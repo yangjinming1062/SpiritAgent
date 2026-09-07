@@ -7,6 +7,7 @@ import { useStore } from '@nanostores/react'
 import { useEffect } from 'react'
 import type React from 'react'
 
+import { $spriteState } from '@/companion'
 import { hydrateRoomBackdrop } from '@/living/room-backdrop-store'
 import { ArrowRight, Home } from '@/shared/lib/icons'
 import { WindowControls } from '@/shared/panel'
@@ -20,12 +21,15 @@ import { RoomBackdrop } from './room-backdrop'
 
 export function LivingRoot(): React.JSX.Element {
   const auth = useStore($auth)
+  const spriteState = useStore($spriteState)
 
   useEffect(() => {
     if (auth.kind === 'authenticated') {
       void hydrateRoomBackdrop()
     }
   }, [auth.kind])
+
+  const statusLabel = spriteState === 'thinking' || spriteState === 'working' ? '忙碌中' : '陪伴中'
 
   return (
     <div className={styles.windowFrame}>
@@ -43,7 +47,7 @@ export function LivingRoot(): React.JSX.Element {
             <h1 className={styles.title}>生活空间</h1>
             <div className={styles.statusBadge}>
               <span className={styles.statusDot} />
-              <span>陪伴中</span>
+              <span>{statusLabel}</span>
             </div>
           </div>
           <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>

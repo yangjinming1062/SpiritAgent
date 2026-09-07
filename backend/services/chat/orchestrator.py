@@ -247,6 +247,7 @@ async def run_chat_turn(
                 actions=llm_result.actions,
                 spatial_locale=llm_result.spatial_locale,
                 spatial_target=llm_result.spatial_target,
+                mood=llm_result.mood,
                 media=turn_media,
                 reasoning=llm_result.reasoning,
                 turn_reasoning="\n\n".join(turn_reasoning_parts) or None,

@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..conversation import load_recent_context_window
 from ..llm import UserLlmConfig
+from .affect_emit import clip_mood, emit_companion_affect
 from .interaction_stats import read_today_summary
 from .prompt_runtime import load_companion_prompt_context, run_prompt_json
 
@@ -19,6 +20,7 @@ logger = get_logger(__name__)
 class InteractResult(BaseModel):
     text: str | None = None
     emotion: str | None = None
+    mood: str = Field(default="", max_length=200)
     reason: str = Field(default="", max_length=200)
 
 
@@ -33,7 +35,7 @@ REGION_NAMES_ZH: dict[str, str] = {
     "skirt": "裙摆",
 }
 
-_MAX_RESPONSE_TOKENS = 120
+_MAX_RESPONSE_TOKENS = 180
 
 _INTERACT_PROMPT_TEMPLATE = (
     "你是 {persona_name}。\n"
@@ -48,9 +50,10 @@ _INTERACT_PROMPT_TEMPLATE = (
     "- 用户此前已空闲 {idle_minutes} 分钟\n\n"
     "请结合你的角色语气与性格，并让当前着装参与塑造你的仪态（着装只是情境，性格仍是反应核心），"
     "给出一句简短的口头反应（长度严格 ≤40 字）。\n"
-    "同时，可选择是否带上一个符合此时心境的表情（emotion）。\n"
+    "同时给出一句角色此刻的第一人称内心独白（mood，会展示给用户看，不要复述口头回应，不要写决策理由），"
+    "并可选带上一个符合此时心境的表情（emotion）。\n"
     "不要生成工具调用。只返回 JSON，不要有任何其他文字：\n"
-    '{{"text": "回应文案", "emotion": "EMOTION"}}\n\n'
+    '{{"text": "回应文案", "emotion": "EMOTION", "mood": "第一人称内心独白"}}\n\n'
     "emotion 必须是以下之一（如果没有特别表情，填 neutral 或 omit）：\n"
     " {allowed_emotions}"
 )
@@ -120,6 +123,10 @@ async def interact(
     raw_emotion = str(parsed.get("emotion") or "neutral").lower().strip()
     emotion = raw_emotion if raw_emotion in ctx.allowed_emotions and raw_emotion != "neutral" else None
 
+    mood = clip_mood(parsed.get("mood")) or ""
+    if mood:
+        await emit_companion_affect(user_id, mood=mood)
+
     logger.info(
         "interact: generated interaction response",
         extra={
@@ -128,6 +135,7 @@ async def interact(
             "region": region,
             "text": text,
             "emotion": emotion,
+            "mood": mood,
         },
     )
-    return InteractResult(text=text, emotion=emotion, reason="ok")
+    return InteractResult(text=text, emotion=emotion, mood=mood, reason="ok")

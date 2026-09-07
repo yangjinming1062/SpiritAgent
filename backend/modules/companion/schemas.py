@@ -34,6 +34,7 @@ class PersonaResponse(BaseModel):
     is_complete: bool
     personality_tags: list[str] = Field(default_factory=list)
     render_mode: str = "2d"
+    current_mood: str | None = None
 
 
 # 生成是同步的——所有持久化资产都是 succeeded；钉死字面量以便未来若改为异步时契约仍清楚。

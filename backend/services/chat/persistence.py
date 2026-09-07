@@ -16,6 +16,8 @@ from modules.conversation import Conversation, Message
 from modules.system import ChatRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.companion import emit_companion_affect
+
 from ..conversation import AFFECT_TRACE_SUBTYPE
 from ..llm import copy_responses_context, message_to_response_items
 from ..scheduler import auto_generate_title, run_background_memory_review
@@ -150,6 +152,7 @@ async def _persist_assistant_no_tool_turn(
     actions: list[str] | None = None,
     spatial_locale: str | None = None,
     spatial_target: str | None = None,
+    mood: str | None = None,
     media: list[dict[str, str]] | None = None,
     reasoning: str | None = None,
     turn_reasoning: str | None = None,
@@ -213,6 +216,9 @@ async def _persist_assistant_no_tool_turn(
             track_task(review_task)
         else:
             _track_background_task(review_task)
+
+    if mood:
+        await emit_companion_affect(user_id, mood=mood)
 
     affect_payload: dict[str, Any] = {"emotion": emotion}
     if actions:

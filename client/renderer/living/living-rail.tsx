@@ -1,9 +1,7 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
-import { $spriteEmotion, $spriteState } from '@/companion/companion-store'
-import { $persona } from '@/companion/persona-store'
-import { $activeAvatarId, $portraitUrl } from '@/companion/portrait-store'
+import { $activeAvatarId, $companionMood, $persona, $portraitUrl, $spriteEmotion, $spriteState } from '@/companion'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import {
   CalendarPlus,
@@ -38,81 +36,8 @@ const NAV_ENTRIES: NavEntry[] = [
   { icon: Settings, id: 'settings', label: '设置' }
 ]
 
-// 状态文案随动画状态走，不要写死"陪伴中 · 栖息"——静态文案会让人觉得她没在动。
-function describeState(state: string, emotion: string | null): string {
-  if (emotion && emotion !== 'neutral') {
-    return `${stateLabel(state)} · ${emotionLabel(emotion)}`
-  }
-
-  return stateLabel(state)
-}
-
-function stateLabel(state: string): string {
-  switch (state) {
-    case 'thinking':
-      return '在想事情'
-
-    case 'working':
-      return '在忙'
-
-    case 'speaking':
-      return '在说话'
-
-    case 'listening':
-      return '在听'
-
-    case 'emotional':
-      return '有小情绪'
-
-    case 'interacting':
-      return '在陪'
-
-    default:
-      return '陪伴中'
-  }
-}
-
-function emotionLabel(emotion: string): string {
-  switch (emotion) {
-    case 'happy':
-      return '开心'
-
-    case 'sad':
-      return '低落'
-
-    case 'angry':
-      return '闹别扭'
-
-    case 'surprised':
-      return '惊讶'
-
-    case 'shy':
-      return '害羞'
-
-    case 'curious':
-      return '好奇'
-
-    case 'sleepy':
-      return '犯困'
-
-    case 'excited':
-      return '兴奋'
-
-    case 'playful':
-      return '玩耍'
-
-    case 'concerned':
-      return '担心'
-
-    case 'scared':
-      return '害怕'
-
-    default:
-      return '陪伴中'
-  }
-}
-
 export function LivingRail(): React.JSX.Element {
+  const companionMood = useStore($companionMood)
   const persona = useStore($persona)
   const portrait = useStore($portraitUrl)
   const activeAvatarId = useStore($activeAvatarId)
@@ -120,7 +45,7 @@ export function LivingRail(): React.JSX.Element {
   const spriteState = useStore($spriteState)
   const emotion = useStore($spriteEmotion)
   const displayName = persona?.name ?? '伙伴'
-  const statusText = describeState(spriteState, emotion)
+  const moodText = companionMood?.trim() || persona?.personality?.trim() || ''
 
   return (
     <aside className={styles.rail}>
@@ -141,7 +66,9 @@ export function LivingRail(): React.JSX.Element {
         </button>
         <div className={styles.identityText}>
           <p className={styles.displayName}>{displayName}</p>
-          <span className={styles.statusDesc}>{statusText}</span>
+          <span className={styles.statusDesc} title={moodText || undefined}>
+            {moodText}
+          </span>
         </div>
       </div>
 

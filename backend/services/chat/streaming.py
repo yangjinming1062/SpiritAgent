@@ -38,6 +38,7 @@ class _LLMTurnResult:
     actions: list[str] | None = None
     spatial_locale: str | None = None
     spatial_target: str | None = None
+    mood: str | None = None
 
 
 def _llm_error_user_message(exc: LLMRuntimeError) -> str:
@@ -284,4 +285,5 @@ async def _stream_llm_response(
         actions=affect.actions,
         spatial_locale=affect.spatial_locale,
         spatial_target=affect.spatial_target,
+        mood=affect.mood,
     )

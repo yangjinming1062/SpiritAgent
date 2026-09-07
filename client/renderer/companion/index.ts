@@ -59,7 +59,7 @@ export {
   VOICE_PRESETS
 } from './persona-presets'
 export { $personaSkin, initPersonaSkin, type PersonaSkin, refreshPersonaSkin } from './persona-skin'
-export { $persona, hydratePersona } from './persona-store'
+export { $companionMood, $persona, hydratePersona } from './persona-store'
 export {
   $activeAvatarId,
   $portraitHistory,

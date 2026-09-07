@@ -20,10 +20,12 @@ export interface PersonaDefinition {
 
 export const $persona = atom<PersonaDefinition | null>(null)
 export const $personalityTags = atom<string[]>([])
+export const $companionMood = atom<string | null>(null)
 
 function resetPersona(): void {
   $persona.set(null)
   $personalityTags.set([])
+  $companionMood.set(null)
 }
 
 registerStorageClearHandler(resetPersona)
@@ -36,6 +38,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
     is_complete?: boolean
     personality_tags?: string[]
     render_mode?: string
+    current_mood?: string | null
   }>({
     path: '/api/companion/persona'
   })
@@ -51,6 +54,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
     if (!opts.silent && $auth.get().kind === 'authenticated') {
       $persona.set(null)
       $personalityTags.set([])
+      $companionMood.set(null)
     }
 
     return { error: result.error, ok: false }
@@ -97,6 +101,8 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
   )
 
   $personalityTags.set(p.personality_tags ?? [])
+
+  $companionMood.set(p.current_mood?.trim() || null)
 
   return { ok: true }
 }

@@ -122,6 +122,8 @@ class Persona(ModelBase, TimestampMixin):
     active_backdrop_id: Mapped[int | None] = mapped_column(ForeignKey("companion_room_backdrops.id", ondelete="SET NULL"), nullable=True)
     # 房间图政策：llm_may_replace（默认，LLM 可主动换房）/ locked（用户锁住，LLM 主动换房被拒）。
     backdrop_policy: Mapped[str] = mapped_column(String(16), default=BACKDROP_POLICY_DEFAULT, server_default=text(f"'{BACKDROP_POLICY_DEFAULT}'"))
+    # 当前心境：由 LLM 情绪/情境推理驱动的最新心理活动说明，端到端投射至客户端展示。
+    current_mood: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
 
     user: Mapped["User"] = relationship(back_populates="persona")
 

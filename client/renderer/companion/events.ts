@@ -62,6 +62,7 @@ import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
 import type { ChatMediaItem, SessionMessage } from '@/shared/types/spiritagent'
 
 import { $devMode, pushDevLog } from './developer-overlay'
+import { $companionMood } from './persona-store'
 import { speakProactive } from './proactive/proactive'
 import { findWindowByKeyword, gazeTowardsPoint, performRitualWalk, type WindowGeom } from './ritual-walk'
 import { triggerFootGlowPulse } from './sprite/foot-glow'
@@ -364,15 +365,22 @@ export function handleCompanionEvent(event: GatewayEvent): void {
     }
 
     case 'companion.affect': {
-      // 云端独立 affect 推送按 DESIGN §6.6 只承载情绪与空间；动作序列走 message.complete 的 affect.actions。
-      const payload = event.payload as { emotion?: string; locale?: string; target?: string } | undefined
+      // 云端独立 affect 推送承载情绪、空间与心境；动作序列走 message.complete 的 affect.actions。
+      const payload = event.payload as { emotion?: string; locale?: string; mood?: string; target?: string } | undefined
 
       const emotion = payload?.emotion
       const locale = payload?.locale
       const target = payload?.target
+      const mood = payload?.mood?.trim()
+      const still = $effectiveTier.get() === 'still'
+
+      // 静止档不消费主动心境推送（PROTOCOL：源头已停，此处兜底）。
+      if (mood && !still) {
+        $companionMood.set(mood)
+      }
 
       // 情绪通道不受锁屏拦截（DESIGN §6.2）；静止档经防御性跳过——后端源头已断流，此处兜底。
-      if (emotion && emotion !== 'neutral' && $effectiveTier.get() !== 'still') {
+      if (emotion && emotion !== 'neutral' && !still) {
         maybeEmotionVfx(emotion)
         setSpriteState('emotional', { emotion: emotion as SpriteEmotion })
       }

@@ -58,7 +58,7 @@
 | tts.match_voice / tts.design_voice / tts.list_voices | 音色描述匹配 / 专属音色生成 / 目录枚举 | Backend TTS + Client 音色页 + 工具窗口 REST 镜像 |
 | companion.set_timezone | Client 每次连接上报本地 IANA 时区——系统提示词日期与陪伴对话时间感知、夜间批处理与互动统计按用户本地日聚合的唯一时区来源；缺行时回落服务端 UTC，夜间流水线整段跳过 | Backend 持久化 + Client boot 上报 + DESIGN §6.2 |
 | tools.sync | Client boot 与 Runner 重启时把 Runner 工具 schema 推送到后端网关，纳入该用户的本机工具池。缺该调用时本机工具对模型不可见。对应 WS RPC 注册于 [backend/services/gateway/handlers.py](../backend/services/gateway/handlers.py) | Backend handlers + Client boot 上报 |
-| companion.check_affect / companion.interact / companion.should_act / companion.record_interaction_stats / companion.get_user_profile | 情境化情绪 / 戳·摸头·眩晕反应 / 自主空间决策 / 互动统计 / 画像召回 | Backend 推理 + Client 触发与消费 + DESIGN §6.3/§6.4 |
+| companion.check_affect / companion.interact / companion.should_act / companion.record_interaction_stats / companion.get_user_profile | 情境化情绪与心境 / 戳·摸头·眩晕反应 / 自主空间决策 / 互动统计 / 画像召回。成功时心境经 `companion.affect` 下发；RPC 的 `reason` 仅为跳过/失败诊断，不得当作心境展示 | Backend 推理 + Client 触发与消费 + DESIGN §6.3/§6.4 |
 | POST /api/companion/portrait/confirm | 确认半身形象（幂等），解开正面全身立绘生成子阶段 | Backend 状态 + Client 流程 |
 | POST /api/companion/avatar/{avatar_id}/fullbody/front-2d | 按默认赛璐珞画风（自然站姿）与微调反馈生成/重绘 2D 正面全身图 | Backend 生成 + Client 正面预览与微调 |
 | POST /api/companion/avatar/{avatar_id}/fullbody/front-3d | 以半身头像种子（形象身份基准，同 2D 正面生成）为参考生成/重绘 A-pose、3D 画风的 3D 正面种子（3D 升级向导调用；形象锁定后仍可用——姿态/画风派生而非身份变更；不覆盖 2D 正面种子，重绘会使已派生背面种子失效） | Backend 生成 + Client 3D 正面预览与微调 |
@@ -66,6 +66,7 @@
 | POST /api/companion/avatar/{avatar_id}/fullbody/confirm-front | 确认 2D 正面全身图并解开音色/用户子阶段（引导期不生成 3D 种子图——正面与背面均为 3D 建模派生输入，准备见 [docs/PIPELINE.md §1](docs/PIPELINE.md)） | Backend 生成 + Client 流程 |
 | GET/POST /api/companion/model | 查询 / 触发 3D 模型异步生成；输入、产物与动画映射契约见 [docs/PIPELINE.md](docs/PIPELINE.md) | Backend 生成管线 + Client 加载 + DESIGN §5.5 |
 | GET/POST /api/companion/2d | 查询 / 触发 2D 形象生成流水线（see-through 双 provider 拆分，产物恒为分层 PSD）；产物契约见 [docs/PIPELINE.md §6](docs/PIPELINE.md) | Backend 生成管线 + Client puppet 渲染链 |
+| GET/PUT /api/companion/persona | 人设读取与更新；响应含当前心境说明 | Backend persona + Client 人设水合 |
 | POST /api/companion/render-mode | 切换并持久化伙伴渲染模式（`2d` / `3d`） | Backend 持久化 + Client 实时切换 |
 | companion.model.retryDownload | 仅重试下载已付费的 3D 生成结果，不重新提交生成 | Backend 生成管线 + Client 失败态入口 |
 | POST /api/companion/avatar（含 /from-image、/upload）、/avatar/{id}/select 与 GET /avatar/history | 半身头像生成（含上传参考图重绘、直接上传头像）/ 历史形象切换激活 / 历史查询 | Backend 生成与上传 + Client 头像确认与历史画廊 + DESIGN §5.4 |
@@ -85,6 +86,7 @@
 - **形象锁定**：形象确认即锁定，物种/性别/基础外貌不可再改，3D 模型/头像重新生成路径与历史头像切换激活一并关闭（切换激活等于换掉已确认的视觉身份）。
 - **关系不外溢到分析与形象**：引导期录入的用户与伙伴关系（知己好友、赛博管家等）只渲染进对话系统提示词供交互参考；不进入性格标签分析与头像/立绘提示词生成——关系是用户与伙伴之间的，不是伙伴自身属性。
 - **下载失败可恢复（已付费结果绝不丢）**：下载失败态随 `model.failed` 事件下发可重试标记与模型标识；客户端必须据此提供"重试下载"入口，而非引导重新生成。持久化与恢复语义见 [docs/PIPELINE.md §3](docs/PIPELINE.md)。
+- **心境说明透传**：人设水合响应与情境情绪事件均可携带当前心境说明，供生活空间身份轨展示。静止档不发起、不消费主动情绪与心境推送。RPC 跳过/失败诊断不得当作心境。
 - **生活空间房间图联动与保护**：房间背景将角色绘制进场景中，身份基准由头像种子图锚定、当前穿着由着装描述锚定。换装成功后（`worn=true`）自动比较着装指纹，不一致时下发 `companion.room.invalidated` 并自动触发重建，防止画面穿帮。房间政策为 `locked` 时，拒绝角色自主换房，但放行换装联动与用户显式请求；历史房间保留最近 5 张供回滚，回滚时若服装指纹与当前穿着冲突则返回 409。
 - **时刻与日记分层不变量**：底层 `memories` 向量表仅用于混合语义检索与系统提示词注入，不对客户端暴露为可读列表；生活空间消费独立的 `moments`（时刻）与 `diary_entries`（第一人称日记）。夜间批处理静默提炼日记，若当天已被用户编辑过则采取尾部段落追加而非覆写；工作预设会话中严格禁止记录生活时刻。
 - **内置专属工具门控**：
@@ -96,7 +98,7 @@
 
 | 事件 type | 触发时机 | 消费者 |
 |-----------|----------|--------|
-| companion.affect | 非言语的情境化情绪反应 | Client 切 EMOTIONAL（静止档不透传——主动情绪推理在源头已停） |
+| companion.affect | 非言语的情境化情绪与心境反应（载荷 `{emotion?, mood?}`；无非中性情绪时只更新心境） | Client：非中性情绪切 EMOTIONAL，有心境说明则更新身份轨（静止档不透传——主动情绪推理在源头已停） |
 | avatar.regenerated | 头像重生最终结果 | Client 替换头像或展示失败 |
 | model.ready / model.gen.progress / model.failed | 3D 模型就绪 / 进度 / 失败；载荷契约与产物映射见 [docs/PIPELINE.md](docs/PIPELINE.md) | Client 加载与状态展示 |
 | companion.2d.ready / .failed | 2D 拆分就绪 / 失败；载荷包含 manifest_url 与图层签名 URL 字典。manifest 恒为分层 PSD 描述符（`kind=psd`，产物契约见 docs/PIPELINE.md §6.1） | Client 水合 puppet 渲染路径 |

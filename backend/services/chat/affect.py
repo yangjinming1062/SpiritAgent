@@ -15,10 +15,12 @@ ALLOWED_LOCALES: frozenset[str] = frozenset({"home", "perch", "roam"})
 
 # 锚定缓冲区开头的 tag 正则；target 允许非 ]/非换行字符，以容纳本地化应用名（如「微信」）与空格（如「Visual Studio Code」）。
 _AFFECT_RE = re.compile(r"^\s*\[affect:([a-z_]+)\]\s*", re.IGNORECASE)
+_MOOD_RE = re.compile(r"^\s*\[mood:([^\]]{1,200})\]\s*", re.IGNORECASE)
 _SPATIAL_RE = re.compile(r"^\s*\[spatial:([a-z_]+)(?:,target:([^\]\n]+))?\]\s*", re.IGNORECASE)
 
 # 部分匹配正则：flush() 时抢救流中断前的解析结果，避免把半截标签（如 [affect:foo）暴露给用户。
 _PARTIAL_AFFECT_RE = re.compile(r"^\s*\[affect:([a-z_]+)?", re.IGNORECASE)
+_PARTIAL_MOOD_RE = re.compile(r"^\s*\[mood:([^\]]*)", re.IGNORECASE)
 _PARTIAL_SPATIAL_RE = re.compile(r"^\s*\[spatial:([a-z_]+)?(?:,target:([^\]\n]*))?", re.IGNORECASE)
 
 # 星号包裹的第三人称动作旁白（不显示不朗读，仅由 [affect:...] 驱动 3D 反应）。
@@ -50,8 +52,9 @@ _AFFECT_GUIDANCE_TEXTS: dict[str, str] = {
     "zh": (
         "# 具身表情与动作\n"
         "你的屏幕头像通过面部表情、身体动画与空间定位来可见地表达情绪。"
-        "若要表达情绪与肢体动作，请在回复开头独占一行写 affect tag 与可选的 action/spatial tag：\n"
+        "若要表达情绪与肢体动作，请在回复开头独占一行写 affect tag 与可选的 mood/action/spatial tag：\n"
         "    [affect:EMOTION]\n"
+        "    [mood:第一人称内心独白]  （可选；此刻心境，会展示给用户看，不要写决策理由）\n"
         "    [action:ACTION]  （可选；snake_case 具体动作，如 turn_away / stomp / nod）\n"
         "    [spatial:LOCALE,target:KEYWORD]  （可选）\n"
         "其后跟随你的实际对话回复。\n\n"
@@ -65,6 +68,7 @@ _AFFECT_GUIDANCE_TEXTS: dict[str, str] = {
         "LOCALE must be one of: {locales}. KEYWORD is an active window or app name.\n"
         "示例：\n"
         "    [affect:happy]\n"
+        "    [mood:见到你了，心里一下子亮起来]\n"
         "    见到你真开心！今天咱们一起做点什么？\n"
         "    [affect:curious]\n"
         "    [spatial:perch,target:bilibili]\n"
@@ -74,8 +78,9 @@ _AFFECT_GUIDANCE_TEXTS: dict[str, str] = {
     "en": (
         "# Embodied Expressions & Movements\n"
         "Your on-screen avatar visibly expresses emotions through facial expressions, body animations, and spatial positioning. "
-        "To convey emotion and physical movement, begin your response with an affect tag and optional action/spatial tags on their own lines:\n"
+        "To convey emotion and physical movement, begin your response with an affect tag and optional mood/action/spatial tags on their own lines:\n"
         "    [affect:EMOTION]\n"
+        "    [mood:first-person inner state]  (optional; shown to the user as your current mood, not a system rationale)\n"
         "    [action:ACTION]  (optional; a specific movement in snake_case, e.g. turn_away / stomp / nod)\n"
         "    [spatial:LOCALE,target:KEYWORD]  (optional)\n"
         "followed by your actual conversational reply.\n\n"
@@ -89,6 +94,7 @@ _AFFECT_GUIDANCE_TEXTS: dict[str, str] = {
         "LOCALE must be one of: {locales}. KEYWORD is an active window or app name.\n"
         "Examples:\n"
         "    [affect:happy]\n"
+        "    [mood:Seeing you brightens me up]\n"
         "    I'm glad to see you! What are we working on today?\n"
         "    [affect:curious]\n"
         "    [spatial:perch,target:bilibili]\n"
@@ -163,6 +169,7 @@ class AffectScrubber:
     def __init__(self, allowed_emotions: frozenset[str] | None = None, allowed_actions: frozenset[str] | None = None) -> None:
         self._buf: str = ""
         self._emotion: str | None = None
+        self._mood: str | None = None
         self._spatial_locale: str | None = None
         self._spatial_target: str | None = None
         self._actions: list[str] = []
@@ -173,6 +180,10 @@ class AffectScrubber:
     @property
     def emotion(self) -> str | None:
         return self._emotion
+
+    @property
+    def mood(self) -> str | None:
+        return self._mood
 
     @property
     def actions(self) -> list[str]:
@@ -206,6 +217,10 @@ class AffectScrubber:
             if m_aff.group(1):
                 self._set_emotion(m_aff.group(1))
             self._consume(m_aff, strip_bracket=True)
+        m_mood = _PARTIAL_MOOD_RE.match(self._buf)
+        if m_mood:
+            self._set_mood(m_mood.group(1))
+            self._consume(m_mood, strip_bracket=True)
         m_spat = _PARTIAL_SPATIAL_RE.match(self._buf)
         if m_spat:
             self._consume(m_spat, strip_bracket=True)
@@ -239,6 +254,11 @@ class AffectScrubber:
                 self._set_emotion(m_aff.group(1))
                 self._consume(m_aff)
                 continue
+            m_mood = _MOOD_RE.match(self._buf)
+            if m_mood:
+                self._set_mood(m_mood.group(1))
+                self._consume(m_mood)
+                continue
             m_spat = _SPATIAL_RE.match(self._buf)
             if m_spat:
                 self._set_spatial(m_spat.group(1), m_spat.group(2))
@@ -267,6 +287,12 @@ class AffectScrubber:
             return
         normalized = token.lower()
         self._emotion = normalized if normalized in self._allowed else "neutral"
+
+    def _set_mood(self, token: str | None) -> None:
+        text = (token or "").strip()
+        if not text:
+            return
+        self._mood = text[:200]
 
     def _set_spatial(self, loc: str | None, target: str | None) -> None:
         if loc is None:

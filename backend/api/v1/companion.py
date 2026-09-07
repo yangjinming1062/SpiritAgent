@@ -113,6 +113,7 @@ async def get_persona(user: CurrentUser, db: DbSession) -> PersonaResponse:
         definition_json=persona.definition_json,
         personality_tags=tags if isinstance(tags, list) else [],
         render_mode=persona.render_mode or "2d",
+        current_mood=persona.current_mood,
     )
 
 
@@ -131,6 +132,7 @@ async def put_persona(body: PersonaUpdate, user: CurrentUser, db: DbSession) -> 
         definition_json=persona.definition_json,
         personality_tags=tags if isinstance(tags, list) else [],
         render_mode=persona.render_mode or "2d",
+        current_mood=persona.current_mood,
     )
 
 
@@ -484,6 +486,7 @@ async def post_render_mode(body: RenderModeRequest, user: CurrentUser, db: DbSes
         is_complete=persona.is_complete,
         personality_tags=[],
         render_mode=persona.render_mode or "2d",
+        current_mood=persona.current_mood,
     )
 
 
