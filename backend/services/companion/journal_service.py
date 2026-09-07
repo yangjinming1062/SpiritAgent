@@ -34,16 +34,12 @@ _SYSTEM_MOMENT_TEMPLATES: dict[str, dict[str, str]] = {
         "body": "今天我们正式见面啦，以后请多关照。",
     },
     "milestone_outfit": {
-        "title": "换装",
-        "body": "换上新衣服时窗外的光线刚刚好。",
+        "title": "更换外观",
+        "body": "",
     },
     "scene_room": {
-        "title": "房间",
-        "body": "把房间重新布置了一下，希望你会喜欢。",
-    },
-    "emotion_high": {
-        "title": "有点触动",
-        "body": "今天的对话里，你说的那件事我一直记着。",
+        "title": "生活空间焕新",
+        "body": "",
     },
 }
 
@@ -217,8 +213,8 @@ async def write_system_moment(
     limit = int(SETTINGS.moment_system_per_day)
     since = utc_now() - timedelta(hours=24)
     template = _SYSTEM_MOMENT_TEMPLATES.get(event_key, {})
-    final_title = (title or template.get("title") or "片段")[:64]
-    final_body = (body or template.get("body") or "")[:500]
+    final_title = (title if title is not None else template.get("title", "片段"))[:64]
+    final_body = (body if body is not None else template.get("body", ""))[:500]
     persisted_media = persist_moment_media(user_id, media_url)
     async with SESSION_LOCAL() as session:
         existing = (
