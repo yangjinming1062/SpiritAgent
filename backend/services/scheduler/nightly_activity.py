@@ -691,7 +691,7 @@ async def _run_nightly_pipeline_inner(user_id: int, now_utc: datetime, log_id: i
     async def _checkpoint() -> None:
         await run_daily_checkpoint(llm_cfg, user_id, utc_start, utc_end, local_today_str)
 
-    async def _journal_project() -> bool:
+    async def _journal_project() -> bool | None:
         return await project_today(user_id, reference_utc=now_utc, pre_messages=clean_main_messages, llm_cfg=llm_cfg)
 
     results = await asyncio.gather(
@@ -705,6 +705,12 @@ async def _run_nightly_pipeline_inner(user_id: int, now_utc: datetime, log_id: i
             # 不在 except 块里——必须显式传异常，否则 exc_info 为空，traceback 丢失。
             logger.error(f"nightly_activity: {label} failed", exc_info=result, extra={"user_id": user_id})
             stages.append({"stage": label, "status": "error", "error": str(result)})
+        elif label == "journal nightly" and result is None:
+            logger.error(
+                "nightly_activity: journal nightly failed",
+                extra={"user_id": user_id, "error": "empty compose result"},
+            )
+            stages.append({"stage": label, "status": "error", "error": "empty compose result"})
         else:
             stages.append({"stage": label, "status": "ok"})
 

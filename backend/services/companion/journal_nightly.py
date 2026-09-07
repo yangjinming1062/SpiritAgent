@@ -20,7 +20,11 @@ from services.llm import MissingLlmConfigError, call_llm_once, resolve_user_llm_
 
 from .journal_service import upsert_diary
 from .memory_bootstrap import resolve_user_timezone
-from .nightly_helpers import get_local_day_utc_bounds, is_injected_time_item, prefilter_messages_for_nightly
+from .nightly_helpers import (
+    get_local_day_utc_bounds,
+    is_injected_time_item,
+    prefilter_messages_for_nightly,
+)
 
 logger = get_logger(__name__)
 
@@ -31,11 +35,6 @@ _DIARY_SYSTEM = (
     '只输出一个 JSON：{"title": "不超过 12 字", "body": "..."}。'
 )
 
-_FALLBACK_DIARY_TEMPLATES: dict[str, str] = {
-    "default": "今天我们说了很少的话，我把窗口留得更大一些，等你愿意再说。",
-    "active": "今天和你聊了很多，记下几个关键点。",
-}
-
 
 async def project_today(
     user_id: int,
@@ -43,8 +42,14 @@ async def project_today(
     *,
     pre_messages: list[dict[str, str]] | None = None,
     llm_cfg: dict[str, Any] | None = None,
-) -> bool:
-    """夜间 upsert 当日（指 reference_utc 派生出的本地日）的日记，关联当日时刻。"""
+) -> bool | None:
+    """夜间 upsert 当日（指 reference_utc 派生出的本地日）的日记，关联当日时刻。
+
+    返回值语义：
+    - ``True``：成功生成并落库夜间日记；
+    - ``False``：因配置或数据条件被安全跳过；
+    - ``None``：应生成日记，但 LLM/解析失败，且按原则七不写入伪造内容。
+    """
     if not SETTINGS.diary_nightly_enabled:
         logger.info("journal_nightly: disabled by config", extra={"user_id": user_id})
         return False
@@ -52,10 +57,16 @@ async def project_today(
     async with SESSION_LOCAL() as db:
         tz_str = await resolve_user_timezone(db, user_id)
         if not tz_str:
-            logger.info("journal_nightly: skipped, missing timezone", extra={"user_id": user_id})
+            logger.info(
+                "journal_nightly: skipped, missing timezone",
+                extra={"user_id": user_id},
+            )
             return False
         try:
-            utc_start, utc_end, _, local_date_str = get_local_day_utc_bounds(now_utc, tz_str)
+            utc_start, utc_end, _, local_date_str = get_local_day_utc_bounds(
+                now_utc,
+                tz_str,
+            )
         except (ZoneInfoNotFoundError, ValueError):
             return False
         target_date = date.fromisoformat(local_date_str)
@@ -68,7 +79,10 @@ async def project_today(
                         .where(
                             Conversation.user_id == user_id,
                             Conversation.kind.in_(("special", "standard")),
-                            or_(Conversation.system_preset_id.is_(None), Conversation.system_preset_id == "companion"),
+                            or_(
+                                Conversation.system_preset_id.is_(None),
+                                Conversation.system_preset_id == "companion",
+                            ),
                             Message.role.in_(("user", "assistant")),
                             Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),
                             Message.created_at >= utc_start,
@@ -101,10 +115,19 @@ async def project_today(
         )
 
     if not any(m["role"] == "user" and not is_injected_time_item(m) for m in clean):
-        logger.info("journal_nightly: no user messages today", extra={"user_id": user_id})
+        logger.info(
+            "journal_nightly: no user messages today",
+            extra={"user_id": user_id},
+        )
         return False
 
     title, body = await _compose_diary(user_id, llm_cfg, clean, target_date)
+    if body is None:
+        logger.warning(
+            "journal_nightly: skipped persisting nightly diary due to compose failure",
+            extra={"user_id": user_id},
+        )
+        return None
     async with SESSION_LOCAL() as db:
         await upsert_diary(
             db,
@@ -123,21 +146,30 @@ async def _compose_diary(
     llm_cfg: dict[str, Any] | None,
     clean_messages: list[dict[str, str]],
     target_date: date,
-) -> tuple[str, str]:
+) -> tuple[str, str | None]:
     if not (llm_cfg and llm_cfg.get("api_key") and llm_cfg.get("base_url") and llm_cfg.get("model_name")):
-        return _fallback_diary(clean_messages)
+        logger.warning("journal_nightly: missing llm config", extra={"user_id": user_id})
+        return "", None
     payload = {
         "local_date": target_date.isoformat(),
         "today_companion_conversations": clean_messages[-40:],
     }
     try:
-        raw = await call_llm_once(llm_cfg, _DIARY_SYSTEM, payload, max_output_tokens=600)
+        raw = await call_llm_once(
+            llm_cfg,
+            _DIARY_SYSTEM,
+            payload,
+            max_output_tokens=600,
+        )
     except MissingLlmConfigError as exc:
-        logger.info("journal_nightly: missing llm config", extra={"user_id": user_id, "error": str(exc)})
-        return _fallback_diary(clean_messages)
+        logger.warning(
+            "journal_nightly: missing llm config",
+            extra={"user_id": user_id, "error": str(exc)},
+        )
+        return "", None
     except Exception:
         logger.warning("journal_nightly: LLM compose failed", exc_info=True)
-        return _fallback_diary(clean_messages)
+        return "", None
     parsed = parse_llm_json(raw) or {}
     title = ""
     body = ""
@@ -145,12 +177,9 @@ async def _compose_diary(
         title = (parsed.get("title") or "").strip()[:128]
         body = (parsed.get("body") or "").strip()[:2000]
     if not body:
-        return _fallback_diary(clean_messages)
+        logger.warning(
+            "journal_nightly: empty body from compose",
+            extra={"user_id": user_id},
+        )
+        return "", None
     return title, body
-
-
-def _fallback_diary(clean_messages: list[dict[str, str]]) -> tuple[str, str]:
-    user_count = sum(1 for m in clean_messages if m["role"] == "user" and not is_injected_time_item(m))
-    if user_count >= 4:
-        return "今天的小事", _FALLBACK_DIARY_TEMPLATES["active"]
-    return "今天的小事", _FALLBACK_DIARY_TEMPLATES["default"]
