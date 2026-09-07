@@ -149,7 +149,7 @@ export function DiaryPage(): React.JSX.Element {
             <BookOpen className={styles.emptyIcon} size={36} />
             <p className={styles.emptyTitle}>这一天还没有日记</p>
             <p className={styles.emptyHint}>
-              {isToday ? `${displayName} 会在夜晚记录生活中的点滴，晚点再来看看吧～` : '这一天没有日记记录哦～'}
+              {isToday ? '今日日记将在夜间整理生成，晚点再来翻看吧～' : '这一天没有日记记录哦～'}
             </p>
           </div>
         )}
