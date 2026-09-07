@@ -1,10 +1,11 @@
-"""baseline：完整 schema + pgvector/pg_trgm 扩展、partial unique 与 HNSW/GIN 索引、ws_events NOTIFY 触发器、2D 模型管线与 persona.render_mode、IM 通道桥两表与 messages.draft_anchor；未部署阶段的压缩版本。"""
+"""baseline：完整 schema + pgvector/pg_trgm 扩展、partial unique 与 HNSW/GIN 索引、ws_events NOTIFY 触发器、2D 模型管线与 persona.render_mode、IM 通道桥两表与 messages.draft_anchor/messages.reasoning_content、persona.current_mood、房间背景/时刻/日记、nightly_activity_logs；0002~0007 squash 后的未部署版本（drop personas.system_prompt_extras / drop companion_expression_avatars 已合并到本文件）。"""
 
 from collections.abc import Sequence
 
 import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 
 # Alembic 用的版本标识符。
 revision: str = "0001"
@@ -106,21 +107,6 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_companion_expressions_user_id"), "companion_expressions", ["user_id"], unique=False)
-    op.create_table(
-        "companion_expression_avatars",
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("name", sa.String(length=64), nullable=False),
-        sa.Column("avatar_id", sa.Integer(), nullable=True),
-        sa.Column("prompt", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("asset_url", sa.String(length=2048), nullable=False),
-        sa.Column("content_hash", sa.String(length=64), server_default=sa.text("''"), nullable=True),
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("user_id", "name", "avatar_id", name="uq_companion_expression_avatars_key"),
-    )
     op.create_table(
         "companion_3d_models",
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -270,18 +256,48 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_memories_user_id"), "memories", ["user_id"], unique=False)
     op.create_table(
+        "companion_room_backdrops",
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("origin", sa.String(length=16), server_default=sa.text("'onboarding'"), nullable=False),
+        sa.Column("intent", sa.String(length=16), server_default=sa.text("'decorate'"), nullable=False),
+        sa.Column("brief", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("prompt", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("media_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("public_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("seed_portrait_media_id", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("seed_outfit_media_id", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("outfit_fingerprint", sa.String(length=128), server_default=sa.text("''"), nullable=False),
+        sa.Column("contains_character", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
+        sa.Column("error_utterance", sa.Text(), nullable=True),
+        sa.Column("attempt_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("requested_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("ready_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(op.f("ix_companion_room_backdrops_user_id"), "companion_room_backdrops", ["user_id"], unique=False)
+    op.create_index(op.f("ix_companion_room_backdrops_status"), "companion_room_backdrops", ["status"], unique=False)
+    op.create_index(op.f("ix_companion_room_backdrops_outfit_fingerprint"), "companion_room_backdrops", ["outfit_fingerprint"], unique=False)
+    op.create_table(
         "personas",
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("definition_json", sa.Text(), nullable=False),
         sa.Column("personality_tags_json", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
-        sa.Column("system_prompt_extras", sa.Text(), nullable=False),
         sa.Column("is_complete", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("is_portrait_confirmed", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("portrait_confirmed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("render_mode", sa.String(length=8), server_default=sa.text("'2d'"), nullable=False),
+        sa.Column("active_backdrop_id", sa.Integer(), nullable=True),
+        sa.Column("backdrop_policy", sa.String(length=16), server_default=sa.text("'llm_may_replace'"), nullable=False),
+        sa.Column("current_mood", sa.Text(), nullable=True),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["active_backdrop_id"], ["companion_room_backdrops.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
@@ -289,6 +305,68 @@ def upgrade() -> None:
     op.create_index(op.f("ix_personas_is_portrait_confirmed"), "personas", ["is_portrait_confirmed"], unique=False)
     op.create_index(op.f("ix_personas_render_mode"), "personas", ["render_mode"], unique=False)
     op.create_index(op.f("ix_personas_user_id"), "personas", ["user_id"], unique=True)
+    op.create_table(
+        "companion_moments",
+        sa.Column("id", UUID(as_uuid=False), nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("occurred_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("kind", sa.String(length=16), server_default=sa.text("'greeting'"), nullable=False),
+        sa.Column("title", sa.String(length=64), server_default=sa.text("''"), nullable=False),
+        sa.Column("body", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("emotion", sa.String(length=32), nullable=True),
+        sa.Column("media_url", sa.String(length=2048), nullable=True),
+        sa.Column("source", sa.String(length=16), server_default=sa.text("'system'"), nullable=False),
+        sa.Column("memory_id", sa.Integer(), nullable=True),
+        sa.Column("session_id", sa.Integer(), nullable=True),
+        sa.Column("visibility", sa.String(length=16), server_default=sa.text("'shown'"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["memory_id"], ["memories.id"], ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["session_id"], ["conversations.id"], ondelete="SET NULL"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(op.f("ix_companion_moments_user_id"), "companion_moments", ["user_id"], unique=False)
+    op.create_index(op.f("ix_companion_moments_occurred_at"), "companion_moments", ["occurred_at"], unique=False)
+    op.create_index(op.f("ix_companion_moments_kind"), "companion_moments", ["kind"], unique=False)
+
+    op.create_table(
+        "companion_diary_entries",
+        sa.Column("id", UUID(as_uuid=False), nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("entry_date", sa.Date(), nullable=False),
+        sa.Column("title", sa.String(length=128), server_default=sa.text("''"), nullable=False),
+        sa.Column("body", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("mood", sa.String(length=32), nullable=True),
+        sa.Column("source", sa.String(length=16), server_default=sa.text("'nightly'"), nullable=False),
+        sa.Column("memory_ids", ARRAY(sa.String()), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("moment_ids", ARRAY(sa.String()), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("edited_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "entry_date", name="uq_companion_diary_user_date"),
+    )
+    op.create_index(op.f("ix_companion_diary_entries_user_id"), "companion_diary_entries", ["user_id"], unique=False)
+    op.create_index(op.f("ix_companion_diary_entries_entry_date"), "companion_diary_entries", ["entry_date"], unique=False)
+
+    op.create_table(
+        "nightly_activity_logs",
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("target_date", sa.Date(), nullable=False),
+        sa.Column("status", sa.String(length=32), server_default=sa.text("'running'"), nullable=False),
+        sa.Column("summary", sa.Text(), nullable=True),
+        sa.Column("payload", sa.JSON(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "target_date", name="uq_nightly_activity_logs_user_date"),
+    )
+    op.create_index(op.f("ix_nightly_activity_logs_user_id"), "nightly_activity_logs", ["user_id"], unique=False)
+    op.create_index(op.f("ix_nightly_activity_logs_target_date"), "nightly_activity_logs", ["target_date"], unique=False)
     op.create_table(
         "user_model_configs",
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -389,6 +467,7 @@ def upgrade() -> None:
         sa.Column("role", sa.String(length=64), nullable=False),
         sa.Column("subtype", sa.String(length=64), nullable=True),
         sa.Column("content", sa.Text(), nullable=True),
+        sa.Column("reasoning_content", sa.Text(), nullable=True),
         sa.Column("tool_calls", sa.Text(), nullable=True),
         sa.Column("tool_call_id", sa.Text(), nullable=True),
         sa.Column("prompt_tokens", sa.Integer(), server_default=sa.text("0"), nullable=False),
@@ -498,6 +577,7 @@ def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS ws_event_notify_trigger ON ws_events")
     op.execute("DROP FUNCTION IF EXISTS notify_ws_event()")
     # 先子表再父表（messages → conversations → users）。
+    # companion_moments/diary/nightly_logs/room_backdrops 在 personas 之后、memories/conversations 之前 drop：personas.active_backdrop_id → room_backdrops 故 personas 必须先 drop；moments.memory_id/session_id 用 SET NULL 兜底，但提前 drop 可省一次更新。
     for table in (
         "messages",
         "channel_peers",
@@ -507,10 +587,13 @@ def downgrade() -> None:
         "user_settings",
         "user_model_configs",
         "personas",
+        "companion_moments",
+        "companion_diary_entries",
+        "nightly_activity_logs",
+        "companion_room_backdrops",
         "memories",
         "login_records",
         "cron_jobs",
-        "companion_expression_avatars",
         "companion_3d_models",
         "companion_2d_models",
         "companion_outfits",
