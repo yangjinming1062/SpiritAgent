@@ -1146,7 +1146,7 @@ wheels = [
 
 [[package]]
 name = "spirit-agent"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "cua-driver", marker = "sys_platform == 'darwin' or sys_platform == 'win32'" },

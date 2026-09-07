@@ -1,6 +1,6 @@
 [package]
 name = "spiritagent-bootstrap"
-version = "0.3.0"
+version = "0.4.0"
 description = "SpiritAgent Setup — signed installer that drives installer/install.ps1"
 authors = ["SpiritAgent <info@spiritagent.ai>"]
 edition = "2021"

@@ -1,7 +1,7 @@
 {
   "name": "@spiritagent/installer",
   "private": true,
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "SpiritAgent Setup — signed installer that drives installer/install.ps1 with a polished native UI.",
   "type": "module",
   "scripts": {
