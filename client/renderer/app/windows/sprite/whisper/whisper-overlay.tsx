@@ -129,7 +129,7 @@ function WhisperOverlayContent(): React.JSX.Element {
           <X className="size-3.5" />
         </button>
       </div>
-      <div className="min-h-0 flex-1 overflow-hidden">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <ConversationSurface scrollRef={scrollRef} variant="living" />
       </div>
       <div className="shrink-0">
