@@ -1,0 +1,27 @@
+# 内置基础情绪；未识别的 LLM token 兜底为 neutral，避免脏数据污染渲染端状态。
+BUILTIN_EMOTIONS: frozenset[str] = frozenset(
+    {
+        "happy",
+        "sad",
+        "surprised",
+        "excited",
+        "confused",
+        "concerned",
+        "shy",
+        "proud",
+        "grateful",
+        "playful",
+        "bored",
+        "neutral",
+        "lonely",
+        "sleepy",
+        "curious",
+        "embarrassed",
+        "apologetic",
+        "pout",
+        "angry",
+        "smug",
+        "scared",
+        "relieved",
+    },
+)

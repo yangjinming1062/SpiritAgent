@@ -1,0 +1,34 @@
+# 项目级 ruff 配置，供 pre-commit、ruff CLI、IDE 扩展共用。
+# 与 backend/、runner/ 等子模块各自的 pyproject.toml 形成层级覆盖：子模块可覆盖 line-length 等设置，
+# 但尾逗号等风格规则在此集中定义，避免散落。
+
+line-length = 120
+target-version = "py313"
+extend-exclude = [
+    "installer",
+    "client",
+    ".ruff_cache",
+]
+
+[lint]
+# COM812 = multi-line trailing comma required（多行集合末尾必须有尾逗号，--fix 可自动补）
+# COM819 = trailing comma prohibited（单行禁止尾逗号，与 COM812 配合保证风格一致）
+# 其它启用的规则族：E/pycodestyle、F/pyflakes、I/isort、SIM/simplify、C4/comprehensions、
+# UP/pyupgrade、FA/future-annotations、ARG/argparse、PLC/Pylint convention、ERA/eradicate
+select = [
+    "E", "F", "I", "SIM", "C4", "UP", "FA", "ARG", "PLC", "ERA",
+    "COM812",  # missing-trailing-comma：多行末尾必须有尾逗号（safe fix 自动补）
+    "COM819",  # prohibited-trailing-comma：单行禁止尾逗号
+]
+ignore = [
+    "PLC0415",  # 非 import 顶层 import（provider 注册需要副作用）
+    "ARG001",   # FastAPI 依赖项未使用参数
+    "ARG002",   # FastAPI 路由 handler 未使用参数
+    "E501",     # 部分字符串不处理换行（如正则、JSON、SQL、prompt 模板），不强制折行
+]
+
+[format]
+# ruff format 默认尊重 COM812：在多行集合里自动补尾逗号、保持它。
+# skip-magic-trailing-comma = false 显式写出来，避免未来升级时默认值变更静默改变行为。
+# （line-length 在顶层已统一设置。）
+skip-magic-trailing-comma = false

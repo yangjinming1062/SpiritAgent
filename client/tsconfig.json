@@ -1,0 +1,36 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "useDefineForClassFields": true,
+    "lib": ["DOM", "DOM.Iterable", "ES2023"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "jsx": "react-jsx",
+    "paths": {
+      "@/*": ["./renderer/*"],
+      "@shared/*": ["./renderer/shared/*"],
+      "@companion/*": ["./renderer/companion/*"],
+      "@2d/*": ["./renderer/2d/*"],
+      "@3d/*": ["./renderer/3d/*"],
+      "@chat/*": ["./renderer/chat/*"],
+      "@living/*": ["./renderer/living/*"],
+      "@workbench/*": ["./renderer/workbench/*"],
+      "@onboarding/*": ["./renderer/onboarding/*"],
+      "@ipc/contracts": ["./shared/ipc/contracts"],
+      "@runtime": ["./shared/runtime"]
+    }
+  },
+  "include": ["renderer", "shared"],
+  "references": []
+}

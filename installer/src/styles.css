@@ -1,0 +1,310 @@
+/* 安装器为顶层独立模块，token 与桌面端赛博玻璃主题对齐：玻璃拟态 + 低饱和蓝紫渐变 + 像素噪点 + 发光描边。
+   与 client/renderer/styles.css 的 cyber-glass 块严格同步，只是去掉 desktop 独有的精灵窗/工具窗维度。 */
+
+@import 'tailwindcss';
+
+/* Collapse Bold —— SpiritAgent 品牌字体；通过 @nous-research/ui 依赖提供。 */
+@font-face {
+  font-family: 'Collapse';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('../node_modules/@nous-research/ui/dist/fonts/Collapse-Bold.woff2') format('woff2');
+}
+
+@theme inline {
+  /* —— 与 client 一致的语义 token 层 ——————————————————————————————————————————
+     工具类（bg-surface-card / text-text-strong 等）发出 var(--ui-*) 引用，避免编译期定值固化主题。 */
+  --color-surface-chrome: var(--ui-surface-chrome);
+  --color-surface-panel: var(--ui-surface-panel);
+  --color-surface-card: var(--ui-surface-card);
+  --color-glass: var(--ui-glass-bg);
+  --color-line-hairline: var(--ui-line-hairline);
+  --color-line-standard: var(--ui-line-standard);
+  --color-line-strong: var(--ui-line-strong);
+  --color-fill-faint: var(--ui-fill-faint);
+  --color-text-strong: var(--ui-text-strong);
+  --color-text-body: var(--ui-text-body);
+  --color-text-muted: var(--ui-text-muted);
+  --color-text-faint: var(--ui-text-faint);
+  --color-accent: var(--ui-accent);
+  --color-accent-soft: var(--ui-accent-soft);
+  --color-accent-line: var(--ui-accent-line);
+  --color-focus-line: var(--ui-focus-line);
+  --color-success: var(--ui-success);
+  --color-destructive: #cf2d56;
+  --color-egg-shell: var(--ui-glow);
+
+  --font-sans: var(--ui-font-sans);
+  --font-mono: var(--ui-font-mono);
+
+  --blur-glass: var(--ui-glass-blur);
+
+  --radius-xs: calc(var(--radius-scalar) * 0.125rem);
+  --radius-sm: calc(var(--radius-scalar) * 0.5rem);
+  --radius-md: calc(var(--radius-scalar) * 0.625rem);
+  --radius-lg: calc(var(--radius-scalar) * 0.75rem);
+  --radius-xl: calc(var(--radius-scalar) * 1rem);
+  --radius-2xl: calc(var(--radius-scalar) * 1.5rem);
+
+  --shadow-sm: 0 0 0 0.0625rem color-mix(in srgb, #fff 6%, transparent), 0 0.125rem 0.5rem rgb(0 0 0 / 0.4);
+  --shadow-md:
+    0 0 0 0.0625rem color-mix(in srgb, #fff 8%, transparent), 0 0.25rem 1rem rgb(0 0 0 / 0.5),
+    0 1rem 2rem -1.5rem rgb(0 0 0 / 0.7);
+  --shadow-lg:
+    inset 0 0.0625rem 0 color-mix(in srgb, #fff 28%, transparent),
+    0 0 0 0.0625rem color-mix(in srgb, #fff 8%, transparent), 0 0.75rem 2rem rgb(0 0 0 / 0.55);
+}
+
+@layer base {
+  /* 桌面端"赛博玻璃"主题：玻璃拟态半透 + 低饱和蓝紫渐变 + 像素噪点 + 发光描边。
+     安装器不走主题切换，常驻此主题——与 client 默认入口保持一致视觉锚点。 */
+  :root {
+    color-scheme: dark;
+
+    --ui-app-bg: linear-gradient(160deg, #0a0c18, #0c1024 55%, #100f26);
+    --ui-surface-chrome: rgb(10 12 24 / 0.72);
+    --ui-surface-panel: rgb(16 19 36 / 0.66);
+    --ui-surface-card: rgb(24 28 52 / 0.6);
+    --ui-glass-bg: rgb(8 10 22 / 0.55);
+    --ui-glass-blur: 1.5rem;
+    --ui-line-hairline: rgb(122 143 255 / 0.14);
+    --ui-line-standard: rgb(139 158 255 / 0.2);
+    --ui-line-strong: rgb(168 184 255 / 0.32);
+    --ui-fill-faint: rgb(140 155 255 / 0.07);
+    --ui-text-strong: rgb(238 242 255 / 0.95);
+    --ui-text-body: rgb(232 238 255 / 0.8);
+    --ui-text-muted: rgb(226 234 255 / 0.52);
+    --ui-text-faint: rgb(226 234 255 / 0.38);
+    --ui-accent: #7d9bff;
+    --ui-accent-soft: rgb(125 155 255 / 0.18);
+    --ui-accent-line: rgb(125 155 255 / 0.55);
+    --ui-focus-line: rgb(125 155 255 / 0.75);
+    --ui-success: rgb(52 211 153);
+    --ui-glow: rgb(125 155 255 / 0.28);
+    --ui-noise: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)' opacity='0.05'/%3E%3C/svg%3E");
+
+    --ui-font-sans:
+      'Segoe WPC', 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif,
+      'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
+    --ui-font-mono:
+      'Cascadia Code', 'JetBrains Mono', 'SF Mono', ui-monospace, Menlo, Consolas, monospace;
+
+    --radius-scalar: 0.6;
+  }
+
+  * {
+    box-sizing: border-box;
+    border-color: var(--ui-line-standard);
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    /* app bg 下沉到独立层，让 body::before 的噪点纹理能正确合成在渐变之上。 */
+    background: var(--ui-app-bg);
+    color: var(--ui-text-strong);
+    font-family: var(--ui-font-sans);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    overflow: hidden;
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* 整页噪点：低不透明 PNG turbulence，5% 不透明度叠加在 app bg 之上给玻璃感打底。 */
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    background-image: var(--ui-noise);
+    background-size: 140px 140px;
+    opacity: 1;
+    z-index: 0;
+  }
+
+  button,
+  textarea {
+    font: inherit;
+  }
+
+  *::selection {
+    background: rgb(255 210 74 / 0.38);
+    color: inherit;
+  }
+}
+
+@layer utilities {
+  /* fit-text —— 按容器宽度自动缩放字体；与桌面端 .fit-text 保持一致。 */
+  .fit-text {
+    --fit-captured-length: initial;
+    --fit-support-sentinel: var(--fit-captured-length, 9999px);
+
+    display: flex;
+    flex-direction: column;
+    container-type: inline-size;
+  }
+
+  .fit-text > [aria-hidden] {
+    visibility: hidden;
+  }
+
+  .fit-text > :not([aria-hidden]) {
+    flex-grow: 1;
+    container-type: inline-size;
+    --fit-available-space: var(--fit-captured-length);
+  }
+
+  .fit-text > :not([aria-hidden]) > * {
+    --fit-support-sentinel: inherit;
+    --fit-captured-length: 100cqi;
+    --fit-ratio: tan(
+      atan2(
+        var(--fit-available-space),
+        var(--fit-available-space) - var(--fit-captured-length)
+      )
+    );
+    --fit-support: var(--fit-support-sentinel) * var(--fit-ratio);
+    font-size: clamp(
+      100% * var(--fit-min, 1) / var(--fit-captured-length),
+      var(--fit-support),
+      100% * var(--fit-max, 1) / var(--fit-captured-length)
+    );
+  }
+
+  @container (inline-size > 0) {
+    .fit-text > :not([aria-hidden]) > * {
+      white-space: nowrap;
+    }
+  }
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+   安装器专属：发光晕、蛋脉动、破壳闪光等关键帧。色值已切到 cyber-glass 的
+   --ui-accent (蓝紫 #7d9bff)，保留原节奏（3.4s 呼吸、0.6s 闪光、0.6s 震颤）。 */
+
+@keyframes spiritagent-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.spiritagent-fade-in {
+  animation: spiritagent-fade-in 0.45s ease-out both;
+}
+
+/* 伙伴氛围光：cyber-glass 蓝紫调（之前是琥珀色），用 --ui-accent-soft 让玻璃发光。 */
+.spiritagent-glow {
+  position: absolute;
+  left: 50%;
+  top: 42%;
+  width: min(72vw, 34rem);
+  height: min(72vw, 34rem);
+  transform: translate(-50%, -50%);
+  border-radius: 9999px;
+  background: radial-gradient(
+    closest-side,
+    color-mix(in srgb, var(--ui-accent) 30%, transparent),
+    transparent 70%
+  );
+  filter: blur(36px);
+  opacity: 0.7;
+  pointer-events: none;
+  z-index: -1;
+  animation: spiritagent-glow-pulse 3.4s ease-in-out infinite;
+}
+
+@keyframes spiritagent-glow-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 0.95; }
+}
+
+@keyframes spiritagent-egg-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scale(1.03);
+    opacity: 1;
+  }
+}
+
+.animate-egg-pulse {
+  animation: spiritagent-egg-pulse 3.4s ease-in-out infinite;
+}
+
+@keyframes spiritagent-crack-flash {
+  0% {
+    stroke-width: 5;
+    opacity: 1;
+    filter: drop-shadow(0 0 8px var(--ui-accent));
+  }
+  50% {
+    stroke-width: 3.5;
+    opacity: 0.95;
+    filter: drop-shadow(0 0 4px var(--ui-accent));
+  }
+  100% {
+    stroke-width: 2;
+    opacity: 0.85;
+    filter: none;
+  }
+}
+
+.animate-crack-flash {
+  animation: spiritagent-crack-flash 0.6s ease-out;
+}
+
+@keyframes spiritagent-egg-tremor {
+  0%, 100% { transform: translate(0, 0) rotate(0deg); }
+  20% { transform: translate(-3px, 1px) rotate(-1.5deg); }
+  40% { transform: translate(3px, -1px) rotate(1.5deg); }
+  60% { transform: translate(-2px, 0px) rotate(-1deg); }
+  80% { transform: translate(2px, 0px) rotate(1deg); }
+}
+
+.animate-egg-tremor {
+  animation: spiritagent-egg-tremor 0.6s ease-in-out;
+}
+
+@keyframes spiritagent-warm-glow {
+  0% {
+    transform: scale(0.5);
+    opacity: 0.3;
+  }
+  50% {
+    transform: scale(1.15);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+}
+
+.animate-warm-glow {
+  animation: spiritagent-warm-glow 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spiritagent-glow,
+  .animate-egg-pulse,
+  .animate-crack-flash,
+  .animate-egg-tremor,
+  .animate-warm-glow {
+    animation: none !important;
+  }
+}

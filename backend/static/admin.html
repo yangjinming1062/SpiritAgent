@@ -1,0 +1,1904 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SpiritAgent 管理后台</title>
+<style>
+/* ── SpiritAgent product tokens (ported from desktop/renderer/styles.css) ──
+   The admin console reuses the product's own palette, type stack, radius
+   scale and hairline border language so it reads as the same product, not a
+   generic template. Light-only — an internal ops door, not a marketing face. */
+:root {
+    --primary: #0053fd;
+    --primary-ink: color-mix(in srgb, #0053fd 88%, #000);   /* hover/pressed */
+    --primary-fg: #fcfcfc;
+    --primary-soft: color-mix(in srgb, #0053fd 10%, #fff);
+    --primary-softer: color-mix(in srgb, #0053fd 5%, #fff);
+
+    --fg: #17171a;
+    --text-2: color-mix(in srgb, #17171a 66%, transparent);
+    --text-3: color-mix(in srgb, #17171a 46%, transparent);
+
+    --bg: #f8faff;
+    --surface: #ffffff;
+    --surface-2: #fcfcfc;
+
+    --border: color-mix(in srgb, #17171a 9%, transparent);
+    --border-2: color-mix(in srgb, #17171a 14%, transparent);
+
+    --row-hover: color-mix(in srgb, #0053fd 4.5%, transparent);
+    --row-active: color-mix(in srgb, #0053fd 9%, transparent);
+
+    --green: #1f8a65;
+    --green-soft: color-mix(in srgb, #1f8a65 12%, #fff);
+    --red: #cf2d56;
+    --red-soft: color-mix(in srgb, #cf2d56 10%, #fff);
+    --amber: #c08532;
+    --amber-soft: color-mix(in srgb, #c08532 14%, #fff);
+
+    --radius: 0.625rem;
+    --radius-sm: 0.4rem;
+    --radius-lg: 0.875rem;
+
+    --shadow-sm: 0 0.0625rem 0.125rem color-mix(in srgb, #000 5%, transparent);
+    --shadow-md: 0 0.5rem 1.25rem color-mix(in srgb, #000 9%, transparent);
+    --shadow-lg: 0 1rem 2.5rem color-mix(in srgb, #000 14%, transparent);
+
+    --font-sans: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif,
+        'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
+    --font-mono: 'Cascadia Code', 'JetBrains Mono', 'SF Mono', ui-monospace, Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+*:focus { outline: none; }
+*:focus-visible { outline: 2px solid color-mix(in srgb, var(--primary) 55%, #fff); outline-offset: 1px; }
+
+html, body { height: 100%; }
+body {
+    margin: 0;
+    font-family: var(--font-sans);
+    font-size: 0.875rem;
+    line-height: 1.5;
+    color: var(--fg);
+    background: var(--bg);
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+}
+button, input, select, textarea { font: inherit; color: inherit; }
+.mono { font-family: var(--font-mono); font-size: 0.78rem; }
+.text-3 { color: var(--text-3); }
+.text-red { color: var(--red); }
+
+/* ── Brand mark ─────────────────────────────────────────── */
+.logo { display: inline-flex; flex: none; }
+
+/* ── Buttons ────────────────────────────────────────────── */
+.btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
+    padding: 0.5rem 0.9rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--fg);
+    font-size: 0.8125rem; font-weight: 600;
+    line-height: 1.2;
+    cursor: pointer;
+    transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
+    white-space: nowrap;
+}
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn--primary { background: var(--primary); color: var(--primary-fg); }
+.btn--primary:not(:disabled):hover { background: var(--primary-ink); }
+.btn--ghost { border-color: var(--border-2); color: var(--text-2); background: var(--surface); }
+.btn--ghost:not(:disabled):hover { background: var(--primary-softer); border-color: var(--primary); color: var(--primary); }
+.btn--danger { background: var(--red); color: #fff; }
+.btn--danger:not(:disabled):hover { background: color-mix(in srgb, var(--red) 86%, #000); }
+.btn--sm { padding: 0.32rem 0.6rem; font-size: 0.75rem; font-weight: 600; }
+.btn--block { width: 100%; }
+
+/* ── Pills / chips ──────────────────────────────────────── */
+.pill {
+    display: inline-flex; align-items: center; gap: 0.3rem;
+    padding: 0.12rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.72rem; font-weight: 600; line-height: 1.4;
+    border: 1px solid transparent;
+}
+.pill::before { content: ''; width: 0.4rem; height: 0.4rem; border-radius: 50%; background: currentColor; opacity: 0.85; }
+.pill--green { color: var(--green); background: var(--green-soft); }
+.pill--red { color: var(--red); background: var(--red-soft); }
+.pill--amber { color: var(--amber); background: var(--amber-soft); }
+.pill--muted { color: var(--text-2); background: color-mix(in srgb, var(--fg) 5%, transparent); }
+.pill--primary { color: var(--primary); background: var(--primary-soft); }
+
+.svc-dot {
+    display: inline-flex; align-items: center;
+    font-size: 0.7rem; font-weight: 600;
+    padding: 0.1rem 0.42rem; border-radius: 999px;
+    color: var(--text-3); background: color-mix(in srgb, var(--fg) 4%, transparent);
+}
+.svc-dot.on { color: var(--green); background: var(--green-soft); }
+
+.plat {
+    display: inline-flex;
+    font-size: 0.68rem; font-weight: 600;
+    padding: 0.1rem 0.4rem; border-radius: 0.3rem;
+    color: var(--text-2); background: color-mix(in srgb, var(--fg) 5%, transparent);
+}
+.plat--on { color: var(--primary); background: var(--primary-soft); }
+.plat--off { color: var(--text-3); text-decoration: line-through; text-decoration-thickness: 1px; }
+
+.keybadge { font-size: 0.7rem; font-weight: 600; padding: 0.1rem 0.45rem; border-radius: 999px; }
+.keybadge.on { color: var(--green); background: var(--green-soft); }
+.keybadge.off { color: var(--text-3); background: color-mix(in srgb, var(--fg) 5%, transparent); }
+
+/* ── Login ──────────────────────────────────────────────── */
+#login {
+    position: fixed; inset: 0; z-index: 1000;
+    display: flex; align-items: center; justify-content: center;
+    background: var(--bg);
+    background-image:
+        radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--primary) 7%, transparent), transparent 55%),
+        radial-gradient(120% 90% at 0% 100%, color-mix(in srgb, var(--primary) 5%, transparent), transparent 55%);
+    padding: 1.5rem;
+}
+.login-card {
+    width: 100%; max-width: 23rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-md);
+    padding: 2.25rem 2rem 2rem;
+}
+.login-brand { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1.5rem; }
+.login-brand .wordmark { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }
+.login-brand .tag { font-size: 0.7rem; font-weight: 600; color: var(--primary); background: var(--primary-soft); padding: 0.1rem 0.45rem; border-radius: 999px; }
+.login-card h1 { margin: 0 0 0.25rem; font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
+.login-card .sub { margin: 0 0 1.5rem; color: var(--text-3); font-size: 0.82rem; }
+#loginError { display: none; margin-top: 0.75rem; padding: 0.55rem 0.7rem; border-radius: var(--radius-sm); background: var(--red-soft); color: var(--red); font-size: 0.8rem; font-weight: 500; }
+
+/* ── App shell ──────────────────────────────────────────── */
+#app { display: none; }
+.shell { display: grid; grid-template-columns: 14.5rem 1fr; min-height: 100vh; }
+
+.sidebar {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex; flex-direction: column;
+    padding: 1.1rem 0.75rem;
+    position: sticky; top: 0; height: 100vh;
+}
+.side-brand { display: flex; align-items: center; gap: 0.55rem; padding: 0.35rem 0.5rem 1.1rem; }
+.side-brand .wordmark { font-size: 0.98rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+.side-brand .tag { display: block; font-size: 0.68rem; font-weight: 500; color: var(--text-3); }
+
+.nav { display: flex; flex-direction: column; gap: 0.15rem; }
+.nav-item {
+    display: flex; align-items: center; gap: 0.6rem;
+    padding: 0.55rem 0.65rem;
+    border: 1px solid transparent;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-2);
+    font-size: 0.84rem; font-weight: 600;
+    text-align: left; width: 100%; cursor: pointer;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+.nav-item:hover { background: var(--primary-softer); color: var(--primary); }
+.nav-item.active { background: var(--primary-soft); color: var(--primary); }
+.nav-item svg { flex: none; opacity: 0.9; }
+
+.side-foot { margin-top: auto; padding-top: 0.75rem; border-top: 1px solid var(--border); }
+.side-foot .btn { width: 100%; justify-content: flex-start; color: var(--text-2); }
+
+.main { display: flex; flex-direction: column; min-width: 0; }
+.topbar {
+    position: sticky; top: 0; z-index: 20;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(0.5rem) saturate(1.1);
+    -webkit-backdrop-filter: blur(0.5rem) saturate(1.1);
+    border-bottom: 1px solid var(--border);
+}
+.topbar-inner { padding: 1rem 1.75rem; }
+.topbar h1 { margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: -0.015em; }
+.topbar .desc { margin: 0.15rem 0 0; color: var(--text-3); font-size: 0.8rem; }
+
+.content { padding: 1.5rem 1.75rem 4rem; }
+.wrap { max-width: 72rem; margin: 0 auto; display: flex; flex-direction: column; gap: 1.25rem; }
+
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* ── Card ───────────────────────────────────────────────── */
+.card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    overflow: hidden;
+}
+.card-head {
+    display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
+    padding: 0.95rem 1.1rem;
+    border-bottom: 1px solid var(--border);
+}
+.card-head h2 { margin: 0; font-size: 0.98rem; font-weight: 700; letter-spacing: -0.01em; }
+.card-head .spacer { flex: 1; }
+.card-head .count { font-size: 0.75rem; font-weight: 600; color: var(--text-3); background: color-mix(in srgb, var(--fg) 5%, transparent); padding: 0.1rem 0.5rem; border-radius: 999px; }
+
+/* ── Table ──────────────────────────────────────────────── */
+.table-scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; min-width: 44rem; }
+th, td { text-align: left; padding: 0.7rem 1.1rem; vertical-align: middle; }
+thead th {
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    color: var(--text-3);
+    border-bottom: 1px solid var(--border-2);
+    background: var(--surface-2);
+    white-space: nowrap;
+}
+tbody td { border-bottom: 1px solid var(--border); }
+tbody tr:last-child td { border-bottom: 0; }
+tbody tr { transition: background 0.1s ease; }
+tbody tr:hover { background: var(--row-hover); }
+.td-id { font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-3); white-space: nowrap; }
+.td-actions { white-space: nowrap; text-align: right; }
+.td-actions .btn + .btn { margin-left: 0.3rem; }
+.td-services, .td-platforms { display: flex; flex-wrap: wrap; gap: 0.3rem; }
+.td-notes { max-width: 18rem; color: var(--text-2); }
+.cell-strong { font-weight: 600; color: var(--fg); }
+.cell-sub { color: var(--text-3); font-size: 0.74rem; margin-top: 0.1rem; word-break: break-all; }
+
+/* ── States (loading / empty / error) ───────────────────── */
+.state-row td { text-align: center; padding: 2.5rem 1rem; }
+.state-row .state-msg { color: var(--text-2); font-weight: 600; }
+.state-row .state-hint { color: var(--text-3); font-size: 0.8rem; margin-top: 0.25rem; }
+.state-row.err .state-msg { color: var(--red); }
+
+/* ── Forms ──────────────────────────────────────────────── */
+.field { margin-bottom: 0.95rem; }
+.field:last-child { margin-bottom: 0; }
+.field > label { display: block; font-size: 0.78rem; font-weight: 600; margin-bottom: 0.3rem; }
+.field .hint { font-size: 0.73rem; color: var(--text-3); margin-top: 0.3rem; }
+.callout {
+    padding: 0.65rem 0.8rem; margin-bottom: 1rem;
+    border-radius: var(--radius-sm);
+    background: var(--amber-soft);
+    border: 1px solid color-mix(in srgb, var(--amber) 25%, transparent);
+    font-size: 0.8rem; line-height: 1.5; color: var(--text-2);
+}
+.callout strong { font-weight: 700; color: var(--fg); }
+.field .label-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.3rem; }
+.field .label-row > label { margin: 0; }
+input[type="text"], input[type="password"], input[type="date"], input[type="search"], select, textarea {
+    width: 100%;
+    padding: 0.5rem 0.65rem;
+    border: 1px solid var(--border-2);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    transition: border-color 0.12s ease, box-shadow 0.12s ease;
+}
+input::placeholder, select { color: var(--text-3); }
+input:focus, select:focus, textarea:focus {
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 16%, transparent);
+}
+.checkbox-row { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; cursor: pointer; }
+.checkbox-row input { width: 1rem; height: 1rem; accent-color: var(--primary); }
+select { cursor: pointer; }
+
+/* inline form row (models panel head) */
+.inline-form { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
+.inline-form select { width: auto; min-width: 10rem; }
+
+/* ── Upload form ────────────────────────────────────────── */
+.upload-grid { display: grid; grid-template-columns: 1fr; gap: 0.85rem; padding: 1.1rem; }
+.upload-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
+.upload-row .file-name { color: var(--text-3); font-size: 0.8rem; }
+.upload-row input[type="text"] { flex: 1; min-width: 12rem; }
+input[type="file"] { font-size: 0.78rem; }
+.file-drop {
+    border: 1px dashed var(--border-2);
+    border-radius: var(--radius-sm);
+    padding: 0.65rem 0.8rem;
+    background: var(--surface-2);
+}
+#uploadStatus { font-size: 0.8rem; margin: 0; min-height: 1.1rem; }
+
+/* ── Modal ──────────────────────────────────────────────── */
+.modal {
+    display: none; position: fixed; inset: 0; z-index: 200;
+    align-items: center; justify-content: center;
+    background: color-mix(in srgb, #000 32%, transparent);
+    backdrop-filter: blur(0.25rem); -webkit-backdrop-filter: blur(0.25rem);
+    padding: 1.5rem;
+}
+.modal.open { display: flex; }
+.modal-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow-lg);
+    width: 100%; max-width: 32rem;
+    max-height: 90vh; overflow-y: auto;
+    animation: modal-in 0.14s ease-out;
+}
+.modal-card.wide { max-width: 56rem; }
+@keyframes modal-in { from { opacity: 0; transform: translateY(0.5rem); } to { opacity: 1; transform: none; } }
+.modal-head { display: flex; align-items: center; gap: 0.75rem; padding: 1.1rem 1.25rem; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+.modal-head h2 { margin: 0; font-size: 1.02rem; font-weight: 700; letter-spacing: -0.01em; flex: 1; }
+.modal-close { border: 0; background: transparent; cursor: pointer; color: var(--text-3); width: 1.75rem; height: 1.75rem; border-radius: var(--radius-sm); display: grid; place-items: center; }
+.modal-close:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); }
+.modal-body { padding: 1.25rem; }
+.modal-foot { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 1rem 1.25rem; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--surface); }
+
+/* model config service cards */
+.svc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 1rem; }
+.svc-card {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.9rem;
+    background: var(--surface-2);
+}
+.svc-card.required { border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); }
+.svc-card h3 { margin: 0 0 0.65rem; font-size: 0.82rem; font-weight: 700; display: flex; align-items: center; gap: 0.4rem; }
+.svc-card .req { font-size: 0.62rem; font-weight: 700; color: var(--primary); background: var(--primary-soft); padding: 0.05rem 0.35rem; border-radius: 0.2rem; text-transform: uppercase; letter-spacing: 0.03em; }
+
+/* ── AIConfig card editors ─────────────────────────────── */
+:is(#aiCardSettings, #userAiCardSettings) .hint { font-size: 0.78rem; color: var(--text-3); line-height: 1.6; }
+:is(#aiCardSettings, #userAiCardSettings) .ai-card-head .btn { padding: 0.25rem 0.35rem; }
+:is(#aiCardSettings, #userAiCardSettings) .ai-card-head { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.8rem; }
+:is(#aiCardSettings, #userAiCardSettings) .ai-card-head strong { flex: 1; }
+:is(#aiCardSettings, #userAiCardSettings) [data-ai-handle] { cursor: grab; }
+:is(#aiCardSettings, #userAiCardSettings) .ai-drop-target { outline: 2px solid var(--primary); outline-offset: -2px; }
+
+/* ── Toast ──────────────────────────────────────────────── */
+#toast-wrap { position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 300; display: flex; flex-direction: column; gap: 0.5rem; }
+.toast {
+    background: var(--surface); border: 1px solid var(--border);
+    border-left: 3px solid var(--primary);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    padding: 0.6rem 0.85rem;
+    font-size: 0.82rem; font-weight: 500;
+    max-width: 22rem;
+    animation: toast-in 0.16s ease-out;
+}
+.toast.ok { border-left-color: var(--green); }
+.toast.err { border-left-color: var(--red); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
+
+/* ── Responsive ─────────────────────────────────────────── */
+@media (max-width: 860px) {
+    .shell { grid-template-columns: 1fr; }
+    .sidebar { position: static; height: auto; flex-direction: row; align-items: center; gap: 0.5rem; padding: 0.6rem 0.75rem; overflow-x: auto; }
+    .side-brand { padding: 0; border: 0; }
+    .nav { flex-direction: row; }
+    .side-foot { margin: 0; padding: 0; border: 0; }
+    .side-foot .btn { width: auto; }
+    .nav-item span { display: none; }
+    .topbar-inner, .content { padding-left: 1rem; padding-right: 1rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+</style>
+</head>
+<body>
+
+<!-- ── Login ─────────────────────────────────────────────── -->
+<div id="login">
+    <div class="login-card">
+        <div class="login-brand">
+            <svg class="logo" viewBox="0 0 32 32" width="30" height="30" aria-hidden="true">
+                <rect width="32" height="32" rx="9" fill="var(--primary)"/>
+                <circle cx="16" cy="16" r="7.2" fill="none" stroke="#fff" stroke-width="2.6"/>
+                <circle cx="16" cy="16" r="2.4" fill="#fff"/>
+            </svg>
+            <span class="wordmark">SpiritAgent</span>
+            <span class="tag">管理后台</span>
+        </div>
+        <h1>欢迎回来</h1>
+        <p class="sub">登录以管理用户、凭证与版本分发。</p>
+        <form id="loginForm" autocomplete="on">
+            <div class="field">
+                <label for="loginUser">用户名</label>
+                <input type="text" id="loginUser" autocomplete="username" required>
+            </div>
+            <div class="field">
+                <label for="loginPass">密码</label>
+                <input type="password" id="loginPass" autocomplete="current-password" required>
+            </div>
+            <button type="submit" class="btn btn--primary btn--block">登录</button>
+            <p id="loginError"></p>
+        </form>
+    </div>
+</div>
+
+<!-- ── App ──────────────────────────────────────────────── -->
+<div id="app">
+    <div class="shell">
+        <aside class="sidebar">
+            <div class="side-brand">
+                <svg class="logo" viewBox="0 0 32 32" width="26" height="26" aria-hidden="true">
+                    <rect width="32" height="32" rx="9" fill="var(--primary)"/>
+                    <circle cx="16" cy="16" r="7.2" fill="none" stroke="#fff" stroke-width="2.6"/>
+                    <circle cx="16" cy="16" r="2.4" fill="#fff"/>
+                </svg>
+                <div>
+                    <span class="wordmark">SpiritAgent</span>
+                    <span class="tag">管理后台</span>
+                </div>
+            </div>
+            <nav class="nav">
+                <button class="nav-item active" data-tab="users" onclick="showTab('users')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                    <span>用户管理</span>
+                </button>
+                <button class="nav-item" data-tab="models" onclick="showTab('models')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+                    <span>模型配置</span>
+                </button>
+                <button class="nav-item" data-tab="settings" onclick="showTab('settings')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                    <span>系统设置</span>
+                </button>
+                <button class="nav-item" data-tab="versions" onclick="showTab('versions')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                    <span>版本管理</span>
+                </button>
+                <button class="nav-item" data-tab="logs" onclick="showTab('logs')">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                    <span>活动日志</span>
+                </button>
+            </nav>
+            <div class="side-foot">
+                <button class="btn btn--ghost btn--sm" onclick="logout()">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+                    退出登录
+                </button>
+            </div>
+        </aside>
+
+        <main class="main">
+            <header class="topbar">
+                <div class="topbar-inner">
+                    <h1 id="topTitle">用户管理</h1>
+                    <p class="desc" id="topDesc"></p>
+                </div>
+            </header>
+
+            <div class="content">
+                <div class="wrap">
+
+                    <!-- ── Users ─────────────────────────────── -->
+                    <section id="panel-users" class="panel active">
+                        <div class="card">
+                            <div class="card-head">
+                                <h2>用户列表</h2>
+                                <span class="count" id="userCount"></span>
+                                <span class="spacer"></span>
+                                <button class="btn btn--primary btn--sm" onclick="showCreateUser()">＋ 创建用户</button>
+                            </div>
+                            <div class="table-scroll">
+                                <table>
+                                    <thead><tr>
+                                        <th>ID</th><th>用户名</th><th>夜间活动</th><th>状态</th><th style="text-align:right">操作</th>
+                                    </tr></thead>
+                                    <tbody id="userList"><tr class="state-row"><td colspan="5"><div class="state-msg">加载中…</div></td></tr></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ── Models ────────────────────────────── -->
+                    <section id="panel-models" class="panel">
+                        <div class="card">
+                            <div class="card-head">
+                                <h2>凭证配置</h2>
+                                <span class="count" id="modelCount"></span>
+                                <span class="spacer"></span>
+                                <div class="inline-form">
+                                    <select id="modelUserSelect"><option value="">选择用户…</option></select>
+                                    <button class="btn btn--primary btn--sm" onclick="showModelConfig()">设置配置</button>
+                                </div>
+                            </div>
+                            <div class="table-scroll">
+                                <table>
+                                    <thead><tr>
+                                        <th>用户</th><th>LLM</th><th>已配置服务</th><th style="text-align:right">操作</th>
+                                    </tr></thead>
+                                    <tbody id="modelList"><tr class="state-row"><td colspan="4"><div class="state-msg">加载中…</div></td></tr></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ── System Settings ────────────────────── -->
+                    <section id="panel-settings" class="panel">
+                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem;">
+                            <div>
+                                <span style="font-weight:700; font-size:1.05rem;">系统参数设置</span>
+                                <span class="hint" style="margin-left:0.5rem; color:var(--text-3);">保存后即刻在内存与数据库中生效，无需重启服务</span>
+                            </div>
+                            <button class="btn btn--primary" onclick="saveSystemSettingsForm()">保存系统设置</button>
+                        </div>
+
+                        <div id="aiCardSettings"></div>
+                        <div class="card" style="margin-bottom:1.25rem;">
+                            <div class="card-head"><h2>能力运行参数</h2><span class="hint">请求、重试与媒体任务的全局运行参数</span></div>
+                            <div style="padding:1.1rem;">
+                                <h3 style="margin:0 0 0.75rem; font-size:0.88rem;">LLM 调用超时与重试调优</h3>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem;">
+                                    <div class="field"><label>请求超时时间 (秒)</label><input type="number" step="1" id="sys_llm_request_timeout_seconds"></div>
+                                    <div class="field"><label>流式静默超时 (秒)</label><input type="number" step="1" id="sys_llm_stream_idle_timeout_seconds"></div>
+                                    <div class="field"><label>失败最大重试次数</label><input type="number" step="1" id="sys_llm_max_retry_attempts"></div>
+                                    <div class="field"><label>初始重试退避 (秒)</label><input type="number" step="0.5" id="sys_llm_base_retry_delay"></div>
+                                    <div class="field"><label>最大重试延迟 (秒)</label><input type="number" step="1" id="sys_llm_max_retry_delay"></div>
+                                    <div class="field"><label>默认 Token 兜底容量</label><input type="number" step="1000" id="sys_default_llm_context_tokens"></div>
+                                </div>
+                                <h3 style="margin:1.25rem 0 0.75rem; font-size:0.88rem;">视频生成轮询与下载调优</h3>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem;">
+                                    <div class="field"><label>轮询间隔 (秒)</label><input type="number" step="0.5" id="sys_video_gen_poll_interval_seconds"></div>
+                                    <div class="field"><label>轮询退避上限 (秒)</label><input type="number" step="1" id="sys_video_gen_poll_backoff_max_seconds"></div>
+                                    <div class="field"><label>最大轮询超时 (秒)</label><input type="number" step="10" id="sys_video_gen_max_poll_seconds"></div>
+                                    <div class="field"><label>工具等待超时 (秒)</label><input type="number" step="10" id="sys_video_gen_tool_wait_seconds"></div>
+                                    <div class="field"><label>产物下载上限 (字节)</label><input type="number" step="1048576" id="sys_video_gen_download_max_bytes"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 3. 图生 3D 与 2D 分层资产 -->
+                        <div class="card" style="margin-bottom:1.25rem;">
+                            <div class="card-head">
+                                <h2>3D / 2D 伙伴形象资产生成</h2>
+                                <span class="hint">Tripo3D、混元 3D 生模与 SeeThrough 分层拆分参数</span>
+                            </div>
+                            <div style="padding:1.1rem;">
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+                                    <div class="field">
+                                        <label>图生 3D 首选供应商</label>
+                                        <select id="sys_image_to_3d_provider">
+                                            <option value="tripo">tripo (Tripo3D 自动绑骨)</option>
+                                            <option value="hunyuan">hunyuan (腾讯混元 3D)</option>
+                                        </select>
+                                    </div>
+                                    <div class="field"><label>3D 轮询间隔 (秒)</label><input type="number" step="0.5" id="sys_image_to_3d_poll_interval_seconds"></div>
+                                    <div class="field"><label>3D 轮询退避上限 (秒)</label><input type="number" step="1" id="sys_image_to_3d_poll_backoff_max_seconds"></div>
+                                    <div class="field"><label>3D 最大超时 (秒)</label><input type="number" step="10" id="sys_image_to_3d_max_poll_seconds"></div>
+                                </div>
+                                <div class="svc-grid" style="margin-bottom:1rem;">
+                                    <div class="svc-card">
+                                        <h3>Tripo3D 配置</h3>
+                                        <div class="field">
+                                            <div class="label-row"><label>API Key</label><span class="keybadge off" id="sys_tripo_key_badge">未设置</span></div>
+                                            <input type="password" id="sys_tripo_api_key" placeholder="留空保持原有配置">
+                                        </div>
+                                        <div class="field"><label>Base URL</label><input type="text" id="sys_tripo_base_url"></div>
+                                        <div class="field"><label>模型版本</label><input type="text" id="sys_tripo_model_version"></div>
+                                        <div class="field"><label>面数限制</label><input type="number" id="sys_tripo_face_limit"></div>
+                                        <div class="field"><label>贴图质量</label><input type="text" id="sys_tripo_texture_quality" placeholder="extreme / detailed / standard"></div>
+                                        <div class="field"><label>几何质量</label><input type="text" id="sys_tripo_geometry_quality" placeholder="detailed / standard"></div>
+                                        <label class="checkbox-row" style="margin-top:0.5rem;"><input type="checkbox" id="sys_tripo_enable_autofix"> 启用模型自动修复</label>
+                                    </div>
+                                    <div class="svc-card">
+                                        <h3>腾讯混元 3D 配置</h3>
+                                        <div class="field">
+                                            <div class="label-row"><label>API Key</label><span class="keybadge off" id="sys_hunyuan_key_badge">未设置</span></div>
+                                            <input type="password" id="sys_hunyuan_api_key" placeholder="留空保持原有配置">
+                                        </div>
+                                        <div class="field"><label>Base URL</label><input type="text" id="sys_hunyuan_base_url"></div>
+                                        <div class="field"><label>模型版本</label><input type="text" id="sys_hunyuan_model_version"></div>
+                                        <div class="field"><label>生成模式</label><input type="text" id="sys_hunyuan_generate_type" placeholder="Normal / LowPoly / Geometry / Sketch"></div>
+                                        <div class="field"><label>面数限制</label><input type="number" id="sys_hunyuan_face_count"></div>
+                                        <div class="field"><label>产物格式</label><input type="text" id="sys_hunyuan_result_format" placeholder="GLB"></div>
+                                        <label class="checkbox-row" style="margin-top:0.5rem;"><input type="checkbox" id="sys_hunyuan_enable_pbr"> 启用 PBR 材质</label>
+                                    </div>
+                                    <div class="svc-card">
+                                        <h3>SeeThrough 2D 姿态与拆分</h3>
+                                        <div class="field"><label>主用 HF Space API 基址</label><input type="text" id="sys_seethrough_space_base"></div>
+                                        <div class="field"><label>备用魔搭社区 API 基址</label><input type="text" id="sys_seethrough_fallback_base"></div>
+                                        <div class="field">
+                                            <div class="label-row"><label>魔搭 SDK Token</label><span class="keybadge off" id="sys_seethrough_token_badge">未设置</span></div>
+                                            <input type="password" id="sys_seethrough_fallback_token" placeholder="留空保持原有配置">
+                                        </div>
+                                        <div class="field">
+                                            <label>伴侣资产局部生图优先链</label>
+                                            <input type="text" id="sys_companion_asset_image_providers" placeholder="gemini, grok">
+                                            <div class="hint">逗号分隔，留空继承通用优先链</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 4. 聊天压缩与会话 -->
+                        <div class="card" style="margin-bottom:1.25rem;">
+                            <div class="card-head">
+                                <h2>对话编排与上下文压缩</h2>
+                            </div>
+                            <div style="padding:1.1rem; display:grid; grid-template-columns:repeat(auto-fill, minmax(14rem, 1fr)); gap:0.75rem;">
+                                <div class="field" style="grid-column:1/-1;">
+                                    <label class="checkbox-row"><input type="checkbox" id="sys_enable_context_compression"> 启用长会话自动上下文压缩摘要</label>
+                                </div>
+                                <div class="field"><label>压缩触发阈值 (比例 0.1~0.9)</label><input type="number" step="0.05" id="sys_context_compression_threshold"></div>
+                                <div class="field"><label>摘要压缩目标 Token 数</label><input type="number" step="100" id="sys_context_summary_target_tokens"></div>
+                                <div class="field"><label>单次摘要最大输入消息条数</label><input type="number" step="1" id="sys_context_summary_max_input_messages"></div>
+                                <div class="field"><label>活跃会话判定窗口 (分钟)</label><input type="number" step="1" id="sys_chat_active_window_minutes"></div>
+                                <div class="field"><label>IPC 异步调用等待超时 (秒)</label><input type="number" step="10" id="sys_ipc_future_timeout_seconds"></div>
+                            </div>
+                        </div>
+
+                        <!-- 5. 联网搜索与抓取 -->
+                        <div class="card" style="margin-bottom:1.25rem;">
+                            <div class="card-head">
+                                <h2>联网搜索与网页抓取 (Web Search & Extract)</h2>
+                            </div>
+                            <div style="padding:1.1rem; display:grid; grid-template-columns:repeat(auto-fill, minmax(14rem, 1fr)); gap:0.75rem;">
+                                <div class="field">
+                                    <label>搜索后端</label>
+                                    <select id="sys_web_search_backend">
+                                        <option value="ddgs">ddgs (DuckDuckGo 免密钥)</option>
+                                        <option value="brave-free">brave-free (Brave Search)</option>
+                                        <option value="tavily">tavily (Tavily AI 搜索)</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <label>抓取提取后端</label>
+                                    <select id="sys_web_extract_backend">
+                                        <option value="tavily">tavily (Tavily AI 抓取)</option>
+                                        <option value="ddgs">ddgs</option>
+                                    </select>
+                                </div>
+                                <div class="field">
+                                    <div class="label-row"><label>Brave Search API Key</label><span class="keybadge off" id="sys_brave_key_badge">未设置</span></div>
+                                    <input type="password" id="sys_brave_search_api_key" placeholder="留空保持原有配置">
+                                </div>
+                                <div class="field">
+                                    <div class="label-row"><label>Tavily API Key</label><span class="keybadge off" id="sys_tavily_key_badge">未设置</span></div>
+                                    <input type="password" id="sys_tavily_api_key" placeholder="留空保持原有配置">
+                                </div>
+                                <div class="field" style="grid-column:1/-1;">
+                                    <label>Tavily Base URL (可选覆盖)</label>
+                                    <input type="text" id="sys_tavily_base_url" placeholder="留空使用官方默认地址">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 6. 频控与防护配额 -->
+                        <div class="card" style="margin-bottom:1.25rem;">
+                            <div class="card-head">
+                                <h2>接口限流与安全防护</h2>
+                            </div>
+                            <div style="padding:1.1rem;">
+                                <div class="field" style="margin-bottom:1rem;">
+                                    <label class="checkbox-row"><input type="checkbox" id="sys_rate_limit_enabled"> 开启接口速率限制 (Rate Limiting)</label>
+                                </div>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+                                    <div class="field"><label>登录频次上限 (/分钟)</label><input type="number" id="sys_login_rate_limit_per_minute"></div>
+                                    <div class="field"><label>单用户 LLM 对话补全 (/分钟)</label><input type="number" id="sys_llm_completion_rate_limit_per_minute"></div>
+                                    <div class="field"><label>单 IP LLM 对话补全 (/分钟)</label><input type="number" id="sys_llm_completion_rate_limit_per_ip_per_minute"></div>
+                                    <div class="field"><label>语音识别 STT (/分钟)</label><input type="number" id="sys_media_stt_rate_limit_per_minute"></div>
+                                    <div class="field"><label>语音合成 TTS (/分钟)</label><input type="number" id="sys_media_tts_rate_limit_per_minute"></div>
+                                    <div class="field"><label>视频附件上传 (/分钟)</label><input type="number" id="sys_media_video_rate_limit_per_minute"></div>
+                                    <div class="field"><label>伴侣头像生成 (/分钟)</label><input type="number" id="sys_companion_avatar_generate_rate_limit_per_minute"></div>
+                                    <div class="field"><label>伴侣 3D 模型生成 (/分钟)</label><input type="number" id="sys_companion_model_generate_rate_limit_per_minute"></div>
+                                    <div class="field"><label>伴侣换装外观生成 (/小时)</label><input type="number" id="sys_companion_outfit_generate_rate_limit_per_hour"></div>
+                                </div>
+                                <h3 style="margin:1rem 0 0.5rem; font-size:0.88rem;">房间背景与叙事时刻配额</h3>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+                                    <div class="field"><label>角色主动换房上限 (/24小时)</label><input type="number" id="sys_room_llm_replace_per_24h"></div>
+                                    <div class="field"><label>房间生成最大重试次数</label><input type="number" id="sys_room_max_attempts"></div>
+                                    <div class="field"><label>历史可用房间保留数量</label><input type="number" id="sys_room_history_keep"></div>
+                                    <div class="field"><label>系统自动写时刻上限 (/天)</label><input type="number" id="sys_moment_system_per_day"></div>
+                                    <div class="field"><label>角色主动记时刻配额 (/天)</label><input type="number" id="sys_moment_llm_per_day"></div>
+                                </div>
+                                <div class="field">
+                                    <label class="checkbox-row"><input type="checkbox" id="sys_diary_nightly_enabled"> 开启夜间日记提炼批处理</label>
+                                </div>
+                                <div class="field" style="margin-top:0.75rem;">
+                                    <label>SSRF 豁免 IP 网段 (逗号分隔 CIDR)</label>
+                                    <input type="text" id="sys_ssrf_allowed_cidrs" placeholder="例如 198.18.0.0/15,fdfe:dcba:9876::/64">
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 7. 渠道接入与系统运行时 -->
+                        <div class="card" style="margin-bottom:1.5rem;">
+                            <div class="card-head">
+                                <h2>外部渠道与系统运行时</h2>
+                            </div>
+                            <div style="padding:1.1rem;">
+                                <h3 style="margin:0 0 0.5rem; font-size:0.88rem;">微信 iLink 外部 IM 渠道</h3>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+                                    <div class="field"><label>在途排队入站消息上限</label><input type="number" id="sys_channels_turn_queue_max"></div>
+                                    <div class="field"><label>入站限速频次 (/分钟)</label><input type="number" id="sys_channels_inbound_rate_per_minute"></div>
+                                    <div class="field"><label>守卫重试退避时间 (秒)</label><input type="number" id="sys_channels_restart_backoff_seconds"></div>
+                                    <div class="field"><label>微信回复单条分片上限 (字)</label><input type="number" id="sys_weixin_reply_max_chars"></div>
+                                    <div class="field"><label>长轮询客户端超时 (秒)</label><input type="number" id="sys_weixin_ilink_poll_timeout_seconds"></div>
+                                </div>
+                                <h3 style="margin:1rem 0 0.5rem; font-size:0.88rem;">运行时与日志调优</h3>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem;">
+                                    <div class="field"><label>公网访问基础地址 (public_base_url)</label><input type="text" id="sys_public_base_url" placeholder="https://example.com"></div>
+                                    <div class="field"><label>临时媒体文件存活时长 (小时)</label><input type="number" id="sys_temp_file_ttl_hours"></div>
+                                    <div class="field"><label>用户登录 Token 有效期 (分钟)</label><input type="number" id="sys_access_token_expire_minutes"></div>
+                                    <div class="field">
+                                        <label>日志输出级别</label>
+                                        <select id="sys_log_level">
+                                            <option value="DEBUG">DEBUG</option>
+                                            <option value="INFO">INFO</option>
+                                            <option value="WARNING">WARNING</option>
+                                            <option value="ERROR">ERROR</option>
+                                            <option value="CRITICAL">CRITICAL</option>
+                                        </select>
+                                    </div>
+                                    <div class="field">
+                                        <label>日志格式</label>
+                                        <select id="sys_log_format">
+                                            <option value="json">json</option>
+                                            <option value="text">text</option>
+                                        </select>
+                                    </div>
+                                    <div class="field">
+                                        <div class="label-row"><label>指标采集鉴权 Token</label><span class="keybadge off" id="sys_metrics_token_badge">未设置</span></div>
+                                        <input type="password" id="sys_metrics_auth_token" placeholder="留空不设鉴权">
+                                    </div>
+                                </div>
+                                <div class="field" style="margin-top:0.75rem;">
+                                    <label class="checkbox-row"><input type="checkbox" id="sys_llm_debug_logging"> 开启 LLM Debug 面包屑追踪日志</label>
+                                </div>
+                                <div class="field" style="max-width:20rem;">
+                                    <label>LLM Debug 单字段截断字符数</label>
+                                    <input type="number" id="sys_llm_debug_max_chars">
+                                </div>
+                            </div>
+                        </div>
+
+                        <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-bottom:2rem;">
+                            <button class="btn btn--primary" style="padding:0.6rem 1.8rem; font-size:0.9rem;" onclick="saveSystemSettingsForm()">保存全部系统设置</button>
+                        </div>
+                    </section>
+
+                    <!-- ── Versions ──────────────────────────── -->
+                    <section id="panel-versions" class="panel">
+                        <div class="card">
+                            <div class="card-head"><h2>发布新版本</h2></div>
+                            <form id="uploadForm" class="upload-grid">
+                                <div class="upload-row">
+                                    <input type="text" id="releaseNotes" placeholder="更新说明（可选）">
+                                </div>
+                                <div class="upload-row">
+                                    <label class="file-drop">
+                                        <input type="file" id="fileInput" accept=".zip" required>
+                                    </label>
+                                    <span class="file-name" id="fileName"></span>
+                                    <span class="spacer" style="flex:1"></span>
+                                    <button type="submit" class="btn btn--primary btn--sm">上传并发布</button>
+                                </div>
+                                <p id="uploadStatus"></p>
+                            </form>
+                        </div>
+                        <div class="card">
+                            <div class="card-head">
+                                <h2>版本历史</h2>
+                                <span class="count" id="versionCount"></span>
+                            </div>
+                            <div class="table-scroll">
+                                <table>
+                                    <thead><tr>
+                                        <th>版本</th><th>更新说明</th><th>平台</th><th>状态</th><th>发布时间</th><th style="text-align:right">操作</th>
+                                    </tr></thead>
+                                    <tbody id="versionList"><tr class="state-row"><td colspan="6"><div class="state-msg">加载中…</div></td></tr></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+
+                    <!-- ── Logs ──────────────────────────────────────── -->
+                    <section id="panel-logs" class="panel">
+                        <div class="card">
+                            <div class="card-head">
+                                <h2>活动日志</h2>
+                                <span class="count" id="logCount"></span>
+                                <span class="spacer"></span>
+                                <div class="inline-form">
+                                    <input type="number" id="logUserId" placeholder="用户 ID（可选）" style="width:8rem">
+                                    <input type="date" id="logDate">
+                                    <button class="btn btn--ghost btn--sm" onclick="loadLogs()">查询</button>
+                                </div>
+                            </div>
+                            <div class="table-scroll">
+                                <table>
+                                    <thead><tr>
+                                        <th>ID</th><th>用户</th><th>目标日期</th><th>状态</th><th>更新时间</th><th style="text-align:right">操作</th>
+                                    </tr></thead>
+                                    <tbody id="logList"><tr class="state-row"><td colspan="6"><div class="state-msg">加载中…</div></td></tr></tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </section>
+
+                </div>
+            </div>
+        </main>
+    </div>
+</div>
+
+<!-- ── User modal ───────────────────────────────────────── -->
+<div id="userModal" class="modal" onclick="if(event.target===this)closeModal('userModal')">
+    <div class="modal-card">
+        <div class="modal-head">
+            <h2 id="userModalTitle">创建用户</h2>
+            <button class="modal-close" onclick="closeModal('userModal')" aria-label="关闭">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="editUserId">
+            <div class="field">
+                <label for="username">用户名</label>
+                <input type="text" id="username" placeholder="登录用户名" autocomplete="off">
+            </div>
+            <div class="field">
+                <label for="baseUrl">后端地址</label>
+                <input type="text" id="baseUrl" placeholder="http://localhost:10620" value="http://localhost:10620" autocomplete="off" required>
+                <div class="hint">嵌入激活码的后端地址，用户激活时客户端将连接此地址。</div>
+            </div>
+            <label class="checkbox-row"><input type="checkbox" id="nightlyEnabled" checked> 启用夜间活动</label>
+            <div class="field" id="regenField" style="display:none; margin-top:0.95rem; padding-top:0.95rem; border-top:1px solid var(--border);">
+                <label>激活码</label>
+                <button type="button" class="btn btn--ghost btn--sm" onclick="regenerateToken()">重新生成激活码</button>
+                <div class="hint">激活令牌仅以哈希存储，无法再次查看原码。重新生成将创建新激活码（旧码立即失效）并在此展示。</div>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn--ghost" onclick="closeModal('userModal')">取消</button>
+            <button class="btn btn--primary" onclick="saveUser()">保存</button>
+        </div>
+    </div>
+</div>
+
+<div id="userExportModal" class="modal" onclick="if(event.target===this)closeModal('userExportModal')">
+    <div class="modal-card">
+        <div class="modal-head"><h2>导出用户备份</h2></div>
+        <div class="modal-body">
+            <p>包含角色与形象、衣橱、房间背景、用户画像与设置、音色、长期记忆、片刻、日记和定时任务。</p>
+            <label class="checkbox-row"><input type="checkbox" id="exportConversations"> 包含会话记录（消息、上下文与现存附件）</label>
+            <p class="hint">默认不包含会话记录。备份包含用户 API 凭据，请妥善保存。导入后请重新启动客户端以刷新数据。</p>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn--ghost" onclick="closeModal('userExportModal')">取消</button>
+            <button class="btn btn--primary" id="exportSubmitBtn" onclick="exportUser(Number($('#userExportModal').dataset.userId))">开始导出</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── User backup modal ─────────────────────────────────── -->
+<div id="userBackupModal" class="modal" onclick="if(event.target===this)closeModal('userBackupModal')">
+    <div class="modal-card">
+        <div class="modal-head">
+            <h2>导入用户备份</h2>
+            <button class="modal-close" onclick="closeModal('userBackupModal')" aria-label="关闭">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">
+                导入目标用户 #<span id="backupUserId"></span>。恢复备份中包含的角色、形象与衣橱、房间、设置与凭据、长期记忆、片刻、日记和定时任务；仅当备份包含会话记录时才恢复会话。未包含的会话保持不变。导入后请重新启动客户端。
+            </p>
+            <div class="field">
+                <label>导入模式</label>
+                <div style="display:flex; gap:0.75rem; margin-top:0.3rem; flex-wrap:wrap;">
+                    <label class="checkbox-row"><input type="radio" name="bk_mode" value="overwrite" checked> 覆盖（替换备份范围内的数据）</label>
+                    <label class="checkbox-row"><input type="radio" name="bk_mode" value="merge"> 合并（保留现有人设、凭据、同名设置、同日日记与激活形象，补入缺失内容）</label>
+                </div>
+            </div>
+            <div class="field">
+                <label for="backupFile">备份文件 (.zip)</label>
+                <input type="file" id="backupFile" accept=".zip">
+                <div class="hint">支持本后台导出的 ZIP；旧备份未包含的内容无法补回。</div>
+            </div>
+            <div id="backupStatus" style="margin-top:0.5rem; font-size:0.78rem; color:var(--text-3);"></div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn--ghost" onclick="closeModal('userBackupModal')">取消</button>
+            <button type="button" class="btn btn--primary" id="backupSubmitBtn" onclick="submitUserBackup()">开始导入</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Activation code modal ─────────────────────────────── -->
+<div id="activationModal" class="modal" onclick="if(event.target===this)closeModal('activationModal')">
+    <div class="modal-card">
+        <div class="modal-head">
+            <h2>激活码已生成</h2>
+            <button class="modal-close" onclick="closeModal('activationModal')" aria-label="关闭">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">请将此激活码发送给用户，用于客户端激活。</p>
+            <textarea id="activationCodeText" class="mono" readonly rows="5" style="width:100%; resize:vertical; word-break:break-all;"></textarea>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn--ghost" onclick="closeModal('activationModal')">关闭</button>
+            <button class="btn btn--primary" onclick="copyActivationCode()">复制</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Activation code management modal ──────────────────── -->
+<div id="activationManageModal" class="modal" onclick="if(event.target===this)closeModal('activationManageModal')">
+    <div class="modal-card">
+        <div class="modal-head">
+            <h2 id="activationManageTitle">激活码管理</h2>
+            <button class="modal-close" onclick="closeModal('activationManageModal')" aria-label="关闭">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="activationManageUserId">
+            <div class="callout">
+                激活码携带后端服务地址与用户认证令牌。您可以在此随时查看当前激活码并复制发放。后端地址变动时输入新地址点击「更新后端地址」即可，无需重置令牌；如需强制作废旧激活码可点击「重新生成激活码」。
+            </div>
+            <div id="activationManageResult" style="margin-top:0.5rem;">
+                <label style="display:block; font-size:0.78rem; font-weight:600; margin-bottom:0.3rem;">当前激活码</label>
+                <textarea id="activationManageCode" class="mono" readonly rows="4" style="width:100%; resize:vertical; word-break:break-all;"></textarea>
+            </div>
+            <div class="field" style="margin-top:1rem;">
+                <label for="activationManageBaseUrl">后端地址</label>
+                <input type="text" id="activationManageBaseUrl" value="http://localhost:10620" autocomplete="off">
+                <div class="hint">更新后端地址会自动重打激活码，不影响用户已有数据与授权。</div>
+            </div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn--ghost" onclick="closeModal('activationManageModal')">关闭</button>
+            <button class="btn btn--ghost" id="activationManageCopyBtn" style="display:none" onclick="copyActivationManageCode()">复制激活码</button>
+            <button class="btn btn--ghost" id="activationManageUpdateUrlBtn" style="display:none" onclick="updateBaseUrlFromManage()">更新后端地址</button>
+            <button class="btn btn--primary" id="activationManageGenBtn" onclick="regenerateFromManage()">重新生成激活码</button>
+        </div>
+    </div>
+</div>
+
+<!-- ── Model config modal ──────────────────────────────── -->
+<div id="modelModal" class="modal" onclick="if(event.target===this)closeModal('modelModal')">
+    <div class="modal-card wide">
+        <div class="modal-head">
+            <h2 id="modelModalTitle">配置凭证</h2>
+            <button class="modal-close" onclick="closeModal('modelModal')" aria-label="关闭">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <input type="hidden" id="modelUserId">
+            <p class="hint" style="margin:0 0 1rem">用户能力链有卡片时覆盖系统能力链；空链继承系统配置。用户能力卡片可继承用户或系统的同名供应商信息。</p>
+            <div id="userAiCardSettings"></div>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn--ghost" onclick="closeModal('modelModal')">取消</button>
+            <button class="btn btn--primary" onclick="saveModelConfig()">保存</button>
+        </div>
+    </div>
+</div>
+
+<div id="toast-wrap"></div>
+
+<script>
+const API_BASE = '';
+const TOKEN_KEY = 'spiritagent_admin_token';
+const tabCache = { users: null, models: null, settings: null, versions: null, logs: null };
+
+const TABS = {
+    users:    { title: '用户管理', desc: '管理可登录客户端的账户、使用权限与激活码' },
+    models:   { title: '模型配置', desc: '为每个用户配置 LLM、语音、图像与视频的接入凭证' },
+    settings: { title: '系统设置', desc: '全局业务参数、AI 供应商凭据与运行时调优配置（实时热生效，无需重启容器）' },
+    versions: { title: '版本管理', desc: '上传并分发桌面端与 Runner 的更新包' },
+    logs: { title: '活动日志', desc: '查看夜间自主活动流水线运行记录' },
+};
+
+const $  = (s, r = document) => r.querySelector(s);
+const $$ = (s, r = document) => Array.from(r.querySelectorAll(s));
+
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+const getItems = (data) => data?.items ?? [];
+
+function pill(text, type = 'muted') { return `<span class="pill pill--${type}">${esc(text)}</span>`; }
+function svcDot(label, on) { return `<span class="svc-dot ${on ? 'on' : ''}">${esc(label)}</span>`; }
+function plat(label, on) { return `<span class="plat ${on ? 'plat--on' : 'plat--off'}">${esc(label)}</span>`; }
+
+function fmtDate(s) {
+    if (!s) return '—';
+    const d = new Date(s);
+    if (isNaN(d)) return '—';
+    return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+function fmtDateOnly(s) { return s ? s.split('T')[0] : ''; }
+function fmtSize(b) {
+    if (b === null || b === undefined || isNaN(b)) return '';
+    if (b === 0) return '0 B';
+    const u = ['B', 'KB', 'MB', 'GB'];
+    let i = 0, n = b;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return (n < 10 && i > 0 ? n.toFixed(1) : Math.round(n)) + ' ' + u[i];
+}
+
+function toast(msg, type = 'ok') {
+    const wrap = $('#toast-wrap');
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.textContent = msg;
+    wrap.appendChild(el);
+    setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(0.4rem)'; el.style.transition = 'all .16s ease'; setTimeout(() => el.remove(), 200); }, 2600);
+}
+
+function stateRow(colspan, msg, hint = '', err = false) {
+    return `<tr class="state-row ${err ? 'err' : ''}"><td colspan="${colspan}"><div class="state-msg">${esc(msg)}</div>${hint ? `<div class="state-hint">${esc(hint)}</div>` : ''}</td></tr>`;
+}
+
+function showTab(name) {
+    $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+    $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
+    const t = TABS[name];
+    $('#topTitle').textContent = t.title;
+    $('#topDesc').textContent = t.desc;
+    if (name === 'users') loadUsers();
+    if (name === 'models') loadModelConfigs();
+    if (name === 'settings') loadSystemSettings();
+    if (name === 'versions') loadVersions();
+    if (name === 'logs') loadLogs();
+}
+
+function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
+
+async function apiFetch(path, options = {}) {
+    const headers = { ...(getToken() ? { Authorization: 'Bearer ' + getToken() } : {}) };
+    if (!(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
+    const resp = await fetch(API_BASE + path, { ...options, headers: { ...headers, ...(options.headers || {}) } });
+    if (resp.status === 401) {
+        sessionStorage.removeItem(TOKEN_KEY);
+        location.reload();
+        throw new Error('会话已过期，请重新登录');
+    }
+    if (!resp.ok) {
+        const detail = (await resp.json().catch(() => ({}))).detail;
+        throw new Error(detail || `HTTP ${resp.status}`);
+    }
+    return resp;
+}
+
+function enterApp() {
+    $('#login').style.display = 'none';
+    $('#app').style.display = 'block';
+    showTab('users');
+}
+
+function logout() {
+    sessionStorage.removeItem(TOKEN_KEY);
+    location.reload();
+}
+
+// ── Login ────────────────────────────────────────────────
+$('#loginForm').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const u = $('#loginUser').value.trim(), p = $('#loginPass').value;
+    if (!u || !p) return;
+    fetch(API_BASE + '/admin/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: u, password: p }),
+    })
+    .then(r => r.ok ? r.json() : Promise.reject(new Error('用户名或密码错误')))
+    .then(data => { sessionStorage.setItem(TOKEN_KEY, data.access_token); enterApp(); })
+    .catch(e => { const err = $('#loginError'); err.textContent = e.message; err.style.display = 'block'; });
+});
+
+if (getToken()) enterApp();
+
+// ── Users ────────────────────────────────────────────────
+async function loadUsers() {
+    try {
+        const data = await (await apiFetch('/api/admin/users')).json();
+        tabCache.users = data;
+        renderUsers(data);
+    } catch (e) { $('#userList').innerHTML = stateRow(5, '加载失败：' + e.message, '', true); }
+}
+
+function renderUsers(data) {
+    const tbody = $('#userList');
+    const items = getItems(data);
+    $('#userCount').textContent = items.length ? `${items.length} 个用户` : '';
+    if (!items.length) { tbody.innerHTML = stateRow(5, '暂无用户', '点击右上角“创建用户”添加'); return; }
+    tbody.innerHTML = items.map(u => {
+        return `<tr>
+            <td class="td-id">${u.id}</td>
+            <td><div class="cell-strong">${esc(u.username)}</div></td>
+            <td>${u.nightly_activity_enabled ? pill('启用', 'green') : pill('关闭', 'muted')}</td>
+            <td>${u.is_active ? pill('启用', 'green') : pill('停用', 'red')}</td>
+            <td class="td-actions">
+                <button class="btn btn--ghost btn--sm" onclick="manageActivation(${u.id})">激活码</button>
+                <button class="btn btn--ghost btn--sm" onclick="editUser(${u.id})">编辑</button>
+                <button class="btn btn--ghost btn--sm" onclick="toggleUser(${u.id})">${u.is_active ? '停用' : '启用'}</button>
+                <button class="btn btn--ghost btn--sm" onclick="exportUserPrompt(${u.id})">导出</button>
+                <button class="btn btn--ghost btn--sm" onclick="importUserPrompt(${u.id})">导入</button>
+                <button class="btn btn--danger btn--sm" onclick="deleteUser(${u.id})">删除</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+// ── baseUrl 默认值：现有激活码里的 b > 后端 public_base_url > localhost:10620 ──
+let runtimeInfoCache = null;
+
+async function fetchRuntimeInfo() {
+    if (runtimeInfoCache !== null) {
+        return runtimeInfoCache;
+    }
+    try {
+        const data = await (await apiFetch('/api/admin/runtime-info')).json();
+        runtimeInfoCache = typeof data?.public_base_url === 'string' ? data.public_base_url : '';
+    } catch {
+        runtimeInfoCache = '';
+    }
+    return runtimeInfoCache;
+}
+
+function decodeActivationBaseUrl(code) {
+    if (!code) return null;
+    try {
+        const raw = atob(code.replace(/-/g, '+').replace(/_/g, '/'));
+        const data = JSON.parse(raw);
+        return data?.b || null;
+    } catch {
+        return null;
+    }
+}
+
+async function resolveDefaultBaseUrl(existingCode) {
+    return decodeActivationBaseUrl(existingCode) || (await fetchRuntimeInfo()) || 'http://localhost:10620';
+}
+
+async function showCreateUser() {
+    $('#userModalTitle').textContent = '创建用户';
+    $('#editUserId').value = '';
+    $('#username').value = ''; $('#username').disabled = false;
+    $('#baseUrl').value = await resolveDefaultBaseUrl(null);
+    $('#baseUrl').disabled = false;
+    $('#nightlyEnabled').checked = true;
+    $('#regenField').style.display = 'none';
+    openModal('userModal');
+    $('#username').focus();
+}
+
+async function editUser(id) {
+    try {
+        const u = await (await apiFetch('/api/admin/users/' + id)).json();
+        $('#userModalTitle').textContent = '编辑用户';
+        $('#editUserId').value = u.id;
+        $('#username').value = u.username; $('#username').disabled = true;
+        $('#baseUrl').value = await resolveDefaultBaseUrl(u.activation_code);
+        $('#baseUrl').disabled = false;
+        $('#nightlyEnabled').checked = u.nightly_activity_enabled;
+        $('#regenField').style.display = '';
+        openModal('userModal');
+    } catch (e) { toast(e.message, 'err'); }
+}
+
+async function saveUser() {
+    const id = $('#editUserId').value;
+    const baseUrl = $('#baseUrl').value.trim();
+    if (!baseUrl) { toast('请填写后端地址', 'err'); $('#baseUrl').focus(); return; }
+    const payload = { nightly_activity_enabled: $('#nightlyEnabled').checked };
+    if (!id) {
+        payload.username = $('#username').value.trim();
+    }
+    payload.base_url = baseUrl;
+    try {
+        const method = id ? 'PATCH' : 'POST';
+        const url = id ? `/api/admin/users/${id}` : '/api/admin/users';
+        const resp = await apiFetch(url, { method, body: JSON.stringify(payload) });
+        const data = await resp.json();
+        closeModal('userModal');
+        toast(id ? '用户已更新' : '用户已创建');
+        loadUsers();
+        if (data.activation_code) showActivationCode(data.activation_code);
+    } catch (e) { toast(e.message, 'err'); }
+}
+
+async function regenerateToken() {
+    const id = $('#editUserId').value;
+    if (!id) return;
+    const baseUrl = $('#baseUrl').value.trim() || 'http://localhost:10620';
+    try {
+        const resp = await apiFetch(`/api/admin/users/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ regenerate_token: true, base_url: baseUrl }),
+        });
+        const data = await resp.json();
+        toast('激活码已重新生成');
+        if (data.activation_code) showActivationCode(data.activation_code);
+    } catch (e) { toast(e.message, 'err'); }
+}
+
+function showActivationCode(code) {
+    $('#activationCodeText').value = code;
+    openModal('activationModal');
+}
+
+async function copyActivationCode() {
+    const code = $('#activationCodeText').value;
+    if (!code) return;
+    try {
+        await navigator.clipboard.writeText(code);
+        toast('已复制到剪贴板');
+    } catch (e) {
+        const ta = $('#activationCodeText');
+        ta.select(); document.execCommand('copy');
+        toast('已复制到剪贴板');
+    }
+}
+
+async function manageActivation(id) {
+    const user = (tabCache.users?.items ?? []).find(u => u.id === id);
+    $('#activationManageUserId').value = id;
+    $('#activationManageTitle').textContent = '激活码管理' + (user ? ' · ' + user.username : '');
+    const code = user?.activation_code || '';
+    $('#activationManageCode').value = code;
+    if (code) {
+        $('#activationManageResult').style.display = '';
+        $('#activationManageCopyBtn').style.display = '';
+        $('#activationManageUpdateUrlBtn').style.display = '';
+    } else {
+        $('#activationManageResult').style.display = 'none';
+        $('#activationManageCopyBtn').style.display = 'none';
+        $('#activationManageUpdateUrlBtn').style.display = 'none';
+    }
+    $('#activationManageBaseUrl').value = await resolveDefaultBaseUrl(code);
+    openModal('activationManageModal');
+}
+
+async function updateBaseUrlFromManage() {
+    const id = $('#activationManageUserId').value;
+    if (!id) return;
+    const baseUrl = $('#activationManageBaseUrl').value.trim() || 'http://localhost:10620';
+    const btn = $('#activationManageUpdateUrlBtn');
+    btn.disabled = true; btn.textContent = '更新中…';
+    try {
+        const resp = await apiFetch(`/api/admin/users/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ base_url: baseUrl }),
+        });
+        const data = await resp.json();
+        if (data.activation_code) {
+            $('#activationManageCode').value = data.activation_code;
+            $('#activationManageResult').style.display = '';
+            $('#activationManageCopyBtn').style.display = '';
+            $('#activationManageUpdateUrlBtn').style.display = '';
+            const user = (tabCache.users?.items ?? []).find(u => u.id === Number(id));
+            if (user) user.activation_code = data.activation_code;
+        }
+        toast('后端地址已更新，激活码已刷新');
+        loadUsers();
+    } catch (e) { toast(e.message, 'err'); }
+    finally { btn.disabled = false; btn.textContent = '更新后端地址'; }
+}
+
+async function regenerateFromManage() {
+    const id = $('#activationManageUserId').value;
+    if (!id) return;
+    const baseUrl = $('#activationManageBaseUrl').value.trim() || 'http://localhost:10620';
+    const btn = $('#activationManageGenBtn');
+    btn.disabled = true; btn.textContent = '生成中…';
+    try {
+        const resp = await apiFetch(`/api/admin/users/${id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ regenerate_token: true, base_url: baseUrl }),
+        });
+        const data = await resp.json();
+        if (data.activation_code) {
+            $('#activationManageCode').value = data.activation_code;
+            $('#activationManageResult').style.display = '';
+            $('#activationManageCopyBtn').style.display = '';
+            $('#activationManageUpdateUrlBtn').style.display = '';
+            const user = (tabCache.users?.items ?? []).find(u => u.id === Number(id));
+            if (user) user.activation_code = data.activation_code;
+        }
+        toast('激活码已重新生成');
+        loadUsers();
+    } catch (e) { toast(e.message, 'err'); }
+    finally { btn.disabled = false; btn.textContent = '重新生成激活码'; }
+}
+
+async function copyActivationManageCode() {
+    const code = $('#activationManageCode').value;
+    if (!code) return;
+    try {
+        await navigator.clipboard.writeText(code);
+        toast('已复制到剪贴板');
+    } catch (e) {
+        const ta = $('#activationManageCode');
+        ta.select(); document.execCommand('copy');
+        toast('已复制到剪贴板');
+    }
+}
+
+async function toggleUser(id) {
+    try { await apiFetch(`/api/admin/users/${id}/toggle-active`, { method: 'PATCH' }); toast('状态已切换'); loadUsers(); }
+    catch (e) { toast(e.message, 'err'); }
+}
+
+async function deleteUser(id) {
+    if (!confirm('确定彻底删除此用户及其所有关联数据？此操作不可撤销。')) return;
+    try { await apiFetch(`/api/admin/users/${id}`, { method: 'DELETE' }); toast('用户已删除'); loadUsers(); }
+    catch (e) { toast(e.message, 'err'); }
+}
+
+// ── User backup ─────────────────────────────────────────
+function exportUserPrompt(id) {
+    $('#userExportModal').dataset.userId = String(id);
+    $('#exportConversations').checked = false;
+    $('#exportSubmitBtn').disabled = false;
+    openModal('userExportModal');
+}
+
+async function exportUser(id) {
+    const user = (tabCache.users?.items ?? []).find(u => u.id === id);
+    const label = user ? user.username : `#${id}`;
+    const btn = $('#exportSubmitBtn');
+    const includeConversations = $('#exportConversations').checked;
+    btn.disabled = true;
+    try {
+        const resp = await apiFetch(`/api/admin/users/${id}/export?include_conversations=${includeConversations}`);
+        if (!resp.ok) {
+            const txt = await resp.text();
+            throw new Error(txt || `HTTP ${resp.status}`);
+        }
+        const blob = await resp.blob();
+        let filename = `spiritagent-user-${id}-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.zip`;
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const m = cd.match(/filename="?([^"]+)"?/);
+        if (m) filename = m[1];
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename; document.body.appendChild(a);
+        a.click(); a.remove();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+        toast(`已导出用户 ${label}`);
+        closeModal('userExportModal');
+    } catch (e) { toast(`导出失败：${e.message || e}`, 'err'); }
+    finally { btn.disabled = false; }
+}
+
+function importUserPrompt(id) {
+    const user = (tabCache.users?.items ?? []).find(u => u.id === id);
+    $('#backupUserId').textContent = `${id}${user ? ' (' + user.username + ')' : ''}`;
+    $('#backupFile').value = '';
+    $('#backupStatus').textContent = '';
+    $('#backupSubmitBtn').disabled = false;
+    openModal('userBackupModal');
+}
+
+async function submitUserBackup() {
+    const idText = $('#backupUserId').textContent.split(' ')[0].replace(/[()#]/g, '');
+    const file = $('#backupFile').files[0];
+    const mode = ($$('input[name="bk_mode"]').find(r => r.checked) || {}).value || 'overwrite';
+    const status = $('#backupStatus');
+    const btn = $('#backupSubmitBtn');
+    if (!file) { status.textContent = '请选择 .zip 文件'; status.style.color = 'var(--red)'; return; }
+    btn.disabled = true;
+    status.textContent = `上传并导入中（模式：${mode}），请稍候…`;
+    status.style.color = 'var(--primary)';
+    try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const resp = await apiFetch(`/api/admin/users/${idText}/import?mode=${encodeURIComponent(mode)}`, {
+            method: 'POST', body: fd, headers: {},
+        });
+        const data = await resp.json();
+        const total = Object.values(data.imported || {}).reduce((a, b) => a + b, 0);
+        status.textContent = `导入完成（${data.mode}），共 ${total} 行`; status.style.color = 'var(--green)';
+        toast(`已导入用户 #${idText} · ${data.mode}`);
+        setTimeout(() => { closeModal('userBackupModal'); loadUsers(); }, 600);
+    } catch (err) {
+        status.textContent = '导入失败：' + (err.message || err); status.style.color = 'var(--red)';
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// ── Model configs ────────────────────────────────────────
+async function loadModelConfigs() {
+    try {
+        const [configsResp, usersResp] = await Promise.all([apiFetch('/api/admin/model-configs'), apiFetch('/api/admin/users')]);
+        const data = await configsResp.json();
+        const userData = await usersResp.json();
+        tabCache.models = data;
+        renderModels(data);
+        $('#modelUserSelect').innerHTML = '<option value="">选择用户…</option>' + getItems(userData).map(u => `<option value="${u.id}">${esc(u.username)} (#${u.id})</option>`).join('');
+    } catch (e) { $('#modelList').innerHTML = stateRow(4, '加载失败：' + e.message, '', true); }
+}
+
+function renderModels(data) {
+    const tbody = $('#modelList');
+    const items = getItems(data);
+    $('#modelCount').textContent = items.length ? `${items.length} 条配置` : '';
+    if (!items.length) { tbody.innerHTML = stateRow(4, '暂无凭证配置', '选择用户后点击“设置配置”'); return; }
+    tbody.innerHTML = items.map(c => {
+        const capabilities = c.ai_config.capabilities;
+        const llm = capabilities.llm[0];
+        return `<tr>
+            <td class="td-id">#${c.user_id}</td>
+            <td><div class="cell-strong">${llm ? esc(aiProviderLabel(llm.provider)) : '<span class="text-3">继承系统配置</span>'}</div><div class="cell-sub mono">${llm ? esc(llm.model_name) : ''}</div></td>
+            <td class="td-services">
+                ${svcDot('LLM', capabilities.llm.length > 0)}
+                ${svcDot('STT', capabilities.stt.length > 0)}
+                ${svcDot('TTS', capabilities.tts.length > 0)}
+                ${svcDot('图像', capabilities.image_gen.length > 0)}
+                ${svcDot('视频', capabilities.video_gen.length > 0)}
+            </td>
+            <td class="td-actions">
+                <button class="btn btn--ghost btn--sm" onclick="showModelConfigForUser(${c.user_id})">编辑</button>
+                <button class="btn btn--danger btn--sm" onclick="deleteModelConfig(${c.user_id})">删除</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function showModelConfig() {
+    const userId = $('#modelUserSelect').value;
+    if (!userId) { toast('请先选择用户', 'err'); return; }
+    showModelConfigForUser(userId);
+}
+
+function setKeyBadge(id, set) {
+    const el = $('#' + id);
+    el.textContent = set ? '已设置' : '未设置';
+    el.className = 'keybadge ' + (set ? 'on' : 'off');
+}
+
+function showModelConfigForUser(userId) {
+    const cached = tabCache.models?.items?.find(c => c.user_id == userId) ?? null;
+    $('#modelUserId').value = userId;
+    $('#modelModalTitle').textContent = cached ? `编辑凭证 · 用户 #${userId}` : `配置凭证 · 用户 #${userId}`;
+    aiEditors.user.config = structuredClone(cached?.ai_config ?? emptyAiConfig());
+    aiEditors.user.support = tabCache.models?.ai_provider_support ?? {};
+    aiEditors.user.inheritedProviders = tabCache.models?.system_ai_config?.providers ?? [];
+    renderAiCards('user');
+    openModal('modelModal');
+}
+
+async function saveModelConfig() {
+    const userId = $('#modelUserId').value;
+    const payload = {ai_config: aiEditors.user.config};
+    try {
+        await apiFetch(`/api/admin/${userId}/model-config`, { method: 'PUT', body: JSON.stringify(payload) });
+        closeModal('modelModal');
+        toast('凭证配置已保存');
+        loadModelConfigs();
+    } catch (e) { toast(e.message, 'err'); }
+}
+
+async function deleteModelConfig(userId) {
+    if (!confirm('确定删除此用户的凭证配置？')) return;
+    try { await apiFetch(`/api/admin/${userId}/model-config`, { method: 'DELETE' }); toast('凭证配置已删除'); loadModelConfigs(); }
+    catch (e) { toast(e.message, 'err'); }
+}
+
+
+// ── System Settings ─────────────────────────────────────
+const AI_NAMES = {mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok', zhipu: '智谱 BigModel'};
+const AI_SERVICES = {llm: '大语言模型 LLM', stt: '语音识别 STT', tts: '语音合成 TTS', image_gen: '图像生成', video_gen: '视频生成'};
+function emptyAiConfig() { return {providers: [], capabilities: {llm: [], stt: [], tts: [], image_gen: [], video_gen: []}}; }
+const aiEditors = {
+    system: {root: '#aiCardSettings', config: emptyAiConfig(), support: {}, inheritedProviders: []},
+    user: {root: '#userAiCardSettings', config: emptyAiConfig(), support: {}, inheritedProviders: []},
+};
+let aiDrag = null;
+let aiSettingsLoaded = false;
+
+function aiList(editor, group) {
+    return group === 'providers' ? editor.config.providers : editor.config.capabilities[group];
+}
+
+function aiProviderLabel(provider) {
+    return AI_NAMES[provider] ? `${AI_NAMES[provider]} (${provider})` : provider;
+}
+
+function aiSource(editor, provider) {
+    const local = editor.config.providers.find(card => card.provider === provider);
+    const inherited = editor.inheritedProviders.find(card => card.provider === provider);
+    if (!local) return inherited;
+    if (!inherited) return local;
+    return {
+        provider,
+        api_key: local.api_key || inherited.api_key,
+        api_key_set: local.api_key_set || inherited.api_key_set,
+        base_url: local.base_url || inherited.base_url,
+        model_name: local.model_name || inherited.model_name,
+    };
+}
+
+function renderAiCards(editorName) {
+    const editor = aiEditors[editorName];
+    const root = $(editor.root);
+    root.innerHTML = ['providers', ...Object.keys(AI_SERVICES)].map(group => {
+        const library = group === 'providers';
+        const cards = aiList(editor, group);
+        const configured = new Set(cards.map(card => card.provider));
+        const registered = [...new Set(Object.values(editor.support).flat())];
+        const supported = library ? [...new Set([...Object.keys(AI_NAMES), ...registered])] : (editor.support[group] || []);
+        const options = supported.filter(provider => !configured.has(provider)).map(provider => {
+            const source = aiSource(editor, provider);
+            return `<option value="${esc(provider)}">${library ? '' : source ? '引用：' : '独立配置：'}${esc(aiProviderLabel(provider))}</option>`;
+        }).join('') + (library ? '<option value="__custom__">自定义 provider</option>' : '');
+        return `<section class="card" style="margin-bottom:1.25rem" data-ai-group="${group}">
+            <div class="card-head" style="flex-wrap:wrap;gap:0.75rem">
+                <h2>${library ? '供应商信息库' : AI_SERVICES[group]}</h2>
+                <span class="pill pill--${cards.length ? 'green' : 'muted'}">${cards.length ? cards.length + ' 张卡片' : editorName === 'user' && !library ? '继承系统' : '未配置'}</span>
+                <div style="display:flex;gap:0.5rem;margin-left:auto;flex-wrap:wrap"><select aria-label="${library ? '选择供应商' : '选择能力配置来源'}" data-ai-add-source>${options || '<option value="">没有可添加的供应商</option>'}</select>${library ? '<input type="text" data-ai-custom-provider placeholder="自定义 provider 名称" maxlength="64" style="width:12rem">' : ''}<button class="btn btn--primary" data-ai-action="add">＋ 添加卡片</button></div>
+            </div>
+            <div style="padding:1.1rem">
+                <p class="hint" style="margin:0 0 1rem">${library ? 'provider 名称是唯一标识。自定义名称对应的后端实现注册后会出现在能力候选中；保存信息不会自动启用任何能力。' : editorName === 'user' ? '按卡片顺序调用；未添加卡片表示继承系统能力链。留空字段先继承用户同名 provider，再继承系统同名 provider。' : '按卡片顺序调用，失败时按回退规则尝试下一张；未添加卡片表示该能力未配置。留空字段继承同名 provider 的信息，可单独填写覆盖。'}</p>
+                <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,310px),1fr));gap:1rem">
+                    ${cards.map((card, index) => {
+                        const source = library ? null : aiSource(editor, card.provider);
+                        const inherited = source ? '继承 ' + aiProviderLabel(source.provider) : '独立配置';
+                        const keySet = card.api_key || card.api_key_set;
+                        const sourceKey = source && (source.api_key || source.api_key_set);
+                        return `<article class="svc-card" data-ai-index="${index}" style="min-width:0">
+                            <div class="ai-card-head">
+                                <button class="btn btn--ghost" draggable="true" data-ai-handle aria-label="拖拽排序" title="拖拽排序" style="cursor:grab">⠿</button>
+                                <strong style="flex:1">${index + 1}. ${esc(aiProviderLabel(card.provider))}</strong>
+                                <button class="btn btn--ghost" data-ai-action="up" aria-label="上移" ${index === 0 ? 'disabled' : ''}>↑</button>
+                                <button class="btn btn--ghost" data-ai-action="down" aria-label="下移" ${index === cards.length - 1 ? 'disabled' : ''}>↓</button>
+                                <button class="btn btn--ghost" data-ai-action="remove" aria-label="删除卡片">删除</button>
+                            </div>
+                            ${library ? '' : `<p class="hint">${esc(inherited)}</p>`}
+                            <div class="field"><label>API Key <span class="keybadge ${keySet || sourceKey ? 'on' : 'off'}">${keySet ? '已设置独立密钥' : sourceKey ? '继承供应商密钥' : '未设置'}</span>
+                                <input type="password" autocomplete="new-password" data-ai-field="api_key" value="${esc(card.api_key)}" placeholder="${keySet ? '留空保持已保存密钥' : source ? '留空继承供应商' : '填写 API Key'}"></label>
+                                <button class="btn btn--ghost" data-ai-action="clear-key">${source ? '清除覆盖，恢复继承' : '清除密钥'}</button>
+                            </div>
+                            <div class="field"><label>Base URL<input type="text" data-ai-field="base_url" value="${esc(card.base_url)}" placeholder="${esc(source?.base_url || '使用供应商官方地址')}"></label></div>
+                            <div class="field"><label>模型名称<input type="text" data-ai-field="model_name" value="${esc(card.model_name)}" placeholder="${esc(source?.model_name || '使用该能力的默认模型')}"></label></div>
+                        </article>`;
+                    }).join('') || `<p class="hint" style="padding:1rem 0">${library ? '尚未添加供应商。可先建立共享信息卡片，再在能力中引用。' : editorName === 'user' ? '该用户继承系统的此项能力链。添加卡片后改为用户专属调用顺序。' : '该能力未配置。点击“添加卡片”选择共享供应商或填写独立配置。'}</p>`}
+                </div>
+            </div>
+        </section>`;
+    }).join('');
+    root.oninput = event => {
+        if (event.target.matches('[data-ai-custom-provider]')) {
+          event.target.closest('[data-ai-group]').querySelector('[data-ai-add-source]').value = '__custom__';
+            return;
+        }
+        const field = event.target.dataset.aiField;
+        if (!field) return;
+        const group = event.target.closest('[data-ai-group]').dataset.aiGroup;
+        const index = Number(event.target.closest('[data-ai-index]').dataset.aiIndex);
+        aiList(editor, group)[index][field] = event.target.value;
+        if (field === 'api_key' && event.target.value) aiList(editor, group)[index].clear_api_key = false;
+    };
+    root.onclick = event => {
+        const button = event.target.closest('[data-ai-action]');
+        if (!button) return;
+        const section = button.closest('[data-ai-group]');
+        const group = section.dataset.aiGroup;
+        const cards = aiList(editor, group);
+        const index = Number(button.closest('[data-ai-index]')?.dataset.aiIndex);
+        const action = button.dataset.aiAction;
+        if (action === 'add') {
+            let value = section.querySelector('[data-ai-add-source]').value;
+            if (group === 'providers' && value === '__custom__') value = section.querySelector('[data-ai-custom-provider]').value.trim();
+            if (!value) return;
+            if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(value)) {
+                toast('provider 名称只能包含小写字母、数字、点、下划线和短横线', 'err');
+                return;
+            }
+            if (cards.some(card => card.provider === value)) {
+                toast('该 provider 已存在，名称不能冲突', 'err');
+                return;
+            }
+            cards.push({provider: value, api_key: '', base_url: '', model_name: ''});
+        } else if (action === 'remove') {
+            cards.splice(index, 1);
+        } else if (action === 'clear-key') {
+            Object.assign(cards[index], {api_key: '', api_key_set: false, clear_api_key: true});
+        } else {
+            const target = index + (action === 'up' ? -1 : 1);
+            if (target < 0 || target >= cards.length) return;
+            cards.splice(target, 0, cards.splice(index, 1)[0]);
+        }
+        renderAiCards(editorName);
+    };
+    root.ondragstart = event => {
+        if (!event.target.matches('[data-ai-handle]')) { event.preventDefault(); return; }
+        aiDrag = {editorName, group: event.target.closest('[data-ai-group]').dataset.aiGroup, index: Number(event.target.closest('[data-ai-index]').dataset.aiIndex)};
+        event.dataTransfer.effectAllowed = 'move';
+        event.dataTransfer.setData('text/plain', String(aiDrag.index));
+    };
+    root.ondragover = event => {
+        const target = event.target.closest('[data-ai-index]');
+        if (aiDrag) { event.preventDefault(); event.dataTransfer.dropEffect = 'none'; }
+        root.querySelectorAll('.ai-drop-target').forEach(el => el.classList.remove('ai-drop-target'));
+        if (target && aiDrag?.editorName === editorName && aiDrag.group === target.closest('[data-ai-group]').dataset.aiGroup) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'move';
+            target.classList.add('ai-drop-target');
+        }
+    };
+    root.ondrop = event => {
+        const target = event.target.closest('[data-ai-index]');
+        if (aiDrag) event.preventDefault();
+        if (!target || !aiDrag || aiDrag.editorName !== editorName || aiDrag.group !== target.closest('[data-ai-group]').dataset.aiGroup) return;
+        event.preventDefault();
+        const cards = aiList(editor, aiDrag.group);
+        cards.splice(Number(target.dataset.aiIndex), 0, cards.splice(aiDrag.index, 1)[0]);
+        aiDrag = null;
+        renderAiCards(editorName);
+    };
+    root.ondragend = () => {
+        aiDrag = null;
+        root.querySelectorAll('.ai-drop-target').forEach(el => el.classList.remove('ai-drop-target'));
+    };
+}
+
+const SETTING_TEXT_KEYS = [
+    'image_to_3d_provider',
+    'tripo_base_url', 'tripo_model_version', 'tripo_texture_quality', 'tripo_geometry_quality',
+    'hunyuan_base_url', 'hunyuan_model_version', 'hunyuan_generate_type', 'hunyuan_result_format',
+    'seethrough_space_base', 'seethrough_fallback_base', 'companion_asset_image_providers',
+    'web_search_backend', 'web_extract_backend', 'tavily_base_url',
+    'ssrf_allowed_cidrs', 'public_base_url', 'log_level', 'log_format'
+];
+
+const SETTING_NUM_KEYS = [
+    'llm_request_timeout_seconds', 'llm_stream_idle_timeout_seconds', 'llm_max_retry_attempts', 'llm_base_retry_delay', 'llm_max_retry_delay', 'default_llm_context_tokens',
+    'video_gen_poll_interval_seconds', 'video_gen_poll_backoff_max_seconds', 'video_gen_max_poll_seconds', 'video_gen_tool_wait_seconds', 'video_gen_download_max_bytes',
+    'image_to_3d_poll_interval_seconds', 'image_to_3d_poll_backoff_max_seconds', 'image_to_3d_max_poll_seconds',
+    'tripo_face_limit', 'hunyuan_face_count',
+    'context_compression_threshold', 'context_summary_target_tokens', 'context_summary_max_input_messages', 'chat_active_window_minutes', 'ipc_future_timeout_seconds',
+    'login_rate_limit_per_minute', 'llm_completion_rate_limit_per_minute', 'llm_completion_rate_limit_per_ip_per_minute', 'media_stt_rate_limit_per_minute', 'media_tts_rate_limit_per_minute', 'media_video_rate_limit_per_minute',
+    'companion_avatar_generate_rate_limit_per_minute', 'companion_model_generate_rate_limit_per_minute', 'companion_outfit_generate_rate_limit_per_hour',
+    'room_llm_replace_per_24h', 'room_max_attempts', 'room_history_keep', 'moment_system_per_day', 'moment_llm_per_day',
+    'channels_turn_queue_max', 'channels_inbound_rate_per_minute', 'channels_restart_backoff_seconds', 'weixin_reply_max_chars', 'weixin_ilink_poll_timeout_seconds',
+    'temp_file_ttl_hours', 'access_token_expire_minutes', 'llm_debug_max_chars'
+];
+
+const SETTING_BOOL_KEYS = [
+    'tripo_enable_autofix', 'hunyuan_enable_pbr',
+    'enable_context_compression', 'rate_limit_enabled',
+    'diary_nightly_enabled', 'llm_debug_logging'
+];
+
+const SETTING_KEY_BADGES = [
+    { key: 'tripo_api_key', badge: 'sys_tripo_key_badge' },
+    { key: 'hunyuan_api_key', badge: 'sys_hunyuan_key_badge' },
+    { key: 'seethrough_fallback_token', badge: 'sys_seethrough_token_badge' },
+    { key: 'brave_search_api_key', badge: 'sys_brave_key_badge' },
+    { key: 'tavily_api_key', badge: 'sys_tavily_key_badge' },
+    { key: 'metrics_auth_token', badge: 'sys_metrics_token_badge' }
+];
+
+async function loadSystemSettings() {
+    aiSettingsLoaded = false;
+    try {
+        const resp = await apiFetch('/api/admin/system-settings');
+        const data = await resp.json();
+        tabCache.settings = data;
+        renderSystemSettings(data);
+    } catch (e) {
+        toast('加载系统设置失败：' + e.message, 'err');
+    }
+}
+
+function renderSystemSettings(data) {
+    if (!data) return;
+    aiEditors.system.config = structuredClone(data.ai_config);
+    aiEditors.system.support = data.ai_provider_support;
+    aiSettingsLoaded = true;
+    renderAiCards('system');
+    for (const k of SETTING_TEXT_KEYS) {
+        const el = $('#sys_' + k);
+        if (!el) continue;
+        let val = data[k] ?? '';
+        if (Array.isArray(val)) val = val.join(', ');
+        el.value = val;
+    }
+    for (const k of SETTING_NUM_KEYS) {
+        const el = $('#sys_' + k);
+        if (!el) continue;
+        el.value = data[k] !== undefined && data[k] !== null ? data[k] : '';
+    }
+    for (const k of SETTING_BOOL_KEYS) {
+        const el = $('#sys_' + k);
+        if (!el) continue;
+        el.checked = !!data[k];
+    }
+    for (const item of SETTING_KEY_BADGES) {
+        const inputEl = $('#sys_' + item.key);
+        if (inputEl) inputEl.value = '';
+        setKeyBadge(item.badge, !!data[item.key + '_set']);
+    }
+}
+
+async function saveSystemSettingsForm() {
+    if (!aiSettingsLoaded) { toast('请先成功加载系统设置后再保存', 'err'); return; }
+    const payload = { ai_config: aiEditors.system.config };
+    for (const k of SETTING_TEXT_KEYS) {
+        const el = $('#sys_' + k);
+        if (el) payload[k] = el.value.trim();
+    }
+    for (const k of SETTING_NUM_KEYS) {
+        const el = $('#sys_' + k);
+        if (el && el.value !== '') {
+            payload[k] = Number(el.value);
+        } else if (el && el.value === '') {
+            payload[k] = '';
+        }
+    }
+    for (const k of SETTING_BOOL_KEYS) {
+        const el = $('#sys_' + k);
+        if (el) payload[k] = el.checked;
+    }
+    for (const item of SETTING_KEY_BADGES) {
+        const el = $('#sys_' + item.key);
+        if (el && el.value) {
+            payload[item.key] = el.value.trim();
+        }
+    }
+
+    try {
+        const resp = await apiFetch('/api/admin/system-settings', {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+        });
+        const data = await resp.json();
+        tabCache.settings = data;
+        renderSystemSettings(data);
+        toast('系统设置已保存并实时生效');
+    } catch (e) {
+        toast('保存系统设置失败：' + e.message, 'err');
+    }
+}
+
+
+// ── Logs ────────────────────────────────────────────────
+async function loadLogs() {
+    const userId = $('#logUserId').value.trim();
+    const dateVal = $('#logDate').value;
+    const params = new URLSearchParams();
+    if (userId) params.set('user_id', userId);
+    if (dateVal) params.set('target_date', dateVal);
+    try {
+        const data = await (await apiFetch('/api/admin/nightly-activity-logs' + (params.toString() ? '?' + params : ''))).json();
+        tabCache.logs = data;
+        renderLogs(data);
+    } catch (e) { $('#logList').innerHTML = stateRow(6, '加载失败：' + e.message, '', true); }
+}
+
+function renderLogs(data) {
+    const tbody = $('#logList');
+    const items = getItems(data);
+    $('#logCount').textContent = items.length ? `${items.length} 条记录` : '';
+    if (!items.length) { tbody.innerHTML = stateRow(6, '暂无夜间活动记录', '当夜间流水线运行后会在此展示'); return; }
+    tbody.innerHTML = items.map(r => {
+        const statusPill = pill(
+            r.status === 'completed' ? '已完成' :
+            r.status === 'completed_with_errors' ? '部分失败' :
+            r.status === 'skipped' ? '跳过' : '失败',
+            r.status === 'completed' ? 'green' :
+            r.status === 'skipped' ? 'muted' : 'red'
+        );
+        return `<tr style="cursor:pointer" onclick="openLogDetail(${r.id})">
+            <td class="td-id">${r.id}</td>
+            <td><div class="cell-strong">${esc(String(r.user_id))}</div><div class="cell-sub">${esc(r.summary || '')}</div></td>
+            <td>${esc(r.target_date)}</td>
+            <td>${statusPill}</td>
+            <td>${fmtDate(r.updated_at || r.created_at)}</td>
+            <td class="td-actions"><button class="btn btn--ghost btn--sm" onclick="event.stopPropagation(); openLogDetail(${r.id})">查看</button></td>
+        </tr>`;
+    }).join('');
+}
+
+async function openLogDetail(id) {
+    const items = tabCache.logs?.items ?? [];
+    const item = items.find(r => r.id === id);
+    if (!item) return;
+    $('#logDetailTitle').textContent = `日志 #${item.id} · 用户 ${item.user_id} · ${item.target_date}`;
+    $('#logDetailBody').textContent = JSON.stringify(item, null, 2);
+    openModal('logDetailModal');
+}
+
+// ── Versions ─────────────────────────────────────────────
+async function loadVersions() {
+    try {
+        const data = await (await apiFetch('/api/update/versions')).json();
+        tabCache.versions = data;
+        renderVersions(data);
+    } catch (e) { $('#versionList').innerHTML = stateRow(6, '加载失败：' + e.message, '', true); }
+}
+
+function renderVersions(data) {
+    const tbody = $('#versionList');
+    const items = getItems(data);
+    $('#versionCount').textContent = items.length ? `${items.length} 个版本` : '';
+    if (!items.length) { tbody.innerHTML = stateRow(6, '暂无历史版本', '上传一个 .zip 更新包以开始分发'); return; }
+    tbody.innerHTML = items.map(v => {
+        const size = fmtSize(v.exe_size);
+        return `<tr>
+            <td><div class="cell-strong">v${esc(v.version)}</div><div class="cell-sub mono">${size ? esc(size) : '—'}</div></td>
+            <td class="td-notes">${esc(v.release_notes) || '<span class="text-3">—</span>'}</td>
+            <td class="td-platforms">
+                ${plat('Windows', !!v.exe_filename)}
+                ${plat('macOS', !!v.mac_filename)}
+                ${plat('Runner', !!v.runner_filename)}
+            </td>
+            <td>${v.is_active ? pill('上线', 'green') : pill('下线', 'muted')}</td>
+            <td><div>${fmtDate(v.created_at)}</div><div class="cell-sub">${esc(v.created_by) || '—'}</div></td>
+            <td class="td-actions">
+                ${v.is_active
+                    ? `<button class="btn btn--ghost btn--sm" onclick="setActive(${v.id}, false)">下线</button>`
+                    : `<button class="btn btn--primary btn--sm" onclick="setActive(${v.id}, true)">上线</button>`}
+                <button class="btn btn--danger btn--sm" onclick="deleteVersion(${v.id})">删除</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+async function setActive(id, active) {
+    try { await apiFetch(`/api/update/versions/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: active }) }); toast(active ? '版本已上线' : '版本已下线'); loadVersions(); }
+    catch (e) { toast(e.message, 'err'); }
+}
+
+async function deleteVersion(id) {
+    if (!confirm('确定永久删除此版本及其文件？此操作不可撤销。')) return;
+    try { await apiFetch(`/api/update/versions/${id}`, { method: 'DELETE' }); toast('版本已删除'); loadVersions(); }
+    catch (e) { toast(e.message, 'err'); }
+}
+
+$('#fileInput').addEventListener('change', (e) => { $('#fileName').textContent = e.target.files[0] ? e.target.files[0].name : ''; });
+
+$('#uploadForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const formData = new FormData();
+    const rn = $('#releaseNotes').value;
+    if (rn) formData.append('release_notes', rn);
+    formData.append('file', $('#fileInput').files[0]);
+    const status = $('#uploadStatus');
+    status.textContent = '正在上传并处理版本，请稍候…'; status.style.color = 'var(--primary)';
+    try {
+        const resp = await apiFetch('/api/update/versions', { method: 'POST', body: formData, headers: {} });
+        const data = await resp.json();
+        status.textContent = `发布成功 · v${data.version}`; status.style.color = 'var(--green)';
+        $('#uploadForm').reset(); $('#fileName').textContent = '';
+        toast('新版本已发布');
+        loadVersions();
+    } catch (err) { status.textContent = '发布失败：' + err.message; status.style.color = 'var(--red)'; }
+});
+
+function openModal(id) { $('#' + id).classList.add('open'); document.body.style.overflow = 'hidden'; }
+function closeModal(id) { $('#' + id).classList.remove('open'); document.body.style.overflow = ''; }
+
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $$('.modal.open').forEach(m => m.classList.remove('open')); });
+</script>
+
+<div id="logDetailModal" class="modal" onclick="if(event.target===this)closeModal('logDetailModal')">
+    <div class="modal-card wide">
+        <div class="modal-head">
+            <h2 id="logDetailTitle">日志详情</h2>
+            <button class="modal-close" onclick="closeModal('logDetailModal')" aria-label="关闭">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+        <div class="modal-body">
+            <pre id="logDetailBody" style="white-space:pre-wrap;word-break:break-word;font-size:0.82rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1rem;max-height:60vh;overflow:auto"></pre>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn--ghost" onclick="closeModal('logDetailModal')">关闭</button>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

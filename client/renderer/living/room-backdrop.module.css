@@ -1,0 +1,182 @@
+.root {
+  border-radius: 24px;
+  clip-path: inset(0 round 24px);
+  contain: paint;
+  inset: 0;
+  isolation: isolate;
+  overflow: hidden;
+  pointer-events: none;
+  position: absolute;
+  z-index: 0;
+}
+
+html[data-maximized='true'] .root {
+  border-radius: 0;
+  bottom: 0;
+  clip-path: none;
+  left: 0;
+  right: 0;
+  top: 0;
+}
+
+.backdropImage {
+  background-color: var(--ui-app-bg);
+  background-image:
+    radial-gradient(circle at 75% 25%, var(--ui-accent-soft) 0%, transparent 55%),
+    radial-gradient(circle at 20% 80%, var(--ui-accent-soft) 0%, transparent 50%);
+  background-position: 70% center;
+  background-repeat: no-repeat;
+  background-size: cover;
+  bottom: 0;
+  left: 0;
+  position: absolute;
+  right: 0;
+  top: 0;
+}
+
+/* 清透档把房间图自身磨砂：Electron 对兄弟层 backdrop-filter 采样不可靠。模糊保持轻，才能看见房间。 */
+html[data-effect='clear'] .backdropImage {
+  filter: blur(18px) saturate(1.22);
+  transform: scale(1.1);
+  transform-origin: 70% center;
+}
+
+html[data-effect='clear'][data-palette='day'] .backdropImage {
+  filter: blur(18px) saturate(1.08) brightness(0.97);
+}
+
+html[data-effect='solid'] .backdropImage {
+  filter: blur(12px) saturate(1.06);
+  transform: scale(1.06);
+  transform-origin: 70% center;
+}
+
+html[data-effect='clear'] .backdropImage.status_pending {
+  filter: blur(18px) saturate(1.22) brightness(1.07);
+}
+
+html[data-effect='clear'][data-palette='day'] .backdropImage.status_pending {
+  filter: blur(18px) saturate(1.08) brightness(1.01);
+}
+
+html[data-effect='solid'] .backdropImage.status_pending {
+  filter: blur(12px) saturate(1.06) brightness(1.07);
+}
+
+.kenBurns {
+  animation: ken-burns 50s ease-in-out infinite alternate;
+  will-change: transform;
+}
+
+html[data-effect='clear'] .kenBurns {
+  animation-name: ken-burns-frosted;
+}
+
+html[data-effect='solid'] .kenBurns {
+  animation-name: ken-burns-veiled;
+}
+
+@keyframes ken-burns {
+  from {
+    transform: scale(1);
+  }
+
+  to {
+    transform: scale(1.04);
+  }
+}
+
+@keyframes ken-burns-frosted {
+  from {
+    transform: scale(1.1);
+  }
+
+  to {
+    transform: scale(1.14);
+  }
+}
+
+@keyframes ken-burns-veiled {
+  from {
+    transform: scale(1.06);
+  }
+
+  to {
+    transform: scale(1.1);
+  }
+}
+
+.status_pending {
+  filter: brightness(1.07);
+  transition: opacity 0.8s ease-in-out;
+}
+
+.status_ready {
+  opacity: 1;
+  transition: opacity 0.8s ease-in-out;
+}
+
+.status_failed {
+  opacity: 0.6;
+}
+
+.failedGlass {
+  align-items: center;
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  background: var(--ui-surface-card);
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 12px;
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.18), 0 12px 32px -6px rgba(0, 0, 0, 0.15);
+  bottom: 50%;
+  color: var(--ui-text-strong);
+  display: flex;
+  left: 50%;
+  padding: 16px 24px;
+  position: absolute;
+  transform: translate(-50%, 50%);
+}
+
+.failedText {
+  color: var(--ui-text-strong);
+  font-size: 13px;
+  margin: 0;
+}
+
+.pendingGlass {
+  align-items: center;
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
+  background: var(--ui-surface-panel);
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.18), 0 8px 24px -4px rgba(0, 0, 0, 0.12);
+  color: var(--ui-text-muted);
+  display: flex;
+  left: 50%;
+  padding: 8px 16px;
+  position: absolute;
+  top: 16px;
+  transform: translateX(-50%);
+}
+
+.pendingText {
+  color: var(--ui-text-muted);
+  font-size: 12px;
+  margin: 0;
+}
+
+html[class~='no-blur'] .failedGlass,
+html[class~='no-blur'] .pendingGlass {
+  backdrop-filter: none !important;
+  -webkit-backdrop-filter: none !important;
+}
+
+html[class~='no-blur'] .backdropImage {
+  filter: none !important;
+  transform: none;
+}
+
+html[class~='no-blur'] .kenBurns {
+  animation-name: ken-burns;
+}

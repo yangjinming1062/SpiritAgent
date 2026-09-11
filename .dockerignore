@@ -1,0 +1,71 @@
+# ---------------------------------------------------------------------------
+# Build context root is the repo root (docker-compose context: ..).
+# The backend image only needs backend/ and runner/tools/.
+# ---------------------------------------------------------------------------
+
+# Python virtual envs & caches (the .venv\lib64 symlink breaks Docker on Windows)
+.venv/
+**/.venv/
+venv/
+**/venv/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.pip-cache/
+.uv-cache/
+
+# Node / npm / pnpm
+node_modules/
+**/node_modules/
+.pnpm-store/
+.npm/
+.yarn/
+.turbo/
+.eslintcache
+**/*.tsbuildinfo
+
+# Build output
+build/
+dist/
+release/
+updates/
+
+# Secrets & config (mounted at runtime, not baked in)
+.env
+.env.*
+config.toml
+config.toml.local
+
+# Desktop client & installer (not needed in the backend image)
+client/
+installer/
+docs/
+scripts/
+
+# VCS & tooling
+.git/
+.gitignore
+.gitattributes
+.firecrawl/
+.mimocode/
+.claude/
+.idea/
+.vscode/
+.DS_Store
+
+# Runtime data & databases
+data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs & temp
+*.log
+logs/
+tmp/
+temp/

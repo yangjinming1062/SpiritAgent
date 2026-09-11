@@ -1,0 +1,55 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.4
+    hooks:
+      # 必须先 ruff-check --fix 再 ruff format：先 format 会让 import 块跨更多行，
+      # 再 --fix 会把 import 合并回单块。规则统一在根 ruff.toml，pre-commit / CLI / IDE 共用。
+      - id: ruff-check
+        args: [ --fix ]
+        exclude: ^(installer)/
+      - id: ruff-format
+        exclude: ^(installer)/
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: check-json
+        types: [ file ]
+        files: \.(json|myext)$
+      - id: check-ast
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: check-yaml
+      - id: check-toml
+  - repo: local
+    hooks:
+      - id: check-imports
+        name: check backend+runner import shape (future annotations, TYPE_CHECKING leak, facade consistency)
+        # --strict-imports 让违规直接失败；不加则只打印诊断并 exit 0（advisory 模式）。
+        entry: python scripts/check_imports.py --strict-imports
+        language: system
+        types: [python]
+        files: ^(backend|runner)/
+      - id: check-forbidden-comments
+        name: check forbidden issue tags in code comments
+        entry: '(?i)#\s*.*(P[0-9]+-[0-9]+|M-[0-9]+)'
+        language: pygrep
+        types: [python, ts, tsx, javascript]
+        exclude: ^(RULES\.md|AGENTS\.md|CHANGELOG.*|\.git.*)
+      - id: client-eslint-fix
+        name: client eslint fix
+        entry: pnpm --dir client exec eslint renderer/ main/ --fix
+        language: system
+        files: ^client/(renderer|main)/.*\.(ts|tsx|js|cjs|mjs)$
+        pass_filenames: false
+      - id: client-fmt
+        name: client prettier format
+        entry: pnpm --dir client exec prettier --write "renderer/**/*.{ts,tsx}" "main/**/*.{ts,tsx}"
+        language: system
+        files: ^client/.*\.(ts|tsx|js|cjs|mjs|json|css)$
+        pass_filenames: false

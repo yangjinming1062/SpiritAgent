@@ -1,0 +1,2 @@
+# vendored third-party（Anime2.5DRig MIT / ag-psd MIT），保持上游原样，不做本仓格式化
+renderer/companion/puppet/vendor/**

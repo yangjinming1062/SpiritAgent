@@ -1,0 +1,18 @@
+<type>(<scope>): <主题：一句话说清改了什么，整行 ≤30 字>
+
+# 主题最重要：只看主题就能知道这条提交改了什么，便于日后 log/grep 定位。
+#   - 写「做了什么」，不写「更新/优化/调整」这类空话
+#   - 优先点名对象与变化，例如「工具调用超时后不再重试」
+#   - 不堆模块名、路径、符号；scope 已标模块
+#
+# 正文（可选）：单文件或主题已自明时可省略。需要时：
+#   - 一个模块一条；服务于同一目标的兄弟改动合并
+#   - 写改动达成了什么；跳过符号名、片段、字面量
+#   - 省略格式化、被迫改名、import 整理等机械连带
+#   - 非显然动机放最后一行 "Why: ..."（≤2 行）
+#
+# type:  feat | fix | refactor | perf | docs | test | chore | style | build
+# scope: 仅顶层大模块，单选：
+#   backend | desktop | runner | installer | scripts | docs
+# 跨多个顶层模块的改动必须拆成多条提交，每条只标一个 scope；
+# 不要写 desktop+backend，也不要用子模块名（companion、hub、gateway…）。

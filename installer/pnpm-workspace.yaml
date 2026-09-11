@@ -1,0 +1,17 @@
+packages:
+  - .
+
+# Allow pnpm to run install scripts for the listed packages. Without this,
+# pnpm >=10 prints a one-time warning and silently skips the postinstall
+# (e.g. esbuild's binary fetch), so vite/tauri builds fail with "cannot
+# find module esbuild" on a clean clone. Names mirror what client/
+# needs for the same reason.
+onlyBuiltDependencies:
+  - esbuild
+  - unicode-animations
+
+# Legacy key kept for pnpm 9 compat — `onlyBuiltDependencies` is the
+# pnpm 10+ spelling. client/ declares both for the same reason.
+allowBuilds:
+  esbuild: true
+  unicode-animations: true

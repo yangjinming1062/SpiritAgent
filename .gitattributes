@@ -1,0 +1,5 @@
+# Pin shell-script line endings to LF so Windows checkout (with
+# `core.autocrlf=true`) doesn't CRLF-convert the husky hooks and break
+# the `#!/usr/bin/env sh` shebang.
+.husky/*            text eol=lf
+*.sh                text eol=lf

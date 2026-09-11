@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=77.0,<83"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spirit-agent"
+version = "1.0.0"
+description = "SpiritAgent Runner — stateless local tool executor for the SpiritAgent companion"
+requires-python = ">=3.11"
+authors = [{ name = "SpiritAgent" }]
+license = "MIT"
+dependencies = [
+  "httpx[socks]==0.28.1",
+  "pyyaml==6.0.3",
+  "pydantic==2.13.4",
+  "PyJWT[crypto]==2.12.1",
+  "psutil==7.2.2",
+  "ptyprocess>=0.7.0,<1; sys_platform != 'win32'",
+  "pywinpty>=2.0.0,<3; sys_platform == 'win32'",
+  "websockets==13.1",
+  "Pillow==12.2.0",
+  "mcp==1.27.0",
+  "sounddevice>=0.4.6",
+  "numpy>=1.26.0",
+  "pywinauto>=0.6.8; sys_platform == 'win32'",
+  "mss>=10.2.0; sys_platform == 'win32'",
+  "pyautogui>=0.9.54; sys_platform == 'win32'",
+  "pyperclip>=0.7.0",
+  "cua-driver==0.21.0; sys_platform == 'win32' or sys_platform == 'darwin'",
+]
+
+[project.optional-dependencies]
+dev = ["debugpy==1.8.20", "ruff==0.15.10"]
+
+[tool.setuptools]
+py-modules = ["runner_version"]
+
+[tool.setuptools.packages.find]
+include = ["envs", "envs.*", "tools", "tools.*", "utils", "utils.*"]
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.rules]
+unknown-argument = "warn"
+redundant-cast = "ignore"

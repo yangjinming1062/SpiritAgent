@@ -1,0 +1,27 @@
+{
+  "voice": "冰糖",
+  "language": "zh",
+  "format": "mp3",
+  "files": [
+    { "tag": "onboarding.q0",  "text": "您好…我还不认识自己。您愿意给我一个名字吗？" },
+    { "tag": "onboarding.q1",  "text": "那我是哪种生灵呢？" },
+    { "tag": "onboarding.q2",  "text": "嗯…那我是男性、女性、还是…" },
+    { "tag": "onboarding.q3",  "text": "您希望我长什么样？说说头发、眼睛、体型、标志性细节…" },
+    { "tag": "onboarding.q4",  "text": "好的，那您希望我是什么样的身份？" },
+    { "tag": "onboarding.q5",  "text": "您希望我是什么性格？" },
+    { "tag": "onboarding.q6",  "text": "我该怎么称呼您？" },
+    { "tag": "onboarding.q7",  "text": "您方便告诉我您的性别吗？" },
+    { "tag": "onboarding.q8",  "text": "您属于哪个年龄段？" },
+    { "tag": "onboarding.q9",  "text": "您平时喜欢什么？" },
+    { "tag": "onboarding.q10", "text": "您希望我说话的风格是什么样的？" },
+    { "tag": "onboarding.q11", "text": "还有什么想告诉我、或者想叮嘱我的吗？" },
+    { "tag": "onboarding.q12", "text": "您希望我听起来是什么样的？比如温柔的少女音、沉稳的男声、活泼的正太…" },
+    { "tag": "onboarding.hatching",         "text": "让我想想我该是什么样子…" },
+    { "tag": "onboarding.hatching.retry",  "text": "刚才的回答有些问题，咱们再来一次。" },
+    { "tag": "onboarding.portrait.ok",         "text": "嗯…这就是我，您觉得怎么样？" },
+    { "tag": "onboarding.portrait.failed",     "text": "我大概长这样，您觉得呢？" },
+    { "tag": "onboarding.portrait.regenerate", "text": "换一个样子，这样如何？" },
+    { "tag": "onboarding.finishing.retry", "text": "还差一点点，咱们再确认一次。" },
+    { "tag": "onboarding.greeting", "text": "您好，很高兴见到您！" }
+  ]
+}

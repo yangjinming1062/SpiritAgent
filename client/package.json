@@ -1,0 +1,179 @@
+{
+  "name": "spiritagent",
+  "productName": "SpiritAgent",
+  "private": true,
+  "version": "1.0.0",
+  "description": "唤生桌面版客户端。",
+  "author": "Jinming Yang",
+  "type": "module",
+  "main": "dist-electron/entry.js",
+  "packageManager": "pnpm@11.5.2",
+  "engines": {
+    "node": ">=24 <25",
+    "pnpm": "11.5.2"
+  },
+  "scripts": {
+    "dev": "node scripts/assert-root-install.cjs && tsup && concurrently -k \"vite --host 127.0.0.1 --port 5174\" \"tsup --watch main --watch shared\" \"wait-on dist-electron/entry.js http://127.0.0.1:5174 && cross-env XCURSOR_SIZE=24 SPIRITAGENT_DESKTOP_DEV_SERVER=http://127.0.0.1:5174 node scripts/launch-dev-electron.cjs\"",
+    "build": "node scripts/assert-root-install.cjs && node scripts/write-build-stamp.cjs && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json && tsup && vite build && node scripts/assert-dist-built.cjs",
+    "builder": "cross-env NODE_OPTIONS=--max-old-space-size=16384 electron-builder",
+    "pack": "pnpm run build && pnpm run builder -- --dir",
+    "dist": "pnpm run build && pnpm run builder",
+    "dist:mac:dmg": "pnpm run build && pnpm run builder -- --mac dmg",
+    "dist:win": "pnpm run build && pnpm run builder -- --win",
+    "dist:win:nsis": "pnpm run build && pnpm run builder -- --win nsis",
+    "fix": "eslint renderer/ main/ shared/ --fix && prettier --write \"renderer/**/*.{ts,tsx}\" \"main/**/*.{ts,tsx}\" \"shared/**/*.{ts,tsx}\" \"scripts/**/*.{cjs,mjs,ts}\" \"vite.config.ts\" \"tsup.config.ts\" && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json",
+    "lint": "eslint renderer/ main/ shared/"
+  },
+  "dependencies": {
+    "electron-log": "^5.2.0",
+    "electron-updater": "^6.6.2",
+    "qrcode.react": "^4.2.0",
+    "ws": "^8.21.0",
+    "yaml": "^2.9.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.4",
+    "@nanostores/react": "^1.1.0",
+    "@tabler/icons-react": "^3.41.1",
+    "@tailwindcss/vite": "^4.2.4",
+    "@types/node": "^24.12.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.185.4",
+    "@types/ws": "^8.18.1",
+    "@typescript-eslint/eslint-plugin": "^8.59.1",
+    "@typescript-eslint/parser": "^8.59.1",
+    "@vitejs/plugin-react": "^6.0.1",
+    "clsx": "^2.1.1",
+    "concurrently": "^10.0.3",
+    "cross-env": "^10.1.0",
+    "electron": "^42.4.0",
+    "electron-builder": "^26.8.1",
+    "eslint": "^9.39.4",
+    "eslint-plugin-perfectionist": "^5.9.0",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-compiler": "^19.1.0-rc.2",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "globals": "^16.5.0",
+    "nanostores": "^1.3.0",
+    "prettier": "^3.8.3",
+    "react": "^19.2.5",
+    "react-dom": "^19.2.5",
+    "react-router-dom": "^7.17.0",
+    "tailwind-merge": "^3.5.0",
+    "tailwindcss": "^4.2.4",
+    "three": "^0.185.1",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.12",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.10",
+    "wait-on": "^9.0.5",
+    "web-haptics": "^0.0.6"
+  },
+  "build": {
+    "appId": "io.spiritagent.agent",
+    "productName": "SpiritAgent",
+    "executableName": "SpiritAgent",
+    "artifactName": "SpiritAgent-${version}-${os}-${arch}.${ext}",
+    "icon": "assets/icon",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "assets/**",
+      "dist-electron/**",
+      "main/security/*.plist",
+      "package.json"
+    ],
+    "npmRebuild": false,
+    "beforePack": "scripts/before-pack.cjs",
+    "extraResources": [
+      {
+        "from": "build/install-stamp.json",
+        "to": "install-stamp.json"
+      },
+      {
+        "from": "assets/icon.ico",
+        "to": "icon.ico"
+      },
+      {
+        "from": "../scripts/release-keys/update.pub",
+        "to": "update.pub"
+      }
+    ],
+    "asar": true,
+    "afterSign": "scripts/notarize.cjs",
+    "asarUnpack": [
+      "**/*.node",
+      "**/prebuilds/**",
+      "dist/**"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "entitlements": "main/security/entitlements.mac.plist",
+      "entitlementsInherit": "main/security/entitlements.mac.inherit.plist",
+      "extendInfo": {
+        "CFBundleDisplayName": "唤生",
+        "CFBundleExecutable": "SpiritAgent",
+        "CFBundleName": "SpiritAgent",
+        "NSAudioCaptureUsageDescription": "唤生使用音频采集进行语音对话。",
+        "NSMicrophoneUsageDescription": "唤生使用麦克风进行语音输入和对话。"
+      },
+      "gatekeeperAssess": false,
+      "hardenedRuntime": true,
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "dmg": {
+      "title": "安装 唤生",
+      "backgroundColor": "#f5f5f7",
+      "iconSize": 96,
+      "window": {
+        "width": 560,
+        "height": 360
+      },
+      "contents": [
+        {
+          "x": 160,
+          "y": 170,
+          "type": "file"
+        },
+        {
+          "x": 400,
+          "y": 170,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    },
+    "win": {
+      "legalTrademarks": "唤生",
+      "target": [
+        "nsis",
+        "msi"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "shortcutName": "唤生",
+      "uninstallDisplayName": "唤生",
+      "warningsAsErrors": false
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://resolved-at-runtime.invalid/api/update",
+        "channel": "latest",
+        "useMultipleRangeRequest": false,
+        "updaterCacheDirName": "spiritagent-updater"
+      }
+    ]
+  }
+}
