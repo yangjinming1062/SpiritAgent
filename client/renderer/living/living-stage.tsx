@@ -11,9 +11,14 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
 
-import { ChatPanel } from '@/chat/chat-panel'
-import { $chatSessionId, $chatSessionKind } from '@/chat/chat-store'
-import { $companionSessionId, $currentSessionKind, openMainSession } from '@/chat/session-list-store'
+import {
+  $chatSessionId,
+  $companionSessionId,
+  ChatPanel,
+  openMainSession,
+  pushExternalAttachment,
+  useIsReadOnlySession
+} from '@/chat'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { $gatewayState } from '@/shared/store/gateway'
 
@@ -55,11 +60,7 @@ function ChatStage(): React.JSX.Element {
 function LivingChatView({ gatewayState }: { gatewayState: ConnectionState }): React.JSX.Element {
   const chatSessionId = useStore($chatSessionId)
   const companionSessionId = useStore($companionSessionId)
-  const chatSessionKind = useStore($chatSessionKind)
-  const currentSessionKind = useStore($currentSessionKind)
-
-  const sessionKind = chatSessionKind || currentSessionKind || ''
-  const isReadOnlySession = sessionKind === 'im'
+  const isReadOnlySession = useIsReadOnlySession()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // 生活空间全生命周期只使用唯一的「陪伴」对话；若尚未加载或当前处于工作会话，自动定位为主陪伴会话
@@ -72,6 +73,29 @@ function LivingChatView({ gatewayState }: { gatewayState: ConnectionState }): Re
       void openMainSession()
     }
   }, [gatewayState, companionSessionId, chatSessionId])
+
+  // 精灵窗投喂的混合文件：广播只作信号，统一经主进程 take 取走（取走即清，避免重复附件）。
+  useEffect(() => {
+    const drain = (): void => {
+      void window.spiritagent.chat
+        .takePendingFeed()
+        .then(paths => {
+          if (paths.length > 0) {
+            pushExternalAttachment(paths)
+          }
+        })
+        .catch(() => {})
+    }
+
+    const off = window.spiritagent.chat.onPendingFeed(() => {
+      drain()
+    })
+
+    // 刚创建的窗口可能错过广播，挂载后补取一次。
+    drain()
+
+    return off
+  }, [gatewayState])
 
   return (
     <div className={styles.chatStage}>

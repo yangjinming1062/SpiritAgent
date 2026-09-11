@@ -7,15 +7,15 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { ChatPanel } from '@/chat/chat-panel'
-import { $chatSessionId, $chatSessionKind } from '@/chat/chat-store'
 import {
-  $currentSessionKind,
+  $chatSessionId,
   $currentSessionTitle,
   $sessions,
+  ChatPanel,
   isCompanionSession,
-  switchSession
-} from '@/chat/session-list-store'
+  switchSession,
+  useIsReadOnlySession
+} from '@/chat'
 import { MediaViewerOverlay, SpriteStatusBadge } from '@/companion'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared'
 import { normalizeHashPath } from '@/shared/lib/hash-route'
@@ -51,8 +51,6 @@ export function WorkbenchRoot(): React.JSX.Element {
 
   const title = useStore($currentSessionTitle)
   const gatewayState = useStore($gatewayState)
-  const chatSessionKind = useStore($chatSessionKind)
-  const currentSessionKind = useStore($currentSessionKind)
   const currentSessionId = useStore($chatSessionId)
   const dict = useStrings()
   const t = dict.workbench
@@ -61,8 +59,7 @@ export function WorkbenchRoot(): React.JSX.Element {
   useEffect(() => {
     document.title = `${dict.brand.name} · ${t.title}`
   }, [dict.brand.name, t.title])
-  const sessionKind = chatSessionKind || currentSessionKind || ''
-  const isReadOnlySession = sessionKind === 'im'
+  const isReadOnlySession = useIsReadOnlySession()
   const activeSession = sessions.find(session => session.id === currentSessionId)
   const canShowChat = activeSession !== undefined && !isCompanionSession(activeSession)
 

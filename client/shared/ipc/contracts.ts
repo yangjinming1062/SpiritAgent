@@ -390,6 +390,9 @@ export interface IpcInvokeContract {
   'spiritagent:readFileDataUrl': (filePath: string) => Promise<string> | string
   'spiritagent:readImageForAttach': (filePath: string) => Promise<string> | string
   'spiritagent:registerUserSelectedPaths': (paths: string[]) => Promise<void> | void
+  /** 精灵窗投喂的混合文件路径信箱：写入后由生活空间窗口取走，解决跨窗口内存不共享。 */
+  'spiritagent:chat:set-pending-feed': (paths: string[]) => Promise<void> | void
+  'spiritagent:chat:take-pending-feed': () => Promise<string[]> | string[]
   'spiritagent:selectPaths': (options?: SpiritAgentSelectPathsOptions) => Promise<string[]> | string[]
   'spiritagent:writeClipboard': (text: string) => boolean | Promise<boolean>
   'spiritagent:saveClipboardImage': () => Promise<string> | string
@@ -486,6 +489,7 @@ export interface IpcEventContract {
   'spiritagent:runner:status': [payload: DesktopRunnerStatusEvent]
   'spiritagent:shortcuts:changed': [payload: DesktopShortcutsState]
   'spiritagent:surface:changed': [payload: DesktopSurfaceChangedEvent]
+  'spiritagent:chat:pending-feed': [payload: string[]]
   'spiritagent:tray:activate': []
   'spiritagent:tray:logout': []
   'spiritagent:tray:reset-position': []
@@ -531,6 +535,8 @@ export const IPC = {
     readFileDataUrl: 'spiritagent:readFileDataUrl',
     readImageForAttach: 'spiritagent:readImageForAttach',
     registerUserSelectedPaths: 'spiritagent:registerUserSelectedPaths',
+    chatSetPendingFeed: 'spiritagent:chat:set-pending-feed',
+    chatTakePendingFeed: 'spiritagent:chat:take-pending-feed',
     selectPaths: 'spiritagent:selectPaths',
     writeClipboard: 'spiritagent:writeClipboard',
     saveClipboardImage: 'spiritagent:saveClipboardImage',
@@ -579,6 +585,7 @@ export const IPC = {
     runnerStatus: 'spiritagent:runner:status',
     shortcutsChanged: 'spiritagent:shortcuts:changed',
     surfaceChanged: 'spiritagent:surface:changed',
+    chatPendingFeed: 'spiritagent:chat:pending-feed',
     trayActivate: 'spiritagent:tray:activate',
     trayLogout: 'spiritagent:tray:logout',
     trayResetPosition: 'spiritagent:tray:reset-position',

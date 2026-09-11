@@ -1,8 +1,8 @@
 ﻿import { clamp } from '@runtime'
 
+import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
 import { $runnerPhase } from '@/shared/store/runner-status'
-import { $surfaceOpen } from '@/shared/store/surfaces'
 
 import { $focusContext, $lastIdleSeconds, $screenLocked } from './activity'
 import { $effectiveTier, lockGazeToPoint } from './companion-store'
@@ -66,7 +66,7 @@ function approachLocomotion(target: { x: number; y: number }): 'walk' | 'fly' {
 // 途中视线锁定目标中心，数秒后交还指针跟随（镜像 events.ts 的 perch cue 模式）。
 function executeApproach(): void {
   // 锁屏不搭话；聊天开着时空间决策本就冻结。
-  if ($screenLocked.get() || $surfaceOpen.get() !== null) {
+  if ($screenLocked.get() || $chatVisible.get()) {
     return
   }
 
@@ -136,12 +136,7 @@ function executeAutonomousAction(action: string): void {
 
 async function consultAutonomyLLM(force = false): Promise<void> {
   // 空间智能只服务当前可见的桌面精灵；生活空间等表面打开时精灵已收起，不发起推理。
-  if (
-    !$llmAutonomy.get() ||
-    $effectiveTier.get() !== 'autonomous' ||
-    $surfaceOpen.get() !== null ||
-    $screenLocked.get()
-  ) {
+  if (!$llmAutonomy.get() || $effectiveTier.get() !== 'autonomous' || $chatVisible.get() || $screenLocked.get()) {
     return
   }
 
@@ -228,8 +223,8 @@ export function startAutonomyProvision(): () => void {
   )
   unsubs.push($lastIdleSeconds.subscribe(onStateOrEventChange))
   unsubs.push(
-    $surfaceOpen.subscribe(surface => {
-      if (surface !== null) {
+    $chatVisible.subscribe(visible => {
+      if (visible) {
         lastSnapshot = null
 
         return

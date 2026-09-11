@@ -1,37 +1,23 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { type RefObject, useEffect, useMemo, useRef, useState } from 'react'
+import { type RefObject, useEffect, useRef, useState } from 'react'
 
-import { attachVideoFile } from '@/chat/chat-attach-picker'
 import type { ConversationVariant } from '@/chat/chat-dock-message-bubble'
 import { ChatParamsPanel, type ChatParamsTab } from '@/chat/chat-params-panel'
-import {
-  $chatDraftFromUndo,
-  $chatSessionId,
-  $chatTurnInFlight,
-  $lastAssistantStreaming,
-  $pendingExternalAttachment,
-  $pendingPromptBatch,
-  clearExternalAttachment
-} from '@/chat/chat-store'
+import { $chatSessionId } from '@/chat/chat-store'
 import {
   ChatContextAmbientLine,
   ChatContextCapsule,
   ChatReasoningCapsule,
   ChatTemperatureCapsule
 } from '@/chat/context-progress-bar'
-import { useChatSubmit } from '@/chat/use-chat-submit'
-import { useAtomListen } from '@/shared/hooks/use-atom-listen'
-import { resolveDroppedFiles } from '@/shared/lib/file-drop'
+import { useChatInput } from '@/chat/use-chat-input'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
 import { cn } from '@/shared/lib/utils'
-import { notify } from '@/shared/store/notifications'
-import { useStrings } from '@/shared/strings'
 
 import { ConversationInput } from './conversation-input'
 import { ConversationSurface } from './conversation-surface'
-import { useVoiceRecorder } from './use-voice-recorder'
 
 export interface ChatPanelProps {
   className?: string
@@ -53,15 +39,11 @@ export function ChatPanel({
   variant
 }: ChatPanelProps): React.JSX.Element {
   const chatSessionId = useStore($chatSessionId)
-  const turnInFlight = useStore($chatTurnInFlight)
-  const lastStreaming = useStore($lastAssistantStreaming)
-  const pendingBatchLen = useStore($pendingPromptBatch).length
-  const dict = useStrings()
-  const [attachMenuOpen, setAttachMenuOpen] = useState(false)
-  const [externalPaths, setExternalPaths] = useState<string[]>([])
   const [paramsPanelOpen, setParamsPanelOpen] = useState(false)
   const [paramsPanelTab, setParamsPanelTab] = useState<ChatParamsTab>('context')
   const paramsPanelRef = useRef<HTMLDivElement>(null)
+
+  const input = useChatInput({ gatewayState, isReadOnlySession })
 
   useEffect(() => {
     if (gatewayState === 'open') {
@@ -97,54 +79,6 @@ export function ChatPanel({
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [paramsPanelOpen])
-
-  const submit = useChatSubmit({
-    externalPaths,
-    gatewayState,
-    isReadOnlySession,
-    onClearExternalPaths: () => setExternalPaths([]),
-    onPreCheckFail: msg => notify({ kind: 'warning', message: msg })
-  })
-
-  const { text, setText, pending, setPending, sending, send, handleStop } = submit
-  const { recording, start: startRecording, stop: stopRecording } = useVoiceRecorder({ isReadOnlySession })
-
-  const isGenerating = gatewayState === 'open' && (sending || pendingBatchLen > 0 || turnInFlight || lastStreaming)
-
-  // 外部文件投喂与常规附件合并
-  useAtomListen($pendingExternalAttachment, state => {
-    if (!state || state.paths.length === 0) {
-      return
-    }
-
-    setExternalPaths(prev => [...prev, ...state.paths])
-    clearExternalAttachment()
-    notify({ kind: 'info', message: dict.chat.filesReceived(state.paths.length) })
-  })
-
-  // 撤销草稿回填，多窗口按会话过滤
-  useAtomListen($chatDraftFromUndo, draft => {
-    if (!draft || draft.session_id !== chatSessionId) {
-      return
-    }
-
-    setText(draft.text)
-    $chatDraftFromUndo.set(null)
-  })
-
-  const submitState = useMemo(
-    () => ({
-      externalPaths,
-      gatewayState,
-      isGenerating,
-      isReadOnlySession,
-      pending,
-      recording,
-      sending,
-      text
-    }),
-    [externalPaths, gatewayState, isGenerating, isReadOnlySession, pending, recording, sending, text]
-  )
 
   const headerWrapClass = cn(
     'relative flex items-center justify-end shrink-0',
@@ -212,97 +146,7 @@ export function ChatPanel({
         variant={variant}
       />
       <div className={cn('mt-auto shrink-0', inputWrapperClassName)}>
-        <ConversationInput
-          attachMenuOpen={attachMenuOpen}
-          externalPaths={externalPaths}
-          onAttachMenuToggle={setAttachMenuOpen}
-          onDrop={e => {
-            const paths = resolveDroppedFiles(e.dataTransfer?.files)
-
-            if (paths.length === 0) {
-              return
-            }
-
-            e.preventDefault()
-            setExternalPaths(prev => [...prev, ...paths])
-            notify({ kind: 'info', message: dict.chat.attachmentsAdded(paths.length) })
-          }}
-          onPaste={async e => {
-            const files = Array.from(e.clipboardData?.files ?? [])
-
-            if (files.length === 0) {
-              return
-            }
-
-            e.preventDefault()
-
-            for (const file of files) {
-              if (file.type.startsWith('image/')) {
-                const dataUrl = await new Promise<string | null>(resolve => {
-                  const reader = new FileReader()
-
-                  reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
-                  reader.onerror = () => resolve(null)
-                  reader.readAsDataURL(file)
-                })
-
-                if (dataUrl) {
-                  setPending({ type: 'image', value: dataUrl, fileName: file.name })
-                }
-
-                continue
-              }
-
-              let filePath = (file as File & { path?: string }).path
-
-              if (!filePath && window.spiritagentWebUtils) {
-                try {
-                  filePath = window.spiritagentWebUtils.getPathForFile(file)
-                } catch {
-                  filePath = undefined
-                }
-              }
-
-              if (filePath) {
-                if (window.spiritagent.registerUserSelectedPaths) {
-                  await window.spiritagent.registerUserSelectedPaths([filePath]).catch(() => {})
-                }
-
-                if (file.type.startsWith('video/')) {
-                  await attachVideoFile(filePath, setPending)
-                } else {
-                  setExternalPaths(prev => [...prev, filePath as string])
-                }
-              }
-            }
-          }}
-          onRecordingPointerCancel={e => {
-            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-              e.currentTarget.releasePointerCapture(e.pointerId)
-            }
-
-            void stopRecording()
-          }}
-          onRecordingPointerDown={e => {
-            e.currentTarget.setPointerCapture(e.pointerId)
-            void startRecording()
-          }}
-          onRecordingPointerUp={e => {
-            if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-              e.currentTarget.releasePointerCapture(e.pointerId)
-            }
-
-            void stopRecording()
-          }}
-          onSend={() => {
-            void send()
-          }}
-          onSetPending={setPending}
-          onSetText={setText}
-          onStop={handleStop}
-          submit={submitState}
-          variant={variant}
-        />
+        <ConversationInput {...input.inputProps} variant={variant} />
       </div>
     </div>
   )

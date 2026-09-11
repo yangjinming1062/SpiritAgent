@@ -52,6 +52,7 @@ import {
 } from '@/companion'
 import { useGatewayRequest } from '@/shared'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
+import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { FolderOpen, Sparkles } from '@/shared/lib/icons'
 import { isClientErrorIpc, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { safeJsonParse } from '@/shared/lib/safe-json'
@@ -502,15 +503,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const resumedRef = useRef(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  const dragRef = useRef<{
-    startX: number
-    startY: number
-    originX: number
-    originY: number
-    moved: boolean
-    pointerId: number
-  } | null>(null)
-
   // 居中的初始位置；用户可以从这里开始拖拽。
   const [dialogPos, setDialogPos] = useState<{ x: number; y: number }>(() => {
     const width = 448
@@ -546,8 +538,20 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   }, [phase])
 
   // 拖拽用 document 级监听器（而不是容器上的 React onPointerMove），
-  // 这样光标离开对话框矩形后拖拽仍能继续，并能在悬停在别的区域时持续更新位置。
-  // setPointerCapture 会干扰表单上按钮/输入框触发的 click 事件，所以不用它。
+  // 这样光标离开对话框矩形后拖拽仍能继续。阈值过滤点击；表单控件由下面的 wrapper 屏蔽。
+  // 基准位与实时位移分离：dialogPos 只在松手时提交，拖拽中用 hook 内部 delta 做视觉偏移，
+  // 避免把「相对 pointerdown 的累计位移」叠到不断被重设的 origin 上导致加速漂移。
+  const { delta: dialogDragDelta, onPointerDown: onRawDialogPointerDown } = usePointerDrag({
+    threshold: DRAG_THRESHOLD,
+    onCommit: ({ dx, dy }) => {
+      setDialogPos(prev => ({ x: prev.x + dx, y: prev.y + dy }))
+    }
+  })
+
+  const dialogLeft = dialogPos.x + dialogDragDelta.dx
+  const dialogTop = dialogPos.y + dialogDragDelta.dy
+
+  // 表单控件交由浏览器原生——若起点是按钮/输入框/可编辑元素则不进入拖拽。
   const onDialogPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     const target = e.target as HTMLElement
 
@@ -555,66 +559,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return
     }
 
-    dragRef.current = {
-      startX: e.clientX,
-      startY: e.clientY,
-      originX: dialogPos.x,
-      originY: dialogPos.y,
-      moved: false,
-      pointerId: e.pointerId
-    }
+    onRawDialogPointerDown(e)
   }
-
-  useEffect(() => {
-    const onMove = (e: PointerEvent) => {
-      const drag = dragRef.current
-
-      if (!drag || drag.pointerId !== e.pointerId) {
-        return
-      }
-
-      const dx = e.clientX - drag.startX
-      const dy = e.clientY - drag.startY
-
-      if (!drag.moved && Math.hypot(dx, dy) < DRAG_THRESHOLD) {
-        return
-      }
-
-      drag.moved = true
-      setDialogPos({ x: drag.originX + dx, y: drag.originY + dy })
-    }
-
-    const onUp = (e: PointerEvent) => {
-      const drag = dragRef.current
-
-      if (!drag || drag.pointerId !== e.pointerId) {
-        return
-      }
-
-      dragRef.current = null
-    }
-
-    const onLeave = (e: PointerEvent) => {
-      // 拖拽过程中指针离开窗口要清掉拖拽状态，避免后续 move 拿旧的原点坐标去算位移。
-      const drag = dragRef.current
-
-      if (drag && drag.pointerId === e.pointerId) {
-        dragRef.current = null
-      }
-    }
-
-    document.addEventListener('pointermove', onMove)
-    document.addEventListener('pointerup', onUp)
-    document.addEventListener('pointercancel', onUp)
-    document.addEventListener('pointerleave', onLeave)
-
-    return () => {
-      document.removeEventListener('pointermove', onMove)
-      document.removeEventListener('pointerup', onUp)
-      document.removeEventListener('pointercancel', onUp)
-      document.removeEventListener('pointerleave', onLeave)
-    }
-  }, [])
 
   const currentList = PHASE_QUESTIONS[phase]
 
@@ -1532,11 +1478,11 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         onPointerDown={onDialogPointerDown}
         ref={containerRef}
         style={{
-          left: dialogPos.x,
+          left: dialogLeft,
           padding: '0 1.5rem',
           pointerEvents: 'auto',
           position: 'absolute',
-          top: dialogPos.y,
+          top: dialogTop,
           touchAction: 'none'
         }}
       >

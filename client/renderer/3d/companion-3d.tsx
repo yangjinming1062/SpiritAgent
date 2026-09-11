@@ -20,7 +20,7 @@ import {
   useInteractiveRegion
 } from '@/companion'
 import { log } from '@/shared/lib/log'
-import { $surfaceOpen } from '@/shared/store/surfaces'
+import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { Engine } from './Engine'
 import { fetchGlbWithCache } from './glb-opfs-cache'
@@ -141,7 +141,7 @@ export function Companion3D(): React.JSX.Element {
           return
         }
 
-        if ($surfaceOpen.get() !== null || $spatialLocomotion.get() === 'drag' || $contextMenuOpen.get()) {
+        if ($chatVisible.get() || $spatialLocomotion.get() === 'drag' || $contextMenuOpen.get()) {
           eng.character.setLookTarget(0, 0)
 
           return

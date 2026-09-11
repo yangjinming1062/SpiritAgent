@@ -24,12 +24,12 @@ import { $auth, logout } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { notify } from '@/shared/store/notifications'
 import { hydrateRunnerStatus } from '@/shared/store/runner-status'
-import { $lastSurface, $surfaceOpen, requestOpenSurface, setSurfaceRole } from '@/shared/store/surfaces'
+import { $surfaceOpen, requestOpenSurface, setSurfaceRole } from '@/shared/store/surfaces'
 import { getStrings } from '@/shared/strings'
 
 import { DeveloperOverlay } from './developer-overlay'
 import { handleCompanionEvent } from './events'
-import { handlePetInteraction, handlePokeInteraction, isPokeActive, normalizeRegion } from './interaction'
+import { handlePetInteraction, handlePokeInteraction, normalizeRegion } from './interaction'
 import { MediaViewerOverlay } from './media-viewer-overlay'
 import { speakProactive } from './proactive/proactive'
 import { ProactiveBubble } from './proactive/proactive-bubble'
@@ -37,6 +37,7 @@ import { SpriteContextMenu } from './sprite/context-menu'
 import { $contextMenuPos } from './sprite/context-menu-store'
 import { SpriteStage } from './sprite/sprite-stage'
 import { checkCompanionVoiceValidity } from './voice-validity'
+import { toggleWhisper, WhisperOverlay } from './whisper'
 
 setSurfaceRole('sprite')
 
@@ -308,15 +309,8 @@ export function CompanionRoot(): React.JSX.Element {
         return
       }
 
-      // 处于 poke 激活窗口内时累加戳击
-      if (isPokeActive()) {
-        handlePokeInteraction(rawRegion)
-
-        return
-      }
-
-      // 单击 body 切到生活空间（会话在生活空间里发生）
-      void requestOpenSurface('living')
+      // 单击 body 触发戳击反应；双击精灵才打开轻语卡片。
+      handlePokeInteraction(rawRegion)
 
       return
     }
@@ -325,7 +319,7 @@ export function CompanionRoot(): React.JSX.Element {
     setActivationOpen(true)
   }
 
-  // 双击精灵：开上次入口（plan §0）；未登录时打开激活浮层；onboarding 期间进引导。
+  // 双击精灵：切换轻语卡片；未登录时打开激活浮层；onboarding 期间进引导。
   const onDoubleTap = (): void => {
     if (!authed) {
       setActivationOpen(true)
@@ -339,7 +333,7 @@ export function CompanionRoot(): React.JSX.Element {
       return
     }
 
-    void requestOpenSurface($lastSurface.get())
+    toggleWhisper()
   }
 
   // onboarding 完成触发 3D 模型生成（base_texture 供应商是即时的——
@@ -378,6 +372,7 @@ export function CompanionRoot(): React.JSX.Element {
         }}
       />
       <ProactiveBubble />
+      <WhisperOverlay />
       {authed && <MediaViewerOverlay />}
       <NotificationStack regionRef={notificationStackRef} />
       <BootFailureOverlay />

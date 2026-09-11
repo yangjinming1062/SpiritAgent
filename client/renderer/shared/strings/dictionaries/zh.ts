@@ -1025,6 +1025,10 @@ export const dict = {
       artifactsSubtitleCount: (count: number) => `${count} 项`,
       artifactsEmpty: '这一轮还没有生成图或视频'
     }
+  },
+
+  whisper: {
+    close: '关闭轻语'
   }
 }
 

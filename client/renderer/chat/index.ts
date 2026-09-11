@@ -43,14 +43,7 @@ export {
   showMediaHint,
   submitPendingBatch
 } from './chat-store'
-export {
-  bindChatVoiceBarListeners,
-  cancelVoiceBar,
-  getCachedVoiceDuration,
-  isLivingVoiceBarActive,
-  resolveVoiceBarDuration,
-  setCachedVoiceDuration
-} from './chat-voice-bar'
+export { bindChatVoiceBarListeners, cancelVoiceBar, isLivingVoiceBarActive } from './chat-voice-bar'
 export {
   ChatContextAmbientLine,
   ChatContextCapsule,
@@ -68,11 +61,15 @@ export {
   $companionSessionId,
   $currentSessionKind,
   $currentSessionTitle,
+  $sessions,
   ensureChatSession,
+  isCompanionSession,
   openMainSession,
   switchSession
 } from './session-list-store'
 export { SlashCommandPopover } from './slash-command-popover'
-
 export { ToolChipTimeline } from './tool-chip-timeline'
+
+export { useChatInput } from './use-chat-input'
 export { useChatSubmit } from './use-chat-submit'
+export { useIsReadOnlySession } from './use-is-read-only-session'

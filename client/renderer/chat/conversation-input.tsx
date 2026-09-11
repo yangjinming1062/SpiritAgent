@@ -304,7 +304,16 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
           : 'w-full max-w-2xl mx-auto rounded-2xl border border-line-standard bg-surface-card shadow-lg backdrop-blur-xl p-2.5'
       )}
       onDragOver={onDrop ? e => e.preventDefault() : undefined}
-      onDrop={onDrop}
+      onDrop={
+        onDrop
+          ? e => {
+              // 阻止冒泡：whisper-overlay 等父容器同时挂着 onDrop 接收整层浮层的拖入，
+              // 这里消费后不必再交给外层，否则文件路径会重复入附件。
+              e.stopPropagation()
+              onDrop(e)
+            }
+          : undefined
+      }
     >
       {isReadOnlySession && <p className="text-center text-[10px] text-faint">{dict.chat.input.readOnlyHint}</p>}
 

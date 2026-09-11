@@ -135,6 +135,11 @@ contextBridge.exposeInMainWorld('spiritagent', {
       ipcRenderer.invoke(IPC.invoke.surfaceSetIgnoreMouseEvents, payload),
     toggle: (payload: DesktopSurfaceOpenPayload) => ipcRenderer.invoke(IPC.invoke.surfaceToggle, payload)
   },
+  chat: {
+    onPendingFeed: (cb: (paths: string[]) => void) => subscribe(IPC.event.chatPendingFeed, cb),
+    setPendingFeed: (paths: string[]) => ipcRenderer.invoke(IPC.invoke.chatSetPendingFeed, paths),
+    takePendingFeed: () => ipcRenderer.invoke(IPC.invoke.chatTakePendingFeed)
+  },
   skills: {
     list: () => ipcRenderer.invoke(IPC.invoke.skillsList),
     setEnabled: (payload: { enabled: boolean; name: string }) => ipcRenderer.invoke(IPC.invoke.skillSetEnabled, payload)

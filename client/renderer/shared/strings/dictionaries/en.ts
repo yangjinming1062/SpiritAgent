@@ -1069,5 +1069,9 @@ export const dict: Dictionary = {
       artifactsSubtitleCount: (count: number) => `${count} items`,
       artifactsEmpty: 'No images or videos generated this round'
     }
+  },
+
+  whisper: {
+    close: 'Close Whisper'
   }
 }

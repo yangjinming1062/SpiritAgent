@@ -43,8 +43,6 @@ let lastPokeTime = 0
 let pokeCount = 0
 let resetTimer: ReturnType<typeof setTimeout> | null = null
 let lastLlmPokeAt = 0
-let inPokeWindow = false
-let pokeWindowTimer: ReturnType<typeof setTimeout> | null = null
 
 function bucketForPokeCount(): ReactionBucket {
   if (pokeCount >= 5) {
@@ -176,12 +174,7 @@ export function handleDizzyInteraction(): void {
   reportInteractionStat('poke')
 }
 
-export function isPokeActive(): boolean {
-  return inPokeWindow
-}
-
 export function handleLongPressBodyInteraction(region?: string): void {
-  inPokeWindow = true
   // 400ms 触感/微颤反馈（spec §4.3 & §13）
   $spriteAction.set('tremor')
   handlePokeInteraction(region)
@@ -205,17 +198,6 @@ export function handlePokeInteraction(region?: string): void {
   }
 
   lastPokeTime = now
-  inPokeWindow = true
-
-  if (pokeWindowTimer) {
-    clearTimeout(pokeWindowTimer)
-  }
-
-  pokeWindowTimer = setTimeout(() => {
-    inPokeWindow = false
-    pokeCount = 0
-    pokeWindowTimer = null
-  }, 3000)
 
   if (resetTimer) {
     clearTimeout(resetTimer)

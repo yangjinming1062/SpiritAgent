@@ -13,7 +13,7 @@ import {
   moveTo,
   updateSpatialDecision
 } from '@/companion/spatial'
-import { $surfaceOpen } from '@/shared/store/surfaces'
+import { $chatVisible } from '@/shared/store/chat-visibility'
 
 const RETRY_MS = 300
 const RETRY_COUNT = 5
@@ -80,7 +80,7 @@ export async function performRitualWalk<T>(
   execute: () => Promise<T>,
   opts?: { previewClick?: boolean }
 ): Promise<T> {
-  if ($surfaceOpen.get() !== null || $screenLocked.get()) {
+  if ($chatVisible.get() || $screenLocked.get()) {
     return execute()
   }
 

@@ -7,9 +7,9 @@ import {
   type DisturbanceTier,
   pushEffectiveDisturbanceTier
 } from '@/companion/companion-store'
+import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
 import { $runnerPhase } from '@/shared/store/runner-status'
-import { $surfaceOpen } from '@/shared/store/surfaces'
 
 import { $llmAffect } from './prefs'
 
@@ -56,7 +56,7 @@ function maybeTriggerAffectCheck(idleSeconds: number, locked: boolean): void {
   if (
     !$llmAffect.get() ||
     $effectiveTier.get() !== 'autonomous' ||
-    $surfaceOpen.get() !== null ||
+    $chatVisible.get() ||
     locked ||
     idleSeconds < IDLE_THRESHOLD_SECONDS
   ) {

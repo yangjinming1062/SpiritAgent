@@ -119,6 +119,11 @@ declare global {
         setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-ignore-mouse-events']>
         onChanged: EventSubscription<'spiritagent:surface:changed'>
       }
+      chat: {
+        onPendingFeed: EventSubscription<'spiritagent:chat:pending-feed'>
+        setPendingFeed: AsyncIpc<IpcInvokeContract['spiritagent:chat:set-pending-feed']>
+        takePendingFeed: AsyncIpc<IpcInvokeContract['spiritagent:chat:take-pending-feed']>
+      }
       runnerConfig: {
         read: AsyncIpc<IpcInvokeContract['spiritagent:runner-config:read']>
         write: AsyncIpc<IpcInvokeContract['spiritagent:runner-config:write']>

@@ -1,18 +1,19 @@
 import { useStore } from '@nanostores/react'
 import { useRef } from 'react'
 
-import { $chatSessionId, $proactiveBubble, setProactiveBubble, switchSession } from '@/chat'
+import { $proactiveBubble, setProactiveBubble } from '@/chat'
 import { pendingMessages } from '@/chat'
 import { $screenLocked } from '@/companion/activity'
 import { $effectiveTier } from '@/companion/companion-store'
+import { openWhisper } from '@/companion/whisper'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
+import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { $spatialPos, $spatialScale, $viewport, computeOverlayAnchorBesideSprite } from '../spatial'
 
-// 伙伴主动消息的临时气泡：生活空间未打开时显示在伙伴身边（DESIGN §6.2）。
-// 生活空间打开时，消息已经在对话流里出现，这里不再重复显示。
-// 富媒体不进气泡——媒体送达提示也只以文本出现，点击打开生活空间陪伴对话。
+// 伙伴主动消息的临时气泡：对话入口均未打开时显示在伙伴身边（DESIGN §6.2）。
+// 生活空间 / 工作台 / 轻语任一打开时消息已在对话流里，这里不再重复显示。
+// 富媒体不进气泡——媒体送达提示也只以文本出现，点击打开轻语陪伴对话。
 //
 // 锚定在精灵身边，跟随拖拽 / 行走 / 飞行 / 聊天场所重新定位；
 // 外层在「无消息」时短路掉，保证 spatial 订阅只在气泡显示期间才跑。
@@ -26,9 +27,9 @@ export function ProactiveBubble(): React.JSX.Element | null {
   const tier = useStore($effectiveTier)
   const locked = useStore($screenLocked)
   const state = transient ?? pending.at(-1)
-  const surfaceOpen = useStore($surfaceOpen)
+  const chatVisible = useStore($chatVisible)
 
-  if (!state || surfaceOpen !== null || tier === 'still' || locked) {
+  if (!state || chatVisible || tier === 'still' || locked) {
     return null
   }
 
@@ -54,11 +55,7 @@ function ProactiveBubbleView({ text, sessionId }: { text: string; sessionId?: st
   })
 
   const handleClick = (): void => {
-    if (sessionId && sessionId !== $chatSessionId.get()) {
-      void switchSession(sessionId)
-    }
-
-    void requestOpenSurface('living', { sessionId, view: 'chat' })
+    openWhisper(sessionId)
     setProactiveBubble(null)
   }
 

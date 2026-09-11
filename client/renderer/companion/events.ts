@@ -14,6 +14,7 @@ import {
   $chatDraftFromUndo,
   $chatSessionId,
   $chatTurnInFlight,
+  $companionSessionId,
   $turnHadBubbleBreak,
   appendAssistantDelta,
   appendAssistantReasoningDelta,
@@ -53,9 +54,10 @@ import { onBackdropEvent, onJournalEvent } from '@/living'
 import { type GatewayEvent, type SlashCommandResultPayload } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
+import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
 import { notify } from '@/shared/store/notifications'
-import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
+import { requestOpenSurface } from '@/shared/store/surfaces'
 import { getStrings } from '@/shared/strings'
 import type { ChatMediaItem, SessionMessage } from '@/shared/types/spiritagent'
 
@@ -66,6 +68,7 @@ import { $companionMood } from './persona-store'
 import { speakProactive } from './proactive/proactive'
 import { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritual-walk'
 import { triggerFootGlowPulse } from './sprite/foot-glow'
+import { openWhisper } from './whisper'
 
 // click_at 虚拟目标几何的边长（px）：只为 perch 落位与指向方位提供参照，
 // 精灵会站到点击点旁而非覆盖它。
@@ -101,6 +104,19 @@ function markToolCallSeen(callId: string): boolean {
   seenToolCalls.add(callId)
 
   return true
+}
+
+// 通知跳转入口：陪伴会话进轻语，工作会话进工作台聊天。轻语只承载陪伴会话，
+// 直接 openWhisper(工作会话 id) 会被强制拉回主陪伴会话并丢掉目标内容。
+function openSessionSurface(sessionId: string): void {
+  if (sessionId === $companionSessionId.get()) {
+    openWhisper(sessionId)
+
+    return
+  }
+
+  void switchSession(sessionId)
+  void requestOpenSurface('workbench', { sessionId, view: 'chat' })
 }
 
 function releaseRemoteTool(): void {
@@ -157,7 +173,7 @@ export function handleCompanionEvent(event: GatewayEvent): void {
 
   const gw = $gateway.get()
   const isProxy = Boolean(gw && 'isProxy' in gw && gw.isProxy)
-  const shouldPlayAudio = isProxy || $surfaceOpen.get() === null
+  const shouldPlayAudio = isProxy || !$chatVisible.get()
 
   switch (event.type) {
     case 'message.start':
@@ -250,8 +266,8 @@ export function handleCompanionEvent(event: GatewayEvent): void {
         bindTrailingAssistantMessageId(payload.message_id)
       }
 
-      // 媒体已送达但生活空间收起：气泡只做轻量系统提示，点击打开生活空间查看。
-      if (payload?.media?.length && $surfaceOpen.get() === null && !screenLocked) {
+      // 媒体已送达但对话界面收起：气泡只做轻量系统提示，点击打开轻语/生活空间查看。
+      if (payload?.media?.length && !$chatVisible.get() && !screenLocked) {
         const sys = getStrings().notifications.system
         showMediaHint(payload.media.some(m => m.type === 'video') ? sys.videoReady : sys.imageReady)
       }
@@ -285,7 +301,7 @@ export function handleCompanionEvent(event: GatewayEvent): void {
       const actions = Array.isArray(payload?.actions) ? payload.actions.filter(a => typeof a === 'string') : []
       const autonomous = $effectiveTier.get() === 'autonomous'
 
-      const canAnimate = autonomous && $surfaceOpen.get() === null && !$screenLocked.get() && !isProxy
+      const canAnimate = autonomous && !$chatVisible.get() && !$screenLocked.get() && !isProxy
 
       if (canAnimate && ((emotion && emotion !== 'neutral') || actions.length > 0)) {
         maybeEmotionVfx(emotion)
@@ -667,7 +683,7 @@ export function handleCompanionEvent(event: GatewayEvent): void {
         pushProactiveMessage(text, payload?.media, payload?.message_id)
       }
 
-      if (displayText && $effectiveTier.get() !== 'still' && !$screenLocked.get() && $surfaceOpen.get() === null) {
+      if (displayText && $effectiveTier.get() !== 'still' && !$screenLocked.get() && !$chatVisible.get()) {
         if (shouldPlayAudio) {
           void speakProactive(displayText, { sessionId: payload?.session_id })
         } else {
@@ -700,16 +716,15 @@ export function handleCompanionEvent(event: GatewayEvent): void {
       if (sessionId && sessionId === $chatSessionId.get()) {
         pushMediaMessage(media)
       } else if (!$screenLocked.get()) {
-        // 正在看别的会话时用通知承载跳转；生活空间收起时用精灵气泡提示。
-        if ($surfaceOpen.get() !== null && sessionId) {
+        // 正在看别的会话或轻语时用通知承载跳转；对话界面收起时用精灵气泡提示。
+        if ($chatVisible.get() && sessionId) {
           notify({
             kind: 'success',
             message: sys.videoReady,
             action: {
               label: sys.view,
               onClick: () => {
-                void switchSession(sessionId)
-                void requestOpenSurface('living', { sessionId, view: 'chat' })
+                openSessionSurface(sessionId)
               }
             }
           })

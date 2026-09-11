@@ -1,6 +1,6 @@
 import { setProactiveBubble } from '@/chat'
 import { $effectiveTier, setSpriteState } from '@/companion/companion-store'
-import { $surfaceOpen } from '@/shared/store/surfaces'
+import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { speak } from '../tts'
 
@@ -21,8 +21,9 @@ export async function speakProactive(
   }
 
   const bubble = { text: text.trim(), sessionId: opts?.sessionId }
+  const overlayVisible = !$chatVisible.get()
 
-  if ($surfaceOpen.get() !== 'living') {
+  if (overlayVisible) {
     setProactiveBubble(bubble)
   }
 
@@ -34,8 +35,8 @@ export async function speakProactive(
     setSpriteState('idle', { force: true })
     // 让气泡在语音结束后再停留一会儿再消失。
     const linger = ok ? 4200 : 5000
-    setProactiveBubble($surfaceOpen.get() !== 'living' ? bubble : null, linger)
-  } else if ($surfaceOpen.get() !== 'living') {
+    setProactiveBubble(overlayVisible ? bubble : null, linger)
+  } else if (overlayVisible) {
     // 普通档位：停留更久，让用户在没有语音的情况下也能读完文字。
     setProactiveBubble(bubble, 8000)
   }

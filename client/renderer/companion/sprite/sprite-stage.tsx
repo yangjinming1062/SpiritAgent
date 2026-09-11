@@ -26,6 +26,7 @@ import {
   updateDragPosition
 } from '../spatial'
 import { emitVfx, Mesh2DVfxOverlay } from '../vfx'
+import { openWhisper } from '../whisper'
 
 import { FootGlow } from './foot-glow'
 import { Mesh2DGestureTracker } from './gesture-tracker'
@@ -45,6 +46,8 @@ const DOUBLE_TAP_MS = 320
 // 长按阈值（DESIGN §6.3）：按住未移动 ≥ 500ms 触发 long_press 精灵动作与粒子；
 // 拖拽一旦启动即取消等待，两条交互通道互斥。
 const LONG_PRESS_MS = 500
+// 投喂分流：纯图片/视频走轻语快速回复；混有其它文件时整批进生活空间。
+const MEDIA_DROP_PATH_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif|mp4|mov|webm|m4v|avi|mkv)$/i
 
 // 调这里：贴边趴姿的整体倾角（度）。人站在屏外（EDGE_DOCK_HIDDEN_FRACTION），
 // 绕贴边侧脚底向屏内倾——上半身斜插进屏幕，配合 gait 的扒边姿态构成「趴屏」。
@@ -80,6 +83,9 @@ export function SpriteStage({
   } | null>(null)
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // 单击延迟执行，给双击让路：否则双击会先触发一次戳击/摸头（反应、统计甚至 LLM）。
+  const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const lastTapRef = useRef(0)
   const pos = useStore($spatialPos)
@@ -154,6 +160,16 @@ export function SpriteStage({
         cancelAnimationFrame(dragRafRef.current)
         dragRafRef.current = null
       }
+
+      if (tapTimerRef.current !== null) {
+        clearTimeout(tapTimerRef.current)
+        tapTimerRef.current = null
+      }
+
+      if (longPressTimerRef.current !== null) {
+        clearTimeout(longPressTimerRef.current)
+        longPressTimerRef.current = null
+      }
     }
   }, [])
 
@@ -224,6 +240,7 @@ export function SpriteStage({
   }, [])
 
   // 文件投喂（DESIGN §6.3）：解析真实文件路径并推到 chat-dock。
+  // 纯媒体进轻语（快速看图/视频）；含非媒体文件时整批进生活空间。
   const handleDrop = (fileList: FileList | null | undefined): void => {
     const paths = resolveDroppedFiles(fileList)
 
@@ -238,10 +255,23 @@ export function SpriteStage({
     $spriteAction.set('present_right')
     setSpriteState('interacting', { durationMs: 2000 })
     clearExternalAttachment()
-    pushExternalAttachment(paths)
-    // 投喂文件时自动打开生活空间聊天的文件投递；
-    // 走主进程 surface 互斥（不能直接写 $surfaceOpen，避免与工作台冲突）。
-    void requestOpenSurface('living')
+
+    if (paths.every(path => MEDIA_DROP_PATH_RE.test(path))) {
+      // 同窗轻语：先推本地附件再打开，订阅挂载时按 nonce 消费。
+      pushExternalAttachment(paths)
+      openWhisper()
+
+      return
+    }
+
+    // 跨窗：生活空间是独立 BrowserWindow，内存 atom 互不可见——经主进程信箱转交。
+    void window.spiritagent.chat
+      .setPendingFeed(paths)
+      .then(() => requestOpenSurface('living'))
+      .catch(() => {
+        // 信箱写入失败时仍打开表面，避免用户以为投喂被吞掉却无后续。
+        void requestOpenSurface('living')
+      })
   }
 
   const gestureTrackerRef = useRef<Mesh2DGestureTracker | null>(null)
@@ -418,16 +448,38 @@ export function SpriteStage({
     const now = Date.now()
 
     if (onDoubleTap && now - lastTapRef.current < DOUBLE_TAP_MS) {
+      if (tapTimerRef.current !== null) {
+        clearTimeout(tapTimerRef.current)
+        tapTimerRef.current = null
+      }
+
       lastTapRef.current = 0
       onDoubleTap()
-    } else {
-      lastTapRef.current = now
-      // 计算归一化坐标 (nx, ny) 透传给 onTap，供 2D 路径子区域命中
-      const rect = mountRef.current?.getBoundingClientRect()
-      const nx = rect && rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5
-      const ny = rect && rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5
-      onTap?.(nx, ny)
+
+      return
     }
+
+    lastTapRef.current = now
+    // 计算归一化坐标 (nx, ny) 透传给 onTap，供 2D 路径子区域命中
+    const rect = mountRef.current?.getBoundingClientRect()
+    const nx = rect && rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5
+    const ny = rect && rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5
+
+    // 存在双击回调时，单击延迟一拍再触发；在窗口内到达的第二次抬起会取消本计时器。
+    if (onDoubleTap) {
+      if (tapTimerRef.current !== null) {
+        clearTimeout(tapTimerRef.current)
+      }
+
+      tapTimerRef.current = setTimeout(() => {
+        tapTimerRef.current = null
+        onTap?.(nx, ny)
+      }, DOUBLE_TAP_MS)
+
+      return
+    }
+
+    onTap?.(nx, ny)
   }
 
   const spriteW = getBaseSpriteWidth()

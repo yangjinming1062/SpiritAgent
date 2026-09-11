@@ -1,4 +1,4 @@
-// 渲染层入口面 store：当前哪个 surface 开着 + 用户最近一次打开的是哪个。
+// 渲染层入口面 store：当前哪个 surface 开着。
 //
 // 主进程是状态权威（surfaces.ts 持有 BrowserWindow 引用与互斥锁），本 store 只是镜像。
 // 启动期 `hydrateSurfaces` 主动拉一次 `getState`，之后订阅 `onChanged` 维持一致；
@@ -9,7 +9,6 @@ import { atom } from 'nanostores'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 
 export const $surfaceOpen = atom<null | SurfaceId>(null)
-export const $lastSurface = atom<SurfaceId>('living')
 // 工作台窗口外侧栖息坐标，由主进程合帧广播
 export const $surfaceBounds = atom<DesktopSurfaceBounds | null>(null)
 
@@ -34,7 +33,6 @@ export function isLivingProxyWindow(): boolean {
 
 registerStorageClearHandler(() => {
   $surfaceOpen.set(null)
-  $lastSurface.set('living')
   $surfaceBounds.set(null)
   $surfaceRole.set(null)
 })
@@ -53,7 +51,6 @@ export async function requestOpenSurface(surface: SurfaceId, options: OpenSurfac
 
   // 乐观回灌：把当前意图同步进 store，让按钮立即按下、UI 跟随。
   $surfaceOpen.set(surface)
-  $lastSurface.set(surface)
 
   await window.spiritagent?.surface?.open?.(payload)
 }
@@ -82,17 +79,15 @@ export function hydrateSurfaces(): () => void {
     .then(state => {
       if (state) {
         $surfaceOpen.set(state.open)
-        $lastSurface.set(state.lastSurface)
         $surfaceBounds.set(state.bounds ?? null)
       }
     })
     .catch(() => {
-      // 启动早期 main 端 IPC 尚未就绪：保留默认 store（null / 'living'），等下一次 onChanged 跟上。
+      // 启动早期 main 端 IPC 尚未就绪：保留默认 store（null），等下一次 onChanged 跟上。
     })
 
   return window.spiritagent.surface.onChanged(payload => {
     $surfaceOpen.set(payload?.open ?? null)
-    $lastSurface.set(payload?.lastSurface ?? 'living')
     $surfaceBounds.set(payload?.bounds ?? null)
   })
 }
