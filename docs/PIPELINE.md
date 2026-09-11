@@ -109,7 +109,7 @@
 
 **产物契约**：描述符包含分层 PSD 与独立姿态包；姿态包按图层资产通道签名下发，内容哈希随完整资产包更新。PSD 内为 22 语义层（face / eyewhite / irides / eyelash / eyebrow / mouth / nose / neck / ears / front hair / back hair / topwear / bottomwear / legwear / handwear / footwear 等，含肢体节段划分与遮挡补全），层名可带 `-l/-r` 侧后缀与 upper/lower/hand 节段后缀。
 
-**客户端兑现**（[client/renderer/2d/puppet/](../client/renderer/2d/puppet/)，机制细节见模块 README）：
+**客户端兑现**（[client/renderer/modules/character/rendering/2d/puppet/](../client/renderer/modules/character/rendering/2d/puppet/)，机制细节见模块 README）：
 - PSD → vendor rigger（Anime2.5DRig，MIT）语义装配；保留四肢与服装原始层级顺序；see-through 的 `-l/-r` 侧名与节段后缀在装配边界补齐 side / fade / 眼与四肢锚点。
 - 每层 alpha 轮廓 ArtMesh（增量 Delaunay）+ 头部与身体解耦：头部保留双表面控制笼（圆投影伪 3D 转头 / 六点深度曲线 / 远眼收窄 / 周边可见度）+ 次级运动（发束 4 节点弹簧链 / 裙双频 / 耳事件 / 呆毛 / 种子化自主观察段落）；身体图层走 18 骨骼层次结构与线性混合蒙皮（2-Bone 解析 IK 与解剖学限位求解）。
 - 步态双脚反向接地补偿与对侧摆臂（支撑相零脚滑接地、摆动相抛物线抬腿、350ms 平滑指数衰减停步中立）；扶边使用独立姿态图与参数化变形；拖拽通过本地速度驱动抓取点悬挂与松手回正，机制约束见木偶模块 README。
@@ -144,5 +144,5 @@
 - 3D 能力链编排：`backend/services/companion/pipeline.py::run_capability_chain`
 - 2D see-through 拆分：`backend/services/companion/seethrough/`（双供应商传输；完整资产发布由 mesh2d 编排）
 - 2D 行编排（状态机 / 落库 / WS 事件）：`backend/services/companion/mesh2d/pipeline.py::run_mesh2d_pipeline`
-- 3D 客户端兑现：`client/renderer/3d/AnimationMap.ts`
-- 2D puppet 链客户端：`client/renderer/2d/puppet/PuppetStage.tsx`（模块 README 含机制）
+- 3D 客户端兑现：`client/renderer/modules/character/rendering/3d/AnimationMap.ts`
+- 2D puppet 链客户端：`client/renderer/modules/character/rendering/2d/puppet/PuppetStage.tsx`（renderer README 含机制）

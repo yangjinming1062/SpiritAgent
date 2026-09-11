@@ -4,8 +4,10 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 
-import { initCompanionPrefsSync } from '@/companion'
-import { useSurfaceSpriteLink } from '@/companion/hooks/use-surface-sprite-link'
+import { bindPresentation } from '@/app/bootstrap/bind-presentation'
+import { SpriteBootstrap } from '@/app/bootstrap/sprite'
+import { SpriteWindow } from '@/app/windows/sprite/sprite-window'
+import { initCompanionPrefsSync } from '@/modules/character'
 import { ErrorBoundary } from '@/shared/components/error-boundary'
 import { HapticsProvider } from '@/shared/components/haptics-provider'
 import { applyNoBlurIfNeeded } from '@/shared/lib/apply-no-blur'
@@ -14,28 +16,21 @@ import { initLocaleSync } from '@/shared/store/locale'
 import { hydrateSurfaces } from '@/shared/store/surfaces'
 import { initUiThemeSync } from '@/shared/store/theme'
 
-import { CompanionRoot } from './companion/root'
-
 installClipboardShim()
 applyNoBlurIfNeeded()
+bindPresentation()
 initUiThemeSync()
 initLocaleSync()
 initCompanionPrefsSync()
 hydrateSurfaces()
 
-function SpriteSurfaceLink(): null {
-  useSurfaceSpriteLink()
-
-  return null
-}
-
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ErrorBoundary label="sprite-root">
       <HapticsProvider>
-        <SpriteSurfaceLink />
+        <SpriteBootstrap />
         <HashRouter>
-          <CompanionRoot />
+          <SpriteWindow />
         </HashRouter>
       </HapticsProvider>
     </ErrorBoundary>

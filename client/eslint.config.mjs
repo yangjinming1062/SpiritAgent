@@ -17,7 +17,7 @@ export default [
       'assets/**',
       'public/**',
       'src/**/*.js',
-      'renderer/2d/puppet/vendor/**',
+      'renderer/modules/character/rendering/2d/puppet/vendor/**',
       '*.config.*'
     ]
   },
@@ -140,8 +140,10 @@ export default [
       }
     }
   },
+  // —— 渲染层模块边界：跨模块只走公共 barrel，业务模块互不导入，shared 不反向依赖 ——
+
   {
-    files: ['renderer/companion/**/*.{ts,tsx}'],
+    files: ['renderer/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
     rules: {
       'no-restricted-imports': [
@@ -149,8 +151,16 @@ export default [
         {
           patterns: [
             {
-              group: ['@/2d/*', '@/3d/*', '@/chat/*', '@/living/*', '@/workbench/*', '@/onboarding/*'],
-              message: 'cross-module imports must go through the target barrel (@/2d, @/3d, @/chat, @/living, @/workbench, @/onboarding).'
+              group: [
+                '@/modules/conversation/*',
+                '@/modules/character/*',
+                '@/modules/speech/*',
+                '@/modules/media/*',
+                '@/modules/memory/*',
+                '@/modules/room/*',
+                '@/modules/character/rendering/*'
+              ],
+              message: '跨模块只能经目标模块的公共 barrel（@/modules/*；character 渲染域为 @/modules/character/rendering/2d、/3d）；模块内部用相对路径。'
             }
           ]
         }
@@ -158,7 +168,8 @@ export default [
     }
   },
   {
-    files: ['renderer/living/**/*.{ts,tsx}'],
+    // app 组合层：character 深路径禁止，但渲染域的两个公共入口（rendering/2d、rendering/3d）放行。
+    files: ['renderer/app/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
     rules: {
       'no-restricted-imports': [
@@ -166,12 +177,18 @@ export default [
         {
           patterns: [
             {
-              group: ['@/workbench/*', '../workbench/*'],
-              message: 'living must not import workbench — the two surfaces are independent.'
+              group: [
+                '@/modules/conversation/*',
+                '@/modules/speech/*',
+                '@/modules/media/*',
+                '@/modules/memory/*',
+                '@/modules/room/*'
+              ],
+              message: '跨模块只能经目标模块的公共 barrel（@/modules/*）。'
             },
             {
-              group: ['@/companion/*', '../companion/*'],
-              message: 'cross-module imports must go through the companion barrel (@/companion).'
+              regex: '^@/modules/character/(?!rendering/(2d|3d)$).+',
+              message: 'character 只经公共 barrel（@/modules/character）与渲染域入口（rendering/2d、/3d）访问。'
             }
           ]
         }
@@ -179,7 +196,8 @@ export default [
     }
   },
   {
-    files: ['renderer/workbench/**/*.{ts,tsx}'],
+    // 业务模块互不导入；需要两个模块一起完成的事情进 app/workflows（client/README.md §3）。
+    files: ['renderer/modules/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
     rules: {
       'no-restricted-imports': [
@@ -187,30 +205,206 @@ export default [
         {
           patterns: [
             {
-              group: ['@/living/*', '../living/*'],
-              message: 'workbench must not import living — the two surfaces are independent.'
-            }
-          ]
-        }
-      ]
-    }
-  },
-  {
-    files: ['renderer/chat/**/*.{ts,tsx}'],
-    ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@/living/*', '@/workbench/*', '../living/*', '../workbench/*'],
-              message: 'chat must not import either surface — chat is shared across both.'
+              group: ['@/app', '@/app/*', '../app', '../app/*'],
+              message: '业务模块不得反向依赖应用层。'
             },
             {
-              group: ['@/companion', '@/companion/*', '../companion/*'],
-              message:
-                'chat must not import the companion layer — use @/shared/presentation-ports (companion binds the implementation).'
+              group: ['@/modules/conversation', '@/modules/character', '@/modules/speech', '@/modules/media'],
+              message: '业务模块互不导入；跨模块协作由 app 层装配。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    // 例外：气泡内媒体卡消费 media 的展示原语与媒体源解析（只读 UI 基元）。
+    files: ['renderer/modules/conversation/**/*.{ts,tsx}'],
+    ignores: ['**/node_modules/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/app', '@/app/*', '../app', '../app/*'],
+              message: '业务模块不得反向依赖应用层。'
+            },
+            {
+              group: ['@/modules/character', '@/modules/speech'],
+              message: 'conversation 不导入形象/语音模块：形象与语音经呈现端口及 voice-link 接缝（client/README.md §3）。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['renderer/modules/character/**/*.{ts,tsx}'],
+    ignores: ['**/node_modules/**', '**/character/rendering/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/app', '@/app/*', '../app', '../app/*'],
+              message: '业务模块不得反向依赖应用层。'
+            },
+            {
+              group: ['@/modules/conversation', '@/modules/speech', '@/modules/media'],
+              message: '业务模块互不导入；跨模块协作由 app 层装配。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['renderer/modules/speech/**/*.{ts,tsx}'],
+    ignores: ['**/node_modules/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/app', '@/app/*', '../app', '../app/*'],
+              message: '业务模块不得反向依赖应用层。'
+            },
+            {
+              group: ['@/modules/conversation', '@/modules/character', '@/modules/media'],
+              message: '业务模块互不导入；跨模块协作由 app 层装配。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    // character 渲染域（2d/3d）：可消费 character barrel 与 speech 口型振幅，禁入应用层与会话。
+    files: ['renderer/modules/character/rendering/**/*.{ts,tsx}'],
+    ignores: ['**/node_modules/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/app', '@/app/*', '../app', '../app/*'],
+              message: '渲染层不得依赖应用层。'
+            },
+            {
+              group: ['@/modules/conversation', '@/modules/media'],
+              message: '渲染域只消费 @/modules/character 与 @/modules/speech。'
+            },
+            {
+              group: ['@/modules/character/*'],
+              message: '渲染域访问 character 只经其公共 barrel。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['renderer/modules/media/**/*.{ts,tsx}'],
+    ignores: ['**/node_modules/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/app', '@/app/*', '../app', '../app/*'],
+              message: '业务模块不得反向依赖应用层。'
+            },
+            {
+              group: ['@/modules/conversation', '@/modules/character', '@/modules/speech'],
+              message: '业务模块互不导入；跨模块协作由 app 层装配。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    // 运行时与工作流不得反向导入窗口组件；窗口只经入口与 app/bootstrap 装配。
+    files: ['renderer/app/runtime/**/*.{ts,tsx}', 'renderer/app/workflows/**/*.{ts,tsx}'],
+    ignores: ['**/node_modules/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: [
+                '@/app/windows',
+                '@/app/windows/*',
+                '../windows',
+                '../windows/*',
+                '@/modules/conversation/*',
+                '@/modules/speech/*',
+                '@/modules/media/*',
+                '@/modules/memory/*',
+                '@/modules/room/*'
+              ],
+              message: '运行时与工作流不得反向导入窗口组件。'
+            },
+            {
+              regex: '^@/modules/character/(?!rendering/(2d|3d)$).+',
+              message: 'character 只经公共 barrel 与渲染域入口访问。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['renderer/app/windows/living/**/*.{ts,tsx}'],
+    ignores: ['**/node_modules/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/app/windows/sprite', '@/app/windows/sprite/*', '@/app/windows/workbench', '@/app/windows/workbench/*'],
+              message: '窗口体验互不依赖；共享能力下沉 modules 或经 app/workflows。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['renderer/app/windows/workbench/**/*.{ts,tsx}'],
+    ignores: ['**/node_modules/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/app/windows/sprite', '@/app/windows/sprite/*', '@/app/windows/living', '@/app/windows/living/*'],
+              message: '窗口体验互不依赖；共享能力下沉 modules 或经 app/workflows。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['renderer/app/windows/sprite/**/*.{ts,tsx}'],
+    ignores: ['**/node_modules/**'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['@/app/windows/living', '@/app/windows/living/*', '@/app/windows/workbench', '@/app/windows/workbench/*'],
+              message: '窗口体验互不依赖；共享能力下沉 modules 或经 app/workflows。'
             }
           ]
         }
@@ -226,23 +420,8 @@ export default [
         {
           patterns: [
             {
-              group: [
-                '@/companion',
-                '@/companion/*',
-                '@/2d',
-                '@/2d/*',
-                '@/3d',
-                '@/3d/*',
-                '@/chat',
-                '@/chat/*',
-                '@/living',
-                '@/living/*',
-                '@/workbench',
-                '@/workbench/*',
-                '@/onboarding',
-                '@/onboarding/*'
-              ],
-              message: 'shared must not import feature modules.'
+              group: ['@/app', '@/app/*', '@/modules/*'],
+              message: 'shared 不得依赖应用层、业务模块与渲染实现。'
             }
           ]
         }
@@ -255,13 +434,9 @@ export default [
     // SPA 回退的 index.html。后端数据与字节一律走主进程桥（api / apiAsset /
     // apiAssetBuffer / apiAssetModelUrl）。确需直连处逐行 eslint-disable 写明 URL 来源。
     files: [
-      'renderer/companion/**/*.{ts,tsx}',
-      'renderer/living/**/*.{ts,tsx}',
-      'renderer/workbench/**/*.{ts,tsx}',
-      'renderer/chat/**/*.{ts,tsx}',
-      'renderer/onboarding/**/*.{ts,tsx}',
-      'renderer/2d/**/*.{ts,tsx}',
-      'renderer/3d/**/*.{ts,tsx}',
+      'renderer/app/**/*.{ts,tsx}',
+      'renderer/modules/**/*.{ts,tsx}',
+      'renderer/modules/character/rendering/**/*.{ts,tsx}',
       'renderer/shared/**/*.{ts,tsx}'
     ],
     rules: {

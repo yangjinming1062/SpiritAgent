@@ -1,8 +1,0 @@
-export { ActivationOverlay } from './activation/activation-overlay'
-export { $desktopBoot } from './boot-store'
-export { BootFailureOverlay } from './boot/boot-failure-overlay'
-export { useGatewayBoot } from './boot/use-gateway-boot'
-export { EggStage } from './egg-stage'
-export { playOnboardingAudio } from './onboarding-audio'
-export { HistoryGallery, PortraitLightbox, useNaturalAspectRatio } from './onboarding-components'
-export { OnboardingFlow } from './onboarding-flow'

@@ -15,10 +15,12 @@
 
 - `main/` 是可信主进程，持有凭据、窗口与 Runner 生命周期；`renderer/` 承载各窗口体验；`shared/ipc/` 定义跨进程通道、载荷与运行时常量。
 - 主进程由 tsup 构建，渲染层由 Vite 构建；preload 格式约束见 §4。
-- 渲染层依赖：任意特性 → `shared/`；`companion/` 与 `living/` 双向（companion 依赖 living 的日记/房间事件与表面入口；living 作为设置与浏览表面消费 companion 的 persona / wardrobe / spatial 公开状态）。`companion/` 另可依赖 `2d/`、`3d/`、`chat/`、`workbench/`、`onboarding/`。`shared/` 不反向依赖特性。`chat/` 不依赖形象层：形象状态、TTS 与媒体查看器经 `shared/presentation-ports` 注入，companion 启动时绑定实现。
-- `companion/whisper/` 是精灵窗内的轻语卡片浮层（不是新窗口），与 `chat/` 对接；详见 §4 关键设计决策。
-- `living/` 与 `workbench/` 互不依赖；共享的 `chat/` 不依赖任一表面，避免对话层绑定窗口。
-- 窗口入口直接装配对应根组件；特性间调用只走公共 barrel，内部实现不导出。ESLint 对跨模块导入实施检查（含 living↔companion 必须走 barrel）。
+- 渲染层分四类：`app/`（应用组合层——bootstrap 装配、runtime 网关路由与宿主分发、workflows 跨模块流程、windows 三窗口体验与 onboarding 引导）、`modules/`（可复用业务能力——conversation 会话、character 角色呈现（含 `rendering/2d`、`rendering/3d` 渲染域）、speech 语音、media 媒体、memory 记忆、room 房间）、`shared/`（无业务共享代码）、窗口入口（根目录 `main.tsx`、`sprite-entry.tsx` 与 `app/windows/*/*-entry.tsx`，保持薄入口）。跨进程契约仍在 `shared/ipc/`（`@ipc`），与 renderer 内的 `shared/` 职责不同。
+- 依赖规则：业务模块互不导入、不依赖 app（例外经 ESLint 白名单：conversation → media 的展示原语只读；character 渲染域可订阅 speech 口型振幅）；app → modules 只走公共 barrel；runtime / workflows 不得反向导入 windows；shared 不反向依赖任何业务。
+- 会话与形象 / 语音的接缝是注入式端口：形象状态、TTS 与媒体查看器经 `shared/presentation-ports`；语音条播放状态与控制经 `modules/conversation/voice-link.ts`。实现由 `app/bootstrap/bind-presentation.ts` 在各窗口入口渲染前显式绑定（不依赖 barrel 副作用导入顺序）。角色表现命令当前仍经端口下达，收敛为表现输入属后续批次。
+- 网关事件由 `app/runtime/gateway-event-router.ts` 只做分派与守卫（鉴权 pending 丢弃、session_id 闸门、代理窗过滤），状态更新按能力在 `app/runtime/handlers/` 组织：会话回合、角色 / 形象 / 衣柜、通知投递与宿主专属 tool.call 分发（含重放去重与仪式行走）。
+- `app/windows/sprite/whisper/` 是精灵窗内的轻语卡片浮层（不是新窗口），与 conversation 对接；详见 §4 关键设计决策。
+- 窗口入口直接装配对应根组件（`app/windows/*` 的 entry）；生活空间与工作台互不依赖。ESLint 对模块边界实施检查。
 
 ## 4. 关键设计决策
 
@@ -62,7 +64,7 @@
 - 玻璃采样：生活空间直接模糊房间图后覆 tint，因为兄弟层 backdrop-filter 不可靠；工作台采样桌面且底板更不透明。降低透明度偏好或集显触发 `.no-blur`，关滤镜并提高底板不透明度，避免大面积合成成本。
 - 渲染回退：WebGPU → 内置 WebGL2 节点后端 → 经典 WebGLRenderer → 产品兜底。经典回退必须新建 canvas，已取 WebGPU 上下文的 canvas 无法再取 WebGL2；模型加载等待异步引擎就绪，环境贴图按渲染器类型生成。
 - GPU 默认低功耗，避免小型精灵持续唤醒独显；引擎自管活跃、空闲、休眠与停止调度，不依赖 Three.js 固定循环。
-- 材质加载保留 GLB 原生贴图，自定义贴图失败回退原生材质；拖拽速度驱动物理倾角和松手回正，基准尺寸随屏幕高度适配。2D 机械反馈见 [puppet README](renderer/2d/puppet/README.md)。
+- 材质加载保留 GLB 原生贴图，自定义贴图失败回退原生材质；拖拽速度驱动物理倾角和松手回正，基准尺寸随屏幕高度适配。2D 机械反馈见 [renderer 架构指南](renderer/README.md)。
 - 下载失败与生成失败分别提供重试入口，水合保持同一分流，避免错误触发付费重生成；契约见 [PROTOCOL §1.2](../docs/PROTOCOL.md)。
 - 开发 CSP 允许本地 Vite Fast Refresh 所需的内联脚本和 eval，生产保持严格策略；混用会造成开发白屏或放松生产脚本边界。
 
@@ -70,7 +72,7 @@
 
 - 对后端 / Runner：生命周期、事件、配置、安全与凭据见 [PROTOCOL](../docs/PROTOCOL.md)。
 - 对后端：3D / 2D 产物与动画映射见 [PIPELINE](../docs/PIPELINE.md)，打扰档位权威见 [ARCHITECTURE §5.1](../docs/ARCHITECTURE.md)。
-- 渲染内部：状态机与空间行为见 [companion README](renderer/companion/README.md)，IPC 共享定义见 §3。
+- 渲染内部：架构、模块契约与收敛路径见 [renderer README](renderer/README.md)，IPC 共享定义见 §3。
 - Skills 平台过滤：双端翻译约束见 [Installer §2](../installer/README.md)。
 
 ## 6. 已知限制

@@ -126,16 +126,16 @@
 
 **事件投递范围（session_id 语义）**：session_id 就是 conversation_id 的字符串形式（见 §6）。聊天会话事件（message.* / tool.start / tool.complete / error）必带信封级 session_id、只属于该会话，渲染端必须按 session_id 过滤；outbox 事件（上表）不带信封级 session_id，投递到该用户的 desktop、与打开哪个会话无关，照常处理。`companion.message`、`system.notification` 与 `video_gen.completed` 可在载荷内部携带 session_id，渲染端据此决定增量落卡或提供跳转，不将它用作 outbox 路由闸门。
 
-**`tool.call` 是用户级设备指令，不是会话事件**（改此处需同步：backend services/chat/tool_dispatch.py 与 services/gateway/emitter.py、client companion/events.ts、本文档）：它不渲染进任何气泡、不参与会话状态机，只按 `call_id`（§6 定义的唯一 Future Key）与 `tool.result` 配对，因此**不带信封级 session_id**、由后端直接推给该用户的 desktop 派发器。载荷含 `{name, args, call_id, session_id, headless?}`，其中 `session_id` 是**信息字段而非路由闸门**；交互式回合下客户端用它判断可见会话并自持精灵工作态，`headless=true` 时照常执行设备指令但不展示工作态、工具流或打字态。IM、主动 Cron、普通自动化与子 agent 的无头回合统一使用该标志，不依赖会话类型猜测可见性。
+**`tool.call` 是用户级设备指令，不是会话事件**（改此处需同步：backend services/chat/tool_dispatch.py 与 services/gateway/emitter.py、client app/runtime/gateway-event-router.ts、本文档）：它不渲染进任何气泡、不参与会话状态机，只按 `call_id`（§6 定义的唯一 Future Key）与 `tool.result` 配对，因此**不带信封级 session_id**、由后端直接推给该用户的 desktop 派发器。载荷含 `{name, args, call_id, session_id, headless?}`，其中 `session_id` 是**信息字段而非路由闸门**；交互式回合下客户端用它判断可见会话并自持精灵工作态，`headless=true` 时照常执行设备指令但不展示工作态、工具流或打字态。IM、主动 Cron、普通自动化与子 agent 的无头回合统一使用该标志，不依赖会话类型猜测可见性。
 
 **设备指令的重复投递**：`tool.call` 与其它事件一样进重放缓冲，WS 断连重连会重发。本机副作用不可撤销（删文件、跑命令），因此**客户端必须按 `call_id` 去重**，重复帧直接丢弃——后端的 `resolve_future` 只会丢弃迟到的结果，拦不住已经发生的副作用。
 
-**对话内生成媒体**（改此处需同步：backend 工具与聊天持久化、backend/README.md、client 渲染层与 client/renderer/companion/README.md、DESIGN §6）：
+**对话内生成媒体**（改此处需同步：backend 工具与聊天持久化、backend/README.md、client 渲染层与 client/renderer/README.md、DESIGN §6）：
 - 聊天回合经图像/视频生成工具产出的媒体，随对话完成事件以 media 数组（元素为 image / video 类型 + 本服务媒体 URL）下发，并持久化在对应助手消息行；后台完成的视频另以 status_media 送达行落库，实时事件与历史水合看到同一形状。
 - 渲染端在**对话窗**以媒体卡内联预览、点击放大播放；精灵气泡只承载轻量文本，收到媒体时仅提示「点击查看」并支持点击打开对话窗（必要时切到目标会话）——富媒体统一在对话窗展示，不进气泡。
 - 精灵画/拍自己（生成工具 subject='self'）：身份参考由后端自动注入**半身头像**（种子图编排与参照基准见 [docs/PIPELINE.md §1](PIPELINE.md)）。
 
-**用户侧聊天附件**（改此处需同步：backend 网关校验与附件生命周期模块、backend/README.md、client 附件 UX 与 client/renderer/companion/README.md、DESIGN §6.1）：
+**用户侧聊天附件**（改此处需同步：backend 网关校验与附件生命周期模块、backend/README.md、client 附件 UX 与 client/renderer/README.md、DESIGN §6.1）：
 - 图片附件以 `data:image/*` data URL 随 `prompt.submit` 的 attachments 直发（不落盘）；视频附件因 base64 远超 WS 单帧上限，客户端必须先经 `POST /api/media/videos`（multipart：file + session_id，容器白名单 mp4/mov）换取附件 URL，再以 `{"type": "video", "file_url": ...}` 提交——附件 URL 只认本会话（跨会话引用直接拒绝），绝对形态仅认 `public_base_url` 前缀（第三方绝对 URL 会被拒绝，防止借供应商发任意请求）。
 - 服务端点 `GET /api/media/videos/{session_id}/{file_id}` 公开（file_id 为不可猜测 token；公网模式下供应商需直接拉取）。
 - 供应商消费分双模式，由后端 `public_base_url` 配置决定：留空时构造请求前把最近 2 个内联为 data URL（单文件 50MB 上限）；配置可公网访问地址后以绝对 URL 直发供应商自拉（单文件上限=会话配额 512MB，且该地址必须真能被供应商服务器访问）。
@@ -263,7 +263,7 @@ REST 端点异常路径返回统一结构：error（短码）+ reason（分类�
 
 **渠道能力差异**（产品语义级）：微信 iLink 为 reply-only（伙伴**不能**主动发起微信消息，回复须回显入站 context_token，过期后等用户下一条消息刷新）。
 
-**改此处需同步**：backend services/channels 与 modules/channels、backend/README.md、client 通道设置页与只读守卫（client/renderer/companion/README.md）、DESIGN.md、ARCHITECTURE.md §5.4。
+**改此处需同步**：backend services/channels 与 modules/channels、backend/README.md、client 通道设置页与只读守卫（client/renderer/README.md）、DESIGN.md、ARCHITECTURE.md §5.4。
 
 **覆盖恢复维护边界**：管理员执行用户备份 `overwrite` 恢复时，后端先把该用户标记为维护中；新 REST/WS 操作返回稍后重试，已进入的 REST 操作须退出，网关会话、IM 绑定、Cron 回合及可中断的整理任务须取消并等待，已经提交的付费生成任务须等待自然落地，之后才允许清表与写入。导入成功或回滚后都要清除会话、主动状态、交互统计与调度节流等旧内存镜像，再从数据库真源恢复 IM 绑定；客户端后续重连必须重新挂载会话，不得沿用已删除的 conversation ID。
 
@@ -333,12 +333,12 @@ REST 端点异常路径返回统一结构：error（短码）+ reason（分类�
 
 **改一处需同步**：
 - 命令注册表 / 元数据 → [backend/services/chat/slash_commands.py](../backend/services/chat/slash_commands.py) + [client/renderer/shared/lib/slash-commands.ts](../client/renderer/shared/lib/slash-commands.ts) 镜像
-- 拦截逻辑 / 弹层 → [client/renderer/chat/chat-slash.ts](../client/renderer/chat/chat-slash.ts) + [client/renderer/chat/slash-command-popover.tsx](../client/renderer/chat/slash-command-popover.tsx)
+- 拦截逻辑 / 弹层 → [client/renderer/modules/conversation/chat-slash.ts](../client/renderer/modules/conversation/chat-slash.ts) + [client/renderer/modules/conversation/slash-command-popover.tsx](../client/renderer/modules/conversation/slash-command-popover.tsx)
 - 错误码 → [backend/components/constants.py](../backend/components/constants.py) + [backend/components/__init__.py](../backend/components/__init__.py) + 客户端 `slashErrorToMessage`（chat-dock.tsx）
 - 状态 pill 渲染 → `status_command_result` 加入 `chat-dock-message-bubble.tsx` 的 status 渲染分支
-- 自动压缩事件 → [backend/services/chat/orchestrator.py](../backend/services/chat/orchestrator.py)（orchestrator 命中阈值后 push）+ [backend/services/gateway/emitter.py](../backend/services/gateway/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/companion/events.ts](../client/renderer/companion/events.ts)（`compress.completed` switch）+ `chat-dock-message-bubble.tsx` 的 `COMPRESS_CARD_SUBTYPES` 折叠卡片分支 + 本文档 §1.3
-- 活路径消息 id 回写 → [backend/services/chat/persistence.py](../backend/services/chat/persistence.py) + [backend/services/chat/orchestrator.py](../backend/services/chat/orchestrator.py)（`message.persisted`）+ [backend/services/gateway/emitter.py](../backend/services/gateway/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/companion/events.ts](../client/renderer/companion/events.ts) + `chat-store.ts` 绑定 + 本文档 §1.3
-- 推理过程事件 → [backend/services/chat/streaming.py](../backend/services/chat/streaming.py) + [backend/services/chat/persistence.py](../backend/services/chat/persistence.py) + [backend/services/gateway/emitter.py](../backend/services/gateway/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/companion/events.ts](../client/renderer/companion/events.ts) + `chat-store.ts` + 工作台气泡 + 本文档 §1.3
+- 自动压缩事件 → [backend/services/chat/orchestrator.py](../backend/services/chat/orchestrator.py)（orchestrator 命中阈值后 push）+ [backend/services/gateway/emitter.py](../backend/services/gateway/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/app/runtime/gateway-event-router.ts](../client/renderer/app/runtime/gateway-event-router.ts)（`compress.completed` switch）+ `chat-dock-message-bubble.tsx` 的 `COMPRESS_CARD_SUBTYPES` 折叠卡片分支 + 本文档 §1.3
+- 活路径消息 id 回写 → [backend/services/chat/persistence.py](../backend/services/chat/persistence.py) + [backend/services/chat/orchestrator.py](../backend/services/chat/orchestrator.py)（`message.persisted`）+ [backend/services/gateway/emitter.py](../backend/services/gateway/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/app/runtime/gateway-event-router.ts](../client/renderer/app/runtime/gateway-event-router.ts) + `chat-store.ts` 绑定 + 本文档 §1.3
+- 推理过程事件 → [backend/services/chat/streaming.py](../backend/services/chat/streaming.py) + [backend/services/chat/persistence.py](../backend/services/chat/persistence.py) + [backend/services/gateway/emitter.py](../backend/services/gateway/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/app/runtime/gateway-event-router.ts](../client/renderer/app/runtime/gateway-event-router.ts) + `chat-store.ts` + 工作台气泡 + 本文档 §1.3
 
 **手动撤回不走 slash 命令**：消息级粒度的「撤回」由用户在历史用户气泡旁点击撤回图标触发，直接走 `session.undo_to_message` RPC（slash 命令无法承载消息级粒度 + 需要服务端精确路由到具体 source_message_id）。详见 §1.2 与 §1.3 的 `message.deleted` 事件。
 

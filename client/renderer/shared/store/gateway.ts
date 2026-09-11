@@ -33,7 +33,7 @@ export function setPrimaryGateway(gateway: SpiritAgentGateway | SpiritAgentGatew
 }
 
 // 关闭当前网关（同步拆除 WS，避免 401 触发的登出要等 TCP 超时）并清空 atom。
-// `auth.ts::logout` 和 `use-gateway-boot.ts` 的清理都依赖这一对操作；
+// `auth.ts::logout` 和 app/runtime/host-runtime.ts 的清理都依赖这一对操作；
 // 集中在一处可保证「先关后清」这一顺序永远不会被拆开。
 export function tearDownPrimaryGateway(): void {
   $gateway.get()?.close?.()

@@ -20,13 +20,6 @@
     "paths": {
       "@/*": ["./renderer/*"],
       "@shared/*": ["./renderer/shared/*"],
-      "@companion/*": ["./renderer/companion/*"],
-      "@2d/*": ["./renderer/2d/*"],
-      "@3d/*": ["./renderer/3d/*"],
-      "@chat/*": ["./renderer/chat/*"],
-      "@living/*": ["./renderer/living/*"],
-      "@workbench/*": ["./renderer/workbench/*"],
-      "@onboarding/*": ["./renderer/onboarding/*"],
       "@ipc/contracts": ["./shared/ipc/contracts"],
       "@runtime": ["./shared/runtime"]
     }

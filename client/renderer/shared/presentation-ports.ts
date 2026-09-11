@@ -42,6 +42,8 @@ export interface PresentationPorts {
   ) => Promise<string>
   setSpriteState: (name: SpriteStateName, options?: SetSpriteStateOptions) => void
   speakChatMessage: (text: string, voice?: string, onDone?: () => void, speechStyle?: SpeechStyle) => Promise<boolean>
+  /** 预制台词的合成+播放（内容寻址落盘缓存）：角色反应池经此送达，避免模块直连语音引擎。 */
+  speakScripted: (text: string, voice?: string, context?: string) => Promise<boolean>
   stopAudio: () => void
   stopSpeaking: () => void
 }
