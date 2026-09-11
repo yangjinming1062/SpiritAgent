@@ -40,7 +40,6 @@ export function isCompanionSession(session: null | SessionInfo | undefined): boo
 export const $companionSessionId = atom<string | null>(null)
 export const $sessions = atom<SessionInfo[]>([])
 export const $sessionsLoading = atom(false)
-export const $sessionListOpen = atom(false)
 export const $sessionSort = atom<SessionSort>(parseSessionSort(storedString(SESSION_SORT_KEY)))
 export const $sessionSearch = atom('')
 export const $searchResults = atom<SessionInfo[]>([])
@@ -114,15 +113,6 @@ export async function ensureChatSession(): Promise<string> {
   return sessionId
 }
 
-export function setSessionListOpen(open: boolean): void {
-  $sessionListOpen.set(open)
-
-  if (open) {
-    void fetchSessions()
-    void fetchArchived()
-  }
-}
-
 export function setSessionSort(sort: SessionSort): void {
   if (sort === $sessionSort.get()) {
     return
@@ -130,10 +120,7 @@ export function setSessionSort(sort: SessionSort): void {
 
   $sessionSort.set(sort)
   persistString(SESSION_SORT_KEY, sort)
-
-  if ($sessionListOpen.get()) {
-    void fetchSessions()
-  }
+  void fetchSessions()
 }
 
 export async function fetchSessions(): Promise<void> {

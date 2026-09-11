@@ -28,7 +28,6 @@ export interface RailArtifact {
   url: string
   /** 来自哪条消息；用于追溯 */
   messageId: string
-  timestamp?: number
 }
 
 export const $isRailOpen = atom<boolean>(true)
