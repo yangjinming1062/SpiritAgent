@@ -1,3 +1,4 @@
+import { bindChatVoiceBarListeners } from '@/chat'
 import { bindPresentationPorts } from '@/shared/presentation-ports'
 
 import { $screenLocked } from './activity'
@@ -25,3 +26,5 @@ bindPresentationPorts({
   stopAudio,
   stopSpeaking
 })
+
+bindChatVoiceBarListeners()

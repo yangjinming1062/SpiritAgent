@@ -44,6 +44,7 @@ export {
   submitPendingBatch
 } from './chat-store'
 export {
+  bindChatVoiceBarListeners,
   cancelVoiceBar,
   getCachedVoiceDuration,
   isLivingVoiceBarActive,

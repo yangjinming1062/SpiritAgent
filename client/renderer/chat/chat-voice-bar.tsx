@@ -457,27 +457,33 @@ export function cancelVoiceBar(): void {
   }
 }
 
-presentationPorts().$screenLocked.listen(locked => {
-  if (locked) {
-    cancelVoiceBar()
-  }
-})
+// 模块顶层访问 presentationPorts 会撞上「chat 先于 companion 加载」的加载顺序：
+// 这几个 listen 在 presentation-bind 绑定后由 companion/presentation-bind 显式注册。
+export function bindChatVoiceBarListeners(): void {
+  const ports = presentationPorts()
 
-presentationPorts().$companionVoiceId.listen(() => {
-  cancelVoiceBar()
-
-  for (const [id, body] of Object.entries($chatMessageBodies.get())) {
-    if (body?.voiceDuration != null) {
-      updateMessageVoice(id, { voiceDuration: undefined, voiceStatus: undefined })
+  ports.$screenLocked.listen(locked => {
+    if (locked) {
+      cancelVoiceBar()
     }
-  }
-})
+  })
 
-presentationPorts().$responseMode.listen(mode => {
-  if (mode !== 'voice') {
+  ports.$companionVoiceId.listen(() => {
     cancelVoiceBar()
-  }
-})
+
+    for (const [id, body] of Object.entries($chatMessageBodies.get())) {
+      if (body?.voiceDuration != null) {
+        updateMessageVoice(id, { voiceDuration: undefined, voiceStatus: undefined })
+      }
+    }
+  })
+
+  ports.$responseMode.listen(mode => {
+    if (mode !== 'voice') {
+      cancelVoiceBar()
+    }
+  })
+}
 
 registerStorageClearHandler(() => {
   memoryDurationCache = null
