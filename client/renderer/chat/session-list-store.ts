@@ -3,6 +3,7 @@ import { atom, computed } from 'nanostores'
 import {
   $chatDraftFromUndo,
   $chatSessionId,
+  $companionSessionId,
   hydrateChatMessages,
   hydrateSessionSettings,
   resetChatMessages,
@@ -37,7 +38,6 @@ export function isCompanionSession(session: null | SessionInfo | undefined): boo
   return session.system_preset_id === 'companion' || session.kind === 'companion'
 }
 
-export const $companionSessionId = atom<string | null>(null)
 export const $sessions = atom<SessionInfo[]>([])
 export const $sessionsLoading = atom(false)
 export const $sessionSort = atom<SessionSort>(parseSessionSort(storedString(SESSION_SORT_KEY)))

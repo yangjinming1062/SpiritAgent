@@ -11,6 +11,7 @@ export {
   $chatSessionKind,
   $chatStreamingTick,
   $chatTurnInFlight,
+  $companionSessionId,
   $lastAssistantStreaming,
   $pendingPromptBatch,
   $proactiveBubble,
@@ -58,7 +59,6 @@ export { ConversationSurface } from './conversation-surface'
 export { InlineMedia } from './inline-media'
 export { consumePendingMessages, pendingMessages, rememberPendingMessage } from './pending-messages'
 export {
-  $companionSessionId,
   $currentSessionKind,
   $currentSessionTitle,
   $sessions,

@@ -17,7 +17,6 @@ import { speechText } from '../../shared/speech-text'
 
 import { chatDisplayText } from './chat-display-text'
 import { cancelVoiceBar, getCachedVoiceDuration, isLivingVoiceBarActive, synthesizeVoiceBar } from './chat-voice-bar'
-import { $companionSessionId } from './session-list-store'
 
 export interface ChatMessageListItem {
   id: string
@@ -60,6 +59,8 @@ export const $chatMessageBodies = map<Record<string, ChatMessageBody>>({})
 export const $lastAssistantStreaming = atom<boolean>(false)
 export const $chatStreamingTick = atom<number>(0)
 export const $chatSessionId = atom<string | null>(storedString(CHAT_SESSION_ID_KEY))
+// 与 $chatSessionId 同层，避免 session-list-store 反向依赖 chat-store 造成循环初始化。
+export const $companionSessionId = atom<string | null>(null)
 // IM 守卫与语音入口的权威 kind 源：写值由 hydrate 把服务端 info.kind 注入。
 // 与 PROTOCOL §2.1 Conversation.kind 对齐：special / standard / im。
 export type ChatSessionKind = 'im' | 'special' | 'standard'
