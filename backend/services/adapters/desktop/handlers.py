@@ -1042,6 +1042,9 @@ def _register_session_handlers(
     async def session_resume(params: dict) -> dict:
         stored_id = _require_str(params, "session_id")
         last_seq = params.get("last_seq")
+        after_id = params.get("after_id")
+        if after_id is not None and not _is_nonneg_int(after_id):
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "after_id must be a non-negative int")
         async with SESSION_LOCAL() as db:
             conv = await _find_owned_conv(db, user_id, stored_id)
             if conv is None:
@@ -1070,6 +1073,39 @@ def _register_session_handlers(
                 replayed_count=len(replayed_frames),
                 current_seq=effective_buffer.max_seq,
             ).model_dump()
+
+        # 本地已有历史：锚点仍存在时只回增量，避免冷启动全量重拉。
+        if after_id is not None and after_id > 0:
+            async with SESSION_LOCAL() as db:
+                anchor_exists = (
+                    await db.execute(
+                        select(Message.id).where(Message.id == after_id, Message.conversation_id == conv.id),
+                    )
+                ).scalar_one_or_none() is not None
+                if anchor_exists:
+                    delivered = await build_session_messages(conv.id, db, after_id=after_id, include_id=True)
+            if anchor_exists:
+                runtime = _mount_runtime(conv, conv.cwd, cancel_existing=True)
+                await dispatcher.flush_unsent()
+                logger.info(
+                    "session.resume incremental",
+                    extra={
+                        "user_id": user_id,
+                        "session_id": runtime.session_id,
+                        "after_id": after_id,
+                        "new_count": len(delivered),
+                    },
+                )
+                return SessionResumeResult(
+                    session_id=runtime.session_id,
+                    message_count=len(delivered),
+                    messages=delivered,
+                    info=await _runtime_info(cfg, runtime, conv),
+                    resumed=False,
+                    replayed_count=0,
+                    current_seq=effective_buffer.max_seq,
+                    incremental=True,
+                ).model_dump()
 
         # 客户端序列号失同步或超时，回退到 DB 历史防御性截断重水化
         async with SESSION_LOCAL() as db:
