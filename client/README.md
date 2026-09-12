@@ -72,6 +72,7 @@
 
 - 对后端 / Runner：生命周期、事件、配置、安全与凭据见 [PROTOCOL](../docs/PROTOCOL.md)。
 - 对后端：3D / 2D 产物与动画映射见 [PIPELINE](../docs/PIPELINE.md)，打扰档位权威见 [ARCHITECTURE §5.1](../docs/ARCHITECTURE.md)。
+- 主进程内部：包边界、装配与准入约束见 [main README](main/README.md)，IPC 共享定义见 §3。
 - 渲染内部：架构、模块契约与收敛路径见 [renderer README](renderer/README.md)，IPC 共享定义见 §3。
 - Skills 平台过滤：双端翻译约束见 [Installer §2](../installer/README.md)。
 

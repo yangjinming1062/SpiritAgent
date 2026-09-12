@@ -222,6 +222,7 @@ export function createReverseRpc(
     const nextMessages =
       sessionMessagesSent +
       (messageCount || (Array.isArray(responsesPayload.input) ? responsesPayload.input.length : 1))
+
     const nextBytes = sessionBytesSent + payloadBytes
 
     // 先校验再提交：被拒绝的请求不消耗会话额度。
