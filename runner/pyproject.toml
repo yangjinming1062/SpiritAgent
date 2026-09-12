@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "spirit-agent"
 version = "1.1.0"
 description = "SpiritAgent Runner — stateless local tool executor for the SpiritAgent companion"
-requires-python = ">=3.11"
+requires-python = ">=3.13"
 authors = [{ name = "SpiritAgent" }]
 license = "MIT"
 dependencies = [
@@ -39,7 +39,7 @@ py-modules = ["runner_version"]
 include = ["envs", "envs.*", "tools", "tools.*", "utils", "utils.*"]
 
 [tool.ty.environment]
-python-version = "3.11"
+python-version = "3.13"
 
 [tool.ty.rules]
 unknown-argument = "warn"

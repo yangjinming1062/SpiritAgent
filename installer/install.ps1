@@ -29,7 +29,7 @@ $ScriptName = "install.ps1"
 $RunnerWheelGlob = "spirit_agent-*.whl"
 $DefaultDesktopFormat = "nsis"
 $PythonVersion = "3.13"
-$PythonFallbackVersions = @("3.12", "3.14", "3.11")
+$PythonFallbackVersions = @("3.14")
 
 # 路径优先级：环境变量 > 参数 > 默认值
 if (-not $SpiritAgentHome) {

@@ -163,7 +163,7 @@ test_python() {
     fi
   fi
 
-  local candidates=("$PYTHON_VERSION" "3.12" "3.14" "3.11")
+  local candidates=("$PYTHON_VERSION" "3.14")
   local missing=()
 
   for ver in "${candidates[@]}"; do
