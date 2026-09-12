@@ -246,7 +246,6 @@ async def _persist_assistant_no_tool_turn(
 async def _persist_assistant_with_tool_calls_and_results(
     conv: Conversation,
     tool_calls_list: list[dict],
-    turn_content: str,
     final_prompt_tokens: int,
     final_completion_tokens: int,
     turn_duration_ms: int,
@@ -256,12 +255,9 @@ async def _persist_assistant_with_tool_calls_and_results(
     schemas_by_name: dict[str, dict],
     *,
     reasoning: str | None = None,
-    speech_style: SpeechStyle | None = None,
     persist: bool = True,
 ) -> list[dict[str, str]]:
     """持久化含 tool_calls 的 assistant Message、跑工具批处理，并同步更新 Responses 输入轨迹；返回本轮生成的可送达媒体。"""
-    if turn_content:
-        context["input"].append({"role": "assistant", "content": [{"type": "output_text", "text": turn_content}]})
     context["input"].extend(tool_calls_list)
     if persist:
         async with session_scope() as db:
@@ -269,10 +265,9 @@ async def _persist_assistant_with_tool_calls_and_results(
                 Message(
                     conversation_id=conv.id,
                     role="assistant",
-                    content=turn_content if turn_content else None,
+                    content=None,
                     tool_calls=json.dumps(tool_calls_list),
                     reasoning_content=reasoning or None,
-                    speech_style_json=speech_style.model_dump_json() if speech_style else None,
                     prompt_tokens=final_prompt_tokens,
                     completion_tokens=final_completion_tokens,
                     turn_duration_ms=turn_duration_ms,

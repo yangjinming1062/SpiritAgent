@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import time
-from collections.abc import AsyncIterator
+from collections.abc import AsyncGenerator
 from typing import Any
 
 from components import LLM_RETRY_MIN_TIMEOUT, SETTINGS, get_logger
@@ -42,10 +42,10 @@ async def _stream_with_timeout(
     *,
     model: str,
     idle_timeout: float | None = None,
-) -> AsyncIterator:
+) -> AsyncGenerator[Any]:
     """包装流式响应：每 chunk 间的静默期受 ``idle_timeout`` 约束（重置于每 chunk），
     整个流同时受 ``timeout`` (``llm_request_timeout_seconds``) 总预算硬上界约束。
-    finally 中始终 aclose() 流，避免 chat-loop 取消时 HTTP 连接泄漏到 SDK 池。
+    finally 中始终 close() 流，避免 chat-loop 取消时 HTTP 连接泄漏到 SDK 池。
     """
     loop = asyncio.get_running_loop()
     start = loop.time()
@@ -71,21 +71,19 @@ async def _stream_with_timeout(
         )
         raise LLMRuntimeError(classified, original=exc) from exc
     finally:
-        aclose = getattr(stream, "aclose", None)
-        if aclose is not None:
-            with contextlib.suppress(Exception):
-                await aclose()
+        with contextlib.suppress(Exception):
+            await stream.close()
 
 
 async def _wrap_stream_for_debug(
-    stream: AsyncIterator,
+    stream: AsyncGenerator[Any],
     *,
     call_id: str,
     provider: str,
     model: str,
     call_site: str,
     call_started: float,
-) -> AsyncIterator:
+) -> AsyncGenerator[Any]:
     """透传流并累积 chunk，迭代结束时（成功 / 流中异常 / 取消）统一打一条面包屑。"""
     events_count = 0
     accumulated_content = ""
@@ -125,6 +123,7 @@ async def _wrap_stream_for_debug(
         error = exc
         raise
     finally:
+        await stream.aclose()
         latency_ms = int((time.monotonic() - call_started) * 1000)
         preview, original_len = truncate_for_log(accumulated_content)
         response_summary: dict[str, Any] = {

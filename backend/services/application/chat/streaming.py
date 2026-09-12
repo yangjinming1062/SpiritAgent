@@ -1,10 +1,9 @@
 import asyncio
-import contextlib
 import random
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from components import DEFAULT_LANGUAGE, TOOL_CALL_ID_HEX_PREFIX_LEN, get_logger, new_request_id
 from modules.media import SpeechStyle
@@ -28,7 +27,6 @@ logger = get_logger(__name__)
 # 连续助手气泡之间的视觉节奏（plan §2.4）。
 BUBBLE_BREAK_MIN_SECONDS = 0.5
 BUBBLE_BREAK_MAX_SECONDS = 1.5
-CHUNK_BATCH_WINDOW_SECONDS = 0.008
 
 
 @dataclass
@@ -111,6 +109,8 @@ async def _stream_llm_response(
     ctx_length: int,
     provider: Any,
     *,
+    delivery: Literal["stream", "buffered", "silent", "bubbles"],
+    phase_instructions: str = "",
     on_first_chunk: Callable[[], None] | None = None,
     reasoning_effort: str | None = None,
     temperature: float | None = None,
@@ -132,6 +132,8 @@ async def _stream_llm_response(
         user_local_tz=user_local_tz,
         lang=lang,
     )
+    if phase_instructions:
+        instructions += "\n\n" + phase_instructions
     if speech_config:
         instructions += speech_style_guidance(speech_config.provider_name, speech_config.model)
     speech_parser = SpeechStyleParser(speech_config.provider_name, speech_config.model) if speech_config else None
@@ -144,6 +146,10 @@ async def _stream_llm_response(
         reasoning=reasoning,
         temperature=scaled_temperature,
     )
+    if delivery == "bubbles":
+        if active_schemas:
+            raise ValueError("Bubble delivery requires a tool-free reply")
+        kwargs["tool_choice"] = "none"
 
     # 仅记录送往 LLM 的多模态 part 形状：Vertex beta API 400 ``INVALID_ARGUMENT`` 多为代理未能转译 ``inline_data``，通过日志中的实际 part 列表可定位问题而无需抓包。
     image_items = [
@@ -168,50 +174,19 @@ async def _stream_llm_response(
     tool_calls_list: list[dict] = []
     final_prompt_tokens = final_completion_tokens = 0
     final_usage_payload: dict | None = None
-
-    message_start_sent = False
-
-    async def _ensure_message_start() -> None:
-        nonlocal message_start_sent
-        if not message_start_sent:
-            message_start_sent = True
-            await emitter.send_json({"type": "message.start"})
+    pending_text: list[str] = []
 
     bubbles = BubbleSplitter(split_paragraphs=split_paragraphs)
 
-    batch_buf: list[str] = []
-    flush_task: asyncio.Task | None = None
     speech_style_sent = False
 
-    async def _flush_chunk_batch() -> None:
-        nonlocal flush_task, speech_style_sent
-        if flush_task is not None and flush_task is not asyncio.current_task():
-            flush_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await flush_task
-            flush_task = None
-        if not batch_buf:
-            return
-        text = "".join(batch_buf)
-        batch_buf.clear()
+    async def _send_text(text: str) -> None:
+        nonlocal speech_style_sent
         payload = {"type": "chunk", "content": text}
         if not speech_style_sent and speech_parser and speech_parser.style:
             payload["speech_style"] = speech_parser.style.model_dump()
             speech_style_sent = True
         await emitter.send_json(payload)
-
-    async def _timed_flush() -> None:
-        try:
-            await asyncio.sleep(CHUNK_BATCH_WINDOW_SECONDS)
-            await _flush_chunk_batch()
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            logger.warning("failed to flush batched chunk", extra={"error": str(e)})
-        finally:
-            nonlocal flush_task
-            if flush_task is asyncio.current_task():
-                flush_task = None
 
     async def _emit_bubble_events(events: list[BubbleEvent]) -> None:
         nonlocal speech_style_sent
@@ -220,7 +195,8 @@ async def _stream_llm_response(
                 segment = "".join(bubble_parts).strip()
                 if not segment:
                     continue
-                await _flush_chunk_batch()
+                if delivery == "bubbles":
+                    await _send_text(segment)
                 speech_style_sent = False
                 # --- 分隔符仅作传输用：发 break 帧给渲染端，但不要合并到 turn_content（持久化文本会被 TTS 朗读，不能漏出 ---）。
                 turn_parts.append(segment)
@@ -230,69 +206,82 @@ async def _stream_llm_response(
                 await asyncio.sleep(random.uniform(BUBBLE_BREAK_MIN_SECONDS, BUBBLE_BREAK_MAX_SECONDS))
             elif event.text:
                 bubble_parts.append(event.text)
-                batch_buf.append(event.text)
-                nonlocal flush_task
-                if flush_task is None or flush_task.done():
-                    flush_task = asyncio.create_task(_timed_flush())
+                if delivery != "bubbles":
+                    await _send_text(event.text)
 
-    async def _feed_clean(clean_text: str) -> None:
-        if clean_text:
-            await _emit_bubble_events(bubbles.feed(clean_text))
-
+    response_finished = False
     try:
-        try:
-            async for chunk in stream:
-                # 仅含 usage 的 chunk 仍代表流是活的，换供应商会让渲染端内容孤立；在跳过前先触发 on_first_chunk，让回退派发器把流视为已开始。
-                if on_first_chunk is not None:
-                    on_first_chunk()
-                    on_first_chunk = None
-                await _ensure_message_start()
-                event_type = str(getattr(chunk, "type", ""))
-                if event_type == "response.output_text.delta":
-                    await _feed_clean(speech_parser.feed(chunk.delta) if speech_parser else chunk.delta)
-                elif event_type in (
-                    "response.reasoning_text.delta",
-                    "response.reasoning_summary_text.delta",
-                    "response.reasoning.delta",
-                ):
-                    delta = getattr(chunk, "delta", None)
-                    if isinstance(delta, str) and delta:
-                        reasoning_parts.append(delta)
-                        await emitter.send_json({"type": "reasoning.delta", "content": delta})
-                elif event_type == "response.output_item.done":
-                    item = getattr(chunk, "item", None)
-                    if item is not None and getattr(item, "type", None) == "function_call":
-                        tool_calls_list.append(_function_call_to_dict(item))
-                    elif item is not None and getattr(item, "type", None) == "reasoning":
-                        if hasattr(item, "model_dump"):
-                            context["input"].append(item.model_dump(exclude_none=True))
-                        if not reasoning_parts:
-                            extracted = _reasoning_item_text(item)
-                            if extracted:
-                                reasoning_parts.append(extracted)
-                                await emitter.send_json({"type": "reasoning.delta", "content": extracted})
-                elif event_type in {"response.completed", "response.incomplete"}:
-                    if usage := getattr(getattr(chunk, "response", None), "usage", None):
-                        final_prompt_tokens, final_completion_tokens = usage.input_tokens, usage.output_tokens
-                        final_usage_payload = _usage_payload(usage)
-                elif event_type == "response.failed":
-                    response = getattr(chunk, "response", None)
-                    error = getattr(response, "error", None)
-                    raise RuntimeError(getattr(error, "message", None) or "LLM response failed")
-        except LLMRuntimeError:
-            # 流中途分类错误：已发出 chunk 后供应商 4xx；orchestrator 看到 stream_emitted=True 拒绝换供应商，抛出此异常并发出收尾 error 帧，让渲染端拿到干净的转写。
-            raise
+        async for chunk in stream:
+            # 保持首个供应商事件后禁止回退的边界，独立于正文缓冲。
+            if on_first_chunk is not None:
+                on_first_chunk()
+                on_first_chunk = None
+            event_type = str(getattr(chunk, "type", ""))
+            if event_type == "response.output_text.delta":
+                if delivery == "buffered":
+                    pending_text.append(chunk.delta)
+                elif delivery != "silent":
+                    text = speech_parser.feed(chunk.delta) if speech_parser else chunk.delta
+                    await _emit_bubble_events(bubbles.feed(text))
+            elif event_type in (
+                "response.reasoning_text.delta",
+                "response.reasoning_summary_text.delta",
+                "response.reasoning.delta",
+            ):
+                delta = getattr(chunk, "delta", None)
+                if isinstance(delta, str) and delta:
+                    reasoning_parts.append(delta)
+                    await emitter.send_json({"type": "reasoning.delta", "content": delta})
+            elif event_type == "response.output_item.done":
+                item = getattr(chunk, "item", None)
+                if item is not None and getattr(item, "type", None) == "function_call":
+                    if delivery == "bubbles":
+                        raise RuntimeError("LLM returned a tool call during the tool-free reply")
+                    tool_calls_list.append(_function_call_to_dict(item))
+                elif item is not None and getattr(item, "type", None) == "reasoning":
+                    if hasattr(item, "model_dump"):
+                        context["input"].append(item.model_dump(exclude_none=True))
+                    if not reasoning_parts:
+                        extracted = _reasoning_item_text(item)
+                        if extracted:
+                            reasoning_parts.append(extracted)
+                            await emitter.send_json({"type": "reasoning.delta", "content": extracted})
+            elif event_type == "response.incomplete":
+                details = getattr(getattr(chunk, "response", None), "incomplete_details", None)
+                raise RuntimeError(f"LLM response incomplete: {getattr(details, 'reason', None) or 'unknown'}")
+            elif event_type == "response.completed":
+                response_finished = True
+                if usage := getattr(getattr(chunk, "response", None), "usage", None):
+                    final_prompt_tokens, final_completion_tokens = usage.input_tokens, usage.output_tokens
+                    final_usage_payload = _usage_payload(usage)
+            elif event_type == "response.failed":
+                response = getattr(chunk, "response", None)
+                error = getattr(response, "error", None)
+                raise RuntimeError(getattr(error, "message", None) or "LLM response failed")
+        if not response_finished:
+            raise RuntimeError("LLM stream ended before completion")
+
+        # 陪伴正文等工具结构确定后再交付，防止中间台词进入气泡或 TTS。
+        if delivery == "buffered" and not tool_calls_list:
+            text = "".join(pending_text)
+            await _emit_bubble_events(bubbles.feed(speech_parser.feed(text) if speech_parser else text))
+            await _emit_bubble_events(bubbles.flush())
+        elif delivery == "bubbles":
+            await _emit_bubble_events(bubbles.flush())
 
     finally:
-        # 流中途死亡时也要 flush bubble splitter，使残余缓冲文本落地，尾部不完整分隔符会被丢弃。
-        await _emit_bubble_events(bubbles.flush())
-        await _flush_chunk_batch()
+        await stream.aclose()
+        # 工作台已显示的增量在失败时也须收尾；陪伴的未确认正文始终丢弃。
+        if delivery == "stream":
+            await _emit_bubble_events(bubbles.flush())
 
     # 收尾最后气泡：若 break 后立即结束，bubble_parts 为空则不追加，turn_parts 已持有前面气泡。
     if bubble_parts:
         segment = "".join(bubble_parts).strip()
         if segment:
             turn_parts.append(segment)
+            if delivery == "bubbles":
+                await _send_text(segment)
 
     turn_duration_ms = int((time.monotonic() - turn_start_time) * 1000)
 
@@ -300,9 +289,9 @@ async def _stream_llm_response(
     turn_reasoning = "".join(reasoning_parts).strip() or None
 
     return _LLMTurnResult(
-        turn_content=turn_content,
+        turn_content=turn_content if not tool_calls_list else "",
         reasoning=turn_reasoning,
-        speech_style=speech_parser.style if speech_parser else None,
+        speech_style=speech_parser.style if speech_parser and not tool_calls_list else None,
         tool_calls_list=tool_calls_list,
         final_prompt_tokens=final_prompt_tokens,
         final_completion_tokens=final_completion_tokens,

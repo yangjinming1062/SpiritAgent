@@ -7,6 +7,7 @@ from components import (
     DEFAULT_LANGUAGE,
     SETTINGS,
     get_logger,
+    resolve_prompt_text,
     safe_json_loads,
     session_scope,
 )
@@ -15,6 +16,7 @@ from modules.conversation import Conversation, Message
 from modules.system import ChatRequest, PromptPreset
 
 from services.domains.companion import is_work_preset
+from services.domains.conversation import DEFAULT_PRESET_ID, IM_KIND, SPECIAL_KIND
 from services.domains.media import inline_video_parts, prune_videos_in_range
 from services.domains.memory import embed_memory_text
 from services.infrastructure.llm import (
@@ -37,7 +39,12 @@ from .persistence import (
     _persist_assistant_with_tool_calls_and_results,
     _persist_user_message,
 )
-from .prompt_presets import AUTOMATION_EXCLUDED_TOOL_NAMES, LIFE_SPACE_TOOL_NAMES
+from .prompt_presets import (
+    AUTOMATION_EXCLUDED_TOOL_NAMES,
+    COMPANION_PREPARE_GUIDANCE,
+    COMPANION_REPLY_GUIDANCE,
+    LIFE_SPACE_TOOL_NAMES,
+)
 from .streaming import _emit_llm_error, _ensure_tool_call_ids, _stream_llm_response
 from .tool_dispatch import _ToolDispatchContext
 from .turn_inputs import (
@@ -235,8 +242,25 @@ async def run_chat_turn(
         excluded_tool_names=effective_excluded_tool_names,
     )
 
+    buffer_text = (
+        headless
+        or ephemeral
+        or conv.kind == IM_KIND
+        or (conv.kind == SPECIAL_KIND and conv.system_preset_id == DEFAULT_PRESET_ID and not conv.is_automation)
+    )
+    companion_reply = (
+        conv.kind == SPECIAL_KIND
+        and conv.system_preset_id == DEFAULT_PRESET_ID
+        and not conv.is_automation
+        and not headless
+        and not ephemeral
+        and preset_override is None
+    )
+    preparing = companion_reply
+    if buffer_text:
+        await emitter.send_json({"type": "message.start"})
     while True:
-        if not budget.consume():
+        if not (companion_reply and not preparing) and not budget.consume():
             await emitter.send_json(
                 {
                     "type": "error",
@@ -245,7 +269,11 @@ async def run_chat_turn(
             )
             break
 
+        if not buffer_text:
+            await emitter.send_json({"type": "message.start"})
         active_schemas = [schemas_by_name[n] for n in active_tool_names if n in schemas_by_name]
+        if companion_reply and not preparing:
+            active_schemas = []
         # 供应商链包装：按顺序尝试已配置供应商，仅在尚未输出 chunk 时触发回退；每次尝试使用对应槽位的 model，避免回退供应商收到不识别的模型名导致 model_not_found、链提前耗尽。
         stream_emitted = False
 
@@ -266,12 +294,25 @@ async def run_chat_turn(
                 active_schemas,
                 slot_ctx_length,
                 provider,
+                delivery=("silent" if preparing else "bubbles")
+                if companion_reply
+                else "buffered"
+                if buffer_text
+                else "stream",
+                phase_instructions=resolve_prompt_text(
+                    COMPANION_PREPARE_GUIDANCE if preparing else COMPANION_REPLY_GUIDANCE,
+                    inputs.language,
+                )
+                if companion_reply
+                else "",
                 on_first_chunk=set_stream_emitted,
                 reasoning_effort=reasoning_effort,
                 temperature=temperature,
                 user_local_tz=inputs.user_local_tz,
                 lang=inputs.language,
-                speech_config=inputs.speech_config if not headless and preset_override is None else None,
+                speech_config=inputs.speech_config
+                if not preparing and not headless and preset_override is None
+                else None,
                 split_paragraphs=conv.system_preset_id == "companion"
                 and not conv.is_automation
                 and preset_override is None,
@@ -319,6 +360,9 @@ async def run_chat_turn(
             turn_reasoning_parts.append(llm_result.reasoning)
 
         if not llm_result.tool_calls_list:
+            if preparing:
+                preparing = False
+                continue
             await _persist_assistant_no_tool_turn(
                 conv,
                 user_id,
@@ -354,7 +398,6 @@ async def run_chat_turn(
             await _persist_assistant_with_tool_calls_and_results(
                 conv,
                 llm_result.tool_calls_list,
-                llm_result.turn_content,
                 llm_result.final_prompt_tokens,
                 llm_result.final_completion_tokens,
                 llm_result.turn_duration_ms,
@@ -363,7 +406,6 @@ async def run_chat_turn(
                 active_tool_names,
                 schemas_by_name,
                 reasoning=llm_result.reasoning,
-                speech_style=llm_result.speech_style,
                 persist=not ephemeral,
             ),
         )

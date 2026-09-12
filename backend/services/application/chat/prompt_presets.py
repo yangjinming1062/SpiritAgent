@@ -12,6 +12,15 @@ from services.domains.conversation import DEFAULT_PRESET_ID, SYSTEM_PRESET_CATAL
 
 logger = logging.getLogger(__name__)
 
+COMPANION_PREPARE_GUIDANCE = {
+    "zh": "当前是内部工具准备阶段，不向用户发送台词。只在确有必要时查询记忆或执行工具，不为普通闲聊强行调用工具。需要工具就调用；信息与操作准备完毕后不再调用工具，只输出 READY。正式答复由下一阶段生成。",
+    "en": "This is the internal tool preparation phase, not a user-facing reply. Recall memory or use tools only when needed; do not force tool use for casual chat. Call any necessary tools. Once preparation is complete, stop calling tools and output only READY. The next phase will generate the actual reply.",
+}
+COMPANION_REPLY_GUIDANCE = {
+    "zh": "工具准备阶段已结束。现在只依据用户消息、上下文与实际工具结果生成正式答复，不再调用工具。信息不足或工具失败时如实表达，不假装完成。沿用角色与聊天分气泡规则，每个气泡是完整台词，不重复前文。",
+    "en": "Tool preparation is complete. Generate the actual reply using the user message, context and real tool results. No further tools are available. Be honest about missing information or failed tools. Follow the character and chat bubble rules; each bubble is complete dialogue without repeating earlier text.",
+}
+
 # 5 套系统预设：companion 保留完整伴侣语气与着装联动；其余 4 套工作面预设按需拉取块。
 _BODY_COMPANION = (
     "{{USER_IDENTITY_OVERRIDE}}\n\n"

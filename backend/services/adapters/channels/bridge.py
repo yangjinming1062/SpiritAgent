@@ -245,16 +245,7 @@ async def handle_inbound(adapter: ChannelAdapter, msg: InboundMessage) -> asynci
 
 
 class ChannelTurnEmitter:
-    """无头回合发射器：捕获终端 ``message.complete`` 文本，typing 与中间进度转发给适配器。
-
-    实现 application/chat 的 Emitter 协议（send_json）；帧全部留存便于调试，不做 WS 翻译——
-    桌面端不实时旁观 IM 回合（P3 再议），历史经 im 会话 REST 读取。
-
-    中间进度：编排器只在终局那一轮发 message.complete，带工具调用的中间迭代只发 chunk，
-    LLM 那句「好的我去看看」原本永远送不出去。这里在每个工具批次开始时把攒下的中间话术投出去，
-    让长任务在微信侧边做边有反馈。终局文本与中间话术天然不相交（message.complete 的 text 是
-    最后一轮迭代的输出，不含此前各轮），无需去重。
-    """
+    """无头回合发射器：捕获终端回复并转发 typing，工具中间轮不送出正文。"""
 
     def __init__(self) -> None:
         self.frames: list[dict] = []
@@ -262,8 +253,6 @@ class ChannelTurnEmitter:
         self.error: str | None = None
         self.media: list[dict] = []
         self._on_start: Callable[[], Awaitable[None]] | None = None
-        self._on_progress: Callable[[str], Awaitable[None]] | None = None
-        self._progress_buffer: list[str] = []
         self._typing_task: asyncio.Task | None = None
 
     def _clear_typing_task(self, task: asyncio.Task) -> None:
@@ -276,9 +265,6 @@ class ChannelTurnEmitter:
     def bind_typing(self, on_start: Callable[[], Awaitable[None]]) -> None:
         self._on_start = on_start
 
-    def bind_progress(self, on_progress: Callable[[str], Awaitable[None]]) -> None:
-        self._on_progress = on_progress
-
     async def aclose(self) -> None:
         """等待 typing 回调退出，防止回合取消后它继续使用已关闭的适配器。"""
         task = self._typing_task
@@ -289,29 +275,13 @@ class ChannelTurnEmitter:
             task.cancel()
         await asyncio.gather(task, return_exceptions=True)
 
-    def _take_progress(self) -> str:
-        """同步取出并清空缓冲——必须在 await 投递之前完成。
-
-        可并行的工具批次走 asyncio.gather，多个 _execute_single_tool 几乎同时发 tool_start；
-        若先 await 再清空，两个协程都会看到同一段非空缓冲并各投一次，微信侧出现重复。
-        """
-        text = "".join(self._progress_buffer).strip()
-        self._progress_buffer.clear()
-        return text
-
     async def send_json(self, data: dict) -> None:
         self.frames.append(data)
         frame_type = data.get("type")
         if frame_type == "message.start" and self._on_start is not None:
             self._typing_task = asyncio.create_task(self._on_start())
             self._typing_task.add_done_callback(self._clear_typing_task)
-        elif frame_type == "chunk":
-            self._progress_buffer.append(data.get("content", ""))
-        elif frame_type == "tool_start" and self._on_progress is not None:
-            if pending := self._take_progress():
-                await self._on_progress(pending)
         elif frame_type == "message.complete":
-            self._progress_buffer.clear()
             self.reply_text = data.get("text")
             new_media = data.get("media")
             if isinstance(new_media, list):
@@ -414,18 +384,6 @@ async def _execute_im_turn(adapter: ChannelAdapter, batch: list[InboundMessage])
                 logger.debug("typing indicator failed", extra={"binding": snapshot.id})
 
         emitter.bind_typing(_typing_on)
-
-    async def _progress(text: str) -> None:
-        # 严格 best-effort：tool_start 的发射点在 _execute_single_tool 的 try 之外，异常会沿 send_json
-        # 冒泡把工具记成崩溃结果——微信偶发超时/频控/token 瞬时失效绝不能拖垮本机任务。
-        try:
-            if clean := strip_markdown(text):
-                for chunk in chunk_text(clean, SETTINGS.weixin_reply_max_chars):
-                    await adapter.send_text(last.peer_id, chunk, last.context_token)
-        except Exception:
-            logger.debug("progress relay failed", extra={"binding": snapshot.id})
-
-    emitter.bind_progress(_progress)
 
     # 两个条件都要满足：WS 在线但 tools.sync 未完成（刚连上）或 Runner 崩溃时，注册表里没有 runner schema，
     # 只看 is_available 会让提示词声称「工具可用」而上下文里根本没有对应工具，诱发幻觉。
