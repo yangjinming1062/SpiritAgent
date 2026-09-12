@@ -35,6 +35,8 @@ SpiritAgent 桌面渲染层的唯一架构文档：分层与依赖规则、跨�
 
 ## 4. 事件路由与多窗口运行时
 
+聊天的逐气泡交付与 TTS 收尾幂等约束见 [PROTOCOL §1.4](../../docs/PROTOCOL.md)；完成事件可以补充已收尾气泡的媒体等元数据，但不能再次发起语音合成。
+
 - `app/runtime/gateway-event-router.ts` 只做分派与公共守卫：鉴权 `pending` 丢弃、`session_id` 闸门、代理窗口过滤。状态更新按能力在 `handlers/` 组织：`conversation-events`（message.* 与 slash / 压缩 / 撤回）、`character-events`（心情、具身表达、模型与 2D 拆分、衣柜、头像）、`delivery-events`（主动消息、通知、视频任务、IM 通道）、`tool-dispatch`（宿主专属 Runner 分发）。
 - **`tool.call` 是用户级设备指令**（PROTOCOL §1.3）：信封不带 `session_id`、按 `call_id` 关联，重放帧按 `call_id` 去重（本机副作用不可撤销）；`headless` 指令照常执行但不驱动精灵工作态。这套宿主专属逻辑只在宿主运行时存在，代理窗口在装配层即过滤 `tool.call`。
 - 连接角色：精灵窗宿主持唯一 WebSocket（`app/runtime/host-runtime.ts`，鉴权后挂载、登出即卸载拆链）；生活空间 / 工作台经主进程代理共享连接（`app/runtime/proxy-runtime.ts` 事件泵 + `IpcGatewayProxy`）。**复用同一份模块代码不等于共享内存**——各窗口分别水合运行时状态，跨窗口变化走既有 IPC、网关事件与水合机制；异步副作用（语音合成、历史水合、草稿回填）必须校验所属会话与回合，切换后不得写入错误会话。

@@ -882,15 +882,21 @@ export function finalizeAssistantMessage(
   }
 
   const shouldSynth =
-    (options?.synthesize ?? true) && conversationVoiceSink().isActive() && Boolean(speechText(finalStr))
+    Boolean(body.streaming) &&
+    (options?.synthesize ?? true) &&
+    conversationVoiceSink().isActive() &&
+    Boolean(speechText(finalStr))
 
-  const nextVoiceStatus = shouldSynth
-    ? 'pending'
-    : options?.synthesize === false
-      ? 'failed'
-      : body.voiceStatus === 'pending'
-        ? undefined
-        : body.voiceStatus
+  // 完成帧可能再次收尾已由分隔帧提交的气泡，保留播放状态且不重复合成。
+  const nextVoiceStatus = !body.streaming
+    ? body.voiceStatus
+    : shouldSynth
+      ? 'pending'
+      : options?.synthesize === false
+        ? 'failed'
+        : body.voiceStatus === 'pending'
+          ? undefined
+          : body.voiceStatus
 
   $chatMessageBodies.setKey(lastItem.id, {
     ...body,
