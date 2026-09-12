@@ -10,7 +10,6 @@ from typing import Any
 from utils import (
     cfg_get,
     get_env_type,
-    get_external_skills_dirs,
     get_skills_dir,
     has_traversal_component,
     is_interrupted,
@@ -18,6 +17,8 @@ from utils import (
     register_credential_file,
     register_env_passthrough,
     validate_within_dir,
+    visible_skill_path,
+    visible_skill_roots,
 )
 
 from ..registry import registry, tool_error
@@ -194,9 +195,7 @@ def _build_setup_note(
 
 
 def _get_category_from_path(skill_path: Path) -> str | None:
-    dirs = [SKILLS_DIR]
-    with contextlib.suppress(Exception):
-        dirs.extend(get_external_skills_dirs())
+    dirs = visible_skill_roots()
     for d in dirs:
         try:
             if len(parts := skill_path.relative_to(d).parts) >= 3:
@@ -249,12 +248,10 @@ def _find_all_skills(*, skip_disabled: bool = False) -> list[dict[str, Any]]:
     skills = []
     seen_names = set()
     disabled = set() if skip_disabled else get_disabled_skill_names()
-    dirs = [SKILLS_DIR] if SKILLS_DIR.exists() else []
-    with contextlib.suppress(Exception):
-        dirs.extend(get_external_skills_dirs())
+    dirs = visible_skill_roots()
     for d in dirs:
         for skill_md in iter_skill_index_files(d, "SKILL.md"):
-            if is_excluded_skill_path(skill_md):
+            if is_excluded_skill_path(skill_md) or not visible_skill_path(skill_md, d):
                 continue
             try:
                 frontmatter, body = parse_frontmatter(skill_md.read_text(encoding="utf-8")[:4000])
@@ -303,17 +300,6 @@ def _sort_skills(skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def skills_list(category: str | None = None, task_id: str | None = None) -> str:
     try:
-        if not SKILLS_DIR.exists():
-            SKILLS_DIR.mkdir(parents=True, exist_ok=True)
-            return json.dumps(
-                {
-                    "success": True,
-                    "skills": [],
-                    "categories": [],
-                    "message": "No skills found. Skills directory created at $SPIRITAGENT_HOME/skills/.",
-                },
-                ensure_ascii=False,
-            )
         all_skills = _find_all_skills()
         if not all_skills:
             return json.dumps(
@@ -365,9 +351,7 @@ def skill_view(name: str, file_path: str | None = None, task_id: str | None = No
                 ensure_ascii=False,
             )
 
-        all_dirs = [SKILLS_DIR] if SKILLS_DIR.exists() else []
-        with contextlib.suppress(Exception):
-            all_dirs.extend(get_external_skills_dirs())
+        all_dirs = visible_skill_roots()
         if not all_dirs:
             return json.dumps(
                 {
@@ -381,6 +365,8 @@ def skill_view(name: str, file_path: str | None = None, task_id: str | None = No
         seen_md = set()
 
         def _record(sd: Path | None, smd: Path) -> None:
+            if not visible_skill_path(smd, search_dir):
+                return
             try:
                 key = smd.resolve()
             except Exception:
@@ -390,6 +376,8 @@ def skill_view(name: str, file_path: str | None = None, task_id: str | None = No
                 candidates.append((sd, smd))
 
         for search_dir in all_dirs:
+            if candidates:
+                break
             direct = search_dir / name
             if direct.is_dir() and (direct / "SKILL.md").exists():
                 _record(direct, direct / "SKILL.md")
@@ -447,20 +435,9 @@ def skill_view(name: str, file_path: str | None = None, task_id: str | None = No
         except Exception as e:
             return json.dumps({"success": False, "error": f"Failed to read skill '{name}': {e}"}, ensure_ascii=False)
 
-        outside = True
-        try:
-            trusted = [SKILLS_DIR.resolve()] + [d.resolve() for d in all_dirs[1:]]
-        except Exception:
-            trusted = [SKILLS_DIR.resolve()]
-        for td in trusted:
-            try:
-                skill_md.resolve().relative_to(td)
-                outside = False
-                break
-            except ValueError:
-                pass
-
-        if outside or (inj := any(p in content.lower() for p in _INJECTION_PATTERNS)):
+        outside = not any(visible_skill_path(skill_md, root) for root in all_dirs)
+        inj = any(p in content.lower() for p in _INJECTION_PATTERNS)
+        if outside or inj:
             warns = []
             if outside:
                 warns.append(f"skill file is outside the trusted skills directory (~/.spiritagent/skills/): {skill_md}")

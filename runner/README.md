@@ -33,6 +33,10 @@ wheel 发布与安装布局见 [scripts/README.md](../scripts/README.md) 和 [in
 - 代码子进程 RPC 每次生成一次性能力 token，首帧鉴权，避免 Windows loopback 端点被无关进程使用。
 - SSH 密码用临时 askpass：OpenSSH 不从 stdin 读密码，强制 askpass 要求 OpenSSH ≥ 8.4（Windows 8.9+）；密钥优先并快速失败，密码脚本随环境清理。密码明文只存本机终端配置，与私钥路径同级保护。
 
+### 按预设学习技能
+
+调用作用域通过 `ContextVar` 固定并在结束时恢复，协议见 [PROTOCOL](../docs/PROTOCOL.md#预设记忆与学习作用域)。学习技能位于 `$SPIRITAGENT_HOME/learned-skills/<user_id>/<system_preset_id>`；读取合并当前目录与人工安装的静态技能，当前域优先。修改静态技能时复制到当前域，删除只能删除当前域副本；路径和符号链接不能跨域。
+
 ## 5. 与外部的契约
 
 - 对客户端：握手、能力与 RPC 见 [PROTOCOL §2](../docs/PROTOCOL.md)；反向代理见 [§3](../docs/PROTOCOL.md)。
@@ -42,3 +46,4 @@ wheel 发布与安装布局见 [scripts/README.md](../scripts/README.md) 和 [in
 ## 6. 已知限制
 
 - Runner 服务进程不提供交互式 TTY / stdin；工具需要终端交互时使用受管 PTY，RPC 传输使用独立本地 IPC。
+- 学习隔离约束作用于技能接口；用户授权的通用文件与终端工具仍拥有原有本机访问能力。

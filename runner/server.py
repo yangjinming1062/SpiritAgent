@@ -25,8 +25,10 @@ from tools import (
 from tools.browser import reset_session_caches
 from tools.toolsets import excluded_tool_names
 from utils import (
+    CURRENT_SKILL_SCOPE,
     CancellationToken,
     DesktopEndpoint,
+    SkillScope,
     connect_desktop,
     disk_free_bytes,
     get_spiritagent_home,
@@ -238,11 +240,12 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
             await _send(ws, req_id, result={"ok": True})
             return
 
-        if method == "execute_tool":
+        if method in {"execute_tool", "execute_scoped_tool"}:
             name = params.get("name")
             if not name:
                 raise ValueError("Missing 'name' in params")
             # 与 get_schemas_for_llm 同源：渲染层/直调不得绕过 toolsets.disabled。
+            skill_scope = SkillScope.parse(params.get("skill_scope")) if method == "execute_scoped_tool" else None
             disabled_ids = get_disabled_toolset_ids()
             if name in excluded_tool_names(disabled_ids, {name}):
                 raise ToolError(f"Tool '{name}' is disabled by toolsets.disabled")
@@ -250,6 +253,7 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
             token = CancellationToken()
             _ACTIVE_CANCELLATIONS[req_id_str] = token
             ctx_reset = set_current_request(req_id_str)
+            scope_reset = CURRENT_SKILL_SCOPE.set(skill_scope)
             cur_task = asyncio.current_task()
             _INFLIGHT_BY_REQ_ID[req_id_str] = cur_task
             _CURRENT_EXECUTE_TASK = cur_task
@@ -263,6 +267,7 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
                 await _send(ws, req_id, result=result)
                 return
             finally:
+                CURRENT_SKILL_SCOPE.reset(scope_reset)
                 if _CURRENT_EXECUTE_TASK is cur_task:
                     _CURRENT_EXECUTE_TASK = None
                     _CURRENT_EXECUTE_REQ_ID = None

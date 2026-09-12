@@ -10,13 +10,15 @@ import yaml
 from utils import (
     atomic_replace,
     cfg_get,
-    get_external_skills_dirs,
     get_skills_dir,
     has_traversal_component,
     is_interrupted,
     is_truthy_value,
+    learned_skills_root,
     load_config,
     validate_within_dir,
+    visible_skill_path,
+    visible_skill_roots,
 )
 
 from ..files import format_no_match_hint, fuzzy_find_and_replace
@@ -29,7 +31,7 @@ _GUARD_AVAILABLE = True
 
 
 def get_all_skills_dirs() -> list[Path]:
-    return [Path(get_skills_dir()), *get_external_skills_dirs()]
+    return visible_skill_roots()
 
 
 def _guard_agent_created_enabled() -> bool:
@@ -126,15 +128,34 @@ def _validate_content_size(content: str, label: str = "SKILL.md") -> str | None:
 
 
 def _resolve_skill_dir(name: str, category: str | None = None) -> Path:
-    return SKILLS_DIR / category / name if category else SKILLS_DIR / name
+    root = learned_skills_root()
+    target = root / category / name if category else root / name
+    if not visible_skill_path(target, root):
+        raise ValueError("Skill path escapes its scope")
+    return target
 
 
-def _find_skill(name: str) -> dict[str, Any] | None:
+def _find_skill(name: str, *, writable: bool = True) -> dict[str, Any] | None:
     for skills_dir in get_all_skills_dirs():
         if skills_dir.exists():
             for skill_md in skills_dir.rglob("SKILL.md"):
-                if not is_excluded_skill_path(skill_md) and skill_md.parent.name == name:
-                    return {"path": skill_md.parent}
+                if (
+                    not is_excluded_skill_path(skill_md)
+                    and skill_md.parent.name == name
+                    and visible_skill_path(skill_md, skills_dir)
+                ):
+                    target = skill_md.parent
+                    if writable and not target.resolve().is_relative_to(learned_skills_root().resolve()):
+                        target = _resolve_skill_dir(name)
+                        target.parent.mkdir(parents=True, exist_ok=True)
+                        if any(
+                            path.is_symlink() or not visible_skill_path(path, skill_md.parent)
+                            for path in skill_md.parent.rglob("*")
+                        ):
+                            raise ValueError("Cannot copy a shared skill containing symlinks")
+                        if not target.exists():
+                            shutil.copytree(skill_md.parent, target)
+                    return {"path": target}
     return None
 
 
@@ -176,7 +197,7 @@ def _create_skill(name: str, content: str, category: str | None = None) -> dict[
         return {"success": False, "error": err}
     if err := _validate_content_size(content):
         return {"success": False, "error": err}
-    if _find_skill(name):
+    if _find_skill(name, writable=False):
         return {"success": False, "error": f"A skill named '{name}' already exists."}
     skill_dir = _resolve_skill_dir(name, category)
     skill_dir.mkdir(parents=True, exist_ok=True)
@@ -187,7 +208,7 @@ def _create_skill(name: str, content: str, category: str | None = None) -> dict[
     result = {
         "success": True,
         "message": f"Skill '{name}' created.",
-        "path": str(skill_dir.relative_to(SKILLS_DIR)),
+        "path": str(skill_dir.relative_to(learned_skills_root())),
         "skill_md": str(skill_dir / "SKILL.md"),
     }
     if category:
@@ -264,15 +285,17 @@ def _patch_skill(
 
 
 def _delete_skill(name: str, absorbed_into: str | None = None) -> dict[str, Any]:
-    if not (existing := _find_skill(name)):
+    if not (existing := _find_skill(name, writable=False)):
         return {"success": False, "error": _skill_not_found_error(name)}
     if absorbed_into and absorbed_into.strip():
         t_name = absorbed_into.strip()
         if t_name == name:
             return {"success": False, "error": "absorbed_into cannot equal the skill being deleted."}
-        if not _find_skill(t_name):
+        if not _find_skill(t_name, writable=False):
             return {"success": False, "error": f"absorbed_into='{t_name}' does not exist. Create or patch it first."}
     skill_dir = existing["path"]
+    if not skill_dir.resolve().is_relative_to(learned_skills_root().resolve()):
+        return {"success": False, "error": "Shared static skills cannot be deleted by a model"}
     skills_root = _containing_skills_root(skill_dir)
     shutil.rmtree(skill_dir)
     if (parent := skill_dir.parent) != skills_root and parent.exists() and not any(parent.iterdir()):
@@ -351,6 +374,7 @@ def skill_manage(
     replace_all: bool = False,
     absorbed_into: str | None = None,
 ) -> str:
+    learned_skills_root()
     if action == "create":
         if not content:
             return tool_error("content is required for 'create'. Provide the full SKILL.md text.", success=False)
@@ -388,7 +412,7 @@ SKILL_MANAGE_SCHEMA = {
     "description": (
         "Manage skills (create, update, delete). Skills are your procedural "
         "memory — reusable approaches for recurring task types. "
-        "New skills go to $SPIRITAGENT_HOME/skills/; existing skills can be "
+        "New skills belong to the current preset; shared skills are copied before being "
         "modified wherever they live.\n\n"
         "Actions: create (full SKILL.md + optional category), "
         "patch (old_string/new_string — preferred for fixes), "

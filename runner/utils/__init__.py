@@ -73,6 +73,7 @@ from .interrupt import (
     set_local_interrupt,
 )
 from .job_object import init_runner_job_object
+from .memory_scope import CURRENT_SKILL_SCOPE, SkillScope, learned_skills_root, visible_skill_path, visible_skill_roots
 from .path_helpers import append_sane_path_entries, find_bash, find_python, msys_to_windows_path, resolve_safe_cwd
 from .pid import PidState, kill_tree, pid_exists, pid_state
 from .process_tree import TerminationResult, terminate_tree
@@ -100,6 +101,7 @@ from .url_safety import (
 
 __all__ = [
     "CREATE_NO_WINDOW",
+    "CURRENT_SKILL_SCOPE",
     "CancellationToken",
     "DesktopConnection",
     "DesktopEndpoint",
@@ -110,6 +112,7 @@ __all__ = [
     "SafeAsyncHTTPTransport",
     "SafeHTTPTransport",
     "SECRET_PREFIX_RE",
+    "SkillScope",
     "TerminationResult",
     "UNIX_TRANSPORT",
     "append_sane_path_entries",
@@ -162,6 +165,7 @@ __all__ = [
     "iter_cache_files",
     "iter_skills_files",
     "kill_tree",
+    "learned_skills_root",
     "load_config",
     "microphone_available",
     "msys_to_windows_path",
@@ -197,4 +201,6 @@ __all__ = [
     "terminate_tree",
     "validate_within_dir",
     "verify_ip_not_blocked",
+    "visible_skill_path",
+    "visible_skill_roots",
 ]
