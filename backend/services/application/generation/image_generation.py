@@ -2,10 +2,11 @@ import asyncio
 import base64
 import io
 
-from components import SESSION_LOCAL, get_logger, save_file
+from components import SESSION_LOCAL, download_capped, get_logger, save_file
 from PIL import Image, ImageDraw, ImageOps
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.infrastructure.assets import save_companion_asset
 from services.infrastructure.llm import (
     ImageGenRequest,
     MissingLlmConfigError,
@@ -18,6 +19,8 @@ from services.infrastructure.llm import (
 )
 
 logger = get_logger(__name__)
+
+_EXT_BY_MIME = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 
 
 class ImageGenerationError(Exception):
@@ -63,6 +66,23 @@ def compose_image_references(primary: bytes, secondary: bytes) -> bytes:
     return output.getvalue()
 
 
+def _image_ext_from_bytes(data: bytes, fallback: str = "jpg") -> str:
+    if data.startswith(b"\x89PNG"):
+        return "png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "jpg"
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "webp"
+    if data.startswith(b"GIF8"):
+        return "gif"
+    return fallback
+
+
+def _persist_user_asset(data: bytes, user_id: int, *, mime: str = "") -> str:
+    ext = _EXT_BY_MIME.get((mime or "").lower()) or _image_ext_from_bytes(data)
+    return save_companion_asset(data, user_id=user_id, label="chat_image", ext=ext)
+
+
 async def generate_images(
     prompt: str,
     *,
@@ -72,8 +92,12 @@ async def generate_images(
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
     preferred_provider: str | list[str] | None = None,
+    persist_user_assets: bool = False,
 ) -> list[str]:
-    """走 image_gen 供应商链生成图片并落盘；成功返回 URL 列表，失败抛 ImageGenerationError。"""
+    """走 image_gen 供应商链生成图片并落盘；成功返回 URL 列表，失败抛 ImageGenerationError。
+
+    ``persist_user_assets=True`` 且提供 ``user_id`` 时，结果转存为 ``companion-assets/{user_id}/`` 永久资产并返回裸路径；否则落 temp-media（或透传供应商 URL）。
+    """
     try:
         if reference_image and secondary_reference_image:
             primary, secondary = await asyncio.gather(
@@ -130,16 +154,30 @@ async def generate_images(
         raise ImageGenerationError("图片生成服务返回空结果")
 
     urls: list[str] = []
-    ext_by_mime = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
+    as_user_assets = persist_user_assets and user_id is not None
     for asset in result.images:
         if asset.url:
+            if as_user_assets:
+                try:
+                    data = await download_capped(asset.url, max_bytes=50 * 1024 * 1024, timeout=120.0)
+                    urls.append(_persist_user_asset(data, user_id, mime=asset.mime or ""))
+                    continue
+                except Exception:
+                    logger.warning(
+                        "failed to re-host provider image url as user asset; keeping provider url",
+                        extra={"user_id": user_id},
+                        exc_info=True,
+                    )
             urls.append(asset.url)
         elif asset.b64 is not None:
             if not asset.b64:
                 logger.warning("image asset has empty b64; skipping", extra={"mime": asset.mime})
                 continue
             data = base64.b64decode(asset.b64)
-            ext = ext_by_mime.get((asset.mime or "").lower(), "jpg")
+            if as_user_assets:
+                urls.append(_persist_user_asset(data, user_id, mime=asset.mime or ""))
+                continue
+            ext = _EXT_BY_MIME.get((asset.mime or "").lower(), "jpg")
             _file_id, public_url = save_file(data, session_id="", content_type=asset.mime or "image/jpeg", ext=ext)
             urls.append(public_url)
     if not urls:

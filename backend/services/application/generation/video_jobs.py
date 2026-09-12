@@ -10,7 +10,6 @@ from components import (
     backoff_for_poll,
     download_capped,
     get_logger,
-    save_file,
     utc_now,
 )
 from components.user_maintenance_runtime import track_user_task
@@ -21,6 +20,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.conversation import MEDIA_STATUS_SUBTYPE
+from services.infrastructure.assets import client_asset_url, save_companion_asset
 from services.infrastructure.llm import (
     MissingLlmConfigError,
     ProviderResultUnknownError,
@@ -346,31 +346,34 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     if not claimed:
                         return
                 try:
-                    file_id, public_url = await _download_and_store(
+                    file_id, storage_url = await _download_and_store(
                         provider,
                         status.file_id,
                         download_url=status.download_url,
+                        user_id=user_id,
                     )
                 except Exception:
                     logger.exception("video download failed", extra={"job_id": job_id})
                     await _record_failure(job_id, reason="download_failed", user_id=user_id)
                     return
-                await _update_job(job_id, status="succeeded", file_id=file_id, video_url=public_url)
+                # 库内保留裸资产路径；实时事件改写为客户端可鉴权加载的 URL。
+                await _update_job(job_id, status="succeeded", file_id=file_id, video_url=storage_url)
                 session_id = getattr(job, "session_id", None)
-                media = [{"type": "video", "url": public_url}]
+                media = [{"type": "video", "url": storage_url}]
+                client_url = client_asset_url(storage_url)
                 if session_id:
                     await _persist_media_status_message(
                         session_id,
-                        f"[视频已生成 task {job_id}] {public_url}",
+                        f"[视频已生成 task {job_id}] {client_url}",
                         json.dumps(media, ensure_ascii=False),
                     )
                 await _evt(
                     "video_gen.completed",
                     {
                         "task_id": str(job_id),
-                        "url": public_url,
+                        "url": client_url,
                         **({"session_id": session_id} if session_id else {}),
-                        "media": media,
+                        "media": [{"type": "video", "url": client_url}],
                     },
                 )
                 logger.info("video job succeeded", extra={"job_id": job_id, "file_id": file_id})
@@ -401,18 +404,21 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
         await _record_failure(job_id, reason="worker_failed", user_id=user_id)
 
 
-async def _download_and_store(provider, file_id: str | None, *, download_url: str | None = None) -> tuple[str, str]:
-    """从供应商下载视频字节（须在 URL 窗口内）并通过 ``components.save_file`` 本地持久化。MiniMax-H3 v2 在成功路径直接返回 URL（填 ``download_url``），跳过额外 ``fetch()``；旧版 MiniMax-Hailuo v1 把 URL 藏在 ``files/retrieve`` 接口后（填 ``file_id``）。"""
-    if download_url:
-        asset_content_type = "video/mp4"
-    else:
+async def _download_and_store(
+    provider,
+    file_id: str | None,
+    *,
+    download_url: str | None = None,
+    user_id: int,
+) -> tuple[str, str]:
+    """从供应商下载视频字节并转存 ``companion-assets/{user_id}/`` 永久资产，返回 (文件名, 裸存储路径)。MiniMax-H3 v2 在成功路径直接返回 URL（填 ``download_url``），跳过额外 ``fetch()``；旧版 MiniMax-Hailuo v1 把 URL 藏在 ``files/retrieve`` 接口后（填 ``file_id``）。"""
+    if not download_url:
         if not file_id:
             raise RuntimeError("provider.poll succeeded without file_id or download_url")
-        asset = await provider.fetch(file_id)
-        download_url = asset.download_url
-        asset_content_type = asset.content_type or "video/mp4"
+        download_url = (await provider.fetch(file_id)).download_url
     data = await _stream_download(download_url)
-    return save_file(data, session_id="", content_type=asset_content_type, ext="mp4")
+    storage_path = save_companion_asset(data, user_id=user_id, label="chat_video", ext="mp4")
+    return storage_path.rsplit("/", 1)[-1], storage_path
 
 
 async def _stream_download(url: str) -> bytes:

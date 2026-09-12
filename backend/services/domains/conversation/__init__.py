@@ -2,7 +2,7 @@ from .bootstrap import ensure_system_conversations_for_user
 from .context_window import load_recent_context_window
 from .fork import ForkNotAllowedError, SourceNotFoundError, fork_conversation_from_message
 from .formatting import format_messages_compact
-from .history import build_session_messages
+from .history import build_session_messages, client_media_entries
 from .main_conversation import (
     IM_KIND,
     MEDIA_STATUS_SUBTYPE,
@@ -41,6 +41,7 @@ __all__ = [
     "UndoNotAllowedError",
     "UserProactiveRecord",
     "build_session_messages",
+    "client_media_entries",
     "ensure_system_conversations_for_user",
     "fork_conversation_from_message",
     "format_messages_compact",

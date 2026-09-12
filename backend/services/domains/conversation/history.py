@@ -9,6 +9,23 @@ from modules.conversation import Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.infrastructure.assets import client_asset_url
+
+
+def client_media_entries(media: list[dict[str, str]]) -> list[dict[str, str]]:
+    """把媒体条目里的裸资产路径改写为客户端可鉴权加载的 /api/companion/asset/ URL；其余形态原样保留。"""
+    return [
+        {
+            **entry,
+            **{
+                key: client_asset_url(entry[key])
+                for key in ("url", "audio_url")
+                if isinstance(entry.get(key), str) and entry[key]
+            },
+        }
+        for entry in media
+    ]
+
 
 async def build_session_messages(
     conv_id: int,
@@ -47,18 +64,7 @@ async def build_session_messages(
         if msg.media_json:
             media = safe_json_loads(msg.media_json, default=None)
             if isinstance(media, list) and media:
-                item["media"] = [
-                    {
-                        **entry,
-                        **{
-                            key: "/api/companion/asset/" + entry[key].removeprefix("companion-assets/")
-                            for key in ("url", "audio_url")
-                            if isinstance(entry.get(key), str) and entry[key].startswith("companion-assets/")
-                        },
-                    }
-                    for entry in media
-                    if isinstance(entry, dict)
-                ]
+                item["media"] = client_media_entries([e for e in media if isinstance(e, dict)])
         if msg.speech_style_json:
             item["speech_style"] = safe_json_loads(msg.speech_style_json, default=None)
         if msg.reasoning_content:

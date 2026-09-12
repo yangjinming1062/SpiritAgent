@@ -139,6 +139,13 @@ def signed_companion_asset_url(storage_path: str) -> str | None:
     return build_signed_asset_url(*parsed)
 
 
+def client_asset_url(storage_path: str) -> str:
+    """裸资产路径改写为客户端可鉴权加载的 /api/companion/asset/ 路径；其他形态原样返回。"""
+    if storage_path.startswith("companion-assets/"):
+        return "/api/companion/asset/" + storage_path.removeprefix("companion-assets/")
+    return storage_path
+
+
 def companion_asset_exists(storage_path: str) -> bool:
     """判断裸存储路径对应文件是否仍在磁盘上——文件丢失的孤儿记录应算缓存未命中。"""
     parsed = parse_companion_asset_path(storage_path)

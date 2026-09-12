@@ -14,6 +14,8 @@ from Crypto.Cipher import AES
 from modules.channels import ChannelBinding, ChannelPeer
 from sqlalchemy import select
 
+from services.infrastructure.assets import parse_companion_asset_path, resolve_companion_asset_path
+
 from ..base import (
     ChannelAdapter,
     ChannelBindingSnapshot,
@@ -585,11 +587,10 @@ class WeixinIlinkAdapter(ChannelAdapter):
             raise ChannelError("iLink session expired while sending media", fatal=False) from None
 
     async def _upload_one(self, peer_id: str, media: dict) -> dict:
-        """上传单个媒体：拉 temp-media → AES 加密 → getuploadurl 拿 upload_full_url → POST 字节 →
+        """上传单个媒体：拉本地媒体字节 → AES 加密 → getuploadurl 拿 upload_full_url → POST 字节 →
         返回 iLink image_item / file_item 段。"""
         url = media["url"]
         mtype = media.get("type") or "image"
-        # temp-media 路径或 URL 都接受：先视作 file_id，再退化到 GET。
         plain: bytes | None = None
         content_type = "application/octet-stream"
         if url.startswith("/api/media/files/"):
@@ -600,11 +601,20 @@ class WeixinIlinkAdapter(ChannelAdapter):
             plain_path, content_type = stored
             plain = plain_path.read_bytes()
         else:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as c:
-                resp = await c.get(url)
-                resp.raise_for_status()
-                plain = resp.content
-                content_type = resp.headers.get("content-type") or content_type
+            asset_path = url.split("?", 1)[0]
+            if asset_path.startswith("/api/companion/asset/"):
+                asset_path = "companion-assets/" + asset_path.removeprefix("/api/companion/asset/")
+            parsed = parse_companion_asset_path(asset_path)
+            resolved = resolve_companion_asset_path(*parsed) if parsed else None
+            if resolved is not None:
+                plain_path, content_type = resolved
+                plain = plain_path.read_bytes()
+            else:
+                async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as c:
+                    resp = await c.get(url)
+                    resp.raise_for_status()
+                    plain = resp.content
+                    content_type = resp.headers.get("content-type") or content_type
 
         if plain is None:
             raise ChannelError("media body empty", fatal=False)

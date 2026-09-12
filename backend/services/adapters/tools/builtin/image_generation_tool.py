@@ -24,7 +24,7 @@ async def image_generation_tool(
     subject: str | None = None,
     **kwargs,
 ) -> str:
-    """通过 image_gen 供应商链生成图片，base64 结果会落地为本服务的 /api/media/files/<id> 链接。
+    """通过 image_gen 供应商链生成图片；结果按用户永久资产落盘，经鉴权资产通道加载。
 
     注意：本工具仅产生会话媒体卡片，禁止用于替换房间背景图（换房请使用 room_backdrop_update）。
     """
@@ -44,6 +44,7 @@ async def image_generation_tool(
             reference_image=reference_image,
             secondary_reference_image=secondary_reference_image,
             preferred_provider=preferred_provider,
+            persist_user_assets=True,
         )
     except ImageGenerationError as e:
         return tool_error(str(e))
@@ -70,7 +71,8 @@ IMAGE_GENERATION_SCHEMA = {
     "name": "image_generate",
     "description": (
         "Generate an image from a text description. Returns the generated image URLs "
-        "(locally-served for base64 payloads, provider-hosted for URL-mode responses). "
+        "(locally persisted as permanent user assets and served via the authenticated asset channel; "
+        "provider-hosted URLs only as a rare fallback). "
         "Requires an image generation provider configured — default MiniMax image-01, also supports OpenAI DALL·E. "
         "NOTE: Prohibited from replacing the companion room background. To update room backdrop, use 'room_backdrop_update'."
     ),

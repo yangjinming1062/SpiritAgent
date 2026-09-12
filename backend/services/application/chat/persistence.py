@@ -19,7 +19,7 @@ from modules.system import ChatRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.companion import update_mood_from_companion_turn
-from services.domains.conversation import DEFAULT_PRESET_ID, SPECIAL_KIND
+from services.domains.conversation import DEFAULT_PRESET_ID, SPECIAL_KIND, client_media_entries
 from services.infrastructure.llm import copy_responses_context, message_to_response_items
 from services.infrastructure.tool_runtime import REGISTRY
 
@@ -216,7 +216,7 @@ async def _persist_assistant_no_tool_turn(
             "text": turn_content,
             **({"speech_style": speech_style.model_dump()} if speech_style else {}),
             **({"reasoning": displayed_reasoning} if displayed_reasoning else {}),
-            **({"media": media} if media else {}),
+            **({"media": client_media_entries(media)} if media else {}),
             **({"usage": final_usage_payload} if final_usage_payload else {}),
             **({"message_id": assistant_message_id} if isinstance(assistant_message_id, int) else {}),
         },
