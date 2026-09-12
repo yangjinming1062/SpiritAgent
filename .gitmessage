@@ -14,5 +14,5 @@
 # type:  feat | fix | refactor | perf | docs | test | chore | style | build
 # scope: 仅顶层大模块，单选：
 #   backend | desktop | runner | installer | scripts | docs
-# 跨多个顶层模块的改动必须拆成多条提交，每条只标一个 scope；
+# 跨多个顶层模块的改动必须拆成多条提交（文档除外，文档同步和代码修改在同一目标下可以一并提交），每条只标一个 scope；
 # 不要写 desktop+backend，也不要用子模块名（companion、hub、gateway…）。
