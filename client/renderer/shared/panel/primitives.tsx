@@ -29,16 +29,6 @@ export function Pill({
   return <span className={tone === 'primary' ? CHIP_ACTIVE : CHIP}>{children}</span>
 }
 
-export function SectionHeading({ title, meta }: { title: string; meta?: string }): React.JSX.Element {
-  return (
-    <div className="mb-2 flex items-center gap-2 text-xs font-semibold tracking-wide text-strong">
-      <span className="size-1.5 rounded-full bg-accent shadow-[0_0_4px_var(--ui-accent)]" />
-      <span>{title}</span>
-      {meta && <Pill>{meta}</Pill>}
-    </div>
-  )
-}
-
 export function SettingsSubsection({
   children,
   intro,

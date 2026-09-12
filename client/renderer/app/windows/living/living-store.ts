@@ -124,9 +124,3 @@ function onHashChange(): void {
 if (typeof window !== 'undefined') {
   window.addEventListener('hashchange', onHashChange)
 }
-
-export function disposeLivingHashListener(): void {
-  if (typeof window !== 'undefined') {
-    window.removeEventListener('hashchange', onHashChange)
-  }
-}

@@ -2,13 +2,7 @@ import { $gateway } from '@/shared/store/gateway'
 import type { ReactionBucket } from '@/shared/types/reactions'
 
 import { $lastIdleSeconds, reportInteractionStat } from './activity'
-import {
-  $clipOverride,
-  $spriteAction,
-  $spriteEmotion,
-  playSpriteActionSequence,
-  setSpriteState
-} from './companion-store'
+import { $clipOverride, $spriteAction, $spriteEmotion, setSpriteState } from './companion-store'
 import { $personalityTags } from './persona-store'
 import { $llmReactions } from './prefs'
 import { pickReaction, playReactionAudio } from './reactions/reaction-audio'
@@ -172,20 +166,6 @@ export function handleDizzyInteraction(): void {
 
   void triggerReaction('poke-heavy', tags, undefined, 'dizzy')
   reportInteractionStat('poke')
-}
-
-export function handleLongPressBodyInteraction(region?: string): void {
-  // 400ms 触感/微颤反馈（spec §4.3 & §13）
-  $spriteAction.set('tremor')
-  handlePokeInteraction(region)
-}
-
-export function playAffectionateAction(): void {
-  // 亲昵动作序列（spec §4.2 & §4.3）
-  emitVfx('heart', { nx: 0.5, ny: 0.25, count: 2 })
-  $clipOverride.set('petting')
-  playSpriteActionSequence(['turn_towards', 'nod'])
-  setSpriteState('interacting', { durationMs: 2200 })
 }
 
 export function handlePokeInteraction(region?: string): void {

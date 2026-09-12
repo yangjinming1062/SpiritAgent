@@ -2,9 +2,6 @@
 // 全部消费 styles.css 的语义 token（--ui-*），主题在 html[data-theme] 上换肤。
 // 分层：大面板实体表面（阶梯 chrome→panel→card），瞬时浮层走 overlay（可读、不跟窗壳玻璃同一透明度）。
 
-// 表面阶梯（实体档）
-export const SURFACE_CHROME = 'bg-surface-chrome'
-
 // 精灵右键等桌面浮层：跟色彩轴走，不继承清透档的低 alpha。
 export const SURFACE_OVERLAY = 'liquid-glass-overlay'
 
@@ -32,12 +29,6 @@ export const CHIP_FILTER =
 export const CHIP_FILTER_ACTIVE =
   'liquid-glass-pill liquid-glass-pill-active inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-medium text-strong'
 
-// 设置侧栏导航
-export const NAV_ITEM =
-  'group relative flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-xs text-muted transition-all duration-150 hover:bg-fill-hover hover:text-strong'
-export const NAV_ITEM_ACTIVE =
-  'group relative flex h-8 w-full items-center gap-2 rounded-lg bg-accent-soft px-2.5 text-left text-xs font-medium text-accent shadow-[inset_0_0_0_1px_var(--ui-line-hairline)] before:absolute before:left-0 before:top-1.5 before:bottom-1.5 before:w-0.5 before:rounded-full before:bg-accent'
-
 // 文本层级
 export const SECTION_TITLE = 'text-[12px] font-medium tracking-wide text-muted'
 export const SETTINGS_INTRO_TITLE = 'text-[15px] font-medium tracking-tight text-strong'
@@ -46,7 +37,3 @@ export const SETTINGS_ROW_TITLE = 'text-[13px] font-medium text-strong'
 export const SETTINGS_ROW_DESC = 'mt-0.5 text-[11px] leading-relaxed text-muted'
 export const FIELD_LABEL = 'mb-1 block text-[11px] text-muted font-medium'
 export const HINT_TEXT = 'text-[10px] leading-relaxed text-faint'
-
-// 科技面板与卡片类
-export const TECH_CARD =
-  'relative overflow-hidden rounded-xl border border-line-hairline bg-surface-card transition-all duration-200 hover:border-line-strong'

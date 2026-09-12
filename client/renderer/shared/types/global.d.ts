@@ -109,7 +109,6 @@ declare global {
       }
       surface: {
         open: AsyncIpc<IpcInvokeContract['spiritagent:surface:open']>
-        toggle: AsyncIpc<IpcInvokeContract['spiritagent:surface:toggle']>
         close: AsyncIpc<IpcInvokeContract['spiritagent:surface:close']>
         focus: AsyncIpc<IpcInvokeContract['spiritagent:surface:focus']>
         isMaximized: AsyncIpc<IpcInvokeContract['spiritagent:surface:is-maximized']>

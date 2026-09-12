@@ -19,30 +19,6 @@ export type SpriteStateName =
 
 export type SpriteEmotion = string
 
-export const BUILTIN_EMOTIONS: ReadonlySet<string> = new Set([
-  'happy',
-  'sad',
-  'surprised',
-  'excited',
-  'confused',
-  'concerned',
-  'shy',
-  'proud',
-  'grateful',
-  'playful',
-  'bored',
-  'lonely',
-  'sleepy',
-  'curious',
-  'embarrassed',
-  'apologetic',
-  'pout',
-  'angry',
-  'smug',
-  'scared',
-  'relieved'
-])
-
 const lifecyclePersisted = definePersistedEnum<CompanionLifecycle>({
   allowed: ['unauthed', 'ready', 'onboarding'] as const,
   fallback: 'unauthed',

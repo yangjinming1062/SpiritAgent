@@ -12,166 +12,16 @@ import {
   BTN_ICON,
   BTN_PRIMARY,
   BTN_SUBTLE,
-  HINT_TEXT,
   INPUT_CLASS,
-  NAV_ITEM,
-  NAV_ITEM_ACTIVE,
   SETTINGS_INTRO_HINT,
   SETTINGS_INTRO_TITLE,
   SETTINGS_ROW_DESC,
-  SETTINGS_ROW_TITLE,
-  TECH_CARD
+  SETTINGS_ROW_TITLE
 } from './palette'
 
 // 拖拽柄事件组的透传形状（usePanelDrag 的 bind）——shared 侧不依赖 companion hooks，
 // 只要求它是可展开到 DOM 上的对象。
 type DragBindProps = object
-
-export interface NavItemDescriptor {
-  id: string
-  label: string
-  icon: IconComponent
-}
-
-export function BorderBeam({ className, fast = false }: { className?: string; fast?: boolean }): React.JSX.Element {
-  return <span aria-hidden="true" className={cn('border-beam', fast && 'border-beam-fast', className)} />
-}
-
-export function HudCorners({ className, size = 6 }: { className?: string; size?: number }): React.JSX.Element {
-  const s = `${size}px`
-
-  return (
-    <div aria-hidden="true" className={cn('pointer-events-none absolute inset-0 z-10', className)}>
-      <span className="absolute left-0 top-0 border-l border-t border-accent/60" style={{ width: s, height: s }} />
-      <span className="absolute right-0 top-0 border-r border-t border-accent/60" style={{ width: s, height: s }} />
-      <span className="absolute bottom-0 left-0 border-b border-l border-accent/60" style={{ width: s, height: s }} />
-      <span className="absolute bottom-0 right-0 border-b border-r border-accent/60" style={{ width: s, height: s }} />
-    </div>
-  )
-}
-
-export function TechCard({
-  children,
-  className,
-  glow = true,
-  tilt = false
-}: {
-  children: ReactNode
-  className?: string
-  glow?: boolean
-  tilt?: boolean
-}): React.JSX.Element {
-  const cardRef = useRef<HTMLDivElement>(null)
-  const shineRef = useRef<HTMLDivElement>(null)
-
-  const handleMouseMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (!tilt || !cardRef.current) {
-      return
-    }
-
-    const rect = cardRef.current.getBoundingClientRect()
-    const x = e.clientX - rect.left
-    const y = e.clientY - rect.top
-    const dx = (x - rect.width / 2) / (rect.width / 2)
-    const dy = (y - rect.height / 2) / (rect.height / 2)
-
-    cardRef.current.style.transform = `perspective(800px) rotateX(${-dy * 4}deg) rotateY(${dx * 4}deg)`
-
-    if (shineRef.current) {
-      shineRef.current.style.background = `radial-gradient(280px circle at ${x}px ${y}px, color-mix(in srgb, var(--ui-text-strong) 12%, transparent), transparent 80%)`
-      shineRef.current.style.opacity = '1'
-    }
-  }
-
-  const handleMouseLeave = () => {
-    if (!tilt || !cardRef.current) {
-      return
-    }
-
-    cardRef.current.style.transform = ''
-
-    if (shineRef.current) {
-      shineRef.current.style.opacity = '0'
-    }
-  }
-
-  return (
-    <div
-      className={cn(TECH_CARD, 'group transition-transform duration-150 ease-out', className)}
-      onMouseLeave={handleMouseLeave}
-      onMouseMove={handleMouseMove}
-      ref={cardRef}
-    >
-      {glow && (
-        <div className="pointer-events-none absolute -inset-px rounded-xl bg-gradient-to-br from-accent/15 via-transparent to-transparent opacity-0 transition-opacity duration-300 group-hover:opacity-100" />
-      )}
-      {tilt && (
-        <div
-          className="pointer-events-none absolute inset-0 rounded-xl opacity-0 transition-opacity duration-200"
-          ref={shineRef}
-        />
-      )}
-      <div className="relative z-10">{children}</div>
-    </div>
-  )
-}
-
-export function SettingsNav({
-  items,
-  activeId,
-  onSelect
-}: {
-  items: readonly NavItemDescriptor[]
-  activeId: string
-  onSelect: (id: string) => void
-}): React.JSX.Element {
-  return (
-    <nav className="flex flex-col gap-1">
-      {items.map(item => {
-        const isActive = activeId === item.id
-
-        return (
-          <button
-            className={cn(isActive ? NAV_ITEM_ACTIVE : NAV_ITEM)}
-            key={item.id}
-            onClick={() => onSelect(item.id)}
-            type="button"
-          >
-            <item.icon
-              className={cn(
-                'shrink-0 size-4 transition-colors',
-                isActive ? 'text-accent drop-shadow-[0_0_6px_var(--ui-accent)]' : 'text-muted group-hover:text-strong'
-              )}
-            />
-            <span className="min-w-0 flex-1 truncate">{item.label}</span>
-            {isActive && <span className="size-1 rounded-full bg-accent drop-shadow-[0_0_4px_var(--ui-accent)]" />}
-          </button>
-        )
-      })}
-    </nav>
-  )
-}
-
-// 设置页骨架：粘性标题 + 独立滚动正文。
-export function SettingsPage({
-  title,
-  hint,
-  children
-}: {
-  title: string
-  hint?: string
-  children: ReactNode
-}): React.JSX.Element {
-  return (
-    <section className="flex min-h-0 flex-1 flex-col">
-      <header className="px-5 pb-3 pt-4">
-        <h2 className="text-sm font-semibold text-strong">{title}</h2>
-        {hint && <p className={cn('mt-1', HINT_TEXT)}>{hint}</p>}
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pb-5">{children}</div>
-    </section>
-  )
-}
 
 export function SettingsSectionIntro({ title, hint }: { title: string; hint?: string }): React.JSX.Element {
   return (

@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react'
+import { atom } from 'nanostores'
 import {
   type ClipboardEvent,
   type Dispatch,
@@ -49,14 +50,13 @@ export interface UseChatInputResult {
   submitState: ChatSubmitState
 }
 
-// 已消费过的投喂 nonce + 跨挂载暂存的附件路径。
-// StrictMode 会卸载重挂：组件本地 state 会丢，靠模块级 staged 在重挂时还原；
+// 已消费过的投喂 nonce + 跨挂载暂存的附件路径（模块级 atom，StrictMode 卸载重挂不丢）。
 // nonce 防止 listen 对同一份投喂重复 append。监听器内不 clear，由投喂方在下次 push 前清。
 let consumedExternalFeedNonce = 0
-let stagedExternalPaths: string[] = []
+const $stagedExternalPaths = atom<string[]>([])
 
 export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOptions): UseChatInputResult {
-  const [externalPaths, setExternalPaths] = useState<string[]>(stagedExternalPaths)
+  const externalPaths = useStore($stagedExternalPaths)
   const [attachMenuOpen, setAttachMenuOpen] = useState(false)
   const chatSessionId = useStore($chatSessionId)
   const turnInFlight = useStore($chatTurnInFlight)
@@ -68,8 +68,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
     gatewayState,
     isReadOnlySession,
     onClearExternalPaths: () => {
-      setExternalPaths([])
-      stagedExternalPaths = []
+      $stagedExternalPaths.set([])
     },
     onPreCheckFail: msg => notify({ kind: 'warning', message: msg })
   })
@@ -93,12 +92,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
     }
 
     consumedExternalFeedNonce = state.nonce
-    setExternalPaths(prev => {
-      const next = [...prev, ...state.paths]
-      stagedExternalPaths = next
-
-      return next
-    })
+    $stagedExternalPaths.set([...$stagedExternalPaths.get(), ...state.paths])
     notify({ kind: 'info', message: getStrings().chat.filesReceived(state.paths.length) })
   })
 
@@ -110,12 +104,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
     }
 
     e.preventDefault()
-    setExternalPaths(prev => {
-      const next = [...prev, ...paths]
-      stagedExternalPaths = next
-
-      return next
-    })
+    $stagedExternalPaths.set([...$stagedExternalPaths.get(), ...paths])
     notify({ kind: 'info', message: getStrings().chat.attachmentsAdded(paths.length) })
   }
 
@@ -164,12 +153,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
         if (file.type.startsWith('video/')) {
           await attachVideoFile(filePath, submit.setPending)
         } else {
-          setExternalPaths(prev => {
-            const next = [...prev, filePath as string]
-            stagedExternalPaths = next
-
-            return next
-          })
+          $stagedExternalPaths.set([...$stagedExternalPaths.get(), filePath as string])
         }
       }
     }

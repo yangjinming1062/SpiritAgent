@@ -135,31 +135,10 @@ export type BoneId =
   | 'lowerLegR'
   | 'footR'
 
-export const BONE_NAMES: readonly BoneId[] = Object.freeze([
-  'hip',
-  'spine',
-  'neck',
-  'head',
-  'shoulderL',
-  'upperArmL',
-  'lowerArmL',
-  'handL',
-  'shoulderR',
-  'upperArmR',
-  'lowerArmR',
-  'handR',
-  'upperLegL',
-  'lowerLegL',
-  'footL',
-  'upperLegR',
-  'lowerLegR',
-  'footR'
-] as BoneId[])
-
 export interface Bone {
   id: BoneId
   index: number
-  parent: number | null // 父骨骼在 BONE_NAMES 中的索引，hip 为 null
+  parent: number | null // 父骨骼在骨骼序列中的索引，hip 为 null
   // 绑定姿态数据
   bindWorldPos: { x: number; y: number }
   bindWorldAngle: number

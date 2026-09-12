@@ -363,7 +363,6 @@ export interface IpcInvokeContract {
 
   // 入口面（互斥 living / workbench）
   'spiritagent:surface:open': (payload: DesktopSurfaceOpenPayload) => Promise<void> | void
-  'spiritagent:surface:toggle': (payload: DesktopSurfaceOpenPayload) => Promise<void> | void
   'spiritagent:surface:close': () => Promise<void> | void
   'spiritagent:surface:focus': () => Promise<void> | void
   'spiritagent:surface:minimize': () => Promise<void> | void
@@ -553,7 +552,6 @@ export const IPC = {
     shortcutsSet: 'spiritagent:shortcuts:set',
     shortcutsReset: 'spiritagent:shortcuts:reset',
     surfaceOpen: 'spiritagent:surface:open',
-    surfaceToggle: 'spiritagent:surface:toggle',
     surfaceClose: 'spiritagent:surface:close',
     surfaceFocus: 'spiritagent:surface:focus',
     surfaceMinimize: 'spiritagent:surface:minimize',

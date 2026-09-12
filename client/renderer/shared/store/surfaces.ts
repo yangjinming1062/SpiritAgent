@@ -59,16 +59,6 @@ export async function requestCloseSurface(): Promise<void> {
   await window.spiritagent?.surface?.close?.()
 }
 
-export async function requestToggleSurface(surface: SurfaceId, options: OpenSurfaceOptions = {}): Promise<void> {
-  const payload: DesktopSurfaceOpenPayload = {
-    sessionId: options.sessionId,
-    surface,
-    view: options.view
-  }
-
-  await window.spiritagent?.surface?.toggle?.(payload)
-}
-
 export function hydrateSurfaces(): () => void {
   if (!window.spiritagent?.surface) {
     return () => {}

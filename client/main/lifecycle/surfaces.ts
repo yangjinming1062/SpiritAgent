@@ -336,18 +336,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       })
     })
 
-    ipcMain.handle(IPC.invoke.surfaceToggle, (_event, payload: unknown) => {
-      const surface = (payload as { surface?: unknown } | null)?.surface
-      const view = (payload as { view?: unknown } | null)?.view
-      const sessionId = (payload as { sessionId?: unknown } | null)?.sessionId
-
-      return toggleSurface({
-        sessionId: typeof sessionId === 'string' ? sessionId : undefined,
-        surface: normalizeSurfaceId(surface),
-        view: typeof view === 'string' ? view : undefined
-      })
-    })
-
     const resolveWindow = (event: IpcMainInvokeEvent): BrowserWindow | null => {
       const fromSender = BrowserWindow.fromWebContents(event.sender)
 

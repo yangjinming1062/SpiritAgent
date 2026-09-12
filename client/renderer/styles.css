@@ -1266,51 +1266,6 @@ html[data-palette='day'] .sa-slider::-moz-range-thumb {
 
 /* ── 现代科技感与全息控制台增强动效 ─────────────────────────────────────── */
 
-@property --beam-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-
-@keyframes beam-spin {
-  from {
-    --beam-angle: 0deg;
-  }
-  to {
-    --beam-angle: 360deg;
-  }
-}
-
-/* 巡游流光边框 */
-.border-beam-container {
-  position: relative;
-}
-
-.border-beam {
-  pointer-events: none;
-  position: absolute;
-  inset: -1px;
-  border-radius: inherit;
-  padding: 1px;
-  background: conic-gradient(
-    from var(--beam-angle),
-    transparent 0deg,
-    transparent 280deg,
-    var(--ui-accent, #6c8aff) 330deg,
-    var(--ui-glow, #a5b4fc) 360deg
-  );
-  -webkit-mask:
-    linear-gradient(#fff 0 0) content-box,
-    linear-gradient(#fff 0 0);
-  -webkit-mask-composite: xor;
-  mask-composite: exclude;
-  animation: beam-spin 4s linear infinite;
-}
-
-.border-beam-fast {
-  animation: beam-spin 2s linear infinite;
-}
-
 /* 离子微光标（流式文本打字机） */
 @keyframes caret-pulse {
   0%,
@@ -1345,7 +1300,6 @@ html[data-palette='day'] .sa-slider::-moz-range-thumb {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .border-beam,
   .animate-caret-pulse {
     animation: none;
   }

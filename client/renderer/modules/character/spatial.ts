@@ -274,29 +274,6 @@ export function moveTo(target: { x: number; y: number }, locomotion: 'walk' | 'f
   rafId = requestAnimationFrame(tick)
 }
 
-// 重新瞄准正在飞行的目标，拖拽窗口时合帧重瞄避免中断
-export function retargetMove(target: { x: number; y: number }): boolean {
-  if (rafId === null || !moveStart || !moveTarget) {
-    return false
-  }
-
-  const current = $spatialPos.get()
-  const dist = Math.hypot(target.x - current.x, target.y - current.y)
-
-  if (dist < 2) {
-    moveTarget = target
-
-    return true
-  }
-
-  moveStart = { ...current }
-  moveTarget = target
-  moveStartTime = performance.now()
-  moveDuration = Math.min(Math.max((dist / FLY_SPEED) * 1000, 50), 90)
-
-  return true
-}
-
 export function cancelMovement(notifyArrive = false): void {
   if (rafId !== null) {
     cancelAnimationFrame(rafId)

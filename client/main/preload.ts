@@ -132,8 +132,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
     onChanged: (cb: (payload: DesktopSurfaceChangedEvent) => void) => subscribe(IPC.event.surfaceChanged, cb),
     open: (payload: DesktopSurfaceOpenPayload) => ipcRenderer.invoke(IPC.invoke.surfaceOpen, payload),
     setIgnoreMouseEvents: (payload: { forward?: boolean; ignore: boolean }) =>
-      ipcRenderer.invoke(IPC.invoke.surfaceSetIgnoreMouseEvents, payload),
-    toggle: (payload: DesktopSurfaceOpenPayload) => ipcRenderer.invoke(IPC.invoke.surfaceToggle, payload)
+      ipcRenderer.invoke(IPC.invoke.surfaceSetIgnoreMouseEvents, payload)
   },
   chat: {
     onPendingFeed: (cb: (paths: string[]) => void) => subscribe(IPC.event.chatPendingFeed, cb),
