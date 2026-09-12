@@ -12,7 +12,6 @@
 #   - 非显然动机放最后一行 "Why: ..."（≤2 行）
 #
 # type:  feat | fix | refactor | perf | docs | test | chore | style | build
-# scope: 仅顶层大模块，单选：
+# scope: 仅顶层大模块，可选：
 #   backend | desktop | runner | installer | scripts | docs
-# 跨多个顶层模块的改动必须拆成多条提交（文档除外，文档同步和代码修改在同一目标下可以一并提交），每条只标一个 scope；
-# 不要写 desktop+backend，也不要用子模块名（companion、hub、gateway…）。
+# 同一目标的修改一并提交，但是每条只标一至两个主要 scope，不要用子模块名（companion、hub、gateway…）。
