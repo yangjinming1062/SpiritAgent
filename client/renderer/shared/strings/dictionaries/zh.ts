@@ -407,9 +407,18 @@ export const dict = {
     memory: {
       tabAriaLabel: '记忆类型',
       presetLabel: '当前预设',
-      tabRecall: (count: string | number) => `主动召回 · ${count}`,
-      tabAutoInject: (count: string | number) => `自动注入 · ${count}`,
-      userProfileHint: (count: string | number) => `${count} 个 user_profile 由你独占`,
+      tabActive: (count: string | number) => `有效 · ${count}`,
+      tabCandidate: (count: string | number) => `候选 · ${count}`,
+      tabInvalidated: (count: string | number) => `失效 · ${count}`,
+      tabExpired: (count: string | number) => `过期 · ${count}`,
+      userProfileHint: (count: string | number) => `${count} 项明确设定的资料`,
+      maintenanceHint: '伙伴会自行审阅证据和维护记忆，无需你确认。只有有效且未过期的记忆用于互动。',
+      basis: { explicit: '明确表达', inferred: '推断', observed: '事件观察', system: '系统记录' },
+      usage: { contextual: '按需使用', background: '长期背景' },
+      stance: { supports: '支持依据', opposes: '相反依据' },
+      evidence: '查看依据',
+      expires: '有效期至',
+      updated: '更新',
       loading: '加载中…',
       loadFailedHint: '加载失败',
       loadFailedToast: '加载长期记忆失败',
@@ -417,22 +426,10 @@ export const dict = {
       saveFailedToast: '保存记忆失败',
       deleteFailedHint: '删除失败，已回滚',
       deleteFailedToast: '删除记忆失败',
-      emptyRecall: '还没有召回记忆。精灵会在对话中主动写下。',
+      empty: '这里还没有记忆。没有值得长期保留的信息时，伙伴不会写入。',
       saved: '已保存',
       saving: '保存中…',
-      delete: '删除',
-      autoInjectIntro: (max: number) =>
-        `自动注入段每次对话都默念一遍，LLM 写入时已限 ${max} 字符。这里你可以查看或修正。`,
-      autoInjectUpdated: '更新',
-      autoInjectChars: (current: number, max: number) => `${current} / ${max} chars`,
-      autoInjectEmpty: '（空）让精灵在对话中自然填入',
-      autoInjectSlotHints: {
-        communicationStyle: '回答怎么框定（详略程度、口吻风格、是否使用列表等）',
-        rapportState: '当前关系/熟悉度阶段',
-        interactionPattern: '典型使用节奏（夜间高频、短对话等）',
-        moodPattern: '近期情绪倾向（模式，不是当下 mood）',
-        relationshipSignal: '信任/打趣频率/正式度'
-      } as Record<string, string>
+      delete: '删除'
     }
   },
 

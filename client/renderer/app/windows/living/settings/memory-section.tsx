@@ -10,10 +10,13 @@ import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS } from
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-const MAX_AUTO_INJECT_CONTENT_CHARS = 500
-
 interface MemoryRow {
   id: number
+  basis: 'explicit' | 'inferred' | 'observed' | 'system'
+  usage: 'contextual' | 'background'
+  reason: string
+  expires_at: string | null
+  evidence: Array<{ message_id: number; quote: string; stance: 'supports' | 'opposes'; created_at: string }>
   context: string | null
   tags: string | null
   content: string | null
@@ -22,11 +25,11 @@ interface MemoryRow {
 }
 
 interface MemoryCounts {
-  recall: number
-  auto_inject: number
+  active: number
+  candidate: number
+  invalidated: number
+  expired: number
   user_profile: number
-  interaction_stats: number
-  other: number
 }
 
 interface ListResponse {
@@ -35,36 +38,6 @@ interface ListResponse {
   counts: MemoryCounts
 }
 
-// context 后缀到字典 hint 键的映射；新增槽位时在这里追加。
-const AUTO_INJECT_SLOT_HINT_KEYS: ReadonlyArray<{ context: string; label: string; hintKey: string }> = [
-  {
-    context: 'auto_inject:communication_style',
-    label: 'communication style',
-    hintKey: 'communicationStyle'
-  },
-  {
-    context: 'auto_inject:rapport_state',
-    label: 'rapport state',
-    hintKey: 'rapportState'
-  },
-  {
-    context: 'auto_inject:interaction_pattern',
-    label: 'interaction pattern',
-    hintKey: 'interactionPattern'
-  },
-  {
-    context: 'auto_inject:mood_pattern',
-    label: 'mood pattern',
-    hintKey: 'moodPattern'
-  },
-  {
-    context: 'auto_inject:relationship_signal',
-    label: 'relationship signal',
-    hintKey: 'relationshipSignal'
-  }
-]
-
-// 长期记忆浏览与修正（DESIGN §8）：主动召回 / 自动注入两 tab。
 export function MemorySection(): React.ReactElement {
   const presets = useStore($systemPresets)
   const [presetId, setPresetId] = useState('companion')
@@ -80,7 +53,7 @@ export function MemorySection(): React.ReactElement {
         <select
           className={INPUT_CLASS}
           onChange={event => {
-            setMemoryBrowserTab('recall')
+            setMemoryBrowserTab('active')
             setPresetId(event.target.value)
           }}
           value={presetId}
@@ -124,7 +97,11 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
       setHint(null)
 
       try {
-        const res = await requestGateway<ListResponse>('memory.list', { kind: nextTab, system_preset_id: presetId })
+        const res = await requestGateway<ListResponse>('memory.list', {
+          kind: 'recall',
+          status: nextTab,
+          system_preset_id: presetId
+        })
 
         if (loadIdRef.current !== id) {
           return
@@ -173,13 +150,22 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
       setSavingById(s => ({ ...s, [id]: true }))
 
       try {
-        await requestGateway('memory.update', { memory_id: id, content: draft, system_preset_id: presetId })
+        const updated = await requestGateway<MemoryRow>('memory.update', {
+          memory_id: id,
+          content: draft,
+          system_preset_id: presetId
+        })
 
         if (requestId !== loadIdRef.current) {
           return
         }
 
-        setRows(prev => prev.map(r => (r.id === id ? { ...r, content: draft } : r)))
+        setRows(prev => (tab === 'active' ? prev.map(r => (r.id === id ? updated : r)) : prev.filter(r => r.id !== id)))
+        setDraftById(prev => ({ ...prev, [id]: updated.content ?? '' }))
+
+        if (tab !== 'active') {
+          setCounts(prev => (prev ? { ...prev, [tab]: Math.max(0, prev[tab] - 1), active: prev.active + 1 } : prev))
+        }
       } catch (err) {
         if (requestId !== loadIdRef.current) {
           return
@@ -200,28 +186,35 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
         }
       }
     },
-    [presetId, draftById, requestGateway, rows, t.saveFailedHint, t.saveFailedToast]
+    [presetId, draftById, requestGateway, rows, t.saveFailedHint, t.saveFailedToast, tab]
   )
 
   const del = useCallback(
     async (id: number) => {
       const requestId = loadIdRef.current
-      const prevRows = rows
-      setRows(prev => prev.filter(r => r.id !== id))
+      setSavingById(prev => ({ ...prev, [id]: true }))
 
       try {
         await requestGateway('memory.delete', { memory_id: id, system_preset_id: presetId })
+
+        if (requestId === loadIdRef.current) {
+          setRows(prev => prev.filter(r => r.id !== id))
+          setCounts(prev => (prev ? { ...prev, [tab]: Math.max(0, prev[tab] - 1) } : prev))
+        }
       } catch (err) {
         if (requestId !== loadIdRef.current) {
           return
         }
 
-        setRows(prevRows)
         setHint(t.deleteFailedHint)
         notifyError(err, t.deleteFailedToast)
+      } finally {
+        if (requestId === loadIdRef.current) {
+          setSavingById(prev => ({ ...prev, [id]: false }))
+        }
       }
     },
-    [presetId, requestGateway, rows, t.deleteFailedHint, t.deleteFailedToast]
+    [presetId, requestGateway, t.deleteFailedHint, t.deleteFailedToast, tab]
   )
 
   const switchTab = (next: MemoryTab): void => {
@@ -237,8 +230,10 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
           ariaLabel={t.tabAriaLabel}
           onChange={switchTab}
           options={[
-            { label: t.tabRecall(counts?.recall ?? '…'), value: 'recall' },
-            { label: t.tabAutoInject(counts?.auto_inject ?? '…'), value: 'auto_inject' }
+            { label: t.tabActive(counts?.active ?? '…'), value: 'active' },
+            { label: t.tabCandidate(counts?.candidate ?? '…'), value: 'candidate' },
+            { label: t.tabInvalidated(counts?.invalidated ?? '…'), value: 'invalidated' },
+            { label: t.tabExpired(counts?.expired ?? '…'), value: 'expired' }
           ]}
           size="sm"
           value={tab}
@@ -246,104 +241,75 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
         <span className={cn(HINT_TEXT, 'ml-auto')}>{t.userProfileHint(counts?.user_profile ?? '…')}</span>
       </div>
 
+      <p className={cn(HINT_TEXT, 'mb-3')}>{t.maintenanceHint}</p>
       {hint && <p className="mb-2 text-xs text-amber-300/90">{hint}</p>}
 
       {loading ? (
         <p className="text-xs text-muted">{t.loading}</p>
-      ) : tab === 'recall' ? (
-        rows.length === 0 ? (
-          <p className="text-xs text-muted">{t.emptyRecall}</p>
-        ) : (
-          <div className="space-y-2.5">
-            {rows.map(r => {
-              const tags = parseTags(r.tags)
-              const draft = draftById[r.id] ?? ''
-              const dirty = draft !== (r.content ?? '')
-              const saving = !!savingById[r.id]
-
-              return (
-                <div className="liquid-glass-card rounded-2xl p-3.5" key={r.id}>
-                  <textarea
-                    className={cn(INPUT_CLASS, 'resize-none')}
-                    disabled={saving}
-                    onChange={e => setDraftById(d => ({ ...d, [r.id]: e.target.value }))}
-                    rows={3}
-                    value={draft}
-                  />
-                  <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                    {tags.map(tg => (
-                      <span className={CHIP} key={tg}>
-                        {tg}
-                      </span>
-                    ))}
-                  </div>
-                  <p className={cn(HINT_TEXT, 'mt-1')}>
-                    {r.context ?? '—'} · {t.autoInjectUpdated} {r.updated_at ?? '—'} · {draft.length} chars
-                  </p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <button
-                      className={BTN_SUBTLE}
-                      disabled={saving || !dirty}
-                      onClick={() => void saveRecall(r.id)}
-                      type="button"
-                    >
-                      {saving ? t.saving : dict.common.save}
-                    </button>
-                    <button className={BTN_GHOST} disabled={saving} onClick={() => void del(r.id)} type="button">
-                      {t.delete}
-                    </button>
-                    {!dirty && <span className={cn(HINT_TEXT, 'ml-1')}>{t.saved}</span>}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )
+      ) : rows.length === 0 ? (
+        <p className="text-xs text-muted">{t.empty}</p>
       ) : (
         <div className="space-y-2.5">
-          <p className={HINT_TEXT}>{t.autoInjectIntro(MAX_AUTO_INJECT_CONTENT_CHARS)}</p>
-          {AUTO_INJECT_SLOT_HINT_KEYS.map(slot => {
-            const row = rows.find(r => r.context === slot.context)
-            const draft = row ? (draftById[row.id] ?? row.content ?? '') : ''
-            const dirty = !!row && draft !== (row.content ?? '')
-            const overLimit = draft.length > MAX_AUTO_INJECT_CONTENT_CHARS
-            const saving = !!row && !!savingById[row.id]
-            const hintText = t.autoInjectSlotHints[slot.hintKey] ?? ''
+          {rows.map(r => {
+            const tags = parseTags(r.tags)
+            const draft = draftById[r.id] ?? ''
+            const dirty = draft !== (r.content ?? '')
+            const saving = !!savingById[r.id]
 
             return (
-              <div className="liquid-glass-card rounded-2xl p-3.5" key={slot.context}>
-                <p className="text-[11px] font-medium text-strong">{slot.label}</p>
-                <p className="mb-1.5 mt-0.5 text-[10px] text-muted">{hintText}</p>
-                {row ? (
-                  <>
-                    <textarea
-                      className={cn(INPUT_CLASS, 'resize-none')}
-                      disabled={saving}
-                      onChange={e => setDraftById(d => ({ ...d, [row.id]: e.target.value }))}
-                      rows={2}
-                      value={draft}
-                    />
-                    <p className={cn(HINT_TEXT, 'mt-1')}>
-                      {t.autoInjectChars(draft.length, MAX_AUTO_INJECT_CONTENT_CHARS)} · {t.autoInjectUpdated}{' '}
-                      {row.updated_at ?? '—'}
-                    </p>
-                    <div className="mt-2 flex items-center gap-2">
-                      <button
-                        className={BTN_SUBTLE}
-                        disabled={saving || !dirty || overLimit}
-                        onClick={() => void saveRecall(row.id)}
-                        type="button"
-                      >
-                        {saving ? t.saving : dict.common.save}
-                      </button>
-                      <button className={BTN_GHOST} disabled={saving} onClick={() => void del(row.id)} type="button">
-                        {t.delete}
-                      </button>
-                    </div>
-                  </>
-                ) : (
-                  <p className="text-[10px] text-faint">{t.autoInjectEmpty}</p>
+              <div className="liquid-glass-card rounded-2xl p-3.5" key={r.id}>
+                <p className={cn(HINT_TEXT, 'mb-2')}>
+                  {t.basis[r.basis]} · {t.usage[r.usage]}
+                </p>
+                {r.reason && <p className={cn(HINT_TEXT, 'mb-2')}>{r.reason}</p>}
+                {r.expires_at && (
+                  <p className={HINT_TEXT}>
+                    {t.expires} {r.expires_at}
+                  </p>
                 )}
+                {r.evidence.length > 0 && (
+                  <details className="mb-2 text-xs text-muted">
+                    <summary>{t.evidence}</summary>
+                    {r.evidence.map((e, i) => (
+                      <blockquote className="mt-1 border-l pl-2" key={`${e.message_id}-${i}`}>
+                        {t.stance[e.stance]} · {e.created_at}
+                        <br />
+                        {e.quote}
+                      </blockquote>
+                    ))}
+                  </details>
+                )}
+                <textarea
+                  className={cn(INPUT_CLASS, 'resize-none')}
+                  disabled={saving}
+                  onChange={e => setDraftById(d => ({ ...d, [r.id]: e.target.value }))}
+                  rows={3}
+                  value={draft}
+                />
+                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                  {tags.map(tg => (
+                    <span className={CHIP} key={tg}>
+                      {tg}
+                    </span>
+                  ))}
+                </div>
+                <p className={cn(HINT_TEXT, 'mt-1')}>
+                  {r.context ?? '—'} · {t.updated} {r.updated_at ?? '—'} · {draft.length} chars
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    className={BTN_SUBTLE}
+                    disabled={saving || !dirty}
+                    onClick={() => void saveRecall(r.id)}
+                    type="button"
+                  >
+                    {saving ? t.saving : dict.common.save}
+                  </button>
+                  <button className={BTN_GHOST} disabled={saving} onClick={() => void del(r.id)} type="button">
+                    {t.delete}
+                  </button>
+                  {!dirty && <span className={cn(HINT_TEXT, 'ml-1')}>{t.saved}</span>}
+                </div>
               </div>
             )
           })}

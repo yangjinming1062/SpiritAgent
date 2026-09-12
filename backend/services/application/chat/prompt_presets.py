@@ -30,8 +30,7 @@ _BODY_COMPANION = (
     "{{COMPANION_CHAT_GUIDANCE}}\n\n"
     "{{OUTFIT}}\n\n"
     "{{USER_PROFILE}}\n\n"
-    "{{AUTO_INJECT}}\n\n"
-    "{{INFERRED_PROFILE}}\n\n"
+    "{{BACKGROUND_MEMORY}}\n\n"
     "{{PROACTIVE_MEMORY}}\n\n"
     "{{MEMORY_TOOL_GUIDANCE}}\n\n"
     "{{SESSION_SEARCH_GUIDANCE}}\n\n"
@@ -60,8 +59,7 @@ _BODY_DEVELOPER = (
     "{{ENVIRONMENT_HINTS}}\n\n"
     "{{PLATFORM_HINTS}}\n\n"
     "{{USER_PROFILE}}\n\n"
-    "{{AUTO_INJECT}}\n\n"
-    "{{INFERRED_PROFILE}}\n\n"
+    "{{BACKGROUND_MEMORY}}\n\n"
     "{{PROACTIVE_MEMORY}}\n\n"
     "{{VOLATILE_HEADER}}"
 )
@@ -76,8 +74,7 @@ _BODY_PRODUCT_MANAGER = (
     "{{MEMORY_TOOL_GUIDANCE}}\n\n"
     "{{MEDIA_GUIDANCE}}\n\n"
     "{{USER_PROFILE}}\n\n"
-    "{{AUTO_INJECT}}\n\n"
-    "{{INFERRED_PROFILE}}\n\n"
+    "{{BACKGROUND_MEMORY}}\n\n"
     "{{PROACTIVE_MEMORY}}\n\n"
     "{{SKILLS_LIST}}\n\n"
     "{{ENVIRONMENT_HINTS}}\n\n"
@@ -96,8 +93,7 @@ _BODY_COPYWRITER = (
     "{{SKILLS_GUIDANCE}}\n\n"
     "{{MEDIA_GUIDANCE}}\n\n"
     "{{USER_PROFILE}}\n\n"
-    "{{AUTO_INJECT}}\n\n"
-    "{{INFERRED_PROFILE}}\n\n"
+    "{{BACKGROUND_MEMORY}}\n\n"
     "{{PROACTIVE_MEMORY}}\n\n"
     "{{SKILLS_LIST}}\n\n"
     "{{ENVIRONMENT_HINTS}}\n\n"
@@ -116,8 +112,7 @@ _BODY_LANGUAGE_TEACHER = (
     "{{SKILLS_GUIDANCE}}\n\n"
     "{{MEDIA_GUIDANCE}}\n\n"
     "{{USER_PROFILE}}\n\n"
-    "{{AUTO_INJECT}}\n\n"
-    "{{INFERRED_PROFILE}}\n\n"
+    "{{BACKGROUND_MEMORY}}\n\n"
     "{{PROACTIVE_MEMORY}}\n\n"
     "{{SKILLS_LIST}}\n\n"
     "{{ENVIRONMENT_HINTS}}\n\n"
@@ -157,7 +152,7 @@ LIFE_SPACE_TOOL_NAMES = frozenset(
 )
 AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(
     {
-        "memory_forget",
+        "memory_inspect",
         "memory_recall",
         "memory_retain",
         "session_search",

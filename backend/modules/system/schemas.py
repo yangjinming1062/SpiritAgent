@@ -74,8 +74,7 @@ class AgentPromptConfig(BaseModel):
     user_profile_extras: str | None = None
     # 当前穿着的着装描述（2D 换装）；精灵自知穿着，为着装联动打底
     outfit_extras: str = ""
-    auto_inject_extras: str = ""
-    inferred_profile_extras: str = ""
+    background_memory_extras: str = ""
     proactive_memory_extras: str = ""
     language: str = DEFAULT_LANGUAGE
     # 用户本地 IANA tz（如 "Asia/Shanghai"）；用于 volatile header 日期与陪伴对话时间提示走本地时区。

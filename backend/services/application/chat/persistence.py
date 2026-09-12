@@ -18,10 +18,10 @@ from modules.media import SpeechStyle
 from modules.system import ChatRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import MemoryScope, MemorySource
+from services.contracts.memory import MemoryScope
 from services.domains.companion import update_mood_from_companion_turn
 from services.domains.conversation import DEFAULT_PRESET_ID, SPECIAL_KIND, client_media_entries
-from services.infrastructure.llm import copy_responses_context, message_to_response_items
+from services.infrastructure.llm import message_to_response_items
 from services.infrastructure.tool_runtime import REGISTRY
 
 from .background_review import run_background_memory_review
@@ -202,13 +202,19 @@ async def _persist_assistant_no_tool_turn(
         or effective_settings.get("enable_background_review")
         or BACKGROUND_REVIEW_DEFAULT
     )
-    if persist and run_post_turn_tasks and memory_scope is not None and bg_review.lower() == BACKGROUND_REVIEW_DEFAULT:
+    if (
+        persist
+        and run_post_turn_tasks
+        and memory_scope is not None
+        and assistant_message_id is not None
+        and bg_review.lower() == BACKGROUND_REVIEW_DEFAULT
+    ):
         review_task = asyncio.create_task(
             run_background_memory_review(
                 memory_scope,
                 llm_config,
-                copy_responses_context(context),
-                source=MemorySource("reflection", session_id=conv.id),
+                session_id=conv.id,
+                through_message_id=assistant_message_id,
             ),
         )
         if track_task:

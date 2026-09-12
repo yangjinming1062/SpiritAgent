@@ -168,8 +168,6 @@ async def insert_rows(
             and (payload.get("context") or "").startswith(
                 (
                     "user_profile:",
-                    "auto_inject:",
-                    "inferred_profile:",
                     "diary:",
                     "interaction_stats:",
                     "recall:nightly_actions:",
@@ -262,6 +260,7 @@ def _build_payload(
         if not isinstance(payload.get("context_after_message_id"), int) or payload["context_after_message_id"] < 0:
             raise ValueError("Invalid conversation context watermark")
         payload["context_after_message_id"] = 0
+        payload["memory_reviewed_message_id"] = 0
         if payload.get("is_automation"):
             if payload.get("system_preset_id") != "automation":
                 raise ValueError("Invalid automation preset")
@@ -277,6 +276,14 @@ def _build_payload(
             raise ValueError("Invalid memory content version")
         if not isinstance(payload.get("source_refs"), dict) or not isinstance(payload.get("source_kind"), str):
             raise ValueError("Memory source is required")
+        if payload.get("status") not in {"active", "candidate", "invalidated", "forgotten"}:
+            raise ValueError("Invalid memory status")
+        if payload.get("basis") not in {"explicit", "inferred", "observed", "system"}:
+            raise ValueError("Invalid memory basis")
+        if payload.get("usage") not in {"background", "contextual"}:
+            raise ValueError("Invalid memory usage")
+        if not isinstance(payload.get("evidence"), list) or not isinstance(payload.get("history"), list):
+            raise ValueError("Memory evidence and history are required")
         payload["source_kind"] = "import"
         payload["source_refs"] = {"imported_memory_id": raw["id"], "original_source": payload["source_refs"]}
     if table == "companion_room_backdrops":
@@ -344,6 +351,41 @@ async def restore_memory_context(
             restored["message_ids"] = mapped_messages
         else:
             restored["external_source"] = {key: value for key, value in refs.items() if key != "external_source"}
+
+        def remap_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
+            result = []
+            for item in evidence:
+                entry = dict(item)
+                mid = entry.get("message_id")
+                if mid is not None:
+                    message = messages.get(str(mid))
+                    conv = conversations.get(str(message["conversation_id"])) if message else None
+                    if conv and conv["system_preset_id"] != raw["system_preset_id"]:
+                        raise ValueError("Memory evidence belongs to a different preset")
+                    if not message or not conv or str(mid) not in id_map.get("messages", {}):
+                        entry.pop("message_id", None)
+                        entry.pop("session_id", None)
+                        entry["source_unavailable"] = True
+                    else:
+                        if message["role"] != "user" or message.get("subtype") is not None:
+                            raise ValueError("Memory evidence must reference an original user message")
+                        entry["message_id"] = int(id_map["messages"][str(mid)])
+                        entry["session_id"] = int(id_map["conversations"][str(message["conversation_id"])])
+                result.append(entry)
+            return result
+
+        memory.evidence = remap_evidence(raw["evidence"])
+        if any(e.get("source_unavailable") for e in memory.evidence) and memory.status in {"active", "candidate"}:
+            memory.status = "invalidated"
+            memory.reason = "Original evidence was not included in the restored backup"
+        history = []
+        for old in raw["history"]:
+            item = dict(old)
+            item["id"] = memory.id
+            item["evidence"] = remap_evidence(item.get("evidence", []))
+            history.append(item)
+        memory.history = history
+        restored["message_ids"] = sorted({e["message_id"] for e in memory.evidence if "message_id" in e})
         memory.source_refs = restored
     await db.flush()
 

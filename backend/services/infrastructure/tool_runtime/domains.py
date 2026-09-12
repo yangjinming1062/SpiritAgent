@@ -56,7 +56,7 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
         description_zh="长期记忆与日记",
         description_en="Long-term memory and journal",
         aliases=("memory", "diary", "moments", "记忆", "日记", "时刻", "回忆", "记住", "备忘"),
-        extra_tools=("memory_retain", "memory_recall", "memory_forget", "moment_create", "diary_write"),
+        extra_tools=("memory_retain", "memory_recall", "memory_inspect", "moment_create", "diary_write"),
     ),
     ToolDomain(
         id="media",

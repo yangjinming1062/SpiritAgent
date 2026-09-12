@@ -1711,6 +1711,7 @@ def _register_session_handlers(
                     db,
                     scope,
                     kind=kind if isinstance(kind, str) else None,
+                    status=params.get("status", "active"),
                     tag=tag if isinstance(tag, str) else None,
                     q=q if isinstance(q, str) else None,
                     limit=int(limit) if isinstance(limit, int) else 100,

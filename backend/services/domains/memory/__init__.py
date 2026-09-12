@@ -15,24 +15,16 @@ from services.domains.memory.memory_bootstrap import (
     resolve_user_timezone,
 )
 from services.domains.memory.memory_format import (
-    format_auto_inject_block,
-    format_inferred_profile_block,
+    format_background_memory_block,
     format_memories_block,
     format_proactive_memory_block,
 )
 from services.domains.memory.memory_namespaces import (
-    AUTO_INJECT_SLOTS,
-    FORBIDDEN_FROM_LLM,
-    INFERRED_PROFILE_SLOTS,
     KIND_TO_PREFIX,
-    NAMESPACE_SPECS,
     RECALL_TAGS,
     RESERVED_FROM_RECALL,
-    STATIC_BLOCK_EXCLUDED,
-    NamespaceSpec,
     context_not_in,
     normalize_recall_context,
-    normalize_recall_tags,
     participates_in_recall,
 )
 from services.domains.memory.memory_retrieval import (
@@ -41,44 +33,40 @@ from services.domains.memory.memory_retrieval import (
     retrieve_proactive_memories,
 )
 
+from .memory_learning import MemoryReviewContext, load_review_context
+from .memory_policy import MEMORY_POLICY, MemoryDecisions
+from .memory_review import assess_memory_changes, review_memories
 from .memory_store import (
-    RecallSnapshot,
-    apply_reflection_slot,
+    active_memory_filter,
     backfill_memory_embeddings,
     create_memory,
     delete_memory,
     get_memory,
-    load_recall_snapshot,
-    replace_recall_snapshot,
     scope_filter,
     upsert_slotted_memory,
 )
 
 __all__ = [
+    "active_memory_filter",
+    "MemoryReviewContext",
+    "load_review_context",
+    "MEMORY_POLICY",
+    "MemoryDecisions",
+    "assess_memory_changes",
+    "review_memories",
     "create_memory",
     "get_memory",
     "scope_filter",
-    "load_recall_snapshot",
-    "replace_recall_snapshot",
-    "RecallSnapshot",
-    "apply_reflection_slot",
-    "AUTO_INJECT_SLOTS",
-    "FORBIDDEN_FROM_LLM",
-    "INFERRED_PROFILE_SLOTS",
     "KIND_TO_PREFIX",
-    "NamespaceSpec",
-    "NAMESPACE_SPECS",
     "RECALL_TAGS",
     "RESERVED_FROM_RECALL",
-    "STATIC_BLOCK_EXCLUDED",
     "backfill_memory_embeddings",
     "build_user_profile_extras",
     "context_not_in",
     "delete_memory",
     "embed_memory_text",
     "extract_user_profile",
-    "format_auto_inject_block",
-    "format_inferred_profile_block",
+    "format_background_memory_block",
     "format_memories_block",
     "format_proactive_memory_block",
     "list_memories",
@@ -86,7 +74,6 @@ __all__ = [
     "memory_counts",
     "memory_namespaces",
     "normalize_recall_context",
-    "normalize_recall_tags",
     "participates_in_recall",
     "read_user_profile",
     "record_user_profile",

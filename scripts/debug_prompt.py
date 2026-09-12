@@ -60,8 +60,7 @@ async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -
     from services.domains.conversation import validate_memory_scope
     from services.domains.memory import (
         build_user_profile_extras,
-        format_auto_inject_block,
-        format_inferred_profile_block,
+        format_background_memory_block,
         format_proactive_memory_block,
     )
     from services.infrastructure.tool_runtime import REGISTRY
@@ -79,8 +78,7 @@ async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -
         outfit_extras = (
             await build_outfit_extras(db, user_id, language=language) if persona and persona.is_complete else ""
         )
-        auto_inject_extras = await format_auto_inject_block(db, scope, language=language)
-        inferred_profile_extras = await format_inferred_profile_block(db, scope, language=language)
+        background_memory_extras = await format_background_memory_block(db, scope, language=language)
         proactive_memory_extras = format_proactive_memory_block([], language=language)
 
         tools = REGISTRY.get_all_schemas(user_id=user_id, user_settings={})
@@ -89,8 +87,7 @@ async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -
             "persona_extras": persona_extras,
             "user_profile_extras": user_profile_extras,
             "outfit_extras": outfit_extras,
-            "auto_inject_extras": auto_inject_extras,
-            "inferred_profile_extras": inferred_profile_extras,
+            "background_memory_extras": background_memory_extras,
             "proactive_memory_extras": proactive_memory_extras,
             "tools": tools,
         }
@@ -106,7 +103,7 @@ def assemble_debug_prompt(
     platform: str,
     enable_tools: bool,
     outfit_text: str = "",
-    auto_inject_text: str = "",
+    background_memory_text: str = "",
     db_data: dict[str, Any] | None = None,
     preset_id: str = "companion",
     user_local_tz: str | None = None,
@@ -129,16 +126,14 @@ def assemble_debug_prompt(
         persona_extras = db_data["persona_extras"]
         user_profile_extras = db_data["user_profile_extras"]
         outfit_extras = db_data["outfit_extras"]
-        auto_inject_extras = db_data["auto_inject_extras"]
-        inferred_profile_extras = db_data["inferred_profile_extras"]
+        background_memory_extras = db_data["background_memory_extras"]
         proactive_memory_extras = db_data["proactive_memory_extras"]
         tools = db_data["tools"] if enable_tools else []
     else:
         persona_extras = render_extras(persona_dict, language=language)
         user_profile_extras = _build_mock_user_profile_extras(user_profile_dict, language=language)
         outfit_extras = outfit_text
-        auto_inject_extras = auto_inject_text
-        inferred_profile_extras = ""
+        background_memory_extras = background_memory_text
         proactive_memory_extras = ""
         tools = REGISTRY.get_all_schemas(user_id=1, user_settings={}) if enable_tools else []
 
@@ -162,8 +157,7 @@ def assemble_debug_prompt(
         persona_extras=persona_extras,
         user_profile_extras=user_profile_extras,
         outfit_extras=outfit_extras,
-        auto_inject_extras=auto_inject_extras,
-        inferred_profile_extras=inferred_profile_extras,
+        background_memory_extras=background_memory_extras,
         proactive_memory_extras=proactive_memory_extras,
         language=language,
         platform=platform,

@@ -1936,8 +1936,8 @@ async def _execute_ephemeral_actions(
 async def run_nightly_planning(
     llm_cfg: dict[str, Any],
     user_id: int,
-    inferred_profile: dict[str, str],
-    auto_inject: dict[str, str],
+    contextual_memories: dict[str, str],
+    background_memories: dict[str, str],
     user_profile: dict[str, str],
     recall_highlights: list[dict[str, Any]],
     date_context: DateContext | dict[str, Any],
@@ -1951,8 +1951,8 @@ async def run_nightly_planning(
     plan = await _stored_plan(log_id)
     if plan is None:
         payload = {
-            "inferred_profile": inferred_profile,
-            "auto_inject_state": auto_inject,
+            "contextual_memories": contextual_memories,
+            "background_memories_state": background_memories,
             "user_profile": user_profile,
             "recall_highlights": recall_highlights,
             "today_conversations": today_conversations,

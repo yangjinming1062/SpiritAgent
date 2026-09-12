@@ -482,10 +482,14 @@ LLM 的不同输出面遵守以下规则：
 
 ### 预设记忆与学习作用域
 
-`memory.list/update/delete` 沿用原方法。会话入口提交 `session_id`；人工独立管理页提交 `system_preset_id`，两者互斥且必须有一个。用户归属取自认证，服务端拒绝未知预设与 automation。list 返回 `system_preset_id`、`session_id`（人工预设选择时为 null）、`memories`、同域 `counts`；update/delete 的 ID 跨域与不存在均返回未找到。客户端切换预设后丢弃旧请求结果。
+`memory.list/update/delete` 是人工管理入口。会话入口提交 `session_id`；人工独立管理页提交 `system_preset_id`，两者互斥且必须有一个。用户归属取自认证，服务端拒绝未知预设与 automation。list 返回 `system_preset_id`、`session_id`（人工预设选择时为 null）、`memories`、同域 `counts`；update/delete 的 ID 跨域与不存在均返回未找到。客户端切换预设后丢弃旧请求结果。
+
+列表接受 `status=active|candidate|invalidated|expired`（默认 active）和 `kind` 命名空间过滤。记录返回 `content_version`、`basis`、`status`、`usage`、`reason`、`expires_at`、`evidence`；证据含消息 ID、原文、支持或反对方向和发送时间。counts 返回四个可见状态的学习记忆数量及 user_profile 数量；已遗忘正文与指纹不经管理列表返回。编辑作为用户明确陈述生效，删除执行不可召回的遗忘。
+
+模型工具为 `memory_recall`（有效记忆检索）、`memory_inspect`（读取原始证据及版本）、`memory_retain`（提交 decisions 原子批次供独立 LLM 审核）。决策字段与约束的唯一 schema 见 [memory_policy.py](../backend/services/domains/memory/memory_policy.py)。模型可以选择已提供的证据 ID，但不能指定来源归属；服务端重新核对原始消息和全文片段。候选和失效记录只进入独立维护器，不作为对话事实返回。更新必须带当前 ID 和版本；发生并发变更整批拒绝，重新检查后再判断。
 
 模型记忆工具不接受 user_id、system_preset_id、scope 或 source_refs；服务端捕获的作用域与来源不可由参数覆盖。`cronjob` 模型入口依源会话限定任务创建、列表及 ID 管理，任务 `system_preset_id` 表示创建目标；standard 执行会话仍显式绑定 automation，special 只能属于 companion。
 
 客户端 `tools.sync` 声明 `skill_scope_version=1` 才开放 skills_list/skill_view/skill_manage。Backend 的 runner 工具请求以顶层 `skill_scope={user_id, system_preset_id}` 传给 Client，Client 经 `runnerInvoke` 转发 `execute_scoped_tool`；该字段不在模型工具 schema。Runner 在请求执行期间固定作用域，学习产物只写所属目录。旧全局 client_context.skills 不再用于提示词注入，技能目录由模型通过同域工具读取。自动化不开放学习技能和 cronjob 管理。
 
-`companion.set_timezone` 写入 `UserSetting.timezone`，语言和时区是静态运行配置，不进入画像共享池。备份只接受 schema_version=3，重建部署不兼容旧备份格式。
+`companion.set_timezone` 写入 `UserSetting.timezone`，语言和时区是静态运行配置，不进入画像共享池。备份不维护独立格式版本号；导入按当前数据模型校验必需字段、来源引用、文件校验和及向量维度，不按版本号放行数据。

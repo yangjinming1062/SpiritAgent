@@ -165,6 +165,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_companion_2d_models_user_id"), "companion_2d_models", ["user_id"], unique=False)
     op.create_table(
         "conversations",
+        sa.Column("memory_reviewed_message_id", sa.Integer(), server_default="0", nullable=False),
         sa.Column("context_after_message_id", sa.Integer(), server_default="0", nullable=False),
         sa.CheckConstraint("context_after_message_id >= 0", name="ck_conversations_context_watermark"),
         sa.CheckConstraint(
@@ -245,6 +246,17 @@ def upgrade() -> None:
         sa.Column("source_refs", JSONB(), nullable=False),
         sa.Column("content_version", sa.Integer(), server_default="1", nullable=False),
         sa.CheckConstraint("content_version > 0", name="ck_memories_content_version"),
+        sa.Column("status", sa.String(16), server_default="active", nullable=False),
+        sa.Column("basis", sa.String(16), server_default="system", nullable=False),
+        sa.Column("usage", sa.String(16), server_default="contextual", nullable=False),
+        sa.Column("reason", sa.Text(), server_default="", nullable=False),
+        sa.Column("evidence", JSONB(), server_default="[]", nullable=False),
+        sa.Column("history", JSONB(), server_default="[]", nullable=False),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("reviewed_at", sa.DateTime(timezone=True), nullable=True),
+        sa.CheckConstraint("status IN ('candidate', 'active', 'invalidated', 'forgotten')", name="ck_memories_status"),
+        sa.CheckConstraint("basis IN ('explicit', 'inferred', 'observed', 'system')", name="ck_memories_basis"),
+        sa.CheckConstraint("usage IN ('contextual', 'background')", name="ck_memories_usage"),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("context", sa.Text(), nullable=True),
@@ -634,21 +646,6 @@ def upgrade() -> None:
         ["user_id", "system_preset_id", "context"],
         unique=True,
         postgresql_where=sa.text("context LIKE 'user_profile:%'"),
-    )
-    # 每 (user, slot) 一行，让 memory_retain(kind='auto_inject') 原子 upsert。
-    op.create_index(
-        "uq_memories_auto_inject_slot",
-        "memories",
-        ["user_id", "system_preset_id", "context"],
-        unique=True,
-        postgresql_where=sa.text("context LIKE 'auto_inject:%'"),
-    )
-    op.create_index(
-        "uq_memories_inferred_profile_slot",
-        "memories",
-        ["user_id", "system_preset_id", "context"],
-        unique=True,
-        postgresql_where=sa.text("context LIKE 'inferred_profile:%'"),
     )
     op.create_index(
         "uq_memories_diary_day",

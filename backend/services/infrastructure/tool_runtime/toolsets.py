@@ -14,7 +14,7 @@ class ToolsetDef:
 # 无工具集归属、不受开关影响的 backend 工具：search_tools（元工具）
 # video_generate / video_generate_status（UI 未开对应工具集开关）。
 TOOLSET_CATALOG: dict[str, ToolsetDef] = {
-    "memory": ToolsetDef(names=("memory_retain", "memory_recall", "memory_forget", "moment_create", "diary_write")),
+    "memory": ToolsetDef(names=("memory_retain", "memory_recall", "memory_inspect", "moment_create", "diary_write")),
     "web_tools": ToolsetDef(names=("web_search", "web_extract")),
     "image_generation": ToolsetDef(names=("image_generate", "room_backdrop_update")),
     "messaging": ToolsetDef(names=("send_message_tool",)),

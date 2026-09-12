@@ -16,6 +16,8 @@ from components import (
 )
 from modules.system import AgentPromptConfig
 
+from services.domains.memory import MEMORY_POLICY
+
 logger = logging.getLogger(__name__)
 
 PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z][A-Z0-9_]{2,40})\}\}")
@@ -130,114 +132,10 @@ _VOLATILE_LABELS: dict[str, str] = {
 }
 
 _MEMORY_TOOL_GUIDANCES: dict[str, str] = {
-    "zh": (
-        "# 长期记忆系统\n"
-        "若尚未解锁记忆工具，先调用 `search_tools(query='memory')`。"
-        "你可以通过记忆工具在会话间保留持久记忆。有两类——写入时选对类型。"
-        "类型写入后不可更改；要改成另一种类型只能重新写入一行。\n\n"
-        "## 按事实「出现方式」分类\n"
-        "写入前先问：这条事实在每次对话中都会起作用（我始终带着的背景上下文），"
-        "还是只在某个特定场景下才会用到（按需回忆的小事实）？\n"
-        "  - 若是背景上下文 → kind='auto_inject'（每次对话都会注入）。\n"
-        "  - 若是按需事实 → kind='recall'（你必须主动调用 memory_recall 检索）。\n\n"
-        "## kind='auto_inject' —— 慎用，只用于「每次都存在」的事实\n"
-        "两个人对话时不会刻意去想「我跟这个人的关系是 X，我的心情模式是 Y，"
-        "他们偏好 Z 的沟通方式」——他们只是照此行事。"
-        "这些事实在每轮对话中都存在。\n"
-        "固定槽位（每个一条；第二次写入会覆盖）：\n"
-        "  - auto_inject:communication_style — 用户希望如何框定回复\n"
-        "  - auto_inject:rapport_state — 当前关系/熟悉度阶段\n"
-        "  - auto_inject:interaction_pattern — 典型使用节奏（夜猫子、短脉冲等）\n"
-        "  - auto_inject:mood_pattern — 用户的情绪倾向（模式，不是瞬时）\n"
-        "  - auto_inject:relationship_signal — 信任度、互怼频率、正式程度\n"
-        "硬性上限：每条 500 字符。写入时超长内容会被拒——保持精炼。\n"
-        "不要把只在特定场景下才会想起的事（用户的禁忌、某次提过的观点、一次性偏好）"
-        "放进 auto_inject；那些应放进 recall。\n\n"
-        "## kind='recall' —— 大多数事实属于这里\n"
-        "仅追加的池子，必须通过 memory_recall(query=...) 查询检索。"
-        "只能从下列闭集标签里挑一个（自由标签会被拒）：\n"
-        "  user_preference, likes, dislikes, key_constraints, other, tool_quirk, environment\n"
-        "用 'key_constraints' 标记用户分享过的硬性禁忌——这些只在匹配场景下有用，"
-        "不是每轮都用，所以应放 recall（而非 auto_inject）。\n\n"
-        "## 通用指南\n"
-        "优先存「能减少未来用户介入」的事实——最有价值的记忆，是能让用户不必再纠正或提醒你的那种。"
-        "用户偏好与反复出现的纠正比任务过程细节更重要。\n"
-        "不要保存任务进度、会话结果、完成的工作日志或临时 TODO 状态；这些用 session_search。"
-        "具体而言：不要记录 PR 号、issue 号、commit SHA、「修了 bug X」「提交了 PR Y」"
-        "「第 N 阶段完成」、文件计数，或任何 7 天内会过期的产物。"
-        "如果一条事实一周后会过期，它就不该进记忆。"
-        "如果你发现了新的做事方法、保存了将来可能用上的问题，那就保存为 skill。\n"
-        "记忆写成陈述性事实，而非对自己的指令。"
-        "「用户偏好简洁回复」✓ ——「始终用简洁方式回复」✗。"
-        "「项目用 pytest 配合 xdist」✓ ——「用 pytest -n 4 跑测试」✗。\n\n"
-        "## 反模式：不要重复系统提示词或预配置上下文\n"
-        "不要抽取或保存系统提示词其它部分已经覆盖的事实：\n"
-        "  1. 全局语言与系统指令：永远不要保存「用户讲中文 / 偏好中文」——默认语言已由系统指令处理。\n"
-        "  2. 伙伴自身人设：永远不要保存你自己的名字、外貌、性格、物种——"
-        "人设属于伙伴定义，不属于用户记忆。\n"
-        "  3. 结构化用户资料：永远不要复制「# 用户资料」段里的入门事实"
-        "（如偏好名、性别、年龄段、列出的爱好）。\n"
-        "  4. 运行时环境与会话状态：永远不要保存实时 OS 平台、当前时间、"
-        "会话 ID、PR/commit hash、或 7 天内会过期的事实。"
-    ),
-    "en": (
-        "# Long-Term Memory System\n"
-        "If memory tools are not yet unlocked, call `search_tools(query='memory')` first. "
-        "You have persistent memory across sessions via the memory tool. There are TWO "
-        "kinds — pick the right one at write time. The kind cannot be changed later; "
-        "rewriting a fact to a different kind means writing a new row.\n\n"
-        "## Pick by how the fact 'shows up' in conversation\n"
-        "Before writing, ask: does the fact shape EVERY exchange (background context I "
-        "always carry), or is it something I'd only reach for in a specific scenario (a "
-        "small fact I'd recall on demand)?\n"
-        "  - If background context → kind='auto_inject' (injected into every conversation).\n"
-        "  - If on-demand fact → kind='recall' (you must call memory_recall to retrieve).\n\n"
-        "## kind='auto_inject' — use sparingly, only for things that ARE always present\n"
-        "Two people in conversation don't consciously think 'oh, my rapport with this "
-        "person is X, my mood pattern is Y, they prefer Z communication' — they just act "
-        "on it. These facts are present in every turn.\n"
-        "Fixed slots (one row each; a second write OVERWRITES):\n"
-        "  - auto_inject:communication_style — how the user wants responses framed\n"
-        "  - auto_inject:rapport_state — current relationship/familiarity stage\n"
-        "  - auto_inject:interaction_pattern — typical use rhythm (night owl, short bursts, etc.)\n"
-        "  - auto_inject:mood_pattern — user's emotional tendency (pattern, not moment-to-moment)\n"
-        "  - auto_inject:relationship_signal — trust level, tease frequency, formality\n"
-        "Hard cap: 500 chars per row. Longer content is rejected at write time — keep it tight.\n"
-        "Do NOT use auto_inject for things you only think about in specific scenarios "
-        "(the user's taboos, an opinion they shared once, a one-off preference). "
-        "Those go to recall.\n\n"
-        "## kind='recall' — most facts belong here\n"
-        "Append-only pool you must query via memory_recall(query=...) to retrieve. "
-        "Pick ONE closed-set tag from this list (free-form tags are rejected):\n"
-        "  user_preference, likes, dislikes, key_constraints, other, tool_quirk, environment\n"
-        "Use 'key_constraints' for hard taboos the user has shared — these only matter in "
-        "matching scenarios, not every turn, so recall is the right home (NOT auto_inject).\n\n"
-        "## General Guidelines\n"
-        "Prioritize what reduces future user steering — the most valuable memory is one "
-        "that prevents the user from having to correct or remind you again. User "
-        "preferences and recurring corrections matter more than procedural task details.\n"
-        "Do NOT save task progress, session outcomes, completed-work logs, or temporary "
-        "TODO state; use session_search for those. Specifically: do not record PR numbers, "
-        "issue numbers, commit SHAs, 'fixed bug X', 'submitted PR Y', 'Phase N done', file "
-        "counts, or any artifact that will be stale in 7 days. If a fact will be stale in "
-        "a week, it does not belong in memory. If you've discovered a new way to do "
-        "something, saved a problem that could be necessary later, save it as a skill "
-        "instead.\n"
-        "Write memories as declarative facts, not instructions to yourself. "
-        "'User prefers concise responses' ✓ — 'Always respond concisely' ✗. "
-        "'Project uses pytest with xdist' ✓ — 'Run tests with pytest -n 4' ✗.\n\n"
-        "## Anti-Patterns: Never duplicate system prompt or pre-configured context\n"
-        "Do NOT extract or save facts already covered by other sections of your system "
-        "prompt:\n"
-        "  1. Global language & system directives: never save 'User speaks Chinese / "
-        "prefers Chinese' — default language is already handled by system directives.\n"
-        "  2. Companion's own persona: never save your own name, appearance, personality, "
-        "or species — persona belongs to the companion definition, not user memory.\n"
-        "  3. Structured user profile: never duplicate onboarding facts from the "
-        "'# User profile' section (e.g. preferred name, gender, age bucket, listed hobbies).\n"
-        "  4. Runtime environment & session state: never save live OS platform, current "
-        "time, session IDs, PR/commit hashes, or facts stale within 7 days."
-    ),
+    "zh": "# 长期记忆维护\n先用 search_tools(query='memory') 解锁。memory_recall 只检索有效记忆；维护前用 memory_inspect 读取原始证据及版本，再用 memory_retain 提交原子变更。错误记忆应修正或失效，不追加矛盾结论。不询问用户是否记忆。\n"
+    + MEMORY_POLICY,
+    "en": "# Long-term memory\nUnlock with search_tools(query='memory'). Use memory_recall for active facts; memory_inspect before submitting atomic changes through memory_retain.\n"
+    + MEMORY_POLICY,
 }
 
 _SESSION_SEARCH_GUIDANCES: dict[str, str] = {
@@ -644,8 +542,7 @@ BLOCK_RENDERERS: dict[str, Callable[[AgentPromptConfig], str | None]] = {
     "COMPANION_CHAT_GUIDANCE": _companion_chat_guidance_block,
     "OUTFIT": _outfit_block,
     "USER_PROFILE": _config_attr_block("user_profile_extras"),
-    "AUTO_INJECT": _config_attr_block("auto_inject_extras"),
-    "INFERRED_PROFILE": _config_attr_block("inferred_profile_extras"),
+    "BACKGROUND_MEMORY": _config_attr_block("background_memory_extras"),
     "PROACTIVE_MEMORY": _config_attr_block("proactive_memory_extras"),
     "MEMORY_TOOL_GUIDANCE": _memory_tool_guidance_block,
     "SESSION_SEARCH_GUIDANCE": _session_search_guidance_block,

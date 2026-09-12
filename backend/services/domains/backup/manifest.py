@@ -13,15 +13,13 @@ if TYPE_CHECKING:
 
 
 MANIFEST_FORMAT = "spiritagent-user-backup"
-MANIFEST_SCHEMA_VERSION = 3
-# pgvector 当前固定 1536 维；切到其它 embedding 模型需 bump schema_version。
+# pgvector 当前固定 1536 维；导入时独立校验向量维度。
 EMBEDDING_DIM_DEFAULT = 1536
 
 
 def build_manifest(user: "User", rows_by_table: dict[str, list[dict[str, Any]]], exported_by: str) -> dict[str, Any]:
     return {
         "format": MANIFEST_FORMAT,
-        "schema_version": MANIFEST_SCHEMA_VERSION,
         "exported_at": utc_now().isoformat(),
         "exported_by": f"admin:{exported_by}",
         "source_user_id": user.id,
@@ -37,9 +35,6 @@ def validate_manifest(payload: dict[str, Any] | None) -> None:
         raise HTTPException(status_code=400, detail="manifest.json must be a JSON object")
     if payload.get("format") != MANIFEST_FORMAT:
         raise HTTPException(status_code=400, detail=f"Unknown backup format: {payload.get('format')!r}")
-    schema_version = payload.get("schema_version")
-    if schema_version != MANIFEST_SCHEMA_VERSION:
-        raise HTTPException(status_code=400, detail=f"Unsupported schema_version: {schema_version!r}")
     if not isinstance(payload.get("source_user_id"), int):
         raise HTTPException(status_code=400, detail="manifest.source_user_id must be an integer")
     if not isinstance(payload.get("tables"), list):

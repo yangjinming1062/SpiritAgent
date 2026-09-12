@@ -435,9 +435,24 @@ export const dict: Dictionary = {
     memory: {
       tabAriaLabel: 'Memory type',
       presetLabel: 'Current preset',
-      tabRecall: (count: string | number) => `Recall · ${count}`,
-      tabAutoInject: (count: string | number) => `Auto-inject · ${count}`,
-      userProfileHint: (count: string | number) => `${count} user_profile entries are yours alone`,
+      tabActive: (count: string | number) => `Active · ${count}`,
+      tabCandidate: (count: string | number) => `Candidates · ${count}`,
+      tabInvalidated: (count: string | number) => `Invalidated · ${count}`,
+      tabExpired: (count: string | number) => `Expired · ${count}`,
+      userProfileHint: (count: string | number) => `${count} explicitly configured profile entries`,
+      maintenanceHint:
+        'Your companion reviews evidence and maintains memory autonomously. Only active, unexpired memories inform interactions.',
+      basis: {
+        explicit: 'Explicit statement',
+        inferred: 'Inference',
+        observed: 'Observation',
+        system: 'System record'
+      },
+      usage: { contextual: 'Contextual', background: 'Enduring context' },
+      stance: { supports: 'Supporting evidence', opposes: 'Counterevidence' },
+      evidence: 'View evidence',
+      expires: 'Valid until',
+      updated: 'Updated',
       loading: 'Loading…',
       loadFailedHint: 'Failed to load',
       loadFailedToast: 'Failed to load long-term memory',
@@ -445,22 +460,10 @@ export const dict: Dictionary = {
       saveFailedToast: 'Failed to save memory',
       deleteFailedHint: 'Delete failed, rolled back',
       deleteFailedToast: 'Failed to delete memory',
-      emptyRecall: 'No recall memories yet — the companion will write some as you chat.',
+      empty: 'No memories here. Ordinary conversation does not need to become long-term memory.',
       saved: 'Saved',
       saving: 'Saving…',
-      delete: 'Delete',
-      autoInjectIntro: (max: number) =>
-        `Auto-injected slots are whispered to the LLM each turn — already capped at ${max} chars on write. You can review or edit them here.`,
-      autoInjectUpdated: 'Updated',
-      autoInjectChars: (current: number, max: number) => `${current} / ${max} chars`,
-      autoInjectEmpty: '(Empty) — the companion will fill these in naturally during chat',
-      autoInjectSlotHints: {
-        communicationStyle: 'How answers are framed (detail level, tone, lists, etc.)',
-        rapportState: 'Current rapport / familiarity stage',
-        interactionPattern: 'Typical usage rhythm (e.g. late-night heavy use, short sessions)',
-        moodPattern: 'Recent emotional pattern (not the current mood)',
-        relationshipSignal: 'Trust / banter frequency / formality'
-      } as Record<string, string>
+      delete: 'Delete'
     }
   },
 

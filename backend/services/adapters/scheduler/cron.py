@@ -7,8 +7,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import (
-    MEMORY_CONSOLIDATE_INTERVAL_SECONDS,
-    MEMORY_CONSOLIDATE_TRIGGER_ROWS,
+    MEMORY_REVIEW_INTERVAL_SECONDS,
     NIGHTLY_SCAN_INTERVAL_SECONDS,
     NIGHTLY_WINDOW_END_HOUR,
     NIGHTLY_WINDOW_START_HOUR,
@@ -35,7 +34,6 @@ from sqlalchemy.engine import Row
 
 from services.application.automation import execute_standard_turn
 from services.application.nightly import run_nightly_pipeline
-from services.application.nightly.memory_consolidator import maybe_consolidate_one_scope
 from services.contracts.memory import MemoryScope
 from services.domains.automation.cron_jobs import STANDARD_CRON_KIND, compute_next_run_at
 from services.domains.companion.disturbance import get_disturbance_tier, is_still
@@ -46,6 +44,7 @@ from services.domains.conversation import (
     note_outreach_throttle,
     reset_user_outreach,
 )
+from services.domains.memory import review_memories
 from services.infrastructure.desktop import MANAGER
 from services.infrastructure.event_store import run_outbox_gc
 
@@ -58,8 +57,8 @@ _SCANS: dict[str, asyncio.Task] = {}
 
 SCHEDULER_INTERVAL_SECONDS = 60
 
-# per-user 最近一次 consolidator 运行时间戳：进程本地——匹配 ARCH §5 单实例语义（多 replica 会分裂状态）。
-_LAST_MEMORY_CONSOLIDATE: dict[MemoryScope, float] = {}
+# per-user 最近一次记忆审核运行时间戳：进程本地——匹配 ARCH §5 单实例语义（多 replica 会分裂状态）。
+_LAST_MEMORY_REVIEW: dict[MemoryScope, float] = {}
 
 # per-user 最近一次成功的 nightly pipeline 运行的本地日期字符串。
 _LAST_NIGHTLY_RUN: dict[MemoryScope, str] = {}
@@ -67,15 +66,15 @@ _LAST_NIGHTLY_RUN: dict[MemoryScope, str] = {}
 
 def invalidate_user_scheduler_state(user_id: int) -> None:
     """覆盖恢复后丢弃从旧数据计算出的调度节流镜像。"""
-    for state in (_LAST_MEMORY_CONSOLIDATE, _LAST_NIGHTLY_RUN):
+    for state in (_LAST_MEMORY_REVIEW, _LAST_NIGHTLY_RUN):
         for scope in list(state):
             if scope.user_id == user_id:
                 state.pop(scope, None)
 
 
 # recall-pool 扫描本身的外层节流：扫描便宜（部分索引），但没用户符合时每分钟跑一次没意义。10 min 让发现延迟可控，由 per-user 6h 节流把重 LLM 调用频率压住。
-_LAST_CONSOLIDATE_SCAN: float = 0.0
-_CONSOLIDATE_SCAN_INTERVAL_SECONDS: int = 600
+_LAST_MEMORY_REVIEW_SCAN: float = 0.0
+_MEMORY_REVIEW_SCAN_INTERVAL_SECONDS: int = 600
 
 # nightly activity 扫描的外层节流。
 _LAST_NIGHTLY_SCAN: float = 0.0
@@ -457,8 +456,8 @@ async def _maybe_run_ignored_outreach(now: datetime) -> None:
 async def _tick() -> None:
     """为到期 job CAS 推进 next_run_at；special 写内部事件，standard 直接启动独立任务回合。"""
     now = utc_now()
-    # 慢扫描与 cron-job 派发独立——不能用 ``if not due_jobs`` gate，否则没有 cron job 的安装永远不会触发 consolidation/GC。
-    _spawn_scan("memory_consolidator", lambda: _maybe_run_memory_consolidator(now))
+    # 慢扫描与 cron-job 派发独立——不能用 ``if not due_jobs`` gate，否则没有 cron job 的安装永远不会触发记忆维护/GC。
+    _spawn_scan("memory_review", lambda: _maybe_run_memory_review(now))
     _spawn_scan("nightly_activity", lambda: _maybe_run_autonomous_activity(now))
     _spawn_scan("outbox_gc", lambda: _maybe_run_outbox_gc(now))
     _spawn_scan("ignored_outreach", lambda: _maybe_run_ignored_outreach(now))
@@ -492,20 +491,22 @@ async def _maybe_run_outbox_gc(now: datetime) -> None:
     await run_outbox_gc()
 
 
-async def _maybe_run_memory_consolidator(now: datetime) -> None:
-    """为 recall pool 超阈值的用户跑 recall consolidator——外层按 _CONSOLIDATE_SCAN_INTERVAL_SECONDS 节流，per-user 按 MEMORY_CONSOLIDATE_INTERVAL_SECONDS 节流，并发通过 gather 单 tick 只付最大 LLM 延迟。"""
-    global _LAST_CONSOLIDATE_SCAN
-    if now.timestamp() - _LAST_CONSOLIDATE_SCAN < _CONSOLIDATE_SCAN_INTERVAL_SECONDS:
+async def _maybe_run_memory_review(now: datetime) -> None:
+    """为有记忆或待审核消息的预设执行证据维护——外层按 _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS 节流，per-user 按 MEMORY_REVIEW_INTERVAL_SECONDS 节流，并发通过 gather 单 tick 只付最大 LLM 延迟。"""
+    global _LAST_MEMORY_REVIEW_SCAN
+    if now.timestamp() - _LAST_MEMORY_REVIEW_SCAN < _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS:
         return
-    _LAST_CONSOLIDATE_SCAN = now.timestamp()
+    _LAST_MEMORY_REVIEW_SCAN = now.timestamp()
 
     async with session_scope() as db:
         rows = (
             await db.execute(
                 text(
-                    "SELECT user_id, system_preset_id FROM memories WHERE context LIKE 'recall:%' GROUP BY user_id, system_preset_id HAVING COUNT(*) >= :t",
+                    "SELECT user_id, system_preset_id FROM memories WHERE context LIKE 'recall:%' AND status != 'forgotten' "
+                    "UNION SELECT c.user_id, c.system_preset_id FROM conversations c JOIN messages m ON m.conversation_id = c.id "
+                    "WHERE NOT c.is_automation AND m.id > GREATEST(c.context_after_message_id, c.memory_reviewed_message_id) "
+                    "AND m.role IN ('user', 'assistant') AND m.subtype IS NULL",
                 ),
-                {"t": MEMORY_CONSOLIDATE_TRIGGER_ROWS},
             )
         ).all()
     eligible: list[MemoryScope] = []
@@ -514,16 +515,14 @@ async def _maybe_run_memory_consolidator(now: datetime) -> None:
         scope = MemoryScope(uid, preset)
         if is_user_in_maintenance(uid):
             continue
-        if now.timestamp() - _LAST_MEMORY_CONSOLIDATE.get(scope, 0.0) < MEMORY_CONSOLIDATE_INTERVAL_SECONDS:
+        if now.timestamp() - _LAST_MEMORY_REVIEW.get(scope, 0.0) < MEMORY_REVIEW_INTERVAL_SECONDS:
             continue
         eligible.append(scope)
     if not eligible:
         return
 
-    # 预设级节流只在 consolidator 真的为该作用域跑过之后才生效——LLM 失败不该把用户锁在后续尝试之外。
-    tasks = [
-        asyncio.create_task(maybe_consolidate_one_scope(scope), name=f"scheduler.memory.{scope}") for scope in eligible
-    ]
+    # 预设级节流只在维护成功之后才生效——LLM 失败不该把用户锁在后续尝试之外。
+    tasks = [asyncio.create_task(review_memories(scope), name=f"scheduler.memory.{scope}") for scope in eligible]
     for scope, task in zip(eligible, tasks, strict=True):
         track_user_task(scope.user_id, task)
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -532,13 +531,12 @@ async def _maybe_run_memory_consolidator(now: datetime) -> None:
         if isinstance(result, Exception):
             # 不在 except 块里——必须显式传异常，否则 exc_info 为空，traceback 丢失。
             logger.error(
-                "memory_consolidator: tick failed",
+                "memory_review: tick failed",
                 exc_info=result,
                 extra={"user_id": uid},
             )
             continue
-        if result is True:
-            _LAST_MEMORY_CONSOLIDATE[scope] = now.timestamp()
+        _LAST_MEMORY_REVIEW[scope] = now.timestamp()
 
 
 async def _maybe_run_autonomous_activity(now: datetime) -> None:

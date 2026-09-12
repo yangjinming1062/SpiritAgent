@@ -26,6 +26,7 @@ class Conversation(ModelBase, TimestampMixin):
     # 值集合 {special, standard, im}：special = 系统预设对话（由 system_preset_id 区分具体预设），standard = 用户创建或任务型 Cron 使用的普通对话，im = 外部 IM 对话。
     kind: Mapped[str] = mapped_column(String(32), default="standard", server_default=text("'standard'"))
     system_preset_id: Mapped[str] = mapped_column(String(32), index=True)
+    memory_reviewed_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     context_after_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     title: Mapped[str] = mapped_column(Text, default="New Conversation")
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

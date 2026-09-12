@@ -1,127 +1,79 @@
-from components import DEFAULT_LANGUAGE, resolve_prompt_text
+from components import DEFAULT_LANGUAGE
 from modules.memory import Memory
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts.memory import MemoryScope
 
-from .memory_namespaces import (
-    AUTO_INJECT_SLOTS,
-    INFERRED_PROFILE_SLOTS,
-    KIND_TO_PREFIX,
-    STATIC_BLOCK_EXCLUDED,
-    context_not_in,
-)
-from .memory_store import scope_filter
+from .memory_store import active_memory_filter, scope_filter
 
 MAX_MEMORIES = 10
-MAX_MEMORY_SNIPPET_LEN = 200
 
-# 双语提示词块标签：auto_inject / inferred_profile / proactive_memory 三段开头的标题。
-# zh 为直译占位，en 保留重构前英文原值便于回滚 1:1 对照。
-# 槽位 display (slot_name = context.split(":",1)[1].replace("_"," ").capitalize()) 是协议级展示，保持英文不译。
 
-_AUTO_INJECT_LABELS_TEXTS: dict[str, str] = {
-    "zh": "# 自动注入记忆（始终生效）",
-    "en": "# Active auto-inject memories (always in effect)",
-}
-
-_INFERRED_PROFILE_LABELS_TEXTS: dict[str, str] = {
-    "zh": "# 推断出的用户资料（背景知识）",
-    "en": "# Inferred user profile (background knowledge)",
-}
-
-_PROACTIVE_MEMORY_LABELS_TEXTS: dict[str, str] = {
-    "zh": "# 相关的长期记忆（主动检索到、用于当前上下文）",
-    "en": "# Relevant long-term memories (proactively retrieved for current context)",
-}
+def _format_record(content: str, basis: str, context: str | None) -> str:
+    return f"- [{basis}; {context or 'general'}] {content}"
 
 
 async def format_memories_block(db: AsyncSession, scope: MemoryScope) -> str:
-    """以列表形式渲染用户最近的长期记忆；有独立提示词槽位或检索路径的命名空间已排除，无记忆时返回占位文案供提示词直接插值。"""
-    rows = (
+    rows = list(
         (
-            await db.execute(
+            await db.scalars(
                 select(Memory)
-                .where(scope_filter(scope), *[context_not_in(p) for p in STATIC_BLOCK_EXCLUDED])
+                .where(
+                    scope_filter(scope),
+                    active_memory_filter(),
+                    Memory.context.like("recall:%"),
+                )
                 .order_by(Memory.updated_at.desc())
                 .limit(MAX_MEMORIES),
             )
-        )
-        .scalars()
-        .all()
+        ).all(),
     )
-    if not rows:
-        return "（暂无长期记忆）"
-    lines = []
-    for r in rows:
-        snippet = (r.content or "")[:MAX_MEMORY_SNIPPET_LEN]
-        ctx = f" [{r.context}]" if r.context else ""
-        lines.append(f"- {snippet}{ctx}")
-    return "\n".join(lines)
+    return "\n".join(_format_record(r.content, r.basis, r.context) for r in rows) or "（暂无有效长期记忆）"
 
 
-async def format_auto_inject_block(db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE) -> str:
-    rows = (
-        (
-            await db.execute(
-                select(Memory).where(
-                    scope_filter(scope),
-                    Memory.context.like(KIND_TO_PREFIX["auto_inject"] + "%"),
-                ),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    if not rows:
-        return ""
-    by_slot = {r.context: r for r in rows}
-    ordered = [by_slot[s] for s in AUTO_INJECT_SLOTS if s in by_slot]
-    lines = [resolve_prompt_text(_AUTO_INJECT_LABELS_TEXTS, language)]
-    for r in ordered:
-        slot_name = r.context.split(":", 1)[1].replace("_", " ")
-        lines.append(f"- **{slot_name}**: {r.content}")
-    return "\n".join(lines)
-
-
-async def format_inferred_profile_block(
+async def format_background_memory_block(
     db: AsyncSession,
     scope: MemoryScope,
     *,
     language: str = DEFAULT_LANGUAGE,
 ) -> str:
-    rows = (
+    rows = list(
         (
-            await db.execute(
-                select(Memory).where(
+            await db.scalars(
+                select(Memory)
+                .where(
                     scope_filter(scope),
-                    Memory.context.like(KIND_TO_PREFIX["inferred_profile"] + "%"),
-                ),
+                    active_memory_filter(),
+                    Memory.usage == "background",
+                    Memory.basis == "explicit",
+                    Memory.context.like("recall:%"),
+                )
+                .order_by(Memory.id)
+                .limit(MAX_MEMORIES),
             )
-        )
-        .scalars()
-        .all()
+        ).all(),
     )
     if not rows:
         return ""
-    by_slot = {r.context: r for r in rows}
-    ordered = [by_slot[s] for s in INFERRED_PROFILE_SLOTS if s in by_slot]
-    if not ordered:
-        return ""
-    lines = [resolve_prompt_text(_INFERRED_PROFILE_LABELS_TEXTS, language)]
-    for r in ordered:
-        slot_name = r.context.split(":", 1)[1].replace("_", " ")
-        lines.append(f"- **{slot_name}**: {r.content}")
-    return "\n".join(lines)
+    title = (
+        "# 用户明确表达的长期背景（按适用范围使用）"
+        if language != "en"
+        else "# Explicit enduring context (respect each claim's scope)"
+    )
+    return title + "\n" + "\n".join(_format_record(r.content, r.basis, r.context) for r in rows)
 
 
 def format_proactive_memory_block(memories: list[dict], *, language: str = DEFAULT_LANGUAGE) -> str:
     if not memories:
         return ""
-    lines = [resolve_prompt_text(_PROACTIVE_MEMORY_LABELS_TEXTS, language)]
-    for m in memories:
-        ctx = f" [{m['context']}]" if m.get("context") else ""
-        content = (m.get("content") or "").strip()
-        lines.append(f"- {content}{ctx}")
-    return "\n".join(lines)
+    title = (
+        "# 相关有效记忆（推断不等于用户确认；尊重时效和范围）"
+        if language != "en"
+        else "# Relevant valid memories (inference is not user confirmation; respect scope and expiry)"
+    )
+    return (
+        title
+        + "\n"
+        + "\n".join(_format_record(m["content"], m.get("basis", "system"), m.get("context")) for m in memories)
+    )

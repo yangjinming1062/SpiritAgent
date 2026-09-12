@@ -7,14 +7,10 @@ from zoneinfo import ZoneInfoNotFoundError
 
 from components import (
     DEFAULT_LANGUAGE,
-    MAX_AUTO_INJECT_CONTENT_CHARS,
     MAX_DIARY_CONTENT_CHARS,
-    MAX_INFERRED_PROFILE_CONTENT_CHARS,
     MAX_RECALL_CONTENT_CHARS,
     NIGHTLY_CONSOLIDATE_MAX_RECALL_ROWS,
-    NIGHTLY_CONSOLIDATION_MAX_TOKENS,
     NIGHTLY_DIARY_MAX_TOKENS,
-    NIGHTLY_REFLECTION_MAX_TOKENS,
     get_logger,
     parse_llm_json,
     resolve_language,
@@ -24,37 +20,25 @@ from components import (
 )
 from modules.auth import User
 from modules.conversation import Conversation, Message
-from modules.memory import Memory
 from modules.scheduler import NightlyActivityLog
 from modules.settings import UserSetting
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from services.contracts.memory import EmbeddingItem, MemoryScope, MemorySource
-from services.domains.companion import read_today_summary
 from services.domains.conversation import SPECIAL_KIND, UI_ONLY_SUBTYPES, validate_memory_scope
 from services.domains.memory import (
-    AUTO_INJECT_SLOTS,
-    INFERRED_PROFILE_SLOTS,
-    KIND_TO_PREFIX,
-    RECALL_TAGS,
-    apply_reflection_slot,
     backfill_memory_embeddings,
     list_memories,
+    read_user_profile,
     resolve_user_timezone,
-    scope_filter,
+    review_memories,
     upsert_slotted_memory,
 )
 from services.infrastructure.llm import call_llm_once, resolve_user_llm_config
 
 from .daily_checkpoint import run_daily_checkpoint
 from .journal_nightly import project_today
-from .memory_consolidator import (
-    RecallReplaceStatus,
-    load_recall_snapshot,
-    memory_consolidation_lock,
-    replace_recall_pool,
-)
 from .nightly_helpers import get_local_day_utc_bounds, is_injected_time_item, prefilter_messages_for_nightly
 from .nightly_planning import ActionExecutionResult, DateContext, PlanningResult, run_nightly_planning
 
@@ -64,88 +48,7 @@ logger = get_logger(__name__)
 _PLANNING_RECALL_HIGHLIGHTS: int = 10
 
 
-_WORK_REFLECTION_PROMPT = """Extract durable facts for the current professional preset only.
-Use only the supplied conversations and profiles. Do not infer companion mood or relationship state.
-Return JSON with inferred_profile_updates (slot, content) and auto_inject_updates (slot, content).
-Use the supplied existing slot names or these inferred_profile slots: basic_info, work_schedule,
-interests, preferences, important_dates, relationships, goals_stressors, freeform (prefix inferred_profile:).
-Only auto_inject:communication_style is appropriate for professional auto-injection.
-No transient task progress, duplicates, or invented facts. Return empty arrays if nothing durable changed."""
-
-_REFLECTION_SYSTEM_PROMPT = """You are SpiritAgent's nightly reflection engine. Analyze today's conversations between the user and their AI companion to extract durable user profile updates and assess relationship/emotional dynamics.
-
-Today's conversations are provided under this key:
-- "today_companion_conversations": Everyday companion conversation with the user — your main source for understanding user emotions, relationships, and preferences.
-
-Calendar date appears only in dividers before the first message of each local day (`--- Weekday, Month DD, YYYY ---`).
-Each user message is followed by a separate clock/interval note, not the date. These are read-only metadata, not user speech.
-Use dividers for calendar day and clock notes for time of day:
-- Distinguish late-night vs daytime emotional context (e.g., user vents at 02:30 vs asks light questions at 14:00).
-- Detect patterns like "user usually vents after midnight" or "user responds most actively in the evening".
-- Correlate interaction intensity with time-of-day when updating `auto_inject:interaction_pattern` and `inferred_profile:work_schedule`.
-Identify speakers by the `role` field; never treat time notes or date dividers as user utterances.
-
-Instructions:
-1. ONLY extract facts that are grounded in today's conversations or today's interaction statistics. Do NOT invent or assume facts.
-2. Inferred Profile: Update the user's inferred profile in structured slots.
-   Allowed inferred profile slots:
-   - inferred_profile:basic_info (birthday, age group, location, occupation)
-   - inferred_profile:work_schedule (working hours, routine, active times)
-   - inferred_profile:interests (deeper interests, hobbies, technical topics)
-   - inferred_profile:preferences (communication style, food, clothing, aesthetic preferences)
-   - inferred_profile:important_dates (birthdays, anniversaries, exams, deadlines)
-   - inferred_profile:relationships (important people, friends, family, colleagues)
-   - inferred_profile:goals_stressors (current goals, aspirations, sources of stress)
-   - inferred_profile:freeform (other rich profile facts that do not fit above)
-3. Auto Inject: Update the companion's auto_inject slots based on today's rapport and emotional dynamics.
-   Allowed auto_inject slots:
-   - auto_inject:communication_style (how the user wants responses framed)
-   - auto_inject:rapport_state (current relationship/familiarity stage)
-   - auto_inject:interaction_pattern (user's typical use rhythm and habits)
-   - auto_inject:mood_pattern (user's emotional tendency or state pattern)
-   - auto_inject:relationship_signal (trust level, tease frequency, formality)
-4. Only output slots where there is genuine new information or an update. Do not return empty updates.
-5. Anti-Patterns:
-   - Do NOT duplicate global directives (e.g. 'User speaks Chinese / prefers Chinese' — system handles default language).
-   - Do NOT record companion's own persona (companion name, appearance, species, personality).
-   - Do NOT duplicate static user profile facts already recorded in onboarding.
-   - Do NOT record transient session data (PR numbers, commit hashes, temporary task states).
-6. Interaction Statistics: The user message may include an "interaction_stats_today" field containing today's raw poke / chat counts and an hour_counts breakdown of when the user was active. This is grounded observational data (not conversation), so use it to inform:
-   - auto_inject:interaction_pattern (e.g. heavy poking in a burst, late-night activity)
-   - auto_inject:mood_pattern (e.g. restless poking may signal stress/boredom)
-   - inferred_profile:work_schedule (active-hour distribution from hour_counts)
-   Do NOT fabricate counts; only reflect what the field actually contains.
-
-Output valid JSON only, in this exact schema:
-{
-  "inferred_profile_updates": [
-    {"slot": "inferred_profile:basic_info", "content": "concise fact summary", "reason": "why updated"}
-  ],
-  "auto_inject_updates": [
-    {"slot": "auto_inject:rapport_state", "content": "concise update under 500 chars"}
-  ]
-}
-"""
-
-_CONSOLIDATION_SYSTEM_PROMPT = """You are SpiritAgent's memory consolidation and decay engine. You are consolidating the user's recall-pool memories with the updated inferred profile as grounding context.
-
-Instructions:
-1. Merge duplicate or overlapping memory entries.
-2. Remove outdated, contradicted, or decayed facts that are no longer relevant.
-3. Remove anti-pattern entries if present (e.g. companion's own persona, default language rules like 'speaks Chinese', transient commit/PR progress, or duplicate onboarding profile fields).
-4. Preserve durable, specific user facts and preferences.
-5. When uncertain, KEEP the fact.
-6. Each summary MUST use one closed-set tag from: {tags}.
-
-Output valid JSON only, in this shape:
-{{
-  "summaries": [
-    {{"content": "fact summary", "tags": ["one_allowed_tag"], "context": "short_topic_label"}}
-  ]
-}}
-""".format(tags=", ".join(sorted(RECALL_TAGS)))
-
-_STAGE4_DIARY_SYSTEM_TEXTS: dict[str, str] = {
+_DIARY_SYSTEM_TEXTS: dict[str, str] = {
     "zh": """你是桌面伙伴，在一天结束时私下反思。用伙伴的第一人称「我」写一段个人日记，反思今天与用户的互动。
 
 要求：
@@ -179,175 +82,12 @@ Output valid JSON only:
 }
 
 
-async def _stage_1_daily_reflection(
-    llm_cfg: dict[str, Any],
-    scope: MemoryScope,
-    clean_messages: list[dict[str, str]],
-    inferred_profile: dict[str, str],
-    auto_inject: dict[str, str],
-    user_profile: dict[str, str],
-    local_date_str: str,
-    slot_versions: dict[str, tuple[int, int]],
-    interaction_stats_today: dict[str, Any] | None = None,
-) -> tuple[dict[str, str], dict[str, str]]:
-    """Stage 1：每日反思——更新 inferred_profile 和 auto_inject。"""
-    user_id = scope.user_id
-    validate_memory_scope(scope)
-    payload = {
-        (
-            "today_companion_conversations" if scope.system_preset_id == "companion" else "today_conversations"
-        ): clean_messages,
-        "current_inferred_profile": inferred_profile,
-        "current_auto_inject": auto_inject,
-        "user_profile": user_profile,
-        "local_date": local_date_str,
-    }
-    if interaction_stats_today is not None:
-        payload["interaction_stats_today"] = interaction_stats_today
-    raw = await call_llm_once(
-        llm_cfg,
-        _REFLECTION_SYSTEM_PROMPT if scope.system_preset_id == "companion" else _WORK_REFLECTION_PROMPT,
-        payload,
-        max_output_tokens=NIGHTLY_REFLECTION_MAX_TOKENS,
-    )
-    parsed = parse_llm_json(raw)
-    if not isinstance(parsed, dict):
-        logger.warning(
-            "nightly_activity: stage 1 failed to parse JSON",
-            extra={"user_id": user_id},
-        )
-        return inferred_profile, auto_inject
-
-    inferred_updates = parsed.get("inferred_profile_updates") or []
-    auto_inject_updates = parsed.get("auto_inject_updates") or []
-
-    updated_inferred = dict(inferred_profile)
-    updated_auto_inject = dict(auto_inject)
-    async with session_scope() as db:
-        if isinstance(inferred_updates, list):
-            for item in inferred_updates:
-                if not isinstance(item, dict):
-                    continue
-                slot = item.get("slot")
-                content = (item.get("content") or "").strip()
-                if slot not in INFERRED_PROFILE_SLOTS or not content:
-                    continue
-                content_truncated = content[:MAX_INFERRED_PROFILE_CONTENT_CHARS]
-                if await apply_reflection_slot(
-                    db,
-                    scope,
-                    context=slot,
-                    content=content_truncated,
-                    tags=json.dumps(["inferred_profile"]),
-                    expected=slot_versions.get(slot),
-                    source=MemorySource("reflection", batch_id=local_date_str),
-                ):
-                    updated_inferred[slot] = content_truncated
-
-        if isinstance(auto_inject_updates, list):
-            for item in auto_inject_updates:
-                if not isinstance(item, dict):
-                    continue
-                slot = item.get("slot")
-                content = (item.get("content") or "").strip()
-                if (
-                    slot not in AUTO_INJECT_SLOTS
-                    or not content
-                    or (scope.system_preset_id != "companion" and slot != "auto_inject:communication_style")
-                ):
-                    continue
-                content_truncated = content[:MAX_AUTO_INJECT_CONTENT_CHARS]
-                if await apply_reflection_slot(
-                    db,
-                    scope,
-                    context=slot,
-                    content=content_truncated,
-                    tags=json.dumps(["auto_inject"]),
-                    expected=slot_versions.get(slot),
-                    source=MemorySource("reflection", batch_id=local_date_str),
-                ):
-                    updated_auto_inject[slot] = content_truncated
-        await db.commit()
-
-    logger.info("nightly_activity: stage 1 completed", extra={"user_id": user_id})
-    return updated_inferred, updated_auto_inject
-
-
-async def _stage_2_memory_consolidation(
-    llm_cfg: dict[str, Any],
-    scope: MemoryScope,
-    inferred_profile: dict[str, str],
-    local_date_str: str,
-) -> bool:
-    """Stage 2：记忆合并与衰减。"""
-    user_id = scope.user_id
-    validate_memory_scope(scope)
-    # Stage 1 也会等待 LLM，不能复用流水线起点读取的 recall_rows；取得与白天整理共用的
-    # 进程内锁后重新取快照，且在 LLM await 前关闭数据库会话。
-    async with memory_consolidation_lock(scope):
-        async with session_scope() as db:
-            source_rows = await load_recall_snapshot(
-                db,
-                scope,
-                limit=NIGHTLY_CONSOLIDATE_MAX_RECALL_ROWS,
-            )
-        if not source_rows:
-            logger.info(
-                "nightly_activity: stage 2 skipped, recall pool empty",
-                extra={"user_id": user_id},
-            )
-            return True
-
-        payload = {
-            "recall_pool": [row.prompt_row() for row in source_rows],
-            "inferred_profile": inferred_profile,
-            "local_date": local_date_str,
-        }
-        raw = await call_llm_once(
-            llm_cfg,
-            _CONSOLIDATION_SYSTEM_PROMPT,
-            payload,
-            max_output_tokens=NIGHTLY_CONSOLIDATION_MAX_TOKENS,
-        )
-        parsed = parse_llm_json(raw)
-        if not isinstance(parsed, dict) or not isinstance(parsed.get("summaries"), list):
-            logger.warning(
-                "nightly_activity: stage 2 failed to parse summaries",
-                extra={"user_id": user_id},
-            )
-            return False
-
-        result = await replace_recall_pool(scope, source_rows, parsed["summaries"])
-        if result.status == RecallReplaceStatus.EMPTY_SUMMARIES:
-            logger.warning(
-                "nightly_activity: stage 2 all summaries empty, source rows preserved",
-                extra={"user_id": user_id},
-            )
-            return False
-        if result.status == RecallReplaceStatus.STALE_SNAPSHOT:
-            logger.info(
-                "nightly_activity: stage 2 source snapshot changed, old summaries discarded",
-                extra={"user_id": user_id},
-            )
-            return False
-
-        logger.info(
-            "nightly_activity: stage 2 completed",
-            extra={
-                "user_id": user_id,
-                "replaced": len(source_rows),
-                "written": result.written,
-            },
-        )
-        return True
-
-
 async def _stage_4_self_diary(
     llm_cfg: dict[str, Any],
     scope: MemoryScope,
     clean_messages: list[dict[str, str]],
-    inferred_profile: dict[str, str],
-    auto_inject: dict[str, str],
+    contextual_memories: dict[str, str],
+    background_memories: dict[str, str],
     local_date_str: str,
     autonomous_actions: list[dict[str, Any]],
     language: str = DEFAULT_LANGUAGE,
@@ -357,15 +97,15 @@ async def _stage_4_self_diary(
     validate_memory_scope(scope)
     payload = {
         "today_conversations": clean_messages,
-        "inferred_profile": inferred_profile,
-        "auto_inject": auto_inject,
+        "contextual_memories": contextual_memories,
+        "background_memories": background_memories,
         "nightly_autonomous_actions": autonomous_actions,
         "local_date": local_date_str,
         "language": language,
     }
     raw = await call_llm_once(
         llm_cfg,
-        resolve_prompt_text(_STAGE4_DIARY_SYSTEM_TEXTS, language),
+        resolve_prompt_text(_DIARY_SYSTEM_TEXTS, language),
         payload,
         max_output_tokens=NIGHTLY_DIARY_MAX_TOKENS,
     )
@@ -622,39 +362,7 @@ async def _run_nightly_pipeline_inner(
         clean_messages = clean_main_messages
         has_user_messages = any(m["role"] == "user" and not is_injected_time_item(m) for m in clean_messages)
 
-        # 加载已有 memory 命名空间——一个 query 取三种前缀。
-        ns_rows = (
-            (
-                await db.execute(
-                    select(Memory).where(
-                        scope_filter(scope),
-                        Memory.context.like(KIND_TO_PREFIX["inferred_profile"] + "%")
-                        | Memory.context.like(KIND_TO_PREFIX["auto_inject"] + "%")
-                        | Memory.context.like(KIND_TO_PREFIX["user_profile"] + "%"),
-                    ),
-                )
-            )
-            .scalars()
-            .all()
-        )
-        slot_versions = {r.context: (r.id, r.content_version) for r in ns_rows}
-        inferred_profile: dict[str, str] = {}
-        auto_inject: dict[str, str] = {}
-        user_profile: dict[str, str] = {}
-        for r in ns_rows:
-            if r.context.startswith(KIND_TO_PREFIX["inferred_profile"]):
-                inferred_profile[r.context] = r.content
-            elif r.context.startswith(KIND_TO_PREFIX["auto_inject"]):
-                auto_inject[r.context] = r.content
-            elif r.context.startswith(KIND_TO_PREFIX["user_profile"]):
-                user_profile[r.context] = r.content
-
-        recall_rows = await list_memories(
-            db,
-            scope,
-            kind="recall",
-            limit=NIGHTLY_CONSOLIDATE_MAX_RECALL_ROWS,
-        )
+        user_profile = await read_user_profile(db, scope)
 
         user_lang_row = (
             await db.execute(
@@ -719,53 +427,21 @@ async def _run_nightly_pipeline_inner(
 
     # 各阶段顺序执行，失败域相互隔离；每个阶段的结果汇入 stages 给末尾日志。
     stages: list[dict[str, Any]] = []
-    updated_inferred = inferred_profile
-    updated_auto_inject = auto_inject
-    today_stats = await read_today_summary(user_id, local_today_str) if scope.system_preset_id == "companion" else None
-    if has_user_messages or today_stats:
-        try:
-            updated_inferred, updated_auto_inject = await _stage_1_daily_reflection(
-                llm_cfg,
-                scope,
-                clean_main_messages,
-                inferred_profile,
-                auto_inject,
-                user_profile,
-                local_today_str,
-                slot_versions=slot_versions,
-                interaction_stats_today=today_stats,
-            )
-            stages.append({"stage": "reflection", "status": "ok"})
-        except Exception as exc:
-            logger.exception(
-                "nightly_activity: stage 1 reflection failed",
-                extra={"user_id": user_id, "error": str(exc)},
-            )
-            stages.append({"stage": "reflection", "status": "error", "error": str(exc)})
-    else:
-        stages.append(
-            {"stage": "reflection", "status": "skipped", "reason": "当日无新互动"},
-        )
-
     try:
-        consolidation_ok = await _stage_2_memory_consolidation(
-            llm_cfg,
-            scope,
-            updated_inferred,
-            local_today_str,
-        )
-        stages.append(
-            {
-                "stage": "consolidation",
-                "status": "ok" if consolidation_ok else "error",
-            },
-        )
+        await review_memories(scope, llm_config=llm_cfg)
+        stages.append({"stage": "memory_review", "status": "ok"})
     except Exception as exc:
-        logger.exception(
-            "nightly_activity: stage 2 consolidation failed",
-            extra={"user_id": user_id, "error": str(exc)},
-        )
-        stages.append({"stage": "consolidation", "status": "error", "error": str(exc)})
+        logger.exception("nightly memory review failed", extra={"user_id": user_id})
+        stages.append({"stage": "memory_review", "status": "error", "error": str(exc)})
+
+    # 维护完成后重新读取有效事实，规划与日记不复用维护前的过期快照。
+    async with session_scope() as db:
+        recall_rows = await list_memories(db, scope, kind="recall", limit=NIGHTLY_CONSOLIDATE_MAX_RECALL_ROWS)
+        user_profile = await read_user_profile(db, scope)
+    updated_contextual = {
+        str(r["id"]): f"[{r['basis']}] {r['content']}" for r in recall_rows if r["usage"] == "contextual"
+    }
+    updated_background_memories = {str(r["id"]): r["content"] for r in recall_rows if r["usage"] == "background"}
 
     if scope.system_preset_id != "companion":
         has_errors = any(stage["status"] == "error" for stage in stages)
@@ -779,8 +455,8 @@ async def _run_nightly_pipeline_inner(
         planning_result = await run_nightly_planning(
             llm_cfg,
             user_id,
-            updated_inferred,
-            updated_auto_inject,
+            updated_contextual,
+            updated_background_memories,
             user_profile,
             recall_highlights,
             date_context,
@@ -818,8 +494,8 @@ async def _run_nightly_pipeline_inner(
                 llm_cfg,
                 scope,
                 clean_messages,
-                updated_inferred,
-                updated_auto_inject,
+                updated_contextual,
+                updated_background_memories,
                 local_today_str,
                 action_facts,
                 language=user_language,

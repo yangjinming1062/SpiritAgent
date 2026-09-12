@@ -10,11 +10,10 @@ class MemoryScope:
 
 @dataclass(frozen=True, slots=True)
 class MemorySource:
-    kind: Literal["tool", "manual", "onboarding", "reflection", "consolidation", "interaction", "diary"]
+    kind: Literal["tool", "manual", "onboarding", "reflection", "interaction", "diary"]
     session_id: int | None = None
     message_ids: tuple[int, ...] = ()
     batch_id: str | None = None
-    memory_versions: tuple[tuple[int, int], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

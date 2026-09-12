@@ -249,7 +249,7 @@ async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, va
                     {field: value.strip()[:_ONBOARDING_MAX_LEN]},
                 )
                 await db.commit()
-            # 传空值不动 Memory 行：清除 user_* 条目只能经 memory_forget 撤回
+            # 传空值不动 Memory 行：清除 user_* 条目通过记忆管理删除
             return _state(_onboarding_answers(load_persona_definition(persona)), None, True)
         # voice 不是人设字段，故此处只动草稿
         if field == "voice":

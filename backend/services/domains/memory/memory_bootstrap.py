@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts.memory import MemoryScope, MemorySource
 
-from .memory_store import scope_filter, upsert_slotted_memory
+from .memory_store import active_memory_filter, scope_filter, upsert_slotted_memory
 
 _USER_PROFILE_TAGS_JSON = '["onboarding", "user_profile"]'
 
@@ -39,7 +39,15 @@ def extract_user_profile(payload: dict[str, Any]) -> dict[str, str]:
 async def read_user_profile(db: AsyncSession, scope: MemoryScope) -> dict[str, str]:
     """record_user_profile 的逆操作：以 {raw_key: content} 返回用户当前的 user_* 回答。"""
     rows = (
-        (await db.execute(select(Memory).where(scope_filter(scope), Memory.context.like("user_profile:%"))))
+        (
+            await db.execute(
+                select(Memory).where(
+                    scope_filter(scope),
+                    active_memory_filter(),
+                    Memory.context.like("user_profile:%"),
+                ),
+            )
+        )
         .scalars()
         .all()
     )
@@ -53,7 +61,15 @@ async def read_user_profile(db: AsyncSession, scope: MemoryScope) -> dict[str, s
 
 async def build_user_profile_extras(db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE) -> str:
     rows = (
-        (await db.execute(select(Memory).where(scope_filter(scope), Memory.context.like("user_profile:%"))))
+        (
+            await db.execute(
+                select(Memory).where(
+                    scope_filter(scope),
+                    active_memory_filter(),
+                    Memory.context.like("user_profile:%"),
+                ),
+            )
+        )
         .scalars()
         .all()
     )

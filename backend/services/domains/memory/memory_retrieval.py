@@ -16,7 +16,7 @@ from services.infrastructure.llm import (
 )
 
 from .memory_namespaces import RESERVED_FROM_RECALL, context_not_in
-from .memory_store import scope_filter
+from .memory_store import active_memory_filter, scope_filter
 
 logger = get_logger(__name__)
 
@@ -95,6 +95,7 @@ async def _dense_search(
     """稠密语义检索：用 pgvector ``<=>`` 余弦距离算子在 DB 端排序与截断。"""
     stmt = select(Memory).where(
         scope_filter(scope),
+        active_memory_filter(),
         Memory.embedding.isnot(None),
         *[context_not_in(p) for p in excluded_namespaces],
     )
@@ -130,6 +131,7 @@ async def _sparse_search(
         select(Memory)
         .where(
             scope_filter(scope),
+            active_memory_filter(),
             or_(*conditions),
             *[context_not_in(p) for p in excluded_namespaces],
         )
@@ -228,6 +230,8 @@ async def retrieve_hybrid_memories(
                 "context": mem.context,
                 "tags": mem.tags,
                 "importance": importance,
+                "basis": mem.basis,
+                "expires_at": mem.expires_at,
                 "score": final_score,
                 "updated_at": mem.updated_at,
             },

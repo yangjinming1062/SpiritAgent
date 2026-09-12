@@ -1,25 +1,31 @@
 from datetime import datetime
 from typing import Any
 
-from components import MAX_AUTO_INJECT_CONTENT_CHARS, MAX_RECALL_CONTENT_CHARS, session_scope
+from components import MAX_RECALL_CONTENT_CHARS, session_scope, utc_now
 from modules.memory import Memory
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts.memory import EmbeddingItem, MemoryScope
 
-from .memory_namespaces import AUTO_INJECT_SLOTS, KIND_TO_PREFIX, RECALL_TAGS, participates_in_recall
-from .memory_store import backfill_memory_embeddings, get_memory, scope_filter, update_memory_content
+from .memory_learning import memory_record
+from .memory_namespaces import KIND_TO_PREFIX, RECALL_TAGS, participates_in_recall
+from .memory_store import (
+    active_memory_filter,
+    backfill_memory_embeddings,
+    get_memory,
+    scope_filter,
+    update_memory_content,
+)
 
 # 界限：列表分页上限与编辑时的长度上限
 _LIST_DEFAULT_LIMIT = 100
 _LIST_MAX_LIMIT = 500
 
-_OTHER_BUCKET = "other"
-
 
 def _row_to_dict(row: Memory) -> dict[str, Any]:
     return {
+        **memory_record(row),
         "id": row.id,
         "system_preset_id": row.system_preset_id,
         "content_version": row.content_version,
@@ -37,6 +43,7 @@ async def list_memories(
     scope: MemoryScope,
     *,
     kind: str | None = None,
+    status: str = "active",
     tag: str | None = None,
     q: str | None = None,
     limit: int = _LIST_DEFAULT_LIMIT,
@@ -49,7 +56,17 @@ async def list_memories(
     if limit <= 0 or limit > _LIST_MAX_LIMIT:
         limit = _LIST_DEFAULT_LIMIT
 
+    if status not in {"active", "candidate", "invalidated", "expired"}:
+        raise ValueError("Invalid memory status filter")
     stmt = select(Memory).where(scope_filter(scope))
+    if status == "active":
+        stmt = stmt.where(active_memory_filter())
+    elif status == "expired":
+        stmt = stmt.where(Memory.status.in_(("active", "candidate")), Memory.expires_at <= func.now())
+    else:
+        stmt = stmt.where(Memory.status == status)
+        if status == "candidate":
+            stmt = stmt.where(or_(Memory.expires_at.is_(None), Memory.expires_at > func.now()))
     if kind is not None:
         stmt = stmt.where(Memory.context.like(KIND_TO_PREFIX[kind] + "%"))
     if tag:
@@ -64,7 +81,7 @@ async def list_memories(
 
 
 async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> dict[str, Any] | None:
-    """只更新 content；长度上限随 context 而定（auto_inject 槽位必须短，唯一索引与后续整合逻辑依赖这一点）。"""
+    """人工编辑作为明确事实重新生效。"""
     content = (content or "").strip()
     if not content:
         raise ValueError("content must be non-empty")
@@ -72,7 +89,7 @@ async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> 
         row = await get_memory(db, scope, memory_id)
         if row is None:
             return None
-        cap = MAX_AUTO_INJECT_CONTENT_CHARS if row.context in AUTO_INJECT_SLOTS else MAX_RECALL_CONTENT_CHARS
+        cap = MAX_RECALL_CONTENT_CHARS
         if len(content) > cap:
             raise ValueError(f"content exceeds {cap} chars for {row.context or 'recall'}")
         row = await update_memory_content(db, scope, memory_id, content)
@@ -90,17 +107,23 @@ async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> 
 
 
 async def memory_counts(db: AsyncSession, scope: MemoryScope) -> dict[str, int]:
-    """按命名空间前缀统计记忆条数；行数本就有界，Python 侧聚合比手写 SQL CASE-WHEN 更划算。"""
-    counts: dict[str, int] = dict.fromkeys(KIND_TO_PREFIX, 0)
-    counts[_OTHER_BUCKET] = 0
-    for (ctx,) in (await db.execute(select(Memory.context).where(scope_filter(scope)))).all():
-        if ctx is None:
-            counts[_OTHER_BUCKET] += 1
+    rows = (
+        await db.execute(
+            select(Memory.status, Memory.expires_at, Memory.context).where(
+                scope_filter(scope),
+                Memory.status != "forgotten",
+            ),
+        )
+    ).all()
+    counts = dict.fromkeys(("active", "candidate", "invalidated", "expired", "user_profile"), 0)
+    now = utc_now()
+    for status, expiry, context in rows:
+        if context and context.startswith("user_profile:"):
+            if status == "active":
+                counts["user_profile"] += 1
             continue
-        for label, prefix in KIND_TO_PREFIX.items():
-            if ctx.startswith(prefix):
-                counts[label] += 1
-                break
-        else:
-            counts[_OTHER_BUCKET] += 1
+        if not context or not context.startswith("recall:"):
+            continue
+        key = "expired" if status in {"active", "candidate"} and expiry and expiry <= now else status
+        counts[key] += 1
     return counts

@@ -40,8 +40,7 @@ from services.domains.conversation import (
 )
 from services.domains.memory import (
     build_user_profile_extras,
-    format_auto_inject_block,
-    format_inferred_profile_block,
+    format_background_memory_block,
     format_proactive_memory_block,
     resolve_user_timezone,
     retrieve_proactive_memories,
@@ -423,7 +422,6 @@ async def build_turn_inputs(
         else None
     )
     # 入口处一次性 normalize 语言：避免 lang="fr" 等未支持值在 volatile header 与 day marker 处分别走不同分支；
-    # 上移至此是为了让下方 auto_inject_extras / inferred_profile_extras / proactive_memory_extras /
     # user_profile_extras / outfit_extras 都能拿到正确的 language，而非默认值 zh。
     session_lang = resolve_language(user_settings.get("language", DEFAULT_LANGUAGE))
     user_profile_extras = (
@@ -435,11 +433,8 @@ async def build_turn_inputs(
         else ""
     )
     # 自动化任务不装配伙伴人格、用户画像或长期记忆；其它 preset 即使 persona 未完成也能承载背景上下文。
-    auto_inject_extras = (
-        await format_auto_inject_block(db, memory_scope, language=session_lang) if include_memory_context else ""
-    )
-    inferred_profile_extras = (
-        await format_inferred_profile_block(db, memory_scope, language=session_lang) if include_memory_context else ""
+    background_memory_extras = (
+        await format_background_memory_block(db, memory_scope, language=session_lang) if include_memory_context else ""
     )
     user_local_tz = await resolve_user_timezone(db, user_id)
     last_history_user_content = next(
@@ -477,8 +472,7 @@ async def build_turn_inputs(
         persona_extras=build_system_prompt_extras(persona, language=session_lang),
         user_profile_extras=user_profile_extras,
         outfit_extras=outfit_extras,
-        auto_inject_extras=auto_inject_extras,
-        inferred_profile_extras=inferred_profile_extras,
+        background_memory_extras=background_memory_extras,
         proactive_memory_extras=proactive_memory_extras,
         language=session_lang,
         user_local_tz=user_local_tz,
@@ -495,8 +489,6 @@ async def build_turn_inputs(
     native_memory = (
         NativeMemory(memory_scope, source=MemorySource("tool", session_id=conv.id)) if memory_scope else None
     )
-    if native_memory is not None and (addition := native_memory.format_for_system_prompt()):
-        context["instructions"] += "\n\n" + addition
 
     # 计算上下文 Token 估算值：结合 Responses 权威基线与 CJK 全量/增量估算
     full_context_tokens = approx_responses_tokens(context["instructions"], context["input"])

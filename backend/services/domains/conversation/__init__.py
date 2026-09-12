@@ -1,7 +1,7 @@
 from .bootstrap import ensure_system_conversations_for_user
 from .context_window import load_recent_context_window
 from .fork import ForkNotAllowedError, SourceNotFoundError, fork_conversation_from_message
-from .formatting import format_messages_compact
+from .formatting import format_messages_compact, message_text
 from .history import build_session_messages, client_media_entries
 from .main_conversation import (
     IM_KIND,
@@ -27,6 +27,7 @@ from .proactive_state import (
 from .undo import UndoNotAllowedError, resolve_undo_target, undo_conversation_to_message
 
 __all__ = [
+    "message_text",
     "conversation_memory_scope",
     "resolve_memory_scope",
     "validate_memory_scope",
