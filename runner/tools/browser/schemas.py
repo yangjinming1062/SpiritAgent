@@ -12,8 +12,7 @@ BROWSER_NAVIGATE_SCHEMA: dict[str, Any] = {
         "dynamic content). Returns a compact page snapshot with interactive elements and ref IDs — no need "
         "to call browser_snapshot separately after navigating. For advanced browser capabilities (file downloads, "
         "multi-tab navigation, cookie injection, viewport / user-agent / geolocation configuration, element-level "
-        "screenshots), use `search_tools` or rely on dynamic tool discovery (`tools.sync`) — those tools are not "
-        "in the always-visible core set."
+        "screenshots), use `search_tools` to unlock them — those tools are not in the always-visible core set."
     ),
     "parameters": {
         "type": "object",
@@ -442,9 +441,8 @@ BROWSER_TAB_LIST_SCHEMA: dict[str, Any] = {
 BROWSER_SET_VIEWPORT_SCHEMA: dict[str, Any] = {
     "name": "browser_set_viewport",
     "description": (
-        "Override the browser viewport size (CDP Emulation.setDeviceMetricsOverride). "
-        "Persists until next call or page reload. Use to test mobile layouts without a real "
-        "device. Requires a CDP-capable backend."
+        "Override the browser viewport size. Persists until next call or page reload. "
+        "Use to test mobile layouts without a real device. Requires a CDP-capable backend."
     ),
     "parameters": {
         "type": "object",
@@ -468,10 +466,7 @@ BROWSER_SET_VIEWPORT_SCHEMA: dict[str, Any] = {
 
 BROWSER_SET_USER_AGENT_SCHEMA: dict[str, Any] = {
     "name": "browser_set_user_agent",
-    "description": (
-        "Override the user-agent string sent on subsequent navigations "
-        "(CDP Network.setUserAgentOverride). Pass None to clear the override."
-    ),
+    "description": ("Override the user-agent string sent on subsequent navigations. Pass None to clear the override."),
     "parameters": {
         "type": "object",
         "properties": {
@@ -495,8 +490,8 @@ BROWSER_SET_USER_AGENT_SCHEMA: dict[str, Any] = {
 BROWSER_SET_EXTRA_HEADERS_SCHEMA: dict[str, Any] = {
     "name": "browser_set_extra_headers",
     "description": (
-        "Replace all extra HTTP headers sent on subsequent navigations "
-        "(CDP Network.setExtraHTTPHeaders). Wholesale replacement — pass the complete desired "
+        "Replace all extra HTTP headers sent on subsequent navigations. "
+        "Wholesale replacement — pass the complete desired "
         "set. Empty dict clears all overrides."
     ),
     "parameters": {
@@ -517,7 +512,7 @@ BROWSER_SET_EXTRA_HEADERS_SCHEMA: dict[str, Any] = {
 BROWSER_SET_GEOLOCATION_SCHEMA: dict[str, Any] = {
     "name": "browser_set_geolocation",
     "description": (
-        "Override browser-reported geolocation (CDP Emulation.setGeolocationOverride). "
+        "Override browser-reported geolocation. "
         "Subsequent pages see injected coords via navigator.geolocation. Pass lat=NaN to clear."
     ),
     "parameters": {
@@ -614,9 +609,8 @@ BROWSER_CONSOLE_SCHEMA: dict[str, Any] = {
 BROWSER_COOKIES_GET_SCHEMA: dict[str, Any] = {
     "name": "browser_cookies_get",
     "description": (
-        "Read all cookies visible to the current page, optionally filtered by URL. Backed by "
-        "CDP Network.getCookies. Read-only — does not mutate state. Requires a CDP-capable "
-        "backend."
+        "Read all cookies visible to the current page, optionally filtered by URL. "
+        "Read-only — does not mutate state. Requires a CDP-capable backend."
     ),
     "parameters": {
         "type": "object",
@@ -636,8 +630,8 @@ BROWSER_COOKIES_GET_SCHEMA: dict[str, Any] = {
 BROWSER_COOKIES_SET_SCHEMA: dict[str, Any] = {
     "name": "browser_cookies_set",
     "description": (
-        "Set a cookie via CDP Network.setCookie. Useful for re-establishing session state "
-        "after restart, or injecting auth tokens for testing. Requires a CDP-capable backend."
+        "Set a cookie. Useful for re-establishing session state after restart, or injecting "
+        "auth tokens for testing. Requires a CDP-capable backend."
     ),
     "parameters": {
         "type": "object",
@@ -673,9 +667,8 @@ BROWSER_COOKIES_SET_SCHEMA: dict[str, Any] = {
 BROWSER_COOKIES_CLEAR_SCHEMA: dict[str, Any] = {
     "name": "browser_cookies_clear",
     "description": (
-        "Clear browser cookies and/or storage via CDP. WARNING: scope is GLOBAL "
-        '(Network.clearBrowserCookies + Storage.clearDataForOrigin with origin="*"), '
-        "not the current origin — this affects every site the browser has visited. "
+        "Clear browser cookies and/or storage. WARNING: scope is GLOBAL, not the current "
+        "origin — this affects every site the browser has visited. "
         "By default clears both session cookies and all storage data. Pass session=False "
         "and storage=False to no-op (useful for explicit intent signalling)."
     ),
@@ -703,8 +696,7 @@ BROWSER_STORAGE_GET_SCHEMA: dict[str, Any] = {
     "name": "browser_storage_get",
     "description": (
         "Read the value of a localStorage or sessionStorage entry from a specific origin. "
-        "Backed by CDP DOMStorage.getDOMStorageItems + getItems. Read-only. "
-        "Requires a CDP-capable backend."
+        "Read-only. Requires a CDP-capable backend."
     ),
     "parameters": {
         "type": "object",
@@ -729,8 +721,7 @@ BROWSER_STORAGE_SET_SCHEMA: dict[str, Any] = {
     "name": "browser_storage_set",
     "description": (
         "Set the value of a localStorage / sessionStorage entry for a specific origin. "
-        "Backed by CDP DOMStorage.setDOMStorageItem. Mutates page state. "
-        "Requires a CDP-capable backend."
+        "Mutates page state. Requires a CDP-capable backend."
     ),
     "parameters": {
         "type": "object",

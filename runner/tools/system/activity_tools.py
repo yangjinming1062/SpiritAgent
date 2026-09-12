@@ -37,18 +37,14 @@ SYSTEM_IS_LOCKED_SCHEMA = {
 
 SYSTEM_FOCUS_SCHEMA = {
     "name": "system.get_focused_app",
-    "description": (
-        "{name, pid, kind} for the foreground app; {} when unknown. Feeds [desktop/plan §4.4] situational idle behaviour."
-    ),
+    "description": ("{name, pid, kind} for the foreground app; {} when unknown."),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 
 SYSTEM_IS_FULLSCREEN_SCHEMA = {
     "name": "system.is_fullscreen",
-    "description": (
-        "True iff the foreground window covers ≥95% of its monitor's working area. False when unknown. Feeds the desktop's auto-downgrade-to-quiet signal."
-    ),
+    "description": ("True iff the foreground window covers ≥95% of its monitor's working area. False when unknown."),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
@@ -57,11 +53,7 @@ SYSTEM_SNAPSHOT_SCHEMA = {
     "name": "system.snapshot",
     "description": (
         "Aggregated activity snapshot: {idle_seconds, locked, focused_app, fullscreen} "
-        "in one round-trip. The desktop's 30s activity poll uses this instead of "
-        "issuing the four system.* probes individually — same data shape, one IPC "
-        "message and one Python-to-OS-call chain instead of four. Returns the same "
-        "shapes as ``system.get_idle_seconds`` / ``system.is_screen_locked`` / "
-        "``system.get_focused_app`` / ``system.is_fullscreen``."
+        "in one call — same data as the four individual system.* probes."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
@@ -76,9 +68,7 @@ SYSTEM_POWER_SCHEMA = {
 
 SYSTEM_GET_WINDOWS_SCHEMA = {
     "name": "system.get_windows",
-    "description": (
-        "Visible top-level windows with geometry: {windows: [{title, name, x, y, w, h, focused}, ...]}. Feeds the companion's perch / roam / ritual-walk spatial behaviour."
-    ),
+    "description": ("Visible top-level windows with geometry: {windows: [{title, name, x, y, w, h, focused}, ...]}."),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 

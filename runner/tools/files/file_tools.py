@@ -1541,7 +1541,7 @@ PATCH_SCHEMA = {
     "name": "patch",
     "description": (
         "Targeted find-and-replace edits in files. Use this instead of sed/awk in terminal. "
-        "Uses fuzzy matching (9 strategies) so minor whitespace/indentation differences won't break it. "
+        "Uses fuzzy matching so minor whitespace/indentation differences won't break it. "
         "Returns a unified diff. Auto-runs syntax checks after editing.\n\n"
         "REPLACE MODE (mode='replace', default): find a unique string and replace it. "
         "REQUIRED PARAMETERS: mode, path, old_string, new_string.\n"
@@ -1608,7 +1608,7 @@ SEARCH_FILES_SCHEMA = {
     "name": "search_files",
     "description": (
         "Search file contents or find files by name. Use this instead of grep/rg/find/ls in "
-        "terminal. Ripgrep-backed, faster than shell equivalents.\n\n"
+        "terminal — faster than the shell equivalents.\n\n"
         "Content search (target='content'): Regex search inside files. Output modes: full "
         "matches with line numbers, file paths only, or match counts.\n\n"
         "File search (target='files'): Find files by glob pattern (e.g., '*.py', '*config*'). "

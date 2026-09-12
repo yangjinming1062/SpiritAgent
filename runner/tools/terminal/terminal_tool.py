@@ -735,8 +735,7 @@ _TERMINAL_SCHEMA_TEMPLATE = {
                 "description": (
                     "Max seconds to wait (default: 180). Returns INSTANTLY when command finishes — "
                     "set high for long tasks, you won't wait unnecessarily. Foreground timeouts "
-                    "above the configured cap (600 by default, overridable via the "
-                    "TERMINAL_MAX_FOREGROUND_TIMEOUT env var) are rejected; use background=true "
+                    "above the cap (600s by default) are rejected; use background=true "
                     "for longer commands."
                 ),
                 "minimum": 1,
