@@ -264,7 +264,7 @@ stage_unpack_runner() {
     fi
   fi
 
-  # 不再做安装后烟测：build_client.{ps1,sh} 已经用 pytest 把 wheel 卡在打包前，损坏 venv 不会到达用户。
+  # 不再做安装后烟测：构建链在打包前跑 scripts/check_runner_facade.py，wheel 与 server.py 不一致不会进入安装包。
 
   # 清理旧的 PyInstaller 二进制
   rm -f "$SPIRITAGENT_HOME_RESOLVED/bin/spiritagent-runner"

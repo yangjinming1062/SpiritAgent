@@ -89,6 +89,34 @@ def _link_or_copy(src: Path, dst: Path, is_dir: bool = False) -> None:
                 shutil.copy2(src, dst)
 
 
+def _read_runner_pyproject_version(root: Path) -> str:
+    pyproject = root / "runner" / "pyproject.toml"
+    text = pyproject.read_text(encoding="utf-8")
+    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE)
+    if not match:
+        raise RuntimeError(f"cannot read version from {pyproject}")
+    return match.group(1)
+
+
+def _select_runner_wheel(dist_dir: Path, version: str) -> Path:
+    """只接受与 pyproject 版本精确匹配的 wheel。
+
+    dist/ 里常堆积历史 wheel；按名字 sorted()[0] 会选中最旧的 0.1.0，
+    再配上当前 server.py 就打出「新 server + 旧包」的坏安装包。
+    """
+    exact = sorted(dist_dir.glob(f"spirit_agent-{version}-*.whl"))
+    if not exact:
+        available = sorted(p.name for p in dist_dir.glob("*.whl"))
+        raise FileNotFoundError(
+            f"runner wheel for version {version} not found in {dist_dir}. "
+            f"Available: {available or 'none'}. Rebuild the runner wheel for this version "
+            f"(`uv build --wheel` in runner/) before staging — do not reuse an old wheel.",
+        )
+    if len(exact) > 1:
+        raise RuntimeError(f"multiple wheels for version {version} in {dist_dir}: {[p.name for p in exact]}")
+    return exact[0]
+
+
 def stage_payload(repo_root: Path | None = None, target: str | None = None) -> None:
     """暂存 payload 至 installer/payload/ (runner wheel, server.py, skills, install 脚本)。"""
     root = repo_root or get_repo_root()
@@ -105,20 +133,29 @@ def stage_payload(repo_root: Path | None = None, target: str | None = None) -> N
     payload_runner.mkdir(parents=True, exist_ok=True)
     payload_client.mkdir(parents=True, exist_ok=True)
 
+    version = _read_runner_pyproject_version(root)
     dist_dir = root / "runner" / "dist"
-    wheels = sorted(dist_dir.glob("spirit*-agent-*.whl"))
-    if not wheels:
-        wheels = sorted(dist_dir.glob("*.whl"))
-    if not wheels:
-        raise FileNotFoundError(f"No wheel found in {dist_dir} (build runner first)")
-
-    wheel = wheels[0]
+    wheel = _select_runner_wheel(dist_dir, version)
     shutil.copy2(wheel, payload_runner / wheel.name)
 
     server_py = root / "runner" / "server.py"
     if not server_py.is_file():
         raise FileNotFoundError(f"runner/server.py not found: {server_py}")
     shutil.copy2(server_py, payload_runner / "server.py")
+
+    # 发布门禁：即将进入安装包的 wheel 必须满足同包 server.py 的本地导入。
+    subprocess.run(
+        [
+            sys.executable,
+            str(root / "scripts" / "check_runner_facade.py"),
+            "--wheel",
+            str(payload_runner / wheel.name),
+            "--server-py",
+            str(server_py),
+        ],
+        check=True,
+        cwd=root,
+    )
 
     skills_src = root / "installer" / "skills"
     skills_dst = root / "installer" / "payload" / "skills"

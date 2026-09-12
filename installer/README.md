@@ -6,7 +6,7 @@
 
 ## 2. 设计意图
 
-- 安装脚本与 payload 随安装器嵌入，版本一致；Python 与依赖引导的下载行为见 §4，不能把资源自包含等同于完全离线安装。
+- 安装脚本与 payload 随安装器嵌入，版本一致；Python 与依赖引导的下载行为见 §4，不能把资源自包含等同于完全离线安装。payload 中的 runner wheel 由构建链强制与发布版本一致（见 [scripts/README.md](../scripts/README.md)），安装器只负责按包内内容覆盖本机，不做版本猜测。
 - Tauri 负责编排，安装脚本只执行阶段任务；二者同目录维护、随版本共同演进，仓库级构建归 scripts。
 - 使用 uv 托管 Python 与独立 venv，避免系统 Python 版本差异扩大兼容矩阵。
 - Skills 按完整文件释放，不解析 frontmatter；客户端与 Runner 分别过滤和翻译，两套平台翻译表语义必须对齐，新增平台同时修改两端。

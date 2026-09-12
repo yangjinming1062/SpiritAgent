@@ -67,6 +67,8 @@ def build_runner(repo_root: Path) -> None:
     else:
         print("==> No runner tests/ directory — skipping pytest (project ships no test code)")
     run_cmd(["uv", "build", "--wheel", "--out-dir", "dist"], cwd=runner_dir)
+    # 发布质量门：wheel 必须满足 server.py 本地导入；不一致直接失败，不在安装期回滚。
+    run_cmd([sys.executable, str(repo_root / "scripts" / "check_runner_facade.py")], cwd=repo_root)
 
 
 def build_desktop(repo_root: Path, target: str) -> None:

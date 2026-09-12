@@ -149,6 +149,9 @@ try {
             if ($LASTEXITCODE -ne 0) { throw "uv sync failed" }
             & uv build --wheel --out-dir dist
             if ($LASTEXITCODE -ne 0) { throw "uv build failed" }
+            # 发布质量门：wheel 必须满足 server.py 本地导入；不一致直接失败，不在安装期回滚。
+            & uv run python (Join-Path $RepoRoot "scripts\check_runner_facade.py")
+            if ($LASTEXITCODE -ne 0) { throw "check_runner_facade failed — wheel does not satisfy server.py" }
         } finally { Pop-Location }
     } else {
         Write-Output "==> Skipping runner build (-SkipRunner)"
@@ -218,15 +221,21 @@ try {
     Write-Output "==> Final installer: $(Join-Path $OutputDir $finalName) (single-file self-contained)"
 
     # 同一构建再产一个自更新 zip：已安装客户端从后端拉它自更桌面端 + runner，无需重跑 Tauri 安装器。
-    $wheel = Get-ChildItem (Join-Path $RepoRoot 'installer\payload\runner') -Filter '*.whl' | Select-Object -First 1
-    if ($wheel) {
-        Build-UpdateZip `
-            -Version $Version `
-            -DesktopReleaseDir (Join-Path $RepoRoot 'client\release') `
-            -RunnerWheelPath $wheel.FullName `
-            -ServerPyPath (Join-Path $RepoRoot 'installer\payload\runner\server.py') `
-            -OutputDir $OutputDir
+    # payload/runner 在 stage 时只放版本匹配的单个 wheel；这里仍显式校验，避免误打历史残留。
+    $wheels = @(Get-ChildItem (Join-Path $RepoRoot 'installer\payload\runner') -Filter '*.whl' -ErrorAction SilentlyContinue)
+    if ($wheels.Count -ne 1) {
+        throw "expected exactly one staged runner wheel in installer\payload\runner, found $($wheels.Count)"
     }
+    $wheel = $wheels[0]
+    if ($wheel.Name -notlike "*-$Version-*") {
+        throw "staged runner wheel $($wheel.Name) does not match release version $Version"
+    }
+    Build-UpdateZip `
+        -Version $Version `
+        -DesktopReleaseDir (Join-Path $RepoRoot 'client\release') `
+        -RunnerWheelPath $wheel.FullName `
+        -ServerPyPath (Join-Path $RepoRoot 'installer\payload\runner\server.py') `
+        -OutputDir $OutputDir
 } finally {
     Pop-Location
 }

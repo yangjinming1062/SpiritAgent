@@ -13,10 +13,16 @@ pwsh scripts/build_client.ps1 -Version 0.16.0
 ```
 
 - 写版本号到 `client/package.json`、`installer/package.json`、`installer/src-tauri/tauri.conf.json`、`installer/src-tauri/Cargo.toml`、`runner/pyproject.toml`
-- Staging 到 `installer/payload/`（symlink/junction skills 与 install 脚本，copy config + runner wheel + client artifact）
+- Staging 到 `installer/payload/`（symlink/junction skills 与 install 脚本，copy config + runner wheel + client artifact）。wheel **必须**与 `runner/pyproject.toml` 版本精确匹配；`dist/` 里的历史 wheel 一律不参与打包，缺对应版本 wheel 直接失败
+- staging 后对「将进入安装包的 wheel + server.py」再跑一次 `scripts/check_runner_facade.py`；wheel 与 `server.py` 导入面不一致则中止构建，避免发布「新 server + 旧 utils」一类错位包
 - macOS code-sign + notarize（`--sign-identity` / `--notary-profile`）；Windows signtool（`-CertThumbprint`）
 - Tauri 2 默认对 `bundle.resources` 缺失文件**报错**；构建脚本在 tauri build 之前临时 patch `tauri.conf.json` 的 `bundle.resources` 列表，把占位文件替换为当前 host 的实际 client artifact，build 后 restore（git 状态保持干净）
 - **跨平台 build 不可行** —— macOS code-sign 必须 mac host，Windows 必须 win host。脚本校验 `host/target` 匹配
+
+```bash
+# 单独跑 runner 导入面门禁（默认取 runner/dist 下最新 wheel）
+python scripts/check_runner_facade.py
+```
 
 **Windows 最终产物是单个 `SpiritAgent-Setup-{ver}.exe`**（不是 NSIS wrapper）。NSIS wrapper 会出现"双安装器"问题——NSIS 把 `SpiritAgent-Setup.exe` 装到 Program Files，用户还得再手动跑一次。直接发 `SpiritAgent-Setup.exe` 用户双击即看到 Tauri 安装 UI。Windows 脚本用 `tauri build --no-bundle` 跳过 NSIS，产物直接拷贝到 `release/SpiritAgent-Setup-{ver}.exe`。
 

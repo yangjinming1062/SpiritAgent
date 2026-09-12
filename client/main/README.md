@@ -55,6 +55,7 @@ Electron 可信主进程：持有凭据、窗口与表面生命周期、Runner �
 - Client 监听 OS IPC（Windows 命名管道 / macOS UDS），Runner 主动连入；握手 token 校验失败即 401，不进入业务帧。端点路径与 token 由 Client 单向下发，Runner 重连间重读配置以跟随 Client 重启。
 - `bridge-deps` 把会话、进程、反向 RPC、WS Server、日志等全部收成参数注入，入口不持有隐藏全局；可变 `getAuthToken` 以 getter/setter 成对接入，保证会话切换后 bridge 读到最新 token。
 - 连接缓存 `ensure-backend` 用代数标记：reset 时递增，在途 resolve 完成后若代数已变则不写回缓存，避免陈旧连接复活。
+- Runner 更新语义是「装新 wheel + 覆盖 server.py」，一次性切到新版本，不在安装期做兼容 smoke 或回滚。wheel 与 `server.py` 的导入面一致性由构建期 `scripts/check_runner_facade.py` 门禁；`uv` 路径与 installer 对齐（`$SPIRITAGENT_HOME/bin/uv`，venv 通常不带 pip）。
 
 ### 网络与缓存
 

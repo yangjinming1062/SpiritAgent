@@ -215,47 +215,28 @@ export class RunnerUpdater {
         )
       }
 
-      let rollbackMarker: string | null = null
+      // 与 installer 一致：uv 装在 `$SPIRITAGENT_HOME/bin`，venv 由 `uv venv` 创建时不带 pip。
+      const uvName = process.platform === 'win32' ? 'uv.exe' : 'uv'
+      const managedUv = path.join(home, 'bin', uvName)
+      const uvBin = fs.existsSync(managedUv) ? managedUv : uvName
+      const serverPyDest = path.join(home, 'runner', 'server.py')
 
+      // 更新语义：装新 wheel + 覆盖 server.py，一次性切到新版本。
+      // 兼容性由构建期 scripts/check_runner_facade.py 保证；这里不做安装期回滚，
+      // 避免「新 server + 旧包」或「回滚了包却留下新 server」的半更新状态。
       try {
-        const { stdout } = await execFileP(venvPython, ['-m', 'pip', 'show', 'spiritagent-agent'], {
-          maxBuffer: 1 * 1024 * 1024,
-          timeout: 30_000
-        })
-
-        const m = /Name:\s*(\S+)[\s\S]+?Version:\s*(\S+)/.exec(stdout)
-
-        if (m) {
-          rollbackMarker = `${m[1]}==${m[2]}`
-        }
-      } catch (err) {
-        this.log?.('debug', '[updater] no pre-existing wheel to snapshot', err)
-      }
-
-      try {
-        await execFileP(venvPython, ['-m', 'pip', 'install', '--upgrade', sentinel.wheel_path], {
+        await execFileP(uvBin, ['pip', 'install', '--python', venvPython, '--upgrade', sentinel.wheel_path], {
           maxBuffer: 16 * 1024 * 1024,
           timeout: 300_000
         })
       } catch (err) {
-        await this.tryRollbackPip(venvPython, rollbackMarker, 'pip-failed')
-
         return await fail('pip-failed', err)
       }
 
-      const serverPyDest = path.join(home, 'runner', 'server.py')
-      await fsp.copyFile(sentinel.server_py_path, serverPyDest)
-
       try {
-        await execFileP(
-          venvPython,
-          ['-c', 'import spiritagent_agent, importlib.util as u; assert u.find_spec("server") is not None'],
-          { cwd: path.join(home, 'runner'), timeout: 30_000 }
-        )
+        await fsp.copyFile(sentinel.server_py_path, serverPyDest)
       } catch (err) {
-        await this.tryRollbackPip(venvPython, rollbackMarker, 'smoke-test-failed')
-
-        return await fail('smoke-test-failed', err)
+        return await fail('server-py-copy-failed', err)
       }
 
       if (this.bridgeDeps?.runnerBridge) {
@@ -266,8 +247,7 @@ export class RunnerUpdater {
           })
           startedNew = true
         } catch (err) {
-          await this.tryRollbackPip(venvPython, rollbackMarker, 'start-timeout')
-
+          // 已切到新版本但拉起失败：保留新版本并上报，不回退旧 runner。
           return await fail('start-timeout', err)
         }
       }
@@ -289,28 +269,6 @@ export class RunnerUpdater {
           this.log?.('error', '[updater] post-update restart failed', err)
         }
       }
-    }
-  }
-
-  // 三个失败分支（pip-failed / smoke-test-failed / start-timeout）共用同一段回滚逻辑——
-  // 回退到升级前的 wheel 版本，仅在有 rollbackMarker 时执行。
-  private async tryRollbackPip(
-    venvPython: string,
-    rollbackMarker: string | null,
-    reason: 'pip-failed' | 'smoke-test-failed' | 'start-timeout'
-  ): Promise<void> {
-    if (!rollbackMarker) {
-      return
-    }
-
-    try {
-      await execFileP(venvPython, ['-m', 'pip', 'install', '--upgrade', rollbackMarker], {
-        maxBuffer: 16 * 1024 * 1024,
-        timeout: 300_000
-      })
-      this.log?.('info', `[updater] rolled back to ${rollbackMarker} after ${reason} failure`)
-    } catch (rollbackErr) {
-      this.log?.('error', `[updater] rollback after ${reason} failure also failed`, rollbackErr)
     }
   }
 

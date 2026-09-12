@@ -260,7 +260,7 @@ function Stage-UnpackRunner {
         }
     }
 
-    # 不做安装后烟测：build_client.ps1 已通过 pytest tests/test_startup_imports.py 把 wheel 卡在打包前，损坏 venv 不会到达用户。
+    # 不做安装后烟测：构建链在打包前跑 scripts/check_runner_facade.py，wheel 与 server.py 不一致不会进入安装包。
 
     # 清理旧的 PyInstaller 二进制
     $oldBin = Join-Path (Join-Path $SpiritAgentHome "bin") "spiritagent-runner.exe"

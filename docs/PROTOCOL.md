@@ -450,7 +450,7 @@ LLM 工具入参**禁止**覆盖保留键：user_id / llm_config / user_settings
 | Runner wheel 自更新 | SHA-512 + 公钥签名（ECDSA P-256）双重校验（签名不匹配在 Staging 阶段直接拦截） |
 | Skills | 由 installer 首装 seed，client 自更新不下载 |
 
-**两阶段更新契约**（避免升级中途断网/崩溃变砖）：Stage 1 预取（下载新版 Electron + Runner wheel 到 staging，强校验签名 + SHA-512，写 Sentinel）；Stage 2 安装（用户点 Restart & Install 后原地覆盖、导入冒烟测试、失败回滚旧版）。**核心约束**：Runner venv 目录**永不**重命名或移动，确保任意升级阶段崩溃时旧版 Runner 依赖树仍完全可用。
+**两阶段更新契约**（避免升级中途断网/崩溃变砖）：Stage 1 预取（下载新版 Electron + Runner wheel 到 staging，强校验签名 + SHA-512，写 Sentinel）；Stage 2 安装（用户点 Restart & Install 后用 `uv pip` 装新 wheel 并覆盖 server.py，一次性切到新版本；失败记入 Sentinel 重试，不做安装期冒烟或回滚——wheel 与 server.py 的导入面一致性由构建期 `scripts/check_runner_facade.py` 门禁保证）。**核心约束**：Runner venv 目录**永不**重命名或移动，确保任意升级阶段崩溃时旧版 Runner 依赖树仍完全可用。
 
 ## 6. ID 语义
 
