@@ -118,14 +118,16 @@ def _get_backend() -> ComputerUseBackend:
                     _backend = _NoopBackend()
             else:
                 raise RuntimeError(f"Unknown computer_use backend={name!r}")
-            _backend.start()
+            try:
+                _backend.start()
+            except Exception:
+                # 不缓存半初始化实例: start 失败后置空, 下次调用重新构造, 否则进程生命周期内无法自愈。
+                _backend = None
+                raise
         return _backend
 
 
 class _NoopBackend(ComputerUseBackend):
-    def __init__(self) -> None:
-        self.calls: list[tuple[str, dict[str, Any]]] = []
-
     def start(self) -> None:
         pass
 
@@ -136,39 +138,30 @@ class _NoopBackend(ComputerUseBackend):
         return False
 
     def capture(self, mode: str = "som", app: str | None = None) -> CaptureResult:
-        self.calls.append(("capture", {"mode": mode, "app": app}))
         return CaptureResult(mode=mode, width=1024, height=768)
 
     def click(self, **kw) -> ActionResult:
-        self.calls.append(("click", kw))
         return ActionResult(ok=True, action="click")
 
     def drag(self, **kw) -> ActionResult:
-        self.calls.append(("drag", kw))
         return ActionResult(ok=True, action="drag")
 
     def scroll(self, **kw) -> ActionResult:
-        self.calls.append(("scroll", kw))
         return ActionResult(ok=True, action="scroll")
 
     def type_text(self, text: str) -> ActionResult:
-        self.calls.append(("type", {"text": text}))
         return ActionResult(ok=True, action="type")
 
     def key(self, keys: str) -> ActionResult:
-        self.calls.append(("key", {"keys": keys}))
         return ActionResult(ok=True, action="key")
 
     def list_apps(self) -> list[dict[str, Any]]:
-        self.calls.append(("list_apps", {}))
         return []
 
     def focus_app(self, app: str, raise_window: bool = False) -> ActionResult:
-        self.calls.append(("focus_app", {"app": app, "raise": raise_window}))
         return ActionResult(ok=True, action="focus_app")
 
     def set_value(self, value: str, element: int | None = None) -> ActionResult:
-        self.calls.append(("set_value", {"value": value, "element": element}))
         return ActionResult(ok=True, action="set_value")
 
 
@@ -502,11 +495,9 @@ def _computer_use_available() -> bool:
     return False
 
 
-registry.register_tool(
-    "computer_use",
-    schema=COMPUTER_USE_SCHEMA,
-    check_fn=_computer_use_available,
-)(lambda args, **kw: handle_computer_use(args, **kw))
+registry.register_tool("computer_use", schema=COMPUTER_USE_SCHEMA, check_fn=_computer_use_available)(
+    handle_computer_use,
+)
 
 
 def _element_to_dict(e: UIElement) -> dict[str, Any]:

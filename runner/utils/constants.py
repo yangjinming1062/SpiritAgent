@@ -1,4 +1,3 @@
-import contextlib
 import os
 import subprocess
 import sys
@@ -45,12 +44,3 @@ def get_spiritagent_dir(new_subpath: str | None = None, old_name: str | None = N
 
 def get_skills_dir() -> Path:
     return get_spiritagent_home() / "skills"
-
-
-def secure_parent_dir(path: str | Path) -> None:
-    """确保 ``path`` 的父目录存在并设置 ``0700`` 权限（仅 POSIX 生效）。"""
-    parent = Path(path).parent
-    if not parent.exists():
-        parent.mkdir(parents=True, exist_ok=True)
-    with contextlib.suppress(OSError, NotImplementedError):
-        os.chmod(parent, 0o700)

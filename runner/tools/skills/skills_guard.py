@@ -702,13 +702,18 @@ MAX_FILE_COUNT = 50  # skills shouldn't have 50+ files
 MAX_TOTAL_SIZE_KB = 1024  # 1MB total is suspicious for a skill
 MAX_SINGLE_FILE_KB = 256  # individual file > 256KB is suspicious
 
-# 扫描的文件扩展名（仅文本文件 — 跳过二进制）
+# 扫描的文件扩展名（仅文本文件 — 跳过二进制）；ps1/bat/cmd 是 win32 主平台上技能最常携带的脚本类型。
 SCANNABLE_EXTENSIONS = {
     ".md",
     ".txt",
     ".py",
     ".sh",
     ".bash",
+    ".zsh",
+    ".fish",
+    ".ps1",
+    ".bat",
+    ".cmd",
     ".js",
     ".ts",
     ".rb",
@@ -767,7 +772,7 @@ INVISIBLE_CHARS = {
 
 
 def scan_file(file_path: Path, rel_path: str = "") -> list[Finding]:
-    """扫描单个文件中的威胁模式与不可见 Unicode 字符。返回按 pattern × line 去重的 findings 列表。"""
+    """扫描单个文件中的威胁模式与不可见 Unicode 字符，返回 findings 列表。"""
     if not rel_path:
         rel_path = file_path.name
 
@@ -775,20 +780,28 @@ def scan_file(file_path: Path, rel_path: str = "") -> list[Finding]:
         return []
 
     try:
-        content = file_path.read_text(encoding="utf-8")
-    except (UnicodeDecodeError, OSError):
-        return []
+        # errors="replace": 非 UTF-8 字节不能让整份文件逃过威胁扫描, 替换后继续逐行匹配。
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        # 枚举得到却读不了的文件按 high finding 处理（fail-closed）, 不静默放行。
+        return [
+            Finding(
+                pattern_id="unreadable_file",
+                severity="high",
+                category="obfuscation",
+                file=rel_path,
+                line=0,
+                match="",
+                description="file listed but could not be read during scan",
+            ),
+        ]
 
     findings = []
     lines = content.split("\n")
-    seen = set()  # (pattern_id, line_number) 用于去重
 
     for pattern, pid, severity, category, description in THREAT_PATTERNS:
         for i, line in enumerate(lines, start=1):
-            if (pid, i) in seen:
-                continue
             if re.search(pattern, line, re.IGNORECASE):
-                seen.add((pid, i))
                 matched_text = line.strip()
                 if len(matched_text) > 120:
                     matched_text = matched_text[:117] + "..."
@@ -870,8 +883,8 @@ def scan_skill(skill_path: Path, source: str = "community") -> ScanResult:
     )
 
 
-def should_allow_install(result: ScanResult, force: bool = False) -> tuple[bool, str]:
-    """根据扫描结果与信任级别决定是否允许安装 skill。返回 (allowed, reason) 元组。"""
+def should_allow_install(result: ScanResult) -> tuple[bool | None, str]:
+    """根据扫描结果与信任级别决定是否允许安装 skill。返回 (allowed, reason)；allowed 为 None 表示需要用户确认。"""
     policy = INSTALL_POLICY.get(result.trust_level, INSTALL_POLICY["community"])
     vi = VERDICT_INDEX.get(result.verdict, 2)
     decision = policy[vi]
@@ -879,22 +892,15 @@ def should_allow_install(result: ScanResult, force: bool = False) -> tuple[bool,
     if decision == "allow":
         return True, f"Allowed ({result.trust_level} source, {result.verdict} verdict)"
 
-    if force and not (result.verdict == "dangerous" and result.trust_level in ("community", "trusted")):
-        return True, (f"Force-installed despite {result.verdict} verdict ({len(result.findings)} findings)")
-
     if decision == "ask":
         # 返回 None 表示"需要用户确认"
         return None, (
             f"Requires confirmation ({result.trust_level} source + {result.verdict} verdict, {len(result.findings)} findings)"
         )
 
-    # dangerous verdict 不能被 --force 覆盖（community / trusted）；其它 block 可以
-    if result.verdict == "dangerous" and result.trust_level in ("community", "trusted"):
-        return False, (
-            f"Blocked ({result.trust_level} source + dangerous verdict, {len(result.findings)} findings). --force does not override a dangerous verdict."
-        )
     return False, (
-        f"Blocked ({result.trust_level} source + {result.verdict} verdict, {len(result.findings)} findings). Use --force to override."
+        f"Blocked ({result.trust_level} source + {result.verdict} verdict, {len(result.findings)} findings). "
+        "Remove the flagged content and retry."
     )
 
 

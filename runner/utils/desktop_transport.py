@@ -541,22 +541,6 @@ class DesktopConnection:
             # 握手未完成，仍要放一个哨兵让任何等待者退出。
             self._messages.put_nowait(None)
 
-    @property
-    def close_code(self) -> int | None:
-        if self._protocol.close_rcvd is not None:
-            return self._protocol.close_rcvd.code
-        if self._protocol.close_sent is not None:
-            return self._protocol.close_sent.code
-        return self._protocol.close_code
-
-    @property
-    def close_reason(self) -> str | None:
-        if self._protocol.close_rcvd is not None:
-            return self._protocol.close_rcvd.reason
-        if self._protocol.close_sent is not None:
-            return self._protocol.close_sent.reason
-        return self._protocol.close_reason
-
     def __aiter__(self) -> "DesktopConnection":
         return self
 

@@ -59,30 +59,20 @@ def _truncate_snapshot(snapshot_text: str, max_chars: int = 8000) -> str:
     return "\n".join(out)
 
 
-def _extract_relevant_content(snapshot_text: str, user_task: str | None = None) -> str:
+def _extract_relevant_content(snapshot_text: str, user_task: str) -> str:
     """调用 LLM 按 user_task 抽取快照里与任务相关的内容；不可达 reverse-RPC 时回退到按行截断。"""
-    if user_task:
-        extraction_prompt = (
-            f"You are a content extractor for a browser automation agent.\n\n"
-            f"The user's task is: {user_task}\n\n"
-            f"Given the following page snapshot (accessibility tree representation), "
-            f"extract and summarize the most relevant information for completing this task. Focus on:\n"
-            f"1. Interactive elements (buttons, links, inputs) that might be needed\n"
-            f"2. Text content relevant to the task (prices, descriptions, headings, important info)\n"
-            f"3. Navigation structure if relevant\n\n"
-            f"Keep ref IDs (like [ref=e5]) for interactive elements so the agent can use them.\n\n"
-            f"Page Snapshot:\n{snapshot_text}\n\n"
-            f"Provide a concise summary that preserves actionable information and relevant content."
-        )
-    else:
-        extraction_prompt = (
-            f"Summarize this page snapshot, preserving:\n"
-            f"1. All interactive elements with their ref IDs (like [ref=e5])\n"
-            f"2. Key text content and headings\n"
-            f"3. Important information visible on the page\n\n"
-            f"Page Snapshot:\n{snapshot_text}\n\n"
-            f"Provide a concise summary focused on interactive elements and key content."
-        )
+    extraction_prompt = (
+        f"You are a content extractor for a browser automation agent.\n\n"
+        f"The user's task is: {user_task}\n\n"
+        f"Given the following page snapshot (accessibility tree representation), "
+        f"extract and summarize the most relevant information for completing this task. Focus on:\n"
+        f"1. Interactive elements (buttons, links, inputs) that might be needed\n"
+        f"2. Text content relevant to the task (prices, descriptions, headings, important info)\n"
+        f"3. Navigation structure if relevant\n\n"
+        f"Keep ref IDs (like [ref=e5]) for interactive elements so the agent can use them.\n\n"
+        f"Page Snapshot:\n{snapshot_text}\n\n"
+        f"Provide a concise summary that preserves actionable information and relevant content."
+    )
 
     extraction_prompt = redact_sensitive_text(extraction_prompt)
 

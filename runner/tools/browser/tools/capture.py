@@ -1,6 +1,9 @@
 import hashlib
 import json
 import secrets
+import shutil
+import tempfile
+from pathlib import Path
 from typing import Any
 
 from utils import get_spiritagent_home
@@ -121,6 +124,22 @@ def browser_download(
         target_name = _safe_save_name(save_as, orig_filename)
         dest_dir = _get_downloads_dir()
         dest_path = dest_dir / target_name
+
+        # CDP setDownloadBehavior 把文件下载到临时目录, browser_downloads 只存最终交付位置: 下载完成后搬过来。
+        src_path = Path(dl_res["path"]) if dl_res.get("path") else Path(tempfile.gettempdir()) / orig_filename
+        if src_path.is_file():
+            try:
+                shutil.move(str(src_path), str(dest_path))
+            except OSError as exc:
+                return json.dumps(
+                    {"success": False, "error": f"Downloaded but failed to move into downloads dir: {exc}"},
+                    ensure_ascii=False,
+                )
+        else:
+            return json.dumps(
+                {"success": False, "error": f"Download reported complete but file is missing: {src_path}"},
+                ensure_ascii=False,
+            )
 
         return json.dumps(
             {"success": True, "filename": target_name, "path": str(dest_path), "guid": dl_res.get("guid")},

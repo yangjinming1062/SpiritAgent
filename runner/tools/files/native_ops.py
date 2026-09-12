@@ -9,9 +9,8 @@ import shutil
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
 
-from utils import is_write_denied, strip_ansi
+from utils import IS_WINDOWS, atomic_replace, is_write_denied, strip_ansi
 
 from .fuzzy_match import format_no_match_hint, fuzzy_find_and_replace
 from .helpers import (
@@ -188,7 +187,8 @@ class NativeFileOperations(FileOperations):
                 p.parent.mkdir(parents=True, exist_ok=True)
                 dirs_created = True
 
-            p.write_text(content, encoding="utf-8")
+            # 原子替换（tempfile + os.replace）: 崩溃/杀软拦截/磁盘满时不留半截文件, 与 shell 后端语义一致。
+            atomic_replace(str(p), content)
             bytes_written = len(content.encode("utf-8"))
 
             lint_result = self._check_lint_delta(str(p), pre_content=pre_content, post_content=content)
@@ -463,7 +463,13 @@ class NativeFileOperations(FileOperations):
         page = [rel for _, rel in hits[offset : offset + limit]]
         return SearchResult(files=page, total_count=len(hits), truncated=len(hits) > offset + limit)
 
-    def _exec(self, command: str, cwd: str | None = None, timeout: int = 60, stdin_data: str | None = None) -> Any:
+    def _exec(
+        self,
+        command: str,
+        cwd: str | None = None,
+        timeout: int = 60,
+        stdin_data: str | None = None,
+    ) -> ExecuteResult:
         kwargs = {"shell": True, "text": True, "capture_output": True, "timeout": timeout}
         if stdin_data is not None:
             kwargs["input"] = stdin_data
@@ -471,8 +477,9 @@ class NativeFileOperations(FileOperations):
             result = subprocess.run(command, cwd=cwd or self.cwd, **kwargs)
             return ExecuteResult(stdout=result.stdout, exit_code=result.returncode)
         except subprocess.TimeoutExpired as e:
-            # text=True 模式下 TimeoutExpired.stdout 已为 str|None，再次解码会抛错。
-            return ExecuteResult(stdout=e.stdout or "", exit_code=124)
+            # POSIX 上 TimeoutExpired.stdout 是原始 bytes（decode 发生在 communicate 正常返回时, 超时路径不走）。
+            stdout = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode("utf-8", errors="replace")
+            return ExecuteResult(stdout=stdout, exit_code=124)
         except Exception as e:
             return ExecuteResult(stdout=str(e), exit_code=1)
 
@@ -480,9 +487,10 @@ class NativeFileOperations(FileOperations):
         return shutil.which(cmd) is not None
 
     def _escape_shell_arg(self, arg: str) -> str:
-        return shlex.quote(arg)
+        # Windows 上 shell=True 走 cmd.exe, 单引号不是引用字符, 必须用双引号规则转义。
+        return subprocess.list2cmdline([arg]) if IS_WINDOWS else shlex.quote(arg)
 
-    def _check_lint(self, path: str, content: str | None = None) -> Any:
+    def _check_lint(self, path: str, content: str | None = None) -> LintResult:
         ext = os.path.splitext(path)[1].lower()
         inproc = LINTERS_INPROC.get(ext)
         if inproc is not None:
@@ -507,7 +515,7 @@ class NativeFileOperations(FileOperations):
             return LintResult(skipped=True, message=f"{base_cmd} not usable: {first_line[:200]}")
         return LintResult(success=result.exit_code == 0, output=result.stdout.strip() if result.stdout.strip() else "")
 
-    def _check_lint_delta(self, path: str, pre_content: str | None, post_content: str | None = None) -> Any:
+    def _check_lint_delta(self, path: str, pre_content: str | None, post_content: str | None = None) -> LintResult:
         post = self._check_lint(path, content=post_content)
         if post.success or post.skipped:
             return post

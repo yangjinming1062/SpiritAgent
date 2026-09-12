@@ -68,67 +68,48 @@ def _is_retryable_download_error(error: Exception) -> bool:
     return bool(isinstance(error, httpx.TransportError | httpx.TimeoutException | ConnectionError | OSError))
 
 
-async def _download_media(
-    url: str,
-    destination: Path,
-    *,
-    accept: str,
-    max_bytes: int,
-    timeout: float,
-    media_label: str,
-    max_retries: int = 3,
-) -> Path:
-    """下载媒体到 destination，含大小上限、重定向安全检查与可重试错误处理。目前 vision 工具是唯一调用方；accept / max_bytes / timeout / media_label 仍参数化以便未来媒体工具复用，无需复制大小上限/重定向防护机制。"""
+async def _download_image(image_url: str, destination: Path) -> Path:
+    """下载图片到 destination，含大小上限与可重试错误处理；每跳重定向的安全校验由 SafeAsyncHTTPTransport 承担。"""
 
     def _write_destination(body: bytearray) -> None:
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(body)
 
-    async def _guard(response) -> None:
-        if (
-            response.is_redirect
-            and response.next_request
-            and not await async_is_safe_url(redirect := str(response.next_request.url))
-        ):
-            raise ValueError(f"Blocked redirect to private/internal address: {redirect}")
-
     last_err: Exception | None = None
-    for attempt in range(max_retries):
+    for attempt in range(3):
         try:
-            if blocked := check_website_access(url):
+            if blocked := check_website_access(image_url):
                 raise PermissionError(blocked.message)
-            async with create_safe_async_client(
-                timeout=timeout,
-                follow_redirects=True,
-                event_hooks={"response": [_guard]},
-            ) as client:
-                res = await client.stream(
+            async with (
+                create_safe_async_client(timeout=_VISION_DOWNLOAD_TIMEOUT_S, follow_redirects=True) as client,
+                client.stream(
                     "GET",
-                    url,
+                    image_url,
                     headers={
                         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                        "Accept": accept,
+                        "Accept": "image/*,*/*;q=0.8",
                     },
-                )
-                async with res:
-                    res.raise_for_status()
-                    if (content_length := res.headers.get("content-length")) and int(content_length) > max_bytes:
-                        raise ValueError(f"{media_label.capitalize()} too large")
-                    body = bytearray()
-                    async for chunk in res.aiter_bytes():
-                        body.extend(chunk)
-                        if len(body) > max_bytes:
-                            raise ValueError(f"{media_label.capitalize()} too large")
-                    if blocked := check_website_access(str(res.url)):
-                        raise PermissionError(blocked.message)
-                    await asyncio.to_thread(_write_destination, body)
+                ) as res,
+            ):
+                res.raise_for_status()
+                if (content_length := res.headers.get("content-length")) and int(
+                    content_length,
+                ) > _VISION_MAX_DOWNLOAD_BYTES:
+                    raise ValueError("Image too large")
+                body = bytearray()
+                async for chunk in res.aiter_bytes():
+                    body.extend(chunk)
+                    if len(body) > _VISION_MAX_DOWNLOAD_BYTES:
+                        raise ValueError("Image too large")
+                if blocked := check_website_access(str(res.url)):
+                    raise PermissionError(blocked.message)
+                await asyncio.to_thread(_write_destination, body)
             return destination
         except Exception as e:
             last_err = e
-            if not _is_retryable_download_error(e) or attempt >= max_retries - 1:
+            if not _is_retryable_download_error(e) or attempt >= 2:
                 logger.error(
-                    "%s download failed after %s attempt(s): %s",
-                    media_label.capitalize(),
+                    "Image download failed after %s attempt(s): %s",
                     attempt + 1,
                     str(e)[:100],
                     exc_info=True,
@@ -136,27 +117,13 @@ async def _download_media(
                 raise
             wait = 2 ** (attempt + 1)
             logger.warning(
-                "%s download failed (attempt %s/%s): %s. Retrying in %ss...",
-                media_label.capitalize(),
+                "Image download failed (attempt %s/3): %s. Retrying in %ss...",
                 attempt + 1,
-                max_retries,
                 str(e)[:50],
                 wait,
             )
             await asyncio.sleep(wait)
     raise last_err or RuntimeError("No attempts made")
-
-
-async def _download_image(image_url: str, destination: Path, max_retries: int = 3) -> Path:
-    return await _download_media(
-        image_url,
-        destination,
-        accept="image/*,*/*;q=0.8",
-        max_bytes=_VISION_MAX_DOWNLOAD_BYTES,
-        timeout=_VISION_DOWNLOAD_TIMEOUT_S,
-        media_label="image",
-        max_retries=max_retries,
-    )
 
 
 def _guess_mime_from_extension(image_path: Path) -> str:
@@ -234,7 +201,7 @@ def resize_image_for_vision(
     if pil_format == "JPEG" and img.mode in {"RGBA", "P"}:
         img = img.convert("RGB")
 
-    quality_steps = (85, 70, 50) if pil_format == "JPEG" else (None)
+    quality_steps = (85, 70, 50) if pil_format == "JPEG" else (None,)
     prev_dims = (img.width, img.height)
     # 跟踪见到的最小候选，以便在没有任何一次迭代满足 max_base64_bytes 时仍能返回最佳结果 — 旧版兜底返回的是原尺寸 base64，与调用方在缩放失败时想要的相反
     best_candidate: str | None = None

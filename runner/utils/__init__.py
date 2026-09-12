@@ -1,14 +1,11 @@
 from .async_bridge import safe_schedule_threadsafe
 from .capabilities import (
     disk_free_bytes,
-    microphone_available,
     network_reachable,
-    screen_capture_available,
     snapshot,
     snapshot_health,
-    system_activity_available,
 )
-from .clean import clean_output, strip_ansi, strip_fence
+from .clean import clean_output, strip_ansi
 from .config import (
     cfg_bool,
     cfg_get,
@@ -29,13 +26,10 @@ from .constants import (
     get_spiritagent_home,
     get_spiritagent_home_override,
     get_subprocess_home,
-    secure_parent_dir,
 )
 from .credential_files import (
-    get_cache_directory_mounts,
     get_credential_file_mounts,
     get_external_skills_dirs,
-    get_skills_directory_mount,
     iter_cache_files,
     iter_skills_files,
     register_credential_file,
@@ -50,7 +44,7 @@ from .desktop_transport import (
     read_endpoint,
 )
 from .env_helpers import inject_context_spiritagent_home, sanitize_subprocess_env
-from .env_passthrough import get_all_passthrough, is_env_passthrough, register_env_passthrough
+from .env_passthrough import is_env_passthrough, register_env_passthrough
 from .file_io import atomic_replace
 from .file_safety import (
     build_write_denied_paths,
@@ -68,8 +62,6 @@ from .interrupt import (
     is_interrupted,
     reset_current_request,
     set_current_request,
-    set_global_interrupt,
-    set_interrupt,
     set_local_interrupt,
 )
 from .job_object import init_runner_job_object
@@ -79,38 +71,24 @@ from .pid import PidState, kill_tree, pid_exists, pid_state
 from .process_tree import TerminationResult, terminate_tree
 from .redact import SECRET_PREFIX_RE, redact_sensitive_text
 from .reverse_rpc import call_llm, call_llm_sync, set_handler, set_main_loop
-from .tokens import (
-    CancellationToken,
-    check_cancel,
-    race_cancel,
-    raise_if_cancelled,
-)
 from .url_safety import (
-    SafeAsyncHTTPTransport,
-    SafeHTTPTransport,
     async_is_safe_url,
-    check_redirect_url_safety,
     check_website_access,
     create_safe_async_client,
-    create_safe_client,
     is_always_blocked_url,
     is_safe_url,
     normalize_url_for_request,
-    verify_ip_not_blocked,
 )
 
 __all__ = [
     "CREATE_NO_WINDOW",
     "CURRENT_SKILL_SCOPE",
-    "CancellationToken",
     "DesktopConnection",
     "DesktopEndpoint",
     "HANDSHAKE_AUTH_HEADER",
     "IS_MACOS",
     "IS_WINDOWS",
     "PIPE_TRANSPORT",
-    "SafeAsyncHTTPTransport",
-    "SafeHTTPTransport",
     "SECRET_PREFIX_RE",
     "SkillScope",
     "TerminationResult",
@@ -127,18 +105,13 @@ __all__ = [
     "cfg_get",
     "cfg_int",
     "cfg_str",
-    "check_cancel",
-    "check_redirect_url_safety",
     "check_website_access",
     "clean_output",
     "connect_desktop",
     "create_safe_async_client",
-    "create_safe_client",
     "disk_free_bytes",
     "find_bash",
     "find_python",
-    "get_all_passthrough",
-    "get_cache_directory_mounts",
     "get_credential_file_mounts",
     "get_cross_profile_warning",
     "get_disabled_config_names",
@@ -147,7 +120,6 @@ __all__ = [
     "get_read_block_error",
     "get_sandbox_mirror_warning",
     "get_skills_dir",
-    "get_skills_directory_mount",
     "get_spiritagent_dir",
     "get_spiritagent_home",
     "get_spiritagent_home_override",
@@ -167,15 +139,12 @@ __all__ = [
     "kill_tree",
     "learned_skills_root",
     "load_config",
-    "microphone_available",
     "msys_to_windows_path",
     "network_reachable",
     "normalize_url_for_request",
     "PidState",
     "pid_exists",
     "pid_state",
-    "race_cancel",
-    "raise_if_cancelled",
     "read_endpoint",
     "redact_sensitive_text",
     "register_credential_file",
@@ -184,23 +153,16 @@ __all__ = [
     "resolve_safe_cwd",
     "safe_schedule_threadsafe",
     "sanitize_subprocess_env",
-    "screen_capture_available",
-    "secure_parent_dir",
     "set_current_request",
-    "set_global_interrupt",
     "set_handler",
     "set_inmemory_config",
-    "set_interrupt",
     "set_local_interrupt",
     "set_main_loop",
     "snapshot",
     "snapshot_health",
     "strip_ansi",
-    "strip_fence",
-    "system_activity_available",
     "terminate_tree",
     "validate_within_dir",
-    "verify_ip_not_blocked",
     "visible_skill_path",
     "visible_skill_roots",
 ]

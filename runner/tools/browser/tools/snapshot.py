@@ -18,13 +18,13 @@ logger = logging.getLogger(__name__)
 def browser_snapshot(full: bool = False, task_id: str | None = None, user_task: str | None = None) -> str:
     """获取当前页面可访问性树快照（紧凑或完整）；超长时结合 user_task 调用 LLM 抽取，否则按行截断。"""
     if is_camofox_mode():
-        return camofox_snapshot(full, task_id, user_task)
+        return camofox_snapshot(task_id, user_task)
 
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
             return no_supervisor()
 
-        res = supervisor.snapshot_axtree(full=full, interactive_only=not full)
+        res = supervisor.snapshot_axtree(interactive_only=not full)
         if not res.get("ok"):
             return json.dumps({"success": False, "error": res.get("error", "Failed to get snapshot")})
 

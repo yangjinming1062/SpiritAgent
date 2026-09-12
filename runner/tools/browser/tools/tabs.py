@@ -41,7 +41,7 @@ def browser_tab_new(url: str | None = None, task_id: str | None = None) -> str:
 
         session_id = attach_res["result"].get("sessionId")
         if session_id:
-            supervisor.set_active_session_id(session_id)
+            supervisor.activate_tab_session(session_id)
 
         return json.dumps({"success": True, "tab_id": target_id, "url": target_url})
 
@@ -65,7 +65,7 @@ def browser_tab_switch(tab_id: str, task_id: str | None = None) -> str:
                 )
             session_id = attach_res["result"].get("sessionId")
 
-        supervisor.set_active_session_id(session_id)
+        supervisor.activate_tab_session(session_id)
         return json.dumps({"success": True, "active_tab_id": tab_id})
 
 

@@ -1,8 +1,5 @@
-import atexit
 import logging
 import os
-import shutil
-import tempfile
 from contextvars import ContextVar
 from pathlib import Path
 
@@ -95,49 +92,6 @@ def get_credential_file_mounts() -> list[dict[str, str]]:
     return [{"host_path": hp, "container_path": cp} for cp, hp in (cfg_mounts | mounts).items()]
 
 
-def get_skills_directory_mount(container_base: str = "/root/.spiritagent") -> list[dict[str, str]]:
-    spiritagent_home = get_spiritagent_home()
-    base = container_base.rstrip("/")
-    mounts = (
-        [{"host_path": _safe_skills_path(skills_dir), "container_path": f"{base}/skills"}]
-        if (skills_dir := spiritagent_home / "skills").is_dir()
-        else []
-    )
-    mounts.extend(
-        [
-            {"host_path": _safe_skills_path(ext_dir), "container_path": f"{base}/external_skills/{idx}"}
-            for idx, ext_dir in enumerate(get_external_skills_dirs())
-            if ext_dir.is_dir()
-        ],
-    )
-    return mounts
-
-
-_safe_skills_tempdir: Path | None = None
-
-
-def _safe_skills_path(skills_dir: Path) -> str:
-    global _safe_skills_tempdir
-    if not (symlinks := [p for p in skills_dir.rglob("*") if p.is_symlink()]):
-        return str(skills_dir)
-    for link in symlinks:
-        logger.warning("credential_files: skipping symlink in skills dir: %s -> %s", link, os.readlink(link))
-    if _safe_skills_tempdir and _safe_skills_tempdir.is_dir():
-        shutil.rmtree(_safe_skills_tempdir, ignore_errors=True)
-    _safe_skills_tempdir = safe_dir = Path(tempfile.mkdtemp(prefix="spiritagent-skills-safe-"))
-    for item in skills_dir.rglob("*"):
-        if not item.is_symlink():
-            target = safe_dir / item.relative_to(skills_dir)
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if item.is_dir():
-                target.mkdir(exist_ok=True)
-            elif item.is_file():
-                shutil.copy2(str(item), str(target))
-    atexit.register(lambda: shutil.rmtree(safe_dir, ignore_errors=True) if safe_dir.is_dir() else None)
-    logger.info("credential_files: created symlink-safe skills copy at %s", safe_dir)
-    return str(safe_dir)
-
-
 def iter_skills_files(container_base: str = "/root/.spiritagent") -> list[dict[str, str]]:
     spiritagent_home = get_spiritagent_home()
     base = container_base.rstrip("/")
@@ -149,9 +103,9 @@ def iter_skills_files(container_base: str = "/root/.spiritagent") -> list[dict[s
     )
     out: list[dict[str, str]] = []
     for s_dir, c_root in dirs:
-        # ``follow_symlinks=False`` 防止 rglob 钻进 symlinked 子目录; 否则 ``item.relative_to(s_dir)``
+        # rglob 默认不钻进 symlinked 子目录; 否则 ``item.relative_to(s_dir)``
         # 会抛 ValueError 把整个 mount 流程拖垮, 且会无意识地泄露 skills 之外的文件。
-        for item in s_dir.rglob("*", follow_symlinks=False):
+        for item in s_dir.rglob("*"):
             if item.is_symlink() or item.is_dir():
                 continue
             if not item.is_file():
@@ -170,14 +124,6 @@ _CACHE_DIRS: list[tuple[str, str]] = [
     ("cache/audio", "audio_cache"),
     ("cache/screenshots", "browser_screenshots"),
 ]
-
-
-def get_cache_directory_mounts(container_base: str = "/root/.spiritagent") -> list[dict[str, str]]:
-    return [
-        {"host_path": str(host_dir), "container_path": f"{container_base.rstrip('/')}/{new_subpath}"}
-        for new_subpath, old_name in _CACHE_DIRS
-        if (host_dir := get_spiritagent_dir(new_subpath, old_name)).is_dir()
-    ]
 
 
 def iter_cache_files(container_base: str = "/root/.spiritagent") -> list[dict[str, str]]:

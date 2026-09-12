@@ -27,7 +27,6 @@ from .helpers import is_excluded_skill_path
 from .skills_guard import format_scan_report, scan_skill, should_allow_install
 
 logger = logging.getLogger(__name__)
-_GUARD_AVAILABLE = True
 
 
 def get_all_skills_dirs() -> list[Path]:
@@ -42,7 +41,7 @@ def _guard_agent_created_enabled() -> bool:
 
 
 def _security_scan_skill(skill_dir: Path) -> str | None:
-    if not _GUARD_AVAILABLE or not _guard_agent_created_enabled():
+    if not _guard_agent_created_enabled():
         return None
     try:
         result = scan_skill(skill_dir, source="agent-created")

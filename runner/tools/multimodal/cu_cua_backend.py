@@ -103,9 +103,6 @@ _CUA_DRIVER_PUBLIC_OVERRIDES: frozenset[str] = frozenset(
         "AUTHORITY_URL",
     },
 )
-# 名字不包含上述子串但仍然敏感的变量精确丢弃列表（例如 SPIRITAGENT_JWT 包含 "JWT" 已能被捕获；
-# SPIRITAGENT_DESKTOP_TOKEN 包含 "TOKEN" 也能被捕获 — 此处保留作为双保险锚点）
-_CUA_DRIVER_DROP_EXACT: frozenset[str] = frozenset()
 
 
 def _is_cua_secret_var(name: str) -> bool:
@@ -198,17 +195,12 @@ def _build_cua_driver_env() -> dict[str, str]:
     同时根据 computer_use.cua_telemetry 配置项注入 CUA_DRIVER_RS_TELEMETRY_ENABLED — 失败安全默认关闭。
     """
 
-    def _is_secret_var(name: str) -> bool:
-        return _is_cua_secret_var(name)
-
     safe: dict[str, str] = {}
     for key, value in os.environ.items():
-        if key in _CUA_DRIVER_DROP_EXACT:
-            continue
         if key in _CUA_DRIVER_PUBLIC_OVERRIDES:
             safe[key] = value
             continue
-        if _is_secret_var(key):
+        if _is_cua_secret_var(key):
             continue
         upper = key.upper()
         if upper in _CUA_DRIVER_SAFE_ENV_EXACT or any(upper.startswith(p) for p in _CUA_DRIVER_SAFE_ENV_PREFIXES):
@@ -717,39 +709,6 @@ class CuaDriverBackend(ComputerUseBackend):
             return ActionResult(ok=False, action="set_value", message="set_value requires element= (element index).")
         return self._action("set_value", {"pid": pid, "window_id": window_id, "element_index": element, "value": value})
 
-    def zoom(
-        self,
-        window_id: int,
-        x: int,
-        y: int,
-        w: int,
-        h: int,
-        factor: float = 2.0,
-        fmt: str = "jpeg",
-        quality: int = 85,
-    ) -> dict[str, Any]:
-        """Python 内部辅助（不暴露到工具 schema）：截取窗口子区域并可选上采样，用于在不消耗整屏 token 的前提下 OCR / 检查密集 UI 区域。返回 {image_b64, mime_type, width, height}，width/height 为上采样后的像素。"""
-        out = self._session.call_tool(
-            "zoom",
-            {
-                "window_id": window_id,
-                "x": x,
-                "y": y,
-                "w": w,
-                "h": h,
-                "factor": factor,
-                "format": fmt,
-                "quality": quality,
-            },
-        )
-        image_b64, mime_type = _extract_first_image(out)
-        return {
-            "image_b64": image_b64,
-            "mime_type": mime_type,
-            "width": int((w or 0) * (factor or 0)),
-            "height": int((h or 0) * (factor or 0)),
-        }
-
     def list_apps(self) -> list[dict[str, Any]]:
         data = self._session.call_tool("list_apps", {}).get("data")
         if isinstance(data, list):
@@ -791,10 +750,16 @@ class CuaDriverBackend(ComputerUseBackend):
                     target["window_id"],
                     target["app_name"],
                 )
+            # cua-driver 没有窗口前置调用: raise_window=True 时如实说明被忽略, 不冒充已 raise。
+            suffix = (
+                "raise_window was requested but this backend cannot raise windows; input is routed by window id instead."
+                if raise_window
+                else "Input is routed by window id without raising the window."
+            )
             return ActionResult(
                 ok=True,
                 action="focus_app",
-                message=f"Targeted {target['app_name']} (pid {self._active_pid}, window {self._active_window_id}) without raising window.",
+                message=f"Targeted {target['app_name']} (pid {self._active_pid}, window {self._active_window_id}). {suffix}",
             )
         return ActionResult(ok=False, action="focus_app", message=f"No on-screen window found for app '{app}'.")
 

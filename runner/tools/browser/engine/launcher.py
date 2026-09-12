@@ -12,8 +12,8 @@ from utils import (
     CREATE_NO_WINDOW,
     cfg_get,
     is_truthy_value,
-    kill_tree,
     load_config,
+    terminate_tree,
 )
 
 from ..profile_manager import is_profile_locked
@@ -28,16 +28,15 @@ class BrowserLaunchError(Exception):
 class NativeBrowserProcess:
     """包装原生启动的 Chromium 进程及其 CDP 端点信息。"""
 
-    def __init__(self, proc: subprocess.Popen, pid: int, cdp_url: str, port: int, profile_dir: Path) -> None:
+    def __init__(self, proc: subprocess.Popen, pid: int, cdp_url: str, profile_dir: Path) -> None:
         self.proc = proc
         self.pid = pid
         self.cdp_url = cdp_url
-        self.port = port
         self.profile_dir = profile_dir
 
-    def terminate(self, timeout: float = 5.0) -> None:
+    def terminate(self) -> None:
         try:
-            kill_tree(self.pid, graceful_timeout=1.0, force_timeout=2.0)
+            terminate_tree(self.pid, graceful_timeout=1.0, force_timeout=2.0)
         except Exception as e:
             logger.debug("Error killing browser process tree %s: %s", self.pid, e)
 
@@ -250,12 +249,12 @@ def launch_chromium(
 
     if port is None or not ws_path:
         try:
-            kill_tree(proc.pid, force=True)
+            terminate_tree(proc, graceful_timeout=0.5, force_timeout=1.0)
         except Exception as e:
-            logger.debug("kill_tree on launch timeout failed: %s", e)
+            logger.debug("terminate_tree on launch timeout failed: %s", e)
         raise BrowserLaunchError(
             f"Timed out waiting for DevToolsActivePort in {profile_dir} after {startup_timeout_s}s",
         )
 
     cdp_url = f"ws://127.0.0.1:{port}/{ws_path.lstrip('/')}"
-    return NativeBrowserProcess(proc=proc, pid=proc.pid, cdp_url=cdp_url, port=port, profile_dir=profile_dir)
+    return NativeBrowserProcess(proc=proc, pid=proc.pid, cdp_url=cdp_url, profile_dir=profile_dir)

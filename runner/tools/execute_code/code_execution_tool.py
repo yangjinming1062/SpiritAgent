@@ -15,7 +15,7 @@ import threading
 import time
 import uuid
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Mapping
 from typing import Any
 
 from envs import (
@@ -28,7 +28,6 @@ from envs import (
     last_activity,
     resolve_container_task_id,
     start_cleanup_thread,
-    task_env_overrides,
 )
 from utils import (
     CREATE_NO_WINDOW,
@@ -113,19 +112,11 @@ _WINDOWS_ESSENTIAL_ENV_VARS = frozenset(
 )
 
 
-def _scrub_child_env(
-    source_env: dict[str, str],
-    is_passthrough: Callable[[str], bool] | None = None,
-    is_windows: bool | None = None,
-) -> dict[str, str]:
-    if is_passthrough is None:
-        is_passthrough = is_env_passthrough
-    if is_windows is None:
-        is_windows = IS_WINDOWS
+def _scrub_child_env(source_env: Mapping[str, str]) -> dict[str, str]:
     scrubbed: dict[str, str] = {}
     _dropped_spiritagent = []
     for k, v in source_env.items():
-        if is_passthrough(k):
+        if is_env_passthrough(k):
             scrubbed[k] = v
             continue
         if any(s in k.upper() for s in _SECRET_SUBSTRINGS):
@@ -136,7 +127,7 @@ def _scrub_child_env(
         if k in SPIRITAGENT_CHILD_ALLOWED:
             scrubbed[k] = v
             continue
-        if is_windows and k.upper() in _WINDOWS_ESSENTIAL_ENV_VARS:
+        if IS_WINDOWS and k.upper() in _WINDOWS_ESSENTIAL_ENV_VARS:
             scrubbed[k] = v
             continue
         if k.startswith("SPIRITAGENT_"):
@@ -300,9 +291,9 @@ def _connect():
             _sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             _sock.connect(endpoint)
         _sock.settimeout(300)
-    # First line on the wire authenticates this sandbox to the parent's RPC
-    # listener; unauthenticated local connections are dropped server-side.
-    _sock.sendall((json.dumps({"auth": _RPC_TOKEN}) + "\\n").encode())
+        # First line on the wire authenticates this sandbox to the parent's RPC
+        # listener; unauthenticated local connections are dropped server-side.
+        _sock.sendall((json.dumps({"auth": _RPC_TOKEN}) + "\\n").encode())
     return _sock
 
 def _call(tool_name, args):
@@ -404,16 +395,18 @@ def _read_conn_line(conn: socket.socket, buf: bytes) -> tuple[bytes | None, byte
 def _rpc_server_loop(
     server_sock: socket.socket,
     task_id: str,
-    tool_call_log: list[Any],
     tool_call_counter: list[int],
     max_tool_calls: int,
     allowed_tools: frozenset[str],
     expected_token: str,
+    accept_window: float,
 ) -> None:
     """本机沙箱的父进程侧 RPC 监听循环: accept 一条已认证连接 + 串行派发工具调用。"""
     conn = None
     try:
-        server_sock.settimeout(5)
+        # 子进程可能先做长时间初始化才发起第一次工具调用, accept 窗口跟随脚本超时而不是固定几秒;
+        # 脚本结束后 server_sock 被主流程关闭, 阻塞中的 accept 以 OSError 退出。
+        server_sock.settimeout(accept_window)
         # Windows 上端点是 loopback TCP, 没有文件系统权限, 因此首行必须做沙箱认证;
         # 拒绝的连接立即关闭、监听继续接收 — 否则任何本地进程都能抢这个独享 RPC 槽位。
         while True:
@@ -440,7 +433,6 @@ def _rpc_server_loop(
                 line = line.strip()
                 if not line:
                     continue
-                call_start = time.monotonic()
                 try:
                     request = json.loads(line.decode())
                 except (json.JSONDecodeError, UnicodeDecodeError) as exc:
@@ -483,11 +475,6 @@ def _rpc_server_loop(
                     logger.error("Tool call failed in sandbox: %s", exc, exc_info=True)
                     result = tool_error(str(exc))
                 tool_call_counter[0] += 1
-                call_duration = time.monotonic() - call_start
-                args_preview = str(tool_args)[:80]
-                tool_call_log.append(
-                    {"tool": tool_name, "args_preview": args_preview, "duration": round(call_duration, 2)},
-                )
                 conn.sendall((result + "\n").encode())
             try:
                 chunk = conn.recv(65536)
@@ -526,8 +513,7 @@ def _get_or_create_env(task_id: str) -> tuple[Any, str]:
                 return active_environments[effective_task_id], get_env_config()["env_type"]
         config = get_env_config()
         env_type = config["env_type"]
-        overrides = task_env_overrides.get(effective_task_id, {})
-        cwd = overrides.get("cwd") or config["cwd"]
+        cwd = config["cwd"]
         ssh_config = None
         if env_type == "ssh":
             ssh_config = {
@@ -548,7 +534,6 @@ def _get_or_create_env(task_id: str) -> tuple[Any, str]:
             timeout=config["timeout"],
             ssh_config=ssh_config,
             local_config=local_config,
-            task_id=effective_task_id,
         )
         with env_lock:
             active_environments[effective_task_id] = env
@@ -585,7 +570,6 @@ def _rpc_poll_loop(
     env: Any,
     rpc_dir: str,
     task_id: str,
-    tool_call_log: list[Any],
     tool_call_counter: list[int],
     max_tool_calls: int,
     allowed_tools: frozenset[str],
@@ -612,7 +596,6 @@ def _rpc_poll_loop(
             for req_file in req_files:
                 if stop_event.is_set():
                     break
-                call_start = time.monotonic()
                 quoted_req_file = shlex.quote(req_file)
                 read_result = env.execute(f"cat {quoted_req_file}", cwd="/", timeout=10)
                 try:
@@ -663,10 +646,6 @@ def _rpc_poll_loop(
                         logger.error("Tool call failed in remote sandbox: %s", exc, exc_info=True)
                         tool_result = tool_error(str(exc))
                     tool_call_counter[0] += 1
-                    call_duration = time.monotonic() - call_start
-                    tool_call_log.append(
-                        {"tool": tool_name, "args_preview": str(tool_args)[:80], "duration": round(call_duration, 2)},
-                    )
                 encoded_result = base64.b64encode(tool_result.encode("utf-8")).decode("ascii")
                 env.execute(
                     (
@@ -697,7 +676,6 @@ def _execute_remote(code: str) -> str:
     sandbox_dir = f"{temp_dir}/spiritagent_exec_{sandbox_id}"
     quoted_sandbox_dir = shlex.quote(sandbox_dir)
     quoted_rpc_dir = shlex.quote(f"{sandbox_dir}/rpc")
-    tool_call_log: list = []
     tool_call_counter = [0]
     exec_start = time.monotonic()
     stop_event = threading.Event()
@@ -726,7 +704,6 @@ def _execute_remote(code: str) -> str:
                 env,
                 f"{sandbox_dir}/rpc",
                 effective_task_id,
-                tool_call_log,
                 tool_call_counter,
                 max_tool_calls,
                 SANDBOX_ALLOWED_TOOLS,
@@ -838,7 +815,6 @@ def execute_code(code: str) -> str:
     else:
         sock_path = os.path.join(_sock_tmpdir, f"spiritagent_rpc_{uuid.uuid4().hex}.sock")
         rpc_endpoint = sock_path
-    tool_call_log: list = []
     tool_call_counter = [0]
     exec_start = time.monotonic()
     server_sock = None
@@ -864,11 +840,11 @@ def execute_code(code: str) -> str:
             args=(
                 server_sock,
                 "default",
-                tool_call_log,
                 tool_call_counter,
                 max_tool_calls,
                 SANDBOX_ALLOWED_TOOLS,
                 rpc_token,
+                timeout,
             ),
             daemon=True,
         )

@@ -1,4 +1,3 @@
-import contextlib
 import logging
 import re
 
@@ -43,10 +42,8 @@ def strip_fence(text: str) -> str:
 
 def clean_output(text: str) -> str:
     """对工具输出按固定顺序清洗：先去 ANSI 跳脱码，再去代码围栏，最后脱敏。"""
-    with contextlib.suppress(Exception):
-        text = strip_ansi(text)
-    with contextlib.suppress(Exception):
-        text = strip_fence(text)
+    text = strip_ansi(text)
+    text = strip_fence(text)
     # redact_sensitive_text 是安全关键，失败即整段屏蔽，保证原始凭据绝不进入 LLM。
     if text:
         try:

@@ -6,6 +6,7 @@ import logging
 import os
 import platform
 import sys
+import threading
 import time
 import uuid
 from typing import Any
@@ -26,7 +27,8 @@ from tools.browser import reset_session_caches
 from tools.toolsets import excluded_tool_names
 from utils import (
     CURRENT_SKILL_SCOPE,
-    CancellationToken,
+    PIPE_TRANSPORT,
+    UNIX_TRANSPORT,
     DesktopEndpoint,
     SkillScope,
     connect_desktop,
@@ -39,7 +41,6 @@ from utils import (
     set_current_request,
     set_handler,
     set_inmemory_config,
-    set_interrupt,
     set_local_interrupt,
     set_main_loop,
     snapshot,
@@ -74,7 +75,7 @@ _BG_TASKS: set[asyncio.Task] = set()
 _INFLIGHT_BY_REQ_ID: dict[str, asyncio.Task] = {}
 _CURRENT_EXECUTE_TASK: asyncio.Task | None = None
 _CURRENT_EXECUTE_REQ_ID: str | None = None
-_ACTIVE_CANCELLATIONS: dict[str, CancellationToken] = {}
+_ACTIVE_CANCELLATIONS: dict[str, threading.Event] = {}
 
 # PROTOCOL §3 反向 RPC 速率守卫：单会话累计限额（200 帧 / 1MB 文本 / 10MB 视觉），防止工具失控刷爆 LLM。
 MAX_LLM_REQUESTS_PER_SESSION = 200
@@ -144,15 +145,6 @@ async def request_llm_from_desktop(kwargs: dict[str, Any]) -> str:
     if _llm_bytes_count + payload_bytes > max_bytes:
         raise RuntimeError("request_llm rate-limited by runner: exceeded maximum payload bytes per session")
 
-    req_id = f"req_llm_{uuid.uuid4().hex[:8]}"
-    fut: asyncio.Future = asyncio.Future()
-    _PENDING_RPC[req_id] = fut
-
-    _llm_requests_count += 1
-    _llm_bytes_count += payload_bytes
-
-    await _send_notification(ws, "request_llm", kwargs, id=req_id)
-
     # 尊重调用方传入的 per-call 超时: 下限设 1.0s 避免出现 0 秒等; 不设上限, 上限由调用方在业务预算处自行约束。
     try:
         timeout_s = float(kwargs.get("timeout", 120.0))
@@ -160,7 +152,15 @@ async def request_llm_from_desktop(kwargs: dict[str, Any]) -> str:
         timeout_s = 120.0
     timeout_s = max(timeout_s, 1.0)
 
+    req_id = f"req_llm_{uuid.uuid4().hex[:8]}"
+    fut: asyncio.Future = asyncio.Future()
+    _PENDING_RPC[req_id] = fut
+
+    _llm_requests_count += 1
+    _llm_bytes_count += payload_bytes
+
     try:
+        await _send_notification(ws, "request_llm", kwargs, id=req_id)
         result = await asyncio.wait_for(fut, timeout=timeout_s)
     finally:
         _PENDING_RPC.pop(req_id, None)
@@ -193,8 +193,6 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
     if req_id is None and method:
         return
 
-    # 新请求到达时清理上一条请求残留的 per-thread interrupt, 防止当前请求的工具立刻被 bail。
-    set_interrupt(False, thread_id=None)
     try:
         if method == "spiritagent.cancel":
             target_req_id = params.get("req_id")
@@ -250,11 +248,12 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
             if name in excluded_tool_names(disabled_ids, {name}):
                 raise ToolError(f"Tool '{name}' is disabled by toolsets.disabled")
             req_id_str = str(req_id) if req_id is not None else f"_anon_{uuid.uuid4().hex[:8]}"
-            token = CancellationToken()
+            token = threading.Event()
             _ACTIVE_CANCELLATIONS[req_id_str] = token
             ctx_reset = set_current_request(req_id_str)
             scope_reset = CURRENT_SKILL_SCOPE.set(skill_scope)
             cur_task = asyncio.current_task()
+            assert cur_task is not None
             _INFLIGHT_BY_REQ_ID[req_id_str] = cur_task
             _CURRENT_EXECUTE_TASK = cur_task
             _CURRENT_EXECUTE_REQ_ID = req_id_str
@@ -279,9 +278,6 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
 
         await _send(ws, req_id, error={"code": -32601, "message": "Method not found"})
     except asyncio.CancelledError:
-        cur_t = asyncio.current_task()
-        if cur_t is not None:
-            cur_t.uncancel()
         with contextlib.suppress(Exception):
             await _send(ws, req_id, error={"code": -32000, "message": "cancelled"})
         raise
@@ -493,7 +489,7 @@ def main() -> None:
     if not token:
         parser.error("Desktop handshake token is required (SPIRITAGENT_DESKTOP_TOKEN or --desktop-auth)")
 
-    transport = "pipe" if sys.platform == "win32" else "unix"
+    transport = PIPE_TRANSPORT if sys.platform == "win32" else UNIX_TRANSPORT
     endpoint = DesktopEndpoint(transport=transport, path=args.desktop_endpoint, token=token)
 
     imported, import_errors = discover_builtin_tools_strict()

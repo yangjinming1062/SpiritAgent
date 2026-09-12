@@ -1,4 +1,3 @@
-import concurrent.futures
 import contextlib
 import ctypes
 import os
@@ -324,10 +323,19 @@ def _get_final_path_by_handle(path_str: str) -> str | None:
             return None
 
     try:
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as ex:
-            fut = ex.submit(_impl)
-            return fut.result(timeout=1.0)
-    except (concurrent.futures.TimeoutError, Exception):
+        # 与 ``build_write_denied_prefixes._safe_resolve`` 同理: ``ThreadPoolExecutor`` 的 ``__exit__``
+        # 默认 ``wait=True``, 超时后仍会 join 挂死在 ``CreateFileW`` 上的工作线程, 必须用裸 daemon Thread。
+        holder: dict[str, str] = {}
+
+        def _runner() -> None:
+            if (v := _impl()) is not None:
+                holder["v"] = v
+
+        t = threading.Thread(target=_runner, daemon=True)
+        t.start()
+        t.join(timeout=1.0)
+        return holder.get("v")
+    except Exception:
         return None
 
 

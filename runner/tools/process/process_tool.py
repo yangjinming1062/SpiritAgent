@@ -114,6 +114,7 @@ class ProcessSession:
     env_ref: Any = None  # 关联的 Environment 对象
     cwd: str | None = None  # 工作目录
     started_at: float = 0.0  # spawn 时的 time.time()
+    finished_at: float = 0.0  # 进入 finished 的 time.time()(已结束 session 的 TTL 起点)
     exited: bool = False  # 进程是否已结束
     exit_code: int | None = None  # 退出码(未结束则为 None)
     output_buffer: str = ""  # 滚动输出(最近 MAX_OUTPUT_CHARS)
@@ -705,6 +706,8 @@ class ProcessRegistry:
         """把一个 session 从 running 移到 finished; 幂等, 不会被并发调用重入双下发。"""
         with self._lock:
             was_running = self._running.pop(session.id, None) is not None
+            if session.finished_at == 0.0:
+                session.finished_at = time.time()
             self._finished[session.id] = session
         self._write_checkpoint()
         # 仅在第一次移过来时入队完成通知 — 不做这个守卫, kill_process() 和 reader 线程
@@ -1093,17 +1096,19 @@ class ProcessRegistry:
             all_sessions = [s for s in all_sessions if s.task_id == task_id]
         result = []
         for s in all_sessions:
-            # 先对完整字符串脱敏再切片: 否则一个跨 200 字符边界的密钥会被切在 token 中间,
-            # 脱敏正则匹配不到前缀片段就漏过。
+            # 与 poll / read_log 一致: 先对完整字符串脱敏再切片, 否则跨边界的密钥会被切在 token 中间漏过。
+            command_redacted = redact_sensitive_text(s.command)
             entry = {
                 "session_id": s.id,
-                "command": clean_output(s.command)[:200],
+                "command": clean_output(command_redacted)[:200],
                 "cwd": clean_output(s.cwd) if s.cwd else s.cwd,
                 "pid": s.pid,
                 "started_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(s.started_at)),
                 "uptime_seconds": int(time.time() - s.started_at),
                 "status": "exited" if s.exited else "running",
-                "output_preview": clean_output(s.output_buffer)[-200:] if s.output_buffer else "",
+                "output_preview": redact_sensitive_text(clean_output(s.output_buffer))[-200:]
+                if s.output_buffer
+                else "",
             }
             if s.exited:
                 entry["exit_code"] = s.exit_code
@@ -1144,14 +1149,15 @@ class ProcessRegistry:
     def _prune_if_needed(self) -> None:
         """超过 MAX_PROCESSES 时淘汰最旧的已结束 session(调用方需持 ``_lock``)。"""
         now = time.time()
-        expired = [sid for sid, s in self._finished.items() if (now - s.started_at) > FINISHED_TTL_SECONDS]
+        # TTL 从 finished_at 起算: 从 started_at 起算会让跑了 31 分钟才退出的进程结果立刻被淘汰。
+        expired = [sid for sid, s in self._finished.items() if (now - s.finished_at) > FINISHED_TTL_SECONDS]
         for sid in expired:
             del self._finished[sid]
             self._completion_consumed.discard(sid)
-        # 仍超限时按 started_at 顺序再淘汰最旧的。
+        # 仍超限时按 finished_at 顺序再淘汰最旧的。
         total = len(self._running) + len(self._finished)
         if total >= MAX_PROCESSES and self._finished:
-            oldest_id = min(self._finished, key=lambda sid: self._finished[sid].started_at)
+            oldest_id = min(self._finished, key=lambda sid: self._finished[sid].finished_at)
             del self._finished[oldest_id]
             self._completion_consumed.discard(oldest_id)
         # belt-and-suspenders: 清理不在任何已跟踪集合里的 completion 残留 id,

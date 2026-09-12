@@ -12,9 +12,6 @@ env_lock = threading.Lock()
 creation_locks: dict[str, threading.Lock] = {}
 creation_locks_lock = threading.Lock()
 
-task_env_overrides: dict[str, dict[str, Any]] = {}
-task_env_overrides_lock = threading.Lock()
-
 
 def _safe_getcwd() -> str:
     try:
@@ -37,8 +34,9 @@ def get_env_config() -> dict[str, Any]:
     t = t if isinstance(t, dict) else {}
 
     env_type = cfg_str(t, "env_type", "local")
+    # expanduser 只对 local 生效: SSH 的 `~` 必须原样传给远端 shell, 本地展开会把宿主路径塞进远端 cd。
     cwd = cfg_str(t, "cwd", _safe_getcwd() if env_type == "local" else "~")
-    if cwd:
+    if cwd and env_type == "local":
         cwd = os.path.expanduser(cwd)
     ssh_cfg = t.get("ssh") if isinstance(t.get("ssh"), dict) else {}
     return {

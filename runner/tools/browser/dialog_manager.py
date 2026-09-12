@@ -362,7 +362,14 @@ class DialogManager:
                 handle = self._watchdogs.pop(dialog.id, None)
             if handle is not None:
                 handle.cancel()
-            await strategy.fulfill(dialog, accept=accept, prompt_text=pt)
+            delivered = await strategy.fulfill(dialog, accept=accept, prompt_text=pt)
+            # 应答投递失败（WS 断开 / CDP 报错）时如实上报: dialog 已归档无法重试, 但页面可能仍被弹窗阻塞。
+            if not delivered:
+                return {
+                    "ok": False,
+                    "error": "dialog response not delivered; the page may still be blocked",
+                    "dialog": dialog.to_dict(),
+                }
             return {"ok": True, "dialog": dialog.to_dict()}
 
         loop = self._loop_provider()

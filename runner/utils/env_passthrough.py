@@ -36,7 +36,7 @@ def _load_config_passthrough() -> frozenset[str]:
                 if isinstance(item, str) and (name := item.strip()):
                     result.add(name)
     except Exception as e:
-        logger.debug("Could not read tools.env_passthrough from config: %s", e)
+        logger.debug("Could not read terminal.env_passthrough from config: %s", e)
     _config_passthrough = frozenset(result)
     return _config_passthrough
 
@@ -49,7 +49,3 @@ def reset_cache() -> None:
 
 def is_env_passthrough(var_name: str) -> bool:
     return var_name in _get_allowed() or var_name in _load_config_passthrough()
-
-
-def get_all_passthrough() -> frozenset[str]:
-    return frozenset(_get_allowed()) | _load_config_passthrough()

@@ -97,6 +97,8 @@ def _cwd_marker(session_id: str) -> str:
 class BaseEnvironment(ABC):
     _stdin_mode: str = "pipe"
     _snapshot_timeout: int = 30
+    # 环境类型标签（local / ssh），由 factory 在实例化后赋值；file_tools 据此路由本地文件操作。
+    env_type: str = ""
 
     def get_temp_dir(self) -> str:
         return "/tmp"
@@ -112,13 +114,14 @@ class BaseEnvironment(ABC):
         self._cwd_marker = _cwd_marker(self._session_id)
         self._snapshot_ready = False
         self._snapshot_created_at: float = 0.0
+        # 前台命令执行中标记: cleanup 线程据此续命, 避免长命令运行中途环境被回收。
+        self._executing = False
 
     def _run_bash(
         self,
         cmd_string: str,
         *,
         login: bool = False,
-        timeout: int = 120,
         stdin_data: str | None = None,
     ) -> ProcessHandle:
         raise NotImplementedError(f"{type(self).__name__} must implement _run_bash()")
@@ -138,7 +141,7 @@ class BaseEnvironment(ABC):
             f"printf '\\n{self._cwd_marker}%s{self._cwd_marker}\\n' \"$(pwd -P)\"\n"
         )
         try:
-            proc = self._run_bash(bootstrap, login=True, timeout=self._snapshot_timeout)
+            proc = self._run_bash(bootstrap, login=True)
             result = self._wait_for_process(proc, timeout=self._snapshot_timeout)
             self._snapshot_ready = True
             self._snapshot_created_at = time.time()
@@ -326,7 +329,7 @@ class BaseEnvironment(ABC):
         rewrite_compound_background: bool = True,
     ) -> dict:
         self._before_execute()
-        exec_command, sudo_stdin = self._prepare_command(command)
+        exec_command, sudo_stdin = _transform_sudo_command(command)
         if rewrite_compound_background:
             exec_command = _rewrite_compound_background(exec_command)
         effective_stdin = (
@@ -337,17 +340,15 @@ class BaseEnvironment(ABC):
             effective_stdin = None
         to = timeout or self.timeout
         wrapped = self._wrap_command(exec_command, cwd or self.cwd)
-        proc = self._run_bash(wrapped, login=not self._snapshot_ready, timeout=to, stdin_data=effective_stdin)
-        result = self._wait_for_process(proc, timeout=to)
+        self._executing = True
+        try:
+            proc = self._run_bash(wrapped, login=not self._snapshot_ready, stdin_data=effective_stdin)
+            result = self._wait_for_process(proc, timeout=to)
+        finally:
+            self._executing = False
         self._update_cwd(result)
         return result
-
-    def stop(self) -> None:
-        self.cleanup()
 
     def __del__(self) -> None:
         with contextlib.suppress(Exception):
             self.cleanup()
-
-    def _prepare_command(self, command: str) -> tuple[str, str | None]:
-        return _transform_sudo_command(command)

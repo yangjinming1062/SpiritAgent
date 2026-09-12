@@ -51,26 +51,22 @@ def parse_numeric_unit(
     default: float,
     *,
     valid_units: tuple[str, ...] = ("s", "ms"),
-    allow_negative: bool = False,
 ) -> float:
-    """安全解析带单位数值字符串（支持 s, ms, px 等），返回浮点数。"""
+    """安全解析带单位数值字符串（支持 s, ms, px 等），返回非负浮点数。"""
     if raw_val is None:
         return default
     if isinstance(raw_val, bool):
         raise ValueError("Boolean value is not a valid numeric value")
     if isinstance(raw_val, int | float):
-        return float(raw_val if allow_negative else abs(raw_val))
+        return abs(float(raw_val))
 
     if isinstance(raw_val, str) and raw_val.strip():
         unit_pat = "|".join(re.escape(u) for u in valid_units)
-        sign_pat = "[-+]?" if allow_negative else ""
-        pattern = rf"^\s*({sign_pat}\d+(?:\.\d+)?)\s*(?:{unit_pat})?\s*$"
+        pattern = rf"^\s*(\d+(?:\.\d+)?)\s*(?:{unit_pat})?\s*$"
         m = re.fullmatch(pattern, raw_val.strip(), re.IGNORECASE)
         if not m:
             raise ValueError(f"Invalid numeric value '{raw_val}'")
-        parsed = float(m.group(1))
-        if not allow_negative:
-            parsed = abs(parsed)
+        parsed = abs(float(m.group(1)))
         if raw_val.strip().lower().endswith("ms"):
             parsed = parsed / 1000.0
         return parsed

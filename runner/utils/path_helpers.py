@@ -97,7 +97,8 @@ def find_python() -> str | None:
             return str(c)
 
     uv_exe = "uv.exe" if IS_WINDOWS else "uv"
-    for uv in (shutil.which("uv"), str(Path(root).parents[2] / "bin" / uv_exe)):
+    # 客户端托管的 uv 位于 $SPIRITAGENT_HOME/bin（client/main/runner/updater.ts）。
+    for uv in (shutil.which("uv"), str(Path(root).parents[1] / "bin" / uv_exe)):
         if not uv or not Path(uv).is_file():
             continue
         try:

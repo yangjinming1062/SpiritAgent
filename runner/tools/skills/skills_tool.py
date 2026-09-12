@@ -10,7 +10,6 @@ from typing import Any
 from utils import (
     cfg_get,
     get_env_type,
-    get_skills_dir,
     has_traversal_component,
     is_interrupted,
     load_config,
@@ -29,14 +28,9 @@ from .helpers import (
     iter_skill_index_files,
     parse_frontmatter,
 )
-from .skill_manager_tool import MAX_SKILL_FILE_BYTES
+from .skill_manager_tool import MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH, MAX_SKILL_FILE_BYTES, SKILLS_DIR
 
 logger = logging.getLogger(__name__)
-
-SKILLS_DIR = get_skills_dir()
-
-MAX_NAME_LENGTH = 64
-MAX_DESCRIPTION_LENGTH = 1024
 
 _PLATFORM_MAP = {"macos": "darwin", "windows": "win32"}
 _ENV_VAR_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -298,7 +292,7 @@ def _sort_skills(skills: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(skills, key=lambda s: (s.get("category") or "", s["name"]))
 
 
-def skills_list(category: str | None = None, task_id: str | None = None) -> str:
+def skills_list(category: str | None = None) -> str:
     try:
         all_skills = _find_all_skills()
         if not all_skills:
@@ -323,7 +317,7 @@ def skills_list(category: str | None = None, task_id: str | None = None) -> str:
         return tool_error(str(e), success=False)
 
 
-def skill_view(name: str, file_path: str | None = None, task_id: str | None = None) -> str:
+def skill_view(name: str, file_path: str | None = None) -> str:
     try:
         if lookup_error := _skill_lookup_path_error(name):
             return json.dumps(
@@ -435,26 +429,22 @@ def skill_view(name: str, file_path: str | None = None, task_id: str | None = No
         except Exception as e:
             return json.dumps({"success": False, "error": f"Failed to read skill '{name}': {e}"}, ensure_ascii=False)
 
-        outside = not any(visible_skill_path(skill_md, root) for root in all_dirs)
+        # 不可信 skill 在 view 阶段必须硬阻断, 不能只警告: 一个 community skill 若已绕过安装期扫描,
+        # 后续 view 不再防御就是把注入内容直灌 LLM 上下文。
         inj = any(p in content.lower() for p in _INJECTION_PATTERNS)
-        if outside or inj:
-            warns = []
-            if outside:
-                warns.append(f"skill file is outside the trusted skills directory (~/.spiritagent/skills/): {skill_md}")
-            if inj:
-                warns.append("skill content contains patterns that may indicate prompt injection")
-            logger.warning("Skill security warning for '%s': %s", name, "; ".join(warns))
-            # 不可信 skill 在 view 阶段必须硬阻断, 不能只警告: 一个 community skill 若已绕过安装期扫描,
-            # 后续 view 不再防御就是把注入内容直灌 LLM 上下文。Builtin / 内部 skill 只警告不阻断。
-            if outside or inj:
-                return json.dumps(
-                    {
-                        "success": False,
-                        "error": f"Skill '{name}' blocked by skill_view security gate: " + "; ".join(warns),
-                        "skill_source": "external" if outside else "internal-but-suspicious",
-                    },
-                    ensure_ascii=False,
-                )
+        if inj:
+            logger.warning("Skill security warning for '%s': content may indicate prompt injection", name)
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": (
+                        f"Skill '{name}' blocked by skill_view security gate: "
+                        "skill content contains patterns that may indicate prompt injection"
+                    ),
+                    "skill_source": "internal-but-suspicious",
+                },
+                ensure_ascii=False,
+            )
 
         parsed_frontmatter = {}
         with contextlib.suppress(Exception):
@@ -545,6 +535,18 @@ def skill_view(name: str, file_path: str | None = None, task_id: str | None = No
                         ensure_ascii=False,
                     )
                 f_content = target_file.read_text(encoding="utf-8")
+                # 链接文件与 SKILL.md 同闸: SKILL.md 干净而 references 脏的技能不能借 view 绕过。
+                if any(p in f_content.lower() for p in _INJECTION_PATTERNS):
+                    return json.dumps(
+                        {
+                            "success": False,
+                            "error": (
+                                f"Linked file '{file_path}' blocked by skill_view security gate: "
+                                "content contains patterns that may indicate prompt injection"
+                            ),
+                        },
+                        ensure_ascii=False,
+                    )
                 return json.dumps(
                     {
                         "success": True,
@@ -621,11 +623,12 @@ def skill_view(name: str, file_path: str | None = None, task_id: str | None = No
         missing_cred_files = []
         if isinstance(req_cred_files, list) and req_cred_files:
             try:
+                # walrus 目标用 cred_rel: 推导式内的绑定会泄漏到函数作用域, 不能占用外层的 rel_path。
                 if missing_cred_files := [
-                    rel_path
+                    cred_rel
                     for entry in req_cred_files
                     if (
-                        rel_path := (
+                        cred_rel := (
                             entry.strip()
                             if isinstance(entry, str)
                             else (entry.get("path") or entry.get("name") or "").strip()
@@ -633,7 +636,7 @@ def skill_view(name: str, file_path: str | None = None, task_id: str | None = No
                             else ""
                         )
                     )
-                    if not register_credential_file(rel_path)
+                    if not register_credential_file(cred_rel)
                 ]:
                     setup_needed = True
             except Exception:
@@ -737,7 +740,7 @@ SKILL_VIEW_SCHEMA = {
 }
 
 registry.register_tool("skills_list", schema=SKILLS_LIST_SCHEMA)(
-    lambda args, **kw: skills_list(category=args.get("category"), task_id=kw.get("task_id")),
+    lambda args, **_kw: skills_list(category=args.get("category")),
 )
 
 
@@ -746,7 +749,7 @@ def _skill_view_handler(args: dict[str, Any], **kw: Any) -> str:
     # 没有这个兜底，过期 "please list skills" 调用会在用户已转移注意力后继续运行。
     if is_interrupted():
         return json.dumps({"error": "Interrupted", "interrupted": True})
-    return skill_view(name=args.get("name", ""), file_path=args.get("file_path"), task_id=kw.get("task_id"))
+    return skill_view(name=args.get("name", ""), file_path=args.get("file_path"))
 
 
 registry.register_tool("skill_view", schema=SKILL_VIEW_SCHEMA)(_skill_view_handler)

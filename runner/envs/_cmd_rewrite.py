@@ -264,24 +264,19 @@ def _rewrite_compound_background(command: str) -> str:
     return result
 
 
-def _transform_sudo_command(command: str | None) -> tuple[str | None, str | None]:
-    if command is None:
-        return None, None
+def _transform_sudo_command(command: str) -> tuple[str, str | None]:
     transformed, has_real_sudo = _rewrite_real_sudo_invocations(command)
     if not has_real_sudo:
         return command, None
-    sudo_password = cfg_get(load_config(), "terminal", "sudo_password", default="")
-    has_configured_password = bool(sudo_password)
-    if not has_configured_password and not sudo_password and _sudo_nopasswd_works():
-        return command, None
-    if (
-        not has_configured_password
-        and not sudo_password
-        and is_truthy_value(cfg_get(load_config(), "terminal", "interactive_sudo_prompt", default=False))
-    ):
-        sudo_password = _prompt_for_sudo_password()
-        if sudo_password:
-            _set_cached_sudo_password(sudo_password)
-    if has_configured_password or sudo_password:
-        return transformed, sudo_password + "\n"
+    terminal_cfg = cfg_get(load_config(), "terminal", default={})
+    sudo_password = cfg_get(terminal_cfg, "sudo_password", default="")
+    if not sudo_password:
+        if _sudo_nopasswd_works():
+            return command, None
+        if is_truthy_value(cfg_get(terminal_cfg, "interactive_sudo_prompt", default=False)):
+            sudo_password = _prompt_for_sudo_password()
+            if sudo_password:
+                _set_cached_sudo_password(sudo_password)
+    if sudo_password:
+        return transformed, str(sudo_password) + "\n"
     return command, None

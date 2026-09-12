@@ -22,7 +22,6 @@ from envs import (
     register_env_cleanup_hook,
     resolve_container_task_id,
     start_cleanup_thread,
-    task_env_overrides,
 )
 from utils import (
     IS_WINDOWS,
@@ -690,9 +689,8 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations | NativeFileO
         if terminal_env is None:
             config = get_env_config()
             env_type = config["env_type"]
-            overrides = task_env_overrides.get(task_id, {})
 
-            cwd = overrides.get("cwd") or config["cwd"]
+            cwd = config["cwd"]
             logger.info("Creating new %s environment for task %s...", env_type, task_id[:8])
 
             ssh_config = None
@@ -716,7 +714,6 @@ def _get_file_ops(task_id: str = "default") -> ShellFileOperations | NativeFileO
                 timeout=config["timeout"],
                 ssh_config=ssh_config,
                 local_config=local_config,
-                task_id=task_id,
             )
 
             with env_lock:
@@ -775,7 +772,11 @@ def list_directory_tool(path: str, task_id: str = "default", cancel_token: Any =
 
         entries = []
         for p in _resolved.iterdir():
-            stat = p.stat()
+            # 单个坏条目（悬空符号链接 / 遍历间隙被删）跳过, 不让整次 list_directory 失败。
+            try:
+                stat = p.stat()
+            except OSError:
+                continue
             entries.append(
                 {
                     "name": p.name + ("/" if p.is_dir() else ""),

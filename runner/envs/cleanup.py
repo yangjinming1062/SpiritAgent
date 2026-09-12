@@ -5,9 +5,8 @@ import logging
 import threading
 import time
 from collections.abc import Callable
-from typing import Any
 
-from .state import active_environments, creation_locks, creation_locks_lock, env_lock, get_env_config, last_activity
+from .state import active_environments, env_lock, get_env_config, last_activity
 
 logger = logging.getLogger(__name__)
 
@@ -43,19 +42,12 @@ def _log_cleanup_error(task_id: str, exc: BaseException) -> None:
         logger.warning("Error cleaning up environment for task %s: %s", task_id, exc)
 
 
-def _stop_env(env: Any) -> None:
-    if hasattr(env, "cleanup"):
-        env.cleanup()
-    elif hasattr(env, "stop"):
-        env.stop()
-    elif hasattr(env, "terminate"):
-        env.terminate()
-
-
 def _cleanup_inactive_envs(lifetime_seconds: int = 300) -> None:
     current_time = time.time()
     for task_id in list(last_activity.keys()):
-        if any(checker(task_id) for checker in _active_process_checkers):
+        # 前台命令执行中的环境与有活跃子进程的环境都要续命, 否则长命令运行中途环境会被回收
+        # （SSH 场景下 cleanup 还会掐断 ControlMaster, 杀死在途命令）。
+        if _env_busy(task_id) or any(checker(task_id) for checker in _active_process_checkers):
             last_activity[task_id] = current_time
     envs_to_stop = []
     with env_lock:
@@ -71,10 +63,15 @@ def _cleanup_inactive_envs(lifetime_seconds: int = 300) -> None:
             with contextlib.suppress(Exception):
                 hook(task_id)
         try:
-            _stop_env(env)
+            env.cleanup()
             logger.info("Cleaned up inactive environment for task: %s", task_id)
         except Exception as e:
             _log_cleanup_error(task_id, e)
+
+
+def _env_busy(task_id: str) -> bool:
+    env = active_environments.get(task_id)
+    return bool(getattr(env, "_executing", False))
 
 
 def _cleanup_thread_worker() -> None:
@@ -129,22 +126,17 @@ def cleanup_vm(task_id: str, *, force_remove: bool = False) -> None:
     with env_lock:
         env = active_environments.pop(task_id, None)
         last_activity.pop(task_id, None)
-    with creation_locks_lock:
-        creation_locks.pop(task_id, None)
     for hook in _cleanup_hooks:
         with contextlib.suppress(Exception):
             hook(task_id)
     if env is None:
         return
     try:
-        if hasattr(env, "cleanup"):
-            sig = inspect.signature(env.cleanup)
-            if "force_remove" in sig.parameters:
-                env.cleanup(force_remove=force_remove)
-            else:
-                env.cleanup()
+        sig = inspect.signature(env.cleanup)
+        if "force_remove" in sig.parameters:
+            env.cleanup(force_remove=force_remove)
         else:
-            _stop_env(env)
+            env.cleanup()
         logger.info("Manually cleaned up environment for task: %s", task_id)
     except Exception as e:
         _log_cleanup_error(task_id, e)
@@ -155,16 +147,7 @@ def _atexit_cleanup() -> None:
     if active_environments:
         count = len(active_environments)
         logger.info("Shutting down %d remaining sandbox(es)...", count)
-        envs_to_wait = list(active_environments.values())
         cleanup_all_environments()
-        for env in envs_to_wait:
-            wait_fn = getattr(env, "wait_for_cleanup", None)
-            if wait_fn is None:
-                continue
-            try:
-                wait_fn(timeout=15.0)
-            except Exception as e:
-                logger.debug("wait_for_cleanup raised on exit: %s", e)
 
 
 atexit.register(_atexit_cleanup)

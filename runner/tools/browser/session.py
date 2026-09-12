@@ -6,7 +6,6 @@ import socket
 import threading
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from urllib.parse import urlparse
 
 import httpx
@@ -17,6 +16,7 @@ from utils import (
 )
 
 from .camofox import is_camofox_mode
+from .dialog_manager import _VALID_POLICIES, DEFAULT_DIALOG_POLICY, DEFAULT_DIALOG_TIMEOUT_S
 from .profile_manager import cleanup_old_profiles
 from .supervisor import SUPERVISOR_REGISTRY
 
@@ -31,21 +31,14 @@ try:
 except (TypeError, ValueError):
     BROWSER_SESSION_INACTIVITY_TIMEOUT = 300
 
-DEFAULT_DIALOG_POLICY = "must_respond"
-DEFAULT_DIALOG_TIMEOUT_S = 300.0
-_VALID_POLICIES = frozenset({"must_respond", "auto_dismiss", "auto_accept"})
-
 
 @dataclass
 class SessionInfo:
     task_id: str
     cdp_url: str = ""
-    profile_dir: Path | None = None
     launch_handle: object | None = None
     started_at: float = field(default_factory=time.time)
     last_active_at: float = field(default_factory=time.time)
-    first_nav: bool = True
-    features: dict[str, bool] = field(default_factory=dict)
 
 
 _active_sessions: dict[str, SessionInfo] = {}

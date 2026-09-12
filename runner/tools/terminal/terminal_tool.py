@@ -19,7 +19,6 @@ from envs import (
     last_activity,
     resolve_container_task_id,
     start_cleanup_thread,
-    task_env_overrides,
 )
 from utils import cfg_get, clean_output, is_interrupted, load_config, redact_sensitive_text
 
@@ -327,7 +326,7 @@ def terminal_tool(
     """在对应 task 的终端环境中执行单条 shell 命令——前台/后台互斥分支，复用 / 必要时懒创建环境。
 
     ``cancel_token``: 调用方注入的一次性取消令牌；工具函数在执行 / 等待 / 重试的关键阻塞点
-    调用 ``is_interrupted()`` 兜底（基于 ``ContextVar`` 的 thread-id 中断位），覆盖 ``set_local_interrupt``
+    调用 ``is_interrupted()`` 兜底（经 ``ContextVar`` 关联到当前请求的取消事件），覆盖 ``set_local_interrupt``
     之外的本地线程取消触发。
     """
     try:
@@ -350,11 +349,7 @@ def terminal_tool(
                 ensure_ascii=False,
             )
         effective_task_id = resolve_container_task_id(task_id)
-        overrides = (task_env_overrides.get(task_id) if task_id else None) or task_env_overrides.get(
-            effective_task_id,
-            {},
-        )
-        cwd = overrides.get("cwd") or config["cwd"]
+        cwd = config["cwd"]
         default_timeout = config["timeout"]
         effective_timeout = timeout if timeout is not None else default_timeout
         if not background and timeout and timeout > FOREGROUND_MAX_TIMEOUT:
@@ -426,7 +421,6 @@ def terminal_tool(
                             timeout=effective_timeout,
                             ssh_config=ssh_config,
                             local_config=local_config,
-                            task_id=effective_task_id,
                         )
                     except ImportError as e:
                         return json.dumps(

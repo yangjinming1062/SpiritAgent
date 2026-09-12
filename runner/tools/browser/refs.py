@@ -108,7 +108,6 @@ class Refs:
     def snapshot_axtree(
         self,
         *,
-        full: bool = False,
         interactive_only: bool = False,
         max_depth: int = 50,
     ) -> dict[str, Any]:

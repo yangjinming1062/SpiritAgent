@@ -10,7 +10,6 @@ def create_environment(
     timeout: int,
     ssh_config: dict | None = None,
     local_config: dict | None = None,
-    task_id: str = "default",
 ) -> Any:
     """按 env_type 实例化对应的终端环境（local / ssh），并打上 `env_type` 标签。"""
     lc = local_config or {}

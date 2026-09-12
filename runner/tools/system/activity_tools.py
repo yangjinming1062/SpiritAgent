@@ -44,7 +44,9 @@ SYSTEM_FOCUS_SCHEMA = {
 
 SYSTEM_IS_FULLSCREEN_SCHEMA = {
     "name": "system.is_fullscreen",
-    "description": ("True iff the foreground window covers ≥95% of its monitor's working area. False when unknown."),
+    "description": (
+        "True iff the foreground window covers ≥95% of its monitor's full area (not the work area). False when unknown."
+    ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 

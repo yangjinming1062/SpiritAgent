@@ -175,11 +175,12 @@ class FileSyncManager:
 
     def _sync_back_locked(self, lock_path: Path) -> None:
         # Windows 的 ``msvcrt.locking`` 锁区段必须已存在 — 在 0 字节文件上 ``LK_LOCK, 1`` 会抛 ``Errno 22``。
-        # 显式写入 1 字节占位, 锁解锁后再清理。
+        # 显式写入 1 字节占位, 锁解锁后再清理; 已有占位时不能再写 — 另一进程可能正锁着该字节, 写入会得到 Lock Violation。
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, "w+b") as f:
-            f.write(b"\x00")
-            f.flush()
+            if f.read(1) != b"\x00":
+                f.write(b"\x00")
+                f.flush()
             try:
                 if sys.platform == "win32":
                     msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)

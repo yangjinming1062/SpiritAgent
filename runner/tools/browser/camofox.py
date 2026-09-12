@@ -277,7 +277,7 @@ def camofox_navigate(url: str, task_id: str | None = None) -> str:
         return tool_error(str(e), success=False)
 
 
-def camofox_snapshot(full: bool = False, task_id: str | None = None, user_task: str | None = None) -> str:
+def camofox_snapshot(task_id: str | None = None, user_task: str | None = None) -> str:
     """取 Camofox 后端的页面快照。"""
     try:
         session = _get_session(task_id)

@@ -28,14 +28,14 @@ def _path_env_key(run_env: dict) -> str | None:
     return next((k for k in run_env if k.upper() == "PATH"), None) if IS_WINDOWS else "PATH"
 
 
-def _make_run_env(env: dict) -> dict:
+def _make_run_env(env: dict) -> dict[str, str]:
     """组装子进程环境：以 runner 自身环境为基底（调用方可控），叠加 `env` 覆盖。"""
     run_env = {k: str(v) if v is not None else "" for k, v in (os.environ | env).items()}
     if path_key := _path_env_key(run_env):
         run_env[path_key] = append_sane_path_entries(run_env.get(path_key, ""))
     inject_context_spiritagent_home(run_env)
     if ph := get_subprocess_home():
-        run_env["HOME"] = ph
+        run_env["HOME"] = str(ph)
     return run_env
 
 
@@ -103,7 +103,6 @@ class LocalEnvironment(BaseEnvironment):
         cmd_string: str,
         *,
         login: bool = False,
-        timeout: int = 120,
         stdin_data: str | None = None,
     ) -> subprocess.Popen:
         if login and (init_files := _resolve_shell_init_files()):

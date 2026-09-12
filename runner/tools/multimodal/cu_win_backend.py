@@ -7,6 +7,7 @@ import logging
 import re
 import sys
 import threading
+import time
 from typing import Any
 
 try:
@@ -332,11 +333,14 @@ class WinBackend(ComputerUseBackend):
 
         try:
             pyautogui.moveTo(x, y, _pause=False)
-            for mod in modifiers or []:
-                pyautogui.keyDown(_map_key(mod))
-            pyautogui.click(x, y, clicks=click_count, button=button)
-            for mod in modifiers or []:
-                pyautogui.keyUp(_map_key(mod))
+            try:
+                for mod in modifiers or []:
+                    pyautogui.keyDown(_map_key(mod))
+                pyautogui.click(x, y, clicks=click_count, button=button)
+            finally:
+                # 动作中途抛错也必须抬键, 否则修饰键在 OS 层保持按下, 污染用户真实键盘输入。
+                for mod in modifiers or []:
+                    pyautogui.keyUp(_map_key(mod))
             return ActionResult(ok=True, action="click", message=f"clicked at ({x}, {y})")
         except Exception as e:
             return ActionResult(ok=False, action="click", message=str(e))
@@ -362,11 +366,13 @@ class WinBackend(ComputerUseBackend):
 
         try:
             pyautogui.moveTo(sx, sy, _pause=False)
-            for mod in modifiers or []:
-                pyautogui.keyDown(_map_key(mod))
-            pyautogui.drag(ex - sx, ey - sy, duration=0.5, button=button)
-            for mod in modifiers or []:
-                pyautogui.keyUp(_map_key(mod))
+            try:
+                for mod in modifiers or []:
+                    pyautogui.keyDown(_map_key(mod))
+                pyautogui.drag(ex - sx, ey - sy, duration=0.5, button=button)
+            finally:
+                for mod in modifiers or []:
+                    pyautogui.keyUp(_map_key(mod))
             return ActionResult(ok=True, action="drag", message=f"dragged ({sx},{sy}) -> ({ex},{ey})")
         except Exception as e:
             return ActionResult(ok=False, action="drag", message=str(e))
@@ -393,14 +399,16 @@ class WinBackend(ComputerUseBackend):
 
         ticks = max(1, min(50, amount))
         try:
-            for mod in modifiers or []:
-                pyautogui.keyDown(_map_key(mod))
-            if direction in ("up", "down"):
-                pyautogui.scroll(ticks if direction == "up" else -ticks, x, y)
-            elif direction in ("left", "right"):
-                pyautogui.hscroll(ticks if direction == "right" else -ticks, x, y)
-            for mod in modifiers or []:
-                pyautogui.keyUp(_map_key(mod))
+            try:
+                for mod in modifiers or []:
+                    pyautogui.keyDown(_map_key(mod))
+                if direction in ("up", "down"):
+                    pyautogui.scroll(ticks if direction == "up" else -ticks, x, y)
+                elif direction in ("left", "right"):
+                    pyautogui.hscroll(ticks if direction == "right" else -ticks, x, y)
+            finally:
+                for mod in modifiers or []:
+                    pyautogui.keyUp(_map_key(mod))
             return ActionResult(ok=True, action="scroll", message=f"scrolled {direction} x{ticks} at ({x},{y})")
         except Exception as e:
             return ActionResult(ok=False, action="scroll", message=str(e))
@@ -411,8 +419,16 @@ class WinBackend(ComputerUseBackend):
             if all(ord(c) < 128 for c in text):
                 pyautogui.write(text, interval=0.02)
             else:
+                # 剪贴板粘贴会覆盖用户剪贴板: 尽力保存并在粘贴后恢复, 减少用户可感知的数据丢失。
+                prev_clipboard = None
+                with contextlib.suppress(Exception):
+                    prev_clipboard = pyperclip.paste()
                 pyperclip.copy(text)
                 pyautogui.hotkey("ctrl", "v")
+                if prev_clipboard is not None:
+                    with contextlib.suppress(Exception):
+                        time.sleep(0.1)
+                        pyperclip.copy(prev_clipboard)
             return ActionResult(ok=True, action="type_text", message=f"typed {len(text)} chars")
         except Exception as e:
             return ActionResult(ok=False, action="type_text", message=str(e))

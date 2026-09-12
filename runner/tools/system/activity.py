@@ -306,7 +306,9 @@ def _idle_windows() -> float:
         info = LASTINPUTINFO()
         info.cbSize = ctypes.sizeof(info)
         if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
-            ticks = ctypes.windll.kernel32.GetTickCount()
+            # GetTickCount64 + c_uint64 restype: 32 位 GetTickCount 约 24.8 天后有符号回绕, 长开机机器会恒判"刚有输入"。
+            ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_uint64
+            ticks = ctypes.windll.kernel32.GetTickCount64()
             return max(0.0, (ticks - info.dwTime) / 1000.0)
     except Exception as e:
         logger.debug("win idle probe failed: %s", e)

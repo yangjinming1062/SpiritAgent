@@ -62,7 +62,6 @@ def _ensure_supervisor(session_key: str) -> CDPSupervisor:
         profile_dir = resolve_profile_dir(session_key)
         launch_handle = launch_chromium(profile_dir=profile_dir)
         session_info.launch_handle = launch_handle
-        session_info.profile_dir = profile_dir
         cdp_url = launch_handle.cdp_url
         auto_owned = True
 

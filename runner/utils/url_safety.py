@@ -254,83 +254,10 @@ def _scheme_for_port(port: int) -> str:
     return "https" if port == 443 else "http"
 
 
-def _connect_with_validated_ip(
-    addr_info: list[tuple],
-    *,
-    timeout: float | None,
-    local_address: str | None,
-    socket_options: Iterable[tuple] | None,
-) -> socket.socket:
-    """按顺序尝试用已校验 IP 直接 connect，保留原始 Host / TLS SNI / 证书主机名校验。"""
-    source_address = None if local_address is None else (local_address, 0)
-    socket_options = list(socket_options or [])
-    last_error: OSError | None = None
-    for family, socktype, proto, _canon, sockaddr in addr_info:
-        sock = socket.socket(family, socktype, proto)
-        try:
-            for option in socket_options:
-                sock.setsockopt(*option)
-            sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
-            if timeout is not None:
-                sock.settimeout(timeout)
-            if source_address is not None:
-                sock.bind(source_address)
-            sock.connect(sockaddr[:2])
-            return sock
-        except OSError as exc:
-            last_error = exc
-            sock.close()
-            continue
-    if last_error is not None:
-        raise last_error
-    raise httpcore.ConnectError("No validated addresses available for connect")
-
-
 # ---------------------------------------------------------------------------
 # httpcore NetworkBackend 实现：在 socket.connect 之前再次解析并校验目标 IP，
 # 直接使用已校验 IP 建连，原始 Host / TLS SNI / 证书主机名校验保持不变。
 # ---------------------------------------------------------------------------
-
-
-class _SafeSyncBackend(httpcore._backends.sync.SyncBackend):
-    """同步 httpcore 后端：connect_tcp 阶段强制重新解析并校验每一个目标 IP。
-
-    父类 ``socket.create_connection`` 会再次调 getaddrinfo，从而引入 DNS
-    rebinding TOCTOU 窗口；此处改为我们显式解析 + 校验 + 直连 IP，
-    原始 hostname 仍由 httpcore 用于 HTTP Host、TLS SNI 与证书校验。
-    """
-
-    def connect_tcp(  # type: ignore[override]
-        self,
-        host: str,
-        port: int,
-        timeout: float | None = None,
-        local_address: str | None = None,
-        socket_options: Iterable[tuple] | None = None,
-    ):
-        from httpcore._backends.sync import SyncStream
-
-        # hostname 黑名单在 DNS 之前先拦截，省一次解析。
-        if _normalize_host(host) in _BLOCKED_HOSTNAMES:
-            raise httpcore.ConnectError(f"Blocked request to internal hostname: {host}")
-
-        addr_info = _resolve_and_validate(host, port, scheme=_scheme_for_port(port))
-        sock = _connect_with_validated_ip(
-            addr_info,
-            timeout=timeout,
-            local_address=local_address,
-            socket_options=socket_options,
-        )
-        return SyncStream(sock)
-
-    # connect_unix_socket: 不参与 TCP 校验，保持父类语义不变。
-    def connect_unix_socket(  # type: ignore[override]
-        self,
-        path: str,
-        timeout: float | None = None,
-        socket_options: Iterable[tuple] | None = None,
-    ):
-        return super().connect_unix_socket(path, timeout=timeout, socket_options=socket_options)
 
 
 class _SafeAsyncBackend(httpcore._backends.auto.AutoBackend):
@@ -390,26 +317,6 @@ def _swap_pool_backend(pool: Any, backend: Any) -> None:
     pool._network_backend = backend  # noqa: SLF001 - httpcore 没有公开的 setter
 
 
-class SafeHTTPTransport(httpx.HTTPTransport):
-    """同步 HTTP 传输层：
-
-    * handle_request 在请求前对 URL 字符串做 SSRF 预检（快速失败）；
-    * 实际 socket.connect 由 ``_SafeSyncBackend`` 在建连时再次解析并校验
-      所有目标 IP，杜绝 DNS rebinding 窗口；
-    * 原始 Host / TLS SNI / 证书主机名校验保持 httpx 默认行为。
-    """
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        _swap_pool_backend(self._pool, _SafeSyncBackend())
-
-    def handle_request(self, request: httpx.Request) -> httpx.Response:
-        url_str = str(request.url)
-        if not is_safe_url(url_str):
-            raise ValueError(f"SSRF guard blocked request to unsafe URL: {url_str}")
-        return super().handle_request(request)
-
-
 class SafeAsyncHTTPTransport(httpx.AsyncHTTPTransport):
     """异步 HTTP 传输层：
 
@@ -430,31 +337,11 @@ class SafeAsyncHTTPTransport(httpx.AsyncHTTPTransport):
         return await super().handle_async_request(request)
 
 
-def create_safe_client(**kwargs: Any) -> httpx.Client:
-    """创建挂载了 ``SafeHTTPTransport`` 的同步 ``httpx.Client``。"""
-    if "transport" not in kwargs:
-        kwargs["transport"] = SafeHTTPTransport()
-    return httpx.Client(**kwargs)
-
-
 def create_safe_async_client(**kwargs: Any) -> httpx.AsyncClient:
     """创建挂载了 ``SafeAsyncHTTPTransport`` 的异步 ``httpx.AsyncClient``。"""
     if "transport" not in kwargs:
         kwargs["transport"] = SafeAsyncHTTPTransport()
     return httpx.AsyncClient(**kwargs)
-
-
-def check_redirect_url_safety(original_url: str, redirect_url: str) -> bool:
-    """校验重定向目标 URL 是否命中云元数据黑名单或 SSRF 防护。"""
-    if not redirect_url or not redirect_url.startswith(("http://", "https://")):
-        return True
-    if is_always_blocked_url(redirect_url):
-        logger.warning("Blocked redirect to cloud metadata address: %s -> %s", original_url, redirect_url)
-        return False
-    if not is_safe_url(redirect_url):
-        logger.warning("Blocked redirect to unsafe target: %s -> %s", original_url, redirect_url)
-        return False
-    return True
 
 
 class WebsitePolicyError(Exception):

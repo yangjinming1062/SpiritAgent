@@ -30,8 +30,6 @@ from .state import (
     last_activity,
     register_environment,
     resolve_container_task_id,
-    task_env_overrides,
-    task_env_overrides_lock,
 )
 
 __all__ = [
@@ -63,7 +61,5 @@ __all__ = [
     "set_sudo_password_callback",
     "start_cleanup_thread",
     "stop_cleanup_thread",
-    "task_env_overrides",
-    "task_env_overrides_lock",
     "unique_parent_dirs",
 ]

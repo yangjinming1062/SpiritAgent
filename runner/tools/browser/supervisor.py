@@ -126,10 +126,7 @@ class SupervisorSnapshot:
     pending_dialogs: tuple[PendingDialog, ...]
     recent_dialogs: tuple[DialogRecord, ...]
     frame_tree: dict[str, Any]
-    console_errors: tuple[ConsoleEvent, ...]
     active: bool
-    cdp_url: str
-    task_id: str
 
     def to_dict(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -269,7 +266,6 @@ class CDPSupervisor:
         # DialogManager.snapshot 单独加锁（锁 #2），不与 _state_lock 嵌套以避免锁序倒置。
         pending, recent = self._dialog_manager.snapshot()
         with self._state_lock:
-            console_errors = tuple(e for e in self._console_events if e.level in ("error", "exception"))
             active = self._active
             ft = self._build_frame_tree_locked()
 
@@ -277,10 +273,7 @@ class CDPSupervisor:
             pending_dialogs=pending,
             recent_dialogs=recent,
             frame_tree=ft,
-            console_errors=console_errors,
             active=active,
-            cdp_url=self.cdp_url,
-            task_id=self.task_id,
         )
 
     def _build_frame_tree_locked(self) -> dict[str, Any]:
@@ -299,8 +292,24 @@ class CDPSupervisor:
                 return None, None
             return frame, frame.cdp_session_id
 
-    def set_active_session_id(self, session_id: str | None) -> None:
+    def activate_tab_session(self, session_id: str) -> None:
+        """切到新 page session: 启用事件域并跟随 root_frame。
+
+        Page/Runtime 等域只在初始页启用过; 新 tab 的 session 不启用的话,
+        navigate 的导航/lifecycle 等待器收不到事件, 且 waiter 还拿着旧 tab 的 frame 键 — 每次导航固定空等超时。
+        """
         self._set_session(active=session_id)
+        for method, params in (
+            ("Page.enable", None),
+            ("Page.setLifecycleEventsEnabled", {"enabled": True}),
+            ("Runtime.enable", None),
+            ("Accessibility.enable", None),
+            ("DOM.enable", None),
+        ):
+            self.send_cdp(method, params, session_id=session_id)
+        ft = self.send_cdp("Page.getFrameTree", session_id=session_id)
+        root = ft.get("result", {}).get("frameTree", {}).get("frame", {}).get("id", "") if ft.get("ok") else ""
+        self._set_session(root_frame=root)
 
     def get_attached_targets(self) -> tuple[str | None, dict[str, dict[str, str]]]:
         with self._state_lock:
@@ -356,9 +365,18 @@ class CDPSupervisor:
 
         result = self.send_cdp("Target.closeTarget", {"targetId": tab_id})
         with self._state_lock:
-            self._attached_targets.pop(tab_id, None)
+            closed_session = self._attached_targets.pop(tab_id, {}).get("session_id")
             if closing_active:
-                self._set_session(active=self._current_sids().page)
+                # 改选任一存活会话; 被关的若是 page 会话本身, page 也要跟着换,
+                # 否则后续 send_cdp 默认路由进死会话, root_frame 采纳逻辑对新导航永久失效。
+                fallback = next(
+                    (info.get("session_id") for info in self._attached_targets.values() if info.get("session_id")),
+                    None,
+                )
+                if fallback is not None and self._current_sids().page == closed_session:
+                    self._set_session(page=fallback, active=fallback)
+                else:
+                    self._set_session(active=fallback)
         return result if not result.get("ok") else {"ok": True, "tab_id": tab_id}
 
     def send_cdp(
@@ -523,19 +541,11 @@ class CDPSupervisor:
     def snapshot_axtree(
         self,
         *,
-        full: bool = False,
         interactive_only: bool = False,
         max_depth: int = 50,
     ) -> dict[str, Any]:
         """抓取 AXTree 并生成 [ref=eN] 文本快照，同步在 DOM 中注入 aria-ref 属性。"""
-        return self._refs.snapshot_axtree(full=full, interactive_only=interactive_only, max_depth=max_depth)
-
-    async def _inject_aria_refs_async(self, refs_map: dict[str, dict[str, Any]], session_id: str | None) -> None:
-        await self._refs._inject_aria_refs_async(refs_map, session_id)
-
-    def _resolve_ref_center(self, ref: str, *, scroll_into_view: bool = True) -> tuple[float, float, str | None]:
-        """根据 ref、视觉角标序号或视口物理坐标定位并返回 (center_x, center_y, object_id)。"""
-        return self._refs._resolve_ref_center(ref, scroll_into_view=scroll_into_view)
+        return self._refs.snapshot_axtree(interactive_only=interactive_only, max_depth=max_depth)
 
     def click_ref(self, ref: str, *, wait_stable: bool = True, timeout_s: float = 0.2) -> dict[str, Any]:
         return self._input.click_ref(ref, wait_stable=wait_stable, timeout_s=timeout_s)
@@ -854,7 +864,7 @@ class CDPSupervisor:
 
     def screenshot_element(self, ref: str, path: str | Path | None = None) -> dict[str, Any]:
         try:
-            _, _, obj_id = self._resolve_ref_center(ref, scroll_into_view=False)
+            _, _, obj_id = self._refs._resolve_ref_center(ref, scroll_into_view=False)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -946,7 +956,7 @@ class CDPSupervisor:
             entry = self._pending_downloads.pop(guid, {})
         state = entry.get("state", "unknown")
         if state == "completed":
-            return {"ok": True, "filename": entry.get("filename", ""), "guid": guid}
+            return {"ok": True, "filename": entry.get("filename", ""), "path": entry.get("file_path", ""), "guid": guid}
         return {"ok": False, "error": f"download ended with state: {state}"}
 
     def _thread_main(self) -> None:
@@ -1041,6 +1051,16 @@ class CDPSupervisor:
             await asyncio.sleep(jitter)
             backoff = min(backoff * 2, _CDP_BACKOFF_MAX)
 
+    async def _enable_page_domains(self, session_id: str) -> None:
+        for method, params in (
+            ("Page.enable", None),
+            ("Page.setLifecycleEventsEnabled", {"enabled": True}),
+            ("Runtime.enable", None),
+            ("Accessibility.enable", None),
+            ("DOM.enable", None),
+        ):
+            await self._cdp(method, params, session_id=session_id)
+
     async def _attach_initial_page(self) -> None:
         resp = await self._cdp("Target.getTargets")
         targets = resp.get("result", {}).get("targetInfos", [])
@@ -1062,11 +1082,7 @@ class CDPSupervisor:
         ft_resp = await self._cdp("Page.getFrameTree", session_id=sid)
         self._set_session(root_frame=ft_resp.get("result", {}).get("frameTree", {}).get("frame", {}).get("id", ""))
 
-        await self._cdp("Page.enable", session_id=sid)
-        await self._cdp("Page.setLifecycleEventsEnabled", {"enabled": True}, session_id=sid)
-        await self._cdp("Runtime.enable", session_id=sid)
-        await self._cdp("Accessibility.enable", session_id=sid)
-        await self._cdp("DOM.enable", session_id=sid)
+        await self._enable_page_domains(sid)
         await self._cdp(
             "Browser.setDownloadBehavior",
             {"behavior": "allow", "eventsEnabled": True, "downloadPath": tempfile.gettempdir()},
@@ -1181,16 +1197,14 @@ class CDPSupervisor:
             self._on_download_progress(params)
 
     def _await_frame_navigated(self, frame_id: str) -> asyncio.Future:
-        loop = self._loop
-        fut: asyncio.Future = loop.create_future()
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
         bucket = self._frame_navigated_waiters.setdefault(frame_id, [])
         bucket.append(fut)
         fut.add_done_callback(lambda f, fid=frame_id: self._pop_waiter(self._frame_navigated_waiters, fid, f))
         return fut
 
     def _await_lifecycle(self, frame_id: str, name: str) -> asyncio.Future:
-        loop = self._loop
-        fut: asyncio.Future = loop.create_future()
+        fut: asyncio.Future = asyncio.get_running_loop().create_future()
         key = (frame_id, name)
         bucket = self._lifecycle_waiters.setdefault(key, [])
         bucket.append(fut)
@@ -1338,6 +1352,8 @@ class CDPSupervisor:
             entry = self._pending_downloads.get(guid)
             if entry is not None:
                 entry["state"] = state
+                if state == "completed":
+                    entry["file_path"] = params.get("filePath", "")
                 if state in ("completed", "canceled"):
                     entry["event"].set()
 

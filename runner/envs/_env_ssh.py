@@ -86,10 +86,16 @@ class SSHEnvironment(BaseEnvironment):
                 self.control_socket.unlink(missing_ok=True)
 
     def _create_askpass(self) -> Path | None:
-        """密码模式生成一次性 askpass 脚本；密钥认证（优先）或无密码时返回 None。"""
+        """密码模式生成一次性 askpass 脚本；密钥认证（优先）或无密码时返回 None。
+
+        文件名含 per-session 哈希: 多个 SSH 环境实例共存时互不覆盖, 各实例只清理自己的脚本。
+        """
         if self.key_path or not self.password:
             return None
-        path = self.control_dir / ("askpass.bat" if IS_WINDOWS else "askpass.sh")
+        path = self.control_dir / (
+            f"askpass-{hashlib.sha256(f'{self.user}@{self.host}:{self.port}'.encode()).hexdigest()[:16]}"
+            + (".bat" if IS_WINDOWS else ".sh")
+        )
         if IS_WINDOWS:
             escaped = self.password.translate(
                 str.maketrans({"%": "%%", "^": "^^", "&": "^&", "|": "^|", "<": "^<", ">": "^>", "(": "^(", ")": "^)"}),
@@ -343,7 +349,6 @@ class SSHEnvironment(BaseEnvironment):
         cmd_string: str,
         *,
         login: bool = False,
-        timeout: int = 120,
         stdin_data: str | None = None,
     ) -> subprocess.Popen:
         cmd = self._build_ssh_command()

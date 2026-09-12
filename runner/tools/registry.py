@@ -93,36 +93,6 @@ class ToolRegistry:
 
         return decorator
 
-    def register(
-        self,
-        name: str,
-        handler: Callable | None = None,
-        *,
-        toolset: str | None = None,
-        schema: dict | None = None,
-        check_fn: Callable[[], bool] | None = None,
-        **kwargs: Any,
-    ) -> Callable:
-        """直接调用形式注册工具(handler 与 schema 都必填)。"""
-        handler = handler or kwargs.pop("handler", None)
-        if not handler:
-            raise TypeError("registry.register requires a handler")
-        if schema is None:
-            raise TypeError(
-                f"registry.register({name!r}) requires a `schema=` argument (every tool must declare an explicit JSON Schema).",
-            )
-        if kwargs:
-            unknown = ", ".join(sorted(kwargs))
-            raise TypeError(f"registry.register got unexpected keyword arguments: {unknown}")
-        with self._lock:
-            self._tools[name] = handler
-            if toolset:
-                self._toolset[name] = toolset
-            self._schemas[name] = schema
-            if check_fn is not None:
-                self._check_fns[name] = check_fn
-        return handler
-
     def is_tool_available(self, name: str) -> bool:
         """能力探测的惰性检查 + TTL 缓存 + 瞬时失败抑制。
 
@@ -157,21 +127,6 @@ class ToolRegistry:
             self._check_fn_cache[name] = (ok, now, suppress_until)
         return ok
 
-    def clear_availability_cache(self) -> None:
-        """丢弃缓存的能力探测结果。"""
-        with self._lock:
-            self._check_fn_cache.clear()
-
-    def deregister(self, name: str) -> None:
-        """注销某个工具, 一并清掉它的能力探测缓存。"""
-        with self._lock:
-            self._tools.pop(name, None)
-            self._toolset.pop(name, None)
-            self._schemas.pop(name, None)
-            # 不清掉的话重新注册会静默复用旧 check_fn 及其缓存结果。
-            self._check_fns.pop(name, None)
-            self._check_fn_cache.pop(name, None)
-
     def get_all_tool_names(self) -> list[str]:
         """返回已注册工具名的快照(用于 ``get_schemas_for_llm`` 等过滤流程)。"""
         with self._lock:
@@ -194,7 +149,7 @@ class ToolRegistry:
             raise RuntimeError(
                 "Tool(s) registered without an explicit schema: "
                 + ", ".join(sorted(missing))
-                + ". Add `schema=...` to their register_tool() / register() call.",
+                + ". Add `schema=...` to their register_tool() call.",
             )
         return schemas
 
@@ -209,9 +164,9 @@ class ToolRegistry:
         excluded = excluded_tool_names(disabled_toolset_ids, {n for n, _ in items})
         return [schema for name, schema in items if name not in excluded and self.is_tool_available(name)]
 
-    def get_max_result_size(self, default: int | float | None = None) -> int | float:
-        """返回工具结果的大小上限; 未指定时回落到默认。"""
-        return default if default is not None else DEFAULT_MAX_RESULT_SIZE_CHARS
+    def get_max_result_size(self) -> int:
+        """返回工具结果的大小上限。"""
+        return DEFAULT_MAX_RESULT_SIZE_CHARS
 
     def dispatch(self, name: str, args: dict, **kwargs) -> str:
         """同步入口, 供沙箱内 RPC(``code_execution_tool``)调用; 返回 JSON 字符串。注意: 不可在已运行的事件循环内调用异步工具。"""
