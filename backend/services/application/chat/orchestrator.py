@@ -14,6 +14,7 @@ from modules.auth import ChatRequestClientContext
 from modules.conversation import Conversation, Message
 from modules.system import ChatRequest, PromptPreset
 
+from services.domains.companion import is_work_preset
 from services.domains.media import inline_video_parts, prune_videos_in_range
 from services.domains.memory import embed_memory_text
 from services.infrastructure.llm import (
@@ -36,7 +37,7 @@ from .persistence import (
     _persist_assistant_with_tool_calls_and_results,
     _persist_user_message,
 )
-from .prompt_presets import AUTOMATION_EXCLUDED_TOOL_NAMES
+from .prompt_presets import AUTOMATION_EXCLUDED_TOOL_NAMES, LIFE_SPACE_TOOL_NAMES
 from .streaming import _emit_llm_error, _ensure_tool_call_ids, _stream_llm_response
 from .tool_dispatch import _ToolDispatchContext
 from .turn_inputs import (
@@ -97,8 +98,10 @@ async def run_chat_turn(
             await emitter.send_json({"type": "error", "message": "Conversation not found"})
             return
         sid = str(conv.id)
-        effective_excluded_tool_names = excluded_tool_names | (
-            AUTOMATION_EXCLUDED_TOOL_NAMES if conv.is_automation else frozenset()
+        effective_excluded_tool_names = (
+            excluded_tool_names
+            | (AUTOMATION_EXCLUDED_TOOL_NAMES if conv.is_automation else frozenset())
+            | (LIFE_SPACE_TOOL_NAMES if is_work_preset(conv.system_preset_id) else frozenset())
         )
         if conv.is_automation:
             run_post_turn_tasks = False

@@ -26,7 +26,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.chat.native_memory import NativeMemory
-from services.domains.companion import build_outfit_extras, build_system_prompt_extras
+from services.domains.companion import build_outfit_extras, build_system_prompt_extras, is_work_preset
 from services.domains.configuration.desktop_config import DEFAULT_CONFIG
 from services.domains.conversation import (
     IM_KIND,
@@ -58,7 +58,13 @@ from services.infrastructure.llm import (
 )
 from services.infrastructure.tool_runtime import REGISTRY, schema_name
 
-from .prompt_presets import AUTOMATION_EXCLUDED_TOOL_NAMES, AUTOMATION_PRESET, DEFAULT_PRESET_ID, resolve_preset
+from .prompt_presets import (
+    AUTOMATION_EXCLUDED_TOOL_NAMES,
+    AUTOMATION_PRESET,
+    DEFAULT_PRESET_ID,
+    LIFE_SPACE_TOOL_NAMES,
+    resolve_preset,
+)
 from .system_prompt import build_system_prompt
 
 logger = get_logger(__name__)
@@ -392,6 +398,9 @@ async def build_turn_inputs(
     all_schemas = REGISTRY.get_all_schemas(user_id, user_settings=user_settings)
     if not include_companion_context:
         all_schemas = [schema for schema in all_schemas if schema_name(schema) not in AUTOMATION_EXCLUDED_TOOL_NAMES]
+    elif is_work_preset(conv.system_preset_id):
+        # 用 DB 原始 preset 判定（含 pm 别名）：工作会话不绑定生活空间工具，而非靠工具入口拒绝。
+        all_schemas = [schema for schema in all_schemas if schema_name(schema) not in LIFE_SPACE_TOOL_NAMES]
     persona = (
         (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
         if include_companion_context

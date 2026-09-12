@@ -36,7 +36,7 @@ from services.domains.companion.persona_service import (
 from services.domains.companion.personality_tagger import analyze_personality_tags
 from services.domains.companion.prompt_runtime import run_prompt_json
 from services.domains.companion.rig_type_selector import classify_species, select_rig_type
-from services.domains.companion.session_preset import is_life_preset, is_work_preset, resolve_session_preset
+from services.domains.companion.session_preset import is_life_preset, is_work_preset, resolve_session_profile
 from services.domains.companion.should_act import ALLOWED_ACTIONS, ShouldActResult, should_act
 from services.domains.companion.voice_catalog import (
     design_voice,
@@ -85,7 +85,7 @@ __all__ = [
     "read_today_summary",
     "record_interaction",
     "render_extras",
-    "resolve_session_preset",
+    "resolve_session_profile",
     "run_prompt_json",
     "schedule_personality_tag_refresh",
     "select_rig_type",

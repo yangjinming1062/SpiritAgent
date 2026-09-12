@@ -15,17 +15,22 @@ logger = get_logger(__name__)
 async def run_delegated_turn(action: DelegateAction, user_id: int, llm_config: dict, *, run_turn) -> str:
     """执行子 Agent 回合并把结果转换为父回合的 ToolResult 内容。
 
-    子回合继承父回合的 llm_config 与用户作用域；回合入口由调用方（orchestrator）注入，
-    避免模块级循环导入。输出经 HeadlessEmitter 捕获，以结构化的 final_text/error 取代
-    对输出 chunk 的拼接解析。
+    子回合继承父回合的 llm_config、用户作用域与会话类型（system_preset_id / is_automation）；
+    回合入口由调用方（orchestrator）注入，避免模块级循环导入。输出经 HeadlessEmitter 捕获，
+    以结构化的 final_text/error 取代对输出 chunk 的拼接解析。
     """
     try:
         # 仅用于插入 Conversation 行以获取 id；显式 commit 以便 run_chat_turn 能读到新会话。
         async with session_scope() as db:
+            parent_id = int(action.parent_session_id) if action.parent_session_id else None
+            parent = await db.get(Conversation, parent_id) if parent_id else None
             conv = Conversation(
                 user_id=user_id,
-                parent_id=int(action.parent_session_id) if action.parent_session_id else None,
+                parent_id=parent_id,
                 title="Subagent Task",
+                # 继承父会话类型：工作 / 自动化对话的子智能体拿对应预设与工具绑定，而不是伙伴人格。
+                system_preset_id=parent.system_preset_id if parent else None,
+                is_automation=parent.is_automation if parent else False,
             )
             db.add(conv)
             await db.commit()

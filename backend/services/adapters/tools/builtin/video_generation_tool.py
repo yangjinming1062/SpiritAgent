@@ -126,7 +126,11 @@ async def video_generate_status_tool(task_id: int, user_id: int | None = None, *
 
 VIDEO_GENERATION_SCHEMA = {
     "name": "video_generate",
-    "description": "Generate a short video from a text prompt (and optionally a first-frame image). Returns the video URL on success, or a pending marker with a task_id for long jobs. Default model: MiniMax-Hailuo-2.3 (v1 API: duration 6 or 10 seconds, resolution 512P/768P/1080P). If the deployment is configured with MiniMax-H3 (v2, paid plan) the limits are instead 4-15 seconds and 768P/2K, and aspect_ratio is mandatory for text-to-video. The provider URL is short-lived — we download and persist the video as a permanent user asset (companion-assets), served via the authenticated asset channel.",
+    "description": (
+        "Generate a short video from a text prompt (and optionally a first-frame image). "
+        "Returns the video URL on success, or a pending task_id for long jobs — check it later "
+        "with video_generate_status."
+    ),
     "parameters": {
         "type": "object",
         "properties": {

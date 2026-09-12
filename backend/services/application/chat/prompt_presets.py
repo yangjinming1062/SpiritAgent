@@ -136,14 +136,20 @@ AUTOMATION_PRESET = PromptPreset(
     icon_key="task",
     body=_BODY_AUTOMATION,
 )
-AUTOMATION_EXCLUDED_TOOL_NAMES = frozenset(
+# 生活空间工具只服务陪伴会话：工作预设与自动化任务在回合装配层（build_turn_inputs）与
+# search_tools 元工具同源过滤，压根不注入 schema，工具入口不再二次判定会话类型。
+LIFE_SPACE_TOOL_NAMES = frozenset(
     {
         "diary_write",
+        "moment_create",
+        "room_backdrop_update",
+    },
+)
+AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(
+    {
         "memory_forget",
         "memory_recall",
         "memory_retain",
-        "moment_create",
-        "room_backdrop_update",
         "send_message_tool",
         "session_search",
     },

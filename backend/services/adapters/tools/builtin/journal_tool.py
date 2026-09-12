@@ -4,22 +4,19 @@
 - 静止档禁止主动调用
 - moment_create 主动配额：每用户每天 3
 - 用户回合的「记下来」不算主动配额
-- 工作预设会话不刷生活时刻（开发计划 §7.4：developer / product_manager / copywriter / language_teacher）
+- 工作预设会话不绑定这两个工具（回合装配层过滤，见 prompt_presets.LIFE_SPACE_TOOL_NAMES）
 """
 
 import json
 from datetime import date
 from typing import Any
 
-from components import SESSION_LOCAL, get_logger, tool_error
+from components import SESSION_LOCAL, tool_error
 from modules.companion import DiarySource, MomentKind, MomentSource
 
-from services.domains.companion import is_work_preset, resolve_session_preset
 from services.domains.companion.disturbance import get_disturbance_tier
 from services.domains.journal import check_moment_llm_quota, create_user_moment, resolve_user_local_today, upsert_diary
 from services.infrastructure.tool_runtime.registry import REGISTRY
-
-logger = get_logger(__name__)
 
 _VALID_MOMENT_KINDS: frozenset[str] = frozenset(k.value for k in MomentKind)
 
@@ -54,15 +51,7 @@ async def moment_create_tool(
             session_id_int = int(parent_session_id)
         except (ValueError, TypeError):
             session_id_int = None
-    # 工作预设会话不刷生活时刻：与工作预设（developer/pm/copywriter/language_teacher）走自己的 LLM 上下文
     async with SESSION_LOCAL() as db:
-        preset = await resolve_session_preset(db, parent_session_id)
-        if is_work_preset(preset):
-            logger.info(
-                "moment_create skipped: work preset session",
-                extra={"user_id": user_id, "session_id": parent_session_id, "preset": preset},
-            )
-            return tool_error("这是工作对话，不写生活时刻。")
         if not await check_moment_llm_quota(db, user_id):
             return tool_error("今天记下的时刻已经够多了，明天再记录吧。")
         row = await create_user_moment(
@@ -85,7 +74,6 @@ async def diary_write_tool(
     title: str | None = None,
     user_id: int | None = None,
     disturbance_tier: str | None = None,
-    parent_session_id: str | None = None,
     **kwargs: Any,
 ) -> str:
     if user_id is None:
@@ -108,14 +96,6 @@ async def diary_write_tool(
             return tool_error(f"无效的日期格式 '{raw_date}'，必须为 YYYY-MM-DD")
 
     async with SESSION_LOCAL() as db:
-        preset = await resolve_session_preset(db, parent_session_id)
-        if is_work_preset(preset):
-            logger.info(
-                "diary_write skipped: work preset session",
-                extra={"user_id": user_id, "session_id": parent_session_id, "preset": preset},
-            )
-            return tool_error("这是工作对话，不写日记。")
-
         entry_date = target_date or await resolve_user_local_today(db, user_id)
         row = await upsert_diary(
             db,
@@ -132,13 +112,13 @@ async def diary_write_tool(
 
 MOMENT_CREATE_SCHEMA = {
     "name": "moment_create",
-    "description": "在用户生活空间时间线写一条时刻。系统已对主动配额（每用户每天 3）做节流；静止档与工作预设会话不调用。",
+    "description": "在用户生活空间时间线写一条时刻。主动记录每用户每天限 3 条。",
     "parameters": {
         "type": "object",
         "properties": {
             "title": {"type": "string", "description": "短标题（≤ 24 字）"},
             "body": {"type": "string", "description": "80–240 字的正文，第一人称或第二人称皆可"},
-            "emotion": {"type": "string", "description": "可选情绪 token（白名单见 emotion 枚举）"},
+            "emotion": {"type": "string", "description": "可选情绪 token，取值见系统提示中的 emotion 枚举"},
             "kind": {
                 "type": "string",
                 "enum": ["greeting", "emotion", "together", "milestone", "scene", "user"],
@@ -151,7 +131,7 @@ MOMENT_CREATE_SCHEMA = {
 
 DIARY_WRITE_SCHEMA = {
     "name": "diary_write",
-    "description": "在用户日记本追加一段（用户时区今天），第一人称；不覆盖用户已写过的当日内容（按追加段落处理）。静止档与工作预设会话不调用。",
+    "description": "在用户日记本追加一段（用户时区今天），第一人称；不覆盖用户已写过的当日内容（按追加段落处理）。",
     "parameters": {
         "type": "object",
         "properties": {

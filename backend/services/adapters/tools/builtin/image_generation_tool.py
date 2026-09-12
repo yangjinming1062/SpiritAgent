@@ -69,13 +69,7 @@ IMAGE_GENERATION_SIZES = [
 
 IMAGE_GENERATION_SCHEMA = {
     "name": "image_generate",
-    "description": (
-        "Generate an image from a text description. Returns the generated image URLs "
-        "(locally persisted as permanent user assets and served via the authenticated asset channel; "
-        "provider-hosted URLs only as a rare fallback). "
-        "Requires an image generation provider configured — default MiniMax image-01, also supports OpenAI DALL·E. "
-        "NOTE: Prohibited from replacing the companion room background. To update room backdrop, use 'room_backdrop_update'."
-    ),
+    "description": "Generate an image from a text description. Returns the generated image URLs.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -88,7 +82,7 @@ IMAGE_GENERATION_SCHEMA = {
             "size": {
                 "type": "string",
                 "enum": IMAGE_GENERATION_SIZES,
-                "description": "Output size. Pixel sizes (1024x1024, 1024x1792, 1792x1024) map to aspect ratios when the provider is MiniMax.",
+                "description": "Output size or aspect ratio.",
             },
             "n": {"type": "integer", "description": "Number of images to generate."},
         },

@@ -90,10 +90,10 @@
 - **生活空间房间图联动与保护**：房间背景将角色绘制进场景中，身份基准由头像种子图锚定，当前穿着由激活外观的全身立绘作为第二视觉参考并由着装描述补充。换装成功后（`worn=true`）自动比较着装指纹，不一致时下发 `companion.room.invalidated` 并自动触发重建，防止画面穿帮。房间政策为 `locked` 时，拒绝角色自主换房，但放行换装联动与用户显式请求；历史房间保留最近 5 张供回滚，回滚时若服装指纹与当前穿着冲突则返回 409。
 - **夜间自主活动目录、门控与顺序**：`User.nightly_activity_enabled` 是总控；`Persona.backdrop_policy`、`Persona.outfit_policy`、配置点键 `companion.autonomous_media` 与 `companion.autonomous_voice` 分别门控房间、外观、图片/视频和语音/配音，缺省均开放。Stage 2 与白天阈值记忆整理共享用户级进程内互斥；每次在调用 LLM 前读取带内容、标签、重要度和更新时间的源快照，LLM 返回后以条件删除的短事务核对全部源行，任一行被编辑或删除即整体回滚并丢弃旧摘要，数据库连接及行锁不得跨 LLM 等待持有。Stage 3 将运行时可用的 `outfit.wear`、`outfit.create`、`room.change`、`moment.create`、`media.image`、`media.video`、`media.voice`、`outreach.schedule` 目录交给 LLM，模型可返回任意小组合或空列表；服务层拒绝目录外能力并按外观 → 房间 → 片刻/媒体 → 联系执行，动作开始前再次读取政策。计划与动作状态分别持久化在 `nightly_activity_logs.payload.nightly_plan` 与 `nightly_activity_actions`；可核对的长任务携内部任务 id 沿同一业务记录恢复，无法确认的在途动作标记 `interrupted` 且不重复提交。最近一个中断日期可在休息窗口外沿原参考日恢复，超过一日本地恢复窗口则终止未确认动作。成功事实写入 `recall:nightly_actions:<date>`、两套日记输入和问候提示，失败/跳过不冒充事实。`BackdropOrigin.NIGHTLY` 不消费在线 LLM 换房的 24 小时配额；夜间片刻与主陪伴消息、消息 outbox 在同一事务写入；消息媒体支持 image/video/audio 与可选配音 audio_url，持久化保存永久资产路径，读取经鉴权资产通道加载。无当日消息不阻断 Stage 3。白天打扰档位不参与夜间决策，但一次性 `special` 问候到期时仅在用户在线且不处于静止档时派发，并由 `CronJob.expires_at` 保留至目标本地日结束。
 - **时刻与日记分层不变量**：底层 `memories` 向量表仅用于混合语义检索与系统提示词注入，不对客户端暴露为可读列表；生活空间消费独立的 `moments`（时刻）与 `diary_entries`（第一人称日记）。夜间批处理静默提炼日记，若当天已被用户编辑过则采取尾部段落追加而非覆写；工作预设会话中严格禁止记录生活时刻。
-- **内置专属工具门控**：
+- **内置专属工具门控**：生活空间三工具只绑定陪伴会话——工作预设与自动化任务在回合装配层即不注入 schema（`prompt_presets.LIFE_SPACE_TOOL_NAMES`，`build_turn_inputs` 与 `search_tools` 同源过滤），派发层按同一集合硬阻断（orchestrator，与 automation 同机制），工具入口不判定会话类型；静止档由工具入口人格化拒绝。
   - `room_backdrop_update`（args: intent, notes?）：角色自主换房。静止档禁止调用；locked 政策拒绝；每日角色自主换房成功 ≤ 1 次；常规档限 decorate/mood，rebuild 仅自主档或用户显式操作放行。
-  - `moment_create`（args: title, body, emotion?, kind?）：角色主动记录时刻。静止档禁止调用；每日角色主动配额 ≤ 3 次；工作预设会话中禁止调用。
-  - `diary_write`（args: body, mood?, date?）：角色主动写日记。静止档禁止调用；工作预设会话中禁止调用。
+  - `moment_create`（args: title, body, emotion?, kind?）：角色主动记录时刻。静止档禁止调用；每日角色主动配额 ≤ 3 次。
+  - `diary_write`（args: body, mood?, date?）：角色主动写日记。静止档禁止调用。
 
 ### 1.3 事件类型
 

@@ -141,11 +141,11 @@ async def cronjob(
 
 CRONJOB_SCHEMA = {
     "name": "cronjob",
-    "description": "Manage scheduled cron jobs. Jobs are checked against their schedules and executed.",
+    "description": "Manage the user's scheduled cron jobs.",
     "parameters": {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "description": "One of: create, list, update, pause, resume, remove."},
+            "action": {"type": "string", "description": "One of: create, list, update, get, pause, resume, remove."},
             "job_id": {"type": "integer", "description": "Required for update/pause/resume/remove."},
             "prompt": {"type": "string", "description": "For create: the full prompt/instructions for the job."},
             "schedule": {

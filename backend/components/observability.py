@@ -30,7 +30,7 @@ ROOM_BACKDROP_IMAGES_TOTAL = Counter(
 # LLM 主动触发房间图的当日成功计数（按用户本地日统计在应用层；这里只打原始事件）。
 ROOM_BACKDROP_LLM_TRIGGERS_TOTAL = Counter(
     "spiritagent_room_backdrop_llm_triggers_total",
-    "LLM-triggered room backdrop tool calls by outcome (accepted / rejected_locked / rejected_quota / rejected_work_preset / rejected_silent)",
+    "LLM-triggered room backdrop tool calls by outcome (accepted / rejected_locked / rejected_quota / rejected_silent)",
     ["outcome"],
 )
 # 失败的人格化 utterance 标签（避免暴露 provider 名）

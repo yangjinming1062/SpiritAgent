@@ -6,13 +6,13 @@
 - 主动配额：每用户每 24h origin=llm 成功 ≤ 1
 - ``rebuild`` 仅自主档或用户 HTTP 请求（门控在 persona definition / 调度层判定，工具只把 intent 透传）
 - 常规档只允许 ``decorate`` / ``mood``
-- 工作预设会话（developer / pm / copywriter / language_teacher）不触发换房：工作面与生活空间视觉解耦
+- 工作预设会话不绑定本工具（回合装配层过滤，见 prompt_presets.LIFE_SPACE_TOOL_NAMES）
 """
 
 import json
 from typing import Any
 
-from components import ROOM_BACKDROP_LLM_TRIGGERS_TOTAL, SESSION_LOCAL, get_logger, tool_error
+from components import ROOM_BACKDROP_LLM_TRIGGERS_TOTAL, get_logger, tool_error
 
 from services.application.generation import (
     BackdropIntent,
@@ -22,7 +22,6 @@ from services.application.generation import (
     RoomBackdropQuotaExceededError,
     schedule_room_generation,
 )
-from services.domains.companion import is_work_preset, resolve_session_preset
 from services.domains.companion.disturbance import get_disturbance_tier
 from services.infrastructure.tool_runtime.registry import REGISTRY
 
@@ -49,7 +48,6 @@ async def room_backdrop_update_tool(
     notes: str | None = None,
     user_id: int | None = None,
     disturbance_tier: str | None = None,
-    parent_session_id: str | None = None,
     **kwargs: Any,
 ) -> str:
     """LLM 主动更新房间图：换气氛 / 换季节 / 调心情 / 重建。"""
@@ -72,16 +70,6 @@ async def room_backdrop_update_tool(
     if tier == "normal" and norm_intent not in _NORMAL_TIER_INTENTS:
         ROOM_BACKDROP_LLM_TRIGGERS_TOTAL.labels(outcome="rejected_tier").inc()
         return tool_error("现在不适宜大改房间，先说点别的吧。")
-    # 工作预设会话不触发换房：工作面对话不应驱动生活空间视觉
-    async with SESSION_LOCAL() as db:
-        preset = await resolve_session_preset(db, parent_session_id)
-        if is_work_preset(preset):
-            ROOM_BACKDROP_LLM_TRIGGERS_TOTAL.labels(outcome="rejected_work_preset").inc()
-            logger.info(
-                "room_backdrop_update skipped: work preset session",
-                extra={"user_id": user_id, "session_id": parent_session_id, "preset": preset},
-            )
-            return tool_error("这是工作对话，不动房间。")
     try:
         row = await schedule_room_generation(
             user_id,
@@ -106,14 +94,18 @@ async def room_backdrop_update_tool(
 
 ROOM_BACKDROP_UPDATE_SCHEMA = {
     "name": "room_backdrop_update",
-    "description": "主动调整生活空间的房间图（背景）。常见用法：换个心情、把窗帘调暗一点、整理一下桌面。角色必须出现在画面中（姿势自然、与房间融为一体）。需要 LLM 主动配额（每用户每 24h 一次），政策锁住时返回人格化拒绝；工作预设会话不调用。",
+    "description": (
+        "主动调整生活空间的房间图（背景），是更换房间背景的唯一入口——不要用 image_generate "
+        "生成图片充当背景。常见用法：换个心情、把窗帘调暗一点、整理一下桌面。"
+        "角色必须出现在画面中（姿势自然、与房间融为一体）。主动调用每用户每 24h 限一次。"
+    ),
     "parameters": {
         "type": "object",
         "properties": {
             "intent": {
                 "type": "string",
                 "enum": ["decorate", "seasonal", "mood", "rebuild"],
-                "description": "意图：decorate=重新布置 / seasonal=换季 / mood=调心情 / rebuild=大改（仅自主档或用户 HTTP 触发可用）。",
+                "description": "意图：decorate=重新布置 / seasonal=换季 / mood=调心情 / rebuild=大改（仅自主档或用户明确要求时可用）。",
             },
             "notes": {
                 "type": "string",

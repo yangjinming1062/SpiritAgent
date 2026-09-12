@@ -1,4 +1,4 @@
-"""会话系统预设判定：判断当前回合是否落在工作预设会话（不应写生活空间时刻/日记/房间图）。"""
+"""会话类型判定：工作预设集合与供工具装配层读取的最小会话档案（预设 + 自动化标记）。"""
 
 from modules.conversation import Conversation
 from sqlalchemy import select
@@ -15,13 +15,17 @@ def is_work_preset(preset_id: str | None) -> bool:
     return preset_id in _WORK_PRESETS
 
 
-async def resolve_session_preset(db: AsyncSession, session_id: int | str | None) -> str | None:
+async def resolve_session_profile(db: AsyncSession, session_id: int | str | None) -> tuple[str | None, bool]:
+    """返回会话的 ``(system_preset_id, is_automation)``；未知 / 非法 session 一律回落 (None, False)。"""
     if session_id is None:
-        return None
+        return None, False
     try:
         sid_int = int(session_id)
     except (TypeError, ValueError):
-        return None
-    return (
-        await db.execute(select(Conversation.system_preset_id).where(Conversation.id == sid_int))
-    ).scalar_one_or_none()
+        return None, False
+    row = (
+        await db.execute(
+            select(Conversation.system_preset_id, Conversation.is_automation).where(Conversation.id == sid_int),
+        )
+    ).one_or_none()
+    return (row.system_preset_id, row.is_automation) if row is not None else (None, False)
