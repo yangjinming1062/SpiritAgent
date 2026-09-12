@@ -1,8 +1,6 @@
 import type { App, BrowserWindow, Net, SafeStorage } from 'electron'
 
-import type { BackendHttp } from '../backend/http'
-import type { BackendSession, createBackendSession, SessionSnapshot } from '../backend/session'
-import type { autoStartBridge, autoStopBridge } from '../ipc/runner'
+import type { BackendHttpPort, BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
 import type { buildClientContext } from '../shared/client-context'
 
 import type { createRunnerBridge, RunnerBridge } from './bridge'
@@ -15,17 +13,24 @@ export interface RunnerBridgeDeps {
   atomicWriteFile: (path: string, content: Buffer | string | Uint8Array) => Promise<void>
   autoStartBridge: () => void
   autoStopBridge: () => void
-  backendSession: null | BackendSession
-  broadcastAuthChanged: (snapshot: null | SessionSnapshot) => void
+  backendSession: null | BackendSessionPort
+  broadcastAuthChanged: (snapshot: null | SessionSnapshotPort) => void
   buildClientContext: () => ReturnType<typeof buildClientContext>
-  createBackendSession: typeof createBackendSession
+  createBackendSession: (options: {
+    appVersion: string
+    defaultBaseUrl: null | string
+    fetchImpl: (url: string, options?: RequestInit) => Promise<Response>
+    log: (chunk: string) => void
+    safeStorage: SafeStorage
+    userDataDir: string
+  }) => BackendSessionPort
   createReverseRpc: typeof createReverseRpc
   createRunnerBridge: typeof createRunnerBridge
   createRunnerProcess: typeof createRunnerProcess
   createRunnerWsServer: typeof createRunnerWsServer
   electronNet: Net
-  ensureBackendSession: () => BackendSession
-  fetchJson: BackendHttp['fetchJson']
+  ensureBackendSession: () => BackendSessionPort
+  fetchJson: BackendHttpPort['fetchJson']
   fileExists: (path: string) => boolean
   getMainWindow: () => BrowserWindow | null
   getSpriteWindow: () => BrowserWindow | null
@@ -34,7 +39,7 @@ export interface RunnerBridgeDeps {
   rebuildTrayMenu: () => void
   rememberLog: (chunk: string) => void
   resetBackendCache: () => void
-  resolveSpiritAgentVersion: BackendHttp['resolveSpiritAgentVersion']
+  resolveSpiritAgentVersion: () => string
   rewireAuthToken: () => void
   runnerBridge: null | RunnerBridge
   safeStorage: SafeStorage
@@ -45,12 +50,12 @@ export interface RunnerBridgeDeps {
 export interface CreateBridgeDepsGlobals {
   app: Pick<App, 'getPath'>
   atomicWriteFile: RunnerBridgeDeps['atomicWriteFile']
-  autoStartBridge: typeof autoStartBridge
-  autoStopBridge: typeof autoStopBridge
-  backendHttp: BackendHttp
+  autoStartBridge: (deps: RunnerBridgeDeps) => void
+  autoStopBridge: (deps: RunnerBridgeDeps) => void
+  backendHttp: BackendHttpPort
   broadcastAuthChanged: RunnerBridgeDeps['broadcastAuthChanged']
   buildClientContext: typeof buildClientContext
-  createBackendSession: typeof createBackendSession
+  createBackendSession: RunnerBridgeDeps['createBackendSession']
   createReverseRpc: typeof createReverseRpc
   createRunnerBridge: typeof createRunnerBridge
   createRunnerProcess: typeof createRunnerProcess
@@ -102,7 +107,8 @@ export function createBridgeDeps(globals: CreateBridgeDepsGlobals): RunnerBridge
       deps.backendSession = globals.createBackendSession({
         appVersion: globals.backendHttp.resolveSpiritAgentVersion(),
         defaultBaseUrl: globals.readStoredBackendUrl(globals.spiritagentHome) || null,
-        fetchImpl: (url, options) => globals.electronNet.fetch(url, options),
+        fetchImpl: (url: string, options?: RequestInit) =>
+          globals.electronNet.fetch(url, options as Parameters<typeof globals.electronNet.fetch>[1]),
         log: chunk => globals.rememberLog(chunk),
         safeStorage: globals.safeStorage,
         userDataDir: globals.app.getPath('userData')
@@ -111,7 +117,7 @@ export function createBridgeDeps(globals: CreateBridgeDepsGlobals): RunnerBridge
       try {
         deps.backendSession
           .restoreSession()
-          .then((snapshot: null | SessionSnapshot) => {
+          .then((snapshot: null | SessionSnapshotPort) => {
             if (snapshot) {
               globals.broadcastAuthChanged(snapshot)
               deps.autoStartBridge()

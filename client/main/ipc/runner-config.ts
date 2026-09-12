@@ -1,12 +1,25 @@
 import { IPC, type RunnerConfigPatch } from '@ipc/contracts'
-import type { IpcMain } from 'electron'
+import type { IpcMain, WebContents } from 'electron'
 
 import * as store from '../shared/lib/runner-config-store'
 import { errorMessage } from '../shared/utils'
 
-export function registerRunnerConfigIpc({ ipcMain }: { ipcMain: IpcMain }): void {
-  ipcMain.handle(IPC.invoke.runnerConfigRead, async () => {
+interface RunnerConfigIpcDeps {
+  ipcMain: IpcMain
+  /** 仅工作台等授权窗可读写完整本机配置；缺省时全部拒绝。 */
+  isAuthorizedSender?: (event: { sender: WebContents }) => boolean
+}
+
+export function registerRunnerConfigIpc({ ipcMain, isAuthorizedSender }: RunnerConfigIpcDeps): void {
+  const assertAuthorized = (event: { sender: WebContents }): void => {
+    if (!isAuthorizedSender?.(event)) {
+      throw new Error('runner config access is restricted to the workbench window')
+    }
+  }
+
+  ipcMain.handle(IPC.invoke.runnerConfigRead, async event => {
     try {
+      assertAuthorized(event)
       const content = JSON.stringify(store.read(), null, 2)
 
       return { content, ok: true }
@@ -17,7 +30,13 @@ export function registerRunnerConfigIpc({ ipcMain }: { ipcMain: IpcMain }): void
     }
   })
 
-  ipcMain.handle(IPC.invoke.runnerConfigWrite, async (_event, newContent: unknown) => {
+  ipcMain.handle(IPC.invoke.runnerConfigWrite, async (event, newContent: unknown) => {
+    try {
+      assertAuthorized(event)
+    } catch (error: unknown) {
+      return { error: errorMessage(error), ok: false }
+    }
+
     if (typeof newContent !== 'string') {
       return { error: 'config content must be a string', ok: false }
     }
@@ -39,7 +58,13 @@ export function registerRunnerConfigIpc({ ipcMain }: { ipcMain: IpcMain }): void
     return store.write(obj as Record<string, unknown>)
   })
 
-  ipcMain.handle(IPC.invoke.runnerConfigPatch, async (_event, patch?: RunnerConfigPatch) => {
+  ipcMain.handle(IPC.invoke.runnerConfigPatch, async (event, patch?: RunnerConfigPatch) => {
+    try {
+      assertAuthorized(event)
+    } catch (error: unknown) {
+      return { error: errorMessage(error), ok: false }
+    }
+
     if (!patch || !Array.isArray(patch.path) || patch.path.length === 0) {
       return { error: 'patch.path must be a non-empty array', ok: false }
     }

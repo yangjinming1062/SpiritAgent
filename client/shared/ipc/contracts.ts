@@ -135,7 +135,6 @@ export function normalizeUiTheme(raw: unknown): SpiritAgentUiTheme {
 
 // 入口面：互斥的两个 BrowserWindow。"closed" 仅渲染层用作占位，不进主进程 IPC 边界。
 export type SurfaceId = 'living' | 'workbench'
-export const SPIRITAGENT_SURFACES = ['living', 'workbench'] as const satisfies readonly SurfaceId[]
 
 export function normalizeSurfaceId(raw: unknown): SurfaceId {
   return raw === 'workbench' ? 'workbench' : 'living'
@@ -160,18 +159,6 @@ export interface DesktopSurfaceChangedEvent {
   bounds?: DesktopSurfaceBounds | null
   lastSurface: SurfaceId
   open: null | SurfaceId
-}
-
-export function getThemeBackgroundColor(theme?: SpiritAgentUiTheme): string {
-  if (theme === 'night' || theme === 'night-clear') {
-    return '#0e0f14'
-  }
-
-  if (theme === 'day') {
-    return '#f8f7f5'
-  }
-
-  return '#f4f6fa'
 }
 
 export interface DesktopUiThemeBroadcast {
@@ -364,7 +351,6 @@ export interface IpcInvokeContract {
   // 入口面（互斥 living / workbench）
   'spiritagent:surface:open': (payload: DesktopSurfaceOpenPayload) => Promise<void> | void
   'spiritagent:surface:close': () => Promise<void> | void
-  'spiritagent:surface:focus': () => Promise<void> | void
   'spiritagent:surface:minimize': () => Promise<void> | void
   'spiritagent:surface:maximize': () => Promise<void> | void
   'spiritagent:surface:is-maximized': () => Promise<boolean> | boolean
@@ -394,7 +380,6 @@ export interface IpcInvokeContract {
   'spiritagent:chat:take-pending-feed': () => Promise<string[]> | string[]
   'spiritagent:selectPaths': (options?: SpiritAgentSelectPathsOptions) => Promise<string[]> | string[]
   'spiritagent:writeClipboard': (text: string) => boolean | Promise<boolean>
-  'spiritagent:saveClipboardImage': () => Promise<string> | string
   'spiritagent:log:emit': (payload: {
     args: unknown[]
     level: 'error' | 'info' | 'warn'
@@ -456,7 +441,6 @@ export interface IpcInvokeContract {
   'spiritagent:shortcuts:set': (
     payload: DesktopShortcutsSetPayload
   ) => DesktopShortcutsState | Promise<DesktopShortcutsState>
-  'spiritagent:shortcuts:reset': () => DesktopShortcutsState | Promise<DesktopShortcutsState>
 
   // 更新
   'spiritagent:update:check': () => Promise<void> | void
@@ -510,7 +494,7 @@ export interface IpcSendContract {
 
 type IpcChannel = keyof IpcInvokeContract
 export type IpcEventChannel = keyof IpcEventContract
-export type IpcSendChannel = keyof IpcSendContract
+type IpcSendChannel = keyof IpcSendContract
 
 // 运行时 channel 常量。用扁平键(camelCase)避免 `Record<string, Record<string, ...>>`
 // 守卫无法适配混合扁平/嵌套 channel 名的结构问题。每个叶子字符串都必须
@@ -538,7 +522,6 @@ export const IPC = {
     chatTakePendingFeed: 'spiritagent:chat:take-pending-feed',
     selectPaths: 'spiritagent:selectPaths',
     writeClipboard: 'spiritagent:writeClipboard',
-    saveClipboardImage: 'spiritagent:saveClipboardImage',
     logEmit: 'spiritagent:log:emit',
     version: 'spiritagent:version',
     runnerInvoke: 'spiritagent:runner:invoke',
@@ -550,10 +533,8 @@ export const IPC = {
     runnerConfigPatch: 'spiritagent:runner-config:patch',
     shortcutsGet: 'spiritagent:shortcuts:get',
     shortcutsSet: 'spiritagent:shortcuts:set',
-    shortcutsReset: 'spiritagent:shortcuts:reset',
     surfaceOpen: 'spiritagent:surface:open',
     surfaceClose: 'spiritagent:surface:close',
-    surfaceFocus: 'spiritagent:surface:focus',
     surfaceMinimize: 'spiritagent:surface:minimize',
     surfaceMaximize: 'spiritagent:surface:maximize',
     surfaceIsMaximized: 'spiritagent:surface:is-maximized',

@@ -1,14 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import {
-  type DesktopAuthBroadcast,
-  type DesktopAuthSnapshot,
-  type DesktopSurfaceOpenPayload,
-  IPC,
-  type SurfaceId
-} from '@ipc/contracts'
-import { sleep } from '@runtime'
+import { type DesktopAuthBroadcast, type DesktopAuthSnapshot, IPC } from '@ipc/contracts'
 import {
   app,
   BrowserWindow,
@@ -26,6 +19,7 @@ import {
 } from 'electron'
 import log from 'electron-log/main'
 
+import { BackendRequestError, createBackendClient } from './backend/client'
 import { createEnsureBackend } from './backend/ensure-backend'
 import { createBackendHttp } from './backend/http'
 import { createBackendSession, type SessionSnapshot } from './backend/session'
@@ -44,7 +38,7 @@ import { autoStartBridge, autoStopBridge, registerRunnerIpc } from './ipc/runner
 import { registerRunnerConfigIpc } from './ipc/runner-config'
 import { cleanupShortcuts, registerShortcutsIpc, syncShortcutsFromConfig } from './ipc/shortcuts'
 import { registerSkillsIpc } from './ipc/skills'
-import { readRestPosition, registerSpriteIpc } from './ipc/sprite'
+import { registerSpriteIpc } from './ipc/sprite'
 import { registerSystemIpc } from './ipc/system'
 import { registerUiThemeIpc } from './ipc/ui-theme'
 import { registerUpdateIpc } from './ipc/update'
@@ -56,6 +50,8 @@ import { createMenu } from './lifecycle/menu'
 import { createOpenExternalUrl } from './lifecycle/open-external-url'
 import { detectRemoteDisplay } from './lifecycle/platform'
 import { createRendererPaths, unpackedPathFor } from './lifecycle/renderer-paths'
+import { createSpriteWindowFactory, getWindowState as readSpriteWindowState } from './lifecycle/sprite-window'
+import { createSurfaceWindowFactory } from './lifecycle/surface-window'
 import { createSurfacesManager, type SurfacesManager } from './lifecycle/surfaces'
 import {
   destroyTray,
@@ -73,6 +69,7 @@ import { createBridgeDeps } from './runner/bridge-deps'
 import { createRunnerProcess } from './runner/process'
 import { createReverseRpc } from './runner/reverse-rpc'
 import { createRunnerWsServer } from './runner/rpc-ws'
+import { RunnerUpdater } from './runner/updater'
 import {
   DATA_URL_READ_MAX_BYTES,
   DEFAULT_CSP_POLICY,
@@ -116,7 +113,6 @@ if (process.env.SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK !== '1') {
 let pendingSecondInstance = false
 let mainWindow: BrowserWindow | null = null
 let surfaces: null | SurfacesManager = null
-let spriteBoundsListenerInstalled = false
 let getAuthToken = (): string | null => null
 
 const onEarlySecondInstance = (): void => {
@@ -161,15 +157,6 @@ const rememberLog = (chunk: unknown): void => desktopLogger.rememberLog(chunk)
 runnerConfigStore.init({ spiritagentHome: SPIRITAGENT_HOME })
 
 const APP_NAME = '唤生'
-const TITLEBAR_HEIGHT = 34
-const MACOS_TRAFFIC_LIGHTS_HEIGHT = 14
-
-const WINDOW_BUTTON_POSITION = {
-  x: 24,
-  y: TITLEBAR_HEIGHT / 2 - MACOS_TRAFFIC_LIGHTS_HEIGHT / 2
-}
-
-const NATIVE_OVERLAY_BUTTON_WIDTH = 144
 
 const backendHttp = createBackendHttp({
   app,
@@ -194,8 +181,10 @@ const { ensureBackend, resetBackendCache, setCachedWsUrl } = createEnsureBackend
 // 云端配置同步协调器：backend user_settings 为真源，desktop-settings.json 是镜像
 // （terminal/spiritagent 等机密与设备相关节仅本机，见 shared/lib/config-sync.ts）。
 const configSync = createConfigSync({
+  createBackendClient: ({ baseUrl }) =>
+    createBackendClient({ baseUrl, fetch: (url, init) => electronNet.fetch(url, init) }),
   ensureBackend: () => ensureBackend(),
-  fetchImpl: (url, init) => electronNet.fetch(url, init),
+  isRetryableError: error => error instanceof BackendRequestError && (error.isNetwork || error.isServerError),
   log: chunk => rememberLog(chunk),
   onHydrated: payload => {
     // payload 已由 config-sync 的 buildPrefsHydratedFromConfig 统一构造（含主题规范化）。
@@ -244,7 +233,7 @@ registerMediaProtocolScheme()
 
 const zoomPersistence = createZoomPersistence({ app, rememberLog })
 
-const contextMenuHelpers = createContextMenuHelpers({ app, electronNet })
+const contextMenuHelpers = createContextMenuHelpers({ electronNet })
 
 const openExternalUrl = createOpenExternalUrl(chunk => rememberLog(chunk))
 
@@ -273,207 +262,49 @@ const windowHandlers = createWindowHandlers({
   zoomPersistence
 })
 
-function getWindowButtonPosition(): { x: number; y: number } | null {
-  if (!IS_MAC) {
-    return null
-  }
-
-  return mainWindow?.getWindowButtonPosition?.() || WINDOW_BUTTON_POSITION
+function getAppIconPath(): null | string {
+  return APP_ICON_PATHS.find(fileExists) || null
 }
 
-function getNativeOverlayWidth(): number {
-  return IS_MAC ? 0 : NATIVE_OVERLAY_BUTTON_WIDTH
-}
+const SPRITE_TRANSPARENT = !REMOTE_DISPLAY_REASON
+const PRELOAD_PATH = path.join(import.meta.dirname, 'preload.cjs')
+
+const { createSpriteWindow } = createSpriteWindowFactory({
+  app,
+  bootProgress,
+  getAppIconPath,
+  getMainWindow: () => mainWindow,
+  installCloseInterceptor,
+  isMac: IS_MAC,
+  preloadPath: PRELOAD_PATH,
+  rendererUrlFor,
+  setMainWindow: win => {
+    mainWindow = win
+  },
+  spriteTransparent: SPRITE_TRANSPARENT,
+  windowHandlers,
+  zoomPersistence
+})
+
+const { createSurfaceWindow, navigateSurfaceWindow } = createSurfaceWindowFactory({
+  app,
+  appName: APP_NAME,
+  getAppIconPath,
+  getSurfaces: () => surfaces,
+  isMac: IS_MAC,
+  preloadPath: PRELOAD_PATH,
+  rebuildTrayMenu,
+  rendererUrlFor,
+  windowHandlers,
+  zoomPersistence
+})
 
 function getWindowState(): {
   isFullscreen: boolean
   nativeOverlayWidth: number
   windowButtonPosition: { x: number; y: number } | null
 } {
-  return {
-    isFullscreen: Boolean(mainWindow?.isFullScreen?.()),
-    nativeOverlayWidth: getNativeOverlayWidth(),
-    windowButtonPosition: getWindowButtonPosition()
-  }
-}
-
-function getAppIconPath(): null | string {
-  return APP_ICON_PATHS.find(fileExists) || null
-}
-
-const SPRITE_TRANSPARENT = !REMOTE_DISPLAY_REASON
-
-function applySpriteBounds(preferredOrigin?: { x: number; y: number }): void {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    return
-  }
-
-  // 贴住窗口当前覆盖的那块显示器（或启动时包含 preferredOrigin 的那块），
-  // 而不是每次都弹回主显示器——精灵必须停留在用户拖到的那块显示器上。
-  // 当原显示器被拔掉时，getDisplayMatching 会回退到最近的那块。
-  const base = preferredOrigin
-    ? { height: 1, width: 1, x: preferredOrigin.x, y: preferredOrigin.y }
-    : mainWindow.getBounds()
-
-  mainWindow.setBounds(screen.getDisplayMatching(base).workArea)
-}
-
-function createSpriteWindow(): void {
-  const icon = getAppIconPath() || undefined
-  mainWindow = new BrowserWindow({
-    alwaysOnTop: true,
-    backgroundColor: '#00000000',
-    frame: false,
-    hasShadow: false,
-    height: 320,
-    movable: false,
-    resizable: false,
-    show: false,
-    skipTaskbar: true,
-    // `type: 'panel'` 仅适用于 macOS（Cocoa NSPanel）；在 Win/Linux 上设置会输出 deprecation 警告。
-    type: IS_MAC ? 'panel' : undefined,
-    transparent: SPRITE_TRANSPARENT,
-    webPreferences: {
-      backgroundThrottling: false,
-      contextIsolation: true,
-      devTools: !app.isPackaged,
-      nodeIntegration: false,
-      preload: path.join(import.meta.dirname, 'preload.cjs'),
-      sandbox: true
-    },
-    width: 480
-  })
-
-  applySpriteBounds(readRestPosition(app.getPath('userData'))?.origin)
-  mainWindow.setIgnoreMouseEvents(true, { forward: SPRITE_TRANSPARENT })
-
-  // macOS 用 'screen-saver' z-band（位于 floating 之上，能压过 exclusive fullscreen 游戏）；
-  // Win/Linux 回退 'floating'。Windows 的 exclusive fullscreen 完全绕过 DWM，
-  // 伙伴窗口无法覆盖在上面（已记录的限制）。
-  if (IS_MAC) {
-    mainWindow.setAlwaysOnTop(true, 'screen-saver', 1)
-  } else {
-    mainWindow.setAlwaysOnTop(true, 'floating')
-  }
-
-  if (IS_MAC && icon) {
-    app.dock?.setIcon(icon)
-  }
-
-  if (!spriteBoundsListenerInstalled) {
-    spriteBoundsListenerInstalled = true
-    screen.on('display-metrics-changed', () => applySpriteBounds())
-  }
-
-  windowHandlers.installStandardWindowHandlers(mainWindow)
-  installCloseInterceptor(mainWindow)
-
-  void mainWindow.loadURL(rendererUrlFor('sprite'))
-  mainWindow.webContents.once('did-finish-load', () => {
-    zoomPersistence.restorePersistedZoomLevel(mainWindow)
-    bootProgress.broadcast()
-    mainWindow?.showInactive()
-  })
-}
-
-// 入口面互斥窗口工厂：living 是生活空间，workbench 是工作台。
-// 形态按 SpiritAgent-客户端开发计划 §2.5 / §4 默认尺寸落定；具体内容（房间图、Run Rail 等）按阶段接入。
-const SURFACE_DEFAULTS: Record<SurfaceId, { height: number; minHeight: number; minWidth: number; width: number }> = {
-  living: { height: 720, minHeight: 560, minWidth: 880, width: 1080 },
-  workbench: { height: 800, minHeight: 640, minWidth: 1264, width: 1532 }
-}
-
-async function createSurfaceWindow(id: SurfaceId, payload?: DesktopSurfaceOpenPayload): Promise<BrowserWindow> {
-  const defaults = SURFACE_DEFAULTS[id]
-  const icon = getAppIconPath() || undefined
-
-  let initialX: number | undefined
-  let initialY: number | undefined
-  let initialWidth = defaults.width
-  let initialHeight = defaults.height
-
-  if (id === 'workbench') {
-    const cursor = screen.getCursorScreenPoint()
-    const display = screen.getDisplayNearestPoint(cursor)
-    const wa = display.workArea
-
-    initialWidth = Math.max(defaults.minWidth, Math.min(defaults.width, wa.width - 16))
-    initialHeight = Math.max(defaults.minHeight, Math.min(defaults.height, wa.height - 16))
-    initialX = Math.round(wa.x + Math.max(0, (wa.width - initialWidth) / 2))
-    initialY = Math.round(wa.y + Math.max(0, (wa.height - initialHeight) / 2))
-  }
-
-  // 入口窗用 CSS 大圆角液态玻璃。Windows 亚克力与系统阴影按 HWND 矩形铺底，
-  // 会在圆角切出的四角漏出灰底；关掉原生材质/圆角/阴影，圆角外像素保持真透明。
-  const win = new BrowserWindow({
-    backgroundColor: '#00000000',
-    frame: false,
-    hasShadow: false,
-    height: initialHeight,
-    minHeight: defaults.minHeight,
-    minWidth: defaults.minWidth,
-    resizable: true,
-    roundedCorners: false,
-    show: false,
-    skipTaskbar: false,
-    title: id === 'living' ? `${APP_NAME} · 生活空间` : `${APP_NAME} · 工作台`,
-    transparent: true,
-    webPreferences: {
-      backgroundThrottling: false,
-      contextIsolation: true,
-      devTools: !app.isPackaged,
-      nodeIntegration: false,
-      preload: path.join(import.meta.dirname, 'preload.cjs'),
-      sandbox: true
-    },
-    width: initialWidth,
-    x: initialX,
-    y: initialY
-  })
-
-  if (IS_MAC && icon) {
-    app.dock?.setIcon(icon)
-  }
-
-  windowHandlers.installSurfaceWindowHandlers(win)
-
-  win.on('close', () => {
-    surfaces?.onWindowClosed(id, win)
-    rebuildTrayMenu()
-  })
-
-  win.on('show', () => rebuildTrayMenu())
-  win.on('hide', () => rebuildTrayMenu())
-
-  await win.loadURL(surfaceLoadUrl(id, payload))
-  zoomPersistence.restorePersistedZoomLevel(win)
-  win.show()
-  win.focus()
-
-  return win
-}
-
-function surfaceLoadUrl(id: SurfaceId, payload?: DesktopSurfaceOpenPayload): string {
-  const url = new URL(rendererUrlFor(id))
-
-  if (payload?.view) {
-    url.hash = `#/${payload.view}`
-  }
-
-  if (payload?.sessionId) {
-    url.searchParams.set('sessionId', payload.sessionId)
-  }
-
-  return url.toString()
-}
-
-async function navigateSurfaceWindow(
-  win: BrowserWindow,
-  id: SurfaceId,
-  payload: DesktopSurfaceOpenPayload
-): Promise<void> {
-  await win.loadURL(surfaceLoadUrl(id, payload))
-  zoomPersistence.restorePersistedZoomLevel(win)
+  return readSpriteWindowState({ getMainWindow: () => mainWindow, isMac: IS_MAC })
 }
 
 function broadcastAuthChanged(snapshot: null | SessionSnapshot): void {
@@ -504,7 +335,7 @@ registerSystemIpc({
   ipcMain
 })
 registerUiThemeIpc({ ipcMain })
-registerPrefsIpc({ ipcMain })
+registerPrefsIpc({ ipcMain, onLanguageChanged: () => rebuildTrayMenu() })
 
 surfaces = createSurfacesManager({
   createWindow: createSurfaceWindow,
@@ -535,8 +366,7 @@ registerShortcutsIpc({
 })
 registerClipboardIpc({
   electron: { clipboard },
-  ipcMain,
-  writeComposerImage: contextMenuHelpers.writeComposerImage
+  ipcMain
 })
 registerLogIpc({ ipcMain, log: chunk => rememberLog(chunk) })
 registerFilesIpc({
@@ -572,6 +402,7 @@ registerConnectionIpc({
   fetchImpl: electronFetch,
   fetchJson: backendHttp.fetchJson,
   getBootProgressState: () => bootProgress.getState(),
+  getMainWindow: () => mainWindow,
   ipcMain,
   mintWsTicket: backendHttp.mintWsTicket,
   modelDiskCache,
@@ -630,6 +461,11 @@ const autoUpdater = createAutoUpdater({
   app,
   appRoot: APP_ROOT,
   bridgeDeps,
+  createRunnerUpdater: ({ bridgeDeps: deps, fetchImpl }) =>
+    new RunnerUpdater({
+      bridgeDeps: deps,
+      fetchImpl: fetchImpl as typeof globalThis.fetch
+    }),
   electronNet,
   spiritagentHome: SPIRITAGENT_HOME
 })
@@ -642,44 +478,26 @@ registerAuthIpc({
   ipcMain
 })
 registerRunnerIpc({ deps: bridgeDeps, ipcMain })
-registerRunnerConfigIpc({ ipcMain })
+registerRunnerConfigIpc({
+  ipcMain,
+  isAuthorizedSender: event => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+
+    return Boolean(win && surfaces?.isSurfaceWindow('workbench', win))
+  }
+})
 registerSkillsIpc({ spiritagentHome: SPIRITAGENT_HOME, getRunnerBridge: () => bridgeDeps.runnerBridge, ipcMain })
 registerUpdateIpc({
   electron: { app },
   getMainWindow: () => mainWindow,
   ipcMain,
+  isFeedConfigured: () => autoUpdater.isFeedConfigured(),
   sendToMain
 })
 
 registerSpriteIpc({
   deps: { getSpriteWindow: () => mainWindow, getUserDataDir: () => app.getPath('userData'), screen },
   ipcMain
-})
-
-ipcMain.handle(IPC.invoke.runnerGetTools, async () => {
-  const deadline = Date.now() + 6000
-
-  while (Date.now() < deadline) {
-    const bridge = bridgeDeps.runnerBridge
-
-    if (bridge) {
-      const tools = bridge.getTools()
-
-      if (tools.length > 0) {
-        return tools
-      }
-
-      const status = bridge.getStatus()
-
-      if (status.phase === 'error' || status.phase === 'stopped') {
-        return []
-      }
-    }
-
-    await sleep(100)
-  }
-
-  return bridgeDeps.runnerBridge?.getTools() || []
 })
 
 bridgeDeps.rewireAuthToken()
@@ -761,20 +579,41 @@ app.on('before-quit', () => {
   // 尽力而为的收尾上云；进程先退也不丢——下次启动水合的键级播种会把遗留编辑补传。
   void configSync.flush()
 
-  if (bridgeDeps.runnerBridge) {
-    try {
-      void bridgeDeps.runnerBridge.stop({ reason: 'app-quit' })
-    } catch (error) {
-      const msg = errorMessage(error)
-      rememberLog(`[runner-bridge] quit cleanup failed: ${msg}`)
-    }
-  }
-
   desktopLogger.flushSync()
 })
 
-app.on('window-all-closed', () => {
-  if (bridgeDeps.isQuitting && !IS_MAC) {
-    app.quit()
+// will-quit 有界等待 Runner 收尾，避免 fire-and-forget 留下孤儿子进程。
+let willQuitCleanupDone = false
+
+app.on('will-quit', event => {
+  if (willQuitCleanupDone) {
+    return
   }
+
+  willQuitCleanupDone = true
+  event.preventDefault()
+
+  const stopPromise = bridgeDeps.runnerBridge ? bridgeDeps.runnerBridge.stop({ reason: 'app-quit' }) : Promise.resolve()
+  const timeoutMs = 3000
+
+  void Promise.race([
+    stopPromise.catch(error => {
+      rememberLog(`[runner-bridge] quit cleanup failed: ${errorMessage(error)}`)
+    }),
+    new Promise(resolve => {
+      const timer = setTimeout(resolve, timeoutMs)
+
+      if (typeof timer.unref === 'function') {
+        timer.unref()
+      }
+    })
+  ]).then(() => {
+    desktopLogger.flushSync()
+    app.exit(0)
+  })
+})
+
+app.on('window-all-closed', () => {
+  // 常驻托盘：关窗不退出。真正退出由托盘/菜单的 app.quit → before-quit/will-quit 驱动；
+  // 这里不能再调 app.quit，否则会重入清理并双跑 runner stop。
 })

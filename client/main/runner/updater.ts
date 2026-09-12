@@ -8,9 +8,9 @@ import { promisify } from 'node:util'
 import { sleep } from '@runtime'
 import YAML from 'yaml'
 
+import type { BackendSessionLike } from '../shared/backend-port'
 import { errorMessage } from '../shared/utils'
 
-import type { BackendSessionLike } from './reverse-rpc'
 import { venvPythonFor } from './venv'
 
 const execFileP = promisify(execFile)
@@ -197,7 +197,7 @@ export class RunnerUpdater {
 
     try {
       if (!fs.existsSync(venvPython)) {
-        await stopIfBridged()
+        stopResult = await stopIfBridged()
 
         return await fail('venv-missing')
       }

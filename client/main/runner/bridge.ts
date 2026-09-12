@@ -6,10 +6,11 @@ import path from 'node:path'
 
 import type { RunnerCapabilities, RunnerCapabilitiesHealth } from '@ipc/contracts'
 
+import type { BackendSessionLike } from '../shared/backend-port'
 import { atomicWriteFile, errorMessage } from '../shared/utils'
 
 import type { RunnerProcess, RunnerProcessStartArgs, RunnerProcessState } from './process'
-import type { BackendSessionLike, ReverseRpcOptions } from './reverse-rpc'
+import type { ReverseRpcOptions } from './reverse-rpc'
 import type { CreateRunnerWsServerOptions, RunnerWsEvent, RunnerWsServer, RunnerWsStatus } from './rpc-ws'
 
 // macOS 的 sun_path 上限为 104 字节；留出余量以确保不超限。
@@ -141,6 +142,9 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     stoppedAt: null
   }
 
+  // start/stop 操作代数：stop 递增后，被打断的 start 在 await 恢复时自废。
+  let opGeneration = 0
+
   function setState(patch: Partial<RunnerBridgeState>): void {
     state = { ...state, ...patch }
   }
@@ -234,6 +238,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
   }
 
   async function rollback(reason: string): Promise<void> {
+    detachSubs()
     const tasks: Promise<unknown>[] = []
 
     if (wsServer) {
@@ -258,6 +263,8 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
       throw new Error('Runner bridge is already running.')
     }
 
+    const gen = ++opGeneration
+
     setState({
       lastError: null,
       phase: 'starting',
@@ -277,7 +284,8 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
       if (ev.type === 'exit') {
         if (state.phase === 'running') {
           fail('stopped', new Error(`Runner exited (code=${ev.code}, signal=${ev.signal})`))
-        } else if (state.phase === 'starting' || state.phase === 'stopping') {
+        } else if (state.phase === 'starting') {
+          // 主动 stop 走 stopping，不在此记 error；仅启动期异常退出算 error。
           fail('error', new Error(`Runner exited during ${state.phase} (code=${ev.code}, signal=${ev.signal})`))
         }
       }
@@ -294,7 +302,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
       sweepLegacySockets(options.spiritagentHome)
     }
 
-    wsServer = wsServerFactory
+    const wsInstance = wsServerFactory
       ? wsServerFactory({
           authToken,
           log: options.log,
@@ -304,12 +312,14 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
         })
       : null
 
-    if (!wsServer) {
+    wsServer = wsInstance
+
+    if (!wsInstance) {
       await rollback('ws-server-init')
       throw fail('error', new Error('No WS server factory wired.'))
     }
 
-    const offWs = wsServer.onEvent?.((ev: RunnerWsEvent) => {
+    const offWs = wsInstance.onEvent?.((ev: RunnerWsEvent) => {
       if (ev.type === 'runner_ready') {
         void handleRunnerReady(ev)
       } else if (ev.type === 'disconnected') {
@@ -336,28 +346,58 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     }
 
     try {
-      const started = await wsServer.start({ path: endpoint.path })
+      const started = await wsInstance.start({ path: endpoint.path })
       log(
         `[runner-bridge] WS server listening on ${started?.transport || endpoint.transport} ${started?.path || endpoint.path}`
       )
       await writeEndpointFile({ ...endpoint, token: authToken })
     } catch (error) {
       await rollback('ws-server-start')
-      throw fail('error', error)
+
+      if (gen === opGeneration) {
+        throw fail('error', error)
+      }
+
+      throw error
+    }
+
+    if (gen !== opGeneration) {
+      await rollback('start-superseded')
+      throw new Error('Runner bridge start was superseded by stop.')
     }
 
     try {
-      await runnerProcess.start({ authToken, endpointPath: endpoint.path, executable: args.executable })
+      await processInstance.start({ authToken, endpointPath: endpoint.path, executable: args.executable })
     } catch (error) {
       await rollback('process-start')
-      throw fail('error', error)
+
+      if (gen === opGeneration) {
+        throw fail('error', error)
+      }
+
+      throw error
+    }
+
+    if (gen !== opGeneration) {
+      await rollback('start-superseded')
+      throw new Error('Runner bridge start was superseded by stop.')
     }
 
     try {
-      await runnerProcess.waitForReady({ timeoutMs: args.readyTimeoutMs ?? 8_000 })
+      await processInstance.waitForReady({ timeoutMs: args.readyTimeoutMs ?? 8_000 })
     } catch (error) {
       await rollback('ready-timeout')
-      throw fail('error', error)
+
+      if (gen === opGeneration) {
+        throw fail('error', error)
+      }
+
+      throw error
+    }
+
+    if (gen !== opGeneration) {
+      await rollback('start-superseded')
+      throw new Error('Runner bridge start was superseded by stop.')
     }
 
     return getStatus()
@@ -463,6 +503,19 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
       return { noop: true, ok: true }
     }
 
+    // 已有 stop 在跑时复用同一次收尾，避免双 kill / 双 stopped。
+    if (state.phase === 'stopping') {
+      return new Promise(resolve => {
+        const off = onEvent(ev => {
+          if (ev.type === 'stopped') {
+            off()
+            resolve({ errors: ev.errors, ok: !(ev.errors && ev.errors.length > 0) })
+          }
+        })
+      })
+    }
+
+    opGeneration++
     setState({ phase: 'stopping' })
     log(`[runner-bridge] stop reason=${reason || 'unspecified'}`)
 

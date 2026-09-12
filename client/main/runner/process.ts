@@ -257,6 +257,12 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
       log(`[runner] error event: ${error.message}`)
       setState({ lastError: error.message })
       emit({ error, type: 'error' })
+
+      // Node 不保证 error 后再发 exit；spawn 级失败须解除 running 门闩，否则 start 永久卡死。
+      if (handle.exitCode == null && handle.signalCode == null) {
+        setState({ exitCode: null, exitSignal: null, running: false })
+        child = null
+      }
     })
     handle.on('exit', (code, signal) => {
       log(`[runner] exit code=${code} signal=${signal}`)
@@ -286,6 +292,8 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
       const target = child!
       let settled = false
       let forceKillTimer: ReturnType<typeof setTimeout> | null = null
+      let forceSettleTimer: ReturnType<typeof setTimeout> | null = null
+      let stopTimeoutTimer: ReturnType<typeof setTimeout> | null = null
 
       const finalize = (code: null | number, signal: null | string, fromExit: boolean) => {
         if (settled) {
@@ -296,6 +304,26 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
 
         if (forceKillTimer) {
           clearTimeout(forceKillTimer)
+          forceKillTimer = null
+        }
+
+        if (forceSettleTimer) {
+          clearTimeout(forceSettleTimer)
+          forceSettleTimer = null
+        }
+
+        if (stopTimeoutTimer) {
+          clearTimeout(stopTimeoutTimer)
+          stopTimeoutTimer = null
+        }
+
+        // 超时兜底也允许再次 start：门闩与 stop 终态对齐，避免 restart 卡死。
+        if (state.running && target.exitCode == null && target.signalCode == null) {
+          setState({ running: false })
+
+          if (child === target) {
+            child = null
+          }
         }
 
         target.removeListener('exit', onExit)
@@ -331,16 +359,24 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
           log(`[runner] SIGKILL failed: ${msg}`)
         }
 
-        setTimeout(() => {
+        forceSettleTimer = setTimeout(() => {
           if (target.exitCode == null && target.signalCode == null) {
             log(`[runner] pid=${target.pid} still alive after SIGKILL; reporting failure`)
           }
 
           settleIfExited('SIGKILL')
-        }, 500).unref()
+        }, 500)
+
+        if (typeof forceSettleTimer.unref === 'function') {
+          forceSettleTimer.unref()
+        }
       }, stopGraceMs)
 
-      setTimeout(() => settleIfExited(null), stopTimeoutMs).unref()
+      stopTimeoutTimer = setTimeout(() => settleIfExited(null), stopTimeoutMs)
+
+      if (typeof stopTimeoutTimer.unref === 'function') {
+        stopTimeoutTimer.unref()
+      }
     })
   }
 

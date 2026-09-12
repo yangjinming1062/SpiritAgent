@@ -1,4 +1,4 @@
-import type { App, BrowserWindow, Menu } from 'electron'
+import { type App, BrowserWindow, type Menu } from 'electron'
 
 import type { ZoomPersistence } from './zoom-persistence'
 
@@ -19,6 +19,11 @@ export function createMenu({ app, appName, getMainWindow, isMac, menu, zoomPersi
       copyright: `Copyright © 2026 ${appName}`
     })
     app.showAboutPanel()
+  }
+
+  /** Close/Zoom 作用在焦点窗；无焦点时回落精灵，避免表面窗快捷键打到精灵。 */
+  function targetWindow(): BrowserWindow | null {
+    return BrowserWindow.getFocusedWindow() || getMainWindow()
   }
 
   function buildApplicationMenu(): Menu {
@@ -48,7 +53,7 @@ export function createMenu({ app, appName, getMainWindow, isMac, menu, zoomPersi
           ? {
               accelerator: 'CommandOrControl+W',
               click: () => {
-                getMainWindow()?.close()
+                targetWindow()?.close()
               },
               label: 'Close'
             }
@@ -80,14 +85,14 @@ export function createMenu({ app, appName, getMainWindow, isMac, menu, zoomPersi
         {
           accelerator: 'CommandOrControl+0',
           click: () => {
-            zoomPersistence.setAndPersistZoomLevel(getMainWindow(), 0)
+            zoomPersistence.setAndPersistZoomLevel(targetWindow(), 0)
           },
           label: 'Actual Size'
         },
         {
           accelerator: 'CommandOrControl+Plus',
           click: () => {
-            const win = getMainWindow()
+            const win = targetWindow()
 
             if (win && !win.isDestroyed()) {
               zoomPersistence.setAndPersistZoomLevel(win, win.webContents.getZoomLevel() + 0.1)
@@ -98,7 +103,7 @@ export function createMenu({ app, appName, getMainWindow, isMac, menu, zoomPersi
         {
           accelerator: 'CommandOrControl+-',
           click: () => {
-            const win = getMainWindow()
+            const win = targetWindow()
 
             if (win && !win.isDestroyed()) {
               zoomPersistence.setAndPersistZoomLevel(win, win.webContents.getZoomLevel() - 0.1)

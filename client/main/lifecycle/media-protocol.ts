@@ -19,7 +19,7 @@ function isUnderMediaRoot(resolvedPath: string, roots: readonly string[]): boole
   })
 }
 
-export function mediaProtocolRoots(spiritagentHome: string): string[] {
+function mediaProtocolRoots(spiritagentHome: string): string[] {
   return [path.join(spiritagentHome, 'cache'), path.join(spiritagentHome, 'audio')]
 }
 

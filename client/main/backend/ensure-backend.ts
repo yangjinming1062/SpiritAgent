@@ -41,8 +41,11 @@ export function createEnsureBackend(deps: EnsureBackendDeps): {
 } {
   let cachedBackend: SpiritAgentConnection | null = null
   let pendingBackend: Promise<SpiritAgentConnection> | null = null
+  // reset 时递增：在途 resolve 完成后若代数已变则不写回缓存。
+  let generation = 0
 
   function resetBackendCache(): void {
+    generation++
     cachedBackend = null
     pendingBackend = null
   }
@@ -74,13 +77,22 @@ export function createEnsureBackend(deps: EnsureBackendDeps): {
       return pendingBackend
     }
 
-    pendingBackend = (async () => {
+    const startGeneration = generation
+    // IIFE 的 finally 需要引用自身判断归属，只能用 let 分两步赋值
+    let mine: null | Promise<SpiritAgentConnection> = null
+
+    mine = (async () => {
       try {
         if (cachedBackend) {
           const liveWindowState = deps.getWindowState()
           const wsBase = cachedBackend.baseUrl.replace(/^http/, 'ws')
           const token = deps.getAuthToken()
           const wsTicket = await deps.backendHttp.mintWsTicket(cachedBackend.baseUrl, token)
+
+          if (startGeneration !== generation) {
+            throw new Error('Backend connection was reset during resolve.')
+          }
+
           cachedBackend = {
             ...cachedBackend,
             ...liveWindowState,
@@ -105,6 +117,11 @@ export function createEnsureBackend(deps: EnsureBackendDeps): {
           24
         )
         await deps.backendHttp.waitForSpiritAgent(remote.baseUrl, token || undefined)
+
+        if (startGeneration !== generation) {
+          throw new Error('Backend connection was reset during resolve.')
+        }
+
         deps.bootProgress.update({
           error: null,
           message: `Remote ${deps.appName} backend is ready`,
@@ -114,6 +131,11 @@ export function createEnsureBackend(deps: EnsureBackendDeps): {
         })
         const wsBase = remote.baseUrl.replace(/^http/, 'ws')
         const wsTicket = await deps.backendHttp.mintWsTicket(remote.baseUrl, token)
+
+        if (startGeneration !== generation) {
+          throw new Error('Backend connection was reset during resolve.')
+        }
+
         cachedBackend = {
           baseUrl: remote.baseUrl,
           token,
@@ -123,11 +145,16 @@ export function createEnsureBackend(deps: EnsureBackendDeps): {
 
         return cachedBackend
       } finally {
-        pendingBackend = null
+        // 只清自己这条 pending，避免被 reset 后启动的并发 resolve 被误抹掉。
+        if (mine && pendingBackend === mine) {
+          pendingBackend = null
+        }
       }
     })()
 
-    return pendingBackend
+    pendingBackend = mine
+
+    return mine
   }
 
   return { ensureBackend, resetBackendCache, setCachedWsUrl }

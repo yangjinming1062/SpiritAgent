@@ -85,13 +85,10 @@ declare global {
       readFileDataUrl: AsyncIpc<IpcInvokeContract['spiritagent:readFileDataUrl']>
       /** 聊天图片附件读取：超限降采样重编码，产出可直接发送的 data URL。 */
       readImageForAttach: AsyncIpc<IpcInvokeContract['spiritagent:readImageForAttach']>
-      /** 注册拖拽/粘贴得到的真实路径，使其可被附件 IPC 读取（配合 selectPaths 白名单）。 */
-      registerUserSelectedPaths: AsyncIpc<IpcInvokeContract['spiritagent:registerUserSelectedPaths']>
       /** 聊天视频附件上传：主进程读文件经后端 /api/media/videos 换取会话级附件 URL。 */
       uploadVideoForAttach: AsyncIpc<IpcInvokeContract['spiritagent:media:video-upload']>
       selectPaths: AsyncIpc<IpcInvokeContract['spiritagent:selectPaths']>
       writeClipboard: AsyncIpc<IpcInvokeContract['spiritagent:writeClipboard']>
-      saveClipboardImage: AsyncIpc<IpcInvokeContract['spiritagent:saveClipboardImage']>
       log: AsyncIpc<IpcInvokeContract['spiritagent:log:emit']>
       runnerInvoke: AsyncIpc<IpcInvokeContract['spiritagent:runner:invoke']>
       runnerCancel: AsyncIpc<IpcInvokeContract['spiritagent:runner:cancel']>
@@ -104,13 +101,11 @@ declare global {
       shortcuts: {
         get: AsyncIpc<IpcInvokeContract['spiritagent:shortcuts:get']>
         onChanged: EventSubscription<'spiritagent:shortcuts:changed'>
-        reset: AsyncIpc<IpcInvokeContract['spiritagent:shortcuts:reset']>
         set: AsyncIpc<IpcInvokeContract['spiritagent:shortcuts:set']>
       }
       surface: {
         open: AsyncIpc<IpcInvokeContract['spiritagent:surface:open']>
         close: AsyncIpc<IpcInvokeContract['spiritagent:surface:close']>
-        focus: AsyncIpc<IpcInvokeContract['spiritagent:surface:focus']>
         isMaximized: AsyncIpc<IpcInvokeContract['spiritagent:surface:is-maximized']>
         maximize: AsyncIpc<IpcInvokeContract['spiritagent:surface:maximize']>
         minimize: AsyncIpc<IpcInvokeContract['spiritagent:surface:minimize']>

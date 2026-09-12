@@ -31,7 +31,7 @@ export function registerUserSelectedPaths(paths: readonly string[]): void {
   }
 }
 
-export function isUserSelectedPath(filePath: string): boolean {
+function isUserSelectedPath(filePath: string): boolean {
   try {
     return userSelectedPaths.has(normalizeKey(filePath))
   } catch {

@@ -1,6 +1,6 @@
 import { type DesktopPrefsHydrated, type DesktopShortcutsConfig, normalizeUiTheme } from '@ipc/contracts'
 
-import { type BackendClient, BackendRequestError, createBackendClient, type FetchFunction } from '../../backend/client'
+import type { BackendClientPort } from '../backend-port'
 import { errorMessage } from '../utils'
 
 import * as store from './runner-config-store'
@@ -47,8 +47,10 @@ interface ConfigSyncConnection {
 }
 
 export interface ConfigSyncDeps {
+  createBackendClient: (options: { baseUrl: string }) => BackendClientPort
   ensureBackend: () => Promise<ConfigSyncConnection>
-  fetchImpl: FetchFunction
+  /** 网络/5xx 等可重试错误；由 entry 注入 BackendRequestError 判定，shared 不依赖 backend。 */
+  isRetryableError: (error: unknown) => boolean
   log: (chunk: string) => void
   onHydrated: (payload: DesktopPrefsHydrated) => void
 }
@@ -84,7 +86,7 @@ export function buildPrefsHydratedFromConfig(config: Record<string, unknown>): D
 }
 
 export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
-  let client: null | BackendClient = null
+  let client: null | BackendClientPort = null
   let clientBaseUrl = ''
   let dirty = false
   let hydratedUserId: null | number = null
@@ -94,10 +96,12 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
   let retryTimer: null | NodeJS.Timeout = null
   let backoffMs = RETRY_BACKOFF_INITIAL_MS
   let lastFlushedJson = '{}'
+  // 换号/登出时递增：在途 flush/hydrate 完成前若 epoch 已变则丢弃结果。
+  let authEpoch = 0
 
-  function backendClient(baseUrl: string): BackendClient {
+  function backendClient(baseUrl: string): BackendClientPort {
     if (!client || clientBaseUrl !== baseUrl) {
-      client = createBackendClient({ baseUrl, fetch: deps.fetchImpl })
+      client = deps.createBackendClient({ baseUrl })
       clientBaseUrl = baseUrl
     }
 
@@ -197,12 +201,13 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
     }
 
     flushing = true
+    const epoch = authEpoch
 
     try {
       const conn = await deps.ensureBackend()
 
-      // 未登录：挂起（不排重试），等下次 authChanged 触发水合补齐。
-      if (!conn.token) {
+      // 未登录或身份已切换：挂起，避免旧账号配置写入新账号。
+      if (epoch !== authEpoch || !conn.token) {
         return
       }
 
@@ -216,11 +221,20 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       }
 
       await backendClient(conn.baseUrl).put('/api/config', { body: { config: payload }, token: conn.token })
+
+      if (epoch !== authEpoch) {
+        return
+      }
+
       dirty = false
       backoffMs = RETRY_BACKOFF_INITIAL_MS
       lastFlushedJson = JSON.stringify(payload)
     } catch (error) {
-      if (error instanceof BackendRequestError && (error.isNetwork || error.isServerError)) {
+      if (epoch !== authEpoch) {
+        return
+      }
+
+      if (deps.isRetryableError(error)) {
         scheduleRetry(() => void flush())
       } else {
         // 鉴权失败（等 authChanged）或 4xx（载荷被拒，重试无意义）：挂起并保留 dirty。
@@ -242,20 +256,22 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
     }
 
     hydrating = true
+    const epoch = authEpoch
+    const uid = hydratedUserId
 
     try {
       // 未上云的本地编辑先落云，避免被云端旧值覆盖；失败（离线）则保留本地下次再试。
       if (dirty) {
         await flush()
 
-        if (dirty) {
+        if (dirty || epoch !== authEpoch) {
           return
         }
       }
 
       const conn = await deps.ensureBackend()
 
-      if (!conn.token || hydratedUserId === null) {
+      if (epoch !== authEpoch || !conn.token || uid === null) {
         return
       }
 
@@ -263,12 +279,16 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
         token: conn.token
       })
 
+      if (epoch !== authEpoch) {
+        return
+      }
+
       const cloud = pickSyncedSections(res.config ?? {})
       const local = store.read()
       const stamp = objectSection(local, 'sync') as MirrorStamp
       // 归属戳不匹配（明确换了号）→ 不信任：清空同步节、只进云端内容、不回传本地。
       // 无戳（升级前的存量文件）视为可信：文件本就属于当前安装的这位用户，首跑播种把本地配置上云。
-      const trusted = stamp.user_id === undefined || stamp.user_id === hydratedUserId
+      const trusted = stamp.user_id === undefined || stamp.user_id === uid
 
       if (!trusted) {
         await store.mutate(config => {
@@ -280,6 +300,10 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
             delete config[key]
           }
         })
+      }
+
+      if (epoch !== authEpoch) {
+        return
       }
 
       const fresh = store.read()
@@ -332,9 +356,13 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       }
 
       // 节有变化或归属戳缺失/过期时落盘（含戳），否则零写入。
-      if (Object.keys(changed).length > 0 || stamp.user_id !== hydratedUserId) {
-        changed.sync = { user_id: hydratedUserId }
+      if (Object.keys(changed).length > 0 || stamp.user_id !== uid) {
+        changed.sync = { user_id: uid }
         await store.applyCloudMirror(changed)
+      }
+
+      if (epoch !== authEpoch) {
+        return
       }
 
       deps.onHydrated(buildPrefsHydratedFromConfig(store.read()))
@@ -344,13 +372,20 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
         void flush()
       }
     } catch (error) {
-      deps.log(`[config-sync] hydrate failed: ${errorMessage(error)}`)
+      if (epoch === authEpoch) {
+        deps.log(`[config-sync] hydrate failed: ${errorMessage(error)}`)
 
-      if (error instanceof BackendRequestError && (error.isNetwork || error.isServerError)) {
-        scheduleRetry(() => void hydrate())
+        if (deps.isRetryableError(error)) {
+          scheduleRetry(() => void hydrate())
+        }
       }
     } finally {
       hydrating = false
+
+      // 在途 hydrate 期间换号：补跑当前用户水合，避免被吞掉。
+      if (epoch !== authEpoch && hydratedUserId !== null) {
+        void hydrate()
+      }
     }
   }
 
@@ -364,6 +399,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
     // 归属戳保证换号水合不会把它们泄给新用户。
     dirty = false
     hydratedUserId = userId
+    authEpoch++
 
     if (userId !== null) {
       void hydrate()

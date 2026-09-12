@@ -140,6 +140,88 @@ export default [
       }
     }
   },
+  // —— main 子域边界：shared 为叶子；backend↛runner；runner↛backend/ipc；ipc↛lifecycle ——
+  {
+    files: ['main/shared/**/*.{ts,tsx}'],
+    ignores: ['main/shared/backend-port.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['../backend/*', '../../backend/*', '../ipc/*', '../../ipc/*', '../lifecycle/*', '../../lifecycle/*', '../runner/*', '../../runner/*'],
+              message: 'shared 必须是叶子：依赖经 entry 注入，不得 import backend/ipc/lifecycle/runner。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['main/backend/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['../runner/*', '../../runner/*', '../ipc/*', '../../ipc/*', '../lifecycle/*', '../../lifecycle/*'],
+              message: 'backend 不得 import runner/ipc/lifecycle。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['main/runner/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['../backend/*', '../../backend/*', '../ipc/*', '../../ipc/*'],
+              message: 'runner 不得 import backend/ipc；会话与 HTTP 走 shared/backend-port。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['main/ipc/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['../lifecycle/*', '../../lifecycle/*'],
+              message: 'ipc 不得 import lifecycle；托盘/表面经 entry 注入回调或窄接口。'
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    files: ['main/lifecycle/**/*.{ts,tsx}'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['../runner/*', '../../runner/*'],
+              message: 'lifecycle 不得 import runner 实现；由 entry 注入工厂/端口。'
+            }
+          ]
+        }
+      ]
+    }
+  },
   // —— 渲染层模块边界：跨模块只走公共 barrel，业务模块互不导入，shared 不反向依赖 ——
 
   {

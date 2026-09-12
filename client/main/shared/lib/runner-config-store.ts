@@ -2,7 +2,7 @@ import path from 'node:path'
 
 import { atomicWriteFile, errorMessage, safeReadJson } from '../utils'
 
-export const FILENAME = 'desktop-settings.json'
+const FILENAME = 'desktop-settings.json'
 
 // 内存数据：磁盘路径、当前镜像、首次读取懒标记。
 let _storePath: null | string = null

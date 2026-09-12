@@ -27,6 +27,7 @@ export interface SurfacesManager {
   getState: () => DesktopSurfaceChangedEvent
   hydrateLastSurface: () => SurfaceId
   isMaximizedSurface: () => boolean
+  isSurfaceWindow: (id: SurfaceId, win: BrowserWindow) => boolean
   maximizeSurface: () => void
   minimizeSurface: () => void
   onWindowClosed: (id: SurfaceId, win: BrowserWindow) => void
@@ -226,6 +227,22 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       await options.navigateWindow?.(win, id, payload)
     }
 
+    // navigate/create 期间用户关窗：窗口已销毁，不能再 show/focus，也不能残留 openSurfaceId。
+    if (win.isDestroyed()) {
+      if (windows.get(id) === win) {
+        windows.delete(id)
+        boundsUnbinders.get(id)?.()
+        boundsUnbinders.delete(id)
+      }
+
+      if (openSurfaceId === id) {
+        openSurfaceId = null
+        broadcastToAllWindows(IPC.event.surfaceChanged, snapshot())
+      }
+
+      return
+    }
+
     if (win.isMinimized()) {
       win.restore()
     }
@@ -323,6 +340,10 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     return Boolean(win && !win.isDestroyed() && win.isMaximized())
   }
 
+  const isSurfaceWindow = (id: SurfaceId, win: BrowserWindow): boolean => {
+    return windows.get(id) === win && !win.isDestroyed()
+  }
+
   const registerIpcHandlers = ({ ipcMain }: { ipcMain: IpcMain }): void => {
     ipcMain.handle(IPC.invoke.surfaceOpen, (_event, payload: unknown) => {
       const surface = (payload as { surface?: unknown } | null)?.surface
@@ -355,22 +376,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     }
 
     ipcMain.handle(IPC.invoke.surfaceClose, () => closeSurface())
-    ipcMain.handle(IPC.invoke.surfaceFocus, () => {
-      if (!openSurfaceId) {
-        return
-      }
-
-      const win = windows.get(openSurfaceId)
-
-      if (win && !win.isDestroyed()) {
-        if (win.isMinimized()) {
-          win.restore()
-        }
-
-        win.show()
-        win.focus()
-      }
-    })
     ipcMain.handle(IPC.invoke.surfaceMinimize, event => {
       resolveWindow(event)?.minimize()
     })
@@ -409,6 +414,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     getState,
     hydrateLastSurface,
     isMaximizedSurface,
+    isSurfaceWindow,
     maximizeSurface,
     minimizeSurface,
     onWindowClosed,

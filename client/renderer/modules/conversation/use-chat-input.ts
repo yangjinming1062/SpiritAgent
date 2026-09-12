@@ -146,10 +146,6 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
       }
 
       if (filePath) {
-        if (window.spiritagent.registerUserSelectedPaths) {
-          await window.spiritagent.registerUserSelectedPaths([filePath]).catch(() => {})
-        }
-
         if (file.type.startsWith('video/')) {
           await attachVideoFile(filePath, submit.setPending)
         } else {

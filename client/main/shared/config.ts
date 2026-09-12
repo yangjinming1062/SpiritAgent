@@ -6,7 +6,7 @@ import { atomicWriteFile, safeReadJson } from './utils'
 // $SPIRITAGENT_HOME/desktop-config.json 保存用户激活过的后端 URL
 //（与加密会话文件 `agent-session.json` 分离，便于在登出后仍然保留）。
 // 尽力处理：文件缺失或格式错乱时返回 null。
-export const FILENAME = 'desktop-config.json'
+const FILENAME = 'desktop-config.json'
 
 function configPath(spiritagentHome: string | null | undefined): string | null {
   if (!spiritagentHome) {

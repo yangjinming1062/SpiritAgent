@@ -206,6 +206,8 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   let backendClientBaseUrl: null | string = null
   let activatePromise: null | Promise<null | SessionSnapshot> = null
   let refreshTimer: NodeJS.Timeout | null = null
+  // activate/clearSession 时递增：在途 refresh 完成前若代数已变则丢弃。
+  let sessionEpoch = 0
 
   async function persistCurrent(): Promise<void> {
     if (!cached) {
@@ -402,6 +404,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       user: resolvedUser
     }
 
+    sessionEpoch++
     backendClient = null
     backendClientBaseUrl = null
 
@@ -508,6 +511,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
 
     const { clientContext } = payload
     const backend = client()
+    const epoch = sessionEpoch
 
     return backend
       .post<TokenAuthResponse>('/api/user/refresh', {
@@ -517,8 +521,24 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
         },
         token: cached.token
       })
-      .then(response => applyTokenResponse(response, 'refresh', 'invalid-refresh-response'))
-      .catch(translateBackendError)
+      .then(response => {
+        if (epoch !== sessionEpoch) {
+          throw new SessionError({
+            code: 'session-superseded',
+            message: 'Session changed during refresh; dropping stale token response.'
+          })
+        }
+
+        return applyTokenResponse(response, 'refresh', 'invalid-refresh-response')
+      })
+      .catch(async (error: unknown) => {
+        // 鉴权失效：与 restore 对齐清理，避免僵尸 hasToken；身份已切换则只透传错误。
+        if (epoch === sessionEpoch && error instanceof BackendRequestError && error.status === 401) {
+          await clearSession()
+        }
+
+        return translateBackendError(error)
+      })
   }
 
   async function logout(): Promise<{ backendUnreachable?: boolean; error?: string; ok: boolean }> {
@@ -546,6 +566,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   }
 
   async function clearSession(): Promise<void> {
+    sessionEpoch++
     clearRefreshTimer()
     cached = null
     backendClient = null

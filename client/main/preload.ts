@@ -29,9 +29,18 @@ import {
 import { contextBridge, ipcRenderer, type IpcRendererEvent, webUtils } from 'electron'
 
 // Electron 32+ 移除了 File.path——桌面文件拖拽的真实路径只能经 webUtils.getPathForFile 拿到。
-// 桥接到 window.spiritagentWebUtils 让渲染层在 drop handler 里使用。
+// 解析成功即写入主进程可读白名单；不再向渲染层暴露 registerUserSelectedPaths，
+// 防止 XSS 用任意路径自授后 readFileDataUrl 外传。
 contextBridge.exposeInMainWorld('spiritagentWebUtils', {
-  getPathForFile: (file: File): string => webUtils.getPathForFile(file)
+  getPathForFile: (file: File): string => {
+    const filePath = webUtils.getPathForFile(file)
+
+    if (filePath) {
+      void ipcRenderer.invoke(IPC.invoke.registerUserSelectedPaths, [filePath]).catch(() => {})
+    }
+
+    return filePath
+  }
 })
 
 // 订阅主进程单方向事件：listener 解构 payload，丢弃 IpcRendererEvent；
@@ -96,7 +105,6 @@ contextBridge.exposeInMainWorld('spiritagent', {
   onUiThemeChanged: (cb: (payload: DesktopUiThemeBroadcast) => void) => subscribe(IPC.event.uiThemeChanged, cb),
   readFileDataUrl: (filePath: string) => ipcRenderer.invoke(IPC.invoke.readFileDataUrl, filePath),
   readImageForAttach: (filePath: string) => ipcRenderer.invoke(IPC.invoke.readImageForAttach, filePath),
-  registerUserSelectedPaths: (paths: string[]) => ipcRenderer.invoke(IPC.invoke.registerUserSelectedPaths, paths),
   uploadVideoForAttach: (payload: AttachmentVideoUploadPayload) =>
     ipcRenderer.invoke(IPC.invoke.mediaVideoUpload, payload),
   refreshSession: () => ipcRenderer.invoke(IPC.invoke.authRefresh),
@@ -110,7 +118,6 @@ contextBridge.exposeInMainWorld('spiritagent', {
   runnerGetTools: () => ipcRenderer.invoke(IPC.invoke.runnerGetTools),
   runnerInvoke: (name: string, args: Record<string, unknown>) =>
     ipcRenderer.invoke(IPC.invoke.runnerInvoke, name, args),
-  saveClipboardImage: () => ipcRenderer.invoke(IPC.invoke.saveClipboardImage),
   selectPaths: (options?: SpiritAgentSelectPathsOptions) => ipcRenderer.invoke(IPC.invoke.selectPaths, options),
   prefs: {
     set: (payload: SpiritAgentPrefsSet) => ipcRenderer.send(IPC.send.prefsSet, payload)
@@ -119,12 +126,10 @@ contextBridge.exposeInMainWorld('spiritagent', {
   shortcuts: {
     get: () => ipcRenderer.invoke(IPC.invoke.shortcutsGet),
     onChanged: (cb: (payload: DesktopShortcutsState) => void) => subscribe(IPC.event.shortcutsChanged, cb),
-    reset: () => ipcRenderer.invoke(IPC.invoke.shortcutsReset),
     set: (payload: DesktopShortcutsSetPayload) => ipcRenderer.invoke(IPC.invoke.shortcutsSet, payload)
   },
   surface: {
     close: () => ipcRenderer.invoke(IPC.invoke.surfaceClose),
-    focus: () => ipcRenderer.invoke(IPC.invoke.surfaceFocus),
     getState: () => ipcRenderer.invoke(IPC.invoke.surfaceGetState),
     isMaximized: () => ipcRenderer.invoke(IPC.invoke.surfaceIsMaximized),
     maximize: () => ipcRenderer.invoke(IPC.invoke.surfaceMaximize),

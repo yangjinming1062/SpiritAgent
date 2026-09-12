@@ -6,35 +6,67 @@ import log from 'electron-log/main'
 import electronUpdaterPkg from 'electron-updater'
 import type { UpdateInfo } from 'electron-updater'
 
-import type { RunnerUpdaterDeps } from '../runner/updater'
-import { RunnerUpdater } from '../runner/updater'
+import type { BackendSessionLike } from '../shared/backend-port'
 import { resolveNormalizedBackendUrl } from '../shared/config'
 import { errorMessage } from '../shared/utils'
 
 const UPDATE_INITIAL_CHECK_DELAY_MS = 30_000
 
+interface RunnerUpdaterPort {
+  installPending: () => Promise<unknown>
+  prefetchRunnerAssets: (options: {
+    publicKeyPath: null | string
+    updateBaseUrl: string
+    version: string
+  }) => Promise<void>
+}
+
+/** 仅更新器需要的 bridge 视图；结构对齐 RunnerUpdaterDeps，不 import runner。 */
+interface BridgeForUpdater {
+  ensureBackendSession?: () => BackendSessionLike | null | undefined
+  runnerBridge?: null | {
+    start: (options: { backendSession?: BackendSessionLike | null; readyTimeoutMs?: number }) => Promise<unknown>
+    stop: (options: { reason: string }) => Promise<unknown>
+  }
+  spiritagentHome: string
+}
+
 interface AutoUpdaterOptions {
   app: Pick<App, 'getPath' | 'getVersion' | 'isPackaged'>
   appRoot: string
-  bridgeDeps: RunnerUpdaterDeps['bridgeDeps']
+  bridgeDeps: BridgeForUpdater
+  /** 由 entry 注入，切断 lifecycle→runner 实现导入。 */
+  createRunnerUpdater: (deps: { bridgeDeps: BridgeForUpdater; fetchImpl: unknown }) => RunnerUpdaterPort
   electronNet: Net
   spiritagentHome: null | string
 }
 
-export function createAutoUpdater({ app, appRoot, bridgeDeps, electronNet, spiritagentHome }: AutoUpdaterOptions) {
-  let singleton: RunnerUpdater | null = null
+export function createAutoUpdater({
+  app,
+  appRoot,
+  bridgeDeps,
+  createRunnerUpdater,
+  electronNet,
+  spiritagentHome
+}: AutoUpdaterOptions) {
+  let singleton: null | RunnerUpdaterPort = null
+  let feedConfigured = false
 
-  function getRunnerUpdater(): RunnerUpdater {
+  function getRunnerUpdater(): RunnerUpdaterPort {
     if (singleton) {
       return singleton
     }
 
-    singleton = new RunnerUpdater({
+    singleton = createRunnerUpdater({
       bridgeDeps,
       fetchImpl: electronNet.fetch as unknown as typeof globalThis.fetch
     })
 
     return singleton
+  }
+
+  function isFeedConfigured(): boolean {
+    return feedConfigured
   }
 
   function getBundledPublicKeyPath(): null | string {
@@ -55,6 +87,8 @@ export function createAutoUpdater({ app, appRoot, bridgeDeps, electronNet, spiri
   }
 
   function setup(): void {
+    feedConfigured = false
+
     if (!app.isPackaged) {
       return
     }
@@ -85,6 +119,7 @@ export function createAutoUpdater({ app, appRoot, bridgeDeps, electronNet, spiri
       provider: 'generic',
       url: updateBaseUrl
     })
+    feedConfigured = true
 
     autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
       log.info('desktop update downloaded; starting runner prefetch', info?.version)
@@ -111,5 +146,5 @@ export function createAutoUpdater({ app, appRoot, bridgeDeps, electronNet, spiri
     }
   }
 
-  return { getRunnerUpdater, setup }
+  return { getRunnerUpdater, isFeedConfigured, setup }
 }

@@ -21,6 +21,7 @@ interface UpdateIpcDeps {
   electron: { app: App }
   getMainWindow: () => BrowserWindow | null | undefined
   ipcMain: IpcMain
+  isFeedConfigured?: () => boolean
   sendToMain: <C extends keyof IpcEventContract>(
     win: BrowserWindow | null | undefined,
     channel: C,
@@ -41,7 +42,13 @@ function toDesktopUpdateInfo(info: unknown): DesktopUpdateInfo {
   }
 }
 
-export function registerUpdateIpc({ electron, getMainWindow, ipcMain, sendToMain }: UpdateIpcDeps): void {
+export function registerUpdateIpc({
+  electron,
+  getMainWindow,
+  ipcMain,
+  isFeedConfigured,
+  sendToMain
+}: UpdateIpcDeps): void {
   const { app } = electron
 
   function broadcast(event: DesktopUpdateEvent): void {
@@ -52,7 +59,7 @@ export function registerUpdateIpc({ electron, getMainWindow, ipcMain, sendToMain
   // 始终注册 updateCheck：开发模式无更新源，回 'none' 让渲染层落 "up to date" 文案，
   // 避免 renderer 触发未注册 IPC handler 抛出 unhandled rejection。
   ipcMain.handle(IPC.invoke.updateCheck, async () => {
-    if (!app.isPackaged) {
+    if (!app.isPackaged || (isFeedConfigured && !isFeedConfigured())) {
       broadcast({ type: 'none' })
 
       return

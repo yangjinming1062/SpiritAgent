@@ -9,7 +9,7 @@ import {
   type Tray
 } from 'electron'
 
-import type { BackendSessionLike } from '../runner/reverse-rpc'
+import type { BackendSessionLike } from '../shared/backend-port'
 import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
 import { broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, sendToMain } from '../shared/utils'

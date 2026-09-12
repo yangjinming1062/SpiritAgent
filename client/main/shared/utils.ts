@@ -93,7 +93,7 @@ export class HttpError extends Error {
   }
 }
 
-export function isHttpStatus(error: unknown, status: number): boolean {
+function isHttpStatus(error: unknown, status: number): boolean {
   if (error instanceof HttpError) {
     return error.status === status
   }

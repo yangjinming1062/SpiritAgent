@@ -1,15 +1,13 @@
-import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import type { App, BrowserWindow, Net } from 'electron'
+import type { BrowserWindow, Net } from 'electron'
 import { clipboard, dialog, nativeImage } from 'electron'
 
 import { extensionForMimeType, mimeTypeForPath, parseDataUrl } from '../shared/mime'
 
-// 解析 `data:` / `file:` / http(s) URL 为字节流 + mime；右键菜单里
-// 复制/保存图片与写 composer 缩略图都依赖这条公共路径。
+// 解析 `data:` / `file:` / http(s) URL 为字节流 + mime；右键菜单里复制/保存图片依赖这条公共路径。
 async function resourceBufferFromUrl(rawUrl: string, electronNet: Net): Promise<{ buffer: Buffer; mimeType: string }> {
   if (!rawUrl) {
     throw new Error('Missing URL')
@@ -54,11 +52,10 @@ function filenameFromUrl(rawUrl: string, fallback = 'image'): string {
 }
 
 interface ContextMenuHelpersOptions {
-  app: Pick<App, 'getPath'>
   electronNet: Net
 }
 
-export function createContextMenuHelpers({ app, electronNet }: ContextMenuHelpersOptions) {
+export function createContextMenuHelpers({ electronNet }: ContextMenuHelpersOptions) {
   async function copyImageFromUrl(rawUrl: string): Promise<void> {
     const { buffer } = await resourceBufferFromUrl(rawUrl, electronNet)
     const image = nativeImage.createFromBuffer(buffer)
@@ -88,24 +85,7 @@ export function createContextMenuHelpers({ app, electronNet }: ContextMenuHelper
     return true
   }
 
-  async function writeComposerImage(buffer: Buffer, ext = '.png'): Promise<string> {
-    const rawExt = String(ext || '.png')
-      .trim()
-      .toLowerCase()
-
-    const normalizedExt = rawExt.startsWith('.') ? rawExt : `.${rawExt}`
-    const safeExt = /^\.[a-z0-9]{1,5}$/.test(normalizedExt) ? normalizedExt : '.png'
-    const dir = path.join(app.getPath('userData'), 'composer-images')
-    await fs.promises.mkdir(dir, { recursive: true })
-    const stamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '')
-    const random = crypto.randomBytes(3).toString('hex')
-    const filePath = path.join(dir, `composer_${stamp}_${random}${safeExt}`)
-    await fs.promises.writeFile(filePath, buffer)
-
-    return filePath
-  }
-
-  return { copyImageFromUrl, saveImageFromUrl, writeComposerImage }
+  return { copyImageFromUrl, saveImageFromUrl }
 }
 
 export type ContextMenuHelpers = ReturnType<typeof createContextMenuHelpers>

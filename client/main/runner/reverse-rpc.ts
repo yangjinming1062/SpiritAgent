@@ -1,15 +1,9 @@
-import type { BackendClient } from '../backend/client'
+import type { BackendSessionLike } from '../shared/backend-port'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 
 // JSON-RPC 2.0 §5.1 — "Method not found".
 const METHOD_NOT_FOUND_CODE = -32601
-
-export interface BackendSessionLike {
-  client: () => BackendClient
-  getSession: () => null | { hasToken: boolean }
-  getToken: () => null | string
-}
 
 export interface ReverseRpcOptions {
   backendSession?: BackendSessionLike | null
@@ -59,7 +53,7 @@ export function createReverseRpc(
     throw new TypeError('createReverseRpc requires options.backendSession.')
   }
 
-  // 单会话累计限额；Runner 重新连接时（新的 WS 会话）配额会重置。
+  // 单会话累计限额；仅随 bridge.start 新建本实例时重置，WS 重连不清零。
   const MAX_MESSAGES_PER_SESSION = 200
   const MAX_TEXT_BYTES_PER_SESSION = 1 * 1024 * 1024
   const MAX_VISION_BYTES_PER_SESSION = 10 * 1024 * 1024
@@ -225,19 +219,24 @@ export function createReverseRpc(
       throw new Error(`request_llm rejected: messages payload too large (${payloadBytes} bytes > ${maxBytes}).`)
     }
 
-    sessionMessagesSent += messageCount || (Array.isArray(responsesPayload.input) ? responsesPayload.input.length : 1)
+    const nextMessages =
+      sessionMessagesSent +
+      (messageCount || (Array.isArray(responsesPayload.input) ? responsesPayload.input.length : 1))
+    const nextBytes = sessionBytesSent + payloadBytes
 
-    if (sessionMessagesSent > MAX_MESSAGES_PER_SESSION) {
+    // 先校验再提交：被拒绝的请求不消耗会话额度。
+    if (nextMessages > MAX_MESSAGES_PER_SESSION) {
       throw new Error(
-        `request_llm rejected: session exceeded ${MAX_MESSAGES_PER_SESSION} messages (sent ${sessionMessagesSent}).`
+        `request_llm rejected: session exceeded ${MAX_MESSAGES_PER_SESSION} messages (sent ${nextMessages}).`
       )
     }
 
-    sessionBytesSent += payloadBytes
-
-    if (sessionBytesSent > maxBytes) {
-      throw new Error(`request_llm rejected: session exceeded ${maxBytes} bytes (sent ${sessionBytesSent}).`)
+    if (nextBytes > maxBytes) {
+      throw new Error(`request_llm rejected: session exceeded ${maxBytes} bytes (sent ${nextBytes}).`)
     }
+
+    sessionMessagesSent = nextMessages
+    sessionBytesSent = nextBytes
 
     const itemCount = Array.isArray(responsesPayload.input) ? responsesPayload.input.length : 1
     log(

@@ -1,7 +1,6 @@
 import { type DesktopRunnerState, IPC } from '@ipc/contracts'
 import type { BrowserWindow, IpcMain } from 'electron'
 
-import type { BackendSession } from '../backend/session'
 import type {
   RunnerBridge,
   RunnerBridgeEvent,
@@ -12,6 +11,7 @@ import type {
 import type { CreateRunnerProcessOptions, RunnerProcess } from '../runner/process'
 import type { ReverseRpcOptions } from '../runner/reverse-rpc'
 import type { CreateRunnerWsServerOptions, RunnerWsServer } from '../runner/rpc-ws'
+import type { BackendSessionPort } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
 import { errorMessage } from '../shared/utils'
 
@@ -21,7 +21,7 @@ interface RunnerIpcDeps {
   createRunnerProcess: (options: CreateRunnerProcessOptions) => RunnerProcess
   createRunnerWsServer: (options: CreateRunnerWsServerOptions) => RunnerWsServer
   spiritagentHome?: null | string
-  ensureBackendSession: () => BackendSession
+  ensureBackendSession: () => BackendSessionPort
   fileExists?: (p: string) => boolean
   getMainWindow?: () => BrowserWindow | null | undefined
   rememberLog: (chunk: string) => void
@@ -148,6 +148,32 @@ export function registerRunnerIpc({ deps, ipcMain }: { deps: RunnerIpcDeps; ipcM
   if (!ipcMain) {
     return
   }
+
+  ipcMain.handle(IPC.invoke.runnerGetTools, async () => {
+    const deadline = Date.now() + 6000
+
+    while (Date.now() < deadline) {
+      const bridge = deps.runnerBridge
+
+      if (bridge) {
+        const tools = bridge.getTools()
+
+        if (tools.length > 0) {
+          return tools
+        }
+
+        const status = bridge.getStatus()
+
+        if (status.phase === 'error' || status.phase === 'stopped') {
+          return []
+        }
+      }
+
+      await new Promise(resolve => setTimeout(resolve, 100))
+    }
+
+    return deps.runnerBridge?.getTools() || []
+  })
 
   ipcMain.handle(IPC.invoke.runnerInvoke, async (_event, name: string, args?: Record<string, unknown>) => {
     if (typeof name !== 'string' || !name) {

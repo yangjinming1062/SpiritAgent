@@ -1,6 +1,7 @@
 import { type DesktopGatewayEvent, type DesktopGatewayRpcResponse, type DesktopGatewayState, IPC } from '@ipc/contracts'
 import { BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 
+import { isSenderWindow } from '../security/ipc-trust'
 import { broadcastToAllWindows, sendToMain } from '../shared/utils'
 
 export interface GatewayIpcDeps {
@@ -31,11 +32,22 @@ export function registerGatewayIpc({ getMainWindow, ipcMain, rememberLog }: Gate
     pendingRequests.clear()
   }
 
+  // 网关宿主—代理：仅宿主窗（精灵/主窗口）可改状态、灌事件、抢答 RPC。
+  const isGatewayHost = (event: { sender: { id: number } }): boolean => {
+    return isSenderWindow(event.sender, getMainWindow())
+  }
+
   // 1. 获取当前网关状态
   ipcMain.handle(IPC.invoke.gatewayGetState, () => currentGatewayState)
 
   // 2. 主窗口上报网关状态并广播给所有窗口
-  ipcMain.on(IPC.send.gatewayBroadcastState, (_event, payload?: { state: DesktopGatewayState }) => {
+  ipcMain.on(IPC.send.gatewayBroadcastState, (event, payload?: { state: DesktopGatewayState }) => {
+    if (!isGatewayHost(event)) {
+      rememberLog?.(`[gateway-ipc] rejected state broadcast from non-host webContents=${event.sender.id}`)
+
+      return
+    }
+
     const next = payload?.state ?? 'closed'
     currentGatewayState = next
     rememberLog?.(`[gateway-ipc] state changed: ${next}`)
@@ -49,7 +61,7 @@ export function registerGatewayIpc({ getMainWindow, ipcMain, rememberLog }: Gate
 
   // 3. 主窗口收到 WS 业务事件并广播给 Surface 窗口（排除发送方本身）
   ipcMain.on(IPC.send.gatewayBroadcastEvent, (event, payload?: { event: DesktopGatewayEvent }) => {
-    if (!payload?.event) {
+    if (!isGatewayHost(event) || !payload?.event) {
       return
     }
 
@@ -96,8 +108,8 @@ export function registerGatewayIpc({ getMainWindow, ipcMain, rememberLog }: Gate
   )
 
   // 5. 主窗口处理完 RPC 请求后回复结果
-  ipcMain.on(IPC.send.gatewayRpcReply, (_event, payload?: DesktopGatewayRpcResponse) => {
-    if (!payload || typeof payload.id !== 'number') {
+  ipcMain.on(IPC.send.gatewayRpcReply, (event, payload?: DesktopGatewayRpcResponse) => {
+    if (!isGatewayHost(event) || !payload || typeof payload.id !== 'number') {
       return
     }
 

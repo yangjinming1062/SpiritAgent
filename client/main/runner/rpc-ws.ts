@@ -345,6 +345,9 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
         if (activeWs && activeWs.readyState === 1) {
           log('[runner-ws] replacing existing connection')
 
+          // 旧连接上的 pending 属于旧 socket；切换前终结，避免挂死到超时。
+          rejectAllPending(new Error('Runner connection replaced.'))
+
           try {
             activeWs.close(1000, 'replaced')
           } catch {
@@ -389,6 +392,11 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
         ws.on('close', () => clearInterval(heartbeatTimer))
 
         ws.on('message', data => {
+          // 被替换的旧 socket 可能在 close 前仍发数据；只认 active。
+          if (activeWs !== ws) {
+            return
+          }
+
           lastSeen = Date.now()
           handleRunnerMessage(data)
         })

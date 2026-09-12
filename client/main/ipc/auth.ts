@@ -1,15 +1,15 @@
 import { type DesktopActivatePayload, IPC } from '@ipc/contracts'
 import type { IpcMain } from 'electron'
 
-import type { BackendSession, SessionSnapshot } from '../backend/session'
+import type { BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
 import { writeStoredBackendUrl } from '../shared/config'
 
 interface AuthIpcDeps {
   autoStartBridge?: () => void
   autoStopBridge?: () => void
-  broadcastAuthChanged?: (session: null | SessionSnapshot) => void
+  broadcastAuthChanged?: (session: null | SessionSnapshotPort) => void
   buildClientContext?: () => { client_context?: unknown }
-  ensureBackendSession: () => BackendSession
+  ensureBackendSession: () => BackendSessionPort
   rebuildTrayMenu?: () => void
   resetBackendCache?: () => void
   spiritagentHome?: null | string
@@ -27,6 +27,7 @@ export function registerAuthIpc({
   ipcMain.handle(IPC.invoke.authActivate, async (_event, payload: DesktopActivatePayload) => {
     const session = deps.ensureBackendSession()
     const built = deps.buildClientContext?.() ?? {}
+    const previousUserId = session.getSession()?.user?.id ?? null
 
     const enriched = {
       ...(payload || {}),
@@ -37,6 +38,13 @@ export function registerAuthIpc({
     deps.resetBackendCache?.()
     deps.rebuildTrayMenu?.()
     deps.broadcastAuthChanged?.(session.getSession())
+
+    // 换号（含从无到有登录）同样清字节缓存，与登出对齐，避免旧账号资产对新账号可见。
+    const nextUserId = session.getSession()?.user?.id ?? null
+
+    if (result && previousUserId !== nextUserId) {
+      await clearLocalAssetCaches?.().catch(() => {})
+    }
 
     if (result) {
       deps.autoStartBridge?.()

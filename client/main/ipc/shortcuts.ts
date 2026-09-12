@@ -9,9 +9,13 @@ import {
 } from '@ipc/contracts'
 import { type BrowserWindow, globalShortcut, type IpcMain } from 'electron'
 
-import type { SurfacesManager } from '../lifecycle/surfaces'
 import * as store from '../shared/lib/runner-config-store'
 import { errorMessage, sendToMain } from '../shared/utils'
+
+/** 窄接口：短cuts 只需要切表面，不依赖 lifecycle/surfaces 具体类型。 */
+interface SurfaceToggler {
+  toggleSurface: (payload: { surface: SurfaceId }) => Promise<void>
+}
 
 interface ShortcutsIpcDeps {
   getMainWindow: () => BrowserWindow | null | undefined
@@ -19,7 +23,7 @@ interface ShortcutsIpcDeps {
   ipcMain: IpcMain
   rememberLog?: (chunk: string) => void
   showMainWindow: () => void
-  surfaces?: SurfacesManager
+  surfaces?: SurfaceToggler
 }
 
 let deps: ShortcutsIpcDeps | null = null
@@ -203,12 +207,4 @@ export function registerShortcutsIpc(options: ShortcutsIpcDeps): void {
       return state
     }
   )
-
-  ipcMain.handle(IPC.invoke.shortcutsReset, async (): Promise<DesktopShortcutsState> => {
-    await store.patch(['shortcuts'], { value: DEFAULT_SHORTCUTS })
-    const state = applyShortcuts(DEFAULT_SHORTCUTS)
-    broadcastShortcutsChanged(state)
-
-    return state
-  })
 }

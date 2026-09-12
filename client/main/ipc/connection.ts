@@ -7,8 +7,10 @@ import {
   type SpiritAgentConnection,
   type SpiritAgentConnectionPublic
 } from '@ipc/contracts'
-import type { IpcMain, WebContents } from 'electron'
+import type { BrowserWindow, IpcMain, WebContents } from 'electron'
 
+import { assertApiRequestAllowed } from '../security/api-allowlist'
+import { isSenderWindow } from '../security/ipc-trust'
 import { dataUrlFromBuffer } from '../shared/mime'
 import { HttpError, isUnauthorized, sendToSender } from '../shared/utils'
 
@@ -97,12 +99,17 @@ interface ConnectionIpcDeps {
     options?: { body?: unknown; method?: string; timeoutMs?: number }
   ) => Promise<unknown>
   getBootProgressState: () => DesktopBootProgress
+  getMainWindow?: () => BrowserWindow | null | undefined
   ipcMain: IpcMain
   mintWsTicket?: (baseUrl: string, token: string | null) => Promise<string | null>
   modelDiskCache?: null | ModelDiskCache
   resolvePathTimeoutMs: (path?: string, method?: string, fallbackMs?: number) => number
   resolveTimeoutMs: (timeoutMs?: number | string | null, fallbackMs?: number) => number
   setCachedWsUrl?: (wsUrl: string) => void
+}
+
+function stripWsTicket(wsUrl: string): string {
+  return wsUrl.split('?')[0] as string
 }
 
 export function registerConnectionIpc({
@@ -112,6 +119,7 @@ export function registerConnectionIpc({
   fetchImpl,
   fetchJson,
   getBootProgressState,
+  getMainWindow,
   ipcMain,
   mintWsTicket,
   modelDiskCache,
@@ -119,12 +127,21 @@ export function registerConnectionIpc({
   resolveTimeoutMs,
   setCachedWsUrl
 }: ConnectionIpcDeps): void {
+  const isGatewayHost = (event: { sender: WebContents }): boolean => {
+    return isSenderWindow(event.sender, getMainWindow?.())
+  }
+
   ipcMain.handle(IPC.invoke.connection, async (): Promise<SpiritAgentConnectionPublic> => {
     const { token: _token, ...publicConnection } = await ensureBackend()
 
-    return publicConnection
+    // 公开投影不下发一次性 WS ticket；宿主经 gatewayWsUrl 铸票后连接。
+    return { ...publicConnection, wsUrl: stripWsTicket(publicConnection.wsUrl) }
   })
-  ipcMain.handle(IPC.invoke.gatewayWsUrl, async () => {
+  ipcMain.handle(IPC.invoke.gatewayWsUrl, async event => {
+    if (!isGatewayHost(event)) {
+      throw new Error('gatewayWsUrl is restricted to the gateway host window')
+    }
+
     const connection = await ensureBackend()
 
     if (mintWsTicket && connection.token) {
@@ -139,11 +156,13 @@ export function registerConnectionIpc({
       }
     }
 
-    return connection.wsUrl
+    return stripWsTicket(connection.wsUrl)
   })
   ipcMain.handle(IPC.invoke.bootProgressGet, async () => getBootProgressState())
 
   ipcMain.handle(IPC.invoke.api, async (_event, request: SpiritAgentApiRequest) => {
+    assertApiRequestAllowed(request?.path, request?.method)
+
     const connection = await ensureBackend()
     const fallback = resolvePathTimeoutMs(request?.path, request?.method, defaultFetchTimeoutMs)
     const timeoutMs = resolveTimeoutMs(request?.timeoutMs, fallback)

@@ -142,8 +142,7 @@ export function registerFilesIpc({ electron, hardening, ipcMain, mimeTypeForPath
       return
     }
 
-    // 同步进用户选中路径白名单，取走方后续附件 IPC 才可读。
-    registerUserSelectedPaths(cleaned)
+    // 路径须已由 preload getPathForFile 或 selectPaths 注册；此处不再自授白名单。
     pendingFeedPaths = cleaned
     // 已打开的生活空间靠广播即时收到；刚创建的窗口在挂载时 take 补齐。
     broadcastToAllWindows(IPC.event.chatPendingFeed, cleaned)

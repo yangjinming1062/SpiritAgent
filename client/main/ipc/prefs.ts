@@ -1,11 +1,12 @@
 import { IPC } from '@ipc/contracts'
 import type { IpcMain } from 'electron'
 
-import { rebuildTrayMenu } from '../lifecycle/tray'
 import * as store from '../shared/lib/runner-config-store'
 
 interface PrefsIpcDeps {
   ipcMain: IpcMain
+  /** 语言变更后的托盘菜单重建；由 entry 注入，切断 ipc→lifecycle。 */
+  onLanguageChanged?: () => void
 }
 
 // 渲染层偏好写穿透终点：把点键合入配置镜像，乘既有管道
@@ -24,7 +25,7 @@ function isAllowedKey(key: string): boolean {
   return (ALLOWED_PRIMITIVE_KEYS as readonly string[]).includes(key)
 }
 
-export function registerPrefsIpc({ ipcMain }: PrefsIpcDeps): void {
+export function registerPrefsIpc({ ipcMain, onLanguageChanged }: PrefsIpcDeps): void {
   ipcMain.on(IPC.send.prefsSet, (_event, payload: unknown) => {
     if (!payload || typeof payload !== 'object') {
       return
@@ -44,7 +45,7 @@ export function registerPrefsIpc({ ipcMain }: PrefsIpcDeps): void {
 
     void store.patch(keyPath, { value }).then(result => {
       if (key === 'language' && result.ok) {
-        rebuildTrayMenu()
+        onLanguageChanged?.()
       }
     })
   })
