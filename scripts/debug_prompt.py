@@ -57,15 +57,15 @@ def _build_mock_user_profile_extras(profile: dict[str, str], *, language: str = 
 async def _load_from_db(user_id: int, *, language: str = "zh") -> dict[str, Any]:
     from components import SESSION_LOCAL
     from modules.companion import Persona
-    from services.companion import (
-        build_outfit_extras,
-        build_system_prompt_extras,
-        build_user_profile_extras,
+    from services.domains.companion.appearance import build_outfit_extras
+    from services.domains.companion.persona_service import build_system_prompt_extras
+    from services.domains.memory.memory_bootstrap import build_user_profile_extras
+    from services.domains.memory.memory_format import (
         format_auto_inject_block,
         format_inferred_profile_block,
         format_proactive_memory_block,
     )
-    from services.tools import REGISTRY
+    from services.infrastructure.tool_runtime import REGISTRY
     from sqlalchemy import select
 
     async with SESSION_LOCAL() as db:
@@ -118,12 +118,12 @@ def assemble_debug_prompt(
     from components import ensure_utc, utc_now
     from modules.auth import ChatRequestClientContext
     from modules.system import AgentPromptConfig
-    from services.chat.prompt_presets import BUILTIN_PRESETS, resolve_preset
-    from services.chat.system_prompt import build_system_prompt
-    from services.chat.turn_inputs import _history_to_responses_context
-    from services.companion import render_extras
-    from services.llm import approx_responses_tokens
-    from services.tools import REGISTRY, schema_name
+    from services.application.chat.prompt_presets import BUILTIN_PRESETS, resolve_preset
+    from services.application.chat.system_prompt import build_system_prompt
+    from services.application.chat.turn_inputs import _history_to_responses_context
+    from services.domains.companion.persona_service import render_extras
+    from services.infrastructure.llm import approx_responses_tokens
+    from services.infrastructure.tool_runtime import REGISTRY, schema_name
 
     if db_data is not None:
         persona_extras = db_data["persona_extras"]
@@ -218,7 +218,7 @@ def assemble_debug_prompt(
 
 
 def format_human_readable(result: dict[str, Any]) -> str:
-    from services.tools import schema_name
+    from services.infrastructure.tool_runtime import schema_name
 
     meta = result["metadata"]
     lines: list[str] = []

@@ -31,11 +31,21 @@ backend + runner 的 static import-shape 检查器（被 `.pre-commit-config.yam
 - runner 工具子包之间的 sibling 跨子包 eager import（终端 ↔ 文件、代码执行 → 线程上下文这类循环）
 - Facade 一致性：`from <local_pkg> import X` 走的 `<local_pkg>` 必须在其 `__init__.py` 里 re-export `X`，防止 facade 被过度精简
 
-## 3. Onboarding 引导词音频生成与校验 — `onboarding-audio/`
+## 3. Backend 分层架构检查 — `check_services_architecture.py`
+
+backend `services/` 的分层守护（可纳入 pre-commit / 发布前检查）：
+
+```bash
+backend/.venv/Scripts/python.exe scripts/check_services_architecture.py
+```
+
+覆盖 5 类违规：站内导入不可解析（含相对导入的语义化解析）；包级依赖环；层间白名单（contracts 纯净、application 不导入 adapters、infrastructure 不认识业务、bootstrap 不被反向导入、main 只导入 bootstrap）；domains 跨业务域隔离（含已登记的会话底座与时区只读例外）；application 内未声明的流程依赖边。例外清单以脚本内 `UPWARD_ALLOWED` / `APPLICATION_FLOW_EDGES` 为权威，调整时同步 backend/README.md §3。
+
+## 4. Onboarding 引导词音频生成与校验 — `onboarding-audio/`
 
 包含预渲染引导词音频元信息 `manifest.json` 与合成/校验脚本 `generate_onboarding_audio.py`。详见 [scripts/onboarding-audio/README.md](onboarding-audio/README.md)。
 
-## 4. 提示词调试与检查 — `debug_prompt.py`
+## 5. 提示词调试与检查 — `debug_prompt.py`
 
 用于呈现与调试伙伴完成 onboarding 引导流程以及用户发出消息时实际装配的完整聊天提示词（系统提示词、用户画像、工具集与请求负载）。桌面视觉动作使用独立推理提示词，不属于本脚本的聊天请求负载。
 
