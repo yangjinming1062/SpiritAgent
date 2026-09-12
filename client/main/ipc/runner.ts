@@ -1,3 +1,4 @@
+import type { MemoryToolScope } from '@ipc/contracts'
 import { type DesktopRunnerState, IPC } from '@ipc/contracts'
 import type { BrowserWindow, IpcMain } from 'electron'
 
@@ -175,15 +176,22 @@ export function registerRunnerIpc({ deps, ipcMain }: { deps: RunnerIpcDeps; ipcM
     return deps.runnerBridge?.getTools() || []
   })
 
-  ipcMain.handle(IPC.invoke.runnerInvoke, async (_event, name: string, args?: Record<string, unknown>) => {
-    if (typeof name !== 'string' || !name) {
-      throw new Error('runner:invoke requires a non-empty tool name')
+  ipcMain.handle(
+    IPC.invoke.runnerInvoke,
+    async (_event, name: string, args?: Record<string, unknown>, skillScope?: MemoryToolScope) => {
+      if (typeof name !== 'string' || !name) {
+        throw new Error('runner:invoke requires a non-empty tool name')
+      }
+
+      const bridge = ensureRunnerBridge(deps)
+
+      if (skillScope) {
+        return bridge.dispatch('execute_scoped_tool', { name, args: args ?? {}, skill_scope: skillScope })
+      }
+
+      return bridge.invoke(name, args && typeof args === 'object' ? args : {})
     }
-
-    const bridge = ensureRunnerBridge(deps)
-
-    return bridge.invoke(name, args && typeof args === 'object' ? args : {})
-  })
+  )
 
   ipcMain.handle(IPC.invoke.runnerGetState, async (): Promise<DesktopRunnerState> => {
     const bridge = deps.runnerBridge

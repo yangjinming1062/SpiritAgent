@@ -84,7 +84,7 @@ async function syncRunnerTools(gateway: SpiritAgentGateway): Promise<void> {
     }
 
     if (tools.length > 0) {
-      const res = await gateway.request<{ count: number }>('tools.sync', { tools })
+      const res = await gateway.request<{ count: number }>('tools.sync', { tools, skill_scope_version: 1 })
       log.info(
         'gateway-boot',
         `tools.sync: synced ${res.count || tools.length} runner tools to gateway (hasFileTools=${hasFileTools})`

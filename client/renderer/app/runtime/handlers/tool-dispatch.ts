@@ -1,3 +1,5 @@
+import type { MemoryToolScope } from '@ipc/contracts'
+
 import {
   $spriteState,
   findWindowByKeyword,
@@ -77,6 +79,7 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
     call_id?: string
     session_id?: string
     headless?: boolean
+    skill_scope?: MemoryToolScope
   }>(event.payload)
 
   const runnerInvoke = window.spiritagent?.runnerInvoke
@@ -146,8 +149,8 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
       }
 
       const result = findTarget
-        ? await performRitualWalk(findTarget, () => runnerInvoke(name, args), { previewClick })
-        : await runnerInvoke(name, args)
+        ? await performRitualWalk(findTarget, () => runnerInvoke(name, args, p.skill_scope), { previewClick })
+        : await runnerInvoke(name, args, p.skill_scope)
 
       await gateway?.request('tool.result', { call_id: p.call_id, result })
     } catch (err) {

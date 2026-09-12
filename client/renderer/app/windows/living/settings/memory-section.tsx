@@ -3,6 +3,7 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { $memoryBrowserTab, type MemoryTab, setMemoryBrowserTab } from '@/modules/character'
+import { $systemPresets, fetchSystemPresets } from '@/modules/conversation'
 import { useGatewayRequest } from '@/shared'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS } from '@/shared/panel'
@@ -29,6 +30,7 @@ interface MemoryCounts {
 }
 
 interface ListResponse {
+  system_preset_id: string
   memories: MemoryRow[]
   counts: MemoryCounts
 }
@@ -64,6 +66,38 @@ const AUTO_INJECT_SLOT_HINT_KEYS: ReadonlyArray<{ context: string; label: string
 
 // 长期记忆浏览与修正（DESIGN §8）：主动召回 / 自动注入两 tab。
 export function MemorySection(): React.ReactElement {
+  const presets = useStore($systemPresets)
+  const [presetId, setPresetId] = useState('companion')
+  const dict = useStrings()
+  useEffect(() => {
+    void fetchSystemPresets()
+  }, [])
+
+  return (
+    <section>
+      <label className="mb-3 block">
+        {dict.settings.memory.presetLabel}
+        <select
+          className={INPUT_CLASS}
+          onChange={event => {
+            setMemoryBrowserTab('recall')
+            setPresetId(event.target.value)
+          }}
+          value={presetId}
+        >
+          {presets.map(preset => (
+            <option key={preset.id} value={preset.id}>
+              {preset.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <ScopedMemorySection key={presetId} presetId={presetId} />
+    </section>
+  )
+}
+
+function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.memory
 
@@ -84,12 +118,19 @@ export function MemorySection(): React.ReactElement {
     async (nextTab: MemoryTab) => {
       const id = ++loadIdRef.current
       setLoading(true)
+      setRows([])
+      setDraftById({})
+      setSavingById({})
       setHint(null)
 
       try {
-        const res = await requestGateway<ListResponse>('memory.list', { kind: nextTab })
+        const res = await requestGateway<ListResponse>('memory.list', { kind: nextTab, system_preset_id: presetId })
 
         if (loadIdRef.current !== id) {
+          return
+        }
+
+        if (res.system_preset_id !== presetId) {
           return
         }
 
@@ -110,55 +151,77 @@ export function MemorySection(): React.ReactElement {
         }
       }
     },
-    [requestGateway, t.loadFailedHint, t.loadFailedToast]
+    [presetId, requestGateway, t.loadFailedHint, t.loadFailedToast]
   )
 
   useEffect(() => {
+    const requestRef = loadIdRef
     void load(tab)
+
+    return () => {
+      requestRef.current++
+    }
   }, [tab, load])
 
   // 函数式 setState 无需镜像 ref 也能拿到上一次的 rows；
   // 回滚分支从点击时闭包捕获的 `rows` 快照里同时还原 rows[i].content 与 draftById[i]。
   const saveRecall = useCallback(
     async (id: number) => {
+      const requestId = loadIdRef.current
       const draft = draftById[id] ?? ''
       const prevContent = rows.find(r => r.id === id)?.content ?? ''
       setSavingById(s => ({ ...s, [id]: true }))
 
       try {
-        await requestGateway('memory.update', { memory_id: id, content: draft })
+        await requestGateway('memory.update', { memory_id: id, content: draft, system_preset_id: presetId })
+
+        if (requestId !== loadIdRef.current) {
+          return
+        }
+
         setRows(prev => prev.map(r => (r.id === id ? { ...r, content: draft } : r)))
       } catch (err) {
+        if (requestId !== loadIdRef.current) {
+          return
+        }
+
         setRows(prev => prev.map(r => (r.id === id ? { ...r, content: prevContent } : r)))
         setDraftById(d => ({ ...d, [id]: prevContent }))
         setHint(t.saveFailedHint)
         notifyError(err, t.saveFailedToast)
       } finally {
-        setSavingById(s => {
-          const next = { ...s }
-          delete next[id]
+        if (requestId === loadIdRef.current) {
+          setSavingById(s => {
+            const next = { ...s }
+            delete next[id]
 
-          return next
-        })
+            return next
+          })
+        }
       }
     },
-    [draftById, requestGateway, rows, t.saveFailedHint, t.saveFailedToast]
+    [presetId, draftById, requestGateway, rows, t.saveFailedHint, t.saveFailedToast]
   )
 
   const del = useCallback(
     async (id: number) => {
+      const requestId = loadIdRef.current
       const prevRows = rows
       setRows(prev => prev.filter(r => r.id !== id))
 
       try {
-        await requestGateway('memory.delete', { memory_id: id })
+        await requestGateway('memory.delete', { memory_id: id, system_preset_id: presetId })
       } catch (err) {
+        if (requestId !== loadIdRef.current) {
+          return
+        }
+
         setRows(prevRows)
         setHint(t.deleteFailedHint)
         notifyError(err, t.deleteFailedToast)
       }
     },
-    [requestGateway, rows, t.deleteFailedHint, t.deleteFailedToast]
+    [presetId, requestGateway, rows, t.deleteFailedHint, t.deleteFailedToast]
   )
 
   const switchTab = (next: MemoryTab): void => {

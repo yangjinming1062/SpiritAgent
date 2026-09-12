@@ -1,3 +1,4 @@
+import type { MemoryToolScope } from '@ipc/contracts'
 import {
   type AttachmentVideoUploadPayload,
   type DesktopActivatePayload,
@@ -123,8 +124,8 @@ contextBridge.exposeInMainWorld('spiritagent', {
   },
   runnerGetState: () => ipcRenderer.invoke(IPC.invoke.runnerGetState),
   runnerGetTools: () => ipcRenderer.invoke(IPC.invoke.runnerGetTools),
-  runnerInvoke: (name: string, args: Record<string, unknown>) =>
-    ipcRenderer.invoke(IPC.invoke.runnerInvoke, name, args),
+  runnerInvoke: (name: string, args: Record<string, unknown>, skillScope?: MemoryToolScope) =>
+    ipcRenderer.invoke(IPC.invoke.runnerInvoke, name, args, skillScope),
   selectPaths: (options?: SpiritAgentSelectPathsOptions) => ipcRenderer.invoke(IPC.invoke.selectPaths, options),
   prefs: {
     set: (payload: SpiritAgentPrefsSet) => ipcRenderer.send(IPC.send.prefsSet, payload)

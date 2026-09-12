@@ -434,6 +434,7 @@ export const dict: Dictionary = {
     },
     memory: {
       tabAriaLabel: 'Memory type',
+      presetLabel: 'Current preset',
       tabRecall: (count: string | number) => `Recall · ${count}`,
       tabAutoInject: (count: string | number) => `Auto-inject · ${count}`,
       userProfileHint: (count: string | number) => `${count} user_profile entries are yours alone`,

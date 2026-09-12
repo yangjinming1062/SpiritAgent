@@ -1,3 +1,4 @@
+export interface MemoryToolScope { user_id: number; system_preset_id: string }
 // SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。
 // 通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和
 // `client/renderer/shared/types/global.d.ts` 导入。
@@ -404,7 +405,7 @@ export interface IpcInvokeContract {
   'spiritagent:version': () => DesktopVersionInfo | Promise<DesktopVersionInfo>
 
   // Runner
-  'spiritagent:runner:invoke': (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown
+  'spiritagent:runner:invoke': (name: string, args: Record<string, unknown>, skillScope?: MemoryToolScope) => Promise<unknown> | unknown
   'spiritagent:runner:cancel': () => unknown | Promise<unknown>
   'spiritagent:runner:get-state': () => DesktopRunnerState | Promise<DesktopRunnerState>
   'spiritagent:runner:get-tools': () => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>

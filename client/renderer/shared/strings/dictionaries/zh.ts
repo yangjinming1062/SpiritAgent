@@ -406,6 +406,7 @@ export const dict = {
     },
     memory: {
       tabAriaLabel: '记忆类型',
+      presetLabel: '当前预设',
       tabRecall: (count: string | number) => `主动召回 · ${count}`,
       tabAutoInject: (count: string | number) => `自动注入 · ${count}`,
       userProfileHint: (count: string | number) => `${count} 个 user_profile 由你独占`,
