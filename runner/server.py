@@ -23,6 +23,7 @@ from tools import (
     reset_max_read_chars_cache,
 )
 from tools.browser import reset_session_caches
+from tools.toolsets import excluded_tool_names
 from utils import (
     CancellationToken,
     DesktopEndpoint,
@@ -241,6 +242,10 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
             name = params.get("name")
             if not name:
                 raise ValueError("Missing 'name' in params")
+            # 与 get_schemas_for_llm 同源：渲染层/直调不得绕过 toolsets.disabled。
+            disabled_ids = get_disabled_toolset_ids()
+            if name in excluded_tool_names(disabled_ids, {name}):
+                raise ToolError(f"Tool '{name}' is disabled by toolsets.disabled")
             req_id_str = str(req_id) if req_id is not None else f"_anon_{uuid.uuid4().hex[:8]}"
             token = CancellationToken()
             _ACTIVE_CANCELLATIONS[req_id_str] = token
