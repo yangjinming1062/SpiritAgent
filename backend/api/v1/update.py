@@ -12,7 +12,13 @@ from fastapi.responses import FileResponse
 from modules.auth import CurrentAdmin
 from modules.system import MessageResponse, ReleaseManifestResponse
 from modules.update import UpdateVersion, UpdateVersionItem, UpdateVersionListResponse, UpdateVersionUpdate
-from services.update import ALLOWED_ARCHIVE_SUFFIXES, CHUNK_SIZE, DOWNLOAD_SUFFIXES, VERSIONS_DIR, build_manifest
+from services.application.updates import (
+    ALLOWED_ARCHIVE_SUFFIXES,
+    CHUNK_SIZE,
+    DOWNLOAD_SUFFIXES,
+    VERSIONS_DIR,
+    build_manifest,
+)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

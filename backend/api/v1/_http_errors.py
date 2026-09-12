@@ -1,5 +1,5 @@
 from fastapi import HTTPException
-from services.llm import ClassifiedError
+from services.infrastructure.llm import ClassifiedError
 
 
 def classified_http_exception(classified: ClassifiedError) -> HTTPException:

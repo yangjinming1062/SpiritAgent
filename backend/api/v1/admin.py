@@ -39,13 +39,11 @@ from modules.scheduler import (
     NightlyActivityLogListResponse,
 )
 from modules.system import MessageResponse
-from services.ai_config import prepare_ai_config, public_ai_config
-from services.companion import delete_portrait_file
-from services.conversation import ensure_system_conversations_for_user
-from services.gateway import terminate_user_gateway
-from services.llm import providers_supporting
-from services.system_settings import get_system_settings_for_admin, save_system_settings
-from services.user_backup import (
+from services.adapters.desktop.handlers import terminate_user_gateway
+from services.adapters.maintenance import user_maintenance
+from services.application.configuration.system_settings import get_system_settings_for_admin, save_system_settings
+from services.application.generation import delete_portrait_file
+from services.domains.backup import (
     CONVERSATION_TABLES,
     TABLES,
     UrlRewriter,
@@ -58,7 +56,9 @@ from services.user_backup import (
     restore_files,
     serialize_rows,
 )
-from services.user_maintenance import user_maintenance
+from services.domains.configuration.ai_config import prepare_ai_config, public_ai_config
+from services.domains.conversation import ensure_system_conversations_for_user
+from services.infrastructure.llm import providers_supporting
 from sqlalchemy import delete, select, update
 from starlette.background import BackgroundTask
 

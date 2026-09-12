@@ -16,7 +16,7 @@ from modules.companion import (
     MomentResponse,
     MomentUpdateRequest,
 )
-from services.companion import (
+from services.domains.journal import (
     DiaryNotFoundError,
     MomentNotFoundError,
     create_user_diary,

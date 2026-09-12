@@ -65,7 +65,8 @@ build/
 dist/
 dist-electron/
 release/
-updates/
+# 锚定到后端运行时自更新产物卷；非锚定形式会误伤 services/application/updates 源码包。
+backend/updates/
 
 # ---------------------------------------------------------------------------
 # Optional Skills State

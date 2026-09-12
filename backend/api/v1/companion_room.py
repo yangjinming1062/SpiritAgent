@@ -15,7 +15,7 @@ from modules.companion import (
     RoomGenerateRequest,
     RoomStateResponse,
 )
-from services.companion import (
+from services.application.generation import (
     BackdropOrigin,
     RoomBackdropError,
     RoomBackdropNotFoundError,

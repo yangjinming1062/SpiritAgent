@@ -6,7 +6,8 @@ from fastapi import HTTPException, Request
 from modules.auth import CurrentUser
 from modules.system import CompletionResponse
 from pydantic import BaseModel
-from services.llm import (
+from services.adapters.http.rate_limit import limiter
+from services.infrastructure.llm import (
     MissingLlmConfigError,
     ServiceType,
     call_with_retry,
@@ -15,7 +16,6 @@ from services.llm import (
     resolve_context_tokens,
     resolve_provider_chain,
 )
-from services.rate_limit import limiter
 from slowapi.util import get_remote_address
 
 from ._http_errors import classified_http_exception, missing_config_http

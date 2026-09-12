@@ -5,7 +5,7 @@ from components import SETTINGS, DbSession, utc_now
 from modules.auth import CurrentUser, LoginRecord
 from modules.conversation import Conversation
 from modules.system import StatusResponse
-from services.ws import MANAGER
+from services.infrastructure.desktop.connection import MANAGER
 from sqlalchemy import func, select
 
 router = get_router()

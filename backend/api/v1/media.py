@@ -21,20 +21,15 @@ from modules.auth import CurrentUser
 from modules.conversation import Conversation
 from modules.media import SPEECH_STYLE_ADAPTER
 from pydantic import ValidationError
-from services.llm import (
-    MissingLlmConfigError,
-    classify_api_error,
-    synthesize_speech,
-    transcribe_audio,
-)
-from services.media import (
+from services.adapters.http.rate_limit import limiter
+from services.domains.media import (
     attachment_video_url,
     enforce_session_quota,
     resolve_video_file,
     save_video_attachment,
     video_mime_for_ext,
 )
-from services.rate_limit import limiter
+from services.infrastructure.llm import MissingLlmConfigError, classify_api_error, synthesize_speech, transcribe_audio
 
 from ._http_errors import classified_http_exception, missing_config_http
 

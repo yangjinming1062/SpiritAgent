@@ -29,7 +29,8 @@ from modules.companion import (
     RenderModeRequest,
     VoicesListResponse,
 )
-from services.companion import (
+from services.adapters.http.rate_limit import limiter
+from services.application.generation import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
     AvatarGenerationError,
     AvatarNotFoundError,
@@ -45,13 +46,11 @@ from services.companion import (
     OutfitError,
     OutfitNotFoundError,
     OutfitStateError,
-    PersonaValidationError,
     SeedPromptMissingError,
     activate_outfit,
     avatar_response,
     confirm_fullbody_front,
     confirm_outfit,
-    confirm_portrait,
     create_outfit_draft,
     delete_outfit,
     finalize_avatar,
@@ -63,33 +62,38 @@ from services.companion import (
     generate_mesh2d_model,
     get_active_avatar,
     get_active_mesh2d_response,
-    get_active_model,
-    get_onboarding_state,
-    get_or_create_persona,
     get_outfit_policy,
     list_avatar_history,
     list_outfits,
-    list_tts_voices,
     model_response,
-    normalize_voice_language,
     outfit_response,
     regenerate_avatar_from_image,
     regenerate_outfit_draft,
-    resolve_companion_asset_path,
-    resolve_companion_model_path,
     resolve_uploaded_avatar_path,
-    schedule_personality_tag_refresh,
     select_avatar,
-    serve_ranged_file,
     set_outfit_policy,
     set_render_mode,
-    update_persona,
     upload_avatar,
+)
+from services.domains.companion import (
+    PersonaValidationError,
+    confirm_portrait,
+    get_active_model,
+    get_onboarding_state,
+    get_or_create_persona,
+    list_tts_voices,
+    normalize_voice_language,
+    schedule_personality_tag_refresh,
+    update_persona,
+)
+from services.infrastructure.assets import (
+    resolve_companion_asset_path,
+    resolve_companion_model_path,
+    serve_ranged_file,
     verify_signed_asset_request,
     verify_signed_avatar_request,
 )
-from services.llm import MissingLlmConfigError
-from services.rate_limit import limiter
+from services.infrastructure.llm import MissingLlmConfigError
 
 router = get_router()
 

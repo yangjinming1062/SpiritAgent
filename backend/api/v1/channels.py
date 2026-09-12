@@ -17,7 +17,7 @@ from modules.channels import (
     PeerInfo,
     PeerListResponse,
 )
-from services.channels import MANAGER, channels_info, try_resolve, update_binding_status
+from services.adapters.channels import MANAGER, channels_info, try_resolve, update_binding_status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 

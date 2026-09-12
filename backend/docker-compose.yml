@@ -36,7 +36,7 @@ services:
       - ./updates:/app/updates
       - ./data:/app/data
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:10620/health"]
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:10620/health')"]
       interval: 10s
       timeout: 3s
       retries: 5

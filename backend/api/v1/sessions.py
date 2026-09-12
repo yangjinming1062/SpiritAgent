@@ -28,7 +28,8 @@ from modules.conversation import (
     DesktopSessionUndoResponse,
     Message,
 )
-from services.conversation import (
+from services.adapters.desktop.handlers import do_session_undo
+from services.domains.conversation import (
     SPECIAL_KIND,
     ForkNotAllowedError,
     SourceNotFoundError,
@@ -36,8 +37,8 @@ from services.conversation import (
     fork_conversation_from_message,
     resolve_preset_meta,
 )
-from services.gateway import do_session_undo
-from services.ws import MANAGER, JsonRpcError
+from services.infrastructure.desktop.connection import MANAGER
+from services.infrastructure.desktop.jsonrpc import JsonRpcError
 from sqlalchemy import String, asc, case, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 

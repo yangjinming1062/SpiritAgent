@@ -14,8 +14,8 @@ from modules.auth import (
     hash_activation_token,
 )
 from modules.system import MessageResponse
-from services.gateway import terminate_user_gateway
-from services.rate_limit import limiter
+from services.adapters.desktop.handlers import terminate_user_gateway
+from services.adapters.http.rate_limit import limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
 

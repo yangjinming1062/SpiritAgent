@@ -4,7 +4,7 @@ from fastapi import Depends
 from modules.auth import CurrentUser, get_current_session
 from modules.settings import UserSetting
 from modules.system import DesktopConfigPutRequest, DesktopConfigResponse
-from services.desktop_config import DEFAULT_CONFIG, flatten_config, settings_to_config
+from services.domains.configuration.desktop_config import DEFAULT_CONFIG, flatten_config, settings_to_config
 from sqlalchemy import select
 
 router = get_router()
