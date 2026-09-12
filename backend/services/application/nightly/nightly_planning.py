@@ -713,11 +713,11 @@ async def _collect_context(user_id: int) -> PlanningContext:
     )
     if not isinstance(definition, dict):
         definition = {}
-    active_room = room["active"]
+    active_room = room.active
     context = PlanningContext(
         policies=PlanningPolicies(
             outfit=persona.outfit_policy if persona is not None else "llm_may_replace",
-            room=room["policy"],
+            room=room.policy,
             media=_setting_value(settings, "companion.autonomous_media", True) is True,
             voice=_setting_value(settings, "companion.autonomous_voice", True) is True,
         ),
@@ -739,7 +739,7 @@ async def _collect_context(user_id: int) -> PlanningContext:
         ),
         room=RoomContext(
             active_brief=active_room.brief if active_room is not None else "",
-            generation_pending=room["pending"] is not None,
+            generation_pending=room.pending is not None,
         ),
         wardrobe=[
             WardrobeItem(

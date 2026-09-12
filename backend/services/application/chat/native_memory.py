@@ -36,12 +36,11 @@ class NativeMemory:
                         before_memory_id=args.get("before_memory_id"),
                     )
                 payload = self._inspection.payload()
-                payload["next_before_memory_id"] = min((r["id"] for r in self._inspection.memories), default=None)
+                payload["next_before_memory_id"] = min((r.id for r in self._inspection.memories), default=None)
                 payload["maintenance_only_memories"] = [
-                    r
+                    r.model_dump()
                     for r in self._inspection.memories
-                    if r["status"] == "active"
-                    and (not r["expires_at"] or datetime.fromisoformat(r["expires_at"]) > utc_now())
+                    if r.status == "active" and (not r.expires_at or datetime.fromisoformat(r.expires_at) > utc_now())
                 ]
                 return json.dumps(payload, ensure_ascii=False)
             if tool_name == "memory_retain":
@@ -62,7 +61,7 @@ class NativeMemory:
                     {
                         "result": "reviewed",
                         "changes": [
-                            r if r["status"] == "active" else {"id": r["id"], "status": r["status"]} for r in rows
+                            r.model_dump() if r.status == "active" else {"id": r.id, "status": r.status} for r in rows
                         ],
                         "note": "No changes means nothing new was retained. Do not claim a candidate is an established fact.",
                     },

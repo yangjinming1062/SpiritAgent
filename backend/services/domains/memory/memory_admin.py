@@ -25,7 +25,7 @@ _LIST_MAX_LIMIT = 500
 
 def _row_to_dict(row: Memory) -> dict[str, Any]:
     return {
-        **memory_record(row),
+        **memory_record(row).model_dump(),
         "id": row.id,
         "system_preset_id": row.system_preset_id,
         "content_version": row.content_version,

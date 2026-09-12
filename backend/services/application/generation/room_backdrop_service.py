@@ -7,9 +7,10 @@ ready 行同步设 active（除非政策在自主生成期间被锁定）；保�
 """
 
 import asyncio
+from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any
 
 from components import (
     ROOM_BACKDROP_FAILURES_TOTAL,
@@ -186,14 +187,15 @@ async def get_backdrop(
     ).scalar_one_or_none()
 
 
-class RoomStateDict(TypedDict):
+@dataclass(frozen=True, slots=True)
+class RoomState:
     active: CompanionRoomBackdrop | None
     history: list[CompanionRoomBackdrop]
     policy: str
     pending: CompanionRoomBackdrop | None
 
 
-async def get_room_state(db: AsyncSession, user_id: int) -> RoomStateDict:
+async def get_room_state(db: AsyncSession, user_id: int) -> RoomState:
     persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
     active = await get_active_backdrop(db, user_id, persona=persona)
     pending = await get_pending_backdrop(db, user_id)
@@ -215,12 +217,12 @@ async def get_room_state(db: AsyncSession, user_id: int) -> RoomStateDict:
         .scalars()
         .all()
     )
-    return {
-        "active": active,
-        "history": list(history_rows),
-        "policy": (persona.backdrop_policy if persona is not None else BackdropPolicy.LLM_MAY_REPLACE.value),
-        "pending": pending,
-    }
+    return RoomState(
+        active=active,
+        history=list(history_rows),
+        policy=(persona.backdrop_policy if persona is not None else BackdropPolicy.LLM_MAY_REPLACE.value),
+        pending=pending,
+    )
 
 
 async def set_backdrop_policy(db: AsyncSession, user_id: int, policy: str) -> str:

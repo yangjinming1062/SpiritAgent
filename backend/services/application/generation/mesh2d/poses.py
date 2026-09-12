@@ -3,12 +3,12 @@ import base64
 import hashlib
 import io
 from pathlib import Path
-from typing import Literal, TypedDict
+from typing import Literal
 
 import numpy as np
 from components import SESSION_LOCAL, SETTINGS, download_capped, get_logger
 from PIL import Image, ImageDraw, ImageFilter
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from services.infrastructure.assets import asset_store
 from services.infrastructure.llm import (
@@ -29,12 +29,12 @@ Side = Literal["left", "right"]
 Rect = tuple[float, float, float, float]
 
 
-class Texture(TypedDict):
+class Texture(BaseModel):
     key: str
     hash: str
 
 
-class Pose(TypedDict):
+class Pose(BaseModel):
     width: int
     height: int
     contactX: float
@@ -44,8 +44,9 @@ class Pose(TypedDict):
     textures: dict[str, Texture]
 
 
-class PosePack(TypedDict):
-    schema: str
+class PosePack(BaseModel):
+    # 客户端契约键为 "schema"；BaseModel 自带 schema 属性，落库名走序列化别名。
+    schema_version: str = Field(serialization_alias="schema")
     left: Pose
     right: Pose
 
@@ -316,20 +317,20 @@ async def generate_pose_pack(reference: bytes, user_id: int | None) -> tuple[Pos
             image.save(output, format="WEBP", lossless=True)
             key = f"pose_{side}_{name}"
             assets[key] = output.getvalue()
-            textures[name] = {"key": key, "hash": hashlib.sha256(assets[key]).hexdigest()}
+            textures[name] = Texture(key=key, hash=hashlib.sha256(assets[key]).hexdigest())
         bounds = body.getbbox()
         if bounds is None:
             raise ValueError("empty pose")
         hands = [[rect[i] * 1.024 for i in (1, 0, 3, 2)] for rect in (landmarks.upper_hand, landmarks.lower_hand)]
-        return {
-            "width": 1024,
-            "height": 1024,
-            "contactX": contact,
-            "head": face,
-            "hands": hands,
-            "bounds": list(bounds),
-            "textures": textures,
-        }, assets
+        return Pose(
+            width=1024,
+            height=1024,
+            contactX=contact,
+            head=face,
+            hands=hands,
+            bounds=list(bounds),
+            textures=textures,
+        ), assets
 
     try:
         async with asyncio.timeout(1200), asyncio.TaskGroup() as tasks:
@@ -338,4 +339,7 @@ async def generate_pose_pack(reference: bytes, user_id: int | None) -> tuple[Pos
     except (ExceptionGroup, TimeoutError) as exc:
         raise PoseGenerationError("扶边姿态未通过生成校验，请重试") from exc
     left, right = left_task.result(), right_task.result()
-    return {"schema": "spiritagent.2d.poses/1", "left": left[0], "right": right[0]}, left[1] | right[1]
+    return (
+        PosePack(schema_version="spiritagent.2d.poses/1", left=left[0], right=right[0]),
+        left[1] | right[1],
+    )

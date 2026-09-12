@@ -63,7 +63,12 @@ async def _generate(
             path = asset_store.save_companion_asset(data, user_id=user_id, label=name, ext="webp")
             paths.append(path)
             layers.append({"name": name, "url": path})
-        manifest = {"schema": "spiritagent.2d.psd/1", "kind": "psd", "psd": psd_path, "poses": poses}
+        manifest = {
+            "schema": "spiritagent.2d.psd/1",
+            "kind": "psd",
+            "psd": psd_path,
+            "poses": poses.model_dump(by_alias=True),
+        }
         return json.dumps(manifest, ensure_ascii=False), layers
     except Exception as exc:
         for path in paths:

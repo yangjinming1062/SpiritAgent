@@ -39,10 +39,10 @@ async def get_room(
 ) -> RoomStateResponse:
     state = await get_room_state(db, user.id)
     return RoomStateResponse(
-        active=BackdropResponse(**response_for_backdrop(state["active"])) if state["active"] is not None else None,
-        history=[BackdropResponse(**response_for_backdrop(r)) for r in state["history"]],
-        policy=state["policy"],
-        pending=BackdropResponse(**response_for_backdrop(state["pending"])) if state["pending"] is not None else None,
+        active=BackdropResponse(**response_for_backdrop(state.active)) if state.active is not None else None,
+        history=[BackdropResponse(**response_for_backdrop(r)) for r in state.history],
+        policy=state.policy,
+        pending=BackdropResponse(**response_for_backdrop(state.pending)) if state.pending is not None else None,
     )
 
 
