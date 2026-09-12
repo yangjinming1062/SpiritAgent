@@ -29,7 +29,7 @@
 
 ## 2. 能力声明
 
-定义在 `ImageTo3DProvider`（`backend/services/image_to_3d/base.py`）：
+定义在 `ImageTo3DProvider`（`backend/services/infrastructure/image_to_3d/base.py`）：
 
 | ClassVar / 方法 | 含义 |
 | --- | --- |
@@ -103,7 +103,7 @@
 
 立绘并行进入两条分支：分层拆分（HF Gradio 上传、推理、SSE 轮询，失败切魔搭）与左右姿态 / 闭眼附件生成。两分支完成后统一校验、入库并发布描述符；备用策略见下文，姿态约束见 §6.2。
 
-**Provider 策略**（实现与配置面见 [backend/services/companion/seethrough/](../backend/services/companion/seethrough/)）：
+**Provider 策略**（实现与配置面见 [backend/services/infrastructure/seethrough/](../backend/services/infrastructure/seethrough/)）：
 - 主用失败切备用各试一次、单 provider 不重试（烧额度）；主用确认每日限额（错误文案 / HTTP 429 / 402）后进程内冷却 6 小时直连备用。
 - 双 provider 共享 1740s 墙钟预算，兜在 outfit 拆分 30 分钟清扫窗口内；魔搭 complete 载荷的文件 URL 落在 ms.show 运行域（拒 Bearer 头），客户端统一改写回 provider 域下载。
 
@@ -141,8 +141,8 @@
 
 ## 9. 参考实现
 
-- 3D 能力链编排：`backend/services/companion/pipeline.py::run_capability_chain`
-- 2D see-through 拆分：`backend/services/companion/seethrough/`（双供应商传输；完整资产发布由 mesh2d 编排）
-- 2D 行编排（状态机 / 落库 / WS 事件）：`backend/services/companion/mesh2d/pipeline.py::run_mesh2d_pipeline`
+- 3D 能力链编排：`backend/services/application/generation/pipeline.py::run_capability_chain`
+- 2D see-through 拆分：`backend/services/infrastructure/seethrough/`（双供应商传输；完整资产发布由 mesh2d 编排）
+- 2D 行编排（状态机 / 落库 / WS 事件）：`backend/services/application/generation/mesh2d/pipeline.py::run_mesh2d_pipeline`
 - 3D 客户端兑现：`client/renderer/modules/character/rendering/3d/AnimationMap.ts`
 - 2D puppet 链客户端：`client/renderer/modules/character/rendering/2d/puppet/PuppetStage.tsx`（renderer README 含机制）

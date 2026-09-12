@@ -117,7 +117,7 @@ Runner 不持有云端凭证；需要模型能力的本地工具经 Client 代�
 
 ### 5.4 IM 通道桥
 
-外部 IM（微信 iLink）经 **web 进程内**的通道桥（`services/channels/`）与同一伙伴对话——与调度器同为进程内 asyncio 任务，天然满足 §5.3 的单副本语义，不需要 omp-wechat 类方案的多进程单例锁。与 cron 自主回合的路由差异是本节的关键不变量：
+外部 IM（微信 iLink）经 **web 进程内**的通道桥（`services/adapters/channels/`）与同一伙伴对话——与调度器同为进程内 asyncio 任务，天然满足 §5.3 的单副本语义，不需要 omp-wechat 类方案的多进程单例锁。与 cron 自主回合的路由差异是本节的关键不变量：
 
 - **`special` cron 回合依赖用户 WS**：调度 tick 只写 outbox 行，由持有该用户 WS 的副本认领执行；桌面离线即无处执行。`standard` cron 回合是独立后台任务，不依赖桌面在线，涉及本机工具时才受 WS 可用性约束。
 - **IM 回合不依赖用户 WS**：入站消息由进程内适配器接收，直接以无头 emitter 跑完整 chat 回合（桌面离线也能回），回复格式化后从原渠道送出；桌面端只读旁观 im 会话历史。配对审批与通道状态变化走 outbox 事件。

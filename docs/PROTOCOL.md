@@ -47,7 +47,7 @@
 
 ### 1.2 伙伴生命周期方法（方法级契约）
 
-普通 chat / tool 类方法清单见 backend 代码（[services/gateway/handlers.py](../backend/services/gateway/handlers.py) 的注册表）。以下是**伙伴生命周期**专用方法，客户端必须实现消费状态机（详见 [DESIGN.md §5–§6](DESIGN.md)）。**逐参数签名见 backend 代码，本文只锁定契约意图与「改这里要同步哪里」：**
+普通 chat / tool 类方法清单见 backend 代码（[services/adapters/desktop/handlers.py](../backend/services/adapters/desktop/handlers.py) 的注册表）。以下是**伙伴生命周期**专用方法，客户端必须实现消费状态机（详见 [DESIGN.md §5–§6](DESIGN.md)）。**逐参数签名见 backend 代码，本文只锁定契约意图与「改这里要同步哪里」：**
 
 | 方法 | 用途 | 改动需同步的模块 |
 | --- | --- | --- |
@@ -55,7 +55,7 @@
 | avatar.regenerate | 重生头像（不使模型失效） | Backend + Client 头像展示 |
 | tts.match_voice / tts.design_voice / tts.list_voices | 音色描述匹配 / 专属音色生成 / 目录枚举 | Backend TTS + Client 音色页 + 工具窗口 REST 镜像 |
 | companion.set_timezone | Client 每次连接上报本地 IANA 时区——系统提示词日期与陪伴对话时间感知、夜间批处理与互动统计按用户本地日聚合的唯一时区来源；缺行时回落服务端 UTC，夜间流水线整段跳过 | Backend 持久化 + Client boot 上报 + DESIGN §6.2 |
-| tools.sync | Client boot 与 Runner 重启时把 Runner 工具 schema 推送到后端网关，纳入该用户的本机工具池。缺该调用时本机工具对模型不可见。对应 WS RPC 注册于 [backend/services/gateway/handlers.py](../backend/services/gateway/handlers.py) | Backend handlers + Client boot 上报 |
+| tools.sync | Client boot 与 Runner 重启时把 Runner 工具 schema 推送到后端网关，纳入该用户的本机工具池。缺该调用时本机工具对模型不可见。对应 WS RPC 注册于 [backend/services/adapters/desktop/handlers.py](../backend/services/adapters/desktop/handlers.py) | Backend handlers + Client boot 上报 |
 | companion.check_affect / companion.interact / companion.should_act / companion.record_interaction_stats / companion.get_user_profile | 桌面自主视觉表达 / 戳·摸头·眩晕反应 / 自主空间决策 / 互动统计 / 画像召回。`check_affect` 只返回结构化 `emotion/actions`，`should_act` 只返回空间动作与可选开场白；RPC 的 `reason` 仅为跳过/失败诊断 | Backend 推理 + Client 触发与消费 + DESIGN §6.3/§6.4 |
 | POST /api/companion/portrait/confirm | 确认半身形象（幂等），解开正面全身立绘生成子阶段 | Backend 状态 + Client 流程 |
 | POST /api/companion/avatar/{avatar_id}/fullbody/front-2d | 按默认赛璐珞画风（自然站姿）与微调反馈生成/重绘 2D 正面全身图 | Backend 生成 + Client 正面预览与微调 |
@@ -72,7 +72,7 @@
 | GET /api/companion/room 与 POST /generate、POST /activate、PATCH /policy、GET /{id} | 生活空间房间背景：水合房间状态（active / history[≤5] / policy / pending）/ 用户主动生成（202 异步，不占角色配额）/ 激活回滚历史房间（着装指纹不一致回 409）/ 政策切换（locked / llm_may_replace）/ 房间详情 | Backend companion_room / room_backdrop_service + Client room-backdrop / 生活空间设置 |
 | GET/POST /api/companion/moments 与 PATCH/DELETE /{id} | 生活空间时刻：游标分页查询（cursor/limit/kind）/ 用户与系统写入时刻 / 软隐藏或修改时刻。响应媒体契约含 `media_url`、`media_type`（空串/image/video/audio）、可选 `audio_url` 与 `media_metadata`；视频或图片可携同片刻配音 | Backend companion_journal / journal_service + Client moments-page |
 | GET /api/companion/diary 与 GET /{date}、POST、PATCH /{id} | 生活空间日记：区间拉取日记 / 指定自然日日记查询 / 用户手工补写或编辑日记（支持段落追加保护） | Backend companion_journal / journal_service + Client diary-page |
-| `command.dispatch` | Slash 命令分发：客户端在输入框敲 `/xxx` 时拦截，改走本 RPC 而非 `prompt.submit`。命令注册表权威源在 [backend/services/chat/slash_commands.py](../backend/services/chat/slash_commands.py)；返回 `{command, result:{status, message, payload?, hydrate?}}`，同步广播 `command.result` 事件给同 session 订阅者（多窗口同步渲染）。详见 §6 |  |
+| `command.dispatch` | Slash 命令分发：客户端在输入框敲 `/xxx` 时拦截，改走本 RPC 而非 `prompt.submit`。命令注册表权威源在 [backend/services/application/chat/slash_commands.py](../backend/services/application/chat/slash_commands.py)；返回 `{command, result:{status, message, payload?, hydrate?}}`，同步广播 `command.result` 事件给同 session 订阅者（多窗口同步渲染）。详见 §6 |  |
 | `command.list` | 列出可用 Slash 命令元数据（`{name, aliases, description, requires_confirmation}`，**不含 handler**），供客户端 `/帮助` 与调试面板消费 |  |
 | `session.clear_messages` | 清空当前会话消息（保留会话行 + 写一条 `subtype='status_cleared'` 的 system marker）；强制要求 `confirmed=true`，否则 `-32001`。与 `/清理` Slash 命令共用底层实现 |  |
 | `session.set_settings` | 写会话级参数覆盖（载荷 `{session_id, settings:{temperature?, context_compression_threshold?, reasoning_effort?}}`）。仅覆盖本会话与 `info.settings` 内存视图；持久化层以会话行为单位；下次 `session.resume` 会随 `info.settings` 一起回水合。客户端通常以 350ms 防抖批量提交，避免高频 patch 抖动 | Backend handlers / client chat-store + ChatParamsPanel / session-list-store（hydrate 路径）/ PROTOCOL.md |
@@ -126,7 +126,7 @@
 
 **事件投递范围（session_id 语义）**：session_id 就是 conversation_id 的字符串形式（见 §6）。聊天会话事件（message.* / tool.start / tool.complete / error）必带信封级 session_id、只属于该会话，渲染端必须按 session_id 过滤；outbox 事件（上表）不带信封级 session_id，投递到该用户的 desktop、与打开哪个会话无关，照常处理。`companion.message`、`system.notification` 与 `video_gen.completed` 可在载荷内部携带 session_id，渲染端据此决定增量落卡或提供跳转，不将它用作 outbox 路由闸门。
 
-**`tool.call` 是用户级设备指令，不是会话事件**（改此处需同步：backend services/chat/tool_dispatch.py 与 services/gateway/emitter.py、client app/runtime/gateway-event-router.ts、本文档）：它不渲染进任何气泡、不参与会话状态机，只按 `call_id`（§6 定义的唯一 Future Key）与 `tool.result` 配对，因此**不带信封级 session_id**、由后端直接推给该用户的 desktop 派发器。载荷含 `{name, args, call_id, session_id, headless?}`，其中 `session_id` 是**信息字段而非路由闸门**；交互式回合下客户端用它判断可见会话并自持精灵工作态，`headless=true` 时照常执行设备指令但不展示工作态、工具流或打字态。IM、主动 Cron、普通自动化与子 agent 的无头回合统一使用该标志，不依赖会话类型猜测可见性。
+**`tool.call` 是用户级设备指令，不是会话事件**（改此处需同步：backend services/application/chat/tool_dispatch.py 与 services/adapters/desktop/emitter.py、client app/runtime/gateway-event-router.ts、本文档）：它不渲染进任何气泡、不参与会话状态机，只按 `call_id`（§6 定义的唯一 Future Key）与 `tool.result` 配对，因此**不带信封级 session_id**、由后端直接推给该用户的 desktop 派发器。载荷含 `{name, args, call_id, session_id, headless?}`，其中 `session_id` 是**信息字段而非路由闸门**；交互式回合下客户端用它判断可见会话并自持精灵工作态，`headless=true` 时照常执行设备指令但不展示工作态、工具流或打字态。IM、主动 Cron、普通自动化与子 agent 的无头回合统一使用该标志，不依赖会话类型猜测可见性。
 
 **设备指令的重复投递**：`tool.call` 与其它事件一样进重放缓冲，WS 断连重连会重发。本机副作用不可撤销（删文件、跑命令），因此**客户端必须按 `call_id` 去重**，重复帧直接丢弃——后端的 `resolve_future` 只会丢弃迟到的结果，拦不住已经发生的副作用。
 
@@ -150,11 +150,11 @@
 
 **当前心情（mood）**：生活空间陪伴回合完成后，Backend 用独立 JSON 推理生成一句第一人称短语，持久化到 `persona.current_mood` 并发出 `companion.mood {mood}`。Client 无条件刷新身份轨；该状态不写 `messages` 表、不渲染气泡。工作预设、主动 Cron、普通自动化与 IM 回合不触发这条更新。
 
-**emotion 枚举**（22 项，权威源 [backend/services/companion/emotions.py](../backend/services/companion/emotions.py)）：happy / sad / surprised / excited / confused / concerned / shy / proud / grateful / playful / bored / lonely / sleepy / curious / embarrassed / apologetic / neutral / pout / angry / smug / scared / relieved。
+**emotion 枚举**（22 项，权威源 [backend/services/domains/companion/emotions.py](../backend/services/domains/companion/emotions.py)）：happy / sad / surprised / excited / confused / concerned / shy / proud / grateful / playful / bored / lonely / sleepy / curious / embarrassed / apologetic / neutral / pout / angry / smug / scared / relieved。
 
 **自主视觉表达**：Client 仅在生效档位为 autonomous、桌面精灵可见、屏幕解锁且空闲达到阈值时调用 `companion.check_affect`。Backend 另以档位闸门限制该 RPC，并从角色定义、记忆、时间、允许情绪与当前模型动作能力独立推理 `emotion/actions`；成功时发出 `companion.affect`。Client 收到事件时再次按同一可见性条件消费。该链不生成正文、气泡或 TTS，也不写对话历史。
 
-**视觉 action 白名单（2D 路径）**（权威源 [backend/services/companion/mesh2d/actions.py](../backend/services/companion/mesh2d/actions.py) 的 `DEFAULT_ACTIONS`，自主视觉推理清单为当前模型 clip keys 去除状态机/用户交互专用键，模型未提供清单时回退 `DEFAULT_ACTIONS − NON_LLM_ACTIONS`；最多按序返回 3 个。下表标 ★ 的键为 Client 本地触发、自主视觉推理不可请求）：
+**视觉 action 白名单（2D 路径）**（权威源 [backend/services/domains/companion/actions.py](../backend/services/domains/companion/actions.py) 的 `DEFAULT_ACTIONS`，自主视觉推理清单为当前模型 clip keys 去除状态机/用户交互专用键，模型未提供清单时回退 `DEFAULT_ACTIONS − NON_LLM_ACTIONS`；最多按序返回 3 个。下表标 ★ 的键为 Client 本地触发、自主视觉推理不可请求）：
 
 | key | 描述 | 默认绑定 emotion |
 | --- | --- | --- |
@@ -203,7 +203,7 @@
 
 命中区域与手势影响：（1）前端手势/物理反馈——摸头享受、怒气、眩晕与发区抖动的触发阈值与粒子反馈见 [DESIGN.md §6.3](DESIGN.md)；（2）LLM 反应上下文——`kind` 与 `region` 字段透传到 LLM，让回应可针对"摸头" vs "戳脸" vs "拍手" vs "眩晕"做不同文案。两条渲染路径都做可见像素级命中——3D 走 silhouette hit（离屏 alpha 回读）；2D 走 [PuppetStage](../client/renderer/2d/puppet/PuppetStage.tsx)（当前帧部件网格精确点测，区域 = 最上层命中部件的映射，CPU 轻量，经命中区域总线 `$mesh2dHitmap` 下发）。
 
-**扩展协议**：emotion 扩展须同步更新 **Backend 白名单 + Client 表情映射 + 本文档**；视觉 action 扩展须同步更新 **Backend [actions.py](../backend/services/companion/mesh2d/actions.py)（DEFAULT_ACTIONS / NON_LLM_ACTIONS）+ Client [PuppetStage 包络表](../client/renderer/2d/puppet/PuppetStage.tsx) + 本文档**；空间动作扩展须同步 `ALLOWED_ACTIONS`、Client autonomy 执行器与本文档。未覆盖 emotion 一律按 neutral 处理。
+**扩展协议**：emotion 扩展须同步更新 **Backend 白名单 + Client 表情映射 + 本文档**；视觉 action 扩展须同步更新 **Backend [actions.py](../backend/services/domains/companion/actions.py)（DEFAULT_ACTIONS / NON_LLM_ACTIONS）+ Client [PuppetStage 包络表](../client/renderer/2d/puppet/PuppetStage.tsx) + 本文档**；空间动作扩展须同步 `ALLOWED_ACTIONS`、Client autonomy 执行器与本文档。未覆盖 emotion 一律按 neutral 处理。
 
 **用户面向语言（locale）**：
 
@@ -212,7 +212,7 @@
 - **传输**：托盘菜单「语言 / Language」子项切换或渲染层 `window.spiritagent.prefs.set({ key: 'language', value: 'en' })` → 镜像原子写 → `spiritagent.config.update` 推 Runner → 防抖 1.5s PUT 云端；主进程向所有窗口广播 `prefs-hydrated` 事件（`DesktopPrefsHydrated.language?: string`）→ `client/renderer/shared/store/locale.ts` 的 `initLocaleSync()` 回写 `$locale` nanostore；启动/登录/换号 `GET /api/config` 水合覆盖本地镜像并同步刷新托盘菜单。
 - **生效时机**：客户端 `$locale.set('en')` 立即触发 `useStrings()` hook 重渲（热切换，无需重启）；主进程 TTS/STT 媒体调用缺省跟随当前语言；后端下一回合 `load_user_settings` 拿到新 `language`，`build_system_prompt` 按新 lang 渲染 17 段双语 dict；当前回合若已锁 prompt 则最迟下一回合切完（与 timezone 切换同语义）。
 - **缺省兜底**：`resolve_language(language)` 把空值 / 未知值回落 `DEFAULT_LANGUAGE = "zh"`（`backend/components/functions.py`）；客户端 `normalizeLocale` 同源。切换 `language` 点键 **不需要重启 backend**。
-- **扩展 locale**：须同步更新 **Backend `SUPPORTED_LANGUAGES`（`components/constants.py`）+ Client `SUPPORTED_LOCALES`（`renderer/shared/strings/locales.ts`）+ 全部 `prompt_blocks.BLOCK_RENDERERS` 与 `system_prompt.py` 各 `BILINGUAL_DICT` 键集 + 客户端 `dictionaries/*.ts` 全语种副本 + 本文档**。未知 locale 一律按 `DEFAULT_LANGUAGE` 处理（`resolve_language` 兜底）。改一处需同步以上全部。
+- **扩展 locale**：须同步更新 **Backend `SUPPORTED_LANGUAGES`（`components/constants.py`）+ Client `SUPPORTED_LOCALES`（`renderer/shared/strings/locales.ts`）+ `prompt_blocks.py` 的 `BLOCK_RENDERERS` 与各双语提示词常量键集 + 客户端 `dictionaries/*.ts` 全语种副本 + 本文档**。未知 locale 一律按 `DEFAULT_LANGUAGE` 处理（`resolve_language` 兜底）。改一处需同步以上全部。
 
 ### 1.5 资产 URL 签名与传输缓存
 
@@ -263,7 +263,7 @@ REST 端点异常路径返回统一结构：error（短码）+ reason（分类�
 
 **渠道能力差异**（产品语义级）：微信 iLink 为 reply-only（伙伴**不能**主动发起微信消息，回复须回显入站 context_token，过期后等用户下一条消息刷新）。
 
-**改此处需同步**：backend services/channels 与 modules/channels、backend/README.md、client 通道设置页与只读守卫（client/renderer/README.md）、DESIGN.md、ARCHITECTURE.md §5.4。
+**改此处需同步**：backend services/adapters/channels 与 modules/channels、backend/README.md、client 通道设置页与只读守卫（client/renderer/README.md）、DESIGN.md、ARCHITECTURE.md §5.4。
 
 **覆盖恢复维护边界**：管理员执行用户备份 `overwrite` 恢复时，后端先把该用户标记为维护中；新 REST/WS 操作返回稍后重试，已进入的 REST 操作须退出，网关会话、IM 绑定、Cron 回合及可中断的整理任务须取消并等待，已经提交的付费生成任务须等待自然落地，之后才允许清表与写入。导入成功或回滚后都要清除会话、主动状态、交互统计与调度节流等旧内存镜像，再从数据库真源恢复 IM 绑定；客户端后续重连必须重新挂载会话，不得沿用已删除的 conversation ID。
 
@@ -288,9 +288,9 @@ REST 端点异常路径返回统一结构：error（短码）+ reason（分类�
 - `session.get_main`（WS RPC）：现存的方法指代「**用户的主对话**」，返回 `system_preset_id='companion'` 的特殊对话。
 - 既有 `session.create` 等方法对系统预设对话同样适用（用户能在 5 套预设之上再 clone 一个变体；但 5 套预设本身不可被 PATCH/DELETE）。
 
-**派生会话（forked）**：`session.fork`（WS RPC）与 `POST /api/sessions/{id}/fork`（REST 镜像）由用户在 `kind='standard'` 源会话的某条历史消息节点上派生新会话；复制范围显式保留 `subtype=NULL` 的普通消息及压缩/每日摘要，只排除 `status_*` 界面行，并原样保留工具链、媒体、推理、语音样式、摘要日期与创建时间等历史元数据（用量和耗时统计清零）。复制行不再打 `Message.draft_anchor`（消息要么在历史要么在输入框，不允许两者并存），新会话的所有复制行按已发送历史对待；新会话 `parent_id` 指向源、`is_deletable`/`is_renamable` 默认 True、标题追加「 — 副本」。源 `kind ∈ {special, im}` 时返回 INVALID_PARAMS / 403（系统预设、IM 桥接不可派生）。**改此处需同步**：backend services/conversation/fork.py、services/chat/history.py、services/gateway/handlers.py、api/v1/sessions.py、modules/conversation/models.py（`Message.draft_anchor` 列保留仅作向后兼容）、alembic baseline；client session-list-store.ts、chat-store.ts、chat-dock-message-bubble.tsx、chat-message-fork-button.tsx。
+**派生会话（forked）**：`session.fork`（WS RPC）与 `POST /api/sessions/{id}/fork`（REST 镜像）由用户在 `kind='standard'` 源会话的某条历史消息节点上派生新会话；复制范围显式保留 `subtype=NULL` 的普通消息及压缩/每日摘要，只排除 `status_*` 界面行，并原样保留工具链、媒体、推理、语音样式、摘要日期与创建时间等历史元数据（用量和耗时统计清零）。复制行不再打 `Message.draft_anchor`（消息要么在历史要么在输入框，不允许两者并存），新会话的所有复制行按已发送历史对待；新会话 `parent_id` 指向源、`is_deletable`/`is_renamable` 默认 True、标题追加「 — 副本」。源 `kind ∈ {special, im}` 时返回 INVALID_PARAMS / 403（系统预设、IM 桥接不可派生）。**改此处需同步**：backend services/domains/conversation/fork.py、services/domains/conversation/history.py、services/adapters/desktop/handlers.py、api/v1/sessions.py、modules/conversation/models.py（`Message.draft_anchor` 列保留仅作向后兼容）、alembic baseline；client session-list-store.ts、chat-store.ts、chat-dock-message-bubble.tsx、chat-message-fork-button.tsx。
 
-**新建对话预设选择**：客户端在工作台用户点 「新建」 时弹出选择器，供用户在 4 种专业工位预设中选 1（无默认，确认按钮必选中才启用；生活空间独占「陪伴」会话不支持新建或切换）。经 WS RPC `system.list_presets` 获取预设元数据（`id` / `name` / `description` / `icon_key`，**不含 body**；body 永远不下发到客户端）；`session.create` 传选中的 `system_preset_id`（必须 ∈ `BUILTIN_PRESETS` 键集合；非法值抛 INVALID_PARAMS；省略/空串 = 未传，行为同旧版 `kind='standard'`，`system_preset_id=NULL`，chat 时按 `resolve_preset` 降级到 `companion`）。新建的会话始终是 `kind='standard'`，可改名/删除/派生，系统提示词由 `system_preset_id` 在 chat 时间锁定。`DesktopSessionInfo.system_preset_id` 与 `system_preset_icon_key` 暴露给客户端用于侧边栏徽标（NULL 时 `system_preset_icon_key` 已降级为 `companion.icon_key`）。**改此处需同步**：backend services/gateway/handlers.py（`system.list_presets` handler + `session.create` 校验）、modules/system/schemas.py（`PromptPresetSummary` / `PromptPresetListResponse`）、modules/conversation/schemas.py（`DesktopSessionInfo` 新字段）、api/v1/sessions.py（`_conversation_to_session_info` 填充）；client companion/chat/preset-picker-modal.tsx（新建）、companion/chat/session-drawer.tsx（picker 挂载 + `SessionRow` 徽标）、companion/session-list-store.ts（`createNewSession(systemPresetId?)` + `fetchSystemPresets` + 3 个 atom）、shared/types/spiritagent.ts（`SessionInfo` 字段 + `SystemPresetSummary` / `SystemPresetListResponse`）、shared/strings/index.ts（`chat.presetPicker.*`）；本文档。
+**新建对话预设选择**：客户端在工作台用户点 「新建」 时弹出选择器，供用户在 4 种专业工位预设中选 1（无默认，确认按钮必选中才启用；生活空间独占「陪伴」会话不支持新建或切换）。经 WS RPC `system.list_presets` 获取预设元数据（`id` / `name` / `description` / `icon_key`，**不含 body**；body 永远不下发到客户端）；`session.create` 传选中的 `system_preset_id`（必须 ∈ `BUILTIN_PRESETS` 键集合；非法值抛 INVALID_PARAMS；省略/空串 = 未传，行为同旧版 `kind='standard'`，`system_preset_id=NULL`，chat 时按 `resolve_preset` 降级到 `companion`）。新建的会话始终是 `kind='standard'`，可改名/删除/派生，系统提示词由 `system_preset_id` 在 chat 时间锁定。`DesktopSessionInfo.system_preset_id` 与 `system_preset_icon_key` 暴露给客户端用于侧边栏徽标（NULL 时 `system_preset_icon_key` 已降级为 `companion.icon_key`）。**改此处需同步**：backend services/adapters/desktop/handlers.py（`system.list_presets` handler + `session.create` 校验）、modules/system/schemas.py（`PromptPresetSummary` / `PromptPresetListResponse`）、modules/conversation/schemas.py（`DesktopSessionInfo` 新字段）、api/v1/sessions.py（`_conversation_to_session_info` 填充）；client companion/chat/preset-picker-modal.tsx（新建）、companion/chat/session-drawer.tsx（picker 挂载 + `SessionRow` 徽标）、companion/session-list-store.ts（`createNewSession(systemPresetId?)` + `fetchSystemPresets` + 3 个 atom）、shared/types/spiritagent.ts（`SessionInfo` 字段 + `SystemPresetSummary` / `SystemPresetListResponse`）、shared/strings/index.ts（`chat.presetPicker.*`）；本文档。
 
 ### 1.8.1 Cron 双轨契约
 
@@ -332,13 +332,13 @@ REST 端点异常路径返回统一结构：error（短码）+ reason（分类�
 **事件 `command.result`**（必带 `session_id`）：payload 含 `{command, result:{status, message, payload?, hydrate?}}`。`hydrate=true` 时用 `payload.messages` 替换本地消息列表；否则 push 一条 status pill（与 `daily_summary` / `compress_summary` / `status_cleared` 同渲染集合）。同一调用同时下发 RPC 响应与事件——前端接住任一路即可，幂等处理。
 
 **改一处需同步**：
-- 命令注册表 / 元数据 → [backend/services/chat/slash_commands.py](../backend/services/chat/slash_commands.py) + [client/renderer/shared/lib/slash-commands.ts](../client/renderer/shared/lib/slash-commands.ts) 镜像
+- 命令注册表 / 元数据 → [backend/services/application/chat/slash_commands.py](../backend/services/application/chat/slash_commands.py) + [client/renderer/shared/lib/slash-commands.ts](../client/renderer/shared/lib/slash-commands.ts) 镜像
 - 拦截逻辑 / 弹层 → [client/renderer/modules/conversation/chat-slash.ts](../client/renderer/modules/conversation/chat-slash.ts) + [client/renderer/modules/conversation/slash-command-popover.tsx](../client/renderer/modules/conversation/slash-command-popover.tsx)
 - 错误码 → [backend/components/constants.py](../backend/components/constants.py) + [backend/components/__init__.py](../backend/components/__init__.py) + 客户端 `slashErrorToMessage`（chat-dock.tsx）
 - 状态 pill 渲染 → `status_command_result` 加入 `chat-dock-message-bubble.tsx` 的 status 渲染分支
-- 自动压缩事件 → [backend/services/chat/orchestrator.py](../backend/services/chat/orchestrator.py)（orchestrator 命中阈值后 push）+ [backend/services/gateway/emitter.py](../backend/services/gateway/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/app/runtime/gateway-event-router.ts](../client/renderer/app/runtime/gateway-event-router.ts)（`compress.completed` switch）+ `chat-dock-message-bubble.tsx` 的 `COMPRESS_CARD_SUBTYPES` 折叠卡片分支 + 本文档 §1.3
-- 活路径消息 id 回写 → [backend/services/chat/persistence.py](../backend/services/chat/persistence.py) + [backend/services/chat/orchestrator.py](../backend/services/chat/orchestrator.py)（`message.persisted`）+ [backend/services/gateway/emitter.py](../backend/services/gateway/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/app/runtime/gateway-event-router.ts](../client/renderer/app/runtime/gateway-event-router.ts) + `chat-store.ts` 绑定 + 本文档 §1.3
-- 推理过程事件 → [backend/services/chat/streaming.py](../backend/services/chat/streaming.py) + [backend/services/chat/persistence.py](../backend/services/chat/persistence.py) + [backend/services/gateway/emitter.py](../backend/services/gateway/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/app/runtime/gateway-event-router.ts](../client/renderer/app/runtime/gateway-event-router.ts) + `chat-store.ts` + 工作台气泡 + 本文档 §1.3
+- 自动压缩事件 → [backend/services/application/chat/orchestrator.py](../backend/services/application/chat/orchestrator.py)（orchestrator 命中阈值后 push）+ [backend/services/adapters/desktop/emitter.py](../backend/services/adapters/desktop/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/app/runtime/gateway-event-router.ts](../client/renderer/app/runtime/gateway-event-router.ts)（`compress.completed` switch）+ `chat-dock-message-bubble.tsx` 的 `COMPRESS_CARD_SUBTYPES` 折叠卡片分支 + 本文档 §1.3
+- 活路径消息 id 回写 → [backend/services/application/chat/persistence.py](../backend/services/application/chat/persistence.py) + [backend/services/application/chat/orchestrator.py](../backend/services/application/chat/orchestrator.py)（`message.persisted`）+ [backend/services/adapters/desktop/emitter.py](../backend/services/adapters/desktop/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/app/runtime/gateway-event-router.ts](../client/renderer/app/runtime/gateway-event-router.ts) + `chat-store.ts` 绑定 + 本文档 §1.3
+- 推理过程事件 → [backend/services/application/chat/streaming.py](../backend/services/application/chat/streaming.py) + [backend/services/application/chat/persistence.py](../backend/services/application/chat/persistence.py) + [backend/services/adapters/desktop/emitter.py](../backend/services/adapters/desktop/emitter.py)（`_TRANSLATED` 表 + `_translate`）+ [client/renderer/app/runtime/gateway-event-router.ts](../client/renderer/app/runtime/gateway-event-router.ts) + `chat-store.ts` + 工作台气泡 + 本文档 §1.3
 
 **手动撤回不走 slash 命令**：消息级粒度的「撤回」由用户在历史用户气泡旁点击撤回图标触发，直接走 `session.undo_to_message` RPC（slash 命令无法承载消息级粒度 + 需要服务端精确路由到具体 source_message_id）。详见 §1.2 与 §1.3 的 `message.deleted` 事件。
 
@@ -379,7 +379,7 @@ capabilities 与 capabilities_health 来源于 Runner 的运行时探测（探�
 
 **推理配置作用域**：`agent.*` / `chat.*` 用户设置仅为 `kind=standard` 普通会话默认值，即使普通会话选择了系统提示词模板也仍继承。`kind=special` 的每条系统预设会话使用预设目录中的 `inference_defaults`，不继承工作台推理、压缩或后台记忆整理设置；IM 同样隔离并使用陪伴场景默认。所有会话最后叠加自身持久化覆盖，主动回合与手动压缩使用同一合并规则。`session.set_settings` 只写当前会话覆盖；`reasoning_effort` 与 `reasoning` 映射到 `agent.reasoning_effort`。
 
-创建、恢复、派生与保存响应的 `info.settings` 返回生效参数。`session.set_settings` 仅接受温度、压缩阈值及推理强度三个字段；`null` 删除对应覆盖（含同义存储键），空 patch 只刷新生效参数。窗口内“恢复默认”删除三项覆盖，随后由后端重新计算默认值，避免普通会话固化旧默认。保存先在行锁下合并落库，再更新运行时；失败不得只改变运行时。场景值由 [预设目录](../backend/services/conversation/presets.py) 单源维护。语言、设备与工具能力遵循各自共享契约。
+创建、恢复、派生与保存响应的 `info.settings` 返回生效参数。`session.set_settings` 仅接受温度、压缩阈值及推理强度三个字段；`null` 删除对应覆盖（含同义存储键），空 patch 只刷新生效参数。窗口内“恢复默认”删除三项覆盖，随后由后端重新计算默认值，避免普通会话固化旧默认。保存先在行锁下合并落库，再更新运行时；失败不得只改变运行时。场景值由 [预设目录](../backend/services/domains/conversation/presets.py) 单源维护。语言、设备与工具能力遵循各自共享契约。
 
 **Backend 的 user_settings 是用户配置真源**（REST 为 `GET/PUT /api/config`，按点键 upsert、永不删除键）；Client 是同步代理与 Runner 的唯一推送方。本地 `desktop-settings.json` 是云端镜像（本地/离线使用 + 供 Runner 推送），内容 = **同步节白名单**（toolsets / skills / browser / security / debug / tool_output / computer_use / file_state / audio / companion / ui，节内本机键如 `browser.profile_dir` 不上云）+ **顶层原始值同步键**（`language`，与后端 `user_settings.language` 行一一对应；详见 §1.4 locale 扩展契约）+ **仅本机节**（terminal、spiritagent 等机密与设备相关节及未知节——**永不离开本机**，红线见 §5.3）。镜像带归属戳（sync.user_id），换号残留按不信任处理：水合前清空同步节、不上传。
 
