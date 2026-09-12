@@ -56,6 +56,6 @@ uv run --project backend python scripts/debug_prompt.py
 # 自定义角色、用户与消息，并以原始 JSON 输出
 uv run --project backend python scripts/debug_prompt.py -m "你好呀！" --persona-name "星奈" --json
 
-# 连接数据库读取真实用户的人设与记忆状态
-uv run --project backend python scripts/debug_prompt.py --db --user-id 1
+# 连接数据库读取所选预设的记忆（人设仅用于陪伴）
+uv run --project backend python scripts/debug_prompt.py --db --user-id 1 --preset companion
 ```

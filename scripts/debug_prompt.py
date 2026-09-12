@@ -34,8 +34,6 @@ DEFAULT_MOCK_USER_PROFILE: dict[str, str] = {
     "freeform": "平时经常写代码，希望你在旁边陪伴聊天并在需要时协助分析问题",
 }
 
-DEFAULT_MOCK_SKILLS: list[str] = ["browser", "coding", "search"]
-
 # 双语 mock 用户资料块标题（仅 debug 脚本内使用）。
 _MOCK_USER_PROFILE_LABELS_TEXTS: dict[str, str] = {
     "zh": "# 用户资料",
@@ -54,13 +52,14 @@ def _build_mock_user_profile_extras(profile: dict[str, str], *, language: str = 
     return "\n".join(lines)
 
 
-async def _load_from_db(user_id: int, *, language: str = "zh") -> dict[str, Any]:
+async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -> dict[str, Any]:
     from components import SESSION_LOCAL
     from modules.companion import Persona
-    from services.domains.companion.appearance import build_outfit_extras
-    from services.domains.companion.persona_service import build_system_prompt_extras
-    from services.domains.memory.memory_bootstrap import build_user_profile_extras
-    from services.domains.memory.memory_format import (
+    from services.contracts.memory import MemoryScope
+    from services.domains.companion import build_outfit_extras, build_system_prompt_extras
+    from services.domains.conversation import validate_memory_scope
+    from services.domains.memory import (
+        build_user_profile_extras,
         format_auto_inject_block,
         format_inferred_profile_block,
         format_proactive_memory_block,
@@ -68,18 +67,20 @@ async def _load_from_db(user_id: int, *, language: str = "zh") -> dict[str, Any]
     from services.infrastructure.tool_runtime import REGISTRY
     from sqlalchemy import select
 
+    scope = MemoryScope(user_id, preset_id)
+    validate_memory_scope(scope)
     async with SESSION_LOCAL() as db:
-        persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
+        persona = (
+            await db.scalar(select(Persona).where(Persona.user_id == user_id)) if preset_id == "companion" else None
+        )
         persona_extras = build_system_prompt_extras(persona, language=language) if persona else ""
 
-        user_profile_extras = (
-            await build_user_profile_extras(db, user_id, language=language) if persona and persona.is_complete else ""
-        )
+        user_profile_extras = await build_user_profile_extras(db, scope, language=language)
         outfit_extras = (
             await build_outfit_extras(db, user_id, language=language) if persona and persona.is_complete else ""
         )
-        auto_inject_extras = await format_auto_inject_block(db, user_id, language=language)
-        inferred_profile_extras = await format_inferred_profile_block(db, user_id, language=language)
+        auto_inject_extras = await format_auto_inject_block(db, scope, language=language)
+        inferred_profile_extras = await format_inferred_profile_block(db, scope, language=language)
         proactive_memory_extras = format_proactive_memory_block([], language=language)
 
         tools = REGISTRY.get_all_schemas(user_id=user_id, user_settings={})
@@ -100,7 +101,6 @@ def assemble_debug_prompt(
     message_text: str,
     persona_dict: dict[str, str],
     user_profile_dict: dict[str, str],
-    skills: list[str],
     model: str,
     language: str,
     platform: str,
@@ -118,7 +118,7 @@ def assemble_debug_prompt(
     from components import ensure_utc, utc_now
     from modules.auth import ChatRequestClientContext
     from modules.system import AgentPromptConfig
-    from services.application.chat.prompt_presets import BUILTIN_PRESETS, resolve_preset
+    from services.application.chat.prompt_presets import BUILTIN_PRESETS, LIFE_SPACE_TOOL_NAMES, resolve_preset
     from services.application.chat.system_prompt import build_system_prompt
     from services.application.chat.turn_inputs import _history_to_responses_context
     from services.domains.companion.persona_service import render_extras
@@ -142,10 +142,13 @@ def assemble_debug_prompt(
         proactive_memory_extras = ""
         tools = REGISTRY.get_all_schemas(user_id=1, user_settings={}) if enable_tools else []
 
+    if preset_id != "companion":
+        persona_extras = ""
+        outfit_extras = ""
+        tools = [tool for tool in tools if schema_name(tool) not in LIFE_SPACE_TOOL_NAMES]
     valid_tool_names = [schema_name(s) for s in tools]
 
     client_ctx = ChatRequestClientContext(
-        skills=skills,
         environment_hints=f"OS: {sys.platform}; Workspace: {REPO_ROOT.as_posix()}",
         platform_hints=None,
     )
@@ -345,13 +348,6 @@ def main() -> int:
         help="用户补充背景",
     )
 
-    # 技能
-    parser.add_argument(
-        "--skills",
-        default=",".join(DEFAULT_MOCK_SKILLS),
-        help="启用的本地技能列表 (逗号分隔)",
-    )
-
     # 数据库模式
     parser.add_argument("--db", action="store_true", help="连接 PostgreSQL 数据库读取真实用户数据")
     parser.add_argument("--user-id", type=int, default=1, help="数据库查询对应的 user_id")
@@ -376,7 +372,7 @@ def main() -> int:
     db_data = None
     if args.db:
         try:
-            db_data = asyncio.run(_load_from_db(args.user_id, language=args.language))
+            db_data = asyncio.run(_load_from_db(args.user_id, preset_id=args.preset, language=args.language))
         except (OSError, RuntimeError, ValueError) as exc:
             print(f"Error loading from database: {exc}", file=sys.stderr)
             return 1
@@ -399,13 +395,10 @@ def main() -> int:
         "freeform": args.user_freeform,
     }
 
-    skills = [s.strip() for s in args.skills.split(",") if s.strip()]
-
     result = assemble_debug_prompt(
         message_text=args.message,
         persona_dict=persona_dict,
         user_profile_dict=user_profile_dict,
-        skills=skills,
         model=args.model,
         language=args.language,
         platform=args.platform,
