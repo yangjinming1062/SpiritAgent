@@ -74,7 +74,7 @@ SpiritAgent 桌面渲染层的唯一架构文档：分层与依赖规则、跨�
 
 ### 情绪表达与当前心情
 
-情绪枚举固定为 21 项内置（不含 `neutral`；Backend 权威 `services/companion/emotions.py` 的 22 项含 neutral）。自主视觉引擎只返回白名单 token；`neutral` 本身不触发 EMOTIONAL，只有动作时作为动作状态的中性基调。情绪只驱动现有模型参数与动画，不存在自定义表情注册或表情图片资产。情绪的渲染分工：**肢体动画**按模型映射解析当前状态可用动画，解析与兜底规则见 [docs/PIPELINE.md §5](../../docs/PIPELINE.md)；2D 模式同时把内置情绪映射到参数化眉、眼、嘴通道；3D 模式只兑现模型已有的动作 clip。
+情绪枚举固定为 21 项内置（不含 `neutral`；Backend 权威 `services/domains/companion/emotions.py` 的 22 项含 neutral）。自主视觉引擎只返回白名单 token；`neutral` 本身不触发 EMOTIONAL，只有动作时作为动作状态的中性基调。情绪只驱动现有模型参数与动画，不存在自定义表情注册或表情图片资产。情绪的渲染分工：**肢体动画**按模型映射解析当前状态可用动画，解析与兜底规则见 [docs/PIPELINE.md §5](../../docs/PIPELINE.md)；2D 模式同时把内置情绪映射到参数化眉、眼、嘴通道；3D 模式只兑现模型已有的动作 clip。
 
 `companion.mood {mood}` 与视觉 affect 完全独立：事件到达后直接写 `$companionMood`，生活空间左栏在头像和名字下方动态展示；它不切换动画状态、不生成聊天消息，也不受打扰档位或桌面表面显隐门控。首次水合从 Persona 的 `current_mood` 恢复。
 
