@@ -29,6 +29,12 @@ BUBBLE_BREAK_MIN_SECONDS = 0.5
 BUBBLE_BREAK_MAX_SECONDS = 1.5
 
 
+class _IncompleteResponseError(RuntimeError):
+    def __init__(self, reason: str, *, text_emitted: bool) -> None:
+        self.retryable = not text_emitted and reason != "content_filter"
+        super().__init__(f"LLM response incomplete: {reason}")
+
+
 @dataclass
 class _LLMTurnResult:
     """单次 LLM 调用的输出：流式文本 + 累积的 tool 调用 + usage；orchestrator 会就地补全 tool_call_id，故不冻结。"""
@@ -179,9 +185,11 @@ async def _stream_llm_response(
     bubbles = BubbleSplitter(split_paragraphs=split_paragraphs)
 
     speech_style_sent = False
+    text_emitted = False
 
     async def _send_text(text: str) -> None:
-        nonlocal speech_style_sent
+        nonlocal speech_style_sent, text_emitted
+        text_emitted = True
         payload = {"type": "chunk", "content": text}
         if not speech_style_sent and speech_parser and speech_parser.style:
             payload["speech_style"] = speech_parser.style.model_dump()
@@ -248,7 +256,10 @@ async def _stream_llm_response(
                             await emitter.send_json({"type": "reasoning.delta", "content": extracted})
             elif event_type == "response.incomplete":
                 details = getattr(getattr(chunk, "response", None), "incomplete_details", None)
-                raise RuntimeError(f"LLM response incomplete: {getattr(details, 'reason', None) or 'unknown'}")
+                raise _IncompleteResponseError(
+                    getattr(details, "reason", None) or "unknown",
+                    text_emitted=text_emitted,
+                )
             elif event_type == "response.completed":
                 response_finished = True
                 if usage := getattr(getattr(chunk, "response", None), "usage", None):
@@ -272,7 +283,7 @@ async def _stream_llm_response(
     finally:
         await stream.aclose()
         # 工作台已显示的增量在失败时也须收尾；陪伴的未确认正文始终丢弃。
-        if delivery == "stream":
+        if delivery == "stream" and (text_emitted or response_finished):
             await _emit_bubble_events(bubbles.flush())
 
     # 收尾最后气泡：若 break 后立即结束，bubble_parts 为空则不追加，turn_parts 已持有前面气泡。

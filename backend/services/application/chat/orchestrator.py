@@ -20,6 +20,7 @@ from services.domains.conversation import DEFAULT_PRESET_ID, IM_KIND, SPECIAL_KI
 from services.domains.media import inline_video_parts, prune_videos_in_range
 from services.domains.memory import embed_memory_text
 from services.infrastructure.llm import (
+    ChatProvider,
     LLMRuntimeError,
     MissingLlmConfigError,
     ServiceType,
@@ -45,7 +46,13 @@ from .prompt_presets import (
     COMPANION_REPLY_GUIDANCE,
     LIFE_SPACE_TOOL_NAMES,
 )
-from .streaming import _emit_llm_error, _ensure_tool_call_ids, _stream_llm_response
+from .streaming import (
+    _emit_llm_error,
+    _ensure_tool_call_ids,
+    _IncompleteResponseError,
+    _LLMTurnResult,
+    _stream_llm_response,
+)
 from .tool_dispatch import _ToolDispatchContext
 from .turn_inputs import (
     _load_memory_query_text,
@@ -277,7 +284,7 @@ async def run_chat_turn(
         # 供应商链包装：按顺序尝试已配置供应商，仅在尚未输出 chunk 时触发回退；每次尝试使用对应槽位的 model，避免回退供应商收到不识别的模型名导致 model_not_found、链提前耗尽。
         stream_emitted = False
 
-        async def _call(provider):
+        async def _call(provider: ChatProvider) -> _LLMTurnResult:
             if provider.raw_client() is None:
                 raise RuntimeError(f"provider {provider.provider_name} does not expose the Responses API")
             model_for_slot = inputs.model_override or provider.config.model
@@ -287,36 +294,46 @@ async def run_chat_turn(
                 if inputs.context_tokens_override is not None
                 else resolve_context_tokens(provider.provider_name, ServiceType.llm)
             )
-            return await _stream_llm_response(
-                emitter,
-                model_for_slot,
-                current_context,
-                active_schemas,
-                slot_ctx_length,
-                provider,
-                delivery=("silent" if preparing else "bubbles")
-                if companion_reply
-                else "buffered"
-                if buffer_text
-                else "stream",
-                phase_instructions=resolve_prompt_text(
-                    COMPANION_PREPARE_GUIDANCE if preparing else COMPANION_REPLY_GUIDANCE,
-                    inputs.language,
-                )
-                if companion_reply
-                else "",
-                on_first_chunk=set_stream_emitted,
-                reasoning_effort=reasoning_effort,
-                temperature=temperature,
-                user_local_tz=inputs.user_local_tz,
-                lang=inputs.language,
-                speech_config=inputs.speech_config
-                if not preparing and not headless and preset_override is None
-                else None,
-                split_paragraphs=conv.system_preset_id == "companion"
-                and not conv.is_automation
-                and preset_override is None,
-            )
+            input_length = len(current_context["input"])
+            retry_available = True
+            while True:
+                try:
+                    return await _stream_llm_response(
+                        emitter,
+                        model_for_slot,
+                        current_context,
+                        active_schemas,
+                        slot_ctx_length,
+                        provider,
+                        delivery=("silent" if preparing else "bubbles")
+                        if companion_reply
+                        else "buffered"
+                        if buffer_text
+                        else "stream",
+                        phase_instructions=resolve_prompt_text(
+                            COMPANION_PREPARE_GUIDANCE if preparing else COMPANION_REPLY_GUIDANCE,
+                            inputs.language,
+                        )
+                        if companion_reply
+                        else "",
+                        on_first_chunk=set_stream_emitted,
+                        reasoning_effort=reasoning_effort,
+                        temperature=temperature,
+                        user_local_tz=inputs.user_local_tz,
+                        lang=inputs.language,
+                        speech_config=inputs.speech_config
+                        if not preparing and not headless and preset_override is None
+                        else None,
+                        split_paragraphs=conv.system_preset_id == "companion"
+                        and not conv.is_automation
+                        and preset_override is None,
+                    )
+                except _IncompleteResponseError as exc:
+                    del current_context["input"][input_length:]
+                    if not retry_available or not exc.retryable:
+                        raise
+                    retry_available = False
+                    logger.warning("Retrying incomplete LLM response before text delivery: %s", exc)
 
         def set_stream_emitted() -> None:
             nonlocal stream_emitted
