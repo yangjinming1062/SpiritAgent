@@ -1,6 +1,6 @@
 [package]
 name = "spiritagent-bootstrap"
-version = "1.0.0"
+version = "1.1.0"
 description = "唤生 安装器 —— 由 installer/install.ps1 与 installer/install.sh 驱动桌面端安装"
 authors = ["唤生 <yjm1062@gmail.com>"]
 edition = "2021"

@@ -2,7 +2,7 @@
   "name": "spiritagent",
   "productName": "SpiritAgent",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "唤生桌面版客户端。",
   "author": "Jinming Yang",
   "type": "module",
