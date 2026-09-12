@@ -82,6 +82,11 @@ declare global {
       /** 获取缓存的模型流媒体协议 URL(spiritagent-media://...),
        * 供前端零拷贝流式加载。 */
       apiAssetModelUrl: AsyncIpc<IpcInvokeContract['spiritagent:api:asset-model-url']>
+      sessionHistory: {
+        get: AsyncIpc<IpcInvokeContract['spiritagent:session-history:get']>
+        save: AsyncIpc<IpcInvokeContract['spiritagent:session-history:save']>
+        remove: AsyncIpc<IpcInvokeContract['spiritagent:session-history:remove']>
+      }
       readFileDataUrl: AsyncIpc<IpcInvokeContract['spiritagent:readFileDataUrl']>
       /** 聊天图片附件读取：超限降采样重编码，产出可直接发送的 data URL。 */
       readImageForAttach: AsyncIpc<IpcInvokeContract['spiritagent:readImageForAttach']>

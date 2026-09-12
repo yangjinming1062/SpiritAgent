@@ -1,4 +1,4 @@
-﻿import {
+import {
   type SlashCommandResultPayload,
   SpiritAgentRpcError,
   SpiritAgentRpcErrorCode
@@ -8,6 +8,7 @@ import { getStrings } from '@/shared/strings'
 import type { SessionMessage } from '@/shared/types/spiritagent'
 
 import { hydrateChatMessages, markAssistantTerminal, type PendingAttachment, pushStatusPill } from './chat-store'
+import { rememberFullHistory } from './session-history-cache'
 import { ensureChatSession } from './session-list-store'
 
 function slashErrorToMessage(err: unknown): string {
@@ -105,6 +106,10 @@ async function executeSlashCommand(
 
         if (Array.isArray(raw)) {
           hydrateChatMessages(raw as SessionMessage[])
+
+          if (sid) {
+            rememberFullHistory(sid, raw as SessionMessage[])
+          }
         }
       } else {
         pushStatusPill('status_command_result', r.message)

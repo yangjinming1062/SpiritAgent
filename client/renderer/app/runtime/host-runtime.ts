@@ -15,8 +15,10 @@ import {
   $chatSessionId,
   hydrateChatMessages,
   hydrateSessionSettings,
+  loadLocalSessionHistory,
   openMainSession,
-  setChatSession
+  setChatSession,
+  syncSessionHistory
 } from '@/modules/conversation'
 import { cancelVoiceBar, stopSpeaking } from '@/modules/speech'
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
@@ -282,36 +284,48 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
         // 会话已被删除（或换了账号）时 resume 报错，清掉持久化 id 并回退主会话。
         const sid = $chatSessionId.get()
 
-        const syncMountSeq = (res: SessionResumeResponse) => {
+        const syncMountSeq = (res: { current_seq?: number }) => {
           if (typeof res.current_seq === 'number') {
             gateway.resetSeq(res.current_seq)
           }
         }
 
-        const hasMessages = $chatMessageList.get().length > 0
-        const lastSeq = hasMessages && gateway.lastReceivedSeq > 0 ? gateway.lastReceivedSeq : undefined
-
         if (sid) {
-          void gateway
-            .request<SessionResumeResponse>('session.resume', {
-              session_id: sid,
-              ...(lastSeq !== undefined ? { last_seq: lastSeq } : {})
-            })
-            .then(res => {
-              syncMountSeq(res)
+          void (async () => {
+            try {
+              const local = await loadLocalSessionHistory(sid)
+              const hasMessages = $chatMessageList.get().length > 0
 
-              if (!res.resumed || !hasMessages) {
-                if (Array.isArray(res.messages)) {
-                  hydrateChatMessages(res.messages, res.info)
-                }
-              } else if (res.info) {
-                hydrateSessionSettings(res.info)
+              // 本地秒开：先渲染缓存，再后台增量追上。网关 seq 不重置到缓存值——
+              // 后端重启后 seq 从低值重新增长，陈旧高水位会把实时帧当重复丢弃。
+              if (local && !hasMessages) {
+                hydrateChatMessages(local.messages, local.info)
               }
-            })
-            .catch(() => {
+
+              // last_seq 只在聊天列表是活数据（重连）时发；缓存不追踪实时回合，
+              // 冷启动一律走 after_id 增量，否则服务端按陈旧水位重放会重复追加。
+              const synced = await syncSessionHistory({
+                lastSeq: hasMessages && gateway.lastReceivedSeq > 0 ? gateway.lastReceivedSeq : undefined,
+                sessionId: sid,
+                request: body => gateway.request<SessionResumeResponse>('session.resume', { session_id: sid, ...body })
+              })
+
+              if (synced.currentSeq > 0) {
+                syncMountSeq({ current_seq: synced.currentSeq })
+              }
+
+              const liveHasMessages = $chatMessageList.get().length > 0
+
+              if (!liveHasMessages || synced.kind !== 'noop') {
+                hydrateChatMessages(synced.messages, synced.info)
+              } else if (synced.info) {
+                hydrateSessionSettings(synced.info)
+              }
+            } catch {
               setChatSession(null)
               void openMainSession(syncMountSeq)
-            })
+            }
+          })()
         } else {
           void openMainSession(syncMountSeq)
         }

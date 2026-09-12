@@ -20,6 +20,17 @@ export interface DesktopUpdateInfo {
   version: string
 }
 
+/** 会话历史磁盘快照：主进程缓存，渲染层本地秒开 + 增量合并的载荷。 */
+export interface SessionHistorySnapshot {
+  currentSeq: number
+  info?: Record<string, unknown>
+  lastMessageId: null | number
+  messages: unknown[]
+  nextCursor: null | string
+  truncated: boolean
+  writtenAt: number
+}
+
 export interface DesktopUpdateProgress {
   bytesPerSecond: number
   delta: number
@@ -371,6 +382,11 @@ export interface IpcInvokeContract {
   'spiritagent:api:asset-buffer': (request: { preferCache?: boolean; contentHash?: string; url: string }) => Promise<Uint8Array> | Uint8Array
   'spiritagent:api:asset-model-url': (request: { contentHash?: string; url: string }) => string | Promise<string>
 
+  // 会话历史本地缓存（user 维度由主进程从当前会话解析；登出/换号清空走主进程 auth 的 clearLocalAssetCaches）
+  'spiritagent:session-history:get': (sessionId: string) => SessionHistorySnapshot | null | Promise<SessionHistorySnapshot | null>
+  'spiritagent:session-history:save': (sessionId: string, snapshot: SessionHistorySnapshot) => Promise<void> | void
+  'spiritagent:session-history:remove': (sessionId: string) => Promise<void> | void
+
   // 文件 / 剪贴板 / 日志
   'spiritagent:readFileDataUrl': (filePath: string) => Promise<string> | string
   'spiritagent:readImageForAttach': (filePath: string) => Promise<string> | string
@@ -515,6 +531,9 @@ export const IPC = {
     apiAsset: 'spiritagent:api:asset',
     apiAssetBuffer: 'spiritagent:api:asset-buffer',
     apiAssetModelUrl: 'spiritagent:api:asset-model-url',
+    sessionHistoryGet: 'spiritagent:session-history:get',
+    sessionHistorySave: 'spiritagent:session-history:save',
+    sessionHistoryRemove: 'spiritagent:session-history:remove',
     readFileDataUrl: 'spiritagent:readFileDataUrl',
     readImageForAttach: 'spiritagent:readImageForAttach',
     registerUserSelectedPaths: 'spiritagent:registerUserSelectedPaths',

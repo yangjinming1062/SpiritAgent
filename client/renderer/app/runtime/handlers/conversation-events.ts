@@ -3,6 +3,7 @@ import type { SpeechStyle } from '@ipc/contracts'
 import { $screenLocked, reportInteractionStat, setSpriteState, triggerFootGlowPulse } from '@/modules/character'
 import {
   $chatDraftFromUndo,
+  $chatSessionId,
   $chatTurnInFlight,
   $turnHadBubbleBreak,
   appendAssistantDelta,
@@ -16,6 +17,7 @@ import {
   hydrateChatMessages,
   markAssistantTerminal,
   pushStatusPill,
+  rememberFullHistory,
   setSessionContextUsage,
   setTurnHadBubbleBreak,
   showMediaHint,
@@ -182,7 +184,12 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
         const messages = decodePayload<{ messages?: unknown }>(r.payload).messages
 
         if (Array.isArray(messages)) {
+          const sid = $chatSessionId.get()
           hydrateChatMessages(messages as SessionMessage[])
+
+          if (sid) {
+            rememberFullHistory(sid, messages as SessionMessage[])
+          }
         }
       }
 
@@ -211,7 +218,12 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       }>(event.payload)
 
       if (Array.isArray(p?.messages)) {
+        const sid = p.session_id || $chatSessionId.get()
         hydrateChatMessages(p.messages as SessionMessage[])
+
+        if (sid) {
+          rememberFullHistory(sid, p.messages as SessionMessage[])
+        }
       }
 
       // 跟随窗口从事件 payload 取 anchor 推到草稿总线——对话组件用 session_id 过滤应用。

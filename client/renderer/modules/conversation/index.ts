@@ -57,6 +57,7 @@ export {
 export { type ChatSubmitState, ConversationInput, type ConversationInputProps } from './conversation-input'
 export { ConversationSurface } from './conversation-surface'
 export { consumePendingMessages, pendingMessages, rememberPendingMessage } from './pending-messages'
+export { loadLocalSessionHistory, rememberFullHistory, syncSessionHistory } from './session-history-cache'
 export {
   $archivedLoading,
   $archivedSessions,

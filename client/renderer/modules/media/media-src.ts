@@ -50,7 +50,7 @@ function resolveImageSrc(url: string): string | Promise<string | null> {
     return window.spiritagent.readFileDataUrl(url).catch(() => null)
   }
 
-  return window.spiritagent.apiAsset({ url }).catch(() => null)
+  return window.spiritagent.apiAsset({ url, preferCache: true }).catch(() => null)
 }
 
 /** 把后端媒体 URL 解析为渲染端可用 src：图片走 data URL 通道；视频取字节转 blob URL，组件卸载时回收。 */
@@ -83,7 +83,7 @@ export function useResolvedMediaSrc(item: ChatMediaItem): string | null {
             setResolved({ url: item.url, type: item.type, src: dataUrl })
           }
         } else {
-          const buf = await window.spiritagent.apiAssetBuffer({ url: item.url })
+          const buf = await window.spiritagent.apiAssetBuffer({ url: item.url, preferCache: true })
 
           if (buf && !cancelled) {
             const clean = item.url.split(/[?#]/)[0]

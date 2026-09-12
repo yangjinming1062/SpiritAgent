@@ -21,6 +21,7 @@ import {
   type MediaSttPayload,
   type MediaTtsPayload,
   type RunnerConfigPatch,
+  type SessionHistorySnapshot,
   type SpiritAgentApiRequest,
   type SpiritAgentPrefsSet,
   type SpiritAgentSelectPathsOptions,
@@ -67,6 +68,12 @@ contextBridge.exposeInMainWorld('spiritagent', {
     ipcRenderer.invoke(IPC.invoke.apiAssetBuffer, request),
   apiAssetModelUrl: (request: { contentHash?: string; url: string }) =>
     ipcRenderer.invoke(IPC.invoke.apiAssetModelUrl, request),
+  sessionHistory: {
+    get: (sessionId: string) => ipcRenderer.invoke(IPC.invoke.sessionHistoryGet, sessionId),
+    save: (sessionId: string, snapshot: SessionHistorySnapshot) =>
+      ipcRenderer.invoke(IPC.invoke.sessionHistorySave, sessionId, snapshot),
+    remove: (sessionId: string) => ipcRenderer.invoke(IPC.invoke.sessionHistoryRemove, sessionId)
+  },
   getBootProgress: () => ipcRenderer.invoke(IPC.invoke.bootProgressGet),
   getConnection: () => ipcRenderer.invoke(IPC.invoke.connection),
   getGatewayWsUrl: () => ipcRenderer.invoke(IPC.invoke.gatewayWsUrl),

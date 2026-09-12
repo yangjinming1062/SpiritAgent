@@ -28,6 +28,7 @@ import {
   temperatureStyleLabel,
   useContextStatus
 } from './context-progress-bar'
+import { rememberFullHistory } from './session-history-cache'
 
 const DEFAULT_THRESHOLD = 0.7
 const THRESHOLD_MIN = 0.3
@@ -385,6 +386,10 @@ export function ChatParamsPanel({
       if (res.compressed) {
         if (Array.isArray(res.messages)) {
           hydrateChatMessages(res.messages)
+
+          if (sessionId) {
+            rememberFullHistory(sessionId, res.messages)
+          }
         }
 
         if (res.usage?.total_tokens !== undefined) {

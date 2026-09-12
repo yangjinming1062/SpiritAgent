@@ -24,6 +24,14 @@ import {
   resetSessionContextUsage,
   setChatSession
 } from './chat-store'
+import {
+  $persistedCompanionSessionId,
+  forgetSessionHistory,
+  loadLocalSessionHistory,
+  rememberFullHistory,
+  setPersistedCompanionSessionId,
+  syncSessionHistory
+} from './session-history-cache'
 
 export type SessionSort = 'created' | 'messages' | 'recent'
 
@@ -364,6 +372,12 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
     // 与 switchSession 同一形态：先 setChatSession 清残留状态 + 持久化新 id，再 hydrate 灌消息流
     setChatSession(res.session_id)
     hydrateChatMessages(res.messages || [], res.info)
+    rememberFullHistory(res.session_id, res.messages || [], {
+      currentSeq: res.current_seq,
+      info: res.info,
+      nextCursor: res.next_cursor,
+      truncated: res.truncated
+    })
 
     resetSessionContextUsage(res.info?.context_window)
     // 刷新抽屉让新会话出现在列表（默认按 parent_id 隐藏，开 include_subagents 才能看到）
@@ -403,6 +417,7 @@ export async function undoToMessage(sessionId: string, sourceMessageId: number):
 
     if (Array.isArray(res.messages)) {
       hydrateChatMessages(res.messages)
+      rememberFullHistory(res.session_id, res.messages)
     }
 
     return res
@@ -425,15 +440,30 @@ export async function switchSession(sessionId: string): Promise<void> {
   const token = ++switchSessionToken
 
   try {
-    const res = await gw.request<SessionResumeResponse>('session.resume', { session_id: sessionId })
+    const local = await loadLocalSessionHistory(sessionId)
+
+    if (token !== switchSessionToken) {
+      return
+    }
+
+    if (local) {
+      setChatSession(sessionId)
+      hydrateChatMessages(local.messages, local.info)
+    }
+
+    const synced = await syncSessionHistory({
+      sessionId,
+      request: body => gw.request<SessionResumeResponse>('session.resume', { session_id: sessionId, ...body })
+    })
 
     // 快速 A→B 切换时丢弃过期响应，避免旧会话写回覆盖新会话。
+    // 未传活水位 last_seq，服务端只走增量或全量，merged/messages 恒为完整列表。
     if (token !== switchSessionToken) {
       return
     }
 
     setChatSession(sessionId)
-    hydrateChatMessages(res.messages || [], res.info)
+    hydrateChatMessages(synced.messages, synced.info)
   } catch (err) {
     if (token === switchSessionToken) {
       log.error('session-list', 'Failed to switch session:', err)
@@ -457,10 +487,52 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
   openMainPromise = (async () => {
     try {
+      // 已知陪伴会话 id 时走本地秒开 + 增量；未知（首装/清缓存）才 get_main 全量。
+      const knownCompanionId = $companionSessionId.get() || $persistedCompanionSessionId.get()
+
+      if (knownCompanionId) {
+        const local = await loadLocalSessionHistory(knownCompanionId)
+
+        if (local) {
+          $companionSessionId.set(knownCompanionId)
+          setPersistedCompanionSessionId(knownCompanionId)
+          setChatSession(knownCompanionId)
+          hydrateChatMessages(local.messages, local.info)
+
+          try {
+            const synced = await syncSessionHistory({
+              sessionId: knownCompanionId,
+              request: body =>
+                gw.request<SessionResumeResponse>('session.resume', { session_id: knownCompanionId, ...body })
+            })
+
+            hydrateChatMessages(synced.messages, synced.info)
+            onMounted?.({
+              current_seq: synced.currentSeq,
+              info: synced.info,
+              message_count: synced.messages.length,
+              messages: synced.messages,
+              session_id: knownCompanionId
+            })
+
+            return knownCompanionId
+          } catch {
+            // 增量失败回落 get_main 全量挂载。
+          }
+        }
+      }
+
       const res = await gw.request<SessionResumeResponse>('session.get_main')
       $companionSessionId.set(res.session_id)
+      setPersistedCompanionSessionId(res.session_id)
       setChatSession(res.session_id)
       hydrateChatMessages(res.messages || [], res.info)
+      rememberFullHistory(res.session_id, res.messages || [], {
+        currentSeq: res.current_seq,
+        info: res.info,
+        nextCursor: res.next_cursor,
+        truncated: res.truncated
+      })
       onMounted?.(res)
 
       return res.session_id
@@ -491,6 +563,8 @@ export async function deleteSession(sessionId: string): Promise<void> {
 
     return
   }
+
+  forgetSessionHistory(sessionId)
 
   if ($chatSessionId.get() === sessionId) {
     await openMainSession()

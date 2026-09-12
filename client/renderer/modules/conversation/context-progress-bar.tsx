@@ -17,6 +17,7 @@ import {
   hydrateChatMessages,
   setSessionContextUsage
 } from './chat-store'
+import { rememberFullHistory } from './session-history-cache'
 
 const DEFAULT_THRESHOLD = 0.7
 const DEFAULT_LIMIT = 1_000_000
@@ -284,6 +285,10 @@ export function ContextProgressBar(): React.JSX.Element {
       if (res.compressed) {
         if (Array.isArray(res.messages)) {
           hydrateChatMessages(res.messages)
+
+          if (sessionId) {
+            rememberFullHistory(sessionId, res.messages)
+          }
         }
 
         if (res.usage?.total_tokens !== undefined) {

@@ -36,6 +36,8 @@ import { registerOnboardingAudioIpc } from './ipc/onboarding-audio'
 import { registerPrefsIpc } from './ipc/prefs'
 import { autoStartBridge, autoStopBridge, registerRunnerIpc } from './ipc/runner'
 import { registerRunnerConfigIpc } from './ipc/runner-config'
+import { registerSessionHistoryIpc } from './ipc/session-history'
+import { createSessionHistoryDiskCache } from './ipc/session-history-disk-cache'
 import { cleanupShortcuts, registerShortcutsIpc, syncShortcutsFromConfig } from './ipc/shortcuts'
 import { registerSkillsIpc } from './ipc/skills'
 import { registerSpriteIpc } from './ipc/sprite'
@@ -395,6 +397,10 @@ const assetDiskCache = createAssetDiskCache({
   spiritagentHome: SPIRITAGENT_HOME
 })
 
+const sessionHistoryDiskCache = createSessionHistoryDiskCache({
+  spiritagentHome: SPIRITAGENT_HOME
+})
+
 registerConnectionIpc({
   assetDiskCache,
   defaultFetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
@@ -472,10 +478,15 @@ const autoUpdater = createAutoUpdater({
 
 registerAuthIpc({
   clearLocalAssetCaches: async () => {
-    await Promise.all([assetDiskCache.clear(), modelDiskCache.clear()])
+    await Promise.all([assetDiskCache.clear(), modelDiskCache.clear(), sessionHistoryDiskCache.clear()])
   },
   deps: bridgeDeps,
   ipcMain
+})
+registerSessionHistoryIpc({
+  ensureBackendSession: () => bridgeDeps.ensureBackendSession(),
+  ipcMain,
+  sessionHistoryDiskCache
 })
 registerRunnerIpc({ deps: bridgeDeps, ipcMain })
 registerRunnerConfigIpc({
