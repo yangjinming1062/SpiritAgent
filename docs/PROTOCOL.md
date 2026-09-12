@@ -247,7 +247,7 @@ REST 端点异常路径返回统一结构：error（短码）+ reason（分类�
 
 外部 IM（微信 iLink）经后端进程内的通道桥与同一伙伴对话：入站消息驱动**无头 chat 回合**（不依赖用户 WS——桌面离线也能回），回复经格式化（去 markdown、按 `weixin_reply_max_chars` 分片）从原渠道送出。产品语义与渠道路线见 [DESIGN.md](DESIGN.md)；实现与已知限制见 [backend/README.md](../backend/README.md)。
 
-**会话契约**：所有渠道共用 `im` 这一种 conversation kind；**每用户每渠道一条专属 im 会话**，由 `channel_bindings.conversation_id` 唯一外键锚定（渠道间不混流）。im 会话对桌面端**只读**：出现在会话列表与历史中，但 `prompt.submit` 拒写（后端守卫 + 客户端输入禁用）；人设/长期记忆/情感与桌面回合共享（按 user 加载，无需任何同步动作）。
+**会话契约**：所有渠道共用 `im` 这一种 conversation kind；**每用户每渠道一条专属 im 会话**，由 `channel_bindings.conversation_id` 唯一外键锚定（渠道间不混流）。im 会话对桌面端**只读**：出现在会话列表与历史中，但 `prompt.submit` 拒写（后端守卫 + 客户端输入禁用）；人设/情感与桌面陪伴共享；长期记忆固定按 `(user_id, companion)` 加载。
 
 **遥控契约（IM 驱动本机工具）**：IM 回合与桌面回合共用同一编排器与同一工具注册表，因此桌面在线时伙伴在 IM 上**能调用本机 runner 工具**——手机是遥控器，能力叠加在陪伴之上而非替代它。三条边界：
 
@@ -275,7 +275,7 @@ REST 端点异常路径返回统一结构：error（短码）+ reason（分类�
 
 **改此处需同步**：backend services/adapters/channels 与 modules/channels、backend/README.md、client 通道设置页与只读守卫（client/renderer/README.md）、DESIGN.md、ARCHITECTURE.md §5.4。
 
-**覆盖恢复维护边界**：管理员执行用户备份 `overwrite` 恢复时，后端先把该用户标记为维护中；新 REST/WS 操作返回稍后重试，已进入的 REST 操作须退出，网关会话、IM 绑定、Cron 回合及可中断的整理任务须取消并等待，已经提交的付费生成任务须等待自然落地，之后才允许清表与写入。导入成功或回滚后都要清除会话、主动状态、交互统计与调度节流等旧内存镜像，再从数据库真源恢复 IM 绑定；客户端后续重连必须重新挂载会话，不得沿用已删除的 conversation ID。
+**覆盖恢复维护边界**：管理员执行用户备份 `overwrite` 或 `merge` 恢复时，后端先把该用户标记为维护中；新 REST/WS 操作返回稍后重试，已进入的 REST 操作须退出，网关会话、IM 绑定、Cron 回合及可中断的整理任务须取消并等待，已经提交的付费生成任务须等待自然落地，之后才允许清表与写入。导入成功或回滚后都要清除会话、主动状态、交互统计与调度节流等旧内存镜像，再从数据库真源恢复 IM 绑定；客户端后续重连必须重新挂载会话，不得沿用已删除的 conversation ID。
 
 ### 1.8 系统预设对话（5 套并列的特殊会话）
 
@@ -479,3 +479,13 @@ LLM 的不同输出面遵守以下规则：
 - 任何 Reserved Key 新增，必须在 **本文档 + 工具入口** 同步。
 - 任何 user_settings 新键，必须在 **后端消费代码 + client 同步节白名单（shared/lib/config-sync.ts）** 同步；跨模块语义（如工具集禁用）另在本文档登记。语言设置的客户端入口见 §1.4。
 - 子模块 README 不重复本文档内容，只在需要时链接。
+
+### 预设记忆与学习作用域
+
+`memory.list/update/delete` 沿用原方法。会话入口提交 `session_id`；人工独立管理页提交 `system_preset_id`，两者互斥且必须有一个。用户归属取自认证，服务端拒绝未知预设与 automation。list 返回 `system_preset_id`、`session_id`（人工预设选择时为 null）、`memories`、同域 `counts`；update/delete 的 ID 跨域与不存在均返回未找到。客户端切换预设后丢弃旧请求结果。
+
+模型记忆工具不接受 user_id、system_preset_id、scope 或 source_refs；服务端捕获的作用域与来源不可由参数覆盖。`cronjob` 模型入口依源会话限定任务创建、列表及 ID 管理，任务 `system_preset_id` 表示创建目标；standard 执行会话仍显式绑定 automation，special 只能属于 companion。
+
+客户端 `tools.sync` 声明 `skill_scope_version=1` 才开放 skills_list/skill_view/skill_manage。Backend 的 runner 工具请求以顶层 `skill_scope={user_id, system_preset_id}` 传给 Client，Client 经 `runnerInvoke` 转发 `execute_scoped_tool`；该字段不在模型工具 schema。Runner 在请求执行期间固定作用域，学习产物只写所属目录。旧全局 client_context.skills 不再用于提示词注入，技能目录由模型通过同域工具读取。自动化不开放学习技能和 cronjob 管理。
+
+`companion.set_timezone` 写入 `UserSetting.timezone`，语言和时区是静态运行配置，不进入画像共享池。备份只接受 schema_version=3，重建部署不兼容旧备份格式。

@@ -14,7 +14,6 @@ class UserInfo(BaseModel):
 class ChatRequestClientContext(BaseModel):
     environment_hints: str | None = None
     platform_hints: str | None = None
-    skills: list[str] | None = None
 
 
 class ActivateRequest(BaseModel):

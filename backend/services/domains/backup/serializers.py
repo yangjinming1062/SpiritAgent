@@ -25,6 +25,9 @@ from modules.settings import UserSetting
 from sqlalchemy import Date, DateTime, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.contracts.memory import MemoryScope
+from services.domains.conversation import validate_memory_scope
+
 from .file_packing import UrlRewriter
 
 # 表白名单与依赖顺序单源维护；列从模型读取，新增持久字段不会静默漏备份。
@@ -117,19 +120,40 @@ async def insert_rows(
     id_map: IdMap,
     *,
     mode: str,
+    import_batch_id: str,
 ) -> tuple[dict[str, int | str], int]:
     model = TABLE_MODELS[table]
     new_map: dict[str, int | str] = {}
     inserted = 0
     parents: list[tuple[Conversation, Any, datetime | None]] = []
-    for raw in raw_rows:
+    for raw in sorted(raw_rows, key=lambda row: int(row["id"])) if table == "messages" else raw_rows:
         payload = _build_payload(table, raw, target_user_id, rewriter, id_map)
+        if table == "memories":
+            payload["source_refs"]["import_batch_id"] = import_batch_id
         if table == "user_preferences":
             if mode == "overwrite":
                 user = await db.get(User, target_user_id)
                 user.nightly_activity_enabled = payload["nightly_activity_enabled"]
                 inserted += 1
             continue
+        if table == "cron_jobs" and payload.get("conversation_id") is not None:
+            conversation = await db.get(Conversation, payload["conversation_id"])
+            if conversation.user_id != target_user_id or not conversation.is_automation:
+                raise ValueError("Standard job requires an automation conversation")
+        if table in {"companion_moments", "companion_diary_entries"}:
+            memory_ids = (
+                payload.get("memory_ids", []) if table == "companion_diary_entries" else [payload.get("memory_id")]
+            )
+            for memory_id in memory_ids:
+                if memory_id is None:
+                    continue
+                memory = await db.get(Memory, int(memory_id))
+                if memory is None or memory.user_id != target_user_id or memory.system_preset_id != "companion":
+                    raise ValueError("Companion narrative refers to a different memory scope")
+            if table == "companion_moments" and payload.get("session_id") is not None:
+                conversation = await db.get(Conversation, payload["session_id"])
+                if conversation.user_id != target_user_id or conversation.system_preset_id != "companion":
+                    raise ValueError("Companion moment refers to a different conversation scope")
         existing = None
         if mode == "merge" and table in UNIQUE_KEYS:
             existing = await db.scalar(
@@ -142,11 +166,22 @@ async def insert_rows(
             mode == "merge"
             and table == "memories"
             and (payload.get("context") or "").startswith(
-                ("user_profile:", "auto_inject:", "inferred_profile:", "diary:"),
+                (
+                    "user_profile:",
+                    "auto_inject:",
+                    "inferred_profile:",
+                    "diary:",
+                    "interaction_stats:",
+                    "recall:nightly_actions:",
+                ),
             )
         ):
             existing = await db.scalar(
-                select(Memory).where(Memory.user_id == target_user_id, Memory.context == payload["context"]),
+                select(Memory).where(
+                    Memory.user_id == target_user_id,
+                    Memory.system_preset_id == payload["system_preset_id"],
+                    Memory.context == payload["context"],
+                ),
             )
         if table == "conversations" and payload.get("kind") == "special" and payload.get("system_preset_id"):
             existing = await db.scalar(
@@ -157,6 +192,8 @@ async def insert_rows(
                 ),
             )
         if existing is not None:
+            if table == "conversations" and (raw["context_after_message_id"] or existing.context_after_message_id):
+                raise ValueError("Cannot merge conversation histories with context watermarks")
             new_map[str(raw["id"])] = existing.id
             continue
         if (
@@ -179,6 +216,9 @@ async def insert_rows(
             if str(parent_id) not in new_map:
                 raise ValueError("Conversation parent is missing from backup")
             conversation.parent_id = new_map[str(parent_id)]
+            parent = await db.get(Conversation, conversation.parent_id)
+            if parent.user_id != target_user_id or parent.system_preset_id != conversation.system_preset_id:
+                raise ValueError("Conversation parent belongs to a different scope")
             await db.flush()
             if updated_at is not None:
                 conversation.updated_at = updated_at
@@ -219,6 +259,26 @@ def _build_payload(
         raise ValueError("Message conversation is missing from backup")
     if table == "conversations":
         payload["parent_id"] = None
+        if not isinstance(payload.get("context_after_message_id"), int) or payload["context_after_message_id"] < 0:
+            raise ValueError("Invalid conversation context watermark")
+        payload["context_after_message_id"] = 0
+        if payload.get("is_automation"):
+            if payload.get("system_preset_id") != "automation":
+                raise ValueError("Invalid automation preset")
+        else:
+            validate_memory_scope(MemoryScope(user_id, payload.get("system_preset_id")))
+    if table == "cron_jobs":
+        validate_memory_scope(MemoryScope(user_id, payload.get("system_preset_id")))
+        if payload.get("kind") == "special" and payload["system_preset_id"] != "companion":
+            raise ValueError("Special job belongs to a different preset")
+    if table == "memories":
+        validate_memory_scope(MemoryScope(user_id, payload.get("system_preset_id")))
+        if not isinstance(payload.get("content_version"), int) or payload["content_version"] <= 0:
+            raise ValueError("Invalid memory content version")
+        if not isinstance(payload.get("source_refs"), dict) or not isinstance(payload.get("source_kind"), str):
+            raise ValueError("Memory source is required")
+        payload["source_kind"] = "import"
+        payload["source_refs"] = {"imported_memory_id": raw["id"], "original_source": payload["source_refs"]}
     if table == "companion_room_backdrops":
         payload["outfit_fingerprint"] = str(
             id_map.get("companion_outfits", {}).get(str(raw.get("outfit_fingerprint")), ""),
@@ -232,11 +292,60 @@ def _build_payload(
         manifest = payload["manifest_json"]
         payload["content_hash"] = hashlib.sha256(manifest.encode("utf-8")).hexdigest()
         rewriter.write_manifest(payload.get("manifest_path"), manifest)
-    if table == "cron_jobs" and "kind" not in payload:
-        payload["kind"] = "special"
     if table not in {"messages", "user_preferences"}:
         payload["user_id"] = user_id
     return payload
+
+
+async def restore_memory_context(
+    db: AsyncSession,
+    rows: dict[str, list[dict[str, Any]]],
+    id_map: IdMap,
+    user_id: int,
+    import_batch_id: str,
+) -> None:
+    conversations = {str(row["id"]): row for row in rows.get("conversations", [])}
+    messages = {str(row["id"]): row for row in rows.get("messages", [])}
+    for original_id, raw in conversations.items():
+        watermark = raw["context_after_message_id"]
+        if watermark:
+            mapped = [
+                int(id_map["messages"][mid])
+                for mid, message in messages.items()
+                if str(message["conversation_id"]) == original_id and int(mid) <= watermark
+            ]
+            conv = await db.get(Conversation, int(id_map["conversations"][original_id]))
+            conv.context_after_message_id = max(mapped, default=0)
+    for raw in rows.get("memories", []):
+        memory = await db.get(Memory, int(id_map["memories"][str(raw["id"])]))
+        # merge 保留现有槽位，不改写它的来源。
+        if memory.source_kind != "import" or memory.source_refs.get("import_batch_id") != import_batch_id:
+            continue
+        refs = raw["source_refs"]
+        restored: dict[str, Any] = {
+            "imported_memory_id": raw["id"],
+            "import_batch_id": import_batch_id,
+            "original_source": refs,
+        }
+        session_id = refs.get("session_id")
+        if session_id is not None and str(session_id) in conversations:
+            conv = conversations[str(session_id)]
+            if conv["system_preset_id"] != raw["system_preset_id"]:
+                raise ValueError("Memory source belongs to a different preset")
+            restored["session_id"] = int(id_map["conversations"][str(session_id)])
+            mapped_messages = []
+            for mid in refs.get("message_ids", []):
+                message = messages.get(str(mid))
+                if message is None:
+                    continue
+                if str(message["conversation_id"]) != str(session_id):
+                    raise ValueError("Invalid memory source message")
+                mapped_messages.append(int(id_map["messages"][str(mid)]))
+            restored["message_ids"] = mapped_messages
+        else:
+            restored["external_source"] = {key: value for key, value in refs.items() if key != "external_source"}
+        memory.source_refs = restored
+    await db.flush()
 
 
 def deserialize_rows(extract_root: Path, tables: list[str]) -> dict[str, list[dict[str, Any]]]:

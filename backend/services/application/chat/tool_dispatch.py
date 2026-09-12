@@ -6,6 +6,7 @@ from components import async_trace_span, redact_sensitive_text, safe_json_loads,
 
 from services.application.chat.native_memory import NativeMemory
 from services.contracts.delegation import DelegateAction
+from services.contracts.memory import MemoryScope
 from services.infrastructure.desktop.connection import MANAGER
 from services.infrastructure.desktop.ipc import create_future, discard_call, wait_future
 from services.infrastructure.tool_runtime import (
@@ -37,7 +38,8 @@ class _ToolDispatchContext:
     llm_config: dict
     user_settings: dict
     session_id: str
-    native_memory: NativeMemory
+    memory_scope: MemoryScope | None
+    native_memory: NativeMemory | None
     guardrails: ToolCallGuardrailController
     emitter: Emitter
     delegate_executor: DelegateExecutor
@@ -65,12 +67,18 @@ async def _dispatch_runner_tool(
     session_id: str,
     *,
     headless: bool = False,
+    memory_scope: MemoryScope | None,
 ) -> str:
     """把 runner 工具调用作为用户级设备指令推给桌面 WS，并等待其 ipc future。
 
     不经回合 emitter：设备派发不是聊天帧，它靠 call_id 关联、与用户在看哪个会话无关。载荷里的
     session_id 只描述来源，不参与路由；headless 要求客户端照常执行但不展示工作态或工具流。
     """
+    skill_scope = None
+    if name in {"skills_list", "skill_view", "skill_manage"}:
+        if memory_scope is None:
+            return tool_error("Learning skills are unavailable in automation")
+        skill_scope = {"user_id": memory_scope.user_id, "system_preset_id": memory_scope.system_preset_id}
     # 客户端离线（未连接也无 grace session）或 Runner 未同步工具时快速失败；否则 IPC future 会挂 ipc_future_timeout_seconds（默认 300s）才返回合成超时错误。
     if not MANAGER.is_available(user_id):
         return tool_error("Desktop is offline. Tool calls require an active desktop connection.")
@@ -87,7 +95,14 @@ async def _dispatch_runner_tool(
         # 底层吞掉所有发送异常，所以「WS 掉线」只体现为返回 False——不看返回值就会白等满 IPC 超时。
         delivered = await dispatcher.enqueue_event(
             "tool.call",
-            {"name": name, "args": args, "call_id": call_id, "session_id": session_id, "headless": headless},
+            {
+                "name": name,
+                "args": args,
+                "call_id": call_id,
+                "session_id": session_id,
+                "headless": headless,
+                "skill_scope": skill_scope,
+            },
         )
     except BaseException:
         # 注册已完成而派发未走到等待（含回合被取消）：不清理就会在 _PENDING 里留下永久句柄。
@@ -156,7 +171,11 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
                         else result
                     )
                 case "memory":
-                    result_str = await ctx.native_memory.execute_tool(name, args)
+                    result_str = (
+                        await ctx.native_memory.execute_tool(name, args)
+                        if ctx.native_memory
+                        else tool_error("Memory is unavailable")
+                    )
                 case "runner":
                     result_str = await _dispatch_runner_tool(
                         ctx.user_id,
@@ -165,6 +184,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
                         tc["call_id"],
                         ctx.session_id,
                         headless=ctx.headless,
+                        memory_scope=ctx.memory_scope,
                     )
                 case _:
                     result_str = tool_error(f"Unknown tool location for {name}")

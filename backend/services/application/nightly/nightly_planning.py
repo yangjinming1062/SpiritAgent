@@ -53,6 +53,7 @@ from services.application.generation import (
     resume_room_generation,
     schedule_room_generation,
 )
+from services.contracts.memory import MemoryScope
 from services.domains.automation.cron_jobs import create_job, remove_job
 from services.domains.journal import create_generated_moment, create_user_moment
 from services.infrastructure.assets import save_companion_asset
@@ -1719,7 +1720,7 @@ async def _execute_outreach_schedule(
     completed = json.dumps(facts, ensure_ascii=False)
     effective_prompt = f"{prompt}\n\n昨夜已实际完成的自主行动：{completed}。本次夜间主题：{context.plan_theme}。只能自然呼应列表中确实完成的行动，不得声称被跳过、失败或未列出的行动已经完成。"
     job = await create_job(
-        user_id=user_id,
+        scope=MemoryScope(user_id, "companion"),
         prompt=effective_prompt,
         schedule=schedule,
         name=name,
@@ -1729,7 +1730,7 @@ async def _execute_outreach_schedule(
         expires_at=_outreach_expiry(date_context),
     )
     if job["is_paused"] or not _runs_on_target_local_date(job, date_context):
-        await remove_job(user_id, job["id"])
+        await remove_job(MemoryScope(user_id, "companion"), job["id"])
         timezone = ZoneInfo(str(date_context.user_timezone))
         target = date.fromisoformat(str(date_context.tomorrow_date))
         now = utc_now()
@@ -1739,7 +1740,7 @@ async def _execute_outreach_schedule(
                 reason="outreach does not run on target local date",
             )
         job = await create_job(
-            user_id=user_id,
+            scope=MemoryScope(user_id, "companion"),
             prompt=effective_prompt,
             schedule=_near_term_cron(now),
             name=name,
@@ -1749,7 +1750,7 @@ async def _execute_outreach_schedule(
             expires_at=_outreach_expiry(date_context),
         )
         if job["is_paused"] or not _runs_on_target_local_date(job, date_context):
-            await remove_job(user_id, job["id"])
+            await remove_job(MemoryScope(user_id, "companion"), job["id"])
             return ActionExecutionResult(
                 status="failed",
                 reason="outreach recovery could not find a remaining target-day slot",

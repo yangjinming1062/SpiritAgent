@@ -12,6 +12,7 @@ from .main_conversation import (
     get_or_create_special_conversation,
     get_special_conversation,
 )
+from .memory_scope import conversation_memory_scope, resolve_memory_scope, validate_memory_scope
 from .presets import DEFAULT_PRESET_ID, SYSTEM_PRESET_CATALOG, InferenceDefaults, SystemPresetMeta, resolve_preset_meta
 from .proactive_state import (
     ProactiveState,
@@ -26,6 +27,9 @@ from .proactive_state import (
 from .undo import UndoNotAllowedError, resolve_undo_target, undo_conversation_to_message
 
 __all__ = [
+    "conversation_memory_scope",
+    "resolve_memory_scope",
+    "validate_memory_scope",
     "DEFAULT_PRESET_ID",
     "IM_KIND",
     "MEDIA_STATUS_SUBTYPE",

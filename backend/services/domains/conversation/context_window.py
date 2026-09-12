@@ -22,6 +22,7 @@ async def load_recent_context_window(db: AsyncSession, user_id: int, max_message
                 select(Message)
                 .where(
                     Message.conversation_id == main_conv.id,
+                    Message.id > main_conv.context_after_message_id,
                     Message.role.in_(("user", "assistant")),
                     # ``NULL NOT IN (...)`` 在 WHERE 中为 NULL（视为 false），显式 is_(None) 分支是保留普通消息的关键。
                     Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),

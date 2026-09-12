@@ -38,7 +38,7 @@ async def get_or_create_channel_conversation(
         return conv
 
     title = (title_override or "").strip() or "IM 对话"
-    conv = Conversation(user_id=binding.user_id, kind=IM_KIND, title=title)
+    conv = Conversation(user_id=binding.user_id, kind=IM_KIND, title=title, system_preset_id="companion")
     db.add(conv)
     await db.flush()
     binding.conversation_id = conv.id

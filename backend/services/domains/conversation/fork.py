@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .history import build_session_messages
 from .main_conversation import IM_KIND, SPECIAL_KIND, STANDARD_KIND
+from .memory_scope import conversation_memory_scope
 
 
 class ForkNotAllowedError(Exception):
@@ -26,6 +27,8 @@ async def fork_conversation_from_message(
     src = await Conversation.by_session_id(db, source_session_id, user_id=user_id)
     if src is None:
         raise SourceNotFoundError(f"源会话不存在或不属于当前用户: {source_session_id!r}")
+
+    conversation_memory_scope(src, user_id)
 
     if src.kind in (SPECIAL_KIND, IM_KIND):
         raise ForkNotAllowedError(f"该类型会话不可派生 (kind={src.kind!r})")
@@ -52,6 +55,7 @@ async def fork_conversation_from_message(
                 .where(
                     Message.conversation_id == src.id,
                     Message.id <= source_message_id,
+                    Message.id > src.context_after_message_id,
                     Message.subtype.is_(None) | ~Message.subtype.like("status_%"),
                 )
                 .order_by(Message.id),
@@ -76,6 +80,7 @@ async def fork_conversation_from_message(
         cwd=src.cwd,
         settings_json=src.settings_json,
         system_preset_id=src.system_preset_id,
+        is_automation=src.is_automation,
         is_deletable=True,
         is_renamable=True,
     )

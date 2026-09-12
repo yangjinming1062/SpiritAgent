@@ -3,6 +3,8 @@ from modules.memory import Memory
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.contracts.memory import MemoryScope
+
 from .memory_namespaces import (
     AUTO_INJECT_SLOTS,
     INFERRED_PROFILE_SLOTS,
@@ -10,6 +12,7 @@ from .memory_namespaces import (
     STATIC_BLOCK_EXCLUDED,
     context_not_in,
 )
+from .memory_store import scope_filter
 
 MAX_MEMORIES = 10
 MAX_MEMORY_SNIPPET_LEN = 200
@@ -34,13 +37,13 @@ _PROACTIVE_MEMORY_LABELS_TEXTS: dict[str, str] = {
 }
 
 
-async def format_memories_block(db: AsyncSession, user_id: int) -> str:
+async def format_memories_block(db: AsyncSession, scope: MemoryScope) -> str:
     """以列表形式渲染用户最近的长期记忆；有独立提示词槽位或检索路径的命名空间已排除，无记忆时返回占位文案供提示词直接插值。"""
     rows = (
         (
             await db.execute(
                 select(Memory)
-                .where(Memory.user_id == user_id, *[context_not_in(p) for p in STATIC_BLOCK_EXCLUDED])
+                .where(scope_filter(scope), *[context_not_in(p) for p in STATIC_BLOCK_EXCLUDED])
                 .order_by(Memory.updated_at.desc())
                 .limit(MAX_MEMORIES),
             )
@@ -58,12 +61,12 @@ async def format_memories_block(db: AsyncSession, user_id: int) -> str:
     return "\n".join(lines)
 
 
-async def format_auto_inject_block(db: AsyncSession, user_id: int, *, language: str = DEFAULT_LANGUAGE) -> str:
+async def format_auto_inject_block(db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE) -> str:
     rows = (
         (
             await db.execute(
                 select(Memory).where(
-                    Memory.user_id == user_id,
+                    scope_filter(scope),
                     Memory.context.like(KIND_TO_PREFIX["auto_inject"] + "%"),
                 ),
             )
@@ -82,12 +85,17 @@ async def format_auto_inject_block(db: AsyncSession, user_id: int, *, language: 
     return "\n".join(lines)
 
 
-async def format_inferred_profile_block(db: AsyncSession, user_id: int, *, language: str = DEFAULT_LANGUAGE) -> str:
+async def format_inferred_profile_block(
+    db: AsyncSession,
+    scope: MemoryScope,
+    *,
+    language: str = DEFAULT_LANGUAGE,
+) -> str:
     rows = (
         (
             await db.execute(
                 select(Memory).where(
-                    Memory.user_id == user_id,
+                    scope_filter(scope),
                     Memory.context.like(KIND_TO_PREFIX["inferred_profile"] + "%"),
                 ),
             )

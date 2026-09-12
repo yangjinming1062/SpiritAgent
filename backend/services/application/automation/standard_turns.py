@@ -35,6 +35,7 @@ async def _resolve_conversation(user_id: int, job_id: int, conversation_id: int 
                 kind=STANDARD_KIND,
                 title=f"定时任务 · {name}",
                 is_automation=True,
+                system_preset_id="automation",
             )
             db.add(conversation)
             await db.flush()

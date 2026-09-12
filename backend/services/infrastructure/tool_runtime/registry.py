@@ -18,7 +18,22 @@ def schema_name(schema: dict[str, Any]) -> str:
 
 
 # 工具的 ``user_id`` / ``llm_config`` / ``user_settings`` 是正常 kwargs，被注入时从 LLM 提供的 args 中静默剔除，避免受 LLM 注入。
-RESERVED_KEYS = frozenset({"user_id", "llm_config", "user_settings"})
+RESERVED_KEYS = frozenset(
+    {
+        "user_id",
+        "llm_config",
+        "user_settings",
+        "system_preset_id",
+        "scope",
+        "memory_scope",
+        "source_kind",
+        "source_refs",
+        "content_version",
+        "parent_session_id",
+        "emitter",
+        "skill_scope",
+    },
+)
 
 # 判定只读进程级配置，与调用用户无关。
 AvailabilityCheck = Callable[[], bool]
@@ -51,8 +66,12 @@ class ToolsRegistry:
         """添加 memory 工具（无函数——由 ``NativeMemory`` 派发），以扁平 ``{name: schema}`` 存储。"""
         self._memory_tools[name] = schema
 
-    def update_runner_tools(self, user_id: int, schemas: list[dict[str, Any]]) -> None:
-        self._runner_tools[user_id] = {schema_name(schema): schema for schema in schemas}
+    def update_runner_tools(self, user_id: int, schemas: list[dict[str, Any]], *, skill_scope_version: int = 0) -> None:
+        self._runner_tools[user_id] = {
+            schema_name(schema): schema
+            for schema in schemas
+            if skill_scope_version == 1 or schema_name(schema) not in {"skills_list", "skill_view", "skill_manage"}
+        }
         logger.info("Updated runner tools", extra={"user_id": user_id, "schema_count": len(schemas)})
 
     def clear_runner_tools(self, user_id: int) -> None:

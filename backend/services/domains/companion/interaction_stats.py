@@ -8,7 +8,8 @@ from modules.memory import Memory
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.memory import resolve_user_timezone
+from services.contracts.memory import MemoryScope, MemorySource
+from services.domains.memory import resolve_user_timezone, scope_filter, upsert_slotted_memory
 
 logger = get_logger(__name__)
 
@@ -90,15 +91,17 @@ def _format_content(counters: _DailyCounters) -> str:
 
 
 async def _stats_memory_for(db: AsyncSession, user_id: int, date_str: str) -> Memory | None:
-    # 用 first() 而非 one_or_none()：interaction_stats:* 无唯一约束，读写竞态下可能出现多行
     return (
         (
             await db.execute(
-                select(Memory).where(Memory.user_id == user_id, Memory.context == f"interaction_stats:{date_str}"),
+                select(Memory).where(
+                    scope_filter(MemoryScope(user_id, "companion")),
+                    Memory.context == f"interaction_stats:{date_str}",
+                ),
             )
         )
         .scalars()
-        .first()
+        .one_or_none()
     )
 
 
@@ -107,14 +110,14 @@ async def _upsert_memory(user_id: int, counters: _DailyCounters) -> None:
     tags_json = '["interaction","stats","daily_summary"]'
 
     async with SESSION_LOCAL() as db:
-        existing = await _stats_memory_for(db, user_id, counters.date)
-        if existing is not None:
-            existing.content = content
-            existing.tags = tags_json
-        else:
-            db.add(
-                Memory(user_id=user_id, content=content, context=f"interaction_stats:{counters.date}", tags=tags_json),
-            )
+        await upsert_slotted_memory(
+            db,
+            MemoryScope(user_id, "companion"),
+            f"interaction_stats:{counters.date}",
+            content,
+            tags_json,
+            source=MemorySource("interaction", batch_id=counters.date),
+        )
         await db.commit()
     logger.info(
         "interaction_stats: daily summary written",

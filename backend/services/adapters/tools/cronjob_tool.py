@@ -1,8 +1,9 @@
 import json
 from typing import Any
 
-from components import coerce_int, get_logger, tool_error
+from components import coerce_int, get_logger, session_scope, tool_error
 
+from services.contracts.memory import MemoryScope
 from services.domains.automation.cron_jobs import (
     create_job,
     get_job,
@@ -12,6 +13,7 @@ from services.domains.automation.cron_jobs import (
     resume_job,
     update_job,
 )
+from services.domains.conversation import resolve_memory_scope
 from services.infrastructure.tool_runtime import REGISTRY
 
 logger = get_logger(__name__)
@@ -34,7 +36,7 @@ def _build_updates(prompt: str | None, name: str | None, schedule: str | None, k
 
 async def _handle_cron_action(
     action: str,
-    user_id: int,
+    scope: MemoryScope,
     job_id_raw: int | str | None,
     prompt: str | None,
     schedule: str | None,
@@ -48,7 +50,7 @@ async def _handle_cron_action(
                 return tool_error("schedule and prompt are required for create")
             try:
                 job = await create_job(
-                    user_id=user_id,
+                    scope=scope,
                     prompt=prompt,
                     schedule=schedule,
                     name=name or "cron job",
@@ -62,14 +64,14 @@ async def _handle_cron_action(
                 ensure_ascii=False,
             )
         case "list":
-            jobs = await list_jobs(user_id=user_id)
+            jobs = await list_jobs(scope=scope)
             return json.dumps({"success": True, "jobs": jobs}, ensure_ascii=False)
         case "update":
             job_id = coerce_int(job_id_raw, None)
             if job_id is None:
                 return tool_error("job_id is required for update")
             updates = _build_updates(prompt, name, schedule, kind)
-            job = await update_job(user_id=user_id, job_id=job_id, updates=updates)
+            job = await update_job(scope=scope, job_id=job_id, updates=updates)
             if not job:
                 return tool_error(f"Cron job #{job_id_raw} not found.")
             return json.dumps(
@@ -80,7 +82,7 @@ async def _handle_cron_action(
             job_id = coerce_int(job_id_raw, None)
             if job_id is None:
                 return tool_error("job_id is required for remove")
-            ok = await remove_job(user_id=user_id, job_id=job_id)
+            ok = await remove_job(scope=scope, job_id=job_id)
             if not ok:
                 return tool_error(f"Cron job #{job_id_raw} not found.")
             return json.dumps({"success": True, "message": f"Cron job #{job_id_raw} removed."}, ensure_ascii=False)
@@ -88,7 +90,7 @@ async def _handle_cron_action(
             job_id = coerce_int(job_id_raw, None)
             if job_id is None:
                 return tool_error("job_id is required for pause")
-            job = await pause_job(user_id=user_id, job_id=job_id)
+            job = await pause_job(scope=scope, job_id=job_id)
             if not job:
                 return tool_error(f"Cron job #{job_id_raw} not found.")
             return json.dumps(
@@ -99,7 +101,7 @@ async def _handle_cron_action(
             job_id = coerce_int(job_id_raw, None)
             if job_id is None:
                 return tool_error("job_id is required for resume")
-            job = await resume_job(user_id=user_id, job_id=job_id)
+            job = await resume_job(scope=scope, job_id=job_id)
             if not job:
                 return tool_error(f"Cron job #{job_id_raw} not found.")
             return json.dumps(
@@ -110,7 +112,7 @@ async def _handle_cron_action(
             job_id = coerce_int(job_id_raw, None)
             if job_id is None:
                 return tool_error("job_id is required for get")
-            job = await get_job(user_id=user_id, job_id=job_id)
+            job = await get_job(scope=scope, job_id=job_id)
             if not job:
                 return tool_error(f"Cron job #{job_id_raw} not found")
             return json.dumps({"success": True, "job": job}, ensure_ascii=False)
@@ -129,11 +131,16 @@ async def cronjob(
     name: str | None = None,
     deliver: str = "local",
     kind: str | None = None,
+    parent_session_id: str | None = None,
     **_,
 ) -> str:
     normalized = (action or "").strip().lower()
     try:
-        return await _handle_cron_action(normalized, user_id, job_id, prompt, schedule, name, deliver, kind)
+        if parent_session_id is None:
+            raise ValueError("Source conversation is required")
+        async with session_scope() as db:
+            scope = await resolve_memory_scope(db, user_id, parent_session_id)
+        return await _handle_cron_action(normalized, scope, job_id, prompt, schedule, name, deliver, kind)
     except Exception as e:
         logger.exception("cronjob tool error")
         return tool_error(str(e))

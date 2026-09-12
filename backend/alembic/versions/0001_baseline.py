@@ -5,7 +5,7 @@ from collections.abc import Sequence
 import sqlalchemy as sa
 from alembic import op
 from pgvector.sqlalchemy import Vector
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
 # Alembic 用的版本标识符。
 revision: str = "0001"
@@ -165,10 +165,16 @@ def upgrade() -> None:
     op.create_index(op.f("ix_companion_2d_models_user_id"), "companion_2d_models", ["user_id"], unique=False)
     op.create_table(
         "conversations",
+        sa.Column("context_after_message_id", sa.Integer(), server_default="0", nullable=False),
+        sa.CheckConstraint("context_after_message_id >= 0", name="ck_conversations_context_watermark"),
+        sa.CheckConstraint(
+            "is_automation = (system_preset_id = 'automation')",
+            name="ck_conversations_automation_preset",
+        ),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("parent_id", sa.Integer(), nullable=True),
         sa.Column("kind", sa.String(length=32), server_default=sa.text("'standard'"), nullable=False),
-        sa.Column("system_preset_id", sa.String(length=32), nullable=True),
+        sa.Column("system_preset_id", sa.String(length=32), nullable=False),
         sa.Column("title", sa.Text(), nullable=False),
         sa.Column("pinned_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True),
@@ -190,6 +196,7 @@ def upgrade() -> None:
     op.create_table(
         "cron_jobs",
         sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("system_preset_id", sa.String(length=32), nullable=False),
         sa.Column("name", sa.String(length=128), nullable=False),
         sa.Column("schedule", sa.String(length=128), nullable=False),
         sa.Column("prompt", sa.Text(), nullable=False),
@@ -233,6 +240,11 @@ def upgrade() -> None:
     op.create_index(op.f("ix_login_records_user_id"), "login_records", ["user_id"], unique=False)
     op.create_table(
         "memories",
+        sa.Column("system_preset_id", sa.String(32), nullable=False),
+        sa.Column("source_kind", sa.String(32), nullable=False),
+        sa.Column("source_refs", JSONB(), nullable=False),
+        sa.Column("content_version", sa.Integer(), server_default="1", nullable=False),
+        sa.CheckConstraint("content_version > 0", name="ck_memories_content_version"),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
         sa.Column("context", sa.Text(), nullable=True),
@@ -358,6 +370,7 @@ def upgrade() -> None:
 
     op.create_table(
         "nightly_activity_logs",
+        sa.Column("system_preset_id", sa.String(32), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("target_date", sa.Date(), nullable=False),
         sa.Column("status", sa.String(length=32), server_default=sa.text("'running'"), nullable=False),
@@ -368,7 +381,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
-        sa.UniqueConstraint("user_id", "target_date", name="uq_nightly_activity_logs_user_date"),
+        sa.UniqueConstraint("user_id", "system_preset_id", "target_date", name="uq_nightly_activity_logs_scope_date"),
     )
     op.create_index(op.f("ix_nightly_activity_logs_user_id"), "nightly_activity_logs", ["user_id"], unique=False)
     op.create_index(
@@ -618,7 +631,7 @@ def upgrade() -> None:
     op.create_index(
         "uq_memories_user_context",
         "memories",
-        ["user_id", "context"],
+        ["user_id", "system_preset_id", "context"],
         unique=True,
         postgresql_where=sa.text("context LIKE 'user_profile:%'"),
     )
@@ -626,24 +639,40 @@ def upgrade() -> None:
     op.create_index(
         "uq_memories_auto_inject_slot",
         "memories",
-        ["user_id", "context"],
+        ["user_id", "system_preset_id", "context"],
         unique=True,
         postgresql_where=sa.text("context LIKE 'auto_inject:%'"),
     )
     op.create_index(
         "uq_memories_inferred_profile_slot",
         "memories",
-        ["user_id", "context"],
+        ["user_id", "system_preset_id", "context"],
         unique=True,
         postgresql_where=sa.text("context LIKE 'inferred_profile:%'"),
     )
     op.create_index(
         "uq_memories_diary_day",
         "memories",
-        ["user_id", "context"],
+        ["user_id", "system_preset_id", "context"],
         unique=True,
         postgresql_where=sa.text("context LIKE 'diary:%'"),
     )
+    op.create_index(
+        "ix_memories_scope_updated",
+        "memories",
+        ["user_id", "system_preset_id", sa.text("updated_at DESC"), sa.text("id DESC")],
+    )
+    for name, prefix in (
+        ("uq_memories_interaction_day", "interaction_stats:"),
+        ("uq_memories_nightly_actions", "recall:nightly_actions:"),
+    ):
+        op.create_index(
+            name,
+            "memories",
+            ["user_id", "system_preset_id", "context"],
+            unique=True,
+            postgresql_where=sa.text(f"context LIKE '{prefix}%'"),
+        )
     # 加速 recall consolidator 的 count-and-recent 查询。
     op.create_index(
         "ix_memories_recall_user_updated",

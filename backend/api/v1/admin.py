@@ -5,6 +5,7 @@ import json
 import os
 import shutil
 import tempfile
+import uuid
 import zipfile
 from datetime import date, datetime
 from pathlib import Path
@@ -54,6 +55,7 @@ from services.domains.backup import (
     insert_rows,
     load_manifest,
     restore_files,
+    restore_memory_context,
     serialize_rows,
 )
 from services.domains.configuration.ai_config import prepare_ai_config, public_ai_config
@@ -374,7 +376,7 @@ async def import_user_backup(
         manifest = await asyncio.to_thread(load_manifest, extract_root)
         source_uid = int(manifest["source_user_id"])
         rewriter = UrlRewriter({})
-        boundary = user_maintenance(user_id) if mode == "overwrite" else contextlib.nullcontext()
+        boundary = user_maintenance(user_id)
         async with boundary:
             try:
                 rows = await asyncio.to_thread(deserialize_rows, extract_root, manifest["tables"])
@@ -384,6 +386,7 @@ async def import_user_backup(
                     await clear_user_scoped_rows(db, user_id, manifest["tables"])
                 id_map: dict[str, dict[str, int | str]] = {}
                 imported: dict[str, int] = {}
+                import_batch_id = uuid.uuid4().hex
                 if "conversations" in rows:
                     id_map["conversations"], imported["conversations"] = await insert_rows(
                         db,
@@ -393,6 +396,7 @@ async def import_user_backup(
                         rewriter,
                         id_map,
                         mode=mode,
+                        import_batch_id=import_batch_id,
                     )
                 rewriter = await asyncio.to_thread(
                     restore_files,
@@ -411,7 +415,9 @@ async def import_user_backup(
                             rewriter,
                             id_map,
                             mode=mode,
+                            import_batch_id=import_batch_id,
                         )
+                await restore_memory_context(db, rows, id_map, user_id, import_batch_id)
                 if await db.scalar(select(Persona.is_complete).where(Persona.user_id == user_id)):
                     await ensure_system_conversations_for_user(db, user_id)
                 else:

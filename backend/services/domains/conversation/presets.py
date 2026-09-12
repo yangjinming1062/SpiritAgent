@@ -60,7 +60,6 @@ SYSTEM_PRESET_CATALOG: dict[str, SystemPresetMeta] = {
 
 
 def resolve_preset_meta(preset_id: str | None) -> SystemPresetMeta:
-    """根据 system_preset_id 解析预设元数据；不存在/为空/未知一律回退 companion。"""
-    if preset_id and preset_id in SYSTEM_PRESET_CATALOG:
-        return SYSTEM_PRESET_CATALOG[preset_id]
-    return SYSTEM_PRESET_CATALOG[DEFAULT_PRESET_ID]
+    if preset_id not in SYSTEM_PRESET_CATALOG:
+        raise ValueError("Unknown system preset")
+    return SYSTEM_PRESET_CATALOG[preset_id]

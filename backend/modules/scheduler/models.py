@@ -13,6 +13,7 @@ class CronJob(ModelBase):
     __tablename__ = "cron_jobs"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    system_preset_id: Mapped[str] = mapped_column(String(32))
     name: Mapped[str] = mapped_column(String(128), index=True)
     schedule: Mapped[str] = mapped_column(String(128))
     prompt: Mapped[str] = mapped_column(Text)
@@ -35,6 +36,7 @@ class CronJob(ModelBase):
         return {
             "id": self.id,
             "user_id": self.user_id,
+            "system_preset_id": self.system_preset_id,
             "name": self.name,
             "schedule": self.schedule,
             "prompt": self.prompt,
@@ -51,10 +53,13 @@ class CronJob(ModelBase):
 
 class NightlyActivityLog(ModelBase):
     __tablename__ = "nightly_activity_logs"
-    __table_args__ = (UniqueConstraint("user_id", "target_date", name="uq_nightly_activity_logs_user_date"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "system_preset_id", "target_date", name="uq_nightly_activity_logs_scope_date"),
+    )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     target_date: Mapped[date] = mapped_column(Date, index=True)
+    system_preset_id: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(32), default="running", server_default=text("'running'"))
     summary: Mapped[str | None] = mapped_column(Text, nullable=True, default="")
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True, default=None)
@@ -69,6 +74,7 @@ class NightlyActivityLog(ModelBase):
         return {
             "id": self.id,
             "user_id": self.user_id,
+            "system_preset_id": self.system_preset_id,
             "target_date": self.target_date.isoformat() if self.target_date else None,
             "status": self.status,
             "summary": self.summary,

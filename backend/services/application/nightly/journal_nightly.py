@@ -23,7 +23,7 @@ from modules.companion import (
 )
 from modules.conversation import Conversation, Message
 from modules.settings import UserSetting
-from sqlalchemy import or_, select
+from sqlalchemy import select
 
 from services.domains.conversation import UI_ONLY_SUBTYPES
 from services.domains.journal import upsert_diary
@@ -103,10 +103,9 @@ async def project_today(
                         .where(
                             Conversation.user_id == user_id,
                             Conversation.kind.in_(("special", "standard")),
-                            or_(
-                                Conversation.system_preset_id.is_(None),
-                                Conversation.system_preset_id == "companion",
-                            ),
+                            Conversation.system_preset_id == "companion",
+                            Conversation.is_automation.is_(False),
+                            Message.id > Conversation.context_after_message_id,
                             Message.role.in_(("user", "assistant")),
                             Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),
                             Message.created_at >= utc_start,

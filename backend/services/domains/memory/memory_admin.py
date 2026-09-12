@@ -6,8 +6,10 @@ from modules.memory import Memory
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.contracts.memory import EmbeddingItem, MemoryScope
+
 from .memory_namespaces import AUTO_INJECT_SLOTS, KIND_TO_PREFIX, RECALL_TAGS, participates_in_recall
-from .memory_retrieval import backfill_memory_embeddings
+from .memory_store import backfill_memory_embeddings, get_memory, scope_filter, update_memory_content
 
 # 界限：列表分页上限与编辑时的长度上限
 _LIST_DEFAULT_LIMIT = 100
@@ -16,31 +18,11 @@ _LIST_MAX_LIMIT = 500
 _OTHER_BUCKET = "other"
 
 
-async def _owned(db: AsyncSession, user_id: int, memory_id: int) -> Memory | None:
-    return (
-        await db.execute(select(Memory).where(Memory.id == memory_id, Memory.user_id == user_id))
-    ).scalar_one_or_none()
-
-
-async def upsert_slotted_memory(db: AsyncSession, user_id: int, context: str, content: str, tags: str) -> Memory:
-    """按 context 插入或更新槽位记忆并返回行（commit 由调用方负责）；内容长度限制与标签格式由调用方负责。"""
-    existing = (
-        await db.execute(select(Memory).where(Memory.user_id == user_id, Memory.context == context))
-    ).scalar_one_or_none()
-    if existing is not None:
-        if existing.content != content:
-            existing.content = content
-            existing.embedding = None
-        existing.tags = tags
-        return existing
-    row = Memory(user_id=user_id, content=content, context=context, tags=tags)
-    db.add(row)
-    return row
-
-
 def _row_to_dict(row: Memory) -> dict[str, Any]:
     return {
         "id": row.id,
+        "system_preset_id": row.system_preset_id,
+        "content_version": row.content_version,
         "context": row.context,
         "tags": row.tags,
         "content": row.content,
@@ -52,7 +34,7 @@ def _row_to_dict(row: Memory) -> dict[str, Any]:
 
 async def list_memories(
     db: AsyncSession,
-    user_id: int,
+    scope: MemoryScope,
     *,
     kind: str | None = None,
     tag: str | None = None,
@@ -67,7 +49,7 @@ async def list_memories(
     if limit <= 0 or limit > _LIST_MAX_LIMIT:
         limit = _LIST_DEFAULT_LIMIT
 
-    stmt = select(Memory).where(Memory.user_id == user_id)
+    stmt = select(Memory).where(scope_filter(scope))
     if kind is not None:
         stmt = stmt.where(Memory.context.like(KIND_TO_PREFIX[kind] + "%"))
     if tag:
@@ -81,44 +63,37 @@ async def list_memories(
     return [_row_to_dict(r) for r in rows]
 
 
-async def update_memory(user_id: int, memory_id: int, *, content: str) -> dict[str, Any] | None:
+async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> dict[str, Any] | None:
     """只更新 content；长度上限随 context 而定（auto_inject 槽位必须短，唯一索引与后续整合逻辑依赖这一点）。"""
     content = (content or "").strip()
     if not content:
         raise ValueError("content must be non-empty")
     async with session_scope() as db:
-        row = await _owned(db, user_id, memory_id)
+        row = await get_memory(db, scope, memory_id)
         if row is None:
             return None
         cap = MAX_AUTO_INJECT_CONTENT_CHARS if row.context in AUTO_INJECT_SLOTS else MAX_RECALL_CONTENT_CHARS
         if len(content) > cap:
             raise ValueError(f"content exceeds {cap} chars for {row.context or 'recall'}")
-        if row.content != content:
-            row.content = content
-            row.embedding = None
+        row = await update_memory_content(db, scope, memory_id, content)
+        if row is None:
+            return None
         await db.commit()
         await db.refresh(row)
         result = _row_to_dict(row)
-        embedding_item = (row.id, row.content) if participates_in_recall(row.context) else None
+        embedding_item = (
+            EmbeddingItem(row.id, row.content, row.content_version) if participates_in_recall(row.context) else None
+        )
     if embedding_item is not None:
-        await backfill_memory_embeddings(user_id, [embedding_item])
+        await backfill_memory_embeddings(scope, [embedding_item])
     return result
 
 
-async def delete_memory(db: AsyncSession, user_id: int, memory_id: int) -> bool:
-    row = await _owned(db, user_id, memory_id)
-    if row is None:
-        return False
-    await db.delete(row)
-    await db.commit()
-    return True
-
-
-async def memory_counts(db: AsyncSession, user_id: int) -> dict[str, int]:
+async def memory_counts(db: AsyncSession, scope: MemoryScope) -> dict[str, int]:
     """按命名空间前缀统计记忆条数；行数本就有界，Python 侧聚合比手写 SQL CASE-WHEN 更划算。"""
     counts: dict[str, int] = dict.fromkeys(KIND_TO_PREFIX, 0)
     counts[_OTHER_BUCKET] = 0
-    for (ctx,) in (await db.execute(select(Memory.context).where(Memory.user_id == user_id))).all():
+    for (ctx,) in (await db.execute(select(Memory.context).where(scope_filter(scope)))).all():
         if ctx is None:
             counts[_OTHER_BUCKET] += 1
             continue

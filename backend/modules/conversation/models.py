@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from common import ModelBase, TimestampMixin
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func, select, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -12,6 +12,10 @@ if TYPE_CHECKING:
 
 class Conversation(ModelBase, TimestampMixin):
     __tablename__ = "conversations"
+    __table_args__ = (
+        CheckConstraint("context_after_message_id >= 0", name="ck_conversations_context_watermark"),
+        CheckConstraint("is_automation = (system_preset_id = 'automation')", name="ck_conversations_automation_preset"),
+    )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     parent_id: Mapped[int | None] = mapped_column(
@@ -21,8 +25,8 @@ class Conversation(ModelBase, TimestampMixin):
     )
     # 值集合 {special, standard, im}：special = 系统预设对话（由 system_preset_id 区分具体预设），standard = 用户创建或任务型 Cron 使用的普通对话，im = 外部 IM 对话。
     kind: Mapped[str] = mapped_column(String(32), default="standard", server_default=text("'standard'"))
-    # 系统预设 ID；None=普通对话，非空∈{companion,developer,product_manager,copywriter,language_teacher}。
-    system_preset_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    system_preset_id: Mapped[str] = mapped_column(String(32), index=True)
+    context_after_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     title: Mapped[str] = mapped_column(Text, default="New Conversation")
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

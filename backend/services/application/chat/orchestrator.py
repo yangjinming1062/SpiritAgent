@@ -16,7 +16,7 @@ from modules.conversation import Conversation, Message
 from modules.system import ChatRequest, PromptPreset
 
 from services.domains.companion import is_work_preset
-from services.domains.conversation import DEFAULT_PRESET_ID, IM_KIND, SPECIAL_KIND
+from services.domains.conversation import DEFAULT_PRESET_ID, IM_KIND, SPECIAL_KIND, conversation_memory_scope
 from services.domains.media import inline_video_parts, prune_videos_in_range
 from services.domains.memory import embed_memory_text
 from services.infrastructure.llm import (
@@ -111,6 +111,12 @@ async def run_chat_turn(
         if not conv:
             await emitter.send_json({"type": "error", "message": "Conversation not found"})
             return
+        try:
+            memory_scope = conversation_memory_scope(conv, user_id)
+            _resolve_turn_preset(conv, preset_override)
+        except ValueError as exc:
+            await emitter.send_json({"type": "error", "message": str(exc)})
+            return
         sid = str(conv.id)
         effective_excluded_tool_names = (
             excluded_tool_names
@@ -157,6 +163,7 @@ async def run_chat_turn(
             req,
             session_client_context,
             effective_settings,
+            memory_scope,
             preset_override=preset_override,
             use_request_for_memory_retrieval=not ephemeral,
             proactive_memory_query=proactive_memory_query,
@@ -241,6 +248,7 @@ async def run_chat_turn(
         llm_config=llm_config,
         user_settings=effective_settings,
         session_id=sid,
+        memory_scope=inputs.memory_scope,
         native_memory=inputs.native_memory,
         guardrails=guardrails,
         emitter=emitter,
@@ -395,6 +403,7 @@ async def run_chat_turn(
                 inputs.first_user_msg_content,
                 current_context,
                 track_task,
+                memory_scope=inputs.memory_scope,
                 provider_name=inputs.provider_name,
                 media=turn_media,
                 reasoning=llm_result.reasoning,

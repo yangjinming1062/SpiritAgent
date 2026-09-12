@@ -6,6 +6,7 @@ from modules.settings import UserSetting
 from pydantic import BaseModel
 from sqlalchemy import select
 
+from services.contracts.memory import MemoryScope
 from services.domains.memory import format_memories_block
 from services.infrastructure.llm import (
     LLMRuntimeError,
@@ -78,7 +79,7 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
             persona_extras=render_extras(definition, language=language),
             current_mood=persona.current_mood or "",
             outfit_block=await build_outfit_extras(db, user_id, language=language),
-            memories_block=await format_memories_block(db, user_id),
+            memories_block=await format_memories_block(db, MemoryScope(user_id, "companion")),
             allowed_emotions=set(BUILTIN_EMOTIONS),
             available_actions=available_actions,
         )

@@ -3,9 +3,14 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import DEFAULT_LANGUAGE, resolve_prompt_text
 from modules.memory import Memory
+from modules.settings import UserSetting
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from services.contracts.memory import MemoryScope, MemorySource
+
+from .memory_store import scope_filter, upsert_slotted_memory
 
 _USER_PROFILE_TAGS_JSON = '["onboarding", "user_profile"]'
 
@@ -16,7 +21,6 @@ _CONTEXT_LABELS: dict[str, str] = {
     "user_age_bucket": "user_profile:age_bucket",
     "user_hobbies": "user_profile:hobbies",
     "user_freeform": "user_profile:freeform",
-    "timezone": "user_profile:timezone",
 }
 
 # 双语用户资料块标题；display 字段（context.split(":",1)[1].replace("_"," ").capitalize()）属协议级展示，保持英文不译。
@@ -32,10 +36,10 @@ def extract_user_profile(payload: dict[str, Any]) -> dict[str, str]:
     return {k: (payload.get(k) or "").strip() for k in payload if k.startswith("user_")}
 
 
-async def read_user_profile(db: AsyncSession, user_id: int) -> dict[str, str]:
+async def read_user_profile(db: AsyncSession, scope: MemoryScope) -> dict[str, str]:
     """record_user_profile 的逆操作：以 {raw_key: content} 返回用户当前的 user_* 回答。"""
     rows = (
-        (await db.execute(select(Memory).where(Memory.user_id == user_id, Memory.context.like("user_profile:%"))))
+        (await db.execute(select(Memory).where(scope_filter(scope), Memory.context.like("user_profile:%"))))
         .scalars()
         .all()
     )
@@ -47,9 +51,9 @@ async def read_user_profile(db: AsyncSession, user_id: int) -> dict[str, str]:
     return out
 
 
-async def build_user_profile_extras(db: AsyncSession, user_id: int, *, language: str = DEFAULT_LANGUAGE) -> str:
+async def build_user_profile_extras(db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE) -> str:
     rows = (
-        (await db.execute(select(Memory).where(Memory.user_id == user_id, Memory.context.like("user_profile:%"))))
+        (await db.execute(select(Memory).where(scope_filter(scope), Memory.context.like("user_profile:%"))))
         .scalars()
         .all()
     )
@@ -68,29 +72,23 @@ async def build_user_profile_extras(db: AsyncSession, user_id: int, *, language:
     return "\n".join(lines)
 
 
-async def record_user_profile(db: AsyncSession, user_id: int, profile: dict[str, str]) -> None:
+async def record_user_profile(db: AsyncSession, scope: MemoryScope, profile: dict[str, str]) -> None:
     """把 user_* 字段写入 Memory；空值跳过（不插不删），使人设编辑器可重复保存而不清空既有行。"""
     for user_key, val in profile.items():
         if not val:
             continue
         ctx = _CONTEXT_LABELS.get(user_key, f"user_profile:{user_key.removeprefix('user_')}")
-        statement = (
-            insert(Memory)
-            .values(user_id=user_id, content=val, context=ctx, tags=_USER_PROFILE_TAGS_JSON)
-            .on_conflict_do_update(
-                index_elements=["user_id", "context"],
-                index_where=Memory.context.like("user_profile:%"),
-                set_={"content": val, "tags": _USER_PROFILE_TAGS_JSON, "updated_at": func.now()},
-            )
-        )
-        await db.execute(statement)
+        await upsert_slotted_memory(db, scope, ctx, val, _USER_PROFILE_TAGS_JSON, source=MemorySource("onboarding"))
 
 
 async def resolve_user_timezone(db: AsyncSession, user_id: int) -> str | None:
     """读用户 IANA 时区；夜间批处理与互动统计按它做本地日聚合。"""
     val = (
         await db.execute(
-            select(Memory.content).where(Memory.user_id == user_id, Memory.context == "user_profile:timezone"),
+            select(UserSetting.setting_value).where(
+                UserSetting.user_id == user_id,
+                UserSetting.setting_key == "timezone",
+            ),
         )
     ).scalar()
     return (val or "").strip() or None
@@ -102,5 +100,12 @@ async def record_user_timezone(db: AsyncSession, user_id: int, tz: str) -> bool:
         ZoneInfo(tz)
     except (ZoneInfoNotFoundError, ValueError, KeyError):
         return False
-    await record_user_profile(db, user_id, {"timezone": tz})
+    await db.execute(
+        insert(UserSetting)
+        .values(user_id=user_id, setting_key="timezone", setting_value=tz)
+        .on_conflict_do_update(
+            index_elements=["user_id", "setting_key"],
+            set_={"setting_value": tz, "updated_at": func.now()},
+        ),
+    )
     return True

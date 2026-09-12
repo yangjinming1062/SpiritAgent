@@ -40,7 +40,6 @@ from components.user_maintenance_runtime import is_user_in_maintenance
 from fastapi import WebSocket, WebSocketDisconnect
 from modules.auth import ChatRequestClientContext
 from modules.conversation import Conversation, Message
-from modules.memory import Memory
 from modules.system import ChatMessageRequest, ChatRequest, PromptPresetListResponse, PromptPresetSummary
 from modules.ws import CRON_TURN_EVENT
 from pydantic import ValidationError
@@ -74,6 +73,7 @@ from services.application.generation import (
     regenerate_avatar,
     request_model_download_retry,
 )
+from services.contracts.memory import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.companion import (
     REGION_NAMES_ZH,
     PersonaValidationError,
@@ -91,6 +91,7 @@ from services.domains.companion import (
     submit_onboarding_field,
 )
 from services.domains.companion.disturbance import get_disturbance_tier
+from services.domains.companion.interaction_stats import invalidate_user_interaction_stats
 from services.domains.conversation import (
     IM_KIND,
     SYSTEM_PRESET_CATALOG,
@@ -98,17 +99,21 @@ from services.domains.conversation import (
     SourceNotFoundError,
     UndoNotAllowedError,
     build_session_messages,
+    conversation_memory_scope,
     fork_conversation_from_message,
     get_or_create_special_conversation,
     get_special_conversation,
     note_user_contact,
     reset_user_outreach,
+    resolve_memory_scope,
     resolve_undo_target,
     undo_conversation_to_message,
+    validate_memory_scope,
 )
 from services.domains.media import prune_videos_in_range
 from services.domains.memory import (
     backfill_memory_embeddings,
+    create_memory,
     delete_memory,
     list_memories,
     memory_counts,
@@ -619,7 +624,15 @@ async def _do_compress_history(
     user_settings = await load_user_settings(db, user_id)
     effective_settings = merge_session_settings(user_settings, runtime.settings, conv=conv)
     req = ChatRequest(session_id=str(conv.id), message=ChatMessageRequest(role="user", content=""))
-    inputs = await build_turn_inputs(db, conv, user_id, req, runtime.session_client_context, effective_settings)
+    inputs = await build_turn_inputs(
+        db,
+        conv,
+        user_id,
+        req,
+        runtime.session_client_context,
+        effective_settings,
+        conversation_memory_scope(conv, user_id),
+    )
 
     compression_u = parse_temperature(
         effective_settings.get("chat.compression_temperature"),
@@ -662,7 +675,15 @@ async def _do_compress_history(
     await prune_videos_in_range(db, conv.id, hi=checkpoint.id)
     await db.commit()
 
-    new_inputs = await build_turn_inputs(db, conv, user_id, req, runtime.session_client_context, effective_settings)
+    new_inputs = await build_turn_inputs(
+        db,
+        conv,
+        user_id,
+        req,
+        runtime.session_client_context,
+        effective_settings,
+        conversation_memory_scope(conv, user_id),
+    )
     delivered = await build_session_messages(conv.id, db)
 
     return {
@@ -846,17 +867,19 @@ async def _slash_remember(ctx: SlashCommandContext) -> SlashCommandResult:
     importance = 1.5
 
     async with SESSION_LOCAL() as db:
-        mem = Memory(
-            user_id=ctx.user_id,
+        scope = await resolve_memory_scope(db, ctx.user_id, ctx.session_id)
+        mem = await create_memory(
+            db,
+            scope,
+            source=MemorySource("manual", session_id=int(ctx.session_id)),
             content=norm_content,
             context=context,
             tags=tags,
             importance=importance,
         )
-        db.add(mem)
         await db.commit()
 
-    await backfill_memory_embeddings(ctx.user_id, [(mem.id, mem.content)])
+    await backfill_memory_embeddings(scope, [EmbeddingItem(mem.id, mem.content, mem.content_version)])
 
     display_content = norm_content if len(norm_content) <= 60 else f"{norm_content[:57]}..."
     return SlashCommandResult(
@@ -953,7 +976,7 @@ def _register_session_handlers(
     async def session_create(params: dict) -> dict:
         cwd = params.get("cwd") or None
         raw_preset = params.get("system_preset_id")
-        preset_id: str | None = None
+        preset_id: str = "developer"
         if raw_preset is not None and raw_preset != "":
             if not isinstance(raw_preset, str) or raw_preset not in SYSTEM_PRESET_CATALOG:
                 raise JsonRpcError(
@@ -1477,7 +1500,7 @@ def _register_session_handlers(
         tools = params.get("tools", [])
         if not isinstance(tools, list):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "tools must be a list")
-        REGISTRY.update_runner_tools(user_id, tools)
+        REGISTRY.update_runner_tools(user_id, tools, skill_scope_version=params.get("skill_scope_version", 0))
         return ToolsSyncResult(count=len(tools)).model_dump()
 
     dispatcher.register("tools.sync", tools_sync)
@@ -1503,6 +1526,7 @@ def _register_session_handlers(
             if not await record_user_timezone(db, user_id, normalized):
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"unknown timezone: {normalized}")
             await db.commit()
+        invalidate_user_interaction_stats(user_id)
         return {"timezone": normalized}
 
     dispatcher.register("companion.set_timezone", companion_set_timezone)
@@ -1656,9 +1680,24 @@ def _register_session_handlers(
     async def companion_get_user_profile(_params: dict) -> dict:
         # record_user_profile 的逆操作：retune 向导在打开前调用，预填它的 user_* 步骤。
         async with SESSION_LOCAL() as db:
-            return await read_user_profile(db, user_id)
+            return await read_user_profile(db, MemoryScope(user_id, "companion"))
 
     dispatcher.register("companion.get_user_profile", companion_get_user_profile)
+
+    async def _memory_scope(params: dict, db: AsyncSession) -> MemoryScope:
+        try:
+            if "session_id" in params:
+                if "system_preset_id" in params or not isinstance(params["session_id"], str):
+                    raise ValueError("Provide a session or a preset, not both")
+                return await resolve_memory_scope(db, user_id, params["session_id"])
+            preset = params.get("system_preset_id")
+            if not isinstance(preset, str):
+                raise ValueError("session_id or system_preset_id is required")
+            scope = MemoryScope(user_id, preset)
+            validate_memory_scope(scope)
+            return scope
+        except ValueError as exc:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
 
     async def memory_list(params: dict) -> dict:
         kind = params.get("kind")
@@ -1667,18 +1706,24 @@ def _register_session_handlers(
         limit = params.get("limit")
         try:
             async with SESSION_LOCAL() as db:
+                scope = await _memory_scope(params, db)
                 rows = await list_memories(
                     db,
-                    user_id,
+                    scope,
                     kind=kind if isinstance(kind, str) else None,
                     tag=tag if isinstance(tag, str) else None,
                     q=q if isinstance(q, str) else None,
                     limit=int(limit) if isinstance(limit, int) else 100,
                 )
-                counts = await memory_counts(db, user_id)
+                counts = await memory_counts(db, scope)
         except ValueError as exc:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc))
-        return {"memories": rows, "counts": counts}
+        return {
+            "memories": rows,
+            "counts": counts,
+            "system_preset_id": scope.system_preset_id,
+            "session_id": params.get("session_id"),
+        }
 
     async def memory_update(params: dict) -> dict:
         memory_id = params.get("memory_id")
@@ -1686,7 +1731,9 @@ def _register_session_handlers(
         if not isinstance(memory_id, int) or not isinstance(content, str):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "memory_id (int) and content (str) required")
         try:
-            row = await update_memory(user_id, memory_id, content=content)
+            async with SESSION_LOCAL() as db:
+                scope = await _memory_scope(params, db)
+            row = await update_memory(scope, memory_id, content=content)
         except ValueError as exc:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc))
         if row is None:
@@ -1698,7 +1745,8 @@ def _register_session_handlers(
         if not isinstance(memory_id, int):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "memory_id (int) required")
         async with SESSION_LOCAL() as db:
-            ok = await delete_memory(db, user_id, memory_id)
+            scope = await _memory_scope(params, db)
+            ok = await delete_memory(db, scope, memory_id)
         return {"deleted": ok}
 
     dispatcher.register("memory.list", memory_list)

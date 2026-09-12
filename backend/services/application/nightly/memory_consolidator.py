@@ -1,7 +1,6 @@
 import asyncio
 import json
 from dataclasses import dataclass
-from datetime import datetime
 from enum import StrEnum
 
 from components import (
@@ -13,16 +12,17 @@ from components import (
     parse_llm_json,
     session_scope,
 )
-from modules.memory import Memory
-from sqlalchemy import and_, delete, or_, select
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.contracts.memory import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.memory import (
-    KIND_TO_PREFIX,
     RECALL_TAGS,
+    RecallSnapshot,
     backfill_memory_embeddings,
+    create_memory,
+    load_recall_snapshot,
     normalize_recall_context,
     normalize_recall_tags,
+    replace_recall_snapshot,
 )
 from services.infrastructure.llm import call_llm_once, resolve_user_llm_config
 
@@ -51,25 +51,7 @@ own persona, transient task progress, or duplicate onboarding profile fields), o
     tags=", ".join(sorted(RECALL_TAGS)),
 )
 
-_CONSOLIDATION_LOCKS: dict[int, asyncio.Lock] = {}
-
-
-@dataclass(frozen=True, slots=True)
-class RecallSnapshot:
-    id: int
-    content: str
-    context: str | None
-    tags: str | None
-    importance: float
-    updated_at: datetime
-
-    def prompt_row(self) -> dict[str, int | str | None]:
-        return {
-            "id": self.id,
-            "context": self.context,
-            "tags": self.tags,
-            "content": self.content,
-        }
+_CONSOLIDATION_LOCKS: dict[MemoryScope, asyncio.Lock] = {}
 
 
 class RecallReplaceStatus(StrEnum):
@@ -84,118 +66,53 @@ class RecallReplaceResult:
     written: int = 0
 
 
-def memory_consolidation_lock(user_id: int) -> asyncio.Lock:
-    """返回白天整理与夜间 Stage 2 共用的用户级进程内互斥锁。"""
-    return _CONSOLIDATION_LOCKS.setdefault(user_id, asyncio.Lock())
-
-
-async def load_recall_snapshot(db: AsyncSession, user_id: int, *, limit: int) -> list[RecallSnapshot]:
-    """在短会话中读取供一次 LLM 整理使用的版本化 recall 快照。"""
-    rows = (
-        (
-            await db.execute(
-                select(Memory)
-                .where(
-                    Memory.user_id == user_id,
-                    Memory.context.like(KIND_TO_PREFIX["recall"] + "%"),
-                )
-                .order_by(Memory.updated_at.desc(), Memory.id.desc())
-                .limit(limit),
-            )
-        )
-        .scalars()
-        .all()
-    )
-    return [
-        RecallSnapshot(
-            id=row.id,
-            content=row.content,
-            context=row.context,
-            tags=row.tags,
-            importance=float(row.importance),
-            updated_at=row.updated_at,
-        )
-        for row in rows
-    ]
+def memory_consolidation_lock(scope: MemoryScope) -> asyncio.Lock:
+    """返回白天整理与夜间 Stage 2 共用的作用域进程内互斥锁。"""
+    return _CONSOLIDATION_LOCKS.setdefault(scope, asyncio.Lock())
 
 
 async def replace_recall_pool(
-    user_id: int,
+    scope: MemoryScope,
     source_rows: list[RecallSnapshot],
     summaries: list[dict],
 ) -> RecallReplaceResult:
-    """仅在源快照仍完整一致时，以一个短事务删除源 recall 行并写入摘要。"""
-    new_rows: list[Memory] = []
-    for summary in summaries:
-        if not isinstance(summary, dict):
-            continue
-        content_str = (summary.get("content") or "").strip()[:MAX_RECALL_CONTENT_CHARS]
-        if not content_str:
-            continue
-        importance = max(0.1, min(5.0, float(summary.get("importance", 1.0) or 1.0)))
-        new_rows.append(
-            Memory(
-                user_id=user_id,
-                content=content_str,
-                context=normalize_recall_context(summary.get("context"), default="consolidated"),
-                tags=json.dumps(normalize_recall_tags(summary.get("tags"))),
-                importance=importance,
-            ),
-        )
-
-    # 至少写一条 summary 才允许删除源行，避免 LLM 全空 payload 清空 recall pool。
-    if not new_rows:
-        return RecallReplaceResult(RecallReplaceStatus.EMPTY_SUMMARIES)
-
-    expected_ids = {row.id for row in source_rows}
-    if not expected_ids or len(expected_ids) != len(source_rows):
-        return RecallReplaceResult(RecallReplaceStatus.STALE_SNAPSHOT)
-
-    # 条件 DELETE 同时承担提交前校验和行锁定；并发编辑若先提交会令对应谓词失配，
-    # 若本事务先取得行锁，编辑方只能在本事务提交后看到行已不存在。
-    snapshot_predicates = [
-        and_(
-            Memory.id == row.id,
-            Memory.content == row.content,
-            Memory.context.is_not_distinct_from(row.context),
-            Memory.tags.is_not_distinct_from(row.tags),
-            Memory.importance == row.importance,
-            Memory.updated_at.is_not_distinct_from(row.updated_at),
-        )
-        for row in source_rows
+    valid = [
+        item
+        for item in summaries
+        if isinstance(item, dict) and isinstance(item.get("content"), str) and item["content"].strip()
     ]
+    if not valid:
+        return RecallReplaceResult(RecallReplaceStatus.EMPTY_SUMMARIES)
     async with session_scope() as db:
-        deleted_ids = set(
-            (
-                await db.execute(
-                    delete(Memory)
-                    .where(
-                        Memory.user_id == user_id,
-                        or_(*snapshot_predicates),
-                    )
-                    .returning(Memory.id),
-                )
-            )
-            .scalars()
-            .all(),
-        )
-        if deleted_ids != expected_ids:
-            await db.rollback()
+        if not await replace_recall_snapshot(db, scope, source_rows):
             return RecallReplaceResult(RecallReplaceStatus.STALE_SNAPSHOT)
-        db.add_all(new_rows)
+        rows = []
+        for item in valid:
+            row = await create_memory(
+                db,
+                scope,
+                content=item["content"].strip()[:MAX_RECALL_CONTENT_CHARS],
+                context=normalize_recall_context(item.get("context"), default="consolidated"),
+                tags=json.dumps(normalize_recall_tags(item.get("tags"))),
+                importance=max(0.1, min(5.0, float(item.get("importance", 1.0) or 1.0))),
+                source=MemorySource(
+                    "consolidation",
+                    memory_versions=tuple((row.id, row.version) for row in source_rows),
+                ),
+            )
+            rows.append(EmbeddingItem(row.id, row.content, row.content_version))
         await db.commit()
-
-    # 摘要行落库后批量补向量，保证合并后的 recall pool 仍是稠密可检索的。
-    await backfill_memory_embeddings(user_id, [(row.id, row.content) for row in new_rows])
-    return RecallReplaceResult(RecallReplaceStatus.WRITTEN, len(new_rows))
+    await backfill_memory_embeddings(scope, rows)
+    return RecallReplaceResult(RecallReplaceStatus.WRITTEN, len(rows))
 
 
-async def maybe_consolidate_one_user(user_id: int) -> bool:
-    """recall pool 超过触发阈值时合并；跑了返回 True，否则 False。per-user 节流由调用方负责（cron tick 维护 _LAST_MEMORY_CONSOLIDATE）。"""
+async def maybe_consolidate_one_scope(scope: MemoryScope) -> bool:
+    """recall pool 超过触发阈值时合并；跑了返回 True，否则 False。预设级节流由调用方负责（cron tick 维护 _LAST_MEMORY_CONSOLIDATE）。"""
+    user_id = scope.user_id
     # 互斥覆盖“取快照 → LLM → 短事务校验写入”，只持有进程内锁，不跨 LLM await 占用数据库连接或数据库锁。
-    async with memory_consolidation_lock(user_id):
+    async with memory_consolidation_lock(scope):
         async with session_scope() as db:
-            source_rows = await load_recall_snapshot(db, user_id, limit=MEMORY_CONSOLIDATE_WINDOW_ROWS)
+            source_rows = await load_recall_snapshot(db, scope, limit=MEMORY_CONSOLIDATE_WINDOW_ROWS)
             if len(source_rows) < MEMORY_CONSOLIDATE_TRIGGER_ROWS:
                 return False
             llm_cfg = await resolve_user_llm_config(db, user_id)
@@ -216,7 +133,7 @@ async def maybe_consolidate_one_user(user_id: int) -> bool:
             return False
         summaries = parsed["summaries"][:MEMORY_CONSOLIDATE_TARGET_ROWS]
 
-        result = await replace_recall_pool(user_id, source_rows, summaries)
+        result = await replace_recall_pool(scope, source_rows, summaries)
         if result.status == RecallReplaceStatus.EMPTY_SUMMARIES:
             logger.warning(
                 "memory_consolidator: all summaries empty, source rows kept",

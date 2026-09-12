@@ -26,13 +26,16 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.chat.native_memory import NativeMemory
+from services.contracts.memory import MemoryScope, MemorySource
 from services.domains.companion import build_outfit_extras, build_system_prompt_extras, is_work_preset
 from services.domains.configuration.desktop_config import DEFAULT_CONFIG
 from services.domains.conversation import (
+    DEFAULT_PRESET_ID,
     IM_KIND,
     SPECIAL_KIND,
     UI_ONLY_SUBTYPES,
     InferenceDefaults,
+    conversation_memory_scope,
     resolve_preset_meta,
 )
 from services.domains.memory import (
@@ -61,7 +64,6 @@ from services.infrastructure.tool_runtime import REGISTRY, schema_name
 from .prompt_presets import (
     AUTOMATION_EXCLUDED_TOOL_NAMES,
     AUTOMATION_PRESET,
-    DEFAULT_PRESET_ID,
     LIFE_SPACE_TOOL_NAMES,
     resolve_preset,
 )
@@ -80,7 +82,8 @@ class TurnInputs:
 
     context: dict[str, Any]
     client: Any
-    native_memory: NativeMemory
+    memory_scope: MemoryScope | None
+    native_memory: NativeMemory | None
     model_name: str
     model_override: str | None
     ctx_length: int
@@ -113,11 +116,16 @@ async def _load_memory_query_text(
         await db.execute(
             select(func.max(Message.id)).where(
                 Message.conversation_id == conv.id,
+                Message.id > conv.context_after_message_id,
                 Message.subtype.in_(("daily_summary", "compress_summary")),
             ),
         )
     ).scalar()
-    stmt = select(Message.content).where(Message.conversation_id == conv.id, Message.role == "user")
+    stmt = select(Message.content).where(
+        Message.conversation_id == conv.id,
+        Message.id > conv.context_after_message_id,
+        Message.role == "user",
+    )
     if checkpoint_id:
         stmt = stmt.where(Message.id >= checkpoint_id)
     content = (
@@ -127,7 +135,11 @@ async def _load_memory_query_text(
 
 
 def _resolve_turn_preset(conv: Conversation, preset_override: PromptPreset | None) -> PromptPreset:
-    return preset_override or (AUTOMATION_PRESET if conv.is_automation else resolve_preset(conv.system_preset_id))
+    conversation_memory_scope(conv, conv.user_id)
+    resolved = preset_override or (AUTOMATION_PRESET if conv.is_automation else resolve_preset(conv.system_preset_id))
+    if resolved.id != conv.system_preset_id:
+        raise ValueError("Prompt preset does not match conversation memory scope")
+    return resolved
 
 
 def resolve_inference_settings(settings: dict[str, str], *, conv: Conversation) -> InferenceDefaults:
@@ -322,23 +334,28 @@ async def build_turn_inputs(
     req: ChatRequest,
     session_client_context: ChatRequestClientContext | None,
     user_settings: dict,
+    memory_scope: MemoryScope | None,
     preset_override: PromptPreset | None = None,
     use_request_for_memory_retrieval: bool = True,
     proactive_memory_query: str | None = None,
     proactive_memory_embedding: list[float] | None = None,
 ) -> TurnInputs:
     """解析身份 prompt、schemas、agent_config、历史与 LLM client；native_memory 补充内容在此注入系统消息，使 orchestrator 保持线性。"""
+    if conversation_memory_scope(conv, user_id) != memory_scope:
+        raise ValueError("Turn memory scope mismatch")
+    resolved_preset = _resolve_turn_preset(conv, preset_override)
     # LLM 上下文从最新检查点开始（夜间 daily_summary 或进行中 compress_summary），其前消息已被摘要覆盖；原行留在 DB，仅缩窄本次读取范围。
     checkpoint_id = (
         await db.execute(
             select(func.max(Message.id)).where(
                 Message.conversation_id == conv.id,
+                Message.id > conv.context_after_message_id,
                 Message.subtype.in_(("daily_summary", "compress_summary")),
             ),
         )
     ).scalar()
 
-    stmt = select(Message).where(Message.conversation_id == conv.id)
+    stmt = select(Message).where(Message.conversation_id == conv.id, Message.id > conv.context_after_message_id)
     if checkpoint_id:
         stmt = stmt.where(Message.id >= checkpoint_id)
     history = (await db.execute(stmt.order_by(Message.id.asc()))).scalars().all()
@@ -383,10 +400,9 @@ async def build_turn_inputs(
             )
         ctx_length = resolve_context_tokens(provider.provider_name, ServiceType.llm)
 
-    resolved_preset = _resolve_turn_preset(conv, preset_override)
-    include_companion_context = resolved_preset.id != "automation"
+    include_memory_context = resolved_preset.id != "automation"
     identity_prompt = None
-    if include_companion_context:
+    if resolved_preset.id == "companion":
         identity_prompt = (
             await db.execute(
                 select(UserSetting.setting_value).where(
@@ -396,14 +412,14 @@ async def build_turn_inputs(
             )
         ).scalar()
     all_schemas = REGISTRY.get_all_schemas(user_id, user_settings=user_settings)
-    if not include_companion_context:
+    if not include_memory_context:
         all_schemas = [schema for schema in all_schemas if schema_name(schema) not in AUTOMATION_EXCLUDED_TOOL_NAMES]
     elif is_work_preset(conv.system_preset_id):
-        # 用 DB 原始 preset 判定（含 pm 别名）：工作会话不绑定生活空间工具，而非靠工具入口拒绝。
+        # 工作会话不绑定生活空间工具，执行层使用同一排除集合。
         all_schemas = [schema for schema in all_schemas if schema_name(schema) not in LIFE_SPACE_TOOL_NAMES]
     persona = (
         (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
-        if include_companion_context
+        if resolved_preset.id == "companion"
         else None
     )
     # 入口处一次性 normalize 语言：避免 lang="fr" 等未支持值在 volatile header 与 day marker 处分别走不同分支；
@@ -411,9 +427,7 @@ async def build_turn_inputs(
     # user_profile_extras / outfit_extras 都能拿到正确的 language，而非默认值 zh。
     session_lang = resolve_language(user_settings.get("language", DEFAULT_LANGUAGE))
     user_profile_extras = (
-        await build_user_profile_extras(db, user_id, language=session_lang)
-        if persona is not None and persona.is_complete
-        else ""
+        await build_user_profile_extras(db, memory_scope, language=session_lang) if memory_scope is not None else ""
     )
     outfit_extras = (
         await build_outfit_extras(db, user_id, language=session_lang)
@@ -422,10 +436,10 @@ async def build_turn_inputs(
     )
     # 自动化任务不装配伙伴人格、用户画像或长期记忆；其它 preset 即使 persona 未完成也能承载背景上下文。
     auto_inject_extras = (
-        await format_auto_inject_block(db, user_id, language=session_lang) if include_companion_context else ""
+        await format_auto_inject_block(db, memory_scope, language=session_lang) if include_memory_context else ""
     )
     inferred_profile_extras = (
-        await format_inferred_profile_block(db, user_id, language=session_lang) if include_companion_context else ""
+        await format_inferred_profile_block(db, memory_scope, language=session_lang) if include_memory_context else ""
     )
     user_local_tz = await resolve_user_timezone(db, user_id)
     last_history_user_content = next(
@@ -440,8 +454,14 @@ async def build_turn_inputs(
             else last_history_user_content
         ) or ""
     proactive_rows = (
-        await retrieve_proactive_memories(db, user_id, query_text, query_embedding=proactive_memory_embedding, limit=3)
-        if include_companion_context and query_text
+        await retrieve_proactive_memories(
+            db,
+            memory_scope,
+            query_text,
+            query_embedding=proactive_memory_embedding,
+            limit=3,
+        )
+        if include_memory_context and query_text
         else []
     )
     proactive_memory_extras = format_proactive_memory_block(proactive_rows, language=session_lang)
@@ -472,8 +492,10 @@ async def build_turn_inputs(
     )
 
     # 不绑定 session：每次 memory 工具调用各自开 session，连接不跨 LLM 循环持续占用。
-    native_memory = NativeMemory(user_id)
-    if include_companion_context and (addition := native_memory.format_for_system_prompt()):
+    native_memory = (
+        NativeMemory(memory_scope, source=MemorySource("tool", session_id=conv.id)) if memory_scope else None
+    )
+    if native_memory is not None and (addition := native_memory.format_for_system_prompt()):
         context["instructions"] += "\n\n" + addition
 
     # 计算上下文 Token 估算值：结合 Responses 权威基线与 CJK 全量/增量估算
@@ -503,6 +525,7 @@ async def build_turn_inputs(
     return TurnInputs(
         context=context,
         client=client,
+        memory_scope=memory_scope,
         native_memory=native_memory,
         model_name=model_name,
         model_override=req.model,

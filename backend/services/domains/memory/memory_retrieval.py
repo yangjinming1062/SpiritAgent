@@ -4,17 +4,19 @@ from typing import Any
 
 from components import get_logger, session_scope, utc_now
 from modules.memory import Memory
-from sqlalchemy import or_, select, update
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
+from services.contracts.memory import MemoryScope
 from services.infrastructure.llm import (
     EmbeddingProvider,
     generate_embedding,
-    generate_embeddings,
     resolve_embedding_provider,
 )
 
 from .memory_namespaces import RESERVED_FROM_RECALL, context_not_in
+from .memory_store import scope_filter
 
 logger = get_logger(__name__)
 
@@ -85,27 +87,36 @@ def _extract_search_terms(query: str) -> list[str]:
 
 async def _dense_search(
     db: AsyncSession,
-    user_id: int,
+    scope: MemoryScope,
     query_embedding: list[float],
     limit: int = 30,
     excluded_namespaces: frozenset[str] = RESERVED_FROM_RECALL,
 ) -> list[Memory]:
     """稠密语义检索：用 pgvector ``<=>`` 余弦距离算子在 DB 端排序与截断。"""
     stmt = select(Memory).where(
-        Memory.user_id == user_id,
+        scope_filter(scope),
         Memory.embedding.isnot(None),
         *[context_not_in(p) for p in excluded_namespaces],
     )
-    return (
-        (await db.execute(stmt.order_by(Memory.embedding.cosine_distance(query_embedding)).limit(limit)))
-        .scalars()
-        .all()
+    candidates = stmt.cte("scoped_memories").prefix_with("MATERIALIZED")
+    scoped = aliased(Memory, candidates)
+    return list(
+        (
+            await db.scalars(
+                select(scoped)
+                .order_by(
+                    scoped.embedding.cosine_distance(query_embedding),
+                    scoped.id,
+                )
+                .limit(limit),
+            )
+        ).all(),
     )
 
 
 async def _sparse_search(
     db: AsyncSession,
-    user_id: int,
+    scope: MemoryScope,
     keywords: list[str],
     *,
     limit: int,
@@ -118,7 +129,7 @@ async def _sparse_search(
     stmt = (
         select(Memory)
         .where(
-            Memory.user_id == user_id,
+            scope_filter(scope),
             or_(*conditions),
             *[context_not_in(p) for p in excluded_namespaces],
         )
@@ -152,56 +163,9 @@ async def _resolve_memory_embedding_provider(user_id: int) -> EmbeddingProvider 
         return await resolve_embedding_provider(db, user_id)
 
 
-async def backfill_memory_embeddings(user_id: int, rows: list[tuple[int, str]]) -> None:
-    """写路径收尾：为已提交的记忆行批量补向量（consolidator 摘要、retain 新行、手工编辑共用）。
-    best-effort——失败留空列，稀疏检索仍覆盖该行，下次内容变更时重新嵌入。"""
-    if not rows:
-        return
-    try:
-        provider = await _resolve_memory_embedding_provider(user_id)
-        vectors = await generate_embeddings([content for _, content in rows], provider, user_id=user_id)
-        if vectors is None:
-            return
-        if len(vectors) != len(rows):
-            logger.warning(
-                "memory embedding batch size mismatch; skipping backfill",
-                extra={"user_id": user_id, "requested": len(rows), "received": len(vectors)},
-            )
-            return
-        updates: list[tuple[int, str, list[float]]] = []
-        for (mid, content), vec in zip(rows, vectors):
-            if not isinstance(vec, list) or len(vec) != MEMORY_EMBEDDING_DIM:
-                logger.warning(
-                    "memory embedding dimension mismatch; skipping row",
-                    extra={
-                        "user_id": user_id,
-                        "memory_id": mid,
-                        "received_dim": len(vec) if isinstance(vec, list) else None,
-                    },
-                )
-                continue
-            updates.append((mid, content, vec))
-        if not updates:
-            return
-        async with session_scope() as db:
-            for mid, content, vec in updates:
-                await db.execute(
-                    update(Memory)
-                    .where(Memory.id == mid, Memory.user_id == user_id, Memory.content == content)
-                    .values(embedding=vec),
-                )
-            await db.commit()
-    except Exception:
-        logger.warning(
-            "memory embedding backfill failed; retaining keyword-only recall",
-            extra={"user_id": user_id},
-            exc_info=True,
-        )
-
-
 async def retrieve_hybrid_memories(
     db: AsyncSession,
-    user_id: int,
+    scope: MemoryScope,
     query: str,
     *,
     query_embedding: list[float] | None = None,
@@ -219,7 +183,7 @@ async def retrieve_hybrid_memories(
     if query_embedding:
         dense_candidates = await _dense_search(
             db,
-            user_id,
+            scope,
             query_embedding,
             limit=limit * 2,
             excluded_namespaces=excluded_namespaces,
@@ -229,7 +193,7 @@ async def retrieve_hybrid_memories(
     if q_str or keywords:
         sparse_candidates = await _sparse_search(
             db,
-            user_id,
+            scope,
             keywords,
             limit=limit * 2,
             excluded_namespaces=excluded_namespaces,
@@ -275,7 +239,7 @@ async def retrieve_hybrid_memories(
 
 async def retrieve_proactive_memories(
     db: AsyncSession,
-    user_id: int,
+    scope: MemoryScope,
     query: str,
     *,
     query_embedding: list[float] | None = None,
@@ -286,5 +250,5 @@ async def retrieve_proactive_memories(
     q_str = (query or "").strip()
     if not q_str or len(q_str) <= 1:
         return []
-    candidates = await retrieve_hybrid_memories(db, user_id, q_str, query_embedding=query_embedding, limit=limit)
+    candidates = await retrieve_hybrid_memories(db, scope, q_str, query_embedding=query_embedding, limit=limit)
     return [c for c in candidates if c["score"] >= min_score]

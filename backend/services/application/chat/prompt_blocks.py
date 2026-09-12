@@ -457,11 +457,6 @@ _PLATFORM_HINTS_TEXTS: dict[str, dict[str, str]] = {
     },
 }
 
-_SKILLS_LIST_TEXTS: dict[str, str] = {
-    "zh": "已启用的本地技能（来自 $SPIRITAGENT_HOME/skills）：{skills}。",
-    "en": "Enabled local skills (from $SPIRITAGENT_HOME/skills): {skills}.",
-}
-
 
 def _language_directive(language: str) -> str:
     return resolve_prompt_text(LANGUAGE_DIRECTIVES, language)
@@ -554,11 +549,11 @@ def _steer_channel_note_block(config: AgentPromptConfig) -> str | None:
 
 
 def _skills_list_block(config: AgentPromptConfig) -> str | None:
-    ctx = config.client_context
-    if not ctx or not ctx.skills:
-        return None
-    skills = ", ".join(ctx.skills)
-    return resolve_prompt_text(_SKILLS_LIST_TEXTS, config.language).format(skills=skills)
+    return (
+        "Use skills_list to discover skills available to this preset."
+        if "skills_list" in config.valid_tool_names
+        else None
+    )
 
 
 def _environment_hints_block(config: AgentPromptConfig) -> str | None:

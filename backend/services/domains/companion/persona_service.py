@@ -8,6 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.contracts.memory import MemoryScope
 from services.domains.conversation import ensure_system_conversations_for_user
 from services.domains.journal import write_system_moment
 from services.domains.memory import extract_user_profile, read_user_profile, record_user_profile
@@ -115,7 +116,7 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
     cleaned = _validate_definition(persona_def)
 
     async def _dual_write() -> Persona:
-        await record_user_profile(db, user_id, user_profile)
+        await record_user_profile(db, MemoryScope(user_id, "companion"), user_profile)
         persona = await get_or_create_persona(db, user_id)
         current_draft = load_persona_definition(persona)
         if current_draft.get("voice"):
@@ -210,7 +211,7 @@ async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]
     persona = await get_or_create_persona(db, user_id)
     draft = load_persona_definition(persona)
     if persona.is_complete:
-        user_profile = await read_user_profile(db, user_id)
+        user_profile = await read_user_profile(db, MemoryScope(user_id, "companion"))
         merged = _onboarding_answers({**draft, **user_profile})
         if not persona.is_portrait_confirmed:
             return _state(merged, "portrait", False)
@@ -242,7 +243,11 @@ async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, va
         # 后置阶段字段仍允许在此提交，详见单 PUT 双写契约
         if field.startswith("user_"):
             if value and value.strip():
-                await record_user_profile(db, user_id, {field: value.strip()[:_ONBOARDING_MAX_LEN]})
+                await record_user_profile(
+                    db,
+                    MemoryScope(user_id, "companion"),
+                    {field: value.strip()[:_ONBOARDING_MAX_LEN]},
+                )
                 await db.commit()
             # 传空值不动 Memory 行：清除 user_* 条目只能经 memory_forget 撤回
             return _state(_onboarding_answers(load_persona_definition(persona)), None, True)

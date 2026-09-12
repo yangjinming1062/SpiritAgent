@@ -118,6 +118,7 @@ async def _collect_inputs(
             .select_from(Message)
             .where(
                 Message.conversation_id == main_conv.id,
+                Message.id > main_conv.context_after_message_id,
                 Message.created_at >= utc_start,
                 Message.created_at < utc_end,
                 Message.role.in_(("user", "assistant")),
@@ -132,7 +133,11 @@ async def _collect_inputs(
     prev_checkpoint = (
         await db.execute(
             select(Message)
-            .where(Message.conversation_id == main_conv.id, Message.subtype.in_(tuple(_CHECKPOINT_SUBTYPES)))
+            .where(
+                Message.conversation_id == main_conv.id,
+                Message.id > main_conv.context_after_message_id,
+                Message.subtype.in_(tuple(_CHECKPOINT_SUBTYPES)),
+            )
             .order_by(Message.id.desc())
             .limit(1),
         )
@@ -146,6 +151,7 @@ async def _collect_inputs(
             .select_from(Message)
             .where(
                 Message.conversation_id == main_conv.id,
+                Message.id > main_conv.context_after_message_id,
                 Message.id > checkpoint_id,
                 Message.role.in_(("user", "assistant")),
                 real_turns,
@@ -160,7 +166,12 @@ async def _collect_inputs(
         (
             await db.execute(
                 select(Message)
-                .where(Message.conversation_id == main_conv.id, Message.id >= checkpoint_id, real_turns)
+                .where(
+                    Message.conversation_id == main_conv.id,
+                    Message.id > main_conv.context_after_message_id,
+                    Message.id >= checkpoint_id,
+                    real_turns,
+                )
                 .order_by(Message.id.asc()),
             )
         )
@@ -177,7 +188,11 @@ async def _collect_inputs(
         else (
             await db.execute(
                 select(Message)
-                .where(Message.conversation_id == main_conv.id, Message.subtype == "daily_summary")
+                .where(
+                    Message.conversation_id == main_conv.id,
+                    Message.id > main_conv.context_after_message_id,
+                    Message.subtype == "daily_summary",
+                )
                 .order_by(Message.id.desc())
                 .limit(1),
             )

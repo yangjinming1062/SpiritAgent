@@ -2,11 +2,9 @@
 
 from services.domains.memory import memory_admin, memory_namespaces
 from services.domains.memory.memory_admin import (
-    delete_memory,
     list_memories,
     memory_counts,
     update_memory,
-    upsert_slotted_memory,
 )
 from services.domains.memory.memory_bootstrap import (
     build_user_profile_extras,
@@ -38,13 +36,32 @@ from services.domains.memory.memory_namespaces import (
     participates_in_recall,
 )
 from services.domains.memory.memory_retrieval import (
-    backfill_memory_embeddings,
     embed_memory_text,
     retrieve_hybrid_memories,
     retrieve_proactive_memories,
 )
 
+from .memory_store import (
+    RecallSnapshot,
+    apply_reflection_slot,
+    backfill_memory_embeddings,
+    create_memory,
+    delete_memory,
+    get_memory,
+    load_recall_snapshot,
+    replace_recall_snapshot,
+    scope_filter,
+    upsert_slotted_memory,
+)
+
 __all__ = [
+    "create_memory",
+    "get_memory",
+    "scope_filter",
+    "load_recall_snapshot",
+    "replace_recall_snapshot",
+    "RecallSnapshot",
+    "apply_reflection_slot",
     "AUTO_INJECT_SLOTS",
     "FORBIDDEN_FROM_LLM",
     "INFERRED_PROFILE_SLOTS",

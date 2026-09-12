@@ -12,6 +12,7 @@ from .serializers import (
     TABLES,
     deserialize_rows,
     insert_rows,
+    restore_memory_context,
     serialize_rows,
 )
 
@@ -28,6 +29,7 @@ __all__ = [
     "insert_rows",
     "load_manifest",
     "restore_files",
+    "restore_memory_context",
     "serialize_rows",
     "validate_manifest",
 ]

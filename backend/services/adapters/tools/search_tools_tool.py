@@ -34,7 +34,7 @@ async def search_tools_tool(query: str, **kwargs) -> str:
     available_schemas = REGISTRY.get_all_schemas(user_id, user_settings=user_settings)
     # 工作预设 / 自动化会话不解锁各自装配层排除的工具：与回合装配同一集合过滤，避免解锁后被派发层拒绝。
     async with SESSION_LOCAL() as db:
-        preset, is_automation = await resolve_session_profile(db, kwargs.get("parent_session_id"))
+        preset, is_automation = await resolve_session_profile(db, user_id, kwargs.get("parent_session_id"))
     if is_automation:
         excluded: frozenset[str] = AUTOMATION_EXCLUDED_TOOL_NAMES
     elif is_work_preset(preset):

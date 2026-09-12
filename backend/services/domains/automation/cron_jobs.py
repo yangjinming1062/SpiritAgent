@@ -9,7 +9,8 @@ from modules.scheduler import CronJob
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.conversation import STANDARD_KIND
+from services.contracts.memory import MemoryScope
+from services.domains.conversation import STANDARD_KIND, validate_memory_scope
 
 logger = get_logger(__name__)
 
@@ -17,7 +18,7 @@ SPECIAL_CRON_KIND = "special"
 STANDARD_CRON_KIND = "standard"
 CRON_KINDS = frozenset({SPECIAL_CRON_KIND, STANDARD_CRON_KIND})
 
-_JOB_IMMUTABLE_FIELDS = frozenset({"id", "user_id", "conversation_id"})
+_JOB_IMMUTABLE_FIELDS = frozenset({"id", "user_id", "conversation_id", "system_preset_id"})
 _SCHEDULE_KEYS = ("schedule", "is_paused")
 MAX_ACTIVE_CRON_JOBS = 10
 
@@ -69,7 +70,7 @@ async def _ensure_active_job_capacity(db: AsyncSession, user_id: int, candidate_
 
 
 async def create_job(
-    user_id: int,
+    scope: MemoryScope,
     prompt: str,
     schedule: str,
     name: str = "cron job",
@@ -79,10 +80,15 @@ async def create_job(
     expires_at: datetime | None = None,
 ) -> dict[str, Any]:
     normalized_kind = _validate_kind(kind)
+    if normalized_kind == SPECIAL_CRON_KIND and scope.system_preset_id != "companion":
+        raise ValueError("Special jobs require the companion preset")
+    validate_memory_scope(scope)
+    user_id = scope.user_id
     async with session_scope() as db:
         await _lock_user_cron_jobs(db, user_id)
         job = CronJob(
             user_id=user_id,
+            system_preset_id=scope.system_preset_id,
             name=name,
             schedule=schedule,
             prompt=prompt,
@@ -102,6 +108,7 @@ async def create_job(
                 kind=STANDARD_KIND,
                 title=_conversation_title(name),
                 is_automation=True,
+                system_preset_id="automation",
             )
             db.add(conversation)
             await db.flush()
@@ -113,19 +120,27 @@ async def create_job(
         return job.to_dict()
 
 
-async def get_job(user_id: int, job_id: int) -> dict[str, Any] | None:
+async def get_job(scope: MemoryScope, job_id: int) -> dict[str, Any] | None:
+    validate_memory_scope(scope)
+    user_id = scope.user_id
     async with session_scope() as db:
         job = (
             await db.execute(
-                select(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id),
+                select(CronJob).where(
+                    CronJob.id == job_id,
+                    CronJob.user_id == user_id,
+                    CronJob.system_preset_id == scope.system_preset_id,
+                ),
             )
         ).scalar_one_or_none()
         return job.to_dict() if job else None
 
 
-async def list_jobs(user_id: int, include_paused: bool = False) -> list[dict[str, Any]]:
+async def list_jobs(scope: MemoryScope, include_paused: bool = False) -> list[dict[str, Any]]:
+    validate_memory_scope(scope)
+    user_id = scope.user_id
     async with session_scope() as db:
-        stmt = select(CronJob).where(CronJob.user_id == user_id)
+        stmt = select(CronJob).where(CronJob.user_id == user_id, CronJob.system_preset_id == scope.system_preset_id)
         if not include_paused:
             stmt = stmt.where(CronJob.is_paused.is_(False))
         jobs = (await db.execute(stmt)).scalars().all()
@@ -133,17 +148,25 @@ async def list_jobs(user_id: int, include_paused: bool = False) -> list[dict[str
 
 
 async def update_job(
-    user_id: int,
+    scope: MemoryScope,
     job_id: int,
     updates: dict[str, Any],
 ) -> dict[str, Any] | None:
     if "kind" in updates:
         updates["kind"] = _validate_kind(updates["kind"])
+        if updates["kind"] == SPECIAL_CRON_KIND and scope.system_preset_id != "companion":
+            raise ValueError("Special jobs require the companion preset")
+    validate_memory_scope(scope)
+    user_id = scope.user_id
     async with session_scope() as db:
         await _lock_user_cron_jobs(db, user_id)
         job = (
             await db.execute(
-                select(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id),
+                select(CronJob).where(
+                    CronJob.id == job_id,
+                    CronJob.user_id == user_id,
+                    CronJob.system_preset_id == scope.system_preset_id,
+                ),
             )
         ).scalar_one_or_none()
         if not job:
@@ -162,6 +185,7 @@ async def update_job(
                 kind=STANDARD_KIND,
                 title=_conversation_title(job.name),
                 is_automation=True,
+                system_preset_id="automation",
             )
             db.add(conversation)
             await db.flush()
@@ -172,19 +196,25 @@ async def update_job(
         return job.to_dict()
 
 
-async def pause_job(user_id: int, job_id: int) -> dict[str, Any] | None:
-    return await update_job(user_id, job_id, {"is_paused": True})
+async def pause_job(scope: MemoryScope, job_id: int) -> dict[str, Any] | None:
+    return await update_job(scope, job_id, {"is_paused": True})
 
 
-async def resume_job(user_id: int, job_id: int) -> dict[str, Any] | None:
-    return await update_job(user_id, job_id, {"is_paused": False})
+async def resume_job(scope: MemoryScope, job_id: int) -> dict[str, Any] | None:
+    return await update_job(scope, job_id, {"is_paused": False})
 
 
-async def remove_job(user_id: int, job_id: int) -> bool:
+async def remove_job(scope: MemoryScope, job_id: int) -> bool:
+    validate_memory_scope(scope)
+    user_id = scope.user_id
     async with session_scope() as db:
         job = (
             await db.execute(
-                select(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id),
+                select(CronJob).where(
+                    CronJob.id == job_id,
+                    CronJob.user_id == user_id,
+                    CronJob.system_preset_id == scope.system_preset_id,
+                ),
             )
         ).scalar_one_or_none()
         if not job:

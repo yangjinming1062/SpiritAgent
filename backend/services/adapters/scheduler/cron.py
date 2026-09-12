@@ -26,15 +26,17 @@ from components.user_maintenance_runtime import (
     track_user_task,
 )
 from modules.auth import User
-from modules.memory import Memory
+from modules.conversation import Conversation
 from modules.scheduler import CronJob, NightlyActivityLog
+from modules.settings import UserSetting
 from modules.ws import CRON_TURN_EVENT, emit_ws_event
 from sqlalchemy import bindparam, delete, or_, select, text, tuple_
 from sqlalchemy.engine import Row
 
 from services.application.automation import execute_standard_turn
-from services.application.nightly import get_local_day_utc_bounds, run_nightly_pipeline
-from services.application.nightly.memory_consolidator import maybe_consolidate_one_user
+from services.application.nightly import run_nightly_pipeline
+from services.application.nightly.memory_consolidator import maybe_consolidate_one_scope
+from services.contracts.memory import MemoryScope
 from services.domains.automation.cron_jobs import STANDARD_CRON_KIND, compute_next_run_at
 from services.domains.companion.disturbance import get_disturbance_tier, is_still
 from services.domains.conversation import (
@@ -57,16 +59,18 @@ _SCANS: dict[str, asyncio.Task] = {}
 SCHEDULER_INTERVAL_SECONDS = 60
 
 # per-user 最近一次 consolidator 运行时间戳：进程本地——匹配 ARCH §5 单实例语义（多 replica 会分裂状态）。
-_LAST_MEMORY_CONSOLIDATE: dict[int, float] = {}
+_LAST_MEMORY_CONSOLIDATE: dict[MemoryScope, float] = {}
 
 # per-user 最近一次成功的 nightly pipeline 运行的本地日期字符串。
-_LAST_NIGHTLY_RUN: dict[int, str] = {}
+_LAST_NIGHTLY_RUN: dict[MemoryScope, str] = {}
 
 
 def invalidate_user_scheduler_state(user_id: int) -> None:
     """覆盖恢复后丢弃从旧数据计算出的调度节流镜像。"""
-    _LAST_MEMORY_CONSOLIDATE.pop(user_id, None)
-    _LAST_NIGHTLY_RUN.pop(user_id, None)
+    for state in (_LAST_MEMORY_CONSOLIDATE, _LAST_NIGHTLY_RUN):
+        for scope in list(state):
+            if scope.user_id == user_id:
+                state.pop(scope, None)
 
 
 # recall-pool 扫描本身的外层节流：扫描便宜（部分索引），但没用户符合时每分钟跑一次没意义。10 min 让发现延迟可控，由 per-user 6h 节流把重 LLM 调用频率压住。
@@ -499,28 +503,32 @@ async def _maybe_run_memory_consolidator(now: datetime) -> None:
         rows = (
             await db.execute(
                 text(
-                    "SELECT user_id FROM memories WHERE context LIKE 'recall:%' GROUP BY user_id HAVING COUNT(*) > :t",
+                    "SELECT user_id, system_preset_id FROM memories WHERE context LIKE 'recall:%' GROUP BY user_id, system_preset_id HAVING COUNT(*) >= :t",
                 ),
                 {"t": MEMORY_CONSOLIDATE_TRIGGER_ROWS},
             )
         ).all()
-    eligible: list[int] = []
-    for (uid_raw,) in rows:
+    eligible: list[MemoryScope] = []
+    for uid_raw, preset in rows:
         uid = int(uid_raw)
+        scope = MemoryScope(uid, preset)
         if is_user_in_maintenance(uid):
             continue
-        if now.timestamp() - _LAST_MEMORY_CONSOLIDATE.get(uid, 0.0) < MEMORY_CONSOLIDATE_INTERVAL_SECONDS:
+        if now.timestamp() - _LAST_MEMORY_CONSOLIDATE.get(scope, 0.0) < MEMORY_CONSOLIDATE_INTERVAL_SECONDS:
             continue
-        eligible.append(uid)
+        eligible.append(scope)
     if not eligible:
         return
 
-    # per-user 节流只在 consolidator 真的为该用户跑过之后才生效——LLM 失败不该把用户锁在后续尝试之外。
-    tasks = [asyncio.create_task(maybe_consolidate_one_user(uid), name=f"scheduler.memory.{uid}") for uid in eligible]
-    for uid, task in zip(eligible, tasks, strict=True):
-        track_user_task(uid, task)
+    # 预设级节流只在 consolidator 真的为该作用域跑过之后才生效——LLM 失败不该把用户锁在后续尝试之外。
+    tasks = [
+        asyncio.create_task(maybe_consolidate_one_scope(scope), name=f"scheduler.memory.{scope}") for scope in eligible
+    ]
+    for scope, task in zip(eligible, tasks, strict=True):
+        track_user_task(scope.user_id, task)
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    for uid, result in zip(eligible, results, strict=True):
+    for scope, result in zip(eligible, results, strict=True):
+        uid = scope.user_id
         if isinstance(result, Exception):
             # 不在 except 块里——必须显式传异常，否则 exc_info 为空，traceback 丢失。
             logger.error(
@@ -530,7 +538,7 @@ async def _maybe_run_memory_consolidator(now: datetime) -> None:
             )
             continue
         if result is True:
-            _LAST_MEMORY_CONSOLIDATE[uid] = now.timestamp()
+            _LAST_MEMORY_CONSOLIDATE[scope] = now.timestamp()
 
 
 async def _maybe_run_autonomous_activity(now: datetime) -> None:
@@ -538,135 +546,71 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
     if now.timestamp() - _LAST_NIGHTLY_SCAN < NIGHTLY_SCAN_INTERVAL_SECONDS:
         return
     _LAST_NIGHTLY_SCAN = now.timestamp()
-
+    eligible: list[tuple[MemoryScope, datetime, date]] = []
     async with session_scope() as db:
         rows = (
             await db.execute(
-                select(Memory.user_id, Memory.content)
-                .join(User, User.id == Memory.user_id)
+                select(Conversation.user_id, Conversation.system_preset_id, UserSetting.setting_value)
+                .join(User, User.id == Conversation.user_id)
+                .join(UserSetting, UserSetting.user_id == User.id)
                 .where(
-                    Memory.context == "user_profile:timezone",
                     User.nightly_activity_enabled.is_(True),
-                ),
+                    Conversation.is_automation.is_(False),
+                    UserSetting.setting_key == "timezone",
+                )
+                .distinct(),
             )
         ).all()
-
-        eligible: list[tuple[int, datetime, str]] = []
-        scheduled_targets: set[tuple[int, str]] = set()
-        timezone_by_user = {int(uid): (content or "").strip() for uid, content in rows if content}
-        unfinished_logs = list(
+        logs = list(
             (
-                await db.execute(
+                await db.scalars(
                     select(NightlyActivityLog)
-                    .join(User, User.id == NightlyActivityLog.user_id)
-                    .where(
-                        NightlyActivityLog.status.in_(("running", "failed")),
-                        User.nightly_activity_enabled.is_(True),
-                    )
+                    .where(NightlyActivityLog.status.in_(("running", "failed")))
                     .order_by(NightlyActivityLog.target_date.desc()),
                 )
-            )
-            .scalars()
-            .all(),
+            ).all(),
         )
-        recovery_users: set[int] = set()
-        for log in unfinished_logs:
-            tz_str = timezone_by_user.get(log.user_id, "")
-            if not tz_str:
+        for user_id, preset, timezone_name in rows:
+            if is_user_in_maintenance(user_id):
                 continue
+            scope = MemoryScope(user_id, preset)
             try:
-                timezone = ZoneInfo(tz_str)
-                local_today = now.astimezone(timezone).date()
+                timezone = ZoneInfo(timezone_name)
+                local_now = now.astimezone(timezone)
             except (ZoneInfoNotFoundError, ValueError):
                 continue
-            if log.target_date < local_today - timedelta(days=1):
-                log.status = "completed_with_errors"
-                log.summary = "夜间流水线中断后超过恢复窗口，未确认动作不再重放"
+            recover = None
+            for log in logs:
+                if log.user_id != user_id or log.system_preset_id != preset:
+                    continue
+                if log.target_date < local_now.date() - timedelta(days=1) or recover is not None:
+                    log.status = "completed_with_errors"
+                    log.summary = "已超过恢复窗口或有更新日期优先恢复，未确认动作不再重放"
+                else:
+                    recover = log.target_date
+            target = recover or local_now.date() - timedelta(days=1)
+            if recover is None and not NIGHTLY_WINDOW_START_HOUR <= local_now.hour < NIGHTLY_WINDOW_END_HOUR:
                 continue
-            if log.user_id in recovery_users:
-                log.status = "completed_with_errors"
-                log.summary = "已有更新日期的夜间流水线优先恢复，本日期未确认动作不再重放"
+            if _LAST_NIGHTLY_RUN.get(scope) == target.isoformat():
                 continue
-            target_date_str = log.target_date.isoformat()
-            # 用目标本地日正午重建稳定 reference，避免恢复发生在白天时把日期推到今天。
-            reference_utc = (
-                datetime.combine(
-                    log.target_date,
-                    datetime.min.time(),
-                    timezone,
-                )
-                .replace(hour=12)
-                .astimezone(UTC)
-            )
-            eligible.append((log.user_id, reference_utc, target_date_str))
-            scheduled_targets.add((log.user_id, target_date_str))
-            recovery_users.add(log.user_id)
+            reference = datetime.combine(target, datetime.min.time(), timezone).replace(hour=12).astimezone(UTC)
+            eligible.append((scope, reference, target))
         await db.commit()
-
-        for uid_raw, tz_content in rows:
-            uid = int(uid_raw)
-            if is_user_in_maintenance(uid):
-                continue
-            tz_str = (tz_content or "").strip()
-            if not tz_str:
-                continue
-            if uid in recovery_users:
-                continue
-            # 窗口门读当前本地小时；流水线消化刚结束的本地日。若从偏移后的 instant 派生小时，DST 边界会差 1。
-            try:
-                _, _, user_local_dt, _ = get_local_day_utc_bounds(now, tz_str)
-                reference_utc = now - timedelta(days=1)
-                _, _, _, target_date_str = get_local_day_utc_bounds(
-                    reference_utc,
-                    tz_str,
-                )
-            except (ZoneInfoNotFoundError, ValueError) as exc:
-                logger.warning(
-                    "nightly eligibility: skip user due to timezone computation error",
-                    extra={"user_id": uid, "tz": tz_str, "error": str(exc)},
-                )
-                continue
-
-            if not (NIGHTLY_WINDOW_START_HOUR <= user_local_dt.hour < NIGHTLY_WINDOW_END_HOUR):
-                continue
-
-            if _LAST_NIGHTLY_RUN.get(uid) == target_date_str:
-                continue
-            if (uid, target_date_str) in scheduled_targets:
-                continue
-
-            # 自主规划每天都运行。没有当日对话时，LLM 仍可依据长期记忆中的生日、纪念日和承诺准备惊喜；
-            # 反思与摘要阶段会各自按输入条件跳过，避免为空白日制造事实。
-            eligible.append((uid, reference_utc, target_date_str))
-            scheduled_targets.add((uid, target_date_str))
-
-    if not eligible:
-        return
-
     tasks = [
         asyncio.create_task(
-            run_nightly_pipeline(
-                uid,
-                reference_utc,
-                target_date=date.fromisoformat(target_date_str),
-            ),
-            name=f"scheduler.nightly.{uid}.{target_date_str}",
+            run_nightly_pipeline(scope, reference, target_date=target),
+            name=f"scheduler.nightly.{scope}.{target}",
         )
-        for uid, reference_utc, target_date_str in eligible
+        for scope, reference, target in eligible
     ]
-    for (uid, _, _), task in zip(eligible, tasks, strict=True):
-        track_user_task(uid, task)
+    for (scope, _, _), task in zip(eligible, tasks, strict=True):
+        track_user_task(scope.user_id, task)
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    for (uid, _, target_date_str), result in zip(eligible, results, strict=True):
-        if isinstance(result, Exception):
-            logger.error(
-                "nightly_activity: tick failed",
-                exc_info=result,
-                extra={"user_id": uid},
-            )
-            continue
-        if result is True:
-            _LAST_NIGHTLY_RUN[uid] = target_date_str
+    for (scope, _, target), result in zip(eligible, results, strict=True):
+        if isinstance(result, BaseException):
+            logger.error("nightly_activity: tick failed", exc_info=result, extra={"scope": str(scope)})
+        elif result is True:
+            _LAST_NIGHTLY_RUN[scope] = target.isoformat()
 
 
 async def scheduler_loop() -> None:

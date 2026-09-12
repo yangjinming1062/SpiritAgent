@@ -8,7 +8,7 @@ import logging
 from components import resolve_prompt_text
 from modules.system import PromptPreset
 
-from services.domains.conversation import DEFAULT_PRESET_ID, SYSTEM_PRESET_CATALOG
+from services.domains.conversation import SYSTEM_PRESET_CATALOG
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +149,7 @@ AUTOMATION_PRESET = PromptPreset(
 # search_tools 元工具同源过滤，压根不注入 schema，工具入口不再二次判定会话类型。
 LIFE_SPACE_TOOL_NAMES = frozenset(
     {
+        "send_message_tool",
         "diary_write",
         "moment_create",
         "room_backdrop_update",
@@ -159,8 +160,11 @@ AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(
         "memory_forget",
         "memory_recall",
         "memory_retain",
-        "send_message_tool",
         "session_search",
+        "cronjob",
+        "skills_list",
+        "skill_view",
+        "skill_manage",
     },
 )
 
@@ -224,9 +228,6 @@ BUILTIN_PRESETS: dict[str, PromptPreset] = {
 
 
 def resolve_preset(preset_id: str | None) -> PromptPreset:
-    """根据 system_preset_id 解析预设；不存在/为空/未知一律回退 companion。"""
-    if preset_id and preset_id in BUILTIN_PRESETS:
-        return BUILTIN_PRESETS[preset_id]
-    if preset_id:
-        logger.warning("unknown system_preset_id %r; falling back to %s", preset_id, DEFAULT_PRESET_ID)
-    return BUILTIN_PRESETS[DEFAULT_PRESET_ID]
+    if preset_id not in BUILTIN_PRESETS:
+        raise ValueError("Unknown system preset")
+    return BUILTIN_PRESETS[preset_id]

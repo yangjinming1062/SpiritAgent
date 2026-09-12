@@ -73,7 +73,7 @@ def _conversation_to_session_info(
     tool_count: int,
     preview: str | None,
 ) -> DesktopSessionInfo:
-    preset = resolve_preset_meta(conv.system_preset_id)
+    preset = resolve_preset_meta(conv.system_preset_id) if not conv.is_automation else None
     return DesktopSessionInfo(
         id=str(conv.id),
         kind=conv.kind,
@@ -90,7 +90,7 @@ def _conversation_to_session_info(
         archived=conv.archived_at is not None,
         lineage_root_id=str(conv.parent_id) if conv.parent_id is not None else None,
         system_preset_id=conv.system_preset_id,
-        system_preset_icon_key=preset.icon_key,
+        system_preset_icon_key=preset.icon_key if preset else "task",
     )
 
 

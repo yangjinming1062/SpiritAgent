@@ -1,7 +1,9 @@
 from typing import Any
 
-from components import get_logger, safe_json_loads
+from components import get_logger, safe_json_loads, session_scope
 
+from services.contracts.memory import MemoryScope, MemorySource
+from services.domains.memory import list_memories
 from services.infrastructure.llm import (
     ServiceType,
     build_responses_kwargs,
@@ -50,6 +52,15 @@ important, return empty.
 DO NOT reply with conversational text or chat. Only invoke tools if necessary.
 """
 
+_WORK_REVIEW_PROMPT = """Review the supplied conversation for durable facts useful to this professional preset.
+Use memory_retain with kind='recall' for technical preferences, environment constraints, tool experience,
+and long-term work habits. Choose one tag: user_preference, likes, dislikes, key_constraints, other,
+tool_quirk, environment. Use kind='auto_inject' only for auto_inject:communication_style (max 500 chars).
+Do not evaluate companion mood, intimacy, or relationship state. Do not store temporary progress,
+commit hashes, issue numbers, default system settings, duplicate facts, or invented facts.
+Only invoke memory_retain if necessary; otherwise return empty. Do not reply conversationally.
+"""
+
 _TRUNCATE_SUFFIX = "\n...(truncated)"
 _TOOL_OUTPUT_CAP = 1000
 
@@ -61,7 +72,13 @@ def _trim_tool_output(item: dict) -> dict:
     return item
 
 
-async def run_background_memory_review(user_id: int, llm_config: dict, context_snapshot: dict[str, Any]) -> None:
+async def run_background_memory_review(
+    scope: MemoryScope,
+    llm_config: dict,
+    context_snapshot: dict[str, Any],
+    *,
+    source: MemorySource,
+) -> None:
     """fire-and-forget：复盘会话并把值得长期记住的事存下来。"""
     # 工具输出可能很大，截断以保持 review 调用便宜。
     items = [
@@ -79,17 +96,23 @@ async def run_background_memory_review(user_id: int, llm_config: dict, context_s
 
     try:
         # 不绑 session：下面的 review LLM 调用直连无 DB；每个 memory_retain 自己开短 session。
-        native_memory = NativeMemory(user_id)
-        schemas = [REGISTRY.get_schema("memory_retain")]
+        async with session_scope() as db:
+            slots = await list_memories(db, scope, kind="auto_inject")
+        native_memory = NativeMemory(
+            scope,
+            source=source,
+            slot_versions={row["context"]: (row["id"], row["content_version"]) for row in slots},
+        )
+        schemas = [REGISTRY.get_schema(scope.user_id, "memory_retain")]
 
         provider_name = llm_config.get("provider_name", "")
         if not provider_name:
             # resolver 会回落到全局默认；告警以避免配置错的链静默使用 1M 上下文。
-            logger.warning("background_review: empty provider_name", extra={"user_id": user_id})
+            logger.warning("background_review: empty provider_name", extra={"user_id": scope.user_id})
         context_length = resolve_context_tokens(provider_name, ServiceType.llm)
         request = build_responses_kwargs(
             model=model_name,
-            instructions=_BACKGROUND_REVIEW_PROMPT,
+            instructions=_BACKGROUND_REVIEW_PROMPT if scope.system_preset_id == "companion" else _WORK_REVIEW_PROMPT,
             input_items=items,
             tools=schemas,
             max_output_tokens=500,

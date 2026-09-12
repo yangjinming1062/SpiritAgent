@@ -36,7 +36,7 @@ from services.domains.companion.persona_service import (
 from services.domains.companion.personality_tagger import analyze_personality_tags
 from services.domains.companion.prompt_runtime import run_prompt_json
 from services.domains.companion.rig_type_selector import classify_species, select_rig_type
-from services.domains.companion.session_preset import is_life_preset, is_work_preset, resolve_session_profile
+from services.domains.companion.session_preset import is_work_preset, resolve_session_profile
 from services.domains.companion.should_act import ALLOWED_ACTIONS, ShouldActResult, should_act
 from services.domains.companion.voice_catalog import (
     design_voice,
@@ -73,7 +73,6 @@ __all__ = [
     "get_onboarding_state",
     "get_or_create_persona",
     "interact",
-    "is_life_preset",
     "is_still",
     "is_work_preset",
     "list_tts_voices",
