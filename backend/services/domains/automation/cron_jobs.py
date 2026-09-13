@@ -196,14 +196,6 @@ async def update_job(
         return job.to_dict()
 
 
-async def pause_job(scope: MemoryScope, job_id: int) -> dict[str, Any] | None:
-    return await update_job(scope, job_id, {"is_paused": True})
-
-
-async def resume_job(scope: MemoryScope, job_id: int) -> dict[str, Any] | None:
-    return await update_job(scope, job_id, {"is_paused": False})
-
-
 async def remove_job(scope: MemoryScope, job_id: int) -> bool:
     validate_memory_scope(scope)
     user_id = scope.user_id

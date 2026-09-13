@@ -152,10 +152,13 @@ async def save_system_settings(
     async with _SETTINGS_UPDATE_LOCK:
         updates = dict(updates)
         if "ai_config" in updates:
-            updates["ai_config"] = prepare_ai_config(
-                updates["ai_config"],
-                SETTINGS.ai_config,
-            )
+            try:
+                updates["ai_config"] = prepare_ai_config(
+                    updates["ai_config"],
+                    SETTINGS.ai_config,
+                )
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
         pending: dict[str, Any] = {}
         for key, val in updates.items():
             if key in STARTUP_ONLY_KEYS or key not in type(SETTINGS).model_fields:

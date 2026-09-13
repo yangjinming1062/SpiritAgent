@@ -1,8 +1,6 @@
 import asyncio
 from typing import ClassVar
 
-import httpx
-
 from .._provider_errors import raise_for_provider_response
 from ..base import ImageAsset, ImageGenProvider, ImageGenRequest, ImageGenResult, ProviderConfig
 from ..http import download_as_b64, get_http
@@ -29,10 +27,9 @@ class ZhipuImageGenProvider(ImageGenProvider):
         resp = await self._client.post("/images/generations", json=payload)
         body = raise_for_provider_response(resp, family=self.provider_name, model=self.config.model)
 
-        # 并行下载 CDN 图，使用匿名客户端防止 Bearer 透出到 CDN（与 base.py 中 VideoGenProvider.download 保持一致）。
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as cdn:
-            urls = [u for item in body.get("data") or [] if (u := item.get("url"))]
-            b64s = await asyncio.gather(*(download_as_b64(cdn, u) for u in urls))
+        # 并行下载 CDN 图，不带 Bearer——供应商返回的是短期临时 URL，统一转 base64 屏蔽外部引用。
+        urls = [u for item in body.get("data") or [] if (u := item.get("url"))]
+        b64s = await asyncio.gather(*(download_as_b64(u) for u in urls))
         assets = [ImageAsset(b64=b, mime="image/png") for b in b64s]
 
         if not assets:

@@ -35,7 +35,7 @@ from services.domains.memory.memory_retrieval import (
 
 from .memory_learning import MemoryReviewContext, load_review_context
 from .memory_policy import MEMORY_POLICY, MemoryDecisions
-from .memory_review import assess_memory_changes, review_memories
+from .memory_review import assess_memory_changes, invalidate_memory_review_locks, review_memories
 from .memory_store import (
     active_memory_filter,
     backfill_memory_embeddings,
@@ -54,6 +54,7 @@ __all__ = [
     "MemoryDecisions",
     "assess_memory_changes",
     "review_memories",
+    "invalidate_memory_review_locks",
     "create_memory",
     "get_memory",
     "scope_filter",

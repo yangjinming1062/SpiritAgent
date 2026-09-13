@@ -494,7 +494,7 @@ async def confirm_outfit(
         if avatar is None:
             raise OutfitStateError("找不到激活头像行")
         if outfit.fullbody_url.startswith("temp-media/"):
-            moved = _read_temp_media_bytes(outfit.fullbody_url)
+            moved = await _read_temp_media_bytes(outfit.fullbody_url)
             if moved is None:
                 raise OutfitDraftExpiredError("外观草稿已过期，请重新生成")
             outfit.fullbody_url, _, _ = await _persist_portrait_bytes(

@@ -19,7 +19,7 @@ from modules.companion import (
     Persona,
 )
 from modules.conversation import Conversation, Message
-from modules.memory import Memory
+from modules.memory import MEMORY_EMBEDDING_DIM, Memory
 from modules.scheduler import CronJob
 from modules.settings import UserSetting
 from sqlalchemy import Date, DateTime, select
@@ -284,6 +284,12 @@ def _build_payload(
             raise ValueError("Invalid memory usage")
         if not isinstance(payload.get("evidence"), list) or not isinstance(payload.get("history"), list):
             raise ValueError("Memory evidence and history are required")
+        embedding = payload.get("embedding")
+        if embedding is not None:
+            if not isinstance(embedding, list) or not all(isinstance(v, int | float) for v in embedding):
+                raise ValueError("Memory embedding must be a list of numbers")
+            if len(embedding) != MEMORY_EMBEDDING_DIM:
+                raise ValueError(f"Memory embedding dim {len(embedding)} != {MEMORY_EMBEDDING_DIM}")
         payload["source_kind"] = "import"
         payload["source_refs"] = {"imported_memory_id": raw["id"], "original_source": payload["source_refs"]}
     if table == "companion_room_backdrops":

@@ -221,7 +221,7 @@ class Settings(BaseSettings):
 
     @field_validator("companion_asset_image_providers", mode="before")
     @classmethod
-    def _parse_providers_csv(cls, v):
+    def _parse_providers_csv(cls, v: str | list[str] | None) -> list[str] | None:
         if v is None or v == "":
             return []
         if isinstance(v, str):

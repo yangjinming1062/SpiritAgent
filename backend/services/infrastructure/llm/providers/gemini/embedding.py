@@ -19,7 +19,7 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
             auth_header={"x-goog-api-key": "{api_key}"},
         )
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], *, purpose: str = "db") -> list[list[float]]:
         if not texts:
             return []
         model = self.config.model or "gemini-embedding-001"

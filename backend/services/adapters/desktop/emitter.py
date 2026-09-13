@@ -1,6 +1,5 @@
 from typing import Any
 
-from services.application.chat import Emitter
 from services.infrastructure.desktop.jsonrpc import JsonRpcDispatcher
 
 # 原始 ``type`` → JSON-RPC ``params.type``。每个原始帧要么翻译成 JSON-RPC 事件信封，要么丢弃（未知类型）。
@@ -21,21 +20,14 @@ _TRANSLATED: dict[str, str] = {
 class JsonRpcEmitter:
     """把原始 chat_service 帧翻译成 JSON-RPC 事件信封：renderer（events.ts）按 params.type 分发并读 params.payload，由 JsonRpcDispatcher.push_event 构造信封；已知类型必翻译，未知类型静默丢弃。"""
 
-    def __init__(self, raw: Emitter | None, *, dispatcher: JsonRpcDispatcher, session_id: str) -> None:
-        self._raw = raw
+    def __init__(self, *, dispatcher: JsonRpcDispatcher, session_id: str) -> None:
         self._dispatcher = dispatcher
         self._session_id = session_id
 
     async def send_json(self, data: dict) -> None:
         raw_type = data.get("type")
-        if not isinstance(raw_type, str):
-            if self._raw is not None:
-                await self._raw.send_json(data)
-            return
-        # 未知类型按原始帧透传。
-        if raw_type not in _TRANSLATED:
-            if self._raw is not None:
-                await self._raw.send_json(data)
+        # 非字符串或未知类型一律静默丢弃。
+        if not isinstance(raw_type, str) or raw_type not in _TRANSLATED:
             return
         event_name = _TRANSLATED[raw_type]
         payload = self._translate(raw_type, data)

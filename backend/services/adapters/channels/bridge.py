@@ -248,7 +248,6 @@ class ChannelTurnEmitter:
     """无头回合发射器：捕获终端回复并转发 typing，工具中间轮不送出正文。"""
 
     def __init__(self) -> None:
-        self.frames: list[dict] = []
         self.reply_text: str | None = None
         self.error: str | None = None
         self.media: list[dict] = []
@@ -276,7 +275,6 @@ class ChannelTurnEmitter:
         await asyncio.gather(task, return_exceptions=True)
 
     async def send_json(self, data: dict) -> None:
-        self.frames.append(data)
         frame_type = data.get("type")
         if frame_type == "message.start" and self._on_start is not None:
             self._typing_task = asyncio.create_task(self._on_start())

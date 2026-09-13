@@ -2,16 +2,16 @@ import copy
 from typing import Any
 
 from components import CAPABILITY_SERVICES, AIConfig, AIConfigPublic, AIConfigUpdate
-from fastapi import HTTPException
 from pydantic import ValidationError
 
 from services.infrastructure.llm import providers_supporting
 
 
 def prepare_ai_config(raw: Any, previous: AIConfig | None = None) -> AIConfig:
+    """整批验证并归一化 AI 配置；失败抛 ValueError（含具体原因），由调用方决定错误呈现。"""
     value = raw.model_dump() if isinstance(raw, AIConfigUpdate) else copy.deepcopy(raw)
     if not isinstance(value, dict) or "providers" not in value or "capabilities" not in value:
-        raise HTTPException(422, "AI 配置必须同时包含供应商库与能力配置")
+        raise ValueError("AI 配置必须同时包含供应商库与能力配置")
     old_value = (previous or AIConfig()).model_dump()
     try:
         groups = [(value.get("providers", []), old_value["providers"])]
@@ -32,14 +32,14 @@ def prepare_ai_config(raw: Any, previous: AIConfig | None = None) -> AIConfig:
                 elif not card.get("api_key"):
                     card["api_key"] = prior.get("api_key", "")
         config = AIConfig.model_validate(value)
+    except (ValidationError, AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("AI 卡片配置无效，请检查字段与重复的供应商") from exc
 
-        for service in CAPABILITY_SERVICES:
-            supported = set(providers_supporting(service))
-            if any(card.provider not in supported for card in getattr(config.capabilities, service)):
-                raise HTTPException(422, f"所选供应商不支持 {service} 能力")
-        return config
-    except (ValidationError, AttributeError, TypeError, ValueError):
-        raise HTTPException(422, "AI 卡片配置无效，请检查字段与重复的供应商") from None
+    for service in CAPABILITY_SERVICES:
+        supported = set(providers_supporting(service))
+        if any(card.provider not in supported for card in getattr(config.capabilities, service)):
+            raise ValueError(f"所选供应商不支持 {service} 能力")
+    return config
 
 
 def public_ai_config(config: AIConfig) -> AIConfigPublic:

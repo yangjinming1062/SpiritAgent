@@ -7,6 +7,7 @@
 
 import asyncio
 import json
+import shutil
 import tempfile
 import time
 from collections.abc import Awaitable, Callable
@@ -494,7 +495,9 @@ async def _download_one_step(
     """单跳下载 + 重试;返回 GLB bytes。"""
     if not await _cas_model_status(model_id, from_statuses=RETRYABLE_DOWNLOAD_STATUSES, to_status="downloading"):
         raise ModelGenerationError("another download attempt owns the row")
-    with tempfile.TemporaryDirectory() as tmp:
+    # GLB 可达数百 MB，退出时的目录删除移到线程，避免 rmtree 阻塞事件循环
+    tmp = tempfile.mkdtemp()
+    try:
         glb_path = await _download_with_retry(
             provider,
             user_id=user_id,
@@ -504,6 +507,8 @@ async def _download_one_step(
             dest_dir=Path(tmp),
         )
         return await asyncio.to_thread(glb_path.read_bytes)
+    finally:
+        await asyncio.to_thread(shutil.rmtree, tmp, ignore_errors=True)
 
 
 async def _maybe_apply_capability(

@@ -8,12 +8,7 @@ from services.infrastructure.tool_runtime.domains import (
     resolve_tools_for_domain,
     search_domains_and_tools,
 )
-from services.infrastructure.tool_runtime.file_safety import (
-    BLOCKED_PROJECT_ENV_BASENAMES,
-    SPIRITAGENT_CONTROL_FILE_BASENAMES,
-    get_read_block_error,
-    is_write_denied,
-)
+from services.infrastructure.tool_runtime.file_safety import get_read_block_error, is_write_denied
 from services.infrastructure.tool_runtime.model_tools import coerce_tool_args
 from services.infrastructure.tool_runtime.registry import (
     REGISTRY,
@@ -47,14 +42,12 @@ from services.infrastructure.tool_runtime.tool_result_classification import (
 from services.infrastructure.tool_runtime.toolsets import TOOLSET_CATALOG, ToolsetDef, disabled_backend_tool_names
 
 __all__ = [
-    "BLOCKED_PROJECT_ENV_BASENAMES",
     "DOMAIN_CATALOG",
     "FILE_MUTATING_TOOL_NAMES",
     "IDEMPOTENT_TOOL_NAMES",
     "MUTATING_TOOL_NAMES",
     "REGISTRY",
     "RESERVED_KEYS",
-    "SPIRITAGENT_CONTROL_FILE_BASENAMES",
     "TOOLSET_CATALOG",
     "ToolCallGuardrailConfig",
     "ToolCallGuardrailController",

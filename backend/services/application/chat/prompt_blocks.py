@@ -356,10 +356,6 @@ _PLATFORM_HINTS_TEXTS: dict[str, dict[str, str]] = {
 }
 
 
-def _language_directive(language: str) -> str:
-    return resolve_prompt_text(LANGUAGE_DIRECTIVES, language)
-
-
 def _should_inject_tool_use_enforcement(setting: str) -> bool:
     """``tool_use_enforcement`` 除非显式关闭，否则视为开启。"""
     return setting.lower() not in TOOL_ENFORCE_OFF_VALUES
@@ -524,7 +520,7 @@ def _message_timestamps_block(config: AgentPromptConfig) -> str:
 
 
 def _language_directive_block(config: AgentPromptConfig) -> str:
-    return _language_directive(config.language)
+    return resolve_prompt_text(LANGUAGE_DIRECTIVES, config.language)
 
 
 def _help_guidance_block(config: AgentPromptConfig) -> str:

@@ -6,7 +6,7 @@ from modules.conversation import Conversation, Message
 from sqlalchemy import func, select
 
 from services.contracts.memory import MemoryScope, MemorySource
-from services.infrastructure.llm import call_llm_once, resolve_user_llm_config
+from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_user_llm_config
 
 from .memory_learning import (
     MemoryConflictError,
@@ -17,7 +17,14 @@ from .memory_learning import (
 )
 from .memory_policy import MEMORY_POLICY, MEMORY_REVIEW_INSTRUCTIONS, MemoryDecisions
 
+# 每个记忆作用域一把审阅锁，保证同域审核串行；用户覆盖恢复/删除后经 invalidate 丢弃。
 _REVIEW_LOCKS: dict[MemoryScope, asyncio.Lock] = {}
+
+
+def invalidate_memory_review_locks(user_id: int) -> None:
+    """丢弃指定用户的全部审阅锁条目；仅在用户维护边界内调用（无在途审核）。"""
+    for scope in [s for s in _REVIEW_LOCKS if s.user_id == user_id]:
+        _REVIEW_LOCKS.pop(scope, None)
 
 
 async def assess_memory_changes(
@@ -25,7 +32,7 @@ async def assess_memory_changes(
     source: MemorySource,
     context: MemoryReviewContext,
     *,
-    llm_config: dict[str, Any],
+    llm_config: UserLlmConfig | dict[str, Any],
     proposal: dict[str, Any] | None = None,
     advance_review: bool = False,
 ) -> list[MemoryRecord]:
@@ -64,7 +71,7 @@ async def review_memories(
     *,
     session_id: int | None = None,
     through_message_id: int | None = None,
-    llm_config: dict[str, Any] | None = None,
+    llm_config: UserLlmConfig | dict[str, Any] | None = None,
 ) -> None:
     async with _REVIEW_LOCKS.setdefault(scope, asyncio.Lock()):
         started_at = utc_now()

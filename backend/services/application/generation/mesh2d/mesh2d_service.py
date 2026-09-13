@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.companion import get_or_create_persona
 from services.infrastructure.assets import asset_store
 
+from ..avatar_service import get_avatar_job_lock
 from .pipeline import active_model_ids, run_mesh2d_pipeline
 
 logger = get_logger(__name__)
@@ -39,6 +40,18 @@ async def generate_mesh2d_model(
     force: bool = False,
 ) -> Companion2DModel:
     """从已激活 avatar 启动 2d 切分；avatar 不可用时抛错。"""
+    # 锁内完成查重 + 建行 + 提交，防并发请求重复建行重复付费；管线发布段共用同一把锁
+    async with get_avatar_job_lock(user_id):
+        return await _generate_mesh2d_model_locked(db, user_id=user_id, priority=priority, force=force)
+
+
+async def _generate_mesh2d_model_locked(
+    db: AsyncSession,
+    *,
+    user_id: int,
+    priority: str,
+    force: bool,
+) -> Companion2DModel:
     avatar = await _resolve_active_avatar(db, user_id)
 
     if avatar is None or not avatar.seed_front_2d_url:

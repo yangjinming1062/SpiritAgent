@@ -46,6 +46,8 @@ def decode_activation_code(code: str) -> tuple[str, str]:
     """encode_activation_code 的反向操作；返回 ``(base_url, token)``，格式错误抛 ValueError。"""
     raw = _b64decode(code)
     data = json.loads(raw)
+    if not isinstance(data, dict):
+        raise ValueError("activation code payload must be a JSON object")
     base_url = data.get("b")
     token = data.get("t")
     if not base_url or not token:

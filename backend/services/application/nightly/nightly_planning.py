@@ -127,14 +127,6 @@ class DateContext(BaseModel):
     next_7_days: list[str] = Field(default_factory=list)
     user_timezone: str
 
-    def __getitem__(self, item: str) -> Any:
-        if hasattr(self, item):
-            return getattr(self, item)
-        raise KeyError(item)
-
-    def get(self, item: str, default: Any = None) -> Any:
-        return getattr(self, item, default)
-
 
 class OutfitWearArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -229,14 +221,6 @@ class NormalizedPlan(BaseModel):
     reveal: str = ""
     actions: list[PlannedAction] = Field(default_factory=list)
 
-    def __getitem__(self, item: str) -> Any:
-        if hasattr(self, item):
-            return getattr(self, item)
-        raise KeyError(item)
-
-    def get(self, item: str, default: Any = None) -> Any:
-        return getattr(self, item, default)
-
 
 class ActionExecutionResult(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -256,16 +240,6 @@ class ActionExecutionResult(BaseModel):
     audio_path: str | None = None
     voice_id: str | None = None
 
-    def __getitem__(self, item: str) -> Any:
-        if hasattr(self, item):
-            return getattr(self, item)
-        if self.__pydantic_extra__ and item in self.__pydantic_extra__:
-            return self.__pydantic_extra__[item]
-        raise KeyError(item)
-
-    def get(self, item: str, default: Any = None) -> Any:
-        return getattr(self, item, default)
-
 
 class PlanningResult(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -274,14 +248,6 @@ class PlanningResult(BaseModel):
     rationale: str = ""
     reveal: str = ""
     actions: dict[str, ActionExecutionResult] = Field(default_factory=dict)
-
-    def __getitem__(self, item: str) -> Any:
-        if hasattr(self, item):
-            return getattr(self, item)
-        raise KeyError(item)
-
-    def get(self, item: str, default: Any = None) -> Any:
-        return getattr(self, item, default)
 
 
 class PlanningPolicies(BaseModel):
@@ -292,11 +258,6 @@ class PlanningPolicies(BaseModel):
     media: bool = True
     voice: bool = True
 
-    def __getitem__(self, item: str) -> Any:
-        if hasattr(self, item):
-            return getattr(self, item)
-        raise KeyError(item)
-
 
 class PlanningProviders(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -305,11 +266,6 @@ class PlanningProviders(BaseModel):
     image_reference: bool = False
     video: bool = False
     tts: bool = False
-
-    def __getitem__(self, item: str) -> Any:
-        if hasattr(self, item):
-            return getattr(self, item)
-        raise KeyError(item)
 
 
 class PersonaContext(BaseModel):
@@ -320,25 +276,12 @@ class PersonaContext(BaseModel):
     current_mood: str | None = None
     render_mode: str | None = None
 
-    def __getitem__(self, item: str) -> Any:
-        if hasattr(self, item):
-            return getattr(self, item)
-        raise KeyError(item)
-
-    def get(self, item: str, default: Any = None) -> Any:
-        return getattr(self, item, default)
-
 
 class RoomContext(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     active_brief: str = ""
     generation_pending: bool = False
-
-    def __getitem__(self, item: str) -> Any:
-        if hasattr(self, item):
-            return getattr(self, item)
-        raise KeyError(item)
 
 
 class WardrobeItem(BaseModel):
@@ -350,14 +293,6 @@ class WardrobeItem(BaseModel):
     status: str
     active: bool = False
     pending_wear: bool = False
-
-    def __getitem__(self, item: str) -> Any:
-        if hasattr(self, item):
-            return getattr(self, item)
-        raise KeyError(item)
-
-    def get(self, item: str, default: Any = None) -> Any:
-        return getattr(self, item, default)
 
 
 class RecentActionSummary(BaseModel):
@@ -388,11 +323,6 @@ class AvailableCapability(BaseModel):
     exclusive_group: str | None = None
     paid: bool = False
 
-    def __getitem__(self, item: str) -> Any:
-        if hasattr(self, item):
-            return getattr(self, item)
-        raise KeyError(item)
-
 
 class BlockedCapability(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -418,22 +348,6 @@ class PlanningContext(BaseModel):
     plan_theme: str = ""
     action_row_id: int | None = Field(default=None, alias="_action_row_id")
     resume_result: dict[str, Any] | None = Field(default=None, alias="_resume_result")
-
-    def __getitem__(self, item: str) -> Any:
-        if item == "_action_row_id":
-            return self.action_row_id
-        if item == "_resume_result":
-            return self.resume_result
-        if hasattr(self, item):
-            return getattr(self, item)
-        raise KeyError(item)
-
-    def get(self, item: str, default: Any = None) -> Any:
-        if item == "_action_row_id":
-            return self.action_row_id if self.action_row_id is not None else default
-        if item == "_resume_result":
-            return self.resume_result if self.resume_result is not None else default
-        return getattr(self, item, default)
 
 
 _CAPABILITIES: tuple[NightlyCapability, ...] = (

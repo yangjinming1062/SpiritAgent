@@ -36,6 +36,7 @@ logger = get_logger(__name__)
 # track_task=None 路径的兜底：模块级强引用集合，防止 CPython GC 在 await 期间销毁进行中的 task。
 # 与 scheduler/cron.py 的 _BG 同模式（TaskBag 在 components/background.py）。
 _BG = TaskBag("chat.persistence")
+_MEDIA_TOOL_NAMES = frozenset({"image_generate", "video_generate"})
 
 
 def _on_bg_error(task: asyncio.Task) -> None:
@@ -54,9 +55,6 @@ def _coerce_tool_result_content(content: Any) -> str:
     if isinstance(content, str):
         return content
     return json.dumps(content, ensure_ascii=False, default=str)
-
-
-_MEDIA_TOOL_NAMES = frozenset({"image_generate", "video_generate"})
 
 
 def extract_turn_media(tool_results: list[dict]) -> list[dict[str, str]]:

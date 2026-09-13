@@ -19,6 +19,8 @@ from .buffer import ReplayBuffer
 
 logger = get_logger(__name__)
 
+OUTBOX_QUEUE_MAX = 1024
+
 
 class JsonRpcError(Exception):
     def __init__(self, code: int, message: str, data: Any = None):
@@ -84,9 +86,6 @@ def _redact_data(data: Any) -> Any:
     return data
 
 
-OUTBOX_QUEUE_MAX = 1024
-
-
 class JsonRpcDispatcher:
     def __init__(
         self,
@@ -130,6 +129,10 @@ class JsonRpcDispatcher:
     def start_writer(self) -> None:
         if self._writer_task is None or self._writer_task.done():
             self._writer_task = asyncio.create_task(self._writer_loop())
+
+    @property
+    def writer_task(self) -> asyncio.Task | None:
+        return self._writer_task
 
     async def stop_writer(self) -> None:
         if self._writer_task is not None:

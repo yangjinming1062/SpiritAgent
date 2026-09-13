@@ -1,6 +1,5 @@
-import contextlib
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import Awaitable, Callable
 
 from components import get_logger, log_paid_call
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -156,47 +155,3 @@ async def execute_with_fallback[T](
                 user_id=user_id,
             )
             raise content_policy_error or last_error
-
-
-async def execute_stream_with_fallback[T](
-    db: AsyncSession | None,
-    user_id: int | None,
-    service_type: str,
-    open_fn: Callable[[BaseProvider], AsyncIterator[T]],
-    *,
-    _chain: list[ProviderConfig] | None = None,
-) -> AsyncIterator[T]:
-    """``execute_with_fallback`` 的流式版：回退只发生在首个元素之前——首元素产生即视为流已开始
-    （对齐 PROTOCOL §1.6"流已开始不切换"），此后任何失败原样上抛给消费方。
-
-    首元素由 ``execute_with_fallback`` 代为打开（``open_fn`` 调用 + 取首个元素），级联 / 分类 /
-    计费日志全部复用其语义——``duration_ms`` 因此记录的是 duration-to-first；本生成器随后接管
-    同一迭代器继续产出。
-    """
-    opened: list[AsyncIterator[T]] = []
-
-    async def open_and_first(provider: BaseProvider) -> T:
-        stream = open_fn(provider)
-        opened.append(stream)
-        try:
-            return await anext(stream)
-        except StopAsyncIteration:
-            # 空流：显式转 RuntimeError，避免 StopAsyncIteration 逃逸进异步生成器框架被隐式转换。
-            raise RuntimeError(f"{provider.provider_name} stream ended before first element")
-
-    try:
-        first = await execute_with_fallback(db, user_id, service_type, open_and_first, _chain=_chain)
-    except Exception:
-        # 整链失败：链中各家流尚未被消费，需要在此处关闭避免 HTTP 连接泄漏。
-        for stream in opened:
-            with contextlib.suppress(Exception):
-                await stream.aclose()
-        raise
-    try:
-        yield first
-        async for item in opened[-1]:
-            yield item
-    finally:
-        for stream in opened:
-            with contextlib.suppress(Exception):
-                await stream.aclose()

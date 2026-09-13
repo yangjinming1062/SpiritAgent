@@ -161,7 +161,8 @@ async def enqueue_video_job(
     await db.refresh(job)
 
     try:
-        submitted = await execute_with_fallback(db, user_id, "video_gen", call_fn=_submit, _chain=chain)
+        # db=None：提交走独立短会话解析（_chain 已显式传入），请求会话不跨供应商 HTTP 等待持有连接
+        submitted = await execute_with_fallback(None, user_id, "video_gen", call_fn=_submit, _chain=chain)
     except ProviderResultUnknownError:
         if submitted_provider is not None:
             job.provider = submitted_provider.provider_name
@@ -417,7 +418,7 @@ async def _download_and_store(
             raise RuntimeError("provider.poll succeeded without file_id or download_url")
         download_url = (await provider.fetch(file_id)).download_url
     data = await _stream_download(download_url)
-    storage_path = save_companion_asset(data, user_id=user_id, label="chat_video", ext="mp4")
+    storage_path = await asyncio.to_thread(save_companion_asset, data, user_id=user_id, label="chat_video", ext="mp4")
     return storage_path.rsplit("/", 1)[-1], storage_path
 
 

@@ -10,6 +10,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 if TYPE_CHECKING:
     from modules.auth import User
 
+# memories.embedding 列宽的唯一事实源；更换嵌入维度时须同步迁移
+MEMORY_EMBEDDING_DIM = 1536
+
 
 class Memory(ModelBase, TimestampMixin):
     __tablename__ = "memories"
@@ -37,6 +40,6 @@ class Memory(ModelBase, TimestampMixin):
     context: Mapped[str | None] = mapped_column(Text, nullable=True)
     tags: Mapped[str | None] = mapped_column(Text, nullable=True)
     importance: Mapped[float] = mapped_column(Float, default=1.0, server_default="1.0")
-    embedding: Mapped[list[float] | None] = mapped_column(Vector(1536), nullable=True)
+    embedding: Mapped[list[float] | None] = mapped_column(Vector(MEMORY_EMBEDDING_DIM), nullable=True)
 
     user: Mapped["User"] = relationship(back_populates="memories")

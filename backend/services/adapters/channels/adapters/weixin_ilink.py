@@ -105,35 +105,35 @@ def _aes_ecb_encrypt(plaintext: bytes, key: bytes) -> bytes:
     return AES.new(key, AES.MODE_ECB).encrypt(plaintext + bytes([pad]) * pad)
 
 
+def _encrypt_and_digest(plaintext: bytes, key: bytes) -> tuple[bytes, str]:
+    return _aes_ecb_encrypt(plaintext, key), hashlib.md5(plaintext).hexdigest()
+
+
 def _parse_inbound_item(item: dict) -> dict | None:
-    """提取可下载的媒体描述：type=image/voice/file/video 时返 {kind, cdn_url, aes_key, file_name}。"""
-    item_type = item.get("type")
-    inner = (
-        item.get("image_item")
-        if item_type == _MEDIA_TYPE_IMAGE
-        else item.get("voice_item")
-        if item_type == _MEDIA_TYPE_VOICE
-        else item.get("file_item")
-        if item_type == _MEDIA_TYPE_FILE
-        else item.get("video_item")
-        if item_type == _MEDIA_TYPE_VIDEO
-        else None
-    )
-    if not isinstance(inner, dict):
-        return None
-    cdn_url = inner.get("media") or inner.get("aeskey")
-    aes_key = inner.get("aes_key")
-    if not isinstance(cdn_url, str) or not cdn_url:
-        return None
-    kind = {2: "image", 3: "voice", 4: "file", 5: "video"}.get(item_type)
-    if not kind:
-        return None
-    return {
-        "kind": kind,
-        "cdn_url": cdn_url,
-        "aes_key": aes_key if isinstance(aes_key, str) else "",
-        "file_name": inner.get("file_name") or "",
-    }
+    """提取可下载的媒体描述：{kind, cdn_url, aes_key, file_name}；无媒体段返回 None。
+
+    image 的 type 值在收发两侧代码中不一致（出站用 1、入站按 2），故按内层段名判别而非 type 数字。
+    """
+    for segment, kind in (
+        ("image_item", "image"),
+        ("voice_item", "voice"),
+        ("file_item", "file"),
+        ("video_item", "video"),
+    ):
+        inner = item.get(segment)
+        if not isinstance(inner, dict):
+            continue
+        cdn_url = inner.get("media")
+        if not isinstance(cdn_url, str) or not cdn_url:
+            return None
+        aes_key = inner.get("aes_key")
+        return {
+            "kind": kind,
+            "cdn_url": cdn_url,
+            "aes_key": aes_key if isinstance(aes_key, str) else "",
+            "file_name": inner.get("file_name") or "",
+        }
+    return None
 
 
 def _split_text_and_media(item_list: list) -> tuple[str, list[dict]]:
@@ -142,11 +142,12 @@ def _split_text_and_media(item_list: list) -> tuple[str, list[dict]]:
     media: list[dict] = []
     for item in item_list or []:
         item_type = item.get("type")
-        if item_type == 1:
+        if item_type == 1 and "text_item" in item:
             text = (item.get("text_item") or {}).get("text")
             if text:
                 parts.append(text)
-        elif item_type == _MEDIA_TYPE_IMAGE:
+        elif item_type == 2 or "image_item" in item:
+            # 入站图片的 type 值不确定（收发两侧代码不一致），按内层段名兜底判别
             parts.append("[图片]")
             desc = _parse_inbound_item(item)
             if desc:
@@ -217,7 +218,8 @@ async def _materialize_inbound_attachments(
                 content_type, ext = "image/png", "png"
             elif plaintext[:4] == b"GIF8":
                 content_type, ext = "image/gif", "gif"
-            file_id, public_url = save_file(
+            file_id, public_url = await asyncio.to_thread(
+                save_file,
                 plaintext,
                 session_id=f"weixin_{binding_id}",
                 content_type=content_type,
@@ -599,7 +601,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
             if stored is None:
                 raise ChannelError(f"temp-media not found: {file_id}", fatal=False)
             plain_path, content_type = stored
-            plain = plain_path.read_bytes()
+            plain = await asyncio.to_thread(plain_path.read_bytes)
         else:
             asset_path = url.split("?", 1)[0]
             if asset_path.startswith("/api/companion/asset/"):
@@ -608,7 +610,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
             resolved = resolve_companion_asset_path(*parsed) if parsed else None
             if resolved is not None:
                 plain_path, content_type = resolved
-                plain = plain_path.read_bytes()
+                plain = await asyncio.to_thread(plain_path.read_bytes)
             else:
                 async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as c:
                     resp = await c.get(url)
@@ -622,7 +624,8 @@ class WeixinIlinkAdapter(ChannelAdapter):
         # iLink 媒体类型编码：1=image 2=voice 3=video 4=file；不同 kind 可能需要映射。
         ilink_kind = {"image": 1, "voice": 4, "video": 3, "file": 4}.get(mtype, 1)
         raw_key = secrets.token_bytes(16)
-        ciphertext = _aes_ecb_encrypt(plain, raw_key)
+        # 全量媒体加密与 md5 是 CPU 密集操作，移出事件循环
+        ciphertext, plain_md5 = await asyncio.to_thread(_encrypt_and_digest, plain, raw_key)
         filekey = secrets.token_hex(16)
         aeskey_hex = raw_key.hex()
 
@@ -634,7 +637,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
                 "media_type": ilink_kind,
                 "to_user_id": peer_id,
                 "rawsize": len(plain),
-                "rawfilemd5": hashlib.md5(plain).hexdigest(),
+                "rawfilemd5": plain_md5,
                 "filesize": len(ciphertext),
                 "no_need_thumb": True,
                 "aeskey": aeskey_hex,

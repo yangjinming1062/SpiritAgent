@@ -1,8 +1,6 @@
 import asyncio
 from typing import ClassVar
 
-import httpx
-
 from .._provider_errors import raise_for_provider_response
 from .._size_aspect import SIZE_TO_ASPECT
 from ..base import ImageAsset, ImageGenProvider, ImageGenRequest, ImageGenResult, ProviderConfig
@@ -40,9 +38,7 @@ class GrokImageGenProvider(ImageGenProvider):
         if not urls:
             raise RuntimeError(f"grok image_gen returned no images: {body}")
 
-        # 并行下载 CDN 图，使用匿名客户端防止 Bearer 透出到 CDN（与 zhipu/image.py 保持一致）。
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as cdn:
-            b64s = await asyncio.gather(*(download_as_b64(cdn, u) for u in urls))
+        b64s = await asyncio.gather(*(download_as_b64(u) for u in urls))
         assets = [ImageAsset(b64=b, mime="image/png") for b in b64s]
 
         return ImageGenResult(images=assets, model=self.config.model, raw=body)
@@ -65,8 +61,7 @@ class GrokImageGenProvider(ImageGenProvider):
         if not urls:
             raise RuntimeError(f"grok image_edit returned no images: {body}")
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as cdn:
-            b64s = await asyncio.gather(*(download_as_b64(cdn, u) for u in urls))
+        b64s = await asyncio.gather(*(download_as_b64(u) for u in urls))
         assets = [ImageAsset(b64=b, mime="image/png") for b in b64s]
 
         return ImageGenResult(images=assets, model=self.config.model, raw=body)

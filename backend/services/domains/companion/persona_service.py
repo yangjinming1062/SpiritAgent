@@ -10,7 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts.memory import MemoryScope
 from services.domains.conversation import ensure_system_conversations_for_user
-from services.domains.journal import write_system_moment
 from services.domains.memory import extract_user_profile, read_user_profile, record_user_profile
 
 logger = get_logger(__name__)
@@ -23,6 +22,16 @@ _schedule_initial_room: InitialRoomScheduler | None = None
 def set_initial_room_scheduler(fn: InitialRoomScheduler | None) -> None:
     global _schedule_initial_room
     _schedule_initial_room = fn
+
+
+# 问候时刻同样经装配层注入，companion 不直接依赖 journal 域。
+GreetingMomentWriter = Callable[..., Awaitable[object]]
+_write_greeting_moment: GreetingMomentWriter | None = None
+
+
+def set_greeting_moment_writer(fn: GreetingMomentWriter | None) -> None:
+    global _write_greeting_moment
+    _write_greeting_moment = fn
 
 
 # 双语伙伴人设块标题。字段 label（key.replace("_", " ").capitalize()）属协议级展示，保持英文不译。
@@ -164,7 +173,8 @@ async def confirm_portrait(db: AsyncSession, user_id: int) -> Persona:
     except Exception:
         logger.warning("failed to schedule initial room backdrop", extra={"user_id": user_id}, exc_info=True)
     try:
-        await write_system_moment(user_id, kind=MomentKind.GREETING.value, event_key="greeting")
+        if _write_greeting_moment is not None:
+            await _write_greeting_moment(user_id, kind=MomentKind.GREETING.value, event_key="greeting")
     except Exception:
         logger.warning("failed to write greeting moment", extra={"user_id": user_id}, exc_info=True)
     return persona

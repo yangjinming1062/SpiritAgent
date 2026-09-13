@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import random
 import time
 from collections.abc import Callable
@@ -283,8 +284,10 @@ async def _stream_llm_response(
     finally:
         await stream.aclose()
         # 工作台已显示的增量在失败时也须收尾；陪伴的未确认正文始终丢弃。
+        # flush 失败（如 WS 已断开）不得替换掉正在传播的原始流异常。
         if delivery == "stream" and (text_emitted or response_finished):
-            await _emit_bubble_events(bubbles.flush())
+            with contextlib.suppress(Exception):
+                await _emit_bubble_events(bubbles.flush())
 
     # 收尾最后气泡：若 break 后立即结束，bubble_parts 为空则不追加，turn_parts 已持有前面气泡。
     if bubble_parts:

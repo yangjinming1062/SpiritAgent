@@ -11,6 +11,7 @@ from sqlalchemy import select, update
 
 from services.infrastructure.llm import MissingLlmConfigError, chat, resolve_provider_chain
 
+from .appearance import get_active_model
 from .persona_service import load_persona_definition
 from .personality_tagger import analyze_personality_tags
 
@@ -89,6 +90,7 @@ async def _refresh_personality_tags(persona_id: int, user_id: int) -> None:
             species = definition.get("biological_type")
             chain = await resolve_provider_chain(db, user_id, "llm")
             definition_json = persona.definition_json
+            active_model = await get_active_model(db, user_id)
         tag_provider = chain[0] if chain else None
         t_llm = time.monotonic()
         tags = await analyze_personality_tags(
@@ -96,6 +98,7 @@ async def _refresh_personality_tags(persona_id: int, user_id: int) -> None:
             definition_json,
             user_id=user_id,
             species=species,
+            rig_type=active_model.rig_type if active_model else None,
             db=None,
             provider_config=tag_provider,
         )

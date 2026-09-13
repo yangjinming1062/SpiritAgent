@@ -99,23 +99,20 @@ def save_video_attachment(session_id: str, data: bytes, ext: str) -> tuple[str, 
     return file_id, len(data)
 
 
-def _rewrite_parts(parts: list, file_ids: set[str], *, session_id: str | None = None) -> tuple[list, bool]:
+def _rewrite_parts(parts: list, file_ids: set[str], *, session_id: str) -> tuple[list, bool]:
     """把引用了 ``file_ids`` 的 input_video part 替换为清理占位文本；返回 (新 parts, 是否有改动)。
 
-    ``session_id`` 传入时拒掉跨会话 / 形态非法的 URL，防止 stale DB 行把任意路径污染到 victim 集合比对中。
+    拒掉跨会话 / 形态非法的 URL，防止 stale DB 行把任意路径污染到 victim 集合比对中。
     """
     changed = False
     out: list = []
     for part in parts:
         if isinstance(part, dict) and part.get("type") == "input_video":
             url = str(part.get("video_url") or "")
-            if session_id is not None:
-                file_id = _file_id_from_url(url, session_id)
-                if file_id is None:
-                    out.append(part)
-                    continue
-            else:
-                file_id = url.rsplit("/", 1)[-1]
+            file_id = _file_id_from_url(url, session_id)
+            if file_id is None:
+                out.append(part)
+                continue
             if file_id in file_ids:
                 out.append({"type": "input_text", "text": VIDEO_PRUNED_TEXT})
                 changed = True

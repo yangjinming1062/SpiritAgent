@@ -17,6 +17,7 @@ from services.domains.conversation import message_text
 
 from .memory_bootstrap import resolve_user_timezone
 from .memory_policy import MemoryDecision
+from .memory_retrieval import extract_search_terms
 from .memory_store import (
     backfill_memory_embeddings,
     fingerprint_history,
@@ -159,11 +160,8 @@ async def load_review_context(
         stmt = stmt.where(Message.id > Conversation.memory_reviewed_message_id)
     if query:
         stmt = stmt.where(Message.content.icontains(query, autoescape=True))
-    rows = list(
-        (
-            await db.scalars(stmt.order_by(Message.id.asc() if new_only else Message.id.desc()).limit(MESSAGE_LIMIT))
-        ).all(),
-    )
+    # 先取最新的 MESSAGE_LIMIT 条（即时检查优先保留最新消息），呈现时按 id 升序重排
+    rows = list((await db.scalars(stmt.order_by(Message.id.desc()).limit(MESSAGE_LIMIT))).all())
     forgotten = list((await db.scalars(select(Memory).where(scope_filter(scope), Memory.status == "forgotten"))).all())
     blocked = {e["fingerprint"] for r in forgotten for e in r.evidence if "fingerprint" in e}
     messages: list[ReviewMessage] = []
@@ -203,9 +201,7 @@ async def load_review_context(
     memories = list((await db.scalars(memory_stmt.order_by(*order).limit(REVIEW_MEMORY_LIMIT))).all())
     # 带上新发言相关的事实（含候选和反例），即使它们不在本次轮转窗口中。
     if new_only and messages:
-        from .memory_retrieval import _extract_search_terms
-
-        terms = _extract_search_terms(
+        terms = extract_search_terms(
             " ".join(m.content for m in messages if m.role == "user" and not m.suppressed),
         )
         if terms:

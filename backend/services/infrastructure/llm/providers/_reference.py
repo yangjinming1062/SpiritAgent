@@ -1,7 +1,7 @@
 import base64
 from urllib.parse import urlparse
 
-from components import download_capped, is_safe_outbound
+from components import download_capped
 
 
 def _parse_data_uri(reference: str) -> tuple[bytes, str] | None:
@@ -24,10 +24,6 @@ async def resolve_reference_bytes(reference_image: str) -> tuple[bytes, str]:
     parsed = urlparse(reference_image)
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"reference_image must be a data URI or http(s) URL: {reference_image[:64]!r}")
-    hostname = parsed.hostname or ""
-    safe, reason = is_safe_outbound(hostname)
-    if not safe:
-        raise RuntimeError(f"refusing to fetch unsafe reference host: {hostname} ({reason})")
 
     data = await download_capped(reference_image, max_bytes=50 * 1024 * 1024, timeout=120.0)
     ct = "image/jpeg"

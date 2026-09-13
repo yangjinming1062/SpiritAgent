@@ -190,13 +190,10 @@ def discard_user_session(user_id: int) -> list[asyncio.Task]:
         if runtime.chat_task and not runtime.chat_task.done() and runtime.chat_task is not current_task:
             runtime.chat_task.cancel()
             pending.append(runtime.chat_task)
-    if (
-        sess.dispatcher._writer_task
-        and not sess.dispatcher._writer_task.done()
-        and sess.dispatcher._writer_task is not current_task
-    ):
-        sess.dispatcher._writer_task.cancel()
-        pending.append(sess.dispatcher._writer_task)
+    writer_task = sess.dispatcher.writer_task
+    if writer_task and not writer_task.done() and writer_task is not current_task:
+        writer_task.cancel()
+        pending.append(writer_task)
     sess.runtime_sessions.clear()
     return pending
 
@@ -1449,7 +1446,7 @@ def _register_session_handlers(
         )
 
         disp = user_session.dispatcher if user_session else dispatcher
-        emitter = JsonRpcEmitter(raw=None, dispatcher=disp, session_id=runtime.session_id)
+        emitter = JsonRpcEmitter(dispatcher=disp, session_id=runtime.session_id)
 
         cur_cfg = user_session.llm_config if user_session else llm_config
         cur_ctx = user_session.session_client_context if user_session else None

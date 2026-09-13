@@ -42,6 +42,13 @@ APPLICATION_FLOW_EDGES = {
     ("services.application.nightly", "services.application.generation"),
     ("services.application.automation", "services.application.nightly"),
 }
+# domains 内显式声明的跨域单向依赖（域级，与 backend/README.md §3.2 例外表一致）。
+DOMAIN_FLOW_EDGES = {
+    ("services.domains.companion", "services.domains.memory"),
+    ("services.domains.journal", "services.domains.memory"),
+}
+# 各域可单向导入的底座域（backend/README.md §3.2）。
+DOMAIN_BASE = "services.domains.conversation"
 BOTTOM = ("common", "components", "modules")
 
 
@@ -54,6 +61,14 @@ def pkg_of(module: str) -> str:
     if module == "services":
         return "services"
     return module.split(".", maxsplit=1)[0]
+
+
+def domain_of(module: str) -> str:
+    """services.domains.X / services.application.X 取到第三段域级包名，供域隔离与流程边检查使用。"""
+    parts = module.split(".")
+    if len(parts) >= 3 and parts[0] == "services" and parts[1] in ("domains", "application"):
+        return ".".join(parts[:3])
+    return module
 
 
 def layer_of(pkg: str) -> str | None:
@@ -188,11 +203,12 @@ def main() -> int:
             errors.append(f"[layer] {la} -> {lb} 越层  [{where}]")
             continue
         if la == lb and a != b:
-            pa, pb = pkg_of(a), pkg_of(b)
-            if la == "services.domains" and pa != pb:
-                errors.append(f"[domain-isolation] {a} 跨业务域导入 {b}  [{where}]")
-            elif la == "services.application" and pa != pb and (pa, pb) not in APPLICATION_FLOW_EDGES:
-                errors.append(f"[app-flow] {pa} -> {pb} 未声明的应用流程依赖  [{where}]")
+            da, db = domain_of(a), domain_of(b)
+            if la == "services.domains" and da != db:
+                if db != DOMAIN_BASE and (da, db) not in DOMAIN_FLOW_EDGES:
+                    errors.append(f"[domain-isolation] {a} 跨业务域导入 {b}  [{where}]")
+            elif la == "services.application" and da != db and (da, db) not in APPLICATION_FLOW_EDGES:
+                errors.append(f"[app-flow] {da} -> {db} 未声明的应用流程依赖  [{where}]")
 
     if errors:
         print(f"{len(errors)} 个架构问题:", file=sys.stderr)

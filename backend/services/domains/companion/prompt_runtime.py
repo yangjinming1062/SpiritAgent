@@ -71,7 +71,8 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         if active_model is not None:
             clip_map = safe_json_loads(active_model.clip_map_json or "{}", default={})
             if isinstance(clip_map, dict):
-                available_actions = sorted(set(clip_map) - _NON_AUTONOMOUS_CLIP_KEYS)
+                # 两条路径共用同一排除集：本地物理/交互触发动作不得进入 LLM 可点播清单
+                available_actions = sorted(set(clip_map) - _NON_AUTONOMOUS_CLIP_KEYS - NON_LLM_ACTIONS)
         if not available_actions:
             available_actions = sorted(set(DEFAULT_ACTIONS) - NON_LLM_ACTIONS)
         return CompanionPromptContext(

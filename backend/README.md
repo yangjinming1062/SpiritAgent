@@ -66,7 +66,7 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 
 实例创建、注册与启停顺序全部集中在 `bootstrap/`，业务包导入不产生任何副作用：
 
-- **显式注册**（`bootstrap/registrations.py`）：LLM 供应商、图生 3D 供应商、LLM 工具与 memory 工具 schema、渠道适配器、内部事件处理器（`cron.turn.request` → `execute_cron_turn`）、域钩子（首房间图调度）。新增供应商/工具/渠道 = 实现类 + 装配层加一行注册；遗漏会在能力链解析时显式抛 `LookupError` 而非静默缺能力。注册表覆盖式幂等，重复调用安全。
+- **显式注册**（`bootstrap/registrations.py`）：LLM 供应商、图生 3D 供应商、LLM 工具与 memory 工具 schema、渠道适配器、内部事件处理器（`cron.turn.request` → `execute_cron_turn`）、域钩子（首房间图调度、形象确认后的问候时刻写入）。新增供应商/工具/渠道 = 实现类 + 装配层加一行注册；遗漏会在能力链解析时显式抛 `LookupError` 而非静默缺能力。注册表覆盖式幂等，重复调用安全。
 - **启动顺序**（`bootstrap/lifecycle.py`）：迁移 → 配置水合 → 注册（应用导入期）→ 调度器 → 事件回路（LISTEN 专线）→ 渠道桥 → 恢复未完成任务（视频、3D 管道）。依赖注入式解耦：事件回路不认识 cron 业务，处理器由装配层绑定。
 - **停止顺序**：先停调度器再 drain（tick 会 spawn 新任务，反序留下逃逸窗口）→ 并行 drain 各模块任务集合 → 停渠道桥（适配器任务可能还在写事件）→ 停事件回路 → 释放引擎与连接池。付费生成任务的恢复语义不变：无法确认提交结果的任务保留不确定状态，不自动重发。
 - **运行时单例**：`MANAGER`（桌面连接）、`REGISTRY`（工具）、`SETTINGS`、TaskBag、用户级锁表保留为模块级单例——这是单副本语义（[ARCHITECTURE §5.3](../docs/ARCHITECTURE.md)）下的刻意选择；跨副本状态一律经持久化与 outbox 路由外置，bootstrap 管"谁注册谁启动"，不做 DI 容器。

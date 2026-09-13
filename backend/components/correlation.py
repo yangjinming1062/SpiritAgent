@@ -28,7 +28,7 @@ def normalize_inbound(value: str | None) -> str | None:
 
 
 def new_request_id() -> str:
-    """项目通用 hex ID 生成器（call_id / jti / 工具 request_id / 文件名种子都走这里）；utils.py 因属于基础设施层（与 config/logger 平级）可例外。"""
+    """项目通用 hex ID 生成器（call_id / jti / 工具 request_id / 文件名种子都走这里）。"""
     return uuid.uuid4().hex
 
 

@@ -199,11 +199,14 @@ async def _persist_portrait_bytes(data: bytes, content_type: str) -> tuple[str, 
     final_ext = _UPLOAD_EXTS.get(src_content_type, "jpg")
     file_id = secrets.token_urlsafe(16)
     avatars_dir = Path(SETTINGS.data_dir) / "companion-avatars"
-    avatars_dir.mkdir(parents=True, exist_ok=True)
 
-    filepath = avatars_dir / f"{file_id}.{final_ext}"
-    with open(filepath, "wb") as f:
-        f.write(data)
+    def _write() -> None:
+        avatars_dir.mkdir(parents=True, exist_ok=True)
+        with open(avatars_dir / f"{file_id}.{final_ext}", "wb") as f:
+            f.write(data)
+
+    # 立绘可达数十 MB，写盘移出事件循环
+    await asyncio.to_thread(_write)
 
     # 行内存裸路径而非签名 URL，避免过期；读取时再签名
     return _avatar_storage_path(file_id, final_ext), file_id, final_ext
@@ -229,7 +232,7 @@ async def _download_to_bytes(url: str) -> tuple[bytes, str] | None:
         res = get_file_path(fid)
         if res:
             path, content_type = res
-            return Path(path).read_bytes(), content_type
+            return await asyncio.to_thread(Path(path).read_bytes), content_type
     try:
         content = await download_capped(url, max_bytes=50 * 1024 * 1024, timeout=120.0)
         ct = "image/jpeg"
@@ -799,7 +802,7 @@ def resolve_uploaded_avatar_path(filename: str) -> tuple[Path, str] | None:
     return filepath, content_type
 
 
-def _read_temp_media_bytes(bare_path: str) -> tuple[bytes, str] | None:
+async def _read_temp_media_bytes(bare_path: str) -> tuple[bytes, str] | None:
     """读取 temp-media 文件字节；文件因 TTL 过期或不可读时返回 None。"""
     temp_file_id = bare_path.split("/", 1)[1]
     res = get_file_path(temp_file_id)
@@ -807,7 +810,7 @@ def _read_temp_media_bytes(bare_path: str) -> tuple[bytes, str] | None:
         return None
     path, content_type = res
     try:
-        data = path.read_bytes()
+        data = await asyncio.to_thread(path.read_bytes)
     except OSError:
         return None
     return data, content_type
@@ -825,7 +828,7 @@ async def finalize_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
     for attr in ("asset_url", "seed_front_2d_url", "seed_front_3d_url", "seed_back_url"):
         current = getattr(asset, attr, None)
         if current and current.startswith("temp-media/"):
-            result = _read_temp_media_bytes(current)
+            result = await _read_temp_media_bytes(current)
             if result is None:
                 raise AvatarSourceUnreadableError(
                     f"temp-media file expired for {attr}: {current} — please regenerate the avatar",
@@ -1203,7 +1206,7 @@ async def confirm_fullbody_front(
         target.seed_back_url = ""
         # 确认动作把 temp-media 草稿种子图提升到 companion-avatars；草稿过期则抛可重试错误而非留下死链
         if target.seed_front_2d_url.startswith("temp-media/"):
-            moved = _read_temp_media_bytes(target.seed_front_2d_url)
+            moved = await _read_temp_media_bytes(target.seed_front_2d_url)
             if moved is None:
                 raise AvatarSourceUnreadableError(
                     f"temp-media file expired for seed_front_2d_url: {target.seed_front_2d_url} — please regenerate the fullbody front",

@@ -30,10 +30,6 @@ class TripoImageTo3DProvider(ImageTo3DProvider):
     SUPPORTS_NEGATIVE_PROMPT = True
     SUPPORTS_ANIMATE_BIND = True
 
-    def __init__(self, api_key: str = "", base_url: str = "") -> None:
-        self.api_key = api_key
-        self.base_url = base_url
-
     async def _upload(self, path: Path) -> str:
         image_bytes = await asyncio.to_thread(path.read_bytes)
         return await client.upload_file(image_bytes, path.name, _CONTENT_TYPES.get(path.suffix.lower(), "image/png"))

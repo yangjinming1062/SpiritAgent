@@ -18,9 +18,6 @@ class _PrioritizedItem:
     key: str = field(compare=False, repr=False, default="")
 
 
-_SENTINEL_PRIORITY = 10_000
-
-
 class PriorityTaskQueue:
     """高 / 低优先级调度：高优先级任务先跑；同优先级内按到达顺序。"""
 
@@ -45,29 +42,6 @@ class PriorityTaskQueue:
             for i in range(total):
                 self._worker_tasks.append(asyncio.create_task(self._worker(i)))
 
-    async def stop(self) -> None:
-        async with self._lock:
-            if not self._running:
-                return
-
-            self._running = False
-            loop = asyncio.get_running_loop()
-
-            for _ in range(len(self._worker_tasks)):
-                await self._queue.put(
-                    _PrioritizedItem(
-                        priority=_SENTINEL_PRIORITY,
-                        seq=self._next_seq(),
-                        future=loop.create_future(),
-                        run=_noop,
-                    ),
-                )
-
-            for task in self._worker_tasks:
-                await task
-
-            self._worker_tasks.clear()
-
     def _next_seq(self) -> int:
         self._seq += 1
         return self._seq
@@ -79,7 +53,7 @@ class PriorityTaskQueue:
         *,
         priority: str,
     ) -> T:
-        """提交任务；同一 key 的旧任务会被取消，新任务接力。"""
+        """提交任务；同一 key 仍在排队中的旧任务被跳过（future 置取消），已开始执行的旧任务不中断。"""
         prio = 0 if priority == "high" else 100
 
         if key in self._tasks:
@@ -104,9 +78,6 @@ class PriorityTaskQueue:
             item = await self._queue.get()
 
             try:
-                if item.priority >= _SENTINEL_PRIORITY:
-                    return
-
                 if item.future.cancelled():
                     continue
 
@@ -120,10 +91,6 @@ class PriorityTaskQueue:
             finally:
                 if item.key and self._tasks.get(item.key) is item:
                     self._tasks.pop(item.key, None)
-
-
-async def _noop() -> None:
-    return None
 
 
 _default_queue: PriorityTaskQueue | None = None

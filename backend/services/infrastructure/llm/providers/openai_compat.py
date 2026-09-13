@@ -16,7 +16,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         super().__init__(config)
         self._client: AsyncOpenAI = get_async_client(config.api_key, config.base_url)
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], *, purpose: str = "db") -> list[list[float]]:
         if not texts:
             return []
         model = self.config.model or "text-embedding-3-small"

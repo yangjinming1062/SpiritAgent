@@ -35,12 +35,12 @@ _TITLE_PROMPTS: dict[str, str] = {
 }
 
 
+_TITLE_PREFIX = "title:"
+
+
 def _title_prompt(language: str) -> str:
     lang = (language or "").strip().lower()
     return _TITLE_PROMPTS.get(lang, _TITLE_PROMPTS[DEFAULT_LANGUAGE])
-
-
-_TITLE_PREFIX = "title:"
 
 
 def _clean_title(raw: str) -> str:

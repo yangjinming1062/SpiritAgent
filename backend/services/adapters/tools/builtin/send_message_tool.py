@@ -1,3 +1,4 @@
+import asyncio
 import json
 from urllib.parse import urlparse
 
@@ -43,7 +44,8 @@ async def send_message_tool(
     if parsed.scheme not in ("http", "https"):
         return tool_error("Invalid webhook URL scheme (must be http or https).")
 
-    safe, reason = is_safe_outbound(parsed.hostname or "")
+    # is_safe_outbound 内部走同步 socket.getaddrinfo，必须移出事件循环
+    safe, reason = await asyncio.to_thread(is_safe_outbound, parsed.hostname or "")
     if not safe:
         return tool_error(f"Refusing to POST to {parsed.hostname}: {reason}")
 

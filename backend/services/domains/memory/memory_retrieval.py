@@ -3,7 +3,7 @@ import re
 from typing import Any
 
 from components import get_logger, session_scope, utc_now
-from modules.memory import Memory
+from modules.memory import MEMORY_EMBEDDING_DIM, Memory
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
@@ -30,9 +30,6 @@ TIME_DECAY_FLOOR: float = 0.30
 # 单查询可下推到 LIKE 的最大关键词数；选 16 而非示例值 8，保留 2/3-gram 共存窗口，4-gram 由 PG pg_trgm 索引接手。
 SPARSE_QUERY_TERM_MAX: int = 16
 
-# memories.embedding 列宽（pgvector Vector(1536)）；维度不符的供应商向量直接丢弃而非落库报错。
-MEMORY_EMBEDDING_DIM = 1536
-
 _CJK_PATTERN = re.compile(r"[一-鿿㐀-䶿]")
 _CJK_RUN_PATTERN = re.compile(r"[一-鿿㐀-䶿]+")
 _NON_CJK_RUN_PATTERN = re.compile(r"[^一-鿿㐀-䶿]+")
@@ -46,7 +43,7 @@ def _compute_time_decay(updated_at: Any, now: Any) -> float:
     return TIME_DECAY_FLOOR + (1.0 - TIME_DECAY_FLOOR) * math.exp(-TIME_DECAY_LAMBDA * delta_days)
 
 
-def _extract_search_terms(query: str) -> list[str]:
+def extract_search_terms(query: str) -> list[str]:
     """结构化词条提取：优先保留拉丁/专有名词 token 与 CJK 完整词段，辅以 2/3-gram 滑动窗口，截断至 SPARSE_QUERY_TERM_MAX。"""
     q = (query or "").strip()
     if not q:
@@ -156,7 +153,7 @@ async def embed_memory_text(user_id: int, text: str) -> list[float] | None:
     if not (text := (text or "").strip()):
         return None
     provider = await _resolve_memory_embedding_provider(user_id)
-    vec = await generate_embedding(text, provider, user_id=user_id)
+    vec = await generate_embedding(text, provider, user_id=user_id, purpose="query")
     return vec if vec and len(vec) == MEMORY_EMBEDDING_DIM else None
 
 
@@ -179,7 +176,7 @@ async def retrieve_hybrid_memories(
     if not q_str and not query_embedding:
         return []
 
-    keywords = _extract_search_terms(q_str)
+    keywords = extract_search_terms(q_str)
 
     dense_candidates: list[Memory] = []
     if query_embedding:

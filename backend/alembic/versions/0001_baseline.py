@@ -35,7 +35,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_admin_sessions_created_at"), "admin_sessions", ["created_at"], unique=False)
     op.create_index(op.f("ix_admin_sessions_is_active"), "admin_sessions", ["is_active"], unique=False)
-    op.create_index(op.f("ix_admin_sessions_token_jti"), "admin_sessions", ["token_jti"], unique=False)
     op.create_index(op.f("ix_admin_sessions_username"), "admin_sessions", ["username"], unique=False)
     op.create_table(
         "update_versions",
@@ -237,7 +236,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_login_records_is_active"), "login_records", ["is_active"], unique=False)
     op.create_index(op.f("ix_login_records_login_at"), "login_records", ["login_at"], unique=False)
-    op.create_index(op.f("ix_login_records_token_jti"), "login_records", ["token_jti"], unique=False)
     op.create_index(op.f("ix_login_records_user_id"), "login_records", ["user_id"], unique=False)
     op.create_table(
         "memories",

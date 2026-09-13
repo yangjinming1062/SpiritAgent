@@ -4,7 +4,6 @@ from fastapi import Depends
 
 from .deps import (
     get_current_admin_token,
-    get_current_login_record,
     get_current_session,
     get_current_user,
     get_optional_current_session,
@@ -39,7 +38,6 @@ from .security import (
 CurrentAdmin = Annotated[str, Depends(get_current_admin_token)]
 CurrentSession = Annotated[tuple[User, LoginRecord], Depends(get_current_session)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
-CurrentLogin = Annotated[LoginRecord, Depends(get_current_login_record)]
 OptionalSession = Annotated[tuple[User, LoginRecord] | None, Depends(get_optional_current_session)]
 
 __all__ = [
@@ -48,7 +46,6 @@ __all__ = [
     "AdminTokenResponse",
     "ChatRequestClientContext",
     "CurrentAdmin",
-    "CurrentLogin",
     "CurrentSession",
     "CurrentUser",
     "LoginRecord",
@@ -72,7 +69,6 @@ __all__ = [
     "encode_activation_code",
     "generate_activation_token",
     "get_current_admin_token",
-    "get_current_login_record",
     "get_current_session",
     "get_current_user",
     "get_optional_current_session",

@@ -3,7 +3,7 @@ import time
 from typing import Any
 
 import httpx
-from components import SETTINGS, download_capped, log_paid_call
+from components import SETTINGS, download_capped, log_paid_call, safe_outbound_async_client
 
 from ..._http import get_json, post_json
 
@@ -93,7 +93,7 @@ def _envelope(resp: httpx.Response) -> dict[str, Any]:
 
 async def upload_file(file_bytes: bytes, filename: str, content_type: str = "image/jpeg") -> str:
     """POST /v3/files —— multipart 上传，返回 ``file_token``（在 image-to-model 中作为 ``input`` 使用）。"""
-    async with httpx.AsyncClient(timeout=60.0) as client:
+    async with safe_outbound_async_client(timeout=60.0) as client:
         resp = await client.post(
             f"{_base_url()}/files",
             headers={"Authorization": f"Bearer {_api_key()}"},
@@ -170,8 +170,6 @@ async def create_image_to_model(
     auxiliary_tokens = {view: token for view, token in (multiview_tokens or {}).items() if view != "front" and token}
     if auxiliary_tokens:
         views = {"front": image_token, **auxiliary_tokens}
-        if len(views) < 2:
-            raise ValueError("multiview-to-model requires at least 2 views")
         inputs = [{view: views[view]} for view in ("front", "back") if views.get(view)]
     else:
         texture_alignment = None

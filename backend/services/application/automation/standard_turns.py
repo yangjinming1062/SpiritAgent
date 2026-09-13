@@ -120,5 +120,11 @@ async def _execute_standard_turn(user_id: int, job_id: int, payload: dict) -> No
 
 async def execute_standard_turn(user_id: int, job_id: int, payload: dict) -> None:
     """同一任务串行执行，避免短周期任务把同一历史交错写入。"""
-    async with _STANDARD_TURN_LOCKS.setdefault(job_id, asyncio.Lock()):
-        await _execute_standard_turn(user_id, job_id, payload)
+    lock = _STANDARD_TURN_LOCKS.setdefault(job_id, asyncio.Lock())
+    try:
+        async with lock:
+            await _execute_standard_turn(user_id, job_id, payload)
+    finally:
+        # 任务删除后锁条目无人清理会随进程生命周期缓慢累积；无等待者时移除自身
+        if not lock.locked() and _STANDARD_TURN_LOCKS.get(job_id) is lock:
+            del _STANDARD_TURN_LOCKS[job_id]

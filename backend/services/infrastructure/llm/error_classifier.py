@@ -14,6 +14,7 @@ from .providers.base import ProviderError, ProviderResultUnknownError
 logger = get_logger(__name__)
 
 _CAUSE_CHAIN_MAX_DEPTH = 5
+_RESET_HEADER_PATTERN = re.compile(r"^\d+(\.\d+)?$")
 
 
 class FailoverReason(enum.Enum):
@@ -947,9 +948,6 @@ def _extract_message(error: Exception, body: dict) -> str:
         if isinstance(msg, str) and msg.strip():
             return msg.strip()[:2000]
     return redact_sensitive_text(str(error))[:2000]
-
-
-_RESET_HEADER_PATTERN = re.compile(r"^\d+(\.\d+)?$")
 
 
 def _extract_suggested_delay(error: Exception) -> float | None:

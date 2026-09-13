@@ -82,7 +82,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         while True:
             await asyncio.sleep(3600)
             try:
-                cleanup_expired()
+                await asyncio.to_thread(cleanup_expired)
             except Exception:
                 logger.warning("Temp file cleanup failed", exc_info=True)
 

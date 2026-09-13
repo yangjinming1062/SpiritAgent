@@ -362,8 +362,6 @@ async def _run_nightly_pipeline_inner(
         clean_messages = clean_main_messages
         has_user_messages = any(m["role"] == "user" and not is_injected_time_item(m) for m in clean_messages)
 
-        user_profile = await read_user_profile(db, scope)
-
         user_lang_row = (
             await db.execute(
                 select(UserSetting.setting_value).where(

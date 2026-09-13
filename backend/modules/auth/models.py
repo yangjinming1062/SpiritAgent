@@ -51,7 +51,7 @@ class LoginRecord(ModelBase):
     __table_args__ = (UniqueConstraint("token_jti", name="uq_login_records_token_jti"),)
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    token_jti: Mapped[str] = mapped_column(String(64), index=True)
+    token_jti: Mapped[str] = mapped_column(String(64))
     client_version: Mapped[str] = mapped_column(String(64), default="")
     ip_address: Mapped[str] = mapped_column(String(64), default="")
     user_agent: Mapped[str] = mapped_column(Text, default="")
@@ -68,7 +68,7 @@ class AdminSession(ModelBase):
     __tablename__ = "admin_sessions"
     __table_args__ = (UniqueConstraint("token_jti", name="uq_admin_sessions_token_jti"),)
 
-    token_jti: Mapped[str] = mapped_column(String(64), index=True)
+    token_jti: Mapped[str] = mapped_column(String(64))
     username: Mapped[str] = mapped_column(String(64), index=True)
     client_version: Mapped[str] = mapped_column(String(64), default="")
     ip_address: Mapped[str] = mapped_column(String(64), default="")

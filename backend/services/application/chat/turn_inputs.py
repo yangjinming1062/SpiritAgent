@@ -127,9 +127,8 @@ async def _load_memory_query_text(
     )
     if checkpoint_id:
         stmt = stmt.where(Message.id >= checkpoint_id)
-    content = (
-        await db.execute(stmt.order_by(Message.id.asc() if use_request else Message.id.desc()).limit(1))
-    ).scalar()
+    # 始终取最近一条用户消息作记忆召回锚点；use_request 仅用于优先取请求内消息
+    content = (await db.execute(stmt.order_by(Message.id.desc()).limit(1))).scalar()
     return content or ""
 
 
@@ -466,7 +465,6 @@ async def build_turn_inputs(
     agent_config = AgentPromptConfig(
         valid_tool_names=[schema_name(s) for s in all_schemas],
         model=model_name,
-        tools=all_schemas,
         client_context=_merge_client_context(session_client_context, req.client_context),
         identity_prompt=identity_prompt,
         persona_extras=build_system_prompt_extras(persona, language=session_lang),

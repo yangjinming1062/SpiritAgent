@@ -33,10 +33,6 @@ class ReplayBuffer:
         return self._current_seq
 
     @property
-    def min_seq(self) -> int:
-        return next(iter(self._buffer.values())).seq if self._buffer else self._current_seq
-
-    @property
     def max_seq(self) -> int:
         return self._current_seq
 
@@ -139,9 +135,3 @@ class ReplayBuffer:
         while len(self._buffer) > self.capacity:
             oldest_key = next(iter(self._buffer))
             del self._buffer[oldest_key]
-
-    def clear(self) -> None:
-        """重置缓冲区和 seq 计数器。"""
-        self._buffer.clear()
-        self._current_seq = 0
-        self._max_sent_seq = 0

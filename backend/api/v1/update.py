@@ -1,3 +1,4 @@
+import asyncio
 import json
 import re
 import shutil
@@ -124,31 +125,32 @@ async def create_version(
     # 在进程唯一的临时目录暂存上传，避免两个并发管理上传同一版本时互相覆盖字节。
     with tempfile.TemporaryDirectory(dir=VERSIONS_DIR, prefix=f".upload_{version}_") as tmp_dir:
         zip_path = Path(tmp_dir) / "upload.zip"
+        # 上传包可达数百 MB：写盘与解压移出事件循环
         with open(zip_path, "wb") as f:
             while chunk := await file.read(CHUNK_SIZE):
-                f.write(chunk)
+                await asyncio.to_thread(f.write, chunk)
 
         try:
-            _extract_archive_entries(zip_path, versions_dir)
+            await asyncio.to_thread(_extract_archive_entries, zip_path, versions_dir)
         except zipfile.BadZipFile:
             raise HTTPException(status_code=400, detail="Invalid zip file")
 
     # 校验内嵌 manifest.json：构建脚本（Build-UpdateZip）总会写入，其 version 必须匹配从文件名解析出的版本，否则视为不同发布并拒绝。
     manifest_path = versions_dir / "manifest.json"
     if not manifest_path.exists():
-        shutil.rmtree(versions_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="Zip must contain manifest.json")
     try:
-        manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest_data = json.loads(await asyncio.to_thread(manifest_path.read_text, encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        shutil.rmtree(versions_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail=f"Invalid manifest.json: {exc}")
     manifest_version = manifest_data.get("version")
     if not manifest_version:
-        shutil.rmtree(versions_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="manifest.json missing required 'version' field")
     if manifest_version != version:
-        shutil.rmtree(versions_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
         raise HTTPException(
             status_code=400,
             detail=f"manifest.json version {manifest_version} does not match upload filename version {version}",
@@ -156,7 +158,7 @@ async def create_version(
 
     exe_file = _pick_asset(versions_dir, "*.exe")
     if not exe_file:
-        shutil.rmtree(versions_dir, ignore_errors=True)
+        await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
         raise HTTPException(status_code=400, detail="Zip must contain a *.exe file")
 
     mac_file = _pick_asset(versions_dir, "*.zip", "*.dmg")
@@ -168,13 +170,13 @@ async def create_version(
         version=version,
         release_notes=release_notes,
         exe_filename=exe_file.name,
-        exe_sha512=sha512_b64(exe_file),
+        exe_sha512=await asyncio.to_thread(sha512_b64, exe_file),
         exe_size=exe_file.stat().st_size,
         mac_filename=mac_file.name if mac_file else None,
-        mac_sha512=sha512_b64(mac_file) if mac_file else None,
+        mac_sha512=await asyncio.to_thread(sha512_b64, mac_file) if mac_file else None,
         mac_size=mac_file.stat().st_size if mac_file else None,
         runner_filename=f"runner/{wheel_file.name}" if wheel_file else None,
-        runner_sha512=sha512_b64(wheel_file) if wheel_file else None,
+        runner_sha512=await asyncio.to_thread(sha512_b64, wheel_file) if wheel_file else None,
         runner_size=wheel_file.stat().st_size if wheel_file else None,
         runner_version=version if wheel_file else None,
         is_active=True,
@@ -204,7 +206,7 @@ async def delete_version(id: int, _admin: CurrentAdmin, db: DbSession) -> Messag
     record = await get_or_404(db, UpdateVersion, id=id, detail="Version not found")
     versions_dir = VERSIONS_DIR / record.version
     if versions_dir.exists():
-        shutil.rmtree(versions_dir)
+        await asyncio.to_thread(shutil.rmtree, versions_dir)
     await db.delete(record)
     await db.commit()
     return MessageResponse(message="Version deleted")

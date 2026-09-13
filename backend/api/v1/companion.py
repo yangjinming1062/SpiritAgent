@@ -62,6 +62,7 @@ from services.application.generation import (
     generate_mesh2d_model,
     get_active_avatar,
     get_active_mesh2d_response,
+    get_avatar_job_lock,
     get_outfit_policy,
     list_avatar_history,
     list_outfits,
@@ -189,14 +190,13 @@ async def post_avatar(
                 detail={"error": "请先完成 onboarding 再生成形象", "reason": "persona is incomplete"},
             )
     try:
-        asset = await generate_avatar(user_id=user.id, persona=persona)
+        async with get_avatar_job_lock(user.id):
+            asset = await generate_avatar(user_id=user.id, persona=persona)
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except AvatarGenerationError as exc:
         err_detail = getattr(exc, "internal", str(exc))
         logger.warning("post_avatar generation failed", extra={"user_id": user.id, "error": err_detail})
-        if "persona is incomplete" in str(exc):
-            raise HTTPException(status_code=409, detail={"error": "请先完成 onboarding 再生成形象", "reason": str(exc)})
         raise HTTPException(status_code=502, detail={"error": "伙伴形象生成失败，请稍后重试", "reason": str(exc)})
     except MissingLlmConfigError as exc:
         logger.warning("post_avatar missing config", extra={"user_id": user.id, "error": str(exc)})
@@ -237,25 +237,21 @@ async def post_avatar_from_image(
                 detail={"error": "请先完成 onboarding 再基于图片生成形象", "reason": "persona is incomplete"},
             )
     try:
-        asset = await regenerate_avatar_from_image(
-            user_id=user.id,
-            persona=persona,
-            data=raw,
-            content_type=content_type,
-            description=body.description,
-            presentation_data=pres_raw,
-            presentation_content_type=pres_content_type,
-        )
+        async with get_avatar_job_lock(user.id):
+            asset = await regenerate_avatar_from_image(
+                user_id=user.id,
+                persona=persona,
+                data=raw,
+                content_type=content_type,
+                description=body.description,
+                presentation_data=pres_raw,
+                presentation_content_type=pres_content_type,
+            )
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except AvatarGenerationError as exc:
         err_detail = getattr(exc, "internal", str(exc))
         logger.warning("post_avatar_from_image failed", extra={"user_id": user.id, "error": err_detail})
-        if "persona is incomplete" in str(exc):
-            raise HTTPException(
-                status_code=409,
-                detail={"error": "请先完成 onboarding 再基于图片生成形象", "reason": str(exc)},
-            )
         raise HTTPException(status_code=502, detail={"error": "按参考重绘失败，请稍后重试", "reason": str(exc)})
     except MissingLlmConfigError as exc:
         logger.warning("post_avatar_from_image missing config", extra={"user_id": user.id, "error": str(exc)})
@@ -285,12 +281,13 @@ async def post_avatar_upload(
                 detail={"error": "请先完成 onboarding 再上传形象", "reason": "persona is incomplete"},
             )
     try:
-        asset = await upload_avatar(
-            user_id=user.id,
-            persona=persona,
-            data=raw,
-            content_type=content_type or "image/png",
-        )
+        async with get_avatar_job_lock(user.id):
+            asset = await upload_avatar(
+                user_id=user.id,
+                persona=persona,
+                data=raw,
+                content_type=content_type or "image/png",
+            )
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except Exception as exc:

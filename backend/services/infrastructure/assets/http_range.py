@@ -77,7 +77,7 @@ async def serve_ranged_file(
         raise HTTPException(status_code=404, detail="File not found")
 
     file_size = file_path.stat().st_size
-    sha256 = content_sha256 or _get_file_sha256(file_path)
+    sha256 = content_sha256 or await asyncio.to_thread(_get_file_sha256, file_path)
     etag = f'"{sha256}"'
 
     base_headers = {
@@ -92,6 +92,9 @@ async def serve_ranged_file(
         return Response(status_code=304, headers=base_headers)
 
     range_header = request.headers.get("range")
+    if range_header and "," in range_header:
+        # 多 Range（bytes=0-1,3-4）语法合法但不支持：按 RFC 7233 忽略该头，整体 200 返回
+        range_header = None
 
     if not range_header:
 

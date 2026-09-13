@@ -5,17 +5,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-MomentKindLiteral = Literal["greeting", "emotion", "together", "milestone", "scene", "user"]
-MomentSourceLiteral = Literal["system", "nightly", "llm", "user"]
-MomentVisibilityLiteral = Literal["shown", "hidden"]
+from .journal import DiarySource, MomentKind, MomentSource, MomentVisibility
+
 MomentMediaTypeLiteral = Literal["", "image", "video", "audio"]
-DiarySourceLiteral = Literal["nightly", "llm", "user"]
 
 
 class MomentResponse(BaseModel):
     id: str
     occurred_at: datetime
-    kind: MomentKindLiteral
+    kind: MomentKind
     title: str
     body: str
     emotion: str | None = None
@@ -23,8 +21,8 @@ class MomentResponse(BaseModel):
     media_type: MomentMediaTypeLiteral = ""
     audio_url: str | None = None
     media_metadata: dict | None = None
-    source: MomentSourceLiteral
-    visibility: MomentVisibilityLiteral = "shown"
+    source: MomentSource
+    visibility: MomentVisibility = MomentVisibility.SHOWN
 
 
 class MomentListResponse(BaseModel):
@@ -39,7 +37,7 @@ class MomentCreateRequest(BaseModel):
     body: str = Field(min_length=1, max_length=500)
     emotion: str | None = Field(default=None, max_length=32)
     media_id: str | None = None
-    kind: MomentKindLiteral = "user"
+    kind: MomentKind = MomentKind.USER
 
 
 class MomentUpdateRequest(BaseModel):
@@ -47,7 +45,7 @@ class MomentUpdateRequest(BaseModel):
 
     title: str | None = Field(default=None, max_length=64)
     body: str | None = Field(default=None, max_length=500)
-    visibility: MomentVisibilityLiteral | None = None
+    visibility: MomentVisibility | None = None
 
 
 class DiaryEntryResponse(BaseModel):
@@ -56,7 +54,7 @@ class DiaryEntryResponse(BaseModel):
     title: str
     body: str
     mood: str | None = None
-    source: DiarySourceLiteral
+    source: DiarySource
     memory_ids: list[str] = Field(default_factory=list)
     moment_ids: list[str] = Field(default_factory=list)
     edited_at: datetime | None = None

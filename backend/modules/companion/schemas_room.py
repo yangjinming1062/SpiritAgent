@@ -1,21 +1,17 @@
 """Pydantic 契约：伙伴房间图 REST 接口。"""
 
 from datetime import datetime
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-BackdropStatusLiteral = Literal["pending", "ready", "failed", "superseded"]
-BackdropOriginLiteral = Literal["onboarding", "outfit", "llm", "nightly", "user_request", "rollback"]
-BackdropIntentLiteral = Literal["decorate", "seasonal", "mood", "rebuild"]
-BackdropPolicyLiteral = Literal["locked", "llm_may_replace"]
+from .room_backdrop import BackdropIntent, BackdropOrigin, BackdropPolicy, BackdropStatus
 
 
 class BackdropResponse(BaseModel):
     id: int
-    status: BackdropStatusLiteral
-    origin: BackdropOriginLiteral
-    intent: BackdropIntentLiteral
+    status: BackdropStatus
+    origin: BackdropOrigin
+    intent: BackdropIntent
     brief: str = ""
     prompt: str = ""
     url: str = ""
@@ -35,14 +31,14 @@ class BackdropListResponse(BaseModel):
 class RoomStateResponse(BaseModel):
     active: BackdropResponse | None = None
     history: list[BackdropResponse] = Field(default_factory=list)
-    policy: BackdropPolicyLiteral = "llm_may_replace"
+    policy: BackdropPolicy = BackdropPolicy.LLM_MAY_REPLACE
     pending: BackdropResponse | None = None
 
 
 class RoomGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    intent: BackdropIntentLiteral = "rebuild"
+    intent: BackdropIntent = BackdropIntent.REBUILD
     notes: str | None = Field(default=None, max_length=500)
 
 
@@ -55,8 +51,8 @@ class RoomActivateRequest(BaseModel):
 class BackdropPolicyRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    policy: BackdropPolicyLiteral
+    policy: BackdropPolicy
 
 
 class BackdropPolicyResponse(BaseModel):
-    policy: BackdropPolicyLiteral
+    policy: BackdropPolicy

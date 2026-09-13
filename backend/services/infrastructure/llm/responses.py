@@ -10,11 +10,6 @@ INPUT_IMAGE_TOKEN_ESTIMATE: int = 800
 INPUT_VIDEO_TOKEN_ESTIMATE: int = 2000
 
 
-def copy_responses_context(ctx: dict[str, Any]) -> dict[str, Any]:
-    """Deep-copy a context dict (``{instructions, input}``) so mutations don't leak."""
-    return {"instructions": ctx["instructions"], "input": [dict(item) for item in ctx["input"]]}
-
-
 def approx_responses_tokens(instructions: str, input_items: Any) -> int:
     return approx_text_tokens(instructions or "") + _value_tokens(input_items)
 

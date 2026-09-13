@@ -20,6 +20,7 @@ from services.adapters.scheduler.cron import invalidate_user_scheduler_state
 from services.domains.companion.interaction_stats import invalidate_user_interaction_stats
 from services.domains.companion.should_act import invalidate_user_should_act
 from services.domains.conversation.proactive_state import clear_user_proactive_state
+from services.domains.memory import invalidate_memory_review_locks
 from services.infrastructure.event_store import interrupt_user_event_tasks
 
 logger = get_logger(__name__)
@@ -53,6 +54,7 @@ def _invalidate_runtime_caches(user_id: int) -> None:
     clear_user_proactive_state(user_id)
     invalidate_user_interaction_stats(user_id)
     invalidate_user_should_act(user_id)
+    invalidate_memory_review_locks(user_id)
     invalidate_user_scheduler_state(user_id)
 
 

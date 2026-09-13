@@ -16,11 +16,11 @@ class MiniMaxEmbeddingProvider(EmbeddingProvider):
         super().__init__(config)
         self._http = get_http(config.base_url or "https://api.minimaxi.com", config.api_key)
 
-    async def embed(self, texts: list[str]) -> list[list[float]]:
+    async def embed(self, texts: list[str], *, purpose: str = "db") -> list[list[float]]:
         if not texts:
             return []
         model = self.config.model or "embo-01"
-        payload = {"model": model, "texts": texts, "type": "db"}
+        payload = {"model": model, "texts": texts, "type": purpose}
         resp = await self._http.post("/v1/embeddings", json=payload)
         body = raise_for_minimax_response(resp, provider=self.provider_name, model=model)
         vectors = body.get("vectors") if isinstance(body, dict) else None

@@ -1,13 +1,12 @@
 from . import (
-    gemini,  # noqa: F401 — 副作用：注册 gemini 供应商
-    grok,  # noqa: F401 — 副作用：注册 grok 供应商
-    mimo,  # noqa: F401 — 副作用：注册 mimo 供应商
-    minimax,  # noqa: F401 — 副作用：注册 minimax 供应商
-    zhipu,  # noqa: F401 — 副作用：注册 zhipu 供应商
+    gemini,  # noqa: F401 — 供应商子包须可被 bootstrap 以 providers.<pkg> 引用；注册由 bootstrap/registrations.py 执行
+    grok,  # noqa: F401
+    mimo,  # noqa: F401
+    minimax,  # noqa: F401
+    zhipu,  # noqa: F401
 )
 from ._reference import resolve_reference_bytes
 from .base import (
-    AudioChunk,
     BaseProvider,
     ChatProvider,
     EmbeddingProvider,
@@ -56,7 +55,6 @@ from .registry import (
 __all__ = [
     "OPENAI_COMPATIBLE_PROVIDERS",
     "PROVIDER_DEFAULT_URLS",
-    "AudioChunk",
     "BaseProvider",
     "ChatProvider",
     "EmbeddingProvider",

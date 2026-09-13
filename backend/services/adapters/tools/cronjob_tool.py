@@ -8,13 +8,10 @@ from services.domains.automation.cron_jobs import (
     create_job,
     get_job,
     list_jobs,
-    pause_job,
     remove_job,
-    resume_job,
     update_job,
 )
 from services.domains.conversation import resolve_memory_scope
-from services.infrastructure.tool_runtime import REGISTRY
 
 logger = get_logger(__name__)
 
@@ -90,7 +87,7 @@ async def _handle_cron_action(
             job_id = coerce_int(job_id_raw, None)
             if job_id is None:
                 return tool_error("job_id is required for pause")
-            job = await pause_job(scope=scope, job_id=job_id)
+            job = await update_job(scope=scope, job_id=job_id, updates={"is_paused": True})
             if not job:
                 return tool_error(f"Cron job #{job_id_raw} not found.")
             return json.dumps(
@@ -101,7 +98,7 @@ async def _handle_cron_action(
             job_id = coerce_int(job_id_raw, None)
             if job_id is None:
                 return tool_error("job_id is required for resume")
-            job = await resume_job(scope=scope, job_id=job_id)
+            job = await update_job(scope=scope, job_id=job_id, updates={"is_paused": False})
             if not job:
                 return tool_error(f"Cron job #{job_id_raw} not found.")
             return json.dumps(
@@ -178,4 +175,4 @@ CRONJOB_SCHEMA = {
 
 
 def register(registry) -> None:
-    REGISTRY.register("cronjob", CRONJOB_SCHEMA, cronjob)
+    registry.register("cronjob", CRONJOB_SCHEMA, cronjob)

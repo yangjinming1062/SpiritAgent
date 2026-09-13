@@ -3,8 +3,10 @@
 ``memories`` 表不动；moments / diary 是给用户看的展示面，不是检索向量。
 """
 
+import asyncio
 import json
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -67,7 +69,7 @@ class DiaryNotFoundError(JournalError):
     pass
 
 
-def persist_moment_media(user_id: int, media_identifier: str | None) -> str | None:
+async def persist_moment_media(user_id: int, media_identifier: str | None) -> str | None:
     """若媒体来自 temp-media，转存至正式资产目录 companion-assets/{user_id}/；外部 URL 或既有 asset 原样返回。"""
     if not media_identifier:
         return None
@@ -79,14 +81,7 @@ def persist_moment_media(user_id: int, media_identifier: str | None) -> str | No
     if resolved is not None:
         path, _ = resolved
         try:
-            data = path.read_bytes()
-            ext = path.suffix.lstrip(".").lower() or "png"
-            return save_companion_asset(
-                data,
-                user_id=user_id,
-                label="moment_media",
-                ext=ext,
-            )
+            return await asyncio.to_thread(_copy_temp_media, user_id, path)
         except OSError:
             logger.warning(
                 "Failed to migrate temp media for moment",
@@ -94,6 +89,12 @@ def persist_moment_media(user_id: int, media_identifier: str | None) -> str | No
                 exc_info=True,
             )
     return raw
+
+
+def _copy_temp_media(user_id: int, path: Path) -> str:
+    data = path.read_bytes()
+    ext = path.suffix.lstrip(".").lower() or "png"
+    return save_companion_asset(data, user_id=user_id, label="moment_media", ext=ext)
 
 
 def _moment_media_type(media_identifier: str | None) -> str:
@@ -180,8 +181,8 @@ async def create_user_moment(
     session_id: int | None = None,
     memory_id: int | None = None,
 ) -> CompanionMoment:
-    persisted_media = persist_moment_media(user_id, media_url)
-    persisted_audio = persist_moment_media(user_id, audio_url)
+    persisted_media = await persist_moment_media(user_id, media_url)
+    persisted_audio = await persist_moment_media(user_id, audio_url)
     row = CompanionMoment(
         id=str(uuid4()),
         user_id=user_id,
@@ -290,7 +291,7 @@ async def _persist_generated_media(
     label: str,
 ) -> tuple[str, str]:
     if not media_url.startswith(("http://", "https://")):
-        persisted = persist_moment_media(user_id, media_url) or media_url
+        persisted = await persist_moment_media(user_id, media_url) or media_url
         return persisted, _moment_media_type(persisted)
     data = await download_capped(
         media_url,
@@ -298,7 +299,7 @@ async def _persist_generated_media(
         timeout=600.0,
     )
     ext = _generated_media_extension(data)
-    persisted = save_companion_asset(data, user_id=user_id, label=label, ext=ext)
+    persisted = await asyncio.to_thread(save_companion_asset, data, user_id=user_id, label=label, ext=ext)
     return persisted, _media_type_for_extension(ext)
 
 
@@ -388,7 +389,6 @@ async def write_system_moment(
     template = _SYSTEM_MOMENT_TEMPLATES.get(event_key, {})
     final_title = (title if title is not None else template.get("title", "片段"))[:64]
     final_body = (body if body is not None else template.get("body", ""))[:500]
-    persisted_media = persist_moment_media(user_id, media_url)
     async with SESSION_LOCAL() as session:
         existing = (
             (
@@ -411,6 +411,8 @@ async def write_system_moment(
                 extra={"user_id": user_id, "limit": limit},
             )
             return None
+        # 通过去重与配额检查后才转存媒体，避免 bail 路径在资产目录留下无行引用的孤儿文件
+        persisted_media = await persist_moment_media(user_id, media_url)
         row = CompanionMoment(
             id=str(uuid4()),
             user_id=user_id,
@@ -431,10 +433,8 @@ async def write_system_moment(
 
 
 async def check_moment_llm_quota(db: AsyncSession, user_id: int) -> bool:
-    """角色主动 moment_create 每日配额：每用户每 24h ≤ moment_llm_per_day（默认 3）。"""
+    """角色主动 moment_create 每日配额：每用户每 24h ≤ moment_llm_per_day（默认 3，0 表示关闭该通道）。"""
     limit = int(SETTINGS.moment_llm_per_day)
-    if limit <= 0:
-        return True
     since = utc_now() - timedelta(hours=24)
     count = (
         await db.execute(

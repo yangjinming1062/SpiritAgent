@@ -11,6 +11,13 @@ from .constants import DEFAULT_LANGUAGE, SUPPORTED_LANGUAGES
 
 logger = logging.getLogger(__name__)
 
+TIME_NOTE_ZH_HEAD = "（系统时间："
+TIME_NOTE_EN_HEAD = "(System time:"
+# CJK 表意文字、兼容表意、扩展 B、全角形式与 CJK 标点/部首——与西文分别计价。
+_CJK_CHARS = re.compile(
+    "[⸀-⹿⺀-⻿　-〿㇀-㇯㈀-㏿㐀-䶿一-鿿豈-﫿＀-￯ -⁯𠀀-𲎯]",
+)
+
 
 def apply_partial(obj: Any, payload: BaseModel, /, *, exclude: frozenset[str] = frozenset()) -> None:
     for field, value in payload.model_dump(exclude_unset=True, exclude=exclude).items():
@@ -71,9 +78,6 @@ def ensure_utc(dt: datetime) -> datetime:
 
 
 # ---------- 时间格式化（陪伴对话时间感知）----------
-
-TIME_NOTE_ZH_HEAD = "（系统时间："
-TIME_NOTE_EN_HEAD = "(System time:"
 
 
 def _safe_localize(dt: datetime | None, tz_str: str | None) -> datetime | None:
@@ -223,12 +227,6 @@ def coerce_hour_0_23(value: Any) -> int:
     if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 23:
         return -1
     return value
-
-
-# CJK 表意文字、兼容表意、扩展 B、全角形式与 CJK 标点/部首——与西文分别计价。
-_CJK_CHARS = re.compile(
-    "[⸀-⹿⺀-⻿　-〿㇀-㇯㈀-㏿㐀-䶿一-鿿豈-﫿＀-￯ -⁯𠀀-𲎯]",
-)
 
 
 def approx_text_tokens(text: str) -> int:

@@ -63,15 +63,6 @@ _LAST_MEMORY_REVIEW: dict[MemoryScope, float] = {}
 # per-user 最近一次成功的 nightly pipeline 运行的本地日期字符串。
 _LAST_NIGHTLY_RUN: dict[MemoryScope, str] = {}
 
-
-def invalidate_user_scheduler_state(user_id: int) -> None:
-    """覆盖恢复后丢弃从旧数据计算出的调度节流镜像。"""
-    for state in (_LAST_MEMORY_REVIEW, _LAST_NIGHTLY_RUN):
-        for scope in list(state):
-            if scope.user_id == user_id:
-                state.pop(scope, None)
-
-
 # recall-pool 扫描本身的外层节流：扫描便宜（部分索引），但没用户符合时每分钟跑一次没意义。10 min 让发现延迟可控，由 per-user 6h 节流把重 LLM 调用频率压住。
 _LAST_MEMORY_REVIEW_SCAN: float = 0.0
 _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS: int = 600
@@ -89,10 +80,18 @@ _IGNORED_OUTREACH_JOB_ID = -2
 _IGNORED_OUTREACH_MIN_IGNORED_SECONDS = 3600  # 用户持续不理伙伴 1 小时后才有资格触发
 _IGNORED_OUTREACH_MIN_SPACING_SECONDS = 3600  # 两次触发之间的最小间距——LLM 传 0 结束节奏后的再触发安全网
 
+
+def invalidate_user_scheduler_state(user_id: int) -> None:
+    """覆盖恢复后丢弃从旧数据计算出的调度节流镜像。"""
+    for state in (_LAST_MEMORY_REVIEW, _LAST_NIGHTLY_RUN):
+        for scope in list(state):
+            if scope.user_id == user_id:
+                state.pop(scope, None)
+
+
 # 每个 tick 处理的到期 job 硬上限——限制批量 CAS 的语句大小和单 tick 工作量，避免长时间停摆后的回追（例如 60 分钟 ``* * * * *`` 调度，第一 tick 有 3600 个到期）。超出上限的 job 保留原 next_run_at，下一 tick 再触发。
 _MAX_DUE_PER_TICK = 200
 
-# 夜间扫描每批处理的用户上限，防止单条 SQL 的 IN 谓词过大。
 _SCHEDULER = BackgroundTask("scheduler.cron_loop")
 
 

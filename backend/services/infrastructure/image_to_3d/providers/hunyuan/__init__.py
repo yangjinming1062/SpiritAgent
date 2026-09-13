@@ -10,11 +10,10 @@ from ...base import ImageTo3DError, ImageTo3DProvider, Model3DAsset, Model3DJob,
 from . import client
 from .client import HunyuanApiError
 
-# TokenHub 接受裸 base64；自定义代理需要 data-URI 时改为前缀
-IMAGE_BASE64_PREFIX = ""
-
 _MAX_IMAGE_BYTES = 10 * 1024 * 1024
 _ALLOWED_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp"}
+# 供应商产物 zip 压缩比不可控，解压前按声明大小封顶，防 zip 炸弹
+_MAX_GLB_EXTRACT_BYTES = 512 * 1024 * 1024
 
 # TokenHub 任务状态 → Model3DPollResult.status；未知值继续轮询。
 _STATUS_MAP: dict[str, str] = {
@@ -37,10 +36,6 @@ class HunyuanImageTo3DProvider(ImageTo3DProvider):
     SUPPORTS_ANIMATE_BIND = False
     DEFAULT_MODEL = "hy-3d-3.1"
 
-    def __init__(self, api_key: str = "", base_url: str = "") -> None:
-        self.api_key = api_key
-        self.base_url = (base_url or client.DEFAULT_BASE_URL).rstrip("/")
-
     @property
     def _model(self) -> str:
         return getattr(SETTINGS, "hunyuan_model_version", "") or self.DEFAULT_MODEL
@@ -51,7 +46,7 @@ class HunyuanImageTo3DProvider(ImageTo3DProvider):
         image_bytes = await asyncio.to_thread(path.read_bytes)
         if len(image_bytes) > _MAX_IMAGE_BYTES:
             raise ImageTo3DError(f"种子图超过 10MB 上限（{len(image_bytes)} bytes）", provider=self.provider_name)
-        return IMAGE_BASE64_PREFIX + base64.b64encode(image_bytes).decode("ascii")
+        return base64.b64encode(image_bytes).decode("ascii")
 
     async def create_image_to_model(
         self,
@@ -114,7 +109,7 @@ class HunyuanImageTo3DProvider(ImageTo3DProvider):
         dest_dir.mkdir(parents=True, exist_ok=True)
         raw = await client.download_model(glb_urls[0] if glb_urls else any_urls[0])
         if raw[:4] == b"PK\x03\x04":
-            glb_path = _extract_glb_from_zip(raw, dest_dir)
+            glb_path = await asyncio.to_thread(_extract_glb_from_zip, raw, dest_dir)
             if glb_path is None:
                 raise ImageTo3DError("hunyuan 产物 zip 内未找到 GLB", provider=self.provider_name)
             return glb_path
@@ -127,6 +122,11 @@ def _extract_glb_from_zip(raw: bytes, dest_dir: Path) -> Path | None:
     with zipfile.ZipFile(io.BytesIO(raw)) as zf:
         for name in zf.namelist():
             if name.lower().endswith(".glb"):
+                if zf.getinfo(name).file_size > _MAX_GLB_EXTRACT_BYTES:
+                    raise ImageTo3DError(
+                        f"hunyuan 产物 zip 内 GLB 超过解压上限（{zf.getinfo(name).file_size} bytes）",
+                        provider="hunyuan",
+                    )
                 out = dest_dir / Path(name).name
                 out.write_bytes(zf.read(name))
                 return out

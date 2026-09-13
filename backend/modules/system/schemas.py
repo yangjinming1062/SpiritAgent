@@ -59,13 +59,11 @@ class ChatRequest(BaseModel):
     model: str | None = None  # 可选覆盖；与 context_tokens 一起使用，覆盖模型的窗口与供应商默认不同时
     context_tokens: int | None = Field(default=None, gt=0)
     client_context: ChatRequestClientContext | None = None
-    tools: list[dict] | None = None
 
 
 class AgentPromptConfig(BaseModel):
     valid_tool_names: list[str] = Field(default_factory=list)
     model: str | None = None
-    tools: list[dict] | None = None
     client_context: ChatRequestClientContext | None = None
     identity_prompt: str | None = None
     platform: str = "desktop"

@@ -1,5 +1,4 @@
 import asyncio
-import contextlib
 import hashlib
 import json
 import os
@@ -7,7 +6,7 @@ import shutil
 import tempfile
 import uuid
 import zipfile
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -136,6 +135,17 @@ async def update_user(user_id: int, payload: UserUpdate, db: DbSession) -> UserR
     return UserResponse.model_validate(user)
 
 
+def _rm_user_asset_dir(d: Path) -> None:
+    """尽力删除用户资产目录；文件系统错误不阻断被遗忘权流程。"""
+    try:
+        if d.is_dir():
+            shutil.rmtree(d, ignore_errors=True)
+        else:
+            d.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 @router.delete("/users/{user_id}", response_model=MessageResponse)
 async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
     await get_or_404(db, User, id=user_id, detail="用户不存在。")
@@ -144,7 +154,7 @@ async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
     # 清除用户范围内的 DB 行与磁盘资产（被遗忘权）。
     avatar_rows = (await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id))).scalars().all()
     for av in avatar_rows:
-        delete_portrait_file(av.asset_url)
+        await asyncio.to_thread(delete_portrait_file, av.asset_url)
 
     await db.execute(delete(AvatarAsset).where(AvatarAsset.user_id == user_id))
     await db.execute(delete(Companion3DModel).where(Companion3DModel.user_id == user_id))
@@ -154,11 +164,8 @@ async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
     for sub in ("companion-assets", "companion-models"):
         d = Path(SETTINGS.data_dir) / sub / str(user_id)
         if d.exists():
-            with contextlib.suppress(Exception):
-                if d.is_dir():
-                    shutil.rmtree(d, ignore_errors=True)
-                else:
-                    d.unlink(missing_ok=True)
+            # 用户资产可达 GB 级，删除移出事件循环
+            await asyncio.to_thread(_rm_user_asset_dir, d)
     return {"message": "用户已删除。"}
 
 
@@ -234,7 +241,10 @@ async def upsert_model_config(user_id: int, payload: UserModelConfigRequest, db:
     await get_or_404(db, User, id=user_id, detail="用户不存在。")
     config = (await db.execute(select(UserModelConfig).where(UserModelConfig.user_id == user_id))).scalar_one_or_none()
     previous = load_ai_config(config.ai_config) if config else None
-    ai_config = prepare_ai_config(payload.ai_config, previous)
+    try:
+        ai_config = prepare_ai_config(payload.ai_config, previous)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
     if config:
         config.ai_config = ai_config.model_dump()
     else:
@@ -328,7 +338,7 @@ async def export_user_backup(
     os.close(fd)
     try:
         await asyncio.to_thread(_create_export_zip, tmp, user, admin, rows_by_table, files)
-        filename = f"spiritagent-user-{user_id}-{datetime.utcnow():%Y%m%d%H%M%S}.zip"
+        filename = f"spiritagent-user-{user_id}-{datetime.now(UTC):%Y%m%d%H%M%S}.zip"
         return FileResponse(
             path=tmp,
             media_type="application/zip",
@@ -373,7 +383,10 @@ async def import_user_backup(
 
         await asyncio.to_thread(_extract_and_validate_zip, zip_path, extract_root)
 
-        manifest = await asyncio.to_thread(load_manifest, extract_root)
+        try:
+            manifest = await asyncio.to_thread(load_manifest, extract_root)
+        except ValueError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"备份无效：{exc}") from exc
         source_uid = int(manifest["source_user_id"])
         rewriter = UrlRewriter({})
         boundary = user_maintenance(user_id)

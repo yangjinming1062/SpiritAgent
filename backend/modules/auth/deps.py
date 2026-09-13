@@ -97,9 +97,3 @@ async def get_current_user(
         yield user
     finally:
         await end_user_request(user.id)
-
-
-async def get_current_login_record(
-    session: tuple[User, LoginRecord] = Depends(get_current_session),
-) -> LoginRecord:
-    return session[1]

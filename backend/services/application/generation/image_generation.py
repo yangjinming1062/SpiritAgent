@@ -78,9 +78,9 @@ def _image_ext_from_bytes(data: bytes, fallback: str = "jpg") -> str:
     return fallback
 
 
-def _persist_user_asset(data: bytes, user_id: int, *, mime: str = "") -> str:
+async def _persist_user_asset_async(data: bytes, user_id: int, *, mime: str = "") -> str:
     ext = _EXT_BY_MIME.get((mime or "").lower()) or _image_ext_from_bytes(data)
-    return save_companion_asset(data, user_id=user_id, label="chat_image", ext=ext)
+    return await asyncio.to_thread(save_companion_asset, data, user_id=user_id, label="chat_image", ext=ext)
 
 
 async def generate_images(
@@ -160,7 +160,7 @@ async def generate_images(
             if as_user_assets:
                 try:
                     data = await download_capped(asset.url, max_bytes=50 * 1024 * 1024, timeout=120.0)
-                    urls.append(_persist_user_asset(data, user_id, mime=asset.mime or ""))
+                    urls.append(await _persist_user_asset_async(data, user_id, mime=asset.mime or ""))
                     continue
                 except Exception:
                     logger.warning(
@@ -175,10 +175,16 @@ async def generate_images(
                 continue
             data = base64.b64decode(asset.b64)
             if as_user_assets:
-                urls.append(_persist_user_asset(data, user_id, mime=asset.mime or ""))
+                urls.append(await _persist_user_asset_async(data, user_id, mime=asset.mime or ""))
                 continue
             ext = _EXT_BY_MIME.get((asset.mime or "").lower(), "jpg")
-            _file_id, public_url = save_file(data, session_id="", content_type=asset.mime or "image/jpeg", ext=ext)
+            _file_id, public_url = await asyncio.to_thread(
+                save_file,
+                data,
+                session_id="",
+                content_type=asset.mime or "image/jpeg",
+                ext=ext,
+            )
             urls.append(public_url)
     if not urls:
         raise ImageGenerationError("图片生成服务返回空结果")

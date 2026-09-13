@@ -1,5 +1,5 @@
 from common import get_router
-from fastapi import WebSocket, WebSocketDisconnect
+from fastapi import WebSocket
 from services.adapters.desktop.handlers import handle_chat_websocket
 
 router = get_router()
@@ -11,5 +11,5 @@ async def chat_websocket(websocket: WebSocket, ticket: str | None = None, token:
     credential = ticket or token
     if not credential:
         await websocket.close(code=1008)
-        raise WebSocketDisconnect
+        return
     await handle_chat_websocket(websocket, credential)

@@ -146,12 +146,6 @@ def client_asset_url(storage_path: str) -> str:
     return storage_path
 
 
-def companion_asset_exists(storage_path: str) -> bool:
-    """判断裸存储路径对应文件是否仍在磁盘上——文件丢失的孤儿记录应算缓存未命中。"""
-    parsed = parse_companion_asset_path(storage_path)
-    return parsed is not None and resolve_companion_asset_path(*parsed) is not None
-
-
 def unlink_companion_asset(storage_path: str | None) -> Path | None:
     """尽力删除裸存储路径对应文件，返回被删路径；路径非法或文件缺失时返回 None。"""
     parsed = parse_companion_asset_path(storage_path)
@@ -172,13 +166,6 @@ def compress_glb(data: bytes) -> bytes:
     if len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B:
         return data
     return gzip.compress(data, compresslevel=6)
-
-
-def decompress_glb_if_needed(data: bytes) -> bytes:
-    """带 gzip 魔数时透明解压 GLB 字节，否则原样返回。"""
-    if len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B:
-        return gzip.decompress(data)
-    return data
 
 
 def _models_root() -> Path:
@@ -216,10 +203,6 @@ def compute_file_sha256(path: Path | str) -> str:
         while chunk := f.read(256 * 1024):
             h.update(chunk)
     return h.hexdigest()
-
-
-def compute_bytes_sha256(data: bytes) -> str:
-    return hashlib.sha256(data).hexdigest()
 
 
 def get_companion_model_sha256(user_id: int, filename: str) -> str | None:

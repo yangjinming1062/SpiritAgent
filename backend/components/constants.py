@@ -39,15 +39,10 @@ LLM_RETRY_MIN_TIMEOUT: float = 1.0
 # 给 LLM 留出余量避免中途截断。
 CONTEXT_SUMMARY_HEADROOM_FACTOR: int = 2
 
-MEMORY_RECALL_MAX_RESULTS: int = 10
-
-
 MAX_RECALL_CONTENT_CHARS: int = 4_000
-
 
 # 同一预设周期维护的最小间隔（秒），限制后台 LLM 调用频率。
 MEMORY_REVIEW_INTERVAL_SECONDS: int = 6 * 3600
-
 
 NIGHTLY_WINDOW_START_HOUR: int = 0
 NIGHTLY_WINDOW_END_HOUR: int = 5
@@ -58,7 +53,6 @@ NIGHTLY_PLANNING_REASONING_EFFORT: str = "high"
 NIGHTLY_PLANNING_MAX_TOKENS: int = 16_000
 NIGHTLY_DIARY_MAX_TOKENS: int = 800
 MAX_DIARY_CONTENT_CHARS: int = 1_000
-
 
 JSON_RPC_VERSION: str = "2.0"
 
@@ -77,13 +71,11 @@ JSONRPC_SLASH_BUSY: int = -32002
 # Slash 命令兜底错误码（handler 内部异常未映射时使用）。
 JSONRPC_SLASH_GENERIC: int = -32003
 
-
 # OpenAI TTS 硬限 4096，留 4000 给安全余量。
 TTS_MAX_TEXT_CHARS: int = 4_000
 
 # 云端 STT 上限 25 MB；客户端卡到 24 MB 避开边界 413。
 STT_MAX_AUDIO_BYTES: int = 24 * 1024 * 1024
-
 
 # SQL LIKE 通配符（%、_）的转义符，避免字面输入把搜索放大为「全部」。
 SQL_LIKE_ESCAPE_CHAR: str = "\\"
@@ -96,11 +88,9 @@ SESSION_PREVIEW_MAX_CHARS: int = 200
 SESSION_HISTORY_TRUNCATE_THRESHOLD: int = 5000
 SESSION_HISTORY_PRE_BUFFER: int = 200
 
-
 MAX_ATTACHMENTS_PER_TURN: int = 16
 
 LOGIN_HEARTBEAT_INTERVAL_SECONDS: int = 60
-
 
 REDACT_PHONE_DIGIT_THRESHOLD: int = 8
 
@@ -109,13 +99,11 @@ SECRET_MASK_TAIL_CHARS: int = 4
 
 SECRET_MASK_MIN_LENGTH: int = 18
 
-
 # 关闭 tool-use 约束的字符串值集合。
 TOOL_ENFORCE_OFF_VALUES: frozenset[str] = frozenset({"false", "never", "no", "off"})
 
 # voice-design 自由文本提示词上限；MIMO 会把它逐字嵌入 voice_id。
 MAX_VOICE_DESIGN_PROMPT_CHARS: int = 200
-
 
 # 协议层附件类型判别；聊天管道接受 image（视觉模型以 image_url 消费）与 video（上传后以 input_video 消费）。
 ATTACHMENT_TYPE_IMAGE: str = "image"

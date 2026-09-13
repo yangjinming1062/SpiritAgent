@@ -3,7 +3,7 @@ from typing import Any
 
 from components import get_logger, session_scope, utc_now
 from modules.conversation import Conversation, Message
-from modules.memory import Memory
+from modules.memory import MEMORY_EMBEDDING_DIM, Memory
 from sqlalchemy import ColumnElement, and_, case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,7 +13,7 @@ from services.domains.conversation import validate_memory_scope
 from services.infrastructure.llm import generate_embeddings, resolve_embedding_provider
 
 logger = get_logger(__name__)
-MEMORY_EMBEDDING_DIM = 1536
+
 _SLOTTED_PREFIXES = (
     "user_profile:",
     "diary:",

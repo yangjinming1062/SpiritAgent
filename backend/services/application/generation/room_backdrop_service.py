@@ -64,6 +64,14 @@ _ONE_DAY = timedelta(days=1)
 _AUTONOMOUS_ORIGINS = frozenset(
     (BackdropOrigin.LLM.value, BackdropOrigin.NIGHTLY.value),
 )
+_MIN_IMAGE_BYTES: int = 4 * 1024
+_VALID_IMAGE_MAGIC: tuple[bytes, ...] = (
+    b"\x89PNG",
+    b"\xff\xd8\xff",
+    b"RIFF",
+    b"GIF8",
+    b"BM",
+)
 
 
 class RoomBackdropError(RuntimeError):
@@ -102,20 +110,6 @@ async def _emit_backdrop_event(
             await db.commit()
     except Exception:
         logger.warning("Failed to emit %s", event_type, exc_info=True)
-
-
-async def list_backdrops(db: AsyncSession, user_id: int) -> list[CompanionRoomBackdrop]:
-    return (
-        (
-            await db.execute(
-                select(CompanionRoomBackdrop)
-                .where(CompanionRoomBackdrop.user_id == user_id)
-                .order_by(CompanionRoomBackdrop.id.desc()),
-            )
-        )
-        .scalars()
-        .all()
-    )
 
 
 async def get_active_backdrop(
@@ -953,16 +947,6 @@ async def drain_room_backdrop_jobs() -> None:
     _INFLIGHT_TASKS.clear()
 
 
-_MIN_IMAGE_BYTES: int = 4 * 1024
-_VALID_IMAGE_MAGIC: tuple[bytes, ...] = (
-    b"\x89PNG",
-    b"\xff\xd8\xff",
-    b"RIFF",
-    b"GIF8",
-    b"BM",
-)
-
-
 async def _fetch_image_bytes(url: str) -> tuple[bytes, str] | None:
     """把生成结果 URL 解析为 (bytes, content_type)，不可达时返回 None。"""
     if "/api/media/files/" in url:
@@ -970,7 +954,7 @@ async def _fetch_image_bytes(url: str) -> tuple[bytes, str] | None:
         res = get_file_path(fid)
         if res:
             path, ctype = res
-            return Path(path).read_bytes(), ctype
+            return await asyncio.to_thread(Path(path).read_bytes), ctype
     try:
         content = await download_capped(url, max_bytes=20 * 1024 * 1024, timeout=120.0)
         if content:

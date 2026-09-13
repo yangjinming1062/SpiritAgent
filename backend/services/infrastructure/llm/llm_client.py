@@ -300,8 +300,9 @@ async def generate_embedding(
     *,
     user_id: int | None = None,
     timeout_seconds: float = 2.0,
+    purpose: str = "db",
 ) -> list[float] | None:
-    """为单段文本生成 embedding 向量；未配置或失败时返回 None。"""
+    """为单段文本生成 embedding 向量；未配置或失败时返回 None。purpose 见 EmbeddingProvider.embed。"""
     if not text or not text.strip():
         return None
     call_id = new_call_id()
@@ -336,7 +337,7 @@ async def generate_embedding(
             user_id=user_id,
         )
         result = await asyncio.wait_for(
-            provider.embed_one(text),
+            provider.embed_one(text, purpose=purpose),
             timeout=timeout_seconds,
         )
         _log_embedding(

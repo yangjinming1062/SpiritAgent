@@ -48,4 +48,4 @@ async def search_tools_tool(query: str, **kwargs) -> str:
 
 
 def register(registry) -> None:
-    REGISTRY.register("search_tools", SEARCH_TOOLS_SCHEMA, search_tools_tool)
+    registry.register("search_tools", SEARCH_TOOLS_SCHEMA, search_tools_tool)

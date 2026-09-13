@@ -1,29 +1,22 @@
-import json
 import logging
-from collections.abc import AsyncIterator
 from typing import ClassVar
 
-import httpx
 from modules.media import SpeechStyle
 
-from ..base import AudioChunk, ProviderConfig, TTSProvider, TTSResult, VoiceDesignResult, pick_catalog_voice
+from ..base import ProviderConfig, TTSProvider, TTSResult, VoiceDesignResult, pick_catalog_voice
 from ..http import get_http
 from ..speech_style import speech_style_matches, styled_speech_text
-from ._errors import extract_minimax_audio, raise_for_minimax_response, raise_for_minimax_stream_event
+from ._errors import extract_minimax_audio, raise_for_minimax_response
 
 logger = logging.getLogger(__name__)
 
-# 流式 SSE 事件间隙可能超过共享客户端的默认 read 超时（按整段请求时长设定），流式请求单独放宽。
-_STREAM_TIMEOUT = httpx.Timeout(connect=10.0, read=60.0, write=30.0, pool=10.0)
-
 
 class MiniMaxTTSProvider(TTSProvider):
-    """通过 MiniMax 同步 POST /v1/t2a_v2 提供 TTS（{model,text,voice_setting:{voice_id,speed,vol},audio_setting:{format,sample_rate}}，data.audio 为 hex 编码音频，本模块解码回字节）；流式走同端点 stream=true SSE（事件 data.audio hex + data.status 1/2，末事件默认重复携带聚合音频需显式排除）；异步长文本 /v1/t2a_async_v2 未封装，chat 回复足够短，落在 10000 字符同步上限内。"""
+    """通过 MiniMax 同步 POST /v1/t2a_v2 提供 TTS（{model,text,voice_setting:{voice_id,speed,vol},audio_setting:{format,sample_rate}}，data.audio 为 hex 编码音频，本模块解码回字节）；异步长文本 /v1/t2a_async_v2 未封装，chat 回复足够短，落在 10000 字符同步上限内。"""
 
     provider_name = "minimax"
     DEFAULT_MODELS: ClassVar[dict[str, str]] = {"tts": "speech-2.8-hd"}
     DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"tts": 8_000}
-    SUPPORTS_SYNTH_STREAM = True
     VOICE_DESIGN_GUIDE = """\
 用一段文字描述你想要的音色，描述越具体效果越好。建议涵盖：
 • 性别与年龄：如"沉稳可靠的中年男性"、"专业播音腔的中年女性"
@@ -735,32 +728,6 @@ preview_text 为试听文本——设计完成后会用它合成一段示例音�
         audio = extract_minimax_audio(body)
         mime = "audio/mpeg" if fmt == "mp3" else f"audio/{fmt}"
         return TTSResult(audio=audio, mime=mime, voice=payload["voice_setting"]["voice_id"])
-
-    async def synthesize_stream(
-        self,
-        text: str,
-        *,
-        voice: str = "",
-        speed: float | None = None,
-        speech_style: SpeechStyle | None = None,
-    ) -> AsyncIterator[AudioChunk]:
-        payload = self._request_payload(text, voice, "pcm", speed, speech_style)
-        payload.update(stream=True, stream_options={"exclude_aggregated_audio": True})
-        async with self._client.stream("POST", "/v1/t2a_v2", json=payload, timeout=_STREAM_TIMEOUT) as resp:
-            resp.raise_for_status()
-            async for line in resp.aiter_lines():
-                if not line.startswith("data:"):
-                    continue
-                try:
-                    body = json.loads(line[5:].strip())
-                except json.JSONDecodeError:
-                    continue
-                if not isinstance(body, dict):
-                    continue
-                raise_for_minimax_stream_event(body, provider="minimax", model=self.config.model)
-                hex_audio = (body.get("data") or {}).get("audio") or ""
-                if hex_audio:
-                    yield AudioChunk(bytes.fromhex(hex_audio), "audio/pcm", sample_rate=32000)
 
     async def design_voice(self, prompt: str, *, preview_text: str = "") -> VoiceDesignResult:
         payload: dict = {"prompt": prompt, "preview_text": preview_text or "你好，我是你的桌面伙伴。"}

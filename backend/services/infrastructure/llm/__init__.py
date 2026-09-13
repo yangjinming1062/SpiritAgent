@@ -19,7 +19,7 @@ from .llm_client import (
     resolve_vision_chain,
     scale_temperature,
 )
-from .llm_fallback import execute_stream_with_fallback, execute_with_fallback
+from .llm_fallback import execute_with_fallback
 from .llm_retry import LLMRuntimeError, call_with_retry
 from .prompt_engineer import (
     FullbodyStyle,
@@ -34,7 +34,6 @@ from .prompt_engineer import (
     resolve_fullbody_template,
 )
 from .providers import (
-    AudioChunk,
     BaseProvider,
     ChatProvider,
     EmbeddingProvider,
@@ -75,7 +74,6 @@ from .providers.speech_style import speech_style_guidance, speech_style_matches
 from .responses import (
     approx_responses_tokens,
     build_responses_kwargs,
-    copy_responses_context,
     message_to_response_items,
     tool_schema_for_responses,
 )
@@ -83,13 +81,11 @@ from .stt_service import transcribe_audio
 from .tts_service import (
     resolve_speech_style_config,
     synthesize_speech,
-    synthesize_speech_stream,
 )
 from .user_config import UserLlmConfig, resolve_user_llm_config
 from .voice_catalog import VoiceEntry, pick_voice_id, voices_for_provider
 
 __all__ = [
-    "AudioChunk",
     "BaseProvider",
     "ChatProvider",
     "ClassifiedError",
@@ -132,12 +128,10 @@ __all__ = [
     "chat",
     "classify_api_error",
     "client_for_config",
-    "copy_responses_context",
     "default_base_url",
     "default_context_tokens_for",
     "default_model_for",
     "enhance_avatar_prompt",
-    "execute_stream_with_fallback",
     "execute_with_fallback",
     "generate_embedding",
     "generate_embeddings",
@@ -167,7 +161,6 @@ __all__ = [
     "speech_style_guidance",
     "speech_style_matches",
     "synthesize_speech",
-    "synthesize_speech_stream",
     "tool_schema_for_responses",
     "transcribe_audio",
     "try_resolve",

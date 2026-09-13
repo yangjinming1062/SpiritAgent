@@ -17,7 +17,8 @@ from services.adapters.tools.builtin.video_generation_tool import register as re
 from services.adapters.tools.builtin.web_tools import register as register_web
 from services.application.automation.cron_turns import execute_cron_turn
 from services.application.generation.room_backdrop_service import schedule_initial_room
-from services.domains.companion.persona_service import set_initial_room_scheduler
+from services.domains.companion.persona_service import set_greeting_moment_writer, set_initial_room_scheduler
+from services.domains.journal import write_system_moment
 from services.infrastructure.event_store import register_internal_event_handler
 from services.infrastructure.image_to_3d.providers import HunyuanImageTo3DProvider, TripoImageTo3DProvider
 from services.infrastructure.image_to_3d.registry import register as register_image_to_3d_provider
@@ -74,8 +75,9 @@ def register_internal_event_handlers() -> None:
 
 
 def wire_domain_hooks() -> None:
-    """业务域内需要触达生成流程的少数副作用点，经装配层注入，避免域反向依赖应用。"""
+    """业务域内需要触达生成流程或跨域副作用的少数入口，经装配层注入，保持域间依赖可登记、可检查。"""
     set_initial_room_scheduler(schedule_initial_room)
+    set_greeting_moment_writer(write_system_moment)
 
 
 def register_all() -> None:

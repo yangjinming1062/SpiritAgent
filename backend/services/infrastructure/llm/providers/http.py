@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import httpx
-from components import SETTINGS, get_logger, safe_outbound_async_transport
+from components import SETTINGS, download_capped, get_logger, safe_outbound_async_transport
 from openai import AsyncOpenAI, NotGiven
 
 from .base import ProviderResultUnknownError
@@ -41,10 +41,10 @@ _REQUEST_VALIDATION_PATTERNS = (
 )
 
 
-async def download_as_b64(client: httpx.AsyncClient, url: str) -> str:
-    resp = await client.get(url)
-    resp.raise_for_status()
-    return base64.b64encode(resp.content).decode("utf-8")
+async def download_as_b64(url: str) -> str:
+    """下载供应商返回的 CDN 图并编码 base64；走安全 transport（SSRF 守卫）并限制大小。"""
+    data = await download_capped(url, max_bytes=50 * 1024 * 1024, timeout=60.0)
+    return base64.b64encode(data).decode("utf-8")
 
 
 class _RetryAsyncTransport(httpx.AsyncBaseTransport):

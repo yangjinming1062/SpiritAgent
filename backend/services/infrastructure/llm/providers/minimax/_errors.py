@@ -72,13 +72,6 @@ def raise_for_minimax_response(resp, *, provider: str, model: str) -> dict:
     return body if isinstance(body, dict) else {}
 
 
-def raise_for_minimax_stream_event(body: dict, *, provider: str, model: str) -> None:
-    """SSE 流式事件的 base_resp 校验——错误同样裹在 200 事件体内（首事件前抛出仍可回退下一家）。"""
-    base = body.get("base_resp")
-    if isinstance(base, dict):
-        _raise_for_base_resp(base, provider=provider, model=model)
-
-
 def extract_minimax_audio(body: dict) -> bytes:
     data = body.get("data") or {}
     audio_hex = data.get("audio") or ""
