@@ -12,10 +12,7 @@ import { useStrings } from '@/shared/strings'
 const CRACK_PATHS = [
   'M 160 70 L 148 95 L 155 115 L 140 135',
   'M 230 140 L 205 148 L 195 135 L 180 155',
-  'M 90 210 L 115 200 L 125 215 L 145 195',
-  'M 80 145 L 105 150 L 115 165 L 138 160',
-  'M 175 60 L 180 88 L 168 105 L 175 125',
-  'M 160 270 L 165 240 L 152 215 L 160 170'
+  'M 90 210 L 115 200 L 125 215 L 145 195'
 ]
 
 const CLICK_PROMPT_MS = 2000
@@ -164,7 +161,7 @@ export function EggStage({ size = 280, onTap }: EggStageProps): React.JSX.Elemen
 
         {/* 裂纹装饰 */}
         <g filter="url(#crack-glow-filter)" opacity="0.55">
-          {CRACK_PATHS.slice(0, 3).map((d, i) => (
+          {CRACK_PATHS.map((d, i) => (
             <path
               className="animate-crack-shimmer"
               d={d}

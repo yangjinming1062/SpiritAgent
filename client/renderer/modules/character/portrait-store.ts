@@ -52,6 +52,23 @@ export const $portraitUrl = atom<string | null>(null)
 // 3D 流水线是在服务端读取当前 avatar 行，所以这里只是为画廊选择做镜像。
 export const $activeAvatarId = atom<number | null>(initialPersisted.avatarId)
 
+// 用户在按「重新生成」之前输入的反馈文本。在所有暴露重生流程的面板间共享
+// （onboarding / 伙伴设置 / 重新对话微调性格 / 角色 inline 编辑），
+// 这样用户在某个面板里输入了一半再切到另一个面板时草稿不会丢。
+// 每次重生成功后由 useRegeneratePortrait 清掉。
+export const $regenFeedback = atom<string>('')
+
+export interface PortraitEntry {
+  assetUrl?: string | null
+  avatarId: number | null
+  portraitUrl: string | null
+}
+
+const MAX_HISTORY = 5
+
+export const $portraitHistory = atom<PortraitEntry[]>([])
+export const $portraitSelectedIdx = atom<number>(0)
+
 registerStorageClearHandler(() => {
   $portraitUrl.set(null)
   $activeAvatarId.set(null)
@@ -63,10 +80,6 @@ function persistPortrait(next: PersistedPortrait): void {
   $activeAvatarId.set(next.avatarId)
   portraitPersisted.reset()
   portraitPersisted.set({ assetUrl: next.assetUrl, avatarId: next.avatarId })
-}
-
-if ('portraitDataUrl' in (initialPersisted as object)) {
-  persistPortrait({ assetUrl: initialPersisted.assetUrl, avatarId: initialPersisted.avatarId })
 }
 
 async function restorePortraitFromDisk(assetUrl: string, epoch: number): Promise<void> {
@@ -265,23 +278,6 @@ export async function selectAvatar(avatarId: number): Promise<boolean> {
     return false
   }
 }
-
-// 用户在按「重新生成」之前输入的反馈文本。在所有暴露重生流程的面板间共享
-// （onboarding / 伙伴设置 / 重新对话微调性格 / 角色 inline 编辑），
-// 这样用户在某个面板里输入了一半再切到另一个面板时草稿不会丢。
-// 每次重生成功后由 useRegeneratePortrait 清掉。
-export const $regenFeedback = atom<string>('')
-
-export interface PortraitEntry {
-  assetUrl?: string | null
-  avatarId: number | null
-  portraitUrl: string | null
-}
-
-const MAX_HISTORY = 5
-
-export const $portraitHistory = atom<PortraitEntry[]>([])
-export const $portraitSelectedIdx = atom<number>(0)
 
 export function pushPortraitEntry(entry: PortraitEntry): void {
   const current = $portraitHistory.get()

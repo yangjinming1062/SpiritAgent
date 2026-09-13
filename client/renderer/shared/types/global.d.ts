@@ -10,35 +10,13 @@
 // `IpcInvokeContract['spiritagent:api']` 是非泛型的,直接查表会让泛型调用点全报错。
 
 import type {
-  DesktopActivatePayload,
-  DesktopAuthBroadcast,
-  DesktopAuthSnapshot,
-  DesktopBootProgress,
   DesktopGatewayEvent,
-  DesktopGatewayRpcRequest,
   DesktopGatewayRpcResponse,
   DesktopGatewayState,
-  DesktopPrefsHydrated,
-  DesktopRunnerState,
-  DesktopRunnerStatusEvent,
-  DesktopShortcutsConfig,
-  DesktopShortcutsSetPayload,
-  DesktopShortcutsState,
-  DesktopSurfaceChangedEvent,
-  DesktopSurfaceOpenPayload,
-  DesktopUiThemeBroadcast,
-  DesktopUpdateEvent,
   IpcEventContract,
   IpcInvokeContract,
   IpcSendContract,
-  MediaSttPayload,
-  MediaTtsPayload,
-  RunnerConfigPatch,
-  ShortcutRegistrationStatus,
-  SpiritAgentApiRequest,
-  SpiritAgentConnectionPublic,
-  SpiritAgentSelectPathsOptions,
-  SpiritAgentUiTheme
+  SpiritAgentApiRequest
 } from '@ipc/contracts'
 
 // 把契约里的 `(payload) => R | Promise<R>` 收窄为 `(...args) => Promise<R>`,
@@ -170,39 +148,4 @@ declare global {
       getPathForFile: (file: File) => string
     }
   }
-}
-
-// 显式重新导出,避免 60+ 处 `window.spiritagent` 调用方需要重写导入;
-// `expectTypeOf<IpcInvokeContract[K]>()` 之类的类型测试也可以从同一个模块导入。
-export type {
-  DesktopActivatePayload,
-  DesktopAuthBroadcast,
-  DesktopAuthSnapshot,
-  DesktopBootProgress,
-  type DesktopGatewayEvent,
-  type DesktopGatewayRpcRequest,
-  type DesktopGatewayRpcResponse,
-  type DesktopGatewayState,
-  type DesktopPrefsHydrated,
-  type DesktopRunnerState,
-  type DesktopRunnerStatusEvent,
-  type DesktopShortcutsConfig,
-  type DesktopShortcutsSetPayload,
-  type DesktopShortcutsState,
-  type DesktopSurfaceChangedEvent,
-  type DesktopSurfaceOpenPayload,
-  type DesktopUiThemeBroadcast,
-  type DesktopUpdateEvent,
-  type IpcEventContract,
-  type IpcInvokeContract,
-  type IpcSendContract,
-  type MediaSttPayload,
-  type MediaTtsPayload,
-  type RunnerConfigPatch,
-  type ShortcutRegistrationStatus,
-  type SpiritAgentApiRequest,
-  type SpiritAgentConnectionPublic,
-  SpiritAgentPrefsSet,
-  SpiritAgentSelectPathsOptions,
-  SpiritAgentUiTheme
 }

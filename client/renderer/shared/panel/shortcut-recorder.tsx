@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState } from 'react'
 
 import { AlertCircle, Check, Pencil, RefreshCw, X } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
+import { useStrings } from '@/shared/strings'
 
 import { BTN_GHOST, BTN_ICON } from './palette'
 
@@ -232,6 +233,7 @@ export function ShortcutRecorder({
   error,
   disabled = false
 }: ShortcutRecorderProps): React.JSX.Element {
+  const t = useStrings().settings.shortcuts
   const [recording, setRecording] = useState(false)
   const [heldModifiers, setHeldModifiers] = useState<string[]>([])
   const containerRef = useRef<HTMLDivElement>(null)
@@ -330,7 +332,7 @@ export function ShortcutRecorder({
     <div className="flex flex-col gap-1.5" ref={containerRef}>
       <div className="flex items-center gap-2">
         <button
-          aria-label={recording ? '正在录制快捷键' : '点击修改快捷键'}
+          aria-label={recording ? t.recordingAria : t.editAria}
           className={cn(
             'group relative flex min-h-8 min-w-44 items-center justify-between gap-2 rounded-lg border px-3 py-1 text-xs transition select-none',
             recording
@@ -362,7 +364,7 @@ export function ShortcutRecorder({
                 ))
               ) : (
                 <span className="flex items-center gap-1.5 text-[11px] text-accent animate-pulse font-medium">
-                  请按下组合键…
+                  {t.pressKeysPrompt}
                 </span>
               )
             ) : tokens.length > 0 ? (
@@ -375,20 +377,20 @@ export function ShortcutRecorder({
                 </Fragment>
               ))
             ) : (
-              <span className="text-[11px] text-faint">未设置</span>
+              <span className="text-[11px] text-faint">{t.empty}</span>
             )}
           </div>
 
           <div className="flex items-center gap-1.5 pl-2 text-faint group-hover:text-muted">
             {recording ? (
-              <span className="text-[10px] text-faint">Esc 取消</span>
+              <span className="text-[10px] text-faint">{t.cancelHint}</span>
             ) : (
               <>
                 {value &&
                   (registered && !error ? (
-                    <Check className="size-3.5 text-success" title="已成功注册全局热键" />
+                    <Check className="size-3.5 text-success" title={t.registeredOk} />
                   ) : (
-                    <AlertCircle className="size-3.5 text-danger-fg" title={error || '热键注册失败'} />
+                    <AlertCircle className="size-3.5 text-danger-fg" title={error || t.registerFailed} />
                   ))}
                 <Pencil className="size-3 opacity-0 transition group-hover:opacity-100" />
               </>
@@ -398,11 +400,11 @@ export function ShortcutRecorder({
 
         {value && !recording && (
           <button
-            aria-label="清空快捷键"
+            aria-label={t.clearAria}
             className={cn(BTN_ICON, 'size-8 text-faint hover:text-strong')}
             disabled={disabled}
             onClick={() => onChange('')}
-            title="禁用 / 清空快捷键"
+            title={t.clearTitle}
             type="button"
           >
             <X />
@@ -411,15 +413,15 @@ export function ShortcutRecorder({
 
         {isCustomized && defaultValue && !recording && (
           <button
-            aria-label="恢复默认快捷键"
+            aria-label={t.resetAria}
             className={cn(BTN_GHOST, 'h-8 px-2 text-muted hover:text-strong')}
             disabled={disabled}
             onClick={() => onChange(defaultValue)}
-            title={`恢复为默认值 (${defaultValue})`}
+            title={t.resetTitle(defaultValue)}
             type="button"
           >
             <RefreshCw className="mr-1 size-3.5" />
-            <span>默认</span>
+            <span>{t.defaultLabel}</span>
           </button>
         )}
       </div>

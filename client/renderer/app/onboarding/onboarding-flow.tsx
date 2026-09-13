@@ -52,26 +52,25 @@ import {
   voiceSelectionId,
   warmAudioContext
 } from '@/modules/speech'
-import { useGatewayRequest } from '@/shared'
+import {
+  HistoryGallery,
+  type HistoryGalleryItem,
+  PortraitLightbox,
+  useGatewayRequest,
+  useNaturalAspectRatio
+} from '@/shared'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { FolderOpen, Sparkles } from '@/shared/lib/icons'
 import { isClientErrorIpc, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { cn } from '@/shared/lib/utils'
-import { INPUT_CLASS } from '@/shared/panel'
+import { Chip, INPUT_CLASS } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
 
 import { computeBackTransition } from './back-transition'
 import { type OnboardingAudioTag, playOnboardingAudio } from './onboarding-audio'
-import {
-  Chip,
-  HistoryGallery,
-  type HistoryGalleryItem,
-  PortraitLightbox,
-  PortraitPanel,
-  useNaturalAspectRatio
-} from './onboarding-components'
+import { PortraitPanel } from './onboarding-components'
 import { useRegeneratePortrait } from './use-regenerate-portrait'
 
 type Phase =

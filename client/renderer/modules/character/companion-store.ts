@@ -37,6 +37,15 @@ export const $spriteActionQueue = atom<string[]>([])
 const $previousState = atom<SpriteStateName>('idle')
 export const $clipOverride = atom<string | null>(null)
 
+// 程序化视线目标（精灵窗口归一 [-1,1]，与指针跟随同空间）：显式目标优先于指针
+// （ritual walk 飞行途中锁定目标窗口中心）；null = 回到指针跟随。
+export const $gazeTarget = atom<{ nx: number; ny: number } | null>(null)
+
+let gazeResetTimer: ReturnType<typeof setTimeout> | null = null
+
+// 跨模块共享的水合去重缓存：同 key 的并发水合只跑一次。
+const inFlightHydrations = new Map<string, Promise<unknown>>()
+
 // 打扰档位门控伙伴的主动行为（DESIGN §6.2）。
 // 三档：still（静止，停止一切主动 LLM 调用与分析，仅响应交互）、
 // normal（常规，仅文字问候等原地轻互动）、autonomous（自主，开放桌面精灵视觉与空间表达）。
@@ -173,12 +182,6 @@ export function playSpriteActionSequence(actions: readonly string[]): void {
   $spriteAction.set(first ?? null)
 }
 
-// 程序化视线目标（精灵窗口归一 [-1,1]，与指针跟随同空间）：显式目标优先于指针
-// （ritual walk 飞行途中锁定目标窗口中心）；null = 回到指针跟随。
-export const $gazeTarget = atom<{ nx: number; ny: number } | null>(null)
-
-let gazeResetTimer: ReturnType<typeof setTimeout> | null = null
-
 /** 锁定视线到一个点，durationMs 后自动回到指针跟随。 */
 export function lockGazeToPoint(point: { nx: number; ny: number }, durationMs = 6000): void {
   if (gazeResetTimer) {
@@ -250,8 +253,6 @@ export function resolveCompanionRenderLayer(opts: {
 
   return 'companion3d'
 }
-
-const inFlightHydrations = new Map<string, Promise<unknown>>()
 
 function runOnce(key: string, fn: () => Promise<unknown>): Promise<unknown> {
   let task = inFlightHydrations.get(key)

@@ -4,6 +4,7 @@ import type { ReactNode } from 'react'
 import type { IconComponent } from '@/shared/lib/icons'
 import { ChevronDown, Loader2, Search, X } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
+import { useStrings } from '@/shared/strings'
 
 import { useEscapeKey } from '../hooks/use-escape-key'
 
@@ -279,7 +280,7 @@ export function PanelHeader({
   onClose,
   dragBind,
   dragRegion = false,
-  closeLabel = '关闭'
+  closeLabel
 }: {
   title: ReactNode
   icon?: IconComponent
@@ -290,6 +291,8 @@ export function PanelHeader({
   dragRegion?: boolean
   closeLabel?: string
 }): React.JSX.Element {
+  const t = useStrings()
+
   return (
     <div
       className={cn(
@@ -297,7 +300,7 @@ export function PanelHeader({
         dragBind && 'cursor-grab active:cursor-grabbing',
         dragRegion && '[-webkit-app-region:drag]'
       )}
-      title={dragBind ? '拖动以移动面板' : undefined}
+      title={dragBind ? t.ui.panelDragToMove : undefined}
       {...dragBind}
     >
       <div className="flex items-center gap-2.5">
@@ -314,7 +317,7 @@ export function PanelHeader({
         </div>
       </div>
       <button
-        aria-label={closeLabel}
+        aria-label={closeLabel ?? t.common.close}
         className={cn(
           BTN_ICON,
           'hover:border hover:border-line-strong hover:bg-danger-bg hover:text-danger-fg',
@@ -452,6 +455,8 @@ export function SearchField({
   placeholder?: string
   ariaLabel?: string
 }): React.JSX.Element {
+  const t = useStrings()
+
   return (
     <div className="relative w-full max-w-sm">
       <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-faint" />
@@ -465,7 +470,7 @@ export function SearchField({
       />
       {value && (
         <button
-          aria-label="清空搜索"
+          aria-label={t.ui.search.clear}
           className="absolute right-1.5 top-1/2 flex size-6 -translate-y-1/2 items-center justify-center rounded-md text-faint transition hover:bg-fill-hover hover:text-strong"
           onClick={() => onChange('')}
           type="button"
@@ -504,10 +509,11 @@ export function ConfirmDialog({
   title,
   description,
   confirmLabel,
-  cancelLabel = '取消',
+  cancelLabel,
   variant = 'default',
   onConfirm
 }: ConfirmDialogProps): React.JSX.Element {
+  const t = useStrings()
   const [busy, setBusy] = useState(false)
 
   useEscapeKey(() => onOpenChange(false), { enabled: open, busy })
@@ -530,7 +536,7 @@ export function ConfirmDialog({
         {description && <p className="mt-2 text-xs leading-relaxed text-muted">{description}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button className={BTN_SUBTLE} disabled={busy} onClick={() => onOpenChange(false)} type="button">
-            {cancelLabel}
+            {cancelLabel ?? t.common.cancel}
           </button>
           <button
             className={variant === 'destructive' ? BTN_DANGER : BTN_PRIMARY}
@@ -547,7 +553,7 @@ export function ConfirmDialog({
             }}
             type="button"
           >
-            {busy ? '处理中…' : confirmLabel}
+            {busy ? t.common.processing : confirmLabel}
           </button>
         </div>
       </div>

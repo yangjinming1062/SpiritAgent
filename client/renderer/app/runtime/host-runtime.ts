@@ -294,6 +294,13 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
           void (async () => {
             try {
               const local = await loadLocalSessionHistory(sid)
+
+              // 等待期间用户可能已切走会话（如通知点击跳转）；迟到的旧会话
+              // 数据不得写入新会话，seq 也不能按旧会话的 resume 结果重置。
+              if ($chatSessionId.get() !== sid) {
+                return
+              }
+
               const hasMessages = $chatMessageList.get().length > 0
 
               // 本地秒开：先渲染缓存，再后台增量追上。网关 seq 不重置到缓存值——
@@ -310,6 +317,10 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
                 request: body => gateway.request<SessionResumeResponse>('session.resume', { session_id: sid, ...body })
               })
 
+              if ($chatSessionId.get() !== sid) {
+                return
+              }
+
               if (synced.currentSeq > 0) {
                 syncMountSeq({ current_seq: synced.currentSeq })
               }
@@ -322,6 +333,11 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
                 hydrateSessionSettings(synced.info)
               }
             } catch {
+              // 同样只在用户仍停留在本会话时才回退主会话；否则会误清新会话。
+              if ($chatSessionId.get() !== sid) {
+                return
+              }
+
               setChatSession(null)
               void openMainSession(syncMountSeq)
             }

@@ -65,7 +65,7 @@ export interface ConfigSync {
 
 /** 从 store 镜像（或任意 config 记录）取出单个对象节，非对象 / 数组一律回落 {}。
  *  与 broadcast companion/ui/shortcuts 时同源，避免在多个调用点重复 typeof/Array.isArray 防御。 */
-export function objectSection(config: Record<string, unknown>, section: string): Record<string, unknown> {
+function objectSection(config: Record<string, unknown>, section: string): Record<string, unknown> {
   const value = config[section]
 
   return value != null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}

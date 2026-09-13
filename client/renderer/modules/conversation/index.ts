@@ -45,15 +45,6 @@ export {
   showMediaHint,
   submitPendingBatch
 } from './chat-store'
-export {
-  ChatContextAmbientLine,
-  ChatContextCapsule,
-  ChatReasoningCapsule,
-  ChatTemperatureCapsule,
-  ContextProgressBar,
-  formatTokenNumber,
-  useContextStatus
-} from './context-progress-bar'
 export { type ChatSubmitState, ConversationInput, type ConversationInputProps } from './conversation-input'
 export { ConversationSurface } from './conversation-surface'
 export { consumePendingMessages, pendingMessages, rememberPendingMessage } from './pending-messages'

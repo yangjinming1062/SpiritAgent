@@ -365,9 +365,6 @@ export function SpriteWindow(): React.JSX.Element {
       </SpriteStage>
       <SpriteContextMenu
         onOpenActivation={() => setActivationOpen(true)}
-        onOpenChat={() => {
-          void requestOpenSurface('living')
-        }}
         onOpenSurface={surface => {
           void requestOpenSurface(surface)
         }}

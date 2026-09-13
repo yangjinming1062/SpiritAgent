@@ -126,5 +126,5 @@ export function createMenu({ app, appName, getMainWindow, isMac, menu, zoomPersi
     return menu.buildFromTemplate(template)
   }
 
-  return { buildApplicationMenu, showAboutPanelFresh }
+  return { buildApplicationMenu }
 }

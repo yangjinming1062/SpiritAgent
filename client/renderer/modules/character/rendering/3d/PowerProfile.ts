@@ -10,7 +10,6 @@ export interface PowerSignals {
   screenLocked: boolean
   documentHidden: boolean
   fullscreen: boolean
-  staticCovered: boolean
   modelSettled: boolean
 }
 
@@ -26,7 +25,7 @@ export function resolvePowerProfile(signals: PowerSignals): PowerProfile {
     return 'active'
   }
 
-  const dormant = signals.screenLocked || signals.documentHidden || signals.fullscreen || signals.staticCovered
+  const dormant = signals.screenLocked || signals.documentHidden || signals.fullscreen
 
   if (dormant) {
     return 'dormant'

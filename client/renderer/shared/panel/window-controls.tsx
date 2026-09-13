@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { X } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
+import { useStrings } from '@/shared/strings'
 
 export interface WindowControlsProps {
   className?: string
@@ -11,6 +12,7 @@ export interface WindowControlsProps {
 }
 
 export function WindowControls({ className, onClose }: WindowControlsProps): React.JSX.Element {
+  const { close, maximize, minimize, restore } = useStrings().common
   const [maximized, setMaximized] = useState(false)
 
   const checkMaximized = async (): Promise<void> => {
@@ -79,20 +81,20 @@ export function WindowControls({ className, onClose }: WindowControlsProps): Rea
       style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
     >
       <button
-        aria-label="最小化"
+        aria-label={minimize}
         className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-fill-hover hover:text-strong active:scale-95"
         onClick={() => void handleMinimize()}
-        title="最小化"
+        title={minimize}
         type="button"
       >
         <span className="h-[1.5px] w-2.5 rounded-full bg-current" />
       </button>
 
       <button
-        aria-label={maximized ? '还原' : '最大化'}
+        aria-label={maximized ? restore : maximize}
         className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-fill-hover hover:text-strong active:scale-95"
         onClick={() => void handleMaximize()}
-        title={maximized ? '还原' : '最大化'}
+        title={maximized ? restore : maximize}
         type="button"
       >
         {maximized ? (
@@ -106,10 +108,10 @@ export function WindowControls({ className, onClose }: WindowControlsProps): Rea
       </button>
 
       <button
-        aria-label="关闭"
+        aria-label={close}
         className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-rose-500/80 hover:text-white active:scale-95"
         onClick={() => void handleClose()}
-        title="关闭"
+        title={close}
         type="button"
       >
         <X className="size-3.5" />

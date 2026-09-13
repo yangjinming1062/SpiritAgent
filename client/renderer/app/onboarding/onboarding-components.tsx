@@ -1,12 +1,6 @@
 import { useState } from 'react'
 
-import { HistoryGallery, type HistoryGalleryItem, PortraitLightbox, useNaturalAspectRatio } from '@/shared'
-
-export { Chip } from '@/shared/panel'
-export { HistoryGallery, type HistoryGalleryItem, PortraitLightbox, useNaturalAspectRatio }
-
-// 从 onboarding-flow.tsx 中抽离出的四个小 JSX 组件。
-// 所有输入都通过 props 传入——不依赖模块级共享状态——便于单独隔离测试。
+import { HistoryGallery, type HistoryGalleryItem, PortraitLightbox } from '@/shared'
 
 export function PortraitPanel({
   avatarUrl,
@@ -39,7 +33,6 @@ export function PortraitPanel({
         label="头像"
         name={name}
         onZoom={avatarUrl ? () => setZoomedUrl(avatarUrl) : undefined}
-        size="lg"
         url={avatarUrl}
       />
       {gallery}
@@ -53,17 +46,13 @@ function PortraitThumb({
   label,
   name,
   onZoom,
-  size = 'sm',
   url
 }: {
   label: string
   name: string
   onZoom: (() => void) | undefined
-  size?: 'lg' | 'md' | 'sm'
   url: string | null
 }): React.JSX.Element {
-  const sizeClass = size === 'lg' ? 'h-48 w-48' : size === 'sm' ? 'h-28 w-28' : 'h-36 w-36'
-
   return (
     <div className="flex flex-col items-center gap-1">
       {url ? (
@@ -74,13 +63,11 @@ function PortraitThumb({
             onClick={onZoom}
             type="button"
           >
-            <img alt={name} className={`${sizeClass} object-cover shadow-lg`} src={url} />
+            <img alt={name} className="h-28 w-28 object-cover shadow-lg" src={url} />
           </button>
         </div>
       ) : (
-        <div
-          className={`grid ${sizeClass} place-items-center rounded-xl bg-fill-faint text-center text-[10px] text-faint`}
-        >
+        <div className="grid h-28 w-28 place-items-center rounded-xl bg-fill-faint text-center text-[10px] text-faint">
           —
         </div>
       )}

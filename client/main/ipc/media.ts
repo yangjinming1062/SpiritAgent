@@ -396,7 +396,6 @@ export function registerMediaIpc({
 
       const sttLog = makeLog(log, '[stt]', {
         bytes: data.length,
-        ctx: payload?.context || 'default',
         id: sttId,
         lang,
         mime
@@ -441,7 +440,8 @@ export function registerMediaIpc({
     const speechStyle = payload?.speech_style
     const styleKey = speechStyleKey(speechStyle)
     const diskVoice = styleKey ? JSON.stringify([voice, styleKey]) : voice
-    const language = resolveMediaLanguage(payload, DEFAULT_TTS_LANGUAGE)
+    // TTS 语言统一由主进程配置解析，渲染层不传。
+    const language = resolveMediaLanguage(undefined, DEFAULT_TTS_LANGUAGE)
     const persist = payload?.persist === true
     const startedAt = Date.now()
 
@@ -552,9 +552,6 @@ export function registerMediaIpc({
       })
 
       const parsed = JSON.parse(body.toString('utf8')) as {
-        file_id?: string
-        mime?: string
-        size?: number
         url?: string
       }
 
@@ -562,12 +559,7 @@ export function registerMediaIpc({
         throw new Error('Backend video upload returned no url')
       }
 
-      return {
-        fileId: parsed.file_id || '',
-        mime: parsed.mime || 'video/mp4',
-        size: parsed.size ?? data.length,
-        url: parsed.url
-      }
+      return { url: parsed.url }
     }
   )
 }

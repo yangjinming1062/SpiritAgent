@@ -43,7 +43,7 @@ function broadcastShortcutsChanged(state: DesktopShortcutsState): void {
   sendToMain(deps.getMainWindow(), IPC.event.shortcutsChanged, state)
 }
 
-export function readShortcutsConfig(): DesktopShortcutsConfig {
+function readShortcutsConfig(): DesktopShortcutsConfig {
   const root = store.read()
   const raw = root.shortcuts as Record<string, unknown> | undefined
 
@@ -136,7 +136,7 @@ function registerSingleShortcut(action: keyof DesktopShortcutsConfig, accelerato
   }
 }
 
-export function applyShortcuts(config: DesktopShortcutsConfig): DesktopShortcutsState {
+function applyShortcuts(config: DesktopShortcutsConfig): DesktopShortcutsState {
   registerSingleShortcut('toggleVisibility', config.toggleVisibility)
   registerSingleShortcut('openLiving', config.openLiving)
   registerSingleShortcut('openWorkbench', config.openWorkbench)

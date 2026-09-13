@@ -16,8 +16,7 @@ export function createBootProgressMachine({ getMainWindow, rememberLog }: BootPr
     message: 'Waiting to start 唤生 backend',
     phase: 'idle',
     progress: 0,
-    running: false,
-    timestamp: Date.now()
+    running: false
   }
 
   function broadcast(): void {
@@ -33,8 +32,7 @@ export function createBootProgressMachine({ getMainWindow, rememberLog }: BootPr
       ...state,
       ...update,
       error: update.error === undefined ? state.error : update.error,
-      progress: nextProgress,
-      timestamp: Date.now()
+      progress: nextProgress
     }
 
     if (update.message) {

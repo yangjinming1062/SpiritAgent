@@ -349,10 +349,6 @@ export class PuppetRuntime {
   private tier: 'semantic' | 'grouped' | 'minimal' = 'grouped'
   private limbTier: LimbTier = 'blob'
   private skeleton: Skeleton | null = null
-  private meshVerts = 0
-  private meshTris = 0
-  private meshArtmesh = 0
-  private meshFallback = 0
   private cw = 768
   private ch = 768
   private fs = 1
@@ -552,45 +548,6 @@ export class PuppetRuntime {
     this.segDur = dur * 1000
   }
 
-  /** 调试/验证用：指定部件当前顶点相对基准的平均水平位移（px），供次级运动断言。 */
-  layerShift(bn: string): number {
-    let s = 0
-    let n = 0
-
-    for (const L of this.layers) {
-      if (L.bn !== bn) {
-        continue
-      }
-
-      for (let k = 0; k < L.base.length; k += 2) {
-        s += Math.abs(L.cur[k]! - L.base[k]!)
-        n++
-      }
-    }
-
-    return n ? s / n : 0
-  }
-
-  /** 调试/验证用：发束链梢-根位移差的均值（px），直接反映次级弹簧链输出。 */
-  chainSwing(bn: string): number {
-    let s = 0
-    let n = 0
-
-    for (const L of this.layers) {
-      if (L.bn !== bn || !L.spr) {
-        continue
-      }
-
-      for (const sp of L.spr) {
-        const nds = sp.nodes
-        s += Math.abs(nds[nds.length - 1]!.x - nds[0]!.x)
-        n++
-      }
-    }
-
-    return n ? s / n : 0
-  }
-
   /** 命中检测：rig 画布像素坐标 → 最上层可见部件的规范层名（bn），未命中返回 null。
    * 走当前帧形变后的顶点（cur/idx），与屏幕所见一致——层序即绘制序（后画在上），
    * 自尾向头首个命中的层即视觉最上层；fade 低于渲染阈值的层与渲染同步跳过。 */
@@ -630,11 +587,6 @@ export class PuppetRuntime {
   /** 装配档位（Phase 5 三级降级）：semantic 全语义机制 / grouped 整体运动+缩幅 / minimal 仅整体呼吸与倾斜。 */
   rigTier(): 'semantic' | 'grouped' | 'minimal' {
     return this.tier
-  }
-
-  /** 四肢完整度档位：segmented (全IK+走循环) / sided (单骨摆动+简化走循环) / blob (平移降级) */
-  getLimbTier(): LimbTier {
-    return this.limbTier
   }
 
   /** 获取当前 2D 骨架 */
@@ -888,10 +840,6 @@ export class PuppetRuntime {
     this.limbTier = assessLimbTier(rig)
     // Phase 5: PSD 语义完整度分级（semantic→grouped→minimal），门控机制与动作幅度
     this.tier = this.assessTier(rig, A)
-    this.meshVerts = 0
-    this.meshTris = 0
-    this.meshArtmesh = 0
-    this.meshFallback = 0
 
     for (const Lr of rig.layers) {
       const L = this.buildGlPart(Lr)
@@ -932,17 +880,11 @@ export class PuppetRuntime {
       }
 
       idx = am.tris
-      this.meshVerts += nv
-      this.meshTris += am.stats.tris
-      this.meshArtmesh++
     } else {
       nv = 4
       base = new Float32Array([Lr.x, Lr.y, Lr.x + Lr.w, Lr.y, Lr.x, Lr.y + Lr.h, Lr.x + Lr.w, Lr.y + Lr.h])
       uv = new Float32Array([0, 0, 1, 0, 0, 1, 1, 1])
       idx = new Uint16Array([0, 1, 2, 1, 3, 2])
-      this.meshVerts += 4
-      this.meshTris += 2
-      this.meshFallback++
     }
 
     // see-through 的 `-l/-r` 后缀绕过 vendor SLOTS：规范 bn/side，并给开眼层补 fade
@@ -1212,17 +1154,6 @@ export class PuppetRuntime {
 
   get size(): { w: number; h: number } {
     return { w: this.cw, h: this.ch }
-  }
-
-  /** 网格统计（无头断言用）：ArtMesh 层数 / 回退层数 / 总顶点 / 总三角形。 */
-  meshStats(): { layers: number; verts: number; tris: number; artmesh: number; fallback: number } {
-    return {
-      layers: this.layers.length,
-      verts: this.meshVerts,
-      tris: this.meshTris,
-      artmesh: this.meshArtmesh,
-      fallback: this.meshFallback
-    }
   }
 
   private fadeAlpha(L: GLPart, e: Evaluated): number {

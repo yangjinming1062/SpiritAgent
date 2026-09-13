@@ -29,6 +29,8 @@ interface ServerCommandEntry {
 // 启动前为空；拉取失败也保持空，由下次连通或再次进入命令模式时重试。
 export const $slashCommandMeta = atom<readonly SlashCommandMeta[]>([])
 
+let slashMetaInflight: Promise<void> | null = null
+
 function setSlashCommandMeta(metas: readonly SlashCommandMeta[]): void {
   $slashCommandMeta.set(metas)
 }
@@ -221,8 +223,6 @@ export function fuzzyFilterCommands(query: string, limit = 8): ScoredSlashComman
 interface SlashCommandListResponse {
   commands: readonly ServerCommandEntry[]
 }
-
-let slashMetaInflight: Promise<void> | null = null
 
 /** 从网关拉取命令元数据写入本窗口 atom；已有数据则跳过，失败保持空以便重试。 */
 export async function fetchSlashCommandMeta(): Promise<void> {

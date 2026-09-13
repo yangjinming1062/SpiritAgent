@@ -1,4 +1,4 @@
-import { $effectiveTier, setSpriteState } from '@/modules/character'
+import { $effectiveTier, $spriteState, setSpriteState } from '@/modules/character'
 import { setProactiveBubble } from '@/modules/conversation'
 import { speak } from '@/modules/speech'
 import { $chatVisible } from '@/shared/store/chat-visibility'
@@ -31,7 +31,13 @@ export async function speakProactive(
     // 不强制切的话主动/触发的语音就不会体现出来。
     setSpriteState('speaking', { force: true })
     const ok = await speak(text)
-    setSpriteState('idle', { force: true })
+
+    // 朗读期间可能有更高优先级状态介入（工具 working、流式 thinking）；
+    // 只在仍是 speaking 时才复位，否则会踩掉介入状态并让它失去收尾复位。
+    if ($spriteState.get() === 'speaking') {
+      setSpriteState('idle', { force: true })
+    }
+
     // 让气泡在语音结束后再停留一会儿再消失。
     const linger = ok ? 4200 : 5000
     setProactiveBubble(overlayVisible ? bubble : null, linger)

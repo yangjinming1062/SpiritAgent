@@ -129,7 +129,7 @@ function normalizeUser(raw: unknown): null | SessionUser {
   }
 }
 
-export function decodeActivationCode(code: string): { baseUrl: string; token: string } {
+function decodeActivationCode(code: string): { baseUrl: string; token: string } {
   const padding = '='.repeat((4 - (code.length % 4)) % 4)
   const raw = Buffer.from(code + padding, 'base64url').toString('utf8')
   const data = JSON.parse(raw) as { b?: string; t?: string }
@@ -205,6 +205,9 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   let backendClient: null | BackendClient = null
   let backendClientBaseUrl: null | string = null
   let activatePromise: null | Promise<null | SessionSnapshot> = null
+  // 在途激活对应的 code：不同 code 的并发激活不能复用彼此的结果，否则
+  // 第二个用户会静默拿到第一个 code 的 token（token/baseUrl/user 整套串线）。
+  let activatePromiseCode: null | string = null
   let refreshTimer: NodeJS.Timeout | null = null
   // activate/clearSession 时递增：在途 refresh 完成前若代数已变则丢弃。
   let sessionEpoch = 0
@@ -475,11 +478,12 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       })
     }
 
-    if (activatePromise) {
+    if (activatePromise && activatePromiseCode === code) {
       return activatePromise
     }
 
     const backend = createBackendClient({ baseUrl, fetch: fetchImpl })
+    activatePromiseCode = code
     activatePromise = backend
       .post<TokenAuthResponse>('/api/user/activate', {
         body: {
@@ -493,7 +497,11 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       )
       .catch(translateBackendError)
       .finally(() => {
-        activatePromise = null
+        // 迟到的旧激活请求不得清掉已接管槽位的新请求。
+        if (activatePromiseCode === code) {
+          activatePromise = null
+          activatePromiseCode = null
+        }
       })
 
     return activatePromise

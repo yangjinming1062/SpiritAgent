@@ -11,13 +11,6 @@ const initialLocale: Locale = normalizeLocale(storedString(LOCALE_STORAGE_KEY))
 
 export const $locale = atom<Locale>(initialLocale)
 
-export function setLocale(locale: Locale): void {
-  $locale.set(locale)
-  persistString(LOCALE_STORAGE_KEY, locale)
-  // 经 prefs:set 通道写——渲染层只能走此通道，否则被白名单外绕过。
-  window.spiritagent?.prefs?.set({ key: 'language', value: locale })
-}
-
 export function initLocaleSync(): () => void {
   const unsubscribe = window.spiritagent?.onPrefsHydrated?.(payload => {
     const next = normalizeLocale(payload?.language)

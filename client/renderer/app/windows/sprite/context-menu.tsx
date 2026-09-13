@@ -20,7 +20,6 @@ import { requestCloseSurface } from '@/shared/store/surfaces'
 
 interface ContextMenuProps {
   onOpenActivation?: () => void
-  onOpenChat: () => void
   onOpenSurface?: (surface: SurfaceId, view?: string) => void
 }
 

@@ -71,6 +71,29 @@ function normalizeChatSessionKind(raw: unknown): ChatSessionKind {
 
 export const $chatSessionKind = atom<ChatSessionKind>('standard')
 
+interface PendingPromptItem {
+  text: string
+  attachments?: ChatAttachment[]
+  messageId?: string
+}
+
+export const $pendingPromptBatch = atom<PendingPromptItem[]>([])
+
+export const $chatTurnInFlight = atom<boolean>(false)
+
+// 当后端在 in-flight 回合期间发出 bubble.break 时置位，防止 message.complete 的全文/推理覆盖末尾气泡。
+export const $turnHadBubbleBreak = atom<boolean>(false)
+
+interface ChatUndoDraft {
+  session_id: string
+  text: string
+  content_type?: string
+  media_json?: string | null
+}
+
+// 撤回落草稿总线：undo 成功后由 session-list-store 写入；多窗口订阅需按 session_id 过滤，避免 A 撤回落到 B 的输入框。
+export const $chatDraftFromUndo = atom<ChatUndoDraft | null>(null)
+
 // 当前会话独立参数配置（温度、压缩阈值、思考程度等）
 interface SessionSettings {
   temperature?: number
@@ -308,10 +331,11 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
 
   if (info) {
     hydrateSessionSettings(info)
+    // 缺字段/未知值回落 standard，与 setChatSession 兜底一致——避免 IM 守卫在
+    // hydrate 完成前的瞬间误判。无 info 的调用（撤回 / 清空 / 压缩后重水合）
+    // 沿用当前 kind：这些都是本会话内操作，服务端 kind 未变，重置会解除 IM 只读。
+    $chatSessionKind.set(normalizeChatSessionKind(info.kind))
   }
-
-  // 缺字段/未知值回落 standard，与 setChatSession 兜底一致——避免 IM 守卫在 hydrate 完成前的瞬间误判。
-  $chatSessionKind.set(normalizeChatSessionKind(info?.kind))
 
   // 估算 Token 占用（无精确 usage 时的兜底估算：~3 字符/Token）
   // 先清零分项，避免切换会话后残留上一会话的 prompt/completion。
@@ -552,14 +576,6 @@ export function pushStatusPill(subtype: string, text: string): string {
   return id
 }
 
-interface PendingPromptItem {
-  text: string
-  attachments?: ChatAttachment[]
-  messageId?: string
-}
-
-export const $pendingPromptBatch = atom<PendingPromptItem[]>([])
-
 export function pushPendingPrompt(item: PendingPromptItem): void {
   const last = $chatMessageList.get().at(-1)
   $pendingPromptBatch.set([
@@ -578,21 +594,6 @@ function drainPendingPrompts(): PendingPromptItem[] {
 export function clearPendingPrompts(): void {
   $pendingPromptBatch.set([])
 }
-
-export const $chatTurnInFlight = atom<boolean>(false)
-
-// 当后端在 in-flight 回合期间发出 bubble.break 时置位，防止 message.complete 的全文/推理覆盖末尾气泡。
-export const $turnHadBubbleBreak = atom<boolean>(false)
-
-interface ChatUndoDraft {
-  session_id: string
-  text: string
-  content_type?: string
-  media_json?: string | null
-}
-
-// 撤回落草稿总线：undo 成功后由 session-list-store 写入；多窗口订阅需按 session_id 过滤，避免 A 撤回落到 B 的输入框。
-export const $chatDraftFromUndo = atom<ChatUndoDraft | null>(null)
 
 registerStorageClearHandler(() => {
   conversationVoiceSink().cancel()

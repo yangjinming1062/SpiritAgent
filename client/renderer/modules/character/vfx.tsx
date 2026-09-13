@@ -8,7 +8,6 @@
  *   dizzy_stars(眩晕星环)、music_notes(音符律动)、sleep_zzz(打盹)。
  */
 
-import { atom } from 'nanostores'
 import { useEffect, useRef, useState } from 'react'
 
 type VfxType = 'heart' | 'petal' | 'anger' | 'sweat' | 'dizzy_stars' | 'music_notes' | 'sleep_zzz'
@@ -38,7 +37,6 @@ interface Particle {
 
 let nextParticleId = 1
 const activeParticles: Particle[] = []
-const $vfxActiveCount = atom<number>(0)
 
 // 唤醒回调：Mesh2DVfxOverlay 在 mount 时注册，emitVfx 在粒子清空后
 // 再次添加时调用——用于把已停止的 RAF 循环重新拉起。
@@ -80,23 +78,15 @@ export function emitVfx(type: VfxType, opts: VfxEmitOptions = {}): void {
     activeParticles.push(p)
   }
 
-  $vfxActiveCount.set(activeParticles.length)
   wakeTick?.()
 }
 
 // 立刻清除指定类型的所有粒子（用于状态切换 / 重连时强制收回瞬时特效）。
 export function clearVfx(type: VfxType): void {
-  let removed = 0
-
   for (let i = activeParticles.length - 1; i >= 0; i--) {
     if (activeParticles[i]!.type === type) {
       activeParticles.splice(i, 1)
-      removed++
     }
-  }
-
-  if (removed > 0) {
-    $vfxActiveCount.set(activeParticles.length)
   }
 }
 

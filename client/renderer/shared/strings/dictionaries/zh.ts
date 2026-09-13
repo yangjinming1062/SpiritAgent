@@ -1,9 +1,7 @@
 export const dict = {
   brand: {
     name: '唤生',
-    fullName: '唤生桌面',
-    copyright: 'Copyright © 2026 唤生',
-    slogan: ['让想象中的伙伴，来到你的桌面。', '会陪伴、能做事的专属 AI 伙伴。']
+    fullName: '唤生桌面'
   },
 
   common: {
@@ -12,7 +10,6 @@ export const dict = {
     save: '保存',
     saving: '保存中…',
     cancel: '取消',
-    change: '更改',
     choose: '选择',
     clear: '清除',
     close: '关闭',
@@ -27,20 +24,21 @@ export const dict = {
     done: '完成',
     error: '错误',
     failed: '失败',
-    free: '免费',
     loading: '加载中…',
-    notSet: '未设置',
+    maximize: '最大化',
+    minimize: '最小化',
     refresh: '刷新',
     remove: '移除',
     replace: '替换',
+    restore: '还原',
     retry: '重试',
     run: '运行',
     send: '发送',
     set: '设置',
-    skip: '跳过',
     update: '更新',
     on: '开',
-    off: '关'
+    off: '关',
+    processing: '处理中…'
   },
 
   boot: {
@@ -114,7 +112,6 @@ export const dict = {
 
   settings: {
     title: '应用设置',
-    closeSettings: '关闭设置',
     nav: {
       inference: '推理与对话',
       about: '关于',
@@ -139,9 +136,17 @@ export const dict = {
       openWorkbenchDesc: '快速唤起或隐藏工作台生产力窗口。',
       pressKeysPrompt: '请按下组合键…',
       pressKeysHint: '按 Esc 取消录制，按 Backspace 或 Delete 清空',
+      recordingAria: '正在录制快捷键',
+      editAria: '点击修改快捷键',
+      cancelHint: 'Esc 取消',
+      registeredOk: '已成功注册全局热键',
+      registerFailed: '热键注册失败',
+      clearAria: '清空快捷键',
+      clearTitle: '禁用 / 清空快捷键',
       resetAll: '恢复全部默认',
-      resetAllSuccess: '已恢复默认快捷键',
-      conflictError: '快捷键已被系统或其他应用占用',
+      resetAria: '恢复默认快捷键',
+      resetTitle: (value: string) => `恢复为默认值 (${value})`,
+      defaultLabel: '默认',
       empty: '未设置'
     },
     channels: {
@@ -182,8 +187,7 @@ export const dict = {
         pendingLabel: '待审批',
         allowedLabel: '已批准',
         blockedLabel: '已拉黑',
-        actionFailed: '操作失败',
-        requestToast: (channel: string, peer: string) => `${channel}上有人想和伙伴聊天：${peer}`
+        actionFailed: '操作失败'
       }
     },
     appearance: {
@@ -382,6 +386,12 @@ export const dict = {
       noTtsConfigured: '尚未配置 TTS 供应商。',
       noVoicesForLanguage: '已配置的 TTS 供应商没有适配当前系统语言的音色。',
       genderFilterAria: '声线筛选',
+      genderFilters: {
+        '': '全部',
+        female: '女声',
+        male: '男声',
+        neutral: '中性'
+      },
       preview: '试听',
       use: '使用',
       inUse: '使用中',
@@ -396,6 +406,12 @@ export const dict = {
       themesHeading: '主题方案',
       themesAriaLabel: '主题方案',
       activeBadge: '生效中',
+      themes: {
+        night: { label: '夜色', description: '深邃沉静，适合夜间使用' },
+        day: { label: '日色', description: '温暖明亮，充满活力' },
+        'night-clear': { label: '夜色透明', description: '暗底清透，房间从窗壳透出' },
+        'day-clear': { label: '日色透明', description: '亮底清透，房间从窗壳透出' }
+      },
       materialHeading: '材质效果说明',
       materialTransparent: '清透模式（透明）',
       materialTransparentDesc: '启用液态玻璃与磨砂透视，房间图透出流动光影，桌面伴侣通透灵动。',
@@ -477,6 +493,11 @@ export const dict = {
   },
 
   ui: {
+    lightbox: {
+      backdropAria: '点击关闭',
+      closePreview: '关闭预览'
+    },
+    panelDragToMove: '拖动以移动面板',
     search: {
       clear: '清除搜索'
     }
@@ -493,8 +514,7 @@ export const dict = {
     sendFailed: '发送失败',
 
     media: {
-      imageLoading: '图片加载中…',
-      videoLoading: '视频加载中…'
+      imageLoading: '图片加载中…'
     },
 
     copy: {
@@ -679,16 +699,6 @@ export const dict = {
 
       thresholdMarker: (pct: number) => `自动压缩阈值节点 (${pct}%)`,
 
-      manualCompressRunning: '正在压缩当前会话上下文…',
-      manualCompressTooltipInline: (used: string, total: string, pct: string) =>
-        `上下文：${used} / ${total} Tokens (${pct}%)`,
-      manualCompressThresholdInline: (pct: number) => `压缩节点: ${pct}%`,
-      manualCompressClickInline: '点击立即压缩',
-      manualCompressButtonAria: '手动压缩上下文',
-      manualCompressButtonTitle: '点击手动压缩当前会话上下文',
-      manualCompressThresholdMarker: (pct: number) => `压缩阈值节点 (${pct}%)`,
-      manualCompressSuccess: (count: number) => `已成功压缩 ${count} 条早期对话历史`,
-      manualCompressNotNeeded: '当前历史消息较少，无需压缩',
       manualCompressFailed: '手动压缩上下文失败',
 
       thresholdSliderHeading: '上下文窗口负载',
@@ -1012,7 +1022,6 @@ export const dict = {
       collapseTitle: '折叠',
       subtitle: (steps: number) => `${steps} 步 · 本轮`,
       idleSubtitle: '空闲中',
-      stepsUnit: '步',
       toolsTitle: '本轮工具',
       toolsSubtitleIdle: '尚未动手',
       toolsSubtitleSteps: (steps: number) => `${steps} 步`,

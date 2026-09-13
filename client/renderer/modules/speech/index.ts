@@ -3,7 +3,6 @@ export { requestSynth, speak, speakChatMessage, speakScripted, stopSpeaking } fr
 export {
   designVoice,
   fetchVoiceCatalogRaw,
-  GENDER_OPTIONS,
   isCustomVoiceSelectionId,
   matchVoicePreference,
   nextVoice,

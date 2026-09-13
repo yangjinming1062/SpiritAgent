@@ -53,7 +53,6 @@ export interface RunnerProcessStartArgs {
 export interface RunnerProcess {
   getStatus: () => RunnerProcessState
   onEvent: (callback: (event: RunnerProcessEvent) => void) => () => void
-  restart: (args: RunnerProcessStartArgs) => Promise<RunnerProcessState>
   signalReady: () => void
   start: (args: RunnerProcessStartArgs) => Promise<RunnerProcessState>
   stop: (options?: {
@@ -380,12 +379,6 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
     })
   }
 
-  async function restart(args: RunnerProcessStartArgs): Promise<RunnerProcessState> {
-    await stop({ reason: 'restart' })
-
-    return start(args)
-  }
-
   function onEvent(callback: (event: RunnerProcessEvent) => void): () => void {
     emitter.on('event', callback)
 
@@ -434,7 +427,6 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
   return {
     getStatus,
     onEvent,
-    restart,
     signalReady,
     start,
     stop,

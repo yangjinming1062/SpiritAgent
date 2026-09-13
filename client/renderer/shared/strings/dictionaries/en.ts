@@ -3,12 +3,7 @@ import type { Dictionary } from './zh'
 export const dict: Dictionary = {
   brand: {
     name: 'SpiritAgent',
-    fullName: 'SpiritAgent Desktop',
-    copyright: 'Copyright © 2026 SpiritAgent',
-    slogan: [
-      'Bring the companion you imagine to your desktop.',
-      'A personal AI companion that keeps you company and gets things done.'
-    ]
+    fullName: 'SpiritAgent Desktop'
   },
 
   common: {
@@ -17,7 +12,6 @@ export const dict: Dictionary = {
     save: 'Save',
     saving: 'Saving…',
     cancel: 'Cancel',
-    change: 'Change',
     choose: 'Choose',
     clear: 'Clear',
     close: 'Close',
@@ -32,20 +26,21 @@ export const dict: Dictionary = {
     done: 'Done',
     error: 'Error',
     failed: 'Failed',
-    free: 'Free',
     loading: 'Loading…',
-    notSet: 'Not set',
+    maximize: 'Maximize',
+    minimize: 'Minimize',
     refresh: 'Refresh',
     remove: 'Remove',
     replace: 'Replace',
+    restore: 'Restore',
     retry: 'Retry',
     run: 'Run',
     send: 'Send',
     set: 'Set',
-    skip: 'Skip',
     update: 'Update',
     on: 'On',
-    off: 'Off'
+    off: 'Off',
+    processing: 'Processing…'
   },
 
   boot: {
@@ -120,7 +115,6 @@ export const dict: Dictionary = {
 
   settings: {
     title: 'App settings',
-    closeSettings: 'Close settings',
     nav: {
       inference: 'Inference & chat',
       about: 'About',
@@ -146,9 +140,17 @@ export const dict: Dictionary = {
       openWorkbenchDesc: 'Quickly summon or hide the productivity Workbench window.',
       pressKeysPrompt: 'Press a key combination…',
       pressKeysHint: 'Press Esc to cancel, Backspace or Delete to clear',
+      recordingAria: 'Recording shortcut',
+      editAria: 'Click to edit shortcut',
+      cancelHint: 'Esc to cancel',
+      registeredOk: 'Global hotkey registered',
+      registerFailed: 'Hotkey registration failed',
+      clearAria: 'Clear shortcut',
+      clearTitle: 'Disable / clear shortcut',
       resetAll: 'Restore all defaults',
-      resetAllSuccess: 'Default shortcuts restored',
-      conflictError: 'This shortcut is taken by the system or another app',
+      resetAria: 'Restore default shortcut',
+      resetTitle: (value: string) => `Restore default (${value})`,
+      defaultLabel: 'Default',
       empty: 'Not set'
     },
     channels: {
@@ -193,9 +195,7 @@ export const dict: Dictionary = {
         pendingLabel: 'Pending',
         allowedLabel: 'Approved',
         blockedLabel: 'Blocked',
-        actionFailed: 'Action failed',
-        requestToast: (channel: string, peer: string) =>
-          `Someone on ${channel} wants to chat with the companion: ${peer}`
+        actionFailed: 'Action failed'
       }
     },
     appearance: {
@@ -408,6 +408,12 @@ export const dict: Dictionary = {
       noTtsConfigured: 'No TTS provider is configured.',
       noVoicesForLanguage: 'The configured TTS providers have no voices for the current system language.',
       genderFilterAria: 'Tone filter',
+      genderFilters: {
+        '': 'All',
+        female: 'Female',
+        male: 'Male',
+        neutral: 'Neutral'
+      },
       preview: 'Preview',
       use: 'Use',
       inUse: 'In use',
@@ -422,6 +428,15 @@ export const dict: Dictionary = {
       themesHeading: 'Theme presets',
       themesAriaLabel: 'Theme presets',
       activeBadge: 'Active',
+      themes: {
+        night: { label: 'Night', description: 'Deep and calm — made for nighttime use' },
+        day: { label: 'Day', description: 'Warm and bright, full of energy' },
+        'night-clear': {
+          label: 'Night clear',
+          description: 'Dark translucent surface — the room shows through the shell'
+        },
+        'day-clear': { label: 'Day clear', description: 'Light translucent surface — the room shows through the shell' }
+      },
       materialHeading: 'Material effects',
       materialTransparent: 'Clear mode (transparent)',
       materialTransparentDesc:
@@ -514,6 +529,11 @@ export const dict: Dictionary = {
   },
 
   ui: {
+    lightbox: {
+      backdropAria: 'Click to close',
+      closePreview: 'Close preview'
+    },
+    panelDragToMove: 'Drag to move panel',
     search: {
       clear: 'Clear search'
     }
@@ -530,8 +550,7 @@ export const dict: Dictionary = {
     sendFailed: 'Send failed',
 
     media: {
-      imageLoading: 'Loading image…',
-      videoLoading: 'Loading video…'
+      imageLoading: 'Loading image…'
     },
 
     copy: {
@@ -717,16 +736,6 @@ export const dict: Dictionary = {
 
       thresholdMarker: (pct: number) => `Auto-compress threshold (${pct}%)`,
 
-      manualCompressRunning: 'Compressing current session context…',
-      manualCompressTooltipInline: (used: string, total: string, pct: string) =>
-        `Context: ${used} / ${total} tokens (${pct}%)`,
-      manualCompressThresholdInline: (pct: number) => `Threshold: ${pct}%`,
-      manualCompressClickInline: 'Click to compress now',
-      manualCompressButtonAria: 'Manually compress context',
-      manualCompressButtonTitle: 'Click to manually compress the current session context',
-      manualCompressThresholdMarker: (pct: number) => `Compression threshold (${pct}%)`,
-      manualCompressSuccess: (count: number) => `Successfully compressed ${count} early messages`,
-      manualCompressNotNeeded: 'Not much history to compress yet',
       manualCompressFailed: 'Failed to manually compress context',
 
       thresholdSliderHeading: 'Context window load',
@@ -1062,7 +1071,6 @@ export const dict: Dictionary = {
       collapseTitle: 'Collapse',
       subtitle: (steps: number) => `${steps} steps · this round`,
       idleSubtitle: 'Idle',
-      stepsUnit: 'steps',
       toolsTitle: 'Tools this round',
       toolsSubtitleIdle: 'Not yet started',
       toolsSubtitleSteps: (steps: number) => `${steps} steps`,

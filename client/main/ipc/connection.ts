@@ -104,7 +104,6 @@ interface ConnectionIpcDeps {
   mintWsTicket?: (baseUrl: string, token: string | null) => Promise<string | null>
   modelDiskCache?: null | ModelDiskCache
   resolvePathTimeoutMs: (path?: string, method?: string, fallbackMs?: number) => number
-  resolveTimeoutMs: (timeoutMs?: number | string | null, fallbackMs?: number) => number
   setCachedWsUrl?: (wsUrl: string) => void
 }
 
@@ -124,7 +123,6 @@ export function registerConnectionIpc({
   mintWsTicket,
   modelDiskCache,
   resolvePathTimeoutMs,
-  resolveTimeoutMs,
   setCachedWsUrl
 }: ConnectionIpcDeps): void {
   const isGatewayHost = (event: { sender: WebContents }): boolean => {
@@ -164,8 +162,7 @@ export function registerConnectionIpc({
     assertApiRequestAllowed(request?.path, request?.method)
 
     const connection = await ensureBackend()
-    const fallback = resolvePathTimeoutMs(request?.path, request?.method, defaultFetchTimeoutMs)
-    const timeoutMs = resolveTimeoutMs(request?.timeoutMs, fallback)
+    const timeoutMs = resolvePathTimeoutMs(request?.path, request?.method, defaultFetchTimeoutMs)
     const url = `${connection.baseUrl}${request.path}`
 
     try {
@@ -289,15 +286,23 @@ export function registerConnectionIpc({
       const isModel = pathname.includes('/model/file/') || pathname.includes('/companion-models/')
 
       if (modelDiskCache && isModel) {
-        const cached = await modelDiskCache.ensureCached({
-          baseUrl: connection.baseUrl,
-          contentHash: request?.contentHash,
-          fetchFn: fetchImpl,
-          token: connection.token || undefined,
-          url: raw
-        })
+        try {
+          const cached = await modelDiskCache.ensureCached({
+            baseUrl: connection.baseUrl,
+            contentHash: request?.contentHash,
+            fetchFn: fetchImpl,
+            token: connection.token || undefined,
+            url: raw
+          })
 
-        return await fsp.readFile(cached.filePath)
+          return await fsp.readFile(cached.filePath)
+        } catch (error: unknown) {
+          // 与兄弟 handler 对齐：401 触发 session-expired 广播，否则模型下载
+          // 的鉴权过期只能靠其他请求兜底提示。
+          notifyAuthExpiredOn401(error, connection, _event.sender)
+
+          throw error
+        }
       }
 
       const identityCache = assetDiskCache

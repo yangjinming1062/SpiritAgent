@@ -6,7 +6,6 @@ import { $companionVoiceId, $persona, setCompanionVoiceId } from '@/modules/char
 import {
   designVoice,
   fetchVoiceCatalogRaw,
-  GENDER_OPTIONS,
   playDataUrl,
   sampleLine,
   speakScripted,
@@ -32,6 +31,7 @@ import {
 } from '@/shared/panel'
 import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
+import { GENDER_FILTER_VALUES } from '@/shared/voice-catalog'
 
 // 音色页：目录筛选 / 试听 / 切换 + 专属音色设计。长页（living-settings）内嵌段。
 export function VoicePage(): React.ReactElement {
@@ -109,7 +109,7 @@ export function VoicePage(): React.ReactElement {
         <CapsuleTabs
           ariaLabel={t.genderFilterAria}
           onChange={setGenderFilter}
-          options={GENDER_OPTIONS.map(g => ({ label: g.label, value: g.id }))}
+          options={GENDER_FILTER_VALUES.map(value => ({ label: t.genderFilters[value], value }))}
           size="sm"
           value={genderFilter}
         />

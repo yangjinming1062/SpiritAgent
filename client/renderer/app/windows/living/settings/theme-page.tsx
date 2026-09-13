@@ -1,3 +1,4 @@
+import { SPIRITAGENT_UI_THEMES } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
@@ -7,7 +8,6 @@ import { cn } from '@/shared/lib/utils'
 import { SECTION_TITLE, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
 import { $theme, setUiTheme } from '@/shared/store/theme'
 import { useStrings } from '@/shared/strings'
-import { THEMES } from '@/shared/theme/registry'
 
 export function ThemePage(): React.JSX.Element {
   const dict = useStrings()
@@ -22,22 +22,22 @@ export function ThemePage(): React.JSX.Element {
       <section>
         <p className={cn(SECTION_TITLE, 'mb-2.5')}>{themeText.themesHeading}</p>
         <div aria-label={themeText.themesAriaLabel} className="grid grid-cols-1 gap-3 sm:grid-cols-2" role="radiogroup">
-          {THEMES.map(theme => {
-            const isActive = theme.id === active
+          {SPIRITAGENT_UI_THEMES.map(theme => {
+            const isActive = theme === active
 
             return (
               <button
                 aria-checked={isActive}
                 className={cn('theme-tile select-none text-left', isActive && 'is-active')}
-                key={theme.id}
+                key={theme}
                 onClick={() => {
                   triggerHaptic('open')
-                  setUiTheme(theme.id)
+                  setUiTheme(theme)
                 }}
                 role="radio"
                 type="button"
               >
-                <div className="theme-preview" data-preview={theme.id}>
+                <div className="theme-preview" data-preview={theme}>
                   <div className="theme-preview-body">
                     <div className="theme-preview-rail" />
                     <div className="theme-preview-stage">
@@ -55,7 +55,7 @@ export function ThemePage(): React.JSX.Element {
                   <span
                     className={cn('text-[13px] font-medium transition-colors', isActive ? 'text-strong' : 'text-body')}
                   >
-                    {theme.label}
+                    {themeText.themes[theme].label}
                   </span>
                   {isActive && (
                     <span className="inline-flex items-center gap-1 rounded-full bg-accent-soft px-1.5 py-0.5 text-[10px] font-medium text-accent">
@@ -64,7 +64,7 @@ export function ThemePage(): React.JSX.Element {
                     </span>
                   )}
                 </div>
-                <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{theme.description}</p>
+                <p className="mt-0.5 text-[11px] leading-relaxed text-muted">{themeText.themes[theme].description}</p>
               </button>
             )
           })}

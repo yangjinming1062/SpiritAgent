@@ -127,23 +127,6 @@ export class GaitDriver {
   private outClingPoseSide: 'none' | 'left' | 'right' = 'none'
   private outClingPoseTier: 'semantic' | 'grouped' | 'minimal' = 'grouped'
 
-  /** 供启动恢复或外部测试直接置位贴边权重 */
-  setClingWeight(weight: number): void {
-    this.w = clamp(weight, 0, 1)
-  }
-
-  getClingWeight(): number {
-    return this.w
-  }
-
-  getGaitEnvelope(): number {
-    return this.gA
-  }
-
-  getPhase(): number {
-    return this.phase
-  }
-
   /** 每帧推进步态状态并计算输出增量与姿态目标。
    *  返回的 GaitFrameOutput 复用同一组缓冲对象；调用方应在同一帧消费完字段后再调用下一次。 */
   update(

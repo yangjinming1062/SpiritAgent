@@ -16,7 +16,6 @@ const INITIAL_BOOT_STATE: DesktopBootState = (() => {
     phase: 'renderer.init',
     progress: 2,
     running: true,
-    timestamp: Date.now(),
     visible: true
   }
 })()
@@ -49,8 +48,7 @@ export function setDesktopBootStep(step: {
     message: step.message,
     phase: step.phase,
     progress: step.progress,
-    running: step.running ?? true,
-    timestamp: Date.now()
+    running: step.running ?? true
   })
 }
 
@@ -68,7 +66,6 @@ export function completeDesktopBoot(message?: string): void {
     phase: 'renderer.ready',
     progress: 100,
     running: false,
-    timestamp: Date.now(),
     visible: false
   })
 }
@@ -82,7 +79,6 @@ export function failDesktopBoot(message: string): void {
     phase: 'renderer.error',
     progress: clampBootProgress(current.progress),
     running: false,
-    timestamp: Date.now(),
     visible: true
   })
 }

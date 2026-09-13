@@ -116,7 +116,7 @@ async function setSystemLanguage(lang: 'en' | 'zh'): Promise<void> {
   }
 }
 
-export function buildTrayMenu(): Menu | null {
+function buildTrayMenu(): Menu | null {
   if (!trayDeps) {
     return null
   }

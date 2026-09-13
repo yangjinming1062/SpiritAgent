@@ -135,7 +135,7 @@ function sensitiveFileBlockReason(filePath: string): null | string {
   return null
 }
 
-function resolveRequestedFilePath(filePath: string, baseDir = process.cwd(), purpose = 'File read'): string {
+function resolveRequestedFilePath(filePath: string, purpose = 'File read'): string {
   const raw = String(filePath || '').trim()
 
   if (!raw) {
@@ -154,14 +154,10 @@ function resolveRequestedFilePath(filePath: string, baseDir = process.cwd(), pur
     }
   }
 
-  const resolvedBase = path.resolve(String(baseDir || process.cwd()))
-
-  return path.resolve(resolvedBase, raw)
+  return path.resolve(process.cwd(), raw)
 }
 
 interface ResolveReadableFileOptions {
-  baseDir?: string
-  blockSensitive?: boolean
   maxBytes?: null | number
   purpose?: string
 }
@@ -171,14 +167,12 @@ export async function resolveReadableFileForIpc(
   options: ResolveReadableFileOptions = {}
 ): Promise<{ resolvedPath: string; stat: fs.Stats }> {
   const purpose = String(options.purpose || 'File read')
-  const resolvedPath = resolveRequestedFilePath(filePath, options.baseDir, purpose)
+  const resolvedPath = resolveRequestedFilePath(filePath, purpose)
 
-  if (options.blockSensitive !== false) {
-    const blockReason = sensitiveFileBlockReason(resolvedPath)
+  const blockReason = sensitiveFileBlockReason(resolvedPath)
 
-    if (blockReason) {
-      throw new Error(`${purpose} blocked for sensitive file: ${blockReason}`)
-    }
+  if (blockReason) {
+    throw new Error(`${purpose} blocked for sensitive file: ${blockReason}`)
   }
 
   let stat: fs.Stats
@@ -204,15 +198,13 @@ export async function resolveReadableFileForIpc(
     throw new Error(`${purpose} failed: only regular files can be read.`)
   }
 
-  if (options.blockSensitive !== false) {
-    const realPath = await fs.promises.realpath(resolvedPath)
+  const realPath = await fs.promises.realpath(resolvedPath)
 
-    if (realPath !== resolvedPath) {
-      const realBlockReason = sensitiveFileBlockReason(realPath)
+  if (realPath !== resolvedPath) {
+    const realBlockReason = sensitiveFileBlockReason(realPath)
 
-      if (realBlockReason) {
-        throw new Error(`${purpose} blocked for sensitive file (symlink target): ${realBlockReason}`)
-      }
+    if (realBlockReason) {
+      throw new Error(`${purpose} blocked for sensitive file (symlink target): ${realBlockReason}`)
     }
   }
 

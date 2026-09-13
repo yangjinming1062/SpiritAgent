@@ -39,7 +39,6 @@ interface EnsureCachedOptions {
 export interface ModelDiskCache {
   clear: () => Promise<void>
   ensureCached: (opts: EnsureCachedOptions) => Promise<{ contentHash: string; filePath: string; fromCache: boolean }>
-  getPath: (hash: string) => Promise<null | string>
   has: (hash: string) => Promise<boolean>
   sweep: () => Promise<void>
 }
@@ -81,14 +80,6 @@ export function createModelDiskCache({
     } catch {
       return false
     }
-  }
-
-  async function getPath(hash?: null | string): Promise<null | string> {
-    if (await has(hash)) {
-      return getGlbPath(hash!)
-    }
-
-    return null
   }
 
   async function sweep(): Promise<void> {
@@ -151,7 +142,10 @@ export function createModelDiskCache({
     const { pathname, search } = new URL(raw, baseUrl || 'http://127.0.0.1:8000')
     const targetUrl = baseUrl ? `${baseUrl}${pathname}${search}` : raw
 
-    const downloadKey = contentHash || crypto.createHash('sha1').update(pathname).digest('hex')
+    // 断点续传 key 纳入 query：同一 pathname 携带不同签名参数的 URL 不得共用 partial 文件，
+    // 否则旧签名残留段会拼进新下载。
+    const downloadKey = contentHash || crypto.createHash('sha1').update(`${pathname}${search}`).digest('hex')
+
     const partialPath = getPartialPath(downloadKey)
 
     async function attemptDownload(resumeFromBytes = 0): Promise<null | string> {
@@ -299,7 +293,10 @@ export function createModelDiskCache({
     }
 
     const promise = _download(opts).finally(() => {
-      inFlightDownloads.delete(key)
+      // clear() 后 key 可能已被新的在途下载重新占用；只清理自己那一项。
+      if (inFlightDownloads.get(key) === promise) {
+        inFlightDownloads.delete(key)
+      }
     })
 
     inFlightDownloads.set(key, promise)
@@ -317,7 +314,6 @@ export function createModelDiskCache({
   return {
     clear,
     ensureCached,
-    getPath,
     has,
     sweep
   }

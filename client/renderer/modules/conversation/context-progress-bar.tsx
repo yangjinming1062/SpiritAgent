@@ -1,23 +1,13 @@
 import { useStore } from '@nanostores/react'
 import { clamp } from '@runtime'
 import type React from 'react'
-import { useState } from 'react'
 
-import { Brain, Loader2, Sparkles, Thermometer } from '@/shared/lib/icons'
+import { Brain, Thermometer } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { $gateway } from '@/shared/store/gateway'
-import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { SessionMessage } from '@/shared/types/spiritagent'
 
-import {
-  $chatSessionId,
-  $sessionContextUsage,
-  $sessionSettings,
-  hydrateChatMessages,
-  setSessionContextUsage
-} from './chat-store'
-import { rememberFullHistory } from './session-history-cache'
+import { $chatSessionId, $sessionContextUsage, $sessionSettings } from './chat-store'
 
 const DEFAULT_THRESHOLD = 0.7
 const DEFAULT_LIMIT = 1_000_000
@@ -257,125 +247,5 @@ export function ChatReasoningCapsule({ active, onClick, variant }: ChatCapsulePr
         {isOff ? params.reasoningCapsuleOff : params.reasoningCapsuleOn(label)}
       </span>
     </button>
-  )
-}
-
-/** 兼容保留的完整进度条与手动压缩组件 */
-export function ContextProgressBar(): React.JSX.Element {
-  const { sessionId, totalTokens, contextLimit, pct, thresholdPct, isInactive, barColor } = useContextStatus()
-  const gateway = useStore($gateway)
-  const params = useStrings().chat.params
-  const [hovered, setHovered] = useState(false)
-  const [compressing, setCompressing] = useState(false)
-
-  const handleManualCompress = async (e: React.MouseEvent) => {
-    e.stopPropagation()
-
-    if (compressing || !sessionId || !gateway || gateway.connectionState !== 'open') {
-      return
-    }
-
-    setCompressing(true)
-
-    try {
-      const res = await gateway.request<CompressContextResponse>('session.compress_context', {
-        session_id: sessionId
-      })
-
-      if (res.compressed) {
-        if (Array.isArray(res.messages)) {
-          hydrateChatMessages(res.messages)
-
-          if (sessionId) {
-            rememberFullHistory(sessionId, res.messages)
-          }
-        }
-
-        if (res.usage?.total_tokens !== undefined) {
-          setSessionContextUsage({
-            contextLimit: res.usage.context_window,
-            totalTokens: res.usage.total_tokens
-          })
-        }
-
-        notify({
-          durationMs: 4000,
-          kind: 'success',
-          message: params.manualCompressSuccess(res.replaced_count ?? 0)
-        })
-      } else {
-        notify({
-          durationMs: 3500,
-          kind: 'info',
-          message: res.reason || params.manualCompressNotNeeded
-        })
-      }
-    } catch (err) {
-      notifyError(err, params.manualCompressFailed)
-    } finally {
-      setCompressing(false)
-    }
-  }
-
-  return (
-    <div
-      className="relative w-full pt-1.5 pb-0.5"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      {hovered && (
-        <div className="absolute -top-8 left-1/2 -translate-x-1/2 z-50 flex items-center gap-1.5 rounded-md border border-line-standard bg-neutral-900/95 px-2.5 py-1 text-[10px] text-strong shadow-lg backdrop-blur-sm whitespace-nowrap pointer-events-none animate-in fade-in zoom-in-95 duration-150">
-          {compressing ? (
-            <div className="flex items-center gap-1.5 text-accent">
-              <Loader2 className="size-3 animate-spin" />
-              <span>{params.manualCompressRunning}</span>
-            </div>
-          ) : (
-            <>
-              <span>
-                {params.manualCompressTooltipInline(
-                  totalTokens.toLocaleString(),
-                  contextLimit.toLocaleString(),
-                  pct.toFixed(1)
-                )}
-              </span>
-              <span className="text-faint">·</span>
-              <span className="text-accent font-medium">
-                {params.manualCompressThresholdInline(Math.round(thresholdPct))}
-              </span>
-              <span className="text-faint">·</span>
-              <span className="text-muted font-sans flex items-center gap-0.5">
-                <Sparkles className="size-2.5 text-amber-300" />
-                {params.manualCompressClickInline}
-              </span>
-            </>
-          )}
-        </div>
-      )}
-
-      <button
-        aria-label={params.manualCompressButtonAria}
-        className={cn(
-          'relative h-1.5 w-full overflow-visible rounded-full bg-fill-hover transition group cursor-pointer block border-0 p-0',
-          compressing && 'cursor-wait animate-pulse'
-        )}
-        disabled={compressing}
-        onClick={handleManualCompress}
-        title={params.manualCompressButtonTitle}
-        type="button"
-      >
-        <div
-          className={cn('h-full rounded-full transition-all duration-300 ease-out', barColor)}
-          style={{ width: `${Math.max(pct, isInactive ? 0 : 1)}%` }}
-        />
-        <div
-          className="absolute top-1/2 -translate-y-1/2 -translate-x-1/2 h-2.5 w-[2px] rounded-full bg-line-strong shadow-xs transition group-hover:h-3.5"
-          style={{ left: `${thresholdPct}%` }}
-          title={params.manualCompressThresholdMarker(Math.round(thresholdPct))}
-        >
-          <div className="absolute -top-1 left-1/2 -translate-x-1/2 size-1 rounded-full bg-line-strong" />
-        </div>
-      </button>
-    </div>
   )
 }

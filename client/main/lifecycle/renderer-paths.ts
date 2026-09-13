@@ -95,5 +95,5 @@ export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLo
     return pathToFileURL(resolveRendererHtml(htmlFile)).toString()
   }
 
-  return { htmlFileNameForRole, rendererUrlFor, resolveRendererHtml, resolveWebDist }
+  return { rendererUrlFor }
 }

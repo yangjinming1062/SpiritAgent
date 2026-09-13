@@ -221,8 +221,10 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
   const start = useCallback(() => {
     let pending: Promise<void> | null = null
     pending = (async () => {
+      let stream: MediaStream | null = null
+
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: IM_VOICE_BAR_AUDIO_CONSTRAINTS })
+        stream = await navigator.mediaDevices.getUserMedia({ audio: IM_VOICE_BAR_AUDIO_CONSTRAINTS })
         const mimeType = getSupportedOpusMimeType()
         const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream)
 
@@ -250,6 +252,12 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
           }, cap * 1000)
         }
       } catch {
+        // getUserMedia 成功但 MediaRecorder 构造失败时 stream 尚未挂到 streamRef，
+        // 必须就地停轨，否则麦克风音轨与系统指示灯保持点亮。
+        if (stream && streamRef.current !== stream) {
+          stream.getTracks().forEach(t => t.stop())
+        }
+
         markAssistantTerminal({ error: '无法使用麦克风录制语音' })
         presentationPorts().setSpriteState('idle')
       } finally {

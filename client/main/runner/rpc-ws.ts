@@ -213,13 +213,13 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
   function call<T = unknown>(
     method: string,
     params: Record<string, unknown> = {},
-    { id: explicitId, timeoutMs }: { id?: number | string; timeoutMs?: number } = {}
+    { timeoutMs }: { timeoutMs?: number } = {}
   ): Promise<T> {
     if (closed) {
       return Promise.reject(new Error('Runner WS server is closed.'))
     }
 
-    const id = explicitId !== undefined ? String(explicitId) : `call_${nextId++}`
+    const id = `call_${nextId++}`
 
     const effectiveTimeoutMs =
       typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS

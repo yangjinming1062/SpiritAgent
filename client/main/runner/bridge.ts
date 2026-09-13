@@ -555,7 +555,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
   async function _rpc<T = unknown>(
     method: string,
     params: Record<string, unknown>,
-    opts: { id?: number | string; timeoutMs?: number } = {}
+    opts: { timeoutMs?: number } = {}
   ): Promise<T> {
     if (!wsServer || !wsServer.getStatus()?.connected) {
       throw new Error('Runner is not connected.')
@@ -567,13 +567,13 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
   const invoke = <T = unknown>(
     name: string,
     args?: Record<string, unknown>,
-    opts?: { id?: number | string; timeoutMs?: number }
+    opts?: { timeoutMs?: number }
   ): Promise<T> => _rpc<T>('execute_tool', { args: args || {}, name }, opts)
 
   const dispatch = <T = unknown>(
     method: string,
     params?: Record<string, unknown>,
-    opts?: { id?: number | string; timeoutMs?: number }
+    opts?: { timeoutMs?: number }
   ): Promise<T> => _rpc<T>(method, params || {}, opts)
 
   function getTools(): Record<string, unknown>[] {

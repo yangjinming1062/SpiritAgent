@@ -9,7 +9,8 @@ export interface AgentFormState {
   enable_background_review: boolean
 }
 
-const REASONING_OPTIONS = ['none', 'low', 'medium', 'high'] as const
+// 推断档位的合法值集合：选项渲染与后端返回值校验共用，避免两处清单漂移。
+export const REASONING_OPTIONS = ['none', 'low', 'medium', 'high'] as const
 
 export function AgentDefaultsSection({
   disabled,

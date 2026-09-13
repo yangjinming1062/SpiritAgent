@@ -24,7 +24,7 @@ export interface SurfaceWindowDeps {
   zoomPersistence: Pick<ZoomPersistence, 'restorePersistedZoomLevel'>
 }
 
-export function surfaceLoadUrl(
+function surfaceLoadUrl(
   rendererUrlFor: (id: SurfaceId) => string,
   id: SurfaceId,
   payload?: DesktopSurfaceOpenPayload

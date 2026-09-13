@@ -3,14 +3,12 @@
 // 主进程是状态权威（surfaces.ts 持有 BrowserWindow 引用与互斥锁），本 store 只是镜像。
 // 启动期 `hydrateSurfaces` 主动拉一次 `getState`，之后订阅 `onChanged` 维持一致；
 // 任何 `requestOpenSurface` 调用先更新本地意图再交给主进程；本地意图用于 UI 立即反馈。
-import type { DesktopSurfaceBounds, DesktopSurfaceOpenPayload, SurfaceId } from '@ipc/contracts'
+import type { DesktopSurfaceOpenPayload, SurfaceId } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 
 export const $surfaceOpen = atom<null | SurfaceId>(null)
-// 工作台窗口外侧栖息坐标，由主进程合帧广播
-export const $surfaceBounds = atom<DesktopSurfaceBounds | null>(null)
 
 export type SurfaceRole = 'living' | 'workbench' | 'sprite'
 export const $surfaceRole = atom<SurfaceRole | null>(null)
@@ -33,7 +31,6 @@ export function isLivingProxyWindow(): boolean {
 
 registerStorageClearHandler(() => {
   $surfaceOpen.set(null)
-  $surfaceBounds.set(null)
   $surfaceRole.set(null)
 })
 
@@ -69,7 +66,6 @@ export function hydrateSurfaces(): () => void {
     .then(state => {
       if (state) {
         $surfaceOpen.set(state.open)
-        $surfaceBounds.set(state.bounds ?? null)
       }
     })
     .catch(() => {
@@ -78,6 +74,5 @@ export function hydrateSurfaces(): () => void {
 
   return window.spiritagent.surface.onChanged(payload => {
     $surfaceOpen.set(payload?.open ?? null)
-    $surfaceBounds.set(payload?.bounds ?? null)
   })
 }

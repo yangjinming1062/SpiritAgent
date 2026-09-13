@@ -387,11 +387,9 @@ export function createWindowHandlers({
   return {
     configureSpellChecker,
     installContentSecurityPolicy,
-    installContextMenu,
     installMediaPermissions,
     installStandardWindowHandlers,
     installSurfaceWindowHandlers,
-    installZoomShortcuts,
     registerPowerResumeListeners
   }
 }

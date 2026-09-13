@@ -136,8 +136,12 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
     case 'model.gen.progress': {
       const p = decodePayload<{ stage?: string; progress?: number }>(event.payload)
 
-      // 终态已定后,迟到的 progress 不能再把它打回 'generating' —— 否则覆盖层会重现。
-      if ($modelGenState.get() === 'succeeded') {
+      // 终态（succeeded / failed）已定后，迟到的 progress 不能再把它打回
+      // 'generating' —— 否则失败覆盖层会在失败后重现。重试下载会先显式置回
+      // 'generating'，不受此守卫影响。
+      const genState = $modelGenState.get()
+
+      if (genState === 'succeeded' || genState === 'failed') {
         break
       }
 

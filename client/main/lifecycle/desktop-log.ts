@@ -14,7 +14,6 @@ interface DesktopLoggerOptions {
 }
 
 interface DesktopLogger {
-  flushAsync: () => Promise<void>
   flushSync: () => void
   logPath: string
   rememberLog: (chunk: unknown) => void
@@ -185,7 +184,6 @@ export function createDesktopLogger({ spiritagentHome, isPackaged = true }: Desk
   }
 
   return {
-    flushAsync,
     flushSync,
     logPath,
     rememberLog

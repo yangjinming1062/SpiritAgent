@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
+import { useStrings } from '@/shared/strings'
+
 import { useEscapeKey } from '../hooks/use-escape-key'
 import { useInteractiveRegion } from '../lib/interactive-regions'
 
@@ -85,10 +87,11 @@ export function PortraitLightbox({
   onClose: () => void
   url: string
 }): React.ReactPortal | null {
+  const t = useStrings()
   const overlayRef = useRef<HTMLDivElement>(null)
 
   // 灯箱打开时把整个视口注册为可交互区，避免点击图片或背景时事件穿透到下层窗口。
-  // 函数引用稳定下来，useInteractiveRegion 的 effect 不会每次渲染都重新订阅。
+  // hook 内部经 getRectRef 镜像读取，函数身份无需稳定。
   const getLightboxRect = (): DOMRect => new DOMRect(0, 0, window.innerWidth, window.innerHeight)
 
   useInteractiveRegion('portrait-lightbox', overlayRef, getLightboxRect)
@@ -102,7 +105,7 @@ export function PortraitLightbox({
 
   return createPortal(
     <div
-      aria-label="点击关闭"
+      aria-label={t.ui.lightbox.backdropAria}
       className="fixed inset-0 z-[100] flex items-center justify-center p-6"
       onClick={onClose}
       ref={overlayRef}
@@ -110,7 +113,7 @@ export function PortraitLightbox({
       style={{ background: 'rgba(0,0,0,0.35)', pointerEvents: 'auto' }}
     >
       <button
-        aria-label="关闭预览"
+        aria-label={t.ui.lightbox.closePreview}
         className="block cursor-zoom-out rounded-2xl border-0 bg-transparent p-0"
         onClick={onClose}
         type="button"

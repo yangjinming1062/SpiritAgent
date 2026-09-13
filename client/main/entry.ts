@@ -78,8 +78,7 @@ import {
   DEFAULT_FETCH_TIMEOUT_MS,
   DEV_CSP_POLICY,
   resolvePathTimeoutMs,
-  resolveReadableFileForIpc,
-  resolveTimeoutMs
+  resolveReadableFileForIpc
 } from './security/hardening'
 import { spiritagentHome } from './security/paths'
 import { buildClientContext } from './shared/client-context'
@@ -116,6 +115,8 @@ let pendingSecondInstance = false
 let mainWindow: BrowserWindow | null = null
 let surfaces: null | SurfacesManager = null
 let getAuthToken = (): string | null => null
+// will-quit 有界等待 Runner 收尾，避免 fire-and-forget 留下孤儿子进程。
+let willQuitCleanupDone = false
 
 const onEarlySecondInstance = (): void => {
   pendingSecondInstance = true
@@ -413,7 +414,6 @@ registerConnectionIpc({
   mintWsTicket: backendHttp.mintWsTicket,
   modelDiskCache,
   resolvePathTimeoutMs,
-  resolveTimeoutMs,
   setCachedWsUrl
 })
 registerGatewayIpc({
@@ -592,9 +592,6 @@ app.on('before-quit', () => {
 
   desktopLogger.flushSync()
 })
-
-// will-quit 有界等待 Runner 收尾，避免 fire-and-forget 留下孤儿子进程。
-let willQuitCleanupDone = false
 
 app.on('will-quit', event => {
   if (willQuitCleanupDone) {

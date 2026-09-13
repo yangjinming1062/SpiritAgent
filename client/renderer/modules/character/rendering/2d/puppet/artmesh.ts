@@ -15,7 +15,6 @@ export interface ArtMesh {
   /** 顶点 xy（图像局部像素坐标） */
   verts: Float32Array
   tris: Uint16Array
-  stats: { verts: number; tris: number; cover: number }
 }
 
 interface DelaTri {
@@ -232,7 +231,6 @@ export function buildArtMesh(img: RigImage, maxEdge: number): ArtMesh | null {
   const nReal = xs.length
   const trisAll = delaunay(px, py, nReal)
   const kept: DelaTri[] = []
-  let coverHit = 0
 
   for (const t of trisAll) {
     if (t.a >= nReal || t.b >= nReal || t.c >= nReal) {
@@ -257,10 +255,6 @@ export function buildArtMesh(img: RigImage, maxEdge: number): ArtMesh | null {
 
     if (hit) {
       kept.push(t)
-
-      if (alphaAt(Math.round(mx), Math.round(my)) > ALPHA_TH) {
-        coverHit++
-      }
     }
   }
 
@@ -301,7 +295,6 @@ export function buildArtMesh(img: RigImage, maxEdge: number): ArtMesh | null {
 
   return {
     verts,
-    tris: triIdx,
-    stats: { verts: nv, tris: kept.length, cover: kept.length ? coverHit / kept.length : 0 }
+    tris: triIdx
   }
 }

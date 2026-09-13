@@ -8,7 +8,7 @@ import { atom } from 'nanostores'
 
 import { authedApi } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
-import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 
 export interface MomentEntry {
   audioUrl: string | null
@@ -117,11 +117,22 @@ function toDiary(w: DiaryWire): DiaryEntry {
   }
 }
 
+// 水合序号：请求期间页面可能切月 / 重挂，或发生登出清空；
+// 迟到的旧响应不得覆盖新数据（与 wardrobe-store 同一套 revision + clearEpoch 防护）。
+let momentsRevision = 0
+let diaryRevision = 0
+
 export async function hydrateMoments(): Promise<void> {
+  const version = ++momentsRevision
+  const epoch = currentClearEpoch()
   $momentsLoading.set(true)
 
   try {
     const result = await authedApi<MomentListWire>({ path: '/api/companion/moments' })
+
+    if (version !== momentsRevision || epoch !== currentClearEpoch()) {
+      return
+    }
 
     if (!result.ok) {
       if (result.reason === 'err') {
@@ -137,11 +148,15 @@ export async function hydrateMoments(): Promise<void> {
 
     $moments.set(result.value.moments.map(toMoment))
   } finally {
-    $momentsLoading.set(false)
+    if (version === momentsRevision) {
+      $momentsLoading.set(false)
+    }
   }
 }
 
 export async function hydrateDiary(opts: { from?: string; to?: string; reset?: boolean } = {}): Promise<void> {
+  const version = ++diaryRevision
+  const epoch = currentClearEpoch()
   $diaryLoading.set(true)
 
   try {
@@ -160,6 +175,10 @@ export async function hydrateDiary(opts: { from?: string; to?: string; reset?: b
     const result = await authedApi<DiaryListWire>({
       path: `/api/companion/diary${query ? `?${query}` : ''}`
     })
+
+    if (version !== diaryRevision || epoch !== currentClearEpoch()) {
+      return
+    }
 
     if (!result.ok) {
       if (result.reason === 'err') {
@@ -185,7 +204,9 @@ export async function hydrateDiary(opts: { from?: string; to?: string; reset?: b
       $diaryByDate.set({ ...$diaryByDate.get(), ...incoming })
     }
   } finally {
-    $diaryLoading.set(false)
+    if (version === diaryRevision) {
+      $diaryLoading.set(false)
+    }
   }
 }
 

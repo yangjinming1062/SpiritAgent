@@ -6,7 +6,7 @@ import { net, protocol } from 'electron'
 import { resolveReadableFileForIpc } from '../security/hardening'
 import { STREAMABLE_MEDIA_EXTS } from '../shared/mime'
 
-export const MEDIA_PROTOCOL = 'spiritagent-media'
+const MEDIA_PROTOCOL = 'spiritagent-media'
 
 // 仅允许从应用缓存目录流式读出——渲染层不得经自定义协议探测任意绝对路径。
 function isUnderMediaRoot(resolvedPath: string, roots: readonly string[]): boolean {

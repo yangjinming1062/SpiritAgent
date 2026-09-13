@@ -1,4 +1,3 @@
-export interface MemoryToolScope { user_id: number; system_preset_id: string }
 // SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。
 // 通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和
 // `client/renderer/shared/types/global.d.ts` 导入。
@@ -7,6 +6,8 @@ export interface MemoryToolScope { user_id: number; system_preset_id: string }
 import { clamp } from '../runtime'
 import type { SpeechStyle } from '../speech-style'
 export type { SpeechStyle } from '../speech-style'
+
+export interface MemoryToolScope { user_id: number; system_preset_id: string }
 
 export interface DesktopVersionInfo {
   appVersion: string
@@ -17,7 +18,6 @@ export interface DesktopVersionInfo {
 
 export interface DesktopUpdateInfo {
   releaseDate?: string
-  releaseNotes?: string
   version: string
 }
 
@@ -33,8 +33,6 @@ export interface SessionHistorySnapshot {
 }
 
 export interface DesktopUpdateProgress {
-  bytesPerSecond: number
-  delta: number
   percent: number
   total: number
   transferred: number
@@ -106,14 +104,14 @@ export interface SpiritAgentConnection {
   wsUrl: string
 }
 
-/** 渲染进程可见的连接投影——刻意不含 token（ARCHITECTURE §3 隐藏凭证）。 */
-export type SpiritAgentConnectionPublic = Omit<SpiritAgentConnection, 'token'>
+/** 渲染进程可见的连接投影——只暴露网关地址；刻意不含 token（ARCHITECTURE §3 隐藏凭证）。 */
+export type SpiritAgentConnectionPublic = Pick<SpiritAgentConnection, 'wsUrl'>
 
 export type SpiritAgentUiPalette = 'night' | 'day'
 export type SpiritAgentUiEffect = 'solid' | 'clear'
 export type SpiritAgentUiTheme = 'night' | 'day' | 'night-clear' | 'day-clear'
 
-// 主进程侧校验白名单——契约是跨进程唯一真理源，渲染层 registry 只扩展元数据。
+// 主进程侧校验白名单——契约是跨进程唯一真理源；主题名称与描述在渲染层文案字典。
 export const SPIRITAGENT_UI_THEMES = [
   'night',
   'day',
@@ -225,7 +223,6 @@ export interface DesktopBootProgress {
   phase: string
   progress: number
   running: boolean
-  timestamp: number
 }
 
 // 启动进度的 0–100 收口；非数与 NaN 一律视为 0，避免上游 NaN 透传把进度条钉死。
@@ -258,7 +255,6 @@ export interface SpiritAgentApiRequest {
   body?: unknown
   method?: string
   path: string
-  timeoutMs?: number
 }
 
 export interface SpiritAgentSelectPathsOptions {
@@ -291,7 +287,6 @@ export interface RunnerConfigPatch {
 }
 
 export interface MediaSttPayload {
-  context?: null | string
   dataUrl: string
   filename?: string
   language?: string
@@ -300,7 +295,6 @@ export interface MediaSttPayload {
 export interface MediaTtsPayload {
   speech_style?: SpeechStyle
   context?: null | string
-  language?: string
   persist?: boolean
   text: string
   voice?: string
@@ -312,9 +306,6 @@ export interface AttachmentVideoUploadPayload {
 }
 
 export interface AttachmentVideoUploadResult {
-  fileId: string
-  mime: string
-  size: number
   url: string
 }
 

@@ -31,6 +31,9 @@ const IMAGE_ATTACH_MAX_EDGE = 2048
 const IMAGE_ATTACH_TARGET_BYTES = 6 * 1024 * 1024
 const IMAGE_ATTACH_JPEG_QUALITY = 0.85
 
+// 跨窗口投喂信箱：精灵窗写入，生活空间窗口取走。取走即清空，避免下次打开残留旧附件。
+const pendingFeedPaths: string[] = []
+
 export function registerFilesIpc({ electron, hardening, ipcMain, mimeTypeForPath }: FilesIpcDeps): void {
   const { dialog, getMainWindow } = electron
 
@@ -132,9 +135,6 @@ export function registerFilesIpc({ electron, hardening, ipcMain, mimeTypeForPath
     registerUserSelectedPaths(paths.map(p => String(p)))
   })
 
-  // 跨窗口投喂信箱：精灵窗写入，生活空间窗口取走。取走即清空，避免下次打开残留旧附件。
-  let pendingFeedPaths: string[] = []
-
   ipcMain.handle(IPC.invoke.chatSetPendingFeed, async (_event, paths: string[]) => {
     const cleaned = Array.isArray(paths) ? paths.map(p => String(p)).filter(Boolean) : []
 
@@ -143,14 +143,15 @@ export function registerFilesIpc({ electron, hardening, ipcMain, mimeTypeForPath
     }
 
     // 路径须已由 preload getPathForFile 或 selectPaths 注册；此处不再自授白名单。
-    pendingFeedPaths = cleaned
+    pendingFeedPaths.length = 0
+    pendingFeedPaths.push(...cleaned)
     // 已打开的生活空间靠广播即时收到；刚创建的窗口在挂载时 take 补齐。
     broadcastToAllWindows(IPC.event.chatPendingFeed, cleaned)
   })
 
   ipcMain.handle(IPC.invoke.chatTakePendingFeed, async () => {
-    const paths = pendingFeedPaths
-    pendingFeedPaths = []
+    const paths = [...pendingFeedPaths]
+    pendingFeedPaths.length = 0
 
     return paths
   })

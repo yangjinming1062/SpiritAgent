@@ -12,7 +12,6 @@ function currentSignals(): PowerSignals {
     screenLocked: $screenLocked.get(),
     documentHidden: document.visibilityState !== 'visible',
     fullscreen: $focusContext.get()?.fullscreen ?? false,
-    staticCovered: false,
     modelSettled: $modelLoadSettled.get()
   }
 }

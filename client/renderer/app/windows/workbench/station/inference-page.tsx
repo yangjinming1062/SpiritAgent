@@ -10,12 +10,10 @@ import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { SessionRuntimeInfo, SpiritAgentConfigResponse } from '@/shared/types/spiritagent'
 
-import { AgentDefaultsSection, type AgentFormState } from './inference/agent-defaults-section'
+import { AgentDefaultsSection, type AgentFormState, REASONING_OPTIONS } from './inference/agent-defaults-section'
 import { type ChatFormState, ContextCompressionSection } from './inference/context-compression-section'
 import { type TemperatureFormState, TemperatureSection } from './inference/temperature-section'
 import { useFormSection } from './use-form-section'
-
-const REASONING_OPTIONS = ['none', 'low', 'medium', 'high'] as const
 
 const EMPTY_AGENT: AgentFormState = {
   reasoning_effort: 'low',

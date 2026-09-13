@@ -1,10 +1,4 @@
-import {
-  type DesktopUpdateEvent,
-  type DesktopUpdateInfo,
-  type DesktopUpdateProgress,
-  IPC,
-  type IpcEventContract
-} from '@ipc/contracts'
+import { type DesktopUpdateEvent, type DesktopUpdateInfo, IPC, type IpcEventContract } from '@ipc/contracts'
 import type { App, BrowserWindow, IpcMain } from 'electron'
 import log from 'electron-log/main'
 // 顶层静态 import：client/package.json 是 ESM (`"type": "module"`)，asar 模式下 dynamic require
@@ -14,6 +8,7 @@ import log from 'electron-log/main'
 // 注意：electron-updater 是 CJS 模块没有 named export `autoUpdater`，必须 default import + 解构，
 // 顶层 named import 在 dev/prod 都会被 Node ESM loader 拒绝。
 import electronUpdaterPkg from 'electron-updater'
+import type { ProgressInfo } from 'electron-updater'
 
 import { errorMessage } from '../shared/utils'
 
@@ -29,16 +24,14 @@ interface UpdateIpcDeps {
   ) => void
 }
 
-/** electron-updater 的 releaseNotes 可能是 string | ReleaseNoteInfo[] | null | undefined；
- *  IPC 契约的 DesktopUpdateInfo 只承诺 string | undefined——把 null/note[] 归一化成 undefined。
- *  之前 dynamic require 把类型擦成 any，TS 没看出这里不兼容；顶层静态 import 让 TS 抓出来。 */
+/** electron-updater 的 info 携带渲染层不消费的字段；只挑契约承诺的两个字段下发，
+ *  避免 releaseNotes（string | ReleaseNoteInfo[]）等原始结构跨入 IPC 边界。 */
 function toDesktopUpdateInfo(info: unknown): DesktopUpdateInfo {
-  const candidate = (info ?? {}) as DesktopUpdateInfo & { releaseNotes?: unknown }
-  const notes = candidate.releaseNotes
+  const candidate = (info ?? {}) as Partial<DesktopUpdateInfo>
 
   return {
-    ...candidate,
-    releaseNotes: typeof notes === 'string' ? notes : undefined
+    releaseDate: typeof candidate.releaseDate === 'string' ? candidate.releaseDate : undefined,
+    version: typeof candidate.version === 'string' ? candidate.version : ''
   }
 }
 
@@ -83,7 +76,15 @@ export function registerUpdateIpc({
   autoUpdater.on('checking-for-update', () => broadcast({ type: 'checking' }))
   autoUpdater.on('update-available', info => broadcast({ info: toDesktopUpdateInfo(info), type: 'available' }))
   autoUpdater.on('update-not-available', info => broadcast({ info: toDesktopUpdateInfo(info), type: 'none' }))
-  autoUpdater.on('download-progress', (progress: DesktopUpdateProgress) => broadcast({ progress, type: 'progress' }))
+  autoUpdater.on(
+    'download-progress',
+    // 同 toDesktopUpdateInfo：契约只承诺三个字段，剔除 bytesPerSecond / delta 等原始结构。
+    (raw: ProgressInfo) =>
+      broadcast({
+        progress: { percent: raw.percent, total: raw.total, transferred: raw.transferred },
+        type: 'progress'
+      })
+  )
   autoUpdater.on('update-downloaded', info => broadcast({ info: toDesktopUpdateInfo(info), type: 'downloaded' }))
   autoUpdater.on('error', (err: unknown) => {
     const message = errorMessage(err)
