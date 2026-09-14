@@ -36,29 +36,19 @@ _MINIMAX_EMOTIONS = {
 }
 
 _MIMO_GUIDANCE = """
-MiMo supports open-ended style and inline audio tags, including custom natural-language tags.
-styles: overall style labels, combined at the beginning of the spoken text. Recommended labels:
-- 基础情绪：开心/悲伤/愤怒/恐惧/惊讶/兴奋/委屈/平静/冷漠
-- 复合情绪：怅然/欣慰/无奈/愧疚/释然/嫉妒/厌倦/忐忑/动情
-- 整体语调：温柔/高冷/活泼/严肃/慵懒/俏皮/深沉/干练/凌厉
-- 音色定位：磁性/醇厚/清亮/空灵/稚嫩/苍老/甜美/沙哑/醇雅
-- 人设腔调：夹子音/御姐音/正太音/大叔音/台湾腔
-- 方言：东北话/四川话/河南话/粤语；角色扮演：孙悟空/林黛玉
-cues: inline audio instructions. Recommended tag values:
-- 语速与节奏：吸气/深呼吸/叹气/长叹一口气/喘息/屏息
-- 情绪状态：紧张/害怕/激动/疲惫/委屈/撒娇/心虚/震惊/不耐烦
-- 语音特征：颤抖/声音颤抖/变调/破音/鼻音/气声/沙哑
-- 哭笑表达：笑/轻笑/大笑/冷笑/抽泣/呜咽/哽咽/嚎啕大哭
-- Further documented examples: 语速加快/碎碎念/小声/沉默片刻/苦笑/咳嗽/提高音量喊话.
-These are examples, not a closed whitelist; use custom precise delivery descriptions when useful.
-direction: REQUIRED director mode, with three natural-language fields (Chinese or English):
-- role: the persona's voice-relevant traits and relationship to the listener, not a full biography (max 500 characters).
-- scene: the situation established by this exchange and your attitude toward it; do not invent events (max 500 characters).
-- guidance: the few vocal choices that matter for these words, such as pace, pauses, emphasis or emotional progression (max 1500 characters).
-Keep each field concise and specific. Direction describes vocal delivery, not visual gestures or physical actions.
-Preserve the selected voice and persona. Do not add dramatic intensity or a new speaker to make the reply expressive.
-styles, cues and direction must agree without restating the same instructions in every field.
-styles may be empty and contain at most 16 labels. Do not include brackets around styles or cue tags.
+MiMo accepts open-ended natural-language delivery controls.
+- styles: zero to four overall labels that genuinely affect the whole utterance. Useful categories include emotion
+  (平静/开心/委屈/释然), tone (温柔/俏皮/严肃/慵懒), voice quality (清亮/磁性/气声), or a supported dialect.
+  These are examples, not a whitelist; do not add a style merely to fill the field.
+- cues: local audible events or delivery changes, such as 轻笑, 叹气, 吸气, 小声, 语速加快, 苦笑, 哽咽,
+  or 咳嗽. Use a precise custom description when needed. A cue must be justified by the adjacent words; it is not
+  a place for visual gestures, inner thoughts, or invented events.
+- direction is required. role contains only voice-relevant persona traits and the listener relationship (max 500
+  characters); scene contains the situation established by this exchange and your attitude, without invented facts
+  (max 500); guidance contains the few important choices of pace, pauses, emphasis, and emotional progression (max
+  1500). Keep all three concise.
+Preserve the selected voice and one-speaker persona. styles, cues, and direction must agree without repeating the same
+instruction in every field or escalating drama beyond the dialogue. Do not include brackets in style or cue values.
 """
 
 
@@ -66,11 +56,11 @@ def speech_style_guidance(provider: str, model: str) -> str:
     example: dict = {"provider": provider, "model": model}
     if provider == "mimo":
         example.update(
-            styles=["温柔"],
+            styles=[],
             direction={
-                "role": "your character",
-                "scene": "this conversation",
-                "guidance": "contextual vocal direction",
+                "role": "configured persona and voice",
+                "scene": "the current exchange",
+                "guidance": "natural delivery; add emphasis only where the words support it",
             },
             cues=[],
         )
@@ -81,7 +71,7 @@ def speech_style_guidance(provider: str, model: str) -> str:
             else "This model does not support singing; do not request singing in styles, cues or director guidance.\n"
         )
     elif provider == "minimax":
-        example.update(emotion="calm", speed=1, cues=[], pauses=[])
+        example.update(emotion=None, speed=1, cues=[], pauses=[])
         emotions = dict(_MINIMAX_EMOTIONS)
         if model in _MINIMAX_EXTENDED_EMOTION_MODELS:
             emotions.update(fluent="生动", whisper="低语")
@@ -96,18 +86,18 @@ def speech_style_guidance(provider: str, model: str) -> str:
         return ""
     return (
         "\n## Hidden speech delivery for the selected voice\n"
-        "Begin every final reply with exactly one <speech_style> header containing valid JSON with the "
-        "following fields, then the dialogue. This required header is delivery metadata, not a chat bubble. "
-        "Do not wrap it in a code fence, put --- before the first spoken bubble, or include it in tool arguments. "
-        "Keep provider and model exactly as shown:\n"
+        "Begin every final reply with exactly one `<speech_style>` header containing valid JSON in the shape "
+        "shown below, immediately followed by the dialogue. It is hidden delivery metadata, not spoken text or "
+        "a chat bubble. Never put it in a code fence, tool argument, or after dialogue, and do not place `---` "
+        "before the first spoken bubble. Keep provider and model exact:\n"
         f"<speech_style>{json.dumps(example, ensure_ascii=False)}</speech_style>\n"
         + capabilities
-        + "Choose delivery for your own words and attitude, rather than copying the user's emotion. "
-        "Natural speech is the baseline; add expressive sounds only where they serve the exchange. "
-        "Each cue is {before, tag}; cues may be empty, with at most 32 entries. before is an exact substring "
-        "of at most 80 characters occurring ONCE in the following dialogue. The sound is inserted before "
-        "that anchor, which remains spoken normally. Do not invent anchors or add words just to fit a cue. "
-        "Keep all delivery instructions in the header; the following body obeys the dialogue delivery rules.\n"
+        + "Choose delivery for your own words and attitude rather than copying the user's emotion. Natural speech "
+        "is the default; use no more than eight cues and only where an audible event improves the exchange. Each "
+        "cue is {before, tag}; before must be an exact substring of at most 80 characters that occurs exactly once "
+        "in the following dialogue. The cue is inserted before that anchor, which remains spoken. Do not invent an "
+        "anchor or add dialogue to accommodate metadata. Keep all delivery controls in the header; the body still "
+        "obeys the dialogue rules.\n"
     )
 
 

@@ -9,12 +9,6 @@ _OUTFIT_LABELS_TEXTS: dict[str, str] = {
     "en": "# Current outfit",
 }
 
-# 双语着装块 fallback：用户尚未穿任何 outfit 时使用，确保 caller 拿到的 outfit_block 非空。
-_DEFAULT_OUTFIT_TEXTS: dict[str, str] = {
-    "zh": "当前着装：（默认形象，尚未换装）",
-    "en": "Current outfit: (default appearance, no outfit set)",
-}
-
 
 async def build_outfit_extras(
     db: AsyncSession,
@@ -22,10 +16,7 @@ async def build_outfit_extras(
     *,
     language: str = DEFAULT_LANGUAGE,
 ) -> str:
-    """当前穿着的着装描述，注入系统提示词稳定段——伙伴自知穿着，为着装联动打底。
-
-    无 outfit 时返回双语 fallback，caller 不必再包一层默认文案。
-    """
+    """返回当前换装描述；未换装时为空，避免重复注入基础形象已经表达的信息。"""
     outfit = (
         await db.execute(
             select(CompanionOutfit).where(
@@ -36,7 +27,7 @@ async def build_outfit_extras(
         )
     ).scalar_one_or_none()
     if outfit is None or not (outfit.description or "").strip():
-        return resolve_prompt_text(_DEFAULT_OUTFIT_TEXTS, language)
+        return ""
     label = resolve_prompt_text(_OUTFIT_LABELS_TEXTS, language)
     return f"{label}\n{outfit.name}:{outfit.description.strip()[:600]}"
 

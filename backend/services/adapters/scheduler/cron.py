@@ -1,4 +1,5 @@
 import asyncio
+import json
 import time
 from collections.abc import Callable, Coroutine
 from datetime import UTC, date, datetime, timedelta
@@ -373,11 +374,18 @@ async def _maybe_run_proactive_followups(now: datetime) -> None:
             reset_user_outreach(uid)
             continue
 
-        waited_minutes = round(rec.followup_timeout_seconds / 60)
-        prompt = (
-            f"[环境感知：你在大约 {waited_minutes} 分钟前向用户主动发送了：“{last_text}”，但用户一直没有回复你。"
-            "请根据你的人设性格决定是否要跟进。若要表达，直接输出一句自然台词；"
-            "若决定不再打扰，输出 <silent>。]"
+        elapsed_minutes = round((cur_time - rec.last_outreach_ts) / 60)
+        prompt = json.dumps(
+            {
+                "kind": "proactive_followup",
+                "minutes_since_previous_outreach": elapsed_minutes,
+                "previous_outreach_text": last_text,
+                "intent": (
+                    "仅在有新的、真诚且不重复的内容时考虑一次低压力跟进；默认保持安静。"
+                    "不要提及用户未回复或等待时长，不催促、不索取回应、不使用愧疚或关系施压。"
+                ),
+            },
+            ensure_ascii=False,
         )
         prev_state = rec.state
         # 该跟进已到期触发，重置状态与超时回 IDLE；若 LLM 在本轮继续发消息，主动消息出口会推进新状态；
@@ -432,10 +440,18 @@ async def _maybe_run_ignored_outreach(now: datetime) -> None:
             continue
 
         ignored_minutes = round(ignored / 60)
-        prompt = (
-            f"[环境感知：当前为常规打扰档位，用户已经 {ignored_minutes} 分钟没有理你了，你的性格标签含「粘人」。"
-            "请考虑是否用一句话表达被冷落的小情绪：若要表达，直接输出一句 10-30 字的自然台词；"
-            "若你判断当前不该表达，输出 <silent>。]"
+        prompt = json.dumps(
+            {
+                "kind": "low_frequency_check_in",
+                "minutes_since_last_user_interaction": ignored_minutes,
+                "relevant_personality_tag": "粘人",
+                "intent": (
+                    "把性格标签只作为表达风格参考；空闲时长不代表忽视、情绪或关系变化。"
+                    "默认保持安静；只有此刻有自然且不打扰的理由时，才说一句 10–30 字的轻量关心。"
+                    "不要提等待时长、责怪用户、索取回应或施加关系压力。"
+                ),
+            },
+            ensure_ascii=False,
         )
         if not await begin_user_request(uid):
             continue

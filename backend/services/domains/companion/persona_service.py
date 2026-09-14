@@ -34,10 +34,10 @@ def set_greeting_moment_writer(fn: GreetingMomentWriter | None) -> None:
     _write_greeting_moment = fn
 
 
-# 双语伙伴人设块标题。字段 label（key.replace("_", " ").capitalize()）属协议级展示，保持英文不译。
+# 双语角色设定块标题。字段 label（key.replace("_", " ").capitalize()）属协议级展示，保持英文不译。
 _PERSONA_LABELS_TEXTS: dict[str, str] = {
-    "zh": "# 伙伴人设",
-    "en": "# Companion persona",
+    "zh": "# 角色设定",
+    "en": "# Character persona",
 }
 
 # 人设字段顺序属于对外契约的一部分，它决定渲染出的系统提示词片段形状
@@ -179,7 +179,7 @@ async def confirm_portrait(db: AsyncSession, user_id: int) -> Persona:
 
 
 def build_system_prompt_extras(persona: Persona | None, *, language: str = DEFAULT_LANGUAGE) -> str:
-    """从 persona.definition_json 按当前 session 语言实时渲染伙伴人设块。
+    """从 persona.definition_json 按当前 session 语言实时渲染角色设定块。
 
     仅依赖 definition_json（onboarding 写入的原始定义），不读已废弃的 system_prompt_extras 缓存列。
     """

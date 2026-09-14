@@ -154,7 +154,7 @@ CRONJOB_SCHEMA = {
             "kind": {
                 "type": "string",
                 "enum": ["special", "standard"],
-                "description": "special writes a natural proactive message to the companion conversation; standard runs in a separate task conversation and posts a system notification. Defaults to standard.",
+                "description": "special delivers a natural proactive message in the primary conversation; standard runs in a separate task conversation and posts a system notification. Defaults to standard.",
                 "default": "standard",
             },
             "deliver": {

@@ -29,7 +29,7 @@ async def format_memories_block(db: AsyncSession, scope: MemoryScope) -> str:
             )
         ).all(),
     )
-    return "\n".join(_format_record(r.content, r.basis, r.context) for r in rows) or "（暂无有效长期记忆）"
+    return "\n".join(_format_record(r.content, r.basis, r.context) for r in rows)
 
 
 async def format_background_memory_block(

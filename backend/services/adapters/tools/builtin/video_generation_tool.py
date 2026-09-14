@@ -138,7 +138,7 @@ VIDEO_GENERATION_SCHEMA = {
             "subject": {
                 "type": "string",
                 "enum": ["self"],
-                "description": "Set to 'self' when the video depicts YOU (the companion). The platform injects your canonical seed image as the first frame automatically; do NOT describe your own appearance from memory. Ignored when first_frame_image is set explicitly.",
+                "description": "Set to 'self' only when the current system context defines a canonical character who appears in the video. The platform injects that character's seed image as the first frame; do not reconstruct appearance from memory. Ignored when first_frame_image is set explicitly.",
             },
             "duration": {
                 "type": "integer",

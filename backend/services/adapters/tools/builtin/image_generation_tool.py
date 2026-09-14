@@ -77,7 +77,7 @@ IMAGE_GENERATION_SCHEMA = {
             "subject": {
                 "type": "string",
                 "enum": ["self"],
-                "description": "Set to 'self' when the image depicts YOU (the companion). The platform injects your canonical seed image as the identity reference automatically — do NOT describe your own appearance from memory; focus the prompt on scene, pose, and action.",
+                "description": "Set to 'self' only when the current system context defines a canonical character who appears in the image. The platform injects that character's seed image as the identity reference; describe the scene, pose, and action without reconstructing appearance from memory.",
             },
             "size": {
                 "type": "string",

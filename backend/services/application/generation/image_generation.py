@@ -107,8 +107,10 @@ async def generate_images(
             sheet = await asyncio.to_thread(compose_image_references, primary[0], secondary[0])
             reference_image = "data:image/png;base64," + base64.b64encode(sheet).decode("ascii")
             prompt = (
-                "The single input is a reference sheet: reference 1 is the LEFT panel, reference 2 is the RIGHT panel. Generate ONE final image, not a sheet; omit panel labels. "
-                + prompt
+                "The sole input image is a two-panel reference sheet. The LEFT panel is reference 1 and "
+                "the RIGHT panel is reference 2; use each only for the role assigned in the task prompt. "
+                "Generate one unified final image, never the sheet, split panels, comparison layout, borders, "
+                "or reference labels. Follow the task prompt below.\n\n" + prompt
             )
         req = ImageGenRequest(prompt=prompt, size=size, n=n, reference_image=reference_image)
         if user_id is not None:

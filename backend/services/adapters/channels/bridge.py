@@ -38,16 +38,16 @@ _STOP_COMMANDS = frozenset({"停", "停止", "停下", "stop", "/stop"})
 
 _STOP_ACK = "好，我停下了。"
 
-# 桌面在线与否作为环境事实注入 IM 回合的系统提示词。桌面离线时 runner 工具会被整体清出注册表，
-# LLM 连工具都看不见，若不明说就只会含糊拒绝——用户要的是「你电脑没开机」这句实话。
+# 桌面连接状态作为环境事实注入 IM 回合。离线时 runner 工具会被整体清出注册表；提示只报告可验证的
+# “当前未连接”，不猜测设备是否关机、网络是否中断等具体原因。
 _DESKTOP_ONLINE_TEXTS = {
-    "zh": "【环境】主人的电脑当前在线，你可以使用本机工具（读写文件、终端、浏览器等）帮他做事。",
+    "zh": "【环境】用户的电脑当前在线，你可以使用本机工具（读写文件、终端、浏览器等）帮他做事。",
     "en": "[Environment] The user's desktop is online; you can use the local tools (files, terminal, browser, etc.) to act on it.",
 }
 
 _DESKTOP_OFFLINE_TEXTS = {
-    "zh": "【环境】主人的电脑当前不在线，本机工具全部不可用。遇到需要操作电脑的请求，如实告诉他电脑没开机或没连上，等开机后再帮他做，不要假装做过或含糊搪塞。",
-    "en": "[Environment] The user's desktop is offline, so no local tools are available. If asked to do something on the computer, say plainly that it is not connected and offer to do it once it is back — never pretend it was done.",
+    "zh": "【环境】用户的桌面端当前未连接，本机文件、终端和浏览器工具不可用。需要操作电脑时，只说明目前无法触达设备；不要猜测是关机、断网或其他原因，也不要假装操作已经完成。",
+    "en": "[Environment] The user's desktop is currently disconnected, so local file, terminal, and browser tools are unavailable. If computer access is required, state only that the device cannot be reached now; do not guess whether it is powered off or why the connection failed, and never pretend the action completed.",
 }
 
 # 入站闸门串行化：state 读写与单飞行转移必须原子。

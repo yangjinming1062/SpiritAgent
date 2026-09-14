@@ -25,7 +25,7 @@ _BODY_COMPANION = (
     "{{COMPANION_CHAT_GUIDANCE}}\n\n"
     "{{COMPANION_TOOL_GUIDANCE}}\n\n"
     "{{MEMORY_TOOL_GUIDANCE}}\n\n"
-    "{{MEDIA_GUIDANCE}}\n\n"
+    "{{COMPANION_MEDIA_GUIDANCE}}\n\n"
     "{{STEER_CHANNEL_NOTE}}\n\n"
     "{{ENVIRONMENT_HINTS}}\n\n"
     "{{COMPANION_PLATFORM_HINTS}}\n\n"
@@ -52,13 +52,10 @@ _BODY_WORK = (
 )
 
 _BODY_AUTOMATION = (
-    "You are a background automation agent. Execute the scheduled instruction completely and report only the useful result. "
-    "Do not speak as the user's companion and do not send proactive companion messages.\n\n"
+    "{{AUTOMATION_GUIDANCE}}\n\n"
     "{{LANGUAGE_DIRECTIVE}}\n\n"
     "{{TOOL_USE_ENFORCEMENT}}\n\n"
-    "{{SKILLS_GUIDANCE}}\n\n"
     "{{MEDIA_GUIDANCE}}\n\n"
-    "{{SKILLS_LIST}}\n\n"
     "{{ENVIRONMENT_HINTS}}\n\n"
     "{{PLATFORM_HINTS}}\n\n"
     "{{VOLATILE_HEADER}}"

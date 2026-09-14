@@ -67,11 +67,9 @@ async def send_message_tool(
 SEND_MESSAGE_SCHEMA = {
     "name": "send_message_tool",
     "description": (
-        "Send a message. With no target_webhook, it reaches the user's desktop "
-        "companion directly as a spoken proactive message (greetings, reminders, "
-        "check-ins) — use this when the companion wants to reach out to the user. "
-        "With a target_webhook URL, it POSTs to an external bot API "
-        "(Slack/Discord/Telegram) for notifications."
+        "Send a message now. Without target_webhook, deliver it as a spoken proactive message in the primary "
+        "conversation. Use this only for a grounded, low-pressure outreach within the current authorization. "
+        "With a target_webhook URL, POST a notification to an external bot API such as Slack, Discord, or Telegram."
     ),
     "parameters": {
         "type": "object",
@@ -79,11 +77,11 @@ SEND_MESSAGE_SCHEMA = {
             "message": {"type": "string", "description": "The full text message content to send."},
             "target_webhook": {
                 "type": "string",
-                "description": "Optional webhook URL to POST to (external bot). Omit to deliver to the user's desktop companion.",
+                "description": "Optional external bot webhook URL. Omit to deliver in the primary conversation.",
             },
             "follow_up_after_seconds": {
                 "type": "number",
-                "description": "Optional. How many seconds to wait for the user's reply before proactively following up again. Choose a value fitting your persona and the current situation (e.g. an anxious/clingy persona follows up sooner, a calm/patient one waits longer). Omit if you do not intend to follow up.",
+                "description": "Optional seconds before considering one follow-up. Set only when a later follow-up has a specific purpose; elapsed time or no reply does not imply neglect, and any follow-up must remain low-pressure. Omit otherwise.",
             },
         },
         "required": ["message"],

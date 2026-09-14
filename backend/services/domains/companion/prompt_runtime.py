@@ -1,3 +1,4 @@
+import json
 from typing import Any, NamedTuple
 
 from components import DEFAULT_LANGUAGE, SESSION_LOCAL, get_logger, parse_llm_json, resolve_language, safe_json_loads
@@ -30,7 +31,7 @@ _NON_AUTONOMOUS_CLIP_KEYS = frozenset({"idle", "emotional", "interacting", "poke
 class CompanionPromptContext(BaseModel):
     """人设、心情、记忆、着装与具身能力快照，每次提示词只加载一次，避免调用方重复查询。"""
 
-    persona_name: str
+    language: str
     persona_extras: str
     current_mood: str
     outfit_block: str
@@ -65,7 +66,6 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         ).scalar()
         language = resolve_language(language_setting or DEFAULT_LANGUAGE)
         definition = safe_json_loads(persona.definition_json or "{}", default={})
-        persona_name = str(definition.get("name") or "桌面伙伴").strip()
         available_actions: list[str] = []
         active_model = await get_active_model(db, user_id)
         if active_model is not None:
@@ -76,7 +76,7 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         if not available_actions:
             available_actions = sorted(set(DEFAULT_ACTIONS) - NON_LLM_ACTIONS)
         return CompanionPromptContext(
-            persona_name=persona_name,
+            language=language,
             persona_extras=render_extras(definition, language=language),
             current_mood=persona.current_mood or "",
             outfit_block=await build_outfit_extras(db, user_id, language=language),
@@ -89,13 +89,14 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
 async def run_prompt_json(
     user_id: int,
     llm_config: UserLlmConfig | dict[str, Any],
-    template: str,
-    prompt_args: dict[str, Any],
+    instructions: str,
+    payload: dict[str, Any],
     *,
     max_output_tokens: int,
     log_prefix: str,
+    temperature: float = 0.2,
 ) -> PromptOutcome:
-    """一次性的人设 JSON 提示词调用；失败时用 reason 区分模型/传输错误与响应无法解析。"""
+    """执行一次结构化伙伴推理；静态规则放 instructions，运行时数据作为 JSON 输入。"""
     model_name = (
         llm_config.model_name
         if isinstance(llm_config, UserLlmConfig)
@@ -104,15 +105,18 @@ async def run_prompt_json(
     if not model_name:
         return PromptOutcome(parsed=None, reason="llm_error")
 
-    prompt = template.format(**prompt_args)
-
     try:
         client = client_for_config(llm_config)
         request = build_responses_kwargs(
             model=model_name,
-            instructions="",
-            input_items=[{"role": "user", "content": [{"type": "input_text", "text": prompt}]}],
-            temperature=0.7,
+            instructions=instructions,
+            input_items=[
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": json.dumps(payload, ensure_ascii=False)}],
+                },
+            ],
+            temperature=temperature,
             max_output_tokens=max_output_tokens,
         )
         response = await call_with_retry(client, **request)
