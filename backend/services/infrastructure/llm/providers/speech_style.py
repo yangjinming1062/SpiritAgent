@@ -52,12 +52,13 @@ cues: inline audio instructions. Recommended tag values:
 - Further documented examples: 语速加快/碎碎念/小声/沉默片刻/苦笑/咳嗽/提高音量喊话.
 These are examples, not a closed whitelist; use custom precise delivery descriptions when useful.
 direction: REQUIRED director mode, with three natural-language fields (Chinese or English):
-- role: this companion's identity, personality, speaking habits and relationship to the user.
-- scene: what is happening now, whom you address, the conversational context and emotional position.
-- guidance: concrete acting direction for speed, pauses, breath, emphasis, resonance, timbre and emotional progression.
-Write concise, contextual direction alongside the reply; avoid boilerplate. Describe the vocal performance,
-not imaginary real-world actions. Preserve the selected voice and persona; do not invent a different speaker.
-Overall styles, inline cues and director guidance must agree. Do not include brackets around styles or cue tags.
+- role: the persona's voice-relevant traits and relationship to the listener, not a full biography (max 500 characters).
+- scene: the situation established by this exchange and your attitude toward it; do not invent events (max 500 characters).
+- guidance: the few vocal choices that matter for these words, such as pace, pauses, emphasis or emotional progression (max 1500 characters).
+Keep each field concise and specific. Direction describes vocal delivery, not visual gestures or physical actions.
+Preserve the selected voice and persona. Do not add dramatic intensity or a new speaker to make the reply expressive.
+styles, cues and direction must agree without restating the same instructions in every field.
+styles may be empty and contain at most 16 labels. Do not include brackets around styles or cue tags.
 """
 
 
@@ -95,15 +96,18 @@ def speech_style_guidance(provider: str, model: str) -> str:
         return ""
     return (
         "\n## Hidden speech delivery for the selected voice\n"
-        "Precede each response with exactly one hidden header, using this provider-specific schema:\n"
+        "Begin every final reply with exactly one <speech_style> header containing valid JSON with the "
+        "following fields, then the dialogue. This required header is delivery metadata, not a chat bubble. "
+        "Do not wrap it in a code fence, put --- before the first spoken bubble, or include it in tool arguments. "
+        "Keep provider and model exactly as shown:\n"
         f"<speech_style>{json.dumps(example, ensure_ascii=False)}</speech_style>\n"
         + capabilities
-        + "Choose delivery together with your words, using persona, relationship and current context. Express your own delivery, not the user's emotion. "
-        "Prefer natural delivery; use any supported expressive sound where context calls for it, without gratuitous effects. "
-        "Each cue is {before, tag}: before must be an exact short substring appearing ONCE in the following dialogue, where the sound is inserted. "
-        "The anchor still appears normally in the dialogue. Never put vendor tags or stage directions in the dialogue itself. "
-        "After the header, stream only spoken dialogue using the usual --- bubble separators. The hidden header is an exception to the dialogue-only rule. "
-        "Do not include the header in tool arguments. Do not change the provider or model in the header.\n"
+        + "Choose delivery for your own words and attitude, rather than copying the user's emotion. "
+        "Natural speech is the baseline; add expressive sounds only where they serve the exchange. "
+        "Each cue is {before, tag}; cues may be empty, with at most 32 entries. before is an exact substring "
+        "of at most 80 characters occurring ONCE in the following dialogue. The sound is inserted before "
+        "that anchor, which remains spoken normally. Do not invent anchors or add words just to fit a cue. "
+        "Keep all delivery instructions in the header; the following body obeys the dialogue delivery rules.\n"
     )
 
 

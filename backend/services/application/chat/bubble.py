@@ -12,6 +12,7 @@ _PARTIAL_PREFIXES: tuple[str, ...] = tuple(
 _INCOMPLETE_DASH_PREFIXES: tuple[str, ...] = tuple(
     sorted({p for p in _PARTIAL_PREFIXES if "-" in p}, key=len, reverse=True),
 )
+_LEADING_SEPARATORS: tuple[str, ...] = ("---\r\n\r\n", "---\n\n", "---\r\n", "---\n")
 
 
 @dataclass(frozen=True)
@@ -27,6 +28,7 @@ class BubbleSplitter:
 
     def __init__(self, *, split_paragraphs: bool = False) -> None:
         self._buf = ""
+        self._at_start = True
         self._separators = (*_SEPARATORS, "\n\n", "\r\n\r\n") if split_paragraphs else _SEPARATORS
         self._prefixes = tuple(
             sorted({sep[:i] for sep in self._separators for i in range(1, len(sep))}, key=len, reverse=True),
@@ -40,6 +42,8 @@ class BubbleSplitter:
 
     def flush(self) -> list[BubbleEvent]:
         """流结束时丢弃尾部残留的分隔符/不完整连字符前缀再输出残余文本，避免尾部 ``---`` 暴露为 break 或字面文本。"""
+        if self._at_start and self._buf.strip() == "---":
+            self._buf = ""
         while True:
             stripped = False
             for sep in self._separators:
@@ -58,6 +62,16 @@ class BubbleSplitter:
 
     def _drain(self) -> list[BubbleEvent]:
         events: list[BubbleEvent] = []
+        if self._at_start:
+            for separator in _LEADING_SEPARATORS:
+                if self._buf.startswith(separator):
+                    self._buf = self._buf[len(separator) :]
+                    self._at_start = False
+                    break
+            else:
+                if any(separator.startswith(self._buf) for separator in _LEADING_SEPARATORS):
+                    return events
+                self._at_start = False
         while True:
             idx = -1
             sep_len = 0

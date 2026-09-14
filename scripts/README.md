@@ -53,7 +53,7 @@ backend/.venv/Scripts/python.exe scripts/check_services_architecture.py
 
 ## 5. 提示词调试与检查 — `debug_prompt.py`
 
-用于呈现与调试伙伴完成 onboarding 引导流程以及用户发出消息时实际装配的完整聊天提示词（系统提示词、用户画像、工具集与请求负载）。桌面视觉动作使用独立推理提示词，不属于本脚本的聊天请求负载。
+用于呈现聊天预设的基础系统提示词、用户画像、工具集与输入项，不执行完整回合。生活空间的内部准备模板、阶段指令与按音色追加的语音协议见[陪伴提示词编排](../backend/README.md#对话上下文与记忆)，不包含在本脚本输出中；核对实际发送负载使用 [LLM 调试日志](../backend/README.md#llm-调试日志)。桌面视觉动作使用独立推理提示词。
 
 ```bash
 # 查看默认完成 onboarding 后的完整提示词与请求分段

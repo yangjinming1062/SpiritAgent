@@ -12,37 +12,70 @@ from services.domains.conversation import SYSTEM_PRESET_CATALOG
 
 logger = logging.getLogger(__name__)
 
-COMPANION_PREPARE_GUIDANCE = {
-    "zh": "当前是内部工具准备阶段，不向用户发送台词。只在确有必要时查询记忆或执行工具，不为普通闲聊强行调用工具。需要工具就调用；信息与操作准备完毕后不再调用工具，只输出 READY。正式答复由下一阶段生成。",
-    "en": "This is the internal tool preparation phase, not a user-facing reply. Recall memory or use tools only when needed; do not force tool use for casual chat. Call any necessary tools. Once preparation is complete, stop calling tools and output only READY. The next phase will generate the actual reply.",
+COMPANION_PREPARE_GUIDANCE: dict[str, str] = {
+    "zh": (
+        "# 当前阶段：内部准备\n"
+        "这一阶段不向用户交付内容。判断回应最新消息还缺什么必要信息或操作，按需调用工具。"
+        "已经足以回应，或剩余问题只能向用户说明限制、请求补充时，停止工具调用，只输出 READY。"
+        "普通闲聊可以直接就绪，不预写台词或语音描述；下一阶段会根据准备结果正式回复。"
+    ),
+    "en": (
+        "# Current phase: internal preparation\n"
+        "Nothing from this phase is delivered to the user. Determine what information or actions are "
+        "still needed to answer the latest message, and use tools as needed. Once ready, or when all that "
+        "remains is to explain a limitation or ask the user for input, stop calling tools and output only "
+        "READY. Casual chat can be ready immediately. Do not draft dialogue or speech metadata; the next "
+        "phase will reply using the preparation results."
+    ),
 }
-COMPANION_REPLY_GUIDANCE = {
-    "zh": "工具准备阶段已结束。现在只依据用户消息、上下文与实际工具结果生成正式答复，不再调用工具。信息不足或工具失败时如实表达，不假装完成。沿用角色与聊天分气泡规则，每个气泡是完整台词，不重复前文。",
-    "en": "Tool preparation is complete. Generate the actual reply using the user message, context and real tool results. No further tools are available. Be honest about missing information or failed tools. Follow the character and chat bubble rules; each bubble is complete dialogue without repeating earlier text.",
+COMPANION_REPLY_GUIDANCE: dict[str, str] = {
+    "zh": (
+        "# 当前阶段：正式回复\n"
+        "准备已结束，本阶段没有工具。结合用户最新表达、对话上下文与已经取得的结果，"
+        "按上面的交付规则直接回应。若仍有信息缺口或操作未完成，如实说明必要的限制或请用户补充；"
+        "不要复盘准备过程。"
+    ),
+    "en": (
+        "# Current phase: final reply\n"
+        "Preparation is complete and this phase has no tools. Respond directly to the user's latest "
+        "message using the conversation and results obtained, following the delivery rules above. "
+        "If information or work is still missing, explain the relevant limitation or ask for what is "
+        "needed, without recapping the preparation process."
+    ),
 }
 
-# 5 套系统预设：companion 保留完整伴侣语气与着装联动；其余 4 套工作面预设按需拉取块。
-_BODY_COMPANION = (
+# 准备与回复共享事实背景及工具规则，聊天表达与正文格式只进入面向用户的补全。
+_BODY_COMPANION_CONTEXT = (
     "{{USER_IDENTITY_OVERRIDE}}\n\n"
-    "{{LANGUAGE_DIRECTIVE}}\n\n"
-    "{{HELP_GUIDANCE}}\n\n"
     "{{COMPANION_PERSONA}}\n\n"
-    "{{COMPANION_CHAT_GUIDANCE}}\n\n"
-    "{{OUTFIT}}\n\n"
     "{{USER_PROFILE}}\n\n"
+    "{{LANGUAGE_DIRECTIVE}}\n\n"
+    "{{COMPANION_CONTEXT_GUIDANCE}}\n\n"
+    "{{OUTFIT}}\n\n"
     "{{BACKGROUND_MEMORY}}\n\n"
     "{{PROACTIVE_MEMORY}}\n\n"
+    "{{MESSAGE_TIMESTAMPS}}\n\n"
+)
+_BODY_COMPANION_TOOLS = (
+    "{{COMPANION_TOOL_GUIDANCE}}\n\n"
     "{{MEMORY_TOOL_GUIDANCE}}\n\n"
-    "{{SESSION_SEARCH_GUIDANCE}}\n\n"
-    "{{SKILLS_GUIDANCE}}\n\n"
-    "{{ATTACHMENT_GUIDANCE}}\n\n"
     "{{MEDIA_GUIDANCE}}\n\n"
     "{{STEER_CHANNEL_NOTE}}\n\n"
-    "{{TOOL_USE_ENFORCEMENT}}\n\n"
-    "{{SKILLS_LIST}}\n\n"
     "{{ENVIRONMENT_HINTS}}\n\n"
-    "{{PLATFORM_HINTS}}\n\n"
-    "{{MESSAGE_TIMESTAMPS}}"
+    "{{COMPANION_PLATFORM_HINTS}}\n\n"
+)
+_BODY_COMPANION = (
+    _BODY_COMPANION_CONTEXT
+    + "{{COMPANION_CHAT_GUIDANCE}}\n\n"
+    + _BODY_COMPANION_TOOLS
+    + "{{COMPANION_OUTPUT_GUIDANCE}}"
+)
+
+COMPANION_PREPARE_PRESET = PromptPreset(
+    id="companion",
+    name="陪伴内部准备",
+    icon_key="companion",
+    body=_BODY_COMPANION_CONTEXT + _BODY_COMPANION_TOOLS,
 )
 
 _BODY_DEVELOPER = (

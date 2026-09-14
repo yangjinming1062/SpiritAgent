@@ -1,4 +1,4 @@
-from services.domains.memory import MemoryDecisions
+from services.domains.memory import MEMORY_POLICY, MemoryDecisions
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 RETAIN_SCHEMA = {
@@ -13,7 +13,8 @@ RECALL_SCHEMA = {
 }
 INSPECT_SCHEMA = {
     "name": "memory_inspect",
-    "description": "Inspect original conversation evidence and memory versions before maintenance. Candidates and invalidated claims are NOT user facts and must not inform conversation. Optional query searches text; before_memory_id pages through older records.",
+    "description": "Inspect original conversation evidence and memory versions before maintenance. Candidates and invalidated claims are NOT user facts and must not inform conversation. Optional query searches text; before_memory_id pages through older records.\n\n"
+    + MEMORY_POLICY,
     "parameters": {
         "type": "object",
         "properties": {

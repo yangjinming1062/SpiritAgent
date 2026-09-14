@@ -63,6 +63,7 @@ from services.infrastructure.tool_runtime import REGISTRY, schema_name
 from .prompt_presets import (
     AUTOMATION_EXCLUDED_TOOL_NAMES,
     AUTOMATION_PRESET,
+    COMPANION_PREPARE_PRESET,
     LIFE_SPACE_TOOL_NAMES,
     resolve_preset,
 )
@@ -80,6 +81,7 @@ class TurnInputs:
     """``build_turn_inputs`` 的输出：orchestrator 与各轮辅助函数所需字段，避免重复查询 DB。"""
 
     context: dict[str, Any]
+    prepare_instructions: str
     client: Any
     memory_scope: MemoryScope | None
     native_memory: NativeMemory | None
@@ -514,6 +516,9 @@ async def build_turn_inputs(
 
     return TurnInputs(
         context=context,
+        prepare_instructions=build_system_prompt(agent_config, preset=COMPANION_PREPARE_PRESET)
+        if resolved_preset.id == DEFAULT_PRESET_ID
+        else "",
         client=client,
         memory_scope=memory_scope,
         native_memory=native_memory,

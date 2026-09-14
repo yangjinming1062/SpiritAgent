@@ -309,7 +309,9 @@ async def run_chat_turn(
                     return await _stream_llm_response(
                         emitter,
                         model_for_slot,
-                        current_context,
+                        {**current_context, "instructions": inputs.prepare_instructions}
+                        if preparing
+                        else current_context,
                         active_schemas,
                         slot_ctx_length,
                         provider,

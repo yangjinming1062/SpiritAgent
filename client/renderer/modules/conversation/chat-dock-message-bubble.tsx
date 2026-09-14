@@ -262,9 +262,10 @@ function MessageBubbleWithBody({
   const tools = body.tools?.length ? body.tools : body.toolName ? [body.toolName] : []
   const toolOnly = tools.length > 0 && !displayText && !body.error && !body.cancelled
   const showToolIndicator = !isUser && tools.length > 0
+  const showLivingToolWait = variant === 'living' && toolOnly && Boolean(body.streaming)
 
-  // 纯工具中间帧在生活空间不占位渲染
-  if (variant === 'living' && toolOnly) {
+  // 生活空间不暴露工具轨迹，但回合进行中仍保留通用等待气泡，避免长时间准备期只剩用户消息。
+  if (variant === 'living' && toolOnly && !showLivingToolWait) {
     return <></>
   }
 
@@ -328,7 +329,7 @@ function MessageBubbleWithBody({
                 <TranscriptBlock text={displayText} />
               </>
             )
-          ) : !hideTextBubble && !toolOnly ? (
+          ) : !hideTextBubble && (!toolOnly || showLivingToolWait) ? (
             <div
               className={cn(
                 'relative select-text cursor-text whitespace-pre-wrap break-words rounded-2xl px-4 py-2.5 text-xs leading-relaxed shadow-sm',
