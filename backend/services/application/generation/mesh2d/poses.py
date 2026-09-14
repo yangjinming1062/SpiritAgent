@@ -261,8 +261,12 @@ async def generate_pose_pack(reference: bytes, user_id: int | None) -> tuple[Pos
                 face = [landmarks.face[i] * 1.024 for i in (1, 0, 3, 2)]
                 if not 100 <= contact <= 924:
                     raise ValueError("Both hands must grip an edge near the middle of the source image")
-                if abs(landmarks.upper_hand[edge_index] - landmarks.lower_hand[edge_index]) > 25:
-                    raise ValueError("Align both hands on the SAME vertical edge; the two grips must not drift apart")
+                drift = abs(landmarks.upper_hand[edge_index] - landmarks.lower_hand[edge_index])
+                # 引导图上手勾过边缘、下手后侧支撑，抓握侧外缘固有错位实测 50~77，加视觉框噪声放宽到 100；真实错位（手垂体侧）通常 >120。
+                if drift > 100:
+                    raise ValueError(
+                        f"Align both hands on the SAME vertical edge; the two grips must not drift apart (drift {drift:.0f})",
+                    )
                 if ((face[0] + face[2]) / 2 - contact) * (1 if side == "left" else -1) < 10:
                     raise ValueError(f"Head must lean {inward} past both hands")
                 alpha = np.asarray(body.getchannel("A"))[512:] > 128
