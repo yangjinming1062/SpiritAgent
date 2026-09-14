@@ -21,6 +21,7 @@
 
 - 六阶段协议：welcome → install-python → unpack-runner → unpack-desktop → install-skills → finalize，最后写完成标记；分阶段提供进度与重试边界，Runner 配置由客户端连接后推送。
 - 脚本结果用带哨兵前缀的单行 NDJSON，从 uv / pip / robocopy 混合 stdout 中提取，避免普通日志被误解析为阶段结果或 manifest。
+- `install.ps1` 必须保存为带 BOM 的 UTF-8：PowerShell 5.1 将无 BOM 脚本按系统 ANSI 代码页解码，中文注释在 GBK 等双字节代码页下会打乱令牌解析（UnexpectedToken），首个 `-Manifest` 调用即失败；构建链按字节复制该文件入产物，编码以源文件为准。
 - macOS 自拷贝签名：未签名时补 ad-hoc，损坏 ad-hoc 可重签，权威证书签名须严格校验，禁止静默降级为 ad-hoc。
 - 依赖安装失败后镜像重试：优先 `SPIRITAGENT_PYPI_INDEX_URL` / `PIP_INDEX_URL`，缺省使用阿里云镜像；环境变量覆盖支持企业私有 index。
 - macOS `/Applications/SpiritAgent.app` 同时是首装入口和后续 launcher；fast path 除完成标记外还检查 Runner 核心依赖可导入，损坏回完整修复，`--reinstall` / `--repair` 强制跳过 fast path。

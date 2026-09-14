@@ -1,4 +1,4 @@
-# 唤生 安装脚本（Windows / PowerShell 5.1+）。由 Tauri SpiritAgent-Setup.exe 调用；
+﻿# 唤生 安装脚本（Windows / PowerShell 5.1+）。由 Tauri SpiritAgent-Setup.exe 调用；
 # 6 阶段负载释放：安装 Python（如需）、拷贝 runner wheel / 桌面安装器 / skills 至 $SPIRITAGENT_HOME 及平台规范位置。
 # 协议：
 #   powershell -File install.ps1 -Manifest                 → 输出 manifest JSON
