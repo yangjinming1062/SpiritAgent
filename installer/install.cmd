@@ -14,7 +14,7 @@ echo.
 powershell -ExecutionPolicy ByPass -NoProfile -File "%SCRIPT_DIR%install.ps1" %*
 if %ERRORLEVEL% NEQ 0 (
     echo.
-    echo  Installation failed. See %%LOCALAPPDATA%%\spiritagent\logs\ for details.
+    echo  Installation failed. See %LOCALAPPDATA%\SpiritAgent\logs\ for details.
     echo.
     pause
     exit /b 1

@@ -232,7 +232,6 @@ export async function startInstall(): Promise<void> {
     args: {
       commit: null,
       branch: null,
-      include_desktop: true,
       spiritagent_home: null
     },
     onEvent: channel

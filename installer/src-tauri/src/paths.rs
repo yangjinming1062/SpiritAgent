@@ -9,6 +9,13 @@ use std::process::Command;
 use tracing_appender::non_blocking::WorkerGuard;
 
 pub fn spiritagent_home() -> PathBuf {
+    // 与 install 脚本、runner（get_spiritagent_home）一致的优先级：环境变量 > 平台默认。
+    if let Ok(home) = std::env::var("SPIRITAGENT_HOME") {
+        if !home.is_empty() {
+            return PathBuf::from(home);
+        }
+    }
+
     #[cfg(target_os = "windows")]
     {
         if let Some(local_app_data) = dirs::data_local_dir() {
@@ -152,12 +159,6 @@ fn repair_macos_installer_helper(path: &Path) {
 
 #[cfg(not(target_os = "macos"))]
 fn repair_macos_installer_helper(_path: &Path) {}
-
-/// install.ps1 写入 bootstrap-complete 标记的位置（仅存在与否，供 macOS 启动快路径判断）。
-#[allow(dead_code)]
-pub fn likely_bootstrap_marker(install_root: &Path) -> PathBuf {
-    install_root.join(".spiritagent-bootstrap-complete")
-}
 
 /// Runner uv venv 中的 Python 二进制路径。两者皆不存在时返回 `None`，调用方应视为"venv 不健康"并拒绝。
 ///

@@ -13,7 +13,6 @@ pub struct StreamSink {
     pub on_stderr_line: Box<dyn Fn(&str) + Send + Sync>,
 }
 
-/// 脚本执行结果；字段与 bootstrap-runner.cjs 中的 `{stdout, stderr, code, signal, killed}` 一致。
 #[derive(Debug)]
 pub struct ScriptResult {
     pub stdout: String,
@@ -46,6 +45,7 @@ pub struct BundleContext {
 /// 启动 install.ps1 / install.sh 并流式返回输出。
 ///
 /// `spiritagent_home_override` 作为 $SPIRITAGENT_HOME 传递给子脚本；`bundle` 作为 SPIRITAGENT_BUNDLE_* 环境变量。
+/// 返回值第二项是未触发的取消通道，调用方须归还给 holder，否则后续阶段无法再响应取消。
 pub async fn run_script(
     script_path: &Path,
     args: &[String],
@@ -53,7 +53,7 @@ pub async fn run_script(
     spiritagent_home_override: Option<&str>,
     bundle: &BundleContext,
     mut cancel_rx: Option<CancelRx>,
-) -> Result<ScriptResult> {
+) -> Result<(ScriptResult, Option<CancelRx>)> {
     let mut cmd = build_command(script_path, args);
 
     // 安装器可能被自更新替换；固定一个稳定 cwd，避免 bash/zsh 从已删除目录启动时打印 getcwd 错误。
@@ -142,8 +142,9 @@ pub async fn run_script(
             _ = recv_cancel(&mut cancel_rx) => {
                 tracing::warn!("cancellation received — killing child");
                 killed = true;
-                // 尽力杀掉子进程，不向上传播错误。
+                // 尽力杀掉子进程，不向上传播错误；已触发的通道不再回收。
                 let _ = child.start_kill();
+                cancel_rx = None;
                 break;
             }
         }
@@ -166,12 +167,15 @@ pub async fn run_script(
         .await
         .context("waiting for install script to exit")?;
 
-    Ok(ScriptResult {
-        stdout: combined_stdout,
-        stderr: combined_stderr,
-        exit_code: status.code(),
-        killed,
-    })
+    Ok((
+        ScriptResult {
+            stdout: combined_stdout,
+            stderr: combined_stderr,
+            exit_code: status.code(),
+            killed,
+        },
+        cancel_rx,
+    ))
 }
 
 fn stable_script_cwd<'a>(script_path: &'a Path, spiritagent_home_override: Option<&'a str>) -> Option<&'a Path> {

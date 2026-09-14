@@ -39,7 +39,7 @@ impl ScriptKind {
         }
     }
 
-    fn filename(&self) -> &'static str {
+    pub(crate) fn filename(&self) -> &'static str {
         match self {
             Self::Ps1 => "install.ps1",
             Self::Sh => "install.sh",

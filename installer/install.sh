@@ -189,9 +189,10 @@ test_python() {
 
 # 阶段 1：welcome
 stage_welcome() {
+  # mkdir失败不中断：由下方 -d 检查统一发错误帧，避免 set -e 静默退出无结果帧。
   mkdir -p "$SPIRITAGENT_HOME_RESOLVED/bin" \
            "$SPIRITAGENT_HOME_RESOLVED/skills" \
-           "$SPIRITAGENT_HOME_RESOLVED/logs"
+           "$SPIRITAGENT_HOME_RESOLVED/logs" || true
 
   if [[ ! -d "$SPIRITAGENT_HOME_RESOLVED" ]]; then
     emit_stage_err welcome "could not create SPIRITAGENT_HOME: $SPIRITAGENT_HOME_RESOLVED"
@@ -223,6 +224,12 @@ stage_install_python() {
 
 # 阶段 3：解包运行器
 stage_unpack_runner() {
+  # 每个阶段是独立进程：先重新推导 uv 与 Python 版本（install-python 阶段可能落在 3.14 回退版本），与 install.ps1 保持一致。
+  if [[ -z "${UV_CMD:-}" ]] && ! test_python; then
+    emit_stage_err unpack-runner "Python runtime not available (uv or Python missing)"
+    return 1
+  fi
+
   if [[ -z "$BUNDLED_RUNNER_DIR" ]]; then
     emit_stage_err unpack-runner "--bundled-runner-dir (or SPIRITAGENT_BUNDLED_RUNNER_DIR) is required"
     return 1
@@ -254,12 +261,13 @@ stage_unpack_runner() {
     return 1
   }
 
-  # 安装 wheel 至 venv。从国内访问 PyPI 不稳，首次失败回退至阿里云镜像（与 install.ps1 保持一致）；再次失败把同一错误透出给上层。
+  # 安装 wheel 至 venv。从国内访问 PyPI 不稳，首次失败回退至镜像（与 install.ps1 一致：优先 SPIRITAGENT_PYPI_INDEX_URL / PIP_INDEX_URL，缺省阿里云）；再次失败把同一错误透出给上层。
   if ! "$UV_CMD" pip install --python "$runner_dir/.venv/bin/python" "$wheel" 2>/dev/null; then
+    local index_url="${SPIRITAGENT_PYPI_INDEX_URL:-${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}}"
     if ! "$UV_CMD" pip install --python "$runner_dir/.venv/bin/python" \
-        --index-url https://mirrors.aliyun.com/pypi/simple/ \
+        --index-url "$index_url" \
         "$wheel" 2>/dev/null; then
-      emit_stage_err unpack-runner "uv pip install failed (PyPI + Aliyun mirror)"
+      emit_stage_err unpack-runner "uv pip install failed (PyPI + fallback mirror)"
       return 1
     fi
   fi
@@ -342,7 +350,12 @@ stage_unpack_desktop() {
         return 1
       fi
       rm -rf /Applications/SpiritAgent.app
-      cp -R "$mount_point/SpiritAgent.app" /Applications/SpiritAgent.app
+      # 拷贝失败须先卸载 DMG 再报错，避免 set -e 退出时挂载点泄漏。
+      if ! cp -R "$mount_point/SpiritAgent.app" /Applications/SpiritAgent.app; then
+        hdiutil detach "$mount_point" 2>/dev/null || true
+        emit_stage_err unpack-desktop "failed to copy SpiritAgent.app from $artifact"
+        return 1
+      fi
       hdiutil detach "$mount_point" 2>/dev/null || true
       xattr -cr /Applications/SpiritAgent.app 2>/dev/null || true
       printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "unpack-desktop", "data": {"installed_path": "/Applications/SpiritAgent.app", "format": "dmg"}}\n'

@@ -58,9 +58,9 @@ fn main() {
     // 运行时若 resource_dir/ 下找不到 payload/（单 exe 分发场景），回退解压这里嵌入的 zip。
     // -----------------------------------------------------------------
     let payload_src = PathBuf::from("../payload");
+    let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");
+    let zip_path = PathBuf::from(&out_dir).join("payload.zip");
     if payload_src.exists() {
-        let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");
-        let zip_path = PathBuf::from(&out_dir).join("payload.zip");
         build_payload_zip(&payload_src, &zip_path);
         println!("cargo:rerun-if-changed={}", payload_src.display());
     } else {
@@ -68,6 +68,10 @@ fn main() {
             "cargo:warning=spiritagent-bootstrap: ../payload not found; \
              embedded payload will be empty — single-exe distribution will fail"
         );
+        // 仍写入空 zip：embedded_payload 的 include_bytes! 需要该文件存在，空负载会在
+        // `payload_zip_is_non_empty` 测试与运行时解压处得到明确报错，而非编译失败。
+        std::fs::File::create(&zip_path)
+            .unwrap_or_else(|e| panic!("create empty payload.zip at {}: {e}", zip_path.display()));
     }
 
     // -----------------------------------------------------------------

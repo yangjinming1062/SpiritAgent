@@ -22,10 +22,6 @@ pub struct StartBootstrapArgs {
     pub commit: Option<String>,
     /// 分支 pin 覆盖；缺省取 `BUILD_PIN_BRANCH`。
     pub branch: Option<String>,
-    /// 旧的 `Stage-Desktop` 流程使用；瘦身后的 5 阶段脚本里桌面端由 Tauri bundle 预置，已无对应阶段。
-    /// 仅保留以兼容前端传参，不向下转发。
-    #[serde(default)]
-    pub include_desktop: bool,
     /// SPIRITAGENT_HOME 覆盖，仅测试使用；生产路径走 OS 默认。
     pub spiritagent_home: Option<String>,
 }
@@ -227,25 +223,6 @@ pub(crate) fn resolve_spiritagent_desktop_exe() -> Option<PathBuf> {
     None
 }
 
-#[allow(dead_code)]
-pub(crate) fn resolve_spiritagent_desktop_app() -> Option<PathBuf> {
-    let exe = resolve_spiritagent_desktop_exe()?;
-    #[cfg(target_os = "macos")]
-    {
-        // .../SpiritAgent.app/Contents/MacOS/SpiritAgent -> .../SpiritAgent.app
-        let app = exe.parent()?.parent()?.parent()?.to_path_buf();
-        if app.extension().and_then(|e| e.to_str()) == Some("app") && app.is_dir() {
-            return Some(app);
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        return Some(exe);
-    }
-    #[allow(unreachable_code)]
-    None
-}
-
 /// 给 `spiritagent_is_installed` 上一道闸，避免 venv 损坏时被 macOS 启动快路径误判为已安装。
 /// 导入链必须与 `client/main/runner-updater.cjs::_probeVenvIntegrity` 保持一致，确保两边对"健康 venv"的判定一致。
 fn runner_venv_is_healthy() -> bool {
@@ -363,7 +340,6 @@ async fn run_bootstrap(
         pinned_commit = ?pinned_commit,
         pinned_branch = ?pinned_branch,
         kind = ?kind,
-        include_desktop = args.include_desktop,
         "bootstrap starting"
     );
 
@@ -412,7 +388,7 @@ async fn run_bootstrap(
 
     let bundle_ctx = build_bundle_context(&app);
 
-    let manifest_result = run_install_script(
+    let (manifest_result, _) = run_install_script(
         &on_event,
         &script.path,
         &manifest_args,
@@ -421,37 +397,26 @@ async fn run_bootstrap(
         None,
         Some("__manifest__".to_string()),
     )
-    .await?;
+    .await
+    .map_err(|e| fail_bootstrap(&on_event, None, e.to_string()))?;
 
     if manifest_result.exit_code != Some(0) {
         let err = format!(
-            "install.ps1 -Manifest failed: exit {:?}\n{}",
+            "{} -Manifest failed: exit {:?}\n{}",
+            kind.filename(),
             manifest_result.exit_code,
             manifest_result.stderr.trim()
         );
-        emit_event(
-            &on_event,
-            BootstrapEvent::Failed {
-                stage: None,
-                error: err.clone(),
-            },
-        );
-        return Err(anyhow!(err));
+        return Err(fail_bootstrap(&on_event, None, err));
     }
 
     let manifest: Manifest = powershell::parse_manifest(&manifest_result.stdout).ok_or_else(|| {
         let err = format!(
-            "install.ps1 -Manifest produced no parseable JSON payload\n{}",
+            "{} -Manifest produced no parseable JSON payload\n{}",
+            kind.filename(),
             truncate(&manifest_result.stdout, MANIFEST_PREVIEW_CHARS)
         );
-        emit_event(
-            &on_event,
-            BootstrapEvent::Failed {
-                stage: None,
-                error: err.clone(),
-            },
-        );
-        anyhow!(err)
+        fail_bootstrap(&on_event, None, err)
     })?;
 
     emit_event(
@@ -495,10 +460,11 @@ async fn run_bootstrap(
             "-Json".to_string(),
         ];
 
-        // 每个阶段独占 cancel 接收者：run_script 内的 tokio::select! 会消费它，所以经 Arc<Mutex> 取出/归还。
+        // 每个阶段独占 cancel 接收者：run_script 内的 tokio::select! 会消费它，结束后把未触发的通道归还 holder，
+        // 否则后续阶段（如耗时最长的 unpack-runner）无法再被取消。
         let local_cancel_rx = cancel_rx_holder.lock().await.take();
 
-        let stage_result = run_install_script(
+        let (stage_result, unused_cancel_rx) = run_install_script(
             &on_event,
             &script.path,
             &stage_args,
@@ -507,7 +473,10 @@ async fn run_bootstrap(
             local_cancel_rx,
             Some(stage.name.clone()),
         )
-        .await?;
+        .await
+        .map_err(|e| fail_bootstrap(&on_event, Some(stage.name.clone()), e.to_string()))?;
+
+        *cancel_rx_holder.lock().await = unused_cancel_rx;
 
         let duration_ms = started.elapsed().as_millis() as u64;
 
@@ -548,8 +517,12 @@ async fn run_bootstrap(
                     "stage produced no JSON result frame"
                 );
                 let err = format!(
-                    "install.ps1 -Stage {} produced no JSON result frame (exit={:?})\nstdout: {}\nstderr: {}",
-                    stage.name, stage_result.exit_code, stdout_preview, stderr_preview
+                    "{} -Stage {} produced no JSON result frame (exit={:?})\nstdout: {}\nstderr: {}",
+                    kind.filename(),
+                    stage.name,
+                    stage_result.exit_code,
+                    stdout_preview,
+                    stderr_preview
                 );
                 emit_event(
                     &on_event,
@@ -621,7 +594,7 @@ async fn run_bootstrap(
         }
     }
 
-    // 4) 解析 install_root。瘦身后的 5 阶段脚本不再向 `<spiritagent_home>/spiritagent-agent/` 克隆仓库，所有负载直接落 $SPIRITAGENT_HOME（bin/、skills/、.spiritagent-bootstrap-complete），所以 install_root 即 spiritagent_home。
+    // 4) 解析 install_root。6 阶段脚本不再向 `<spiritagent_home>/spiritagent-agent/` 克隆仓库，所有负载直接落 $SPIRITAGENT_HOME（bin/、skills/、.spiritagent-bootstrap-complete），所以 install_root 即 spiritagent_home。
     let spiritagent_home = args
         .spiritagent_home
         .clone()
@@ -667,7 +640,7 @@ async fn run_install_script(
     bundle: &BundleContext,
     cancel_rx: Option<mpsc::Receiver<()>>,
     stage_name: Option<String>,
-) -> Result<powershell::ScriptResult> {
+) -> Result<(powershell::ScriptResult, Option<mpsc::Receiver<()>>)> {
     let on_event_stdout = on_event.clone();
     let stage_for_stdout = stage_name.clone();
     let on_event_stderr = on_event.clone();
@@ -718,6 +691,22 @@ async fn run_install_script(
             tracing::error!(?e, "install script invocation failed");
             anyhow!("install script invocation failed: {e:#}")
         })
+}
+
+/// 把失败同时送达前端事件流与返回值；缺少 Failed 事件时前端会停留在 running 态，无法进入重试。
+fn fail_bootstrap(
+    on_event: &Channel<BootstrapEvent>,
+    stage: Option<String>,
+    err: String,
+) -> anyhow::Error {
+    emit_event(
+        &on_event,
+        BootstrapEvent::Failed {
+            stage,
+            error: err.clone(),
+        },
+    );
+    anyhow!(err)
 }
 
 /// 由当前安装器的 Tauri 资源目录构建 `BundleContext`；路径以 `<bundle.resources>/payload/` 为锚点（见 `tauri.conf.json#bundle.resources`）。
@@ -841,43 +830,35 @@ mod tests {
 
     static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// 重新启动目标是平台规范路径上的桌面端：macOS 必须是 .app bundle（`open` 与 electron-updater 都以此为目标）；这里加锁防止回归。
+    /// 启动快路径与 launch 命令都以 `resolve_spiritagent_desktop_exe` 为准；这里加锁防止 override 互相干扰。
     #[test]
-    fn resolve_spiritagent_desktop_app_finds_installed_bundle() {
+    fn resolve_spiritagent_desktop_exe_finds_installed_desktop() {
         let _lock = TEST_MUTEX.lock().unwrap();
         let root = unique_tmp_dir("app-ok");
         set_desktop_root_override_for_test(Some(root.clone()));
-        make_installed_desktop(&root);
+        let installed = make_installed_desktop(&root);
 
-        let resolved = resolve_spiritagent_desktop_app()
-            .expect("should resolve the installed desktop app");
+        let resolved = resolve_spiritagent_desktop_exe()
+            .expect("should resolve the installed desktop executable");
 
-        #[cfg(target_os = "macos")]
-        {
-            assert_eq!(
-                resolved.extension().and_then(|e| e.to_str()),
-                Some("app"),
-                "relaunch target must be a .app bundle on macOS"
-            );
-            assert!(resolved.is_dir(), "macOS resolution must be a directory");
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            assert!(resolved.is_file(), "non-macOS resolution must be a file");
-        }
+        assert!(
+            resolved.is_file(),
+            "resolved desktop target must be the executable file, got {resolved:?}"
+        );
+        assert!(resolved.starts_with(&installed));
         let _ = std::fs::remove_dir_all(&root);
         set_desktop_root_override_for_test(None);
     }
 
     #[test]
-    fn resolve_spiritagent_desktop_app_is_none_without_install() {
+    fn resolve_spiritagent_desktop_exe_is_none_without_install() {
         let _lock = TEST_MUTEX.lock().unwrap();
         let root = unique_tmp_dir("app-none");
         set_desktop_root_override_for_test(Some(root.clone()));
         // 不构造已安装桌面：未安装时应返回 None。
         assert!(
-            resolve_spiritagent_desktop_app().is_none(),
-            "no resolved app when nothing has been installed"
+            resolve_spiritagent_desktop_exe().is_none(),
+            "no resolved desktop when nothing has been installed"
         );
         let _ = std::fs::remove_dir_all(&root);
         set_desktop_root_override_for_test(None);
