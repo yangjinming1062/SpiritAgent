@@ -4,11 +4,10 @@ import json
 import os
 import shutil
 import tempfile
-import uuid
 import zipfile
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from common import get_or_404, get_router, list_response
 from components import CAPABILITY_SERVICES, SETTINGS, DbSession, apply_partial, get_logger, load_ai_config, utc_now
@@ -18,6 +17,8 @@ from modules.auth import (
     CurrentAdmin,
     LoginRecord,
     User,
+    UserBackupImportFailure,
+    UserBackupImportResponse,
     UserCreate,
     UserListResponse,
     UserModelConfig,
@@ -46,15 +47,13 @@ from services.application.generation import delete_portrait_file
 from services.domains.backup import (
     CONVERSATION_TABLES,
     TABLES,
-    UrlRewriter,
+    BackupImportMode,
+    BackupRestoreResult,
     build_manifest,
-    clear_user_scoped_rows,
     collect_files_for_export,
-    deserialize_rows,
-    insert_rows,
+    load_backup_rows,
     load_manifest,
-    restore_files,
-    restore_memory_context,
+    restore_backup_rows,
     serialize_rows,
 )
 from services.domains.configuration.ai_config import prepare_ai_config, public_ai_config
@@ -350,14 +349,14 @@ async def export_user_backup(
         raise
 
 
-@router.post("/users/{user_id}/import")
+@router.post("/users/{user_id}/import", response_model=UserBackupImportResponse)
 async def import_user_backup(
     user_id: int,
     db: DbSession,
     file: UploadFile = File(...),
     mode: str = "overwrite",
-) -> dict:
-    """覆盖仅清理备份声明的表；合并保留已有唯一记录与激活形象。"""
+) -> UserBackupImportResponse:
+    """尽力恢复备份；覆盖仅清理兼容且可安全替换的数据类。"""
     if mode not in ("overwrite", "merge"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mode 必须是 overwrite 或 merge。")
     if not file.filename or not file.filename.endswith(".zip"):
@@ -388,63 +387,48 @@ async def import_user_backup(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"备份无效：{exc}") from exc
         source_uid = int(manifest["source_user_id"])
-        rewriter = UrlRewriter({})
+        import_mode = cast(BackupImportMode, mode)
+        read_result = await asyncio.to_thread(
+            load_backup_rows,
+            extract_root,
+            list(manifest["tables"]),
+            dict(manifest["row_counts"]),
+        )
+        restore_result: BackupRestoreResult | None = None
         boundary = user_maintenance(user_id)
         async with boundary:
             try:
-                rows = await asyncio.to_thread(deserialize_rows, extract_root, manifest["tables"])
-                if any(len(records) != manifest.get("row_counts", {}).get(table) for table, records in rows.items()):
-                    raise ValueError("Backup row counts do not match manifest")
-                if mode == "overwrite":
-                    await clear_user_scoped_rows(db, user_id, manifest["tables"])
-                id_map: dict[str, dict[str, int | str]] = {}
-                imported: dict[str, int] = {}
-                import_batch_id = uuid.uuid4().hex
-                if "conversations" in rows:
-                    id_map["conversations"], imported["conversations"] = await insert_rows(
-                        db,
-                        "conversations",
-                        rows["conversations"],
-                        user_id,
-                        rewriter,
-                        id_map,
-                        mode=mode,
-                        import_batch_id=import_batch_id,
-                    )
-                rewriter = await asyncio.to_thread(
-                    restore_files,
+                restore_result = await restore_backup_rows(
+                    db,
                     extract_root,
                     source_uid,
                     user_id,
-                    conversations=id_map.get("conversations", {}),
+                    read_result.rows,
+                    mode=import_mode,
                 )
-                for tbl in TABLES:
-                    if tbl in rows and tbl != "conversations":
-                        id_map[tbl], imported[tbl] = await insert_rows(
-                            db,
-                            tbl,
-                            rows[tbl],
-                            user_id,
-                            rewriter,
-                            id_map,
-                            mode=mode,
-                            import_batch_id=import_batch_id,
-                        )
-                await restore_memory_context(db, rows, id_map, user_id, import_batch_id)
                 if await db.scalar(select(Persona.is_complete).where(Persona.user_id == user_id)):
                     await ensure_system_conversations_for_user(db, user_id)
                 else:
                     await db.commit()
             except (ValueError, OSError, KeyError, TypeError) as exc:
                 await db.rollback()
-                rewriter.rollback()
-                raise HTTPException(status_code=400, detail=f"备份无效或文件无法恢复：{exc}") from exc
+                if restore_result is not None:
+                    restore_result.rewriter.rollback()
+                reason = str(exc) if not isinstance(exc, OSError) else "目标存储不可用。"
+                raise HTTPException(status_code=400, detail=f"备份无效或文件无法恢复：{reason}") from exc
             except BaseException:
                 await db.rollback()
-                rewriter.rollback()
+                if restore_result is not None:
+                    restore_result.rewriter.rollback()
                 raise
 
-    return {
-        "mode": mode,
-        "imported": imported,
-    }
+    failed = [
+        UserBackupImportFailure(section=item.section, count=item.count, reason=item.reason)
+        for item in (*read_result.failures, *restore_result.failures)
+    ]
+    return UserBackupImportResponse(
+        mode=import_mode,
+        imported=restore_result.imported,
+        restored_files=restore_result.restored_files,
+        failed=failed,
+    )

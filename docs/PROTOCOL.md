@@ -492,4 +492,4 @@ LLM 的不同输出面遵守以下规则：
 
 客户端 `tools.sync` 声明 `skill_scope_version=1` 才开放 skills_list/skill_view/skill_manage。Backend 的 runner 工具请求以顶层 `skill_scope={user_id, system_preset_id}` 传给 Client，Client 经 `runnerInvoke` 转发 `execute_scoped_tool`；该字段不在模型工具 schema。Runner 在请求执行期间固定作用域，学习产物只写所属目录。旧全局 client_context.skills 不再用于提示词注入，技能目录由模型通过同域工具读取。自动化不开放学习技能和 cronjob 管理。
 
-`companion.set_timezone` 写入 `UserSetting.timezone`，语言和时区是静态运行配置，不进入画像共享池。备份不维护独立格式版本号；导入按当前数据模型校验必需字段、来源引用、文件校验和及向量维度，不按版本号放行数据。
+`companion.set_timezone` 写入 `UserSetting.timezone`，语言和时区是静态运行配置，不进入画像共享池。备份不维护独立格式版本号。ZIP 路径、manifest 清单、文件库存与校验和属于包级硬门槛，任一失败都不写目标数据；通过后按当前数据模型逐类预检必需字段、来源引用与向量维度。旧包未声明的当前数据保持不变，覆盖恢复也只清理通过预检且将要写入的数据类；清理某类会破坏未恢复关联数据时保留该类目标数据并列为失败。未知或不兼容的数据类不阻断其他内容恢复。导入响应列出每个失败类别、数量与原因，管理页保留部分成功结果供管理员核对。会话与消息必须成对出现；无法映射目标会话的附件只跳过该附件并计入失败结果。

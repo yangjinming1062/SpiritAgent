@@ -1,18 +1,18 @@
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from components import utc_now
 from modules.memory import MEMORY_EMBEDDING_DIM
 
-from .serializers import CONVERSATION_TABLES, TABLES
-
 if TYPE_CHECKING:
     from modules.auth import User
 
 
 MANIFEST_FORMAT = "spiritagent-user-backup"
+TABLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
 def build_manifest(user: "User", rows_by_table: dict[str, list[dict[str, Any]]], exported_by: str) -> dict[str, Any]:
@@ -33,17 +33,20 @@ def validate_manifest(payload: dict[str, Any] | None) -> None:
         raise ValueError("manifest.json must be a JSON object")
     if payload.get("format") != MANIFEST_FORMAT:
         raise ValueError(f"Unknown backup format: {payload.get('format')!r}")
-    if not isinstance(payload.get("source_user_id"), int):
+    if not isinstance(payload.get("source_user_id"), int) or isinstance(payload["source_user_id"], bool):
         raise ValueError("manifest.source_user_id must be an integer")
     if not isinstance(payload.get("tables"), list):
         raise ValueError("manifest.tables must be a list")
     tables = payload["tables"]
-    if any(not isinstance(table, str) or table not in TABLES for table in tables) or len(set(tables)) != len(tables):
-        raise ValueError("Unknown or duplicate backup tables")
-    if set(tables) & CONVERSATION_TABLES and not CONVERSATION_TABLES.issubset(tables):
-        raise ValueError("Conversations and messages must be restored together")
-    if not (set(TABLES) - CONVERSATION_TABLES).issubset(tables):
-        raise ValueError("Backup is missing companion data tables")
+    if not tables or any(not isinstance(table, str) or not TABLE_NAME_PATTERN.fullmatch(table) for table in tables):
+        raise ValueError("Invalid backup table names")
+    if len(set(tables)) != len(tables):
+        raise ValueError("Duplicate backup tables")
+    row_counts = payload.get("row_counts")
+    if not isinstance(row_counts, dict) or set(row_counts) != set(tables):
+        raise ValueError("manifest.row_counts must match manifest.tables")
+    if any(not isinstance(count, int) or isinstance(count, bool) or count < 0 for count in row_counts.values()):
+        raise ValueError("manifest.row_counts must contain non-negative integers")
 
 
 def load_manifest(extract_root: Path) -> dict[str, Any]:

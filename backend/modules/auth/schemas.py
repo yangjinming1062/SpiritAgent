@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Literal
 
 from components import AIConfigPublic, AIConfigUpdate
 from pydantic import BaseModel, ConfigDict, Field
@@ -90,3 +91,16 @@ class UserResponse(BaseModel):
 
 class UserListResponse(BaseModel):
     items: list[UserResponse]
+
+
+class UserBackupImportFailure(BaseModel):
+    section: str
+    count: int = Field(ge=0)
+    reason: str
+
+
+class UserBackupImportResponse(BaseModel):
+    mode: Literal["overwrite", "merge"]
+    imported: dict[str, int]
+    restored_files: int = Field(ge=0)
+    failed: list[UserBackupImportFailure]

@@ -2,6 +2,7 @@ import json
 import shutil
 import time
 from collections.abc import Iterator
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 from urllib.parse import unquote, urlsplit
@@ -90,6 +91,12 @@ class UrlRewriter:
             path.unlink(missing_ok=True)
 
 
+@dataclass(frozen=True)
+class FileRestoreResult:
+    rewriter: UrlRewriter
+    skipped_conversation_files: int
+
+
 def collect_files_for_export(user_id: int, rows: dict[str, list[dict[str, Any]]]) -> list[Path]:
     root = Path(SETTINGS.data_dir).resolve()
     files: set[Path] = set()
@@ -120,10 +127,11 @@ def restore_files(
     target_uid: int,
     *,
     conversations: dict[str, int | str],
-) -> UrlRewriter:
+) -> FileRestoreResult:
     root = Path(SETTINGS.data_dir).resolve()
     source_root = extract_root / "files"
     rewriter = UrlRewriter({})
+    skipped_conversation_files = 0
     temp_ids: dict[str, str] = {}
     try:
         for source in sorted(source_root.rglob("*")):
@@ -133,7 +141,10 @@ def restore_files(
             parts = relative.parts
             if parts[0] in USER_DIRECTORIES and len(parts) >= 3 and parts[1] == str(source_uid):
                 target_relative = PurePosixPath(parts[0], str(target_uid), *parts[2:])
-            elif parts[0] == "desktop-attachments" and len(parts) >= 3 and parts[1] in conversations:
+            elif parts[0] == "desktop-attachments" and len(parts) >= 3:
+                if parts[1] not in conversations:
+                    skipped_conversation_files += 1
+                    continue
                 target_relative = PurePosixPath(parts[0], str(conversations[parts[1]]), *parts[2:])
             elif parts[0] == "companion-avatars" and len(parts) == 2:
                 target_relative = relative
@@ -167,7 +178,10 @@ def restore_files(
             if "marker" in meta:
                 meta["marker"] = f"preview:{target_uid}"
             meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
-        return rewriter
+        return FileRestoreResult(
+            rewriter=rewriter,
+            skipped_conversation_files=skipped_conversation_files,
+        )
     except Exception:
         rewriter.rollback()
         raise

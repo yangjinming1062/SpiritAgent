@@ -310,12 +310,10 @@ def _build_payload(
     return payload
 
 
-async def restore_memory_context(
+async def restore_conversation_context(
     db: AsyncSession,
     rows: dict[str, list[dict[str, Any]]],
     id_map: IdMap,
-    user_id: int,
-    import_batch_id: str,
 ) -> None:
     conversations = {str(row["id"]): row for row in rows.get("conversations", [])}
     messages = {str(row["id"]): row for row in rows.get("messages", [])}
@@ -329,6 +327,18 @@ async def restore_memory_context(
             ]
             conv = await db.get(Conversation, int(id_map["conversations"][original_id]))
             conv.context_after_message_id = max(mapped, default=0)
+    await db.flush()
+
+
+async def restore_memory_context(
+    db: AsyncSession,
+    rows: dict[str, list[dict[str, Any]]],
+    id_map: IdMap,
+    user_id: int,
+    import_batch_id: str,
+) -> None:
+    conversations = {str(row["id"]): row for row in rows.get("conversations", [])}
+    messages = {str(row["id"]): row for row in rows.get("messages", [])}
     for raw in rows.get("memories", []):
         memory = await db.get(Memory, int(id_map["memories"][str(raw["id"])]))
         # merge 保留现有槽位，不改写它的来源。
