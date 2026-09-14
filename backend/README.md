@@ -2,7 +2,7 @@
 
 ## 1. 职责与边界
 
-云端持有角色定义、记忆与资产，编排对话、云端工具、调度和事件；本机执行委托 Runner，窗口与渲染交给客户端。物理边界见 [ARCHITECTURE.md §1](../docs/ARCHITECTURE.md)，生成链见 [PIPELINE.md](../docs/PIPELINE.md)。本文件是 backend 的唯一 README：先读它理解分层与设计思路，再动代码。
+云端持有角色定义、记忆与资产，编排对话、云端工具、调度和事件；本机执行委托 Runner，窗口与渲染交给客户端。物理边界见 [ARCHITECTURE.md §1](../docs/ARCHITECTURE.md)，生成链见 [PIPELINE.md](../docs/PIPELINE.md)。修改本模块时从本文定位分层与相关设计约束；生成素材说明见对应资源目录。
 
 ## 2. 设计意图
 
@@ -47,7 +47,7 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 | `infrastructure/` | 技术能力怎么实现：llm、image_to_3d、seethrough、assets、web、tool_runtime、desktop（连接/IPC/JSON-RPC）、event_store（outbox） | 不认识业务编排——不导入 domains / application / adapters，这是全系统最重要的方向不变量 |
 | `adapters/` | 外部协议如何进来：desktop（WS handlers）、channels、scheduler、tools、http、maintenance | 只做适配与入口编排，不沉淀业务规则 |
 
-依赖方向：`adapters → application → domains`，`domains`/`application` 可引用 `infrastructure`，全部层可引用 `contracts`。三条结构性规则由 [check_services_architecture.py](../scripts/check_services_architecture.py) 强制（环检测、层白名单、域隔离），改导入前先跑它：
+依赖方向：`adapters → application → domains`，`domains`/`application` 可引用 `infrastructure`，全部层可引用 `contracts`。三条结构性规则由 [check_services_architecture.py](../scripts/check_services_architecture.py) 强制（环检测、层白名单、域隔离），修改依赖关系后运行；需要区分已有违规与本次回归时先建立基线：
 
 - **application 包间只允许显式单向边**：automation → chat / nightly、chat → nightly（回合后整理）、nightly → generation。加新边必须同时改检查脚本的 `APPLICATION_FLOW_EDGES` 与本文件。
 - **域间例外**（脚本例外表的权威）：各域可单向导入 conversation——它是一切回合与叙事的会话底座且零反向依赖；companion 使用 memory 公共入口读取陪伴记忆与记录交互，journal 使用 memory 的时区解析；companion 经 bootstrap 注入的钩子触发 generation（onboarding 首张房间图），业务域自身不反向依赖应用流程。

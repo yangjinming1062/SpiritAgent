@@ -1,11 +1,8 @@
 ---
 name: computer-use
-description: |
-  Drive the user's desktop (macOS or Windows) in the background —
-  screenshots, mouse, keyboard, scroll, drag — without stealing the user's
-  cursor, keyboard focus, or current Space/desktop. Works with any
-  tool-capable model. Load this skill whenever the `computer_use` tool is
-  available.
+description: >
+  Inspect or operate macOS and Windows desktop interfaces with computer_use
+  when a task needs screenshots or GUI interaction.
 version: 1.0.0
 platforms: [macos, windows]
 metadata:
@@ -16,6 +13,10 @@ metadata:
 ---
 
 # Computer Use (universal, any-model, macOS + Windows)
+
+Use for tasks that require inspecting or interacting with desktop UI. Tool
+availability alone does not trigger this skill; prefer an appropriate file,
+API, or browser tool when it directly satisfies the request.
 
 You have a `computer_use` tool that drives the user's actual desktop in the
 **background**. On macOS it uses cua-driver (Apple's native Accessibility

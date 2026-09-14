@@ -1,6 +1,6 @@
 # Agent 阅读入口
 
-修改前先读 [RULES.md](RULES.md)，再读 [ARCHITECTURE.md](docs/ARCHITECTURE.md) 与 [DESIGN.md](docs/DESIGN.md) 理解背景；进入具体模块前读对应 README。根 [README.md](README.md) 面向人类介绍产品，其余工程文档用于指导 Agent 修改与审查，事实归属及写法由 RULES 定义。
+修改前先读 [RULES.md](RULES.md)，再按任务从下表定位相关章节；进入具体模块时读对应 README 的边界与相关约束。同一任务中已读且未变化的内容无需重复加载。根 [README.md](README.md) 面向人类介绍产品，工程文档的事实归属及写法由 RULES 定义。
 
 | 任务 | 阅读入口 |
 |---|---|

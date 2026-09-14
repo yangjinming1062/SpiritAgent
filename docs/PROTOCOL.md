@@ -176,7 +176,7 @@
 | ★ `long_press` | 长按凝视姿态 | neutral（用户长按精灵触发） |
 | ★ `drag_end` | 拖拽松手就地的站稳微沉 | neutral（拖拽释放定居触发） |
 
-注：3D 路径走 GLB clip map；2D 路径走 [PuppetStage](../client/renderer/2d/puppet/PuppetStage.tsx) 定时包络（白名单键同源，通道由包络内部定义）。同一 action key 在各路径上语义一致但兑现方式不同。
+注：3D 路径走 GLB clip map；2D 路径走 [PuppetStage](../client/renderer/modules/character/rendering/2d/puppet/PuppetStage.tsx) 定时包络（白名单键同源，通道由包络内部定义）。同一 action key 在各路径上语义一致但兑现方式不同。
 
 走路 / 跳跃（locomotion）：2D 路径有程序化复合步态（基于逐帧位移积分相位驱动躯干起伏、侧倾摆动与朝向微倾，叠加发束与全身次级物理），飞行维持滑行语义。如需移动角色，用空间决策或仪式行走而非视觉 action。
 
@@ -210,9 +210,9 @@
 | `back_hair` / `front_hair` | 后发 / 前发 |
 | `skirt` | 下装 / 裙子 |
 
-命中区域与手势影响：（1）前端手势/物理反馈——摸头享受、怒气、眩晕与发区抖动的触发阈值与粒子反馈见 [DESIGN.md §6.3](DESIGN.md)；（2）LLM 反应上下文——`kind` 与 `region` 字段透传到 LLM，让回应可针对"摸头" vs "戳脸" vs "拍手" vs "眩晕"做不同文案。两条渲染路径都做可见像素级命中——3D 走 silhouette hit（离屏 alpha 回读）；2D 走 [PuppetStage](../client/renderer/2d/puppet/PuppetStage.tsx)（当前帧部件网格精确点测，区域 = 最上层命中部件的映射，CPU 轻量，经命中区域总线 `$mesh2dHitmap` 下发）。
+命中区域与手势影响：（1）前端手势/物理反馈——摸头享受、怒气、眩晕与发区抖动的触发阈值与粒子反馈见 [DESIGN.md §6.3](DESIGN.md)；（2）LLM 反应上下文——`kind` 与 `region` 字段透传到 LLM，让回应可针对"摸头" vs "戳脸" vs "拍手" vs "眩晕"做不同文案。两条渲染路径都做可见像素级命中——3D 走 silhouette hit（离屏 alpha 回读）；2D 走 [PuppetStage](../client/renderer/modules/character/rendering/2d/puppet/PuppetStage.tsx)（当前帧部件网格精确点测，区域 = 最上层命中部件的映射，CPU 轻量，经命中区域总线 `$mesh2dHitmap` 下发）。
 
-**扩展协议**：emotion 扩展须同步更新 **Backend 白名单 + Client 表情映射 + 本文档**；视觉 action 扩展须同步更新 **Backend [actions.py](../backend/services/domains/companion/actions.py)（DEFAULT_ACTIONS / NON_LLM_ACTIONS）+ Client [PuppetStage 包络表](../client/renderer/2d/puppet/PuppetStage.tsx) + 本文档**；空间动作扩展须同步 `ALLOWED_ACTIONS`、Client autonomy 执行器与本文档。未覆盖 emotion 一律按 neutral 处理。
+**扩展协议**：emotion 扩展须同步更新 **Backend 白名单 + Client 表情映射 + 本文档**；视觉 action 扩展须同步更新 **Backend [actions.py](../backend/services/domains/companion/actions.py)（DEFAULT_ACTIONS / NON_LLM_ACTIONS）+ Client [PuppetStage 包络表](../client/renderer/modules/character/rendering/2d/puppet/PuppetStage.tsx) + 本文档**；空间动作扩展须同步 `ALLOWED_ACTIONS`、Client autonomy 执行器与本文档。未覆盖 emotion 一律按 neutral 处理。
 
 **用户面向语言（locale）**：
 
@@ -473,7 +473,7 @@ LLM 的不同输出面遵守以下规则：
 
 ## 8. 维护规约
 
-- 本文档是**跨模块公共契约**——任何改动必须同时通知所有受影响的模块所有者。
+- 本文档是**跨模块公共契约**——变更说明列明受影响模块、同步内容与验证结果。
 - **契约变更即破坏性变更**：共享枚举/事件/方法的改动，同提交更新本文档与所有消费者；只允许向后兼容的扩展（新增枚举值、新增可选字段），删除/改名/收紧必须写明升级说明与版本策略，并同步各模块。
 - 任何扩展 emotion / locale / 事件 type，必须在 **本文档 + 后端白名单 + 客户端消费代码**三处同步。
 - 任何 Reserved Key 新增，必须在 **本文档 + 工具入口** 同步。

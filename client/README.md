@@ -17,7 +17,7 @@
 - 主进程由 tsup 构建，渲染层由 Vite 构建；preload 格式约束见 §4。
 - 渲染层分四类：`app/`（应用组合层——bootstrap 装配、runtime 网关路由与宿主分发、workflows 跨模块流程、windows 三窗口体验与 onboarding 引导）、`modules/`（可复用业务能力——conversation 会话、character 角色呈现（含 `rendering/2d`、`rendering/3d` 渲染域）、speech 语音、media 媒体、memory 记忆、room 房间）、`shared/`（无业务共享代码）、窗口入口（根目录 `main.tsx`、`sprite-entry.tsx` 与 `app/windows/*/*-entry.tsx`，保持薄入口）。跨进程契约仍在 `shared/ipc/`（`@ipc`），与 renderer 内的 `shared/` 职责不同。
 - 依赖规则：业务模块互不导入、不依赖 app（例外经 ESLint 白名单：conversation → media 的展示原语只读；character 渲染域可订阅 speech 口型振幅）；app → modules 只走公共 barrel；runtime / workflows 不得反向导入 windows；shared 不反向依赖任何业务。
-- 会话与形象 / 语音的接缝是注入式端口：形象状态、TTS 与媒体查看器经 `shared/presentation-ports`；语音条播放状态与控制经 `modules/conversation/voice-link.ts`。实现由 `app/bootstrap/bind-presentation.ts` 在各窗口入口渲染前显式绑定（不依赖 barrel 副作用导入顺序）。角色表现命令当前仍经端口下达，收敛为表现输入属后续批次。
+- 会话与形象 / 语音经注入式端口协作，在各窗口渲染前显式绑定，不依赖 barrel 副作用导入顺序；角色状态优先级由 character 统一裁决。接缝与当前归属见 [renderer README §3–§5](renderer/README.md)。
 - 网关事件由 `app/runtime/gateway-event-router.ts` 只做分派与守卫（鉴权 pending 丢弃、session_id 闸门、代理窗过滤），状态更新按能力在 `app/runtime/handlers/` 组织：会话回合、角色 / 形象 / 衣柜、通知投递与宿主专属 tool.call 分发（含重放去重与仪式行走）。
 - `app/windows/sprite/whisper/` 是精灵窗内的轻语卡片浮层（不是新窗口），与 conversation 对接；详见 §4 关键设计决策。
 - 窗口入口直接装配对应根组件（`app/windows/*` 的 entry）；生活空间与工作台互不依赖。ESLint 对模块边界实施检查。
@@ -78,7 +78,7 @@
 - 对后端 / Runner：生命周期、事件、配置、安全与凭据见 [PROTOCOL](../docs/PROTOCOL.md)。
 - 对后端：3D / 2D 产物与动画映射见 [PIPELINE](../docs/PIPELINE.md)，打扰档位权威见 [ARCHITECTURE §5.1](../docs/ARCHITECTURE.md)。
 - 主进程内部：包边界、装配与准入约束见 [main README](main/README.md)，IPC 共享定义见 §3。
-- 渲染内部：架构、模块契约与收敛路径见 [renderer README](renderer/README.md)，IPC 共享定义见 §3。
+- 渲染内部：架构、模块契约与当前限制见 [renderer README](renderer/README.md)，2D 机制按其入口进入专属说明；IPC 共享定义见 §3。
 - Skills 平台过滤：双端翻译约束见 [Installer §2](../installer/README.md)。
 
 ## 6. 已知限制

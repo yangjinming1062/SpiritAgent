@@ -1,6 +1,6 @@
 ---
 name: humanizer
-description: "Humanize text: strip AI-isms and add real voice."
+description: "Revise supplied prose to sound natural or match a writing sample when the user requests style editing."
 version: 2.5.1
 author: Siqi Chen (@blader, https://github.com/blader/humanizer), ported by SpiritAgent Agent
 license: MIT
@@ -25,7 +25,9 @@ Load this skill whenever the user asks to:
 - match their voice in writing they're producing
 - review text for AI tells before publishing
 
-Also apply this skill to **your own** output when writing user-facing prose — release notes, PR descriptions, documentation, long-form explanations, summaries. SpiritAgent's baseline voice already strips most of these, but a focused pass catches what slips through.
+Do not load this skill for every user-facing response or ordinary documentation update. Use it when naturalness or voice is part of the requested editing task.
+
+Preserve facts, uncertainty, citations, and technical constraints. Do not invent interviews, studies, personal experiences, or opinions to add voice. Examples illustrate wording, not evidence to reuse; neutral technical prose may be the right result.
 
 ## How to use it in SpiritAgent
 
@@ -44,8 +46,8 @@ When given text to humanize:
 2. **Rewrite problematic sections** — replace AI-isms with natural alternatives.
 3. **Preserve meaning** — keep the core message intact.
 4. **Maintain voice** — match the intended tone (formal, casual, technical, etc.). If a voice sample was provided, match it specifically.
-5. **Add soul** — don't just remove bad patterns, inject actual personality. See PERSONALITY AND SOUL below.
-6. **Do a final anti-AI pass** — ask yourself: "What makes the below so obviously AI generated?" Answer briefly with any remaining tells, then revise one more time.
+5. **Match the requested voice** — use the supplied sample or intended audience; add personality only when appropriate to that voice.
+6. **Verify the revision** — preserve meaning and correct remaining style issues; another rewrite is only needed when an issue remains.
 
 
 ## Voice Calibration (optional)
@@ -487,23 +489,17 @@ Avoiding AI patterns is only half the job. Sterile, voiceless writing is just as
    - Uses specific details over vague claims
    - Maintains appropriate tone for context
    - Uses simple constructions (is/are/has) where appropriate
-5. Present a draft humanized version.
-6. Prompt yourself: "What makes the below so obviously AI generated?"
-7. Answer briefly with the remaining tells (if any).
-8. Prompt yourself: "Now make it not obviously AI generated."
-9. Present the final version (revised after the audit).
-10. If the text came from a file, apply the edit with `patch` (targeted) or `write_file` (full rewrite) and show the user what changed.
+5. Check meaning and the requested voice; revise again only if a concrete issue remains.
+6. If the text came from a file, apply the edit with `patch` (targeted) or `write_file` (full rewrite) and show the user what changed.
 
 ## Output Format
 
-Provide:
-1. Draft rewrite
-2. "What makes the below so obviously AI generated?" (brief bullets)
-3. Final rewrite
-4. A brief summary of changes made (optional, if helpful)
+Provide the final rewrite, with a brief summary of changes when useful. Include a draft or critique only when requested.
 
 
 ## Full Example
+
+This example illustrates successive style edits, not verified factual content. Its invented interviews and personal claims must not be introduced into a user's text. The intermediate draft and critique are not required output stages.
 
 **Before (AI-sounding):**
 > Great question! Here is an essay on this topic. I hope this helps!

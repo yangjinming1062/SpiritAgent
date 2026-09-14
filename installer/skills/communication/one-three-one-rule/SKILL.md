@@ -1,13 +1,8 @@
 ---
 name: one-three-one-rule
 description: >
-  Structured decision-making framework for technical proposals and trade-off analysis.
-  When the user faces a choice between multiple approaches (architecture decisions,
-  tool selection, refactoring strategies, migration paths), this skill produces a
-  1-3-1 format: one clear problem statement, three distinct options with pros/cons,
-  and one concrete recommendation with definition of done and implementation plan.
-  Use when the user asks for a "1-3-1", says "give me options", or needs help
-  choosing between competing approaches.
+  Frame a technical decision with options and a recommendation when the user
+  asks for a 1-3-1 proposal or help choosing between competing approaches.
 platforms: [linux, macos, windows]
 version: 1.0.0
 author: Willard Moore
@@ -26,20 +21,23 @@ Structured decision-making format for when a task has multiple viable approaches
 
 - The user explicitly asks for a "1-3-1" response.
 - The user says "give me options" or "what are my choices" for a technical decision.
-- A task has multiple viable approaches with meaningful trade-offs (architecture, tooling, migration strategy).
-- The user needs a proposal they can forward to a team or stakeholder.
+- The user requests a comparison or decision proposal with meaningful trade-offs.
 
 Do NOT use for simple questions with one obvious answer, debugging sessions, or tasks where the user has already decided on an approach.
+
+Use the three-option format for a requested 1-3-1. For a general comparison,
+include only viable alternatives; do not invent a third option. A request to
+implement an already chosen approach should continue to implementation.
 
 ## Procedure
 
 1. **Problem** (one sentence)
    - State the core decision or desired outcome in a single concise sentence.
    - Focus on the *what*, not the *how* — no implementation details, tool names, or specific technologies.
-   - Keep it tight. If you need "and", you're describing two problems.
+   - Preserve the decision's actual scope, including related constraints.
 
-2. **Options** (exactly three)
-   - Present three distinct, viable approaches labeled A, B, C.
+2. **Options** (three for a requested 1-3-1)
+   - Label distinct, viable approaches A, B, C as applicable.
    - Each option gets a brief description, pros, and cons.
    - Options should represent genuinely different strategies, not minor variations of the same approach.
 
@@ -60,7 +58,7 @@ Do NOT use for simple questions with one obvious answer, debugging sessions, or 
 ## Verification
 
 - Response has exactly one Problem sentence.
-- Response has exactly three Options (A, B, C) with pros and cons for each.
+- A requested 1-3-1 has three viable Options (A, B, C); general comparisons use the alternatives the decision warrants.
 - Response has a single Recommendation that picks one option with reasoning.
 - Definition of Done and Implementation Plan align with the recommended option.
 - If the user selects a different option, Recommendation, DoD, and Implementation Plan update accordingly.

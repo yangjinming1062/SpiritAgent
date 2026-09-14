@@ -6,7 +6,7 @@ Public trust bundle for the desktop auto-update pipeline.
 
 | File | Tracked? | Purpose |
 |------|----------|---------|
-| `update.pub` | yes | Trust anchor bundled into client builds via `client/package.json` `extraResources`. The runner verifier ([client/main/runner/updater.ts](../../client/main/runner/updater.ts)) calls `crypto.verify('SHA512', ...)` against this key to confirm release manifests were signed by the matching private key. |
+| `update.pub` | yes | Trust anchor bundled into client builds via `client/package.json` `extraResources`. The runner verifier ([client/main/runner/updater.ts](../../client/main/runner/updater.ts)) uses this key to confirm release manifests were signed by the matching private key; the signature contract is defined in [PROTOCOL §5.5](../../docs/PROTOCOL.md). |
 | (private key) | **no** | Released-signing private key — used by `scripts/lib/UpdateManifest.ps1` `Sign-Manifest` at build time only. Never stored in this repo. |
 
 The matching private key is sourced from `$env:SPIRITAGENT_UPDATE_SIGNING_KEY`

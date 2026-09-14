@@ -6,7 +6,7 @@
 
 - `manifest.json` — 文案与 voice 元信息（tracked source of truth）。`generate_onboarding_audio.py` 据此生成 mp3。
 - `generate_onboarding_audio.py` — 一次性合成脚本。需要 `MIMO_API_KEY`（或 `TTS_API_KEY`）环境变量。
-- 生成的 mp3 落到 `installer/payload/onboarding-audio/zh/<tag>.mp3`（gitignored，Tauri 构建产物）。tag 与 `client/renderer/companion/onboarding/onboarding-flow.tsx` 里 `playOnboardingAudio(tag)` 调用的字符串一一对应。
+- 生成的 mp3 落到 `installer/payload/onboarding-audio/zh/<tag>.mp3`（gitignored，Tauri 构建产物）。tag 与 [onboarding 引导流程](../../client/renderer/app/onboarding/onboarding-flow.tsx)里 `playOnboardingAudio(tag)` 调用的字符串一一对应。
 
 **tag 与文案绑定，不与题号绑定**：问题表里每题自带 `audioTag`，指向录了这句话的那条 manifest 条目。因此调整引导题序不触发任何重新合成；只有**改文案**才需要重生成对应 mp3。
 
