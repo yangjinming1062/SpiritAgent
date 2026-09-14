@@ -4,12 +4,13 @@
 业务包导入不再触发任何注册副作用。注册表为覆盖式幂等，重复调用安全。
 """
 
-from modules.ws import CRON_TURN_EVENT
+from modules.ws import COMPANION_TURN_EVENT
 from services.adapters.channels import register as register_channel
 from services.adapters.channels.adapters import WeixinIlinkAdapter
 from services.adapters.tools import agent_delegate, cronjob_tool, search_tools_tool
 from services.adapters.tools import memory as memory_tools
 from services.adapters.tools.builtin import (
+    register_companion_wait,
     register_image_generation,
     register_journal,
     register_room_backdrop,
@@ -17,9 +18,14 @@ from services.adapters.tools.builtin import (
     register_video_generation,
     register_web,
 )
-from services.application.automation import execute_cron_turn
+from services.application.automation import execute_companion_turn
 from services.application.generation import schedule_initial_room
-from services.domains.companion import set_greeting_moment_writer, set_initial_room_scheduler
+from services.domains.automation import set_job_intent_invalidator
+from services.domains.companion import (
+    invalidate_cron_companion_intents,
+    set_greeting_moment_writer,
+    set_initial_room_scheduler,
+)
 from services.domains.journal import write_system_moment
 from services.infrastructure.event_store import register_internal_event_handler
 from services.infrastructure.image_to_3d import HunyuanImageTo3DProvider, TripoImageTo3DProvider
@@ -59,6 +65,7 @@ def register_providers() -> None:
 def register_tools() -> None:
     memory_tools.register_memory_tools(REGISTRY)
     search_tools_tool.register(REGISTRY)
+    register_companion_wait(REGISTRY)
     register_image_generation(REGISTRY)
     register_journal(REGISTRY)
     register_room_backdrop(REGISTRY)
@@ -74,13 +81,14 @@ def register_channel_adapters() -> None:
 
 
 def register_internal_event_handlers() -> None:
-    register_internal_event_handler(CRON_TURN_EVENT, execute_cron_turn)
+    register_internal_event_handler(COMPANION_TURN_EVENT, execute_companion_turn)
 
 
 def wire_domain_hooks() -> None:
     """业务域内需要触达生成流程或跨域副作用的少数入口，经装配层注入，保持域间依赖可登记、可检查。"""
     set_initial_room_scheduler(schedule_initial_room)
     set_greeting_moment_writer(write_system_moment)
+    set_job_intent_invalidator(invalidate_cron_companion_intents)
 
 
 def register_all() -> None:

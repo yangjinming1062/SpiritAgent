@@ -8,6 +8,7 @@ from .models import (
     CompanionOutfit,
     Persona,
 )
+from .models_loop import COMPANION_CRON_SOURCE_PREFIX, CompanionIntent, companion_cron_source_key
 from .room_backdrop import (
     BackdropIntent,
     BackdropOrigin,
@@ -53,6 +54,14 @@ from .schemas_journal import (
     MomentResponse,
     MomentUpdateRequest,
 )
+from .schemas_loop import (
+    MAX_COMPANION_FAILURES,
+    CompanionIntentView,
+    CompanionSignal,
+    CompanionTurnRequest,
+    CompanionWaitRequest,
+    CompanionWakeEvent,
+)
 from .schemas_room import (
     BackdropListResponse,
     BackdropPolicyRequest,
@@ -64,6 +73,15 @@ from .schemas_room import (
 )
 
 __all__ = [
+    "COMPANION_CRON_SOURCE_PREFIX",
+    "MAX_COMPANION_FAILURES",
+    "CompanionIntent",
+    "CompanionIntentView",
+    "CompanionSignal",
+    "CompanionTurnRequest",
+    "CompanionWaitRequest",
+    "CompanionWakeEvent",
+    "companion_cron_source_key",
     "BACKDROP_POLICY_DEFAULT",
     "OUTFIT_POLICY_DEFAULT",
     "BackdropIntent",

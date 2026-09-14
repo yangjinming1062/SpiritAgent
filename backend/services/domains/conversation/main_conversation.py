@@ -32,8 +32,14 @@ async def get_special_conversation(db: AsyncSession, user_id: int, preset_id: st
     ).scalar_one_or_none()
 
 
-async def get_or_create_special_conversation(db: AsyncSession, user_id: int, preset_id: str) -> Conversation:
-    """获取系统预设对话，首次访问时创建；并发竞态由 ``uq_conversations_user_preset`` 部分唯一索引兜底，败者回滚重读到胜者行。"""
+async def get_or_create_special_conversation(
+    db: AsyncSession,
+    user_id: int,
+    preset_id: str,
+    *,
+    commit: bool = True,
+) -> Conversation:
+    """获取或创建系统预设对话；唯一索引与保存点处理竞态。commit=False 时由调用方提交外层事务。"""
     conv = await get_special_conversation(db, user_id, preset_id)
     if conv is not None:
         return conv
@@ -56,6 +62,7 @@ async def get_or_create_special_conversation(db: AsyncSession, user_id: int, pre
         if existing is not None:
             return existing
         raise
-    await db.commit()
-    await db.refresh(conv)
+    if commit:
+        await db.commit()
+        await db.refresh(conv)
     return conv

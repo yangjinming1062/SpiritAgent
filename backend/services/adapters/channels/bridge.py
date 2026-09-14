@@ -8,14 +8,15 @@ from components import SETTINGS, get_logger, resolve_prompt_text, session_scope
 from modules.auth import ChatRequestClientContext
 from modules.channels import ChannelBinding, ChannelPeer
 from modules.system import ChatMessageRequest, ChatRequest
-from modules.ws import emit_ws_event
+from modules.ws import COMPANION_TURN_EVENT, emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.chat import load_user_settings, persist_extra_user_messages, run_chat_turn
-from services.domains.conversation import note_user_contact, reset_user_outreach
+from services.domains.companion import note_user_contact
 from services.infrastructure.desktop import MANAGER
+from services.infrastructure.event_store import interrupt_user_event_tasks
 from services.infrastructure.llm import resolve_user_llm_config
 from services.infrastructure.tool_runtime import REGISTRY
 
@@ -192,9 +193,9 @@ async def handle_inbound(adapter: ChannelAdapter, msg: InboundMessage) -> asynci
             return _resolved(PAIRING_NOTICE)
         return _resolved(None)
 
-    # IM 侧的用户消息同样终结主动外联节奏、刷新接触计时——与 prompt.submit 同一契约。
-    reset_user_outreach(snapshot.user_id)
+    # IM 用户消息同样优先中断主动回合、刷新接触计时——与 prompt.submit 同一契约。
     note_user_contact(snapshot.user_id)
+    await interrupt_user_event_tasks(snapshot.user_id, COMPANION_TURN_EVENT)
 
     state = _state_for(snapshot.id)
 
@@ -337,8 +338,7 @@ async def _finish_turn(adapter: ChannelAdapter, state: _ChannelState, task: asyn
 async def _execute_im_turn(adapter: ChannelAdapter, batch: list[InboundMessage]) -> str | None:
     """跑一轮完整 chat turn（自带 emitter，不依赖用户 WS——桌面离线也能回），把回复格式化后经渠道送出。
 
-    沿 _execute_cron_turn 的回合先例（connection.py），差异在 emitter：cron 复用用户 WS 派发器（桌面离线
-    回合即死），这里无头捕获 + 回合后渠道投递。人设/长期记忆/主动记忆块按 user 加载，与桌面回合共享。
+    IM 使用原渠道 emitter，不要求桌面在线；本机工具仍由桌面派发器兑现。
     """
     snapshot = adapter.snapshot
     last = batch[-1]

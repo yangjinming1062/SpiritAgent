@@ -24,24 +24,26 @@ from components import (
     utc_now,
 )
 from modules.auth import User
+from modules.companion import companion_cron_source_key
 from modules.conversation import Conversation
 from modules.scheduler import CronJob, NightlyActivityLog
 from modules.settings import UserSetting
-from modules.ws import CRON_TURN_EVENT, emit_ws_event
-from sqlalchemy import bindparam, delete, or_, select, text, tuple_
+from sqlalchemy import DateTime, bindparam, delete, or_, select, text, tuple_
 from sqlalchemy.engine import Row
 
 from services.application.automation import execute_standard_turn
 from services.application.nightly import run_nightly_pipeline
 from services.contracts import MemoryScope
 from services.domains.automation import STANDARD_CRON_KIND, compute_next_run_at
-from services.domains.companion import get_disturbance_tier, is_still
-from services.domains.conversation import (
-    ProactiveState,
+from services.domains.companion import (
+    enqueue_companion_intent,
+    get_disturbance_tier,
     get_personality_tags,
     get_user_proactive_record,
+    is_still,
+    list_companion_intents,
     note_outreach_throttle,
-    reset_user_outreach,
+    queue_companion_intent,
 )
 from services.domains.memory import review_memories
 from services.infrastructure.desktop import MANAGER
@@ -73,11 +75,8 @@ _LAST_NIGHTLY_SCAN: float = 0.0
 _LAST_OUTBOX_GC_SCAN: float = 0.0
 _OUTBOX_GC_INTERVAL_SECONDS: int = 900
 
-# 主动跟进 / 被冷落问候 turn 的合成 job_id——不是 CronJob 行的 id，仅用于日志与 WS 事件溯源。
-_PROACTIVE_FOLLOWUP_JOB_ID = -1
-_IGNORED_OUTREACH_JOB_ID = -2
 _IGNORED_OUTREACH_MIN_IGNORED_SECONDS = 3600  # 用户持续不理伙伴 1 小时后才有资格触发
-_IGNORED_OUTREACH_MIN_SPACING_SECONDS = 3600  # 两次触发之间的最小间距——LLM 传 0 结束节奏后的再触发安全网
+_IGNORED_OUTREACH_MIN_SPACING_SECONDS = 3600  # 两次触发之间的最小间距——沉默结束意图后的再触发安全网
 
 
 def invalidate_user_scheduler_state(user_id: int) -> None:
@@ -182,7 +181,6 @@ async def _bulk_cas_advance(
                 "user_id": job.user_id,
                 "is_paused": False,
                 "kind": job.kind,
-                "disturbance_prechecked": job.expires_at is not None,
                 "payload": {
                     "prompt": job.prompt,
                     "name": job.name,
@@ -196,7 +194,6 @@ async def _bulk_cas_advance(
                 "user_id": job.user_id,
                 "is_paused": next_run is None,
                 "kind": job.kind,
-                "disturbance_prechecked": job.expires_at is not None,
                 "payload": {
                     "prompt": job.prompt,
                     "name": job.name,
@@ -204,11 +201,29 @@ async def _bulk_cas_advance(
                 },
             }
 
-    recurring = [job for job in due_jobs if not job.one_shot]
-    one_shots = [job for job in due_jobs if job.one_shot]
     won: set[int] = set()
 
     async with session_scope() as db:
+        await db.execute(
+            select(User.id)
+            .where(User.id.in_(sorted({job.user_id for job in due_jobs})))
+            .order_by(User.id)
+            .with_for_update(),
+        )
+        # 内容或轨别修改未必改变调度游标；持有用户锁后核对快照，防止撤销的旧意图再次交接。
+        current_jobs: dict[int, CronJob] = {
+            job.id: job
+            for job in (await db.execute(select(CronJob).where(CronJob.id.in_([job.id for job in due_jobs])))).scalars()
+        }
+        due_jobs = [
+            job
+            for job in due_jobs
+            if (current := current_jobs.get(job.id)) is not None
+            and not current.is_paused
+            and all(getattr(current, key) == value for key, value in job._mapping.items())
+        ]
+        recurring = [job for job in due_jobs if not job.one_shot]
+        one_shots = [job for job in due_jobs if job.one_shot]
         if recurring:
             case_clauses = " ".join(f"WHEN :id_{i} THEN :next_{i}" for i in range(len(recurring)))
             stmt = text(
@@ -217,7 +232,10 @@ async def _bulk_cas_advance(
                 f"is_paused = (CASE id {case_clauses} END) IS NULL "
                 f"WHERE (id, next_run_at, schedule) IN :match "
                 f"RETURNING id",
-            ).bindparams(bindparam("match", expanding=True))
+            ).bindparams(
+                bindparam("match", expanding=True),
+                *(bindparam(f"next_{i}", type_=DateTime(timezone=True)) for i in range(len(recurring))),
+            )
             params: dict[str, Any] = {
                 "match": [(j.id, j.next_run_at, j.schedule) for j in recurring],
             }
@@ -242,6 +260,15 @@ async def _bulk_cas_advance(
                 {"match": [(j.id, j.next_run_at) for j in one_shots]},
             )
             won.update(r[0] for r in res.all())
+        for job in sorted(due_jobs, key=lambda row: (row.user_id, row.id)):
+            if job.id in won and job.kind != STANDARD_CRON_KIND and not winners[job.id]["is_paused"]:
+                await enqueue_companion_intent(
+                    db,
+                    job.user_id,
+                    job.prompt,
+                    source_key=companion_cron_source_key(job.id),
+                    expires_at=job.expires_at,
+                )
         await db.commit()
 
     return {job.id: winners[job.id] for job in due_jobs if job.id in won}
@@ -252,7 +279,7 @@ async def _advance_due_jobs(due_jobs: list[Row], now: datetime) -> None:
     expired_ids = [job.id for job in due_jobs if job.expires_at is not None and job.expires_at <= now]
     if expired_ids:
         async with session_scope() as db:
-            await db.execute(delete(CronJob).where(CronJob.id.in_(expired_ids)))
+            await db.execute(delete(CronJob).where(CronJob.id.in_(expired_ids), CronJob.expires_at <= now))
             await db.commit()
 
     online_users = set(MANAGER.local_user_ids())
@@ -289,131 +316,37 @@ async def _advance_due_jobs(due_jobs: list[Row], now: datetime) -> None:
     for job_id, meta in winners.items():
         if meta.get("is_paused"):
             continue
-        try:
-            if meta.get("kind") == STANDARD_CRON_KIND:
-                t = asyncio.create_task(
-                    execute_standard_turn(meta["user_id"], job_id, meta["payload"]),
-                )
-            else:
-                t = asyncio.create_task(_kick_autonomous_turn(job_id, meta))
-            _BG.add(t, on_error=partial(_log_task_error, f"kick:{job_id}"))
-            track_user_task(int(meta["user_id"]), t)
-        except RuntimeError:
-            # 没有运行中的 loop——跳过本 tick；job 的 next_run_at 已推进，下一 tick 会再拾起。
-            logger.warning(
-                "cron: no running loop, skipping autonomous turn",
-                extra={"job_id": job_id},
-            )
+        if meta.get("kind") == STANDARD_CRON_KIND:
+            task = asyncio.create_task(execute_standard_turn(meta["user_id"], job_id, meta["payload"]))
+        else:
+            task = asyncio.create_task(queue_companion_intent(meta["user_id"]))
+        _BG.add(task, on_error=partial(_log_task_error, f"kick:{job_id}"))
+        track_user_task(int(meta["user_id"]), task)
 
 
-async def _kick_cron_turn(user_id: int, prompt: str, job_id: int) -> None:
-    """向 ws_events 写一条 cron.turn.request；持有该用户 WS 的 replica 通过 outbox claim 循环拣起，全副本离线则被 GC 收割。"""
-
+async def _queue_ignored_outreach(user_id: int, prompt: str) -> None:
     async with session_scope() as db:
-        emit_ws_event(
-            db,
-            user_id=user_id,
-            event_type=CRON_TURN_EVENT,
-            payload={"job_id": job_id, "prompt": prompt},
-        )
+        await enqueue_companion_intent(db, user_id, prompt, source_key="checkin:ignored")
         await db.commit()
+    await queue_companion_intent(user_id)
 
 
-async def _kick_autonomous_turn(job_id: int, meta: dict[str, Any]) -> None:
-    """向持有该用户 WS 的 replica 申请自主 turn——流式 delta、tool future、runtime session 都是进程本地的，tick 所在 replica 只写一条 ws_events，由 outbox claim 循环拣起；全副本离线则被 GC 收割。"""
-    user_id = meta["user_id"]
-    prompt = (meta["payload"].get("prompt") or "").strip()
-    if not prompt:
-        return
-
-    if not meta.get("disturbance_prechecked") and await is_still(user_id):
-        # 静止档抑制自主触达；先 gate 再写行。
-        logger.debug(
-            "cron: user is still, skipping autonomous turn",
-            extra={"user_id": user_id, "job_id": job_id},
-        )
-        return
-
-    await _kick_cron_turn(user_id, prompt, job_id)
-    logger.info(
-        "cron: autonomous turn requested",
-        extra={"user_id": user_id, "job_id": job_id},
-    )
-
-
-async def _maybe_run_proactive_followups(now: datetime) -> None:
-    """扫描 OUTREACHED / FOLLOWUP_SENT 状态的用户，触发新一轮跟进 turn。
-
-    两种状态共用同一触发条件：timeout 到期 + 用户仍在线。
-    区别仅在 prompt 措辞与状态推进：
-      - OUTREACHED → FOLLOWUP_SENT（第一次跟进）；
-      - FOLLOWUP_SENT → FOLLOWUP_SENT（连续主动节奏内，LLM 在上一轮 turn 中又主动发言过）。
-
-    静止档用户在扫描处直接重置外联记录回 IDLE 并跳过（等价用户响应）；无头回合交付前
-    会再次读取打扰档位。跟进回合直接输出自然台词或静默标记，不通过消息工具穿透会话。
-    """
-    cur_time = time.monotonic()
-    online_uids = MANAGER.local_user_ids()
-    for uid in online_uids:
-        if is_user_in_maintenance(uid):
-            continue
-        rec = get_user_proactive_record(uid)
-        if rec.state not in (ProactiveState.OUTREACHED, ProactiveState.FOLLOWUP_SENT):
-            continue
-        if await is_still(uid):
-            reset_user_outreach(uid)
-            continue
-        if rec.followup_timeout_seconds <= 0:
-            continue
-        if (cur_time - rec.last_outreach_ts) < rec.followup_timeout_seconds:
-            continue
-
-        last_text = (rec.last_proactive_text or "").strip()
-        # 前序正文缺失时不伪造台词——无前序外联记录直接终结节奏并跳过。
-        if not last_text:
-            reset_user_outreach(uid)
-            continue
-
-        elapsed_minutes = round((cur_time - rec.last_outreach_ts) / 60)
-        prompt = json.dumps(
-            {
-                "kind": "proactive_followup",
-                "minutes_since_previous_outreach": elapsed_minutes,
-                "previous_outreach_text": last_text,
-                "intent": (
-                    "仅在有新的、真诚且不重复的内容时考虑一次低压力跟进；默认保持安静。"
-                    "不要提及用户未回复或等待时长，不催促、不索取回应、不使用愧疚或关系施压。"
-                ),
-            },
-            ensure_ascii=False,
-        )
-        prev_state = rec.state
-        # 该跟进已到期触发，重置状态与超时回 IDLE；若 LLM 在本轮继续发消息，主动消息出口会推进新状态；
-        # 若 LLM 沉默，则状态与超时保持 IDLE，避免陷入 5 分钟重复唤醒的死循环。
-        if not await begin_user_request(uid):
+async def _scan_companion_waits() -> None:
+    for user_id in MANAGER.local_user_ids():
+        if not await begin_user_request(user_id):
             continue
         try:
-            reset_user_outreach(uid)
-            note_outreach_throttle(uid)
-            await _kick_cron_turn(uid, prompt, _PROACTIVE_FOLLOWUP_JOB_ID)
+            await queue_companion_intent(user_id)
         finally:
-            await end_user_request(uid)
-        logger.info(
-            "cron: proactive follow-up turn requested",
-            extra={
-                "user_id": uid,
-                "state": prev_state.value,
-                "last_outreach_text": last_text,
-            },
-        )
+            await end_user_request(user_id)
 
 
 async def _maybe_run_ignored_outreach(now: datetime) -> None:
     """常规档下用户持续不与伙伴互动（≥1h）且无进行中外联节奏时，为粘人性格注入轻量问候 turn。
 
-    固定 1h 间距是「LLM 跳过 / 传 0 结束」后的再触发安全网
+    固定 1h 间距限制无新互动时的低频问候候选
     （否则 LLM 每次都跳过时每 tick 都满足触发条件）。静止档不触发（一切主动推理断源），
-    自主档不需要（完整主动能力已开放，cron job 与跟进节奏都在跑）。
+    自主档不需要（完整主动能力已开放，由定时任务与等待意图承载）。
     """
     cur_time = time.monotonic()
     online_uids = MANAGER.local_user_ids()
@@ -423,8 +356,6 @@ async def _maybe_run_ignored_outreach(now: datetime) -> None:
         if await get_disturbance_tier(uid) != "normal":
             continue
         rec = get_user_proactive_record(uid)
-        if rec.state != ProactiveState.IDLE:
-            continue
         # 0 = 进程启动以来用户还没互动过——没有「被冷落」的基准，跳过。
         if rec.last_user_contact_ts == 0.0:
             continue
@@ -433,8 +364,12 @@ async def _maybe_run_ignored_outreach(now: datetime) -> None:
             continue
         if cur_time - rec.last_outreach_ts < _IGNORED_OUTREACH_MIN_SPACING_SECONDS:
             continue
-        # 性格标签查询放在所有廉价条件之后——这是本扫描唯一的 DB roundtrip。
+        # 性格标签查询放在所有廉价条件之后——避免无意义地读取等待意图与性格。
         async with session_scope() as db:
+            if any(
+                intent.status in {"waiting", "queued", "running"} for intent in await list_companion_intents(db, uid)
+            ):
+                continue
             tags = await get_personality_tags(db, uid)
         if "粘人" not in tags:
             continue
@@ -457,7 +392,7 @@ async def _maybe_run_ignored_outreach(now: datetime) -> None:
             continue
         try:
             note_outreach_throttle(uid)
-            await _kick_cron_turn(uid, prompt, _IGNORED_OUTREACH_JOB_ID)
+            await _queue_ignored_outreach(uid, prompt)
         finally:
             await end_user_request(uid)
         logger.info(
@@ -467,14 +402,14 @@ async def _maybe_run_ignored_outreach(now: datetime) -> None:
 
 
 async def _tick() -> None:
-    """为到期 job CAS 推进 next_run_at；special 写内部事件，standard 直接启动独立任务回合。"""
+    """为到期 job CAS 推进 next_run_at；special 持久化等待意图，standard 直接启动独立任务回合。"""
     now = utc_now()
     # 慢扫描与 cron-job 派发独立——不能用 ``if not due_jobs`` gate，否则没有 cron job 的安装永远不会触发记忆维护/GC。
     _spawn_scan("memory_review", lambda: _maybe_run_memory_review(now))
     _spawn_scan("nightly_activity", lambda: _maybe_run_autonomous_activity(now))
     _spawn_scan("outbox_gc", lambda: _maybe_run_outbox_gc(now))
     _spawn_scan("ignored_outreach", lambda: _maybe_run_ignored_outreach(now))
-    await _maybe_run_proactive_followups(now)
+    _spawn_scan("companion_waits", _scan_companion_waits)
     due_jobs = await _select_due_jobs()
     if len(due_jobs) > _MAX_DUE_PER_TICK:
         logger.warning(
@@ -496,7 +431,7 @@ async def _tick() -> None:
 
 
 async def _maybe_run_outbox_gc(now: datetime) -> None:
-    """定期执行 WS Outbox 历史事件与过期内部 cron 事件的物理清理。"""
+    """定期执行 WS Outbox 历史事件与过期内部陪伴事件的物理清理。"""
     global _LAST_OUTBOX_GC_SCAN
     if now.timestamp() - _LAST_OUTBOX_GC_SCAN < _OUTBOX_GC_INTERVAL_SECONDS:
         return

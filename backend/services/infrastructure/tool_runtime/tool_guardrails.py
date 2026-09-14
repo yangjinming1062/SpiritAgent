@@ -59,6 +59,7 @@ MUTATING_TOOL_NAMES = frozenset(
         "browser_set_geolocation",
         "send_message",
         "cronjob",
+        "companion_wait",
         "process",
     },
 )

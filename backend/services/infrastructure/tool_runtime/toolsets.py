@@ -18,7 +18,7 @@ TOOLSET_CATALOG: dict[str, ToolsetDef] = {
     "web_tools": ToolsetDef(names=("web_search", "web_extract")),
     "image_generation": ToolsetDef(names=("image_generate", "room_backdrop_update")),
     "messaging": ToolsetDef(names=("send_message_tool",)),
-    "scheduled_tasks": ToolsetDef(names=("cronjob",)),
+    "scheduled_tasks": ToolsetDef(names=("cronjob", "companion_wait")),
     "agent_delegation": ToolsetDef(names=("agent_delegate_tool",)),
 }
 

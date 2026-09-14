@@ -29,7 +29,8 @@ _BODY_COMPANION = (
     "{{STEER_CHANNEL_NOTE}}\n\n"
     "{{ENVIRONMENT_HINTS}}\n\n"
     "{{COMPANION_PLATFORM_HINTS}}\n\n"
-    "{{COMPANION_OUTPUT_GUIDANCE}}"
+    "{{COMPANION_OUTPUT_GUIDANCE}}\n\n"
+    "{{COMPANION_PROACTIVE_GUIDANCE}}"
 )
 
 # 四个专业预设共享协作与能力规则，职业判断只在各自的双语头部维护。
@@ -73,6 +74,7 @@ AUTOMATION_PRESET = PromptPreset(
 LIFE_SPACE_TOOL_NAMES = frozenset(
     {
         "send_message_tool",
+        "companion_wait",
         "diary_write",
         "moment_create",
         "room_backdrop_update",

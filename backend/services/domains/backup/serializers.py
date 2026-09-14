@@ -6,17 +6,21 @@ from pathlib import Path
 from typing import Any
 
 from common import ModelBase
-from components import ensure_utc
+from components import ensure_utc, utc_now
 from modules.auth import User, UserModelConfig
 from modules.companion import (
+    COMPANION_CRON_SOURCE_PREFIX,
     AvatarAsset,
     Companion2DModel,
     Companion3DModel,
     CompanionDiaryEntry,
+    CompanionIntent,
+    CompanionIntentView,
     CompanionMoment,
     CompanionOutfit,
     CompanionRoomBackdrop,
     Persona,
+    companion_cron_source_key,
 )
 from modules.conversation import Conversation, Message
 from modules.memory import MEMORY_EMBEDDING_DIM, Memory
@@ -43,6 +47,7 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
     "companion_3d_models": Companion3DModel,
     "user_settings": UserSetting,
     "cron_jobs": CronJob,
+    "companion_intents": CompanionIntent,
     "memories": Memory,
     "companion_moments": CompanionMoment,
     "companion_diary_entries": CompanionDiaryEntry,
@@ -270,6 +275,21 @@ def _build_payload(
         validate_memory_scope(MemoryScope(user_id, payload.get("system_preset_id")))
         if payload.get("kind") == "special" and payload["system_preset_id"] != "companion":
             raise ValueError("Special job belongs to a different preset")
+    if table == "companion_intents":
+        CompanionIntentView.model_validate({**payload, "id": raw["id"]}, strict=True)
+        if payload["status"] == "queued":
+            payload["status"] = "waiting"
+        elif payload["status"] == "running":
+            payload["status"] = "failed"
+            payload["last_error"] = "Restored interrupted run; verify previous tool effects before rescheduling."
+            payload["updated_at"] = utc_now()
+        payload["lease_token"] = None
+        payload["lease_until"] = None
+        source_key = payload.get("source_key")
+        if isinstance(source_key, str) and source_key.startswith(COMPANION_CRON_SOURCE_PREFIX):
+            job_id = id_map.get("cron_jobs", {}).get(source_key.removeprefix(COMPANION_CRON_SOURCE_PREFIX))
+            payload["source_key"] = companion_cron_source_key(int(job_id)) if job_id is not None else None
+        payload["event_received_at"] = None
     if table == "memories":
         validate_memory_scope(MemoryScope(user_id, payload.get("system_preset_id")))
         if not isinstance(payload.get("content_version"), int) or payload["content_version"] <= 0:

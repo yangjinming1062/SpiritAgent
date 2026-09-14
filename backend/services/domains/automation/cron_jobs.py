@@ -1,3 +1,4 @@
+from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
@@ -21,6 +22,14 @@ CRON_KINDS = frozenset({SPECIAL_CRON_KIND, STANDARD_CRON_KIND})
 _JOB_IMMUTABLE_FIELDS = frozenset({"id", "user_id", "conversation_id", "system_preset_id"})
 _SCHEDULE_KEYS = ("schedule", "is_paused")
 MAX_ACTIVE_CRON_JOBS = 10
+_INTENT_INVALIDATING_FIELDS = ("prompt", "schedule", "kind", "expires_at", "is_paused")
+JobIntentInvalidator = Callable[[AsyncSession, int, int], Awaitable[None]]
+_invalidate_job_intents: JobIntentInvalidator | None = None
+
+
+def set_job_intent_invalidator(fn: JobIntentInvalidator | None) -> None:
+    global _invalidate_job_intents
+    _invalidate_job_intents = fn
 
 
 def _validate_kind(kind: str) -> str:
@@ -171,6 +180,7 @@ async def update_job(
         ).scalar_one_or_none()
         if not job:
             return None
+        previous_intent = tuple(getattr(job, field) for field in _INTENT_INVALIDATING_FIELDS)
         for key, value in updates.items():
             if key in _JOB_IMMUTABLE_FIELDS or not hasattr(job, key):
                 continue
@@ -192,6 +202,10 @@ async def update_job(
             job.conversation_id = conversation.id
         elif job.kind == SPECIAL_CRON_KIND:
             job.conversation_id = None
+        if _invalidate_job_intents is not None and previous_intent != tuple(
+            getattr(job, field) for field in _INTENT_INVALIDATING_FIELDS
+        ):
+            await _invalidate_job_intents(db, user_id, job.id)
         await db.commit()
         return job.to_dict()
 
@@ -200,6 +214,7 @@ async def remove_job(scope: MemoryScope, job_id: int) -> bool:
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:
+        await _lock_user_cron_jobs(db, user_id)
         job = (
             await db.execute(
                 select(CronJob).where(
@@ -211,6 +226,8 @@ async def remove_job(scope: MemoryScope, job_id: int) -> bool:
         ).scalar_one_or_none()
         if not job:
             return False
+        if _invalidate_job_intents is not None:
+            await _invalidate_job_intents(db, user_id, job.id)
         await db.delete(job)
         await db.commit()
         return True

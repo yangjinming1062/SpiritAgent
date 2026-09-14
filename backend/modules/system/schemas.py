@@ -63,6 +63,7 @@ class ChatRequest(BaseModel):
 
 class AgentPromptConfig(BaseModel):
     valid_tool_names: list[str] = Field(default_factory=list)
+    companion_proactive_turn: bool = False
     model: str | None = None
     client_context: ChatRequestClientContext | None = None
     identity_prompt: str | None = None

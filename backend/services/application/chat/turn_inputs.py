@@ -337,6 +337,8 @@ async def build_turn_inputs(
     use_request_for_memory_retrieval: bool = True,
     proactive_memory_query: str | None = None,
     proactive_memory_embedding: list[float] | None = None,
+    companion_proactive_turn: bool = False,
+    excluded_tool_names: frozenset[str] = frozenset(),
 ) -> TurnInputs:
     """解析身份 prompt、schemas、agent_config、历史与 LLM client；native_memory 补充内容在此注入系统消息，使 orchestrator 保持线性。"""
     if conversation_memory_scope(conv, user_id) != memory_scope:
@@ -409,7 +411,11 @@ async def build_turn_inputs(
                 ),
             )
         ).scalar()
-    all_schemas = REGISTRY.get_all_schemas(user_id, user_settings=user_settings)
+    all_schemas = [
+        schema
+        for schema in REGISTRY.get_all_schemas(user_id, user_settings=user_settings)
+        if schema_name(schema) not in excluded_tool_names
+    ]
     if not include_memory_context:
         all_schemas = [schema for schema in all_schemas if schema_name(schema) not in AUTOMATION_EXCLUDED_TOOL_NAMES]
     elif is_work_preset(conv.system_preset_id):
@@ -464,6 +470,7 @@ async def build_turn_inputs(
     inject_time_perception = resolved_preset.id == DEFAULT_PRESET_ID
     agent_config = AgentPromptConfig(
         valid_tool_names=[schema_name(s) for s in all_schemas],
+        companion_proactive_turn=companion_proactive_turn,
         model=model_name,
         client_context=_merge_client_context(session_client_context, req.client_context),
         identity_prompt=identity_prompt,

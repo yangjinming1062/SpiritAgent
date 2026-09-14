@@ -110,7 +110,7 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
         description_zh="定时任务",
         description_en="Scheduled tasks",
         aliases=("tasks", "scheduled_tasks", "cron", "定时", "定时任务", "周期任务", "闹钟", "提醒", "定时器"),
-        extra_tools=("cronjob",),
+        extra_tools=("cronjob", "companion_wait"),
     ),
     ToolDomain(
         id="computer_use",

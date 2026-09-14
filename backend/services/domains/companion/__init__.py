@@ -11,6 +11,20 @@ from .disturbance import (
     is_still,
 )
 from .emotions import BUILTIN_EMOTIONS
+from .intents import (
+    COMPANION_MAX_LOOP_TURNS,
+    COMPANION_TURN_TIMEOUT_SECONDS,
+    begin_companion_intent,
+    cancel_companion_wait,
+    companion_turn_plan,
+    enqueue_companion_intent,
+    finish_companion_intent,
+    invalidate_cron_companion_intents,
+    latest_user_message_id,
+    list_companion_intents,
+    queue_companion_intent,
+    set_companion_wait,
+)
 from .interact import REGION_NAMES_ZH, InteractResult, interact
 from .interaction_stats import invalidate_user_interaction_stats, read_today_summary, record_interaction
 from .mood import (
@@ -36,6 +50,16 @@ from .persona_service import (
     update_persona,
 )
 from .personality_tagger import analyze_personality_tags
+from .proactive_runtime import (
+    can_start_companion_turn,
+    clear_user_proactive_state,
+    get_personality_tags,
+    get_user_proactive_record,
+    note_outreach_throttle,
+    note_user_contact,
+    observe_companion_presence,
+    user_turn_activity,
+)
 from .prompt_runtime import run_prompt_json
 from .rig_type_selector import classify_species, select_rig_type
 from .session_preset import is_work_preset, resolve_session_profile
@@ -48,6 +72,26 @@ from .voice_catalog import (
 )
 
 __all__ = [
+    "can_start_companion_turn",
+    "clear_user_proactive_state",
+    "get_personality_tags",
+    "get_user_proactive_record",
+    "note_outreach_throttle",
+    "note_user_contact",
+    "observe_companion_presence",
+    "user_turn_activity",
+    "COMPANION_MAX_LOOP_TURNS",
+    "COMPANION_TURN_TIMEOUT_SECONDS",
+    "begin_companion_intent",
+    "cancel_companion_wait",
+    "companion_turn_plan",
+    "enqueue_companion_intent",
+    "finish_companion_intent",
+    "invalidate_cron_companion_intents",
+    "latest_user_message_id",
+    "list_companion_intents",
+    "queue_companion_intent",
+    "set_companion_wait",
     "ALLOWED_ACTIONS",
     "ALLOWED_TIERS",
     "AffectCheckResult",

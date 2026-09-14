@@ -39,9 +39,10 @@ from components import (
 )
 from fastapi import WebSocket, WebSocketDisconnect
 from modules.auth import ChatRequestClientContext
+from modules.companion import CompanionSignal
 from modules.conversation import Conversation, Message
 from modules.system import ChatMessageRequest, ChatRequest, PromptPresetListResponse, PromptPresetSummary
-from modules.ws import CRON_TURN_EVENT
+from modules.ws import COMPANION_TURN_EVENT
 from pydantic import ValidationError
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -87,6 +88,9 @@ from services.domains.companion import (
     list_tts_voices,
     match_user_voice,
     normalize_voice_language,
+    note_user_contact,
+    observe_companion_presence,
+    queue_companion_intent,
     record_interaction,
     should_act,
     submit_onboarding_field,
@@ -102,8 +106,6 @@ from services.domains.conversation import (
     fork_conversation_from_message,
     get_or_create_special_conversation,
     get_special_conversation,
-    note_user_contact,
-    reset_user_outreach,
     resolve_memory_scope,
     resolve_undo_target,
     undo_conversation_to_message,
@@ -280,8 +282,9 @@ async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | No
             await websocket.close(code=1008)
         MANAGER.disconnect(websocket, user_id)
 
+    observe_companion_presence(user_id, False)
     pending = discard_user_session(user_id)
-    await interrupt_user_event_tasks(user_id, CRON_TURN_EVENT)
+    await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
     await MANAGER.aunregister_dispatcher(user_id)
     _clear_user_gateway_state(user_id)
     if pending:
@@ -460,6 +463,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
         is_active = MANAGER.active_connections.get(user_id) is websocket
         MANAGER.disconnect(websocket, user_id)
         if is_active:
+            observe_companion_presence(user_id, False)
             sess = _USER_SESSIONS.get(user_id)
             if sess is not None and sess.websocket is websocket:
                 sess.websocket = None
@@ -478,7 +482,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
                                 if pending:
                                     await asyncio.gather(*pending, return_exceptions=True)
                             finally:
-                                cancel_user_event_tasks(uid, CRON_TURN_EVENT)
+                                cancel_user_event_tasks(uid, COMPANION_TURN_EVENT)
                                 await MANAGER.aunregister_dispatcher(uid)
                                 _clear_user_gateway_state(uid)
                     except asyncio.CancelledError:
@@ -1368,7 +1372,8 @@ def _register_session_handlers(
         if any(uid == user_id for uid, _ in _inflight_interact):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "companion reaction in-flight; please retry after it lands")
 
-        await interrupt_user_event_tasks(user_id, CRON_TURN_EVENT)
+        note_user_contact(user_id)
+        await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
 
         truncate_ordinal = params.get("truncate_before_user_ordinal")
         if truncate_ordinal is not None and not _is_nonneg_int(truncate_ordinal):
@@ -1438,9 +1443,6 @@ def _register_session_handlers(
         else:
             text = _require_str(params, "text")
             attachments = _validate_attachments(params, runtime.session_id)
-
-        reset_user_outreach(user_id)
-        note_user_contact(user_id)
 
         req = ChatRequest(
             session_id=runtime.session_id,
@@ -1551,6 +1553,22 @@ def _register_session_handlers(
 
     dispatcher.register("companion.check_affect", companion_check_affect)
 
+    async def companion_signal(params: dict) -> dict[str, bool]:
+        try:
+            signal = CompanionSignal.model_validate(params)
+        except ValueError as exc:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+        became_available = observe_companion_presence(user_id, signal.available)
+        if not signal.available:
+            await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
+            return {"queued": False}
+        queued = await queue_companion_intent(user_id, "desktop_available" if became_available else signal.event)
+        if became_available and signal.event == "context_changed":
+            queued = await queue_companion_intent(user_id, signal.event) or queued
+        return {"queued": queued}
+
+    dispatcher.register("companion.signal", companion_signal)
+
     async def companion_record_interaction_stats(params: dict) -> dict:
         # poke / chat_turn 每事件统计供每日 Memory 汇总用，无 LLM 开销；desktop 侧合并到 STATS_THRESHOLD 后切分钟级节流。
         # hour 是用户本地小时（客户端上报 getHours()），与本地日期键同口径，夜间反思按本地日读取。
@@ -1572,6 +1590,7 @@ def _register_session_handlers(
 
         # 戳摸即「理了伙伴」——被节流拦掉的也算接触，刷新常规档被冷落问候的计时起点。
         note_user_contact(user_id)
+        await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
 
         now = time.monotonic()
         if _user_throttled(_last_interact_ts, user_id, INTERACT_MIN_INTERVAL_SECONDS, now):

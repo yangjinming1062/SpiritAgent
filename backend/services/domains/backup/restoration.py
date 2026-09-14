@@ -6,7 +6,9 @@ from typing import Any, Literal
 
 from components import get_logger
 from modules.auth import User
-from sqlalchemy import select
+from modules.companion import COMPANION_CRON_SOURCE_PREFIX
+from modules.scheduler import CronJob
+from sqlalchemy import String, cast, select
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -33,6 +35,7 @@ BACKUP_RESTORE_ORDER: tuple[str, ...] = (
 # 父类覆盖会改变仍被保留的子类引用；子类没有随本次恢复清理时须保留父类。
 # None 表示引用嵌在 JSON / 数组等非关系列中，只要存在保留行就按可能有关联处理。
 OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = {
+    "cron_jobs": (("companion_intents", "source_key"),),
     "conversations": (
         ("cron_jobs", "conversation_id"),
         ("companion_moments", "session_id"),
@@ -251,6 +254,15 @@ async def _has_retained_dependent(
         predicates = [model.user_id == target_user_id]
         if reference_column is not None:
             predicates.append(getattr(model, reference_column).is_not(None))
+        if table == "cron_jobs":
+            predicates.append(
+                select(CronJob.id)
+                .where(
+                    CronJob.user_id == target_user_id,
+                    model.source_key == COMPANION_CRON_SOURCE_PREFIX + cast(CronJob.id, String),
+                )
+                .exists(),
+            )
         retained_id = await db.scalar(
             select(model.id).where(*predicates).limit(1),
         )

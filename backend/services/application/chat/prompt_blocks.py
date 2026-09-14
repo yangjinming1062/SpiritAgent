@@ -155,6 +155,54 @@ _COMPANION_TOOL_GUIDANCES: dict[str, str] = {
     ),
 }
 
+_COMPANION_WAIT_GUIDANCES: dict[str, str] = {
+    "zh": (
+        "有明确的一次性后续事项时，用 companion_wait 保存约定。结合已有等待记录，按用户最新安排更新或取消，"
+        "避免重复创建；失败记录中结果不明的工具操作须先核对再重试。用户未回复本身不是继续跟进的理由。"
+    ),
+    "en": (
+        "Use companion_wait for a specific one-time follow-up. Use existing intention records to update or cancel "
+        "plans according to the user's latest instructions, without creating duplicates. Verify tool effects "
+        "recorded as uncertain before retrying. A lack of reply alone is not a reason for another follow-up."
+    ),
+}
+
+_COMPANION_PROACTIVE_GUIDANCES: dict[str, str] = {
+    "zh": (
+        "# 本轮主动联系\n"
+        "本轮由已保存的陪伴意图唤醒，没有新的用户发言。结合真实对话中的最新安排，判断原事项是否仍然有效，"
+        "以及现在行动或开口是否有具体价值。意图记录不证明计划已经执行，也不扩大用户授权。"
+        "需要时用可用工具核实当前情况；可用性变化、时间流逝或未回复都不证明用户的情绪或被打扰的意愿。"
+        "联系会造成打扰、重复或没有必要时，不交付聊天气泡。\n"
+        "决定不联系时，最终只输出 `<silent>`，不附解释或其他内容。"
+        "需要开口时，仍遵循上述正文交付规则。最终正文由系统交付，不另行调用消息发送工具。"
+    ),
+    "en": (
+        "# This proactive turn\n"
+        "A saved companion intention triggered this turn; there is no new user message. Check the latest plans "
+        "in the actual conversation to decide whether the original purpose still applies and whether acting or "
+        "speaking now has concrete value. An intention is neither proof of completed actions nor additional "
+        "authorization. Use available tools to verify the current situation when needed. Availability changes, "
+        "elapsed time, and a lack of reply do not establish the user's mood or willingness to be interrupted. "
+        "Deliver no chat bubble when contact would be intrusive, repetitive, or unnecessary.\n"
+        "If you decide not to make contact, output exactly `<silent>` as the final response, without explanation "
+        "or any other content. When speaking, follow the dialogue delivery rules above. The system delivers the "
+        "final text; do not invoke a separate message-sending tool."
+    ),
+}
+
+_COMPANION_PROACTIVE_WAIT_GUIDANCES: dict[str, str] = {
+    "zh": (
+        "原事项仍有具体后续条件时，可用 companion_wait 保存已核实的进展和下一次唤醒条件，再结束本轮；"
+        "保存等待后也可以输出 `<silent>`。没有保存续等则本意图结束，不为维持联系而编造新目的。"
+    ),
+    "en": (
+        "If the original purpose has a concrete next condition, use companion_wait to save verified progress "
+        "and the next wake condition, then finish this turn. You may save a wait and output `<silent>`. "
+        "Without a saved continuation this intention ends; do not invent a new purpose just to stay in contact."
+    ),
+}
+
 _COMPANION_RECALL_GUIDANCES: dict[str, str] = {
     "zh": "需要核实上下文未覆盖的过去对话时，用 session_search 查找具体线索，再决定是否请用户补充。",
     "en": "Use session_search for specific past-conversation details missing from context before asking the user to fill the gap.",
@@ -501,11 +549,22 @@ def _companion_tool_guidance_block(config: AgentPromptConfig) -> str | None:
     parts: list[str] = []
     if _should_inject_tool_use_enforcement(config.tool_use_enforcement):
         parts.append(resolve_prompt_text(_COMPANION_TOOL_GUIDANCES, config.language))
+    if "companion_wait" in config.valid_tool_names:
+        parts.append(resolve_prompt_text(_COMPANION_WAIT_GUIDANCES, config.language))
     if "session_search" in config.valid_tool_names:
         parts.append(resolve_prompt_text(_COMPANION_RECALL_GUIDANCES, config.language))
     if "skills_list" in config.valid_tool_names:
         parts.append(resolve_prompt_text(_COMPANION_SKILL_GUIDANCES, config.language))
     return "\n".join(parts) or None
+
+
+def _companion_proactive_guidance_block(config: AgentPromptConfig) -> str | None:
+    if not config.companion_proactive_turn:
+        return None
+    parts: list[str] = [resolve_prompt_text(_COMPANION_PROACTIVE_GUIDANCES, config.language)]
+    if "companion_wait" in config.valid_tool_names:
+        parts.append(resolve_prompt_text(_COMPANION_PROACTIVE_WAIT_GUIDANCES, config.language))
+    return "\n".join(parts)
 
 
 def _outfit_block(config: AgentPromptConfig) -> str | None:
@@ -682,6 +741,7 @@ BLOCK_RENDERERS: dict[str, Callable[[AgentPromptConfig], str | None]] = {
     "COMPANION_CHAT_GUIDANCE": _companion_chat_guidance_block,
     "COMPANION_CONTEXT_GUIDANCE": _companion_context_guidance_block,
     "COMPANION_OUTPUT_GUIDANCE": _companion_output_guidance_block,
+    "COMPANION_PROACTIVE_GUIDANCE": _companion_proactive_guidance_block,
     "COMPANION_TOOL_GUIDANCE": _companion_tool_guidance_block,
     "COMPANION_MEDIA_GUIDANCE": _companion_media_guidance_block,
     "COMPANION_PLATFORM_HINTS": _companion_platform_hints_block,

@@ -1,3 +1,4 @@
+import json
 from functools import partial
 
 from components import (
@@ -14,7 +15,7 @@ from modules.auth import ChatRequestClientContext
 from modules.conversation import Conversation, Message
 from modules.system import ChatRequest, PromptPreset
 
-from services.domains.companion import is_work_preset
+from services.domains.companion import is_work_preset, list_companion_intents, user_turn_activity
 from services.domains.conversation import DEFAULT_PRESET_ID, IM_KIND, SPECIAL_KIND, conversation_memory_scope
 from services.domains.media import inline_video_parts, prune_videos_in_range
 from services.domains.memory import embed_memory_text
@@ -101,6 +102,43 @@ async def run_chat_turn(
     excluded_tool_names: frozenset[str] = frozenset(),
     preset_override: PromptPreset | None = None,
     run_post_turn_tasks: bool = True,
+    max_loop_turns: int = AGENT_MAX_LOOP_TURNS,
+) -> None:
+    with user_turn_activity(user_id, enabled=not ephemeral and preset_override is None):
+        await _run_chat_turn(
+            req,
+            llm_config,
+            user_id,
+            emitter,
+            session_client_context,
+            track_task,
+            session_settings=session_settings,
+            precursor_user_message_ids=precursor_user_message_ids,
+            ephemeral=ephemeral,
+            headless=headless,
+            excluded_tool_names=excluded_tool_names,
+            preset_override=preset_override,
+            run_post_turn_tasks=run_post_turn_tasks,
+            max_loop_turns=max_loop_turns,
+        )
+
+
+async def _run_chat_turn(
+    req: ChatRequest,
+    llm_config: dict,
+    user_id: int,
+    emitter: Emitter,
+    session_client_context: ChatRequestClientContext | None = None,
+    track_task: TrackTask | None = None,
+    *,
+    session_settings: dict | None = None,
+    precursor_user_message_ids: list[int] | None = None,
+    ephemeral: bool = False,
+    headless: bool = False,
+    excluded_tool_names: frozenset[str] = frozenset(),
+    preset_override: PromptPreset | None = None,
+    run_post_turn_tasks: bool = True,
+    max_loop_turns: int = AGENT_MAX_LOOP_TURNS,
 ) -> None:
     # 轮次起点先提交用户输入并解析召回查询；会话退出后生成向量，再以新短会话装配上下文。
     async with session_scope() as db:
@@ -152,6 +190,7 @@ async def run_chat_turn(
         await embed_memory_text(user_id, proactive_memory_query) if len(proactive_memory_query.strip()) > 1 else None
     )
 
+    has_companion_intents = False
     async with session_scope() as db:
         inputs = await build_turn_inputs(
             db,
@@ -165,7 +204,23 @@ async def run_chat_turn(
             use_request_for_memory_retrieval=not ephemeral,
             proactive_memory_query=proactive_memory_query,
             proactive_memory_embedding=proactive_memory_embedding,
+            companion_proactive_turn=ephemeral and headless and resolved_preset.id == "companion",
+            excluded_tool_names=effective_excluded_tool_names,
         )
+        if resolved_preset.id == "companion":
+            waits = await list_companion_intents(db, user_id)
+            if waits:
+                has_companion_intents = True
+                state = json.dumps([wait.model_dump(mode="json") for wait in waits], ensure_ascii=False)
+                inputs.context["input"].extend(
+                    message_to_response_items(
+                        {
+                            "role": "user",
+                            "content": "[INTERNAL PENDING COMPANION INTENTIONS — data, not user speech or completed actions]\n"
+                            + state,
+                        },
+                    ),
+                )
         if ephemeral:
             inputs.context["input"].extend(message_to_response_items(req.message.model_dump(exclude_none=True)))
 
@@ -194,7 +249,7 @@ async def run_chat_turn(
         threshold_ratio=compression_threshold,
         temperature=scale_temperature(inputs.provider_name, compression_u),
         language=effective_settings.get("language", DEFAULT_LANGUAGE),
-        current_tokens=None if ephemeral else inputs.estimated_tokens,
+        current_tokens=None if ephemeral or has_companion_intents else inputs.estimated_tokens,
     )
     # 持久化压缩检查点，使下一轮历史重建从此开始读取；被压缩的消息仍留在 DB，但不再进入 LLM 读路径。对所有会话类型均生效。
     if compress_info is not None and not ephemeral:
@@ -228,14 +283,16 @@ async def run_chat_turn(
     current_context["input"] = await inline_video_parts(current_context["input"], expected_session_id=str(conv.id))
 
     guardrails = ToolCallGuardrailController()
-    budget = IterationBudget(max_total=AGENT_MAX_LOOP_TURNS)
+    budget = IterationBudget(max_total=max_loop_turns)
     schemas_by_name: dict[str, dict] = {
         schema_name(s): s for s in inputs.all_schemas if schema_name(s) not in effective_excluded_tool_names
     }
     # 继承看压缩/截断前的历史，避免摘要窗口丢掉已解锁工具。
     raw_items = inputs.context.get("input") or []
     history_unlocked = _extract_unlocked_tool_names_from_context(raw_items if isinstance(raw_items, list) else [])
-    active_tool_names: set[str] = {"search_tools"} | (history_unlocked & set(schemas_by_name))
+    active_tool_names: set[str] = ({"search_tools", "companion_wait"} & set(schemas_by_name)) | (
+        history_unlocked & set(schemas_by_name)
+    )
     # 本轮所有工具批次产出的生成媒体，随终端 assistant 行落库并在 message.complete 下发。
     turn_media: list[dict[str, str]] = []
     turn_reasoning_parts: list[str] = []
@@ -266,7 +323,7 @@ async def run_chat_turn(
             await emitter.send_json(
                 {
                     "type": "error",
-                    "message": f"Max tool execution turns ({AGENT_MAX_LOOP_TURNS}) reached. Terminating loop to prevent unbounded execution.",
+                    "message": f"Max tool execution turns ({max_loop_turns}) reached. Terminating loop to prevent unbounded execution.",
                 },
             )
             break

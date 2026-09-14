@@ -12,13 +12,16 @@ from components import (
     user_maintenance_lock,
     wait_for_user_requests,
 )
-from modules.ws import CRON_TURN_EVENT
+from modules.ws import COMPANION_TURN_EVENT
 
 from services.adapters.channels import MANAGER as CHANNEL_MANAGER
 from services.adapters.desktop import terminate_user_gateway
 from services.adapters.scheduler import invalidate_user_scheduler_state
-from services.domains.companion import invalidate_user_interaction_stats, invalidate_user_should_act
-from services.domains.conversation import clear_user_proactive_state
+from services.domains.companion import (
+    clear_user_proactive_state,
+    invalidate_user_interaction_stats,
+    invalidate_user_should_act,
+)
 from services.domains.memory import invalidate_memory_review_locks
 from services.infrastructure.event_store import interrupt_user_event_tasks
 
@@ -36,7 +39,7 @@ async def _quiesce_runtime(user_id: int) -> None:
     await _await_quiescers(
         terminate_user_gateway(user_id),
         CHANNEL_MANAGER.pause_user_bindings(user_id),
-        interrupt_user_event_tasks(user_id, CRON_TURN_EVENT),
+        interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT),
         cancel_user_tasks(user_id),
     )
     # 已在边界建立期间结束的 REST 请求可能刚派生后台任务；再收一次保证清表前无遗漏。
@@ -44,7 +47,7 @@ async def _quiesce_runtime(user_id: int) -> None:
     await _await_quiescers(
         terminate_user_gateway(user_id),
         CHANNEL_MANAGER.pause_user_bindings(user_id),
-        interrupt_user_event_tasks(user_id, CRON_TURN_EVENT),
+        interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT),
         cancel_user_tasks(user_id),
     )
 

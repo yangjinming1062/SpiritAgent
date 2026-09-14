@@ -15,14 +15,8 @@ WEBHOOK_TIMEOUT = 10.0
 async def send_message_tool(
     message: str,
     target_webhook: str | None = None,
-    follow_up_after_seconds: float | None = None,
-    followup_timeout_seconds: float | None = None,
     **kwargs,
 ) -> str:
-    # followup_timeout_seconds 是 cron 跟进提示词沿用的旧参数名，作为别名收下——
-    # 落进 **kwargs 会被静默丢弃，LLM 给出的跟进节奏就永远进不了状态机
-    if follow_up_after_seconds is None:
-        follow_up_after_seconds = followup_timeout_seconds
     # 伙伴原生主动路径：未传 webhook 时直接以 companion.message 形式投递给客户端（docs/ARCHITECTURE.md §7.4 将本工具复用为伙伴主动触达通道）。
     # 客户端是打扰档位的单一事实源，但后端在源头也做一次防御性拦截：非官方客户端走 /api/chat/ws 会绕过客户端侧过滤器，
     # 故静止档不写 WSEvent——静止档不做任何主动表达。
@@ -35,7 +29,6 @@ async def send_message_tool(
                 await emit_companion_message(
                     user_id,
                     message,
-                    followup_timeout_seconds=follow_up_after_seconds,
                 )
         return json.dumps({"success": True, "channel": "companion", "still_suppressed": still}, ensure_ascii=False)
 
@@ -78,10 +71,6 @@ SEND_MESSAGE_SCHEMA = {
             "target_webhook": {
                 "type": "string",
                 "description": "Optional external bot webhook URL. Omit to deliver in the primary conversation.",
-            },
-            "follow_up_after_seconds": {
-                "type": "number",
-                "description": "Optional seconds before considering one follow-up. Set only when a later follow-up has a specific purpose; elapsed time or no reply does not imply neglect, and any follow-up must remain low-pressure. Omit otherwise.",
             },
         },
         "required": ["message"],

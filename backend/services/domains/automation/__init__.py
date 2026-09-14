@@ -10,6 +10,7 @@ from .cron_jobs import (
     get_job,
     list_jobs,
     remove_job,
+    set_job_intent_invalidator,
     update_job,
 )
 
@@ -23,5 +24,6 @@ __all__ = [
     "get_job",
     "list_jobs",
     "remove_job",
+    "set_job_intent_invalidator",
     "update_job",
 ]

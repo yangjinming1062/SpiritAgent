@@ -40,6 +40,12 @@ let lastAffectCheckAt = 0
 let lastTierPushed: DisturbanceTier | null = null
 let runnerReady = false
 let offPhaseSub: (() => void) | null = null
+let offTierSub: (() => void) | null = null
+let monitorGeneration = 0
+let polling = false
+let lastSignalContext: string | null = null
+let pendingSignalContextChange = false
+let signalRevision = 0
 
 const localStatsCounters: Record<'poke' | 'chat_turn', number> = {
   poke: 0,
@@ -249,7 +255,57 @@ interface SystemSnapshot {
   fullscreen?: boolean
 }
 
+async function reportCompanionSignal(available: boolean, context: string | null = null): Promise<void> {
+  const gateway = $gateway.get()
+  const generation = monitorGeneration
+  const revision = ++signalRevision
+
+  if (context !== null && lastSignalContext !== null && context !== lastSignalContext) {
+    pendingSignalContextChange = true
+  }
+
+  if (!gateway) {
+    return
+  }
+
+  const event = available && pendingSignalContextChange ? 'context_changed' : undefined
+
+  try {
+    await gateway.request('companion.signal', { available, ...(event ? { event } : {}) })
+
+    if (
+      generation === monitorGeneration &&
+      revision === signalRevision &&
+      gateway === $gateway.get() &&
+      available &&
+      context !== null
+    ) {
+      lastSignalContext = context
+      pendingSignalContextChange = false
+    }
+  } catch {
+    // 保留未成功上报的变化；等待意图仍由后端到期扫描恢复。
+  }
+}
+
 async function pollOnce(): Promise<void> {
+  if (polling) {
+    return
+  }
+
+  polling = true
+  const generation = monitorGeneration
+
+  try {
+    await pollSnapshot(generation)
+  } finally {
+    if (generation === monitorGeneration) {
+      polling = false
+    }
+  }
+}
+
+async function pollSnapshot(generation: number): Promise<void> {
   const desktop = window.spiritagent
 
   if (!desktop?.runnerInvoke) {
@@ -261,11 +317,16 @@ async function pollOnce(): Promise<void> {
   // 逐探针语义保持一致。
   const snapshotResult = await desktop.runnerInvoke('system.snapshot', {}).catch(() => null)
 
+  if (generation !== monitorGeneration) {
+    return
+  }
+
   if (snapshotResult === null) {
     // 探测失败——atom 保留上次已知值。基于当前 atom 状态重新计算
     // 档位 override，避免探测中断后陈旧的 $focusContext 把档位
     // 永久钉住。
     maybePushTierOverride()
+    await reportCompanionSignal(false)
 
     return
   }
@@ -281,12 +342,14 @@ async function pollOnce(): Promise<void> {
     }
   }
 
-  const idleSeconds = Number(snapshot.idle_seconds ?? 0)
+  const idleSeconds = Number(snapshot.idle_seconds ?? -1)
 
   // ``Number('abc')`` 返回 NaN；而 ``NaN < N`` 永远为 false，
   // 没有显式守卫时下面的冷却网关会把 NaN 透传给后端的 LLM prompt。
   // 把任何非有限值当作缺失信号处理。
   if (!Number.isFinite(idleSeconds)) {
+    await reportCompanionSignal(false)
+
     return
   }
 
@@ -330,6 +393,23 @@ async function pollOnce(): Promise<void> {
   }
 
   maybePushTierOverride()
+
+  // 只上报可用性与变化类别，不上传窗口标题、应用名称或屏幕内容。
+  const available =
+    snapshot.locked === false &&
+    fullscreenProbeOk &&
+    !fullscreen &&
+    idleSeconds >= 0 &&
+    $effectiveTier.get() !== 'still'
+
+  const context = `${$focusContext.get()?.category ?? 'unknown'}:${fullscreen}`
+
+  await reportCompanionSignal(available, context)
+
+  if (generation !== monitorGeneration) {
+    return
+  }
+
   maybeTriggerAffectCheck(snapshot.locked !== undefined ? idleSeconds : -1, $screenLocked.get())
 }
 
@@ -337,6 +417,13 @@ export function startActivityMonitor(): () => void {
   if (timer) {
     return stopActivityMonitor
   }
+
+  monitorGeneration += 1
+  offTierSub = $effectiveTier.subscribe(tier => {
+    if (tier === 'still') {
+      void reportCompanionSignal(false)
+    }
+  })
 
   let firstPollDone = false
 
@@ -363,6 +450,9 @@ export function startActivityMonitor(): () => void {
       // bridge 恢复后会再次发出 `running`；在此之前 setInterval tick
       // 是空操作，避免在 IPC 错误日志里不断刷 "Runner is not connected"。
       runnerReady = false
+      monitorGeneration += 1
+      polling = false
+      void reportCompanionSignal(false)
     }
   })
 
@@ -378,6 +468,17 @@ export function startActivityMonitor(): () => void {
 }
 
 function stopActivityMonitor(): void {
+  monitorGeneration += 1
+  void reportCompanionSignal(false)
+  polling = false
+  lastSignalContext = null
+  pendingSignalContextChange = false
+
+  if (offTierSub) {
+    offTierSub()
+    offTierSub = null
+  }
+
   if (timer) {
     clearInterval(timer)
     timer = null
