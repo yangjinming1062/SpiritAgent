@@ -218,7 +218,7 @@
 
 - **真源**：Backend `user_settings.language` 行（点键 `setting_key="language"`），与后端 LLM 提示词装配同一键；Client 是同步镜像的持有者。沿用 §2.4 配置同步管道，**不新增 WS RPC**（与 `companion.set_timezone` 的"每次连接瞬时环境事实"语义不同；locale 是用户偏好）。
 - **枚举**：`zh | en`，定义在 `backend/components/constants.py:SUPPORTED_LANGUAGES` 与 `client/renderer/shared/strings/locales.ts:SUPPORTED_LOCALES`，两侧必须一致。
-- **传输**：托盘菜单「语言 / Language」子项切换或渲染层 `window.spiritagent.prefs.set({ key: 'language', value: 'en' })` → 镜像原子写 → `spiritagent.config.update` 推 Runner → 防抖 1.5s PUT 云端；主进程向所有窗口广播 `prefs-hydrated` 事件（`DesktopPrefsHydrated.language?: string`）→ `client/renderer/shared/store/locale.ts` 的 `initLocaleSync()` 回写 `$locale` nanostore；启动/登录/换号 `GET /api/config` 水合覆盖本地镜像并同步刷新托盘菜单。
+- **传输**：托盘菜单「语言 / Language」子项切换或渲染层 `window.spiritagent.prefs.set({ key: 'language', value: 'en' })` → 镜像原子写 → `spiritagent.config.update` 推 Runner → 防抖 1.5s PUT 云端；主进程向所有窗口广播 `prefs-hydrated` 事件（`DesktopPrefsHydrated.language?: null | string`）→ `client/renderer/shared/store/locale.ts` 的 `initLocaleSync()` 回写 `$locale` nanostore；启动/登录/换号 `GET /api/config` 水合覆盖本地镜像并同步刷新托盘菜单。
 - **生效时机**：客户端 `$locale.set('en')` 立即触发 `useStrings()` hook 重渲（热切换，无需重启）；主进程 TTS/STT 媒体调用缺省跟随当前语言；后端下一回合 `load_user_settings` 拿到新 `language`，`build_system_prompt` 按新 lang 渲染 17 段双语 dict；当前回合若已锁 prompt 则最迟下一回合切完（与 timezone 切换同语义）。
 - **缺省兜底**：`resolve_language(language)` 把空值 / 未知值回落 `DEFAULT_LANGUAGE = "zh"`（`backend/components/functions.py`）；客户端 `normalizeLocale` 同源。切换 `language` 点键 **不需要重启 backend**。
 - **扩展 locale**：须同步更新 **Backend `SUPPORTED_LANGUAGES`（`components/constants.py`）+ Client `SUPPORTED_LOCALES`（`renderer/shared/strings/locales.ts`）+ `prompt_blocks.py` 的 `BLOCK_RENDERERS` 与各双语提示词常量键集 + 客户端 `dictionaries/*.ts` 全语种副本 + 本文档**。未知 locale 一律按 `DEFAULT_LANGUAGE` 处理（`resolve_language` 兜底）。改一处需同步以上全部。
@@ -392,7 +392,7 @@ capabilities 与 capabilities_health 来源于 Runner 的运行时探测（探�
 
 创建、恢复、派生与保存响应的 `info.settings` 返回生效参数。`session.set_settings` 仅接受温度、压缩阈值及推理强度三个字段；`null` 删除对应覆盖（含同义存储键），空 patch 只刷新生效参数。窗口内“恢复默认”删除三项覆盖，随后由后端重新计算默认值，避免普通会话固化旧默认。保存先在行锁下合并落库，再更新运行时；失败不得只改变运行时。场景值由 [预设目录](../backend/services/domains/conversation/presets.py) 单源维护。语言、设备与工具能力遵循各自共享契约。
 
-**Backend 的 user_settings 是用户配置真源**（REST 为 `GET/PUT /api/config`，按点键 upsert、永不删除键）；Client 是同步代理与 Runner 的唯一推送方。本地 `desktop-settings.json` 是云端镜像（本地/离线使用 + 供 Runner 推送），内容 = **同步节白名单**（toolsets / skills / browser / security / debug / tool_output / computer_use / file_state / audio / companion / ui，节内本机键如 `browser.profile_dir` 不上云）+ **顶层原始值同步键**（`language`，与后端 `user_settings.language` 行一一对应；详见 §1.4 locale 扩展契约）+ **仅本机节**（terminal、spiritagent 等机密与设备相关节及未知节——**永不离开本机**，红线见 §5.3）。镜像带归属戳（sync.user_id），换号残留按不信任处理：水合前清空同步节、不上传。
+**Backend 的 user_settings 是用户配置真源**（REST 为 `GET/PUT /api/config`，按点键 upsert、永不删除键）；Client 是同步代理与 Runner 的唯一推送方。本地 `desktop-settings.json` 是云端镜像（本地/离线使用 + 供 Runner 推送），内容 = **同步节白名单**（toolsets / skills / browser / security / debug / tool_output / computer_use / file_state / audio / companion / shortcuts / ui，节内本机键如 `browser.profile_dir` 不上云）+ **顶层原始值同步键**（`language`，与后端 `user_settings.language` 行一一对应；详见 §1.4 locale 扩展契约）+ **仅本机节**（terminal、spiritagent 等机密与设备相关节及未知节——**永不离开本机**，红线见 §5.3）。镜像带归属戳（sync.user_id），换号残留按不信任处理：水合前清空同步节、不上传。
 
 同步语义：设置变更 → 镜像原子写 → spiritagent.config.update 推 Runner → 防抖后 PUT 云端；启动恢复会话、登录、换号时 GET 水合（云端值逐键覆盖镜像同名键；本地有而云端无的键回传上云，覆盖首跑播种与离线补传）。离线时镜像照常读写，恢复后自动补传；多端为按保存 last-write-wins、无合并，另一端的改动在下次水合时收敛。
 

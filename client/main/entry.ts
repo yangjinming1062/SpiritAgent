@@ -83,7 +83,7 @@ import {
 import { spiritagentHome } from './security/paths'
 import { buildClientContext } from './shared/client-context'
 import { readStoredBackendUrl } from './shared/config'
-import { createConfigSync } from './shared/lib/config-sync'
+import { createConfigSync, uiThemeFromConfig } from './shared/lib/config-sync'
 import * as runnerConfigStore from './shared/lib/runner-config-store'
 import { mimeTypeForPath } from './shared/mime'
 import {
@@ -190,8 +190,7 @@ const configSync = createConfigSync({
   isRetryableError: error => error instanceof BackendRequestError && (error.isNetwork || error.isServerError),
   log: chunk => rememberLog(chunk),
   onHydrated: payload => {
-    // payload 已由 config-sync 的 buildPrefsHydratedFromConfig 统一构造（含主题规范化）。
-    const theme = payload.ui.theme
+    const theme = uiThemeFromConfig(runnerConfigStore.read())
 
     syncShortcutsFromConfig()
 

@@ -46,52 +46,14 @@ export type DesktopUpdateEvent =
   | { progress: DesktopUpdateProgress; type: 'progress' }
   | { type: 'checking' }
 
-interface CapabilityHealthItem {
-  available: boolean
-  reason?: string | null
+export interface DesktopRunnerStatusEvent {
+  type: 'error' | 'runner_ready' | 'running' | 'stopped'
 }
-
-export type RunnerCapabilitiesHealth = Record<string, CapabilityHealthItem>
-
-export interface RunnerCapabilities {
-  microphone?: boolean
-  platform?: string
-  python?: string
-  screen_capture?: boolean
-  system_activity?: boolean
-}
-
-export type DesktopRunnerStatusEvent =
-  | { error: Error; phase: string; type: 'error' }
-  | {
-      capabilities?: null | RunnerCapabilities
-      capabilitiesHealth?: null | RunnerCapabilitiesHealth
-      probeFailed?: boolean | null
-      runnerVersion?: null | string
-      tools?: unknown[] | null
-      type: 'runner_ready'
-    }
-  | {
-      capabilities?: null | RunnerCapabilities
-      capabilitiesHealth?: null | RunnerCapabilitiesHealth
-      probeFailed?: boolean | null
-      runnerVersion?: null | string
-      tools: unknown[] | null
-      type: 'running'
-    }
-  | { errors?: string[]; reason?: string; type: 'stopped' }
 
 export type DesktopRunnerPhase = 'error' | 'idle' | 'running' | 'starting' | 'stopped' | 'stopping'
 
 export interface DesktopRunnerState {
-  capabilities?: null | RunnerCapabilities
-  capabilitiesHealth?: null | RunnerCapabilitiesHealth
-  lastError?: null | string
   phase: DesktopRunnerPhase
-  probeFailed?: boolean | null
-  runnerVersion?: null | string
-  startedAt?: null | number
-  stoppedAt?: null | number
 }
 
 /** 主进程内部连接缓存：含会话 JWT，仅在 main 使用，禁止直发渲染进程。 */
@@ -156,18 +118,7 @@ export interface DesktopSurfaceOpenPayload {
   view?: string
 }
 
-export interface DesktopSurfaceBounds {
-  displayId: number
-  height: number
-  width: number
-  x: number
-  y: number
-}
-
 export interface DesktopSurfaceChangedEvent {
-  /** 工作台窗口屏幕坐标边界。生活空间不下发，工作台显示、移动或调整尺寸时下发。 */
-  bounds?: DesktopSurfaceBounds | null
-  lastSurface: SurfaceId
   open: null | SurfaceId
 }
 
@@ -181,7 +132,6 @@ export interface SpiritAgentPrefsSet {
   value: unknown
 }
 
-// 云端配置水合广播：主进程把 GET /api/config 水合进本地镜像后，携带镜像中的偏好节通知双窗口刷新缓存。
 export interface DesktopShortcutsConfig {
   openLiving: string
   openWorkbench: string
@@ -208,10 +158,10 @@ export interface DesktopShortcutsSetPayload {
   shortcuts: Partial<DesktopShortcutsConfig>
 }
 
+// 云端配置水合广播：只携带渲染层需要回写的伙伴偏好与语言。
+// 主题与快捷键由主进程各自的专用同步通道处理。
 export interface DesktopPrefsHydrated {
   companion: Record<string, unknown>
-  shortcuts?: DesktopShortcutsConfig
-  ui: { theme?: SpiritAgentUiTheme }
   // 顶层原始值同步键（PROTOCOL §1.4），从 user_settings.language 透传过来；
   // null/undefined 表示云端未设置（回落 DEFAULT_LOCALE）。
   language?: null | string

@@ -3,7 +3,6 @@ import fs from 'node:fs'
 import http from 'node:http'
 import type { Socket } from 'node:net'
 
-import type { RunnerCapabilities, RunnerCapabilitiesHealth } from '@ipc/contracts'
 import type WebSocket from 'ws'
 import { WebSocketServer } from 'ws'
 
@@ -13,6 +12,21 @@ const DEFAULT_TIMEOUT_MS = 120_000
 const JSON_RPC_VERSION = '2.0'
 const HEARTBEAT_INTERVAL_MS = 10_000
 const HEARTBEAT_DEADLINE_MS = 120_000
+
+interface CapabilityHealthItem {
+  available: boolean
+  reason?: string | null
+}
+
+export type RunnerCapabilitiesHealth = Record<string, CapabilityHealthItem>
+
+export interface RunnerCapabilities {
+  microphone?: boolean
+  platform?: string
+  python?: string
+  screen_capture?: boolean
+  system_activity?: boolean
+}
 
 export interface CreateRunnerWsServerOptions {
   authToken?: string

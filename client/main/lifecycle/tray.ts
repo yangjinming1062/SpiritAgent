@@ -106,7 +106,7 @@ async function setSystemLanguage(lang: 'en' | 'zh'): Promise<void> {
       return
     }
 
-    // 走与 config-sync 水合同源的 prefs-hydrated 载荷构造，确保主题规范化等不变量一致。
+    // 走与 config-sync 水合同源的渲染层偏好投影。
     broadcastToAllWindows(IPC.event.prefsHydrated, buildPrefsHydratedFromConfig(runnerConfigStore.read()))
   } catch (err) {
     const message = errorMessage(err)

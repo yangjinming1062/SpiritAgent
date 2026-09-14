@@ -1,4 +1,4 @@
-import { type DesktopPrefsHydrated, type DesktopShortcutsConfig, normalizeUiTheme } from '@ipc/contracts'
+import { type DesktopPrefsHydrated, normalizeUiTheme, type SpiritAgentUiTheme } from '@ipc/contracts'
 
 import type { BackendClientPort } from '../backend-port'
 import { errorMessage } from '../utils'
@@ -63,26 +63,26 @@ export interface ConfigSync {
   flush: () => Promise<void>
 }
 
-/** 从 store 镜像（或任意 config 记录）取出单个对象节，非对象 / 数组一律回落 {}。
- *  与 broadcast companion/ui/shortcuts 时同源，避免在多个调用点重复 typeof/Array.isArray 防御。 */
+/** 从 store 镜像（或任意 config 记录）取出单个对象节，非对象 / 数组一律回落 {}。 */
 function objectSection(config: Record<string, unknown>, section: string): Record<string, unknown> {
   const value = config[section]
 
   return value != null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }
 
-/** 从 store 镜像（或任意 config 记录）构造广播到渲染层 / 托盘的 prefs-hydrated 载荷。
- *  集中收口节裁剪 + 主题规范化，所有 prefs-hydrated 路径（云端水合、托盘写值、未来扩展）都走这里。 */
+/** 从配置镜像构造渲染层实际消费的 prefs-hydrated 载荷。 */
 export function buildPrefsHydratedFromConfig(config: Record<string, unknown>): DesktopPrefsHydrated {
-  const shortcuts = objectSection(config, 'shortcuts')
-  const ui = objectSection(config, 'ui')
-
   return {
     companion: objectSection(config, 'companion'),
-    shortcuts: shortcuts as unknown as DesktopShortcutsConfig | undefined,
-    ui: { theme: typeof ui.theme === 'string' && ui.theme.length > 0 ? normalizeUiTheme(ui.theme) : undefined },
     language: typeof config.language === 'string' && config.language.length > 0 ? config.language : null
   }
+}
+
+/** 主进程水合后的主题投影；与渲染层偏好广播分开，仅供主进程副作用使用。 */
+export function uiThemeFromConfig(config: Record<string, unknown>): SpiritAgentUiTheme | undefined {
+  const theme = objectSection(config, 'ui').theme
+
+  return typeof theme === 'string' && theme.length > 0 ? normalizeUiTheme(theme) : undefined
 }
 
 export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {

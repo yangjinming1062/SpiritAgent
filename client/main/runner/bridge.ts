@@ -4,14 +4,19 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 
-import type { RunnerCapabilities, RunnerCapabilitiesHealth } from '@ipc/contracts'
-
 import type { BackendSessionLike } from '../shared/backend-port'
 import { atomicWriteFile, errorMessage } from '../shared/utils'
 
 import type { RunnerProcess, RunnerProcessStartArgs, RunnerProcessState } from './process'
 import type { ReverseRpcOptions } from './reverse-rpc'
-import type { CreateRunnerWsServerOptions, RunnerWsEvent, RunnerWsServer, RunnerWsStatus } from './rpc-ws'
+import type {
+  CreateRunnerWsServerOptions,
+  RunnerCapabilities,
+  RunnerCapabilitiesHealth,
+  RunnerWsEvent,
+  RunnerWsServer,
+  RunnerWsStatus
+} from './rpc-ws'
 
 // macOS 的 sun_path 上限为 104 字节；留出余量以确保不超限。
 const MAC_SOCK_PATH_BYTE_LIMIT = 100

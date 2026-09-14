@@ -1,5 +1,5 @@
 import type { MemoryToolScope } from '@ipc/contracts'
-import { type DesktopRunnerState, IPC } from '@ipc/contracts'
+import { type DesktopRunnerState, type DesktopRunnerStatusEvent, IPC } from '@ipc/contracts'
 import type { BrowserWindow, IpcMain } from 'electron'
 
 import type {
@@ -77,7 +77,8 @@ function ensureRunnerBridge(deps: RunnerIpcDeps): RunnerBridge {
     const win = deps.getMainWindow?.()
 
     if (win && !win.isDestroyed()) {
-      win.webContents.send(IPC.event.runnerStatus, ev)
+      const payload: DesktopRunnerStatusEvent = { type: ev.type }
+      win.webContents.send(IPC.event.runnerStatus, payload)
     }
   })
 
@@ -200,18 +201,7 @@ export function registerRunnerIpc({ deps, ipcMain }: { deps: RunnerIpcDeps; ipcM
       return { phase: 'idle' }
     }
 
-    const status = bridge.getStatus()
-
-    return {
-      capabilities: status.capabilities ?? null,
-      capabilitiesHealth: status.capabilitiesHealth ?? null,
-      lastError: status.lastError ?? null,
-      phase: status.phase,
-      probeFailed: status.probeFailed ?? null,
-      runnerVersion: status.runnerVersion ?? null,
-      startedAt: status.startedAt ?? null,
-      stoppedAt: status.stoppedAt ?? null
-    }
+    return { phase: bridge.getStatus().phase }
   })
 
   ipcMain.handle(IPC.invoke.runnerCancel, async () => {

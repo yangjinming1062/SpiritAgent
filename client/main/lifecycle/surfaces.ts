@@ -4,13 +4,12 @@
 //   - 打开入口面：互斥切到指定面（先收起另一面再展示），并将上次打开的面持久化；
 //   - 关闭入口面：从进程间通信边界收起当前面，记录上次打开的面但不重写偏好；
 //   - 窗口自身关闭：与从进程间通信边界收起保持一致；
-//   - 水合历史入口：启动期读取偏好，回灌给调用方，渲染层首屏按此决定双击精灵去向。
+//   - 水合历史入口：启动期读取偏好，供托盘双击决定开窗去向。
 //
 // 互斥控制：本模块对当前展开面的串行访问用微任务队列排队，避免并发打开产生竞态。
-// 消费方：主进程路由分发、托盘菜单、精灵右键与桌面双击入口。
+// 消费方：主进程路由分发、托盘点击 / 双击与精灵右键入口。
 
 import {
-  type DesktopSurfaceBounds,
   type DesktopSurfaceChangedEvent,
   type DesktopSurfaceOpenPayload,
   IPC,
@@ -24,7 +23,6 @@ import { broadcastToAllWindows } from '../shared/utils'
 
 export interface SurfacesManager {
   closeSurface: () => Promise<void>
-  getState: () => DesktopSurfaceChangedEvent
   hydrateLastSurface: () => SurfaceId
   isMaximizedSurface: () => boolean
   isSurfaceWindow: (id: SurfaceId, win: BrowserWindow) => boolean
@@ -49,120 +47,78 @@ async function persistLastSurface(id: SurfaceId): Promise<void> {
   await runnerConfigStore.patch(LAST_SURFACE_KEY_PATH, { value: id })
 }
 
-// 上报工作台窗口相对于当前屏幕工作区的坐标
-function captureBounds(
-  win: BrowserWindow,
-  syncSpriteToDisplay?: (display: Electron.Display) => void
-): DesktopSurfaceBounds | null {
-  if (win.isDestroyed()) {
-    return null
-  }
-
-  const b = win.getBounds()
-  const display = screen.getDisplayMatching(b)
-  syncSpriteToDisplay?.(display)
-
-  return {
-    displayId: display.id,
-    height: b.height,
-    width: b.width,
-    x: b.x - display.workArea.x,
-    y: b.y - display.workArea.y
-  }
-}
-
 export function createSurfacesManager(options: SurfacesManagerOptions): SurfacesManager {
   const windows = new Map<SurfaceId, BrowserWindow>()
-  const boundsUnbinders = new Map<SurfaceId, () => void>()
   let openSurfaceId: null | SurfaceId = null
   let pendingChain: Promise<unknown> = Promise.resolve()
   let lastSurface: SurfaceId = 'living'
   let lastSurfaceHydrated = false
+  let unbindWorkbenchDisplaySync: null | (() => void) = null
 
   function log(chunk: string): void {
     options.rememberLog?.(chunk)
   }
 
   function snapshot(): DesktopSurfaceChangedEvent {
-    const open = openSurfaceId
-    // 栖息目标坐标仅在工作台开窗时下发，生活空间不携带
-    const win = open === 'workbench' ? windows.get(open) : null
-
-    return {
-      bounds: open === 'workbench' && win ? captureBounds(win, options.syncSpriteToDisplay) : null,
-      lastSurface,
-      open
-    }
+    return { open: openSurfaceId }
   }
 
-  function bindBoundsReporting(id: SurfaceId, win: BrowserWindow): void {
-    // 同一窗口被复用时先解绑，避免重复监听；createWindow 路径只触发一次。
-    boundsUnbinders.get(id)?.()
+  // 工作台开启时桌面精灵窗虽隐藏，仍须跟随到同屏，确保工作台关闭后原地恢复。
+  // 这是主进程窗口副作用，不属于渲染层表面状态。
+  function syncSpriteToWorkbenchDisplay(win: BrowserWindow): void {
+    const sync = options.syncSpriteToDisplay
 
-    let reporterRaf: ReturnType<typeof setTimeout> | null = null
-    let hasPendingMove = false
-    let lastBroadcastBounds: DesktopSurfaceBounds | null | undefined = undefined
-
-    const rebroadcast = (): void => {
-      if (openSurfaceId !== id) {
-        return
-      }
-
-      const snap = snapshot()
-      const b = snap.bounds
-
-      const isBoundsEqual =
-        lastBroadcastBounds === b ||
-        (Boolean(lastBroadcastBounds && b) &&
-          lastBroadcastBounds!.x === b!.x &&
-          lastBroadcastBounds!.y === b!.y &&
-          lastBroadcastBounds!.width === b!.width &&
-          lastBroadcastBounds!.height === b!.height &&
-          lastBroadcastBounds!.displayId === b!.displayId)
-
-      if (lastBroadcastBounds !== undefined && isBoundsEqual) {
-        return
-      }
-
-      lastBroadcastBounds = b
-      broadcastToAllWindows(IPC.event.surfaceChanged, snap)
+    if (!sync || openSurfaceId !== 'workbench' || win.isDestroyed()) {
+      return
     }
 
+    sync(screen.getDisplayMatching(win.getBounds()))
+  }
+
+  function clearWorkbenchDisplaySync(): void {
+    unbindWorkbenchDisplaySync?.()
+    unbindWorkbenchDisplaySync = null
+  }
+
+  function bindWorkbenchDisplaySync(win: BrowserWindow): void {
+    // 同一窗口被复用时先解绑，避免重复监听；createWindow 路径只触发一次。
+    clearWorkbenchDisplaySync()
+
+    let syncTimer: ReturnType<typeof setTimeout> | null = null
+    let hasPendingChange = false
+
     const onChange = (): void => {
-      if (reporterRaf !== null) {
-        hasPendingMove = true
+      if (syncTimer !== null) {
+        hasPendingChange = true
 
         return
       }
 
-      rebroadcast()
+      syncSpriteToWorkbenchDisplay(win)
 
-      reporterRaf = setTimeout(() => {
-        reporterRaf = null
+      syncTimer = setTimeout(() => {
+        syncTimer = null
 
-        if (hasPendingMove) {
-          hasPendingMove = false
-          rebroadcast()
+        if (hasPendingChange) {
+          hasPendingChange = false
+          syncSpriteToWorkbenchDisplay(win)
         }
       }, 16)
     }
 
     win.on('move', onChange)
     win.on('resize', onChange)
-    win.on('show', rebroadcast)
 
-    boundsUnbinders.set(id, () => {
-      if (reporterRaf !== null) {
-        clearTimeout(reporterRaf)
-        reporterRaf = null
+    unbindWorkbenchDisplaySync = () => {
+      if (syncTimer !== null) {
+        clearTimeout(syncTimer)
+        syncTimer = null
       }
 
-      hasPendingMove = false
-      lastBroadcastBounds = undefined
+      hasPendingChange = false
       win.off('move', onChange)
       win.off('resize', onChange)
-      win.off('show', rebroadcast)
-    })
+    }
   }
 
   function withMutex<T>(task: () => Promise<T>): Promise<T> {
@@ -178,8 +134,10 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     }
 
     windows.delete(id)
-    boundsUnbinders.get(id)?.()
-    boundsUnbinders.delete(id)
+
+    if (id === 'workbench') {
+      clearWorkbenchDisplaySync()
+    }
 
     if (openSurfaceId === id) {
       openSurfaceId = null
@@ -222,7 +180,10 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     if (!win || win.isDestroyed()) {
       win = await options.createWindow(id, payload)
       windows.set(id, win)
-      bindBoundsReporting(id, win)
+
+      if (id === 'workbench') {
+        bindWorkbenchDisplaySync(win)
+      }
     } else if (payload.view || payload.sessionId) {
       await options.navigateWindow?.(win, id, payload)
     }
@@ -231,8 +192,10 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     if (win.isDestroyed()) {
       if (windows.get(id) === win) {
         windows.delete(id)
-        boundsUnbinders.get(id)?.()
-        boundsUnbinders.delete(id)
+
+        if (id === 'workbench') {
+          clearWorkbenchDisplaySync()
+        }
       }
 
       if (openSurfaceId === id) {
@@ -252,6 +215,10 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     openSurfaceId = id
     lastSurface = id
     lastSurfaceHydrated = true
+
+    if (id === 'workbench') {
+      syncSpriteToWorkbenchDisplay(win)
+    }
 
     broadcastToAllWindows(IPC.event.surfaceChanged, snapshot())
     await persistLastSurface(id)
@@ -286,8 +253,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       internalClose()
     })
   }
-
-  const getState = (): DesktopSurfaceChangedEvent => snapshot()
 
   const hydrateLastSurface = (): SurfaceId => {
     if (lastSurfaceHydrated) {
@@ -411,7 +376,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
   return {
     closeSurface,
-    getState,
     hydrateLastSurface,
     isMaximizedSurface,
     isSurfaceWindow,
