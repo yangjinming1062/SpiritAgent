@@ -1,5 +1,7 @@
 import { clamp } from '@runtime'
 
+import { observeWebGLContext } from '../../gpu-context'
+
 export interface ShapeKey {
   value: number
   offsets: number[]
@@ -42,23 +44,28 @@ void main(){ vec4 c=texture2D(image,texCoord)*opacity; if(c.a<0.0039) discard; g
 
 // 关键形状必须由资产提供；运行时不从骨骼角度猜测肘部轮廓或手型。
 export class ParametricRenderer {
+  private readonly canvas: HTMLCanvasElement
   private readonly gl: WebGLRenderingContext
-  private readonly program: WebGLProgram
-  private readonly position: number
-  private readonly uv: number
-  private readonly opacity: WebGLUniformLocation | null
-  private readonly layers: RenderLayer[] = []
+  private program: WebGLProgram | null = null
+  private position = -1
+  private uv = -1
+  private opacity: WebGLUniformLocation | null = null
+  private layers: RenderLayer[] = []
   private readonly values: Record<string, number> = {}
   private readonly targets: Record<string, number> = {}
   private readonly pixels = new Map<string, ImageData>()
+  private readonly stopObservingContext: () => void
   private disposed = false
+  private contextLost = false
 
   constructor(
     canvas: HTMLCanvasElement,
     private readonly model: ParametricModel,
-    textures: ReadonlyMap<string, TexImageSource>
+    textures: ReadonlyMap<string, TexImageSource>,
+    private readonly onContextRestoreFailed: (error: unknown) => void
   ) {
     validate(model, textures)
+    this.canvas = canvas
     const probe = document.createElement('canvas')
 
     for (const [name, texture] of textures) {
@@ -73,13 +80,36 @@ export class ParametricRenderer {
       }
     }
 
+    this.stopObservingContext = observeWebGLContext(canvas, {
+      onLost: () => {
+        this.contextLost = true
+      },
+      onRestored: this.onContextRestored,
+      onTimeout: () => this.onContextRestoreFailed(new Error('WebGL context restoration timed out'))
+    })
     const gl = canvas.getContext('webgl', { alpha: true, premultipliedAlpha: true })
 
     if (!gl) {
+      this.stopObservingContext()
       throw new Error('WebGL unavailable')
     }
 
     this.gl = gl
+
+    for (const [id, param] of Object.entries(model.parameters)) {
+      this.targets[id] = this.values[id] = param.initial
+    }
+
+    try {
+      this.initializeGpu()
+    } catch (error) {
+      this.stopObservingContext()
+      throw error
+    }
+  }
+
+  private initializeGpu(): void {
+    const gl = this.gl
 
     const compile = (type: number, source: string): WebGLShader => {
       const shader = gl.createShader(type)!
@@ -101,10 +131,11 @@ export class ParametricRenderer {
       const fragment = compile(gl.FRAGMENT_SHADER, FRAGMENT)
 
       try {
-        this.program = gl.createProgram()!
-        gl.attachShader(this.program, vertex)
-        gl.attachShader(this.program, fragment)
-        gl.linkProgram(this.program)
+        const program = gl.createProgram()!
+        gl.attachShader(program, vertex)
+        gl.attachShader(program, fragment)
+        gl.linkProgram(program)
+        this.program = program
       } finally {
         gl.deleteShader(fragment)
       }
@@ -112,30 +143,33 @@ export class ParametricRenderer {
       gl.deleteShader(vertex)
     }
 
-    if (!gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
-      const error = gl.getProgramInfoLog(this.program)
-      gl.deleteProgram(this.program)
+    if (!this.program || !gl.getProgramParameter(this.program, gl.LINK_STATUS)) {
+      const error = this.program ? gl.getProgramInfoLog(this.program) : null
+
+      if (this.program) {
+        gl.deleteProgram(this.program)
+      }
+
+      this.program = null
       throw new Error(error ?? 'Shader linking failed')
     }
 
     gl.useProgram(this.program)
-    canvas.width = model.width
-    canvas.height = model.height
+    this.canvas.width = this.model.width
+    this.canvas.height = this.model.height
     this.position = gl.getAttribLocation(this.program, 'position')
     this.uv = gl.getAttribLocation(this.program, 'uv')
     this.opacity = gl.getUniformLocation(this.program, 'opacity')
-    gl.uniform2f(gl.getUniformLocation(this.program, 'size'), model.width, model.height)
+    gl.uniform2f(gl.getUniformLocation(this.program, 'size'), this.model.width, this.model.height)
     gl.uniform1i(gl.getUniformLocation(this.program, 'image'), 0)
     gl.enable(gl.BLEND)
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
 
-    for (const [id, param] of Object.entries(model.parameters)) {
-      this.targets[id] = this.values[id] = param.initial
-    }
+    this.layers = []
 
     try {
-      for (const layer of model.layers) {
+      for (const layer of this.model.layers) {
         const texture = gl.createTexture()!
         gl.bindTexture(gl.TEXTURE_2D, texture)
         gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
@@ -154,7 +188,7 @@ export class ParametricRenderer {
         }
 
         this.layers.push(state)
-        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, textures.get(layer.texture)!)
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, this.pixels.get(layer.texture)!)
         gl.bindBuffer(gl.ARRAY_BUFFER, state.vertexBuffer)
         gl.bufferData(gl.ARRAY_BUFFER, state.vertices, gl.DYNAMIC_DRAW)
         gl.bindBuffer(gl.ARRAY_BUFFER, state.uvBuffer)
@@ -165,8 +199,22 @@ export class ParametricRenderer {
 
       this.layers.sort((a, b) => a.model.order - b.model.order)
     } catch (error) {
-      this.dispose()
+      this.disposeGpuResources()
       throw error
+    }
+  }
+
+  private onContextRestored = (): void => {
+    if (this.disposed) {
+      return
+    }
+
+    try {
+      this.contextLost = false
+      this.initializeGpu()
+    } catch (error) {
+      this.contextLost = true
+      this.onContextRestoreFailed(error)
     }
   }
 
@@ -246,7 +294,7 @@ export class ParametricRenderer {
   }
 
   frame(dt: number): void {
-    if (this.disposed) {
+    if (this.disposed || this.contextLost) {
       return
     }
 
@@ -298,7 +346,13 @@ export class ParametricRenderer {
 
   private draw(): void {
     const gl = this.gl
-    gl.useProgram(this.program)
+    const program = this.program
+
+    if (!program) {
+      return
+    }
+
+    gl.useProgram(program)
     gl.viewport(0, 0, this.model.width, this.model.height)
     gl.clearColor(0, 0, 0, 0)
     gl.clear(gl.COLOR_BUFFER_BIT)
@@ -317,15 +371,27 @@ export class ParametricRenderer {
 
     this.disposed = true
 
+    this.stopObservingContext()
+    this.disposeGpuResources()
+    this.pixels.clear()
+  }
+
+  private disposeGpuResources(): void {
+    const gl = this.gl
+
     for (const layer of this.layers) {
-      this.gl.deleteTexture(layer.texture)
-      this.gl.deleteBuffer(layer.vertexBuffer)
-      this.gl.deleteBuffer(layer.uvBuffer)
-      this.gl.deleteBuffer(layer.indexBuffer)
+      gl.deleteTexture(layer.texture)
+      gl.deleteBuffer(layer.vertexBuffer)
+      gl.deleteBuffer(layer.uvBuffer)
+      gl.deleteBuffer(layer.indexBuffer)
     }
 
-    this.gl.deleteProgram(this.program)
-    this.pixels.clear()
+    this.layers = []
+
+    if (this.program) {
+      gl.deleteProgram(this.program)
+      this.program = null
+    }
   }
 }
 

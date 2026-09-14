@@ -10,6 +10,8 @@ import { clamp } from '@runtime'
 
 import { log } from '@/shared/lib/log'
 
+import { observeWebGLContext } from '../../gpu-context'
+
 import { buildArtMesh } from './artmesh'
 import { buildHeadCage, cageBary, curveDepth, headBlendMu, type HeadCage } from './head-cage'
 import { assessLimbTier } from './limb-split'
@@ -328,14 +330,15 @@ function smooth(t: number): number {
 export class PuppetRuntime {
   private readonly canvas: HTMLCanvasElement
   private readonly gl: WebGLRenderingContext
-  private readonly prog: WebGLProgram
-  private readonly locPos: number
-  private readonly locUV: number
-  private readonly locRes: WebGLUniformLocation | null
-  private readonly locCut: WebGLUniformLocation | null
-  private readonly locAlpha: WebGLUniformLocation | null
+  private prog!: WebGLProgram
+  private locPos = -1
+  private locUV = -1
+  private locRes: WebGLUniformLocation | null = null
+  private locCut: WebGLUniformLocation | null = null
+  private locAlpha: WebGLUniformLocation | null = null
 
   private layers: GLPart[] = []
+  private rig: Rig | null = null
   private readonly interactionMatrix = createMat2D()
   private readonly inverseInteraction = createMat2D()
   private readonly suspensionMatrix = createMat2D()
@@ -388,7 +391,10 @@ export class PuppetRuntime {
   private lastE: Evaluated | null = null
   private readonly bounce = { x: 0, v: 0, dy: 0 }
   private readonly cur: PuppetParams
+  private readonly stopObservingContext: () => void
   private disposed = false
+  private contextLost = false
+  private readonly onContextRestoreFailed: (error: unknown) => void
 
   /** 外部驱动的目标参数与自动化开关；调用方直接改字段即可。 */
   readonly target: PuppetParams = defaultPuppetParams()
@@ -440,15 +446,40 @@ export class PuppetRuntime {
     }
   }
 
-  constructor(canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement, onContextRestoreFailed: (error: unknown) => void) {
     this.canvas = canvas
+    this.onContextRestoreFailed = onContextRestoreFailed
+    this.stopObservingContext = observeWebGLContext(canvas, {
+      onLost: () => {
+        this.contextLost = true
+      },
+      onRestored: this.onContextRestored,
+      onTimeout: () => this.onContextRestoreFailed(new Error('WebGL context restoration timed out'))
+    })
     const gl = canvas.getContext('webgl', { alpha: true, stencil: true, antialias: true, premultipliedAlpha: true })
 
     if (!gl) {
+      this.stopObservingContext()
       throw new Error('WebGL unavailable')
     }
 
     this.gl = gl
+
+    try {
+      this.initializeGpu()
+    } catch (error) {
+      this.stopObservingContext()
+      throw error
+    }
+
+    this.cur = defaultPuppetParams()
+    this.reseed()
+    this.earNext = performance.now() + 6000
+    this.ahogeNext = performance.now() + 4000
+  }
+
+  private initializeGpu(): void {
+    const gl = this.gl
 
     const sh = (type: number, src: string): WebGLShader => {
       const s = gl.createShader(type)!
@@ -456,30 +487,46 @@ export class PuppetRuntime {
       gl.compileShader(s)
 
       if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-        throw new Error(gl.getShaderInfoLog(s) ?? 'shader compile failed')
+        const error = gl.getShaderInfoLog(s)
+        gl.deleteShader(s)
+        throw new Error(error ?? 'shader compile failed')
       }
 
       return s
     }
 
-    const prog = gl.createProgram()!
-    gl.attachShader(
-      prog,
-      sh(
-        gl.VERTEX_SHADER,
-        'attribute vec2 aPos; attribute vec2 aUV; uniform vec2 uRes; varying vec2 vUV;' +
-          'void main(){ vUV=aUV; vec2 c = aPos/uRes*2.0-1.0; gl_Position=vec4(c.x,-c.y,0.0,1.0); }'
-      )
+    const vertex = sh(
+      gl.VERTEX_SHADER,
+      'attribute vec2 aPos; attribute vec2 aUV; uniform vec2 uRes; varying vec2 vUV;' +
+        'void main(){ vUV=aUV; vec2 c = aPos/uRes*2.0-1.0; gl_Position=vec4(c.x,-c.y,0.0,1.0); }'
     )
-    gl.attachShader(
-      prog,
-      sh(
+
+    let fragment: WebGLShader
+
+    try {
+      fragment = sh(
         gl.FRAGMENT_SHADER,
         'precision mediump float; varying vec2 vUV; uniform sampler2D uTex; uniform float uCut; uniform float uAlpha;' +
           'void main(){ vec4 c=texture2D(uTex,vUV); if(c.a<uCut) discard; gl_FragColor=c*uAlpha; }'
       )
-    )
+    } catch (error) {
+      gl.deleteShader(vertex)
+      throw error
+    }
+
+    const prog = gl.createProgram()!
+    gl.attachShader(prog, vertex)
+    gl.attachShader(prog, fragment)
     gl.linkProgram(prog)
+    gl.deleteShader(vertex)
+    gl.deleteShader(fragment)
+
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
+      const error = gl.getProgramInfoLog(prog)
+      gl.deleteProgram(prog)
+      throw new Error(error ?? 'shader link failed')
+    }
+
     gl.useProgram(prog)
     this.prog = prog
     this.locPos = gl.getAttribLocation(prog, 'aPos')
@@ -492,10 +539,26 @@ export class PuppetRuntime {
     gl.enable(gl.BLEND)
     gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA)
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true)
-    this.cur = defaultPuppetParams()
-    this.reseed()
-    this.earNext = performance.now() + 6000
-    this.ahogeNext = performance.now() + 4000
+  }
+
+  private onContextRestored = (): void => {
+    if (this.disposed) {
+      return
+    }
+
+    try {
+      this.contextLost = false
+      this.initializeGpu()
+
+      if (this.rig) {
+        this.applyRig(this.rig)
+      }
+
+      this.lastNow = performance.now()
+    } catch (error) {
+      this.contextLost = true
+      this.onContextRestoreFailed(error)
+    }
   }
 
   /** 重播种子：自主段落与事件调度回到该种子的确定序列。 */
@@ -793,6 +856,12 @@ export class PuppetRuntime {
 
   applyRig(rig: Rig): void {
     if (this.disposed) {
+      return
+    }
+
+    this.rig = rig
+
+    if (this.contextLost) {
       return
     }
 
@@ -1139,6 +1208,7 @@ export class PuppetRuntime {
   dispose(): void {
     this.disposed = true
     cancelAnimationFrame(this.raf)
+    this.stopObservingContext()
     const gl = this.gl
 
     for (const L of this.layers) {
@@ -2051,7 +2121,7 @@ export class PuppetRuntime {
     const gl = this.gl
     const e = this.lastE
 
-    if (!e || !this.layers.length) {
+    if (this.contextLost || !e || !this.layers.length) {
       return
     }
 

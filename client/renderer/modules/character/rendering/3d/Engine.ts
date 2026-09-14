@@ -5,6 +5,8 @@ import { WebGPUBackend, WebGPURenderer } from 'three/webgpu'
 import { getBaseSpriteHeight, getBaseSpriteWidth } from '@/modules/character'
 import { log } from '@/shared/lib/log'
 
+import { observeWebGLContext } from '../gpu-context'
+
 import { CharacterController } from './CharacterController'
 import { reportBackend, reportEngineError, reportFrameStats } from './engine-diagnostics'
 import { LightingRig } from './LightingRig'
@@ -64,6 +66,14 @@ function readCanvasSize(canvas: HTMLCanvasElement): { width: number; height: num
   return { width, height }
 }
 
+function disposeFailedRenderer(renderer: AnyRenderer | null): void {
+  try {
+    renderer?.dispose()
+  } catch {
+    // Engine 构造可能在 renderer 完整、其余资源未就绪时失败，释放按尽力而为处理。
+  }
+}
+
 export class Engine {
   private readonly renderer: AnyRenderer
   private readonly backendKind: EngineBackendKind
@@ -90,20 +100,30 @@ export class Engine {
   private hitMap: SilhouetteHitmap | null = null
   private hitMapAt = 0
   private hitRefresh: Promise<SilhouetteHitmap | null> | null = null
+  private contextLost = false
+  private resumeAfterContextRestore = false
+  private recoveryRequested = false
+  private gpuGeneration = 0
+  private readonly stopObservingContext: () => void
+  private readonly onRecoveryNeeded: () => void
 
   // 异步工厂：WebGPURenderer.init() 负责回退链的前两档
   // （WebGPU 后端 → 自带的 WebGL2 重试）。只有 init 完全失败
   // 才会降级到经典 WebGLRenderer——前提是新 canvas，
   // 因为一旦承载过 webgpu 上下文的 canvas 不会再产出 webgl2 上下文。
   // 进一步失败则向上抛给调用方，由 root 渲染级联兜底（DESIGN §1.2）。
-  static async create(container: HTMLElement, opts: EngineOptions = {}): Promise<Engine> {
+  static async create(container: HTMLElement, opts: EngineOptions): Promise<Engine> {
     const dpr = Math.min(window.devicePixelRatio || 1, MAX_DPR)
     // 默认走 iGPU：精灵窗负载远低于 iGPU 满载门槛，避免在混合显卡本上唤醒 dGPU。
     const powerPreference = opts.powerPreference ?? 'low-power'
 
     // ── 尝试 1：WebGPU（首选 WebGPU 后端，init 内部回退 WebGL2）──
+    const gpuCanvas = makeCanvas(container)
+    let gpuRenderer: WebGPURenderer | null = null
+    let gpuInitialized = false
+
     try {
-      const canvas = makeCanvas(container)
+      const canvas = gpuCanvas
       const { width, height } = readCanvasSize(canvas)
 
       const renderer = new WebGPURenderer({
@@ -113,10 +133,13 @@ export class Engine {
         powerPreference
       })
 
+      gpuRenderer = renderer
+
       renderer.setPixelRatio(dpr)
       renderer.setSize(width, height, false)
 
       await renderer.init()
+      gpuInitialized = true
 
       const backendKind: EngineBackendKind = renderer.backend instanceof WebGPUBackend ? 'webgpu' : 'webgl2'
 
@@ -124,13 +147,22 @@ export class Engine {
 
       return new Engine(renderer, backendKind, canvas, opts)
     } catch (gpuErr) {
+      // Three 的 dispose() 会在初始化失败后再次进入 init() 并产生未处理 rejection。
+      if (gpuInitialized) {
+        disposeFailedRenderer(gpuRenderer)
+      }
+
+      gpuCanvas.remove()
       log.warn('3d', 'WebGPURenderer failed, falling back to classic WebGLRenderer:', gpuErr)
     }
 
     // ── 尝试 2：经典 WebGLRenderer（纯标准 WebGL2，兼容旧 GPU 与驱动）──
+    const glCanvas = makeCanvas(container)
+    let glRenderer: THREE.WebGLRenderer | null = null
+
     try {
       // 必须用新 canvas：承载过 webgpu 上下文的 canvas 不会再产出 webgl2 上下文
-      const canvas = makeCanvas(container)
+      const canvas = glCanvas
       const { width, height } = readCanvasSize(canvas)
 
       const renderer = new THREE.WebGLRenderer({
@@ -141,6 +173,7 @@ export class Engine {
         preserveDrawingBuffer: false
       })
 
+      glRenderer = renderer
       renderer.setPixelRatio(dpr)
       renderer.setSize(width, height, false)
 
@@ -148,6 +181,8 @@ export class Engine {
 
       return new Engine(renderer, 'classic-webgl', canvas, opts)
     } catch (glErr) {
+      disposeFailedRenderer(glRenderer)
+      glCanvas.remove()
       log.error('3d', 'All 3D renderer backends failed:', glErr)
       throw new Error(`Failed to initialize any 3D renderer: ${glErr instanceof Error ? glErr.message : String(glErr)}`)
     }
@@ -157,11 +192,27 @@ export class Engine {
     renderer: AnyRenderer,
     backendKind: EngineBackendKind,
     canvas: HTMLCanvasElement,
-    opts: EngineOptions = {}
+    opts: EngineOptions
   ) {
     this.renderer = renderer
     this.backendKind = backendKind
     this.canvas = canvas
+    this.onRecoveryNeeded = opts.onRecoveryNeeded
+
+    this.stopObservingContext = observeWebGLContext(this.canvas, {
+      onLost: this.onWebGLContextLost,
+      onRestored: this.onWebGLContextRestored,
+      onTimeout: () => this.requestRecovery(`${this.backendKind} context restoration timed out`)
+    })
+
+    if (renderer instanceof WebGPURenderer) {
+      renderer.onDeviceLost = info => {
+        // 节点 WebGL2 另由 DOM 恢复事件触发重建，避免丢失时重复回调。
+        if (info.api === 'WebGPU') {
+          this.requestRecovery(`WebGPU device lost: ${info.message}`)
+        }
+      }
+    }
 
     const useShadows = opts.useShadows ?? false
 
@@ -189,6 +240,66 @@ export class Engine {
     reportBackend(backendKind)
   }
 
+  private onWebGLContextLost = (): void => {
+    if (this.disposed) {
+      return
+    }
+
+    this.contextLost = true
+    this.gpuGeneration++
+    this.resumeAfterContextRestore = this.running
+    this.stop()
+    this.invalidateHitmap()
+    this.hitRefresh = null
+    log.warn('3d', `${this.backendKind} context lost; waiting for restoration`)
+  }
+
+  private onWebGLContextRestored = (): void => {
+    if (this.disposed) {
+      return
+    }
+
+    this.contextLost = false
+    this.hitRT?.dispose()
+    this.hitRT = null
+    this.invalidateHitmap()
+    this.lastFrameAt = 0
+
+    if (this.backendKind !== 'classic-webgl') {
+      this.requestRecovery(`${this.backendKind} context restored`)
+
+      return
+    }
+
+    try {
+      const { width, height } = readCanvasSize(this.canvas)
+      this.resize(width, height)
+
+      if (this.resumeAfterContextRestore) {
+        this.start()
+      }
+
+      log.info('3d', 'classic-webgl context restored')
+    } catch (error) {
+      this.requestRecovery(
+        `classic-webgl restoration failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+    }
+  }
+
+  private requestRecovery(reason: string): void {
+    if (this.disposed || this.recoveryRequested) {
+      return
+    }
+
+    this.recoveryRequested = true
+    this.stop()
+    this.invalidateHitmap()
+    this.hitRefresh = null
+    log.warn('3d', `${reason}; rebuilding engine`)
+    this.onRecoveryNeeded()
+  }
+
   /** 角色动作或姿态发生切换时立即废弃旧的命中缓存，避免 250ms 内使用走动姿态命中静止姿态。 */
   invalidateHitmap(): void {
     this.hitMap = null
@@ -201,7 +312,7 @@ export class Engine {
    * Cached HITMAP_TTL_MS; concurrent callers share one refresh. Null only
    * when the readback itself fails. */
   async silhouetteHitmap(): Promise<SilhouetteHitmap | null> {
-    if (this.disposed) {
+    if (this.disposed || this.contextLost || this.recoveryRequested) {
       return null
     }
 
@@ -209,17 +320,27 @@ export class Engine {
       return this.hitMap
     }
 
-    this.hitRefresh ??= this.refreshHitmap().finally(() => {
-      this.hitRefresh = null
-    })
+    if (this.hitRefresh) {
+      return this.hitRefresh
+    }
 
-    return this.hitRefresh
+    let refresh: Promise<SilhouetteHitmap | null>
+    refresh = this.refreshHitmap().finally(() => {
+      if (this.hitRefresh === refresh) {
+        this.hitRefresh = null
+      }
+    })
+    this.hitRefresh = refresh
+
+    return refresh
   }
 
   private async refreshHitmap(): Promise<SilhouetteHitmap | null> {
     if (this.disposed) {
       return null
     }
+
+    const gpuGeneration = this.gpuGeneration
 
     const canvasW = this.canvas.clientWidth || this.canvas.parentElement?.clientWidth || getBaseSpriteWidth()
     const canvasH = this.canvas.clientHeight || this.canvas.parentElement?.clientHeight || getBaseSpriteHeight()
@@ -251,12 +372,22 @@ export class Engine {
         }
       }
 
+      if (this.contextLost || this.recoveryRequested) {
+        return null
+      }
+
       const data =
         this.backendKind === 'classic-webgl'
           ? await this.readClassicPixels(rt as THREE.WebGLRenderTarget, w, h)
           : await (this.renderer as WebGPURenderer).readRenderTargetPixelsAsync(rt, 0, 0, w, h)
 
-      if (this.disposed || !data) {
+      if (
+        this.disposed ||
+        this.contextLost ||
+        this.recoveryRequested ||
+        gpuGeneration !== this.gpuGeneration ||
+        !data
+      ) {
         return null
       }
 
@@ -354,7 +485,7 @@ export class Engine {
     await this.waitSync(gl, sync)
     gl.deleteSync(sync)
 
-    if (this.disposed) {
+    if (this.disposed || this.contextLost || this.recoveryRequested || gl.isContextLost()) {
       gl.deleteBuffer(pbo)
 
       return null
@@ -372,17 +503,25 @@ export class Engine {
   private waitSync(gl: WebGL2RenderingContext, sync: WebGLSync): Promise<void> {
     return new Promise(resolve => {
       const check = (): void => {
-        if (this.disposed) {
+        if (this.disposed || this.contextLost || this.recoveryRequested || gl.isContextLost()) {
           resolve()
 
           return
         }
 
-        const res = gl.clientWaitSync(sync, 0, 0)
+        let result: number
 
-        if (res === gl.ALREADY_SIGNALED || res === gl.CONDITION_SATISFIED) {
+        try {
+          result = gl.clientWaitSync(sync, 0, 0)
+        } catch {
           resolve()
-        } else if (res === gl.WAIT_FAILED) {
+
+          return
+        }
+
+        if (result === gl.ALREADY_SIGNALED || result === gl.CONDITION_SATISFIED) {
+          resolve()
+        } else if (result === gl.WAIT_FAILED) {
           resolve()
         } else {
           setTimeout(check, 4)
@@ -456,7 +595,7 @@ export class Engine {
   }
 
   start(): void {
-    if (this.running || this.disposed) {
+    if (this.running || this.disposed || this.contextLost || this.recoveryRequested) {
       return
     }
 
@@ -593,6 +732,10 @@ export class Engine {
   }
 
   resize(width: number, height: number): void {
+    if (this.disposed || this.contextLost || this.recoveryRequested) {
+      return
+    }
+
     // 重新选择像素比：window.devicePixelRatio 在跨不同 DPI 显示器拖动时会变化。
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, MAX_DPR))
     this.camera.aspect = width / height
@@ -604,6 +747,7 @@ export class Engine {
   dispose(): void {
     this.disposed = true
     this.stop()
+    this.stopObservingContext()
     this.lighting.dispose(this.scene)
     this.character.dispose()
     this.hitRT?.dispose()

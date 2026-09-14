@@ -76,7 +76,11 @@ export function AssetPackPreview({
           return
         }
 
-        instance = new PuppetRuntime(canvas)
+        instance = new PuppetRuntime(canvas, error => {
+          log.warn('wardrobe-preview', 'WebGL recovery failed', error)
+          setFront('failed')
+        })
+
         await loadPsdIntoRuntime(instance, buffer)
 
         if (controller.signal.aborted) {

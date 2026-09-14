@@ -196,6 +196,11 @@ export function PuppetStage(): React.JSX.Element {
     canvasRef.current = canvas
   }, [])
 
+  const onRuntimeError = useCallback((error: unknown): void => {
+    log.warn('puppet-stage', 'WebGL recovery failed; cascade to 3D / egg', error)
+    setPuppetError('WebGL recovery failed')
+  }, [])
+
   // 驱动层共享的运行态（rAF 循环每帧读取）
   const hitmapRef = useRef<((nx: number, ny: number) => { region: string } | null) | null>(null)
   const ampRef = useRef(0)
@@ -652,7 +657,7 @@ export function PuppetStage(): React.JSX.Element {
       ref={containerRef}
       style={{ position: 'absolute', inset: 0, pointerEvents: 'none' }}
     >
-      <PuppetCanvas onCanvas={onCanvas} ref={handleRef} />
+      <PuppetCanvas onCanvas={onCanvas} onError={onRuntimeError} ref={handleRef} />
       {puppet.poses && <EdgePoseCanvas key={puppet.contentHash} pack={puppet.poses} ref={edgePoseRef} />}
     </div>
   )

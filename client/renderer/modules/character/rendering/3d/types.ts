@@ -3,6 +3,8 @@ type EnginePowerPreference = 'high-performance' | 'low-power'
 
 export interface EngineOptions {
   container?: HTMLElement
+  /** WebGPU device 或节点 WebGL2 上下文失效后请求调用方重建 Engine。 */
+  onRecoveryNeeded: () => void
   /** Whether the renderer should enable shadow mapping. Default `false` — for a 300×360 desktop-pet window PBR environment lighting alone conveys depth, and a 2048² PCFSoft shadow map is the single biggest GPU cost in the pipeline. When enabled, capped at 1024² PCF. */
   useShadows?: boolean
   /** 默认 `'low-power'`，避免在双显卡笔记本上唤醒 dGPU；调试工具经此显式覆盖。 */

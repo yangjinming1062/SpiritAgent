@@ -86,7 +86,7 @@ SpiritAgent 桌面渲染层的唯一架构文档：分层与依赖规则、跨�
 
 ### 3D 渲染资源降级与功耗调度
 
-渲染栈是 `three/webgpu` 的 **WebGPURenderer + 四层回退**：WebGPU 后端 → three 内置 WebGL2 后端（同 API 面，零代码）→ 经典 `WebGLRenderer`（仅当 `init()` 整体 reject；必须换新 canvas——webgpu 上下文成功过的 canvas 要不到 webgl2）→ `EngineInitError`（程序化蛋形兜底）。`Engine.create()` 是异步工厂，canvas 由 Engine 自建自管（React 只渲染容器），companion-3d 的 load effects 一律 await 引擎就绪 Promise；实际后端写 dev log。视觉兜底层级见 [DESIGN.md §1.2](../../docs/DESIGN.md)；模型字节到达并完成解析后才视作可渲染，GLB 解析失败回退到程序化蛋兜底，3D 引擎 init 失败亦同。
+渲染栈是 `three/webgpu` 的 **WebGPURenderer + 四层回退**：WebGPU 后端 → three 内置 WebGL2 后端（同 API 面，零代码）→ 经典 `WebGLRenderer`（仅当 `init()` 整体 reject；必须换新 canvas——webgpu 上下文成功过的 canvas 要不到 webgl2）→ `EngineInitError`（程序化蛋形兜底）。`Engine.create()` 是异步工厂，canvas 由 Engine 自建自管（React 只渲染容器），companion-3d 的 load effects 一律 await 引擎就绪 Promise；实际后端写 dev log。视觉兜底层级见 [DESIGN.md §1.2](../../docs/DESIGN.md)；模型字节到达并完成解析后才视作可渲染，GLB 解析失败回退到程序化蛋兜底，3D 引擎 init 失败亦同。GPU 重置时经典 WebGL 暂停循环并在上下文恢复后继续；节点 WebGL2 与 WebGPU 需重建 Engine，再从缓存重载当前模型；上下文 5 秒未恢复也强制重建，旧 Engine 的监听、超时器与循环必须随卸载释放。
 
 **渲染功耗三档**（[3d/PowerProfile.ts](modules/character/rendering/3d/PowerProfile.ts) 判定 + [3d/power-signals.ts](modules/character/rendering/3d/power-signals.ts) 订阅，Engine 自门控循环执行）：主进程为后台流式聊天全局禁用了 Chromium 节流，浏览器不会替 7x24 常驻的精灵窗降频，所以循环在 Engine 内按信号自门控——active 60fps（speaking/thinking/listening/working/emotional/interacting）、idle 30fps（idle/disconnected）、dormant 4fps（`$screenLocked`、`document.hidden`、`$focusContext.fullscreen`）。信号全部来自既有渲染端 atom，功耗调度是纯 Client 内部决策（ARCH §7 语义/渲染解耦），无协议与主进程参与。两条防坑约束：**Ready 保护**——首个模型 `loadCharacter` 落定（`$modelLoadSettled`）前强制 active，避免孵化动画被误降频拉长；**隐藏窗口降级**——Chromium 对 hidden 窗口硬停 rAF（禁节流开关管不到合成层），active/idle 档在 `document.hidden` 时改由 16/37ms timer 驱动，`visibilitychange` 恢复 rAF。dormant 恒为 250ms timer（进程级禁 timer 节流，锁屏下稳定）；档位回升时 Engine 层把 delta 钳制到 50ms，防 mixer 在长暂停后跳变。
 
@@ -231,6 +231,7 @@ TTS 合成（`tts.ts`）、音频播放与口型振幅（`audio-track.ts`）、�
 - **素材限制**：整肢立绘只能近似平面屈伸，无法重建手指抓握、肩部遮挡与侧身透视；大角度折臂的自然程度仍依赖素材，不能以骨骼到达接触点代替视觉验收。
 - **动画自动化层**：非对称呼吸（含偶发深呼吸）、眨眼曲线（全眨/半眨/连眨）、视线跟随（眼先动头跟随，无更新过期回落漫游）、微扫视（指数衰减的小幅快速眼动）、说话合成（每句独立振幅 + 音素级嘴型目标）。参数平滑按语义分速率（眼快、头身慢）。
 - **模拟/渲染解耦**：`advanceSim(seconds)` 以固定步进接管内部时钟（rAF 退化为纯渲染），供无头验证与回归做确定性断言——姿态安全验证以此为地基；`snapshot()` 暴露平滑后参数只读快照，`forceBlink()` 为确定性眨眼钩子。
+- **WebGL 上下文恢复**：主木偶与扶边参数化渲染器都在上下文丢失时阻止浏览器放弃恢复，暂停 GPU 提交；恢复后以保留在 CPU 侧的 rig、像素与当前参数重建 shader、buffer 和 texture，不重复下载资产。重建失败或上下文 5 秒未恢复必须上报挂载层并进入既有渲染级联，不能留下仍在跑循环但永远透明的 canvas。
 - **差分合成**：PSD 缺 eye_close / mouth_close 时用内置 genericparts 自动合成并染色适配（上游行为，保留）。
 - **数据来源与渲染级联**：see-through 产出 `spiritagent.2d.psd/1` 描述符（`kind=psd`）复用 mesh2d 行与 WS 事件路径；`companion.2d.ready` / outfit 穿着 / 头像重生事件后 `hydratePuppet` 判 kind。精灵窗根组件渲染级联：**puppet（PSD）→ 3D → 程序化蛋**——puppet 装配失败写 error 熄灭 `$puppetReady` 自动落级，永不空白（DESIGN §1.2）。
 - **驱动层映射**：视线 = 指针归一化注入 + `$gazeTarget` 显式目标周期续注（ritual walk / perch 锁定）；说话 = TTS 振幅接管嘴型并暂停合成说话、静默后交还；情绪 = 后端情绪词表全对齐 → 眉/嘴型/眼缩放参数（puppet 独有面部通道）；动作 = 动作白名单键 → 定时包络 + 队列续播；hover 发区 → 发束冲量（节流，方向随戳侧）。

@@ -63,7 +63,12 @@ export const EdgePoseCanvas = forwardRef<EdgePoseCanvasHandle, Props>(function E
           const canvas = document.createElement('canvas')
           // 可见像素命中由交互区域精化；允许盒外姿态上的指针事件向舞台冒泡。
           canvas.style.cssText = 'position:absolute;visibility:hidden;pointer-events:auto;max-width:none'
-          const runtime = new ParametricRenderer(canvas, createEdgePoseModel(pack[side], side), images)
+
+          const runtime = new ParametricRenderer(canvas, createEdgePoseModel(pack[side], side), images, error => {
+            log.warn('edge-pose', `${side} pose WebGL recovery failed`, error)
+            onStatus?.(side, 'failed')
+          })
+
           loaded[side] = { canvas, runtime }
           mount.current?.append(canvas)
           onStatus?.(side, 'ready')

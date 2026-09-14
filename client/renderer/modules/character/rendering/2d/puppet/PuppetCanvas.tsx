@@ -17,10 +17,11 @@ interface Props {
   className?: string
   onRig?: (rig: Rig) => void
   onCanvas?: (canvas: HTMLCanvasElement) => void
+  onError: (error: unknown) => void
 }
 
 export const PuppetCanvas = forwardRef<PuppetCanvasHandle, Props>(function PuppetCanvas(
-  { className, onRig, onCanvas },
+  { className, onRig, onCanvas, onError },
   ref
 ) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -37,12 +38,12 @@ export const PuppetCanvas = forwardRef<PuppetCanvasHandle, Props>(function Puppe
     let runtime: PuppetRuntime | null = null
 
     try {
-      runtime = new PuppetRuntime(canvas)
+      runtime = new PuppetRuntime(canvas, onError)
       runtime.onRigApplied = onRig ?? null
       runtime.start()
       runtimeRef.current = runtime
     } catch (err) {
-      console.error('puppet runtime init failed', err)
+      onError(err)
     }
 
     return () => {
@@ -50,7 +51,7 @@ export const PuppetCanvas = forwardRef<PuppetCanvasHandle, Props>(function Puppe
       runtimeRef.current = null
     }
     // 调用方以 useCallback 保持稳定引用（挂载期一次性接线）；引用变化时重建运行时
-  }, [onCanvas, onRig])
+  }, [onCanvas, onError, onRig])
 
   useImperativeHandle(
     ref,

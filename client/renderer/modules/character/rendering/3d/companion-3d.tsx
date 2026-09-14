@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   $clipOverride,
@@ -64,6 +64,7 @@ export function Companion3D(): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const engineReadyRef = useRef<Promise<Engine | null> | null>(null)
   const loadedIdentityRef = useRef<string | null>(null)
+  const [engineGeneration, setEngineGeneration] = useState(0)
   const modelInfo = useStore($modelInfo)
 
   // 启动引擎，接好订阅，并触发首次模型加载。
@@ -78,7 +79,17 @@ export function Companion3D(): React.JSX.Element {
     let engine: Engine | null = null
     let detachWiring: (() => void) | null = null
 
-    const ready = Engine.create(container).then(created => {
+    if (engineGeneration > 0) {
+      loadedIdentityRef.current = null
+    }
+
+    const ready = Engine.create(container, {
+      onRecoveryNeeded: () => {
+        if (!cancelled) {
+          setEngineGeneration(current => current + 1)
+        }
+      }
+    }).then(created => {
       if (cancelled) {
         created.dispose()
 
@@ -225,7 +236,7 @@ export function Companion3D(): React.JSX.Element {
       detachWiring?.()
       engine?.dispose()
     }
-  }, [])
+  }, [engineGeneration])
 
   // 在模型 asset URL 变化时加载（或重新加载）GLB。等待引擎启动完成 —— 引擎为 null 时提前 return，
   // 否则会永久静默跳过首个模型。
@@ -237,7 +248,13 @@ export function Companion3D(): React.JSX.Element {
     // 当带 content_hash 时复用磁盘缓存并支持 Range 续传。
     // 拉取失败时返回 null，让 CharacterController 回退到程序化模型。
     void (async () => {
-      const engine = await engineReadyRef.current
+      let engine: Engine | null
+
+      try {
+        engine = await engineReadyRef.current
+      } catch {
+        return
+      }
 
       if (!engine || cancelled) {
         return
@@ -327,7 +344,7 @@ export function Companion3D(): React.JSX.Element {
       cancelled = true
       $spriteContentRect.set(null)
     }
-  }, [modelInfo.asset_url, modelInfo.content_hash, modelInfo.id, modelInfo.rig_type])
+  }, [engineGeneration, modelInfo.asset_url, modelInfo.content_hash, modelInfo.id, modelInfo.rig_type])
 
   const genState = useStore($modelGenState)
   const genProgress = useStore($modelGenProgress)
