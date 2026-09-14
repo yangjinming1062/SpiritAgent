@@ -7,7 +7,6 @@ from components import (
     DEFAULT_LANGUAGE,
     SETTINGS,
     get_logger,
-    resolve_prompt_text,
     safe_json_loads,
     session_scope,
 )
@@ -42,16 +41,14 @@ from .persistence import (
 )
 from .prompt_presets import (
     AUTOMATION_EXCLUDED_TOOL_NAMES,
-    COMPANION_PREPARE_GUIDANCE,
-    COMPANION_REPLY_GUIDANCE,
     LIFE_SPACE_TOOL_NAMES,
 )
 from .streaming import (
     _emit_llm_error,
     _ensure_tool_call_ids,
+    _generate_llm_response,
     _IncompleteResponseError,
     _LLMTurnResult,
-    _stream_llm_response,
 )
 from .tool_dispatch import _ToolDispatchContext
 from .turn_inputs import (
@@ -257,25 +254,15 @@ async def run_chat_turn(
         excluded_tool_names=effective_excluded_tool_names,
     )
 
-    buffer_text = (
-        headless
-        or ephemeral
-        or conv.kind == IM_KIND
-        or (conv.kind == SPECIAL_KIND and conv.system_preset_id == DEFAULT_PRESET_ID and not conv.is_automation)
-    )
     companion_reply = (
-        conv.kind == SPECIAL_KIND
-        and conv.system_preset_id == DEFAULT_PRESET_ID
-        and not conv.is_automation
-        and not headless
-        and not ephemeral
-        and preset_override is None
+        conv.kind == SPECIAL_KIND and conv.system_preset_id == DEFAULT_PRESET_ID and not conv.is_automation
     )
-    preparing = companion_reply
+    buffer_text = companion_reply or headless or ephemeral or conv.kind == IM_KIND
+    complete_response = companion_reply and not headless and not ephemeral and preset_override is None
     if buffer_text:
         await emitter.send_json({"type": "message.start"})
     while True:
-        if not (companion_reply and not preparing) and not budget.consume():
+        if not budget.consume():
             await emitter.send_json(
                 {
                     "type": "error",
@@ -287,10 +274,8 @@ async def run_chat_turn(
         if not buffer_text:
             await emitter.send_json({"type": "message.start"})
         active_schemas = [schemas_by_name[n] for n in active_tool_names if n in schemas_by_name]
-        if companion_reply and not preparing:
-            active_schemas = []
-        # 供应商链包装：按顺序尝试已配置供应商，仅在尚未输出 chunk 时触发回退；每次尝试使用对应槽位的 model，避免回退供应商收到不识别的模型名导致 model_not_found、链提前耗尽。
-        stream_emitted = False
+        # 供应商链包装：按顺序尝试已配置供应商，仅在流式首事件或完整响应到达前允许回退；每次尝试使用对应槽位的 model，避免回退供应商收到不识别的模型名导致 model_not_found、链提前耗尽。
+        response_started = False
 
         async def _call(provider: ChatProvider) -> _LLMTurnResult:
             if provider.raw_client() is None:
@@ -306,34 +291,20 @@ async def run_chat_turn(
             retry_available = True
             while True:
                 try:
-                    return await _stream_llm_response(
+                    return await _generate_llm_response(
                         emitter,
                         model_for_slot,
-                        {**current_context, "instructions": inputs.prepare_instructions}
-                        if preparing
-                        else current_context,
+                        current_context,
                         active_schemas,
                         slot_ctx_length,
                         provider,
-                        delivery=("silent" if preparing else "bubbles")
-                        if companion_reply
-                        else "buffered"
-                        if buffer_text
-                        else "stream",
-                        phase_instructions=resolve_prompt_text(
-                            COMPANION_PREPARE_GUIDANCE if preparing else COMPANION_REPLY_GUIDANCE,
-                            inputs.language,
-                        )
-                        if companion_reply
-                        else "",
-                        on_first_chunk=set_stream_emitted,
+                        delivery="complete" if complete_response else "buffered" if buffer_text else "stream",
+                        on_response_started=set_response_started,
                         reasoning_effort=reasoning_effort,
                         temperature=temperature,
                         user_local_tz=inputs.user_local_tz,
                         lang=inputs.language,
-                        speech_config=inputs.speech_config
-                        if not preparing and not headless and preset_override is None
-                        else None,
+                        speech_config=inputs.speech_config if not headless and preset_override is None else None,
                         split_paragraphs=conv.system_preset_id == "companion"
                         and not conv.is_automation
                         and preset_override is None,
@@ -345,22 +316,22 @@ async def run_chat_turn(
                     retry_available = False
                     logger.warning("Retrying incomplete LLM response before text delivery: %s", exc)
 
-        def set_stream_emitted() -> None:
-            nonlocal stream_emitted
-            stream_emitted = True
+        def set_response_started() -> None:
+            nonlocal response_started
+            response_started = True
 
         try:
-            # db=None：链已在上方预解析，流式调用与回退期间不持有 session。
+            # db=None：链已在上方预解析，模型调用与回退期间不持有 session。
             llm_result = await execute_with_fallback(
                 None,
                 user_id,
                 "llm",
                 call_fn=_call,
-                stream_started=lambda: stream_emitted,
+                stream_started=lambda: response_started,
                 _chain=inputs.llm_chain,
             )
         except LLMRuntimeError as exc:
-            # 链已耗尽（非回退错误或已输出 chunk 后中断）：补发结尾 error 帧，让渲染端消息状态机干净收尾。
+            # 链已耗尽或响应开始后失败：补发结尾 error 帧，让渲染端消息状态机干净收尾。
             reason_val = exc.classified.reason.value if getattr(exc, "classified", None) else "unknown"
             prov_val = getattr(getattr(exc, "classified", None), "provider", None)
             model_val = getattr(getattr(exc, "classified", None), "model", None)
@@ -378,8 +349,8 @@ async def run_chat_turn(
             await _emit_llm_error(emitter, exc)
             break
         except (MissingLlmConfigError, RuntimeError) as exc:
-            # 空链或槽位供应商未暴露 Responses API：仅在无回退时派发器才暴露此类错误，输出定制化错误并结束本轮。
-            logger.warning("LLM chain failed to start: %s", exc)
+            # 配置缺失或响应未正常完成：结束本轮；完整响应失败也可能发生在请求已开始之后。
+            logger.warning("LLM turn failed: %s", exc)
             await emitter.send_json({"type": "error", "message": f"LLM unavailable: {exc}"})
             break
 
@@ -387,9 +358,6 @@ async def run_chat_turn(
             turn_reasoning_parts.append(llm_result.reasoning)
 
         if not llm_result.tool_calls_list:
-            if preparing:
-                preparing = False
-                continue
             await _persist_assistant_no_tool_turn(
                 conv,
                 user_id,

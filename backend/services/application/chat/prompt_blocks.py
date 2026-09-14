@@ -101,7 +101,7 @@ _COMPANION_OUTPUT_GUIDANCES: dict[str, str] = {
         "如有附加的隐藏语音协议或渠道附件协议，按其格式承载元数据；它们不属于台词。\n"
         "回复由一个或几个完整的聊天气泡组成，每个气泡承载一个自然的意思，不把一句话切碎。"
         "只在两个非空气泡之间用单独一行 `---` 分隔，首尾不加分隔线。"
-        "日常聊天用纯文本，换行用真实换行；不把 HTML、时间元数据、标题、格式示例或内部就绪标记发给用户。"
+        "日常聊天用纯文本，换行用真实换行；不把 HTML、时间元数据、标题或格式示例发给用户。"
     ),
     "en": (
         "# Content delivered to the user\n"
@@ -115,7 +115,7 @@ _COMPANION_OUTPUT_GUIDANCES: dict[str, str] = {
         "Reply in one or a few complete chat bubbles, each carrying a natural thought without splitting "
         "a sentence. Use a line containing only `---` between non-empty bubbles, never at the beginning "
         "or end. Use plain text and actual line breaks for everyday chat; do not send HTML, time metadata, "
-        "headings, format examples, or internal readiness markers to the user."
+        "headings, or format examples to the user."
     ),
 }
 
