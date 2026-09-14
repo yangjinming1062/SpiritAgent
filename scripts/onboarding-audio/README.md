@@ -14,7 +14,7 @@
 
 1. 改 `manifest.json`（新增条目或调整文案）
 2. 设 `MIMO_API_KEY`，跑 `python scripts/onboarding-audio/generate_onboarding_audio.py` 重生成 mp3
-3. `scripts/build_client.sh` 之后的 Tauri 阶段会把它们嵌入到 `SpiritAgent-Setup` 安装包
+3. `scripts/build.py` 的 Tauri 阶段会把它们嵌入到 `SpiritAgent-Setup` 安装包
 4. 提交 `manifest.json` 和 `generate_onboarding_audio.py`（mp3 不进 git，是构建产物）
 
 CI 用 `python scripts/onboarding-audio/generate_onboarding_audio.py --check` 校验 mp3 同步字节合法、与 manifest 条目一致。

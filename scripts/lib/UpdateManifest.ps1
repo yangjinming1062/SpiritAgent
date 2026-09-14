@@ -1,5 +1,5 @@
-﻿# scripts/lib/UpdateManifest.ps1 —— SpiritAgent 自更新管线的共享签名与 manifest 助手；由 scripts/build_client.ps1 的 Build-UpdateZip 引入。
-# 仅做纯文件操作，没有模块级可变状态。
+﻿# scripts/lib/UpdateManifest.ps1 —— SpiritAgent 自更新管线的共享签名、manifest 与 update zip 助手。
+# 纯函数库，没有模块级可变状态；scripts/build.py 在 Windows 收尾阶段 dot-source 调用 Build-UpdateZip。
 
 # 定位 openssl.exe：Git for Windows 把 openssl 放在 mingw64/bin 下，非 git 环境下不在 PATH 中，故多走几步常见安装位置查找。
 function Resolve-OpenSsl {
@@ -191,4 +191,93 @@ function New-RunnerManifest {
     Sign-Manifest -ManifestPath $manifestPath -KeyPath $KeyPath -Sha512 $wheelSha -Size $wheelSize
 
     return $manifestPath
+}
+
+# 构造自更新 zip：同时装入桌面端产物 + runner wheel + server.py，一次更新覆盖客户端两侧；
+# wheel 内已带 skills（runner/pyproject.toml 的 package_data），不需要单独的 skills tar。
+# 后端按 zip 内的 `runner/` 布局提取，便于后续一致性校验。
+function Build-UpdateZip {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Version,
+        [Parameter(Mandatory)][string]$DesktopReleaseDir,
+        [Parameter(Mandatory)][string]$RunnerWheelPath,
+        [Parameter(Mandatory)][string]$ServerPyPath,
+        [Parameter(Mandatory)][string]$OutputDir
+    )
+
+    if (-not (Test-Path $DesktopReleaseDir)) {
+        throw "Desktop release dir not found: $DesktopReleaseDir — run `pnpm dist` first."
+    }
+    if (-not (Test-Path $RunnerWheelPath)) {
+        throw "Runner wheel not found: $RunnerWheelPath"
+    }
+    if (-not (Test-Path $ServerPyPath)) {
+        throw "server.py not found: $ServerPyPath"
+    }
+
+    Write-Output "==> Building update zip for $Version"
+
+    $stageDir = Join-Path ([IO.Path]::GetTempPath()) "spiritagent-update-stage-$Version-$PID"
+    if (Test-Path $stageDir) { Remove-Item -Recurse -Force $stageDir }
+    New-Item -ItemType Directory -Path $stageDir | Out-Null
+
+    try {
+        # 仅拷贝当前版本产物与 manifest（剔除 win-unpacked/、构建调试文件、旧构建残留）。
+        $versionPrefix = "SpiritAgent-$Version"
+        Get-ChildItem -Path $DesktopReleaseDir -File | Where-Object {
+            $_.Name -like "$versionPrefix*" -or
+            $_.Name -match '^latest.*\.yml$' -or
+            $_.Name -eq 'app-update.yml'
+        } | ForEach-Object {
+            Copy-Item -Path $_.FullName -Destination $stageDir -Force
+        }
+
+        # 暂存 runner wheel 与 server.py。
+        $runnerStage = Join-Path $stageDir 'runner'
+        New-Item -ItemType Directory -Path $runnerStage -Force | Out-Null
+        Copy-Item -Force $RunnerWheelPath (Join-Path $runnerStage (Split-Path -Leaf $RunnerWheelPath))
+        Copy-Item -Force $ServerPyPath (Join-Path $runnerStage 'server.py')
+
+        # 一次性解析私钥（后续各平台重签与 New-RunnerManifest 共用）。
+        $keyPath = Resolve-UpdateSigningKey
+
+        # 兜底重签：Build-UpdateZip 是规范的签名点（见 Sign-Manifest），此分支处理跨主机构建时 electron-builder 输出未签名 manifest 的情况。
+        foreach ($name in @('latest.yml', 'latest-mac.yml')) {
+            $manifestPath = Join-Path $stageDir $name
+            if (-not (Test-Path $manifestPath)) { continue }
+            $raw = Get-Content -Raw $manifestPath
+            if ($raw -match '(?m)^\s*"?\s*signature\s*"?\s*[:=]') { continue }
+            Write-Output "  re-signing $name (signature was missing)"
+            Sign-Manifest -ManifestPath $manifestPath -KeyPath $keyPath
+        }
+
+        # 构造并签名 latest-runner.yml：桌面端主进程在重启前读取，先把 wheel + server.py 拉到本地、校验完成才提示用户 "Restart now"。
+        New-RunnerManifest `
+            -Version $Version `
+            -WheelPath (Join-Path $runnerStage (Split-Path -Leaf $RunnerWheelPath)) `
+            -ServerPyPath (Join-Path $runnerStage 'server.py') `
+            -OutDir $stageDir `
+            -KeyPath $keyPath | Out-Null
+
+        # 选定规范的 Windows NSIS exe 写入 manifest.json，便于后端 _extract_archive_entries 无歧义定位。
+        $desktopExe = Get-ChildItem $stageDir -Filter 'SpiritAgent-*-win-*.exe' -File | Select-Object -First 1
+        $manifest = [ordered]@{
+            version        = $Version
+            desktop_path   = if ($desktopExe) { $desktopExe.Name } else { $null }
+            runner_wheel   = "runner/$(Split-Path -Leaf $RunnerWheelPath)"
+            server_py      = 'runner/server.py'
+            manifests      = @('latest.yml', 'latest-mac.yml', 'latest-runner.yml')
+        }
+        ($manifest | ConvertTo-Json -Depth 5) | Set-Content -Path (Join-Path $stageDir 'manifest.json') -NoNewline
+
+        # 打包 zip。
+        $zipPath = Join-Path $OutputDir "SpiritAgent-${Version}-update.zip"
+        if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
+        Add-Type -AssemblyName 'System.IO.Compression.FileSystem'
+        [IO.Compression.ZipFile]::CreateFromDirectory($stageDir, $zipPath)
+        Write-Output "==> Update zip: $zipPath ($((Get-Item $zipPath).Length) bytes)"
+    } finally {
+        Remove-Item -Recurse -Force $stageDir -ErrorAction SilentlyContinue
+    }
 }

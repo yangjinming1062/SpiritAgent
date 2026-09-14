@@ -12,4 +12,4 @@
 | 构建、发布与仓库级检查 | [scripts/README.md](scripts/README.md) |
 | 漏洞报告与安全事件 | [docs/SECURITY.md](docs/SECURITY.md) |
 
-提交前按 RULES 执行相关验证，同步受影响的文档与链接；发布执行 scripts 中的完整构建链。
+提交前按 RULES 执行相关验证，同步受影响的文档与链接；发布推送 `v<semver>` tag，由 GitHub Actions 完成双平台构建与 release 草稿（操作见 [scripts/README.md](scripts/README.md)）。

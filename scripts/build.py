@@ -4,7 +4,7 @@
 单一入口，端到端编排：
 1. 版本同步 (client/package.json, installer/package.json, tauri.conf.json, Cargo.toml, runner/pyproject.toml)
 2. 构建 runner wheel (uv sync -> pytest -> uv build --wheel)
-3. 构建 desktop 产物 (pnpm test -> electron-builder)
+3. 构建 desktop 产物 (electron-builder，build 链内含 tsc 双重 typecheck)
 4. 暂存 payload 到 installer/payload/
 5. 签名桌面产物 (macOS codesign/notarytool, Windows signtool)
 6. 临时 patch installer/src-tauri/tauri.conf.json 的 bundle.resources
@@ -75,8 +75,8 @@ def build_desktop(repo_root: Path, target: str) -> None:
     print(f"==> Building client for target: {target}")
     client_dir = repo_root / "client"
     run_cmd(["pnpm", "install", "--frozen-lockfile"], cwd=client_dir)
-    run_cmd(["pnpm", "test"], cwd=client_dir)
 
+    # typecheck 已由 dist:* 的 build 链内含（两遍 tsc --noEmit），client 无独立测试脚本。
     pnpm_target = "dist:mac:dmg" if target == "mac" else "dist:win:nsis"
     run_cmd(["pnpm", "run", pnpm_target], cwd=client_dir)
 
@@ -242,27 +242,38 @@ def main() -> int:
         shutil.copy2(exe_file, output_dir / final_name)
         print(f"\n==> Final installer: {output_dir / final_name}")
 
-        # Windows 自更新 zip 制作
-        update_manifest_script = SCRIPT_DIR / "lib" / "UpdateManifest.ps1"
+        # Windows 自更新 zip 制作：桌面端产物 + runner wheel + server.py 一次覆盖两侧。
+        # 签名私钥缺失或打包失败直接判构建失败——发布物必须携带有效签名的 update zip。
+        update_lib = SCRIPT_DIR / "lib" / "UpdateManifest.ps1"
         runner_payload = repo_root / "installer" / "payload" / "runner"
-        wheels = list(runner_payload.glob("*.whl"))
+        wheels = sorted(runner_payload.glob("*.whl"))
         server_py = runner_payload / "server.py"
         ps_bin = shutil.which("pwsh") or shutil.which("powershell")
 
-        if update_manifest_script.is_file() and ps_bin and wheels and server_py.is_file():
-            build_update_ps = SCRIPT_DIR / "build_client.ps1"
-            if build_update_ps.is_file():
-                print("==> Building update zip via PowerShell...")
-                client_release = repo_root / "client" / "release"
-                pw_cmd = [
-                    ps_bin,
-                    "-NoProfile",
-                    "-ExecutionPolicy",
-                    "Bypass",
-                    "-Command",
-                    f"& {{ . '{build_update_ps}'; Build-UpdateZip -Version '{args.version}' -DesktopReleaseDir '{client_release}' -RunnerWheelPath '{wheels[0]}' -ServerPyPath '{server_py}' -OutputDir '{output_dir}' }}",
-                ]
-                subprocess.run(pw_cmd, cwd=repo_root, check=False)
+        if not update_lib.is_file():
+            raise RuntimeError(f"missing {update_lib}")
+        if not ps_bin:
+            raise RuntimeError("PowerShell (pwsh or powershell) not found in PATH — required to build the update zip")
+        if len(wheels) != 1:
+            raise RuntimeError(f"expected exactly one staged runner wheel in {runner_payload}, found {len(wheels)}")
+        if f"-{args.version}-" not in wheels[0].name:
+            raise RuntimeError(f"staged runner wheel {wheels[0].name} does not match release version {args.version}")
+        if not server_py.is_file():
+            raise RuntimeError(f"missing {server_py}")
+
+        print("==> Building update zip via PowerShell...")
+        client_release = repo_root / "client" / "release"
+        run_cmd(
+            [
+                ps_bin,
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                f"& {{ . '{update_lib}'; Build-UpdateZip -Version '{args.version}' -DesktopReleaseDir '{client_release}' -RunnerWheelPath '{wheels[0]}' -ServerPyPath '{server_py}' -OutputDir '{output_dir}' }}",
+            ],
+            cwd=repo_root,
+        )
 
     return 0
 

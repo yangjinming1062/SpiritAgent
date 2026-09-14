@@ -8,7 +8,6 @@
 - Find-DesktopArtifact：定位 electron-builder 产物
 """
 
-import argparse
 import json
 import os
 import re
@@ -184,7 +183,7 @@ def patch_tauri_config(repo_root: Path | None = None) -> None:
     """备份并修改 installer/src-tauri/tauri.conf.json，将 payload/client 中的桌面产物追加至 bundle.resources。"""
     root = repo_root or get_repo_root()
     conf_path = get_tauri_conf_path(root)
-    bak_path = conf_path.with_name(conf_path.name + ".build_client.bak")
+    bak_path = conf_path.with_name(conf_path.name + ".tauri-build.bak")
 
     if not conf_path.is_file():
         raise FileNotFoundError(f"tauri.conf.json not found: {conf_path}")
@@ -215,7 +214,7 @@ def restore_tauri_config(repo_root: Path | None = None) -> None:
     """恢复 installer/src-tauri/tauri.conf.json 备份并删除备份文件。"""
     root = repo_root or get_repo_root()
     conf_path = get_tauri_conf_path(root)
-    bak_path = conf_path.with_name(conf_path.name + ".build_client.bak")
+    bak_path = conf_path.with_name(conf_path.name + ".tauri-build.bak")
 
     if bak_path.is_file():
         print(f"==> [build_helpers] Restoring {conf_path}")
@@ -238,54 +237,3 @@ def find_desktop_artifact(target: str, version: str, repo_root: Path | None = No
 
     matches = sorted(release_dir.glob(pattern))
     return matches[0] if matches else None
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="SpiritAgent build helpers")
-    subparsers = parser.add_subparsers(dest="command", required=True)
-
-    # set-version
-    p_ver = subparsers.add_parser("set-version", help="Update version in all project config files")
-    p_ver.add_argument("version", help="Semantic version string, e.g. 0.16.0")
-
-    # stage-payload
-    p_stage = subparsers.add_parser("stage-payload", help="Stage wheel, server.py, skills into installer/payload/")
-    p_stage.add_argument("--target", choices=["mac", "win"], default=None)
-
-    # patch-tauri-config
-    subparsers.add_parser("patch-tauri-config", help="Patch tauri.conf.json bundle.resources")
-
-    # restore-tauri-config
-    subparsers.add_parser("restore-tauri-config", help="Restore tauri.conf.json from backup")
-
-    # find-desktop-artifact
-    p_find = subparsers.add_parser("find-desktop-artifact", help="Find desktop artifact path in client/release")
-    p_find.add_argument("--target", choices=["mac", "win"], required=True)
-    p_find.add_argument("--version", required=True)
-
-    args = parser.parse_args()
-
-    try:
-        if args.command == "set-version":
-            set_version(args.version)
-        elif args.command == "stage-payload":
-            stage_payload(target=args.target)
-        elif args.command == "patch-tauri-config":
-            patch_tauri_config()
-        elif args.command == "restore-tauri-config":
-            restore_tauri_config()
-        elif args.command == "find-desktop-artifact":
-            artifact = find_desktop_artifact(args.target, args.version)
-            if artifact:
-                print(str(artifact))
-            else:
-                print(f"error: artifact not found for target={args.target}, version={args.version}", file=sys.stderr)
-                return 1
-        return 0
-    except Exception as exc:
-        print(f"error: {exc}", file=sys.stderr)
-        return 1
-
-
-if __name__ == "__main__":
-    sys.exit(main())

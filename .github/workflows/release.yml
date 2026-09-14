@@ -1,0 +1,139 @@
+# 推送 v<semver> tag 即发版：双平台构建 + MiniMax 总结提交生成 release notes，汇总为 draft release。
+# 人工在 Releases 页检查产物与 notes 后 Publish。版本号以 tag 为唯一来源，构建时注入各清单文件。
+# 所需 repo secrets：MINIMAX_API_KEY（notes 生成，缺失时回退为提交列表）、SPIRITAGENT_UPDATE_SIGNING_KEY（PEM 内容，Windows update zip 签名）。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  notes:
+    name: Release notes (MiniMax)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # 需要完整历史定位上一个 tag 并读取提交区间
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Generate release notes
+        env:
+          MINIMAX_API_KEY: ${{ secrets.MINIMAX_API_KEY }}
+        run: |
+          python scripts/gen_release_notes.py "${GITHUB_REF_NAME}" --output release-notes.md
+          echo "--- release notes ---"
+          cat release-notes.md
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-notes
+          path: release-notes.md
+          if-no-files-found: error
+
+  build:
+    name: Build (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: win
+          - os: macos-latest
+            target: mac
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - uses: astral-sh/setup-uv@v6
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: installer/src-tauri
+      - name: Derive version from tag
+        id: meta
+        shell: bash
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::tag '${GITHUB_REF_NAME}' must look like v1.2.3" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      # Resolve-UpdateSigningKey 接受 PEM 路径；secret 存的是内容，先落地为临时文件。
+      - name: Restore update signing key
+        if: matrix.target == 'win'
+        env:
+          SPIRITAGENT_UPDATE_SIGNING_KEY: ${{ secrets.SPIRITAGENT_UPDATE_SIGNING_KEY }}
+        shell: bash
+        run: |
+          if [[ -z "$SPIRITAGENT_UPDATE_SIGNING_KEY" ]]; then
+            echo "::error::secret SPIRITAGENT_UPDATE_SIGNING_KEY is not set — cannot sign the update zip" >&2
+            exit 1
+          fi
+          key_path="$RUNNER_TEMP/spiritagent-update.key"
+          printf '%s' "$SPIRITAGENT_UPDATE_SIGNING_KEY" > "$key_path"
+          echo "SPIRITAGENT_UPDATE_SIGNING_KEY=$key_path" >> "$GITHUB_ENV"
+      - name: Build installer
+        shell: bash
+        run: |
+          python scripts/build.py --version "${{ steps.meta.outputs.version }}" --target ${{ matrix.target }}
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: |
+            release/SpiritAgent-Setup-*.exe
+            release/SpiritAgent-Setup-*.dmg
+            release/SpiritAgent-*-update.zip
+          if-no-files-found: error
+
+  release:
+    name: Draft release
+    needs: [notes, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-win
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-mac
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-notes
+          path: .
+      - name: Create or update draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          ls -la dist
+          # tag 已有 release（如在 Releases 页手动创建）时只补产物与 notes，不改动其发布状态。
+          if gh release view "${GITHUB_REF_NAME}" --json id >/dev/null 2>&1; then
+            gh release edit "${GITHUB_REF_NAME}" --title "SpiritAgent ${GITHUB_REF_NAME}" --notes-file release-notes.md
+            gh release upload "${GITHUB_REF_NAME}" --clobber dist/SpiritAgent-*
+          else
+            gh release create "${GITHUB_REF_NAME}" \
+              --draft \
+              --title "SpiritAgent ${GITHUB_REF_NAME}" \
+              --notes-file release-notes.md \
+              dist/SpiritAgent-*
+          fi
