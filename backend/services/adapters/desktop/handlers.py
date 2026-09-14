@@ -1745,6 +1745,8 @@ def _register_session_handlers(
         async with SESSION_LOCAL() as db:
             scope = await _memory_scope(params, db)
             ok = await delete_memory(db, scope, memory_id)
+        if not ok:
+            raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"memory {memory_id} not found")
         return {"deleted": ok}
 
     dispatcher.register("memory.list", memory_list)

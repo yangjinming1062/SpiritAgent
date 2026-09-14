@@ -455,6 +455,20 @@ export const dict: Dictionary = {
       tabInvalidated: (count: string | number) => `Invalidated · ${count}`,
       tabExpired: (count: string | number) => `Expired · ${count}`,
       userProfileHint: (count: string | number) => `${count} explicitly configured profile entries`,
+      profile: {
+        title: 'User profile',
+        hint: 'Personal details collected during onboarding; your companion keeps them in mind. Edit or fill them in anytime — after deleting, the entry is forgotten but can be added back later.',
+        set: 'Set',
+        unset: 'Not set',
+        add: 'Add',
+        fields: {
+          user_call_name: 'Call name',
+          user_gender: 'Gender',
+          user_age_bucket: 'Age range',
+          user_hobbies: 'Hobbies',
+          user_freeform: 'Notes'
+        }
+      },
       maintenanceHint:
         'Your companion reviews evidence and maintains memory autonomously. Only active, unexpired memories inform interactions.',
       basis: {

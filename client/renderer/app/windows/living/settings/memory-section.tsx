@@ -10,6 +10,8 @@ import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS } from
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
+import { UserProfileSection } from './user-profile-section'
+
 interface MemoryRow {
   id: number
   basis: 'explicit' | 'inferred' | 'observed' | 'system'
@@ -79,6 +81,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
 
   const [rows, setRows] = useState<MemoryRow[]>([])
   const [counts, setCounts] = useState<MemoryCounts | null>(null)
+  const [userProfileCount, setUserProfileCount] = useState<number | null>(null)
   const [loading, setLoading] = useState(true)
   const [hint, setHint] = useState<string | null>(null)
   const [draftById, setDraftById] = useState<Record<number, string>>({})
@@ -114,6 +117,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
         const list = res?.memories ?? []
         setRows(list)
         setCounts(res?.counts ?? null)
+        setUserProfileCount(current => current ?? res?.counts?.user_profile ?? null)
         setDraftById(Object.fromEntries(list.map(r => [r.id, r.content ?? ''])))
       } catch (err) {
         if (loadIdRef.current !== id) {
@@ -225,6 +229,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
 
   return (
     <section>
+      {presetId === 'companion' && <UserProfileSection onCount={setUserProfileCount} />}
       <div className="mb-3 flex flex-wrap items-center gap-2">
         <CapsuleTabs
           ariaLabel={t.tabAriaLabel}
@@ -238,7 +243,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
           size="sm"
           value={tab}
         />
-        <span className={cn(HINT_TEXT, 'ml-auto')}>{t.userProfileHint(counts?.user_profile ?? '…')}</span>
+        <span className={cn(HINT_TEXT, 'ml-auto')}>{t.userProfileHint(userProfileCount ?? '…')}</span>
       </div>
 
       <p className={cn(HINT_TEXT, 'mb-3')}>{t.maintenanceHint}</p>

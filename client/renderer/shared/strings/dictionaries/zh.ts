@@ -428,6 +428,20 @@ export const dict = {
       tabInvalidated: (count: string | number) => `失效 · ${count}`,
       tabExpired: (count: string | number) => `过期 · ${count}`,
       userProfileHint: (count: string | number) => `${count} 项明确设定的资料`,
+      profile: {
+        title: '用户资料',
+        hint: '引导时收集的个人资料，伙伴会一直记得。可随时修改或补填；删除后伙伴不再记得该条，之后仍可重新填写。',
+        set: '已设定',
+        unset: '未设定',
+        add: '新增',
+        fields: {
+          user_call_name: '称呼',
+          user_gender: '性别',
+          user_age_bucket: '年龄段',
+          user_hobbies: '爱好',
+          user_freeform: '补充'
+        }
+      },
       maintenanceHint: '伙伴会自行审阅证据和维护记忆，无需你确认。只有有效且未过期的记忆用于互动。',
       basis: { explicit: '明确表达', inferred: '推断', observed: '事件观察', system: '系统记录' },
       usage: { contextual: '按需使用', background: '长期背景' },

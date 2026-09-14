@@ -64,11 +64,9 @@ ONBOARDING_FIELDS: tuple[str, ...] = (
 )
 _ONBOARDING_MAX_LEN: int = 2000
 
-# voice 把 ONBOARDING_FIELDS 切成角色阶段与后置阶段；两个子元组均由上面的唯一事实源派生，避免增删字段时失同步
+# voice 之前的字段构成角色阶段，由唯一的顺序事实源派生。
 _VOICE_FIELD_INDEX: int = ONBOARDING_FIELDS.index("voice")
 _CHARACTER_ONBOARDING_FIELDS: tuple[str, ...] = ONBOARDING_FIELDS[:_VOICE_FIELD_INDEX]
-# is_complete 以这些字段为门槛，防止中途崩溃后跳步续接
-_POST_CHARACTER_FIELDS: tuple[str, ...] = ONBOARDING_FIELDS[_VOICE_FIELD_INDEX + 1 :]
 
 
 class PersonaValidationError(ValueError):
@@ -217,7 +215,7 @@ def _state(answers: dict, next_field: str | None, complete: bool) -> dict[str, A
 
 
 async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]:
-    """从数据库恢复引导进度；complete 以立绘确认、全身确认、音色与用户资料字段共同为门槛。"""
+    """从数据库恢复引导进度；complete 以角色、头像、全身形象与音色为门槛。"""
     persona = await get_or_create_persona(db, user_id)
     draft = load_persona_definition(persona)
     if persona.is_complete:
@@ -230,12 +228,10 @@ async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]
         ).scalar_one_or_none()
         if avatar is None or not getattr(avatar, "seed_front_2d_url", None):
             return _state(merged, "fullbody", False)
-        missing_users = [k for k in _POST_CHARACTER_FIELDS if not user_profile.get(k)]
-        voice_missing = not draft.get("voice")
-        if voice_missing or missing_users:
-            # 合并草稿与 Memory，让桌面端一次性恢复所有已答字段
-            next_field = "voice" if voice_missing else missing_users[0]
-            return _state(merged, next_field, False)
+        if not draft.get("voice"):
+            # 合并草稿与 Memory，让桌面端在音色阶段仍能预填已答资料。
+            return _state(merged, "voice", False)
+        # 用户资料均可跳过，且完成后可单独遗忘；缺失资料不能重启 onboarding。
         return _state({}, None, True)
     answers = _onboarding_answers(draft)
     missing_character = next((f for f in _CHARACTER_ONBOARDING_FIELDS if not answers.get(f)), None)
