@@ -4,11 +4,9 @@ from dataclasses import dataclass
 
 from components import async_trace_span, redact_sensitive_text, safe_json_loads, tool_error
 
-from services.application.chat.native_memory import NativeMemory
-from services.contracts.delegation import DelegateAction
-from services.contracts.memory import MemoryScope
-from services.infrastructure.desktop.connection import MANAGER
-from services.infrastructure.desktop.ipc import create_future, discard_call, wait_future
+from services.application.chat import NativeMemory
+from services.contracts import DelegateAction, MemoryScope
+from services.infrastructure.desktop import MANAGER, create_future, discard_call, wait_future
 from services.infrastructure.tool_runtime import (
     REGISTRY,
     RESERVED_KEYS,

@@ -1,7 +1,14 @@
 from collections.abc import AsyncIterator
 
-from components import LOGIN_HEARTBEAT_INTERVAL_SECONDS, ensure_utc, get_db, utc_now
-from components.user_maintenance_runtime import begin_user_request, end_user_request, is_user_in_maintenance
+from components import (
+    LOGIN_HEARTBEAT_INTERVAL_SECONDS,
+    begin_user_request,
+    end_user_request,
+    ensure_utc,
+    get_db,
+    is_user_in_maintenance,
+    utc_now,
+)
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy import select

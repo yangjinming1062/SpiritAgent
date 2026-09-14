@@ -4,7 +4,7 @@ from typing import Any
 
 from components import session_scope, tool_error, utc_now
 
-from services.contracts.memory import MemoryScope, MemorySource
+from services.contracts import MemoryScope, MemorySource
 from services.domains.memory import (
     MemoryDecisions,
     MemoryReviewContext,

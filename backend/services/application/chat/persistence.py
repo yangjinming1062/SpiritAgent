@@ -11,14 +11,14 @@ from components import (
     get_logger,
     safe_json_loads,
     session_scope,
+    track_user_task,
 )
-from components.user_maintenance_runtime import track_user_task
 from modules.conversation import Conversation, Message
 from modules.media import SpeechStyle
 from modules.system import ChatRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import MemoryScope
+from services.contracts import MemoryScope
 from services.domains.companion import update_mood_from_companion_turn
 from services.domains.conversation import DEFAULT_PRESET_ID, SPECIAL_KIND, client_media_entries
 from services.infrastructure.llm import message_to_response_items

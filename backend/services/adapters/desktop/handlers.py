@@ -33,10 +33,10 @@ from components import (
     coerce_non_negative_float,
     coerce_non_negative_int,
     get_logger,
+    is_user_in_maintenance,
     path_attach_ref,
     safe_json_loads,
 )
-from components.user_maintenance_runtime import is_user_in_maintenance
 from fastapi import WebSocket, WebSocketDisconnect
 from modules.auth import ChatRequestClientContext
 from modules.conversation import Conversation, Message
@@ -46,11 +46,11 @@ from pydantic import ValidationError
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.adapters.desktop.auth import authenticate_ws_token, is_ws_login_active
 from services.application.chat import (
     SlashCommandContext,
     SlashCommandResult,
     build_turn_inputs,
+    compress_history_if_needed,
     list_commands_for_user,
     load_user_settings,
     merge_session_settings,
@@ -62,7 +62,6 @@ from services.application.chat import (
     run_chat_turn,
     suggest_commands,
 )
-from services.application.chat.context_compressor import compress_history_if_needed
 from services.application.generation import (
     AVATAR_JOB_LOCKS,
     MODEL_JOB_LOCKS,
@@ -73,16 +72,18 @@ from services.application.generation import (
     regenerate_avatar,
     request_model_download_retry,
 )
-from services.contracts.memory import EmbeddingItem, MemoryScope, MemorySource
+from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.companion import (
     REGION_NAMES_ZH,
     PersonaValidationError,
     check_affect,
     design_voice,
     emit_companion_message,
+    get_disturbance_tier,
     get_onboarding_state,
     get_or_create_persona,
     interact,
+    invalidate_user_interaction_stats,
     list_tts_voices,
     match_user_voice,
     normalize_voice_language,
@@ -90,8 +91,6 @@ from services.domains.companion import (
     should_act,
     submit_onboarding_field,
 )
-from services.domains.companion.disturbance import get_disturbance_tier
-from services.domains.companion.interaction_stats import invalidate_user_interaction_stats
 from services.domains.conversation import (
     IM_KIND,
     SYSTEM_PRESET_CATALOG,
@@ -122,14 +121,16 @@ from services.domains.memory import (
     record_user_timezone,
     update_memory,
 )
-from services.infrastructure.desktop.buffer import (
+from services.infrastructure.desktop import (
     DEFAULT_REPLAY_BUFFER_CAPACITY,
     DEFAULT_REPLAY_BUFFER_TTL_SECONDS,
+    MANAGER,
+    JsonRpcDispatcher,
+    JsonRpcError,
     ReplayBuffer,
+    discard_user,
+    resolve_future,
 )
-from services.infrastructure.desktop.connection import MANAGER
-from services.infrastructure.desktop.ipc import discard_user, resolve_future
-from services.infrastructure.desktop.jsonrpc import JsonRpcDispatcher, JsonRpcError
 from services.infrastructure.event_store import (
     cancel_user_event_tasks,
     interrupt_user_event_tasks,
@@ -137,6 +138,7 @@ from services.infrastructure.event_store import (
 from services.infrastructure.llm import MissingLlmConfigError, resolve_user_llm_config, scale_temperature
 from services.infrastructure.tool_runtime import REGISTRY
 
+from .auth import authenticate_ws_token, is_ws_login_active
 from .emitter import JsonRpcEmitter
 from .runtime import (
     RuntimeSession,

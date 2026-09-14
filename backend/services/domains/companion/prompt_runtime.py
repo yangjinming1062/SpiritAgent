@@ -6,7 +6,7 @@ from modules.settings import UserSetting
 from pydantic import BaseModel
 from sqlalchemy import select
 
-from services.contracts.memory import MemoryScope
+from services.contracts import MemoryScope
 from services.domains.memory import format_memories_block
 from services.infrastructure.llm import (
     LLMRuntimeError,

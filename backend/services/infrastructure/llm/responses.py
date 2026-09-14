@@ -3,7 +3,6 @@ from typing import Any
 from components import approx_text_tokens
 
 # Responses API: DB↔input-item conversion, token estimation, kwargs assembly.
-
 INPUT_IMAGE_TOKEN_ESTIMATE: int = 800
 # 持久层只存 URL 无时长，只能平坦估算；实测视频理解 ~350 token/秒（MiniMax M3），欠估由
 # 1M 上下文与每请求 2 个内联上限（VIDEO_INLINE_MAX_PER_REQUEST）兜底，不会撑爆窗口。

@@ -5,7 +5,7 @@ from typing import Any
 
 from components import get_logger, tool_error
 
-from services.contracts.delegation import DelegateAction
+from services.contracts import DelegateAction
 
 from .domains import apply_search_tools_catalog
 from .toolsets import disabled_backend_tool_names

@@ -3,14 +3,8 @@ from typing import Any
 
 from components import coerce_int, get_logger, session_scope, tool_error
 
-from services.contracts.memory import MemoryScope
-from services.domains.automation.cron_jobs import (
-    create_job,
-    get_job,
-    list_jobs,
-    remove_job,
-    update_job,
-)
+from services.contracts import MemoryScope
+from services.domains.automation import create_job, get_job, list_jobs, remove_job, update_job
 from services.domains.conversation import resolve_memory_scope
 
 logger = get_logger(__name__)

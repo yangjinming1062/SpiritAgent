@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import MemoryScope
+from services.contracts import MemoryScope
 from services.domains.conversation import ensure_system_conversations_for_user
 from services.domains.memory import extract_user_profile, read_user_profile, record_user_profile
 

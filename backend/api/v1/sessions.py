@@ -29,7 +29,7 @@ from modules.conversation import (
     DesktopSessionUndoResponse,
     Message,
 )
-from services.adapters.desktop.handlers import do_session_undo
+from services.adapters.desktop import do_session_undo
 from services.domains.conversation import (
     SPECIAL_KIND,
     ForkNotAllowedError,
@@ -38,8 +38,7 @@ from services.domains.conversation import (
     fork_conversation_from_message,
     resolve_preset_meta,
 )
-from services.infrastructure.desktop.connection import MANAGER
-from services.infrastructure.desktop.jsonrpc import JsonRpcError
+from services.infrastructure.desktop import MANAGER, JsonRpcError
 from sqlalchemy import String, asc, case, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -148,7 +147,6 @@ async def list_sessions(
             q = q.where(Conversation.parent_id.is_(None))
     # 其他 archived 取值由 Literal 在 HTTP 边界 422 拦截，此处 fallthrough 实际不可达，保留 no-op 供未来扩展。
     # include_subagents 仅作用于 archived="exclude"；"only"/"include" 路径忽略它（子代理导航走搜索端点与直链，不在 archived 切换 UI 内）。
-
     if min_messages > 0:
         q = q.where(func.coalesce(msg_stats.c.msg_count, 0) >= min_messages)
 

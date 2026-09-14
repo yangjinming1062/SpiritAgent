@@ -5,7 +5,7 @@ from components import get_logger, session_scope, tool_error
 from modules.conversation import Conversation
 from modules.system import ChatMessageRequest, ChatRequest
 
-from services.contracts.delegation import DelegateAction
+from services.contracts import DelegateAction
 from services.domains.conversation import conversation_memory_scope
 
 from .chat_emitter import HeadlessEmitter

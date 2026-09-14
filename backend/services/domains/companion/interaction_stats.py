@@ -8,7 +8,7 @@ from modules.memory import Memory
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import MemoryScope, MemorySource
+from services.contracts import MemoryScope, MemorySource
 from services.domains.memory import resolve_user_timezone, scope_filter, upsert_slotted_memory
 
 logger = get_logger(__name__)

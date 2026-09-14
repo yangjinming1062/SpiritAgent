@@ -1,6 +1,6 @@
 """日记业务域：片刻与日记的数据操作、编辑规则与归集口径。"""
 
-from services.domains.journal.journal_service import (
+from .journal_service import (
     DiaryNotFoundError,
     DiarySource,
     JournalError,

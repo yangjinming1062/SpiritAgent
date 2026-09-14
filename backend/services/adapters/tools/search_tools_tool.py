@@ -2,10 +2,9 @@ import json
 
 from components import SESSION_LOCAL
 
-from services.application.chat.prompt_presets import AUTOMATION_EXCLUDED_TOOL_NAMES, LIFE_SPACE_TOOL_NAMES
+from services.application.chat import AUTOMATION_EXCLUDED_TOOL_NAMES, LIFE_SPACE_TOOL_NAMES
 from services.domains.companion import is_work_preset, resolve_session_profile
-from services.infrastructure.tool_runtime import REGISTRY, schema_name
-from services.infrastructure.tool_runtime.domains import search_domains_and_tools
+from services.infrastructure.tool_runtime import REGISTRY, schema_name, search_domains_and_tools
 
 SEARCH_TOOLS_SCHEMA = {
     "name": "search_tools",

@@ -5,26 +5,28 @@
 """
 
 from modules.ws import CRON_TURN_EVENT
-from services.adapters.channels.adapters.weixin_ilink import WeixinIlinkAdapter
-from services.adapters.channels.registry import register as register_channel
+from services.adapters.channels import register as register_channel
+from services.adapters.channels.adapters import WeixinIlinkAdapter
 from services.adapters.tools import agent_delegate, cronjob_tool, search_tools_tool
 from services.adapters.tools import memory as memory_tools
-from services.adapters.tools.builtin.image_generation_tool import register as register_image_generation
-from services.adapters.tools.builtin.journal_tool import register as register_journal
-from services.adapters.tools.builtin.room_backdrop_tool import register as register_room_backdrop
-from services.adapters.tools.builtin.send_message_tool import register as register_send_message
-from services.adapters.tools.builtin.video_generation_tool import register as register_video_generation
-from services.adapters.tools.builtin.web_tools import register as register_web
-from services.application.automation.cron_turns import execute_cron_turn
-from services.application.generation.room_backdrop_service import schedule_initial_room
-from services.domains.companion.persona_service import set_greeting_moment_writer, set_initial_room_scheduler
+from services.adapters.tools.builtin import (
+    register_image_generation,
+    register_journal,
+    register_room_backdrop,
+    register_send_message,
+    register_video_generation,
+    register_web,
+)
+from services.application.automation import execute_cron_turn
+from services.application.generation import schedule_initial_room
+from services.domains.companion import set_greeting_moment_writer, set_initial_room_scheduler
 from services.domains.journal import write_system_moment
 from services.infrastructure.event_store import register_internal_event_handler
-from services.infrastructure.image_to_3d.providers import HunyuanImageTo3DProvider, TripoImageTo3DProvider
-from services.infrastructure.image_to_3d.registry import register as register_image_to_3d_provider
+from services.infrastructure.image_to_3d import HunyuanImageTo3DProvider, TripoImageTo3DProvider
+from services.infrastructure.image_to_3d import register as register_image_to_3d_provider
+from services.infrastructure.llm import ServiceType
+from services.infrastructure.llm import register as register_provider
 from services.infrastructure.llm.providers import gemini, grok, mimo, minimax, zhipu
-from services.infrastructure.llm.providers.base import ServiceType
-from services.infrastructure.llm.providers.registry import register as register_provider
 from services.infrastructure.tool_runtime import REGISTRY
 
 

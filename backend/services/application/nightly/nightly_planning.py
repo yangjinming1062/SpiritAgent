@@ -53,8 +53,8 @@ from services.application.generation import (
     resume_room_generation,
     schedule_room_generation,
 )
-from services.contracts.memory import MemoryScope
-from services.domains.automation.cron_jobs import create_job, remove_job
+from services.contracts import MemoryScope
+from services.domains.automation import create_job, remove_job
 from services.domains.journal import create_generated_moment, create_user_moment
 from services.infrastructure.assets import save_companion_asset
 from services.infrastructure.llm import call_llm_once, resolve_provider_chain, synthesize_speech

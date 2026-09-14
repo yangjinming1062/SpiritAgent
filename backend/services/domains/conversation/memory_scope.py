@@ -1,7 +1,7 @@
 from modules.conversation import Conversation
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import MemoryScope
+from services.contracts import MemoryScope
 
 from .presets import SYSTEM_PRESET_CATALOG
 

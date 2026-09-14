@@ -1,7 +1,7 @@
 """生成应用流程：形象、换装、房间、2D/3D 模型与媒体生成的生命周期编排。"""
 
-from services.application.generation import mesh2d
-from services.application.generation.avatar_service import (
+from . import mesh2d
+from .avatar_service import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
     AVATAR_JOB_LOCKS,
     AvatarGenerationError,
@@ -32,24 +32,24 @@ from services.application.generation.avatar_service import (
     select_avatar,
     upload_avatar,
 )
-from services.application.generation.image_generation import (
+from .image_generation import (
     ImageGenerationError,
     compose_image_references,
     generate_images,
     resolve_image_gen_chain,
 )
-from services.application.generation.mesh2d import (
+from .mesh2d import (
     Mesh2DNotReadyError,
     Mesh2DPipelineError,
     generate_mesh2d_model,
     get_active_mesh2d_response,
     set_render_mode,
 )
-from services.application.generation.model_service import (
+from .model_service import (
     generate_companion_model,
     request_model_download_retry,
 )
-from services.application.generation.outfit_service import (
+from .outfit_service import (
     OutfitDraftExpiredError,
     OutfitError,
     OutfitNotFoundError,
@@ -64,7 +64,7 @@ from services.application.generation.outfit_service import (
     resume_outfit_split,
     set_outfit_policy,
 )
-from services.application.generation.pipeline import (
+from .pipeline import (
     MODEL_JOB_LOCKS,
     ModelGenerationError,
     ModelGenerationInProgressError,
@@ -73,12 +73,12 @@ from services.application.generation.pipeline import (
     resume_inflight_pipelines,
     signed_model_url,
 )
-from services.application.generation.response_builders import (
+from .response_builders import (
     avatar_response,
     model_response,
     outfit_response,
 )
-from services.application.generation.room_backdrop_service import (
+from .room_backdrop_service import (
     BackdropIntent,
     BackdropOrigin,
     BackdropPolicy,
@@ -101,8 +101,8 @@ from services.application.generation.room_backdrop_service import (
     schedule_room_generation,
     set_backdrop_policy,
 )
-from services.application.generation.video_jobs import drain as drain_video_jobs
-from services.application.generation.video_jobs import (
+from .video_jobs import drain as drain_video_jobs
+from .video_jobs import (
     enqueue_video_job,
     get_job,
     resume_pending_video_jobs,

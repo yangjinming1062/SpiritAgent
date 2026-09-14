@@ -4,8 +4,7 @@ from components import get_logger, session_scope
 from modules.system import ChatMessageRequest, ChatRequest
 
 from services.application.chat import HeadlessEmitter, run_chat_turn
-from services.domains.companion import emit_companion_message
-from services.domains.companion.disturbance import get_disturbance_tier
+from services.domains.companion import emit_companion_message, get_disturbance_tier
 from services.domains.conversation import get_or_create_special_conversation
 from services.infrastructure.desktop import MANAGER
 from services.infrastructure.llm import resolve_user_llm_config

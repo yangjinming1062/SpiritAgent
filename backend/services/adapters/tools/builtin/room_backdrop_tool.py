@@ -22,8 +22,8 @@ from services.application.generation import (
     RoomBackdropQuotaExceededError,
     schedule_room_generation,
 )
-from services.domains.companion.disturbance import get_disturbance_tier
-from services.infrastructure.tool_runtime.registry import REGISTRY
+from services.domains.companion import get_disturbance_tier
+from services.infrastructure.tool_runtime import REGISTRY
 
 logger = get_logger(__name__)
 

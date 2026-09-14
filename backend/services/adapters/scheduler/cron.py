@@ -14,15 +14,13 @@ from components import (
     BackgroundTask,
     TaskBag,
     begin_local_scope,
-    get_logger,
-    session_scope,
-    utc_now,
-)
-from components.user_maintenance_runtime import (
     begin_user_request,
     end_user_request,
+    get_logger,
     is_user_in_maintenance,
+    session_scope,
     track_user_task,
+    utc_now,
 )
 from modules.auth import User
 from modules.conversation import Conversation
@@ -34,9 +32,9 @@ from sqlalchemy.engine import Row
 
 from services.application.automation import execute_standard_turn
 from services.application.nightly import run_nightly_pipeline
-from services.contracts.memory import MemoryScope
-from services.domains.automation.cron_jobs import STANDARD_CRON_KIND, compute_next_run_at
-from services.domains.companion.disturbance import get_disturbance_tier, is_still
+from services.contracts import MemoryScope
+from services.domains.automation import STANDARD_CRON_KIND, compute_next_run_at
+from services.domains.companion import get_disturbance_tier, is_still
 from services.domains.conversation import (
     ProactiveState,
     get_personality_tags,

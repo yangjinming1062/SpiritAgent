@@ -128,9 +128,6 @@ def list_commands_for_user() -> list[dict]:
     return out
 
 
-# --- 模糊建议（给未识别命令回执用） ---
-
-
 def suggest_commands(name: str, *, limit: int = 3, cutoff: float = 0.5) -> list[str]:
     """未识别命令的回执：返回与 ``name`` 最相近的命令主名列表（不含 aliases）。
 

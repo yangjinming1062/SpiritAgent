@@ -25,10 +25,10 @@ from modules.system import AgentPromptConfig, ChatRequest, PromptPreset
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.application.chat.native_memory import NativeMemory
-from services.contracts.memory import MemoryScope, MemorySource
+from services.application.chat import NativeMemory
+from services.contracts import MemoryScope, MemorySource
 from services.domains.companion import build_outfit_extras, build_system_prompt_extras, is_work_preset
-from services.domains.configuration.desktop_config import DEFAULT_CONFIG
+from services.domains.configuration import DEFAULT_CONFIG
 from services.domains.conversation import (
     DEFAULT_PRESET_ID,
     IM_KIND,

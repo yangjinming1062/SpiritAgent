@@ -19,11 +19,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.companion import classify_species, get_or_create_persona, load_persona_definition, select_rig_type
-from services.infrastructure.assets.asset_store import (
-    build_data_uri,
-    build_signed_avatar_url,
-    resolve_companion_asset_path,
-)
+from services.infrastructure.assets import build_data_uri, build_signed_avatar_url, resolve_companion_asset_path
 from services.infrastructure.llm import (
     build_fullbody_prompt,
     chat,

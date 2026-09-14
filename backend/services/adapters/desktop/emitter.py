@@ -1,6 +1,6 @@
 from typing import Any
 
-from services.infrastructure.desktop.jsonrpc import JsonRpcDispatcher
+from services.infrastructure.desktop import JsonRpcDispatcher
 
 # 原始 ``type`` → JSON-RPC ``params.type``。每个原始帧要么翻译成 JSON-RPC 事件信封，要么丢弃（未知类型）。
 _TRANSLATED: dict[str, str] = {

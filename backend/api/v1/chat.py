@@ -1,6 +1,6 @@
 from common import get_router
 from fastapi import WebSocket
-from services.adapters.desktop.handlers import handle_chat_websocket
+from services.adapters.desktop import handle_chat_websocket
 
 router = get_router()
 

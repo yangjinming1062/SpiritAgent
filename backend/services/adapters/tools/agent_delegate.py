@@ -1,4 +1,4 @@
-from services.contracts.delegation import DelegateAction
+from services.contracts import DelegateAction
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 AGENT_DELEGATE_SCHEMA = {

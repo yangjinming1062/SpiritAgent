@@ -77,9 +77,6 @@ def ensure_utc(dt: datetime) -> datetime:
     return dt.replace(tzinfo=UTC) if dt.tzinfo is None else dt
 
 
-# ---------- 时间格式化（陪伴对话时间感知）----------
-
-
 def _safe_localize(dt: datetime | None, tz_str: str | None) -> datetime | None:
     if dt is None:
         return None

@@ -21,7 +21,7 @@ from modules.auth import CurrentUser
 from modules.conversation import Conversation
 from modules.media import SPEECH_STYLE_ADAPTER
 from pydantic import ValidationError
-from services.adapters.http.rate_limit import limiter
+from services.adapters.http import limiter
 from services.domains.media import (
     attachment_video_url,
     enforce_session_quota,

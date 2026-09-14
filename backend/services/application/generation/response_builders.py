@@ -10,7 +10,7 @@ from modules.companion import (
     OutfitResponse,
 )
 
-from services.infrastructure.assets.asset_store import get_companion_model_sha256
+from services.infrastructure.assets import get_companion_model_sha256
 from services.infrastructure.image_to_3d import provider_supports_multiview
 
 from .avatar_service import re_sign_bare_path

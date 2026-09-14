@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.chat import load_user_settings, persist_extra_user_messages, run_chat_turn
 from services.domains.conversation import note_user_contact, reset_user_outreach
-from services.infrastructure.desktop.connection import MANAGER
+from services.infrastructure.desktop import MANAGER
 from services.infrastructure.llm import resolve_user_llm_config
 from services.infrastructure.tool_runtime import REGISTRY
 

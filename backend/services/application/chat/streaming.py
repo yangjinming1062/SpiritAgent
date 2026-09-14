@@ -195,7 +195,7 @@ async def _generate_llm_response(
                 if not segment:
                     continue
                 speech_style_sent = False
-                # --- 分隔符仅作传输用：发 break 帧给渲染端，但不要合并到 turn_content（持久化文本会被 TTS 朗读，不能漏出 ---）。
+                # 分隔符仅作传输用：发 break 帧给渲染端，但不要合并到 turn_content（持久化文本会被 TTS 朗读，不能漏出）。
                 turn_parts.append(segment)
                 bubble_parts.clear()
                 await emitter.send_json({"type": "bubble.break"})

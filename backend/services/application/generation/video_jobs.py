@@ -10,9 +10,9 @@ from components import (
     backoff_for_poll,
     download_capped,
     get_logger,
+    track_user_task,
     utc_now,
 )
-from components.user_maintenance_runtime import track_user_task
 from modules.conversation import Message
 from modules.media import VideoGenJob
 from modules.ws import emit_ws_event
@@ -258,8 +258,6 @@ async def _record_failure(
 
 
 # In-flight 集合：进程中途重启时，多个协程可能竞争 finalize 同一任务。第一个进入的注册，后续提前退出，避免重复下载或重复 WSEvent；集合驻留在进程内存（重启即丢失——重启后由 resume_pending_video_jobs 走 DB 重建）。
-
-
 async def _poll_and_finalize(job_id: int) -> None:
     """后台主循环：轮询供应商、成功后下载、写 WSEvent。状态机：``queued`` → ``processing`` → ``downloading`` → ``succeeded``/``failed``；``downloading`` 故意排除在 resume 集合外，避免重连任务重启下载半段。"""
     if job_id in _INFLIGHT:

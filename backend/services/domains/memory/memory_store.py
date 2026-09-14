@@ -8,7 +8,7 @@ from sqlalchemy import ColumnElement, and_, case, func, or_, select, text, updat
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import EmbeddingItem, MemoryScope, MemorySource
+from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.conversation import validate_memory_scope
 from services.infrastructure.llm import generate_embeddings, resolve_embedding_provider
 

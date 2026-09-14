@@ -5,8 +5,7 @@ import base64
 import hashlib
 import json
 
-from components import SESSION_LOCAL, get_logger
-from components.user_maintenance_runtime import track_user_task
+from components import SESSION_LOCAL, get_logger, track_user_task
 from modules.companion import AvatarAsset, Companion2DModel, CompanionOutfit
 from modules.ws import emit_ws_event
 from sqlalchemy import select, update

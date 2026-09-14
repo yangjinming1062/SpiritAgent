@@ -4,8 +4,7 @@ from urllib.parse import urlparse
 
 from components import get_logger, is_safe_outbound, safe_outbound_async_client, tool_error
 
-from services.domains.companion import emit_companion_message
-from services.domains.companion.disturbance import is_still
+from services.domains.companion import emit_companion_message, is_still
 from services.infrastructure.tool_runtime import REGISTRY
 
 logger = get_logger(__name__)

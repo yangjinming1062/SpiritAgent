@@ -36,7 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.conversation import get_or_create_special_conversation
 from services.domains.memory import resolve_user_timezone
-from services.infrastructure.assets.asset_store import save_companion_asset, signed_companion_asset_url
+from services.infrastructure.assets import save_companion_asset, signed_companion_asset_url
 
 logger = get_logger(__name__)
 

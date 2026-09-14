@@ -6,7 +6,7 @@ from fastapi import HTTPException, Request
 from modules.auth import CurrentUser
 from modules.system import CompletionResponse
 from pydantic import BaseModel
-from services.adapters.http.rate_limit import limiter
+from services.adapters.http import limiter
 from services.infrastructure.llm import (
     MissingLlmConfigError,
     ServiceType,

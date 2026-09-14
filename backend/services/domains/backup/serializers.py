@@ -25,7 +25,7 @@ from modules.settings import UserSetting
 from sqlalchemy import Date, DateTime, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import MemoryScope
+from services.contracts import MemoryScope
 from services.domains.conversation import validate_memory_scope
 
 from .file_packing import UrlRewriter

@@ -40,9 +40,9 @@ from modules.scheduler import (
     NightlyActivityLogListResponse,
 )
 from modules.system import MessageResponse
-from services.adapters.desktop.handlers import terminate_user_gateway
+from services.adapters.desktop import terminate_user_gateway
 from services.adapters.maintenance import user_maintenance
-from services.application.configuration.system_settings import get_system_settings_for_admin, save_system_settings
+from services.application.configuration import get_system_settings_for_admin, save_system_settings
 from services.application.generation import delete_portrait_file
 from services.domains.backup import (
     CONVERSATION_TABLES,
@@ -56,7 +56,7 @@ from services.domains.backup import (
     restore_backup_rows,
     serialize_rows,
 )
-from services.domains.configuration.ai_config import prepare_ai_config, public_ai_config
+from services.domains.configuration import prepare_ai_config, public_ai_config
 from services.domains.conversation import ensure_system_conversations_for_user
 from services.infrastructure.llm import providers_supporting
 from sqlalchemy import delete, select, update
@@ -257,11 +257,6 @@ async def delete_model_config(user_id: int, db: DbSession) -> MessageResponse:
     await db.delete(await get_or_404(db, UserModelConfig, user_id=user_id, detail="模型配置不存在。"))
     await db.commit()
     return {"message": "模型配置已删除。"}
-
-
-# ── 用户数据导出 / 导入 ────────────────────────────────────────
-# 会话与消息可选；channel_bindings / login_records / admin_sessions 不迁移；
-# activation_code / activation_token_hash 也不复制（绑定原部署 base_url）。
 
 
 def _create_export_zip(

@@ -5,7 +5,7 @@ from components import parse_llm_json, session_scope, utc_now
 from modules.conversation import Conversation, Message
 from sqlalchemy import func, select
 
-from services.contracts.memory import MemoryScope, MemorySource
+from services.contracts import MemoryScope, MemorySource
 from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_user_llm_config
 
 from .memory_learning import (

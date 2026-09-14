@@ -16,18 +16,13 @@ from enum import Enum
 from pathlib import Path
 
 import httpx
-from components import SESSION_LOCAL, SETTINGS, backoff_for_poll, get_logger, log_paid_call
-from components.user_maintenance_runtime import track_user_task
+from components import SESSION_LOCAL, SETTINGS, backoff_for_poll, get_logger, log_paid_call, track_user_task
 from modules.companion import Companion3DModel
 from modules.ws import emit_ws_event
 from sqlalchemy import select, update
 
 from services.domains.companion import select_rig_type
-from services.infrastructure.assets.asset_store import (
-    build_signed_model_url,
-    get_companion_model_sha256,
-    save_companion_model,
-)
+from services.infrastructure.assets import build_signed_model_url, get_companion_model_sha256, save_companion_model
 from services.infrastructure.image_to_3d import (
     ImageTo3DError,
     ImageTo3DProvider,

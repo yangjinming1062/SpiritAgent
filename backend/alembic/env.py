@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import modules
 import modules.media.models  # noqa: F401 — video_gen_jobs is intentionally not imported by modules/__init__
-from common.model import ModelBase
+from common import ModelBase
 from components import SETTINGS
 
 config = context.config

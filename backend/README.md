@@ -33,7 +33,9 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 - **components/**（config、database、logger、background、attachments、hashing、correlation、user_maintenance_runtime 等）是进程级运行时设施：`SETTINGS` 配置单例、异步引擎与会话、TaskBag/BackgroundTask 任务托管、日志与相关 ID。它无业务语义，是单副本 eager-import 设计的地基；新增横切设施放这里，而不是在各业务包里自造单例。
 - **common/** 只有 api.py 与 model.py：路由声明、ORM 基类、列表响应等极少量框架工具，保证所有路由的声明方式与分页响应形状一致。
 
-运行时周边：`static/admin.html` 是管理台单文件页，`updates/` 与 `data/` 是挂载卷（自更新产物与附件根目录），`monitoring/` 供 Prometheus 抓取配置，容器编排见 [docker-compose.yml](docker-compose.yml)。
+包入口约定：`common`、`components` 与 `modules` 各子包在 `__init__.py` 中相对导入并 re-export 公共符号（带 `__all__`），调用方写 `from components import track_user_task`、`from modules.auth import CurrentUser`，不深挖实现文件。`services` 不在包级汇总导出——按能力域导入（如 `from services.domains.memory import create_memory`）；各域/基础设施包同样用相对导入在自身 `__init__.py` 暴露公共入口。facade 一致性由 [check_imports.py](../scripts/check_imports.py) 检查。
+
+运行时周边：`static/admin.html` 是管理台单页，`updates/` 与 `data/` 是挂载卷（自更新产物与附件根目录），`monitoring/` 供 Prometheus 抓取配置，容器编排见 [docker-compose.yml](docker-compose.yml)。
 
 ### 3.2 services 五层
 

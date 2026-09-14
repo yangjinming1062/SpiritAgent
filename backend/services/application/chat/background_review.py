@@ -1,6 +1,6 @@
 from components import get_logger
 
-from services.contracts.memory import MemoryScope
+from services.contracts import MemoryScope
 from services.domains.memory import review_memories
 
 logger = get_logger(__name__)

@@ -1,3 +1,5 @@
+"""进程级运行时设施：配置、数据库、日志、任务托管、附件与维护态；对外 re-export。"""
+
 from .ai_config import CAPABILITY_SERVICES, AIConfig, AIConfigPublic, AIConfigUpdate, ProviderCard, load_ai_config
 from .attachments import attachment_root, path_attach_ref, session_dir
 from .attachments import gc_session as attachments_gc_session
@@ -106,6 +108,17 @@ from .paid_calls import log_paid_call
 from .redact import redact_sensitive_text
 from .temp_files import cleanup_expired, get_file_path, save_file
 from .temp_files import gc_session as temp_files_gc_session
+from .user_maintenance_runtime import (
+    begin_user_request,
+    cancel_user_tasks,
+    clear_user_maintenance,
+    end_user_request,
+    is_user_in_maintenance,
+    mark_user_maintenance,
+    track_user_task,
+    user_maintenance_lock,
+    wait_for_user_requests,
+)
 
 __all__ = [
     "AGENT_MAX_LOOP_TURNS",
@@ -190,7 +203,10 @@ __all__ = [
     "attachments_gc_session",
     "backoff_for_poll",
     "begin_local_scope",
+    "begin_user_request",
+    "cancel_user_tasks",
     "cleanup_expired",
+    "clear_user_maintenance",
     "coerce_hour_0_23",
     "coerce_int",
     "coerce_non_negative_float",
@@ -198,6 +214,7 @@ __all__ = [
     "correlated_exception_response",
     "correlation_id_middleware",
     "download_capped",
+    "end_user_request",
     "ensure_utc",
     "format_day_marker",
     "format_local_date_str",
@@ -206,8 +223,10 @@ __all__ = [
     "get_file_path",
     "get_logger",
     "is_safe_outbound",
+    "is_user_in_maintenance",
     "log_paid_call",
     "load_ai_config",
+    "mark_user_maintenance",
     "new_request_id",
     "normalize_sha512",
     "parse_llm_json",
@@ -228,5 +247,8 @@ __all__ = [
     "sha512_b64",
     "temp_files_gc_session",
     "tool_error",
+    "track_user_task",
+    "user_maintenance_lock",
     "utc_now",
+    "wait_for_user_requests",
 ]

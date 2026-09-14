@@ -25,7 +25,7 @@ from modules.settings import UserSetting
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
-from services.contracts.memory import EmbeddingItem, MemoryScope, MemorySource
+from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.conversation import SPECIAL_KIND, UI_ONLY_SUBTYPES, validate_memory_scope
 from services.domains.memory import (
     backfill_memory_embeddings,

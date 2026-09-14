@@ -6,7 +6,7 @@ from modules.memory import Memory
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import EmbeddingItem, MemoryScope
+from services.contracts import EmbeddingItem, MemoryScope
 
 from .memory_learning import memory_record
 from .memory_namespaces import KIND_TO_PREFIX, RECALL_TAGS, participates_in_recall

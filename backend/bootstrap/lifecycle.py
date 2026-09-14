@@ -19,10 +19,10 @@ from components import (
 )
 from fastapi import FastAPI
 from services.adapters.channels import start_channel_manager, stop_channel_manager
-from services.adapters.desktop.handlers import drain as drain_user_sessions
-from services.adapters.scheduler.cron import drain as drain_cron
-from services.adapters.scheduler.cron import start_scheduler, stop_scheduler
-from services.application.configuration.system_settings import load_and_apply_system_settings
+from services.adapters.desktop import drain as drain_user_sessions
+from services.adapters.scheduler import drain as drain_cron
+from services.adapters.scheduler import start_scheduler, stop_scheduler
+from services.application.configuration import load_and_apply_system_settings
 from services.application.generation import (
     drain_room_backdrop_jobs,
     drain_video_jobs,

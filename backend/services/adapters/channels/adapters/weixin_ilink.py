@@ -263,8 +263,6 @@ class WeixinIlinkAdapter(ChannelAdapter):
         self._login_state: dict = {"state": "connected" if self.has_credentials() else "login_required"}
         self._client: httpx.AsyncClient | None = None
 
-    # ---- 基础 HTTP 层 ---------------------------------------------------------------
-
     def has_credentials(self) -> bool:
         return bool(self._creds.get("bot_token"))
 
@@ -322,8 +320,6 @@ class WeixinIlinkAdapter(ChannelAdapter):
         if (ret is not None and ret != 0) or (errcode is not None and errcode != 0):
             raise ChannelError(f"iLink API error: {data.get('errmsg') or data}", fatal=False)
         return data
-
-    # ---- 登录流 ---------------------------------------------------------------------
 
     async def start_login(self) -> None:
         if self._login_task is not None and not self._login_task.done():
@@ -434,8 +430,6 @@ class WeixinIlinkAdapter(ChannelAdapter):
         self._login_gate.clear()
         await update_binding_status(self.snapshot.id, "login_required")
 
-    # ---- 常驻轮询 -------------------------------------------------------------------
-
     async def run(self) -> None:
         while True:
             if not self.has_credentials():
@@ -501,8 +495,6 @@ class WeixinIlinkAdapter(ChannelAdapter):
                 logger.exception("weixin inbound turn failed", extra={"binding": self.snapshot.id, "peer": peer_id})
 
         self.create_task(_dispatch(), name=f"channels.weixin.dispatch.{self.snapshot.id}")
-
-    # ---- 出站 -----------------------------------------------------------------------
 
     async def send_text(self, peer_id: str, text: str, context_token: str | None = None) -> None:
         token = context_token or self._creds.get("context_tokens", {}).get(peer_id)
@@ -723,8 +715,6 @@ class WeixinIlinkAdapter(ChannelAdapter):
 
     def platform_hint(self) -> str | None:
         return "weixin"
-
-    # ---- 凭据持久化 -----------------------------------------------------------------
 
     async def _persist_credentials(self) -> None:
         async with session_scope() as db:

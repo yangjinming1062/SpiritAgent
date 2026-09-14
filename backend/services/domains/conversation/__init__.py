@@ -17,6 +17,7 @@ from .presets import DEFAULT_PRESET_ID, SYSTEM_PRESET_CATALOG, InferenceDefaults
 from .proactive_state import (
     ProactiveState,
     UserProactiveRecord,
+    clear_user_proactive_state,
     get_personality_tags,
     get_user_proactive_record,
     note_outreach_throttle,
@@ -46,6 +47,7 @@ __all__ = [
     "UndoNotAllowedError",
     "UserProactiveRecord",
     "build_session_messages",
+    "clear_user_proactive_state",
     "client_media_entries",
     "ensure_system_conversations_for_user",
     "fork_conversation_from_message",

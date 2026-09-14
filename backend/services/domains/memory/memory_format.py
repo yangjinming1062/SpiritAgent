@@ -3,7 +3,7 @@ from modules.memory import Memory
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import MemoryScope
+from services.contracts import MemoryScope
 
 from .memory_store import active_memory_filter, scope_filter
 

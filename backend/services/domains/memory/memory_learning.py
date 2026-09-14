@@ -12,7 +12,7 @@ from pydantic import BaseModel, field_serializer
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import EmbeddingItem, MemoryScope, MemorySource
+from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.conversation import message_text
 
 from .memory_bootstrap import resolve_user_timezone

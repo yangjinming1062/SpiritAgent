@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.configuration.ai_config import prepare_ai_config, public_ai_config
+from services.domains.configuration import prepare_ai_config, public_ai_config
 from services.infrastructure.llm import providers_supporting, rotate_http_clients
 
 logger = get_logger(__name__)
@@ -105,7 +105,6 @@ def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
             logger.warning("Failed to reload logging configuration", exc_info=True)
 
     # DynamicLimiter.enabled 的 getter 直读 SETTINGS.rate_limit_enabled，无需进程内赋值。
-
     # 如果 LLM 请求超时或重试参数发生变动，换代客户端连接池，让新连接应用新参数
     llm_http_keys = {
         "llm_request_timeout_seconds",

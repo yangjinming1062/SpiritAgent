@@ -22,9 +22,9 @@ from components import (
     get_logger,
     log_paid_call,
     parse_llm_json,
+    track_user_task,
     utc_now,
 )
-from components.user_maintenance_runtime import track_user_task
 from modules.companion import (
     AvatarAsset,
     BackdropIntent,

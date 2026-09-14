@@ -4,10 +4,10 @@ import asyncio
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from components import get_logger
-from components.user_maintenance_runtime import (
+from components import (
     cancel_user_tasks,
     clear_user_maintenance,
+    get_logger,
     mark_user_maintenance,
     user_maintenance_lock,
     wait_for_user_requests,
@@ -15,11 +15,10 @@ from components.user_maintenance_runtime import (
 from modules.ws import CRON_TURN_EVENT
 
 from services.adapters.channels import MANAGER as CHANNEL_MANAGER
-from services.adapters.desktop.handlers import terminate_user_gateway
-from services.adapters.scheduler.cron import invalidate_user_scheduler_state
-from services.domains.companion.interaction_stats import invalidate_user_interaction_stats
-from services.domains.companion.should_act import invalidate_user_should_act
-from services.domains.conversation.proactive_state import clear_user_proactive_state
+from services.adapters.desktop import terminate_user_gateway
+from services.adapters.scheduler import invalidate_user_scheduler_state
+from services.domains.companion import invalidate_user_interaction_stats, invalidate_user_should_act
+from services.domains.conversation import clear_user_proactive_state
 from services.domains.memory import invalidate_memory_review_locks
 from services.infrastructure.event_store import interrupt_user_event_tasks
 

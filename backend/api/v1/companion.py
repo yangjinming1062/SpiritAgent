@@ -29,7 +29,7 @@ from modules.companion import (
     RenderModeRequest,
     VoicesListResponse,
 )
-from services.adapters.http.rate_limit import limiter
+from services.adapters.http import limiter
 from services.application.generation import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
     AvatarGenerationError,

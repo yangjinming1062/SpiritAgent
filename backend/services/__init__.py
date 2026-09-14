@@ -1,1 +1,5 @@
-# 服务/编排层；不重导出子包，按需直接 import；工具注册由 main.py 显式触发。
+"""服务编排层：contracts / domains / application / infrastructure / adapters。
+
+不在此包级 re-export 子包符号——调用方按能力域导入，例如 ``from services.domains.memory import create_memory``。
+工具与供应商注册由 bootstrap 显式触发。
+"""

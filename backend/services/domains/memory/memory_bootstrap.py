@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import MemoryScope, MemorySource
+from services.contracts import MemoryScope, MemorySource
 
 from .memory_store import active_memory_filter, scope_filter, upsert_slotted_memory
 

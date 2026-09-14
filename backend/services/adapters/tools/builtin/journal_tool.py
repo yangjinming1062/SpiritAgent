@@ -14,9 +14,9 @@ from typing import Any
 from components import SESSION_LOCAL, tool_error
 from modules.companion import DiarySource, MomentKind, MomentSource
 
-from services.domains.companion.disturbance import get_disturbance_tier
+from services.domains.companion import get_disturbance_tier
 from services.domains.journal import check_moment_llm_quota, create_user_moment, resolve_user_local_today, upsert_diary
-from services.infrastructure.tool_runtime.registry import REGISTRY
+from services.infrastructure.tool_runtime import REGISTRY
 
 _VALID_MOMENT_KINDS: frozenset[str] = frozenset(k.value for k in MomentKind)
 

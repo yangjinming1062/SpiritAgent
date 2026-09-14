@@ -20,9 +20,9 @@ from components import (
     SETTINGS,
     get_logger,
     safe_json_loads,
+    track_user_task,
     utc_now,
 )
-from components.user_maintenance_runtime import track_user_task
 from modules.companion import (
     OUTFIT_POLICY_DEFAULT,
     AvatarAsset,
@@ -36,7 +36,7 @@ from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.companion import get_or_create_persona, load_persona_definition
-from services.infrastructure.assets.asset_store import build_data_uri, resolve_companion_asset_path
+from services.infrastructure.assets import build_data_uri, resolve_companion_asset_path
 from services.infrastructure.llm import build_outfit_prompt, chat, resolve_fullbody_template
 
 from .avatar_service import (

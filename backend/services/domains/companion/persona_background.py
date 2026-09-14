@@ -4,8 +4,7 @@ import random
 import time
 from collections.abc import Awaitable, Callable
 
-from components import SESSION_LOCAL, get_logger
-from components.user_maintenance_runtime import track_user_task
+from components import SESSION_LOCAL, get_logger, track_user_task
 from modules.companion import Persona
 from sqlalchemy import select, update
 

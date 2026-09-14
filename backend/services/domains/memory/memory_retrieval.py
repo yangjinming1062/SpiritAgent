@@ -8,7 +8,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
-from services.contracts.memory import MemoryScope
+from services.contracts import MemoryScope
 from services.infrastructure.llm import (
     EmbeddingProvider,
     generate_embedding,

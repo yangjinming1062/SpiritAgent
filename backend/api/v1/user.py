@@ -14,17 +14,15 @@ from modules.auth import (
     hash_activation_token,
 )
 from modules.system import MessageResponse
-from services.adapters.desktop.handlers import terminate_user_gateway
-from services.adapters.http.rate_limit import limiter
+from services.adapters.desktop import terminate_user_gateway
+from services.adapters.http import limiter
 from slowapi.util import get_remote_address
 from sqlalchemy import select
 
 WS_TICKET_TTL_SECONDS = 60
 
-
-router = get_router()
-
 # 短期 ticket TTL：足以开 WS、重放前已过期。
+router = get_router()
 
 
 @router.post("/activate", response_model=TokenResponse)

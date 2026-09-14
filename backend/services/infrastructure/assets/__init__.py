@@ -1,7 +1,7 @@
 """资产基础设施：文件存储、签名 URL、散列与 Range 文件服务。"""
 
-from services.infrastructure.assets import asset_store
-from services.infrastructure.assets.asset_store import (
+from . import asset_store
+from .asset_store import (
     build_data_uri,
     build_signed_asset_url,
     build_signed_avatar_url,
@@ -14,10 +14,12 @@ from services.infrastructure.assets.asset_store import (
     resolve_companion_asset_path,
     resolve_companion_model_path,
     save_companion_asset,
+    save_companion_model,
+    signed_companion_asset_url,
     verify_signed_asset_request,
     verify_signed_avatar_request,
 )
-from services.infrastructure.assets.http_range import serve_ranged_file
+from .http_range import serve_ranged_file
 
 __all__ = [
     "asset_store",
@@ -33,7 +35,9 @@ __all__ = [
     "resolve_companion_asset_path",
     "resolve_companion_model_path",
     "save_companion_asset",
+    "save_companion_model",
     "serve_ranged_file",
+    "signed_companion_asset_url",
     "verify_signed_asset_request",
     "verify_signed_avatar_request",
 ]

@@ -9,7 +9,7 @@ from modules.scheduler import CronJob
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts.memory import MemoryScope
+from services.contracts import MemoryScope
 from services.domains.conversation import STANDARD_KIND, validate_memory_scope
 
 logger = get_logger(__name__)

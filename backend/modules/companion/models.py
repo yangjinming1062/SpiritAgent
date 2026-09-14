@@ -143,7 +143,6 @@ class AvatarAsset(ModelBase):
 
     __tablename__ = "avatar_assets"
     # 部分唯一索引（每用户一个 active）位于 alembic baseline——需要 WHERE 子句。
-
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     prompt_json: Mapped[str] = mapped_column(Text)
     asset_url: Mapped[str] = mapped_column(String(2048))

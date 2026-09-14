@@ -12,7 +12,7 @@ from components import (
 from fastapi import FastAPI, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from services.adapters.http.rate_limit import (
+from services.adapters.http import (
     limiter,
     rate_limit_exception_handler,
     stash_user_id_middleware,
