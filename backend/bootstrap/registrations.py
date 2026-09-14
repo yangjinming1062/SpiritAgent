@@ -48,6 +48,7 @@ def register_providers() -> None:
     register_provider(ServiceType.image_gen, "minimax", minimax.MiniMaxImageGenProvider)
     register_provider(ServiceType.video_gen, "minimax", minimax.MiniMaxVideoGenProvider)
     register_provider(ServiceType.tts, "minimax", minimax.MiniMaxTTSProvider)
+    register_provider(ServiceType.stt, "minimax", minimax.MiniMaxSTTProvider)
     register_provider(ServiceType.embedding, "minimax", minimax.MiniMaxEmbeddingProvider)
     register_provider(ServiceType.stt, "zhipu", zhipu.ZhipuSTTProvider)
     register_provider(ServiceType.tts, "zhipu", zhipu.ZhipuTTSProvider)

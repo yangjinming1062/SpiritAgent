@@ -23,7 +23,7 @@ _PROVIDER_VIDEO_MODELS: dict[str, str] = {}
 # 提供 OpenAI 形态 /v1/embeddings 端点的供应商；原生端点（如 minimax /v1/embeddings 用 texts 而非 input）被排除，llm_client.resolve_embedding_provider 仅对集合内的供应商构造 OpenAI 兼容兜底。
 OPENAI_COMPATIBLE_PROVIDERS: frozenset[str] = frozenset({"mimo"})
 
-# (provider, service) 的默认 base_url；空字符串表示该供应商不提供该能力（如 MiniMax 无公开 STT）。MiMo 含 /v1（OpenAI SDK 需要完整 base_url），MiniMax 不含 /v1（其 httpx provider 自拼 /v1/<endpoint>）。
+# (provider, service) 的默认 base_url；空字符串表示该供应商不提供该能力（如 Gemini 未注册 STT）。MiMo 与 MiniMax llm 含 /v1（OpenAI SDK 需要完整 base_url）；MiniMax 其余能力的 httpx provider 自拼 /v1/<endpoint>，llm_client 链解析会剥掉其 base_url 尾部 /v1，故注册默认值统一含 /v1。
 PROVIDER_DEFAULT_URLS: dict[str, dict[str, str]] = {
     "mimo": {
         "llm": "https://token-plan-cn.xiaomimimo.com/v1",
@@ -35,11 +35,11 @@ PROVIDER_DEFAULT_URLS: dict[str, dict[str, str]] = {
     },
     "minimax": {
         "llm": "https://api.minimaxi.com/v1",
-        "stt": "",
-        "tts": "https://api.minimaxi.com",
-        "image_gen": "https://api.minimaxi.com",
-        "video_gen": "https://api.minimaxi.com",
-        "embedding": "https://api.minimaxi.com",
+        "stt": "https://api.minimaxi.com/v1",
+        "tts": "https://api.minimaxi.com/v1",
+        "image_gen": "https://api.minimaxi.com/v1",
+        "video_gen": "https://api.minimaxi.com/v1",
+        "embedding": "https://api.minimaxi.com/v1",
     },
     "gemini": {
         "llm": "",

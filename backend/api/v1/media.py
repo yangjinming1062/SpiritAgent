@@ -207,7 +207,7 @@ async def speech_to_text(
     audio_file: UploadFile | None = File(None),
     file: UploadFile | None = File(None),
 ) -> dict[str, Any]:
-    """走供应商链路的语音转写（仅 MiMo 注册了 STT）。"""
+    """走供应商链路的语音转写。"""
     target_file = audio_file or file
     if target_file is None:
         raise HTTPException(
