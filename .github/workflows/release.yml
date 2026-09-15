@@ -89,6 +89,8 @@ jobs:
           echo "SPIRITAGENT_UPDATE_SIGNING_KEY=$key_path" >> "$GITHUB_ENV"
       - name: Build installer
         shell: bash
+        env:
+          PYTHONUTF8: "1" # runner stdout 默认 cp1252，强制 build.py 及其 Python 子进程走 UTF-8
         run: |
           python scripts/build.py --version "${{ steps.meta.outputs.version }}" --target ${{ matrix.target }}
       - name: Upload artifacts

@@ -82,6 +82,11 @@ def build_desktop(repo_root: Path, target: str) -> None:
 
 
 def main() -> int:
+    # Windows 控制台默认 cp1252/GBK，print 里 → 等非 ASCII 字符会触发 UnicodeEncodeError；
+    # 统一为 UTF-8 并降级替换，保证任意语言环境的 host 与 CI runner 都能跑。
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     parser = argparse.ArgumentParser(description="Build SpiritAgent client installer")
     parser.add_argument("--version", required=True, help="Release version (e.g. 0.16.0)")
     parser.add_argument("--target", choices=["mac", "win"], default=None, help="Target OS (default: infer from host)")
