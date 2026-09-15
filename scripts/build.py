@@ -13,6 +13,7 @@
 """
 
 import argparse
+import os
 import platform
 import shutil
 import subprocess
@@ -41,6 +42,12 @@ def run_cmd(
 ) -> None:
     display_cmd = cmd if isinstance(cmd, str) else " ".join(cmd)
     print(f"==> [exec] {display_cmd} (in {cwd or '.'})")
+    if not shell and isinstance(cmd, list) and os.name == "nt":
+        # Windows CreateProcess 不按 PATHEXT 解析，pnpm 这类 .cmd shim 裸名启动会 WinError 2；
+        # 先经 which 落到完整路径再启动（which 找不到时保持原样，让报错来自 CreateProcess 本身）。
+        resolved = shutil.which(cmd[0])
+        if resolved:
+            cmd = [resolved, *cmd[1:]]
     ret = subprocess.run(cmd, cwd=cwd, shell=shell, env=env, check=False)
     if ret.returncode != 0:
         raise RuntimeError(f"Command failed with exit code {ret.returncode}: {display_cmd}")
