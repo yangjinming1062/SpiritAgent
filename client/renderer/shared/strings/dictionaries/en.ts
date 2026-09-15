@@ -1023,7 +1023,7 @@ export const dict: Dictionary = {
       generateButton: 'Generate new room',
       generatingButton: 'Generating…',
       historyTitle: 'Rollback history',
-      historySubtitle: 'Last 5',
+      historySubtitle: 'Last N',
       historyEmpty: 'No rollback history yet',
       historyAltFallback: 'Previous room',
       historyCurrentLabel: 'Current',

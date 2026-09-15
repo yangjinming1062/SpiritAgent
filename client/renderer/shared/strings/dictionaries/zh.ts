@@ -971,7 +971,7 @@ export const dict = {
       generateButton: '生成新房间',
       generatingButton: '生成中…',
       historyTitle: '回滚历史',
-      historySubtitle: '最近 5 张',
+      historySubtitle: '最近 N 张',
       historyEmpty: '还没有可回滚的历史',
       historyAltFallback: '历史房间',
       historyCurrentLabel: '当前',

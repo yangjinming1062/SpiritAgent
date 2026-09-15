@@ -2,7 +2,7 @@
 
 触发点：onboarding 形象确认 / 换装成功 / 用户 HTTP 换房 / 在线 LLM 工具换房 / 夜间自主规划。
 同 persona 同时只允许一个 pending（CAS），新请求把旧 pending 标 superseded。
-ready 行同步设 active（除非政策在自主生成期间被锁定）；保留最近 5 张 ready 供回滚。
+ready 行同步设 active（除非政策在自主生成期间被锁定）；保留最近 N 张 ready 供回滚。
 故障人格化：失败后写 error_utterance 给 Client 朗读；最多 3 次尝试。
 """
 
@@ -281,7 +281,7 @@ async def activate_backdrop(
 
 
 async def invalidate_room_for_outfit(user_id: int, new_fingerprint: str | None) -> None:
-    """换装成功后调用：把当前 active 行标 superseded 并 schedule origin=outfit 的重建。"""
+    """换装成功后调用：切走 active 展示指针并 schedule origin=outfit 的重建。"""
     should_rebuild = False
     async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
@@ -299,8 +299,8 @@ async def invalidate_room_for_outfit(user_id: int, new_fingerprint: str | None) 
             ).scalar_one_or_none()
             if active is not None and (not new_fingerprint or active.outfit_fingerprint == new_fingerprint):
                 return
-            if active is not None:
-                active.status = BackdropStatus.SUPERSEDED.value
+            # 只切展示指针：旧行保持 READY 留在历史（≤N 张）里供查看与回滚；
+            # 若标 SUPERSEDED，用户刚生成的房间图会直接消失。
             persona.active_backdrop_id = None
             await db.commit()
             should_rebuild = True
