@@ -3,7 +3,6 @@
 门控：
 - 静止档禁止主动调用
 - moment_create 主动配额：每用户每天 3
-- 用户回合的「记下来」不算主动配额
 - 工作预设会话不绑定这两个工具（回合装配层过滤，见 prompt_presets.LIFE_SPACE_TOOL_NAMES）
 """
 
@@ -44,7 +43,7 @@ async def moment_create_tool(
     if tier in ("still", "silent"):
         return tool_error("先把这事放下吧，等你想说的时候再说。")
     if kind not in _VALID_MOMENT_KINDS:
-        kind = MomentKind.USER.value
+        kind = MomentKind.EMOTION.value
     session_id_int: int | None = None
     if parent_session_id is not None:
         try:
@@ -121,7 +120,7 @@ MOMENT_CREATE_SCHEMA = {
             "emotion": {"type": "string", "description": "可选情绪 token，取值见系统提示中的 emotion 枚举"},
             "kind": {
                 "type": "string",
-                "enum": ["greeting", "emotion", "together", "milestone", "scene", "user"],
+                "enum": ["emotion", "together", "scene"],
                 "description": "默认 user",
             },
         },

@@ -7,6 +7,7 @@ type GatewayEventName =
   | 'companion.mood'
   | 'companion.diary.upserted'
   | 'companion.message'
+  | 'companion.moment.comment'
   | 'companion.moment.created'
   | 'companion.outfit.failed'
   | 'companion.outfit.updated'

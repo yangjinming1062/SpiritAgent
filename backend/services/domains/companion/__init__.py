@@ -44,7 +44,6 @@ from .persona_service import (
     load_persona_definition,
     normalize_persona_aliases,
     render_extras,
-    set_greeting_moment_writer,
     set_initial_room_scheduler,
     submit_onboarding_field,
     update_persona,
@@ -60,7 +59,7 @@ from .proactive_runtime import (
     observe_companion_presence,
     user_turn_activity,
 )
-from .prompt_runtime import run_prompt_json
+from .prompt_runtime import load_companion_prompt_context, run_prompt_json
 from .rig_type_selector import classify_species, select_rig_type
 from .session_preset import is_work_preset, resolve_session_profile
 from .should_act import ALLOWED_ACTIONS, ShouldActResult, invalidate_user_should_act, should_act
@@ -133,10 +132,10 @@ __all__ = [
     "record_interaction",
     "render_extras",
     "resolve_session_profile",
+    "load_companion_prompt_context",
     "run_prompt_json",
     "schedule_personality_tag_refresh",
     "select_rig_type",
-    "set_greeting_moment_writer",
     "set_initial_room_scheduler",
     "should_act",
     "submit_onboarding_field",

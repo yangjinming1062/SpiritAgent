@@ -1,4 +1,4 @@
-"""伙伴日记 / 时刻 REST 端点。"""
+"""伙伴时刻 / 日记 REST 端点。"""
 
 from datetime import date
 
@@ -11,24 +11,26 @@ from modules.companion import (
     DiaryEntryResponse,
     DiaryListResponse,
     DiaryUpdateRequest,
-    MomentCreateRequest,
+    MomentCommentCreateRequest,
+    MomentCommentResponse,
     MomentListResponse,
     MomentResponse,
-    MomentUpdateRequest,
 )
+from services.application.moments import schedule_companion_reply
 from services.domains.journal import (
     DiaryNotFoundError,
     MomentNotFoundError,
+    create_moment_comment,
     create_user_diary,
-    create_user_moment,
+    delete_moment_comment,
     get_diary_by_date,
     list_diary,
     list_moments,
+    response_for_comment,
     response_for_diary,
     response_for_moment,
     soft_delete_moment,
     update_diary,
-    update_moment,
 )
 
 router = get_router(prefix="/api/companion", tag="companion")
@@ -50,54 +52,6 @@ async def get_moments(
     )
 
 
-@router.post("/moments", response_model=MomentResponse, status_code=201)
-async def post_moment(
-    user: CurrentUser,
-    db: DbSession,
-    body: MomentCreateRequest,
-) -> MomentResponse:
-    media_url = (
-        (
-            body.media_id
-            if body.media_id.startswith(("/", "http://", "https://"))
-            else f"/api/media/files/{body.media_id}"
-        )
-        if body.media_id
-        else None
-    )
-    row = await create_user_moment(
-        db,
-        user.id,
-        title=body.title,
-        body=body.body,
-        emotion=body.emotion,
-        media_url=media_url,
-        kind=body.kind,
-    )
-    return MomentResponse(**response_for_moment(row))
-
-
-@router.patch("/moments/{moment_id}", response_model=MomentResponse)
-async def patch_moment(
-    user: CurrentUser,
-    db: DbSession,
-    moment_id: str,
-    body: MomentUpdateRequest,
-) -> MomentResponse:
-    try:
-        row = await update_moment(
-            db,
-            user.id,
-            moment_id,
-            title=body.title,
-            body=body.body,
-            visibility=body.visibility,
-        )
-    except MomentNotFoundError as exc:
-        raise HTTPException(status_code=404, detail={"error": "moment not found", "reason": str(exc)})
-    return MomentResponse(**response_for_moment(row))
-
-
 @router.delete("/moments/{moment_id}", status_code=204)
 async def delete_moment(
     user: CurrentUser,
@@ -108,6 +62,39 @@ async def delete_moment(
         await soft_delete_moment(db, user.id, moment_id)
     except MomentNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "moment not found", "reason": str(exc)})
+
+
+@router.post(
+    "/moments/{moment_id}/comments",
+    response_model=MomentCommentResponse,
+    status_code=201,
+)
+async def post_moment_comment(
+    user: CurrentUser,
+    db: DbSession,
+    moment_id: str,
+    body: MomentCommentCreateRequest,
+) -> MomentCommentResponse:
+    try:
+        row = await create_moment_comment(db, user.id, moment_id, content=body.content)
+    except MomentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": "moment not found", "reason": str(exc)})
+    # 精灵回复在请求返回后异步生成，经 companion.moment.comment 事件推送
+    schedule_companion_reply(user.id, moment_id)
+    return MomentCommentResponse(**response_for_comment(row))
+
+
+@router.delete("/moments/{moment_id}/comments/{comment_id}", status_code=204)
+async def delete_moment_comment_route(
+    user: CurrentUser,
+    db: DbSession,
+    moment_id: str,
+    comment_id: str,
+) -> None:
+    try:
+        await delete_moment_comment(db, user.id, moment_id, comment_id)
+    except MomentNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": "comment not found", "reason": str(exc)})
 
 
 @router.get("/diary", response_model=DiaryListResponse)

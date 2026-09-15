@@ -41,7 +41,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.companion import load_persona_definition
-from services.domains.journal import create_user_moment, write_system_moment
+from services.domains.journal import create_user_moment
 from services.infrastructure.assets import asset_store
 from services.infrastructure.llm import call_llm_once, resolve_user_llm_config
 
@@ -319,18 +319,6 @@ async def invalidate_room_for_outfit(user_id: int, new_fingerprint: str | None) 
                 should_rebuild = True
 
     if should_rebuild:
-        try:
-            await write_system_moment(
-                user_id=user_id,
-                kind=MomentKind.MILESTONE.value,
-                event_key="milestone_outfit",
-            )
-        except Exception:
-            logger.warning(
-                "failed to write outfit milestone moment",
-                extra={"user_id": user_id},
-                exc_info=True,
-            )
         await schedule_room_generation(
             user_id,
             origin=BackdropOrigin.OUTFIT.value,
@@ -855,20 +843,6 @@ async def _do_one_attempt(
         except Exception:
             logger.warning(
                 "failed to write nightly room moment",
-                extra={"user_id": user_id},
-                exc_info=True,
-            )
-    elif origin in (BackdropOrigin.USER_REQUEST.value, BackdropOrigin.LLM.value):
-        try:
-            await write_system_moment(
-                user_id=user_id,
-                kind=MomentKind.SCENE.value,
-                event_key="scene_room",
-                media_url=storage_path,
-            )
-        except Exception:
-            logger.warning(
-                "failed to write scene moment for room",
                 extra={"user_id": user_id},
                 exc_info=True,
             )

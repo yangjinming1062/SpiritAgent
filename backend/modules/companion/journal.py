@@ -1,4 +1,4 @@
-"""伙伴日记产品化资源：moments（生活空间时间线）+ diary_entries（每日第一人称日记）。
+"""伙伴日记产品化资源：moments（精灵主导的生活时间线 + 评论）+ diary_entries（每日第一人称日记）。
 
 ``memories`` 仍服务检索与注入对话上下文，不替代。moments / diary 是给用户看的展示面。
 """
@@ -21,23 +21,24 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 
 class MomentKind(StrEnum):
-    GREETING = "greeting"
     EMOTION = "emotion"
     TOGETHER = "together"
-    MILESTONE = "milestone"
     SCENE = "scene"
-    USER = "user"
 
 
 class MomentSource(StrEnum):
-    SYSTEM = "system"
     NIGHTLY = "nightly"
     LLM = "llm"
+    AUTONOMOUS = "autonomous"
+
+
+class MomentCommentRole(StrEnum):
     USER = "user"
+    COMPANION = "companion"
 
 
 class MomentVisibility(StrEnum):
@@ -72,8 +73,8 @@ class CompanionMoment(ModelBase, TimestampMixin):
     )
     kind: Mapped[str] = mapped_column(
         String(16),
-        default=MomentKind.GREETING.value,
-        server_default=text("'greeting'"),
+        default=MomentKind.EMOTION.value,
+        server_default=text("'emotion'"),
         index=True,
     )
     title: Mapped[str] = mapped_column(
@@ -93,8 +94,8 @@ class CompanionMoment(ModelBase, TimestampMixin):
     media_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     source: Mapped[str] = mapped_column(
         String(16),
-        default=MomentSource.SYSTEM.value,
-        server_default=text("'system'"),
+        default=MomentSource.NIGHTLY.value,
+        server_default=text("'nightly'"),
     )
     memory_id: Mapped[int | None] = mapped_column(
         ForeignKey("memories.id", ondelete="SET NULL"),
@@ -109,6 +110,36 @@ class CompanionMoment(ModelBase, TimestampMixin):
         default=MomentVisibility.SHOWN.value,
         server_default=text("'shown'"),
     )
+    comments: Mapped[list["CompanionMomentComment"]] = relationship(
+        lazy="selectin",
+        order_by="CompanionMomentComment.created_at",
+    )
+
+
+class CompanionMomentComment(ModelBase, TimestampMixin):
+    """片刻评论区单条——用户与精灵就一条时刻的公开互动，双向进入夜间反思上下文。"""
+
+    __tablename__ = "companion_moment_comments"
+
+    id: Mapped[str] = mapped_column(
+        UUID(as_uuid=False),
+        primary_key=True,
+        default=lambda: str(uuid4()),
+    )
+    moment_id: Mapped[str] = mapped_column(
+        ForeignKey("companion_moments.id", ondelete="CASCADE"),
+        index=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(
+        String(16),
+        default=MomentCommentRole.USER.value,
+        server_default=text("'user'"),
+    )
+    content: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
 
 
 class CompanionDiaryEntry(ModelBase, TimestampMixin):

@@ -92,6 +92,94 @@
   text-align: center;
 }
 
+.comments {
+  border-top: 1px solid var(--ui-line-hairline);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 8px;
+}
+
+.commentRow {
+  align-items: baseline;
+  color: var(--ui-text-body);
+  display: flex;
+  font-size: 11px;
+  gap: 6px;
+  line-height: 1.5;
+}
+
+.commentCompanion {
+  background: var(--ui-fill-faint);
+  border-radius: 8px;
+  padding: 4px 8px;
+}
+
+.commentAuthor {
+  color: var(--ui-text-muted);
+  flex-shrink: 0;
+  font-weight: 600;
+}
+
+.commentContent {
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.commentDelete {
+  background: transparent;
+  border: 0;
+  color: var(--ui-text-faint);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 13px;
+  line-height: 1;
+  margin-left: auto;
+  padding: 0 2px;
+}
+
+.commentDelete:hover {
+  color: var(--ui-text-strong);
+}
+
+.commentInputRow {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.commentInput {
+  background: var(--ui-fill-faint);
+  border: 1px solid var(--ui-line-hairline);
+  border-radius: 8px;
+  color: var(--ui-text-strong);
+  flex: 1;
+  font-size: 11px;
+  min-width: 0;
+  padding: 5px 8px;
+}
+
+.commentInput:focus {
+  outline: 1px solid var(--ui-line-strong);
+}
+
+.commentSend {
+  background: var(--ui-fill-faint);
+  border: 1px solid var(--ui-line-hairline);
+  border-radius: 8px;
+  color: var(--ui-text-strong);
+  cursor: pointer;
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 5px 10px;
+}
+
+.commentSend:disabled {
+  color: var(--ui-text-faint);
+  cursor: default;
+}
+
 html[class~='no-blur'] .card {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;

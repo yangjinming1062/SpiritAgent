@@ -2,7 +2,8 @@
 //
 // - GET /api/companion/moments（带 cursor 分页）→ $moments
 // - GET /api/companion/diary（带 from/to 区间）→ $diaryByDate
-// - WS `companion.moment.created` / `companion.diary.upserted` 增量 upsert
+// - POST/DELETE /api/companion/moments/{id}/comments → 评论与删除本人评论
+// - WS `companion.moment.created` / `companion.moment.comment` / `companion.diary.upserted` 增量 upsert
 
 import { atom } from 'nanostores'
 
@@ -10,9 +11,26 @@ import { authedApi } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 
+export interface MomentCommentEntry {
+  content: string
+  createdAt: string | null
+  id: string
+  momentId: string
+  role: string
+}
+
+interface MomentCommentWire {
+  content: string
+  created_at: string | null
+  id: string
+  moment_id: string
+  role: string
+}
+
 export interface MomentEntry {
   audioUrl: string | null
   body: string
+  comments: MomentCommentEntry[]
   createdAt: string
   emotion: string | null
   id: string
@@ -28,6 +46,7 @@ export interface MomentEntry {
 interface MomentWire {
   audio_url: string | null
   body: string
+  comments?: MomentCommentWire[]
   emotion: string | null
   id: string
   kind: string
@@ -84,10 +103,21 @@ export const $diaryLoading = atom<boolean>(false)
 
 registerStorageClearHandler(clearJournal)
 
+function toComment(w: MomentCommentWire): MomentCommentEntry {
+  return {
+    content: w.content,
+    createdAt: w.created_at,
+    id: w.id,
+    momentId: w.moment_id,
+    role: w.role
+  }
+}
+
 function toMoment(w: MomentWire): MomentEntry {
   return {
     audioUrl: w.audio_url,
     body: w.body,
+    comments: (w.comments ?? []).map(toComment),
     createdAt: w.occurred_at,
     emotion: w.emotion,
     id: w.id,
@@ -210,6 +240,60 @@ export async function hydrateDiary(opts: { from?: string; to?: string; reset?: b
   }
 }
 
+// 就地更新一条片刻的评论列表（不存在对应片刻时忽略）。
+function withMomentComments(momentId: string, update: (comments: MomentCommentEntry[]) => MomentCommentEntry[]): void {
+  $moments.set($moments.get().map(m => (m.id === momentId ? { ...m, comments: update(m.comments) } : m)))
+}
+
+function upsertComment(momentId: string, comment: MomentCommentEntry): void {
+  withMomentComments(momentId, comments =>
+    comments.some(c => c.id === comment.id) ? comments : [...comments, comment]
+  )
+}
+
+export async function commentMoment(momentId: string, content: string): Promise<boolean> {
+  const result = await authedApi<MomentCommentWire>({
+    body: { content },
+    method: 'POST',
+    path: `/api/companion/moments/${momentId}/comments`
+  })
+
+  if (!result.ok) {
+    if (result.reason === 'err') {
+      log.warn('journal', 'commentMoment failed:', result.error)
+    }
+
+    return false
+  }
+
+  if (!result.value) {
+    return false
+  }
+
+  upsertComment(momentId, toComment(result.value))
+
+  return true
+}
+
+export async function deleteMomentComment(momentId: string, commentId: string): Promise<boolean> {
+  const result = await authedApi<null>({
+    method: 'DELETE',
+    path: `/api/companion/moments/${momentId}/comments/${commentId}`
+  })
+
+  if (!result.ok) {
+    if (result.reason === 'err') {
+      log.warn('journal', 'deleteMomentComment failed:', result.error)
+    }
+
+    return false
+  }
+
+  withMomentComments(momentId, comments => comments.filter(c => c.id !== commentId))
+
+  return true
+}
+
 // WS 入口：由 app/runtime/gateway-event-router.ts 调用。
 export function onJournalEvent(event: { payload?: unknown; type: string }): void {
   if (event.type === 'companion.moment.created') {
@@ -227,6 +311,16 @@ export function onJournalEvent(event: { payload?: unknown; type: string }): void
     }
 
     $moments.set([toMoment(w), ...list])
+  }
+
+  if (event.type === 'companion.moment.comment') {
+    const w = event.payload as { comment?: MomentCommentWire; moment_id?: string } | undefined
+
+    if (!w || !w.comment || !w.moment_id) {
+      return
+    }
+
+    upsertComment(w.moment_id, toComment(w.comment))
   }
 
   if (event.type === 'companion.diary.upserted') {

@@ -1,6 +1,7 @@
-"""伙伴日记 / 时刻服务：CRUD + 节流 + 系统自动写 + 夜间批处理投影。
+"""伙伴时刻 / 日记服务：精灵主导时间线的写入与节流、评论区、夜间批处理投影。
 
 ``memories`` 表不动；moments / diary 是给用户看的展示面，不是检索向量。
+片刻完全由精灵发起（夜间规划、聊天工具、白天自主冲动），用户只能评论、隐藏。
 """
 
 import asyncio
@@ -23,7 +24,9 @@ from components import (
 from modules.companion import (
     CompanionDiaryEntry,
     CompanionMoment,
+    CompanionMomentComment,
     DiarySource,
+    MomentCommentRole,
     MomentKind,
     MomentSource,
     MomentVisibility,
@@ -39,22 +42,6 @@ from services.domains.memory import resolve_user_timezone
 from services.infrastructure.assets import save_companion_asset, signed_companion_asset_url
 
 logger = get_logger(__name__)
-
-# 系统时刻文案模板（每用户每天 ≤ moment.system_per_day；事件级别由调用方路由）。
-_SYSTEM_MOMENT_TEMPLATES: dict[str, dict[str, str]] = {
-    "greeting": {
-        "title": "第一次见面",
-        "body": "今天我们正式见面啦，以后请多关照。",
-    },
-    "milestone_outfit": {
-        "title": "更换外观",
-        "body": "",
-    },
-    "scene_room": {
-        "title": "生活空间焕新",
-        "body": "",
-    },
-}
 
 
 class JournalError(RuntimeError):
@@ -108,6 +95,16 @@ def _moment_media_type(media_identifier: str | None) -> str:
     return "image"
 
 
+def response_for_comment(row: CompanionMomentComment) -> dict[str, Any]:
+    return {
+        "id": row.id,
+        "moment_id": row.moment_id,
+        "role": row.role,
+        "content": row.content,
+        "created_at": row.created_at,
+    }
+
+
 def response_for_moment(row: CompanionMoment) -> dict[str, Any]:
     url = row.media_url
     if url and url.startswith("companion-assets/"):
@@ -128,6 +125,7 @@ def response_for_moment(row: CompanionMoment) -> dict[str, Any]:
         "media_metadata": row.media_metadata,
         "source": row.source,
         "visibility": row.visibility,
+        "comments": [response_for_comment(c) for c in (row.comments or [])],
     }
 
 
@@ -176,8 +174,8 @@ async def create_user_moment(
     media_type: str | None = None,
     audio_url: str | None = None,
     media_metadata: dict[str, Any] | None = None,
-    kind: str = MomentKind.USER.value,
-    source: str = MomentSource.USER.value,
+    kind: str = MomentKind.EMOTION.value,
+    source: str = MomentSource.NIGHTLY.value,
     session_id: int | None = None,
     memory_id: int | None = None,
 ) -> CompanionMoment:
@@ -238,6 +236,8 @@ async def create_user_moment(
     db.add(row)
     await db.commit()
     await db.refresh(row)
+    # 新建行未经查询，refresh 不填充 selectin 关系；显式置空避免事件序列化触发异步惰性加载。
+    row.comments = []
     await _emit_moment_event(row)
     return row
 
@@ -325,36 +325,6 @@ def _media_type_for_extension(ext: str) -> str:
     return "image"
 
 
-async def update_moment(
-    db: AsyncSession,
-    user_id: int,
-    moment_id: str,
-    *,
-    title: str | None = None,
-    body: str | None = None,
-    visibility: str | None = None,
-) -> CompanionMoment:
-    row = (
-        await db.execute(
-            select(CompanionMoment).where(
-                CompanionMoment.id == moment_id,
-                CompanionMoment.user_id == user_id,
-            ),
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        raise MomentNotFoundError(f"moment {moment_id} not found")
-    if title is not None:
-        row.title = title.strip()[:64]
-    if body is not None:
-        row.body = body.strip()[:500]
-    if visibility is not None:
-        row.visibility = visibility
-    await db.commit()
-    await db.refresh(row)
-    return row
-
-
 async def soft_delete_moment(db: AsyncSession, user_id: int, moment_id: str) -> None:
     row = (
         await db.execute(
@@ -370,82 +340,89 @@ async def soft_delete_moment(db: AsyncSession, user_id: int, moment_id: str) -> 
     await db.commit()
 
 
-async def write_system_moment(
-    user_id: int,
-    *,
-    kind: str,
-    event_key: str,
-    title: str | None = None,
-    body: str | None = None,
-    media_url: str | None = None,
-    emotion: str | None = None,
-    session_id: int | None = None,
-    memory_id: int | None = None,
-) -> CompanionMoment | None:
-    if not user_id:
-        return None
-    limit = int(SETTINGS.moment_system_per_day)
+async def _count_recent_source_moments(db: AsyncSession, user_id: int, source: str) -> int:
     since = utc_now() - timedelta(hours=24)
-    template = _SYSTEM_MOMENT_TEMPLATES.get(event_key, {})
-    final_title = (title if title is not None else template.get("title", "片段"))[:64]
-    final_body = (body if body is not None else template.get("body", ""))[:500]
-    async with SESSION_LOCAL() as session:
-        existing = (
-            (
-                await session.execute(
-                    select(CompanionMoment.title).where(
-                        CompanionMoment.user_id == user_id,
-                        CompanionMoment.source == MomentSource.SYSTEM.value,
-                        CompanionMoment.created_at >= since,
-                    ),
-                )
-            )
-            .scalars()
-            .all()
-        )
-        if final_title in existing:
-            return None
-        if len(existing) >= limit:
-            logger.info(
-                "journal: system moment daily cap hit",
-                extra={"user_id": user_id, "limit": limit},
-            )
-            return None
-        # 通过去重与配额检查后才转存媒体，避免 bail 路径在资产目录留下无行引用的孤儿文件
-        persisted_media = await persist_moment_media(user_id, media_url)
-        row = CompanionMoment(
-            id=str(uuid4()),
-            user_id=user_id,
-            kind=kind,
-            title=final_title,
-            body=final_body,
-            emotion=emotion,
-            media_url=persisted_media,
-            source=MomentSource.SYSTEM.value,
-            session_id=session_id,
-            memory_id=memory_id,
-        )
-        session.add(row)
-        await session.commit()
-        await session.refresh(row)
-        await _emit_moment_event(row)
-        return row
-
-
-async def check_moment_llm_quota(db: AsyncSession, user_id: int) -> bool:
-    """角色主动 moment_create 每日配额：每用户每 24h ≤ moment_llm_per_day（默认 3，0 表示关闭该通道）。"""
-    limit = int(SETTINGS.moment_llm_per_day)
-    since = utc_now() - timedelta(hours=24)
-    count = (
+    return (
         await db.execute(
             select(func.count(CompanionMoment.id)).where(
                 CompanionMoment.user_id == user_id,
-                CompanionMoment.source == MomentSource.LLM.value,
+                CompanionMoment.source == source,
                 CompanionMoment.created_at >= since,
             ),
         )
     ).scalar_one()
-    return count < limit
+
+
+async def check_moment_llm_quota(db: AsyncSession, user_id: int) -> bool:
+    """聊天内 moment_create 每日配额：每用户每 24h ≤ moment_llm_per_day（默认 3，0 表示关闭该通道）。"""
+    return await _count_recent_source_moments(
+        db,
+        user_id,
+        MomentSource.LLM.value,
+    ) < int(SETTINGS.moment_llm_per_day)
+
+
+async def check_moment_autonomous_quota(db: AsyncSession, user_id: int) -> bool:
+    """白天自主冲动发布每日配额：每用户每 24h ≤ moment_autonomous_per_day（默认 3，0 表示关闭该通道）。"""
+    return await _count_recent_source_moments(
+        db,
+        user_id,
+        MomentSource.AUTONOMOUS.value,
+    ) < int(SETTINGS.moment_autonomous_per_day)
+
+
+async def get_moment(db: AsyncSession, user_id: int, moment_id: str) -> CompanionMoment | None:
+    return (
+        await db.execute(
+            select(CompanionMoment).where(
+                CompanionMoment.id == moment_id,
+                CompanionMoment.user_id == user_id,
+            ),
+        )
+    ).scalar_one_or_none()
+
+
+async def create_moment_comment(
+    db: AsyncSession,
+    user_id: int,
+    moment_id: str,
+    *,
+    content: str,
+    role: str = MomentCommentRole.USER.value,
+) -> CompanionMomentComment:
+    moment = await get_moment(db, user_id, moment_id)
+    if moment is None:
+        raise MomentNotFoundError(f"moment {moment_id} not found")
+    row = CompanionMomentComment(
+        id=str(uuid4()),
+        moment_id=moment.id,
+        user_id=user_id,
+        role=role,
+        content=content.strip()[:500],
+    )
+    db.add(row)
+    await db.commit()
+    await db.refresh(row)
+    await _emit_comment_event(row)
+    return row
+
+
+async def delete_moment_comment(db: AsyncSession, user_id: int, moment_id: str, comment_id: str) -> None:
+    """仅允许删除本人的 user 评论；companion 评论只能随整条片刻隐藏。"""
+    row = (
+        await db.execute(
+            select(CompanionMomentComment).where(
+                CompanionMomentComment.id == comment_id,
+                CompanionMomentComment.moment_id == moment_id,
+                CompanionMomentComment.user_id == user_id,
+                CompanionMomentComment.role == MomentCommentRole.USER.value,
+            ),
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise MomentNotFoundError(f"comment {comment_id} not found")
+    await db.delete(row)
+    await db.commit()
 
 
 def response_for_diary(row: CompanionDiaryEntry) -> dict[str, Any]:
@@ -629,6 +606,74 @@ async def update_diary(
     return row
 
 
+async def collect_moment_interactions(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    utc_start: datetime,
+    utc_end: datetime,
+) -> list[dict[str, Any]]:
+    """汇总本地当日片刻互动：当日发布的片刻 + 当日有新评论的片刻，各带完整评论线程。
+
+    供夜间规划、反思日记与日记投影共同消费，使片刻评论区成为伙伴反思上下文的一部分。
+    """
+    today_ids = (
+        (
+            await db.execute(
+                select(CompanionMoment.id)
+                .where(
+                    CompanionMoment.user_id == user_id,
+                    CompanionMoment.occurred_at >= utc_start,
+                    CompanionMoment.occurred_at < utc_end,
+                )
+                .order_by(CompanionMoment.occurred_at.desc())
+                .limit(30),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    commented_ids = (
+        (
+            await db.execute(
+                select(CompanionMomentComment.moment_id)
+                .where(
+                    CompanionMomentComment.user_id == user_id,
+                    CompanionMomentComment.created_at >= utc_start,
+                    CompanionMomentComment.created_at < utc_end,
+                )
+                .distinct(),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    ids = list(dict.fromkeys([*today_ids, *commented_ids]))
+    if not ids:
+        return []
+    rows = (
+        (
+            await db.execute(
+                select(CompanionMoment).where(CompanionMoment.id.in_(ids)).order_by(CompanionMoment.occurred_at.desc()),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        {
+            "title": m.title,
+            "body": m.body,
+            "kind": m.kind,
+            "source": m.source,
+            # call_llm_once 的 json.dumps 无 default，datetime 必须先转字符串
+            "occurred_at": m.occurred_at.isoformat() if m.occurred_at else None,
+            "comments": [{"role": c.role, "content": c.content} for c in (m.comments or [])],
+        }
+        for m in rows
+    ]
+
+
 async def resolve_user_local_today(db: AsyncSession | None, user_id: int) -> date:
     """按用户已绑定的 IANA 时区换算本地日历日；无时区或未知时回退为 UTC 当日。"""
     if db is not None:
@@ -656,6 +701,20 @@ async def _emit_moment_event(row: CompanionMoment) -> None:
             await db.commit()
     except Exception:
         logger.warning("Failed to emit companion.moment.created", exc_info=True)
+
+
+async def _emit_comment_event(row: CompanionMomentComment) -> None:
+    try:
+        async with SESSION_LOCAL() as db:
+            emit_ws_event(
+                db,
+                user_id=row.user_id,
+                event_type="companion.moment.comment",
+                payload={"moment_id": row.moment_id, "comment": response_for_comment(row)},
+            )
+            await db.commit()
+    except Exception:
+        logger.warning("Failed to emit companion.moment.comment", exc_info=True)
 
 
 async def _emit_diary_event(row: CompanionDiaryEntry) -> None:

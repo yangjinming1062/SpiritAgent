@@ -1858,6 +1858,7 @@ async def run_nightly_planning(
     anomaly_stats: dict[str, Any],
     today_conversations: list[dict[str, str]],
     *,
+    moment_interactions: list[dict[str, Any]] | None = None,
     log_id: int | None = None,
 ) -> PlanningResult:
     date_ctx = date_context if isinstance(date_context, DateContext) else DateContext.model_validate(date_context)
@@ -1870,6 +1871,7 @@ async def run_nightly_planning(
             "user_profile": user_profile,
             "recall_highlights": recall_highlights,
             "today_conversations": today_conversations,
+            **({"moment_interactions": moment_interactions} if moment_interactions else {}),
             "autonomous_context": context.model_dump(
                 exclude={"action_row_id", "resume_result"},
                 exclude_none=True,

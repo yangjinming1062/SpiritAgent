@@ -149,6 +149,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'companion.moment.created':
 
+    case 'companion.moment.comment':
+
     case 'companion.diary.upserted':
       onJournalEvent(event)
 

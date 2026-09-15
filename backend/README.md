@@ -45,7 +45,7 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 | --- | --- | --- |
 | `contracts/` | 跨层传递的最小词汇，包括委派动作、记忆作用域与来源 | 不导入任何服务实现 |
 | `domains/` | 单一业务能力长什么样：conversation（会话底座）、memory、journal、companion、media、automation、configuration、backup | 不依赖 application / adapters；跨域只经公共入口且仅限下述登记例外 |
-| `application/` | 跨域流程怎么走：chat（回合编排）、generation（形象/房间/2D/3D/媒体）、automation（Cron 两轨回合）、nightly（夜间整理与规划）、configuration（配置提交与热更）、updates | 不导入 adapters；包间只允许显式声明的单向边 |
+| `application/` | 跨域流程怎么走：chat（回合编排）、generation（形象/房间/2D/3D/媒体）、automation（Cron 两轨回合）、moments（片刻自主发布与评论回复）、nightly（夜间整理与规划）、configuration（配置提交与热更）、updates | 不导入 adapters；包间只允许显式声明的单向边 |
 | `infrastructure/` | 技术能力怎么实现：llm、image_to_3d、seethrough、assets、web、tool_runtime、desktop（连接/IPC/JSON-RPC）、event_store（outbox） | 不认识业务编排——不导入 domains / application / adapters，这是全系统最重要的方向不变量 |
 | `adapters/` | 外部协议如何进来：desktop（WS handlers）、channels、scheduler、tools、http、maintenance | 只做适配与入口编排，不沉淀业务规则 |
 
@@ -68,7 +68,7 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 
 实例创建、注册与启停顺序全部集中在 `bootstrap/`，业务包导入不产生任何副作用：
 
-- **显式注册**（`bootstrap/registrations.py`）：LLM 供应商、图生 3D 供应商、LLM 工具与 memory 工具 schema、渠道适配器、内部事件处理器（`companion.turn.request` → `execute_companion_turn`）、域钩子（首房间图调度、形象确认后的问候时刻写入、调度变更时撤销待兑现意图）。新增供应商/工具/渠道 = 实现类 + 装配层加一行注册；遗漏会在能力链解析时显式抛 `LookupError` 而非静默缺能力。注册表覆盖式幂等，重复调用安全。
+- **显式注册**（`bootstrap/registrations.py`）：LLM 供应商、图生 3D 供应商、LLM 工具与 memory 工具 schema、渠道适配器、内部事件处理器（`companion.turn.request` → `execute_companion_turn`）、域钩子（首房间图调度、调度变更时撤销待兑现意图）。新增供应商/工具/渠道 = 实现类 + 装配层加一行注册；遗漏会在能力链解析时显式抛 `LookupError` 而非静默缺能力。注册表覆盖式幂等，重复调用安全。
 - **启动顺序**（`bootstrap/lifecycle.py`）：迁移 → 配置水合 → 注册（应用导入期）→ 调度器 → 事件回路（LISTEN 专线）→ 渠道桥 → 恢复未完成任务（视频、3D 管道）。依赖注入式解耦：事件回路不认识 cron 业务，处理器由装配层绑定。
 - **停止顺序**：先停调度器再 drain（tick 会 spawn 新任务，反序留下逃逸窗口）→ 并行 drain 各模块任务集合 → 停渠道桥（适配器任务可能还在写事件）→ 停事件回路 → 释放引擎与连接池。付费生成任务的恢复语义不变：无法确认提交结果的任务保留不确定状态，不自动重发。
 - **运行时单例**：`MANAGER`（桌面连接）、`REGISTRY`（工具）、`SETTINGS`、TaskBag、用户级锁表保留为模块级单例——这是单副本语义（[ARCHITECTURE §5.3](../docs/ARCHITECTURE.md)）下的刻意选择；跨副本状态一律经持久化与 outbox 路由外置，bootstrap 管"谁注册谁启动"，不做 DI 容器。
@@ -102,7 +102,8 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 - 气泡边界：完整文本与增量共用切分器；跨 chunk 暂留可能属于较长分隔符的前缀，避免把分隔线泄漏为正文。陪伴与工作台的交付方式、工具循环正文边界、分段和 TTS 契约见 [PROTOCOL §1.4](../docs/PROTOCOL.md)。
 - 推理设置隔离：回合与手动压缩共用会话设置合并入口；普通会话按种类继承工作台默认，特殊会话按预设目录取场景默认，不能以模板标识非空替代会话种类判断。作用域及窗口水合见 [PROTOCOL §2.4](../docs/PROTOCOL.md)。
 - 长期记忆：向量与关键词 / CJK N-gram 双路召回、RRF 融合，叠加重要性和不归零的时间衰减；写入召回池同步补向量，主对话前自动注入相关记忆。嵌入未配置或维度不匹配时仅降级到同域关键词检索。
-- 时刻与日记：检索记忆与展示切片分别维护；主动时刻受每日配额约束，工作预设禁止记录。日记按用户本地日归集，用户编辑后的内容只能追加，夜间整理静默交付。
+- 时刻与日记：检索记忆与展示切片分别维护；片刻完全由精灵发起——白天自主冲动（每 24h ≤ `MOMENT_AUTONOMOUS_PER_DAY`，静止档断源）、聊天内 `moment_create`（每日配额）与夜间规划三通道，工作预设禁止记录；用户仅可评论、删除本人评论与软隐藏整条时刻，精灵回复经后台任务生成并事件推送。日记按用户本地日归集，用户编辑后的内容只能追加，夜间整理静默交付。
+- 白天自主冲动：调度器侧扫描按 45–90 分钟随机间隔低频咨询 LLM，由精灵决定是否发一条文本片刻（kind=emotion）；只更新信息流，不写主对话消息、不做桌面打扰。实现见 [services/application/moments/](services/application/moments/)。
 - 互动统计：戳击反应有成本上限，失败另有短冷却；戳击或对话任一达到门限即写小时汇总，日期与夜间反思共用用户本地日口径。
 
 ### 预设记忆存储
@@ -124,7 +125,7 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 - 活动规划：休息窗口内执行证据维护、自主规划与日记；记忆维护规则见上一节。规划使用高推理档和当时可用的安全能力目录，输入角色、衣橱、房间、供应商、画像、近期历史与政策，允许小组合或空计划。无当日消息仍可基于生日等长期记忆规划；无新互动的日记步骤跳过，已有记忆仍可维护，不能伪造经历。
 - 执行相序：外观 → 房间 → 片刻 / 媒体 → 主动联系；各项独立失败、执行前重读政策。新装成功激活后才进入后续生成，角色图片使用身份与当前外观双参考，视频使用当前外观首帧，可附当前音色配音并转存正式资产。
 - 日期与恢复：调度单点传入“刚结束的本地日”，缺时区跳过用户；同日完成不重跑，最近未完成日可在休息窗口外恢复，超过一日本地恢复窗口的未确认动作终止。保存计划与动作账本，有可核对任务 id 的续跑原记录，无法确认的在途副作用标记中断，不重复付费。
-- 成功事实才进入自传记忆、日记与次日问候；标题、正文及配音遵循用户语言。片刻与对话交付原子性见 [PROTOCOL §1.2](../docs/PROTOCOL.md)。
+- 成功事实才进入自传记忆、日记与次日问候；标题、正文及配音遵循用户语言。当日片刻互动（发布与评论线程）经 `collect_moment_interactions` 一并进入规划、反思日记与日记投影。片刻与对话交付原子性见 [PROTOCOL §1.2](../docs/PROTOCOL.md)。
 
 ### 资产与外观
 

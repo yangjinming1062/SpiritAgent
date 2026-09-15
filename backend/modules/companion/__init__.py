@@ -1,4 +1,13 @@
-from .journal import CompanionDiaryEntry, CompanionMoment, DiarySource, MomentKind, MomentSource, MomentVisibility
+from .journal import (
+    CompanionDiaryEntry,
+    CompanionMoment,
+    CompanionMomentComment,
+    DiarySource,
+    MomentCommentRole,
+    MomentKind,
+    MomentSource,
+    MomentVisibility,
+)
 from .models import (
     BACKDROP_POLICY_DEFAULT,
     OUTFIT_POLICY_DEFAULT,
@@ -49,10 +58,10 @@ from .schemas_journal import (
     DiaryEntryResponse,
     DiaryListResponse,
     DiaryUpdateRequest,
-    MomentCreateRequest,
+    MomentCommentCreateRequest,
+    MomentCommentResponse,
     MomentListResponse,
     MomentResponse,
-    MomentUpdateRequest,
 )
 from .schemas_loop import (
     MAX_COMPANION_FAILURES,
@@ -104,6 +113,7 @@ __all__ = [
     "Companion3DModelResponse",
     "CompanionDiaryEntry",
     "CompanionMoment",
+    "CompanionMomentComment",
     "CompanionOperationResponse",
     "CompanionOutfit",
     "CompanionRoomBackdrop",
@@ -116,12 +126,13 @@ __all__ = [
     "Fullbody3dSeedGenerateRequest",
     "FullbodyConfirmFrontRequest",
     "ModelGenerateRequest",
-    "MomentCreateRequest",
+    "MomentCommentCreateRequest",
+    "MomentCommentResponse",
+    "MomentCommentRole",
     "MomentKind",
     "MomentListResponse",
     "MomentResponse",
     "MomentSource",
-    "MomentUpdateRequest",
     "MomentVisibility",
     "OnboardingStateResponse",
     "OutfitCreateRequest",

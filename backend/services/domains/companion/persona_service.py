@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from components import DEFAULT_LANGUAGE, get_logger, resolve_prompt_text, safe_json_loads
-from modules.companion import AvatarAsset, MomentKind, Persona, normalize_persona_aliases
+from modules.companion import AvatarAsset, Persona, normalize_persona_aliases
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,16 +22,6 @@ _schedule_initial_room: InitialRoomScheduler | None = None
 def set_initial_room_scheduler(fn: InitialRoomScheduler | None) -> None:
     global _schedule_initial_room
     _schedule_initial_room = fn
-
-
-# 问候时刻同样经装配层注入，companion 不直接依赖 journal 域。
-GreetingMomentWriter = Callable[..., Awaitable[object]]
-_write_greeting_moment: GreetingMomentWriter | None = None
-
-
-def set_greeting_moment_writer(fn: GreetingMomentWriter | None) -> None:
-    global _write_greeting_moment
-    _write_greeting_moment = fn
 
 
 # 双语角色设定块标题。字段 label（key.replace("_", " ").capitalize()）属协议级展示，保持英文不译。
@@ -164,17 +154,12 @@ async def confirm_portrait(db: AsyncSession, user_id: int) -> Persona:
     persona.portrait_confirmed_at = func.now()
     await db.commit()
     await db.refresh(persona)
-    # onboarding 形象确认后启动首张房间图与问候时刻；与 2D/3D 资产生成并行，不挡问候
+    # onboarding 形象确认后启动首张房间图；与 2D/3D 资产生成并行，不挡问候
     try:
         if _schedule_initial_room is not None:
             await _schedule_initial_room(user_id)
     except Exception:
         logger.warning("failed to schedule initial room backdrop", extra={"user_id": user_id}, exc_info=True)
-    try:
-        if _write_greeting_moment is not None:
-            await _write_greeting_moment(user_id, kind=MomentKind.GREETING.value, event_key="greeting")
-    except Exception:
-        logger.warning("failed to write greeting moment", extra={"user_id": user_id}, exc_info=True)
     return persona
 
 

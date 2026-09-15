@@ -805,6 +805,11 @@ export const dict = {
       loading: '正在翻看相册…',
       empty: '还没有留下什么片刻。',
       noTitle: '无题',
+      commentPlaceholder: '写评论…',
+      commentSend: '发送',
+      commentSending: '发送中…',
+      commentDelete: '删除',
+      userLabel: '我',
       kindLabels: {
         emotion: '心情',
         greeting: '问候',

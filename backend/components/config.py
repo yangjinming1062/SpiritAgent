@@ -175,8 +175,8 @@ class Settings(BaseSettings):
     room_llm_replace_per_24h: int = Field(default=1, validation_alias="ROOM_LLM_REPLACE_PER_24H")
     room_max_attempts: int = Field(default=3, validation_alias="ROOM_MAX_ATTEMPTS")
     room_history_keep: int = Field(default=5, validation_alias="ROOM_HISTORY_KEEP")
-    moment_system_per_day: int = Field(default=5, validation_alias="MOMENT_SYSTEM_PER_DAY")
     moment_llm_per_day: int = Field(default=3, validation_alias="MOMENT_LLM_PER_DAY")
+    moment_autonomous_per_day: int = Field(default=3, validation_alias="MOMENT_AUTONOMOUS_PER_DAY")
     diary_nightly_enabled: bool = Field(default=True, validation_alias="DIARY_NIGHTLY_ENABLED")
     rate_limit_storage_url: str = Field(default="", validation_alias="RATE_LIMIT_STORAGE_URL")
 

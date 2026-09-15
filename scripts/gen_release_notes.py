@@ -182,7 +182,10 @@ def minimax_notes(from_ref: str, to_ref: str, commits: list[Commit]) -> str | No
         "model": model,
         "input": [
             {"role": "system", "content": [{"type": "input_text", "text": SYSTEM_PROMPT}]},
-            {"role": "user", "content": [{"type": "input_text", "text": build_prompt_input(from_ref, to_ref, commits)}]},
+            {
+                "role": "user",
+                "content": [{"type": "input_text", "text": build_prompt_input(from_ref, to_ref, commits)}],
+            },
         ],
         "temperature": 0.2,
         "max_output_tokens": 4096,

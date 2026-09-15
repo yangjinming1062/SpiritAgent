@@ -48,7 +48,8 @@ _DIARY_SYSTEM_TEXTS: dict[str, str] = {
         "不诊断用户、不夸大关系、不虚构共同经历。"
         "日期分界与系统时间提示是元数据，不是用户台词。\n"
         "nightly_autonomous_actions 是执行事实，只写 status 为 succeeded 或 partial 且有 fact 的项目；失败、跳过、"
-        "阻塞或仅计划的动作都不能写成已经发生。省略代码、工具输出、内部流程、重复寒暄和无后续意义的流水账。"
+        "阻塞或仅计划的动作都不能写成已经发生。moment_interactions 是片刻动态与评论互动记录，"
+        "可自然参考其中的真实互动，不得虚构。省略代码、工具输出、内部流程、重复寒暄和无后续意义的流水账。"
         "从当天内容中选取少量具体片段，保持自然、私密、克制，不用日记腔堆砌感伤，也不向用户发号施令。\n"
         "使用简体中文；标题不超过 12 字，正文不超过 600 字。"
         '只输出一个 JSON 对象：{"title": "...", "body": "..."}。不要 Markdown、解释或额外字段。'
@@ -62,7 +63,9 @@ _DIARY_SYSTEM_TEXTS: dict[str, str] = {
         "the user, exaggerate the relationship, or invent shared events. Date dividers "
         "and system time notes are metadata, not user dialogue.\n"
         "nightly_autonomous_actions contains execution facts. Mention only items with status succeeded or partial "
-        "and a fact; never present failed, skipped, blocked, or merely planned actions as completed. Omit code, tool "
+        "and a fact; never present failed, skipped, blocked, or merely planned actions as completed. "
+        "moment_interactions records the companion's moment posts and comment exchanges for the day; "
+        "reference the real interactions naturally, never invent them. Omit code, tool "
         "output, internal process, repeated greetings, and chronology without future value. Select a few concrete "
         "moments and keep the tone natural, intimate, and restrained, without melodrama or instructions to the user.\n"
         "Use English, a title of at most 8 words, and a body of at most 300 words. Output only one JSON object: "
@@ -78,6 +81,7 @@ async def project_today(
     pre_messages: list[dict[str, str]] | None = None,
     llm_cfg: dict[str, Any] | None = None,
     nightly_actions: list[dict[str, Any]] | None = None,
+    moment_interactions: list[dict[str, Any]] | None = None,
     language: str | None = None,
 ) -> bool | None:
     """夜间 upsert 当日（指 reference_utc 派生出的本地日）的日记，关联当日时刻。
@@ -178,7 +182,11 @@ async def project_today(
     )
 
     action_facts = nightly_actions or []
-    if not any(m["role"] == "user" and not is_injected_time_item(m) for m in clean) and not action_facts:
+    if (
+        not any(m["role"] == "user" and not is_injected_time_item(m) for m in clean)
+        and not action_facts
+        and not moment_interactions
+    ):
         logger.info(
             "journal_nightly: no user messages or autonomous actions today",
             extra={"user_id": user_id},
@@ -192,6 +200,7 @@ async def project_today(
         target_date,
         action_facts,
         persona_definition,
+        moment_interactions=moment_interactions,
         language=user_language,
     )
     if body is None:
@@ -220,6 +229,7 @@ async def _compose_diary(
     target_date: date,
     nightly_actions: list[dict[str, Any]],
     persona: dict[str, Any],
+    moment_interactions: list[dict[str, Any]] | None = None,
     language: str = DEFAULT_LANGUAGE,
 ) -> tuple[str, str | None]:
     if not (llm_cfg and llm_cfg.get("api_key") and llm_cfg.get("base_url") and llm_cfg.get("model_name")):
@@ -232,6 +242,7 @@ async def _compose_diary(
         "local_date": target_date.isoformat(),
         "today_conversations": clean_messages[-40:],
         "nightly_autonomous_actions": nightly_actions,
+        **({"moment_interactions": moment_interactions} if moment_interactions else {}),
         "persona": persona,
         "language": language,
     }

@@ -17,6 +17,7 @@ from modules.companion import (
     CompanionIntent,
     CompanionIntentView,
     CompanionMoment,
+    CompanionMomentComment,
     CompanionOutfit,
     CompanionRoomBackdrop,
     Persona,
@@ -50,6 +51,7 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
     "companion_intents": CompanionIntent,
     "memories": Memory,
     "companion_moments": CompanionMoment,
+    "companion_moment_comments": CompanionMomentComment,
     "companion_diary_entries": CompanionDiaryEntry,
     "messages": Message,
 }
@@ -61,6 +63,7 @@ FOREIGN_KEYS: dict[str, dict[str, str]] = {
     "companion_3d_models": {"source_portrait_id": "avatar_assets"},
     "cron_jobs": {"conversation_id": "conversations"},
     "companion_moments": {"memory_id": "memories", "session_id": "conversations"},
+    "companion_moment_comments": {"moment_id": "companion_moments"},
     "messages": {"conversation_id": "conversations"},
 }
 UNIQUE_KEYS: dict[str, tuple[str, ...]] = {

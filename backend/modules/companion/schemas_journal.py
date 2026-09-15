@@ -5,15 +5,24 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .journal import DiarySource, MomentKind, MomentSource, MomentVisibility
+from .journal import DiarySource, MomentVisibility
 
 MomentMediaTypeLiteral = Literal["", "image", "video", "audio"]
+
+
+class MomentCommentResponse(BaseModel):
+    id: str
+    moment_id: str
+    role: str
+    content: str
+    created_at: datetime | None = None
 
 
 class MomentResponse(BaseModel):
     id: str
     occurred_at: datetime
-    kind: MomentKind
+    # kind / source 为自由字符串：存量行含已停写的枚举值（greeting/user/system 等），仍需可读
+    kind: str
     title: str
     body: str
     emotion: str | None = None
@@ -21,8 +30,9 @@ class MomentResponse(BaseModel):
     media_type: MomentMediaTypeLiteral = ""
     audio_url: str | None = None
     media_metadata: dict | None = None
-    source: MomentSource
+    source: str
     visibility: MomentVisibility = MomentVisibility.SHOWN
+    comments: list[MomentCommentResponse] = Field(default_factory=list)
 
 
 class MomentListResponse(BaseModel):
@@ -30,22 +40,10 @@ class MomentListResponse(BaseModel):
     next_cursor: str | None = None
 
 
-class MomentCreateRequest(BaseModel):
+class MomentCommentCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    title: str = Field(min_length=1, max_length=64)
-    body: str = Field(min_length=1, max_length=500)
-    emotion: str | None = Field(default=None, max_length=32)
-    media_id: str | None = None
-    kind: MomentKind = MomentKind.USER
-
-
-class MomentUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    title: str | None = Field(default=None, max_length=64)
-    body: str | None = Field(default=None, max_length=500)
-    visibility: MomentVisibility | None = None
+    content: str = Field(min_length=1, max_length=500)
 
 
 class DiaryEntryResponse(BaseModel):

@@ -29,6 +29,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.companion import load_persona_definition
 from services.domains.conversation import SPECIAL_KIND, UI_ONLY_SUBTYPES, validate_memory_scope
+from services.domains.journal import collect_moment_interactions
 from services.domains.memory import (
     backfill_memory_embeddings,
     list_memories,
@@ -58,7 +59,8 @@ _DIARY_SYSTEM_TEXTS: dict[str, str] = {
         "选取少量真正值得延续的内容：今天实际聊过或共同经历的时刻、叙述者由此产生的感受、仍在意的事情，"
         "以及对明天克制而不施压的期待。准确区分用户说过的话和叙述者的理解；助手此前的说法不能独立证明事件发生。"
         "不诊断用户、不夸大亲密程度，不补造未发生的场景。nightly_autonomous_actions 是执行事实列表，只可写入 status 为 succeeded 或 partial "
-        "且有 fact 的内容；不得把计划、跳过、阻塞或失败写成已经完成。省略工具过程、内部字段和流水线术语。\n\n"
+        "且有 fact 的内容；不得把计划、跳过、阻塞或失败写成已经完成。moment_interactions 是片刻动态与评论互动记录，"
+        "可自然参考其中的真实互动，不得虚构。省略工具过程、内部字段和流水线术语。\n\n"
         "使用自然简体中文，保持人设中的声音，约 150–800 字；宁可短而具体，不写流水账。"
         '只输出一个 JSON 对象：{"content": "..."}。不要 Markdown、标题、解释或额外字段。'
     ),
@@ -74,7 +76,8 @@ _DIARY_SYSTEM_TEXTS: dict[str, str] = {
         "statement does not independently prove an event occurred. Do not diagnose the user, exaggerate intimacy, "
         "or invent scenes. nightly_autonomous_actions contains execution facts: "
         "mention only items with status succeeded or partial and a fact, never plans, skipped, blocked, or failed "
-        "actions. Omit tool process, internal fields, and pipeline terminology.\n\n"
+        "actions. moment_interactions records the companion's moment posts and comment exchanges; reference the "
+        "real interactions naturally, never invent them. Omit tool process, internal fields, and pipeline terminology.\n\n"
         "Use natural English in the configured persona's voice, about 100–400 words; prefer specific brevity to a "
         'chronological log. Output only one JSON object: {"content": "..."}. No Markdown, title, explanation, '
         "or extra fields."
@@ -90,6 +93,7 @@ async def _stage_4_self_diary(
     background_memories: dict[str, str],
     local_date_str: str,
     autonomous_actions: list[dict[str, Any]],
+    moment_interactions: list[dict[str, Any]] | None = None,
     language: str = DEFAULT_LANGUAGE,
 ) -> bool:
     """Stage 4：自我日记——伙伴写下当天的个人反思。"""
@@ -100,6 +104,7 @@ async def _stage_4_self_diary(
         "contextual_memories": contextual_memories,
         "background_memories": background_memories,
         "nightly_autonomous_actions": autonomous_actions,
+        **({"moment_interactions": moment_interactions} if moment_interactions else {}),
         "local_date": local_date_str,
         "language": language,
     }
@@ -380,6 +385,14 @@ async def _run_nightly_pipeline_inner(
         ).scalar()
         user_language = resolve_language(user_lang_row)
 
+        # 片刻互动（当日发布 + 当日评论）作为规划、反思日记与日记投影的共享输入。
+        moment_interactions = await collect_moment_interactions(
+            db,
+            user_id,
+            utc_start=utc_start,
+            utc_end=utc_end,
+        )
+
         # 7 天基线活动统计（主会话，仅真轮——戳一戳 status 行 role 也是 "user"，会被当成参与度）。
         seven_days_ago_utc = utc_start - timedelta(days=7)
         past_7_count = (
@@ -468,6 +481,7 @@ async def _run_nightly_pipeline_inner(
             date_context,
             anomaly_stats,
             clean_main_messages,
+            moment_interactions=moment_interactions,
             log_id=log_id,
         )
         stages.append({"stage": "planning", "status": "ok", "actions": planning_result.model_dump()})
@@ -494,7 +508,7 @@ async def _run_nightly_pipeline_inner(
                 },
             )
 
-    if has_user_messages or action_facts:
+    if has_user_messages or action_facts or moment_interactions:
         try:
             diary_ok = await _stage_4_self_diary(
                 llm_cfg,
@@ -504,6 +518,7 @@ async def _run_nightly_pipeline_inner(
                 updated_background_memories,
                 local_today_str,
                 action_facts,
+                moment_interactions=moment_interactions,
                 language=user_language,
             )
             stages.append(
@@ -538,6 +553,7 @@ async def _run_nightly_pipeline_inner(
             pre_messages=clean_main_messages,
             llm_cfg=llm_cfg,
             nightly_actions=action_facts,
+            moment_interactions=moment_interactions,
             language=user_language,
         )
 

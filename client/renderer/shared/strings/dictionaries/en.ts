@@ -844,6 +844,11 @@ export const dict: Dictionary = {
       loading: 'Flipping through the album…',
       empty: 'No moments captured yet.',
       noTitle: 'Untitled',
+      commentPlaceholder: 'Write a comment…',
+      commentSend: 'Send',
+      commentSending: 'Sending…',
+      commentDelete: 'Delete',
+      userLabel: 'Me',
       kindLabels: {
         emotion: 'Feeling',
         greeting: 'Greeting',

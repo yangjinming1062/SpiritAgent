@@ -1,11 +1,20 @@
-// 片刻页：时间线，新在上。后端直连；空态文案人格化。
+// 片刻页：精灵主导的朋友圈式时间线，新在上；用户可就单条片刻评论与精灵互动。
+// 后端直连；精灵回复经 WS `companion.moment.comment` 增量推送；空态文案人格化。
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useMemo, useState } from 'react'
 
+import { $persona } from '@/modules/character'
 import { InlineMedia } from '@/modules/media'
-import { $moments, $momentsLoading, hydrateMoments } from '@/modules/memory'
+import {
+  $moments,
+  $momentsLoading,
+  commentMoment,
+  deleteMomentComment,
+  hydrateMoments,
+  type MomentCommentEntry
+} from '@/modules/memory'
 import { useStrings } from '@/shared/strings'
 
 import styles from './moments.module.css'
@@ -23,7 +32,9 @@ function formatDate(iso: string): string {
 export function MomentsPage(): React.JSX.Element {
   const moments = useStore($moments)
   const loading = useStore($momentsLoading)
-  const t = useStrings().living.moments
+  const persona = useStore($persona)
+  const strings = useStrings()
+  const t = strings.living.moments
   const [expandedId, setExpandedId] = useState<null | string>(null)
 
   useEffect(() => {
@@ -49,6 +60,8 @@ export function MomentsPage(): React.JSX.Element {
     return <p className={styles.empty}>{t.empty}</p>
   }
 
+  const companionName = persona?.name ?? strings.living.rail.companionFallback
+
   return (
     <div className={styles.list}>
       {formattedMoments.map(m => {
@@ -71,9 +84,107 @@ export function MomentsPage(): React.JSX.Element {
             {m.mediaUrl ? (
               <InlineMedia alt={m.title ?? ''} audioUrl={m.audioUrl} mediaType={m.mediaType} url={m.mediaUrl} />
             ) : null}
+            <MomentComments companionName={companionName} momentId={m.id} />
           </article>
         )
       })}
+    </div>
+  )
+}
+
+function MomentComments(props: { companionName: string; momentId: string }): React.JSX.Element {
+  const { companionName, momentId } = props
+  const moments = useStore($moments)
+  const t = useStrings().living.moments
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+
+  const comments = moments.find(m => m.id === momentId)?.comments ?? []
+
+  const submit = async (): Promise<void> => {
+    const content = draft.trim()
+
+    if (!content || sending) {
+      return
+    }
+
+    setSending(true)
+
+    const ok = await commentMoment(momentId, content)
+
+    setSending(false)
+
+    if (ok) {
+      setDraft('')
+    }
+  }
+
+  const remove = async (commentId: string): Promise<void> => {
+    await deleteMomentComment(momentId, commentId)
+  }
+
+  return (
+    <div className={styles.comments}>
+      {comments.map(c => (
+        <CommentRow comment={c} companionName={companionName} key={c.id} onRemove={remove} />
+      ))}
+      <div className={styles.commentInputRow}>
+        <input
+          aria-label={t.commentPlaceholder}
+          className={styles.commentInput}
+          disabled={sending}
+          maxLength={500}
+          onChange={e => setDraft(e.target.value)}
+          onKeyDown={e => {
+            if (e.key === 'Enter' && !e.nativeEvent.isComposing) {
+              void submit()
+            }
+          }}
+          placeholder={t.commentPlaceholder}
+          type="text"
+          value={draft}
+        />
+        <button
+          className={styles.commentSend}
+          disabled={sending || draft.trim().length === 0}
+          onClick={() => {
+            void submit()
+          }}
+          type="button"
+        >
+          {sending ? t.commentSending : t.commentSend}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+function CommentRow(props: {
+  comment: MomentCommentEntry
+  companionName: string
+  onRemove: (commentId: string) => Promise<void>
+}): React.JSX.Element {
+  const { comment, companionName, onRemove } = props
+  const isCompanion = comment.role !== 'user'
+  const t = useStrings().living.moments
+
+  return (
+    <div className={`${styles.commentRow} ${isCompanion ? styles.commentCompanion : ''}`}>
+      <span className={styles.commentAuthor}>{isCompanion ? companionName : t.userLabel}</span>
+      <span className={styles.commentContent}>{comment.content}</span>
+      {!isCompanion && (
+        <button
+          aria-label={t.commentDelete}
+          className={styles.commentDelete}
+          onClick={() => {
+            void onRemove(comment.id)
+          }}
+          title={t.commentDelete}
+          type="button"
+        >
+          ×
+        </button>
+      )}
     </div>
   )
 }

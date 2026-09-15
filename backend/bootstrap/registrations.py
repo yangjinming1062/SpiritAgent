@@ -23,10 +23,8 @@ from services.application.generation import schedule_initial_room
 from services.domains.automation import set_job_intent_invalidator
 from services.domains.companion import (
     invalidate_cron_companion_intents,
-    set_greeting_moment_writer,
     set_initial_room_scheduler,
 )
-from services.domains.journal import write_system_moment
 from services.infrastructure.event_store import register_internal_event_handler
 from services.infrastructure.image_to_3d import HunyuanImageTo3DProvider, TripoImageTo3DProvider
 from services.infrastructure.image_to_3d import register as register_image_to_3d_provider
@@ -87,7 +85,6 @@ def register_internal_event_handlers() -> None:
 def wire_domain_hooks() -> None:
     """业务域内需要触达生成流程或跨域副作用的少数入口，经装配层注入，保持域间依赖可登记、可检查。"""
     set_initial_room_scheduler(schedule_initial_room)
-    set_greeting_moment_writer(write_system_moment)
     set_job_intent_invalidator(invalidate_cron_companion_intents)
 
 
