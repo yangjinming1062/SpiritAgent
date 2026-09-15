@@ -32,6 +32,7 @@ export {
   type SpriteStateName
 } from './companion-store'
 export { DISTURBANCE_TIERS } from './disturbance-tiers'
+export { FullbodyReferencePanel } from './fullbody-reference-panel'
 export { handleDragEndInteraction, handlePetInteraction, handlePokeInteraction, normalizeRegion } from './interaction'
 export { $memoryBrowserTab, type MemoryTab, setMemoryBrowserTab } from './memory-browser-store'
 export {

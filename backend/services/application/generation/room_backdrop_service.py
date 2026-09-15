@@ -46,9 +46,7 @@ from services.domains.journal import create_user_moment
 from services.infrastructure.assets import asset_store
 from services.infrastructure.llm import call_llm_once, resolve_user_llm_config
 
-from .avatar_service import (
-    load_avatar_bytes_as_data_uri,
-)
+from .avatar_service import load_character_reference_data_uri
 from .image_generation import ImageGenerationError, generate_images
 from .room_prompt import RoomPromptContext, build_room_prompt
 
@@ -475,7 +473,7 @@ async def resume_room_generation(
 
 
 async def schedule_initial_room(user_id: int) -> CompanionRoomBackdrop | None:
-    """onboarding 形象确认后调用；与 2D/3D 资产生成并行，不挡问候。"""
+    """2D 全身立绘确认后调用；与 2D/3D 资产生成并行，不挡问候。"""
     try:
         return await schedule_room_generation(
             user_id,
@@ -568,6 +566,9 @@ async def _run_pipeline(
                 origin=origin,
                 attempt=attempt,
             )
+            return
+        except RoomBackdropStateError as exc:
+            await _mark_failed(backdrop_id, str(exc))
             return
         except ImageGenerationError as exc:
             last_error = str(exc)
@@ -686,18 +687,14 @@ async def _do_one_attempt(
             )
         ).scalar_one_or_none()
     definition = load_persona_definition(persona) if persona else {}
-    identity_uri: str | None = None
-    if avatar is not None:
-        identity_uri = load_avatar_bytes_as_data_uri(avatar.asset_url)
-    outfit_uri = load_avatar_bytes_as_data_uri(outfit.fullbody_url) if outfit is not None else None
+    if avatar is None or not (identity_uri := await asyncio.to_thread(load_character_reference_data_uri, avatar)):
+        raise RoomBackdropStateError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     outfit_description = (outfit.description or "").strip() if outfit is not None else ""
     prompt = build_room_prompt(
         RoomPromptContext(
             species=definition.get("biological_type", ""),
             appearance=definition.get("appearance", ""),
             intent=intent,
-            has_identity_ref=bool(identity_uri),
-            has_outfit_ref=bool(outfit_uri),
             outfit_description=outfit_description,
             brief=brief,
             notes=notes or "",
@@ -713,7 +710,6 @@ async def _do_one_attempt(
             n=1,
             user_id=user_id,
             reference_image=identity_uri,
-            secondary_reference_image=outfit_uri,
         )
         if not urls:
             raise ImageGenerationError("empty image result")
@@ -800,8 +796,8 @@ async def _do_one_attempt(
         row.prompt = prompt
         row.public_url = public_url
         row.media_path = storage_path
-        row.seed_portrait_media_id = (avatar.asset_url or "") if avatar else ""
-        row.seed_outfit_media_id = outfit.fullbody_url if outfit else (avatar.seed_front_2d_url if avatar else "")
+        row.seed_portrait_media_id = avatar.seed_fullbody_url
+        row.seed_outfit_media_id = ""
         row.status = BackdropStatus.READY.value
         row.ready_at = utc_now()
         current_fingerprint = await _current_outfit_fingerprint(db, user_id)

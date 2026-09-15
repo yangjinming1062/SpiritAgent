@@ -57,7 +57,8 @@
 | companion.set_timezone | Client 每次连接上报本地 IANA 时区——系统提示词日期与陪伴对话时间感知、夜间批处理与互动统计按用户本地日聚合的唯一时区来源；缺行时回落服务端 UTC，夜间流水线整段跳过 | Backend 持久化 + Client boot 上报 + DESIGN §6.2 |
 | tools.sync | Client boot 与 Runner 重启时把 Runner 工具 schema 推送到后端网关，纳入该用户的本机工具池。缺该调用时本机工具对模型不可见。对应 WS RPC 注册于 [backend/services/adapters/desktop/handlers.py](../backend/services/adapters/desktop/handlers.py) | Backend handlers + Client boot 上报 |
 | companion.check_affect / companion.interact / companion.should_act / companion.record_interaction_stats / companion.get_user_profile | 桌面自主视觉表达 / 戳·摸头·眩晕反应 / 自主空间决策 / 互动统计 / 画像召回。`check_affect` 只返回结构化 `emotion/actions`，`should_act` 只返回空间动作与可选开场白；RPC 的 `reason` 仅为跳过/失败诊断 | Backend 推理 + Client 触发与消费 + DESIGN §6.3/§6.4 |
-| POST /api/companion/portrait/confirm | 确认半身形象（幂等），解开正面全身立绘生成子阶段 | Backend 状态 + Client 流程 |
+| POST /api/companion/portrait/confirm | 确认半身形象（幂等），进入独立全身种子图阶段 | Backend 状态 + Client 流程 |
+| POST /api/companion/avatar/{avatar_id}/fullbody/reference | 根据头像与角色定义生成/重绘独立全身参考，接受可选 `feedback`（≤ 500 字符）及用户参考 `image`（base64，≤ 8 MiB 字符）、`content_type`（≤ 64 字符，PNG / JPEG / WebP / GIF）；只操作当前激活头像，形象锁定后仍可用，成功替换后由头像响应的 `seed_fullbody_url` 返回签名地址 | Backend 生成与存储 + Client onboarding / 角色与记忆 |
 | POST /api/companion/avatar/{avatar_id}/fullbody/front-2d | 按默认赛璐珞画风（自然站姿）与微调反馈生成/重绘 2D 正面全身图 | Backend 生成 + Client 正面预览与微调 |
 | POST /api/companion/avatar/{avatar_id}/fullbody/front-3d | 以半身头像种子（形象身份基准，同 2D 正面生成）为参考生成/重绘 A-pose、3D 画风的 3D 正面种子（3D 升级向导调用；形象锁定后仍可用——姿态/画风派生而非身份变更；不覆盖 2D 正面种子，重绘会使已派生背面种子失效） | Backend 生成 + Client 3D 正面预览与微调 |
 | POST /api/companion/avatar/{avatar_id}/fullbody/back | 按 3D 正面种子（缺省回退 2D 正面种子）与微调反馈生成/重绘背面全身图（3D 升级向导调用；形象锁定后仍可用——视角派生而非身份变更；画风与 3D 正面种子成对，由系统按类人 CG / 非人写实自动推导） | Backend 生成 + Client 背面预览与微调 |
@@ -82,12 +83,12 @@
 **音色目录与选择**：目录请求携当前系统语言，后端汇总该用户供应商链中所有已配置 TTS 供应商，只返回该语言及多语言音色；每项携供应商身份。客户端将选择持久化为 `供应商:音色 id`，合成端按该引用优先路由到对应供应商，供应商失败仍沿既有 TTS 链回退。
 
 **关键约束**（跨模块语义，非实现细节）：
-- **断点恢复**：角色子阶段答完即标记角色已定稿；onboarding 在全身形象确认且音色完成后视为完成，用户信息均为可选，缺失或后续遗忘不重启引导；未确认形象时按半身头像 → 全身立绘逐步恢复，确认后先路由音色，当前首次流程再继续收集用户信息。全身立绘子阶段的已生成正面种子图随形象行持久化，断点恢复直接重放到正面预览；正面种子草稿确认前停留 temp-media，确认时才转存正式存储，草稿过期按未生成处理由客户端重新生成。
+- **断点恢复**：角色子阶段答完即标记角色已定稿；onboarding 在独立全身种子图就绪、2D 全身立绘确认且音色完成后视为完成，用户信息均为可选，缺失或后续遗忘不重启引导。没有激活头像则恢复到 `portrait`；头像确认后，缺少独立全身种子图或 2D 立绘时返回 `next_field=fullbody-reference`，客户端读取已有种子图，缺图才自动生成并沿用用户上传的参考图；全身种子图就绪且有 2D 草稿时返回 `fullbody` 并恢复预览，确认后先路由音色。2D 种子草稿确认前停留 temp-media，确认时才转存正式存储；预览下载失败可重试加载，重新加载不触发生图，草稿过期才需重生成。
 - **形象锁定**：形象确认即锁定，物种/性别/基础外貌不可再改，3D 模型/头像重新生成路径与历史头像切换激活一并关闭（切换激活等于换掉已确认的视觉身份）。
 - **关系不外溢到分析与形象**：引导期录入的用户与伙伴关系（知己好友、赛博管家等）只渲染进对话系统提示词供交互参考；不进入性格标签分析与头像/立绘提示词生成——关系是用户与伙伴之间的，不是伙伴自身属性。
 - **下载失败可恢复（已付费结果绝不丢）**：下载失败态随 `model.failed` 事件下发可重试标记与模型标识；客户端必须据此提供"重试下载"入口，而非引导重新生成。持久化与恢复语义见 [docs/PIPELINE.md §3](PIPELINE.md)。
 - **当前心情状态**：人设水合响应携带已持久化的 `current_mood`。生活空间陪伴回合完成后，独立状态推理写入该字段并发出 `companion.mood`；用户直接互动也可更新。该短语只供身份轨展示，不写入聊天消息，也不受主动打扰档位拦截。
-- **生活空间房间图联动与保护**：房间背景将角色绘制进场景中，身份基准由头像种子图锚定，当前穿着由激活外观的全身立绘作为第二视觉参考并由着装描述补充。换装成功后（`worn=true`）自动比较着装指纹，不一致时下发 `companion.room.invalidated` 并自动触发重建，防止画面穿帮。房间政策为 `locked` 时，拒绝角色自主换房，但放行换装联动与用户显式请求；历史房间保留最近 5 张供回滚，回滚时若服装指纹与当前穿着冲突则返回 409。
+- **生活空间房间图联动与保护**：房间背景将角色绘制进场景中，角色参考与穿着来源见 [PIPELINE §1](PIPELINE.md#1-3d-链拓扑)。首房间在 2D 立绘确认后调度，避免早于独立全身参考生成。换装成功后（`worn=true`）自动比较着装指纹，不一致时下发 `companion.room.invalidated` 并自动触发重建，防止画面穿帮。房间政策为 `locked` 时，拒绝角色自主换房，但放行换装联动和用户显式请求；历史房间保留最近 5 张供回滚，回滚时若服装指纹与当前穿着冲突则返回 409。
 - **夜间自主活动目录、门控与顺序**：`User.nightly_activity_enabled` 是总控；`Persona.backdrop_policy`、`Persona.outfit_policy`、配置点键 `companion.autonomous_media` 与 `companion.autonomous_voice` 分别门控房间、外观、图片/视频和语音/配音，缺省均开放。Stage 2 与白天阈值记忆整理共享用户级进程内互斥；每次在调用 LLM 前读取带内容、标签、重要度和更新时间的源快照，LLM 返回后以条件删除的短事务核对全部源行，任一行被编辑或删除即整体回滚并丢弃旧摘要，数据库连接及行锁不得跨 LLM 等待持有。Stage 3 将运行时可用的 `outfit.wear`、`outfit.create`、`room.change`、`moment.create`、`media.image`、`media.video`、`media.voice`、`outreach.schedule` 目录交给 LLM，模型可返回任意小组合或空列表；服务层拒绝目录外能力并按外观 → 房间 → 片刻/媒体 → 联系执行，动作开始前再次读取政策。计划与动作状态分别持久化在 `nightly_activity_logs.payload.nightly_plan` 与 `nightly_activity_actions`；可核对的长任务携内部任务 id 沿同一业务记录恢复，无法确认的在途动作标记 `interrupted` 且不重复提交。最近一个中断日期可在休息窗口外沿原参考日恢复，超过一日本地恢复窗口则终止未确认动作。成功事实写入 `recall:nightly_actions:<date>`、两套日记输入和问候提示，失败/跳过不冒充事实。`BackdropOrigin.NIGHTLY` 不消费在线 LLM 换房的 24 小时配额；夜间片刻与主陪伴消息、消息 outbox 在同一事务写入；消息媒体支持 image/video/audio 与可选配音 audio_url，持久化保存永久资产路径，读取经鉴权资产通道加载。无当日消息不阻断 Stage 3。白天打扰档位不参与夜间决策，但一次性 `special` 问候到期时仅在用户在线且不处于静止档时派发，并由 `CronJob.expires_at` 保留至目标本地日结束。
 - **时刻与日记分层不变量**：底层 `memories` 向量表仅用于混合语义检索与系统提示词注入，不对客户端暴露为可读列表；生活空间消费独立的 `moments`（时刻）与 `diary_entries`（第一人称日记）。夜间批处理静默提炼日记，若当天已被用户编辑过则采取尾部段落追加而非覆写；工作预设会话中严格禁止记录生活时刻。片刻完全由精灵发起，产生通道有三：白天自主冲动（每用户每 24h ≤ `MOMENT_AUTONOMOUS_PER_DAY`，默认 3，0 表示关闭；静止档断源，纯信息流更新、不发主对话消息）、聊天内 `moment_create`（≤ 3 次/日）与夜间规划；用户仅可评论、删除本人评论与软隐藏整条时刻。当日片刻互动（发布与评论线程）作为共享输入进入夜间规划、反思日记与日记投影。
 - **内置专属工具门控**：生活空间三工具只绑定陪伴会话——工作预设与自动化任务在回合装配层即不注入 schema（`prompt_presets.LIFE_SPACE_TOOL_NAMES`，`build_turn_inputs` 与 `search_tools` 同源过滤），派发层按同一集合硬阻断（orchestrator，与 automation 同机制），工具入口不判定会话类型；静止档由工具入口人格化拒绝。
@@ -134,7 +135,7 @@
 **对话内生成媒体**（改此处需同步：backend 工具与聊天持久化、backend/README.md、client 渲染层与 client/renderer/README.md、DESIGN §6）：
 - 聊天回合经图像/视频生成工具产出的媒体，随对话完成事件以 media 数组（元素为 image / video 类型 + 本服务媒体 URL）下发，并持久化在对应助手消息行；后台完成的视频另以 status_media 送达行落库，实时事件与历史水合看到同一形状。
 - 渲染端在**对话窗**以媒体卡内联预览、点击放大播放；精灵气泡只承载轻量文本，收到媒体时仅提示「点击查看」并支持点击打开对话窗（必要时切到目标会话）——富媒体统一在对话窗展示，不进气泡。
-- 精灵画/拍自己（生成工具 subject='self'）：身份参考由后端自动注入**半身头像**（种子图编排与参照基准见 [docs/PIPELINE.md §1](PIPELINE.md)）。
+- 精灵画/拍自己（生成工具 subject='self'）：后端自动注入角色参考（图像参考或缺省视频首帧），参考规则见 [PIPELINE §1](PIPELINE.md#1-3d-链拓扑)。
 
 **用户侧聊天附件**（改此处需同步：backend 网关校验与附件生命周期模块、backend/README.md、client 附件 UX 与 client/renderer/README.md、DESIGN §6.1）：
 - 图片附件以 `data:image/*` data URL 随 `prompt.submit` 的 attachments 直发（不落盘）；视频附件因 base64 远超 WS 单帧上限，客户端必须先经 `POST /api/media/videos`（multipart：file + session_id，容器白名单 mp4/mov）换取附件 URL，再以 `{"type": "video", "file_url": ...}` 提交——附件 URL 只认本会话（跨会话引用直接拒绝），绝对形态仅认 `public_base_url` 前缀（第三方绝对 URL 会被拒绝，防止借供应商发任意请求）。

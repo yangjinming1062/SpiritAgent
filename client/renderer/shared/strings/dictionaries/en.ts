@@ -344,6 +344,33 @@ export const dict: Dictionary = {
       intro: 'Edit the persona and review what the companion remembers — all in one place.',
       sectionTitle: 'Persona',
       sectionMemory: 'Long-term memory',
+      fullbodyReference: {
+        title: 'Full-body seed image',
+        hint: 'Show the character’s proportions and personality in a graceful, natural pose. Used as the preferred reference for rooms, selfies and other scenes.',
+        empty: 'No full-body seed image yet. Generate one from the current portrait and persona.',
+        loading: 'Preparing the full-body seed image…',
+        referenceLabel: 'User reference image',
+        referenceHint:
+          'Use a reference for physique, clothing and pose. The confirmed portrait anchors facial identity.',
+        chooseReference: 'Choose reference image',
+        replaceReference: 'Replace reference image',
+        removeReference: 'Remove reference image',
+        pickError: 'Could not select the image. Try a smaller PNG, JPEG, WebP or GIF file.',
+        feedbackLabel: 'Full-body image adjustments',
+        feedbackPlaceholder: 'Describe any changes to the body or pose, or leave blank to generate.',
+        generate: 'Generate full-body seed',
+        regenerate: 'Regenerate full-body seed',
+        reload: 'Reload',
+        enlarge: 'Enlarge full-body seed image',
+        back: 'Back',
+        continue: 'Confirm and continue',
+        errors: {
+          load: 'Could not load the full-body seed image. Please reload.',
+          generate:
+            'Generation did not finish. The previous preview is preserved. Reload to check the result before generating again.',
+          preview: 'The image was saved, but its preview could not load. Please reload.'
+        }
+      },
       editAction: 'Edit',
       editHeading: 'Edit persona',
       defaultName: 'Companion',

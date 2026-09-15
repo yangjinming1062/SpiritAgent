@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useState } from 'react'
 
-import { $persona } from '@/modules/character'
+import { $activeAvatarId, $persona, FullbodyReferencePanel } from '@/modules/character'
 import { useGatewayRequest } from '@/shared'
 import { cn } from '@/shared/lib/utils'
 import { BTN_SUBTLE, HINT_TEXT, SECTION_TITLE, SettingsSectionIntro } from '@/shared/panel'
@@ -32,6 +32,7 @@ export function PersonaPage(): React.ReactElement {
   const t = dict.settings.persona
 
   const persona = useStore($persona)
+  const avatarId = useStore($activeAvatarId)
   const { requestGateway } = useGatewayRequest()
   const [retuneOpen, setRetuneOpen] = useState(false)
   const [retuneInitial, setRetuneInitial] = useState<RetuneInitial | null>(null)
@@ -70,6 +71,7 @@ export function PersonaPage(): React.ReactElement {
       <div className="space-y-6">
         <SettingsSectionIntro hint={t.intro} title={t.title} />
         <PersonaSection />
+        {avatarId != null && <FullbodyReferencePanel avatarId={avatarId} key={avatarId} />}
 
         {persona?.name && (
           <section>

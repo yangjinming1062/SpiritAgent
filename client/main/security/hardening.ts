@@ -44,6 +44,9 @@ export const DEV_CSP_POLICY = [
 // 默认 15 秒会在后端返回 201 之前就超时，所以这里放宽。
 const AVATAR_FETCH_TIMEOUT_MS = 120_000
 
+const AVATAR_SLOW_PATH_PATTERN =
+  /^\/api\/(?:companion\/(?:avatar(?:\/from-image|\/\d+\/fullbody\/(?:reference|front-2d|front-3d|back|confirm-front))?|sprite)|media\/(?:image_gen|video_gen))$/i
+
 const SAFE_ENV_SUFFIXES: Set<string> = new Set(['dist', 'example', 'sample', 'template'])
 const SENSITIVE_EXTENSIONS: Set<string> = new Set(['.kdbx', '.p12', '.pem', '.pfx'])
 
@@ -60,9 +63,6 @@ export function resolveTimeoutMs(timeoutMs?: null | number | string, fallbackMs 
 
   return Number.isFinite(fallbackNum) && fallbackNum > 0 ? Math.round(fallbackNum) : DEFAULT_FETCH_TIMEOUT_MS
 }
-
-const AVATAR_SLOW_PATH_PATTERN =
-  /^\/api\/(?:companion\/(?:avatar(?:\/from-image|\/\d+\/fullbody\/(?:samples|front|back|confirm-front))?|sprite)|media\/(?:image_gen|video_gen))$/i
 
 // 仅 POST 路径——读路径只是数据库查询，不涉及供应商调用。
 export function resolvePathTimeoutMs(

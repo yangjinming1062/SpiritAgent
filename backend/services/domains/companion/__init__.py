@@ -42,7 +42,6 @@ from .persona_service import (
     load_persona_definition,
     normalize_persona_aliases,
     render_extras,
-    set_initial_room_scheduler,
     submit_onboarding_field,
     update_persona,
 )
@@ -132,7 +131,6 @@ __all__ = [
     "run_prompt_json",
     "schedule_personality_tag_refresh",
     "select_rig_type",
-    "set_initial_room_scheduler",
     "should_act",
     "submit_onboarding_field",
     "update_mood_from_companion_turn",

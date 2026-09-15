@@ -16,6 +16,7 @@ from modules.companion import (
     Fullbody2dFrontGenerateRequest,
     Fullbody3dSeedGenerateRequest,
     FullbodyConfirmFrontRequest,
+    FullbodyReferenceGenerateRequest,
     ModelGenerateRequest,
     OnboardingStateResponse,
     OutfitCreateRequest,
@@ -59,6 +60,7 @@ from services.application.generation import (
     generate_fullbody_back,
     generate_fullbody_front_2d,
     generate_fullbody_front_3d,
+    generate_fullbody_reference,
     generate_mesh2d_model,
     get_active_avatar,
     get_active_mesh2d_response,
@@ -71,6 +73,7 @@ from services.application.generation import (
     regenerate_avatar_from_image,
     regenerate_outfit_draft,
     resolve_uploaded_avatar_path,
+    schedule_initial_room,
     select_avatar,
     set_outfit_policy,
     set_render_mode,
@@ -148,11 +151,13 @@ async def post_portrait_confirm(
     db: DbSession,
 ) -> CompanionOperationResponse:
     try:
-        await finalize_avatar(db, user.id)
+        async with get_avatar_job_lock(user.id):
+            asset = await finalize_avatar(db, user.id)
+            if asset is None:
+                raise HTTPException(status_code=404, detail={"error": "请先生成或上传头像"})
+            await confirm_portrait(db, user.id)
     except AvatarSourceUnreadableError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象草稿已过期，请重新生成头像", "reason": str(exc)})
-    # 仅在 finalize 成功后确认 portrait；避免 is_portrait_confirmed=True 但头像文件已丢失的污染状态。
-    await confirm_portrait(db, user.id)
     return CompanionOperationResponse(ok=True)
 
 
@@ -215,7 +220,7 @@ def _decode_upload_image(image_b64: str | None, content_type: str | None) -> tup
     if normalized not in ALLOWED_AVATAR_UPLOAD_MIME_TYPES:
         raise HTTPException(status_code=415, detail={"error": "仅支持 PNG / JPEG / WebP / GIF 图片"})
     try:
-        return base64.b64decode(image_b64), normalized
+        return base64.b64decode(image_b64, validate=True), normalized
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid base64 image data")
 
@@ -306,11 +311,41 @@ async def get_avatar_history(user: CurrentUser, db: DbSession) -> AvatarHistoryR
 @router.put("/avatar/{avatar_id}/select", response_model=AvatarAssetResponse)
 async def put_avatar_select(avatar_id: int, user: CurrentUser, db: DbSession) -> AvatarAssetResponse:
     try:
-        asset = await select_avatar(db, user.id, avatar_id)
+        async with get_avatar_job_lock(user.id):
+            asset = await select_avatar(db, user.id, avatar_id)
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
+    return avatar_response(asset)
+
+
+@router.post("/avatar/{avatar_id}/fullbody/reference", response_model=AvatarAssetResponse)
+@limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
+async def post_fullbody_reference(
+    request: Request,
+    avatar_id: int,
+    body: FullbodyReferenceGenerateRequest,
+    user: CurrentUser,
+) -> AvatarAssetResponse:
+    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    try:
+        asset = await generate_fullbody_reference(
+            user.id,
+            avatar_id=avatar_id,
+            feedback=body.feedback,
+            reference_image=base64.b64encode(raw).decode("utf-8") if raw else None,
+            reference_content_type=content_type,
+        )
+    except AvatarNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": str(exc)})
+    except AvatarSourceUnreadableError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)})
+    except AvatarGenerationError as exc:
+        logger.warning("fullbody reference generation failed", extra={"user_id": user.id, "error": exc.internal})
+        raise HTTPException(status_code=502, detail={"error": "全身参考图生成失败，请稍后重试"})
+    except MissingLlmConfigError:
+        raise HTTPException(status_code=502, detail={"error": "生成服务未配置，请先在设置中配置供应商"})
     return avatar_response(asset)
 
 
@@ -321,20 +356,19 @@ async def post_fullbody_front_2d(
     avatar_id: int,
     body: Fullbody2dFrontGenerateRequest,
     user: CurrentUser,
-    db: DbSession,
 ) -> AvatarAssetResponse:
     raw, content_type = _decode_upload_image(body.image, body.content_type)
     ref_b64 = base64.b64encode(raw).decode("utf-8") if raw else None
     try:
-        asset = await generate_fullbody_front_2d(
-            db,
-            user.id,
-            avatar_id=avatar_id,
-            style=body.style,
-            feedback=body.feedback,
-            reference_image=ref_b64,
-            reference_content_type=content_type,
-        )
+        async with get_avatar_job_lock(user.id):
+            asset = await generate_fullbody_front_2d(
+                user_id=user.id,
+                avatar_id=avatar_id,
+                style=body.style,
+                feedback=body.feedback,
+                reference_image=ref_b64,
+                reference_content_type=content_type,
+            )
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
     except ImageSealedError as exc:
@@ -361,10 +395,10 @@ async def post_fullbody_front_3d(
     avatar_id: int,
     body: Fullbody3dSeedGenerateRequest,
     user: CurrentUser,
-    db: DbSession,
 ) -> AvatarAssetResponse:
     try:
-        asset = await generate_fullbody_front_3d(db, user.id, avatar_id=avatar_id, feedback=body.feedback)
+        async with get_avatar_job_lock(user.id):
+            asset = await generate_fullbody_front_3d(user_id=user.id, avatar_id=avatar_id, feedback=body.feedback)
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
     except FrontSeedMissingError as exc:
@@ -389,10 +423,10 @@ async def post_fullbody_back(
     avatar_id: int,
     body: Fullbody3dSeedGenerateRequest,
     user: CurrentUser,
-    db: DbSession,
 ) -> AvatarAssetResponse:
     try:
-        asset = await generate_fullbody_back(db, user.id, avatar_id=avatar_id, feedback=body.feedback)
+        async with get_avatar_job_lock(user.id):
+            asset = await generate_fullbody_back(user_id=user.id, avatar_id=avatar_id, feedback=body.feedback)
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
     except FrontSeedMissingError as exc:
@@ -420,13 +454,14 @@ async def post_fullbody_confirm_front(
     db: DbSession,
 ) -> AvatarAssetResponse:
     try:
-        asset = await confirm_fullbody_front(
-            db,
-            user.id,
-            avatar_id=avatar_id,
-            style=body.style,
-            front_url=body.front_url,
-        )
+        async with get_avatar_job_lock(user.id):
+            asset = await confirm_fullbody_front(
+                db,
+                user.id,
+                avatar_id=avatar_id,
+                style=body.style,
+                front_url=body.front_url,
+            )
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
     except ImageSealedError as exc:
@@ -438,6 +473,10 @@ async def post_fullbody_confirm_front(
             status_code=409,
             detail={"error": "全身立绘草稿已过期，请重新生成正面全身图", "reason": str(exc)},
         )
+    try:
+        await schedule_initial_room(user.id)
+    except Exception:
+        logger.warning("initial room scheduling failed", extra={"user_id": user.id}, exc_info=True)
     return avatar_response(asset)
 
 

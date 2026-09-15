@@ -29,8 +29,6 @@ class RoomPromptContext:
     species: str
     appearance: str
     intent: BackdropIntent | str
-    has_identity_ref: bool
-    has_outfit_ref: bool = False
     outfit_description: str = ""
     brief: str = ""
     notes: str = ""
@@ -41,17 +39,11 @@ def _prompt_clause(value: str) -> str:
 
 
 def _identity_block(ctx: RoomPromptContext) -> str:
-    species = (ctx.species or "人类").strip() or "人类"
     appearance = _prompt_clause(ctx.appearance or "")
-    if ctx.has_identity_ref:
-        reference_position = "参考图左侧" if ctx.has_outfit_ref else "参考图"
-        block = f"{reference_position}是这个人的正面半身像：只用来锁定五官、发型、肤色、物种与性别，必须画成同一个人，不要换成另一张脸。"
-        if appearance:
-            return f"{block}外形文字仅作补充，与参考图冲突时以参考图的外貌为准：{appearance}。"
-        return block
+    block = "全身参考图用于确定角色身份与身材：保持同一角色的五官、肤色、物种、性别与身材比例；根据本次房间情境安排姿态与构图。"
     if appearance:
-        return f"按这段外形描述画出这个人：{appearance}。"
-    return f"画面中的人是{species}，外貌自然可信。"
+        return f"{block}外形文字仅作补充，与参考图冲突时以参考图的外貌为准：{appearance}。"
+    return block
 
 
 def build_room_prompt(ctx: RoomPromptContext) -> str:
@@ -65,13 +57,11 @@ def build_room_prompt(ctx: RoomPromptContext) -> str:
         _identity_block(ctx),
     ]
     outfit = _prompt_clause(ctx.outfit_description or "")
-    if ctx.has_outfit_ref:
-        outfit_reference = "参考图右侧" if ctx.has_identity_ref else "参考图"
-        parts.append(
-            f"{outfit_reference}是这个人当前的全身穿着：必须保持相同服装、配色、发型、配饰与身体特征，不得自行换装。",
-        )
     if outfit:
-        parts.append(f"角色当前穿着：{outfit}。不要因房间主题改变这套穿着。")
+        parts.append(
+            f"角色当前穿着：{outfit}。服装、配色、发型与配饰以这段当前穿着描述为准，"
+            "优先于全身参考图中的穿着，并在本次房间场景中保持这套搭配。",
+        )
     brief = _prompt_clause(ctx.brief or "")
     if brief:
         parts.append(f"房间陈设：{brief}。")

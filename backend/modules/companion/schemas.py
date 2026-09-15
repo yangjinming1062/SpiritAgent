@@ -44,6 +44,7 @@ SucceededStatus = Literal["succeeded"]
 class AvatarAssetResponse(BaseModel):
     id: int
     asset_url: str
+    seed_fullbody_url: str = ""
     seed_front_2d_url: str = ""
     seed_front_3d_url: str = ""
     seed_back_url: str = ""
@@ -52,6 +53,14 @@ class AvatarAssetResponse(BaseModel):
     fullbody_style: str = ""
     prompt: str = ""
     status: SucceededStatus = "succeeded"
+
+
+class FullbodyReferenceGenerateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    feedback: str | None = Field(default=None, max_length=500)
+    image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
+    content_type: str | None = Field(default=None, max_length=64)
 
 
 class Fullbody2dFrontGenerateRequest(BaseModel):

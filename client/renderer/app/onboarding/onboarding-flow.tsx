@@ -16,6 +16,7 @@ import {
   CHARACTER_GENDER_PRESETS,
   clearDraftRefImage,
   clearPortraitHistory,
+  FullbodyReferencePanel,
   hydratePortraitHistory,
   loadDraftRefImage,
   MAX_APPEARANCE,
@@ -78,6 +79,7 @@ type Phase =
   | 'portrait-choose'
   | 'hatching'
   | 'portrait-avatar'
+  | 'fullbody-reference'
   | 'fullbody'
   | 'q-user'
   | 'voice'
@@ -280,6 +282,7 @@ const PHASE_QUESTIONS: Record<Phase, readonly Question[]> = {
   'portrait-choose': [],
   hatching: [],
   'portrait-avatar': [],
+  'fullbody-reference': [],
   fullbody: [],
   finishing: [],
   greeting: []
@@ -872,10 +875,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   }
 
-  // 从 avatar 行复水 fullbody 阶段——正面种子图——
-  // 让重启能从上次中断处继续，且绝不重新触发生成。
-  // 仅在没有存储内容（首次进入 / 旧版行）或 temp-media 草稿过了 TTL 时才回退到重新生成。
-  const hydrateFullbodyStage = async (): Promise<void> => {
+  // 重新加载只读取已有结果；首次进入且服务端明确无种子时才自动生成。
+  const hydrateFullbodyStage = async (generateIfMissing: boolean = false): Promise<void> => {
     const avatarRes = await window.spiritagent.api<{
       asset_url?: string | null
       seed_front_2d_url?: string | null
@@ -900,15 +901,19 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       if (resolved) {
         setFullbodyHistories({ [style]: [{ rawUrl: seedFrontRaw, previewUrl: resolved }] })
         setFullbodyHistoryIndices({ [style]: 0 })
+      } else {
+        setFullbodyHint('正面立绘预览加载失败，请重新加载；草稿过期时可重新生成。')
       }
-    } else if (avatarRes?.id) {
-      await generateFullbodyFrontDirect(avatarRes.id, style)
     } else {
       setFullbodyStyleState(style)
       setFullbodyFrontRawUrl(null)
       setFullbodyFrontUrl(null)
       setFullbodyHistories({})
       setFullbodyHistoryIndices({})
+
+      if (generateIfMissing && avatarRes?.id) {
+        await generateFullbodyFrontDirect(avatarRes.id, style)
+      }
     }
   }
 
@@ -1009,12 +1014,24 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             } catch {
               setPhase('portrait-choose')
             }
+          } else if (nextField === 'fullbody-reference') {
+            try {
+              const avatarRes = await window.spiritagent.api<{ id: number; asset_url: string }>({
+                path: '/api/companion/avatar'
+              })
+
+              await applyLocalPortrait(avatarRes)
+              setPhase('fullbody-reference')
+            } catch {
+              setPhase('portrait-avatar')
+              setPortraitPanelHint('形象恢复失败，请重试')
+            }
           } else if (nextField === 'fullbody') {
             try {
               // portrait 确认后 persona 已定稿;resume 直接落到 fullbody 阶段。
               setPhase('fullbody')
               await hydratePortraitHistory()
-              await hydrateFullbodyStageRef.current()
+              await hydrateFullbodyStageRef.current(true)
             } catch {
               setPhase('fullbody')
               setFullbodyHint('全身立绘恢复失败，请重试')
@@ -1218,8 +1235,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     clearPortraitHistory()
     setPresentationRef(null)
 
-    // portrait 确认后直接进入全身立绘阶段；2D 形象默认赛璐珞风格，自动生成正面立绘。
-    setPhase('fullbody')
+    setPhase('fullbody-reference')
     setFullbodyStyleState('cel_shading')
     setFullbodyFrontUrl(null)
     setFullbodyFrontRawUrl(null)
@@ -1228,9 +1244,19 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setFullbodyZoomUrl(null)
     setFullbodyHistories({})
     setFullbodyHistoryIndices({})
+  }
 
-    if (activeAvatarId) {
-      void generateFullbodyFrontDirect(activeAvatarId, 'cel_shading')
+  const loadFullbodyStage = async (generateIfMissing: boolean = false): Promise<void> => {
+    setPhase('fullbody')
+    setFullbodyLoading(true)
+    setFullbodyHint(null)
+
+    try {
+      await hydrateFullbodyStage(generateIfMissing)
+    } catch {
+      setFullbodyHint('全身立绘恢复失败，请重试')
+    } finally {
+      setFullbodyLoading(false)
     }
   }
 
@@ -1793,6 +1819,16 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             </div>
           )}
 
+          {phase === 'fullbody-reference' && activeAvatarId != null && (
+            <FullbodyReferencePanel
+              avatarId={activeAvatarId}
+              initialReference={refImage}
+              key={activeAvatarId}
+              onBack={onBack}
+              onContinue={() => void loadFullbodyStage(true)}
+            />
+          )}
+
           {phase === 'fullbody' && (
             <div className="mt-2">
               {fullbodyLoading ? (
@@ -1839,6 +1875,13 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     ) : (
                       <div className="p-4 text-center">
                         <p className="mb-2 text-xs text-muted">暂无预览图</p>
+                        <button
+                          className="rounded-full bg-fill-hover px-3 py-1 text-xs text-strong hover:bg-fill-active"
+                          onClick={() => void loadFullbodyStage()}
+                          type="button"
+                        >
+                          重新加载
+                        </button>
                         {activeAvatarId && (
                           <button
                             className="rounded-full bg-fill-hover px-3 py-1 text-xs text-strong hover:bg-fill-active"
@@ -1876,11 +1919,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                   {fullbodyHint && <p className="mt-2 text-xs text-rose-300/90">{fullbodyHint}</p>}
 
                   <div className="mt-3 flex items-center justify-between text-xs">
-                    <button
-                      className="text-body transition hover:text-strong"
-                      onClick={() => setPhase('portrait-avatar')}
-                      type="button"
-                    >
+                    <button className="text-body transition hover:text-strong" onClick={onBack} type="button">
                       上一步
                     </button>
                     <div className="flex gap-3">

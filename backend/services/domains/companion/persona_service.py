@@ -1,5 +1,4 @@
 import json
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 from components import DEFAULT_LANGUAGE, get_logger, resolve_prompt_text, safe_json_loads
@@ -13,16 +12,6 @@ from services.domains.conversation import ensure_system_conversations_for_user
 from services.domains.memory import extract_user_profile, read_user_profile, record_user_profile
 
 logger = get_logger(__name__)
-
-# 首图确认后的房间图调度由装配层注入（bootstrap），业务域不反向依赖生成流程。
-InitialRoomScheduler = Callable[[int], Awaitable[None]]
-_schedule_initial_room: InitialRoomScheduler | None = None
-
-
-def set_initial_room_scheduler(fn: InitialRoomScheduler | None) -> None:
-    global _schedule_initial_room
-    _schedule_initial_room = fn
-
 
 # 双语角色设定块标题。字段 label（key.replace("_", " ").capitalize()）属协议级展示，保持英文不译。
 _PERSONA_LABELS_TEXTS: dict[str, str] = {
@@ -154,12 +143,6 @@ async def confirm_portrait(db: AsyncSession, user_id: int) -> Persona:
     persona.portrait_confirmed_at = func.now()
     await db.commit()
     await db.refresh(persona)
-    # onboarding 形象确认后启动首张房间图；与 2D/3D 资产生成并行，不挡问候
-    try:
-        if _schedule_initial_room is not None:
-            await _schedule_initial_room(user_id)
-    except Exception:
-        logger.warning("failed to schedule initial room backdrop", extra={"user_id": user_id}, exc_info=True)
     return persona
 
 
@@ -195,12 +178,12 @@ def _onboarding_answers(draft: dict[str, str]) -> dict[str, str]:
     return res
 
 
-def _state(answers: dict, next_field: str | None, complete: bool) -> dict[str, Any]:
+def _state(answers: dict[str, str], next_field: str | None, complete: bool) -> dict[str, Any]:
     return {"answers": answers, "next_field": next_field, "complete": complete}
 
 
 async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]:
-    """从数据库恢复引导进度；complete 以角色、头像、全身形象与音色为门槛。"""
+    """从数据库恢复引导进度；complete 以角色、头像、全身参考、2D 立绘与音色为门槛。"""
     persona = await get_or_create_persona(db, user_id)
     draft = load_persona_definition(persona)
     if persona.is_complete:
@@ -211,7 +194,11 @@ async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]
         avatar = (
             await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
         ).scalar_one_or_none()
-        if avatar is None or not getattr(avatar, "seed_front_2d_url", None):
+        if avatar is None:
+            return _state(merged, "portrait", False)
+        if not avatar.seed_fullbody_url or not avatar.seed_front_2d_url:
+            return _state(merged, "fullbody-reference", False)
+        if avatar.seed_front_2d_url.startswith("temp-media/"):
             return _state(merged, "fullbody", False)
         if not draft.get("voice"):
             # 合并草稿与 Memory，让桌面端在音色阶段仍能预填已答资料。

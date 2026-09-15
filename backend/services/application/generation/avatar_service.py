@@ -31,6 +31,7 @@ from services.infrastructure.llm import (
     resolve_fullbody_template,
 )
 
+from .fullbody_reference_prompt import build_fullbody_reference_prompt
 from .image_generation import ImageGenerationError, generate_images
 
 logger = get_logger(__name__)
@@ -50,6 +51,13 @@ _RIG_FULLBODY_SIZES: dict[str, str] = {
     "octopod": "1792x1024",  # 16:9
 }
 _AVATAR_QUALITY: str = "standard"
+_AVATAR_IMAGE_FIELDS: tuple[str, ...] = (
+    "asset_url",
+    "seed_fullbody_url",
+    "seed_front_2d_url",
+    "seed_front_3d_url",
+    "seed_back_url",
+)
 _UPLOAD_EXTS: dict[str, str] = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 ALLOWED_AVATAR_UPLOAD_MIME_TYPES: frozenset[str] = frozenset(_UPLOAD_EXTS)
 
@@ -67,10 +75,9 @@ _MODERATION_SANITIZATION_PROMPT = (
 
 
 async def _sanitize_prompt_for_moderation(user_id: int, prompt: str) -> str:
-    """合规改写被审核拒绝的提示词，失败时返回原文；自建 DB 会话以兼容 gather 并发调用。"""
+    """合规改写被审核拒绝的提示词，失败时返回原文。"""
     try:
-        async with SESSION_LOCAL() as db:
-            sanitized = await chat(db, user_id, _MODERATION_SANITIZATION_PROMPT, prompt)
+        sanitized = await chat(None, user_id, _MODERATION_SANITIZATION_PROMPT, prompt)
         sanitized = sanitized.strip()
         return sanitized if sanitized else prompt
     except Exception:
@@ -157,7 +164,7 @@ class AvatarSourceUnreadableError(AvatarGenerationError):
 
 
 class ImageSealedError(AvatarGenerationError):
-    """形象已确认锁定（DESIGN §5.4 形象锁定）：半身/全身重生路径对该用户关闭。"""
+    """形象已确认锁定：头像与 2D 建模种子重生路径关闭，独立全身参考仍可派生。"""
 
 
 async def raise_if_image_sealed(db: AsyncSession | None, user_id: int, persona: Persona) -> None:
@@ -489,6 +496,7 @@ async def get_active_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | Non
         await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
     ).scalar_one_or_none()
     if asset is not None:
+        db.expunge(asset)
         _re_sign_avatar_url(asset)
     return asset
 
@@ -533,6 +541,7 @@ async def list_avatar_history(db: AsyncSession, user_id: int, limit: int = 20) -
         if _is_orphan_temp_media_asset(asset):
             await db.delete(asset)
             continue
+        db.expunge(asset)
         _re_sign_avatar_url(asset)
         survivors.append(asset)
     if len(survivors) != len(assets):
@@ -546,10 +555,12 @@ def _is_orphan_temp_media_asset(asset: AvatarAsset) -> bool:
     字段全空、或任一字段还有活着的 temp-media / 已是 companion-avatars，都不视作孤儿。
     """
     has_temp_ref = False
-    for attr in ("asset_url", "seed_front_2d_url", "seed_front_3d_url", "seed_back_url"):
+    for attr in _AVATAR_IMAGE_FIELDS:
         val = getattr(asset, attr, None)
-        if not val or not val.startswith("temp-media/"):
+        if not val:
             continue
+        if not val.startswith("temp-media/"):
+            return False
         has_temp_ref = True
         file_id = val.split("/", 1)[1]
         if get_file_path(file_id) is not None:
@@ -575,11 +586,7 @@ def re_sign_bare_path(bare_path: str | None) -> str | None:
 
 
 def _re_sign_avatar_url(asset: AvatarAsset) -> None:
-    if asset.asset_url:
-        signed = re_sign_bare_path(asset.asset_url)
-        if signed:
-            asset.asset_url = signed
-    for attr in ("seed_front_2d_url", "seed_front_3d_url", "seed_back_url"):
+    for attr in _AVATAR_IMAGE_FIELDS:
         val = getattr(asset, attr, None)
         if val:
             signed = re_sign_bare_path(val)
@@ -686,15 +693,18 @@ def load_avatar_bytes_as_data_uri(asset_url_or_path: str | None) -> str | None:
     return None
 
 
+def load_character_reference_data_uri(asset: AvatarAsset) -> str | None:
+    """日常出镜读取独立全身参考，不使用头像或建模种子。"""
+    return load_avatar_bytes_as_data_uri(asset.seed_fullbody_url)
+
+
 async def resolve_self_reference_data_uri(user_id: int) -> str:
-    """聊天工具画/拍伙伴自己时的身份参考：激活形象行的半身头像 → data URI。
-    刻意不用 2D/3D 正面种子图——它们带生成画风，作参考会让身份失真；聊天内所有自我生成的图像参考统一用头像图。
-    自建 DB 会话，供工具层在无调用方会话的上下文中直接使用。"""
+    """聊天与夜间出镜共用角色参考；自建短会话，不跨媒体生成持有事务。"""
     async with SESSION_LOCAL() as db:
         asset = await get_active_avatar(db, user_id)
-    data_uri = load_avatar_bytes_as_data_uri(asset.asset_url) if asset is not None else None
+    data_uri = await asyncio.to_thread(load_character_reference_data_uri, asset) if asset is not None else None
     if not data_uri:
-        raise AvatarGenerationError("伙伴头像尚未生成，请先完成形象确认")
+        raise AvatarGenerationError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     return data_uri
 
 
@@ -815,7 +825,7 @@ async def _read_temp_media_bytes(bare_path: str) -> tuple[bytes, str] | None:
 
 
 async def finalize_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
-    """把激活头像的图片从 temp-media 转存到 companion-avatars；先全量读取再落盘，避免部分失败留下孤儿文件。"""
+    """确认头像及日常全身参考；建模草稿只由各自确认入口转正，返回头像步骤不能提前锁定形象。"""
     asset = (
         await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
     ).scalar_one_or_none()
@@ -823,7 +833,7 @@ async def finalize_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
         return None
 
     pending: list[tuple[str, bytes, str]] = []
-    for attr in ("asset_url", "seed_front_2d_url", "seed_front_3d_url", "seed_back_url"):
+    for attr in ("asset_url", "seed_fullbody_url"):
         current = getattr(asset, attr, None)
         if current and current.startswith("temp-media/"):
             result = await _read_temp_media_bytes(current)
@@ -920,6 +930,76 @@ async def _commit_asset(session: AsyncSession, asset: AvatarAsset) -> AvatarAsse
     session.expunge(asset)
     _re_sign_avatar_url(asset)
     return asset
+
+
+async def generate_fullbody_reference(
+    user_id: int,
+    *,
+    avatar_id: int,
+    feedback: str | None = None,
+    reference_image: str | None = None,
+    reference_content_type: str | None = None,
+) -> AvatarAsset:
+    """从头像生成独立全身参考；锁定后仍开放，成功落库前保留旧图。"""
+    async with get_avatar_job_lock(user_id):
+        asset, persona = await _fetch_fullbody_target(None, user_id, avatar_id)
+        if not asset.active:
+            raise AvatarNotFoundError("请先选择当前角色的头像")
+        ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.asset_url)
+        if not ref_uri:
+            raise AvatarSourceUnreadableError("头像读取失败，请稍后重试")
+        species, appearance, personality = _fullbody_identity_fields(persona)
+        rig_type = await _resolve_fullbody_rig_type(None, user_id, asset, species)
+        definition = load_persona_definition(persona)
+        user_ref_uri = (
+            f"data:{reference_content_type or 'image/png'};base64,{reference_image}" if reference_image else None
+        )
+        prompt = build_fullbody_reference_prompt(
+            species=species,
+            gender=definition.get("gender", ""),
+            appearance=appearance,
+            personality=personality,
+            feedback=feedback.strip() if feedback else None,
+            has_user_reference=bool(user_ref_uri),
+        )
+        try:
+            generated_url, _, _, _ = await _generate_one_portrait_with_moderation_retry(
+                prompt,
+                user_id,
+                reference_image=ref_uri,
+                secondary_reference_image=user_ref_uri,
+                size=_fullbody_size_for(rig_type),
+                persist=persona.is_portrait_confirmed,
+                preferred_provider=SETTINGS.companion_asset_image_providers,
+            )
+        except AvatarGenerationError as exc:
+            raise FullbodyGenerationError("全身参考图生成失败，请稍后重试", internal=exc.internal) from exc
+
+        async with SESSION_LOCAL() as db:
+            target = (
+                await db.execute(
+                    select(AvatarAsset).where(
+                        AvatarAsset.id == avatar_id,
+                        AvatarAsset.user_id == user_id,
+                        AvatarAsset.active.is_(True),
+                    ),
+                )
+            ).scalar_one_or_none()
+            if target is None:
+                delete_portrait_file(generated_url)
+                raise AvatarNotFoundError("当前角色已切换，请重新打开全身参考图")
+            previous_url = target.seed_fullbody_url
+            payload = safe_json_loads(target.prompt_json, default={})
+            if not isinstance(payload, dict):
+                payload = {}
+            payload["fullbody_reference_prompt"] = prompt
+            payload["fullbody_rig_type"] = rig_type
+            target.prompt_json = json.dumps(payload, ensure_ascii=False)
+            target.seed_fullbody_url = generated_url
+            result = await _commit_asset(db, target)
+        if previous_url and previous_url != generated_url:
+            delete_portrait_file(previous_url)
+        return result
 
 
 async def generate_fullbody_front_2d(

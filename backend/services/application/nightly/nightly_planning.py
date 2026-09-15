@@ -1145,13 +1145,8 @@ async def _wait_for_video(user_id: int, job_id: int) -> VideoGenJob | None:
     return None
 
 
-async def _current_visual_references(user_id: int) -> tuple[str | None, str | None]:
-    identity: str | None = None
-    identity_error: Exception | None = None
-    try:
-        identity = await resolve_self_reference_data_uri(user_id)
-    except Exception as exc:  # noqa: BLE001 - 身份素材可能来自多种存储/解码后端，失败类型不封闭
-        identity_error = exc
+async def _current_visual_references(user_id: int) -> tuple[str, str | None]:
+    identity = await resolve_self_reference_data_uri(user_id)
     async with SESSION_LOCAL() as db:
         outfit = (
             await db.execute(
@@ -1166,10 +1161,6 @@ async def _current_visual_references(user_id: int) -> tuple[str | None, str | No
             )
         ).scalar_one_or_none()
     outfit_reference = load_avatar_bytes_as_data_uri(outfit.fullbody_url) if outfit is not None else None
-    if identity is None and outfit_reference is not None:
-        return outfit_reference, None
-    if identity is None and identity_error is not None:
-        raise identity_error
     return identity, outfit_reference
 
 
@@ -1400,8 +1391,7 @@ async def _execute_media_video(
         return ActionExecutionResult(status="failed", reason="missing video prompt or title")
     first_frame = None
     if parsed_args.depicts_self is True:
-        identity, outfit = await _current_visual_references(user_id)
-        first_frame = outfit or identity
+        first_frame = await resolve_self_reference_data_uri(user_id)
         prompt = (
             "Animate the supplied character reference as one continuous shot. Preserve the exact identity, body, "
             "clothing, colors, hair, and accessories; keep motion anatomically natural and do not introduce another "

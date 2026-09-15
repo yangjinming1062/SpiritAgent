@@ -144,7 +144,7 @@ onboarding 产出的结构化角色定义持久化在 Backend 用户维度，仅
 
 ### 6.2 形象与环境资产（跨模块契约）
 
-伙伴的视觉与环境表达由半身像、2D 形象资产（see-through 双 provider 拆分的分层 PSD）、3D 模型以及生活空间房间背景图构成，均归属用户并在用户维度持久化。产品用途与降级体验见 [DESIGN.md §1](DESIGN.md)；资产签名与传输契约见 [PROTOCOL.md §1.5](PROTOCOL.md)；2D 拆分链与 3D 输入、供应商能力链、产物与动画映射见 [docs/PIPELINE.md](PIPELINE.md)。
+伙伴的视觉与环境表达由半身像、全身种子图、2D 形象资产（see-through 双 provider 拆分的分层 PSD）、3D 模型以及生活空间房间背景图构成，均归属用户并在用户维度持久化。产品用途与降级体验见 [DESIGN.md §1](DESIGN.md)；资产签名与传输契约见 [PROTOCOL.md §1.5](PROTOCOL.md)；参考图选择、2D 拆分链与 3D 输入、供应商能力链、产物与动画映射见 [docs/PIPELINE.md](PIPELINE.md)。
 
 生活空间房间背景图将角色自然绘制进室内中远景场景，与 2D/3D 动态模型解耦；产品形态见 [DESIGN.md §1](DESIGN.md)，换装联动失效与锁保护见 [PROTOCOL.md](PROTOCOL.md)；工作台则不使用房间图。
 

@@ -24,6 +24,7 @@ def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
     return AvatarAssetResponse(
         id=asset.id,
         asset_url=asset.asset_url,
+        seed_fullbody_url=asset.seed_fullbody_url or "",
         seed_front_2d_url=getattr(asset, "seed_front_2d_url", None) or "",
         seed_front_3d_url=getattr(asset, "seed_front_3d_url", None) or "",
         seed_back_url=getattr(asset, "seed_back_url", None) or "",
