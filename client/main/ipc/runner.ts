@@ -179,18 +179,26 @@ export function registerRunnerIpc({ deps, ipcMain }: { deps: RunnerIpcDeps; ipcM
 
   ipcMain.handle(
     IPC.invoke.runnerInvoke,
-    async (_event, name: string, args?: Record<string, unknown>, skillScope?: MemoryToolScope) => {
+    async (_event, name: string, args?: Record<string, unknown>, skillScope?: MemoryToolScope, callId?: string) => {
       if (typeof name !== 'string' || !name) {
         throw new Error('runner:invoke requires a non-empty tool name')
       }
 
       const bridge = ensureRunnerBridge(deps)
 
-      if (skillScope) {
-        return bridge.dispatch('execute_scoped_tool', { name, args: args ?? {}, skill_scope: skillScope })
+      // call_id 透传给 runner 的调用日志（PROTOCOL §2.5）：runner 据此查询/认领已有执行，
+      // 中断后凭记录区分「已执行」与「从未开始」，避免盲目重跑本机副作用。
+      const invokeParams: Record<string, unknown> = { name, args: args ?? {} }
+
+      if (callId) {
+        invokeParams.call_id = callId
       }
 
-      return bridge.invoke(name, args && typeof args === 'object' ? args : {})
+      if (skillScope) {
+        return bridge.dispatch('execute_scoped_tool', { ...invokeParams, skill_scope: skillScope })
+      }
+
+      return bridge.dispatch('execute_tool', invokeParams)
     }
   )
 

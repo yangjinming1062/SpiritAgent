@@ -131,7 +131,7 @@
 
 **`tool.call` 是用户级设备指令，不是会话事件**（改此处需同步：backend services/application/chat/tool_dispatch.py 与 services/adapters/desktop/emitter.py、client app/runtime/gateway-event-router.ts、本文档）：它不渲染进任何气泡、不参与会话状态机，只按 `call_id`（§6 定义的唯一 Future Key）与 `tool.result` 配对，因此**不带信封级 session_id**、由后端直接推给该用户的 desktop 派发器。载荷含 `{name, args, call_id, session_id, headless?}`，其中 `session_id` 是**信息字段而非路由闸门**；交互式回合下客户端用它判断可见会话并自持精灵工作态，`headless=true` 时照常执行设备指令但不展示工作态、工具流或打字态。IM、主动 Cron、普通自动化与子 agent 的无头回合统一使用该标志，不依赖会话类型猜测可见性。
 
-**设备指令的重复投递**：`tool.call` 与其它事件一样进重放缓冲，WS 断连重连会重发。本机副作用不可撤销（删文件、跑命令），因此**客户端必须按 `call_id` 去重**，重复帧直接丢弃——后端的 `resolve_future` 只会丢弃迟到的结果，拦不住已经发生的副作用。
+**设备指令的重复投递**：`tool.call` 与其它事件一样进重放缓冲，WS 断连重连会重发。本机副作用不可撤销（删文件、跑命令），因此**客户端必须按 `call_id` 去重**，重复帧直接丢弃——后端的 `resolve_future` 只会丢弃迟到的结果，拦不住已经发生的副作用。客户端执行时把 `call_id` 原样透传给 `execute_tool`（§2.5），让 Runner 侧调用日志成为第二道幂等防线并支撑中断后的结果查询。
 
 **对话内生成媒体**（改此处需同步：backend 工具与聊天持久化、backend/README.md、client 渲染层与 client/renderer/README.md、DESIGN §6）：
 - 聊天回合经图像/视频生成工具产出的媒体，随对话完成事件以 media 数组（元素为 image / video 类型 + 本服务媒体 URL）下发，并持久化在对应助手消息行；后台完成的视频另以 status_media 送达行落库，实时事件与历史水合看到同一形状。
@@ -384,11 +384,14 @@ Client 宿主通过 `companion.signal {available, event?}` 上报短期可用性
 
 | 方法 | 方向 | 用途 | 改动需同步的模块 |
 | --- | --- | --- | --- |
-| runner_ready | Runner → Client | 启动握手，携带 version + capabilities + capabilities_health + reconnect_streak | Runner 探测 + Client 功能门控 + 重连降级展示 |
+| runner_ready | Runner → Client | 启动握手，携带 version + run_generation + pid + capabilities + capabilities_health + reconnect_streak | Runner 探测 + Client 功能门控 + 重连降级展示 |
+| runner_capabilities_changed | Runner → Client | 运行期能力重探测快照变化通知（载荷含 run_generation + capabilities + probe_failed）；客户端暂未消费该通知，能力门控仍以 runner_ready 为准 | Runner 监视 + Client 能力门控 |
 | tools_changed | Runner → Client | 工具 schema 变更通知，Client 重拉并同步到 Backend | Runner + Client + Backend 工具表 |
 | get_tools | Client → Runner | 获取工具 schema（已过滤禁用项） | Runner 过滤 + Backend 过滤 + Client |
-| spiritagent.info | Client → Runner | 完整运行快照 | Runner 上报 + Client 诊断 |
-| execute_tool | Client → Runner | 执行工具调用 | Backend 路由 + Client 中转 + Runner 执行 |
+| spiritagent.info | Client → Runner | 完整运行快照（含 run_generation + pid） | Runner 上报 + Client 诊断 |
+| execute_tool | Client → Runner | 执行工具调用；params 可选 `call_id` 启用调用日志（见 §2.5） | Backend 路由 + Client 中转 + Runner 执行 |
+| execute_scoped_tool | Client → Runner | 同 execute_tool，额外绑定 `skill_scope`（§预设记忆与学习作用域）；`call_id` 语义相同 | Backend 工具请求 + Client runnerInvoke + Runner 执行 |
+| spiritagent.call_result | Client → Runner | 按 `call_id` 查询调用日志记录（status ∈ claimed / completed / failed / unknown / not_found），供中断后恢复决策 | Runner 调用日志 + Client 查询入口 + Backend 中断恢复 |
 | spiritagent.cancel | Client → Runner | params.req_id 可选；指定则取消该 RPC，缺省取消当前进行中工具；并对目标 req_id 设置中断标记 | Client 中断 + Runner 任务取消 + 请求级隔离 |
 | spiritagent.config.update | Client → Runner | 推送完整配置（云端为真源，Client 是镜像持有者与唯一推送方，见 §2.4） | Client 设置 + Runner 内存配置 |
 | request_llm | Runner → Client | 反向 RPC 借大脑 | §3 |
@@ -403,6 +406,8 @@ Client 宿主通过 `companion.signal {available, event?}` 上报短期可用性
 capabilities 与 capabilities_health 来源于 Runner 的运行时探测（探测设计见 [runner/README.md §2](../runner/README.md)）：前者是向后兼容的布尔映射，后者按子能力给出可用性与失败原因。致命探测异常置 probe_failed；客户端按能力缺失做局部降级或给出可操作提示。
 
 `reconnect_streak` 是自上次成功握手以来的连续重连次数（握手成功后重置为 0）。客户端可据此感知连接状态但保持 Runner 存活。生命周期累计重连计数通过 `spiritagent.info.reconnect_count` 上报，不重置。
+
+**运行代次（run_generation）**：Runner 每次进程启动生成新的随机标识，进程内重连不轮换。`runner_ready`、`runner_capabilities_changed` 与 `spiritagent.info` 同源携带。客户端以「连接有效 + runner_ready 已收到 + run_generation 一致 + 能力同步完成」汇总设备可执行状态；run_generation 变化即上次运行的调用关联作废，不得复用旧代次的就绪结论。Runner 运行期还周期性重探测能力，快照变化才发 `runner_capabilities_changed`；该通知与 run_generation 汇总的客户端消费尚未接入，探测异常以 `probe_failed` 降级通知。
 
 ### 2.4 配置所有权与云端同步
 
@@ -419,6 +424,16 @@ capabilities 与 capabilities_health 来源于 Runner 的运行时探测（探�
 生效打扰档位落 `companion.disturbance_tier` 点键经本管道上云，是后端主动闸门（主动消息、cron 自主回合、情绪/空间推理入口）的唯一档位来源（权威边界见 [ARCHITECTURE.md §5.1](ARCHITECTURE.md)）；用户偏好另存 `companion.disturbance_preference` 供跨端恢复，水合只回写偏好、不回写生效值（生效值是设备派生的）。
 
 Runner 侧不变：仅内存持有配置、每次工具调用读取，不读写磁盘配置文件。时序：Runner 就绪握手后、首个 execute_tool 前推一次 full config；此后每次设置保存再推一次；Runner 重启后内存配置清空，客户端在下次 runner_ready 时重新推送。**config 键明细见 runner 代码（utils/config.py）与 client（shared/lib/config-sync.ts 的白名单），本文只锁定所有权与同步契约。**
+
+### 2.5 本机调用日志
+
+`execute_tool` / `execute_scoped_tool` 的 params 携带可选 `call_id`（与 §6 的 Future Key 同一标识，由 Backend 生成、Client 原样透传、不经模型工具 schema）时，Runner 在 `$SPIRITAGENT_HOME/call-journal/` 持久化调用记录：
+
+- **先查询后认领**：执行前按 `call_id` 查询已有记录——命中 completed 幂等重放落盘结果，命中 failed / unknown / conflict / claimed_elsewhere 一律返回携带 `data.disposition` 的错误帧（unknown 用 -32011，其余 -32000），绝不执行；无记录则以 `O_CREAT|O_EXCL` 原子认领，并发同标识只有一个进程获得执行权。
+- **同标识不同参数拒绝**：认领冲突时比对参数指纹（工具名 + 参数的规范 JSON 哈希），不一致返回错误，绝不执行。
+- **先保存再返回**：completed / failed 终态与可重取结果落盘后才回复调用方；Runner 重启后仍处执行中的记录由持有进程存活性裁决——进程已死且无终态标记 unknown（副作用可能已发生，待核对），不自动重放；终态与 unknown 不被迟到写入覆盖。
+- **查询入口**：`spiritagent.call_result {call_id}` 返回 `{call_id, status, result?, error?, claimed_at?, finished_at?}`，无记录返回 `status="not_found"`。Backend 中断恢复时先查询，据 status 决定续跑、重放结果还是保留待核对提示，不得盲目重跑本机副作用。
+- **边界**：调用日志只降低重复执行风险并提供查询依据，不保证任意外部副作用恰好发生一次；记录默认保留 7 天后由 Runner 启动清理。无 `call_id` 的直调路径不记日志、行为不变。
 
 ## 3. 反向 RPC 桥接（Runner 借大脑）
 

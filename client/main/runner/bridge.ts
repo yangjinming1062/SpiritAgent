@@ -105,11 +105,6 @@ export interface RunnerBridge {
   ) => Promise<T>
   getStatus: () => RunnerBridgeStatus
   getTools: () => Record<string, unknown>[]
-  invoke: <T = unknown>(
-    name: string,
-    args?: Record<string, unknown>,
-    opts?: { id?: number | string; timeoutMs?: number }
-  ) => Promise<T>
   onEvent: (callback: (event: RunnerBridgeEvent) => void) => () => void
   start: (args?: RunnerBridgeStartOptions) => Promise<RunnerBridgeStatus>
   stop: (options?: { reason?: string }) => Promise<{ errors?: string[]; noop?: boolean; ok: boolean }>
@@ -569,12 +564,6 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     return wsServer.call<T>(method, params || {}, opts)
   }
 
-  const invoke = <T = unknown>(
-    name: string,
-    args?: Record<string, unknown>,
-    opts?: { timeoutMs?: number }
-  ): Promise<T> => _rpc<T>('execute_tool', { args: args || {}, name }, opts)
-
   const dispatch = <T = unknown>(
     method: string,
     params?: Record<string, unknown>,
@@ -589,7 +578,6 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     dispatch,
     getStatus,
     getTools,
-    invoke,
     onEvent,
     start,
     stop

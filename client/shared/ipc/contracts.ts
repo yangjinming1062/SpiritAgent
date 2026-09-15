@@ -346,7 +346,12 @@ export interface IpcInvokeContract {
   'spiritagent:version': () => DesktopVersionInfo | Promise<DesktopVersionInfo>
 
   // Runner
-  'spiritagent:runner:invoke': (name: string, args: Record<string, unknown>, skillScope?: MemoryToolScope) => Promise<unknown> | unknown
+  'spiritagent:runner:invoke': (
+    name: string,
+    args: Record<string, unknown>,
+    skillScope?: MemoryToolScope,
+    callId?: string
+  ) => Promise<unknown> | unknown
   'spiritagent:runner:cancel': () => unknown | Promise<unknown>
   'spiritagent:runner:get-state': () => DesktopRunnerState | Promise<DesktopRunnerState>
   'spiritagent:runner:get-tools': () => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>

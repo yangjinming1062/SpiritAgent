@@ -1,4 +1,13 @@
 from .async_bridge import safe_schedule_threadsafe
+from .call_journal import (
+    ClaimOutcome,
+    args_fingerprint,
+    claim,
+    lookup,
+    mark_completed,
+    mark_failed,
+    sweep_stale_claims,
+)
 from .capabilities import (
     disk_free_bytes,
     network_reachable,
@@ -82,6 +91,7 @@ from .url_safety import (
 
 __all__ = [
     "CREATE_NO_WINDOW",
+    "ClaimOutcome",
     "CURRENT_SKILL_SCOPE",
     "DesktopConnection",
     "DesktopEndpoint",
@@ -94,6 +104,7 @@ __all__ = [
     "TerminationResult",
     "UNIX_TRANSPORT",
     "append_sane_path_entries",
+    "args_fingerprint",
     "async_is_safe_url",
     "atomic_replace",
     "build_write_denied_paths",
@@ -106,6 +117,7 @@ __all__ = [
     "cfg_int",
     "cfg_str",
     "check_website_access",
+    "claim",
     "clean_output",
     "connect_desktop",
     "create_safe_async_client",
@@ -139,7 +151,10 @@ __all__ = [
     "kill_tree",
     "learned_skills_root",
     "load_config",
+    "lookup",
     "msys_to_windows_path",
+    "mark_completed",
+    "mark_failed",
     "network_reachable",
     "normalize_url_for_request",
     "PidState",
@@ -161,6 +176,7 @@ __all__ = [
     "snapshot",
     "snapshot_health",
     "strip_ansi",
+    "sweep_stale_claims",
     "terminate_tree",
     "validate_within_dir",
     "visible_skill_path",
