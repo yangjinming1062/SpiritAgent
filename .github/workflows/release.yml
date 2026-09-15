@@ -107,7 +107,7 @@ jobs:
     name: Draft release
     needs: [notes, build]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     permissions:
       contents: write
     steps:
@@ -126,6 +126,7 @@ jobs:
       - name: Create or update draft release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }} # job 无 checkout，gh 无法从 git remote 定位仓库
         run: |
           ls -la dist
           # tag 已有 release（如在 Releases 页手动创建）时只补产物与 notes，不改动其发布状态。
