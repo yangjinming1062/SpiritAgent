@@ -53,6 +53,9 @@ const nextId = (): string => `m${++idCounter}`
 let bubbleTimer: ReturnType<typeof setTimeout> | null = null
 let bubbleGeneration = 0
 let flushTimer: ReturnType<typeof setTimeout> | null = null
+// 最近一次已提交批对应的用户气泡 id（工作台合并后只剩首条，陪伴会话为全部连发气泡）。
+// message.persisted 的 message_ids 只按本集合绑定，失败回合遗留的孤儿气泡不会被下一轮错绑。
+let submittedBubbleIds: Set<string> = new Set()
 
 export const $chatMessageList = atom<ChatMessageListItem[]>([])
 export const $chatMessageBodies = map<Record<string, ChatMessageBody>>({})
@@ -279,16 +282,16 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
 
     totalChars += textContent.length
 
-    const segments =
-      m.role === 'assistant' &&
-      !m.subtype &&
-      $chatSessionId.get() !== null &&
-      $chatSessionId.get() === $companionSessionId.get()
-        ? textContent
-            .split(/\r?\n(?:[ \t]*\r?\n)+/)
-            .map(part => part.trim())
-            .filter(Boolean)
-        : [textContent]
+    // 助手行按空行拆回 bubble.break 的多气泡；陪伴会话的用户行同样拆分，
+    // 与实时呈现对齐（DB 一行、显示多泡）。工作台两者都保持整段。
+    const canSplit = !m.subtype && (m.role === 'assistant' || m.role === 'user') && splitUserBubblesEnabled()
+
+    const segments = canSplit
+      ? textContent
+          .split(/\r?\n(?:[ \t]*\r?\n)+/)
+          .map(part => part.trim())
+          .filter(Boolean)
+      : [textContent]
 
     if (segments.length === 0) {
       segments.push('')
@@ -308,6 +311,8 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
       const cachedVoiceDuration =
         m.role === 'assistant' && segment ? conversationVoiceSink().cachedDuration(segment, m.speech_style) : undefined
 
+      // 拆分后附件只挂首个气泡：附件伴随连发的首条消息发出，合并行里已无法逐段归属，
+      // 每段都挂会重复渲染媒体卡。不拆分时首段即唯一段，行为不变。
       bodies[id] = {
         text: segment,
         speechStyle: m.speech_style,
@@ -317,7 +322,7 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
         streaming: false,
         voiceDuration: cachedVoiceDuration,
         voiceStatus: cachedVoiceDuration ? 'ready' : undefined,
-        ...(m.role === 'user' ? omitUndefined(extractUserAttachments(m)) : {}),
+        ...(m.role === 'user' && index === 0 ? omitUndefined(extractUserAttachments(m)) : {}),
         ...(index === segments.length - 1 && m.media?.length ? { media: m.media } : {})
       }
     }
@@ -489,8 +494,19 @@ function isPositiveInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0
 }
 
+// 陪伴会话与后端 bubble.break 的助手拆分对称：连发用户消息保留独立气泡、
+// 持久化行里的空行段落拆回多个气泡。工作台整段阅读不拆，避免误拆用户粘贴的多段内容。
+function splitUserBubblesEnabled(): boolean {
+  const id = $chatSessionId.get()
+
+  return id !== null && id === $companionSessionId.get()
+}
+
 export function bindTrailingUserMessageIds(ids: number[]): void {
-  // 活路径 push 时没有后端 id；按末尾未绑定用户行从旧到新填，避免覆盖 hydrate 已有的 id。
+  // 活路径 push 时没有后端 id；只绑本次提交的气泡（submittedBubbleIds），
+  // 避免把失败回合遗留的孤儿气泡错绑到新行——错绑会让撤回按钮截断别人的消息。
+  // 陪伴会话连发不合并时，同一 DB 行拆成多个气泡：超出 id 数的气泡挂最后一个 id，
+  // 与 hydrate 后同行的每个气泡都带同一 id、undo 从该行截断的语义一致。
   const validIds = ids.filter(isPositiveInt)
 
   if (validIds.length === 0) {
@@ -500,8 +516,10 @@ export function bindTrailingUserMessageIds(ids: number[]): void {
   const list = $chatMessageList.get()
   const unboundIndexes: number[] = []
 
-  for (let i = list.length - 1; i >= 0 && unboundIndexes.length < validIds.length; i--) {
-    if (list[i]?.role === 'user' && list[i].backendMessageId === undefined) {
+  for (let i = list.length - 1; i >= 0; i--) {
+    const item = list[i]
+
+    if (item?.role === 'user' && item.backendMessageId === undefined && submittedBubbleIds.has(item.id)) {
       unboundIndexes.push(i)
     }
   }
@@ -512,15 +530,17 @@ export function bindTrailingUserMessageIds(ids: number[]): void {
 
   unboundIndexes.reverse()
   const next = list.slice()
-  const count = Math.min(unboundIndexes.length, validIds.length)
-  const idOffset = validIds.length - count
+  let changed = false
 
-  for (let i = 0; i < count; i++) {
-    const idx = unboundIndexes[i]
-    next[idx] = { ...next[idx], backendMessageId: validIds[idOffset + i] }
+  for (const [index, idx] of unboundIndexes.entries()) {
+    const messageId = validIds[index] ?? validIds[validIds.length - 1]
+    next[idx] = { ...next[idx], backendMessageId: messageId }
+    changed = true
   }
 
-  $chatMessageList.set(next)
+  if (changed) {
+    $chatMessageList.set(next)
+  }
 }
 
 export function bindTrailingAssistantMessageId(messageId: number): void {
@@ -679,7 +699,9 @@ export function submitPendingBatch(): void {
   const pendingRows = list.filter(item => pendingIds.has(item.id))
   const first = pendingRows[0]
 
-  if (first) {
+  // 工作台：连发的气泡合回首条再提交（整段阅读）。
+  // 陪伴会话：每条连发保留独立气泡，与伙伴的多气泡节奏对称（DB 仍合并为一行）。
+  if (first && !splitUserBubblesEnabled()) {
     const bodies = $chatMessageBodies.get()
     const displayAttachments = pendingRows.flatMap(item => bodies[item.id]?.attachments ?? [])
     $chatMessageBodies.setKey(first.id, {
@@ -696,6 +718,9 @@ export function submitPendingBatch(): void {
       $chatMessageBodies.setKey(item.id, undefined)
     }
   }
+
+  // 记录本批对应的存活气泡 id（合并路径只剩首条），persisted 据此精确绑定。
+  submittedBubbleIds = new Set(pendingRows.map(item => item.id))
 
   const attachments = pendingBatch.flatMap(p => p.attachments ?? [])
 
