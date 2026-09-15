@@ -9,6 +9,7 @@ export {
   onBackdropEvent,
   regenerateRoom,
   rollbackRoom,
+  type RoomGenerationInput,
   type RoomHistoryEntry,
   type RoomPolicy,
   setRoomPolicy

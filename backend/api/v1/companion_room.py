@@ -57,6 +57,7 @@ async def post_room_generate(
             origin=BackdropOrigin.USER_REQUEST.value,
             intent=body.intent,
             notes=body.notes,
+            reference_image=f"data:{body.content_type};base64,{body.image}" if body.image is not None else None,
         )
     except RoomBackdropStateError as exc:
         raise HTTPException(status_code=409, detail={"error": str(exc), "reason": str(exc)})

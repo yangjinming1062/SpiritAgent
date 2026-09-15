@@ -1,6 +1,8 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
+import { useEffect, useRef, useState } from 'react'
 
+import { pickAvatarImage, type PickedImage } from '@/modules/character'
 import {
   $activeBackdrop,
   $backdropStatus,
@@ -12,8 +14,18 @@ import {
 } from '@/modules/room'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { ArrowBackUp, Eye, FileImage, Loader2, RefreshCw, Sparkles } from '@/shared/lib/icons'
+import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
-import { BTN_PRIMARY, BTN_SUBTLE, SettingCard, SettingRow, SettingsContent, Toggle } from '@/shared/panel'
+import {
+  BTN_PRIMARY,
+  BTN_SUBTLE,
+  HINT_TEXT,
+  INPUT_CLASS,
+  SettingCard,
+  SettingRow,
+  SettingsContent,
+  Toggle
+} from '@/shared/panel'
 import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
@@ -35,7 +47,52 @@ export function RoomPage(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.living.room
   const tToasts = dict.living.toasts
-  const busy = status === 'pending'
+  const [notes, setNotes] = useState('')
+  const [reference, setReference] = useState<PickedImage | null>(null)
+  const [selecting, setSelecting] = useState(false)
+  const [referenceError, setReferenceError] = useState(false)
+  const mounted = useRef(true)
+  const generating = status === 'pending'
+  const busy = generating || selecting
+
+  useEffect(() => {
+    mounted.current = true
+
+    const unregister = registerStorageClearHandler((): void => {
+      setNotes('')
+      setReference(null)
+      setSelecting(false)
+      setReferenceError(false)
+    })
+
+    return (): void => {
+      mounted.current = false
+      unregister()
+    }
+  }, [])
+
+  const chooseReference = async (): Promise<void> => {
+    if (busy) {
+      return
+    }
+
+    const epoch = currentClearEpoch()
+    setSelecting(true)
+    setReferenceError(false)
+    const result = await pickAvatarImage(t.chooseReference)
+
+    if (!mounted.current || currentClearEpoch() !== epoch) {
+      return
+    }
+
+    if (result && 'image' in result) {
+      setReference(result.image)
+    } else if (result && 'error' in result) {
+      setReferenceError(true)
+    }
+
+    setSelecting(false)
+  }
 
   const handleChange = async (): Promise<void> => {
     if (busy) {
@@ -43,7 +100,10 @@ export function RoomPage(): React.JSX.Element {
     }
 
     triggerHaptic('open')
-    await regenerateRoom()
+    await regenerateRoom({
+      notes: notes.trim() || undefined,
+      ...(reference ? { image: reference.base64, content_type: reference.contentType } : {})
+    })
   }
 
   const handleRollback = async (backdropId: string): Promise<void> => {
@@ -86,7 +146,7 @@ export function RoomPage(): React.JSX.Element {
           )}
 
           {/* 生效中指示 */}
-          {activeBackdrop?.url && !busy && status !== 'failed' ? (
+          {activeBackdrop?.url && !generating && status !== 'failed' ? (
             <div className="absolute top-2.5 left-2.5">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-0.5 text-[10.5px] font-medium text-white shadow-sm backdrop-blur-md">
                 <span className="size-1.5 rounded-full bg-emerald-400" />
@@ -96,7 +156,7 @@ export function RoomPage(): React.JSX.Element {
           ) : null}
 
           {/* 生成中状态遮罩 */}
-          {busy ? (
+          {generating ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 p-4 text-center backdrop-blur-sm">
               <Loader2 className="size-6 animate-spin text-accent" />
               <p className="text-xs font-medium text-white">{t.pendingOverlay}</p>
@@ -108,6 +168,7 @@ export function RoomPage(): React.JSX.Element {
               <p className="text-[10.5px] text-white/70">{t.failedOverlayHint}</p>
               <button
                 className={cn(BTN_SUBTLE, 'mt-1 !h-7 px-3 text-xs')}
+                disabled={busy}
                 onClick={() => void handleChange()}
                 type="button"
               >
@@ -118,13 +179,61 @@ export function RoomPage(): React.JSX.Element {
           ) : null}
         </div>
 
+        <div className="space-y-3 border-t border-line-hairline p-3.5">
+          <div className="space-y-2">
+            <p className={HINT_TEXT}>{t.referenceHint}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {reference && (
+                <img
+                  alt={t.referenceLabel}
+                  className="h-20 w-28 rounded-lg border border-line-hairline object-contain"
+                  src={reference.previewUrl}
+                />
+              )}
+              <button className={BTN_SUBTLE} disabled={busy} onClick={() => void chooseReference()} type="button">
+                {reference ? t.replaceReference : t.chooseReference}
+              </button>
+              {reference && (
+                <button
+                  className={BTN_SUBTLE}
+                  disabled={busy}
+                  onClick={(): void => {
+                    setReference(null)
+                    setReferenceError(false)
+                  }}
+                  type="button"
+                >
+                  {t.removeReference}
+                </button>
+              )}
+            </div>
+            {referenceError && (
+              <p className="text-xs text-danger-fg" role="alert">
+                {t.referenceError}
+              </p>
+            )}
+          </div>
+          <textarea
+            aria-label={t.notesLabel}
+            className={INPUT_CLASS}
+            disabled={busy}
+            maxLength={500}
+            onChange={(event): void => setNotes(event.target.value)}
+            placeholder={t.notesPlaceholder}
+            rows={3}
+            value={notes}
+          />
+        </div>
+
         {/* 房间描述与唯一的生成新房间主按钮 */}
         <div className="flex items-center justify-between gap-4 p-3.5">
           <div className="min-w-0 flex-1">
             <h4 className="truncate text-xs font-medium text-strong">
-              {activeBackdrop?.brief || (busy ? t.briefPending : t.briefFallback)}
+              {activeBackdrop?.brief || (generating ? t.briefPending : t.briefFallback)}
             </h4>
-            <p className="mt-0.5 truncate text-[10.5px] text-faint">{busy ? t.subbriefPending : t.subbriefReady}</p>
+            <p className="mt-0.5 truncate text-[10.5px] text-faint">
+              {generating ? t.subbriefPending : t.subbriefReady}
+            </p>
           </div>
 
           <button
@@ -136,7 +245,7 @@ export function RoomPage(): React.JSX.Element {
             onClick={() => void handleChange()}
             type="button"
           >
-            {busy ? (
+            {generating ? (
               <>
                 <Loader2 className="size-3.5 animate-spin" />
                 <span>{t.generatingButton}</span>

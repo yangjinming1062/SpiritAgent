@@ -1,11 +1,9 @@
-"""room_backdrop_update 工具：LLM 主动换房。
+"""room_backdrop_update 工具：用户要求或 LLM 主动换房。
 
 门控（写在工具入口，不写在 Client）：
-- ``backdrop_policy=locked`` → 工具返回人格化拒绝
-- 静止档 + 非用户回合的主动调用 → 拒绝
+- 用户回合允许显式换房请求和附件参考；自主回合继续受政策、档位与配额门控
 - 主动配额：每用户每 24h origin=llm 成功 ≤ 1
-- ``rebuild`` 仅自主档或用户 HTTP 请求（门控在 persona definition / 调度层判定，工具只把 intent 透传）
-- 常规档只允许 ``decorate`` / ``mood``
+- 自主调用的常规档只允许 ``decorate`` / ``mood``；用户请求可重建
 - 工作预设会话不绑定本工具（回合装配层过滤，见 prompt_presets.LIFE_SPACE_TOOL_NAMES）
 """
 
@@ -46,11 +44,14 @@ _NORMAL_TIER_INTENTS: frozenset[str] = frozenset(
 async def room_backdrop_update_tool(
     intent: str = "decorate",
     notes: str | None = None,
+    reference_image_index: int | None = None,
     user_id: int | None = None,
     disturbance_tier: str | None = None,
+    user_images: tuple[str, ...] = (),
+    user_initiated: bool = False,
     **kwargs: Any,
 ) -> str:
-    """LLM 主动更新房间图：换气氛 / 换季节 / 调心情 / 重建。"""
+    """更新房间图；附件只从服务端绑定的当前会话图片中按序号选择。"""
     if user_id is None:
         ROOM_BACKDROP_LLM_TRIGGERS_TOTAL.labels(outcome="rejected_no_user").inc()
         return tool_error("更新房间需要用户上下文")
@@ -58,24 +59,32 @@ async def room_backdrop_update_tool(
     if norm_intent not in _VALID_INTENTS:
         ROOM_BACKDROP_LLM_TRIGGERS_TOTAL.labels(outcome="rejected_bad_intent").inc()
         return tool_error(f"unsupported intent: {intent}")
+    reference_image = None
+    if reference_image_index is not None:
+        if not user_initiated:
+            return tool_error("参考图换房需要用户主动请求")
+        if type(reference_image_index) is not int or not 1 <= reference_image_index <= len(user_images):
+            return tool_error("找不到指定的参考图，请在当前对话中重新发送图片")
+        reference_image = user_images[reference_image_index - 1]
     tier = disturbance_tier or (kwargs.get("user_settings") or {}).get("companion.disturbance_tier")
     if tier is None and user_id is not None:
         tier = await get_disturbance_tier(user_id)
     tier = (tier or "normal").lower()
 
-    if tier in ("still", "silent"):
+    if not user_initiated and tier in ("still", "silent"):
         ROOM_BACKDROP_LLM_TRIGGERS_TOTAL.labels(outcome="rejected_silent").inc()
         return tool_error("现在我不想动房间的事，等你叫我再说。")
     # 常规档只允许 decorate / mood
-    if tier == "normal" and norm_intent not in _NORMAL_TIER_INTENTS:
+    if not user_initiated and tier == "normal" and norm_intent not in _NORMAL_TIER_INTENTS:
         ROOM_BACKDROP_LLM_TRIGGERS_TOTAL.labels(outcome="rejected_tier").inc()
         return tool_error("现在不适宜大改房间，先说点别的吧。")
     try:
         row = await schedule_room_generation(
             user_id,
-            origin=BackdropOrigin.LLM.value,
+            origin=BackdropOrigin.USER_REQUEST.value if user_initiated else BackdropOrigin.LLM.value,
             intent=norm_intent,
             notes=notes,
+            reference_image=reference_image,
         )
     except RoomBackdropLockedError as exc:
         ROOM_BACKDROP_LLM_TRIGGERS_TOTAL.labels(outcome="rejected_locked").inc()
@@ -95,9 +104,8 @@ async def room_backdrop_update_tool(
 ROOM_BACKDROP_UPDATE_SCHEMA = {
     "name": "room_backdrop_update",
     "description": (
-        "主动调整生活空间的房间图（背景），是更换房间背景的唯一入口——不要用 image_generate "
-        "生成图片充当背景。常见用法：换个心情、把窗帘调暗一点、整理一下桌面。"
-        "角色必须出现在画面中（姿势自然、与房间融为一体）。主动调用每用户每 24h 限一次。"
+        "生成并更换生活空间的房间背景，支持文字描述及场景、姿势参考图，参考图可以包含人物。"
+        "画面包含角色本人，保持既定身份与当前穿着。返回后台生成任务的标识与状态，图片异步生成。"
     ),
     "parameters": {
         "type": "object",
@@ -105,11 +113,16 @@ ROOM_BACKDROP_UPDATE_SCHEMA = {
             "intent": {
                 "type": "string",
                 "enum": ["decorate", "seasonal", "mood", "rebuild"],
-                "description": "意图：decorate=重新布置 / seasonal=换季 / mood=调心情 / rebuild=大改（仅自主档或用户明确要求时可用）。",
+                "description": "调整类型：decorate=重新布置 / seasonal=换季 / mood=调整氛围 / rebuild=整体重建。默认 decorate。",
             },
             "notes": {
                 "type": "string",
-                "description": "你想怎么改房间（不写五官、不写衣着细节），例如「把窗帘换成暖色」「桌上多一束花」。",
+                "description": "房间布置、构图与角色姿势的完整要求，例如「参考图中的房间，让角色侧坐在窗边」。角色身份与当前衣着保持不变。",
+            },
+            "reference_image_index": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "使用参考图时填写当前上下文中最近一条带图用户消息的图片序号，从 1 开始；单图填 1。不使用图片时省略，不填写 URL 或 base64。",
             },
         },
     },

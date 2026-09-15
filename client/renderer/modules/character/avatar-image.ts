@@ -30,7 +30,7 @@ export async function pickAvatarImage(title: string): Promise<{ image: PickedIma
 
     return base64.length > MAX_IMAGE_BASE64
       ? { error: '这张图太大了，换张小一点的吧' }
-      : { image: { base64, contentType: dataUrl.slice(5, comma), previewUrl: dataUrl } }
+      : { image: { base64, contentType: dataUrl.slice(5, comma).split(';')[0], previewUrl: dataUrl } }
   } catch {
     return { error: '选择图片失败了，换个方式试试？' }
   }

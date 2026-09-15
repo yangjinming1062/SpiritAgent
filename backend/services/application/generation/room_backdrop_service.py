@@ -7,6 +7,8 @@ ready 行同步设 active（除非政策在自主生成期间被锁定）；保�
 """
 
 import asyncio
+import base64
+import io
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -14,6 +16,7 @@ from typing import Any
 
 from components import (
     LAYER_ASSET_DOWNLOAD_MAX_BYTES,
+    REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     ROOM_BACKDROP_FAILURES_TOTAL,
     ROOM_BACKDROP_IMAGES_TOTAL,
     SESSION_LOCAL,
@@ -38,13 +41,14 @@ from modules.companion import (
     Persona,
 )
 from modules.ws import emit_ws_event
+from PIL import Image
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.companion import load_persona_definition
 from services.domains.journal import create_user_moment
 from services.infrastructure.assets import asset_store
-from services.infrastructure.llm import call_llm_once, resolve_user_llm_config
+from services.infrastructure.llm import call_llm_once, resolve_reference_bytes, resolve_user_llm_config
 
 from .avatar_service import load_character_reference_data_uri
 from .image_generation import ImageGenerationError, generate_images
@@ -414,8 +418,12 @@ async def schedule_room_generation(
     origin: str,
     intent: str = "rebuild",
     notes: str | None = None,
+    reference_image: str | None = None,
 ) -> CompanionRoomBackdrop:
     """创建 pending 行；返回行对象供 HTTP 端点返回 202。后续生图走 fire-and-forget。"""
+    # 先读取并校验用户图，避免坏图取代当前 pending；快照贯穿本次任务的全部重试。
+    if reference_image is not None:
+        reference_image = await _prepare_reference_image(reference_image)
     async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
         if origin == BackdropOrigin.LLM.value:
             await _consume_llm_quota(db, user_id)
@@ -436,8 +444,43 @@ async def schedule_room_generation(
         db.add(row)
         await db.commit()
         await db.refresh(row)
-    _launch_generation_task(row.id, user_id, origin=origin, intent=intent, notes=notes)
+    _launch_generation_task(
+        row.id,
+        user_id,
+        origin=origin,
+        intent=intent,
+        notes=notes,
+        reference_image=reference_image,
+    )
     return row
+
+
+def _reference_image_mime(data: bytes) -> str:
+    with Image.open(io.BytesIO(data)) as image:
+        if image.format not in {"PNG", "JPEG", "WEBP", "GIF"}:
+            raise ValueError("unsupported reference image format")
+        if Image.MAX_IMAGE_PIXELS is not None and image.width * image.height > Image.MAX_IMAGE_PIXELS:
+            raise ValueError("reference image dimensions exceed limit")
+        mime = Image.MIME[image.format]
+        image.load()
+        return mime
+
+
+async def _prepare_reference_image(reference: str) -> str:
+    try:
+        if reference.startswith("data:"):
+            header, separator, payload = reference.partition(",")
+            if not separator or not header.endswith(";base64"):
+                raise ValueError("invalid image data URI")
+            data = base64.b64decode(payload, validate=True)
+        else:
+            data, _ = await resolve_reference_bytes(reference)
+        if not data or len(data) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
+            raise ValueError("reference image size exceeds limit")
+        mime = await asyncio.to_thread(_reference_image_mime, data)
+    except Exception as exc:
+        raise RoomBackdropError("参考图无法读取，请换一张有效的 PNG / JPEG / WebP / GIF 图片") from exc
+    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
 
 
 async def resume_room_generation(
@@ -491,6 +534,7 @@ def _launch_generation_task(
     origin: str,
     intent: str,
     notes: str | None,
+    reference_image: str | None = None,
 ) -> None:
     old_task = _INFLIGHT_TASKS.get(user_id)
     if old_task and not old_task.done():
@@ -504,6 +548,7 @@ def _launch_generation_task(
                 origin=origin,
                 intent=intent,
                 notes=notes,
+                reference_image=reference_image,
             )
         except asyncio.CancelledError:
             logger.info(
@@ -532,6 +577,7 @@ async def _run_pipeline(
     origin: str,
     intent: str,
     notes: str | None,
+    reference_image: str | None = None,
 ) -> None:
     """brief → prompt → generate_images → 落 media → 设 active / emit ready。失败重试与 uttered 错误在内部。"""
     attempts = max(1, int(SETTINGS.room_max_attempts))
@@ -563,6 +609,7 @@ async def _run_pipeline(
                 brief=brief,
                 intent=intent,
                 notes=notes,
+                reference_image=reference_image,
                 origin=origin,
                 attempt=attempt,
             )
@@ -646,6 +693,7 @@ async def _do_one_attempt(
     notes: str | None,
     origin: str,
     attempt: int,
+    reference_image: str | None = None,
 ) -> None:
     await _emit_backdrop_event(
         user_id,
@@ -698,6 +746,7 @@ async def _do_one_attempt(
             outfit_description=outfit_description,
             brief=brief,
             notes=notes or "",
+            has_reference_image=reference_image is not None,
         ),
     )
     generated_url = (
@@ -710,6 +759,7 @@ async def _do_one_attempt(
             n=1,
             user_id=user_id,
             reference_image=identity_uri,
+            secondary_reference_image=reference_image,
         )
         if not urls:
             raise ImageGenerationError("empty image result")

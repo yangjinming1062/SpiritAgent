@@ -5,7 +5,7 @@ import { atom } from 'nanostores'
 
 import { authedApi } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
-import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
@@ -48,6 +48,12 @@ interface RoomStateWire {
   history?: RoomBackdropWire[]
   pending: RoomBackdropWire | null
   policy?: string
+}
+
+export interface RoomGenerationInput {
+  notes?: string
+  image?: string
+  content_type?: string
 }
 
 async function resolveBackdropUrl(url?: string): Promise<string> {
@@ -129,6 +135,8 @@ function deriveStatus(state: RoomStateWire): BackdropStatus {
 
 let pendingPollTimer: ReturnType<typeof setInterval> | null = null
 let pendingPollCount = 0
+let generationVersion = 0
+let submittingGeneration = false
 const MAX_PENDING_POLL_COUNT = 20
 
 function stopPendingPoll(): void {
@@ -140,7 +148,7 @@ function stopPendingPoll(): void {
 }
 
 function startPendingPoll(): void {
-  if (pendingPollTimer !== null) {
+  if (pendingPollTimer !== null || submittingGeneration) {
     return
   }
 
@@ -159,7 +167,12 @@ function startPendingPoll(): void {
       return
     }
 
+    const version = generationVersion
     void authedApi<RoomStateWire>({ path: '/api/companion/room' }).then(result => {
+      if (version !== generationVersion || submittingGeneration) {
+        return
+      }
+
       if (!result.ok) {
         if (result.reason === 'unauth') {
           stopPendingPoll()
@@ -197,6 +210,8 @@ export const $roomHistory = atom<RoomHistoryEntry[]>([])
 export const $roomPolicy = atom<RoomPolicy>('llm_may_replace')
 
 function resetRoomBackdrop(): void {
+  generationVersion++
+  submittingGeneration = false
   stopPendingPoll()
   $backdropStatus.set('none')
   $activeBackdrop.set(null)
@@ -264,7 +279,16 @@ async function applyRoomState(state: Partial<RoomStateWire> & Pick<RoomStateWire
 
 // 冷启动水合：拉一次完整房间态。失败保留 none 状态（玻璃底 + 占位）。
 export function hydrateRoomBackdrop(): void {
+  if (submittingGeneration) {
+    return
+  }
+
+  const version = generationVersion
   void authedApi<RoomStateWire>({ path: '/api/companion/room' }).then(result => {
+    if (version !== generationVersion || submittingGeneration) {
+      return
+    }
+
     if (!result.ok) {
       if (result.reason === 'err') {
         log.warn('room', 'hydrate failed:', result.error)
@@ -279,26 +303,50 @@ export function hydrateRoomBackdrop(): void {
   })
 }
 
-export async function regenerateRoom(): Promise<boolean> {
+export async function regenerateRoom(input: RoomGenerationInput = {}): Promise<boolean> {
   const prevStatus = $backdropStatus.get()
+
+  if (prevStatus === 'pending' || submittingGeneration) {
+    return false
+  }
+
+  const epoch = currentClearEpoch()
+  generationVersion++
+  submittingGeneration = true
   $backdropStatus.set('pending')
-  startPendingPoll()
 
   const result = await authedApi({
-    body: { intent: 'rebuild' },
+    body: { intent: 'rebuild', ...input },
     method: 'POST',
     path: '/api/companion/room/generate'
   })
 
+  if (currentClearEpoch() !== epoch) {
+    return false
+  }
+
+  submittingGeneration = false
+
   if (!result.ok) {
     stopPendingPoll()
-    $backdropStatus.set(prevStatus)
+
+    if ($backdropStatus.get() === 'pending') {
+      $backdropStatus.set(prevStatus)
+    }
 
     if (result.reason === 'err') {
       notify({ kind: 'warning', message: getStrings().living.toasts.roomRegenerateFailed })
     }
 
+    hydrateRoomBackdrop()
+
     return false
+  }
+
+  if ($backdropStatus.get() === 'pending') {
+    startPendingPoll()
+  } else if ($backdropStatus.get() === 'ready') {
+    hydrateRoomBackdrop()
   }
 
   return true

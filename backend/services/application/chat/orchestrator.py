@@ -86,6 +86,24 @@ def _extract_unlocked_tool_names_from_context(input_items: list[dict]) -> set[st
     return unlocked
 
 
+def _latest_user_images(input_items: list[dict]) -> tuple[str, ...]:
+    """与本轮模型可见的最近一条带图用户消息对齐，不读取其他会话或工具结果。"""
+    for item in reversed(input_items):
+        if item.get("role") != "user" or not isinstance(content := item.get("content"), list):
+            continue
+        images = tuple(
+            part["image_url"]
+            for part in content
+            if isinstance(part, dict)
+            and part.get("type") == "input_image"
+            and isinstance(part.get("image_url"), str)
+            and part["image_url"]
+        )
+        if images:
+            return images
+    return ()
+
+
 async def run_chat_turn(
     req: ChatRequest,
     llm_config: dict,
@@ -311,6 +329,11 @@ async def _run_chat_turn(
         delegate_executor=partial(run_delegated_turn, run_turn=run_chat_turn),
         headless=headless,
         excluded_tool_names=effective_excluded_tool_names,
+        user_images=_latest_user_images(current_context["input"]),
+        user_initiated=not ephemeral
+        and not conv.is_automation
+        and preset_override is None
+        and req.message.role == "user",
     )
 
     companion_reply = (

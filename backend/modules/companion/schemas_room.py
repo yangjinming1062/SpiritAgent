@@ -1,6 +1,7 @@
 """Pydantic 契约：伙伴房间图 REST 接口。"""
 
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -40,6 +41,8 @@ class RoomGenerateRequest(BaseModel):
 
     intent: BackdropIntent = BackdropIntent.REBUILD
     notes: str | None = Field(default=None, max_length=500)
+    image: str | None = Field(default=None, min_length=1, max_length=8 * 1024 * 1024)
+    content_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"] = "image/png"
 
 
 class RoomActivateRequest(BaseModel):

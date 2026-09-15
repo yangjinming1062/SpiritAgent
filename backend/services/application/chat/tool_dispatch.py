@@ -43,6 +43,8 @@ class _ToolDispatchContext:
     delegate_executor: DelegateExecutor
     headless: bool = False
     excluded_tool_names: frozenset[str] = frozenset()
+    user_images: tuple[str, ...] = ()
+    user_initiated: bool = False
 
 
 def _redact_tool_payload(result_str: str) -> str | list:
@@ -162,6 +164,8 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
                         user_settings=ctx.user_settings,
                         parent_session_id=ctx.session_id,
                         emitter=ctx.emitter,
+                        user_images=ctx.user_images,
+                        user_initiated=ctx.user_initiated,
                     )
                     result_str = (
                         await ctx.delegate_executor(result, ctx.user_id, ctx.llm_config)

@@ -994,6 +994,16 @@ export const dict: Dictionary = {
     },
     room: {
       intro: 'Change the mood, roll back to an earlier room, or lock the room policy — all here.',
+      referenceHint:
+        'Add a room photo, including one with people, to guide the decor and mood. You can also ask your companion to copy a pose.',
+      referenceLabel: 'Room reference image',
+      chooseReference: 'Choose reference image',
+      replaceReference: 'Replace reference image',
+      removeReference: 'Remove reference image',
+      referenceError: 'The image could not be read or is too large. Choose a smaller PNG, JPEG, WebP or GIF image.',
+      notesLabel: 'Room and pose instructions',
+      notesPlaceholder:
+        'For example: use this room as a reference and have my companion sit sideways by the window, wearing their current outfit.',
       noBackdrop: 'No active room backdrop yet',
       currentBadge: 'Current room',
       currentAltFallback: 'Active room',
