@@ -222,7 +222,8 @@ def main() -> int:
         if target == "mac":
             run_cmd(["pnpm", "run", "tauri:build"], cwd=installer_dir)
         else:
-            run_cmd(["pnpm", "run", "tauri", "--", "build", "--no-bundle"], cwd=installer_dir)
+            # 不走 `pnpm run tauri -- build`：pnpm 会把 `--` 原样转发，tauri CLI(clap) 拒绝 `-- build`。
+            run_cmd(["pnpm", "run", "tauri:build:nobundle"], cwd=installer_dir)
     finally:
         restore_tauri_config(repo_root)
 
