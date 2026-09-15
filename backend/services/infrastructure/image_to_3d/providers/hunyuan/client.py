@@ -1,7 +1,14 @@
 from typing import Any
 
 import httpx
-from components import SETTINGS, download_capped, get_logger, log_paid_call
+from components import (
+    SETTINGS,
+    THREED_MODEL_DOWNLOAD_MAX_BYTES,
+    THREED_MODEL_DOWNLOAD_TIMEOUT_SECONDS,
+    download_capped,
+    get_logger,
+    log_paid_call,
+)
 
 from ..._http import post_json
 
@@ -10,9 +17,6 @@ logger = get_logger(__name__)
 DEFAULT_BASE_URL: str = "https://tokenhub.tencentmaas.com"
 
 MODEL_VERSION_DEFAULT: str = "hy-3d-3.1"
-
-_DOWNLOAD_TIMEOUT_SECONDS: float = 120.0
-_DOWNLOAD_MAX_BYTES: int = 100 * 1024 * 1024
 
 # 面数上下界（腾讯混元 3D 规格）
 _MIN_FACE_COUNT: int = 3_000
@@ -161,4 +165,8 @@ async def get_task(job_id: str, *, model: str = MODEL_VERSION_DEFAULT) -> dict[s
 
 async def download_model(model_url: str) -> bytes:
     """通过 download_capped 下载模型资产。"""
-    return await download_capped(model_url, max_bytes=_DOWNLOAD_MAX_BYTES, timeout=_DOWNLOAD_TIMEOUT_SECONDS)
+    return await download_capped(
+        model_url,
+        max_bytes=THREED_MODEL_DOWNLOAD_MAX_BYTES,
+        timeout=THREED_MODEL_DOWNLOAD_TIMEOUT_SECONDS,
+    )

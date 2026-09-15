@@ -1,14 +1,12 @@
 import asyncio
 import json
 
-from components import begin_user_request, end_user_request, get_logger, session_scope, utc_now
+from components import SETTINGS, begin_user_request, end_user_request, get_logger, session_scope, utc_now
 from modules.companion import CompanionIntentView, CompanionTurnRequest
 from modules.system import ChatMessageRequest, ChatRequest
 
 from services.application.chat import HeadlessEmitter, run_chat_turn
 from services.domains.companion import (
-    COMPANION_MAX_LOOP_TURNS,
-    COMPANION_TURN_TIMEOUT_SECONDS,
     begin_companion_intent,
     companion_turn_plan,
     finish_companion_intent,
@@ -75,7 +73,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
     message_id = 0
     try:
         remaining = (intent.expires_at - utc_now()).total_seconds()
-        async with asyncio.timeout(min(COMPANION_TURN_TIMEOUT_SECONDS, max(0.0, remaining))):
+        async with asyncio.timeout(min(SETTINGS.companion_turn_timeout_seconds, max(0.0, remaining))):
             async with session_scope() as db:
                 conversation = await get_or_create_special_conversation(db, user_id, "companion")
                 llm_config = await resolve_user_llm_config(db, user_id)
@@ -96,7 +94,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                     ephemeral=True,
                     headless=True,
                     excluded_tool_names=frozenset({"send_message_tool", "agent_delegate_tool"}),
-                    max_loop_turns=COMPANION_MAX_LOOP_TURNS,
+                    max_loop_turns=SETTINGS.companion_max_loop_turns,
                 )
         text = emitter.final_text.strip()
         await finish_companion_intent(

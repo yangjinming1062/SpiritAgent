@@ -19,8 +19,6 @@ from components import (
     JSONRPC_SLASH_BUSY,
     JSONRPC_SLASH_CONFIRM_REQUIRED,
     JSONRPC_SLASH_GENERIC,
-    MAX_ATTACHMENTS_PER_TURN,
-    MAX_RECALL_CONTENT_CHARS,
     MAX_VOICE_DESIGN_PROMPT_CHARS,
     REQUEST_ID_HEADER,
     SESSION_HISTORY_PRE_BUFFER,
@@ -154,8 +152,6 @@ from .runtime import (
 
 logger = get_logger(__name__)
 
-DISCONNECT_GRACE_SECONDS = 30.0
-
 
 @dataclass
 class UserGatewaySession:
@@ -225,16 +221,12 @@ async def _noop_send_strict(data: dict[str, Any]) -> bool:
 
 
 # 进程级节流：buggy renderer 可能狂打 check_affect 烧 LLM 配额。
-CHECK_AFFECT_MIN_INTERVAL_SECONDS = 2.0
 _last_check_affect_ts: dict[int, float] = {}
 
-INTERACT_MIN_INTERVAL_SECONDS = 1.5
-USER_TRIGGERED_LLM_COOLDOWN_SECONDS = 5 * 60
-# 失败短冷却：5 分钟成本窗口只在成功时全额消耗的话，供应商持续故障时连戳会把成本闸门
-# 打成筛子；60s 让故障模式也有封顶，又不把瞬时失败的用户锁满 5 分钟
-INTERACT_FAILURE_COOLDOWN_SECONDS = 60
+# 失败短冷却：成本窗口只在成功时全额消耗的话，供应商持续故障时连戳会把成本闸门
+# 打成筛子；短冷却让故障模式也有封顶，又不把瞬时失败的用户锁满完整成本窗口。
 _last_interact_ts: dict[int, float] = {}
-# per-(user, kind) 存冷却到期时刻（monotonic），成功与失败分别写 5min / 60s
+# per-(user, kind) 存冷却到期时刻（monotonic），成功与失败分别写 SETTINGS 的长短冷却。
 _llm_cooldown_until: dict[int, dict[str, float]] = {}
 # per-(user, kind) 的 in-flight 守卫：慢的 LLM 反应还没回时，避免再触发第二次并发反应。
 _inflight_interact: set[tuple[int, str]] = set()
@@ -471,7 +463,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
 
                 async def _grace_cleanup(uid: int) -> None:
                     try:
-                        await asyncio.sleep(DISCONNECT_GRACE_SECONDS)
+                        await asyncio.sleep(SETTINGS.desktop_disconnect_grace_seconds)
                         if not MANAGER.is_connected(uid):
                             logger.info(
                                 "Grace period expired for disconnected user, performing full cleanup",
@@ -540,8 +532,8 @@ def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[
         return None
     if not isinstance(raw, list):
         raise JsonRpcError(JSONRPC_INVALID_PARAMS, "attachments must be a list")
-    if len(raw) > MAX_ATTACHMENTS_PER_TURN:
-        raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"too many attachments (max {MAX_ATTACHMENTS_PER_TURN})")
+    if len(raw) > SETTINGS.max_attachments_per_turn:
+        raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"too many attachments (max {SETTINGS.max_attachments_per_turn})")
     cleaned: list[dict[str, Any]] = []
     for idx, att in enumerate(raw):
         if not isinstance(att, dict):
@@ -864,7 +856,7 @@ async def _slash_remember(ctx: SlashCommandContext) -> SlashCommandResult:
             hydrate=False,
         )
 
-    norm_content = content[:MAX_RECALL_CONTENT_CHARS]
+    norm_content = content[: SETTINGS.memory_recall_max_content_chars]
     context = normalize_recall_context("manual")
     tags = json.dumps(["user_preference"])
     importance = 1.5
@@ -1538,7 +1530,7 @@ def _register_session_handlers(
         if await get_disturbance_tier(user_id) != "autonomous":
             return {"emotion": None, "actions": [], "reason": "autonomous tier required"}
         now = time.monotonic()
-        if _user_throttled(_last_check_affect_ts, user_id, CHECK_AFFECT_MIN_INTERVAL_SECONDS, now):
+        if _user_throttled(_last_check_affect_ts, user_id, SETTINGS.companion_check_affect_min_interval_seconds, now):
             logger.debug(
                 "check_affect: throttled",
                 extra={"user_id": user_id, "since_sec": round(now - _last_check_affect_ts.get(user_id, 0.0), 3)},
@@ -1593,7 +1585,7 @@ def _register_session_handlers(
         await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
 
         now = time.monotonic()
-        if _user_throttled(_last_interact_ts, user_id, INTERACT_MIN_INTERVAL_SECONDS, now):
+        if _user_throttled(_last_interact_ts, user_id, SETTINGS.companion_interact_min_interval_seconds, now):
             return {"text": None, "emotion": None, "reason": "throttled"}
 
         # 跨门：renderer 发起的 chat turn 正在主会话上空跑——戳一戳可能在 in-flight 用户消息入库前写入 status_interaction 行，或 status_reaction 落在还在生成的助手回复前；按 throttled 契约静默丢弃。
@@ -1609,7 +1601,7 @@ def _register_session_handlers(
         if inflight_key in _inflight_interact:
             return {"text": None, "emotion": None, "reason": "inflight"}
         _inflight_interact.add(inflight_key)
-        # anti-dup 节流总是消费；成本窗口按结果分级——成功 5 分钟、失败 60 秒
+        # anti-dup 节流总是消费；成本窗口按结果分级——成功走完整成本窗口，失败走短冷却
         _last_interact_ts[user_id] = now
 
         poke_count = coerce_non_negative_int(params.get("poke_count"))
@@ -1626,8 +1618,8 @@ def _register_session_handlers(
             _inflight_interact.discard(inflight_key)
 
         if res.text is None:
-            # 失败也封 60s：LLM 调用已付过钱，故障模式下成本闸门同样要生效
-            user_cooldowns[kind] = now + INTERACT_FAILURE_COOLDOWN_SECONDS
+            # 失败也封短冷却：LLM 调用已付过钱，故障模式下成本闸门同样要生效
+            user_cooldowns[kind] = now + SETTINGS.companion_interact_failure_cooldown_seconds
             return res.model_dump()
 
         # 只有用户实际看到的反应才值得写历史行——未应答的戳一戳否则会污染主会话。
@@ -1643,7 +1635,7 @@ def _register_session_handlers(
         await _record_main_conversation(user_id, "user", action_name, "status_interaction")
         await _record_main_conversation(user_id, "assistant", res.text, "status_reaction")
         # 不论 DB 结果如何都消耗完整冷却：LLM 调用已经付过钱，持久化失败不该为第二次调用打开门。
-        user_cooldowns[kind] = now + USER_TRIGGERED_LLM_COOLDOWN_SECONDS
+        user_cooldowns[kind] = now + SETTINGS.companion_llm_cooldown_seconds
         return res.model_dump()
 
     dispatcher.register("companion.interact", companion_interact)

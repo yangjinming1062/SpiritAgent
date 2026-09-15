@@ -2,7 +2,6 @@
 
 from .cron_jobs import (
     CRON_KINDS,
-    MAX_ACTIVE_CRON_JOBS,
     SPECIAL_CRON_KIND,
     STANDARD_CRON_KIND,
     compute_next_run_at,
@@ -16,7 +15,6 @@ from .cron_jobs import (
 
 __all__ = [
     "CRON_KINDS",
-    "MAX_ACTIVE_CRON_JOBS",
     "SPECIAL_CRON_KIND",
     "STANDARD_CRON_KIND",
     "compute_next_run_at",

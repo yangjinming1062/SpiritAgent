@@ -5,6 +5,7 @@ import secrets
 from pathlib import Path
 
 from components import (
+    REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     SESSION_LOCAL,
     SETTINGS,
     download_capped,
@@ -231,7 +232,7 @@ async def _download_to_bytes(url: str) -> tuple[bytes, str] | None:
             path, content_type = res
             return await asyncio.to_thread(Path(path).read_bytes), content_type
     try:
-        content = await download_capped(url, max_bytes=50 * 1024 * 1024, timeout=120.0)
+        content = await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=120.0)
         ct = "image/jpeg"
         if content.startswith(b"\x89PNG"):
             ct = "image/png"

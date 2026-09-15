@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from components import MAX_RECALL_CONTENT_CHARS, session_scope, utc_now
+from components import SETTINGS, session_scope, utc_now
 from modules.memory import Memory
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -89,7 +89,7 @@ async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> 
         row = await get_memory(db, scope, memory_id)
         if row is None:
             return None
-        cap = MAX_RECALL_CONTENT_CHARS
+        cap = SETTINGS.memory_recall_max_content_chars
         if len(content) > cap:
             raise ValueError(f"content exceeds {cap} chars for {row.context or 'recall'}")
         row = await update_memory_content(db, scope, memory_id, content)

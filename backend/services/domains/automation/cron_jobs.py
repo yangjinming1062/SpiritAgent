@@ -2,7 +2,7 @@ from collections.abc import Awaitable, Callable
 from datetime import datetime
 from typing import Any
 
-from components import get_logger, session_scope, utc_now
+from components import SETTINGS, get_logger, session_scope, utc_now
 from croniter import croniter
 from modules.auth import User
 from modules.conversation import Conversation
@@ -21,7 +21,6 @@ CRON_KINDS = frozenset({SPECIAL_CRON_KIND, STANDARD_CRON_KIND})
 
 _JOB_IMMUTABLE_FIELDS = frozenset({"id", "user_id", "conversation_id", "system_preset_id"})
 _SCHEDULE_KEYS = ("schedule", "is_paused")
-MAX_ACTIVE_CRON_JOBS = 10
 _INTENT_INVALIDATING_FIELDS = ("prompt", "schedule", "kind", "expires_at", "is_paused")
 JobIntentInvalidator = Callable[[AsyncSession, int, int], Awaitable[None]]
 _invalidate_job_intents: JobIntentInvalidator | None = None
@@ -72,9 +71,9 @@ async def _ensure_active_job_capacity(db: AsyncSession, user_id: int, candidate_
     stmt = select(func.count()).select_from(CronJob).where(CronJob.user_id == user_id, CronJob.is_paused.is_(False))
     if candidate_job_id is not None:
         stmt = stmt.where(CronJob.id != candidate_job_id)
-    if (await db.execute(stmt)).scalar_one() >= MAX_ACTIVE_CRON_JOBS:
+    if (await db.execute(stmt)).scalar_one() >= SETTINGS.cron_max_active_per_user:
         raise ValueError(
-            f"Maximum active cron jobs limit ({MAX_ACTIVE_CRON_JOBS}) reached.",
+            f"Maximum active cron jobs limit ({SETTINGS.cron_max_active_per_user}) reached.",
         )
 
 

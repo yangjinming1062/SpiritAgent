@@ -3,7 +3,14 @@ import time
 from typing import Any
 
 import httpx
-from components import SETTINGS, download_capped, log_paid_call, safe_outbound_async_client
+from components import (
+    SETTINGS,
+    THREED_MODEL_DOWNLOAD_MAX_BYTES,
+    THREED_MODEL_DOWNLOAD_TIMEOUT_SECONDS,
+    download_capped,
+    log_paid_call,
+    safe_outbound_async_client,
+)
 
 from ..._http import get_json, post_json
 
@@ -46,7 +53,6 @@ _RETARGET_CLIPS.update(
     },
 )
 
-_DOWNLOAD_TIMEOUT_SECONDS: float = 120.0
 
 # P 系列为低面数优化并封顶 ``face_limit``；封顶保护切换到 P 系列 id 的运营人员。
 _P_SERIES_FACE_LIMIT_MAX: int = 20_000
@@ -270,4 +276,8 @@ async def retarget(task_id: str, rig_type: str) -> str:
 
 async def download_model(model_url: str) -> bytes:
     """Tripo 模型 URL 短期有效，需在 rig 任务成功后立即下载。"""
-    return await download_capped(model_url, max_bytes=100 * 1024 * 1024, timeout=_DOWNLOAD_TIMEOUT_SECONDS)
+    return await download_capped(
+        model_url,
+        max_bytes=THREED_MODEL_DOWNLOAD_MAX_BYTES,
+        timeout=THREED_MODEL_DOWNLOAD_TIMEOUT_SECONDS,
+    )

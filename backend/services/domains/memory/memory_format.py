@@ -1,4 +1,4 @@
-from components import DEFAULT_LANGUAGE
+from components import DEFAULT_LANGUAGE, SETTINGS
 from modules.memory import Memory
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -6,8 +6,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.contracts import MemoryScope
 
 from .memory_store import active_memory_filter, scope_filter
-
-MAX_MEMORIES = 10
 
 
 def _format_record(content: str, basis: str, context: str | None) -> str:
@@ -25,7 +23,7 @@ async def format_memories_block(db: AsyncSession, scope: MemoryScope) -> str:
                     Memory.context.like("recall:%"),
                 )
                 .order_by(Memory.updated_at.desc())
-                .limit(MAX_MEMORIES),
+                .limit(SETTINGS.memory_prompt_max_memories),
             )
         ).all(),
     )
@@ -50,7 +48,7 @@ async def format_background_memory_block(
                     Memory.context.like("recall:%"),
                 )
                 .order_by(Memory.id)
-                .limit(MAX_MEMORIES),
+                .limit(SETTINGS.memory_prompt_max_memories),
             )
         ).all(),
     )

@@ -1,7 +1,7 @@
 import time
 from typing import Any
 
-from components import coerce_hour_0_23, coerce_non_negative_float, get_logger
+from components import SETTINGS, coerce_hour_0_23, coerce_non_negative_float, get_logger
 from pydantic import BaseModel, Field
 
 from services.infrastructure.llm import UserLlmConfig
@@ -15,7 +15,6 @@ ALLOWED_ACTIONS: frozenset[str] = frozenset({"roam", "perch", "approach", "stay"
 # approach（走过去搭话）专属低频闸：一次搭话 = 一次走位 + 一条主动消息 + 一次 TTS，
 # 频繁搭话会把"主动陪伴"变成骚扰。冷却内的 approach 决策整体降级为 stay——
 # 不发消息也不返回 approach，避免"说了话却没走过来"的割裂（客户端只认 action 走位）。
-APPROACH_COOLDOWN_SECONDS = 1800.0
 _last_approach_at: dict[int, float] = {}
 
 
@@ -119,7 +118,7 @@ async def should_act(
     if action == "approach":
         now = time.monotonic()
         last = _last_approach_at.get(user_id)
-        if last is not None and now - last < APPROACH_COOLDOWN_SECONDS:
+        if last is not None and now - last < SETTINGS.companion_approach_cooldown_seconds:
             logger.info(
                 "should_act: approach throttled",
                 extra={"user_id": user_id, "since_sec": round(now - last, 1)},

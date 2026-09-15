@@ -134,6 +134,7 @@ class Settings(BaseSettings):
 
     web_search_backend: str = Field(default="ddgs", validation_alias="WEB_SEARCH_BACKEND")
     web_extract_backend: str = Field(default="tavily", validation_alias="WEB_EXTRACT_BACKEND")
+    web_search_default_results: int = Field(default=5, gt=0, validation_alias="WEB_SEARCH_DEFAULT_RESULTS")
     brave_search_api_key: str = Field(default="", validation_alias="BRAVE_SEARCH_API_KEY")
     tavily_api_key: str = Field(default="", validation_alias="TAVILY_API_KEY")
     tavily_base_url: str = Field(default="", validation_alias="TAVILY_BASE_URL")
@@ -144,6 +145,85 @@ class Settings(BaseSettings):
     enable_context_compression: bool = Field(default=True, validation_alias="ENABLE_CONTEXT_COMPRESSION")
     ipc_future_timeout_seconds: float = Field(default=300.0, validation_alias="IPC_FUTURE_TIMEOUT_SECONDS")
     chat_active_window_minutes: int = Field(default=30, validation_alias="CHAT_ACTIVE_WINDOW_MINUTES")
+
+    # 对话回合与陪伴交互节奏：控制工具循环上限、桌面互动的 LLM 成本窗口与主动行为的静默门槛。
+    agent_max_loop_turns: int = Field(default=150, gt=0, validation_alias="AGENT_MAX_LOOP_TURNS")
+    companion_check_affect_min_interval_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        validation_alias="COMPANION_CHECK_AFFECT_MIN_INTERVAL_SECONDS",
+    )
+    companion_interact_min_interval_seconds: float = Field(
+        default=1.5,
+        gt=0,
+        validation_alias="COMPANION_INTERACT_MIN_INTERVAL_SECONDS",
+    )
+    companion_llm_cooldown_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        validation_alias="COMPANION_LLM_COOLDOWN_SECONDS",
+    )
+    companion_interact_failure_cooldown_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        validation_alias="COMPANION_INTERACT_FAILURE_COOLDOWN_SECONDS",
+    )
+    companion_approach_cooldown_seconds: float = Field(
+        default=1800.0,
+        gt=0,
+        validation_alias="COMPANION_APPROACH_COOLDOWN_SECONDS",
+    )
+    companion_contact_quiet_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        validation_alias="COMPANION_CONTACT_QUIET_SECONDS",
+    )
+    desktop_disconnect_grace_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        validation_alias="DESKTOP_DISCONNECT_GRACE_SECONDS",
+    )
+    companion_max_pending_intents: int = Field(default=16, gt=0, validation_alias="COMPANION_MAX_PENDING_INTENTS")
+    companion_min_turn_interval_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        validation_alias="COMPANION_MIN_TURN_INTERVAL_SECONDS",
+    )
+    companion_turn_timeout_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        validation_alias="COMPANION_TURN_TIMEOUT_SECONDS",
+    )
+    companion_max_loop_turns: int = Field(default=8, gt=0, validation_alias="COMPANION_MAX_LOOP_TURNS")
+
+    # 记忆维护与召回注入的节流与预算。
+    memory_review_interval_seconds: float = Field(
+        default=6 * 3600.0,
+        gt=0,
+        validation_alias="MEMORY_REVIEW_INTERVAL_SECONDS",
+    )
+    memory_recall_max_content_chars: int = Field(
+        default=4_000,
+        gt=0,
+        validation_alias="MEMORY_RECALL_MAX_CONTENT_CHARS",
+    )
+    memory_prompt_max_memories: int = Field(default=10, gt=0, validation_alias="MEMORY_PROMPT_MAX_MEMORIES")
+
+    # 夜间整理窗口、规划与日记预算；调度器 tick 周期与用户 Cron 配额。
+    nightly_window_start_hour: int = Field(default=0, ge=0, le=23, validation_alias="NIGHTLY_WINDOW_START_HOUR")
+    nightly_window_end_hour: int = Field(default=5, ge=0, le=23, validation_alias="NIGHTLY_WINDOW_END_HOUR")
+    nightly_scan_interval_seconds: float = Field(default=300.0, gt=0, validation_alias="NIGHTLY_SCAN_INTERVAL_SECONDS")
+    nightly_consolidate_max_recall_rows: int = Field(
+        default=200,
+        gt=0,
+        validation_alias="NIGHTLY_CONSOLIDATE_MAX_RECALL_ROWS",
+    )
+    nightly_message_truncate_chars: int = Field(default=4_000, gt=0, validation_alias="NIGHTLY_MESSAGE_TRUNCATE_CHARS")
+    nightly_planning_max_tokens: int = Field(default=16_000, gt=0, validation_alias="NIGHTLY_PLANNING_MAX_TOKENS")
+    nightly_diary_max_tokens: int = Field(default=800, gt=0, validation_alias="NIGHTLY_DIARY_MAX_TOKENS")
+    diary_max_content_chars: int = Field(default=1_000, gt=0, validation_alias="DIARY_MAX_CONTENT_CHARS")
+    scheduler_interval_seconds: float = Field(default=60.0, gt=0, validation_alias="SCHEDULER_INTERVAL_SECONDS")
+    cron_max_active_per_user: int = Field(default=10, gt=0, validation_alias="CRON_MAX_ACTIVE_PER_USER")
 
     default_llm_context_tokens: int = Field(default=1000000, gt=0, validation_alias="DEFAULT_LLM_CONTEXT_TOKENS")
 
@@ -179,6 +259,24 @@ class Settings(BaseSettings):
     moment_autonomous_per_day: int = Field(default=3, validation_alias="MOMENT_AUTONOMOUS_PER_DAY")
     diary_nightly_enabled: bool = Field(default=True, validation_alias="DIARY_NIGHTLY_ENABLED")
     rate_limit_storage_url: str = Field(default="", validation_alias="RATE_LIMIT_STORAGE_URL")
+
+    # 附件、生成媒体与备份压缩包的体积/条数配额。
+    max_attachments_per_turn: int = Field(default=16, gt=0, validation_alias="MAX_ATTACHMENTS_PER_TURN")
+    attachment_session_quota_bytes: int = Field(
+        default=512 * 1024 * 1024,
+        gt=0,
+        validation_alias="ATTACHMENT_SESSION_QUOTA_BYTES",
+    )
+    journal_media_download_max_bytes: int = Field(
+        default=100 * 1024 * 1024,
+        gt=0,
+        validation_alias="JOURNAL_MEDIA_DOWNLOAD_MAX_BYTES",
+    )
+    backup_archive_max_bytes: int = Field(
+        default=500 * 1024 * 1024,
+        gt=0,
+        validation_alias="BACKUP_ARCHIVE_MAX_BYTES",
+    )
 
     metrics_enabled: bool = Field(default=True, validation_alias="METRICS_ENABLED")
     metrics_path: str = Field(default="/metrics", validation_alias="METRICS_PATH")

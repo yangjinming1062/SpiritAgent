@@ -295,7 +295,7 @@ async def _persist_generated_media(
         return persisted, _moment_media_type(persisted)
     data = await download_capped(
         media_url,
-        max_bytes=100 * 1024 * 1024,
+        max_bytes=SETTINGS.journal_media_download_max_bytes,
         timeout=600.0,
     )
     ext = _generated_media_extension(data)

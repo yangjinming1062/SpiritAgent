@@ -1,7 +1,7 @@
 import asyncio
 import json
 
-from components import coerce_int, get_logger, tool_error
+from components import SETTINGS, coerce_int, get_logger, tool_error
 from openai import AsyncOpenAI
 
 from services.infrastructure.llm import build_responses_kwargs, call_with_retry, client_for_config
@@ -68,14 +68,15 @@ async def _summarize_documents(documents: list[dict], llm_config: dict) -> None:
     await asyncio.gather(*(_guarded(d) for d in documents))
 
 
-async def web_search_tool(query: str, limit: int = 5, **_) -> str:
+async def web_search_tool(query: str, limit: int | None = None, **_) -> str:
     provider = resolve_search_provider()
     if not provider.is_available():
         return tool_error(f"{provider.display_name} is not configured or unavailable.")
     if not provider.supports_search():
         return tool_error(f"{provider.display_name} does not support search.")
 
-    safe_limit = max(1, coerce_int(limit, 5))
+    default_limit = SETTINGS.web_search_default_results
+    safe_limit = max(1, coerce_int(limit, default_limit))
     logger.info("Web search", extra={"provider_name": provider.name, "query": query, "limit": safe_limit})
     try:
         result = await provider.search(query, safe_limit)
@@ -115,7 +116,7 @@ async def web_extract_tool(urls: list[str] | str, llm_config: dict, use_llm_proc
 WEB_SEARCH_SCHEMA = {
     "name": "web_search",
     "description": (
-        "Search the web for information. Returns up to 5 results by default, each with title, "
+        "Search the web for information. Returns results with title, "
         "URL, and description. Search operators (site:domain, filetype:pdf, intitle:word, "
         '-term, "exact phrase") may be supported depending on the search backend.'
     ),
@@ -128,10 +129,9 @@ WEB_SEARCH_SCHEMA = {
             },
             "limit": {
                 "type": "integer",
-                "description": "Maximum number of results to return. Defaults to 5.",
+                "description": "Maximum number of results to return.",
                 "minimum": 1,
                 "maximum": 100,
-                "default": 5,
             },
         },
         "required": ["query"],

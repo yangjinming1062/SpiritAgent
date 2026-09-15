@@ -11,7 +11,6 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import (
-    NIGHTLY_PLANNING_MAX_TOKENS,
     NIGHTLY_PLANNING_REASONING_EFFORT,
     SESSION_LOCAL,
     SETTINGS,
@@ -1883,7 +1882,7 @@ async def run_nightly_planning(
             llm_cfg,
             _PLANNING_SYSTEM_PROMPT,
             payload,
-            max_output_tokens=NIGHTLY_PLANNING_MAX_TOKENS,
+            max_output_tokens=SETTINGS.nightly_planning_max_tokens,
             reasoning_effort=NIGHTLY_PLANNING_REASONING_EFFORT,
         )
         plan = _normalize_plan(parse_llm_json(raw), context)

@@ -59,9 +59,7 @@ async def _generate_reply_inner(user_id: int, moment_id: str) -> None:
                 "kind": moment.kind,
                 **({"emotion": moment.emotion} if moment.emotion else {}),
             },
-            "comments": [
-                {"role": c.role, "content": c.content} for c in (moment.comments or [])
-            ],
+            "comments": [{"role": c.role, "content": c.content} for c in (moment.comments or [])],
         }
         llm_cfg = await resolve_user_llm_config(db, user_id)
     if not llm_cfg.model_name:
@@ -71,12 +69,15 @@ async def _generate_reply_inner(user_id: int, moment_id: str) -> None:
     if ctx.current_mood:
         payload["current_mood"] = ctx.current_mood
 
-    reply = (await call_llm_once(
-        llm_cfg,
-        _REPLY_INSTRUCTIONS,
-        payload,
-        max_output_tokens=_MAX_REPLY_TOKENS,
-    ) or "").strip()
+    reply = (
+        await call_llm_once(
+            llm_cfg,
+            _REPLY_INSTRUCTIONS,
+            payload,
+            max_output_tokens=_MAX_REPLY_TOKENS,
+        )
+        or ""
+    ).strip()
     if not reply:
         logger.info("moment reply: empty response", extra={"user_id": user_id})
         return

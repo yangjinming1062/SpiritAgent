@@ -3,13 +3,12 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 
-from components import safe_json_loads
+from components import SETTINGS, safe_json_loads
 from modules.companion import Persona
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 PRESENCE_TTL_SECONDS: int = 90
-CONTACT_QUIET_SECONDS: int = 60
 _USER_PROACTIVE_STATE: dict[int, "UserProactiveRecord"] = {}
 
 
@@ -71,7 +70,9 @@ def can_start_companion_turn(user_id: int) -> bool:
         rec.available
         and now - rec.observed_at <= PRESENCE_TTL_SECONDS
         and rec.busy_count == 0
-        and (rec.last_user_contact_ts == 0 or now - rec.last_user_contact_ts >= CONTACT_QUIET_SECONDS)
+        and (
+            rec.last_user_contact_ts == 0 or now - rec.last_user_contact_ts >= SETTINGS.companion_contact_quiet_seconds
+        )
     )
 
 

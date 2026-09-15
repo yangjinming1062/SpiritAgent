@@ -8,10 +8,7 @@ from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import (
-    MEMORY_REVIEW_INTERVAL_SECONDS,
-    NIGHTLY_SCAN_INTERVAL_SECONDS,
-    NIGHTLY_WINDOW_END_HOUR,
-    NIGHTLY_WINDOW_START_HOUR,
+    SETTINGS,
     BackgroundTask,
     TaskBag,
     begin_local_scope,
@@ -56,8 +53,6 @@ _BG = TaskBag("scheduler.cron")
 
 # 每个慢扫描的在飞 task：LLM 流水线可能比扫描间隔跑得更久，而 per-user 去重标记只在成功后才写——不挡住重入会让同一用户的流水线并行跑两遍。
 _SCANS: dict[str, asyncio.Task] = {}
-
-SCHEDULER_INTERVAL_SECONDS = 60
 
 # per-user 最近一次记忆审核运行时间戳：进程本地——匹配 ARCH §5 单实例语义（多 replica 会分裂状态）。
 _LAST_MEMORY_REVIEW: dict[MemoryScope, float] = {}
@@ -448,7 +443,7 @@ async def _maybe_run_outbox_gc(now: datetime) -> None:
 
 
 async def _maybe_run_memory_review(now: datetime) -> None:
-    """为有记忆或待审核消息的预设执行证据维护——外层按 _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS 节流，per-user 按 MEMORY_REVIEW_INTERVAL_SECONDS 节流，并发通过 gather 单 tick 只付最大 LLM 延迟。"""
+    """为有记忆或待审核消息的预设执行证据维护——外层按 _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS 节流，per-user 按 SETTINGS.memory_review_interval_seconds 节流，并发通过 gather 单 tick 只付最大 LLM 延迟。"""
     global _LAST_MEMORY_REVIEW_SCAN
     if now.timestamp() - _LAST_MEMORY_REVIEW_SCAN < _MEMORY_REVIEW_SCAN_INTERVAL_SECONDS:
         return
@@ -471,7 +466,7 @@ async def _maybe_run_memory_review(now: datetime) -> None:
         scope = MemoryScope(uid, preset)
         if is_user_in_maintenance(uid):
             continue
-        if now.timestamp() - _LAST_MEMORY_REVIEW.get(scope, 0.0) < MEMORY_REVIEW_INTERVAL_SECONDS:
+        if now.timestamp() - _LAST_MEMORY_REVIEW.get(scope, 0.0) < SETTINGS.memory_review_interval_seconds:
             continue
         eligible.append(scope)
     if not eligible:
@@ -497,7 +492,7 @@ async def _maybe_run_memory_review(now: datetime) -> None:
 
 async def _maybe_run_autonomous_activity(now: datetime) -> None:
     global _LAST_NIGHTLY_SCAN
-    if now.timestamp() - _LAST_NIGHTLY_SCAN < NIGHTLY_SCAN_INTERVAL_SECONDS:
+    if now.timestamp() - _LAST_NIGHTLY_SCAN < SETTINGS.nightly_scan_interval_seconds:
         return
     _LAST_NIGHTLY_SCAN = now.timestamp()
     eligible: list[tuple[MemoryScope, datetime, date]] = []
@@ -543,7 +538,10 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
                 else:
                     recover = log.target_date
             target = recover or local_now.date() - timedelta(days=1)
-            if recover is None and not NIGHTLY_WINDOW_START_HOUR <= local_now.hour < NIGHTLY_WINDOW_END_HOUR:
+            if (
+                recover is None
+                and not SETTINGS.nightly_window_start_hour <= local_now.hour < SETTINGS.nightly_window_end_hour
+            ):
                 continue
             if _LAST_NIGHTLY_RUN.get(scope) == target.isoformat():
                 continue
@@ -568,17 +566,17 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
 
 
 async def scheduler_loop() -> None:
-    """以 SCHEDULER_INTERVAL_SECONDS 为周期的 cron tick 循环：单 tick 粒度——不支持分钟以下调度。按 deadline 对齐而非 tick 结束后固定 sleep——后者的实际周期是 60s + tick 耗时，误差逐轮累积；落后超过一整周期时丢弃错过的槽位，避免停摆恢复后连打。_tick() 未捕获的异常会冒泡导致 BackgroundTask 死亡，运维侧曝光度高（Task exited with error）——这是故意的：持久 bug 不该每 60 秒静默刷日志，而应显式崩溃以便修复；派发出去的自主 turn 与扫描各自在独立 task 里失败并落日志，不会终止循环。"""
+    """以 SETTINGS.scheduler_interval_seconds 为周期的 cron tick 循环（每轮重读，热调即时生效）：单 tick 粒度——不支持分钟以下调度。按 deadline 对齐而非 tick 结束后固定 sleep——后者的实际周期是 tick 间隔 + tick 耗时，误差逐轮累积；落后超过一整周期时丢弃错过的槽位，避免停摆恢复后连打。_tick() 未捕获的异常会冒泡导致 BackgroundTask 死亡，运维侧曝光度高（Task exited with error）——这是故意的：持久 bug 不该每个 tick 静默刷日志，而应显式崩溃以便修复；派发出去的自主 turn 与扫描各自在独立 task 里失败并落日志，不会终止循环。"""
     logger.info("Starting background cron scheduler loop.")
     loop = asyncio.get_running_loop()
     next_at = loop.time()
     while True:
         begin_local_scope()
         await _tick()
-        next_at += SCHEDULER_INTERVAL_SECONDS
+        next_at += SETTINGS.scheduler_interval_seconds
         now = loop.time()
         if next_at <= now:
-            next_at = now + SCHEDULER_INTERVAL_SECONDS
+            next_at = now + SETTINGS.scheduler_interval_seconds
         await asyncio.sleep(next_at - now)
 
 

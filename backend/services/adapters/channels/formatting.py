@@ -70,7 +70,7 @@ def _assemble(atoms: list[str], sep: str, limit: int) -> list[str]:
     return chunks
 
 
-def chunk_text(text: str, limit: int = 2000) -> list[str]:
+def chunk_text(text: str, limit: int) -> list[str]:
     """按 段落 → 行 → 空格 边界把长回复切为 ≤limit 的分片；原子级仍超限才硬切。
 
     分片间以 ``\\n`` 连接原子（段落空行不逐段复原——IM 分片场景下段落已各自成原子，结构足够可读）。

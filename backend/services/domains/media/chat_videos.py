@@ -17,7 +17,6 @@ from pathlib import Path
 from urllib.parse import quote
 
 from components import (
-    ATTACHMENT_SESSION_QUOTA_BYTES,
     ATTACHMENT_VIDEO_EXTENSIONS,
     SETTINGS,
     VIDEO_INLINE_MAX_PER_REQUEST,
@@ -172,11 +171,11 @@ async def enforce_session_quota(db: AsyncSession, session_id: str, incoming_byte
             continue
         entries.append((stat.st_mtime, stat.st_size, p))
         total += stat.st_size
-    if total <= ATTACHMENT_SESSION_QUOTA_BYTES:
+    if total <= SETTINGS.attachment_session_quota_bytes:
         return
     victims: list[Path] = []
     for _mtime, size, p in sorted(entries):  # 最旧在前
-        if total <= ATTACHMENT_SESSION_QUOTA_BYTES:
+        if total <= SETTINGS.attachment_session_quota_bytes:
             break
         total -= size
         victims.append(p)

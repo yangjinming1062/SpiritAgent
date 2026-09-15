@@ -66,8 +66,6 @@ logger = get_logger(__name__)
 
 router = get_router(dependencies=[Depends(get_current_admin_token)])
 
-# 用户备份 zip 大小上限 500 MB；上传也按此截断以免 OOM。
-ARCHIVE_MAX_BYTES = 500 * 1024 * 1024
 # 1 MB 分块上传，匹配 update.py 的 CHUNK_SIZE 数量级。
 ARCHIVE_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
@@ -368,10 +366,10 @@ async def import_user_backup(
         with open(zip_path, "wb") as out:
             while chunk := await file.read(ARCHIVE_UPLOAD_CHUNK_BYTES):
                 total += len(chunk)
-                if total > ARCHIVE_MAX_BYTES:
+                if total > SETTINGS.backup_archive_max_bytes:
                     raise HTTPException(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"Archive exceeds {ARCHIVE_MAX_BYTES} bytes",
+                        detail=f"Archive exceeds {SETTINGS.backup_archive_max_bytes} bytes",
                     )
                 await asyncio.to_thread(out.write, chunk)
 

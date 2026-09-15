@@ -12,8 +12,6 @@ from .disturbance import (
 )
 from .emotions import BUILTIN_EMOTIONS
 from .intents import (
-    COMPANION_MAX_LOOP_TURNS,
-    COMPANION_TURN_TIMEOUT_SECONDS,
     begin_companion_intent,
     cancel_companion_wait,
     companion_turn_plan,
@@ -79,8 +77,6 @@ __all__ = [
     "note_user_contact",
     "observe_companion_presence",
     "user_turn_activity",
-    "COMPANION_MAX_LOOP_TURNS",
-    "COMPANION_TURN_TIMEOUT_SECONDS",
     "begin_companion_intent",
     "cancel_companion_wait",
     "companion_turn_plan",

@@ -2,7 +2,7 @@ import asyncio
 import base64
 import io
 
-from components import SESSION_LOCAL, download_capped, get_logger, save_file
+from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_logger, save_file
 from PIL import Image, ImageDraw, ImageOps
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -161,7 +161,7 @@ async def generate_images(
         if asset.url:
             if as_user_assets:
                 try:
-                    data = await download_capped(asset.url, max_bytes=50 * 1024 * 1024, timeout=120.0)
+                    data = await download_capped(asset.url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=120.0)
                     urls.append(await _persist_user_asset_async(data, user_id, mime=asset.mime or ""))
                     continue
                 except Exception:

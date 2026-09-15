@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from components import (
+    LAYER_ASSET_DOWNLOAD_MAX_BYTES,
     ROOM_BACKDROP_FAILURES_TOTAL,
     ROOM_BACKDROP_IMAGES_TOTAL,
     SESSION_LOCAL,
@@ -935,7 +936,7 @@ async def _fetch_image_bytes(url: str) -> tuple[bytes, str] | None:
             path, ctype = res
             return await asyncio.to_thread(Path(path).read_bytes), ctype
     try:
-        content = await download_capped(url, max_bytes=20 * 1024 * 1024, timeout=120.0)
+        content = await download_capped(url, max_bytes=LAYER_ASSET_DOWNLOAD_MAX_BYTES, timeout=120.0)
         if content:
             return content, _image_content_type(content)
     except Exception:

@@ -624,6 +624,7 @@ input[type="file"] { font-size: 0.78rem; }
                                 <div class="field" style="grid-column:1/-1;">
                                     <label class="checkbox-row"><input type="checkbox" id="sys_enable_context_compression"> 启用长会话自动上下文压缩摘要</label>
                                 </div>
+                                <div class="field"><label>工具循环轮数上限</label><input type="number" step="1" id="sys_agent_max_loop_turns"></div>
                                 <div class="field"><label>压缩触发阈值 (比例 0.1~0.9)</label><input type="number" step="0.05" id="sys_context_compression_threshold"></div>
                                 <div class="field"><label>摘要压缩目标 Token 数</label><input type="number" step="100" id="sys_context_summary_target_tokens"></div>
                                 <div class="field"><label>单次摘要最大输入消息条数</label><input type="number" step="1" id="sys_context_summary_max_input_messages"></div>
@@ -632,7 +633,66 @@ input[type="file"] { font-size: 0.78rem; }
                             </div>
                         </div>
 
-                        <!-- 5. 联网搜索与抓取 -->
+                        <!-- 5. 陪伴交互与主动行为 -->
+                        <div class="card" style="margin-bottom:1.25rem;">
+                            <div class="card-head">
+                                <h2>陪伴交互与主动行为</h2>
+                                <span class="hint">桌面互动节流、LLM 成本冷却与主动回合预算</span>
+                            </div>
+                            <div style="padding:1.1rem;">
+                                <h3 style="margin:0 0 0.75rem; font-size:0.88rem;">互动节流与成本冷却</h3>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+                                    <div class="field"><label>情境推理最小间隔 (秒)</label><input type="number" step="0.5" id="sys_companion_check_affect_min_interval_seconds"></div>
+                                    <div class="field"><label>互动触发最小间隔 (秒)</label><input type="number" step="0.5" id="sys_companion_interact_min_interval_seconds"></div>
+                                    <div class="field"><label>互动反应成本冷却 (秒)</label><input type="number" step="10" id="sys_companion_llm_cooldown_seconds"></div>
+                                    <div class="field"><label>互动失败短冷却 (秒)</label><input type="number" step="5" id="sys_companion_interact_failure_cooldown_seconds"></div>
+                                    <div class="field"><label>主动搭话冷却 (秒)</label><input type="number" step="30" id="sys_companion_approach_cooldown_seconds"></div>
+                                    <div class="field"><label>用户接触静默窗口 (秒)</label><input type="number" step="5" id="sys_companion_contact_quiet_seconds"></div>
+                                    <div class="field"><label>桌面断线宽限 (秒)</label><input type="number" step="5" id="sys_desktop_disconnect_grace_seconds"></div>
+                                </div>
+                                <h3 style="margin:1rem 0 0.75rem; font-size:0.88rem;">主动回合预算</h3>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem;">
+                                    <div class="field"><label>待处理意图上限 (条)</label><input type="number" step="1" id="sys_companion_max_pending_intents"></div>
+                                    <div class="field"><label>主动回合最小间隔 (秒)</label><input type="number" step="5" id="sys_companion_min_turn_interval_seconds"></div>
+                                    <div class="field"><label>主动回合超时 (秒)</label><input type="number" step="10" id="sys_companion_turn_timeout_seconds"></div>
+                                    <div class="field"><label>主动回合工具循环上限 (轮)</label><input type="number" step="1" id="sys_companion_max_loop_turns"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 6. 记忆与夜间整理 -->
+                        <div class="card" style="margin-bottom:1.25rem;">
+                            <div class="card-head">
+                                <h2>记忆维护与夜间整理</h2>
+                                <span class="hint">记忆维护节流、夜间窗口与规划日记预算</span>
+                            </div>
+                            <div style="padding:1.1rem;">
+                                <h3 style="margin:0 0 0.75rem; font-size:0.88rem;">记忆维护与召回注入</h3>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+                                    <div class="field"><label>记忆维护最小间隔 (秒)</label><input type="number" step="60" id="sys_memory_review_interval_seconds"></div>
+                                    <div class="field"><label>召回内容截断 (字)</label><input type="number" step="100" id="sys_memory_recall_max_content_chars"></div>
+                                    <div class="field"><label>提示词注入记忆条数</label><input type="number" step="1" id="sys_memory_prompt_max_memories"></div>
+                                </div>
+                                <h3 style="margin:1rem 0 0.75rem; font-size:0.88rem;">夜间整理与规划</h3>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
+                                    <div class="field"><label>夜间窗口开始 (时)</label><input type="number" step="1" min="0" max="23" id="sys_nightly_window_start_hour"></div>
+                                    <div class="field"><label>夜间窗口结束 (时)</label><input type="number" step="1" min="0" max="23" id="sys_nightly_window_end_hour"></div>
+                                    <div class="field"><label>夜间扫描间隔 (秒)</label><input type="number" step="10" id="sys_nightly_scan_interval_seconds"></div>
+                                    <div class="field"><label>整理召回行数上限</label><input type="number" step="10" id="sys_nightly_consolidate_max_recall_rows"></div>
+                                    <div class="field"><label>夜间消息截断 (字)</label><input type="number" step="100" id="sys_nightly_message_truncate_chars"></div>
+                                    <div class="field"><label>规划最大 Token</label><input type="number" step="1000" id="sys_nightly_planning_max_tokens"></div>
+                                    <div class="field"><label>日记最大 Token</label><input type="number" step="100" id="sys_nightly_diary_max_tokens"></div>
+                                    <div class="field"><label>日记内容上限 (字)</label><input type="number" step="100" id="sys_diary_max_content_chars"></div>
+                                </div>
+                                <h3 style="margin:1rem 0 0.75rem; font-size:0.88rem;">调度与自动化</h3>
+                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem;">
+                                    <div class="field"><label>调度器 tick 周期 (秒)</label><input type="number" step="1" id="sys_scheduler_interval_seconds"></div>
+                                    <div class="field"><label>单用户活跃 Cron 上限</label><input type="number" step="1" id="sys_cron_max_active_per_user"></div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- 7. 联网搜索与抓取 -->
                         <div class="card" style="margin-bottom:1.25rem;">
                             <div class="card-head">
                                 <h2>联网搜索与网页抓取 (Web Search & Extract)</h2>
@@ -665,10 +725,14 @@ input[type="file"] { font-size: 0.78rem; }
                                     <label>Tavily Base URL (可选覆盖)</label>
                                     <input type="text" id="sys_tavily_base_url" placeholder="留空使用官方默认地址">
                                 </div>
+                                <div class="field">
+                                    <label>默认搜索结果条数</label>
+                                    <input type="number" step="1" min="1" id="sys_web_search_default_results">
+                                </div>
                             </div>
                         </div>
 
-                        <!-- 6. 频控与防护配额 -->
+                        <!-- 8. 频控与防护配额 -->
                         <div class="card" style="margin-bottom:1.25rem;">
                             <div class="card-head">
                                 <h2>接口限流与安全防护</h2>
@@ -688,13 +752,16 @@ input[type="file"] { font-size: 0.78rem; }
                                     <div class="field"><label>伴侣 3D 模型生成 (/分钟)</label><input type="number" id="sys_companion_model_generate_rate_limit_per_minute"></div>
                                     <div class="field"><label>伴侣换装外观生成 (/小时)</label><input type="number" id="sys_companion_outfit_generate_rate_limit_per_hour"></div>
                                 </div>
-                                <h3 style="margin:1rem 0 0.5rem; font-size:0.88rem;">房间背景与叙事时刻配额</h3>
+                                <h3 style="margin:1rem 0 0.5rem; font-size:0.88rem;">房间背景、叙事时刻与安全配额</h3>
                                 <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
                                     <div class="field"><label>角色主动换房上限 (/24小时)</label><input type="number" id="sys_room_llm_replace_per_24h"></div>
                                     <div class="field"><label>房间生成最大重试次数</label><input type="number" id="sys_room_max_attempts"></div>
                                     <div class="field"><label>历史可用房间保留数量</label><input type="number" id="sys_room_history_keep"></div>
-                                    <div class="field"><label>系统自动写时刻上限 (/天)</label><input type="number" id="sys_moment_system_per_day"></div>
                                     <div class="field"><label>角色主动记时刻配额 (/天)</label><input type="number" id="sys_moment_llm_per_day"></div>
+                                    <div class="field"><label>单回合附件数量上限</label><input type="number" step="1" id="sys_max_attachments_per_turn"></div>
+                                    <div class="field"><label>会话附件目录配额 (字节)</label><input type="number" step="1048576" id="sys_attachment_session_quota_bytes"></div>
+                                    <div class="field"><label>日记生成媒体下载上限 (字节)</label><input type="number" step="1048576" id="sys_journal_media_download_max_bytes"></div>
+                                    <div class="field"><label>用户备份压缩包上限 (字节)</label><input type="number" step="1048576" id="sys_backup_archive_max_bytes"></div>
                                 </div>
                                 <div class="field">
                                     <label class="checkbox-row"><input type="checkbox" id="sys_diary_nightly_enabled"> 开启夜间日记提炼批处理</label>
@@ -706,7 +773,7 @@ input[type="file"] { font-size: 0.78rem; }
                             </div>
                         </div>
 
-                        <!-- 7. 渠道接入与系统运行时 -->
+                        <!-- 9. 渠道接入与系统运行时 -->
                         <div class="card" style="margin-bottom:1.5rem;">
                             <div class="card-head">
                                 <h2>外部渠道与系统运行时</h2>
@@ -1684,9 +1751,19 @@ const SETTING_NUM_KEYS = [
     'image_to_3d_poll_interval_seconds', 'image_to_3d_poll_backoff_max_seconds', 'image_to_3d_max_poll_seconds',
     'tripo_face_limit', 'hunyuan_face_count',
     'context_compression_threshold', 'context_summary_target_tokens', 'context_summary_max_input_messages', 'chat_active_window_minutes', 'ipc_future_timeout_seconds',
+    'agent_max_loop_turns',
+    'companion_check_affect_min_interval_seconds', 'companion_interact_min_interval_seconds', 'companion_llm_cooldown_seconds', 'companion_interact_failure_cooldown_seconds',
+    'companion_approach_cooldown_seconds', 'companion_contact_quiet_seconds', 'desktop_disconnect_grace_seconds',
+    'companion_max_pending_intents', 'companion_min_turn_interval_seconds', 'companion_turn_timeout_seconds', 'companion_max_loop_turns',
+    'memory_review_interval_seconds', 'memory_recall_max_content_chars', 'memory_prompt_max_memories',
+    'nightly_window_start_hour', 'nightly_window_end_hour', 'nightly_scan_interval_seconds', 'nightly_consolidate_max_recall_rows',
+    'nightly_message_truncate_chars', 'nightly_planning_max_tokens', 'nightly_diary_max_tokens', 'diary_max_content_chars',
+    'scheduler_interval_seconds', 'cron_max_active_per_user',
     'login_rate_limit_per_minute', 'llm_completion_rate_limit_per_minute', 'llm_completion_rate_limit_per_ip_per_minute', 'media_stt_rate_limit_per_minute', 'media_tts_rate_limit_per_minute', 'media_video_rate_limit_per_minute',
     'companion_avatar_generate_rate_limit_per_minute', 'companion_model_generate_rate_limit_per_minute', 'companion_outfit_generate_rate_limit_per_hour',
-    'room_llm_replace_per_24h', 'room_max_attempts', 'room_history_keep', 'moment_system_per_day', 'moment_llm_per_day',
+    'room_llm_replace_per_24h', 'room_max_attempts', 'room_history_keep', 'moment_llm_per_day',
+    'max_attachments_per_turn', 'attachment_session_quota_bytes', 'journal_media_download_max_bytes', 'backup_archive_max_bytes',
+    'web_search_default_results',
     'channels_turn_queue_max', 'channels_inbound_rate_per_minute', 'channels_restart_backoff_seconds', 'weixin_reply_max_chars', 'weixin_ilink_poll_timeout_seconds',
     'temp_file_ttl_hours', 'access_token_expire_minutes', 'llm_debug_max_chars'
 ];

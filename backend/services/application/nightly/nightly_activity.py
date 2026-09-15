@@ -7,10 +7,7 @@ from zoneinfo import ZoneInfoNotFoundError
 
 from components import (
     DEFAULT_LANGUAGE,
-    MAX_DIARY_CONTENT_CHARS,
-    MAX_RECALL_CONTENT_CHARS,
-    NIGHTLY_CONSOLIDATE_MAX_RECALL_ROWS,
-    NIGHTLY_DIARY_MAX_TOKENS,
+    SETTINGS,
     get_logger,
     parse_llm_json,
     resolve_language,
@@ -120,7 +117,7 @@ async def _stage_4_self_diary(
         llm_cfg,
         resolve_prompt_text(_DIARY_SYSTEM_TEXTS, language),
         payload,
-        max_output_tokens=NIGHTLY_DIARY_MAX_TOKENS,
+        max_output_tokens=SETTINGS.nightly_diary_max_tokens,
     )
     parsed = parse_llm_json(raw)
     if not isinstance(parsed, dict):
@@ -130,7 +127,7 @@ async def _stage_4_self_diary(
         )
         return False
 
-    content = (parsed.get("content") or "").strip()[:MAX_DIARY_CONTENT_CHARS]
+    content = (parsed.get("content") or "").strip()[: SETTINGS.diary_max_content_chars]
     if not content:
         return False
 
@@ -222,7 +219,7 @@ async def _write_action_memory(
             db,
             scope,
             f"recall:nightly_actions:{local_date_str}",
-            content[:MAX_RECALL_CONTENT_CHARS],
+            content[: SETTINGS.memory_recall_max_content_chars],
             json.dumps(["other"]),
             source=MemorySource("reflection", batch_id=local_date_str),
         )
@@ -455,7 +452,7 @@ async def _run_nightly_pipeline_inner(
 
     # 维护完成后重新读取有效事实，规划与日记不复用维护前的过期快照。
     async with session_scope() as db:
-        recall_rows = await list_memories(db, scope, kind="recall", limit=NIGHTLY_CONSOLIDATE_MAX_RECALL_ROWS)
+        recall_rows = await list_memories(db, scope, kind="recall", limit=SETTINGS.nightly_consolidate_max_recall_rows)
         user_profile = await read_user_profile(db, scope)
     updated_contextual = {
         str(r["id"]): f"[{r['basis']}] {r['content']}" for r in recall_rows if r["usage"] == "contextual"

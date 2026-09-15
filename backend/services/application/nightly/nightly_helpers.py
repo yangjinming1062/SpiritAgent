@@ -8,7 +8,7 @@ from zoneinfo import ZoneInfo
 
 from components import (
     DEFAULT_LANGUAGE,
-    NIGHTLY_MESSAGE_TRUNCATE_CHARS,
+    SETTINGS,
     TIME_NOTE_EN_HEAD,
     TIME_NOTE_ZH_HEAD,
     format_day_marker,
@@ -83,7 +83,7 @@ def prefilter_messages_for_nightly(
             if marker_text:
                 clean.append({"role": "user", "content": marker_text})
             prev_date_key = cur_date_key
-        clean.append({"role": msg.role, "content": text_content[:NIGHTLY_MESSAGE_TRUNCATE_CHARS]})
+        clean.append({"role": msg.role, "content": text_content[: SETTINGS.nightly_message_truncate_chars]})
         if msg.role == "user" and msg.created_at is not None:
             clock = format_time_anchor(msg.created_at, last_user_at, user_tz, lang)
             if clock:

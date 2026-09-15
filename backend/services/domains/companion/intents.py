@@ -5,7 +5,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from components import session_scope, utc_now
+from components import SETTINGS, session_scope, utc_now
 from modules.auth import User
 from modules.companion import (
     MAX_COMPANION_FAILURES,
@@ -25,10 +25,7 @@ from .affect_emit import append_companion_message
 from .disturbance import get_disturbance_tier
 from .proactive_runtime import can_start_companion_turn, get_user_proactive_record, note_outreach_throttle
 
-MAX_PENDING_INTENTS: int = 16
-COMPANION_MIN_TURN_INTERVAL_SECONDS: int = 60
-COMPANION_TURN_TIMEOUT_SECONDS: int = 120
-COMPANION_MAX_LOOP_TURNS: int = 8
+# 待处理意图、回合间隔与超时上限走 SETTINGS 动态配置；队列租约是回合超时的实现细节，留在代码。
 _QUEUE_LEASE_SECONDS: int = 180
 _ACTIVE_STATUSES: tuple[str, ...] = ("waiting", "queued", "running")
 _INTENT_RETENTION: timedelta = timedelta(days=30)
@@ -161,8 +158,8 @@ async def set_companion_wait(
                     ),
                 )
             ).scalar_one()
-            if count >= MAX_PENDING_INTENTS:
-                raise ValueError(f"Pending companion intent limit ({MAX_PENDING_INTENTS}) reached")
+            if count >= SETTINGS.companion_max_pending_intents:
+                raise ValueError(f"Pending companion intent limit ({SETTINGS.companion_max_pending_intents}) reached")
         if row is None:
             row = CompanionIntent(user_id=user_id)
             db.add(row)
@@ -293,7 +290,7 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
         ).first() is not None
         last_attempt = (await db.execute(select(func.max(CompanionIntent.last_attempt_at)).where(scope))).scalar_one()
         cooling = last_attempt is not None and now - last_attempt < timedelta(
-            seconds=COMPANION_MIN_TURN_INTERVAL_SECONDS,
+            seconds=SETTINGS.companion_min_turn_interval_seconds,
         )
         eligible = can_start_companion_turn(user_id) and await get_disturbance_tier(user_id, db=db) != "still"
         if busy or cooling or not eligible:
@@ -355,7 +352,7 @@ async def begin_companion_intent(user_id: int, request: CompanionTurnRequest) ->
             await db.commit()
             return None
         row.status = "running"
-        row.lease_until = utc_now() + timedelta(seconds=COMPANION_TURN_TIMEOUT_SECONDS + 30)
+        row.lease_until = utc_now() + timedelta(seconds=SETTINGS.companion_turn_timeout_seconds + 30)
         await db.commit()
         return CompanionIntentView.model_validate(row)
 

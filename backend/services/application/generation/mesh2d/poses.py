@@ -6,7 +6,13 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
-from components import SESSION_LOCAL, SETTINGS, download_capped, get_logger
+from components import (
+    LAYER_ASSET_DOWNLOAD_MAX_BYTES,
+    SESSION_LOCAL,
+    SETTINGS,
+    download_capped,
+    get_logger,
+)
 from PIL import Image, ImageDraw, ImageFilter
 from pydantic import BaseModel, Field
 
@@ -96,7 +102,7 @@ async def generate_image(
             raw = (
                 base64.b64decode(asset.b64)
                 if asset.b64
-                else await download_capped(asset.url or "", max_bytes=20 * 1024 * 1024, timeout=90)
+                else await download_capped(asset.url or "", max_bytes=LAYER_ASSET_DOWNLOAD_MAX_BYTES, timeout=90)
             )
             with Image.open(io.BytesIO(raw)) as image:
                 if image.width != image.height or image.width < 512:

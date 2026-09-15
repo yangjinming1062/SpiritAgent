@@ -2,7 +2,6 @@ import json
 from functools import partial
 
 from components import (
-    AGENT_MAX_LOOP_TURNS,
     CHAT_TEMPERATURE_DEFAULT,
     CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
     DEFAULT_LANGUAGE,
@@ -102,7 +101,7 @@ async def run_chat_turn(
     excluded_tool_names: frozenset[str] = frozenset(),
     preset_override: PromptPreset | None = None,
     run_post_turn_tasks: bool = True,
-    max_loop_turns: int = AGENT_MAX_LOOP_TURNS,
+    max_loop_turns: int | None = None,
 ) -> None:
     with user_turn_activity(user_id, enabled=not ephemeral and preset_override is None):
         await _run_chat_turn(
@@ -138,8 +137,11 @@ async def _run_chat_turn(
     excluded_tool_names: frozenset[str] = frozenset(),
     preset_override: PromptPreset | None = None,
     run_post_turn_tasks: bool = True,
-    max_loop_turns: int = AGENT_MAX_LOOP_TURNS,
+    max_loop_turns: int | None = None,
 ) -> None:
+    # 默认值运行时解析：工具循环上限可在管理端热调，不能在函数定义期绑定常量。
+    if max_loop_turns is None:
+        max_loop_turns = SETTINGS.agent_max_loop_turns
     # 轮次起点先提交用户输入并解析召回查询；会话退出后生成向量，再以新短会话装配上下文。
     async with session_scope() as db:
         conv = await Conversation.by_session_id(db, req.session_id, user_id=user_id)
