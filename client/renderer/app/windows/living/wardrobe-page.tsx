@@ -13,7 +13,7 @@ import {
 } from '@/modules/character'
 import { AssetPackPreview } from '@/modules/character/rendering/2d'
 import { PortraitLightbox } from '@/shared'
-import { Check, FileImage, Pencil, Send, Trash2 } from '@/shared/lib/icons'
+import { ArrowBackUp, Check, FileImage, Pencil, Send, Trash2 } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_ICON, BTN_PRIMARY, HINT_TEXT, INPUT_CLASS, Spinner, Toggle } from '@/shared/panel'
@@ -92,10 +92,13 @@ export function WardrobePage(): React.JSX.Element {
 
   const selected = outfits.find(o => o.id === selectedId) ?? null
   const previewUrl = designing ? session.draft?.previewUrl : (selected?.fullbodyUrl ?? null)
+  // 后端同一时间只允许一套外观切分（409 invalid_state）——切分中禁用新设计入口，
+  // 等待/失败/完成经 companion.outfit.updated 事件刷新列表后自动解锁。
+  const splitting = outfits.some(o => o.status === 'splitting')
 
   const sendText = (): void => {
     // 生成进行中会话内部会拒绝——此时不清空输入，避免丢字。
-    if (session.busy || (!text.trim() && !session.refImage)) {
+    if (session.busy || splitting || (!text.trim() && !session.refImage)) {
       return
     }
 
@@ -132,6 +135,8 @@ export function WardrobePage(): React.JSX.Element {
               const statusLabel = t.statusLabels[outfit.status] ?? ''
               const deletable = !outfit.active && outfit.status !== 'splitting'
               const isActiveCard = !designing && selectedId === outfit.id
+              // 已有切分在途时，重试/继续设计最终都会撞 409——统一禁用等待当前切分结束。
+              const disabledBySplitting = splitting && outfit.status !== 'splitting'
 
               return (
                 <div
@@ -172,6 +177,7 @@ export function WardrobePage(): React.JSX.Element {
                         <button
                           aria-label={t.actions.continueDesign}
                           className={CARD_ACTION_CLASS}
+                          disabled={disabledBySplitting}
                           onClick={e => {
                             e.stopPropagation()
                             session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
@@ -202,7 +208,7 @@ export function WardrobePage(): React.JSX.Element {
                       {outfit.status === 'failed' && (
                         <button
                           className={CARD_ACTION_CLASS}
-                          disabled={busyId === outfit.id}
+                          disabled={busyId === outfit.id || disabledBySplitting}
                           onClick={e => {
                             e.stopPropagation()
                             withBusy(outfit.id, () => retrySplit(outfit.id))
@@ -295,8 +301,8 @@ export function WardrobePage(): React.JSX.Element {
           {!designing ? (
             <div className="grid flex-1 place-items-center px-6 text-center">
               <div>
-                <p className="text-xs text-body">{t.startPrompt}</p>
-                <button className={cn(BTN_PRIMARY, 'mt-3')} onClick={startDesign} type="button">
+                <p className="text-xs text-body">{splitting ? t.splittingPrompt : t.startPrompt}</p>
+                <button className={cn(BTN_PRIMARY, 'mt-3')} disabled={splitting} onClick={startDesign} type="button">
                   {t.startAction}
                 </button>
               </div>
@@ -310,27 +316,45 @@ export function WardrobePage(): React.JSX.Element {
                     <div className="flex justify-end" key={m.id}>
                       <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-accent/20 px-3 py-1.5 text-strong">
                         {m.imageUrl && (
-                          <img
-                            alt={t.refImageAlt}
-                            className="mb-1 size-16 rounded-lg border border-line-hairline object-cover"
-                            src={m.imageUrl}
-                          />
+                          <button
+                            aria-label={t.zoomRefImage}
+                            className="mb-1 block cursor-zoom-in"
+                            onClick={() => setZoomUrl(m.imageUrl ?? null)}
+                            type="button"
+                          >
+                            <img
+                              alt={t.refImageAlt}
+                              className="size-16 rounded-lg border border-line-hairline object-cover"
+                              src={m.imageUrl}
+                            />
+                          </button>
                         )}
                         {m.text && <p className="whitespace-pre-wrap break-words">{m.text}</p>}
                       </div>
                     </div>
                   ) : (
-                    <div className="flex justify-start" key={m.id}>
+                    <div className="flex items-center justify-start gap-2" key={m.id}>
                       <div
                         className={cn(
                           'max-w-[85%] rounded-2xl rounded-bl-sm border px-3 py-1.5',
                           m.tone === 'error'
-                            ? 'border-rose-400/25 bg-rose-500/10 text-rose-200'
+                            ? 'border-danger-line bg-danger-bg text-danger-fg'
                             : 'border-line-hairline bg-surface-card text-body'
                         )}
                       >
                         {m.text}
                       </div>
+                      {m.tone === 'error' && session.lastRequest && (
+                        <button
+                          aria-label={t.retryLast}
+                          className={cn(BTN_ICON, 'shrink-0 text-danger-fg')}
+                          onClick={session.retry}
+                          title={t.retryLast}
+                          type="button"
+                        >
+                          <ArrowBackUp />
+                        </button>
+                      )}
                     </div>
                   )
                 )}
@@ -340,7 +364,7 @@ export function WardrobePage(): React.JSX.Element {
                 <div className="flex items-center gap-2 border-t border-line-hairline px-4 py-2">
                   <button
                     className={cn(BTN_PRIMARY, 'h-7')}
-                    disabled={session.busy || !session.draft.previewUrl}
+                    disabled={session.busy || splitting || !session.draft.previewUrl}
                     onClick={() => void session.confirm()}
                     type="button"
                   >
@@ -360,11 +384,18 @@ export function WardrobePage(): React.JSX.Element {
 
               {session.refImage && !session.draft && (
                 <div className="flex items-center gap-2 border-t border-line-hairline px-4 py-1.5 text-[11px] text-body">
-                  <img
-                    alt={t.refImageAlt}
-                    className="size-8 rounded border border-line-hairline object-cover"
-                    src={session.refImage.previewUrl}
-                  />
+                  <button
+                    aria-label={t.zoomRefImage}
+                    className="block cursor-zoom-in"
+                    onClick={() => setZoomUrl(session.refImage?.previewUrl ?? null)}
+                    type="button"
+                  >
+                    <img
+                      alt={t.refImageAlt}
+                      className="size-8 rounded border border-line-hairline object-cover"
+                      src={session.refImage.previewUrl}
+                    />
+                  </button>
                   {t.refImageAttached}
                   <button
                     className="text-muted transition hover:text-strong"
@@ -379,7 +410,7 @@ export function WardrobePage(): React.JSX.Element {
               <div className="flex items-end gap-2 border-t border-line-hairline p-3">
                 <textarea
                   className={cn(INPUT_CLASS, 'min-h-[38px] flex-1 resize-none')}
-                  disabled={session.busy}
+                  disabled={session.busy || splitting}
                   onChange={e => setText(e.target.value)}
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) {
@@ -387,7 +418,9 @@ export function WardrobePage(): React.JSX.Element {
                       sendText()
                     }
                   }}
-                  placeholder={session.draft ? t.placeholderRefining : t.placeholderInitial}
+                  placeholder={
+                    splitting ? t.placeholderSplitting : session.draft ? t.placeholderRefining : t.placeholderInitial
+                  }
                   ref={inputRef}
                   rows={2}
                   value={text}
@@ -396,7 +429,7 @@ export function WardrobePage(): React.JSX.Element {
                   <button
                     aria-label={t.attachImage}
                     className={cn(BTN_ICON, 'h-9 w-9 shrink-0 self-end')}
-                    disabled={session.busy}
+                    disabled={session.busy || splitting}
                     onClick={() => void session.attachRefImage()}
                     title={t.attachImageTitle}
                     type="button"
@@ -407,7 +440,7 @@ export function WardrobePage(): React.JSX.Element {
                 <button
                   aria-label={t.send}
                   className={cn(BTN_PRIMARY, 'h-9 w-9 shrink-0 self-end px-0')}
-                  disabled={session.busy || (!text.trim() && !session.refImage)}
+                  disabled={session.busy || splitting || (!text.trim() && !session.refImage)}
                   onClick={sendText}
                   type="button"
                 >

@@ -42,12 +42,15 @@ function outfitErrMsg(err: unknown, fallback: string): string {
 
 // 衣柜页的设计会话：着装描述 + 可选参考图 → 草稿 → 反馈微调重绘 → 确认入柜并自动穿着。
 // 服装/发型可换、五官锁定——身份与身材由后端用全身种子图锚定，这里只收集着装意图。
+// 发出失败的请求保留在 lastRequest 里供一键重试，避免用户重打描述、重传参考图。
 export function useOutfitDesignSession(onConfirmed: () => void): {
   messages: DesignMessage[]
   draft: DesignDraft | null
   refImage: PickedImage | null
   busy: boolean
+  lastRequest: { image: PickedImage | null; text: string } | null
   send: (text: string) => void
+  retry: () => void
   confirm: () => Promise<void>
   attachRefImage: () => Promise<void>
   clearRefImage: () => void
@@ -58,6 +61,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   const [draft, setDraft] = useState<DesignDraft | null>(null)
   const [refImage, setRefImage] = useState<PickedImage | null>(null)
   const [busy, setBusy] = useState(false)
+  const [lastRequest, setLastRequest] = useState<{ image: PickedImage | null; text: string } | null>(null)
 
   const mountedRef = useRef(true)
   const generatingRef = useRef(false)
@@ -71,6 +75,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     setMessages([])
     setDraft(null)
     setRefImage(null)
+    setLastRequest(null)
   }, [])
 
   useEffect(() => {
@@ -97,11 +102,9 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     setMessages(prev => [...prev, { ...message, id: msgIdRef.current }])
   }, [])
 
-  const send = useCallback(
-    (text: string): void => {
-      const trimmed = text.trim()
-
-      if (!mountedRef.current || generatingRef.current || (!draft && !trimmed && !refImage)) {
+  const runDesign = useCallback(
+    (text: string, image: PickedImage | null, withDraft: DesignDraft | null): void => {
+      if (!mountedRef.current || generatingRef.current) {
         return
       }
 
@@ -109,16 +112,14 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
       const epoch = currentClearEpoch()
       generatingRef.current = true
       setBusy(true)
+      setLastRequest(null)
 
-      push({ imageUrl: refImage?.previewUrl, role: 'user', text: trimmed || '（按参考图设计）' })
-
-      const image = refImage
-      setRefImage(null)
+      push({ imageUrl: image?.previewUrl, role: 'user', text: text || '（按参考图设计）' })
 
       void (async () => {
         try {
           // 有草稿后只走反馈微调（后端 regenerate 不收图）；参考图仅用于首次生成。
-          const res = draft ? await runRegenerate(draft.id, trimmed) : await runCreate(trimmed, image)
+          const res = withDraft ? await runRegenerate(withDraft.id, text) : await runCreate(text, image)
 
           if (!isCurrent(revision, epoch)) {
             return
@@ -160,10 +161,12 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
               rawError
             )
 
-          if (draft && (timedOut || /^409 /.test(rawError))) {
-            setDraft({ id: draft.id, previewUrl: '' })
+          if (withDraft && (timedOut || /^409 /.test(rawError))) {
+            setDraft({ id: withDraft.id, previewUrl: '' })
           }
 
+          // 失败后保留本次输入与参考图，失败气泡旁给一键重试，不必重打描述或重传图。
+          setLastRequest({ image, text })
           push({
             role: 'system',
             text: timedOut
@@ -180,8 +183,32 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
         }
       })()
     },
-    [draft, isCurrent, push, refImage]
+    [isCurrent, push]
   )
+
+  const send = useCallback(
+    (text: string): void => {
+      const trimmed = text.trim()
+
+      if (!mountedRef.current || generatingRef.current || (!draft && !trimmed && !refImage)) {
+        return
+      }
+
+      const image = refImage
+      setRefImage(null)
+
+      runDesign(trimmed, image, draft)
+    },
+    [draft, refImage, runDesign]
+  )
+
+  const retry = useCallback((): void => {
+    if (!mountedRef.current || generatingRef.current || !lastRequest) {
+      return
+    }
+
+    runDesign(lastRequest.text, lastRequest.image, draft)
+  }, [draft, lastRequest, runDesign])
 
   const confirm = useCallback(async (): Promise<void> => {
     if (!mountedRef.current || !draft?.previewUrl || generatingRef.current) {
@@ -263,7 +290,9 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     draft,
     refImage,
     busy,
+    lastRequest,
     send,
+    retry,
     confirm,
     attachRefImage,
     clearRefImage,
