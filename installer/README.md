@@ -39,7 +39,3 @@
 - Tauri ↔ 安装脚本：资源与运行时布局见 §3，阶段及结果帧见 §4。
 - 对客户端 / Runner：运行时安装位置见 §3，Skills 平台翻译约束见 §2；构建 payload 清单见 [scripts README](../scripts/README.md)。
 - 更新与签名边界见 [PROTOCOL §5.5](../docs/PROTOCOL.md)。
-
-## 6. 已知限制
-
-- 默认镜像可能不符合企业网络策略，部署方须通过 §4 的环境变量指定私有 index。
