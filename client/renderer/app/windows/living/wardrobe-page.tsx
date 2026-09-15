@@ -340,7 +340,7 @@ export function WardrobePage(): React.JSX.Element {
                 <div className="flex items-center gap-2 border-t border-line-hairline px-4 py-2">
                   <button
                     className={cn(BTN_PRIMARY, 'h-7')}
-                    disabled={session.busy}
+                    disabled={session.busy || !session.draft.previewUrl}
                     onClick={() => void session.confirm()}
                     type="button"
                   >

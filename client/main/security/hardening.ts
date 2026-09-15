@@ -40,9 +40,12 @@ export const DEV_CSP_POLICY = [
   "form-action 'none'"
 ].join('; ')
 
-// 头像 / 精灵 / 衣橱生成：供应商调用 + Pillow 重编码 + 关键帧写入通常要 15–25 秒，
+// 头像 / 精灵生成：供应商调用 + Pillow 重编码 + 关键帧写入通常要 15–25 秒，
 // 默认 15 秒会在后端返回 201 之前就超时，所以这里放宽。
 const AVATAR_FETCH_TIMEOUT_MS = 120_000
+// 衣橱同步请求包含供应商回退；单个供应商默认可等待 300 秒，另需下载与落盘。
+const OUTFIT_FETCH_TIMEOUT_MS = 15 * 60_000
+const OUTFIT_GENERATION_PATH_PATTERN = /^\/api\/companion\/outfits(?:\/\d+\/regenerate)?$/i
 
 const AVATAR_SLOW_PATH_PATTERN =
   /^\/api\/(?:companion\/(?:avatar(?:\/from-image|\/\d+\/fullbody\/(?:reference|front-2d|front-3d|back|confirm-front))?|sprite)|media\/(?:image_gen|video_gen))$/i
@@ -70,10 +73,13 @@ export function resolvePathTimeoutMs(
   method?: null | string,
   fallbackMs = DEFAULT_FETCH_TIMEOUT_MS
 ): number {
-  const isSlowPost =
-    String(method || 'GET').toUpperCase() === 'POST' &&
-    typeof pathStr === 'string' &&
-    AVATAR_SLOW_PATH_PATTERN.test(pathStr)
+  const isPost = String(method || 'GET').toUpperCase() === 'POST' && typeof pathStr === 'string'
+
+  if (isPost && OUTFIT_GENERATION_PATH_PATTERN.test(pathStr)) {
+    return OUTFIT_FETCH_TIMEOUT_MS
+  }
+
+  const isSlowPost = isPost && AVATAR_SLOW_PATH_PATTERN.test(pathStr)
 
   return isSlowPost ? AVATAR_FETCH_TIMEOUT_MS : resolveTimeoutMs(undefined, fallbackMs)
 }

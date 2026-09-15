@@ -37,8 +37,8 @@ export function parseEdgePoses(value: unknown, urls: Record<string, string>): Ed
       pose.width !== 1024 ||
       pose.height !== 1024 ||
       !Number.isFinite(pose.contactX) ||
-      pose.contactX < 100 ||
-      pose.contactX > 924
+      pose.contactX < 0 ||
+      pose.contactX > pose.width
     ) {
       return null
     }

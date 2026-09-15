@@ -15,6 +15,7 @@ interface WardrobeOutfit {
   id: number
   name: string
   description: string | null
+  fullbodyPath: string | null
   fullbodyUrl: string | null
   style: string
   status: OutfitStatus
@@ -88,12 +89,14 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
   $outfits.set(
     state.outfits.map((o): WardrobeOutfit => {
       const old = previous.get(o.id)
+      const fullbodyPath = o.fullbody_url.split('?', 1)[0] || null
 
       return {
         id: o.id,
         name: o.name,
         description: o.description ?? null,
-        fullbodyUrl: old?.fullbodyUrl ?? null,
+        fullbodyPath,
+        fullbodyUrl: old?.fullbodyPath === fullbodyPath ? old.fullbodyUrl : null,
         style: o.style || 'cel_shading',
         status: (o.status || 'draft') as OutfitStatus,
         active: o.active === true,

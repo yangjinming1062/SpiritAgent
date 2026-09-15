@@ -134,7 +134,7 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 - 草稿可恢复、确认才转正：持久化草稿路径与画风，转存失败可重试；仅全部图片都为过期草稿的头像行可清理，已有正式头像或全身参考时须保留。读取头像与历史时先脱离 ORM 再签名，避免草稿清理的提交把临时签名写回资产列。恢复契约见 [PROTOCOL §1.2](../docs/PROTOCOL.md)。
 - 画幅稳定：骨架分类是模型推理，首次分类后随形象持久化，重绘与换装复用，避免多次分类翻转画幅。种子图画风、姿态、参考图及双供应商拆分策略统一见 [PIPELINE](../docs/PIPELINE.md)。
 - 3D 能力链独立于通用 LLM 链，仍复用供应商注册机制；长任务与 web 进程同生命周期，启动扫描未完成记录接续，恢复见 [PIPELINE §3](../docs/PIPELINE.md)。
-- 2D 拆分编排（mesh2d）：分层拆分的供应商传输在 `infrastructure/seethrough`，生成任务、优先级队列、资产落库、外观激活与就绪事件归 `application/generation/mesh2d`；完整包校验通过才发布。自主视觉动作白名单由 `domains/companion/actions.py` 维护（`DEFAULT_ACTIONS` / `NON_LLM_ACTIONS`），变更须同步客户端动作兑现与 [PROTOCOL §1.4](../docs/PROTOCOL.md)。
+- 2D 拆分编排（mesh2d）：分层拆分的供应商传输在 `infrastructure/seethrough`，生成任务、优先级队列、资产落库、外观激活与就绪事件归 `application/generation/mesh2d`；完整包生成后才发布，交付条件见 [PIPELINE §6](../docs/PIPELINE.md#6-2d-分层动画能力链)。自主视觉动作白名单由 `domains/companion/actions.py` 维护（`DEFAULT_ACTIONS` / `NON_LLM_ACTIONS`），变更须同步客户端动作兑现与 [PROTOCOL §1.4](../docs/PROTOCOL.md)。
 - 2D 任务排队：render_mode='3d' 的后台 2D 拆分用 low 优先级、render_mode='2d' 用 high；不同资产任务独立排队，发布时核对当前身份与穿着意图，避免较晚完成的旧任务覆盖用户选择。
 - 2D 失败兜底：生成失败不激活新模型、不自动穿着新外观；已有可用模型继续服务，无可用模型时走客户端渲染级联（puppet → 3D → 程序化蛋，永不空白）。
 - see-through 拆分供应商：只做传输不做拆分逻辑——调 see-through 在线 Space 把立绘拆成 22 个语义层 PSD，主用 Hugging Face Space、魔搭创空间备用（API-Inference 专用域 + Bearer token，www 代理域不可匿名）。失败统一抛 `SeeThroughError` 由编排层落失败态；参数必须传 Gradio FileData 对象，裸路径字符串被静默拒收。产物只是分层 PSD 字节，后端不解析 PSD、不依赖 psd-tools；完整资产包生成与发布由 mesh2d 负责。切换、冷却与共享预算见 [PIPELINE §6](../docs/PIPELINE.md)。
