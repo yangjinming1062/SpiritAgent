@@ -430,10 +430,10 @@ Runner 侧不变：仅内存持有配置、每次工具调用读取，不读写�
 `execute_tool` / `execute_scoped_tool` 的 params 携带可选 `call_id`（与 §6 的 Future Key 同一标识，由 Backend 生成、Client 原样透传、不经模型工具 schema）时，Runner 在 `$SPIRITAGENT_HOME/call-journal/` 持久化调用记录：
 
 - **先查询后认领**：执行前按 `call_id` 查询已有记录——命中 completed 幂等重放落盘结果，命中 failed / unknown / conflict / claimed_elsewhere 一律返回携带 `data.disposition` 的错误帧（unknown 用 -32011，其余 -32000），绝不执行；无记录则以 `O_CREAT|O_EXCL` 原子认领，并发同标识只有一个进程获得执行权。
-- **同标识不同参数拒绝**：认领冲突时比对参数指纹（工具名 + 参数的规范 JSON 哈希），不一致返回错误，绝不执行。
-- **先保存再返回**：completed / failed 终态与可重取结果落盘后才回复调用方；Runner 重启后仍处执行中的记录由持有进程存活性裁决——进程已死且无终态标记 unknown（副作用可能已发生，待核对），不自动重放；终态与 unknown 不被迟到写入覆盖。
-- **查询入口**：`spiritagent.call_result {call_id}` 返回 `{call_id, status, result?, error?, claimed_at?, finished_at?}`，无记录返回 `status="not_found"`。Backend 中断恢复时先查询，据 status 决定续跑、重放结果还是保留待核对提示，不得盲目重跑本机副作用。
-- **边界**：调用日志只降低重复执行风险并提供查询依据，不保证任意外部副作用恰好发生一次；记录默认保留 7 天后由 Runner 启动清理。无 `call_id` 的直调路径不记日志、行为不变。
+- **同标识不同参数拒绝**：认领冲突时比对参数指纹（工具名 + 参数 + 学习作用域的规范 JSON 哈希），不一致返回错误，绝不执行或跨作用域重放结果。
+- **终态与中断**：认领记录刷盘后才开始执行；completed / failed 终态与完整结果保存后才回复调用方，重放不另行截断。只有持有该次认领凭据的执行者能写入终态；取消后无已保存终态的记录标 unknown（工作线程和外部副作用可能仍在继续），终态与 unknown 不被迟到写入覆盖。查询和启动清理均核对持有进程；进程已死且无终态时标 unknown，不自动重放。
+- **查询入口**：`spiritagent.call_result {call_id}` 返回 `{call_id, status, result?, error?, claimed_at?, finished_at?}`，仅无记录返回 `status="not_found"`；损坏或不可读的记录返回 unknown，非法调用标识返回错误。Backend 中断恢复时先查询，据 status 决定续跑、重放结果还是保留待核对提示，不得盲目重跑本机副作用。
+- **边界**：调用日志只降低重复执行风险并提供查询依据，不保证任意外部副作用恰好发生一次；终态自完成或裁决为 unknown 起保留 7 天后由 Runner 启动清理。日志不可写时允许执行和返回，但恢复能力不可保证；未获得认领凭据时不得补写或覆盖其他执行者的记录。无 `call_id` 的直调路径不记日志、行为不变。
 
 ## 3. 反向 RPC 桥接（Runner 借大脑）
 

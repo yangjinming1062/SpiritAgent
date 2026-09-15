@@ -11,7 +11,6 @@ import time
 import uuid
 from typing import Any
 
-import utils.call_journal as call_journal
 import utils.credential_files
 import utils.env_passthrough
 import websockets
@@ -32,6 +31,7 @@ from utils import (
     UNIX_TRANSPORT,
     DesktopEndpoint,
     SkillScope,
+    call_journal,
     connect_desktop,
     disk_free_bytes,
     get_spiritagent_home,
@@ -233,7 +233,7 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
             call_id = params.get("call_id")
             if not isinstance(call_id, str) or not call_id:
                 raise ValueError("spiritagent.call_result requires a 'call_id' string")
-            record = call_journal.lookup(call_id)
+            record = await asyncio.to_thread(call_journal.lookup, call_id)
             await _send(
                 ws,
                 req_id,
@@ -257,8 +257,14 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
 
         if method in {"execute_tool", "execute_scoped_tool"}:
             name = params.get("name")
-            if not name:
-                raise ValueError("Missing 'name' in params")
+            if not isinstance(name, str) or not name:
+                raise ValueError("A non-empty 'name' string is required")
+            journal_args = params.get("args", {})
+            if not isinstance(journal_args, dict):
+                raise ValueError("Tool 'args' must be an object")
+            journal_call_id = params.get("call_id")
+            if journal_call_id is not None and (not isinstance(journal_call_id, str) or not journal_call_id):
+                raise ValueError("Tool 'call_id' must be a non-empty string")
             # 与 get_schemas_for_llm 同源：渲染层/直调不得绕过 toolsets.disabled。
             skill_scope = SkillScope.parse(params.get("skill_scope")) if method == "execute_scoped_tool" else None
             disabled_ids = get_disabled_toolset_ids()
@@ -269,73 +275,63 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
             _ACTIVE_CANCELLATIONS[req_id_str] = token
             ctx_reset = set_current_request(req_id_str)
             scope_reset = CURRENT_SKILL_SCOPE.set(skill_scope)
-            journal_call_id = params.get("call_id") if isinstance(params.get("call_id"), str) else None
-            journal_args = params.get("args", {})
+            journal_claim: asyncio.Task[call_journal.ClaimOutcome] | None = None
+            journal_claim_token: str | None = None
             cur_task = asyncio.current_task()
             assert cur_task is not None
             _INFLIGHT_BY_REQ_ID[req_id_str] = cur_task
             _CURRENT_EXECUTE_TASK = cur_task
             _CURRENT_EXECUTE_REQ_ID = req_id_str
             try:
-                # 调用方携带 call_id 时启用调用日志：先查询/原子认领，已有终态直接回放、
-                # 同标识不同参数拒绝、执行完先落盘再返回。无 call_id 的直调路径行为不变。
-                # 拒绝路径在 try 内 return，让下方 finally 统一回收取消 token 与请求态。
                 if journal_call_id:
-                    outcome = await asyncio.to_thread(
-                        call_journal.claim,
-                        journal_call_id,
-                        name,
-                        journal_args,
-                        os.getpid(),
+                    journal_claim = asyncio.create_task(
+                        asyncio.to_thread(
+                            call_journal.claim,
+                            journal_call_id,
+                            name,
+                            journal_args,
+                            os.getpid(),
+                            skill_scope,
+                        ),
                     )
+                    # 取消不能停止认领线程；保留其结果，取消路径才能回收已经获得的执行权。
+                    outcome = await asyncio.shield(journal_claim)
+                    journal_claim_token = outcome.claim_token
                     if not outcome.should_execute:
                         if outcome.disposition == "completed":
-                            # 幂等重放：同标识同参数的调用直接返回上次落盘的结果，不重放执行。
                             await _send(ws, req_id, result=outcome.result)
                             return
-                        if outcome.disposition in {"failed", "unknown"}:
-                            # failed: 上次执行已失败，携带记录到的错误；unknown: 中断遗留，副作用待核对、
-                            # 不自动重放。两者都以错误帧交还调用方裁决。
-                            code = -32000 if outcome.disposition == "failed" else -32011
-                            await _send(
-                                ws,
-                                req_id,
-                                error={
-                                    "code": code,
-                                    "message": outcome.error or f"call {outcome.disposition}",
-                                    "data": {"disposition": outcome.disposition},
-                                },
-                            )
-                            return
-                        # conflict / claimed_elsewhere / invalid_call_id：不走 ToolError——那会把
-                        # 在途的 claimed 记录误标 failed，真正执行完成的结果反而落不了盘。
                         await _send(
                             ws,
                             req_id,
                             error={
-                                "code": -32000,
-                                "message": f"call_id {journal_call_id!r} rejected: {outcome.error or outcome.disposition}",
+                                "code": -32011 if outcome.disposition == "unknown" else -32000,
+                                "message": outcome.error
+                                or f"call_id {journal_call_id!r} rejected: {outcome.disposition}",
                                 "data": {"disposition": outcome.disposition},
                             },
                         )
                         return
                 try:
-                    result = await registry.async_dispatch(name, params.get("args", {}), cancel_token=token)
+                    result = await registry.async_dispatch(name, journal_args, cancel_token=token)
                 except ToolError as e:
-                    if journal_call_id:
-                        await asyncio.to_thread(call_journal.mark_failed, journal_call_id, name, journal_args, str(e))
+                    if journal_call_id and journal_claim_token is not None:
+                        await asyncio.to_thread(call_journal.mark_failed, journal_call_id, journal_claim_token, str(e))
                     await _send(ws, req_id, error={"code": -32000, "message": str(e)})
                     return
-                if journal_call_id:
+                if journal_call_id and journal_claim_token is not None:
                     await asyncio.to_thread(
                         call_journal.mark_completed,
                         journal_call_id,
-                        name,
-                        journal_args,
+                        journal_claim_token,
                         result,
                     )
                 await _send(ws, req_id, result=result)
                 return
+            except asyncio.CancelledError:
+                if journal_call_id and journal_claim is not None:
+                    await call_journal.settle_cancelled_claim(journal_call_id, journal_claim)
+                raise
             finally:
                 CURRENT_SKILL_SCOPE.reset(scope_reset)
                 if _CURRENT_EXECUTE_TASK is cur_task:
@@ -584,18 +580,19 @@ async def _build_info() -> dict[str, Any]:
 
 
 async def _runner_main(endpoint: DesktopEndpoint) -> None:
-    # 能力监视与主循环同生命周期：断连期间跳过发送，重连后凭快照差异继续通知。
-    watcher = asyncio.create_task(_watch_capabilities())
-    _BG_TASKS.add(watcher)
-    watcher.add_done_callback(_BG_TASKS.discard)
     # 启动核对：上次运行中断的认领（持有进程已死且无终态）标 unknown 待核对，过期终态清理。
     stale = await asyncio.to_thread(call_journal.sweep_stale_claims, os.getpid())
     if stale:
         logger.info("call journal: %d interrupted claim(s) marked unknown", stale)
+    watcher = asyncio.create_task(_watch_capabilities())
+    _BG_TASKS.add(watcher)
+    watcher.add_done_callback(_BG_TASKS.discard)
     try:
         await runner_loop(endpoint)
     finally:
         watcher.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await watcher
 
 
 def main() -> None:
