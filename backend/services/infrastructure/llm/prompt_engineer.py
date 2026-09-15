@@ -300,7 +300,7 @@ def build_fullbody_prompt(
     avatar_prompt: str = "",
     persona: Persona | dict | None = None,
 ) -> str:
-    """为某个视角拼装一条生图 prompt（无 LLM 往返）；由 ``application/generation/avatar_service`` 按视角调用。全身图由外貌设定、性格特点、画风词典与用户额外要求装配，外形特征由原参考图/头像锚定，不带入头像阶段特异性的 avatar_prompt。"""
+    """为某个视角拼装一条生图 prompt（无 LLM 往返）；由 ``application/generation/avatar_service`` 按视角调用。全身图由外貌设定、性格特点、画风词典与用户额外要求装配，外形特征由主参考图锚定（正面种子源自全身种子图、背面种子源自正面种子、换装主参考为全身种子图），不带入头像阶段特异性的 avatar_prompt。"""
     style_key = style_id or template.style or "cel_shading"
     style_wording = _FULLBODY_STYLE_WORDING.get(style_key, _FULLBODY_STYLE_WORDING["cel_shading"])
     features = getattr(template, f"{view}_features", "")
@@ -350,7 +350,7 @@ def build_outfit_prompt(
     appearance: str = "",
     personality: str = "",
 ) -> str:
-    """换装立绘 prompt：在正面全身 prompt 之上叠加「锁身份、换穿着」约束；身份由主参考图（头像种子图）锚定，着装要求进 feedback 槽。"""
+    """换装立绘 prompt：在正面全身 prompt 之上叠加「锁身份、换穿着」约束；身份与身材由主参考图（独立全身种子图）锚定，着装要求进 feedback 槽。"""
     base = build_fullbody_prompt(
         "front",
         template=template,

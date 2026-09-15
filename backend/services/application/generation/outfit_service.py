@@ -357,7 +357,7 @@ async def create_outfit_draft(
     image: bytes | None = None,
     content_type: str | None = None,
 ) -> CompanionOutfit:
-    """文本描述 + 可选参考图创建外观草稿；身份参考恒为激活头像的正面种子（主），用户图为次参考。"""
+    """文本描述 + 可选参考图创建外观草稿；身份与身材参考恒为激活头像的独立全身种子图（主），用户图为次参考。"""
     effective_description = (description or "").strip()
     if not effective_description and image is None:
         raise OutfitError("请先描述想要的着装，或上传一张参考图")
@@ -371,9 +371,9 @@ async def create_outfit_draft(
         style,
         rig_type,
     ) = await _outfit_generation_context(db, user_id)
-    identity_uri = load_avatar_bytes_as_data_uri(avatar.asset_url)
+    identity_uri = load_avatar_bytes_as_data_uri(avatar.seed_fullbody_url)
     if identity_uri is None:
-        raise OutfitError("头像种子图读取失败，请稍后重试")
+        raise OutfitError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     # 结束读事务：生图往返期间不占连接（短会话纪律）
     await db.commit()
 
@@ -439,9 +439,9 @@ async def regenerate_outfit_draft(
         style,
         rig_type,
     ) = await _outfit_generation_context(db, user_id)
-    identity_uri = load_avatar_bytes_as_data_uri(avatar.asset_url)
+    identity_uri = load_avatar_bytes_as_data_uri(avatar.seed_fullbody_url)
     if identity_uri is None:
-        raise OutfitError("头像种子图读取失败，请稍后重试")
+        raise OutfitError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     await db.commit()
 
     source = safe_json_loads(outfit.source_json or "{}", default={})

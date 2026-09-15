@@ -828,8 +828,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setFullbodyHint(null)
     setFullbodyStyleState(styleId)
 
-    const effectiveRef = refImage ?? presentationRef
-
     try {
       const res = await window.spiritagent.api<{
         id?: number
@@ -839,9 +837,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         path: `/api/companion/avatar/${avatarId}/fullbody/front-2d`,
         method: 'POST',
         body: {
-          style: styleId,
-          image: effectiveRef?.base64,
-          content_type: effectiveRef?.contentType
+          style: styleId
         }
       })
 
@@ -1287,8 +1283,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setFullbodyLoadingText('正在按要求重新生成正面全身图…')
     setFullbodyHint(null)
 
-    const effectiveRef = refImage ?? presentationRef
-
     try {
       const res = await window.spiritagent.api<{
         id?: number
@@ -1299,9 +1293,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         method: 'POST',
         body: {
           style: fullbodyStyle,
-          feedback: fullbodyFeedback.trim() || undefined,
-          image: effectiveRef?.base64,
-          content_type: effectiveRef?.contentType
+          feedback: fullbodyFeedback.trim() || undefined
         }
       })
 

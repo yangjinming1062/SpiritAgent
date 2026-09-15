@@ -874,18 +874,6 @@ def normalize_avatar_url_to_bare(url: str | None) -> str:
     return clean
 
 
-def _subject_reference_for_avatar(
-    asset: AvatarAsset,
-    reference_image: str | None = None,
-    reference_content_type: str | None = None,
-) -> str | None:
-    """获取全身图生成的主体参考图 URI（始终使用原参考图/半身像，绝不使用已生成的全身图，避免迭代失真）。"""
-    if reference_image:
-        mime = (reference_content_type or "image/png").split(";")[0].strip().lower() or "image/png"
-        return f"data:{mime};base64,{reference_image}"
-    return load_avatar_bytes_as_data_uri(asset.asset_url)
-
-
 async def _fetch_fullbody_target(
     db: AsyncSession | None,
     user_id: int,
@@ -1009,13 +997,15 @@ async def generate_fullbody_front_2d(
     avatar_id: int,
     style: str = "cel_shading",
     feedback: str | None = None,
-    reference_image: str | None = None,
-    reference_content_type: str | None = None,
 ) -> AvatarAsset:
-    """按选定画风与用户微调要求生成/重绘 2D 正面种子图。主体参考始终使用原参考图/半身像，避免多轮迭代细节丢失。"""
+    """按选定画风与用户微调要求生成/重绘 2D 正面种子图。主体参考恒为独立全身种子图，
+    保留身材比例；身份细节以其源头（半身头像 + 角色定义）间接锚定，不回退半身像。"""
     if user_id is None:
         raise ValueError("user_id is required")
     asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id, check_sealed=True)
+    ref_uri = load_avatar_bytes_as_data_uri(asset.seed_fullbody_url)
+    if ref_uri is None:
+        raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
 
     prompt_payload = safe_json_loads(asset.prompt_json, default={})
     if not isinstance(prompt_payload, dict):
@@ -1026,7 +1016,6 @@ async def generate_fullbody_front_2d(
     species, appearance, personality = _fullbody_identity_fields(persona)
     rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
     template = resolve_fullbody_template(species, rig_type, style)
-    ref_uri = _subject_reference_for_avatar(asset, reference_image, reference_content_type)
 
     effective_feedback = feedback.strip() if (feedback and feedback.strip()) else None
     prompt = build_fullbody_prompt(
@@ -1117,8 +1106,8 @@ async def generate_fullbody_front_3d(
 ) -> AvatarAsset:
     """生成/重绘 3D 建模专用正面种子（A-pose、3D 画风）。
 
-    身份参考与 2D 正面生成同源——恒用半身头像种子（所有派生图的身份基准），不引用
-    已生成的全身图以免迭代失真；仅姿态与画风切换为 3D 建模所需，属派生而非身份变更：
+    身份与身材参考与 2D 正面生成同源——恒用独立全身种子图（其身份源自半身头像种子），
+    不引用已生成的全身立绘以免迭代失真；仅姿态与画风切换为 3D 建模所需，属派生而非身份变更：
     不受形象锁定约束，也不覆盖 2D 正面种子（衣柜与 2D 拆分的身份锚）。重绘后旧背面种子随之失效。"""
     if user_id is None:
         raise ValueError("user_id is required")
@@ -1127,11 +1116,14 @@ async def generate_fullbody_front_3d(
     if not asset.seed_front_2d_url:
         raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; confirm the 2D front seed first")
 
+    ref_uri = load_avatar_bytes_as_data_uri(asset.seed_fullbody_url)
+    if ref_uri is None:
+        raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+
     species, appearance, personality = _fullbody_identity_fields(persona)
     effective_style = await _resolve_fullbody_3d_style(db, user_id, asset, species)
     rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
     template = resolve_fullbody_template(species, rig_type, effective_style)
-    ref_uri = _subject_reference_for_avatar(asset)
     effective_feedback = feedback.strip() if (feedback and feedback.strip()) else None
     prompt = build_fullbody_prompt(
         "front",
@@ -1202,7 +1194,9 @@ async def generate_fullbody_back(
     rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
     template = resolve_fullbody_template(species, rig_type, effective_style)
 
-    front_ref_uri = load_avatar_bytes_as_data_uri(effective_front_url) or _subject_reference_for_avatar(asset)
+    front_ref_uri = load_avatar_bytes_as_data_uri(effective_front_url) or load_avatar_bytes_as_data_uri(
+        asset.seed_fullbody_url,
+    )
     effective_feedback = feedback.strip() if (feedback and feedback.strip()) else None
     prompt = build_fullbody_prompt(
         "back",

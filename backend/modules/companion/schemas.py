@@ -68,8 +68,6 @@ class Fullbody2dFrontGenerateRequest(BaseModel):
 
     style: str = Field(default="cel_shading", max_length=64)
     feedback: str | None = Field(default=None, max_length=500)
-    image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
-    content_type: str | None = Field(default=None, max_length=64)
 
 
 # 3D 种子（A-pose 正面 / 背面）生成共用请求体；画风由服务端按物种路由并随行持久化，正背恒成对一致

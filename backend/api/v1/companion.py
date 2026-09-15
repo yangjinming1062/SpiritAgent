@@ -357,8 +357,6 @@ async def post_fullbody_front_2d(
     body: Fullbody2dFrontGenerateRequest,
     user: CurrentUser,
 ) -> AvatarAssetResponse:
-    raw, content_type = _decode_upload_image(body.image, body.content_type)
-    ref_b64 = base64.b64encode(raw).decode("utf-8") if raw else None
     try:
         async with get_avatar_job_lock(user.id):
             asset = await generate_fullbody_front_2d(
@@ -366,8 +364,6 @@ async def post_fullbody_front_2d(
                 avatar_id=avatar_id,
                 style=body.style,
                 feedback=body.feedback,
-                reference_image=ref_b64,
-                reference_content_type=content_type,
             )
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
@@ -375,6 +371,8 @@ async def post_fullbody_front_2d(
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except SeedPromptMissingError as exc:
         raise HTTPException(status_code=400, detail={"error": "头像缺失提示词缓存，请重新生成头像", "reason": str(exc)})
+    except AvatarSourceUnreadableError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)})
     except FullbodyGenerationError as exc:
         err_detail = getattr(exc, "internal", str(exc))
         logger.warning("fullbody front-2d generation failed", extra={"user_id": user.id, "error": err_detail})
@@ -403,6 +401,8 @@ async def post_fullbody_front_3d(
         raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
     except FrontSeedMissingError as exc:
         raise HTTPException(status_code=400, detail={"error": "请先确认 2D 正面全身图", "reason": str(exc)})
+    except AvatarSourceUnreadableError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)})
     except FullbodyGenerationError as exc:
         err_detail = getattr(exc, "internal", str(exc))
         logger.warning("fullbody front-3d generation failed", extra={"user_id": user.id, "error": err_detail})
