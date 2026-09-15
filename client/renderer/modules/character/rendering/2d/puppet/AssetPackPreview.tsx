@@ -87,7 +87,6 @@ export function AssetPackPreview({
           return
         }
 
-        instance.auto.talk = false
         instance.auto.rand = false
         instance.auto.gaze = false
         instance.renderFrame(1 / 60)

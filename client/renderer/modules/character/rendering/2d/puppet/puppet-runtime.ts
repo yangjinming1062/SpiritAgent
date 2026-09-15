@@ -81,7 +81,6 @@ interface PuppetAuto {
   idle: boolean
   blink: boolean
   rand: boolean
-  talk: boolean
   phys: boolean
   gaze: boolean
 }
@@ -377,14 +376,6 @@ export class PuppetRuntime {
   private ahogeNext = 0
   private ahogeEvT0 = -1
   private readonly ahogeS = { x: 0, v: 0 }
-  private talkOn = false
-  private talkV = 0
-  private talkTgt = 0
-  private talkF = 0
-  private talkFTgt = 0
-  private talkAmp = 1
-  private nextTalkState = 0
-  private nextSyl = 0
   private breathP = 0
   private nextSigh = performance.now() + 9000
   private sighUntil = 0
@@ -398,7 +389,7 @@ export class PuppetRuntime {
 
   /** 外部驱动的目标参数与自动化开关；调用方直接改字段即可。 */
   readonly target: PuppetParams = defaultPuppetParams()
-  readonly auto: PuppetAuto = { idle: true, blink: true, rand: true, talk: true, phys: true, gaze: true }
+  readonly auto: PuppetAuto = { idle: true, blink: true, rand: true, phys: true, gaze: true }
   /** 自主段落/耳/呆毛事件的种子（同种子同时间序列 → 相同动作）；改后调 reseed 生效 */
   autoSeed = 20260826
 
@@ -1884,33 +1875,6 @@ export class PuppetRuntime {
       this.sac.y *= decay
       tgt.eyeX = clamp(tgt.eyeX + this.sac.x, -1, 1)
       tgt.eyeY = clamp(tgt.eyeY + this.sac.y, -1, 1)
-    }
-
-    if (this.auto.talk) {
-      if (now > this.nextTalkState) {
-        this.talkOn = !this.talkOn
-        this.nextTalkState = now + (this.talkOn ? 1200 + Math.random() * 2200 : 600 + Math.random() * 1800)
-
-        if (this.talkOn) {
-          this.talkAmp = 0.55 + Math.random() * 0.45
-        }
-      }
-
-      if (this.talkOn && now > this.nextSyl) {
-        this.nextSyl = now + 70 + Math.random() * 110
-        this.talkTgt = (Math.random() < 0.25 ? 0.04 : 0.25 + Math.random() * 0.75) * this.talkAmp
-        this.talkFTgt = (Math.random() * 2 - 1) * 0.6
-      }
-
-      if (!this.talkOn) {
-        this.talkTgt = 0
-        this.talkFTgt = 0
-      }
-
-      this.talkV += (this.talkTgt - this.talkV) * Math.min(1, dt * 22)
-      this.talkF += (this.talkFTgt - this.talkF) * Math.min(1, dt * 10)
-      tgt.mouthOpen = Math.max(tgt.mouthOpen, this.talkV)
-      tgt.mouthForm = clamp(tgt.mouthForm + this.talkF, -1, 1)
     }
 
     if (this.auto.blink) {

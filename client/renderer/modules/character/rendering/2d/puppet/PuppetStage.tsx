@@ -5,7 +5,7 @@
  * - hitmap：当前帧部件网格精确命中 → $mesh2dHitmap —— SpriteStage 的 tap/hover/手势
  *   管线与 interaction.ts 区域语义原样复用（区域=最上层命中部件的映射）；
  * - 视线：窗口 pointermove → setGaze（$gazeTarget 显式目标优先，周期重注入续 TTL）；
- * - 说话：TTS 振幅接管 mouthOpen，静默后交还合成说话；
+ * - 说话：TTS 振幅驱动 mouthOpen，静默后恢复当前情绪的嘴型；
  * - 情绪：$spriteEmotion → 眉/嘴型/眼参数映射（mesh2d 无面部通道，puppet 独有）；
  * - 动作/交互：$spriteAction 通用语义子集 → 定时包络；hover 发区 → hairImpulse。
  * 装配失败调 setPuppetError 熄灭 $puppetReady，root 渲染级联落 3D / 蛋兜底。
@@ -221,6 +221,7 @@ export function PuppetStage(): React.JSX.Element {
   const lastTickTimeRef = useRef<number>(performance.now())
 
   const emotionEyeCYRef = useRef<number>(EMOTION_PARAMS[$spriteEmotion.get() ?? 'neutral']?.eyeCY ?? 0)
+  const emotionRef = useRef<string | null>($spriteEmotion.get())
 
   const puppet = useStore($puppetInfo)
 
@@ -393,6 +394,7 @@ export function PuppetStage(): React.JSX.Element {
 
       if (r) {
         applyEmotion(r, emotion)
+        emotionRef.current = emotion
         emotionEyeCYRef.current = EMOTION_PARAMS[emotion ?? 'neutral']?.eyeCY ?? 0
       }
     })
@@ -515,20 +517,19 @@ export function PuppetStage(): React.JSX.Element {
         // 3. auto.idle 待机呼吸幅度衰减（走路 0.7，趴姿 0.4）
         r.idleScale = gaitOut.idleScale
 
-        // 4. TTS 振幅接管嘴型；静默 600ms 后交还合成说话
+        // 4. TTS 振幅驱动嘴型；静默 600ms 后恢复当前情绪的嘴型（预设可能持有 mouthOpen）
         if (ampRef.current > 0.04) {
           lastTalkAtRef.current = now
-
-          if (!wasTalkingRef.current) {
-            wasTalkingRef.current = true
-            r.auto.talk = false
-          }
+          wasTalkingRef.current = true
 
           r.target.mouthOpen = Math.min(1, 0.18 + ampRef.current * 0.9)
         } else if (wasTalkingRef.current && now - lastTalkAtRef.current > 600) {
           wasTalkingRef.current = false
-          r.auto.talk = true
-          r.target.mouthOpen = 0
+
+          const emotion = emotionRef.current
+          const params = emotion ? EMOTION_PARAMS[emotion] : undefined
+
+          r.target.mouthOpen = params?.mouthOpen ?? EMOTION_DEFAULTS.mouthOpen
         }
 
         // 5. 显式视线目标周期重注入（setGaze 3s TTL；ritual walk 途中持续锁定）
