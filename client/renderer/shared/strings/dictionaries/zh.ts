@@ -443,7 +443,9 @@ export const dict = {
       materialTransparentDayNight: '日色透明 / 夜色透明',
       materialSolid: '实底模式（经典）',
       materialSolidDesc: '实体不透明表面，石墨与暖纸底板，具有极高对比度，适合复杂桌面背景环境。',
-      materialSolidDayNight: '日色 / 夜色'
+      materialSolidDayNight: '日色 / 夜色',
+      reduceTransparency: '减少透明效果',
+      reduceTransparencyDesc: '关闭玻璃模糊并加实底板，降低合成开销；窗口外侧真实透明不受影响。'
     },
     memory: {
       tabAriaLabel: '记忆类型',

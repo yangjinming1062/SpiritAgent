@@ -1,6 +1,8 @@
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
+import { UI_THEME_URL_PARAM } from '@ipc/contracts'
+
 import { directoryExists, fileExists } from '../shared/utils'
 
 export function unpackedPathFor(filePath: string): string {
@@ -85,14 +87,21 @@ export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLo
     return candidates[0]
   }
 
-  function rendererUrlFor(role: string): string {
+  function rendererUrlFor(role: string, theme?: string): string {
     const htmlFile = htmlFileNameForRole(role)
+    let url: URL
 
     if (devServer) {
-      return `${devServer}/${htmlFile}`
+      url = new URL(`${devServer}/${htmlFile}`)
+    } else {
+      url = new URL(pathToFileURL(resolveRendererHtml(htmlFile)).toString())
     }
 
-    return pathToFileURL(resolveRendererHtml(htmlFile)).toString()
+    if (theme) {
+      url.searchParams.set(UI_THEME_URL_PARAM, theme)
+    }
+
+    return url.toString()
   }
 
   return { rendererUrlFor }

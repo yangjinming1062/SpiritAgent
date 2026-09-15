@@ -32,6 +32,12 @@ export async function hydrateRunnerStatus(): Promise<void> {
 
   offRunnerStatus =
     desktop.onRunnerStatus?.((ev: DesktopRunnerStatusEvent) => {
-      $runnerPhase.set(ev.type === 'running' || ev.type === 'runner_ready' ? 'running' : 'stopped')
+      $runnerPhase.set(
+        ev.type === 'running' || ev.type === 'runner_ready'
+          ? 'running'
+          : ev.type === 'stopping'
+            ? 'stopping'
+            : 'stopped'
+      )
     }) ?? null
 }

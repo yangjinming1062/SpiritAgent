@@ -2,10 +2,11 @@ import { SPIRITAGENT_UI_THEMES } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
+import { $manualReduceTransparency, setManualReduceTransparency } from '@/shared/lib/apply-no-blur'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { Check } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { SECTION_TITLE, SettingCard, SettingRow, SettingsSectionIntro } from '@/shared/panel'
+import { SECTION_TITLE, SettingCard, SettingRow, SettingsSectionIntro, Toggle } from '@/shared/panel'
 import { $theme, setUiTheme } from '@/shared/store/theme'
 import { useStrings } from '@/shared/strings'
 
@@ -14,6 +15,7 @@ export function ThemePage(): React.JSX.Element {
   const appearance = dict.settings.appearance
   const themeText = dict.settings.theme
   const active = useStore($theme)
+  const reduceTransparency = useStore($manualReduceTransparency)
 
   return (
     <div className="space-y-6">
@@ -79,6 +81,16 @@ export function ThemePage(): React.JSX.Element {
           </SettingRow>
           <SettingRow description={themeText.materialSolidDesc} label={themeText.materialSolid}>
             <span className="text-[11px] text-faint">{themeText.materialSolidDayNight}</span>
+          </SettingRow>
+          <SettingRow description={themeText.reduceTransparencyDesc} label={themeText.reduceTransparency}>
+            <Toggle
+              ariaLabel={themeText.reduceTransparency}
+              checked={reduceTransparency}
+              onChange={next => {
+                triggerHaptic('open')
+                setManualReduceTransparency(next)
+              }}
+            />
           </SettingRow>
         </SettingCard>
       </section>

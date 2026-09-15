@@ -19,17 +19,19 @@ export interface SurfaceWindowDeps {
   isMac: boolean
   preloadPath: string
   rebuildTrayMenu: () => void
-  rendererUrlFor: (id: SurfaceId) => string
+  rendererUrlFor: (id: SurfaceId, theme?: string) => string
+  seedTheme: () => string | undefined
   windowHandlers: { installSurfaceWindowHandlers: (win: BrowserWindow) => void }
   zoomPersistence: Pick<ZoomPersistence, 'restorePersistedZoomLevel'>
 }
 
 function surfaceLoadUrl(
-  rendererUrlFor: (id: SurfaceId) => string,
+  rendererUrlFor: (id: SurfaceId, theme?: string) => string,
   id: SurfaceId,
-  payload?: DesktopSurfaceOpenPayload
+  payload?: DesktopSurfaceOpenPayload,
+  seedTheme?: string
 ): string {
-  const url = new URL(rendererUrlFor(id))
+  const url = new URL(rendererUrlFor(id, seedTheme))
 
   if (payload?.view) {
     url.hash = `#/${payload.view}`
@@ -109,7 +111,7 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
     win.on('hide', () => deps.rebuildTrayMenu())
 
     try {
-      await win.loadURL(surfaceLoadUrl(deps.rendererUrlFor, id, payload))
+      await win.loadURL(surfaceLoadUrl(deps.rendererUrlFor, id, payload, deps.seedTheme()))
     } catch (error) {
       // 构造与登记进 surfaces Map 之间的空窗：失败时回收，避免隐藏泄漏窗。
       if (!win.isDestroyed()) {
@@ -129,7 +131,7 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
     id: SurfaceId,
     payload: DesktopSurfaceOpenPayload
   ): Promise<void> {
-    await win.loadURL(surfaceLoadUrl(deps.rendererUrlFor, id, payload))
+    await win.loadURL(surfaceLoadUrl(deps.rendererUrlFor, id, payload, deps.seedTheme()))
     deps.zoomPersistence.restorePersistedZoomLevel(win)
   }
 

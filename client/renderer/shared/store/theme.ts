@@ -1,13 +1,44 @@
-import { getUiEffect, getUiPalette, normalizeUiTheme, type SpiritAgentUiTheme } from '@ipc/contracts'
+import {
+  getUiEffect,
+  getUiPalette,
+  normalizeUiTheme,
+  type SpiritAgentUiTheme,
+  UI_THEME_URL_PARAM
+} from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { persistString, storedString } from '@/shared/lib/storage'
 
 const THEME_STORAGE_KEY = 'da.ui.theme'
 
-// 新装（localStorage 无此 key）默认走「日色透明」；已有显式选择（night/day/历史别名）保留。
-const stored = storedString(THEME_STORAGE_KEY)
-const initialTheme: SpiritAgentUiTheme = stored === null ? 'day-clear' : normalizeUiTheme(stored)
+// 启动主题的优先级：主进程播种的 URL 参数（配置镜像当前值，窗口创建前写入）>
+// localStorage（本窗口上次使用的即时缓存）> 「日色透明」默认。
+// URL 参数在模块加载时消费并清除——它只在首帧前有效，之后主题变化一律走
+// IPC 广播（initUiThemeSync）与本窗 setUiTheme。
+function resolveInitialTheme(): SpiritAgentUiTheme {
+  const params = new URLSearchParams(window.location.search)
+  const seeded = params.get(UI_THEME_URL_PARAM)
+
+  if (seeded !== null) {
+    params.delete(UI_THEME_URL_PARAM)
+    const query = params.toString()
+    const path = `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`
+
+    try {
+      window.history.replaceState(window.history.state, '', path)
+    } catch {
+      // 受限 History 环境只影响参数清理，不影响镜像主题的优先级。
+    }
+
+    return normalizeUiTheme(seeded)
+  }
+
+  const stored = storedString(THEME_STORAGE_KEY)
+
+  return stored === null ? 'day-clear' : normalizeUiTheme(stored)
+}
+
+const initialTheme = resolveInitialTheme()
 
 export const $theme = atom<SpiritAgentUiTheme>(initialTheme)
 

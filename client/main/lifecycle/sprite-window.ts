@@ -27,7 +27,8 @@ export interface SpriteWindowDeps {
   getMainWindow: () => null | BrowserWindow
   isMac: boolean
   preloadPath: string
-  rendererUrlFor: (id: 'sprite') => string
+  rendererUrlFor: (id: 'sprite', theme?: string) => string
+  seedTheme: () => string | undefined
   setMainWindow: (win: null | BrowserWindow) => void
   spriteTransparent: boolean
   windowHandlers: { installStandardWindowHandlers: (win: BrowserWindow) => void }
@@ -136,7 +137,7 @@ export function createSpriteWindowFactory(deps: SpriteWindowDeps): {
     deps.windowHandlers.installStandardWindowHandlers(mainWindow)
     deps.installCloseInterceptor(mainWindow)
 
-    void mainWindow.loadURL(deps.rendererUrlFor('sprite'))
+    void mainWindow.loadURL(deps.rendererUrlFor('sprite', deps.seedTheme()))
     mainWindow.webContents.once('did-finish-load', () => {
       deps.zoomPersistence.restorePersistedZoomLevel(mainWindow)
       deps.bootProgress.broadcast()

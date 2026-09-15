@@ -63,7 +63,11 @@ function syncTimezone(gateway: SpiritAgentGateway): void {
   void gateway.request('companion.set_timezone', { timezone }).catch(() => {})
 }
 
-async function syncRunnerTools(gateway: SpiritAgentGateway): Promise<void> {
+// 把 Runner 当前能力发布到后端注册表：工具列表非空即「本机工具可执行」，
+// 空列表同样发送——后端 update_runner_tools([]) 会清空该用户注册表，
+// 使 has_runner_tools 判 false，断开/停止期间新派发立即被拒（fail-closed），
+// 空表只阻止新派发，已经发出的调用仍按原有结果与超时规则收尾。
+async function syncRunnerTools(gateway: SpiritAgentGateway, isCurrent: () => boolean, revoke: boolean): Promise<void> {
   const desktop = window.spiritagent
 
   if (!desktop?.runnerGetTools) {
@@ -71,7 +75,11 @@ async function syncRunnerTools(gateway: SpiritAgentGateway): Promise<void> {
   }
 
   try {
-    const tools = await desktop.runnerGetTools()
+    const tools = revoke ? [] : await desktop.runnerGetTools()
+
+    if (!isCurrent()) {
+      return
+    }
 
     const names = tools
       .map((t: { function?: { name?: string }; name?: string }) => t.function?.name || t.name)
@@ -83,13 +91,11 @@ async function syncRunnerTools(gateway: SpiritAgentGateway): Promise<void> {
       log.warn('gateway-boot', 'tools.sync: LLM will lack file tools in this session')
     }
 
-    if (tools.length > 0) {
-      const res = await gateway.request<{ count: number }>('tools.sync', { tools, skill_scope_version: 1 })
-      log.info(
-        'gateway-boot',
-        `tools.sync: synced ${res.count || tools.length} runner tools to gateway (hasFileTools=${hasFileTools})`
-      )
-    }
+    const res = await gateway.request<{ count: number }>('tools.sync', { tools, skill_scope_version: 1 })
+    log.info(
+      'gateway-boot',
+      `tools.sync: synced ${res.count || tools.length} runner tools to gateway (hasFileTools=${hasFileTools})`
+    )
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     log.error('gateway-boot', `tools.sync failed: ${msg}`)
@@ -107,6 +113,7 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
 
   useEffect(() => {
     let cancelled = false
+    let toolsSyncGeneration = 0
     const desktop = window.spiritagent
 
     if (!desktop) {
@@ -139,6 +146,12 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
     }
 
     const gatewayOpen = () => gateway.connectionState === 'open'
+
+    const syncTools = (revoke: boolean = false): Promise<void> => {
+      const generation = ++toolsSyncGeneration
+
+      return syncRunnerTools(gateway, () => !cancelled && generation === toolsSyncGeneration && gatewayOpen(), revoke)
+    }
 
     const clearReconnectTimer = () => {
       if (reconnectTimer !== null) {
@@ -180,7 +193,7 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
           return
         }
 
-        void syncRunnerTools(gateway)
+        void syncTools()
         reconnectAttempt = 0
         lastReconnectError = null
         reconnectErrorNotified = false
@@ -244,6 +257,10 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
     setPrimaryGateway(gateway)
 
     const offState = gateway.onState(st => {
+      if (st !== 'open') {
+        toolsSyncGeneration++
+      }
+
       reportPrimaryGatewayState(st)
       window.spiritagent?.gatewayBroadcastState?.(st)
 
@@ -407,10 +424,8 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
     document.addEventListener('visibilitychange', onVisible)
 
     const offRunnerStatus = desktop.onRunnerStatus?.(ev => {
-      if (ev.type === 'running' || ev.type === 'runner_ready') {
-        if (gateway.connectionState === 'open') {
-          void syncRunnerTools(gateway)
-        }
+      if (gateway.connectionState === 'open') {
+        void syncTools(ev.type !== 'running' && ev.type !== 'runner_ready')
       }
     })
 
@@ -434,7 +449,7 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
           return
         }
 
-        void syncRunnerTools(gateway)
+        void syncTools()
         dismissOverlayOnce()
         bootCompleted = true
       } catch (err) {

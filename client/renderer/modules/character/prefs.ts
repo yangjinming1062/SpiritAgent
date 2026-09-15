@@ -1,5 +1,6 @@
 import { atom, type WritableAtom } from 'nanostores'
 
+import { hydrateManualReduceTransparency } from '@/shared/lib/apply-no-blur'
 import { persistBoolean, persistString, storedBoolean, storedString } from '@/shared/lib/storage'
 
 import { setDisturbanceTier } from './companion-store'
@@ -93,6 +94,11 @@ export function initCompanionPrefsSync(): () => void {
 
     if (typeof companion.autonomous_voice === 'boolean') {
       autonomousVoicePref.set(companion.autonomous_voice)
+    }
+
+    // 减少透明效果（玻璃降级手动开关）：跨窗口、跨端经 companion 节同步。
+    if (typeof companion.reduce_transparency === 'boolean') {
+      hydrateManualReduceTransparency(companion.reduce_transparency)
     }
 
     // 打扰档位：只回写用户偏好（跨端恢复）；生效档位（companion.disturbance_tier）是设备

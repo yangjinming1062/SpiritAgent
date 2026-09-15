@@ -16,6 +16,16 @@ import type { EngineBackendKind, EngineOptions, LoadedModelInfo } from './types'
 
 type AnyRenderer = THREE.WebGLRenderer | WebGPURenderer
 
+// 透明合成的 alpha 约定（改动前必读）：精灵窗要求 canvas 输出预乘 alpha
+// ——Chromium 按 premultiplied 解释透明窗口合成。three 内部链路自洽地满足这一要求：
+//   WebGPU：alpha:true → canvas alphaMode 'premultiplied'，材质走非预乘
+//           NormalBlending（SrcAlpha / OneMinusSrcAlpha），blend 输出即预乘形式；
+//   WebGL：canvas 上下文 premultipliedAlpha:true + GL blend 收敛到同一结果。
+// 因此应用层不自行预乘、也不二次预乘；若升级 three 后出现黑晕/黑底，优先
+// 核对 WebGPUBackend 的 alphaMode 与 PipelineUtils 的 blend factor 是否仍如上，
+// 并可用 localStorage `da.render.forceClassicWebgl=1` 强制走经典回退对照定位。
+const FORCE_CLASSIC_WEBGL_KEY = 'da.render.forceClassicWebgl'
+
 // dormant 档位由定时器以 4fps 驱动，而非 rAF：
 // 锁屏与被遮挡窗口会完全停止 rAF，而本进程关闭了 Chromium 定时器限流，
 // 因此 setTimeout 仍能保持稳定节奏。
@@ -64,6 +74,43 @@ function readCanvasSize(canvas: HTMLCanvasElement): { width: number; height: num
   const height = parent?.clientHeight || canvas.clientHeight || getBaseSpriteHeight()
 
   return { width, height }
+}
+
+// GPU/驱动标识进日志：透明合成异常（黑晕/黑底）时据此定位受影响的组合，
+// 再用 FORCE_CLASSIC_WEBGL_KEY 做有针对性的回退。
+function logGpuAdapterInfo(renderer: AnyRenderer): void {
+  try {
+    if (renderer instanceof WebGPURenderer && renderer.backend instanceof WebGPUBackend) {
+      // three 的声明未暴露 device；日志从实际渲染设备取值，避免另选适配器唤醒独显。
+      const backend = renderer.backend as WebGPUBackend & { device?: { adapterInfo?: GPUAdapterInfo } }
+      const info = backend.device?.adapterInfo
+
+      if (info) {
+        const desc = [info.vendor, info.architecture, info.device, info.description].filter(Boolean).join(' ')
+
+        if (desc) {
+          log.info('3d', `GPU adapter: ${desc}`)
+        }
+      }
+
+      return
+    }
+
+    const gl =
+      renderer instanceof THREE.WebGLRenderer
+        ? renderer.getContext()
+        : (renderer.backend as WebGPURenderer['backend'] & { gl?: WebGL2RenderingContext }).gl
+
+    if (gl) {
+      const ext = gl.getExtension('WEBGL_debug_renderer_info')
+
+      if (ext) {
+        log.info('3d', `GPU renderer: ${String(gl.getParameter(ext.UNMASKED_RENDERER_WEBGL))}`)
+      }
+    }
+  } catch {
+    /* 信息性日志——取不到就跳过 */
+  }
 }
 
 function disposeFailedRenderer(renderer: AnyRenderer | null): void {
@@ -117,44 +164,57 @@ export class Engine {
     // 默认走 iGPU：精灵窗负载远低于 iGPU 满载门槛，避免在混合显卡本上唤醒 dGPU。
     const powerPreference = opts.powerPreference ?? 'low-power'
 
+    // 异常 GPU/驱动组合的逃生口（黑晕/黑底）：置 localStorage 后跳过 WebGPU 直接经典回退。
+    let forceClassic = false
+
+    try {
+      forceClassic = window.localStorage.getItem(FORCE_CLASSIC_WEBGL_KEY) === '1'
+    } catch {
+      /* 受限上下文读不到——按默认链路走 */
+    }
+
     // ── 尝试 1：WebGPU（首选 WebGPU 后端，init 内部回退 WebGL2）──
     const gpuCanvas = makeCanvas(container)
     let gpuRenderer: WebGPURenderer | null = null
     let gpuInitialized = false
 
-    try {
-      const canvas = gpuCanvas
-      const { width, height } = readCanvasSize(canvas)
+    if (!forceClassic) {
+      try {
+        const canvas = gpuCanvas
+        const { width, height } = readCanvasSize(canvas)
 
-      const renderer = new WebGPURenderer({
-        canvas,
-        alpha: true,
-        antialias: true,
-        powerPreference
-      })
+        const renderer = new WebGPURenderer({
+          canvas,
+          alpha: true,
+          antialias: true,
+          powerPreference
+        })
 
-      gpuRenderer = renderer
+        gpuRenderer = renderer
 
-      renderer.setPixelRatio(dpr)
-      renderer.setSize(width, height, false)
+        renderer.setPixelRatio(dpr)
+        renderer.setSize(width, height, false)
 
-      await renderer.init()
-      gpuInitialized = true
+        await renderer.init()
+        gpuInitialized = true
 
-      const backendKind: EngineBackendKind = renderer.backend instanceof WebGPUBackend ? 'webgpu' : 'webgl2'
+        const backendKind: EngineBackendKind = renderer.backend instanceof WebGPUBackend ? 'webgpu' : 'webgl2'
 
-      log.info('3d', `Engine initialized with ${backendKind} backend (${width}x${height} @ ${dpr}x)`)
+        log.info('3d', `Engine initialized with ${backendKind} backend (${width}x${height} @ ${dpr}x)`)
+        logGpuAdapterInfo(renderer)
 
-      return new Engine(renderer, backendKind, canvas, opts)
-    } catch (gpuErr) {
-      // Three 的 dispose() 会在初始化失败后再次进入 init() 并产生未处理 rejection。
-      if (gpuInitialized) {
-        disposeFailedRenderer(gpuRenderer)
+        return new Engine(renderer, backendKind, canvas, opts)
+      } catch (gpuErr) {
+        // Three 的 dispose() 会在初始化失败后再次进入 init() 并产生未处理 rejection。
+        if (gpuInitialized) {
+          disposeFailedRenderer(gpuRenderer)
+        }
+
+        log.warn('3d', 'WebGPURenderer failed, falling back to classic WebGLRenderer:', gpuErr)
       }
-
-      gpuCanvas.remove()
-      log.warn('3d', 'WebGPURenderer failed, falling back to classic WebGLRenderer:', gpuErr)
     }
+
+    gpuCanvas.remove()
 
     // ── 尝试 2：经典 WebGLRenderer（纯标准 WebGL2，兼容旧 GPU 与驱动）──
     const glCanvas = makeCanvas(container)
@@ -178,6 +238,7 @@ export class Engine {
       renderer.setSize(width, height, false)
 
       log.info('3d', `Engine initialized with classic-webgl backend (${width}x${height} @ ${dpr}x)`)
+      logGpuAdapterInfo(renderer)
 
       return new Engine(renderer, 'classic-webgl', canvas, opts)
     } catch (glErr) {

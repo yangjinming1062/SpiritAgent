@@ -166,7 +166,12 @@ export function registerRunnerIpc({ deps, ipcMain }: { deps: RunnerIpcDeps; ipcM
 
         const status = bridge.getStatus()
 
-        if (status.phase === 'error' || status.phase === 'stopped') {
+        if (
+          status.phase === 'error' ||
+          status.phase === 'stopped' ||
+          status.phase === 'stopping' ||
+          status.phase === 'idle'
+        ) {
           return []
         }
       }

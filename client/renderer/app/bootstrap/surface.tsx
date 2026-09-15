@@ -11,7 +11,7 @@ import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
 import { hydratePersona, hydratePortrait, initCompanionPrefsSync } from '@/modules/character'
 import { ErrorBoundary } from '@/shared/components/error-boundary'
 import { HapticsProvider } from '@/shared/components/haptics-provider'
-import { applyNoBlurIfNeeded } from '@/shared/lib/apply-no-blur'
+import { applyNoBlurIfNeeded, initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
 import { installClipboardShim } from '@/shared/lib/clipboard'
 import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
 import { $auth } from '@/shared/store/auth'
@@ -49,6 +49,12 @@ function SurfaceAuthBootstrap(): null {
   return null
 }
 
+function SurfaceGlassBudgetGuard(): null {
+  useEffect(() => initGlassBudgetGuard(), [])
+
+  return null
+}
+
 export function bootstrapSurface(label: string, RootComponent: React.ComponentType): void {
   if (label.includes('living')) {
     setSurfaceRole('living')
@@ -76,6 +82,7 @@ export function bootstrapSurface(label: string, RootComponent: React.ComponentTy
       <ErrorBoundary label={label}>
         <HapticsProvider>
           <HashRouter>
+            <SurfaceGlassBudgetGuard />
             <SurfaceAuthBootstrap />
             <ProxyGatewayPump />
             <RootComponent />

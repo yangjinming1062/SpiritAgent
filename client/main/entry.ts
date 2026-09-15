@@ -83,7 +83,7 @@ import {
 import { spiritagentHome } from './security/paths'
 import { buildClientContext } from './shared/client-context'
 import { readStoredBackendUrl } from './shared/config'
-import { createConfigSync, uiThemeFromConfig } from './shared/lib/config-sync'
+import { buildPrefsHydratedFromConfig, createConfigSync, uiThemeFromConfig } from './shared/lib/config-sync'
 import * as runnerConfigStore from './shared/lib/runner-config-store'
 import { mimeTypeForPath } from './shared/mime'
 import {
@@ -206,6 +206,8 @@ const configSync = createConfigSync({
 
 runnerConfigStore.setCloudSync(configSync)
 
+const seedUiTheme = (): string | undefined => uiThemeFromConfig(runnerConfigStore.read())
+
 const { rendererUrlFor } = createRendererPaths({
   appRoot: APP_ROOT,
   devServer: DEV_SERVER,
@@ -280,6 +282,7 @@ const { createSpriteWindow } = createSpriteWindowFactory({
   isMac: IS_MAC,
   preloadPath: PRELOAD_PATH,
   rendererUrlFor,
+  seedTheme: seedUiTheme,
   setMainWindow: win => {
     mainWindow = win
   },
@@ -297,6 +300,7 @@ const { createSurfaceWindow, navigateSurfaceWindow } = createSurfaceWindowFactor
   preloadPath: PRELOAD_PATH,
   rebuildTrayMenu,
   rendererUrlFor,
+  seedTheme: seedUiTheme,
   windowHandlers,
   zoomPersistence
 })
@@ -337,7 +341,14 @@ registerSystemIpc({
   ipcMain
 })
 registerUiThemeIpc({ ipcMain })
-registerPrefsIpc({ ipcMain, onLanguageChanged: () => rebuildTrayMenu() })
+registerPrefsIpc({
+  ipcMain,
+  onLanguageChanged: () => rebuildTrayMenu(),
+  onReduceTransparencyChanged: value => {
+    const { language } = buildPrefsHydratedFromConfig(runnerConfigStore.read())
+    broadcastToAllWindows(IPC.event.prefsHydrated, { companion: { reduce_transparency: value }, language })
+  }
+})
 
 surfaces = createSurfacesManager({
   createWindow: createSurfaceWindow,

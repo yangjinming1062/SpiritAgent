@@ -95,7 +95,7 @@ export type RunnerBridgeEvent =
       type: 'runner_ready' | 'running'
     }
   | { error: Error; phase: string; type: 'error' }
-  | { errors?: string[]; reason?: string; type: 'stopped' }
+  | { errors?: string[]; reason?: string; type: 'stopped' | 'stopping' }
 
 export interface RunnerBridge {
   dispatch: <T = unknown>(
@@ -128,6 +128,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
   let runnerProcess: null | RunnerProcess = null
   let wsServer: null | RunnerWsServer = null
   let cachedTools: Record<string, unknown>[] | null = null
+  let toolsGeneration = 0
   let subUnsubFns: Array<() => void> = []
   let endpointFilePath: null | string = null
 
@@ -159,6 +160,8 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
 
   function fail(phase: 'error' | 'stopped', error: unknown): Error {
     const err = error instanceof Error ? error : new Error(String(error))
+    toolsGeneration++
+    cachedTools = null
     setState({ lastError: err.message, phase })
     emit.emit('event', { error: err, phase, type: 'error' })
 
@@ -323,6 +326,9 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
       if (ev.type === 'runner_ready') {
         void handleRunnerReady(ev)
       } else if (ev.type === 'disconnected') {
+        toolsGeneration++
+        cachedTools = null
+
         if (state.phase === 'running') {
           fail('stopped', new Error('Runner disconnected from WS server.'))
         }
@@ -409,6 +415,14 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     probe_failed?: boolean | null
     version?: null | string
   }): Promise<void> {
+    const server = wsServer
+
+    if (!server || !server.getStatus().connected || state.phase === 'stopping' || state.phase === 'error') {
+      return
+    }
+
+    const generation = ++toolsGeneration
+    const reconnecting = state.phase !== 'starting'
     log('[runner-bridge] runner_ready received')
 
     if (runnerProcess?.signalReady) {
@@ -424,60 +438,46 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
       })
     }
 
-    if (state.phase !== 'starting') {
-      if (pushConfig) {
-        Promise.resolve(pushConfig()).catch(err => {
-          const msg = errorMessage(err)
-          log(`[runner-bridge] config push on reconnect failed: ${msg}`)
-        })
-      }
-
-      emit.emit('event', {
-        capabilities: state.capabilities,
-        capabilitiesHealth: state.capabilitiesHealth,
-        probeFailed: state.probeFailed,
-        runnerVersion: state.runnerVersion,
-        tools: cachedTools,
-        type: 'runner_ready'
-      })
-
-      return
-    }
-
     if (pushConfig) {
       try {
         await pushConfig()
       } catch (err: unknown) {
         const msg = errorMessage(err)
-        log(`[runner-bridge] initial config push failed: ${msg}`)
+        log(`[runner-bridge] config push failed: ${msg}`)
       }
     }
 
-    await _fetchAndCacheTools()
-
-    if (state.phase !== 'starting') {
+    if (generation !== toolsGeneration || server !== wsServer || !server.getStatus().connected) {
       return
     }
 
-    setState({ phase: 'running' })
+    const tools = await _fetchTools(server)
+
+    // 断连、停止或下一次握手使旧查询失效，旧连接不能重新发布执行资格。
+    if (generation !== toolsGeneration || server !== wsServer || !server.getStatus().connected) {
+      return
+    }
+
+    cachedTools = tools
+    setState({ lastError: null, phase: 'running' })
     emit.emit('event', {
       capabilities: state.capabilities,
       capabilitiesHealth: state.capabilitiesHealth,
       probeFailed: state.probeFailed,
       runnerVersion: state.runnerVersion,
       tools: cachedTools,
-      type: 'running'
+      type: reconnecting ? 'runner_ready' : 'running'
     })
   }
 
-  async function _fetchAndCacheTools(): Promise<void> {
+  async function _fetchTools(server: RunnerWsServer): Promise<Record<string, unknown>[]> {
     try {
-      const result = await wsServer!.call<{ tools?: Record<string, unknown>[] }>('get_tools', {}, { timeoutMs: 10_000 })
-      cachedTools = (result?.tools as Record<string, unknown>[]) || []
-      log(`[runner-bridge] got ${cachedTools.length} tools from runner`)
+      const result = await server.call<{ tools?: Record<string, unknown>[] }>('get_tools', {}, { timeoutMs: 10_000 })
+      const tools = result?.tools ?? []
+      log(`[runner-bridge] got ${tools.length} tools from runner`)
 
-      if (cachedTools.length > 0) {
-        const names = cachedTools
+      if (tools.length > 0) {
+        const names = tools
           .map(t => {
             const func = t?.function as { name?: string } | undefined
 
@@ -487,10 +487,13 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
 
         log(`[runner-bridge] tool names: ${names.join(', ') || '(unparseable schemas)'}`)
       }
+
+      return tools
     } catch (error: unknown) {
       const msg = errorMessage(error)
       log(`[runner-bridge] get_tools failed: ${msg}`)
-      cachedTools = []
+
+      return []
     }
   }
 
@@ -499,7 +502,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     noop?: boolean
     ok: boolean
   }> {
-    if (state.phase === 'idle' || state.phase === 'stopped') {
+    if (state.phase === 'idle' || (state.phase === 'stopped' && !wsServer && !runnerProcess)) {
       return { noop: true, ok: true }
     }
 
@@ -516,7 +519,10 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     }
 
     opGeneration++
+    toolsGeneration++
+    cachedTools = null
     setState({ phase: 'stopping' })
+    emit.emit('event', { reason, type: 'stopping' })
     log(`[runner-bridge] stop reason=${reason || 'unspecified'}`)
 
     const errors: unknown[] = []
@@ -571,7 +577,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
   ): Promise<T> => _rpc<T>(method, params || {}, opts)
 
   function getTools(): Record<string, unknown>[] {
-    return cachedTools || []
+    return state.phase === 'running' && wsServer?.getStatus().connected ? (cachedTools ?? []) : []
   }
 
   return {

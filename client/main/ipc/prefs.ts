@@ -7,6 +7,7 @@ interface PrefsIpcDeps {
   ipcMain: IpcMain
   /** 语言变更后的托盘菜单重建；由 entry 注入，切断 ipc→lifecycle。 */
   onLanguageChanged?: () => void
+  onReduceTransparencyChanged?: (value: boolean) => void
 }
 
 // 渲染层偏好写穿透终点：把点键合入配置镜像，乘既有管道
@@ -25,7 +26,7 @@ function isAllowedKey(key: string): boolean {
   return (ALLOWED_PRIMITIVE_KEYS as readonly string[]).includes(key)
 }
 
-export function registerPrefsIpc({ ipcMain, onLanguageChanged }: PrefsIpcDeps): void {
+export function registerPrefsIpc({ ipcMain, onLanguageChanged, onReduceTransparencyChanged }: PrefsIpcDeps): void {
   ipcMain.on(IPC.send.prefsSet, (_event, payload: unknown) => {
     if (!payload || typeof payload !== 'object') {
       return
@@ -46,6 +47,10 @@ export function registerPrefsIpc({ ipcMain, onLanguageChanged }: PrefsIpcDeps): 
     void store.patch(keyPath, { value }).then(result => {
       if (key === 'language' && result.ok) {
         onLanguageChanged?.()
+      }
+
+      if (key === 'companion.reduce_transparency' && typeof value === 'boolean' && result.ok) {
+        onReduceTransparencyChanged?.(value)
       }
     })
   })

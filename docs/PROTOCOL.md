@@ -55,7 +55,7 @@
 | avatar.regenerate | 重生头像（不使模型失效） | Backend + Client 头像展示 |
 | tts.match_voice / tts.design_voice / tts.list_voices | 音色描述匹配 / 专属音色生成 / 目录枚举 | Backend TTS + Client 音色页 + 工具窗口 REST 镜像 |
 | companion.set_timezone | Client 每次连接上报本地 IANA 时区——系统提示词日期与陪伴对话时间感知、夜间批处理与互动统计按用户本地日聚合的唯一时区来源；缺行时回落服务端 UTC，夜间流水线整段跳过 | Backend 持久化 + Client boot 上报 + DESIGN §6.2 |
-| tools.sync | Client boot 与 Runner 重启时把 Runner 工具 schema 推送到后端网关，纳入该用户的本机工具池。缺该调用时本机工具对模型不可见。对应 WS RPC 注册于 [backend/services/adapters/desktop/handlers.py](../backend/services/adapters/desktop/handlers.py) | Backend handlers + Client boot 上报 |
+| tools.sync | Client boot、Runner 重启与状态变化时推送工具 schema。非空列表发布执行资格；Runner 断开、崩溃或开始停止时，网关仍连接的客户端发送空列表清空注册表，阻止新派发，不等断线宽限期清理。已派发调用仍按原有结果与超时规则收尾；缺同步或列表为空时本机工具对模型不可见且不可派发。对应 WS RPC 注册于 [backend/services/adapters/desktop/handlers.py](../backend/services/adapters/desktop/handlers.py) | Backend handlers + Client boot 上报 |
 | companion.check_affect / companion.interact / companion.should_act / companion.record_interaction_stats / companion.get_user_profile | 桌面自主视觉表达 / 戳·摸头·眩晕反应 / 自主空间决策 / 互动统计 / 画像召回。`check_affect` 只返回结构化 `emotion/actions`，`should_act` 只返回空间动作与可选开场白；RPC 的 `reason` 仅为跳过/失败诊断 | Backend 推理 + Client 触发与消费 + DESIGN §6.3/§6.4 |
 | POST /api/companion/portrait/confirm | 确认半身形象（幂等），进入独立全身种子图阶段 | Backend 状态 + Client 流程 |
 | POST /api/companion/avatar/{avatar_id}/fullbody/reference | 根据头像与角色定义生成/重绘独立全身参考，接受可选 `feedback`（≤ 500 字符）及用户参考 `image`（base64，≤ 8 MiB 字符）、`content_type`（≤ 64 字符，PNG / JPEG / WebP / GIF）；只操作当前激活头像，形象锁定后仍可用，成功替换后由头像响应的 `seed_fullbody_url` 返回签名地址 | Backend 生成与存储 + Client onboarding / 角色与记忆 |
@@ -415,13 +415,13 @@ capabilities 与 capabilities_health 来源于 Runner 的运行时探测（探�
 
 创建、恢复、派生与保存响应的 `info.settings` 返回生效参数。`session.set_settings` 仅接受温度、压缩阈值及推理强度三个字段；`null` 删除对应覆盖（含同义存储键），空 patch 只刷新生效参数。窗口内“恢复默认”删除三项覆盖，随后由后端重新计算默认值，避免普通会话固化旧默认。保存先在行锁下合并落库，再更新运行时；失败不得只改变运行时。场景值由 [预设目录](../backend/services/domains/conversation/presets.py) 单源维护。语言、设备与工具能力遵循各自共享契约。
 
-**Backend 的 user_settings 是用户配置真源**（REST 为 `GET/PUT /api/config`，按点键 upsert、永不删除键）；Client 是同步代理与 Runner 的唯一推送方。本地 `desktop-settings.json` 是云端镜像（本地/离线使用 + 供 Runner 推送），内容 = **同步节白名单**（toolsets / skills / browser / security / debug / tool_output / computer_use / file_state / audio / companion / shortcuts / ui，节内本机键如 `browser.profile_dir` 不上云）+ **顶层原始值同步键**（`language`，与后端 `user_settings.language` 行一一对应；详见 §1.4 locale 扩展契约）+ **仅本机节**（terminal、spiritagent 等机密与设备相关节及未知节——**永不离开本机**，红线见 §5.3）。镜像带归属戳（sync.user_id），换号残留按不信任处理：水合前清空同步节、不上传。
+**Backend 的 user_settings 是用户配置真源**（REST 为 `GET/PUT /api/config`，按点键 upsert、永不删除键）；Client 是同步代理与 Runner 的唯一推送方。本地 `desktop-settings.json` 是云端镜像（本地/离线使用 + 供 Runner 推送），内容 = **同步节白名单**（toolsets / skills / browser / security / debug / tool_output / computer_use / file_state / audio / companion / shortcuts / ui，节内本机键如 `browser.profile_dir` 不上云；`ui.theme` 供主进程在窗口 `loadURL` 前播种入口首帧主题，契约见 [client README §4](../client/README.md)）+ **顶层原始值同步键**（`language`，与后端 `user_settings.language` 行一一对应；详见 §1.4 locale 扩展契约）+ **仅本机节**（terminal、spiritagent 等机密与设备相关节及未知节——**永不离开本机**，红线见 §5.3）。镜像带归属戳（sync.user_id），换号残留按不信任处理：水合前清空同步节、不上传。
 
 同步语义：设置变更 → 镜像原子写 → spiritagent.config.update 推 Runner → 防抖后 PUT 云端；启动恢复会话、登录、换号时 GET 水合（云端值逐键覆盖镜像同名键；本地有而云端无的键回传上云，覆盖首跑播种与离线补传）。离线时镜像照常读写，恢复后自动补传；多端为按保存 last-write-wins、无合并，另一端的改动在下次水合时收敛。
 
 `language` 是顶层原始值同步键——与 `SYNCED_SECTIONS` 的对象节不同，按 last-write-wins 与云端直接互盖；通过 `prefs:set('language', ...)` 通道写入，与 `disturbance_preference` 同族（用户偏好语义，非设备环境事实）。
 
-生效打扰档位落 `companion.disturbance_tier` 点键经本管道上云，是后端主动闸门（主动消息、cron 自主回合、情绪/空间推理入口）的唯一档位来源（权威边界见 [ARCHITECTURE.md §5.1](ARCHITECTURE.md)）；用户偏好另存 `companion.disturbance_preference` 供跨端恢复，水合只回写偏好、不回写生效值（生效值是设备派生的）。
+生效打扰档位落 `companion.disturbance_tier` 点键经本管道上云，是后端主动闸门（主动消息、cron 自主回合、情绪/空间推理入口）的唯一档位来源（权威边界见 [ARCHITECTURE.md §5.1](ARCHITECTURE.md)）；用户偏好另存 `companion.disturbance_preference` 供跨端恢复，水合只回写偏好、不回写生效值（生效值是设备派生的）。玻璃降级手动开关 `companion.reduce_transparency` 同为用户偏好键（跨端恢复；OS 减透明偏好与帧预算自动降级是设备派生信号，不上云）。
 
 Runner 侧不变：仅内存持有配置、每次工具调用读取，不读写磁盘配置文件。时序：Runner 就绪握手后、首个 execute_tool 前推一次 full config；此后每次设置保存再推一次；Runner 重启后内存配置清空，客户端在下次 runner_ready 时重新推送。**config 键明细见 runner 代码（utils/config.py）与 client（shared/lib/config-sync.ts 的白名单），本文只锁定所有权与同步契约。**
 

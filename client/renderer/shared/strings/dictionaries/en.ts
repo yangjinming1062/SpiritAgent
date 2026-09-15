@@ -472,7 +472,10 @@ export const dict: Dictionary = {
       materialSolid: 'Solid mode (classic)',
       materialSolidDesc:
         'Opaque surfaces in graphite and warm paper, with strong contrast — fits busier desktop backgrounds.',
-      materialSolidDayNight: 'Day / Night'
+      materialSolidDayNight: 'Day / Night',
+      reduceTransparency: 'Reduce transparency',
+      reduceTransparencyDesc:
+        'Turns off glass blur and solidifies panels to cut compositing cost; true transparency outside the window is unaffected.'
     },
     memory: {
       tabAriaLabel: 'Memory type',

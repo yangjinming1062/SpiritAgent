@@ -161,12 +161,18 @@ speech 拥有合成、音频播放、振幅与语音队列，消息读写经 §3
 
 ### 3D 初始化、功耗与缓存
 
-渲染器回退顺序归 [client README §4](../README.md)。[3D 入口](modules/character/rendering/3d/companion-3d.tsx)等待异步引擎就绪后再加载模型；经典 WebGL 回退必须更换 canvas，不能复用已获得另一种上下文的画布。
+渲染器回退顺序归 [client README §4](../README.md)。[3D 入口](modules/character/rendering/3d/companion-3d.tsx)等待异步引擎就绪后再加载模型；经典 WebGL 回退必须更换 canvas，不能复用已获得另一种上下文的画布。透明合成的预乘 alpha 约定钉在 [Engine.ts](modules/character/rendering/3d/Engine.ts) 头部注释：应用层不自行预乘也不二次预乘，全部依赖 three 内部的 WebGPU alphaMode / WebGL blend 约定；初始化日志记录实际后端与 GPU 适配器，`localStorage da.render.forceClassicWebgl=1` 可强制经典回退用于异常组合对照。
 
 - Chromium 为后台聊天关闭节流，因此引擎自己控制帧率与停止。[PowerProfile](modules/character/rendering/3d/PowerProfile.ts)决定活跃、空闲和休眠档，参数只在源码维护。首次模型落定前保持活跃；隐藏窗口不能依赖 rAF，用定时器续接；恢复时钳制时间增量，避免动画跳变。
 - [GLB 实例缓存](modules/character/rendering/3d/gltf-instance-cache.ts)按内容哈希复用解析模板。骨骼和实例动画状态需深克隆隔离；GPU 资源由模板引用计数管理，实例卸载不能释放其他实例仍使用的资源，淘汰与登出才安全回收。
 - [OPFS 缓存](shared/lib/opfs-blob-cache.ts)共享 GLB / PSD 的串行写入、预算淘汰与魔术字节校验；拉取、缓存写入和装配都尊重取消及登出代次，旧请求不能在清空后写回旧用户资产。缓存上限由各格式适配器维护。
 - 引擎 tick 异常后停止循环并上报，避免逐帧重抛；形象回退由 [companion-store.ts](modules/character/companion-store.ts)统一选择，产品可见性要求见 [DESIGN §1.2](../../docs/DESIGN.md)。
+
+### 玻璃降级与主题播种
+
+- [apply-no-blur.ts](shared/lib/apply-no-blur.ts) 把玻璃降级的四个来源（OS 减透明偏好、集显探测、用户「减少透明效果」开关、表面窗帧预算监视）汇成 `no-blur` class；降级语义与手动开关管道见 [client README §4](../README.md)。帧预算监视只在表面窗挂载，精灵窗不参与。
+- 生活空间房间图经 [baked-backdrop.ts](app/windows/living/baked-backdrop.ts)烘焙；远端签名图走主进程资源桥，避免 canvas CORS 读回失败。烘焙、原图回退与降级语义见 [client README §4](../README.md)，CSS 不再给烘焙位图叠加模糊。
+- 主题启动优先级：主进程播种的 URL 参数（配置镜像当前值）> localStorage 即时缓存 > 默认主题；参数在 [theme store](shared/store/theme.ts)模块加载时消费并从地址栏剥离，之后的变化一律走 IPC 广播。
 
 ### Puppet（2D 高保真渲染路径）
 

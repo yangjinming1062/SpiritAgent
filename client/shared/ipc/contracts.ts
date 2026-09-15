@@ -47,7 +47,7 @@ export type DesktopUpdateEvent =
   | { type: 'checking' }
 
 export interface DesktopRunnerStatusEvent {
-  type: 'error' | 'runner_ready' | 'running' | 'stopped'
+  type: 'error' | 'runner_ready' | 'running' | 'stopped' | 'stopping'
 }
 
 export type DesktopRunnerPhase = 'error' | 'idle' | 'running' | 'starting' | 'stopped' | 'stopping'
@@ -104,6 +104,9 @@ export function normalizeUiTheme(raw: unknown): SpiritAgentUiTheme {
 
   return 'day-clear'
 }
+
+/** 入口 HTML 播种参数名：主进程 loadURL 前把镜像里的主题写进查询串，渲染层首帧前消费。 */
+export const UI_THEME_URL_PARAM = 'ui_theme'
 
 // 入口面：互斥的两个 BrowserWindow。"closed" 仅渲染层用作占位，不进主进程 IPC 边界。
 export type SurfaceId = 'living' | 'workbench'

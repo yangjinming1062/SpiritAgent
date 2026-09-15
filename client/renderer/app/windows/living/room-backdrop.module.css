@@ -34,7 +34,8 @@ html[data-maximized='true'] .root {
   top: 0;
 }
 
-/* 清透档把房间图自身磨砂：Electron 对兄弟层 backdrop-filter 采样不可靠。模糊保持轻，才能看见房间。 */
+/* 烘焙位图（data-baked）自带模糊与 overscan，自身不再叠加 CSS filter；
+ * 下面的 CSS filter 只服务烘焙未就绪或失败时的回退路径。模糊保持轻，才能看见房间。 */
 html[data-effect='clear'] .backdropImage {
   filter: blur(18px) saturate(1.22);
   transform: scale(1.1);
@@ -68,12 +69,42 @@ html[data-effect='solid'] .backdropImage.status_pending {
   will-change: transform;
 }
 
+/* 烘焙位图自带 overscale（baked-backdrop.ts 的 BAKE_OVERSCAN），动画在
+ * 1.0–1.04 间漂移即可；1.1 基线是未烘焙路径补偿 blur 边缘用的。 */
+@keyframes ken-burns-baked {
+  from {
+    transform: scale(1);
+  }
+
+  to {
+    transform: scale(1.04);
+  }
+}
+
 html[data-effect='clear'] .kenBurns {
   animation-name: ken-burns-frosted;
 }
 
 html[data-effect='solid'] .kenBurns {
   animation-name: ken-burns-veiled;
+}
+
+html[data-effect] .backdropImage[data-baked='true'] {
+  filter: none;
+  transform: none;
+  transform-origin: 70% center;
+}
+
+html[data-effect][data-palette] .backdropImage[data-baked='true'].status_pending {
+  filter: brightness(1.07);
+}
+
+html[data-effect='clear'][data-palette='day'] .backdropImage[data-baked='true'].status_pending {
+  filter: brightness(1.041237);
+}
+
+html[data-effect] .backdropImage[data-baked='true'].kenBurns {
+  animation-name: ken-burns-baked;
 }
 
 @keyframes ken-burns {
@@ -177,6 +208,7 @@ html[class~='no-blur'] .backdropImage {
   transform: none;
 }
 
-html[class~='no-blur'] .kenBurns {
-  animation-name: ken-burns;
+html[class~='no-blur'] .backdropImage.kenBurns,
+html[class~='no-blur'] .backdropImage[data-baked='true'].kenBurns {
+  animation-name: ken-burns-baked;
 }
