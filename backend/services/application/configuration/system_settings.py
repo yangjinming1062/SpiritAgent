@@ -12,7 +12,7 @@ from components import (
 from fastapi import HTTPException
 from modules.settings import SystemSetting
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.configuration import prepare_ai_config, public_ai_config
@@ -182,6 +182,7 @@ async def save_system_settings(
         changed_keys = {key for key, value in normalized.items() if getattr(SETTINGS, key) != value}
 
         try:
+            pending_rows: list[SystemSetting] = []
             for key, value in serialized.items():
                 row = (
                     await db.execute(select(SystemSetting).where(SystemSetting.setting_key == key))
@@ -189,7 +190,20 @@ async def save_system_settings(
                 if row is not None:
                     row.setting_value = value
                 else:
-                    db.add(SystemSetting(setting_key=key, setting_value=value))
+                    pending_rows.append(SystemSetting(setting_key=key, setting_value=value))
+            if pending_rows:
+                max_id = await db.scalar(select(func.max(SystemSetting.id)))
+                if max_id is not None:
+                    # 外部导入（如 CSV 带显式 id 写入）不会推进自增序列，先对齐再插入，避免 nextval 撞已有主键。
+                    await db.execute(
+                        select(
+                            func.setval(
+                                func.pg_get_serial_sequence("system_settings", "id"),
+                                max_id,
+                            ),
+                        ),
+                    )
+                db.add_all(pending_rows)
             await db.commit()
         except Exception:
             await db.rollback()
