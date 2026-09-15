@@ -1,14 +1,14 @@
 # 模型生成能力链（3D 与 2D 分层动画）
 
-读者：后端 pipeline 维护者、新供应商接入方、客户端 2D / 3D 渲染引擎维护者。
+本文定义形象生成的参考选择、能力编排、失败恢复、产物及客户端兑现契约。适用于生成服务、供应商适配与渲染消费端的修改；产品流程见 [DESIGN.md](DESIGN.md)，接口与事件见 [PROTOCOL.md](PROTOCOL.md)，模块内部取舍见 [backend README](../backend/README.md) 和 [renderer README](../client/renderer/README.md)。
 
-本文档是 3D 生成链路与 2D 分层动画生成链路的唯一权威：种子图编排、供应商能力、链拓扑、失败语义、产物契约与客户端兑现策略只在这里展开。产品流程见 [DESIGN.md](DESIGN.md)，跨模块接口见 [PROTOCOL.md](PROTOCOL.md)，后端实现取舍见 [backend/README.md](../backend/README.md)。
+修改参考图与派生关系读 §1，接入 3D 供应商读 §2–§5，修改 2D 资产读 §6，传输、验证与源码入口读 §7–§9。源码维护能力声明和参数，本文解释各阶段为什么需要这些输入、如何恢复以及消费者能依赖什么。
 
 ## 1. 3D 链拓扑
 
 种子图提交并轮询 → 按能力绑骨并轮询 → 绑骨成功且动作清单非空时绑定动画并轮询 → 下载链末 GLB 到用户资产目录。跳过与恢复条件见下文及 §3。
 
-**种子图编排与参考选择**：
+### 1.1 共用参考与种子图派生
 
 - 头像种子图锚定角色身份。独立的全身种子图在头像确认后生成，以头像与角色定义补全身材比例，通过自然优美的姿态展现整体气质；不要求固定站姿，不使用建模姿态模板，也不直接作为 2D 拆分或图生 3D 的提交输入——两条链消费由它派生的种子图。每次重绘仍从头像出发，可附带用户参考图作为第二参考来补充体型、服装和姿态，身份以头像和角色定义为准；不用上一版全身图递归派生。
 - 房间背景、聊天画/拍自己及夜间出镜媒体使用独立全身种子图，文件缺失或不可读时停止生成并提示重新生成种子图。房间以全身种子图为图 1 锚定身份与身材，可附用户图片为图 2 参考室内布局、氛围与构图；用户要求时将图中人物的动作、朝向和位置转给精灵，按其物种与肢体结构调整，不复制参考人物的身份或额外加入人物。当前服装、发型和配饰来自衣柜激活外观的着装描述，缺少描述时沿用图 1；图 2 不改变穿着。双参考复用带分区标识的单图合成，不丢弃用户图或按多图能力重排供应商。用户文字要求优先于场景参考，场景参考优先于默认布置建议，身份、穿着与单角色画面约束始终保留。
@@ -20,18 +20,18 @@
 - 3D 种子存独立列、不覆盖 2D 正面种子（两者生命周期不同：2D 种子跨渲染模式长期服务 2D 资产重切分，3D 种子服务 3D 生成与向导断点恢复）；形象锁定不约束该路径（姿态/视角派生而非身份变更），锁定后生成的 3D 种子直接落正式资产目录，不经草稿 TTL；3D 正面种子重绘会使已派生的背面种子失效。
 - 双足姿态随画风路由：2D 立绘画风（cel_shading）自然站姿（see-through 拆分不要求 A-pose）；3D 画风（anime_game_cg / realistic）A-pose（绑骨识别与多视角一致性）。非双足骨架（四足/鸟/蛇等）姿态本为自然站/舒展，不随画风切换。
 
-**关键不变量**：
+### 1.2 3D 阶段与持久化
 
 - **任务 id 串联**：每跳用前跳的任务 id 作为输入，链不传递 GLB 二进制；链末产物只下载一次并落盘。
 - **能力缺位自动跳过**：无云端绑骨能力或绑骨失败时交付生模阶段的 GLB；只有绑骨成功且支持动画绑定、骨架具有预设动作时才进入动画绑定，否则交付已绑骨任务的 GLB（avian 即此情况）。
-- **每跳成功就地刷新任务 id 与下载地址**：重试下载与进程崩溃接续都从已持久化的任务恢复，**绝不重新计费**。
-- **提交后立即持久化任务句柄**（轮询前）：进程在轮询中崩溃时任务 id 不丢失，避免已付费但重启后被当作无状态重发的重复计费。
+- **成功阶段更新任务 id 与下载来源**：恢复优先使用已持久化的供应商任务，不因下载失败重新提交生模；持久化窗口与计费限制见 §3。
+- **生模提交后、轮询前保存任务句柄**：已保存句柄的任务可在重启后接续。绑骨与动画绑定当前在该阶段成功后才更新持久化记录，不能概括成每次提交都已落库。
 - **阶段标记标识当前任务在链上的位置**（submit / rig / animate）：崩溃接续据此判断产物是否为最终含动画的 GLB，并按序续跑后续跳。
 - **动作映射只在动画绑定真正成功时持久化**：空字典代表该骨架不产出动画（avian 或绑定失败）；客户端拿到非空映射会去 GLB 里兑现动作，空映射是契约硬面。
 
 ## 2. 能力声明
 
-定义在 `ImageTo3DProvider`（`backend/services/infrastructure/image_to_3d/base.py`）：
+能力声明与方法签名见 [ImageTo3DProvider](../backend/services/infrastructure/image_to_3d/base.py)：
 
 | ClassVar / 方法 | 含义 |
 | --- | --- |
@@ -41,7 +41,7 @@
 | `SUPPORTS_MULTIVIEW` | 提交方法是否按多图模式消费种子图；关闭时编排侧只提交正面图 |
 | `SUPPORTS_NEGATIVE_PROMPT` | 是否接受 negative prompt |
 
-接入新供应商：继承 `ImageTo3DProvider`、覆写 ClassVar 与三个抽象方法（`create_image_to_model` / `poll` / `download`），可选覆写 `start_rig` / `start_animate_bind` / `animation_clips`（默认实现抛 `ImageTo3DError` 等价于"不支持"）。
+接入供应商时，能力位必须与已实现的方法一致。生模、轮询和下载为必需入口；可选绑骨、动画绑定默认不支持，相应启动方法抛 `ImageTo3DError`；`animation_clips` 默认返回空字典。只声明能力位而未实现对应方法，不能视为接入完成。
 
 ## 3. 失败与重试语义
 
@@ -51,31 +51,34 @@
 | `download_failed_retryable` | 下载环节失败，付费结果仍在 | True |
 | `provider_unconfigured` | 未配置供应商 | False |
 
-**进程崩溃接续**（启动时自驱接续）：
+**进程崩溃接续**：启动时根据持久化阶段和任务 id 恢复，先查询并在必要时继续轮询当前任务；任务完成后再续跑后续阶段。
 
-- 动画绑定阶段 + 任务 id 存在 → 仅下载（链末产物已含动画）
+- 动画绑定阶段 + 任务 id 存在 → 下载链末产物，不再次绑定动画
 - 绑骨阶段 + 任务 id 存在 → 续跑动画绑定与下载（绑骨已付费，不重发）
 - 提交阶段 + 任务 id 存在 → 续跑绑骨、动画绑定与下载（生模已付费，不重发）
 - 任一阶段若任务 id 缺失 → 安全侧判定生成失败并允许用户重生成
 
+**当前恢复限制**：绑骨与动画绑定的句柄在该阶段成功后才保存；提交至落库之间若进程退出，恢复可能从上一阶段重新提交该跳。生模提交至首次保存之间也存在未捕获句柄的窗口。因此恢复机制不能保证供应商不重复计费，下载地址与任务的外部保留期也不能由本地状态保证。修改恢复流程时须核对这些提交窗口，不能以“绝不重新计费”代替已实现的幂等保障。
+
 **模型记录与激活状态**：每次新生成请求创建独立记录行并解除旧记录激活态；新产物就绪后原子置为当前唯一生效模型。非强制生成请求自动复用已生效模型，避免重复调用。
 
 **失败重发的真实状态探针**：本地判为失败但记录持有任务 id 时，下次发起生成请求先向供应商查询真实任务状态——三态决策：
+
 - 供应商任务已成功 → 置为待下载并由流程自驱续跑（避免重复计费）
-- 供应商任务确认失败、取消或封禁 → 允许创建新记录重新提交（供应商失败不计费）
+- 供应商返回终态失败 → 允许创建新记录重新提交；是否计费由供应商决定
 - 网络异常、任务排队中或状态未知 → 保持现有状态且不重发提交，杜绝盲目重发带来的重复计费风险。
 
 本地异常退出不代表供应商任务失败：只有明确确认失败才允许重发；无法确认时保持现状供排查。
 
 ## 4. 3D 产物契约（Tripo3D `spec=tripo`）
 
-`spec=tripo` 是当前唯一可用的骨骼命名规范——`mixamo` 命名不被云端动画绑定端点接受（实测 `error_code 1004`）。
+本项目 Tripo 集成使用 `spec=tripo`，以保持绑骨与动画绑定端点的命名兼容。修改骨骼规范时必须验证整条能力链，不能只验证生模成功；配置和预设映射见 [Tripo 适配器](../backend/services/infrastructure/image_to_3d/providers/tripo/client.py)。
 
 **命名约定**：零关节前缀（`Hips` / `Root` 视 rig 而定）；`L_` / `R_` 左右前缀；`*Twist01` / `*Twist02` 是蒙皮辅助骨，动画 track 不要直接引用；无 Eye / Jaw 节点（面部情绪走聊天窗头像）。
 
-**绑骨算法版本与 preset 命名空间正交**：`spec` 是骨骼命名，`model` 是绑骨算法版本。biped 走 `v1.0-20240301` 解锁 90+ 个 `preset:biped:*` 预设库；其余 6 类走 `v2.5-20260210`。
+**绑骨算法与命名空间分开配置**：`spec` 决定骨骼命名，`model` 决定绑骨算法版本。双足与其他骨架使用不同算法版本，具体值以适配器常量为准；升级版本时同时验证可用预设与客户端骨骼引用。
 
-**预设 token 表**（每条单独计费，故只绑产品必需最小集；biped 还受 Tripo `retarget` 单次 ≤ 5 动画的硬限制约束——超出返回 `code=1004 "animations size must be <= 5"`）：
+**当前预设选择**：只绑定产品实际使用的最小动作集，兼顾供应商容量与生成成本；提交 token 以适配器映射为准。
 
 | rig_type | 预设 token |
 | --- | --- |
@@ -90,33 +93,30 @@
 
 **映射下发路径**：`provider.animation_clips(rig_type)` 是声明式权威；落库到 `clip_map_json`；随 `model.ready` 事件 + `GET /api/companion/model` 响应一起下发。客户端**不持有任何供应商命名**。
 
-**客户端兑现**（`AnimationMap.ts::resolveClip`）：供应商不承诺写进 GLB 的 clip 名与提交的 token 逐字一致，按三级降级——精确候选 → 叶名精确 → 叶名子串，大小写不敏感。
+**客户端兑现**（[AnimationMap.ts](../client/renderer/modules/character/rendering/3d/AnimationMap.ts) 的 `resolveClip`）：先取语义键对应的候选，缺键时统一尝试 `idle` 映射；再按候选全名精确匹配 → 去除命名空间后的叶名精确匹配 → 叶名子串匹配查找 GLB 动画。后两级忽略大小写，全名匹配保留原始名称。
 
 **缺失键兜底**：
 
-- 状态 / 交互反馈类键缺席 → 客户端回退 `idle`，符合"永不空白"
-- LLM 可请求类键缺席 → 客户端兑现落空停在绑定姿势；LLM 端因清单里没有该键而无法误请求
+- 任意语义键缺席 → 尝试 `idle`，不区分状态键与模型可请求键。
+- 没有候选或三级名称匹配均失败 → 返回空结果，保持绑定姿势，不抛错；不会在候选名称匹配失败后再额外尝试 `idle`。
+- 模型能力清单限制可请求语义键，不能证明供应商 GLB 中一定有可匹配动画；接入验证须检查真实产物。
 
 ## 6. 2D 分层动画能力链
 
-2D 拆分只走 see-through 一条产物链：主用 HF Space、备用魔搭 ModelScope（主用任何失败自动切换），行状态机 / WS 事件 / 衣柜接缝复用；渲染级联为 puppet（PSD）→ 3D → 程序化蛋。每用户一条激活 2d 行由部分唯一索引硬保证，所有激活翻转（穿着、非 outfit 成功接缝）共用先停用后激活顺序。
+2D 拆分采用 see-through 分层 PSD 产物链，主用 HF Space、备用魔搭 ModelScope，复用形象状态、事件与衣橱交付。每用户最多一条激活 2D 行，穿着和非外观生成的激活切换都须先停用旧行再激活新行，受数据库唯一约束保护。显示模式与兜底顺序归 [DESIGN §1.2](DESIGN.md#12-渲染模式与降级体系永不空白)。
 
 ### 6.1 PSD 链（see-through 双 provider）
 
 立绘并行进入两条分支：分层拆分（HF Gradio 上传、推理、SSE 轮询，失败切魔搭）与左右姿态 / 闭眼附件生成。两分支完成后统一入库并发布描述符；备用策略见下文，姿态可加载约束见 §6.2。
 
-**Provider 策略**（实现与配置面见 [backend/services/infrastructure/seethrough/](../backend/services/infrastructure/seethrough/)）：
+**供应商策略**（实现与配置见 [seethrough](../backend/services/infrastructure/seethrough/)）：
+
 - 主用失败切备用各试一次、单 provider 不重试（烧额度）；主用确认每日限额（错误文案 / HTTP 429 / 402）后进程内冷却 6 小时直连备用。
 - 双 provider 共享 1740s 墙钟预算，兜在 outfit 拆分 30 分钟清扫窗口内；魔搭 complete 载荷的文件 URL 落在 ms.show 运行域（拒 Bearer 头），客户端统一改写回 provider 域下载。
 
 **产物契约**：描述符包含分层 PSD 与独立姿态包；姿态包按图层资产通道签名下发，内容哈希随完整资产包更新。PSD 内为 22 语义层（face / eyewhite / irides / eyelash / eyebrow / mouth / nose / neck / ears / front hair / back hair / topwear / bottomwear / legwear / handwear / footwear 等，含肢体节段划分与遮挡补全），层名可带 `-l/-r` 侧后缀与 upper/lower/hand 节段后缀。
 
-**客户端兑现**（[client/renderer/modules/character/rendering/2d/puppet/](../client/renderer/modules/character/rendering/2d/puppet/)，机制细节见模块 README）：
-- PSD → vendor rigger（Anime2.5DRig，MIT）语义装配；保留四肢与服装原始层级顺序；see-through 的 `-l/-r` 侧名与节段后缀在装配边界补齐 side / fade / 眼与四肢锚点。
-- 每层 alpha 轮廓 ArtMesh（增量 Delaunay）+ 头部与身体解耦：头部保留双表面控制笼（圆投影伪 3D 转头 / 六点深度曲线 / 远眼收窄 / 周边可见度）+ 次级运动（发束 4 节点弹簧链 / 裙双频 / 耳事件 / 呆毛 / 种子化自主观察段落）；身体图层走 18 骨骼层次结构与线性混合蒙皮（2-Bone 解析 IK 与解剖学限位求解）。
-- 步态双脚反向接地补偿与对侧摆臂（支撑相零脚滑接地、摆动相抛物线抬腿、350ms 平滑指数衰减停步中立）；扶边使用独立姿态图与参数化变形；拖拽通过本地速度驱动抓取点悬挂与松手回正，机制约束见木偶模块 README。
-- 13 姿态安全验证（三角形翻转 / 边拉伸）按动作缩放阶梯（1→0.25）取首个全绿档；PSD 语义完整度三级分档（semantic / grouped / minimal）与四肢分档（segmented / sided / blob）门控机制与幅度。
-- 驱动层：情绪（[PROTOCOL.md §1.4](PROTOCOL.md) 22 词表）→ 面部参数、动作白名单 → 定时包络与四肢逆运动学目标（悬挂和贴边接触约束优先）、TTS 振幅 → 嘴型、部件命中区域（当前帧网格精确点测）走 `$mesh2dHitmap` 交互总线。
+**客户端兑现**：装配边界解释图层语义、左右侧与肢体节段，保留原始遮挡顺序；素材完整度决定可用机制与动作幅度。面部、身体、步态和接触姿态不能各自破坏其他通道的约束，嘴型跟随实际音频。网格、骨骼、形变、动作互斥和命中检测的内部细节统一见 [puppet README](../client/renderer/modules/character/rendering/2d/puppet/README.md)；公共情绪与动作语义见 [PROTOCOL §1.4](PROTOCOL.md#14-聊天心情视觉表达与空间契约)。
 
 ### 6.2 扶边姿态包
 
@@ -136,19 +136,22 @@
 
 ## 7. 渲染与传输
 
-- **3D 客户端**：纯 GLB 播放渲染引擎——动画全部来自 `gltf.animations`，无程序化注入；Gzip 透明解压与 OPFS 内容哈希缓存。
+- **3D 客户端**：基础动画播放使用 `gltf.animations` 与后端动作映射，客户端不自行拼装供应商预设；姿态、视线与空间呈现见 [renderer README](../client/renderer/README.md)。下载与内容哈希缓存见 [PROTOCOL §1.5](PROTOCOL.md#15-资产-url-签名与传输缓存)。
 - **2D 客户端**：puppet（WebGL 原生，Alpha 轮廓网格 + 逐顶点形变）；姿态纹理按需载入，隐藏姿态不逐帧绘制。
 
-## 8. 验证 checklist
+## 8. 按改动选择验证
 
-- [ ] clip track 引用的 bone name 与 `spec=tripo` 对应 rig 的层级一致
-- [ ] biped 颈段取 `NeckTwist01` 兜底（`spec=tripo` 无 `Neck` 节点）
-- [ ] 客户端兑现按三级降级落空时回退到绑定姿势而非抛错
+- 参考图与提示词变化：核对完整要求、身份和穿着来源、输入顺序及派生失效关系；生成质量结论须检查真实产物。
+- 3D 能力或供应商变化：检查实际 GLB 的骨骼、轨道与动作映射，覆盖缺失能力、空映射和名称匹配失败；绑定姿势兜底不能被当作动画验收通过。
+- 2D 资产变化：检查完整包、左右姿态与闭眼附件、签名和哈希，覆盖单分支失败、旧外观保留与缺少可选控制区；可加载校验与视觉质量分别说明。
+- 恢复与状态变化：覆盖提交至落库窗口、轮询中断、下载重试、失败探针和迟到结果；说明供应商真实调用与本地模拟分别验证了什么。
+
+仅修改文档时按 [RULES](../RULES.md) 检查事实与链接，不要求重新触发付费生成。模块验证与仓库检查入口见 [scripts README](../scripts/README.md)。
 
 ## 9. 参考实现
 
-- 3D 能力链编排：`backend/services/application/generation/pipeline.py::run_capability_chain`
-- 2D see-through 拆分：`backend/services/infrastructure/seethrough/`（双供应商传输；完整资产发布由 mesh2d 编排）
-- 2D 行编排（状态机 / 落库 / WS 事件）：`backend/services/application/generation/mesh2d/pipeline.py::run_mesh2d_pipeline`
-- 3D 客户端兑现：`client/renderer/modules/character/rendering/3d/AnimationMap.ts`
-- 2D puppet 链客户端：`client/renderer/modules/character/rendering/2d/puppet/PuppetStage.tsx`（renderer README 含机制）
+- [3D 能力链编排](../backend/services/application/generation/pipeline.py)：阶段持久化、能力跳转、失败探针与恢复。
+- [see-through 适配](../backend/services/infrastructure/seethrough/)：分层服务的请求、轮询和下载。
+- [2D 完整包编排](../backend/services/application/generation/mesh2d/pipeline.py)：并行分支、状态、入库与事件。
+- [3D 动作兑现](../client/renderer/modules/character/rendering/3d/AnimationMap.ts)：语义键与真实 clip 名称匹配。
+- [2D 渲染入口](../client/renderer/modules/character/rendering/2d/puppet/PuppetStage.tsx)：装配与表达通道，内部约束见同目录 README。

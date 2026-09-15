@@ -10,6 +10,6 @@
 | 3D / 2D 生成链、供应商能力、产物与兑现 | [docs/PIPELINE.md](docs/PIPELINE.md) |
 | 后端 / 客户端 / 本地工具 / 安装 | [backend](backend/README.md)、[client](client/README.md)、[runner](runner/README.md)、[installer](installer/README.md) |
 | 构建、发布与仓库级检查 | [scripts/README.md](scripts/README.md) |
-| 漏洞报告与安全事件 | [docs/SECURITY.md](docs/SECURITY.md) |
+| 凭据、准入与更新安全 | [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md#7-安全与准入控制架构原则)、[docs/PROTOCOL.md §5](docs/PROTOCOL.md#5-跨模块安全契约) |
 
 提交前按 RULES 执行相关验证，同步受影响的文档与链接；发布推送 `v<semver>` tag，由 GitHub Actions 完成双平台构建与 release 草稿（操作见 [scripts/README.md](scripts/README.md)）。

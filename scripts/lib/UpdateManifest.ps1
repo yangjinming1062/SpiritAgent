@@ -19,11 +19,8 @@ function Resolve-OpenSsl {
     throw "openssl not found. Install Git for Windows (includes openssl) or add openssl to PATH."
 }
 
-# Resolve-UpdateSigningKey — locates the PEM private key used to sign release manifests.
-# The key MUST live outside the repo: an env var points to it, otherwise the well-known
-# per-user default is used. An earlier revision stored the key under scripts/secrets/
-# in the repo itself, which forced a wholesale keypair rotation and history rewrite
-# (see docs/SECURITY.md).
+# 签名私钥必须保存在仓库外；环境变量传 PEM 文件路径，缺省读取用户目录。
+# 本地与 CI 的配置区别见 scripts/release-keys/README.md。
 function Resolve-UpdateSigningKey {
     [CmdletBinding()]
     param()
