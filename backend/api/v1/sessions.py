@@ -46,7 +46,6 @@ router = get_router()
 
 logger = get_logger(__name__)
 
-
 # 列表/搜索预览关联子查询：取首条非空 user 消息并在 SQL 层截断，避免大文本/多模态造成整页 IO 放大
 _preview_subquery = (
     select(func.substr(Message.content, 1, SESSION_PREVIEW_MAX_CHARS))

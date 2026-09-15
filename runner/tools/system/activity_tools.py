@@ -18,13 +18,11 @@ from .activity import (
 
 logger = logging.getLogger(__name__)
 
-
 SYSTEM_GET_IDLE_SCHEMA = {
     "name": "system.get_idle_seconds",
     "description": "Seconds since the last user input. Cheap; safe to poll.",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
-
 
 SYSTEM_IS_LOCKED_SCHEMA = {
     "name": "system.is_screen_locked",
@@ -34,13 +32,11 @@ SYSTEM_IS_LOCKED_SCHEMA = {
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
-
 SYSTEM_FOCUS_SCHEMA = {
     "name": "system.get_focused_app",
     "description": ("{name, pid, kind} for the foreground app; {} when unknown."),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
-
 
 SYSTEM_IS_FULLSCREEN_SCHEMA = {
     "name": "system.is_fullscreen",
@@ -49,7 +45,6 @@ SYSTEM_IS_FULLSCREEN_SCHEMA = {
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
-
 
 SYSTEM_SNAPSHOT_SCHEMA = {
     "name": "system.snapshot",
@@ -60,20 +55,17 @@ SYSTEM_SNAPSHOT_SCHEMA = {
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
-
 SYSTEM_POWER_SCHEMA = {
     "name": "system.get_power_state",
     "description": "{on_battery, screen_on, charging} — booleans default to False/True.",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
-
 SYSTEM_GET_WINDOWS_SCHEMA = {
     "name": "system.get_windows",
     "description": ("Visible top-level windows with geometry: {windows: [{title, name, x, y, w, h, focused}, ...]}."),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
-
 
 SYSTEM_OPEN_APP_SCHEMA = {
     "name": "system.open_application",
@@ -87,20 +79,17 @@ SYSTEM_OPEN_APP_SCHEMA = {
     },
 }
 
-
 SYSTEM_GET_WORK_AREA_SCHEMA = {
     "name": "system.get_work_area",
     "description": "Returns primary display's working area bounds: {x, y, w, h} excluding taskbars/docks.",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
-
 SYSTEM_GET_CURSOR_POS_SCHEMA = {
     "name": "system.get_cursor_pos",
     "description": "Returns current global mouse cursor position: {x, y}.",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
-
 
 SYSTEM_CLICK_AT_SCHEMA = {
     "name": "system.click_at",

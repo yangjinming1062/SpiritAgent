@@ -237,7 +237,6 @@ _inflight_prompt: set[int] = set()
 SHOULD_ACT_ANTIDUP_SECONDS = 2.0
 _last_should_act_ts: dict[int, float] = {}
 
-
 # avatar.* RPC 创建的 task，关停时由 drain 收尾。
 _avatar_regen_tasks: set[asyncio.Task] = set()
 

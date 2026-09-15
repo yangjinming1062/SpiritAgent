@@ -40,7 +40,6 @@ _TITLE_PROMPTS: dict[str, str] = {
     ),
 }
 
-
 _TITLE_PREFIX = "title:"
 
 

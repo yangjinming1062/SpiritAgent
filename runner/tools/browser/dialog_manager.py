@@ -16,7 +16,6 @@ from typing import Any, Protocol
 
 logger = logging.getLogger(__name__)
 
-
 DIALOG_POLICY_MUST_RESPOND = "must_respond"
 DIALOG_POLICY_AUTO_DISMISS = "auto_dismiss"
 DIALOG_POLICY_AUTO_ACCEPT = "auto_accept"

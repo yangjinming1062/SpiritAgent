@@ -93,7 +93,6 @@ AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(
     },
 )
 
-
 # 中英文表达同一套职业判断；工具操作与通用协作要求归共享块，不在头部重复。
 _PRESET_HEADER_TEXTS: dict[str, dict[str, str]] = {
     "developer": {

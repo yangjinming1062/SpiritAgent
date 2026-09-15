@@ -74,7 +74,6 @@ BROWSER_CLICK_SCHEMA: dict[str, Any] = {
     },
 }
 
-
 BROWSER_TYPE_SCHEMA: dict[str, Any] = {
     "name": "browser_type",
     "description": (
@@ -572,7 +571,6 @@ BROWSER_VISION_SCHEMA: dict[str, Any] = {
         "required": [],
     },
 }
-
 
 BROWSER_CONSOLE_SCHEMA: dict[str, Any] = {
     "name": "browser_console",

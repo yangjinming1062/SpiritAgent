@@ -83,7 +83,6 @@ class ClassifiedError:
 
 _ClassifierBuilder = Callable[..., ClassifiedError]
 
-
 # 403/404 消歧与无 SDK 信号的消息 fallback 用；主路径已被 SDK RateLimitError + _BILLING_ERROR_CODES 覆盖。
 _BILLING_PATTERNS = (
     "insufficient credits",
@@ -133,7 +132,6 @@ _IMAGE_TOO_LARGE_PATTERNS = (
 
 # 生图供应商返回 200 但零张图：同一供应商上重试无意义，下一家可能成功。
 _EMPTY_IMAGE_RESULT_PATTERNS = ("returned no images",)
-
 
 # 模型存在但拒绝图像/视频输入 —— 走 model_not_found 的回退路径。
 _VISION_UNSUPPORTED_PATTERNS = (

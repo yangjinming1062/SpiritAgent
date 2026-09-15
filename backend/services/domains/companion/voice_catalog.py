@@ -21,7 +21,6 @@ _GENDER_KEYWORDS: dict[str, list[str]] = {
     "male": ["male", "男", "男声", "少年", "正太"],
 }
 
-
 # 稳定排序序位：zh → multi → ∅ → en，桶内保持原始顺序；放模块级避免每次调用重新分配
 _LANGUAGE_BUCKET: dict[str, int] = {"zh": 0, "multi": 1, "": 2, "en": 3}
 

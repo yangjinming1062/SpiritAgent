@@ -16,7 +16,6 @@ from components import get_logger
 
 logger = get_logger(__name__)
 
-
 SlashCommandStatus = Literal["ok", "error"]
 
 

@@ -1210,7 +1210,6 @@ EXECUTE_CODE_SCHEMA = {
     },
 }
 
-
 registry.register_tool("execute_code", schema=EXECUTE_CODE_SCHEMA)(
     lambda args, **_kw: execute_code(code=args.get("code", "")),
 )

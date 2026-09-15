@@ -53,7 +53,6 @@ _RETARGET_CLIPS.update(
     },
 )
 
-
 # P 系列为低面数优化并封顶 ``face_limit``；封顶保护切换到 P 系列 id 的运营人员。
 _P_SERIES_FACE_LIMIT_MAX: int = 20_000
 

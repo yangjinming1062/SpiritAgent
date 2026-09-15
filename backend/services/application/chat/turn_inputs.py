@@ -70,7 +70,6 @@ from .system_prompt import build_system_prompt
 
 logger = get_logger(__name__)
 
-
 # 三家 Responses 供应商共同接受的安全枚举；供应商专属档位在 provider 层过滤。
 ALLOWED_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high"})
 

@@ -21,7 +21,6 @@ from .engine import (
 
 logger = logging.getLogger(__name__)
 
-
 AX_REF_PATTERN = re.compile(r"^@?e\d+$")
 COORD_REF_PATTERN = re.compile(r"^@?(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$")
 

@@ -10,7 +10,6 @@ from modules.memory import MEMORY_EMBEDDING_DIM
 if TYPE_CHECKING:
     from modules.auth import User
 
-
 MANIFEST_FORMAT = "spiritagent-user-backup"
 TABLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 

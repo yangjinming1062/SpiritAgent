@@ -6,7 +6,6 @@ from components import get_logger
 
 logger = get_logger(__name__)
 
-
 # Responses API 输入媒体 part 类型 → 老轮次占位文本；``truncate_responses_context`` 窗口外替换使用。
 _MEDIA_PART_PLACEHOLDERS = {"input_image": "[screenshot]", "input_video": "[video]"}
 

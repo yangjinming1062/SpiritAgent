@@ -9,7 +9,6 @@ from ..http import get_http
 
 logger = logging.getLogger(__name__)
 
-
 # xAI 已发布内置音色目录的子集（https://docs.x.ai/docs/rest-api-reference/inference/voice — GET /v1/tts/voices）；按性别/音色分桶每桶取一条；运行时若配置了 API key 可向运行端点扩展。
 _GROK_VOICES: tuple[tuple[str, str, str], ...] = (
     ("eve", "Eve", "female"),  # docs default

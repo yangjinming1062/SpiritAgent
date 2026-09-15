@@ -37,7 +37,6 @@ from .refs import Refs, SessionIds
 
 logger = logging.getLogger(__name__)
 
-
 _CDP_BACKOFF_MAX = 10.0
 
 _UNSET: Any = object()
@@ -46,7 +45,6 @@ CONSOLE_HISTORY_MAX = 50
 
 DIALOG_BRIDGE_HOST = "spiritagent-dialog-bridge.invalid"
 DIALOG_BRIDGE_URL_PATTERN = f"http://{DIALOG_BRIDGE_HOST}/*"
-
 
 _DIALOG_BRIDGE_SCRIPT = r"""
 (() => {

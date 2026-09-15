@@ -20,7 +20,6 @@ logger = logging.getLogger(__name__)
 
 PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z][A-Z0-9_]{2,40})\}\}")
 
-
 # 双语提示词块：所有 dict 的值是一段完整 prompt 文本；键必须是 SUPPORTED_LANGUAGES 集合内的 lang code（默认 zh/en）。
 # STEER_MARKER_OPEN / CLOSE 是协议级 marker，LLM 输出端要识别，不参与语言切换，保持英文。
 _COMPANION_CHAT_GUIDANCES: dict[str, str] = {

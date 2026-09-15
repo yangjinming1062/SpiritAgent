@@ -82,10 +82,14 @@ def _popen_bash(cmd: list[str], stdin_data: str | None = None, **kwargs) -> subp
 
 class ProcessHandle(Protocol):
     def poll(self) -> int | None: ...
+
     def kill(self) -> None: ...
+
     def wait(self, timeout: float | None = None) -> int: ...
+
     @property
     def stdout(self) -> IO[str] | None: ...
+
     @property
     def returncode(self) -> int | None: ...
 
@@ -128,6 +132,7 @@ class BaseEnvironment(ABC):
 
     @abstractmethod
     def cleanup(self) -> None: ...
+
     def init_session(self) -> None:
         bootstrap = (
             f"export -p > {shlex.quote(self._snapshot_path)}\n"

@@ -37,7 +37,6 @@ _BACKTICK_RE = re.compile(r"`[^`]*`")
 _cfg = load_config()
 FOREGROUND_MAX_TIMEOUT = cfg_get(_cfg, "terminal", "max_foreground_timeout", default=DEFAULT_FOREGROUND_MAX_TIMEOUT)
 
-
 _WORKDIR_SAFE_RE = re.compile(r"^[A-Za-z0-9/\\:_\-.~ +@=,]+$")
 
 
