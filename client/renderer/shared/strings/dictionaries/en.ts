@@ -949,7 +949,7 @@ export const dict: Dictionary = {
       autoWearAfterSplit: 'Auto-wear once split completes',
       actions: {
         continueDesign: 'Continue design',
-        continueDesignTitle: 'Continue designing this draft',
+        continueDesignTitle: 'Refine and redraw this look',
         wear: 'Wear',
         wearTitle: 'Wear this look',
         retry: 'Retry',

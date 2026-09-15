@@ -69,7 +69,7 @@
 | POST /api/companion/render-mode | 切换并持久化伙伴渲染模式（`2d` / `3d`） | Backend 持久化 + Client 实时切换 |
 | companion.model.retryDownload | 仅重试下载已付费的 3D 生成结果，不重新提交生成 | Backend 生成管线 + Client 失败态入口 |
 | POST /api/companion/avatar（含 /from-image、/upload）、/avatar/{id}/select 与 GET /avatar/history | 半身头像生成（含上传参考图重绘、直接上传头像）/ 历史形象切换激活 / 历史查询 | Backend 生成与上传 + Client 头像确认与历史画廊 + DESIGN §5.4 |
-| GET/POST /api/companion/outfits 与 PATCH /policy、POST /{id}/regenerate、/{id}/confirm、PUT /{id}/activate、DELETE /{id} | 2D 换装衣柜：外观列表同时返回自主换装政策；每项的 `asset` 为该外观最新成功的 2D 包（复用 `Companion2DModelResponse` 的签名 manifest、图层 URL 与整包哈希），非就绪项或无成功包返回 null，读取不激活外观、不生成资产；草稿生成（着装描述 + 可选服装参考图，身份与身材恒为全身种子图主参考）/ 微调重绘 / 确认转正并触发 2D 切分（failed 可重试切分）/ 即时穿着 / 删除（穿着中与切分中拒绝）。政策取值为 `locked` / `llm_may_replace`，只门控夜间自主穿着与添置，不限制用户操作。生成走独立小时级频控，不设数量上限 | Backend 生成管线 + Client 衣柜 + DESIGN §1.1 / §8 |
+| GET/POST /api/companion/outfits 与 PATCH /policy、POST /{id}/regenerate、/{id}/confirm、PUT /{id}/activate、DELETE /{id} | 2D 换装衣柜：外观列表同时返回自主换装政策；每项的 `asset` 为该外观最新成功的 2D 包（复用 `Companion2DModelResponse` 的签名 manifest、图层 URL 与整包哈希），非就绪项或无成功包返回 null，读取不激活外观、不生成资产；草稿生成（着装描述 + 可选服装参考图，身份与身材恒为全身种子图主参考）/ 微调重绘（draft 或 failed 可用，成功后置 draft，重新确认才生成资产）/ 确认转正并触发 2D 切分（failed 可复用原立绘重试）/ 即时穿着 / 删除（穿着中与切分中拒绝）。政策取值为 `locked` / `llm_may_replace`，只门控夜间自主穿着与添置，不限制用户操作。生成走独立小时级频控，不设数量上限 | Backend 生成管线 + Client 衣柜 + DESIGN §1.1 / §8 |
 | GET /api/companion/room 与 POST /generate、POST /activate、PATCH /policy、GET /{id} | 生活空间房间背景：水合房间状态（active / history[≤5] / policy / pending）/ 用户主动生成（202 异步，不占角色配额；可选 `notes` ≤ 500 字符、`image` 为非空 base64 且 ≤ 8 MiB 字符，`content_type` 为 PNG / JPEG / WebP / GIF 的 MIME，缺省 image/png；参考图读取或解码失败拒绝调度）/ 激活回滚历史房间（着装指纹不一致回 409）/ 政策切换（locked / llm_may_replace）/ 房间详情 | Backend companion_room / room_backdrop_service + Client room-backdrop / 生活空间设置 |
 | GET /api/companion/moments 与 DELETE /{id}、POST /{id}/comments、DELETE /{id}/comments/{comment_id} | 生活空间时刻（精灵主导的朋友圈）：游标分页查询（cursor/limit/kind）/ 软隐藏整条时刻 / 用户评论 / 删除本人评论，评论提交后精灵后台异步生成回复。响应媒体契约含 `media_url`、`media_type`（空串/image/video/audio）、可选 `audio_url`、`media_metadata` 与内嵌 `comments`（`role` 为 user/companion）；视频或图片可携同片刻配音。用户不可创建或编辑时刻 | Backend companion_journal / journal_service / application/moments + Client moments-page |
 | GET /api/companion/diary 与 GET /{date}、POST、PATCH /{id} | 生活空间日记：区间拉取日记 / 指定自然日日记查询 / 用户手工补写或编辑日记（支持段落追加保护） | Backend companion_journal / journal_service + Client diary-page |
@@ -109,7 +109,7 @@
 | model.ready / model.gen.progress / model.failed | 3D 模型就绪 / 进度 / 失败；载荷契约与产物映射见 [docs/PIPELINE.md](PIPELINE.md) | Client 加载与状态展示 |
 | companion.2d.ready / .failed | 2D 完整资产包就绪 / 失败；客户端刷新当前资产及签名地址，分层立绘与扶边姿态的完整性约束见 [能力链说明](PIPELINE.md#62-扶边姿态包) | Client 水合 puppet 渲染路径 |
 | companion.render_mode.changed | 用户在设置中或多端同步切换渲染模式（`2d` / `3d`） | Client 切换展示画布 |
-| companion.outfit.updated / .failed | 换装外观状态变化（切分就绪 / 穿着翻转 / 删除，载荷含 outfit_id 与 worn 标记）/ 切分失败（含原因） | Client 重拉衣柜列表；worn 变化时重水合 2D 渲染层（与 2d.ready 双触发幂等，事件只当刷新触发、列表端点是真相源） |
+| companion.outfit.updated / .failed | 换装外观状态变化（重绘为草稿 / 切分就绪 / 穿着翻转 / 删除，载荷含 outfit_id 与 worn 标记）/ 切分失败（含原因） | Client 重拉衣柜列表；worn 为 true 时重水合 2D 渲染层（与 2d.ready 双触发幂等，重绘只刷新衣柜，事件只当刷新触发、列表端点是真相源） |
 | companion.room.progress | 房间图生图三段进度（brief / imagine / store），载荷 `{backdrop_id, stage}` | Client 在生活空间显示生成进度条 |
 | companion.room.ready | 房间图就绪，载荷 `{backdrop_id, url, brief, origin, outfit_fingerprint}` | Client 把生活空间背景切到新图 |
 | companion.room.failed | 房间图生成失败（无供应商名），载荷 `{backdrop_id, utterance}` | Client 用玻璃底展示失败态，并朗读 utterance |

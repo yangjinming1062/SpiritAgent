@@ -195,7 +195,7 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
     }
 
     case 'companion.outfit.updated': {
-      // 衣柜状态变化（切分就绪/穿着翻转/删除）——重拉列表；列表端点是真相源，事件只当刷新触发。
+      // 衣柜状态变化（重绘草稿/切分就绪/穿着翻转/删除）——重拉列表；列表端点是真相源，事件只当刷新触发。
       // 仅穿着翻转时重水合 2d（幂等，与 2d.ready 双触发无妨）；入柜不换装与删除不动当前穿着。
       const p = decodePayload<{ worn?: boolean }>(event.payload)
 

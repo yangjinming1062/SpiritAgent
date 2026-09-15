@@ -104,10 +104,9 @@ async def _get_outfit(
 ) -> CompanionOutfit | None:
     return (
         await db.execute(
-            select(CompanionOutfit).where(
-                CompanionOutfit.id == outfit_id,
-                CompanionOutfit.user_id == user_id,
-            ),
+            select(CompanionOutfit)
+            .where(CompanionOutfit.id == outfit_id, CompanionOutfit.user_id == user_id)
+            .execution_options(populate_existing=True),
         )
     ).scalar_one_or_none()
 
@@ -423,12 +422,14 @@ async def regenerate_outfit_draft(
     *,
     feedback: str | None,
 ) -> CompanionOutfit:
-    """草稿微调重绘：身份锚点与参考图不变，feedback 并入着装要求。"""
+    """草稿或失败外观微调重绘：成功后回到草稿，重新确认才生成动画资产。"""
     outfit = await _get_outfit(db, user_id, outfit_id)
     if outfit is None:
         raise OutfitNotFoundError(f"outfit {outfit_id} not found")
-    if outfit.status != "draft":
-        raise OutfitStateError("仅草稿状态可以微调重绘")
+    if outfit.status not in ("draft", "failed"):
+        raise OutfitStateError("仅草稿或失败状态可以微调重绘")
+    original_url = outfit.fullbody_url
+    original_status = outfit.status
 
     (
         avatar,
@@ -464,15 +465,27 @@ async def regenerate_outfit_draft(
     )
 
     async with get_avatar_job_lock(user_id):
-        # 生图往返期间行可能已被确认（切分中）——锁内重读校验，防止把已转正的立绘路径覆盖回 temp-media
+        # 生图期间可能已确认重试或被另一轮重绘替换，锁内刷新持久状态后再核对原始版本。
         outfit = await _get_outfit(db, user_id, outfit_id)
-        if outfit is None or outfit.status != "draft":
-            raise OutfitStateError("仅草稿状态可以微调重绘")
+        if outfit is None or outfit.status != original_status or outfit.fullbody_url != original_url:
+            if draft_url != original_url:
+                delete_portrait_file(draft_url)
+            raise OutfitStateError("外观已发生变化，请刷新后重试")
         outfit.fullbody_url = draft_url
+        outfit.status = "draft"
+        outfit.pending_wear = False
         if (feedback or "").strip():
             source["feedback"] = feedback.strip()
         outfit.source_json = json.dumps(source, ensure_ascii=False)
+        emit_ws_event(
+            db,
+            user_id=user_id,
+            event_type="companion.outfit.updated",
+            payload={"outfit_id": outfit.id, "worn": False},
+        )
         await db.commit()
+        if original_url != draft_url:
+            delete_portrait_file(original_url)
         await db.refresh(outfit)
     return outfit
 

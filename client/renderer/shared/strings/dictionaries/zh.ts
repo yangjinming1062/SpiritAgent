@@ -900,7 +900,7 @@ export const dict = {
       autoWearAfterSplit: '切分完成后自动穿上',
       actions: {
         continueDesign: '继续设计',
-        continueDesignTitle: '继续设计这套草稿',
+        continueDesignTitle: '微调重绘这套外观',
         wear: '穿着',
         wearTitle: '穿上这套外观',
         retry: '重试',

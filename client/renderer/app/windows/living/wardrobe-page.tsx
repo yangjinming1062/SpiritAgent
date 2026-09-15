@@ -168,7 +168,7 @@ export function WardrobePage(): React.JSX.Element {
                     )}
 
                     <div className="absolute right-1.5 top-1.5 flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
-                      {outfit.status === 'draft' && (
+                      {(outfit.status === 'draft' || outfit.status === 'failed') && (
                         <button
                           aria-label={t.actions.continueDesign}
                           className={CARD_ACTION_CLASS}
