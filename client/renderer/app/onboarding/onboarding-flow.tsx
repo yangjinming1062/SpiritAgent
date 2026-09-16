@@ -498,7 +498,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   const [fullbodyLoading, setFullbodyLoading] = useState(false)
   const [fullbodyLoadingText, setFullbodyLoadingText] = useState('正在为您生成正面全身立绘…')
-  const [fullbodyStyle, setFullbodyStyleState] = useState<string | null>('cel_shading')
+  const [fullbodyStyle, setFullbodyStyleState] = useState<string | null>('refined_anime_cg')
   const [fullbodyFrontUrl, setFullbodyFrontUrl] = useState<string | null>(null)
   const [fullbodyFrontRawUrl, setFullbodyFrontRawUrl] = useState<string | null>(null)
   const [fullbodyFeedback, setFullbodyFeedback] = useState<string>('')
@@ -851,7 +851,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     void playOnboardingAudio(url ? 'onboarding.portrait.ok' : 'onboarding.portrait.failed')
   }
 
-  const generateFullbodyFrontDirect = async (avatarId: number, styleId = 'cel_shading'): Promise<void> => {
+  const generateFullbodyFrontDirect = async (avatarId: number, styleId = 'refined_anime_cg'): Promise<void> => {
     setFullbodyLoading(true)
     setFullbodyLoadingText('正在为您生成正面全身立绘…')
     setFullbodyHint(null)
@@ -914,7 +914,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
     await applyLocalPortrait(avatarRes)
 
-    const style = 'cel_shading'
+    const style = 'refined_anime_cg'
     const seedFrontRaw = avatarRes?.seed_front_2d_url || null
 
     if (seedFrontRaw) {
@@ -1269,7 +1269,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setPresentationRef(null)
 
     setPhase('fullbody-reference')
-    setFullbodyStyleState('cel_shading')
+    setFullbodyStyleState('refined_anime_cg')
     setFullbodyFrontUrl(null)
     setFullbodyFrontRawUrl(null)
     setFullbodyFeedback('')
@@ -1945,7 +1945,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                         {activeAvatarId && (
                           <button
                             className="rounded-full bg-fill-hover px-3 py-1 text-xs text-strong hover:bg-fill-active"
-                            onClick={() => void generateFullbodyFrontDirect(activeAvatarId, 'cel_shading')}
+                            onClick={() => void generateFullbodyFrontDirect(activeAvatarId, 'refined_anime_cg')}
                             type="button"
                           >
                             重新生成
@@ -1960,7 +1960,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                       <HistoryGallery
                         entries={currentFullbodyHistory}
                         onSelect={onSelectFullbodyHistoryEntry}
-                        selectedIdx={fullbodyHistoryIndices['cel_shading'] ?? currentFullbodyHistory.length - 1}
+                        selectedIdx={fullbodyHistoryIndices['refined_anime_cg'] ?? currentFullbodyHistory.length - 1}
                       />
                     </div>
                   )}

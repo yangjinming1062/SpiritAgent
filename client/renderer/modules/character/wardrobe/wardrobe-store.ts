@@ -97,7 +97,7 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
         description: o.description ?? null,
         fullbodyPath,
         fullbodyUrl: old?.fullbodyPath === fullbodyPath ? old.fullbodyUrl : null,
-        style: o.style || 'cel_shading',
+        style: o.style || 'refined_anime_cg',
         status: (o.status || 'draft') as OutfitStatus,
         active: o.active === true,
         pendingWear: o.pending_wear === true,

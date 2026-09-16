@@ -42,7 +42,7 @@ def outfit_response(outfit: CompanionOutfit) -> OutfitResponse:
         name=outfit.name,
         description=outfit.description,
         fullbody_url=re_sign_bare_path(outfit.fullbody_url) or "",
-        style=outfit.style or "cel_shading",
+        style=outfit.style or "refined_anime_cg",
         status=outfit.status,
         active=outfit.active,
         pending_wear=outfit.pending_wear,

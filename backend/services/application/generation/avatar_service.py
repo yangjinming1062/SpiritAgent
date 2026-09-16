@@ -1084,7 +1084,7 @@ async def generate_fullbody_front_2d(
     user_id: int | None = None,
     *,
     avatar_id: int,
-    style: str = "cel_shading",
+    style: str = "refined_anime_cg",
     feedback: str | None = None,
     mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
@@ -1398,7 +1398,7 @@ async def confirm_fullbody_front(
     prompt_payload = safe_json_loads(asset.prompt_json, default={})
     if not isinstance(prompt_payload, dict):
         prompt_payload = {}
-    effective_style = style or prompt_payload.get("fullbody_style") or "cel_shading"
+    effective_style = style or prompt_payload.get("fullbody_style") or "refined_anime_cg"
 
     async def _write(session: AsyncSession) -> AvatarAsset:
         target = await session.get(AvatarAsset, avatar_id)

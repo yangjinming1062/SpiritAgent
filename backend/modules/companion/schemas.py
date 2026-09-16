@@ -71,7 +71,7 @@ class FullbodyReferenceGenerateRequest(BaseModel):
 class Fullbody2dFrontGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    style: str = Field(default="cel_shading", max_length=64)
+    style: str = Field(default="refined_anime_cg", max_length=64)
     feedback: str | None = Field(default=None, max_length=500)
     mode: ImageReviseMode = "regenerate"
 
@@ -146,7 +146,7 @@ class ModelGenerateRequest(BaseModel):
 class Companion2DModelResponse(BaseModel):
     id: int
     status: str = "generating"
-    style: str = "cel_shading"
+    style: str = "refined_anime_cg"
     manifest_url: str | None = None
     layer_urls: dict[str, str] = Field(default_factory=dict)
     content_hash: str | None = None
@@ -181,7 +181,7 @@ class OutfitResponse(BaseModel):
     name: str
     description: str | None = None
     fullbody_url: str = ""
-    style: str = "cel_shading"
+    style: str = "refined_anime_cg"
     # draft → splitting → ready | failed | expired
     status: str = "draft"
     active: bool = False

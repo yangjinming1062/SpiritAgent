@@ -46,7 +46,7 @@ const DEFAULT_MESH2D_INFO: Mesh2DInfo = {
   layerUrls: {},
   manifestUrl: null,
   status: 'idle',
-  style: 'cel_shading'
+  style: 'refined_anime_cg'
 }
 
 function isPersistableMesh2D(val: unknown): val is Mesh2DInfo {
@@ -110,7 +110,7 @@ export async function hydrateMesh2D(): Promise<void> {
       layerUrls: mesh2d.layer_urls ?? {},
       manifestUrl: mesh2d.manifest_url,
       status: 'succeeded',
-      style: mesh2d.style || 'cel_shading'
+      style: mesh2d.style || 'refined_anime_cg'
     })
   } else if (mesh2d.status === 'generating') {
     setMesh2DInfo({
@@ -120,7 +120,7 @@ export async function hydrateMesh2D(): Promise<void> {
       layerUrls: {},
       manifestUrl: null,
       status: 'generating',
-      style: mesh2d.style || 'cel_shading'
+      style: mesh2d.style || 'refined_anime_cg'
     })
   } else if (mesh2d.status === 'failed') {
     setMesh2DInfo({
@@ -130,7 +130,7 @@ export async function hydrateMesh2D(): Promise<void> {
       layerUrls: {},
       manifestUrl: null,
       status: 'failed',
-      style: mesh2d.style || 'cel_shading'
+      style: mesh2d.style || 'refined_anime_cg'
     })
   }
 }
