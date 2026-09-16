@@ -263,11 +263,7 @@ export function WardrobePage(): React.JSX.Element {
             aspect-square 取可用区内最大正方形。 */}
         <div className="relative min-h-0 flex-1">
           {!designing && selected?.asset ? (
-            <AssetPackPreview
-              imageUrl={previewUrl ?? null}
-              key={`${selected.id}:${selected.asset.content_hash ?? selected.asset.id}`}
-              source={selected.asset}
-            />
+            <AssetPackPreview key={`${selected.id}:${selected.asset.content_hash ?? selected.asset.id}`} source={selected.asset} />
           ) : previewUrl ? (
             <div className="absolute inset-4 grid place-items-center">
               <button

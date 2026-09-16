@@ -26,13 +26,7 @@ const PREVIEW_ACTIONS = [
   'petting'
 ] as const
 
-export function AssetPackPreview({
-  source,
-  imageUrl
-}: {
-  source: PuppetAssetSource
-  imageUrl: string | null
-}): React.JSX.Element {
+export function AssetPackPreview({ source }: { source: PuppetAssetSource }): React.JSX.Element {
   const t = useStrings().living.wardrobe.preview
   const [mode, setMode] = useState<Mode>('front')
   const [action, setAction] = useState<string>('idle')
@@ -210,9 +204,6 @@ export function AssetPackPreview({
         className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-line-strong bg-fill-trough"
         role="region"
       >
-        {imageUrl && status !== 'ready' && (
-          <img alt="" className="absolute inset-0 h-full w-full object-contain opacity-40" src={imageUrl} />
-        )}
         <div
           className="absolute inset-3 flex items-center justify-center"
           ref={mount}
