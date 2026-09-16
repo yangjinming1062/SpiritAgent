@@ -76,6 +76,10 @@ class Settings(BaseSettings):
     temp_file_ttl_hours: int = Field(default=24, validation_alias="TEMP_FILE_TTL_HOURS")
     data_dir: str = Field(default="./data", validation_alias="DATA_DIR")
 
+    # 静态显著性抠图模型名（ISNet 系，onnx）。模型文件按 data_dir/models/<name>.onnx 查找，
+    # 随 data 卷挂载进容器；缺失时扶边姿态抠图退回色键路径，不阻塞启动。
+    matting_model: str = Field(default="isnet-general-use", validation_alias="MATTING_MODEL")
+
     image_to_3d_provider: str = Field(default="tripo", validation_alias="IMAGE_TO_3D_PROVIDER")
     image_to_3d_poll_interval_seconds: float = Field(default=5.0, validation_alias="IMAGE_TO_3D_POLL_INTERVAL_SECONDS")
     image_to_3d_poll_backoff_max_seconds: float = Field(

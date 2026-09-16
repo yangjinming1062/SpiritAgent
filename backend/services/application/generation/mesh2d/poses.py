@@ -30,6 +30,7 @@ from services.infrastructure.llm import (
 )
 
 from ..image_generation import compose_image_references, resolve_image_gen_chain
+from .matting import subject_matte
 
 logger = get_logger(__name__)
 Side = Literal["left", "right"]
@@ -185,13 +186,63 @@ def align_blink(raw: bytes, closed_raw: bytes, face: list[float], eyes: list[int
         )
 
 
+def _dilate4(mask: NDArray[np.bool_]) -> NDArray[np.bool_]:
+    """4 邻域膨胀一圈；np.roll 的边缘环绕只落在边框行列，两处调用中边框均为种子或已判定背景，不改变结果。"""
+    return mask | np.roll(mask, 1, 0) | np.roll(mask, -1, 0) | np.roll(mask, 1, 1) | np.roll(mask, -1, 1)
+
+
+def _border_flood(candidate: NDArray[np.bool_]) -> NDArray[np.bool_]:
+    """画布四边做种、4 邻域闭包；逐轮 numpy 膨胀到不动点，粗网格上有界收敛。"""
+    reach = np.zeros_like(candidate)
+    reach[0, :] = candidate[0, :]
+    reach[-1, :] = candidate[-1, :]
+    reach[:, 0] = candidate[:, 0]
+    reach[:, -1] = candidate[:, -1]
+    while True:
+        grown = reach | (candidate & _dilate4(reach))
+        if (grown == reach).all():
+            return reach
+        reach = grown
+
+
 def cutout(raw: bytes, channel: int) -> Image.Image:
+    """色幕抠图：与画布边框连通的背景整片泛洪清除（容忍色幕漂移、渐变与棋盘格纹理），封闭空隙退回色键。"""
     with Image.open(io.BytesIO(raw)) as source:
         rgb = np.asarray(source.convert("RGB"), dtype=np.float32)
     others = [c for c in range(3) if c != channel]
     excess = rgb[:, :, channel] - rgb[:, :, others].max(axis=2)
+
+    # 背景色取自粗化图的边框环：生成要求角色四周留白，边框环几乎全为背景；棋盘格等纹理粗化后摊平为均值色。
+    small = np.asarray(
+        Image.fromarray(rgb.astype(np.uint8)).resize(
+            (rgb.shape[1] // 4, rgb.shape[0] // 4),
+            Image.Resampling.BOX,
+        ),
+        dtype=np.float32,
+    )
+    border = np.concatenate([small[0], small[-1], small[:, 0], small[:, -1]])
+    bg = np.median(border, axis=0)
+    # 候选判据只认「颜色仍近似边框背景」。不用色幕通道差作泛洪条件：
+    # 服装主色与色幕同通道时洪水会灌进角色；远离背景色的渐变漂移由色键 alpha 兜底。
+    candidate = np.sqrt(((small - bg) ** 2).sum(axis=2)) < 75
+    flooded_full = (
+        np.asarray(
+            Image.fromarray(_border_flood(candidate).astype(np.uint8) * 255).resize(
+                (rgb.shape[1], rgb.shape[0]),
+                Image.Resampling.NEAREST,
+            ),
+        )
+        > 0
+    )
+    # 膨胀一圈吃掉轮廓处的抗锯齿混色边，避免透明区边缘残留 1px 背景晕。
+    flooded_full |= _dilate4(flooded_full)
+
+    # 色键 alpha 负责软过渡与残余清理：泛洪区整片清除，近背景色的封闭空隙（臂弯）也清除。
+    # 封闭空隙颜色偏离背景色时，退回原色键逻辑（excess 阈值）——色幕纯色下空隙通道差大，能清干净。
     alpha = 1 - np.clip((excess - 30) / 140, 0, 1)
-    background = excess > 30
+    alpha[np.sqrt(((rgb - bg) ** 2).sum(axis=2)) < 45] = 0
+    alpha[flooded_full] = 0
+    background = alpha == 0
     rgb[:, :, others] /= np.maximum(alpha[:, :, None], 0.01)
     rgb[:, :, channel] = np.where(background, rgb[:, :, others].max(axis=2), rgb[:, :, channel])
     return Image.fromarray(np.dstack((np.clip(rgb, 0, 255), alpha * 255)).astype(np.uint8))
@@ -242,11 +293,15 @@ async def generate_pose_pack(reference: bytes, user_id: int | None) -> tuple[Pos
             "inside a square canvas, with at least 8% empty space above and below and clear space at both sides. Scale the "
             "whole figure proportionally to achieve this framing. Give every body region coherent anatomy, the character's "
             "own skin and clothing colors, and a consistent level of illustration detail. The visible image consists solely "
-            f"of the character against a perfectly flat, uniformly saturated {backdrop} background; the contact line is an "
-            "imaginary layout constraint. Deliver one unified 1024x1024 illustration."
+            f"of the character against a perfectly flat, uniformly saturated {backdrop} background with no texture, no "
+            "gradient, and no checkerboard pattern; the contact line is an imaginary layout constraint. Deliver one "
+            "unified 1024x1024 illustration."
         )
         raw = await generate_image(prompt, reference, image_chain, guide)
-        body = await asyncio.to_thread(cutout, raw, channel)
+        # 两级抠图：ISNet 显著性抠图（颜色无关，容忍任意背景）→ 色幕色键兜底（模型缺失或推理失败时）。
+        body = await asyncio.to_thread(subject_matte, raw)
+        if body is None:
+            body = await asyncio.to_thread(cutout, raw, channel)
         bounds = body.getbbox()
         if bounds is None:
             raise ValueError("empty pose")

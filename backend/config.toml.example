@@ -36,6 +36,8 @@ admin_password = "spiritagent@admin123"
 [storage]
 # 后端磁盘数据与产物存储根目录（支持相对或绝对路径）
 data_dir = "./data"
+# 扶边姿态显著性抠图模型（onnx），文件放置于 data_dir/models/<name>.onnx；缺失时自动退回色幕色键抠图
+matting_model = "isnet-general-use"
 
 [rate_limit]
 # 速率限制器后端存储 URL（为空时默认使用进程内内存存储；生产高可用可配置 redis://...）
