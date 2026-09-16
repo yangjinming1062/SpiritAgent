@@ -1,7 +1,7 @@
 ﻿import { atom } from 'nanostores'
 
 import { authedApi } from '@/shared/lib/authed-api'
-import { isClientErrorIpc } from '@/shared/lib/ipc-error'
+import { isClientErrorIpc, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
@@ -37,6 +37,16 @@ interface OutfitResponse {
 
 export type OutfitPolicy = 'llm_may_replace' | 'locked'
 
+export type PoseRegenSide = 'left' | 'right'
+
+export interface PoseRegenState {
+  outfitId: number
+  side: PoseRegenSide
+  baselineHash: string | null
+  /** null=生成中；非空=已失败（空串表示无服务端文案，仅展示通用失败） */
+  error: string | null
+}
+
 interface WardrobeSnapshot {
   outfits: OutfitResponse[]
   policy: OutfitPolicy
@@ -62,9 +72,11 @@ const snapshot = definePersistedAtom<WardrobeSnapshot>({
 
 export const $outfits = atom<WardrobeOutfit[]>([])
 export const $outfitPolicy = atom<OutfitPolicy>(snapshot.get().policy)
+export const $poseRegen = atom<PoseRegenState | null>(null)
 const warmed = new Set<string>()
 let revision = 0
 let policyRevision = 0
+let poseRegenTimer: ReturnType<typeof setTimeout> | undefined
 
 registerStorageClearHandler(() => {
   revision += 1
@@ -72,6 +84,7 @@ registerStorageClearHandler(() => {
   warmed.clear()
   $outfits.set([])
   $outfitPolicy.set('llm_may_replace')
+  $poseRegen.set(null)
 })
 
 async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: boolean): Promise<void> {
@@ -106,6 +119,17 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
       }
     })
   )
+  // 单侧姿态重生成完成信号：外观还在且 content_hash 已离开基线（hash 必变）；外观被删也视为结束
+  const regen = $poseRegen.get()
+
+  if (regen && regen.error === null) {
+    const updated = state.outfits.find(o => o.id === regen.outfitId)
+
+    if (!updated || updated.asset?.content_hash !== regen.baselineHash) {
+      $poseRegen.set(null)
+    }
+  }
+
   await Promise.all(
     state.outfits.map(async (o): Promise<void> => {
       if (!o.fullbody_url) {
@@ -247,5 +271,64 @@ export async function deleteOutfit(outfitId: number): Promise<boolean> {
     log.warn('wardrobe', 'deleteOutfit failed', err)
 
     return false
+  }
+}
+
+// 主进程错误含状态码、路径与 JSON 错误体，取 detail 里的公开文案；解析不了就留空（UI 走通用失败文案）
+function poseRegenErrMsg(err: unknown): string {
+  try {
+    const parsed = JSON.parse(unwrapIpcErrorMessage(err).replace(/^\d{3}\s+(?:\/[^\s]*:\s*)?/, '')) as {
+      detail?: { error?: unknown }
+    }
+
+    if (typeof parsed?.detail?.error === 'string' && parsed.detail.error) {
+      return parsed.detail.error
+    }
+  } catch {
+    /* 非预期形态，走通用失败文案 */
+  }
+
+  return ''
+}
+
+/** 单侧重生成一侧扶边姿态：请求只负责校验入队，完成与失败由 WS 事件驱动
+ * （content_hash 变化 / companion.outfit.failed）；兜底超时防后端重启丢任务后 pending 永挂。 */
+export async function regenerateOutfitPose(outfitId: number, side: PoseRegenSide): Promise<boolean> {
+  const baselineHash = $outfits.get().find(o => o.id === outfitId)?.asset?.content_hash ?? null
+  $poseRegen.set({ outfitId, side, baselineHash, error: null })
+  clearTimeout(poseRegenTimer)
+  poseRegenTimer = setTimeout(() => {
+    const regen = $poseRegen.get()
+
+    if (regen?.outfitId === outfitId && regen.error === null) {
+      $poseRegen.set({ ...regen, error: '' })
+    }
+  }, 30 * 60_000)
+
+  try {
+    await window.spiritagent.api({
+      method: 'POST',
+      path: `/api/companion/outfits/${outfitId}/poses/${side}/regenerate`
+    })
+
+    return true
+  } catch (err) {
+    log.warn('wardrobe', 'regenerateOutfitPose failed', err)
+    const regen = $poseRegen.get()
+
+    if (regen?.outfitId === outfitId && regen.error === null) {
+      $poseRegen.set({ ...regen, error: poseRegenErrMsg(err) })
+    }
+
+    return false
+  }
+}
+
+/** WS companion.outfit.failed：匹配在飞单侧重生成时落失败态（保留条目供 UI 展示原因）。 */
+export function failPoseRegen(outfitId: number | undefined, reason: string | null | undefined): void {
+  const regen = $poseRegen.get()
+
+  if (regen && regen.error === null && regen.outfitId === outfitId) {
+    $poseRegen.set({ ...regen, error: reason || '' })
   }
 }

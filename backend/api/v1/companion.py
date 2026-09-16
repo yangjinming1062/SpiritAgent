@@ -1,4 +1,5 @@
 import base64
+from typing import Literal
 
 from common import get_router
 from components import SESSION_LOCAL, SETTINGS, DbSession, get_logger, safe_json_loads
@@ -72,6 +73,7 @@ from services.application.generation import (
     outfit_response,
     regenerate_avatar_from_image,
     regenerate_outfit_draft,
+    regenerate_outfit_pose,
     resolve_uploaded_avatar_path,
     schedule_initial_room,
     select_avatar,
@@ -655,6 +657,21 @@ async def post_outfit_regenerate(
             extra={"user_id": user.id, "outfit_id": outfit_id, "error": getattr(exc, "internal", str(exc))},
         )
         raise HTTPException(status_code=502, detail={"error": str(exc), "reason": "generation_failed"})
+    return outfit_response(outfit)
+
+
+@router.post("/outfits/{outfit_id}/poses/{side}/regenerate", response_model=OutfitResponse)
+async def post_outfit_pose_regenerate(
+    outfit_id: int,
+    side: Literal["left", "right"],
+    user: CurrentUser,
+    db: DbSession,
+) -> OutfitResponse:
+    """单侧重生成一侧扶边姿态：校验后就地入队（202 语义），完成与失败经 WS 事件驱动刷新。"""
+    try:
+        outfit = await regenerate_outfit_pose(db, user.id, outfit_id, side)
+    except OutfitError as exc:
+        raise _outfit_http_error(exc)
     return outfit_response(outfit)
 
 

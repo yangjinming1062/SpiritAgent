@@ -3,7 +3,7 @@ import base64
 import hashlib
 import io
 from pathlib import Path
-from typing import Literal
+from typing import Literal, NamedTuple
 
 import numpy as np
 from components import (
@@ -255,7 +255,19 @@ def _prepare_pose_reference(reference: bytes) -> tuple[NDArray[np.float32], byte
         return pixels, encode_png(image)
 
 
-async def generate_pose_pack(reference: bytes, user_id: int | None) -> tuple[PosePack, dict[str, bytes]]:
+class _PoseContext(NamedTuple):
+    """一次姿态生成的共享上下文：预处理后的参考图、供应商链与色幕通道（按立绘主色选取）。"""
+
+    reference: bytes
+    image_chain: list[ProviderConfig]
+    vision_chain: list[ProviderConfig]
+    channel: int
+
+
+_POSE_BACKDROPS = ("red (#FF0000)", "green (#00FF00)", "blue (#0000FF)")
+
+
+async def _resolve_pose_context(reference: bytes, user_id: int | None) -> _PoseContext:
     async with SESSION_LOCAL() as db:
         image_chain, _ = await resolve_image_gen_chain(
             db if user_id is not None else None,
@@ -272,94 +284,99 @@ async def generate_pose_pack(reference: bytes, user_id: int | None) -> tuple[Pos
         range(3),
         key=lambda c: int(np.count_nonzero(pixels[:, :, c] - np.delete(pixels, c, axis=2).max(axis=2) > 30)),
     )
-    backdrop = ("red (#FF0000)", "green (#00FF00)", "blue (#0000FF)")[channel]
+    return _PoseContext(reference, image_chain, vision_chain, channel)
 
-    async def generate(side: Side) -> tuple[Pose, dict[str, bytes]]:
-        guide = (Path(__file__).parent / "pose-guides" / f"{side}.webp").read_bytes()
-        inward, outward = ("RIGHT", "LEFT") if side == "left" else ("LEFT", "RIGHT")
-        prompt = (
-            "Create a full-body character illustration for a peeking animation at a screen edge.\n\n"
-            "REFERENCE ROLES\n"
-            "The input sheet has two reference panels. The left panel defines the character's face, body proportions, hair, "
-            "outfit, colors, asymmetric details, and illustration style. The right panel defines the articulated body pose, "
-            "hand shapes, and relative grip locations. Render the character design from the left in the pose from the right. "
-            "The references supply visual design evidence; this brief defines the finished composition.\n\n"
-            "POSE AND EXPRESSION\n"
-            "Two naturally connected arms place their hands one above the other along an imaginary vertical contact line "
-            f"near the canvas center. The head leans {inward} beyond the hands, while the hips and legs remain on the {outward} "
-            "side of that line. Both eyes are open, with a gentle, curious expression toward the viewer.\n\n"
-            "COMPOSITION AND RENDERING\n"
-            "Compose one complete character from the top of the hair to the tips of both feet. Keep the entire silhouette "
-            "inside a square canvas, with at least 8% empty space above and below and clear space at both sides. Scale the "
-            "whole figure proportionally to achieve this framing. Give every body region coherent anatomy, the character's "
-            "own skin and clothing colors, and a consistent level of illustration detail. The visible image consists solely "
-            f"of the character against a perfectly flat, uniformly saturated {backdrop} background with no texture, no "
-            "gradient, and no checkerboard pattern; the contact line is an imaginary layout constraint. Deliver one "
-            "unified 1024x1024 illustration."
-        )
-        raw = await generate_image(prompt, reference, image_chain, guide)
-        # 两级抠图：ISNet 显著性抠图（颜色无关，容忍任意背景）→ 色幕色键兜底（模型缺失或推理失败时）。
-        body = await asyncio.to_thread(subject_matte, raw)
-        if body is None:
-            body = await asyncio.to_thread(cutout, raw, channel)
-        bounds = body.getbbox()
-        if bounds is None:
-            raise ValueError("empty pose")
-        landmarks = await locate_pose(raw, vision_chain)
-        edge_index = 1 if side == "left" else 3
-        contact = (landmarks.upper_hand[edge_index] + landmarks.lower_hand[edge_index]) / 2 * 1.024
-        face = [landmarks.face[i] * 1.024 for i in (1, 0, 3, 2)]
-        eyes = [round(landmarks.eyes[i] * 1.024) for i in (1, 0, 3, 2)]
-        closed_raw = await generate_image(
-            "Create the closed-eye frame of a gentle blink for the supplied character illustration.\n\n"
-            "The source image defines the finished character, pose, style, colors, background, and pixel registration. "
-            "Use it as the full-frame editing canvas. The editable region consists of both eyelids and the immediately "
-            "adjacent eye pixels. Render both eyes fully closed at the same instant, with natural eyelid curves that "
-            "follow the existing eye positions, facial perspective, and drawing style. Preserve the relaxed expression.\n\n"
-            "All pixels outside the editable eye region retain their original appearance and coordinates. Deliver the "
-            "complete image at the source dimensions and framing, so the edited eyelids align with the original face "
-            "when the two frames are overlaid.",
-            raw,
-            image_chain,
-        )
-        closed = await asyncio.to_thread(align_blink, raw, closed_raw, face, eyes)
-        mask = Image.new("L", body.size)
-        ImageDraw.Draw(mask).rectangle((eyes[0] - 4, eyes[1] - 4, eyes[2] + 4, eyes[3] + 4), fill=255)
-        mask = mask.filter(ImageFilter.GaussianBlur(3))
-        closed.putalpha(
-            Image.fromarray(
-                (np.asarray(body.getchannel("A"), dtype=np.float32) * np.asarray(mask) / 255).astype(np.uint8),
-            ),
-        )
-        assets: dict[str, bytes] = {}
-        textures: dict[str, Texture] = {}
 
-        def _encode_webp(image: Image.Image) -> bytes:
-            output = io.BytesIO()
-            image.save(output, format="WEBP", lossless=True)
-            return output.getvalue()
+async def _compose_pose(side: Side, context: _PoseContext) -> tuple[Pose, dict[str, bytes]]:
+    guide = (Path(__file__).parent / "pose-guides" / f"{side}.webp").read_bytes()
+    inward, outward = ("RIGHT", "LEFT") if side == "left" else ("LEFT", "RIGHT")
+    backdrop = _POSE_BACKDROPS[context.channel]
+    prompt = (
+        "Create a full-body character illustration for a peeking animation at a screen edge.\n\n"
+        "REFERENCE ROLES\n"
+        "The input sheet has two reference panels. The left panel defines the character's face, body proportions, hair, "
+        "outfit, colors, asymmetric details, and illustration style. The right panel defines the articulated body pose, "
+        "hand shapes, and relative grip locations. Render the character design from the left in the pose from the right. "
+        "The references supply visual design evidence; this brief defines the finished composition.\n\n"
+        "POSE AND EXPRESSION\n"
+        "Two naturally connected arms place their hands one above the other along an imaginary vertical contact line "
+        f"near the canvas center. The head leans {inward} beyond the hands, while the hips and legs remain on the {outward} "
+        "side of that line. Both eyes are open, with a gentle, curious expression toward the viewer.\n\n"
+        "COMPOSITION AND RENDERING\n"
+        "Compose one complete character from the top of the hair to the tips of both feet. Keep the entire silhouette "
+        "inside a square canvas, with at least 8% empty space above and below and clear space at both sides. Scale the "
+        "whole figure proportionally to achieve this framing. Give every body region coherent anatomy, the character's "
+        "own skin and clothing colors, and a consistent level of illustration detail. The visible image consists solely "
+        f"of the character against a perfectly flat, uniformly saturated {backdrop} background with no texture, no "
+        "gradient, and no checkerboard pattern; the contact line is an imaginary layout constraint. Deliver one "
+        "unified 1024x1024 illustration."
+    )
+    raw = await generate_image(prompt, context.reference, context.image_chain, guide)
+    # 两级抠图：ISNet 显著性抠图（颜色无关，容忍任意背景）→ 色幕色键兜底（模型缺失或推理失败时）。
+    body = await asyncio.to_thread(subject_matte, raw)
+    if body is None:
+        body = await asyncio.to_thread(cutout, raw, context.channel)
+    bounds = body.getbbox()
+    if bounds is None:
+        raise ValueError("empty pose")
+    landmarks = await locate_pose(raw, context.vision_chain)
+    edge_index = 1 if side == "left" else 3
+    contact = (landmarks.upper_hand[edge_index] + landmarks.lower_hand[edge_index]) / 2 * 1.024
+    face = [landmarks.face[i] * 1.024 for i in (1, 0, 3, 2)]
+    eyes = [round(landmarks.eyes[i] * 1.024) for i in (1, 0, 3, 2)]
+    closed_raw = await generate_image(
+        "Create the closed-eye frame of a gentle blink for the supplied character illustration.\n\n"
+        "The source image defines the finished character, pose, style, colors, background, and pixel registration. "
+        "Use it as the full-frame editing canvas. The editable region consists of both eyelids and the immediately "
+        "adjacent eye pixels. Render both eyes fully closed at the same instant, with natural eyelid curves that "
+        "follow the existing eye positions, facial perspective, and drawing style. Preserve the relaxed expression.\n\n"
+        "All pixels outside the editable eye region retain their original appearance and coordinates. Deliver the "
+        "complete image at the source dimensions and framing, so the edited eyelids align with the original face "
+        "when the two frames are overlaid.",
+        raw,
+        context.image_chain,
+    )
+    closed = await asyncio.to_thread(align_blink, raw, closed_raw, face, eyes)
+    mask = Image.new("L", body.size)
+    ImageDraw.Draw(mask).rectangle((eyes[0] - 4, eyes[1] - 4, eyes[2] + 4, eyes[3] + 4), fill=255)
+    mask = mask.filter(ImageFilter.GaussianBlur(3))
+    closed.putalpha(
+        Image.fromarray(
+            (np.asarray(body.getchannel("A"), dtype=np.float32) * np.asarray(mask) / 255).astype(np.uint8),
+        ),
+    )
+    assets: dict[str, bytes] = {}
+    textures: dict[str, Texture] = {}
 
-        for name, image in (("body", body), ("closed", closed)):
-            # 无损 WEBP 编码 1MP 图可达数百毫秒，移出事件循环
-            data = await asyncio.to_thread(_encode_webp, image)
-            key = f"pose_{side}_{name}"
-            assets[key] = data
-            textures[name] = Texture(key=key, hash=hashlib.sha256(data).hexdigest())
-        hands = [[rect[i] * 1.024 for i in (1, 0, 3, 2)] for rect in (landmarks.upper_hand, landmarks.lower_hand)]
-        return Pose(
-            width=1024,
-            height=1024,
-            contactX=contact,
-            head=face,
-            hands=hands,
-            bounds=list(bounds),
-            textures=textures,
-        ), assets
+    def _encode_webp(image: Image.Image) -> bytes:
+        output = io.BytesIO()
+        image.save(output, format="WEBP", lossless=True)
+        return output.getvalue()
 
+    for name, image in (("body", body), ("closed", closed)):
+        # 无损 WEBP 编码 1MP 图可达数百毫秒，移出事件循环
+        data = await asyncio.to_thread(_encode_webp, image)
+        key = f"pose_{side}_{name}"
+        assets[key] = data
+        textures[name] = Texture(key=key, hash=hashlib.sha256(data).hexdigest())
+    hands = [[rect[i] * 1.024 for i in (1, 0, 3, 2)] for rect in (landmarks.upper_hand, landmarks.lower_hand)]
+    return Pose(
+        width=1024,
+        height=1024,
+        contactX=contact,
+        head=face,
+        hands=hands,
+        bounds=list(bounds),
+        textures=textures,
+    ), assets
+
+
+async def generate_pose_pack(reference: bytes, user_id: int | None) -> tuple[PosePack, dict[str, bytes]]:
+    context = await _resolve_pose_context(reference, user_id)
     try:
         async with asyncio.timeout(1200), asyncio.TaskGroup() as tasks:
-            left_task = tasks.create_task(generate("left"))
-            right_task = tasks.create_task(generate("right"))
+            left_task = tasks.create_task(_compose_pose("left", context))
+            right_task = tasks.create_task(_compose_pose("right", context))
     except (ExceptionGroup, TimeoutError) as exc:
         raise PoseGenerationError("扶边姿态生成失败，请重试") from exc
     left, right = left_task.result(), right_task.result()
@@ -367,3 +384,15 @@ async def generate_pose_pack(reference: bytes, user_id: int | None) -> tuple[Pos
         PosePack(schema_version="spiritagent.2d.poses/1", left=left[0], right=right[0]),
         left[1] | right[1],
     )
+
+
+async def generate_single_pose(reference: bytes, user_id: int | None, side: Side) -> tuple[Pose, dict[str, bytes]]:
+    """单侧重生成一侧扶边姿态：与整包共用参考图预处理与色幕上下文，供外观级局部重生成调用。"""
+    context = await _resolve_pose_context(reference, user_id)
+    try:
+        async with asyncio.timeout(1200):
+            return await _compose_pose(side, context)
+    except PoseGenerationError:
+        raise
+    except Exception as exc:
+        raise PoseGenerationError("扶边姿态生成失败，请重试") from exc

@@ -62,6 +62,7 @@ from .outfit_service import (
     get_outfit_policy,
     list_outfits,
     regenerate_outfit_draft,
+    regenerate_outfit_pose,
     resume_outfit_split,
     set_outfit_policy,
 )
@@ -182,6 +183,7 @@ __all__ = [
     "regenerate_avatar",
     "regenerate_avatar_from_image",
     "regenerate_outfit_draft",
+    "regenerate_outfit_pose",
     "request_model_download_retry",
     "resolve_image_gen_chain",
     "resolve_self_reference_data_uri",

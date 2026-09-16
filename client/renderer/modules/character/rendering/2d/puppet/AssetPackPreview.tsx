@@ -26,7 +26,20 @@ const PREVIEW_ACTIONS = [
   'petting'
 ] as const
 
-export function AssetPackPreview({ source }: { source: PuppetAssetSource }): React.JSX.Element {
+interface PoseRegenView {
+  side: 'left' | 'right'
+  error: string | null
+}
+
+export function AssetPackPreview({
+  onRegeneratePose,
+  poseRegen,
+  source
+}: {
+  onRegeneratePose: (side: 'left' | 'right') => void
+  poseRegen: PoseRegenView | null
+  source: PuppetAssetSource
+}): React.JSX.Element {
   const t = useStrings().living.wardrobe.preview
   const [mode, setMode] = useState<Mode>('front')
   const [action, setAction] = useState<string>('idle')
@@ -183,6 +196,16 @@ export function AssetPackPreview({ source }: { source: PuppetAssetSource }): Rea
   }, [action, mode, playing, front, edges, pack, restart])
 
   const status = mode === 'front' ? front : pack?.poses ? edges[mode] : front === 'loading' ? 'loading' : 'failed'
+  const regenBusy = poseRegen !== null && poseRegen.error === null
+
+  const regenNotice =
+    mode !== 'front' && poseRegen !== null && poseRegen.side === mode
+      ? poseRegen.error === null
+        ? t.regenRunning
+        : poseRegen.error
+          ? `${t.regenFailed}: ${poseRegen.error}`
+          : t.regenFailed
+      : null
 
   return (
     <div className="absolute inset-4 flex min-h-0 flex-col gap-2">
@@ -220,22 +243,28 @@ export function AssetPackPreview({ source }: { source: PuppetAssetSource }): Rea
             )}
           />
         )}
-        {status !== 'ready' && (
+        {(status !== 'ready' || regenNotice) && (
           <div
             className="absolute inset-x-3 bottom-3 rounded-lg bg-surface-card p-2 text-center text-xs text-body"
             role="status"
           >
-            {status === 'loading' ? t.loading : mode !== 'front' && pack && !pack.poses ? t.noPose : t.failed}
-            {status === 'failed' && !(mode !== 'front' && pack && !pack.poses) && (
-              <button className={BTN_GHOST} onClick={() => setRetry(value => value + 1)} type="button">
-                {t.retry}
-              </button>
+            {status !== 'ready' ? (
+              <>
+                {status === 'loading' ? t.loading : mode !== 'front' && pack && !pack.poses ? t.noPose : t.failed}
+                {status === 'failed' && !(mode !== 'front' && pack && !pack.poses) && (
+                  <button className={BTN_GHOST} onClick={() => setRetry(value => value + 1)} type="button">
+                    {t.retry}
+                  </button>
+                )}
+              </>
+            ) : (
+              regenNotice
             )}
           </div>
         )}
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {mode === 'front' && (
+        {mode === 'front' ? (
           <select
             aria-label={t.action}
             className={cn(INPUT_CLASS, 'min-w-0 flex-1')}
@@ -248,6 +277,16 @@ export function AssetPackPreview({ source }: { source: PuppetAssetSource }): Rea
               </option>
             ))}
           </select>
+        ) : (
+          <button
+            className={BTN_GHOST}
+            disabled={regenBusy}
+            onClick={() => onRegeneratePose(mode)}
+            title={t.regenPose}
+            type="button"
+          >
+            {regenBusy && poseRegen?.side === mode ? t.regenRunning : t.regenPose}
+          </button>
         )}
         <button
           className={BTN_GHOST}

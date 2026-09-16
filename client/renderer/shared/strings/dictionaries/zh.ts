@@ -890,6 +890,9 @@ export const dict = {
         failed: '预览加载失败，立绘仍可查看',
         noPose: '这套资产暂未包含扶边姿态',
         retry: '重试加载',
+        regenPose: '重新生成姿态',
+        regenRunning: '正在重新生成该侧姿态…',
+        regenFailed: '姿态重新生成失败',
         actions: {
           idle: '呼吸与眨眼',
           wave_left: '左手挥手',

@@ -16,7 +16,7 @@ from services.infrastructure.seethrough import split_to_psd
 
 from ..avatar_service import get_avatar_job_lock, load_avatar_bytes_as_data_uri, normalize_avatar_url_to_bare
 from ..room_backdrop_service import invalidate_room_for_outfit
-from .poses import generate_pose_pack
+from .poses import Side, generate_pose_pack, generate_single_pose
 from .priority_queue import get_default_queue
 
 logger = get_logger(__name__)
@@ -29,10 +29,16 @@ class Mesh2DPipelineError(RuntimeError):
 # 后台提交任务的强引用集合 + 在飞 model_id 集合（后者供 service 侧识别重启遗留的僵尸 generating 行）
 _PIPELINE_TASKS: set[asyncio.Task[None]] = set()
 _ACTIVE_MODEL_IDS: set[int] = set()
+# 在飞单侧姿态重生成 (user_id, outfit_id)；仅内存标记，进程重启即丢（客户端有兜底超时）
+_ACTIVE_POSE_OUTFITS: set[tuple[int, int]] = set()
 
 
 def active_model_ids() -> frozenset[int]:
     return frozenset(_ACTIVE_MODEL_IDS)
+
+
+def pose_regeneration_in_progress(user_id: int, outfit_id: int) -> bool:
+    return (user_id, outfit_id) in _ACTIVE_POSE_OUTFITS
 
 
 async def _safe_load_avatar_bytes(url: str) -> bytes:
@@ -309,6 +315,182 @@ def run_mesh2d_pipeline(
 
     _PIPELINE_TASKS.add(wrapper)
     wrapper.add_done_callback(_done)
+    return wrapper
+
+
+async def _latest_succeeded_model(db: AsyncSession, user_id: int, outfit_id: int) -> Companion2DModel | None:
+    return (
+        await db.execute(
+            select(Companion2DModel)
+            .where(
+                Companion2DModel.user_id == user_id,
+                Companion2DModel.outfit_id == outfit_id,
+                Companion2DModel.status == "succeeded",
+            )
+            .order_by(Companion2DModel.id.desc())
+            .limit(1),
+        )
+    ).scalar_one_or_none()
+
+
+def run_pose_side_regeneration(*, user_id: int, outfit_id: int, side: Side) -> asyncio.Task[None]:
+    """提交单侧扶边姿态重生成并立即返回。成功原位替换该侧两张姿态纹理与 manifest 的
+    poses 子树并重算 content_hash，其余资产不动；失败保留旧姿态、外观保持 ready——
+    单侧重生成是优化而非重建，失败不得波及整套资产。任务不落库，进程重启即丢。"""
+    queue = get_default_queue()
+
+    async def _task() -> None:
+        layer_entries: list[dict[str, str]] = []
+        try:
+            async with SESSION_LOCAL() as db:
+                outfit = (
+                    await db.execute(
+                        select(CompanionOutfit).where(
+                            CompanionOutfit.id == outfit_id,
+                            CompanionOutfit.user_id == user_id,
+                        ),
+                    )
+                ).scalar_one_or_none()
+                model = await _latest_succeeded_model(db, user_id, outfit_id) if outfit is not None else None
+                if outfit is None or model is None:
+                    logger.warning(
+                        "pose side regen target vanished",
+                        extra={"user_id": user_id, "outfit_id": outfit_id},
+                    )
+                    return
+                model_id = model.id
+                fullbody_url = normalize_avatar_url_to_bare(outfit.fullbody_url) or outfit.fullbody_url
+
+            try:
+                fullbody_bytes = await _safe_load_avatar_bytes(fullbody_url)
+            except Mesh2DPipelineError as exc:
+                raise Mesh2DPipelineError("外观立绘已不可读，无法重新生成姿态") from exc
+            pose, textures = await generate_single_pose(fullbody_bytes, user_id, side)
+            for name, data in textures.items():
+                layer_entries.append(
+                    {
+                        "name": name,
+                        "url": await asset_store.save_companion_asset_async(
+                            data,
+                            user_id=user_id,
+                            label=name,
+                            ext="webp",
+                        ),
+                    },
+                )
+        except (Exception, asyncio.CancelledError) as exc:
+            for entry in layer_entries:
+                asset_store.unlink_companion_asset(entry["url"])
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            logger.warning(
+                "pose side regeneration failed",
+                exc_info=True,
+                extra={"user_id": user_id, "outfit_id": outfit_id, "side": side},
+            )
+            await _emit_outfit_event(
+                user_id,
+                "companion.outfit.failed",
+                {"outfit_id": outfit_id, "reason": str(exc) or "扶边姿态重新生成失败，请重试", "side": side},
+            )
+            return
+
+        manifest_path: str | None = None
+        replaced_urls: list[str] = []
+        old_manifest_path: str | None = None
+        layers: list[dict[str, str]] = []
+        try:
+            async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:
+                model = (
+                    await db.execute(
+                        select(Companion2DModel).where(
+                            Companion2DModel.id == model_id,
+                            Companion2DModel.user_id == user_id,
+                        ),
+                    )
+                ).scalar_one_or_none()
+                latest = await _latest_succeeded_model(db, user_id, outfit_id)
+                if model is None or latest is None or latest.id != model_id:
+                    # 资产行被删或整包重切分已换代：本次结果作废
+                    logger.info(
+                        "pose side regen superseded, discarding",
+                        extra={"user_id": user_id, "outfit_id": outfit_id, "model_id": model_id},
+                    )
+                    for entry in layer_entries:
+                        asset_store.unlink_companion_asset(entry["url"])
+                    return
+                try:
+                    manifest = json.loads(model.manifest_json)
+                except json.JSONDecodeError as exc:
+                    raise Mesh2DPipelineError("外观资产数据损坏，无法重新生成姿态") from exc
+                poses = manifest.get("poses")
+                if not isinstance(poses, dict) or side not in poses:
+                    raise Mesh2DPipelineError("该外观资产缺少贴边姿态数据，无法单侧重生成")
+                old_manifest_path = model.manifest_path or None
+                layers = json.loads(model.layers_json or "[]")
+                new_url_by_name = {entry["name"]: entry["url"] for entry in layer_entries}
+                replaced_urls = [
+                    entry["url"]
+                    for entry in layers
+                    if isinstance(entry, dict)
+                    and entry.get("name") in new_url_by_name
+                    and isinstance(entry.get("url"), str)
+                    and entry["url"]
+                ]
+                for entry in layers:
+                    if isinstance(entry, dict) and entry.get("name") in new_url_by_name:
+                        entry["url"] = new_url_by_name[entry["name"]]
+                manifest["poses"][side] = pose.model_dump()
+                manifest_json = json.dumps(manifest, ensure_ascii=False)
+                model.manifest_json = manifest_json
+                model.content_hash = hashlib.sha256(manifest_json.encode("utf-8")).hexdigest()
+                model.layers_json = json.dumps(layers, ensure_ascii=False)
+                manifest_path = asset_store.save_companion_asset(
+                    manifest_json.encode("utf-8"),
+                    user_id=user_id,
+                    label=f"2d_manifest_{model_id}",
+                    ext="json",
+                )
+                model.manifest_path = manifest_path
+                await db.commit()
+        except (Exception, asyncio.CancelledError) as exc:
+            for entry in layer_entries:
+                asset_store.unlink_companion_asset(entry["url"])
+            if manifest_path:
+                asset_store.unlink_companion_asset(manifest_path)
+            if isinstance(exc, asyncio.CancelledError):
+                raise
+            logger.exception("pose side publication failed", extra={"user_id": user_id, "outfit_id": outfit_id})
+            await _emit_outfit_event(
+                user_id,
+                "companion.outfit.failed",
+                {"outfit_id": outfit_id, "reason": str(exc) or "扶边姿态重新生成失败，请重试", "side": side},
+            )
+            return
+
+        # 提交成功后才清理被替换的旧资产；中断窗口最多留孤儿文件，不破坏现行资产
+        if old_manifest_path:
+            asset_store.unlink_companion_asset(old_manifest_path)
+        for url in replaced_urls:
+            asset_store.unlink_companion_asset(url)
+
+        manifest_url = asset_store.signed_companion_asset_url(manifest_path)
+        await _emit_mesh2d_ready(user_id, model_id, manifest_url, layers)
+        await _emit_outfit_event(
+            user_id,
+            "companion.outfit.updated",
+            {"outfit_id": outfit_id, "worn": False},
+        )
+
+    async def _submit() -> None:
+        try:
+            await queue.submit(f"pose:{user_id}:{outfit_id}", _task, priority="high")
+        finally:
+            _ACTIVE_POSE_OUTFITS.discard((user_id, outfit_id))
+
+    _ACTIVE_POSE_OUTFITS.add((user_id, outfit_id))
+    wrapper = asyncio.create_task(_submit(), name=f"companion.pose.{user_id}.{outfit_id}.{side}")
+    track_user_task(user_id, wrapper, cancel_on_maintenance=False)
     return wrapper
 
 

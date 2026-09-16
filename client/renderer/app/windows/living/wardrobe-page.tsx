@@ -5,9 +5,11 @@ import { useEffect, useRef, useState } from 'react'
 import {
   $outfitPolicy,
   $outfits,
+  $poseRegen,
   activateOutfit,
   deleteOutfit,
   hydrateWardrobe,
+  regenerateOutfitPose,
   setOutfitPolicy,
   useOutfitDesignSession
 } from '@/modules/character'
@@ -30,6 +32,7 @@ const CARD_ACTION_CLASS =
 export function WardrobePage(): React.JSX.Element {
   const outfits = useStore($outfits)
   const outfitPolicy = useStore($outfitPolicy)
+  const poseRegen = useStore($poseRegen)
   const authKind = useStore($auth).kind
   const dict = useStrings()
   const t = dict.living.wardrobe
@@ -275,6 +278,8 @@ export function WardrobePage(): React.JSX.Element {
           {!designing && selected?.asset ? (
             <AssetPackPreview
               key={`${selected.id}:${selected.asset.content_hash ?? selected.asset.id}`}
+              onRegeneratePose={side => void regenerateOutfitPose(selected.id, side)}
+              poseRegen={poseRegen?.outfitId === selected.id ? { side: poseRegen.side, error: poseRegen.error } : null}
               source={selected.asset}
             />
           ) : previewUrl ? (

@@ -940,6 +940,9 @@ export const dict: Dictionary = {
         failed: 'Preview unavailable; the portrait is still visible',
         noPose: 'This asset pack has no edge poses',
         retry: 'Retry loading',
+        regenPose: 'Regenerate pose',
+        regenRunning: 'Regenerating this pose…',
+        regenFailed: 'Pose regeneration failed',
         actions: {
           idle: 'Breathing and blinking',
           wave_left: 'Wave left',

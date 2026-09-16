@@ -126,10 +126,14 @@ export { useOutfitDesignSession } from './wardrobe/design-session'
 export {
   $outfitPolicy,
   $outfits,
+  $poseRegen,
   activateOutfit,
   deleteOutfit,
+  failPoseRegen,
   hydrateWardrobe,
   type OutfitPolicy,
+  type PoseRegenState,
+  regenerateOutfitPose,
   setOutfitPolicy
 } from './wardrobe/wardrobe-store'
 export { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'

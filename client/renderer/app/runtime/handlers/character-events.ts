@@ -3,6 +3,7 @@ import {
   $effectiveTier,
   $screenLocked,
   emitVfx,
+  failPoseRegen,
   hydrateWardrobe,
   playSpriteActionSequence,
   resolveAvatarRegeneration,
@@ -209,7 +210,8 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
     }
 
     case 'companion.outfit.failed': {
-      const p = decodePayload<{ reason?: string }>(event.payload)
+      const p = decodePayload<{ outfit_id?: number; reason?: string }>(event.payload)
+      failPoseRegen(p?.outfit_id, p?.reason)
       void hydrateWardrobe()
       log.warn('events', 'outfit failed:', p?.reason)
 

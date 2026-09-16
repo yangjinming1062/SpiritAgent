@@ -13,6 +13,7 @@ import base64
 import contextlib
 import json
 from datetime import timedelta
+from typing import Literal
 
 from components import (
     DEFAULT_LANGUAGE,
@@ -61,7 +62,13 @@ from .avatar_service import (
     load_avatar_bytes_as_data_uri,
     resolve_uploaded_avatar_path,
 )
-from .mesh2d import active_model_ids, mesh2d_response, run_mesh2d_pipeline
+from .mesh2d import (
+    active_model_ids,
+    mesh2d_response,
+    pose_regeneration_in_progress,
+    run_mesh2d_pipeline,
+    run_pose_side_regeneration,
+)
 from .response_builders import outfit_response
 from .room_backdrop_service import invalidate_room_for_outfit
 
@@ -638,13 +645,50 @@ async def resume_outfit_split(user_id: int, outfit_id: int) -> bool:
             return True
         model_id = model.id
         fullbody_url = outfit.fullbody_url
-    run_mesh2d_pipeline(
-        user_id=user_id,
-        model_id=model_id,
-        fullbody_url=fullbody_url,
-        priority="high",
-    )
+        run_mesh2d_pipeline(
+            user_id=user_id,
+            model_id=model_id,
+            fullbody_url=fullbody_url,
+            priority="high",
+        )
     return True
+
+
+async def regenerate_outfit_pose(
+    db: AsyncSession,
+    user_id: int,
+    outfit_id: int,
+    side: Literal["left", "right"],
+) -> CompanionOutfit:
+    """单侧重生成就绪外观的一侧扶边姿态：只替换该侧两张姿态纹理与 manifest poses 子树，
+    PSD 与另一侧不动；生成失败时旧姿态保持可用、外观仍为 ready。与整包切分互斥，
+    同一外观同一时间只允许一个单侧任务（单飞标记在管线模块）。"""
+    async with get_avatar_job_lock(user_id):
+        outfit = await _get_outfit(db, user_id, outfit_id)
+        if outfit is None:
+            raise OutfitNotFoundError(f"outfit {outfit_id} not found")
+        if outfit.status != "ready":
+            raise OutfitStateError("仅切分成功的外观可以重新生成扶边姿态")
+        if await _has_splitting(db, user_id):
+            raise OutfitStateError("有一套外观正在生成中，请稍候")
+        model_id = await db.scalar(
+            select(Companion2DModel.id)
+            .where(
+                Companion2DModel.user_id == user_id,
+                Companion2DModel.outfit_id == outfit.id,
+                Companion2DModel.status == "succeeded",
+            )
+            .order_by(Companion2DModel.id.desc())
+            .limit(1),
+        )
+        if model_id is None:
+            raise OutfitStateError("外观缺少 2D 资产，请重新生成外观")
+        if pose_regeneration_in_progress(user_id, outfit.id):
+            raise OutfitStateError("扶边姿态正在重新生成中，请稍候")
+
+    # 锁内校验到锁外提交之间无挂起点，单飞检查与在飞标记登记在同一事件轮内原子完成
+    run_pose_side_regeneration(user_id=user_id, outfit_id=outfit.id, side=side)
+    return outfit
 
 
 async def activate_outfit(
