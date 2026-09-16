@@ -13,7 +13,7 @@
     "pnpm": "11.5.2"
   },
   "scripts": {
-    "dev": "node scripts/assert-root-install.cjs && tsup && concurrently -k \"vite --host 127.0.0.1 --port 5174\" \"tsup --watch main --watch shared\" \"wait-on dist-electron/entry.js http://127.0.0.1:5174 && cross-env XCURSOR_SIZE=24 SPIRITAGENT_DESKTOP_DEV_SERVER=http://127.0.0.1:5174 node scripts/launch-dev-electron.cjs\"",
+    "dev": "node scripts/assert-root-install.cjs && tsup && concurrently -k \"vite --host 127.0.0.1 --port 5174\" \"tsup --watch main --watch shared\" \"wait-on dist-electron/entry.js http-get://127.0.0.1:5174/sprite.html && cross-env XCURSOR_SIZE=24 SPIRITAGENT_DESKTOP_DEV_SERVER=http://127.0.0.1:5174 node scripts/launch-dev-electron.cjs\"",
     "build": "node scripts/assert-root-install.cjs && node scripts/write-build-stamp.cjs && tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.main.json && tsup && vite build && node scripts/assert-dist-built.cjs",
     "builder": "cross-env NODE_OPTIONS=--max-old-space-size=16384 electron-builder",
     "pack": "pnpm run build && pnpm run builder -- --dir",
