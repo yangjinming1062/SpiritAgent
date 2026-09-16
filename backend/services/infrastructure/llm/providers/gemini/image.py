@@ -10,10 +10,10 @@ from ._parts import iter_parts
 
 
 class GeminiImageGenProvider(ImageGenProvider):
-    """通过 Gemini 的 generateContent（responseModalities=["IMAGE"]）生成图像；reference_image 作为 inlineData 部件置于文本前，触发 Gemini 原生图像编辑模式（保留主体、按提示重绘）。"""
+    """通过 Gemini 的 generateContent（responseModalities=["TEXT","IMAGE"]，Gemini 3 图像模型强制双模态）生成图像；imageSize 固定 2K（仅 3 Pro 支持 4K，取值严格大写 K）；reference_image 作为 inlineData 部件置于文本前，触发 Gemini 原生图像编辑模式（保留主体、按提示重绘）。"""
 
     provider_name = "gemini"
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"image_gen": "gemini-3.1-flash-lite-image"}
+    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"image_gen": "gemini-3-pro-image"}
     DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"image_gen": 8_000}
     supports_reference_image: ClassVar[bool] = True
     supports_multiple_reference_images: ClassVar[bool] = True
@@ -38,7 +38,10 @@ class GeminiImageGenProvider(ImageGenProvider):
 
         payload = {
             "contents": [{"parts": parts}],
-            "generationConfig": {"responseModalities": ["TEXT", "IMAGE"], "imageConfig": {"aspectRatio": aspect}},
+            "generationConfig": {
+                "responseModalities": ["TEXT", "IMAGE"],
+                "imageConfig": {"aspectRatio": aspect, "imageSize": "2K"},
+            },
         }
 
         resp = await self._client.post(f"/v1beta/models/{self.config.model}:generateContent", json=payload)

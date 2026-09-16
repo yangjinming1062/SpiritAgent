@@ -8,10 +8,10 @@ from ..http import download_as_b64, get_http
 
 
 class GrokImageGenProvider(ImageGenProvider):
-    """通过 xAI 的两个图像端点生图：/images/generations（纯文，返回 URL 列表，认 n 与 aspect_ratio）与 /images/edits（文+参考图，image 字段支持 URL 或 data URI）；base_url 含 /v1，原生 httpx 调用仅用相对路径以避免双前缀；xAI 默认返回 URL，统一匿名下载再 base64；xAI 协议按 aspect_ratio 驱动，size 故意忽略。"""
+    """通过 xAI 的两个图像端点生图：/images/generations（纯文，返回 URL 列表，认 n 与 aspect_ratio）与 /images/edits（文+参考图，image 字段支持 URL 或 data URI）；base_url 含 /v1，原生 httpx 调用仅用相对路径以避免双前缀；xAI 默认返回 URL，统一匿名下载再 base64；xAI 协议按 aspect_ratio 驱动，size 故意忽略。2.0 起按分辨率×质量计价：resolution 固定 2k；quality 仅支持 low/medium，其余值（含缺省）回退官方默认 medium。"""
 
     provider_name = "grok"
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"image_gen": "grok-imagine-image-quality"}
+    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"image_gen": "grok-imagine-image-2.0"}
     DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"image_gen": 8_000}
     # xAI /images/edits 原生消费 reference_image，工具层可直接透传，无需回退到视觉模型描述。
     supports_reference_image: ClassVar[bool] = True
@@ -28,7 +28,13 @@ class GrokImageGenProvider(ImageGenProvider):
         return await self._generate_text_only(req)
 
     async def _generate_text_only(self, req: ImageGenRequest) -> ImageGenResult:
-        payload: dict = {"model": self.config.model, "prompt": req.prompt, "n": req.n}
+        payload: dict = {
+            "model": self.config.model,
+            "prompt": req.prompt,
+            "n": req.n,
+            "resolution": "2k",
+            "quality": req.quality if req.quality in ("low", "medium") else "medium",
+        }
         aspect = req.aspect_ratio or (req.size and SIZE_TO_ASPECT.get(req.size))
         if aspect:
             payload["aspect_ratio"] = aspect
@@ -50,6 +56,8 @@ class GrokImageGenProvider(ImageGenProvider):
             "model": self.config.model,
             "prompt": req.prompt,
             "n": req.n,
+            "resolution": "2k",
+            "quality": req.quality if req.quality in ("low", "medium") else "medium",
             "image": {"url": req.reference_image, "type": "image_url"},
         }
         aspect = req.aspect_ratio or (req.size and SIZE_TO_ASPECT.get(req.size))
