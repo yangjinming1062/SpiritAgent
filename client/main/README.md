@@ -1,6 +1,8 @@
 # Main 主进程
 
-Electron 可信主进程：持有凭据、窗口与表面生命周期、Runner 进程与 OS IPC、配置镜像与云同步、磁盘缓存、自更新与托盘。渲染层只经 preload 暴露的 `window.spiritagent` 使用这些能力。客户端全局与产品侧主进程决策见 [client/README.md](../README.md)，跨进程通道定义在 `client/shared/ipc/`（`@ipc`），信任域与平台策略见 [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。
+Electron 可信主进程：持有凭据、窗口与表面生命周期、Runner 进程与 OS IPC、配置镜像与云同步、磁盘缓存、自更新与托盘。渲染层只经 preload 暴露的 `window.spiritagent` 使用这些能力。客户端跨进程协作见 [client/README.md](../README.md)，跨进程通道定义在 [shared/ipc](../shared/ipc/)（`@ipc`），信任域与平台策略见 [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。
+
+修改启动与退出读“启动与装配”；鉴权和桥接读“凭据与渲染面隔离”“网关宿主—代理”；窗口、配置、Runner 与缓存按“关键设计决策”的对应主题进入。验证入口见文末。
 
 ## 包边界
 
@@ -35,13 +37,16 @@ Electron 可信主进程：持有凭据、窗口与表面生命周期、Runner �
 ### 网关宿主—代理
 
 - 仅精灵 / 主窗口可上报网关状态、灌业务事件、抢答 RPC；生活空间 / 工作台只能发 `gatewayRequest`，经主进程转发给宿主 WebSocket。非宿主广播直接丢弃并记日志。
-- 代理请求挂起表带超时；网关 `closed` / `error` 时统一 reject，避免表面窗拿着已断连接的 future 悬挂。宿主身份与连接角色见 [client/README.md §4](../README.md)。
+- 代理请求挂起表带超时；网关 `closed` / `error` 时统一 reject，避免表面窗拿着已断连接的 future 悬挂。宿主身份与连接角色见 [Client 连接约束](../README.md#连接与设备就绪)。
 
 ### 表面互斥与几何
 
 - 生活空间与工作台同一时刻最多一个可见；`pendingChain` 串行化并发 open / close，避免竞态双开。
 - 工作台打开、移动或调整尺寸时，主进程直接判定其所在显示器，让隐藏的桌面精灵窗跟随；渲染层表面状态只同步当前开启入口，不承载窗口几何。
 - 上次入口写入配置镜像 `ui.last_surface`，启动水合后供托盘双击按此开窗。
+- 激活入口：未认证立即展示激活浮层；托盘唤起须经 IPC 修改渲染状态，仅拉起窗口无法重开已关闭浮层。
+- 全局快捷键由主进程注册，配置进本地镜像与云同步；冲突或注册失败返回状态并降级。并行调试开关见“启动与装配”。
+- 关闭行为：Windows 隐藏到托盘，macOS 隐藏窗口但保留 Dock 图标。
 
 ### 配置镜像与云同步
 
@@ -53,21 +58,25 @@ Electron 可信主进程：持有凭据、窗口与表面生命周期、Runner �
 ### Runner 生命周期
 
 - Client 监听 OS IPC（Windows 命名管道 / macOS UDS），Runner 主动连入；握手 token 校验失败即 401，不进入业务帧。端点路径与 token 由 Client 单向下发，Runner 重连间重读配置以跟随 Client 重启。
-- 能力缓存随连接作废：Runner WS 断开、进程退出或开始停止时立即撤销；握手按代次隔离在途查询，配置推送完成后才取工具并进入运行态。宿主同步与撤销约束见 [client README §4](../README.md)及 [PROTOCOL.md §1.2](../../docs/PROTOCOL.md)。
+- 能力缓存随连接作废：Runner WS 断开、进程退出或开始停止时立即撤销；握手按代次隔离在途查询，配置推送完成后才取工具并进入运行态。宿主同步与撤销约束见 [Client 连接约束](../README.md#连接与设备就绪)及 [PROTOCOL.md §1.2](../../docs/PROTOCOL.md)。
 - `bridge-deps` 把会话、进程、反向 RPC、WS Server、日志等全部收成参数注入，入口不持有隐藏全局；可变 `getAuthToken` 以 getter/setter 成对接入，保证会话切换后 bridge 读到最新 token。
-- 连接缓存 `ensure-backend` 用代数标记：reset 时递增，在途 resolve 完成后若代数已变则不写回缓存，避免陈旧连接复活。
+- 连接缓存 `ensure-backend` 用代次标记：reset 时递增，在途 resolve 完成后若代次已变则不写回缓存，避免陈旧连接复活。
 - Runner 更新语义是「装新 wheel + 覆盖 server.py」，一次性切到新版本，不在安装期做兼容 smoke 或回滚。wheel 与 `server.py` 的导入面一致性由构建期 `scripts/check_runner_facade.py` 门禁；`uv` 路径与 installer 对齐（`$SPIRITAGENT_HOME/bin/uv`，venv 通常不带 pip）。
 
 ### 网络与缓存
 
-- 生产渲染禁止裸 fetch；资产与模型字节统一经主进程磁盘缓存。缓存键优先 `contentHash`，否则去掉签名查询参数后哈希——同内容不同签名 URL 命中同一文件。
+- 资产与模型字节统一经主进程磁盘缓存，跨进程读取及 OPFS 配合见 [Client 缓存约束](../README.md#资产与历史缓存)。缓存键优先 `contentHash`，否则去掉签名查询参数后哈希——同内容不同签名 URL 命中同一文件。
 - 请求超时由 [hardening.ts](security/hardening.ts) 按方法和路径裁决：衣橱草稿生成与微调的同步 POST 需为供应商回退、下载及落盘预留等待时间；列表、确认和激活不沿用生图等待窗口。新增生成路由须同步匹配；客户端等待超时不代表后端已停止或生成失败。
 - 401 按结构化状态判定并广播会话过期，不解析错误文案。
 
+- STT / TTS 经主进程调用云端，无本地引擎；STT 并发与令牌桶限流，TTS 有界排队、合并在途请求并限制云端间隔，超额快速失败。缓存命中不排队、不占额度。实现入口见 [ipc/media.ts](ipc/media.ts)，限额由该入口维护。
+
 ### 构建产物
 
-- tsup 打包 main（ESM `.js`）与 preload（CJS `.cjs`），`@ipc/contracts` 经 esbuild alias 解析到 `shared/ipc/contracts`。dev 脚本显式 `--watch main --watch shared`，避免 tsup 配置级 watch 劫持全树。
+- [tsup](../tsup.config.ts)按“包边界”的格式产出 main 与 preload；`@ipc/contracts` 经 esbuild alias 解析到共享契约。dev 脚本显式 `--watch main --watch shared`，避免 tsup 配置级 watch 劫持全树。
 - 改 preload 导出或主进程入口路径时同步检查 `dist-electron` 产物名与 `package.json` `main` 字段。
+
+- 开发 CSP 允许本地 Vite Fast Refresh 所需的内联脚本和 eval，生产保持严格策略；混用会造成开发白屏或放松生产脚本边界。
 
 ## 与外部的契约
 
@@ -76,7 +85,7 @@ Electron 可信主进程：持有凭据、窗口与表面生命周期、Runner �
 | 渲染层 ↔ 主进程 | preload 暴露面 + `@ipc/contracts`；信任校验用 `isSenderWindow` / 表面角色 |
 | Client ↔ Backend | [PROTOCOL.md](../../docs/PROTOCOL.md)（会话、配置、资产、更新） |
 | Client ↔ Runner | [PROTOCOL.md §2](../../docs/PROTOCOL.md) + [runner/README.md](../../runner/README.md) |
-| 产品侧主进程决策 | [client/README.md §4](../README.md)（窗口、凭据、缓存、更新、快捷键等） |
+| 跨进程协作 | [Client §4](../README.md#4-跨进程协作)（连接、主题、窗口和缓存） |
 | 渲染模块契约 | [renderer/README.md](../renderer/README.md) |
 
 ## 已知限制
@@ -85,3 +94,7 @@ Electron 可信主进程：持有凭据、窗口与表面生命周期、Runner �
 - 配置上云为按保存先后覆盖，多端并发编辑不做合并；离线编辑恢复后只播种云端缺失键。
 - 远程显示模式下透明精灵关闭 GPU 加速，合成与滤镜表现与本机不同；调试透明 / 模糊问题前先确认是否处于该模式。
 - Runner 停止等待有界超时；超时后进程可能残留至系统回收，日志中会记录 quit cleanup 失败。
+
+## 验证入口
+
+[仓库检查](../../scripts/README.md#8-按改动选择验证)覆盖客户端 lint 与两套 TypeScript 配置。改动 preload 或入口路径时检查实际构建产物；涉及窗口 sender、连接代次、配置归属或 Runner 更新时，核对对应拒绝路径、迟到结果和失败恢复，不能只验证正常启动。

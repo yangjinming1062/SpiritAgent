@@ -1,8 +1,8 @@
 # Renderer 架构指南
 
-本文是渲染层的修改入口，定义依赖方向、状态归属与容易引发回归的约束。产品体验归 [DESIGN](../../docs/DESIGN.md)，跨模块载荷归 [PROTOCOL](../../docs/PROTOCOL.md)，主进程与窗口职责归 [client README](../README.md)。
+本文是渲染层的修改入口，定义依赖方向、状态归属与容易引发回归的约束。产品体验归 [DESIGN](../../docs/DESIGN.md)，跨模块载荷归 [PROTOCOL](../../docs/PROTOCOL.md)，主进程与多窗口的协作归 [Client](../README.md)。
 
-修改跨模块接缝读 §1–§4；角色状态、交互与移动读 §6；会话及媒体读 §7；渲染资源读 §8。2D 几何、素材与动作机制按需读 [Puppet README](modules/character/rendering/2d/puppet/README.md)，无需为普通会话或界面修改加载该部分。
+修改跨模块接缝读 §1–§4；角色状态、交互与移动读 §6；会话及媒体读 §7；渲染资源读 §8；界面与玻璃效果读 §9。2D 几何、素材与动作机制按需读 [Puppet README](modules/character/rendering/2d/puppet/README.md)，无需为普通会话或界面修改加载该部分。
 
 ## 1. 分层与目录归属
 
@@ -24,6 +24,8 @@
 
 [ESLint 配置](../eslint.config.mjs)检查这些边界；新增依赖边时同步规则和本文，不能用内部文件直连绕过公共入口。
 
+生产渲染禁止裸 fetch：相对签名 URL 在 Vite / file origin 下不能正确解析，数据与资产统一经主进程 IPC；确需直连的例外逐行 lint 注释说明 URL 来源。
+
 ## 3. 跨模块接缝与绑定纪律
 
 [bind-presentation.ts](app/bootstrap/bind-presentation.ts)在各窗口渲染前显式绑定能力，不依赖 barrel 的副作用导入顺序：
@@ -36,9 +38,11 @@
 
 ## 4. 事件路由与多窗口运行时
 
-[网关路由](app/runtime/gateway-event-router.ts)负责鉴权、会话和窗口角色守卫，再按能力分派给 handlers。精灵窗宿主持唯一 WebSocket 与 Runner 派发能力，生活空间 / 工作台通过主进程代理；连接架构见 [client README §4](../README.md)。
+[网关路由](app/runtime/gateway-event-router.ts)负责鉴权、会话和窗口角色守卫，再按能力分派给 handlers。精灵窗宿主持唯一 WebSocket 与 Runner 派发能力，生活空间 / 工作台通过主进程代理；连接架构见 [Client 连接约束](../README.md#连接与设备就绪)。
 
 同一份模块在不同窗口运行不代表共享内存。每个窗口独立水合，变化经 IPC、网关与既有同步机制传播；语音、附件、草稿和历史的异步回写必须核对用户、会话、回合及清理代次。
+
+每次连接上报 IANA 时区。活动监视器复用本机快照，只报告可用性、应用类别及全屏变化，不上传应用名或窗口标题；去重与清理约束见 §6，跨端语义见 [PROTOCOL §1.8.1](../../docs/PROTOCOL.md#181-cron-双轨契约)。
 
 ### 设备指令与会话事件
 
@@ -53,7 +57,7 @@
 
 陪伴消息只消费后端已提交的 `companion.message`，追加到主陪伴会话；是否展示提醒不影响消息入列。普通自动化消费 `system.notification`，带会话标识时提供查看入口，不使用陪伴打扰档位过滤。
 
-[session-delivery.ts](app/workflows/session-delivery.ts)按会话归属选择轻语或工作台；不能把工作会话传给轻语，否则会回到主陪伴会话并丢失目标上下文。历史水合与送达形状归 [PROTOCOL](../../docs/PROTOCOL.md)。
+[session-delivery.ts](app/workflows/session-delivery.ts)按会话归属选择轻语或工作台；不能把工作会话传给轻语，否则会回到主陪伴会话并丢失目标上下文。历史水合与送达形状归 [PROTOCOL](../../docs/PROTOCOL.md)。未读提醒按会话本地持久化并同步窗口，仅对话可见时清除；收到推送或气泡消失不算已读。
 
 ## 5. 当前归属与限制
 
@@ -133,11 +137,17 @@ localStorage 是窗口缓存，主进程配置镜像与云端所有权见 [PROTO
 会话列表、消息历史、流式投影、待发批次与输入归 conversation；展示使用端口和公共媒体原语。停止同时请求中断会话与 Runner，均为 best-effort，本地仍需完成回合收尾，不能把界面停止当成已撤销副作用。
 
 - 陪伴与专业会话在入口和异步水合两侧隔离；IM 会话只读，输入禁用不能替代服务端守卫。预设和参数作用域见 [PROTOCOL §1.8 / §2.4](../../docs/PROTOCOL.md)。
-- 连发消息的等待与冲刷规则归 [DESIGN §6.6](../../docs/DESIGN.md)；消息完成不能越过尚未到期的等待窗口。
+- 运行轨迹、推理折叠、两端气泡变体与时间分隔条均由现有消息状态投影，不另写正文或后端接口；连发与冲刷时机见 [DESIGN §6.6](../../docs/DESIGN.md)。待发队列在提交时合并文本与附件为一条用户消息；工作台气泡随之合回一条，生活空间保留每条连发的独立气泡（与伙伴多气泡节奏对称）。打字和组字重置计时，完成事件不能越过仍有效的计时器。陪伴历史按空行还原用户与伙伴气泡并共享同一消息 id，附件挂用户首段，伙伴推理仅留首段、媒体仅留末段。
 - 附件通过粘贴、拖放与选择器进入，视频先上传，未完成时不能发送；失败可重试或移除。附件绑定加入时的会话，切换后丢弃旧附件及其迟到上传结果。纯图片 / 视频投喂和混合文件的入口分流见 [DESIGN §6.3](../../docs/DESIGN.md)。
-- 时间条、语音条、媒体卡和运行轨迹都是结构化消息的投影，不写回正文；完整媒体交付与历史缓存规则见 [client README §4](../README.md)。
+- 本地快照、增量追赶与重放水位的配合见 [Client 历史缓存](../README.md#资产与历史缓存)，会话 store 不把快照水位当成实时帧水位。
+- 会话参数面板显示后端返回的生效值，“恢复默认”清除会话覆盖后读取后端生效值；重连重放同样刷新参数，切换会话清空参数缓存并重建面板，避免待保存参数跨会话写入。保存响应只水合当前会话的最新修改，失败必须提示；工作台默认保存后刷新当前会话的生效参数。
+- 工作台只在当前会话确认不属于陪伴预设时挂载对话面板，避免切换或深链水合期间暴露陪伴参数入口；推理配置作用域见 [PROTOCOL §2.4](../../docs/PROTOCOL.md)。
 
 IM 只读历史保留入站消息的接收顺序，以排队标记显示“已接收，等待处理”。恢复时使用后端全量水合结果覆盖本地缓存，保证已消费消息的旧排队标记被清除；契约见 [PROTOCOL §1.7](../../docs/PROTOCOL.md#17-im-通道桥接apichannels)。
+
+### 轻语与窗口入口
+
+[轻语](app/windows/sprite/whisper/)是精灵窗内的浮层，固定使用唯一的陪伴会话，只挂聊天气泡与输入，不挂参数面板；打开时消费该会话未读。生活空间或工作台打开后收起轻语。双击、通知点击及投喂分流遵循 [DESIGN §6.3](../../docs/DESIGN.md#63-用户直接交互戳拖悬停)，跨窗口附件走 [Client 信箱约束](../README.md#窗口与主题)。
 
 ### Speech（modules/speech）
 
@@ -145,15 +155,24 @@ speech 拥有合成、音频播放、振幅与语音队列，消息读写经 §3
 
 [音频输出](modules/speech/audio-track.ts)与语音条共用播放路径；[音色校验](modules/speech/voice-validity.ts)在目录就绪后检查已选声音，缺失时提示重选。语音请求限额与缓存归主进程媒体入口，不能在窗口复制限流值或另一套音频缓存规则。
 
+- TTS 使用独立朗读文本：过滤媒体标记、URL、Markdown 装饰及 XML/HTML 标签；仅标点、符号或表情的消息保留文字，不显示播放按钮或语音条，也不合成。标签内部文字不按标签名称推断用途或删除。正常句内标点保留，合成及语音时长缓存统一使用清理后的文本，避免命中旧的异常读音；聊天与转写原文不受影响。
+- 气泡结束即可用提前送达的演绎描述合成语音；生活空间始终语音由前台代理拉取、落盘并投影语音条，不修改后端消息。交付及缓存约束见 [PROTOCOL §1.4](../../docs/PROTOCOL.md)。
+
 ### Media（modules/media）
 
-每个可打开媒体的窗口独立挂载查看器，打开能力经端口注入；精灵窗内轻语是浮层，生活空间与工作台是独立窗口，不能假设弹层共享内存。
+对话与片刻共用媒体播放入口。每个可打开媒体的窗口独立挂载查看器，打开能力经端口注入，点击遮罩或 Esc 关闭；窗口及浮层不能假设共享内存。
 
-媒体字节经主进程桥获取，临时 URL 在卸载时回收。签名 URL 是交付地址，不是稳定身份；签名、缓存与媒体永久存储契约见 [PROTOCOL](../../docs/PROTOCOL.md) 和 [client README](../README.md)。
+助手正文的 `MEDIA:` 交付标记在流式投影及历史水合时移除，不进入显示、复制或 TTS；流式暂存原文以处理跨增量标记，媒体只消费结构化媒体列。
+
+媒体字节经主进程桥获取，视频及配音字节按正确 MIME 生成临时 URL，在卸载时回收。签名 URL 是交付地址，不是稳定身份；签名、缓存与媒体永久存储契约见 [PROTOCOL](../../docs/PROTOCOL.md) 和 [client README](../README.md)。
 
 ### Memory 与 Room（modules/memory、modules/room）
 
-[journal-store.ts](modules/memory/journal-store.ts)维护片刻与日记的分页、水合和增量。记忆管理按预设隔离，换预设或卸载后旧请求不能覆盖当前页面；具体管理契约见 [client README 的预设记忆交互](../README.md#预设记忆交互)。
+[journal-store.ts](modules/memory/journal-store.ts)维护片刻与日记的分页、水合和增量。
+
+记忆管理页按有效、候选、失效和过期状态展示记录及原始依据，不设置审核或确认流程；编辑和删除成功后更新对应记录及数量，保留其他记录尚未保存的草稿。陪伴预设可另行补填、修改或遗忘引导时收集的用户资料。页面按预设重新挂载列表与编辑状态，请求序号及卸载清理防止迟到结果覆盖新页面。学习工具的归属随调用传递，不从当前窗口推断；会话与人工管理入口、工具作用域协议见 [PROTOCOL](../../docs/PROTOCOL.md#预设记忆与学习作用域)。
+
+夜间政策开关按房间、衣橱与交互场景归位并直接读写服务端，不复用白天打扰档位。
 
 [backdrop-store.ts](modules/room/backdrop-store.ts)负责房间等待、就绪、失效、失败恢复与历史。工作台不使用房间图；换装联动和锁定政策归 [DESIGN §6.1](../../docs/DESIGN.md)。
 
@@ -163,18 +182,13 @@ speech 拥有合成、音频播放、振幅与语音队列，消息读写经 §3
 
 ### 3D 初始化、功耗与缓存
 
-渲染器回退顺序归 [client README §4](../README.md)。[3D 入口](modules/character/rendering/3d/companion-3d.tsx)等待异步引擎就绪后再加载模型；经典 WebGL 回退必须更换 canvas，不能复用已获得另一种上下文的画布。透明合成的预乘 alpha 约定钉在 [Engine.ts](modules/character/rendering/3d/Engine.ts) 头部注释：应用层不自行预乘也不二次预乘，全部依赖 three 内部的 WebGPU alphaMode / WebGL blend 约定；初始化日志记录实际后端与 GPU 适配器，`localStorage da.render.forceClassicWebgl=1` 可强制经典回退用于异常组合对照。
+渲染器按 WebGPU → 内置 WebGL2 节点后端 → 经典 WebGLRenderer 依次尝试，再进入产品兜底。环境贴图按实际渲染器类型生成。[3D 入口](modules/character/rendering/3d/companion-3d.tsx)等待异步引擎就绪后再加载模型；经典 WebGL 回退必须更换 canvas，不能复用已获得另一种上下文的画布。透明合成的预乘 alpha 约定钉在 [Engine.ts](modules/character/rendering/3d/Engine.ts) 头部注释：应用层不自行预乘也不二次预乘，全部依赖 three 内部的 WebGPU alphaMode / WebGL blend 约定；初始化日志记录实际后端与 GPU 适配器，`localStorage da.render.forceClassicWebgl=1` 可强制经典回退用于异常组合对照。
 
-- Chromium 为后台聊天关闭节流，因此引擎自己控制帧率与停止。[PowerProfile](modules/character/rendering/3d/PowerProfile.ts)决定活跃、空闲和休眠档，参数只在源码维护。首次模型落定前保持活跃；隐藏窗口不能依赖 rAF，用定时器续接；恢复时钳制时间增量，避免动画跳变。
+- GPU 默认使用低功耗策略，避免常驻精灵持续唤醒独显；Chromium 为后台聊天关闭节流，因此引擎自己控制帧率与停止。[PowerProfile](modules/character/rendering/3d/PowerProfile.ts)决定活跃、空闲和休眠档，参数只在源码维护。首次模型落定前保持活跃；隐藏窗口不能依赖 rAF，用定时器续接；恢复时钳制时间增量，避免动画跳变。
 - [GLB 实例缓存](modules/character/rendering/3d/gltf-instance-cache.ts)按内容哈希复用解析模板。骨骼和实例动画状态需深克隆隔离；GPU 资源由模板引用计数管理，实例卸载不能释放其他实例仍使用的资源，淘汰与登出才安全回收。
 - [OPFS 缓存](shared/lib/opfs-blob-cache.ts)共享 GLB / PSD 的串行写入、预算淘汰与魔术字节校验；拉取、缓存写入和装配都尊重取消及登出代次，旧请求不能在清空后写回旧用户资产。缓存上限由各格式适配器维护。
+- 材质加载保留 GLB 原生贴图，自定义贴图失败回退原生材质；拖拽速度驱动物理倾角和松手回正，基准尺寸随屏幕高度适配。2D 机械反馈见下节 Puppet 入口。
 - 引擎 tick 异常后停止循环并上报，避免逐帧重抛；形象回退由 [companion-store.ts](modules/character/companion-store.ts)统一选择，产品可见性要求见 [DESIGN §1.2](../../docs/DESIGN.md)。
-
-### 玻璃降级与主题播种
-
-- [apply-no-blur.ts](shared/lib/apply-no-blur.ts) 把玻璃降级的四个来源（OS 减透明偏好、集显探测、用户「减少透明效果」开关、表面窗帧预算监视）汇成 `no-blur` class；降级语义与手动开关管道见 [client README §4](../README.md)。帧预算监视只在表面窗挂载，精灵窗不参与。
-- 生活空间房间图经 [baked-backdrop.ts](app/windows/living/baked-backdrop.ts)烘焙；远端签名图走主进程资源桥，避免 canvas CORS 读回失败。烘焙、原图回退与降级语义见 [client README §4](../README.md)，CSS 不再给烘焙位图叠加模糊。
-- 主题启动优先级：主进程播种的 URL 参数（配置镜像当前值）> localStorage 即时缓存 > 默认主题；参数在 [theme store](shared/store/theme.ts)模块加载时消费并从地址栏剥离，之后的变化一律走 IPC 广播。
 
 ### Puppet（2D 高保真渲染路径）
 
@@ -188,3 +202,17 @@ speech 拥有合成、音频播放、振幅与语音队列，消息读写经 §3
 - 本机缓存和远端字节均验证 PSD 魔术字节，中止与读取失败向装配层传播，由其决定回退。
 - 部件命中由当前实际呈现的运行时写入，隐藏的 PSD、预览或旧资源不能覆盖桌面命中。
 - 生成失败保留状态与原因；下载失败走读取重试，重新生成遵循生成契约。
+
+## 9. 界面、主题与玻璃效果
+
+- 窗口控件统一消费 `shared/panel` 与 `--ui-*` 语义 token；CSS 持有底色，主题 id 白名单由 IPC 契约校验，名称与描述归文案字典。根节点主题同时切换色彩与效果轴，新增控件不得硬编码颜色。
+- 弹层共享拖拽、持久位置与互斥入口，命中区域随位移更新；精灵内弹层使用应用面板头与关闭 / Esc，入口窗口使用主进程统一调度的最小化、最大化和关闭控件。
+- 首帧主题的 URL、localStorage 与云端优先级由 [Client](../README.md#窗口与主题)定义，[theme store](shared/store/theme.ts)负责消费入口参数。主题设置在生活空间；精灵瞬时浮层使用独立 overlay token，不继承清透窗壳的低透明度。
+- [apply-no-blur.ts](shared/lib/apply-no-blur.ts)汇总 OS 减透明偏好、集显探测、用户开关与表面窗帧预算监视；任一命中即关闭 backdrop-filter、提高底板不透明度。手动偏好经主进程广播并跨端恢复；水合只更新缓存，登出清理不回传旧偏好。自动降级是设备状态，不上云。
+- 帧预算监视只在表面窗挂载；连续超预算才降级，持续恢复后才解除，后台区间不计入。监听随组件释放，阈值由[实现](shared/lib/apply-no-blur.ts)维护。
+- 房间图经 [baked-backdrop.ts](app/windows/living/baked-backdrop.ts)按 URL、窗口尺寸和主题烘焙为预模糊位图，远端图通过主进程资源桥获取以避免 CORS 读回失败。Ken Burns 只变换静态层，CSS 不再给已烘焙位图叠加模糊；输入变化即停用旧结果，烘焙失败回退 CSS filter，`no-blur` 使用原图。
+- 玻璃与降级底色只覆盖圆角内部，不能填满窗口外侧透明区；窗口透明及首帧背景约束见 [Client](../README.md#窗口与主题)。
+
+## 10. 验证入口
+
+静态检查使用 [scripts](../../scripts/README.md#8-按改动选择验证)列出的客户端 lint 与类型检查。多窗口状态须验证切换、登出、卸载和迟到回写；播放、GPU 上下文、命中与透明合成需在相应桌面环境验证。修改 2D 几何和动作时继续按 [Puppet README](modules/character/rendering/2d/puppet/README.md)核对呈现与命中使用同一几何。

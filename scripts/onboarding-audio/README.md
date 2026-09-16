@@ -1,22 +1,29 @@
-# Onboarding audio assets
+# Onboarding 引导音频
 
-预渲染的 onboarding 引导词音频。云端 TTS 一次合成、随安装包分发，client 在 onboarding 阶段只读盘播放——零网络、零本地合成。
+本目录维护预渲染的引导词及其合成脚本。音频由云端 TTS 生成后随安装包分发，客户端引导阶段读本机文件播放；音色试听仍走运行时 TTS，不属于这套预制音频。
 
-## 文件清单
+## 来源与交付
 
-- `manifest.json` — 文案与 voice 元信息（tracked source of truth）。`generate_onboarding_audio.py` 据此生成 mp3。
-- `generate_onboarding_audio.py` — 合成脚本，需要 `MIMO_API_KEY`（或 `TTS_API_KEY`）环境变量；请求体结构对齐 backend 的 MiMo TTS 运行时，保证同一音色下与 `/api/media/tts` 产出一致。
-- 生成的 mp3 落到 `installer/payload/onboarding-audio/zh/<tag>.mp3`，与 manifest、脚本一并提交（`.gitignore` 对 `installer/payload/onboarding-audio/` 显式重新包含）；[tauri.conf.json](../../installer/src-tauri/tauri.conf.json) 的 `bundle.resources` 打包该目录，`scripts/build.py` 的 Tauri 阶段将其嵌入安装包。tag 与 [onboarding 引导流程](../../client/renderer/app/onboarding/onboarding-flow.tsx)里 `playOnboardingAudio(tag)` 的 `OnboardingAudioTag` 一一对应。
+- [manifest.json](manifest.json)维护文案、音色、语言与 tag；[生成脚本](generate_onboarding_audio.py)读取它，输出到 [installer/payload/onboarding-audio/zh/](../../installer/payload/onboarding-audio/zh/)。请求结构与后端 MiMo TTS 适配一致，不保证两次云端合成的音频字节相同。
+- MP3 与 manifest 一并提交；[Tauri 资源配置](../../installer/src-tauri/tauri.conf.json)将音频嵌入安装包，释放位置见 [Installer](../../installer/README.md#3-架构地图)。
+- tag 与文案绑定，不与题号绑定；[引导流程](../../client/renderer/app/onboarding/onboarding-flow.tsx)使用对应的音频标识。调整题序无需重合成，修改文案、音色或合成行为需更新受影响的音频；增加或改名 tag 时同步调用方。
 
-**tag 与文案绑定，不与题号绑定**：问题表里每题自带 `audioTag`，指向录了这句话的那条 manifest 条目。因此调整引导题序不触发任何重新合成；只有**改文案**才需要重生成对应 mp3。
+## 修改与验证
 
-## 添加 / 修改流程
+以下命令在仓库根目录执行，使用后端项目依赖；静态检查也需安装 OpenAI SDK，因为脚本在加载时导入它。
 
-1. 改 `manifest.json`（新增条目或调整文案）
-2. 设 `MIMO_API_KEY`，跑 `python scripts/onboarding-audio/generate_onboarding_audio.py` 重新生成 mp3
-3. 提交 `manifest.json` 与重新生成的 mp3
-4. `--check` 校验 mp3 同步字节合法、目录内容与 manifest 条目一致（无外部调用，可随时本地运行）
+1. 修改 manifest，并核对引导流程中的 tag 引用。
+2. 需要合成时配置环境变量 `MIMO_API_KEY`（或 `TTS_API_KEY`），执行：
 
-## voice 选择
+   ```bash
+   uv run --project backend python scripts/onboarding-audio/generate_onboarding_audio.py
+   ```
 
-`冰糖`（mimo TTS 默认中文女声）。整段 onboarding 听感一致；voice preview sample 不在此列，仍走运行时 TTS 让用户试听不同声线。
+   当前脚本每次重新合成整个 manifest，会调用供应商并覆盖对应 MP3；不是按变更条目增量生成。删除 tag 后还需移除已不使用的音频文件。
+3. 执行静态检查，并试听受影响音频后提交 manifest 与 MP3：
+
+   ```bash
+   uv run --project backend python scripts/onboarding-audio/generate_onboarding_audio.py --check
+   ```
+
+`--check` 不调用供应商，只核对 MP3 文件名与 manifest 一致、文件头符合脚本接受的帧同步字节；不验证朗读内容、音色、时长或完整解码，不能代替试听。

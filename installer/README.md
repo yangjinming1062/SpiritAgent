@@ -4,12 +4,14 @@
 
 负责安装、修复与运行时释放；认证交互由客户端承载，更新与签名边界见 [PROTOCOL §5.5](../docs/PROTOCOL.md#55-自更新签名client--backend--installer--backend)。安装 UI 与资源独立维护，不借用其他模块的样式或组件；产物由构建阶段显式输入，构建入口见 [scripts/README.md](../scripts/README.md)。
 
+修改载荷解析读 §3，阶段执行、修复与平台行为读 §4；内置技能文档有独立维护约束。仓库级构建与发布由 scripts 维护，验证入口见文末。
+
 ## 2. 设计意图
 
 - 安装脚本与 payload 随安装器嵌入，版本一致；安装期需联网获取 Python 工具链、Runner 依赖与 OfficeCLI（获取与回退行为见 §4），不能把资源自包含等同于完全离线安装。payload 中的 runner wheel 由构建链强制与发布版本一致（见 [scripts/README.md](../scripts/README.md)），安装器只负责按包内内容覆盖本机，不做版本猜测。
 - Tauri 负责编排，安装脚本只执行阶段任务；二者同目录维护、随版本共同演进，仓库级构建归 scripts。
 - 使用 uv 托管 Python 与独立 venv，避免系统 Python 版本差异扩大兼容矩阵。
-- Skills 按完整文件释放，不解析 frontmatter，覆盖同名文件但不删除用户自装内容；客户端与 Runner 分别过滤和翻译，两套平台翻译表语义必须对齐，新增平台同时修改两端。`$SPIRITAGENT_HOME/.no-bundled-skills` 标记可让 install-skills 阶段跳过内置技能释放。
+- Skills 按完整文件释放，不解析 frontmatter，覆盖同名文件但不删除用户自装内容；平台声明和消费端过滤统一见 [PROTOCOL §2.6](../docs/PROTOCOL.md#26-skills-平台声明与过滤)。`$SPIRITAGENT_HOME/.no-bundled-skills` 标记可让 install-skills 阶段跳过内置技能释放。
 
 ## 3. 架构地图
 
@@ -27,7 +29,7 @@
 - `install.ps1` 必须保存为带 BOM 的 UTF-8：PowerShell 5.1 将无 BOM 脚本按系统 ANSI 代码页解码，中文注释在 GBK 等双字节代码页下会打乱令牌解析（UnexpectedToken），首个 `-Manifest` 调用即失败；构建链按字节复制该文件入产物，编码以源文件为准。
 - 安装器完成后自拷贝至 `$SPIRITAGENT_HOME/spiritagent-setup(.exe)`，为快捷方式提供稳定目标；macOS 对副本先清 quarantine 再按签名状态处理：未签名补 ad-hoc，损坏 ad-hoc 可重签，权威证书签名须严格校验，禁止静默降级为 ad-hoc。
 - 安装期联网获取：uv 与 Python 工具链、Runner wheel 依赖、OfficeCLI。Runner 依赖安装失败后镜像重试：优先 `SPIRITAGENT_PYPI_INDEX_URL` / `PIP_INDEX_URL`，缺省使用阿里云镜像，环境变量覆盖支持企业私有 index；uv、Python 与 OfficeCLI 的下载无镜像回退，OfficeCLI 安装尽力而为、失败不阻断。
-- macOS `/Applications/SpiritAgent.app` 同时是首装入口和后续 launcher；fast path 除完成标记外还检查桌面端二进制存在与 Runner venv 可导入核心依赖，venv 健康判定须与客户端 [updater.ts](../client/main/runner/updater.ts) 的探针保持一致，改动两端同步；`--reinstall` / `--repair` 强制跳过 fast path。
+- macOS `/Applications/SpiritAgent.app` 同时是首装入口和后续 launcher；fast path 除完成标记外还检查桌面端二进制存在与 Runner venv 可导入核心依赖，健康判定的消费端一致性见 [PROTOCOL §5.5](../docs/PROTOCOL.md#55-自更新签名client--backend--installer--backend)；`--reinstall` / `--repair` 强制跳过 fast path。
 - 卸载由客户端 NSIS 安装包的系统卸载入口承载，仅移除应用本体；本模块不注册卸载流程，`$SPIRITAGENT_HOME` 数据不随卸载清理。
 - ZIP 安装查找客户端时允许 `$SPIRITAGENT_HOME/apps/SpiritAgent/SpiritAgent.exe`，因为该布局不在常规安装位置。
 
@@ -41,5 +43,9 @@
 
 - Tauri ↔ 安装脚本：资源与运行时布局见 §3，阶段及结果帧见 §4。
 - Tauri ↔ 前端：`bootstrap` IPC 通道推送 manifest / stage / log / complete / failed 事件帧，定义见 [events.rs](src-tauri/src/events.rs)，前端消费见 [store.ts](src/store.ts)。
-- 对客户端 / Runner：运行时安装位置见 §3，Skills 平台翻译约束见 §2，venv 健康探针两端同步见 §4；构建 payload 清单见 [scripts README](../scripts/README.md)。
+- 对客户端 / Runner：运行时安装位置见 §3，平台声明见 [PROTOCOL §2.6](../docs/PROTOCOL.md#26-skills-平台声明与过滤)，venv 健康探针见 [§5.5](../docs/PROTOCOL.md#55-自更新签名client--backend--installer--backend)；构建 payload 清单见 [scripts README](../scripts/README.md)。
 - 更新与签名边界见 [PROTOCOL §5.5](../docs/PROTOCOL.md#55-自更新签名client--backend--installer--backend)。
+
+## 6. 验证入口
+
+构建、发布与提交前检查见 [scripts](../scripts/README.md#8-按改动选择验证)。载荷或安装脚本变化需核对产物中实际嵌入的文件、版本、路径及 Windows 脚本编码；阶段变化需在相应平台检查取消、失败重试和完成标记。首装、修复与 launcher 快路径分别验证，静态检查或成功打包不能代表真实安装已通过。

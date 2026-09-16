@@ -1,6 +1,6 @@
 # 模型生成能力链（3D 与 2D 分层动画）
 
-本文定义形象生成的参考选择、能力编排、失败恢复、产物及客户端兑现契约。适用于生成服务、供应商适配与渲染消费端的修改；产品流程见 [DESIGN.md](DESIGN.md)，接口与事件见 [PROTOCOL.md](PROTOCOL.md)，模块内部取舍见 [backend README](../backend/README.md) 和 [renderer README](../client/renderer/README.md)。
+本文定义形象生成的参考选择、能力编排、失败恢复、产物及客户端兑现契约。适用于生成服务、供应商适配与渲染消费端的修改；产品流程见 [DESIGN.md](DESIGN.md)，接口与事件见 [PROTOCOL.md](PROTOCOL.md)，模块内部取舍见 [后端生成模块](../backend/services/application/generation/README.md) 和 [renderer README](../client/renderer/README.md)。
 
 修改参考图与派生关系读 §1，接入 3D 供应商读 §2–§5，修改 2D 资产读 §6，传输、验证与源码入口读 §7–§9。源码维护能力声明和参数，本文解释各阶段为什么需要这些输入、如何恢复以及消费者能依赖什么。
 

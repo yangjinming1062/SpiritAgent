@@ -94,7 +94,7 @@ WebSocket 与本地 IPC 使用 JSON-RPC 2.0 信封；反向模型请求经 Clien
 - **生活空间房间图联动与保护**：房间背景将角色绘制进场景中，角色参考与穿着来源见 [PIPELINE §1](PIPELINE.md#1-3d-链拓扑)。首房间在 2D 立绘确认后调度，避免早于独立全身参考生成。换装成功后（`worn=true`）自动比较着装指纹，不一致时下发 `companion.room.invalidated` 并自动触发重建，防止画面穿帮。房间政策为 `locked` 时，拒绝角色自主换房，但放行换装联动和用户显式请求；历史房间保留最近 N 张供回滚，回滚时若服装指纹与当前穿着冲突则返回 409。
 - **聊天参考图换房**：`room_backdrop_update` 用 `reference_image_index` 选择当前模型上下文中最近一条带图用户消息的图片，从 1 开始；用户要求参考图片时必须指定，未指定不使用用户图，越界或图片不可读时失败，不退回纯文字生成。图片与用户回合标识由编排层注入并作为保留参数保护，模型只提供序号与场景要求。用户回合的显式换房按 `user_request` 调度，放行锁定与打扰档位且不占自主配额；自主回合仍受原门控，并拒绝用户参考图。改动须同步聊天编排、工具运行时、换房工具与生成服务。
 - **夜间自主活动**：`User.nightly_activity_enabled` 总控，房间与外观政策及 `companion.autonomous_media`、`companion.autonomous_voice` 分别控制对应能力，默认开放。模型从运行时可用目录选择少量活动或空计划，服务层按外观 → 房间 → 片刻/媒体 → 联系执行，每项开始前重读政策；无当日消息不阻断规划，在线打扰档位不参与夜间判断。
-- **夜间恢复与交付**：可查询任务沿原业务记录恢复，结果未知的在途动作保留中断状态，不重新提交；成功事实才能进入记忆、日记与问候。片刻及对应陪伴消息、outbox 同事务提交，媒体持久化为永久资产路径。夜间房间活动独立于在线换房配额；次日问候以一次性 `special` 任务等待，仅在线且非静止时交付，最晚保留至目标本地日结束。内部账本、恢复窗口和记忆整理的并发快照约束见 [backend README](../backend/README.md)，体验见 [DESIGN §6.2](DESIGN.md#62-主动陪伴与打扰档位)。
+- **夜间恢复与交付**：可查询任务沿原业务记录恢复，结果未知的在途动作保留中断状态，不重新提交；成功事实才能进入记忆、日记与问候。片刻及对应陪伴消息、outbox 同事务提交，媒体持久化为永久资产路径。夜间房间活动独立于在线换房配额；次日问候以一次性 `special` 任务等待，仅在线且非静止时交付，最晚保留至目标本地日结束。内部账本与恢复窗口见 [Backend 夜间批处理](../backend/README.md#夜间批处理)，证据并发约束见[记忆模块](../backend/services/domains/memory/README.md#来源与并发)，体验见 [DESIGN §6.2](DESIGN.md#62-主动陪伴与打扰档位)。
 - **时刻与日记分层不变量**：底层 `memories` 用于检索与上下文注入，人工管理入口按预设展示事实、状态和证据，不暴露向量表示；生活空间消费独立的 `moments`（时刻）与 `diary_entries`（第一人称日记）。夜间批处理静默提炼日记，若当天已被用户编辑过则采取尾部段落追加而非覆写；工作预设会话中严格禁止记录生活时刻。片刻完全由精灵发起，产生通道有三：白天自主冲动（每用户每 24h ≤ `MOMENT_AUTONOMOUS_PER_DAY`，默认 3，0 表示关闭；静止档断源，纯信息流更新、不发主对话消息）、聊天内 `moment_create`（≤ 3 次/日）与夜间规划；用户仅可评论、删除本人评论与软隐藏整条时刻。当日片刻互动（发布与评论线程）作为共享输入进入夜间规划、反思日记与日记投影。
 - **内置专属工具门控**：生活空间三工具只绑定陪伴会话——工作预设与自动化任务在回合装配层即不注入 schema（`prompt_presets.LIFE_SPACE_TOOL_NAMES`，`build_turn_inputs` 与 `search_tools` 同源过滤），派发层按同一集合硬阻断（orchestrator，与 automation 同机制），工具入口不判定会话类型。
   - `room_backdrop_update`：支持聊天请求与角色自主换房，参考图选择和用户请求例外见上文。自主调用在静止档或 locked 政策下拒绝，常规档限 decorate/mood，自主档可 seasonal/rebuild；每用户每 24 小时自主换房成功 ≤ 1 次。
@@ -137,13 +137,13 @@ WebSocket 与本地 IPC 使用 JSON-RPC 2.0 信封；反向模型请求经 Clien
 
 **设备指令的重复投递**：`tool.call` 与其它事件一样进重放缓冲，WS 断连重连会重发。本机副作用不可撤销（删文件、跑命令），因此**客户端必须按 `call_id` 去重**，重复帧直接丢弃——后端的 `resolve_future` 只会丢弃迟到的结果，拦不住已经发生的副作用。客户端执行时把 `call_id` 原样透传给 `execute_tool`（§2.5），让 Runner 侧调用日志成为第二道幂等防线并支撑中断后的结果查询。
 
-**对话内生成媒体**（改此处需同步：backend 工具与聊天持久化、backend/README.md、client 渲染层与 client/renderer/README.md、DESIGN §6）：
+**对话内生成媒体**（改此处需同步：backend 工具与聊天持久化、[对话编排 README](../backend/services/application/chat/README.md)、client 渲染层与 client/renderer/README.md、DESIGN §6）：
 
 - 聊天回合经图像/视频生成工具产出的媒体，随对话完成事件以 media 数组（元素为 image / video 类型 + 本服务媒体 URL）下发，并持久化在对应助手消息行；后台完成的视频另以 status_media 送达行落库，实时事件与历史水合看到同一形状。
 - 渲染端在**对话窗**以媒体卡内联预览、点击放大播放；精灵气泡只承载轻量文本，收到媒体时仅提示「点击查看」并支持点击打开对话窗（必要时切到目标会话）——富媒体统一在对话窗展示，不进气泡。
 - 精灵画/拍自己（生成工具 subject='self'）：后端自动注入角色参考（图像参考或缺省视频首帧），参考规则见 [PIPELINE §1](PIPELINE.md#1-3d-链拓扑)。
 
-**用户侧聊天附件**（改此处需同步：backend 网关校验与附件生命周期模块、backend/README.md、client 附件 UX 与 client/renderer/README.md、DESIGN §6.1）：
+**用户侧聊天附件**（改此处需同步：backend 网关校验与附件生命周期模块、[对话编排 README](../backend/services/application/chat/README.md)、client 附件 UX 与 client/renderer/README.md、DESIGN §6.1）：
 
 - 图片附件以 `data:image/*` data URL 随 `prompt.submit` 的 attachments 直发（不落盘）；视频附件因 base64 远超 WS 单帧上限，客户端必须先经 `POST /api/media/videos`（multipart：file + session_id，容器白名单 mp4/mov）换取附件 URL，再以 `{"type": "video", "file_url": ...}` 提交——附件 URL 只认本会话（跨会话引用直接拒绝），绝对形态仅认 `public_base_url` 前缀（第三方绝对 URL 会被拒绝，防止借供应商发任意请求）。
 - 服务端点 `GET /api/media/videos/{session_id}/{file_id}` 公开（file_id 为不可猜测 token；公网模式下供应商需直接拉取）。
@@ -419,7 +419,9 @@ capabilities 与 capabilities_health 来源于 Runner 的运行时探测（探�
 
 创建、恢复、派生与保存响应的 `info.settings` 返回生效参数。`session.set_settings` 仅接受温度、压缩阈值及推理强度三个字段；`null` 删除对应覆盖（含同义存储键），空 patch 只刷新生效参数。窗口内“恢复默认”删除三项覆盖，随后由后端重新计算默认值，避免普通会话固化旧默认。保存先在行锁下合并落库，再更新运行时；失败不得只改变运行时。场景值由 [预设目录](../backend/services/domains/conversation/presets.py) 单源维护。语言、设备与工具能力遵循各自共享契约。
 
-**Backend 的 user_settings 是用户配置真源**（REST 为 `GET/PUT /api/config`，按点键 upsert、永不删除键）；Client 是同步代理与 Runner 的唯一推送方。本地 `desktop-settings.json` 是云端镜像（本地/离线使用 + 供 Runner 推送），内容 = **同步节白名单**（toolsets / skills / browser / security / debug / tool_output / computer_use / file_state / audio / companion / shortcuts / ui，节内本机键如 `browser.profile_dir` 不上云；`ui.theme` 供主进程在窗口 `loadURL` 前播种入口首帧主题，契约见 [client README §4](../client/README.md)）+ **顶层原始值同步键**（`language`，与后端 `user_settings.language` 行一一对应；详见 §1.4 locale 扩展契约）+ **仅本机节**（terminal、spiritagent 等机密与设备相关节及未知节——**永不离开本机**，红线见 §5.3）。镜像带归属戳（sync.user_id），换号残留按不信任处理：水合前清空同步节、不上传。
+**Backend 的 user_settings 是用户配置真源**（REST 为 `GET/PUT /api/config`，按点键 upsert、永不删除键）；Client 是同步代理与 Runner 的唯一推送方。本地 `desktop-settings.json` 同时保存允许同步的云端镜像和仅本机配置，供离线使用及推送 Runner。同步节、节内排除键与顶层原始值键由 [config-sync.ts](../client/main/shared/lib/config-sync.ts)维护；白名单外、未知节和机密键永不上传，边界见 §5.3。镜像带用户归属戳，换号残留按不信任处理：水合前清空同步节、不上传。
+
+主题由配置镜像播种窗口首帧，跨进程时序见 [Client](../client/README.md#窗口与主题)；语言使用顶层原始值同步，跨模块语义见 [§7](#7-跨模块语言规则)。
 
 同步语义：设置变更 → 镜像原子写 → spiritagent.config.update 推 Runner → 防抖后 PUT 云端；启动恢复会话、登录、换号时 GET 水合（云端值逐键覆盖镜像同名键；本地有而云端无的键回传上云，覆盖首跑播种与离线补传）。离线时镜像照常读写，恢复后自动补传；多端为按保存 last-write-wins、无合并，另一端的改动在下次水合时收敛。
 
@@ -427,7 +429,7 @@ capabilities 与 capabilities_health 来源于 Runner 的运行时探测（探�
 
 生效打扰档位落 `companion.disturbance_tier` 点键经本管道上云，是后端主动闸门（主动消息、cron 自主回合、情绪/空间推理入口）的唯一档位来源（权威边界见 [ARCHITECTURE.md §5.1](ARCHITECTURE.md)）；用户偏好另存 `companion.disturbance_preference` 供跨端恢复，水合只回写偏好、不回写生效值（生效值是设备派生的）。玻璃降级手动开关 `companion.reduce_transparency` 同为用户偏好键（跨端恢复；OS 减透明偏好与帧预算自动降级是设备派生信号，不上云）。
 
-Runner 侧不变：仅内存持有配置、每次工具调用读取，不读写磁盘配置文件。时序：Runner 就绪握手后、首个 execute_tool 前推一次 full config；此后每次设置保存再推一次；Runner 重启后内存配置清空，客户端在下次 runner_ready 时重新推送。**config 键明细见 runner 代码（utils/config.py）与 client（shared/lib/config-sync.ts 的白名单），本文只锁定所有权与同步契约。**
+Runner 侧不变：仅内存持有配置、每次工具调用读取，不读写磁盘配置文件。时序：Runner 就绪握手后、首个 execute_tool 前推一次 full config；此后每次设置保存再推一次；Runner 重启后内存配置清空，客户端在下次 runner_ready 时重新推送。配置键与默认值见 [Runner 配置](../runner/utils/config.py)，同步范围见上文客户端白名单；本文维护所有权与同步契约。
 
 ### 2.5 本机调用日志
 
@@ -438,6 +440,14 @@ Runner 侧不变：仅内存持有配置、每次工具调用读取，不读写�
 - **终态与中断**：认领记录刷盘后才开始执行；completed / failed 终态与完整结果保存后才回复调用方，重放不另行截断。只有持有该次认领凭据的执行者能写入终态；取消后无已保存终态的记录标 unknown（工作线程和外部副作用可能仍在继续），终态与 unknown 不被迟到写入覆盖。查询和启动清理均核对持有进程；进程已死且无终态时标 unknown，不自动重放。
 - **查询入口**：`spiritagent.call_result {call_id}` 返回 `{call_id, status, result?, error?, claimed_at?, finished_at?}`，仅无记录返回 `status="not_found"`；损坏或不可读的记录返回 unknown，非法调用标识返回错误。Backend 中断恢复时先查询，据 status 决定续跑、重放结果还是保留待核对提示，不得盲目重跑本机副作用。
 - **边界**：调用日志只降低重复执行风险并提供查询依据，不保证任意外部副作用恰好发生一次；终态自完成或裁决为 unknown 起保留 7 天后由 Runner 启动清理。日志不可写时允许执行和返回，但恢复能力不可保证；未获得认领凭据时不得补写或覆盖其他执行者的记录。无 `call_id` 的直调路径不记日志、行为不变。
+
+### 2.6 Skills 平台声明与过滤
+
+技能 frontmatter 使用 `platforms` 声明适用系统，支持字符串或列表；未声明或空列表表示不限定平台。规范值使用 `macos` / `windows`，两端也接受对应的 `darwin` / `win32` 别名并忽略大小写。该声明用于按宿主筛选，不扩大 [ARCHITECTURE 的平台支持范围](ARCHITECTURE.md#平台支持策略)。
+
+Installer 保留完整技能文件；Client 主进程计算兼容状态，界面据此过滤，并拒绝启用不适配本机的技能；Runner 在技能列表与读取入口再次过滤。解析入口分别为 [skill-index.ts](../client/main/shared/lib/skill-index.ts)与 [skills_tool.py](../runner/tools/skills/skills_tool.py)。新增平台或调整声明语义须同时核对两端与实际 payload，不能只改界面标签。
+
+Runner 还兼容旧式单数 `platform` 字段，客户端索引只读 `platforms`；需要两端一致识别的技能必须使用规范字段。学习技能的用户与预设隔离见[预设记忆与学习作用域](#预设记忆与学习作用域)，与平台过滤分别生效。
 
 ## 3. 反向 RPC 桥接（Runner 借大脑）
 
@@ -492,9 +502,13 @@ Backend 按 `(user_id, call_id)` 保存一次工具调用的等待对象，用�
 
 Runner venv 路径保持不变，避免移动目录破坏入口脚本和解释器引用；这不保证安装中断后旧依赖树仍完整。已有 venv 损坏时需要安装器修复，不能把更新重试当作重建环境。实现见 [updater.ts](../client/main/runner/updater.ts)，wheel 与入口的构建期一致性检查见 [scripts README](../scripts/README.md)。签名私钥的本地与 CI 配置见 [release-keys README](../scripts/release-keys/README.md)。
 
+Installer 的启动快路径与客户端更新前检查须使用一致的 Runner venv 健康判定，不能仅凭完成标记或 Python 文件存在认定可用。修改核心导入探针时同步 [bootstrap.rs](../installer/src-tauri/src/bootstrap.rs)和 [updater.ts](../client/main/runner/updater.ts)；具体导入集合由两端实现维护。
+
 ### 5.6 备份校验与覆盖恢复
 
 备份不维护独立格式版本号。ZIP 路径、manifest 清单、文件库存与校验和属于包级硬门槛，任一失败都不写目标数据；通过后按当前数据模型逐类预检必需字段、来源引用与向量维度。旧包未声明的当前数据保持不变，覆盖恢复也只清理通过预检且将要写入的数据类；清理某类会破坏未恢复关联数据时保留该类目标数据并列为失败。未知或不兼容的数据类不阻断其他内容恢复。导入响应列出每个失败类别、数量与原因，管理页保留部分成功结果供管理员核对。会话与消息必须成对出现；无法映射目标会话的附件只跳过该附件并计入失败结果。
+
+恢复时只有特殊系统会话按预设去重，选择同一预设的普通会话仍独立映射。上传上限由 [Settings](../backend/components/config.py)维护，解压总量与路径检查见[管理端导入入口](../backend/api/v1/admin.py)；部署状态的排除范围见 [Backend](../backend/README.md#数据与运行可靠性)，记忆证据与遗忘指纹的重映射约束见[记忆模块](../backend/services/domains/memory/README.md#恢复与读取)。
 
 **覆盖恢复维护边界**：管理员执行用户备份 `overwrite` 或 `merge` 恢复时，后端先把该用户标记为维护中；新 REST/WS 操作返回稍后重试，已进入的 REST 操作须退出，网关会话、IM 绑定、Cron 回合及可中断的整理任务须取消并等待，已经提交的付费生成任务须等待自然落地，之后才允许清表与写入。导入成功或回滚后都要清除会话、主动状态、交互统计与调度节流等旧内存镜像，再从数据库真源恢复 IM 绑定；客户端后续重连必须重新挂载会话，不得沿用已删除的 conversation ID。
 

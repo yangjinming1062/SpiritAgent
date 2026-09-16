@@ -4,6 +4,8 @@
 
 在用户本机执行终端、文件、浏览器、代码执行、进程、多模态、系统感知与 Skills 工具，并上报真实能力；不装配人设、管理对话或持有后端凭据。需要模型能力时经客户端反向代理。全局边界见 [ARCHITECTURE.md §1](../docs/ARCHITECTURE.md)。
 
+修改工具先读包边界及 §4 中对应约束；调用重放、能力握手和配置语义从 §5 进入协议，学习技能另见“按预设学习技能”。构建与检查入口在文末。
+
 ## 2. 设计意图
 
 - 环境状态与工具逻辑分离，多类工具共享环境生命周期而不互相依赖；包边界见 §3。
@@ -44,8 +46,12 @@ wheel 发布与安装布局见 [scripts/README.md](../scripts/README.md) 和 [in
 
 - 对客户端：握手、能力与 RPC 见 [PROTOCOL §2](../docs/PROTOCOL.md)；反向代理见 [§3](../docs/PROTOCOL.md)。
 - 执行安全：全局防线见 [ARCHITECTURE §7](../docs/ARCHITECTURE.md)，模块内建连与路径约束见 §4。
-- Skills 平台过滤：工具侧实施过滤，双端翻译表见 [Installer §2](../installer/README.md)。
+- Skills 平台声明及 Client / Runner 过滤联动见 [PROTOCOL §2.6](../docs/PROTOCOL.md#26-skills-平台声明与过滤)。
 
 ## 6. 已知限制
 
 - 调用日志降低重复执行风险并提供中断后查询，但不保证任意外部副作用恰好发生一次：已发生的本机外部副作用（删除、发送、写入）无法普遍撤销，标记为待核对的记录需要上层或用户核对。
+
+## 7. 验证入口
+
+Python 导入检查和提交前检查见 [scripts](../scripts/README.md#8-按改动选择验证)，wheel 与入口兼容性见[构建门禁](../scripts/README.md#1-构建安装器--buildpy)。涉及 OS API、路径、进程树或终端的改动需在对应宿主验证；静态导入通过不能代表能力探测通过。工具调用还需核对所改的取消、日志重放或作用域边界，SSH 行为不能用本机验证替代。
