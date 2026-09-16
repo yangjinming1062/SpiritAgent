@@ -17,6 +17,7 @@ import { ArrowBackUp, Check, FileImage, Pencil, Send, Trash2 } from '@/shared/li
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_ICON, BTN_PRIMARY, HINT_TEXT, INPUT_CLASS, Spinner, Toggle } from '@/shared/panel'
+import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
 // 列表卡 hover 操作钮：浮在立绘上，深色半透明底保证任何画面下可读。
@@ -28,6 +29,7 @@ const CARD_ACTION_CLASS =
 export function WardrobePage(): React.JSX.Element {
   const outfits = useStore($outfits)
   const outfitPolicy = useStore($outfitPolicy)
+  const authKind = useStore($auth).kind
   const dict = useStrings()
   const t = dict.living.wardrobe
   const common = dict.common
@@ -47,9 +49,13 @@ export function WardrobePage(): React.JSX.Element {
     void hydrateWardrobe()
   })
 
+  // 冷启动默认视图可能是衣橱（hash/localStorage 持久化），此时 hydrateAuth 的 IPC
+  // 往返尚未完成——订阅 auth 就绪后再水合，否则 hydrateWardrobe 会因 pending 静默跳过。
   useEffect(() => {
-    void hydrateWardrobe()
-  }, [])
+    if (authKind === 'authenticated') {
+      void hydrateWardrobe()
+    }
+  }, [authKind])
 
   // 选中项被删除 / 列表刷新后兜底回落到穿着中（或第一项）。
   useEffect(() => {
@@ -263,7 +269,10 @@ export function WardrobePage(): React.JSX.Element {
             aspect-square 取可用区内最大正方形。 */}
         <div className="relative min-h-0 flex-1">
           {!designing && selected?.asset ? (
-            <AssetPackPreview key={`${selected.id}:${selected.asset.content_hash ?? selected.asset.id}`} source={selected.asset} />
+            <AssetPackPreview
+              key={`${selected.id}:${selected.asset.content_hash ?? selected.asset.id}`}
+              source={selected.asset}
+            />
           ) : previewUrl ? (
             <div className="absolute inset-4 grid place-items-center">
               <button

@@ -15,6 +15,7 @@ import {
   hydrateMoments,
   type MomentCommentEntry
 } from '@/modules/memory'
+import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
 import styles from './moments.module.css'
@@ -33,13 +34,18 @@ export function MomentsPage(): React.JSX.Element {
   const moments = useStore($moments)
   const loading = useStore($momentsLoading)
   const persona = useStore($persona)
+  const authKind = useStore($auth).kind
   const strings = useStrings()
   const t = strings.living.moments
   const [expandedId, setExpandedId] = useState<null | string>(null)
 
+  // 冷启动默认视图可能是片刻（hash/localStorage 持久化），hydrateAuth 的 IPC 往返
+  // 尚未完成时 authedApi 会以 unauth 静默跳过——等 auth 就绪再水合。
   useEffect(() => {
-    void hydrateMoments()
-  }, [])
+    if (authKind === 'authenticated') {
+      void hydrateMoments()
+    }
+  }, [authKind])
 
   const formattedMoments = useMemo(
     () =>

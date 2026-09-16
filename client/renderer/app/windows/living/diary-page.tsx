@@ -7,6 +7,7 @@ import type React from 'react'
 import { $persona } from '@/modules/character'
 import { $diaryByDate, $diaryLoading, hydrateDiary } from '@/modules/memory'
 import { BookOpen } from '@/shared/lib/icons'
+import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
 import styles from './diary.module.css'
@@ -57,6 +58,7 @@ export function DiaryPage(): React.JSX.Element {
   const persona = useStore($persona)
   const diaryByDate = useStore($diaryByDate)
   const loading = useStore($diaryLoading)
+  const authKind = useStore($auth).kind
   const dict = useStrings()
   const t = dict.living.diary
   const tRail = dict.living.rail
@@ -67,6 +69,8 @@ export function DiaryPage(): React.JSX.Element {
   const isToday = selectedDate === todayKey()
 
   // 月份切换时若选中日期超出当月范围，则吸到该月首日；同时拉取当月数据。
+  // 冷启动默认视图可能是日记（hash/localStorage 持久化），hydrateAuth 的 IPC 往返
+  // 尚未完成时 authedApi 会以 unauth 静默跳过——等 auth 就绪再水合（authKind 变化重跑）。
   useEffect(() => {
     const cursorStart = cursorMonthStart(cursor)
     const cursorEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)
@@ -74,8 +78,11 @@ export function DiaryPage(): React.JSX.Element {
     const endKey = localDateKey(cursorEnd)
 
     setSelectedDate(prev => (prev < startKey || prev > endKey ? startKey : prev))
-    void hydrateDiary({ from: startKey, to: endKey })
-  }, [cursor])
+
+    if (authKind === 'authenticated') {
+      void hydrateDiary({ from: startKey, to: endKey })
+    }
+  }, [cursor, authKind])
 
   const days = useMemo(() => daysInMonth(cursor), [cursor])
   const firstDayOffset = days[0] ? (days[0].getDay() + 6) % 7 : 0
