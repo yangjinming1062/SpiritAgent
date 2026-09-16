@@ -17,6 +17,8 @@ class GeminiImageGenProvider(ImageGenProvider):
     DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"image_gen": 8_000}
     supports_reference_image: ClassVar[bool] = True
     supports_multiple_reference_images: ClassVar[bool] = True
+    # inlineData + 文本触发原生图像编辑（增量重绘、保留未提及区域），多轮迭代可无状态地把上一轮输出再喂回。
+    supports_image_edit: ClassVar[bool] = True
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)

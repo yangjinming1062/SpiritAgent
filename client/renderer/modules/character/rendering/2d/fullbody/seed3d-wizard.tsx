@@ -6,6 +6,7 @@ import { HistoryGallery, PortraitLightbox, useNaturalAspectRatio } from '@/share
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, WizardModal } from '@/shared/panel'
+import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 const HISTORY_CAP = 5
 
@@ -87,6 +88,9 @@ export function Seed3dWizard({
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
   const mountedRef = useRef(true)
   const generatingRef = useRef(false)
+  const stagesRef = useRef<Record<Stage, StageState>>(stages)
+
+  stagesRef.current = stages
 
   useEffect(() => {
     // StrictMode 开发态会卸载重挂一次，cleanup 已把标记置 false——重挂时必须复位，
@@ -103,9 +107,19 @@ export function Seed3dWizard({
   }, [])
 
   const generate = useCallback(
-    async (key: Stage, feedbackText: string): Promise<boolean> => {
+    async (key: Stage, feedbackText: string, mode: ImageReviseMode = 'regenerate'): Promise<boolean> => {
       if (generatingRef.current) {
         return false
+      }
+
+      // 微调编辑上一版种子，要求先有图与反馈；首张生成走重新生成路径。
+      // stages 经 ref 读取：直接依赖会让水合 setStages → generate 重建 → 水合 effect 重跑成环。
+      if (mode === 'edit') {
+        const cur = stagesRef.current[key]
+
+        if (!cur.previewUrl || !feedbackText.trim() || cur.idx !== cur.entries.length - 1) {
+          return false
+        }
       }
 
       const meta = STAGE_META[key]
@@ -117,7 +131,7 @@ export function Seed3dWizard({
         const res = await window.spiritagent.api<{ seed_front_3d_url?: string | null; seed_back_url?: string | null }>({
           path: `/api/companion/avatar/${avatarId}${meta.endpoint}`,
           method: 'POST',
-          body: { feedback: feedbackText.trim() || undefined }
+          body: { feedback: feedbackText.trim() || undefined, mode }
         })
 
         const raw = res?.[meta.field] || null
@@ -365,11 +379,29 @@ export function Seed3dWizard({
         <div className="flex items-center gap-2">
           <button
             className="rounded-lg px-2 py-1 text-xs text-body transition hover:bg-fill-hover hover:text-strong disabled:opacity-40"
-            disabled={current.loading || !current.previewUrl}
-            onClick={() => regenerate(stage)}
+            disabled={
+              current.loading ||
+              !current.previewUrl ||
+              !feedback[stage].trim() ||
+              current.idx !== current.entries.length - 1
+            }
+            onClick={() => void generate(stage, feedback[stage], 'edit')}
+            title={
+              current.idx === current.entries.length - 1
+                ? '在当前立绘上修改，其余保持不变（需先填写要求）'
+                : '微调只能基于最近生成的一版，请先在历史中选择最新图片'
+            }
             type="button"
           >
-            微调重绘
+            微调
+          </button>
+          <button
+            className="rounded-lg px-2 py-1 text-xs text-body transition hover:bg-fill-hover hover:text-strong disabled:opacity-40"
+            disabled={current.loading}
+            onClick={() => void generate(stage, feedback[stage], 'regenerate')}
+            type="button"
+          >
+            重新生成
           </button>
           {stage === 'front' && supportsMultiview ? (
             <button

@@ -40,6 +40,8 @@ interface UseRegeneratePortraitOptions {
    * 已通过 `useStore($portraitUrl)` 订阅的页面可以省略。
    */
   onRegenerated?: (urls: { avatar: string | null; id: number | null }) => void
+  /** 后台生成失败时把服务端公开文案交给所在页面展示。 */
+  onError?: (message: string) => void
 }
 
 interface UseRegeneratePortraitResult {
@@ -52,6 +54,12 @@ interface UseRegeneratePortraitResult {
    * 调用点刚写入新 refImage 时 hook 闭包还持有旧值，只能经参数传新图）。
    */
   regenerate: (feedback?: string, overrideRef?: PickedImage | null) => Promise<void>
+  /**
+   * 微调当前头像：编辑上一版产物，未提及区域保留。要求 feedback 非空、
+   * 不接受参考图（参考图只属于重新生成意图）。后台 job 的错误载荷经
+   * onError 交给调用页面展示。
+   */
+  edit: (feedback?: string) => Promise<void>
   busy: boolean
 }
 
@@ -65,19 +73,29 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
   const { requestGateway } = useGatewayRequest()
   const [busy, setBusy] = useState(false)
 
-  const { refImage, presentationRef, playAudioOnSuccess = false, feedback: optionFeedback, onRegenerated } = options
+  const {
+    refImage,
+    presentationRef,
+    playAudioOnSuccess = false,
+    feedback: optionFeedback,
+    onRegenerated,
+    onError
+  } = options
 
-  const regenerate = useCallback(
-    async (callFeedback?: string, overrideRef?: PickedImage | null) => {
+  const resolveFeedback = useCallback(
+    (callFeedback?: string): string | undefined => {
       const fromCall = callFeedback?.trim() || undefined
       const fromOptions = optionFeedback?.trim() || undefined
       const fromAtom = $regenFeedback.get().trim() || undefined
-      const feedback = fromCall ?? fromOptions ?? fromAtom
-      const effRefImage = overrideRef !== undefined ? overrideRef : refImage
 
-      setBusy(true)
+      return fromCall ?? fromOptions ?? fromAtom
+    },
+    [optionFeedback]
+  )
 
-      const onApplied = (assetUrl?: string | null) => {
+  const onAppliedFactory = useCallback(
+    (playAudio: boolean): ((assetUrl?: string | null) => void) =>
+      (assetUrl?: string | null): void => {
         pushPortraitEntry({
           assetUrl,
           avatarId: $activeAvatarId.get(),
@@ -85,10 +103,57 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
         })
         $regenFeedback.set('')
 
-        if (playAudioOnSuccess) {
+        if (playAudio) {
           void playOnboardingAudio('onboarding.portrait.regenerate')
         }
+      },
+    []
+  )
+
+  // avatar.regenerate RPC 的同步/排队分流与结果落地，regenerate 与 edit 共用。
+  const runAvatarRegen = useCallback(
+    async (params: { feedback?: string; mode?: 'edit' }): Promise<void> => {
+      const onApplied = onAppliedFactory(playAudioOnSuccess)
+
+      const queued = await requestGateway<{
+        asset_url?: string | null
+        id?: number
+        job_id?: string
+        queued?: boolean
+        error?: string
+      }>('avatar.regenerate', params)
+
+      const settled =
+        queued && 'asset_url' in queued
+          ? queued
+          : queued?.queued && queued.job_id
+            ? await awaitAvatarRegeneration(queued.job_id)
+            : null
+
+      if (settled?.error) {
+        throw new Error(settled.error)
       }
+
+      if (settled?.asset_url) {
+        const applied = await applyPortrait({
+          assetUrl: settled.asset_url,
+          id: settled.id
+        })
+
+        onRegenerated?.({ ...applied, id: settled.id ?? null })
+        onApplied(settled.asset_url)
+      }
+    },
+    [requestGateway, playAudioOnSuccess, onAppliedFactory, onRegenerated]
+  )
+
+  const regenerate = useCallback(
+    async (callFeedback?: string, overrideRef?: PickedImage | null): Promise<void> => {
+      const feedback = resolveFeedback(callFeedback)
+      const effRefImage = overrideRef !== undefined ? overrideRef : refImage
+
+      setBusy(true)
+      const onApplied = onAppliedFactory(playAudioOnSuccess)
 
       try {
         // Q4 图是身份锚；presentationRef 是风格/表现提示。
@@ -127,30 +192,9 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
           }
         }
 
-        const queued = await requestGateway<{
-          asset_url?: string | null
-          id?: number
-          job_id?: string
-          queued?: boolean
-        }>('avatar.regenerate', { feedback })
-
-        const settled =
-          queued && 'asset_url' in queued
-            ? queued
-            : queued?.queued && queued.job_id
-              ? await awaitAvatarRegeneration(queued.job_id)
-              : null
-
-        if (settled?.asset_url) {
-          const applied = await applyPortrait({
-            assetUrl: settled.asset_url,
-            id: settled.id
-          })
-
-          onRegenerated?.({ ...applied, id: settled.id ?? null })
-          onApplied(settled.asset_url)
-        }
-      } catch {
+        await runAvatarRegen({ feedback })
+      } catch (error) {
+        onError?.(error instanceof Error ? error.message : '伙伴形象生成失败，请稍后重试')
       } finally {
         setBusy(false)
       }
@@ -159,8 +203,39 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
     // 都会传入新字面量，否则会让 `regenerate` 每次渲染都获得新身份，
     // 抵消下游 React.memo 的效果。optionFeedback 参与依赖是为了让调用方
     // 在不重新挂载 hook 的情况下更改它。
-    [requestGateway, refImage, presentationRef, playAudioOnSuccess, optionFeedback, onRegenerated]
+    [
+      refImage,
+      presentationRef,
+      playAudioOnSuccess,
+      resolveFeedback,
+      onAppliedFactory,
+      onRegenerated,
+      onError,
+      runAvatarRegen
+    ]
   )
 
-  return { busy, regenerate }
+  // 微调走 avatar.regenerate RPC + mode:"edit"；上传图路径（from-image）是重新生成专属，微调不进入。
+  const edit = useCallback(
+    async (callFeedback?: string): Promise<void> => {
+      const feedback = resolveFeedback(callFeedback)
+
+      if (!feedback) {
+        return
+      }
+
+      setBusy(true)
+
+      try {
+        await runAvatarRegen({ feedback, mode: 'edit' })
+      } catch (error) {
+        onError?.(error instanceof Error ? error.message : '伙伴形象微调失败，请稍后重试')
+      } finally {
+        setBusy(false)
+      }
+    },
+    [onError, resolveFeedback, runAvatarRegen]
+  )
+
+  return { busy, regenerate, edit }
 }

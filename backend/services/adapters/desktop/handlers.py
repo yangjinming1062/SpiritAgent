@@ -1796,6 +1796,9 @@ def _register_session_handlers(
         feedback = params.get("feedback")
         if feedback is not None and not isinstance(feedback, str):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "feedback must be a string")
+        mode = params.get("mode", "regenerate")
+        if mode not in ("edit", "regenerate"):
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "mode must be 'edit' or 'regenerate'")
         async with SESSION_LOCAL() as db:
             persona = await get_or_create_persona(db, user_id)
             if not persona.is_complete:
@@ -1827,7 +1830,7 @@ def _register_session_handlers(
                     if regen_busy:
                         payload = {"job_id": job_id, "error": "伙伴正在生成形象，请稍候"}
                     else:
-                        asset = await regenerate_avatar(user_id=user_id, feedback=feedback)
+                        asset = await regenerate_avatar(user_id=user_id, feedback=feedback, mode=mode)
                         payload = {"job_id": job_id, "asset_url": asset.asset_url, "id": asset.id}
                 except AvatarGenerationError as exc:
                     logger.warning("avatar regenerate failed", extra={"user_id": user_id, "error": exc.internal})

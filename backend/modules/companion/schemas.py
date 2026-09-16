@@ -40,6 +40,10 @@ class PersonaResponse(BaseModel):
 # 生成是同步的——所有持久化资产都是 succeeded；钉死字面量以便未来若改为异步时契约仍清楚。
 SucceededStatus = Literal["succeeded"]
 
+# 迭代修改意图：edit=微调（编辑上一版产物，未提及区域保留）；regenerate=重新生成（种子锚定全量重绘）。
+# 默认 regenerate——不带 mode 的旧请求保持全量重绘语义不变。
+ImageReviseMode = Literal["edit", "regenerate"]
+
 
 class AvatarAssetResponse(BaseModel):
     id: int
@@ -61,6 +65,7 @@ class FullbodyReferenceGenerateRequest(BaseModel):
     feedback: str | None = Field(default=None, max_length=500)
     image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
     content_type: str | None = Field(default=None, max_length=64)
+    mode: ImageReviseMode = "regenerate"
 
 
 class Fullbody2dFrontGenerateRequest(BaseModel):
@@ -68,6 +73,7 @@ class Fullbody2dFrontGenerateRequest(BaseModel):
 
     style: str = Field(default="cel_shading", max_length=64)
     feedback: str | None = Field(default=None, max_length=500)
+    mode: ImageReviseMode = "regenerate"
 
 
 # 3D 种子（A-pose 正面 / 背面）生成共用请求体；画风由服务端按物种路由并随行持久化，正背恒成对一致
@@ -75,6 +81,7 @@ class Fullbody3dSeedGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     feedback: str | None = Field(default=None, max_length=500)
+    mode: ImageReviseMode = "regenerate"
 
 
 class FullbodyConfirmFrontRequest(BaseModel):
@@ -165,6 +172,7 @@ class OutfitRegenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     feedback: str | None = Field(default=None, max_length=500)
+    mode: ImageReviseMode = "regenerate"
 
 
 class OutfitResponse(BaseModel):

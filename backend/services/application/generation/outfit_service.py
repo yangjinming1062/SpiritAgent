@@ -30,6 +30,7 @@ from modules.companion import (
     AvatarAsset,
     Companion2DModel,
     CompanionOutfit,
+    ImageReviseMode,
     OutfitResponse,
     Persona,
 )
@@ -40,7 +41,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.companion import get_or_create_persona, load_persona_definition
 from services.infrastructure.assets import build_data_uri, resolve_companion_asset_path
-from services.infrastructure.llm import build_outfit_prompt, chat, resolve_fullbody_template
+from services.infrastructure.llm import (
+    EDIT_PRESERVE_IDENTITY,
+    build_image_edit_prompt,
+    build_outfit_prompt,
+    chat,
+    resolve_fullbody_template,
+)
 
 from .avatar_service import (
     _fullbody_size_for,
@@ -325,11 +332,16 @@ async def _generate_outfit_fullbody(
     appearance: str,
     personality: str,
     feedback: str,
-    identity_uri: str,
+    identity_uri: str | None,
     secondary_uri: str | None,
+    prompt_override: str | None = None,
+    image_edit: bool = False,
+    edit_base_uri: str | None = None,
 ) -> str:
-    """生成换装全身立绘草稿（persist=False 落 temp-media）；返回裸路径。画幅与姿态模板随 rig_type 分桶。"""
-    prompt = build_outfit_prompt(
+    """生成换装全身立绘草稿（persist=False 落 temp-media）；返回裸路径。画幅与姿态模板随 rig_type 分桶。
+
+    微调模式传 prompt_override + edit_base_uri（编辑底图替换种子参考，提示词只含增量，identity_uri 为 None）。"""
+    prompt = prompt_override or build_outfit_prompt(
         template=resolve_fullbody_template(species, rig_type, style),
         style_id=style,
         feedback=feedback,
@@ -339,11 +351,12 @@ async def _generate_outfit_fullbody(
     draft_url, _, _, _ = await _generate_one_portrait_with_moderation_retry(
         prompt,
         user_id,
-        reference_image=identity_uri,
-        secondary_reference_image=secondary_uri,
+        reference_image=edit_base_uri if image_edit else identity_uri,
+        secondary_reference_image=None if image_edit else secondary_uri,
         size=_fullbody_size_for(rig_type),
         persist=False,
         preferred_provider=SETTINGS.companion_asset_image_providers,
+        image_edit=image_edit,
     )
     return draft_url
 
@@ -421,8 +434,10 @@ async def regenerate_outfit_draft(
     outfit_id: int,
     *,
     feedback: str | None,
+    mode: ImageReviseMode = "regenerate",
 ) -> CompanionOutfit:
-    """草稿或失败外观微调重绘：成功后回到草稿，重新确认才生成动画资产。"""
+    """草稿或失败外观修改：mode="edit" 微调（编辑上一版立绘，未提及区域逐像素保留），
+    mode="regenerate" 全量重绘（种子锚定）。两者成功后都回到草稿，重新确认才生成动画资产。"""
     outfit = await _get_outfit(db, user_id, outfit_id)
     if outfit is None:
         raise OutfitNotFoundError(f"outfit {outfit_id} not found")
@@ -430,6 +445,10 @@ async def regenerate_outfit_draft(
         raise OutfitStateError("仅草稿或失败状态可以微调重绘")
     original_url = outfit.fullbody_url
     original_status = outfit.status
+
+    effective_feedback = (feedback or "").strip()
+    if mode == "edit" and not effective_feedback:
+        raise OutfitError("请先描述要微调的内容")
 
     (
         avatar,
@@ -440,17 +459,34 @@ async def regenerate_outfit_draft(
         style,
         rig_type,
     ) = await _outfit_generation_context(db, user_id)
-    identity_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
-    if identity_uri is None:
-        raise OutfitError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
-    await db.commit()
 
     source = safe_json_loads(outfit.source_json or "{}", default={})
     if not isinstance(source, dict):
         source = {}
-    secondary_uri = await asyncio.to_thread(_reference_data_uri, source)
-    description = str(source.get("description") or "").strip()
-    effective_feedback = "；".join(part for part in (description, (feedback or "").strip()) if part)
+
+    if mode == "edit":
+        # 编辑底图即上一版草稿立绘；身份已在其中，不重锚种子图（preserve 条款约束五官/身材不变）。
+        edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, original_url)
+        if not edit_uri:
+            raise OutfitDraftExpiredError("上一版草稿已过期或无法读取，请改用重新生成")
+        prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_IDENTITY)
+        identity_uri = None
+        secondary_uri = None
+    else:
+        identity_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
+        if identity_uri is None:
+            raise OutfitError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+        secondary_uri = await asyncio.to_thread(_reference_data_uri, source)
+        description = str(source.get("description") or "").strip()
+        combined_feedback = "；".join(part for part in (description, effective_feedback) if part)
+        prompt = build_outfit_prompt(
+            template=resolve_fullbody_template(species, rig_type, style),
+            style_id=style,
+            feedback=combined_feedback,
+            appearance=appearance,
+            personality=personality,
+        )
+    await db.commit()
 
     draft_url = await _generate_outfit_fullbody(
         user_id,
@@ -459,9 +495,12 @@ async def regenerate_outfit_draft(
         style=style,
         appearance=appearance,
         personality=personality,
-        feedback=effective_feedback,
+        feedback="",
         identity_uri=identity_uri,
         secondary_uri=secondary_uri,
+        prompt_override=prompt,
+        image_edit=mode == "edit",
+        edit_base_uri=edit_uri if mode == "edit" else None,
     )
 
     async with get_avatar_job_lock(user_id):
@@ -474,8 +513,8 @@ async def regenerate_outfit_draft(
         outfit.fullbody_url = draft_url
         outfit.status = "draft"
         outfit.pending_wear = False
-        if (feedback or "").strip():
-            source["feedback"] = feedback.strip()
+        if effective_feedback:
+            source["feedback"] = effective_feedback
         outfit.source_json = json.dumps(source, ensure_ascii=False)
         emit_ws_event(
             db,

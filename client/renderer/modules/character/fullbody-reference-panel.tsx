@@ -67,6 +67,13 @@ export function FullbodyReferencePanel({
     }
   }
 
+  // 微调编辑上一版全身参考：需要已有图与反馈；附参考图时不可用（参考图属重新生成意图）。
+  const edit = async (): Promise<void> => {
+    if (await regenerateFullbodyReference(avatarId, feedback, null, 'edit')) {
+      setFeedback('')
+    }
+  }
+
   return (
     <section className="space-y-3">
       <div>
@@ -137,7 +144,7 @@ export function FullbodyReferencePanel({
       />
       {current && state.error && (
         <p className="text-xs text-danger-fg" role="alert">
-          {t.errors[state.error]}
+          {state.errorMessage || t.errors[state.error]}
         </p>
       )}
       <div className="flex flex-wrap items-center gap-2">
@@ -154,6 +161,17 @@ export function FullbodyReferencePanel({
             type="button"
           >
             {t.reload}
+          </button>
+        )}
+        {current && state.rawUrl && (
+          <button
+            className={BTN_SUBTLE}
+            disabled={busy || !feedback.trim() || !!reference}
+            onClick={() => void edit()}
+            title={reference ? t.editDisabledByReference : t.editRequiresFeedback}
+            type="button"
+          >
+            {t.edit}
           </button>
         )}
         <button className={BTN_SUBTLE} disabled={busy} onClick={() => void regenerate()} type="button">

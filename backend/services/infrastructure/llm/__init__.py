@@ -22,9 +22,14 @@ from .llm_client import (
 from .llm_fallback import execute_with_fallback
 from .llm_retry import LLMRuntimeError, call_with_retry
 from .prompt_engineer import (
+    EDIT_PRESERVE_3D_BACK,
+    EDIT_PRESERVE_3D_FRONT,
+    EDIT_PRESERVE_FULLBODY,
+    EDIT_PRESERVE_IDENTITY,
     FullbodyStyle,
     FullbodyTemplate,
     build_fullbody_prompt,
+    build_image_edit_prompt,
     build_outfit_prompt,
     call_llm_once,
     chat,
@@ -110,6 +115,10 @@ __all__ = [
     "STTResult",
     "ServiceType",
     "TTSProvider",
+    "EDIT_PRESERVE_3D_BACK",
+    "EDIT_PRESERVE_3D_FRONT",
+    "EDIT_PRESERVE_FULLBODY",
+    "EDIT_PRESERVE_IDENTITY",
     "TTSResult",
     "UserLlmConfig",
     "VideoAsset",
@@ -121,6 +130,7 @@ __all__ = [
     "aclose_all",
     "approx_responses_tokens",
     "build_fullbody_prompt",
+    "build_image_edit_prompt",
     "build_outfit_prompt",
     "build_responses_kwargs",
     "call_llm_once",

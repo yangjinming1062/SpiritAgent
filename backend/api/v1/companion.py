@@ -336,14 +336,20 @@ async def post_fullbody_reference(
             feedback=body.feedback,
             reference_image=base64.b64encode(raw).decode("utf-8") if raw else None,
             reference_content_type=content_type,
+            mode=body.mode,
         )
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": str(exc)})
     except AvatarSourceUnreadableError as exc:
         raise HTTPException(status_code=409, detail={"error": str(exc)})
-    except AvatarGenerationError as exc:
+    except FullbodyGenerationError as exc:
+        # 供应商链失败包装层：str 已透传公开文案（如编辑能力缺失指引），502 语义是可重试失败。
         logger.warning("fullbody reference generation failed", extra={"user_id": user.id, "error": exc.internal})
-        raise HTTPException(status_code=502, detail={"error": "全身参考图生成失败，请稍后重试"})
+        raise HTTPException(status_code=502, detail={"error": str(exc), "reason": str(exc)})
+    except AvatarGenerationError as exc:
+        # edit 守卫（反馈缺失、参考图同给等）是确定性的请求错误，公开文案直达用户。
+        logger.warning("fullbody reference guard rejected", extra={"user_id": user.id, "error": exc.internal})
+        raise HTTPException(status_code=400, detail={"error": str(exc)})
     except MissingLlmConfigError:
         raise HTTPException(status_code=502, detail={"error": "生成服务未配置，请先在设置中配置供应商"})
     return avatar_response(asset)
@@ -364,6 +370,7 @@ async def post_fullbody_front_2d(
                 avatar_id=avatar_id,
                 style=body.style,
                 feedback=body.feedback,
+                mode=body.mode,
             )
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
@@ -377,6 +384,9 @@ async def post_fullbody_front_2d(
         err_detail = getattr(exc, "internal", str(exc))
         logger.warning("fullbody front-2d generation failed", extra={"user_id": user.id, "error": err_detail})
         raise HTTPException(status_code=502, detail={"error": str(exc), "reason": str(exc)})
+    except AvatarGenerationError as exc:
+        logger.warning("fullbody front-2d guard rejected", extra={"user_id": user.id, "error": exc.internal})
+        raise HTTPException(status_code=400, detail={"error": str(exc)})
     except MissingLlmConfigError as exc:
         logger.warning("post_fullbody_front_2d missing config", extra={"user_id": user.id, "error": str(exc)})
         raise HTTPException(
@@ -396,7 +406,12 @@ async def post_fullbody_front_3d(
 ) -> AvatarAssetResponse:
     try:
         async with get_avatar_job_lock(user.id):
-            asset = await generate_fullbody_front_3d(user_id=user.id, avatar_id=avatar_id, feedback=body.feedback)
+            asset = await generate_fullbody_front_3d(
+                user_id=user.id,
+                avatar_id=avatar_id,
+                feedback=body.feedback,
+                mode=body.mode,
+            )
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
     except FrontSeedMissingError as exc:
@@ -407,6 +422,9 @@ async def post_fullbody_front_3d(
         err_detail = getattr(exc, "internal", str(exc))
         logger.warning("fullbody front-3d generation failed", extra={"user_id": user.id, "error": err_detail})
         raise HTTPException(status_code=502, detail={"error": str(exc), "reason": str(exc)})
+    except AvatarGenerationError as exc:
+        logger.warning("fullbody front-3d guard rejected", extra={"user_id": user.id, "error": exc.internal})
+        raise HTTPException(status_code=400, detail={"error": str(exc)})
     except MissingLlmConfigError as exc:
         logger.warning("post_fullbody_front_3d missing config", extra={"user_id": user.id, "error": str(exc)})
         raise HTTPException(
@@ -426,15 +444,25 @@ async def post_fullbody_back(
 ) -> AvatarAssetResponse:
     try:
         async with get_avatar_job_lock(user.id):
-            asset = await generate_fullbody_back(user_id=user.id, avatar_id=avatar_id, feedback=body.feedback)
+            asset = await generate_fullbody_back(
+                user_id=user.id,
+                avatar_id=avatar_id,
+                feedback=body.feedback,
+                mode=body.mode,
+            )
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
     except FrontSeedMissingError as exc:
         raise HTTPException(status_code=400, detail={"error": "请先生成正面全身图", "reason": str(exc)})
+    except AvatarSourceUnreadableError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)})
     except FullbodyGenerationError as exc:
         err_detail = getattr(exc, "internal", str(exc))
         logger.warning("fullbody back generation failed", extra={"user_id": user.id, "error": err_detail})
         raise HTTPException(status_code=502, detail={"error": str(exc), "reason": str(exc)})
+    except AvatarGenerationError as exc:
+        logger.warning("fullbody back guard rejected", extra={"user_id": user.id, "error": exc.internal})
+        raise HTTPException(status_code=400, detail={"error": str(exc)})
     except MissingLlmConfigError as exc:
         logger.warning("post_fullbody_back missing config", extra={"user_id": user.id, "error": str(exc)})
         raise HTTPException(
@@ -617,18 +645,16 @@ async def post_outfit_regenerate(
     db: DbSession,
 ) -> OutfitResponse:
     try:
-        outfit = await regenerate_outfit_draft(db, user.id, outfit_id, feedback=body.feedback)
+        outfit = await regenerate_outfit_draft(db, user.id, outfit_id, feedback=body.feedback, mode=body.mode)
     except OutfitError as exc:
         raise _outfit_http_error(exc)
     except AvatarGenerationError as exc:
+        # AvatarGenerationError 的 str 按契约是公开文案（含编辑能力缺失等可行动指引），透传不替换。
         logger.warning(
             "outfit draft regenerate failed",
             extra={"user_id": user.id, "outfit_id": outfit_id, "error": getattr(exc, "internal", str(exc))},
         )
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "外观生成失败，请稍后重试", "reason": "generation_failed"},
-        )
+        raise HTTPException(status_code=502, detail={"error": str(exc), "reason": "generation_failed"})
     return outfit_response(outfit)
 
 

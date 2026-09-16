@@ -39,8 +39,9 @@ async def resolve_image_gen_chain(
     reference_image: str | None,
     *,
     preferred_provider: str | list[str] | None = None,
+    image_edit: bool = False,
 ) -> tuple[list[ProviderConfig], str | None]:
-    """在传入 reference_image 时按图生图能力过滤 image_gen 供应商链。"""
+    """在传入 reference_image 时按图生图能力过滤 image_gen 供应商链；image_edit 时改按图像编辑能力过滤。"""
     full = await resolve_provider_chain(db, user_id, "image_gen")
     if preferred_provider:
         priority = [preferred_provider] if isinstance(preferred_provider, str) else list(preferred_provider)
@@ -48,9 +49,22 @@ async def resolve_image_gen_chain(
         full = sorted(full, key=lambda c: rank.get(c.provider_name, len(priority)))
     if not reference_image:
         return full, None
-    capable = [c for c in full if resolve(ServiceType.image_gen, c.provider_name).supports_reference_image]
+    capable = [
+        c
+        for c in full
+        if (
+            resolve(ServiceType.image_gen, c.provider_name).supports_image_edit
+            if image_edit
+            else resolve(ServiceType.image_gen, c.provider_name).supports_reference_image
+        )
+    ]
     if full and not capable:
-        return (capable, "当前图片生成供应商均不支持以图生图，请启用 minimax / gemini / grok 其中之一")
+        error = (
+            "当前图片生成供应商均不支持图像编辑，请启用 gemini / grok 其中之一"
+            if image_edit
+            else "当前图片生成供应商均不支持以图生图，请启用 minimax / gemini / grok 其中之一"
+        )
+        return capable, error
     return capable, None
 
 
@@ -85,11 +99,19 @@ async def generate_images(
     secondary_reference_image: str | None = None,
     preferred_provider: str | list[str] | None = None,
     persist_user_assets: bool = False,
+    image_edit: bool = False,
 ) -> list[str]:
     """走 image_gen 供应商链生成图片并落盘；成功返回 URL 列表，失败抛 ImageGenerationError。
 
     ``persist_user_assets=True`` 且提供 ``user_id`` 时，结果转存为 ``companion-assets/{user_id}/`` 永久资产并返回裸路径；否则落 temp-media（或透传供应商 URL）。
+    ``image_edit=True`` 时 reference_image 是编辑底图，供应商链按图像编辑能力过滤；编辑不接受双参考拼图，
+    secondary 与 image_edit 同给视为调用方违约，立即报错而非静默丢弃。
     """
+    if image_edit and secondary_reference_image:
+        raise ImageGenerationError(
+            "图像编辑不支持附加参考图，请改用重新生成",
+            internal="image_edit with secondary reference",
+        )
     try:
         if reference_image and secondary_reference_image:
             primary, secondary = await asyncio.gather(
@@ -113,6 +135,7 @@ async def generate_images(
                     user_id,
                     reference_image,
                     preferred_provider=preferred_provider,
+                    image_edit=image_edit,
                 )
         else:
             chain, err = await resolve_image_gen_chain(
@@ -120,6 +143,7 @@ async def generate_images(
                 None,
                 reference_image,
                 preferred_provider=preferred_provider,
+                image_edit=image_edit,
             )
         if err:
             logger.warning("image generation chain error", extra={"error": err, "user_id": user_id})

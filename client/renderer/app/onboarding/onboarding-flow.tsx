@@ -68,6 +68,7 @@ import { safeJsonParse } from '@/shared/lib/safe-json'
 import { cn } from '@/shared/lib/utils'
 import { Chip, INPUT_CLASS } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
+import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 import { computeBackTransition } from './back-transition'
 import { type OnboardingAudioTag, playOnboardingAudio } from './onboarding-audio'
@@ -402,6 +403,34 @@ function RegenFeedbackInput(): React.JSX.Element {
       rows={2}
       value={value}
     />
+  )
+}
+
+// 同 RegenFeedbackInput：微调按钮的 disabled 依赖反馈非空，订阅放独立小组件避免整框重渲染。
+function EditAvatarButton({
+  busy,
+  disabledByReference,
+  onEdit
+}: {
+  busy: boolean
+  disabledByReference: boolean
+  onEdit: () => void
+}): React.JSX.Element {
+  const feedback = useStore($regenFeedback)
+  const disabled = busy || disabledByReference || !feedback.trim()
+
+  return (
+    <button
+      className="text-body transition hover:text-strong disabled:opacity-40"
+      disabled={disabled}
+      onClick={onEdit}
+      title={
+        disabledByReference ? '附参考图时不可微调，请先移除参考图' : '在当前头像上修改，其余保持不变（需先填写反馈）'
+      }
+      type="button"
+    >
+      微调
+    </button>
   )
 }
 
@@ -1074,15 +1103,23 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   }, [gatewayState, requestGateway, voiceCatalog.length])
 
   // 第一步——头像重生：新建一行 avatar，新 id 通过 hook 内 applyPortrait 自动发布到 ``$activeAvatarId``。
-  const { regenerate: regenerateAvatarPortrait, busy: avatarBusy } = useRegeneratePortrait({
+  // 微调（edit）编辑上一版头像；重新生成保持种子全量重绘。附参考图时微调不可用（参考图属重新生成意图）。
+  const {
+    regenerate: regenerateAvatarPortrait,
+    edit: editAvatarPortrait,
+    busy: avatarBusy
+  } = useRegeneratePortrait({
     refImage,
     presentationRef,
     playAudioOnSuccess: true,
     onRegenerated: ({ avatar }) => {
+      setPortraitPanelHint(null)
+
       if (avatar) {
         setPortraitUrl(avatar)
       }
-    }
+    },
+    onError: setPortraitPanelHint
   })
 
   const currentHistoryItems: HistoryGalleryItem[] = useMemo(
@@ -1274,13 +1311,27 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     [fullbodyHistories, fullbodyStyle]
   )
 
-  const regenerateFullbodyFront = async (): Promise<void> => {
+  const regenerateFullbodyFront = async (mode: ImageReviseMode = 'regenerate'): Promise<void> => {
     if (!activeAvatarId || !fullbodyStyle || fullbodyLoading) {
       return
     }
 
+    // 微调编辑上一版正面种子，要求先有图与反馈；首次生成走重新生成路径。
+    if (mode === 'edit' && (!fullbodyFrontUrl || !fullbodyFeedback.trim())) {
+      return
+    }
+
+    const history = fullbodyHistories[fullbodyStyle] || []
+    const selectedHistoryIndex = fullbodyHistoryIndices[fullbodyStyle] ?? history.length - 1
+
+    if (mode === 'edit' && selectedHistoryIndex !== history.length - 1) {
+      setFullbodyHint('微调只能基于最近生成的一版，请先在历史中选择最新图片')
+
+      return
+    }
+
     setFullbodyLoading(true)
-    setFullbodyLoadingText('正在按要求重新生成正面全身图…')
+    setFullbodyLoadingText(mode === 'edit' ? '正在按反馈微调正面全身图…' : '正在按要求重新生成正面全身图…')
     setFullbodyHint(null)
 
     try {
@@ -1293,7 +1344,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         method: 'POST',
         body: {
           style: fullbodyStyle,
-          feedback: fullbodyFeedback.trim() || undefined
+          feedback: fullbodyFeedback.trim() || undefined,
+          mode
         }
       })
 
@@ -1486,6 +1538,11 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
     return list.map(item => ({ url: item.previewUrl }))
   }, [fullbodyHistories, fullbodyStyle])
+
+  const fullbodyEditUsesLatest =
+    currentFullbodyHistory.length > 0 &&
+    (fullbodyHistoryIndices[fullbodyStyle || ''] ?? currentFullbodyHistory.length - 1) ===
+      currentFullbodyHistory.length - 1
 
   const canGoBack =
     computeBackTransition({ phase, qIndex, voiceStage, imageSealed }, CHARACTER_QUESTIONS.length) !== null
@@ -1782,11 +1839,22 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                       <button
                         className="text-body transition hover:text-strong disabled:opacity-40"
                         disabled={avatarBusy || avatarUploading}
-                        onClick={() => void regenerateAvatarPortrait()}
+                        onClick={() => {
+                          setPortraitPanelHint(null)
+                          void regenerateAvatarPortrait()
+                        }}
                         type="button"
                       >
                         重新生成
                       </button>
+                      <EditAvatarButton
+                        busy={avatarBusy || avatarUploading}
+                        disabledByReference={Boolean(refImage || presentationRef)}
+                        onEdit={() => {
+                          setPortraitPanelHint(null)
+                          void editAvatarPortrait()
+                        }}
+                      />
                       <button
                         className="rounded-full border border-line-standard px-3 py-1 text-strong transition hover:bg-fill-hover disabled:opacity-40"
                         disabled={avatarBusy || avatarUploading}
@@ -1917,11 +1985,26 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     <div className="flex gap-3">
                       <button
                         className="text-body transition hover:text-strong disabled:opacity-40"
-                        disabled={fullbodyLoading}
-                        onClick={() => void regenerateFullbodyFront()}
+                        disabled={
+                          fullbodyLoading || !fullbodyFrontUrl || !fullbodyFeedback.trim() || !fullbodyEditUsesLatest
+                        }
+                        onClick={() => void regenerateFullbodyFront('edit')}
+                        title={
+                          fullbodyEditUsesLatest
+                            ? '在当前立绘上修改，其余保持不变（需先填写要求）'
+                            : '微调只能基于最近生成的一版，请先在历史中选择最新图片'
+                        }
                         type="button"
                       >
-                        微调重绘
+                        微调
+                      </button>
+                      <button
+                        className="text-body transition hover:text-strong disabled:opacity-40"
+                        disabled={fullbodyLoading}
+                        onClick={() => void regenerateFullbodyFront('regenerate')}
+                        type="button"
+                      >
+                        重新生成
                       </button>
                       <button
                         className="inline-flex h-9 items-center justify-center rounded-lg bg-accent px-4 text-sm font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40"

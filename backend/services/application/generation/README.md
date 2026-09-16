@@ -34,6 +34,14 @@
 - 房间生成：性格须显式进入房间简述，参考像素不能表达性格；明确的房间要求独立传给生图模型，不经简述截断，优先于陈设与光线建议但不覆盖身份、穿着和画面约束。普通会话生图不得修改激活背景。在线自主换房受用户锁、日配额与打扰档位约束，夜间共用互斥和政策锁但不占在线配额；用户请求与换装失效的保护规则见 [PROTOCOL](../../../../docs/PROTOCOL.md)。
 - 房间参考图：在取代旧 pending 前读取、校验并固化为任务内图片，全部尝试复用同一份参考；用户任务中断后需重新提交，参考图不单独写入永久资产或备份。身份图和用户图的职责与供应商提交方式归 [PIPELINE §1](../../../../docs/PIPELINE.md#1-3d-链拓扑)，聊天图片选择与用户请求门控归 [PROTOCOL §1.2](../../../../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。
 
+## 图像修改双模式（微调 / 重新生成）
+
+头像、全身参考、2D / 3D 种子与衣柜草稿的迭代修改按 [PIPELINE §1.1.1](../../../../docs/PIPELINE.md#111-图像修改双模式微调--重新生成)区分为两种显式意图；语义与守卫归该文，这里维护实现约束：
+
+- 编辑能力由 `ImageGenProvider.supports_image_edit` 声明（grok `/images/edits`、gemini 原生编辑为 True；角色条件化参考不算编辑）。`generate_images(image_edit=True)` 按该能力过滤供应商链，链上无编辑能力时报公开错误而非静默回退全量重绘；编辑不接受 secondary 参考，调用层保证不同给。
+- 编辑提示词用 `build_image_edit_prompt`（增量反馈 + 按流程的 preserve 条款，条款只描述输入图自身可见维度，不使用「种子图」等内部概念）；各流程选用的条款常量在 [prompt_engineer](../../infrastructure/llm/prompt_engineer.py)集中定义。
+- 各业务入口（avatar / outfit 服务）在服务函数内分支 mode：edit 先守卫（反馈必填、上一版存在可读、不与参考图同给），编辑底图经 `load_avatar_bytes_as_data_uri` 读取（兼容 temp-media 草稿与正式资产）；regenerate 路径与既有全量重绘完全一致。审核改写重试对两种模式同样生效。
+
 ## 限制与验证
 
 - see-through 依赖社区免费算力、无 SLA：休眠唤醒与排队延迟不可消除，由阶段超时与总预算显式降级（编排层落失败态，客户端渲染级联降级并可在设置页重试）；需要稳定服务时经 `seethrough_space_base` / `seethrough_fallback_base` 切换专用部署或自托管入口。

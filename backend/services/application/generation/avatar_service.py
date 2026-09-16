@@ -14,7 +14,7 @@ from components import (
     safe_json_loads,
     save_file,
 )
-from modules.companion import AvatarAsset, Persona
+from modules.companion import AvatarAsset, ImageReviseMode, Persona
 from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +22,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.companion import classify_species, get_or_create_persona, load_persona_definition, select_rig_type
 from services.infrastructure.assets import build_data_uri, build_signed_avatar_url, resolve_companion_asset_path
 from services.infrastructure.llm import (
+    EDIT_PRESERVE_3D_BACK,
+    EDIT_PRESERVE_3D_FRONT,
+    EDIT_PRESERVE_FULLBODY,
+    EDIT_PRESERVE_IDENTITY,
     build_fullbody_prompt,
+    build_image_edit_prompt,
     chat,
     enhance_avatar_prompt,
     is_content_policy_error_message,
@@ -98,8 +103,9 @@ async def _generate_one_portrait_with_moderation_retry(
     size: str = _AVATAR_SIZE,
     persist: bool = True,
     preferred_provider: str | list[str] | None = None,
+    image_edit: bool = False,
 ) -> tuple[str, str, str, str]:
-    """生成一张立绘；命中内容审核时用改写后的提示词重试一次。"""
+    """生成一张立绘；命中内容审核时用改写后的提示词重试一次。image_edit=True 时参考图是编辑底图，供应商链按图像编辑能力过滤。"""
     try:
         return await _generate_one_portrait(
             prompt,
@@ -109,6 +115,7 @@ async def _generate_one_portrait_with_moderation_retry(
             size=size,
             persist=persist,
             preferred_provider=preferred_provider,
+            image_edit=image_edit,
         )
     except AvatarGenerationError as first_exc:
         if not is_content_policy_error_message(first_exc.internal):
@@ -126,10 +133,11 @@ async def _generate_one_portrait_with_moderation_retry(
                 size=size,
                 persist=persist,
                 preferred_provider=preferred_provider,
+                image_edit=image_edit,
             )
         except AvatarGenerationError as second_exc:
             raise AvatarGenerationError(
-                "sanitized retry failed after moderation block",
+                "生成请求被内容审核拦截，请调整描述后重试",
                 internal=f"original: {first_exc.internal}; retry: {second_exc.internal}",
             ) from second_exc
 
@@ -266,8 +274,9 @@ async def _generate_one_portrait(
     size: str = _AVATAR_SIZE,
     persist: bool = True,
     preferred_provider: str | list[str] | None = None,
+    image_edit: bool = False,
 ) -> tuple[str, str, str, str]:
-    """persist=False 时图片留在 temp-media/（引导流程），True 时落盘到 companion-avatars/。"""
+    """persist=False 时图片留在 temp-media/（引导流程），True 时落盘到 companion-avatars/。image_edit=True 时走图像编辑供应商链（编辑底图经 reference_image 传入，不接受 secondary）。"""
     try:
         urls = await generate_images(
             prompt,
@@ -277,10 +286,12 @@ async def _generate_one_portrait(
             reference_image=reference_image,
             secondary_reference_image=secondary_reference_image,
             preferred_provider=preferred_provider,
+            image_edit=image_edit,
         )
     except ImageGenerationError as exc:
         logger.warning("portrait image generation failed", extra={"user_id": user_id, "error": exc.internal})
-        raise AvatarGenerationError("image-gen provider failed", internal=exc.internal) from exc
+        # ImageGenerationError 的 str 按契约是公开文案（含编辑能力缺失等可行动指引），透传不替换。
+        raise AvatarGenerationError(str(exc), internal=exc.internal) from exc
     source_url = urls[0]
 
     if not persist:
@@ -291,7 +302,7 @@ async def _generate_one_portrait(
 
     downloaded = await _download_to_bytes(source_url)
     if downloaded is None:
-        raise AvatarGenerationError("image-gen result is unreachable")
+        raise AvatarGenerationError("生成结果下载失败，请稍后重试")
     data, content_type = downloaded
     asset_url, file_id, final_ext = await _persist_portrait_bytes(data, content_type)
     return asset_url, file_id, final_ext, source_url
@@ -371,6 +382,7 @@ async def _generate_avatar_step(
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
     persist: bool = False,
+    image_edit: bool = False,
 ) -> AvatarAsset:
     """先在短会话外完成立绘生成，再用一次短写会话提交新的 active AvatarAsset 行。"""
     (asset_url, file_id, final_ext, avatar_source_url) = await _generate_one_portrait_with_moderation_retry(
@@ -379,6 +391,7 @@ async def _generate_avatar_step(
         reference_image=reference_image,
         secondary_reference_image=secondary_reference_image,
         persist=persist,
+        image_edit=image_edit,
     )
 
     if db is None:
@@ -599,11 +612,19 @@ async def regenerate_avatar(
     persona: Persona | None = None,
     feedback: str | None = None,
     style: str = _DEFAULT_STYLE,
+    mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
-    """重新生成立绘；可选的 feedback 会并入提示词。"""
+    """重新生成立绘；可选的 feedback 会并入提示词。
+
+    mode="edit"（微调）以当前激活头像行为编辑底图，提示词只含本次增量，
+    未提及区域逐像素保留；mode="regenerate"（重新生成）保持全量重绘。"""
     if user_id is None:
         raise ValueError("user_id is required")
     persona = await _verified_persona(db, user_id, persona)
+
+    if mode == "edit":
+        return await _edit_active_avatar(db, user_id, persona, feedback=feedback, style=style)
+
     try:
         avatar_prompt = await enhance_avatar_prompt(db, user_id, persona, feedback=feedback)
     except (ValidationError, RuntimeError) as exc:
@@ -616,6 +637,55 @@ async def regenerate_avatar(
         persona=persona,
         feedback=feedback,
         persist=persona.is_portrait_confirmed,
+    )
+    return asset
+
+
+async def _edit_active_avatar(
+    db: AsyncSession | None,
+    user_id: int,
+    persona: Persona,
+    *,
+    feedback: str | None,
+    style: str,
+) -> AvatarAsset:
+    """微调当前激活头像：编辑底图即该行 asset_url，成功后照常写入新 AvatarAsset 行。"""
+    effective_feedback = (feedback or "").strip()
+    if not effective_feedback:
+        raise AvatarGenerationError("请先描述要微调的内容")
+
+    async def _current_uri(session: AsyncSession) -> tuple[AvatarAsset | None, str | None]:
+        asset = (
+            await session.execute(
+                select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)),
+            )
+        ).scalar_one_or_none()
+        if asset is None:
+            return None, None
+        return asset, await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.asset_url)
+
+    if db is not None:
+        current, edit_uri = await _current_uri(db)
+    else:
+        async with SESSION_LOCAL() as probe_db:
+            current, edit_uri = await _current_uri(probe_db)
+    if current is None:
+        raise AvatarNotFoundError("找不到当前头像，请重新生成")
+    if not edit_uri:
+        raise AvatarSourceUnreadableError("当前头像文件缺失或无法读取，请重新生成")
+
+    prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_IDENTITY)
+    persist = persona.is_portrait_confirmed
+    asset = await _generate_avatar_step(
+        db,
+        user_id,
+        avatar_prompt=prompt,
+        style=style,
+        persona=persona,
+        feedback=effective_feedback,
+        reference_image=edit_uri,
+        persist=persist,
+        image_edit=True,
     )
     return asset
 
@@ -927,41 +997,60 @@ async def generate_fullbody_reference(
     feedback: str | None = None,
     reference_image: str | None = None,
     reference_content_type: str | None = None,
+    mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
-    """从头像生成独立全身参考；锁定后仍开放，成功落库前保留旧图。"""
+    """从头像生成独立全身参考；锁定后仍开放，成功落库前保留旧图。
+
+    mode="edit"（微调）编辑上一版全身参考，参考图只属于重新生成意图、与 edit 同给直接拒绝。"""
     async with get_avatar_job_lock(user_id):
         asset, persona = await _fetch_fullbody_target(None, user_id, avatar_id)
         if not asset.active:
             raise AvatarNotFoundError("请先选择当前角色的头像")
-        ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.asset_url)
-        if not ref_uri:
-            raise AvatarSourceUnreadableError("头像读取失败，请稍后重试")
-        species, appearance, personality = _fullbody_identity_fields(persona)
-        rig_type = await _resolve_fullbody_rig_type(None, user_id, asset, species)
+        effective_feedback = (feedback or "").strip()
+        if mode == "edit":
+            if reference_image:
+                raise AvatarGenerationError("参考图只用于重新生成，微调请先移除参考图")
+            if not effective_feedback:
+                raise AvatarGenerationError("请先描述要微调的内容")
+            edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
+            if not edit_uri:
+                raise AvatarSourceUnreadableError("上一版全身参考缺失或无法读取，请先重新生成")
+            prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_FULLBODY)
+        else:
+            ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.asset_url)
+            if not ref_uri:
+                raise AvatarSourceUnreadableError("头像读取失败，请稍后重试")
+        species, appearance, personality_text = _fullbody_identity_fields(persona)
         definition = load_persona_definition(persona)
-        user_ref_uri = (
-            f"data:{reference_content_type or 'image/png'};base64,{reference_image}" if reference_image else None
-        )
-        prompt = build_fullbody_reference_prompt(
-            species=species,
-            gender=definition.get("gender", ""),
-            appearance=appearance,
-            personality=personality,
-            feedback=feedback.strip() if feedback else None,
-            has_user_reference=bool(user_ref_uri),
-        )
+        rig_type = await _resolve_fullbody_rig_type(None, user_id, asset, species)
+        if mode != "edit":
+            user_ref_uri = (
+                f"data:{reference_content_type or 'image/png'};base64,{reference_image}" if reference_image else None
+            )
+            prompt = build_fullbody_reference_prompt(
+                species=species,
+                gender=definition.get("gender", ""),
+                appearance=appearance,
+                personality=personality_text,
+                feedback=effective_feedback or None,
+                has_user_reference=bool(user_ref_uri),
+            )
+        else:
+            user_ref_uri = None
         try:
             generated_url, _, _, _ = await _generate_one_portrait_with_moderation_retry(
                 prompt,
                 user_id,
-                reference_image=ref_uri,
-                secondary_reference_image=user_ref_uri,
+                reference_image=edit_uri if mode == "edit" else ref_uri,
+                secondary_reference_image=None if mode == "edit" else user_ref_uri,
                 size=_fullbody_size_for(rig_type),
                 persist=persona.is_portrait_confirmed,
                 preferred_provider=SETTINGS.companion_asset_image_providers,
+                image_edit=mode == "edit",
             )
         except AvatarGenerationError as exc:
-            raise FullbodyGenerationError("全身参考图生成失败，请稍后重试", internal=exc.internal) from exc
+            # str 按类契约是公开文案（含编辑能力缺失等可行动指引），透传给端点映射。
+            raise FullbodyGenerationError(str(exc), internal=exc.internal) from exc
 
         async with SESSION_LOCAL() as db:
             target = (
@@ -997,48 +1086,62 @@ async def generate_fullbody_front_2d(
     avatar_id: int,
     style: str = "cel_shading",
     feedback: str | None = None,
+    mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
     """按选定画风与用户微调要求生成/重绘 2D 正面种子图。主体参考恒为独立全身种子图，
-    保留身材比例；身份细节以其源头（半身头像 + 角色定义）间接锚定，不回退半身像。"""
+    保留身材比例；身份细节以其源头（半身头像 + 角色定义）间接锚定，不回退半身像。
+    mode="edit"（微调）编辑上一版 2D 正面种子，未提及区域逐像素保留。"""
     if user_id is None:
         raise ValueError("user_id is required")
     asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id, check_sealed=True)
-    ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
-    if ref_uri is None:
-        raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
-
-    prompt_payload = safe_json_loads(asset.prompt_json, default={})
-    if not isinstance(prompt_payload, dict):
-        prompt_payload = {}
-    if not (prompt_payload.get("avatar_prompt") or prompt_payload.get("prompt")):
-        raise SeedPromptMissingError(f"avatar {avatar_id} has no cached avatar_prompt")
-
     species, appearance, personality = _fullbody_identity_fields(persona)
     rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
-    template = resolve_fullbody_template(species, rig_type, style)
 
-    effective_feedback = feedback.strip() if (feedback and feedback.strip()) else None
-    prompt = build_fullbody_prompt(
-        "front",
-        template=template,
-        style_id=style,
-        feedback=effective_feedback,
-        appearance=appearance,
-        personality=personality,
-    )
+    effective_feedback = feedback.strip() if (feedback and feedback.strip()) else ""
+    if mode == "edit":
+        if not effective_feedback:
+            raise AvatarGenerationError("请先描述要微调的内容")
+        if not asset.seed_front_2d_url:
+            raise AvatarGenerationError("尚无上一版正面种子，请先重新生成")
+        edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_front_2d_url)
+        if not edit_uri:
+            raise AvatarSourceUnreadableError("上一版正面种子缺失或无法读取，请先重新生成")
+        prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_FULLBODY)
+    else:
+        prompt_payload = safe_json_loads(asset.prompt_json, default={})
+        if not isinstance(prompt_payload, dict):
+            prompt_payload = {}
+        if not (prompt_payload.get("avatar_prompt") or prompt_payload.get("prompt")):
+            raise SeedPromptMissingError(f"avatar {avatar_id} has no cached avatar_prompt")
+        ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
+        if ref_uri is None:
+            raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+        template = resolve_fullbody_template(species, rig_type, style)
+        prompt = build_fullbody_prompt(
+            "front",
+            template=template,
+            style_id=style,
+            feedback=effective_feedback or None,
+            appearance=appearance,
+            personality=personality,
+        )
 
     try:
         front_url, _, _, _ = await _generate_one_portrait_with_moderation_retry(
             prompt,
             user_id,
-            reference_image=ref_uri,
+            reference_image=edit_uri if mode == "edit" else ref_uri,
             size=_fullbody_size_for(rig_type),
             persist=False,
             preferred_provider=SETTINGS.companion_asset_image_providers,
+            image_edit=mode == "edit",
         )
+    except AvatarGenerationError as exc:
+        # 供应商链失败（含审核拦截、编辑能力缺失等公开文案）统一包成 FullbodyGenerationError → 502；
+        # edit 守卫在 try 之外直接抛出，走端点 400 分支。
+        raise FullbodyGenerationError(str(exc), internal=exc.internal) from exc
     except Exception as exc:
-        err_msg = getattr(exc, "internal", str(exc))
-        raise FullbodyGenerationError("正面全身图生成失败，请稍后重试", internal=err_msg) from exc
+        raise FullbodyGenerationError("正面全身图生成失败，请稍后重试", internal=str(exc)) from exc
 
     async def _write(session: AsyncSession) -> AvatarAsset:
         target = await session.get(AvatarAsset, avatar_id)
@@ -1048,7 +1151,7 @@ async def generate_fullbody_front_2d(
         if isinstance(payload, dict):
             payload["fullbody_style"] = style
             payload["fullbody_rig_type"] = rig_type
-            if effective_feedback is not None:
+            if effective_feedback:
                 payload["fullbody_feedback"] = effective_feedback
             else:
                 payload.pop("fullbody_feedback", None)
@@ -1103,12 +1206,14 @@ async def generate_fullbody_front_3d(
     *,
     avatar_id: int,
     feedback: str | None = None,
+    mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
     """生成/重绘 3D 建模专用正面种子（A-pose、3D 画风）。
 
     身份与身材参考与 2D 正面生成同源——恒用独立全身种子图（其身份源自半身头像种子），
     不引用已生成的全身立绘以免迭代失真；仅姿态与画风切换为 3D 建模所需，属派生而非身份变更：
-    不受形象锁定约束，也不覆盖 2D 正面种子（衣柜与 2D 拆分的身份锚）。重绘后旧背面种子随之失效。"""
+    不受形象锁定约束，也不覆盖 2D 正面种子（衣柜与 2D 拆分的身份锚）。重绘后旧背面种子随之失效。
+    mode="edit"（微调）编辑上一版 3D 正面种子，A-pose 与白底由 preserve 条款保留。"""
     if user_id is None:
         raise ValueError("user_id is required")
     asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
@@ -1116,36 +1221,48 @@ async def generate_fullbody_front_3d(
     if not asset.seed_front_2d_url:
         raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; confirm the 2D front seed first")
 
-    ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
-    if ref_uri is None:
-        raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
-
     species, appearance, personality = _fullbody_identity_fields(persona)
     effective_style = await _resolve_fullbody_3d_style(db, user_id, asset, species)
     rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
-    template = resolve_fullbody_template(species, rig_type, effective_style)
-    effective_feedback = feedback.strip() if (feedback and feedback.strip()) else None
-    prompt = build_fullbody_prompt(
-        "front",
-        template=template,
-        style_id=effective_style,
-        feedback=effective_feedback,
-        appearance=appearance,
-        personality=personality,
-    )
+    effective_feedback = feedback.strip() if (feedback and feedback.strip()) else ""
+
+    if mode == "edit":
+        if not effective_feedback:
+            raise AvatarGenerationError("请先描述要微调的内容")
+        if not asset.seed_front_3d_url:
+            raise AvatarGenerationError("尚无上一版 3D 正面种子，请先重新生成")
+        edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_front_3d_url)
+        if not edit_uri:
+            raise AvatarSourceUnreadableError("上一版 3D 正面种子缺失或无法读取，请先重新生成")
+        prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_3D_FRONT)
+    else:
+        ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
+        if ref_uri is None:
+            raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+        template = resolve_fullbody_template(species, rig_type, effective_style)
+        prompt = build_fullbody_prompt(
+            "front",
+            template=template,
+            style_id=effective_style,
+            feedback=effective_feedback or None,
+            appearance=appearance,
+            personality=personality,
+        )
 
     try:
         front_url, _, _, _ = await _generate_one_portrait_with_moderation_retry(
             prompt,
             user_id,
-            reference_image=ref_uri,
+            reference_image=edit_uri if mode == "edit" else ref_uri,
             size=_fullbody_size_for(rig_type),
             persist=persona.is_portrait_confirmed,
             preferred_provider=SETTINGS.companion_asset_image_providers,
+            image_edit=mode == "edit",
         )
+    except AvatarGenerationError as exc:
+        raise FullbodyGenerationError(str(exc), internal=exc.internal) from exc
     except Exception as exc:
-        err_msg = getattr(exc, "internal", str(exc))
-        raise FullbodyGenerationError("3D 正面立绘生成失败，请稍后重试", internal=err_msg) from exc
+        raise FullbodyGenerationError("3D 正面立绘生成失败，请稍后重试", internal=str(exc)) from exc
 
     async def _write(session: AsyncSession) -> AvatarAsset:
         target = await session.get(AvatarAsset, avatar_id)
@@ -1155,7 +1272,7 @@ async def generate_fullbody_front_3d(
         if isinstance(payload, dict):
             payload["fullbody_3d_style"] = effective_style
             payload["fullbody_rig_type"] = rig_type
-            if effective_feedback is not None:
+            if effective_feedback:
                 payload["fullbody_3d_feedback"] = effective_feedback
             else:
                 payload.pop("fullbody_3d_feedback", None)
@@ -1176,10 +1293,12 @@ async def generate_fullbody_back(
     *,
     avatar_id: int,
     feedback: str | None = None,
+    mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
     """按 3D 正面种子为参考图生成/重绘背面全身图（3D 升级阶段的背面种子确认；无 3D 正面种子时回退 2D 正面种子）。
 
-    形象锁定后仍可调用：参考图恒为已确认的正面种子，是视角派生而非身份变更，不受 raise_if_image_sealed 约束。"""
+    形象锁定后仍可调用：参考图恒为已确认的正面种子，是视角派生而非身份变更，不受 raise_if_image_sealed 约束。
+    mode="edit"（微调）编辑上一版背面种子，背面视点与正面一致性由 preserve 条款保留。"""
     if user_id is None:
         raise ValueError("user_id is required")
     asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
@@ -1192,33 +1311,45 @@ async def generate_fullbody_back(
 
     effective_style = await _resolve_fullbody_3d_style(db, user_id, asset, species)
     rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
-    template = resolve_fullbody_template(species, rig_type, effective_style)
+    effective_feedback = feedback.strip() if (feedback and feedback.strip()) else ""
 
-    front_ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, effective_front_url) or (
-        await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
-    )
-    effective_feedback = feedback.strip() if (feedback and feedback.strip()) else None
-    prompt = build_fullbody_prompt(
-        "back",
-        template=template,
-        style_id=effective_style,
-        feedback=effective_feedback,
-        appearance=appearance,
-        personality=personality,
-    )
+    if mode == "edit":
+        if not effective_feedback:
+            raise AvatarGenerationError("请先描述要微调的内容")
+        if not asset.seed_back_url:
+            raise AvatarGenerationError("尚无上一版背面种子，请先重新生成")
+        edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_back_url)
+        if not edit_uri:
+            raise AvatarSourceUnreadableError("上一版背面种子缺失或无法读取，请先重新生成")
+        prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_3D_BACK)
+    else:
+        template = resolve_fullbody_template(species, rig_type, effective_style)
+        front_ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, effective_front_url) or (
+            await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
+        )
+        prompt = build_fullbody_prompt(
+            "back",
+            template=template,
+            style_id=effective_style,
+            feedback=effective_feedback or None,
+            appearance=appearance,
+            personality=personality,
+        )
 
     try:
         back_url, _, _, _ = await _generate_one_portrait_with_moderation_retry(
             prompt,
             user_id,
-            reference_image=front_ref_uri,
+            reference_image=edit_uri if mode == "edit" else front_ref_uri,
             size=_fullbody_size_for(rig_type),
             persist=persona.is_portrait_confirmed,
             preferred_provider=SETTINGS.companion_asset_image_providers,
+            image_edit=mode == "edit",
         )
+    except AvatarGenerationError as exc:
+        raise FullbodyGenerationError(str(exc), internal=exc.internal) from exc
     except Exception as exc:
-        err_msg = getattr(exc, "internal", str(exc))
-        raise FullbodyGenerationError("背面全身图生成失败，请稍后重试", internal=err_msg) from exc
+        raise FullbodyGenerationError("背面全身图生成失败，请稍后重试", internal=str(exc)) from exc
 
     async def _write(session: AsyncSession) -> AvatarAsset:
         target = await session.get(AvatarAsset, avatar_id)
@@ -1228,7 +1359,7 @@ async def generate_fullbody_back(
         if isinstance(payload, dict):
             payload["fullbody_3d_style"] = effective_style
             payload["fullbody_rig_type"] = rig_type
-            if effective_feedback is not None:
+            if effective_feedback:
                 payload["fullbody_back_feedback"] = effective_feedback
             else:
                 payload.pop("fullbody_back_feedback", None)

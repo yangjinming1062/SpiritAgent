@@ -15,6 +15,8 @@ class GrokImageGenProvider(ImageGenProvider):
     DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"image_gen": 8_000}
     # xAI /images/edits 原生消费 reference_image，工具层可直接透传，无需回退到视觉模型描述。
     supports_reference_image: ClassVar[bool] = True
+    # /images/edits 是真图像编辑端点：增量重绘、保留未提及区域，官方支持多轮编辑（上一轮输出作下一轮输入）。
+    supports_image_edit: ClassVar[bool] = True
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)

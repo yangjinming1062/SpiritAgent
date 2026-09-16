@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
+import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 import { pickAvatarImage, type PickedImage, resolvePortraitUrl } from '../avatar-image'
 
@@ -42,14 +43,15 @@ function outfitErrMsg(err: unknown, fallback: string): string {
 
 // 衣柜页的设计会话：着装描述 + 可选参考图 → 草稿 → 反馈微调重绘 → 确认入柜并自动穿着。
 // 服装/发型可换、五官锁定——身份与身材由后端用全身种子图锚定，这里只收集着装意图。
+// 有草稿后的反馈分两种意图：edit=微调（编辑上一版草稿）、regenerate=重新生成（种子锚定全量重绘）。
 // 发出失败的请求保留在 lastRequest 里供一键重试，避免用户重打描述、重传参考图。
 export function useOutfitDesignSession(onConfirmed: () => void): {
   messages: DesignMessage[]
   draft: DesignDraft | null
   refImage: PickedImage | null
   busy: boolean
-  lastRequest: { image: PickedImage | null; text: string } | null
-  send: (text: string) => void
+  lastRequest: { image: PickedImage | null; text: string; mode: ImageReviseMode } | null
+  send: (text: string, mode: ImageReviseMode) => void
   retry: () => void
   confirm: () => Promise<void>
   attachRefImage: () => Promise<void>
@@ -61,7 +63,12 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   const [draft, setDraft] = useState<DesignDraft | null>(null)
   const [refImage, setRefImage] = useState<PickedImage | null>(null)
   const [busy, setBusy] = useState(false)
-  const [lastRequest, setLastRequest] = useState<{ image: PickedImage | null; text: string } | null>(null)
+
+  const [lastRequest, setLastRequest] = useState<{
+    image: PickedImage | null
+    text: string
+    mode: ImageReviseMode
+  } | null>(null)
 
   const mountedRef = useRef(true)
   const generatingRef = useRef(false)
@@ -103,7 +110,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   }, [])
 
   const runDesign = useCallback(
-    (text: string, image: PickedImage | null, withDraft: DesignDraft | null): void => {
+    (text: string, image: PickedImage | null, withDraft: DesignDraft | null, mode: ImageReviseMode): void => {
       if (!mountedRef.current || generatingRef.current) {
         return
       }
@@ -118,8 +125,8 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
 
       void (async () => {
         try {
-          // 有草稿后只走反馈微调（后端 regenerate 不收图）；参考图仅用于首次生成。
-          const res = withDraft ? await runRegenerate(withDraft.id, text) : await runCreate(text, image)
+          // 有草稿后按用户意图走微调或重新生成（后端 regenerate 均不收图）；参考图仅用于首次生成。
+          const res = withDraft ? await runRegenerate(withDraft.id, text, mode) : await runCreate(text, image)
 
           if (!isCurrent(revision, epoch)) {
             return
@@ -147,7 +154,15 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
           }
 
           setDraft({ id: res.id, previewUrl: resolved })
-          push({ role: 'system', text: '草稿已生成，见上方预览。继续描述可以微调重绘，满意就确认入柜。', tone: 'info' })
+          push({
+            role: 'system',
+            // 首次生成无「微调」可言（send 对无草稿请求强制 edit），按是否基于已有草稿区分文案。
+            text:
+              withDraft && mode === 'edit'
+                ? '已按反馈微调，见上方预览。继续描述可以再微调，满意就确认入柜。'
+                : '草稿已生成，见上方预览。继续描述可以微调重绘，满意就确认入柜。',
+            tone: 'info'
+          })
         } catch (err) {
           if (!isCurrent(revision, epoch)) {
             return
@@ -166,7 +181,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
           }
 
           // 失败后保留本次输入与参考图，失败气泡旁给一键重试，不必重打描述或重传图。
-          setLastRequest({ image, text })
+          setLastRequest({ image, text, mode })
           push({
             role: 'system',
             text: timedOut
@@ -187,7 +202,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   )
 
   const send = useCallback(
-    (text: string): void => {
+    (text: string, mode: ImageReviseMode = 'edit'): void => {
       const trimmed = text.trim()
 
       if (!mountedRef.current || generatingRef.current || (!draft && !trimmed && !refImage)) {
@@ -197,7 +212,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
       const image = refImage
       setRefImage(null)
 
-      runDesign(trimmed, image, draft)
+      runDesign(trimmed, image, draft, draft ? mode : 'edit')
     },
     [draft, refImage, runDesign]
   )
@@ -207,7 +222,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
       return
     }
 
-    runDesign(lastRequest.text, lastRequest.image, draft)
+    runDesign(lastRequest.text, lastRequest.image, draft, lastRequest.mode)
   }, [draft, lastRequest, runDesign])
 
   const confirm = useCallback(async (): Promise<void> => {
@@ -316,10 +331,14 @@ async function runCreate(
   })
 }
 
-async function runRegenerate(id: number, feedback: string): Promise<{ id?: number; fullbody_url?: string }> {
+async function runRegenerate(
+  id: number,
+  feedback: string,
+  mode: ImageReviseMode
+): Promise<{ id?: number; fullbody_url?: string }> {
   return window.spiritagent.api<{ id?: number; fullbody_url?: string }>({
     path: `/api/companion/outfits/${id}/regenerate`,
     method: 'POST',
-    body: { feedback: feedback || undefined }
+    body: { feedback: feedback || undefined, mode }
   })
 }

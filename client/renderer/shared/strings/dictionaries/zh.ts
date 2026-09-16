@@ -1,3 +1,5 @@
+import type { ImageReviseMode } from '@/shared/types/spiritagent'
+
 export const dict = {
   brand: {
     name: '唤生',
@@ -338,6 +340,9 @@ export const dict = {
         feedbackPlaceholder: '希望怎样展现体态或姿势？可留空直接生成。',
         generate: '生成全身种子图',
         regenerate: '重新生成全身种子图',
+        edit: '微调',
+        editRequiresFeedback: '在当前图上修改，其余保持不变（需先填写要求）',
+        editDisabledByReference: '附参考图时不可微调，请先移除参考图',
         reload: '重新加载',
         enlarge: '放大查看全身种子图',
         back: '上一步',
@@ -938,11 +943,17 @@ export const dict = {
       retryLast: '重试上次生成',
       splittingPrompt: '有一套外观正在生成中，完成后再来设计新装',
       placeholderSplitting: '外观生成中，请稍候…',
-      placeholderRefining: '想微调哪里？继续描述…（Enter 发送）',
+      placeholderRefining: '想调整哪里？继续描述…（Enter 发送）',
       placeholderInitial: '描述想要的着装…（Enter 发送，Shift+Enter 换行）',
       attachImage: '附参考图',
       attachImageTitle: '附参考图（可选，仅首次生成）',
-      send: '发送'
+      send: '发送',
+      reviseEdit: '微调',
+      reviseRegenerate: '重新生成',
+      reviseHint: {
+        edit: '在当前草稿上修改，其余保持不变',
+        regenerate: '按原描述与参考图重新生成整套设计'
+      } as Record<ImageReviseMode, string>
     },
     appearance: {
       renderMode: '渲染模式',

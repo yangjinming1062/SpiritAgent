@@ -154,6 +154,37 @@ _OUTFIT_CHANGE_CLAUSE = (
     "不要复制第二张图的人物身份、姿势、背景、构图或文字。"
 )
 
+# 微调编辑的「保持不变」条款按流程取用：编辑底图已含完整画面，增量只来自用户反馈。
+# 条款只描述输入图自身可见的维度——模型看不到「种子图」「正面/背面成对」等产品内部概念，
+# 跨图一致性不能靠提示词表达，只能约束输入图内可见的内容。
+EDIT_PRESERVE_IDENTITY = (
+    "除用户明确要求修改的部分外，输入图中角色的五官、脸型、发型发色、体型、物种与性别保持不变，"
+    "无关的姿势、构图、背景与画风也保持不变"
+)
+EDIT_PRESERVE_FULLBODY = (
+    "除用户明确要求修改的部位或姿态外，角色从头到脚完整入画的构图、身体比例与画风保持不变，"
+    "头顶、肢体、翅膀或尾部不被裁切"
+)
+EDIT_PRESERVE_3D_FRONT = (
+    "标准 A-pose 与正面视点是不可改变的建模约束；除用户明确要求修改的细节外，"
+    "角色其余外观、纯白无缝背景与 3D 建模画风保持不变"
+)
+EDIT_PRESERVE_3D_BACK = (
+    "背面视点（背向镜头）是不可改变的建模约束；除用户明确要求修改的细节外，"
+    "后脑发型、背部轮廓、服装后侧设计、纯白无缝背景与 3D 建模画风保持不变"
+)
+
+
+def build_image_edit_prompt(feedback: str, *, preserve: str) -> str:
+    """图像编辑 prompt：输入图是编辑底图（上一版产物），只按用户本次反馈做增量修改。"""
+    clause = _prompt_clause(feedback)
+    if not clause:
+        raise ValueError("image edit requires non-empty feedback")
+    return (
+        "对输入图片做编辑，不是重新创作。用户本次的修改要求："
+        f"{clause}。只修改与该要求直接相关的部分，其余内容保持原样。{preserve}。"
+    )
+
 
 def _strip_markdown_fence(raw: str) -> str:
     """剥离最外层 ```...``` 包装；只匹配首个开 fence 与字符串末尾的闭 fence，避免破坏 JSON 内的 ``` 子串。"""

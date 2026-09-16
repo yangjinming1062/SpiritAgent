@@ -1,5 +1,8 @@
 import type { SpeechStyle } from '@ipc/contracts'
 
+/** 图像迭代意图：微调上一版，或从固定参考重新生成。与后端 ImageReviseMode 对齐。 */
+export type ImageReviseMode = 'edit' | 'regenerate'
+
 export interface SessionInfo {
   archived?: boolean
   pinned?: boolean

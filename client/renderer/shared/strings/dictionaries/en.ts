@@ -1,3 +1,5 @@
+import type { ImageReviseMode } from '@/shared/types/spiritagent'
+
 import type { Dictionary } from './zh'
 
 export const dict: Dictionary = {
@@ -360,6 +362,9 @@ export const dict: Dictionary = {
         feedbackPlaceholder: 'Describe any changes to the body or pose, or leave blank to generate.',
         generate: 'Generate full-body seed',
         regenerate: 'Regenerate full-body seed',
+        edit: 'Refine',
+        editRequiresFeedback: 'Edit the current image; everything else stays the same (feedback required first)',
+        editDisabledByReference: 'Refine is unavailable while a reference image is attached — remove it first',
         reload: 'Reload',
         enlarge: 'Enlarge full-body seed image',
         back: 'Back',
@@ -993,7 +998,13 @@ export const dict: Dictionary = {
       placeholderInitial: 'Describe an outfit… (Enter to send, Shift+Enter for newline)',
       attachImage: 'Attach reference image',
       attachImageTitle: 'Attach reference image (optional, first generation only)',
-      send: 'Send'
+      send: 'Send',
+      reviseEdit: 'Refine',
+      reviseRegenerate: 'Regenerate',
+      reviseHint: {
+        edit: 'Edit the current draft; everything else stays the same',
+        regenerate: 'Redesign from the original description and reference image'
+      } as Record<ImageReviseMode, string>
     },
     appearance: {
       renderMode: 'Render mode',

@@ -16,9 +16,10 @@ import { PortraitLightbox } from '@/shared'
 import { ArrowBackUp, Check, FileImage, Pencil, Send, Trash2 } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_ICON, BTN_PRIMARY, HINT_TEXT, INPUT_CLASS, Spinner, Toggle } from '@/shared/panel'
+import { BTN_GHOST, BTN_ICON, BTN_PRIMARY, HINT_TEXT, INPUT_CLASS, Segmented, Spinner, Toggle } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
+import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 // 列表卡 hover 操作钮：浮在立绘上，深色半透明底保证任何画面下可读。
 const CARD_ACTION_CLASS =
@@ -39,6 +40,8 @@ export function WardrobePage(): React.JSX.Element {
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
   const [designing, setDesigning] = useState(false)
   const [text, setText] = useState('')
+  // 有草稿后的反馈意图：edit=微调（编辑上一版）、regenerate=重新生成（种子锚定全量重绘）。
+  const [reviseMode, setReviseMode] = useState<ImageReviseMode>('edit')
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
 
@@ -101,14 +104,15 @@ export function WardrobePage(): React.JSX.Element {
   // 后端同一时间只允许一套外观切分（409 invalid_state）——切分中禁用新设计入口，
   // 等待/失败/完成经 companion.outfit.updated 事件刷新列表后自动解锁。
   const splitting = outfits.some(o => o.status === 'splitting')
+  const canRegenerateWithoutFeedback = Boolean(session.draft && reviseMode === 'regenerate')
 
   const sendText = (): void => {
     // 生成进行中会话内部会拒绝——此时不清空输入，避免丢字。
-    if (session.busy || splitting || (!text.trim() && !session.refImage)) {
+    if (session.busy || splitting || (!text.trim() && !session.refImage && !canRegenerateWithoutFeedback)) {
       return
     }
 
-    session.send(text)
+    session.send(text, session.draft ? reviseMode : 'edit')
     setText('')
   }
 
@@ -412,6 +416,20 @@ export function WardrobePage(): React.JSX.Element {
                 </div>
               )}
 
+              {session.draft && (
+                <div className="flex items-center gap-2 border-t border-line-hairline px-4 py-2">
+                  <Segmented<ImageReviseMode>
+                    onChange={setReviseMode}
+                    options={[
+                      { value: 'edit', label: t.reviseEdit },
+                      { value: 'regenerate', label: t.reviseRegenerate }
+                    ]}
+                    value={reviseMode}
+                  />
+                  <span className={cn(HINT_TEXT, 'truncate')}>{t.reviseHint[reviseMode]}</span>
+                </div>
+              )}
+
               <div className="flex items-end gap-2 border-t border-line-hairline p-3">
                 <textarea
                   className={cn(INPUT_CLASS, 'min-h-[38px] flex-1 resize-none')}
@@ -445,7 +463,9 @@ export function WardrobePage(): React.JSX.Element {
                 <button
                   aria-label={t.send}
                   className={cn(BTN_PRIMARY, 'h-9 w-9 shrink-0 self-end px-0')}
-                  disabled={session.busy || splitting || (!text.trim() && !session.refImage)}
+                  disabled={
+                    session.busy || splitting || (!text.trim() && !session.refImage && !canRegenerateWithoutFeedback)
+                  }
                   onClick={sendText}
                   type="button"
                 >

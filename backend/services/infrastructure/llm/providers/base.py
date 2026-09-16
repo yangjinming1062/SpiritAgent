@@ -129,6 +129,9 @@ class ImageGenProvider(BaseProvider):
     supports_reference_image: ClassVar[bool] = False
     # True 表示同时消费 secondary_reference_image（双参考图生图）；False 时调用链会过滤掉，退而求其次选单参考图供应商。
     supports_multiple_reference_images: ClassVar[bool] = False
+    # True 表示以 reference_image 为编辑底图的真图像编辑（保留未提及区域、按增量重绘）；
+    # 角色条件化等弱参考（如 minimax subject_reference）不算编辑，置 False。
+    supports_image_edit: ClassVar[bool] = False
 
     @abstractmethod
     async def generate(self, req: ImageGenRequest) -> ImageGenResult: ...
