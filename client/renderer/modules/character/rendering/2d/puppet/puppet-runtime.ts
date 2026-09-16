@@ -2137,6 +2137,85 @@ export class PuppetRuntime {
   }
 }
 
+/** see-through 只拆出一个原始嘴层（角色立绘的常态闭嘴）；装配边界把它归为闭合层，
+ * 开口帧由闭合纹理纵向拉伸派生。显式提供 mouth_open/mouth_close 分层的素材不走此路径。 */
+function rehomeSourceMouth(psd: { children?: { name?: string }[] }): boolean {
+  let renamed = false
+
+  for (const child of psd.children ?? []) {
+    const name = (child.name ?? '').normalize('NFKC').trim().toLowerCase()
+
+    if (name === 'mouth' || /^mouth[ _-]?\d+$/.test(name)) {
+      child.name = 'mouth_c'
+      renamed = true
+    }
+  }
+
+  return renamed
+}
+
+/** 从闭合嘴纹理派生开口帧：唇线以下区域纵向拉伸，顶端（上唇）对齐保持与闭合帧同位注册。 */
+function deriveMouthOpenFromClosed(close: RigPart): RigPart | null {
+  const { width: w, height: h, data } = close.img
+
+  if (w < 2 || h < 2) {
+    return null
+  }
+
+  let y0 = -1
+  let y1 = -1
+
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      if (data[(y * w + x) * 4 + 3]! > 24) {
+        if (y0 < 0) {
+          y0 = y
+        }
+
+        y1 = y
+
+        break
+      }
+    }
+  }
+
+  if (y0 < 0 || y1 <= y0) {
+    return null
+  }
+
+  const lipY = y0 + Math.round((y1 - y0) * 0.45)
+  const stretch = 1.9
+  const th = Math.min(256, Math.round(lipY + (h - lipY) * stretch))
+  const out = new Uint8ClampedArray(w * th * 4)
+
+  for (let y = 0; y < th; y++) {
+    const sy = y < lipY ? y : lipY + (y - lipY) / stretch
+    const sy0 = Math.max(0, Math.min(h - 1, Math.floor(sy)))
+    const sy1 = Math.max(0, Math.min(h - 1, sy0 + 1))
+    const fy = Math.max(0, Math.min(1, sy - sy0))
+
+    for (let x = 0; x < w; x++) {
+      const o = (y * w + x) * 4
+      const s0 = (sy0 * w + x) * 4
+      const s1 = (sy1 * w + x) * 4
+
+      for (let c = 0; c < 4; c++) {
+        out[o + c] = close.img.data[s0 + c]! * (1 - fy) + close.img.data[s1 + c]! * fy
+      }
+    }
+  }
+
+  // 内容顶端对齐（rows 0..lipY 不变），包围盒只向下扩展 stretch 增量，上唇与闭合帧同位注册。
+  return {
+    ...close,
+    name: 'mouth_open',
+    fade: 'mouthOpen',
+    synthetic: true,
+    h: th,
+    img: { width: w, height: th, data: out }
+  }
+}
+
 /** PSD 字节 → rig 并应用到 runtime；vendor 前置检查与差分合成选项在此收敛。 */
 export async function loadPsdIntoRuntime(runtime: PuppetRuntime, psdBuffer: ArrayBuffer): Promise<Rig> {
   await ensureVendorLibs()
@@ -2149,10 +2228,11 @@ export async function loadPsdIntoRuntime(runtime: PuppetRuntime, psdBuffer: Arra
 
   const psd = agPsd.readPsd(new Uint8Array(psdBuffer), { useImageData: true, skipThumbnail: true })
   Rigger.cleanPsdLayers(psd)
+  const hasSourceMouth = rehomeSourceMouth(psd as { children?: { name?: string }[] })
   const GP = window.GenericParts
   const generic: Record<string, RigImage> = {}
 
-  if (GP) {
+  if (GP && !hasSourceMouth) {
     for (const key of ['eyeL', 'eyeR', 'mouth'] as const) {
       const img = GP.get(key)
 
@@ -2165,6 +2245,10 @@ export async function loadPsdIntoRuntime(runtime: PuppetRuntime, psdBuffer: Arra
   const opts = Object.keys(generic).length ? { generic } : {}
   const rig = Rigger.buildRig(psd, opts)
 
+  if (hasSourceMouth) {
+    appendDerivedMouthOpen(rig)
+  }
+
   if (rig.warnings.length) {
     log.warn('puppet-runtime', 'rig warnings', rig.warnings)
   }
@@ -2172,4 +2256,29 @@ export async function loadPsdIntoRuntime(runtime: PuppetRuntime, psdBuffer: Arra
   runtime.applyRig(rig)
 
   return rig
+}
+
+/** 在闭合层旁插入派生的开口层并恢复 z 序；找不到闭合层时静默跳过（保底仍可显示）。 */
+function appendDerivedMouthOpen(rig: Rig): void {
+  const index = rig.layers.findIndex(l => {
+    const bn = window.Rigger?.baseName(l.name) ?? l.name
+
+    return bn === 'mouth_close'
+  })
+
+  if (index < 0) {
+    return
+  }
+
+  const open = deriveMouthOpenFromClosed(rig.layers[index]!)
+
+  if (!open) {
+    return
+  }
+
+  rig.layers.splice(index + 1, 0, open)
+
+  for (let i = 0; i < rig.layers.length; i++) {
+    rig.layers[i]!.z = i
+  }
 }
