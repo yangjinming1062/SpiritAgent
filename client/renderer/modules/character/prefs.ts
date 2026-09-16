@@ -1,12 +1,22 @@
-import { atom, type WritableAtom } from 'nanostores'
+import { atom, onMount, type WritableAtom } from 'nanostores'
 
 import { hydrateManualReduceTransparency } from '@/shared/lib/apply-no-blur'
-import { persistBoolean, persistString, storedBoolean, storedString } from '@/shared/lib/storage'
+import {
+  persistBoolean,
+  persistString,
+  registerCompanionStorageKey,
+  registerStorageClearHandler,
+  storedBoolean,
+  storedString
+} from '@/shared/lib/storage'
 
 import { setDisturbanceTier } from './companion-store'
 
 // 响应模式控制伙伴在 Chat 模式下如何回复（DESIGN §6.1 响应模式）。
 export type ResponseMode = 'text' | 'voice'
+
+const COMPANION_VOICE_ID_STORAGE_KEY = registerCompanionStorageKey('da.companion.voiceId')
+const RESPONSE_MODE_STORAGE_KEY = registerCompanionStorageKey('da.companion.responseMode')
 
 // localStorage 仍是各窗口的即时缓存（同步读、离线可用）；每次写入额外经
 // prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL §2.4）。
@@ -15,20 +25,57 @@ function reportCloud(key: string, value: unknown): void {
   window.spiritagent?.prefs?.set({ key, value })
 }
 
-export const $companionVoiceId = atom<string>(storedString('da.companion.voiceId') ?? '')
-export const $responseMode = atom<ResponseMode>((storedString('da.companion.responseMode') as ResponseMode) ?? 'text')
+export const $companionVoiceId = atom<string>(storedString(COMPANION_VOICE_ID_STORAGE_KEY) ?? '')
+export const $responseMode = atom<ResponseMode>(storedString(RESPONSE_MODE_STORAGE_KEY) === 'voice' ? 'voice' : 'text')
+
+// 音色与响应模式都在生活空间设置，精灵窗内的轻语使用同一组偏好。
+// 各窗口内存独立，借 storage 事件把其他窗口的写入热同步进 atom。
+onMount($companionVoiceId, () => {
+  const refresh = (event: StorageEvent): void => {
+    if (event.key === COMPANION_VOICE_ID_STORAGE_KEY) {
+      $companionVoiceId.set(event.newValue ?? '')
+    }
+  }
+
+  window.addEventListener('storage', refresh)
+
+  return () => window.removeEventListener('storage', refresh)
+})
+
+onMount($responseMode, () => {
+  const refresh = (event: StorageEvent): void => {
+    if (event.key !== RESPONSE_MODE_STORAGE_KEY) {
+      return
+    }
+
+    if (event.newValue === 'text' || event.newValue === 'voice') {
+      $responseMode.set(event.newValue)
+    } else if (event.newValue === null) {
+      $responseMode.set('text')
+    }
+  }
+
+  window.addEventListener('storage', refresh)
+
+  return () => window.removeEventListener('storage', refresh)
+})
 
 export function setCompanionVoiceId(voice: string): void {
   $companionVoiceId.set(voice)
-  persistString('da.companion.voiceId', voice || null)
+  persistString(COMPANION_VOICE_ID_STORAGE_KEY, voice || null)
   reportCloud('companion.voice_id', voice)
 }
 
 export function setResponseMode(mode: ResponseMode): void {
   $responseMode.set(mode)
-  persistString('da.companion.responseMode', mode)
+  persistString(RESPONSE_MODE_STORAGE_KEY, mode)
   reportCloud('companion.response_mode', mode)
 }
+
+registerStorageClearHandler(() => {
+  $companionVoiceId.set('')
+  $responseMode.set('text')
+})
 
 interface BooleanPref {
   $atom: WritableAtom<boolean>

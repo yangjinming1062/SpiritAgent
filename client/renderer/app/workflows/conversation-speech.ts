@@ -12,7 +12,7 @@ import {
   cancelVoiceBar,
   estimateVoiceDuration,
   getCachedVoiceDuration,
-  isLivingVoiceBarActive,
+  isCompanionVoiceBarActive,
   resolveVoiceBarDuration,
   synthesizeVoiceBar,
   toggleVoiceBar
@@ -60,7 +60,7 @@ export function bindConversationSpeech(): void {
   })
 
   setConversationVoiceSink({
-    isActive: isLivingVoiceBarActive,
+    isActive: isCompanionVoiceBarActive,
     cachedDuration: getCachedVoiceDuration,
     synthesize: (messageId, text) => {
       void synthesizeVoiceBar(messageId, text, { autoPlay: true })

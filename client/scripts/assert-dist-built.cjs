@@ -10,7 +10,7 @@ function checkDistBuilt(distDir) {
     return { ok: false, error: `no dist directory at ${distDir}` }
   }
 
-  const requiredHtmlFiles = ['index.html', 'sprite.html']
+  const requiredHtmlFiles = ['sprite.html', 'living.html', 'workbench.html']
   for (const file of requiredHtmlFiles) {
     const htmlPath = path.join(distDir, file)
     if (!fs.existsSync(htmlPath) || !fs.statSync(htmlPath).isFile()) {
@@ -21,8 +21,8 @@ function checkDistBuilt(distDir) {
     }
   }
 
-  // index.html alone isn't enough — vite emits hashed JS into dist/assets.
-  // An index.html with no script bundle still blank-pages.
+  // HTML 引用的 hashed JS 由 vite 发到 dist/assets；只有 HTML 没有脚本包
+  // 时窗口照样白屏。
   const assetsDir = path.join(distDir, 'assets')
   const hasAssets =
     fs.existsSync(assetsDir) &&
@@ -50,7 +50,7 @@ function main() {
     process.exit(1)
   }
 
-  console.log('✓ assert-dist-built: HTML entries (index, sprite) + assets present')
+  console.log('✓ assert-dist-built: HTML entries (sprite, living, workbench) + assets present')
 }
 
 if (require.main === module) {

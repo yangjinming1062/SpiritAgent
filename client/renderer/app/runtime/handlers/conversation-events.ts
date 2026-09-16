@@ -24,7 +24,7 @@ import {
   showMediaHint,
   submitPendingBatch
 } from '@/modules/conversation'
-import { cancelVoiceBar, isLivingVoiceBarActive } from '@/modules/speech'
+import { cancelVoiceBar, isCompanionVoiceBarActive } from '@/modules/speech'
 import { type GatewayEvent, type SlashCommandResultPayload } from '@/shared/lib/gateway-protocol'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { getStrings } from '@/shared/strings'
@@ -133,9 +133,9 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
         showMediaHint(payload.media.some(m => m.type === 'video') ? sys.videoReady : sys.imageReady)
       }
 
-      const livingVoiceActive = isLivingVoiceBarActive()
+      const companionVoiceActive = isCompanionVoiceBarActive()
 
-      if (!livingVoiceActive || !speechText(text)) {
+      if (!companionVoiceActive || !speechText(text)) {
         setSpriteState('idle', { force: true })
       }
 

@@ -14,6 +14,7 @@ import { HapticsProvider } from '@/shared/components/haptics-provider'
 import { applyNoBlurIfNeeded, initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
 import { installClipboardShim } from '@/shared/lib/clipboard'
 import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
+import { installUpdateBridge } from '@/shared/lib/update-bridge'
 import { $auth } from '@/shared/store/auth'
 import { setPrimaryGateway } from '@/shared/store/gateway'
 import { initLocaleSync } from '@/shared/store/locale'
@@ -56,7 +57,9 @@ function SurfaceGlassBudgetGuard(): null {
 }
 
 export function bootstrapSurface(label: string, RootComponent: React.ComponentType): void {
-  if (label.includes('living')) {
+  const isLiving = label.includes('living')
+
+  if (isLiving) {
     setSurfaceRole('living')
   } else if (label.includes('workbench')) {
     setSurfaceRole('workbench')
@@ -69,6 +72,16 @@ export function bootstrapSurface(label: string, RootComponent: React.ComponentTy
   initLocaleSync()
   initCompanionPrefsSync()
   hydrateSurfaces()
+
+  if (isLiving) {
+    // 更新状态唯一消费方（设置页 about）在生活空间。
+    const offUpdateBridge = installUpdateBridge()
+
+    if (import.meta.hot) {
+      import.meta.hot.dispose(offUpdateBridge)
+    }
+  }
+
   setPrimaryGateway(new IpcGatewayProxy())
 
   const container = document.getElementById('root')

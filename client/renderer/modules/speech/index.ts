@@ -20,7 +20,7 @@ export {
   cancelVoiceBar,
   estimateVoiceDuration,
   getCachedVoiceDuration,
-  isLivingVoiceBarActive,
+  isCompanionVoiceBarActive,
   resolveVoiceBarDuration,
   setCachedVoiceDuration,
   synthesizeVoiceBar,

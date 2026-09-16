@@ -18,7 +18,6 @@ export default defineConfig({
     chunkSizeWarningLimit: 800,
     rollupOptions: {
       input: {
-        index: path.resolve(__dirname, 'index.html'),
         sprite: path.resolve(__dirname, 'sprite.html'),
         living: path.resolve(__dirname, 'living.html'),
         workbench: path.resolve(__dirname, 'workbench.html')

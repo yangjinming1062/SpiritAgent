@@ -3,6 +3,7 @@ import type { SpeechStyle } from '@ipc/contracts'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { registerCompanionStorageKey, registerStorageClearHandler } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
+import { $whisperOpen } from '@/shared/store/chat-visibility'
 import { $surfaceOpen, isLivingProxyWindow } from '@/shared/store/surfaces'
 
 import { speechStyleKey } from '../../../shared/speech-style'
@@ -69,14 +70,22 @@ function voiceProjection(): VoiceBarProjection {
   return projection
 }
 
-export function isLivingVoiceBarActive(): boolean {
+// 「始终语音」生效表面：打开的生活空间窗口，或精灵窗上可见的轻语卡片（可见
+// 条件与 WhisperOverlay 一致：$whisperOpen 且 surface 未开——生活空间/工作台打开
+// 时浮层收起）。同一回合事件会到达多个窗口，各窗口按同一闸门裁决后至多一个
+// 窗口合成与出声，隐藏窗口不抢合成；模式切回文字时整条链路静音。
+export function isCompanionVoiceBarActive(): boolean {
   const ports = presentationPorts()
 
-  return isLivingProxyWindow() && ports.$responseMode.get() === 'voice' && !ports.$screenLocked.get()
-}
+  if (ports.$screenLocked.get() || ports.$responseMode.get() !== 'voice') {
+    return false
+  }
 
-function canAutoPlayVoiceBar(): boolean {
-  return isLivingVoiceBarActive() && $surfaceOpen.get() === 'living'
+  if (isLivingProxyWindow()) {
+    return $surfaceOpen.get() === 'living'
+  }
+
+  return $whisperOpen.get() && $surfaceOpen.get() === null
 }
 
 function hasOutstandingVoice(exceptId?: string): boolean {
@@ -353,7 +362,7 @@ export async function synthesizeVoiceBar(
     return
   }
 
-  if (options?.autoPlay && canAutoPlayVoiceBar()) {
+  if (options?.autoPlay && isCompanionVoiceBarActive()) {
     if (voiceProjection().getPlaying() === null) {
       void playVoiceBar(messageId)
     } else if (!autoPlayQueue.includes(messageId)) {
@@ -470,6 +479,12 @@ export function cancelVoiceBar(): void {
 export function bindVoiceBarListeners(): void {
   const ports = presentationPorts()
 
+  const cancelIfInactive = (): void => {
+    if (!isCompanionVoiceBarActive()) {
+      cancelVoiceBar()
+    }
+  }
+
   ports.$screenLocked.listen(locked => {
     if (locked) {
       cancelVoiceBar()
@@ -486,6 +501,9 @@ export function bindVoiceBarListeners(): void {
       cancelVoiceBar()
     }
   })
+
+  $surfaceOpen.listen(cancelIfInactive)
+  $whisperOpen.listen(cancelIfInactive)
 }
 
 registerStorageClearHandler(() => {

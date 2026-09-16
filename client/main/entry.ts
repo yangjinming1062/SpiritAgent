@@ -509,11 +509,10 @@ registerRunnerConfigIpc({
 })
 registerSkillsIpc({ spiritagentHome: SPIRITAGENT_HOME, getRunnerBridge: () => bridgeDeps.runnerBridge, ipcMain })
 registerUpdateIpc({
+  broadcast: broadcastToAllWindows,
   electron: { app },
-  getMainWindow: () => mainWindow,
   ipcMain,
-  isFeedConfigured: () => autoUpdater.isFeedConfigured(),
-  sendToMain
+  isFeedConfigured: () => autoUpdater.isFeedConfigured()
 })
 
 registerSpriteIpc({

@@ -49,32 +49,19 @@ export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLo
       return 'sprite.html'
     }
 
-    if (role === 'living') {
-      return 'living.html'
-    }
-
     if (role === 'workbench') {
       return 'workbench.html'
     }
 
-    return 'index.html'
+    return 'living.html'
   }
 
-  function resolveRendererHtml(htmlFileName = 'index.html'): string {
+  function resolveRendererHtml(htmlFileName = 'living.html'): string {
     const candidates = [path.join(appRoot, 'dist', htmlFileName), path.join(resolveWebDist(), htmlFileName)]
     const found = candidates.find(fileExists)
 
     if (found) {
       return found
-    }
-
-    if (htmlFileName !== 'index.html') {
-      const fallbackCandidates = [path.join(appRoot, 'dist', 'index.html'), path.join(resolveWebDist(), 'index.html')]
-      const fallbackFound = fallbackCandidates.find(fileExists)
-
-      if (fallbackFound) {
-        return fallbackFound
-      }
     }
 
     rememberLog(

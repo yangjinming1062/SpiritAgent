@@ -292,7 +292,7 @@ export const dict = {
       responseMode: '回应方式',
       responseModeText: '默认文字',
       responseModeVoice: '始终语音',
-      responseModeDesc: '只控制生活空间陪伴对话，工作台始终文字。',
+      responseModeDesc: '控制生活空间和轻语的陪伴对话，工作台始终文字。',
       recording: '录音时长上限',
       recordingDesc: '单条语音录音的最大时长，到达上限后自动停止录制并发送。',
       recordingSecondsSuffix: '秒',

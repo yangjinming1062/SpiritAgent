@@ -1,5 +1,5 @@
 import { type DesktopUpdateEvent, type DesktopUpdateInfo, IPC, type IpcEventContract } from '@ipc/contracts'
-import type { App, BrowserWindow, IpcMain } from 'electron'
+import type { App, IpcMain } from 'electron'
 import log from 'electron-log/main'
 // 顶层静态 import：client/package.json 是 ESM (`"type": "module"`)，asar 模式下 dynamic require
 // （`require('electron-log/main')` / `require('electron-updater')`）会被 Node 拒绝并抛
@@ -14,14 +14,9 @@ import { errorMessage } from '../shared/utils'
 
 interface UpdateIpcDeps {
   electron: { app: App }
-  getMainWindow: () => BrowserWindow | null | undefined
   ipcMain: IpcMain
   isFeedConfigured?: () => boolean
-  sendToMain: <C extends keyof IpcEventContract>(
-    win: BrowserWindow | null | undefined,
-    channel: C,
-    ...payload: IpcEventContract[C]
-  ) => void
+  broadcast: <C extends keyof IpcEventContract>(channel: C, ...payload: IpcEventContract[C]) => void
 }
 
 /** electron-updater 的 info 携带渲染层不消费的字段；只挑契约承诺的两个字段下发，
@@ -35,25 +30,25 @@ function toDesktopUpdateInfo(info: unknown): DesktopUpdateInfo {
   }
 }
 
-export function registerUpdateIpc({
-  electron,
-  getMainWindow,
-  ipcMain,
-  isFeedConfigured,
-  sendToMain
-}: UpdateIpcDeps): void {
+export function registerUpdateIpc({ electron, ipcMain, isFeedConfigured, broadcast }: UpdateIpcDeps): void {
   const { app } = electron
+  let latestEvent: DesktopUpdateEvent | null = null
 
-  function broadcast(event: DesktopUpdateEvent): void {
-    const win = getMainWindow()
-    sendToMain(win, IPC.event.updateEvent, event)
+  // 更新状态的唯一消费方是生活空间设置页，广播到所有窗口而不是假定主窗口：
+  // 消费方窗口由渲染层装配决定（update-bridge 挂在哪个入口哪个窗口收得到）。
+  function broadcastUpdate(event: DesktopUpdateEvent): void {
+    latestEvent = event
+    broadcast(IPC.event.updateEvent, event)
   }
+
+  // 自动检查可能早于生活空间开窗；新窗口订阅后读最新快照，补齐开窗前的状态。
+  ipcMain.handle(IPC.invoke.updateGetState, () => latestEvent)
 
   // 始终注册 updateCheck：开发模式无更新源，回 'none' 让渲染层落 "up to date" 文案，
   // 避免 renderer 触发未注册 IPC handler 抛出 unhandled rejection。
   ipcMain.handle(IPC.invoke.updateCheck, async () => {
     if (!app.isPackaged || (isFeedConfigured && !isFeedConfigured())) {
-      broadcast({ type: 'none' })
+      broadcastUpdate({ type: 'none' })
 
       return
     }
@@ -62,7 +57,7 @@ export function registerUpdateIpc({
       await autoUpdater.checkForUpdates()
     } catch (e: unknown) {
       const msg = errorMessage(e)
-      broadcast({ message: msg, type: 'error' })
+      broadcastUpdate({ message: msg, type: 'error' })
     }
   })
 
@@ -73,26 +68,26 @@ export function registerUpdateIpc({
   const { autoUpdater } = electronUpdaterPkg
   autoUpdater.logger = log
 
-  autoUpdater.on('checking-for-update', () => broadcast({ type: 'checking' }))
-  autoUpdater.on('update-available', info => broadcast({ info: toDesktopUpdateInfo(info), type: 'available' }))
-  autoUpdater.on('update-not-available', info => broadcast({ info: toDesktopUpdateInfo(info), type: 'none' }))
+  autoUpdater.on('checking-for-update', () => broadcastUpdate({ type: 'checking' }))
+  autoUpdater.on('update-available', info => broadcastUpdate({ info: toDesktopUpdateInfo(info), type: 'available' }))
+  autoUpdater.on('update-not-available', info => broadcastUpdate({ info: toDesktopUpdateInfo(info), type: 'none' }))
   autoUpdater.on(
     'download-progress',
     // 同 toDesktopUpdateInfo：契约只承诺三个字段，剔除 bytesPerSecond / delta 等原始结构。
     (raw: ProgressInfo) =>
-      broadcast({
+      broadcastUpdate({
         progress: { percent: raw.percent, total: raw.total, transferred: raw.transferred },
         type: 'progress'
       })
   )
-  autoUpdater.on('update-downloaded', info => broadcast({ info: toDesktopUpdateInfo(info), type: 'downloaded' }))
+  autoUpdater.on('update-downloaded', info => broadcastUpdate({ info: toDesktopUpdateInfo(info), type: 'downloaded' }))
   autoUpdater.on('error', (err: unknown) => {
     const message = errorMessage(err)
 
     if (message.includes('404') && message.includes('latest.yml')) {
-      broadcast({ info: undefined, type: 'none' })
+      broadcastUpdate({ info: undefined, type: 'none' })
     } else {
-      broadcast({ message, type: 'error' })
+      broadcastUpdate({ message, type: 'error' })
     }
   })
 }

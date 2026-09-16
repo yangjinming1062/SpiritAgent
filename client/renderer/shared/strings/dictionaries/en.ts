@@ -308,7 +308,7 @@ export const dict: Dictionary = {
       responseMode: 'Response mode',
       responseModeText: 'Text by default',
       responseModeVoice: 'Always voice',
-      responseModeDesc: 'Only affects Living Space chats; the Workbench always uses text.',
+      responseModeDesc: 'Controls companion chats in Living Space and Whisper; the Workbench always uses text.',
       recording: 'Recording length cap',
       recordingDesc: 'Maximum length of a single voice recording — auto-stops and sends at the limit.',
       recordingSecondsSuffix: 's',

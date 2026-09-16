@@ -27,12 +27,36 @@ const UPDATE_HANDLERS: UpdateHandlerMap = {
 }
 
 export function installUpdateBridge(): () => void {
-  const off = window.spiritagent?.update?.onEvent?.(payload => {
+  const update = window.spiritagent?.update
+
+  if (!update) {
+    return () => {}
+  }
+
+  let active = true
+
+  const apply = (payload: DesktopUpdateEvent): void => {
+    if (!active) {
+      return
+    }
+
     const handler = UPDATE_HANDLERS[payload.type] as ((p: DesktopUpdateEvent) => void) | undefined
     handler?.(payload)
-  })
+  }
+
+  const off = update.onEvent(apply)
+
+  void update
+    .getState()
+    .then(payload => {
+      if (payload) {
+        apply(payload)
+      }
+    })
+    .catch(() => {})
 
   return () => {
-    off?.()
+    active = false
+    off()
   }
 }

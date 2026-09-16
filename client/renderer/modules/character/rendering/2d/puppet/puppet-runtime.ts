@@ -1,4 +1,4 @@
-/** Puppet WebGL 运行时 — 自 Anime2.5DRig（MIT）index.html 核心移植：
+/** Puppet WebGL 运行时 — 自 Anime2.5DRig（MIT）核心移植：
  * 每层 ArtMesh（alpha 轮廓三角剖分）+ deform() 顶点形变（头转/呼吸/眨眼差分/发束弹簧/胸物理）
  * + 模板眼裁切 + 头部三角控制笼重心绑定。形变数学与上游保持一致；GL 装配、rAF 生命周期、
  * 动画自动化层（Phase 1）、网格/绑定（Phase 2）、伪 3D 转头（Phase 3：圆投影深度曲线/

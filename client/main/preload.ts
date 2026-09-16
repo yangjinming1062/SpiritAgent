@@ -170,6 +170,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
   },
   update: {
     check: () => ipcRenderer.invoke(IPC.invoke.updateCheck),
+    getState: () => ipcRenderer.invoke(IPC.invoke.updateGetState),
     onEvent: (cb: (payload: DesktopUpdateEvent) => void) => subscribe(IPC.event.updateEvent, cb)
   },
   writeClipboard: (text: string) => ipcRenderer.invoke(IPC.invoke.writeClipboard, text)

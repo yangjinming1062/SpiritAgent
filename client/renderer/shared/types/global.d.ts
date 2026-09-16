@@ -141,6 +141,7 @@ declare global {
       getVersion: AsyncIpc<IpcInvokeContract['spiritagent:version']>
       update: {
         check: AsyncIpc<IpcInvokeContract['spiritagent:update:check']>
+        getState: AsyncIpc<IpcInvokeContract['spiritagent:update:get-state']>
         onEvent: EventSubscription<'spiritagent:update-event'>
       }
     }

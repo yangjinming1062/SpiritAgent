@@ -410,6 +410,7 @@ export interface IpcInvokeContract {
 
   // 更新
   'spiritagent:update:check': () => Promise<void> | void
+  'spiritagent:update:get-state': () => DesktopUpdateEvent | null | Promise<DesktopUpdateEvent | null>
 
   // 精灵窗口
   'spiritagent:sprite:hide': () => Promise<void> | void
@@ -522,7 +523,8 @@ export const IPC = {
     spriteGetPosition: 'spiritagent:sprite:get-position',
     spriteSetPosition: 'spiritagent:sprite:set-position',
     spriteMoveToCursorDisplay: 'spiritagent:sprite:move-to-cursor-display',
-    updateCheck: 'spiritagent:update:check'
+    updateCheck: 'spiritagent:update:check',
+    updateGetState: 'spiritagent:update:get-state'
   } as const satisfies Record<string, IpcChannel>,
   event: {
     authChanged: 'spiritagent:auth:changed',
