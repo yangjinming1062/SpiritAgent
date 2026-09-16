@@ -2,7 +2,7 @@
 
 ## 1. 职责与边界
 
-在用户本机执行终端、文件、浏览器、代码、系统感知、音频与 Skills 工具，并上报真实能力；不装配人设、管理对话或持有后端凭据。需要模型能力时经客户端反向代理。全局边界见 [ARCHITECTURE.md §1](../docs/ARCHITECTURE.md)。
+在用户本机执行终端、文件、浏览器、代码执行、进程、多模态、系统感知与 Skills 工具，并上报真实能力；不装配人设、管理对话或持有后端凭据。需要模型能力时经客户端反向代理。全局边界见 [ARCHITECTURE.md §1](../docs/ARCHITECTURE.md)。
 
 ## 2. 设计意图
 
@@ -16,7 +16,7 @@
 
 依赖方向：`utils/` ← `envs/` ← `tools/` ← `server.py`；底层不反向依赖上层。
 
-`envs/` 管理本地 / SSH 环境与共享生命周期，工具统一从它获取环境能力，清理与活跃进程检查经回调解耦。`tools/` 按终端、文件、浏览器、代码、进程、Skills、多模态与系统能力分域。
+`envs/` 管理本地 / SSH 环境与共享生命周期，工具统一从它获取环境能力，清理与活跃进程检查经回调解耦。`tools/` 按终端、文件、浏览器、代码执行、进程、Skills、多模态与系统感知分域；工具集 id 与工具名 / 前缀的映射见 `tools/toolsets/catalog.py`。
 
 wheel 发布与安装布局见 [scripts/README.md](../scripts/README.md) 和 [installer/README.md](../installer/README.md)。
 
@@ -25,7 +25,7 @@ wheel 发布与安装布局见 [scripts/README.md](../scripts/README.md) 和 [in
 - 本地 IPC：主动连接客户端端点，采用 WebSocket sans-I/O 帧解析；重连重读端点以跟随客户端重启。传输选型及鉴权见 [ARCHITECTURE §4.1](../docs/ARCHITECTURE.md) 与 [PROTOCOL §2.1](../docs/PROTOCOL.md)。
 - HTTP 统一使用 `httpx[socks]`，减少同步 / 异步重复依赖与 wheel 审计面。
 - SSRF 双校验：请求前检查 URL，建连时重新解析并检查全部地址，直接连已校验 IP，同时保留原 Host、TLS SNI 与证书校验；每跳重定向重新检查，DNS 放工作线程，防止预检到建连的地址竞态。
-- 反向 RPC：由客户端持凭据与限流，工作线程等待主循环结果，超时取消；接受 Responses 输入或旧消息数组，由客户端统一契约形状，供应商兼容过滤归后端，见 [PROTOCOL §3](../docs/PROTOCOL.md)。
+- 反向 RPC：凭据与权威预算归客户端，预算按桥实例累计、重连不清零；Runner 侧另设单连接守卫，请求次数与文本 / 视觉字节分别限额，重连重置，防止工具失控刷爆 LLM。工作线程等待主循环结果，超时取消；接受 Responses 输入或旧消息数组，由客户端统一契约形状，供应商兼容过滤归后端，见 [PROTOCOL §3](../docs/PROTOCOL.md)。
 - 视觉图片直接注入主对话多模态结果，超尺寸缩图；不先借另一模型转文字，避免多一跳且损失原图。反向模型调用保留给纯文本处理，如浏览器快照压缩。
 - Windows 进程树：启动时显式加入关闭即杀全树的 Job Object，子孙进程和 PTY 继承，崩溃后内核清理；模块导入不产生此副作用。
 - Windows 路径：经句柄解析真实路径，覆盖短名、符号链接、联接点与未创建的深层子路径；比较忽略大小写、剥离设备前缀并阻断备用数据流。

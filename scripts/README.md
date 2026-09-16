@@ -11,10 +11,10 @@ uv run python scripts/build.py --version 0.16.0
 ```
 
 - 写版本号到 `client/package.json`、`installer/package.json`、`installer/src-tauri/tauri.conf.json`、`installer/src-tauri/Cargo.toml`、`runner/pyproject.toml`
-- Staging 到 `installer/payload/`（symlink/junction skills 与 install 脚本，copy config + runner wheel + client artifact）。wheel **必须**与 `runner/pyproject.toml` 版本精确匹配；`dist/` 里的历史 wheel 一律不参与打包，缺对应版本 wheel 直接失败
+- Staging 到 `installer/payload/`：copy 与 `runner/pyproject.toml` 版本精确匹配的 wheel（`dist/` 里的历史 wheel 一律不参与打包，缺对应版本直接失败）与 `server.py`，symlink/junction skills 与 install 脚本，desktop 产物拷入 `payload/client/`
 - staging 后对「将进入安装包的 wheel + server.py」再跑一次 `scripts/check_runner_facade.py`；wheel 与 `server.py` 导入面不一致则中止构建，避免发布「新 server + 旧 utils」一类错位包
-- macOS code-sign + notarize（`--sign-identity` / `--notary-profile`）；Windows signtool（`-CertThumbprint`）。证书参数缺省时产出未签名安装器
-- Tauri 2 默认对 `bundle.resources` 缺失文件**报错**；构建脚本在 tauri build 之前临时 patch `tauri.conf.json` 的 `bundle.resources` 列表，把占位文件替换为当前 host 的实际 client artifact，build 后 restore（git 状态保持干净）
+- macOS code-sign + notarize（`--sign-identity` / `--notary-profile`）；Windows signtool（`--cert-thumbprint`）。证书参数缺省时产出未签名安装器
+- Tauri 2 对 `bundle.resources` 缺失文件**报错**，而 client 产物文件名含版本号、无法静态写进配置；构建脚本在 tauri build 之前临时把当前 host 的实际 client artifact 追加进 `bundle.resources`，build 后 restore（git 状态保持干净）
 - **单机构建受 host/target 约束** —— macOS 产物只能出自 macOS host，Windows 产物只能出自 Windows host；脚本校验不匹配即失败。跨平台产物由 §2 的 CI 矩阵在两个 runner 上分别产出
 
 ```bash
@@ -44,22 +44,26 @@ python scripts/gen_release_notes.py v1.3.0 --from-tag v1.2.0 --output notes.md
 
 ## 4. Import 检查 — `check_imports.py`
 
-backend + runner 的 static import-shape 检查器（被 `.pre-commit-config.yaml` 注册为本地 hook 并以 `--strict-imports` 启动），防 c66ab1a 一类回归。覆盖 4 类违规：
+backend + runner 的 static import-shape 检查器，防「名字到运行时才炸」与 facade 被过度精简一类回归。被 `.pre-commit-config.yaml` 注册为本地 hook 并以 `--strict-imports` 启动（违规即失败）；直接运行且不带该参数时仅打印诊断、exit 0。覆盖 3 类违规：
 
-- 禁止 future annotations：Python 3.13 原生支持 PEP 585/604，禁止 `from __future__ import annotations`
+- 禁止 future annotations：Python 3.13 原生支持 PEP 585/604，禁止 `from __future__ import annotations`；`--fix` 可自动清理
 - `TYPE_CHECKING` 名字泄漏：仅在 `if TYPE_CHECKING:` 内 import、却被类体注解等运行时求值路径引用的名字
-- runner 工具子包之间的 sibling 跨子包 eager import（终端 ↔ 文件、代码执行 → 线程上下文这类循环）
-- Facade 一致性：`from <local_pkg> import X` 走的 `<local_pkg>` 必须在其 `__init__.py` 里 re-export `X`，防止 facade 被过度精简
+- Facade 一致性：经绝对或相对包级导入 `from <pkg> import X` 引入的名字，必须在目标包 `__init__.py` 的 re-export 集合（`__all__` 与模块级 `from .x import y` 的并集）内
+
+```bash
+python scripts/check_imports.py --strict-imports   # 全量扫描 backend + runner
+python scripts/check_imports.py --fix              # 自动清理 future annotations
+```
 
 ## 5. Backend 分层架构检查 — `check_services_architecture.py`
 
-backend `services/` 的分层守护（可纳入 pre-commit / 发布前检查）：
+backend `services/` 的分层守护（纯标准库实现）。backend/README §3.2 把环检测、层白名单与域隔离委托给它，修改 backend 依赖关系后运行：
 
 ```bash
-backend/.venv/Scripts/python.exe scripts/check_services_architecture.py
+python scripts/check_services_architecture.py
 ```
 
-覆盖 5 类违规：站内导入不可解析（含相对导入的语义化解析）；包级依赖环；层间白名单（contracts 纯净、application 不导入 adapters、infrastructure 不认识业务、bootstrap 不被反向导入、main 只导入 bootstrap）；domains 跨业务域隔离（含已登记的会话底座与时区只读例外）；application 内未声明的流程依赖边。例外清单以脚本内 `UPWARD_ALLOWED` / `APPLICATION_FLOW_EDGES` 为权威，调整时同步 backend/README.md §3。
+覆盖 5 类违规：站内导入不可解析（含相对导入的语义化解析）；包级依赖环；层间白名单（contracts 纯净、application 不导入 adapters、infrastructure 不认识业务、bootstrap 不被反向导入、main 只导入 bootstrap、common / components / modules 不得反向导入服务实现）；domains 跨业务域隔离（各域可单向导入会话底座 conversation，companion / journal 对 memory 的已登记例外）；application 内未声明的流程依赖边。例外清单以脚本内 `UPWARD_ALLOWED` / `APPLICATION_FLOW_EDGES` / `DOMAIN_FLOW_EDGES`（含 `DOMAIN_BASE`）为权威，调整时同步 backend/README.md §3。
 
 ## 6. Onboarding 引导词音频生成与校验 — `onboarding-audio/`
 

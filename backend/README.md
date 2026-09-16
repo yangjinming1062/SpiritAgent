@@ -29,7 +29,7 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 
 共享底层三件套的分工是刻意的，改代码前先分清归属：
 
-- **modules/**（auth、conversation、companion、memory、media、scheduler、settings、system、channels、update）持有领域模型与协议 Schema。它按数据库与契约"拥有"行结构和载荷定义，业务代码引用它而不重复定义；它不知道哪些业务在用它。加字段 / 加枚举从这里开始，迁移与之同提交。
+- **modules/**（auth、conversation、companion、memory、media、scheduler、settings、system、channels、update、ws）持有领域模型与协议 Schema。它按数据库与契约"拥有"行结构和载荷定义，业务代码引用它而不重复定义；它不知道哪些业务在用它。加字段 / 加枚举从这里开始，迁移与之同提交。
 - **components/**（config、database、logger、background、attachments、hashing、correlation、user_maintenance_runtime 等）是进程级运行时设施：`SETTINGS` 配置单例、异步引擎与会话、TaskBag/BackgroundTask 任务托管、日志与相关 ID。它无业务语义，是单副本 eager-import 设计的地基；新增横切设施放这里，而不是在各业务包里自造单例。
 - **common/** 只有 api.py 与 model.py：路由声明、ORM 基类、列表响应等极少量框架工具，保证所有路由的声明方式与分页响应形状一致。
 
@@ -46,7 +46,7 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 | `contracts/` | 跨层传递的最小词汇，包括委派动作、记忆作用域与来源 | 不导入任何服务实现 |
 | `domains/` | 单一业务能力长什么样：conversation（会话底座）、memory、journal、companion、media、automation、configuration、backup | 不依赖 application / adapters；跨域只经公共入口且仅限下述登记例外 |
 | `application/` | 跨域流程怎么走：chat（回合编排）、generation（形象/房间/2D/3D/媒体）、automation（Cron 两轨回合）、moments（片刻自主发布与评论回复）、nightly（夜间整理与规划）、configuration（配置提交与热更）、updates | 不导入 adapters；包间只允许显式声明的单向边 |
-| `infrastructure/` | 技术能力怎么实现：llm、image_to_3d、seethrough、assets、web、tool_runtime、desktop（连接/IPC/JSON-RPC）、event_store（outbox） | 不认识业务编排——不导入 domains / application / adapters，这是全系统最重要的方向不变量 |
+| `infrastructure/` | 技术能力怎么实现：llm（对话、嵌入与 TTS / STT）、image_to_3d、seethrough、assets、web、tool_runtime、desktop（连接/IPC/JSON-RPC）、event_store（outbox） | 不认识业务编排——不导入 domains / application / adapters，这是全系统最重要的方向不变量 |
 | `adapters/` | 外部协议如何进来：desktop（WS handlers）、channels、scheduler、tools、http、maintenance | 只做适配与入口编排，不沉淀业务规则 |
 
 依赖方向：`adapters → application → domains`，`domains`/`application` 可引用 `infrastructure`，全部层可引用 `contracts`。三条结构性规则由 [check_services_architecture.py](../scripts/check_services_architecture.py) 强制（环检测、层白名单、域隔离），修改依赖关系后运行；需要区分已有违规与本次回归时先建立基线：
@@ -95,7 +95,7 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 - 工具渐进披露：初始挂搜索元工具，陪伴回合另挂已启用的等待工具，其余按域解锁 schema；从未压缩历史继承已解锁工具，不改历史或逐轮重拼系统提示词，兼顾体积与前缀缓存。
 - 记忆规则按需披露：聊天提示词常驻召回条件、维护门槛与证据入口；完整 `MEMORY_POLICY` 随 `memory_inspect` 的工具说明解锁，并与独立记忆审核共用同一源。维护仍须先检查原始证据与版本，不能为了缩短上下文删减证据要求；仅闲聊且未解锁记忆工具时不携带维护细则。
 - 工具集开关：后端 / 记忆工具在注册表读取口过滤，畸形禁用值按空过滤处理；Runner 工具由客户端源头过滤。每回合重读设置，保存后无需重连；枚举见 [PROTOCOL §2.2](../docs/PROTOCOL.md)。
-- 工具执行安全网：文件写入黑名单前置 block、回合内重复精确失败与幂等无进展由 guardrail 合成结果并追写指导、批内并发按幂等性判定；子 Agent 委派经 `DelegateAction` 由对话执行层接管（见 §3.1），工具处理器不反向重入对话入口。
+- 工具执行安全网：文件写入黑名单前置 block、回合内重复精确失败与幂等无进展由 guardrail 合成结果并追写指导、批内并发按幂等性判定；子 Agent 委派经 `DelegateAction` 由对话执行层接管（见 §3.2），工具处理器不反向重入对话入口。
 - 生成媒体：仅提取成功工具结果并随终端助手消息落库，多气泡挂末格，后台视频另建送达行；不能依赖模型在正文贴 URL。对话生成图片与视频统一走「供应商下载→魔数校验→转存用户永久资产（`companion-assets/{user_id}/`）→消息引用→完成通知」，转存或校验失败按本轮失败处理，不把供应商短效 URL 落进消息。库内保留裸路径，实时下发与历史水合改写为鉴权资产 URL，避免 temp-media TTL 过期后历史 404。
 - 推理过程：独立于正文持久化并只在工作台展示；不回灌下一轮 Responses 输入，避免供应商推理协议污染后续上下文。
 - 时间感知不落库：陪伴对话的时间元数据不写进消息，跨轮按发送时刻重建以保留 prefix cache；陪伴预设的系统提示词不含当前日期，并要求模型只输出角色台词。
@@ -151,7 +151,7 @@ alembic/ 迁移独立于应用代码，只被启动流程调用
 - 特殊会话场景默认值由会话预设目录单源维护，推理与窗口水合共用同一合并逻辑；普通会话即使选择系统模板也保持普通配置作用域，契约见 [PROTOCOL §2.4](../docs/PROTOCOL.md)。
 - 备份不承载部署恢复：登录态、激活信息、IM 绑定 / 授权、事件队列及后台执行账本不迁移，不保证在途任务跨部署接续；系统级供应商配置与本机配置仍需在目标部署单独配置。源端已清理的历史媒体无法从数据库还原，备份只携带现存文件。恢复时仅 `kind='special'` 的系统会话按预设 ID 去重，带同一预设的普通会话始终独立映射；当前模型不兼容的数据类经预检隔离，其余数据继续恢复并返回失败摘要，包级安全校验仍整体失败。合并与覆盖恢复均先建立用户级维护边界：拒绝新 REST/WS 请求，等待已进入的请求，取消可中断的网关、IM、调度与整理任务，并等待已付费生成自然落地；成功或回滚后清除旧运行时缓存并从数据库重启渠道。上传 ZIP 上限 500 MB，解压上限 4 GB；完整契约见 [PROTOCOL](../docs/PROTOCOL.md#预设记忆与学习作用域)。
 - 冷启动与动态配置分离：文件只提供启动硬依赖，业务参数在管理端持久化并热更新，启动从库水合；调用点运行时直读 `SETTINGS`，业务参数不新增散落常量，协议、安全与供应商硬限收在 [constants.py](components/constants.py)（边界见 §3.4）。文件优先级以 [config.toml.example](config.toml.example) 为准，动态项随后由数据库覆盖。
-- 供应商显式注册：由 `bootstrap/registrations.py` 集中登记（连同 LLM 工具、渠道适配器与内部事件处理器，见 §3.2）；按供应商 / 客户端 / 带回退执行三个入口选用，不从 URL host 反推供应商。
+- 供应商显式注册：由 `bootstrap/registrations.py` 集中登记（连同 LLM 工具、渠道适配器与内部事件处理器，见 §3.5）；按供应商 / 客户端 / 带回退执行三个入口选用，不从 URL host 反推供应商。
 - 供应商信息与能力链分离：共享凭据不隐式启用核心能力，名称作为唯一关联标识；嵌入按供应商顺序筛选并使用对应模型。继承、覆盖与密钥规则见 [PROTOCOL §5.4](../docs/PROTOCOL.md)。
 - Alembic 启动升级：单实例部署在启动时升级，减少漏迁移步骤；未部署允许改 baseline，部署后只追加。迁移须可降级，回填幂等；删除或不可逆收紧须拆分并说明风险。
 - 迁移比对：类型与默认值必须零差异；迁移环境对视频任务模型的显式导入不可删。PostgreSQL 部分唯一、向量及全文索引仅在迁移维护，不塞入模型 metadata 导致自动生成误删。
