@@ -621,6 +621,15 @@ export const dict: Dictionary = {
       confirm: 'Undo this message? This will also delete every message after it.'
     },
 
+    edit: {
+      label: 'Edit last message',
+      cancel: 'Cancel editing (Esc)',
+      send: 'Send changes and regenerate reply',
+      hint: 'Regenerate the reply and keep the original attachments',
+      stale: 'The conversation has changed. Wait for the reply or select the last message again.',
+      failed: 'Could not edit the message. Your changes have been kept.'
+    },
+
     play: {
       label: 'Read aloud',
       preparing: 'Preparing voice…',

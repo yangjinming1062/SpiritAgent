@@ -5,6 +5,7 @@ export { ChatPanel } from './chat-panel'
 export { ChatParamsPanel, type ChatParamsTab } from './chat-params-panel'
 export {
   $chatDraftFromUndo,
+  $chatEditDraft,
   $chatMessageBodies,
   $chatMessageList,
   $chatSessionId,
@@ -28,6 +29,7 @@ export {
   clearPendingPrompts,
   finalizeAssistantMessage,
   hydrateChatMessages,
+  hydrateEditedChatMessages,
   hydrateSessionSettings,
   markAssistantTerminal,
   pushExternalAttachment,

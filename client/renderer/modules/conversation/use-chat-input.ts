@@ -97,6 +97,12 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
   })
 
   const handleDrop = (e: DragEvent): void => {
+    if (submit.editing) {
+      e.preventDefault()
+
+      return
+    }
+
     const paths = resolveDroppedFiles(e.dataTransfer?.files)
 
     if (paths.length === 0) {
@@ -112,6 +118,12 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
     const files = Array.from(e.clipboardData?.files ?? [])
 
     if (files.length === 0) {
+      return
+    }
+
+    if (submit.editing) {
+      e.preventDefault()
+
       return
     }
 
@@ -156,11 +168,12 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
   }
 
   const submitState: ChatSubmitState = {
-    externalPaths,
+    editMessageId: submit.editing?.sourceMessageId,
+    externalPaths: submit.editing ? [] : externalPaths,
     gatewayState,
     isGenerating: gatewayState === 'open' && (submit.sending || pendingBatchLen > 0 || turnInFlight || lastStreaming),
     isReadOnlySession,
-    pending: submit.pending,
+    pending: submit.editing ? null : submit.pending,
     recording,
     sending: submit.sending,
     text: submit.text
@@ -189,8 +202,9 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
 
   const inputProps: Omit<ConversationInputProps, 'variant'> = {
     attachMenuOpen,
-    externalPaths,
+    externalPaths: submitState.externalPaths,
     onAttachMenuToggle: setAttachMenuOpen,
+    onCancelEdit: submit.cancelEdit,
     onDrop: handleDrop,
     onPaste: handlePaste,
     onRecordingPointerCancel,

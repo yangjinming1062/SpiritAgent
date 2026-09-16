@@ -96,6 +96,7 @@ from services.domains.companion import (
 from services.domains.conversation import (
     IM_KIND,
     SYSTEM_PRESET_CATALOG,
+    EditNotAllowedError,
     ForkNotAllowedError,
     SourceNotFoundError,
     UndoNotAllowedError,
@@ -104,6 +105,7 @@ from services.domains.conversation import (
     fork_conversation_from_message,
     get_or_create_special_conversation,
     get_special_conversation,
+    replace_last_user_message,
     resolve_memory_scope,
     resolve_undo_target,
     undo_conversation_to_message,
@@ -678,7 +680,7 @@ async def _do_compress_history(
         effective_settings,
         conversation_memory_scope(conv, user_id),
     )
-    delivered = await build_session_messages(conv.id, db)
+    delivered = await build_session_messages(conv.id, db, include_id=True)
 
     return {
         "session_id": runtime.session_id,
@@ -740,11 +742,10 @@ async def do_session_undo(
     即可复用锁、in-flight 守卫与广播；不传时退化为「无 in-flight / 无广播」基础版（仅服务调用 + 锁）。
     """
     runtime = runtime_sessions.get(session_id) if runtime_sessions else None
-    if runtime is not None and runtime.chat_task and not runtime.chat_task.done():
-        raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
-
     lock = _conversation_locks.setdefault(str(session_id), asyncio.Lock())
     async with lock, SESSION_LOCAL() as db:
+        if runtime is not None and runtime.chat_task and not runtime.chat_task.done():
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
         try:
             conv = await resolve_undo_target(db, user_id, session_id, source_message_id)
             await prune_videos_in_range(db, conv.id, lo=source_message_id)
@@ -784,10 +785,10 @@ async def do_session_undo(
 )
 async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
     """``/清理`` 命令 handler。``confirmed`` 由 ``command.dispatch`` 在调用前把关，未传则抛 SLASH_CONFIRM_REQUIRED。"""
-    if ctx.runtime.chat_task and not ctx.runtime.chat_task.done():
-        raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再清理会话")
     lock = _conversation_locks.setdefault(str(ctx.runtime.conversation_id), asyncio.Lock())
     async with lock, SESSION_LOCAL() as db:
+        if ctx.runtime.chat_task and not ctx.runtime.chat_task.done():
+            raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再清理会话")
         conv = await _find_owned_conv(db, ctx.user_id, ctx.session_id)
         if conv is None:
             raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"session not found: {ctx.session_id!r}")
@@ -816,10 +817,10 @@ async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
 )
 async def _slash_compress(ctx: SlashCommandContext) -> SlashCommandResult:
     """``/压缩`` 命令 handler：复用 session.compress_context 的核心实现。"""
-    if ctx.runtime.chat_task and not ctx.runtime.chat_task.done():
-        raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再压缩会话")
     lock = _conversation_locks.setdefault(str(ctx.runtime.conversation_id), asyncio.Lock())
     async with lock, SESSION_LOCAL() as db:
+        if ctx.runtime.chat_task and not ctx.runtime.chat_task.done():
+            raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再压缩会话")
         conv = await _find_owned_conv(db, ctx.user_id, ctx.session_id)
         if conv is None:
             raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"session not found: {ctx.session_id!r}")
@@ -1197,10 +1198,10 @@ def _register_session_handlers(
     async def session_compress_context(params: dict) -> dict:
         sess_runtime = user_session.runtime_sessions if user_session else runtime_sessions
         runtime = _get_runtime(sess_runtime, params)
-        if runtime.chat_task and not runtime.chat_task.done():
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
-
-        async with SESSION_LOCAL() as db:
+        lock = _conversation_locks.setdefault(runtime.session_id, asyncio.Lock())
+        async with lock, SESSION_LOCAL() as db:
+            if runtime.chat_task and not runtime.chat_task.done():
+                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
             conv = await _find_owned_conv(db, user_id, runtime.session_id)
             if conv is None:
                 raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"session not found: {runtime.session_id!r}")
@@ -1345,9 +1346,7 @@ def _register_session_handlers(
             user_session.background_tasks.add(task)
             task.add_done_callback(user_session.background_tasks.discard)
 
-    async def prompt_submit(params: dict) -> dict:
-        sess_runtime = user_session.runtime_sessions if user_session else runtime_sessions
-        runtime = _get_runtime(sess_runtime, params)
+    async def _submit_prompt(params: dict, runtime: RuntimeSession) -> dict:
         # im 会话由通道桥独占写入（外部 IM 消息驱动回合），桌面端只读旁观历史。
         if runtime.kind == IM_KIND:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "IM 会话由通道桥接维护，仅只读")
@@ -1368,49 +1367,15 @@ def _register_session_handlers(
         if any(uid == user_id for uid, _ in _inflight_interact):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "companion reaction in-flight; please retry after it lands")
 
-        note_user_contact(user_id)
-        await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
-
-        truncate_ordinal = params.get("truncate_before_user_ordinal")
-        if truncate_ordinal is not None and not _is_nonneg_int(truncate_ordinal):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "truncate_before_user_ordinal must be a non-negative int")
-        if truncate_ordinal is not None:
-            async with SESSION_LOCAL() as db:
-                user_total = (
-                    await db.execute(
-                        select(func.count(Message.id)).where(
-                            Message.conversation_id == runtime.conversation_id,
-                            Message.role == "user",
-                        ),
-                    )
-                ).scalar_one()
-                if truncate_ordinal < 0 or truncate_ordinal >= user_total:
-                    raise JsonRpcError(
-                        JSONRPC_INVALID_PARAMS,
-                        f"truncate_before_user_ordinal {truncate_ordinal} no longer in session history",
-                    )
-                nth = (
-                    await db.execute(
-                        select(Message.id)
-                        .where(
-                            Message.conversation_id == runtime.conversation_id,
-                            Message.role == "user",
-                        )
-                        .order_by(Message.id)
-                        .offset(truncate_ordinal)
-                        .limit(1),
-                    )
-                ).scalar_one()
-                # 即将删除的行所引用的视频是死重量：删行前先清文件（行本身随之删除，无需改写占位）。
-                await prune_videos_in_range(db, runtime.conversation_id, lo=nth)
-                await db.execute(
-                    delete(Message).where(
-                        Message.conversation_id == runtime.conversation_id,
-                        Message.id >= nth,
-                    ),
+        edit_message_id = params.get("edit_message_id")
+        if edit_message_id is not None:
+            if not _is_nonneg_int(edit_message_id) or edit_message_id == 0:
+                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "edit_message_id must be a positive int")
+            if "batch" in params or "attachments" in params:
+                raise JsonRpcError(
+                    JSONRPC_INVALID_PARAMS,
+                    "message edits only accept text; original attachments are retained",
                 )
-                db.expire_all()
-                await db.commit()
 
         precursor_user_message_ids: list[int] = []
         batch = params.get("batch")
@@ -1448,6 +1413,26 @@ def _register_session_handlers(
         disp = user_session.dispatcher if user_session else dispatcher
         emitter = JsonRpcEmitter(dispatcher=disp, session_id=runtime.session_id)
 
+        note_user_contact(user_id)
+        await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
+
+        persisted_message_id: int | None = None
+        edited_messages: list[dict] | None = None
+        if edit_message_id is not None:
+            async with SESSION_LOCAL() as db:
+                try:
+                    replacement = await replace_last_user_message(
+                        db,
+                        user_id,
+                        runtime.session_id,
+                        edit_message_id,
+                        text,
+                    )
+                except EditNotAllowedError as exc:
+                    raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+                persisted_message_id = replacement.id
+                edited_messages = await build_session_messages(runtime.conversation_id, db, include_id=True)
+
         cur_cfg = user_session.llm_config if user_session else llm_config
         cur_ctx = user_session.session_client_context if user_session else None
 
@@ -1455,6 +1440,12 @@ def _register_session_handlers(
             _inflight_prompt.add(user_id)
             try:
                 try:
+                    if edited_messages is not None:
+                        await disp.push_event(
+                            "message.edited",
+                            {"session_id": runtime.session_id, "messages": edited_messages},
+                            session_id=runtime.session_id,
+                        )
                     await run_chat_turn(
                         req,
                         cur_cfg,
@@ -1464,6 +1455,7 @@ def _register_session_handlers(
                         track_task=_track,
                         session_settings=runtime.settings,
                         precursor_user_message_ids=precursor_user_message_ids or None,
+                        persisted_message_id=persisted_message_id,
                     )
                 except (WebSocketDisconnect, asyncio.CancelledError):
                     raise
@@ -1477,6 +1469,13 @@ def _register_session_handlers(
         runtime.chat_task = asyncio.create_task(_run_turn())
         _track(runtime.chat_task)
         return {"queued": True}
+
+    async def prompt_submit(params: dict) -> dict:
+        sess_runtime = user_session.runtime_sessions if user_session else runtime_sessions
+        runtime = _get_runtime(sess_runtime, params)
+        lock = _conversation_locks.setdefault(runtime.session_id, asyncio.Lock())
+        async with lock:
+            return await _submit_prompt(params, runtime)
 
     dispatcher.register("prompt.submit", prompt_submit)
 

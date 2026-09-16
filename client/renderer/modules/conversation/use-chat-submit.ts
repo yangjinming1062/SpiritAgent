@@ -1,3 +1,4 @@
+import { useStore } from '@nanostores/react'
 import { useCallback, useRef, useState } from 'react'
 
 import { useGatewayRequest } from '@/shared'
@@ -5,18 +6,21 @@ import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { parseSlashInput } from '@/shared/lib/slash-commands'
 import { presentationPorts } from '@/shared/presentation-ports'
-import { notify } from '@/shared/store/notifications'
+import { notify, notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type { ChatAttachment } from '@/shared/types/spiritagent'
 
 import { basename } from './chat-path'
 import { executeSlashCommand, slashPreCheck } from './chat-slash'
 import {
+  $chatEditDraft,
   $chatMessageBodies,
   $chatMessageList,
   $chatSessionId,
   $chatTurnInFlight,
+  $lastEditableUserMessage,
   cancelPendingFlush,
+  type ChatEditDraft,
   finalizeAssistantMessage,
   markAssistantTerminal,
   type PendingAttachment,
@@ -37,6 +41,8 @@ interface UseChatSubmitOptions {
 }
 
 export interface ChatSubmit {
+  cancelEdit: () => void
+  editing: ChatEditDraft | null
   handleStop: () => Promise<void>
   pending: PendingAttachment | null
   sending: boolean
@@ -58,6 +64,7 @@ export function useChatSubmit({
   const [text, setText] = useState('')
   const [pending, setPending] = useState<PendingAttachment | null>(null)
   const [sending, setSending] = useState(false)
+  const editing = useStore($chatEditDraft)
 
   // 通过 ref 转发最新值给 send（避免 useCallback 依赖列表频繁变更）。
   const textRef = useRef(text)
@@ -72,9 +79,10 @@ export function useChatSubmit({
   sendingRef.current = sending
   externalPathsRef.current = externalPaths
 
-  const send = useCallback(async () => {
-    const currentText = textRef.current
-    const currentPending = pendingRef.current
+  const send = useCallback(async (): Promise<void> => {
+    const edit = $chatEditDraft.get()
+    const currentText = edit?.text ?? textRef.current
+    const currentPending = edit ? null : pendingRef.current
     const currentSending = sendingRef.current
 
     if (isReadOnlySession) {
@@ -102,11 +110,50 @@ export function useChatSubmit({
       return
     }
 
-    if (trimmed === '/') {
+    if (!edit && trimmed === '/') {
       return
     }
 
     if (gatewayState !== 'open') {
+      return
+    }
+
+    if (edit) {
+      if (
+        edit.sessionId !== $chatSessionId.get() ||
+        edit.sourceMessageId !== $lastEditableUserMessage.get()?.backendMessageId
+      ) {
+        onPreCheckFail(getStrings().chat.edit.stale)
+
+        return
+      }
+
+      sendingRef.current = true
+      setSending(true)
+      $chatTurnInFlight.set(true)
+      conversationVoiceSink().cancel()
+
+      try {
+        await requestGateway('prompt.submit', {
+          session_id: edit.sessionId,
+          edit_message_id: edit.sourceMessageId,
+          text: trimmed
+        })
+
+        if ($chatEditDraft.get() === edit) {
+          $chatEditDraft.set(null)
+        }
+      } catch (err) {
+        // 已收到修订事件时，服务端已接受；迟到的 RPC 失败不能中止新回合。
+        if ($chatSessionId.get() === edit.sessionId && $chatEditDraft.get() === edit) {
+          $chatTurnInFlight.set(false)
+          notifyError(err, getStrings().chat.edit.failed)
+        }
+      } finally {
+        sendingRef.current = false
+        setSending(false)
+      }
+
       return
     }
 
@@ -287,13 +334,27 @@ export function useChatSubmit({
   }, [requestGateway])
 
   return {
+    cancelEdit: () => {
+      if (!sendingRef.current) {
+        $chatEditDraft.set(null)
+      }
+    },
+    editing,
     handleStop,
     pending,
     send,
     sending,
     setPending,
     setSending,
-    setText,
-    text
+    setText: next => {
+      const edit = $chatEditDraft.get()
+
+      if (edit) {
+        $chatEditDraft.set({ ...edit, text: typeof next === 'function' ? next(edit.text) : next })
+      } else {
+        setText(next)
+      }
+    },
+    text: editing?.text ?? text
   }
 }

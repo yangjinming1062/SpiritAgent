@@ -1,6 +1,6 @@
 import type { SpeechStyle } from '@ipc/contracts'
 import { sleep } from '@runtime'
-import { atom, map } from 'nanostores'
+import { atom, computed, map } from 'nanostores'
 
 import {
   persistString,
@@ -28,6 +28,8 @@ export interface ChatMessageListItem {
 }
 
 export interface ChatMessageBody {
+  /** 完整用户输入；陪伴拆泡与附件展示文案不能用作编辑原文。 */
+  editableText?: string
   streamingText?: string
   speechStyle?: SpeechStyle
   text: string
@@ -57,6 +59,7 @@ let flushTimer: ReturnType<typeof setTimeout> | null = null
 // 最近一次已提交批对应的用户气泡 id（工作台合并后只剩首条，陪伴会话为全部连发气泡）。
 // message.persisted 的 message_ids 只按本集合绑定，失败回合遗留的孤儿气泡不会被下一轮错绑。
 let submittedBubbleIds: Set<string> = new Set()
+let historyEditRevision = 0
 
 export const $chatMessageList = atom<ChatMessageListItem[]>([])
 export const $chatMessageBodies = map<Record<string, ChatMessageBody>>({})
@@ -84,6 +87,47 @@ interface PendingPromptItem {
 export const $pendingPromptBatch = atom<PendingPromptItem[]>([])
 
 export const $chatTurnInFlight = atom<boolean>(false)
+
+export interface ChatEditDraft {
+  sessionId: string
+  sourceMessageId: number
+  text: string
+}
+
+export const $chatEditDraft = atom<ChatEditDraft | null>(null)
+
+export const $lastEditableUserMessage = computed(
+  [$chatMessageList, $chatSessionKind, $chatTurnInFlight, $pendingPromptBatch],
+  (list, kind, inFlight, pending): ChatMessageListItem | null => {
+    if (kind === 'im' || inFlight || pending.length > 0) {
+      return null
+    }
+
+    const last = list.findLast(item => item.role === 'user')
+
+    return last?.backendMessageId && !last.subtype ? last : null
+  }
+)
+
+export function startEditingMessage(messageId: string): void {
+  const message = $lastEditableUserMessage.get()
+  const sessionId = $chatSessionId.get()
+  const body = $chatMessageBodies.get()[messageId]
+
+  if (!sessionId || message?.id !== messageId || !message.backendMessageId || !body) {
+    return
+  }
+
+  $chatEditDraft.set({
+    sessionId,
+    sourceMessageId: message.backendMessageId,
+    text: (body.editableText ?? body.text)
+      .split('\n')
+      .filter(line => !/^@(file|folder):/i.test(line.trim()))
+      .join('\n')
+      .trim()
+  })
+}
 
 // 当后端在 in-flight 回合期间发出 bubble.break 时置位，防止 message.complete 的全文/推理覆盖末尾气泡。
 export const $turnHadBubbleBreak = atom<boolean>(false)
@@ -222,6 +266,7 @@ export function setChatSession(id: string | null): void {
   $turnHadBubbleBreak.set(false)
 
   if ($chatSessionId.get() !== id) {
+    $chatEditDraft.set(null)
     $sessionSettings.set({})
     resetSessionContextUsage()
   }
@@ -233,6 +278,28 @@ export function setChatSession(id: string | null): void {
 }
 
 // 用从后端加载的会话替换面板的聊天记录。
+export function hydrateEditedChatMessages(messages: SessionMessage[]): void {
+  // 其他窗口可能正在连发或等待提交确认；历史修订不能删掉未落库的输入。
+  historyEditRevision++
+  const pendingIds = new Set($pendingPromptBatch.get().map(item => item.messageId))
+
+  const pendingRows = $chatMessageList
+    .get()
+    .filter(item => pendingIds.has(item.id) || (submittedBubbleIds.has(item.id) && item.backendMessageId === undefined))
+
+  const previousBodies = $chatMessageBodies.get()
+
+  $chatTurnInFlight.set(true)
+  hydrateChatMessages(messages)
+  $chatEditDraft.set(null)
+
+  for (const item of pendingRows) {
+    $chatMessageBodies.setKey(item.id, previousBodies[item.id])
+  }
+
+  $chatMessageList.set([...$chatMessageList.get(), ...pendingRows])
+}
+
 export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRuntimeInfo): void {
   const items: ChatMessageListItem[] = []
   const bodies: Record<string, ChatMessageBody> = {}
@@ -316,6 +383,7 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
       // 每段都挂会重复渲染媒体卡。不拆分时首段即唯一段，行为不变。
       bodies[id] = {
         text: segment,
+        editableText: m.role === 'user' ? textContent : undefined,
         speechStyle: m.speech_style,
         reasoning: m.role === 'assistant' && index === 0 ? takeReasoning(reasoningContent || undefined) : undefined,
         toolName: m.tool_name ?? null,
@@ -516,6 +584,12 @@ export function bindTrailingUserMessageIds(ids: number[]): void {
   }
 
   const list = $chatMessageList.get()
+
+  // 编辑事件已经水合了修订行；随后重放的落库通知不属于本窗口待确认的提交。
+  if (validIds.every(id => list.some(item => item.backendMessageId === id))) {
+    return
+  }
+
   const unboundIndexes: number[] = []
 
   for (let i = list.length - 1; i >= 0; i--) {
@@ -638,6 +712,7 @@ registerStorageClearHandler(() => {
   $chatTurnInFlight.set(false)
   $turnHadBubbleBreak.set(false)
   $chatDraftFromUndo.set(null)
+  $chatEditDraft.set(null)
 
   if (flushTimer) {
     clearTimeout(flushTimer)
@@ -725,16 +800,27 @@ export function submitPendingBatch(): void {
   submittedBubbleIds = new Set(pendingRows.map(item => item.id))
 
   const attachments = pendingBatch.flatMap(p => p.attachments ?? [])
+  const promptText = pendingBatch.map(p => p.text).join('\n\n')
+
+  for (const id of submittedBubbleIds) {
+    const body = $chatMessageBodies.get()[id]
+
+    if (body) {
+      $chatMessageBodies.setKey(id, { ...body, editableText: promptText })
+    }
+  }
 
   const batchPayload = {
     session_id: sessionId,
     batch: [
       {
-        text: pendingBatch.map(p => p.text).join('\n\n'),
+        text: promptText,
         ...(attachments.length ? { attachments: attachments.map(a => ({ file_url: a.url, type: a.type })) } : {})
       }
     ]
   }
+
+  const submittedRevision = historyEditRevision
 
   const submitWithRetry = async (attempt = 0): Promise<void> => {
     const g = $gateway.get()
@@ -750,6 +836,18 @@ export function submitPendingBatch(): void {
       await g.request('prompt.submit', batchPayload)
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : String(err)
+
+      if (
+        errMsg.includes('in-flight') &&
+        historyEditRevision !== submittedRevision &&
+        $chatSessionId.get() === sessionId
+      ) {
+        // 另一个窗口的编辑先被接受；本批尚未落库，回到队列等该回合结束。
+        $pendingPromptBatch.set([...pendingBatch, ...$pendingPromptBatch.get()])
+        submitPendingBatch()
+
+        return
+      }
 
       if (errMsg.includes('in-flight') && attempt < 3) {
         await sleep(50 * Math.pow(2, attempt))
@@ -982,6 +1080,7 @@ export function markAssistantTerminal({ error, cancelled }: { error?: string; ca
 // 重置消息列表与 bodies，不触碰 $chatSessionId 与 pending batch。
 export function resetChatMessages(): void {
   conversationVoiceSink().cancel()
+  $chatEditDraft.set(null)
   $chatMessageList.set([])
   $chatMessageBodies.set({})
   $lastAssistantStreaming.set(false)

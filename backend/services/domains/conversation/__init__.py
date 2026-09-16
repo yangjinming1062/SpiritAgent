@@ -1,5 +1,6 @@
 from .bootstrap import ensure_system_conversations_for_user
 from .context_window import load_recent_context_window
+from .edit import EditNotAllowedError, replace_last_user_message
 from .fork import ForkNotAllowedError, SourceNotFoundError, fork_conversation_from_message
 from .formatting import format_messages_compact, message_text
 from .history import build_session_messages, client_media_entries
@@ -17,6 +18,8 @@ from .presets import DEFAULT_PRESET_ID, SYSTEM_PRESET_CATALOG, InferenceDefaults
 from .undo import UndoNotAllowedError, resolve_undo_target, undo_conversation_to_message
 
 __all__ = [
+    "EditNotAllowedError",
+    "replace_last_user_message",
     "message_text",
     "conversation_memory_scope",
     "resolve_memory_scope",

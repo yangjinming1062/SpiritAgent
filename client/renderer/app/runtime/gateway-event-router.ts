@@ -72,6 +72,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'message.deleted':
 
+    case 'message.edited':
+
     case 'command.result':
 
     case 'compress.completed':

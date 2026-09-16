@@ -24,7 +24,7 @@ WebSocket 与本地 IPC 使用 JSON-RPC 2.0 信封；反向模型请求经 Clien
 - 客户端定期向服务端发送 `session.ack(seq)` 确认消费进度（带 id 的标准 RPC 请求），服务端自重放缓冲中修剪已确认帧。
 - **心跳保活（session.ping）**：客户端在连接空闲 15s 时发送 `session.ping`（带 id 的标准 RPC 请求），服务端回 `{}`；若 30s 内无任何帧到达，客户端判定半开连接并主动 `close(4000, 'heartbeat')` 触发重连。该机制覆盖 NAT 超时、Wi-Fi 切换、VPN 抖动、笔记本合盖等场景，避免用户发消息后 120s 死寂。
 - **全量重水化的防御性截断**：当全量重水化返回的消息数达到防御上限时，响应携带截断标记与更早历史的分页游标；客户端可通过 `GET /api/sessions/{id}/messages?before_id=<cursor>&limit=<n>` 拉取游标前紧邻的更早一页。REST 页内按消息 ID 升序交付且每条消息必带 ID；仍有更早历史时 `next_cursor` 为本页首条消息 ID，耗尽时为 null。该截断仅作为超大历史的负载防御兜底，优先仍走重放缓冲的无缝恢复。
-- **水合消息必带创建时间**：后端向客户端下发会话历史消息时（会话恢复、主会话获取、分支派生、消息撤回、上下文压缩、会话清空及历史消息端点），每条消息必须携带创建时间的毫秒级时间戳。改此处需同步：后端消息重建与客户端对话水合。
+- **水合消息必带创建时间**：后端向客户端下发会话历史消息时（会话恢复、主会话获取、分支派生、消息撤回与编辑、上下文压缩、会话清空及历史消息端点），每条消息必须携带创建时间的毫秒级时间戳。改此处需同步：后端消息重建与客户端对话水合。
 - WS 关闭码 1008（鉴权失效）= 立即退出重连流程，不继续尝试。
 - **WS 鉴权用短时 ticket**：客户端连接前持 Bearer JWT 调 POST /api/user/ws-ticket 现铸 60s TTL 的专用 token（purpose=ws），经查询串携带；长效 JWT 不进 URL（避免落入代理/访问日志）。ticket 关联签发它的登录记录，握手和每个入站帧都要求该记录与用户仍有效。注销、另一端激活或管理员停用会以 1008 关闭连接并终止该用户在途回合、工具等待与运行时状态；正常刷新只轮换同一登录记录的 Bearer 凭据，既有 ticket 与 WS 明确接续。`?token=` 直传 JWT 仅限后端内部调用。
 
@@ -81,6 +81,7 @@ WebSocket 与本地 IPC 使用 JSON-RPC 2.0 信封；反向模型请求经 Clien
 | `session.set_settings` | 保存当前会话的温度、压缩阈值与推理强度覆盖；生效参数随会话水合，继承与恢复默认见 §2.4 | Backend 会话设置 + Client 参数面板与水合 |
 | `session.compress_context`（别名 `session.compress`） | 与自动压缩共用处理路径；成功后返回压缩历史和用量，客户端替换本地列表并刷新上下文占用。Slash 命令的交付见 §1.9 | Backend 压缩与历史重建 + Client 消息与用量视图 |
 | `session.undo_to_message` | 普通会话撤回指定用户消息及其后全部消息，返回锚点作为输入草稿；要求确认且无在途回合。REST 镜像共用锁、权限和删除广播，其他窗口按新历史水合；类型限制见 §1.8 | Backend 撤回服务与 WS/REST + Client 草稿恢复与消息列表 |
+| `prompt.submit` 的 `edit_message_id` | 按消息 id 编辑最后一条用户消息并启动新回合；只接受 `text`，保留原附件，与 `batch` / `attachments` 互斥。支持普通和固定系统对话，IM 拒绝；与撤回、清空及手动压缩共用会话锁；服务端在锁内核对归属、最新用户行及无在途回合，原消息与后续历史删除、新用户行写入同事务提交。校验失败不改历史；已执行工具的外部副作用不随编辑撤销 | Backend 编辑领域服务与桌面入口 + Client 编辑草稿、提交、历史事件与缓存 |
 
 **音色目录与选择**：目录请求携当前系统语言，后端汇总该用户供应商链中所有已配置 TTS 供应商，只返回该语言及多语言音色；每项携供应商身份。客户端将选择持久化为 `供应商:音色 id`，合成端按该引用优先路由到对应供应商，供应商失败仍沿既有 TTS 链回退。
 
@@ -130,6 +131,7 @@ WebSocket 与本地 IPC 使用 JSON-RPC 2.0 信封；反向模型请求经 Clien
 | `message.persisted` | 用户消息落库后、流式开始前下发；载荷 `{role:'user', message_ids}`，`message_ids` 为本轮提交的全部用户行 id（含 batch 前导，按插入序）；必带 `session_id`。终端助手行 id 挂在 `message.complete.message_id`（中间工具调用助手行不回写）。活路径气泡据此绑定，无需等 hydrate | Client 聊天窗：把 id 绑到当前会话末尾尚未绑定的对应用户/助手气泡 |
 | `message.reasoning.delta` | 助手推理过程流式增量；载荷 `{text}`；必带 `session_id`。与 `message.delta` 并行，不进入正文、不进下一轮 LLM 输入 | Client 工作台：累加到当前助手气泡的推理区；生活空间不展示 |
 | `message.deleted` | `session.undo_to_message` 的多窗口广播：载荷 `{session_id, deleted_count, messages}`，`messages` 是截断后的完整消息列表；发起窗口已通过 RPC 路径 hydrate，其它窗口经此事件用 `payload.messages` 替换本地列表；必带 `session_id`，由 `events.ts` 在会话闸门内消费 | Client 聊天窗：`hydrateChatMessages(messages)` 替换本地消息列表 |
+| `message.edited` | 编辑提交后、新回合开始前广播 `{session_id, messages}`；包含修订用户行的完整历史，所有窗口按所属会话全量水合并更新快照，同时保留本窗口尚未提交或正在等待提交确认的消息气泡与附件；若待确认提交因编辑回合在途被拒绝，将其退回待发队列，待新回合结束后继续提交。修订行使用新 id，使离线窗口的旧 `after_id` 失效；RPC 响应仅确认入队，不再次水合，以免覆盖已开始的流式回复 | Client 聊天窗、编辑草稿与历史缓存 |
 
 **事件投递范围（session_id 语义）**：session_id 就是 conversation_id 的字符串形式（见 §6）。聊天会话事件（`message.*` / `tool.start` / `tool.complete` / `error`）带信封级 `session_id`，渲染端按会话过滤；业务 outbox 事件投递到用户的 desktop，不以当前打开的会话作为路由闸门。上表同时包含这两类事件，不能统一按 outbox 处理。`companion.message`、`system.notification` 与 `video_gen.completed` 可在载荷内部携带 session_id，渲染端据此决定增量落卡或提供跳转，不将它用作 outbox 路由闸门。
 
@@ -291,7 +293,7 @@ REST 端点异常路径返回统一结构：error（短码）+ reason（分类�
 - `PATCH /api/sessions/{id}` 管理标题、置顶和归档，固定系统对话或不可改名会话拒绝修改；`DELETE` 对固定或不可删除会话返回 403。非默认标题不再由自动命名覆盖。改变预设目标不能借改名完成，已有历史必须保留原归属。
 - `session.fork` 与 REST 镜像只允许从普通会话的指定历史节点派生，继承源预设与自动化归属，设置父会话关联。复制普通消息、工具链、媒体、推理、语音描述、摘要日期和创建时间，排除界面状态行，清零用量与耗时；复制内容是已发送历史，不同时放进输入框。系统预设与 IM 会话拒绝派生。
 
-当前消息气泡只按是否在途和消息状态决定操作显隐，未完全对齐会话类型：固定陪伴对话仍可显示撤回，固定专业对话可显示撤回与派生，但服务端会拒绝。实现限制由[消息气泡](../client/renderer/modules/conversation/chat-dock-message-bubble.tsx)、[撤回守卫](../backend/services/domains/conversation/undo.py)和派生守卫共同核对；修复时不能仅为放行界面操作而绕过会话保护。
+消息操作同时核对会话类型与回合状态：最后一条正常用户消息可编辑，固定系统对话也支持；撤回与派生仅限普通会话，IM 只读。编辑按持久化 id 定位，陪伴多气泡回填同一用户行的完整文本；本地待发批次或在途回合存在时不开放编辑。服务端守卫分别见[编辑](../backend/services/domains/conversation/edit.py)、[撤回](../backend/services/domains/conversation/undo.py)与派生服务，客户端入口见[消息气泡](../client/renderer/modules/conversation/chat-dock-message-bubble.tsx)。
 
 创建与恢复由 [桌面 handlers](../backend/services/adapters/desktop/handlers.py) 和[会话端点](../backend/api/v1/sessions.py)交付，派生范围由 [fork.py](../backend/services/domains/conversation/fork.py) 维护；变更时同步[客户端会话列表](../client/renderer/modules/conversation/session-list-store.ts)、[历史缓存](../client/renderer/modules/conversation/session-history-cache.ts)与消息操作。参数继承和恢复默认见 §2.4。
 
@@ -335,7 +337,7 @@ Client 宿主通过 `companion.signal {available, event?}` 上报短期可用性
 
 ### 1.9 Slash 命令（对话内元动作）
 
-对话输入框以 `/` 开头的文本触发会话级元动作（清空、压缩等），不经 `prompt.submit` 而经独立的 WS RPC 派发。命令语义与 system prompt 模板（preset）、LLM 工具调用都正交——`/压缩` 不是「让 LLM 帮我压缩」，而是「我现在就要压缩」。这避免了把回合外副作用塞进 prompt 路径产生的 in-flight / 审计 / 跨窗口同步问题。
+普通输入模式以 `/` 开头的文本触发清空、压缩等会话级元动作，不经 `prompt.submit` 而经独立的 WS RPC 派发；编辑已发送消息时，斜杠开头的内容按普通文本处理。命令语义与 system prompt 模板（preset）、LLM 工具调用都正交——`/压缩` 不是「让 LLM 帮我压缩」，而是「我现在就要压缩」。这避免了把回合外副作用塞进 prompt 路径产生的 in-flight / 审计 / 跨窗口同步问题。
 
 **命令语义**（名称、别名和确认标记以[注册入口](../backend/services/adapters/desktop/handlers.py)为准）：
 

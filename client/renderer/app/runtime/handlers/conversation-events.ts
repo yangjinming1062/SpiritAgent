@@ -15,6 +15,7 @@ import {
   clearPendingPrompts,
   finalizeAssistantMessage,
   hydrateChatMessages,
+  hydrateEditedChatMessages,
   markAssistantTerminal,
   pushStatusPill,
   rememberFullHistory,
@@ -38,6 +39,7 @@ import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteContext): void {
   switch (event.type) {
     case 'message.start':
+      $chatTurnInFlight.set(true)
       beginAssistantMessage()
       setTurnHadBubbleBreak(false)
       setSpriteState('thinking')
@@ -202,6 +204,22 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
 
       if (p?.subtype === 'compress_summary' && typeof p.text === 'string') {
         pushStatusPill('compress_summary', p.text)
+      }
+
+      break
+    }
+
+    case 'message.edited': {
+      const payload = decodePayload<{ messages?: SessionMessage[] }>(event.payload)
+
+      if (Array.isArray(payload?.messages)) {
+        cancelVoiceBar()
+        hydrateEditedChatMessages(payload.messages)
+        const sid = $chatSessionId.get()
+
+        if (sid) {
+          rememberFullHistory(sid, payload.messages)
+        }
       }
 
       break

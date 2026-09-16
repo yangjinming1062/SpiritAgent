@@ -11,10 +11,19 @@ import { speechText } from '../../../shared/speech-text'
 
 import { ChatMediaCard } from './chat-media-card'
 import { ChatMessageCopyButton } from './chat-message-copy-button'
+import { ChatMessageEditButton } from './chat-message-edit-button'
 import { ChatMessageForkButton } from './chat-message-fork-button'
 import { ChatMessagePlayButton } from './chat-message-play-button'
 import { ChatMessageUndoButton } from './chat-message-undo-button'
-import { $chatMessageBodies, $chatTurnInFlight, type ChatMessageBody, type ChatMessageListItem } from './chat-store'
+import {
+  $chatEditDraft,
+  $chatMessageBodies,
+  $chatSessionKind,
+  $chatTurnInFlight,
+  $lastEditableUserMessage,
+  type ChatMessageBody,
+  type ChatMessageListItem
+} from './chat-store'
 import { ChatVoiceBar, TranscriptBlock } from './chat-voice-bar'
 import { formatConversationTime } from './conversation-time'
 import { ToolChipTimeline } from './tool-chip-timeline'
@@ -103,6 +112,9 @@ function MessageBubbleWithBody({
   const portraitUrl = useStore(ports.$portraitUrl)
   const activeAvatarId = useStore(ports.$activeAvatarId)
   const responseMode = useStore(ports.$responseMode)
+  const sessionKind = useStore($chatSessionKind)
+  const editing = useStore($chatEditDraft)
+  const lastEditableMessage = useStore($lastEditableUserMessage)
 
   // 摘要/压缩卡片折叠态：组件局部 useState，默认折叠，不持久化、不入 store；多窗口各自独立展开。
   const [summaryExpanded, setSummaryExpanded] = useState(false)
@@ -241,6 +253,7 @@ function MessageBubbleWithBody({
   // 必须有后端 Message.id 才能回传；回合进行中服务端会拒绝撤回，按钮一并藏掉。
   const canOperate =
     Boolean(message.backendMessageId) &&
+    !editing &&
     !turnInFlight &&
     !body.streaming &&
     !body.queued &&
@@ -249,10 +262,11 @@ function MessageBubbleWithBody({
     !body.toolName
 
   // 生活空间只有唯一陪伴上下文，不允许派生。
-  const canFork = variant === 'workbench' && canOperate
+  const canFork = variant === 'workbench' && sessionKind === 'standard' && canOperate
 
   // 避免误点助手行变成撤回伙伴上一句。
-  const canUndo = isUser && canOperate
+  const canUndo = isUser && sessionKind === 'standard' && canOperate
+  const canEdit = isUser && canOperate && lastEditableMessage?.id === message.id
 
   // 用户附件渲染为可点击图片卡（data URL 或本地路径，媒体源通道负责取图）；
   // 正文剔除 @file: 指令行，纯图片消息不渲染空气泡。
@@ -288,7 +302,7 @@ function MessageBubbleWithBody({
 
   // 只要消息具有非空可见正文且非流式传输中，即允许一键复制
   const canCopy = Boolean(displayText) && !body.streaming && !isVoicePendingOrStreaming
-  const hasActions = canFork || canUndo || canCopy
+  const hasActions = canFork || canUndo || canCopy || canEdit
 
   return wrapWithTimeDivider(
     timeDivider,
@@ -380,6 +394,7 @@ function MessageBubbleWithBody({
         {hasActions && (
           <MessageActionCluster
             canCopy={canCopy}
+            canEdit={canEdit}
             canFork={canFork}
             canUndo={canUndo}
             copyText={displayText}
@@ -448,6 +463,7 @@ function ReasoningBlock({
 
 function MessageActionCluster({
   canCopy,
+  canEdit,
   canFork,
   canUndo,
   copyText,
@@ -455,6 +471,7 @@ function MessageActionCluster({
   sourceMessageId
 }: {
   canCopy: boolean
+  canEdit: boolean
   canFork: boolean
   canUndo: boolean
   copyText?: string
@@ -472,6 +489,7 @@ function MessageActionCluster({
       )}
     >
       {canCopy && copyText && <ChatMessageCopyButton text={copyText} />}
+      {canEdit && <ChatMessageEditButton messageId={messageId} />}
       {canFork && sourceMessageId !== undefined && (
         <ChatMessageForkButton messageId={messageId} sourceMessageId={sourceMessageId} />
       )}

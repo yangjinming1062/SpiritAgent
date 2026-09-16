@@ -20,7 +20,7 @@ import {
 } from 'react'
 
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
-import { FileText, FolderOpen, ImageIcon, Mic, Plus, Send, Slash, SquareFilled, Video } from '@/shared/lib/icons'
+import { FileText, FolderOpen, ImageIcon, Mic, Plus, Send, Slash, SquareFilled, Video, X } from '@/shared/lib/icons'
 import {
   $slashCommandMeta,
   fetchSlashCommandMeta,
@@ -38,6 +38,7 @@ import { type PendingAttachment, schedulePendingFlush } from './chat-store'
 import { SlashCommandPopover } from './slash-command-popover'
 
 export interface ChatSubmitState {
+  editMessageId?: number
   externalPaths: string[]
   gatewayState: ConnectionState
   isGenerating: boolean
@@ -62,6 +63,7 @@ export interface ConversationInputProps {
   attachMenuOpen?: boolean
   externalPaths: string[]
   onAttachMenuToggle?: Dispatch<SetStateAction<boolean>>
+  onCancelEdit?: () => void
   onDrop?: (e: React.DragEvent) => void
   onPaste?: (e: ClipboardEvent) => void | Promise<void>
   onRecordingPointerCancel?: (e: PointerEvent<HTMLButtonElement>) => void
@@ -85,6 +87,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     attachMenuOpen = false,
     externalPaths,
     onAttachMenuToggle,
+    onCancelEdit,
     onDrop,
     onPaste,
     onRecordingPointerCancel,
@@ -99,7 +102,8 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     variant = 'living'
   } = props
 
-  const { gatewayState, isGenerating, isReadOnlySession, pending, recording, sending, text } = submit
+  const { editMessageId, gatewayState, isGenerating, isReadOnlySession, pending, recording, sending, text } = submit
+  const isEditing = editMessageId !== undefined
 
   const {
     highlightIndex: slashHighlightIndex,
@@ -120,7 +124,8 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   const slashMeta = useStore($slashCommandMeta)
 
   // 工作台只在「要打字了」时升格成指挥台——空闲保持胶囊形态。
-  const expanded = variant === 'workbench' && (focused || Boolean(pending) || text.length >= COMMAND_LINE_THRESHOLD)
+  const expanded =
+    isEditing || (variant === 'workbench' && (focused || Boolean(pending) || text.length >= COMMAND_LINE_THRESHOLD))
 
   const editorRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
 
@@ -131,10 +136,14 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
       const len = editorRef.current.value.length
       editorRef.current.setSelectionRange(len, len)
     }
-  }, [expanded])
+  }, [editMessageId, expanded])
 
   // 仅前导 / 且尚未键入参数时，空 query 仍算命令模式，弹层展示全量。
   const slashContext = useMemo<{ active: boolean; query: string }>(() => {
+    if (isEditing) {
+      return { active: false, query: '' }
+    }
+
     if (slashQuery !== undefined || slashPaletteForced) {
       return { active: true, query: slashQuery ?? '' }
     }
@@ -153,10 +162,12 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     }
 
     return { active: true, query: body }
-  }, [slashPaletteForced, slashQuery, text])
+  }, [isEditing, slashPaletteForced, slashQuery, text])
 
   const items = slashItems ?? (slashContext.active ? fuzzyFilterCommands(slashContext.query, 8) : [])
-  const isOpen = (slashPopoverOpen ?? (slashContext.active && !internalSlashDismissed)) && items.length > 0
+
+  const isOpen =
+    !isEditing && (slashPopoverOpen ?? (slashContext.active && !internalSlashDismissed)) && items.length > 0
 
   useEffect(() => {
     if (!slashContext.active || slashMeta.length > 0) {
@@ -186,10 +197,11 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     setInternalSlashDismissed(true)
   }
 
-  const showStop = isGenerating && !text.trim() && !pending && externalPaths.length === 0
+  const showStop = !isEditing && isGenerating && !text.trim() && !pending && externalPaths.length === 0
 
   const sendDisabled =
     isReadOnlySession ||
+    (isEditing && isGenerating) ||
     (!showStop &&
       (sending ||
         gatewayState !== 'open' ||
@@ -205,11 +217,21 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   }
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
+    if (isEditing && e.key === 'Escape' && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      e.stopPropagation()
+      onCancelEdit?.()
+
+      return
+    }
+
     if (e.nativeEvent.isComposing || e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') {
       schedulePendingFlush()
     }
 
-    onSlashKeyDown?.(e)
+    if (!isEditing) {
+      onSlashKeyDown?.(e)
+    }
 
     if (isOpen) {
       if (e.key === 'ArrowDown') {
@@ -259,7 +281,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault()
 
-      if (text.trim() === '/') {
+      if (sendDisabled || (!isEditing && text.trim() === '/')) {
         return
       }
 
@@ -268,7 +290,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   }
 
   const commonEditorProps = {
-    disabled: isReadOnlySession,
+    disabled: isReadOnlySession || (isEditing && sending),
     onBlur: () => setFocused(false),
     onChange: handleChange,
     onCompositionUpdate: () => schedulePendingFlush(),
@@ -359,7 +381,12 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
       </div>
 
       <div className="flex items-center justify-between gap-1.5">
-        <div className="flex items-center gap-1.5">
+        {isEditing && (
+          <span className="min-w-0 text-[11px] text-muted" title={dict.chat.edit.hint}>
+            {dict.chat.edit.label}
+          </span>
+        )}
+        <div className={cn('flex items-center gap-1.5', isEditing && 'hidden')}>
           <div className="relative shrink-0">
             <button
               aria-label={dict.chat.input.addAttachment}
@@ -375,7 +402,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
               <Plus className="size-4" />
             </button>
 
-            {attachMenuOpen && (
+            {attachMenuOpen && !isEditing && (
               <div className="absolute bottom-full mb-2 left-0 z-50 flex w-36 flex-col gap-0.5 rounded-xl border border-line-standard bg-surface-card p-1 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-150">
                 <button
                   className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-body transition hover:bg-fill-hover hover:text-strong text-left"
@@ -449,9 +476,22 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
+          {isEditing && (
+            <button
+              aria-label={dict.chat.edit.cancel}
+              className="inline-flex size-7 items-center justify-center rounded-full text-muted transition hover:bg-fill-hover hover:text-strong disabled:opacity-40"
+              disabled={sending}
+              onClick={onCancelEdit}
+              title={dict.chat.edit.cancel}
+              type="button"
+            >
+              <X className="size-4" />
+            </button>
+          )}
           <button
             className={cn(
               'inline-flex size-7 items-center justify-center rounded-full border border-line-hairline bg-fill-faint text-muted transition hover:border-line-standard hover:bg-fill-hover hover:text-strong disabled:pointer-events-none disabled:opacity-40',
+              isEditing && 'hidden',
               recording && 'border-rose-400/70 bg-rose-500/25 text-rose-300 animate-pulse'
             )}
             disabled={isReadOnlySession}
@@ -465,7 +505,9 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
           </button>
 
           <button
-            aria-label={showStop ? dict.chat.input.stopGenerating : dict.chat.input.sendMessage}
+            aria-label={
+              showStop ? dict.chat.input.stopGenerating : isEditing ? dict.chat.edit.send : dict.chat.input.sendMessage
+            }
             className={cn(
               'inline-flex size-7 items-center justify-center rounded-xl transition disabled:pointer-events-none disabled:opacity-30',
               showStop
@@ -474,7 +516,13 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
             )}
             disabled={sendDisabled}
             onClick={() => void (showStop ? onStop() : onSend())}
-            title={showStop ? dict.chat.input.stopGenerating : dict.chat.input.sendMessageShortcut}
+            title={
+              showStop
+                ? dict.chat.input.stopGenerating
+                : isEditing
+                  ? dict.chat.edit.send
+                  : dict.chat.input.sendMessageShortcut
+            }
             type="button"
           >
             {showStop ? <SquareFilled className="size-3" /> : <Send className="size-3.5 -rotate-12" />}
