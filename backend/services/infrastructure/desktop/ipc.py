@@ -7,7 +7,11 @@ from components import JSONRPC_INTERNAL_ERROR, SETTINGS
 _PENDING: dict[tuple[int, str], asyncio.Future] = {}
 
 _DESKTOP_GONE_ERROR = json.dumps(
-    {"code": JSONRPC_INTERNAL_ERROR, "message": "Desktop disconnected before the tool call completed."},
+    {
+        "code": JSONRPC_INTERNAL_ERROR,
+        "message": "Desktop disconnected before the tool call completed. The outcome is uncertain: do not blindly retry; "
+        "verify via the runner call journal (call_id) or ask the user before re-running.",
+    },
 )
 
 
@@ -61,10 +65,14 @@ async def wait_future(user_id: int, call_id: str, fut: asyncio.Future, *, timeou
     try:
         return await asyncio.wait_for(fut, timeout=effective_timeout)
     except TimeoutError:
+        # 超时不代表未执行：Runner 侧调用日志（PROTOCOL §2.5）按 call_id 记录实际结局，
+        # 重试前先核对，避免把可能已落地的副作用再执行一遍。
         return json.dumps(
             {
                 "code": JSONRPC_INTERNAL_ERROR,
-                "message": f"Tool execution timeout for call {call_id} (no response within {effective_timeout}s). The desktop runner may be offline.",
+                "message": f"Tool execution timeout for call {call_id} (no response within {effective_timeout}s). "
+                "The desktop runner may be offline; the call outcome is uncertain — verify via the runner call journal "
+                "for this call_id (or ask the user) before retrying.",
             },
         )
     finally:

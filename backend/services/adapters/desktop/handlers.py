@@ -1069,7 +1069,12 @@ def _register_session_handlers(
 
         cfg = user_session.llm_config if user_session else llm_config
 
-        if isinstance(last_seq, int) and last_seq > 0 and effective_buffer.can_replay(last_seq):
+        if (
+            conv.kind != IM_KIND
+            and isinstance(last_seq, int)
+            and last_seq > 0
+            and effective_buffer.can_replay(last_seq)
+        ):
             runtime = _mount_runtime(conv, conv.cwd, cancel_existing=False)
             replayed_frames = await dispatcher.replay(last_seq) or []
             logger.info(
@@ -1092,7 +1097,7 @@ def _register_session_handlers(
             ).model_dump()
 
         # 本地已有历史：锚点仍存在时只回增量，避免冷启动全量重拉。
-        if after_id is not None and after_id > 0:
+        if conv.kind != IM_KIND and after_id is not None and after_id > 0:
             async with SESSION_LOCAL() as db:
                 anchor_exists = (
                     await db.execute(

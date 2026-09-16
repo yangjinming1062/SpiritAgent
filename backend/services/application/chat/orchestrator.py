@@ -114,6 +114,7 @@ async def run_chat_turn(
     *,
     session_settings: dict | None = None,
     precursor_user_message_ids: list[int] | None = None,
+    persisted_message_id: int | None = None,
     ephemeral: bool = False,
     headless: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
@@ -131,6 +132,7 @@ async def run_chat_turn(
             track_task,
             session_settings=session_settings,
             precursor_user_message_ids=precursor_user_message_ids,
+            persisted_message_id=persisted_message_id,
             ephemeral=ephemeral,
             headless=headless,
             excluded_tool_names=excluded_tool_names,
@@ -150,6 +152,7 @@ async def _run_chat_turn(
     *,
     session_settings: dict | None = None,
     precursor_user_message_ids: list[int] | None = None,
+    persisted_message_id: int | None = None,
     ephemeral: bool = False,
     headless: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
@@ -183,7 +186,18 @@ async def _run_chat_turn(
 
         if not ephemeral:
             # 用户行先落库再跑 LLM：失败路径也要把 id 回给活路径，否则撤回/派生一直点不了。
-            user_message_id = await _persist_user_message(db, conv, req)
+            if persisted_message_id is not None:
+                persisted = await db.get(Message, persisted_message_id)
+                if (
+                    persisted is None
+                    or persisted.conversation_id != conv.id
+                    or persisted.role != "user"
+                    or persisted.queued
+                ):
+                    raise ValueError("Persisted user message does not belong to this turn")
+                user_message_id = persisted_message_id
+            else:
+                user_message_id = await _persist_user_message(db, conv, req)
             await emitter.send_json(
                 {
                     "type": "message.persisted",

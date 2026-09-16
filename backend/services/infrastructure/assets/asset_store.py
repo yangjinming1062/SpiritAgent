@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import gzip
 import hashlib
@@ -13,6 +14,16 @@ logger = get_logger(__name__)
 
 # 仅 5 分钟：桌面端本就频繁重新拉取，短 TTL 降低链接泄露风险
 _ASSET_URL_TTL_SECONDS = 300
+_MEDIA_MAGIC: tuple[tuple[bytes, str], ...] = (
+    (b"\x89PNG\r\n\x1a\n", "png"),
+    (b"\xff\xd8\xff", "jpg"),
+    (b"GIF87a", "gif"),
+    (b"GIF89a", "gif"),
+    (b"ID3", "mp3"),
+    (b"OggS", "ogg"),
+    (b"fLaC", "flac"),
+    (b"\x1a\x45\xdf\xa3", "webm"),
+)
 
 
 def build_data_uri(data: bytes, content_type: str | None = None) -> str:
@@ -91,6 +102,18 @@ def save_companion_asset(data: bytes, *, user_id: int, label: str, ext: str) -> 
     return f"companion-assets/{user_id}/{filename}"
 
 
+async def save_companion_asset_async(data: bytes, *, user_id: int, label: str, ext: str) -> str:
+    """在线程写盘；取消时等写盘退出并删除未交接的资产。"""
+    task = asyncio.create_task(asyncio.to_thread(save_companion_asset, data, user_id=user_id, label=label, ext=ext))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        result = (await asyncio.gather(task, return_exceptions=True))[0]
+        if isinstance(result, str):
+            await asyncio.to_thread(unlink_companion_asset, result)
+        raise
+
+
 def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str] | None:
     name = Path(filename).name
     if "/" in name or "\\" in name or ".." in name:
@@ -166,6 +189,29 @@ def compress_glb(data: bytes) -> bytes:
     if len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B:
         return data
     return gzip.compress(data, compresslevel=6)
+
+
+def sniff_media_ext(data: bytes) -> str | None:
+    """识别图片、视频与音频的文件签名；不保证文件完整或可解码。"""
+    for magic, ext in _MEDIA_MAGIC:
+        if data.startswith(magic):
+            return ext
+    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
+        return "webp"
+    if data.startswith(b"RIFF") and data[8:12] == b"WAVE":
+        return "wav"
+    if len(data) >= 16 and data[4:8] == b"ftyp":
+        if data[8:12] in (b"M4A ", b"M4B ", b"M4P "):
+            return "m4a"
+        if data[8:12] == b"qt  ":
+            return "mov"
+        return "mp4"
+    if len(data) >= 4 and data[0] == 0xFF:
+        if data[1] & 0xF6 == 0xF0:
+            return "aac"
+        if data[1] & 0xE0 == 0xE0 and data[1] & 0x06:
+            return "mp3"
+    return None
 
 
 def _models_root() -> Path:

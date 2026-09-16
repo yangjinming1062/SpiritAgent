@@ -132,7 +132,7 @@ async def _emit_model_ready(
     if len(parts) == 3:
         payload["asset_url"] = build_signed_model_url(int(parts[1]), parts[2])
         if not content_hash:
-            content_hash = get_companion_model_sha256(int(parts[1]), parts[2])
+            content_hash = await asyncio.to_thread(get_companion_model_sha256, int(parts[1]), parts[2])
     if content_hash:
         payload["content_hash"] = content_hash
     try:
@@ -207,7 +207,7 @@ async def _finalize_generation(
         if not computed_hash and asset_url:
             parts = asset_url.split("/", 2)
             if len(parts) == 3:
-                computed_hash = get_companion_model_sha256(int(parts[1]), parts[2])
+                computed_hash = await asyncio.to_thread(get_companion_model_sha256, int(parts[1]), parts[2])
         model.content_hash = computed_hash or ""
 
         if not superseded:

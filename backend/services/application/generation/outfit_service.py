@@ -370,7 +370,7 @@ async def create_outfit_draft(
         style,
         rig_type,
     ) = await _outfit_generation_context(db, user_id)
-    identity_uri = load_avatar_bytes_as_data_uri(avatar.seed_fullbody_url)
+    identity_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
     if identity_uri is None:
         raise OutfitError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     # 结束读事务：生图往返期间不占连接（短会话纪律）
@@ -385,7 +385,7 @@ async def create_outfit_draft(
             content_type or "image/png",
         )
         source["reference_image_path"] = ref_path
-        secondary_uri = f"data:{content_type or 'image/png'};base64,{base64.b64encode(image).decode('ascii')}"
+        secondary_uri = f"data:{content_type or 'image/png'};base64,{(await asyncio.to_thread(base64.b64encode, image)).decode('ascii')}"
 
     feedback = effective_description or "参考第二张图中的服装与发型，为角色设计一套新的着装"
     draft_url = await _generate_outfit_fullbody(
@@ -440,7 +440,7 @@ async def regenerate_outfit_draft(
         style,
         rig_type,
     ) = await _outfit_generation_context(db, user_id)
-    identity_uri = load_avatar_bytes_as_data_uri(avatar.seed_fullbody_url)
+    identity_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
     if identity_uri is None:
         raise OutfitError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     await db.commit()
@@ -448,7 +448,7 @@ async def regenerate_outfit_draft(
     source = safe_json_loads(outfit.source_json or "{}", default={})
     if not isinstance(source, dict):
         source = {}
-    secondary_uri = _reference_data_uri(source)
+    secondary_uri = await asyncio.to_thread(_reference_data_uri, source)
     description = str(source.get("description") or "").strip()
     effective_feedback = "；".join(part for part in (description, (feedback or "").strip()) if part)
 

@@ -45,3 +45,19 @@ class ChannelPeer(ModelBase, TimestampMixin):
     peer_name: Mapped[str] = mapped_column(String(128), default="", server_default=text("''"))
     status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"), index=True)
     last_message_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ChannelDelivery(ModelBase, TimestampMixin):
+    """渠道待补发记录；执行与投递独立，恢复语义见 PROTOCOL §1.7。"""
+
+    __tablename__ = "channel_deliveries"
+
+    binding_id: Mapped[int] = mapped_column(ForeignKey("channel_bindings.id", ondelete="CASCADE"), index=True)
+    # 空串表示对端未定（后台任务产物），补发时跟随触发补发的对端。
+    peer_id: Mapped[str] = mapped_column(String(128), default="", server_default=text("''"))
+    # ChannelDeliveryPayload 的 JSON；media URL 为裸资产路径。
+    payload_json: Mapped[str] = mapped_column(Text)
+    # pending / sent / abandoned。
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"), index=True)
+    attempts: Mapped[int] = mapped_column(default=0, server_default=text("0"))
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

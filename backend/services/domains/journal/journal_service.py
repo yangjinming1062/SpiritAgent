@@ -39,7 +39,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.conversation import get_or_create_special_conversation
 from services.domains.memory import resolve_user_timezone
-from services.infrastructure.assets import save_companion_asset, signed_companion_asset_url
+from services.infrastructure.assets import (
+    save_companion_asset,
+    save_companion_asset_async,
+    signed_companion_asset_url,
+    sniff_media_ext,
+)
 
 logger = get_logger(__name__)
 
@@ -57,12 +62,26 @@ class DiaryNotFoundError(JournalError):
 
 
 async def persist_moment_media(user_id: int, media_identifier: str | None) -> str | None:
-    """若媒体来自 temp-media，转存至正式资产目录 companion-assets/{user_id}/；外部 URL 或既有 asset 原样返回。"""
+    """把片刻媒体固化为正式资产（``companion-assets/{user_id}/``）后返回裸路径。
+
+    temp-media 来源转存接管；外部 http(s) 地址（供应商产物短时效）下载后转存，失败显式报错——
+    时刻历史永不引用会过期的外部或临时地址，否则展示与备份都会留下死链。``data:`` 与既有资产原样返回。
+    """
     if not media_identifier:
         return None
     raw = media_identifier.strip()
-    if raw.startswith(("companion-assets/", "http://", "https://", "data:")):
+    if raw.startswith(("companion-assets/", "data:")):
         return raw
+    if raw.startswith(("http://", "https://")) and "/api/media/files/" not in raw:
+        data = await download_capped(
+            raw,
+            max_bytes=SETTINGS.journal_media_download_max_bytes,
+            timeout=600.0,
+        )
+        ext = sniff_media_ext(data)
+        if ext is None:
+            raise JournalError("moment media is not a recognizable image, video or audio")
+        return await save_companion_asset_async(data, user_id=user_id, label="moment_media", ext=ext)
     file_id = raw.split("/api/media/files/")[-1].split("?")[0].split("/")[0] if "/api/media/files/" in raw else raw
     resolved = get_file_path(file_id)
     if resolved is not None:
@@ -75,7 +94,7 @@ async def persist_moment_media(user_id: int, media_identifier: str | None) -> st
                 extra={"user_id": user_id, "file_id": file_id},
                 exc_info=True,
             )
-    return raw
+    raise JournalError(f"moment media unavailable: {file_id}")
 
 
 def _copy_temp_media(user_id: int, path: Path) -> str:

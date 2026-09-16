@@ -3,7 +3,7 @@ from .context_compressor import compress_history_if_needed
 from .message_sanitization import truncate_responses_context
 from .native_memory import NativeMemory
 from .orchestrator import run_chat_turn
-from .persistence import persist_extra_user_messages
+from .persistence import persist_extra_user_messages, persist_queued_inbound_message
 from .prompt_presets import AUTOMATION_EXCLUDED_TOOL_NAMES, AUTOMATION_PRESET, LIFE_SPACE_TOOL_NAMES
 from .slash_commands import (
     SlashCommandContext,
@@ -39,6 +39,7 @@ __all__ = [
     "merge_session_settings",
     "parse_temperature",
     "persist_extra_user_messages",
+    "persist_queued_inbound_message",
     "register_slash_command",
     "resolve_slash_command",
     "resolve_inference_settings",

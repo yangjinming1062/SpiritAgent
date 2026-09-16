@@ -112,7 +112,7 @@
 **供应商策略**（实现与配置见 [seethrough](../backend/services/infrastructure/seethrough/)）：
 
 - 主用失败切备用各试一次、单 provider 不重试（烧额度）；主用确认每日限额（错误文案 / HTTP 429 / 402）后进程内冷却 6 小时直连备用。
-- 双 provider 共享 1740s 墙钟预算，兜在 outfit 拆分 30 分钟清扫窗口内；魔搭 complete 载荷的文件 URL 落在 ms.show 运行域（拒 Bearer 头），客户端统一改写回 provider 域下载。
+- 提交、推理、下载三段各有独立超时，双 provider 共享墙钟总预算（`seethrough_total_budget_seconds`，默认及上限 1740s，兜在 outfit 拆分 30 分钟清扫窗口内，可在管理端热调）；魔搭 complete 载荷的文件 URL 落在 ms.show 运行域（拒 Bearer 头），客户端统一改写回 provider 域下载。
 
 **产物契约**：描述符包含分层 PSD 与独立姿态包；姿态包按图层资产通道签名下发，内容哈希随完整资产包更新。PSD 内为 22 语义层（face / eyewhite / irides / eyelash / eyebrow / mouth / nose / neck / ears / front hair / back hair / topwear / bottomwear / legwear / handwear / footwear 等，含肢体节段划分与遮挡补全），层名可带 `-l/-r` 侧后缀与 upper/lower/hand 节段后缀。
 

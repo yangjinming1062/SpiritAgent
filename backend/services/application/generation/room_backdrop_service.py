@@ -472,7 +472,7 @@ async def _prepare_reference_image(reference: str) -> str:
             header, separator, payload = reference.partition(",")
             if not separator or not header.endswith(";base64"):
                 raise ValueError("invalid image data URI")
-            data = base64.b64decode(payload, validate=True)
+            data = await asyncio.to_thread(base64.b64decode, payload, validate=True)
         else:
             data, _ = await resolve_reference_bytes(reference)
         if not data or len(data) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
@@ -480,7 +480,8 @@ async def _prepare_reference_image(reference: str) -> str:
         mime = await asyncio.to_thread(_reference_image_mime, data)
     except Exception as exc:
         raise RoomBackdropError("参考图无法读取，请换一张有效的 PNG / JPEG / WebP / GIF 图片") from exc
-    return f"data:{mime};base64,{base64.b64encode(data).decode('ascii')}"
+    encoded = await asyncio.to_thread(base64.b64encode, data)
+    return f"data:{mime};base64,{encoded.decode('ascii')}"
 
 
 async def resume_room_generation(
@@ -818,7 +819,7 @@ async def _do_one_attempt(
         "image/png": "png",
         "image/webp": "webp",
     }.get((content_type or "").lower(), "jpg")
-    storage_path = asset_store.save_companion_asset(
+    storage_path = await asset_store.save_companion_asset_async(
         data,
         user_id=user_id,
         label="room_backdrop",

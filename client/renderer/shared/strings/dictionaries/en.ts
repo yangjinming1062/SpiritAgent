@@ -587,6 +587,7 @@ export const dict: Dictionary = {
     defaultSessionTitle: 'Daily chat',
     inputPlaceholder: 'Say something, or drag a file over',
     typing: 'Typing...',
+    queued: 'Received, waiting to be processed',
     openMainSessionFailed: 'Could not open daily chat',
 
     filesReceived: (count: number) => `${count} file${count === 1 ? '' : 's'} received`,

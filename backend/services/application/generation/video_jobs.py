@@ -13,6 +13,7 @@ from components import (
     track_user_task,
     utc_now,
 )
+from modules.channels import ChannelBinding, ChannelDelivery, ChannelDeliveryPayload
 from modules.conversation import Message
 from modules.media import VideoGenJob
 from modules.ws import emit_ws_event
@@ -20,7 +21,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.conversation import MEDIA_STATUS_SUBTYPE
-from services.infrastructure.assets import client_asset_url, save_companion_asset
+from services.infrastructure.assets import client_asset_url, save_companion_asset_async, sniff_media_ext
 from services.infrastructure.llm import (
     MissingLlmConfigError,
     ProviderResultUnknownError,
@@ -97,6 +98,37 @@ async def _persist_media_status_message(session_id: str, content: str, media_jso
             await db.commit()
     except Exception:
         logger.warning("failed to persist video status_media row", extra={"session_id": session_id}, exc_info=True)
+
+
+async def _enqueue_channel_delivery(session_id: str | None, *, text: str, media: list[dict[str, str]]) -> None:
+    """IM 会话的后台任务结果转待补发队列：绑定存在即落 ChannelDelivery 行，由渠道桥在对端
+    下一条消息提供的新鲜回复上下文里补发（iLink reply-only，无法主动推送）；桌面会话无绑定，
+    结果本就经 WS 事件与送达行抵达，直接跳过。投递状态独立于本行执行状态。"""
+    if not session_id:
+        return
+    try:
+        conv_id = int(session_id)
+    except (TypeError, ValueError):
+        return
+    try:
+        async with SESSION_LOCAL() as db:
+            binding = (
+                await db.execute(select(ChannelBinding).where(ChannelBinding.conversation_id == conv_id))
+            ).scalar_one_or_none()
+            if binding is None:
+                return
+            db.add(
+                ChannelDelivery(
+                    binding_id=binding.id,
+                    peer_id="",
+                    payload_json=ChannelDeliveryPayload.model_validate(
+                        {"text": text, "media": media},
+                    ).model_dump_json(),
+                ),
+            )
+            await db.commit()
+    except Exception:
+        logger.warning("failed to enqueue channel delivery", extra={"session_id": session_id}, exc_info=True)
 
 
 async def get_job(db: AsyncSession, job_id: int, user_id: int) -> VideoGenJob | None:
@@ -255,6 +287,8 @@ async def _record_failure(
             "video_gen.failed",
             {"task_id": str(job_id), "error": user_msg, **({"session_id": session_id} if session_id else {})},
         )
+    if session_id:
+        await _enqueue_channel_delivery(session_id, text=f"视频生成失败（任务 {job_id}）：{user_msg}", media=[])
 
 
 # In-flight 集合：进程中途重启时，多个协程可能竞争 finalize 同一任务。第一个进入的注册，后续提前退出，避免重复下载或重复 WSEvent；集合驻留在进程内存（重启即丢失——重启后由 resume_pending_video_jobs 走 DB 重建）。
@@ -366,6 +400,12 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                         f"[视频已生成 task {job_id}] {client_url}",
                         json.dumps(media, ensure_ascii=False),
                     )
+                    # IM 会话的用户看不到 WS 事件：任务结果转待补发，等对端下一条消息送达。
+                    await _enqueue_channel_delivery(
+                        session_id,
+                        text=f"视频已生成（任务 {job_id}）",
+                        media=media,
+                    )
                 await _evt(
                     "video_gen.completed",
                     {
@@ -416,7 +456,9 @@ async def _download_and_store(
             raise RuntimeError("provider.poll succeeded without file_id or download_url")
         download_url = (await provider.fetch(file_id)).download_url
     data = await _stream_download(download_url)
-    storage_path = await asyncio.to_thread(save_companion_asset, data, user_id=user_id, label="chat_video", ext="mp4")
+    if sniff_media_ext(data) != "mp4":
+        raise RuntimeError("provider returned a payload that is not an mp4 stream")
+    storage_path = await save_companion_asset_async(data, user_id=user_id, label="chat_video", ext="mp4")
     return storage_path.rsplit("/", 1)[-1], storage_path
 
 

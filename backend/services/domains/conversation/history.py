@@ -61,6 +61,9 @@ async def build_session_messages(
         item: dict = {"role": msg.role, "content": msg.content}
         if msg.subtype:
             item["subtype"] = msg.subtype
+        # IM 入站已接收未消费（queued）的消息在水合中如实呈现，刷新后排队状态可见。
+        if msg.queued:
+            item["queued"] = True
         if msg.media_json:
             media = safe_json_loads(msg.media_json, default=None)
             if isinstance(media, list) and media:

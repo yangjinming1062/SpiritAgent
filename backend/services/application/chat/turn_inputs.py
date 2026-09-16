@@ -121,13 +121,18 @@ async def _load_memory_query_text(
     ).scalar()
     stmt = select(Message.content).where(
         Message.conversation_id == conv.id,
-        Message.id > conv.context_after_message_id,
+        func.coalesce(Message.context_order, Message.id) > conv.context_after_message_id,
         Message.role == "user",
+        Message.queued.is_(False),
     )
     if checkpoint_id:
-        stmt = stmt.where(Message.id >= checkpoint_id)
+        stmt = stmt.where(func.coalesce(Message.context_order, Message.id) >= checkpoint_id)
     # 始终取最近一条用户消息作记忆召回锚点；use_request 仅用于优先取请求内消息
-    content = (await db.execute(stmt.order_by(Message.id.desc()).limit(1))).scalar()
+    content = (
+        await db.execute(
+            stmt.order_by(func.coalesce(Message.context_order, Message.id).desc(), Message.id.desc()).limit(1),
+        )
+    ).scalar()
     return content or ""
 
 
@@ -354,10 +359,15 @@ async def build_turn_inputs(
         )
     ).scalar()
 
-    stmt = select(Message).where(Message.conversation_id == conv.id, Message.id > conv.context_after_message_id)
+    context_order = func.coalesce(Message.context_order, Message.id)
+    stmt = select(Message).where(
+        Message.conversation_id == conv.id,
+        context_order > conv.context_after_message_id,
+        Message.queued.is_(False),
+    )
     if checkpoint_id:
-        stmt = stmt.where(Message.id >= checkpoint_id)
-    history = (await db.execute(stmt.order_by(Message.id.asc()))).scalars().all()
+        stmt = stmt.where(context_order >= checkpoint_id)
+    history = (await db.execute(stmt.order_by(context_order.asc(), Message.id.asc()))).scalars().all()
     first_user_msg = next((m for m in history if m.role == "user"), None)
     first_user_msg_content = first_user_msg.content if first_user_msg else None
 

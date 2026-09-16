@@ -78,7 +78,8 @@ IdMap = dict[str, dict[str, int | str]]
 def _columns(table: str) -> list[str]:
     if table == "user_preferences":
         return ["nightly_activity_enabled"]
-    return [column.name for column in TABLE_MODELS[table].__table__.columns if column.name != "user_id"]
+    excluded = {"user_id", "dedup_key"} if table == "messages" else {"user_id"}
+    return [column.name for column in TABLE_MODELS[table].__table__.columns if column.name not in excluded]
 
 
 async def serialize_rows(

@@ -4,6 +4,16 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
+class ChannelDeliveryMedia(BaseModel):
+    type: Literal["image", "video"]
+    url: str
+
+
+class ChannelDeliveryPayload(BaseModel):
+    text: str = ""
+    media: list[ChannelDeliveryMedia] = Field(default_factory=list)
+
+
 class ChannelCapabilities(BaseModel):
     """注册表里某渠道的静态能力位，随 GET /api/channels 一起返回供 UI 折叠不支持的开关。"""
 

@@ -243,6 +243,7 @@ function MessageBubbleWithBody({
     Boolean(message.backendMessageId) &&
     !turnInFlight &&
     !body.streaming &&
+    !body.queued &&
     !body.error &&
     !body.cancelled &&
     !body.toolName
@@ -374,6 +375,7 @@ function MessageBubbleWithBody({
               ))}
             </div>
           ) : null}
+          {isUser && body.queued ? <span className="mt-1 text-[11px] text-faint">{dict.chat.queued}</span> : null}
         </div>
         {hasActions && (
           <MessageActionCluster

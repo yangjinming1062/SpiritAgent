@@ -64,6 +64,7 @@ export interface SessionMessage {
   reasoning_content?: null | string
   reasoning_details?: unknown
   role: 'assistant' | 'system' | 'tool' | 'user'
+  queued?: boolean
   subtype?: string
   text?: unknown
   timestamp?: number

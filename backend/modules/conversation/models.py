@@ -85,6 +85,13 @@ class Message(ModelBase):
     summary_date: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     # 旧 fork 末条标记位的列存根——fork / undo 都已不再写入；列保留只为已存在数据不报错，待后续迁移移除。
     draft_anchor: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), nullable=False)
+    # IM 入站消息先落库再确认接收：queued=True 表示已被接收但尚未被任何回合消费；
+    # 消费时整批清除。接收顺序即 id 序，回合顺序由消费动作表达。
+    queued: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), nullable=False)
+    # IM 消费批的上下文排序位置；接收 id 保持不变，排队输入在上一轮工具与回复之后进入上下文。
+    context_order: Mapped[int | None] = mapped_column(nullable=True)
+    # 渠道重投去重标识（绑定 + 对端 + 消息标识的 sha256）。
+    dedup_key: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")

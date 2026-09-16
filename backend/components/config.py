@@ -109,6 +109,31 @@ class Settings(BaseSettings):
         validation_alias="SEETHROUGH_FALLBACK_BASE",
     )
     seethrough_fallback_token: str = Field(default="", validation_alias="SEETHROUGH_FALLBACK_TOKEN")
+    seethrough_submit_timeout_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="SEETHROUGH_SUBMIT_TIMEOUT_SECONDS",
+    )
+    seethrough_inference_timeout_seconds: float = Field(
+        default=900.0,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="SEETHROUGH_INFERENCE_TIMEOUT_SECONDS",
+    )
+    seethrough_download_timeout_seconds: float = Field(
+        default=300.0,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="SEETHROUGH_DOWNLOAD_TIMEOUT_SECONDS",
+    )
+    seethrough_total_budget_seconds: float = Field(
+        default=1740.0,
+        gt=0,
+        le=1740,
+        allow_inf_nan=False,
+        validation_alias="SEETHROUGH_TOTAL_BUDGET_SECONDS",
+    )
     companion_asset_image_providers: Annotated[list[str], NoDecode] = Field(
         default=["gemini", "grok"],
         validation_alias="COMPANION_ASSET_IMAGE_PROVIDERS",
@@ -285,6 +310,7 @@ class Settings(BaseSettings):
     channels_turn_queue_max: int = Field(default=20, validation_alias="CHANNELS_TURN_QUEUE_MAX")
     channels_inbound_rate_per_minute: int = Field(default=20, validation_alias="CHANNELS_INBOUND_RATE_PER_MINUTE")
     channels_restart_backoff_seconds: float = Field(default=10.0, validation_alias="CHANNELS_RESTART_BACKOFF_SECONDS")
+    channels_delivery_max_attempts: int = Field(default=3, gt=0, validation_alias="CHANNELS_DELIVERY_MAX_ATTEMPTS")
     weixin_reply_max_chars: int = Field(default=2000, validation_alias="WEIXIN_REPLY_MAX_CHARS")
     weixin_ilink_poll_timeout_seconds: float = Field(default=40.0, validation_alias="WEIXIN_ILINK_POLL_TIMEOUT_SECONDS")
 

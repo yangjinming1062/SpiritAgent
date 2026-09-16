@@ -23,6 +23,8 @@ class InboundMessage:
     peer_id: str
     peer_name: str
     text: str
+    # 渠道侧消息标识（可用时）；缺失时不去重，避免把合法的重复发言当作重投。
+    msg_id: str = ""
     # 微信 iLink 的回复凭据（reply-only：send 必须回显入站消息携带的 token）；其它渠道为 None。
     context_token: str | None = None
     is_group: bool = False

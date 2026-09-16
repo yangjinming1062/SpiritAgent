@@ -727,7 +727,7 @@ async def regenerate_avatar_from_image(
     except (ValidationError, RuntimeError) as exc:
         raise AvatarGenerationError("prompt enhancement failed", internal=str(exc)) from exc
     secondary_uri = (
-        build_data_uri(presentation_data, presentation_content_type or "image/png")
+        await asyncio.to_thread(build_data_uri, presentation_data, presentation_content_type or "image/png")
         if presentation_data is not None
         else None
     )
@@ -738,7 +738,7 @@ async def regenerate_avatar_from_image(
         style=style,
         persona=persona,
         feedback=description,
-        reference_image=build_data_uri(data, content_type),
+        reference_image=await asyncio.to_thread(build_data_uri, data, content_type),
         secondary_reference_image=secondary_uri,
         persist=persona.is_portrait_confirmed,
     )
@@ -767,7 +767,8 @@ async def upload_avatar(
         asset_url, file_id, final_ext = await _persist_portrait_bytes(data, content_type)
         avatar_source_url = asset_url
     else:
-        file_id, public_url = save_file(
+        file_id, public_url = await asyncio.to_thread(
+            save_file,
             data,
             f"user:{user_id}",
             src_content_type,
@@ -1002,7 +1003,7 @@ async def generate_fullbody_front_2d(
     if user_id is None:
         raise ValueError("user_id is required")
     asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id, check_sealed=True)
-    ref_uri = load_avatar_bytes_as_data_uri(asset.seed_fullbody_url)
+    ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
     if ref_uri is None:
         raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
 
@@ -1115,7 +1116,7 @@ async def generate_fullbody_front_3d(
     if not asset.seed_front_2d_url:
         raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; confirm the 2D front seed first")
 
-    ref_uri = load_avatar_bytes_as_data_uri(asset.seed_fullbody_url)
+    ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
     if ref_uri is None:
         raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
 
@@ -1193,8 +1194,8 @@ async def generate_fullbody_back(
     rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
     template = resolve_fullbody_template(species, rig_type, effective_style)
 
-    front_ref_uri = load_avatar_bytes_as_data_uri(effective_front_url) or load_avatar_bytes_as_data_uri(
-        asset.seed_fullbody_url,
+    front_ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, effective_front_url) or (
+        await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
     )
     effective_feedback = feedback.strip() if (feedback and feedback.strip()) else None
     prompt = build_fullbody_prompt(

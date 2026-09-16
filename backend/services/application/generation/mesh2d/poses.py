@@ -13,6 +13,7 @@ from components import (
     download_capped,
     get_logger,
 )
+from numpy.typing import NDArray
 from PIL import Image, ImageDraw, ImageFilter
 from pydantic import BaseModel, Field
 
@@ -85,17 +86,18 @@ async def generate_image(
     for config in chain:
         try:
             provider = resolve(ServiceType.image_gen, config.provider_name)(config)
+            data_uri = await asyncio.to_thread(asset_store.build_data_uri, reference)
             result = await provider.generate(
                 ImageGenRequest(
                     prompt=prompt,
-                    reference_image=asset_store.build_data_uri(reference),
+                    reference_image=data_uri,
                     size="1024x1024",
                     response_format="b64",
                 ),
             )
             asset = result.images[0]
             raw = (
-                base64.b64decode(asset.b64)
+                await asyncio.to_thread(base64.b64decode, asset.b64)
                 if asset.b64
                 else await download_capped(asset.url or "", max_bytes=LAYER_ASSET_DOWNLOAD_MAX_BYTES, timeout=90)
             )
@@ -135,7 +137,10 @@ async def locate_pose(raw: bytes, chain: list[ProviderConfig]) -> Landmarks:
                         {
                             "role": "user",
                             "content": [
-                                {"type": "input_image", "image_url": asset_store.build_data_uri(raw)},
+                                {
+                                    "type": "input_image",
+                                    "image_url": await asyncio.to_thread(asset_store.build_data_uri, raw),
+                                },
                             ],
                         },
                     ],
@@ -192,6 +197,13 @@ def cutout(raw: bytes, channel: int) -> Image.Image:
     return Image.fromarray(np.dstack((np.clip(rgb, 0, 255), alpha * 255)).astype(np.uint8))
 
 
+def _prepare_pose_reference(reference: bytes) -> tuple[NDArray[np.float32], bytes]:
+    with Image.open(io.BytesIO(reference)) as source:
+        image = source.convert("RGB")
+        pixels = np.asarray(image.resize((128, 128)), dtype=np.float32)
+        return pixels, encode_png(image)
+
+
 async def generate_pose_pack(reference: bytes, user_id: int | None) -> tuple[PosePack, dict[str, bytes]]:
     async with SESSION_LOCAL() as db:
         image_chain, _ = await resolve_image_gen_chain(
@@ -203,9 +215,7 @@ async def generate_pose_pack(reference: bytes, user_id: int | None) -> tuple[Pos
         vision_chain = await resolve_vision_chain(db if user_id is not None else None, user_id)
     if not image_chain or not vision_chain:
         raise PoseGenerationError("扶边姿态需要配置支持参考图的图像供应商及视觉模型")
-    with Image.open(io.BytesIO(reference)) as source:
-        pixels = np.asarray(source.convert("RGB").resize((128, 128)), dtype=np.float32)
-        reference = encode_png(source.convert("RGB"))
+    pixels, reference = await asyncio.to_thread(_prepare_pose_reference, reference)
     # 选取立绘中最少出现的主色作色幕，手臂与身体间的封闭空隙也能清除。
     channel = min(
         range(3),

@@ -160,29 +160,35 @@ async def enforce_session_quota(db: AsyncSession, session_id: str, incoming_byte
     root = session_dir(SETTINGS.data_dir, session_id)
     if not root.exists():
         return
-    entries: list[tuple[float, int, Path]] = []
-    total = incoming_bytes
-    for p in root.iterdir():
-        try:
-            if not p.is_file():
+
+    def _evict_overflow() -> set[str]:
+        entries: list[tuple[float, int, Path]] = []
+        total = incoming_bytes
+        for p in root.iterdir():
+            try:
+                if not p.is_file():
+                    continue
+                stat = p.stat()
+            except OSError:
                 continue
-            stat = p.stat()
-        except OSError:
-            continue
-        entries.append((stat.st_mtime, stat.st_size, p))
-        total += stat.st_size
-    if total <= SETTINGS.attachment_session_quota_bytes:
-        return
-    victims: list[Path] = []
-    for _mtime, size, p in sorted(entries):  # 最旧在前
+            entries.append((stat.st_mtime, stat.st_size, p))
+            total += stat.st_size
         if total <= SETTINGS.attachment_session_quota_bytes:
-            break
-        total -= size
-        victims.append(p)
-    file_ids = {p.name for p in victims}
-    for p in victims:
-        with contextlib.suppress(OSError):
-            p.unlink()
+            return set()
+        victims: list[Path] = []
+        for _mtime, size, p in sorted(entries):  # 最旧在前
+            if total <= SETTINGS.attachment_session_quota_bytes:
+                break
+            total -= size
+            victims.append(p)
+        for p in victims:
+            with contextlib.suppress(OSError):
+                p.unlink()
+        return {p.name for p in victims}
+
+    file_ids = await asyncio.to_thread(_evict_overflow)
+    if not file_ids:
+        return
     rewritten = await _rewrite_rows_referencing(db, session_id, file_ids)
     if rewritten:
         await db.commit()
@@ -283,9 +289,10 @@ async def inline_video_parts(items: list, *, expected_session_id: str | None = N
                     try:
                         raw = await asyncio.to_thread(path.read_bytes)
                         mime = video_mime_for_ext(path.suffix)
+                        encoded = await asyncio.to_thread(base64.b64encode, raw)
                         inlined = {
                             "type": "input_video",
-                            "video_url": f"data:{mime};base64,{base64.b64encode(raw).decode('ascii')}",
+                            "video_url": f"data:{mime};base64,{encoded.decode('ascii')}",
                         }
                         budget -= 1
                     except OSError:

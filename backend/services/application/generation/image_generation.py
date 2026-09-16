@@ -6,9 +6,11 @@ from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_
 from PIL import Image, ImageDraw, ImageOps
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.infrastructure.assets import save_companion_asset
+from services.infrastructure.assets import asset_store, save_companion_asset_async, sniff_media_ext
 from services.infrastructure.llm import (
+    ImageGenProvider,
     ImageGenRequest,
+    ImageGenResult,
     MissingLlmConfigError,
     ProviderConfig,
     ServiceType,
@@ -66,21 +68,11 @@ def compose_image_references(primary: bytes, secondary: bytes) -> bytes:
     return output.getvalue()
 
 
-def _image_ext_from_bytes(data: bytes, fallback: str = "jpg") -> str:
-    if data.startswith(b"\x89PNG"):
-        return "png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "jpg"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        return "webp"
-    if data.startswith(b"GIF8"):
-        return "gif"
-    return fallback
-
-
-async def _persist_user_asset_async(data: bytes, user_id: int, *, mime: str = "") -> str:
-    ext = _EXT_BY_MIME.get((mime or "").lower()) or _image_ext_from_bytes(data)
-    return await asyncio.to_thread(save_companion_asset, data, user_id=user_id, label="chat_image", ext=ext)
+async def _persist_user_asset_async(data: bytes, user_id: int) -> str:
+    ext = sniff_media_ext(data)
+    if ext not in ("png", "jpg", "webp", "gif"):
+        raise ImageGenerationError("图片生成服务返回了无效的图片数据，请重试")
+    return await save_companion_asset_async(data, user_id=user_id, label="chat_image", ext=ext)
 
 
 async def generate_images(
@@ -105,7 +97,8 @@ async def generate_images(
                 resolve_reference_bytes(secondary_reference_image),
             )
             sheet = await asyncio.to_thread(compose_image_references, primary[0], secondary[0])
-            reference_image = "data:image/png;base64," + base64.b64encode(sheet).decode("ascii")
+            encoded = await asyncio.to_thread(base64.b64encode, sheet)
+            reference_image = "data:image/png;base64," + encoded.decode("ascii")
             prompt = (
                 "The sole input image is a two-panel reference sheet. The LEFT panel is reference 1 and "
                 "the RIGHT panel is reference 2; use each only for the role assigned in the task prompt. "
@@ -133,7 +126,7 @@ async def generate_images(
             raise ImageGenerationError(err, internal=err)
         active_provider: list[str] = []
 
-        async def _generate_call(p):
+        async def _generate_call(p: ImageGenProvider) -> ImageGenResult:
             prov_name = getattr(getattr(p, "config", None), "provider_name", None) or getattr(
                 p,
                 "provider_name",
@@ -157,37 +150,40 @@ async def generate_images(
 
     urls: list[str] = []
     as_user_assets = persist_user_assets and user_id is not None
-    for asset in result.images:
-        if asset.url:
-            if as_user_assets:
-                try:
+    try:
+        for asset in result.images:
+            if asset.url:
+                if as_user_assets:
+                    # 供应商地址短时效：下载→魔数校验→转存正式资产，失败即本轮报错重试，不把短效 URL 落库。
                     data = await download_capped(asset.url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=120.0)
-                    urls.append(await _persist_user_asset_async(data, user_id, mime=asset.mime or ""))
+                    urls.append(await _persist_user_asset_async(data, user_id))
+                else:
+                    urls.append(asset.url)
+            elif asset.b64 is not None:
+                if not asset.b64:
+                    logger.warning("image asset has empty b64; skipping", extra={"mime": asset.mime})
                     continue
-                except Exception:
-                    logger.warning(
-                        "failed to re-host provider image url as user asset; keeping provider url",
-                        extra={"user_id": user_id},
-                        exc_info=True,
-                    )
-            urls.append(asset.url)
-        elif asset.b64 is not None:
-            if not asset.b64:
-                logger.warning("image asset has empty b64; skipping", extra={"mime": asset.mime})
-                continue
-            data = base64.b64decode(asset.b64)
-            if as_user_assets:
-                urls.append(await _persist_user_asset_async(data, user_id, mime=asset.mime or ""))
-                continue
-            ext = _EXT_BY_MIME.get((asset.mime or "").lower(), "jpg")
-            _file_id, public_url = await asyncio.to_thread(
-                save_file,
-                data,
-                session_id="",
-                content_type=asset.mime or "image/jpeg",
-                ext=ext,
-            )
-            urls.append(public_url)
+                data = await asyncio.to_thread(base64.b64decode, asset.b64)
+                if as_user_assets:
+                    urls.append(await _persist_user_asset_async(data, user_id))
+                    continue
+                ext = _EXT_BY_MIME.get((asset.mime or "").lower(), "jpg")
+                _file_id, public_url = await asyncio.to_thread(
+                    save_file,
+                    data,
+                    session_id="",
+                    content_type=asset.mime or "image/jpeg",
+                    ext=ext,
+                )
+                urls.append(public_url)
+    except Exception as exc:
+        if as_user_assets:
+            for url in urls:
+                await asyncio.to_thread(asset_store.unlink_companion_asset, url)
+        if isinstance(exc, ImageGenerationError):
+            raise
+        logger.warning("generated image storage failed", extra={"user_id": user_id}, exc_info=True)
+        raise ImageGenerationError("生成图片无法保存，请稍后重试", internal=str(exc)) from exc
     if not urls:
         raise ImageGenerationError("图片生成服务返回空结果")
     used_provider = active_provider[-1] if active_provider else None

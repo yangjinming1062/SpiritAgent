@@ -5,7 +5,7 @@ import base64
 import hashlib
 import json
 
-from components import SESSION_LOCAL, get_logger, track_user_task
+from components import SESSION_LOCAL, SETTINGS, get_logger, track_user_task
 from modules.companion import AvatarAsset, Companion2DModel, CompanionOutfit
 from modules.ws import emit_ws_event
 from sqlalchemy import select, update
@@ -35,14 +35,14 @@ def active_model_ids() -> frozenset[int]:
     return frozenset(_ACTIVE_MODEL_IDS)
 
 
-def _safe_load_avatar_bytes(url: str) -> bytes:
-    data_uri = load_avatar_bytes_as_data_uri(url)
+async def _safe_load_avatar_bytes(url: str) -> bytes:
+    data_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, url)
 
     if not data_uri or not data_uri.startswith("data:"):
         raise Mesh2DPipelineError(f"failed to read avatar bytes for url: {url}")
 
     _, b64 = data_uri.split(",", 1)
-    return base64.b64decode(b64)
+    return await asyncio.to_thread(base64.b64decode, b64)
 
 
 async def _generate(
@@ -51,15 +51,25 @@ async def _generate(
 ) -> tuple[str, list[dict[str, str]]]:
     paths: list[str] = []
     try:
-        async with asyncio.timeout(1740), asyncio.TaskGroup() as tasks:
+        async with asyncio.timeout(SETTINGS.seethrough_total_budget_seconds), asyncio.TaskGroup() as tasks:
             psd_task = tasks.create_task(split_to_psd(fullbody_bytes))
             poses_task = tasks.create_task(generate_pose_pack(fullbody_bytes, user_id))
         poses, textures = poses_task.result()
-        psd_path = asset_store.save_companion_asset(psd_task.result(), user_id=user_id, label="2d_psd", ext="psd")
+        psd_path = await asset_store.save_companion_asset_async(
+            psd_task.result(),
+            user_id=user_id,
+            label="2d_psd",
+            ext="psd",
+        )
         paths.append(psd_path)
         layers = [{"name": "psd", "url": psd_path}]
         for name, data in textures.items():
-            path = asset_store.save_companion_asset(data, user_id=user_id, label=name, ext="webp")
+            path = await asset_store.save_companion_asset_async(
+                data,
+                user_id=user_id,
+                label=name,
+                ext="webp",
+            )
             paths.append(path)
             layers.append({"name": name, "url": path})
         manifest = {
@@ -69,9 +79,11 @@ async def _generate(
             "poses": poses.model_dump(by_alias=True),
         }
         return json.dumps(manifest, ensure_ascii=False), layers
-    except Exception as exc:
+    except (Exception, asyncio.CancelledError) as exc:
         for path in paths:
-            asset_store.unlink_companion_asset(path)
+            await asyncio.to_thread(asset_store.unlink_companion_asset, path)
+        if isinstance(exc, asyncio.CancelledError):
+            raise
         logger.warning("2d asset generation failed", exc_info=True, extra={"user_id": user_id})
         raise Mesh2DPipelineError("2D 资产生成失败，请重试") from exc
 
@@ -116,7 +128,7 @@ def run_mesh2d_pipeline(
 
         try:
             normalized_url = normalize_avatar_url_to_bare(fullbody_url) or fullbody_url
-            fullbody_bytes = _safe_load_avatar_bytes(normalized_url)
+            fullbody_bytes = await _safe_load_avatar_bytes(normalized_url)
             manifest_json, layer_entries = await _generate(user_id, fullbody_bytes)
         except Mesh2DPipelineError as exc:
             logger.warning(

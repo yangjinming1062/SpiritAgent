@@ -14,8 +14,10 @@ from .asset_store import (
     resolve_companion_asset_path,
     resolve_companion_model_path,
     save_companion_asset,
+    save_companion_asset_async,
     save_companion_model,
     signed_companion_asset_url,
+    sniff_media_ext,
     verify_signed_asset_request,
     verify_signed_avatar_request,
 )
@@ -35,9 +37,11 @@ __all__ = [
     "resolve_companion_asset_path",
     "resolve_companion_model_path",
     "save_companion_asset",
+    "save_companion_asset_async",
     "save_companion_model",
     "serve_ranged_file",
     "signed_companion_asset_url",
+    "sniff_media_ext",
     "verify_signed_asset_request",
     "verify_signed_avatar_request",
 ]

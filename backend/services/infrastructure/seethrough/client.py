@@ -2,10 +2,15 @@
 
 双 provider 同构 Gradio 协议（upload → call → SSE 轮询）。主用任何失败自动切备用
 （免费资源，多试一次成本为零）；主用确认每日限额后进程内冷却 6 小时直接走备用。
-两路都失败抛 SeeThroughError，由调用方落失败态（无 CPU 兜底链）。"""
+两路都失败抛 SeeThroughError，由调用方落失败态（无 CPU 兜底链）。
 
+社区算力休眠、排队与推理耗时不可控：提交、推理、下载三段各有独立超时（SETTINGS 热调），
+再受总预算约束——不用单个大而全的读超时掩盖阶段停滞。"""
+
+import asyncio
 import json
 import time
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import urlparse
 
@@ -14,10 +19,9 @@ from components import SETTINGS, get_logger
 
 logger = get_logger(__name__)
 
-_TOTAL_TIMEOUT_SECONDS = 900.0
 _MIN_PSD_BYTES = 10240
-# 双 provider 最坏 900s+900s 会撞 outfit 拆分 30 分钟清扫窗口；共享预算留余量
-_TOTAL_BUDGET_SECONDS = 1740.0
+# 主用耗尽预算后，备用路至少要留这么多秒，否则直接跳过（唤醒都来不及）。
+_FALLBACK_MIN_BUDGET_SECONDS = 60.0
 _QUOTA_COOLDOWN_SECONDS = 6 * 3600.0
 _QUOTA_SIGNALS = ("quota", "exceeded", "rate limit", "too many", "sign in", "daily")
 
@@ -30,6 +34,27 @@ class SeeThroughError(RuntimeError):
     def __init__(self, message: str, *, kind: str = "space") -> None:
         super().__init__(message)
         self.kind = kind
+
+
+@dataclass(frozen=True)
+class _StageTimeouts:
+    """拆分各阶段的独立超时（秒）。"""
+
+    submit: float
+    inference: float
+    download: float
+
+    @classmethod
+    def from_settings(cls) -> "_StageTimeouts":
+        return cls(
+            submit=SETTINGS.seethrough_submit_timeout_seconds,
+            inference=SETTINGS.seethrough_inference_timeout_seconds,
+            download=SETTINGS.seethrough_download_timeout_seconds,
+        )
+
+
+def _remaining(deadline: float) -> float:
+    return max(0.0, deadline - time.monotonic())
 
 
 def _classify_error_text(text: str) -> str:
@@ -59,14 +84,15 @@ async def split_to_psd(
 ) -> bytes:
     """主用 HF、备用魔搭各试一次（单 provider 均不重试，额度保护）；返回 PSD 字节。"""
     global _primary_quota_until
-    deadline = time.monotonic() + _TOTAL_BUDGET_SECONDS
+    deadline = time.monotonic() + SETTINGS.seethrough_total_budget_seconds
+    stages = _StageTimeouts.from_settings()
     fallback_base = SETTINGS.seethrough_fallback_base or None
     fallback_headers: dict[str, str] = {}
     if SETTINGS.seethrough_fallback_token:
         fallback_headers["Authorization"] = f"Bearer {SETTINGS.seethrough_fallback_token}"
     primary_reason = "skipped: quota cooldown"
 
-    async with httpx.AsyncClient(timeout=httpx.Timeout(_TOTAL_TIMEOUT_SECONDS, connect=30.0)) as client:
+    async with httpx.AsyncClient() as client:
         if time.monotonic() >= _primary_quota_until:
             try:
                 psd = await _attempt_split(
@@ -77,6 +103,8 @@ async def split_to_psd(
                     resolution,
                     seed,
                     tblr_split,
+                    stages=stages,
+                    deadline=deadline,
                 )
                 logger.info("2d split provider succeeded: hf")
                 return psd
@@ -91,7 +119,7 @@ async def split_to_psd(
         if not fallback_base:
             raise SeeThroughError(f"2d split failed (hf: {primary_reason}; fallback disabled)")
 
-        if deadline - time.monotonic() < 60.0:
+        if _remaining(deadline) < _FALLBACK_MIN_BUDGET_SECONDS:
             raise SeeThroughError(
                 f"2d split failed on all providers (hf: {primary_reason}; modelscope: skipped, budget exhausted)",
             )
@@ -106,6 +134,8 @@ async def split_to_psd(
                 seed,
                 tblr_split,
                 headers=fallback_headers,
+                stages=stages,
+                deadline=deadline,
             )
             logger.info("2d split provider succeeded: modelscope")
             return psd
@@ -125,12 +155,43 @@ async def _attempt_split(
     tblr_split: bool,
     *,
     headers: dict[str, str] | None = None,
+    stages: _StageTimeouts,
+    deadline: float,
 ) -> bytes:
+    if _remaining(deadline) <= 0:
+        raise SeeThroughError("budget exhausted before split start")
+    stage = "submit"
     try:
-        file_data = await _upload(client, base, image_bytes, mime, headers)
-        event_id = await _submit(client, base, file_data, resolution, seed, tblr_split, headers)
-        psd_url = _provider_file_url(base, await _wait_complete(client, base, event_id, headers))
-        return await _download(client, psd_url, headers)
+        async with asyncio.timeout(_remaining(deadline)):
+            async with asyncio.timeout(stages.submit):
+                submit_timeout = httpx.Timeout(stages.submit, connect=min(30.0, stages.submit))
+                file_data = await _upload(client, base, image_bytes, mime, headers, timeout=submit_timeout)
+                event_id = await _submit(
+                    client,
+                    base,
+                    file_data,
+                    resolution,
+                    seed,
+                    tblr_split,
+                    headers,
+                    timeout=submit_timeout,
+                )
+            stage = "inference"
+            async with asyncio.timeout(stages.inference):
+                psd_url = _provider_file_url(
+                    base,
+                    await _wait_complete(client, base, event_id, headers, stage_limit=stages.inference),
+                )
+            stage = "download"
+            async with asyncio.timeout(stages.download):
+                return await _download(
+                    client,
+                    psd_url,
+                    headers,
+                    timeout=httpx.Timeout(stages.download, connect=min(30.0, stages.download)),
+                )
+    except TimeoutError as exc:
+        raise SeeThroughError(f"{stage} stage or total budget timed out", kind="transport") from exc
     except SeeThroughError:
         raise
     except httpx.TransportError as exc:
@@ -149,9 +210,16 @@ async def _upload(
     image_bytes: bytes,
     mime: str,
     headers: dict[str, str] | None,
+    *,
+    timeout: httpx.Timeout,
 ) -> dict[str, Any]:
     ext = "png" if "png" in mime else "jpg"
-    resp = await client.post(f"{base}/upload", files={"files": (f"seed.{ext}", image_bytes, mime)}, headers=headers)
+    resp = await client.post(
+        f"{base}/upload",
+        files={"files": (f"seed.{ext}", image_bytes, mime)},
+        headers=headers,
+        timeout=timeout,
+    )
 
     resp.raise_for_status()
     paths = resp.json()
@@ -171,11 +239,14 @@ async def _submit(
     seed: int,
     tblr_split: bool,
     headers: dict[str, str] | None,
+    *,
+    timeout: httpx.Timeout,
 ) -> str:
     resp = await client.post(
         f"{base}/call/inference",
         json={"data": [file_data, resolution, seed, tblr_split]},
         headers=headers,
+        timeout=timeout,
     )
     resp.raise_for_status()
     event_id = resp.json().get("event_id")
@@ -191,11 +262,22 @@ async def _wait_complete(
     base: str,
     event_id: str,
     headers: dict[str, str] | None,
+    *,
+    stage_limit: float,
 ) -> str:
-    """SSE 轮询直到 complete 事件；error 事件与流中断都转 SeeThroughError。"""
-    event = ""
+    """SSE 轮询直到 complete 事件；error 事件与流中断都转 SeeThroughError。
 
-    async with client.stream("GET", f"{base}/call/inference/{event_id}", headers=headers) as stream:
+    阶段累计耗时与总预算由调用边界约束，HTTP 读超时仅约束停滞。
+    """
+    event = ""
+    read_timeout = httpx.Timeout(stage_limit, connect=min(30.0, stage_limit))
+
+    async with client.stream(
+        "GET",
+        f"{base}/call/inference/{event_id}",
+        headers=headers,
+        timeout=read_timeout,
+    ) as stream:
         async for line in stream.aiter_lines():
             if line.startswith("event:"):
                 event = line[6:].strip()
@@ -225,8 +307,14 @@ def _extract_psd_url(data: str) -> str:
     return url
 
 
-async def _download(client: httpx.AsyncClient, url: str, headers: dict[str, str] | None) -> bytes:
-    resp = await client.get(url, follow_redirects=True, headers=headers)
+async def _download(
+    client: httpx.AsyncClient,
+    url: str,
+    headers: dict[str, str] | None,
+    *,
+    timeout: httpx.Timeout,
+) -> bytes:
+    resp = await client.get(url, follow_redirects=True, headers=headers, timeout=timeout)
     resp.raise_for_status()
 
     if len(resp.content) < _MIN_PSD_BYTES:

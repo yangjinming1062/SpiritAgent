@@ -548,6 +548,7 @@ export const dict = {
     defaultSessionTitle: '日常对话',
     inputPlaceholder: '跟它说，或把文件拖过来',
     typing: '正在输入...',
+    queued: '已接收，等待处理',
     openMainSessionFailed: '无法打开日常对话',
 
     filesReceived: (count: number) => `收到 ${count} 个文件`,

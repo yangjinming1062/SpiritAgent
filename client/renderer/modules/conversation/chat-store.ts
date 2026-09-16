@@ -33,6 +33,7 @@ export interface ChatMessageBody {
   text: string
   reasoning?: string
   streaming?: boolean
+  queued?: boolean
   toolName?: string | null
   tools?: string[]
   error?: string
@@ -320,6 +321,7 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
         toolName: m.tool_name ?? null,
         tools: m.tool_name ? [m.tool_name] : undefined,
         streaming: false,
+        queued: m.role === 'user' && m.queued,
         voiceDuration: cachedVoiceDuration,
         voiceStatus: cachedVoiceDuration ? 'ready' : undefined,
         ...(m.role === 'user' && index === 0 ? omitUndefined(extractUserAttachments(m)) : {}),

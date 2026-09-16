@@ -43,7 +43,10 @@ DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com/"
 # 通用请求头与 base_info：channel_version 需跟随官方 iLink SDK 演进（omp-wechat 同源值 2.2.0）。
 CHANNEL_VERSION = "2.2.0"
 BOT_AGENT = "SpiritAgent/1.0.0"
-# 会话过期错误码（getupdates / sendmessage / getconfig 均可能返回；恢复手段只有重新扫码）。
+# 会话过期错误码（getupdates / sendmessage / getconfig 均可能返回）。
+# 语义区分：登录凭据失效要求重新扫码，但**只有轮询回路有权判定**——getupdates 是持续会话探针，
+# 它报 -14 才清凭据转 login_required。发送路径遇到 -14 只代表本条回复上下文失效
+# （context_token 过期），等待对端下一条消息刷新 token 即可，不动登录态。
 SESSION_EXPIRED = -14
 
 QR_POLL_INTERVAL_SECONDS = 3.0
@@ -460,16 +463,17 @@ class WeixinIlinkAdapter(ChannelAdapter):
                 timeout=SETTINGS.weixin_ilink_poll_timeout_seconds,
             )
             cursor = data.get("get_updates_buf")
-            if cursor:
-                self._creds["get_updates_buf"] = cursor
             msgs = data.get("msgs") or []
             for msg in msgs:
-                self._accept_inbound(msg)
+                await self._accept_inbound(msg)
+            # 接收落库完成后才推进游标；回合执行通过返回的 future 独立继续。
+            if cursor:
+                self._creds["get_updates_buf"] = cursor
             # 游标与新增 context_token 一批一存（~35s 一次，DB 写频率可忽略）。
             if msgs or cursor:
                 await self._persist_credentials()
 
-    def _accept_inbound(self, msg: dict) -> None:
+    async def _accept_inbound(self, msg: dict) -> None:
         peer_id = msg.get("from_user_id") or ""
         text, media_descs = _split_text_and_media(msg.get("item_list"))
         if not peer_id or (not text and not media_descs):
@@ -478,23 +482,17 @@ class WeixinIlinkAdapter(ChannelAdapter):
         if token:
             self._creds.setdefault("context_tokens", {})[peer_id] = token
 
-        async def _dispatch() -> None:
-            attachments = await _materialize_inbound_attachments(self.snapshot.id, peer_id, media_descs)
-            inbound = InboundMessage(
-                channel=self.channel_name,
-                peer_id=peer_id,
-                peer_name=peer_id,
-                text=text,
-                context_token=token,
-                attachments=attachments,
-            )
-            try:
-                future = await self._on_inbound(inbound)
-                await future
-            except Exception:
-                logger.exception("weixin inbound turn failed", extra={"binding": self.snapshot.id, "peer": peer_id})
-
-        self.create_task(_dispatch(), name=f"channels.weixin.dispatch.{self.snapshot.id}")
+        attachments = await _materialize_inbound_attachments(self.snapshot.id, peer_id, media_descs)
+        inbound = InboundMessage(
+            channel=self.channel_name,
+            peer_id=peer_id,
+            peer_name=peer_id,
+            text=text,
+            msg_id=str(msg.get("new_msg_id") or msg.get("msg_id") or ""),
+            context_token=token,
+            attachments=attachments,
+        )
+        await self._on_inbound(inbound)
 
     async def send_text(self, peer_id: str, text: str, context_token: str | None = None) -> None:
         token = context_token or self._creds.get("context_tokens", {}).get(peer_id)
@@ -516,8 +514,9 @@ class WeixinIlinkAdapter(ChannelAdapter):
         try:
             await self._request("POST", "ilink/bot/sendmessage", payload=payload)
         except IlinkSessionExpired:
-            await self._expire_session()
-            raise ChannelError("iLink session expired while sending", fatal=False) from None
+            # 回复上下文失效 ≠ 登录失效：不重扫码。桥接层把未送达内容保留为待补发，
+            # 登录态是否真失效由轮询回路的 -14 判定。
+            raise ChannelError("iLink reply context expired while sending", fatal=False) from None
 
     async def send_media(
         self,
@@ -547,10 +546,10 @@ class WeixinIlinkAdapter(ChannelAdapter):
                 raise
             except Exception as e:
                 logger.warning(
-                    "iLink upload failed, skipping media",
+                    "iLink upload failed",
                     extra={"binding": self.snapshot.id, "error": str(e)},
                 )
-                continue
+                raise ChannelError("iLink media upload failed", fatal=False) from e
             item_list.append(item)
 
         if not item_list and not text:
@@ -558,7 +557,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
                 "all media uploads failed; nothing to send",
                 extra={"binding": self.snapshot.id, "peer": peer_id},
             )
-            return
+            raise ChannelError("iLink media reply contains no uploadable media", fatal=False)
         if text:
             item_list.insert(0, {"type": 1, "text_item": {"text": text}})
 
@@ -577,8 +576,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
         try:
             await self._request("POST", "ilink/bot/sendmessage", payload=payload)
         except IlinkSessionExpired:
-            await self._expire_session()
-            raise ChannelError("iLink session expired while sending media", fatal=False) from None
+            raise ChannelError("iLink reply context expired while sending media", fatal=False) from None
 
     async def _upload_one(self, peer_id: str, media: dict) -> dict:
         """上传单个媒体：拉本地媒体字节 → AES 加密 → getuploadurl 拿 upload_full_url → POST 字节 →
@@ -692,7 +690,8 @@ class WeixinIlinkAdapter(ChannelAdapter):
                 timeout=10.0,
             )
         except IlinkSessionExpired:
-            await self._expire_session()
+            # typing 是 best-effort，会话是否真失效交给轮询回路判定。
+            logger.debug("typing skipped: reply context expired", extra={"binding": self.snapshot.id, "peer": peer_id})
         except Exception:
             logger.debug("typing indicator failed", extra={"binding": self.snapshot.id, "peer": peer_id})
 

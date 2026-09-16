@@ -16,6 +16,7 @@ from components import (
 from modules.conversation import Conversation, Message
 from modules.media import SpeechStyle
 from modules.system import ChatRequest
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope
@@ -113,6 +114,35 @@ async def persist_extra_user_messages(db: AsyncSession, conv_id: int, items: lis
         rows.append(row)
     await db.commit()
     return [row.id for row in rows if isinstance(row.id, int)]
+
+
+async def persist_queued_inbound_message(
+    db: AsyncSession,
+    conv_id: int,
+    *,
+    text: str,
+    attachments: list[dict] | None = None,
+    dedup_key: str | None = None,
+) -> Message | None:
+    """IM 入站消息先持久化再确认接收：以 queued 标记落为会话行并返回。
+
+    接收顺序即行 id 序；回合消费时整批清除标记。dedup_key 命中已有行（渠道重投）
+    时返回 None，调用方不再入队。
+    """
+    db_content, db_content_type = _build_persisted_content_from_parts(text, attachments or [])
+    stmt = insert(Message).values(
+        conversation_id=conv_id,
+        role="user",
+        content=db_content,
+        content_type=db_content_type,
+        queued=True,
+        dedup_key=dedup_key,
+    )
+    row = (
+        await db.execute(stmt.on_conflict_do_nothing(index_elements=[Message.dedup_key]).returning(Message))
+    ).scalar_one_or_none()
+    await db.commit()
+    return row
 
 
 async def _persist_user_message(db: AsyncSession, conv: Conversation, req: ChatRequest) -> int:
