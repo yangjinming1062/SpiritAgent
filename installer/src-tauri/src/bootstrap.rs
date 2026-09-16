@@ -224,7 +224,7 @@ pub(crate) fn resolve_spiritagent_desktop_exe() -> Option<PathBuf> {
 }
 
 /// 给 `spiritagent_is_installed` 上一道闸，避免 venv 损坏时被 macOS 启动快路径误判为已安装。
-/// 导入链必须与 `client/main/runner-updater.cjs::_probeVenvIntegrity` 保持一致，确保两边对"健康 venv"的判定一致。
+/// 导入链必须与 `client/main/runner/updater.ts::probeVenvIntegrity` 保持一致，确保两边对"健康 venv"的判定一致。
 fn runner_venv_is_healthy() -> bool {
     use std::process::{Command, Stdio};
 

@@ -385,8 +385,8 @@ function Stage-InstallSkills {
     $skillsDir = Join-Path $SpiritAgentHome "skills"
     if (-not (Test-Path $skillsDir)) { New-Item -ItemType Directory -Force -Path $skillsDir | Out-Null }
 
-    # robocopy /MIR 镜像（保留用户未与 bundle 冲突的本地内容）。退出码 0-7 视为成功，>=8 视为失败。
-    & robocopy $BundledSkillsDir $skillsDir /MIR /NFL /NDL /NJH /NJS /NP /R:0 /W:0 | Out-Null
+    # /E 只增不删（无 /PURGE）：保留用户自装技能，与 install.sh 的 rsync 语义一致。退出码 0-7 视为成功，>=8 视为失败。
+    & robocopy $BundledSkillsDir $skillsDir /E /NFL /NDL /NJH /NJS /NP /R:0 /W:0 | Out-Null
     if ($LASTEXITCODE -ge 8) {
         Emit-StageErr "install-skills" "robocopy skills failed: exit $LASTEXITCODE"
         return 1
