@@ -38,15 +38,10 @@ async def resolve_image_gen_chain(
     user_id: int | None,
     reference_image: str | None,
     *,
-    preferred_provider: str | list[str] | None = None,
     image_edit: bool = False,
 ) -> tuple[list[ProviderConfig], str | None]:
     """在传入 reference_image 时按图生图能力过滤 image_gen 供应商链；image_edit 时改按图像编辑能力过滤。"""
     full = await resolve_provider_chain(db, user_id, "image_gen")
-    if preferred_provider:
-        priority = [preferred_provider] if isinstance(preferred_provider, str) else list(preferred_provider)
-        rank = {name: i for i, name in enumerate(priority)}
-        full = sorted(full, key=lambda c: rank.get(c.provider_name, len(priority)))
     if not reference_image:
         return full, None
     capable = [
@@ -97,7 +92,6 @@ async def generate_images(
     user_id: int | None = None,
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
-    preferred_provider: str | list[str] | None = None,
     persist_user_assets: bool = False,
     image_edit: bool = False,
 ) -> list[str]:
@@ -134,7 +128,6 @@ async def generate_images(
                     db,
                     user_id,
                     reference_image,
-                    preferred_provider=preferred_provider,
                     image_edit=image_edit,
                 )
         else:
@@ -142,7 +135,6 @@ async def generate_images(
                 None,
                 None,
                 reference_image,
-                preferred_provider=preferred_provider,
                 image_edit=image_edit,
             )
         if err:

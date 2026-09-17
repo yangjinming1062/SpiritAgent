@@ -1,11 +1,10 @@
 import tomllib
 from pathlib import Path
-from typing import Annotated, Any, Literal, Self
+from typing import Any, Literal, Self
 
 from pydantic import Field, field_validator
 from pydantic_settings import (
     BaseSettings,
-    NoDecode,
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
@@ -138,11 +137,6 @@ class Settings(BaseSettings):
         allow_inf_nan=False,
         validation_alias="SEETHROUGH_TOTAL_BUDGET_SECONDS",
     )
-    companion_asset_image_providers: Annotated[list[str], NoDecode] = Field(
-        default=["gemini", "grok"],
-        validation_alias="COMPANION_ASSET_IMAGE_PROVIDERS",
-    )
-
     companion_asset_signing_key: str
     ssrf_allowed_cidrs: str = Field(default="", validation_alias="SSRF_ALLOWED_CIDRS")
 
@@ -346,15 +340,6 @@ class Settings(BaseSettings):
         file_secret_settings: PydanticBaseSettingsSource,  # noqa: ARG003
     ) -> tuple[PydanticBaseSettingsSource, ...]:
         return (init_settings, env_settings, dotenv_settings, TomlConfigSource(settings_cls))
-
-    @field_validator("companion_asset_image_providers", mode="before")
-    @classmethod
-    def _parse_providers_csv(cls, v: str | list[str] | None) -> list[str] | None:
-        if v is None or v == "":
-            return []
-        if isinstance(v, str):
-            return [p.strip() for p in v.split(",") if p.strip()]
-        return v
 
     @field_validator("data_dir", mode="after")
     @classmethod

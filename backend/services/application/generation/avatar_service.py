@@ -111,7 +111,6 @@ async def _generate_one_portrait_with_moderation_retry(
     secondary_reference_image: str | None = None,
     size: str = _AVATAR_SIZE,
     persist: bool = True,
-    preferred_provider: str | list[str] | None = None,
     image_edit: bool = False,
 ) -> tuple[str, str, str, str]:
     """生成一张立绘；命中内容审核时用改写后的提示词重试一次。image_edit=True 时参考图是编辑底图，供应商链按图像编辑能力过滤。"""
@@ -123,7 +122,6 @@ async def _generate_one_portrait_with_moderation_retry(
             secondary_reference_image=secondary_reference_image,
             size=size,
             persist=persist,
-            preferred_provider=preferred_provider,
             image_edit=image_edit,
         )
     except AvatarGenerationError as first_exc:
@@ -141,7 +139,6 @@ async def _generate_one_portrait_with_moderation_retry(
                 secondary_reference_image=secondary_reference_image,
                 size=size,
                 persist=persist,
-                preferred_provider=preferred_provider,
                 image_edit=image_edit,
             )
         except AvatarGenerationError as second_exc:
@@ -307,7 +304,6 @@ async def _generate_one_portrait(
     secondary_reference_image: str | None = None,
     size: str = _AVATAR_SIZE,
     persist: bool = True,
-    preferred_provider: str | list[str] | None = None,
     image_edit: bool = False,
 ) -> tuple[str, str, str, str]:
     """persist=False 时图片留在 temp-media/（引导流程），True 时落盘到 companion-avatars/。image_edit=True 时走图像编辑供应商链（编辑底图经 reference_image 传入，不接受 secondary）。"""
@@ -319,7 +315,6 @@ async def _generate_one_portrait(
             user_id=user_id,
             reference_image=reference_image,
             secondary_reference_image=secondary_reference_image,
-            preferred_provider=preferred_provider,
             image_edit=image_edit,
         )
     except ImageGenerationError as exc:
@@ -1140,7 +1135,6 @@ async def generate_fullbody_reference(
                 secondary_reference_image=None if mode == "edit" else user_ref_uri,
                 size=_fullbody_size_for(rig_type),
                 persist=persona.is_portrait_confirmed,
-                preferred_provider=SETTINGS.companion_asset_image_providers,
                 image_edit=mode == "edit",
             )
         except AvatarGenerationError as exc:
@@ -1217,7 +1211,6 @@ async def generate_fullbody_front_2d(
             reference_image=edit_uri if mode == "edit" else ref_uri,
             size=_fullbody_size_for(rig_type),
             persist=False,
-            preferred_provider=SETTINGS.companion_asset_image_providers,
             image_edit=mode == "edit",
         )
     except AvatarGenerationError as exc:
@@ -1338,7 +1331,6 @@ async def generate_fullbody_front_3d(
             reference_image=edit_uri if mode == "edit" else ref_uri,
             size=_fullbody_size_for(rig_type),
             persist=persona.is_portrait_confirmed,
-            preferred_provider=SETTINGS.companion_asset_image_providers,
             image_edit=mode == "edit",
         )
     except AvatarGenerationError as exc:
@@ -1423,7 +1415,6 @@ async def generate_fullbody_back(
             reference_image=edit_uri if mode == "edit" else front_ref_uri,
             size=_fullbody_size_for(rig_type),
             persist=persona.is_portrait_confirmed,
-            preferred_provider=SETTINGS.companion_asset_image_providers,
             image_edit=mode == "edit",
         )
     except AvatarGenerationError as exc:

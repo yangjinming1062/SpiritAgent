@@ -20,7 +20,6 @@ async def image_generation_tool(
     user_id: int | None = None,
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
-    preferred_provider: str | list[str] | None = None,
     subject: str | None = None,
     **kwargs,
 ) -> str:
@@ -43,7 +42,6 @@ async def image_generation_tool(
             user_id=user_id,
             reference_image=reference_image,
             secondary_reference_image=secondary_reference_image,
-            preferred_provider=preferred_provider,
             persist_user_assets=True,
         )
     except ImageGenerationError as e:

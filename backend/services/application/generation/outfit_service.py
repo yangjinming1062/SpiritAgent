@@ -18,7 +18,6 @@ from typing import Literal
 from components import (
     DEFAULT_LANGUAGE,
     SESSION_LOCAL,
-    SETTINGS,
     get_logger,
     parse_llm_json,
     resolve_language,
@@ -388,7 +387,6 @@ async def _generate_outfit_fullbody(
         reference_image=edit_base_uri if image_edit else identity_uri,
         size=_fullbody_size_for(rig_type),
         persist=False,
-        preferred_provider=SETTINGS.companion_asset_image_providers,
         image_edit=image_edit,
     )
     return draft_url

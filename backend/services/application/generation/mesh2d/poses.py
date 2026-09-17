@@ -9,7 +9,6 @@ import numpy as np
 from components import (
     LAYER_ASSET_DOWNLOAD_MAX_BYTES,
     SESSION_LOCAL,
-    SETTINGS,
     download_capped,
     get_logger,
 )
@@ -294,7 +293,6 @@ async def _resolve_pose_context(reference: bytes, user_id: int | None) -> _PoseC
             db if user_id is not None else None,
             user_id,
             "reference",
-            preferred_provider=SETTINGS.companion_asset_image_providers,
         )
         vision_chain = await resolve_vision_chain(db if user_id is not None else None, user_id)
     if not image_chain or not vision_chain:
@@ -505,7 +503,6 @@ async def compose_single_pose_from_image(
             db if user_id is not None else None,
             user_id,
             "reference",
-            preferred_provider=SETTINGS.companion_asset_image_providers,
         )
         vision_chain = await resolve_vision_chain(db if user_id is not None else None, user_id)
     if not image_chain or not vision_chain:

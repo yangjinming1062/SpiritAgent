@@ -605,11 +605,6 @@ input[type="file"] { font-size: 0.78rem; }
                                             <div class="label-row"><label>魔搭 SDK Token</label><span class="keybadge off" id="sys_seethrough_token_badge">未设置</span></div>
                                             <input type="password" id="sys_seethrough_fallback_token" placeholder="留空保持原有配置">
                                         </div>
-                                        <div class="field">
-                                            <label>伴侣资产局部生图优先链</label>
-                                            <input type="text" id="sys_companion_asset_image_providers" placeholder="gemini, grok">
-                                            <div class="hint">逗号分隔，留空继承通用优先链</div>
-                                        </div>
                                     </div>
                                 </div>
                             </div>
@@ -1740,7 +1735,7 @@ const SETTING_TEXT_KEYS = [
     'image_to_3d_provider',
     'tripo_base_url', 'tripo_model_version', 'tripo_texture_quality', 'tripo_geometry_quality',
     'hunyuan_base_url', 'hunyuan_model_version', 'hunyuan_generate_type', 'hunyuan_result_format',
-    'seethrough_space_base', 'seethrough_fallback_base', 'companion_asset_image_providers',
+    'seethrough_space_base', 'seethrough_fallback_base',
     'web_search_backend', 'web_extract_backend', 'tavily_base_url',
     'ssrf_allowed_cidrs', 'public_base_url', 'log_level', 'log_format'
 ];
