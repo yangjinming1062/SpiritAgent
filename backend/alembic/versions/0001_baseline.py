@@ -1,4 +1,4 @@
-"""完整 schema 基线：pgvector/pg_trgm 扩展、partial unique 与 HNSW/GIN 索引、ws_events NOTIFY 触发器、2D 模型管线、persona.render_mode/outfit_policy/current_mood、IM 通道桥两表、messages.draft_anchor/reasoning_content/speech_style_json、房间背景/时刻/日记、nightly_activity_logs/actions、cron 双轨、user_model_configs.ai_config、system_settings。"""
+"""完整 schema 基线：pgvector/pg_trgm 扩展、partial unique 与 HNSW/GIN 索引、ws_events NOTIFY 触发器、2D 模型管线（风格键 refined_anime_cg）、persona.render_mode/outfit_policy/current_mood、IM 通道桥三表（含待补发队列）、messages IM 入站列、房间背景（含自备图 source）/时刻（含评论区）/日记、companion_intents 等待与认领、nightly_activity_logs/actions、cron 双轨、user_model_configs.ai_config、system_settings。"""
 
 from collections.abc import Sequence
 
@@ -78,6 +78,7 @@ def upgrade() -> None:
         sa.Column("prompt_json", sa.Text(), nullable=False),
         sa.Column("asset_url", sa.String(length=2048), nullable=False),
         sa.Column("style", sa.String(length=64), nullable=False),
+        sa.Column("seed_fullbody_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("seed_front_2d_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("seed_front_3d_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("seed_back_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
@@ -124,7 +125,7 @@ def upgrade() -> None:
         sa.Column("name", sa.String(length=64), nullable=False),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("fullbody_url", sa.String(length=2048), nullable=False),
-        sa.Column("style", sa.String(length=32), server_default=sa.text("'cel_shading'"), nullable=False),
+        sa.Column("style", sa.String(length=32), server_default=sa.text("'refined_anime_cg'"), nullable=False),
         sa.Column("status", sa.String(length=16), server_default=sa.text("'draft'"), nullable=False),
         sa.Column("source_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
@@ -146,7 +147,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("avatar_id", sa.Integer(), nullable=True),
         sa.Column("outfit_id", sa.Integer(), nullable=True),
-        sa.Column("style", sa.String(length=32), server_default=sa.text("'cel_shading'"), nullable=False),
+        sa.Column("style", sa.String(length=32), server_default=sa.text("'refined_anime_cg'"), nullable=False),
         sa.Column("status", sa.String(length=16), server_default=sa.text("'generating'"), nullable=False),
         sa.Column("manifest_json", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("manifest_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
@@ -274,6 +275,8 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
         sa.Column("origin", sa.String(length=16), server_default=sa.text("'onboarding'"), nullable=False),
         sa.Column("intent", sa.String(length=16), server_default=sa.text("'decorate'"), nullable=False),
+        # generated = AI 生成；user_upload = 用户自备图（等待回传的 pending 行不参与生成恢复）。
+        sa.Column("source", sa.String(length=16), server_default=sa.text("'generated'"), nullable=False),
         sa.Column("brief", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("prompt", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("media_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
@@ -329,12 +332,13 @@ def upgrade() -> None:
         sa.Column("id", UUID(as_uuid=False), nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("occurred_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("kind", sa.String(length=16), server_default=sa.text("'greeting'"), nullable=False),
+        # 片刻由精灵主导：无 greeting/system 缺省，默认情绪切片 + 夜间来源。
+        sa.Column("kind", sa.String(length=16), server_default=sa.text("'emotion'"), nullable=False),
         sa.Column("title", sa.String(length=64), server_default=sa.text("''"), nullable=False),
         sa.Column("body", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("emotion", sa.String(length=32), nullable=True),
         sa.Column("media_url", sa.String(length=2048), nullable=True),
-        sa.Column("source", sa.String(length=16), server_default=sa.text("'system'"), nullable=False),
+        sa.Column("source", sa.String(length=16), server_default=sa.text("'nightly'"), nullable=False),
         sa.Column("memory_id", sa.Integer(), nullable=True),
         sa.Column("session_id", sa.Integer(), nullable=True),
         sa.Column("visibility", sa.String(length=16), server_default=sa.text("'shown'"), nullable=False),
@@ -351,7 +355,31 @@ def upgrade() -> None:
     op.create_index(op.f("ix_companion_moments_user_id"), "companion_moments", ["user_id"], unique=False)
     op.create_index(op.f("ix_companion_moments_occurred_at"), "companion_moments", ["occurred_at"], unique=False)
     op.create_index(op.f("ix_companion_moments_kind"), "companion_moments", ["kind"], unique=False)
-
+    op.create_table(
+        "companion_moment_comments",
+        sa.Column("id", UUID(as_uuid=False), nullable=False),
+        sa.Column("moment_id", UUID(as_uuid=False), nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("role", sa.String(length=16), server_default=sa.text("'user'"), nullable=False),
+        sa.Column("content", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["moment_id"], ["companion_moments.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        op.f("ix_companion_moment_comments_moment_id"),
+        "companion_moment_comments",
+        ["moment_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_companion_moment_comments_user_id"),
+        "companion_moment_comments",
+        ["user_id"],
+        unique=False,
+    )
     op.create_table(
         "companion_diary_entries",
         sa.Column("id", UUID(as_uuid=False), nullable=False),
@@ -377,7 +405,33 @@ def upgrade() -> None:
         ["entry_date"],
         unique=False,
     )
-
+    # 待兑现的陪伴意图：等待、认领（租约）与交付状态和模型调用生命周期分离。
+    op.create_table(
+        "companion_intents",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("intent", sa.Text(), nullable=False),
+        sa.Column("source_key", sa.String(length=128), nullable=True),
+        sa.Column("status", sa.String(length=16), server_default=sa.text("'waiting'"), nullable=False),
+        sa.Column("not_before_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("wake_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("wake_event", sa.String(length=32), nullable=True),
+        sa.Column("event_received_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("lease_token", sa.String(length=64), nullable=True),
+        sa.Column("lease_until", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("last_attempt_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("failure_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("last_error", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(op.f("ix_companion_intents_user_id"), "companion_intents", ["user_id"], unique=False)
+    op.create_index(op.f("ix_companion_intents_status"), "companion_intents", ["status"], unique=False)
+    op.create_index(op.f("ix_companion_intents_wake_at"), "companion_intents", ["wake_at"], unique=False)
+    op.create_index(op.f("ix_companion_intents_expires_at"), "companion_intents", ["expires_at"], unique=False)
     op.create_table(
         "nightly_activity_logs",
         sa.Column("system_preset_id", sa.String(32), nullable=False),
@@ -400,7 +454,6 @@ def upgrade() -> None:
         ["target_date"],
         unique=False,
     )
-
     # 夜间能力流水线账本：capability+phase 标识能力在多阶段内的位置；log_id+action_key 联合唯一防同 capability 重复入队。
     op.create_table(
         "nightly_activity_actions",
@@ -529,11 +582,17 @@ def upgrade() -> None:
         sa.Column("media_json", sa.Text(), nullable=True),
         sa.Column("summary_date", sa.String(length=10), nullable=True),
         sa.Column("draft_anchor", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        # IM 入站消息先落库再确认接收；queued 批的上下文排序位置由 context_order 表达，
+        # dedup_key 唯一约束做渠道重投去重。
+        sa.Column("queued", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("dedup_key", sa.String(length=64), nullable=True),
+        sa.Column("context_order", sa.Integer(), nullable=True),
         sa.Column("speech_style_json", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("dedup_key", name="uq_messages_dedup_key"),
     )
     op.create_index(op.f("ix_messages_conversation_id"), "messages", ["conversation_id"], unique=False)
     op.create_index(op.f("ix_messages_subtype"), "messages", ["subtype"], unique=False)
@@ -578,6 +637,23 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_channel_peers_binding_id"), "channel_peers", ["binding_id"], unique=False)
     op.create_index(op.f("ix_channel_peers_status"), "channel_peers", ["status"], unique=False)
+    # 渠道待补发队列：执行与投递独立，恢复语义见 docs/PROTOCOL.md §1.7。
+    op.create_table(
+        "channel_deliveries",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("binding_id", sa.Integer(), nullable=False),
+        sa.Column("peer_id", sa.String(length=128), server_default=sa.text("''"), nullable=False),
+        sa.Column("payload_json", sa.Text(), nullable=False),
+        sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("attempts", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("sent_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["binding_id"], ["channel_bindings.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(op.f("ix_channel_deliveries_binding_id"), "channel_deliveries", ["binding_id"], unique=False)
+    op.create_index(op.f("ix_channel_deliveries_status"), "channel_deliveries", ["status"], unique=False)
 
     # 动态系统配置：admin UI 经此表读写并触发运行时副作用。
     op.create_table(
@@ -723,9 +799,11 @@ def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS ws_event_notify_trigger ON ws_events")
     op.execute("DROP FUNCTION IF EXISTS notify_ws_event()")
     # 先子表再父表（messages → conversations → users）。
+    # channel_deliveries / channel_peers 在 channel_bindings 之后 drop（binding_id FK）；
     # nightly_activity_actions 在 nightly_activity_logs 之后 drop（log_id FK）；system_settings 无 FK 引用，置于最末。
     for table in (
         "messages",
+        "channel_deliveries",
         "channel_peers",
         "channel_bindings",
         "ws_events",
@@ -734,8 +812,10 @@ def downgrade() -> None:
         "user_model_configs",
         "nightly_activity_actions",
         "personas",
+        "companion_moment_comments",
         "companion_moments",
         "companion_diary_entries",
+        "companion_intents",
         "nightly_activity_logs",
         "companion_room_backdrops",
         "memories",
