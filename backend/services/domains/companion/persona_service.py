@@ -118,7 +118,7 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
                 else:
                     cleaned.pop(locked, None)
         persona.definition_json = json.dumps(cleaned, ensure_ascii=False)
-        # persona_extras 不再缓存：build_system_prompt_extras 在运行期按 session language 从
+        # persona_extras 不缓存：build_system_prompt_extras 在运行期按 session language 从
         # definition_json 实时渲染，避免英语会话拿到 onboarding 时烤进去的中文头部。
         persona.is_complete = True
         return persona
@@ -147,10 +147,7 @@ async def confirm_portrait(db: AsyncSession, user_id: int) -> Persona:
 
 
 def build_system_prompt_extras(persona: Persona | None, *, language: str = DEFAULT_LANGUAGE) -> str:
-    """从 persona.definition_json 按当前 session 语言实时渲染角色设定块。
-
-    仅依赖 definition_json（onboarding 写入的原始定义），不读已废弃的 system_prompt_extras 缓存列。
-    """
+    """从 persona.definition_json 按当前 session 语言实时渲染角色设定块。"""
     if persona is None or not persona.is_complete:
         return ""
     definition = load_persona_definition(persona)

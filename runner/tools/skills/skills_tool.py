@@ -654,12 +654,9 @@ def skill_view(name: str, file_path: str | None = None) -> str:
             if linked_files
             else None,
             "required_environment_variables": req_envs,
-            "required_commands": [],
             "missing_required_environment_variables": rem_missing_envs,
             "missing_credential_files": missing_cred_files,
-            "missing_required_commands": [],
             "setup_needed": setup_needed,
-            "setup_skipped": False,
             "readiness_status": SkillReadinessStatus.SETUP_NEEDED.value
             if setup_needed
             else SkillReadinessStatus.AVAILABLE.value,
@@ -678,8 +675,6 @@ def skill_view(name: str, file_path: str | None = None) -> str:
                     )
                 result["setup_note"] = setup_note
 
-        if parsed_frontmatter.get("compatibility"):
-            result["compatibility"] = parsed_frontmatter["compatibility"]
         if isinstance(meta := parsed_frontmatter.get("metadata"), dict):
             result["metadata"] = meta
 

@@ -22,7 +22,6 @@ class BraveFreeWebSearchProvider(WebSearchProvider):
 
     @property
     def name(self) -> str:
-        # 保留连字符形式以兼容既有配置键。
         return "brave-free"
 
     @property
