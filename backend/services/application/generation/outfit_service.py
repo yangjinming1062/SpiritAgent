@@ -52,6 +52,7 @@ from services.infrastructure.llm import (
 )
 
 from .avatar_service import (
+    _fullbody_aspect_for,
     _fullbody_size_for,
     _generate_one_portrait_with_moderation_retry,
     _persist_portrait_bytes,
@@ -743,6 +744,7 @@ async def prepare_outfit_prompt(
         appearance=appearance,
         personality=personality,
         identity_anchor="text",
+        canvas_aspect=_fullbody_aspect_for(rig_type),
     )
 
 
@@ -789,6 +791,7 @@ async def prepare_outfit_regenerate_prompt(
         appearance=appearance,
         personality=personality,
         identity_anchor="text",
+        canvas_aspect=_fullbody_aspect_for(rig_type),
     )
 
 

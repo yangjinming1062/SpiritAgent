@@ -21,7 +21,10 @@ def build_fullbody_reference_prompt(
     feedback: str | None,
     has_user_reference: bool,
     identity_anchor: IdentityAnchor = "reference",
+    canvas_aspect: str | None = None,
 ) -> str:
+    """canvas_aspect 写入画幅宽高比（如 "9:16"），供自备图变体告知外部工具目标比例；AI 路径
+    的画幅由生图请求的 size 传达，不传。"""
     if identity_anchor == "text":
         reference_rules = _TEXT_REFERENCE_RULES
     else:
@@ -36,6 +39,7 @@ def build_fullbody_reference_prompt(
                 "\n参考图 2 提供体型、身材比例、服饰和姿态的视觉线索；"
                 "结合角色已有的体貌设定，将这些线索融入同一角色的全身形象。"
             )
+    composition_aspect = f"画幅比例 {canvas_aspect}；" if canvas_aspect else ""
     return (
         "画面目标\n"
         "创作一幅以这位角色为唯一主体的完整全身肖像，让身材比例、优美的体态与独特气质成为画面的中心。"
@@ -43,6 +47,7 @@ def build_fullbody_reference_prompt(
         f"{reference_rules}"
         "\n\n构图与表现\n"
         "选择适合角色身体结构的自然、舒展、有美感的姿态，通过神态和肢体关系传达性格。"
+        f"{composition_aspect}"
         "全身及角色特有的身体结构完整入画，四周保留适当余量；"
         "以自然透视呈现角色自身的比例，面容清楚，躯干与肢体的轮廓、长短和体量清晰可辨。"
         "角色有服饰时，让剪裁、垂坠与褶皱顺应身体和姿态，使整体身形自然可读。"

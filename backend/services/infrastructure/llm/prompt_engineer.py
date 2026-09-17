@@ -357,8 +357,9 @@ def build_fullbody_prompt(
     avatar_prompt: str = "",
     persona: Persona | dict | None = None,
     identity_anchor: IdentityAnchor = "reference",
+    canvas_aspect: str | None = None,
 ) -> str:
-    """为某个视角拼装一条生图 prompt（无 LLM 往返）；由 ``application/generation/avatar_service`` 按视角调用。全身图由外貌设定、性格特点、画风词典与用户额外要求装配，外形特征由主参考图锚定（正面种子源自全身种子图、背面种子源自正面种子、换装主参考为全身种子图），不带入头像阶段特异性的 avatar_prompt。identity_anchor="text" 是自备图变体：提示词供用户拿去外部工具生图，没有参考图输入，身份一致性改由画面自身与角色设定文字承载。"""
+    """为某个视角拼装一条生图 prompt（无 LLM 往返）；由 ``application/generation/avatar_service`` 按视角调用。全身图由外貌设定、性格特点、画风词典与用户额外要求装配，外形特征由主参考图锚定（正面种子源自全身种子图、背面种子源自正面种子、换装主参考为全身种子图），不带入头像阶段特异性的 avatar_prompt。identity_anchor="text" 是自备图变体：提示词供用户拿去外部工具生图，没有参考图输入，身份一致性改由画面自身与角色设定文字承载。canvas_aspect 写入画幅宽高比（如 "9:16"），供没有独立 size 通道的自备图语境告知比例；AI 路径的画幅由生图请求的 size 传达，不传。"""
     style_key = style_id or template.style or "refined_anime_cg"
     style_wording = _FULLBODY_STYLE_WORDING.get(style_key, _FULLBODY_STYLE_WORDING["refined_anime_cg"])
     features = getattr(template, f"{view}_features", "")
@@ -370,10 +371,13 @@ def build_fullbody_prompt(
         if not personality:
             personality = str(definition.get("personality") or "").strip()
 
+    frame_clause = "从头到脚完整可见，四周留有安全边距，不裁切头顶、肢体、翅膀或尾部；平视镜头，透视自然。"
+    if canvas_aspect:
+        frame_clause = f"画幅比例 {canvas_aspect}；{frame_clause}"
     parts = [
         f"{_VIEW_PREFIX.get(view, '正面全身角色立绘')}，单一角色居中。",
         f"{template.pose}{features}",
-        "从头到脚完整可见，四周留有安全边距，不裁切头顶、肢体、翅膀或尾部；平视镜头，透视自然。",
+        frame_clause,
         _TEXT_IDENTITY_CLAUSE
         if identity_anchor == "text"
         else "若提供参考图，以参考图为身份锚点，保持同一角色的脸、体型、物种与标志性特征。",
@@ -411,8 +415,9 @@ def build_outfit_prompt(
     appearance: str = "",
     personality: str = "",
     identity_anchor: IdentityAnchor = "reference",
+    canvas_aspect: str | None = None,
 ) -> str:
-    """换装立绘 prompt：在正面全身 prompt 之上叠加「锁身份、换穿着」约束；身份与身材由主参考图（独立全身种子图）锚定，着装要求进 feedback 槽。identity_anchor="text" 是自备图变体：无参考图输入，身份一致性由画面自身与角色设定文字承载。"""
+    """换装立绘 prompt：在正面全身 prompt 之上叠加「锁身份、换穿着」约束；身份与身材由主参考图（独立全身种子图）锚定，着装要求进 feedback 槽。identity_anchor="text" 是自备图变体：无参考图输入，身份一致性由画面自身与角色设定文字承载。canvas_aspect 语义同 build_fullbody_prompt。"""
     base = build_fullbody_prompt(
         "front",
         template=template,
@@ -420,6 +425,7 @@ def build_outfit_prompt(
         appearance=appearance,
         personality=personality,
         identity_anchor=identity_anchor,
+        canvas_aspect=canvas_aspect,
     )
     change_clause = _OUTFIT_TEXT_IDENTITY_CLAUSE if identity_anchor == "text" else _OUTFIT_CHANGE_CLAUSE
     tail = (

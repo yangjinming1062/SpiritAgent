@@ -40,6 +40,7 @@ from .prompt_engineer import (
     resolve_fullbody_template,
 )
 from .providers import (
+    SIZE_TO_ASPECT,
     BaseProvider,
     ChatProvider,
     EmbeddingProvider,
@@ -112,6 +113,7 @@ __all__ = [
     "ProviderConfig",
     "ProviderError",
     "ProviderResultUnknownError",
+    "SIZE_TO_ASPECT",
     "STTProvider",
     "STTResult",
     "ServiceType",

@@ -6,6 +6,7 @@ from . import (
     zhipu,  # noqa: F401
 )
 from ._reference import resolve_reference_bytes
+from ._size_aspect import SIZE_TO_ASPECT
 from .base import (
     BaseProvider,
     ChatProvider,
@@ -69,6 +70,7 @@ __all__ = [
     "ProviderConfig",
     "ProviderError",
     "ProviderResultUnknownError",
+    "SIZE_TO_ASPECT",
     "STTProvider",
     "STTResult",
     "ServiceType",

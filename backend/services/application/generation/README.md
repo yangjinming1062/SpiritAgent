@@ -29,7 +29,7 @@
 
 ## 参考图与视觉提示词
 
-视觉提示词按 [PIPELINE §1.1](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)装配参考图职责；拼图位置与单幅成图要求由[生图适配层](image_generation.py)统一说明，避免各业务入口重复拼装。提示词维护遵循 [RULES](../../../../RULES.md#提示词设计与修改规范)。
+视觉提示词按 [PIPELINE §1.1](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)装配参考图职责；拼图位置与单幅成图要求由[生图适配层](image_generation.py)统一说明，避免各业务入口重复拼装。画幅在提示词中只写宽高比不写像素尺寸（要求见 PIPELINE §1.1），分辨率由生图请求的 `size` 参数决定；全身 / 外观的自备图比例经 `_fullbody_aspect_for` 与 `size` 同源派生。提示词维护遵循 [RULES](../../../../RULES.md#提示词设计与修改规范)。
 
 - 房间生成：性格须显式进入房间简述，参考像素不能表达性格；明确的房间要求独立传给生图模型，不经简述截断，优先于陈设与光线建议但不覆盖身份、穿着和画面约束。普通会话生图不得修改激活背景。在线自主换房受用户锁、日配额与打扰档位约束，夜间共用互斥和政策锁但不占在线配额；用户请求与换装失效的保护规则见 [PROTOCOL](../../../../docs/PROTOCOL.md)。
 - 房间参考图：在取代旧 pending 前读取、校验并固化为任务内图片，全部尝试复用同一份参考；用户任务中断后需重新提交，参考图不单独写入永久资产或备份。身份图和用户图的职责与供应商提交方式归 [PIPELINE §1](../../../../docs/PIPELINE.md#1-3d-链拓扑)，聊天图片选择与用户请求门控归 [PROTOCOL §1.2](../../../../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。
@@ -50,7 +50,7 @@
 - 自备图提示词由既有构建器加 `identity_anchor="text"` 变体（`build_fullbody_prompt` / `build_outfit_prompt` / `build_fullbody_reference_prompt`）与 `build_room_prompt(text_identity=True)`、`build_pose_side_prompt` 组装：不写参考图条款、产品内部概念或供应商特有指令；修改措辞时同步核对装配验证。
 - 采纳端点的图片校验沿用既有边界（种子与外观走 API 层 `_decode_upload_image` 的 MIME / base64 校验，体积上限由请求模型 `ImageAdoptRequest.image` 的 `max_length` 强制；房间走 `_decode_reference_image` 的 PIL 格式与像素校验）；不做 AI 内容审核，与头像上传的既有边界一致。
 - 房间等待上传行：`schedule_room_prompt` 创建 `source=user_upload` 的 pending 行并落库 brief / 提示词，不启动生成任务；`resume_room_generation`（夜间规划）跳过该行，不会把它误启动为 AI 生成，由 adopt（复用 `_finalize_ready_row` 的转 ready / 激活 / 事件段）或 discard 收敛。
-- 单侧姿态采纳经 `run_pose_side_regeneration(user_image=...)` 入队既有单侧管线：`compose_single_pose_from_image` 只跳过主姿态图生图，抠图、关键点定位与闭眼帧复用同一后处理（`_finish_pose` 按图像实际宽高参数化：AI 路径恒 1024×1024，自备图保持用户原始尺寸与比例，闭眼帧编辑结果整体缩放回原尺寸再对齐）；提示词按 `build_pose_side_prompt` 给出纯色背景建议（ISNet 不依赖背景色）。
+- 单侧姿态采纳经 `run_pose_side_regeneration(user_image=...)` 入队既有单侧管线：`compose_single_pose_from_image` 只跳过主姿态图生图，抠图、关键点定位与闭眼帧复用同一后处理（`_finish_pose` 按图像实际宽高参数化：AI 路径归一化 1:1 方形，自备图保持用户原始尺寸与比例，闭眼帧编辑结果整体缩放回原尺寸再对齐）；提示词按 `build_pose_side_prompt` 给出 1:1 方形画幅与纯色背景建议（ISNet 不依赖背景色）。
 
 ## 限制与验证
 

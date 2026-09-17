@@ -27,6 +27,7 @@ from services.infrastructure.llm import (
     EDIT_PRESERVE_3D_FRONT,
     EDIT_PRESERVE_FULLBODY,
     EDIT_PRESERVE_IDENTITY,
+    SIZE_TO_ASPECT,
     build_fullbody_prompt,
     build_image_edit_prompt,
     chat,
@@ -59,6 +60,10 @@ _RIG_FULLBODY_SIZES: dict[str, str] = {
     "aquatic": "1792x1344",  # 4:3
     "octopod": "1792x1024",  # 16:9
 }
+
+# 自备图提示词只告知宽高比不写像素尺寸（分辨率由外部工具决定）；宽高比直接从供应商
+# 尺寸翻译表派生，保证与生图请求同一份事实，新增画幅桶时随 SIZE_TO_ASPECT 同步生效。
+_RIG_FULLBODY_ASPECTS: dict[str, str] = {rig: SIZE_TO_ASPECT[size] for rig, size in _RIG_FULLBODY_SIZES.items()}
 _AVATAR_QUALITY: str = "standard"
 _AVATAR_IMAGE_FIELDS: tuple[str, ...] = (
     "asset_url",
@@ -1248,6 +1253,11 @@ def _fullbody_size_for(rig_type: str) -> str:
     return _RIG_FULLBODY_SIZES.get(rig_type, _RIG_FULLBODY_SIZES["biped"])
 
 
+def _fullbody_aspect_for(rig_type: str) -> str:
+    """自备图提示词用的画幅宽高比，与生图请求同源派生；回落规则与 _fullbody_size_for 一致。"""
+    return _RIG_FULLBODY_ASPECTS.get(rig_type, _RIG_FULLBODY_ASPECTS["biped"])
+
+
 async def _resolve_fullbody_rig_type(db: AsyncSession | None, user_id: int, avatar: AvatarAsset, species: str) -> str:
     """全身种子骨骼类型：优先沿用头像行已记的 rig（重绘与换装间画幅/姿态稳定，不随分类抖动漂移），
     缺省按物种分类一次——avatar_service 各全身生成流随后随 prompt_json 持久化；预设物种恒 biped 免 LLM 调用。"""
@@ -1520,6 +1530,7 @@ async def prepare_fullbody_prompt(
             raise AvatarNotFoundError("请先选择当前角色的头像")
         species, appearance, personality_text = _fullbody_identity_fields(persona)
         definition = load_persona_definition(persona)
+        rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
         return build_fullbody_reference_prompt(
             species=species,
             gender=definition.get("gender", ""),
@@ -1528,6 +1539,7 @@ async def prepare_fullbody_prompt(
             feedback=effective_feedback or None,
             has_user_reference=False,
             identity_anchor="text",
+            canvas_aspect=_fullbody_aspect_for(rig_type),
         )
     if kind == "front-2d":
         asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id, check_sealed=True)
@@ -1547,6 +1559,7 @@ async def prepare_fullbody_prompt(
             appearance=appearance,
             personality=personality,
             identity_anchor="text",
+            canvas_aspect=_fullbody_aspect_for(rig_type),
         )
     asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
     if kind == "front-3d":
@@ -1565,6 +1578,7 @@ async def prepare_fullbody_prompt(
         appearance=appearance,
         personality=personality,
         identity_anchor="text",
+        canvas_aspect=_fullbody_aspect_for(rig_type),
     )
 
 

@@ -341,7 +341,8 @@ def build_pose_side_prompt(
             "viewer.",
             "",
             "COMPOSITION AND RENDERING",
-            "Compose one complete character from the top of the hair to the tips of both feet. Keep the entire "
+            "Work on a square 1:1 canvas. Compose one complete character from the top of the hair to the tips of "
+            "both feet. Keep the entire "
             "silhouette inside the frame, with at least 8% empty space above and below and clear space at both "
             "sides. Give every body region coherent anatomy, the character's own skin and clothing colors, and "
             "a consistent level of illustration detail. The visible image consists solely of the character against "
@@ -375,7 +376,7 @@ async def _compose_pose(side: Side, context: _PoseContext) -> tuple[Pose, dict[s
         "own skin and clothing colors, and a consistent level of illustration detail. The visible image consists solely "
         f"of the character against a perfectly flat, uniformly saturated {backdrop} background with no texture, no "
         "gradient, and no checkerboard pattern; the contact line is an imaginary layout constraint. Deliver one "
-        "unified 1024x1024 illustration."
+        "unified square 1:1 illustration."
     )
     raw = await generate_image(prompt, context.reference, context.image_chain, guide)
     return await _finish_pose(raw, side, context.image_chain, context.vision_chain, context.channel)
