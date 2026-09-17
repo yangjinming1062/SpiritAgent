@@ -6,6 +6,7 @@ import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 
+import type { PickedImage } from '../avatar-image'
 import { cachePuppetAssetPack, hydrateMesh2D, type PuppetAssetSource } from '../rendering/2d'
 
 type OutfitStatus = 'draft' | 'splitting' | 'ready' | 'failed' | 'expired'
@@ -291,9 +292,9 @@ function poseRegenErrMsg(err: unknown): string {
   return ''
 }
 
-/** 单侧重生成一侧扶边姿态：请求只负责校验入队，完成与失败由 WS 事件驱动
- * （content_hash 变化 / companion.outfit.failed）；兜底超时防后端重启丢任务后 pending 永挂。 */
-export async function regenerateOutfitPose(outfitId: number, side: PoseRegenSide): Promise<boolean> {
+/** 单侧姿态任务的前置登记：记录 content_hash 基线并挂 30 分钟兜底超时
+ * （防后端重启丢任务后 pending 永挂）；完成与失败由 WS 事件驱动。 */
+function beginPoseRegen(outfitId: number, side: PoseRegenSide): void {
   const baselineHash = $outfits.get().find(o => o.id === outfitId)?.asset?.content_hash ?? null
   $poseRegen.set({ outfitId, side, baselineHash, error: null })
   clearTimeout(poseRegenTimer)
@@ -304,6 +305,12 @@ export async function regenerateOutfitPose(outfitId: number, side: PoseRegenSide
       $poseRegen.set({ ...regen, error: '' })
     }
   }, 30 * 60_000)
+}
+
+/** 单侧重生成一侧扶边姿态：请求只负责校验入队，完成与失败由 WS 事件驱动
+ * （content_hash 变化 / companion.outfit.failed）。 */
+export async function regenerateOutfitPose(outfitId: number, side: PoseRegenSide): Promise<boolean> {
+  beginPoseRegen(outfitId, side)
 
   try {
     await window.spiritagent.api({
@@ -321,6 +328,29 @@ export async function regenerateOutfitPose(outfitId: number, side: PoseRegenSide
     }
 
     return false
+  }
+}
+
+/** 自备图采纳（单侧姿态）：用户图入队既有单侧管线（跳过主图生图，抠图/定位/闭眼帧仍由后端完成），
+ * 完成与失败语义与单侧重绘一致。入队失败（校验拒绝）时回滚 pending 态并抛出后端公开文案。 */
+export async function adoptOutfitPoseImage(outfitId: number, side: PoseRegenSide, image: PickedImage): Promise<void> {
+  beginPoseRegen(outfitId, side)
+
+  try {
+    await window.spiritagent.api({
+      body: { image: image.base64, content_type: image.contentType },
+      method: 'POST',
+      path: `/api/companion/outfits/${outfitId}/poses/${side}/adopt`
+    })
+  } catch (err) {
+    log.warn('wardrobe', 'adoptOutfitPoseImage failed', err)
+    const regen = $poseRegen.get()
+
+    if (regen?.outfitId === outfitId && regen.error === null) {
+      $poseRegen.set({ ...regen, error: poseRegenErrMsg(err) })
+    }
+
+    throw err
   }
 }
 

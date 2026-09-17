@@ -1,12 +1,14 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { MAX_APPEARANCE, resolvePortraitUrl } from '@/modules/character'
+import { MAX_APPEARANCE, type PickedImage, resolvePortraitUrl } from '@/modules/character'
 import { HistoryGallery, PortraitLightbox, useNaturalAspectRatio } from '@/shared'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, WizardModal } from '@/shared/panel'
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
+
+import { SelfSourceImageFlow } from '../../../self-source-image'
 
 const HISTORY_CAP = 5
 
@@ -86,6 +88,7 @@ export function Seed3dWizard({
   const [feedback, setFeedback] = useState<Record<Stage, string>>({ front: '', back: '' })
   const [hint, setHint] = useState<string | null>(null)
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
+  const [selfSourceOpen, setSelfSourceOpen] = useState(false)
   const mountedRef = useRef(true)
   const generatingRef = useRef(false)
   const stagesRef = useRef<Record<Stage, StageState>>(stages)
@@ -105,6 +108,51 @@ export function Seed3dWizard({
   const patchStage = useCallback((key: Stage, patch: Partial<StageState>): void => {
     setStages(prev => ({ ...prev, [key]: { ...prev[key], ...patch } }))
   }, [])
+
+  // 生成 / 自备图采纳共用：把接口返回的种子图落位到阶段历史，正面更新会作废已派生的背面。
+  const applySeedResponse = useCallback(
+    async (
+      key: Stage,
+      res: { seed_front_3d_url?: string | null; seed_back_url?: string | null } | undefined
+    ): Promise<void> => {
+      const meta = STAGE_META[key]
+      const raw = res?.[meta.field] || null
+      const resolved = raw ? await resolvePortraitUrl(raw) : null
+
+      if (!raw || !resolved) {
+        throw new Error(meta.genFail)
+      }
+
+      if (!mountedRef.current) {
+        return
+      }
+
+      setStages(prev => {
+        const cur = prev[key]
+        const entries = [...cur.entries, { rawUrl: raw, previewUrl: resolved }]
+        const capped = entries.length > HISTORY_CAP ? entries.slice(entries.length - HISTORY_CAP) : entries
+
+        return {
+          ...prev,
+          [key]: {
+            ...cur,
+            rawUrl: raw,
+            previewUrl: resolved,
+            entries: capped,
+            idx: capped.length - 1,
+            loading: false,
+            failed: false
+          }
+        }
+      })
+
+      // 正面重绘会使后端已派生的背面种子失效，本地同步作废（由用户在背面阶段重新点按生成）
+      if (key === 'front') {
+        setStages(prev => ({ ...prev, back: EMPTY_STAGE }))
+      }
+    },
+    []
+  )
 
   const generate = useCallback(
     async (key: Stage, feedbackText: string, mode: ImageReviseMode = 'regenerate'): Promise<boolean> => {
@@ -134,40 +182,7 @@ export function Seed3dWizard({
           body: { feedback: feedbackText.trim() || undefined, mode }
         })
 
-        const raw = res?.[meta.field] || null
-        const resolved = raw ? await resolvePortraitUrl(raw) : null
-
-        if (!raw || !resolved) {
-          throw new Error(meta.genFail)
-        }
-
-        if (!mountedRef.current) {
-          return true
-        }
-
-        setStages(prev => {
-          const cur = prev[key]
-          const entries = [...cur.entries, { rawUrl: raw, previewUrl: resolved }]
-          const capped = entries.length > HISTORY_CAP ? entries.slice(entries.length - HISTORY_CAP) : entries
-
-          return {
-            ...prev,
-            [key]: {
-              ...cur,
-              rawUrl: raw,
-              previewUrl: resolved,
-              entries: capped,
-              idx: capped.length - 1,
-              loading: false,
-              failed: false
-            }
-          }
-        })
-
-        // 正面重绘会使后端已派生的背面种子失效，本地同步作废（由用户在背面阶段重新点按生成）
-        if (key === 'front') {
-          setStages(prev => ({ ...prev, back: EMPTY_STAGE }))
-        }
+        await applySeedResponse(key, res)
 
         return true
       } catch (err) {
@@ -183,7 +198,40 @@ export function Seed3dWizard({
         generatingRef.current = false
       }
     },
-    [avatarId, patchStage]
+    [applySeedResponse, avatarId, patchStage]
+  )
+
+  const fetchSelfSourcePrompt = useCallback(async (): Promise<string> => {
+    const res = await window.spiritagent.api<{ prompt: string }>({
+      path: `/api/companion/avatar/${avatarId}${STAGE_META[stage].endpoint}/prompt`,
+      method: 'POST',
+      body: { feedback: feedback[stage].trim() || undefined }
+    })
+
+    return res.prompt
+  }, [avatarId, feedback, stage])
+
+  const adoptSelfSource = useCallback(
+    async (image: PickedImage): Promise<void> => {
+      const key = stage
+      const meta = STAGE_META[key]
+      patchStage(key, { loading: true, failed: false })
+      setHint(null)
+
+      try {
+        const res = await window.spiritagent.api<{ seed_front_3d_url?: string | null; seed_back_url?: string | null }>({
+          path: `/api/companion/avatar/${avatarId}${meta.endpoint}/adopt`,
+          method: 'POST',
+          body: { image: image.base64, content_type: image.contentType }
+        })
+
+        await applySeedResponse(key, res)
+      } catch (err) {
+        patchStage(key, { loading: false })
+        throw err
+      }
+    },
+    [applySeedResponse, avatarId, patchStage, stage]
   )
 
   // 打开时水合已有 3D 种子（存量用户直接复用）；没有则停在空态，由用户点按显式触发——避免误触 3D 切换即消耗生图费用。
@@ -257,9 +305,10 @@ export function Seed3dWizard({
     void boot()
   }, [generate, supportsMultiview])
 
-  // Esc 关闭向导；灯箱打开时让灯箱自己的 Esc 生效，不连带关掉整个向导。
+  // Esc 关闭向导；灯箱或自备图弹窗打开时让它们自己的 Esc 生效，不连带关掉整个向导
+  // （两者与向导同为 window 捕获阶段监听，stopPropagation 无法互相压制，须靠 busy 位让路）。
   // 捕获阶段拦截并阻断冒泡，外层设置面板的 Esc 不连坐。
-  useEscapeKey(onCancel, { busy: Boolean(zoomUrl) })
+  useEscapeKey(onCancel, { busy: Boolean(zoomUrl) || selfSourceOpen })
 
   const onSelectHistoryEntry = (key: Stage, idx: number): void => {
     const entry = stages[key].entries[idx]
@@ -403,6 +452,15 @@ export function Seed3dWizard({
           >
             重新生成
           </button>
+          <button
+            className="rounded-lg px-2 py-1 text-xs text-body transition hover:bg-fill-hover hover:text-strong disabled:opacity-40"
+            disabled={current.loading}
+            onClick={() => setSelfSourceOpen(true)}
+            title="我自己生成这张图（复制提示词，生成后回传上传）"
+            type="button"
+          >
+            使用自己的图
+          </button>
           {stage === 'front' && supportsMultiview ? (
             <button
               className={BTN_PRIMARY}
@@ -426,6 +484,18 @@ export function Seed3dWizard({
       </div>
 
       {zoomUrl && <PortraitLightbox name={meta.alt} onClose={() => setZoomUrl(null)} url={zoomUrl} />}
+
+      <SelfSourceImageFlow
+        adopt={adoptSelfSource}
+        fetchPrompt={fetchSelfSourcePrompt}
+        onClose={() => setSelfSourceOpen(false)}
+        onUseAi={() => {
+          setSelfSourceOpen(false)
+          void generate(stage, feedback[stage], 'regenerate')
+        }}
+        open={selfSourceOpen}
+        title={`${stage === 'front' ? '3D 正面立绘' : '背面立绘'} · 使用自己的图`}
+      />
     </WizardModal>
   )
 }

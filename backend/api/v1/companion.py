@@ -16,14 +16,22 @@ from modules.companion import (
     CompanionOperationResponse,
     Fullbody2dFrontGenerateRequest,
     Fullbody3dSeedGenerateRequest,
+    FullbodyAdoptRequest,
     FullbodyConfirmFrontRequest,
+    FullbodyPromptRequest,
     FullbodyReferenceGenerateRequest,
+    FullbodySeedKind,
+    ImageAdoptRequest,
+    ImagePromptResponse,
     ModelGenerateRequest,
     OnboardingStateResponse,
+    OutfitAdoptRequest,
     OutfitCreateRequest,
     OutfitListResponse,
     OutfitPolicyRequest,
     OutfitPolicyResponse,
+    OutfitPromptRequest,
+    OutfitRegeneratePromptRequest,
     OutfitRegenerateRequest,
     OutfitResponse,
     PersonaResponse,
@@ -50,6 +58,10 @@ from services.application.generation import (
     OutfitStateError,
     SeedPromptMissingError,
     activate_outfit,
+    adopt_fullbody_seed,
+    adopt_outfit_draft_image,
+    adopt_outfit_pose,
+    adopt_outfit_regenerate_image,
     avatar_response,
     confirm_fullbody_front,
     confirm_outfit,
@@ -71,6 +83,10 @@ from services.application.generation import (
     list_outfits,
     model_response,
     outfit_response,
+    prepare_fullbody_prompt,
+    prepare_outfit_prompt,
+    prepare_outfit_regenerate_prompt,
+    prepare_pose_prompt,
     regenerate_avatar_from_image,
     regenerate_outfit_draft,
     regenerate_outfit_pose,
@@ -510,6 +526,88 @@ async def post_fullbody_confirm_front(
     return avatar_response(asset)
 
 
+def _fullbody_self_source_http_error(exc: AvatarGenerationError) -> HTTPException:
+    """自备图提示词/采纳端点共用的错误映射：语义与对应生成端点一致。"""
+    if isinstance(exc, AvatarNotFoundError):
+        return HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
+    if isinstance(exc, ImageSealedError):
+        return HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
+    if isinstance(exc, SeedPromptMissingError):
+        return HTTPException(
+            status_code=400,
+            detail={"error": "头像缺失提示词缓存，请重新生成头像", "reason": str(exc)},
+        )
+    if isinstance(exc, FrontSeedMissingError):
+        return HTTPException(status_code=400, detail={"error": "请先生成或确认正面全身图", "reason": str(exc)})
+    return HTTPException(status_code=400, detail={"error": str(exc)})
+
+
+@router.post("/avatar/{avatar_id}/fullbody/{kind}/prompt", response_model=ImagePromptResponse)
+@limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
+async def post_fullbody_prompt(
+    request: Request,
+    avatar_id: int,
+    kind: FullbodySeedKind,
+    user: CurrentUser,
+    body: FullbodyPromptRequest = Body(default_factory=FullbodyPromptRequest),
+) -> ImagePromptResponse:
+    """自备图提示词：按文本身份锚定变体组装，不下发生成、不做生图。"""
+    try:
+        prompt = await prepare_fullbody_prompt(
+            user_id=user.id,
+            avatar_id=avatar_id,
+            kind=kind,
+            feedback=body.feedback,
+            style=body.style,
+        )
+    except AvatarGenerationError as exc:
+        raise _fullbody_self_source_http_error(exc)
+    except MissingLlmConfigError as exc:
+        logger.warning("fullbody prompt missing config", extra={"user_id": user.id, "error": str(exc)})
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "生成服务未配置，请先在设置中配置供应商", "reason": str(exc)},
+        )
+    return ImagePromptResponse(prompt=prompt)
+
+
+@router.post(
+    "/avatar/{avatar_id}/fullbody/{kind}/adopt",
+    response_model=AvatarAssetResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+@limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
+async def post_fullbody_adopt(
+    request: Request,
+    avatar_id: int,
+    kind: FullbodySeedKind,
+    body: FullbodyAdoptRequest,
+    user: CurrentUser,
+) -> AvatarAssetResponse:
+    """自备图采纳：用户外部生成的图像按对应种子生成成功的语义落库。"""
+    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    if not raw:
+        raise HTTPException(status_code=400, detail="Invalid image data")
+    try:
+        asset = await adopt_fullbody_seed(
+            user_id=user.id,
+            avatar_id=avatar_id,
+            kind=kind,
+            data=raw,
+            content_type=content_type or "image/png",
+            style=body.style,
+        )
+    except AvatarGenerationError as exc:
+        raise _fullbody_self_source_http_error(exc)
+    except MissingLlmConfigError as exc:
+        logger.warning("fullbody adopt missing config", extra={"user_id": user.id, "error": str(exc)})
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "生成服务未配置，请先在设置中配置供应商", "reason": str(exc)},
+        )
+    return avatar_response(asset)
+
+
 @router.get("/model", response_model=Companion3DModelResponse | None)
 async def get_model(user: CurrentUser, db: DbSession) -> Companion3DModelResponse | None:
     model = await get_active_model(db, user.id)
@@ -637,6 +735,60 @@ async def post_outfit(
     return outfit_response(outfit)
 
 
+@router.post("/outfits/prompt", response_model=ImagePromptResponse)
+@limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
+async def post_outfit_prompt(
+    request: Request,  # required by @limiter.limit
+    body: OutfitPromptRequest,
+    user: CurrentUser,
+    db: DbSession,
+) -> ImagePromptResponse:
+    """自备图提示词（创建语境）：整合链与创建草稿一致，参考图整合失败降级纯文字。"""
+    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    try:
+        prompt = await prepare_outfit_prompt(
+            db,
+            user.id,
+            description=body.description,
+            image=raw,
+            content_type=content_type,
+        )
+    except OutfitError as exc:
+        raise _outfit_http_error(exc)
+    except AvatarGenerationError as exc:
+        logger.warning(
+            "outfit prompt failed",
+            extra={"user_id": user.id, "error": getattr(exc, "internal", str(exc))},
+        )
+        raise HTTPException(status_code=502, detail={"error": str(exc), "reason": "generation_failed"})
+    return ImagePromptResponse(prompt=prompt)
+
+
+@router.post("/outfits/adopt", response_model=OutfitResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
+async def post_outfit_adopt(
+    request: Request,  # required by @limiter.limit
+    body: OutfitAdoptRequest,
+    user: CurrentUser,
+    db: DbSession,
+) -> OutfitResponse:
+    """自备图采纳（创建语境）：外部生成的立绘按创建草稿语义入库。"""
+    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    if not raw:
+        raise HTTPException(status_code=400, detail="Invalid image data")
+    try:
+        outfit = await adopt_outfit_draft_image(
+            db,
+            user.id,
+            description=body.description,
+            data=raw,
+            content_type=content_type,
+        )
+    except OutfitError as exc:
+        raise _outfit_http_error(exc)
+    return outfit_response(outfit)
+
+
 @router.post("/outfits/{outfit_id}/regenerate", response_model=OutfitResponse)
 @limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
 async def post_outfit_regenerate(
@@ -670,6 +822,93 @@ async def post_outfit_pose_regenerate(
     """单侧重生成一侧扶边姿态：校验后就地入队（202 语义），完成与失败经 WS 事件驱动刷新。"""
     try:
         outfit = await regenerate_outfit_pose(db, user.id, outfit_id, side)
+    except OutfitError as exc:
+        raise _outfit_http_error(exc)
+    return outfit_response(outfit)
+
+
+@router.post("/outfits/{outfit_id}/prompt", response_model=ImagePromptResponse)
+@limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
+async def post_outfit_regenerate_prompt(
+    request: Request,  # required by @limiter.limit
+    outfit_id: int,
+    body: OutfitRegeneratePromptRequest,
+    user: CurrentUser,
+    db: DbSession,
+) -> ImagePromptResponse:
+    """自备图提示词（草稿重绘语境）：反馈整合同草稿重绘，以文本身份锚定变体组装。"""
+    try:
+        prompt = await prepare_outfit_regenerate_prompt(db, user.id, outfit_id, feedback=body.feedback)
+    except OutfitError as exc:
+        raise _outfit_http_error(exc)
+    except AvatarGenerationError as exc:
+        logger.warning(
+            "outfit regenerate prompt failed",
+            extra={"user_id": user.id, "outfit_id": outfit_id, "error": getattr(exc, "internal", str(exc))},
+        )
+        raise HTTPException(status_code=502, detail={"error": str(exc), "reason": "generation_failed"})
+    return ImagePromptResponse(prompt=prompt)
+
+
+@router.post("/outfits/{outfit_id}/adopt", response_model=OutfitResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
+async def post_outfit_regenerate_adopt(
+    request: Request,  # required by @limiter.limit
+    outfit_id: int,
+    body: ImageAdoptRequest,
+    user: CurrentUser,
+    db: DbSession,
+) -> OutfitResponse:
+    """自备图采纳（草稿重绘语境）：替换草稿/失败外观的立绘，状态回到草稿。"""
+    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    if not raw:
+        raise HTTPException(status_code=400, detail="Invalid image data")
+    try:
+        outfit = await adopt_outfit_regenerate_image(
+            db,
+            user.id,
+            outfit_id,
+            data=raw,
+            content_type=content_type,
+        )
+    except OutfitError as exc:
+        raise _outfit_http_error(exc)
+    return outfit_response(outfit)
+
+
+@router.post("/outfits/{outfit_id}/poses/{side}/prompt", response_model=ImagePromptResponse)
+async def post_outfit_pose_prompt(
+    outfit_id: int,
+    side: Literal["left", "right"],
+    user: CurrentUser,
+    db: DbSession,
+) -> ImagePromptResponse:
+    """自备图提示词（单侧扶边姿态）：姿势/构图规范与生成链一致，附纯色背景建议。"""
+    try:
+        prompt = await prepare_pose_prompt(db, user.id, outfit_id, side)
+    except OutfitError as exc:
+        raise _outfit_http_error(exc)
+    return ImagePromptResponse(prompt=prompt)
+
+
+@router.post(
+    "/outfits/{outfit_id}/poses/{side}/adopt",
+    response_model=OutfitResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+)
+async def post_outfit_pose_adopt(
+    outfit_id: int,
+    side: Literal["left", "right"],
+    body: ImageAdoptRequest,
+    user: CurrentUser,
+    db: DbSession,
+) -> OutfitResponse:
+    """自备图采纳（单侧姿态）：校验后就地入队既有单侧管线（跳过主图生图），完成经 WS 事件驱动刷新。"""
+    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    if not raw:
+        raise HTTPException(status_code=400, detail="Invalid image data")
+    try:
+        outfit = await adopt_outfit_pose(db, user.id, outfit_id, side, data=raw)
     except OutfitError as exc:
         raise _outfit_http_error(exc)
     return outfit_response(outfit)

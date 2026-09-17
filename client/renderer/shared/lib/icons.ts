@@ -25,6 +25,7 @@ export {
   IconGlobe as Globe,
   IconHome as Home,
   IconPhoto as ImageIcon,
+  IconPhotoPlus as ImagePlus,
   IconInfoCircle as Info,
   IconKeyboard as Keyboard,
   IconKey as KeyRound,

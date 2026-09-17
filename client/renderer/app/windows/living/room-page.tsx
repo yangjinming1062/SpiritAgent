@@ -2,12 +2,15 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { pickAvatarImage, type PickedImage } from '@/modules/character'
+import { pickAvatarImage, type PickedImage, SelfSourceImageFlow } from '@/modules/character'
 import {
   $activeBackdrop,
   $backdropStatus,
   $roomHistory,
   $roomPolicy,
+  adoptRoomImage,
+  discardPendingRoom,
+  prepareRoomPrompt,
   regenerateRoom,
   rollbackRoom,
   setRoomPolicy
@@ -51,9 +54,12 @@ export function RoomPage(): React.JSX.Element {
   const [reference, setReference] = useState<PickedImage | null>(null)
   const [selecting, setSelecting] = useState(false)
   const [referenceError, setReferenceError] = useState(false)
+  const [selfSourceOpen, setSelfSourceOpen] = useState(false)
+  const [uploading, setUploading] = useState(false)
   const mounted = useRef(true)
   const generating = status === 'pending'
-  const busy = generating || selecting
+  const waitingUpload = status === 'waiting_upload'
+  const busy = generating || selecting || waitingUpload || uploading
 
   useEffect(() => {
     mounted.current = true
@@ -104,6 +110,65 @@ export function RoomPage(): React.JSX.Element {
       notes: notes.trim() || undefined,
       ...(reference ? { image: reference.base64, content_type: reference.contentType } : {})
     })
+  }
+
+  const fetchSelfSourcePrompt = async (): Promise<string> => prepareRoomPrompt(notes.trim() || undefined)
+
+  // 采纳成功不另发本地 toast：adopt 转 ready 必经 WS companion.room.ready，
+  // 事件处理里已有就绪通知与水合，本地再发会叠两条。
+  const adoptSelfSourceImage = async (image: PickedImage): Promise<void> => {
+    await adoptRoomImage(image)
+  }
+
+  // 等待上传态的直传入口：提示词已在行上，无需再走弹窗。
+  const uploadWaitingImage = async (): Promise<void> => {
+    if (uploading) {
+      return
+    }
+
+    const epoch = currentClearEpoch()
+    setSelecting(true)
+    const result = await pickAvatarImage(t.chooseReference)
+
+    if (!mounted.current || currentClearEpoch() !== epoch) {
+      setSelecting(false)
+
+      return
+    }
+
+    setSelecting(false)
+
+    if (!result || !('image' in result)) {
+      if (result && 'error' in result) {
+        notify({ kind: 'warning', message: result.error })
+      }
+
+      return
+    }
+
+    setUploading(true)
+
+    try {
+      await adoptRoomImage(result.image)
+    } catch (err) {
+      notify({ kind: 'warning', message: err instanceof Error ? err.message : tToasts.roomRegenerateFailed })
+    } finally {
+      if (mounted.current) {
+        setUploading(false)
+      }
+    }
+  }
+
+  const discardWaitingUpload = async (): Promise<void> => {
+    if (uploading) {
+      return
+    }
+
+    try {
+      await discardPendingRoom()
+    } catch (err) {
+      notify({ kind: 'warning', message: err instanceof Error ? err.message : tToasts.roomRegenerateFailed })
+    }
   }
 
   const handleRollback = async (backdropId: string): Promise<void> => {
@@ -161,6 +226,30 @@ export function RoomPage(): React.JSX.Element {
               <Loader2 className="size-6 animate-spin text-accent" />
               <p className="text-xs font-medium text-white">{t.pendingOverlay}</p>
               <p className="text-[10.5px] text-white/70">{t.pendingOverlayHint}</p>
+            </div>
+          ) : waitingUpload ? (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 p-4 text-center backdrop-blur-sm">
+              <FileImage className="size-6 text-accent" />
+              <p className="text-xs font-medium text-white">{t.waitingUploadOverlay}</p>
+              <p className="text-[10.5px] text-white/70">{t.waitingUploadHint}</p>
+              <div className="mt-1 flex gap-2">
+                <button
+                  className={cn(BTN_SUBTLE, '!h-7 px-3 text-xs')}
+                  disabled={uploading}
+                  onClick={() => void discardWaitingUpload()}
+                  type="button"
+                >
+                  {t.waitingUploadDiscard}
+                </button>
+                <button
+                  className={cn(BTN_PRIMARY, '!h-7 px-3 text-xs')}
+                  disabled={uploading}
+                  onClick={() => void uploadWaitingImage()}
+                  type="button"
+                >
+                  {uploading ? t.pendingOverlay : t.waitingUploadAction}
+                </button>
+              </div>
             </div>
           ) : status === 'failed' ? (
             <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/65 p-4 text-center backdrop-blur-sm">
@@ -236,27 +325,39 @@ export function RoomPage(): React.JSX.Element {
             </p>
           </div>
 
-          <button
-            className={cn(
-              BTN_PRIMARY,
-              'inline-flex shrink-0 items-center gap-1.5 px-3.5 text-xs font-medium transition active:scale-95'
-            )}
-            disabled={busy}
-            onClick={() => void handleChange()}
-            type="button"
-          >
-            {generating ? (
-              <>
-                <Loader2 className="size-3.5 animate-spin" />
-                <span>{t.generatingButton}</span>
-              </>
-            ) : (
-              <>
-                <Sparkles className="size-3.5" />
-                <span>{t.generateButton}</span>
-              </>
-            )}
-          </button>
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              className={cn(BTN_SUBTLE, 'inline-flex shrink-0 items-center gap-1.5 px-3 text-xs')}
+              disabled={busy}
+              onClick={() => setSelfSourceOpen(true)}
+              title={dict.selfSource.openTitle}
+              type="button"
+            >
+              <FileImage className="size-3.5" />
+              <span>{dict.selfSource.open}</span>
+            </button>
+            <button
+              className={cn(
+                BTN_PRIMARY,
+                'inline-flex shrink-0 items-center gap-1.5 px-3.5 text-xs font-medium transition active:scale-95'
+              )}
+              disabled={busy}
+              onClick={() => void handleChange()}
+              type="button"
+            >
+              {generating ? (
+                <>
+                  <Loader2 className="size-3.5 animate-spin" />
+                  <span>{t.generatingButton}</span>
+                </>
+              ) : (
+                <>
+                  <Sparkles className="size-3.5" />
+                  <span>{t.generateButton}</span>
+                </>
+              )}
+            </button>
+          </div>
         </div>
       </SettingCard>
 
@@ -333,6 +434,21 @@ export function RoomPage(): React.JSX.Element {
           </div>
         </SettingRow>
       </SettingCard>
+
+      <SelfSourceImageFlow
+        adopt={adoptSelfSourceImage}
+        fetchPrompt={fetchSelfSourcePrompt}
+        onClose={() => setSelfSourceOpen(false)}
+        onUseAi={() => {
+          setSelfSourceOpen(false)
+          void regenerateRoom({
+            notes: notes.trim() || undefined,
+            ...(reference ? { image: reference.base64, content_type: reference.contentType } : {})
+          })
+        }}
+        open={selfSourceOpen}
+        title={`${t.generateButton} · ${dict.selfSource.open}`}
+      />
     </SettingsContent>
   )
 }

@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .room_backdrop import BackdropIntent, BackdropOrigin, BackdropPolicy, BackdropStatus
+from .room_backdrop import BackdropIntent, BackdropOrigin, BackdropPolicy, BackdropSource, BackdropStatus
 
 
 class BackdropResponse(BaseModel):
@@ -13,6 +13,7 @@ class BackdropResponse(BaseModel):
     status: BackdropStatus
     origin: BackdropOrigin
     intent: BackdropIntent
+    source: BackdropSource = BackdropSource.GENERATED
     brief: str = ""
     prompt: str = ""
     url: str = ""
@@ -43,6 +44,14 @@ class RoomGenerateRequest(BaseModel):
     notes: str | None = Field(default=None, max_length=500)
     image: str | None = Field(default=None, min_length=1, max_length=8 * 1024 * 1024)
     content_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"] = "image/png"
+
+
+# 自备图提示词请求：不收场景参考图——提示词是纯文本，用户可自行决定是否向外部工具附参考图。
+class RoomPromptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    intent: BackdropIntent = BackdropIntent.REBUILD
+    notes: str | None = Field(default=None, max_length=500)
 
 
 class RoomActivateRequest(BaseModel):

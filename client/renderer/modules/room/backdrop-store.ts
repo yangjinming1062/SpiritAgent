@@ -1,17 +1,21 @@
 // 房间背景状态机：none → pending → ready；换装 invalidated → pending → ready；
-// 失败 failed → 重试入口。
+// 失败 failed → 重试入口；自备图 waiting_upload（等待用户回传图像）→ adopt → ready / discard → none。
 
 import { atom } from 'nanostores'
 
 import { authedApi } from '@/shared/lib/authed-api'
+import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
-export type BackdropStatus = 'failed' | 'none' | 'pending' | 'ready'
+export type BackdropStatus = 'failed' | 'none' | 'pending' | 'ready' | 'waiting_upload'
 
 export type RoomPolicy = 'llm_may_replace' | 'locked'
+
+// 自备图行标记：提示词已下发、等待用户上传成品（后端不启动生成任务）
+const USER_UPLOAD_SOURCE = 'user_upload'
 
 export interface ActiveBackdrop {
   brief: string
@@ -19,6 +23,7 @@ export interface ActiveBackdrop {
   origin?: string
   outfitFingerprint?: string
   prompt?: string
+  source?: string
   status: Exclude<BackdropStatus, 'none'>
   url: string
 }
@@ -36,6 +41,7 @@ interface RoomBackdropWire {
   id: number | string
   status: 'pending' | 'ready' | 'failed' | 'superseded'
   origin?: string
+  source?: string
   brief?: string
   prompt?: string
   url?: string
@@ -91,6 +97,7 @@ async function toActiveBackdrop(w: RoomBackdropWire): Promise<null | ActiveBackd
     origin: w.origin,
     outfitFingerprint: w.outfit_fingerprint,
     prompt: w.prompt,
+    source: w.source,
     status: 'ready',
     url
   }
@@ -119,7 +126,8 @@ async function toHistoryEntry(w: RoomBackdropWire): Promise<RoomHistoryEntry | n
 
 function deriveStatus(state: RoomStateWire): BackdropStatus {
   if (state.pending && state.pending.status === 'pending') {
-    return 'pending'
+    // 自备图行不跑生成任务：展示为等待上传，而不是无限轮询的生成中
+    return state.pending.source === USER_UPLOAD_SOURCE ? 'waiting_upload' : 'pending'
   }
 
   if (state.active && state.active.status === 'ready') {
@@ -226,6 +234,7 @@ async function applyRoomState(state: Partial<RoomStateWire> & Pick<RoomStateWire
   const nextStatus = deriveStatus(state as RoomStateWire)
   $backdropStatus.set(nextStatus)
 
+  // waiting_upload 没有服务端任务在跑：不轮询也不误报超时
   if (nextStatus === 'pending') {
     startPendingPoll()
   } else {
@@ -254,6 +263,7 @@ async function applyRoomState(state: Partial<RoomStateWire> & Pick<RoomStateWire
         origin: state.pending.origin,
         outfitFingerprint: state.pending.outfit_fingerprint,
         prompt: state.pending.prompt,
+        source: state.pending.source,
         status: 'pending',
         url: ''
       }
@@ -350,6 +360,87 @@ export async function regenerateRoom(input: RoomGenerationInput = {}): Promise<b
   }
 
   return true
+}
+
+// 主进程错误含状态码、路径与 JSON 错误体，取 detail 里的公开文案；解析不了就用兜底。
+const roomErrMsg = (err: unknown): string => backendDetailMessage(err, getStrings().living.toasts.roomRegenerateFailed)
+
+// 自备图第一步：下发提示词并在后端创建等待上传的 pending 行（不启动生图任务）。
+// 用户取消或离开后行仍在，房间页展示等待上传态；放弃走 discardPendingRoom。
+export async function prepareRoomPrompt(notes?: string): Promise<string> {
+  const result = await authedApi<{ prompt: string }>({
+    body: { intent: 'rebuild', notes: notes || undefined },
+    method: 'POST',
+    path: '/api/companion/room/prompt'
+  })
+
+  if (!result.ok) {
+    throw new Error(result.reason === 'err' ? roomErrMsg(result.error) : '')
+  }
+
+  if (!result.value) {
+    throw new Error(getStrings().living.toasts.roomRegenerateFailed)
+  }
+
+  void hydrateRoomBackdrop()
+
+  return result.value.prompt
+}
+
+// 自备图采纳：把用户上传的房间图挂到等待上传的行上，服务端按生成链同一语义转 ready。
+export async function adoptRoomImage(image: { base64: string; contentType: string }): Promise<void> {
+  const pending = $pendingBackdrop.get()
+
+  // 水合未完成或失败时没有可挂靠的行：必须显式失败，静默返回会让调用方误报「房间已就绪」。
+  if (!pending) {
+    throw new Error(getStrings().living.toasts.roomRegenerateFailed)
+  }
+
+  const id = Number.parseInt(pending.id, 10)
+
+  if (Number.isNaN(id)) {
+    throw new Error(getStrings().living.toasts.roomRegenerateFailed)
+  }
+
+  const result = await authedApi({
+    body: { image: image.base64, content_type: image.contentType },
+    method: 'POST',
+    path: `/api/companion/room/${id}/adopt`
+  })
+
+  if (!result.ok) {
+    // unauth 等非 err 失败也要带文案：房间页直传路径直接取 message 弹 toast，空字符串会变成空白气泡。
+    throw new Error(
+      result.reason === 'err' ? roomErrMsg(result.error) : getStrings().living.toasts.roomRegenerateFailed
+    )
+  }
+
+  void hydrateRoomBackdrop()
+}
+
+// 放弃等待上传的自备图行。
+export async function discardPendingRoom(): Promise<void> {
+  const pending = $pendingBackdrop.get()
+
+  if (!pending) {
+    return
+  }
+
+  const id = Number.parseInt(pending.id, 10)
+
+  if (Number.isNaN(id)) {
+    return
+  }
+
+  const result = await authedApi({ method: 'POST', path: `/api/companion/room/${id}/discard` })
+
+  if (!result.ok) {
+    throw new Error(
+      result.reason === 'err' ? roomErrMsg(result.error) : getStrings().living.toasts.roomRegenerateFailed
+    )
+  }
+
+  void hydrateRoomBackdrop()
 }
 
 export async function rollbackRoom(backdropId: string): Promise<void> {

@@ -1,6 +1,15 @@
 """独立全身肖像的画面目标、参考分工与创作资料。"""
 
 import json
+from typing import Literal
+
+IdentityAnchor = Literal["reference", "text"]
+
+# 自备图变体没有参考图输入：身份完全由创作资料文字确定。
+_TEXT_REFERENCE_RULES = (
+    "角色形象完全由下方创作资料确定：保持资料中面容、物种、肤色或表面材质、发色与标志性细节的一致性，"
+    "并按体貌设定补全协调的全身体型和比例。"
+)
 
 
 def build_fullbody_reference_prompt(
@@ -11,18 +20,22 @@ def build_fullbody_reference_prompt(
     personality: str,
     feedback: str | None,
     has_user_reference: bool,
+    identity_anchor: IdentityAnchor = "reference",
 ) -> str:
-    portrait_reference = "参考图 1" if has_user_reference else "参考图"
-    reference_rules = (
-        f"{portrait_reference}中的头像确定角色的面容、物种、肤色或表面材质、发色和标志性细节；"
-        "保持这些身份特征，延续头像的画风与质感。"
-        "以角色资料中明确的体貌设定为依据，补全与头像协调的全身体型和比例。"
-    )
-    if has_user_reference:
-        reference_rules += (
-            "\n参考图 2 提供体型、身材比例、服饰和姿态的视觉线索；"
-            "结合角色已有的体貌设定，将这些线索融入同一角色的全身形象。"
+    if identity_anchor == "text":
+        reference_rules = _TEXT_REFERENCE_RULES
+    else:
+        portrait_reference = "参考图 1" if has_user_reference else "参考图"
+        reference_rules = (
+            f"{portrait_reference}中的头像确定角色的面容、物种、肤色或表面材质、发色和标志性细节；"
+            "保持这些身份特征，延续头像的画风与质感。"
+            "以角色资料中明确的体貌设定为依据，补全与头像协调的全身体型和比例。"
         )
+        if has_user_reference:
+            reference_rules += (
+                "\n参考图 2 提供体型、身材比例、服饰和姿态的视觉线索；"
+                "结合角色已有的体貌设定，将这些线索融入同一角色的全身形象。"
+            )
     return (
         "画面目标\n"
         "创作一幅以这位角色为唯一主体的完整全身肖像，让身材比例、优美的体态与独特气质成为画面的中心。"

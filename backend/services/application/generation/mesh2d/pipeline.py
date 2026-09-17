@@ -16,7 +16,7 @@ from services.infrastructure.seethrough import split_to_psd
 
 from ..avatar_service import get_avatar_job_lock, load_avatar_bytes_as_data_uri, normalize_avatar_url_to_bare
 from ..room_backdrop_service import invalidate_room_for_outfit
-from .poses import Side, generate_pose_pack, generate_single_pose
+from .poses import Side, compose_single_pose_from_image, generate_pose_pack, generate_single_pose
 from .priority_queue import get_default_queue
 
 logger = get_logger(__name__)
@@ -333,10 +333,17 @@ async def _latest_succeeded_model(db: AsyncSession, user_id: int, outfit_id: int
     ).scalar_one_or_none()
 
 
-def run_pose_side_regeneration(*, user_id: int, outfit_id: int, side: Side) -> asyncio.Task[None]:
+def run_pose_side_regeneration(
+    *,
+    user_id: int,
+    outfit_id: int,
+    side: Side,
+    user_image: bytes | None = None,
+) -> asyncio.Task[None]:
     """提交单侧扶边姿态重生成并立即返回。成功原位替换该侧两张姿态纹理与 manifest 的
     poses 子树并重算 content_hash，其余资产不动；失败保留旧姿态、外观保持 ready——
-    单侧重生成是优化而非重建，失败不得波及整套资产。任务不落库，进程重启即丢。"""
+    单侧重生成是优化而非重建，失败不得波及整套资产。任务不落库，进程重启即丢。
+    user_image 提供时为自备图采纳：跳过主姿态图生图，用户图直接进入既有后处理。"""
     queue = get_default_queue()
 
     async def _task() -> None:
@@ -361,11 +368,14 @@ def run_pose_side_regeneration(*, user_id: int, outfit_id: int, side: Side) -> a
                 model_id = model.id
                 fullbody_url = normalize_avatar_url_to_bare(outfit.fullbody_url) or outfit.fullbody_url
 
-            try:
-                fullbody_bytes = await _safe_load_avatar_bytes(fullbody_url)
-            except Mesh2DPipelineError as exc:
-                raise Mesh2DPipelineError("外观立绘已不可读，无法重新生成姿态") from exc
-            pose, textures = await generate_single_pose(fullbody_bytes, user_id, side)
+            if user_image is not None:
+                pose, textures = await compose_single_pose_from_image(user_image, user_id, side)
+            else:
+                try:
+                    fullbody_bytes = await _safe_load_avatar_bytes(fullbody_url)
+                except Mesh2DPipelineError as exc:
+                    raise Mesh2DPipelineError("外观立绘已不可读，无法重新生成姿态") from exc
+                pose, textures = await generate_single_pose(fullbody_bytes, user_id, side)
             for name, data in textures.items():
                 layer_entries.append(
                     {

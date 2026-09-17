@@ -7,15 +7,19 @@ import {
   $outfits,
   $poseRegen,
   activateOutfit,
+  adoptOutfitPoseImage,
   deleteOutfit,
   hydrateWardrobe,
+  type PickedImage,
   regenerateOutfitPose,
+  resolvePortraitUrl,
+  SelfSourceImageFlow,
   setOutfitPolicy,
   useOutfitDesignSession
 } from '@/modules/character'
 import { AssetPackPreview } from '@/modules/character/rendering/2d'
 import { PortraitLightbox } from '@/shared'
-import { ArrowBackUp, Check, FileImage, Pencil, Send, Trash2 } from '@/shared/lib/icons'
+import { ArrowBackUp, Check, FileImage, ImagePlus, Pencil, Send, Trash2 } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_ICON, BTN_PRIMARY, HINT_TEXT, INPUT_CLASS, Segmented, Spinner, Toggle } from '@/shared/panel'
@@ -37,6 +41,7 @@ export function WardrobePage(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.living.wardrobe
   const common = dict.common
+  const selfSourceDict = dict.selfSource
   const [busyId, setBusyId] = useState<number | null>(null)
   const [policyBusy, setPolicyBusy] = useState(false)
   const [selectedId, setSelectedId] = useState<number | null>(null)
@@ -45,6 +50,8 @@ export function WardrobePage(): React.JSX.Element {
   const [text, setText] = useState('')
   // 有草稿后的反馈意图：edit=微调（编辑上一版）、regenerate=重新生成（种子锚定全量重绘）。
   const [reviseMode, setReviseMode] = useState<ImageReviseMode>('edit')
+  const [poseSelfSourceSide, setPoseSelfSourceSide] = useState<'left' | 'right' | null>(null)
+  const [outfitSelfSourceOpen, setOutfitSelfSourceOpen] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
 
@@ -117,6 +124,76 @@ export function WardrobePage(): React.JSX.Element {
 
     session.send(text, session.draft ? reviseMode : 'edit')
     setText('')
+  }
+
+  // 自备图（外观立绘）：有草稿时提示词/采纳都走草稿重绘语境，否则走创建语境。
+  const fetchOutfitSelfSourcePrompt = async (): Promise<string> => {
+    if (session.draft) {
+      const res = await window.spiritagent.api<{ prompt: string }>({
+        path: `/api/companion/outfits/${session.draft.id}/prompt`,
+        method: 'POST',
+        body: { feedback: text.trim() || undefined }
+      })
+
+      return res.prompt
+    }
+
+    const res = await window.spiritagent.api<{ prompt: string }>({
+      path: '/api/companion/outfits/prompt',
+      method: 'POST',
+      body: {
+        description: text.trim() || undefined,
+        image: session.refImage?.base64,
+        content_type: session.refImage?.contentType
+      }
+    })
+
+    return res.prompt
+  }
+
+  const adoptOutfitSelfSource = async (image: PickedImage): Promise<void> => {
+    const res = await window.spiritagent.api<{ id?: number; fullbody_url?: string }>({
+      path: session.draft ? `/api/companion/outfits/${session.draft.id}/adopt` : '/api/companion/outfits/adopt',
+      method: 'POST',
+      // 草稿重绘语境的采纳不收 description（schema forbid，描述沿用草稿 source_json 里的原文）。
+      body: {
+        image: image.base64,
+        content_type: image.contentType,
+        ...(session.draft ? {} : { description: text.trim() || undefined })
+      }
+    })
+
+    void hydrateWardrobe()
+
+    const resolved = res?.fullbody_url ? await resolvePortraitUrl(res.fullbody_url) : null
+
+    // 从采纳后的草稿续上设计会话，可继续描述微调或直接确认入柜。
+    if (res?.id) {
+      session.adoptDraft(res.id, resolved ?? '')
+    }
+
+    setText('')
+  }
+
+  const fetchPoseSelfSourcePrompt = async (): Promise<string> => {
+    if (!selected || !poseSelfSourceSide) {
+      throw new Error('missing pose target')
+    }
+
+    const res = await window.spiritagent.api<{ prompt: string }>({
+      path: `/api/companion/outfits/${selected.id}/poses/${poseSelfSourceSide}/prompt`,
+      method: 'POST'
+    })
+
+    return res.prompt
+  }
+
+  const adoptPoseSelfSource = async (image: PickedImage): Promise<void> => {
+    if (!selected || !poseSelfSourceSide) {
+      throw new Error('missing pose target')
+    }
+
+    await adoptOutfitPoseImage(selected.id, poseSelfSourceSide, image)
   }
 
   return (
@@ -279,6 +356,7 @@ export function WardrobePage(): React.JSX.Element {
             <AssetPackPreview
               key={`${selected.id}:${selected.asset.content_hash ?? selected.asset.id}`}
               onRegeneratePose={side => void regenerateOutfitPose(selected.id, side)}
+              onSelfSourcePose={side => setPoseSelfSourceSide(side)}
               poseRegen={poseRegen?.outfitId === selected.id ? { side: poseRegen.side, error: poseRegen.error } : null}
               source={selected.asset}
             />
@@ -466,6 +544,16 @@ export function WardrobePage(): React.JSX.Element {
                   </button>
                 )}
                 <button
+                  aria-label={selfSourceDict.open}
+                  className={cn(BTN_ICON, 'h-9 w-9 shrink-0 self-end')}
+                  disabled={session.busy || splitting}
+                  onClick={() => setOutfitSelfSourceOpen(true)}
+                  title={selfSourceDict.openTitle}
+                  type="button"
+                >
+                  <ImagePlus />
+                </button>
+                <button
                   aria-label={t.send}
                   className={cn(BTN_PRIMARY, 'h-9 w-9 shrink-0 self-end px-0')}
                   disabled={
@@ -483,6 +571,42 @@ export function WardrobePage(): React.JSX.Element {
       </div>
 
       {zoomUrl && <PortraitLightbox name={t.imageAlt} onClose={() => setZoomUrl(null)} url={zoomUrl} />}
+
+      <SelfSourceImageFlow
+        adopt={adoptOutfitSelfSource}
+        fetchPrompt={fetchOutfitSelfSourcePrompt}
+        onClose={() => setOutfitSelfSourceOpen(false)}
+        onUseAi={() => {
+          setOutfitSelfSourceOpen(false)
+
+          // 无可发送内容时 sendText 会静默拒绝——聚焦输入框把用户带回设计流程，避免点按钮毫无反馈。
+          if (!text.trim() && !session.refImage && !canRegenerateWithoutFeedback) {
+            inputRef.current?.focus()
+
+            return
+          }
+
+          sendText()
+        }}
+        open={outfitSelfSourceOpen}
+        title={session.draft ? t.reviseRegenerate : t.startAction}
+      />
+
+      <SelfSourceImageFlow
+        adopt={adoptPoseSelfSource}
+        fetchPrompt={fetchPoseSelfSourcePrompt}
+        onClose={() => setPoseSelfSourceSide(null)}
+        onUseAi={() => {
+          const side = poseSelfSourceSide
+          setPoseSelfSourceSide(null)
+
+          if (side && selected) {
+            void regenerateOutfitPose(selected.id, side)
+          }
+        }}
+        open={poseSelfSourceSide !== null}
+        title={`${t.preview.regenPose} · ${selfSourceDict.open}`}
+      />
     </div>
   )
 }

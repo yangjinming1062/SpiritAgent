@@ -43,6 +43,24 @@ export const dict = {
     processing: '处理中…'
   },
 
+  selfSource: {
+    open: '使用自己的图',
+    openTitle: '我自己生成这张图（复制提示词，生成后回传上传）',
+    hint: '复制下方提示词，用你喜欢的任意工具生成图片，然后选图上传。画面内容会以这段描述为准。',
+    promptLoading: '正在准备提示词…',
+    promptFailed: '提示词获取失败，请重试。',
+    retryPrompt: '重新获取提示词',
+    copyPrompt: '复制提示词',
+    copied: '已复制',
+    pickTitle: '选择生成好的图片',
+    pickImage: '选择图片',
+    replaceImage: '换一张',
+    adopt: '使用这张图',
+    adopting: '正在保存…',
+    adoptFailed: '保存失败，请重试。',
+    useAi: '改用 AI 生成'
+  },
+
   boot: {
     ready: (brandFullName: string) => `${brandFullName} 已就绪`,
     desktopBootFailedWithMessage: (message: string) => `桌面启动失败：${message}`,
@@ -987,6 +1005,10 @@ export const dict = {
       currentAltFallback: '当前生效房间',
       pendingOverlay: '正在收拾新房间…',
       pendingOverlayHint: '结合伙伴形象与起居意向装点中，稍等片刻即可入住',
+      waitingUploadOverlay: '等你的房间图',
+      waitingUploadHint: '提示词已生成，随时选图上传即可生效；也可以先放弃。',
+      waitingUploadAction: '选择图片上传',
+      waitingUploadDiscard: '放弃',
       failedOverlay: '房间收拾失败',
       failedOverlayHint: '生成服务暂时繁忙或网络异常，可点击重试',
       retryButton: '重新尝试',

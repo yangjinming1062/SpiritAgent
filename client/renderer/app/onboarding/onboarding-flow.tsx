@@ -32,6 +32,7 @@ import {
   saveDraftRefImage,
   selectAvatar,
   selectPortraitEntry,
+  SelfSourceImageFlow,
   setCompanionVoiceId,
   SPEAKING_STYLE_PRESETS,
   SPECIES_PRESETS,
@@ -504,6 +505,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [fullbodyFeedback, setFullbodyFeedback] = useState<string>('')
   const [fullbodyHint, setFullbodyHint] = useState<string | null>(null)
   const [fullbodyZoomUrl, setFullbodyZoomUrl] = useState<string | null>(null)
+  const [fullbodySelfSourceOpen, setFullbodySelfSourceOpen] = useState(false)
 
   const [fullbodyHistories, setFullbodyHistories] = useState<
     Record<string, Array<{ rawUrl: string | null; previewUrl: string }>>
@@ -851,6 +853,35 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     void playOnboardingAudio(url ? 'onboarding.portrait.ok' : 'onboarding.portrait.failed')
   }
 
+  // front-2d 生成 / 自备图采纳共用：把接口返回的正面种子落到本地状态。
+  const applyFullbodyFrontResponse = async (
+    res: { id?: number; asset_url?: string; seed_front_2d_url?: string } | undefined
+  ): Promise<void> => {
+    const applied = await applyPortrait({
+      id: res?.id,
+      assetUrl: res?.asset_url,
+      seedFrontUrl: res?.seed_front_2d_url
+    })
+
+    const rawFront = res?.seed_front_2d_url || null
+    let resolvedUrl: string | null = null
+
+    if (applied.seedFront) {
+      resolvedUrl = applied.seedFront
+    } else if (rawFront) {
+      resolvedUrl = await resolvePortraitUrl(rawFront)
+    }
+
+    if (resolvedUrl) {
+      setFullbodyFrontRawUrl(rawFront)
+      setFullbodyFrontUrl(resolvedUrl)
+      setFullbodyHistories({ refined_anime_cg: [{ rawUrl: rawFront, previewUrl: resolvedUrl }] })
+      setFullbodyHistoryIndices({ refined_anime_cg: 0 })
+    } else {
+      setFullbodyHint('正面立绘加载失败，请重试')
+    }
+  }
+
   const generateFullbodyFrontDirect = async (avatarId: number, styleId = 'refined_anime_cg'): Promise<void> => {
     setFullbodyLoading(true)
     setFullbodyLoadingText('正在为您生成正面全身立绘…')
@@ -870,31 +901,41 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         }
       })
 
-      const applied = await applyPortrait({
-        id: res?.id,
-        assetUrl: res?.asset_url,
-        seedFrontUrl: res?.seed_front_2d_url
-      })
-
-      const rawFront = res?.seed_front_2d_url || null
-      let resolvedUrl: string | null = null
-
-      if (applied.seedFront) {
-        resolvedUrl = applied.seedFront
-      } else if (rawFront) {
-        resolvedUrl = await resolvePortraitUrl(rawFront)
-      }
-
-      if (resolvedUrl) {
-        setFullbodyFrontRawUrl(rawFront)
-        setFullbodyFrontUrl(resolvedUrl)
-        setFullbodyHistories({ [styleId]: [{ rawUrl: rawFront, previewUrl: resolvedUrl }] })
-        setFullbodyHistoryIndices({ [styleId]: 0 })
-      } else {
-        setFullbodyHint('正面立绘加载失败，请重试')
-      }
+      await applyFullbodyFrontResponse(res)
     } catch (err) {
       setFullbodyHint(err instanceof Error ? err.message : '生成正面全身立绘失败，请重试')
+    } finally {
+      setFullbodyLoading(false)
+    }
+  }
+
+  const fetchFullbodyFrontPrompt = async (): Promise<string> => {
+    const res = await window.spiritagent.api<{ prompt: string }>({
+      path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-2d/prompt`,
+      method: 'POST',
+      body: { style: 'refined_anime_cg', feedback: fullbodyFeedback.trim() || undefined }
+    })
+
+    return res.prompt
+  }
+
+  const adoptFullbodyFrontImage = async (image: PickedImage): Promise<void> => {
+    setFullbodyLoading(true)
+    setFullbodyLoadingText('正在保存你上传的立绘…')
+    setFullbodyHint(null)
+
+    try {
+      const res = await window.spiritagent.api<{
+        id?: number
+        asset_url?: string
+        seed_front_2d_url?: string
+      }>({
+        path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-2d/adopt`,
+        method: 'POST',
+        body: { image: image.base64, content_type: image.contentType, style: 'refined_anime_cg' }
+      })
+
+      await applyFullbodyFrontResponse(res)
     } finally {
       setFullbodyLoading(false)
     }
@@ -2007,6 +2048,15 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                         重新生成
                       </button>
                       <button
+                        className="text-body transition hover:text-strong disabled:opacity-40"
+                        disabled={fullbodyLoading}
+                        onClick={() => setFullbodySelfSourceOpen(true)}
+                        title="我自己生成这张图（复制提示词，生成后回传上传）"
+                        type="button"
+                      >
+                        使用自己的图
+                      </button>
+                      <button
                         className="inline-flex h-9 items-center justify-center rounded-lg bg-accent px-4 text-sm font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40"
                         disabled={fullbodyLoading || !fullbodyFrontUrl}
                         onClick={() => void confirmFullbodyFront()}
@@ -2026,6 +2076,19 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                   url={fullbodyZoomUrl}
                 />
               )}
+
+              <SelfSourceImageFlow
+                adopt={adoptFullbodyFrontImage}
+                fetchPrompt={fetchFullbodyFrontPrompt}
+                onClose={() => setFullbodySelfSourceOpen(false)}
+                onUseAi={() => {
+                  setFullbodySelfSourceOpen(false)
+                  // 走标准重绘入口保留已填的反馈；generateFullbodyFrontDirect 不带 feedback，只用于断点恢复的自动补生成。
+                  void regenerateFullbodyFront('regenerate')
+                }}
+                open={fullbodySelfSourceOpen}
+                title="正面全身立绘 · 使用自己的图"
+              />
             </div>
           )}
 

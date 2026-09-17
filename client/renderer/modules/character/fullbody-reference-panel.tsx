@@ -8,6 +8,7 @@ import { useStrings } from '@/shared/strings'
 
 import { pickAvatarImage, type PickedImage } from './avatar-image'
 import { $fullbodyReference, hydrateFullbodyReference, regenerateFullbodyReference } from './fullbody-reference-store'
+import { SelfSourceImageFlow } from './self-source-image'
 
 interface FullbodyReferencePanelProps {
   avatarId: number
@@ -23,12 +24,14 @@ export function FullbodyReferencePanel({
   onBack
 }: FullbodyReferencePanelProps): React.JSX.Element {
   const t = useStrings().settings.persona.fullbodyReference
+  const selfSource = useStrings().selfSource
   const state = useStore($fullbodyReference)
   const [feedback, setFeedback] = useState('')
   const [reference, setReference] = useState(initialReference)
   const [referenceError, setReferenceError] = useState(false)
   const [selecting, setSelecting] = useState(false)
   const [zoom, setZoom] = useState(false)
+  const [selfSourceOpen, setSelfSourceOpen] = useState(false)
   const onboarding = Boolean(onContinue)
   const current = state.avatarId === avatarId
   const preview = current ? state.previewUrl : null
@@ -72,6 +75,25 @@ export function FullbodyReferencePanel({
     if (await regenerateFullbodyReference(avatarId, feedback, null, 'edit')) {
       setFeedback('')
     }
+  }
+
+  const fetchSelfSourcePrompt = async (): Promise<string> => {
+    const res = await window.spiritagent.api<{ prompt: string }>({
+      path: `/api/companion/avatar/${avatarId}/fullbody/reference/prompt`,
+      method: 'POST',
+      body: { feedback: feedback.trim() || undefined }
+    })
+
+    return res.prompt
+  }
+
+  const adoptSelfSourceImage = async (image: PickedImage): Promise<void> => {
+    await window.spiritagent.api({
+      path: `/api/companion/avatar/${avatarId}/fullbody/reference/adopt`,
+      method: 'POST',
+      body: { image: image.base64, content_type: image.contentType }
+    })
+    await hydrateFullbodyReference(avatarId)
   }
 
   return (
@@ -177,6 +199,15 @@ export function FullbodyReferencePanel({
         <button className={BTN_SUBTLE} disabled={busy} onClick={() => void regenerate()} type="button">
           {current && state.rawUrl ? t.regenerate : t.generate}
         </button>
+        <button
+          className={BTN_SUBTLE}
+          disabled={busy}
+          onClick={() => setSelfSourceOpen(true)}
+          title={selfSource.openTitle}
+          type="button"
+        >
+          {selfSource.open}
+        </button>
         {onContinue && (
           <button
             className={BTN_PRIMARY}
@@ -188,6 +219,17 @@ export function FullbodyReferencePanel({
           </button>
         )}
       </div>
+      <SelfSourceImageFlow
+        adopt={adoptSelfSourceImage}
+        fetchPrompt={fetchSelfSourcePrompt}
+        onClose={() => setSelfSourceOpen(false)}
+        onUseAi={() => {
+          setSelfSourceOpen(false)
+          void regenerate()
+        }}
+        open={selfSourceOpen}
+        title={current && state.rawUrl ? t.regenerate : t.generate}
+      />
       {zoom && preview && <PortraitLightbox name={t.title} onClose={() => setZoom(false)} url={preview} />}
     </section>
   )

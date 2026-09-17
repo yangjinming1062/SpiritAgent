@@ -40,8 +40,16 @@ class BackdropPolicy(StrEnum):
     LLM_MAY_REPLACE = "llm_may_replace"
 
 
+class BackdropSource(StrEnum):
+    """图片来源：AI 生成（默认）或用户自备图上传（提示词下发后用户自行获取，回传采纳）。"""
+
+    GENERATED = "generated"
+    USER_UPLOAD = "user_upload"
+
+
 class CompanionRoomBackdrop(ModelBase, TimestampMixin):
-    """伙伴的房间图行；status 流转 pending → ready | failed；superseded 表示被更新取代。"""
+    """伙伴的房间图行；status 流转 pending → ready | failed；superseded 表示被更新取代。
+    source=user_upload 的 pending 行在等待用户回传图像，不参与生成任务恢复。"""
 
     __tablename__ = "companion_room_backdrops"
 
@@ -61,6 +69,11 @@ class CompanionRoomBackdrop(ModelBase, TimestampMixin):
         String(16),
         default=BackdropIntent.DECORATE.value,
         server_default=text("'decorate'"),
+    )
+    source: Mapped[str] = mapped_column(
+        String(16),
+        default=BackdropSource.GENERATED.value,
+        server_default=text("'generated'"),
     )
     brief: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     prompt: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))

@@ -93,6 +93,7 @@ export {
 export { bindProactiveLineSpeaker, type ProactiveLineOptions } from './proactive-speak'
 export { $renderMode, type RenderMode, setRenderMode } from './render-mode'
 export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritual-walk'
+export { SelfSourceImageFlow } from './self-source-image'
 export {
   $defaultScale,
   $dragVelocity,
@@ -128,6 +129,7 @@ export {
   $outfits,
   $poseRegen,
   activateOutfit,
+  adoptOutfitPoseImage,
   deleteOutfit,
   failPoseRegen,
   hydrateWardrobe,

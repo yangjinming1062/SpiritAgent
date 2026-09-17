@@ -3,6 +3,7 @@ import contextlib
 import json
 import secrets
 from pathlib import Path
+from typing import Literal
 
 from components import (
     REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
@@ -40,6 +41,9 @@ from .fullbody_reference_prompt import build_fullbody_reference_prompt
 from .image_generation import ImageGenerationError, generate_images
 
 logger = get_logger(__name__)
+
+# 全身种子自备图点位；值与 REST 路径段一致
+FullbodySeedKind = Literal["reference", "front-2d", "front-3d", "back"]
 
 _DEFAULT_STYLE: str = "portrait"
 _AVATAR_SIZE: str = "1024x1024"
@@ -227,6 +231,31 @@ async def _persist_portrait_bytes(data: bytes, content_type: str) -> tuple[str, 
 def _avatar_storage_path(file_id: str, ext: str) -> str:
     """返回立绘的规范裸存储路径 companion-avatars/<file_id>.<ext>。"""
     return f"companion-avatars/{file_id}.{ext}"
+
+
+async def _persist_portrait_or_draft(
+    data: bytes,
+    user_id: int,
+    content_type: str,
+    *,
+    persist: bool,
+) -> tuple[str, str, str]:
+    """按确认语义落盘立绘字节：persist=True 写 companion-avatars/ 永久路径，False 写 temp-media/ 草稿（TTL 24h）。
+    返回 (存储裸路径, file_id, ext)；不需要 file_id 的调用方忽略后两项。"""
+    if persist:
+        asset_url, file_id, final_ext = await _persist_portrait_bytes(data, content_type)
+        return asset_url, file_id, final_ext
+    src_content_type = content_type.split(";", maxsplit=1)[0].strip().lower()
+    final_ext = _UPLOAD_EXTS.get(src_content_type, "jpg")
+    file_id, _public_url = await asyncio.to_thread(
+        save_file,
+        data,
+        f"user:{user_id}",
+        src_content_type,
+        final_ext,
+        meta_marker=f"preview:{user_id}",
+    )
+    return f"temp-media/{file_id}", file_id, final_ext
 
 
 def _temp_media_public_url(bare_path: str) -> str:
@@ -990,6 +1019,67 @@ async def _commit_asset(session: AsyncSession, asset: AvatarAsset) -> AvatarAsse
     return asset
 
 
+async def _install_fullbody_seed(
+    db: AsyncSession | None,
+    user_id: int,
+    *,
+    avatar_id: int,
+    field: str,
+    url: str,
+    metadata: dict[str, str | None],
+    require_active: bool = False,
+    activate: bool = False,
+    clear_back: bool = False,
+    replace_previous: bool = False,
+    cleanup_url: str | None = None,
+) -> AvatarAsset:
+    """全身种子产物安装：写 prompt_json 元数据并替换目标字段，AI 生成与自备图采纳共用，
+    保证两条路径的落库语义一致。metadata 值为 None 表示移除该键。
+
+    require_active 要求目标行仍是激活头像（独立全身参考的守卫）；activate 翻转该用户激活行
+    （front-2d 语义）；clear_back 清空背面种子（3D 正面语义）；replace_previous 在提交后删除
+    被替换的旧文件；cleanup_url 在目标行消失时删除本次产物（期间角色被切换的竞态）。"""
+
+    async def _write(session: AsyncSession) -> AvatarAsset:
+        query = select(AvatarAsset).where(AvatarAsset.id == avatar_id, AvatarAsset.user_id == user_id)
+        if require_active:
+            query = query.where(AvatarAsset.active.is_(True))
+        target = (await session.execute(query)).scalar_one_or_none()
+        if target is None:
+            if cleanup_url:
+                delete_portrait_file(cleanup_url)
+            message = "当前角色已切换，请重新打开全身参考图" if require_active else f"avatar {avatar_id} not found"
+            raise AvatarNotFoundError(message)
+        previous_url = getattr(target, field) if replace_previous else None
+        payload = safe_json_loads(target.prompt_json, default={})
+        if isinstance(payload, dict):
+            for key, value in metadata.items():
+                if value is None:
+                    payload.pop(key, None)
+                else:
+                    payload[key] = value
+            target.prompt_json = json.dumps(payload, ensure_ascii=False)
+        setattr(target, field, url)
+        if clear_back:
+            target.seed_back_url = ""
+        if activate:
+            await session.execute(
+                update(AvatarAsset)
+                .where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True))
+                .values(active=False),
+            )
+            target.active = True
+        result = await _commit_asset(session, target)
+        if replace_previous and previous_url and previous_url != url:
+            delete_portrait_file(previous_url)
+        return result
+
+    if db is None:
+        async with SESSION_LOCAL() as write_db:
+            return await _write(write_db)
+    return await _write(db)
+
+
 async def generate_fullbody_reference(
     user_id: int,
     *,
@@ -1052,31 +1142,20 @@ async def generate_fullbody_reference(
             # str 按类契约是公开文案（含编辑能力缺失等可行动指引），透传给端点映射。
             raise FullbodyGenerationError(str(exc), internal=exc.internal) from exc
 
-        async with SESSION_LOCAL() as db:
-            target = (
-                await db.execute(
-                    select(AvatarAsset).where(
-                        AvatarAsset.id == avatar_id,
-                        AvatarAsset.user_id == user_id,
-                        AvatarAsset.active.is_(True),
-                    ),
-                )
-            ).scalar_one_or_none()
-            if target is None:
-                delete_portrait_file(generated_url)
-                raise AvatarNotFoundError("当前角色已切换，请重新打开全身参考图")
-            previous_url = target.seed_fullbody_url
-            payload = safe_json_loads(target.prompt_json, default={})
-            if not isinstance(payload, dict):
-                payload = {}
-            payload["fullbody_reference_prompt"] = prompt
-            payload["fullbody_rig_type"] = rig_type
-            target.prompt_json = json.dumps(payload, ensure_ascii=False)
-            target.seed_fullbody_url = generated_url
-            result = await _commit_asset(db, target)
-        if previous_url and previous_url != generated_url:
-            delete_portrait_file(previous_url)
-        return result
+        return await _install_fullbody_seed(
+            None,
+            user_id,
+            avatar_id=avatar_id,
+            field="seed_fullbody_url",
+            url=generated_url,
+            metadata={
+                "fullbody_reference_prompt": prompt,
+                "fullbody_rig_type": rig_type,
+            },
+            require_active=True,
+            replace_previous=True,
+            cleanup_url=generated_url,
+        )
 
 
 async def generate_fullbody_front_2d(
@@ -1144,26 +1223,19 @@ async def generate_fullbody_front_2d(
         raise FullbodyGenerationError("正面全身图生成失败，请稍后重试", internal=str(exc)) from exc
 
     async def _write(session: AsyncSession) -> AvatarAsset:
-        target = await session.get(AvatarAsset, avatar_id)
-        if target is None:
-            raise AvatarNotFoundError(f"avatar {avatar_id} not found")
-        payload = safe_json_loads(target.prompt_json, default={})
-        if isinstance(payload, dict):
-            payload["fullbody_style"] = style
-            payload["fullbody_rig_type"] = rig_type
-            if effective_feedback:
-                payload["fullbody_feedback"] = effective_feedback
-            else:
-                payload.pop("fullbody_feedback", None)
-            target.prompt_json = json.dumps(payload, ensure_ascii=False)
-        target.seed_front_2d_url = front_url
-        await session.execute(
-            update(AvatarAsset)
-            .where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True))
-            .values(active=False),
+        return await _install_fullbody_seed(
+            session,
+            user_id,
+            avatar_id=avatar_id,
+            field="seed_front_2d_url",
+            url=front_url,
+            metadata={
+                "fullbody_style": style,
+                "fullbody_rig_type": rig_type,
+                "fullbody_feedback": effective_feedback or None,
+            },
+            activate=True,
         )
-        target.active = True
-        return await _commit_asset(session, target)
 
     if db is None:
         async with SESSION_LOCAL() as write_db:
@@ -1265,21 +1337,19 @@ async def generate_fullbody_front_3d(
         raise FullbodyGenerationError("3D 正面立绘生成失败，请稍后重试", internal=str(exc)) from exc
 
     async def _write(session: AsyncSession) -> AvatarAsset:
-        target = await session.get(AvatarAsset, avatar_id)
-        if target is None:
-            raise AvatarNotFoundError(f"avatar {avatar_id} not found")
-        payload = safe_json_loads(target.prompt_json, default={})
-        if isinstance(payload, dict):
-            payload["fullbody_3d_style"] = effective_style
-            payload["fullbody_rig_type"] = rig_type
-            if effective_feedback:
-                payload["fullbody_3d_feedback"] = effective_feedback
-            else:
-                payload.pop("fullbody_3d_feedback", None)
-            target.prompt_json = json.dumps(payload, ensure_ascii=False)
-        target.seed_front_3d_url = front_url
-        target.seed_back_url = ""
-        return await _commit_asset(session, target)
+        return await _install_fullbody_seed(
+            session,
+            user_id,
+            avatar_id=avatar_id,
+            field="seed_front_3d_url",
+            url=front_url,
+            metadata={
+                "fullbody_3d_style": effective_style,
+                "fullbody_rig_type": rig_type,
+                "fullbody_3d_feedback": effective_feedback or None,
+            },
+            clear_back=True,
+        )
 
     if db is None:
         async with SESSION_LOCAL() as write_db:
@@ -1352,20 +1422,18 @@ async def generate_fullbody_back(
         raise FullbodyGenerationError("背面全身图生成失败，请稍后重试", internal=str(exc)) from exc
 
     async def _write(session: AsyncSession) -> AvatarAsset:
-        target = await session.get(AvatarAsset, avatar_id)
-        if target is None:
-            raise AvatarNotFoundError(f"avatar {avatar_id} not found")
-        payload = safe_json_loads(target.prompt_json, default={})
-        if isinstance(payload, dict):
-            payload["fullbody_3d_style"] = effective_style
-            payload["fullbody_rig_type"] = rig_type
-            if effective_feedback:
-                payload["fullbody_back_feedback"] = effective_feedback
-            else:
-                payload.pop("fullbody_back_feedback", None)
-            target.prompt_json = json.dumps(payload, ensure_ascii=False)
-        target.seed_back_url = back_url
-        return await _commit_asset(session, target)
+        return await _install_fullbody_seed(
+            session,
+            user_id,
+            avatar_id=avatar_id,
+            field="seed_back_url",
+            url=back_url,
+            metadata={
+                "fullbody_3d_style": effective_style,
+                "fullbody_rig_type": rig_type,
+                "fullbody_back_feedback": effective_feedback or None,
+            },
+        )
 
     if db is None:
         async with SESSION_LOCAL() as write_db:
@@ -1429,3 +1497,176 @@ async def confirm_fullbody_front(
         async with SESSION_LOCAL() as write_db:
             return await _write(write_db)
     return await _write(db)
+
+
+async def prepare_fullbody_prompt(
+    db: AsyncSession | None = None,
+    user_id: int | None = None,
+    *,
+    avatar_id: int,
+    kind: FullbodySeedKind,
+    feedback: str | None = None,
+    style: str | None = None,
+) -> str:
+    """自备图提示词：按「文本身份锚定」变体组装用户将拿去外部工具的完整提示词，不做生图。
+    前置守卫镜像对应生成函数的重新生成路径；edit 语境不适用（编辑依赖上一版底图，外部工具没有），
+    反馈恒并入重新生成语义的反馈槽。"""
+    if user_id is None:
+        raise ValueError("user_id is required")
+    effective_feedback = feedback.strip() if (feedback and feedback.strip()) else ""
+    if kind == "reference":
+        asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
+        if not asset.active:
+            raise AvatarNotFoundError("请先选择当前角色的头像")
+        species, appearance, personality_text = _fullbody_identity_fields(persona)
+        definition = load_persona_definition(persona)
+        return build_fullbody_reference_prompt(
+            species=species,
+            gender=definition.get("gender", ""),
+            appearance=appearance,
+            personality=personality_text,
+            feedback=effective_feedback or None,
+            has_user_reference=False,
+            identity_anchor="text",
+        )
+    if kind == "front-2d":
+        asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id, check_sealed=True)
+        prompt_payload = safe_json_loads(asset.prompt_json, default={})
+        if not isinstance(prompt_payload, dict) or not (
+            prompt_payload.get("avatar_prompt") or prompt_payload.get("prompt")
+        ):
+            raise SeedPromptMissingError(f"avatar {avatar_id} has no cached avatar_prompt")
+        effective_style = style or "refined_anime_cg"
+        species, appearance, personality = _fullbody_identity_fields(persona)
+        rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
+        return build_fullbody_prompt(
+            "front",
+            template=resolve_fullbody_template(species, rig_type, effective_style),
+            style_id=effective_style,
+            feedback=effective_feedback or None,
+            appearance=appearance,
+            personality=personality,
+            identity_anchor="text",
+        )
+    asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
+    if kind == "front-3d":
+        if not asset.seed_front_2d_url:
+            raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; confirm the 2D front seed first")
+    elif not (asset.seed_front_3d_url or asset.seed_front_2d_url):
+        raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; generate front fullbody first")
+    species, appearance, personality = _fullbody_identity_fields(persona)
+    effective_style = await _resolve_fullbody_3d_style(db, user_id, asset, species)
+    rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
+    return build_fullbody_prompt(
+        "front" if kind == "front-3d" else "back",
+        template=resolve_fullbody_template(species, rig_type, effective_style),
+        style_id=effective_style,
+        feedback=effective_feedback or None,
+        appearance=appearance,
+        personality=personality,
+        identity_anchor="text",
+    )
+
+
+async def adopt_fullbody_seed(
+    db: AsyncSession | None = None,
+    user_id: int | None = None,
+    *,
+    avatar_id: int,
+    kind: FullbodySeedKind,
+    data: bytes,
+    content_type: str,
+    style: str | None = None,
+) -> AvatarAsset:
+    """自备图采纳：用户在外部工具生成的图像按对应种子「生成成功」的语义落库安装，
+    元数据与 persist 语义与各生成函数完全一致（front-2d 保持草稿待 confirm-front 转正，
+    其余在形象确认后直接永久；独立全身参考仍要求激活头像行）。"""
+    if user_id is None:
+        raise ValueError("user_id is required")
+    if not data:
+        raise ValueError("image data is required")
+    async with get_avatar_job_lock(user_id):
+        if kind == "front-2d":
+            asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id, check_sealed=True)
+        else:
+            asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
+        species, appearance, personality_text = _fullbody_identity_fields(persona)
+        # 前置守卫先于落盘（同各生成函数的守卫位置）：守卫失败时不能留下已持久化的孤儿文件
+        # （front-3d/back 在形象确认后写的是永久路径，无 TTL 兜底清理）。
+        if kind == "front-3d":
+            if not asset.seed_front_2d_url:
+                raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; confirm the 2D front seed first")
+        elif kind == "back" and not (asset.seed_front_3d_url or asset.seed_front_2d_url):
+            raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; generate front fullbody first")
+        # 与各生成函数的 persist 语义一致：front-2d 恒为草稿，其余确认后永久
+        persist = kind != "front-2d" and persona.is_portrait_confirmed
+        url, _, _ = await _persist_portrait_or_draft(data, user_id, content_type, persist=persist)
+
+        if kind == "reference":
+            rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
+            definition = load_persona_definition(persona)
+            prompt = build_fullbody_reference_prompt(
+                species=species,
+                gender=definition.get("gender", ""),
+                appearance=appearance,
+                personality=personality_text,
+                feedback=None,
+                has_user_reference=False,
+                identity_anchor="text",
+            )
+            return await _install_fullbody_seed(
+                db,
+                user_id,
+                avatar_id=avatar_id,
+                field="seed_fullbody_url",
+                url=url,
+                metadata={
+                    "fullbody_reference_prompt": prompt,
+                    "fullbody_rig_type": rig_type,
+                },
+                require_active=True,
+                replace_previous=True,
+                cleanup_url=url,
+            )
+        if kind == "front-2d":
+            return await _install_fullbody_seed(
+                db,
+                user_id,
+                avatar_id=avatar_id,
+                field="seed_front_2d_url",
+                url=url,
+                metadata={
+                    "fullbody_style": style or "refined_anime_cg",
+                    "fullbody_rig_type": await _resolve_fullbody_rig_type(db, user_id, asset, species),
+                    "fullbody_feedback": None,
+                },
+                activate=True,
+            )
+        effective_style = await _resolve_fullbody_3d_style(db, user_id, asset, species)
+        rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
+        if kind == "front-3d":
+            return await _install_fullbody_seed(
+                db,
+                user_id,
+                avatar_id=avatar_id,
+                field="seed_front_3d_url",
+                url=url,
+                metadata={
+                    "fullbody_3d_style": effective_style,
+                    "fullbody_rig_type": rig_type,
+                    "fullbody_3d_feedback": None,
+                },
+                clear_back=True,
+            )
+        return await _install_fullbody_seed(
+            db,
+            user_id,
+            avatar_id=avatar_id,
+            field="seed_back_url",
+            url=url,
+            metadata={
+                "fullbody_3d_style": effective_style,
+                "fullbody_rig_type": rig_type,
+                "fullbody_back_feedback": None,
+            },
+        )

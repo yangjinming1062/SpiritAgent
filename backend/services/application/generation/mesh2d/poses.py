@@ -161,7 +161,14 @@ async def locate_pose(raw: bytes, chain: list[ProviderConfig]) -> Landmarks:
     raise ValueError("pose landmark detection unavailable")
 
 
-def align_blink(raw: bytes, closed_raw: bytes, face: list[float], eyes: list[int]) -> Image.Image:
+def align_blink(
+    raw: bytes,
+    closed_raw: bytes,
+    face: list[float],
+    eyes: list[int],
+    width: int,
+    height: int,
+) -> Image.Image:
     x0, y0, x1, y1 = [round(v) for v in face]
     with Image.open(io.BytesIO(raw)) as source, Image.open(io.BytesIO(closed_raw)) as candidate:
         original = np.asarray(source.convert("RGB"), dtype=np.float32)[y0:y1, x0:x1]
@@ -173,7 +180,7 @@ def align_blink(raw: bytes, closed_raw: bytes, face: list[float], eyes: list[int
         best = (float("inf"), 0, 0)
         for dy in range(-8, 9):
             for dx in range(-8, 9):
-                if x0 + dx < 0 or y0 + dy < 0 or x1 + dx > 1024 or y1 + dy > 1024:
+                if x0 + dx < 0 or y0 + dy < 0 or x1 + dx > width or y1 + dy > height:
                     continue
                 patch = edited[y0 + dy : y1 + dy, x0 + dx : x1 + dx]
                 score = float(np.abs(patch - original)[stable].mean())
@@ -267,6 +274,20 @@ class _PoseContext(NamedTuple):
 _POSE_BACKDROPS = ("red (#FF0000)", "green (#00FF00)", "blue (#0000FF)")
 
 
+def _chroma_channel(pixels: NDArray[np.float32]) -> int:
+    """选取立绘中最少出现的主色作色幕通道，手臂与身体间的封闭空隙也能清除。"""
+    return min(
+        range(3),
+        key=lambda c: int(np.count_nonzero(pixels[:, :, c] - np.delete(pixels, c, axis=2).max(axis=2) > 30)),
+    )
+
+
+def pose_backdrop_for_artwork(reference: bytes) -> str:
+    """按立绘主色选建议色幕（与生成链同规则），供自备图提示词给出纯色背景建议。"""
+    pixels, _ = _prepare_pose_reference(reference)
+    return _POSE_BACKDROPS[_chroma_channel(pixels)]
+
+
 async def _resolve_pose_context(reference: bytes, user_id: int | None) -> _PoseContext:
     async with SESSION_LOCAL() as db:
         image_chain, _ = await resolve_image_gen_chain(
@@ -279,12 +300,57 @@ async def _resolve_pose_context(reference: bytes, user_id: int | None) -> _PoseC
     if not image_chain or not vision_chain:
         raise PoseGenerationError("扶边姿态需要配置支持参考图的图像供应商及视觉模型")
     pixels, reference = await asyncio.to_thread(_prepare_pose_reference, reference)
-    # 选取立绘中最少出现的主色作色幕，手臂与身体间的封闭空隙也能清除。
-    channel = min(
-        range(3),
-        key=lambda c: int(np.count_nonzero(pixels[:, :, c] - np.delete(pixels, c, axis=2).max(axis=2) > 30)),
+    return _PoseContext(reference, image_chain, vision_chain, _chroma_channel(pixels))
+
+
+def build_pose_side_prompt(
+    side: Side,
+    *,
+    appearance: str = "",
+    outfit_description: str = "",
+    backdrop: str | None = None,
+) -> str:
+    """自备图场景的用户可见姿态提示词：身份来自角色设定与穿着的文字描述，姿势与构图规范与生成链
+    一致，不引用参考图或内部概念。backdrop 是按立绘主色推荐的纯色背景（ISNet 抠图不依赖背景色，
+    仅提升色键兜底与闭眼帧质量）；缺省时只要求纯色。"""
+    inward, outward = ("RIGHT", "LEFT") if side == "left" else ("LEFT", "RIGHT")
+    backdrop_text = backdrop or "flat solid"
+    parts: list[str] = [
+        "Create a full-body character illustration for a peeking animation at a screen edge.",
+        "",
+    ]
+    identity_clauses: list[str] = []
+    if appearance.strip():
+        identity_clauses.append(f"The character's appearance: {appearance.strip()}.")
+    if outfit_description.strip():
+        identity_clauses.append(f"The character's current outfit: {outfit_description.strip()}.")
+    if identity_clauses:
+        parts.append("CHARACTER")
+        parts.append(
+            " ".join(identity_clauses)
+            + " Render exactly this one character; keep the face, species, body proportions, and signature details"
+            " consistent with this description throughout.",
+        )
+        parts.append("")
+    parts.extend(
+        (
+            "POSE AND EXPRESSION",
+            "Two naturally connected arms place their hands one above the other along an imaginary vertical contact "
+            f"line near the canvas center. The head leans {inward} beyond the hands, while the hips and legs remain "
+            f"on the {outward} side of that line. Both eyes are open, with a gentle, curious expression toward the "
+            "viewer.",
+            "",
+            "COMPOSITION AND RENDERING",
+            "Compose one complete character from the top of the hair to the tips of both feet. Keep the entire "
+            "silhouette inside the frame, with at least 8% empty space above and below and clear space at both "
+            "sides. Give every body region coherent anatomy, the character's own skin and clothing colors, and "
+            "a consistent level of illustration detail. The visible image consists solely of the character against "
+            f"a perfectly flat, uniformly saturated {backdrop_text} background with no texture, no gradient, and no "
+            "checkerboard pattern; the contact line is an imaginary layout constraint. Deliver one complete "
+            "illustration.",
+        ),
     )
-    return _PoseContext(reference, image_chain, vision_chain, channel)
+    return "\n".join(parts)
 
 
 async def _compose_pose(side: Side, context: _PoseContext) -> tuple[Pose, dict[str, bytes]]:
@@ -312,18 +378,40 @@ async def _compose_pose(side: Side, context: _PoseContext) -> tuple[Pose, dict[s
         "unified 1024x1024 illustration."
     )
     raw = await generate_image(prompt, context.reference, context.image_chain, guide)
+    return await _finish_pose(raw, side, context.image_chain, context.vision_chain, context.channel)
+
+
+async def _finish_pose(
+    raw: bytes,
+    side: Side,
+    image_chain: list[ProviderConfig],
+    vision_chain: list[ProviderConfig],
+    channel: int,
+) -> tuple[Pose, dict[str, bytes]]:
+    """主姿态图之后的共享后处理：抠图 → 关键点定位 → 闭眼帧 → 纹理编码；自备图路径复用。
+
+    几何按图像实际宽高参数化：AI 路径恒为 1024×1024（generate_image 归一化），自备图保持
+    用户原始尺寸与比例——渲染端网格、画布与布局均消费 Pose.width/height，无方形假设。"""
     # 两级抠图：ISNet 显著性抠图（颜色无关，容忍任意背景）→ 色幕色键兜底（模型缺失或推理失败时）。
     body = await asyncio.to_thread(subject_matte, raw)
     if body is None:
-        body = await asyncio.to_thread(cutout, raw, context.channel)
+        body = await asyncio.to_thread(cutout, raw, channel)
     bounds = body.getbbox()
     if bounds is None:
         raise ValueError("empty pose")
-    landmarks = await locate_pose(raw, context.vision_chain)
+    width, height = body.size
+    landmarks = await locate_pose(raw, vision_chain)
     edge_index = 1 if side == "left" else 3
-    contact = (landmarks.upper_hand[edge_index] + landmarks.lower_hand[edge_index]) / 2 * 1.024
-    face = [landmarks.face[i] * 1.024 for i in (1, 0, 3, 2)]
-    eyes = [round(landmarks.eyes[i] * 1.024) for i in (1, 0, 3, 2)]
+
+    # locate_pose 输出归一化到 0..1000 的 [ymin,xmin,ymax,xmax]；经 (1,0,3,2) 重排为 [x0,y0,x1,y1]
+    # 后，x 坐标按宽、y 坐标按高换算回像素（AI 方形路径下即原 ×1.024）。
+    def _to_px(rect: Rect, *, as_int: bool = False) -> list[float]:
+        scaled = [rect[i] * (height / 1000 if i % 2 == 0 else width / 1000) for i in (1, 0, 3, 2)]
+        return [float(round(v)) for v in scaled] if as_int else scaled
+
+    contact = (landmarks.upper_hand[edge_index] + landmarks.lower_hand[edge_index]) / 2 * (width / 1000)
+    face = _to_px(landmarks.face)
+    eyes = _to_px(landmarks.eyes, as_int=True)
     closed_raw = await generate_image(
         "Create the closed-eye frame of a gentle blink for the supplied character illustration.\n\n"
         "The source image defines the finished character, pose, style, colors, background, and pixel registration. "
@@ -334,9 +422,15 @@ async def _compose_pose(side: Side, context: _PoseContext) -> tuple[Pose, dict[s
         "complete image at the source dimensions and framing, so the edited eyelids align with the original face "
         "when the two frames are overlaid.",
         raw,
-        context.image_chain,
+        image_chain,
     )
-    closed = await asyncio.to_thread(align_blink, raw, closed_raw, face, eyes)
+    with Image.open(io.BytesIO(closed_raw)) as closed_source:
+        # 编辑链恒按 1024×1024 返回；非方形输入先整体缩放回原尺寸，保持与原图同一像素配准
+        closed_scaled = await asyncio.to_thread(
+            encode_png,
+            closed_source.convert("RGB").resize((width, height), Image.Resampling.LANCZOS),
+        )
+    closed = await asyncio.to_thread(align_blink, raw, closed_scaled, face, eyes, width, height)
     mask = Image.new("L", body.size)
     ImageDraw.Draw(mask).rectangle((eyes[0] - 4, eyes[1] - 4, eyes[2] + 4, eyes[3] + 4), fill=255)
     mask = mask.filter(ImageFilter.GaussianBlur(3))
@@ -359,10 +453,10 @@ async def _compose_pose(side: Side, context: _PoseContext) -> tuple[Pose, dict[s
         key = f"pose_{side}_{name}"
         assets[key] = data
         textures[name] = Texture(key=key, hash=hashlib.sha256(data).hexdigest())
-    hands = [[rect[i] * 1.024 for i in (1, 0, 3, 2)] for rect in (landmarks.upper_hand, landmarks.lower_hand)]
+    hands = [_to_px(rect) for rect in (landmarks.upper_hand, landmarks.lower_hand)]
     return Pose(
-        width=1024,
-        height=1024,
+        width=width,
+        height=height,
         contactX=contact,
         head=face,
         hands=hands,
@@ -392,6 +486,36 @@ async def generate_single_pose(reference: bytes, user_id: int | None, side: Side
     try:
         async with asyncio.timeout(1200):
             return await _compose_pose(side, context)
+    except PoseGenerationError:
+        raise
+    except Exception as exc:
+        raise PoseGenerationError("扶边姿态生成失败，请重试") from exc
+
+
+async def compose_single_pose_from_image(
+    raw: bytes,
+    user_id: int | None,
+    side: Side,
+) -> tuple[Pose, dict[str, bytes]]:
+    """自备图单侧姿态：用户提供的姿态图直接进入既有后处理（抠图/定位/闭眼帧/编码），
+    只跳过主姿态图的生图调用。ISNet 抠图容忍任意背景，色幕通道按用户图自身主色选取供色键兜底。"""
+    async with SESSION_LOCAL() as db:
+        image_chain, _ = await resolve_image_gen_chain(
+            db if user_id is not None else None,
+            user_id,
+            "reference",
+            preferred_provider=SETTINGS.companion_asset_image_providers,
+        )
+        vision_chain = await resolve_vision_chain(db if user_id is not None else None, user_id)
+    if not image_chain or not vision_chain:
+        raise PoseGenerationError("扶边姿态需要配置支持参考图的图像供应商及视觉模型")
+    # 关键点换算、闭眼帧对齐与 Pose 尺寸记录均按图像实际宽高参数化（见 _finish_pose），
+    # 用户图保持原始分辨率与比例进入后处理，不强行归一化到生图链的 1024×1024。
+    pixels, _ = await asyncio.to_thread(_prepare_pose_reference, raw)
+    channel = _chroma_channel(pixels)
+    try:
+        async with asyncio.timeout(1200):
+            return await _finish_pose(raw, side, image_chain, vision_chain, channel)
     except PoseGenerationError:
         raise
     except Exception as exc:

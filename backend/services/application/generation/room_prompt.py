@@ -33,6 +33,8 @@ class RoomPromptContext:
     brief: str = ""
     notes: str = ""
     has_reference_image: bool = False
+    # 自备图变体：提示词供用户拿去外部工具生图，没有参考图输入，身份由文字描述承载。
+    text_identity: bool = False
 
 
 def _prompt_clause(value: str) -> str:
@@ -41,6 +43,11 @@ def _prompt_clause(value: str) -> str:
 
 def _identity_block(ctx: RoomPromptContext) -> str:
     appearance = _prompt_clause(ctx.appearance or "")
+    if ctx.text_identity:
+        block = "画面中只出现这一位角色，其五官、肤色、物种、性别与身材比例与角色外形设定保持一致；根据本次房间情境安排姿态与构图。"
+        if appearance:
+            return f"{block}角色外形设定：{appearance}。"
+        return block
     identity = "图 1（全身参考图）" if ctx.has_reference_image else "全身参考图"
     block = f"{identity}用于确定角色身份与身材：保持同一角色的五官、肤色、物种、性别与身材比例；根据本次房间情境安排姿态与构图。"
     if appearance:
@@ -49,7 +56,8 @@ def _identity_block(ctx: RoomPromptContext) -> str:
 
 
 def build_room_prompt(ctx: RoomPromptContext) -> str:
-    """身份图锁定外貌；用户图提供场景与所需姿势；穿着用着装描述原文。"""
+    """身份图锁定外貌；用户图提供场景与所需姿势；穿着用着装描述原文。
+    text_identity=True 是自备图变体：无任何参考图输入，身份由文字描述承载。"""
     intent_value = ctx.intent.value if isinstance(ctx.intent, BackdropIntent) else str(ctx.intent)
     lighting = _INTENT_LIGHTING.get(intent_value, _INTENT_LIGHTING["decorate"])
     species = (ctx.species or "人类").strip() or "人类"
@@ -69,9 +77,11 @@ def build_room_prompt(ctx: RoomPromptContext) -> str:
         )
     outfit = _prompt_clause(ctx.outfit_description or "")
     if outfit:
+        # text_identity 变体没有参考图输入，提示词供用户带去外部工具，不引用不存在的图。
+        priority = "" if ctx.text_identity else "优先于所有参考图中的穿着，"
         parts.append(
             f"角色当前穿着：{outfit}。服装、配色、发型与配饰以这段当前穿着描述为准，"
-            "优先于所有参考图中的穿着，并在本次房间场景中保持这套搭配。",
+            f"{priority}并在本次房间场景中保持这套搭配。",
         )
     elif ctx.has_reference_image:
         parts.append("角色穿着沿用图 1，不采用图 2 人物的服装、发型或配饰。")

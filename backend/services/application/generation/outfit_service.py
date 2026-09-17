@@ -55,6 +55,7 @@ from .avatar_service import (
     _fullbody_size_for,
     _generate_one_portrait_with_moderation_retry,
     _persist_portrait_bytes,
+    _persist_portrait_or_draft,
     _read_temp_media_bytes,
     _resolve_fullbody_rig_type,
     delete_portrait_file,
@@ -64,7 +65,9 @@ from .avatar_service import (
 )
 from .mesh2d import (
     active_model_ids,
+    build_pose_side_prompt,
     mesh2d_response,
+    pose_backdrop_for_artwork,
     pose_regeneration_in_progress,
     run_mesh2d_pipeline,
     run_pose_side_regeneration,
@@ -654,40 +657,271 @@ async def resume_outfit_split(user_id: int, outfit_id: int) -> bool:
     return True
 
 
+async def _ready_outfit_for_pose(db: AsyncSession, user_id: int, outfit_id: int) -> CompanionOutfit:
+    """单侧姿态重绘、采纳与提示词共用的就绪外观守卫；返回外观行。"""
+    outfit = await _get_outfit(db, user_id, outfit_id)
+    if outfit is None:
+        raise OutfitNotFoundError(f"outfit {outfit_id} not found")
+    if outfit.status != "ready":
+        raise OutfitStateError("仅切分成功的外观可以重新生成扶边姿态")
+    if await _has_splitting(db, user_id):
+        raise OutfitStateError("有一套外观正在生成中，请稍候")
+    model_id = await db.scalar(
+        select(Companion2DModel.id)
+        .where(
+            Companion2DModel.user_id == user_id,
+            Companion2DModel.outfit_id == outfit.id,
+            Companion2DModel.status == "succeeded",
+        )
+        .order_by(Companion2DModel.id.desc())
+        .limit(1),
+    )
+    if model_id is None:
+        raise OutfitStateError("外观缺少 2D 资产，请重新生成外观")
+    return outfit
+
+
 async def regenerate_outfit_pose(
     db: AsyncSession,
     user_id: int,
     outfit_id: int,
     side: Literal["left", "right"],
 ) -> CompanionOutfit:
-    """单侧重生成就绪外观的一侧扶边姿态：只替换该侧两张姿态纹理与 manifest poses 子树，
+    """单侧重生成一侧扶边姿态：只替换该侧两张姿态纹理与 manifest poses 子树，
     PSD 与另一侧不动；生成失败时旧姿态保持可用、外观仍为 ready。与整包切分互斥，
     同一外观同一时间只允许一个单侧任务（单飞标记在管线模块）。"""
     async with get_avatar_job_lock(user_id):
-        outfit = await _get_outfit(db, user_id, outfit_id)
-        if outfit is None:
-            raise OutfitNotFoundError(f"outfit {outfit_id} not found")
-        if outfit.status != "ready":
-            raise OutfitStateError("仅切分成功的外观可以重新生成扶边姿态")
-        if await _has_splitting(db, user_id):
-            raise OutfitStateError("有一套外观正在生成中，请稍候")
-        model_id = await db.scalar(
-            select(Companion2DModel.id)
-            .where(
-                Companion2DModel.user_id == user_id,
-                Companion2DModel.outfit_id == outfit.id,
-                Companion2DModel.status == "succeeded",
-            )
-            .order_by(Companion2DModel.id.desc())
-            .limit(1),
-        )
-        if model_id is None:
-            raise OutfitStateError("外观缺少 2D 资产，请重新生成外观")
+        outfit = await _ready_outfit_for_pose(db, user_id, outfit_id)
         if pose_regeneration_in_progress(user_id, outfit.id):
             raise OutfitStateError("扶边姿态正在重新生成中，请稍候")
 
     # 锁内校验到锁外提交之间无挂起点，单飞检查与在飞标记登记在同一事件轮内原子完成
     run_pose_side_regeneration(user_id=user_id, outfit_id=outfit.id, side=side)
+    return outfit
+
+
+async def prepare_outfit_prompt(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    description: str | None,
+    image: bytes | None = None,
+    content_type: str | None = None,
+) -> str:
+    """自备图提示词（创建语境）：守卫与参考图整合链同创建草稿（整合失败降级纯文字），
+    以文本身份锚定变体组装；不创建草稿行，不做生图。"""
+    effective_description = (description or "").strip()
+    if not effective_description and image is None:
+        raise OutfitError("请先描述想要的着装，或上传一张参考图")
+
+    (
+        _avatar,
+        _mesh2d,
+        species,
+        appearance,
+        personality,
+        style,
+        rig_type,
+    ) = await _outfit_generation_context(db, user_id)
+    # 结束读事务：整合往返期间不占连接（短会话纪律）
+    await db.commit()
+
+    garment_text: str | None = None
+    if image is not None:
+        garment_text = await _describe_reference_garment(
+            user_id,
+            {},
+            image,
+            content_type,
+            requirement=effective_description,
+        )
+    feedback = garment_text or effective_description or "为角色设计一套新的着装"
+    return build_outfit_prompt(
+        template=resolve_fullbody_template(species, rig_type, style),
+        style_id=style,
+        feedback=feedback,
+        appearance=appearance,
+        personality=personality,
+        identity_anchor="text",
+    )
+
+
+async def prepare_outfit_regenerate_prompt(
+    db: AsyncSession,
+    user_id: int,
+    outfit_id: int,
+    *,
+    feedback: str | None,
+) -> str:
+    """自备图提示词（草稿重绘语境）：守卫与反馈整合同草稿重绘（含设计稿补整合），以文本身份锚定变体组装。"""
+    outfit = await _get_outfit(db, user_id, outfit_id)
+    if outfit is None:
+        raise OutfitNotFoundError(f"outfit {outfit_id} not found")
+    if outfit.status not in ("draft", "failed"):
+        raise OutfitStateError("仅草稿或失败状态可以微调重绘")
+    effective_feedback = (feedback or "").strip()
+
+    (
+        _avatar,
+        _mesh2d,
+        species,
+        appearance,
+        personality,
+        style,
+        rig_type,
+    ) = await _outfit_generation_context(db, user_id)
+    source = safe_json_loads(outfit.source_json or "{}", default={})
+    if not isinstance(source, dict):
+        source = {}
+    await db.commit()
+
+    description = str(source.get("description") or "").strip()
+    garment_text = str(source.get("reference_description") or "").strip()
+    if not garment_text and source.get("reference_image_path"):
+        garment_text = await _describe_reference_garment(user_id, source, requirement=description)
+    combined_feedback = "；".join(part for part in (garment_text or description, effective_feedback) if part)
+    if not combined_feedback:
+        raise OutfitError("请先描述想要的着装或修改要求")
+    return build_outfit_prompt(
+        template=resolve_fullbody_template(species, rig_type, style),
+        style_id=style,
+        feedback=combined_feedback,
+        appearance=appearance,
+        personality=personality,
+        identity_anchor="text",
+    )
+
+
+async def adopt_outfit_draft_image(
+    db: AsyncSession,
+    user_id: int,
+    *,
+    description: str | None,
+    data: bytes,
+    content_type: str | None,
+) -> CompanionOutfit:
+    """自备图采纳（创建语境）：用户外部生成的立绘按创建草稿语义入库（temp-media 草稿，确认后转正）。"""
+    (
+        _avatar,
+        _mesh2d,
+        _species,
+        _appearance,
+        _personality,
+        style,
+        _rig_type,
+    ) = await _outfit_generation_context(db, user_id)
+    effective_description = (description or "").strip()
+    fullbody_url, _, _ = await _persist_portrait_or_draft(
+        data,
+        user_id,
+        content_type or "image/png",
+        persist=False,
+    )
+
+    async with get_avatar_job_lock(user_id):
+        outfit = CompanionOutfit(
+            user_id=user_id,
+            name="新外观",
+            fullbody_url=fullbody_url,
+            style=style,
+            status="draft",
+            source_json=json.dumps({"description": effective_description}, ensure_ascii=False),
+        )
+        db.add(outfit)
+        await db.commit()
+        await db.refresh(outfit)
+    return outfit
+
+
+async def adopt_outfit_regenerate_image(
+    db: AsyncSession,
+    user_id: int,
+    outfit_id: int,
+    *,
+    data: bytes,
+    content_type: str | None,
+) -> CompanionOutfit:
+    """自备图采纳（草稿重绘语境）：替换草稿/失败外观的立绘，状态回到草稿；成功发 outfit.updated。"""
+    outfit = await _get_outfit(db, user_id, outfit_id)
+    if outfit is None:
+        raise OutfitNotFoundError(f"outfit {outfit_id} not found")
+    if outfit.status not in ("draft", "failed"):
+        raise OutfitStateError("仅草稿或失败状态可以微调重绘")
+    original_url = outfit.fullbody_url
+
+    fullbody_url, _, _ = await _persist_portrait_or_draft(
+        data,
+        user_id,
+        content_type or "image/png",
+        persist=False,
+    )
+
+    async with get_avatar_job_lock(user_id):
+        # 上传期间外观可能已被确认或另一次重绘替换，锁内刷新后按原始版本核对（同 regenerate_outfit_draft）
+        outfit = await _get_outfit(db, user_id, outfit_id)
+        if outfit is None or outfit.status not in ("draft", "failed") or outfit.fullbody_url != original_url:
+            delete_portrait_file(fullbody_url)
+            raise OutfitStateError("外观已发生变化，请刷新后重试")
+        outfit.fullbody_url = fullbody_url
+        outfit.status = "draft"
+        outfit.pending_wear = False
+        emit_ws_event(
+            db,
+            user_id=user_id,
+            event_type="companion.outfit.updated",
+            payload={"outfit_id": outfit.id, "worn": False},
+        )
+        await db.commit()
+        if original_url != fullbody_url:
+            delete_portrait_file(original_url)
+        await db.refresh(outfit)
+    return outfit
+
+
+async def prepare_pose_prompt(
+    db: AsyncSession,
+    user_id: int,
+    outfit_id: int,
+    side: Literal["left", "right"],
+) -> str:
+    """自备图提示词（单侧扶边姿态）：姿势/构图规范与生成链一致，身份来自角色设定与当前穿着文字，
+    附带按立绘主色推荐的纯色背景；立绘不可读时降级为通用纯色要求。"""
+    outfit = await _ready_outfit_for_pose(db, user_id, outfit_id)
+    persona = await get_or_create_persona(db, user_id)
+    definition = load_persona_definition(persona)
+    backdrop: str | None = None
+    resolved = resolve_uploaded_avatar_path(outfit.fullbody_url.rsplit("/", 1)[-1])
+    if resolved is not None:
+        try:
+            artwork = await asyncio.to_thread(resolved[0].read_bytes)
+            backdrop = await asyncio.to_thread(pose_backdrop_for_artwork, artwork)
+        except Exception:
+            backdrop = None
+    return build_pose_side_prompt(
+        side,
+        appearance=str(definition.get("appearance") or "").strip(),
+        outfit_description=(outfit.description or "").strip(),
+        backdrop=backdrop,
+    )
+
+
+async def adopt_outfit_pose(
+    db: AsyncSession,
+    user_id: int,
+    outfit_id: int,
+    side: Literal["left", "right"],
+    *,
+    data: bytes,
+) -> CompanionOutfit:
+    """自备图采纳（单侧姿态）：校验后就地入队既有单侧管线（跳过主图生图，抠图/定位/闭眼帧仍由后端完成），
+    完成与失败经 WS 事件驱动刷新，语义与单侧重绘一致。"""
+    async with get_avatar_job_lock(user_id):
+        outfit = await _ready_outfit_for_pose(db, user_id, outfit_id)
+        if pose_regeneration_in_progress(user_id, outfit.id):
+            raise OutfitStateError("扶边姿态正在重新生成中，请稍候")
+
+    # 锁内校验到锁外提交之间无挂起点，单飞检查与在飞标记登记在同一事件轮内原子完成
+    run_pose_side_regeneration(user_id=user_id, outfit_id=outfit.id, side=side, user_image=data)
     return outfit
 
 

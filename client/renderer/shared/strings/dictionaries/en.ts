@@ -45,6 +45,24 @@ export const dict: Dictionary = {
     processing: 'Processing…'
   },
 
+  selfSource: {
+    open: 'Use your own image',
+    openTitle: 'Generate this image yourself (copy the prompt, then upload the result)',
+    hint: 'Copy the prompt below, generate the image with any tool you like, then pick and upload it here. The artwork will follow this description.',
+    promptLoading: 'Preparing the prompt…',
+    promptFailed: 'Failed to fetch the prompt. Please retry.',
+    retryPrompt: 'Refetch prompt',
+    copyPrompt: 'Copy prompt',
+    copied: 'Copied',
+    pickTitle: 'Pick the finished image',
+    pickImage: 'Pick image',
+    replaceImage: 'Replace',
+    adopt: 'Use this image',
+    adopting: 'Saving…',
+    adoptFailed: 'Failed to save. Please retry.',
+    useAi: 'Use AI generation'
+  },
+
   boot: {
     ready: (brandFullName: string) => `${brandFullName} is ready`,
     desktopBootFailedWithMessage: (message: string) => `Desktop failed to start: ${message}`,
@@ -1040,6 +1058,10 @@ export const dict: Dictionary = {
       currentAltFallback: 'Active room',
       pendingOverlay: 'Setting up a new room…',
       pendingOverlayHint: 'Decorating based on your companion and daily vibe — a moment and you can move in',
+      waitingUploadOverlay: 'Waiting for your room image',
+      waitingUploadHint: 'The prompt is ready. Upload your image anytime, or discard it for now.',
+      waitingUploadAction: 'Pick image to upload',
+      waitingUploadDiscard: 'Discard',
       failedOverlay: 'Room setup failed',
       failedOverlayHint: 'Generation service is busy or the network is unstable — tap to retry',
       retryButton: 'Try again',

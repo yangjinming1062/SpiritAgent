@@ -34,6 +34,7 @@ from modules.companion import (
     BackdropIntent,
     BackdropOrigin,
     BackdropPolicy,
+    BackdropSource,
     BackdropStatus,
     CompanionOutfit,
     CompanionRoomBackdrop,
@@ -455,6 +456,178 @@ async def schedule_room_generation(
     return row
 
 
+async def _current_outfit_description(user_id: int) -> str:
+    """当前穿着外观的描述原文；无就绪外观返回空串（提示词不写穿着块）。"""
+    async with SESSION_LOCAL() as db:
+        outfit = (
+            await db.execute(
+                select(CompanionOutfit)
+                .where(
+                    CompanionOutfit.user_id == user_id,
+                    CompanionOutfit.active.is_(True),
+                    CompanionOutfit.status == "ready",
+                )
+                .order_by(CompanionOutfit.id.desc())
+                .limit(1),
+            )
+        ).scalar_one_or_none()
+    return (outfit.description or "").strip() if outfit is not None else ""
+
+
+async def schedule_room_prompt(
+    user_id: int,
+    *,
+    intent: str = "rebuild",
+    notes: str | None = None,
+) -> CompanionRoomBackdrop:
+    """自备图第一步：创建 source=user_upload 的 pending 行并落库 brief 与文本身份锚定的提示词，
+    不启动任何生图任务；用户回传图像后经 adopt_room_backdrop 转 ready，放弃则 discard。
+    落库的提示词与客户端展示的完全一致。"""
+    async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
+        persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
+        if persona is None or not persona.is_complete:
+            raise RoomBackdropStateError("persona not ready; complete onboarding first")
+        definition = load_persona_definition(persona)
+        await _supersede_pending(db, user_id)
+        row = CompanionRoomBackdrop(
+            user_id=user_id,
+            status=BackdropStatus.PENDING.value,
+            origin=BackdropOrigin.USER_REQUEST.value,
+            intent=intent,
+            outfit_fingerprint=await _current_outfit_fingerprint(db, user_id),
+            source=BackdropSource.USER_UPLOAD.value,
+        )
+        db.add(row)
+        await db.commit()
+        row_id = row.id
+    # 被取代的在飞 AI 生成任务不再有人消费其结果，立即取消省一次完整生图往返
+    _cancel_inflight_task(user_id)
+
+    brief = await _compose_brief(user_id, intent=intent, notes=notes)
+    prompt = build_room_prompt(
+        RoomPromptContext(
+            species=definition.get("biological_type", ""),
+            appearance=definition.get("appearance", ""),
+            intent=intent,
+            outfit_description=await _current_outfit_description(user_id),
+            brief=brief,
+            notes=notes or "",
+            text_identity=True,
+        ),
+    )
+    async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
+        fresh = (
+            await db.execute(
+                select(CompanionRoomBackdrop).where(
+                    CompanionRoomBackdrop.id == row_id,
+                    CompanionRoomBackdrop.user_id == user_id,
+                    CompanionRoomBackdrop.status == BackdropStatus.PENDING.value,
+                ),
+            )
+        ).scalar_one_or_none()
+        if fresh is None:
+            # 组装期间被新的房间请求取代：行已不归本次请求所有，但仍把刚组装好的
+            # 提示词返回给调用方——prompt 文本正是该请求的全部产出，返回空串会让用户白跑一趟。
+            row.brief = brief
+            row.prompt = prompt
+            return row
+        fresh.brief = brief
+        fresh.prompt = prompt
+        await db.commit()
+        await db.refresh(fresh)
+    return fresh
+
+
+async def adopt_room_backdrop(
+    user_id: int,
+    backdrop_id: int,
+    *,
+    data: bytes,
+) -> CompanionRoomBackdrop:
+    """自备图采纳：校验用户上传的房间图并落库，行按生成链同一激活/事件语义转 ready。
+    brief 与提示词沿用提示词步骤落库的原文；着装指纹取提示词步骤的快照，
+    之后换装仍会按指纹联动失效重建（走正常 AI 生成）。"""
+    try:
+        data, mime = await asyncio.to_thread(_decode_reference_image, data)
+    except Exception as exc:
+        raise RoomBackdropError("图片无法读取，请换一张有效的 PNG / JPEG / WebP / GIF 图片") from exc
+
+    async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
+        row = (
+            await db.execute(
+                select(CompanionRoomBackdrop).where(
+                    CompanionRoomBackdrop.id == backdrop_id,
+                    CompanionRoomBackdrop.user_id == user_id,
+                ),
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise RoomBackdropNotFoundError(f"backdrop {backdrop_id} not found")
+        if row.status != BackdropStatus.PENDING.value or row.source != BackdropSource.USER_UPLOAD.value:
+            raise RoomBackdropStateError("该房间记录不在等待上传状态")
+        avatar = (
+            await db.execute(
+                select(AvatarAsset).where(
+                    AvatarAsset.user_id == user_id,
+                    AvatarAsset.active.is_(True),
+                ),
+            )
+        ).scalar_one_or_none()
+        if avatar is None or not avatar.seed_fullbody_url:
+            raise RoomBackdropStateError("全身种子图缺失，请在设置的“角色与记忆”中重新生成")
+        seed_portrait = avatar.seed_fullbody_url
+        origin = row.origin
+
+    ext = {"image/gif": "gif", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}.get(mime, "jpg")
+    storage_path = await asset_store.save_companion_asset_async(
+        data,
+        user_id=user_id,
+        label="room_backdrop",
+        ext=ext,
+    )
+    public_url = (
+        asset_store.signed_companion_asset_url(storage_path)
+        or f"/api/companion/asset/{user_id}/{Path(storage_path).name}"
+    )
+    activated = await _finalize_ready_row(
+        backdrop_id,
+        user_id,
+        storage_path=storage_path,
+        public_url=public_url,
+        seed_portrait_media_id=seed_portrait,
+        origin=origin,
+    )
+    if not activated:
+        # 校验通过后到落库前行可能被新请求取代；_finalize_ready_row 已清理本轮资产，显式失败避免静默丢弃上传。
+        raise RoomBackdropStateError("房间状态已变化，请刷新后重试")
+    async with SESSION_LOCAL() as db:
+        final_row = await get_backdrop(db, user_id, backdrop_id)
+    if final_row is None:
+        raise RoomBackdropNotFoundError(f"backdrop {backdrop_id} not found")
+    return final_row
+
+
+async def discard_room_backdrop(user_id: int, backdrop_id: int) -> CompanionRoomBackdrop:
+    """放弃等待上传的自备图行（pending+user_upload → superseded）。"""
+    async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
+        row = (
+            await db.execute(
+                select(CompanionRoomBackdrop).where(
+                    CompanionRoomBackdrop.id == backdrop_id,
+                    CompanionRoomBackdrop.user_id == user_id,
+                ),
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise RoomBackdropNotFoundError(f"backdrop {backdrop_id} not found")
+        if row.status != BackdropStatus.PENDING.value or row.source != BackdropSource.USER_UPLOAD.value:
+            raise RoomBackdropStateError("该房间记录不在等待上传状态")
+        row.status = BackdropStatus.SUPERSEDED.value
+        await db.commit()
+        await db.refresh(row)
+        return row
+
+
 def _reference_image_mime(data: bytes) -> str:
     with Image.open(io.BytesIO(data)) as image:
         if image.format not in {"PNG", "JPEG", "WEBP", "GIF"}:
@@ -466,6 +639,13 @@ def _reference_image_mime(data: bytes) -> str:
         return mime
 
 
+def _decode_reference_image(data: bytes) -> tuple[bytes, str]:
+    """校验图片字节（体积、格式白名单、像素上限、实际解码），返回原字节与 MIME；不合法抛 ValueError。"""
+    if not data or len(data) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
+        raise ValueError("reference image size exceeds limit")
+    return data, _reference_image_mime(data)
+
+
 async def _prepare_reference_image(reference: str) -> str:
     try:
         if reference.startswith("data:"):
@@ -475,9 +655,7 @@ async def _prepare_reference_image(reference: str) -> str:
             data = await asyncio.to_thread(base64.b64decode, payload, validate=True)
         else:
             data, _ = await resolve_reference_bytes(reference)
-        if not data or len(data) > REMOTE_ASSET_DOWNLOAD_MAX_BYTES:
-            raise ValueError("reference image size exceeds limit")
-        mime = await asyncio.to_thread(_reference_image_mime, data)
+        data, mime = await asyncio.to_thread(_decode_reference_image, data)
     except Exception as exc:
         raise RoomBackdropError("参考图无法读取，请换一张有效的 PNG / JPEG / WebP / GIF 图片") from exc
     encoded = await asyncio.to_thread(base64.b64encode, data)
@@ -506,6 +684,9 @@ async def resume_room_generation(
         ).scalar_one_or_none()
     if row is None:
         return False
+    if row.source == BackdropSource.USER_UPLOAD.value:
+        # 等待用户回传图像的自备图行不做 AI 生成恢复，由 adopt / discard 收敛
+        return True
     _launch_generation_task(
         row.id,
         user_id,
@@ -528,6 +709,13 @@ async def schedule_initial_room(user_id: int) -> CompanionRoomBackdrop | None:
         return None
 
 
+def _cancel_inflight_task(user_id: int) -> None:
+    """取消该用户在飞的房间生成任务；新请求取代旧任务时调用，避免旧结果无人消费仍跑完整生图。"""
+    old_task = _INFLIGHT_TASKS.get(user_id)
+    if old_task and not old_task.done():
+        old_task.cancel()
+
+
 def _launch_generation_task(
     backdrop_id: int,
     user_id: int,
@@ -537,9 +725,7 @@ def _launch_generation_task(
     notes: str | None,
     reference_image: str | None = None,
 ) -> None:
-    old_task = _INFLIGHT_TASKS.get(user_id)
-    if old_task and not old_task.done():
-        old_task.cancel()
+    _cancel_inflight_task(user_id)
 
     async def _runner() -> None:
         try:
@@ -830,6 +1016,47 @@ async def _do_one_attempt(
         or f"/api/companion/asset/{user_id}/{Path(storage_path).name}"
     )
 
+    should_activate = await _finalize_ready_row(
+        backdrop_id,
+        user_id,
+        storage_path=storage_path,
+        public_url=public_url,
+        seed_portrait_media_id=avatar.seed_fullbody_url,
+        origin=origin,
+    )
+
+    if origin == BackdropOrigin.NIGHTLY.value and should_activate:
+        try:
+            async with SESSION_LOCAL() as db:
+                await create_user_moment(
+                    db,
+                    user_id,
+                    title="房间布置",
+                    body=brief,
+                    media_url=storage_path,
+                    kind=MomentKind.SCENE.value,
+                    source="nightly",
+                )
+        except Exception:
+            logger.warning(
+                "failed to write nightly room moment",
+                extra={"user_id": user_id},
+                exc_info=True,
+            )
+
+
+async def _finalize_ready_row(
+    backdrop_id: int,
+    user_id: int,
+    *,
+    storage_path: str,
+    public_url: str,
+    seed_portrait_media_id: str,
+    origin: str,
+) -> bool:
+    """pending 行落成 ready：写产物路径与种子锚，按换装指纹与政策决定是否激活并广播 ready；
+    返回是否激活。生成链与自备图采纳共用；行已被取代或删除时清理产物并返回 False。
+    brief/prompt 由调用方在生图/提示词步骤落库，此处不覆写。"""
     async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
         row = (
             await db.execute(
@@ -841,13 +1068,11 @@ async def _do_one_attempt(
         ).scalar_one_or_none()
         if row is None or row.status != BackdropStatus.PENDING.value:
             asset_store.unlink_companion_asset(storage_path)
-            return
+            return False
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
-        row.brief = brief
-        row.prompt = prompt
         row.public_url = public_url
         row.media_path = storage_path
-        row.seed_portrait_media_id = avatar.seed_fullbody_url
+        row.seed_portrait_media_id = seed_portrait_media_id
         row.seed_outfit_media_id = ""
         row.status = BackdropStatus.READY.value
         row.ready_at = utc_now()
@@ -875,25 +1100,7 @@ async def _do_one_attempt(
                 "companion.room.ready",
                 _event_payload(row, persona),
             )
-
-    if origin == BackdropOrigin.NIGHTLY.value and should_activate:
-        try:
-            async with SESSION_LOCAL() as db:
-                await create_user_moment(
-                    db,
-                    user_id,
-                    title="房间布置",
-                    body=brief,
-                    media_url=storage_path,
-                    kind=MomentKind.SCENE.value,
-                    source="nightly",
-                )
-        except Exception:
-            logger.warning(
-                "failed to write nightly room moment",
-                extra={"user_id": user_id},
-                exc_info=True,
-            )
+    return should_activate
 
 
 def _event_payload(
@@ -909,6 +1116,7 @@ def _event_payload(
         "url": url,
         "brief": row.brief,
         "origin": row.origin,
+        "source": row.source,
         "outfit_fingerprint": row.outfit_fingerprint,
     }
 
@@ -949,6 +1157,7 @@ def response_for_backdrop(row: CompanionRoomBackdrop | None) -> dict[str, Any]:
         "status": row.status,
         "origin": row.origin,
         "intent": row.intent,
+        "source": row.source,
         "brief": row.brief,
         "prompt": row.prompt,
         "url": url,

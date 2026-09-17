@@ -12,6 +12,11 @@ from .pipeline import (
     run_mesh2d_pipeline,
     run_pose_side_regeneration,
 )
+from .poses import (
+    build_pose_side_prompt,
+    compose_single_pose_from_image,
+    pose_backdrop_for_artwork,
+)
 from .priority_queue import PriorityTaskQueue, get_default_queue
 
 __all__ = [
@@ -19,10 +24,13 @@ __all__ = [
     "Mesh2DPipelineError",
     "PriorityTaskQueue",
     "active_model_ids",
+    "build_pose_side_prompt",
+    "compose_single_pose_from_image",
     "generate_mesh2d_model",
     "get_active_mesh2d_response",
     "get_default_queue",
     "mesh2d_response",
+    "pose_backdrop_for_artwork",
     "pose_regeneration_in_progress",
     "run_mesh2d_pipeline",
     "run_pose_side_regeneration",

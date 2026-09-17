@@ -91,6 +91,37 @@ class FullbodyConfirmFrontRequest(BaseModel):
     front_url: str | None = Field(default=None, max_length=2048)
 
 
+# 全身种子自备图点位；值与 REST 路径段一致
+FullbodySeedKind = Literal["reference", "front-2d", "front-3d", "back"]
+
+
+class FullbodyPromptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    style: str | None = Field(default=None, max_length=64)
+    feedback: str | None = Field(default=None, max_length=500)
+
+
+class FullbodyAdoptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    image: str = Field(min_length=1, max_length=8 * 1024 * 1024)
+    content_type: str | None = Field(default=None, max_length=64)
+    # 仅 front-2d 消费：采纳后随行持久化（与 front-2d 生成的画风语义一致）
+    style: str | None = Field(default=None, max_length=64)
+
+
+class ImagePromptResponse(BaseModel):
+    prompt: str
+
+
+class ImageAdoptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    image: str = Field(min_length=1, max_length=8 * 1024 * 1024)
+    content_type: str | None = Field(default=None, max_length=64)
+
+
 class AvatarGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -173,6 +204,29 @@ class OutfitRegenerateRequest(BaseModel):
 
     feedback: str | None = Field(default=None, max_length=500)
     mode: ImageReviseMode = "regenerate"
+
+
+class OutfitPromptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    description: str | None = Field(default=None, max_length=500)
+    # 服装参考图（可选）：整合为着装设计稿后进入提示词，不直传生图
+    image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
+    content_type: str | None = Field(default=None, max_length=64)
+
+
+class OutfitAdoptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    description: str | None = Field(default=None, max_length=500)
+    image: str = Field(min_length=1, max_length=8 * 1024 * 1024)
+    content_type: str | None = Field(default=None, max_length=64)
+
+
+class OutfitRegeneratePromptRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    feedback: str | None = Field(default=None, max_length=500)
 
 
 class OutfitResponse(BaseModel):

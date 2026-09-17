@@ -32,10 +32,13 @@ export function parseEdgePoses(value: unknown, urls: Record<string, string>): Ed
   for (const side of ['left', 'right'] as const) {
     const pose = pack[side]
 
+    // 自备图路径保留用户原始尺寸，网格与画布布局均按 width/height 参数化；只校验几何有效性。
     if (
       !pose ||
-      pose.width !== 1024 ||
-      pose.height !== 1024 ||
+      !Number.isFinite(pose.width) ||
+      pose.width <= 0 ||
+      !Number.isFinite(pose.height) ||
+      pose.height <= 0 ||
       !Number.isFinite(pose.contactX) ||
       pose.contactX < 0 ||
       pose.contactX > pose.width
@@ -43,14 +46,16 @@ export function parseEdgePoses(value: unknown, urls: Record<string, string>): Ed
       return null
     }
 
+    const inBounds = (rect: unknown): boolean =>
+      Array.isArray(rect) &&
+      rect.length === 4 &&
+      // 矩形为 [x0,y0,x1,y1]：偶数下标按宽、奇数下标按高界定。
+      rect.every(
+        (p, i) => typeof p === 'number' && Number.isFinite(p) && p >= 0 && p <= (i % 2 === 0 ? pose.width : pose.height)
+      )
+
     for (const rect of [pose.head, pose.bounds]) {
-      if (
-        !Array.isArray(rect) ||
-        rect.length !== 4 ||
-        !rect.every(p => Number.isFinite(p) && p >= 0 && p <= 1024) ||
-        rect[0] >= rect[2] ||
-        rect[1] >= rect[3]
-      ) {
+      if (!inBounds(rect) || rect[0] >= rect[2] || rect[1] >= rect[3]) {
         return null
       }
     }
@@ -70,14 +75,7 @@ export function parseEdgePoses(value: unknown, urls: Record<string, string>): Ed
     const hands =
       Array.isArray(pose.hands) &&
       pose.hands.length === 2 &&
-      pose.hands.every(
-        rect =>
-          Array.isArray(rect) &&
-          rect.length === 4 &&
-          rect.every(p => Number.isFinite(p) && p >= 0 && p <= 1024) &&
-          rect[0] < rect[2] &&
-          rect[1] < rect[3]
-      )
+      pose.hands.every(rect => inBounds(rect) && rect[0] < rect[2] && rect[1] < rect[3])
         ? pose.hands
         : null
 

@@ -42,6 +42,16 @@
 - 编辑提示词用 `build_image_edit_prompt`（增量反馈 + 按流程的 preserve 条款，条款只描述输入图自身可见维度，不使用「种子图」等内部概念）；各流程选用的条款常量在 [prompt_engineer](../../infrastructure/llm/prompt_engineer.py)集中定义。
 - 各业务入口（avatar / outfit 服务）在服务函数内分支 mode：edit 先守卫（反馈必填、上一版存在可读、不与参考图同给），编辑底图经 `load_avatar_bytes_as_data_uri` 读取（兼容 temp-media 草稿与正式资产）；regenerate 路径与既有全量重绘完全一致。审核改写重试对两种模式同样生效。
 
+## 自备图（提示词下发与采纳）
+
+用户发起的图像点位提供自备图方案，语义契约归 [PIPELINE §1.1.2](../../../../docs/PIPELINE.md#112-用户自备图提示词下发与采纳)，实现约束：
+
+- 全身种子的生成与采纳共用 `_install_fullbody_seed` 落库（prompt_json 元数据、字段替换、激活翻转、旧图清理），两条路径的落库语义由同一函数保证；persist 规则镜像各生成函数（front-2d 恒草稿，其余确认后永久）。
+- 自备图提示词由既有构建器加 `identity_anchor="text"` 变体（`build_fullbody_prompt` / `build_outfit_prompt` / `build_fullbody_reference_prompt`）与 `build_room_prompt(text_identity=True)`、`build_pose_side_prompt` 组装：不写参考图条款、产品内部概念或供应商特有指令；修改措辞时同步核对装配验证。
+- 采纳端点的图片校验沿用既有边界（种子与外观走 API 层 `_decode_upload_image` 的 MIME / base64 校验，体积上限由请求模型 `ImageAdoptRequest.image` 的 `max_length` 强制；房间走 `_decode_reference_image` 的 PIL 格式与像素校验）；不做 AI 内容审核，与头像上传的既有边界一致。
+- 房间等待上传行：`schedule_room_prompt` 创建 `source=user_upload` 的 pending 行并落库 brief / 提示词，不启动生成任务；`resume_room_generation`（夜间规划）跳过该行，不会把它误启动为 AI 生成，由 adopt（复用 `_finalize_ready_row` 的转 ready / 激活 / 事件段）或 discard 收敛。
+- 单侧姿态采纳经 `run_pose_side_regeneration(user_image=...)` 入队既有单侧管线：`compose_single_pose_from_image` 只跳过主姿态图生图，抠图、关键点定位与闭眼帧复用同一后处理（`_finish_pose` 按图像实际宽高参数化：AI 路径恒 1024×1024，自备图保持用户原始尺寸与比例，闭眼帧编辑结果整体缩放回原尺寸再对齐）；提示词按 `build_pose_side_prompt` 给出纯色背景建议（ISNet 不依赖背景色）。
+
 ## 限制与验证
 
 - see-through 依赖社区免费算力、无 SLA：休眠唤醒与排队延迟不可消除，由阶段超时与总预算显式降级（编排层落失败态，客户端渲染级联降级并可在设置页重试）；需要稳定服务时经 `seethrough_space_base` / `seethrough_fallback_base` 切换专用部署或自托管入口。

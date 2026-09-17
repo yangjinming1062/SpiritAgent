@@ -33,14 +33,18 @@ interface PoseRegenView {
 
 export function AssetPackPreview({
   onRegeneratePose,
+  onSelfSourcePose,
   poseRegen,
   source
 }: {
   onRegeneratePose: (side: 'left' | 'right') => void
+  /** 提供时在姿态重绘旁展示「使用自己的图」入口（自备图采纳）。 */
+  onSelfSourcePose?: (side: 'left' | 'right') => void
   poseRegen: PoseRegenView | null
   source: PuppetAssetSource
 }): React.JSX.Element {
   const t = useStrings().living.wardrobe.preview
+  const selfSource = useStrings().selfSource
   const [mode, setMode] = useState<Mode>('front')
   const [action, setAction] = useState<string>('idle')
   const [playing, setPlaying] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches)
@@ -278,15 +282,28 @@ export function AssetPackPreview({
             ))}
           </select>
         ) : (
-          <button
-            className={BTN_GHOST}
-            disabled={regenBusy}
-            onClick={() => onRegeneratePose(mode)}
-            title={t.regenPose}
-            type="button"
-          >
-            {regenBusy && poseRegen?.side === mode ? t.regenRunning : t.regenPose}
-          </button>
+          <>
+            <button
+              className={BTN_GHOST}
+              disabled={regenBusy}
+              onClick={() => onRegeneratePose(mode)}
+              title={t.regenPose}
+              type="button"
+            >
+              {regenBusy && poseRegen?.side === mode ? t.regenRunning : t.regenPose}
+            </button>
+            {onSelfSourcePose && (
+              <button
+                className={BTN_GHOST}
+                disabled={regenBusy}
+                onClick={() => onSelfSourcePose(mode)}
+                title={selfSource.openTitle}
+                type="button"
+              >
+                {selfSource.open}
+              </button>
+            )}
+          </>
         )}
         <button
           className={BTN_GHOST}
