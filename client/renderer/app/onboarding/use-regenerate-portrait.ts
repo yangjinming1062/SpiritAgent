@@ -112,7 +112,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
 
   // avatar.regenerate RPC 的同步/排队分流与结果落地，regenerate 与 edit 共用。
   const runAvatarRegen = useCallback(
-    async (params: { feedback?: string; mode?: 'edit' }): Promise<void> => {
+    async (params: { feedback?: string; mode: 'edit' | 'regenerate' }): Promise<void> => {
       const onApplied = onAppliedFactory(playAudioOnSuccess)
 
       const queued = await requestGateway<{
@@ -192,7 +192,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
           }
         }
 
-        await runAvatarRegen({ feedback })
+        await runAvatarRegen({ feedback, mode: 'regenerate' })
       } catch (error) {
         onError?.(error instanceof Error ? error.message : '伙伴形象生成失败，请稍后重试')
       } finally {

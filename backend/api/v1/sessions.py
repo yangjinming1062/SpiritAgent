@@ -3,7 +3,6 @@ from typing import Literal
 
 from common import get_router
 from components import (
-    JSONRPC_INVALID_PARAMS,
     SEARCH_INPUT_MAX_LEN,
     SESSION_PREVIEW_MAX_CHARS,
     SETTINGS,
@@ -17,28 +16,14 @@ from fastapi import HTTPException, Query
 from modules.auth import CurrentUser, User
 from modules.conversation import (
     Conversation,
-    DesktopSessionForkRequest,
-    DesktopSessionForkResponse,
     DesktopSessionInfo,
     DesktopSessionListResponse,
-    DesktopSessionMessagesResponse,
     DesktopSessionOperationResponse,
     DesktopSessionPatchRequest,
     DesktopSessionSearchResponse,
-    DesktopSessionUndoRequest,
-    DesktopSessionUndoResponse,
     Message,
 )
-from services.adapters.desktop import do_session_undo
-from services.domains.conversation import (
-    SPECIAL_KIND,
-    ForkNotAllowedError,
-    SourceNotFoundError,
-    build_session_messages,
-    fork_conversation_from_message,
-    resolve_preset_meta,
-)
-from services.infrastructure.desktop import MANAGER, JsonRpcError
+from services.domains.conversation import SPECIAL_KIND, resolve_preset_meta
 from sqlalchemy import String, asc, case, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -291,38 +276,6 @@ async def search_sessions(
     return DesktopSessionSearchResponse(sessions=sessions)
 
 
-@router.get("/{session_id}/messages", response_model=DesktopSessionMessagesResponse)
-async def get_session_messages(
-    user: CurrentUser,
-    db: DbSession,
-    session_id: str,
-    before_id: int | None = Query(
-        default=None,
-        ge=0,
-        description="取 id < before_id 的更早历史，配合 next_cursor 翻页",
-    ),
-    limit: int | None = Query(default=None, ge=1, le=1000, description="单次返回条数上限"),
-) -> DesktopSessionMessagesResponse:
-    conv = await _get_conversation_or_404(db, user, session_id)
-    if limit is None:
-        messages = await build_session_messages(conv.id, db, before_id=before_id, include_id=True)
-        next_cursor = None
-    else:
-        messages = await build_session_messages(
-            conv.id,
-            db,
-            before_id=before_id,
-            limit=limit + 1,
-            desc=True,
-            include_id=True,
-        )
-        has_more = len(messages) > limit
-        messages = messages[:limit]
-        messages.reverse()
-        next_cursor = str(messages[0]["id"]) if has_more and messages else None
-    return DesktopSessionMessagesResponse(session_id=str(conv.id), messages=messages, next_cursor=next_cursor)
-
-
 @router.patch("/{session_id}", response_model=DesktopSessionOperationResponse)
 async def patch_session(
     user: CurrentUser,
@@ -347,48 +300,6 @@ async def patch_session(
             conv.archived_at = None
     await db.commit()
     return DesktopSessionOperationResponse(ok=True)
-
-
-@router.post("/{session_id}/fork", response_model=DesktopSessionForkResponse)
-async def fork_session(
-    user: CurrentUser,
-    db: DbSession,
-    session_id: str,
-    body: DesktopSessionForkRequest,
-) -> DesktopSessionForkResponse:
-    """从指定消息派生新会话。"""
-    try:
-        result = await fork_conversation_from_message(db, user.id, session_id, body.source_message_id)
-    except ForkNotAllowedError as e:
-        raise HTTPException(status_code=403, detail=str(e))
-    except SourceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
-    return DesktopSessionForkResponse(**result)
-
-
-@router.post("/{session_id}/undo-to-message", response_model=DesktopSessionUndoResponse)
-async def undo_to_message(
-    user: CurrentUser,
-    db: DbSession,
-    session_id: str,
-    body: DesktopSessionUndoRequest,
-) -> DesktopSessionUndoResponse:
-    """截断会话至指定消息，并返回该消息作为草稿。"""
-    if not body.confirmed:
-        raise HTTPException(status_code=400, detail="confirmed=true required")
-    try:
-        result = await do_session_undo(
-            user.id,
-            session_id,
-            body.source_message_id,
-            runtime_sessions=MANAGER.get_runtime_sessions(user.id),
-            dispatcher=MANAGER.get_dispatcher(user.id),
-        )
-        return DesktopSessionUndoResponse(**result)
-    except JsonRpcError as e:
-        if e.code == JSONRPC_INVALID_PARAMS:
-            raise HTTPException(status_code=400, detail=str(e))
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/{session_id}", response_model=DesktopSessionOperationResponse)

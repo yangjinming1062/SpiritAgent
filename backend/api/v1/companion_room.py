@@ -27,7 +27,6 @@ from services.application.generation import (
     activate_backdrop,
     adopt_room_backdrop,
     discard_room_backdrop,
-    get_backdrop,
     get_room_state,
     response_for_backdrop,
     schedule_room_generation,
@@ -152,15 +151,3 @@ async def patch_room_policy(
 ) -> BackdropPolicyResponse:
     policy = await set_backdrop_policy(db, user.id, body.policy)
     return BackdropPolicyResponse(policy=policy)
-
-
-@router.get("/room/{backdrop_id}", response_model=BackdropResponse)
-async def get_room_by_id(
-    user: CurrentUser,
-    db: DbSession,
-    backdrop_id: int,
-) -> BackdropResponse:
-    row = await get_backdrop(db, user.id, backdrop_id)
-    if row is None:
-        raise HTTPException(status_code=404, detail="找不到对应的房间图")
-    return BackdropResponse(**response_for_backdrop(row))

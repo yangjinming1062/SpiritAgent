@@ -167,7 +167,6 @@ class Settings(BaseSettings):
     context_summary_max_input_messages: int = Field(default=30, validation_alias="CONTEXT_SUMMARY_MAX_INPUT_MESSAGES")
     enable_context_compression: bool = Field(default=True, validation_alias="ENABLE_CONTEXT_COMPRESSION")
     ipc_future_timeout_seconds: float = Field(default=300.0, validation_alias="IPC_FUTURE_TIMEOUT_SECONDS")
-    chat_active_window_minutes: int = Field(default=30, validation_alias="CHAT_ACTIVE_WINDOW_MINUTES")
 
     # 对话回合与陪伴交互节奏：控制工具循环上限、桌面互动的 LLM 成本窗口与主动行为的静默门槛。
     agent_max_loop_turns: int = Field(default=150, gt=0, validation_alias="AGENT_MAX_LOOP_TURNS")

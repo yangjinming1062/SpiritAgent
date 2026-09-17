@@ -224,12 +224,8 @@ async def _persist_assistant_no_tool_turn(
         else:
             _track_background_task(user_id, title_task)
 
-    # 优先读命名空间键（设置 UI 写入 ``agent.enable_background_review``），旧数据回退到裸键 ``enable_background_review``。
-    bg_review = (
-        effective_settings.get("agent.enable_background_review")
-        or effective_settings.get("enable_background_review")
-        or BACKGROUND_REVIEW_DEFAULT
-    )
+    # 设置 UI 写入 ``agent.enable_background_review``。
+    bg_review = effective_settings.get("agent.enable_background_review") or BACKGROUND_REVIEW_DEFAULT
     if (
         persist
         and run_post_turn_tasks

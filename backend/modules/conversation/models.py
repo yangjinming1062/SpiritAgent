@@ -83,8 +83,6 @@ class Message(ModelBase):
     speech_style_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 在 subtype="daily_summary" 的 system 消息上设置，让每日 checkpoint 不用解析 content 文本就能读到截止日期；content 仍是人类可读版本，本列才是结构化源。
     summary_date: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
-    # 旧 fork 末条标记位的列存根——fork / undo 都已不再写入；列保留只为已存在数据不报错，待后续迁移移除。
-    draft_anchor: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), nullable=False)
     # IM 入站消息先落库再确认接收：queued=True 表示已被接收但尚未被任何回合消费；
     # 消费时整批清除。接收顺序即 id 序，回合顺序由消费动作表达。
     queued: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), nullable=False)

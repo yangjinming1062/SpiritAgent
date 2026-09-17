@@ -1,17 +1,9 @@
-from typing import Any, Literal
+from typing import Any
 
 from components import DEFAULT_LANGUAGE
 from pydantic import BaseModel, Field
 
 from ..auth import ChatRequestClientContext
-
-
-class StatusResponse(BaseModel):
-    """GET /api/status 返回的每用户后端状态快照：login_count 计数当前用户 active LoginRecord（单设备登录 → 0 或 1）；chat_count 计数 settings.chat_active_window_minutes（默认 30 分钟）内更新过的 Conversation 行；connection_state 反映当前用户聊天 WebSocket 是否被 ConnectionManager 持有。"""
-
-    login_count: int
-    chat_count: int
-    connection_state: Literal["connected", "disconnected"]
 
 
 class MessageResponse(BaseModel):

@@ -1,7 +1,5 @@
 """FastAPI 应用装配：中间件、异常处理、路由与静态目录；注册在导入期显式完成。"""
 
-from pathlib import Path
-
 from api import ROUTERS
 from components import (
     SETTINGS,
@@ -11,7 +9,6 @@ from components import (
 )
 from fastapi import FastAPI, Header, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from services.adapters.http import (
     limiter,
     rate_limit_exception_handler,
@@ -40,9 +37,6 @@ app.middleware("http")(correlation_id_middleware)
 # 兜底：ServerErrorMiddleware 在最外层，BaseHTTPMiddleware 抛 raise 时 user middleware 的 post-call_next 不跑；此处从 ContextVar 读 ID 写 header，让 500 / 404 路径也带 X-Request-ID。
 app.add_exception_handler(Exception, correlated_exception_response)
 app.add_exception_handler(RateLimitExceeded, rate_limit_exception_handler)
-updates_dir = Path("updates").absolute()
-updates_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/updates", StaticFiles(directory=str(updates_dir)), name="updates")
 
 
 # 挂在根路径，避免外部 Docker HEALTHCHECK / k8s livenessProbe / uptime probe（默认请求 /health）返回 404。

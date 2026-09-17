@@ -29,7 +29,6 @@ from modules.companion import (
     MomentCommentRole,
     MomentKind,
     MomentSource,
-    MomentVisibility,
 )
 from modules.conversation import Message
 from modules.ws import emit_ws_event
@@ -143,7 +142,6 @@ def response_for_moment(row: CompanionMoment) -> dict[str, Any]:
         "audio_url": audio_url,
         "media_metadata": row.media_metadata,
         "source": row.source,
-        "visibility": row.visibility,
         "comments": [response_for_comment(c) for c in (row.comments or [])],
     }
 
@@ -159,10 +157,7 @@ async def list_moments(
     limit = max(1, min(100, int(limit)))
     stmt = (
         select(CompanionMoment)
-        .where(
-            CompanionMoment.user_id == user_id,
-            CompanionMoment.visibility == MomentVisibility.SHOWN.value,
-        )
+        .where(CompanionMoment.user_id == user_id)
         .order_by(CompanionMoment.occurred_at.desc(), CompanionMoment.id.desc())
     )
     if kind:
@@ -344,21 +339,6 @@ def _media_type_for_extension(ext: str) -> str:
     return "image"
 
 
-async def soft_delete_moment(db: AsyncSession, user_id: int, moment_id: str) -> None:
-    row = (
-        await db.execute(
-            select(CompanionMoment).where(
-                CompanionMoment.id == moment_id,
-                CompanionMoment.user_id == user_id,
-            ),
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        raise MomentNotFoundError(f"moment {moment_id} not found")
-    row.visibility = MomentVisibility.HIDDEN.value
-    await db.commit()
-
-
 async def _count_recent_source_moments(db: AsyncSession, user_id: int, source: str) -> int:
     since = utc_now() - timedelta(hours=24)
     return (
@@ -454,7 +434,6 @@ def response_for_diary(row: CompanionDiaryEntry) -> dict[str, Any]:
         "source": row.source,
         "memory_ids": list(row.memory_ids or []),
         "moment_ids": list(row.moment_ids or []),
-        "edited_at": row.edited_at,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
     }
@@ -501,10 +480,9 @@ async def upsert_diary(
     title: str,
     body: str,
     mood: str | None = None,
-    source: str = DiarySource.USER.value,
+    source: str,
     memory_ids: list[str] | None = None,
     moment_ids: list[str] | None = None,
-    edited_at: datetime | None = None,
     _retried: bool = False,
 ) -> CompanionDiaryEntry:
     row = await get_diary_by_date(db, user_id, entry_date)
@@ -519,29 +497,15 @@ async def upsert_diary(
             source=source,
             memory_ids=memory_ids or [],
             moment_ids=moment_ids or [],
-            edited_at=edited_at,
         )
         db.add(row)
     else:
-        is_user_edited = row.source == DiarySource.USER.value or row.edited_at is not None
-        if source == DiarySource.NIGHTLY.value and is_user_edited:
-            sep = "\n\n——夜间补记——\n"
-            row.body = (row.body + sep + body.strip()[:2000])[:4000]
-            if not row.title and title:
-                row.title = title.strip()[:128]
-            row.mood = mood or row.mood
-        elif source == DiarySource.LLM.value:
-            sep = "\n\n——伙伴补记——\n" if is_user_edited else "\n\n"
-            row.body = (row.body + sep + body.strip()[:2000])[:4000]
-            if not row.title and title:
-                row.title = title.strip()[:128]
-            row.mood = mood or row.mood
-        else:
-            row.title = title.strip()[:128] or row.title
-            row.body = body.strip()[:2000]
-            row.mood = mood or row.mood
-            row.source = source
-            row.edited_at = edited_at
+        # 同日已有日记时只追加不覆盖：夜间补记带专属分隔语，LLM 补记合并正文与标题。
+        sep = "\n\n——夜间补记——\n" if source == DiarySource.NIGHTLY.value else "\n\n"
+        row.body = (row.body + sep + body.strip()[:2000])[:4000]
+        if not row.title and title:
+            row.title = title.strip()[:128]
+        row.mood = mood or row.mood
         if memory_ids:
             row.memory_ids = list(dict.fromkeys((row.memory_ids or []) + memory_ids))
         if moment_ids:
@@ -562,64 +526,8 @@ async def upsert_diary(
             source=source,
             memory_ids=memory_ids,
             moment_ids=moment_ids,
-            edited_at=edited_at,
             _retried=True,
         )
-    await db.refresh(row)
-    await _emit_diary_event(row)
-    return row
-
-
-async def create_user_diary(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    entry_date: date | None = None,
-    title: str | None,
-    body: str,
-    mood: str | None = None,
-) -> CompanionDiaryEntry:
-    target_date = entry_date or (await resolve_user_local_today(db, user_id))
-    return await upsert_diary(
-        db,
-        user_id,
-        entry_date=target_date,
-        title=title or "",
-        body=body,
-        mood=mood,
-        source=DiarySource.USER.value,
-        edited_at=utc_now(),
-    )
-
-
-async def update_diary(
-    db: AsyncSession,
-    user_id: int,
-    diary_id: str,
-    *,
-    title: str | None = None,
-    body: str | None = None,
-    mood: str | None = None,
-) -> CompanionDiaryEntry:
-    row = (
-        await db.execute(
-            select(CompanionDiaryEntry).where(
-                CompanionDiaryEntry.id == diary_id,
-                CompanionDiaryEntry.user_id == user_id,
-            ),
-        )
-    ).scalar_one_or_none()
-    if row is None:
-        raise DiaryNotFoundError(f"diary {diary_id} not found")
-    if title is not None:
-        row.title = title.strip()[:128]
-    if body is not None:
-        row.body = body.strip()[:2000]
-    if mood is not None:
-        row.mood = mood
-    row.source = DiarySource.USER.value
-    row.edited_at = utc_now()
-    await db.commit()
     await db.refresh(row)
     await _emit_diary_event(row)
     return row

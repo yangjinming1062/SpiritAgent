@@ -1,10 +1,9 @@
 from common import get_router
 from components import DbSession
-from fastapi import Depends
-from modules.auth import CurrentUser, get_current_session
+from modules.auth import CurrentUser
 from modules.settings import UserSetting
 from modules.system import DesktopConfigPutRequest, DesktopConfigResponse
-from services.domains.configuration import DEFAULT_CONFIG, flatten_config, settings_to_config
+from services.domains.configuration import flatten_config, settings_to_config
 from sqlalchemy import select
 
 router = get_router()
@@ -32,8 +31,3 @@ async def put_config(body: DesktopConfigPutRequest, user: CurrentUser, db: DbSes
 
     settings = (await db.execute(select(UserSetting).where(UserSetting.user_id == user.id))).scalars().all()
     return DesktopConfigResponse(config=settings_to_config(settings))
-
-
-@router.get("/defaults", response_model=DesktopConfigResponse, dependencies=[Depends(get_current_session)])
-async def get_config_defaults() -> DesktopConfigResponse:
-    return DesktopConfigResponse(config=DEFAULT_CONFIG)

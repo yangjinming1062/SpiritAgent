@@ -30,7 +30,7 @@ def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
         seed_back_url=getattr(asset, "seed_back_url", None) or "",
         supports_multiview=provider_supports_multiview(),
         fullbody_style=str(payload.get("fullbody_style") or ""),
-        prompt=payload.get("prompt", ""),
+        prompt=payload.get("avatar_prompt", ""),
         status="succeeded",
     )
 

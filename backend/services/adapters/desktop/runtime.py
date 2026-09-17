@@ -56,7 +56,7 @@ class RuntimeSession:
     conversation_id: int
     chat_task: asyncio.Task | None = None
     cwd: str | None = None
-    # 会话级覆盖（reasoning/fast/language）：mount 时镜像 Conversation.settings_json；set_setting 修改时也会写回 DB，重连后会读回相同值。
+    # 会话级覆盖（temperature / reasoning_effort / context_compression_threshold）：mount 时镜像 Conversation.settings_json；set_settings 修改时也会写回 DB，重连后会读回相同值。
     settings: dict[str, Any] = field(default_factory=dict)
     # 会话种类镜像（special/standard/im）：prompt_submit 据此拒绝 im 渠道会话（由通道桥独占写入）。
     kind: str = "standard"
@@ -81,7 +81,7 @@ def new_runtime_session(
 
 def runtime_info_snapshot(llm_config: dict[str, Any], runtime: RuntimeSession) -> dict[str, Any]:
     """发给 renderer 的 SessionRuntimeInfo 负载。renderer 容忍缺失字段，未读的 settings 键不在契约内。"""
-    provider = llm_config.get("provider") or llm_config.get("provider_name") or "openai"
+    provider = llm_config.get("provider_name") or "openai"
     context_window = resolve_context_tokens(provider, ServiceType.llm)
 
     return {

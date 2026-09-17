@@ -41,15 +41,9 @@ class MomentCommentRole(StrEnum):
     COMPANION = "companion"
 
 
-class MomentVisibility(StrEnum):
-    SHOWN = "shown"
-    HIDDEN = "hidden"
-
-
 class DiarySource(StrEnum):
     NIGHTLY = "nightly"
     LLM = "llm"
-    USER = "user"
 
 
 class CompanionMoment(ModelBase, TimestampMixin):
@@ -104,11 +98,6 @@ class CompanionMoment(ModelBase, TimestampMixin):
     session_id: Mapped[int | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"),
         nullable=True,
-    )
-    visibility: Mapped[str] = mapped_column(
-        String(16),
-        default=MomentVisibility.SHOWN.value,
-        server_default=text("'shown'"),
     )
     comments: Mapped[list["CompanionMomentComment"]] = relationship(
         lazy="selectin",
@@ -179,8 +168,4 @@ class CompanionDiaryEntry(ModelBase, TimestampMixin):
         ARRAY(String),
         default=list,
         server_default=text("'{}'"),
-    )
-    edited_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True),
-        nullable=True,
     )

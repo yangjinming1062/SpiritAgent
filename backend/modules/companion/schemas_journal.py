@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .journal import DiarySource, MomentVisibility
+from .journal import DiarySource
 
 MomentMediaTypeLiteral = Literal["", "image", "video", "audio"]
 
@@ -31,7 +31,6 @@ class MomentResponse(BaseModel):
     audio_url: str | None = None
     media_metadata: dict | None = None
     source: str
-    visibility: MomentVisibility = MomentVisibility.SHOWN
     comments: list[MomentCommentResponse] = Field(default_factory=list)
 
 
@@ -55,27 +54,9 @@ class DiaryEntryResponse(BaseModel):
     source: DiarySource
     memory_ids: list[str] = Field(default_factory=list)
     moment_ids: list[str] = Field(default_factory=list)
-    edited_at: datetime | None = None
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
 
 class DiaryListResponse(BaseModel):
     entries: list[DiaryEntryResponse]
-
-
-class DiaryCreateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    entry_date: date | None = None
-    title: str | None = Field(default=None, max_length=128)
-    body: str = Field(min_length=1, max_length=2000)
-    mood: str | None = Field(default=None, max_length=32)
-
-
-class DiaryUpdateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    title: str | None = Field(default=None, max_length=128)
-    body: str | None = Field(default=None, max_length=2000)
-    mood: str | None = Field(default=None, max_length=32)

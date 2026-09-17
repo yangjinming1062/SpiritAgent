@@ -155,7 +155,6 @@ def upgrade() -> None:
         sa.Column("content_hash", sa.String(length=64), nullable=True),
         sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("error", sa.Text(), nullable=True),
-        sa.Column("priority", sa.String(length=8), server_default=sa.text("'high'"), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["outfit_id"], ["companion_outfits.id"]),
         sa.PrimaryKeyConstraint("id"),
@@ -341,7 +340,6 @@ def upgrade() -> None:
         sa.Column("source", sa.String(length=16), server_default=sa.text("'nightly'"), nullable=False),
         sa.Column("memory_id", sa.Integer(), nullable=True),
         sa.Column("session_id", sa.Integer(), nullable=True),
-        sa.Column("visibility", sa.String(length=16), server_default=sa.text("'shown'"), nullable=False),
         sa.Column("media_type", sa.String(length=16), server_default=sa.text("''"), nullable=False),
         sa.Column("audio_url", sa.String(length=2048), nullable=True),
         sa.Column("media_metadata", sa.JSON(), nullable=True),
@@ -391,7 +389,6 @@ def upgrade() -> None:
         sa.Column("source", sa.String(length=16), server_default=sa.text("'nightly'"), nullable=False),
         sa.Column("memory_ids", ARRAY(sa.String()), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("moment_ids", ARRAY(sa.String()), server_default=sa.text("'{}'"), nullable=False),
-        sa.Column("edited_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
@@ -581,7 +578,6 @@ def upgrade() -> None:
         sa.Column("content_type", sa.String(length=32), server_default=sa.text("'text'"), nullable=False),
         sa.Column("media_json", sa.Text(), nullable=True),
         sa.Column("summary_date", sa.String(length=10), nullable=True),
-        sa.Column("draft_anchor", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         # IM 入站消息先落库再确认接收；queued 批的上下文排序位置由 context_order 表达，
         # dedup_key 唯一约束做渠道重投去重。
         sa.Column("queued", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),

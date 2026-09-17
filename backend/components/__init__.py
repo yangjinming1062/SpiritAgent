@@ -83,7 +83,7 @@ from .functions import (
     tool_error,
     utc_now,
 )
-from .hashing import normalize_sha512, sha256_hex, sha512_b64
+from .hashing import sha256_hex, sha512_b64
 from .logger import get_logger, set_request_user_id, setup_logging
 from .network import download_capped, is_safe_outbound, safe_outbound_async_client, safe_outbound_async_transport
 from .observability import (
@@ -210,7 +210,6 @@ __all__ = [
     "load_ai_config",
     "mark_user_maintenance",
     "new_request_id",
-    "normalize_sha512",
     "parse_llm_json",
     "path_attach_ref",
     "redact_sensitive_text",

@@ -6,7 +6,6 @@ from .journal import (
     MomentCommentRole,
     MomentKind,
     MomentSource,
-    MomentVisibility,
 )
 from .models import (
     BACKDROP_POLICY_DEFAULT,
@@ -62,13 +61,10 @@ from .schemas import (
     VoiceEntry,
     VoiceMatchResponse,
     VoicesListResponse,
-    normalize_persona_aliases,
 )
 from .schemas_journal import (
-    DiaryCreateRequest,
     DiaryEntryResponse,
     DiaryListResponse,
-    DiaryUpdateRequest,
     MomentCommentCreateRequest,
     MomentCommentResponse,
     MomentListResponse,
@@ -130,11 +126,9 @@ __all__ = [
     "CompanionOperationResponse",
     "CompanionOutfit",
     "CompanionRoomBackdrop",
-    "DiaryCreateRequest",
     "DiaryEntryResponse",
     "DiaryListResponse",
     "DiarySource",
-    "DiaryUpdateRequest",
     "Fullbody2dFrontGenerateRequest",
     "Fullbody3dSeedGenerateRequest",
     "FullbodyAdoptRequest",
@@ -153,7 +147,6 @@ __all__ = [
     "MomentListResponse",
     "MomentResponse",
     "MomentSource",
-    "MomentVisibility",
     "OnboardingStateResponse",
     "OutfitAdoptRequest",
     "OutfitCreateRequest",
@@ -175,5 +168,4 @@ __all__ = [
     "VoiceEntry",
     "VoiceMatchResponse",
     "VoicesListResponse",
-    "normalize_persona_aliases",
 ]

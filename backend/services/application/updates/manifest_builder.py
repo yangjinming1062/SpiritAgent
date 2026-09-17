@@ -1,4 +1,3 @@
-from components import normalize_sha512
 from fastapi import HTTPException
 from modules.update import UpdateVersion
 
@@ -20,6 +19,6 @@ def build_manifest(latest: UpdateVersion, filename: str | None, sha512: str | No
         "releaseDate": latest.created_at.isoformat(),
         "releaseNotes": latest.release_notes,
         "path": filename,
-        "sha512": normalize_sha512(sha512),
-        "files": [{"url": filename, "sha512": normalize_sha512(sha512), "size": actual_size}],
+        "sha512": sha512,
+        "files": [{"url": filename, "sha512": sha512, "size": actual_size}],
     }

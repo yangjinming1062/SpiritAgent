@@ -474,7 +474,7 @@ async def regenerate_outfit_draft(
     outfit_id: int,
     *,
     feedback: str | None,
-    mode: ImageReviseMode = "regenerate",
+    mode: ImageReviseMode,
 ) -> CompanionOutfit:
     """草稿或失败外观修改：mode="edit" 微调（编辑上一版立绘，未提及区域逐像素保留），
     mode="regenerate" 全量重绘（种子锚定）。两者成功后都回到草稿，重新确认才生成动画资产。"""
@@ -606,7 +606,6 @@ async def confirm_outfit(
             avatar_id=avatar.id,
             outfit_id=outfit.id,
             status="generating",
-            priority="high",
         )
         db.add(model)
         await db.commit()

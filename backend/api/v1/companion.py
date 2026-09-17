@@ -37,7 +37,6 @@ from modules.companion import (
     PersonaResponse,
     PersonaUpdate,
     RenderModeRequest,
-    VoicesListResponse,
 )
 from services.adapters.http import limiter
 from services.application.generation import (
@@ -103,8 +102,6 @@ from services.domains.companion import (
     get_active_model,
     get_onboarding_state,
     get_or_create_persona,
-    list_tts_voices,
-    normalize_voice_language,
     schedule_personality_tag_refresh,
     update_persona,
 )
@@ -177,16 +174,6 @@ async def post_portrait_confirm(
     except AvatarSourceUnreadableError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象草稿已过期，请重新生成头像", "reason": str(exc)})
     return CompanionOperationResponse(ok=True)
-
-
-# Hub 无 gateway；此 REST 接口镜像 gateway 的 tts.list_voices 方法。
-@router.get("/voices", response_model=VoicesListResponse)
-async def list_voices(
-    user: CurrentUser,
-    db: DbSession,
-    language: str | None = None,
-) -> VoicesListResponse:
-    return await list_tts_voices(db, user.id, language=normalize_voice_language(language))
 
 
 @router.get("/avatar", response_model=AvatarAssetResponse)

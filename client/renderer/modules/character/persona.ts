@@ -1,7 +1,7 @@
 export interface OnboardingAnswers {
   name?: string
-  species?: string
-  character_gender?: string
+  biological_type?: string
+  gender?: string
   // appearance：外貌特征（脸 / 体型 / 标志性细节）。驱动 3D 模型生成与提示词；
   // 锁定之后的编辑里会被保留。
   appearance?: string
@@ -72,8 +72,8 @@ export function assemblePersona(answers: OnboardingAnswers, previous?: Partial<P
   const prev = previous ?? {}
 
   const optional: Array<[keyof PersonaPayload, string | undefined, number]> = [
-    ['biological_type', answers.species ?? prev.biological_type, MAX_SPECIES_GENDER],
-    ['gender', answers.character_gender ?? prev.gender, MAX_SPECIES_GENDER],
+    ['biological_type', answers.biological_type ?? prev.biological_type, MAX_SPECIES_GENDER],
+    ['gender', answers.gender ?? prev.gender, MAX_SPECIES_GENDER],
     ['appearance', answers.appearance ?? prev.appearance, MAX_APPEARANCE],
     ['relationship', answers.relationship ?? prev.relationship, MAX_RELATIONSHIP],
     ['user_call_name', answers.user_call_name ?? prev.user_call_name, MAX_USER_TEXT],

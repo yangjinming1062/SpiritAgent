@@ -154,7 +154,7 @@ def resolve_inference_settings(settings: dict[str, str], *, conv: Conversation) 
             DEFAULT_CONFIG["agent"]["reasoning_effort"],
         )
     )
-    raw_reasoning = settings.get("agent.reasoning_effort") or settings.get("reasoning_effort", "")
+    raw_reasoning = settings.get("agent.reasoning_effort", "")
     reasoning = safe_json_loads(raw_reasoning, default=raw_reasoning)
     reasoning = _parse_reasoning_effort(reasoning) if isinstance(reasoning, str) else None
     threshold = parse_temperature(
@@ -177,10 +177,7 @@ def merge_session_settings(
     """特殊会话使用场景默认值，普通会话继承工作台设置；最后合并会话覆盖。"""
     isolated = conv.kind in {SPECIAL_KIND, IM_KIND}
     merged = {
-        key: value
-        for key, value in user_settings.items()
-        if not isolated
-        or (not key.startswith(("agent.", "chat.")) and key not in {"reasoning_effort", "enable_background_review"})
+        key: value for key, value in user_settings.items() if not isolated or not key.startswith(("agent.", "chat."))
     }
     if isolated:
         merged.update(
@@ -192,7 +189,7 @@ def merge_session_settings(
         )
     if session_settings:
         for k, v in session_settings.items():
-            target_key = SESSION_TO_GLOBAL_KEY_ALIASES.get(k, k)
+            target_key = SESSION_TO_GLOBAL_KEY_ALIASES[k]
             merged[target_key] = v if isinstance(v, str) else json.dumps(v)
     inference = resolve_inference_settings(merged, conv=conv)
     merged.update(

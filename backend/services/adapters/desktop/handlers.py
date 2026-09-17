@@ -24,7 +24,6 @@ from components import (
     SESSION_HISTORY_PRE_BUFFER,
     SESSION_HISTORY_TRUNCATE_THRESHOLD,
     SESSION_LOCAL,
-    SESSION_TO_GLOBAL_KEY_ALIASES,
     SETTINGS,
     adopt_inbound,
     coerce_hour_0_23,
@@ -1176,12 +1175,10 @@ def _register_session_handlers(
             settings = safe_json_loads(conv.settings_json, default={})
             settings = settings if isinstance(settings, dict) else {}
             for key, value in settings_patch.items():
-                target = SESSION_TO_GLOBAL_KEY_ALIASES[key]
-                for stored_key in list(settings):
-                    if SESSION_TO_GLOBAL_KEY_ALIASES.get(stored_key, stored_key) == target:
-                        del settings[stored_key]
                 if value is not None:
                     settings[key] = value
+                else:
+                    settings.pop(key, None)
             if settings_patch:
                 conv.settings_json = json.dumps(settings, ensure_ascii=False)
                 await db.commit()
@@ -1208,7 +1205,6 @@ def _register_session_handlers(
             return await _do_compress_history(db, conv, user_id, runtime)
 
     dispatcher.register("session.compress_context", session_compress_context)
-    dispatcher.register("session.compress", session_compress_context)
 
     async def session_undo_to_message(params: dict) -> dict:
         """就地截断会话并把锚点载荷以 anchor 字段返回，供客户端落回输入框作为草稿。需要 ``confirmed=true``；in-flight 拒绝；仅 ``kind='standard'`` 允许。广播 ``message.deleted`` 事件给同 user 其他窗口。"""
@@ -1233,35 +1229,6 @@ def _register_session_handlers(
         )
 
     dispatcher.register("session.undo_to_message", session_undo_to_message)
-
-    async def session_clear_messages(params: dict) -> dict:
-        """直接 RPC：清空当前会话的所有消息（保留会话行），写一条 status_cleared marker。
-
-        是 ``/清理`` slash 命令的底层副作用 RPC；提供 REST 镜像与未来自动化测试入口。
-        需要 ``confirmed=true``（仅在与命令层联动时约定；这里强制所有调用都传 confirmed）。
-        """
-        sess_runtime = user_session.runtime_sessions if user_session else runtime_sessions
-        runtime = _get_runtime(sess_runtime, params)
-        if runtime.chat_task and not runtime.chat_task.done():
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
-        if not bool(params.get("confirmed")):
-            raise JsonRpcError(
-                JSONRPC_SLASH_CONFIRM_REQUIRED,
-                "session.clear_messages requires confirmed=true",
-                data={"requires_confirmation": True},
-            )
-        async with SESSION_LOCAL() as db:
-            conv = await _find_owned_conv(db, user_id, runtime.session_id)
-            if conv is None:
-                raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"session not found: {runtime.session_id!r}")
-            result = await _do_clear_history(db, conv, runtime)
-        logger.info(
-            "session.clear_messages",
-            extra={"user_id": user_id, "session_id": runtime.session_id, "cleared_count": result["cleared_count"]},
-        )
-        return result
-
-    dispatcher.register("session.clear_messages", session_clear_messages)
 
     async def command_dispatch(params: dict) -> dict:
         """Slash 命令分发入口：按 ``command`` 字段查 SLASH_COMMANDS 注册表并执行对应 handler。
@@ -1796,7 +1763,7 @@ def _register_session_handlers(
         feedback = params.get("feedback")
         if feedback is not None and not isinstance(feedback, str):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "feedback must be a string")
-        mode = params.get("mode", "regenerate")
+        mode = params.get("mode")
         if mode not in ("edit", "regenerate"):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "mode must be 'edit' or 'regenerate'")
         async with SESSION_LOCAL() as db:

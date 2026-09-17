@@ -11,7 +11,6 @@ from .schemas import (
     PromptPresetSummary,
     ReleaseManifestFileItem,
     ReleaseManifestResponse,
-    StatusResponse,
 )
 
 __all__ = [
@@ -27,5 +26,4 @@ __all__ = [
     "PromptPresetSummary",
     "ReleaseManifestFileItem",
     "ReleaseManifestResponse",
-    "StatusResponse",
 ]

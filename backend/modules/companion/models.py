@@ -102,7 +102,6 @@ class Companion2DModel(ModelBase, TimestampMixin):
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    priority: Mapped[str] = mapped_column(String(8), default="high", server_default=text("'high'"))
 
 
 class Persona(ModelBase, TimestampMixin):

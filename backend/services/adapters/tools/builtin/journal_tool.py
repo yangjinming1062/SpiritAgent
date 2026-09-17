@@ -104,7 +104,6 @@ async def diary_write_tool(
             body=clean_body,
             mood=mood,
             source=DiarySource.LLM.value,
-            edited_at=None,
         )
     return json.dumps({"success": True, "diary_id": row.id, "entry_date": entry_date.isoformat()}, ensure_ascii=False)
 

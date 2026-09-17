@@ -359,7 +359,6 @@ async def _write_avatar_step(
         update(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)).values(active=False),
     )
     prompt_payload: dict = {
-        "prompt": avatar_prompt,
         "avatar_prompt": avatar_prompt,
         "style": style,
         "source_url": avatar_source_url,
@@ -636,12 +635,12 @@ def _re_sign_avatar_url(asset: AvatarAsset) -> None:
 
 
 async def regenerate_avatar(
+    mode: ImageReviseMode,
     db: AsyncSession | None = None,
     user_id: int | None = None,
     persona: Persona | None = None,
     feedback: str | None = None,
     style: str = _DEFAULT_STYLE,
-    mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
     """重新生成立绘；可选的 feedback 会并入提示词。
 
@@ -1084,10 +1083,10 @@ async def generate_fullbody_reference(
     user_id: int,
     *,
     avatar_id: int,
+    mode: ImageReviseMode,
     feedback: str | None = None,
     reference_image: str | None = None,
     reference_content_type: str | None = None,
-    mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
     """从头像生成独立全身参考；锁定后仍开放，成功落库前保留旧图。
 
@@ -1162,9 +1161,9 @@ async def generate_fullbody_front_2d(
     user_id: int | None = None,
     *,
     avatar_id: int,
+    mode: ImageReviseMode,
     style: str = "refined_anime_cg",
     feedback: str | None = None,
-    mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
     """按默认精绘画风与用户微调要求生成/重绘 2D 正面种子图。主体参考恒为独立全身种子图，
     保留身材比例；身份细节以其源头（半身头像 + 角色定义）间接锚定，不回退半身像。
@@ -1189,7 +1188,7 @@ async def generate_fullbody_front_2d(
         prompt_payload = safe_json_loads(asset.prompt_json, default={})
         if not isinstance(prompt_payload, dict):
             prompt_payload = {}
-        if not (prompt_payload.get("avatar_prompt") or prompt_payload.get("prompt")):
+        if not prompt_payload.get("avatar_prompt"):
             raise SeedPromptMissingError(f"avatar {avatar_id} has no cached avatar_prompt")
         ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
         if ref_uri is None:
@@ -1280,8 +1279,8 @@ async def generate_fullbody_front_3d(
     user_id: int | None = None,
     *,
     avatar_id: int,
+    mode: ImageReviseMode,
     feedback: str | None = None,
-    mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
     """生成/重绘 3D 建模专用正面种子（A-pose、按物种路由画风）。
 
@@ -1364,8 +1363,8 @@ async def generate_fullbody_back(
     user_id: int | None = None,
     *,
     avatar_id: int,
+    mode: ImageReviseMode,
     feedback: str | None = None,
-    mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
     """按 3D 正面种子为参考图生成/重绘背面全身图（3D 升级阶段的背面种子确认；无 3D 正面种子时回退 2D 正面种子）。
 
@@ -1535,9 +1534,7 @@ async def prepare_fullbody_prompt(
     if kind == "front-2d":
         asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id, check_sealed=True)
         prompt_payload = safe_json_loads(asset.prompt_json, default={})
-        if not isinstance(prompt_payload, dict) or not (
-            prompt_payload.get("avatar_prompt") or prompt_payload.get("prompt")
-        ):
+        if not isinstance(prompt_payload, dict) or not prompt_payload.get("avatar_prompt"):
             raise SeedPromptMissingError(f"avatar {avatar_id} has no cached avatar_prompt")
         effective_style = style or "refined_anime_cg"
         species, appearance, personality = _fullbody_identity_fields(persona)

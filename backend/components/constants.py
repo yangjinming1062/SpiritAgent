@@ -38,15 +38,11 @@ TOOL_CALL_ID_HEX_PREFIX_LEN: int = 24
 # 夜间规划使用高推理档。
 NIGHTLY_PLANNING_REASONING_EFFORT: str = "high"
 
-# 会话级 setting key → 全局 UserSetting key 的别名映射（renderer 友好名 → 下游实际读到的 key）。
+# 会话级 setting key（SessionSettingsPatch 可写的三个键）→ 全局 UserSetting key 的映射。
 SESSION_TO_GLOBAL_KEY_ALIASES: dict[str, str] = {
-    "reasoning": "agent.reasoning_effort",
     "reasoning_effort": "agent.reasoning_effort",
-    "language": "language",
     "temperature": "agent.temperature",
     "context_compression_threshold": "chat.context_compression_threshold",
-    "enable_context_compression": "chat.enable_context_compression",
-    "compression_temperature": "chat.compression_temperature",
 }
 # 用字符串 "true" 而不是 bool，以匹配 user_settings.get() 的比较模式。
 BACKGROUND_REVIEW_DEFAULT: str = "true"

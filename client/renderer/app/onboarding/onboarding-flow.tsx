@@ -141,7 +141,7 @@ const QUESTIONS: readonly Question[] = [
     audioTag: 'onboarding.q0'
   },
   {
-    key: 'species',
+    key: 'biological_type',
     text: '那我是哪种生灵呢？',
     placeholder: '如：精灵、人类、龙…（可直接输入或选择标签）',
     required: true,
@@ -150,7 +150,7 @@ const QUESTIONS: readonly Question[] = [
     presets: SPECIES_PRESETS
   },
   {
-    key: 'character_gender',
+    key: 'gender',
     text: '嗯…那我是男性、女性、还是…',
     placeholder: '或者自由描述…',
     required: false,
@@ -261,12 +261,12 @@ const QUESTIONS: readonly Question[] = [
 
 // 这些字段的值会驱动 3D 模型，因此用户在确认头像后不能再改。
 // 题面旁边会渲染一个红色 `*`，向导顶部还有 banner 提示用户这一限制。
-const LOCKED_FIELD_KEYS: ReadonlySet<QKey> = new Set(['species', 'character_gender', 'appearance'])
+const LOCKED_FIELD_KEYS: ReadonlySet<QKey> = new Set(['biological_type', 'gender', 'appearance'])
 
 // 锁定字段 → 字段名（DESIGN §5.4 横幅按字段聚焦提示）。
 const LOCKED_FIELD_LABELS: Partial<Record<QKey, string>> = {
-  species: '物种',
-  character_gender: '性别',
+  biological_type: '物种',
+  gender: '性别',
   appearance: '基础外貌'
 }
 
@@ -328,8 +328,8 @@ const DRAG_THRESHOLD = 6
 // 映射都是恒等的（question key === 后端字段名），所以用 Set 就够了。
 const ONBOARDING_FIELD_KEYS: ReadonlySet<QKey> = new Set<QKey>([
   'name',
-  'species',
-  'character_gender',
+  'biological_type',
+  'gender',
   'appearance',
   'relationship',
   'personality',
@@ -738,7 +738,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     if (q?.required && !input.trim()) {
       const requiredHints: Record<string, string> = {
         name: '名字是必填的哦～',
-        species: '生灵类型是必填的哦～',
+        biological_type: '生灵类型是必填的哦～',
         speaking_style: '说话风格是必填的哦～'
       }
 
@@ -897,7 +897,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         path: `/api/companion/avatar/${avatarId}/fullbody/front-2d`,
         method: 'POST',
         body: {
-          style: styleId
+          style: styleId,
+          mode: 'regenerate'
         }
       })
 

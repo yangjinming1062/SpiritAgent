@@ -40,7 +40,6 @@ export interface MomentEntry {
   mediaType: '' | 'image' | 'video' | 'audio'
   source: string
   title: string
-  visibility?: string
 }
 
 interface MomentWire {
@@ -56,7 +55,6 @@ interface MomentWire {
   occurred_at: string
   source: string
   title: string
-  visibility?: string
 }
 
 interface MomentListWire {
@@ -68,7 +66,6 @@ export interface DiaryEntry {
   body: string
   createdAt: string | null
   date: string
-  editedAt: string | null
   id: string
   memoryIds: string[]
   momentIds: string[]
@@ -81,7 +78,6 @@ export interface DiaryEntry {
 interface DiaryWire {
   body: string
   created_at: string | null
-  edited_at: string | null
   entry_date: string
   id: string
   memory_ids: string[]
@@ -126,8 +122,7 @@ function toMoment(w: MomentWire): MomentEntry {
     mediaMetadata: w.media_metadata,
     mediaType: w.media_type,
     source: w.source,
-    title: w.title,
-    visibility: w.visibility
+    title: w.title
   }
 }
 
@@ -136,7 +131,6 @@ function toDiary(w: DiaryWire): DiaryEntry {
     body: w.body,
     createdAt: w.created_at,
     date: w.entry_date,
-    editedAt: w.edited_at,
     id: w.id,
     memoryIds: w.memory_ids,
     momentIds: w.moment_ids,

@@ -23,7 +23,7 @@ from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 from components import SESSION_LOCAL, safe_json_loads
-from modules.companion import Persona, normalize_persona_aliases
+from modules.companion import Persona
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .llm_client import (
@@ -223,10 +223,10 @@ def _prompt_clause(value: str) -> str:
 
 
 def _persona_payload(persona: Persona) -> dict[str, str]:
-    """回退到 ``{}`` 并归一化别名，使未填写完成的 persona 仍能产出 prompt。"""
+    """回退到 ``{}``，使未填写完成的 persona 仍能产出 prompt。"""
     raw = getattr(persona, "definition_json", None) or "{}"
     data = safe_json_loads(raw, default={})
-    return normalize_persona_aliases(data) if isinstance(data, dict) else {}
+    return data if isinstance(data, dict) else {}
 
 
 def _persona_visual_payload(persona: Persona, feedback: str | None) -> dict[str, str]:

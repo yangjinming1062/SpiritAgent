@@ -270,9 +270,7 @@ async def _run_chat_turn(
         effective_settings.get("chat.compression_temperature"),
         CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
     )
-    reasoning_effort = _parse_reasoning_effort(
-        effective_settings.get("agent.reasoning_effort") or effective_settings.get("reasoning_effort"),
-    )
+    reasoning_effort = _parse_reasoning_effort(effective_settings.get("agent.reasoning_effort"))
     temperature = parse_temperature(effective_settings.get("agent.temperature"), CHAT_TEMPERATURE_DEFAULT)
     compressed_context, compress_info = await compress_history_if_needed(
         inputs.context,

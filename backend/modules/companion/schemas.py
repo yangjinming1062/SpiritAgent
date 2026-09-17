@@ -1,26 +1,9 @@
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 # Persona blob 整体作为 JSON 字符串传输；32 KiB 在 HTTP 边界把 DoS 封顶，同时给最大 persona 字段（2000 字符）+ user_* 字段 + JSON 开销留余量。
 _PERSONA_JSON_MAX_LEN: int = 32 * 1024
-
-
-def normalize_persona_aliases(d: dict[str, Any]) -> dict[str, Any]:
-    """将 species 归一化为 biological_type，character_gender 归一化为 gender。
-
-    若别名与规范名共存，弹出并丢弃别名，保留规范名。
-    """
-    res = dict(d)
-    if "species" in res:
-        species_val = res.pop("species")
-        if "biological_type" not in res:
-            res["biological_type"] = species_val
-    if "character_gender" in res:
-        gender_val = res.pop("character_gender")
-        if "gender" not in res:
-            res["gender"] = gender_val
-    return res
 
 
 class PersonaUpdate(BaseModel):
@@ -40,8 +23,7 @@ class PersonaResponse(BaseModel):
 # 生成是同步的——所有持久化资产都是 succeeded；钉死字面量以便未来若改为异步时契约仍清楚。
 SucceededStatus = Literal["succeeded"]
 
-# 迭代修改意图：edit=微调（编辑上一版产物，未提及区域保留）；regenerate=重新生成（种子锚定全量重绘）。
-# 默认 regenerate——不带 mode 的旧请求保持全量重绘语义不变。
+# 迭代修改意图：edit=微调（编辑上一版产物，未提及区域保留）；regenerate=重新生成（种子锚定全量重绘）。必传。
 ImageReviseMode = Literal["edit", "regenerate"]
 
 
@@ -65,7 +47,7 @@ class FullbodyReferenceGenerateRequest(BaseModel):
     feedback: str | None = Field(default=None, max_length=500)
     image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
     content_type: str | None = Field(default=None, max_length=64)
-    mode: ImageReviseMode = "regenerate"
+    mode: ImageReviseMode
 
 
 class Fullbody2dFrontGenerateRequest(BaseModel):
@@ -73,7 +55,7 @@ class Fullbody2dFrontGenerateRequest(BaseModel):
 
     style: str = Field(default="refined_anime_cg", max_length=64)
     feedback: str | None = Field(default=None, max_length=500)
-    mode: ImageReviseMode = "regenerate"
+    mode: ImageReviseMode
 
 
 # 3D 种子（A-pose 正面 / 背面）生成共用请求体；画风由服务端按物种路由并随行持久化，正背恒成对一致
@@ -81,7 +63,7 @@ class Fullbody3dSeedGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     feedback: str | None = Field(default=None, max_length=500)
-    mode: ImageReviseMode = "regenerate"
+    mode: ImageReviseMode
 
 
 class FullbodyConfirmFrontRequest(BaseModel):
@@ -203,7 +185,7 @@ class OutfitRegenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     feedback: str | None = Field(default=None, max_length=500)
-    mode: ImageReviseMode = "regenerate"
+    mode: ImageReviseMode
 
 
 class OutfitPromptRequest(BaseModel):

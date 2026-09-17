@@ -1,7 +1,6 @@
 """日记业务域：片刻与日记的数据操作、编辑规则与归集口径。"""
 
 from .journal_service import (
-    DiaryNotFoundError,
     DiarySource,
     JournalError,
     MomentNotFoundError,
@@ -11,10 +10,8 @@ from .journal_service import (
     collect_moment_interactions,
     create_generated_moment,
     create_moment_comment,
-    create_user_diary,
     create_user_moment,
     delete_moment_comment,
-    get_diary_by_date,
     get_moment,
     list_diary,
     list_moments,
@@ -22,13 +19,10 @@ from .journal_service import (
     response_for_comment,
     response_for_diary,
     response_for_moment,
-    soft_delete_moment,
-    update_diary,
     upsert_diary,
 )
 
 __all__ = [
-    "DiaryNotFoundError",
     "DiarySource",
     "JournalError",
     "MomentNotFoundError",
@@ -38,10 +32,8 @@ __all__ = [
     "collect_moment_interactions",
     "create_generated_moment",
     "create_moment_comment",
-    "create_user_diary",
     "create_user_moment",
     "delete_moment_comment",
-    "get_diary_by_date",
     "get_moment",
     "list_diary",
     "list_moments",
@@ -49,7 +41,5 @@ __all__ = [
     "response_for_comment",
     "response_for_diary",
     "response_for_moment",
-    "soft_delete_moment",
-    "update_diary",
     "upsert_diary",
 ]

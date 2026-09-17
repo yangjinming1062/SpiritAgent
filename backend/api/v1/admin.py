@@ -79,11 +79,6 @@ async def list_users(db: DbSession) -> UserListResponse:
     )
 
 
-@router.get("/users/{user_id}", response_model=UserResponse)
-async def get_user(user_id: int, db: DbSession) -> UserResponse:
-    return UserResponse.model_validate(await get_or_404(db, User, id=user_id, detail="用户不存在。"))
-
-
 @router.post("/users", response_model=UserResponse)
 async def create_user(payload: UserCreate, db: DbSession) -> UserResponse:
     if (await db.execute(select(User).where(User.username == payload.username))).scalar_one_or_none():
