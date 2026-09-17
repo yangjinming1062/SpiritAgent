@@ -158,7 +158,7 @@ class _NoopBackend(ComputerUseBackend):
     def list_apps(self) -> list[dict[str, Any]]:
         return []
 
-    def focus_app(self, app: str, raise_window: bool = False) -> ActionResult:
+    def focus_app(self, app: str, bring_to_front: bool = False) -> ActionResult:
         return ActionResult(ok=True, action="focus_app")
 
     def set_value(self, value: str, element: int | None = None) -> ActionResult:
@@ -261,9 +261,7 @@ def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) ->
         case "focus_app":
             if not (app := args.get("app")):
                 return json.dumps({"error": "focus_app requires `app`"})
-            # raise_window（遗留）与 bring_to_front（新）是别名
-            do_raise = bool(args.get("raise_window")) or bring_to_front
-            return _maybe_follow_capture(backend, _tag(backend.focus_app(app, do_raise)), capture_after)
+            return _maybe_follow_capture(backend, _tag(backend.focus_app(app, bring_to_front)), capture_after)
         case "click" | "double_click" | "right_click" | "middle_click":
             button = (
                 "right"
@@ -321,7 +319,7 @@ def _text_response(res: ActionResult) -> str:
 
 
 def _sniff_image_mime(b64: str) -> str:
-    """尽力通过 base64 magic bytes 猜测 MIME，覆盖 JPEG / PNG / WebP / GIF；无法识别时回退到 image/png，让 LLM 至少看到可渲染的图片标签。cua-driver 0.5.x+ 会在每个 image part 上设置 mimeType — 此兜底仅在该字段缺失或非 cua 后端（WinBackend）时触发。"""
+    """尽力通过 base64 magic bytes 猜测 MIME，覆盖 JPEG / PNG / WebP / GIF；无法识别时回退到 image/png，让 LLM 至少看到可渲染的图片标签。cua-driver 会在每个 image part 上设置 mimeType — 此兜底仅在该字段缺失或非 cua 后端（WinBackend）时触发。"""
     if not b64:
         return "image/png"
     if b64[:4].startswith("/9j/"):
@@ -382,8 +380,8 @@ def _capture_response(cap: CaptureResult, max_elements: int = 100) -> Any:
     summary = clean_output("\n".join(summary_lines))
 
     if cap.png_b64 and cap.mode != "ax":
-        # 优先采用 cua-driver 通过 image.mimeType 报告的 MIME（cua-driver 0.5.x+）；
-        # 旧版本或非 cua 后端（WinBackend）回退到 base64 magic-byte 嗅探
+        # 优先采用 cua-driver 通过 image.mimeType 报告的 MIME；
+        # 非 cua 后端（WinBackend）回退到 base64 magic-byte 嗅探
         mime = cap.image_mime_type or _sniff_image_mime(cap.png_b64)
         return {
             "_multimodal": True,

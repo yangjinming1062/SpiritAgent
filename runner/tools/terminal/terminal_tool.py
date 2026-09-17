@@ -371,14 +371,9 @@ def terminal_tool(
                 )
         start_cleanup_thread()
         with env_lock:
-            _existing_key = (
-                effective_task_id
-                if effective_task_id in active_environments
-                else (task_id if task_id and task_id in active_environments else None)
-            )
-            if _existing_key is not None:
-                last_activity[_existing_key] = time.time()
-                env = active_environments[_existing_key]
+            if effective_task_id in active_environments:
+                last_activity[effective_task_id] = time.time()
+                env = active_environments[effective_task_id]
                 needs_creation = False
             else:
                 needs_creation = True
@@ -389,14 +384,9 @@ def terminal_tool(
                 task_lock = creation_locks[effective_task_id]
             with task_lock:
                 with env_lock:
-                    _existing_key = (
-                        effective_task_id
-                        if effective_task_id in active_environments
-                        else (task_id if task_id and task_id in active_environments else None)
-                    )
-                    if _existing_key is not None:
-                        last_activity[_existing_key] = time.time()
-                        env = active_environments[_existing_key]
+                    if effective_task_id in active_environments:
+                        last_activity[effective_task_id] = time.time()
+                        env = active_environments[effective_task_id]
                         needs_creation = False
                 if needs_creation:
                     logger.info("Creating new %s environment for task %s...", env_type, effective_task_id[:8])

@@ -268,7 +268,6 @@ pub const STAGE_RESULT_SENTINEL: &str = "__SPIRITAGENT_STAGE_RESULT__:";
 pub const MANIFEST_SENTINEL: &str = "__SPIRITAGENT_MANIFEST__:";
 
 /// 解析 stdout 中由 sentinel 前缀标记的阶段结果 JSON 行 `{ok: bool, stage: string, ...}`。
-/// 优先按 sentinel 精准匹配，未匹配时向前回退至普通 JSON 行以保持兼容。
 pub fn parse_stage_result(stdout: &str) -> Option<crate::events::StageResultPayload> {
     for line in stdout.lines().rev() {
         let trimmed = line.trim();
@@ -278,30 +277,10 @@ pub fn parse_stage_result(stdout: &str) -> Option<crate::events::StageResultPayl
             }
         }
     }
-
-    // 兼容兜底：未找到 sentinel 时按裸 JSON 行解析
-    for line in stdout.lines().rev() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Ok(value) = serde_json::from_str::<serde_json::Value>(trimmed) {
-            if value.get("ok").and_then(|v| v.as_bool()).is_some()
-                && value.get("stage").and_then(|v| v.as_str()).is_some()
-            {
-                if let Ok(parsed) =
-                    serde_json::from_value::<crate::events::StageResultPayload>(value)
-                {
-                    return Some(parsed);
-                }
-            }
-        }
-    }
     None
 }
 
 /// `-Manifest` 负载解析：找由 sentinel 前缀标记的单行 NDJSON 负载。
-/// 优先按 sentinel 精准匹配，未匹配时向前回退至裸 JSON 或多行 JSON。
 pub fn parse_manifest(stdout: &str) -> Option<crate::events::Manifest> {
     for line in stdout.lines().rev() {
         let trimmed = line.trim();
@@ -311,27 +290,7 @@ pub fn parse_manifest(stdout: &str) -> Option<crate::events::Manifest> {
             }
         }
     }
-
-    fn try_parse(blob: &str) -> Option<crate::events::Manifest> {
-        let value = serde_json::from_str::<serde_json::Value>(blob).ok()?;
-        if value.get("stages")?.as_array().is_none() {
-            return None;
-        }
-        serde_json::from_value(value).ok()
-    }
-
-    // 先按行匹配（处理单行 JSON 与尾部 banner）。
-    for line in stdout.lines().rev() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        if let Some(m) = try_parse(trimmed) {
-            return Some(m);
-        }
-    }
-    // 兜底：把整个 stdout 当作一个 JSON 对象解析（处理 PowerShell 多行 here-string 输出）。
-    try_parse(stdout.trim())
+    None
 }
 
 #[cfg(test)]
@@ -359,9 +318,8 @@ final non-json banner
 {"ok": true, "stage": "venv"}
 final non-json banner
 "#;
-        let result = parse_stage_result(stdout).unwrap();
-        assert_eq!(result.stage, "venv");
-        assert!(result.ok);
+        let result = parse_stage_result(stdout);
+        assert!(result.is_none(), "bare JSON without sentinel must not match");
     }
 
     #[test]
@@ -383,22 +341,8 @@ trailing info
 info line
 {"stages": [{"name": "uv", "title": "uv", "category": "prereqs", "needs_user_input": false}], "protocol_version": 1}
 "#;
-        let m = parse_manifest(stdout).unwrap();
-        assert_eq!(m.stages.len(), 1);
-        assert_eq!(m.stages[0].name, "uv");
-        assert_eq!(m.protocol_version, Some(1));
-    }
-
-    #[test]
-    fn parse_manifest_handles_multiline_here_string() {
-        let stdout = r#"{"protocol_version": 2, "stages": [
-  {"name": "welcome", "title": "Preparing install", "category": "setup", "needs_user_input": false},
-  {"name": "install-python", "title": "Installing Python runtime", "category": "prereqs", "needs_user_input": false}
-]}
-"#;
-        let m = parse_manifest(stdout).unwrap();
-        assert_eq!(m.stages.len(), 2);
-        assert_eq!(m.protocol_version, Some(2));
+        let m = parse_manifest(stdout);
+        assert!(m.is_none(), "bare JSON without sentinel must not match");
     }
 
     #[test]

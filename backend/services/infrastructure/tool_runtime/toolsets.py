@@ -9,7 +9,7 @@ class ToolsetDef:
     names: tuple[str, ...]
 
 
-# 工具集 id 的权威枚举见 docs/PROTOCOL.md §2.2；此处只登记 backend/memory 桶拥有的 id，
+# 工具集 id 的权威枚举见 client/main/shared/lib/toolset-index.ts；此处只登记 backend/memory 桶拥有的 id，
 # 其余 id（browser_automation 等）由 Runner 侧目录在 get_tools 源头过滤。
 # 无工具集归属、不受开关影响的 backend 工具：search_tools（元工具）
 # video_generate / video_generate_status（UI 未开对应工具集开关）。

@@ -266,10 +266,6 @@ function Stage-UnpackRunner {
 
     # 不做安装后烟测：构建链在打包前跑 scripts/check_runner_facade.py，wheel 与 server.py 不一致不会进入安装包。
 
-    # 清理旧的 PyInstaller 二进制（尽力而为：旧文件被运行中的进程锁定时不得中断安装）。
-    $oldBin = Join-Path (Join-Path $SpiritAgentHome "bin") "spiritagent-runner.exe"
-    if (Test-Path $oldBin) { Remove-Item -Force $oldBin -ErrorAction SilentlyContinue }
-
     # 拷贝 onboarding 引导音频：语言子目录（zh\、en\、…）1:1 映射至 $SpiritAgentHome\audio\onboarding\<lang>\。
     $audioCount = 0
     if ($BundledOnboardingAudioDir -and (Test-Path $BundledOnboardingAudioDir -PathType Container)) {

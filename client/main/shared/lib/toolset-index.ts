@@ -7,8 +7,9 @@ interface ToolsetDef {
   staticTools?: string[]
 }
 
-// 供主进程生成工具集清单的目录。id 权威枚举见 docs/PROTOCOL.md §2.2；
-// Runner 侧工具集在此按 schema/前缀动态匹配，Backend 侧工具集（memory 等）在此登记静态工具名。
+// 工具集 id 的权威枚举（覆盖 Runner 侧与 Backend 桶的全部 id）。Runner 侧工具集在此按 schema/前缀动态匹配，
+// Backend 侧工具集在此登记静态工具名；Runner / Backend 各自的 id → 工具名映射分别见
+// runner/tools/toolsets/catalog.py 与 backend/services/infrastructure/tool_runtime/toolsets.py。
 const TOOLSET_DEFS: ToolsetDef[] = [
   { id: 'browser_automation', prefixes: ['browser_'] },
   { extraTools: ['read_file', 'write_file', 'patch', 'list_directory', 'search_files'], id: 'file_operations' },
@@ -23,7 +24,23 @@ const TOOLSET_DEFS: ToolsetDef[] = [
   { id: 'scheduled_tasks', staticTools: ['cronjob'] },
   { id: 'agent_delegation', staticTools: ['agent_delegate_tool'] },
   { extraTools: ['computer_use'], id: 'computer_use' },
-  { extraTools: ['vision_analyze'], id: 'media_analysis' }
+  { extraTools: ['vision_analyze'], id: 'media_analysis' },
+  {
+    extraTools: [
+      'system.get_idle_seconds',
+      'system.is_screen_locked',
+      'system.get_focused_app',
+      'system.is_fullscreen',
+      'system.snapshot',
+      'system.get_power_state',
+      'system.get_windows',
+      'system.open_application',
+      'system.get_work_area',
+      'system.get_cursor_pos',
+      'system.click_at'
+    ],
+    id: 'system_awareness'
+  }
 ]
 
 function toolNamesForToolset(def: ToolsetDef, availableNames: Set<string>): string[] {

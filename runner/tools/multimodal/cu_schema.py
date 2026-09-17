@@ -168,15 +168,6 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
                 ),
             },
             "seconds": {"type": "number", "description": "Seconds to wait. Max 30."},
-            "raise_window": {
-                "type": "boolean",
-                "description": (
-                    "Only for action='focus_app'. If true, brings the "
-                    "window to front (DISRUPTS the user). Default false "
-                    "— input is routed to the app without raising, "
-                    "matching the background co-work model."
-                ),
-            },
             "capture_after": {
                 "type": "boolean",
                 "description": (

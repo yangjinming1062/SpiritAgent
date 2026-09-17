@@ -6,7 +6,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from utils import get_spiritagent_home
+from utils import get_spiritagent_dir
 
 from ...registry import registry
 from ..camofox import is_camofox_mode
@@ -28,7 +28,7 @@ def browser_screenshot_element(ref: str, save_as: str | None = None, task_id: st
         if supervisor is None:
             return no_supervisor()
 
-        screenshots_dir = get_spiritagent_home() / "browser_screenshots"
+        screenshots_dir = get_spiritagent_dir("cache/screenshots")
         screenshots_dir.mkdir(parents=True, exist_ok=True)
         filename = _safe_save_name(save_as, f"element_{secrets.token_hex(4)}.png")
         out_path = screenshots_dir / filename
@@ -54,7 +54,7 @@ def browser_pdf(
         if supervisor is None:
             return no_supervisor()
 
-        pdf_dir = get_spiritagent_home() / "browser_pdfs"
+        pdf_dir = get_spiritagent_dir("cache/pdfs")
         pdf_dir.mkdir(parents=True, exist_ok=True)
         filename = _safe_save_name(save_as, f"page_{secrets.token_hex(4)}.pdf")
         out_path = pdf_dir / filename
@@ -125,7 +125,7 @@ def browser_download(
         dest_dir = _get_downloads_dir()
         dest_path = dest_dir / target_name
 
-        # CDP setDownloadBehavior 把文件下载到临时目录, browser_downloads 只存最终交付位置: 下载完成后搬过来。
+        # CDP setDownloadBehavior 把文件下载到临时目录, downloads 缓存只存最终交付位置: 下载完成后搬过来。
         src_path = Path(dl_res["path"]) if dl_res.get("path") else Path(tempfile.gettempdir()) / orig_filename
         if src_path.is_file():
             try:

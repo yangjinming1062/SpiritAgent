@@ -37,7 +37,7 @@ def _safe_save_name(save_as: str | None, default: str) -> str:
 
 
 def _get_downloads_dir() -> Path:
-    d = get_spiritagent_dir("cache/downloads", "browser_downloads")
+    d = get_spiritagent_dir("cache/downloads")
     d.mkdir(parents=True, exist_ok=True)
     return d
 

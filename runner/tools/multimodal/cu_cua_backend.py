@@ -438,8 +438,8 @@ def _extract_first_image(out: dict[str, Any]) -> tuple[str | None, str | None]:
 
 def _extract_tool_result(mcp_result: Any) -> dict[str, Any]:
     content = getattr(mcp_result, "content", []) or []
-    # cua-driver 0.5.x+ 在每个图片部分上都会带 mimeType；旧版本只设置 data。
-    # 保留线协议声明的 MIME，让下游可以省去 base64 magic-byte sniff 兜底路径。
+    # cua-driver 在每个图片部分上都会带 mimeType; 保留线协议声明的 MIME,
+    # 让下游可以省去 base64 magic-byte sniff 兜底路径。
     #
     # 单遍：并行构建 (data, mime_type) 元组，保证当未来 cua-driver 在图片之间插入非图片部分时，
     # 两个并行列表不会错位。
@@ -723,7 +723,7 @@ class CuaDriverBackend(ComputerUseBackend):
             ]
         return []
 
-    def focus_app(self, app: str, raise_window: bool = False) -> ActionResult:
+    def focus_app(self, app: str, bring_to_front: bool = False) -> ActionResult:
         lw_out = self._session.call_tool("list_windows", {"on_screen_only": True})
         if raw_windows := (lw_out.get("structuredContent") or {}).get("windows"):
             windows = sorted(
@@ -750,10 +750,10 @@ class CuaDriverBackend(ComputerUseBackend):
                     target["window_id"],
                     target["app_name"],
                 )
-            # cua-driver 没有窗口前置调用: raise_window=True 时如实说明被忽略, 不冒充已 raise。
+            # cua-driver 没有窗口前置调用: bring_to_front=True 时如实说明被忽略, 不冒充已 raise。
             suffix = (
-                "raise_window was requested but this backend cannot raise windows; input is routed by window id instead."
-                if raise_window
+                "bring_to_front was requested but this backend cannot raise windows; input is routed by window id instead."
+                if bring_to_front
                 else "Input is routed by window id without raising the window."
             )
             return ActionResult(

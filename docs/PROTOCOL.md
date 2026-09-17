@@ -188,14 +188,14 @@ Windows 命名管道可被本机进程枚举，token 是实际准入边界；不
 | 方法组 | 用途 |
 |---|---|
 | `runner_ready`、`spiritagent.info` | 握手与运行快照 |
-| `get_tools`、`tools_changed` | 实际工具清单与变更 |
+| `get_tools` | Runner 实际工具清单 |
 | `execute_tool`、`execute_scoped_tool` | 普通及带学习域的执行 |
 | `spiritagent.call_result`、`spiritagent.cancel` | 查询已派发结果与取消请求 |
 | `spiritagent.config.update`、`request_llm` | 完整配置与反向模型请求 |
 
-Client 在启动、Runner 重启和工具变化后同步工具。Runner 断开、崩溃或开始停止时，云端仍连接的 Client 立即发送空 `tools.sync`，阻止新派发；已派发调用按结果与超时收尾。没有同步或清单为空时，本机工具不可见也不可派发。
+Client 在启动与 Runner 重启后经 `get_tools` 获取清单，再经云端 `tools.sync`（携带 `skill_scope_version`）推送 Backend 注册表。Runner 断开、崩溃或开始停止时，云端仍连接的 Client 立即发送空 `tools.sync` 清空注册表，阻止新派发；已派发调用按结果与超时收尾。没有同步或清单为空时，本机工具不可见也不可派发。
 
-禁用工具须在实际注册和派发边界生效，界面清单不是完整运行时目录。公共工具集标识变更同步 Client 显示与统计、Backend 和 Runner 过滤。
+禁用工具须在实际注册和派发边界生效，界面清单不是完整运行时目录。公共工具集标识变更同步 Client 显示与统计、Backend 和 Runner 过滤。工具集 id 的完整枚举以 [toolset-index](../client/main/shared/lib/toolset-index.ts) 为准（Client 侧汇总，覆盖全部 id）；Runner 侧归属在 [catalog.py](../runner/tools/toolsets/catalog.py)（`get_tools` 源头过滤），Backend 桶归属在 [toolsets.py](../backend/services/infrastructure/tool_runtime/toolsets.py)。三处新增或删除 id 时须同步，目录见 [toolset-catalog](../client/renderer/shared/lib/toolset-catalog.ts)（图标）。
 
 ### 2.3 runner_ready capabilities 与 health 状态
 
@@ -233,7 +233,7 @@ Client 必须按 `call_id` 去重设备指令，并将 Backend 生成的同一�
 
 技能使用 `platforms` 声明系统，规范值为 macos / windows，接受 darwin / win32 别名；未声明或空列表不额外限制平台。Client 索引与 Runner 执行入口分别过滤，Installer 保留完整技能文件。
 
-Runner 兼容旧 `platform`，Client 只读 `platforms`，跨端一致的技能必须使用规范字段。平台兼容与用户 / 预设隔离分别生效，不扩大产品支持平台。解析入口见 [Client 索引](../client/main/shared/lib/skill-index.ts) 与 [Runner 技能入口](../runner/tools/skills/skills_tool.py)。
+平台过滤与用户 / 预设隔离分别生效，不扩大产品支持平台。解析入口见 [Client 索引](../client/main/shared/lib/skill-index.ts) 与 [Runner 技能入口](../runner/tools/skills/skills_tool.py)。
 
 ## 3. 反向 RPC 桥接（Runner 借大脑）
 

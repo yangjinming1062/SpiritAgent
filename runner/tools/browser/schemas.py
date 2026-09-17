@@ -293,7 +293,7 @@ BROWSER_DOWNLOAD_SCHEMA: dict[str, Any] = {
     "description": (
         "Download a file by clicking a link (ref) or navigating to a URL. Blocks until the "
         "download completes and returns the local file path. Requires a CDP-capable backend. "
-        "Files are saved to the browser_downloads cache (24h auto-cleanup)."
+        "Files are saved to the downloads cache (24h auto-cleanup)."
     ),
     "parameters": {
         "type": "object",

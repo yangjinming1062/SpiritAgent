@@ -467,7 +467,7 @@ class WinBackend(ComputerUseBackend):
         return apps
 
     @_serialized
-    def focus_app(self, app: str, raise_window: bool = False) -> ActionResult:
+    def focus_app(self, app: str, bring_to_front: bool = False) -> ActionResult:
         hwnd, app_name = self._find_window_by_app(app)
         if hwnd is None:
             return ActionResult(ok=False, action="focus_app", message=f"No window found for app '{app}'")
@@ -476,7 +476,7 @@ class WinBackend(ComputerUseBackend):
         self._active_app = app_name
         self._last_app = app_name
 
-        if raise_window:
+        if bring_to_front:
             try:
                 win = self._get_desktop().window(handle=hwnd)
                 win.set_focus()

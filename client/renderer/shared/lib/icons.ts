@@ -1,4 +1,5 @@
 export {
+  IconActivity as Activity,
   IconAlertCircle as AlertCircle,
   IconAlertTriangle as AlertTriangle,
   IconArchive as Archive,

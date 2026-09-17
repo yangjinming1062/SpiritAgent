@@ -3,7 +3,7 @@ import logging
 import uuid
 from typing import Any
 
-from utils import get_spiritagent_home
+from utils import get_spiritagent_dir
 
 from ...registry import registry
 from ..camofox import camofox_vision, is_camofox_mode
@@ -24,7 +24,7 @@ def browser_vision(annotate: bool = False, task_id: str | None = None) -> dict[s
         if supervisor is None:
             return no_supervisor()
 
-        screenshots_dir = get_spiritagent_home() / "browser_screenshots"
+        screenshots_dir = get_spiritagent_dir("cache/screenshots")
         screenshots_dir.mkdir(parents=True, exist_ok=True)
         screenshot_path = str(screenshots_dir / f"browser_screenshot_{uuid.uuid4().hex[:8]}.png")
 

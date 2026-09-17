@@ -118,20 +118,20 @@ def iter_skills_files(container_base: str = "/root/.spiritagent") -> list[dict[s
     return out
 
 
-_CACHE_DIRS: list[tuple[str, str]] = [
-    ("cache/documents", "document_cache"),
-    ("cache/images", "image_cache"),
-    ("cache/audio", "audio_cache"),
-    ("cache/screenshots", "browser_screenshots"),
+_CACHE_DIRS: list[str] = [
+    "cache/documents",
+    "cache/images",
+    "cache/audio",
+    "cache/screenshots",
 ]
 
 
 def iter_cache_files(container_base: str = "/root/.spiritagent") -> list[dict[str, str]]:
     base = container_base.rstrip("/")
     return [
-        {"host_path": str(item), "container_path": f"{base}/{new_subpath}/{item.relative_to(host_dir)}"}
-        for new_subpath, old_name in _CACHE_DIRS
-        if (host_dir := get_spiritagent_dir(new_subpath, old_name)).is_dir()
+        {"host_path": str(item), "container_path": f"{base}/{subpath}/{item.relative_to(host_dir)}"}
+        for subpath in _CACHE_DIRS
+        if (host_dir := get_spiritagent_dir(subpath)).is_dir()
         for item in host_dir.rglob("*")
         if not item.is_symlink() and item.is_file()
     ]

@@ -123,7 +123,7 @@ key               keys="…" | "return" | "escape" | …
 set_value         element=N   value="…"                # for select/popup + sliders, no focus steal
 wait              seconds=0.5
 list_apps
-focus_app         app="…"  raise_window=false   (default: don't raise)
+focus_app         app="…"  bring_to_front=false   (default: don't raise)
 ```
 
 All actions accept optional `capture_after=True` to get a follow-up
@@ -169,7 +169,7 @@ sliders, pass the numeric target value.
 
 ## Background rules (the whole point)
 
-1. **Never `raise_window=True`** unless the user explicitly asked you
+1. **Never `bring_to_front=True`** unless the user explicitly asked you
    to bring a window to front. Input routing works without raising.
 2. **Scope captures to an app** (`app="Safari"` / `app="Notepad"`) —
    less noisy, fewer elements, doesn't leak other windows the user has

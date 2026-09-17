@@ -17,7 +17,6 @@ const SYNCED_SECTIONS = [
   'tool_output',
   'computer_use',
   'file_state',
-  'audio',
   'companion',
   'shortcuts',
   'ui'

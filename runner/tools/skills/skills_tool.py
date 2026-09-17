@@ -28,7 +28,7 @@ from .helpers import (
     iter_skill_index_files,
     parse_frontmatter,
 )
-from .skill_manager_tool import MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH, MAX_SKILL_FILE_BYTES, SKILLS_DIR
+from .skill_manager_tool import MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH, MAX_SKILL_FILE_BYTES
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +79,7 @@ def skill_matches_platform(frontmatter: dict[str, Any]) -> bool:
     （darwin / win32）。
     没有这个翻译，OS 字符串永远不匹配 — 例如 macOS 专属的 skill 会在唯一能运行它们的 OS 上被过滤掉。
     """
-    declared = frontmatter.get("platforms") or frontmatter.get("platform")
+    declared = frontmatter.get("platforms")
     if not declared:
         return True
     if isinstance(declared, str):
@@ -220,20 +220,14 @@ def _is_disabled(name: str, category: str | None, disabled: set[str]) -> bool:
     return bool(category is not None and category in disabled)
 
 
-def _is_skill_disabled(name: str, category: str | None = None, platform: str | None = None) -> bool:
-    """为 _is_disabled 包一层配置加载。同时尊重全局 skills.disabled 列表（按 name 或 category 匹配）以及
-    按平台的 skills.platform_disabled[plat] map（仅按 name 匹配）。当 platform map 已定义时短路掉全局
-    列表 — 与原始实现的"二选一"语义保持一致。
+def _is_skill_disabled(name: str, category: str | None = None) -> bool:
+    """为 _is_disabled 包一层配置加载：尊重全局 skills.disabled 列表（按 name 或 category 匹配）。
 
     已经持有预加载 disabled 集合的调用方（例如 _find_all_skills）应直接调用 _is_disabled 以避免重复解析。
     """
     try:
-        cfg = cfg_get(load_config(), "skills", default={})
-        plat = platform or sys.platform
-        p_dis = cfg_get(cfg, "platform_disabled", plat)
-        if isinstance(p_dis, list):
-            return name in {str(n) for n in p_dis}
-        return _is_disabled(name, category, get_disabled_skill_names())
+        disabled = get_disabled_skill_names()
+        return _is_disabled(name, category, disabled)
     except Exception:
         return False
 
@@ -599,10 +593,9 @@ def skill_view(name: str, file_path: str | None = None) -> str:
             if v
         }
 
-        try:
-            rel_path = str(skill_md.relative_to(SKILLS_DIR))
-        except ValueError:
-            rel_path = str(skill_md.relative_to(skill_md.parent.parent)) if skill_md.parent.parent else skill_md.name
+        # path 输出按技能所在根目录取相对路径（技能根含静态 skills/ 与学习域目录，SKILLS_DIR 只覆盖前者）。
+        skill_root = next((root for root in visible_skill_roots() if skill_md.is_relative_to(root)), None)
+        rel_path = str(skill_md.relative_to(skill_root)) if skill_root else str(skill_md)
 
         skill_name = parsed_frontmatter.get("name", skill_md.parent.name)
         req_envs = _get_required_environment_variables(parsed_frontmatter)

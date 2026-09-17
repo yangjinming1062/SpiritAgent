@@ -586,7 +586,11 @@ export const dict: Dictionary = {
     scheduled_tasks: { label: 'Scheduled tasks', description: 'Cron triggers and periodic scheduling.' },
     agent_delegation: { label: 'Sub-agent delegation', description: 'Spawn sub-sessions and sub-agents.' },
     computer_use: { label: 'Desktop control', description: 'Take over the desktop via the Windows backend.' },
-    media_analysis: { label: 'Media analysis', description: 'Image analysis.' }
+    media_analysis: { label: 'Media analysis', description: 'Image analysis.' },
+    system_awareness: {
+      label: 'System awareness',
+      description: 'OS state sensing: idle time, screen lock, focused window, fullscreen and cursor position.'
+    }
   },
 
   errors: {

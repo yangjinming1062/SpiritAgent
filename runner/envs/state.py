@@ -1,6 +1,5 @@
 import os
 import threading
-import time
 from typing import Any
 
 from utils import cfg_bool, cfg_int, cfg_str, load_config
@@ -49,28 +48,6 @@ def get_env_config() -> dict[str, Any]:
         "ssh_port": int(ssh_cfg.get("port", 22)),
         "ssh_key": str(ssh_cfg.get("key", "")),
         "ssh_password": str(ssh_cfg.get("password", "")),
-        "ssh_persistent": cfg_bool(t, "ssh_persistent", cfg_bool(ssh_cfg, "persistent", True)),
+        "ssh_persistent": cfg_bool(t, "ssh_persistent", True),
         "local_persistent": cfg_bool(t, "local_persistent", False),
     }
-
-
-def get_active_env(task_id: str) -> Any | None:
-    """按 task_id 取活跃环境：先归一化再查表，同时兼容原始 key 的旧条目。"""
-    lookup = resolve_container_task_id(task_id)
-    with env_lock:
-        return active_environments.get(lookup) or active_environments.get(task_id)
-
-
-def is_persistent_env(task_id: str) -> bool:
-    """查询指定任务的环境是否声明为持久化（仅看 `_persistent` 字段）。"""
-    env = get_active_env(task_id)
-    if env is None:
-        return False
-    return bool(getattr(env, "_persistent", False))
-
-
-def register_environment(task_id: str, env: Any) -> None:
-    """注册一个环境实例并刷新其 last_activity 时间戳。"""
-    with env_lock:
-        active_environments[task_id] = env
-        last_activity[task_id] = time.time()

@@ -73,7 +73,7 @@ async def vision_analyze_tool(image_url: str) -> dict[str, Any] | str:
                 )
             temp_path, should_cleanup = local_path, False
         elif await _validate_image_url_async(image_url):
-            temp_path = get_spiritagent_dir("cache/vision", "temp_vision_images") / f"temp_image_{uuid.uuid4()}.jpg"
+            temp_path = get_spiritagent_dir("cache/vision") / f"temp_image_{uuid.uuid4()}.jpg"
             await _download_image(image_url, temp_path)
         else:
             raise ValueError("Invalid image source. Provide an HTTP/HTTPS URL or a valid local file path.")

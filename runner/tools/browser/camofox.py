@@ -10,7 +10,7 @@ from urllib.parse import SplitResult, urlparse, urlsplit, urlunsplit
 import httpx
 from utils import (
     cfg_get,
-    get_spiritagent_home,
+    get_spiritagent_dir,
     load_config,
 )
 
@@ -388,7 +388,7 @@ def camofox_vision(annotate: bool = False, task_id: str | None = None) -> dict[s
         if not session["tab_id"]:
             return tool_error("No browser session. Call browser_navigate first.", success=False)
         resp = _get_raw(f"/tabs/{session['tab_id']}/screenshot", params={"userId": session["user_id"]})
-        screenshots_dir = get_spiritagent_home() / "browser_screenshots"
+        screenshots_dir = get_spiritagent_dir("cache/screenshots")
         screenshots_dir.mkdir(parents=True, exist_ok=True)
         screenshot_path = str(screenshots_dir / f"browser_screenshot_{uuid.uuid4().hex[:8]}.png")
         with open(screenshot_path, "wb") as f:

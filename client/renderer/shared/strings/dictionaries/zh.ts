@@ -547,7 +547,8 @@ export const dict = {
     scheduled_tasks: { label: '定时任务', description: 'Cron 触发与周期调度。' },
     agent_delegation: { label: '子代理委托', description: '派生子会话与子代理。' },
     computer_use: { label: '桌面操控', description: '通过 Windows 后端接管桌面。' },
-    media_analysis: { label: '多媒体分析', description: '图片分析。' }
+    media_analysis: { label: '多媒体分析', description: '图片分析。' },
+    system_awareness: { label: '系统感知', description: '空闲时长、锁屏、焦点窗口、全屏与屏幕坐标等系统状态探测。' }
   },
 
   errors: {

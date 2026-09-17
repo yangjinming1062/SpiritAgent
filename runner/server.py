@@ -132,9 +132,8 @@ async def _send_notification(ws: Any, method: str, params: dict[str, Any], id: A
 async def request_llm_from_desktop(kwargs: dict[str, Any]) -> str:
     """向 Desktop 发 ``request_llm`` 并返回原始 LLM 文本响应(供 vision / web_extract 等一次性补全的工具使用; 所有网络鉴权都在 Desktop 侧完成, runner 自身不带凭据)。
 
-    Backend 返回 ``{ "content": str, "usage": dict|null }`` 或原始 OpenAI 兼容体; 这里抽取出文本
-    给调用方纯 ``str``。不携带文本字段的 dict 降级为 ``""``(见 ``_extract_llm_content``); 既不是 str 也不是
-    dict 的载荷按协议错误拒绝。
+    Client 代理 Backend ``/api/llm/completion``, 固定返回 ``{ "content": str, "usage": dict|null }``。
+    非 dict 载荷或缺失文本字段按协议错误拒绝, 不降级为空串掩盖失败。
     """
     global _llm_requests_count, _llm_bytes_count
 
@@ -177,15 +176,15 @@ async def request_llm_from_desktop(kwargs: dict[str, Any]) -> str:
                 f"request_llm: backend error ({reason}): {result['error'].get('message', result['error'])}",
             )
         return _extract_llm_content(result)
-    if isinstance(result, str):
-        return result
-    raise RuntimeError(f"request_llm: backend returned {type(result).__name__}, expected str or dict with content")
+    raise RuntimeError(f"request_llm: backend returned {type(result).__name__}, expected dict with content")
 
 
 def _extract_llm_content(result: dict[str, Any]) -> str:
-    """``/api/llm/completion`` 代理返回 ``{"content": str, "usage": ...}``。缺失时返回空串，让调用方优雅处理而非让整个工具调用失败。"""
+    """``/api/llm/completion`` 代理返回 ``{"content": str, "usage": ...}``。缺失文本字段即协议违规。"""
     content = result.get("content")
-    return content if isinstance(content, str) else ""
+    if not isinstance(content, str):
+        raise RuntimeError(f"request_llm: backend response missing string 'content': {type(content).__name__}")
+    return content
 
 
 async def process_request(ws: Any, req: dict[str, Any]) -> None:

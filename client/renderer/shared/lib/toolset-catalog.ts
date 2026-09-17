@@ -1,4 +1,5 @@
 import {
+  Activity,
   Brain,
   Clock,
   Command,
@@ -16,7 +17,7 @@ import {
   Users
 } from './icons'
 
-// 渲染层使用的工具集目录。id 权威枚举见 docs/PROTOCOL.md §2.2，此处只挂图标。
+// 渲染层使用的工具集目录。id 权威枚举见 client/main/shared/lib/toolset-index.ts，此处只挂图标。
 
 export interface ToolsetCatalogEntry {
   id: string
@@ -37,5 +38,6 @@ export const TOOLSET_CATALOG: readonly ToolsetCatalogEntry[] = [
   { id: 'scheduled_tasks', icon: Clock },
   { id: 'agent_delegation', icon: Users },
   { id: 'computer_use', icon: Monitor },
-  { id: 'media_analysis', icon: Eye }
+  { id: 'media_analysis', icon: Eye },
+  { id: 'system_awareness', icon: Activity }
 ] as const

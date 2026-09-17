@@ -31,15 +31,9 @@ def get_subprocess_home() -> Path:
     return Path(override) if (override := os.environ.get("SPIRITAGENT_SUBPROCESS_HOME")) else get_spiritagent_home()
 
 
-def get_spiritagent_dir(new_subpath: str | None = None, old_name: str | None = None) -> Path:
-    base = get_spiritagent_home()
-    new_path = base / new_subpath if new_subpath else None
-    old_path = base / old_name if old_name else None
-    if new_path and new_path.is_dir():
-        return new_path
-    if old_path and old_path.is_dir():
-        return old_path
-    return new_path or old_path or base
+def get_spiritagent_dir(subpath: str) -> Path:
+    """解析 $SPIRITAGENT_HOME 下的固定子目录路径；不隐式创建目录，由写入方按需 mkdir。"""
+    return get_spiritagent_home() / subpath
 
 
 def get_skills_dir() -> Path:

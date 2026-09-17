@@ -274,9 +274,6 @@ stage_unpack_runner() {
 
   # 不再做安装后烟测：构建链在打包前跑 scripts/check_runner_facade.py，wheel 与 server.py 不一致不会进入安装包。
 
-  # 清理旧的 PyInstaller 二进制
-  rm -f "$SPIRITAGENT_HOME_RESOLVED/bin/spiritagent-runner"
-
   # 拷贝 onboarding 引导音频：语言子目录（zh/、en/、…）1:1 映射至 $SPIRITAGENT_HOME/audio/onboarding/<lang>/。
   local audio_count=0
   if [[ -n "$BUNDLED_ONBOARDING_AUDIO_DIR" && -d "$BUNDLED_ONBOARDING_AUDIO_DIR" ]]; then
