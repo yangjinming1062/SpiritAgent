@@ -90,19 +90,7 @@ export function getUiEffect(theme: SpiritAgentUiTheme): SpiritAgentUiEffect {
 }
 
 export function normalizeUiTheme(raw: unknown): SpiritAgentUiTheme {
-  if (raw === 'day' || raw === 'classic-light' || raw === 'lilac-glass') {
-    return 'day'
-  }
-
-  if (raw === 'night' || raw === 'classic' || raw === 'cyber-glass' || raw === 'holo') {
-    return 'night'
-  }
-
-  if (raw === 'night-clear') {
-    return 'night-clear'
-  }
-
-  return 'day-clear'
+  return raw === 'night' || raw === 'day' || raw === 'night-clear' ? raw : 'day-clear'
 }
 
 /** 入口 HTML 播种参数名：主进程 loadURL 前把镜像里的主题写进查询串，渲染层首帧前消费。 */

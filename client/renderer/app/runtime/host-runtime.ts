@@ -81,9 +81,7 @@ async function syncRunnerTools(gateway: SpiritAgentGateway, isCurrent: () => boo
       return
     }
 
-    const names = tools
-      .map((t: { function?: { name?: string }; name?: string }) => t.function?.name || t.name)
-      .filter(Boolean) as string[]
+    const names = tools.map(t => t?.name).filter(Boolean) as string[]
 
     const hasFileTools = names.includes('read_file') || names.includes('list_directory')
 

@@ -56,7 +56,6 @@ export interface ChatAttachment {
 
 export interface SessionMessage {
   speech_style?: SpeechStyle
-  codex_reasoning_items?: unknown
   content: unknown
   context?: unknown
   /** 后端 DB row id（build_session_messages(include_id=True) 下发）；用于 fork / undo 按钮回传给后端的 source_message_id。 */
@@ -64,8 +63,6 @@ export interface SessionMessage {
   media?: ChatMediaItem[]
   name?: string
   reasoning?: null | string
-  reasoning_content?: null | string
-  reasoning_details?: unknown
   role: 'assistant' | 'system' | 'tool' | 'user'
   queued?: boolean
   subtype?: string

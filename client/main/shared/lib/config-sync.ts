@@ -286,9 +286,9 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       const cloud = pickSyncedSections(res.config ?? {})
       const local = store.read()
       const stamp = objectSection(local, 'sync') as MirrorStamp
-      // 归属戳不匹配（明确换了号）→ 不信任：清空同步节、只进云端内容、不回传本地。
-      // 无戳（升级前的存量文件）视为可信：文件本就属于当前安装的这位用户，首跑播种把本地配置上云。
-      const trusted = stamp.user_id === undefined || stamp.user_id === uid
+      // 归属戳是唯一信任依据：不匹配或缺失都视为不可信——
+      // 清空同步节、只进云端内容、不回传本地，防止把无法确认归属的本地编辑泄给当前用户。
+      const trusted = stamp.user_id === uid
 
       if (!trusted) {
         await store.mutate(config => {

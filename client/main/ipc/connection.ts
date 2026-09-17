@@ -28,11 +28,7 @@ function isCompanionIdentityAsset(rawUrl: string, baseUrl: string): boolean {
   try {
     const { pathname } = new URL(rawUrl, baseUrl)
 
-    return (
-      pathname.includes('/api/companion/avatar/') ||
-      pathname.includes('/api/companion/asset/') ||
-      pathname.includes('/companion-avatars/')
-    )
+    return pathname.includes('/api/companion/avatar/') || pathname.includes('/api/companion/asset/')
   } catch {
     return false
   }
@@ -283,7 +279,7 @@ export function registerConnectionIpc({
 
       const { pathname } = new URL(raw, connection.baseUrl)
 
-      const isModel = pathname.includes('/model/file/') || pathname.includes('/companion-models/')
+      const isModel = pathname.includes('/model/file/')
 
       if (modelDiskCache && isModel) {
         try {

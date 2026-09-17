@@ -22,7 +22,7 @@ export async function hydrateRunnerStatus(): Promise<void> {
       $runnerPhase.set(state.phase)
     }
   } catch {
-    // 网桥探测失败（旧版 preload / IPC 传输错误）。下方订阅作为回退路径。
+    // IPC 传输层异常时放弃同步水合，下方订阅仍能拿到后续状态转换。
   }
 
   // 后续转换。幂等：订阅已挂载时再次调用 hydrate 只是重新跑一次同步 getter。

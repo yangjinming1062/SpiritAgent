@@ -8,7 +8,6 @@ import { type BackendClient, BackendRequestError, createBackendClient, type Fetc
 
 const SESSION_FILENAME = 'agent-session.json'
 const SESSION_SCHEMA_VERSION = 2
-const KNOWN_TOKEN_TTL_MS = 8 * 60 * 60 * 1000
 const REFRESH_LEAD_MS = 5 * 60 * 1000
 
 interface SessionErrorOptions {
@@ -56,7 +55,7 @@ interface StoredSessionPayload {
 
 interface TokenAuthResponse {
   access_token?: string
-  expires_in?: number
+  expires_in: number
   user?: unknown
 }
 
@@ -116,7 +115,7 @@ function normalizeUser(raw: unknown): null | SessionUser {
   }
 
   const record = raw as Record<string, unknown>
-  const id = record.id ?? record.user_id ?? null
+  const id = record.id ?? null
   const username = record.username ?? null
 
   if (id === null && username === null) {
@@ -434,17 +433,21 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       })
     }
 
-    const expiresIn =
-      typeof response.expires_in === 'number' && Number.isFinite(response.expires_in) && response.expires_in > 0
-        ? response.expires_in * 1000
-        : KNOWN_TOKEN_TTL_MS
+    // expires_in 是协议必填字段（backend TokenResponse）；非法值拒绝写入会话，
+    // 避免用过期时间不明的 token 触发反复 401。
+    if (!Number.isFinite(response.expires_in) || response.expires_in <= 0) {
+      throw new SessionError({
+        code: 'bad-credentials',
+        message: 'Backend did not return a valid token expiry.'
+      })
+    }
 
     return applySession({
       activationCode: overrides.activationCode,
       baseUrl: overrides.baseUrl,
       source,
       token: response.access_token,
-      tokenExpiresAt: now() + expiresIn,
+      tokenExpiresAt: now() + response.expires_in * 1000,
       user: response.user
     })
   }

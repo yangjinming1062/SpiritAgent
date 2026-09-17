@@ -9,10 +9,7 @@ const DEFAULT_MAX_FILES = 10
 const DEFAULT_MAX_BYTES = 512 * 1024 * 1024
 
 /** v1 元数据：仅保留 LRU 必需三件套（version / size / writtenAt）。
- * `contentHash` 早期版本曾作为字段写入，2026-08 后被剔除——filename `<hash>.meta.json` 已经
- * 是其唯一来源，再写一份是冗余。旧版 meta.json 仍带 contentHash 字段，新代码 touchInternal
- * 直接 JSON.stringify 旧对象回写，contentHash 字段会被原样保留；功能不受影响，旧条目最终
- * 通过 LRU 自然淘汰，无需主动迁移。 */
+ * 内容由 filename `<hash>.meta.json` 中的哈希唯一标识，不另存 contentHash 字段。 */
 interface MetaFile {
   version: number
   writtenAt: number
@@ -431,15 +428,16 @@ export class OpfsBlobCache {
       const metaFile = await metaHandle.getFile()
       const meta = JSON.parse(await metaFile.text()) as Partial<MetaFile>
 
-      if (meta.version !== SCHEMA_VERSION) {
+      if (meta.version !== SCHEMA_VERSION || typeof meta.size !== 'number') {
         return
       }
 
-      meta.writtenAt = now
+      // 只回写当前 meta 形状，不透传 JSON 里多余字段。
+      const next: MetaFile = { version: meta.version, writtenAt: now, size: meta.size }
       const writable = await metaHandle.createWritable()
 
       try {
-        await writable.write(JSON.stringify(meta))
+        await writable.write(JSON.stringify(next))
       } finally {
         await writable.close().catch(() => {})
       }

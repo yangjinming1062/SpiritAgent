@@ -94,17 +94,7 @@ export class HttpError extends Error {
 }
 
 function isHttpStatus(error: unknown, status: number): boolean {
-  if (error instanceof HttpError) {
-    return error.status === status
-  }
-
-  // 兼容既有 Object.assign(new Error(...), { status }) 形态。
-  return (
-    typeof error === 'object' &&
-    error !== null &&
-    'status' in error &&
-    (error as { status?: unknown }).status === status
-  )
+  return error instanceof HttpError && error.status === status
 }
 
 export function isUnauthorized(error: unknown): boolean {

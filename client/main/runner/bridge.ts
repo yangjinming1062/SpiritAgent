@@ -39,22 +39,6 @@ function computeDesktopEndpoint(spiritagentHome?: null | string): { path: string
   return { path: path.join(os.tmpdir(), `spiritagent-${uid}-${digest}.sock`), transport: 'unix' }
 }
 
-function sweepLegacySockets(spiritagentHome: string): void {
-  try {
-    for (const name of fs.readdirSync(spiritagentHome)) {
-      if (/^runner-\d+\.sock$/.test(name)) {
-        try {
-          fs.unlinkSync(path.join(spiritagentHome, name))
-        } catch {
-          /* 已被竞争移除 */
-        }
-      }
-    }
-  } catch {
-    /* spiritagentHome 缺失或不可读——没有可清理的内容 */
-  }
-}
-
 export interface RunnerBridgeStartOptions extends RunnerProcessStartArgs {
   backendSession?: BackendSessionLike | null
   readyTimeoutMs?: number
@@ -301,10 +285,6 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     const authToken = crypto.randomBytes(32).toString('hex')
     const endpoint = computeDesktopEndpoint(options.spiritagentHome)
 
-    if (process.platform !== 'win32' && options.spiritagentHome) {
-      sweepLegacySockets(options.spiritagentHome)
-    }
-
     const wsInstance = wsServerFactory
       ? wsServerFactory({
           authToken,
@@ -477,13 +457,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
       log(`[runner-bridge] got ${tools.length} tools from runner`)
 
       if (tools.length > 0) {
-        const names = tools
-          .map(t => {
-            const func = t?.function as { name?: string } | undefined
-
-            return func?.name || (t?.name as string | undefined)
-          })
-          .filter(Boolean)
+        const names = tools.map(t => t?.name).filter(Boolean)
 
         log(`[runner-bridge] tool names: ${names.join(', ') || '(unparseable schemas)'}`)
       }

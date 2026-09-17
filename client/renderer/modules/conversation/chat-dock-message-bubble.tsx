@@ -48,8 +48,8 @@ const STATUS_TRACE_SUBTYPES = new Set(['status_interaction', 'status_reaction'])
 // 后台视频完成的送达行：正文是给 LLM 的摘要，渲染端只显示媒体卡。
 const MEDIA_STATUS_SUBTYPE = 'status_media'
 
-// 路径模式降级时的 @file: 指令（含历史行里拼进正文的 @file:data:,... 长串）只服务 LLM，
-// 不进用户可见正文；逐行剔除而非整段正则，避免误伤正文里的普通 @ 提及。
+// 路径模式降级时的 @file: 指令只服务 LLM，不进用户可见正文；
+// 逐行剔除而非整段正则，避免误伤正文里的普通 @ 提及。
 function stripAttachmentDirectives(text: string): string {
   return text
     .split('\n')
