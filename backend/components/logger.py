@@ -46,6 +46,14 @@ class _RequestContextFilter(logging.Filter):
         return True
 
 
+class _DropHealthAccessFilter(logging.Filter):
+    """丢弃根路径 `/health` 的 access 日志；Docker HEALTHCHECK 每 10s 探一次会刷屏。"""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn access 形如 `client - "METHOD /path HTTP/1.1" status`；只匹配根路径 /health。
+        return " /health HTTP/" not in record.getMessage()
+
+
 class _JsonFormatter(logging.Formatter):
     """JSON 行输出；不做脱敏——信任上游已脱敏的字符串。"""
 
@@ -103,7 +111,9 @@ def setup_logging() -> None:
     for name in ("uvicorn", "uvicorn.error", "uvicorn.access"):
         uv_logger = logging.getLogger(name)
         uv_logger.handlers.clear()
+        uv_logger.filters.clear()
         uv_logger.propagate = True
+    logging.getLogger("uvicorn.access").addFilter(_DropHealthAccessFilter())
 
 
 def get_logger(name: str | None = None) -> logging.Logger:
