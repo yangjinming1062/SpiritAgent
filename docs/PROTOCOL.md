@@ -62,8 +62,8 @@ WebSocket 与本地 IPC 使用 JSON-RPC 2.0 信封；反向模型请求经 Clien
 | POST /api/companion/portrait/confirm | 确认半身形象（幂等），进入独立全身种子图阶段 | Backend 状态 + Client 流程 |
 | POST /api/companion/avatar/{avatar_id}/fullbody/reference | 根据头像与角色定义生成/重绘独立全身参考，接受可选微调反馈与用户参考图；只操作当前激活头像，形象锁定后仍可用，成功替换后由头像响应的 `seed_fullbody_url` 返回签名地址。`mode="edit"` 微调上一版（守卫拒绝 400：反馈必填、不与参考图同给、上一版缺失不可读 409），缺省 `regenerate` | Backend 生成与存储 + Client onboarding / 角色与记忆 |
 | POST /api/companion/avatar/{avatar_id}/fullbody/front-2d | 以独立全身种子图为参考，按默认高品质游戏 CG 精绘画风（自然站姿）与微调反馈生成/重绘 2D 正面全身图；全身种子图缺失时拒绝并提示先行生成。`mode="edit"` 微调上一版（反馈必填、无上一版拒绝），缺省 `regenerate` | Backend 生成 + Client 正面预览与微调 |
-| POST /api/companion/avatar/{avatar_id}/fullbody/front-3d | 以全身种子图（形象身份与身材基准，同 2D 正面生成）为参考生成/重绘 A-pose、3D 画风的 3D 正面种子（3D 升级向导调用；形象锁定后仍可用——姿态/画风派生而非身份变更；不覆盖 2D 正面种子，重绘会使已派生背面种子失效）。`mode="edit"` 微调上一版，缺省 `regenerate` | Backend 生成 + Client 3D 正面预览与微调 |
-| POST /api/companion/avatar/{avatar_id}/fullbody/back | 按 3D 正面种子（缺省回退 2D 正面种子）与微调反馈生成/重绘背面全身图（3D 升级向导调用；形象锁定后仍可用——视角派生而非身份变更；画风与 3D 正面种子成对，由系统按类人 CG / 非人写实自动推导）。`mode="edit"` 微调上一版，缺省 `regenerate` | Backend 生成 + Client 背面预览与微调 |
+| POST /api/companion/avatar/{avatar_id}/fullbody/front-3d | 以全身种子图（形象身份与身材基准，同 2D 正面生成）为参考生成/重绘 A-pose、按物种路由画风（类人精绘 / 非人写实）的 3D 正面种子（3D 升级向导调用；形象锁定后仍可用——姿态/画风派生而非身份变更；不覆盖 2D 正面种子，重绘会使已派生背面种子失效）。`mode="edit"` 微调上一版，缺省 `regenerate` | Backend 生成 + Client 3D 正面预览与微调 |
+| POST /api/companion/avatar/{avatar_id}/fullbody/back | 按 3D 正面种子（缺省回退 2D 正面种子）与微调反馈生成/重绘背面全身图（3D 升级向导调用；形象锁定后仍可用——视角派生而非身份变更；画风与 3D 正面种子成对，由系统按类人精绘 / 非人写实自动推导）。`mode="edit"` 微调上一版，缺省 `regenerate` | Backend 生成 + Client 背面预览与微调 |
 | POST /api/companion/avatar/{avatar_id}/fullbody/confirm-front | 确认 2D 正面全身图并解开音色/用户子阶段（引导期不生成 3D 种子图——正面与背面均为 3D 建模派生输入，准备见 [docs/PIPELINE.md §1](PIPELINE.md)） | Backend 生成 + Client 流程 |
 | GET/POST /api/companion/model | 查询 / 触发 3D 模型异步生成；输入、产物与动画映射契约见 [docs/PIPELINE.md](PIPELINE.md) | Backend 生成管线 + Client 加载 + DESIGN §5.5 |
 | GET/POST /api/companion/2d | 查询 / 触发 2D 形象生成流水线（see-through 双 provider 拆分，产物恒为分层 PSD）；产物契约见 [docs/PIPELINE.md §6](PIPELINE.md) | Backend 生成管线 + Client puppet 渲染链 |

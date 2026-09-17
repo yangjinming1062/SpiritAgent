@@ -34,7 +34,7 @@ class Companion3DModel(ModelBase, TimestampMixin):
     species: Mapped[str] = mapped_column(String(64), default="人类", server_default=text("'人类'"))
     rig_type: Mapped[str] = mapped_column(String(32), default="biped", server_default=text("'biped'"), index=True)
     rig_naming: Mapped[str] = mapped_column(String(16), default="tripo", server_default=text("'tripo'"))
-    # 模型生成所用的 seed 图风格（anime_game_cg | realistic）—— 路由客户端 NPR/PBR 渲染风格；旧行默认 realistic 以保留 PBR 外观。
+    # 模型生成所用的 seed 图风格（refined_anime_cg | realistic），按物种路由，重试下载时保持同风格。
     style: Mapped[str] = mapped_column(String(16), default="realistic", server_default=text("'realistic'"))
     status: Mapped[str] = mapped_column(String(32), default="pending")
     has_rig: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
@@ -158,7 +158,7 @@ class AvatarAsset(ModelBase):
     # 日常出镜的全身参考；独立于建模种子，锁定身份后仍可重绘。
     seed_fullbody_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     seed_front_2d_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    # 3D 建模专用正面种子（A-pose、3D 画风），切 3D 时以 2D 正面种子派生；不覆盖 2D 正面种子（衣柜与 2D 拆分的身份锚）
+    # 3D 建模专用正面种子（A-pose、按物种路由画风），切 3D 时以 2D 正面种子派生；不覆盖 2D 正面种子（衣柜与 2D 拆分的身份锚）
     seed_front_3d_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     seed_back_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     seed: Mapped[int | None] = mapped_column(Integer, nullable=True)

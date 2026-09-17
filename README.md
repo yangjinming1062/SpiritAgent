@@ -55,10 +55,10 @@
 
 ### 诞生之旅
 
-| 1. 初始破壳「蛋」形态 | 2. 对话定制半身像 | 3. 全身立绘：高品质游戏 CG 精绘（2D 默认画风） | 4. 全身立绘：二次元游戏 CG（3D 类人画风） |
-| :---: | :---: | :---: | :---: |
-| <img src="client/assets/icon.png" width="130" alt="蛋阶段"/> | <img src="docs/assets/avatar_preview.jpg" width="130" alt="头像预览"/> | <img src="docs/assets/refined_anime_cg.png" width="130" alt="高品质游戏 CG 精绘风格"/> | <img src="docs/assets/anime_game_cg.jpg" width="130" alt="二次元游戏 CG 风格"/> |
-| *安装初始·静候唤醒* | *性格与样貌确认* | *2D 分层切分的身份锚* | *图生 3D 建模的输入* |
+| 1. 初始破壳「蛋」形态 | 2. 对话定制半身像 | 3. 全身立绘：高品质游戏 CG 精绘 |
+| :---: | :---: | :---: |
+| <img src="client/assets/icon.png" width="130" alt="蛋阶段"/> | <img src="docs/assets/avatar_preview.jpg" width="130" alt="头像预览"/> | <img src="docs/assets/refined_anime_cg.png" width="130" alt="高品质游戏 CG 精绘风格"/> |
+| *安装初始·静候唤醒* | *性格与样貌确认* | *建模的身份锚* |
 
 ### 让伙伴真正动起来
 

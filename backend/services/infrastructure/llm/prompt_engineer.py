@@ -13,7 +13,7 @@
 
 全身图提示词按稳定优先级组装：视角与主体 → 物种骨骼姿势 → 完整画幅 → 参考图身份锚点 →
 渲染风格 → Persona 外观与克制气质 → 物种特效 → 不冲突的用户反馈 → 纯白背景与排除项。
-双足 2D 立绘采用自然站姿；3D 风格采用 A-pose 以利绑骨与多视角一致性。
+双足 2D 立绘采用自然站姿；3D 种子采用 A-pose 以利绑骨与多视角一致性。
 
 辅助工具说明：物种骨骼路由、视角名称映射、骨骼体态模板定义见下文各常量与类。
 """
@@ -53,12 +53,12 @@ _AVATAR_SYSTEM_PROMPT = (
     "除必要的专业英文短语外使用中文。只输出最终提示词，不要标题、解释、列表、寒暄、引号或 Markdown。"
 )
 
-FullbodyStyle = Literal["refined_anime_cg", "anime_game_cg", "realistic"]
+FullbodyStyle = Literal["refined_anime_cg", "realistic"]
 
 # 预设物种直接带风格；自定义物种由 LLM 人脸判定路由（见 ``rig_type_selector.classify_species``）
 _SPECIES_STYLE: dict[str, FullbodyStyle] = {
-    "人类": "anime_game_cg",
-    "精灵": "anime_game_cg",
+    "人类": "refined_anime_cg",
+    "精灵": "refined_anime_cg",
     "机甲": "realistic",
     "灵兽": "realistic",
     "幻形": "realistic",
@@ -67,7 +67,7 @@ _SPECIES_STYLE: dict[str, FullbodyStyle] = {
 # 骨骼预设物种：固定体型，无需 LLM 骨骼分类
 _PRESET_SPECIES: frozenset[str] = frozenset({"人类", "精灵", "机甲"})
 
-# refined_anime_cg 是 2D 立绘默认画风：高品质二次元游戏角色 CG 精绘。
+# refined_anime_cg 是 2D 立绘与 3D 类人种子共用画风：高品质二次元游戏角色 CG 精绘。
 # 轮廓清晰与色块分界是 see-through 分层拆分的可拆性约束，随画风一并表达。
 _FULLBODY_STYLE_WORDING: dict[str, str] = {
     "refined_anime_cg": (
@@ -76,7 +76,6 @@ _FULLBODY_STYLE_WORDING: dict[str, str] = {
         "轮廓线完整清晰，人物与背景、服装各部件之间色块分界明确；"
         "服装材质质感考究（绸缎、薄纱、皮革等反光与透叠层次分明），光影柔和统一，画面完成度高。"
     ),
-    "anime_game_cg": "现代二次元游戏角色 3D 渲染（anime game character CGI），形体立体统一，发束与服装层次清晰，材质平滑，肤质与次表面散射自然，光影克制。",
     "realistic": "写实角色摄影与真实材质渲染（photorealistic character render），生物肌理、毛发、皮肤或硬表面材质可信，棚拍光影自然，细节清晰。",
 }
 
@@ -315,11 +314,11 @@ async def enhance_avatar_prompt(
 
 
 def resolve_fullbody_style(species: str, has_humanoid_face: bool | None = None) -> FullbodyStyle:
-    """根据物种解析 3D 风格路由：类人物种走 CG 风格（anime_game_cg），非人物种走写实风格（realistic）。"""
+    """根据物种解析 3D 种子画风路由：类人物种走精绘画风（refined_anime_cg，与 2D 立绘一致），非人物种走写实风格（realistic）。"""
     preset = _SPECIES_STYLE.get(species.strip())
     if preset is not None:
         return preset
-    return "realistic" if has_humanoid_face is False else "anime_game_cg"
+    return "realistic" if has_humanoid_face is False else "refined_anime_cg"
 
 
 def is_preset_species(species: str) -> bool:
@@ -331,9 +330,11 @@ def resolve_fullbody_template(
     species: str,
     rig_type: str = "biped",
     style: str = "refined_anime_cg",
+    *,
+    a_pose: bool = False,
 ) -> FullbodyTemplate:
-    """解析完整的全身图模板。双足姿态随画风路由：2D 立绘画风（refined_anime_cg）走自然站姿——
-    see-through 拆分不要求 A-pose；3D 画风（anime_game_cg / realistic）保持 A-pose 供绑骨识别与多视角一致性。"""
+    """解析完整的全身图模板。双足姿态随生成链路路由（``a_pose``）：2D 立绘走自然站姿——
+    see-through 拆分不要求 A-pose；3D 种子（``a_pose=True``）保持 A-pose 供绑骨识别与多视角一致性，画风不影响姿态。"""
     if species in _SPECIES_TEMPLATES:
         template = _SPECIES_TEMPLATES[species]
     else:
@@ -342,7 +343,7 @@ def resolve_fullbody_template(
         if flavor:
             template = replace(template, flavor=flavor)
     if template.rig_type == "biped":
-        template = replace(template, pose=_BIPED_NATURAL_POSE if style == "refined_anime_cg" else _BIPED_A_POSE)
+        template = replace(template, pose=_BIPED_A_POSE if a_pose else _BIPED_NATURAL_POSE)
     return template if template.style == style else replace(template, style=style)
 
 

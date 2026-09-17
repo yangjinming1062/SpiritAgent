@@ -1172,7 +1172,7 @@ async def generate_fullbody_front_2d(
     feedback: str | None = None,
     mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
-    """按选定画风与用户微调要求生成/重绘 2D 正面种子图。主体参考恒为独立全身种子图，
+    """按默认精绘画风与用户微调要求生成/重绘 2D 正面种子图。主体参考恒为独立全身种子图，
     保留身材比例；身份细节以其源头（半身头像 + 角色定义）间接锚定，不回退半身像。
     mode="edit"（微调）编辑上一版 2D 正面种子，未提及区域逐像素保留。"""
     if user_id is None:
@@ -1290,11 +1290,11 @@ async def generate_fullbody_front_3d(
     feedback: str | None = None,
     mode: ImageReviseMode = "regenerate",
 ) -> AvatarAsset:
-    """生成/重绘 3D 建模专用正面种子（A-pose、3D 画风）。
+    """生成/重绘 3D 建模专用正面种子（A-pose、按物种路由画风）。
 
     身份与身材参考与 2D 正面生成同源——恒用独立全身种子图（其身份源自半身头像种子），
-    不引用已生成的全身立绘以免迭代失真；仅姿态与画风切换为 3D 建模所需，属派生而非身份变更：
-    不受形象锁定约束，也不覆盖 2D 正面种子（衣柜与 2D 拆分的身份锚）。重绘后旧背面种子随之失效。
+    不引用已生成的全身立绘以免迭代失真；仅姿态切换为 3D 建模所需（画风按物种路由，类人与 2D 立绘一致），
+    属派生而非身份变更：不受形象锁定约束，也不覆盖 2D 正面种子（衣柜与 2D 拆分的身份锚）。重绘后旧背面种子随之失效。
     mode="edit"（微调）编辑上一版 3D 正面种子，A-pose 与白底由 preserve 条款保留。"""
     if user_id is None:
         raise ValueError("user_id is required")
@@ -1321,7 +1321,7 @@ async def generate_fullbody_front_3d(
         ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
         if ref_uri is None:
             raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
-        template = resolve_fullbody_template(species, rig_type, effective_style)
+        template = resolve_fullbody_template(species, rig_type, effective_style, a_pose=True)
         prompt = build_fullbody_prompt(
             "front",
             template=template,
@@ -1403,7 +1403,7 @@ async def generate_fullbody_back(
             raise AvatarSourceUnreadableError("上一版背面种子缺失或无法读取，请先重新生成")
         prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_3D_BACK)
     else:
-        template = resolve_fullbody_template(species, rig_type, effective_style)
+        template = resolve_fullbody_template(species, rig_type, effective_style, a_pose=True)
         front_ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, effective_front_url) or (
             await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
         )
@@ -1572,7 +1572,7 @@ async def prepare_fullbody_prompt(
     rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
     return build_fullbody_prompt(
         "front" if kind == "front-3d" else "back",
-        template=resolve_fullbody_template(species, rig_type, effective_style),
+        template=resolve_fullbody_template(species, rig_type, effective_style, a_pose=True),
         style_id=effective_style,
         feedback=effective_feedback or None,
         appearance=appearance,

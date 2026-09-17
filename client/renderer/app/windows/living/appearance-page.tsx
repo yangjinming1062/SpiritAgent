@@ -28,7 +28,7 @@ export function AppearancePage(): React.ReactElement {
   const t = useStrings().living.appearance
   const [seed3dWizard, setSeed3dWizard] = useState<Seed3dWizardState | null>(null)
 
-  // 切 3D 前先补 3D 种子图：2D 正面种子的站姿与画风都不满足 3D 建模（A-pose、3D 画风），
+  // 切 3D 前先补 3D 种子图：2D 正面种子的自然站姿不满足 3D 建模（A-pose），
   // 且只在这一刻才值得付生图（onboarding 只确认 2D 正面）。3D 正面缺或（多视角时）背面缺则出向导；
   // 非多视角供应商已有 3D 正面时直接切换。
   const onRenderModeClick = async (m: RenderMode): Promise<void> => {

@@ -54,7 +54,7 @@ def _avatar_view_filenames(avatar: AvatarAsset) -> dict[str, str]:
 
 
 async def _avatar_style(db: AsyncSession, avatar: AvatarAsset, species: str) -> str:
-    """3D 模型风格路由：类人物种走 CG 风格（anime_game_cg），非人物种走写实风格（realistic）。"""
+    """3D 模型风格路由：类人物种走精绘画风（refined_anime_cg，与 2D 立绘一致），非人物种走写实风格（realistic）。"""
     has_humanoid_face = None
     if not is_preset_species(species):
         has_humanoid_face = (await classify_species(chat, species, db=db, user_id=avatar.user_id))[1]

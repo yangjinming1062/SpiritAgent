@@ -51,7 +51,7 @@ const STAGE_META: Record<
     endpoint: '/fullbody/front-3d',
     field: 'seed_front_3d_url',
     title: '升级 3D：确认 3D 正面立绘',
-    hint: '3D 建模需要标准站姿（A-pose）与 3D 画风的正面图，以你的形象头像为基准生成；不满意可微调重绘。',
+    hint: '3D 建模需要标准站姿（A-pose）的正面图，以你的形象头像为基准生成；不满意可微调重绘。',
     alt: '3D 正面全身立绘',
     placeholder: '对 3D 正面立绘有微调要求？例如：姿势细节、服饰纹理…（可留空直接下一步）',
     genFail: '生成 3D 正面立绘失败，请稍后重试',
@@ -69,7 +69,7 @@ const STAGE_META: Record<
   }
 }
 
-// 3D 升级前的种子图确认向导（DESIGN §5.5）：3D 画风与站姿要求与 2D 立绘不同——先以已确认
+// 3D 升级前的种子图确认向导（DESIGN §5.5）：站姿要求与 2D 立绘不同（A-pose）——先以已确认
 // 的 2D 正面种子为基准生成 A-pose 的 3D 正面立绘，多视角供应商再从它派生背面立绘，两者都
 // 只在用户明确选择 3D 时生成。生成失败可降级为仅正面图提交。
 export function Seed3dWizard({
