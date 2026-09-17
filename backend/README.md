@@ -2,174 +2,131 @@
 
 ## 1. 职责与边界
 
-云端持有角色定义、记忆与资产，编排对话、云端工具、调度和事件；本机执行委托 Runner，窗口与渲染交给客户端。物理边界见 [ARCHITECTURE.md §1](../docs/ARCHITECTURE.md)，生成链见 [PIPELINE.md](../docs/PIPELINE.md)。本文维护后端共用的依赖、配置、生命周期与异步可靠性约束，业务细节按任务进入下表。
+负责云端对话编排、角色与记忆、资产、调度和持久化；本机执行委托 Runner，窗口与渲染归 Client。
 
-| 修改内容 | 阅读入口 |
-|---|---|
-| 提示词、上下文、工具循环与正文交付 | [对话编排](services/application/chat/README.md) |
-| 记忆召回、原始证据、审阅与遗忘 | [预设记忆](services/domains/memory/README.md) |
-| 形象、衣橱、房间、2D / 3D 与媒体生成 | [生成服务](services/application/generation/README.md) |
-| 分层依赖、配置、注册与启停 | [架构设计](#3-架构设计) |
-| 陪伴调度、夜间整理、IM 与异步交付 | [调度与恢复](#陪伴调度与恢复)、[夜间批处理](#夜间批处理)、[IM 渠道](#im-渠道)、[事件回路](#36-事件与交付回路) |
-| 检查、部署与请求排查 | [验证入口](#6-验证入口)、[部署与监控](#7-部署与监控) |
+按任务进入：[对话编排](services/application/chat/README.md)、[记忆](services/domains/memory/README.md)、[生成服务](services/application/generation/README.md)。本文只维护后端共用的依赖、配置、生命周期和运行约束。
 
 ## 2. 设计意图
 
-- 对话入口统一编排上下文、模型与工具，避免不同入口（桌面、IM、Cron、子 Agent）形成互不兼容的回合语义。
-- 消息持久化保留角色语义，只在模型调用边界转换为 Responses 指令区与输入项，避免供应商协议侵入数据库设计。
-- 高成本生成采用异步编排、用户级互斥与频控；付费任务优先恢复已有产物，避免重启或重试重复计费。
-- 数据库是持久状态与异步交付的衔接点；投递架构见 [ARCHITECTURE.md §5](../docs/ARCHITECTURE.md)。
-- 服务端分层的目标不是消灭跨域协作，而是让依赖方向可检查：业务能力自洽、跨域流程集中、技术实现可替换、装配显式唯一。
+桌面、IM、Cron 与子 Agent 复用回合编排；领域能力管理业务，应用层组织跨域流程，基础设施隔离供应商与传输。数据库保存业务事实，运行时状态不替代持久化；当前按单 web 进程部署，不因使用数据库认领而具备完整水平扩展能力。
 
 ## 3. 架构设计
 
 ### 3.1 物理布局与依赖总览
 
-backend 是一个单进程（web 进程）asyncio 应用，uvicorn 入口 `main:app`（[Dockerfile](Dockerfile)）。代码按职责组织，业务依赖方向如下：
-
 ```text
-main.py ──→ bootstrap（唯一装配入口）
-bootstrap ──→ api / services / components
-api（HTTP·WS 入口，薄适配）──→ services
-services：contracts ← domains ← application ← adapters，domains/application 可用 infrastructure
-modules、components、common ＝ 共享底层，任何层可用、禁止反向导入业务
-alembic/ 迁移独立于应用代码，只被启动流程调用
+main.py → bootstrap → api / services / components
+api → services
+adapters → application → domains
+application / domains → infrastructure
+各服务层 → contracts
+modules / components / common 不反向依赖服务实现
 ```
 
-共享底层三件套的分工是刻意的，改代码前先分清归属：
+`modules` 定义 ORM 与跨边界 schema；`components` 管配置、数据库、任务和日志；`common` 只放路由、模型基类等少量框架工具。迁移独立于应用实现。
 
-- **[modules/](modules/)** 持有领域模型与协议 schema，业务代码引用这些定义而不重复声明；涉及数据库字段变化时同步迁移。
-- **[components/](components/)** 是进程级运行时设施：`SETTINGS` 配置单例、异步引擎与会话、任务托管、日志与关联 ID。进程内共享设施在此维护，避免各业务包自造单例；状态边界遵循单副本约束。
-- **[common/](common/)** 提供 `api.py` 与 `model.py`：路由声明、ORM 基类、列表响应等极少量框架工具，保证所有路由的声明方式与分页响应形状一致。
-
-包入口约定：`common`、`components` 与 `modules` 各子包在 `__init__.py` 中相对导入并 re-export 公共符号（带 `__all__`），调用方写 `from components import track_user_task`、`from modules.auth import CurrentUser`，不深挖实现文件。`services` 不在包级汇总导出——按能力域导入（如 `from services.domains.memory import create_memory`）；各域/基础设施包同样用相对导入在自身 `__init__.py` 暴露公共入口。facade 一致性由 [check_imports.py](../scripts/check_imports.py) 检查。
-
-运行时周边：`static/admin.html` 是管理台单页，`updates/` 与 `data/` 是挂载卷（自更新产物与附件根目录），`monitoring/` 供 Prometheus 抓取配置，容器编排见 [docker-compose.yml](docker-compose.yml)。
+跨包使用公共入口。各能力包通过 `__init__.py` 暴露符号，`services` 根包不汇总导出；导入与 facade 检查见 [Scripts](../scripts/README.md#4-import-检查--check_importspy)。
 
 ### 3.2 services 五层
 
-`services/` 按五层组织，每层回答一个问题：
+`contracts` 不导入服务实现；`domains` 不依赖 application / adapters；`application` 不依赖 adapters；`infrastructure` 不反向依赖业务；`adapters` 只做协议适配。
 
-| 层 | 职责与依赖约束 |
-|---|---|
-| [contracts](services/contracts/) | 跨层传递的最小词汇，不导入服务实现 |
-| [domains](services/domains/) | 单一业务能力；不依赖 application / adapters，跨域只经公共入口且限已登记依赖 |
-| [application](services/application/) | 组合领域能力的流程；不导入 adapters，包间只允许已登记的单向依赖 |
-| [infrastructure](services/infrastructure/) | 供应商、资产、桌面通信与事件存储等技术能力；不导入 domains / application / adapters |
-| [adapters](services/adapters/) | 外部协议到应用流程的适配，不沉淀业务规则 |
-
-依赖方向为 adapters → application → domains，domains / application 可引用 infrastructure，各层可引用 contracts。自动检查与命令见 [scripts](../scripts/README.md#5-backend-分层架构检查--check_services_architecturepy)；精确允许集合由[检查器](../scripts/check_services_architecture.py)维护，本文解释依赖的业务原因：
-
-- conversation 是会话底座，各域可单向使用其公共入口；它不反向依赖消费域。companion 通过 memory 读取陪伴记忆和记录交互，journal 使用 memory 的时区解析。
-- application 的跨包调用用于复用回合与后处理：自动化调用 chat / nightly，chat 调用回合后整理，nightly 调用生成服务。新增依赖时同时更新检查器与本文的依赖理由。
-- 业务域不反向启动应用流程；例如首张房间图由 API 在全身立绘确认成功后调度。mesh2d 调用 infrastructure/seethrough 的传输能力，传输层不反向依赖生成编排。
+跨域和应用包间依赖仅允许已登记的单向关系：conversation 是会话底座；companion / journal 按需使用 memory；自动化复用 chat / nightly，chat 复用回合后整理，nightly 调用生成服务。新增依赖同时核对业务理由与 [分层检查器](../scripts/check_services_architecture.py)，不使用延迟导入掩盖依赖环。
 
 ### 3.3 api 入口
 
-`api/__init__.py` 约定式自动发现 `v1/*.py`（`router = get_router()` 即注册），新增路由零登记成本。api 保持薄适配：鉴权依赖、限流装饰器、DTO 组装，不写业务规则；桌面 WS 路由挂在 `api/v1/chat.py`，全部会话 RPC 方法注册在 `adapters/desktop/handlers.py`；管理台是 `static/admin.html` 单文件页，由 api 的免鉴权路由与静态挂载提供。
+`api/v1/*.py` 通过 `router = get_router()` 自动发现，负责鉴权、限流和 DTO 组装。WS 从 `api/v1/chat.py` 进入，RPC 注册在 [desktop handlers](services/adapters/desktop/handlers.py)。管理页面位于 `static/admin.html`；页面可加载不代表管理 API 免鉴权。
 
 ### 3.4 配置与迁移体系
 
-- **冷启动与动态配置分离**：`config.toml`（模板 [config.toml.example](config.toml.example)）或环境变量只提供启动硬依赖，业务参数持久化在 `system_settings` 表并热更新。启动水合与管理端保存共用配置校验和应用入口；管理端保存先串行合并候选值，整批验证与事务提交成功后，才原位应用 `SETTINGS` 单例，再刷新日志和 LLM 连接池等副作用；验证或提交失败不应用候选值；`DynamicLimiter.enabled` 直读 SETTINGS，限流开关无需进程内赋值。可运营调参（对话与陪伴节奏、夜间窗口、调度周期、各类配额与下载上限等）一律声明为 `Settings` 字段、调用点运行时直读 `SETTINGS`；`components/constants.py` 只保留协议、安全与供应商硬限等「不是配置」的技术常量。
-- **Alembic 启动升级**：单实例部署在启动时升级到 head，减少漏迁移步骤；未部署允许改 baseline，部署后只追加。迁移须可降级、回填幂等；删除或不可逆收紧须拆分并说明风险。类型与默认值比对须零差异，迁移环境对视频任务模型的显式导入不可删；PostgreSQL 部分唯一索引、向量与全文索引只在迁移里维护，不塞进模型 metadata 以免自动生成误删。
+`config.toml` 或环境变量提供启动依赖；可运营参数进入 `system_settings`，由 `Settings` 声明并在调用时读取。技术常量不承载可运营配置。
+
+热更新顺序为：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 `SETTINGS` → 刷新连接池等副作用。失败不修改运行时，避免数据库与内存分叉。
+
+启动执行 Alembic 升级。未部署时可调整 baseline，部署后追加迁移；迁移须可降级，回填须幂等，破坏性变更说明风险。类型与默认值需比对，视频任务模型的显式导入及迁移中维护的 PostgreSQL 部分、向量和全文索引不能误删。
 
 ### 3.5 装配与生命周期
 
-应用装配、业务注册与启停集中在 [bootstrap/](bootstrap/)，运行时单例由所属底层模块持有：
+`bootstrap` 是唯一装配入口。供应商、工具、渠道、内部事件及域钩子显式注册；注册可重复，未登记能力显式失败。
 
-- **显式注册**：[app.py](bootstrap/app.py)在应用导入期调用 [registrations.py](bootstrap/registrations.py)，此时尚未进入 lifespan。登记内容包括 LLM 与图生 3D 供应商、工具 schema、渠道适配器、内部事件处理器和域钩子。新增能力须在装配层注册；能力链引用未登记供应商时显式抛出 `LookupError`。注册表覆盖式幂等，重复调用安全。
-- **启动顺序**（`bootstrap/lifecycle.py`）：配置启动检查 → 迁移 → 配置水合与附件目录准备 → 调度器 → 事件回路（LISTEN 专线）→ 渠道桥 → 恢复未完成任务（视频、3D 管道）。依赖注入式解耦：事件回路不认识 cron 业务，处理器由装配层绑定。
-- **停止顺序**：先停清理任务和调度器再 drain（tick 会 spawn 新任务，反序留下逃逸窗口）→ 并行 drain 各模块任务集合 → 停渠道桥（适配器任务可能还在写事件）→ 停事件回路 → 释放引擎与连接池。付费生成任务的恢复语义不变：无法确认提交结果的任务保留不确定状态，不自动重发。
-- **运行时单例**：`MANAGER`（桌面连接）、`REGISTRY`（工具）、`SETTINGS`、TaskBag、用户级锁表保留为模块级单例——这是单副本语义（[ARCHITECTURE §5.3](../docs/ARCHITECTURE.md)）下的刻意选择；跨副本状态一律经持久化与 outbox 路由外置，bootstrap 管注册与启停，不做 DI 容器。
+启动依次完成配置检查、迁移、配置水合与目录准备、调度器、事件回路、渠道桥和任务恢复。停止先关闭清理任务与调度入口，再收敛模块任务，停止渠道桥与事件回路，最后释放数据库和连接池。
+
+`MANAGER`、`REGISTRY`、`SETTINGS` 和用户锁等单例遵守单进程边界；bootstrap 管装配，不另建通用依赖注入容器。
 
 ### 3.6 事件与交付回路
 
-业务代码只往 outbox 写行（`modules.ws.emit_ws_event`，同一事务提交），事件回路负责其余：PostgreSQL NOTIFY 唤醒 → 原子认领（`FOR UPDATE SKIP LOCKED`）→ 按事件类型分派——已注册处理器的内部事件（cron 回合）就地 spawn 强引用 task，其余事件经该用户的 JSON-RPC dispatcher 投递；失败指数退避、超限死信、writer 送达确认批量落库。调度器独立回收历史行、死信与孤儿内部事件，避免清理拖慢交付。存储层不知道任何业务处理器；通道桥投递与交付原子性见 [PROTOCOL §1.2 / §1.8.1](../docs/PROTOCOL.md)。
+需与状态共同生效的通知通过 `emit_ws_event` 同事务写入 outbox，随后由 NOTIFY 唤醒、原子认领和分派；内部事件进入已注册处理器，桌面事件进入用户 dispatcher。失败按预算退避，超限进入死信；发送记账与历史清理由所属回路完成。
+
+聊天流另走会话 emitter。存储层不认识业务处理器，任务须有明确所有者，不能用无托管后台任务绕开退出与恢复。
 
 ## 4. 关键设计决策
 
 ### 陪伴叙事
 
-- 检索记忆与叙事展示分别维护：前者归[记忆模块](services/domains/memory/README.md)，片刻与日记归 [journal](services/domains/journal/)。生成入口、用户可执行的操作及交付规则见 [PROTOCOL §1.2](../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。
-- 白天自主冲动：调度器侧扫描按 [Settings](components/config.py)配置的随机间隔低频咨询 LLM，由精灵决定是否发一条文本片刻（kind=emotion）；只更新信息流，不写主对话消息、不做桌面打扰。实现见 [services/application/moments/](services/application/moments/)。
-- 互动统计：戳击反应有成本上限，失败另有短冷却；戳击或对话任一达到门限即写小时汇总，日期与夜间反思共用用户本地日口径。
+检索记忆与片刻、日记分开维护。白天自主片刻只更新信息流，不写主对话或产生桌面打扰；互动统计按用户本地日聚合。证据和维护规则归 [记忆模块](services/domains/memory/README.md)。
 
 ### 夜间批处理
 
-- 活动规划：休息窗口内执行证据维护、自主规划与日记；记忆维护规则见[记忆模块](services/domains/memory/README.md)。规划使用高推理档和当时可用的安全能力目录，输入角色、衣橱、房间、供应商、画像、近期历史与政策，允许小组合或空计划。无当日消息仍可基于生日等长期记忆规划；无新互动的日记步骤跳过，已有记忆仍可维护，不能伪造经历。
-- 执行相序：外观 → 房间 → 片刻 / 媒体 → 主动联系；各项独立失败、执行前重读政策。新装成功激活后才进入后续生成；图片与视频的参考职责按 [PIPELINE §1.1](../docs/PIPELINE.md#11-共用参考与种子图派生)装配，可附当前音色配音并转存正式资产。
-- 日期与恢复：调度单点传入“刚结束的本地日”，缺时区跳过用户；同日完成不重跑，最近未完成日可在休息窗口外恢复，超过一日本地恢复窗口的未确认动作终止。保存计划与动作账本，有可核对任务 id 的续跑原记录，无法确认的在途副作用标记中断，不重复付费。
-- 成功事实才进入自传记忆、日记与次日问候；标题、正文及配音遵循用户语言。当日片刻互动（发布与评论线程）经 `collect_moment_interactions` 一并进入规划、反思日记与日记投影。片刻与对话交付原子性见 [PROTOCOL §1.2](../docs/PROTOCOL.md)。
+调度传入刚结束的本地日，缺时区跳过；同日完成不重跑，最近未完成日按恢复窗口接续。计划与动作账本持久化，执行按外观 → 房间 → 片刻 / 媒体 → 联系推进，每项前重读政策，失败互相隔离。
+
+无当日消息仍可依据长期记忆规划，但没有新互动时不虚构日记。片刻发布和评论纳入当天经历；只有成功结果进入叙事。有任务句柄时核对原任务，结果未知的在途动作保留中断事实，不盲目重发。
 
 ### 数据与运行可靠性
 
-- 备份不承载部署恢复：登录态、激活信息、IM 绑定 / 授权、事件队列及后台执行账本不迁移，不保证在途任务跨部署接续；系统级供应商配置与本机配置仍需在目标部署单独配置。源端已清理的历史媒体无法从数据库还原，备份只携带现存文件。数据映射、兼容预检、配额与用户维护边界统一见 [PROTOCOL §5.6](../docs/PROTOCOL.md#56-备份校验与覆盖恢复)。
-- 数据访问：统一异步连接池，事件监听独占可重连直连；关系显式预加载，时间戳必须带时区。数据库会话不跨 LLM 等待，后台任务拆成短会话读 → 无会话推理 → 短会话写。
-- 阻塞卸载：长任务与 Web 请求共享同一事件循环，因此大载荷字节加工与落盘（base64 往返、图像解码编码、PSD/纹理/房间图/模型写盘、GLB 整文件哈希、视频配额扫描等）通过 `asyncio.to_thread` 移出事件循环，正式资产写盘共用 assets 的异步入口以保证取消时清理未交接产物；生成任务的并发与资源用量由 mesh2d 优先级队列、用户级锁与在飞注册表约束，不因等待时间长拆分任务系统。新增生成链代码遵循同一纪律。
-- 关联与断线：按用户和调用 id 隔离未决响应；短断线保留生成与缓冲，宽限到期回收孤儿任务。恢复及在线要求见 [PROTOCOL §0 / §4](../docs/PROTOCOL.md)。
-- 登录撤销：WS ticket 绑定有效登录记录，入站帧持续复核；注销、替换登录与用户停用共用即时回收入口，凭据正常刷新则沿用同一登录生命周期。契约见 [PROTOCOL §0](../docs/PROTOCOL.md)。
-- 本机派发：先注册待响应对象再发送，并直接持对象等待，防止极速结果到达后条目已弹出。检查入队结果，不能调用吞异常且无成功返回值的直推入口，否则断线会白等超时；设备指令与回合展示分离见 [PROTOCOL §1.3](../docs/PROTOCOL.md)。
-- 离线不等于取消：桌面消失时以离线错误完成未决响应；取消异常会穿透普通异常处理，令 IM / 对话静默死亡。真正的任务取消保留取消语义。
+数据库会话采用短读 → 无会话模型等待 → 短写，关系显式预加载，时间戳带时区。图片、视频、PSD、GLB 等大字节处理与落盘卸载到工作线程；正式资产使用统一异步写入入口处理取消清理。
+
+本机派发先注册等待对象，再发送并检查入队结果；直接持对象等待，避免极速返回后查表丢失。桌面离线以业务错误结束等待，不能一律抛取消异常而使 IM 回合静默退出。
+
+备份不迁移登录、激活、IM 授权、事件队列和执行账本，也不恢复已清理媒体；供应商与本机配置另行准备。包级校验、部分恢复和维护态见 [PROTOCOL](../docs/PROTOCOL.md#56-备份校验与覆盖恢复)。
 
 ### 陪伴调度与恢复
 
-- Cron 双轨：上下文、在线要求与原子交付见 [PROTOCOL §1.8.1](../docs/PROTOCOL.md)；两轨均禁止主动发消息工具，由编排统一捕获终态交付。
-- 陪伴意图与预算：[等待域](services/domains/companion/intents.py)持有有效期、候选条件、认领、去重、配额和原子终态；[陪伴回合](services/application/automation/companion_turns.py)复用 chat 工具循环并限制轮数、时长和委派。等待工具可与沉默终态组合，取消或失败不提交暂存的续等。可用性与用户活动只作为进程内闸门，不能替代持久化等待。
-- 陪伴恢复边界：未启动的认领可重试；已开始且不能核对副作用的回合保留失败事实，不重放工具，有效期不能抹掉核对提示。本机调用中断的核对依据是 Runner 调用日志（`call_id`，契约见 [PROTOCOL §2.5](../docs/PROTOCOL.md)）：恢复或重试前先查询已有执行，已完成的重放结果，unknown / failed 保留待核对，不盲目重跑副作用。失败和待兑现意图只装配给陪伴对话，不能成为记忆学习中的已完成经历。低频问候仍使用本进程互动计时，重启不凭空补算用户未互动时长。
-- Cron 活跃配额：运行期创建、恢复及修改 schedule 解除暂停共用用户行事务锁下的配额检查，候选任务不重复计数；夜间后台创建走同一入口，避免并发请求突破用户上限。
+[等待域](services/domains/companion/intents.py)管理条件、有效期、认领和原子终态；[陪伴回合](services/application/automation/companion_turns.py)复用工具循环并限制轮数、时长和委派。取消或失败不提交暂存续等。
+
+未开始的认领可以重试；已执行而结果不明时先查询 Runner 调用日志，不重跑副作用。有效期结束不抹去核对信息。创建、恢复及解除暂停统一在用户锁下检查活跃任务配额；重启不凭空补算未互动时长。
 
 ### IM 渠道
 
-- IM 适配器：由装配层显式注册，无头回合从原渠道回复；适配器声明渠道能力，统一处理 Markdown 清理与分片。接收落库、渠道重投去重、排队消费、中止保留与结果补发遵循 [PROTOCOL §1.7](../docs/PROTOCOL.md#17-im-通道桥接apichannels)；入站 intake 锁保持接收与入队顺序，模型上下文按消费批排序，投递锁避免并发补发同一行。渠道去重标识只属于原绑定的接收状态，不导入导出至备份，避免历史重复导入触发唯一冲突。绑定状态落库与实际变化通知共用入口；非致命故障由守卫退避重建。登录、入站接收、回合、typing 与补发任务均归绑定实例管理；登出、删除、重建和进程关闭会取消并等待整棵任务树，排队 future 同步落地。
-- iLink 登录与媒体：适配器管理扫码，成功后重建凭据与游标并自动授权主人；媒体经 CDN 加解密、转存临时媒体后输入回合，产出媒体加密回送，文字与附件合并单条消息。登录凭据失效由轮询回路判定：`getupdates` 持续报 -14 才清凭据转 login_required；发送路径遇 -14 视为回复上下文失效，等对端下一条消息刷新 token 后补发，不触发重新扫码。当前渠道能力为仅回复入站消息、不支持群聊，能力位以 [PROTOCOL §1.7](../docs/PROTOCOL.md) 注册表为准。配对、只读会话及桌面在线边界见同节。
+适配器由装配层注册。接收锁保证落库与入队顺序，投递锁避免并发补发；登录、入站、回合、typing 和补发均归绑定实例，退出或重建前取消并等待整棵任务树。
+
+iLink 轮询持续返回 `-14` 才按登录失效处理；发送时的同码仅代表回复上下文失效，等待下一次来信，不直接触发重新扫码。媒体经渠道加解密转换，配对、排队、只读与本机授权见 [PROTOCOL](../docs/PROTOCOL.md#17-im-通道桥接apichannels)。
 
 ### 供应商与网络错误
 
-- 供应商入口按供应商、客户端或带回退执行的需求选用，不从 URL host 反推供应商。供应商信息与能力链分离：共享凭据不隐式启用核心能力，名称作为唯一关联标识；嵌入按供应商顺序筛选并使用对应模型。继承、覆盖与密钥规则见 [PROTOCOL §5.4](../docs/PROTOCOL.md)。
-- 错误恢复：有限分类决定重试、轮换凭据、压缩或终止；内容风控不可重试，鉴权关闭码不靠重连恢复。生成错误使用可重试的友好提示，供应商 URL、认证头与堆栈不能透传。
-- HTTP 重试：幂等方法、显式幂等键及确认未发送的连接失败才可自动重试，请求体须先缓存为可重放字节。非幂等请求在写入或读取响应阶段断线时标记结果不确定，不回退供应商；异步视频提交保留本地任务行并禁止自动重发。
-- SSRF 豁免：默认拒绝保留段，fake-ip 代理部署须显式配置网段豁免；豁免仅跳过保留段检查，域名、协议、HTTPS 降级、云元数据与 CGNAT 拦截保留。
-- LLM 调试：日志集中在聊天包装、回退链与嵌入入口，避免供应商重试叠加造成漏记；开启方式与内容暴露范围见 §7。
+供应商身份由注册与配置决定，不从 URL 推断。幂等方法、显式幂等键或确认未发送的连接失败才可自动重试；请求体须可重放。非幂等请求在写入或读取响应阶段断线按结果未知处理，不能直接换供应商再提交。
+
+SSRF 默认拒绝保留网段；显式 fake-IP 豁免不取消域名、协议、HTTPS 降级、云元数据与 CGNAT 检查。对外错误脱敏，内部诊断保留原因。
 
 ### 数据结构定义
 
-- 结构定义双层：需要校验或序列化的跨边界 schema（协议载荷、LLM 结构化输出、DB JSON 列、发布资产清单）用 pydantic，在构造或读取边界完成校验；仅在进程内传递的值对象与查询结果束用 dataclass（只读加 frozen），类型由静态注解保证，不重复运行时校验。不使用 `TypedDict`。
+跨边界或需校验的结构使用 Pydantic；纯进程内值对象使用 dataclass，只读对象可冻结。不使用 `TypedDict`，也不在调用方重复声明已有 schema。
 
 ## 5. 与外部的契约
 
-- 对客户端：生命周期、媒体与叙事交付见 [PROTOCOL §1](../docs/PROTOCOL.md)，配置与凭据见 [§5](../docs/PROTOCOL.md)。
-- 对客户端 / 调度入口：IM、系统预设、Cron 双轨见 [PROTOCOL §1.7–1.8.1](../docs/PROTOCOL.md)；在线与副本边界见 [ARCHITECTURE §5](../docs/ARCHITECTURE.md)。
-- 对客户端 / Runner：工具集与反向 RPC 见 [PROTOCOL §2–4](../docs/PROTOCOL.md)。
-- 对供应商 / 渲染端：生成输入、能力与资产兑现见 [PIPELINE](../docs/PIPELINE.md)。
+通信、配置、安全和恢复统一见 [PROTOCOL](../docs/PROTOCOL.md)，形象输入与产物见 [PIPELINE](../docs/PIPELINE.md)。内部实现调整未改变契约时，不重复修改外部文档。
 
 ## 6. 验证入口
 
-从仓库根目录执行 [scripts 中的相关检查](../scripts/README.md#8-按改动选择验证)。Python 改动需检查类型、lint 与导入；依赖变化另跑分层检查；协议变化核对公共 schema、调用方和相应契约。数据库结构变化还需迁移比对，不能用静态检查代替迁移验证。
-
-对话、记忆与生成的行为验证入口见本文导航。提示词预览只核对装配，真实供应商、媒体产物及客户端兑现需分别验证并报告执行范围。生成供应商和任务恢复的已知限制见[生成模块](services/application/generation/README.md#限制与验证)。
+使用 [Scripts 检查入口](../scripts/README.md#8-按改动选择验证)。Python 修改核对 lint、导入与类型，依赖变化加跑分层检查；数据库变化另做迁移比对。对话、记忆和生成按专项 README 验证，静态检查不能代替真实供应商与恢复验证。
 
 ## 7. 部署与监控
 
 ### Docker Compose 部署
 
-以下命令在 backend 目录执行；首次部署先按下一节准备配置。
+在 `backend` 目录按 [配置模板](config.toml.example)准备数据库、JWT、资产签名密钥和管理员配置，然后执行：
 
-- **基础核心启动**（仅启动 postgres + backend）：
-  ```bash
-  docker compose up -d
-  ```
-- **附带 Prometheus 观测平台启动**（一键拉起指标采集）：
-  ```bash
-  docker compose --profile monitoring up -d
-  ```
-  启动后可直接访问 `http://localhost:9090` 打开 Prometheus 查询面板；指标抓取目标与周期由 [Prometheus 配置](monitoring/prometheus.yml)维护。
+```bash
+docker compose up -d
+# 同时启动监控
+docker compose --profile monitoring up -d
+```
+
+容器与卷见 [docker-compose.yml](docker-compose.yml)，指标抓取见 [Prometheus 配置](monitoring/prometheus.yml)。Backend 不参与桌面安装包构建。
 
 ### 参数配置与后台动态热更新
 
-- **冷启动文件配置**：首次部署仅需根据 `config.toml.example` 复制创建 `config.toml`（或直接使用环境变量），指定 `database_url`、`jwt_secret_key`、`companion_asset_signing_key` 与管理员账密即可完成启动。
-- **系统设置管理面板**：服务启动后，以管理员身份登录 Web 管理端（`/admin/`）切换至「系统设置」Tab，即可增删、拖拽排序供应商信息卡片与五项能力的调用卡片，也可编辑图生 3D 与 2D 分层资产、对话编排与工具循环、陪伴交互与主动行为、记忆维护与夜间整理、调度与自动化、联网搜索后端、接口速率限制与附件/备份安全配额、IM 渠道及运行时调优等参数。卡片引用、覆盖与空链语义见 [PROTOCOL.md §5.4](../docs/PROTOCOL.md)。
-- **保存与生效**：系统设置保存后无需重启容器；整批验证、事务提交和原位应用的顺序见 [§3.4](#34-配置与迁移体系)。
+登录 `/admin/` 管理供应商、能力链与运营参数。保存按 §3.4 生效，不要求重启容器；密钥继承与脱敏见协议文档。
 
 ### LLM 调试日志
 
-排查对话失败时按需开启的开关。开启后每个 LLM 调用在专用 logger 上按调用粒度输出供应商、模型、请求/响应摘要、延迟与失败原因（字段与默认截断长度见 `llm_debug.py`）。默认关闭——开启会把对话内容原样落到 stdout，仅在复现失败时临时启用。注意两点：事件以 DEBUG 级别发出，需同时设 `log_level = "DEBUG"` 才可见；日志落在实际执行调用的容器里。
+仅排障时临时开启 LLM 调试并将日志级别设为 DEBUG。日志写入实际执行调用的容器 stdout，可能包含原始对话内容，不能当作默认生产日志或未经脱敏的验证材料。

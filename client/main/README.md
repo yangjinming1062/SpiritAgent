@@ -1,100 +1,77 @@
 # Main 主进程
 
-Electron 可信主进程：持有凭据、窗口与表面生命周期、Runner 进程与 OS IPC、配置镜像与云同步、磁盘缓存、自更新与托盘。渲染层只经 preload 暴露的 `window.spiritagent` 使用这些能力。客户端跨进程协作见 [client/README.md](../README.md)，跨进程通道定义在 [shared/ipc](../shared/ipc/)（`@ipc`），信任域与平台策略见 [ARCHITECTURE.md](../../docs/ARCHITECTURE.md)。
-
-修改启动与退出读“启动与装配”；鉴权和桥接读“凭据与渲染面隔离”“网关宿主—代理”；窗口、配置、Runner 与缓存按“关键设计决策”的对应主题进入。验证入口见文末。
+可信主进程持有凭据、窗口、Runner、配置镜像、磁盘缓存和更新。渲染层只经 `window.spiritagent` 使用受控能力；跨窗口协作见 [Client](../README.md)，通道类型见 [shared/ipc](../shared/ipc/)。
 
 ## 包边界
 
-- `entry.ts` 是唯一组合根：装配窗口、托盘、IPC 注册、Runner bridge 与配置同步；业务逻辑不在入口内展开。
-- `preload.ts` 是渲染层唯一桥：输出 CJS（`dist-electron/preload.cjs`），主进程输出 ESM（`dist-electron/entry.js`）。沙盒 preload 不按 ESM 解析，混入 import 会让整桥失效。
-- `backend/` 会话与 HTTP：激活码加密持久化、JWT 内存刷新、连接缓存（token / 窗口态失效重建）。
-- `runner/` 进程与本地 IPC：Client 作 RPC Server，Runner 启动后连入；握手 token 准入；反向 LLM 代理与两阶段更新。
-- `lifecycle/` 窗口与应用生命周期：精灵窗、生活空间 / 工作台互斥管理、托盘 / 菜单、自更新、`spiritagent-media:` 协议、启动进度状态机。
-- `ipc/` 通道注册：一文件一能力面（auth、gateway、media、prefs、shortcuts、sprite…），在 entry 中显式挂载。
-- `security/` 准入与加固：API 白名单、可读文件白名单、敏感路径拦截、sender 窗口校验、`SPIRITAGENT_HOME` 解析。
-- `shared/` 叶子层：配置镜像存储与云同步、MIME、工具函数、后端端口类型。不 import `backend/` 或 `runner/` 实现，避免循环。
+`entry.ts` 是唯一组合根，负责显式装配，不展开业务逻辑。`backend` 管会话与 HTTP，`runner` 管进程和本地 RPC，`lifecycle` 管窗口、托盘、媒体协议与更新，`ipc` 按能力注册通道，`security` 管准入，`shared` 为叶子层。
 
-依赖方向：`entry` → 各子包；`ipc/*` / `lifecycle/*` / `runner/*` → `security` + `shared`；`shared` 只暴露结构端口（`backend-port.ts`），由 entry / bridge-deps 注入实现。
+`shared` 不导入 backend / runner 实现，通过结构端口由装配层注入。主进程输出 ESM `entry.js`，沙盒 preload 输出 CJS `preload.cjs`；preload 混入 ESM import 会使桥接失效。
 
 ## 启动与装配
 
-- `SPIRITAGENT_HOME` 经 `SPIRITAGENT_DESKTOP_USER_DATA_DIR` 覆盖或平台默认路径解析，随后 `app.setPath('userData', …)`——会话、配置镜像、缓存、日志共用同一 home，避免散落多份 userData。
-- 默认单实例锁；`SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK=1` 仅用于并行调试。第二实例事件在完整 forwarder 就绪前先折叠成标志，就绪后再兑现一次，避免 `whenReady` 竞态丢事件。
-- 检测到远程显示时禁用 GPU 硬件加速，降低闪烁。
-- Chromium 后台节流全局关闭：精灵窗 7x24 常驻，不能靠浏览器默认降频；渲染侧功耗自管见 [renderer README](../renderer/README.md)。
-- `window-all-closed` 不退出（托盘常驻）；真正退出走托盘 / 菜单 `app.quit` → `before-quit` 配置 flush → `will-quit` 有界等待 Runner 停止（约 3s）后 `app.exit(0)`，避免 fire-and-forget 孤儿进程。
+Home 支持 `SPIRITAGENT_DESKTOP_USER_DATA_DIR` 覆盖并统一设置 Electron userData，配置、日志与缓存不另找目录。默认单实例；`SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK=1` 只用于并行验证，第二实例事件在转发器就绪前折叠保存，之后兑现一次。
+
+远程显示可禁用 GPU。Chromium 后台节流全局关闭，渲染功耗由引擎管理。关窗不退出，真正退出先 flush 配置，再有界等待 Runner 停止；超时可能残留进程，不能宣称已保证全部清理。
 
 ## 关键设计决策
 
 ### 凭据与渲染面隔离
 
-- 激活码经 `safeStorage` 加密落盘，会话 JWT 仅内存并主动刷新；渲染与 preload 永不接触持久令牌存储接口。规则见 [PROTOCOL.md §5.3](../../docs/PROTOCOL.md)。
-- 渲染层 `api()` 只放行相对路径与固定前缀（`/api/channels`、`/api/companion`、`/api/config`、`/api/sessions`）；绝对 URL、协议相对、路径穿越一律拒绝，防止凭据被打到任意 endpoint。
-- 文件读取走用户选择白名单：对话框选择或拖拽解析成功即登记；不向渲染层暴露任意注册 API，防 XSS 自授后外传。敏感路径（`.ssh/`、`.env*`、证书私钥等）另有一层硬拦截。
-- `spiritagent-media:` 自定义协议只流式读出 `SPIRITAGENT_HOME` 下 `cache/` 与 `audio/`，并校验可读与扩展名；渲染层不能经协议探测任意绝对路径。
+激活凭据加密落盘，JWT 仅内存；preload 不暴露持久凭据读取。`api()` 只允许相对路径和规定前缀，拒绝绝对 URL、协议相对地址和路径穿越，避免携凭据访问任意地址。
+
+文件读取仅接受选择器或拖拽登记的路径，渲染层不能自行授予白名单；敏感路径另行阻断。白名单仅进程内且有容量限制，重启须重新选择，历史附件路径不自动恢复权限。
+
+`spiritagent-media:` 只读取 Home 下允许的 cache / audio 资源并校验路径与扩展名，不能成为任意文件读取接口。
 
 ### 网关宿主—代理
 
-- 仅精灵 / 主窗口可上报网关状态、灌业务事件、抢答 RPC；生活空间 / 工作台只能发 `gatewayRequest`，经主进程转发给宿主 WebSocket。非宿主广播直接丢弃并记日志。
-- 代理请求挂起表带超时；网关 `closed` / `error` 时统一 reject，避免表面窗拿着已断连接的 future 悬挂。宿主身份与连接角色见 [Client 连接约束](../README.md#连接与设备就绪)。
+仅宿主窗口可上报网关状态、注入事件和答复代理 RPC，其他表面只能发请求。所有入口核对 sender，不能只依赖 TypeScript 类型。
+
+代理等待设超时，网关 closed / error 时统一 reject。连接缓存 reset 递增代次，迟到连接不得写回；会话凭据通过实时 getter 读取，不捕获过期 token。
 
 ### 表面互斥与几何
 
-- 生活空间与工作台同一时刻最多一个可见；`pendingChain` 串行化并发 open / close，避免竞态双开。
-- 工作台打开、移动或调整尺寸时，主进程直接判定其所在显示器，让隐藏的桌面精灵窗跟随；渲染层表面状态只同步当前开启入口，不承载窗口几何。
-- 上次入口写入配置镜像 `ui.last_surface`，启动水合后供托盘双击按此开窗。
-- 激活入口：未认证立即展示激活浮层；托盘唤起须经 IPC 修改渲染状态，仅拉起窗口无法重开已关闭浮层。
-- 全局快捷键由主进程注册，配置进本地镜像与云同步；冲突或注册失败返回状态并降级。并行调试开关见“启动与装配”。
-- 关闭行为：Windows 隐藏到托盘，macOS 隐藏窗口但保留 Dock 图标。
+并发 open / close 通过串行链裁决，生活空间与工作台最多一个可见。工作台移动时由主进程跟随显示器，渲染状态不传递几何。未认证时唤起激活界面须更新渲染状态，不能只 raise 窗口。
+
+快捷键由主进程注册并返回冲突或失败状态。Windows 关闭隐藏到托盘，macOS 隐藏但保留 Dock；多屏和透明命中规则归 [Client](../README.md#窗口与主题)。
 
 ### 配置镜像与云同步
 
-- `desktop-settings.json` 是本地镜像，云端 `user_settings` 为真源；同步节白名单见 [PROTOCOL.md §2.4](../../docs/PROTOCOL.md)。机密与设备节（terminal、spiritagent 等）永不上传。
-- 写入经写锁串行化：原子落盘 → 推 Runner → 防抖上云。`applyCloudMirror` 期间抑制本地变更通知，防回环。
-- 镜像带用户归属戳；换号时残留同步节不信任、不上传，防止 A 的编辑泄给 B。
-- Runner 配置补丁 IPC 仅接受工作台窗口 sender，避免其他表面误写本机工具配置。
+镜像写锁串行执行原子落盘、Runner 推送和防抖上云。应用云端镜像期间抑制变更回环；换号先清理不可信旧同步节，机密与设备配置不上云。
+
+Runner 配置补丁只接受工作台 sender。离线编辑与云端冲突不提供版本化合并，精确恢复语义见 [PROTOCOL](../../docs/PROTOCOL.md#24-配置所有权与云端同步)。
 
 ### Runner 生命周期
 
-- Client 监听 OS IPC（Windows 命名管道 / macOS UDS），Runner 主动连入；握手 token 校验失败即 401，不进入业务帧。端点路径与 token 由 Client 单向下发，Runner 重连间重读配置以跟随 Client 重启。
-- 能力缓存随连接作废：Runner WS 断开、进程退出或开始停止时立即撤销；握手按代次隔离在途查询，配置推送完成后才取工具并进入运行态。宿主同步与撤销约束见 [Client 连接约束](../README.md#连接与设备就绪)及 [PROTOCOL.md §1.2](../../docs/PROTOCOL.md)。
-- `bridge-deps` 把会话、进程、反向 RPC、WS Server、日志等全部收成参数注入，入口不持有隐藏全局；可变 `getAuthToken` 以 getter/setter 成对接入，保证会话切换后 bridge 读到最新 token。
-- 连接缓存 `ensure-backend` 用代次标记：reset 时递增，在途 resolve 完成后若代次已变则不写回缓存，避免陈旧连接复活。
-- Runner 更新语义是「装新 wheel + 覆盖 server.py」，一次性切到新版本，不在安装期做兼容 smoke 或回滚。wheel 与 `server.py` 的导入面一致性由构建期 `scripts/check_runner_facade.py` 门禁；`uv` 路径与 installer 对齐（`$SPIRITAGENT_HOME/bin/uv`，venv 通常不带 pip）。
+Client 创建 IPC 端点并鉴权 Runner。断连、退出和开始停止立即作废缓存；新握手先推配置，再取工具，迟到查询不能恢复旧资格。
+
+`bridge-deps` 显式注入会话、进程、RPC 和日志。握手关联查询的失效控制不等于已经完整消费 Runner `run_generation`，当前接入限制见协议文档。
+
+更新使用 Home 下的 uv，在原 venv 安装 wheel 并替换 `server.py`，不承诺安装原子切换或自动回滚。导入面一致性在构建期检查，损坏环境交安装器修复。
 
 ### 网络与缓存
 
-- 资产与模型字节统一经主进程磁盘缓存，跨进程读取及 OPFS 配合见 [Client 缓存约束](../README.md#资产与历史缓存)。缓存键优先 `contentHash`，否则去掉签名查询参数后哈希——同内容不同签名 URL 命中同一文件。
-- 请求超时由 [hardening.ts](security/hardening.ts) 按方法和路径裁决：衣橱草稿生成与微调的同步 POST 需为供应商回退、下载及落盘预留等待时间；列表、确认和激活不沿用生图等待窗口。新增生成路由须同步匹配；客户端等待超时不代表后端已停止或生成失败。
-- 401 按结构化状态判定并广播会话过期，不解析错误文案。
+字节缓存优先使用内容哈希，否则规范化签名 URL 后生成键；历史与账号清理见 [Client](../README.md#资产与历史缓存)。下载、写盘和回调均须遵守取消与用户代次。
 
-- STT / TTS 经主进程调用云端，无本地引擎；STT 并发与令牌桶限流，TTS 有界排队、合并在途请求并限制云端间隔，超额快速失败。缓存命中不排队、不占额度。实现入口见 [ipc/media.ts](ipc/media.ts)，限额由该入口维护。
+[hardening.ts](security/hardening.ts)按路径和方法配置请求等待，新增同步生成入口须核对超时规则。超时不代表后端任务已停；401 按结构化状态处理，不匹配错误文案。
+
+STT / TTS 经 [媒体入口](ipc/media.ts)调用云端，使用有界队列、并发和速率控制；TTS 合并在途请求，缓存命中不排队、不耗调用额度。窗口不复制这套限制。
 
 ### 构建产物
 
-- [tsup](../tsup.config.ts)按“包边界”的格式产出 main 与 preload；`@ipc/contracts` 经 esbuild alias 解析到共享契约。dev 脚本显式 `--watch main --watch shared`，避免 tsup 配置级 watch 劫持全树。
-- 改 preload 导出或主进程入口路径时同步检查 `dist-electron` 产物名与 `package.json` `main` 字段。
+tsup 构建 main / preload，共享 IPC 通过 alias 解析；开发监听只覆盖 main 与 shared。修改导出或路径须核对实际文件名与 `package.json` 的 main。
 
-- 开发 CSP 允许本地 Vite Fast Refresh 所需的内联脚本和 eval，生产保持严格策略；混用会造成开发白屏或放松生产脚本边界。
+开发 CSP 允许 Vite 所需能力，生产保持严格策略，不能为修复开发白屏放宽生产 CSP。
 
 ## 与外部的契约
 
-| 参与方 | 定义位置 |
-|---|---|
-| 渲染层 ↔ 主进程 | preload 暴露面 + `@ipc/contracts`；信任校验用 `isSenderWindow` / 表面角色 |
-| Client ↔ Backend | [PROTOCOL.md](../../docs/PROTOCOL.md)（会话、配置、资产、更新） |
-| Client ↔ Runner | [PROTOCOL.md §2](../../docs/PROTOCOL.md) + [runner/README.md](../../runner/README.md) |
-| 跨进程协作 | [Client §4](../README.md#4-跨进程协作)（连接、主题、窗口和缓存） |
-| 渲染模块契约 | [renderer/README.md](../renderer/README.md) |
+跨进程变化同步共享类型、preload、主进程 handler 和调用方；权限由 sender 与路径准入落实。后端、Runner、配置及更新见 [PROTOCOL](../../docs/PROTOCOL.md)。
 
 ## 已知限制
 
-- 用户选择路径白名单仅进程内、上限 256 条；重启后需重新选择，不能跨会话复用历史附件路径。
-- 配置上云为按保存先后覆盖，多端并发编辑不做合并；离线编辑恢复后只播种云端缺失键。
-- 远程显示模式下透明精灵关闭 GPU 加速，合成与滤镜表现与本机不同；调试透明 / 模糊问题前先确认是否处于该模式。
-- Runner 停止等待有界超时；超时后进程可能残留至系统回收，日志中会记录 quit cleanup 失败。
+路径授权不跨进程重启保留，多端配置不做冲突合并，退出清理有超时边界。远程显示可能关闭硬件加速，排查透明与模糊前先确认实际运行模式。
 
 ## 验证入口
 
-[仓库检查](../../scripts/README.md#8-按改动选择验证)覆盖客户端 lint 与两套 TypeScript 配置。改动 preload 或入口路径时检查实际构建产物；涉及窗口 sender、连接代次、配置归属或 Runner 更新时，核对对应拒绝路径、迟到结果和失败恢复，不能只验证正常启动。
+命令见 [Scripts](../../scripts/README.md#8-按改动选择验证)。覆盖错误 sender、未授权路径、换号、连接 reset 后迟到结果、退出超时和更新失败；preload 与入口变更另查实际构建产物。
