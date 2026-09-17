@@ -13,5 +13,5 @@
 #
 # type:  feat | fix | refactor | perf | docs | test | chore | style | build
 # scope: 仅顶层大模块，可选：
-#   backend | desktop | runner | installer | scripts | docs
+#   backend | client | runner | installer | scripts | docs
 # 同一目标的修改一并提交，但是每条只标一至两个主要 scope，不要用子模块名（companion、hub、gateway…）。
