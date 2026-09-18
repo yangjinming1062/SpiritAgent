@@ -68,12 +68,9 @@ export const dict = {
     saveRefImage: '另存图片',
     saveRefImageFailed: '另存失败，请重试。',
     copyRefImageFailed: '复制失败，请重试。',
-    poseAttachHint: '可选：确认前上传左右扶边姿态图；未提供的侧将由后端自动生成。',
-    poseLeft: '左姿态',
-    poseRight: '右姿态',
-    poseUpload: '上传姿态图',
-    poseSelfSource: '自备姿态图',
-    poseAttached: '已附',
+    poseAttachHint: '可选：确认前可为左右两侧附自备姿态图，未提供的侧由后端自动生成。',
+    poseSelfLeft: '自备左姿态',
+    poseSelfRight: '自备右姿态',
     poseRemove: '移除',
     pickTitle: '选择生成好的图片',
     pickImage: '选择图片',
@@ -1001,8 +998,8 @@ export const dict = {
       reviseEdit: '微调',
       reviseRegenerate: '重新生成',
       reviseHint: {
-        edit: '在当前草稿上修改，其余保持不变',
-        regenerate: '按原描述与参考图重新生成整套设计'
+        edit: '在当前草稿图（含自备图）上修改，其余保持不变',
+        regenerate: '不用当前图，按全身种子图与原描述整体重绘'
       } as Record<ImageReviseMode, string>
     },
     appearance: {

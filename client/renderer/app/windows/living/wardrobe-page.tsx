@@ -12,7 +12,6 @@ import {
   deleteOutfit,
   hydrateAvatarSeeds,
   hydrateWardrobe,
-  pickAvatarImage,
   type PickedImage,
   regenerateOutfitPose,
   resolvePortraitUrl,
@@ -231,57 +230,32 @@ export function WardrobePage(): React.JSX.Element {
     ? [{ label: selfSourceDict.refs.outfitPortrait, url: posePortraitUrl }]
     : undefined
 
-  const uploadDraftPose = async (side: 'left' | 'right'): Promise<void> => {
-    const picked = await pickAvatarImage(side === 'left' ? selfSourceDict.poseLeft : selfSourceDict.poseRight)
-
-    if (picked && 'image' in picked) {
-      session.setPoseImage(side, picked.image)
-    }
-  }
-
   const poseSideControl = (side: 'left' | 'right'): React.JSX.Element => {
     const image = session.poseImages[side]
-    const label = side === 'left' ? selfSourceDict.poseLeft : selfSourceDict.poseRight
+    const label = side === 'left' ? selfSourceDict.poseSelfLeft : selfSourceDict.poseSelfRight
 
     return (
       <div className="flex items-center gap-1.5">
-        <span className="text-[10px] text-faint">{label}</span>
-        {image ? (
-          <>
-            <span className="text-[10px] text-muted">{selfSourceDict.poseAttached}</span>
-            <img
-              alt={label}
-              className="size-8 rounded border border-line-hairline object-cover"
-              src={image.previewUrl}
-            />
-            <button
-              className="text-[10px] text-muted transition hover:text-strong"
-              disabled={session.busy}
-              onClick={() => session.setPoseImage(side, null)}
-              type="button"
-            >
-              {selfSourceDict.poseRemove}
-            </button>
-          </>
-        ) : (
-          <>
-            <button
-              className="text-[10px] text-muted transition hover:text-strong"
-              disabled={session.busy || splitting}
-              onClick={() => void uploadDraftPose(side)}
-              type="button"
-            >
-              {selfSourceDict.poseUpload}
-            </button>
-            <button
-              className="text-[10px] text-muted transition hover:text-strong"
-              disabled={session.busy || splitting}
-              onClick={() => setPoseSelfSourceSide(side)}
-              type="button"
-            >
-              {selfSourceDict.poseSelfSource}
-            </button>
-          </>
+        {image && (
+          <img alt={label} className="size-7 rounded border border-line-hairline object-cover" src={image.previewUrl} />
+        )}
+        <button
+          className="text-[10px] text-muted transition hover:text-strong"
+          disabled={session.busy || splitting}
+          onClick={() => setPoseSelfSourceSide(side)}
+          type="button"
+        >
+          {label}
+        </button>
+        {image && (
+          <button
+            className="text-[10px] text-muted transition hover:text-strong"
+            disabled={session.busy}
+            onClick={() => session.setPoseImage(side, null)}
+            type="button"
+          >
+            {selfSourceDict.poseRemove}
+          </button>
         )}
       </div>
     )
@@ -480,7 +454,13 @@ export function WardrobePage(): React.JSX.Element {
           )}
         </div>
 
-        <div className={cn('flex shrink-0 flex-col border-t border-line-hairline', designing ? 'h-56' : 'h-28')}>
+        {/* 有草稿后固定行变多，面板加高给消息区留出可见空间；预览区 flex-1 随之收缩。 */}
+        <div
+          className={cn(
+            'flex shrink-0 flex-col border-t border-line-hairline',
+            designing ? (session.draft ? 'h-80' : 'h-56') : 'h-28'
+          )}
+        >
           {!designing ? (
             <div className="grid flex-1 place-items-center px-6 text-center">
               <div>
@@ -562,9 +542,9 @@ export function WardrobePage(): React.JSX.Element {
                     >
                       {t.discard}
                     </button>
-                    <span className={cn(HINT_TEXT, 'ml-auto')}>{t.confirmHint}</span>
+                    <span className={cn(HINT_TEXT, 'ml-auto min-w-0 truncate')}>{t.confirmHint}</span>
                   </div>
-                  <div className="flex flex-wrap items-center gap-3">
+                  <div className="flex items-center gap-3">
                     {poseSideControl('left')}
                     {poseSideControl('right')}
                     <span className={cn(HINT_TEXT, 'min-w-0 flex-1 truncate')}>{selfSourceDict.poseAttachHint}</span>
@@ -714,7 +694,13 @@ export function WardrobePage(): React.JSX.Element {
         }}
         open={poseSelfSourceSide !== null}
         referenceImages={poseSelfSourceReferences}
-        title={`${t.preview.regenPose} · ${selfSourceDict.open}`}
+        title={
+          designing && session.draft
+            ? poseSelfSourceSide === 'left'
+              ? selfSourceDict.poseSelfLeft
+              : selfSourceDict.poseSelfRight
+            : `${t.preview.regenPose} · ${selfSourceDict.open}`
+        }
       />
     </div>
   )
