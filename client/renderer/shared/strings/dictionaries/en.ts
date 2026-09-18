@@ -1108,6 +1108,12 @@ export const dict: Dictionary = {
       historyRollbackLabel: 'Use this one',
       historyCurrentAria: 'Currently active room',
       historyRollbackAria: (id: string) => `Roll back to previous room ${id}`,
+      historyDeleteLabel: 'Delete',
+      historyDeleteAria: (id: string) => `Delete previous room ${id}`,
+      historyDeleteTitle: 'Delete this previous room',
+      historyDeleteConfirmTitle: 'Delete this previous room?',
+      historyDeleteConfirmDescription:
+        'This cannot be undone. The room is removed from rollback history and frees a slot. The room currently in use is not deleted.',
       policyTitle: 'Room policy',
       policyLabel: 'Companion-driven room changes',
       policyDesc:
@@ -1127,6 +1133,8 @@ export const dict: Dictionary = {
       roomRegenerateFailed: 'Failed to change rooms… try again in a moment',
       roomRollbackFailed: 'Rollback failed — the previous room may no longer be available',
       roomRollbackSuccess: 'Switched back to a previous room',
+      roomDeleteFailed: 'Delete failed — please retry shortly',
+      roomDeleteSuccess: 'Previous room deleted',
       roomLockFailed: "Couldn't update the lock setting",
       roomLocked: 'Locked — companion-driven room changes are disabled',
       roomUnlocked: 'Unlocked — the companion may change rooms on their own',

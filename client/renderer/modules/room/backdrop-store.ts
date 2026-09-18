@@ -468,6 +468,27 @@ export async function rollbackRoom(backdropId: string): Promise<void> {
   void hydrateRoomBackdrop()
 }
 
+/** 删除历史房间图（非当前 active）；成功后重水合。 */
+export async function deleteRoomHistory(backdropId: string): Promise<void> {
+  const id = Number.parseInt(backdropId, 10)
+  const fallback = getStrings().living.toasts.roomDeleteFailed
+
+  if (Number.isNaN(id)) {
+    throw new Error(fallback)
+  }
+
+  const result = await authedApi({
+    method: 'DELETE',
+    path: `/api/companion/room/${id}`
+  })
+
+  if (!result.ok) {
+    throw new Error(result.reason === 'err' ? backendDetailMessage(result.error, fallback) : fallback)
+  }
+
+  void hydrateRoomBackdrop()
+}
+
 export async function setRoomPolicy(policy: RoomPolicy): Promise<void> {
   const result = await authedApi({
     body: { policy },

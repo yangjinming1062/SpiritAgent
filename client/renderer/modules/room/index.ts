@@ -6,6 +6,7 @@ export {
   $roomHistory,
   $roomPolicy,
   adoptRoomImage,
+  deleteRoomHistory,
   discardPendingRoom,
   hydrateRoomBackdrop,
   onBackdropEvent,

@@ -13,6 +13,7 @@ from modules.companion import (
     BackdropPolicyRequest,
     BackdropPolicyResponse,
     BackdropResponse,
+    CompanionOperationResponse,
     ImageAdoptRequest,
     RoomActivateRequest,
     RoomGenerateRequest,
@@ -26,6 +27,7 @@ from services.application.generation import (
     RoomBackdropStateError,
     activate_backdrop,
     adopt_room_backdrop,
+    delete_room_backdrop,
     discard_room_backdrop,
     get_room_state,
     response_for_backdrop,
@@ -124,6 +126,23 @@ async def post_room_discard(
     except RoomBackdropError as exc:
         raise HTTPException(status_code=400, detail={"error": str(exc), "reason": str(exc)})
     return BackdropResponse(**response_for_backdrop(row))
+
+
+@router.delete("/room/{backdrop_id}", response_model=CompanionOperationResponse)
+async def delete_room_route(
+    user: CurrentUser,
+    backdrop_id: int,
+) -> CompanionOperationResponse:
+    """手动删除非当前房间图。"""
+    try:
+        await delete_room_backdrop(user.id, backdrop_id)
+    except RoomBackdropNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": "找不到对应的房间图", "reason": str(exc)})
+    except RoomBackdropStateError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc), "reason": str(exc)})
+    except RoomBackdropError as exc:
+        raise HTTPException(status_code=400, detail={"error": str(exc), "reason": str(exc)})
+    return CompanionOperationResponse(ok=True)
 
 
 @router.post("/room/activate", response_model=BackdropResponse)

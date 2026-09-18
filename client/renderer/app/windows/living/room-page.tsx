@@ -15,19 +15,22 @@ import {
   $roomHistory,
   $roomPolicy,
   adoptRoomImage,
+  deleteRoomHistory,
   discardPendingRoom,
   prepareRoomPrompt,
   regenerateRoom,
   rollbackRoom,
+  type RoomHistoryEntry,
   setRoomPolicy
 } from '@/modules/room'
 import { triggerHaptic } from '@/shared/lib/haptics'
-import { ArrowBackUp, Eye, FileImage, Loader2, RefreshCw, Sparkles } from '@/shared/lib/icons'
+import { ArrowBackUp, Eye, FileImage, Loader2, RefreshCw, Sparkles, Trash2 } from '@/shared/lib/icons'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
 import {
   BTN_PRIMARY,
   BTN_SUBTLE,
+  ConfirmDialog,
   HINT_TEXT,
   INPUT_CLASS,
   SettingCard,
@@ -63,6 +66,7 @@ export function RoomPage(): React.JSX.Element {
   const [referenceError, setReferenceError] = useState(false)
   const [selfSourceOpen, setSelfSourceOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [pendingDelete, setPendingDelete] = useState<RoomHistoryEntry | null>(null)
   const mounted = useRef(true)
   const generating = status === 'pending'
   const waitingUpload = status === 'waiting_upload'
@@ -188,6 +192,24 @@ export function RoomPage(): React.JSX.Element {
 
     triggerHaptic('tap')
     await rollbackRoom(backdropId)
+  }
+
+  const handleDeleteRoom = async (): Promise<void> => {
+    const target = pendingDelete
+
+    if (!target) {
+      return
+    }
+
+    triggerHaptic('tap')
+
+    try {
+      await deleteRoomHistory(target.id)
+      notify({ kind: 'success', message: tToasts.roomDeleteSuccess })
+    } catch (err) {
+      notify({ kind: 'warning', message: err instanceof Error ? err.message : tToasts.roomDeleteFailed })
+      throw err
+    }
   }
 
   const handleToggleLock = async (): Promise<void> => {
@@ -386,36 +408,53 @@ export function RoomPage(): React.JSX.Element {
               const isCurrent = String(entry.id) === String(activeBackdrop?.id)
 
               return (
-                <button
-                  aria-label={isCurrent ? t.historyCurrentAria : t.historyRollbackAria(entry.id)}
+                <div
                   className={cn(
                     'group relative aspect-video overflow-hidden rounded-lg border transition',
                     isCurrent
                       ? 'border-accent shadow-[0_0_8px_var(--ui-accent-soft,rgba(0,0,0,0.2))] ring-1 ring-accent'
                       : 'border-line-standard hover:border-accent'
                   )}
-                  disabled={isCurrent || busy}
                   key={entry.id}
-                  onClick={() => void handleRollback(entry.id)}
-                  type="button"
                 >
-                  <img
-                    alt={entry.brief || t.historyAltFallback}
-                    className="h-full w-full object-cover transition duration-150 group-hover:scale-105"
-                    src={entry.thumbnailUrl}
-                  />
+                  <button
+                    aria-label={isCurrent ? t.historyCurrentAria : t.historyRollbackAria(entry.id)}
+                    className="absolute inset-0 h-full w-full"
+                    disabled={isCurrent || busy}
+                    onClick={() => void handleRollback(entry.id)}
+                    type="button"
+                  >
+                    <img
+                      alt={entry.brief || t.historyAltFallback}
+                      className="h-full w-full object-cover transition duration-150 group-hover:scale-105"
+                      src={entry.thumbnailUrl}
+                    />
 
-                  {isCurrent ? (
-                    <span className="absolute bottom-1 left-1 rounded bg-accent/90 px-1 py-0.5 text-[9px] font-semibold text-inverse-fg backdrop-blur-sm">
-                      {t.historyCurrentLabel}
-                    </span>
-                  ) : (
-                    <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/60 opacity-0 transition group-hover:opacity-100">
-                      <ArrowBackUp className="size-3.5 text-white" />
-                      <span className="text-[9.5px] font-medium text-white/90">{t.historyRollbackLabel}</span>
-                    </span>
-                  )}
-                </button>
+                    {isCurrent ? (
+                      <span className="absolute bottom-1 left-1 rounded bg-accent/90 px-1 py-0.5 text-[9px] font-semibold text-inverse-fg backdrop-blur-sm">
+                        {t.historyCurrentLabel}
+                      </span>
+                    ) : (
+                      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/60 opacity-0 transition group-hover:opacity-100">
+                        <ArrowBackUp className="size-3.5 text-white" />
+                        <span className="text-[9.5px] font-medium text-white/90">{t.historyRollbackLabel}</span>
+                      </span>
+                    )}
+                  </button>
+
+                  {!isCurrent ? (
+                    <button
+                      aria-label={t.historyDeleteAria(entry.id)}
+                      className="absolute right-1 top-1 inline-flex size-6 items-center justify-center rounded-full bg-black/55 text-white/85 opacity-0 transition focus-visible:opacity-100 hover:bg-black/75 hover:text-rose-300 group-hover:opacity-100"
+                      disabled={busy}
+                      onClick={() => setPendingDelete(entry)}
+                      title={t.historyDeleteTitle}
+                      type="button"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  ) : null}
+                </div>
               )
             })}
           </div>
@@ -466,6 +505,20 @@ export function RoomPage(): React.JSX.Element {
             : undefined
         }
         title={`${t.generateButton} · ${dict.selfSource.open}`}
+      />
+
+      <ConfirmDialog
+        confirmLabel={t.historyDeleteLabel}
+        description={t.historyDeleteConfirmDescription}
+        onConfirm={() => handleDeleteRoom()}
+        onOpenChange={open => {
+          if (!open) {
+            setPendingDelete(null)
+          }
+        }}
+        open={pendingDelete !== null}
+        title={t.historyDeleteConfirmTitle}
+        variant="destructive"
       />
     </SettingsContent>
   )

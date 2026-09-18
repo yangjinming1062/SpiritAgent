@@ -2,7 +2,7 @@
 
 触发点：onboarding 形象确认 / 用户 HTTP 换房 / 在线 LLM 工具换房 / 夜间自主规划与着装对齐。
 同 persona 同时只允许一个 pending（CAS），新请求把旧 pending 标 superseded。
-ready 行同步设 active（除非政策在自主生成期间被锁定）；保留最近 N 张 ready 供回滚。
+ready 行同步设 active（除非政策在自主生成期间被锁定）；保留最近 N 张 ready 供回滚，用户可手动删除非当前历史行。
 故障人格化：失败后写 error_utterance 给 Client 朗读；最多 3 次尝试。
 """
 
@@ -44,7 +44,7 @@ from modules.companion import (
 from modules.ws import emit_ws_event
 from PIL import Image
 from prompts.generation import ROOM_BRIEF_SYSTEM
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.companion import load_persona_definition
@@ -682,6 +682,39 @@ async def discard_room_backdrop(user_id: int, backdrop_id: int) -> CompanionRoom
         await db.commit()
         await db.refresh(row)
         return row
+
+
+async def delete_room_backdrop(user_id: int, backdrop_id: int) -> None:
+    """删除非当前 active 的 ready/failed/superseded 房间行；pending 不可删。"""
+    media_path = ""
+    async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
+        row = (
+            await db.execute(
+                select(CompanionRoomBackdrop).where(
+                    CompanionRoomBackdrop.id == backdrop_id,
+                    CompanionRoomBackdrop.user_id == user_id,
+                ),
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            raise RoomBackdropNotFoundError(f"backdrop {backdrop_id} not found")
+        if row.status == BackdropStatus.PENDING.value:
+            if row.source == BackdropSource.USER_UPLOAD.value:
+                raise RoomBackdropStateError("等待上传的自备图请使用放弃操作")
+            raise RoomBackdropStateError("生成中的房间不能删除，请等就绪或失败后再试")
+
+        persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
+        if persona is not None and persona.active_backdrop_id == row.id:
+            raise RoomBackdropStateError("当前正在使用的房间不能删除，请先换回其他房间")
+
+        if row.media_path and row.media_path.startswith("companion-assets/"):
+            media_path = row.media_path
+        await db.execute(delete(CompanionRoomBackdrop).where(CompanionRoomBackdrop.id == row.id))
+        await db.commit()
+
+    # 先落库再删文件：提交失败时行仍在，不会留下无资产的悬空记录。
+    if media_path:
+        asset_store.unlink_companion_asset(media_path)
 
 
 def _reference_image_mime(data: bytes) -> str:
