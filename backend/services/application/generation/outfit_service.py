@@ -937,8 +937,6 @@ async def prepare_pose_prompt(
     data_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, outfit.fullbody_url)
     if not data_uri or not data_uri.startswith("data:"):
         raise OutfitStateError("外观立绘缺失或无法读取，请先重新生成外观")
-    persona = await get_or_create_persona(db, user_id)
-    definition = load_persona_definition(persona)
     backdrop: str | None = None
     try:
         _, b64 = data_uri.split(",", 1)
@@ -946,12 +944,7 @@ async def prepare_pose_prompt(
         backdrop = await asyncio.to_thread(pose_backdrop_for_artwork, artwork)
     except Exception:
         backdrop = None
-    return build_pose_side_prompt(
-        side,
-        appearance=str(definition.get("appearance") or "").strip(),
-        outfit_description=(outfit.description or "").strip(),
-        backdrop=backdrop,
-    )
+    return build_pose_side_prompt(side, backdrop=backdrop)
 
 
 async def adopt_outfit_pose(

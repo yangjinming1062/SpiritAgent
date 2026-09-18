@@ -386,79 +386,93 @@ async def _resolve_pose_context(reference: bytes, user_id: int | None) -> _PoseC
     return _PoseContext(reference, image_chain, vision_chain, _chroma_channel(pixels))
 
 
+def _peek_inward_outward(side: Side) -> tuple[str, str]:
+    """侧别语义：头倾向画布内侧；躯干与腿落在外侧，读感上被窗口边缘遮住。"""
+    return ("RIGHT", "LEFT") if side == "left" else ("LEFT", "RIGHT")
+
+
+def _peek_pose_sentences(side: Side) -> list[str]:
+    """扶边姿态正文：只描述姿势与侧向藏身，不复述身份或着装。"""
+    inward, outward = _peek_inward_outward(side)
+    return [
+        f"The character peeks out from behind a vertical screen edge. The head tilts {inward} and leans "
+        f"past both hands. Torso, hips, and legs stay on the {outward} side of an imaginary vertical "
+        f"contact line near the canvas center. Concentrate body mass toward the {outward} side of the "
+        f"canvas so the body reads as partially hidden by that edge, as if it continues off-frame beyond "
+        f"the {outward} edge. Two naturally connected arms place their hands one above the other along "
+        f"the contact line, gripping the edge. Both eyes are open, with a gentle, curious expression "
+        f"toward the viewer.",
+    ]
+
+
+def _peek_composition_sentences(side: Side, *, backdrop_text: str, square_canvas: bool) -> list[str]:
+    inward, outward = _peek_inward_outward(side)
+    if square_canvas:
+        canvas = "Work on a square 1:1 canvas. Compose one complete character"
+        framing = ""
+        tail = "Deliver one complete illustration."
+    else:
+        canvas = "Compose one complete character"
+        framing = " Scale the whole figure proportionally to achieve this framing."
+        tail = "Deliver one unified square 1:1 illustration."
+    return [
+        f"{canvas} from the top of the hair to the tips of both feet. Keep the full silhouette inside "
+        f"the frame, but shift the figure toward the {outward} side of the contact line so the peeking "
+        f"body language is clear, leaving more open space on the {inward} side. Keep at least 8% empty "
+        f"space above and below.{framing} Give every body region coherent anatomy, the character's own "
+        "skin and clothing colors, and a consistent level of illustration detail. The visible image "
+        "consists solely of the character against "
+        f"a perfectly flat, uniformly saturated {backdrop_text} background with no texture, no gradient, "
+        "no checkerboard pattern, no cast shadow, no vignette, and no glow spill onto the backdrop; keep "
+        "the background pixel-uniform to the canvas border. The contact line is an imaginary layout "
+        f"constraint. {tail}",
+    ]
+
+
 def build_pose_side_prompt(
     side: Side,
     *,
-    appearance: str = "",
-    outfit_description: str = "",
     backdrop: str | None = None,
 ) -> str:
-    """自备图场景的用户可见姿态提示词：以当前外观正面立绘为参考图锚定身份与穿着，
-    姿势与构图规范与生成链一致，不引用内部概念。backdrop 是按立绘主色推荐的纯色背景
+    """自备图场景的用户可见姿态提示词：当前外观正面立绘是唯一身份与穿着锚点，
+    只改姿态，不复述外貌或着装——多余文本会把生成结果从参考图带偏。姿势与构图
+    规范与生成链一致，不引用内部概念。backdrop 是按立绘主色推荐的纯色背景
     （ISNet 抠图不依赖背景色，仅提升色键兜底与闭眼帧质量）；缺省时只要求纯色。"""
-    inward, outward = ("RIGHT", "LEFT") if side == "left" else ("LEFT", "RIGHT")
     backdrop_text = backdrop or "flat solid"
     parts: list[str] = [
         "Redraw the character from the reference image as a full-body illustration for a peeking "
         "animation at a screen edge.",
         "",
-        "CHARACTER",
-        "The reference image is the identity and outfit anchor: keep the same character's face, species, "
-        "body proportions, hairstyle, outfit, colors, and signature details, and the same illustration "
-        "style. Do not replace the character or redesign the outfit.",
+        "IDENTITY",
+        "The reference image is the sole identity and outfit anchor. Keep the character and outfit "
+        "exactly as drawn there — same face, species, body proportions, hairstyle, outfit, colors, "
+        "signature details, and illustration style. Do not redesign, restyle, recolor, or substitute "
+        "any of them. Change only the pose.",
+        "",
+        "POSE AND EXPRESSION",
+        *_peek_pose_sentences(side),
+        "",
+        "COMPOSITION AND RENDERING",
+        *_peek_composition_sentences(side, backdrop_text=backdrop_text, square_canvas=True),
     ]
-    if appearance.strip():
-        parts.append(f"The character's appearance (supplementary): {appearance.strip()}.")
-    if outfit_description.strip():
-        parts.append(f"The character's current outfit: {outfit_description.strip()}.")
-    parts.append("")
-    parts.extend(
-        (
-            "POSE AND EXPRESSION",
-            "Two naturally connected arms place their hands one above the other along an imaginary vertical contact "
-            f"line near the canvas center. The head leans {inward} beyond the hands, while the hips and legs remain "
-            f"on the {outward} side of that line. Both eyes are open, with a gentle, curious expression toward the "
-            "viewer.",
-            "",
-            "COMPOSITION AND RENDERING",
-            "Work on a square 1:1 canvas. Compose one complete character from the top of the hair to the tips of "
-            "both feet. Keep the entire "
-            "silhouette inside the frame, with at least 8% empty space above and below and clear space at both "
-            "sides. Give every body region coherent anatomy, the character's own skin and clothing colors, and "
-            "a consistent level of illustration detail. The visible image consists solely of the character against "
-            f"a perfectly flat, uniformly saturated {backdrop_text} background with no texture, no gradient, no "
-            "checkerboard pattern, no cast shadow, no vignette, and no glow spill onto the backdrop; keep the "
-            "background pixel-uniform to the canvas border. The contact line is an imaginary layout constraint. "
-            "Deliver one complete illustration.",
-        ),
-    )
     return "\n".join(parts)
 
 
 async def _compose_pose(side: Side, context: _PoseContext) -> tuple[Pose, dict[str, bytes]]:
     guide = (Path(__file__).parent / "pose-guides" / f"{side}.webp").read_bytes()
-    inward, outward = ("RIGHT", "LEFT") if side == "left" else ("LEFT", "RIGHT")
     backdrop = _POSE_BACKDROPS[context.channel]
     prompt = (
         "Create a full-body character illustration for a peeking animation at a screen edge.\n\n"
         "REFERENCE ROLES\n"
-        "The input sheet has two reference panels. The left panel defines the character's face, body proportions, hair, "
-        "outfit, colors, asymmetric details, and illustration style. The right panel defines the articulated body pose, "
-        "hand shapes, and relative grip locations. Render the character design from the left in the pose from the right. "
-        "The references supply visual design evidence; this brief defines the finished composition.\n\n"
-        "POSE AND EXPRESSION\n"
-        "Two naturally connected arms place their hands one above the other along an imaginary vertical contact line "
-        f"near the canvas center. The head leans {inward} beyond the hands, while the hips and legs remain on the {outward} "
-        "side of that line. Both eyes are open, with a gentle, curious expression toward the viewer.\n\n"
+        "The input sheet has two reference panels. The left panel is the sole identity and outfit anchor: "
+        "reproduce its character, outfit, colors, asymmetric details, and illustration style without "
+        "redesign. The right panel defines only the articulated body pose, hand shapes, and relative grip "
+        "locations. Render the left-panel character in the right-panel pose. Do not invent new character "
+        "or outfit details. The references supply visual design evidence; this brief defines the finished "
+        "composition.\n\n"
+        "POSE AND EXPRESSION\n" + "\n".join(_peek_pose_sentences(side)) + "\n\n"
         "COMPOSITION AND RENDERING\n"
-        "Compose one complete character from the top of the hair to the tips of both feet. Keep the entire silhouette "
-        "inside a square canvas, with at least 8% empty space above and below and clear space at both sides. Scale the "
-        "whole figure proportionally to achieve this framing. Give every body region coherent anatomy, the character's "
-        "own skin and clothing colors, and a consistent level of illustration detail. The visible image consists solely "
-        f"of the character against a perfectly flat, uniformly saturated {backdrop} background with no texture, no "
-        "gradient, no checkerboard pattern, no cast shadow, no vignette, and no glow spill onto the backdrop; keep the "
-        "background pixel-uniform to the canvas border. The contact line is an imaginary layout constraint. Deliver one "
-        "unified square 1:1 illustration."
+        + "\n".join(_peek_composition_sentences(side, backdrop_text=backdrop, square_canvas=False))
     )
     raw = await generate_image(prompt, context.reference, context.image_chain, guide)
     return await _finish_pose(raw, side, context.image_chain, context.vision_chain, context.channel)
