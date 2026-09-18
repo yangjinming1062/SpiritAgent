@@ -58,7 +58,8 @@ export {
   IconUsers as Users,
   IconVideo as Video,
   IconVolume2 as Volume2,
-  IconX as X
+  IconX as X,
+  IconZoomIn as ZoomIn
 } from '@tabler/icons-react'
 
 export type { Icon as IconComponent } from '@tabler/icons-react'

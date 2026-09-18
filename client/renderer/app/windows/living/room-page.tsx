@@ -23,8 +23,9 @@ import {
   type RoomHistoryEntry,
   setRoomPolicy
 } from '@/modules/room'
+import { PortraitLightbox } from '@/shared'
 import { triggerHaptic } from '@/shared/lib/haptics'
-import { ArrowBackUp, Eye, FileImage, Loader2, RefreshCw, Sparkles, Trash2 } from '@/shared/lib/icons'
+import { ArrowBackUp, Eye, FileImage, Loader2, RefreshCw, Sparkles, Trash2, ZoomIn } from '@/shared/lib/icons'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
 import {
@@ -51,6 +52,11 @@ function GroupHeading({ subtitle, title }: { subtitle?: string; title: string })
   )
 }
 
+interface ZoomTarget {
+  name: string
+  url: string
+}
+
 export function RoomPage(): React.JSX.Element {
   const history = useStore($roomHistory)
   const policy = useStore($roomPolicy)
@@ -67,10 +73,19 @@ export function RoomPage(): React.JSX.Element {
   const [selfSourceOpen, setSelfSourceOpen] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [pendingDelete, setPendingDelete] = useState<RoomHistoryEntry | null>(null)
+  const [zoom, setZoom] = useState<ZoomTarget | null>(null)
   const mounted = useRef(true)
   const generating = status === 'pending'
   const waitingUpload = status === 'waiting_upload'
   const busy = generating || selecting || waitingUpload || uploading
+
+  const openZoom = (url: string | undefined, name: string): void => {
+    if (!url) {
+      return
+    }
+
+    setZoom({ name, url })
+  }
 
   useEffect(() => {
     mounted.current = true
@@ -83,6 +98,9 @@ export function RoomPage(): React.JSX.Element {
       setReference(null)
       setSelecting(false)
       setReferenceError(false)
+      // 换号/清仓后历史与当前房间均已重置，灯箱与删除确认不得继续展示旧图。
+      setZoom(null)
+      setPendingDelete(null)
     })
 
     return (): void => {
@@ -230,11 +248,27 @@ export function RoomPage(): React.JSX.Element {
       <SettingCard>
         <div className="relative aspect-video w-full overflow-hidden bg-fill-muted/25">
           {activeBackdrop?.url ? (
-            <img
-              alt={activeBackdrop.brief || t.currentAltFallback}
-              className="h-full w-full object-cover"
-              src={activeBackdrop.url}
-            />
+            <button
+              aria-label={t.viewOriginalAria}
+              className="group/view relative block h-full w-full cursor-zoom-in border-0 bg-transparent p-0"
+              onClick={() => openZoom(activeBackdrop.url, activeBackdrop.brief || t.currentAltFallback)}
+              title={t.viewOriginal}
+              type="button"
+            >
+              <img
+                alt={activeBackdrop.brief || t.currentAltFallback}
+                className="h-full w-full object-cover"
+                src={activeBackdrop.url}
+              />
+
+              {/* 可查看原图时给出轻量提示；悬停或键盘聚焦按钮时显示 */}
+              {!generating && status !== 'failed' && !waitingUpload ? (
+                <span className="pointer-events-none absolute right-2.5 bottom-2.5 inline-flex items-center gap-1 rounded-full bg-black/55 px-2 py-0.5 text-[10px] text-white/90 opacity-0 transition group-hover/view:opacity-100 group-focus-visible/view:opacity-100">
+                  <ZoomIn className="size-3" />
+                  {t.viewOriginal}
+                </span>
+              ) : null}
+            </button>
           ) : (
             <div className="flex h-full w-full flex-col items-center justify-center gap-2 text-faint">
               <FileImage className="size-8 opacity-30" />
@@ -244,7 +278,7 @@ export function RoomPage(): React.JSX.Element {
 
           {/* 生效中指示 */}
           {activeBackdrop?.url && !generating && status !== 'failed' ? (
-            <div className="absolute top-2.5 left-2.5">
+            <div className="pointer-events-none absolute top-2.5 left-2.5">
               <span className="inline-flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-0.5 text-[10.5px] font-medium text-white shadow-sm backdrop-blur-md">
                 <span className="size-1.5 rounded-full bg-emerald-400" />
                 {t.currentBadge}
@@ -406,6 +440,7 @@ export function RoomPage(): React.JSX.Element {
           <div className="grid grid-cols-5 gap-2 p-3.5">
             {history.map(entry => {
               const isCurrent = String(entry.id) === String(activeBackdrop?.id)
+              const displayName = entry.brief || t.historyAltFallback
 
               return (
                 <div
@@ -418,42 +453,56 @@ export function RoomPage(): React.JSX.Element {
                   key={entry.id}
                 >
                   <button
-                    aria-label={isCurrent ? t.historyCurrentAria : t.historyRollbackAria(entry.id)}
-                    className="absolute inset-0 h-full w-full"
-                    disabled={isCurrent || busy}
-                    onClick={() => void handleRollback(entry.id)}
+                    aria-label={isCurrent ? t.historyViewCurrentAria : t.historyViewAria(entry.id)}
+                    className="group/view absolute inset-0 h-full w-full cursor-zoom-in"
+                    onClick={() => openZoom(entry.url, displayName)}
+                    title={t.historyViewLabel}
                     type="button"
                   >
                     <img
-                      alt={entry.brief || t.historyAltFallback}
-                      className="h-full w-full object-cover transition duration-150 group-hover:scale-105"
+                      alt={displayName}
+                      className="h-full w-full object-cover transition duration-150 group-hover/view:scale-105"
                       src={entry.thumbnailUrl}
                     />
 
-                    {isCurrent ? (
-                      <span className="absolute bottom-1 left-1 rounded bg-accent/90 px-1 py-0.5 text-[9px] font-semibold text-inverse-fg backdrop-blur-sm">
-                        {t.historyCurrentLabel}
-                      </span>
-                    ) : (
-                      <span className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/60 opacity-0 transition group-hover:opacity-100">
-                        <ArrowBackUp className="size-3.5 text-white" />
-                        <span className="text-[9.5px] font-medium text-white/90">{t.historyRollbackLabel}</span>
-                      </span>
-                    )}
+                    {/* 全局 CSS 去掉了 focus ring：键盘焦点时用不透明角标给出命中提示。 */}
+                    <span className="pointer-events-none absolute top-1 left-1 inline-flex size-5 items-center justify-center rounded-full bg-black/55 text-white/90 opacity-0 transition group-hover/view:opacity-100 group-focus-visible/view:opacity-100">
+                      <ZoomIn className="size-3" />
+                    </span>
                   </button>
 
-                  {!isCurrent ? (
-                    <button
-                      aria-label={t.historyDeleteAria(entry.id)}
-                      className="absolute right-1 top-1 inline-flex size-6 items-center justify-center rounded-full bg-black/55 text-white/85 opacity-0 transition focus-visible:opacity-100 hover:bg-black/75 hover:text-rose-300 group-hover:opacity-100"
-                      disabled={busy}
-                      onClick={() => setPendingDelete(entry)}
-                      title={t.historyDeleteTitle}
-                      type="button"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  ) : null}
+                  {isCurrent ? (
+                    <span className="pointer-events-none absolute bottom-1 left-1 rounded bg-accent/90 px-1 py-0.5 text-[9px] font-semibold text-inverse-fg backdrop-blur-sm">
+                      {t.historyCurrentLabel}
+                    </span>
+                  ) : (
+                    <>
+                      {/* 默认 pointer-events-none：避免透明操作钮抢占「点击查看原图」的命中。
+                          操作钮是 group/view 的兄弟节点，不能用 group-hover/view（那只作用于后代）；
+                          悬停态挂在外层 cell 的 group 上。 */}
+                      <button
+                        aria-label={t.historyRollbackAria(entry.id)}
+                        className="pointer-events-none absolute inset-x-1 bottom-1 inline-flex h-6 items-center justify-center gap-1 rounded-md bg-black/60 text-[9.5px] font-medium text-white/90 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-black/80 focus-visible:pointer-events-auto focus-visible:opacity-100"
+                        disabled={busy}
+                        onClick={() => void handleRollback(entry.id)}
+                        type="button"
+                      >
+                        <ArrowBackUp className="size-3" />
+                        {t.historyRollbackLabel}
+                      </button>
+
+                      <button
+                        aria-label={t.historyDeleteAria(entry.id)}
+                        className="pointer-events-none absolute right-1 top-1 inline-flex size-6 items-center justify-center rounded-full bg-black/55 text-white/85 opacity-0 transition group-hover:pointer-events-auto group-hover:opacity-100 hover:bg-black/75 hover:text-rose-300 focus-visible:pointer-events-auto focus-visible:opacity-100"
+                        disabled={busy}
+                        onClick={() => setPendingDelete(entry)}
+                        title={t.historyDeleteTitle}
+                        type="button"
+                      >
+                        <Trash2 className="size-3.5" />
+                      </button>
+                    </>
+                  )}
                 </div>
               )
             })}
@@ -520,6 +569,8 @@ export function RoomPage(): React.JSX.Element {
         title={t.historyDeleteConfirmTitle}
         variant="destructive"
       />
+
+      {zoom ? <PortraitLightbox name={zoom.name} onClose={() => setZoom(null)} url={zoom.url} /> : null}
     </SettingsContent>
   )
 }

@@ -626,8 +626,13 @@ export const dict: Dictionary = {
 
   ui: {
     lightbox: {
-      backdropAria: 'Click to close',
-      closePreview: 'Close preview'
+      backdropAria: 'Click backdrop to close',
+      closePreview: 'Close preview',
+      zoomIn: 'Zoom in',
+      zoomOut: 'Zoom out',
+      zoomReset: 'Reset',
+      zoomPercent: (n: number) => `${n}%`,
+      zoomHint: 'Scroll to zoom · drag to pan · double-click to zoom in/out'
     },
     panelDragToMove: 'Drag to move panel',
     search: {
@@ -1106,8 +1111,12 @@ export const dict: Dictionary = {
       historyAltFallback: 'Previous room',
       historyCurrentLabel: 'Current',
       historyRollbackLabel: 'Use this one',
-      historyCurrentAria: 'Currently active room',
       historyRollbackAria: (id: string) => `Roll back to previous room ${id}`,
+      viewOriginal: 'Zoom to view',
+      viewOriginalAria: 'Zoom to view current room image',
+      historyViewLabel: 'Zoom to view',
+      historyViewAria: (id: string) => `Zoom to view previous room ${id}`,
+      historyViewCurrentAria: 'Zoom to view previous room (currently active)',
       historyDeleteLabel: 'Delete',
       historyDeleteAria: (id: string) => `Delete previous room ${id}`,
       historyDeleteTitle: 'Delete this previous room',

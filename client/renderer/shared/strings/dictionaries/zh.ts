@@ -582,8 +582,13 @@ export const dict = {
 
   ui: {
     lightbox: {
-      backdropAria: '点击关闭',
-      closePreview: '关闭预览'
+      backdropAria: '点击背景关闭',
+      closePreview: '关闭预览',
+      zoomIn: '放大',
+      zoomOut: '缩小',
+      zoomReset: '重置',
+      zoomPercent: (n: number) => `${n}%`,
+      zoomHint: '滚轮缩放 · 拖动平移 · 双击放大/还原'
     },
     panelDragToMove: '拖动以移动面板',
     search: {
@@ -1048,8 +1053,12 @@ export const dict = {
       historyAltFallback: '历史房间',
       historyCurrentLabel: '当前',
       historyRollbackLabel: '换回此间',
-      historyCurrentAria: '当前正在使用的房间',
       historyRollbackAria: (id: string) => `回滚到历史房间 ${id}`,
+      viewOriginal: '放大查看',
+      viewOriginalAria: '放大查看当前房间图',
+      historyViewLabel: '放大查看',
+      historyViewAria: (id: string) => `放大查看历史房间 ${id}`,
+      historyViewCurrentAria: '放大查看历史房间（当前使用中）',
       historyDeleteLabel: '删除',
       historyDeleteAria: (id: string) => `删除历史房间 ${id}`,
       historyDeleteTitle: '删除这张历史房间',

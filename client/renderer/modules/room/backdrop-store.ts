@@ -34,7 +34,10 @@ export interface RoomHistoryEntry {
   origin?: string
   outfitFingerprint?: string
   prompt?: string
+  // 列表缩略图；后端未给 thumbnail_url 时与 url 同源。
   thumbnailUrl: string
+  // 原图 URL，灯箱查看使用。
+  url: string
 }
 
 interface RoomBackdropWire {
@@ -108,11 +111,13 @@ async function toHistoryEntry(w: RoomBackdropWire): Promise<RoomHistoryEntry | n
     return null
   }
 
-  const url = await resolveBackdropUrl(w.thumbnail_url ?? w.url)
+  const url = await resolveBackdropUrl(w.url)
 
   if (!url) {
     return null
   }
+
+  const thumbnailUrl = w.thumbnail_url ? await resolveBackdropUrl(w.thumbnail_url) : url
 
   return {
     brief: w.brief ?? '',
@@ -120,7 +125,8 @@ async function toHistoryEntry(w: RoomBackdropWire): Promise<RoomHistoryEntry | n
     origin: w.origin,
     outfitFingerprint: w.outfit_fingerprint,
     prompt: w.prompt,
-    thumbnailUrl: url
+    thumbnailUrl,
+    url
   }
 }
 
