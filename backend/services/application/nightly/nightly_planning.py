@@ -45,7 +45,6 @@ from services.application.generation import (
     enqueue_video_job,
     generate_images,
     get_room_state,
-    invalidate_room_for_outfit,
     load_avatar_bytes_as_data_uri,
     resolve_image_gen_chain,
     resolve_self_reference_data_uri,
@@ -981,7 +980,6 @@ async def _execute_outfit_create(
     if not ready.active:
         async with SESSION_LOCAL() as db:
             ready = await activate_outfit(db, user_id, ready.id)
-    await invalidate_room_for_outfit(user_id, new_fingerprint=str(ready.id))
     display_name = ready.name if ready.name != "新外观" else description[:40]
     result = ActionExecutionResult(
         status="succeeded",

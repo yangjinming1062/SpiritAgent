@@ -1098,7 +1098,7 @@ export const dict: Dictionary = {
       policyTitle: 'Room policy',
       policyLabel: 'Companion-driven room changes',
       policyDesc:
-        'When locked the companion refuses to change rooms on their own, only responding to outfit-linked changes or your direct request. Unlocked, the companion can switch rooms whenever the mood strikes.',
+        'When locked, the companion refuses to change rooms autonomously or rebuild during nightly alignment, only responding to your direct request. Unlocked, the companion can switch rooms whenever the mood strikes.',
       policyStatusLocked: 'Locked',
       policyStatusUnlocked: 'Allowed',
       policyToggleAria: 'Allow companion-driven room changes'

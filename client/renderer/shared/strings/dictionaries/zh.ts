@@ -1040,7 +1040,7 @@ export const dict = {
       historyRollbackAria: (id: string) => `回滚到历史房间 ${id}`,
       policyTitle: '房间政策',
       policyLabel: '角色自主换房',
-      policyDesc: '锁定后角色拒绝自主换房，仅响应换装联动与你的主动请求；解锁后角色可随心情时机自主换房。',
+      policyDesc: '锁定后角色拒绝自主换房与夜间对齐重建，仅响应你的主动请求；解锁后角色可随心情时机自主换房。',
       policyStatusLocked: '已锁定',
       policyStatusUnlocked: '允许换房',
       policyToggleAria: '允许角色自主换房'

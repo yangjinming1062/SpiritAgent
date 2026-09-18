@@ -24,6 +24,7 @@ from prompts.nightly import NIGHTLY_REFLECTION_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
+from services.application.generation import reconcile_room_outfit
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.companion import load_persona_definition
 from services.domains.conversation import SPECIAL_KIND, UI_ONLY_SUBTYPES, validate_memory_scope
@@ -471,6 +472,24 @@ async def _run_nightly_pipeline_inner(
                     "error": str(exc),
                 },
             )
+
+    try:
+        reconcile_result = await reconcile_room_outfit(user_id)
+        stages.append(
+            {
+                "stage": "room_outfit_reconcile",
+                "status": "skipped" if reconcile_result.outcome == "skipped" else "ok",
+                "result": reconcile_result.outcome,
+                "backdrop_id": reconcile_result.backdrop_id,
+                **({"reason": reconcile_result.reason} if reconcile_result.reason else {}),
+            },
+        )
+    except Exception as exc:
+        logger.exception(
+            "nightly_activity: room outfit reconcile failed",
+            extra={"user_id": user_id, "error": str(exc)},
+        )
+        stages.append({"stage": "room_outfit_reconcile", "status": "error", "error": str(exc)})
 
     if has_user_messages or action_facts or moment_interactions:
         try:

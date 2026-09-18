@@ -1,6 +1,6 @@
 """伙伴房间图生命周期。
 
-触发点：onboarding 形象确认 / 换装成功 / 用户 HTTP 换房 / 在线 LLM 工具换房 / 夜间自主规划。
+触发点：onboarding 形象确认 / 用户 HTTP 换房 / 在线 LLM 工具换房 / 夜间自主规划与着装对齐。
 同 persona 同时只允许一个 pending（CAS），新请求把旧 pending 标 superseded。
 ready 行同步设 active（除非政策在自主生成期间被锁定）；保留最近 N 张 ready 供回滚。
 故障人格化：失败后写 error_utterance 给 Client 朗读；最多 3 次尝试。
@@ -273,54 +273,101 @@ async def activate_backdrop(
         return target
 
 
-async def invalidate_room_for_outfit(user_id: int, new_fingerprint: str | None) -> None:
-    """换装成功后调用：切走 active 展示指针并 schedule origin=outfit 的重建。"""
-    should_rebuild = False
+@dataclass(frozen=True, slots=True)
+class RoomOutfitReconcileResult:
+    """夜间房间—着装对齐结果；outcome 见 reconcile_room_outfit。"""
+
+    outcome: str
+    backdrop_id: int | None = None
+    reason: str = ""
+
+
+async def reconcile_room_outfit(user_id: int) -> RoomOutfitReconcileResult:
+    """夜间流水线：房间图着装指纹与当前穿着对齐。
+
+    换装成功不即时重建房间（避免频繁换装触发大量生图）。本函数由夜间调用：
+    - 指纹一致 → no-op；
+    - 历史中存在指纹匹配的 ready 图 → 只切 active 指针复用，不生图；
+    - 否则 schedule origin=nightly 重建（受房间自主政策锁定约束）。
+    """
     async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
         if persona is None or not persona.is_complete:
-            return
-        active_id = persona.active_backdrop_id
-        if active_id is not None:
-            active = (
-                await db.execute(
-                    select(CompanionRoomBackdrop).where(
-                        CompanionRoomBackdrop.id == active_id,
-                        CompanionRoomBackdrop.user_id == user_id,
-                    ),
-                )
-            ).scalar_one_or_none()
-            if active is not None and (not new_fingerprint or active.outfit_fingerprint == new_fingerprint):
-                return
-            # 只切展示指针：旧行保持 READY 留在历史（≤N 张）里供查看与回滚；
-            # 若标 SUPERSEDED，用户刚生成的房间图会直接消失。
-            persona.active_backdrop_id = None
-            await db.commit()
-            should_rebuild = True
-            await _emit_backdrop_event(
-                user_id,
-                "companion.room.invalidated",
-                {"reason": "outfit", "active_backdrop_id": active_id},
-            )
+            return RoomOutfitReconcileResult("skipped", reason="persona not ready")
+        if persona.backdrop_policy == BackdropPolicy.LOCKED.value:
+            return RoomOutfitReconcileResult("skipped", reason="room locked")
+
+        current_fingerprint = await _current_outfit_fingerprint(db, user_id)
+        active = await get_active_backdrop(db, user_id, persona=persona)
+        if active is not None:
+            active_fingerprint = active.outfit_fingerprint or ""
+            if not (current_fingerprint or active_fingerprint) or active_fingerprint == current_fingerprint:
+                return RoomOutfitReconcileResult("consistent", backdrop_id=active.id)
+        elif not current_fingerprint:
+            return RoomOutfitReconcileResult("consistent", reason="no active backdrop and no ready outfit")
         else:
-            pending = await get_pending_backdrop(db, user_id)
-            if pending is not None and (not new_fingerprint or pending.outfit_fingerprint == new_fingerprint):
-                return
             has_backdrop = (
                 await db.execute(
                     select(CompanionRoomBackdrop.id).where(CompanionRoomBackdrop.user_id == user_id).limit(1),
                 )
             ).scalar_one_or_none()
-            if has_backdrop is not None:
-                should_rebuild = True
+            if has_backdrop is None:
+                return RoomOutfitReconcileResult("skipped", reason="no existing room backdrop to reconcile")
 
-    if should_rebuild:
-        await schedule_room_generation(
+        pending = await get_pending_backdrop(db, user_id)
+        if pending is not None:
+            if pending.source == BackdropSource.USER_UPLOAD.value:
+                return RoomOutfitReconcileResult(
+                    "skipped",
+                    backdrop_id=pending.id,
+                    reason="pending user upload in progress",
+                )
+            if pending.outfit_fingerprint == current_fingerprint:
+                return RoomOutfitReconcileResult(
+                    "rebuild_scheduled",
+                    backdrop_id=pending.id,
+                    reason="already pending for current outfit",
+                )
+
+        candidate = (
+            await db.execute(
+                select(CompanionRoomBackdrop)
+                .where(
+                    CompanionRoomBackdrop.user_id == user_id,
+                    CompanionRoomBackdrop.status == BackdropStatus.READY.value,
+                    CompanionRoomBackdrop.outfit_fingerprint == current_fingerprint,
+                )
+                .order_by(
+                    CompanionRoomBackdrop.ready_at.desc().nullslast(),
+                    CompanionRoomBackdrop.id.desc(),
+                )
+                .limit(1),
+            )
+        ).scalar_one_or_none()
+        if candidate is not None:
+            if pending is not None:
+                await _supersede_pending(db, user_id)
+                _cancel_inflight_task(user_id)
+            persona.active_backdrop_id = candidate.id
+            await db.commit()
+            await db.refresh(candidate)
+            await _emit_backdrop_event(
+                user_id,
+                "companion.room.ready",
+                _event_payload(candidate, persona),
+            )
+            return RoomOutfitReconcileResult("reused", backdrop_id=candidate.id)
+
+    try:
+        row = await schedule_room_generation(
             user_id,
-            origin=BackdropOrigin.OUTFIT.value,
+            origin=BackdropOrigin.NIGHTLY.value,
             intent=BackdropIntent.REBUILD.value,
             notes=None,
         )
+    except RoomBackdropError as exc:
+        return RoomOutfitReconcileResult("skipped", reason=str(exc))
+    return RoomOutfitReconcileResult("rebuild_scheduled", backdrop_id=row.id)
 
 
 async def _current_outfit_fingerprint(db: AsyncSession, user_id: int) -> str:
@@ -555,8 +602,7 @@ async def adopt_room_backdrop(
     data: bytes,
 ) -> CompanionRoomBackdrop:
     """自备图采纳：校验用户上传的房间图并落库，行按生成链同一激活/事件语义转 ready。
-    brief 与提示词沿用提示词步骤落库的原文；着装指纹取提示词步骤的快照，
-    之后换装仍会按指纹联动失效重建（走正常 AI 生成）。"""
+    brief 与提示词沿用提示词步骤落库的原文；着装指纹取提示词步骤的快照。"""
     try:
         data, mime = await asyncio.to_thread(_decode_reference_image, data)
     except Exception as exc:
