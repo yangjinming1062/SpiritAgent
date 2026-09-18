@@ -251,6 +251,12 @@ function tick(now: number): void {
   }
 }
 
+export function moveDurationMs(dist: number, locomotion: 'walk' | 'fly'): number {
+  const speed = locomotion === 'walk' ? WALK_SPEED : FLY_SPEED
+
+  return Math.max((dist / speed) * 1000, 200)
+}
+
 export function moveTo(target: { x: number; y: number }, locomotion: 'walk' | 'fly', onArrive?: () => void): void {
   cancelMovement()
 
@@ -263,12 +269,10 @@ export function moveTo(target: { x: number; y: number }, locomotion: 'walk' | 'f
     return
   }
 
-  const speed = locomotion === 'walk' ? WALK_SPEED : FLY_SPEED
-
   moveStart = { ...current }
   moveTarget = target
   moveStartTime = performance.now()
-  moveDuration = Math.max((dist / speed) * 1000, 200)
+  moveDuration = moveDurationMs(dist, locomotion)
   moveOnArrive = onArrive ?? null
   $spatialLocomotion.set(locomotion)
   rafId = requestAnimationFrame(tick)

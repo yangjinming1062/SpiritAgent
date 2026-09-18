@@ -12,6 +12,7 @@ import {
   computePerchPlacement,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
+  moveDurationMs,
   moveTo,
   updateSpatialDecision
 } from './spatial'
@@ -20,6 +21,9 @@ const RETRY_MS = 300
 const RETRY_COUNT = 5
 // DESIGN §3.6：远距离飞、近距离走。低于该距离的目标走过去更有"走过去动手"的仪式感。
 const WALK_RANGE_PX = 400
+// 行走动画被中止（生活空间打开 / 开始拖拽会取消移动且不回调）时的宽限：
+// 到点即视为行走结束，就地继续执行原工具。
+const WALK_ABORT_GRACE_MS = 2000
 
 // 仪式行走失败的离线/机械降级台词（DESIGN §3.6 / RULES 原则七边界）——
 // 走 speakProactive 的档位门控：静止档静默、常规档仅气泡、自主档开口。
@@ -113,7 +117,13 @@ export async function performRitualWalk<T>(
 
   try {
     const dist = Math.hypot(perch.x - $spatialPos.get().x, perch.y - $spatialPos.get().y)
-    await new Promise<void>(resolve => moveTo(perch, dist > WALK_RANGE_PX ? 'fly' : 'walk', resolve))
+    const locomotion = dist > WALK_RANGE_PX ? ('fly' as const) : ('walk' as const)
+    // 到达回调在行走被取消时不会触发（spatial 的 surface/drag 中止路径直接丢弃它）；
+    // 仪式行走只是装饰，限时等待后必须继续执行原工具，不能让行走挂起整条工具链。
+    await Promise.race([
+      new Promise<void>(resolve => moveTo(perch, locomotion, resolve)),
+      sleep(moveDurationMs(dist, locomotion) + WALK_ABORT_GRACE_MS)
+    ])
 
     const dx = targetCenter.x - ($spatialPos.get().x + getBaseSpriteWidth() / 2)
     $spriteAction.set(dx >= 0 ? 'point_right' : 'point_left')
