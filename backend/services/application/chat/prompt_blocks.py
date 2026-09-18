@@ -36,7 +36,6 @@ from prompts.chat import (
     OUTFIT_DEMEANOR_GUIDANCES,
     PLATFORM_HINTS_TEXTS,
     SESSION_SEARCH_GUIDANCES,
-    STEER_CHANNEL_NOTES,
     TOOL_USE_ENFORCEMENTS,
     VOLATILE_LABELS,
     WORK_GUIDANCES,
@@ -184,10 +183,6 @@ def _work_tool_guidance_block(config: AgentPromptConfig) -> str | None:
     )
 
 
-def _steer_channel_note_block(config: AgentPromptConfig) -> str | None:
-    return resolve_prompt_text(STEER_CHANNEL_NOTES, config.language) if config.valid_tool_names else None
-
-
 def _environment_hints_block(config: AgentPromptConfig) -> str | None:
     ctx = config.client_context
     return ctx.environment_hints if ctx and ctx.environment_hints else None
@@ -288,7 +283,6 @@ BLOCK_RENDERERS: dict[str, Callable[[AgentPromptConfig], str | None]] = {
     "MEDIA_GUIDANCE": _media_guidance_block,
     "ATTACHMENT_GUIDANCE": _attachment_guidance_block,
     "TOOL_USE_ENFORCEMENT": _tool_use_enforcement_block,
-    "STEER_CHANNEL_NOTE": _steer_channel_note_block,
     "ENVIRONMENT_HINTS": _environment_hints_block,
     "PLATFORM_HINTS": _platform_hints_block,
     "USER_IDENTITY_OVERRIDE": _user_identity_override_block,

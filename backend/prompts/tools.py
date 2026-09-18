@@ -83,8 +83,8 @@ MOMENT_CREATE_DESC = "在用户生活空间时间线写一条时刻。主动记�
 MOMENT_CREATE_PARAM_DESCS = {
     "title": "短标题（≤ 24 字）",
     "body": "80–240 字的正文，第一人称或第二人称皆可",
-    "emotion": "可选情绪 token，取值见系统提示中的 emotion 枚举",
-    "kind": "默认 user",
+    "emotion": "可选情绪 token，如 happy/sad/curious/neutral；不确定时省略",
+    "kind": "内容性质：emotion=情绪感受 / together=共同经历 / scene=场景画面；默认 emotion",
 }
 
 DIARY_WRITE_DESC = "在用户日记本追加一段（用户时区今天），第一人称；不覆盖用户已写过的当日内容（按追加段落处理）。"
