@@ -46,7 +46,9 @@ def _normalize(image: Image.Image) -> np.ndarray:
 def subject_matte(raw: bytes) -> Image.Image | None:
     """对姿态图跑 ISNet，返回以蒙版为 alpha 的 RGBA；模型缺失或推理失败返回 None。
 
-    ISNet 输出显著性概率而非硬分割，蒙版经二值 + 轻微羽化，避免半透明噪点整片残留。
+    ISNet 输出显著性概率而非硬分割。用较宽软阈值映射：低置信背景压成透明，高置信
+    主体保持不透明，边缘保留过渡带。原先接近阶跃的硬二值会把近景残留整片变成
+    不透明色块，贴边合成到深色房间时尤其明显。
     """
     try:
         session = _get_session()
@@ -67,8 +69,10 @@ def subject_matte(raw: bytes) -> Image.Image | None:
             results = session.run(None, {"input_image": feed.astype(np.float32)})
         # 首个输出为主显著性图（后续为内部特征图），值域 0..1 已是概率，无需再过 sigmoid。
         matte = results[0][0, 0]
-        hard = np.clip((matte - 0.5) * 10 * 255, 0, 255).astype(np.uint8)
-        alpha = Image.fromarray(hard).filter(ImageFilter.GaussianBlur(1.5))
+        # 软阈值约 0.35→透明、0.65→不透明；比 (p-0.5)*10 更能保留发丝/光晕边缘，
+        # 同时把大片低置信背景压掉，避免半透明残留在合成时露出底色。
+        soft = np.clip((matte - 0.35) / 0.30, 0.0, 1.0)
+        alpha = Image.fromarray((soft * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(1.2))
         rgba = original.convert("RGBA")
         rgba.putalpha(alpha.resize(original.size, Image.Resampling.BILINEAR))
         return rgba

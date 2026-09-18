@@ -211,14 +211,18 @@ def _border_flood(candidate: NDArray[np.bool_]) -> NDArray[np.bool_]:
         reach = grown
 
 
-def cutout(raw: bytes, channel: int) -> Image.Image:
-    """色幕抠图：与画布边框连通的背景整片泛洪清除（容忍色幕漂移、渐变与棋盘格纹理），封闭空隙退回色键。"""
-    with Image.open(io.BytesIO(raw)) as source:
-        rgb = np.asarray(source.convert("RGB"), dtype=np.float32)
+def _analyze_chroma(
+    rgb: NDArray[np.float32],
+    channel: int,
+) -> tuple[NDArray[np.bool_], NDArray[np.bool_], NDArray[np.float32]]:
+    """色幕背景分析：返回 (边框泛洪背景, 近边框主色硬掩码, 色键 alpha)。
+
+    背景色取自粗化图的边框环：生成要求角色四周留白，边框环几乎全为背景；棋盘格
+    等纹理粗化后摊平为均值色。候选判据只认「颜色仍近似边框背景」，不用色幕通道差
+    作泛洪条件——服装主色与色幕同通道时洪水会灌进角色。
+    """
     others = [c for c in range(3) if c != channel]
     excess = rgb[:, :, channel] - rgb[:, :, others].max(axis=2)
-
-    # 背景色取自粗化图的边框环：生成要求角色四周留白，边框环几乎全为背景；棋盘格等纹理粗化后摊平为均值色。
     small = np.asarray(
         Image.fromarray(rgb.astype(np.uint8)).resize(
             (rgb.shape[1] // 4, rgb.shape[0] // 4),
@@ -228,8 +232,6 @@ def cutout(raw: bytes, channel: int) -> Image.Image:
     )
     border = np.concatenate([small[0], small[-1], small[:, 0], small[:, -1]])
     bg = np.median(border, axis=0)
-    # 候选判据只认「颜色仍近似边框背景」。不用色幕通道差作泛洪条件：
-    # 服装主色与色幕同通道时洪水会灌进角色；远离背景色的渐变漂移由色键 alpha 兜底。
     candidate = np.sqrt(((small - bg) ** 2).sum(axis=2)) < 75
     flooded_full = (
         np.asarray(
@@ -242,16 +244,99 @@ def cutout(raw: bytes, channel: int) -> Image.Image:
     )
     # 膨胀一圈吃掉轮廓处的抗锯齿混色边，避免透明区边缘残留 1px 背景晕。
     flooded_full |= _dilate4(flooded_full)
-
+    near_bg = np.sqrt(((rgb - bg) ** 2).sum(axis=2)) < 45
     # 色键 alpha 负责软过渡与残余清理：泛洪区整片清除，近背景色的封闭空隙（臂弯）也清除。
     # 封闭空隙颜色偏离背景色时，退回原色键逻辑（excess 阈值）——色幕纯色下空隙通道差大，能清干净。
     alpha = 1 - np.clip((excess - 30) / 140, 0, 1)
-    alpha[np.sqrt(((rgb - bg) ** 2).sum(axis=2)) < 45] = 0
+    alpha[near_bg] = 0
     alpha[flooded_full] = 0
+    return flooded_full, near_bg, alpha
+
+
+def cutout(raw: bytes, channel: int) -> Image.Image:
+    """色幕抠图：与画布边框连通的背景整片泛洪清除（容忍色幕漂移、渐变与棋盘格纹理），封闭空隙退回色键。"""
+    with Image.open(io.BytesIO(raw)) as source:
+        rgb = np.asarray(source.convert("RGB"), dtype=np.float32)
+    others = [c for c in range(3) if c != channel]
+    _, _, alpha = _analyze_chroma(rgb, channel)
     background = alpha == 0
     rgb[:, :, others] /= np.maximum(alpha[:, :, None], 0.01)
     rgb[:, :, channel] = np.where(background, rgb[:, :, others].max(axis=2), rgb[:, :, channel])
     return Image.fromarray(np.dstack((np.clip(rgb, 0, 255), alpha * 255)).astype(np.uint8))
+
+
+def _clear_disconnected_islands(alpha: NDArray[np.float32]) -> NDArray[np.float32]:
+    """清除与主体不相连的不透明残留岛。
+
+    种子取不透明质心并吸附到附近不透明像素，再沿不透明区 4 邻域闭包；质心可能落在
+    肢体空隙，窗口吸附避免误把整块主体判成岛。连通残片（与角色粘连的背景框）不在
+    此步范围，由色幕泛洪/近色掩码强制清除。
+    """
+    opaque = alpha > 127
+    if int(opaque.sum()) < 64:
+        return alpha
+    ys, xs = np.nonzero(opaque)
+    cy, cx = int(ys.mean()), int(xs.mean())
+    if not opaque[cy, cx]:
+        height, width = opaque.shape
+        best: tuple[int, int] | None = None
+        best_d2 = 0
+        for y in range(max(0, cy - 32), min(height, cy + 33)):
+            for x in range(max(0, cx - 32), min(width, cx + 33)):
+                if not opaque[y, x]:
+                    continue
+                d2 = (y - cy) ** 2 + (x - cx) ** 2
+                if best is None or d2 < best_d2:
+                    best, best_d2 = (y, x), d2
+        if best is None:
+            return alpha
+        cy, cx = best
+    reach = np.zeros_like(opaque)
+    reach[cy, cx] = True
+    while True:
+        grown = reach | (opaque & _dilate4(reach))
+        if (grown == reach).all():
+            break
+        reach = grown
+    cleaned = alpha.copy()
+    cleaned[opaque & ~reach] = 0
+    return cleaned
+
+
+def _hybrid_alpha(
+    isnet_alpha: NDArray[np.float32],
+    flooded: NDArray[np.bool_],
+    near_bg: NDArray[np.bool_],
+    chroma_alpha: NDArray[np.float32],
+) -> NDArray[np.float32]:
+    """合并 ISNet 蒙版与色幕背景判定：明确背景强制透明，再清连通域外不透明岛。
+
+    不用 min(isnet, chroma) 整图收缩——角色自带与色幕同通道的高光/光晕时，色键会
+    误伤主体；只在色幕已判定为背景的位置把 alpha 打成 0。
+    """
+    alpha = isnet_alpha.copy()
+    definite_bg = flooded | near_bg | (chroma_alpha < 0.05)
+    alpha[definite_bg] = 0
+    return _clear_disconnected_islands(alpha)
+
+
+def matte_pose(raw: bytes, channel: int) -> Image.Image:
+    """姿态图混合抠图：ISNet 显著性定主体边界，色幕泛洪/色键强制清除残留背景。
+
+    生成链要求纯色幕，但供应商可能留下渐变、阴影或近景色块；原先 ISNet 成功即跳过
+    色键，残留会整片进入贴边纹理。ISNet 缺失或推理失败时退回纯色幕 cutout。
+    """
+    body = subject_matte(raw)
+    if body is None:
+        return cutout(raw, channel)
+    with Image.open(io.BytesIO(raw)) as source:
+        rgb = np.asarray(source.convert("RGB"), dtype=np.float32)
+    flooded, near_bg, chroma_alpha = _analyze_chroma(rgb, channel)
+    alpha = np.asarray(body.getchannel("A"), dtype=np.float32)
+    cleaned = _hybrid_alpha(alpha, flooded, near_bg, chroma_alpha)
+    rgba = body.convert("RGBA")
+    rgba.putalpha(Image.fromarray(np.clip(cleaned, 0, 255).astype(np.uint8)))
+    return rgba
 
 
 def _prepare_pose_reference(reference: bytes) -> tuple[NDArray[np.float32], bytes]:
@@ -341,9 +426,10 @@ def build_pose_side_prompt(
             "silhouette inside the frame, with at least 8% empty space above and below and clear space at both "
             "sides. Give every body region coherent anatomy, the character's own skin and clothing colors, and "
             "a consistent level of illustration detail. The visible image consists solely of the character against "
-            f"a perfectly flat, uniformly saturated {backdrop_text} background with no texture, no gradient, and no "
-            "checkerboard pattern; the contact line is an imaginary layout constraint. Deliver one complete "
-            "illustration.",
+            f"a perfectly flat, uniformly saturated {backdrop_text} background with no texture, no gradient, no "
+            "checkerboard pattern, no cast shadow, no vignette, and no glow spill onto the backdrop; keep the "
+            "background pixel-uniform to the canvas border. The contact line is an imaginary layout constraint. "
+            "Deliver one complete illustration.",
         ),
     )
     return "\n".join(parts)
@@ -370,7 +456,8 @@ async def _compose_pose(side: Side, context: _PoseContext) -> tuple[Pose, dict[s
         "whole figure proportionally to achieve this framing. Give every body region coherent anatomy, the character's "
         "own skin and clothing colors, and a consistent level of illustration detail. The visible image consists solely "
         f"of the character against a perfectly flat, uniformly saturated {backdrop} background with no texture, no "
-        "gradient, and no checkerboard pattern; the contact line is an imaginary layout constraint. Deliver one "
+        "gradient, no checkerboard pattern, no cast shadow, no vignette, and no glow spill onto the backdrop; keep the "
+        "background pixel-uniform to the canvas border. The contact line is an imaginary layout constraint. Deliver one "
         "unified square 1:1 illustration."
     )
     raw = await generate_image(prompt, context.reference, context.image_chain, guide)
@@ -388,10 +475,8 @@ async def _finish_pose(
 
     几何按图像实际宽高参数化：AI 路径恒为 1024×1024（generate_image 归一化），自备图保持
     用户原始尺寸与比例——渲染端网格、画布与布局均消费 Pose.width/height，无方形假设。"""
-    # 两级抠图：ISNet 显著性抠图（颜色无关，容忍任意背景）→ 色幕色键兜底（模型缺失或推理失败时）。
-    body = await asyncio.to_thread(subject_matte, raw)
-    if body is None:
-        body = await asyncio.to_thread(cutout, raw, channel)
+    # 混合抠图：ISNet 显著性定边界 + 色幕泛洪/色键强制清残留；模型缺失时内部退回色键。
+    body = await asyncio.to_thread(matte_pose, raw, channel)
     bounds = body.getbbox()
     if bounds is None:
         raise ValueError("empty pose")
