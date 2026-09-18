@@ -308,28 +308,25 @@ def build_pose_side_prompt(
     outfit_description: str = "",
     backdrop: str | None = None,
 ) -> str:
-    """自备图场景的用户可见姿态提示词：身份来自角色设定与穿着的文字描述，姿势与构图规范与生成链
-    一致，不引用参考图或内部概念。backdrop 是按立绘主色推荐的纯色背景（ISNet 抠图不依赖背景色，
-    仅提升色键兜底与闭眼帧质量）；缺省时只要求纯色。"""
+    """自备图场景的用户可见姿态提示词：以当前外观正面立绘为参考图锚定身份与穿着，
+    姿势与构图规范与生成链一致，不引用内部概念。backdrop 是按立绘主色推荐的纯色背景
+    （ISNet 抠图不依赖背景色，仅提升色键兜底与闭眼帧质量）；缺省时只要求纯色。"""
     inward, outward = ("RIGHT", "LEFT") if side == "left" else ("LEFT", "RIGHT")
     backdrop_text = backdrop or "flat solid"
     parts: list[str] = [
-        "Create a full-body character illustration for a peeking animation at a screen edge.",
+        "Redraw the character from the reference image as a full-body illustration for a peeking "
+        "animation at a screen edge.",
         "",
+        "CHARACTER",
+        "The reference image is the identity and outfit anchor: keep the same character's face, species, "
+        "body proportions, hairstyle, outfit, colors, and signature details, and the same illustration "
+        "style. Do not replace the character or redesign the outfit.",
     ]
-    identity_clauses: list[str] = []
     if appearance.strip():
-        identity_clauses.append(f"The character's appearance: {appearance.strip()}.")
+        parts.append(f"The character's appearance (supplementary): {appearance.strip()}.")
     if outfit_description.strip():
-        identity_clauses.append(f"The character's current outfit: {outfit_description.strip()}.")
-    if identity_clauses:
-        parts.append("CHARACTER")
-        parts.append(
-            " ".join(identity_clauses)
-            + " Render exactly this one character; keep the face, species, body proportions, and signature details"
-            " consistent with this description throughout.",
-        )
-        parts.append("")
+        parts.append(f"The character's current outfit: {outfit_description.strip()}.")
+    parts.append("")
     parts.extend(
         (
             "POSE AND EXPRESSION",

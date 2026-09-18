@@ -6,6 +6,7 @@ import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/sto
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 import { type PickedImage, resolvePortraitUrl } from './avatar-image'
+import { patchAvatarSeeds } from './avatar-seeds-store'
 import { $activeAvatarId } from './portrait-store'
 
 interface FullbodyReferenceState {
@@ -19,7 +20,8 @@ interface FullbodyReferenceState {
 
 interface ReferenceResponse {
   id: number
-  seed_fullbody_url: string
+  asset_url?: string | null
+  seed_fullbody_url?: string | null
 }
 
 const EMPTY_STATE: FullbodyReferenceState = {
@@ -127,6 +129,16 @@ function updateReference(
         busy: false,
         error: rawUrl && !previewUrl ? 'preview' : null,
         errorMessage: null
+      })
+
+      // 全身种子图写入本地缓存，自备图流程直接读取该缓存。
+      // preview 解析失败时不要显式传 null：store 的显式 display 分支会冲掉旧展示 URL，
+      // 导致自备图弹窗突然缺参考图；缺省 undefined 交给 resolveDisplayUrl 保留 previous。
+      await patchAvatarSeeds({
+        avatarId,
+        assetUrl: response.asset_url ?? undefined,
+        fullbodySeedUrl: rawUrl,
+        ...(previewUrl ? { fullbodyDisplayUrl: previewUrl } : {})
       })
 
       return !rawUrl || Boolean(previewUrl)

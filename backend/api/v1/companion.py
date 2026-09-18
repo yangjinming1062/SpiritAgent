@@ -519,6 +519,9 @@ def _fullbody_self_source_http_error(exc: AvatarGenerationError) -> HTTPExceptio
         return HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
     if isinstance(exc, ImageSealedError):
         return HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
+    if isinstance(exc, AvatarSourceUnreadableError):
+        # 与 AI 生成端点一致：种子/头像文件不可读是需用户先修复源资产的状态冲突，不是普通请求错误。
+        return HTTPException(status_code=409, detail={"error": str(exc)})
     if isinstance(exc, SeedPromptMissingError):
         return HTTPException(
             status_code=400,
@@ -538,7 +541,7 @@ async def post_fullbody_prompt(
     user: CurrentUser,
     body: FullbodyPromptRequest = Body(default_factory=FullbodyPromptRequest),
 ) -> ImagePromptResponse:
-    """自备图提示词：按文本身份锚定变体组装，不下发生成、不做生图。"""
+    """自备图提示词：按种子参考图锚定组装，种子缺失与 AI 路径同样失败，不做生图。"""
     try:
         prompt = await prepare_fullbody_prompt(
             user_id=user.id,
@@ -730,7 +733,8 @@ async def post_outfit_prompt(
     user: CurrentUser,
     db: DbSession,
 ) -> ImagePromptResponse:
-    """自备图提示词（创建语境）：整合链与创建草稿一致，参考图整合失败降级纯文字。"""
+    """自备图提示词（创建语境）：整合链与创建草稿一致；服装参考整合失败只降级着装描述，
+    身份仍由全身种子图锚定。"""
     raw, content_type = _decode_upload_image(body.image, body.content_type)
     try:
         prompt = await prepare_outfit_prompt(
@@ -823,7 +827,7 @@ async def post_outfit_regenerate_prompt(
     user: CurrentUser,
     db: DbSession,
 ) -> ImagePromptResponse:
-    """自备图提示词（草稿重绘语境）：反馈整合同草稿重绘，以文本身份锚定变体组装。"""
+    """自备图提示词（草稿重绘语境）：反馈整合同草稿重绘，身份由全身种子图锚定。"""
     try:
         prompt = await prepare_outfit_regenerate_prompt(db, user.id, outfit_id, feedback=body.feedback)
     except OutfitError as exc:
@@ -870,7 +874,7 @@ async def post_outfit_pose_prompt(
     user: CurrentUser,
     db: DbSession,
 ) -> ImagePromptResponse:
-    """自备图提示词（单侧扶边姿态）：姿势/构图规范与生成链一致，附纯色背景建议。"""
+    """自备图提示词（单侧扶边姿态）：身份与穿着由当前外观正面立绘锚定；立绘不可读时 409。"""
     try:
         prompt = await prepare_pose_prompt(db, user.id, outfit_id, side)
     except OutfitError as exc:

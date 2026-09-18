@@ -1,11 +1,10 @@
 """独立全身肖像的画面目标、参考分工与创作资料。"""
 
 import json
-from typing import Literal
 
-from prompts.generation import TEXT_REFERENCE_RULES
+from prompts.generation import SELF_SOURCE_REWRITE_LEAD, IdentityAnchor
 
-IdentityAnchor = Literal["reference", "text"]
+_CREATE_GOAL = "画面目标\n创作一幅以这位角色为唯一主体的完整全身肖像，让身材比例、优美的体态与独特气质成为画面的中心。"
 
 
 def build_fullbody_reference_prompt(
@@ -20,9 +19,15 @@ def build_fullbody_reference_prompt(
     canvas_aspect: str | None = None,
 ) -> str:
     """canvas_aspect 写入画幅宽高比（如 "9:16"），供自备图变体告知外部工具目标比例；AI 路径
-    的画幅由生图请求的 size 传达，不传。"""
-    if identity_anchor == "text":
-        reference_rules = TEXT_REFERENCE_RULES
+    的画幅由生图请求的 size 传达，不传。identity_anchor 语义见 prompts.generation.IdentityAnchor。
+    onboarding 完成后头像种子恒在，不存在纯文字变体。"""
+    if identity_anchor == "reference-self-source":
+        reference_rules = (
+            "参考图是这位角色的头像种子图，作为身份锚点：保持同一角色的脸型、五官、发型发色、"
+            "肤色或表面材质与标志性细节，延续头像的画风与质感，不得替换成其他人物。"
+            "以角色资料中明确的体貌设定为依据，补全与头像协调的全身体型和比例。"
+        )
+        goal = SELF_SOURCE_REWRITE_LEAD.format(target="完整全身肖像") + "画面重心放在角色的身材比例、体态与独特气质上。"
     else:
         portrait_reference = "参考图 1" if has_user_reference else "参考图"
         reference_rules = (
@@ -35,13 +40,10 @@ def build_fullbody_reference_prompt(
                 "\n参考图 2 提供体型、身材比例、服饰和姿态的视觉线索；"
                 "结合角色已有的体貌设定，将这些线索融入同一角色的全身形象。"
             )
+        goal = _CREATE_GOAL
     composition_aspect = f"画幅比例 {canvas_aspect}；" if canvas_aspect else ""
     return (
-        "画面目标\n"
-        "创作一幅以这位角色为唯一主体的完整全身肖像，让身材比例、优美的体态与独特气质成为画面的中心。"
-        "\n\n角色与参考\n"
-        f"{reference_rules}"
-        "\n\n构图与表现\n"
+        goal + "\n\n角色与参考\n" + reference_rules + "\n\n构图与表现\n"
         "选择适合角色身体结构的自然、舒展、有美感的姿态，通过神态和肢体关系传达性格。"
         f"{composition_aspect}"
         "全身及角色特有的身体结构完整入画，四周保留适当余量；"

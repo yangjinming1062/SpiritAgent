@@ -1,6 +1,8 @@
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { PortraitLightbox } from '@/shared'
+import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { Check, Copy } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, WizardModal } from '@/shared/panel'
@@ -8,9 +10,17 @@ import { useStrings } from '@/shared/strings'
 
 import { pickAvatarImage, type PickedImage } from './avatar-image'
 
+/** 外部工具按提示词生图时需一并提供的种子参考图；label 说明图的用途（如「全身种子图」）。 */
+export interface SelfSourceReferenceImage {
+  label: string
+  url: string
+}
+
 interface SelfSourceImageFlowProps {
   open: boolean
   title: string
+  /** 提示词所引用的种子参考图：展示缩略图供用户核对并拖拽/另存给外部工具；缺省时纯提示词流程。 */
+  referenceImages?: SelfSourceReferenceImage[]
   /** 打开时拉取后端组装的自备图提示词；失败时给重试入口。 */
   fetchPrompt: () => Promise<string>
   /** 采纳选中的图片；成功后组件自行关闭。抛错时展示后端公开文案。 */
@@ -20,12 +30,13 @@ interface SelfSourceImageFlowProps {
   onClose: () => void
 }
 
-// 自备图流程弹窗：复制后端下发的完整提示词 → 用户用任意外部工具生成 → 选图上传采纳。
-// 组件只负责流程编排；提示词与采纳接口由各生成点位注入。回调经 ref 取用，
+// 自备图流程弹窗：复制后端组装的完整提示词，连同本地缓存的种子参考图一起交给外部工具 → 选图上传采纳。
+// 组件只负责流程编排；提示词、参考图与采纳接口由各生成点位注入。回调经 ref 取用，
 // 避免调用方未 memo 的内联函数在每次 render 都重触发提示词拉取。
 export function SelfSourceImageFlow({
   open,
   title,
+  referenceImages,
   fetchPrompt,
   adopt,
   onUseAi,
@@ -38,6 +49,7 @@ export function SelfSourceImageFlow({
   const [picking, setPicking] = useState(false)
   const [adopting, setAdopting] = useState(false)
   const [adoptError, setAdoptError] = useState<string | null>(null)
+  const [zoomUrl, setZoomUrl] = useState<string | null>(null)
 
   const fetchPromptRef = useRef(fetchPrompt)
   fetchPromptRef.current = fetchPrompt
@@ -70,6 +82,9 @@ export function SelfSourceImageFlow({
     }
   }, [t.promptFailed])
 
+  // 灯箱打开时先关灯箱；WizardModal 同步停用 Esc，避免一次按键关掉整个自备图流程。
+  useEscapeKey(() => setZoomUrl(null), { enabled: open && zoomUrl !== null })
+
   useEffect((): (() => void) => {
     if (!open) {
       return () => undefined
@@ -79,6 +94,7 @@ export function SelfSourceImageFlow({
     setPicking(false)
     setAdopting(false)
     setAdoptError(null)
+    setZoomUrl(null)
     loadPrompt()
 
     return () => {
@@ -124,9 +140,37 @@ export function SelfSourceImageFlow({
   }
 
   return (
-    <WizardModal onClose={onClose} regionId="self-source-image" title={title}>
+    <WizardModal escClose={!zoomUrl} onClose={onClose} regionId="self-source-image" title={title}>
       <div className="space-y-3">
         <p className={HINT_TEXT}>{t.hint}</p>
+
+        {referenceImages && referenceImages.length > 0 ? (
+          <div className="rounded-xl border border-line-hairline bg-fill-trough p-3">
+            <p className="text-[11px] font-medium text-strong">{t.referenceTitle}</p>
+            <p className="mt-0.5 text-[10px] leading-relaxed text-muted">{t.referenceHint}</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {referenceImages.map(ref => (
+                <button
+                  className="group relative block cursor-zoom-in overflow-hidden rounded-lg border border-line-hairline bg-surface-card"
+                  key={ref.url}
+                  onClick={() => setZoomUrl(ref.url)}
+                  title={ref.label}
+                  type="button"
+                >
+                  <img alt={ref.label} className="size-24 object-contain" draggable src={ref.url} />
+                  <span className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-[9.5px] text-white">
+                    {ref.label}
+                  </span>
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : prompt !== null ? (
+          // 提示词已改为参考图锚定：本地缓存缺失且提示词已就绪时显式告知，不能静默只给提示词。
+          <p className="text-xs text-danger-fg" role="alert">
+            {t.referenceMissing}
+          </p>
+        ) : null}
 
         {promptError ? (
           <div className="space-y-2">
@@ -188,6 +232,8 @@ export function SelfSourceImageFlow({
           </button>
         </div>
       </div>
+
+      {zoomUrl && <PortraitLightbox name={t.referenceZoom} onClose={() => setZoomUrl(null)} url={zoomUrl} />}
     </WizardModal>
   )
 }

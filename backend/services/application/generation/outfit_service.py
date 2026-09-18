@@ -99,6 +99,19 @@ class OutfitDraftExpiredError(OutfitError):
     """草稿立绘的 temp-media 文件已过期，需重新生成。"""
 
 
+async def _require_fullbody_seed_readable(avatar: AvatarAsset) -> str:
+    """换装/自备图身份锚点：全身种子路径存在且字节可读，返回 data URI。
+
+    不可读是源资产状态冲突（与 avatar/room 自备图、AI 换装同语义），抛 OutfitStateError
+    由 API 映射为 409，不能降级纯文字。"""
+    if not avatar.seed_fullbody_url:
+        raise OutfitStateError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+    uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
+    if uri is None:
+        raise OutfitStateError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+    return uri
+
+
 async def get_outfit_policy(db: AsyncSession, user_id: int) -> str:
     policy = await db.scalar(
         select(Persona.outfit_policy).where(Persona.user_id == user_id),
@@ -415,9 +428,7 @@ async def create_outfit_draft(
         style,
         rig_type,
     ) = await _outfit_generation_context(db, user_id)
-    identity_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
-    if identity_uri is None:
-        raise OutfitError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+    identity_uri = await _require_fullbody_seed_readable(avatar)
     # 结束读事务：整合与生图往返期间不占连接（短会话纪律）
     await db.commit()
 
@@ -514,9 +525,7 @@ async def regenerate_outfit_draft(
         prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_IDENTITY)
         identity_uri = None
     else:
-        identity_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
-        if identity_uri is None:
-            raise OutfitError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+        identity_uri = await _require_fullbody_seed_readable(avatar)
         description = str(source.get("description") or "").strip()
         garment_text = str(source.get("reference_description") or "").strip()
         if not garment_text and source.get("reference_image_path"):
@@ -706,14 +715,14 @@ async def prepare_outfit_prompt(
     image: bytes | None = None,
     content_type: str | None = None,
 ) -> str:
-    """自备图提示词（创建语境）：守卫与参考图整合链同创建草稿（整合失败降级纯文字），
-    以文本身份锚定变体组装；不创建草稿行，不做生图。"""
+    """自备图提示词（创建语境）：守卫与参考图整合链同创建草稿（整合失败降级纯文字着装描述，
+    身份仍由全身种子图锚定）；不创建草稿行，不做生图。种子缺失按 AI 路径同一文案失败。"""
     effective_description = (description or "").strip()
     if not effective_description and image is None:
         raise OutfitError("请先描述想要的着装，或上传一张参考图")
 
     (
-        _avatar,
+        avatar,
         _mesh2d,
         species,
         appearance,
@@ -721,6 +730,7 @@ async def prepare_outfit_prompt(
         style,
         rig_type,
     ) = await _outfit_generation_context(db, user_id)
+    await _require_fullbody_seed_readable(avatar)
     # 结束读事务：整合往返期间不占连接（短会话纪律）
     await db.commit()
 
@@ -740,7 +750,7 @@ async def prepare_outfit_prompt(
         feedback=feedback,
         appearance=appearance,
         personality=personality,
-        identity_anchor="text",
+        identity_anchor="reference-self-source",
         canvas_aspect=_fullbody_aspect_for(rig_type),
     )
 
@@ -752,7 +762,8 @@ async def prepare_outfit_regenerate_prompt(
     *,
     feedback: str | None,
 ) -> str:
-    """自备图提示词（草稿重绘语境）：守卫与反馈整合同草稿重绘（含设计稿补整合），以文本身份锚定变体组装。"""
+    """自备图提示词（草稿重绘语境）：守卫与反馈整合同草稿重绘（含设计稿补整合）；
+    身份恒由全身种子图锚定，种子缺失按 AI 路径同一文案失败。"""
     outfit = await _get_outfit(db, user_id, outfit_id)
     if outfit is None:
         raise OutfitNotFoundError(f"outfit {outfit_id} not found")
@@ -761,7 +772,7 @@ async def prepare_outfit_regenerate_prompt(
     effective_feedback = (feedback or "").strip()
 
     (
-        _avatar,
+        avatar,
         _mesh2d,
         species,
         appearance,
@@ -769,6 +780,7 @@ async def prepare_outfit_regenerate_prompt(
         style,
         rig_type,
     ) = await _outfit_generation_context(db, user_id)
+    await _require_fullbody_seed_readable(avatar)
     source = safe_json_loads(outfit.source_json or "{}", default={})
     if not isinstance(source, dict):
         source = {}
@@ -787,7 +799,7 @@ async def prepare_outfit_regenerate_prompt(
         feedback=combined_feedback,
         appearance=appearance,
         personality=personality,
-        identity_anchor="text",
+        identity_anchor="reference-self-source",
         canvas_aspect=_fullbody_aspect_for(rig_type),
     )
 
@@ -884,9 +896,19 @@ async def prepare_pose_prompt(
     outfit_id: int,
     side: Literal["left", "right"],
 ) -> str:
-    """自备图提示词（单侧扶边姿态）：姿势/构图规范与生成链一致，身份来自角色设定与当前穿着文字，
-    附带按立绘主色推荐的纯色背景；立绘不可读时降级为通用纯色要求。"""
+    """自备图提示词（单侧扶边姿态）：以当前外观正面立绘为参考图锚定身份与穿着，
+    姿势/构图规范与生成链一致。立绘缺失或不可读时按状态冲突失败（提示词必须带得上参考图）；
+    立绘可读时附带按主色推荐的纯色背景，色幕分析失败只降级为通用纯色要求。"""
     outfit = await _ready_outfit_for_pose(db, user_id, outfit_id)
+    if (
+        not outfit.fullbody_url
+        or await asyncio.to_thread(
+            load_avatar_bytes_as_data_uri,
+            outfit.fullbody_url,
+        )
+        is None
+    ):
+        raise OutfitStateError("外观立绘缺失或无法读取，请先重新生成外观")
     persona = await get_or_create_persona(db, user_id)
     definition = load_persona_definition(persona)
     backdrop: str | None = None

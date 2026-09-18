@@ -5,6 +5,7 @@ import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 
 import { resolvePortraitUrl } from './avatar-image'
+import { clearAvatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds } from './avatar-seeds-store'
 
 interface PersistedPortrait {
   assetUrl: string | null
@@ -77,7 +78,14 @@ registerStorageClearHandler(() => {
 })
 
 function persistPortrait(next: PersistedPortrait): void {
+  const previousId = $activeAvatarId.get()
+
   $activeAvatarId.set(next.avatarId)
+
+  if (previousId !== next.avatarId) {
+    clearAvatarSeeds(next.avatarId)
+  }
+
   portraitPersisted.reset()
   portraitPersisted.set({ assetUrl: next.assetUrl, avatarId: next.avatarId })
 }
@@ -121,8 +129,20 @@ export async function applyPortrait(
       assetUrl: urls.assetUrl ?? portraitPersisted.get().assetUrl,
       avatarId: urls.id ?? $activeAvatarId.get()
     })
+    void patchAvatarSeeds({
+      avatarId: urls.id ?? $activeAvatarId.get(),
+      assetUrl: urls.assetUrl ?? undefined,
+      avatarDisplayUrl: avatar
+    })
   } else if (urls.id != null) {
+    const previousId = $activeAvatarId.get()
+
     $activeAvatarId.set(urls.id)
+
+    // 头像 URL 解析失败但 id 已切换：仍须作废上一形象的种子缓存，避免自备图参考图串号。
+    if (previousId !== urls.id) {
+      clearAvatarSeeds(urls.id)
+    }
   }
 
   return { avatar, seedBack, seedFront }
@@ -159,7 +179,14 @@ export async function hydratePortrait(): Promise<void> {
       }
 
       if (res.id != null && $activeAvatarId.get() !== res.id) {
+        const previousId = $activeAvatarId.get()
+
         $activeAvatarId.set(res.id)
+
+        // 缓存身份与服务端一致但本地 active id 漂移：纠正 id 时同步作废旧形象种子。
+        if (previousId !== res.id) {
+          clearAvatarSeeds(res.id)
+        }
       }
 
       return
@@ -176,6 +203,11 @@ export async function hydratePortrait(): Promise<void> {
       persistPortrait({
         assetUrl: res.asset_url,
         avatarId: res.id ?? null
+      })
+      void patchAvatarSeeds({
+        avatarId: res.id ?? null,
+        assetUrl: res.asset_url,
+        avatarDisplayUrl: newAvatar
       })
     } else {
       log.warn('portrait', 'hydratePortrait failed to resolve new avatar; keeping existing portrait')
@@ -258,16 +290,25 @@ export async function selectAvatar(avatarId: number): Promise<boolean> {
     }
 
     $activeAvatarId.set(avatarId)
+    clearAvatarSeeds(avatarId)
 
     const target = $portraitHistory.get().find(entry => entry.avatarId === avatarId)
 
     if (target?.portraitUrl) {
       $portraitUrl.set(target.portraitUrl)
+      const resolvedAssetUrl = target.assetUrl || portraitPersisted.get().assetUrl || undefined
       persistPortrait({
-        assetUrl: target.assetUrl ?? portraitPersisted.get().assetUrl,
+        assetUrl: resolvedAssetUrl ?? null,
         avatarId
       })
+      void patchAvatarSeeds({
+        avatarId,
+        assetUrl: resolvedAssetUrl,
+        avatarDisplayUrl: target.portraitUrl
+      })
     }
+
+    void hydrateAvatarSeeds()
 
     return true
   } catch (error) {

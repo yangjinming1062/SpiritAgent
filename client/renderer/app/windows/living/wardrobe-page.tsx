@@ -3,17 +3,20 @@ import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
 import {
+  $avatarSeeds,
   $outfitPolicy,
   $outfits,
   $poseRegen,
   activateOutfit,
   adoptOutfitPoseImage,
   deleteOutfit,
+  hydrateAvatarSeeds,
   hydrateWardrobe,
   type PickedImage,
   regenerateOutfitPose,
   resolvePortraitUrl,
   SelfSourceImageFlow,
+  type SelfSourceReferenceImage,
   setOutfitPolicy,
   useOutfitDesignSession
 } from '@/modules/character'
@@ -37,6 +40,7 @@ export function WardrobePage(): React.JSX.Element {
   const outfits = useStore($outfits)
   const outfitPolicy = useStore($outfitPolicy)
   const poseRegen = useStore($poseRegen)
+  const avatarSeeds = useStore($avatarSeeds)
   const authKind = useStore($auth).kind
   const dict = useStrings()
   const t = dict.living.wardrobe
@@ -64,9 +68,11 @@ export function WardrobePage(): React.JSX.Element {
 
   // 冷启动默认视图可能是衣橱（hash/localStorage 持久化），此时 hydrateAuth 的 IPC
   // 往返尚未完成——订阅 auth 就绪后再水合，否则 hydrateWardrobe 会因 pending 静默跳过。
+  // 种子图走本地缓存，缺失时由 hydrateAvatarSeeds 补拉。
   useEffect(() => {
     if (authKind === 'authenticated') {
       void hydrateWardrobe()
+      void hydrateAvatarSeeds()
     }
   }, [authKind])
 
@@ -195,6 +201,15 @@ export function WardrobePage(): React.JSX.Element {
 
     await adoptOutfitPoseImage(selected.id, poseSelfSourceSide, image)
   }
+
+  // 自备图参考图与 AI 生图同源：身份由全身种子图锚定；单侧姿态以当前外观正面立绘为身份与穿着锚点。
+  const outfitSelfSourceReferences: SelfSourceReferenceImage[] | undefined = avatarSeeds.fullbodySeedUrl
+    ? [{ label: selfSourceDict.refs.fullbodySeed, url: avatarSeeds.fullbodySeedUrl }]
+    : undefined
+
+  const poseSelfSourceReferences: SelfSourceReferenceImage[] | undefined = selected?.fullbodyUrl
+    ? [{ label: selfSourceDict.refs.outfitPortrait, url: selected.fullbodyUrl }]
+    : undefined
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -547,7 +562,9 @@ export function WardrobePage(): React.JSX.Element {
                   aria-label={selfSourceDict.open}
                   className={cn(BTN_ICON, 'h-9 w-9 shrink-0 self-end')}
                   disabled={session.busy || splitting}
-                  onClick={() => setOutfitSelfSourceOpen(true)}
+                  onClick={() => {
+                    void hydrateAvatarSeeds().finally(() => setOutfitSelfSourceOpen(true))
+                  }}
                   title={selfSourceDict.openTitle}
                   type="button"
                 >
@@ -589,6 +606,7 @@ export function WardrobePage(): React.JSX.Element {
           sendText()
         }}
         open={outfitSelfSourceOpen}
+        referenceImages={outfitSelfSourceReferences}
         title={session.draft ? t.reviseRegenerate : t.startAction}
       />
 
@@ -605,6 +623,7 @@ export function WardrobePage(): React.JSX.Element {
           }
         }}
         open={poseSelfSourceSide !== null}
+        referenceImages={poseSelfSourceReferences}
         title={`${t.preview.regenPose} · ${selfSourceDict.open}`}
       />
     </div>

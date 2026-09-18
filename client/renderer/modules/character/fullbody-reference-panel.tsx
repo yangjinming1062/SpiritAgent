@@ -7,8 +7,10 @@ import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '
 import { useStrings } from '@/shared/strings'
 
 import { pickAvatarImage, type PickedImage } from './avatar-image'
+import { $avatarSeeds, hydrateAvatarSeeds } from './avatar-seeds-store'
 import { $fullbodyReference, hydrateFullbodyReference, regenerateFullbodyReference } from './fullbody-reference-store'
-import { SelfSourceImageFlow } from './self-source-image'
+import { $portraitUrl } from './portrait-store'
+import { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 
 interface FullbodyReferencePanelProps {
   avatarId: number
@@ -26,6 +28,8 @@ export function FullbodyReferencePanel({
   const t = useStrings().settings.persona.fullbodyReference
   const selfSource = useStrings().selfSource
   const state = useStore($fullbodyReference)
+  const portraitUrl = useStore($portraitUrl)
+  const avatarSeeds = useStore($avatarSeeds)
   const [feedback, setFeedback] = useState('')
   const [reference, setReference] = useState(initialReference)
   const [referenceError, setReferenceError] = useState(false)
@@ -39,6 +43,7 @@ export function FullbodyReferencePanel({
 
   useEffect(() => {
     let live = true
+    void hydrateAvatarSeeds()
     void hydrateFullbodyReference(avatarId).then((loaded: boolean): void => {
       if (live && loaded && onboarding && !$fullbodyReference.get().rawUrl) {
         void regenerateFullbodyReference(avatarId, '', initialReference)
@@ -95,6 +100,13 @@ export function FullbodyReferencePanel({
     })
     await hydrateFullbodyReference(avatarId)
   }
+
+  // 独立全身参考以头像为身份锚点（与 AI 生图同源）；优先读种子缓存，回落到当前头像。
+  const selfSourceAvatarUrl = avatarSeeds.avatarUrl || portraitUrl
+
+  const selfSourceReferences: SelfSourceReferenceImage[] | undefined = selfSourceAvatarUrl
+    ? [{ label: selfSource.refs.avatarSeed, url: selfSourceAvatarUrl }]
+    : undefined
 
   return (
     <section className="space-y-3">
@@ -202,7 +214,10 @@ export function FullbodyReferencePanel({
         <button
           className={BTN_SUBTLE}
           disabled={busy}
-          onClick={() => setSelfSourceOpen(true)}
+          onClick={() => {
+            // 头像为独立全身参考身份锚点：打开前确保种子缓存已水合。
+            void hydrateAvatarSeeds().finally(() => setSelfSourceOpen(true))
+          }}
           title={selfSource.openTitle}
           type="button"
         >
@@ -228,6 +243,7 @@ export function FullbodyReferencePanel({
           void regenerate()
         }}
         open={selfSourceOpen}
+        referenceImages={selfSourceReferences}
         title={current && state.rawUrl ? t.regenerate : t.generate}
       />
       {zoom && preview && <PortraitLightbox name={t.title} onClose={() => setZoom(false)} url={preview} />}

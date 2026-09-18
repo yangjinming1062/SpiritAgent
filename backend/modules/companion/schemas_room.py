@@ -46,7 +46,7 @@ class RoomGenerateRequest(BaseModel):
     content_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"] = "image/png"
 
 
-# 自备图提示词请求：不收场景参考图——提示词是纯文本，用户可自行决定是否向外部工具附参考图。
+# 自备图提示词请求：不收场景参考图。身份参考图是客户端本地缓存的全身种子图，与提示词一起交给外部工具。
 class RoomPromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -472,14 +472,33 @@ async def schedule_room_prompt(
     intent: str = "rebuild",
     notes: str | None = None,
 ) -> CompanionRoomBackdrop:
-    """自备图第一步：创建 source=user_upload 的 pending 行并落库 brief 与文本身份锚定的提示词，
-    不启动任何生图任务；用户回传图像后经 adopt_room_backdrop 转 ready，放弃则 discard。
-    落库的提示词与客户端展示的完全一致。"""
+    """自备图第一步：创建 source=user_upload 的 pending 行并落库 brief 与提示词
+    （身份恒由全身种子图锚定），不启动任何生图任务；用户回传图像后经
+    adopt_room_backdrop 转 ready，放弃则 discard。落库的提示词与客户端展示的完全一致。
+    种子缺失按 AI 路径同一文案失败，不降级纯文字。"""
     async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
         if persona is None or not persona.is_complete:
             raise RoomBackdropStateError("persona not ready; complete onboarding first")
         definition = load_persona_definition(persona)
+        avatar = (
+            await db.execute(
+                select(AvatarAsset).where(
+                    AvatarAsset.user_id == user_id,
+                    AvatarAsset.active.is_(True),
+                ),
+            )
+        ).scalar_one_or_none()
+        if (
+            avatar is None
+            or not avatar.seed_fullbody_url
+            or await asyncio.to_thread(
+                load_character_reference_data_uri,
+                avatar,
+            )
+            is None
+        ):
+            raise RoomBackdropStateError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
         await _supersede_pending(db, user_id)
         row = CompanionRoomBackdrop(
             user_id=user_id,
@@ -504,7 +523,6 @@ async def schedule_room_prompt(
             outfit_description=await _current_outfit_description(user_id),
             brief=brief,
             notes=notes or "",
-            text_identity=True,
         ),
     )
     async with _backdrop_lock(user_id), SESSION_LOCAL() as db:

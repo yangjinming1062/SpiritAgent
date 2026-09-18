@@ -5,6 +5,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   $activeAvatarId,
+  $avatarSeeds,
   $portraitHistory,
   $portraitSelectedIdx,
   $portraitUrl,
@@ -17,11 +18,13 @@ import {
   clearDraftRefImage,
   clearPortraitHistory,
   FullbodyReferencePanel,
+  hydrateAvatarSeeds,
   hydratePortraitHistory,
   loadDraftRefImage,
   MAX_APPEARANCE,
   MAX_USER_TEXT,
   type OnboardingAnswers,
+  patchAvatarSeeds,
   PERSONALITY_PRESETS,
   pickAvatarImage,
   type PickedImage,
@@ -69,6 +72,7 @@ import { safeJsonParse } from '@/shared/lib/safe-json'
 import { cn } from '@/shared/lib/utils'
 import { Chip, INPUT_CLASS } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
+import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 import { computeBackTransition } from './back-transition'
@@ -506,6 +510,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [fullbodyHint, setFullbodyHint] = useState<string | null>(null)
   const [fullbodyZoomUrl, setFullbodyZoomUrl] = useState<string | null>(null)
   const [fullbodySelfSourceOpen, setFullbodySelfSourceOpen] = useState(false)
+  // 自备图参考图：正面立绘重绘读本地缓存的全身种子图（与 AI 生图同源）。
+  const selfSourceDict = useStrings().selfSource
+  const fullbodySeedUrl = useStore($avatarSeeds).fullbodySeedUrl
 
   const [fullbodyHistories, setFullbodyHistories] = useState<
     Record<string, Array<{ rawUrl: string | null; previewUrl: string }>>
@@ -947,6 +954,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     const avatarRes = await window.spiritagent.api<{
       asset_url?: string | null
       seed_front_2d_url?: string | null
+      seed_fullbody_url?: string | null
       id?: number
       fullbody_style?: string | null
     }>({
@@ -955,6 +963,11 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     })
 
     await applyLocalPortrait(avatarRes)
+    await patchAvatarSeeds({
+      avatarId: avatarRes?.id ?? null,
+      assetUrl: avatarRes?.asset_url || undefined,
+      fullbodySeedUrl: avatarRes?.seed_fullbody_url || undefined
+    })
 
     const style = 'refined_anime_cg'
     const seedFrontRaw = avatarRes?.seed_front_2d_url || null
@@ -2051,7 +2064,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                       <button
                         className="text-body transition hover:text-strong disabled:opacity-40"
                         disabled={fullbodyLoading}
-                        onClick={() => setFullbodySelfSourceOpen(true)}
+                        onClick={() => {
+                          // front-2d 自备图参考是全身种子图：进入 fullbody 阶段时已写入缓存，打开前再补齐一次。
+                          void hydrateAvatarSeeds().finally(() => setFullbodySelfSourceOpen(true))
+                        }}
                         title="我自己生成这张图（复制提示词，生成后回传上传）"
                         type="button"
                       >
@@ -2088,6 +2104,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                   void regenerateFullbodyFront('regenerate')
                 }}
                 open={fullbodySelfSourceOpen}
+                referenceImages={
+                  fullbodySeedUrl ? [{ label: selfSourceDict.refs.fullbodySeed, url: fullbodySeedUrl }] : undefined
+                }
                 title="正面全身立绘 · 使用自己的图"
               />
             </div>

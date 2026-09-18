@@ -46,7 +46,18 @@ export const dict = {
   selfSource: {
     open: '使用自己的图',
     openTitle: '我自己生成这张图（复制提示词，生成后回传上传）',
-    hint: '复制下方提示词，用你喜欢的任意工具生成图片，然后选图上传。画面内容会以这段描述为准。',
+    hint: '复制下方提示词，连同参考图一起交给你喜欢的生图工具，然后选图上传。外部工具按参考图重绘，画面内容以这段描述为准。',
+    referenceTitle: '参考图（随提示词一起提供）',
+    referenceHint: '把参考图和提示词一起粘贴或上传到外部工具；也可拖拽或右键另存。点击查看大图。',
+    referenceMissing:
+      '当前未能展示种子参考图。提示词以参考图为身份锚点，请先在设置的“角色与记忆”中补齐种子图，或稍后重试。',
+    referenceZoom: '参考图预览',
+    refs: {
+      avatarSeed: '头像种子图',
+      fullbodySeed: '全身种子图',
+      outfitPortrait: '当前外观正面立绘',
+      seed3dFront: '3D 正面立绘'
+    },
     promptLoading: '正在准备提示词…',
     promptFailed: '提示词获取失败，请重试。',
     retryPrompt: '重新获取提示词',

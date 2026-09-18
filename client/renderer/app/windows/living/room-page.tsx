@@ -2,7 +2,13 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef, useState } from 'react'
 
-import { pickAvatarImage, type PickedImage, SelfSourceImageFlow } from '@/modules/character'
+import {
+  $avatarSeeds,
+  hydrateAvatarSeeds,
+  pickAvatarImage,
+  type PickedImage,
+  SelfSourceImageFlow
+} from '@/modules/character'
 import {
   $activeBackdrop,
   $backdropStatus,
@@ -47,6 +53,7 @@ export function RoomPage(): React.JSX.Element {
   const policy = useStore($roomPolicy)
   const status = useStore($backdropStatus)
   const activeBackdrop = useStore($activeBackdrop)
+  const avatarSeeds = useStore($avatarSeeds)
   const dict = useStrings()
   const t = dict.living.room
   const tToasts = dict.living.toasts
@@ -63,6 +70,9 @@ export function RoomPage(): React.JSX.Element {
 
   useEffect(() => {
     mounted.current = true
+
+    // 自备图参考图读本地种子缓存；缓存缺失时补拉一次。
+    void hydrateAvatarSeeds()
 
     const unregister = registerStorageClearHandler((): void => {
       setNotes('')
@@ -329,7 +339,10 @@ export function RoomPage(): React.JSX.Element {
             <button
               className={cn(BTN_SUBTLE, 'inline-flex shrink-0 items-center gap-1.5 px-3 text-xs')}
               disabled={busy}
-              onClick={() => setSelfSourceOpen(true)}
+              onClick={() => {
+                // 提示词以全身种子图为身份锚点：打开前确保本地参考图缓存已水合。
+                void hydrateAvatarSeeds().finally(() => setSelfSourceOpen(true))
+              }}
               title={dict.selfSource.openTitle}
               type="button"
             >
@@ -447,6 +460,11 @@ export function RoomPage(): React.JSX.Element {
           })
         }}
         open={selfSourceOpen}
+        referenceImages={
+          avatarSeeds.fullbodySeedUrl
+            ? [{ label: dict.selfSource.refs.fullbodySeed, url: avatarSeeds.fullbodySeedUrl }]
+            : undefined
+        }
         title={`${t.generateButton} · ${dict.selfSource.open}`}
       />
     </SettingsContent>

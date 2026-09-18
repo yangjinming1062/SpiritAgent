@@ -9,6 +9,7 @@ export {
   saveDraftRefImage
 } from './avatar-image'
 export { awaitAvatarRegeneration, resolveAvatarRegeneration } from './avatar-regen-store'
+export { $avatarSeeds, clearAvatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds } from './avatar-seeds-store'
 export {
   $clipOverride,
   $companionLifecycle,
@@ -33,6 +34,7 @@ export {
 } from './companion-store'
 export { DISTURBANCE_TIERS } from './disturbance-tiers'
 export { FullbodyReferencePanel } from './fullbody-reference-panel'
+export { $fullbodyReference, hydrateFullbodyReference, regenerateFullbodyReference } from './fullbody-reference-store'
 export { handleDragEndInteraction, handlePetInteraction, handlePokeInteraction, normalizeRegion } from './interaction'
 export { $memoryBrowserTab, type MemoryTab, setMemoryBrowserTab } from './memory-browser-store'
 export {
@@ -93,7 +95,7 @@ export {
 export { bindProactiveLineSpeaker, type ProactiveLineOptions } from './proactive-speak'
 export { $renderMode, type RenderMode, setRenderMode } from './render-mode'
 export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritual-walk'
-export { SelfSourceImageFlow } from './self-source-image'
+export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {
   $defaultScale,
   $dragVelocity,

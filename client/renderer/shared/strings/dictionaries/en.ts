@@ -48,7 +48,19 @@ export const dict: Dictionary = {
   selfSource: {
     open: 'Use your own image',
     openTitle: 'Generate this image yourself (copy the prompt, then upload the result)',
-    hint: 'Copy the prompt below, generate the image with any tool you like, then pick and upload it here. The artwork will follow this description.',
+    hint: 'Copy the prompt below, hand it to your image tool together with the reference image(s), then pick and upload the result here. The tool redraws from the reference following this description.',
+    referenceTitle: 'Reference images (provide with the prompt)',
+    referenceHint:
+      'Paste or upload the reference image(s) together with the prompt; you can also drag or right-click to save. Click to enlarge.',
+    referenceMissing:
+      'Seed reference images are unavailable. This prompt is anchored to a reference image — regenerate the seed in Settings → Character & Memory, or retry later.',
+    referenceZoom: 'Reference preview',
+    refs: {
+      avatarSeed: 'Avatar seed',
+      fullbodySeed: 'Full-body seed',
+      outfitPortrait: 'Current front portrait',
+      seed3dFront: '3D front portrait'
+    },
     promptLoading: 'Preparing the prompt…',
     promptFailed: 'Failed to fetch the prompt. Please retry.',
     retryPrompt: 'Refetch prompt',

@@ -1,11 +1,20 @@
+import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { MAX_APPEARANCE, type PickedImage, resolvePortraitUrl } from '@/modules/character'
+import {
+  $avatarSeeds,
+  hydrateAvatarSeeds,
+  MAX_APPEARANCE,
+  patchAvatarSeeds,
+  type PickedImage,
+  resolvePortraitUrl
+} from '@/modules/character'
 import { HistoryGallery, PortraitLightbox, useNaturalAspectRatio } from '@/shared'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, WizardModal } from '@/shared/panel'
+import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 import { SelfSourceImageFlow } from '../../../self-source-image'
@@ -89,6 +98,9 @@ export function Seed3dWizard({
   const [hint, setHint] = useState<string | null>(null)
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
   const [selfSourceOpen, setSelfSourceOpen] = useState(false)
+  // 自备图参考图读本地缓存：front 用全身种子图，back 用本向导已确认的 3D 正面。
+  const selfSourceDict = useStrings().selfSource
+  const avatarSeeds = useStore($avatarSeeds)
   const mountedRef = useRef(true)
   const generatingRef = useRef(false)
   const stagesRef = useRef<Record<Stage, StageState>>(stages)
@@ -241,12 +253,26 @@ export function Seed3dWizard({
       let existingBack: string | null = null
 
       try {
-        const res = await window.spiritagent.api<{ seed_front_3d_url?: string | null; seed_back_url?: string | null }>({
+        const res = await window.spiritagent.api<{
+          asset_url?: string | null
+          seed_front_3d_url?: string | null
+          seed_back_url?: string | null
+          seed_fullbody_url?: string | null
+        }>({
           path: '/api/companion/avatar'
         })
 
         existingFront = res?.seed_front_3d_url || null
         existingBack = res?.seed_back_url || null
+
+        // 顺带同步全身种子到本地缓存；自备图参考图不依赖这次网络调用。
+        if (res?.seed_fullbody_url || res?.asset_url) {
+          await patchAvatarSeeds({
+            avatarId,
+            assetUrl: res.asset_url || undefined,
+            fullbodySeedUrl: res.seed_fullbody_url || undefined
+          })
+        }
       } catch {
         // 拉取失败不阻塞向导：当作没有 3D 种子，由用户点按显式触发。
       }
@@ -303,7 +329,7 @@ export function Seed3dWizard({
     }
 
     void boot()
-  }, [generate, supportsMultiview])
+  }, [avatarId, generate, supportsMultiview])
 
   // Esc 关闭向导；灯箱或自备图弹窗打开时让它们自己的 Esc 生效，不连带关掉整个向导
   // （两者与向导同为 window 捕获阶段监听，stopPropagation 无法互相压制，须靠 busy 位让路）。
@@ -455,7 +481,10 @@ export function Seed3dWizard({
           <button
             className="rounded-lg px-2 py-1 text-xs text-body transition hover:bg-fill-hover hover:text-strong disabled:opacity-40"
             disabled={current.loading}
-            onClick={() => setSelfSourceOpen(true)}
+            onClick={() => {
+              // front 自备图参考是全身种子图；打开前补齐本地缓存，避免提示词已引用参考图而 UI 未展示。
+              void hydrateAvatarSeeds().finally(() => setSelfSourceOpen(true))
+            }}
             title="我自己生成这张图（复制提示词，生成后回传上传）"
             type="button"
           >
@@ -494,6 +523,15 @@ export function Seed3dWizard({
           void generate(stage, feedback[stage], 'regenerate')
         }}
         open={selfSourceOpen}
+        referenceImages={
+          stage === 'front'
+            ? avatarSeeds.fullbodySeedUrl
+              ? [{ label: selfSourceDict.refs.fullbodySeed, url: avatarSeeds.fullbodySeedUrl }]
+              : undefined
+            : stages.front.previewUrl
+              ? [{ label: selfSourceDict.refs.seed3dFront, url: stages.front.previewUrl }]
+              : undefined
+        }
         title={`${stage === 'front' ? '3D 正面立绘' : '背面立绘'} · 使用自己的图`}
       />
     </WizardModal>
