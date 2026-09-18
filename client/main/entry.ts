@@ -378,7 +378,12 @@ registerShortcutsIpc({
   surfaces: surfaces ?? undefined
 })
 registerClipboardIpc({
-  electron: { clipboard },
+  electron: {
+    clipboard,
+    dialog,
+    getMainWindow: () => mainWindow,
+    nativeImage
+  },
   ipcMain
 })
 registerLogIpc({ ipcMain, log: chunk => rememberLog(chunk) })

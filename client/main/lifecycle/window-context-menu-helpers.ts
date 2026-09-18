@@ -57,11 +57,12 @@ interface ContextMenuHelpersOptions {
 
 export function createContextMenuHelpers({ electronNet }: ContextMenuHelpersOptions) {
   async function copyImageFromUrl(rawUrl: string): Promise<void> {
-    const { buffer } = await resourceBufferFromUrl(rawUrl, electronNet)
+    const { buffer, mimeType } = await resourceBufferFromUrl(rawUrl, electronNet)
+    // 右键路径保留原字节；读空时报告 mime，转换职责在渲染层 image-clipboard
     const image = nativeImage.createFromBuffer(buffer)
 
     if (image.isEmpty()) {
-      throw new Error('Could not read image')
+      throw new Error(`Could not read image (${mimeType || 'unknown'})`)
     }
 
     clipboard.writeImage(image)

@@ -98,7 +98,17 @@ export function createWindowHandlers({
     targetWin.webContents.on('context-menu', (_event, params) => {
       const template: Electron.MenuItemConstructorOptions[] = []
       const hasSelection = Boolean(params.selectionText?.trim())
-      const hasImage = params.mediaType === 'image' && Boolean(params.srcURL)
+
+      // data: 图部分环境下 mediaType 不为 image，仍应提供复制/另存。
+      // 不用路径段启发式：任意含 /image/ 的 URL 会被误判成图片资源。
+      const srcURL = params.srcURL || ''
+
+      const hasImage =
+        Boolean(srcURL) &&
+        (params.mediaType === 'image' ||
+          srcURL.startsWith('data:image/') ||
+          /\.(png|jpe?g|webp|gif|bmp|svg)(\?|#|$)/i.test(srcURL))
+
       const hasLink = Boolean(params.linkURL)
       const isEditable = Boolean(params.isEditable)
 

@@ -329,6 +329,10 @@ export interface IpcInvokeContract {
   'spiritagent:chat:take-pending-feed': () => Promise<string[]> | string[]
   'spiritagent:selectPaths': (options?: SpiritAgentSelectPathsOptions) => Promise<string[]> | string[]
   'spiritagent:writeClipboard': (text: string) => boolean | Promise<boolean>
+  /** 把 data: 或用户已选 file: 图片写入系统剪贴板。 */
+  'spiritagent:copyImage': (payload: { url: string }) => boolean | Promise<boolean>
+  /** 将 data:/file:（须用户已选）图片另存到用户选择的路径；取消时返回 false。 */
+  'spiritagent:saveImage': (payload: { defaultName?: string; url: string }) => boolean | Promise<boolean>
   'spiritagent:log:emit': (payload: {
     args: unknown[]
     level: 'error' | 'info' | 'warn'
@@ -480,6 +484,8 @@ export const IPC = {
     chatTakePendingFeed: 'spiritagent:chat:take-pending-feed',
     selectPaths: 'spiritagent:selectPaths',
     writeClipboard: 'spiritagent:writeClipboard',
+    copyImage: 'spiritagent:copyImage',
+    saveImage: 'spiritagent:saveImage',
     logEmit: 'spiritagent:log:emit',
     version: 'spiritagent:version',
     runnerInvoke: 'spiritagent:runner:invoke',

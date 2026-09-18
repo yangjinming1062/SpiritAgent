@@ -12,6 +12,7 @@ import {
   deleteOutfit,
   hydrateAvatarSeeds,
   hydrateWardrobe,
+  pickAvatarImage,
   type PickedImage,
   regenerateOutfitPose,
   resolvePortraitUrl,
@@ -94,7 +95,8 @@ export function WardrobePage(): React.JSX.Element {
 
   const retrySplit = async (id: number): Promise<void> => {
     try {
-      await window.spiritagent.api({ path: `/api/companion/outfits/${id}/confirm`, method: 'POST' })
+      // 与设计会话确认一致：始终带 JSON body（可空），避免无 body 的 POST 被 422。
+      await window.spiritagent.api({ path: `/api/companion/outfits/${id}/confirm`, method: 'POST', body: {} })
       await hydrateWardrobe()
     } catch (err) {
       log.warn('wardrobe', 'retry split failed', err)
@@ -182,12 +184,16 @@ export function WardrobePage(): React.JSX.Element {
   }
 
   const fetchPoseSelfSourcePrompt = async (): Promise<string> => {
-    if (!selected || !poseSelfSourceSide) {
+    const outfitId = designing && session.draft ? session.draft.id : selected?.id
+    const side = poseSelfSourceSide
+
+    if (!outfitId || !side) {
       throw new Error('missing pose target')
     }
 
+    // 设计草稿与就绪外观共用同一姿态提示词端点。
     const res = await window.spiritagent.api<{ prompt: string }>({
-      path: `/api/companion/outfits/${selected.id}/poses/${poseSelfSourceSide}/prompt`,
+      path: `/api/companion/outfits/${outfitId}/poses/${side}/prompt`,
       method: 'POST'
     })
 
@@ -195,21 +201,91 @@ export function WardrobePage(): React.JSX.Element {
   }
 
   const adoptPoseSelfSource = async (image: PickedImage): Promise<void> => {
-    if (!selected || !poseSelfSourceSide) {
+    const side = poseSelfSourceSide
+
+    if (!side) {
       throw new Error('missing pose target')
     }
 
-    await adoptOutfitPoseImage(selected.id, poseSelfSourceSide, image)
+    // 设计阶段暂存本地，随确认提交；就绪外观走既有单侧采纳。
+    if (designing && session.draft) {
+      session.setPoseImage(side, image)
+
+      return
+    }
+
+    if (!selected) {
+      throw new Error('missing pose target')
+    }
+
+    await adoptOutfitPoseImage(selected.id, side, image)
   }
 
-  // 自备图参考图与 AI 生图同源：身份由全身种子图锚定；单侧姿态以当前外观正面立绘为身份与穿着锚点。
   const outfitSelfSourceReferences: SelfSourceReferenceImage[] | undefined = avatarSeeds.fullbodySeedUrl
     ? [{ label: selfSourceDict.refs.fullbodySeed, url: avatarSeeds.fullbodySeedUrl }]
     : undefined
 
-  const poseSelfSourceReferences: SelfSourceReferenceImage[] | undefined = selected?.fullbodyUrl
-    ? [{ label: selfSourceDict.refs.outfitPortrait, url: selected.fullbodyUrl }]
+  const posePortraitUrl = designing && session.draft?.previewUrl ? session.draft.previewUrl : selected?.fullbodyUrl
+
+  const poseSelfSourceReferences: SelfSourceReferenceImage[] | undefined = posePortraitUrl
+    ? [{ label: selfSourceDict.refs.outfitPortrait, url: posePortraitUrl }]
     : undefined
+
+  const uploadDraftPose = async (side: 'left' | 'right'): Promise<void> => {
+    const picked = await pickAvatarImage(side === 'left' ? selfSourceDict.poseLeft : selfSourceDict.poseRight)
+
+    if (picked && 'image' in picked) {
+      session.setPoseImage(side, picked.image)
+    }
+  }
+
+  const poseSideControl = (side: 'left' | 'right'): React.JSX.Element => {
+    const image = session.poseImages[side]
+    const label = side === 'left' ? selfSourceDict.poseLeft : selfSourceDict.poseRight
+
+    return (
+      <div className="flex items-center gap-1.5">
+        <span className="text-[10px] text-faint">{label}</span>
+        {image ? (
+          <>
+            <span className="text-[10px] text-muted">{selfSourceDict.poseAttached}</span>
+            <img
+              alt={label}
+              className="size-8 rounded border border-line-hairline object-cover"
+              src={image.previewUrl}
+            />
+            <button
+              className="text-[10px] text-muted transition hover:text-strong"
+              disabled={session.busy}
+              onClick={() => session.setPoseImage(side, null)}
+              type="button"
+            >
+              {selfSourceDict.poseRemove}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              className="text-[10px] text-muted transition hover:text-strong"
+              disabled={session.busy || splitting}
+              onClick={() => void uploadDraftPose(side)}
+              type="button"
+            >
+              {selfSourceDict.poseUpload}
+            </button>
+            <button
+              className="text-[10px] text-muted transition hover:text-strong"
+              disabled={session.busy || splitting}
+              onClick={() => setPoseSelfSourceSide(side)}
+              type="button"
+            >
+              {selfSourceDict.poseSelfSource}
+            </button>
+          </>
+        )}
+      </div>
+    )
+  }
 
   return (
     <div className="flex min-h-0 flex-1">
@@ -468,24 +544,31 @@ export function WardrobePage(): React.JSX.Element {
               </div>
 
               {session.draft && (
-                <div className="flex items-center gap-2 border-t border-line-hairline px-4 py-2">
-                  <button
-                    className={cn(BTN_PRIMARY, 'h-7')}
-                    disabled={session.busy || splitting || !session.draft.previewUrl}
-                    onClick={() => void session.confirm()}
-                    type="button"
-                  >
-                    {session.busy ? t.processing : t.confirmAndWear}
-                  </button>
-                  <button
-                    className={BTN_GHOST}
-                    disabled={session.busy}
-                    onClick={() => setDesigning(false)}
-                    type="button"
-                  >
-                    {t.discard}
-                  </button>
-                  <span className={cn(HINT_TEXT, 'ml-auto')}>{t.confirmHint}</span>
+                <div className="space-y-1 border-t border-line-hairline px-4 py-2">
+                  <div className="flex items-center gap-2">
+                    <button
+                      className={cn(BTN_PRIMARY, 'h-7')}
+                      disabled={session.busy || splitting || !session.draft.previewUrl}
+                      onClick={() => void session.confirm()}
+                      type="button"
+                    >
+                      {session.busy ? t.processing : t.confirmAndWear}
+                    </button>
+                    <button
+                      className={BTN_GHOST}
+                      disabled={session.busy}
+                      onClick={() => setDesigning(false)}
+                      type="button"
+                    >
+                      {t.discard}
+                    </button>
+                    <span className={cn(HINT_TEXT, 'ml-auto')}>{t.confirmHint}</span>
+                  </div>
+                  <div className="flex flex-wrap items-center gap-3">
+                    {poseSideControl('left')}
+                    {poseSideControl('right')}
+                    <span className={cn(HINT_TEXT, 'min-w-0 flex-1 truncate')}>{selfSourceDict.poseAttachHint}</span>
+                  </div>
                 </div>
               )}
 
@@ -617,6 +700,13 @@ export function WardrobePage(): React.JSX.Element {
         onUseAi={() => {
           const side = poseSelfSourceSide
           setPoseSelfSourceSide(null)
+
+          // 设计阶段「改用 AI」= 确认时不预附该侧姿态图。
+          if (side && designing && session.draft) {
+            session.setPoseImage(side, null)
+
+            return
+          }
 
           if (side && selected) {
             void regenerateOutfitPose(selected.id, side)

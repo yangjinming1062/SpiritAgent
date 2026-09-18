@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { PortraitLightbox } from '@/shared'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
-import { Check, Copy } from '@/shared/lib/icons'
+import { Check, Copy, Download } from '@/shared/lib/icons'
+import { imageUrlForNativeClipboard } from '@/shared/lib/image-clipboard'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, WizardModal } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
@@ -19,7 +20,7 @@ export interface SelfSourceReferenceImage {
 interface SelfSourceImageFlowProps {
   open: boolean
   title: string
-  /** 提示词所引用的种子参考图：展示缩略图供用户核对并拖拽/另存给外部工具；缺省时纯提示词流程。 */
+  /** 提示词所引用的种子参考图：缩略图可复制/另存；缺省时纯提示词流程。 */
   referenceImages?: SelfSourceReferenceImage[]
   /** 打开时拉取后端组装的自备图提示词；失败时给重试入口。 */
   fetchPrompt: () => Promise<string>
@@ -30,7 +31,7 @@ interface SelfSourceImageFlowProps {
   onClose: () => void
 }
 
-// 自备图流程弹窗：复制后端组装的完整提示词，连同本地缓存的种子参考图一起交给外部工具 → 选图上传采纳。
+// 自备图流程弹窗：拉取提示词、展示参考图并选图采纳。契约见 PIPELINE §1.1.2。
 // 组件只负责流程编排；提示词、参考图与采纳接口由各生成点位注入。回调经 ref 取用，
 // 避免调用方未 memo 的内联函数在每次 render 都重触发提示词拉取。
 export function SelfSourceImageFlow({
@@ -50,6 +51,8 @@ export function SelfSourceImageFlow({
   const [adopting, setAdopting] = useState(false)
   const [adoptError, setAdoptError] = useState<string | null>(null)
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
+  const [refActionError, setRefActionError] = useState<string | null>(null)
+  const [refCopied, setRefCopied] = useState(false)
 
   const fetchPromptRef = useRef(fetchPrompt)
   fetchPromptRef.current = fetchPrompt
@@ -95,6 +98,8 @@ export function SelfSourceImageFlow({
     setAdopting(false)
     setAdoptError(null)
     setZoomUrl(null)
+    setRefActionError(null)
+    setRefCopied(false)
     loadPrompt()
 
     return () => {
@@ -118,6 +123,37 @@ export function SelfSourceImageFlow({
     }
 
     setPicking(false)
+  }
+
+  // 非 PNG/JPEG 的 data URL 先转 PNG，见 image-clipboard
+  const copyReferenceImage = async (url: string): Promise<void> => {
+    setRefActionError(null)
+    setRefCopied(false)
+
+    try {
+      if (!window.spiritagent?.copyImage) {
+        throw new Error('copyImage IPC unavailable')
+      }
+
+      await window.spiritagent.copyImage({ url: await imageUrlForNativeClipboard(url) })
+      setRefCopied(true)
+    } catch {
+      setRefActionError(t.copyRefImageFailed)
+    }
+  }
+
+  const saveReferenceImage = async (url: string, label: string): Promise<void> => {
+    setRefActionError(null)
+
+    try {
+      if (!window.spiritagent?.saveImage) {
+        throw new Error('saveImage IPC unavailable')
+      }
+
+      await window.spiritagent.saveImage({ defaultName: label || undefined, url })
+    } catch {
+      setRefActionError(t.saveRefImageFailed)
+    }
   }
 
   const confirmAdopt = async (): Promise<void> => {
@@ -150,20 +186,54 @@ export function SelfSourceImageFlow({
             <p className="mt-0.5 text-[10px] leading-relaxed text-muted">{t.referenceHint}</p>
             <div className="mt-2 flex flex-wrap gap-2">
               {referenceImages.map(ref => (
-                <button
-                  className="group relative block cursor-zoom-in overflow-hidden rounded-lg border border-line-hairline bg-surface-card"
+                <div
+                  className="group relative overflow-hidden rounded-lg border border-line-hairline bg-surface-card"
                   key={ref.url}
-                  onClick={() => setZoomUrl(ref.url)}
-                  title={ref.label}
-                  type="button"
                 >
-                  <img alt={ref.label} className="size-24 object-contain" draggable src={ref.url} />
-                  <span className="absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-[9.5px] text-white">
+                  <button
+                    className="block cursor-zoom-in"
+                    onClick={() => setZoomUrl(ref.url)}
+                    title={ref.label}
+                    type="button"
+                  >
+                    <img alt={ref.label} className="size-24 object-contain" draggable src={ref.url} />
+                  </button>
+                  <span className="pointer-events-none absolute inset-x-0 bottom-0 truncate bg-black/60 px-1 py-0.5 text-[9.5px] text-white">
                     {ref.label}
                   </span>
-                </button>
+                  <div className="absolute right-0.5 top-0.5 flex gap-0.5 opacity-0 transition group-hover:opacity-100 focus-within:opacity-100">
+                    <button
+                      aria-label={t.copyRefImage}
+                      className="inline-flex size-6 items-center justify-center rounded-md bg-black/70 text-white/90 transition hover:bg-black/90 hover:text-white"
+                      onClick={() => void copyReferenceImage(ref.url)}
+                      title={t.copyRefImage}
+                      type="button"
+                    >
+                      <Copy className="size-3.5" />
+                    </button>
+                    <button
+                      aria-label={t.saveRefImage}
+                      className="inline-flex size-6 items-center justify-center rounded-md bg-black/70 text-white/90 transition hover:bg-black/90 hover:text-white"
+                      onClick={() => void saveReferenceImage(ref.url, ref.label)}
+                      title={t.saveRefImage}
+                      type="button"
+                    >
+                      <Download className="size-3.5" />
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
+            {refCopied && (
+              <p className="mt-2 text-xs text-muted" role="status">
+                {t.copiedRefImage}
+              </p>
+            )}
+            {refActionError && (
+              <p className="mt-2 text-xs text-danger-fg" role="alert">
+                {refActionError}
+              </p>
+            )}
           </div>
         ) : prompt !== null ? (
           // 提示词已改为参考图锚定：本地缓存缺失且提示词已就绪时显式告知，不能静默只给提示词。

@@ -11,6 +11,7 @@
 import asyncio
 import base64
 import contextlib
+import io
 import json
 from datetime import timedelta
 from typing import Literal
@@ -36,6 +37,7 @@ from modules.companion import (
 )
 from modules.settings import UserSetting
 from modules.ws import emit_ws_event
+from PIL import Image
 from prompts.generation import EDIT_PRESERVE_IDENTITY, OUTFIT_DESCRIBE_SYSTEM
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,9 +68,12 @@ from .avatar_service import (
 from .mesh2d import (
     active_model_ids,
     build_pose_side_prompt,
+    clear_outfit_user_poses,
     mesh2d_response,
+    peek_outfit_user_poses,
     pose_backdrop_for_artwork,
     pose_regeneration_in_progress,
+    remember_outfit_user_poses,
     run_mesh2d_pipeline,
     run_pose_side_regeneration,
 )
@@ -580,14 +585,31 @@ async def regenerate_outfit_draft(
     return outfit
 
 
+def _validate_user_pose_bytes(raw: bytes) -> None:
+    """校验自备姿态图可被图像库解码且边长不小于 8。"""
+    try:
+        with Image.open(io.BytesIO(raw)) as im:
+            im.verify()
+        with Image.open(io.BytesIO(raw)) as im:
+            width, height = im.size
+    except Exception as exc:
+        raise OutfitError("姿态图无法解析，请换一张图片后重试") from exc
+    if width < 8 or height < 8:
+        raise OutfitError("姿态图尺寸过小，请换一张完整姿态图后重试")
+
+
 async def confirm_outfit(
     db: AsyncSession,
     user_id: int,
     outfit_id: int,
+    *,
+    user_poses: dict[Literal["left", "right"], bytes] | None = None,
 ) -> CompanionOutfit:
-    """确认草稿（failed 状态可重试切分，立绘已转正不再走 temp-media）：先转正
-    （temp-media → companion-avatars，管线读永久路径）再以不停用现有激活行的方式插入
-    2d 行并启动切分；描述生成后台进行，不阻塞就绪。"""
+    """确认草稿（failed 可重试切分）：立绘转正后启动 2d 切分；描述生成后台进行。
+    user_poses 校验、暂存与恢复语义见 PIPELINE §1.1.2。"""
+    if user_poses:
+        for raw in user_poses.values():
+            await asyncio.to_thread(_validate_user_pose_bytes, raw)
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
@@ -599,6 +621,10 @@ async def confirm_outfit(
         avatar = await _active_avatar(db, user_id)
         if avatar is None:
             raise OutfitStateError("找不到激活头像行")
+        if user_poses:
+            remember_outfit_user_poses(outfit.id, user_poses)
+        else:
+            user_poses = peek_outfit_user_poses(outfit.id)
         if outfit.fullbody_url.startswith("temp-media/"):
             moved = await _read_temp_media_bytes(outfit.fullbody_url)
             if moved is None:
@@ -625,6 +651,7 @@ async def confirm_outfit(
         model_id=model.id,
         fullbody_url=outfit.fullbody_url,
         priority="high",
+        user_poses=user_poses,
     )
     _kick_describe(user_id, outfit.id)
     return outfit
@@ -659,6 +686,7 @@ async def resume_outfit_split(user_id: int, outfit_id: int) -> bool:
             model_id=model_id,
             fullbody_url=fullbody_url,
             priority="high",
+            user_poses=peek_outfit_user_poses(outfit_id),
         )
     return True
 
@@ -895,29 +923,29 @@ async def prepare_pose_prompt(
     outfit_id: int,
     side: Literal["left", "right"],
 ) -> str:
-    """自备图提示词（单侧扶边姿态）：以当前外观正面立绘为参考图锚定身份与穿着，
-    姿势/构图规范与生成链一致。立绘缺失或不可读时按状态冲突失败（提示词必须带得上参考图）；
-    立绘可读时附带按主色推荐的纯色背景，色幕分析失败只降级为通用纯色要求。"""
-    outfit = await _ready_outfit_for_pose(db, user_id, outfit_id)
-    if (
-        not outfit.fullbody_url
-        or await asyncio.to_thread(
-            load_avatar_bytes_as_data_uri,
-            outfit.fullbody_url,
-        )
-        is None
-    ):
+    """自备图提示词（单侧扶边姿态）。草稿/失败也可取；ready 走就绪守卫。
+    契约见 PIPELINE §1.1.2。"""
+    outfit = await _get_outfit(db, user_id, outfit_id)
+    if outfit is None:
+        raise OutfitNotFoundError(f"outfit {outfit_id} not found")
+    if outfit.status not in ("draft", "failed", "ready"):
+        raise OutfitStateError("外观尚未准备好姿态提示词，请稍候或重新生成外观")
+    if outfit.status == "ready":
+        outfit = await _ready_outfit_for_pose(db, user_id, outfit_id)
+    if outfit.status != "ready" and await _has_splitting(db, user_id):
+        raise OutfitStateError("有一套外观正在生成中，请稍候")
+    data_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, outfit.fullbody_url)
+    if not data_uri or not data_uri.startswith("data:"):
         raise OutfitStateError("外观立绘缺失或无法读取，请先重新生成外观")
     persona = await get_or_create_persona(db, user_id)
     definition = load_persona_definition(persona)
     backdrop: str | None = None
-    resolved = resolve_uploaded_avatar_path(outfit.fullbody_url.rsplit("/", 1)[-1])
-    if resolved is not None:
-        try:
-            artwork = await asyncio.to_thread(resolved[0].read_bytes)
-            backdrop = await asyncio.to_thread(pose_backdrop_for_artwork, artwork)
-        except Exception:
-            backdrop = None
+    try:
+        _, b64 = data_uri.split(",", 1)
+        artwork = base64.b64decode(b64)
+        backdrop = await asyncio.to_thread(pose_backdrop_for_artwork, artwork)
+    except Exception:
+        backdrop = None
     return build_pose_side_prompt(
         side,
         appearance=str(definition.get("appearance") or "").strip(),
@@ -934,8 +962,8 @@ async def adopt_outfit_pose(
     *,
     data: bytes,
 ) -> CompanionOutfit:
-    """自备图采纳（单侧姿态）：校验后就地入队既有单侧管线（跳过主图生图，抠图/定位/闭眼帧仍由后端完成），
-    完成与失败经 WS 事件驱动刷新，语义与单侧重绘一致。"""
+    """自备图采纳（单侧姿态）：校验后入队单侧管线，语义与单侧重绘一致。
+    契约见 PIPELINE §1.1.2。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _ready_outfit_for_pose(db, user_id, outfit_id)
         if pose_regeneration_in_progress(user_id, outfit.id):
@@ -1057,6 +1085,7 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
         _delete_reference_file(outfit)
         if outfit.fullbody_url not in avatar_files:
             delete_portrait_file(outfit.fullbody_url)
+        clear_outfit_user_poses(outfit.id)
         emit_ws_event(
             db,
             user_id=user_id,

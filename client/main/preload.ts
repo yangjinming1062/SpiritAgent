@@ -173,5 +173,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
     getState: () => ipcRenderer.invoke(IPC.invoke.updateGetState),
     onEvent: (cb: (payload: DesktopUpdateEvent) => void) => subscribe(IPC.event.updateEvent, cb)
   },
-  writeClipboard: (text: string) => ipcRenderer.invoke(IPC.invoke.writeClipboard, text)
+  writeClipboard: (text: string) => ipcRenderer.invoke(IPC.invoke.writeClipboard, text),
+  copyImage: (payload: { url: string }) => ipcRenderer.invoke(IPC.invoke.copyImage, payload),
+  saveImage: (payload: { defaultName?: string; url: string }) => ipcRenderer.invoke(IPC.invoke.saveImage, payload)
 })

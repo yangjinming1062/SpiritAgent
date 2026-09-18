@@ -205,6 +205,17 @@ class OutfitAdoptRequest(BaseModel):
     content_type: str | None = Field(default=None, max_length=64)
 
 
+class OutfitConfirmRequest(BaseModel):
+    """确认入柜可选姿态图；字段语义见 PIPELINE §1.1.2。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    pose_left: str | None = Field(default=None, max_length=8 * 1024 * 1024)
+    pose_left_content_type: str | None = Field(default=None, max_length=64)
+    pose_right: str | None = Field(default=None, max_length=8 * 1024 * 1024)
+    pose_right_content_type: str | None = Field(default=None, max_length=64)
+
+
 class OutfitRegeneratePromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

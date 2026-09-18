@@ -561,6 +561,39 @@ async def generate_pose_pack(reference: bytes, user_id: int | None) -> tuple[Pos
     )
 
 
+async def compose_pose_pack(
+    reference: bytes,
+    user_id: int | None,
+    user_poses: dict[Side, bytes] | None = None,
+) -> tuple[PosePack, dict[str, bytes]]:
+    """整包姿态：有自备图的侧跳过 AI 生图，其余侧仍生成。见 PIPELINE §1.1.2。"""
+    if not user_poses:
+        return await generate_pose_pack(reference, user_id)
+
+    context = await _resolve_pose_context(reference, user_id)
+    provided = user_poses
+
+    async def _side(side: Side) -> tuple[Pose, dict[str, bytes]]:
+        user_raw = provided.get(side)
+        if user_raw is None:
+            return await _compose_pose(side, context)
+        pixels, _ = await asyncio.to_thread(_prepare_pose_reference, user_raw)
+        channel = _chroma_channel(pixels)
+        return await _finish_pose(user_raw, side, context.image_chain, context.vision_chain, channel)
+
+    try:
+        async with asyncio.timeout(1200), asyncio.TaskGroup() as tasks:
+            left_task = tasks.create_task(_side("left"))
+            right_task = tasks.create_task(_side("right"))
+    except (ExceptionGroup, TimeoutError) as exc:
+        raise PoseGenerationError("扶边姿态生成失败，请重试") from exc
+    left, right = left_task.result(), right_task.result()
+    return (
+        PosePack(schema_version="spiritagent.2d.poses/1", left=left[0], right=right[0]),
+        left[1] | right[1],
+    )
+
+
 async def generate_single_pose(reference: bytes, user_id: int | None, side: Side) -> tuple[Pose, dict[str, bytes]]:
     """单侧重生成一侧扶边姿态：与整包共用参考图预处理与色幕上下文，供外观级局部重生成调用。"""
     context = await _resolve_pose_context(reference, user_id)
@@ -578,8 +611,7 @@ async def compose_single_pose_from_image(
     user_id: int | None,
     side: Side,
 ) -> tuple[Pose, dict[str, bytes]]:
-    """自备图单侧姿态：用户提供的姿态图直接进入既有后处理（抠图/定位/闭眼帧/编码），
-    只跳过主姿态图的生图调用。ISNet 抠图容忍任意背景，色幕通道按用户图自身主色选取供色键兜底。"""
+    """自备图单侧姿态：跳过主图生图，进入既有后处理。见 PIPELINE §1.1.2。"""
     async with SESSION_LOCAL() as db:
         image_chain, _ = await resolve_image_gen_chain(
             db if user_id is not None else None,
@@ -589,8 +621,7 @@ async def compose_single_pose_from_image(
         vision_chain = await resolve_vision_chain(db if user_id is not None else None, user_id)
     if not image_chain or not vision_chain:
         raise PoseGenerationError("扶边姿态需要配置支持参考图的图像供应商及视觉模型")
-    # 关键点换算、闭眼帧对齐与 Pose 尺寸记录均按图像实际宽高参数化（见 _finish_pose），
-    # 用户图保持原始分辨率与比例进入后处理，不强行归一化到生图链的 1024×1024。
+    # 尺寸与像素配准见 _finish_pose；用户图不归一化到 1024×1024
     pixels, _ = await asyncio.to_thread(_prepare_pose_reference, raw)
     channel = _chroma_channel(pixels)
     try:

@@ -26,6 +26,7 @@ from modules.companion import (
     ModelGenerateRequest,
     OnboardingStateResponse,
     OutfitAdoptRequest,
+    OutfitConfirmRequest,
     OutfitCreateRequest,
     OutfitListResponse,
     OutfitPolicyRequest,
@@ -910,9 +911,29 @@ async def post_outfit_confirm(
     outfit_id: int,
     user: CurrentUser,
     db: DbSession,
+    body: OutfitConfirmRequest = Body(default_factory=OutfitConfirmRequest),
 ) -> OutfitResponse:
+    """确认入柜；姿态图字段契约见 PIPELINE §1.1.2。与同模块其他 POST 一致：
+    以可缺省的 Pydantic 模型收 body，空对象不触发 422。"""
+    user_poses: dict[Literal["left", "right"], bytes] | None = None
+    poses: dict[Literal["left", "right"], bytes] = {}
+    for side, image_b64, content_type in (
+        ("left", body.pose_left, body.pose_left_content_type),
+        ("right", body.pose_right, body.pose_right_content_type),
+    ):
+        if not image_b64:
+            continue
+        raw, _ = _decode_upload_image(image_b64, content_type)
+        if not raw:
+            raise HTTPException(status_code=400, detail={"error": f"{'左' if side == 'left' else '右'}姿态图数据无效"})
+        if side == "left":
+            poses["left"] = raw
+        else:
+            poses["right"] = raw
+    user_poses = poses or None
+
     try:
-        outfit = await confirm_outfit(db, user.id, outfit_id)
+        outfit = await confirm_outfit(db, user.id, outfit_id, user_poses=user_poses)
     except OutfitError as exc:
         raise _outfit_http_error(exc)
     return outfit_response(outfit)

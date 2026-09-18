@@ -72,6 +72,8 @@ declare global {
       uploadVideoForAttach: AsyncIpc<IpcInvokeContract['spiritagent:media:video-upload']>
       selectPaths: AsyncIpc<IpcInvokeContract['spiritagent:selectPaths']>
       writeClipboard: AsyncIpc<IpcInvokeContract['spiritagent:writeClipboard']>
+      copyImage: AsyncIpc<IpcInvokeContract['spiritagent:copyImage']>
+      saveImage: AsyncIpc<IpcInvokeContract['spiritagent:saveImage']>
       log: AsyncIpc<IpcInvokeContract['spiritagent:log:emit']>
       runnerInvoke: AsyncIpc<IpcInvokeContract['spiritagent:runner:invoke']>
       runnerCancel: AsyncIpc<IpcInvokeContract['spiritagent:runner:cancel']>

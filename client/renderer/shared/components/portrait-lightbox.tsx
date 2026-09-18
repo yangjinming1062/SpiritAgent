@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
+import { Copy, Download } from '@/shared/lib/icons'
+import { imageUrlForNativeClipboard } from '@/shared/lib/image-clipboard'
 import { useStrings } from '@/shared/strings'
 
 import { useEscapeKey } from '../hooks/use-escape-key'
@@ -89,6 +91,8 @@ export function PortraitLightbox({
 }): React.ReactPortal | null {
   const t = useStrings()
   const overlayRef = useRef<HTMLDivElement>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const [copied, setCopied] = useState(false)
 
   // 灯箱打开时把整个视口注册为可交互区，避免点击图片或背景时事件穿透到下层窗口。
   // hook 内部经 getRectRef 镜像读取，函数身份无需稳定。
@@ -112,14 +116,83 @@ export function PortraitLightbox({
       role="dialog"
       style={{ background: 'rgba(0,0,0,0.35)', pointerEvents: 'auto' }}
     >
-      <button
-        aria-label={t.ui.lightbox.closePreview}
-        className="block cursor-zoom-out rounded-2xl border-0 bg-transparent p-0"
-        onClick={onClose}
-        type="button"
-      >
-        <img alt={name} className="block max-h-[90vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl" src={url} />
-      </button>
+      <div className="flex max-h-[90vh] max-w-[90vw] flex-col items-center gap-2">
+        <button
+          aria-label={t.ui.lightbox.closePreview}
+          className="block cursor-zoom-out rounded-2xl border-0 bg-transparent p-0"
+          onClick={onClose}
+          type="button"
+        >
+          <img alt={name} className="block max-h-[80vh] max-w-[90vw] rounded-2xl object-contain shadow-2xl" src={url} />
+        </button>
+        <div className="flex items-center gap-2" onClick={e => e.stopPropagation()}>
+          <button
+            className="inline-flex h-7 items-center gap-1 rounded-lg bg-black/70 px-2 text-[11px] text-white/90 transition hover:bg-black/90 hover:text-white"
+            onClick={e => {
+              e.stopPropagation()
+
+              setActionError(null)
+
+              void (async (): Promise<void> => {
+                try {
+                  setCopied(false)
+
+                  const copyImage = window.spiritagent?.copyImage
+
+                  if (!copyImage) {
+                    throw new Error('copyImage IPC unavailable')
+                  }
+
+                  await copyImage({ url: await imageUrlForNativeClipboard(url) })
+                  setCopied(true)
+                } catch {
+                  setActionError(t.selfSource.copyRefImageFailed)
+                }
+              })()
+            }}
+            type="button"
+          >
+            <Copy className="size-3.5" />
+            {t.selfSource.copyRefImage}
+          </button>
+          <button
+            className="inline-flex h-7 items-center gap-1 rounded-lg bg-black/70 px-2 text-[11px] text-white/90 transition hover:bg-black/90 hover:text-white"
+            onClick={e => {
+              e.stopPropagation()
+              setActionError(null)
+              setCopied(false)
+
+              void (async (): Promise<void> => {
+                try {
+                  const saveImage = window.spiritagent?.saveImage
+
+                  if (!saveImage) {
+                    throw new Error('saveImage IPC unavailable')
+                  }
+
+                  await saveImage({ defaultName: name || undefined, url })
+                } catch {
+                  setActionError(t.selfSource.saveRefImageFailed)
+                }
+              })()
+            }}
+            type="button"
+          >
+            <Download className="size-3.5" />
+            {t.selfSource.saveRefImage}
+          </button>
+        </div>
+        {copied && (
+          <p className="text-xs text-white/80" role="status">
+            {t.selfSource.copiedRefImage}
+          </p>
+        )}
+        {actionError && (
+          <p className="text-xs text-rose-300" role="alert">
+            {actionError}
+          </p>
+        )}
+      </div>
     </div>,
     document.body
   )

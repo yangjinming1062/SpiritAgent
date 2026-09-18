@@ -15,7 +15,7 @@ from services.infrastructure.assets import asset_store
 from services.infrastructure.seethrough import split_to_psd
 
 from ..avatar_service import get_avatar_job_lock, load_avatar_bytes_as_data_uri, normalize_avatar_url_to_bare
-from .poses import Side, compose_single_pose_from_image, generate_pose_pack, generate_single_pose
+from .poses import Side, compose_pose_pack, compose_single_pose_from_image, generate_single_pose
 from .priority_queue import get_default_queue
 
 logger = get_logger(__name__)
@@ -30,6 +30,8 @@ _PIPELINE_TASKS: set[asyncio.Task[None]] = set()
 _ACTIVE_MODEL_IDS: set[int] = set()
 # 在飞单侧姿态重生成 (user_id, outfit_id)；仅内存标记，进程重启即丢（客户端有兜底超时）
 _ACTIVE_POSE_OUTFITS: set[tuple[int, int]] = set()
+# 自备姿态图按外观进程内暂存（不落库）；语义见 PIPELINE §1.1.2。
+_OUTFIT_USER_POSES: dict[int, dict[Side, bytes]] = {}
 
 
 def active_model_ids() -> frozenset[int]:
@@ -38,6 +40,21 @@ def active_model_ids() -> frozenset[int]:
 
 def pose_regeneration_in_progress(user_id: int, outfit_id: int) -> bool:
     return (user_id, outfit_id) in _ACTIVE_POSE_OUTFITS
+
+
+def remember_outfit_user_poses(outfit_id: int, poses: dict[Side, bytes] | None) -> None:
+    if poses:
+        _OUTFIT_USER_POSES[outfit_id] = poses
+    else:
+        _OUTFIT_USER_POSES.pop(outfit_id, None)
+
+
+def peek_outfit_user_poses(outfit_id: int) -> dict[Side, bytes] | None:
+    return _OUTFIT_USER_POSES.get(outfit_id)
+
+
+def clear_outfit_user_poses(outfit_id: int) -> None:
+    _OUTFIT_USER_POSES.pop(outfit_id, None)
 
 
 async def _safe_load_avatar_bytes(url: str) -> bytes:
@@ -53,12 +70,13 @@ async def _safe_load_avatar_bytes(url: str) -> bytes:
 async def _generate(
     user_id: int,
     fullbody_bytes: bytes,
+    user_poses: dict[Side, bytes] | None = None,
 ) -> tuple[str, list[dict[str, str]]]:
     paths: list[str] = []
     try:
         async with asyncio.timeout(SETTINGS.seethrough_total_budget_seconds), asyncio.TaskGroup() as tasks:
             psd_task = tasks.create_task(split_to_psd(fullbody_bytes))
-            poses_task = tasks.create_task(generate_pose_pack(fullbody_bytes, user_id))
+            poses_task = tasks.create_task(compose_pose_pack(fullbody_bytes, user_id, user_poses))
         poses, textures = poses_task.result()
         psd_path = await asset_store.save_companion_asset_async(
             psd_task.result(),
@@ -99,11 +117,12 @@ def run_mesh2d_pipeline(
     model_id: int,
     fullbody_url: str,
     priority: str = "high",
+    user_poses: dict[Side, bytes] | None = None,
 ) -> asyncio.Task[None]:
     """提交异步流水线并立即返回；状态写入 Companion2DModel 表，由 WS 事件驱动前端刷新。
 
     队列 worker 内各阶段自开短会话——请求路径毫秒级返回（202 语义），不与
-    视觉 LLM 往返共享请求会话。"""
+    视觉 LLM 往返共享请求会话。user_poses 见 PIPELINE §1.1.2。"""
     queue = get_default_queue()
 
     async def _fetch_model(db: AsyncSession) -> Companion2DModel | None:
@@ -134,7 +153,7 @@ def run_mesh2d_pipeline(
         try:
             normalized_url = normalize_avatar_url_to_bare(fullbody_url) or fullbody_url
             fullbody_bytes = await _safe_load_avatar_bytes(normalized_url)
-            manifest_json, layer_entries = await _generate(user_id, fullbody_bytes)
+            manifest_json, layer_entries = await _generate(user_id, fullbody_bytes, user_poses)
         except Mesh2DPipelineError as exc:
             logger.warning(
                 "2d pipeline failed",
@@ -197,6 +216,8 @@ def run_mesh2d_pipeline(
                     if outfit is not None:
                         outfit.status = "ready"
                         event_outfit_name = outfit.name
+                        # 切分成功后暂存不再供重试
+                        clear_outfit_user_poses(outfit.id)
                         if outfit.pending_wear and avatar_active:
                             await db.execute(
                                 update(Companion2DModel)
@@ -333,7 +354,7 @@ def run_pose_side_regeneration(
     """提交单侧扶边姿态重生成并立即返回。成功原位替换该侧两张姿态纹理与 manifest 的
     poses 子树并重算 content_hash，其余资产不动；失败保留旧姿态、外观保持 ready——
     单侧重生成是优化而非重建，失败不得波及整套资产。任务不落库，进程重启即丢。
-    user_image 提供时为自备图采纳：跳过主姿态图生图，用户图直接进入既有后处理。"""
+    user_image 语义见 PIPELINE §1.1.2。"""
     queue = get_default_queue()
 
     async def _task() -> None:
