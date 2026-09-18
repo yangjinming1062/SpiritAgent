@@ -54,6 +54,8 @@ BIPED_NATURAL_POSE = (
 
 VIEW_PREFIX = {"front": "正面全身角色立绘", "back": "背面全身角色立绘"}
 
+UNCHOPPED_BODY_PARTS = "头顶、肢体末端或该角色实际拥有的任何身体部位"
+
 OUTFIT_CHANGE_CLAUSE = (
     "换装任务：参考图是身份锚点，五官、脸型、体型、物种、性别及标志性身体特征必须一致；只可改变服装、发型与配饰。"
 )
@@ -74,7 +76,7 @@ EDIT_PRESERVE_IDENTITY = (
 
 EDIT_PRESERVE_FULLBODY = (
     "除用户明确要求修改的部位或姿态外，角色从头到脚完整入画的构图、身体比例与画风保持不变，"
-    "头顶、肢体、翅膀或尾部不被裁切"
+    f"{UNCHOPPED_BODY_PARTS}不被裁切"
 )
 
 EDIT_PRESERVE_3D_FRONT = (

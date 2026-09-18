@@ -11,8 +11,9 @@
 - describe_garment_image()  [LLM]      用户服装参考图与文字要求 → 整合的着装设计稿（换装参考不直传生图，生图恒单参考）
 - build_fullbody_prompt()   [确定性]   视角(front/back) + 物种姿态模板 + 画风 + Persona 设定 → 全身立绘提示词
 
-全身图提示词按稳定优先级组装：视角与主体 → 物种骨骼姿势 → 完整画幅 → 参考图身份锚点 →
-渲染风格 → Persona 外观与克制气质 → 物种特效 → 不冲突的用户反馈 → 纯白背景与排除项。
+全身图提示词按稳定优先级组装：视角与主体 → 物种骨骼姿势 → 完整画幅 →
+参考图身份锚点 → 渲染风格 → Persona 外观与克制气质 → 物种特效 → 不冲突的用户反馈 →
+纯白背景与排除项。
 双足 2D 立绘采用自然站姿；3D 种子采用 A-pose 以利绑骨与多视角一致性。
 
 辅助工具说明：物种骨骼路由、视角名称映射、骨骼体态模板定义见下文各常量与类。
@@ -33,6 +34,7 @@ from prompts.generation import (
     OUTFIT_CHANGE_CLAUSE,
     SELF_SOURCE_REFERENCE_CLAUSE,
     SELF_SOURCE_REWRITE_LEAD,
+    UNCHOPPED_BODY_PARTS,
     VIEW_PREFIX,
     IdentityAnchor,
 )
@@ -289,6 +291,17 @@ def resolve_fullbody_template(
     return template if template.style == style else replace(template, style=style)
 
 
+def _fullbody_frame_clause(canvas_aspect: str | None) -> str:
+    """完整画幅约束：统一描述，不按骨架列举可能不存在的部位（翅膀/尾巴等）。"""
+    clause = (
+        "从头到脚完整可见的全身构图，主体完整入画且四周留有安全边距，"
+        f"不裁切{UNCHOPPED_BODY_PARTS}，不得改成半身或膝上构图；镜头平视，透视自然。"
+    )
+    if canvas_aspect:
+        return f"画幅比例 {canvas_aspect}；{clause}"
+    return clause
+
+
 def build_fullbody_prompt(
     view: str,
     *,
@@ -314,12 +327,7 @@ def build_fullbody_prompt(
         if not personality:
             personality = str(definition.get("personality") or "").strip()
 
-    frame_clause = (
-        "从头到脚完整可见的全身构图，头顶与双脚（含鞋履）完整入画且四周留有安全边距，"
-        "不裁切头顶、脚部、肢体、翅膀或尾部，不得改成半身或膝上构图；平视镜头，透视自然。"
-    )
-    if canvas_aspect:
-        frame_clause = f"画幅比例 {canvas_aspect}；{frame_clause}"
+    frame_clause = _fullbody_frame_clause(canvas_aspect)
     view_label = VIEW_PREFIX.get(view, "正面全身角色立绘")
     if identity_anchor == "reference-self-source":
         # 自备图：提示词以改写句式开头，同时适配外部工具图生图与纯文生图。
@@ -377,8 +385,10 @@ def build_outfit_prompt(
         identity_anchor=identity_anchor,
         canvas_aspect=canvas_aspect,
     )
-    tail = "不得因此覆盖从头到脚的全身构图、标准姿势、身份锚点或纯白背景。"
-    return f"{base}{OUTFIT_CHANGE_CLAUSE}着装要求：{_prompt_clause(feedback)}。鞋履与脚部同样完整入画。{tail}"
+    tail = "不得因此覆盖完整全身构图、标准姿势、身份锚点或纯白背景。"
+    return (
+        f"{base}{OUTFIT_CHANGE_CLAUSE}着装要求：{_prompt_clause(feedback)}。{UNCHOPPED_BODY_PARTS}同样完整入画。{tail}"
+    )
 
 
 async def describe_garment_image(

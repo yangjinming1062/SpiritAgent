@@ -14,7 +14,7 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 |---|---|---|
 | `chat.py` | 5 套预设体骨架、四职业双语头部、约 20 个系统提示词块、标题生成、上下文压缩 | `services/application/chat/`（prompt_blocks、prompt_presets、system_prompt、title_generator、context_compressor） |
 | `companion.py` | 心情、互动、空闲表达、空间行为、骨骼分类、性格标签（含种子词表）、角色设定与着装块标题 | `services/domains/companion/` |
-| `generation.py` | 头像改写、画风词典、姿态短语、换装/自备图身份条款与改写句式、`IdentityAnchor` 锚定变体、编辑保持条款、服装转写、房间规则与光线词典、审核合规改写、衣柜描述、房间陈设 | `services/infrastructure/llm/prompt_engineer.py`、`services/application/generation/` |
+| `generation.py` | 头像改写、画风词典、姿态短语、全身画幅不可裁切部位、换装/自备图身份条款与改写句式、`IdentityAnchor` 锚定变体、编辑保持条款、服装转写、房间规则与光线词典、审核合规改写、衣柜描述、房间陈设 | `services/infrastructure/llm/prompt_engineer.py`、`services/application/generation/` |
 | `memory.py` | 记忆维护政策（MEMORY_POLICY）、审查指令、用户资料上下文标签与块标题 | `services/domains/memory/`（memory_policy、memory_review、memory_bootstrap） |
 | `nightly.py` | 夜间规划、每日检查点、用户可见日记、内部夜间反思、片刻回复、片刻冲动决策 | `services/application/nightly/`、`services/application/moments/` |
 | `tools.py` | 16 个工具 schema 的主描述与参数描述 | `services/adapters/tools/`（builtin/ 与同级 *.py） |
