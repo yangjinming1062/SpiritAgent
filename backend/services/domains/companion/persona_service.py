@@ -3,6 +3,7 @@ from typing import Any
 
 from components import DEFAULT_LANGUAGE, get_logger, resolve_prompt_text, safe_json_loads
 from modules.companion import AvatarAsset, Persona
+from prompts.companion import PERSONA_LABELS_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -12,12 +13,6 @@ from services.domains.conversation import ensure_system_conversations_for_user
 from services.domains.memory import extract_user_profile, read_user_profile, record_user_profile
 
 logger = get_logger(__name__)
-
-# 双语角色设定块标题。字段 label（key.replace("_", " ").capitalize()）属协议级展示，保持英文不译。
-_PERSONA_LABELS_TEXTS: dict[str, str] = {
-    "zh": "# 角色设定",
-    "en": "# Character persona",
-}
 
 # 人设字段顺序属于对外契约的一部分，它决定渲染出的系统提示词片段形状
 _REQUIRED_FIELDS: tuple[str, ...] = ("name", "personality", "speaking_style")
@@ -157,7 +152,7 @@ def build_system_prompt_extras(persona: Persona | None, *, language: str = DEFAU
 
 
 def render_extras(definition: dict[str, str], *, language: str = DEFAULT_LANGUAGE) -> str:
-    lines = [resolve_prompt_text(_PERSONA_LABELS_TEXTS, language)]
+    lines = [resolve_prompt_text(PERSONA_LABELS_TEXTS, language)]
     for key in _REQUIRED_FIELDS + _OPTIONAL_FIELDS:
         if key in definition:
             label = key.replace("_", " ").capitalize()

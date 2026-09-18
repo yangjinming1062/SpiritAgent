@@ -12,6 +12,12 @@ from typing import Any
 
 from components import SESSION_LOCAL, tool_error
 from modules.companion import DiarySource, MomentKind, MomentSource
+from prompts.tools import (
+    DIARY_WRITE_DESC,
+    DIARY_WRITE_PARAM_DESCS,
+    MOMENT_CREATE_DESC,
+    MOMENT_CREATE_PARAM_DESCS,
+)
 
 from services.domains.companion import get_disturbance_tier
 from services.domains.journal import check_moment_llm_quota, create_user_moment, resolve_user_local_today, upsert_diary
@@ -110,17 +116,17 @@ async def diary_write_tool(
 
 MOMENT_CREATE_SCHEMA = {
     "name": "moment_create",
-    "description": "在用户生活空间时间线写一条时刻。主动记录每用户每天限 3 条。",
+    "description": MOMENT_CREATE_DESC,
     "parameters": {
         "type": "object",
         "properties": {
-            "title": {"type": "string", "description": "短标题（≤ 24 字）"},
-            "body": {"type": "string", "description": "80–240 字的正文，第一人称或第二人称皆可"},
-            "emotion": {"type": "string", "description": "可选情绪 token，取值见系统提示中的 emotion 枚举"},
+            "title": {"type": "string", "description": MOMENT_CREATE_PARAM_DESCS["title"]},
+            "body": {"type": "string", "description": MOMENT_CREATE_PARAM_DESCS["body"]},
+            "emotion": {"type": "string", "description": MOMENT_CREATE_PARAM_DESCS["emotion"]},
             "kind": {
                 "type": "string",
                 "enum": ["emotion", "together", "scene"],
-                "description": "默认 user",
+                "description": MOMENT_CREATE_PARAM_DESCS["kind"],
             },
         },
         "required": ["title", "body"],
@@ -129,14 +135,14 @@ MOMENT_CREATE_SCHEMA = {
 
 DIARY_WRITE_SCHEMA = {
     "name": "diary_write",
-    "description": "在用户日记本追加一段（用户时区今天），第一人称；不覆盖用户已写过的当日内容（按追加段落处理）。",
+    "description": DIARY_WRITE_DESC,
     "parameters": {
         "type": "object",
         "properties": {
-            "body": {"type": "string", "description": "日记正文（≤ 1000 字）"},
-            "mood": {"type": "string", "description": "可选情绪 token"},
-            "date": {"type": "string", "description": "ISO 日期（YYYY-MM-DD）；缺省为用户本地今天"},
-            "title": {"type": "string", "description": "可选标题"},
+            "body": {"type": "string", "description": DIARY_WRITE_PARAM_DESCS["body"]},
+            "mood": {"type": "string", "description": DIARY_WRITE_PARAM_DESCS["mood"]},
+            "date": {"type": "string", "description": DIARY_WRITE_PARAM_DESCS["date"]},
+            "title": {"type": "string", "description": DIARY_WRITE_PARAM_DESCS["title"]},
         },
         "required": ["body"],
     },

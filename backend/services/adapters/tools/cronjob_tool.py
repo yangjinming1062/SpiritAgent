@@ -2,6 +2,7 @@ import json
 from typing import Any
 
 from components import coerce_int, get_logger, session_scope, tool_error
+from prompts.tools import CRONJOB_DESC, CRONJOB_PARAM_DESCS
 
 from services.contracts import MemoryScope
 from services.domains.automation import create_job, get_job, list_jobs, remove_job, update_job
@@ -139,27 +140,27 @@ async def cronjob(
 
 CRONJOB_SCHEMA = {
     "name": "cronjob",
-    "description": "Manage the user's scheduled cron jobs.",
+    "description": CRONJOB_DESC,
     "parameters": {
         "type": "object",
         "properties": {
-            "action": {"type": "string", "description": "One of: create, list, update, get, pause, resume, remove."},
-            "job_id": {"type": "integer", "description": "Required for update/pause/resume/remove."},
-            "prompt": {"type": "string", "description": "For create: the full prompt/instructions for the job."},
+            "action": {"type": "string", "description": CRONJOB_PARAM_DESCS["action"]},
+            "job_id": {"type": "integer", "description": CRONJOB_PARAM_DESCS["job_id"]},
+            "prompt": {"type": "string", "description": CRONJOB_PARAM_DESCS["prompt"]},
             "schedule": {
                 "type": "string",
-                "description": "For create/update: cron expression (e.g., '0 9 * * *' for daily at 9am).",
+                "description": CRONJOB_PARAM_DESCS["schedule"],
             },
-            "name": {"type": "string", "description": "Optional human-friendly name."},
+            "name": {"type": "string", "description": CRONJOB_PARAM_DESCS["name"]},
             "kind": {
                 "type": "string",
                 "enum": ["special", "standard"],
-                "description": "special delivers a natural proactive message in the primary conversation; standard runs in a separate task conversation and posts a system notification. Defaults to standard.",
+                "description": CRONJOB_PARAM_DESCS["kind"],
                 "default": "standard",
             },
             "deliver": {
                 "type": "string",
-                "description": "Delivery channel for job output (e.g., 'local', 'webhook'). Defaults to 'local' when omitted.",
+                "description": CRONJOB_PARAM_DESCS["deliver"],
                 "default": "local",
             },
         },

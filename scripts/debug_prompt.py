@@ -34,17 +34,12 @@ DEFAULT_MOCK_USER_PROFILE: dict[str, str] = {
     "freeform": "平时经常写代码，希望你在旁边陪伴聊天并在需要时协助分析问题",
 }
 
-# 双语 mock 用户资料块标题（仅 debug 脚本内使用）。
-_MOCK_USER_PROFILE_LABELS_TEXTS: dict[str, str] = {
-    "zh": "# 用户资料",
-    "en": "# User profile",
-}
-
 
 def _build_mock_user_profile_extras(profile: dict[str, str], *, language: str = "zh") -> str:
     from components import resolve_prompt_text
+    from prompts.memory import USER_PROFILE_LABELS_TEXTS
 
-    lines = [resolve_prompt_text(_MOCK_USER_PROFILE_LABELS_TEXTS, language)]
+    lines = [resolve_prompt_text(USER_PROFILE_LABELS_TEXTS, language)]
     for key, val in profile.items():
         if val:
             display = key.replace("_", " ").capitalize()

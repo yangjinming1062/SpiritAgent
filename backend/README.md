@@ -20,10 +20,10 @@ api → services
 adapters → application → domains
 application / domains → infrastructure
 各服务层 → contracts
-modules / components / common 不反向依赖服务实现
+modules / components / common / prompts 不反向依赖服务实现
 ```
 
-`modules` 定义 ORM 与跨边界 schema；`components` 管配置、数据库、任务和日志；`common` 只放路由、模型基类等少量框架工具。迁移独立于应用实现。
+`modules` 定义 ORM 与跨边界 schema；`components` 管配置、数据库、任务和日志；`common` 只放路由、模型基类等少量框架工具；`prompts` 集中存放面向 LLM 的提示词文本常量，零项目内依赖，渲染与装配留在各服务层（见 [prompts/README.md](prompts/README.md)）。迁移独立于应用实现。
 
 跨包使用公共入口。各能力包通过 `__init__.py` 暴露符号，`services` 根包不汇总导出；导入与 facade 检查见 [Scripts](../scripts/README.md#4-import-检查--check_importspy)。
 

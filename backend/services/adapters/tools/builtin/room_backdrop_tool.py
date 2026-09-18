@@ -11,6 +11,7 @@ import json
 from typing import Any
 
 from components import ROOM_BACKDROP_LLM_TRIGGERS_TOTAL, get_logger, tool_error
+from prompts.tools import ROOM_BACKDROP_UPDATE_DESC, ROOM_BACKDROP_UPDATE_PARAM_DESCS
 
 from services.application.generation import (
     BackdropIntent,
@@ -103,26 +104,23 @@ async def room_backdrop_update_tool(
 
 ROOM_BACKDROP_UPDATE_SCHEMA = {
     "name": "room_backdrop_update",
-    "description": (
-        "生成并更换生活空间的房间背景，支持文字描述及场景、姿势参考图，参考图可以包含人物。"
-        "画面包含角色本人，保持既定身份与当前穿着。返回后台生成任务的标识与状态，图片异步生成。"
-    ),
+    "description": ROOM_BACKDROP_UPDATE_DESC,
     "parameters": {
         "type": "object",
         "properties": {
             "intent": {
                 "type": "string",
                 "enum": ["decorate", "seasonal", "mood", "rebuild"],
-                "description": "调整类型：decorate=重新布置 / seasonal=换季 / mood=调整氛围 / rebuild=整体重建。默认 decorate。",
+                "description": ROOM_BACKDROP_UPDATE_PARAM_DESCS["intent"],
             },
             "notes": {
                 "type": "string",
-                "description": "房间布置、构图与角色姿势的完整要求，例如「参考图中的房间，让角色侧坐在窗边」。角色身份与当前衣着保持不变。",
+                "description": ROOM_BACKDROP_UPDATE_PARAM_DESCS["notes"],
             },
             "reference_image_index": {
                 "type": "integer",
                 "minimum": 1,
-                "description": "使用参考图时填写当前上下文中最近一条带图用户消息的图片序号，从 1 开始；单图填 1。不使用图片时省略，不填写 URL 或 base64。",
+                "description": ROOM_BACKDROP_UPDATE_PARAM_DESCS["reference_image_index"],
             },
         },
     },

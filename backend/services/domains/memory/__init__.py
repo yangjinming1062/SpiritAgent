@@ -28,7 +28,7 @@ from .memory_namespaces import (
     normalize_recall_context,
     participates_in_recall,
 )
-from .memory_policy import MEMORY_POLICY, MemoryDecisions
+from .memory_policy import MemoryDecisions
 from .memory_retrieval import (
     embed_memory_text,
     retrieve_hybrid_memories,
@@ -49,7 +49,6 @@ __all__ = [
     "active_memory_filter",
     "MemoryReviewContext",
     "load_review_context",
-    "MEMORY_POLICY",
     "MemoryDecisions",
     "assess_memory_changes",
     "review_memories",

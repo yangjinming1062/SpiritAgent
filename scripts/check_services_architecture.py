@@ -6,7 +6,7 @@
 3. 层间白名单：contracts 纯净；domains 不跨业务域、不依赖 application/adapters；
    infrastructure 不认识业务（禁止导入 domains/application/adapters）；
    application 不导入 adapters；除 bootstrap 外不得导入 bootstrap；
-   common/components/modules 不得反向导入服务实现。
+   common/components/modules/prompts 不得反向导入服务实现。
 4. application 内只允许显式声明的单向流程依赖。
 """
 
@@ -49,7 +49,7 @@ DOMAIN_FLOW_EDGES = {
 }
 # 各域可单向导入的底座域（backend/README.md §3.2）。
 DOMAIN_BASE = "services.domains.conversation"
-BOTTOM = ("common", "components", "modules")
+BOTTOM = ("common", "components", "modules", "prompts")
 
 
 def pkg_of(module: str) -> str:
@@ -72,7 +72,7 @@ def domain_of(module: str) -> str:
 
 
 def layer_of(pkg: str) -> str | None:
-    if pkg in ("common", "components", "modules"):
+    if pkg in ("common", "components", "modules", "prompts"):
         return pkg
     if pkg in RANK:
         return pkg
@@ -184,7 +184,7 @@ def main() -> int:
         if la is None or lb is None or a == b:
             continue
         where = f"{evs[0]}"
-        if la in ("common", "components", "modules") and lb not in ("common", "components", "modules"):
+        if la in BOTTOM and lb not in BOTTOM:
             errors.append(f"[bottom-up] {la} 导入 {b}  [{where}]")
             continue
         if la == "main" and lb != "bootstrap":

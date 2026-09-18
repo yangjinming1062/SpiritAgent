@@ -1,6 +1,7 @@
 import json
 
 from components import SESSION_LOCAL
+from prompts.tools import SEARCH_TOOLS_DESC, SEARCH_TOOLS_PARAM_DESCS
 
 from services.application.chat import AUTOMATION_EXCLUDED_TOOL_NAMES, LIFE_SPACE_TOOL_NAMES
 from services.domains.companion import is_work_preset, resolve_session_profile
@@ -8,13 +9,13 @@ from services.infrastructure.tool_runtime import REGISTRY, schema_name, search_d
 
 SEARCH_TOOLS_SCHEMA = {
     "name": "search_tools",
-    "description": "Search by domain or intent and unlock matching tools for immediate use.",
+    "description": SEARCH_TOOLS_DESC,
     "parameters": {
         "type": "object",
         "properties": {
             "query": {
                 "type": "string",
-                "description": "Domain id (e.g. files, browser) or intent (e.g. 读文件, run python).",
+                "description": SEARCH_TOOLS_PARAM_DESCS["query"],
             },
         },
         "required": ["query"],

@@ -3,6 +3,12 @@ import json
 from datetime import timedelta
 
 from components import SESSION_LOCAL, SETTINGS, get_logger, tool_error, utc_now
+from prompts.tools import (
+    VIDEO_GENERATION_DESC,
+    VIDEO_GENERATION_PARAM_DESCS,
+    VIDEO_STATUS_DESC,
+    VIDEO_STATUS_PARAM_DESCS,
+)
 
 from services.application.generation import (
     AvatarGenerationError,
@@ -126,39 +132,35 @@ async def video_generate_status_tool(task_id: int, user_id: int | None = None, *
 
 VIDEO_GENERATION_SCHEMA = {
     "name": "video_generate",
-    "description": (
-        "Generate a short video from a text prompt (and optionally a first-frame image). "
-        "Returns the video URL on success, or a pending task_id for long jobs — check it later "
-        "with video_generate_status."
-    ),
+    "description": VIDEO_GENERATION_DESC,
     "parameters": {
         "type": "object",
         "properties": {
-            "prompt": {"type": "string", "description": "Describe the video content."},
+            "prompt": {"type": "string", "description": VIDEO_GENERATION_PARAM_DESCS["prompt"]},
             "subject": {
                 "type": "string",
                 "enum": ["self"],
-                "description": "Set to 'self' only when the current system context defines a canonical character who appears in the video. The platform injects that character's seed image as the first frame; do not reconstruct appearance from memory. Ignored when first_frame_image is set explicitly.",
+                "description": VIDEO_GENERATION_PARAM_DESCS["subject"],
             },
             "duration": {
                 "type": "integer",
                 "minimum": 4,
                 "maximum": 15,
-                "description": "Clip length in seconds. MiniMax-Hailuo (default): must be 6 or 10. MiniMax-H3: any integer 4-15.",
+                "description": VIDEO_GENERATION_PARAM_DESCS["duration"],
             },
             "resolution": {
                 "type": "string",
                 "enum": ["512P", "768P", "1080P", "2K"],
-                "description": "Output resolution. MiniMax-Hailuo (default): 512P/768P/1080P. MiniMax-H3: 768P/2K.",
+                "description": VIDEO_GENERATION_PARAM_DESCS["resolution"],
             },
             "first_frame_image": {
                 "type": "string",
-                "description": "Public URL or data URL of the first frame (i2v mode). When set, the provider derives the aspect ratio from the image; aspect_ratio is ignored.",
+                "description": VIDEO_GENERATION_PARAM_DESCS["first_frame_image"],
             },
             "aspect_ratio": {
                 "type": "string",
                 "enum": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
-                "description": "Output aspect ratio. Ignored when first_frame_image is set (i2v). Required for text-to-video on MiniMax-H3; optional on MiniMax-Hailuo.",
+                "description": VIDEO_GENERATION_PARAM_DESCS["aspect_ratio"],
             },
         },
         "required": ["prompt"],
@@ -167,10 +169,10 @@ VIDEO_GENERATION_SCHEMA = {
 
 VIDEO_STATUS_SCHEMA = {
     "name": "video_generate_status",
-    "description": "Check the status of a previously-submitted video_generate task. Returns status plus url (on success) or error (on failure).",
+    "description": VIDEO_STATUS_DESC,
     "parameters": {
         "type": "object",
-        "properties": {"task_id": {"type": "integer", "description": "The task_id returned by video_generate."}},
+        "properties": {"task_id": {"type": "integer", "description": VIDEO_STATUS_PARAM_DESCS["task_id"]}},
         "required": ["task_id"],
     },
 }

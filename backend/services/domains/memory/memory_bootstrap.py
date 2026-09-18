@@ -4,6 +4,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from components import DEFAULT_LANGUAGE, resolve_prompt_text
 from modules.memory import Memory
 from modules.settings import UserSetting
+from prompts.memory import CONTEXT_LABELS, USER_PROFILE_LABELS_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,22 +15,8 @@ from .memory_store import active_memory_filter, scope_filter, upsert_slotted_mem
 
 _USER_PROFILE_TAGS_JSON = '["onboarding", "user_profile"]'
 
-# 已知 user_* 键的友好上下文标签；未知键回落为 user_profile:<raw_key>
-_CONTEXT_LABELS: dict[str, str] = {
-    "user_call_name": "user_profile:preferred_name",
-    "user_gender": "user_profile:gender",
-    "user_age_bucket": "user_profile:age_bucket",
-    "user_hobbies": "user_profile:hobbies",
-    "user_freeform": "user_profile:freeform",
-}
-
-# 双语用户资料块标题；display 字段（context.split(":",1)[1].replace("_"," ").capitalize()）属协议级展示，保持英文不译。
-_USER_PROFILE_LABELS_TEXTS: dict[str, str] = {
-    "zh": "# 用户资料",
-    "en": "# User profile",
-}
-
-_REVERSE_CONTEXT_LABELS: dict[str, str] = {v: k for k, v in _CONTEXT_LABELS.items()}
+# CONTEXT_LABELS 的值→键反查表：read_user_profile 用它把 context 槽位还原为 user_* 原始键。
+_REVERSE_CONTEXT_LABELS: dict[str, str] = {v: k for k, v in CONTEXT_LABELS.items()}
 
 
 def extract_user_profile(payload: dict[str, Any]) -> dict[str, str]:
@@ -77,11 +64,11 @@ async def build_user_profile_extras(db: AsyncSession, scope: MemoryScope, *, lan
         return ""
     # 已知字段按声明顺序、其余按字典序渲染，保证给 LLM 的形状稳定
     by_ctx = {row.context: row for row in rows}
-    known_ctxs = list(_CONTEXT_LABELS.values())
+    known_ctxs = list(CONTEXT_LABELS.values())
     ordered = [by_ctx[c] for c in known_ctxs if c in by_ctx] + [
         by_ctx[c] for c in sorted(by_ctx) if c not in known_ctxs
     ]
-    lines = [resolve_prompt_text(_USER_PROFILE_LABELS_TEXTS, language)]
+    lines = [resolve_prompt_text(USER_PROFILE_LABELS_TEXTS, language)]
     for row in ordered:
         display = row.context.split(":", 1)[1].replace("_", " ").capitalize()
         lines.append(f"- **{display}**: {row.content}")
@@ -93,7 +80,7 @@ async def record_user_profile(db: AsyncSession, scope: MemoryScope, profile: dic
     for user_key, val in profile.items():
         if not val:
             continue
-        ctx = _CONTEXT_LABELS.get(user_key, f"user_profile:{user_key.removeprefix('user_')}")
+        ctx = CONTEXT_LABELS.get(user_key, f"user_profile:{user_key.removeprefix('user_')}")
         await upsert_slotted_memory(db, scope, ctx, val, _USER_PROFILE_TAGS_JSON, source=MemorySource("onboarding"))
 
 

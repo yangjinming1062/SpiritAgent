@@ -1,6 +1,7 @@
 import json
 
 from components import get_logger, tool_error
+from prompts.tools import IMAGE_GENERATION_DESC, IMAGE_GENERATION_PARAM_DESCS
 
 from services.application.generation import (
     AvatarGenerationError,
@@ -67,22 +68,22 @@ IMAGE_GENERATION_SIZES = [
 
 IMAGE_GENERATION_SCHEMA = {
     "name": "image_generate",
-    "description": "Generate an image from a text description. Returns the generated image URLs.",
+    "description": IMAGE_GENERATION_DESC,
     "parameters": {
         "type": "object",
         "properties": {
-            "prompt": {"type": "string", "description": "A detailed, descriptive prompt for the image to generate."},
+            "prompt": {"type": "string", "description": IMAGE_GENERATION_PARAM_DESCS["prompt"]},
             "subject": {
                 "type": "string",
                 "enum": ["self"],
-                "description": "Set to 'self' only when the current system context defines a canonical character who appears in the image. The platform injects that character's seed image as the identity reference; describe the scene, pose, and action without reconstructing appearance from memory.",
+                "description": IMAGE_GENERATION_PARAM_DESCS["subject"],
             },
             "size": {
                 "type": "string",
                 "enum": IMAGE_GENERATION_SIZES,
-                "description": "Output size or aspect ratio.",
+                "description": IMAGE_GENERATION_PARAM_DESCS["size"],
             },
-            "n": {"type": "integer", "description": "Number of images to generate."},
+            "n": {"type": "integer", "description": IMAGE_GENERATION_PARAM_DESCS["n"]},
         },
         "required": ["prompt"],
     },

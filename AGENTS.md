@@ -9,6 +9,7 @@
 | 跨模块方法、事件、配置、凭据与安全契约 | [docs/PROTOCOL.md](docs/PROTOCOL.md) |
 | 3D / 2D 生成链、供应商能力、产物与兑现 | [docs/PIPELINE.md](docs/PIPELINE.md) |
 | 后端 / 客户端 / 本地工具 / 安装 | [backend](backend/README.md)、[client](client/README.md)、[runner](runner/README.md)、[installer](installer/README.md) |
+| 提示词文本查找与调整 | [backend/prompts/README.md](backend/prompts/README.md) |
 | 构建、发布与仓库级检查 | [scripts/README.md](scripts/README.md) |
 | 凭据、准入与更新安全 | [docs/ARCHITECTURE.md §7](docs/ARCHITECTURE.md#7-安全与准入控制架构原则)、[docs/PROTOCOL.md §5](docs/PROTOCOL.md#5-跨模块安全契约) |
 

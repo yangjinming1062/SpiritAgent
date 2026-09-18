@@ -9,19 +9,7 @@ brief 由内部小模型根据性格 / 意图写成陈设建议；明确要求�
 from dataclasses import dataclass
 
 from modules.companion import BackdropIntent
-
-_HARD_RULES_ZH = (
-    "只出现这一位角色，不得增加第二个人或人形主体。不要头像特写、拼贴或参考图版式；"
-    "不要工作台、IDE、终端、屏幕 UI、对话框、边框、可读文字、商标或水印。"
-)
-
-# intent 决定光线与氛围关键词；不需要 LLM 二次装配。
-_INTENT_LIGHTING: dict[str, str] = {
-    "decorate": "温暖自然光，午后斜阳，色彩鲜明。",
-    "seasonal": "与房间简述中的季节一致的自然氛围光；未指定具体季节时使用温和自然光。",
-    "mood": "低饱和与柔光，与心情呼应。",
-    "rebuild": "明亮的自然光。",
-}
+from prompts.generation import HARD_RULES_ZH, INTENT_LIGHTING
 
 
 @dataclass(frozen=True)
@@ -59,7 +47,7 @@ def build_room_prompt(ctx: RoomPromptContext) -> str:
     """身份图锁定外貌；用户图提供场景与所需姿势；穿着用着装描述原文。
     text_identity=True 是自备图变体：无任何参考图输入，身份由文字描述承载。"""
     intent_value = ctx.intent.value if isinstance(ctx.intent, BackdropIntent) else str(ctx.intent)
-    lighting = _INTENT_LIGHTING.get(intent_value, _INTENT_LIGHTING["decorate"])
+    lighting = INTENT_LIGHTING.get(intent_value, INTENT_LIGHTING["decorate"])
     species = (ctx.species or "人类").strip() or "人类"
     parts = [
         f"16:9 写实室内环境图，{species}角色的私人起居房间，前后景分明。",
@@ -92,5 +80,5 @@ def build_room_prompt(ctx: RoomPromptContext) -> str:
     notes = _prompt_clause(ctx.notes or "")
     if notes:
         parts.append(f"房间补充要求（优先于陈设与光线建议，不改变角色身份、当前穿着和画面规则）：{notes}。")
-    parts.append(_HARD_RULES_ZH)
+    parts.append(HARD_RULES_ZH)
     return " ".join(parts)

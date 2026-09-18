@@ -3,13 +3,9 @@
 import json
 from typing import Literal
 
-IdentityAnchor = Literal["reference", "text"]
+from prompts.generation import TEXT_REFERENCE_RULES
 
-# 自备图变体没有参考图输入：身份完全由创作资料文字确定。
-_TEXT_REFERENCE_RULES = (
-    "角色形象完全由下方创作资料确定：保持资料中面容、物种、肤色或表面材质、发色与标志性细节的一致性，"
-    "并按体貌设定补全协调的全身体型和比例。"
-)
+IdentityAnchor = Literal["reference", "text"]
 
 
 def build_fullbody_reference_prompt(
@@ -26,7 +22,7 @@ def build_fullbody_reference_prompt(
     """canvas_aspect 写入画幅宽高比（如 "9:16"），供自备图变体告知外部工具目标比例；AI 路径
     的画幅由生图请求的 size 传达，不传。"""
     if identity_anchor == "text":
-        reference_rules = _TEXT_REFERENCE_RULES
+        reference_rules = TEXT_REFERENCE_RULES
     else:
         portrait_reference = "参考图 1" if has_user_reference else "参考图"
         reference_rules = (

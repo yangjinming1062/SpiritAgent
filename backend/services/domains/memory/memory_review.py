@@ -3,6 +3,7 @@ from typing import Any
 
 from components import parse_llm_json, session_scope, utc_now
 from modules.conversation import Conversation, Message
+from prompts.memory import MEMORY_POLICY, MEMORY_REVIEW_INSTRUCTIONS
 from sqlalchemy import func, select
 
 from services.contracts import MemoryScope, MemorySource
@@ -15,7 +16,7 @@ from .memory_learning import (
     apply_memory_decisions,
     load_review_context,
 )
-from .memory_policy import MEMORY_POLICY, MEMORY_REVIEW_INSTRUCTIONS, MemoryDecisions
+from .memory_policy import MemoryDecisions
 
 # 每个记忆作用域一把审阅锁，保证同域审核串行；用户覆盖恢复/删除后经 invalidate 丢弃。
 _REVIEW_LOCKS: dict[MemoryScope, asyncio.Lock] = {}

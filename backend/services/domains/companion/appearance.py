@@ -1,13 +1,8 @@
 from components import DEFAULT_LANGUAGE, resolve_prompt_text
 from modules.companion import Companion3DModel, CompanionOutfit
+from prompts.companion import OUTFIT_LABELS_TEXTS
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-
-# 双语着装块标题。
-_OUTFIT_LABELS_TEXTS: dict[str, str] = {
-    "zh": "# 当前着装",
-    "en": "# Current outfit",
-}
 
 
 async def build_outfit_extras(
@@ -28,7 +23,7 @@ async def build_outfit_extras(
     ).scalar_one_or_none()
     if outfit is None or not (outfit.description or "").strip():
         return ""
-    label = resolve_prompt_text(_OUTFIT_LABELS_TEXTS, language)
+    label = resolve_prompt_text(OUTFIT_LABELS_TEXTS, language)
     return f"{label}\n{outfit.name}:{outfit.description.strip()[:600]}"
 
 

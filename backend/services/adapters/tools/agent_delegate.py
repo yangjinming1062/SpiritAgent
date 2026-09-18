@@ -1,15 +1,17 @@
+from prompts.tools import AGENT_DELEGATE_DESC, AGENT_DELEGATE_PARAM_DESCS
+
 from services.contracts import DelegateAction
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 AGENT_DELEGATE_SCHEMA = {
     "name": "agent_delegate_tool",
-    "description": "Delegate a complex task to an autonomous subagent. The subagent will run independently with its own thought loop and return its final summarized answer. Use this for complex multi-step reasoning or large tasks.",
+    "description": AGENT_DELEGATE_DESC,
     "parameters": {
         "type": "object",
         "properties": {
             "task_description": {
                 "type": "string",
-                "description": "Detailed description of the task, the goal, and any context the subagent needs to know.",
+                "description": AGENT_DELEGATE_PARAM_DESCS["task_description"],
             },
         },
         "required": ["task_description"],

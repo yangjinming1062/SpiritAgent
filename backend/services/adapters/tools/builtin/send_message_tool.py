@@ -3,6 +3,7 @@ import json
 from urllib.parse import urlparse
 
 from components import get_logger, is_safe_outbound, safe_outbound_async_client, tool_error
+from prompts.tools import SEND_MESSAGE_DESC, SEND_MESSAGE_PARAM_DESCS
 
 from services.domains.companion import emit_companion_message, is_still
 from services.infrastructure.tool_runtime import REGISTRY
@@ -59,18 +60,14 @@ async def send_message_tool(
 
 SEND_MESSAGE_SCHEMA = {
     "name": "send_message_tool",
-    "description": (
-        "Send a message now. Without target_webhook, deliver it as a spoken proactive message in the primary "
-        "conversation. Use this only for a grounded, low-pressure outreach within the current authorization. "
-        "With a target_webhook URL, POST a notification to an external bot API such as Slack, Discord, or Telegram."
-    ),
+    "description": SEND_MESSAGE_DESC,
     "parameters": {
         "type": "object",
         "properties": {
-            "message": {"type": "string", "description": "The full text message content to send."},
+            "message": {"type": "string", "description": SEND_MESSAGE_PARAM_DESCS["message"]},
             "target_webhook": {
                 "type": "string",
-                "description": "Optional external bot webhook URL. Omit to deliver in the primary conversation.",
+                "description": SEND_MESSAGE_PARAM_DESCS["target_webhook"],
             },
         },
         "required": ["message"],
