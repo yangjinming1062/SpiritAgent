@@ -1334,6 +1334,10 @@ def _register_session_handlers(
         if any(uid == user_id for uid, _ in _inflight_interact):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "companion reaction in-flight; please retry after it lands")
 
+        response_preference = params.get("response_preference")
+        if response_preference is not None and response_preference not in ("text", "voice"):
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "response_preference must be text or voice")
+
         edit_message_id = params.get("edit_message_id")
         if edit_message_id is not None:
             if not _is_nonneg_int(edit_message_id) or edit_message_id == 0:
@@ -1375,6 +1379,7 @@ def _register_session_handlers(
         req = ChatRequest(
             session_id=runtime.session_id,
             message=ChatMessageRequest(role="user", content=text, attachments=attachments),
+            response_preference=response_preference,
         )
 
         disp = user_session.dispatcher if user_session else dispatcher

@@ -80,7 +80,8 @@ class Message(ModelBase):
     media_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 助手推理过程原文；只给工作台展示与历史水合，装配 Responses 输入时不回灌。
     reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
-    speech_style_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # 陪伴结构化回复的真源；content 是仅供检索、记忆与汇总使用的台词投影。
+    reply_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 在 subtype="daily_summary" 的 system 消息上设置，让每日 checkpoint 不用解析 content 文本就能读到截止日期；content 仍是人类可读版本，本列才是结构化源。
     summary_date: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     # IM 入站消息先落库再确认接收：queued=True 表示已被接收但尚未被任何回合消费；

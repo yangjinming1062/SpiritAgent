@@ -27,6 +27,14 @@ interface HistoryCacheState {
 
 const memoryBySession = new Map<string, HistoryCacheState>()
 const persistTimers = new Map<string, ReturnType<typeof setTimeout>>()
+const invalidations = new Map<string, symbol>()
+
+export class SessionHistoryChangedError extends Error {
+  constructor() {
+    super('Session history changed while synchronizing')
+    this.name = 'SessionHistoryChangedError'
+  }
+}
 
 function canPersist(): boolean {
   return $auth.get().kind === 'authenticated'
@@ -89,12 +97,17 @@ export async function loadLocalSessionHistory(sessionId: string): Promise<null |
     return memory
   }
 
-  if (!canPersist()) {
+  if (!canPersist() || invalidations.has(sessionId)) {
     return null
   }
 
   try {
     const snap = await window.spiritagent.sessionHistory.get(sessionId)
+    const current = getMemoryHistory(sessionId)
+
+    if (current || invalidations.has(sessionId)) {
+      return current
+    }
 
     if (!snap || !Array.isArray(snap.messages)) {
       return null
@@ -221,17 +234,31 @@ export async function syncSessionHistory(params: {
   messages: SessionMessage[]
 }> {
   const local = memoryBySession.get(params.sessionId)
+  let invalidation = invalidations.get(params.sessionId)
   const body: { after_id?: number; last_seq?: number } = {}
 
-  if (local?.lastMessageId && local.lastMessageId > 0) {
+  if (!invalidation && local?.lastMessageId && local.lastMessageId > 0) {
     body.after_id = local.lastMessageId
   }
 
-  if (params.lastSeq && params.lastSeq > 0) {
+  if (!invalidation && params.lastSeq && params.lastSeq > 0) {
     body.last_seq = params.lastSeq
   }
 
-  const res = await params.request(body)
+  let res = await params.request(body)
+
+  // 语音更新会修改旧行，after_id 无法取回；若更新撞上在途快照，重新获取全量。
+  // 连续更新时保留当前界面并交由调用方重试，不把过期快照水合回去。
+  for (let retry = 0; invalidations.get(params.sessionId) !== invalidation; retry++) {
+    if (retry >= 2) {
+      throw new SessionHistoryChangedError()
+    }
+
+    invalidation = invalidations.get(params.sessionId)
+    res = await params.request({})
+  }
+
+  invalidations.delete(params.sessionId)
 
   if (res.resumed) {
     if (typeof res.current_seq === 'number') {
@@ -279,7 +306,7 @@ export async function syncSessionHistory(params: {
 }
 
 function schedulePersist(sessionId: string): void {
-  if (!canPersist()) {
+  if (!canPersist() || invalidations.has(sessionId)) {
     return
   }
 
@@ -301,7 +328,7 @@ function schedulePersist(sessionId: string): void {
 async function persistNow(sessionId: string): Promise<void> {
   const state = memoryBySession.get(sessionId)
 
-  if (!canPersist() || !state) {
+  if (!canPersist() || !state || invalidations.has(sessionId)) {
     return
   }
 
@@ -314,6 +341,7 @@ async function persistNow(sessionId: string): Promise<void> {
 
 function clearSessionHistoryMemory(): void {
   memoryBySession.clear()
+  invalidations.clear()
 
   for (const timer of persistTimers.values()) {
     clearTimeout(timer)
@@ -321,6 +349,22 @@ function clearSessionHistoryMemory(): void {
 
   persistTimers.clear()
   setPersistedCompanionSessionId(null)
+}
+
+/** 旧消息发生原地更新：保留展示与增量基底，下次同步强制取回全量。 */
+export function invalidateSessionHistory(sessionId: string): void {
+  invalidations.set(sessionId, Symbol())
+
+  const timer = persistTimers.get(sessionId)
+
+  if (timer) {
+    clearTimeout(timer)
+    persistTimers.delete(sessionId)
+  }
+
+  void window.spiritagent.sessionHistory.remove(sessionId).catch(err => {
+    log.warn('session-history', 'remove stale history failed:', err)
+  })
 }
 
 /** 会话被删除后清掉内存与磁盘快照，避免已删对话内容留盘。 */

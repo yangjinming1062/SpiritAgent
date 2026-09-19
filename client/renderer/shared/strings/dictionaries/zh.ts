@@ -342,10 +342,10 @@ export const dict = {
       title: '交互',
       intro: '伙伴怎么回应你、什么时候可以打扰你。',
       voiceHeading: '对话与语音',
-      responseMode: '回应方式',
-      responseModeText: '默认文字',
-      responseModeVoice: '始终语音',
-      responseModeDesc: '控制生活空间和轻语的陪伴对话，工作台始终文字。',
+      responsePreference: '回应偏好',
+      responsePreferenceText: '偏好文字',
+      responsePreferenceVoice: '偏好语音',
+      responsePreferenceDesc: '告诉伙伴你通常更喜欢文字还是语音。伙伴会结合情景选择，语音条点击后播放。',
       recording: '录音时长上限',
       recordingDesc: '单条语音录音的最大时长，到达上限后自动停止录制并发送。',
       recordingSecondsSuffix: '秒',
@@ -701,6 +701,7 @@ export const dict = {
     },
 
     voice: {
+      retry: '语音暂不可用，点击重试',
       play: '播放语音',
       stop: '停止播放语音',
       collapse: '收起',

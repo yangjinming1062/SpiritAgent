@@ -4,8 +4,6 @@
 // 在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
 
 import { clamp } from '../runtime'
-import type { SpeechStyle } from '../speech-style'
-export type { SpeechStyle } from '../speech-style'
 
 export interface MemoryToolScope { user_id: number; system_preset_id: string }
 
@@ -234,7 +232,6 @@ export interface MediaSttPayload {
 }
 
 export interface MediaTtsPayload {
-  speech_style?: SpeechStyle
   context?: null | string
   persist?: boolean
   text: string

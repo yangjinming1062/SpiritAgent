@@ -70,6 +70,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'message.complete':
 
+    case 'message.voice':
+
     case 'message.deleted':
 
     case 'message.edited':
@@ -134,7 +136,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     case 'channel.status':
 
     case 'channel.peer_request':
-      handleDeliveryEvent(event, ctx)
+      handleDeliveryEvent(event)
 
       break
 

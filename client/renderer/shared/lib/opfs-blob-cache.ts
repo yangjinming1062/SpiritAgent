@@ -5,22 +5,16 @@ import { currentClearEpoch } from './storage'
 
 const SCHEMA_VERSION = 1
 const META_SUFFIX = '.meta.json'
-const DEFAULT_MAX_FILES = 10
-const DEFAULT_MAX_BYTES = 512 * 1024 * 1024
 
-/** v1 元数据：仅保留 LRU 必需三件套（version / size / writtenAt）。
- * 内容由 filename `<hash>.meta.json` 中的哈希唯一标识，不另存 contentHash 字段。 */
+/** 元数据只校验结构与字节完整性；文件名中的哈希标识内容。 */
 interface MetaFile {
   version: number
-  writtenAt: number
   size: number
 }
 
 interface OpfsBlobCacheOptions {
   dirName: string
   blobSuffix: string
-  maxFiles?: number
-  maxBytes?: number
   logTag: string
 }
 
@@ -47,18 +41,13 @@ interface FetchWithCacheOptions {
 export class OpfsBlobCache {
   private readonly dirName: string
   private readonly blobSuffix: string
-  private readonly maxFiles: number
-  private readonly maxBytes: number
   private readonly logTag: string
   private queue: Promise<unknown> = Promise.resolve()
-  private readonly lastTouched = new Map<string, number>()
   private readonly inFlightFetches = new Map<string, InFlightFetch>()
 
   constructor(options: OpfsBlobCacheOptions) {
     this.dirName = options.dirName
     this.blobSuffix = options.blobSuffix
-    this.maxFiles = options.maxFiles ?? DEFAULT_MAX_FILES
-    this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES
     this.logTag = options.logTag
   }
 
@@ -68,30 +57,6 @@ export class OpfsBlobCache {
 
   private blobKey(contentHash: string): string {
     return `${contentHash}${this.blobSuffix}`
-  }
-
-  private isMetaFile(name: string): boolean {
-    return name.endsWith(META_SUFFIX)
-  }
-
-  private hashFromMetaFile(name: string): string | null {
-    if (!name.endsWith(META_SUFFIX)) {
-      return null
-    }
-
-    return name.slice(0, -META_SUFFIX.length)
-  }
-
-  private isBlobFile(name: string): boolean {
-    return name.endsWith(this.blobSuffix)
-  }
-
-  private hashFromBlobFile(name: string): string | null {
-    if (!name.endsWith(this.blobSuffix)) {
-      return null
-    }
-
-    return name.slice(0, -this.blobSuffix.length)
   }
 
   private async getDir(): Promise<FileSystemDirectoryHandle | null> {
@@ -144,9 +109,7 @@ export class OpfsBlobCache {
         meta.version !== SCHEMA_VERSION ||
         typeof meta.size !== 'number' ||
         !Number.isFinite(meta.size) ||
-        meta.size < 0 ||
-        typeof meta.writtenAt !== 'number' ||
-        !Number.isFinite(meta.writtenAt)
+        meta.size < 0
       ) {
         // meta 损坏：直接清掉当前 dir 的两条条目，不重入 runSerialized 队列
         // （read 不在队列里，delete 进队列会让后续 read 也排队，反而慢）。
@@ -158,14 +121,6 @@ export class OpfsBlobCache {
           await dir.removeEntry(this.blobKey(contentHash))
         } catch {}
 
-        // lastTouched 走 runSerialized：与 writeInternal / pruneInternal 的 set 操作保持 FIFO，
-        // 避免 read 的同步 delete 落到 writeInternal 的 set 之后把刚写入的条目抹掉。
-        void this.runSerialized(() => {
-          this.lastTouched.delete(contentHash)
-
-          return Promise.resolve()
-        })
-
         return null
       }
 
@@ -173,7 +128,7 @@ export class OpfsBlobCache {
       const blobFile = await blobHandle.getFile()
 
       if (blobFile.size !== meta.size) {
-        // size mismatch：调用方拿到的字节将与后续 prune 的字节预算计数不一致；
+        // 字节数不匹配意味着缓存不完整；
         // 走 try/catch 容忍并发 OPFS 锁异常，下一次 read 会再次尝试清理。
         try {
           await dir.removeEntry(this.blobKey(contentHash))
@@ -183,21 +138,10 @@ export class OpfsBlobCache {
           await dir.removeEntry(this.metaKey(contentHash))
         } catch {}
 
-        // 理由同上：lastTouched.delete 必须排在 writeInternal.set 之后执行，否则会把
-        // 同期 writeInternal 已写入的新条目抹掉，造成下一轮 touch 误判 LRU 顺序。
-        void this.runSerialized(() => {
-          this.lastTouched.delete(contentHash)
-
-          return Promise.resolve()
-        })
-
         return null
       }
 
       const buffer = await blobFile.arrayBuffer()
-      // 直接走 runSerialized：touch 必须串行，避免两个并发 read 都过 last<1s 闸门
-      // 把后到的 meta.writtenAt 覆盖掉先到的（LRU 毒化）。
-      void this.runSerialized(() => this.touchInternal(dir, contentHash))
 
       return buffer
     } catch (error) {
@@ -217,13 +161,6 @@ export class OpfsBlobCache {
 
   async write(contentHash: string, bytes: ArrayBuffer): Promise<void> {
     if (!contentHash || !bytes || bytes.byteLength === 0) {
-      return
-    }
-
-    // 单文件大小守卫：超过缓存上限的文件不落盘，避免写完立刻被本次 prune 删除
-    if (bytes.byteLength > this.maxBytes) {
-      log.warn(this.logTag, `File size ${bytes.byteLength} exceeds maxBytes ${this.maxBytes}; skipping cache`)
-
       return
     }
 
@@ -249,8 +186,6 @@ export class OpfsBlobCache {
       try {
         await dir.removeEntry(this.metaKey(contentHash))
       } catch {}
-
-      this.lastTouched.delete(contentHash)
     })
   }
 
@@ -288,7 +223,6 @@ export class OpfsBlobCache {
           } catch {}
         }
 
-        this.lastTouched.clear()
         log.info(this.logTag, `Cleared OPFS cache directory ${this.dirName}`)
       } catch (err) {
         log.warn(this.logTag, `Failed to clear cache directory ${this.dirName}:`, err)
@@ -407,52 +341,12 @@ export class OpfsBlobCache {
     return result
   }
 
-  private async touchInternal(dir: FileSystemDirectoryHandle, contentHash: string): Promise<void> {
-    const now = Date.now()
-    const last = this.lastTouched.get(contentHash) ?? 0
-
-    if (now - last < 1000) {
-      return
-    }
-
-    // 闸门一过立即占位：后续并发 read 会因 last≥now-1000 而直接 short-circuit，
-    // 避免两个并发 touch 各自跑完 meta 写而互相覆盖 writtenAt（LRU 毒化）。
-    this.lastTouched.set(contentHash, now)
-
-    try {
-      // 确认 blob 仍在（prune 后可能已被淘汰）——否则续 meta 会让幽灵条目
-      // 误导下一次 prune 把有效条目也清掉。
-      await dir.getFileHandle(this.blobKey(contentHash))
-
-      const metaHandle = await dir.getFileHandle(this.metaKey(contentHash))
-      const metaFile = await metaHandle.getFile()
-      const meta = JSON.parse(await metaFile.text()) as Partial<MetaFile>
-
-      if (meta.version !== SCHEMA_VERSION || typeof meta.size !== 'number') {
-        return
-      }
-
-      // 只回写当前 meta 形状，不透传 JSON 里多余字段。
-      const next: MetaFile = { version: meta.version, writtenAt: now, size: meta.size }
-      const writable = await metaHandle.createWritable()
-
-      try {
-        await writable.write(JSON.stringify(next))
-      } finally {
-        await writable.close().catch(() => {})
-      }
-    } catch {}
-  }
-
   private async writeInternal(contentHash: string, bytes: ArrayBuffer): Promise<void> {
     const dir = await this.getDir()
 
     if (!dir) {
       return
     }
-
-    let blobWritten = false
-    let metaWritten = false
 
     try {
       const blobHandle = await dir.getFileHandle(this.blobKey(contentHash), { create: true })
@@ -461,15 +355,12 @@ export class OpfsBlobCache {
       try {
         await blobWritable.write(bytes)
       } finally {
-        await blobWritable.close().catch(() => {})
+        await blobWritable.close()
       }
-
-      blobWritten = true
 
       const meta: MetaFile = {
         size: bytes.byteLength,
-        version: SCHEMA_VERSION,
-        writtenAt: Date.now()
+        version: SCHEMA_VERSION
       }
 
       const metaHandle = await dir.getFileHandle(this.metaKey(contentHash), { create: true })
@@ -478,164 +369,18 @@ export class OpfsBlobCache {
       try {
         await metaWritable.write(JSON.stringify(meta))
       } finally {
-        await metaWritable.close().catch(() => {})
-      }
-
-      metaWritten = true
-      this.lastTouched.set(contentHash, meta.writtenAt)
-
-      await this.pruneInternal(dir, this.maxFiles, this.maxBytes)
-    } catch (err) {
-      log.warn(this.logTag, 'write failed; pruning and cleaning up partials', err)
-
-      if (blobWritten || metaWritten) {
-        try {
-          await dir.removeEntry(this.blobKey(contentHash))
-        } catch {}
-
-        try {
-          await dir.removeEntry(this.metaKey(contentHash))
-        } catch {}
-
-        this.lastTouched.delete(contentHash)
-      }
-
-      // 仅在真实配额溢出时执行激进清理，淘汰旧文件解楔；普通 I/O 或路径错误不误伤其他有效条目
-      const isQuotaError =
-        err instanceof Error && (err.name === 'QuotaExceededError' || err.name === 'NS_ERROR_DOM_QUOTA_REACHED')
-
-      if (isQuotaError) {
-        await this.pruneInternal(dir, Math.max(1, this.maxFiles - 2), this.maxBytes * 0.75).catch(() => {})
-      }
-    }
-  }
-
-  private async pruneInternal(dir: FileSystemDirectoryHandle, maxFiles: number, maxBytes: number): Promise<void> {
-    try {
-      const metaEntries: { hash: string; size: number; writtenAt: number }[] = []
-      const blobHashes = new Set<string>()
-      const metaHashes = new Set<string>()
-      const handles: FileSystemHandle[] = []
-
-      // 先收集所有句柄，避免在遍历 AsyncIterator 的过程中删除条目导致迭代器失效
-      for await (const handle of (dir as unknown as { values: () => AsyncIterable<FileSystemHandle> }).values()) {
-        handles.push(handle)
-      }
-
-      for (const handle of handles) {
-        if (handle.kind === 'file' && typeof handle.name === 'string') {
-          if (this.isMetaFile(handle.name)) {
-            const hash = this.hashFromMetaFile(handle.name)
-
-            if (!hash) {
-              continue
-            }
-
-            metaHashes.add(hash)
-
-            try {
-              const file = await (handle as FileSystemFileHandle).getFile()
-              const meta = JSON.parse(await file.text()) as Partial<MetaFile>
-
-              if (
-                meta.version === SCHEMA_VERSION &&
-                typeof meta.size === 'number' &&
-                Number.isFinite(meta.size) &&
-                typeof meta.writtenAt === 'number' &&
-                Number.isFinite(meta.writtenAt) &&
-                meta.size >= 0
-              ) {
-                metaEntries.push({
-                  hash,
-                  size: meta.size,
-                  writtenAt: meta.writtenAt
-                })
-              } else {
-                try {
-                  await dir.removeEntry(handle.name)
-                } catch {}
-              }
-            } catch {
-              try {
-                await dir.removeEntry(handle.name)
-              } catch {}
-            }
-          } else if (this.isBlobFile(handle.name)) {
-            const hash = this.hashFromBlobFile(handle.name)
-
-            if (hash) {
-              blobHashes.add(hash)
-            }
-          }
-        }
-      }
-
-      for (const blobHash of blobHashes) {
-        if (!metaHashes.has(blobHash)) {
-          try {
-            await dir.removeEntry(this.blobKey(blobHash))
-          } catch {}
-        }
-      }
-
-      const validEntries: typeof metaEntries = []
-      let totalBytes = 0
-
-      for (const entry of metaEntries) {
-        if (blobHashes.has(entry.hash)) {
-          try {
-            const blobHandle = await dir.getFileHandle(this.blobKey(entry.hash))
-            const blobFile = await blobHandle.getFile()
-
-            if (blobFile.size === entry.size) {
-              validEntries.push(entry)
-              totalBytes += entry.size
-            } else {
-              try {
-                await dir.removeEntry(this.blobKey(entry.hash))
-                await dir.removeEntry(this.metaKey(entry.hash))
-              } catch {}
-            }
-          } catch {
-            try {
-              await dir.removeEntry(this.metaKey(entry.hash))
-            } catch {}
-          }
-        } else {
-          try {
-            await dir.removeEntry(this.metaKey(entry.hash))
-          } catch {}
-
-          this.lastTouched.delete(entry.hash)
-        }
-      }
-
-      if (validEntries.length <= maxFiles && totalBytes <= maxBytes) {
-        return
-      }
-
-      validEntries.sort((a, b) => a.writtenAt - b.writtenAt)
-
-      while (validEntries.length > maxFiles || totalBytes > maxBytes) {
-        const oldest = validEntries.shift()
-
-        if (!oldest) {
-          break
-        }
-
-        try {
-          await dir.removeEntry(this.blobKey(oldest.hash))
-        } catch {}
-
-        try {
-          await dir.removeEntry(this.metaKey(oldest.hash))
-        } catch {}
-
-        this.lastTouched.delete(oldest.hash)
-        totalBytes -= oldest.size
+        await metaWritable.close()
       }
     } catch (err) {
-      log.warn(this.logTag, 'prune failed:', err)
+      log.warn(this.logTag, 'write failed; cleaning up partials', err)
+
+      try {
+        await dir.removeEntry(this.blobKey(contentHash))
+      } catch {}
+
+      try {
+        await dir.removeEntry(this.metaKey(contentHash))
+      } catch {}
     }
   }
 }

@@ -14,7 +14,7 @@ from services.domains.companion import (
     get_user_proactive_record,
     latest_user_message_id,
 )
-from services.domains.conversation import get_or_create_special_conversation
+from services.domains.conversation import discard_reply_audio, get_or_create_special_conversation, prepare_reply_audio
 from services.infrastructure.desktop import MANAGER
 from services.infrastructure.llm import resolve_user_llm_config
 
@@ -71,6 +71,8 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
     emitter = HeadlessEmitter()
     revision = get_user_proactive_record(user_id).contact_revision
     message_id = 0
+    reply = None
+    delivered = False
     try:
         remaining = (intent.expires_at - utc_now()).total_seconds()
         async with asyncio.timeout(min(SETTINGS.companion_turn_timeout_seconds, max(0.0, remaining))):
@@ -96,17 +98,26 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                     excluded_tool_names=frozenset({"send_message_tool", "agent_delegate_tool"}),
                     max_loop_turns=SETTINGS.companion_max_loop_turns,
                 )
-        text = emitter.final_text.strip()
-        await finish_companion_intent(
-            user_id,
-            trigger,
-            text="" if text.casefold() == "<silent>" else text,
-            followup=plan.followup,
-            contact_revision=revision,
-            user_message_id=message_id,
-            error=emitter.error,
-            tools_started=_tools_may_have_effects(emitter),
+            reply = emitter.final_reply
+            if reply and not emitter.error:
+                await prepare_reply_audio(user_id, reply)
+        finish_task = asyncio.create_task(
+            finish_companion_intent(
+                user_id,
+                trigger,
+                reply=reply,
+                followup=plan.followup,
+                contact_revision=revision,
+                user_message_id=message_id,
+                error=emitter.error,
+                tools_started=_tools_may_have_effects(emitter),
+            ),
         )
+        try:
+            delivered = await asyncio.shield(finish_task)
+        except asyncio.CancelledError:
+            delivered = await finish_task
+            raise
     except asyncio.CancelledError:
         await finish_companion_intent(
             user_id,
@@ -127,3 +138,6 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
             error=str(exc) or type(exc).__name__,
             tools_started=_tools_may_have_effects(emitter),
         )
+    finally:
+        if reply and not delivered:
+            await discard_reply_audio(reply)

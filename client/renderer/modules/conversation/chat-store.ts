@@ -1,4 +1,3 @@
-import type { SpeechStyle } from '@ipc/contracts'
 import { sleep } from '@runtime'
 import { atom, computed, map } from 'nanostores'
 
@@ -11,9 +10,14 @@ import {
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $gateway } from '@/shared/store/gateway'
 import { getStrings } from '@/shared/strings'
-import type { ChatAttachment, ChatMediaItem, SessionMessage, SessionRuntimeInfo } from '@/shared/types/spiritagent'
-
-import { speechText } from '../../../shared/speech-text'
+import type {
+  ChatAttachment,
+  ChatMediaItem,
+  CompanionBubble,
+  ReplyAudio,
+  SessionMessage,
+  SessionRuntimeInfo
+} from '@/shared/types/spiritagent'
 
 import { chatDisplayText } from './chat-display-text'
 import { conversationVoiceSink } from './voice-link'
@@ -31,7 +35,9 @@ export interface ChatMessageBody {
   /** 完整用户输入；陪伴拆泡与附件展示文案不能用作编辑原文。 */
   editableText?: string
   streamingText?: string
-  speechStyle?: SpeechStyle
+  replyType?: 'text' | 'voice'
+  replyIndex?: number
+  replyAudio?: ReplyAudio | null
   text: string
   reasoning?: string
   streaming?: boolean
@@ -42,8 +48,6 @@ export interface ChatMessageBody {
   cancelled?: boolean
   attachments?: ChatAttachment[]
   media?: ChatMediaItem[]
-  voiceStatus?: 'pending' | 'ready' | 'failed'
-  voiceDuration?: number
 }
 
 const DEFAULT_CONTEXT_LIMIT = 1_000_000
@@ -301,6 +305,7 @@ export function hydrateEditedChatMessages(messages: SessionMessage[]): void {
 }
 
 export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRuntimeInfo): void {
+  conversationVoiceSink().cancel()
   const items: ChatMessageListItem[] = []
   const bodies: Record<string, ChatMessageBody> = {}
 
@@ -350,16 +355,17 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
 
     totalChars += textContent.length
 
-    // 助手行按空行拆回 bubble.break 的多气泡；陪伴会话的用户行同样拆分，
-    // 与实时呈现对齐（DB 一行、显示多泡）。工作台两者都保持整段。
-    const canSplit = !m.subtype && (m.role === 'assistant' || m.role === 'user') && splitUserBubblesEnabled()
+    // 助手按结构化气泡恢复；陪伴用户行按空行拆分，与实时呈现对齐。
+    const canSplit = !m.subtype && m.role === 'user' && splitUserBubblesEnabled()
 
-    const segments = canSplit
-      ? textContent
-          .split(/\r?\n(?:[ \t]*\r?\n)+/)
-          .map(part => part.trim())
-          .filter(Boolean)
-      : [textContent]
+    const segments = m.bubbles
+      ? m.bubbles.map(bubble => bubble.text)
+      : canSplit
+        ? textContent
+            .split(/\r?\n(?:[ \t]*\r?\n)+/)
+            .map(part => part.trim())
+            .filter(Boolean)
+        : [textContent]
 
     if (segments.length === 0) {
       segments.push('')
@@ -376,22 +382,19 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
         timestamp: m.timestamp
       })
 
-      const cachedVoiceDuration =
-        m.role === 'assistant' && segment ? conversationVoiceSink().cachedDuration(segment, m.speech_style) : undefined
-
       // 拆分后附件只挂首个气泡：附件伴随连发的首条消息发出，合并行里已无法逐段归属，
       // 每段都挂会重复渲染媒体卡。不拆分时首段即唯一段，行为不变。
       bodies[id] = {
         text: segment,
         editableText: m.role === 'user' ? textContent : undefined,
-        speechStyle: m.speech_style,
+        replyType: m.bubbles?.[index]?.type,
+        replyIndex: m.bubbles ? index : undefined,
+        replyAudio: m.bubbles?.[index]?.type === 'voice' ? m.bubbles[index].audio : undefined,
         reasoning: m.role === 'assistant' && index === 0 ? takeReasoning(reasoningContent || undefined) : undefined,
         toolName: m.tool_name ?? null,
         tools: m.tool_name ? [m.tool_name] : undefined,
         streaming: false,
         queued: m.role === 'user' && m.queued,
-        voiceDuration: cachedVoiceDuration,
-        voiceStatus: cachedVoiceDuration ? 'ready' : undefined,
         ...(m.role === 'user' && index === 0 ? omitUndefined(extractUserAttachments(m)) : {}),
         ...(index === segments.length - 1 && m.media?.length ? { media: m.media } : {})
       }
@@ -812,6 +815,7 @@ export function submitPendingBatch(): void {
 
   const batchPayload = {
     session_id: sessionId,
+    response_preference: presentationPorts().getResponsePreference(),
     batch: [
       {
         text: promptText,
@@ -869,15 +873,10 @@ export function beginAssistantMessage(): void {
   const list = $chatMessageList.get()
   const lastItem = list[list.length - 1]
   const lastBody = lastItem ? $chatMessageBodies.get()[lastItem.id] : undefined
-  const initialVoiceStatus = conversationVoiceSink().isActive() ? 'pending' : undefined
 
   // 复用无内容的流式气泡，避免出现空白占位。
   if (lastItem?.role === 'assistant' && lastBody?.streaming) {
     if (!lastBody.text.trim() && !lastBody.toolName && !lastBody.error && !lastBody.cancelled) {
-      if (initialVoiceStatus && lastBody.voiceStatus !== initialVoiceStatus) {
-        $chatMessageBodies.setKey(lastItem.id, { ...lastBody, voiceStatus: initialVoiceStatus })
-      }
-
       return
     }
 
@@ -885,7 +884,7 @@ export function beginAssistantMessage(): void {
   }
 
   const id = nextId()
-  $chatMessageBodies.setKey(id, { text: '', streaming: true, toolName: null, voiceStatus: initialVoiceStatus })
+  $chatMessageBodies.setKey(id, { text: '', streaming: true, toolName: null })
   $chatMessageList.set([...$chatMessageList.get(), { id, role: 'assistant', timestamp: Date.now() }])
   $lastAssistantStreaming.set(true)
 }
@@ -921,14 +920,13 @@ function patchLastAssistant(patch: (body: ChatMessageBody) => ChatMessageBody): 
   $chatStreamingTick.set($chatStreamingTick.get() + 1)
 }
 
-export function appendAssistantDelta(text: string, speechStyle?: SpeechStyle): void {
+export function appendAssistantDelta(text: string): void {
   // 仅更新当前流式消息 body，不改动 list 引用；首个 delta 过滤前导空行，避免撑大气泡上方
   patchLastAssistant(body => {
     const streamingText = (body.streamingText ?? body.text) + text
 
     return {
       ...body,
-      speechStyle: speechStyle ?? body.speechStyle,
       streamingText,
       text: chatDisplayText(streamingText, true).trimStart()
     }
@@ -962,12 +960,7 @@ export function setAssistantTool(name: string | null): void {
   $chatMessageBodies.setKey(lastItem.id, { ...body, toolName: name, tools })
 }
 
-export function finalizeAssistantMessage(
-  text?: string,
-  media?: ChatMediaItem[],
-  reasoning?: string,
-  options?: { synthesize?: boolean; speechStyle?: SpeechStyle }
-): void {
+export function finalizeAssistantMessage(text?: string, media?: ChatMediaItem[], reasoning?: string): void {
   const list = $chatMessageList.get()
   const lastItem = list[list.length - 1]
 
@@ -984,7 +977,6 @@ export function finalizeAssistantMessage(
   const rawStr = typeof text === 'string' ? text : (body.streamingText ?? body.text)
   const finalStr = chatDisplayText(rawStr).trim()
   const finalMedia = media ?? body.media
-  const speechStyle = options?.speechStyle ?? body.speechStyle
 
   const finalReasoning =
     (typeof reasoning === 'string' && reasoning.trim() ? reasoning : body.reasoning)?.trim() || undefined
@@ -1007,40 +999,85 @@ export function finalizeAssistantMessage(
     return
   }
 
-  const shouldSynth =
-    Boolean(body.streaming) &&
-    (options?.synthesize ?? true) &&
-    conversationVoiceSink().isActive() &&
-    Boolean(speechText(finalStr))
-
-  // 完成帧可能再次收尾已由分隔帧提交的气泡，保留播放状态且不重复合成。
-  const nextVoiceStatus = !body.streaming
-    ? body.voiceStatus
-    : shouldSynth
-      ? 'pending'
-      : options?.synthesize === false
-        ? 'failed'
-        : body.voiceStatus === 'pending'
-          ? undefined
-          : body.voiceStatus
-
   $chatMessageBodies.setKey(lastItem.id, {
     ...body,
     text: finalStr,
     streamingText: undefined,
-    speechStyle,
     reasoning: finalReasoning,
     media: finalMedia,
     streaming: false,
-    toolName: null,
-    voiceDuration:
-      body.voiceDuration ?? (finalStr ? conversationVoiceSink().cachedDuration(finalStr, speechStyle) : undefined),
-    voiceStatus: nextVoiceStatus
+    toolName: null
   })
   $lastAssistantStreaming.set(false)
+}
 
-  if (shouldSynth) {
-    conversationVoiceSink().synthesize(lastItem.id, finalStr)
+export function finalizeCompanionReply(
+  bubbles: CompanionBubble[],
+  messageId: number,
+  media?: ChatMediaItem[],
+  reasoning?: string,
+  proactive = false
+): void {
+  const list = $chatMessageList.get()
+
+  if (list.some(item => item.backendMessageId === messageId)) {
+    bubbles.forEach((bubble, index) => updateVoiceBubble(messageId, index, bubble))
+
+    return
+  }
+
+  const last = list.at(-1)
+  const streaming = last?.role === 'assistant' && $chatMessageBodies.get()[last.id]?.streaming
+  const placeholder = !proactive && streaming
+  const next = streaming ? list.slice(0, -1) : [...list]
+
+  if (placeholder && last) {
+    $chatMessageBodies.setKey(last.id, undefined)
+  }
+
+  bubbles.forEach((bubble, index) => {
+    const id = nextId()
+    next.push({
+      id,
+      role: 'assistant',
+      backendMessageId: messageId,
+      timestamp: Date.now(),
+      ...(proactive ? { subtype: 'status_proactive' } : {})
+    })
+    $chatMessageBodies.setKey(id, {
+      text: bubble.text,
+      replyType: bubble.type,
+      replyIndex: index,
+      replyAudio: bubble.type === 'voice' ? bubble.audio : undefined,
+      streaming: false,
+      toolName: null,
+      ...(index === 0 ? { reasoning } : {}),
+      ...(index === bubbles.length - 1 ? { media } : {})
+    })
+  })
+
+  if (proactive && streaming && last) {
+    next.push(last)
+  }
+
+  $chatMessageList.set(next)
+
+  if (!proactive) {
+    $lastAssistantStreaming.set(false)
+  }
+}
+
+export function updateVoiceBubble(messageId: number, index: number, bubble: CompanionBubble): void {
+  if (bubble.type !== 'voice') {
+    return
+  }
+
+  for (const item of $chatMessageList.get()) {
+    const body = $chatMessageBodies.get()[item.id]
+
+    if (item.backendMessageId === messageId && body?.replyIndex === index && body.replyType === 'voice') {
+      $chatMessageBodies.setKey(item.id, { ...body, replyAudio: bubble.audio ?? body.replyAudio })
+    }
   }
 }
 

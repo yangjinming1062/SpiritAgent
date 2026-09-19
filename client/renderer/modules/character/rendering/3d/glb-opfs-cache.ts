@@ -4,8 +4,6 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 const glbCache = new OpfsBlobCache({
   dirName: 'glb-cache',
   blobSuffix: '.glb',
-  maxFiles: 5,
-  maxBytes: 512 * 1024 * 1024,
   logTag: 'glb-opfs-cache'
 })
 

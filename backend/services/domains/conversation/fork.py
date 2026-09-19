@@ -103,7 +103,7 @@ async def fork_conversation_from_message(
                 content_type=row.content_type,
                 media_json=row.media_json,
                 reasoning_content=row.reasoning_content,
-                speech_style_json=row.speech_style_json,
+                reply_json=row.reply_json,
                 summary_date=row.summary_date,
                 created_at=row.created_at,
             ),

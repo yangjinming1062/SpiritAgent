@@ -25,7 +25,7 @@ export async function playOnboardingAudio(tag: OnboardingAudioTag): Promise<bool
       return false
     }
 
-    return await playDataUrl(res.dataUrl)
+    return (await playDataUrl(res.dataUrl)) === 'completed'
   } catch (error) {
     // 预渲染片段是 onboarding 语音的唯一真相来源——绝不能悄悄回退到运行时 TTS。
     // 把缺失文件的情况大声暴露出来，便于 dev/QA 当场抓到损坏的安装包载荷。

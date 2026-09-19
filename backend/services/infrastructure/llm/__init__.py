@@ -82,7 +82,7 @@ from .responses import (
 )
 from .stt_service import transcribe_audio
 from .tts_service import (
-    resolve_speech_style_config,
+    resolve_reply_voice,
     synthesize_speech,
 )
 from .user_config import UserLlmConfig, resolve_user_llm_config
@@ -158,7 +158,7 @@ __all__ = [
     "resolve_provider_chain",
     "resolve_provider_config",
     "resolve_reference_bytes",
-    "resolve_speech_style_config",
+    "resolve_reply_voice",
     "resolve_user_llm_config",
     "resolve_video_chain",
     "resolve_vision_chain",

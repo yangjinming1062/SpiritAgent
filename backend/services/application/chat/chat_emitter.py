@@ -1,5 +1,7 @@
 from typing import Protocol
 
+from modules.conversation import CompanionReply
+
 
 class Emitter(Protocol):
     async def send_json(self, data: dict) -> None: ...
@@ -20,6 +22,14 @@ class HeadlessEmitter:
             if message.get("type") == "message.complete":
                 return str(message.get("text") or "")
         return ""
+
+    @property
+    def final_reply(self) -> CompanionReply | None:
+        for message in reversed(self.messages):
+            if message.get("type") == "message.complete":
+                data = message.get("reply")
+                return CompanionReply.model_validate(data) if data else None
+        return None
 
     @property
     def error(self) -> str | None:

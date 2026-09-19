@@ -1,5 +1,5 @@
 export { isLatestGen, nextGen, playDataUrl, registerAmplitudeSink, stopAudio, warmAudioContext } from './audio-track'
-export { requestSynth, speak, speakChatMessage, speakScripted, stopSpeaking } from './tts'
+export { requestSynth, speak, speakScripted, stopSpeaking } from './tts'
 export {
   designVoice,
   fetchVoiceCatalogRaw,
@@ -18,14 +18,7 @@ export {
   bindVoiceBarListeners,
   bindVoiceBarProjection,
   cancelVoiceBar,
-  estimateVoiceDuration,
-  getCachedVoiceDuration,
-  isCompanionVoiceBarActive,
-  resolveVoiceBarDuration,
-  setCachedVoiceDuration,
-  synthesizeVoiceBar,
   toggleVoiceBar,
-  TTS_MAX_TEXT_CHARS,
   type VoiceBarProjection
 } from './voice-bar'
 export { VoiceProviderBadge } from './voice-provider-badge'

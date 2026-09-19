@@ -83,6 +83,10 @@ export function resolvePathTimeoutMs(
     return OUTFIT_FETCH_TIMEOUT_MS
   }
 
+  if (isPost && /^\/api\/sessions\/messages\/\d+\/voice\/\d+$/.test(pathStr)) {
+    return 150_000
+  }
+
   const isSlowPost = isPost && AVATAR_SLOW_PATH_PATTERN.test(pathStr)
 
   return isSlowPost ? AVATAR_FETCH_TIMEOUT_MS : resolveTimeoutMs(undefined, fallbackMs)

@@ -17,6 +17,7 @@ import {
   hydrateSessionSettings,
   loadLocalSessionHistory,
   openMainSession,
+  SessionHistoryChangedError,
   setChatSession,
   syncSessionHistory
 } from '@/modules/conversation'
@@ -347,7 +348,13 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
               } else if (synced.info) {
                 hydrateSessionSettings(synced.info)
               }
-            } catch {
+            } catch (error) {
+              if (error instanceof SessionHistoryChangedError) {
+                log.warn('gateway-boot', 'History is changing; keeping current session:', error)
+
+                return
+              }
+
               // 同样只在用户仍停留在本会话时才回退主会话；否则会误清新会话。
               if ($chatSessionId.get() !== sid) {
                 return

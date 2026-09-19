@@ -38,7 +38,6 @@ class JsonRpcEmitter:
         if raw_type in ("chunk", "reasoning.delta"):
             return {
                 "text": data.get("content", ""),
-                **({"speech_style": data["speech_style"]} if data.get("speech_style") else {}),
             }
         if raw_type in ("tool_start", "tool_end"):
             return {
@@ -53,7 +52,7 @@ class JsonRpcEmitter:
             usage = data.get("usage")
             return {
                 "text": data.get("text", ""),
-                **({"speech_style": data["speech_style"]} if data.get("speech_style") else {}),
+                **({"bubbles": data["bubbles"]} if isinstance(data.get("bubbles"), list) else {}),
                 **({"reasoning": data["reasoning"]} if data.get("reasoning") else {}),
                 **({"media": data["media"]} if isinstance(data.get("media"), list) else {}),
                 **({"usage": usage} if isinstance(usage, dict) else {}),
@@ -68,7 +67,6 @@ class JsonRpcEmitter:
             return {
                 "subtype": data.get("subtype", "compress_summary"),
                 "text": data.get("text", ""),
-                **({"speech_style": data["speech_style"]} if data.get("speech_style") else {}),
                 **({"message_id": data["message_id"]} if isinstance(data.get("message_id"), int) else {}),
             }
         # 兜底：message.start / bubble.break 均为空载荷。

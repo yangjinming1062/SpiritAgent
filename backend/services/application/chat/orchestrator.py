@@ -352,7 +352,7 @@ async def _run_chat_turn(
         conv.kind == SPECIAL_KIND and conv.system_preset_id == DEFAULT_PRESET_ID and not conv.is_automation
     )
     buffer_text = companion_reply or headless or ephemeral or conv.kind == IM_KIND
-    complete_response = companion_reply and not headless and not ephemeral and preset_override is None
+    complete_response = companion_reply and preset_override is None
     if buffer_text:
         await emitter.send_json({"type": "message.start"})
     while True:
@@ -398,7 +398,10 @@ async def _run_chat_turn(
                         temperature=temperature,
                         user_local_tz=inputs.user_local_tz,
                         lang=inputs.language,
-                        speech_config=inputs.speech_config if not headless and preset_override is None else None,
+                        speech_config=inputs.speech_config if complete_response else None,
+                        reply_preference=inputs.response_preference if complete_response else None,
+                        voice_id=inputs.speech_voice,
+                        allow_silence=ephemeral and headless and complete_response,
                         split_paragraphs=conv.system_preset_id == "companion"
                         and not conv.is_automation
                         and preset_override is None,
@@ -471,7 +474,7 @@ async def _run_chat_turn(
                 provider_name=inputs.provider_name,
                 media=turn_media,
                 reasoning=llm_result.reasoning,
-                speech_style=llm_result.speech_style,
+                reply=llm_result.reply,
                 turn_reasoning="\n\n".join(turn_reasoning_parts) or None,
                 persist=not ephemeral,
                 run_post_turn_tasks=run_post_turn_tasks,

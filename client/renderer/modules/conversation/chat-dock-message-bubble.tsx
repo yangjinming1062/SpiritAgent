@@ -7,13 +7,10 @@ import { cn } from '@/shared/lib/utils'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { useStrings } from '@/shared/strings'
 
-import { speechText } from '../../../shared/speech-text'
-
 import { ChatMediaCard } from './chat-media-card'
 import { ChatMessageCopyButton } from './chat-message-copy-button'
 import { ChatMessageEditButton } from './chat-message-edit-button'
 import { ChatMessageForkButton } from './chat-message-fork-button'
-import { ChatMessagePlayButton } from './chat-message-play-button'
 import { ChatMessageUndoButton } from './chat-message-undo-button'
 import {
   $chatEditDraft,
@@ -111,7 +108,6 @@ function MessageBubbleWithBody({
   const ports = presentationPorts()
   const portraitUrl = useStore(ports.$portraitUrl)
   const activeAvatarId = useStore(ports.$activeAvatarId)
-  const responseMode = useStore(ports.$responseMode)
   const sessionKind = useStore($chatSessionKind)
   const editing = useStore($chatEditDraft)
   const lastEditableMessage = useStore($lastEditableUserMessage)
@@ -225,30 +221,8 @@ function MessageBubbleWithBody({
     )
   }
 
-  const hasSpeech = Boolean(speechText(body.text))
-
-  const isVoiceBarMode =
-    variant === 'living' &&
-    !isUser &&
-    responseMode === 'voice' &&
-    !body.error &&
-    !body.cancelled &&
-    !body.toolName &&
-    body.voiceStatus !== 'failed' &&
-    (body.streaming || hasSpeech)
-
-  const isVoicePendingOrStreaming = isVoiceBarMode && (body.streaming || body.voiceStatus === 'pending')
-
-  // 仅在生活空间、默认文字模式、已完成、非错误、非取消且有文本的助手消息上显示播放按钮。工作台侧重干活直接看文本。
-  const showPlayButton =
-    variant === 'living' &&
-    !isUser &&
-    !isVoiceBarMode &&
-    !body.streaming &&
-    hasSpeech &&
-    !body.error &&
-    !body.cancelled &&
-    !body.toolName
+  const isVoiceBarMode = variant === 'living' && !isUser && body.replyType === 'voice'
+  const isVoicePendingOrStreaming = isVoiceBarMode && body.streaming
 
   // 必须有后端 Message.id 才能回传；回合进行中服务端会拒绝撤回，按钮一并藏掉。
   const canOperate =
@@ -340,7 +314,7 @@ function MessageBubbleWithBody({
               </div>
             ) : (
               <>
-                <ChatVoiceBar duration={body.voiceDuration} messageId={message.id} text={displayText} />
+                <ChatVoiceBar duration={body.replyAudio?.duration} failed={!body.replyAudio} messageId={message.id} />
                 <TranscriptBlock text={displayText} />
               </>
             )
@@ -368,11 +342,6 @@ function MessageBubbleWithBody({
                 <>
                   {displayText}
                   {body.streaming && <span className="animate-caret-pulse" />}
-                  {showPlayButton && (
-                    <span className="ml-1.5 inline-flex align-middle select-none">
-                      <ChatMessagePlayButton messageId={message.id} text={body.text} />
-                    </span>
-                  )}
                 </>
               ) : (
                 <span className="animate-pulse text-faint">{variant === 'living' ? dict.chat.typing : '…'}</span>

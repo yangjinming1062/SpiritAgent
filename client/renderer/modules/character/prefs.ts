@@ -12,11 +12,11 @@ import {
 
 import { setDisturbanceTier } from './companion-store'
 
-// 响应模式控制伙伴在 Chat 模式下如何回复（DESIGN §6.1 响应模式）。
-export type ResponseMode = 'text' | 'voice'
+// 回应偏好同步到后端供模型选择消息类型，不控制客户端合成或播放。
+export type ResponsePreference = 'text' | 'voice'
 
 const COMPANION_VOICE_ID_STORAGE_KEY = registerCompanionStorageKey('da.companion.voiceId')
-const RESPONSE_MODE_STORAGE_KEY = registerCompanionStorageKey('da.companion.responseMode')
+const RESPONSE_PREFERENCE_STORAGE_KEY = registerCompanionStorageKey('da.companion.responsePreference')
 
 // localStorage 仍是各窗口的即时缓存（同步读、离线可用）；每次写入额外经
 // prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL §2.4）。
@@ -26,32 +26,16 @@ function reportCloud(key: string, value: unknown): void {
 }
 
 export const $companionVoiceId = atom<string>(storedString(COMPANION_VOICE_ID_STORAGE_KEY) ?? '')
-export const $responseMode = atom<ResponseMode>(storedString(RESPONSE_MODE_STORAGE_KEY) === 'voice' ? 'voice' : 'text')
+export const $responsePreference = atom<ResponsePreference>(
+  storedString(RESPONSE_PREFERENCE_STORAGE_KEY) === 'voice' ? 'voice' : 'text'
+)
 
-// 音色与响应模式都在生活空间设置，精灵窗内的轻语使用同一组偏好。
+// 音色与回应偏好在生活空间设置，轻语共用同一组云端偏好。
 // 各窗口内存独立，借 storage 事件把其他窗口的写入热同步进 atom。
 onMount($companionVoiceId, () => {
   const refresh = (event: StorageEvent): void => {
     if (event.key === COMPANION_VOICE_ID_STORAGE_KEY) {
       $companionVoiceId.set(event.newValue ?? '')
-    }
-  }
-
-  window.addEventListener('storage', refresh)
-
-  return () => window.removeEventListener('storage', refresh)
-})
-
-onMount($responseMode, () => {
-  const refresh = (event: StorageEvent): void => {
-    if (event.key !== RESPONSE_MODE_STORAGE_KEY) {
-      return
-    }
-
-    if (event.newValue === 'text' || event.newValue === 'voice') {
-      $responseMode.set(event.newValue)
-    } else if (event.newValue === null) {
-      $responseMode.set('text')
     }
   }
 
@@ -66,15 +50,15 @@ export function setCompanionVoiceId(voice: string): void {
   reportCloud('companion.voice_id', voice)
 }
 
-export function setResponseMode(mode: ResponseMode): void {
-  $responseMode.set(mode)
-  persistString(RESPONSE_MODE_STORAGE_KEY, mode)
-  reportCloud('companion.response_mode', mode)
+export function setResponsePreference(mode: ResponsePreference): void {
+  $responsePreference.set(mode)
+  persistString(RESPONSE_PREFERENCE_STORAGE_KEY, mode)
+  reportCloud('companion.response_preference', mode)
 }
 
 registerStorageClearHandler(() => {
   $companionVoiceId.set('')
-  $responseMode.set('text')
+  $responsePreference.set('text')
 })
 
 interface BooleanPref {
@@ -114,13 +98,27 @@ export { autonomousMediaPref, autonomousVoicePref, llmAffectPref, llmAutonomyPre
 // 借道既有 setter 落 localStorage + atom；回写的 prefs:set 上报在主进程侧
 // 与最近一次成功上云内容比对后消解，不会形成回环。
 export function initCompanionPrefsSync(): () => void {
+  // 发送消息直接读取偏好；监听生命周期不能依赖设置面板是否订阅 atom。
+  const refreshResponsePreference = (): void => {
+    $responsePreference.set(storedString(RESPONSE_PREFERENCE_STORAGE_KEY) === 'voice' ? 'voice' : 'text')
+  }
+
+  const onStorage = (event: StorageEvent): void => {
+    if (event.key === RESPONSE_PREFERENCE_STORAGE_KEY || event.key === null) {
+      refreshResponsePreference()
+    }
+  }
+
+  refreshResponsePreference()
+  window.addEventListener('storage', onStorage)
+
   const unsubscribe = window.spiritagent?.onPrefsHydrated?.(({ companion }) => {
     if (typeof companion.voice_id === 'string') {
       setCompanionVoiceId(companion.voice_id)
     }
 
-    if (companion.response_mode === 'text' || companion.response_mode === 'voice') {
-      setResponseMode(companion.response_mode)
+    if (companion.response_preference === 'text' || companion.response_preference === 'voice') {
+      setResponsePreference(companion.response_preference)
     }
 
     if (typeof companion.llm_reactions === 'boolean') {
@@ -174,5 +172,8 @@ export function initCompanionPrefsSync(): () => void {
     }
   })
 
-  return unsubscribe ?? (() => {})
+  return () => {
+    unsubscribe?.()
+    window.removeEventListener('storage', onStorage)
+  }
 }

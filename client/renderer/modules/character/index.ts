@@ -82,16 +82,16 @@ export {
   $llmAffect,
   $llmAutonomy,
   $llmReactions,
-  $responseMode,
+  $responsePreference,
   autonomousMediaPref,
   autonomousVoicePref,
   initCompanionPrefsSync,
   llmAffectPref,
   llmAutonomyPref,
   llmReactionsPref,
-  type ResponseMode,
+  type ResponsePreference,
   setCompanionVoiceId,
-  setResponseMode
+  setResponsePreference
 } from './prefs'
 export { bindProactiveLineSpeaker, type ProactiveLineOptions } from './proactive-speak'
 export { $renderMode, type RenderMode, setRenderMode } from './render-mode'

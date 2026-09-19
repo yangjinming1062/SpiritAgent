@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from components import DEFAULT_LANGUAGE
 from pydantic import BaseModel, Field
@@ -51,6 +51,7 @@ class ChatRequest(BaseModel):
     model: str | None = None  # 可选覆盖；与 context_tokens 一起使用，覆盖模型的窗口与供应商默认不同时
     context_tokens: int | None = Field(default=None, gt=0)
     client_context: ChatRequestClientContext | None = None
+    response_preference: Literal["text", "voice"] | None = None
 
 
 class AgentPromptConfig(BaseModel):

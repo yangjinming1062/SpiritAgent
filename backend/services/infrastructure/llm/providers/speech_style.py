@@ -53,7 +53,7 @@ instruction in every field or escalating drama beyond the dialogue. Do not inclu
 
 
 def speech_style_guidance(provider: str, model: str) -> str:
-    example: dict = {"provider": provider, "model": model}
+    example: dict = {}
     if provider == "mimo":
         example.update(
             styles=[],
@@ -85,19 +85,15 @@ def speech_style_guidance(provider: str, model: str) -> str:
     else:
         return ""
     return (
-        "\n## Hidden speech delivery for the selected voice\n"
-        "Begin every final reply with exactly one `<speech_style>` header containing valid JSON in the shape "
-        "shown below, immediately followed by the dialogue. It is hidden delivery metadata, not spoken text or "
-        "a chat bubble. Never put it in a code fence, tool argument, or after dialogue, and do not place `---` "
-        "before the first spoken bubble. Keep provider and model exact:\n"
-        f"<speech_style>{json.dumps(example, ensure_ascii=False)}</speech_style>\n"
+        "\n## Speech performance for each voice bubble\n"
+        "The speech object of each voice bubble uses this shape; text bubbles have no speech object. "
+        "Do not include provider or model identifiers. Choose delivery for this bubble's words and context:\n"
+        + json.dumps(example, ensure_ascii=False)
+        + "\n"
         + capabilities
-        + "Choose delivery for your own words and attitude rather than copying the user's emotion. Natural speech "
-        "is the default; use no more than eight cues and only where an audible event improves the exchange. Each "
-        "cue is {before, tag}; before must be an exact substring of at most 80 characters that occurs exactly once "
-        "in the following dialogue. The cue is inserted before that anchor, which remains spoken. Do not invent an "
-        "anchor or add dialogue to accommodate metadata. Keep all delivery controls in the header; the body still "
-        "obeys the dialogue rules.\n"
+        + "Use natural delivery by default and at most eight cues. Each cue is {before, tag}; before must be an "
+        "exact substring occurring once in this bubble's text. Never add dialogue merely to create an anchor. "
+        "All direction stays in speech; text contains only actual spoken words.\n"
     )
 
 

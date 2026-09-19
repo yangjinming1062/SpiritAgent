@@ -11,7 +11,6 @@ import {
 import { sleep } from '@runtime'
 import type { IpcMain } from 'electron'
 
-import { type SpeechStyle, speechStyleKey } from '../../shared/speech-style'
 import { speechText } from '../../shared/speech-text'
 import { resolveReadableFileForIpc } from '../security/hardening'
 import { assertUserSelectedPath } from '../security/user-selected-paths'
@@ -281,20 +280,18 @@ async function ttsViaBackend({
   fetchImpl,
   language,
   text,
-  voice,
-  speechStyle
+  voice
 }: {
   ensureBackend: () => Promise<{ baseUrl: string; token?: null | string }>
   fetchImpl?: typeof globalThis.fetch
   language?: string
   text: string
   voice?: string
-  speechStyle?: SpeechStyle
 }): Promise<{ dataUrl: string; mimeType: string; voiceOut?: string }> {
   const connection = await ensureBackend()
   const url = `${connection.baseUrl}/api/media/tts`
 
-  const payload: Record<string, unknown> = { text, speech_style: speechStyle }
+  const payload: Record<string, unknown> = { text }
 
   if (voice) {
     payload.voice = voice
@@ -437,9 +434,6 @@ export function registerMediaIpc({
     }
 
     const voice = payload?.voice || ''
-    const speechStyle = payload?.speech_style
-    const styleKey = speechStyleKey(speechStyle)
-    const diskVoice = styleKey ? JSON.stringify([voice, styleKey]) : voice
     // TTS 语言统一由主进程配置解析，渲染层不传。
     const language = resolveMediaLanguage(undefined, DEFAULT_TTS_LANGUAGE)
     const persist = payload?.persist === true
@@ -456,7 +450,7 @@ export function registerMediaIpc({
 
     ttsLog('start')
 
-    const cacheKey = JSON.stringify([voice, language, text, styleKey])
+    const cacheKey = JSON.stringify([voice, language, text])
     const cached = getCachedTts(cacheKey)
 
     if (cached) {
@@ -477,7 +471,7 @@ export function registerMediaIpc({
 
     const task = ttsQueue.enqueue(async () => {
       if (persist) {
-        const hit = await diskCache.read({ language, text, voice: diskVoice })
+        const hit = await diskCache.read({ language, text, voice })
 
         if (hit) {
           const value = { dataUrl: dataUrlFromBuffer(hit, 'audio/mpeg'), mimeType: 'audio/mpeg' }
@@ -491,7 +485,7 @@ export function registerMediaIpc({
       // 云端间隔只约束真实出网请求；磁盘命中不占云端额度。
       await throttleCloud()
 
-      const result = await ttsViaBackend({ ensureBackend, fetchImpl, language, text, voice, speechStyle })
+      const result = await ttsViaBackend({ ensureBackend, fetchImpl, language, text, voice })
       const value = { dataUrl: result.dataUrl, mimeType: result.mimeType }
       setCachedTts(cacheKey, value)
 
@@ -501,7 +495,7 @@ export function registerMediaIpc({
           language,
           mimeType: result.mimeType,
           text,
-          voice: diskVoice
+          voice
         })
       }
 

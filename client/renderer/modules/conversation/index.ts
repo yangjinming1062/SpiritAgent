@@ -28,6 +28,7 @@ export {
   clearExternalAttachment,
   clearPendingPrompts,
   finalizeAssistantMessage,
+  finalizeCompanionReply,
   hydrateChatMessages,
   hydrateEditedChatMessages,
   hydrateSessionSettings,
@@ -45,12 +46,20 @@ export {
   setSessionContextUsage,
   setTurnHadBubbleBreak,
   showMediaHint,
-  submitPendingBatch
+  submitPendingBatch,
+  updateVoiceBubble
 } from './chat-store'
 export { type ChatSubmitState, ConversationInput, type ConversationInputProps } from './conversation-input'
 export { ConversationSurface } from './conversation-surface'
 export { consumePendingMessages, pendingMessages, rememberPendingMessage } from './pending-messages'
-export { loadLocalSessionHistory, rememberFullHistory, syncSessionHistory } from './session-history-cache'
+export {
+  forgetSessionHistory,
+  invalidateSessionHistory,
+  loadLocalSessionHistory,
+  rememberFullHistory,
+  SessionHistoryChangedError,
+  syncSessionHistory
+} from './session-history-cache'
 export {
   $archivedLoading,
   $archivedSessions,
@@ -96,6 +105,7 @@ export {
   type ConversationVoiceSink,
   setConversationVoiceSink,
   setVoiceBarControl,
+  setVoiceBarFailed,
   setVoiceBarLoading,
   setVoiceBarPlaying,
   type VoiceBarControl,

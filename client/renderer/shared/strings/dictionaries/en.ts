@@ -361,10 +361,11 @@ export const dict: Dictionary = {
       title: 'Interaction',
       intro: 'How the companion responds and when it may interrupt you.',
       voiceHeading: 'Chat & voice',
-      responseMode: 'Response mode',
-      responseModeText: 'Text by default',
-      responseModeVoice: 'Always voice',
-      responseModeDesc: 'Controls companion chats in Living Space and Whisper; the Workbench always uses text.',
+      responsePreference: 'Response preference',
+      responsePreferenceText: 'Prefer text',
+      responsePreferenceVoice: 'Prefer voice',
+      responsePreferenceDesc:
+        'Tell your companion which format you usually prefer. They choose based on the situation. Tap voice messages to listen.',
       recording: 'Recording length cap',
       recordingDesc: 'Maximum length of a single voice recording — auto-stops and sends at the limit.',
       recordingSecondsSuffix: 's',
@@ -745,6 +746,7 @@ export const dict: Dictionary = {
     },
 
     voice: {
+      retry: 'Voice unavailable. Tap to retry',
       play: 'Play voice',
       stop: 'Stop voice playback',
       collapse: 'Collapse',

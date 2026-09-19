@@ -1,5 +1,3 @@
-import type { SpeechStyle } from '@ipc/contracts'
-
 import { presentationPorts } from '@/shared/presentation-ports'
 
 import { speechText } from '../../../shared/speech-text'
@@ -13,13 +11,7 @@ export function stopSpeaking(): void {
   stopAudio()
 }
 
-export async function requestSynth(
-  text: string,
-  voice?: string,
-  context?: string,
-  persist = false,
-  speechStyle?: SpeechStyle
-): Promise<string> {
+export async function requestSynth(text: string, voice?: string, context?: string, persist = false): Promise<string> {
   const spokenText = speechText(text)
 
   if (!spokenText) {
@@ -28,7 +20,6 @@ export async function requestSynth(
 
   const res = await window.spiritagent.media.tts({
     text: spokenText,
-    speech_style: speechStyle,
     voice: voice ?? presentationPorts().$companionVoiceId.get(),
     context: context ?? null,
     persist
@@ -41,14 +32,9 @@ async function synth(
   text: string,
   voice: string | undefined,
   context: string | undefined,
-  persist: boolean,
-  onDone?: () => void,
-  throwOnError = false,
-  speechStyle?: SpeechStyle
+  persist: boolean
 ): Promise<boolean> {
   if (!speechText(text)) {
-    onDone?.()
-
     return false
   }
 
@@ -56,22 +42,15 @@ async function synth(
   beginVoicePreparing()
 
   try {
-    const dataUrl = await requestSynth(text, voice, context, persist, speechStyle)
+    const dataUrl = await requestSynth(text, voice, context, persist)
 
     if (!isLatestGen(gen)) {
       return false
     }
 
-    // 生命周期回调全权交给 playDataUrl 结算：至多触发一次、只属于当前音频
-    // （抢占时由 stopAudio 同步结算旧的）。这里若再比对 synth 自己的 gen，
-    // 会被 playDataUrl 内部的两次计数递增甩开，恒为假、回调永远不触发。
-    return await playDataUrl(dataUrl, onDone)
+    return (await playDataUrl(dataUrl)) === 'completed'
   } catch (err) {
     stopAudio()
-
-    if (throwOnError) {
-      throw err
-    }
 
     // 环境路径按 DESIGN §7 静默降级为纯文字，但留诊断日志定位供应商故障。
     console.warn('[tts] synthesis failed', err)
@@ -82,7 +61,7 @@ async function synth(
   }
 }
 
-/** 动态台词（聊天回复 / 主动消息）。只走内存缓存，不落盘。 */
+/** 直接互动与角色行为台词。只走内存缓存，不落盘。 */
 export async function speak(text: string, voice?: string, context?: string): Promise<boolean> {
   return await synth(text, voice, context, false)
 }
@@ -91,16 +70,4 @@ export async function speak(text: string, voice?: string, context?: string): Pro
  *  同一组 (音色, 台词) 只消耗一次云端额度。离线/机械降级边界见 DESIGN §6.3。 */
 export async function speakScripted(text: string, voice?: string, context?: string): Promise<boolean> {
   return await synth(text, voice, context, true)
-}
-
-/** 聊天窗口里用户主动点击消息气泡下方的「播放」按钮时的入口。语义与
- *  {@link speak} 一致——动态、单次、命中即停——但永远走磁盘缓存，保证同一段
- *  (voice, text) 跨会话只会消耗一次云端额度。失败向上抛：显式操作必须可见。 */
-export async function speakChatMessage(
-  text: string,
-  voice?: string,
-  onDone?: () => void,
-  speechStyle?: SpeechStyle
-): Promise<boolean> {
-  return await synth(text, voice, 'chat.replay', true, onDone, true, speechStyle)
 }

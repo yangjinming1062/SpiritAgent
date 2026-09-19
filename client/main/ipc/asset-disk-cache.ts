@@ -9,8 +9,6 @@ import type { ReadableStream } from 'node:stream/web'
 import { dataUrlFromBuffer, mimeTypeForPath } from '../shared/mime'
 import { HttpError } from '../shared/utils'
 
-const MAX_CACHE_FILES = 200
-const MAX_CACHE_BYTES = 512 * 1024 * 1024
 const DEFAULT_TIMEOUT_MS = 15_000
 const SIGNED_QUERY_KEYS = new Set(['expires', 'sig', 'token', 't', 'timestamp'])
 
@@ -20,7 +18,6 @@ interface AssetMeta {
   key: string
   mime: string
   size: number
-  writtenAt: number
 }
 
 export interface CachedAsset {
@@ -50,7 +47,6 @@ export interface AssetDiskCache {
   clear: () => Promise<void>
   ensureCached: (opts: EnsureAssetOptions) => Promise<CachedAsset>
   get: (rawUrl: string, contentHash?: string) => Promise<CachedAsset | null>
-  sweep: () => Promise<void>
 }
 
 function normalizeAssetKey(rawUrl: string, contentHash?: string): string {
@@ -156,7 +152,6 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
       }
 
       const mime = meta?.mime || mimeTypeForPath(rawUrl) || 'application/octet-stream'
-      fsp.utimes(binPath, new Date(), new Date()).catch(() => {})
 
       return {
         buffer,
@@ -167,53 +162,6 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
       }
     } catch {
       return null
-    }
-  }
-
-  async function sweep(): Promise<void> {
-    try {
-      await ensureDir()
-      const names = await fsp.readdir(cacheDir)
-      const metaFiles = names.filter(name => name.endsWith('.meta.json'))
-
-      const entries = await Promise.all(
-        metaFiles.map(async name => {
-          const key = name.slice(0, -'.meta.json'.length)
-          const binPath = getBinPath(key)
-
-          const [statBin, meta] = await Promise.all([fsp.stat(binPath).catch(() => null), readMeta(key)])
-
-          if (!statBin?.isFile() || statBin.size <= 0 || !meta) {
-            return null
-          }
-
-          return {
-            binPath,
-            metaPath: path.join(cacheDir, name),
-            size: statBin.size,
-            writtenAt: meta.writtenAt || statBin.mtimeMs
-          }
-        })
-      )
-
-      const files = entries
-        .filter((entry): entry is NonNullable<typeof entry> => entry !== null)
-        .sort((left, right) => left.writtenAt - right.writtenAt)
-
-      let totalBytes = files.reduce((sum, file) => sum + file.size, 0)
-      let count = files.length
-
-      for (const file of files) {
-        if (count <= MAX_CACHE_FILES && totalBytes <= MAX_CACHE_BYTES) {
-          break
-        }
-
-        await Promise.all([fsp.unlink(file.binPath).catch(() => {}), fsp.unlink(file.metaPath).catch(() => {})])
-        totalBytes -= file.size
-        count -= 1
-      }
-    } catch (err) {
-      console.warn('[asset-disk-cache] sweep failed', err)
     }
   }
 
@@ -315,19 +263,6 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
     }
 
     if (res.status === 304 && localCached) {
-      const now = Date.now()
-
-      const meta = (await readMeta(key)) || {
-        key,
-        mime: localCached.mime,
-        size: localCached.buffer.byteLength,
-        writtenAt: now
-      }
-
-      meta.writtenAt = now
-      await writeMeta(key, meta)
-      fsp.utimes(binPath, new Date(), new Date()).catch(() => {})
-
       return localCached
     }
 
@@ -393,19 +328,15 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
 
     await fsp.rename(partialPath, binPath)
 
-    const now = Date.now()
-
     await writeMeta(key, {
       contentHash,
       etag,
       key,
       mime,
-      size: stat.size,
-      writtenAt: now
+      size: stat.size
     })
 
     const buffer = await fsp.readFile(binPath)
-    sweep().catch(() => {})
 
     return {
       buffer,
@@ -438,7 +369,6 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
   return {
     clear,
     ensureCached,
-    get,
-    sweep
+    get
   }
 }

@@ -8,8 +8,6 @@ import type { ReadableStream } from 'node:stream/web'
 
 import { HttpError } from '../shared/utils'
 
-const MAX_CACHE_FILES = 20
-const MAX_CACHE_BYTES = 1024 * 1024 * 1024 // 1 GB
 const DEFAULT_INACTIVITY_TIMEOUT_MS = 30_000
 
 function computeFileSha256(filePath: string): Promise<string> {
@@ -40,7 +38,6 @@ export interface ModelDiskCache {
   clear: () => Promise<void>
   ensureCached: (opts: EnsureCachedOptions) => Promise<{ contentHash: string; filePath: string; fromCache: boolean }>
   has: (hash: string) => Promise<boolean>
-  sweep: () => Promise<void>
 }
 
 export function createModelDiskCache({
@@ -82,40 +79,6 @@ export function createModelDiskCache({
     }
   }
 
-  async function sweep(): Promise<void> {
-    try {
-      await ensureDir()
-      const names = await fsp.readdir(cacheDir)
-      const glbFiles = names.filter(n => n.endsWith('.glb'))
-
-      const entries = await Promise.all(
-        glbFiles.map(async name => {
-          const filePath = path.join(cacheDir, name)
-          const stat = await fsp.stat(filePath).catch(() => null)
-
-          return stat?.isFile() ? { filePath, mtimeMs: stat.mtimeMs, size: stat.size } : null
-        })
-      )
-
-      const files = entries.filter((e): e is NonNullable<typeof e> => e !== null).sort((a, b) => a.mtimeMs - b.mtimeMs)
-
-      let totalBytes = files.reduce((acc, f) => acc + f.size, 0)
-      let count = files.length
-
-      for (const file of files) {
-        if (count <= MAX_CACHE_FILES && totalBytes <= MAX_CACHE_BYTES) {
-          break
-        }
-
-        await fsp.unlink(file.filePath).catch(() => {})
-        totalBytes -= file.size
-        count -= 1
-      }
-    } catch (err) {
-      console.warn('[model-disk-cache] sweep failed', err)
-    }
-  }
-
   async function _download({
     baseUrl,
     contentHash,
@@ -134,7 +97,6 @@ export function createModelDiskCache({
 
     if (contentHash && (await has(contentHash))) {
       const glbPath = getGlbPath(contentHash)
-      fsp.utimes(glbPath, new Date(), new Date()).catch(() => {})
 
       return { contentHash, filePath: glbPath, fromCache: true }
     }
@@ -273,7 +235,6 @@ export function createModelDiskCache({
     }
 
     await fsp.rename(partialPath, finalGlbPath)
-    sweep().catch(() => {})
 
     return {
       contentHash: resolvedHash,
@@ -314,7 +275,6 @@ export function createModelDiskCache({
   return {
     clear,
     ensureCached,
-    has,
-    sweep
+    has
   }
 }

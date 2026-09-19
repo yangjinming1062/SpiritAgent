@@ -1,9 +1,9 @@
-import { speakProactive } from '@/app/workflows/proactive-delivery'
 import { openSessionSurface } from '@/app/workflows/session-delivery'
 import { $effectiveTier, $screenLocked } from '@/modules/character'
 import {
   $chatSessionId,
   chatDisplayText,
+  finalizeCompanionReply,
   pushMediaMessage,
   pushProactiveMessage,
   rememberPendingMessage,
@@ -13,18 +13,19 @@ import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
-import type { ChatMediaItem } from '@/shared/types/spiritagent'
+import type { ChatMediaItem, CompanionBubble } from '@/shared/types/spiritagent'
 
-import { decodePayload, type EventRouteContext } from '../gateway-event-util'
+import { decodePayload } from '../gateway-event-util'
 
 // 主动消息与通知投递：companion.message / system.notification / 视频任务完成 / IM 通道提醒。
-// 气泡与朗读是否发生由打扰档位、锁屏与聊天可见性共同裁决。
+// 提醒是否出现由打扰档位、锁屏与聊天可见性共同裁决。
 
-export function handleDeliveryEvent(event: GatewayEvent, ctx: EventRouteContext): void {
+export function handleDeliveryEvent(event: GatewayEvent): void {
   switch (event.type) {
     case 'companion.message': {
       const payload = decodePayload<{
         text?: string
+        bubbles?: CompanionBubble[]
         session_id?: string
         message_id?: number
         media?: ChatMediaItem[]
@@ -39,15 +40,15 @@ export function handleDeliveryEvent(event: GatewayEvent, ctx: EventRouteContext)
       }
 
       if (payload?.session_id === $chatSessionId.get()) {
-        pushProactiveMessage(text, payload?.media, payload?.message_id)
+        if (payload.bubbles && payload.message_id) {
+          finalizeCompanionReply(payload.bubbles, payload.message_id, payload.media, undefined, true)
+        } else {
+          pushProactiveMessage(text, payload.media, payload.message_id)
+        }
       }
 
       if (displayText && $effectiveTier.get() !== 'still' && !$screenLocked.get() && !$chatVisible.get()) {
-        if (ctx.shouldPlayAudio) {
-          void speakProactive(displayText, { sessionId: payload?.session_id })
-        } else {
-          showMediaHint(displayText, payload?.session_id)
-        }
+        showMediaHint(displayText, payload?.session_id)
       }
 
       break

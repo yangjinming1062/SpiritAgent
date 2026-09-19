@@ -12,7 +12,7 @@ from components import (
     get_logger,
     temp_files_gc_session,
 )
-from fastapi import HTTPException, Query
+from fastapi import HTTPException, Query, Request
 from modules.auth import CurrentUser, User
 from modules.conversation import (
     Conversation,
@@ -22,14 +22,39 @@ from modules.conversation import (
     DesktopSessionPatchRequest,
     DesktopSessionSearchResponse,
     Message,
+    VoiceBubbleView,
 )
-from services.domains.conversation import SPECIAL_KIND, resolve_preset_meta
+from services.adapters.http import limiter
+from services.domains.conversation import (
+    SPECIAL_KIND,
+    client_reply_bubbles,
+    resolve_preset_meta,
+    synthesize_reply_audio,
+)
 from sqlalchemy import String, asc, case, cast, desc, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = get_router()
 
 logger = get_logger(__name__)
+
+
+@router.post("/messages/{message_id}/voice/{bubble_index}")
+@limiter.limit(lambda: f"{SETTINGS.media_tts_rate_limit_per_minute}/minute")
+async def retry_voice_bubble(
+    request: Request,
+    user: CurrentUser,
+    message_id: int,
+    bubble_index: int,
+) -> VoiceBubbleView:
+    try:
+        reply = await synthesize_reply_audio(user.id, message_id, bubble_index=bubble_index)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=503, detail="Voice synthesis is busy; retry shortly") from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail="Voice message not found") from exc
+    return VoiceBubbleView.model_validate(client_reply_bubbles(reply)[bubble_index])
+
 
 # 列表/搜索预览关联子查询：取首条非空 user 消息并在 SQL 层截断，避免大文本/多模态造成整页 IO 放大
 _preview_subquery = (

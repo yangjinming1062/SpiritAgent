@@ -1,5 +1,3 @@
-import type { SpeechStyle } from '@ipc/contracts'
-
 import { $screenLocked, reportInteractionStat, setSpriteState, triggerFootGlowPulse } from '@/modules/character'
 import {
   $chatDraftFromUndo,
@@ -14,23 +12,25 @@ import {
   chatDisplayText,
   clearPendingPrompts,
   finalizeAssistantMessage,
+  finalizeCompanionReply,
   hydrateChatMessages,
   hydrateEditedChatMessages,
+  invalidateSessionHistory,
   markAssistantTerminal,
   pushStatusPill,
   rememberFullHistory,
   setSessionContextUsage,
   setTurnHadBubbleBreak,
   showMediaHint,
-  submitPendingBatch
+  submitPendingBatch,
+  updateVoiceBubble
 } from '@/modules/conversation'
-import { cancelVoiceBar, isCompanionVoiceBarActive } from '@/modules/speech'
+import { cancelVoiceBar } from '@/modules/speech'
 import { type GatewayEvent, type SlashCommandResultPayload } from '@/shared/lib/gateway-protocol'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { getStrings } from '@/shared/strings'
-import type { ChatMediaItem, SessionMessage } from '@/shared/types/spiritagent'
+import type { ChatMediaItem, CompanionBubble, SessionMessage } from '@/shared/types/spiritagent'
 
-import { speechText } from '../../../../shared/speech-text'
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
 // 会话回合事件处理器：message.* 与 slash / 压缩 / 撤回的会话状态更新。
@@ -46,11 +46,11 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
 
       break
     case 'message.delta': {
-      const payload = decodePayload<{ text?: string; speech_style?: SpeechStyle }>(event.payload)
+      const payload = decodePayload<{ text?: string }>(event.payload)
       const text = payload?.text ?? ''
 
       if (text) {
-        appendAssistantDelta(text, payload?.speech_style)
+        appendAssistantDelta(text)
       }
 
       break
@@ -75,6 +75,30 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       break
     }
 
+    case 'message.voice': {
+      const payload = decodePayload<{
+        session_id: string
+        message_id: number
+        bubble_index: number
+        bubble: CompanionBubble
+      }>(event.payload)
+
+      if (typeof payload.session_id === 'string') {
+        invalidateSessionHistory(payload.session_id)
+      }
+
+      if (
+        payload.session_id === $chatSessionId.get() &&
+        typeof payload.message_id === 'number' &&
+        typeof payload.bubble_index === 'number' &&
+        payload.bubble
+      ) {
+        updateVoiceBubble(payload.message_id, payload.bubble_index, payload.bubble)
+      }
+
+      break
+    }
+
     case 'message.persisted': {
       const p = decodePayload<{ role?: string; message_ids?: unknown }>(event.payload)
 
@@ -87,7 +111,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
 
     case 'message.complete': {
       const payload = decodePayload<{
-        speech_style?: SpeechStyle
+        bubbles?: CompanionBubble[]
         media?: ChatMediaItem[]
         message_id?: number
         reasoning?: string
@@ -116,15 +140,19 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       // payload.text 是整轮（包含两个气泡）的全文，会覆盖最后一个气泡。
       // 这种情况下保留 last.text。媒体与正文正交，始终挂到最后一格。
       const hadBreak = $turnHadBubbleBreak.get()
-      finalizeAssistantMessage(
-        hadBreak ? undefined : payload?.text,
-        payload?.media,
-        hadBreak ? undefined : payload?.reasoning,
-        { speechStyle: payload?.speech_style }
-      )
 
-      if (typeof payload?.message_id === 'number') {
-        bindTrailingAssistantMessageId(payload.message_id)
+      if (payload?.bubbles && typeof payload.message_id === 'number') {
+        finalizeCompanionReply(payload.bubbles, payload.message_id, payload.media, payload.reasoning)
+      } else {
+        finalizeAssistantMessage(
+          hadBreak ? undefined : payload?.text,
+          payload?.media,
+          hadBreak ? undefined : payload?.reasoning
+        )
+
+        if (typeof payload?.message_id === 'number') {
+          bindTrailingAssistantMessageId(payload.message_id)
+        }
       }
 
       // 媒体已送达但对话界面收起：气泡只做轻量系统提示，点击打开轻语/生活空间查看。
@@ -133,11 +161,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
         showMediaHint(payload.media.some(m => m.type === 'video') ? sys.videoReady : sys.imageReady)
       }
 
-      const companionVoiceActive = isCompanionVoiceBarActive()
-
-      if (!companionVoiceActive || !speechText(text)) {
-        setSpriteState('idle', { force: true })
-      }
+      setSpriteState('idle', { force: true })
 
       triggerFootGlowPulse('completed', 1200)
 

@@ -465,7 +465,12 @@ export function PanelSelect<T extends string>({
       return
     }
 
-    setActiveIndex(Math.max(0, options.findIndex(o => o.value === value)))
+    setActiveIndex(
+      Math.max(
+        0,
+        options.findIndex(o => o.value === value)
+      )
+    )
     setOpen(true)
   }
 

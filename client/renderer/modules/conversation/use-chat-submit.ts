@@ -137,6 +137,7 @@ export function useChatSubmit({
         await requestGateway('prompt.submit', {
           session_id: edit.sessionId,
           edit_message_id: edit.sourceMessageId,
+          response_preference: presentationPorts().getResponsePreference(),
           text: trimmed
         })
 
@@ -324,7 +325,7 @@ export function useChatSubmit({
     const lastBody = lastItem ? $chatMessageBodies.get()[lastItem.id] : undefined
 
     if (lastItem?.role === 'assistant' && lastBody?.streaming && lastBody.text.trim()) {
-      finalizeAssistantMessage(undefined, undefined, undefined, { synthesize: false })
+      finalizeAssistantMessage()
     } else {
       markAssistantTerminal({ cancelled: true })
     }

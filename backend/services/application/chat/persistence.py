@@ -13,15 +13,20 @@ from components import (
     session_scope,
     track_user_task,
 )
-from modules.conversation import Conversation, Message
-from modules.media import SpeechStyle
+from modules.conversation import CompanionReply, Conversation, Message
 from modules.system import ChatRequest
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope
 from services.domains.companion import update_mood_from_companion_turn
-from services.domains.conversation import DEFAULT_PRESET_ID, SPECIAL_KIND, client_media_entries
+from services.domains.conversation import (
+    DEFAULT_PRESET_ID,
+    SPECIAL_KIND,
+    client_media_entries,
+    client_reply_bubbles,
+    synthesize_reply_audio,
+)
 from services.infrastructure.llm import message_to_response_items
 from services.infrastructure.tool_runtime import REGISTRY
 
@@ -180,12 +185,14 @@ async def _persist_assistant_no_tool_turn(
     provider_name: str = "",
     media: list[dict[str, str]] | None = None,
     reasoning: str | None = None,
-    speech_style: SpeechStyle | None = None,
+    reply: CompanionReply | None = None,
     turn_reasoning: str | None = None,
     persist: bool = True,
     run_post_turn_tasks: bool = True,
 ) -> None:
-    """终端路径：助手只产出文本（可附生成媒体）；持久化 Message、触发可选的标题生成与后台 review、发出 ``message.complete``。"""
+    """保存终端答复与媒体，交付气泡，并调度可选的回合后任务。"""
+    if reply is not None:
+        turn_content = reply.dialogue()
     assistant_message_id: int | None = None
     if persist and (turn_content or media or reasoning):
         async with session_scope() as db:
@@ -195,7 +202,7 @@ async def _persist_assistant_no_tool_turn(
                 content=turn_content or None,
                 media_json=json.dumps(media, ensure_ascii=False) if media else None,
                 reasoning_content=reasoning or None,
-                speech_style_json=speech_style.model_dump_json() if speech_style else None,
+                reply_json=reply.model_dump_json() if reply else None,
                 prompt_tokens=final_prompt_tokens,
                 completion_tokens=final_completion_tokens,
                 turn_duration_ms=turn_duration_ms,
@@ -203,6 +210,8 @@ async def _persist_assistant_no_tool_turn(
             db.add(row)
             await db.commit()
             assistant_message_id = row.id
+    if reply and assistant_message_id is not None:
+        reply = await synthesize_reply_audio(user_id, assistant_message_id)
     if persist and conv.title == "New Conversation" and first_user_msg_content and turn_content:
         title_temp = parse_temperature(
             effective_settings.get("chat.title_generation_temperature"),
@@ -251,7 +260,8 @@ async def _persist_assistant_no_tool_turn(
         {
             "type": "message.complete",
             "text": turn_content,
-            **({"speech_style": speech_style.model_dump()} if speech_style else {}),
+            **({"bubbles": client_reply_bubbles(reply)} if reply else {}),
+            **({"reply": reply.model_dump(mode="json")} if reply and not persist else {}),
             **({"reasoning": displayed_reasoning} if displayed_reasoning else {}),
             **({"media": client_media_entries(media)} if media else {}),
             **({"usage": final_usage_payload} if final_usage_payload else {}),

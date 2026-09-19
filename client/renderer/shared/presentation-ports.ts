@@ -1,4 +1,3 @@
-import type { SpeechStyle } from '@ipc/contracts'
 import type { Atom } from 'nanostores'
 
 import type { ChatMediaItem } from './types/spiritagent'
@@ -23,25 +22,20 @@ export interface SetSpriteStateOptions {
   force?: boolean
 }
 
+export type AudioPlaybackResult = 'completed' | 'interrupted' | 'failed'
+
 export interface PresentationPorts {
   $activeAvatarId: Atom<number | null>
   $companionVoiceId: Atom<string>
   $portraitUrl: Atom<string | null>
-  $responseMode: Atom<'text' | 'voice'>
   $screenLocked: Atom<boolean>
   $spriteState: Atom<SpriteStateName>
   $voicePreparing: Atom<boolean>
+  getResponsePreference: () => 'text' | 'voice'
   openMediaViewer: (item: ChatMediaItem) => void
-  playDataUrl: (dataUrl: string, onDone?: () => void) => Promise<boolean>
-  requestSynth: (
-    text: string,
-    voice?: string,
-    context?: string,
-    persist?: boolean,
-    speechStyle?: SpeechStyle
-  ) => Promise<string>
+  playDataUrl: (dataUrl: string, onDone?: () => void) => Promise<AudioPlaybackResult>
+  requestSynth: (text: string, voice?: string, context?: string, persist?: boolean) => Promise<string>
   setSpriteState: (name: SpriteStateName, options?: SetSpriteStateOptions) => void
-  speakChatMessage: (text: string, voice?: string, onDone?: () => void, speechStyle?: SpeechStyle) => Promise<boolean>
   /** 预制台词的合成+播放（内容寻址落盘缓存）：角色反应池经此送达，避免模块直连语音引擎。 */
   speakScripted: (text: string, voice?: string, context?: string) => Promise<boolean>
   stopAudio: () => void

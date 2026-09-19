@@ -5,11 +5,13 @@
 """
 
 from components import safe_json_loads
-from modules.conversation import Message
+from modules.conversation import CompanionReply, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.assets import client_asset_url
+
+from .reply_audio import client_reply_bubbles
 
 
 def client_media_entries(media: list[dict[str, str]]) -> list[dict[str, str]]:
@@ -68,8 +70,8 @@ async def build_session_messages(
             media = safe_json_loads(msg.media_json, default=None)
             if isinstance(media, list) and media:
                 item["media"] = client_media_entries([e for e in media if isinstance(e, dict)])
-        if msg.speech_style_json:
-            item["speech_style"] = safe_json_loads(msg.speech_style_json, default=None)
+        if msg.reply_json:
+            item["bubbles"] = client_reply_bubbles(CompanionReply.model_validate_json(msg.reply_json))
         if msg.reasoning_content:
             item["reasoning"] = msg.reasoning_content
         if include_id:

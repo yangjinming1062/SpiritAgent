@@ -6,8 +6,9 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from components import DEFAULT_LANGUAGE, TOOL_CALL_ID_HEX_PREFIX_LEN, get_logger, new_request_id
-from modules.media import SpeechStyle
+from components import DEFAULT_LANGUAGE, TOOL_CALL_ID_HEX_PREFIX_LEN, get_logger, new_request_id, resolve_prompt_text
+from modules.conversation import CompanionReply
+from prompts.chat import COMPANION_NO_VOICE_GUIDANCES, COMPANION_REPLY_GUIDANCES
 
 from services.infrastructure.llm import (
     FailoverReason,
@@ -20,7 +21,7 @@ from services.infrastructure.llm import (
 
 from .bubble import BubbleEvent, BubbleSplitter
 from .chat_emitter import Emitter
-from .speech_style import SpeechStyleParser
+from .reply_delivery import parse_companion_reply
 from .system_prompt import refresh_volatile_header_in_prompt
 
 logger = get_logger(__name__)
@@ -47,7 +48,7 @@ class _LLMTurnResult:
     final_usage_payload: dict | None
     turn_duration_ms: int
     reasoning: str | None = None
-    speech_style: SpeechStyle | None = None
+    reply: CompanionReply | None = None
 
 
 def _llm_error_user_message(exc: LLMRuntimeError) -> str:
@@ -124,6 +125,9 @@ async def _generate_llm_response(
     lang: str = DEFAULT_LANGUAGE,
     speech_config: ProviderConfig | None = None,
     split_paragraphs: bool = False,
+    reply_preference: Literal["text", "voice"] | None = None,
+    voice_id: str = "",
+    allow_silence: bool = False,
 ) -> _LLMTurnResult:
     """单次 LLM 调用与正文交付；流式首事件或完整响应到达时触发回退哨兵，工具轮正文只在 stream 模式实时显示。"""
     client = provider.raw_client()
@@ -138,9 +142,13 @@ async def _generate_llm_response(
         user_local_tz=user_local_tz,
         lang=lang,
     )
-    if speech_config:
-        instructions += speech_style_guidance(speech_config.provider_name, speech_config.model)
-    speech_parser = SpeechStyleParser(speech_config.provider_name, speech_config.model) if speech_config else None
+    if reply_preference is not None:
+        instructions += resolve_prompt_text(COMPANION_REPLY_GUIDANCES, lang).replace("{preference}", reply_preference)
+        instructions += (
+            speech_style_guidance(speech_config.provider_name, speech_config.model)
+            if speech_config
+            else resolve_prompt_text(COMPANION_NO_VOICE_GUIDANCES, lang)
+        )
     kwargs = build_responses_kwargs(
         model=model_name,
         instructions=instructions,
@@ -175,26 +183,21 @@ async def _generate_llm_response(
 
     bubbles = BubbleSplitter(split_paragraphs=split_paragraphs)
 
-    speech_style_sent = False
+    reply: CompanionReply | None = None
     text_emitted = False
 
     async def _send_text(text: str) -> None:
-        nonlocal speech_style_sent, text_emitted
+        nonlocal text_emitted
         text_emitted = True
         payload = {"type": "chunk", "content": text}
-        if not speech_style_sent and speech_parser and speech_parser.style:
-            payload["speech_style"] = speech_parser.style.model_dump()
-            speech_style_sent = True
         await emitter.send_json(payload)
 
     async def _emit_bubble_events(events: list[BubbleEvent]) -> None:
-        nonlocal speech_style_sent
         for event in events:
             if event.is_break:
                 segment = "".join(bubble_parts).strip()
                 if not segment:
                     continue
-                speech_style_sent = False
                 # 分隔符仅作传输用：发 break 帧给渲染端，但不要合并到 turn_content（持久化文本会被 TTS 朗读，不能漏出）。
                 turn_parts.append(segment)
                 bubble_parts.clear()
@@ -250,8 +253,7 @@ async def _generate_llm_response(
                     if delivery == "buffered":
                         pending_text.append(chunk.delta)
                     else:
-                        text = speech_parser.feed(chunk.delta) if speech_parser else chunk.delta
-                        await _emit_bubble_events(bubbles.feed(text))
+                        await _emit_bubble_events(bubbles.feed(chunk.delta))
                 elif event_type in (
                     "response.reasoning_text.delta",
                     "response.reasoning_summary_text.delta",
@@ -292,8 +294,20 @@ async def _generate_llm_response(
     # 确认完整终态且没有工具调用，才交付正文；工具轮的重叠台词不能先进入气泡或 TTS。
     if delivery != "stream" and not tool_calls_list:
         text = "".join(pending_text)
-        await _emit_bubble_events(bubbles.feed(speech_parser.feed(text) if speech_parser else text))
-        await _emit_bubble_events(bubbles.flush())
+        if reply_preference is not None:
+            try:
+                reply = parse_companion_reply(
+                    text,
+                    speech_config=speech_config,
+                    voice_id=voice_id,
+                    language=lang,
+                    allow_silence=allow_silence,
+                )
+            except ValueError as exc:
+                raise RuntimeError("Invalid companion reply format") from exc
+        else:
+            await _emit_bubble_events(bubbles.feed(text))
+            await _emit_bubble_events(bubbles.flush())
 
     # 收尾最后气泡：若 break 后立即结束，bubble_parts 为空则不追加，turn_parts 已持有前面气泡。
     if bubble_parts:
@@ -303,13 +317,13 @@ async def _generate_llm_response(
 
     turn_duration_ms = int((time.monotonic() - turn_start_time) * 1000)
 
-    turn_content = "\n\n".join(turn_parts)
+    turn_content = reply.dialogue() if reply else "\n\n".join(turn_parts)
     turn_reasoning = "".join(reasoning_parts).strip() or None
 
     return _LLMTurnResult(
         turn_content=turn_content if not tool_calls_list else "",
         reasoning=turn_reasoning,
-        speech_style=speech_parser.style if speech_parser and not tool_calls_list else None,
+        reply=reply,
         tool_calls_list=tool_calls_list,
         final_prompt_tokens=final_prompt_tokens,
         final_completion_tokens=final_completion_tokens,

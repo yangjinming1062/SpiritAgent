@@ -1,4 +1,5 @@
 import { getAudioContextCtor } from '@/shared/lib/audio-context-ctor'
+import type { AudioPlaybackResult } from '@/shared/presentation-ports'
 
 let current: HTMLAudioElement | null = null
 let currentDone: (() => void) | null = null
@@ -82,7 +83,7 @@ export function warmAudioContext(): void {
   }
 }
 
-export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise<boolean> {
+export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise<AudioPlaybackResult> {
   stopAudio()
   const gen = nextGen()
   const audio = new Audio(dataUrl)
@@ -90,9 +91,9 @@ export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise
 
   // 在任何 await 之前就挂好 'ended' / 'error' 监听器，避免测试里的快速
   // `emit('ended')`（或真实的音频结束事件）抢在监听器挂好之前到达。
-  let resolvePlayback!: (ok: boolean) => void
+  let resolvePlayback!: (result: AudioPlaybackResult) => void
 
-  const playbackEnded = new Promise<boolean>(resolve => {
+  const playbackEnded = new Promise<AudioPlaybackResult>(resolve => {
     resolvePlayback = resolve
   })
 
@@ -100,7 +101,7 @@ export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise
   // play-failure 分支）都试图结算这个 promise，只有第一次调用生效。
   let fired = false
 
-  const fireDone = (ok: boolean): void => {
+  const fireDone = (result: AudioPlaybackResult): void => {
     if (fired) {
       return
     }
@@ -130,21 +131,20 @@ export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise
 
     amplitudeSink?.(0)
 
-    resolvePlayback(ok)
+    resolvePlayback(result)
 
     if (onDone) {
       onDone()
     }
   }
 
-  // `currentDone` 由 stopAudio() 调用。把 `fireDone` 包成一个 thin closure，
-  // 始终上报失败（stop 不算"成功"的播放结束）。
-  const stopDone = (): void => fireDone(false)
+  // 主动停止与其他声音抢占都属于中断，不能作为音频损坏上报。
+  const stopDone = (): void => fireDone('interrupted')
 
   currentDone = stopDone
 
-  const endedHandler: EventListener = () => fireDone(true)
-  const errorHandler: EventListener = () => fireDone(false)
+  const endedHandler: EventListener = () => fireDone('completed')
+  const errorHandler: EventListener = () => fireDone('failed')
   audio.addEventListener('ended', endedHandler, { once: true })
   audio.addEventListener('error', errorHandler, { once: true })
   currentListeners = [
@@ -157,21 +157,24 @@ export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise
   await startAmplitudeLoop(audio, gen)
 
   if (fired || !isLatestGen(gen) || current !== audio) {
-    return false
+    fireDone('interrupted')
+
+    return await playbackEnded
   }
 
-  const playPromise = audio.play().catch(err => err)
+  const playPromise = audio.play().then(
+    () => true,
+    () => false
+  )
 
   const playResult = await playPromise
 
-  if (playResult instanceof Error) {
+  if (!playResult) {
+    fireDone('failed')
+
     if (current === audio && isLatestGen(gen)) {
       stopAudio()
     }
-
-    fireDone(false)
-
-    return false
   }
 
   return await playbackEnded

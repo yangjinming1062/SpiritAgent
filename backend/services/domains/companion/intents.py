@@ -16,7 +16,7 @@ from modules.companion import (
     CompanionWakeEvent,
     companion_cron_source_key,
 )
-from modules.conversation import Conversation, Message
+from modules.conversation import CompanionReply, Conversation, Message
 from modules.ws import COMPANION_TURN_EVENT, emit_ws_event
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -361,7 +361,7 @@ async def finish_companion_intent(
     user_id: int,
     request: CompanionTurnRequest,
     *,
-    text: str = "",
+    reply: CompanionReply | None = None,
     followup: CompanionWaitRequest | None = None,
     contact_revision: int,
     user_message_id: int,
@@ -384,11 +384,15 @@ async def finish_companion_intent(
         if row is None:
             return False
         now = utc_now()
+        tier = await get_disturbance_tier(user_id, db=db)
         context_changed = (
             get_user_proactive_record(user_id).contact_revision != contact_revision
             or await latest_user_message_id(db, user_id) != user_message_id
             or not can_start_companion_turn(user_id)
-            or await get_disturbance_tier(user_id, db=db) == "still"
+            or tier == "still"
+            or reply is not None
+            and tier != "autonomous"
+            and any(bubble.type == "voice" for bubble in reply.bubbles)
         )
         delivered = False
         if row.expires_at <= now:
@@ -408,8 +412,8 @@ async def finish_companion_intent(
                     seconds=60 if interrupted or context_changed else 300 * 2 ** max(0, row.failure_count - 1),
                 )
         else:
-            if text:
-                await append_companion_message(db, user_id, text)
+            if reply:
+                await append_companion_message(db, user_id, reply)
                 delivered = True
             if followup is None:
                 row.status = "completed"

@@ -18,8 +18,6 @@ from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from modules.auth import CurrentUser
 from modules.conversation import Conversation
-from modules.media import SPEECH_STYLE_ADAPTER
-from pydantic import ValidationError
 from services.adapters.http import limiter
 from services.domains.media import (
     attachment_video_url,
@@ -286,15 +284,7 @@ async def text_to_speech(request: Request, user: CurrentUser) -> StreamingRespon
         )
 
     try:
-        try:
-            speech_style = (
-                SPEECH_STYLE_ADAPTER.validate_python(data["speech_style"])
-                if data.get("speech_style") is not None
-                else None
-            )
-        except ValidationError as exc:
-            raise HTTPException(status_code=400, detail="invalid speech_style") from exc
-        result = await synthesize_speech(user.id, text, voice, language, speech_style)
+        result = await synthesize_speech(user.id, text, voice, language)
     except HTTPException:
         raise
     except MissingLlmConfigError:

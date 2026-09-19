@@ -19,7 +19,7 @@ from components import (
 )
 from modules.auth import ChatRequestClientContext
 from modules.companion import Persona
-from modules.conversation import Conversation, Message
+from modules.conversation import CompanionReply, Conversation, Message
 from modules.settings import UserSetting
 from modules.system import AgentPromptConfig, ChatRequest, PromptPreset
 from sqlalchemy import func, select
@@ -27,7 +27,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.chat import NativeMemory
 from services.contracts import MemoryScope, MemorySource
-from services.domains.companion import build_outfit_extras, build_system_prompt_extras, is_work_preset
+from services.domains.companion import (
+    build_outfit_extras,
+    build_system_prompt_extras,
+    get_disturbance_tier,
+    is_work_preset,
+)
 from services.domains.configuration import DEFAULT_CONFIG
 from services.domains.conversation import (
     DEFAULT_PRESET_ID,
@@ -54,7 +59,7 @@ from services.infrastructure.llm import (
     provider_from_config,
     resolve_context_tokens,
     resolve_provider_chain,
-    resolve_speech_style_config,
+    resolve_reply_voice,
     resolve_video_chain,
     resolve_vision_chain,
 )
@@ -94,6 +99,8 @@ class TurnInputs:
     user_local_tz: str | None = None
     language: str = DEFAULT_LANGUAGE
     speech_config: ProviderConfig | None = None
+    response_preference: Literal["text", "voice"] = "text"
+    speech_voice: str = ""
 
 
 async def load_user_settings(db: AsyncSession, user_id: int) -> dict[str, str]:
@@ -219,7 +226,9 @@ def db_message_to_response_items(msg: Message) -> list[dict[str, Any]]:
     if msg.subtype in UI_ONLY_SUBTYPES:
         return []
 
-    content_val: str | list = msg.content or ""
+    content_val: str | list = (
+        CompanionReply.model_validate_json(msg.reply_json).context_json() if msg.reply_json else msg.content or ""
+    )
     is_multimodal = getattr(msg, "content_type", "text") == "multimodal_v1"
     if is_multimodal:
         parsed = safe_json_loads(content_val if isinstance(content_val, str) else "")
@@ -515,15 +524,19 @@ async def build_turn_inputs(
         estimated_tokens = full_context_tokens
 
     speech_config = None
+    selected_voice = ""
     if conv.kind == SPECIAL_KIND and resolved_preset.id == DEFAULT_PRESET_ID:
         raw_voice = user_settings.get("companion.voice_id", "")
         selected_voice = safe_json_loads(raw_voice, default=raw_voice)
-        speech_config = await resolve_speech_style_config(
+        speech_config, selected_voice = await resolve_reply_voice(
             db,
             user_id,
             selected_voice if isinstance(selected_voice, str) else "",
             session_lang,
         )
+
+    if companion_proactive_turn and await get_disturbance_tier(user_id, db=db) != "autonomous":
+        speech_config = None
 
     return TurnInputs(
         context=context,
@@ -542,6 +555,13 @@ async def build_turn_inputs(
         user_local_tz=user_local_tz,
         language=session_lang,
         speech_config=speech_config,
+        speech_voice=selected_voice if isinstance(selected_voice, str) else "",
+        response_preference=req.response_preference
+        or (
+            "voice"
+            if safe_json_loads(user_settings.get("companion.response_preference", '"text"')) == "voice"
+            else "text"
+        ),
     )
 
 

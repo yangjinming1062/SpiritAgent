@@ -1,5 +1,3 @@
-import type { SpeechStyle } from '@ipc/contracts'
-
 /** 图像迭代意图：微调上一版，或从固定参考重新生成。与后端 ImageReviseMode 对齐。 */
 export type ImageReviseMode = 'edit' | 'regenerate'
 
@@ -54,8 +52,14 @@ export interface ChatAttachment {
   url: string
 }
 
+export interface ReplyAudio {
+  url: string
+  duration: number
+}
+export type CompanionBubble = { type: 'text'; text: string } | { type: 'voice'; text: string; audio: ReplyAudio | null }
+
 export interface SessionMessage {
-  speech_style?: SpeechStyle
+  bubbles?: CompanionBubble[]
   content: unknown
   context?: unknown
   /** 后端 DB row id（build_session_messages(include_id=True) 下发）；用于 fork / undo 按钮回传给后端的 source_message_id。 */

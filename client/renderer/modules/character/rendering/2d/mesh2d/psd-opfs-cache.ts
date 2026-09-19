@@ -4,8 +4,6 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 const psdCache = new OpfsBlobCache({
   dirName: 'psd-cache',
   blobSuffix: '.psd',
-  maxFiles: 10,
-  maxBytes: 512 * 1024 * 1024,
   logTag: 'psd-opfs-cache'
 })
 

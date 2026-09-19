@@ -43,20 +43,22 @@ def _route_selected_voice(
     return voice_id, [selected, *(config for config in language_chain if config is not selected)], provider_name
 
 
-async def resolve_speech_style_config(
+async def resolve_reply_voice(
     db: AsyncSession,
     user_id: int,
     voice: str,
     language: str,
-) -> ProviderConfig | None:
+) -> tuple[ProviderConfig | None, str]:
     chain = await resolve_provider_chain(db, user_id, "tts")
     voice_id, chain, _ = _route_selected_voice(voice, chain, language)
     if not chain or chain[0].provider_name not in {"mimo", "minimax"}:
-        return None
+        return None, ""
     config = chain[0]
     if config.provider_name == "mimo" and voice_id.startswith("mimo_voicedesign:"):
-        return replace(config, model="mimo-v2.5-tts-voicedesign")
-    return config
+        config = replace(config, model="mimo-v2.5-tts-voicedesign")
+    selected_voice = voice_id or pick_voice_id("", config.provider_name, language)
+    custom = "custom:" if voice_id and ":custom:" in voice else ""
+    return config, f"{config.provider_name}:{custom}{selected_voice}"
 
 
 async def synthesize_speech(
@@ -65,15 +67,34 @@ async def synthesize_speech(
     voice: str = "",
     language: str = "",
     speech_style: SpeechStyle | None = None,
+    *,
+    preserve_performance: bool = False,
 ) -> TTSResult:
     """走供应商链合成整段语音；链解析为空抛 MissingLlmConfigError。返回体含实际使用的音色 id。"""
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "tts")
     if not chain:
         raise MissingLlmConfigError()
+    if preserve_performance:
+        if speech_style is None:
+            raise ValueError("Voice message requires speech performance")
+        chain = [config for config in chain if config.provider_name == speech_style.provider]
     voice, chain, selected_provider = _route_selected_voice(voice, chain, language)
     if not chain:
         raise MissingLlmConfigError(f"no TTS provider supports language {language!r}")
+    if preserve_performance:
+        if speech_style is None:
+            raise ValueError("Voice message requires speech performance")
+        config = chain[0]
+        if config.provider_name == "mimo" and voice.startswith("mimo_voicedesign:"):
+            config = replace(config, model="mimo-v2.5-tts-voicedesign")
+        if (
+            config.provider_name != speech_style.provider
+            or config.model != speech_style.model
+            or selected_provider != speech_style.provider
+        ):
+            raise ValueError("Voice message TTS configuration is no longer available")
+        chain = [config]
     return await execute_with_fallback(
         db=None,
         user_id=user_id,

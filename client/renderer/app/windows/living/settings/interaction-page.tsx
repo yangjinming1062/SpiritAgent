@@ -9,7 +9,7 @@ import {
   $llmAffect,
   $llmAutonomy,
   $llmReactions,
-  $responseMode,
+  $responsePreference,
   $userPreferredTier,
   autonomousMediaPref,
   autonomousVoicePref,
@@ -19,9 +19,9 @@ import {
   llmAutonomyPref,
   llmReactionsPref,
   pushEffectiveDisturbanceTier,
-  type ResponseMode,
+  type ResponsePreference,
   setDisturbanceTier,
-  setResponseMode
+  setResponsePreference
 } from '@/modules/character'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { Check } from '@/shared/lib/icons'
@@ -50,7 +50,7 @@ export function InteractionPage(): React.ReactElement {
   const t = dict.settings.interaction
 
   const tier = useStore($userPreferredTier)
-  const responseMode = useStore($responseMode)
+  const responsePreference = useStore($responsePreference)
   const llmReactions = useStore($llmReactions)
   const llmAffect = useStore($llmAffect)
   const llmAutonomy = useStore($llmAutonomy)
@@ -116,15 +116,15 @@ export function InteractionPage(): React.ReactElement {
       <section>
         <p className={cn(SECTION_TITLE, 'mb-2')}>{t.voiceHeading}</p>
         <SettingCard>
-          <SettingRow description={t.responseModeDesc} label={t.responseMode} stacked>
+          <SettingRow description={t.responsePreferenceDesc} label={t.responsePreference} stacked>
             <div className="max-w-xs">
-              <Segmented<ResponseMode>
-                onChange={setResponseMode}
+              <Segmented<ResponsePreference>
+                onChange={setResponsePreference}
                 options={[
-                  { value: 'text', label: t.responseModeText },
-                  { value: 'voice', label: t.responseModeVoice }
+                  { value: 'text', label: t.responsePreferenceText },
+                  { value: 'voice', label: t.responsePreferenceVoice }
                 ]}
-                value={responseMode}
+                value={responsePreference}
               />
             </div>
           </SettingRow>

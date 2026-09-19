@@ -1,44 +1,33 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 
 import { ChevronDown, FileText, Loader2, Volume2 } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 
-import { $voiceBarLoadingId, $voiceBarPlayingId, conversationVoiceSink, voiceBarControl } from './voice-link'
+import { $voiceBarFailedId, $voiceBarLoadingId, $voiceBarPlayingId, voiceBarControl } from './voice-link'
 
-// 消息中的语音条与转写折叠块：纯 UI 投影。播放队列、合成与时长缓存的真相在
-// modules/speech，经 voice-link 的控制接缝与本模块原子呈现。
+// 时长来自后端音频，播放状态经 voice-link 投影；本组件不发起文字合成。
 
 interface ChatVoiceBarProps {
   duration?: number
   messageId: string
-  text?: string
+  failed?: boolean
 }
 
-export function ChatVoiceBar({ duration, messageId, text }: ChatVoiceBarProps): React.JSX.Element {
+export function ChatVoiceBar({ duration, messageId, failed }: ChatVoiceBarProps): React.JSX.Element {
   const dict = useStrings()
   const playingId = useStore($voiceBarPlayingId)
   const loadingId = useStore($voiceBarLoadingId)
+  const failedId = useStore($voiceBarFailedId)
+  const unavailable = failed || failedId === messageId
 
   const isPlaying = playingId === messageId
   const isLoading = loadingId === messageId
 
-  useEffect(() => {
-    if (typeof duration === 'number' && duration > 0) {
-      return
-    }
-
-    if (!text?.trim()) {
-      return
-    }
-
-    voiceBarControl().ensureDuration(messageId, text)
-  }, [duration, messageId, text])
-
   const hasRealDuration = typeof duration === 'number' && duration > 0
-  const effectiveSec = hasRealDuration ? duration : text ? conversationVoiceSink().estimateDuration(text) : 1
+  const effectiveSec = hasRealDuration ? duration : 1
   const sec = Math.max(1, Math.min(60, effectiveSec))
   const widthPx = 76 + Math.round(((sec - 1) / 59) * (220 - 76))
 
@@ -49,14 +38,16 @@ export function ChatVoiceBar({ duration, messageId, text }: ChatVoiceBarProps): 
 
   return (
     <button
-      aria-label={isPlaying ? dict.chat.voice.stop : dict.chat.voice.play}
+      aria-label={
+        isPlaying || isLoading ? dict.chat.voice.stop : unavailable ? dict.chat.voice.retry : dict.chat.voice.play
+      }
       className={cn(
         'group/voicebar relative inline-flex items-center justify-between rounded-2xl px-3.5 py-2 text-xs backdrop-blur-md transition select-none cursor-pointer',
         'border border-line-standard bg-surface-card text-strong shadow-xs hover:border-line-strong hover:bg-surface-card/90',
         isPlaying && 'bg-accent-soft/40 border-accent-line/50'
       )}
       onClick={handleClick}
-      style={{ width: `${widthPx}px` }}
+      style={unavailable ? undefined : { width: `${widthPx}px` }}
       type="button"
     >
       <div className="flex items-center gap-1.5">
@@ -74,7 +65,7 @@ export function ChatVoiceBar({ duration, messageId, text }: ChatVoiceBarProps): 
           isPlaying ? 'text-accent font-semibold' : 'text-muted'
         )}
       >
-        {hasRealDuration ? `${duration}″` : '…'}
+        {unavailable ? dict.chat.voice.retry : hasRealDuration ? `${Math.ceil(duration)}″` : '…'}
       </span>
     </button>
   )

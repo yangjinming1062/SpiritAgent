@@ -6,22 +6,14 @@ import {
   $activeAvatarId,
   $companionVoiceId,
   $portraitUrl,
-  $responseMode,
+  $responsePreference,
   $screenLocked,
   $spriteState,
   bindProactiveLineSpeaker,
   setSpriteState
 } from '@/modules/character'
 import { openMediaViewer } from '@/modules/media'
-import {
-  $voicePreparing,
-  playDataUrl,
-  requestSynth,
-  speakChatMessage,
-  speakScripted,
-  stopAudio,
-  stopSpeaking
-} from '@/modules/speech'
+import { $voicePreparing, playDataUrl, requestSynth, speakScripted, stopAudio, stopSpeaking } from '@/modules/speech'
 import { bindPresentationPorts } from '@/shared/presentation-ports'
 
 // 端口与工作流装配：每个 renderer 入口在渲染前显式调用一次。
@@ -31,15 +23,14 @@ export function bindPresentation(): void {
     $activeAvatarId,
     $companionVoiceId,
     $portraitUrl,
-    $responseMode,
     $screenLocked,
     $spriteState,
     $voicePreparing,
+    getResponsePreference: () => $responsePreference.get(),
     openMediaViewer,
     playDataUrl,
     requestSynth,
     setSpriteState,
-    speakChatMessage,
     speakScripted,
     stopAudio,
     stopSpeaking

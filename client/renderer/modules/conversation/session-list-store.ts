@@ -29,6 +29,7 @@ import {
   forgetSessionHistory,
   loadLocalSessionHistory,
   rememberFullHistory,
+  SessionHistoryChangedError,
   setPersistedCompanionSessionId,
   syncSessionHistory
 } from './session-history-cache'
@@ -516,7 +517,13 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
             })
 
             return knownCompanionId
-          } catch {
+          } catch (error) {
+            if (error instanceof SessionHistoryChangedError) {
+              log.warn('session-list', 'History is changing; keeping current session:', error)
+
+              return knownCompanionId
+            }
+
             // 增量失败回落 get_main 全量挂载。
           }
         }

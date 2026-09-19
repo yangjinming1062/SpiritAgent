@@ -21,6 +21,7 @@ type GatewayEventName =
   | 'error'
   | 'message.break'
   | 'message.complete'
+  | 'message.voice'
   | 'message.deleted'
   | 'message.edited'
   | 'message.delta'

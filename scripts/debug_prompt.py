@@ -172,6 +172,7 @@ def assemble_debug_prompt(
         role="user",
         content=message_text,
         content_type="text",
+        reply_json=None,
         created_at=sent_at,
         tool_calls=None,
         tool_call_id=None,

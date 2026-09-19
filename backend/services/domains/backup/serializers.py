@@ -23,7 +23,7 @@ from modules.companion import (
     Persona,
     companion_cron_source_key,
 )
-from modules.conversation import Conversation, Message
+from modules.conversation import CompanionReply, Conversation, Message
 from modules.memory import MEMORY_EMBEDDING_DIM, Memory
 from modules.scheduler import CronJob
 from modules.settings import UserSetting
@@ -316,6 +316,10 @@ def _build_payload(
                 raise ValueError(f"Memory embedding dim {len(embedding)} != {MEMORY_EMBEDDING_DIM}")
         payload["source_kind"] = "import"
         payload["source_refs"] = {"imported_memory_id": raw["id"], "original_source": payload["source_refs"]}
+    if table == "messages" and payload.get("reply_json"):
+        reply = CompanionReply.model_validate_json(payload["reply_json"])
+        payload["reply_json"] = reply.model_dump_json()
+        payload["content"] = reply.dialogue()
     if table == "companion_room_backdrops":
         payload["outfit_fingerprint"] = str(
             id_map.get("companion_outfits", {}).get(str(raw.get("outfit_fingerprint")), ""),

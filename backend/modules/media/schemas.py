@@ -32,10 +32,10 @@ class MiMoSpeechStyle(BaseModel):
     model: str = Field(min_length=1, max_length=100)
     styles: list[Annotated[str, Field(min_length=1, max_length=80, pattern=r"^[^\[\]()<>\r\n]+$")]] = Field(
         default_factory=list,
-        max_length=16,
+        max_length=4,
     )
     direction: SpeechDirection
-    cues: list[SpeechCue] = Field(default_factory=list, max_length=32)
+    cues: list[SpeechCue] = Field(default_factory=list, max_length=8)
 
 
 class MiniMaxSpeechStyle(BaseModel):
@@ -47,7 +47,7 @@ class MiniMaxSpeechStyle(BaseModel):
         Literal["happy", "sad", "angry", "fearful", "disgusted", "surprised", "calm", "fluent", "whisper"] | None
     ) = None
     speed: float = Field(default=1, ge=0.5, le=2)
-    cues: list[SpeechCue] = Field(default_factory=list, max_length=32)
+    cues: list[SpeechCue] = Field(default_factory=list, max_length=8)
     pauses: list[SpeechPause] = Field(default_factory=list, max_length=32)
 
 
