@@ -429,21 +429,16 @@ async def _resolve_pose_context(reference: bytes, user_id: int | None) -> _PoseC
 PoseBackground = Literal["transparent", "chroma"]
 
 
-class _PeekFields(NamedTuple):
-    """一个姿态侧的方位字段：右侧提示词由字段装配生成，不手工复制模板。
+class _PeekLayout(NamedTuple):
+    """观察者视角的遮挡布局；方位只在区域定义中出现，动作统一按区域表达。"""
 
-    所有方向均以观察者看到的画面左右为准；画布横向中心是接触线目标，屏幕边缘
-    本身不得画成实物。"""
-
-    source_edge: str  # 下半身停留的来源边
-    body_half: str  # 骨盆与双腿主要停留的半幅
-    peek_half: str  # 面部、肩部与部分上胸探入的半幅
-    lean_dir: str  # 腰背侧弯与胸廓移动方向
+    occluded_half: str
+    visible_half: str
 
 
-_PEEK_FIELDS: dict[Side, _PeekFields] = {
-    "left": _PeekFields(source_edge="左", body_half="左半部", peek_half="右半部", lean_dir="右"),
-    "right": _PeekFields(source_edge="右", body_half="右半部", peek_half="左半部", lean_dir="左"),
+_PEEK_LAYOUTS: dict[Side, _PeekLayout] = {
+    "left": _PeekLayout(occluded_half="左半幅", visible_half="右半幅"),
+    "right": _PeekLayout(occluded_half="右半幅", visible_half="左半幅"),
 }
 
 
@@ -464,7 +459,7 @@ def build_peek_prompt(
         if chroma_color:
             raise ValueError("chroma_color 只能在色幕背景下使用")
         background_prompt = POSE_TRANSPARENT_BACKGROUND
-    return PEEK_POSE_PROMPT_TEMPLATE.format(f=_PEEK_FIELDS[side], background_prompt=background_prompt)
+    return PEEK_POSE_PROMPT_TEMPLATE.format(layout=_PEEK_LAYOUTS[side], background_prompt=background_prompt)
 
 
 def build_pose_side_prompt(side: Side) -> str:
