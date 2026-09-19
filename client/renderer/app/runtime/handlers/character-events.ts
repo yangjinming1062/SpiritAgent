@@ -137,13 +137,17 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
     case 'model.gen.progress': {
       const p = decodePayload<{ stage?: string; progress?: number }>(event.payload)
 
-      // 终态（succeeded / failed）已定后，迟到的 progress 不能再把它打回
-      // 'generating' —— 否则失败覆盖层会在失败后重现。重试下载会先显式置回
-      // 'generating'，不受此守卫影响。
+      // uploading 是后端在提交新任务前串行发出的首事件，允许其他窗口发起的重建
+      // 开启新一轮。终态之后的其余迟到进度仍丢弃，避免重新出现生成覆盖层。
       const genState = $modelGenState.get()
 
       if (genState === 'succeeded' || genState === 'failed') {
-        break
+        if (p?.stage !== 'uploading') {
+          break
+        }
+
+        $modelGenError.set(null)
+        clearModelRetry()
       }
 
       $modelGenState.set(p?.stage === 'done' ? 'succeeded' : 'generating')

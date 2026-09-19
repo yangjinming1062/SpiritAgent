@@ -26,6 +26,8 @@ interface Seed3dWizardProps {
   avatarId: number
   /** 供应商是否按多图模式消费种子图（决定背面阶段是否存在）。 */
   supportsMultiview: boolean
+  /** 确认按钮文案：默认按"首次切 3D"表述；更新形象流程传入重建语义的文案。 */
+  confirmLabel?: string
   /** 确认 3D 种子（或选择仅用正面图降级）后由调用方切换渲染模式并关闭向导。 */
   onConfirm: () => void
   onCancel: () => void
@@ -85,6 +87,7 @@ const STAGE_META: Record<
 export function Seed3dWizard({
   avatarId,
   supportsMultiview,
+  confirmLabel,
   onConfirm,
   onCancel
 }: Seed3dWizardProps): React.ReactElement {
@@ -496,7 +499,7 @@ export function Seed3dWizard({
             onClick={onConfirm}
             type="button"
           >
-            确认，切换到 3D
+            {confirmLabel ?? '确认，切换到 3D'}
           </button>
         )}
       </div>

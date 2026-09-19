@@ -3,7 +3,8 @@ import { atom } from 'nanostores'
 import { authedApi } from '@/shared/lib/authed-api'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
-import { definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
+import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
+import { $auth } from '@/shared/store/auth'
 import { $gateway } from '@/shared/store/gateway'
 
 // 3D 伙伴的模型与资产目录。
@@ -102,6 +103,51 @@ export function setModelFailed(reason: string, opts: { modelId?: number | null; 
 export function clearModelRetry(): void {
   $modelRetryable.set(false)
   $modelRetryModelId.set(null)
+}
+
+/** 显式重建先开启新一轮进度，保留当前可用模型直到 model.ready 替换。 */
+export async function rebuildModel(): Promise<void> {
+  if ($auth.get().kind !== 'authenticated' || $modelGenState.get() === 'generating') {
+    return
+  }
+
+  const epoch = currentClearEpoch()
+
+  const previous = {
+    state: $modelGenState.get(),
+    progress: $modelGenProgress.get(),
+    error: $modelGenError.get(),
+    retryable: $modelRetryable.get(),
+    retryModelId: $modelRetryModelId.get()
+  }
+
+  $modelGenState.set('generating')
+  $modelGenProgress.set(null)
+  $modelGenError.set(null)
+  clearModelRetry()
+
+  const result = await authedApi<Companion3DModelResponse>({
+    path: '/api/companion/model',
+    method: 'POST',
+    body: { force: true }
+  })
+
+  if (currentClearEpoch() !== epoch || $auth.get().kind !== 'authenticated') {
+    return
+  }
+
+  if (!result.ok && result.reason === 'err') {
+    // 已收到进度或终态时，以事件为准；请求响应不能覆盖已经开始或完成的任务。
+    if ($modelGenState.get() === 'generating' && $modelGenProgress.get() === null) {
+      $modelGenState.set(previous.state)
+      $modelGenProgress.set(previous.progress)
+      $modelGenError.set(previous.error)
+      $modelRetryable.set(previous.retryable)
+      $modelRetryModelId.set(previous.retryModelId)
+    }
+
+    throw result.error
+  }
 }
 
 /** companion.model.retryDownload —— 重放一次已经付费生成结果的下载

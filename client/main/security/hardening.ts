@@ -43,7 +43,7 @@ export const DEV_CSP_POLICY = [
 // 头像 / 精灵生成：供应商调用 + Pillow 重编码 + 关键帧写入通常要 15–25 秒，
 // 默认 15 秒会在后端返回 201 之前就超时，所以这里放宽。
 const AVATAR_FETCH_TIMEOUT_MS = 120_000
-// 衣橱同步请求包含供应商回退；单个供应商默认可等待 300 秒，另需下载与落盘。
+// 外观列表同步请求包含供应商回退；单个供应商默认可等待 300 秒，另需下载与落盘。
 const OUTFIT_FETCH_TIMEOUT_MS = 15 * 60_000
 
 // 自备图的 prompt 端点含 LLM 往返（骨骼分类 / 参考图整合 / 房间 brief），adopt 含

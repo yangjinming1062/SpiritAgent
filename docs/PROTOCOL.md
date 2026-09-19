@@ -43,7 +43,7 @@ Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供�
 |---|---|
 | 对话、引导、工具同步、记忆管理、命令 | [桌面 handlers](../backend/services/adapters/desktop/handlers.py) |
 | 会话 REST 与传输结构 | [会话端点](../backend/api/v1/sessions.py)、[schema](../backend/modules/conversation/schemas.py) |
-| 伙伴、形象、衣橱与生活资源 | [伙伴端点](../backend/api/v1/companion.py)、[伙伴 schema](../backend/modules/companion/schemas.py)、[房间 schema](../backend/modules/companion/schemas_room.py) |
+| 伙伴、形象、着装与生活资源 | [伙伴端点](../backend/api/v1/companion.py)、[伙伴 schema](../backend/modules/companion/schemas.py)、[房间 schema](../backend/modules/companion/schemas_room.py) |
 
 引导恢复依据服务端状态及已有资产，不因页面重开重复生成。角色定稿不等于引导完成；全身参考、2D 立绘确认和音色完成后才结束，用户资料可选。草稿加载失败只重试加载，过期才重新生成。
 

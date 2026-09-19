@@ -1,6 +1,6 @@
 // 生活空间根组件：房间背景 + 顶栏 + 左栏 + 右栏（视图路由）。
 //
-// 不在右栏挂 PuppetStage / Companion3D；立绘由房间背景图承担。
+// 伙伴由房间背景图呈现；外观页另提供独立形象预览。
 // 关掉时主进程互斥会把焦点还给工作台或精灵。
 
 import { useStore } from '@nanostores/react'

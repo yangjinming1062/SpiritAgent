@@ -16,7 +16,6 @@ import {
   Home,
   type IconComponent,
   MessageSquareText,
-  Palette,
   Settings,
   Shirt,
   Sparkles
@@ -49,8 +48,7 @@ export function LivingRail(): React.JSX.Element {
     { icon: MessageSquareText, id: 'chat', label: t.chat },
     { icon: Sparkles, id: 'moments', label: t.moments },
     { icon: CalendarPlus, id: 'diary', label: t.diary },
-    { icon: Shirt, id: 'wardrobe', label: t.wardrobe },
-    { icon: Palette, id: 'appearance', label: t.appearance },
+    { icon: Shirt, id: 'appearance', label: t.appearance },
     { icon: Globe, id: 'channels', label: t.channels },
     { icon: Home, id: 'room', label: t.room }
   ]

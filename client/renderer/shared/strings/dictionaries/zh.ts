@@ -893,8 +893,7 @@ export const dict = {
       chat: '对话',
       moments: '片刻',
       diary: '日记',
-      wardrobe: '衣橱',
-      appearance: '形象',
+      appearance: '外观',
       channels: '通道',
       room: '房间',
       settings: '设置',
@@ -932,7 +931,7 @@ export const dict = {
       weekDayNames: ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'] as ReadonlyArray<string>,
       dateFormat: (dateStr: string, weekDay: string) => `${dateStr} · ${weekDay}`
     },
-    wardrobe: {
+    outfit: {
       preview: {
         views: '预览视角',
         stage: '资产包动画预览',
@@ -996,7 +995,6 @@ export const dict = {
       previewPlaceholderIdle: '选择左侧外观预览资产与动作，或开始设计新外观',
       previewHint: '服装、发型、配饰都可以换；五官与体型保持不变',
       generating: '生成中…',
-      startPrompt: '用一段描述（可附参考图）让伙伴换上新装',
       startAction: '开始新设计',
       designIntro:
         '描述想要的着装，例如「水手服换成米白色针织毛衣和棕色长裙，发型改为低马尾」；也可以附一张参考图。每小时最多生成一套。',
@@ -1017,18 +1015,33 @@ export const dict = {
       send: '发送'
     },
     appearance: {
-      renderMode: '渲染模式',
-      renderModeHint:
-        '切到 3D 会先在向导内逐张生成 3D 正面立绘（多视角供应商再补一张背面立绘），每张均需手动点按触发；全部确认后触发云端 3D 模型生成（1~3 分钟），生成期间显示 2D 动画版（或程序化蛋过渡）；生成失败永久保持 2D 动画版；切回 2D 立即生效。',
       mode2d: '2D 动画版',
       mode3d: '3D 立体版',
+      mode3dHint:
+        '切到 3D 会先在向导内逐张生成 3D 正面立绘（多视角供应商再补一张背面立绘），每张均需手动点按触发；全部确认后触发云端 3D 模型生成（1~3 分钟），生成期间显示 2D 动画版（或程序化蛋过渡）；生成失败永久保持 2D 动画版；切回 2D 立即生效。',
+      companionSize: '形象大小',
+      companionSizeHint: '精灵在桌面上的默认显示比例。',
+      scaleAria: '形象大小',
       mesh2dFailed: '2D 动画资产生成失败',
       mesh2dMissing: '2D 动画资产尚未生成',
       mesh2dRetry: '重新切分',
-      companionSize: '形象大小',
-      companionSizeHint: '精灵在桌面上的默认显示比例。',
-      scaleRange: '0.3×–3× 连续可调，1× 为默认。',
-      scaleAria: '形象大小'
+      model3dStatusReady: '3D 模型已就绪',
+      model3dStatusGenerating: '3D 模型生成中…',
+      model3dStatusFailed: '3D 模型生成失败',
+      model3dStatusMissing: '尚未生成 3D 模型',
+      model3dSeeds: '建模种子图',
+      model3dSeedsLoadFailed: '建模种子图加载失败，请点击“更新形象”重试。',
+      model3dSeedFront: '正面种子',
+      model3dSeedBack: '背面种子',
+      model3dSeedMissing: '未生成',
+      model3dUpdateAction: '更新形象…',
+      model3dUpdateDesc: '重新生成建模种子图，全部确认后重建 3D 模型（约 1~3 分钟），期间保持当前显示。',
+      model3dRebuildAction: '重新建模',
+      model3dRebuildTitle: '重新建模 3D 模型',
+      model3dRebuildBody: '将基于当前种子图重新生成 3D 模型（约 1~3 分钟），完成后自动替换显示。',
+      model3dDressingNote: '3D 形象的穿着在建模时固定，更换穿着请切到 2D 动画版设计新装。',
+      model3dWizardConfirm: '确认，重建 3D 模型',
+      model3dStageAria: '3D 形象预览'
     },
     room: {
       intro: '换个心情、回滚到之前的房间、或者锁定房间政策——都在这里。',

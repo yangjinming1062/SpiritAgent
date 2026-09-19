@@ -12,6 +12,7 @@ export {
   $modelInfo,
   clearModelRetry,
   hydrateModel,
+  rebuildModel,
   setModelFailed,
   setModelInfo
 } from './model-store'

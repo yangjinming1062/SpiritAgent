@@ -45,7 +45,7 @@ export function AssetPackPreview({
   poseRegen: PoseRegenView | null
   source: PuppetAssetSource
 }): React.JSX.Element {
-  const t = useStrings().living.wardrobe.preview
+  const t = useStrings().living.outfit.preview
   const selfSource = useStrings().selfSource
   const [mode, setMode] = useState<Mode>('front')
   const [poseView, setPoseView] = useState<PoseView>('edge')
@@ -370,7 +370,7 @@ export function AssetPackPreview({
 /** 完整素材视图：按原始纹理等比展示全身构图与透明轮廓，不做贴边形变。
  *  接触线、头部框和手部框只是界面覆盖层，不导出、不回传生图模型。 */
 function FullPoseView({ debug, pose }: { debug: boolean; pose: EdgePose }): React.JSX.Element {
-  const t = useStrings().living.wardrobe.preview
+  const t = useStrings().living.outfit.preview
   const containerRef = useRef<HTMLDivElement>(null)
   const [box, setBox] = useState<{ height: number; width: number } | null>(null)
   const [url, setUrl] = useState<string | null>(null)

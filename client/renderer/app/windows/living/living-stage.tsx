@@ -1,8 +1,7 @@
 // 生活空间右栏：根据 living-view 切换内容。
 //
 // - chat: ChatPanel（生活空间变体的对话 + 输入；与工作台共用）
-// - wardrobe: WardrobePage（衣橱）
-// - appearance: AppearancePage（形象 / 渲染模式）
+// - appearance: AppearancePage（外观：渲染模式与着装设计）
 // - moments / diary: 后端直连两页
 // - channels / room: 单文件页
 // - settings: LivingSettings（分区胶囊：角色/音色/交互/外观/快捷键/关于）
@@ -22,7 +21,7 @@ import {
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { $gatewayState } from '@/shared/store/gateway'
 
-import { AppearancePage } from './appearance-page'
+import { AppearancePage } from './appearance/appearance-page'
 import { ChannelsPage } from './channels-page'
 import { DiaryPage } from './diary-page'
 import { $livingView, type LivingView } from './living-store'
@@ -30,7 +29,6 @@ import styles from './living.module.css'
 import { MomentsPage } from './moments-page'
 import { RoomPage } from './room-page'
 import { LivingSettings } from './settings/living-settings'
-import { WardrobePage } from './wardrobe-page'
 
 // 视图 → 渲染组件的闭包表（`chat` 走 ChatStage 局部组件，其他直接挂页）。
 // Record<LivingView, …> 强制 LivingView 出现新成员时报缺 key 错。
@@ -41,8 +39,7 @@ const VIEW_RENDERERS: Record<LivingView, () => React.JSX.Element> = {
   diary: () => <DiaryPage />,
   moments: () => <MomentsPage />,
   room: () => <RoomPage />,
-  settings: () => <LivingSettings />,
-  wardrobe: () => <WardrobePage />
+  settings: () => <LivingSettings />
 }
 
 export function LivingStage(): React.JSX.Element {

@@ -154,7 +154,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
 
           if (!resolved) {
             setDraft({ id: res.id, previewUrl: '' })
-            push({ role: 'system', text: '草稿已生成，但预览加载失败，请从衣橱重新打开草稿。', tone: 'info' })
+            push({ role: 'system', text: '草稿已生成，但预览加载失败，请到外观页重新打开草稿。', tone: 'info' })
 
             return
           }
@@ -197,7 +197,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
           push({
             role: 'system',
             text: timedOut
-              ? '等待结果超时，生成可能仍在继续。请稍后查看衣橱中的草稿，确认结果后再重试。'
+              ? '等待结果超时，生成可能仍在继续。请稍后在外观页查看草稿，确认结果后再重试。'
               : outfitErrMsg(err, '外观生成失败，请稍后重试'),
             tone: timedOut ? 'info' : 'error'
           })
@@ -322,7 +322,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
           role: 'system',
           text: previewUrl
             ? '继续微调这套草稿，或直接确认入柜。'
-            : '草稿预览尚未加载，可继续描述微调，或稍后从衣橱重新打开。',
+            : '草稿预览尚未加载，可继续描述微调，或稍后到外观页重新打开。',
           tone: 'info'
         }
       ])

@@ -941,8 +941,7 @@ export const dict: Dictionary = {
       chat: 'Chat',
       moments: 'Moments',
       diary: 'Diary',
-      wardrobe: 'Wardrobe',
-      appearance: 'Look',
+      appearance: 'Appearance',
       channels: 'Channels',
       room: 'Room',
       settings: 'Settings',
@@ -988,7 +987,7 @@ export const dict: Dictionary = {
       ] as ReadonlyArray<string>,
       dateFormat: (dateStr: string, weekDay: string) => `${dateStr} · ${weekDay}`
     },
-    wardrobe: {
+    outfit: {
       preview: {
         views: 'Preview views',
         stage: 'Asset pack animation preview',
@@ -1052,7 +1051,6 @@ export const dict: Dictionary = {
       previewPlaceholderIdle: 'Pick a look on the left to preview it, or begin a new design',
       previewHint: 'Swap clothing, hairstyle and accessories; the face and body shape stay the same.',
       generating: 'Generating…',
-      startPrompt: 'Describe (or attach a reference image) to dress your companion in something new',
       startAction: 'Start a new design',
       designIntro:
         'Describe the outfit you want — e.g. "sailor uniform swapped for an off-white knit cardigan and a brown long skirt, hair tied in a low ponytail". You can also attach a reference image. One outfit per hour at most.',
@@ -1074,18 +1072,36 @@ export const dict: Dictionary = {
       send: 'Send'
     },
     appearance: {
-      renderMode: 'Render mode',
-      renderModeHint:
-        'Switching to 3D walks you through a wizard to generate each 3D front portrait (multi-view providers also add a back portrait); each requires a manual tap. Once confirmed, the cloud-side 3D model is generated (1–3 minutes). During generation the 2D animated version is shown (with a programmatic egg transition). Failures stay on the 2D animated version permanently; switching back to 2D takes effect immediately.',
       mode2d: '2D animated',
       mode3d: '3D',
+      mode3dHint:
+        'Switching to 3D walks you through a wizard to generate each 3D front portrait (multi-view providers also add a back portrait); each requires a manual tap. Once confirmed, the cloud-side 3D model is generated (1–3 minutes). During generation the 2D animated version is shown (with a programmatic egg transition). Failures stay on the 2D animated version permanently; switching back to 2D takes effect immediately.',
+      companionSize: 'Companion size',
+      companionSizeHint: 'Default display scale of the sprite on the desktop.',
+      scaleAria: 'Companion size',
       mesh2dFailed: '2D animation assets failed to generate',
       mesh2dMissing: '2D animation assets not yet generated',
       mesh2dRetry: 'Re-split',
-      companionSize: 'Companion size',
-      companionSizeHint: 'Default display scale of the sprite on the desktop.',
-      scaleRange: 'Continuously adjustable from 0.3×–3×; 1× is the default.',
-      scaleAria: 'Companion size'
+      model3dStatusReady: '3D model ready',
+      model3dStatusGenerating: 'Generating 3D model…',
+      model3dStatusFailed: '3D model generation failed',
+      model3dStatusMissing: 'No 3D model yet',
+      model3dSeeds: 'Modeling seed images',
+      model3dSeedsLoadFailed: 'Could not load model seed images. Click “Update look” to retry.',
+      model3dSeedFront: 'Front seed',
+      model3dSeedBack: 'Back seed',
+      model3dSeedMissing: 'Not generated',
+      model3dUpdateAction: 'Update look…',
+      model3dUpdateDesc:
+        'Regenerate the modeling seed images; once confirmed, the 3D model is rebuilt (1–3 minutes) while the current look stays.',
+      model3dRebuildAction: 'Rebuild model',
+      model3dRebuildTitle: 'Rebuild 3D model',
+      model3dRebuildBody:
+        'The 3D model will be regenerated from the current seed images (1–3 minutes) and swapped in automatically when done.',
+      model3dDressingNote:
+        'A 3D look is fixed at modeling time; switch to the 2D animated version to design new outfits.',
+      model3dWizardConfirm: 'Confirm and rebuild',
+      model3dStageAria: '3D look preview'
     },
     room: {
       intro: 'Change the mood, roll back to an earlier room, or lock the room policy — all here.',
