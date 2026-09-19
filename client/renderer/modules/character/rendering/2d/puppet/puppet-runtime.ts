@@ -350,6 +350,7 @@ export class PuppetRuntime {
   private headCage: HeadCage | null = null
   private tier: 'semantic' | 'grouped' | 'minimal' = 'grouped'
   private limbTier: LimbTier = 'blob'
+  private eyeMotion = { L: false, R: false }
   private skeleton: Skeleton | null = null
   private cw = 768
   private ch = 768
@@ -730,7 +731,7 @@ export class PuppetRuntime {
     return { flips, maxStretch, byLayer, flipMinA }
   }
 
-  /** PSD 语义完整度分级：缺脸/眼锚点或层数过少 → minimal；语义层与发束链齐全 → semantic。 */
+  /** PSD 整体分档不依赖眼部完整度；眼部缺件只禁用对应眼的局部动画。 */
   private assessTier(rig: Rig, A: RigAnchors): 'semantic' | 'grouped' | 'minimal' {
     const bns = new Set(
       rig.layers.map(l => {
@@ -740,7 +741,7 @@ export class PuppetRuntime {
       })
     )
 
-    if (!bns.has('face') || rig.layers.length < 6 || (!A.eyeL && !A.eyeR)) {
+    if (!bns.has('face') || rig.layers.length < 6) {
       return 'minimal'
     }
 
@@ -872,6 +873,18 @@ export class PuppetRuntime {
     this.anchors = A
     this.fs = A.faceScale
     this.patchSideParts(rig, A)
+
+    for (const side of ['L', 'R'] as const) {
+      const hasPart = (name: string): boolean =>
+        rig.layers.some(part => {
+          const partSide = part.side ?? /[-_](l|r)$/i.exec(part.name)?.[1]?.toUpperCase()
+
+          return !part.synthetic && partSide === side && window.Rigger?.baseName(part.name) === name
+        })
+
+      // 原图只有开眼纹理时，淡出或移动它会露出供应商补全的脸底；保持原眼外观。
+      this.eyeMotion[side] = !!A[side === 'L' ? 'eyeL' : 'eyeR'] && hasPart('eyewhite') && hasPart('eye_close')
+    }
 
     // Phase 2: 头部双表面控制笼（dF=脸层深度，dS=头部层最大深度≈头骨）；
     // Phase 3: 头骨横向半径按头部组层外包矩形实测（毛发/耳一般比脸缘宽）
@@ -1221,9 +1234,17 @@ export class PuppetRuntime {
     let a = 1
 
     if (L.fade === 'eyeOpen') {
+      if (!this.eyeMotion[L.side === 'L' ? 'L' : 'R']) {
+        return 1
+      }
+
       const v = L.side === 'L' ? e.eyeOpenL : e.eyeOpenR
       a = smooth((v - (0.1 + e.eyeEase * 0.45)) / 0.15)
     } else if (L.fade === 'eyeClose') {
+      if (!this.eyeMotion[L.side === 'L' ? 'L' : 'R']) {
+        return 0
+      }
+
       const v = L.side === 'L' ? e.eyeOpenL : e.eyeOpenR
       a = 1 - smooth((v - (0.1 + e.eyeEase * 0.45)) / 0.15)
     } else if (L.fade === 'mouthOpen') {
@@ -1444,8 +1465,9 @@ export class PuppetRuntime {
       const fcy = A.face.cy
       const CAGE = this.headCage
       const eyeSide = L.side
-      const EA: RigEyeAnchor | null = eyeSide === 'L' ? (A.eyeL ?? null) : eyeSide === 'R' ? (A.eyeR ?? null) : null
-      const vOpen = eyeSide === 'L' ? e.eyeOpenL : e.eyeOpenR
+      const eyeAnimated = eyeSide === 'L' ? this.eyeMotion.L : eyeSide === 'R' ? this.eyeMotion.R : false
+      const EA: RigEyeAnchor | null = eyeAnimated ? (eyeSide === 'L' ? (A.eyeL ?? null) : (A.eyeR ?? null)) : null
+      const vOpen = eyeAnimated ? (eyeSide === 'L' ? e.eyeOpenL : e.eyeOpenR) : 1
       const mo = e.mouthOpen
       const mHalfW = (A.mouth.x1 - A.mouth.x0) / 2
       const nS = L.spr ? L.spr.length : 0

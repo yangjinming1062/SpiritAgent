@@ -1092,7 +1092,7 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
             if outfit is None:
                 return
             definition = safe_json_loads(persona.definition_json or "{}", default={})
-            source = safe_json_loads(outfit.source_json or "{}", default={})
+            fullbody_url = outfit.fullbody_url
             language_value = await db.scalar(
                 select(UserSetting.setting_value).where(
                     UserSetting.user_id == user_id,
@@ -1103,11 +1103,12 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
                 "output_language": resolve_language(language_value or DEFAULT_LANGUAGE),
                 "appearance": str(definition.get("appearance") or "") if isinstance(definition, dict) else "",
                 "personality": str(definition.get("personality") or "") if isinstance(definition, dict) else "",
-                # 设计稿已整合原始文字要求，优先取用；只有文字要求时用原话，命名不关心其来源
-                "outfit_request": str(source.get("reference_description") or source.get("description") or "")
-                if isinstance(source, dict)
-                else "",
             }
+        image_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, fullbody_url)
+        if not image_uri:
+            return
+        # 命名依据实际采纳的立绘，覆盖无文字的自备图与后续重绘。
+        payload["outfit_visual_description"] = await describe_garment_image(user_id, image_uri)
         raw = await chat(
             None,
             user_id,
@@ -1121,14 +1122,20 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
         description = str(parsed.get("description") or "").strip()
         if not name and not description:
             return
-        async with SESSION_LOCAL() as db:
+        async with get_avatar_job_lock(user_id), SESSION_LOCAL() as db:
             outfit = await _get_outfit(db, user_id, outfit_id)
-            if outfit is None:
+            if outfit is None or outfit.fullbody_url != fullbody_url:
                 return
             if name:
                 outfit.name = name
             if description:
                 outfit.description = description
+            emit_ws_event(
+                db,
+                user_id=user_id,
+                event_type="companion.outfit.updated",
+                payload={"outfit_id": outfit_id, "worn": False},
+            )
             await db.commit()
     except Exception:
         logger.warning(
