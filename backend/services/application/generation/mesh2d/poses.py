@@ -214,8 +214,8 @@ def _border_flood(candidate: NDArray[np.bool_]) -> NDArray[np.bool_]:
 def _analyze_chroma(
     rgb: NDArray[np.float32],
     channel: int,
-) -> tuple[NDArray[np.bool_], NDArray[np.bool_], NDArray[np.float32]]:
-    """色幕背景分析：返回 (边框泛洪背景, 近边框主色硬掩码, 色键 alpha)。
+) -> tuple[NDArray[np.bool_], NDArray[np.bool_], NDArray[np.float32], NDArray[np.float32]]:
+    """色幕背景分析：返回 (边框泛洪背景, 近边框主色硬掩码, 色键 alpha, 背景色)。
 
     背景色取自粗化图的边框环：生成要求角色四周留白，边框环几乎全为背景；棋盘格
     等纹理粗化后摊平为均值色。候选判据只认「颜色仍近似边框背景」，不用色幕通道差
@@ -250,7 +250,7 @@ def _analyze_chroma(
     alpha = 1 - np.clip((excess - 30) / 140, 0, 1)
     alpha[near_bg] = 0
     alpha[flooded_full] = 0
-    return flooded_full, near_bg, alpha
+    return flooded_full, near_bg, alpha, bg
 
 
 def cutout(raw: bytes, channel: int) -> Image.Image:
@@ -258,7 +258,7 @@ def cutout(raw: bytes, channel: int) -> Image.Image:
     with Image.open(io.BytesIO(raw)) as source:
         rgb = np.asarray(source.convert("RGB"), dtype=np.float32)
     others = [c for c in range(3) if c != channel]
-    _, _, alpha = _analyze_chroma(rgb, channel)
+    _, _, alpha, _ = _analyze_chroma(rgb, channel)
     background = alpha == 0
     rgb[:, :, others] /= np.maximum(alpha[:, :, None], 0.01)
     rgb[:, :, channel] = np.where(background, rgb[:, :, others].max(axis=2), rgb[:, :, channel])
@@ -320,8 +320,20 @@ def _hybrid_alpha(
     return _clear_disconnected_islands(alpha)
 
 
+def _despill(rgb: NDArray[np.float32], alpha: NDArray[np.float32], bg: NDArray[np.float32]) -> None:
+    """按 C = (P - (1-α)·bg) / α 还原半透明边缘像素的前景色（原地修改 rgb）。
+
+    色幕与前景在轮廓抗锯齿像素中混色，显著性抠图保留其原始 RGB，半透明合成到场景
+    时呈现色幕描边。α=1 时公式恒等，主体内部不变；α→0 的像素本就近乎透明，夹紧
+    除法带来的噪声不可见。
+    """
+    weight = np.clip(alpha / 255.0, 0.01, 1.0)[:, :, None]
+    rgb[:] = (rgb - (1.0 - weight) * bg) / weight
+
+
 def matte_pose(raw: bytes, channel: int) -> Image.Image:
-    """姿态图混合抠图：ISNet 显著性定主体边界，色幕泛洪/色键强制清除残留背景。
+    """姿态图混合抠图：ISNet 显著性定主体边界，色幕泛洪/色键强制清除残留背景，
+    边缘按 alpha 还原前景色去掉色幕描边。
 
     生成链要求纯色幕，但供应商可能留下渐变、阴影或近景色块；原先 ISNet 成功即跳过
     色键，残留会整片进入贴边纹理。ISNet 缺失或推理失败时退回纯色幕 cutout。
@@ -331,12 +343,12 @@ def matte_pose(raw: bytes, channel: int) -> Image.Image:
         return cutout(raw, channel)
     with Image.open(io.BytesIO(raw)) as source:
         rgb = np.asarray(source.convert("RGB"), dtype=np.float32)
-    flooded, near_bg, chroma_alpha = _analyze_chroma(rgb, channel)
+    flooded, near_bg, chroma_alpha, bg = _analyze_chroma(rgb, channel)
     alpha = np.asarray(body.getchannel("A"), dtype=np.float32)
+    _despill(rgb, alpha, bg)
     cleaned = _hybrid_alpha(alpha, flooded, near_bg, chroma_alpha)
-    rgba = body.convert("RGBA")
-    rgba.putalpha(Image.fromarray(np.clip(cleaned, 0, 255).astype(np.uint8)))
-    return rgba
+    pixels = np.dstack((np.clip(rgb, 0, 255), np.clip(cleaned, 0, 255))).astype(np.uint8)
+    return Image.fromarray(pixels)
 
 
 def _prepare_pose_reference(reference: bytes) -> tuple[NDArray[np.float32], bytes]:
@@ -392,16 +404,24 @@ def _peek_inward_outward(side: Side) -> tuple[str, str]:
 
 
 def _peek_pose_sentences(side: Side) -> list[str]:
-    """扶边姿态正文：只描述姿势与侧向藏身，不复述身份或着装。"""
+    """扶边姿态正文：只描述姿势与侧向藏身，不复述身份或着装。
+
+    屏幕边缘不可画成实物：生成模型会把 "screen edge" 具象成画中的墙板，使构图读感
+    反侧（人物站在画出的边缘物旁，头部不再越过接触线，客户端对齐后探出部分不可见）。
+    因此硬性要求画面只有角色，并按「头在内侧—手在线上—躯干在外侧」给出可判断的
+    横向次序约束。"""
     inward, outward = _peek_inward_outward(side)
     return [
-        f"The character peeks out from behind a vertical screen edge. The head tilts {inward} and leans "
-        f"past both hands. Torso, hips, and legs stay on the {outward} side of an imaginary vertical "
-        f"contact line near the canvas center. Concentrate body mass toward the {outward} side of the "
-        f"canvas so the body reads as partially hidden by that edge, as if it continues off-frame beyond "
-        f"the {outward} edge. Two naturally connected arms place their hands one above the other along "
-        f"the contact line, gripping the edge. Both eyes are open, with a gentle, curious expression "
-        f"toward the viewer.",
+        f"The character peeks around an invisible vertical screen edge. The edge is a pure layout "
+        f"concept: never draw it, and the image must not contain any wall, door, panel, board, window "
+        f"frame, or furniture — the only content is the character against the plain background. The "
+        f"head tilts {inward} and leans fully past both hands. Two naturally connected arms place "
+        f"their hands one above the other along the contact line, fingers curled as if gripping it. "
+        f"Read across the canvas in order: the entire head and face on the {inward} side of the "
+        f"contact line, both hands on the line, and torso, hips, and legs on the {outward} side, with "
+        f"body mass concentrated toward the {outward} side of the canvas so the body reads as "
+        f"partially hidden by that edge, as if it continues off-frame beyond the {outward} edge. Both "
+        f"eyes are open, with a gentle, curious expression toward the viewer.",
     ]
 
 
@@ -418,7 +438,8 @@ def _peek_composition_sentences(side: Side, *, backdrop_text: str, square_canvas
     return [
         f"{canvas} from the top of the hair to the tips of both feet. Keep the full silhouette inside "
         f"the frame, but shift the figure toward the {outward} side of the contact line so the peeking "
-        f"body language is clear, leaving more open space on the {inward} side. Keep at least 8% empty "
+        f"body language is clear: only the head and hands cross to the {inward} side, and the rest of "
+        f"the {inward} side stays as open background. Keep at least 8% empty "
         f"space above and below.{framing} Give every body region coherent anatomy, the character's own "
         "skin and clothing colors, and a consistent level of illustration detail. The visible image "
         "consists solely of the character against "
