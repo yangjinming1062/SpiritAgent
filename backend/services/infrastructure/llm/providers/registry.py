@@ -29,7 +29,6 @@ PROVIDER_DEFAULT_URLS: dict[str, dict[str, str]] = {
         "llm": "https://token-plan-cn.xiaomimimo.com/v1",
         "stt": "https://token-plan-cn.xiaomimimo.com/v1",
         "tts": "https://token-plan-cn.xiaomimimo.com/v1",
-        "image_gen": "",
         "video_gen": "",
         "embedding": "",
     },

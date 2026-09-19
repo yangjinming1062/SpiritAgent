@@ -10,7 +10,11 @@ from ._parts import iter_parts
 
 
 class GeminiImageGenProvider(ImageGenProvider):
-    """通过 Gemini 的 generateContent（responseModalities=["TEXT","IMAGE"]，Gemini 3 图像模型强制双模态）生成图像；imageSize 固定 2K（仅 3 Pro 支持 4K，取值严格大写 K）；reference_image 作为 inlineData 部件置于文本前，触发 Gemini 原生图像编辑模式（保留主体、按提示重绘）。"""
+    """通过 Gemini 的 generateContent（responseModalities=["TEXT","IMAGE"]，Gemini 3 图像模型强制双模态）生成图像；imageSize 固定 2K（仅 3 Pro 支持 4K，取值严格大写 K）；reference_image 作为 inlineData 部件置于文本前，触发 Gemini 原生图像编辑模式（保留主体、按提示重绘）。
+
+    透明背景：generateContent 的 imageConfig 仅有 aspectRatio / imageSize，无透明背景
+    参数可映射，提示词驱动的 Alpha 输出未获证实；supports_transparent_background 保持
+    False，透明交付走色幕兼容路径。"""
 
     provider_name = "gemini"
     DEFAULT_MODELS: ClassVar[dict[str, str]] = {"image_gen": "gemini-3-pro-image"}

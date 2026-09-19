@@ -45,7 +45,6 @@ def register_providers() -> None:
     register_provider(ServiceType.llm, "mimo", mimo.MiMoChatProvider)
     register_provider(ServiceType.stt, "mimo", mimo.MiMoSTTProvider)
     register_provider(ServiceType.tts, "mimo", mimo.MiMoTTSProvider)
-    register_provider(ServiceType.image_gen, "mimo", mimo.MiMoImageGenProvider)
     register_provider(ServiceType.llm, "minimax", minimax.MiniMaxChatProvider)
     register_provider(ServiceType.image_gen, "minimax", minimax.MiniMaxImageGenProvider)
     register_provider(ServiceType.video_gen, "minimax", minimax.MiniMaxVideoGenProvider)

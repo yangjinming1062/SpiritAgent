@@ -32,7 +32,6 @@ from .base import (
 from .http import aclose_all, rotate_http_clients
 from .mimo import (
     MiMoChatProvider,
-    MiMoImageGenProvider,
     MiMoSTTProvider,
     MiMoTTSProvider,
 )
@@ -64,7 +63,6 @@ __all__ = [
     "ImageGenRequest",
     "ImageGenResult",
     "MiMoChatProvider",
-    "MiMoImageGenProvider",
     "MiMoSTTProvider",
     "MiMoTTSProvider",
     "ProviderConfig",
