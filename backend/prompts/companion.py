@@ -71,7 +71,8 @@ AFFECT_CHECK_INSTRUCTIONS: dict[str, str] = {
         "默认不表达。只有角色在当前情境下确有自然、克制的情绪流露或动作动机时，才令 should_express=true；"
         "时间或空闲时长本身不足以推出情绪，也不要为了展示能力而动作。视觉表达不包含发消息、说话或旁白。\n"
         "emotion 与 actions 可独立使用。emotion 只能取 allowed_emotions；actions 最多 3 个，按播放顺序排列，"
-        "每项必须逐字取自 available_actions，不合适就用空数组。should_express=false 时必须返回 neutral 和空数组。\n\n"
+        "每项必须逐字取自 available_actions 且不重复，不合适就用空数组。should_express=true 时须有非 neutral 情绪"
+        "或至少一个动作；should_express=false 时必须返回 neutral 和空数组。\n\n"
         '只输出一个 JSON 对象：{"should_express": false, "emotion": "neutral", "actions": []}。'
         "不要输出 Markdown、解释或额外字段。"
     ),
@@ -85,8 +86,9 @@ AFFECT_CHECK_INSTRUCTIONS: dict[str, str] = {
         "does not imply emotion, and do not act just to demonstrate capability. A visual expression never "
         "includes sending messages, speaking, or narration.\n"
         "emotion and actions are independent. emotion must come from allowed_emotions; actions holds at most 3 "
-        "entries in playback order, each copied verbatim from available_actions — use an empty array when "
-        "nothing fits. When should_express=false, return neutral and an empty array.\n\n"
+        "distinct entries in playback order, each copied verbatim from available_actions — use an empty array when "
+        "nothing fits. should_express=true requires a non-neutral emotion or at least one action; "
+        "should_express=false requires neutral and an empty array.\n\n"
         'Output exactly one JSON object: {"should_express": false, "emotion": "neutral", "actions": []}. '
         "No Markdown, explanations, or extra fields."
     ),

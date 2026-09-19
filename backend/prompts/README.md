@@ -29,6 +29,8 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 
 - `FullbodyTemplate` 物种/骨骼模板 dict（`prompt_engineer.py`）——dataclass 载体，与类型路由强耦合。
 - `_SPECIES_STYLE` / `_PRESET_SPECIES`（`prompt_engineer.py`）——3D 种子画风路由数据而非文本。
+- [夜间能力目录](../services/application/nightly/nightly_planning.py)——描述与参数选项随能力可用性装配，动作预算从执行端常量传入 `plan_limits`；检查规划提示词时同时核对目录、互斥组和参考图能力。
+- [隐藏语音协议](../services/infrastructure/llm/providers/speech_style.py)——按实际供应商、模型与音色装配能力和 JSON 示例，附加到陪伴终端请求；检查正文规则时一并核对。
 - 数据库 `AvatarAsset.prompt_json` 等审计字段是生成时快照，不是定义源。
 
 ## Runner 例外

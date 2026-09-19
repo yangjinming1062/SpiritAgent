@@ -93,7 +93,7 @@ _SPECIES_TEMPLATES: dict[str, FullbodyTemplate] = {
     "精灵": _BIPED_HUMANOID_TEMPLATE,
     "机甲": FullbodyTemplate(
         front_features="机体朝向正前方，正面视点。",
-        back_features="背面视点（机体转身180°背向镜头），机体后背与推进器结构清晰，看不到正面面部。",
+        back_features="背面视点（机体转身180°背向镜头），按原有机体结构展现后背，不额外添加推进器，看不到正面面部。",
         pose=BIPED_A_POSE,
         rig_type="biped",
         style="refined_anime_cg",
@@ -109,8 +109,8 @@ _RIG_TYPE_TEMPLATES: dict[str, FullbodyTemplate] = {
     "biped": _SPECIES_TEMPLATES["人类"],
     "quadruped": FullbodyTemplate(
         front_features="正前方视点，身体朝前。",
-        back_features="背面视点（转身180°），身体背部与尾部清晰，看不到面部。",
-        pose="四足自然直立站立，四腿分开；脊椎水平，头抬起；尾巴自然舒展。",
+        back_features="背面视点（转身180°），身体背部与原有尾部清晰，看不到面部。",
+        pose="四足自然直立站立，四腿分开；脊椎水平，头抬起；若原有尾巴则自然舒展。",
         rig_type="quadruped",
     ),
     "avian": FullbodyTemplate(
@@ -127,8 +127,8 @@ _RIG_TYPE_TEMPLATES: dict[str, FullbodyTemplate] = {
     ),
     "aquatic": FullbodyTemplate(
         front_features="",
-        back_features="背面，背鳍与尾鳍形态清晰。",
-        pose="身体水平伸展，各鱼鳍完全展开；尾鳍自然伸展。",
+        back_features="背面，保留原有背部与尾部结构，不给原本没有的部位添加鱼鳍。",
+        pose="按原有水生身体结构自然舒展，尾部和原有鱼鳍清晰可辨；类人上身不强行套用鱼类姿态。",
         rig_type="aquatic",
     ),
     "hexapod": FullbodyTemplate(
@@ -139,8 +139,8 @@ _RIG_TYPE_TEMPLATES: dict[str, FullbodyTemplate] = {
     ),
     "octopod": FullbodyTemplate(
         front_features="",
-        back_features="背面，背甲轮廓清晰。",
-        pose="八足对称展开于身体两侧，每条腿清晰可辨；身体居中。",
+        back_features="背面，原有背部轮廓清晰，不给软体角色添加背甲。",
+        pose="原有的八条腿或触腕自然舒展、彼此分开且清晰可辨；身体居中，不将触腕改成关节腿。",
         rig_type="octopod",
     ),
 }

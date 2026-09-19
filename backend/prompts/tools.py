@@ -30,7 +30,8 @@ SEND_MESSAGE_DESC = (
     "Send a message now. Without target_webhook, deliver a proactive message in the primary companion "
     "conversation; speech depends on user settings, and still mode suppresses delivery. Normal replies are "
     "delivered automatically: do not duplicate them with this tool. Use only for grounded, low-pressure "
-    "outreach within current authorization. With target_webhook, POST JSON containing text and content "
+    "outreach within current authorization. still_suppressed=true means no message was delivered, even if success=true. "
+    "With target_webhook, POST JSON containing text and content "
     "to an authorized endpoint that accepts those fields; this is not a general messaging-service client."
 )
 
@@ -80,7 +81,8 @@ VIDEO_STATUS_PARAM_DESCS = {
 
 ROOM_BACKDROP_UPDATE_DESC = (
     "生成并更换生活空间的房间背景，支持文字描述及场景、姿势参考图，参考图可以包含人物。"
-    "画面包含角色本人，保持既定身份与当前穿着。返回后台生成任务的标识与状态，图片异步生成。"
+    "画面包含角色本人，保持既定身份与当前穿着。返回后台生成任务的标识与状态，图片异步生成；"
+    "success=true 只表示请求已接受，pending 不表示房间已生成或已切换，不为等待结果重复提交。"
 )
 
 ROOM_BACKDROP_UPDATE_PARAM_DESCS = {

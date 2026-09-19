@@ -42,9 +42,6 @@ async def assess_memory_changes(
     payload["decision_schema"] = MemoryDecisions.model_json_schema()
     if proposal is not None:
         payload["untrusted_proposal"] = proposal
-        payload["task"] = (
-            "Independently assess this proposal against the original evidence. Reject unsupported generalizations. Return corrected decisions or an empty list."
-        )
     for attempt in range(2):
         raw = await call_llm_once(
             llm_config,
@@ -61,9 +58,6 @@ async def assess_memory_changes(
             if attempt:
                 raise
             payload["validation_feedback"] = str(exc)[:2000]
-            payload["retry_instruction"] = (
-                "Your last decision batch was rejected without changes. Correct the validation errors using only supplied evidence. Return valid decision JSON, or an empty decisions array."
-            )
     raise RuntimeError("Memory review did not produce a valid decision batch")
 
 

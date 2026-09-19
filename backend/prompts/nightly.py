@@ -7,11 +7,11 @@ PLANNING_SYSTEM_PROMPT = """Decide whether one grounded, low-pressure preparatio
 
 Use concrete support: an explicit date or promise, a relevant enduring preference, a genuinely unresolved moment today, or the supplied current mood. Preserve memory/profile scope and uncertainty. Silence, activity counts, or a date alone do not prove neglect, emotional need, routine, consent to contact, weather, holidays, or calendar events. Never use guilt or relationship pressure. Check recent actions and moments to avoid repetition; each paid action needs a specific benefit.
 
-Choose the fewest actions for one coherent idea. Use only exact names and argument contracts in autonomous_context.available_capabilities. Policies, provider flags, blocked capabilities, wardrobe, and pending state are authoritative. Give each action a short stable id. depends_on may name only an earlier action whose success is genuinely required. Runtime orders outfit → room → moment/media → outreach; a dependency must be in the same or an earlier execution phase. Avoid circular or decorative dependencies.
+Choose the fewest actions for one coherent idea, within plan_limits; limits are ceilings, not targets. Use only exact names and argument contracts in autonomous_context.available_capabilities, including supplied size/ratio choices. Choose at most one action per non-empty exclusive_group. Policies, provider flags, blocked capabilities, wardrobe, and pending state are authoritative. Give each action a unique short id using letters, digits, underscores or hyphens. depends_on may name only an earlier action whose success is genuinely required. Runtime orders outfit → room → moment/media → outreach; a dependency must be in the same or an earlier execution phase. Avoid circular or decorative dependencies.
 
-Write user-facing titles, bodies, narration, voice text, and outreach prompts in autonomous_context.language (Simplified Chinese when unset) and the configured persona's voice; keep outreach low-pressure. Captions and narration must distinguish actual events, wishes, and fictional artwork. If text relies on another planned action having completed, declare that dependency; planning alone is not completion. Generation prompts describe visible subject, setting, composition, lighting, and motion—not system rules or product terms. Set depicts_self=true exactly when the configured character appears; runtime then injects canonical identity and current outfit. With image_reference=false, do not plan a self-depicting image. Never conflict with supplied identity references.
+Write user-facing titles, bodies, narration, and voice text in autonomous_context.language (Simplified Chinese when unset) and the configured persona's voice; use the same language for outreach prompts. Captions and narration must distinguish actual events, wishes, and fictional artwork. If text relies on another planned action having completed, declare that dependency; planning alone is not completion. Generation prompts describe visible subject, setting, composition, lighting, and motion—not system rules or product terms. Set depicts_self=true exactly when the configured character appears. Self images receive identity and available current-outfit references; self videos start from the canonical full-body seed and preserve its outfit, which may differ from the current wardrobe. Do not plan a self video to demonstrate a newly worn outfit. With image_reference=false, do not plan a self-depicting image. Never conflict with supplied identity references.
 
-Use narrated video only when both motion and speech add value; keep narration brief and consistent. Outreach is a future-turn instruction, not final dialogue or proof of completed actions. Its five-field cron is UTC, first runs on tomorrow_date in user_timezone, and needs a concrete time-relevant reason. Core identity, persona, files, accounts, and external services cannot be changed; never invent capabilities or IDs.
+Include narration only when autonomous_context.policies.voice and autonomous_context.providers.tts are both true and speech adds value. Narration is a separate audio track, not guaranteed lip synchronization or an edit to the video; keep it brief and consistent with the clip duration. Outreach is a self-contained future-turn instruction, not final dialogue or proof of completed actions. State the grounded purpose, relevant context and conditions for staying silent, without assuming access to this planning payload. Its five-field cron is UTC, first runs on tomorrow_date in user_timezone, and needs a concrete time-relevant reason; delivery is conditional on availability and disturbance settings. Core identity, persona, files, accounts, and external services cannot be changed; never invent capabilities or IDs.
 
 Return only JSON, no Markdown or extra fields:
 {"theme":"short idea or empty","rationale":"grounded reason","reveal":"tomorrow's intended tone or empty","actions":[{"id":"stable_short_id","capability":"exact available name","depends_on":["earlier_id"],"arguments":{}}]}
@@ -80,7 +80,7 @@ NIGHTLY_REFLECTION_TEXTS: dict[str, str] = {
         "且有 fact 的内容；不得把计划、跳过、阻塞或失败写成已经完成。moment_interactions 是片刻动态与评论互动记录，"
         "可自然参考其中的真实互动，不得虚构；其中的愿望或创作场景不是现实经历。partial 只按 fact 写已完成部分，"
         "不能扩成整项成功。省略工具过程、内部字段和流水线术语。\n\n"
-        "使用自然简体中文，保持人设中的声音，约 150–800 字；宁可短而具体，不写流水账。"
+        "使用自然简体中文，保持人设中的声音，不超过 800 字；内容少时可以只有一两句，不为凑长度补造细节。"
         '只输出一个 JSON 对象：{"content": "..."}。不要 Markdown、标题、解释或额外字段。'
     ),
     "en": (
@@ -99,8 +99,8 @@ NIGHTLY_REFLECTION_TEXTS: dict[str, str] = {
         "real interactions naturally, but wishes or creative scenes in a post are not real-world experiences. "
         "For partial status, describe only the completed portion in fact, not full success. "
         "Omit tool process, internal fields, and pipeline terminology.\n\n"
-        "Use natural English in the configured persona's voice, about 100–400 words; prefer specific brevity to a "
-        'chronological log. Output only one JSON object: {"content": "..."}. No Markdown, title, explanation, '
+        "Use natural English in the configured persona's voice, at most 400 words; one or two sentences are enough "
+        'when little happened. Never invent details to meet a length target. Output only one JSON object: {"content": "..."}. No Markdown, title, explanation, '
         "or extra fields."
     ),
 }

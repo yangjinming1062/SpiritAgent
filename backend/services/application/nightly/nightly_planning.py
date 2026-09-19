@@ -92,6 +92,7 @@ _TERMINAL_ACTION_STATUSES = frozenset(
 _SUCCESS_ACTION_STATUSES = frozenset(("succeeded", "partial"))
 _ACTION_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_-]+")
 _MAX_ACTIONS = 8
+_MAX_MEDIA_ACTIONS = 2
 
 
 class NightlyCapability(BaseModel):
@@ -398,7 +399,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
             "prompt": "string",
             "title": "string",
             "body": "string",
-            "size": "supported image size",
+            "size": sorted(_IMAGE_SIZES),
             "depicts_self": "boolean",
             "narration": "optional string",
             "reason": "string",
@@ -408,13 +409,13 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         "media.video",
         30,
-        "创作永久保存到片刻的短视频；depicts_self=true 时以当前全身外观作为首帧，narration 会用角色当前音色生成同步祝福配音。",
+        "创作永久保存到片刻的短视频；depicts_self=true 时以独立全身种子图作为首帧并保留其穿着，不自动应用当前衣橱。narration 是使用当前音色生成的独立音轨，不保证口型同步。",
         {
             "prompt": "string",
             "title": "string",
             "body": "string",
             "duration": "6|10",
-            "aspect_ratio": "supported ratio",
+            "aspect_ratio": sorted(_VIDEO_ASPECT_RATIOS),
             "depicts_self": "boolean",
             "narration": "optional string",
             "reason": "string",
@@ -700,7 +701,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
         if spec.exclusive_group and spec.exclusive_group in seen_groups:
             continue
         if capability_name.startswith("media."):
-            if media_count >= 2:
+            if media_count >= _MAX_MEDIA_ACTIONS:
                 continue
             media_count += 1
         action_id = _normalize_action_id(raw.get("id"), index, seen_ids)
@@ -1841,6 +1842,7 @@ async def run_nightly_planning(
     plan = await _stored_plan(log_id)
     if plan is None:
         payload = {
+            "plan_limits": {"max_actions": _MAX_ACTIONS, "max_media_actions": _MAX_MEDIA_ACTIONS},
             "contextual_memories": contextual_memories,
             "background_memories_state": background_memories,
             "user_profile": user_profile,
