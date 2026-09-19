@@ -2,7 +2,6 @@ import asyncio
 import base64
 import hashlib
 import io
-from pathlib import Path
 from typing import Literal, NamedTuple
 
 import numpy as np
@@ -13,7 +12,7 @@ from components import (
     get_logger,
 )
 from numpy.typing import NDArray
-from PIL import Image, ImageDraw, ImageFilter
+from PIL import Image, ImageDraw, ImageFilter, ImageOps
 from pydantic import BaseModel, Field
 
 from services.infrastructure.assets import asset_store
@@ -28,7 +27,7 @@ from services.infrastructure.llm import (
     resolve_vision_chain,
 )
 
-from ..image_generation import compose_image_references, resolve_image_gen_chain
+from ..image_generation import resolve_image_gen_chain
 from .matting import has_transparent_background, subject_matte
 
 logger = get_logger(__name__)
@@ -75,14 +74,23 @@ def encode_png(image: Image.Image) -> bytes:
     return output.getvalue()
 
 
+def _declares_transparent(config: ProviderConfig) -> bool:
+    return resolve(ServiceType.image_gen, config.provider_name).supports_transparent_background
+
+
 async def generate_image(
     prompt: str,
     reference: bytes,
     chain: list[ProviderConfig],
-    guide: bytes | None = None,
+    *,
+    background: Literal["transparent"] | None = None,
 ) -> bytes:
-    if guide:
-        reference = await asyncio.to_thread(compose_image_references, reference, guide)
+    """单参考图生图：统一转 RGBA 保留 Alpha，RGB 分析副本由调用方自建。透明请求
+    不允许发给未声明透明能力的供应商链——适配器不认这些参数时会静默丢弃，必须在此拦截。"""
+    if background == "transparent":
+        unable = [config.provider_name for config in chain if not _declares_transparent(config)]
+        if unable:
+            raise PoseGenerationError(f"透明背景请求发给了未声明透明能力的供应商：{unable}")
     for config in chain:
         try:
             provider = resolve(ServiceType.image_gen, config.provider_name)(config)
@@ -93,6 +101,7 @@ async def generate_image(
                     reference_image=data_uri,
                     size="1024x1024",
                     response_format="b64",
+                    background=background,
                 ),
             )
             asset = result.images[0]
@@ -104,7 +113,7 @@ async def generate_image(
             with Image.open(io.BytesIO(raw)) as image:
                 return await asyncio.to_thread(
                     encode_png,
-                    image.convert("RGB").resize((1024, 1024), Image.Resampling.LANCZOS),
+                    image.convert("RGBA").resize((1024, 1024), Image.Resampling.LANCZOS),
                 )
         except Exception:
             logger.warning("pose image generation failed", extra={"provider": config.provider_name})
@@ -353,21 +362,26 @@ def matte_pose(raw: bytes, channel: int) -> Image.Image:
 
 def _prepare_pose_reference(reference: bytes) -> tuple[NDArray[np.float32], bytes]:
     with Image.open(io.BytesIO(reference)) as source:
-        image = source.convert("RGB")
+        image = ImageOps.exif_transpose(source).convert("RGB")
         pixels = np.asarray(image.resize((128, 128)), dtype=np.float32)
         return pixels, encode_png(image)
 
 
 class _PoseContext(NamedTuple):
-    """一次姿态生成的共享上下文：预处理后的参考图、供应商链与色幕通道（按立绘主色选取）。"""
+    """一次姿态生成的共享上下文：预处理后的参考图、供应商链与色幕通道。
+
+    image_chain 是支持参考图的完整图像链，供色幕兼容路径与闭眼附件编辑使用；
+    transparent_chain 是其中声明并映射了原生透明输出的子集，为空表示只能走色幕兼容路径。"""
 
     reference: bytes
     image_chain: list[ProviderConfig]
+    transparent_chain: list[ProviderConfig]
     vision_chain: list[ProviderConfig]
     channel: int
 
 
-_POSE_BACKDROPS = ("saturated red (#FF0000)", "saturated green (#00FF00)", "saturated blue (#0000FF)")
+# 色幕背景颜色按立绘中最少出现的主色通道选取（索引即 RGB 通道），供混合抠图强制清背景。
+_POSE_BACKDROPS = ("饱和纯红（#FF0000）", "饱和纯绿（#00FF00）", "饱和纯蓝（#0000FF）")
 
 
 def _chroma_channel(pixels: NDArray[np.float32]) -> int:
@@ -401,133 +415,138 @@ async def _resolve_pose_context(reference: bytes, user_id: int | None) -> _PoseC
         vision_chain = await resolve_vision_chain(db if user_id is not None else None, user_id)
     if not image_chain or not vision_chain:
         raise PoseGenerationError("扶边姿态需要配置支持参考图的图像供应商及视觉模型")
+    transparent_chain = [config for config in image_chain if _declares_transparent(config)]
     pixels, reference = await asyncio.to_thread(_prepare_pose_reference, reference)
-    return _PoseContext(reference, image_chain, vision_chain, _chroma_channel(pixels))
+    return _PoseContext(reference, image_chain, transparent_chain, vision_chain, _chroma_channel(pixels))
 
 
-def _peek_head_body_halves(side: Side) -> tuple[str, str]:
-    """姿态的左右语义：返回 (头部探入半幅, 身体藏身半幅)。
-
-    左侧姿态的遮挡区在画面左半幅：身体藏于左半幅，头探入右半幅；右侧姿态整体镜像。
-    提示词与注释一律用左右描述方位，不用内外侧，避免相对参照引起理解错误。"""
-    return ("RIGHT", "LEFT") if side == "left" else ("LEFT", "RIGHT")
+PoseBackground = Literal["transparent", "chroma"]
 
 
-def _peek_pose_sentences(side: Side) -> list[str]:
-    """扶边姿态正文：以画布竖直中线为接触线，只描述姿势与侧向藏身，不复述身份或着装。
+class _PeekFields(NamedTuple):
+    """一个姿态侧的方位字段：右侧提示词由字段装配生成，不手工复制模板。
 
-    屏幕边缘不可画成实物：生成模型会把 "screen edge" 具象成画中的墙板，使构图读感
-    反侧（人物站在画出的边缘物旁，头部不再越过接触线，客户端对齐后探出部分不可见）。
-    因此把接触线钉在画布正中并硬性要求画面只有角色；半幅方位语义见 _peek_head_body_halves。"""
-    head_half, body_half = _peek_head_body_halves(side)
+    所有方向均以观察者看到的画面左右为准；画布横向中心是接触线目标，屏幕边缘
+    本身不得画成实物。"""
+
+    source_edge: str  # 下半身停留的来源边
+    body_half: str  # 骨盆与双腿主要停留的半幅
+    peek_half: str  # 面部、肩部与部分上胸探入的半幅
+    lean_dir: str  # 腰背侧弯与胸廓移动方向
+
+
+_PEEK_FIELDS: dict[Side, _PeekFields] = {
+    "left": _PeekFields(source_edge="左", body_half="左半部", peek_half="右半部", lean_dir="右"),
+    "right": _PeekFields(source_edge="右", body_half="右半部", peek_half="左半部", lean_dir="左"),
+}
+
+
+def _transparent_background_sentences() -> list[str]:
     return [
-        f"The vertical line at exactly 50% of the canvas width is the contact line of an invisible "
-        f"screen edge. The contact line is a pure layout concept: never draw it, and the image must "
-        f"not contain any wall, door, panel, board, window frame, or furniture — the only content is "
-        f"the character against the plain background. The character hides behind the screen edge, "
-        f"which occludes the {body_half} half of the canvas: the head tilts {head_half} and leans fully "
-        f"across the contact line into the {head_half} half, past both hands. Two naturally connected "
-        f"arms place their hands one above the other along the contact line at the canvas center, "
-        f"fingers curled as if gripping it. Read across the canvas in order: the entire head and face "
-        f"in the {head_half} half, both hands on the center line, and torso, hips, and legs in the "
-        f"{body_half} half, with the body concentrated in the {body_half} half as if it continues "
-        f"off-frame beyond the {body_half} edge. Both eyes are open, with a gentle, curious expression "
-        f"toward the viewer.",
+        "在本次生成中直接输出带真实 Alpha 通道的透明背景 PNG。",
+        "画面只包含角色，所有背景区域均为透明。",
+        "不要白底、黑底、彩色底，不要把棋盘格绘制成背景。",
+        "保留发丝、轮廓抗锯齿和角色原有的半透明材质，",
+        "边缘干净平滑，无残留底色、外部背景投影、文字或水印。",
     ]
 
 
-def _peek_composition_sentences(
+def _chroma_background_sentences(color: str) -> list[str]:
+    return [
+        f"背景是唯一指定的{color}，整幅背景完全均匀一致直到画布四边：",
+        "不含任何纹理、渐变、棋盘格图案、投影、晕影，光线不得溢染到背景上。",
+        "画面只包含角色和该纯色背景，不出现任何文字或水印。",
+    ]
+
+
+def build_peek_prompt(
     side: Side,
     *,
-    background: str,
-    square_canvas: bool,
-) -> list[str]:
-    """构图规范：接触线钉在画布正中，头与双手落进探入半幅，躯干充满藏身半幅。
-
-    background 是完整背景条款，由调用方按路径提供：AI 生图填色幕（供混合抠图
-    强制清背景），自备图填纯白。"""
-    head_half, body_half = _peek_head_body_halves(side)
-    if square_canvas:
-        canvas = "Work on a square 1:1 canvas. Compose one complete character"
-        framing = ""
-        tail = "Deliver one complete illustration."
+    background: PoseBackground = "transparent",
+    chroma_color: str | None = None,
+) -> str:
+    """扶边姿态完整提示词：自动生成与自备图共用同一套身份、动作与构图条款，
+    仅背景交付策略不同（透明与色幕互斥，色幕颜色只由兼容路径传入）；装配后
+    不再经语言模型二次改写，避免方向或画幅要求在改写中丢失。"""
+    if background == "chroma":
+        if not chroma_color:
+            raise ValueError("色幕背景必须提供 chroma_color")
+        background_sentences = _chroma_background_sentences(chroma_color)
     else:
-        canvas = "Compose one complete character"
-        framing = " Scale the whole figure proportionally to achieve this framing."
-        tail = "Deliver one unified square 1:1 illustration."
-    return [
-        f"{canvas} from the top of the hair to the tips of both feet. Keep the full silhouette inside "
-        f"the frame, and keep the contact line at the exact horizontal center of the canvas: only the "
-        f"head and hands enter the {head_half} half, which otherwise stays as open background, while the "
-        f"body mass fills the {body_half} half. Keep at least 8% empty space above and below.{framing} "
-        f"Give every body region coherent anatomy, the character's own skin and clothing colors, and a "
-        f"consistent level of illustration detail. The visible image consists solely of the character "
-        f"against {background}. The contact line is an imaginary layout constraint. {tail}",
+        if chroma_color:
+            raise ValueError("chroma_color 只能在色幕背景下使用")
+        background_sentences = _transparent_background_sentences()
+    f = _PEEK_FIELDS[side]
+    lines = [
+        f"使用唯一提供的参考图，绘制同一角色从画面{f.source_edge}侧向{f.lean_dir}探身的全身插画。",
+        "参考图只提供角色身份、服装、身体比例与画风，不提供目标姿势或背景。",
+        "",
+        "保持同一角色的脸型、五官、物种、发型发色、身体比例、服装、",
+        "配色、配饰及标志性细节。保留服装和身体上的不对称设计，",
+        "不要镜像角色，不要重新设计服装，不要替换画风。",
+        "只改变姿态、画面布局和以下指定的背景。",
+        "",
+        "使用方形 1:1 画布。所有左右方向均指观察者看到的画面左右。",
+        "把画布横向正中央作为一条不可见的竖直接触线。",
+        "这条线只用于安排动作，不要画出线条、墙、门、屏幕、板材或家具。",
+        "",
+        f"角色的骨盆、双腿和双脚主要位于画面{f.body_half}，保持放松而稳定的支撑。",
+        f"从腰部开始自然向{f.lean_dir}侧弯，胸廓向{f.lean_dir}移动，肩部跟随胸廓探出。",
+        f"使完整面部、靠近探出方向的肩部和部分上胸明显进入画面{f.peek_half}，",
+        "形成上半身从边缘后方探出来的动作。",
+        "",
+        "腰背、胸廓、肩部和颈部形成连续、舒展的动作关系。",
+        "头部自然跟随肩部，面部朝向观众，双眼自然睁开，表情温和好奇。",
+        "不要只歪头而让肩胸留在原位，不要把直立角色整体旋转成斜站姿，",
+        f"不要弯腰鞠躬，也不要让骨盆和双腿一起大幅向{f.lean_dir}倾倒。",
+        "",
+        "双臂自然弯曲，两只手沿中央接触位置一上一下轻扶。",
+        "上方手接近下颌高度，下方手接近上胸高度。",
+        "手肘自然放松，手掌、手腕、前臂和上臂连接合理，",
+        "手指轻轻弯曲，如同轻扣一条竖直边缘，不握拳、不悬空。",
+        "不要出现额外手臂、额外手指、断开的肢体或扭曲关节。",
+        "",
+        "素材中绘制完整角色，从头顶到双脚及鞋履全部入画，",
+        "参考图已有的身体附属结构同样完整保留。",
+        "上下各留约 8% 的安全空间，左右轮廓不要贴到画布边缘。",
+        "不要实际遮掉角色，不要裁成半身图，不要删除下半身。",
+        "角色在素材中完整可见，屏幕边缘的遮挡不需要画进图片。",
+        "",
+        *background_sentences,
     ]
-
-
-# 背景条款共享模板：AI 生图填饱和色幕（供混合抠图清背景），自备图填纯白；
-# 不向生图模型索要透明（画不出真透明，可能画出棋盘格底），透明交付契约见 PIPELINE §1.1.2。
-_BACKGROUND_TEMPLATE = (
-    "a perfectly flat, uniform {backdrop} background with no texture, no gradient, "
-    "no checkerboard pattern, no cast shadow, no vignette, and no glow spill onto the backdrop; keep "
-    "the background pixel-uniform to the canvas border"
-)
-
-_POSE_SIDE_BACKGROUND = _BACKGROUND_TEMPLATE.format(backdrop="pure white")
+    return "\n".join(lines)
 
 
 def build_pose_side_prompt(side: Side) -> str:
-    """自备图场景的用户可见姿态提示词：当前外观正面立绘是唯一身份与穿着锚点，
-    只改姿态，不复述外貌或着装——多余文本会把生成结果从参考图带偏。姿势与构图
-    规范与生成链一致，不引用内部概念；背景与透明交付契约见 PIPELINE §1.1.2。"""
-    parts: list[str] = [
-        "Redraw the character from the reference image as a full-body illustration for a peeking "
-        "animation at a screen edge.",
-        "",
-        "IDENTITY",
-        "The reference image is the sole identity and outfit anchor. Keep the character and outfit "
-        "exactly as drawn there — same face, species, body proportions, hairstyle, outfit, colors, "
-        "signature details, and illustration style. Do not redesign, restyle, recolor, or substitute "
-        "any of them. Change only the pose.",
-        "",
-        "POSE AND EXPRESSION",
-        *_peek_pose_sentences(side),
-        "",
-        "COMPOSITION AND RENDERING",
-        *_peek_composition_sentences(
-            side,
-            background=_POSE_SIDE_BACKGROUND,
-            square_canvas=True,
-        ),
-    ]
-    return "\n".join(parts)
+    """自备图姿态提示词：与自动生成共用动作与构图条款，背景条款为完整的
+    真实透明交付要求。见 PIPELINE §1.1.2。"""
+    return build_peek_prompt(side, background="transparent")
 
 
 async def _compose_pose(side: Side, context: _PoseContext) -> tuple[Pose, dict[str, bytes]]:
-    guide = (Path(__file__).parent / "pose-guides" / f"{side}.webp").read_bytes()
-    backdrop = _POSE_BACKDROPS[context.channel]
-    prompt = (
-        "Create a full-body character illustration for a peeking animation at a screen edge.\n\n"
-        "REFERENCE ROLES\n"
-        "The input sheet has two reference panels. The left panel is the sole identity and outfit anchor: "
-        "reproduce its character, outfit, colors, asymmetric details, and illustration style without "
-        "redesign. The right panel defines only the articulated body pose, hand shapes, and relative grip "
-        "locations. Render the left-panel character in the right-panel pose. Do not invent new character "
-        "or outfit details. The references supply visual design evidence; this brief defines the finished "
-        "composition.\n\n"
-        "POSE AND EXPRESSION\n" + "\n".join(_peek_pose_sentences(side)) + "\n\n"
-        "COMPOSITION AND RENDERING\n"
-        + "\n".join(
-            _peek_composition_sentences(
-                side,
-                background=_BACKGROUND_TEMPLATE.format(backdrop=backdrop),
-                square_canvas=False,
-            ),
+    """单原图生成一个侧别的主姿态：唯一图像输入是当前外观正面立绘，姿态、空间
+    关系、构图与背景全部由提示词表达。背景策略在请求前确定——供应商链具备原生
+    透明输出能力时请求透明 PNG；否则使用同一姿态条款加色幕，经本地混合抠图交付
+    （不计为原生透明）。"""
+    if context.transparent_chain:
+        raw = await generate_image(
+            build_peek_prompt(side, background="transparent"),
+            context.reference,
+            context.transparent_chain,
+            background="transparent",
         )
+        # 原生透明输出若实际不带可用 Alpha，按普通图走抠图兜底，channel 现场选取。
+        return await _finish_pose(raw, side, context.image_chain, context.vision_chain, None)
+    raw = await generate_image(
+        build_peek_prompt(side, background="chroma", chroma_color=_POSE_BACKDROPS[context.channel]),
+        context.reference,
+        context.image_chain,
     )
-    raw = await generate_image(prompt, context.reference, context.image_chain, guide)
     return await _finish_pose(raw, side, context.image_chain, context.vision_chain, context.channel)
+
+
+# 双手必须对应同一条接触线；归一化坐标 0..1000 下的夹持边偏差上限（画布宽度 10%）。
+_GRIP_DEVIATION_LIMIT = 100
 
 
 async def _finish_pose(
@@ -537,7 +556,8 @@ async def _finish_pose(
     vision_chain: list[ProviderConfig],
     channel: int | None,
 ) -> tuple[Pose, dict[str, bytes]]:
-    """主姿态图之后的共享后处理：抠图 → 关键点定位 → 闭眼帧 → 纹理编码；自备图路径复用。
+    """主姿态图之后的共享后处理：透明判定 → 抠图 → 关键点定位 → 闭眼帧 → 纹理编码；
+    自备图路径复用。
 
     几何按图像实际宽高参数化：AI 路径恒为 1024×1024（generate_image 归一化），自备图保持
     用户原始尺寸与比例——渲染端网格、画布与布局均消费 Pose.width/height，无方形假设。
@@ -545,15 +565,21 @@ async def _finish_pose(
     身体区域误清成空洞）；其余图走混合抠图，channel 缺省时按图像主色现场选取。"""
     if await asyncio.to_thread(has_transparent_background, raw):
         body = await asyncio.to_thread(_load_rgba, raw)
+        background_path = "transparent"
     else:
         if channel is None:
             channel = await asyncio.to_thread(_chroma_channel_for_raw, raw)
         # 混合抠图：ISNet 显著性定边界 + 色幕泛洪/色键强制清残留；模型缺失时内部退回色键。
         body = await asyncio.to_thread(matte_pose, raw, channel)
+        background_path = "matting"
     bounds = body.getbbox()
     if bounds is None:
         raise ValueError("empty pose")
     width, height = body.size
+    logger.info(
+        "pose background processed",
+        extra={"path": background_path, "width": width, "height": height},
+    )
     landmarks = await locate_pose(raw, vision_chain)
     edge_index = 1 if side == "left" else 3
 
@@ -563,7 +589,17 @@ async def _finish_pose(
         scaled = [rect[i] * (height / 1000 if i % 2 == 0 else width / 1000) for i in (1, 0, 3, 2)]
         return [float(round(v)) for v in scaled] if as_int else scaled
 
-    contact = (landmarks.upper_hand[edge_index] + landmarks.lower_hand[edge_index]) / 2 * (width / 1000)
+    # 两手夹持边明显错开说明构图不合格，拒绝交付并保留诊断，不取平均值掩盖；
+    # 抛 PoseGenerationError 让自备图采纳路径拿到具体原因，而不是笼统的"请重试"。
+    grip_edges = (landmarks.upper_hand[edge_index], landmarks.lower_hand[edge_index])
+    deviation = abs(grip_edges[0] - grip_edges[1])
+    if deviation > _GRIP_DEVIATION_LIMIT:
+        logger.warning(
+            "pose grip contact rejected",
+            extra={"side": side, "deviation": f"{deviation:.0f}/1000"},
+        )
+        raise PoseGenerationError("姿态素材不合格：双手接触位置明显偏离同一条接触线")
+    contact = (grip_edges[0] + grip_edges[1]) / 2 * (width / 1000)
     face = _to_px(landmarks.face)
     eyes = _to_px(landmarks.eyes, as_int=True)
     closed_raw = await generate_image(
@@ -666,7 +702,7 @@ async def compose_pose_pack(
 
 
 async def generate_single_pose(reference: bytes, user_id: int | None, side: Side) -> tuple[Pose, dict[str, bytes]]:
-    """单侧重生成一侧扶边姿态：与整包共用参考图预处理与色幕上下文，供外观级局部重生成调用。"""
+    """单侧重生成一侧扶边姿态：与整包共用参考图预处理与背景策略选择，供外观级局部重生成调用。"""
     context = await _resolve_pose_context(reference, user_id)
     try:
         async with asyncio.timeout(1200):

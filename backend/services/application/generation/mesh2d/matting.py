@@ -44,10 +44,11 @@ def _normalize(image: Image.Image) -> np.ndarray:
 
 
 def has_transparent_background(raw: bytes) -> bool:
-    """判断图像是否自带可用透明背景（自备姿态图跳过抠图的依据）。
+    """判断图像是否自带可用透明背景（跳过抠图管线的快速依据）。
 
     同时要求存在可观比例的透明像素且画布边框环基本透明：仅局部透明（圆角、水印
     擦除）或边框仍不透明（背景未去净）的图不视为已抠图，仍走抠图管线。
+    判定只选择处理路径，不能证明残留已去净；验收语义见 PIPELINE §6.2。
     """
     with Image.open(io.BytesIO(raw)) as source:
         alpha = np.asarray(source.convert("RGBA").getchannel("A"), dtype=np.uint8)

@@ -68,7 +68,7 @@ export const dict = {
     copyRefImageFailed: '复制失败，请重试。',
     poseAttachHint: '可选：确认前可为左右两侧附自备姿态图，未提供的侧由后端自动生成。',
     poseTransparentHint:
-      '姿态图需透明背景 PNG：生图工具无法直接产出透明背景，请在生成后用图像编辑器去除背景再上传；未去背景的图由后端自动抠图。',
+      '提示词已包含透明背景要求。使用支持透明输出的生图工具，并保留 PNG 原文件；上传后将检查实际透明通道，未去净背景的图由后端自动抠图。',
     poseSelfLeft: '自备左姿态',
     poseSelfRight: '自备右姿态',
     poseRemove: '移除',
@@ -950,6 +950,12 @@ export const dict = {
         regenPose: '重新生成姿态',
         regenRunning: '正在重新生成该侧姿态…',
         regenFailed: '姿态重新生成失败',
+        edgeEffect: '贴边效果',
+        fullAsset: '完整素材',
+        backdropLight: '浅色底',
+        backdropDark: '深色底',
+        debugMarks: '调试标记',
+        fullAssetFailed: '姿态纹理加载失败',
         actions: {
           idle: '呼吸与眨眼',
           wave_left: '左手挥手',

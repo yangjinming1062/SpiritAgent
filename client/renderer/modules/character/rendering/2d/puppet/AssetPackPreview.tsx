@@ -9,10 +9,12 @@ import { fetchPsdWithCache } from '../mesh2d/psd-opfs-cache'
 
 import { ACTION_IMPULSE_DEFAULTS, ACTION_SMOOTHED_DEFAULTS, ACTIONS } from './actions'
 import { loadPuppetAssetPack, type PuppetAssetPack, type PuppetAssetSource } from './asset-pack'
+import type { EdgePose } from './edge-pose'
 import { EdgePoseCanvas, type EdgePoseCanvasHandle } from './EdgePoseCanvas'
 import { loadPsdIntoRuntime, PuppetRuntime } from './puppet-runtime'
 
 type Mode = 'front' | 'left' | 'right'
+type PoseView = 'edge' | 'full'
 type LoadState = 'loading' | 'ready' | 'failed'
 
 const PREVIEW_ACTIONS = [
@@ -46,6 +48,9 @@ export function AssetPackPreview({
   const t = useStrings().living.wardrobe.preview
   const selfSource = useStrings().selfSource
   const [mode, setMode] = useState<Mode>('front')
+  const [poseView, setPoseView] = useState<PoseView>('edge')
+  const [darkBackdrop, setDarkBackdrop] = useState(false)
+  const [debugMarks, setDebugMarks] = useState(false)
   const [action, setAction] = useState<string>('idle')
   const [playing, setPlaying] = useState(() => !window.matchMedia('(prefers-reduced-motion: reduce)').matches)
   const [restart, setRestart] = useState(0)
@@ -165,7 +170,7 @@ export function AssetPackPreview({
       }
 
       edge.current?.update(
-        mode === 'front' ? 'none' : mode,
+        mode === 'front' || poseView === 'full' ? 'none' : mode,
         dt,
         elapsed.current,
         Math.sin(elapsed.current / 1800) * 0.35,
@@ -197,7 +202,7 @@ export function AssetPackPreview({
       observer.disconnect()
       document.removeEventListener('visibilitychange', redraw)
     }
-  }, [action, mode, playing, front, edges, pack, restart])
+  }, [action, mode, poseView, playing, front, edges, pack, restart])
 
   const status = mode === 'front' ? front : pack?.poses ? edges[mode] : front === 'loading' ? 'loading' : 'failed'
   const regenBusy = poseRegen !== null && poseRegen.error === null
@@ -228,7 +233,10 @@ export function AssetPackPreview({
       </div>
       <div
         aria-label={t.stage}
-        className="relative min-h-0 flex-1 overflow-hidden rounded-xl border border-line-strong bg-fill-trough"
+        className={cn(
+          'relative min-h-0 flex-1 overflow-hidden rounded-xl border border-line-strong',
+          mode !== 'front' ? (darkBackdrop ? 'bg-neutral-900' : 'bg-neutral-100') : 'bg-fill-trough'
+        )}
         role="region"
       >
         <div
@@ -239,7 +247,10 @@ export function AssetPackPreview({
         {pack?.poses && (
           <EdgePoseCanvas boundary="container" key={retry} onStatus={onEdgeStatus} pack={pack.poses} ref={edge} />
         )}
-        {mode !== 'front' && (
+        {mode !== 'front' && pack?.poses && poseView === 'full' && (
+          <FullPoseView debug={debugMarks} pose={pack.poses[mode]} />
+        )}
+        {mode !== 'front' && poseView === 'edge' && (
           <div
             className={cn(
               'pointer-events-none absolute inset-y-0 w-1 bg-accent-line',
@@ -303,6 +314,37 @@ export function AssetPackPreview({
                 {selfSource.open}
               </button>
             )}
+            <ToggleGroup
+              items={
+                [
+                  ['edge', t.edgeEffect],
+                  ['full', t.fullAsset]
+                ] as const
+              }
+              onSelect={setPoseView}
+              value={poseView}
+            />
+            <ToggleGroup
+              items={
+                [
+                  [false, t.backdropLight],
+                  [true, t.backdropDark]
+                ] as const
+              }
+              onSelect={setDarkBackdrop}
+              value={darkBackdrop}
+            />
+            {poseView === 'full' && (
+              <button
+                aria-pressed={debugMarks}
+                className={cn(BTN_GHOST, debugMarks && 'bg-accent-soft text-strong')}
+                onClick={() => setDebugMarks(value => !value)}
+                title={t.debugMarks}
+                type="button"
+              >
+                {t.debugMarks}
+              </button>
+            )}
           </>
         )}
         <button
@@ -327,5 +369,131 @@ export function AssetPackPreview({
         <span className="text-[10px] text-faint">{t.loop}</span>
       </div>
     </div>
+  )
+}
+
+/** 完整素材视图：按原始纹理等比展示全身构图与透明轮廓，不做贴边形变。
+ *  接触线、头部框和手部框只是界面覆盖层，不导出、不回传生图模型。 */
+function FullPoseView({ debug, pose }: { debug: boolean; pose: EdgePose }): React.JSX.Element {
+  const t = useStrings().living.wardrobe.preview
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [box, setBox] = useState<{ height: number; width: number } | null>(null)
+  const [url, setUrl] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+
+  useEffect(() => {
+    const el = containerRef.current
+
+    if (!el) {
+      return undefined
+    }
+
+    const measure = (): void => {
+      const scale = Math.min(el.clientWidth / pose.width, el.clientHeight / pose.height)
+
+      if (Number.isFinite(scale) && scale > 0) {
+        setBox({ height: Math.floor(pose.height * scale), width: Math.floor(pose.width * scale) })
+      }
+    }
+
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(el)
+
+    return () => observer.disconnect()
+  }, [pose])
+
+  useEffect(() => {
+    let live = true
+    let objectUrl: string | null = null
+    setUrl(null)
+    setFailed(false)
+
+    void (async (): Promise<void> => {
+      try {
+        const bytes = await window.spiritagent.apiAssetBuffer({
+          url: pose.textures.body.url,
+          contentHash: pose.textures.body.hash
+        })
+
+        objectUrl = URL.createObjectURL(new Blob([bytes.slice().buffer], { type: 'image/webp' }))
+
+        if (live) {
+          setUrl(objectUrl)
+        } else {
+          URL.revokeObjectURL(objectUrl)
+        }
+      } catch {
+        if (live) {
+          setFailed(true)
+        }
+      }
+    })()
+
+    return (): void => {
+      live = false
+
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
+    }
+  }, [pose])
+
+  // 覆盖层以素材坐标的百分比定位，与显示缩放无关。
+  const rectStyle = (rect: [number, number, number, number]): React.CSSProperties => ({
+    left: `${(rect[0] / pose.width) * 100}%`,
+    top: `${(rect[1] / pose.height) * 100}%`,
+    width: `${((rect[2] - rect[0]) / pose.width) * 100}%`,
+    height: `${((rect[3] - rect[1]) / pose.height) * 100}%`
+  })
+
+  return (
+    <div className={cn('absolute inset-3 flex items-center justify-center')} ref={containerRef}>
+      {box && url && (
+        <div className="relative" style={{ height: box.height, width: box.width }}>
+          <img alt="" className="block size-full" src={url} />
+          {debug && (
+            <>
+              <div
+                className="absolute inset-y-0 w-px bg-sky-400"
+                style={{ left: `${(pose.contactX / pose.width) * 100}%` }}
+              />
+              <div className="absolute border border-amber-400" style={rectStyle(pose.head)} />
+              {pose.hands?.map((hand, index) => (
+                <div className="absolute border border-emerald-400" key={index} style={rectStyle(hand)} />
+              ))}
+            </>
+          )}
+        </div>
+      )}
+      {failed && <p className="rounded-lg bg-surface-card px-2 py-1 text-xs text-body">{t.fullAssetFailed}</p>}
+    </div>
+  )
+}
+
+/** 互斥切换按钮组：选中项高亮并用 aria-pressed 暴露选中态。 */
+function ToggleGroup<T extends boolean | string>({
+  items,
+  onSelect,
+  value
+}: {
+  items: readonly (readonly [T, string])[]
+  onSelect: (value: T) => void
+  value: T
+}): React.JSX.Element {
+  return (
+    <>
+      {items.map(([item, label]) => (
+        <button
+          aria-pressed={value === item}
+          className={cn(BTN_GHOST, value === item && 'bg-accent-soft text-strong')}
+          key={label}
+          onClick={() => onSelect(item)}
+          type="button"
+        >
+          {label}
+        </button>
+      ))}
+    </>
   )
 }

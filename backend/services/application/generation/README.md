@@ -2,7 +2,7 @@
 
 编排形象、外观、房间和媒体生成，管理任务互斥、提交、落库与激活；供应商传输归 infrastructure。参考来源、产物和跨端恢复统一见 [PIPELINE](../../../../docs/PIPELINE.md)，本文只定义内部并发与状态约束。
 
-入口：[形象](avatar_service.py)、[外观](outfit_service.py)、[房间](room_backdrop_service.py)、[3D](pipeline.py)、[2D](mesh2d/)、[视频](video_jobs.py)；姿态模板见 [pose-guides](mesh2d/pose-guides/README.md)。
+入口：[形象](avatar_service.py)、[外观](outfit_service.py)、[房间](room_backdrop_service.py)、[3D](pipeline.py)、[2D](mesh2d/)、[视频](video_jobs.py)；姿态提示词与背景策略装配见 [mesh2d/poses.py](mesh2d/poses.py)。
 
 ## 身份、草稿与并发
 
