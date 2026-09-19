@@ -4,6 +4,7 @@ import io
 
 from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_logger, save_file
 from PIL import Image, ImageDraw, ImageOps
+from prompts.generation import REFERENCE_SHEET_PROMPT
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.assets import asset_store, save_companion_asset_async, sniff_media_ext
@@ -115,12 +116,7 @@ async def generate_images(
             sheet = await asyncio.to_thread(compose_image_references, primary[0], secondary[0])
             encoded = await asyncio.to_thread(base64.b64encode, sheet)
             reference_image = "data:image/png;base64," + encoded.decode("ascii")
-            prompt = (
-                "The sole input image is a two-panel reference sheet. The LEFT panel is reference 1 and "
-                "the RIGHT panel is reference 2; use each only for the role assigned in the task prompt. "
-                "Generate one unified final image, never the sheet, split panels, comparison layout, borders, "
-                "or reference labels. Follow the task prompt below.\n\n" + prompt
-            )
+            prompt = REFERENCE_SHEET_PROMPT + prompt
         req = ImageGenRequest(prompt=prompt, size=size, n=n, reference_image=reference_image)
         if user_id is not None:
             async with SESSION_LOCAL() as db:

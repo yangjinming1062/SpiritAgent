@@ -771,7 +771,6 @@ async def prepare_outfit_prompt(
         feedback=feedback,
         appearance=appearance,
         personality=personality,
-        identity_anchor="reference-self-source",
         canvas_aspect=_fullbody_aspect_for(rig_type),
     )
 
@@ -820,7 +819,6 @@ async def prepare_outfit_regenerate_prompt(
         feedback=combined_feedback,
         appearance=appearance,
         personality=personality,
-        identity_anchor="reference-self-source",
         canvas_aspect=_fullbody_aspect_for(rig_type),
     )
 

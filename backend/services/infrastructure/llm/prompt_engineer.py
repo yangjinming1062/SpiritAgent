@@ -29,14 +29,15 @@ from prompts.generation import (
     AVATAR_SYSTEM_PROMPT,
     BIPED_A_POSE,
     BIPED_NATURAL_POSE,
+    FULLBODY_BACK_VIEW,
+    FULLBODY_PRESERVE_CHARACTER,
+    FULLBODY_REWRITE_LEAD,
     FULLBODY_STYLE_WORDING,
     GARMENT_DESCRIBE_SYSTEM,
-    OUTFIT_CHANGE_CLAUSE,
-    SELF_SOURCE_REFERENCE_CLAUSE,
-    SELF_SOURCE_REWRITE_LEAD,
+    IMAGE_EDIT_TEMPLATE,
+    OUTFIT_CHANGE_TEMPLATE,
     UNCHOPPED_BODY_PARTS,
     VIEW_PREFIX,
-    IdentityAnchor,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -100,8 +101,8 @@ _SPECIES_TEMPLATES: dict[str, FullbodyTemplate] = {
 }
 
 _SPECIES_FLAVOR: dict[str, str] = {
-    "灵兽": "角色散发灵气与神秘气场，身上可能有发光纹路、灵力标记或神秘图腾。",
-    "幻形": "角色呈现虚幻、流变的气质，身体边缘可能有半透明、发光或粒子消散效果。",
+    "灵兽": "原图若有发光纹路、标记或图腾，保留其形状与分布，不额外添加。",
+    "幻形": "原图若有半透明、发光或粒子效果，保留其表现，不改变角色轮廓。",
 }
 
 _RIG_TYPE_TEMPLATES: dict[str, FullbodyTemplate] = {
@@ -150,10 +151,7 @@ def build_image_edit_prompt(feedback: str, *, preserve: str) -> str:
     clause = _prompt_clause(feedback)
     if not clause:
         raise ValueError("image edit requires non-empty feedback")
-    return (
-        "对输入图片做编辑，不是重新创作。用户本次的修改要求："
-        f"{clause}。只修改与该要求直接相关的部分，其余内容保持原样。{preserve}。"
-    )
+    return IMAGE_EDIT_TEMPLATE.format(feedback=clause, preserve=preserve)
 
 
 def _strip_markdown_fence(raw: str) -> str:
@@ -317,10 +315,9 @@ def build_fullbody_prompt(
     personality: str = "",
     avatar_prompt: str = "",
     persona: Persona | dict | None = None,
-    identity_anchor: IdentityAnchor = "reference",
     canvas_aspect: str | None = None,
 ) -> str:
-    """为某个视角拼装一条生图 prompt（无 LLM 往返）；由 ``application/generation/avatar_service`` 按视角调用。全身图由外貌设定、性格特点、画风词典与用户额外要求装配，外形特征由主参考图锚定（正面种子源自全身种子图、背面种子源自正面种子、换装主参考为全身种子图），不带入头像阶段特异性的 avatar_prompt。identity_anchor 语义见 prompts.generation.IdentityAnchor。canvas_aspect 写入画幅宽高比（如 "9:16"），供没有独立 size 通道的自备图语境告知比例；AI 路径的画幅由生图请求的 size 传达，不传。"""
+    """为某个视角拼装一条生图 prompt（无 LLM 往返）；由 ``application/generation/avatar_service`` 按视角调用。全身图由外貌设定、性格特点、画风词典与用户额外要求装配，外形特征由主参考图锚定（正面种子源自全身种子图、背面种子源自正面种子、换装主参考为全身种子图），不带入头像阶段特异性的 avatar_prompt。canvas_aspect 写入画幅宽高比（如 "9:16"），供没有独立 size 通道的自备图语境告知比例；AI 路径的画幅由生图请求的 size 传达，不传。"""
     style_key = style_id or template.style or "refined_anime_cg"
     style_wording = FULLBODY_STYLE_WORDING.get(style_key, FULLBODY_STYLE_WORDING["refined_anime_cg"])
     features = getattr(template, f"{view}_features", "")
@@ -334,14 +331,9 @@ def build_fullbody_prompt(
 
     frame_clause = _fullbody_frame_clause(canvas_aspect)
     view_label = VIEW_PREFIX.get(view, "正面全身角色立绘")
-    if identity_anchor == "reference-self-source":
-        # 自备图：提示词以改写句式开头，同时适配外部工具图生图与纯文生图。
-        head = SELF_SOURCE_REWRITE_LEAD.format(target=view_label)
-        identity_clause = SELF_SOURCE_REFERENCE_CLAUSE
-    else:
-        head = f"{view_label}，单一角色居中。"
-        identity_clause = "以参考图为身份锚点，保持同一角色的脸、体型、物种与标志性特征。"
-    constraint_scope = "指定视角、姿势、身份锚点或背景规则"
+    head = FULLBODY_REWRITE_LEAD.format(target=view_label)
+    identity_clause = FULLBODY_PRESERVE_CHARACTER
+    constraint_scope = "角色身份、指定视角、姿势、画风或背景规则"
     parts = [
         head,
         f"{template.pose}{features}",
@@ -349,6 +341,9 @@ def build_fullbody_prompt(
         identity_clause,
         style_wording,
     ]
+
+    if view == "back":
+        parts.append(FULLBODY_BACK_VIEW)
 
     identity_parts: list[str] = []
     appearance_clause = _prompt_clause(appearance)
@@ -377,23 +372,18 @@ def build_outfit_prompt(
     feedback: str,
     appearance: str = "",
     personality: str = "",
-    identity_anchor: IdentityAnchor = "reference",
     canvas_aspect: str | None = None,
 ) -> str:
-    """换装立绘 prompt：在正面全身 prompt 之上叠加「锁身份、换穿着」约束；身份与身材由主参考图（独立全身种子图）锚定，着装要求进 feedback 槽。identity_anchor 语义同 build_fullbody_prompt。canvas_aspect 语义同 build_fullbody_prompt。"""
+    """换装立绘 prompt：在正面全身 prompt 之上叠加「锁身份、换穿着」约束；身份与身材由主参考图（独立全身种子图）锚定，着装要求进 feedback 槽。canvas_aspect 语义同 build_fullbody_prompt。"""
     base = build_fullbody_prompt(
         "front",
         template=template,
         style_id=style_id,
         appearance=appearance,
         personality=personality,
-        identity_anchor=identity_anchor,
         canvas_aspect=canvas_aspect,
     )
-    tail = "不得因此覆盖完整全身构图、标准姿势、身份锚点或纯白背景。"
-    return (
-        f"{base}{OUTFIT_CHANGE_CLAUSE}着装要求：{_prompt_clause(feedback)}。{UNCHOPPED_BODY_PARTS}同样完整入画。{tail}"
-    )
+    return base + OUTFIT_CHANGE_TEMPLATE.format(requirement=_prompt_clause(feedback))
 
 
 async def describe_garment_image(

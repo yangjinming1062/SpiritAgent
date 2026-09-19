@@ -11,7 +11,18 @@ onboarding 完成后全身种子图恒在：AI 路径与自备图路径都以该
 from dataclasses import dataclass
 
 from modules.companion import BackdropIntent
-from prompts.generation import HARD_RULES_ZH, INTENT_LIGHTING
+from prompts.generation import (
+    HARD_RULES_ZH,
+    INTENT_LIGHTING,
+    ROOM_APPEARANCE_TEMPLATE,
+    ROOM_BRIEF_TEMPLATE,
+    ROOM_KEEP_OUTFIT_TEMPLATE,
+    ROOM_LIGHTING_TEMPLATE,
+    ROOM_NOTES_TEMPLATE,
+    ROOM_OUTFIT_TEMPLATE,
+    ROOM_SCENE_REFERENCE,
+    ROOM_SCENE_TEMPLATE,
+)
 
 
 @dataclass(frozen=True)
@@ -30,50 +41,28 @@ def _prompt_clause(value: str) -> str:
     return value.strip().rstrip("。.!！?？;； ")
 
 
-def _identity_block(ctx: RoomPromptContext) -> str:
-    appearance = _prompt_clause(ctx.appearance or "")
-    identity = "图 1（全身参考图）" if ctx.has_reference_image else "全身参考图"
-    block = f"以{identity}为身份锚点：保持同一角色的五官、肤色、物种、性别与身材比例，不得替换成其他人物；根据本次房间情境安排姿态与构图。"
-    if appearance:
-        return f"{block}外形文字仅作补充，与{identity}冲突时以其外貌为准：{appearance}。"
-    return block
-
-
 def build_room_prompt(ctx: RoomPromptContext) -> str:
-    """身份图锁定外貌；用户图提供场景与所需姿势；穿着用着装描述原文，优先于参考图中的着装。"""
+    """角色图确定外貌，场景图提供环境与所需姿势；当前着装描述优先于图片中的穿着。"""
     intent_value = ctx.intent.value if isinstance(ctx.intent, BackdropIntent) else str(ctx.intent)
     lighting = INTENT_LIGHTING.get(intent_value, INTENT_LIGHTING["decorate"])
     species = (ctx.species or "人类").strip() or "人类"
-    character_source = "图 1（全身参考图）中的" if ctx.has_reference_image else "全身参考图中的"
-    head = f"把{character_source}角色安排进一间 16:9 写实室内环境图——{species}角色的私人起居房间，前后景分明。"
-    parts = [
-        head,
-        "画面必须包含角色本人：全身或膝上构图，房间环境是视觉主体之一。角色动作与位置优先服从用户要求；未指定时自然安排。",
-        _identity_block(ctx),
-    ]
+    reference = "图 1" if ctx.has_reference_image else "参考图"
+    parts = [ROOM_SCENE_TEMPLATE.format(reference=reference, species=species)]
+    appearance = _prompt_clause(ctx.appearance or "")
+    if appearance:
+        parts.append(ROOM_APPEARANCE_TEMPLATE.format(appearance=appearance))
     if ctx.has_reference_image:
-        parts.append(
-            "图 2 是用户提供的场景参考：参考房间布局、家具、材质、色彩、光线与镜头视角，"
-            "优先于下文的默认陈设与光线建议；与用户文字要求冲突时以文字要求为准。"
-            "图 2 可以含有人物；用户要求模仿姿势时，让图 1 的角色采用相似的动作、朝向与画面位置，"
-            "按该角色的物种与肢体结构自然调整，不受图 1 原姿势限制。"
-            "不要复制图 2 人物的脸、身份、身材或穿着，也不要把其中的人物额外画进成品；"
-            "最终只保留图 1 的角色，输出一个完整房间场景。",
-        )
+        parts.append(ROOM_SCENE_REFERENCE)
     outfit = _prompt_clause(ctx.outfit_description or "")
-    if outfit:
-        parts.append(
-            f"角色当前穿着：{outfit}。服装、配色、发型与配饰以这段当前穿着描述为准，"
-            "优先于所有参考图中的穿着，并在本次房间场景中保持这套搭配。",
-        )
-    elif ctx.has_reference_image:
-        parts.append("角色穿着沿用图 1，不采用图 2 人物的服装、发型或配饰。")
+    parts.append(
+        ROOM_OUTFIT_TEMPLATE.format(outfit=outfit) if outfit else ROOM_KEEP_OUTFIT_TEMPLATE.format(reference=reference),
+    )
     brief = _prompt_clause(ctx.brief or "")
     if brief:
-        parts.append(f"房间陈设：{brief}。")
-    parts.append(f"光线与色彩：{lighting}")
+        parts.append(ROOM_BRIEF_TEMPLATE.format(brief=brief))
+    parts.append(ROOM_LIGHTING_TEMPLATE.format(lighting=lighting))
     notes = _prompt_clause(ctx.notes or "")
     if notes:
-        parts.append(f"房间补充要求（优先于陈设与光线建议，不改变角色身份、当前穿着和画面规则）：{notes}。")
+        parts.append(ROOM_NOTES_TEMPLATE.format(notes=notes))
     parts.append(HARD_RULES_ZH)
-    return " ".join(parts)
+    return "\n".join(parts)

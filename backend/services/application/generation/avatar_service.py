@@ -17,6 +17,8 @@ from components import (
 )
 from modules.companion import AvatarAsset, ImageReviseMode, Persona
 from prompts.generation import (
+    AVATAR_PRESENTATION_REFERENCE,
+    AVATAR_REFERENCE_TEMPLATE,
     EDIT_PRESERVE_3D_BACK,
     EDIT_PRESERVE_3D_FRONT,
     EDIT_PRESERVE_FULLBODY,
@@ -819,7 +821,7 @@ async def regenerate_avatar_from_image(
     presentation_content_type: str | None = None,
     style: str = _DEFAULT_STYLE,
 ) -> AvatarAsset:
-    """以用户上传图作为主体参考重新生成立绘；可选的 presentation_data 作为风格参考，仅多参考图供应商会消费。"""
+    """以用户上传图作为主体参考重新生成立绘；可选的 presentation_data 作为风格参考，与主体图按统一拼图规则传入。"""
     if user_id is None:
         raise ValueError("user_id is required")
     persona = await _verified_persona(db, user_id, persona)
@@ -831,6 +833,12 @@ async def regenerate_avatar_from_image(
         await asyncio.to_thread(build_data_uri, presentation_data, presentation_content_type or "image/png")
         if presentation_data is not None
         else None
+    )
+    avatar_prompt = AVATAR_REFERENCE_TEMPLATE.format(
+        reference="图 1" if secondary_uri else "参考图",
+        presentation=AVATAR_PRESENTATION_REFERENCE if secondary_uri else "",
+        description=avatar_prompt,
+        feedback=(description or "").strip() or "无",
     )
     asset = await _generate_avatar_step(
         db,
@@ -1534,7 +1542,6 @@ async def prepare_fullbody_prompt(
             personality=personality_text,
             feedback=effective_feedback or None,
             has_user_reference=False,
-            identity_anchor="reference-self-source",
             canvas_aspect=_fullbody_aspect_for(rig_type),
         )
     if kind == "front-2d":
@@ -1553,7 +1560,6 @@ async def prepare_fullbody_prompt(
             feedback=effective_feedback or None,
             appearance=appearance,
             personality=personality,
-            identity_anchor="reference-self-source",
             canvas_aspect=_fullbody_aspect_for(rig_type),
         )
     asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
@@ -1581,7 +1587,6 @@ async def prepare_fullbody_prompt(
         feedback=effective_feedback or None,
         appearance=appearance,
         personality=personality,
-        identity_anchor="reference-self-source",
         canvas_aspect=_fullbody_aspect_for(rig_type),
     )
 
@@ -1630,7 +1635,6 @@ async def adopt_fullbody_seed(
                 personality=personality_text,
                 feedback=None,
                 has_user_reference=False,
-                identity_anchor="reference-self-source",
                 canvas_aspect=_fullbody_aspect_for(rig_type),
             )
             return await _install_fullbody_seed(

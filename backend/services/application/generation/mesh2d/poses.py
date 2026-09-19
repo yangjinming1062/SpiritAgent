@@ -13,6 +13,12 @@ from components import (
 )
 from numpy.typing import NDArray
 from PIL import Image, ImageDraw, ImageFilter, ImageOps
+from prompts.generation import (
+    BLINK_EDIT_PROMPT,
+    PEEK_POSE_PROMPT_TEMPLATE,
+    POSE_CHROMA_BACKGROUND_TEMPLATE,
+    POSE_TRANSPARENT_BACKGROUND,
+)
 from pydantic import BaseModel, Field
 
 from services.infrastructure.assets import asset_store
@@ -441,24 +447,6 @@ _PEEK_FIELDS: dict[Side, _PeekFields] = {
 }
 
 
-def _transparent_background_sentences() -> list[str]:
-    return [
-        "在本次生成中直接输出带真实 Alpha 通道的透明背景 PNG。",
-        "画面只包含角色，所有背景区域均为透明。",
-        "不要白底、黑底、彩色底，不要把棋盘格绘制成背景。",
-        "保留发丝、轮廓抗锯齿和角色原有的半透明材质，",
-        "边缘干净平滑，无残留底色、外部背景投影、文字或水印。",
-    ]
-
-
-def _chroma_background_sentences(color: str) -> list[str]:
-    return [
-        f"背景是唯一指定的{color}，整幅背景完全均匀一致直到画布四边：",
-        "不含任何纹理、渐变、棋盘格图案、投影、晕影，光线不得溢染到背景上。",
-        "画面只包含角色和该纯色背景，不出现任何文字或水印。",
-    ]
-
-
 def build_peek_prompt(
     side: Side,
     *,
@@ -471,50 +459,12 @@ def build_peek_prompt(
     if background == "chroma":
         if not chroma_color:
             raise ValueError("色幕背景必须提供 chroma_color")
-        background_sentences = _chroma_background_sentences(chroma_color)
+        background_prompt = POSE_CHROMA_BACKGROUND_TEMPLATE.format(color=chroma_color)
     else:
         if chroma_color:
             raise ValueError("chroma_color 只能在色幕背景下使用")
-        background_sentences = _transparent_background_sentences()
-    f = _PEEK_FIELDS[side]
-    lines = [
-        f"使用唯一提供的参考图，绘制同一角色从画面{f.source_edge}侧向{f.lean_dir}探身的全身插画。",
-        "参考图只提供角色身份、服装、身体比例与画风，不提供目标姿势或背景。",
-        "",
-        "保持同一角色的脸型、五官、物种、发型发色、身体比例、服装、",
-        "配色、配饰及标志性细节。保留服装和身体上的不对称设计，",
-        "不要镜像角色，不要重新设计服装，不要替换画风。",
-        "只改变姿态、画面布局和以下指定的背景。",
-        "",
-        "使用方形 1:1 画布。所有左右方向均指观察者看到的画面左右。",
-        "把画布横向正中央作为一条不可见的竖直接触线。",
-        "这条线只用于安排动作，不要画出线条、墙、门、屏幕、板材或家具。",
-        "",
-        f"角色的骨盆、双腿和双脚主要位于画面{f.body_half}，保持放松而稳定的支撑。",
-        f"从腰部开始自然向{f.lean_dir}侧弯，胸廓向{f.lean_dir}移动，肩部跟随胸廓探出。",
-        f"使完整面部、靠近探出方向的肩部和部分上胸明显进入画面{f.peek_half}，",
-        "形成上半身从边缘后方探出来的动作。",
-        "",
-        "腰背、胸廓、肩部和颈部形成连续、舒展的动作关系。",
-        "头部自然跟随肩部，面部朝向观众，双眼自然睁开，表情温和好奇。",
-        "不要只歪头而让肩胸留在原位，不要把直立角色整体旋转成斜站姿，",
-        f"不要弯腰鞠躬，也不要让骨盆和双腿一起大幅向{f.lean_dir}倾倒。",
-        "",
-        "双臂自然弯曲，两只手沿中央接触位置一上一下轻扶。",
-        "上方手接近下颌高度，下方手接近上胸高度。",
-        "手肘自然放松，手掌、手腕、前臂和上臂连接合理，",
-        "手指轻轻弯曲，如同轻扣一条竖直边缘，不握拳、不悬空。",
-        "不要出现额外手臂、额外手指、断开的肢体或扭曲关节。",
-        "",
-        "素材中绘制完整角色，从头顶到双脚及鞋履全部入画，",
-        "参考图已有的身体附属结构同样完整保留。",
-        "上下各留约 8% 的安全空间，左右轮廓不要贴到画布边缘。",
-        "不要实际遮掉角色，不要裁成半身图，不要删除下半身。",
-        "角色在素材中完整可见，屏幕边缘的遮挡不需要画进图片。",
-        "",
-        *background_sentences,
-    ]
-    return "\n".join(lines)
+        background_prompt = POSE_TRANSPARENT_BACKGROUND
+    return PEEK_POSE_PROMPT_TEMPLATE.format(f=_PEEK_FIELDS[side], background_prompt=background_prompt)
 
 
 def build_pose_side_prompt(side: Side) -> str:
@@ -603,14 +553,7 @@ async def _finish_pose(
     face = _to_px(landmarks.face)
     eyes = _to_px(landmarks.eyes, as_int=True)
     closed_raw = await generate_image(
-        "Create the closed-eye frame of a gentle blink for the supplied character illustration.\n\n"
-        "The source image defines the finished character, pose, style, colors, background, and pixel registration. "
-        "Use it as the full-frame editing canvas. The editable region consists of both eyelids and the immediately "
-        "adjacent eye pixels. Render both eyes fully closed at the same instant, with natural eyelid curves that "
-        "follow the existing eye positions, facial perspective, and drawing style. Preserve the relaxed expression.\n\n"
-        "All pixels outside the editable eye region retain their original appearance and coordinates. Deliver the "
-        "complete image at the source dimensions and framing, so the edited eyelids align with the original face "
-        "when the two frames are overlaid.",
+        BLINK_EDIT_PROMPT,
         raw,
         image_chain,
     )

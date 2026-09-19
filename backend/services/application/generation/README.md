@@ -42,7 +42,7 @@ see-through 的 Gradio 入参必须使用 FileData，魔搭使用专用 API 域�
 
 ## 自备图（提示词与采纳）
 
-生成与采纳共用 `_install_fullbody_seed` 等安装入口，保持字段、元数据、事件和旧文件清理一致。契约见 [PIPELINE §1.1.2](../../../../docs/PIPELINE.md#112-用户自备图)；本模块 `identity_anchor` 恒为 `reference-self-source`，上传沿用既有 MIME、大小和图像校验，不宣称额外完成 AI 身份或内容审核。
+生成与采纳共用 `_install_fullbody_seed` 等安装入口，保持字段、元数据、事件和旧文件清理一致。契约见 [PIPELINE §1.1.2](../../../../docs/PIPELINE.md#112-用户自备图)；自备图与内部生成共用参考图改写模板，上传沿用既有 MIME、大小和图像校验，不宣称额外完成 AI 身份或内容审核。
 
 房间 `source=user_upload` 的 pending 行不启动生成、不参加 AI 恢复，只由采纳或放弃收敛。
 

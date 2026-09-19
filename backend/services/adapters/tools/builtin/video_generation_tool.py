@@ -3,6 +3,7 @@ import json
 from datetime import timedelta
 
 from components import SESSION_LOCAL, SETTINGS, get_logger, tool_error, utc_now
+from prompts.generation import SELF_VIDEO_REFERENCE_TEMPLATE
 from prompts.tools import (
     VIDEO_GENERATION_DESC,
     VIDEO_GENERATION_PARAM_DESCS,
@@ -41,6 +42,7 @@ async def video_generation_tool(
             first_frame_image = await resolve_self_reference_data_uri(user_id)
         except AvatarGenerationError as e:
             return tool_error(str(e))
+        prompt = SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
     if not isinstance(duration, int) or not 4 <= duration <= 15:
         return tool_error("duration must be an integer between 4 and 15 seconds")
     if resolution not in ("512P", "768P", "1080P", "2K"):

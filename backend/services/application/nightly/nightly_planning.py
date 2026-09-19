@@ -33,6 +33,12 @@ from modules.companion import (
 from modules.media import VideoGenJob
 from modules.scheduler import NightlyActivityAction, NightlyActivityLog
 from modules.settings import UserSetting
+from prompts.generation import (
+    NIGHTLY_SELF_VIDEO_REFERENCE_TEMPLATE,
+    SELF_IMAGE_CURRENT_OUTFIT,
+    SELF_IMAGE_OUTFIT_REFERENCE,
+    SELF_IMAGE_REFERENCE_TEMPLATE,
+)
 from prompts.nightly import PLANNING_SYSTEM_PROMPT
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
@@ -1315,11 +1321,10 @@ async def _execute_media_image(
     identity = outfit = None
     if parsed_args.depicts_self is True:
         identity, outfit = await _current_visual_references(user_id)
-        prompt = (
-            "Use the supplied reference 1 only as the character's identity anchor and reference 2, if present, "
-            "only as the currently worn full-body outfit. Preserve face, body, species, clothing, colors, hair, "
-            "and accessories while creating one new unified scene; do not reproduce a reference sheet or labels.\n\n"
-            + prompt
+        prompt = SELF_IMAGE_REFERENCE_TEMPLATE.format(
+            reference="图 1" if outfit else "参考图",
+            outfit=SELF_IMAGE_OUTFIT_REFERENCE if outfit else SELF_IMAGE_CURRENT_OUTFIT,
+            prompt=prompt,
         )
     urls = await generate_images(
         prompt,
@@ -1377,11 +1382,7 @@ async def _execute_media_video(
     first_frame = None
     if parsed_args.depicts_self is True:
         first_frame = await resolve_self_reference_data_uri(user_id)
-        prompt = (
-            "Animate the supplied character reference as one continuous shot. Preserve the exact identity, body, "
-            "clothing, colors, hair, and accessories; keep motion anatomically natural and do not introduce another "
-            "character, identity change, scene cut, text, or watermark.\n\n" + prompt
-        )
+        prompt = NIGHTLY_SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
     try:
         duration = int(parsed_args.duration)
     except (TypeError, ValueError):

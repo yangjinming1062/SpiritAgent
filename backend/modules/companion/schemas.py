@@ -168,7 +168,7 @@ class OutfitCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     description: str | None = Field(default=None, max_length=500)
-    # 服装参考图（可选）：与身份锚点（正面种子）构成双参考，仅多参考图供应商消费
+    # 服装参考图（可选）：先与文字要求整合为着装描述，不直传生图
     image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
     content_type: str | None = Field(default=None, max_length=64)
 

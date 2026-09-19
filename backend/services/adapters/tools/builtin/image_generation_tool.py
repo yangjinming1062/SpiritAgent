@@ -1,6 +1,7 @@
 import json
 
 from components import get_logger, tool_error
+from prompts.generation import SELF_IMAGE_KEEP_OUTFIT, SELF_IMAGE_REFERENCE_TEMPLATE
 from prompts.tools import IMAGE_GENERATION_DESC, IMAGE_GENERATION_PARAM_DESCS
 
 from services.application.generation import (
@@ -35,6 +36,11 @@ async def image_generation_tool(
             reference_image = await resolve_self_reference_data_uri(user_id)
         except AvatarGenerationError as e:
             return tool_error(str(e))
+        prompt = SELF_IMAGE_REFERENCE_TEMPLATE.format(
+            reference="图 1" if secondary_reference_image else "参考图",
+            outfit=SELF_IMAGE_KEEP_OUTFIT,
+            prompt=prompt,
+        )
     try:
         urls = await generate_images(
             prompt,
