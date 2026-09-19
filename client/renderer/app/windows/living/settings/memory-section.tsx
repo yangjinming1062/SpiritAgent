@@ -6,7 +6,7 @@ import { $memoryBrowserTab, type MemoryTab, setMemoryBrowserTab } from '@/module
 import { $systemPresets, fetchSystemPresets } from '@/modules/conversation'
 import { useGatewayRequest } from '@/shared'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS } from '@/shared/panel'
+import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS, PanelSelect } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
@@ -52,20 +52,16 @@ export function MemorySection(): React.ReactElement {
     <section>
       <label className="mb-3 block">
         {dict.settings.memory.presetLabel}
-        <select
-          className={INPUT_CLASS}
-          onChange={event => {
+        <PanelSelect
+          ariaLabel={dict.settings.memory.presetLabel}
+          onChange={next => {
             setMemoryBrowserTab('active')
-            setPresetId(event.target.value)
+            setPresetId(next)
           }}
+          options={presets.map(preset => ({ value: preset.id, label: preset.name }))}
           value={presetId}
-        >
-          {presets.map(preset => (
-            <option key={preset.id} value={preset.id}>
-              {preset.name}
-            </option>
-          ))}
-        </select>
+          widthClass="w-full"
+        />
       </label>
       <ScopedMemorySection key={presetId} presetId={presetId} />
     </section>

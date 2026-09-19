@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, INPUT_CLASS } from '@/shared/panel'
+import { BTN_GHOST, PanelSelect } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 import { fetchPsdWithCache } from '../mesh2d/psd-opfs-cache'
@@ -280,18 +280,13 @@ export function AssetPackPreview({
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {mode === 'front' ? (
-          <select
-            aria-label={t.action}
-            className={cn(INPUT_CLASS, 'min-w-0 flex-1')}
-            onChange={event => setAction(event.target.value)}
+          <PanelSelect
+            ariaLabel={t.action}
+            onChange={setAction}
+            options={PREVIEW_ACTIONS.map(value => ({ value, label: t.actions[value] }))}
             value={action}
-          >
-            {PREVIEW_ACTIONS.map(value => (
-              <option key={value} value={value}>
-                {t.actions[value]}
-              </option>
-            ))}
-          </select>
+            widthClass="min-w-0 flex-1"
+          />
         ) : (
           <>
             <button
