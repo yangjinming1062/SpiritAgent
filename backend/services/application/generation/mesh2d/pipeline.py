@@ -3,11 +3,17 @@
 import asyncio
 import base64
 import hashlib
+import io
 import json
+from collections.abc import Callable, Mapping
+from contextlib import suppress
+from functools import partial
+from pathlib import Path
 
 from components import SESSION_LOCAL, SETTINGS, get_logger, track_user_task
 from modules.companion import AvatarAsset, Companion2DModel, CompanionOutfit
 from modules.ws import emit_ws_event
+from PIL import Image
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,10 +21,21 @@ from services.infrastructure.assets import asset_store
 from services.infrastructure.seethrough import split_to_psd
 
 from ..avatar_service import get_avatar_job_lock, load_avatar_bytes_as_data_uri, normalize_avatar_url_to_bare
+from .appearance import (
+    AppearanceError,
+    SourceAppearance,
+    load_source_appearance,
+    rebuild_source_locked,
+    run_gate,
+)
+from .appearance.trace import report_json, save_trace
 from .poses import Side, compose_pose_pack, compose_single_pose_from_image, generate_single_pose
 from .priority_queue import get_default_queue
 
 logger = get_logger(__name__)
+
+# 外观阶段超过预算即失败；线程无法强杀，失败/取消仍等待该阶段收尾，避免后台遗留任务。
+_APPEARANCE_STAGE_TIMEOUT_SECONDS = 120.0
 
 
 class Mesh2DPipelineError(RuntimeError):
@@ -67,6 +84,98 @@ async def _safe_load_avatar_bytes(url: str) -> bytes:
     return await asyncio.to_thread(base64.b64decode, b64)
 
 
+async def _run_appearance_work[T](work: Callable[[], T]) -> T:
+    task = asyncio.create_task(asyncio.to_thread(work), name="mesh2d.appearance")
+    try:
+        return await asyncio.wait_for(asyncio.shield(task), timeout=_APPEARANCE_STAGE_TIMEOUT_SECONDS)
+    except (Exception, asyncio.CancelledError) as exc:
+        cancelled = isinstance(exc, asyncio.CancelledError)
+        # 父任务可能在收尾期间再次取消；不能把取消继续传给持有线程结果的 task。
+        while not task.done():
+            try:
+                await asyncio.shield(task)
+            except asyncio.CancelledError:
+                cancelled = True
+            except Exception:
+                break
+        with suppress(asyncio.CancelledError):
+            task.exception()
+        if cancelled:
+            raise asyncio.CancelledError from exc
+        raise
+
+
+async def _save_appearance_trace(root: Path, files: Mapping[str, bytes | str]) -> None:
+    """诊断落盘失败只记日志，不掩盖外观阶段的真实失败原因。"""
+    try:
+        await _run_appearance_work(partial(save_trace, root, files))
+    except Exception:
+        logger.exception("appearance trace save failed under %s", root)
+
+
+async def _appearance_stage(user_id: int, source: SourceAppearance, source_png: bytes, raw_psd: bytes) -> bytes:
+    """原图锁定重建 + 外观门禁。失败保存诊断产物并抛错——未通过验收的资产
+    不得写库发布（门禁位于 succeeded/激活状态更新之前）。"""
+    trace_root = Path(SETTINGS.data_dir) / "appearance-trace" / f"u{user_id}"
+    stage = "rebuild"
+    try:
+        rebuilt = await _run_appearance_work(partial(rebuild_source_locked, source, raw_psd))
+        stage = "gate"
+        gate = await _run_appearance_work(partial(run_gate, rebuilt, source))
+    except AppearanceError as exc:
+        await _save_appearance_trace(
+            trace_root,
+            {
+                "source.png": source_png,
+                "provider.psd": raw_psd,
+                "report.json": report_json({"stage": stage, "code": exc.code, "error": str(exc)}),
+            },
+        )
+        raise Mesh2DPipelineError(f"2D 外观处理失败（{exc.code}），请重试") from exc
+    except Exception as exc:
+        # 外观链内部意外异常同样落诊断（阶段标记 INTERNAL），再按管线失败收敛。
+        await _save_appearance_trace(
+            trace_root,
+            {
+                "source.png": source_png,
+                "provider.psd": raw_psd,
+                "report.json": report_json({"stage": "appearance", "code": "INTERNAL", "error": repr(exc)}),
+            },
+        )
+        raise Mesh2DPipelineError("2D 外观处理内部错误，请重试") from exc
+
+    trace_files = {
+        "source.png": source_png,
+        "provider.psd": raw_psd,
+        "rebuilt.psd": rebuilt.psd_bytes,
+        "report.json": report_json(
+            {
+                "stage": "gate",
+                "transform": {
+                    "scale": rebuilt.transform.scale,
+                    "offset": [rebuilt.transform.offset_x, rebuilt.transform.offset_y],
+                },
+                "layers_bottom_to_top": rebuilt.layer_names_bottom_to_top,
+                "layer_stats": [vars(stat) for stat in rebuilt.layer_stats],
+                "gate": gate.to_json(),
+            },
+        ),
+    }
+    if gate.composite is not None:
+        trace_files["composite.png"] = await _run_appearance_work(partial(_png_bytes, gate.composite))
+    await _save_appearance_trace(trace_root, trace_files)
+
+    if not gate.passed:
+        raise Mesh2DPipelineError(f"2D 外观验收未通过（{gate.code or 'QUALITY_FAILED'}），已停止发布，请重试")
+    return rebuilt.psd_bytes
+
+
+def _png_bytes(image: Image.Image) -> bytes:
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 async def _generate(
     user_id: int,
     fullbody_bytes: bytes,
@@ -74,12 +183,17 @@ async def _generate(
 ) -> tuple[str, list[dict[str, str]]]:
     paths: list[str] = []
     try:
+        source = await _run_appearance_work(partial(load_source_appearance, fullbody_bytes))
+        # 拆分提交、姿态参考与门禁基准共用标准化原图：自备图可能是 WebP/GIF 等，
+        # 统一重编码 PNG（EXIF 方向已修正），供应商与姿态链所见和验收基准一致。
+        submission = await _run_appearance_work(partial(_png_bytes, source.canonical))
         async with asyncio.timeout(SETTINGS.seethrough_total_budget_seconds), asyncio.TaskGroup() as tasks:
-            psd_task = tasks.create_task(split_to_psd(fullbody_bytes))
-            poses_task = tasks.create_task(compose_pose_pack(fullbody_bytes, user_id, user_poses))
+            psd_task = tasks.create_task(split_to_psd(submission))
+            poses_task = tasks.create_task(compose_pose_pack(submission, user_id, user_poses))
         poses, textures = poses_task.result()
+        source_locked_psd = await _appearance_stage(user_id, source, submission, psd_task.result())
         psd_path = await asset_store.save_companion_asset_async(
-            psd_task.result(),
+            source_locked_psd,
             user_id=user_id,
             label="2d_psd",
             ext="psd",
@@ -105,7 +219,8 @@ async def _generate(
     except (Exception, asyncio.CancelledError) as exc:
         for path in paths:
             await asyncio.to_thread(asset_store.unlink_companion_asset, path)
-        if isinstance(exc, asyncio.CancelledError):
+        # Mesh2DPipelineError 已携带面向用户的具体原因（如外观验收未通过），原样上抛。
+        if isinstance(exc, (asyncio.CancelledError, Mesh2DPipelineError)):
             raise
         logger.warning("2d asset generation failed", exc_info=True, extra={"user_id": user_id})
         raise Mesh2DPipelineError("2D 资产生成失败，请重试") from exc

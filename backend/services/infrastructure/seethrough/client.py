@@ -5,7 +5,9 @@
 两路都失败抛 SeeThroughError，由调用方落失败态（无 CPU 兜底链）。
 
 社区算力休眠、排队与推理耗时不可控：提交、推理、下载三段各有独立超时（SETTINGS 热调），
-再受总预算约束——不用单个大而全的读超时掩盖阶段停滞。"""
+再受总预算约束——不用单个大而全的读超时掩盖阶段停滞。提交 MIME 按文件魔数探测；
+下载结果只做 PSD 签名与大小校验，外观是否合格由调用方（mesh2d.appearance）
+以原图锁定重建 + 门禁判定，本模块不以“下载成功”代替外观合格。"""
 
 import asyncio
 import json
@@ -20,12 +22,22 @@ from components import SETTINGS, get_logger
 logger = get_logger(__name__)
 
 _MIN_PSD_BYTES = 10240
+_PSD_SIGNATURE = b"8BPS"
 # 主用耗尽预算后，备用路至少要留这么多秒，否则直接跳过（唤醒都来不及）。
 _FALLBACK_MIN_BUDGET_SECONDS = 60.0
 _QUOTA_COOLDOWN_SECONDS = 6 * 3600.0
 _QUOTA_SIGNALS = ("quota", "exceeded", "rate limit", "too many", "sign in", "daily")
 
 _primary_quota_until = 0.0
+
+
+def _sniff_image_mime(data: bytes) -> str:
+    """按魔数判定提交 MIME；仅接受 PNG/JPEG，其余直接报错，避免服务端按错误类型解码。"""
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    raise SeeThroughError("unsupported source image type: expected PNG or JPEG")
 
 
 class SeeThroughError(RuntimeError):
@@ -77,13 +89,17 @@ def _provider_file_url(base: str, url: str) -> str:
 async def split_to_psd(
     image_bytes: bytes,
     *,
-    mime: str = "image/jpeg",
+    mime: str | None = None,
     resolution: int = 1024,
     seed: int = 0,
     tblr_split: bool = True,
 ) -> bytes:
-    """主用 HF、备用魔搭各试一次（单 provider 均不重试，额度保护）；返回 PSD 字节。"""
+    """主用 HF、备用魔搭各试一次（单 provider 均不重试，额度保护）；返回 PSD 字节。
+
+    mime 缺省时按文件魔数探测；返回内容仅是候选分层，调用方必须执行
+    原图锁定重建与外观门禁后方可发布（mesh2d.appearance）。"""
     global _primary_quota_until
+    mime = mime or _sniff_image_mime(image_bytes)
     deadline = time.monotonic() + SETTINGS.seethrough_total_budget_seconds
     stages = _StageTimeouts.from_settings()
     fallback_base = SETTINGS.seethrough_fallback_base or None
@@ -317,6 +333,8 @@ async def _download(
     resp = await client.get(url, follow_redirects=True, headers=headers, timeout=timeout)
     resp.raise_for_status()
 
+    if not resp.content.startswith(_PSD_SIGNATURE):
+        raise SeeThroughError("downloaded split result is not a PSD file")
     if len(resp.content) < _MIN_PSD_BYTES:
         raise SeeThroughError(f"psd suspiciously small: {len(resp.content)} bytes")
 

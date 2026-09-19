@@ -18,7 +18,7 @@
 
 2D 编排管理队列、分支、入库和事件，传输由 [seethrough](../../infrastructure/seethrough/)提供。当前 2D 显示任务优先，备用生成低优先级；完整包就绪后才发布，并再次核对身份和穿着意图。失败不激活新资产。
 
-see-through 的 Gradio 入参必须使用 FileData，魔搭使用专用 API 域与 Bearer。错误统一交给编排落状态；后端不解析 PSD，不引入 psd-tools。供应商重试与总预算在能力链维护，不在各入口另设无限重试。
+see-through 的 Gradio 入参必须使用 FileData，魔搭使用专用 API 域与 Bearer。错误统一交给编排落状态。拆分结果只是候选分层：发布前由 [mesh2d/appearance](mesh2d/appearance/README.md) 解析 PSD（psd-tools）执行原图锁定重建与外观门禁，未通过不发布；诊断产物与验收口径见其 README。供应商重试与总预算在能力链维护，不在各入口另设无限重试。
 
 ## 外观激活与恢复
 

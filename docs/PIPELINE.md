@@ -98,6 +98,8 @@
 
 see-through 分层拆分是面向动漫插画的扩散式分层生成模型，不是纯抠图：输出 PSD 的每个语义图层都由模型重绘并补全遮挡区域，且非方形输入会先被填充、画幅重采样到服务配置的分辨率。因此 2D 链的输入必须是动漫插画风格——写实或照片级输入会明显劣化（面部重绘发灰失真、五官塌陷），原图背景也可能被并入图层、随角色一起渲染到桌面。该域限制是 2D 链画风分槽的唯一依据：2D 正面种子的生成 / 确认 / 采纳、换装立绘及其自备图提示词，画风恒为服务端固定的 `anime_2d_illustration`（`MESH2D_STYLE`，定义见 [prompt_engineer](../backend/services/infrastructure/llm/prompt_engineer.py)）；3D 种子画风按物种路由（类人 `refined_anime_cg` / 非人 `realistic`），两条链不得为观感统一而重新合并。写实风格的角色呈现应走 3D 链。
 
+拆分输出按候选分层处理：发布前由 [mesh2d/appearance](../backend/services/application/generation/mesh2d/appearance/README.md) 以标准化原图执行原图锁定重建（可见区域回填原图像素、生成内容仅保留在不透明遮挡补全区、按客户端运行时层序与 cleanAlpha 口径归属）并执行外观门禁——验收对象是重建 PSD 实际图层的重合成结果，与原图逐像素比较（全局与脸部 ΔE00、脸区连续异常色块、前景透明度与透明源孔洞、内部前景覆盖率），未通过不发布、不激活，保留上一版合格外观，诊断产物按任务隔离保留在 `appearance-trace`。拆分提交统一使用标准化原图重编码的 PNG（EXIF 方向已修正，自备图支持任意 PIL 可解码格式），提交 MIME 按文件魔数探测，下载结果校验 PSD 签名。
+
 确认立绘并行进入分层 PSD 拆分和左右扶边姿态生成，两条分支完成后发布完整描述符、资产哈希及就绪事件。新外观完整就绪前不替换当前穿着；同用户激活资产受唯一性约束。
 
 分层服务采用主备供应商和共享总预算，供应商内不无限重试。提交、轮询、下载、限额冷却与当前参数见 [see-through](../backend/services/infrastructure/seethrough/)。
