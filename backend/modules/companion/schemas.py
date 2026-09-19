@@ -35,8 +35,6 @@ class AvatarAssetResponse(BaseModel):
     seed_front_3d_url: str = ""
     seed_back_url: str = ""
     supports_multiview: bool = False
-    # 已选 fullbody 风格；与 AvatarAsset.seed_front_2d_url 组合作为全身确认阶段的 resume 入口。
-    fullbody_style: str = ""
     prompt: str = ""
     status: SucceededStatus = "succeeded"
 
@@ -53,7 +51,6 @@ class FullbodyReferenceGenerateRequest(BaseModel):
 class Fullbody2dFrontGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    style: str = Field(default="refined_anime_cg", max_length=64)
     feedback: str | None = Field(default=None, max_length=500)
     mode: ImageReviseMode
 
@@ -69,7 +66,6 @@ class Fullbody3dSeedGenerateRequest(BaseModel):
 class FullbodyConfirmFrontRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    style: str | None = Field(default=None, max_length=64)
     front_url: str | None = Field(default=None, max_length=2048)
 
 
@@ -80,7 +76,6 @@ FullbodySeedKind = Literal["reference", "front-2d", "front-3d", "back"]
 class FullbodyPromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    style: str | None = Field(default=None, max_length=64)
     feedback: str | None = Field(default=None, max_length=500)
 
 
@@ -89,8 +84,6 @@ class FullbodyAdoptRequest(BaseModel):
 
     image: str = Field(min_length=1, max_length=8 * 1024 * 1024)
     content_type: str | None = Field(default=None, max_length=64)
-    # 仅 front-2d 消费：采纳后随行持久化（与 front-2d 生成的画风语义一致）
-    style: str | None = Field(default=None, max_length=64)
 
 
 class ImagePromptResponse(BaseModel):
@@ -159,7 +152,6 @@ class ModelGenerateRequest(BaseModel):
 class Companion2DModelResponse(BaseModel):
     id: int
     status: str = "generating"
-    style: str = "refined_anime_cg"
     manifest_url: str | None = None
     layer_urls: dict[str, str] = Field(default_factory=dict)
     content_hash: str | None = None
@@ -228,7 +220,6 @@ class OutfitResponse(BaseModel):
     name: str
     description: str | None = None
     fullbody_url: str = ""
-    style: str = "refined_anime_cg"
     # draft → splitting → ready | failed | expired
     status: str = "draft"
     active: bool = False

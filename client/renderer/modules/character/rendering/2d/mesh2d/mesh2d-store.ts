@@ -22,7 +22,6 @@ export type Mesh2DStatus = 'idle' | 'generating' | 'succeeded' | 'failed'
 interface Mesh2DInfo {
   id: number | null
   status: Mesh2DStatus
-  style: string
   manifestUrl: string | null
   layerUrls: Record<string, string>
   contentHash: string | null
@@ -32,7 +31,6 @@ interface Mesh2DInfo {
 interface Mesh2DResponse {
   id?: number
   status?: string
-  style?: string
   manifest_url?: string | null
   layer_urls?: Record<string, string>
   content_hash?: string | null
@@ -45,8 +43,7 @@ const DEFAULT_MESH2D_INFO: Mesh2DInfo = {
   id: null,
   layerUrls: {},
   manifestUrl: null,
-  status: 'idle',
-  style: 'refined_anime_cg'
+  status: 'idle'
 }
 
 function isPersistableMesh2D(val: unknown): val is Mesh2DInfo {
@@ -109,8 +106,7 @@ export async function hydrateMesh2D(): Promise<void> {
       id: mesh2d.id ?? null,
       layerUrls: mesh2d.layer_urls ?? {},
       manifestUrl: mesh2d.manifest_url,
-      status: 'succeeded',
-      style: mesh2d.style || 'refined_anime_cg'
+      status: 'succeeded'
     })
   } else if (mesh2d.status === 'generating') {
     setMesh2DInfo({
@@ -119,8 +115,7 @@ export async function hydrateMesh2D(): Promise<void> {
       id: mesh2d.id ?? null,
       layerUrls: {},
       manifestUrl: null,
-      status: 'generating',
-      style: mesh2d.style || 'refined_anime_cg'
+      status: 'generating'
     })
   } else if (mesh2d.status === 'failed') {
     setMesh2DInfo({
@@ -129,8 +124,7 @@ export async function hydrateMesh2D(): Promise<void> {
       id: mesh2d.id ?? null,
       layerUrls: {},
       manifestUrl: null,
-      status: 'failed',
-      style: mesh2d.style || 'refined_anime_cg'
+      status: 'failed'
     })
   }
 }

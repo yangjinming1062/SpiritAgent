@@ -32,7 +32,16 @@ AVATAR_SYSTEM_PROMPT = (
 )
 
 
+# 画风词典按生成链分槽，不得重新合并：anime_2d_illustration 服务 2D 链（MESH2D_STYLE 固定），
+# refined_anime_cg / realistic 服务 3D 种子按物种路由；分槽原因见 docs/PIPELINE.md §6.1。
 FULLBODY_STYLE_WORDING: dict[str, str] = {
+    "anime_2d_illustration": (
+        "高品质二次元动漫插画角色立绘（polished anime-style illustration character art），"
+        "标准动漫插画渲染，不是写实照片、真人摄影或真实材质渲染：五官刻画细腻干净"
+        "（渐层瞳孔、清晰睫毛、柔和唇色），肤色通透均匀，发丝分组分明有光泽；"
+        "轮廓线完整清晰，人物与背景、服装各部件之间色块分界明确；"
+        "服装材质以动漫式高光与透叠层次表达（绸缎、薄纱、皮革等质感分明），光影柔和统一，画面完成度高。"
+    ),
     "refined_anime_cg": (
         "高品质二次元游戏角色 CG 立绘（refined anime-style game character CG illustration），"
         "精致动漫渲染：五官刻画细腻（渐层瞳孔、清晰睫毛、柔和唇色），肤色通透，发丝分明有光泽；"

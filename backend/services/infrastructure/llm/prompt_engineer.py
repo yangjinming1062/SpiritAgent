@@ -21,7 +21,7 @@
 
 import json
 from dataclasses import dataclass, replace
-from typing import Any, Literal
+from typing import Any, Final, Literal
 
 from components import SESSION_LOCAL, safe_json_loads
 from modules.companion import Persona
@@ -51,9 +51,14 @@ from .llm_retry import call_with_retry
 from .providers import ProviderConfig, ServiceType, resolve_context_tokens, try_resolve
 from .responses import build_responses_kwargs
 
-FullbodyStyle = Literal["refined_anime_cg", "realistic"]
+FullbodyStyle = Literal["refined_anime_cg", "anime_2d_illustration", "realistic"]
 
-# 预设物种直接带风格；自定义物种由 LLM 人脸判定路由（见 ``rig_type_selector.classify_species``）
+# 2D 链（2D 正面种子、换装及对应自备图提示词）的服务端固定画风。see-through 分层拆分是
+# 动漫插画域模型，写实或照片级输入会劣化面部并把背景并入图层，因此 2D 画风不随 3D 种子
+# 画风路由，也不消费客户端传参。域限制与分槽决策见 docs/PIPELINE.md §6.1。
+MESH2D_STYLE: Final = "anime_2d_illustration"
+
+# 预设物种直接带 3D 种子画风；自定义物种由 LLM 人脸判定路由（见 ``rig_type_selector.classify_species``）
 _SPECIES_STYLE: dict[str, FullbodyStyle] = {
     "人类": "refined_anime_cg",
     "精灵": "refined_anime_cg",
@@ -258,7 +263,7 @@ async def enhance_avatar_prompt(
 
 
 def resolve_fullbody_style(species: str, has_humanoid_face: bool | None = None) -> FullbodyStyle:
-    """根据物种解析 3D 种子画风路由：类人物种走精绘画风（refined_anime_cg，与 2D 立绘一致），非人物种走写实风格（realistic）。"""
+    """根据物种解析 3D 种子画风路由：类人物种走精绘画风（refined_anime_cg），非人物种走写实风格（realistic）。"""
     preset = _SPECIES_STYLE.get(species.strip())
     if preset is not None:
         return preset

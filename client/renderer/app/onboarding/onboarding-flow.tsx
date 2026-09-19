@@ -503,7 +503,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   const [fullbodyLoading, setFullbodyLoading] = useState(false)
   const [fullbodyLoadingText, setFullbodyLoadingText] = useState('正在为您生成正面全身立绘…')
-  const [fullbodyStyle, setFullbodyStyleState] = useState<string | null>('refined_anime_cg')
+  const [fullbodyStyle, setFullbodyStyleState] = useState<string | null>('anime_2d_illustration')
   const [fullbodyFrontUrl, setFullbodyFrontUrl] = useState<string | null>(null)
   const [fullbodyFrontRawUrl, setFullbodyFrontRawUrl] = useState<string | null>(null)
   const [fullbodyFeedback, setFullbodyFeedback] = useState<string>('')
@@ -882,14 +882,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     if (resolvedUrl) {
       setFullbodyFrontRawUrl(rawFront)
       setFullbodyFrontUrl(resolvedUrl)
-      setFullbodyHistories({ refined_anime_cg: [{ rawUrl: rawFront, previewUrl: resolvedUrl }] })
-      setFullbodyHistoryIndices({ refined_anime_cg: 0 })
+      setFullbodyHistories({ anime_2d_illustration: [{ rawUrl: rawFront, previewUrl: resolvedUrl }] })
+      setFullbodyHistoryIndices({ anime_2d_illustration: 0 })
     } else {
       setFullbodyHint('正面立绘加载失败，请重试')
     }
   }
 
-  const generateFullbodyFrontDirect = async (avatarId: number, styleId = 'refined_anime_cg'): Promise<void> => {
+  const generateFullbodyFrontDirect = async (avatarId: number, styleId = 'anime_2d_illustration'): Promise<void> => {
     setFullbodyLoading(true)
     setFullbodyLoadingText('正在为您生成正面全身立绘…')
     setFullbodyHint(null)
@@ -903,8 +903,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       }>({
         path: `/api/companion/avatar/${avatarId}/fullbody/front-2d`,
         method: 'POST',
+        // 2D 画风由服务端固定，请求不携带 style
         body: {
-          style: styleId,
           mode: 'regenerate'
         }
       })
@@ -921,7 +921,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     const res = await window.spiritagent.api<{ prompt: string }>({
       path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-2d/prompt`,
       method: 'POST',
-      body: { style: 'refined_anime_cg', feedback: fullbodyFeedback.trim() || undefined }
+      body: { feedback: fullbodyFeedback.trim() || undefined }
     })
 
     return res.prompt
@@ -940,7 +940,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       }>({
         path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-2d/adopt`,
         method: 'POST',
-        body: { image: image.base64, content_type: image.contentType, style: 'refined_anime_cg' }
+        body: { image: image.base64, content_type: image.contentType }
       })
 
       await applyFullbodyFrontResponse(res)
@@ -956,7 +956,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       seed_front_2d_url?: string | null
       seed_fullbody_url?: string | null
       id?: number
-      fullbody_style?: string | null
     }>({
       path: '/api/companion/avatar',
       method: 'GET'
@@ -969,7 +968,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       fullbodySeedUrl: avatarRes?.seed_fullbody_url || undefined
     })
 
-    const style = 'refined_anime_cg'
+    const style = 'anime_2d_illustration'
     const seedFrontRaw = avatarRes?.seed_front_2d_url || null
 
     if (seedFrontRaw) {
@@ -1324,7 +1323,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setPresentationRef(null)
 
     setPhase('fullbody-reference')
-    setFullbodyStyleState('refined_anime_cg')
+    setFullbodyStyleState('anime_2d_illustration')
     setFullbodyFrontUrl(null)
     setFullbodyFrontRawUrl(null)
     setFullbodyFeedback('')
@@ -1398,7 +1397,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-2d`,
         method: 'POST',
         body: {
-          style: fullbodyStyle,
           feedback: fullbodyFeedback.trim() || undefined,
           mode
         }
@@ -1457,7 +1455,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
 
     const avatarId = activeAvatarId
-    const style = fullbodyStyle
     const frontUrl = fullbodyFrontRawUrl
 
     setFullbodyLoading(true)
@@ -1472,7 +1469,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         path: `/api/companion/avatar/${avatarId}/fullbody/confirm-front`,
         method: 'POST',
         body: {
-          style,
           front_url: frontUrl || undefined
         }
       })
@@ -2000,7 +1996,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                         {activeAvatarId && (
                           <button
                             className="rounded-full bg-fill-hover px-3 py-1 text-xs text-strong hover:bg-fill-active"
-                            onClick={() => void generateFullbodyFrontDirect(activeAvatarId, 'refined_anime_cg')}
+                            onClick={() => void generateFullbodyFrontDirect(activeAvatarId, 'anime_2d_illustration')}
                             type="button"
                           >
                             重新生成
@@ -2015,7 +2011,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                       <HistoryGallery
                         entries={currentFullbodyHistory}
                         onSelect={onSelectFullbodyHistoryEntry}
-                        selectedIdx={fullbodyHistoryIndices['refined_anime_cg'] ?? currentFullbodyHistory.length - 1}
+                        selectedIdx={
+                          fullbodyHistoryIndices['anime_2d_illustration'] ?? currentFullbodyHistory.length - 1
+                        }
                       />
                     </div>
                   )}

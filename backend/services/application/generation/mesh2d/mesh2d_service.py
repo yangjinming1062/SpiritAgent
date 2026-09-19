@@ -163,7 +163,6 @@ def mesh2d_response(model: Companion2DModel) -> Companion2DModelResponse:
     return Companion2DModelResponse(
         id=model.id,
         status=model.status,
-        style=model.style or "refined_anime_cg",
         manifest_url=manifest_url,
         layer_urls=layer_urls,
         content_hash=model.content_hash,

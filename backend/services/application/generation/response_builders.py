@@ -29,7 +29,6 @@ def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
         seed_front_3d_url=getattr(asset, "seed_front_3d_url", None) or "",
         seed_back_url=getattr(asset, "seed_back_url", None) or "",
         supports_multiview=provider_supports_multiview(),
-        fullbody_style=str(payload.get("fullbody_style") or ""),
         prompt=payload.get("avatar_prompt", ""),
         status="succeeded",
     )
@@ -42,7 +41,6 @@ def outfit_response(outfit: CompanionOutfit) -> OutfitResponse:
         name=outfit.name,
         description=outfit.description,
         fullbody_url=re_sign_bare_path(outfit.fullbody_url) or "",
-        style=outfit.style or "refined_anime_cg",
         status=outfit.status,
         active=outfit.active,
         pending_wear=outfit.pending_wear,

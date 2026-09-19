@@ -374,7 +374,6 @@ async def post_fullbody_front_2d(
             asset = await generate_fullbody_front_2d(
                 user_id=user.id,
                 avatar_id=avatar_id,
-                style=body.style,
                 feedback=body.feedback,
                 mode=body.mode,
             )
@@ -493,7 +492,6 @@ async def post_fullbody_confirm_front(
                 db,
                 user.id,
                 avatar_id=avatar_id,
-                style=body.style,
                 front_url=body.front_url,
             )
     except AvatarNotFoundError as exc:
@@ -549,7 +547,6 @@ async def post_fullbody_prompt(
             avatar_id=avatar_id,
             kind=kind,
             feedback=body.feedback,
-            style=body.style,
         )
     except AvatarGenerationError as exc:
         raise _fullbody_self_source_http_error(exc)
@@ -586,7 +583,6 @@ async def post_fullbody_adopt(
             kind=kind,
             data=raw,
             content_type=content_type or "image/png",
-            style=body.style,
         )
     except AvatarGenerationError as exc:
         raise _fullbody_self_source_http_error(exc)

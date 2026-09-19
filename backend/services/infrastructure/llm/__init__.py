@@ -22,6 +22,7 @@ from .llm_client import (
 from .llm_fallback import execute_with_fallback
 from .llm_retry import LLMRuntimeError, call_with_retry
 from .prompt_engineer import (
+    MESH2D_STYLE,
     FullbodyStyle,
     FullbodyTemplate,
     build_fullbody_prompt,
@@ -101,6 +102,7 @@ __all__ = [
     "ImageGenRequest",
     "ImageGenResult",
     "LLMRuntimeError",
+    "MESH2D_STYLE",
     "MiMoChatProvider",
     "MiMoImageGenProvider",
     "MiMoSTTProvider",

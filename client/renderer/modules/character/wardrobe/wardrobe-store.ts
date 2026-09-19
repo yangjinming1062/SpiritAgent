@@ -18,7 +18,6 @@ interface WardrobeOutfit {
   description: string | null
   fullbodyPath: string | null
   fullbodyUrl: string | null
-  style: string
   status: OutfitStatus
   active: boolean
   pendingWear: boolean
@@ -30,7 +29,6 @@ interface OutfitResponse {
   name: string
   description: string | null
   fullbody_url: string
-  style: string
   status: string
   active: boolean
   pending_wear: boolean
@@ -111,7 +109,6 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
         description: o.description ?? null,
         fullbodyPath,
         fullbodyUrl: old?.fullbodyPath === fullbodyPath ? old.fullbodyUrl : null,
-        style: o.style || 'refined_anime_cg',
         status: (o.status || 'draft') as OutfitStatus,
         active: o.active === true,
         pendingWear: o.pending_wear === true,

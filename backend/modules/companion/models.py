@@ -62,11 +62,6 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 全身立绘裸路径（草稿期 temp-media/，确认后 companion-avatars/），读取时重签名
     fullbody_url: Mapped[str] = mapped_column(String(2048), default="")
-    style: Mapped[str] = mapped_column(
-        String(32),
-        default="refined_anime_cg",
-        server_default=text("'refined_anime_cg'"),
-    )
     # draft → splitting → ready | failed | expired
     status: Mapped[str] = mapped_column(String(16), default="draft", server_default=text("'draft'"), index=True)
     # 审计：用户着装描述 / feedback / 参考图前缀标记，仿 AvatarAsset.prompt_json
@@ -85,11 +80,6 @@ class Companion2DModel(ModelBase, TimestampMixin):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     avatar_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id"), nullable=True)
-    style: Mapped[str] = mapped_column(
-        String(32),
-        default="refined_anime_cg",
-        server_default=text("'refined_anime_cg'"),
-    )
     status: Mapped[str] = mapped_column(
         String(16),
         default="generating",

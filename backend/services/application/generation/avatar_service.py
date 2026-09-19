@@ -30,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.companion import classify_species, get_or_create_persona, load_persona_definition, select_rig_type
 from services.infrastructure.assets import build_data_uri, build_signed_avatar_url, resolve_companion_asset_path
 from services.infrastructure.llm import (
+    MESH2D_STYLE,
     SIZE_TO_ASPECT,
     build_fullbody_prompt,
     build_image_edit_prompt,
@@ -1164,12 +1165,11 @@ async def generate_fullbody_front_2d(
     *,
     avatar_id: int,
     mode: ImageReviseMode,
-    style: str = "refined_anime_cg",
     feedback: str | None = None,
 ) -> AvatarAsset:
-    """按默认精绘画风与用户微调要求生成/重绘 2D 正面种子图。主体参考恒为独立全身种子图，
-    保留身材比例；身份细节以其源头（半身头像 + 角色定义）间接锚定，不回退半身像。
-    mode="edit"（微调）编辑上一版 2D 正面种子，未提及区域逐像素保留。"""
+    """按 2D 专用动漫插画画风（MESH2D_STYLE，服务端固定）与用户微调要求生成/重绘 2D 正面种子图。
+    主体参考恒为独立全身种子图，保留身材比例；身份细节以其源头（半身头像 + 角色定义）间接锚定，
+    不回退半身像。mode="edit"（微调）编辑上一版 2D 正面种子，未提及区域逐像素保留。"""
     if user_id is None:
         raise ValueError("user_id is required")
     asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id, check_sealed=True)
@@ -1195,11 +1195,11 @@ async def generate_fullbody_front_2d(
         ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
         if ref_uri is None:
             raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
-        template = resolve_fullbody_template(species, rig_type, style)
+        template = resolve_fullbody_template(species, rig_type, MESH2D_STYLE)
         prompt = build_fullbody_prompt(
             "front",
             template=template,
-            style_id=style,
+            style_id=MESH2D_STYLE,
             feedback=effective_feedback or None,
             appearance=appearance,
             personality=personality,
@@ -1229,7 +1229,6 @@ async def generate_fullbody_front_2d(
             field="seed_front_2d_url",
             url=front_url,
             metadata={
-                "fullbody_style": style,
                 "fullbody_rig_type": rig_type,
                 "fullbody_feedback": effective_feedback or None,
             },
@@ -1457,7 +1456,6 @@ async def confirm_fullbody_front(
     user_id: int | None = None,
     *,
     avatar_id: int,
-    style: str | None = None,
     front_url: str | None = None,
 ) -> AvatarAsset:
     """确认正面全身图。3D 正面与背面种子图不在引导期生成——它们是 3D 建模输入的派生产物，由 3D 升级路径按需生成（generate_fullbody_front_3d / generate_fullbody_back）。"""
@@ -1473,11 +1471,6 @@ async def confirm_fullbody_front(
 
     if not effective_front_url:
         raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; generate front fullbody first")
-
-    prompt_payload = safe_json_loads(asset.prompt_json, default={})
-    if not isinstance(prompt_payload, dict):
-        prompt_payload = {}
-    effective_style = style or prompt_payload.get("fullbody_style") or "refined_anime_cg"
 
     async def _write(session: AsyncSession) -> AvatarAsset:
         target = await session.get(AvatarAsset, avatar_id)
@@ -1496,7 +1489,6 @@ async def confirm_fullbody_front(
             target.seed_front_2d_url, _, _ = await _persist_portrait_bytes(moved[0], moved[1])
         payload = safe_json_loads(target.prompt_json, default={})
         if isinstance(payload, dict):
-            payload["fullbody_style"] = effective_style
             payload.pop("fullbody_3d_style", None)
             payload.pop("fullbody_3d_feedback", None)
             payload.pop("fullbody_back_feedback", None)
@@ -1517,12 +1509,12 @@ async def prepare_fullbody_prompt(
     avatar_id: int,
     kind: FullbodySeedKind,
     feedback: str | None = None,
-    style: str | None = None,
 ) -> str:
     """自备图提示词：组装用户将拿去外部工具的完整提示词，不做生图。
     前置守卫镜像对应生成函数的重新生成路径；edit 语境不适用（编辑依赖上一版底图，外部工具没有），
     反馈恒并入重新生成语义的反馈槽。onboarding 完成后种子图恒在，提示词恒为参考图锚定变体；
-    种子缺失按 AI 路径同一文案失败，不降级纯文字。"""
+    种子缺失按 AI 路径同一文案失败，不降级纯文字。画风按链路取用：front-2d 恒 MESH2D_STYLE，
+    3D 种子按物种路由。"""
     if user_id is None:
         raise ValueError("user_id is required")
     effective_feedback = feedback.strip() if (feedback and feedback.strip()) else ""
@@ -1552,13 +1544,12 @@ async def prepare_fullbody_prompt(
         prompt_payload = safe_json_loads(asset.prompt_json, default={})
         if not isinstance(prompt_payload, dict) or not prompt_payload.get("avatar_prompt"):
             raise SeedPromptMissingError(f"avatar {avatar_id} has no cached avatar_prompt")
-        effective_style = style or "refined_anime_cg"
         species, appearance, personality = _fullbody_identity_fields(persona)
         rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
         return build_fullbody_prompt(
             "front",
-            template=resolve_fullbody_template(species, rig_type, effective_style),
-            style_id=effective_style,
+            template=resolve_fullbody_template(species, rig_type, MESH2D_STYLE),
+            style_id=MESH2D_STYLE,
             feedback=effective_feedback or None,
             appearance=appearance,
             personality=personality,
@@ -1603,7 +1594,6 @@ async def adopt_fullbody_seed(
     kind: FullbodySeedKind,
     data: bytes,
     content_type: str,
-    style: str | None = None,
 ) -> AvatarAsset:
     """自备图采纳：用户在外部工具生成的图像按对应种子「生成成功」的语义落库安装，
     元数据与 persist 语义与各生成函数完全一致（front-2d 保持草稿待 confirm-front 转正，
@@ -1665,7 +1655,6 @@ async def adopt_fullbody_seed(
                 field="seed_front_2d_url",
                 url=url,
                 metadata={
-                    "fullbody_style": style or "refined_anime_cg",
                     "fullbody_rig_type": await _resolve_fullbody_rig_type(db, user_id, asset, species),
                     "fullbody_feedback": None,
                 },

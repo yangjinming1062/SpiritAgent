@@ -45,6 +45,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.companion import get_or_create_persona, load_persona_definition
 from services.infrastructure.assets import resolve_companion_asset_path
 from services.infrastructure.llm import (
+    MESH2D_STYLE,
     build_image_edit_prompt,
     build_outfit_prompt,
     chat,
@@ -249,7 +250,6 @@ async def _ensure_initial_outfit(db: AsyncSession, user_id: int) -> None:
         user_id=user_id,
         name="初始形象",
         fullbody_url=avatar.seed_front_2d_url or avatar.asset_url,
-        style=mesh2d.style or "refined_anime_cg",
         status="ready",
         active=True,
     )
@@ -315,12 +315,8 @@ async def _outfit_generation_context(
     if not persona.is_complete:
         raise OutfitStateError("请先完成 onboarding 再设计外观")
     definition = load_persona_definition(persona)
-    prompt_payload = safe_json_loads(avatar.prompt_json or "{}", default={})
-    style = (
-        (prompt_payload.get("fullbody_style") if isinstance(prompt_payload, dict) else None)
-        or mesh2d.style
-        or "refined_anime_cg"
-    )
+    # 换装立绘属 2D 链：画风恒 MESH2D_STYLE，避免写实画风进入 2D 拆分
+    style = MESH2D_STYLE
     species = str(definition.get("biological_type") or "").strip()
     # 与正面种子同桶取 rig（缓存命中则零 LLM 调用）——换装立绘画幅/姿态与确认形象一致，衣柜内不漂移
     rig_type = await _resolve_fullbody_rig_type(db, user_id, avatar, species)
@@ -472,7 +468,6 @@ async def create_outfit_draft(
             user_id=user_id,
             name="新外观",
             fullbody_url=draft_url,
-            style=style,
             status="draft",
             source_json=json.dumps(source, ensure_ascii=False),
         )
@@ -845,7 +840,7 @@ async def adopt_outfit_draft_image(
         _species,
         _appearance,
         _personality,
-        style,
+        _style,
         _rig_type,
     ) = await _outfit_generation_context(db, user_id)
     effective_description = (description or "").strip()
@@ -861,7 +856,6 @@ async def adopt_outfit_draft_image(
             user_id=user_id,
             name="新外观",
             fullbody_url=fullbody_url,
-            style=style,
             status="draft",
             source_json=json.dumps({"description": effective_description}, ensure_ascii=False),
         )
@@ -1115,7 +1109,6 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
                 "outfit_request": str(source.get("reference_description") or source.get("description") or "")
                 if isinstance(source, dict)
                 else "",
-                "style": outfit.style,
             }
         raw = await chat(
             None,
