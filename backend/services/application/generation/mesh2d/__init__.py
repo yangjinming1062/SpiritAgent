@@ -19,7 +19,6 @@ from .poses import (
     build_pose_side_prompt,
     compose_pose_pack,
     compose_single_pose_from_image,
-    pose_backdrop_for_artwork,
 )
 from .priority_queue import PriorityTaskQueue, get_default_queue
 
@@ -37,7 +36,6 @@ __all__ = [
     "get_default_queue",
     "mesh2d_response",
     "peek_outfit_user_poses",
-    "pose_backdrop_for_artwork",
     "pose_regeneration_in_progress",
     "remember_outfit_user_poses",
     "run_mesh2d_pipeline",

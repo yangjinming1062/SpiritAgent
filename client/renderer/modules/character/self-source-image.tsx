@@ -22,6 +22,8 @@ interface SelfSourceImageFlowProps {
   title: string
   /** 提示词所引用的种子参考图：缩略图可复制/另存；缺省时纯提示词流程。 */
   referenceImages?: SelfSourceReferenceImage[]
+  /** 交付要求补充（如姿态图的透明背景要求）；缺省时只显示通用流程提示。 */
+  hint?: string
   /** 打开时拉取后端组装的自备图提示词；失败时给重试入口。 */
   fetchPrompt: () => Promise<string>
   /** 采纳选中的图片；成功后组件自行关闭。抛错时展示后端公开文案。 */
@@ -38,6 +40,7 @@ export function SelfSourceImageFlow({
   open,
   title,
   referenceImages,
+  hint,
   fetchPrompt,
   adopt,
   onUseAi,
@@ -179,6 +182,7 @@ export function SelfSourceImageFlow({
     <WizardModal escClose={!zoomUrl} onClose={onClose} regionId="self-source-image" title={title}>
       <div className="space-y-3">
         <p className={HINT_TEXT}>{t.hint}</p>
+        {hint && <p className={HINT_TEXT}>{hint}</p>}
 
         {referenceImages && referenceImages.length > 0 ? (
           <div className="rounded-xl border border-line-hairline bg-fill-trough p-3">

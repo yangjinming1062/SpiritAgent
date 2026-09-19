@@ -29,7 +29,7 @@ from services.infrastructure.llm import (
 )
 
 from ..image_generation import compose_image_references, resolve_image_gen_chain
-from .matting import subject_matte
+from .matting import has_transparent_background, subject_matte
 
 logger = get_logger(__name__)
 Side = Literal["left", "right"]
@@ -367,7 +367,7 @@ class _PoseContext(NamedTuple):
     channel: int
 
 
-_POSE_BACKDROPS = ("red (#FF0000)", "green (#00FF00)", "blue (#0000FF)")
+_POSE_BACKDROPS = ("saturated red (#FF0000)", "saturated green (#00FF00)", "saturated blue (#0000FF)")
 
 
 def _chroma_channel(pixels: NDArray[np.float32]) -> int:
@@ -378,10 +378,17 @@ def _chroma_channel(pixels: NDArray[np.float32]) -> int:
     )
 
 
-def pose_backdrop_for_artwork(reference: bytes) -> str:
-    """按立绘主色选建议色幕（与生成链同规则），供自备图提示词给出纯色背景建议。"""
-    pixels, _ = _prepare_pose_reference(reference)
-    return _POSE_BACKDROPS[_chroma_channel(pixels)]
+def _chroma_channel_for_raw(raw: bytes) -> int:
+    """对整图降采样后选取色幕通道，供缺省 channel 的抠图路径现场取值。"""
+    with Image.open(io.BytesIO(raw)) as source:
+        pixels = np.asarray(source.convert("RGB").resize((128, 128)), dtype=np.float32)
+    return _chroma_channel(pixels)
+
+
+def _load_rgba(raw: bytes) -> Image.Image:
+    """整图解码为 RGBA，供跳过抠图的透明自备图保留原始 alpha。"""
+    with Image.open(io.BytesIO(raw)) as source:
+        return source.convert("RGBA")
 
 
 async def _resolve_pose_context(reference: bytes, user_id: int | None) -> _PoseContext:
@@ -398,35 +405,48 @@ async def _resolve_pose_context(reference: bytes, user_id: int | None) -> _PoseC
     return _PoseContext(reference, image_chain, vision_chain, _chroma_channel(pixels))
 
 
-def _peek_inward_outward(side: Side) -> tuple[str, str]:
-    """侧别语义：头倾向画布内侧；躯干与腿落在外侧，读感上被窗口边缘遮住。"""
+def _peek_head_body_halves(side: Side) -> tuple[str, str]:
+    """姿态的左右语义：返回 (头部探入半幅, 身体藏身半幅)。
+
+    左侧姿态的遮挡区在画面左半幅：身体藏于左半幅，头探入右半幅；右侧姿态整体镜像。
+    提示词与注释一律用左右描述方位，不用内外侧，避免相对参照引起理解错误。"""
     return ("RIGHT", "LEFT") if side == "left" else ("LEFT", "RIGHT")
 
 
 def _peek_pose_sentences(side: Side) -> list[str]:
-    """扶边姿态正文：只描述姿势与侧向藏身，不复述身份或着装。
+    """扶边姿态正文：以画布竖直中线为接触线，只描述姿势与侧向藏身，不复述身份或着装。
 
     屏幕边缘不可画成实物：生成模型会把 "screen edge" 具象成画中的墙板，使构图读感
     反侧（人物站在画出的边缘物旁，头部不再越过接触线，客户端对齐后探出部分不可见）。
-    因此硬性要求画面只有角色，并按「头在内侧—手在线上—躯干在外侧」给出可判断的
-    横向次序约束。"""
-    inward, outward = _peek_inward_outward(side)
+    因此把接触线钉在画布正中并硬性要求画面只有角色；半幅方位语义见 _peek_head_body_halves。"""
+    head_half, body_half = _peek_head_body_halves(side)
     return [
-        f"The character peeks around an invisible vertical screen edge. The edge is a pure layout "
-        f"concept: never draw it, and the image must not contain any wall, door, panel, board, window "
-        f"frame, or furniture — the only content is the character against the plain background. The "
-        f"head tilts {inward} and leans fully past both hands. Two naturally connected arms place "
-        f"their hands one above the other along the contact line, fingers curled as if gripping it. "
-        f"Read across the canvas in order: the entire head and face on the {inward} side of the "
-        f"contact line, both hands on the line, and torso, hips, and legs on the {outward} side, with "
-        f"body mass concentrated toward the {outward} side of the canvas so the body reads as "
-        f"partially hidden by that edge, as if it continues off-frame beyond the {outward} edge. Both "
-        f"eyes are open, with a gentle, curious expression toward the viewer.",
+        f"The vertical line at exactly 50% of the canvas width is the contact line of an invisible "
+        f"screen edge. The contact line is a pure layout concept: never draw it, and the image must "
+        f"not contain any wall, door, panel, board, window frame, or furniture — the only content is "
+        f"the character against the plain background. The character hides behind the screen edge, "
+        f"which occludes the {body_half} half of the canvas: the head tilts {head_half} and leans fully "
+        f"across the contact line into the {head_half} half, past both hands. Two naturally connected "
+        f"arms place their hands one above the other along the contact line at the canvas center, "
+        f"fingers curled as if gripping it. Read across the canvas in order: the entire head and face "
+        f"in the {head_half} half, both hands on the center line, and torso, hips, and legs in the "
+        f"{body_half} half, with the body concentrated in the {body_half} half as if it continues "
+        f"off-frame beyond the {body_half} edge. Both eyes are open, with a gentle, curious expression "
+        f"toward the viewer.",
     ]
 
 
-def _peek_composition_sentences(side: Side, *, backdrop_text: str, square_canvas: bool) -> list[str]:
-    inward, outward = _peek_inward_outward(side)
+def _peek_composition_sentences(
+    side: Side,
+    *,
+    background: str,
+    square_canvas: bool,
+) -> list[str]:
+    """构图规范：接触线钉在画布正中，头与双手落进探入半幅，躯干充满藏身半幅。
+
+    background 是完整背景条款，由调用方按路径提供：AI 生图填色幕（供混合抠图
+    强制清背景），自备图填纯白。"""
+    head_half, body_half = _peek_head_body_halves(side)
     if square_canvas:
         canvas = "Work on a square 1:1 canvas. Compose one complete character"
         framing = ""
@@ -437,29 +457,30 @@ def _peek_composition_sentences(side: Side, *, backdrop_text: str, square_canvas
         tail = "Deliver one unified square 1:1 illustration."
     return [
         f"{canvas} from the top of the hair to the tips of both feet. Keep the full silhouette inside "
-        f"the frame, but shift the figure toward the {outward} side of the contact line so the peeking "
-        f"body language is clear: only the head and hands cross to the {inward} side, and the rest of "
-        f"the {inward} side stays as open background. Keep at least 8% empty "
-        f"space above and below.{framing} Give every body region coherent anatomy, the character's own "
-        "skin and clothing colors, and a consistent level of illustration detail. The visible image "
-        "consists solely of the character against "
-        f"a perfectly flat, uniformly saturated {backdrop_text} background with no texture, no gradient, "
-        "no checkerboard pattern, no cast shadow, no vignette, and no glow spill onto the backdrop; keep "
-        "the background pixel-uniform to the canvas border. The contact line is an imaginary layout "
-        f"constraint. {tail}",
+        f"the frame, and keep the contact line at the exact horizontal center of the canvas: only the "
+        f"head and hands enter the {head_half} half, which otherwise stays as open background, while the "
+        f"body mass fills the {body_half} half. Keep at least 8% empty space above and below.{framing} "
+        f"Give every body region coherent anatomy, the character's own skin and clothing colors, and a "
+        f"consistent level of illustration detail. The visible image consists solely of the character "
+        f"against {background}. The contact line is an imaginary layout constraint. {tail}",
     ]
 
 
-def build_pose_side_prompt(
-    side: Side,
-    *,
-    backdrop: str | None = None,
-) -> str:
+# 背景条款共享模板：AI 生图填饱和色幕（供混合抠图清背景），自备图填纯白；
+# 不向生图模型索要透明（画不出真透明，可能画出棋盘格底），透明交付契约见 PIPELINE §1.1.2。
+_BACKGROUND_TEMPLATE = (
+    "a perfectly flat, uniform {backdrop} background with no texture, no gradient, "
+    "no checkerboard pattern, no cast shadow, no vignette, and no glow spill onto the backdrop; keep "
+    "the background pixel-uniform to the canvas border"
+)
+
+_POSE_SIDE_BACKGROUND = _BACKGROUND_TEMPLATE.format(backdrop="pure white")
+
+
+def build_pose_side_prompt(side: Side) -> str:
     """自备图场景的用户可见姿态提示词：当前外观正面立绘是唯一身份与穿着锚点，
     只改姿态，不复述外貌或着装——多余文本会把生成结果从参考图带偏。姿势与构图
-    规范与生成链一致，不引用内部概念。backdrop 是按立绘主色推荐的纯色背景
-    （ISNet 抠图不依赖背景色，仅提升色键兜底与闭眼帧质量）；缺省时只要求纯色。"""
-    backdrop_text = backdrop or "flat solid"
+    规范与生成链一致，不引用内部概念；背景与透明交付契约见 PIPELINE §1.1.2。"""
     parts: list[str] = [
         "Redraw the character from the reference image as a full-body illustration for a peeking "
         "animation at a screen edge.",
@@ -474,7 +495,11 @@ def build_pose_side_prompt(
         *_peek_pose_sentences(side),
         "",
         "COMPOSITION AND RENDERING",
-        *_peek_composition_sentences(side, backdrop_text=backdrop_text, square_canvas=True),
+        *_peek_composition_sentences(
+            side,
+            background=_POSE_SIDE_BACKGROUND,
+            square_canvas=True,
+        ),
     ]
     return "\n".join(parts)
 
@@ -493,7 +518,13 @@ async def _compose_pose(side: Side, context: _PoseContext) -> tuple[Pose, dict[s
         "composition.\n\n"
         "POSE AND EXPRESSION\n" + "\n".join(_peek_pose_sentences(side)) + "\n\n"
         "COMPOSITION AND RENDERING\n"
-        + "\n".join(_peek_composition_sentences(side, backdrop_text=backdrop, square_canvas=False))
+        + "\n".join(
+            _peek_composition_sentences(
+                side,
+                background=_BACKGROUND_TEMPLATE.format(backdrop=backdrop),
+                square_canvas=False,
+            ),
+        )
     )
     raw = await generate_image(prompt, context.reference, context.image_chain, guide)
     return await _finish_pose(raw, side, context.image_chain, context.vision_chain, context.channel)
@@ -504,14 +535,21 @@ async def _finish_pose(
     side: Side,
     image_chain: list[ProviderConfig],
     vision_chain: list[ProviderConfig],
-    channel: int,
+    channel: int | None,
 ) -> tuple[Pose, dict[str, bytes]]:
     """主姿态图之后的共享后处理：抠图 → 关键点定位 → 闭眼帧 → 纹理编码；自备图路径复用。
 
     几何按图像实际宽高参数化：AI 路径恒为 1024×1024（generate_image 归一化），自备图保持
-    用户原始尺寸与比例——渲染端网格、画布与布局均消费 Pose.width/height，无方形假设。"""
-    # 混合抠图：ISNet 显著性定边界 + 色幕泛洪/色键强制清残留；模型缺失时内部退回色键。
-    body = await asyncio.to_thread(matte_pose, raw, channel)
+    用户原始尺寸与比例——渲染端网格、画布与布局均消费 Pose.width/height，无方形假设。
+    已带可用透明背景的图保留原始 alpha 跳过抠图（对已抠好的图重跑抠图会把近背景色的
+    身体区域误清成空洞）；其余图走混合抠图，channel 缺省时按图像主色现场选取。"""
+    if await asyncio.to_thread(has_transparent_background, raw):
+        body = await asyncio.to_thread(_load_rgba, raw)
+    else:
+        if channel is None:
+            channel = await asyncio.to_thread(_chroma_channel_for_raw, raw)
+        # 混合抠图：ISNet 显著性定边界 + 色幕泛洪/色键强制清残留；模型缺失时内部退回色键。
+        body = await asyncio.to_thread(matte_pose, raw, channel)
     bounds = body.getbbox()
     if bounds is None:
         raise ValueError("empty pose")
@@ -612,9 +650,7 @@ async def compose_pose_pack(
         user_raw = provided.get(side)
         if user_raw is None:
             return await _compose_pose(side, context)
-        pixels, _ = await asyncio.to_thread(_prepare_pose_reference, user_raw)
-        channel = _chroma_channel(pixels)
-        return await _finish_pose(user_raw, side, context.image_chain, context.vision_chain, channel)
+        return await _finish_pose(user_raw, side, context.image_chain, context.vision_chain, None)
 
     try:
         async with asyncio.timeout(1200), asyncio.TaskGroup() as tasks:
@@ -656,12 +692,9 @@ async def compose_single_pose_from_image(
         vision_chain = await resolve_vision_chain(db if user_id is not None else None, user_id)
     if not image_chain or not vision_chain:
         raise PoseGenerationError("扶边姿态需要配置支持参考图的图像供应商及视觉模型")
-    # 尺寸与像素配准见 _finish_pose；用户图不归一化到 1024×1024
-    pixels, _ = await asyncio.to_thread(_prepare_pose_reference, raw)
-    channel = _chroma_channel(pixels)
     try:
         async with asyncio.timeout(1200):
-            return await _finish_pose(raw, side, image_chain, vision_chain, channel)
+            return await _finish_pose(raw, side, image_chain, vision_chain, None)
     except PoseGenerationError:
         raise
     except Exception as exc:

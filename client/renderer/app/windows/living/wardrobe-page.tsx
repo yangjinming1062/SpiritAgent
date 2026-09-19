@@ -676,6 +676,7 @@ export function WardrobePage(): React.JSX.Element {
       <SelfSourceImageFlow
         adopt={adoptPoseSelfSource}
         fetchPrompt={fetchPoseSelfSourcePrompt}
+        hint={selfSourceDict.poseTransparentHint}
         onClose={() => setPoseSelfSourceSide(null)}
         onUseAi={() => {
           const side = poseSelfSourceSide

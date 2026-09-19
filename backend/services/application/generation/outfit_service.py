@@ -71,7 +71,6 @@ from .mesh2d import (
     clear_outfit_user_poses,
     mesh2d_response,
     peek_outfit_user_poses,
-    pose_backdrop_for_artwork,
     pose_regeneration_in_progress,
     remember_outfit_user_poses,
     run_mesh2d_pipeline,
@@ -937,14 +936,7 @@ async def prepare_pose_prompt(
     data_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, outfit.fullbody_url)
     if not data_uri or not data_uri.startswith("data:"):
         raise OutfitStateError("外观立绘缺失或无法读取，请先重新生成外观")
-    backdrop: str | None = None
-    try:
-        _, b64 = data_uri.split(",", 1)
-        artwork = base64.b64decode(b64)
-        backdrop = await asyncio.to_thread(pose_backdrop_for_artwork, artwork)
-    except Exception:
-        backdrop = None
-    return build_pose_side_prompt(side, backdrop=backdrop)
+    return build_pose_side_prompt(side)
 
 
 async def adopt_outfit_pose(

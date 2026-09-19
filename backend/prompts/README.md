@@ -29,7 +29,7 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 
 - `FullbodyTemplate` 物种/骨骼模板 dict（`prompt_engineer.py`）——dataclass 载体，与类型路由强耦合。
 - `_SPECIES_STYLE` / `_PRESET_SPECIES`（`prompt_engineer.py`）——类型化路由数据而非文本。
-- `mesh2d/poses.py` 的姿态提示词——函数内按 side/backdrop 动态拼接，抽出会破坏拼接逻辑。
+- `mesh2d/poses.py` 的姿态提示词——函数内按 side 与背景条款（AI 色幕 / 自备图纯白）动态拼接，抽出会破坏拼接逻辑。
 - 数据库 `AvatarAsset.prompt_json` 等审计字段是生成时快照，不是定义源。
 
 ## Runner 例外

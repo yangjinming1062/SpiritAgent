@@ -43,6 +43,22 @@ def _normalize(image: Image.Image) -> np.ndarray:
     return np.asarray(image, dtype=np.float32) / 255.0 - 0.5
 
 
+def has_transparent_background(raw: bytes) -> bool:
+    """判断图像是否自带可用透明背景（自备姿态图跳过抠图的依据）。
+
+    同时要求存在可观比例的透明像素且画布边框环基本透明：仅局部透明（圆角、水印
+    擦除）或边框仍不透明（背景未去净）的图不视为已抠图，仍走抠图管线。
+    """
+    with Image.open(io.BytesIO(raw)) as source:
+        alpha = np.asarray(source.convert("RGBA").getchannel("A"), dtype=np.uint8)
+    if float((alpha < 16).mean()) < 0.05:
+        return False
+    # 边框环过半透明即可：容忍主体贴边（脚底、头顶裁切）的合法构图；背景未去净的图
+    # 边框几乎全不透明，仍会落到抠图管线。
+    border = np.concatenate([alpha[0], alpha[-1], alpha[:, 0], alpha[:, -1]])
+    return bool((border < 16).mean() >= 0.5)
+
+
 def subject_matte(raw: bytes) -> Image.Image | None:
     """对姿态图跑 ISNet，返回以蒙版为 alpha 的 RGBA；模型缺失或推理失败返回 None。
 

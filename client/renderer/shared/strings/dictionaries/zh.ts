@@ -69,6 +69,8 @@ export const dict = {
     saveRefImageFailed: '另存失败，请重试。',
     copyRefImageFailed: '复制失败，请重试。',
     poseAttachHint: '可选：确认前可为左右两侧附自备姿态图，未提供的侧由后端自动生成。',
+    poseTransparentHint:
+      '姿态图需透明背景 PNG：生图工具无法直接产出透明背景，请在生成后用图像编辑器去除背景再上传；未去背景的图由后端自动抠图。',
     poseSelfLeft: '自备左姿态',
     poseSelfRight: '自备右姿态',
     poseRemove: '移除',
