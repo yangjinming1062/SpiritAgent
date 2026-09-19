@@ -1,5 +1,3 @@
-import type { ImageReviseMode } from '@/shared/types/spiritagent'
-
 export const dict = {
   brand: {
     name: '唤生',
@@ -81,6 +79,19 @@ export const dict = {
     adopting: '正在保存…',
     adoptFailed: '保存失败，请重试。',
     useAi: '改用 AI 生成'
+  },
+
+  generationActions: {
+    aiTitle: '让 AI 生成',
+    edit: '微调',
+    regenerate: '重新生成',
+    generate: '生成',
+    editHint: '只修改要求的部分，其余保持不变',
+    editRequiresFeedback: '微调需先填写要求',
+    regenerateHint: '按参考与要求整体重绘',
+    groupHint: '微调只修改要求的部分，其余保持不变；重新生成按参考与要求整体重绘。',
+    selfTitle: '用自己生成的图',
+    selfHint: '复制提示词与参考图，在外部工具生成后回传采纳，不调用 AI 生成。'
   },
 
   boot: {
@@ -371,17 +382,17 @@ export const dict = {
         empty: '还没有全身种子图，可以根据当前头像与角色设定生成。',
         loading: '正在准备全身种子图，请稍候…',
         referenceLabel: '用户参考图',
-        referenceHint: '可沿用或选择参考图来补充体型、服装和姿态，脸部身份以已确认的头像为准。',
+        refLabel: '参考图（可选，仅「重新生成」时生效）',
+        refHint: '补充体型、服装和姿态；脸部身份以已确认的头像为准。',
         chooseReference: '选择参考图',
         replaceReference: '更换参考图',
         removeReference: '移除参考图',
         pickError: '图片选择失败，请尝试较小的 PNG、JPEG、WebP 或 GIF 图片。',
-        feedbackLabel: '全身种子图微调要求',
+        feedbackLabel: '想怎么调整？（可留空）',
         feedbackPlaceholder: '希望怎样展现体态或姿势？可留空直接生成。',
         generate: '生成全身种子图',
         regenerate: '重新生成全身种子图',
         edit: '微调',
-        editRequiresFeedback: '在当前图上修改，其余保持不变（需先填写要求）',
         editDisabledByReference: '附参考图时不可微调，请先移除参考图',
         reload: '重新加载',
         enlarge: '放大查看全身种子图',
@@ -996,13 +1007,7 @@ export const dict = {
       placeholderInitial: '描述想要的着装…（Enter 发送，Shift+Enter 换行）',
       attachImage: '附参考图',
       attachImageTitle: '附参考图（可选，仅首次生成）',
-      send: '发送',
-      reviseEdit: '微调',
-      reviseRegenerate: '重新生成',
-      reviseHint: {
-        edit: '在当前草稿图（含自备图）上修改，其余保持不变',
-        regenerate: '不用当前图，按全身种子图与原描述整体重绘'
-      } as Record<ImageReviseMode, string>
+      send: '发送'
     },
     appearance: {
       renderMode: '渲染模式',

@@ -17,6 +17,7 @@ import { BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, WizardModal } from '@/shared/pane
 import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
+import { GenerationActionsGroup } from '../../../generation-actions'
 import { SelfSourceImageFlow } from '../../../self-source-image'
 
 const HISTORY_CAP = 5
@@ -100,6 +101,7 @@ export function Seed3dWizard({
   const [selfSourceOpen, setSelfSourceOpen] = useState(false)
   // 自备图参考图读本地缓存：front 用全身种子图，back 用本向导已确认的 3D 正面。
   const selfSourceDict = useStrings().selfSource
+  const genActions = useStrings().generationActions
   const avatarSeeds = useStore($avatarSeeds)
   const mountedRef = useRef(true)
   const generatingRef = useRef(false)
@@ -442,6 +444,33 @@ export function Seed3dWizard({
         </div>
       )}
 
+      <div className="mt-3">
+        <GenerationActionsGroup
+          editDisabled={
+            current.loading ||
+            !current.previewUrl ||
+            !feedback[stage].trim() ||
+            current.idx !== current.entries.length - 1
+          }
+          editReason={
+            current.idx !== current.entries.length - 1
+              ? '微调只能基于最近生成的一版，请先在历史中选择最新图片'
+              : !feedback[stage].trim()
+                ? genActions.editRequiresFeedback
+                : undefined
+          }
+          onEdit={() => void generate(stage, feedback[stage], 'edit')}
+          onRegenerate={() => void generate(stage, feedback[stage], 'regenerate')}
+          onSelfSource={() => {
+            // front 自备图参考是全身种子图；打开前补齐本地缓存，避免提示词已引用参考图而 UI 未展示。
+            void hydrateAvatarSeeds().finally(() => setSelfSourceOpen(true))
+          }}
+          regenerateDisabled={current.loading}
+          regenerateLabel={current.previewUrl ? undefined : genActions.generate}
+          selfSourceDisabled={current.loading}
+        />
+      </div>
+
       <div className="mt-4 flex items-center justify-between">
         <button
           className="rounded-lg px-2 py-1 text-xs text-muted transition hover:bg-fill-hover hover:text-strong disabled:opacity-40"
@@ -451,65 +480,25 @@ export function Seed3dWizard({
         >
           {stage === 'back' ? '返回正面' : '取消'}
         </button>
-        <div className="flex items-center gap-2">
+        {stage === 'front' && supportsMultiview ? (
           <button
-            className="rounded-lg px-2 py-1 text-xs text-body transition hover:bg-fill-hover hover:text-strong disabled:opacity-40"
-            disabled={
-              current.loading ||
-              !current.previewUrl ||
-              !feedback[stage].trim() ||
-              current.idx !== current.entries.length - 1
-            }
-            onClick={() => void generate(stage, feedback[stage], 'edit')}
-            title={
-              current.idx === current.entries.length - 1
-                ? '在当前立绘上修改，其余保持不变（需先填写要求）'
-                : '微调只能基于最近生成的一版，请先在历史中选择最新图片'
-            }
+            className={BTN_PRIMARY}
+            disabled={current.loading || !current.previewUrl}
+            onClick={() => setStage('back')}
             type="button"
           >
-            微调
+            下一步：背面立绘
           </button>
+        ) : (
           <button
-            className="rounded-lg px-2 py-1 text-xs text-body transition hover:bg-fill-hover hover:text-strong disabled:opacity-40"
-            disabled={current.loading}
-            onClick={() => void generate(stage, feedback[stage], 'regenerate')}
+            className={BTN_PRIMARY}
+            disabled={current.loading || !current.previewUrl}
+            onClick={onConfirm}
             type="button"
           >
-            重新生成
+            确认，切换到 3D
           </button>
-          <button
-            className="rounded-lg px-2 py-1 text-xs text-body transition hover:bg-fill-hover hover:text-strong disabled:opacity-40"
-            disabled={current.loading}
-            onClick={() => {
-              // front 自备图参考是全身种子图；打开前补齐本地缓存，避免提示词已引用参考图而 UI 未展示。
-              void hydrateAvatarSeeds().finally(() => setSelfSourceOpen(true))
-            }}
-            title="我自己生成这张图（复制提示词，生成后回传上传）"
-            type="button"
-          >
-            使用自己的图
-          </button>
-          {stage === 'front' && supportsMultiview ? (
-            <button
-              className={BTN_PRIMARY}
-              disabled={current.loading || !current.previewUrl}
-              onClick={() => setStage('back')}
-              type="button"
-            >
-              下一步：背面立绘
-            </button>
-          ) : (
-            <button
-              className={BTN_PRIMARY}
-              disabled={current.loading || !current.previewUrl}
-              onClick={onConfirm}
-              type="button"
-            >
-              确认，切换到 3D
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
       {zoomUrl && <PortraitLightbox name={meta.alt} onClose={() => setZoomUrl(null)} url={zoomUrl} />}

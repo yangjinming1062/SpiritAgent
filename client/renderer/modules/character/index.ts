@@ -35,6 +35,7 @@ export {
 export { DISTURBANCE_TIERS } from './disturbance-tiers'
 export { FullbodyReferencePanel } from './fullbody-reference-panel'
 export { $fullbodyReference, hydrateFullbodyReference, regenerateFullbodyReference } from './fullbody-reference-store'
+export { GenerationActionsGroup } from './generation-actions'
 export { handleDragEndInteraction, handlePetInteraction, handlePokeInteraction, normalizeRegion } from './interaction'
 export { $memoryBrowserTab, type MemoryTab, setMemoryBrowserTab } from './memory-browser-store'
 export {

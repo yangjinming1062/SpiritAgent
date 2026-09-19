@@ -10,6 +10,7 @@ import {
   activateOutfit,
   adoptOutfitPoseImage,
   deleteOutfit,
+  GenerationActionsGroup,
   hydrateAvatarSeeds,
   hydrateWardrobe,
   type PickedImage,
@@ -25,7 +26,7 @@ import { PortraitLightbox } from '@/shared'
 import { ArrowBackUp, Check, FileImage, ImagePlus, Pencil, Send, Trash2 } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_ICON, BTN_PRIMARY, HINT_TEXT, INPUT_CLASS, Segmented, Spinner, Toggle } from '@/shared/panel'
+import { BTN_GHOST, BTN_ICON, BTN_PRIMARY, HINT_TEXT, INPUT_CLASS, Spinner, Toggle } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
@@ -34,8 +35,8 @@ import type { ImageReviseMode } from '@/shared/types/spiritagent'
 const CARD_ACTION_CLASS =
   'inline-flex h-6 items-center justify-center rounded-lg bg-black/60 px-1.5 text-white/70 backdrop-blur-sm transition hover:bg-black/80 hover:text-white disabled:pointer-events-none disabled:opacity-40'
 
-// 衣柜三栏页（DESIGN §8）：左侧外观列表（竖版大图卡），右上大图预览，右下类聊天的设计区。
-// 设计流程不再弹窗——描述 / 参考图 / 微调反馈 / 确认入柜都在右半侧完成。
+// 衣柜三栏页（DESIGN §8）：左侧外观列表（竖版大图卡），右上大图预览，右下类聊天的设计区，
+// 描述 / 参考图 / 微调反馈 / 确认入柜都在右半侧完成。
 export function WardrobePage(): React.JSX.Element {
   const outfits = useStore($outfits)
   const outfitPolicy = useStore($outfitPolicy)
@@ -52,8 +53,6 @@ export function WardrobePage(): React.JSX.Element {
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
   const [designing, setDesigning] = useState(false)
   const [text, setText] = useState('')
-  // 有草稿后的反馈意图：edit=微调（编辑上一版）、regenerate=重新生成（种子锚定全量重绘）。
-  const [reviseMode, setReviseMode] = useState<ImageReviseMode>('edit')
   const [poseSelfSourceSide, setPoseSelfSourceSide] = useState<'left' | 'right' | null>(null)
   const [outfitSelfSourceOpen, setOutfitSelfSourceOpen] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -121,15 +120,25 @@ export function WardrobePage(): React.JSX.Element {
   // 后端同一时间只允许一套外观切分（409 invalid_state）——切分中禁用新设计入口，
   // 等待/失败/完成经 companion.outfit.updated 事件刷新列表后自动解锁。
   const splitting = outfits.some(o => o.status === 'splitting')
-  const canRegenerateWithoutFeedback = Boolean(session.draft && reviseMode === 'regenerate')
 
-  const sendText = (): void => {
+  // 首次生成（无草稿）：描述/参考图创建新设计。
+  const sendCreation = (): void => {
     // 生成进行中会话内部会拒绝——此时不清空输入，避免丢字。
-    if (session.busy || splitting || (!text.trim() && !session.refImage && !canRegenerateWithoutFeedback)) {
+    if (session.busy || splitting || (!text.trim() && !session.refImage)) {
       return
     }
 
-    session.send(text, session.draft ? reviseMode : 'edit')
+    session.send(text, 'edit')
+    setText('')
+  }
+
+  // 草稿反馈的两个显式操作（DESIGN §5.4）：微调编辑上一版须带反馈，重新生成允许空反馈整体重绘。
+  const sendRevise = (mode: ImageReviseMode): void => {
+    if (session.busy || splitting || (mode === 'edit' && !text.trim())) {
+      return
+    }
+
+    session.send(text, mode)
     setText('')
   }
 
@@ -578,16 +587,15 @@ export function WardrobePage(): React.JSX.Element {
               )}
 
               {session.draft && (
-                <div className="flex items-center gap-2 border-t border-line-hairline px-4 py-2">
-                  <Segmented<ImageReviseMode>
-                    onChange={setReviseMode}
-                    options={[
-                      { value: 'edit', label: t.reviseEdit },
-                      { value: 'regenerate', label: t.reviseRegenerate }
-                    ]}
-                    value={reviseMode}
+                <div className="border-t border-line-hairline px-4 py-2">
+                  <GenerationActionsGroup
+                    dense
+                    editDisabled={session.busy || splitting || !text.trim()}
+                    editReason={!text.trim() ? dict.generationActions.editRequiresFeedback : undefined}
+                    onEdit={() => sendRevise('edit')}
+                    onRegenerate={() => sendRevise('regenerate')}
+                    regenerateDisabled={session.busy || splitting}
                   />
-                  <span className={cn(HINT_TEXT, 'truncate')}>{t.reviseHint[reviseMode]}</span>
                 </div>
               )}
 
@@ -599,7 +607,13 @@ export function WardrobePage(): React.JSX.Element {
                   onKeyDown={e => {
                     if (e.key === 'Enter' && !e.shiftKey) {
                       e.preventDefault()
-                      sendText()
+
+                      // 草稿态 Enter 默认微调；整体重绘走显式按钮。
+                      if (session.draft) {
+                        sendRevise('edit')
+                      } else {
+                        sendCreation()
+                      }
                     }
                   }}
                   placeholder={
@@ -633,17 +647,17 @@ export function WardrobePage(): React.JSX.Element {
                 >
                   <ImagePlus />
                 </button>
-                <button
-                  aria-label={t.send}
-                  className={cn(BTN_PRIMARY, 'h-9 w-9 shrink-0 self-end px-0')}
-                  disabled={
-                    session.busy || splitting || (!text.trim() && !session.refImage && !canRegenerateWithoutFeedback)
-                  }
-                  onClick={sendText}
-                  type="button"
-                >
-                  <Send className="size-4" />
-                </button>
+                {!session.draft && (
+                  <button
+                    aria-label={t.send}
+                    className={cn(BTN_PRIMARY, 'h-9 w-9 shrink-0 self-end px-0')}
+                    disabled={session.busy || splitting || (!text.trim() && !session.refImage)}
+                    onClick={sendCreation}
+                    type="button"
+                  >
+                    <Send className="size-4" />
+                  </button>
+                )}
               </div>
             </>
           )}
@@ -659,18 +673,24 @@ export function WardrobePage(): React.JSX.Element {
         onUseAi={() => {
           setOutfitSelfSourceOpen(false)
 
-          // 无可发送内容时 sendText 会静默拒绝——聚焦输入框把用户带回设计流程，避免点按钮毫无反馈。
-          if (!text.trim() && !session.refImage && !canRegenerateWithoutFeedback) {
+          if (session.draft) {
+            sendRevise('regenerate')
+
+            return
+          }
+
+          // 无可发送内容时会静默拒绝——聚焦输入框把用户带回设计流程，避免点按钮毫无反馈。
+          if (!text.trim() && !session.refImage) {
             inputRef.current?.focus()
 
             return
           }
 
-          sendText()
+          sendCreation()
         }}
         open={outfitSelfSourceOpen}
         referenceImages={outfitSelfSourceReferences}
-        title={session.draft ? t.reviseRegenerate : t.startAction}
+        title={session.draft ? dict.generationActions.regenerate : t.startAction}
       />
 
       <SelfSourceImageFlow

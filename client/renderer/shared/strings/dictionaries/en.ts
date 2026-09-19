@@ -1,5 +1,3 @@
-import type { ImageReviseMode } from '@/shared/types/spiritagent'
-
 import type { Dictionary } from './zh'
 
 export const dict: Dictionary = {
@@ -85,6 +83,21 @@ export const dict: Dictionary = {
     adopting: 'Saving…',
     adoptFailed: 'Failed to save. Please retry.',
     useAi: 'Use AI generation'
+  },
+
+  generationActions: {
+    aiTitle: 'Generate with AI',
+    edit: 'Refine',
+    regenerate: 'Regenerate',
+    generate: 'Generate',
+    editHint: 'Changes only what you describe; everything else stays',
+    editRequiresFeedback: 'Describe the changes first to refine',
+    regenerateHint: 'Redraws the whole image from the references and your brief',
+    groupHint:
+      'Refine changes only what you describe; Regenerate redraws the whole image from the references.',
+    selfTitle: 'Bring your own image',
+    selfHint:
+      'Copy the prompt and reference into an external image tool, then upload the result back here. No AI generation is used.'
   },
 
   boot: {
@@ -394,18 +407,17 @@ export const dict: Dictionary = {
         empty: 'No full-body seed image yet. Generate one from the current portrait and persona.',
         loading: 'Preparing the full-body seed image…',
         referenceLabel: 'User reference image',
-        referenceHint:
-          'Use a reference for physique, clothing and pose. The confirmed portrait anchors facial identity.',
+        refLabel: 'Reference image (optional, used by Regenerate only)',
+        refHint: 'Adds physique, clothing and pose cues. The confirmed portrait anchors facial identity.',
         chooseReference: 'Choose reference image',
         replaceReference: 'Replace reference image',
         removeReference: 'Remove reference image',
         pickError: 'Could not select the image. Try a smaller PNG, JPEG, WebP or GIF file.',
-        feedbackLabel: 'Full-body image adjustments',
+        feedbackLabel: 'What should change? (optional)',
         feedbackPlaceholder: 'Describe any changes to the body or pose, or leave blank to generate.',
         generate: 'Generate full-body seed',
         regenerate: 'Regenerate full-body seed',
         edit: 'Refine',
-        editRequiresFeedback: 'Edit the current image; everything else stays the same (feedback required first)',
         editDisabledByReference: 'Refine is unavailable while a reference image is attached — remove it first',
         reload: 'Reload',
         enlarge: 'Enlarge full-body seed image',
@@ -1052,13 +1064,7 @@ export const dict: Dictionary = {
       placeholderInitial: 'Describe an outfit… (Enter to send, Shift+Enter for newline)',
       attachImage: 'Attach reference image',
       attachImageTitle: 'Attach reference image (optional, first generation only)',
-      send: 'Send',
-      reviseEdit: 'Refine',
-      reviseRegenerate: 'Regenerate',
-      reviseHint: {
-        edit: 'Edit the current draft image (self-provided included); everything else stays unchanged',
-        regenerate: 'Ignore the current image and redraw from the full-body seed and original description'
-      } as Record<ImageReviseMode, string>
+      send: 'Send'
     },
     appearance: {
       renderMode: 'Render mode',

@@ -3,12 +3,13 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 
 import { PortraitLightbox } from '@/shared'
-import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 import { pickAvatarImage, type PickedImage } from './avatar-image'
 import { $avatarSeeds, hydrateAvatarSeeds } from './avatar-seeds-store'
 import { $fullbodyReference, hydrateFullbodyReference, regenerateFullbodyReference } from './fullbody-reference-store'
+import { GenerationActionsGroup } from './generation-actions'
 import { $portraitUrl } from './portrait-store'
 import { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 
@@ -26,6 +27,7 @@ export function FullbodyReferencePanel({
   onBack
 }: FullbodyReferencePanelProps): React.JSX.Element {
   const t = useStrings().settings.persona.fullbodyReference
+  const genActions = useStrings().generationActions
   const selfSource = useStrings().selfSource
   const state = useStore($fullbodyReference)
   const portraitUrl = useStore($portraitUrl)
@@ -133,8 +135,24 @@ export function FullbodyReferencePanel({
           {t.loading}
         </p>
       )}
-      <div className="space-y-2">
-        <p className={HINT_TEXT}>{t.referenceHint}</p>
+      <div className="space-y-1">
+        <label className={FIELD_LABEL} htmlFor="fullbody-reference-feedback">
+          {t.feedbackLabel}
+        </label>
+        <textarea
+          className={INPUT_CLASS}
+          disabled={busy}
+          id="fullbody-reference-feedback"
+          maxLength={500}
+          onChange={(event): void => setFeedback(event.target.value)}
+          placeholder={t.feedbackPlaceholder}
+          rows={2}
+          value={feedback}
+        />
+      </div>
+      <div className="space-y-1">
+        <p className={FIELD_LABEL}>{t.refLabel}</p>
+        <p className={HINT_TEXT}>{t.refHint}</p>
         <div className="flex items-center gap-2">
           {reference && (
             <img
@@ -166,28 +184,25 @@ export function FullbodyReferencePanel({
           </p>
         )}
       </div>
-      <textarea
-        aria-label={t.feedbackLabel}
-        className={INPUT_CLASS}
-        disabled={busy}
-        maxLength={500}
-        onChange={(event): void => setFeedback(event.target.value)}
-        placeholder={t.feedbackPlaceholder}
-        rows={2}
-        value={feedback}
+      <GenerationActionsGroup
+        editDisabled={busy || !feedback.trim() || !!reference}
+        editReason={
+          reference ? t.editDisabledByReference : !feedback.trim() ? genActions.editRequiresFeedback : undefined
+        }
+        onEdit={current && state.rawUrl ? () => void edit() : undefined}
+        onRegenerate={() => void regenerate()}
+        onSelfSource={() => {
+          // 头像为独立全身参考身份锚点：打开前确保种子缓存已水合。
+          void hydrateAvatarSeeds().finally(() => setSelfSourceOpen(true))
+        }}
+        regenerateLabel={current && state.rawUrl ? undefined : genActions.generate}
+        selfSourceDisabled={busy}
       />
       {current && state.error && (
-        <p className="text-xs text-danger-fg" role="alert">
-          {state.errorMessage || t.errors[state.error]}
-        </p>
-      )}
-      <div className="flex flex-wrap items-center gap-2">
-        {onBack && (
-          <button className={BTN_SUBTLE} disabled={busy} onClick={onBack} type="button">
-            {t.back}
-          </button>
-        )}
-        {current && state.error && (
+        <div className="space-y-2">
+          <p className="text-xs text-danger-fg" role="alert">
+            {state.errorMessage || t.errors[state.error]}
+          </p>
           <button
             className={BTN_SUBTLE}
             disabled={busy}
@@ -196,44 +211,27 @@ export function FullbodyReferencePanel({
           >
             {t.reload}
           </button>
-        )}
-        {current && state.rawUrl && (
-          <button
-            className={BTN_SUBTLE}
-            disabled={busy || !feedback.trim() || !!reference}
-            onClick={() => void edit()}
-            title={reference ? t.editDisabledByReference : t.editRequiresFeedback}
-            type="button"
-          >
-            {t.edit}
-          </button>
-        )}
-        <button className={BTN_SUBTLE} disabled={busy} onClick={() => void regenerate()} type="button">
-          {current && state.rawUrl ? t.regenerate : t.generate}
-        </button>
-        <button
-          className={BTN_SUBTLE}
-          disabled={busy}
-          onClick={() => {
-            // 头像为独立全身参考身份锚点：打开前确保种子缓存已水合。
-            void hydrateAvatarSeeds().finally(() => setSelfSourceOpen(true))
-          }}
-          title={selfSource.openTitle}
-          type="button"
-        >
-          {selfSource.open}
-        </button>
-        {onContinue && (
-          <button
-            className={BTN_PRIMARY}
-            disabled={busy || !preview || !state.rawUrl || state.error !== null}
-            onClick={onContinue}
-            type="button"
-          >
-            {t.continue}
-          </button>
-        )}
-      </div>
+        </div>
+      )}
+      {(onBack || onContinue) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {onBack && (
+            <button className={BTN_SUBTLE} disabled={busy} onClick={onBack} type="button">
+              {t.back}
+            </button>
+          )}
+          {onContinue && (
+            <button
+              className={BTN_PRIMARY}
+              disabled={busy || !preview || !state.rawUrl || state.error !== null}
+              onClick={onContinue}
+              type="button"
+            >
+              {t.continue}
+            </button>
+          )}
+        </div>
+      )}
       <SelfSourceImageFlow
         adopt={adoptSelfSourceImage}
         fetchPrompt={fetchSelfSourcePrompt}
