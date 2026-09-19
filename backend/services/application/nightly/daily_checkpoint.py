@@ -194,7 +194,7 @@ async def _collect_inputs(
         {
             "previous_summary_date": prev_date,
             "current_summary_date": local_date_str,
-            "elapsed_local_days_without_interaction": gap,
+            "elapsed_local_days": gap,
         }
         if gap and gap > 1
         else None

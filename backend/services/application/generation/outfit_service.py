@@ -38,7 +38,7 @@ from modules.companion import (
 from modules.settings import UserSetting
 from modules.ws import emit_ws_event
 from PIL import Image
-from prompts.generation import EDIT_PRESERVE_IDENTITY, OUTFIT_DESCRIBE_SYSTEM
+from prompts.generation import EDIT_PRESERVE_OUTFIT, OUTFIT_DESCRIBE_SYSTEM
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -520,7 +520,7 @@ async def regenerate_outfit_draft(
         edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, original_url)
         if not edit_uri:
             raise OutfitDraftExpiredError("上一版草稿已过期或无法读取，请改用重新生成")
-        prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_IDENTITY)
+        prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_OUTFIT)
         identity_uri = None
     else:
         identity_uri = await _require_fullbody_seed_readable(avatar)

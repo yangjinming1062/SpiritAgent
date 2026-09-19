@@ -46,6 +46,7 @@ async def _generate_reply_inner(user_id: int, moment_id: str) -> None:
             return
         payload = {
             "output_language": ctx.language,
+            "persona": ctx.persona_extras,
             "moment": {
                 "title": moment.title,
                 "body": moment.body,

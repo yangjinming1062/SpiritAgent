@@ -32,7 +32,7 @@ async def analyze_personality_tags(
     db: AsyncSession | None = None,
     provider_config: ProviderConfig | None = None,
 ) -> list[str]:
-    """LLM 分析 persona 设定，返回 3-10 个去重后的性格标签；不过滤自创标签。"""
+    """LLM 分析 persona 设定，返回最多 10 个去重后的性格标签；无依据时可为空。"""
     try:
         raw_data = safe_json_loads(definition_json, default={})
         data = raw_data if isinstance(raw_data, dict) else {}

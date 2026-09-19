@@ -19,6 +19,7 @@ from modules.companion import AvatarAsset, ImageReviseMode, Persona
 from prompts.generation import (
     AVATAR_PRESENTATION_REFERENCE,
     AVATAR_REFERENCE_TEMPLATE,
+    EDIT_PRESERVE_2D_FRONT,
     EDIT_PRESERVE_3D_BACK,
     EDIT_PRESERVE_3D_FRONT,
     EDIT_PRESERVE_FULLBODY,
@@ -1193,7 +1194,7 @@ async def generate_fullbody_front_2d(
         edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_front_2d_url)
         if not edit_uri:
             raise AvatarSourceUnreadableError("上一版正面种子缺失或无法读取，请先重新生成")
-        prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_FULLBODY)
+        prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_2D_FRONT)
     else:
         prompt_payload = safe_json_loads(asset.prompt_json, default={})
         if not isinstance(prompt_payload, dict):

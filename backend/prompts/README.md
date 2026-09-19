@@ -6,7 +6,7 @@
 
 ## 验证
 
-Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-imports`、依赖变化时 `check_services_architecture.py`，见 [scripts/README §8](../../scripts/README.md#8-按改动选择验证)）。措辞变更（非纯搬移）按 [PIPELINE](../../docs/PIPELINE.md) 的提示词变更验证清单复验。
+Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-imports`、依赖变化时 `check_services_architecture.py`，见 [scripts/README §8](../../scripts/README.md#8-按改动选择验证)）。措辞变更须连同消费方核对实际请求，覆盖正常输入、资料缺失、失败或未完成结果、相互冲突的要求及双语输出；共享块检查不同预设与工具开关下的装配。图像链另按 [PIPELINE 验证要求](../../docs/PIPELINE.md#8-按改动选择验证)检查参考顺序与身份约束。静态或模拟验证只证明装配和消费契约，不证明真实模型的表达、判断或视觉质量改善。
 
 ## 模块索引
 

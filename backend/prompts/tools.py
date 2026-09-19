@@ -19,17 +19,19 @@ COMPANION_WAIT_DESC = (
 )
 
 COMPANION_WAIT_PARAM_DESCS = {
-    "intent_id": "Existing intent to update or cancel. Omit to create; proactive turns defer their current intent.",
-    "intent": "Grounded purpose, verified progress and what remains to check. A plan is not a completed action or new authorization.",
+    "intent_id": "Required for cancel; use an ID returned by list. For schedule, set to replace that intent or omit to create; in proactive turns omission defers the current intent.",
+    "intent": "Required for schedule, together with at least one of after_seconds or wake_on. State a grounded purpose, verified progress and what remains to check. A plan is not a completed action or new authorization.",
     "after_seconds": "Time-based wake-up delay. If wake_on is also set, either condition may wake the intent.",
     "wake_on": "Wait for desktop availability to resume, or a change of application category/fullscreen state. The event does not itself prove the user is free.",
     "expires_seconds": "Validity window, default one day, later than after_seconds. Deferral cannot extend the original intent's expiry.",
 }
 
 SEND_MESSAGE_DESC = (
-    "Send a message now. Without target_webhook, deliver it as a spoken proactive message in the primary "
-    "conversation. Use this only for a grounded, low-pressure outreach within the current authorization. "
-    "With a target_webhook URL, POST a notification to an external bot API such as Slack, Discord, or Telegram."
+    "Send a message now. Without target_webhook, deliver a proactive message in the primary companion "
+    "conversation; speech depends on user settings, and still mode suppresses delivery. Normal replies are "
+    "delivered automatically: do not duplicate them with this tool. Use only for grounded, low-pressure "
+    "outreach within current authorization. With target_webhook, POST JSON containing text and content "
+    "to an authorized endpoint that accepts those fields; this is not a general messaging-service client."
 )
 
 SEND_MESSAGE_PARAM_DESCS = {
@@ -37,7 +39,11 @@ SEND_MESSAGE_PARAM_DESCS = {
     "target_webhook": "Optional external bot webhook URL. Omit to deliver in the primary conversation.",
 }
 
-IMAGE_GENERATION_DESC = "Generate an image from a text description. Returns the generated image URLs."
+IMAGE_GENERATION_DESC = (
+    "Generate an image from a text description and return its URLs for automatic conversation media delivery. "
+    "This does not change the avatar, current outfit, or room; room changes require room_backdrop_update when available. "
+    "Only subject='self' supplies an identity reference here; this schema does not accept arbitrary image attachments for editing."
+)
 
 IMAGE_GENERATION_PARAM_DESCS = {
     "prompt": "A detailed, descriptive prompt for the image to generate.",
@@ -49,19 +55,24 @@ IMAGE_GENERATION_PARAM_DESCS = {
 VIDEO_GENERATION_DESC = (
     "Generate a short video from a text prompt (and optionally a first-frame image). "
     "Returns the video URL on success, or a pending task_id for long jobs — check it later "
-    "with video_generate_status."
+    "with video_generate_status. Pending is not completion: keep the original task_id, do not submit the same "
+    "job again or poll continuously. If status is result_unknown or retry_safe=false, verify the original "
+    "job before any retry."
 )
 
 VIDEO_GENERATION_PARAM_DESCS = {
     "prompt": "Describe the video content.",
     "subject": "Set to 'self' only when the current system context defines a canonical character who appears in the video. The platform injects that character's seed image as the first frame; do not reconstruct appearance from memory. Ignored when first_frame_image is set explicitly.",
-    "duration": "Clip length in seconds. MiniMax-Hailuo (default): must be 6 or 10. MiniMax-H3: any integer 4-15.",
-    "resolution": "Output resolution. MiniMax-Hailuo (default): 512P/768P/1080P. MiniMax-H3: 768P/2K.",
-    "first_frame_image": "Public URL or data URL of the first frame (i2v mode). When set, the provider derives the aspect ratio from the image; aspect_ratio is ignored.",
-    "aspect_ratio": "Output aspect ratio. Ignored when first_frame_image is set (i2v). Required for text-to-video on MiniMax-H3; optional on MiniMax-Hailuo.",
+    "duration": "Clip length in seconds, default 6. This tool accepts 4-15; the configured provider may be stricter: MiniMax-Hailuo requires 6 or 10, MiniMax-H3 and Grok accept this tool's full range.",
+    "resolution": "Output resolution, default 768P. Choose only a value supported by the configured provider: MiniMax-Hailuo 512P/768P/1080P; MiniMax-H3 768P/2K; Grok supports 1080P among this tool's exposed options.",
+    "first_frame_image": "Provider-accessible URL or data URL of an actual first-frame image (i2v mode); use an existing supplied or generated image, never invent a URL.",
+    "aspect_ratio": "Requested output aspect ratio; the provider may derive it from the first-frame image in i2v mode. Required for text-to-video on MiniMax-H3; optional on MiniMax-Hailuo and Grok.",
 }
 
-VIDEO_STATUS_DESC = "Check the status of a previously-submitted video_generate task. Returns status plus url (on success) or error (on failure)."
+VIDEO_STATUS_DESC = (
+    "Check an existing video_generate task. Returns its current status and url only on success. "
+    "A queued, processing, or downloading job is still pending; result_unknown does not mean a safe retry."
+)
 
 VIDEO_STATUS_PARAM_DESCS = {
     "task_id": "The task_id returned by video_generate.",
@@ -78,16 +89,24 @@ ROOM_BACKDROP_UPDATE_PARAM_DESCS = {
     "reference_image_index": "使用参考图时填写当前上下文中最近一条带图用户消息的图片序号，从 1 开始；单图填 1。不使用图片时省略，不填写 URL 或 base64。",
 }
 
-MOMENT_CREATE_DESC = "在用户生活空间时间线写一条时刻。主动记录每用户每天限 3 条。"
+MOMENT_CREATE_DESC = (
+    "在伙伴的生活空间时间线发布一条文字片刻，成功后用户可见，不向主对话发消息。"
+    "基于真实交流或明确标为愿望、创作的内容，不把计划或生成场景当作已发生经历，也不索要回应。"
+    "不逐轮记录普通聊天，不重复已有内容；受滚动 24 小时发布配额限制，以工具结果为准，静止档不可用。"
+)
 
 MOMENT_CREATE_PARAM_DESCS = {
     "title": "短标题（≤ 24 字）",
-    "body": "80–240 字的正文，第一人称或第二人称皆可",
+    "body": "以伙伴视角写正文，中文通常 80–240 字，英文保持相近信息量；可以直接对用户说话，不代替用户断言感受或经历",
     "emotion": "可选情绪 token，如 happy/sad/curious/neutral；不确定时省略",
     "kind": "内容性质：emotion=情绪感受 / together=共同经历 / scene=场景画面；默认 emotion",
 }
 
-DIARY_WRITE_DESC = "在用户日记本追加一段（用户时区今天），第一人称；不覆盖用户已写过的当日内容（按追加段落处理）。"
+DIARY_WRITE_DESC = (
+    "以伙伴第一人称补写指定自然日的日记，缺省为用户本地今天；同日已有内容时只追加，不覆盖。"
+    "仅写有依据的当天交流、已完成事件与自身感受，不把用户计划或助手猜测写成事实。"
+    "成功后静默保存供用户查看，不额外发消息；静止档不可用。"
+)
 
 DIARY_WRITE_PARAM_DESCS = {
     "body": "日记正文（≤ 1000 字）",
@@ -108,16 +127,15 @@ WEB_SEARCH_PARAM_DESCS = {
 }
 
 WEB_EXTRACT_DESC = (
-    "Extract content from web page URLs as markdown. Also works with PDF URLs "
-    "(arxiv papers, documents, etc.) — pass the PDF link directly. Short pages return "
-    "full markdown; long pages are summarized down to ~5000 chars. Pages over 2M chars "
-    "are refused. If a URL fails or times out, use the browser tool to access it instead."
+    "Extract readable content from URLs through the configured provider. PDF and page support depend on that "
+    "provider. Content is summarized by default and may be partial; use use_llm_processing=false when exact "
+    "wording or detailed source inspection is needed. Inspect each document's error/content: a successful "
+    "batch does not mean every URL succeeded. If extraction fails, try an available browser or another source."
 )
 
 WEB_EXTRACT_PARAM_DESCS = {
-    "urls": "List of URLs to extract content from (max 5 URLs per call)",
-    "format": "Desired format (e.g. markdown)",
-    "use_llm_processing": "Summarize content with LLM (default: true)",
+    "urls": "Source URLs to extract; batch a small number of relevant pages per call.",
+    "use_llm_processing": "Summarize longer extracted content with LLM (default: true). Set false to retain the provider's extracted text, which may itself be incomplete.",
 }
 
 MEMORY_RETAIN_DESC = "Propose an atomic batch of evidence-grounded memory changes after memory_inspect. An independent LLM review may reject or revise it. Revise or invalidate incorrect facts using their ID and version. Never ask the user to approve maintenance."
@@ -132,22 +150,31 @@ SEARCH_TOOLS_PARAM_DESCS = {
     "query": "Domain id (e.g. files, browser) or intent (e.g. 读文件, run python).",
 }
 
-AGENT_DELEGATE_DESC = "Delegate a complex task to an autonomous subagent. The subagent will run independently with its own thought loop and return its final summarized answer. Use this for complex multi-step reasoning or large tasks."
+AGENT_DELEGATE_DESC = (
+    "Delegate a bounded task to a subagent and receive its final result. It inherits the conversation type "
+    "and user scope, but not the parent conversation's messages or tool results. Supply the necessary context, "
+    "constraints, and expected evidence. Delegation does not grant additional authorization or prove success; "
+    "check the returned evidence before relying on it."
+)
 
 AGENT_DELEGATE_PARAM_DESCS = {
     "task_description": "Detailed description of the task, the goal, and any context the subagent needs to know.",
 }
 
-CRONJOB_DESC = "Manage the user's scheduled cron jobs."
+CRONJOB_DESC = (
+    "Manage recurring scheduled jobs in this preset's scope. Schedules run in UTC, not the user's local "
+    "timezone. Inspect existing jobs before changing or duplicating them. For a one-time companion follow-up "
+    "use companion_wait when available; this tool does not expose a one-shot option."
+)
 
 CRONJOB_PARAM_DESCS = {
     "action": "One of: create, list, update, get, pause, resume, remove.",
-    "job_id": "Required for update/pause/resume/remove.",
-    "prompt": "For create: the full prompt/instructions for the job.",
-    "schedule": "For create/update: cron expression (e.g., '0 9 * * *' for daily at 9am).",
+    "job_id": "Required for get/update/pause/resume/remove; use the actual ID returned by list or create.",
+    "prompt": "Required for create, optional for update: self-contained instructions with the task, relevant context, authorization boundary and expected result. The future run does not inherit this conversation's full history.",
+    "schedule": "For create/update: five-field UTC cron (minute hour day month weekday), e.g. '0 9 * * *' means 09:00 UTC daily. Convert an explicitly requested local time using its timezone; a fixed UTC cron does not follow daylight-saving changes. Updating the schedule also resumes a paused job.",
     "name": "Optional human-friendly name.",
-    "kind": "special delivers a natural proactive message in the primary conversation; standard runs in a separate task conversation and posts a system notification. Defaults to standard.",
-    "deliver": "Delivery channel for job output (e.g., 'local', 'webhook'). Defaults to 'local' when omitted.",
+    "kind": "special is available only in the companion preset and triggers a primary-conversation turn, gated by desktop availability and disturbance settings; it may remain silent. standard runs in a separate task conversation and posts a system notification; local tools still need the desktop online. Defaults to standard.",
+    "deliver": "Use 'local' (default). This field does not configure webhook delivery.",
 }
 
 WEB_SUMMARY_INSTRUCTIONS = (
@@ -157,5 +184,6 @@ WEB_SUMMARY_INSTRUCTIONS = (
     "or uncertainty. Attribute claims to the source when needed and never present them as independently verified; "
     "do not add facts or conclusions absent from the document. Remove navigation, cookie notices, "
     "repeated boilerplate, and irrelevant promotion. Use compact Markdown in the document's main language, "
-    "with enough context for the calling model to judge relevance. Output only the summary."
+    "with enough context for the calling model to judge relevance. The supplied content may be an excerpt; "
+    "do not claim to have inspected missing sections or the whole document. Output only the summary."
 )

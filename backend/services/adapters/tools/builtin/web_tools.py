@@ -142,7 +142,6 @@ WEB_EXTRACT_SCHEMA = {
                 "items": {"type": "string"},
                 "description": WEB_EXTRACT_PARAM_DESCS["urls"],
             },
-            "format": {"type": "string", "description": WEB_EXTRACT_PARAM_DESCS["format"]},
             "use_llm_processing": {"type": "boolean", "description": WEB_EXTRACT_PARAM_DESCS["use_llm_processing"]},
         },
         "required": ["urls"],
