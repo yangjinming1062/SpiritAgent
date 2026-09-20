@@ -22,10 +22,10 @@ if TYPE_CHECKING:
     from modules.auth import User
 
 
-class Companion3DModel(ModelBase, TimestampMixin):
-    """供应商生成的 3D 模型；status 流转：generating → pending_download → downloading → succeeded | failed；下载阶段任意失败 → download_failed（可通过 ``companion.model.retryDownload`` 重试，付费结果保存在 provider_task_id + download_urls_json 中）。"""
+class CompanionModel(ModelBase, TimestampMixin):
+    """供应商生成的模型；status 流转：generating → pending_download → downloading → succeeded | failed；下载阶段任意失败 → download_failed（可通过 ``companion.model.retryDownload`` 重试，付费结果保存在 provider_task_id + download_urls_json 中）。"""
 
-    __tablename__ = "companion_3d_models"
+    __tablename__ = "companion_models"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     asset_url: Mapped[str] = mapped_column(Text, default="")
@@ -51,9 +51,10 @@ class Companion3DModel(ModelBase, TimestampMixin):
 
 
 class CompanionOutfit(ModelBase, TimestampMixin):
-    """2D 换装外观：一套全身立绘 + 对应 2d 切分行 + LLM 着装描述。
+    """外观（着装参考）：一套经确认的全身立绘 + LLM 着装描述。
     服装/发型属可换元素而非身份变更，不受形象锁定约束；激活装不可删 ⇒ 衣柜非空后永不回空。
-    partial unique（每用户一个 active / 一个 splitting）只存在于 baseline 迁移，不进模型 metadata。"""
+    status 流转：draft → ready | failed | expired；ready 表示参考图就绪，
+    不代表任何可播放形象（模型 / 视频）已就绪。"""
 
     __tablename__ = "companion_outfits"
 
@@ -62,35 +63,70 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 全身立绘裸路径（草稿期 temp-media/，确认后 companion-avatars/），读取时重签名
     fullbody_url: Mapped[str] = mapped_column(String(2048), default="")
-    # draft → splitting → ready | failed | expired
+    # draft → ready | failed | expired
     status: Mapped[str] = mapped_column(String(16), default="draft", server_default=text("'draft'"), index=True)
     # 审计：用户着装描述 / feedback / 参考图前缀标记，仿 AvatarAsset.prompt_json
     source_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
-    # 确认即穿着：切分成功后自动翻转激活；期间手动穿着其他装会清掉该标记，切分完成只入柜不换装
-    pending_wear: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
 
 
-class Companion2DModel(ModelBase, TimestampMixin):
-    """see-through 拆分产物：manifest 为 PSD 木偶描述符（spiritagent.2d.psd/1），layers 指向分层 PSD 资产；客户端 puppet 渲染层消费。
-    partial unique（每用户一条 active）只存在于 baseline 迁移，不进模型 metadata。"""
+# 视频动作包必需动作；可选动作（wave/nod 等）允许出现在 manifest 但不阻塞 ready。
+REQUIRED_VIDEO_ACTIONS: tuple[str, ...] = ("idle", "walk_left", "walk_right", "drag")
 
-    __tablename__ = "companion_2d_models"
+
+class CompanionVideoPack(ModelBase, TimestampMixin):
+    """角色视频动作包（不可变版本）：一个外观版本的一套动作片段 + 描述符 manifest。
+    status 流转：processing → ready | failed；ready 仅表示「必需动作全部有效且服务端
+    发布完成」，不改变模型链或其他形象状态。版本不可覆盖：单动作重做生成新版本行，
+    可复用未变化动作的资源哈希；发布与激活只能由 video 编排在用户锁内翻转。"""
+
+    __tablename__ = "companion_video_packs"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     avatar_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id"), nullable=True)
+    pack_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     status: Mapped[str] = mapped_column(
         String(16),
-        default="generating",
-        server_default=text("'generating'"),
+        default="processing",
+        server_default=text("'processing'"),
         index=True,
     )
+    # 描述符（spiritagent.video.pack/1）：身份、画布、动作映射、命中与调度约束；资源为不可变路径+哈希
     manifest_json: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     manifest_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    layers_json: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
+    # 参考版本哈希：换装 / 参考变更后迟到的构建结果凭它被拒，不覆盖新外观的包
+    reference_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class CompanionVideoJob(ModelBase, TimestampMixin):
+    """角色视频动作任务：与聊天媒体 VideoGenJob 分离。status 是任务状态，
+    stage 是其在链上的阶段（提交 / 生成 / 下载 / 处理 / 校验 / 发布），二者分开持久化；
+    供应商等待不占数据库长事务。按动作记录：一个任务对应一个动作（整包=多任务）。"""
+
+    __tablename__ = "companion_video_jobs"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    pack_id: Mapped[int | None] = mapped_column(ForeignKey("companion_video_packs.id"), nullable=True)
+    outfit_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    action: Mapped[str] = mapped_column(String(32), default="idle", server_default=text("'idle'"))
+    status: Mapped[str] = mapped_column(
+        String(16),
+        default="queued",
+        server_default=text("'queued'"),
+        index=True,
+    )
+    stage: Mapped[str] = mapped_column(String(16), default="submit", server_default=text("'submit'"))
+    provider: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
+    provider_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
+    reference_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
+    input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
+    artifact_path: Mapped[str | None] = mapped_column(String(2048), nullable=True, default=None)
+    result_path: Mapped[str | None] = mapped_column(String(2048), nullable=True, default=None)
+    attempt: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -110,8 +146,8 @@ class Persona(ModelBase, TimestampMixin):
         index=True,
     )
     portrait_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # 渲染模式：2d（默认 PSD 木偶动画版）或 3d（云端 GLB 模型）；3d 失败自动回退到 2d。
-    render_mode: Mapped[str] = mapped_column(String(8), default="2d", server_default=text("'2d'"), index=True)
+    # 渲染方式偏好：model（云端 GLB 模型）/ video（默认，视频形象；动作包未就绪时按兜底顺序显示）。
+    render_mode: Mapped[str] = mapped_column(String(8), default="video", server_default=text("'video'"), index=True)
     # 当前激活的房间图行；None = 尚未生成。
     active_backdrop_id: Mapped[int | None] = mapped_column(
         ForeignKey("companion_room_backdrops.id", ondelete="SET NULL"),
@@ -146,10 +182,12 @@ class AvatarAsset(ModelBase):
     style: Mapped[str] = mapped_column(String(64), default="")
     # 日常出镜的全身参考；独立于建模种子，锁定身份后仍可重绘。
     seed_fullbody_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    seed_front_2d_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    # 3D 建模专用正面种子（A-pose、按物种路由画风），切 3D 时以 2D 正面种子派生；不覆盖 2D 正面种子（衣柜与 2D 拆分的身份锚）
-    seed_front_3d_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    seed_back_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
+    # 确认形象的外观参考正面立绘（渲染方式无关的身份锚）：onboarding 确认后锁定身份；
+    # 外观草稿与视频链以它为身份参考。
+    reference_image_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
+    # 建模专用正面种子（A-pose、按物种路由画风），切模型时以参考立绘派生；不覆盖外观参考（衣柜与视频链的身份锚）
+    model_seed_front_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
+    model_seed_back_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

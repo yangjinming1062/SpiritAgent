@@ -49,10 +49,10 @@ const OUTFIT_FETCH_TIMEOUT_MS = 15 * 60_000
 // 自备图的 prompt 端点含 LLM 往返（骨骼分类 / 参考图整合 / 房间 brief），adopt 含
 // 8MiB 图片校验与落盘：与各自生成端点共用同一放宽档。
 const OUTFIT_GENERATION_PATH_PATTERN =
-  /^\/api\/companion\/outfits(?:\/(?:prompt|adopt)|\/\d+\/(?:regenerate|prompt|adopt|poses\/(?:left|right)\/(?:prompt|adopt)))?$/i
+  /^\/api\/companion\/outfits(?:\/(?:prompt|adopt)|\/\d+\/(?:regenerate|prompt|adopt|confirm))?$/i
 
 const AVATAR_SLOW_PATH_PATTERN =
-  /^\/api\/(?:companion\/(?:avatar(?:\/from-image|\/\d+\/fullbody\/(?:reference|front-2d|front-3d|back|confirm-front)(?:\/(?:prompt|adopt))?)?|sprite|room\/(?:prompt|\d+\/adopt))|media\/(?:image_gen|video_gen))$/i
+  /^\/api\/(?:companion\/(?:avatar(?:\/from-image|\/\d+\/fullbody\/(?:reference|front-reference|model-front|back|confirm-front)(?:\/(?:prompt|adopt))?)?|sprite|room\/(?:prompt|\d+\/adopt))|media\/(?:image_gen|video_gen))$/i
 
 const SAFE_ENV_SUFFIXES: Set<string> = new Set(['dist', 'example', 'sample', 'template'])
 const SENSITIVE_EXTENSIONS: Set<string> = new Set(['.kdbx', '.p12', '.pem', '.pfx'])

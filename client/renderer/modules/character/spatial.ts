@@ -50,10 +50,10 @@ const MAX_SCALE = 3
 
 type SpatialLocale = 'home' | 'perch' | 'roam' | 'target' | 'workbench'
 
-// Locomotion 枚举（mesh2d 与 spatial 共用）：
+// Locomotion 枚举（spatial 权威，渲染层消费）：
 // - 'still' / 'walk' / 'fly' / 'drag' 是原有 4 项；
-// - 'walk_fast' 是走路加速版（mesh2d 骨骼相位频率更高）；
-// - 'jump' 是单次脉冲，mesh2d 走 body_main squash + shoulder 上扬方案。
+// - 'walk_fast' 是走路加速版；
+// - 'jump' 是单次脉冲。
 export type Locomotion = 'still' | 'walk' | 'walk_fast' | 'fly' | 'drag' | 'jump'
 
 type EdgeDockSide = 'none' | 'left' | 'right'
@@ -61,7 +61,7 @@ type EdgeDockSide = 'none' | 'left' | 'right'
 const $spatialLocale = atom<SpatialLocale>('home')
 
 // 可见内容包围盒（归一化到舞台盒）：角色实际可见像素的范围，由渲染层上报——
-// puppet 用 rig 层矩形并集，3D 用轮廓 alpha 外接矩形；蛋等未上报路径按整盒兜底。
+// 模型用轮廓 alpha 外接矩形；蛋等未上报路径按整盒兜底。
 // 必须先于下方位置原子声明：home 初值求值期就经 contentBox 读它，晚声明会 TDZ 崩页。
 export const $spriteContentRect = atom<{ left: number; top: number; right: number; bottom: number } | null>(null)
 
@@ -674,8 +674,8 @@ export function resetToHomePosition(): void {
 
 export function initSpatial(): () => void {
   // 启动恢复的出屏判定依赖内容包围盒（整盒兜底会把透明留白算进身体，出屏量与
-  // dock 落点都会算偏）。getPosition 的 IPC 往返几乎总是快于 PSD 装配上报——
-  // rect 未上报时等首次上报再恢复；3s 兜底防 3D/蛋等不上报的渲染路径丢失恢复。
+  // dock 落点都会算偏）。getPosition 的 IPC 往返几乎总是快于渲染层装配上报——
+  // rect 未上报时等首次上报再恢复；3s 兜底防模型/蛋等不上报的渲染路径丢失恢复。
   const restoreSavedPosition = (saved: { x: number; y: number }): void => {
     if (userInteracted) {
       return

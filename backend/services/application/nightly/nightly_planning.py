@@ -54,7 +54,6 @@ from services.application.generation import (
     load_avatar_bytes_as_data_uri,
     resolve_image_gen_chain,
     resolve_self_reference_data_uri,
-    resume_outfit_split,
     resume_room_generation,
     schedule_room_generation,
 )
@@ -66,7 +65,6 @@ from services.infrastructure.llm import call_llm_once, resolve_provider_chain, s
 
 logger = get_logger(__name__)
 
-_OUTFIT_WAIT_SECONDS = 30 * 60
 _ROOM_WAIT_SECONDS = 15 * 60
 _POLL_SECONDS = 3.0
 _ROOM_INTENTS = frozenset(intent.value for intent in BackdropIntent)
@@ -298,7 +296,6 @@ class WardrobeItem(BaseModel):
     description: str = ""
     status: str
     active: bool = False
-    pending_wear: bool = False
 
 
 class RecentActionSummary(BaseModel):
@@ -367,7 +364,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         "outfit.create",
         10,
-        "构思并生成一套新外观，完成 2D 切分后自动穿上；只在现有衣橱不合适或特殊节点时使用。",
+        "构思并生成一套新外观并穿上；只在现有衣橱不合适或特殊节点时使用。",
         {"description": "string", "reason": "string"},
         exclusive_group="outfit",
         paid=True,
@@ -491,15 +488,14 @@ def _capability_availability(
     wardrobe = context.wardrobe
     persona_ready = bool(context.persona.complete)
     has_ready_outfit = any(item.status == "ready" for item in wardrobe)
-    splitting = any(item.status == "splitting" for item in wardrobe)
     rules: dict[str, tuple[bool, str]] = {
         "outfit.wear": (
             policy.outfit != "locked" and has_ready_outfit,
             "换装已锁定或没有 ready 外观",
         ),
         "outfit.create": (
-            policy.outfit != "locked" and providers.image_reference and persona_ready and not splitting,
-            "换装已锁定、形象/生图不可用或已有外观正在切分",
+            policy.outfit != "locked" and providers.image_reference and persona_ready,
+            "换装已锁定或形象/生图不可用",
         ),
         "room.change": (
             policy.room != "locked"
@@ -636,7 +632,6 @@ async def _collect_context(user_id: int) -> PlanningContext:
                 description=outfit.description or "",
                 status=outfit.status,
                 active=outfit.active,
-                pending_wear=outfit.pending_wear,
             )
             for outfit in outfits
         ],
@@ -890,23 +885,16 @@ async def _record_executor_state(
 
 
 async def _wait_for_outfit(user_id: int, outfit_id: int) -> CompanionOutfit | None:
-    deadline = monotonic() + _OUTFIT_WAIT_SECONDS
-    while monotonic() < deadline:
-        async with SESSION_LOCAL() as db:
-            outfit = (
-                await db.execute(
-                    select(CompanionOutfit).where(
-                        CompanionOutfit.user_id == user_id,
-                        CompanionOutfit.id == outfit_id,
-                    ),
-                )
-            ).scalar_one_or_none()
-            if outfit is None or outfit.status in ("failed", "expired"):
-                return None
-            if outfit.status == "ready":
-                return outfit
-        await asyncio.sleep(_POLL_SECONDS)
-    return None
+    """确认后的外观读取：确认是同步操作，这里只兜底核对最终状态。"""
+    async with SESSION_LOCAL() as db:
+        return (
+            await db.execute(
+                select(CompanionOutfit).where(
+                    CompanionOutfit.user_id == user_id,
+                    CompanionOutfit.id == outfit_id,
+                ),
+            )
+        ).scalar_one_or_none()
 
 
 async def _outfit_policy_allows(user_id: int) -> bool:
@@ -968,21 +956,20 @@ async def _execute_outfit_create(
     except (TypeError, ValueError):
         async with SESSION_LOCAL() as db:
             draft = await create_outfit_draft(db, user_id, description=description)
-            splitting = await confirm_outfit(db, user_id, draft.id)
-        outfit_id = splitting.id
+            confirmed = await confirm_outfit(db, user_id, draft.id)
+        outfit_id = confirmed.id
         await _record_executor_state(
             context,
             "running",
             ActionExecutionResult(status="running", outfit_id=outfit_id),
         )
-    else:
-        await resume_outfit_split(user_id, outfit_id)
     ready = await _wait_for_outfit(user_id, outfit_id)
-    if ready is None:
+    # 确认是同步的：缺失或未就绪说明外观已被删除 / 重绘回草稿，不能盲目重做付费生成。
+    if ready is None or ready.status != "ready":
         return ActionExecutionResult(
             status="failed",
             outfit_id=outfit_id,
-            reason="outfit splitting did not finish active",
+            reason="outfit is not ready after confirm",
         )
     if not ready.active:
         async with SESSION_LOCAL() as db:

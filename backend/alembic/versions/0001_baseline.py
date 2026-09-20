@@ -1,4 +1,4 @@
-"""完整 schema 基线：pgvector/pg_trgm 扩展、partial unique 与 HNSW/GIN 索引、ws_events NOTIFY 触发器、2D 模型管线（风格键 refined_anime_cg）、persona.render_mode/outfit_policy/current_mood、IM 通道桥三表（含待补发队列）、messages IM 入站列、房间背景（含自备图 source）/时刻（含评论区）/日记、companion_intents 等待与认领、nightly_activity_logs/actions、cron 双轨、user_model_configs.ai_config、system_settings。"""
+"""完整 schema 基线"""
 
 from collections.abc import Sequence
 
@@ -79,9 +79,9 @@ def upgrade() -> None:
         sa.Column("asset_url", sa.String(length=2048), nullable=False),
         sa.Column("style", sa.String(length=64), nullable=False),
         sa.Column("seed_fullbody_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
-        sa.Column("seed_front_2d_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
-        sa.Column("seed_front_3d_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
-        sa.Column("seed_back_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("reference_image_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("model_seed_front_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("model_seed_back_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("seed", sa.Integer(), nullable=True),
         sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -92,7 +92,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_avatar_assets_active"), "avatar_assets", ["active"], unique=False)
     op.create_index(op.f("ix_avatar_assets_user_id"), "avatar_assets", ["user_id"], unique=False)
     op.create_table(
-        "companion_3d_models",
+        "companion_models",
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("asset_url", sa.Text(), nullable=False),
         sa.Column("source_portrait_id", sa.Integer(), nullable=True),
@@ -116,9 +116,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_companion_3d_models_active"), "companion_3d_models", ["active"], unique=False)
-    op.create_index(op.f("ix_companion_3d_models_rig_type"), "companion_3d_models", ["rig_type"], unique=False)
-    op.create_index(op.f("ix_companion_3d_models_user_id"), "companion_3d_models", ["user_id"], unique=False)
+    op.create_index(op.f("ix_companion_models_active"), "companion_models", ["active"], unique=False)
+    op.create_index(op.f("ix_companion_models_rig_type"), "companion_models", ["rig_type"], unique=False)
+    op.create_index(op.f("ix_companion_models_user_id"), "companion_models", ["user_id"], unique=False)
     op.create_table(
         "companion_outfits",
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -128,7 +128,6 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=16), server_default=sa.text("'draft'"), nullable=False),
         sa.Column("source_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
-        sa.Column("pending_wear", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -138,28 +137,55 @@ def upgrade() -> None:
     op.create_index(op.f("ix_companion_outfits_user_id"), "companion_outfits", ["user_id"], unique=False)
     op.create_index(op.f("ix_companion_outfits_status"), "companion_outfits", ["status"], unique=False)
     op.create_index(op.f("ix_companion_outfits_active"), "companion_outfits", ["active"], unique=False)
+    # 角色视频动作包：包版本不可覆盖，单动作重做生成新版本行；发布与激活由服务层在用户锁内翻转。
     op.create_table(
-        "companion_2d_models",
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        "companion_video_packs",
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("avatar_id", sa.Integer(), nullable=True),
         sa.Column("outfit_id", sa.Integer(), nullable=True),
-        sa.Column("status", sa.String(length=16), server_default=sa.text("'generating'"), nullable=False),
+        sa.Column("pack_version", sa.Integer(), server_default=sa.text("1"), nullable=False),
+        sa.Column("status", sa.String(length=16), server_default=sa.text("'processing'"), nullable=False),
         sa.Column("manifest_json", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("manifest_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
-        sa.Column("layers_json", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
         sa.Column("content_hash", sa.String(length=64), nullable=True),
+        sa.Column("reference_hash", sa.String(length=64), nullable=True),
         sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("error", sa.Text(), nullable=True),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["outfit_id"], ["companion_outfits.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_companion_2d_models_active"), "companion_2d_models", ["active"], unique=False)
-    op.create_index(op.f("ix_companion_2d_models_status"), "companion_2d_models", ["status"], unique=False)
-    op.create_index(op.f("ix_companion_2d_models_user_id"), "companion_2d_models", ["user_id"], unique=False)
+    op.create_index(op.f("ix_companion_video_packs_user_id"), "companion_video_packs", ["user_id"], unique=False)
+    op.create_index(op.f("ix_companion_video_packs_status"), "companion_video_packs", ["status"], unique=False)
+    op.create_index(op.f("ix_companion_video_packs_active"), "companion_video_packs", ["active"], unique=False)
+    op.create_table(
+        "companion_video_jobs",
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("pack_id", sa.Integer(), nullable=True),
+        sa.Column("outfit_id", sa.Integer(), nullable=True),
+        sa.Column("action", sa.String(length=32), server_default=sa.text("'idle'"), nullable=False),
+        sa.Column("status", sa.String(length=16), server_default=sa.text("'queued'"), nullable=False),
+        sa.Column("stage", sa.String(length=16), server_default=sa.text("'submit'"), nullable=False),
+        sa.Column("provider", sa.String(length=64), server_default=sa.text("''"), nullable=False),
+        sa.Column("provider_task_id", sa.String(length=128), nullable=True),
+        sa.Column("reference_hash", sa.String(length=64), nullable=True),
+        sa.Column("input_hash", sa.String(length=64), nullable=True),
+        sa.Column("artifact_path", sa.String(length=2048), nullable=True),
+        sa.Column("result_path", sa.String(length=2048), nullable=True),
+        sa.Column("attempt", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("error", sa.Text(), nullable=True),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["pack_id"], ["companion_video_packs.id"]),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(op.f("ix_companion_video_jobs_user_id"), "companion_video_jobs", ["user_id"], unique=False)
+    op.create_index(op.f("ix_companion_video_jobs_status"), "companion_video_jobs", ["status"], unique=False)
     op.create_table(
         "conversations",
         sa.Column("memory_reviewed_message_id", sa.Integer(), server_default="0", nullable=False),
@@ -308,7 +334,7 @@ def upgrade() -> None:
         sa.Column("is_complete", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("is_portrait_confirmed", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("portrait_confirmed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("render_mode", sa.String(length=8), server_default=sa.text("'2d'"), nullable=False),
+        sa.Column("render_mode", sa.String(length=8), server_default=sa.text("'video'"), nullable=False),
         sa.Column("active_backdrop_id", sa.Integer(), nullable=True),
         sa.Column("backdrop_policy", sa.String(length=16), server_default=sa.text("'llm_may_replace'"), nullable=False),
         sa.Column("outfit_policy", sa.String(length=16), server_default=sa.text("'llm_may_replace'"), nullable=False),
@@ -671,13 +697,13 @@ def upgrade() -> None:
         postgresql_where=sa.text("active"),
     )
     op.create_index(
-        "uq_companion_3d_models_one_active",
-        "companion_3d_models",
+        "uq_companion_models_one_active",
+        "companion_models",
         ["user_id"],
         unique=True,
         postgresql_where=sa.text("active"),
     )
-    # 每用户一个穿着中外观；一个切分中外观（并发 confirm 的硬保证，服务层另有用户级锁）
+    # 每用户一个激活中外观（并发 confirm 的硬保证，服务层另有用户级锁）
     op.create_index(
         "uq_companion_outfits_one_active",
         "companion_outfits",
@@ -685,17 +711,10 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("active"),
     )
+    # 每用户一个激活视频包：先停用后激活的翻转由此兜底。
     op.create_index(
-        "uq_companion_outfits_one_splitting",
-        "companion_outfits",
-        ["user_id"],
-        unique=True,
-        postgresql_where=sa.text("status = 'splitting'"),
-    )
-    # 每用户一条激活 2d 行：非 outfit 成功接缝与穿着翻转共用先停用后激活顺序，切分窗口内的并发激活由此兜底
-    op.create_index(
-        "uq_companion_2d_models_one_active",
-        "companion_2d_models",
+        "uq_companion_video_packs_one_active",
+        "companion_video_packs",
         ["user_id"],
         unique=True,
         postgresql_where=sa.text("active"),
@@ -794,6 +813,7 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS notify_ws_event()")
     # 先子表再父表（messages → conversations → users）。
     # channel_deliveries / channel_peers 在 channel_bindings 之后 drop（binding_id FK）；
+    # companion_video_jobs / companion_video_packs 在 companion_outfits 之前 drop（pack_id / outfit_id FK）；
     # nightly_activity_actions 在 nightly_activity_logs 之后 drop（log_id FK）；system_settings 无 FK 引用，置于最末。
     for table in (
         "messages",
@@ -815,8 +835,9 @@ def downgrade() -> None:
         "memories",
         "login_records",
         "cron_jobs",
-        "companion_3d_models",
-        "companion_2d_models",
+        "companion_video_jobs",
+        "companion_video_packs",
+        "companion_models",
         "companion_outfits",
         "avatar_assets",
         "conversations",

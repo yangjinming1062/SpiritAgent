@@ -20,10 +20,10 @@ import { handleToolCall, handleToolComplete, handleToolStart } from './handlers/
 
 export function handleGatewayEvent(event: GatewayEvent): void {
   // 仅在冷启动 hydrateAuth 尚未完成时（'pending'）丢弃 WSEvent：无用户态，事件无主。
-  // 'unauthenticated' 不丢弃：登出 race 里到达的 message.complete / model.ready /
-  // companion.2d.ready 还要落地——否则流式 chat 卡 thinking、模型 ready 漏掉让用户
-  // 看到旧 model。跨会话污染由事件本身的 session_id 闸门（下方 session_id 过滤段）兜底。
-  // 写持久化原子的副作用分支（model.ready / companion.2d.ready）在自己内部用 $auth.kind
+  // 'unauthenticated' 不丢弃：登出 race 里到达的 message.complete / model.ready 还要落地
+  // ——否则流式 chat 卡 thinking、模型 ready 漏掉让用户看到旧 model。
+  // 跨会话污染由事件本身的 session_id 闸门（下方 session_id 过滤段）兜底。
+  // 写持久化原子的副作用分支（model.ready）在自己内部用 $auth.kind
   // 二次防御，避免 OPFS / localStorage 串味。
   if ($auth.get().kind === 'pending') {
     log.warn('events', 'Discarded event during pending auth:', event.type)
@@ -110,13 +110,13 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'model.failed':
 
-    case 'companion.2d.ready':
-
-    case 'companion.2d.failed':
-
     case 'companion.outfit.updated':
 
-    case 'companion.outfit.failed':
+    case 'companion.video.activated':
+
+    case 'companion.video.failed':
+
+    case 'companion.video.ready':
 
     case 'companion.render_mode.changed':
 

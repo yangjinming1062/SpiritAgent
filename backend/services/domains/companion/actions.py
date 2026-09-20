@@ -1,4 +1,4 @@
-"""2D 动作白名单 — LLM 可触发动作词表（客户端 PuppetStage 动作包络按同名兑现）。"""
+"""动作词表 — LLM 可触发的具身表达动作，渲染层按资产实际支持兑现同名动作。"""
 
 DEFAULT_ACTIONS: frozenset[str] = frozenset(
     {

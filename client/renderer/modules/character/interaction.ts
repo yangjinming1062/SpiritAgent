@@ -6,7 +6,7 @@ import { $clipOverride, $spriteAction, $spriteEmotion, setSpriteState } from './
 import { $personalityTags } from './persona-store'
 import { $llmReactions } from './prefs'
 import { pickReaction, playReactionAudio } from './reactions/reaction-audio'
-import { $availableClipNames, $clipMap, resolveClip } from './rendering/3d'
+import { $availableClipNames, $clipMap, resolveClip } from './rendering/model'
 import { emitVfx } from './vfx'
 
 export type NormalizedRegion = 'head' | 'body' | 'item'
@@ -61,8 +61,8 @@ interface InteractRpcRequest {
   poke_count: number
   idle_seconds: number
   local_hour: number
-  /** 2D 路径子区域命中（head/face/arm_L/arm_R/body/back_hair/front_hair/skirt）；
-   *  不传 = 整精灵矩形命中。3D 路径走 silhouette hit，2D 路径由 2D 渲染层 hitmap 提供。 */
+  /** 渲染层子区域命中（head/face/arm_L/arm_R/body/back_hair/front_hair/skirt）；
+   *  不传 = 整精灵矩形命中（当前轮廓命中只提供布尔，子区域由渲染层按需提供）。 */
   region?: string
 }
 

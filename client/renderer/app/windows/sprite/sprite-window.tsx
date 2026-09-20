@@ -1,36 +1,31 @@
 import { useStore } from '@nanostores/react'
-import React, { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import React, { lazy, Suspense, useEffect, useRef, useState } from 'react'
 
-import { ActivationOverlay, BootFailureOverlay, EggStage, OnboardingFlow } from '@/app/onboarding'
+import { ActivationOverlay, BootFailureOverlay, OnboardingFlow } from '@/app/onboarding'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
 import { speakProactive } from '@/app/workflows/proactive-delivery'
 import {
   $companionLifecycle,
   $companionVoiceId,
   $contextMenuPos,
+  $renderMode,
+  $videoPackStatus,
+  EggStage,
   ensureCompanionHydrated,
-  handlePetInteraction,
   handlePokeInteraction,
   hydratePersona,
   hydratePortrait,
   hydratePortraitHistory,
+  hydrateVideoPack,
   initSpatial,
-  normalizeRegion,
   reportUserActivity,
   resetToHomePosition,
-  resolveCompanionRenderLayer,
+  resolveCompanionPresentation,
   setCompanionLifecycle,
   setCompanionVoiceId,
   startActivityMonitor
 } from '@/modules/character'
-import {
-  $mesh2dHitmap,
-  $puppetReady,
-  $renderMode,
-  hydrateMesh2D,
-  hydratePuppet
-} from '@/modules/character/rendering/2d'
-import { $glbLoadFailed, $modelInfo, hydrateModel } from '@/modules/character/rendering/3d'
+import { $glbLoadFailed, $modelGenState, $modelInfo, hydrateModel } from '@/modules/character/rendering/model'
 import { MediaViewerOverlay } from '@/modules/media'
 import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
 import { NotificationStack, useGatewayRequest } from '@/shared'
@@ -51,14 +46,13 @@ import { toggleWhisper, WhisperOverlay } from './whisper'
 
 setSurfaceRole('sprite')
 
-// 3D / 2D 渲染管线：把这两个组件连同其 three + draco wasm + GLTF loader 全家桶
-// 从启动关键路径挪走。Onboarding 期间 (showOnboarding 为 true) 本来就不挂载它们，
+// 模型渲染管线：把组件连同其 three + draco wasm + GLTF loader 全家桶
+// 从启动关键路径挪走。Onboarding 期间 (showOnboarding 为 true) 本来就不挂载，
 // 让 Vite 把 three.module.js + draco_decoder.wasm 等 25MB 模块拆成单独 chunk，
 // 在 lifecycle=ready 后按需请求，避开启动尖峰把风扇拉满。
-const Companion3D = lazy(() => import('@/modules/character/rendering/3d').then(m => ({ default: m.Companion3D })))
-// puppet（PSD 链）沿用 WebGL/vite 懒加载策略：PSD 装配 + vendor
-// rigger/ag-psd 都不在启动关键路径上（Phase 6）。
-const PuppetStage = lazy(() => import('@/modules/character/rendering/2d').then(m => ({ default: m.PuppetStage })))
+// 兜底层直接渲染程序化蛋（DESIGN §1.2「永不空白」）。
+const ModelStage = lazy(() => import('@/modules/character/rendering/model').then(m => ({ default: m.ModelStage })))
+const VideoStage = lazy(() => import('@/modules/character/rendering/video').then(m => ({ default: m.VideoStage })))
 
 export function SpriteWindow(): React.JSX.Element {
   useWindowMouseCapture()
@@ -69,10 +63,11 @@ export function SpriteWindow(): React.JSX.Element {
   const gatewayState = useStore($gatewayState)
   const surfaceOpen = useStore($surfaceOpen)
   const lifecycle = useStore($companionLifecycle)
-  const renderMode = useStore($renderMode)
-  const puppetReady = useStore($puppetReady)
+  const mode = useStore($renderMode)
   const modelInfo = useStore($modelInfo)
   const glbLoadFailed = useStore($glbLoadFailed)
+  const modelGenState = useStore($modelGenState)
+  const videoStatus = useStore($videoPackStatus)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [activationOpen, setActivationOpen] = useState(false)
   const hasHydratedRef = useRef(false)
@@ -199,18 +194,6 @@ export function SpriteWindow(): React.JSX.Element {
   const showOnboarding = authed && lifecycle === 'onboarding' && onboardingOpen
   const eggVisible = authed && lifecycle === 'onboarding' && !onboardingOpen
 
-  // 渲染级联编排器（DESIGN §1.2「永不空白」）——嵌在组件体内，因依赖多个组件内 useStore 变量；
-  // 抽到 useMemo 避免每次渲染重建闭包。2D = PSD 链（puppet，Phase 6）；puppet 装配失败
-  // 写 error 熄灭 $puppetReady 后落 3D（CharacterController 内部有程序化蛋兜底）。
-  const renderLayer = useMemo<'puppet' | 'companion3d'>(() => {
-    return resolveCompanionRenderLayer({
-      glbLoadFailed,
-      modelStatus: modelInfo.status,
-      puppetReady,
-      renderMode
-    })
-  }, [renderMode, puppetReady, glbLoadFailed, modelInfo.status])
-
   useEffect(() => {
     if (auth.kind !== 'authenticated' || lifecycle !== 'ready') {
       hasHydratedRef.current = false
@@ -233,12 +216,11 @@ export function SpriteWindow(): React.JSX.Element {
         }
 
         await ensureCompanionHydrated({
-          hydrateMesh2D,
           hydrateModel,
           hydratePersona,
-          hydratePortrait,
-          hydratePuppet
+          hydratePortrait
         })
+        void hydrateVideoPack()
       })()
     }
 
@@ -285,7 +267,20 @@ export function SpriteWindow(): React.JSX.Element {
     })
   }, [lifecycle, gatewayState, requestGateway])
 
-  const onTap = (nx?: number, ny?: number): void => {
+  // 偏好模式与资产状态归并为当前渲染层（presentation/render-resolver）：
+  // 模型就绪或生成中挂模型舞台，否则落程序化蛋兜底；视频未提供时不误报。
+  const presentation = React.useMemo(
+    () =>
+      resolveCompanionPresentation({
+        modelGenerating: modelGenState === 'generating',
+        modelReady: modelInfo.status === 'succeeded' && !glbLoadFailed,
+        mode,
+        videoReady: videoStatus === 'ready'
+      }),
+    [mode, modelInfo.status, glbLoadFailed, modelGenState, videoStatus]
+  )
+
+  const onTap = (): void => {
     if (authed) {
       if (lifecycle === 'onboarding') {
         setOnboardingOpen(true)
@@ -293,25 +288,8 @@ export function SpriteWindow(): React.JSX.Element {
         return
       }
 
-      let rawRegion: string | undefined
-
-      if (nx !== undefined && ny !== undefined) {
-        const hit = $mesh2dHitmap.get()
-        const result = hit ? hit.hit(nx, ny) : null
-        rawRegion = result?.region
-      }
-
-      const region = normalizeRegion(rawRegion)
-
-      // 单击 head 摸头（spec §4.3）
-      if (region === 'head') {
-        handlePetInteraction(nx, ny)
-
-        return
-      }
-
-      // 单击 body 触发戳击反应；双击精灵才打开轻语卡片。
-      handlePokeInteraction(rawRegion)
+      // 单击触发戳击反应；双击精灵才打开轻语卡片。
+      handlePokeInteraction()
 
       return
     }
@@ -337,8 +315,8 @@ export function SpriteWindow(): React.JSX.Element {
     toggleWhisper()
   }
 
-  // onboarding 完成触发 3D 模型生成（base_texture 供应商是即时的——
-  // 3D 生成触发在 confirm-front 成功回调里完成——onboarding 流程只负责"展示与完成"，不再触发 3D 任务。
+  // onboarding 完成触发模型生成（base_texture 供应商是即时的——
+  // 模型生成触发在 confirm-front 成功回调里完成——onboarding 流程只负责"展示与完成"，不再触发模型任务。
   const onOnboardingComplete = (): void => {
     setOnboardingOpen(false)
     setCompanionLifecycle('ready')
@@ -349,7 +327,6 @@ export function SpriteWindow(): React.JSX.Element {
       {activationOpen && !authed && <ActivationOverlay onClose={() => setActivationOpen(false)} />}
       {showOnboarding && <OnboardingFlow onCompleted={onOnboardingComplete} />}
       <SpriteStage
-        handlesEdgePose={renderLayer === 'puppet'}
         hidden={showOnboarding || surfaceOpen === 'living' || surfaceOpen === 'workbench'}
         onContextMenu={e => {
           $contextMenuPos.set({ x: e.clientX, y: e.clientY })
@@ -360,7 +337,15 @@ export function SpriteWindow(): React.JSX.Element {
         {eggVisible ? (
           <EggStage onTap={() => setOnboardingOpen(true)} />
         ) : showOnboarding ? null : (
-          <Suspense fallback={null}>{renderLayer === 'puppet' ? <PuppetStage /> : <Companion3D />}</Suspense>
+          <Suspense fallback={null}>
+            {presentation.renderer === 'video' ? (
+              <VideoStage />
+            ) : presentation.renderer === 'model' ? (
+              <ModelStage />
+            ) : (
+              <EggStage />
+            )}
+          </Suspense>
         )}
       </SpriteStage>
       <SpriteContextMenu

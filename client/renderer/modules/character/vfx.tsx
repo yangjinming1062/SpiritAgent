@@ -1,4 +1,4 @@
-/** Mesh2D 视觉特效与情绪粒子系统。
+/** 精灵视觉特效与情绪粒子系统。
  *
  * 设计要点：
  * - 挂载于 SpriteStage 上层（pointer-events: none），零性能负担；
@@ -38,7 +38,7 @@ interface Particle {
 let nextParticleId = 1
 const activeParticles: Particle[] = []
 
-// 唤醒回调：Mesh2DVfxOverlay 在 mount 时注册，emitVfx 在粒子清空后
+// 唤醒回调：SpriteVfxOverlay 在 mount 时注册，emitVfx 在粒子清空后
 // 再次添加时调用——用于把已停止的 RAF 循环重新拉起。
 let wakeTick: (() => void) | null = null
 
@@ -141,7 +141,7 @@ function renderParticleIcon(p: Particle, elapsed: number): React.JSX.Element {
   }
 }
 
-export function Mesh2DVfxOverlay(): React.JSX.Element | null {
+export function SpriteVfxOverlay(): React.JSX.Element | null {
   const [, setFrame] = useState(0)
   const rafRef = useRef<number | null>(null)
 
@@ -217,7 +217,7 @@ export function Mesh2DVfxOverlay(): React.JSX.Element | null {
 
   return (
     <div
-      className="mesh2d-vfx-overlay"
+      className="sprite-vfx-overlay"
       style={{
         position: 'absolute',
         inset: 0,

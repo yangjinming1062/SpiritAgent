@@ -1,5 +1,4 @@
 import base64
-from typing import Literal
 
 from common import get_router
 from components import SESSION_LOCAL, SETTINGS, DbSession, get_logger, safe_json_loads
@@ -11,19 +10,18 @@ from modules.companion import (
     AvatarGenerateRequest,
     AvatarHistoryResponse,
     AvatarUploadRequest,
-    Companion2DModelResponse,
-    Companion3DModelResponse,
+    CompanionModelResponse,
     CompanionOperationResponse,
-    Fullbody2dFrontGenerateRequest,
-    Fullbody3dSeedGenerateRequest,
     FullbodyAdoptRequest,
     FullbodyConfirmFrontRequest,
     FullbodyPromptRequest,
+    FullbodyReferenceFrontGenerateRequest,
     FullbodyReferenceGenerateRequest,
     FullbodySeedKind,
     ImageAdoptRequest,
     ImagePromptResponse,
     ModelGenerateRequest,
+    ModelSeedGenerateRequest,
     OnboardingStateResponse,
     OutfitAdoptRequest,
     OutfitConfirmRequest,
@@ -38,6 +36,9 @@ from modules.companion import (
     PersonaResponse,
     PersonaUpdate,
     RenderModeRequest,
+    VideoPackCreateRequest,
+    VideoPackListResponse,
+    VideoPackResponse,
 )
 from services.adapters.http import limiter
 from services.application.generation import (
@@ -48,7 +49,6 @@ from services.application.generation import (
     FrontSeedMissingError,
     FullbodyGenerationError,
     ImageSealedError,
-    Mesh2DNotReadyError,
     ModelGenerationError,
     ModelGenerationInProgressError,
     ModelProviderNotConfiguredError,
@@ -57,44 +57,45 @@ from services.application.generation import (
     OutfitNotFoundError,
     OutfitStateError,
     SeedPromptMissingError,
+    VideoPackError,
+    VideoPackNotFoundError,
+    VideoPackStateError,
     activate_outfit,
+    activate_video_pack,
     adopt_fullbody_seed,
     adopt_outfit_draft_image,
-    adopt_outfit_pose,
     adopt_outfit_regenerate_image,
     avatar_response,
     confirm_fullbody_front,
     confirm_outfit,
     create_outfit_draft,
+    create_video_pack_from_clips,
     delete_outfit,
+    delete_video_pack,
     finalize_avatar,
     generate_avatar,
     generate_companion_model,
-    generate_fullbody_back,
-    generate_fullbody_front_2d,
-    generate_fullbody_front_3d,
+    generate_fullbody_front_reference,
     generate_fullbody_reference,
-    generate_mesh2d_model,
+    generate_model_seed_back,
+    generate_model_seed_front,
     get_active_avatar,
-    get_active_mesh2d_response,
     get_avatar_job_lock,
     get_outfit_policy,
     list_avatar_history,
     list_outfits,
+    list_pack_responses,
     model_response,
     outfit_response,
     prepare_fullbody_prompt,
     prepare_outfit_prompt,
     prepare_outfit_regenerate_prompt,
-    prepare_pose_prompt,
     regenerate_avatar_from_image,
     regenerate_outfit_draft,
-    regenerate_outfit_pose,
     resolve_uploaded_avatar_path,
     schedule_initial_room,
     select_avatar,
     set_outfit_policy,
-    set_render_mode,
     upload_avatar,
 )
 from services.domains.companion import (
@@ -104,6 +105,7 @@ from services.domains.companion import (
     get_onboarding_state,
     get_or_create_persona,
     schedule_personality_tag_refresh,
+    set_render_mode,
     update_persona,
 )
 from services.infrastructure.assets import (
@@ -137,7 +139,7 @@ async def get_persona(user: CurrentUser, db: DbSession) -> PersonaResponse:
         is_complete=persona.is_complete,
         definition_json=persona.definition_json,
         personality_tags=tags if isinstance(tags, list) else [],
-        render_mode=persona.render_mode or "2d",
+        render_mode=persona.render_mode or "video",
         current_mood=persona.current_mood,
     )
 
@@ -156,7 +158,7 @@ async def put_persona(body: PersonaUpdate, user: CurrentUser, db: DbSession) -> 
         is_complete=persona.is_complete,
         definition_json=persona.definition_json,
         personality_tags=tags if isinstance(tags, list) else [],
-        render_mode=persona.render_mode or "2d",
+        render_mode=persona.render_mode or "video",
         current_mood=persona.current_mood,
     )
 
@@ -361,17 +363,17 @@ async def post_fullbody_reference(
     return avatar_response(asset)
 
 
-@router.post("/avatar/{avatar_id}/fullbody/front-2d", response_model=AvatarAssetResponse)
+@router.post("/avatar/{avatar_id}/fullbody/front-reference", response_model=AvatarAssetResponse)
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
-async def post_fullbody_front_2d(
+async def post_fullbody_front_reference(
     request: Request,
     avatar_id: int,
-    body: Fullbody2dFrontGenerateRequest,
+    body: FullbodyReferenceFrontGenerateRequest,
     user: CurrentUser,
 ) -> AvatarAssetResponse:
     try:
         async with get_avatar_job_lock(user.id):
-            asset = await generate_fullbody_front_2d(
+            asset = await generate_fullbody_front_reference(
                 user_id=user.id,
                 avatar_id=avatar_id,
                 feedback=body.feedback,
@@ -387,13 +389,13 @@ async def post_fullbody_front_2d(
         raise HTTPException(status_code=409, detail={"error": str(exc)})
     except FullbodyGenerationError as exc:
         err_detail = getattr(exc, "internal", str(exc))
-        logger.warning("fullbody front-2d generation failed", extra={"user_id": user.id, "error": err_detail})
+        logger.warning("fullbody front-reference generation failed", extra={"user_id": user.id, "error": err_detail})
         raise HTTPException(status_code=502, detail={"error": str(exc), "reason": str(exc)})
     except AvatarGenerationError as exc:
-        logger.warning("fullbody front-2d guard rejected", extra={"user_id": user.id, "error": exc.internal})
+        logger.warning("fullbody front-reference guard rejected", extra={"user_id": user.id, "error": exc.internal})
         raise HTTPException(status_code=400, detail={"error": str(exc)})
     except MissingLlmConfigError as exc:
-        logger.warning("post_fullbody_front_2d missing config", extra={"user_id": user.id, "error": str(exc)})
+        logger.warning("post_fullbody_front_reference missing config", extra={"user_id": user.id, "error": str(exc)})
         raise HTTPException(
             status_code=502,
             detail={"error": "LLM provider 未配置，请先在设置中配置 chat provider", "reason": str(exc)},
@@ -401,17 +403,17 @@ async def post_fullbody_front_2d(
     return avatar_response(asset)
 
 
-@router.post("/avatar/{avatar_id}/fullbody/front-3d", response_model=AvatarAssetResponse)
+@router.post("/avatar/{avatar_id}/fullbody/model-front", response_model=AvatarAssetResponse)
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
-async def post_fullbody_front_3d(
+async def post_model_seed_front(
     request: Request,
     avatar_id: int,
-    body: Fullbody3dSeedGenerateRequest,
+    body: ModelSeedGenerateRequest,
     user: CurrentUser,
 ) -> AvatarAssetResponse:
     try:
         async with get_avatar_job_lock(user.id):
-            asset = await generate_fullbody_front_3d(
+            asset = await generate_model_seed_front(
                 user_id=user.id,
                 avatar_id=avatar_id,
                 feedback=body.feedback,
@@ -420,18 +422,18 @@ async def post_fullbody_front_3d(
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
     except FrontSeedMissingError as exc:
-        raise HTTPException(status_code=400, detail={"error": "请先确认 2D 正面全身图", "reason": str(exc)})
+        raise HTTPException(status_code=400, detail={"error": "请先确认外观参考正面立绘", "reason": str(exc)})
     except AvatarSourceUnreadableError as exc:
         raise HTTPException(status_code=409, detail={"error": str(exc)})
     except FullbodyGenerationError as exc:
         err_detail = getattr(exc, "internal", str(exc))
-        logger.warning("fullbody front-3d generation failed", extra={"user_id": user.id, "error": err_detail})
+        logger.warning("model front seed generation failed", extra={"user_id": user.id, "error": err_detail})
         raise HTTPException(status_code=502, detail={"error": str(exc), "reason": str(exc)})
     except AvatarGenerationError as exc:
-        logger.warning("fullbody front-3d guard rejected", extra={"user_id": user.id, "error": exc.internal})
+        logger.warning("model front seed guard rejected", extra={"user_id": user.id, "error": exc.internal})
         raise HTTPException(status_code=400, detail={"error": str(exc)})
     except MissingLlmConfigError as exc:
-        logger.warning("post_fullbody_front_3d missing config", extra={"user_id": user.id, "error": str(exc)})
+        logger.warning("post_model_seed_front missing config", extra={"user_id": user.id, "error": str(exc)})
         raise HTTPException(
             status_code=502,
             detail={"error": "LLM provider 未配置，请先在设置中配置 chat provider", "reason": str(exc)},
@@ -441,15 +443,15 @@ async def post_fullbody_front_3d(
 
 @router.post("/avatar/{avatar_id}/fullbody/back", response_model=AvatarAssetResponse)
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
-async def post_fullbody_back(
+async def post_model_seed_back(
     request: Request,
     avatar_id: int,
-    body: Fullbody3dSeedGenerateRequest,
+    body: ModelSeedGenerateRequest,
     user: CurrentUser,
 ) -> AvatarAssetResponse:
     try:
         async with get_avatar_job_lock(user.id):
-            asset = await generate_fullbody_back(
+            asset = await generate_model_seed_back(
                 user_id=user.id,
                 avatar_id=avatar_id,
                 feedback=body.feedback,
@@ -469,7 +471,7 @@ async def post_fullbody_back(
         logger.warning("fullbody back guard rejected", extra={"user_id": user.id, "error": exc.internal})
         raise HTTPException(status_code=400, detail={"error": str(exc)})
     except MissingLlmConfigError as exc:
-        logger.warning("post_fullbody_back missing config", extra={"user_id": user.id, "error": str(exc)})
+        logger.warning("post_model_seed_back missing config", extra={"user_id": user.id, "error": str(exc)})
         raise HTTPException(
             status_code=502,
             detail={"error": "LLM provider 未配置，请先在设置中配置 chat provider", "reason": str(exc)},
@@ -595,22 +597,22 @@ async def post_fullbody_adopt(
     return avatar_response(asset)
 
 
-@router.get("/model", response_model=Companion3DModelResponse | None)
-async def get_model(user: CurrentUser, db: DbSession) -> Companion3DModelResponse | None:
+@router.get("/model", response_model=CompanionModelResponse | None)
+async def get_model(user: CurrentUser, db: DbSession) -> CompanionModelResponse | None:
     model = await get_active_model(db, user.id)
     if model is None:
         return None
     return model_response(model)
 
 
-@router.post("/model", response_model=Companion3DModelResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/model", response_model=CompanionModelResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit(lambda: f"{SETTINGS.companion_model_generate_rate_limit_per_minute}/minute")
 async def post_model(
     request: Request,  # required by @limiter.limit
     user: CurrentUser,
     db: DbSession,
     body: ModelGenerateRequest = Body(default_factory=ModelGenerateRequest),
-) -> Companion3DModelResponse:
+) -> CompanionModelResponse:
     try:
         model = await generate_companion_model(
             db,
@@ -631,40 +633,21 @@ async def post_model(
     return model_response(model)
 
 
-@router.get("/2d", response_model=Companion2DModelResponse | None)
-async def get_mesh2d(user: CurrentUser, db: DbSession) -> Companion2DModelResponse | None:
-    return await get_active_mesh2d_response(db, user.id)
-
-
-@router.post("/2d", response_model=Companion2DModelResponse, status_code=status.HTTP_202_ACCEPTED)
-async def post_mesh2d(user: CurrentUser, db: DbSession) -> Companion2DModelResponse:
-    try:
-        persona = await get_or_create_persona(db, user.id)
-        priority = "low" if persona.render_mode == "3d" else "high"
-        model = await generate_mesh2d_model(db, user_id=user.id, priority=priority)
-    except Mesh2DNotReadyError as exc:
-        logger.warning("2d generation failed to start", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(status_code=409, detail={"error": str(exc), "reason": "startup_failed"})
-
-    response = await get_active_mesh2d_response(db, user.id)
-    return response or Companion2DModelResponse(id=model.id, status=model.status)
-
-
 @router.post("/render-mode", response_model=PersonaResponse)
 async def post_render_mode(body: RenderModeRequest, user: CurrentUser, db: DbSession) -> PersonaResponse:
     persona = await set_render_mode(db, user_id=user.id, render_mode=body.render_mode)
 
-    if body.render_mode == "3d":
+    if body.render_mode == "model":
         try:
             await generate_companion_model(db, user_id=user.id, force=False)
         except ModelGenerationError as exc:
-            logger.info("render_mode 3D dispatch skipped", extra={"user_id": user.id, "error": str(exc)})
+            logger.info("render_mode model dispatch skipped", extra={"user_id": user.id, "error": str(exc)})
 
     return PersonaResponse(
         definition_json=persona.definition_json or "{}",
         is_complete=persona.is_complete,
         personality_tags=[],
-        render_mode=persona.render_mode or "2d",
+        render_mode=persona.render_mode or "video",
         current_mood=persona.current_mood,
     )
 
@@ -800,21 +783,6 @@ async def post_outfit_regenerate(
     return outfit_response(outfit)
 
 
-@router.post("/outfits/{outfit_id}/poses/{side}/regenerate", response_model=OutfitResponse)
-async def post_outfit_pose_regenerate(
-    outfit_id: int,
-    side: Literal["left", "right"],
-    user: CurrentUser,
-    db: DbSession,
-) -> OutfitResponse:
-    """单侧重生成一侧扶边姿态：校验后就地入队（202 语义），完成与失败经 WS 事件驱动刷新。"""
-    try:
-        outfit = await regenerate_outfit_pose(db, user.id, outfit_id, side)
-    except OutfitError as exc:
-        raise _outfit_http_error(exc)
-    return outfit_response(outfit)
-
-
 @router.post("/outfits/{outfit_id}/prompt", response_model=ImagePromptResponse)
 @limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
 async def post_outfit_regenerate_prompt(
@@ -864,44 +832,6 @@ async def post_outfit_regenerate_adopt(
     return outfit_response(outfit)
 
 
-@router.post("/outfits/{outfit_id}/poses/{side}/prompt", response_model=ImagePromptResponse)
-async def post_outfit_pose_prompt(
-    outfit_id: int,
-    side: Literal["left", "right"],
-    user: CurrentUser,
-    db: DbSession,
-) -> ImagePromptResponse:
-    """自备图提示词（单侧扶边姿态）：身份与穿着由当前外观正面立绘锚定；立绘不可读时 409。"""
-    try:
-        prompt = await prepare_pose_prompt(db, user.id, outfit_id, side)
-    except OutfitError as exc:
-        raise _outfit_http_error(exc)
-    return ImagePromptResponse(prompt=prompt)
-
-
-@router.post(
-    "/outfits/{outfit_id}/poses/{side}/adopt",
-    response_model=OutfitResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-)
-async def post_outfit_pose_adopt(
-    outfit_id: int,
-    side: Literal["left", "right"],
-    body: ImageAdoptRequest,
-    user: CurrentUser,
-    db: DbSession,
-) -> OutfitResponse:
-    """自备图采纳（单侧姿态）：校验后就地入队既有单侧管线（跳过主图生图），完成经 WS 事件驱动刷新。"""
-    raw, content_type = _decode_upload_image(body.image, body.content_type)
-    if not raw:
-        raise HTTPException(status_code=400, detail="Invalid image data")
-    try:
-        outfit = await adopt_outfit_pose(db, user.id, outfit_id, side, data=raw)
-    except OutfitError as exc:
-        raise _outfit_http_error(exc)
-    return outfit_response(outfit)
-
-
 @router.post("/outfits/{outfit_id}/confirm", response_model=OutfitResponse)
 async def post_outfit_confirm(
     outfit_id: int,
@@ -909,27 +839,10 @@ async def post_outfit_confirm(
     db: DbSession,
     body: OutfitConfirmRequest = Body(default_factory=OutfitConfirmRequest),
 ) -> OutfitResponse:
-    """确认入柜；姿态图字段契约见 PIPELINE §1.1.2。与同模块其他 POST 一致：
-    以可缺省的 Pydantic 模型收 body，空对象不触发 422。"""
-    user_poses: dict[Literal["left", "right"], bytes] | None = None
-    poses: dict[Literal["left", "right"], bytes] = {}
-    for side, image_b64, content_type in (
-        ("left", body.pose_left, body.pose_left_content_type),
-        ("right", body.pose_right, body.pose_right_content_type),
-    ):
-        if not image_b64:
-            continue
-        raw, _ = _decode_upload_image(image_b64, content_type)
-        if not raw:
-            raise HTTPException(status_code=400, detail={"error": f"{'左' if side == 'left' else '右'}姿态图数据无效"})
-        if side == "left":
-            poses["left"] = raw
-        else:
-            poses["right"] = raw
-    user_poses = poses or None
-
+    """确认入柜：外观立绘转正为持久参考图（ready）。与同模块其他 POST 一致：
+    以可缺省的空模型收 body，空对象不触发 422。"""
     try:
-        outfit = await confirm_outfit(db, user.id, outfit_id, user_poses=user_poses)
+        outfit = await confirm_outfit(db, user.id, outfit_id)
     except OutfitError as exc:
         raise _outfit_http_error(exc)
     return outfit_response(outfit)
@@ -958,6 +871,94 @@ async def delete_outfit_route(
         await delete_outfit(db, user.id, outfit_id)
     except OutfitError as exc:
         raise _outfit_http_error(exc)
+    return CompanionOperationResponse(ok=True)
+
+
+def _video_pack_http_error(exc: VideoPackError) -> HTTPException:
+    if isinstance(exc, VideoPackNotFoundError):
+        return HTTPException(status_code=404, detail={"error": str(exc), "reason": "not_found"})
+    if isinstance(exc, VideoPackStateError):
+        return HTTPException(status_code=409, detail={"error": str(exc), "reason": "invalid_state"})
+    return HTTPException(status_code=400, detail={"error": str(exc), "reason": "invalid_request"})
+
+
+_ALLOWED_CLIP_MIME_TYPES = {"video/webm", "video/mp4", "video/quicktime", "video/x-matroska"}
+
+
+def _decode_clip_upload(data_b64: str, content_type: str | None) -> tuple[bytes, str]:
+    """base64 片段解码；仅接受四种视频 MIME，损坏数据拒绝。"""
+    normalized = (content_type or "video/webm").split(";")[0].strip().lower()
+    if normalized not in _ALLOWED_CLIP_MIME_TYPES:
+        raise HTTPException(status_code=415, detail={"error": "仅支持 WebM / MP4 / MOV / MKV 片段"})
+    try:
+        raw = base64.b64decode(data_b64, validate=True)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": "片段数据无效"})
+    if not raw:
+        raise HTTPException(status_code=400, detail={"error": "片段数据为空"})
+    return raw, normalized
+
+
+@router.get("/video-packs", response_model=VideoPackListResponse)
+async def get_video_packs(user: CurrentUser, db: DbSession) -> VideoPackListResponse:
+    return VideoPackListResponse(packs=[VideoPackResponse(**item) for item in await list_pack_responses(db, user.id)])
+
+
+@router.post("/video-packs", response_model=VideoPackResponse, status_code=status.HTTP_201_CREATED)
+async def post_video_pack(
+    body: VideoPackCreateRequest,
+    user: CurrentUser,
+    db: DbSession,
+) -> VideoPackResponse:
+    """上传动作片段创建视频包：处理与发布在后台进行，结果经 companion.video 事件回流。"""
+    clips: dict[str, tuple[bytes, str]] = {}
+    ranges: dict[str, tuple[float, float]] = {}
+    for clip in body.clips:
+        if clip.action in clips:
+            raise HTTPException(status_code=400, detail={"error": f"动作片段重复：{clip.action}"})
+        raw, content_type = _decode_clip_upload(clip.data, clip.content_type)
+        clips[clip.action] = (raw, content_type)
+        if clip.start_seconds is not None and clip.end_seconds is not None:
+            ranges[clip.action] = (clip.start_seconds, clip.end_seconds)
+    try:
+        pack = await create_video_pack_from_clips(
+            db,
+            user.id,
+            outfit_id=body.outfit_id,
+            clips=clips,
+            canvas=(body.canvas_width, body.canvas_height),
+            action_ranges=ranges,
+        )
+    except VideoPackError as exc:
+        raise _video_pack_http_error(exc)
+    return VideoPackResponse(
+        id=pack.id,
+        outfit_id=pack.outfit_id,
+        pack_version=pack.pack_version,
+        status=pack.status,
+        active=pack.active,
+    )
+
+
+@router.put("/video-packs/{pack_id}/activate", response_model=VideoPackResponse)
+async def put_video_pack_activate(pack_id: int, user: CurrentUser, db: DbSession) -> VideoPackResponse:
+    try:
+        pack = await activate_video_pack(db, user.id, pack_id)
+    except VideoPackError as exc:
+        raise _video_pack_http_error(exc)
+    item = await list_pack_responses(db, user.id)
+    for entry in item:
+        if entry["id"] == pack.id:
+            return VideoPackResponse(**entry)
+    raise HTTPException(status_code=404, detail={"error": "视频包不存在"})
+
+
+@router.delete("/video-packs/{pack_id}", response_model=CompanionOperationResponse)
+async def delete_video_pack_route(pack_id: int, user: CurrentUser, db: DbSession) -> CompanionOperationResponse:
+    try:
+        await delete_video_pack(db, user.id, pack_id)
+    except VideoPackError as exc:
+        raise _video_pack_http_error(exc)
     return CompanionOperationResponse(ok=True)
 
 

@@ -3,7 +3,7 @@
 数据流转：Persona 表（definition_json）→ 物种模板与骨骼姿态路由（resolve_fullbody_template）
 与角色身份设定提取（appearance / personality）→ build_fullbody_prompt() 拼接
 [画风描述] + [角色设定] + [物种特效] + [反馈] → image_generation_tool 发送至生图供应商
-（MiniMax / Gemini / Grok）生成种子图（Front / Back）→ Stage 2: 图生 3D 提交（种子图打包
+（MiniMax / Gemini / Grok）生成种子图（Front / Back）→ Stage 2: 图生模型提交（种子图打包
 上传至 Tripo3D 等服务商，不发送任何文本）。
 
 对外公开的提示词构建方法：
@@ -14,7 +14,7 @@
 全身图提示词按稳定优先级组装：视角与主体 → 物种骨骼姿势 → 完整画幅 →
 参考图身份锚点 → 渲染风格 → Persona 外观与克制气质 → 物种特效 → 不冲突的用户反馈 →
 纯白背景与排除项。
-双足 2D 立绘采用自然站姿；3D 种子采用 A-pose 以利绑骨与多视角一致性。
+双足参考立绘采用自然站姿；模型种子采用 A-pose 以利绑骨与多视角一致性。
 
 辅助工具说明：物种骨骼路由、视角名称映射、骨骼体态模板定义见下文各常量与类。
 """
@@ -52,14 +52,14 @@ from .llm_retry import call_with_retry
 from .providers import ProviderConfig, ServiceType, resolve_context_tokens, try_resolve
 from .responses import build_responses_kwargs
 
-FullbodyStyle = Literal["refined_anime_cg", "anime_2d_illustration", "realistic"]
+FullbodyStyle = Literal["refined_anime_cg", "anime_illustration", "realistic"]
 
-# 2D 链（2D 正面种子、换装及对应自备图提示词）的服务端固定画风。see-through 分层拆分是
-# 动漫插画域模型，写实或照片级输入会劣化面部并把背景并入图层，因此 2D 画风不随 3D 种子
-# 画风路由，也不消费客户端传参。域限制与分槽决策见 docs/PIPELINE.md §6.1。
-MESH2D_STYLE: Final = "anime_2d_illustration"
+# 外观参考链（外观参考立绘、外观及对应自备图提示词）的服务端固定画风。该链交付的是
+# 动漫插画风格的角色参考图，写实或照片级输入不适合后续形象链消费，因此画风不随模型种子
+# 画风路由，也不消费客户端传参。分槽决策见 docs/PIPELINE.md §2。
+REFERENCE_ILLUSTRATION_STYLE: Final = "anime_illustration"
 
-# 预设物种直接带 3D 种子画风；自定义物种由 LLM 人脸判定路由（见 ``rig_type_selector.classify_species``）
+# 预设物种直接带模型种子画风；自定义物种由 LLM 人脸判定路由（见 ``rig_type_selector.classify_species``）
 _SPECIES_STYLE: dict[str, FullbodyStyle] = {
     "人类": "refined_anime_cg",
     "精灵": "refined_anime_cg",
@@ -261,7 +261,7 @@ async def enhance_avatar_prompt(
 
 
 def resolve_fullbody_style(species: str, has_humanoid_face: bool | None = None) -> FullbodyStyle:
-    """根据物种解析 3D 种子画风路由：类人物种走精绘画风（refined_anime_cg），非人物种走写实风格（realistic）。"""
+    """根据物种解析模型种子画风路由：类人物种走精绘画风（refined_anime_cg），非人物种走写实风格（realistic）。"""
     preset = _SPECIES_STYLE.get(species.strip())
     if preset is not None:
         return preset
@@ -280,8 +280,8 @@ def resolve_fullbody_template(
     *,
     a_pose: bool = False,
 ) -> FullbodyTemplate:
-    """解析完整的全身图模板。双足姿态随生成链路路由（``a_pose``）：2D 立绘走自然站姿——
-    see-through 拆分不要求 A-pose；3D 种子（``a_pose=True``）保持 A-pose 供绑骨识别与多视角一致性，画风不影响姿态。"""
+    """解析完整的全身图模板。双足姿态随生成链路路由（``a_pose``）：参考立绘走自然站姿；
+    模型种子（``a_pose=True``）保持 A-pose 供绑骨识别与多视角一致性，画风不影响姿态。"""
     if species in _SPECIES_TEMPLATES:
         template = _SPECIES_TEMPLATES[species]
     else:

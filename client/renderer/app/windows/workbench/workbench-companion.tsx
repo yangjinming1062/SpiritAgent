@@ -1,42 +1,47 @@
 import { useStore } from '@nanostores/react'
-import React, { lazy, Suspense, useCallback, useEffect, useMemo, useRef } from 'react'
+import React, { lazy, Suspense, useCallback, useEffect, useRef } from 'react'
 
-import { EggStage } from '@/app/onboarding'
 import {
   $companionLifecycle,
+  $renderMode,
+  $videoPackStatus,
+  EggStage,
   emitVfx,
   ensureCompanionHydrated,
   handlePetInteraction,
   hydratePersona,
   hydratePortrait,
-  Mesh2DVfxOverlay,
+  hydrateVideoPack,
   reportUserActivity,
-  resolveCompanionRenderLayer
+  resolveCompanionPresentation,
+  SpriteVfxOverlay
 } from '@/modules/character'
 import {
-  $mesh2dHitmap,
-  $puppetReady,
-  $renderMode,
-  hydrateMesh2D,
-  hydratePuppet
-} from '@/modules/character/rendering/2d'
-import { $glbLoadFailed, $modelInfo, $sprite3DHitTest, hydrateModel } from '@/modules/character/rendering/3d'
+  $glbLoadFailed,
+  $modelGenState,
+  $modelInfo,
+  $sprite3DHitTest,
+  hydrateModel
+} from '@/modules/character/rendering/model'
+import { $videoHitTest } from '@/modules/character/rendering/video'
 import { useInteractiveRegion } from '@/shared'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
 import styles from './workbench.module.css'
 
-const Companion3D = lazy(() => import('@/modules/character/rendering/3d').then(m => ({ default: m.Companion3D })))
-const PuppetStage = lazy(() => import('@/modules/character/rendering/2d').then(m => ({ default: m.PuppetStage })))
+// 模型未就绪时由渲染裁决落程序化蛋兜底（DESIGN §1.2「永不空白」）。
+const ModelStage = lazy(() => import('@/modules/character/rendering/model').then(m => ({ default: m.ModelStage })))
+const VideoStage = lazy(() => import('@/modules/character/rendering/video').then(m => ({ default: m.VideoStage })))
 
 export function WorkbenchCompanion(): React.JSX.Element {
   const auth = useStore($auth)
   const lifecycle = useStore($companionLifecycle)
-  const renderMode = useStore($renderMode)
-  const puppetReady = useStore($puppetReady)
+  const mode = useStore($renderMode)
   const modelInfo = useStore($modelInfo)
   const glbLoadFailed = useStore($glbLoadFailed)
+  const modelGenState = useStore($modelGenState)
+  const videoStatus = useStore($videoPackStatus)
   const dict = useStrings()
   const t = dict.workbench
   const brandName = dict.brand.name
@@ -44,6 +49,7 @@ export function WorkbenchCompanion(): React.JSX.Element {
   const hasHydratedRef = useRef(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const hit3DRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
+  const hitVideoRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
 
   useEffect(
     () =>
@@ -53,14 +59,25 @@ export function WorkbenchCompanion(): React.JSX.Element {
     []
   )
 
-  const renderLayer = useMemo<'companion3d' | 'puppet'>(() => {
-    return resolveCompanionRenderLayer({
-      glbLoadFailed,
-      modelStatus: modelInfo.status,
-      puppetReady,
-      renderMode
-    })
-  }, [renderMode, puppetReady, glbLoadFailed, modelInfo.status])
+  useEffect(
+    () =>
+      $videoHitTest.subscribe(fn => {
+        hitVideoRef.current = fn
+      }),
+    []
+  )
+
+  // 偏好模式与资产状态归并为当前渲染层（presentation/render-resolver）。
+  const presentation = React.useMemo(
+    () =>
+      resolveCompanionPresentation({
+        modelGenerating: modelGenState === 'generating',
+        modelReady: modelInfo.status === 'succeeded' && !glbLoadFailed,
+        mode,
+        videoReady: videoStatus === 'ready'
+      }),
+    [mode, modelInfo.status, glbLoadFailed, modelGenState, videoStatus]
+  )
 
   const stageHitTest = useCallback(
     (x: number, y: number): boolean => {
@@ -68,20 +85,14 @@ export function WorkbenchCompanion(): React.JSX.Element {
         return true
       }
 
-      if (renderLayer === 'puppet') {
-        const hitmap = $mesh2dHitmap.get()
+      const probeVideo = hitVideoRef.current
 
-        if (!hitmap) {
-          return true
+      if (probeVideo) {
+        const result = probeVideo(x, y)
+
+        if (result !== null) {
+          return result
         }
-
-        const rect = wrapperRef.current?.getBoundingClientRect()
-
-        if (!rect || rect.width <= 0 || rect.height <= 0) {
-          return false
-        }
-
-        return hitmap.hit((x - rect.left) / rect.width, (y - rect.top) / rect.height) !== null
       }
 
       const probe3d = hit3DRef.current
@@ -92,7 +103,7 @@ export function WorkbenchCompanion(): React.JSX.Element {
 
       return true
     },
-    [auth.kind, renderLayer]
+    [auth.kind]
   )
 
   useInteractiveRegion('workbench-companion', wrapperRef, undefined, stageHitTest, 1)
@@ -108,12 +119,11 @@ export function WorkbenchCompanion(): React.JSX.Element {
       hasHydratedRef.current = true
 
       void ensureCompanionHydrated({
-        hydrateMesh2D,
         hydrateModel,
         hydratePersona,
-        hydratePortrait,
-        hydratePuppet
+        hydratePortrait
       })
+      void hydrateVideoPack()
     }
 
     return () => {
@@ -172,15 +182,15 @@ export function WorkbenchCompanion(): React.JSX.Element {
     >
       <div className={styles.companionInner}>
         <Suspense fallback={null}>
-          {auth.kind !== 'authenticated' ? (
+          {auth.kind !== 'authenticated' || presentation.renderer === 'fallback' ? (
             <EggStage onTap={handleTap} />
-          ) : renderLayer === 'puppet' ? (
-            <PuppetStage />
+          ) : presentation.renderer === 'video' ? (
+            <VideoStage />
           ) : (
-            <Companion3D />
+            <ModelStage />
           )}
         </Suspense>
-        <Mesh2DVfxOverlay />
+        <SpriteVfxOverlay />
       </div>
     </div>
   )

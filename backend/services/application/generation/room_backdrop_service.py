@@ -15,8 +15,8 @@ from pathlib import Path
 from typing import Any
 
 from components import (
-    LAYER_ASSET_DOWNLOAD_MAX_BYTES,
     REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
+    ROOM_BACKDROP_DOWNLOAD_MAX_BYTES,
     ROOM_BACKDROP_FAILURES_TOTAL,
     ROOM_BACKDROP_IMAGES_TOTAL,
     SESSION_LOCAL,
@@ -60,7 +60,7 @@ logger = get_logger(__name__)
 
 # 进程内每用户锁：生图与 activate 走同一锁防并发把同一 persona 的 active 状态撞出多行。
 _BACKDROP_LOCKS: dict[int, asyncio.Lock] = {}
-# 进程内任务表，便于 lifespan 重启时接续（与 3D 管线同思路；规模小、本期不接入启动恢复）。
+# 进程内任务表，便于 lifespan 重启时接续（与模型管线同思路；规模小、本期不接入启动恢复）。
 _INFLIGHT_TASKS: dict[int, asyncio.Task[None]] = {}
 
 _DEFAULT_FAILURE_UTTERANCE = "房间还没收拾完，你先坐一会儿。"
@@ -787,7 +787,7 @@ async def resume_room_generation(
 
 
 async def schedule_initial_room(user_id: int) -> CompanionRoomBackdrop | None:
-    """2D 全身立绘确认后调用；与 2D/3D 资产生成并行，不挡问候。"""
+    """全身立绘确认后调用；与模型/视频资产生成并行，不挡问候。"""
     try:
         return await schedule_room_generation(
             user_id,
@@ -1281,7 +1281,7 @@ async def _fetch_image_bytes(url: str) -> tuple[bytes, str] | None:
             path, ctype = res
             return await asyncio.to_thread(Path(path).read_bytes), ctype
     try:
-        content = await download_capped(url, max_bytes=LAYER_ASSET_DOWNLOAD_MAX_BYTES, timeout=120.0)
+        content = await download_capped(url, max_bytes=ROOM_BACKDROP_DOWNLOAD_MAX_BYTES, timeout=120.0)
         if content:
             return content, _image_content_type(content)
     except Exception:

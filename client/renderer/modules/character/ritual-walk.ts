@@ -1,16 +1,14 @@
-import { clamp, sleep } from '@runtime'
+import { sleep } from '@runtime'
 
 import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { $screenLocked } from './activity'
-import { $gazeTarget, $spriteAction, lockGazeToPoint, setSpriteState } from './companion-store'
+import { $spriteAction, setSpriteState } from './companion-store'
 import { speakProactiveLine } from './proactive-speak'
 import {
   $defaultScale,
   $spatialPos,
-  $spatialScale,
   computePerchPlacement,
-  getBaseSpriteHeight,
   getBaseSpriteWidth,
   moveDurationMs,
   moveTo,
@@ -68,18 +66,6 @@ export async function findWindowByKeyword(keyword: string): Promise<WindowGeom |
   }
 }
 
-/** 屏幕坐标 → 精灵窗口归一 [-1,1] 的视线目标。粗粒度方向感即可，clamp 到边界防越轴。 */
-export function gazeTowardsPoint(point: { x: number; y: number }): { nx: number; ny: number } {
-  const pos = $spatialPos.get()
-  const halfW = (getBaseSpriteWidth() * $spatialScale.get()) / 2
-  const halfH = (getBaseSpriteHeight() * $spatialScale.get()) / 2
-
-  return {
-    nx: clamp((point.x - (pos.x + halfW)) / Math.max(halfW, 1), -1, 1),
-    ny: clamp((point.y - (pos.y + halfH)) / Math.max(halfH, 1), -1, 1)
-  }
-}
-
 export async function performRitualWalk<T>(
   findTarget: () => Promise<WindowGeom | null>,
   execute: () => Promise<T>,
@@ -111,9 +97,7 @@ export async function performRitualWalk<T>(
     return execute()
   }
 
-  // 飞行途中视线锁定目标窗口中心；抵达后按方位抬手指向，再接 click 触碰
   const targetCenter = { x: geom.x + geom.w / 2, y: geom.y + geom.h / 2 }
-  lockGazeToPoint(gazeTowardsPoint(targetCenter))
 
   try {
     const dist = Math.hypot(perch.x - $spatialPos.get().x, perch.y - $spatialPos.get().y)
@@ -153,8 +137,6 @@ export async function performRitualWalk<T>(
 
     return result
   } finally {
-    // gaze 泄漏会让精灵永远盯着最后的目标；异常路径同样要解锁
-    $gazeTarget.set(null)
     await sleep(800)
     updateSpatialDecision()
   }

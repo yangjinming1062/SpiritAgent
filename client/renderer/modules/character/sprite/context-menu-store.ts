@@ -11,7 +11,7 @@ interface ContextMenuPos {
 export const $contextMenuPos = atom<ContextMenuPos | null>(null)
 
 // 派生 atom——供伙伴在菜单打开时跳过画布工作使用
-// （如 `companion-3d.tsx` 用它门控 `pointermove` 注视跟踪）。
+// （渲染层用它门控 `pointermove` 注视跟踪）。
 export const $contextMenuOpen = computed($contextMenuPos, pos => pos !== null)
 
 export function openContextMenu(pos: ContextMenuPos): void {

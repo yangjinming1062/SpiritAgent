@@ -68,11 +68,11 @@ STT_MAX_AUDIO_BYTES: int = 24 * 1024 * 1024
 MAX_VOICE_DESIGN_PROMPT_CHARS: int = 200
 # 远端资产下载的统一体积上限（供应商 CDN 图、生成图、参考图）；各调用点的超时按链路单独设定。
 REMOTE_ASSET_DOWNLOAD_MAX_BYTES: int = 50 * 1024 * 1024
-# 2D 分层与房间背景等小体积资产图的下载上限。
-LAYER_ASSET_DOWNLOAD_MAX_BYTES: int = 20 * 1024 * 1024
-# 图生 3D 产物（GLB / zip）的下载上限与超时。
-THREED_MODEL_DOWNLOAD_MAX_BYTES: int = 100 * 1024 * 1024
-THREED_MODEL_DOWNLOAD_TIMEOUT_SECONDS: float = 120.0
+# 房间背景等小体积资产图的下载上限。
+ROOM_BACKDROP_DOWNLOAD_MAX_BYTES: int = 20 * 1024 * 1024
+# 图生模型产物（GLB / zip）的下载上限与超时。
+MODEL_DOWNLOAD_MAX_BYTES: int = 100 * 1024 * 1024
+MODEL_DOWNLOAD_TIMEOUT_SECONDS: float = 120.0
 
 # 会话展示、重连重水化与登录心跳。
 SESSION_PREVIEW_MAX_CHARS: int = 200

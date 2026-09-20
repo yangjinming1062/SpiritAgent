@@ -4,17 +4,17 @@ from components import safe_json_loads
 from modules.companion import (
     AvatarAsset,
     AvatarAssetResponse,
-    Companion3DModel,
-    Companion3DModelResponse,
+    CompanionModel,
+    CompanionModelResponse,
     CompanionOutfit,
     OutfitResponse,
 )
 
 from services.infrastructure.assets import get_companion_model_sha256
-from services.infrastructure.image_to_3d import provider_supports_multiview
+from services.infrastructure.model_generation import provider_supports_multiview
 
 from .avatar_service import re_sign_bare_path
-from .pipeline import signed_model_url
+from .model.pipeline import signed_model_url
 
 
 def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
@@ -25,9 +25,9 @@ def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
         id=asset.id,
         asset_url=asset.asset_url,
         seed_fullbody_url=asset.seed_fullbody_url or "",
-        seed_front_2d_url=getattr(asset, "seed_front_2d_url", None) or "",
-        seed_front_3d_url=getattr(asset, "seed_front_3d_url", None) or "",
-        seed_back_url=getattr(asset, "seed_back_url", None) or "",
+        reference_image_url=asset.reference_image_url or "",
+        model_seed_front_url=asset.model_seed_front_url or "",
+        model_seed_back_url=asset.model_seed_back_url or "",
         supports_multiview=provider_supports_multiview(),
         prompt=payload.get("avatar_prompt", ""),
         status="succeeded",
@@ -43,12 +43,11 @@ def outfit_response(outfit: CompanionOutfit) -> OutfitResponse:
         fullbody_url=re_sign_bare_path(outfit.fullbody_url) or "",
         status=outfit.status,
         active=outfit.active,
-        pending_wear=outfit.pending_wear,
     )
 
 
-def model_response(model: Companion3DModel) -> Companion3DModelResponse:
-    """把 3D 模型行转换为接口响应，补齐签名地址与内容哈希。"""
+def model_response(model: CompanionModel) -> CompanionModelResponse:
+    """把模型行转换为接口响应，补齐签名地址与内容哈希。"""
     content_hash = model.content_hash or None
     if not content_hash and model.asset_url:
         parts = model.asset_url.split("/", 2)
@@ -56,7 +55,7 @@ def model_response(model: Companion3DModel) -> Companion3DModelResponse:
             with contextlib.suppress(Exception):
                 content_hash = get_companion_model_sha256(int(parts[1]), parts[2])
 
-    return Companion3DModelResponse(
+    return CompanionModelResponse(
         id=model.id,
         species=model.species,
         provider=model.provider,

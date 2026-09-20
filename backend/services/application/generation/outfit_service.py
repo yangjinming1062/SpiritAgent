@@ -1,20 +1,17 @@
-"""Outfit service —— 2D 换装外观生命周期：草稿生成 → 确认转正切分 → 穿着 / 删除。
+"""Outfit service —— 外观（着装参考）生命周期：草稿生成 → 确认转正（参考图就绪）→ 穿着 / 删除。
 
 服装 / 发型是可换元素而非身份变更（DESIGN §5.4 形象锁定的豁免，同背面种子先例）：
 身份锚点恒为激活头像行的独立全身种子图（避免派生图迭代失真），本服务不检查 raise_if_image_sealed。
-两段式激活不变量：切分完成前旧 2d 行保持激活，翻转只发生在 2d 管线的成功
-接缝（2d pipeline.py）；提前翻转会令 get_active_mesh2d_response 落空、精灵掉蛋。
-所有外观状态校验与翻转（含管线接缝）共用用户级锁——锁外校验会让并发双击确认
-插出两行切分任务、或令在途切分覆盖用户手选。
+外观是一套经确认的着装参考图与着装描述：确认只表示参考图就绪，不代表任何可播放形象已就绪；
+`active` 标记当前生效外观，供房间 / 出镜媒体的着装描述消费。
+所有外观状态校验与翻转共用用户级锁——锁外校验会让并发双击确认插出重复状态翻转、
+或令在途重绘覆盖用户手选。
 """
 
 import asyncio
 import base64
-import contextlib
-import io
 import json
 from datetime import timedelta
-from typing import Literal
 
 from components import (
     DEFAULT_LANGUAGE,
@@ -29,7 +26,6 @@ from components import (
 from modules.companion import (
     OUTFIT_POLICY_DEFAULT,
     AvatarAsset,
-    Companion2DModel,
     CompanionOutfit,
     ImageReviseMode,
     OutfitResponse,
@@ -37,15 +33,13 @@ from modules.companion import (
 )
 from modules.settings import UserSetting
 from modules.ws import emit_ws_event
-from PIL import Image
 from prompts.generation import EDIT_PRESERVE_OUTFIT, OUTFIT_DESCRIBE_SYSTEM
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.companion import get_or_create_persona, load_persona_definition
-from services.infrastructure.assets import resolve_companion_asset_path
 from services.infrastructure.llm import (
-    MESH2D_STYLE,
+    REFERENCE_ILLUSTRATION_STYLE,
     build_image_edit_prompt,
     build_outfit_prompt,
     chat,
@@ -66,24 +60,12 @@ from .avatar_service import (
     load_avatar_bytes_as_data_uri,
     resolve_uploaded_avatar_path,
 )
-from .mesh2d import (
-    active_model_ids,
-    build_pose_side_prompt,
-    clear_outfit_user_poses,
-    mesh2d_response,
-    peek_outfit_user_poses,
-    pose_regeneration_in_progress,
-    remember_outfit_user_poses,
-    run_mesh2d_pipeline,
-    run_pose_side_regeneration,
-)
 from .response_builders import outfit_response
 
 logger = get_logger(__name__)
 
 # temp-media 草稿 24h TTL，留 1h 余量在读取时清扫过期草稿
 _DRAFT_TTL = timedelta(hours=23)
-_SPLITTING_TIMEOUT = timedelta(minutes=30)
 _DESCRIBE_TASKS: set[asyncio.Task[None]] = set()
 
 
@@ -96,7 +78,7 @@ class OutfitNotFoundError(OutfitError):
 
 
 class OutfitStateError(OutfitError):
-    """状态守卫拒绝（无 2D 身体 / 切分进行中 / 非法状态转换 / 删除保护）。"""
+    """状态守卫拒绝（非法状态转换 / 删除保护）。"""
 
 
 class OutfitDraftExpiredError(OutfitError):
@@ -157,40 +139,15 @@ async def _active_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
     ).scalar_one_or_none()
 
 
-async def _active_mesh2d(db: AsyncSession, user_id: int) -> Companion2DModel | None:
-    return (
-        await db.execute(
-            select(Companion2DModel).where(
-                Companion2DModel.user_id == user_id,
-                Companion2DModel.active.is_(True),
-                Companion2DModel.status == "succeeded",
-            ),
-        )
-    ).scalar_one_or_none()
-
-
-async def _has_splitting(db: AsyncSession, user_id: int) -> bool:
-    return (
-        await db.execute(
-            select(CompanionOutfit.id)
-            .where(
-                CompanionOutfit.user_id == user_id,
-                CompanionOutfit.status == "splitting",
-            )
-            .limit(1),
-        )
-    ).scalar_one_or_none() is not None
-
-
 async def _sweep_stale(db: AsyncSession, user_id: int) -> None:
-    """读取时顺带清扫：过期草稿置 expired（参考图上传文件一并清理）、卡死的 splitting 置 failed。"""
+    """读取时顺带清扫：过期草稿置 expired（参考图上传文件一并清理）。"""
     now = utc_now()
     rows = (
         (
             await db.execute(
                 select(CompanionOutfit).where(
                     CompanionOutfit.user_id == user_id,
-                    CompanionOutfit.status.in_(("draft", "splitting")),
+                    CompanionOutfit.status == "draft",
                 ),
             )
         )
@@ -199,27 +156,9 @@ async def _sweep_stale(db: AsyncSession, user_id: int) -> None:
     )
     changed = False
     for outfit in rows:
-        age = now - outfit.updated_at
-        if outfit.status == "draft" and age > _DRAFT_TTL:
+        if now - outfit.updated_at > _DRAFT_TTL:
             outfit.status = "expired"
             _delete_reference_file(outfit)
-            changed = True
-        elif outfit.status == "splitting" and age > _SPLITTING_TIMEOUT:
-            model_id = (
-                await db.execute(
-                    select(Companion2DModel.id)
-                    .where(
-                        Companion2DModel.outfit_id == outfit.id,
-                        Companion2DModel.status == "generating",
-                    )
-                    .order_by(Companion2DModel.id.desc())
-                    .limit(1),
-                )
-            ).scalar_one_or_none()
-            if model_id in active_model_ids():
-                continue
-            outfit.status = "failed"
-            outfit.pending_wear = False
             changed = True
     if changed:
         await db.commit()
@@ -233,8 +172,8 @@ def _delete_reference_file(outfit: CompanionOutfit) -> None:
 
 
 async def _ensure_initial_outfit(db: AsyncSession, user_id: int) -> None:
-    """衣柜为空时把当前形象合成第一套外观（回填 2d.outfit_id，此后激活翻转路径统一）；
-    无就绪 2D 身体时保持空衣柜，由 UI 引导先生成形象。"""
+    """衣柜为空时把当前形象立绘合成为第一套外观（此后激活翻转路径统一）；
+    形象行尚无可用立绘时保持空衣柜，由 UI 引导先生成形象。"""
     existing = (
         await db.execute(
             select(CompanionOutfit.id).where(CompanionOutfit.user_id == user_id).limit(1),
@@ -243,19 +182,19 @@ async def _ensure_initial_outfit(db: AsyncSession, user_id: int) -> None:
     if existing is not None:
         return
     avatar = await _active_avatar(db, user_id)
-    mesh2d = await _active_mesh2d(db, user_id)
-    if avatar is None or mesh2d is None:
+    if avatar is None:
+        return
+    reference_url = avatar.reference_image_url or avatar.asset_url
+    if not reference_url:
         return
     outfit = CompanionOutfit(
         user_id=user_id,
         name="初始形象",
-        fullbody_url=avatar.seed_front_2d_url or avatar.asset_url,
+        fullbody_url=reference_url,
         status="ready",
         active=True,
     )
     db.add(outfit)
-    await db.flush()
-    mesh2d.outfit_id = outfit.id
     await db.commit()
     _kick_describe(user_id, outfit.id)
 
@@ -275,54 +214,28 @@ async def list_outfits(db: AsyncSession, user_id: int) -> list[OutfitResponse]:
             .scalars()
             .all()
         )
-        models = (
-            (
-                await db.execute(
-                    select(Companion2DModel)
-                    .where(
-                        Companion2DModel.user_id == user_id,
-                        Companion2DModel.status == "succeeded",
-                        Companion2DModel.outfit_id.is_not(None),
-                    )
-                    .order_by(Companion2DModel.outfit_id, Companion2DModel.id.desc())
-                    .distinct(Companion2DModel.outfit_id),
-                )
-            )
-            .scalars()
-            .all()
-        )
-        assets = {model.outfit_id: mesh2d_response(model) for model in models}
-        return [
-            outfit_response(outfit).model_copy(
-                update={"asset": assets.get(outfit.id) if outfit.status == "ready" else None},
-            )
-            for outfit in outfits
-        ]
+        return [outfit_response(outfit) for outfit in outfits]
 
 
 async def _outfit_generation_context(
     db: AsyncSession,
     user_id: int,
-) -> tuple[AvatarAsset, Companion2DModel, str, str, str, str, str]:
-    """返回 (激活头像, 激活 2d, 物种, 外貌, 性格, 画风, 骨骼类型)；守卫失败抛 OutfitStateError。"""
+) -> tuple[AvatarAsset, str, str, str, str, str]:
+    """返回 (激活头像, 物种, 外貌, 性格, 画风, 骨骼类型)；守卫失败抛 OutfitStateError。"""
     avatar = await _active_avatar(db, user_id)
-    mesh2d = await _active_mesh2d(db, user_id)
-    if avatar is None or mesh2d is None:
-        raise OutfitStateError("还没有就绪的 2D 形象，请先生成 2D 动画资产")
-    if await _has_splitting(db, user_id):
-        raise OutfitStateError("有一套外观正在生成中，请稍候")
+    if avatar is None:
+        raise OutfitStateError("找不到激活头像行，请先完成形象确认")
     persona = await get_or_create_persona(db, user_id)
     if not persona.is_complete:
         raise OutfitStateError("请先完成 onboarding 再设计外观")
     definition = load_persona_definition(persona)
-    # 换装立绘属 2D 链：画风恒 MESH2D_STYLE，避免写实画风进入 2D 拆分
-    style = MESH2D_STYLE
+    # 外观立绘属外观参考链：画风恒 REFERENCE_ILLUSTRATION_STYLE，与形象参考同一动漫插画画风
+    style = REFERENCE_ILLUSTRATION_STYLE
     species = str(definition.get("biological_type") or "").strip()
     # 与正面种子同桶取 rig（缓存命中则零 LLM 调用）——换装立绘画幅/姿态与确认形象一致，衣柜内不漂移
     rig_type = await _resolve_fullbody_rig_type(db, user_id, avatar, species)
     return (
         avatar,
-        mesh2d,
         species,
         str(definition.get("appearance") or "").strip(),
         str(definition.get("personality") or "").strip(),
@@ -420,7 +333,6 @@ async def create_outfit_draft(
 
     (
         avatar,
-        _,
         species,
         appearance,
         personality,
@@ -486,7 +398,7 @@ async def regenerate_outfit_draft(
     mode: ImageReviseMode,
 ) -> CompanionOutfit:
     """草稿或失败外观修改：mode="edit" 微调（编辑上一版立绘，未提及区域逐像素保留），
-    mode="regenerate" 全量重绘（种子锚定）。两者成功后都回到草稿，重新确认才生成动画资产。"""
+    mode="regenerate" 全量重绘（种子锚定）。两者成功后都回到草稿，重新确认才转正。"""
     outfit = await _get_outfit(db, user_id, outfit_id)
     if outfit is None:
         raise OutfitNotFoundError(f"outfit {outfit_id} not found")
@@ -501,7 +413,6 @@ async def regenerate_outfit_draft(
 
     (
         avatar,
-        _,
         species,
         appearance,
         personality,
@@ -562,7 +473,6 @@ async def regenerate_outfit_draft(
             raise OutfitStateError("外观已发生变化，请刷新后重试")
         outfit.fullbody_url = draft_url
         outfit.status = "draft"
-        outfit.pending_wear = False
         if effective_feedback:
             source["feedback"] = effective_feedback
         outfit.source_json = json.dumps(source, ensure_ascii=False)
@@ -579,46 +489,19 @@ async def regenerate_outfit_draft(
     return outfit
 
 
-def _validate_user_pose_bytes(raw: bytes) -> None:
-    """校验自备姿态图可被图像库解码且边长不小于 8。"""
-    try:
-        with Image.open(io.BytesIO(raw)) as im:
-            im.verify()
-        with Image.open(io.BytesIO(raw)) as im:
-            width, height = im.size
-    except Exception as exc:
-        raise OutfitError("姿态图无法解析，请换一张图片后重试") from exc
-    if width < 8 or height < 8:
-        raise OutfitError("姿态图尺寸过小，请换一张完整姿态图后重试")
-
-
 async def confirm_outfit(
     db: AsyncSession,
     user_id: int,
     outfit_id: int,
-    *,
-    user_poses: dict[Literal["left", "right"], bytes] | None = None,
 ) -> CompanionOutfit:
-    """确认草稿（failed 可重试切分）：立绘转正后启动 2d 切分；描述生成后台进行。
-    user_poses 校验、暂存与恢复语义见 PIPELINE §1.1.2。"""
-    if user_poses:
-        for raw in user_poses.values():
-            await asyncio.to_thread(_validate_user_pose_bytes, raw)
+    """确认草稿（failed 可重试确认）：立绘转正为持久参考图，状态到 ready（参考图就绪）。
+    确认不触发任何生成，也不自动穿着；描述生成后台进行，穿着由 activate_outfit 显式完成。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
             raise OutfitNotFoundError(f"outfit {outfit_id} not found")
         if outfit.status not in ("draft", "failed"):
             raise OutfitStateError("仅草稿或失败状态可以确认")
-        if await _has_splitting(db, user_id):
-            raise OutfitStateError("有一套外观正在生成中，请稍候")
-        avatar = await _active_avatar(db, user_id)
-        if avatar is None:
-            raise OutfitStateError("找不到激活头像行")
-        if user_poses:
-            remember_outfit_user_poses(outfit.id, user_poses)
-        else:
-            user_poses = peek_outfit_user_poses(outfit.id)
         if outfit.fullbody_url.startswith("temp-media/"):
             moved = await _read_temp_media_bytes(outfit.fullbody_url)
             if moved is None:
@@ -627,104 +510,11 @@ async def confirm_outfit(
                 moved[0],
                 moved[1],
             )
-        outfit.status = "splitting"
-        outfit.pending_wear = True
-        model = Companion2DModel(
-            user_id=user_id,
-            avatar_id=avatar.id,
-            outfit_id=outfit.id,
-            status="generating",
-        )
-        db.add(model)
+        outfit.status = "ready"
         await db.commit()
-        await db.refresh(model)
         await db.refresh(outfit)
 
-    run_mesh2d_pipeline(
-        user_id=user_id,
-        model_id=model.id,
-        fullbody_url=outfit.fullbody_url,
-        priority="high",
-        user_poses=user_poses,
-    )
     _kick_describe(user_id, outfit.id)
-    return outfit
-
-
-async def resume_outfit_split(user_id: int, outfit_id: int) -> bool:
-    """从同一 outfit/model 行恢复被进程重启打断的切分，不创建新外观或新模型行。"""
-    async with SESSION_LOCAL() as db:
-        outfit = await _get_outfit(db, user_id, outfit_id)
-        if outfit is None or outfit.status != "splitting":
-            return False
-        model = (
-            await db.execute(
-                select(Companion2DModel)
-                .where(
-                    Companion2DModel.user_id == user_id,
-                    Companion2DModel.outfit_id == outfit_id,
-                    Companion2DModel.status == "generating",
-                )
-                .order_by(Companion2DModel.id.desc())
-                .limit(1),
-            )
-        ).scalar_one_or_none()
-        if model is None:
-            return False
-        if model.id in active_model_ids():
-            return True
-        model_id = model.id
-        fullbody_url = outfit.fullbody_url
-        run_mesh2d_pipeline(
-            user_id=user_id,
-            model_id=model_id,
-            fullbody_url=fullbody_url,
-            priority="high",
-            user_poses=peek_outfit_user_poses(outfit_id),
-        )
-    return True
-
-
-async def _ready_outfit_for_pose(db: AsyncSession, user_id: int, outfit_id: int) -> CompanionOutfit:
-    """单侧姿态重绘、采纳与提示词共用的就绪外观守卫；返回外观行。"""
-    outfit = await _get_outfit(db, user_id, outfit_id)
-    if outfit is None:
-        raise OutfitNotFoundError(f"outfit {outfit_id} not found")
-    if outfit.status != "ready":
-        raise OutfitStateError("仅切分成功的外观可以重新生成扶边姿态")
-    if await _has_splitting(db, user_id):
-        raise OutfitStateError("有一套外观正在生成中，请稍候")
-    model_id = await db.scalar(
-        select(Companion2DModel.id)
-        .where(
-            Companion2DModel.user_id == user_id,
-            Companion2DModel.outfit_id == outfit.id,
-            Companion2DModel.status == "succeeded",
-        )
-        .order_by(Companion2DModel.id.desc())
-        .limit(1),
-    )
-    if model_id is None:
-        raise OutfitStateError("外观缺少 2D 资产，请重新生成外观")
-    return outfit
-
-
-async def regenerate_outfit_pose(
-    db: AsyncSession,
-    user_id: int,
-    outfit_id: int,
-    side: Literal["left", "right"],
-) -> CompanionOutfit:
-    """单侧重生成一侧扶边姿态：只替换该侧两张姿态纹理与 manifest poses 子树，
-    PSD 与另一侧不动；生成失败时旧姿态保持可用、外观仍为 ready。与整包切分互斥，
-    同一外观同一时间只允许一个单侧任务（单飞标记在管线模块）。"""
-    async with get_avatar_job_lock(user_id):
-        outfit = await _ready_outfit_for_pose(db, user_id, outfit_id)
-        if pose_regeneration_in_progress(user_id, outfit.id):
-            raise OutfitStateError("扶边姿态正在重新生成中，请稍候")
-
-    # 锁内校验到锁外提交之间无挂起点，单飞检查与在飞标记登记在同一事件轮内原子完成
-    run_pose_side_regeneration(user_id=user_id, outfit_id=outfit.id, side=side)
     return outfit
 
 
@@ -744,7 +534,6 @@ async def prepare_outfit_prompt(
 
     (
         avatar,
-        _mesh2d,
         species,
         appearance,
         personality,
@@ -793,7 +582,6 @@ async def prepare_outfit_regenerate_prompt(
 
     (
         avatar,
-        _mesh2d,
         species,
         appearance,
         personality,
@@ -832,15 +620,7 @@ async def adopt_outfit_draft_image(
     content_type: str | None,
 ) -> CompanionOutfit:
     """自备图采纳（创建语境）：用户外部生成的立绘按创建草稿语义入库（temp-media 草稿，确认后转正）。"""
-    (
-        _avatar,
-        _mesh2d,
-        _species,
-        _appearance,
-        _personality,
-        _style,
-        _rig_type,
-    ) = await _outfit_generation_context(db, user_id)
+    await _outfit_generation_context(db, user_id)
     effective_description = (description or "").strip()
     fullbody_url, _, _ = await _persist_portrait_or_draft(
         data,
@@ -894,7 +674,6 @@ async def adopt_outfit_regenerate_image(
             raise OutfitStateError("外观已发生变化，请刷新后重试")
         outfit.fullbody_url = fullbody_url
         outfit.status = "draft"
-        outfit.pending_wear = False
         emit_ws_event(
             db,
             user_id=user_id,
@@ -908,101 +687,26 @@ async def adopt_outfit_regenerate_image(
     return outfit
 
 
-async def prepare_pose_prompt(
-    db: AsyncSession,
-    user_id: int,
-    outfit_id: int,
-    side: Literal["left", "right"],
-) -> str:
-    """自备图提示词（单侧扶边姿态）。草稿/失败也可取；ready 走就绪守卫。
-    契约见 PIPELINE §1.1.2。"""
-    outfit = await _get_outfit(db, user_id, outfit_id)
-    if outfit is None:
-        raise OutfitNotFoundError(f"outfit {outfit_id} not found")
-    if outfit.status not in ("draft", "failed", "ready"):
-        raise OutfitStateError("外观尚未准备好姿态提示词，请稍候或重新生成外观")
-    if outfit.status == "ready":
-        outfit = await _ready_outfit_for_pose(db, user_id, outfit_id)
-    if outfit.status != "ready" and await _has_splitting(db, user_id):
-        raise OutfitStateError("有一套外观正在生成中，请稍候")
-    data_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, outfit.fullbody_url)
-    if not data_uri or not data_uri.startswith("data:"):
-        raise OutfitStateError("外观立绘缺失或无法读取，请先重新生成外观")
-    return build_pose_side_prompt(side)
-
-
-async def adopt_outfit_pose(
-    db: AsyncSession,
-    user_id: int,
-    outfit_id: int,
-    side: Literal["left", "right"],
-    *,
-    data: bytes,
-) -> CompanionOutfit:
-    """自备图采纳（单侧姿态）：校验后入队单侧管线，语义与单侧重绘一致。
-    契约见 PIPELINE §1.1.2。"""
-    async with get_avatar_job_lock(user_id):
-        outfit = await _ready_outfit_for_pose(db, user_id, outfit_id)
-        if pose_regeneration_in_progress(user_id, outfit.id):
-            raise OutfitStateError("扶边姿态正在重新生成中，请稍候")
-
-    # 锁内校验到锁外提交之间无挂起点，单飞检查与在飞标记登记在同一事件轮内原子完成
-    run_pose_side_regeneration(user_id=user_id, outfit_id=outfit.id, side=side, user_image=data)
-    return outfit
-
-
 async def activate_outfit(
     db: AsyncSession,
     user_id: int,
     outfit_id: int,
 ) -> CompanionOutfit:
-    """即时穿着就绪外观；同事务清空全部自动穿着标记，防止在途切分完成后覆盖用户手选。"""
+    """即时穿着就绪外观：翻转该用户的激活外观。`active` 是当前生效着装描述的唯一权威，
+    供房间 / 出镜媒体生成消费；对渲染形象的影响由各形象链自行处理。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
             raise OutfitNotFoundError(f"outfit {outfit_id} not found")
         if outfit.status != "ready":
-            raise OutfitStateError("外观尚未就绪，无法穿着")
-        model = (
-            await db.execute(
-                select(Companion2DModel)
-                .where(
-                    Companion2DModel.outfit_id == outfit.id,
-                    Companion2DModel.status == "succeeded",
-                )
-                .order_by(Companion2DModel.id.desc())
-                .limit(1),
-            )
-        ).scalar_one_or_none()
-        if model is None:
-            raise OutfitStateError("外观缺少可穿的 2D 资产，请重新生成")
+            raise OutfitStateError("外观尚未确认，无法穿着")
 
-        # 先停用后激活：部分唯一索引不可延迟，顺序颠倒会在中间态撞唯一约束
-        await db.execute(
-            update(CompanionOutfit)
-            .where(
-                CompanionOutfit.user_id == user_id,
-                CompanionOutfit.pending_wear.is_(True),
-            )
-            .values(pending_wear=False)
-            .execution_options(synchronize_session=False),
-        )
-        await db.execute(
-            update(Companion2DModel)
-            .where(
-                Companion2DModel.user_id == user_id,
-                Companion2DModel.active.is_(True),
-            )
-            .values(active=False)
-            .execution_options(synchronize_session=False),
-        )
         await db.execute(
             update(CompanionOutfit)
             .where(CompanionOutfit.user_id == user_id, CompanionOutfit.active.is_(True))
             .values(active=False)
             .execution_options(synchronize_session=False),
         )
-        model.active = True
         outfit.active = True
         emit_ws_event(
             db,
@@ -1015,19 +719,9 @@ async def activate_outfit(
     return outfit
 
 
-def _unlink_companion_asset(user_id: int, storage_path: str | None) -> None:
-    if not storage_path:
-        return
-    filename = storage_path.replace("\\", "/").rsplit("/", 1)[-1].split("?")[0]
-    resolved = resolve_companion_asset_path(user_id, filename)
-    if resolved is not None:
-        with contextlib.suppress(OSError):
-            resolved[0].unlink(missing_ok=True)
-
-
 async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
-    """删除非穿着、非切分中的外观（含初始形象）；2d 行与产物文件 best-effort 清理。
-    初始形象的立绘文件即头像行的正面种子，归头像所有——外观删除不得带走它，
+    """删除非穿着外观（含初始形象）；参考图上传文件与立绘 best-effort 清理。
+    初始形象的立绘文件即头像行的参考立绘，归头像所有——外观删除不得带走它，
     否则后续换装生成都会因身份参考丢失而失败。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
@@ -1035,34 +729,12 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
             raise OutfitNotFoundError(f"outfit {outfit_id} not found")
         if outfit.active:
             raise OutfitStateError("穿着中的外观不能删除，请先切换到其他外观")
-        if outfit.status == "splitting":
-            raise OutfitStateError("正在生成中的外观不能删除")
 
         avatar = await _active_avatar(db, user_id)
-        avatar_files = {avatar.seed_front_2d_url, avatar.asset_url} if avatar is not None else set()
-        models = (
-            (
-                await db.execute(
-                    select(Companion2DModel).where(
-                        Companion2DModel.outfit_id == outfit.id,
-                    ),
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for model in models:
-            _unlink_companion_asset(user_id, model.manifest_path)
-            for entry in safe_json_loads(model.layers_json or "[]", default=[]):
-                if isinstance(entry, dict) and entry.get("url"):
-                    _unlink_companion_asset(user_id, str(entry["url"]))
-        await db.execute(
-            delete(Companion2DModel).where(Companion2DModel.outfit_id == outfit.id),
-        )
+        avatar_files = {avatar.reference_image_url, avatar.asset_url} if avatar is not None else set()
         _delete_reference_file(outfit)
         if outfit.fullbody_url not in avatar_files:
             delete_portrait_file(outfit.fullbody_url)
-        clear_outfit_user_poses(outfit.id)
         emit_ws_event(
             db,
             user_id=user_id,

@@ -34,8 +34,6 @@ interface FetchWithCacheOptions {
   fetcher: (signal: AbortSignal) => Promise<ArrayBuffer | null>
   /** 字节级校验（如 PSD 魔术字节）。失败时调度 delete 并跳过缓存写。 */
   validate?: (buffer: ArrayBuffer) => boolean
-  /** true：abort / fetch 错误直接抛（保留 PSD 旧契约）。false：吞掉并返回 null（GLB 旧契约）。 */
-  throwOnError?: boolean
 }
 
 export class OpfsBlobCache {
@@ -231,17 +229,11 @@ export class OpfsBlobCache {
   }
 
   /** 通用「OPFS 缓存 + 远端拉取」包装：epoch 闸门、读侧校验、in-flight dedupe、写侧三道闸门。
-   * 单一来源替代 glb-opfs-cache.ts / psd-opfs-cache.ts 各 ~140 行 twin 实现。 */
+   * abort / fetch 错误吞掉并返回 null，由调用方按缓存缺失处理。 */
   async fetchWithCache(opts: FetchWithCacheOptions): Promise<ArrayBuffer | null> {
-    const { contentHash, fetcher, signal, throwOnError = false, url, validate } = opts
+    const { contentHash, fetcher, signal, url, validate } = opts
 
-    const failOrThrow = (): null => {
-      if (throwOnError) {
-        throw new DOMException('Aborted', 'AbortError')
-      }
-
-      return null
-    }
+    const failOrThrow = (): null => null
 
     if (signal?.aborted) {
       return failOrThrow()
@@ -287,12 +279,7 @@ export class OpfsBlobCache {
           const buffer = await fetcher(controller.signal)
 
           if (!buffer) {
-            // fetcher 在内部检测到 signal 中止时返回 null：throwOnError=true 时（PSD 旧契约）
-            // 抛 DOMException，调用方的 try/catch 就能识别为「干净的取消」而非错误。
-            if (throwOnError) {
-              throw new DOMException('Aborted', 'AbortError')
-            }
-
+            // fetcher 在内部检测到 signal 中止时返回 null。
             return null
           }
 
@@ -312,12 +299,7 @@ export class OpfsBlobCache {
 
           return buffer
         } catch (err) {
-          // throwOnError=true（PSD 旧契约）：把错误原样抛给调用方，不在本层吞。
-          // throwOnError=false（GLB 旧契约）：吞掉并返回 null。
-          if (throwOnError) {
-            throw err
-          }
-
+          // 错误吞掉并返回 null，由调用方按缓存缺失处理。
           if (!controller.signal.aborted) {
             log.warn(this.logTag, 'Fetch failed:', err)
           }

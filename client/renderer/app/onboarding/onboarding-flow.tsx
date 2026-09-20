@@ -163,7 +163,7 @@ const QUESTIONS: readonly Question[] = [
     presets: CHARACTER_GENDER_PRESETS
   },
   {
-    // appearance：外貌特征——驱动 3D 模型 prompt 与角色外貌描述。
+    // appearance：外貌特征——驱动模型 prompt 与角色外貌描述。
     key: 'appearance',
     text: '您希望我长什么样？说说头发、眼睛、体型、标志性细节…',
     placeholder: '比如：金发绿眼、额间一道疤、机械义眼…',
@@ -263,7 +263,7 @@ const QUESTIONS: readonly Question[] = [
   }
 ]
 
-// 这些字段的值会驱动 3D 模型，因此用户在确认头像后不能再改。
+// 这些字段的值会驱动模型，因此用户在确认头像后不能再改。
 // 题面旁边会渲染一个红色 `*`，向导顶部还有 banner 提示用户这一限制。
 const LOCKED_FIELD_KEYS: ReadonlySet<QKey> = new Set(['biological_type', 'gender', 'appearance'])
 
@@ -453,7 +453,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const voicePreparing = useStore($voicePreparing)
   const { requestGateway } = useGatewayRequest()
   const [phase, setPhase] = useState<Phase>('q-character')
-  // confirm-front 成功后置 true:形象已锁死 + 3D 已启动,任何返回到 portrait-avatar / fullbody 的路径都禁用
+  // confirm-front 成功后置 true:形象已锁死 + 模型已启动,任何返回到 portrait-avatar / fullbody 的路径都禁用
   const [imageSealed, setImageSealed] = useState(false)
   const [qIndex, setQIndex] = useState(0)
   const onboardingSubmissionsRef = useRef(Promise.resolve())
@@ -503,7 +503,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   const [fullbodyLoading, setFullbodyLoading] = useState(false)
   const [fullbodyLoadingText, setFullbodyLoadingText] = useState('正在为您生成正面全身立绘…')
-  const [fullbodyStyle, setFullbodyStyleState] = useState<string | null>('anime_2d_illustration')
+  const [fullbodyStyle, setFullbodyStyleState] = useState<string | null>('anime_illustration')
   const [fullbodyFrontUrl, setFullbodyFrontUrl] = useState<string | null>(null)
   const [fullbodyFrontRawUrl, setFullbodyFrontRawUrl] = useState<string | null>(null)
   const [fullbodyFeedback, setFullbodyFeedback] = useState<string>('')
@@ -768,7 +768,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   }
 
   const onBack = (): void => {
-    // 形象确认后 3D 已启动,任何返回路径都禁用——纯函数 ``computeBackTransition`` 在 imageSealed 时直接返 null。
+    // 形象确认后模型已启动,任何返回路径都禁用——纯函数 ``computeBackTransition`` 在 imageSealed 时直接返 null。
     const intent = computeBackTransition({ phase, qIndex, voiceStage, imageSealed }, CHARACTER_QUESTIONS.length)
 
     if (!intent) {
@@ -860,17 +860,17 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     void playOnboardingAudio(url ? 'onboarding.portrait.ok' : 'onboarding.portrait.failed')
   }
 
-  // front-2d 生成 / 自备图采纳共用：把接口返回的正面种子落到本地状态。
+  // front-reference 生成 / 自备图采纳共用：把接口返回的正面种子落到本地状态。
   const applyFullbodyFrontResponse = async (
-    res: { id?: number; asset_url?: string; seed_front_2d_url?: string } | undefined
+    res: { id?: number; asset_url?: string; reference_image_url?: string } | undefined
   ): Promise<void> => {
     const applied = await applyPortrait({
       id: res?.id,
       assetUrl: res?.asset_url,
-      seedFrontUrl: res?.seed_front_2d_url
+      seedFrontUrl: res?.reference_image_url
     })
 
-    const rawFront = res?.seed_front_2d_url || null
+    const rawFront = res?.reference_image_url || null
     let resolvedUrl: string | null = null
 
     if (applied.seedFront) {
@@ -882,14 +882,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     if (resolvedUrl) {
       setFullbodyFrontRawUrl(rawFront)
       setFullbodyFrontUrl(resolvedUrl)
-      setFullbodyHistories({ anime_2d_illustration: [{ rawUrl: rawFront, previewUrl: resolvedUrl }] })
-      setFullbodyHistoryIndices({ anime_2d_illustration: 0 })
+      setFullbodyHistories({ anime_illustration: [{ rawUrl: rawFront, previewUrl: resolvedUrl }] })
+      setFullbodyHistoryIndices({ anime_illustration: 0 })
     } else {
       setFullbodyHint('正面立绘加载失败，请重试')
     }
   }
 
-  const generateFullbodyFrontDirect = async (avatarId: number, styleId = 'anime_2d_illustration'): Promise<void> => {
+  const generateFullbodyFrontDirect = async (avatarId: number, styleId = 'anime_illustration'): Promise<void> => {
     setFullbodyLoading(true)
     setFullbodyLoadingText('正在为您生成正面全身立绘…')
     setFullbodyHint(null)
@@ -899,11 +899,11 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       const res = await window.spiritagent.api<{
         id?: number
         asset_url?: string
-        seed_front_2d_url?: string
+        reference_image_url?: string
       }>({
-        path: `/api/companion/avatar/${avatarId}/fullbody/front-2d`,
+        path: `/api/companion/avatar/${avatarId}/fullbody/front-reference`,
         method: 'POST',
-        // 2D 画风由服务端固定，请求不携带 style
+        // 画风由服务端固定（外观参考动漫插画风），请求不携带 style
         body: {
           mode: 'regenerate'
         }
@@ -919,7 +919,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   const fetchFullbodyFrontPrompt = async (): Promise<string> => {
     const res = await window.spiritagent.api<{ prompt: string }>({
-      path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-2d/prompt`,
+      path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-reference/prompt`,
       method: 'POST',
       body: { feedback: fullbodyFeedback.trim() || undefined }
     })
@@ -936,9 +936,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       const res = await window.spiritagent.api<{
         id?: number
         asset_url?: string
-        seed_front_2d_url?: string
+        reference_image_url?: string
       }>({
-        path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-2d/adopt`,
+        path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-reference/adopt`,
         method: 'POST',
         body: { image: image.base64, content_type: image.contentType }
       })
@@ -953,7 +953,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const hydrateFullbodyStage = async (generateIfMissing: boolean = false): Promise<void> => {
     const avatarRes = await window.spiritagent.api<{
       asset_url?: string | null
-      seed_front_2d_url?: string | null
+      reference_image_url?: string | null
       seed_fullbody_url?: string | null
       id?: number
     }>({
@@ -968,8 +968,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       fullbodySeedUrl: avatarRes?.seed_fullbody_url || undefined
     })
 
-    const style = 'anime_2d_illustration'
-    const seedFrontRaw = avatarRes?.seed_front_2d_url || null
+    const style = 'anime_illustration'
+    const seedFrontRaw = avatarRes?.reference_image_url || null
 
     if (seedFrontRaw) {
       const resolved = await resolvePortraitUrl(seedFrontRaw)
@@ -1323,7 +1323,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setPresentationRef(null)
 
     setPhase('fullbody-reference')
-    setFullbodyStyleState('anime_2d_illustration')
+    setFullbodyStyleState('anime_illustration')
     setFullbodyFrontUrl(null)
     setFullbodyFrontRawUrl(null)
     setFullbodyFeedback('')
@@ -1392,9 +1392,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       const res = await window.spiritagent.api<{
         id?: number
         asset_url?: string
-        seed_front_2d_url?: string
+        reference_image_url?: string
       }>({
-        path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-2d`,
+        path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-reference`,
         method: 'POST',
         body: {
           feedback: fullbodyFeedback.trim() || undefined,
@@ -1405,10 +1405,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       const applied = await applyPortrait({
         id: res?.id,
         assetUrl: res?.asset_url,
-        seedFrontUrl: res?.seed_front_2d_url
+        seedFrontUrl: res?.reference_image_url
       })
 
-      const rawFront = res?.seed_front_2d_url || null
+      const rawFront = res?.reference_image_url || null
       let resolvedUrl: string | null = null
 
       if (applied.seedFront) {
@@ -1478,15 +1478,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         assetUrl: res?.asset_url
       })
       // 形象确认后立即锁死 onBack 路径(返回到 voice → q-character → portrait-avatar → fullbody 会让
-      // 用户重新调整正面视图,与已启动的 2D 生成不一致)。
+      // 用户重新调整正面视图,与已确认的形象不一致)。
       setImageSealed(true)
-      // 形象确认后立即异步启动 2D 骨骼切分,不等 onboarding 剩余步骤(语音/性格) 完成;
-      // 生成在 web 进程内 fire-and-forget,失败静默——用户在客户端随时可重试。
-      // 渲染模式固定为 2D：onboarding 阶段不暴露模式选择,需要 3D 时可在「伙伴设置 → 渲染模式」切换
-      // （切 3D 前会先补生成背面种子图）。
-      void window.spiritagent
-        .api<{ id?: number; status?: string }>({ path: '/api/companion/2d', method: 'POST', body: {} })
-        .catch(() => undefined)
 
       // 后端确认成功后才能推进——失败时停在当前步,保留按钮可重试。
       setPhase('voice')
@@ -1996,7 +1989,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                         {activeAvatarId && (
                           <button
                             className="rounded-full bg-fill-hover px-3 py-1 text-xs text-strong hover:bg-fill-active"
-                            onClick={() => void generateFullbodyFrontDirect(activeAvatarId, 'anime_2d_illustration')}
+                            onClick={() => void generateFullbodyFrontDirect(activeAvatarId, 'anime_illustration')}
                             type="button"
                           >
                             重新生成
@@ -2011,9 +2004,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                       <HistoryGallery
                         entries={currentFullbodyHistory}
                         onSelect={onSelectFullbodyHistoryEntry}
-                        selectedIdx={
-                          fullbodyHistoryIndices['anime_2d_illustration'] ?? currentFullbodyHistory.length - 1
-                        }
+                        selectedIdx={fullbodyHistoryIndices['anime_illustration'] ?? currentFullbodyHistory.length - 1}
                       />
                     </div>
                   )}
@@ -2063,7 +2054,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                         className="text-body transition hover:text-strong disabled:opacity-40"
                         disabled={fullbodyLoading}
                         onClick={() => {
-                          // front-2d 自备图参考是全身种子图：进入 fullbody 阶段时已写入缓存，打开前再补齐一次。
+                          // front-reference 自备图参考是全身种子图：进入 fullbody 阶段时已写入缓存，打开前再补齐一次。
                           void hydrateAvatarSeeds().finally(() => setFullbodySelfSourceOpen(true))
                         }}
                         title="我自己生成这张图（复制提示词，生成后回传上传）"

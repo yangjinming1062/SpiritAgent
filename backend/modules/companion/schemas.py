@@ -16,7 +16,7 @@ class PersonaResponse(BaseModel):
     definition_json: str
     is_complete: bool
     personality_tags: list[str] = Field(default_factory=list)
-    render_mode: str = "2d"
+    render_mode: str = "video"
     current_mood: str | None = None
 
 
@@ -31,9 +31,9 @@ class AvatarAssetResponse(BaseModel):
     id: int
     asset_url: str
     seed_fullbody_url: str = ""
-    seed_front_2d_url: str = ""
-    seed_front_3d_url: str = ""
-    seed_back_url: str = ""
+    reference_image_url: str = ""
+    model_seed_front_url: str = ""
+    model_seed_back_url: str = ""
     supports_multiview: bool = False
     prompt: str = ""
     status: SucceededStatus = "succeeded"
@@ -48,15 +48,15 @@ class FullbodyReferenceGenerateRequest(BaseModel):
     mode: ImageReviseMode
 
 
-class Fullbody2dFrontGenerateRequest(BaseModel):
+class FullbodyReferenceFrontGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     feedback: str | None = Field(default=None, max_length=500)
     mode: ImageReviseMode
 
 
-# 3D 种子（A-pose 正面 / 背面）生成共用请求体；画风由服务端按物种路由并随行持久化，正背恒成对一致
-class Fullbody3dSeedGenerateRequest(BaseModel):
+# 模型种子（A-pose 正面 / 背面）生成共用请求体；画风由服务端按物种路由并随行持久化，正背恒成对一致
+class ModelSeedGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     feedback: str | None = Field(default=None, max_length=500)
@@ -70,7 +70,7 @@ class FullbodyConfirmFrontRequest(BaseModel):
 
 
 # 全身种子自备图点位；值与 REST 路径段一致
-FullbodySeedKind = Literal["reference", "front-2d", "front-3d", "back"]
+FullbodySeedKind = Literal["reference", "front-reference", "model-front", "back"]
 
 
 class FullbodyPromptRequest(BaseModel):
@@ -124,7 +124,7 @@ class AvatarHistoryResponse(BaseModel):
     history: list[AvatarAssetResponse]
 
 
-class Companion3DModelResponse(BaseModel):
+class CompanionModelResponse(BaseModel):
     id: int
     asset_url: str | None = None
     provider: str
@@ -149,19 +149,10 @@ class ModelGenerateRequest(BaseModel):
     force: bool = False
 
 
-class Companion2DModelResponse(BaseModel):
-    id: int
-    status: str = "generating"
-    manifest_url: str | None = None
-    layer_urls: dict[str, str] = Field(default_factory=dict)
-    content_hash: str | None = None
-    error: str | None = None
-
-
 class RenderModeRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    render_mode: Literal["2d", "3d"]
+    render_mode: Literal["model", "video"]
 
 
 class OutfitCreateRequest(BaseModel):
@@ -198,14 +189,10 @@ class OutfitAdoptRequest(BaseModel):
 
 
 class OutfitConfirmRequest(BaseModel):
-    """确认入柜可选姿态图；字段语义见 PIPELINE §1.1.2。"""
+    """确认入柜：无请求字段。与同模块其他 POST 一致，以可缺省的空模型收 body，
+    空对象不触发 422；确认只表示参考图就绪，不触发任何生成。"""
 
     model_config = ConfigDict(extra="forbid")
-
-    pose_left: str | None = Field(default=None, max_length=8 * 1024 * 1024)
-    pose_left_content_type: str | None = Field(default=None, max_length=64)
-    pose_right: str | None = Field(default=None, max_length=8 * 1024 * 1024)
-    pose_right_content_type: str | None = Field(default=None, max_length=64)
 
 
 class OutfitRegeneratePromptRequest(BaseModel):
@@ -215,16 +202,13 @@ class OutfitRegeneratePromptRequest(BaseModel):
 
 
 class OutfitResponse(BaseModel):
-    asset: Companion2DModelResponse | None = None
     id: int
     name: str
     description: str | None = None
     fullbody_url: str = ""
-    # draft → splitting → ready | failed | expired
+    # draft → ready | failed | expired；ready 表示参考图就绪
     status: str = "draft"
     active: bool = False
-    # 确认即穿着：切分完成后自动换上；期间手动穿着其他装会清掉该标记
-    pending_wear: bool = False
 
 
 class OutfitListResponse(BaseModel):

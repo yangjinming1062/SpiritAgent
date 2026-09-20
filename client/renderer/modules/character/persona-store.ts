@@ -6,7 +6,7 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 
 import { personaFromWire } from './persona-mappers'
-import { $renderMode, setRenderMode } from './render-mode'
+import { $renderMode, setRenderMode } from './presentation/render-mode-store'
 
 export interface PersonaDefinition {
   name: string
@@ -84,7 +84,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
     return { ok: false }
   }
 
-  if ((p.render_mode === '3d' || p.render_mode === '2d') && p.render_mode !== $renderMode.get()) {
+  if ((p.render_mode === 'model' || p.render_mode === 'video') && p.render_mode !== $renderMode.get()) {
     setRenderMode(p.render_mode)
   }
 

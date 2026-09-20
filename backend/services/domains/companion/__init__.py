@@ -41,6 +41,7 @@ from .persona_service import (
     get_or_create_persona,
     load_persona_definition,
     render_extras,
+    set_render_mode,
     submit_onboarding_field,
     update_persona,
 )
@@ -129,6 +130,7 @@ __all__ = [
     "run_prompt_json",
     "schedule_personality_tag_refresh",
     "select_rig_type",
+    "set_render_mode",
     "should_act",
     "submit_onboarding_field",
     "update_mood_from_companion_turn",

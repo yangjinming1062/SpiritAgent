@@ -1,5 +1,4 @@
 import asyncio
-import hashlib
 import json
 from datetime import date, datetime
 from pathlib import Path
@@ -11,11 +10,10 @@ from modules.auth import User, UserModelConfig
 from modules.companion import (
     COMPANION_CRON_SOURCE_PREFIX,
     AvatarAsset,
-    Companion2DModel,
-    Companion3DModel,
     CompanionDiaryEntry,
     CompanionIntent,
     CompanionIntentView,
+    CompanionModel,
     CompanionMoment,
     CompanionMomentComment,
     CompanionOutfit,
@@ -44,8 +42,7 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
     "companion_outfits": CompanionOutfit,
     "companion_room_backdrops": CompanionRoomBackdrop,
     "personas": Persona,
-    "companion_2d_models": Companion2DModel,
-    "companion_3d_models": Companion3DModel,
+    "companion_models": CompanionModel,
     "user_settings": UserSetting,
     "cron_jobs": CronJob,
     "companion_intents": CompanionIntent,
@@ -59,8 +56,7 @@ TABLES = tuple(TABLE_MODELS)
 CONVERSATION_TABLES = frozenset({"conversations", "messages"})
 FOREIGN_KEYS: dict[str, dict[str, str]] = {
     "personas": {"active_backdrop_id": "companion_room_backdrops"},
-    "companion_2d_models": {"avatar_id": "avatar_assets", "outfit_id": "companion_outfits"},
-    "companion_3d_models": {"source_portrait_id": "avatar_assets"},
+    "companion_models": {"source_portrait_id": "avatar_assets"},
     "cron_jobs": {"conversation_id": "conversations"},
     "companion_moments": {"memory_id": "memories", "session_id": "conversations"},
     "companion_moment_comments": {"moment_id": "companion_moments"},
@@ -329,10 +325,6 @@ def _build_payload(
             payload[key] = [
                 str(id_map[ref][str(value)]) for value in raw.get(key, []) if str(value) in id_map.get(ref, {})
             ]
-    if table == "companion_2d_models" and payload.get("manifest_json"):
-        manifest = payload["manifest_json"]
-        payload["content_hash"] = hashlib.sha256(manifest.encode("utf-8")).hexdigest()
-        rewriter.write_manifest(payload.get("manifest_path"), manifest)
     if table not in {"messages", "user_preferences"}:
         payload["user_id"] = user_id
     return payload

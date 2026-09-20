@@ -3,7 +3,7 @@
 #
 # 【重要设计说明】
 # 本文件仅保留影响后端冷启动运行的必要参数（数据库连接、密钥、初始管理员凭据、数据存储等）。
-# 所有业务型参数（如 AI 供应商凭据、模型名称、图生 3D、超时重试、接口限流、渠道接入等）
+# 所有业务型参数（如 AI 供应商凭据、模型名称、图生模型、超时重试、接口限流、渠道接入等）
 # 均已收敛至后台管理页面（/admin/）动态配置，并在保存时实时持久化至数据库且热生效，无需重启容器！
 #
 # 使用方法：
@@ -26,7 +26,7 @@ database_url = "postgresql+psycopg://postgres:postgres@postgres:5432/spiritagent
 jwt_secret_key = "replace-this-with-a-strong-secret"
 # JWT 签名算法
 jwt_algorithm = "HS256"
-# 伴侣头像与 3D 资产 URL 的 HMAC 签名密钥（生产环境必须配置，防止未授权访问）
+# 伴侣头像与模型资产 URL 的 HMAC 签名密钥（生产环境必须配置，防止未授权访问）
 companion_asset_signing_key = "replace-this-with-a-companion-asset-signing-key"
 # 初始超级管理员用户名（首次冷启动时自动创建）
 admin_username = "spiritagent"
@@ -36,8 +36,6 @@ admin_password = "spiritagent@admin123"
 [storage]
 # 后端磁盘数据与产物存储根目录（支持相对或绝对路径）
 data_dir = "./data"
-# 扶边姿态显著性抠图模型（onnx），文件放置于 data_dir/models/<name>.onnx；缺失时自动退回色幕色键抠图
-matting_model = "isnet-general-use"
 
 [rate_limit]
 # 速率限制器后端存储 URL（为空时默认使用进程内内存存储；生产高可用可配置 redis://...）

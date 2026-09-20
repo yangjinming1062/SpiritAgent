@@ -75,17 +75,19 @@ class Settings(BaseSettings):
     temp_file_ttl_hours: int = Field(default=24, validation_alias="TEMP_FILE_TTL_HOURS")
     data_dir: str = Field(default="./data", validation_alias="DATA_DIR")
 
-    # 静态显著性抠图模型名（ISNet 系，onnx）。模型文件按 data_dir/models/<name>.onnx 查找，
-    # 随 data 卷挂载进容器；缺失时扶边姿态抠图退回色键路径，不阻塞启动。
-    matting_model: str = Field(default="isnet-general-use", validation_alias="MATTING_MODEL")
-
-    image_to_3d_provider: str = Field(default="tripo", validation_alias="IMAGE_TO_3D_PROVIDER")
-    image_to_3d_poll_interval_seconds: float = Field(default=5.0, validation_alias="IMAGE_TO_3D_POLL_INTERVAL_SECONDS")
-    image_to_3d_poll_backoff_max_seconds: float = Field(
-        default=40.0,
-        validation_alias="IMAGE_TO_3D_POLL_BACKOFF_MAX_SECONDS",
+    model_generation_provider: str = Field(default="tripo", validation_alias="MODEL_GENERATION_PROVIDER")
+    model_generation_poll_interval_seconds: float = Field(
+        default=5.0,
+        validation_alias="MODEL_GENERATION_POLL_INTERVAL_SECONDS",
     )
-    image_to_3d_max_poll_seconds: float = Field(default=1800.0, validation_alias="IMAGE_TO_3D_MAX_POLL_SECONDS")
+    model_generation_poll_backoff_max_seconds: float = Field(
+        default=40.0,
+        validation_alias="MODEL_GENERATION_POLL_BACKOFF_MAX_SECONDS",
+    )
+    model_generation_max_poll_seconds: float = Field(
+        default=1800.0,
+        validation_alias="MODEL_GENERATION_MAX_POLL_SECONDS",
+    )
 
     tripo_api_key: str = Field(default="", validation_alias="TRIPO_API_KEY")
     tripo_base_url: str = Field(default="https://openapi.tripo3d.ai/v3", validation_alias="TRIPO_BASE_URL")
@@ -103,40 +105,6 @@ class Settings(BaseSettings):
     hunyuan_enable_pbr: bool = Field(default=True, validation_alias="HUNYUAN_ENABLE_PBR")
     hunyuan_result_format: str = Field(default="GLB", validation_alias="HUNYUAN_RESULT_FORMAT")
 
-    seethrough_space_base: str = Field(
-        default="https://24yearsold-see-through-demo.hf.space/gradio_api",
-        validation_alias="SEETHROUGH_SPACE_BASE",
-    )
-    seethrough_fallback_base: str = Field(
-        default="https://studio-ljsabc-see-through.api-inference.modelscope.net/gradio_api",
-        validation_alias="SEETHROUGH_FALLBACK_BASE",
-    )
-    seethrough_fallback_token: str = Field(default="", validation_alias="SEETHROUGH_FALLBACK_TOKEN")
-    seethrough_submit_timeout_seconds: float = Field(
-        default=120.0,
-        gt=0,
-        allow_inf_nan=False,
-        validation_alias="SEETHROUGH_SUBMIT_TIMEOUT_SECONDS",
-    )
-    seethrough_inference_timeout_seconds: float = Field(
-        default=900.0,
-        gt=0,
-        allow_inf_nan=False,
-        validation_alias="SEETHROUGH_INFERENCE_TIMEOUT_SECONDS",
-    )
-    seethrough_download_timeout_seconds: float = Field(
-        default=300.0,
-        gt=0,
-        allow_inf_nan=False,
-        validation_alias="SEETHROUGH_DOWNLOAD_TIMEOUT_SECONDS",
-    )
-    seethrough_total_budget_seconds: float = Field(
-        default=1740.0,
-        gt=0,
-        le=1740,
-        allow_inf_nan=False,
-        validation_alias="SEETHROUGH_TOTAL_BUDGET_SECONDS",
-    )
     companion_asset_signing_key: str
     ssrf_allowed_cidrs: str = Field(default="", validation_alias="SSRF_ALLOWED_CIDRS")
 

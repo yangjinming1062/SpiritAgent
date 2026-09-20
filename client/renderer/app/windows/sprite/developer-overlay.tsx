@@ -2,7 +2,7 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 
 import { $spriteEmotion, $spriteState } from '@/modules/character'
-import { $engineFps, $powerProfile, $rendererBackend } from '@/modules/character/rendering/3d'
+import { $engineFps, $powerProfile, $rendererBackend } from '@/modules/character/rendering/model'
 import { X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 

@@ -180,7 +180,7 @@ export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise
   return await playbackEnded
 }
 
-// ── Analyser-driven amplitude for 3D lip sync ─────────────────────────────
+// ── Analyser-driven amplitude for model lip sync ─────────────────────────────
 
 /** Subscribe to the live audio amplitude [0..1]. Returns a cleanup fn. */
 export function registerAmplitudeSink(fn: ((amp: number) => void) | null): () => void {

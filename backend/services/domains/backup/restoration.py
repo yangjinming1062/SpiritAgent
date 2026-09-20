@@ -41,14 +41,8 @@ OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = 
         ("companion_moments", "session_id"),
         ("memories", None),
     ),
-    "avatar_assets": (
-        ("companion_2d_models", "avatar_id"),
-        ("companion_3d_models", "source_portrait_id"),
-    ),
-    "companion_outfits": (
-        ("companion_2d_models", "outfit_id"),
-        ("companion_room_backdrops", None),
-    ),
+    "avatar_assets": (("companion_models", "source_portrait_id"),),
+    "companion_outfits": (("companion_room_backdrops", None),),
     "companion_room_backdrops": (("personas", "active_backdrop_id"),),
     "memories": (("companion_moments", "memory_id"), ("companion_diary_entries", None)),
     "companion_moments": (("companion_diary_entries", None),),

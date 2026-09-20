@@ -1,7 +1,7 @@
-"""3D 模型 controller：建行 + 调度 in-process 管道。所有 download / poll / SPEC 校验 / 落库 都在 ``pipeline`` 内完成。"""
+"""模型 controller：建行 + 调度 in-process 管道。所有 download / poll / SPEC 校验 / 落库 都在 ``pipeline`` 内完成。"""
 
 from components import get_logger
-from modules.companion import AvatarAsset, Companion3DModel
+from modules.companion import AvatarAsset, CompanionModel
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -13,7 +13,7 @@ from services.domains.companion import (
 )
 from services.infrastructure.llm import chat, is_preset_species, resolve_fullbody_style
 
-from .pipeline import (
+from .model.pipeline import (
     IN_FLIGHT_STATUSES,
     RETRYABLE_DOWNLOAD_STATUSES,
     ModelGenerationError,
@@ -33,7 +33,7 @@ async def _resolve_active_avatar(db: AsyncSession, user_id: int) -> AvatarAsset:
     avatar = (
         await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
     ).scalar_one_or_none()
-    if avatar is None or not (avatar.seed_front_2d_url or avatar.asset_url):
+    if avatar is None or not (avatar.reference_image_url or avatar.asset_url):
         raise ModelGenerationError("没有找到形象头像，请先完成引导流程中的形象生成")
     return avatar
 
@@ -44,17 +44,17 @@ def _avatar_view_filenames(avatar: AvatarAsset) -> dict[str, str]:
     def _name(url: str) -> str:
         return url.rsplit("/", maxsplit=1)[-1].split("?", maxsplit=1)[0]
 
-    front = _name(avatar.seed_front_3d_url or avatar.seed_front_2d_url or avatar.asset_url)
+    front = _name(avatar.model_seed_front_url or avatar.reference_image_url or avatar.asset_url)
     if not front:
         raise ModelGenerationError("请先生成正面全身图再生成模型")
     out: dict[str, str] = {"front": front}
-    if avatar.seed_back_url and (back := _name(avatar.seed_back_url)):
+    if avatar.model_seed_back_url and (back := _name(avatar.model_seed_back_url)):
         out["back"] = back
     return out
 
 
 async def _avatar_style(db: AsyncSession, avatar: AvatarAsset, species: str) -> str:
-    """3D 模型风格路由：类人物种走精绘画风（refined_anime_cg），非人物种走写实风格（realistic）。"""
+    """模型种子画风路由：类人物种走精绘画风（refined_anime_cg），非人物种走写实风格（realistic）。"""
     has_humanoid_face = None
     if not is_preset_species(species):
         has_humanoid_face = (await classify_species(chat, species, db=db, user_id=avatar.user_id))[1]
@@ -68,8 +68,8 @@ async def generate_companion_model(
     species_override: str | None = None,
     provider_override: str | None = None,
     force: bool = False,
-) -> Companion3DModel:
-    """生成 3D 模型：已有生效且成功的模型在非 force 时复用；新请求创建新记录行并将旧记录置为非激活。"""
+) -> CompanionModel:
+    """生成模型：已有生效且成功的模型在非 force 时复用；新请求创建新记录行并将旧记录置为非激活。"""
     persona = await get_or_create_persona(db, user_id)
     definition = load_persona_definition(persona)
     species = species_override or definition.get("biological_type", "人类")
@@ -77,13 +77,13 @@ async def generate_companion_model(
     async with get_model_job_lock(user_id):
         in_flight = (
             await db.execute(
-                select(Companion3DModel)
-                .where(Companion3DModel.user_id == user_id, Companion3DModel.status.in_(IN_FLIGHT_STATUSES))
+                select(CompanionModel)
+                .where(CompanionModel.user_id == user_id, CompanionModel.status.in_(IN_FLIGHT_STATUSES))
                 .limit(1),
             )
         ).scalar_one_or_none()
         if in_flight is not None:
-            raise ModelGenerationInProgressError("已有 3D 模型生成任务进行中，请稍候再试")
+            raise ModelGenerationInProgressError("已有模型生成任务进行中，请稍候再试")
 
         if not force:
             existing = await get_active_model(db, user_id)
@@ -95,13 +95,13 @@ async def generate_companion_model(
                 return existing
             retryable = (
                 await db.execute(
-                    select(Companion3DModel)
+                    select(CompanionModel)
                     .where(
-                        Companion3DModel.user_id == user_id,
-                        Companion3DModel.status == "download_failed",
-                        Companion3DModel.provider_task_id.isnot(None),
+                        CompanionModel.user_id == user_id,
+                        CompanionModel.status == "download_failed",
+                        CompanionModel.provider_task_id.isnot(None),
                     )
-                    .order_by(Companion3DModel.id.desc())
+                    .order_by(CompanionModel.id.desc())
                     .limit(1),
                 )
             ).scalar_one_or_none()
@@ -114,13 +114,13 @@ async def generate_companion_model(
             # 行持有任务 id 时先查询供应商真实状态：成功则接续下载，确认失败才允许重新提交。
             failed_with_task = (
                 await db.execute(
-                    select(Companion3DModel)
+                    select(CompanionModel)
                     .where(
-                        Companion3DModel.user_id == user_id,
-                        Companion3DModel.status == "failed",
-                        Companion3DModel.provider_task_id.isnot(None),
+                        CompanionModel.user_id == user_id,
+                        CompanionModel.status == "failed",
+                        CompanionModel.provider_task_id.isnot(None),
                     )
-                    .order_by(Companion3DModel.id.desc())
+                    .order_by(CompanionModel.id.desc())
                     .limit(1),
                 )
             ).scalar_one_or_none()
@@ -154,12 +154,12 @@ async def generate_companion_model(
         selected_style = await _avatar_style(db, avatar, species)
 
         await db.execute(
-            update(Companion3DModel)
-            .where(Companion3DModel.user_id == user_id, Companion3DModel.active.is_(True))
+            update(CompanionModel)
+            .where(CompanionModel.user_id == user_id, CompanionModel.active.is_(True))
             .values(active=False),
         )
 
-        model = Companion3DModel(
+        model = CompanionModel(
             user_id=user_id,
             status="generating",
             species=species,
@@ -179,21 +179,21 @@ async def generate_companion_model(
         style=selected_style,
     )
     logger.info(
-        "image-to-3d model generation dispatched in-process",
+        "model generation dispatched in-process",
         extra={"user_id": user_id, "species": species, "provider": provider.provider_name},
     )
     return model
 
 
-async def request_model_download_retry(db: AsyncSession, *, user_id: int, model_id: int) -> Companion3DModel:
+async def request_model_download_retry(db: AsyncSession, *, user_id: int, model_id: int) -> CompanionModel:
     """把重试交给 ``pipeline._launch_pipeline_task`` 自驱续跑，不重新计费（docs/PROTOCOL.md §1.2）。"""
     model = (
         await db.execute(
-            select(Companion3DModel).where(Companion3DModel.id == model_id, Companion3DModel.user_id == user_id),
+            select(CompanionModel).where(CompanionModel.id == model_id, CompanionModel.user_id == user_id),
         )
     ).scalar_one_or_none()
     if model is None:
-        raise ModelGenerationError("未找到对应的 3D 模型记录")
+        raise ModelGenerationError("未找到对应的模型记录")
     if model.status not in RETRYABLE_DOWNLOAD_STATUSES:
         raise ModelGenerationError("当前模型状态不支持重试下载")
     if not model.provider_task_id:

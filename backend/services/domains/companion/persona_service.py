@@ -3,6 +3,7 @@ from typing import Any
 
 from components import DEFAULT_LANGUAGE, get_logger, resolve_prompt_text, safe_json_loads
 from modules.companion import AvatarAsset, Persona
+from modules.ws import emit_ws_event
 from prompts.companion import PERSONA_LABELS_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -165,7 +166,7 @@ def _state(answers: dict[str, str], next_field: str | None, complete: bool) -> d
 
 
 async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]:
-    """从数据库恢复引导进度；complete 以角色、头像、全身参考、2D 立绘与音色为门槛。"""
+    """从数据库恢复引导进度；complete 以角色、头像、全身参考、外观参考立绘与音色为门槛。"""
     persona = await get_or_create_persona(db, user_id)
     draft = load_persona_definition(persona)
     if persona.is_complete:
@@ -178,9 +179,9 @@ async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]
         ).scalar_one_or_none()
         if avatar is None:
             return _state(merged, "portrait", False)
-        if not avatar.seed_fullbody_url or not avatar.seed_front_2d_url:
+        if not avatar.seed_fullbody_url or not avatar.reference_image_url:
             return _state(merged, "fullbody-reference", False)
-        if avatar.seed_front_2d_url.startswith("temp-media/"):
+        if avatar.reference_image_url.startswith("temp-media/"):
             return _state(merged, "fullbody", False)
         if not draft.get("voice"):
             # 合并草稿与 Memory，让桌面端在音色阶段仍能预填已答资料。
@@ -236,3 +237,20 @@ async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, va
     missing_character = next((f for f in _CHARACTER_ONBOARDING_FIELDS if not answers.get(f)), None)
     next_field = missing_character if missing_character is not None else "portrait"
     return _state(answers, next_field, False)
+
+
+async def set_render_mode(db: AsyncSession, *, user_id: int, render_mode: str) -> Persona:
+    """写入渲染方式偏好；变化时广播 companion.render_mode.changed，客户端据此收敛各窗口显示。
+    偏好只决定界面分区与目标形象的生成意图，不代表任何形象资产已经就绪。"""
+    persona = await get_or_create_persona(db, user_id)
+    previous = persona.render_mode
+    persona.render_mode = render_mode
+    if previous != render_mode:
+        emit_ws_event(
+            db,
+            user_id=user_id,
+            event_type="companion.render_mode.changed",
+            payload={"new_mode": render_mode},
+        )
+    await db.commit()
+    return persona

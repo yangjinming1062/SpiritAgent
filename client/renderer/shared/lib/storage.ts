@@ -91,16 +91,6 @@ function storedJson<T>(key: string, fallback: T, validate?: (val: unknown) => va
   return parsed as T
 }
 
-function storedEnum<T extends string>(key: string, allowed: readonly T[], fallback: T): T {
-  const raw = storedString(key)
-
-  if (raw !== null && (allowed as readonly string[]).includes(raw)) {
-    return raw as T
-  }
-
-  return fallback
-}
-
 interface PersistedAtomOptions<T> {
   key: string
   fallback: T
@@ -203,11 +193,21 @@ export function definePersistedAtom<T extends object>(options: PersistedAtomOpti
 export function definePersistedEnum<T extends string>(options: PersistedEnumOptions<T>): PersistedEnumResult<T> {
   const { allowed, fallback, key, preserveOnLogout = false } = options
 
+  const load = (): T => {
+    const raw = storedString(key)
+
+    if (raw !== null && (allowed as readonly string[]).includes(raw)) {
+      return raw as T
+    }
+
+    return fallback
+  }
+
   const base = createPersisted<T>({
     apply: (_current, next) => next,
     fallback,
     key,
-    load: () => storedEnum<T>(key, allowed, fallback),
+    load,
     persist: val => persistString(key, val),
     preserveOnLogout
   })

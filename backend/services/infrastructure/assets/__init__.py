@@ -18,6 +18,7 @@ from .asset_store import (
     save_companion_model,
     signed_companion_asset_url,
     sniff_media_ext,
+    unlink_companion_asset,
     verify_signed_asset_request,
     verify_signed_avatar_request,
 )
@@ -42,6 +43,7 @@ __all__ = [
     "serve_ranged_file",
     "signed_companion_asset_url",
     "sniff_media_ext",
+    "unlink_companion_asset",
     "verify_signed_asset_request",
     "verify_signed_avatar_request",
 ]

@@ -30,18 +30,10 @@ export const setCompanionLifecycle = lifecyclePersisted.set
 
 export const $spriteState = atom<SpriteStateName>('idle')
 export const $spriteEmotion = atom<SpriteEmotion | null>(null)
-// 可选的结构化动作提示（如 turn_away），用于细化情绪片段。
+// 可选的结构化动作提示（如 turn_away），用于细化情绪片段；渲染器按资产实际支持选择兑现。
 export const $spriteAction = atom<string | null>(null)
-// 动作序列编排队列：$spriteAction 恒为当前/首个动作（3D 只消费单值），后续由 2D driver 逐个推进。
-export const $spriteActionQueue = atom<string[]>([])
 const $previousState = atom<SpriteStateName>('idle')
 export const $clipOverride = atom<string | null>(null)
-
-// 程序化视线目标（精灵窗口归一 [-1,1]，与指针跟随同空间）：显式目标优先于指针
-// （ritual walk 飞行途中锁定目标窗口中心）；null = 回到指针跟随。
-export const $gazeTarget = atom<{ nx: number; ny: number } | null>(null)
-
-let gazeResetTimer: ReturnType<typeof setTimeout> | null = null
 
 // 跨模块共享的水合去重缓存：同 key 的并发水合只跑一次。
 const inFlightHydrations = new Map<string, Promise<unknown>>()
@@ -141,7 +133,6 @@ export function setSpriteState(
       transientTimer = null
       $spriteEmotion.set(null)
       $spriteAction.set(null)
-      $spriteActionQueue.set([])
       // 若瞬时过程中有更高优先级状态到达，优先取当前状态。
       const currentAfter = $spriteState.get()
       const storedPrev = $previousState.get()
@@ -167,32 +158,12 @@ export function setSpriteState(
   $spriteEmotion.set(options?.emotion ?? null)
   $spriteAction.set(options?.action ?? null)
 
-  if (!options?.action) {
-    $spriteActionQueue.set([])
-  }
-
   $spriteState.set(name)
 }
 
-/** 播放动作序列：首个动作即刻进入 $spriteAction（3D 消费），后续进队列由 2D driver 推进。 */
+/** 播放动作提示：只取首个动作进入 $spriteAction；渲染器按资产实际支持兑现，缺素材时跳过。 */
 export function playSpriteActionSequence(actions: readonly string[]): void {
-  const [first, ...rest] = actions
-
-  $spriteActionQueue.set(rest)
-  $spriteAction.set(first ?? null)
-}
-
-/** 锁定视线到一个点，durationMs 后自动回到指针跟随。 */
-export function lockGazeToPoint(point: { nx: number; ny: number }, durationMs = 6000): void {
-  if (gazeResetTimer) {
-    clearTimeout(gazeResetTimer)
-  }
-
-  $gazeTarget.set(point)
-  gazeResetTimer = setTimeout(() => {
-    $gazeTarget.set(null)
-    gazeResetTimer = null
-  }, durationMs)
+  $spriteAction.set(actions[0] ?? null)
 }
 
 export function reportUserActivity(): void {
@@ -230,30 +201,6 @@ export function pushEffectiveDisturbanceTier(tier: DisturbanceTier): void {
   window.spiritagent?.prefs?.set({ key: 'companion.disturbance_tier', value: tier })
 }
 
-export function resolveCompanionRenderLayer(opts: {
-  glbLoadFailed: boolean
-  modelStatus?: string
-  puppetReady: boolean
-  renderMode: '2d' | '3d'
-}): 'companion3d' | 'puppet' {
-  const modelFailed = opts.glbLoadFailed || opts.modelStatus === 'failed'
-  const isModelReady = opts.renderMode === '3d' && !modelFailed && opts.modelStatus === 'succeeded'
-
-  if (opts.renderMode === '2d' && opts.puppetReady) {
-    return 'puppet'
-  }
-
-  if (isModelReady) {
-    return 'companion3d'
-  }
-
-  if (opts.puppetReady) {
-    return 'puppet'
-  }
-
-  return 'companion3d'
-}
-
 function runOnce(key: string, fn: () => Promise<unknown>): Promise<unknown> {
   let task = inFlightHydrations.get(key)
 
@@ -270,17 +217,11 @@ function runOnce(key: string, fn: () => Promise<unknown>): Promise<unknown> {
 }
 
 export async function ensureCompanionHydrated(deps: {
-  hydrateMesh2D: () => Promise<unknown>
   hydrateModel: () => Promise<unknown>
   hydratePersona: () => Promise<unknown>
   hydratePortrait?: () => Promise<unknown>
-  hydratePuppet: () => Promise<unknown>
 }): Promise<void> {
-  const tasks = [
-    runOnce('persona', deps.hydratePersona),
-    runOnce('model', deps.hydrateModel),
-    runOnce('mesh2d', deps.hydrateMesh2D)
-  ]
+  const tasks = [runOnce('persona', deps.hydratePersona), runOnce('model', deps.hydrateModel)]
 
   if (deps.hydratePortrait) {
     tasks.push(runOnce('portrait', deps.hydratePortrait))
@@ -288,7 +229,6 @@ export async function ensureCompanionHydrated(deps: {
 
   try {
     await Promise.all(tasks)
-    await runOnce('puppet', deps.hydratePuppet)
   } catch (err) {
     log.warn('companion-store', 'ensureCompanionHydrated failed', err)
   }
@@ -313,7 +253,6 @@ registerStorageClearHandler(() => {
   activityCounter = 0
   $spriteEmotion.set(null)
   $spriteAction.set(null)
-  $spriteActionQueue.set([])
   $spriteState.set('idle')
   $previousState.set('idle')
   $clipOverride.set(null)

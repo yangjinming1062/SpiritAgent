@@ -14,9 +14,7 @@ export {
   $clipOverride,
   $companionLifecycle,
   $effectiveTier,
-  $gazeTarget,
   $spriteAction,
-  $spriteActionQueue,
   $spriteEmotion,
   $spriteState,
   $userPreferredTier,
@@ -25,7 +23,6 @@ export {
   playSpriteActionSequence,
   pushEffectiveDisturbanceTier,
   reportUserActivity,
-  resolveCompanionRenderLayer,
   setCompanionLifecycle,
   setDisturbanceTier,
   setSpriteState,
@@ -93,8 +90,21 @@ export {
   setCompanionVoiceId,
   setResponsePreference
 } from './prefs'
+export {
+  $renderMode,
+  type CharacterRenderMode,
+  type CompanionPresentation,
+  type CompanionRendererKind,
+  pickAvailableClip,
+  resolveCompanionPresentation,
+  resolveVideoAction,
+  setRenderMode,
+  switchRenderMode,
+  type VideoActionKey
+} from './presentation'
 export { bindProactiveLineSpeaker, type ProactiveLineOptions } from './proactive-speak'
-export { $renderMode, type RenderMode, setRenderMode } from './render-mode'
+export { EggStage } from './rendering/fallback/egg-stage'
+export { $videoHitTest, $videoPack, $videoPackStatus, hydrateVideoPack } from './rendering/video'
 export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritual-walk'
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {
@@ -125,20 +135,15 @@ export {
 export { SpriteStatusBadge } from './sprite-status-badge'
 export { $contextMenuOpen, $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/context-menu-store'
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
-export { clearVfx, emitVfx, Mesh2DVfxOverlay } from './vfx'
+export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'
 export { useOutfitDesignSession } from './wardrobe/design-session'
 export {
   $outfitPolicy,
   $outfits,
-  $poseRegen,
   activateOutfit,
-  adoptOutfitPoseImage,
   deleteOutfit,
-  failPoseRegen,
   hydrateWardrobe,
   type OutfitPolicy,
-  type PoseRegenState,
-  regenerateOutfitPose,
   setOutfitPolicy
 } from './wardrobe/wardrobe-store'
 export { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'

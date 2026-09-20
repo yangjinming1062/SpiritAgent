@@ -64,7 +64,7 @@ class AgentPromptConfig(BaseModel):
     tool_use_enforcement: str = "auto"
     persona_extras: str | None = None
     user_profile_extras: str | None = None
-    # 当前穿着的着装描述（2D 换装）；精灵自知穿着，为着装联动打底
+    # 当前穿着的着装描述（换装）；精灵自知穿着，为着装联动打底
     outfit_extras: str = ""
     background_memory_extras: str = ""
     proactive_memory_extras: str = ""

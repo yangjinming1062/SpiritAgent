@@ -1,6 +1,5 @@
-"""生成应用流程：形象、换装、房间、2D/3D 模型与媒体生成的生命周期编排。"""
+"""生成应用流程：形象、外观、房间、模型与媒体生成的生命周期编排。"""
 
-from . import mesh2d
 from .avatar_service import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
     AVATAR_JOB_LOCKS,
@@ -17,10 +16,10 @@ from .avatar_service import (
     delete_portrait_file,
     finalize_avatar,
     generate_avatar,
-    generate_fullbody_back,
-    generate_fullbody_front_2d,
-    generate_fullbody_front_3d,
+    generate_fullbody_front_reference,
     generate_fullbody_reference,
+    generate_model_seed_back,
+    generate_model_seed_front,
     get_active_avatar,
     get_avatar_job_lock,
     list_avatar_history,
@@ -42,12 +41,14 @@ from .image_generation import (
     generate_images,
     resolve_image_gen_chain,
 )
-from .mesh2d import (
-    Mesh2DNotReadyError,
-    Mesh2DPipelineError,
-    generate_mesh2d_model,
-    get_active_mesh2d_response,
-    set_render_mode,
+from .model.pipeline import (
+    MODEL_JOB_LOCKS,
+    ModelGenerationError,
+    ModelGenerationInProgressError,
+    ModelProviderNotConfiguredError,
+    recover_stuck_model_generations,
+    resume_inflight_pipelines,
+    signed_model_url,
 )
 from .model_service import (
     generate_companion_model,
@@ -60,7 +61,6 @@ from .outfit_service import (
     OutfitStateError,
     activate_outfit,
     adopt_outfit_draft_image,
-    adopt_outfit_pose,
     adopt_outfit_regenerate_image,
     confirm_outfit,
     create_outfit_draft,
@@ -69,20 +69,8 @@ from .outfit_service import (
     list_outfits,
     prepare_outfit_prompt,
     prepare_outfit_regenerate_prompt,
-    prepare_pose_prompt,
     regenerate_outfit_draft,
-    regenerate_outfit_pose,
-    resume_outfit_split,
     set_outfit_policy,
-)
-from .pipeline import (
-    MODEL_JOB_LOCKS,
-    ModelGenerationError,
-    ModelGenerationInProgressError,
-    ModelProviderNotConfiguredError,
-    recover_stuck_model_generations,
-    resume_inflight_pipelines,
-    signed_model_url,
 )
 from .response_builders import (
     avatar_response,
@@ -118,6 +106,22 @@ from .room_backdrop_service import (
     schedule_room_prompt,
     set_backdrop_policy,
 )
+from .video import (
+    VideoPackError,
+    VideoPackNotFoundError,
+    VideoPackStateError,
+    list_pack_responses,
+)
+from .video import (
+    activate_pack as activate_video_pack,
+)
+from .video import (
+    create_pack_from_clips as create_video_pack_from_clips,
+)
+from .video import (
+    delete_pack as delete_video_pack,
+)
+from .video import resume_processing_packs as resume_processing_video_packs
 from .video_jobs import drain as drain_video_jobs
 from .video_jobs import (
     enqueue_video_job,
@@ -138,11 +142,12 @@ __all__ = [
     "FrontSeedMissingError",
     "FullbodyGenerationError",
     "FullbodySeedKind",
+    "VideoPackError",
+    "VideoPackNotFoundError",
+    "VideoPackStateError",
     "ImageGenerationError",
     "ImageSealedError",
     "MODEL_JOB_LOCKS",
-    "Mesh2DPipelineError",
-    "Mesh2DNotReadyError",
     "ModelGenerationError",
     "ModelGenerationInProgressError",
     "ModelProviderNotConfiguredError",
@@ -159,10 +164,13 @@ __all__ = [
     "RoomState",
     "SeedPromptMissingError",
     "activate_backdrop",
+    "activate_video_pack",
+    "create_video_pack_from_clips",
+    "delete_video_pack",
+    "list_pack_responses",
     "activate_outfit",
     "adopt_fullbody_seed",
     "adopt_outfit_draft_image",
-    "adopt_outfit_pose",
     "adopt_outfit_regenerate_image",
     "adopt_room_backdrop",
     "avatar_response",
@@ -180,13 +188,11 @@ __all__ = [
     "finalize_avatar",
     "generate_avatar",
     "generate_companion_model",
-    "generate_fullbody_back",
-    "generate_fullbody_front_2d",
-    "generate_fullbody_front_3d",
+    "generate_model_seed_back",
+    "generate_model_seed_front",
+    "generate_fullbody_front_reference",
     "generate_fullbody_reference",
     "generate_images",
-    "generate_mesh2d_model",
-    "get_active_mesh2d_response",
     "get_active_avatar",
     "get_active_backdrop",
     "get_avatar_job_lock",
@@ -199,27 +205,24 @@ __all__ = [
     "list_avatar_history",
     "list_outfits",
     "load_avatar_bytes_as_data_uri",
-    "mesh2d",
     "model_response",
     "normalize_avatar_url_to_bare",
     "outfit_response",
     "prepare_fullbody_prompt",
     "prepare_outfit_prompt",
     "prepare_outfit_regenerate_prompt",
-    "prepare_pose_prompt",
     "raise_if_image_sealed",
     "re_sign_bare_path",
     "regenerate_avatar",
     "regenerate_avatar_from_image",
     "regenerate_outfit_draft",
-    "regenerate_outfit_pose",
     "request_model_download_retry",
     "resolve_image_gen_chain",
     "resolve_self_reference_data_uri",
     "resolve_uploaded_avatar_path",
     "resume_inflight_pipelines",
-    "resume_outfit_split",
     "resume_pending_video_jobs",
+    "resume_processing_video_packs",
     "resume_room_generation",
     "response_for_backdrop",
     "recover_stuck_model_generations",
@@ -228,7 +231,6 @@ __all__ = [
     "schedule_room_prompt",
     "select_avatar",
     "set_backdrop_policy",
-    "set_render_mode",
     "set_outfit_policy",
     "signed_model_url",
     "upload_avatar",

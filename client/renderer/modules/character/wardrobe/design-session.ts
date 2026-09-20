@@ -41,7 +41,7 @@ function outfitErrMsg(err: unknown, fallback: string): string {
   return fallback
 }
 
-// 衣柜设计会话：描述/参考图 → 草稿 → 微调或重绘 → 确认入柜。姿态图契约见 PIPELINE §1.1.2。
+// 衣柜设计会话：描述/参考图 → 草稿 → 微调或重绘 → 确认入柜（参考图就绪，不触发生成）。
 // 服装/发型可换、五官锁定；失败请求保留在 lastRequest 供一键重试。
 export function useOutfitDesignSession(onConfirmed: () => void): {
   messages: DesignMessage[]
@@ -49,8 +49,6 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   refImage: PickedImage | null
   busy: boolean
   lastRequest: { image: PickedImage | null; text: string; mode: ImageReviseMode } | null
-  poseImages: { left: PickedImage | null; right: PickedImage | null }
-  setPoseImage: (side: 'left' | 'right', image: PickedImage | null) => void
   send: (text: string, mode: ImageReviseMode) => void
   retry: () => void
   confirm: () => Promise<void>
@@ -63,11 +61,6 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   const [draft, setDraft] = useState<DesignDraft | null>(null)
   const [refImage, setRefImage] = useState<PickedImage | null>(null)
   const [busy, setBusy] = useState(false)
-
-  const [poseImages, setPoseImages] = useState<{ left: PickedImage | null; right: PickedImage | null }>({
-    left: null,
-    right: null
-  })
 
   const [lastRequest, setLastRequest] = useState<{
     image: PickedImage | null
@@ -88,7 +81,6 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     setDraft(null)
     setRefImage(null)
     setLastRequest(null)
-    setPoseImages({ left: null, right: null })
   }, [])
 
   useEffect(() => {
@@ -161,11 +153,6 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
 
           setDraft({ id: res.id, previewUrl: resolved })
 
-          // 立绘已重绘：预附姿态按旧稿准备，确认前须重新上传。
-          if (withDraft) {
-            setPoseImages({ left: null, right: null })
-          }
-
           push({
             role: 'system',
             // 首次生成无「微调」可言（send 对无草稿请求强制 edit），按是否基于已有草稿区分文案。
@@ -237,10 +224,6 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     runDesign(lastRequest.text, lastRequest.image, draft, lastRequest.mode)
   }, [draft, lastRequest, runDesign])
 
-  const setPoseImage = useCallback((side: 'left' | 'right', image: PickedImage | null): void => {
-    setPoseImages(prev => ({ ...prev, [side]: image }))
-  }, [])
-
   const confirm = useCallback(async (): Promise<void> => {
     if (!mountedRef.current || !draft?.previewUrl || generatingRef.current) {
       return
@@ -252,26 +235,16 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     setBusy(true)
 
     try {
-      const body = {
-        ...(poseImages.left
-          ? { pose_left: poseImages.left.base64, pose_left_content_type: poseImages.left.contentType }
-          : {}),
-        ...(poseImages.right
-          ? { pose_right: poseImages.right.base64, pose_right_content_type: poseImages.right.contentType }
-          : {})
-      }
-
-      // 无姿态图时也发空对象，避免无 body 的 POST 422。
+      // 发空对象，避免无 body 的 POST 422；确认只转正参考图，不触发任何生成。
       await window.spiritagent.api({
         path: `/api/companion/outfits/${draft.id}/confirm`,
         method: 'POST',
-        body
+        body: {}
       })
 
       if (isCurrent(revision, epoch)) {
         setDraft(null)
         setMessages([])
-        setPoseImages({ left: null, right: null })
         onConfirmed()
       }
     } catch (err) {
@@ -287,7 +260,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
         setBusy(false)
       }
     }
-  }, [draft, isCurrent, onConfirmed, poseImages.left, poseImages.right, push])
+  }, [draft, isCurrent, onConfirmed, push])
 
   const attachRefImage = useCallback(async (): Promise<void> => {
     const revision = revisionRef.current
@@ -337,8 +310,6 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     refImage,
     busy,
     lastRequest,
-    poseImages,
-    setPoseImage,
     send,
     retry,
     confirm,

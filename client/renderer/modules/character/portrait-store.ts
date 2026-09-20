@@ -50,7 +50,7 @@ const initialPersisted = portraitPersisted.get()
 export const $portraitUrl = atom<string | null>(null)
 
 // 当前 avatar 行 id——由 hydrate 与每次创建新行的重生写入。
-// 3D 流水线是在服务端读取当前 avatar 行，所以这里只是为画廊选择做镜像。
+// 模型流水线是在服务端读取当前 avatar 行，所以这里只是为画廊选择做镜像。
 export const $activeAvatarId = atom<number | null>(initialPersisted.avatarId)
 
 // 用户在按「重新生成」之前输入的反馈文本。在所有暴露重生流程的面板间共享

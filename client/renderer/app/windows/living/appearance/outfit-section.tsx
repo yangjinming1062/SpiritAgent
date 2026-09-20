@@ -6,22 +6,18 @@ import {
   $avatarSeeds,
   $outfitPolicy,
   $outfits,
-  $poseRegen,
   activateOutfit,
-  adoptOutfitPoseImage,
   deleteOutfit,
   GenerationActionsGroup,
   hydrateAvatarSeeds,
   hydrateWardrobe,
   type PickedImage,
-  regenerateOutfitPose,
   resolvePortraitUrl,
   SelfSourceImageFlow,
   type SelfSourceReferenceImage,
   setOutfitPolicy,
   useOutfitDesignSession
 } from '@/modules/character'
-import { AssetPackPreview } from '@/modules/character/rendering/2d'
 import { PortraitLightbox } from '@/shared'
 import { ArrowBackUp, Check, FileImage, ImagePlus, Pencil, Plus, Send, Trash2 } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
@@ -34,13 +30,12 @@ import type { ImageReviseMode } from '@/shared/types/spiritagent'
 const CARD_ACTION_CLASS =
   'inline-flex h-6 items-center justify-center rounded-lg bg-black/60 px-1.5 text-white/70 backdrop-blur-sm transition hover:bg-black/80 hover:text-white disabled:pointer-events-none disabled:opacity-40'
 
-// 外观页 2D 区（DESIGN §6.1）：左侧外观画廊（政策开关 + 设计入口 + 卡片流），
-// 右侧大图舞台展示穿着中/选中外观；「设计新装」进入设计态后底部展开全宽设计抽屉，
-// 描述 / 参考图 / 微调反馈 / 确认入柜都在抽屉内完成。
+// 外观页外观分区（DESIGN §6.1）：左侧外观画廊（政策开关 + 设计入口 + 卡片流），
+// 右侧大图展示穿着中/选中外观；「设计新装」进入设计态后底部展开全宽设计抽屉，
+// 描述 / 参考图 / 微调反馈 / 确认入柜都在抽屉内完成。确认只表示参考图就绪，不触发生成。
 export function OutfitSection(): React.JSX.Element {
   const outfits = useStore($outfits)
   const outfitPolicy = useStore($outfitPolicy)
-  const poseRegen = useStore($poseRegen)
   const avatarSeeds = useStore($avatarSeeds)
   const dict = useStrings()
   const t = dict.living.outfit
@@ -52,12 +47,11 @@ export function OutfitSection(): React.JSX.Element {
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
   const [designing, setDesigning] = useState(false)
   const [text, setText] = useState('')
-  const [poseSelfSourceSide, setPoseSelfSourceSide] = useState<'left' | 'right' | null>(null)
   const [outfitSelfSourceOpen, setOutfitSelfSourceOpen] = useState(false)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const messagesRef = useRef<HTMLDivElement>(null)
 
-  // 确认入柜后重拉列表——新装进入切分态并自动穿上。
+  // 确认入柜后重拉列表——新装转为参考图就绪。
   const session = useOutfitDesignSession(() => {
     setDesigning(false)
     setText('')
@@ -80,13 +74,14 @@ export function OutfitSection(): React.JSX.Element {
     void action().finally(() => setBusyId(null))
   }
 
-  const retrySplit = async (id: number): Promise<void> => {
+  // 失败外观重新确认（草稿立绘仍在）：转正为参考图就绪。
+  const retryConfirm = async (id: number): Promise<void> => {
     try {
       // 与设计会话确认一致：始终带 JSON body（可空），避免无 body 的 POST 被 422。
       await window.spiritagent.api({ path: `/api/companion/outfits/${id}/confirm`, method: 'POST', body: {} })
       await hydrateWardrobe()
     } catch (err) {
-      log.warn('outfit', 'retry split failed', err)
+      log.warn('outfit', 'retry confirm failed', err)
     }
   }
 
@@ -110,14 +105,11 @@ export function OutfitSection(): React.JSX.Element {
 
   const selected = outfits.find(o => o.id === selectedId) ?? null
   const previewUrl = designing ? session.draft?.previewUrl : (selected?.fullbodyUrl ?? null)
-  // 后端同一时间只允许一套外观切分（409 invalid_state）——切分中禁用新设计入口，
-  // 等待/失败/完成经 companion.outfit.updated 事件刷新列表后自动解锁。
-  const splitting = outfits.some(o => o.status === 'splitting')
 
   // 首次生成（无草稿）：描述/参考图创建新设计。
   const sendCreation = (): void => {
     // 生成进行中会话内部会拒绝——此时不清空输入，避免丢字。
-    if (session.busy || splitting || (!text.trim() && !session.refImage)) {
+    if (session.busy || (!text.trim() && !session.refImage)) {
       return
     }
 
@@ -127,7 +119,7 @@ export function OutfitSection(): React.JSX.Element {
 
   // 草稿反馈的两个显式操作（DESIGN §5.4）：微调编辑上一版须带反馈，重新生成允许空反馈整体重绘。
   const sendRevise = (mode: ImageReviseMode): void => {
-    if (session.busy || splitting || (mode === 'edit' && !text.trim())) {
+    if (session.busy || (mode === 'edit' && !text.trim())) {
       return
     }
 
@@ -184,84 +176,9 @@ export function OutfitSection(): React.JSX.Element {
     setText('')
   }
 
-  const fetchPoseSelfSourcePrompt = async (): Promise<string> => {
-    const outfitId = designing && session.draft ? session.draft.id : selected?.id
-    const side = poseSelfSourceSide
-
-    if (!outfitId || !side) {
-      throw new Error('missing pose target')
-    }
-
-    // 设计草稿与就绪外观共用同一姿态提示词端点。
-    const res = await window.spiritagent.api<{ prompt: string }>({
-      path: `/api/companion/outfits/${outfitId}/poses/${side}/prompt`,
-      method: 'POST'
-    })
-
-    return res.prompt
-  }
-
-  const adoptPoseSelfSource = async (image: PickedImage): Promise<void> => {
-    const side = poseSelfSourceSide
-
-    if (!side) {
-      throw new Error('missing pose target')
-    }
-
-    // 设计阶段暂存本地，随确认提交；就绪外观走既有单侧采纳。
-    if (designing && session.draft) {
-      session.setPoseImage(side, image)
-
-      return
-    }
-
-    if (!selected) {
-      throw new Error('missing pose target')
-    }
-
-    await adoptOutfitPoseImage(selected.id, side, image)
-  }
-
   const outfitSelfSourceReferences: SelfSourceReferenceImage[] | undefined = avatarSeeds.fullbodySeedUrl
     ? [{ label: selfSourceDict.refs.fullbodySeed, url: avatarSeeds.fullbodySeedUrl }]
     : undefined
-
-  const posePortraitUrl = designing && session.draft?.previewUrl ? session.draft.previewUrl : selected?.fullbodyUrl
-
-  const poseSelfSourceReferences: SelfSourceReferenceImage[] | undefined = posePortraitUrl
-    ? [{ label: selfSourceDict.refs.outfitPortrait, url: posePortraitUrl }]
-    : undefined
-
-  const poseSideControl = (side: 'left' | 'right'): React.JSX.Element => {
-    const image = session.poseImages[side]
-    const label = side === 'left' ? selfSourceDict.poseSelfLeft : selfSourceDict.poseSelfRight
-
-    return (
-      <div className="flex items-center gap-1.5">
-        {image && (
-          <img alt={label} className="size-7 rounded border border-line-hairline object-cover" src={image.previewUrl} />
-        )}
-        <button
-          className="text-[10px] text-muted transition hover:text-strong"
-          disabled={session.busy || splitting}
-          onClick={() => setPoseSelfSourceSide(side)}
-          type="button"
-        >
-          {label}
-        </button>
-        {image && (
-          <button
-            className="text-[10px] text-muted transition hover:text-strong"
-            disabled={session.busy}
-            onClick={() => session.setPoseImage(side, null)}
-            type="button"
-          >
-            {selfSourceDict.poseRemove}
-          </button>
-        )}
-      </div>
-    )
-  }
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -286,14 +203,13 @@ export function OutfitSection(): React.JSX.Element {
             <p className="mt-1.5 text-[10px] leading-relaxed text-muted">{t.policyDesc}</p>
             <button
               className={cn(BTN_PRIMARY, 'mt-2.5 w-full')}
-              disabled={splitting || session.busy}
+              disabled={session.busy}
               onClick={startDesign}
               type="button"
             >
               <Plus className="mr-1 size-3.5" />
               {t.startAction}
             </button>
-            {splitting && <p className="mt-1.5 text-center text-[10px] text-muted">{t.splittingPrompt}</p>}
           </div>
           <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2.5 pt-4 pb-3">
             {outfits.length === 0 ? (
@@ -301,10 +217,8 @@ export function OutfitSection(): React.JSX.Element {
             ) : (
               outfits.map(outfit => {
                 const statusLabel = t.statusLabels[outfit.status] ?? ''
-                const deletable = !outfit.active && outfit.status !== 'splitting'
+                const deletable = !outfit.active
                 const isActiveCard = !designing && selectedId === outfit.id
-                // 已有切分在途时，重试/继续设计最终都会撞 409——统一禁用等待当前切分结束。
-                const disabledBySplitting = splitting && outfit.status !== 'splitting'
 
                 return (
                   <div
@@ -345,7 +259,6 @@ export function OutfitSection(): React.JSX.Element {
                           <button
                             aria-label={t.actions.continueDesign}
                             className={CARD_ACTION_CLASS}
-                            disabled={disabledBySplitting}
                             onClick={e => {
                               e.stopPropagation()
                               session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
@@ -376,10 +289,10 @@ export function OutfitSection(): React.JSX.Element {
                         {outfit.status === 'failed' && (
                           <button
                             className={CARD_ACTION_CLASS}
-                            disabled={busyId === outfit.id || disabledBySplitting}
+                            disabled={busyId === outfit.id}
                             onClick={e => {
                               e.stopPropagation()
-                              withBusy(outfit.id, () => retrySplit(outfit.id))
+                              withBusy(outfit.id, () => retryConfirm(outfit.id))
                             }}
                             type="button"
                           >
@@ -402,21 +315,11 @@ export function OutfitSection(): React.JSX.Element {
                           </button>
                         )}
                       </div>
-
-                      {outfit.status === 'splitting' && (
-                        <div className="absolute inset-0 grid place-items-center bg-black/45">
-                          <Spinner />
-                        </div>
-                      )}
                     </div>
 
                     <div className="px-2.5 py-2">
                       <p className="truncate text-[11px] font-medium text-strong">{outfit.name}</p>
-                      <p className="mt-0.5 truncate text-[10px] text-muted">
-                        {outfit.status === 'splitting' && outfit.pendingWear
-                          ? t.autoWearAfterSplit
-                          : outfit.description}
-                      </p>
+                      <p className="mt-0.5 truncate text-[10px] text-muted">{outfit.description}</p>
                     </div>
                   </div>
                 )
@@ -425,20 +328,12 @@ export function OutfitSection(): React.JSX.Element {
           </div>
         </div>
 
-        {/* 右：大图舞台。固定方形取景框：全身图比例随物种而异，不假设方形——contain 完整
+        {/* 右：大图。固定方形取景框：全身图比例随物种而异，不假设方形——contain 完整
             呈现，长方图两侧留空。外层 inset 定位拿到确定的高宽（auto 高容器里
             百分比 max 解析不到，图会按内容自然高溢出可视区），内层 h-full +
             aspect-square 取可用区内最大正方形。 */}
         <div className="relative min-h-0 flex-1">
-          {!designing && selected?.asset ? (
-            <AssetPackPreview
-              key={`${selected.id}:${selected.asset.content_hash ?? selected.asset.id}`}
-              onRegeneratePose={side => void regenerateOutfitPose(selected.id, side)}
-              onSelfSourcePose={side => setPoseSelfSourceSide(side)}
-              poseRegen={poseRegen?.outfitId === selected.id ? { side: poseRegen.side, error: poseRegen.error } : null}
-              source={selected.asset}
-            />
-          ) : previewUrl ? (
+          {previewUrl ? (
             <div className="absolute inset-4 grid place-items-center">
               <button
                 className="relative block aspect-square h-full max-w-full cursor-zoom-in overflow-hidden rounded-xl border border-line-hairline bg-fill-trough"
@@ -523,26 +418,19 @@ export function OutfitSection(): React.JSX.Element {
           </div>
 
           {session.draft && (
-            <div className="space-y-1 border-t border-line-hairline px-4 py-2">
-              <div className="flex items-center gap-2">
-                <button
-                  className={cn(BTN_PRIMARY, 'h-7')}
-                  disabled={session.busy || splitting || !session.draft.previewUrl}
-                  onClick={() => void session.confirm()}
-                  type="button"
-                >
-                  {session.busy ? t.processing : t.confirmAndWear}
-                </button>
-                <button className={BTN_GHOST} disabled={session.busy} onClick={() => setDesigning(false)} type="button">
-                  {t.discard}
-                </button>
-                <span className={cn(HINT_TEXT, 'ml-auto min-w-0 truncate')}>{t.confirmHint}</span>
-              </div>
-              <div className="flex items-center gap-3">
-                {poseSideControl('left')}
-                {poseSideControl('right')}
-                <span className={cn(HINT_TEXT, 'min-w-0 flex-1 truncate')}>{selfSourceDict.poseAttachHint}</span>
-              </div>
+            <div className="flex items-center gap-2 border-t border-line-hairline px-4 py-2">
+              <button
+                className={cn(BTN_PRIMARY, 'h-7')}
+                disabled={session.busy || !session.draft.previewUrl}
+                onClick={() => void session.confirm()}
+                type="button"
+              >
+                {session.busy ? t.processing : t.confirmAction}
+              </button>
+              <button className={BTN_GHOST} disabled={session.busy} onClick={() => setDesigning(false)} type="button">
+                {t.discard}
+              </button>
+              <span className={cn(HINT_TEXT, 'ml-auto min-w-0 truncate')}>{t.confirmHint}</span>
             </div>
           )}
 
@@ -571,11 +459,11 @@ export function OutfitSection(): React.JSX.Element {
             <div className="border-t border-line-hairline px-4 py-2">
               <GenerationActionsGroup
                 dense
-                editDisabled={session.busy || splitting || !text.trim()}
+                editDisabled={session.busy || !text.trim()}
                 editReason={!text.trim() ? dict.generationActions.editRequiresFeedback : undefined}
                 onEdit={() => sendRevise('edit')}
                 onRegenerate={() => sendRevise('regenerate')}
-                regenerateDisabled={session.busy || splitting}
+                regenerateDisabled={session.busy}
               />
             </div>
           )}
@@ -583,7 +471,7 @@ export function OutfitSection(): React.JSX.Element {
           <div className="flex items-end gap-2 border-t border-line-hairline p-3">
             <textarea
               className={cn(INPUT_CLASS, 'min-h-[38px] flex-1 resize-none')}
-              disabled={session.busy || splitting}
+              disabled={session.busy}
               onChange={e => setText(e.target.value)}
               onKeyDown={e => {
                 if (e.key === 'Enter' && !e.shiftKey) {
@@ -597,9 +485,7 @@ export function OutfitSection(): React.JSX.Element {
                   }
                 }
               }}
-              placeholder={
-                splitting ? t.placeholderSplitting : session.draft ? t.placeholderRefining : t.placeholderInitial
-              }
+              placeholder={session.draft ? t.placeholderRefining : t.placeholderInitial}
               ref={inputRef}
               rows={2}
               value={text}
@@ -608,7 +494,7 @@ export function OutfitSection(): React.JSX.Element {
               <button
                 aria-label={t.attachImage}
                 className={cn(BTN_ICON, 'h-9 w-9 shrink-0 self-end')}
-                disabled={session.busy || splitting}
+                disabled={session.busy}
                 onClick={() => void session.attachRefImage()}
                 title={t.attachImageTitle}
                 type="button"
@@ -619,7 +505,7 @@ export function OutfitSection(): React.JSX.Element {
             <button
               aria-label={selfSourceDict.open}
               className={cn(BTN_ICON, 'h-9 w-9 shrink-0 self-end')}
-              disabled={session.busy || splitting}
+              disabled={session.busy}
               onClick={() => {
                 void hydrateAvatarSeeds().finally(() => setOutfitSelfSourceOpen(true))
               }}
@@ -632,7 +518,7 @@ export function OutfitSection(): React.JSX.Element {
               <button
                 aria-label={t.send}
                 className={cn(BTN_PRIMARY, 'h-9 w-9 shrink-0 self-end px-0')}
-                disabled={session.busy || splitting || (!text.trim() && !session.refImage)}
+                disabled={session.busy || (!text.trim() && !session.refImage)}
                 onClick={sendCreation}
                 type="button"
               >
@@ -670,37 +556,6 @@ export function OutfitSection(): React.JSX.Element {
         open={outfitSelfSourceOpen}
         referenceImages={outfitSelfSourceReferences}
         title={session.draft ? dict.generationActions.regenerate : t.startAction}
-      />
-
-      <SelfSourceImageFlow
-        adopt={adoptPoseSelfSource}
-        fetchPrompt={fetchPoseSelfSourcePrompt}
-        hint={selfSourceDict.poseTransparentHint}
-        onClose={() => setPoseSelfSourceSide(null)}
-        onUseAi={() => {
-          const side = poseSelfSourceSide
-          setPoseSelfSourceSide(null)
-
-          // 设计阶段「改用 AI」= 确认时不预附该侧姿态图。
-          if (side && designing && session.draft) {
-            session.setPoseImage(side, null)
-
-            return
-          }
-
-          if (side && selected) {
-            void regenerateOutfitPose(selected.id, side)
-          }
-        }}
-        open={poseSelfSourceSide !== null}
-        referenceImages={poseSelfSourceReferences}
-        title={
-          designing && session.draft
-            ? poseSelfSourceSide === 'left'
-              ? selfSourceDict.poseSelfLeft
-              : selfSourceDict.poseSelfRight
-            : `${t.preview.regenPose} · ${selfSourceDict.open}`
-        }
       />
     </div>
   )

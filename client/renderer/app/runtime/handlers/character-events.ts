@@ -3,21 +3,14 @@ import {
   $effectiveTier,
   $screenLocked,
   emitVfx,
-  failPoseRegen,
+  hydrateVideoPack,
   hydrateWardrobe,
   playSpriteActionSequence,
   resolveAvatarRegeneration,
   setSpriteState,
-  type SpriteEmotion
-} from '@/modules/character'
-import {
-  hydrateMesh2D,
-  hydratePuppet,
-  resetMesh2D,
-  resetPuppet,
-  setMesh2DStatus,
+  type SpriteEmotion,
   switchRenderMode
-} from '@/modules/character/rendering/2d'
+} from '@/modules/character'
 import {
   $clipMap,
   $modelGenError,
@@ -26,7 +19,7 @@ import {
   clearModelRetry,
   setModelFailed,
   setModelInfo
-} from '@/modules/character/rendering/3d'
+} from '@/modules/character/rendering/model'
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
@@ -34,8 +27,8 @@ import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
-// 角色 / 形象事件处理器：心情、自主具身表达、模型与 2D 拆分、衣柜与头像重生。
-// 全部只更新 character 域（及其渲染域 2d/3d）的状态，不接触会话。
+// 角色 / 形象事件处理器：心情、自主具身表达、模型与外观、衣柜与头像重生。
+// 全部只更新 character 域（及其模型渲染域）的状态，不接触会话。
 
 const SWEAT_EMOTIONS: ReadonlySet<string> = new Set(['scared', 'embarrassed', 'concerned', 'apologetic'])
 
@@ -86,7 +79,7 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
 
     case 'model.ready': {
       // 后端在 /api/companion/model 生成结束后推送此事件。
-      // 只要 $modelInfo.asset_url 变化，3D 引擎就会重新加载（见 companion-3d.tsx）。
+      // 只要 $modelInfo.asset_url 变化，模型引擎就会重新加载（见 ModelStage.tsx）。
       // error 字段用于展示生成失败；目前 UI 只是记录日志，恢复流程在后续切片。
       //
       // 二次 auth 防御：顶层 guard 只挡 'pending'，'unauthenticated' 的事件正常落地
@@ -158,7 +151,7 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
 
     case 'model.failed': {
       const p = decodePayload<{ reason?: string; retry_download?: boolean; model_id?: number }>(event.payload)
-      setModelFailed(p?.reason ?? '3D 模型生成失败', {
+      setModelFailed(p?.reason ?? '模型生成失败', {
         retryDownload: p?.retry_download === true,
         modelId: p?.model_id ?? null
       })
@@ -166,66 +159,36 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
       break
     }
 
-    case 'companion.2d.ready': {
-      // 2d 拆分完成——重新水合 2d 行并串一次 puppet 分流判定（manifest 恒为 kind=psd 描述符）。
-      //
-      // 二次 auth 防御：与 model.ready 同理，hydrateMesh2D 走 authedApi + 写持久化 atom，
-      // 登出 race 里到达会把旧 session 的 manifest 写进 localStorage。这里早返回避免污染。
+    case 'companion.outfit.updated': {
+      // 衣柜状态变化（重绘草稿/确认转正/穿着翻转/删除）——重拉列表；列表端点是真相源，事件只当刷新触发。
+      void hydrateWardrobe()
+
+      break
+    }
+
+    case 'companion.video.ready':
+    case 'companion.video.activated': {
+      // 视频包就绪 / 激活：重新水合激活包（写持久化状态前先走 authedApi）。
       if (!authed()) {
         break
       }
 
-      const p = decodePayload<{
-        model_id?: number
-        manifest_url?: string | null
-        layers?: { name: string; url: string }[]
-      }>(event.payload)
-
-      if (p?.manifest_url) {
-        log.info('events', '2d ready:', p.model_id)
-      }
-
-      void hydrateMesh2D().then(() => hydratePuppet())
+      void hydrateVideoPack()
 
       break
     }
 
-    case 'companion.2d.failed': {
-      // 切分失败：渲染层由 SpriteStage 兜底（程序化蛋 / 已就绪的 3D 模型）。
+    case 'companion.video.failed': {
       const p = decodePayload<{ reason?: string }>(event.payload)
-      setMesh2DStatus('failed', p?.reason ?? '2D 切分失败')
-      log.warn('events', '2d failed:', p?.reason)
-
-      break
-    }
-
-    case 'companion.outfit.updated': {
-      // 衣柜状态变化（重绘草稿/切分就绪/穿着翻转/删除）——重拉列表；列表端点是真相源，事件只当刷新触发。
-      // 仅穿着翻转时重水合 2d（幂等，与 2d.ready 双触发无妨）；入柜不换装与删除不动当前穿着。
-      const p = decodePayload<{ worn?: boolean }>(event.payload)
-
-      void hydrateWardrobe()
-
-      if (p?.worn) {
-        void hydrateMesh2D().then(() => hydratePuppet())
-      }
-
-      break
-    }
-
-    case 'companion.outfit.failed': {
-      const p = decodePayload<{ outfit_id?: number; reason?: string }>(event.payload)
-      failPoseRegen(p?.outfit_id, p?.reason)
-      void hydrateWardrobe()
-      log.warn('events', 'outfit failed:', p?.reason)
+      log.warn('events', 'video pack failed:', p?.reason)
 
       break
     }
 
     case 'companion.render_mode.changed': {
-      const p = decodePayload<{ new_mode?: '2d' | '3d' }>(event.payload)
+      const p = decodePayload<{ new_mode?: 'model' | 'video' }>(event.payload)
 
-      if (p?.new_mode === '2d' || p?.new_mode === '3d') {
+      if (p?.new_mode === 'model' || p?.new_mode === 'video') {
         void switchRenderMode(p.new_mode)
       }
 
@@ -245,20 +208,6 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
       if (p?.job_id) {
         resolveAvatarRegeneration(p)
       }
-
-      // 与 model.ready / companion.2d.ready 同理：下方 resetMesh2D/resetPuppet 走
-      // 定义了 Persisted atom 的 clear handler，登出 race 里触发会把刚清空的 localStorage
-      // 又把 in-memory atom 写回 fallback（语义无害但与 clearCompanionStorage 重叠），
-      // 之后的 hydrateMesh2D 在已登出窗口写持久化。这里同样加显式 auth 二次防御。
-      if (!authed()) {
-        break
-      }
-
-      // DESIGN §1.2 不变量：头像重生不使 2D/3D 模型失效——模型只随物种变更或用户
-      // 显式请求重生。这里只做幂等的本地状态刷新（hydrate 重新拉取既有资产行）。
-      resetMesh2D()
-      resetPuppet()
-      void hydrateMesh2D().then(() => hydratePuppet())
 
       break
     }

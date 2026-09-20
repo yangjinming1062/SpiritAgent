@@ -105,7 +105,7 @@ function isIntegratedGpu(): boolean {
 // 恢复窗口放宽到 10s 连续达标（滞回，避免临界负载来回切换）。
 /**
  * 表面窗口（living/workbench）挂载后启动的 rAF 帧间隔监视。
- * 返回停止函数。精灵窗不调用——3D 引擎有自己的功率档位调度。
+ * 返回停止函数。精灵窗不调用——模型引擎有自己的功率档位调度。
  */
 export function initGlassBudgetGuard(): () => void {
   let last = 0

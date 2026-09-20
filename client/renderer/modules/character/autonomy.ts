@@ -5,9 +5,8 @@ import { $gateway } from '@/shared/store/gateway'
 import { $runnerPhase } from '@/shared/store/runner-status'
 
 import { $focusContext, $lastIdleSeconds, $screenLocked } from './activity'
-import { $effectiveTier, lockGazeToPoint } from './companion-store'
+import { $effectiveTier } from './companion-store'
 import { $llmAutonomy } from './prefs'
-import { gazeTowardsPoint } from './ritual-walk'
 import {
   $defaultScale,
   $spatialPos,
@@ -63,7 +62,6 @@ function approachLocomotion(target: { x: number; y: number }): 'walk' | 'fly' {
 // 走过去搭话（DESIGN §3.5/§6.4）：开场白由后端经 companion.message 通道投递（边走边说），
 // 客户端只负责走位——有焦点窗口落在窗口旁（复用 perch 落位与缩身，搭话后就地陪工）；
 // 用户在桌面（无窗口）时走到屏幕中下部站定，不动 locale，后续空间决策自然接管。
-// 途中视线锁定目标中心，数秒后交还指针跟随（镜像 events.ts 的 perch cue 模式）。
 function executeApproach(): void {
   // 锁屏不搭话；聊天开着时空间决策本就冻结。
   if ($screenLocked.get() || $chatVisible.get()) {
@@ -78,7 +76,6 @@ function executeApproach(): void {
     const perch = computePerchPlacement(geom, $defaultScale.get())
 
     if (perch) {
-      lockGazeToPoint(gazeTowardsPoint({ x: geom.x + geom.w / 2, y: geom.y + geom.h / 2 }))
       setLocale('perch', {
         position: perch.pos,
         scaleLimit: perch.scale,
@@ -100,7 +97,6 @@ function executeApproach(): void {
     y: clamp(vh * 0.6, 24, vh - h - 24)
   }
 
-  lockGazeToPoint(gazeTowardsPoint(point))
   moveTo(point, approachLocomotion(point))
 }
 

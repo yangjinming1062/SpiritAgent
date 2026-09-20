@@ -17,7 +17,6 @@ export default [
       'assets/**',
       'public/**',
       'src/**/*.js',
-      'renderer/modules/character/rendering/2d/puppet/vendor/**',
       '*.config.*'
     ]
   },
@@ -242,7 +241,7 @@ export default [
                 '@/modules/room/*',
                 '@/modules/character/rendering/*'
               ],
-              message: '跨模块只能经目标模块的公共 barrel（@/modules/*；character 渲染域为 @/modules/character/rendering/2d、/3d）；模块内部用相对路径。'
+              message: '跨模块只能经目标模块的公共 barrel（@/modules/*；character 渲染域为 @/modules/character/rendering/model、/video）；模块内部用相对路径。'
             }
           ]
         }
@@ -250,7 +249,7 @@ export default [
     }
   },
   {
-    // app 组合层：character 深路径禁止，但渲染域的两个公共入口（rendering/2d、rendering/3d）放行。
+    // app 组合层：character 深路径禁止，但渲染域的两个公共入口（rendering/model、rendering/video）放行。
     files: ['renderer/app/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
     rules: {
@@ -269,8 +268,8 @@ export default [
               message: '跨模块只能经目标模块的公共 barrel（@/modules/*）。'
             },
             {
-              regex: '^@/modules/character/(?!rendering/(2d|3d)$).+',
-              message: 'character 只经公共 barrel（@/modules/character）与渲染域入口（rendering/2d、/3d）访问。'
+              regex: '^@/modules/character/(?!rendering/(model|video)$).+',
+              message: 'character 只经公共 barrel（@/modules/character）与渲染域入口（rendering/model、/video）访问。'
             }
           ]
         }
@@ -364,7 +363,7 @@ export default [
     }
   },
   {
-    // character 渲染域（2d/3d）：可消费 character barrel 与 speech 口型振幅，禁入应用层与会话。
+    // character 渲染域（model/video）：可消费 character barrel 与 speech 口型振幅，禁入应用层与会话。
     files: ['renderer/modules/character/rendering/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
     rules: {
@@ -434,7 +433,7 @@ export default [
               message: '运行时与工作流不得反向导入窗口组件。'
             },
             {
-              regex: '^@/modules/character/(?!rendering/(2d|3d)$).+',
+              regex: '^@/modules/character/(?!rendering/(model|video)$).+',
               message: 'character 只经公共 barrel 与渲染域入口访问。'
             }
           ]

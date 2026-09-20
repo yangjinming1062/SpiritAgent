@@ -1,6 +1,6 @@
 # Renderer 架构指南
 
-本文定义渲染层依赖、状态和资源生命周期。产品行为见 [DESIGN](../../docs/DESIGN.md)，跨端载荷见 [PROTOCOL](../../docs/PROTOCOL.md)，多窗口连接与缓存见 [Client](../README.md)。2D 几何按需进入 [Puppet](modules/character/rendering/2d/puppet/README.md)。
+本文定义渲染层依赖、状态和资源生命周期。产品行为见 [DESIGN](../../docs/DESIGN.md)，跨端载荷见 [PROTOCOL](../../docs/PROTOCOL.md)，多窗口连接与缓存见 [Client](../README.md)。
 
 ## 1. 分层与目录归属
 
@@ -8,7 +8,7 @@
 
 ## 2. 依赖规则
 
-app 经公共入口使用 modules；runtime / workflows 不反向导入 windows，窗口之间不互相导入。modules 不依赖 app 或其他模块；例外仅为 conversation 读取 media 展示能力、character 渲染域订阅 speech 振幅。shared 不依赖业务。
+app 经公共入口使用 modules；runtime / workflows 不反向导入 windows，窗口之间不互相导入。modules 不依赖 app 或其他模块；例外仅为 conversation 读取 media 展示能力。shared 不依赖业务。
 
 边界由 [ESLint](../eslint.config.mjs)检查，不通过内部路径绕过。生产数据与资产统一走主进程桥，禁止裸 fetch；确需直连的例外须说明 URL 来源。
 
@@ -66,7 +66,7 @@ affect 只驱动可用动作，mood 只更新身份区，不生成消息或切�
 
 [spatial.ts](modules/character/spatial.ts)拥有位置，[autonomy.ts](modules/character/autonomy.ts)解释云端意图。拖拽取消旧路径，完整入口打开冻结桌面移动；stay 或推理失败不转成本地漫游，本地规则仅在智能关闭时生效。
 
-本地漫游需真实空闲信号，未知则不动；位置适配不足时放弃，不缩成不可辨识大小。仪式行走可跳过，失败仍执行原工具，`system.click_at` 不补第二次点击；结束和取消清理显式视线目标。
+本地漫游需真实空闲信号，未知则不动；位置适配不足时放弃，不缩成不可辨识大小。仪式行走可跳过，失败仍执行原工具，`system.click_at` 不补第二次点击。
 
 ## 7. 会话、语音、媒体、记忆与房间契约
 
@@ -102,7 +102,7 @@ speech 管音频播放、直接交互台词合成与实际音量振幅。聊天�
 
 ## 8. 渲染域（modules/character/rendering）
 
-### 3D 初始化、功耗与缓存
+### 模型渲染初始化、功耗与缓存（rendering/model）
 
 按 WebGPU、WebGL2 节点后端、经典 WebGLRenderer 尝试；经典回退更换 canvas。等待引擎就绪再加载，透明合成不重复预乘 alpha，日志记录实际后端；localStorage 的 `da.render.forceClassicWebgl` 设为 `1` 可强制经典后端作对照。
 
@@ -110,15 +110,11 @@ speech 管音频播放、直接交互台词合成与实际音量振幅。聊天�
 
 OPFS 校验格式并串行写入，保留与清理策略见 [Client](../README.md#资产与历史缓存)；取消或登出后旧请求不得写回。材质替换失败保留 GLB 原生材质。
 
-显式重建通过 3D store 开启生成状态，保留已加载模型直到新模型就绪。其他窗口从后端串行发出的 `uploading` 首进度进入新一轮；终态之后的其他迟到进度不得重新开启生成态。请求失败不覆盖已到达的进度或终态。
+显式重建通过模型 store 开启生成状态，保留已加载模型直到新模型就绪。其他窗口从后端串行发出的 `uploading` 首进度进入新一轮；终态之后的其他迟到进度不得重新开启生成态。请求失败不覆盖已到达的进度或终态。
 
-### Puppet（2D 高保真渲染路径）
+### 视频渲染（rendering/video）
 
-网格、绑骨、动作和扶边见 [Puppet](modules/character/rendering/2d/puppet/README.md)，资产发布见 [PIPELINE](../../docs/PIPELINE.md#6-2d-分层动画能力链)。
-
-### Mesh2D 水合 Store
-
-先取资产行和描述符，再校验 PSD 与装配。命中总线只能由当前展示实例写入，预览、隐藏实例和旧资源不能覆盖；下载失败与生成失败分别恢复，模式切换保持幂等。
+视频层消费动作包 manifest 与透明 WebM 片段：包字节走主进程资产桥与内容哈希缓存，播放为原地循环，动作切换经双 video 就绪后交换，不以黑帧或空帧过渡。命中按每秒采样的 alpha 遮罩查表（最近采样），透明留白不计入身体；移动与拖拽由容器位移表达，播放不驱动嘴部或视线。包未就绪或加载失败由渲染裁决落模型 / 兜底层，不空挂视频元素。
 
 ## 9. 界面、主题与玻璃效果
 

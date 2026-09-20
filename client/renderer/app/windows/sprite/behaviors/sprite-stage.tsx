@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { type PointerEvent, type ReactNode, useCallback, useEffect, useRef } from 'react'
 
-import { handleDragEndInteraction, handlePetInteraction } from '@/modules/character'
+import { handleDragEndInteraction } from '@/modules/character'
 import {
   $clipOverride,
   $edgeDockSide,
@@ -20,10 +20,10 @@ import {
   undockFromEdge,
   updateDragPosition
 } from '@/modules/character'
-import { emitVfx, Mesh2DVfxOverlay } from '@/modules/character'
+import { emitVfx, SpriteVfxOverlay } from '@/modules/character'
 import { FootGlow } from '@/modules/character'
-import { $mesh2dHitmap } from '@/modules/character/rendering/2d'
-import { $sprite3DHitTest } from '@/modules/character/rendering/3d'
+import { $sprite3DHitTest } from '@/modules/character/rendering/model'
+import { $videoHitTest } from '@/modules/character/rendering/video'
 import { clearExternalAttachment, pushExternalAttachment } from '@/modules/conversation'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
@@ -31,15 +31,12 @@ import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
 
 import { openWhisper } from '../whisper'
 
-import { Mesh2DGestureTracker } from './gesture-tracker'
-
 interface SpriteStageProps {
   children: ReactNode
   onTap?: (nx: number, ny: number) => void
   onDoubleTap?: () => void
   onContextMenu?: (e: React.MouseEvent) => void
   hidden?: boolean
-  handlesEdgePose?: boolean
 }
 
 // 12px 是为了避免触控板微抖动被误判为拖拽、把双击吞掉。
@@ -51,8 +48,8 @@ const LONG_PRESS_MS = 500
 // 投喂分流：纯图片/视频走轻语快速回复；混有其它文件时整批进生活空间。
 const MEDIA_DROP_PATH_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif|mp4|mov|webm|m4v|avi|mkv)$/i
 
-// 调这里：贴边趴姿的整体倾角（度）。人站在屏外（EDGE_DOCK_HIDDEN_FRACTION），
-// 绕贴边侧脚底向屏内倾——上半身斜插进屏幕，配合 gait 的扒边姿态构成「趴屏」。
+// 调这里：贴边站位的整体倾角（度）。精灵站在屏内贴边位置，
+// 绕贴边侧脚底向屏内倾——上半身轻微探进屏幕方向。
 // 左贴边用 +（顺时针向屏内倒），右贴边用 −。
 const EDGE_DOCK_LEAN_DEG = 14
 
@@ -67,8 +64,7 @@ export function SpriteStage({
   onTap,
   onDoubleTap,
   onContextMenu,
-  hidden = false,
-  handlesEdgePose = false
+  hidden = false
 }: SpriteStageProps): React.JSX.Element {
   const mountRef = useRef<HTMLDivElement>(null)
 
@@ -92,13 +88,22 @@ export function SpriteStage({
   const lastTapRef = useRef(0)
   const pos = useStore($spatialPos)
   const scale = useStore($spatialScale)
-  // 实时 3D 轮廓探测，通过 ref 同步以保证 region 的 hitTest 闭包稳定。
+  // 实时模型轮廓探测与视频遮罩探测，通过 ref 同步以保证 hitTest 闭包稳定。
   const hit3DRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
+  const hitVideoRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
 
   useEffect(
     () =>
       $sprite3DHitTest.subscribe(fn => {
         hit3DRef.current = fn
+      }),
+    []
+  )
+
+  useEffect(
+    () =>
+      $videoHitTest.subscribe(fn => {
+        hitVideoRef.current = fn
       }),
     []
   )
@@ -117,41 +122,32 @@ export function SpriteStage({
 
       const rect = el.getBoundingClientRect()
 
-      if (rect.width === 0 || rect.height === 0) {
-        return null
-      }
-
-      // 扶边画布独立对齐屏幕边缘，探出的脸可能超出原舞台盒；透明度命中仍负责精化。
-      return handlesEdgePose && $isEdgeDocked.get() && $spatialLocomotion.get() === 'still'
-        ? new DOMRect(0, 0, window.innerWidth, window.innerHeight)
-        : rect
+      return rect.width === 0 || rect.height === 0 ? null : rect
     },
-    [hidden, handlesEdgePose]
+    [hidden]
   )
 
-  // 命中按渲染路径精化：3D 走实时轮廓探测（读回未落地返回 null 保留矩形兜底），
-  // 2D 走 2D 渲染层部件 bbox（PROTOCOL §1.4 契约）；两者都缺席（桌面蛋 / 加载空挡）
-  // 才回退整矩形——否则 2D 模式下矩形空白区会挡住底下应用的点击。
+  // 命中按渲染路径精化：视频走 alpha 遮罩查表，模型走实时轮廓探测
+  // （读回未落地返回 null 保留矩形兜底）；都缺席（桌面蛋 / 加载空挡）才回退整矩形
+  // ——否则矩形空白区会挡住底下应用的点击。
   const stageHitTest = useCallback((x: number, y: number): boolean => {
+    const probeVideo = hitVideoRef.current
+
+    if (probeVideo) {
+      const result = probeVideo(x, y)
+
+      if (result !== null) {
+        return result
+      }
+    }
+
     const probe3d = hit3DRef.current
 
     if (probe3d) {
       return probe3d(x, y) ?? true
     }
 
-    const hitmap = $mesh2dHitmap.get()
-
-    if (!hitmap) {
-      return true
-    }
-
-    const rect = mountRef.current?.getBoundingClientRect()
-
-    if (!rect || rect.width <= 0 || rect.height <= 0) {
-      return false
-    }
-
-    return hitmap.hit((x - rect.left) / rect.width, (y - rect.top) / rect.height) !== null
+    return true
   }, [])
 
   useInteractiveRegion(SPRITE_REGION_ID, mountRef, stageRect, stageHitTest)
@@ -276,20 +272,6 @@ export function SpriteStage({
       })
   }
 
-  const gestureTrackerRef = useRef<Mesh2DGestureTracker | null>(null)
-
-  if (!gestureTrackerRef.current) {
-    gestureTrackerRef.current = new Mesh2DGestureTracker({
-      onPetStart: (nx, ny) => {
-        handlePetInteraction(nx, ny)
-      },
-      onPetTick: (nx, ny) => {
-        // 摸头粒子以爱心为主、花瓣偶尔混入（DESIGN §6.3 爱心 💖/🌸 同族）
-        emitVfx(Math.random() < 0.35 ? 'petal' : 'heart', { nx, ny, count: 1 })
-      }
-    })
-  }
-
   const onPointerDown = (e: PointerEvent<HTMLDivElement>): void => {
     if (hidden || !stageHitTest(e.clientX, e.clientY)) {
       return
@@ -339,16 +321,9 @@ export function SpriteStage({
       return
     }
 
-    const rect = mountRef.current?.getBoundingClientRect()
-    const nx = rect && rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5
-    const ny = rect && rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5
-    const region = $mesh2dHitmap.get()?.hit(nx, ny)?.region
-
     const d = dragRef.current
 
     if (!d) {
-      gestureTrackerRef.current?.feedPointerMove(nx, ny, region)
-
       return
     }
 
@@ -368,8 +343,6 @@ export function SpriteStage({
     }
 
     if (d.moved) {
-      // 拖拽期间不再喂手势识别器：拖拽只做位置移动，不触发戳/摸头/眩晕反馈（DESIGN §6.3 / README §7 拖拽只走 onDragEnd 桶）。
-
       if (e.clientX < 0 || e.clientX > window.innerWidth || e.clientY < 0 || e.clientY > window.innerHeight) {
         probeDisplaySwitch()
       }
@@ -410,7 +383,6 @@ export function SpriteStage({
       longPressTimerRef.current = null
     }
 
-    gestureTrackerRef.current?.feedPointerUp()
     ;(e.currentTarget as Element).releasePointerCapture?.(e.pointerId)
     const drag = dragRef.current
     dragRef.current = null
@@ -462,7 +434,7 @@ export function SpriteStage({
     }
 
     lastTapRef.current = now
-    // 计算归一化坐标 (nx, ny) 透传给 onTap，供 2D 路径子区域命中
+    // 计算归一化坐标 (nx, ny) 透传给 onTap
     const rect = mountRef.current?.getBoundingClientRect()
     const nx = rect && rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5
     const ny = rect && rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5
@@ -491,13 +463,7 @@ export function SpriteStage({
   // 绕贴边侧的脚底为轴把整个人向屏内倾，松开/拖走时 420ms 缓动回正。
   const edgeDockSide = useStore($edgeDockSide)
 
-  const leanDeg = handlesEdgePose
-    ? 0
-    : edgeDockSide === 'left'
-      ? EDGE_DOCK_LEAN_DEG
-      : edgeDockSide === 'right'
-        ? -EDGE_DOCK_LEAN_DEG
-        : 0
+  const leanDeg = edgeDockSide === 'left' ? EDGE_DOCK_LEAN_DEG : edgeDockSide === 'right' ? -EDGE_DOCK_LEAN_DEG : 0
 
   const leanOrigin = edgeDockSide === 'left' ? '0% 100%' : edgeDockSide === 'right' ? '100% 100%' : '50% 50%'
 
@@ -550,7 +516,7 @@ export function SpriteStage({
         >
           <FootGlow />
           {children}
-          <Mesh2DVfxOverlay />
+          <SpriteVfxOverlay />
         </div>
       </div>
     </div>

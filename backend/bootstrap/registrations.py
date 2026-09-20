@@ -24,17 +24,17 @@ from services.domains.companion import (
     invalidate_cron_companion_intents,
 )
 from services.infrastructure.event_store import register_internal_event_handler
-from services.infrastructure.image_to_3d import HunyuanImageTo3DProvider, TripoImageTo3DProvider
-from services.infrastructure.image_to_3d import register as register_image_to_3d_provider
 from services.infrastructure.llm import ServiceType
 from services.infrastructure.llm import register as register_provider
 from services.infrastructure.llm.providers import gemini, grok, mimo, minimax, zhipu
+from services.infrastructure.model_generation import HunyuanCharacterModelProvider, TripoCharacterModelProvider
+from services.infrastructure.model_generation import register as register_model_generation_provider
 from services.infrastructure.tool_runtime import REGISTRY
 
 
 def register_providers() -> None:
-    register_image_to_3d_provider("hunyuan", HunyuanImageTo3DProvider)
-    register_image_to_3d_provider("tripo", TripoImageTo3DProvider)
+    register_model_generation_provider("hunyuan", HunyuanCharacterModelProvider)
+    register_model_generation_provider("tripo", TripoCharacterModelProvider)
     register_provider(ServiceType.image_gen, "gemini", gemini.GeminiImageGenProvider)
     register_provider(ServiceType.embedding, "gemini", gemini.GeminiEmbeddingProvider)
     register_provider(ServiceType.llm, "grok", grok.GrokChatProvider)

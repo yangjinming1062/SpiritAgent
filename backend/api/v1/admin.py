@@ -33,7 +33,7 @@ from modules.auth import (
     get_current_admin_token,
     hash_activation_token,
 )
-from modules.companion import AvatarAsset, Companion3DModel, Persona
+from modules.companion import AvatarAsset, CompanionModel, Persona
 from modules.scheduler import (
     NightlyActivityLog,
     NightlyActivityLogItem,
@@ -149,7 +149,7 @@ async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
         await asyncio.to_thread(delete_portrait_file, av.asset_url)
 
     await db.execute(delete(AvatarAsset).where(AvatarAsset.user_id == user_id))
-    await db.execute(delete(Companion3DModel).where(Companion3DModel.user_id == user_id))
+    await db.execute(delete(CompanionModel).where(CompanionModel.user_id == user_id))
     await db.delete(await db.get(User, user_id))
     await db.commit()
 

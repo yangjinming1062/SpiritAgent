@@ -1,18 +1,14 @@
-﻿import { atom } from 'nanostores'
+import { atom } from 'nanostores'
 
 import { authedApi } from '@/shared/lib/authed-api'
-import { isClientErrorIpc, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 
-import type { PickedImage } from '../avatar-image'
-import { cachePuppetAssetPack, hydrateMesh2D, type PuppetAssetSource } from '../rendering/2d'
-
-type OutfitStatus = 'draft' | 'splitting' | 'ready' | 'failed' | 'expired'
+type OutfitStatus = 'draft' | 'ready' | 'failed' | 'expired'
 
 interface WardrobeOutfit {
-  asset: PuppetAssetSource | null
   id: number
   name: string
   description: string | null
@@ -20,31 +16,18 @@ interface WardrobeOutfit {
   fullbodyUrl: string | null
   status: OutfitStatus
   active: boolean
-  pendingWear: boolean
 }
 
 interface OutfitResponse {
-  asset?: PuppetAssetSource | null
   id: number
   name: string
   description: string | null
   fullbody_url: string
   status: string
   active: boolean
-  pending_wear: boolean
 }
 
 export type OutfitPolicy = 'llm_may_replace' | 'locked'
-
-export type PoseRegenSide = 'left' | 'right'
-
-export interface PoseRegenState {
-  outfitId: number
-  side: PoseRegenSide
-  baselineHash: string | null
-  /** null=生成中；非空=已失败（空串表示无服务端文案，仅展示通用失败） */
-  error: string | null
-}
 
 interface WardrobeSnapshot {
   outfits: OutfitResponse[]
@@ -71,19 +54,14 @@ const snapshot = definePersistedAtom<WardrobeSnapshot>({
 
 export const $outfits = atom<WardrobeOutfit[]>([])
 export const $outfitPolicy = atom<OutfitPolicy>(snapshot.get().policy)
-export const $poseRegen = atom<PoseRegenState | null>(null)
-const warmed = new Set<string>()
 let revision = 0
 let policyRevision = 0
-let poseRegenTimer: ReturnType<typeof setTimeout> | undefined
 
 registerStorageClearHandler(() => {
   revision += 1
   policyRevision += 1
-  warmed.clear()
   $outfits.set([])
   $outfitPolicy.set('llm_may_replace')
-  $poseRegen.set(null)
 })
 
 async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: boolean): Promise<void> {
@@ -110,23 +88,10 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
         fullbodyPath,
         fullbodyUrl: old?.fullbodyPath === fullbodyPath ? old.fullbodyUrl : null,
         status: (o.status || 'draft') as OutfitStatus,
-        active: o.active === true,
-        pendingWear: o.pending_wear === true,
-        asset:
-          o.asset?.content_hash && old?.asset?.content_hash === o.asset.content_hash ? old.asset : (o.asset ?? null)
+        active: o.active === true
       }
     })
   )
-  // 单侧姿态重生成完成信号：外观还在且 content_hash 已离开基线（hash 必变）；外观被删也视为结束
-  const regen = $poseRegen.get()
-
-  if (regen && regen.error === null) {
-    const updated = state.outfits.find(o => o.id === regen.outfitId)
-
-    if (!updated || updated.asset?.content_hash !== regen.baselineHash) {
-      $poseRegen.set(null)
-    }
-  }
 
   await Promise.all(
     state.outfits.map(async (o): Promise<void> => {
@@ -147,30 +112,6 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
       }
     })
   )
-}
-
-async function warmAssets(outfits: OutfitResponse[], epoch: number): Promise<void> {
-  for (const outfit of outfits) {
-    if (epoch !== currentClearEpoch() || $auth.get().kind !== 'authenticated') {
-      return
-    }
-
-    const source = outfit.asset
-    const key = source?.content_hash ?? source?.manifest_url
-
-    if (!source || !key || warmed.has(key)) {
-      continue
-    }
-
-    warmed.add(key)
-
-    try {
-      await cachePuppetAssetPack(source)
-    } catch (err) {
-      warmed.delete(key)
-      log.warn('wardrobe', 'asset cache warmup failed', err)
-    }
-  }
 }
 
 export async function hydrateWardrobe(): Promise<void> {
@@ -212,10 +153,6 @@ export async function hydrateWardrobe(): Promise<void> {
 
   snapshot.set(state)
   await showOutfits(state, version, false)
-
-  if (version === revision && epoch === currentClearEpoch()) {
-    void warmAssets(state.outfits, epoch)
-  }
 }
 
 export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
@@ -244,12 +181,11 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
   }
 }
 
-/** 穿着就绪外观；成功后整包替换 2D 资产（PuppetStage 按 PSD 重建，期间旧装不断档）。 */
+/** 穿着就绪外观：翻转当前生效着装描述（房间 / 出镜媒体消费），不触发任何生成。 */
 export async function activateOutfit(outfitId: number): Promise<boolean> {
   try {
     await window.spiritagent.api({ path: `/api/companion/outfits/${outfitId}/activate`, method: 'PUT' })
     await hydrateWardrobe()
-    await hydrateMesh2D()
 
     return true
   } catch (err) {
@@ -269,93 +205,5 @@ export async function deleteOutfit(outfitId: number): Promise<boolean> {
     log.warn('wardrobe', 'deleteOutfit failed', err)
 
     return false
-  }
-}
-
-// 主进程错误含状态码、路径与 JSON 错误体，取 detail 里的公开文案；解析不了就留空（UI 走通用失败文案）
-function poseRegenErrMsg(err: unknown): string {
-  try {
-    const parsed = JSON.parse(unwrapIpcErrorMessage(err).replace(/^\d{3}\s+(?:\/[^\s]*:\s*)?/, '')) as {
-      detail?: { error?: unknown }
-    }
-
-    if (typeof parsed?.detail?.error === 'string' && parsed.detail.error) {
-      return parsed.detail.error
-    }
-  } catch {
-    /* 非预期形态，走通用失败文案 */
-  }
-
-  return ''
-}
-
-/** 单侧姿态任务的前置登记：记录 content_hash 基线并挂 30 分钟兜底超时
- * （防后端重启丢任务后 pending 永挂）；完成与失败由 WS 事件驱动。 */
-function beginPoseRegen(outfitId: number, side: PoseRegenSide): void {
-  const baselineHash = $outfits.get().find(o => o.id === outfitId)?.asset?.content_hash ?? null
-  $poseRegen.set({ outfitId, side, baselineHash, error: null })
-  clearTimeout(poseRegenTimer)
-  poseRegenTimer = setTimeout(() => {
-    const regen = $poseRegen.get()
-
-    if (regen?.outfitId === outfitId && regen.error === null) {
-      $poseRegen.set({ ...regen, error: '' })
-    }
-  }, 30 * 60_000)
-}
-
-/** 单侧重生成一侧扶边姿态：请求只负责校验入队，完成与失败由 WS 事件驱动
- * （content_hash 变化 / companion.outfit.failed）。 */
-export async function regenerateOutfitPose(outfitId: number, side: PoseRegenSide): Promise<boolean> {
-  beginPoseRegen(outfitId, side)
-
-  try {
-    await window.spiritagent.api({
-      method: 'POST',
-      path: `/api/companion/outfits/${outfitId}/poses/${side}/regenerate`
-    })
-
-    return true
-  } catch (err) {
-    log.warn('wardrobe', 'regenerateOutfitPose failed', err)
-    const regen = $poseRegen.get()
-
-    if (regen?.outfitId === outfitId && regen.error === null) {
-      $poseRegen.set({ ...regen, error: poseRegenErrMsg(err) })
-    }
-
-    return false
-  }
-}
-
-/** 自备图采纳（单侧姿态）：用户图入队既有单侧管线（跳过主图生图，抠图/定位/闭眼帧仍由后端完成），
- * 完成与失败语义与单侧重绘一致。入队失败（校验拒绝）时回滚 pending 态并抛出后端公开文案。 */
-export async function adoptOutfitPoseImage(outfitId: number, side: PoseRegenSide, image: PickedImage): Promise<void> {
-  beginPoseRegen(outfitId, side)
-
-  try {
-    await window.spiritagent.api({
-      body: { image: image.base64, content_type: image.contentType },
-      method: 'POST',
-      path: `/api/companion/outfits/${outfitId}/poses/${side}/adopt`
-    })
-  } catch (err) {
-    log.warn('wardrobe', 'adoptOutfitPoseImage failed', err)
-    const regen = $poseRegen.get()
-
-    if (regen?.outfitId === outfitId && regen.error === null) {
-      $poseRegen.set({ ...regen, error: poseRegenErrMsg(err) })
-    }
-
-    throw err
-  }
-}
-
-/** WS companion.outfit.failed：匹配在飞单侧重生成时落失败态（保留条目供 UI 展示原因）。 */
-export function failPoseRegen(outfitId: number | undefined, reason: string | null | undefined): void {
-  const regen = $poseRegen.get()
-
-  if (regen && regen.error === null && regen.outfitId === outfitId) {
-    $poseRegen.set({ ...regen, error: reason || '' })
   }
 }
