@@ -28,6 +28,15 @@ class VideoPackCreateRequest(BaseModel):
     canvas_height: int = Field(default=768, gt=0, le=1024)
 
 
+class VideoPackGenerateRequest(BaseModel):
+    """按参考生成视频包：缺省取当前激活且已确认的外观；force 跳过同参考版本的包复用。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    outfit_id: int | None = None
+    force: bool = False
+
+
 class VideoPackResponse(BaseModel):
     id: int
     outfit_id: int | None = None

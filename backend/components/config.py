@@ -74,6 +74,8 @@ class Settings(BaseSettings):
 
     temp_file_ttl_hours: int = Field(default=24, validation_alias="TEMP_FILE_TTL_HOURS")
     data_dir: str = Field(default="./data", validation_alias="DATA_DIR")
+    # 抠像 onnx 模型（data_dir/models/<name>.onnx）：背景不纯色时必需，纯色背景走色键不依赖。
+    matting_model: str = Field(default="isnet-general-use", validation_alias="MATTING_MODEL")
 
     model_generation_provider: str = Field(default="tripo", validation_alias="MODEL_GENERATION_PROVIDER")
     model_generation_poll_interval_seconds: float = Field(

@@ -20,9 +20,12 @@ dependencies = [
     "asyncpg>=0.31.0",
     "slowapi==0.1.10",
     "Pillow>=10.4",
+    "numpy>=2.0",
     "pgvector>=0.5.0",
     "alembic>=1.19.1",
     "prometheus-client>=0.20.0",
     "pycryptodome>=3.20.0",
     "mutagen>=1.48.1",
+    # 视频动作包处理：ISNet onnx 抠像（背景不纯色时）
+    "onnxruntime>=1.20.0",
 ]

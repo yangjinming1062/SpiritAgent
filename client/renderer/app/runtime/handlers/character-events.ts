@@ -20,6 +20,13 @@ import {
   setModelFailed,
   setModelInfo
 } from '@/modules/character/rendering/model'
+import {
+  $videoGenError,
+  $videoGenStage,
+  $videoGenState,
+  type VideoGenStage,
+  videoPackEventReceived
+} from '@/modules/character/rendering/video'
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
@@ -168,12 +175,34 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
 
     case 'companion.video.ready':
     case 'companion.video.activated': {
-      // 视频包就绪 / 激活：重新水合激活包（写持久化状态前先走 authedApi）。
+      // 视频包就绪 / 激活：生成态收敛并重新水合激活包（写持久化状态前先走 authedApi）。
       if (!authed()) {
         break
       }
 
-      void hydrateVideoPack()
+      videoPackEventReceived()
+      $videoGenState.set('idle')
+      $videoGenStage.set(null)
+      $videoGenError.set(null)
+      void hydrateVideoPack(true)
+
+      break
+    }
+
+    case 'companion.video.progress': {
+      // 按参考生成的阶段推进：只更新生成态文案，不触碰已激活包的显示。
+      if (!authed()) {
+        break
+      }
+
+      const p = decodePayload<{ stage?: string }>(event.payload)
+      const stages: readonly VideoGenStage[] = ['script', 'submit', 'generate', 'download', 'process', 'publish']
+      const stage = stages.find(s => s === p?.stage) ?? null
+
+      videoPackEventReceived()
+      $videoGenState.set('generating')
+      $videoGenStage.set(stage)
+      $videoGenError.set(null)
 
       break
     }
@@ -181,6 +210,13 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
     case 'companion.video.failed': {
       const p = decodePayload<{ reason?: string }>(event.payload)
       log.warn('events', 'video pack failed:', p?.reason)
+
+      if (authed()) {
+        videoPackEventReceived()
+        $videoGenState.set('failed')
+        $videoGenStage.set(null)
+        $videoGenError.set(p?.reason || '视频形象生成失败，请稍后重试')
+      }
 
       break
     }

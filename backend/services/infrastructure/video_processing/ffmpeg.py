@@ -46,6 +46,14 @@ class VideoProbe:
     def has_alpha(self) -> bool:
         return self.alpha_mode == 1 or self.pix_fmt in _ALPHA_PIX_FMTS
 
+    @property
+    def has_pixel_alpha(self) -> bool:
+        """像素格式自带 alpha（FFV1/PNG 等中间产物可被 FFmpeg 滤镜解码处理）。
+
+        WebM/VP9 的 BlockAdditional alpha 不在像素格式内，FFmpeg CLI 解码会丢弃，
+        不能作为滤镜输入；此类源须先转存为像素级 alpha 格式。"""
+        return self.pix_fmt in _ALPHA_PIX_FMTS
+
 
 def _binary(name: str) -> str:
     resolved = shutil.which(name)
@@ -109,6 +117,28 @@ def probe_video(path: Path) -> VideoProbe:
         pix_fmt=str(stream.get("pix_fmt") or ""),
         alpha_mode=_alpha_mode(stream),
     )
+
+
+def probe_alpha_side_data(path: Path) -> bool:
+    """WebM/VP9 交付产物的 alpha 真伪验收：FFmpeg CLI 解码不回读 BlockAdditional alpha，
+    只有封装层侧数据能证明 alpha 真实存在；ALPHA_MODE 标签单独不足以作为证据。"""
+    args = [
+        _binary("ffprobe"),
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_packets",
+        "-show_entries",
+        "packet=side_data_types",
+        "-of",
+        "csv=p=0",
+        str(path),
+    ]
+    proc = _run(args)
+    if proc.returncode != 0:
+        raise VideoProcessError("视频透明通道验收失败", internal=proc.stderr.decode("utf-8", "replace")[:2000])
+    return "Matroska BlockAdditional" in proc.stdout.decode("utf-8", "replace")
 
 
 def _alpha_mode(stream: dict) -> int:

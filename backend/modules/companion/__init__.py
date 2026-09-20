@@ -92,6 +92,7 @@ from .schemas_room import (
 )
 from .schemas_video import (
     VideoPackCreateRequest,
+    VideoPackGenerateRequest,
     VideoPackListResponse,
     VideoPackResponse,
 )
@@ -175,6 +176,7 @@ __all__ = [
     "RoomPromptRequest",
     "RoomStateResponse",
     "VideoPackCreateRequest",
+    "VideoPackGenerateRequest",
     "VideoPackListResponse",
     "VideoPackResponse",
     "VoiceEntry",

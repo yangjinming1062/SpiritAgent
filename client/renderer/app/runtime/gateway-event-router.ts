@@ -116,6 +116,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'companion.video.failed':
 
+    case 'companion.video.progress':
+
     case 'companion.video.ready':
 
     case 'companion.render_mode.changed':

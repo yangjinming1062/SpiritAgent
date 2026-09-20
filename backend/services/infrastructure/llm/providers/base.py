@@ -175,6 +175,15 @@ class VideoAsset:
 class VideoGenProvider(BaseProvider):
     service_type: ServiceType = ServiceType.video_gen
 
+    # 能力声明（与各适配器 submit 校验保持一致）：编排层据此取链上最保守时长并按供应商选档；
+    # None 表示未声明，按适配器自身校验兜底。
+    # 可用时长档（整数秒，升序）。
+    durations: tuple[int, ...] | None = None
+    # 可用分辨率档（按成本升序）。
+    resolutions: tuple[str, ...] | None = None
+    # 支持 first_frame_image 图生视频；False 时带首帧的请求跳过该供应商。
+    supports_first_frame: bool = False
+
     @abstractmethod
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus: ...
 

@@ -104,7 +104,16 @@ export {
 } from './presentation'
 export { bindProactiveLineSpeaker, type ProactiveLineOptions } from './proactive-speak'
 export { EggStage } from './rendering/fallback/egg-stage'
-export { $videoHitTest, $videoPack, $videoPackStatus, hydrateVideoPack } from './rendering/video'
+export {
+  $videoGenError,
+  $videoGenStage,
+  $videoGenState,
+  $videoHitTest,
+  $videoPack,
+  $videoPackStatus,
+  generateVideoPack,
+  hydrateVideoPack
+} from './rendering/video'
 export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritual-walk'
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {

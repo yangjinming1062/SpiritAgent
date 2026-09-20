@@ -37,6 +37,7 @@ from modules.companion import (
     PersonaUpdate,
     RenderModeRequest,
     VideoPackCreateRequest,
+    VideoPackGenerateRequest,
     VideoPackListResponse,
     VideoPackResponse,
 )
@@ -70,6 +71,7 @@ from services.application.generation import (
     confirm_outfit,
     create_outfit_draft,
     create_video_pack_from_clips,
+    create_video_pack_from_reference,
     delete_outfit,
     delete_video_pack,
     finalize_avatar,
@@ -642,6 +644,13 @@ async def post_render_mode(body: RenderModeRequest, user: CurrentUser, db: DbSes
             await generate_companion_model(db, user_id=user.id, force=False)
         except ModelGenerationError as exc:
             logger.info("render_mode model dispatch skipped", extra={"user_id": user.id, "error": str(exc)})
+    elif body.render_mode == "video":
+        # 切到视频时顺带按当前外观发起生成（复用同参考版本的激活包，不重复付费）；失败只记录，
+        # 不阻塞偏好保存，用户可在视频分区看到失败原因并重试。
+        try:
+            await create_video_pack_from_reference(db, user.id, force=False)
+        except VideoPackError as exc:
+            logger.info("render_mode video dispatch skipped", extra={"user_id": user.id, "error": str(exc)})
 
     return PersonaResponse(
         definition_json=persona.definition_json or "{}",
@@ -928,6 +937,36 @@ async def post_video_pack(
             clips=clips,
             canvas=(body.canvas_width, body.canvas_height),
             action_ranges=ranges,
+        )
+    except VideoPackError as exc:
+        raise _video_pack_http_error(exc)
+    return VideoPackResponse(
+        id=pack.id,
+        outfit_id=pack.outfit_id,
+        pack_version=pack.pack_version,
+        status=pack.status,
+        active=pack.active,
+    )
+
+
+@router.post(
+    "/video-packs/generate",
+    response_model=VideoPackResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+async def post_video_pack_generate(
+    body: VideoPackGenerateRequest,
+    user: CurrentUser,
+    db: DbSession,
+) -> VideoPackResponse:
+    """按参考生成视频包：LLM 演绎脚本 → 参考图 i2v → 服务端抠像与分割 → 发布后自动激活。
+    生成与处理在后台进行，进度与结果经 companion.video.progress / ready / failed 事件回流。"""
+    try:
+        pack = await create_video_pack_from_reference(
+            db,
+            user.id,
+            outfit_id=body.outfit_id,
+            force=body.force,
         )
     except VideoPackError as exc:
         raise _video_pack_http_error(exc)

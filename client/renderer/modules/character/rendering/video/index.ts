@@ -1,4 +1,14 @@
 export type { VideoClipSpec, VideoPackCanvas, VideoPackManifest } from './types'
-export { $videoPack, $videoPackStatus, hydrateVideoPack, resolveVideoClipUrl } from './video-pack-store'
-export type { ActiveVideoPack, VideoPackStatus } from './video-pack-store'
+export {
+  $videoGenError,
+  $videoGenStage,
+  $videoGenState,
+  $videoPack,
+  $videoPackStatus,
+  generateVideoPack,
+  hydrateVideoPack,
+  resolveVideoClipUrl,
+  videoPackEventReceived
+} from './video-pack-store'
+export type { ActiveVideoPack, VideoGenStage, VideoPackStatus } from './video-pack-store'
 export { $videoHitTest, VideoStage } from './VideoStage'

@@ -12,9 +12,9 @@ def _api_version(model: str) -> str:
     return "v2" if (model or "").startswith(_V2_MODEL_PREFIX) else "v1"
 
 
-# v1（Hailuo）约束：离散时长、三档分辨率。
+# v1（Hailuo）约束：离散时长、分辨率档位。Hailuo-2.3 现仅收 768P/1080P（2026-09 实测 API 拒 512P），按成本升序。
 _V1_DURATIONS = (6, 10)
-_V1_RESOLUTIONS = ("512P", "768P", "1080P")
+_V1_RESOLUTIONS = ("768P", "1080P")
 
 # v2（H3）约束：区间内整数秒、两档分辨率。
 _V2_DURATION_MIN, _V2_DURATION_MAX = 4, 15
@@ -56,6 +56,14 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
+        # 能力声明按钉死的 config.model 选择协议档位（v1/v2 不兼容），与 submit 校验同源。
+        if _api_version(config.model) == "v2":
+            self.durations = tuple(range(_V2_DURATION_MIN, _V2_DURATION_MAX + 1))
+            self.resolutions = _V2_RESOLUTIONS
+        else:
+            self.durations = _V1_DURATIONS
+            self.resolutions = _V1_RESOLUTIONS
+        self.supports_first_frame = True
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         model = req.model or self.config.model

@@ -119,9 +119,14 @@ from .video import (
     create_pack_from_clips as create_video_pack_from_clips,
 )
 from .video import (
+    create_pack_from_reference as create_video_pack_from_reference,
+)
+from .video import (
     delete_pack as delete_video_pack,
 )
+from .video import drain_video_generation as drain_video_pack_generation
 from .video import resume_processing_packs as resume_processing_video_packs
+from .video import resume_video_generation_jobs as resume_video_generation_jobs
 from .video_jobs import drain as drain_video_jobs
 from .video_jobs import (
     enqueue_video_job,
@@ -166,6 +171,7 @@ __all__ = [
     "activate_backdrop",
     "activate_video_pack",
     "create_video_pack_from_clips",
+    "create_video_pack_from_reference",
     "delete_video_pack",
     "list_pack_responses",
     "activate_outfit",
@@ -184,6 +190,7 @@ __all__ = [
     "discard_room_backdrop",
     "drain_room_backdrop_jobs",
     "drain_video_jobs",
+    "drain_video_pack_generation",
     "enqueue_video_job",
     "finalize_avatar",
     "generate_avatar",
@@ -223,6 +230,7 @@ __all__ = [
     "resume_inflight_pipelines",
     "resume_pending_video_jobs",
     "resume_processing_video_packs",
+    "resume_video_generation_jobs",
     "resume_room_generation",
     "response_for_backdrop",
     "recover_stuck_model_generations",

@@ -14,7 +14,7 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 |---|---|---|
 | `chat.py` | 5 套预设体骨架、四职业双语头部、约 20 个系统提示词块、标题生成、上下文压缩 | `services/application/chat/`（prompt_blocks、prompt_presets、system_prompt、title_generator、context_compressor） |
 | `companion.py` | 心情、互动、空闲表达、空间行为、骨骼分类、性格标签（含种子词表）、角色设定与着装块标题 | `services/domains/companion/` |
-| `generation.py` | 头像改写、画风词典（外观参考专用 `anime_illustration` 与模型种子路由 `refined_anime_cg`/`realistic` 分槽，见 [PIPELINE §1.1](../../docs/PIPELINE.md#11-共用参考与种子图派生)）、姿态短语、全身画幅不可裁切部位、头像参考、全身扩展/视角派生、换装、编辑保持条款、拼图参考分工、出镜媒体、服装转写、房间模板与光线词典、审核合规改写、衣柜描述、房间陈设 | `services/infrastructure/llm/prompt_engineer.py`、`services/application/generation/`、`services/application/nightly/`、`services/adapters/tools/builtin/` |
+| `generation.py` | 头像改写、画风词典（外观参考专用 `anime_illustration` 与模型种子路由 `refined_anime_cg`/`realistic` 分槽，见 [PIPELINE §1.1](../../docs/PIPELINE.md#11-共用参考与种子图派生)）、姿态短语、全身画幅不可裁切部位、头像参考、全身扩展/视角派生、换装、编辑保持条款、拼图参考分工、出镜媒体、服装转写、房间模板与光线词典、审核合规改写、衣柜描述、房间陈设、视频演绎脚本指令与视频提示词骨架（见 [PIPELINE §6](../../docs/PIPELINE.md#6-视频动作包链)） | `services/infrastructure/llm/prompt_engineer.py`、`services/application/generation/`、`services/application/generation/video/`、`services/application/nightly/`、`services/adapters/tools/builtin/` |
 | `memory.py` | 记忆维护政策（MEMORY_POLICY）、审查指令、用户资料上下文标签与块标题 | `services/domains/memory/`（memory_policy、memory_review、memory_bootstrap） |
 | `nightly.py` | 夜间规划、每日检查点、用户可见日记、内部夜间反思、片刻回复、片刻冲动决策 | `services/application/nightly/`、`services/application/moments/` |
 | `tools.py` | 16 个工具 schema 的主描述与参数描述 | `services/adapters/tools/`（builtin/ 与同级 *.py） |

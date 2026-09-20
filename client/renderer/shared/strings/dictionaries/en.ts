@@ -1029,6 +1029,21 @@ export const dict: Dictionary = {
       videoNotReady:
         'Video look is not ready yet: the desktop shows the model or the egg fallback. Outfit references can be managed here in the meantime.',
       videoReady: (version: number, clips: number) => `Video look ready (version ${version}, ${clips} actions)`,
+      videoGenAction: 'Generate video look',
+      videoRegenAction: 'Regenerate video look',
+      videoRegenTitle: 'Regenerate video look',
+      videoRegenBody:
+        'A fresh action set will be scripted and generated from the current outfit reference (about 3–10 minutes); it replaces the display and activates automatically when ready.',
+      videoGenStageScript: 'Writing the action script from the character’s personality…',
+      videoGenStageSubmit: 'Submitting the video generation task…',
+      videoGenStageGenerate: 'Generating the video, this usually takes a few minutes…',
+      videoGenStageDownload: 'Downloading the generated video…',
+      videoGenStageProcess: 'Matting the background, splitting actions and encoding transparent clips…',
+      videoGenStagePublish: 'Publishing the action pack…',
+      videoGenStageDefault: 'Generating the video look…',
+      videoGenHint:
+        'Generates one video from the current outfit reference covering idle, walking and drag actions, then mats and splits it into a transparent action pack that becomes the default look (about 3–10 minutes).',
+      videoGenRetryHint: 'Tap generate to retry.',
       modelHint:
         'Switching to the model walks you through a wizard to generate each model front portrait (multi-view providers also add a back portrait); each requires a manual tap. Once confirmed, the cloud-side model is generated (1–3 minutes). During generation and on failure the video or the programmatic egg takes over.',
       companionSize: 'Companion size',

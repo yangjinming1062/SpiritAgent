@@ -26,10 +26,12 @@ from services.application.configuration import load_and_apply_system_settings
 from services.application.generation import (
     drain_room_backdrop_jobs,
     drain_video_jobs,
+    drain_video_pack_generation,
     recover_stuck_model_generations,
     resume_inflight_pipelines,
     resume_pending_video_jobs,
     resume_processing_video_packs,
+    resume_video_generation_jobs,
 )
 from services.domains.companion import drain_persona_background
 from services.infrastructure.event_store import drain_event_tasks, start_event_loop, stop_event_loop
@@ -78,7 +80,9 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     await recover_stuck_model_generations()
     # 模型生成管道并入 web 后：从持久状态（companion_models.status IN FLIGHT）重启尚未完成的 task。
     await resume_inflight_pipelines()
-    # 视频包：重启后 processing 行无法续跑（源片段在临时工作区），按失败落库并广播。
+    # 视频包按参考生成：凭持久化句柄（任务 ID / 产物 / 脚本）续跑，不重复提交付费任务。
+    await resume_video_generation_jobs()
+    # 视频包上传导入：无可续跑句柄的 processing 行按失败落库并广播。
     await resume_processing_video_packs()
 
     async def _cleanup_loop():
@@ -107,6 +111,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             drain_persona_background(),
             drain_room_backdrop_jobs(),
             drain_video_jobs(),
+            drain_video_pack_generation(),
             drain_event_tasks(),
             drain_user_sessions(),
             return_exceptions=True,

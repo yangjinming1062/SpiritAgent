@@ -31,6 +31,11 @@ class GrokVideoGenProvider(VideoGenProvider):
     DEFAULT_MODELS: ClassVar[dict[str, str]] = {"video_gen": "grok-imagine-video-1.5"}
     DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"video_gen": 8_000}
 
+    # 能力声明（与 submit 校验一致）；分辨率按成本升序，键取规范小写。
+    durations = _SUPPORTED_DURATIONS
+    resolutions = ("480p", "720p", "1080p")
+    supports_first_frame = True
+
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
