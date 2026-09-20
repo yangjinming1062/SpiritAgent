@@ -14,6 +14,7 @@ import type { VideoPackManifest } from './types'
 export interface ActiveVideoPack {
   packId: number
   packVersion: number
+  coverUrl: string | null
   manifest: VideoPackManifest
   /** action → 可用于 <video src> 的本地展示 URL（已预解析 idle；其余懒解析） */
   clipUrls: Map<string, string>
@@ -22,15 +23,31 @@ export interface ActiveVideoPack {
 export type VideoPackStatus = 'idle' | 'loading' | 'ready' | 'unavailable'
 
 /** 按参考生成的任务阶段（对应后端 companion.video.progress 的 stage） */
-export type VideoGenStage = 'script' | 'submit' | 'generate' | 'download' | 'process' | 'publish'
+export type VideoGenStage = 'script' | 'pose' | 'submit' | 'generate' | 'download' | 'process' | 'publish'
 
-interface VideoPackWire {
+export interface VideoActionWire {
+  action: string
+  status: string
+  stage: string
+  error: string | null
+  clip_url: string | null
+  motion_prompt: string
+}
+
+export interface VideoPackWire {
   id: number
   pack_version: number
+  outfit_id: number | null
+  error: string | null
+  actions: VideoActionWire[]
   status: string
   active: boolean
   manifest_url: string | null
+  can_retry: boolean
+  can_regenerate: boolean
 }
+
+export const $videoPacks = atom<VideoPackWire[]>([])
 
 export const $videoPack = atom<ActiveVideoPack | null>(null)
 export const $videoPackStatus = atom<VideoPackStatus>('idle')
@@ -54,6 +71,7 @@ registerStorageClearHandler(() => {
   inflight = null
   generationRevision += 1
   requestingGeneration = false
+  $videoPacks.set([])
   $videoPack.set(null)
   $videoPackStatus.set('idle')
   $videoGenState.set('idle')
@@ -97,7 +115,9 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
   const revision = generationRevision
 
   const load = (async (): Promise<void> => {
-    $videoPackStatus.set('loading')
+    if (!$videoPack.get()) {
+      $videoPackStatus.set('loading')
+    }
 
     try {
       const res = await authedApi<{ packs?: VideoPackWire[] }>({ path: '/api/companion/video-packs' })
@@ -107,23 +127,30 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
       }
 
       if (!res.ok || !res.value) {
-        $videoPackStatus.set('unavailable')
+        if (!$videoPack.get()) {
+          $videoPackStatus.set('unavailable')
+        }
 
         return
       }
 
+      if (revision !== generationRevision) {
+        return
+      }
+
       const packs = res.value.packs ?? []
+      $videoPacks.set(packs)
       const processing = packs.find(p => p.status === 'processing')
 
-      if (revision !== generationRevision) {
-        // 在途快照不覆盖随后收到的生成事件。
-      } else if (processing) {
+      if (processing) {
         $videoGenState.set('generating')
         $videoGenError.set(null)
       } else if ($videoGenState.get() === 'generating') {
         // 服务端已无进行中的任务（如处理进程重启按失败落库），本地生成态收敛；
         // 具体失败文案以 companion.video.failed 事件为准。
-        $videoGenState.set('idle')
+        const failed = packs[0]?.status === 'failed' ? packs[0] : null
+        $videoGenState.set(failed ? 'failed' : 'idle')
+        $videoGenError.set(failed?.error ?? null)
         $videoGenStage.set(null)
       }
 
@@ -136,6 +163,10 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
         return
       }
 
+      if ($videoPack.get()?.packId === active.id && $videoPackStatus.get() === 'ready') {
+        return
+      }
+
       const manifestUrl = await resolveClipUrl(active.manifest_url)
 
       if (epoch !== currentClearEpoch()) {
@@ -143,7 +174,9 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
       }
 
       if (!manifestUrl) {
-        $videoPackStatus.set('unavailable')
+        if (!$videoPack.get()) {
+          $videoPackStatus.set('unavailable')
+        }
 
         return
       }
@@ -158,7 +191,10 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
 
       if (manifest.schema_version !== 'spiritagent.video.pack/1' || !Array.isArray(manifest.clips)) {
         log.warn('video-pack-store', 'unsupported pack manifest schema')
-        $videoPackStatus.set('unavailable')
+
+        if (!$videoPack.get()) {
+          $videoPackStatus.set('unavailable')
+        }
 
         return
       }
@@ -176,17 +212,37 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
         clipUrls.set(idle.action, idleUrl)
       }
 
-      $videoPack.set({ packId: active.id, packVersion: active.pack_version, manifest, clipUrls })
+      if (!idleUrl) {
+        if (!$videoPack.get()) {
+          $videoPackStatus.set('unavailable')
+        }
+
+        return
+      }
+
+      const coverUrl = manifest.cover_path ? await resolveClipUrl(manifest.cover_path) : null
+
+      if (epoch !== currentClearEpoch() || revision !== generationRevision) {
+        return
+      }
+
+      $videoPack.set({ packId: active.id, packVersion: active.pack_version, manifest, clipUrls, coverUrl })
       $videoPackStatus.set('ready')
     } catch (err) {
       log.warn('video-pack-store', 'hydrateVideoPack failed', err)
 
       if (epoch === currentClearEpoch()) {
-        $videoPackStatus.set('unavailable')
+        if (!$videoPack.get()) {
+          $videoPackStatus.set('unavailable')
+        }
       }
     } finally {
       if (epoch === currentClearEpoch()) {
         inflight = null
+
+        if (revision !== generationRevision) {
+          void hydrateVideoPack()
+        }
       }
     }
   })()
@@ -221,8 +277,23 @@ export async function resolveVideoClipUrl(pack: ActiveVideoPack, action: string)
 
 /** 发起按参考生成（LLM 演绎脚本 → i2v → 服务端处理）；进度与结果经 companion.video 事件回流。
  * 请求被拒绝（守卫 / 供应商未配置）时把后端公开文案写入失败态，不进入 generating。 */
-export async function generateVideoPack(opts: { force?: boolean } = {}): Promise<boolean> {
-  if ($auth.get().kind !== 'authenticated' || requestingGeneration || $videoGenState.get() === 'generating') {
+export async function generateVideoPack(
+  opts: {
+    force?: boolean
+    outfitId?: number
+    sourcePackId?: number
+    action?: string
+    feedback?: string
+    retryPackId?: number
+  } = {}
+): Promise<boolean> {
+  if ($auth.get().kind !== 'authenticated') {
+    return false
+  }
+
+  if (requestingGeneration || $videoGenState.get() === 'generating') {
+    $videoGenError.set('已有视频形象任务进行中，请等待完成后再试')
+
     return false
   }
 
@@ -232,9 +303,17 @@ export async function generateVideoPack(opts: { force?: boolean } = {}): Promise
   requestingGeneration = true
 
   const res = await authedApi<VideoPackWire>({
-    body: { force: opts.force === true },
+    body: {
+      force: opts.force === true,
+      outfit_id: opts.outfitId,
+      source_pack_id: opts.sourcePackId,
+      action: opts.action,
+      feedback: opts.feedback
+    },
     method: 'POST',
-    path: '/api/companion/video-packs/generate'
+    path: opts.retryPackId
+      ? `/api/companion/video-packs/${opts.retryPackId}/retry`
+      : '/api/companion/video-packs/generate'
   })
 
   if (epoch !== currentClearEpoch()) {
@@ -264,9 +343,29 @@ export async function generateVideoPack(opts: { force?: boolean } = {}): Promise
   $videoGenStage.set(res.value.status === 'processing' ? 'script' : null)
   $videoGenError.set(null)
 
-  if (res.value.status !== 'processing') {
-    await hydrateVideoPack(true)
+  await hydrateVideoPack(true)
+
+  return true
+}
+
+export async function activateVideoPack(packId: number): Promise<boolean> {
+  const epoch = currentClearEpoch()
+  const res = await authedApi({ method: 'PUT', path: `/api/companion/video-packs/${packId}/activate` })
+
+  if (epoch !== currentClearEpoch()) {
+    return false
   }
+
+  if (!res.ok) {
+    if (res.reason === 'err') {
+      $videoGenError.set(backendDetailMessage(res.error, 'Unable to activate video'))
+    }
+
+    return false
+  }
+
+  $videoGenError.set(null)
+  await hydrateVideoPack(true)
 
   return true
 }

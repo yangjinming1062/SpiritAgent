@@ -95,6 +95,7 @@ from services.application.generation import (
     regenerate_avatar_from_image,
     regenerate_outfit_draft,
     resolve_uploaded_avatar_path,
+    retry_video_pack,
     schedule_initial_room,
     select_avatar,
     set_outfit_policy,
@@ -959,7 +960,7 @@ async def post_video_pack_generate(
     user: CurrentUser,
     db: DbSession,
 ) -> VideoPackResponse:
-    """按参考生成视频包：LLM 演绎脚本 → 参考图 i2v → 服务端抠像与分割 → 发布后自动激活。
+    """按参考生成视频包：逐动作脚本与关键帧 → Grok 首尾帧短片 → 语义抠像与循环验收。
     生成与处理在后台进行，进度与结果经 companion.video.progress / ready / failed 事件回流。"""
     try:
         pack = await create_video_pack_from_reference(
@@ -967,7 +968,25 @@ async def post_video_pack_generate(
             user.id,
             outfit_id=body.outfit_id,
             force=body.force,
+            source_pack_id=body.source_pack_id,
+            action=body.action,
+            feedback=body.feedback,
         )
+    except VideoPackError as exc:
+        raise _video_pack_http_error(exc)
+    return VideoPackResponse(
+        id=pack.id,
+        outfit_id=pack.outfit_id,
+        pack_version=pack.pack_version,
+        status=pack.status,
+        active=pack.active,
+    )
+
+
+@router.post("/video-packs/{pack_id}/retry", response_model=VideoPackResponse)
+async def post_video_pack_retry(pack_id: int, user: CurrentUser, db: DbSession) -> VideoPackResponse:
+    try:
+        pack = await retry_video_pack(db, user.id, pack_id)
     except VideoPackError as exc:
         raise _video_pack_http_error(exc)
     return VideoPackResponse(

@@ -22,6 +22,7 @@ from .service import (
     pack_response,
     resume_processing_packs,
     resume_video_generation_jobs,
+    retry_pack,
 )
 
 __all__ = [
@@ -41,6 +42,7 @@ __all__ = [
     "drain_video_generation",
     "list_pack_responses",
     "pack_response",
+    "retry_pack",
     "resume_processing_packs",
     "resume_video_generation_jobs",
     "validate_pack_manifest",

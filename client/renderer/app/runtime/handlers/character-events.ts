@@ -196,7 +196,17 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
       }
 
       const p = decodePayload<{ stage?: string }>(event.payload)
-      const stages: readonly VideoGenStage[] = ['script', 'submit', 'generate', 'download', 'process', 'publish']
+
+      const stages: readonly VideoGenStage[] = [
+        'script',
+        'pose',
+        'submit',
+        'generate',
+        'download',
+        'process',
+        'publish'
+      ]
+
       const stage = stages.find(s => s === p?.stage) ?? null
 
       videoPackEventReceived()
@@ -216,6 +226,7 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
         $videoGenState.set('failed')
         $videoGenStage.set(null)
         $videoGenError.set(p?.reason || '视频形象生成失败，请稍后重试')
+        void hydrateVideoPack(true)
       }
 
       break

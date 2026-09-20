@@ -14,9 +14,10 @@ import {
   resolveVideoAction,
   type VideoActionKey
 } from '@/modules/character'
+import { log } from '@/shared/lib/log'
 
 import type { VideoClipSpec } from './types'
-import { $videoPack, type ActiveVideoPack, resolveVideoClipUrl } from './video-pack-store'
+import { $videoPack, $videoPackStatus, type ActiveVideoPack, resolveVideoClipUrl } from './video-pack-store'
 
 // 命中探测（舞台像素坐标）：返回 true 命中身体 / false 透明 / null 无数据。
 export const $videoHitTest = atom<((nx: number, ny: number) => boolean | null) | null>(null)
@@ -34,7 +35,7 @@ function useCurrentAction(): VideoActionKey {
       lastXRef.current = pos.x
       const deltaXSign = last === null || pos.x === last ? 0 : pos.x > last ? 1 : -1
       setAction(resolveVideoAction({ locomotion: $spatialLocomotion.get(), deltaXSign }))
-      raf = window.setTimeout(tick, 120) as unknown as number
+      raf = window.setTimeout(tick, 120)
     }
 
     tick()
@@ -47,7 +48,7 @@ function useCurrentAction(): VideoActionKey {
 
 function clipFor(pack: ActiveVideoPack, action: VideoActionKey): VideoClipSpec {
   const available = new Set(pack.manifest.clips.map(c => c.action))
-  const wanted = pickAvailableClip(action, available, pack.manifest.default_action as VideoActionKey)
+  const wanted = pickAvailableClip(action, available, pack.manifest.default_action)
 
   return (
     pack.manifest.clips.find(c => c.action === wanted) ??
@@ -56,134 +57,222 @@ function clipFor(pack: ActiveVideoPack, action: VideoActionKey): VideoClipSpec {
   )
 }
 
-export function VideoStage(): React.JSX.Element {
-  const pack = useStore($videoPack)
-  const action = useCurrentAction()
-  const [frontUrl, setFrontUrl] = useState<string | null>(null)
-  const [backUrl, setBackUrl] = useState<string | null>(null)
-  const frontRef = useRef<HTMLVideoElement>(null)
-  const backRef = useRef<HTMLVideoElement>(null)
-  const currentClipRef = useRef<VideoClipSpec | null>(null)
+/** 等到真实解码首帧就绪，旧画面在加载和失败期间继续播放。 */
+async function loadVideo(el: HTMLVideoElement, url: string, signal: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    let settled = false
+    let frameCallback: number | null = null
 
-  const packRef = useRef<ActiveVideoPack | null>(pack)
-  packRef.current = pack
+    const finish = (error?: Error): void => {
+      if (settled) {
+        return
+      }
 
-  const canvas = pack?.manifest.canvas
+      settled = true
+      window.clearTimeout(timer)
+      el.removeEventListener('loadeddata', ready)
+      el.removeEventListener('error', failed)
+      signal.removeEventListener('abort', aborted)
 
-  // 动作变化 → 预加载到备用 video，可播放首帧后与前台交换（避免切换黑帧/闪烁）。
-  useEffect(() => {
-    if (!pack) {
-      setFrontUrl(null)
-      setBackUrl(null)
+      if (frameCallback !== null) {
+        el.cancelVideoFrameCallback(frameCallback)
+      }
+
+      if (error) {
+        el.pause()
+        reject(error)
+      } else {
+        resolve()
+      }
+    }
+
+    const ready = (): void => {
+      void el.play().then(
+        () => {
+          if (!settled) {
+            frameCallback = el.requestVideoFrameCallback(() => finish())
+          }
+        },
+        () => finish(new Error('Video playback failed'))
+      )
+    }
+
+    const failed = (): void => finish(new Error('Video decode failed'))
+    const aborted = (): void => finish(new Error('Video load cancelled'))
+    const timer = window.setTimeout(() => finish(new Error('Video load timed out')), 15000)
+    el.addEventListener('loadeddata', ready, { once: true })
+    el.addEventListener('error', failed, { once: true })
+    signal.addEventListener('abort', aborted, { once: true })
+
+    if (signal.aborted) {
+      aborted()
 
       return
     }
 
-    let cancelled = false
+    el.src = url
+    el.load()
+  })
+}
+
+export function VideoStage(): React.JSX.Element {
+  const pack = useStore($videoPack)
+  const action = useCurrentAction()
+  const videos = useRef<[HTMLVideoElement | null, HTMLVideoElement | null]>([null, null])
+  const front = useRef<number | null>(null)
+  const [visible, setVisible] = useState<number | null>(null)
+  const currentClip = useRef<VideoClipSpec | null>(null)
+  const rootRef = useRef<HTMLDivElement>(null)
+  const canvas = pack?.manifest.canvas
+
+  useEffect(() => {
+    if (!pack) {
+      return
+    }
+
     const clip = clipFor(pack, action)
-    currentClipRef.current = clip
+
+    if (currentClip.current?.path === clip.path) {
+      return
+    }
+
+    const controller = new AbortController()
+    let pauseTimer = 0
+
+    const slot = front.current === 0 ? 1 : 0
+    const elements = videos.current
+    const el = elements[slot]
 
     void (async () => {
-      const url = await resolveVideoClipUrl(pack, clip.action)
-
-      if (cancelled || !url) {
+      if (!el) {
         return
       }
 
-      setBackUrl(url)
-      const el = backRef.current
+      try {
+        const url = await resolveVideoClipUrl(pack, clip.action)
 
-      if (el) {
-        el.currentTime = 0
-        await el.play().catch(() => undefined)
-        // 就绪后交换：备用成为前台
-        setFrontUrl(url)
-        setBackUrl(null)
+        if (controller.signal.aborted) {
+          return
+        }
+
+        if (!url) {
+          throw new Error('Video asset unavailable')
+        }
+
+        await loadVideo(el, url, controller.signal)
+
+        if (controller.signal.aborted) {
+          return
+        }
+
+        const previous = front.current
+        front.current = slot
+        currentClip.current = clip
+        setVisible(slot)
+        pauseTimer = window.setTimeout(() => {
+          if (previous !== null && front.current !== previous) {
+            elements[previous]?.pause()
+          }
+        }, 140)
+      } catch (error) {
+        if (controller.signal.aborted) {
+          return
+        }
+
+        log.warn('video-stage', 'Could not play action', error)
+
+        if (front.current === null) {
+          $videoPackStatus.set('unavailable')
+        }
       }
     })()
 
     return () => {
-      cancelled = true
+      controller.abort()
+      window.clearTimeout(pauseTimer)
+
+      for (let index = 0; index < elements.length; index += 1) {
+        if (index !== front.current) {
+          elements[index]?.pause()
+        }
+      }
     }
   }, [pack, action])
 
-  // 内容包围盒：以画布比例整体上报（视频片段自带透明留白，alpha 精化由命中遮罩负责）。
   useEffect(() => {
     if (!canvas) {
       return
     }
 
-    $spriteContentRect.set({
-      left: 0,
-      top: 0,
-      right: canvas.width,
-      bottom: canvas.height
-    })
+    $spriteContentRect.set({ left: 0, top: 0, right: canvas.width, bottom: canvas.height })
 
-    return () => {
-      $spriteContentRect.set(null)
-    }
+    return () => $spriteContentRect.set(null)
   }, [canvas])
-
-  // 命中探测登记：遮罩网格取时间上最接近的采样；坐标为舞台像素，
-  // 经组件自身包围盒（已含容器变换）归一化后映射到网格行列。
-  const rootRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     $videoHitTest.set((px, py) => {
-      const clip = currentClipRef.current
+      const clip = currentClip.current
+      const el = front.current === null ? null : videos.current[front.current]
       const grid = clip?.hitmask_grid
       const rect = rootRef.current?.getBoundingClientRect()
 
-      if (!clip || !grid || clip.hitmask.length === 0 || !rect || rect.width <= 0 || rect.height <= 0) {
+      if (!clip || !grid || !el || !rect || !el.videoWidth || !el.videoHeight || !clip.hitmask.length) {
         return null
       }
 
-      const [gw, gh] = grid
-      const nx = (px - rect.left) / rect.width
-      const ny = (py - rect.top) / rect.height
+      const scale = Math.min(rect.width / el.videoWidth, rect.height / el.videoHeight)
+      const width = el.videoWidth * scale
+      const height = el.videoHeight * scale
+      const nx = (px - rect.left - (rect.width - width) / 2) / width
+      const ny = (py - rect.top - (rect.height - height) / 2) / height
 
-      if (nx < 0 || nx > 1 || ny < 0 || ny > 1) {
+      if (nx < 0 || nx >= 1 || ny < 0 || ny >= 1) {
         return false
       }
 
-      const col = Math.min(gw - 1, Math.floor(nx * gw))
-      const row = Math.min(gh - 1, Math.floor(ny * gh))
-      const sample = clip.hitmask[Math.min(clip.hitmask.length - 1, Math.floor(clip.hitmask.length / 2))]
+      const [gw, gh] = grid
+      const col = Math.floor(nx * gw)
+      const row = Math.floor(ny * gh)
+      const sample = clip.hitmask[Math.min(clip.hitmask.length - 1, Math.floor(el.currentTime * clip.hitmask_fps))]
 
-      return ((sample[row] ?? 0) & (1 << col)) !== 0
+      return ((sample?.[row] ?? 0) & (1 << col)) !== 0
     })
+    const elements = videos.current
 
     return () => {
       $videoHitTest.set(null)
+
+      for (const el of elements) {
+        if (!el) {
+          continue
+        }
+
+        el.pause()
+        el.removeAttribute('src')
+        el.load()
+      }
     }
   }, [])
 
-  if (!pack || !canvas || !frontUrl) {
-    return <div className="h-full w-full" />
-  }
-
   return (
-    <div className="relative h-full w-full" ref={rootRef} style={{ aspectRatio: `${canvas.width} / ${canvas.height}` }}>
-      <video
-        autoPlay
-        className="h-full w-full object-contain"
-        loop
-        muted
-        playsInline
-        ref={frontRef}
-        src={frontUrl ?? undefined}
-      />
-      <video
-        className="hidden h-full w-full object-contain"
-        muted
-        playsInline
-        ref={backRef}
-        src={backUrl ?? undefined}
-      />
+    <div className="relative h-full w-full" ref={rootRef}>
+      {visible === null && pack?.coverUrl ? (
+        <img alt="" className="absolute inset-0 h-full w-full object-contain" src={pack.coverUrl} />
+      ) : null}
+      {[0, 1].map(slot => (
+        <video
+          className="absolute inset-0 h-full w-full object-contain"
+          key={slot}
+          loop
+          muted
+          playsInline
+          preload="auto"
+          ref={el => {
+            videos.current[slot] = el
+          }}
+          style={{ opacity: visible === slot ? 1 : 0, transition: 'opacity 120ms linear' }}
+        />
+      ))}
     </div>
   )
 }
-
-// 动作覆盖（预留）：显式覆盖优先于状态解析；视频链不驱动嘴部或视线。
-export const $videoActionOverride = atom<string | null>(null)

@@ -127,6 +127,9 @@ from .video import (
 from .video import drain_video_generation as drain_video_pack_generation
 from .video import resume_processing_packs as resume_processing_video_packs
 from .video import resume_video_generation_jobs as resume_video_generation_jobs
+from .video import (
+    retry_pack as retry_video_pack,
+)
 from .video_jobs import drain as drain_video_jobs
 from .video_jobs import (
     enqueue_video_job,
@@ -172,6 +175,7 @@ __all__ = [
     "activate_video_pack",
     "create_video_pack_from_clips",
     "create_video_pack_from_reference",
+    "retry_video_pack",
     "delete_video_pack",
     "list_pack_responses",
     "activate_outfit",

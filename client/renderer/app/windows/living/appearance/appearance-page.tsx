@@ -26,7 +26,7 @@ interface ModelSeedWizardState {
 
 // 外观页（DESIGN §5.5 / §6.1）：顶栏左侧切换形象分区（模型 / 视频），
 // 右侧形象大小为跨分区共享的桌面显示设置。模型分区提供建模状态与形象更新（ModelSection）；
-// 视频分区显示未就绪占位并承载外观参考（着装）管理。外观列表与种子图在页级水合，两种分区共用。
+// 视频分区承载逐动作预览、重做与外观参考（着装）管理。外观列表与种子图在页级水合，两种分区共用。
 export function AppearancePage(): React.JSX.Element {
   const renderMode = useStore($renderMode)
   const defaultScale = useStore($defaultScale)
@@ -76,8 +76,8 @@ export function AppearancePage(): React.JSX.Element {
         <Segmented<CharacterRenderMode>
           onChange={m => void onRenderModeClick(m)}
           options={[
-            { value: 'model', label: t.modeModel },
-            { value: 'video', label: t.modeVideo }
+            { value: 'video', label: t.modeVideo },
+            { value: 'model', label: t.modeModel }
           ]}
           value={renderMode}
         />

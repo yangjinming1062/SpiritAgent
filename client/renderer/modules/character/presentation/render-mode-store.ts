@@ -16,7 +16,7 @@ export const $renderMode = renderModePersisted.$atom
 export const setRenderMode = renderModePersisted.set
 
 /** 切换渲染方式：切到模型时由后端顺带触发模型生成；偏好只决定界面分区与生成意图，
- * 桌面实际渲染按各形象资产的就绪情况决定（模型优先，未就绪走通用兜底）。 */
+ * 桌面实际渲染按各形象资产的就绪情况决定（视频优先，其次模型，均未就绪走通用兜底）。 */
 export async function switchRenderMode(mode: CharacterRenderMode): Promise<void> {
   const previous = $renderMode.get()
 

@@ -98,6 +98,9 @@ class CompanionVideoPack(ModelBase, TimestampMixin):
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
     # 参考版本哈希：换装 / 参考变更后迟到的构建结果凭它被拒，不覆盖新外观的包
     reference_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
+    # 同一包及其单动作重做版本共用冻结参考字节；context_json 保存生成时角色资料。
+    reference_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
+    context_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -105,8 +108,8 @@ class CompanionVideoPack(ModelBase, TimestampMixin):
 class CompanionVideoJob(ModelBase, TimestampMixin):
     """角色视频动作任务：与聊天媒体 VideoGenJob 分离。status 是任务状态，
     stage 是其在链上的阶段（脚本 / 提交 / 生成 / 下载 / 处理 / 发布），二者分开持久化；
-    供应商等待不占数据库长事务。按参考生成的整包任务用哨兵动作 full 表示一条长视频任务，
-    上传导入按动作建行（一个任务对应一个动作）；provider_task_id 在提交成功后立即落库，
+    供应商等待不占数据库长事务。每个动作独立建行，成功动作与源素材可恢复；
+    provider_task_id 在提交成功后立即落库，
     进程重启凭它续轮询，不重复提交付费任务。"""
 
     __tablename__ = "companion_video_jobs"
@@ -123,15 +126,17 @@ class CompanionVideoJob(ModelBase, TimestampMixin):
     )
     stage: Mapped[str] = mapped_column(String(16), default="submit", server_default=text("'submit'"))
     provider: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
-    # 提交时钉死的模型名：轮询按它选择供应商协议（如 MiniMax v1/v2）
+    # 提交时钉死的模型名，配置改变后仍按原任务模型查询。
     model: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     provider_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
     reference_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
     input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
-    # 按参考生成：LLM 演绎脚本快照（动作 → 表现提示词与节奏提示）
+    # 按参考生成：单动作的起始姿态与运动描述快照。
     script_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     # 生成源视频的持久产物路径（companion-assets 裸路径），处理中断后凭它续跑
     artifact_path: Mapped[str | None] = mapped_column(String(2048), nullable=True, default=None)
+    pose_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_path: Mapped[str | None] = mapped_column(String(2048), nullable=True, default=None)
     attempt: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

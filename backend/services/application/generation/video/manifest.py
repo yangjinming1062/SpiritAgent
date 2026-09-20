@@ -41,9 +41,10 @@ class VideoClipSpec(BaseModel):
     # 进入 / 退出姿势标记（可选）：客户端用于判断接点是否需要过渡，不做形变。
     enter_pose: str | None = None
     exit_pose: str | None = None
-    # 每秒采样的低分辨率 alpha 命中遮罩 [sample][row][col 位行]
+    # 逐帧低分辨率 alpha 命中遮罩 [frame][row 列位行]。
     hitmask: list[list[int]] = Field(default_factory=list)
     hitmask_grid: tuple[int, int] | None = None
+    hitmask_fps: int = Field(gt=0, le=60)
 
 
 class VideoPackCanvas(BaseModel):

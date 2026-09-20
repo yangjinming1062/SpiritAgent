@@ -6,8 +6,10 @@ import {
   $avatarSeeds,
   $outfitPolicy,
   $outfits,
+  $renderMode,
   activateOutfit,
   deleteOutfit,
+  generateVideoPack,
   GenerationActionsGroup,
   hydrateAvatarSeeds,
   hydrateWardrobe,
@@ -32,7 +34,7 @@ const CARD_ACTION_CLASS =
 
 // 外观页外观分区（DESIGN §6.1）：左侧外观画廊（政策开关 + 设计入口 + 卡片流），
 // 右侧大图展示穿着中/选中外观；「设计新装」进入设计态后底部展开全宽设计抽屉，
-// 描述 / 参考图 / 微调反馈 / 确认入柜都在抽屉内完成。确认只表示参考图就绪，不触发生成。
+// 描述 / 参考图 / 微调反馈 / 确认入柜都在抽屉内完成。视频模式确认参考图后请求生成对应视频包。
 export function OutfitSection(): React.JSX.Element {
   const outfits = useStore($outfits)
   const outfitPolicy = useStore($outfitPolicy)
@@ -80,6 +82,10 @@ export function OutfitSection(): React.JSX.Element {
       // 与设计会话确认一致：始终带 JSON body（可空），避免无 body 的 POST 被 422。
       await window.spiritagent.api({ path: `/api/companion/outfits/${id}/confirm`, method: 'POST', body: {} })
       await hydrateWardrobe()
+
+      if ($renderMode.get() === 'video') {
+        void generateVideoPack({ outfitId: id })
+      }
     } catch (err) {
       log.warn('outfit', 'retry confirm failed', err)
     }
@@ -278,7 +284,11 @@ export function OutfitSection(): React.JSX.Element {
                             disabled={busyId === outfit.id}
                             onClick={e => {
                               e.stopPropagation()
-                              withBusy(outfit.id, () => activateOutfit(outfit.id))
+                              withBusy(outfit.id, () =>
+                                $renderMode.get() === 'video'
+                                  ? generateVideoPack({ outfitId: outfit.id })
+                                  : activateOutfit(outfit.id)
+                              )
                             }}
                             title={t.actions.wearTitle}
                             type="button"

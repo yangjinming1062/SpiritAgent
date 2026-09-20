@@ -66,6 +66,8 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         self.supports_first_frame = True
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
+        if req.last_frame_image or req.reference_images:
+            raise ValueError("MiniMax adapter does not implement pinned loop frames")
         model = req.model or self.config.model
         if _api_version(model) == "v2":
             path, payload = "/v2/video_generation", self._payload_v2(req, model)

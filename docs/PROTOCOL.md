@@ -184,6 +184,17 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 响应与 `command.result` 可能同时到达，Client 幂等消费；`hydrate=true` 替换历史，否则展示状态。自动压缩的 `compress.completed` 插入压缩状态，不与手动压缩的全量替换混用。
 
+### 1.10 视频动作包方法
+
+入口与载荷定义见 [companion API](../backend/api/v1/companion.py) 和 [视频 schema](../backend/modules/companion/schemas_video.py)。
+
+- 创建请求指定已确认外观；同参考就绪包可复用并启用。单动作重做必须同时指定源包和动作，生成新版本，复用其他动作；不能混入另一参考版本的素材。
+- 列表返回包状态、可恢复 / 可重做能力，以及逐动作状态、预览地址与演绎描述。上传包不提供生成式单动作重做，未知提交不提供自动恢复入口。所有资源按当前用户签名，返回地址不写回存储字段。
+- `retry` 恢复已知供应商任务或已有源素材；未知提交不自动重发。`activate` 同事务启用视频包和对应外观；构建中或使用中的包不可删除。
+- `companion.video.progress / ready / failed / activated` 只更新生成状态和资源，不写入聊天历史；事件丢失或重连后以列表恢复状态。
+
+桌面视频模式的服装设计在确认参考图后显式请求该外观的视频包；后端参考图确认本身仍只负责转正图像。新包成功前保留原形象，生成失败可以从外观列表继续发起，不能把参考图就绪显示为视频就绪。完整生成与资源恢复语义见 [PIPELINE](PIPELINE.md#6-视频动作包链)。
+
 ## 2. Client ↔ Runner 契约
 
 ### 2.1 链路与鉴权

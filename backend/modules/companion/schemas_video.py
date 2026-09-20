@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 # 视频片段较大（透明 WebM 数秒），经同一 base64 JSON 通道放宽到 32 MiB；
@@ -35,6 +37,18 @@ class VideoPackGenerateRequest(BaseModel):
 
     outfit_id: int | None = None
     force: bool = False
+    source_pack_id: int | None = None
+    action: Literal["idle", "walk_left", "walk_right", "drag"] | None = None
+    feedback: str = Field(default="", max_length=1000)
+
+
+class VideoActionResponse(BaseModel):
+    action: str
+    status: str
+    stage: str
+    error: str | None = None
+    clip_url: str | None = None
+    motion_prompt: str = ""
 
 
 class VideoPackResponse(BaseModel):
@@ -45,6 +59,9 @@ class VideoPackResponse(BaseModel):
     active: bool = False
     content_hash: str | None = None
     manifest_url: str | None = None
+    can_retry: bool = False
+    can_regenerate: bool = False
+    actions: list[VideoActionResponse] = Field(default_factory=list)
     error: str | None = None
 
 

@@ -12,9 +12,10 @@ export interface VideoClipSpec {
   loop: boolean
   enter_pose: string | null
   exit_pose: string | null
-  /** 每秒采样的低分辨率 alpha 命中遮罩：[sample][row] 为位行（bit i = 第 i 列） */
+  /** 逐帧 alpha 命中遮罩：[frame][row] 为位行（bit i = 第 i 列） */
   hitmask: number[][]
   hitmask_grid: [number, number] | null
+  hitmask_fps: number
 }
 
 export interface VideoPackCanvas {

@@ -17,7 +17,23 @@ logger = get_logger(__name__)
 
 # 有透明通道的常见像素格式（ffprobe pix_fmt）
 _ALPHA_PIX_FMTS: frozenset[str] = frozenset(
-    {"yuva420p", "yuva422p", "yuva444p", "yuva444p10le", "yuva420p10le", "bgra", "rgba", "argb", "abgr"},
+    {
+        "yuva420p",
+        "yuva422p",
+        "yuva444p",
+        "yuva444p10le",
+        "yuva444p12le",
+        "yuva444p16le",
+        "gbrap",
+        "gbrap10le",
+        "gbrap12le",
+        "gbrap16le",
+        "yuva420p10le",
+        "bgra",
+        "rgba",
+        "argb",
+        "abgr",
+    },
 )
 
 _FFMPEG_TIMEOUT_SECONDS = 600.0
@@ -39,20 +55,12 @@ class VideoProbe:
     duration_seconds: float
     codec_name: str
     pix_fmt: str
-    # WebM 容器 alpha_mode（1=透明）；VP9 透明以此为准
+    # 容器的 alpha 声明；交付另验解码像素。
     alpha_mode: int = 0
 
     @property
     def has_alpha(self) -> bool:
         return self.alpha_mode == 1 or self.pix_fmt in _ALPHA_PIX_FMTS
-
-    @property
-    def has_pixel_alpha(self) -> bool:
-        """像素格式自带 alpha（FFV1/PNG 等中间产物可被 FFmpeg 滤镜解码处理）。
-
-        WebM/VP9 的 BlockAdditional alpha 不在像素格式内，FFmpeg CLI 解码会丢弃，
-        不能作为滤镜输入；此类源须先转存为像素级 alpha 格式。"""
-        return self.pix_fmt in _ALPHA_PIX_FMTS
 
 
 def _binary(name: str) -> str:
@@ -119,9 +127,18 @@ def probe_video(path: Path) -> VideoProbe:
     )
 
 
+def alpha_input_args(path: Path) -> list[str]:
+    """VP9 alpha 必须显式使用 libvpx 解码；原生 FFmpeg VP9 解码器会丢弃辅助 alpha。"""
+    probe = probe_video(path)
+    if probe.codec_name == "vp9" and probe.has_alpha:
+        return ["-c:v", "libvpx-vp9"]
+    if probe.codec_name == "vp8" and probe.has_alpha:
+        return ["-c:v", "libvpx"]
+    return []
+
+
 def probe_alpha_side_data(path: Path) -> bool:
-    """WebM/VP9 交付产物的 alpha 真伪验收：FFmpeg CLI 解码不回读 BlockAdditional alpha，
-    只有封装层侧数据能证明 alpha 真实存在；ALPHA_MODE 标签单独不足以作为证据。"""
+    """检查 WebM 的 alpha 辅助数据是否存在；像素有效性由交付处理器另行验证。"""
     args = [
         _binary("ffprobe"),
         "-v",

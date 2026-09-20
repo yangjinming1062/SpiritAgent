@@ -110,7 +110,9 @@ export {
   $videoGenState,
   $videoHitTest,
   $videoPack,
+  $videoPacks,
   $videoPackStatus,
+  activateVideoPack,
   generateVideoPack,
   hydrateVideoPack
 } from './rendering/video'

@@ -39,6 +39,7 @@ class GrokVideoGenProvider(VideoGenProvider):
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
+        self.supports_loop_frames = config.model == "grok-imagine-video-1.5"
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         model = req.model or self.config.model
@@ -55,6 +56,16 @@ class GrokVideoGenProvider(VideoGenProvider):
             payload["aspect_ratio"] = req.aspect_ratio
         if req.first_frame_image:
             payload["image"] = {"url": req.first_frame_image, "type": "image_url"}
+
+        if req.last_frame_image or req.reference_images:
+            if model != "grok-imagine-video-1.5" or req.resolution.lower() not in ("480p", "720p"):
+                raise ValueError("Grok reference/first-last frame mode requires grok-imagine-video-1.5 at up to 720p")
+            if len(req.reference_images) > 7:
+                raise ValueError("Grok accepts at most seven reference images")
+            if req.last_frame_image:
+                payload["last_frame"] = {"url": req.last_frame_image}
+            if req.reference_images:
+                payload["reference_images"] = [{"url": image} for image in req.reference_images]
 
         resp = await self._client.post("/videos/generations", json=payload)
         body = raise_for_grok_response(resp, provider=self.provider_name, model=model)

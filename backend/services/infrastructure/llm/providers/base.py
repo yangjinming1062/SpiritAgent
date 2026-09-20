@@ -149,6 +149,8 @@ class VideoGenRequest:
     duration: int = 6
     resolution: str = "768P"
     first_frame_image: str | None = None
+    last_frame_image: str | None = None
+    reference_images: tuple[str, ...] = ()
     aspect_ratio: str | None = None
     model: str | None = None
 
@@ -183,6 +185,7 @@ class VideoGenProvider(BaseProvider):
     resolutions: tuple[str, ...] | None = None
     # 支持 first_frame_image 图生视频；False 时带首帧的请求跳过该供应商。
     supports_first_frame: bool = False
+    supports_loop_frames: bool = False
 
     @abstractmethod
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus: ...
