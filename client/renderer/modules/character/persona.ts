@@ -2,7 +2,7 @@ export interface OnboardingAnswers {
   name?: string
   biological_type?: string
   gender?: string
-  // appearance：外貌特征（脸 / 体型 / 标志性细节）。驱动 3D 模型生成与提示词；
+  // appearance：外貌特征（脸 / 体型 / 标志性细节）。驱动形象生成提示词；
   // 锁定之后的编辑里会被保留。
   appearance?: string
   // relationship：用户与精灵的关系（知己好友 / 赛博管家等）。只进入对话系统提示词，

@@ -278,7 +278,6 @@ class PersonaContext(BaseModel):
     complete: bool = False
     definition: dict[str, Any] = Field(default_factory=dict)
     current_mood: str | None = None
-    render_mode: str | None = None
 
 
 class RoomContext(BaseModel):
@@ -619,7 +618,6 @@ async def _collect_context(user_id: int) -> PlanningContext:
             complete=bool(persona and persona.is_complete),
             definition=definition,
             current_mood=persona.current_mood if persona is not None else None,
-            render_mode=persona.render_mode if persona is not None else None,
         ),
         room=RoomContext(
             active_brief=active_room.brief if active_room is not None else "",

@@ -13,8 +13,8 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 | 模块 | 内容 | 渲染与装配的所在层 |
 |---|---|---|
 | `chat.py` | 5 套预设体骨架、四职业双语头部、约 20 个系统提示词块、标题生成、上下文压缩 | `services/application/chat/`（prompt_blocks、prompt_presets、system_prompt、title_generator、context_compressor） |
-| `companion.py` | 心情、互动、空闲表达、空间行为、骨骼分类、性格标签（含种子词表）、角色设定与着装块标题 | `services/domains/companion/` |
-| `generation.py` | 头像改写、画风词典（外观参考专用 `anime_illustration` 与模型种子路由 `refined_anime_cg`/`realistic` 分槽，见 [PIPELINE §1.1](../../docs/PIPELINE.md#11-共用参考与种子图派生)）、姿态短语、全身画幅不可裁切部位、头像参考、全身扩展/视角派生、换装、编辑保持条款、拼图参考分工、出镜媒体、服装转写、房间模板与光线词典、审核合规改写、衣柜描述、房间陈设、视频演绎脚本指令与视频提示词骨架（见 [PIPELINE §6](../../docs/PIPELINE.md#6-视频动作包链)） | `services/infrastructure/llm/prompt_engineer.py`、`services/application/generation/`、`services/application/generation/video/`、`services/application/nightly/`、`services/adapters/tools/builtin/` |
+| `companion.py` | 心情、互动、空闲表达、空间行为、性格标签（含种子词表）、角色设定与着装块标题 | `services/domains/companion/` |
+| `generation.py` | 头像改写、画风词典（外观参考专用 `anime_illustration` 与全身模板缺省 `refined_anime_cg` 分槽，见 [PIPELINE §1.1](../../docs/PIPELINE.md#11-共用参考与种子图派生)）、姿态短语、全身画幅不可裁切部位、头像参考、全身扩展、换装、编辑保持条款、拼图参考分工、出镜媒体、服装转写、房间模板与光线词典、审核合规改写、衣柜描述、房间陈设、视频演绎脚本指令与视频提示词骨架（见 [PIPELINE §2](../../docs/PIPELINE.md#2-视频动作包链)） | `services/infrastructure/llm/prompt_engineer.py`、`services/application/generation/`、`services/application/generation/video/`、`services/application/nightly/`、`services/adapters/tools/builtin/` |
 | `memory.py` | 记忆维护政策（MEMORY_POLICY）、审查指令、用户资料上下文标签与块标题 | `services/domains/memory/`（memory_policy、memory_review、memory_bootstrap） |
 | `nightly.py` | 夜间规划、每日检查点、用户可见日记、内部夜间反思、片刻回复、片刻冲动决策 | `services/application/nightly/`、`services/application/moments/` |
 | `tools.py` | 16 个工具 schema 的主描述与参数描述 | `services/adapters/tools/`（builtin/ 与同级 *.py） |
@@ -27,8 +27,8 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 
 ### 保留在服务层的提示词数据（不在本包，调整时从所在文件入手）
 
-- `FullbodyTemplate` 物种/骨骼模板 dict（`prompt_engineer.py`）——dataclass 载体，与类型路由强耦合。
-- `_SPECIES_STYLE` / `_PRESET_SPECIES`（`prompt_engineer.py`）——模型种子画风路由数据而非文本。
+- `FullbodyTemplate` 物种姿态模板 dict（`prompt_engineer.py`）——dataclass 载体，按物种路由姿态与特效。
+- `_SPECIES_FLAVOR`（`prompt_engineer.py`）——物种特效文本模板，附加到对应物种的全身立绘提示词。
 - [夜间能力目录](../services/application/nightly/nightly_planning.py)——描述与参数选项随能力可用性装配，动作预算从执行端常量传入 `plan_limits`；检查规划提示词时同时核对目录、互斥组和参考图能力。
 - [语音气泡演绎能力](../services/infrastructure/llm/providers/speech_style.py)——按实际供应商、模型与音色装配能力和 JSON 示例，附加到陪伴终端请求；检查正文规则时一并核对。
 - 数据库 `AvatarAsset.prompt_json` 等审计字段是生成时快照，不是定义源。

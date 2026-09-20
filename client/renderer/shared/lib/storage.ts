@@ -9,9 +9,9 @@ interface StorageKeyConfig {
 const REGISTERED_STORAGE_KEYS = new Map<string, StorageKeyConfig>()
 const CLEAR_HANDLERS = new Set<() => void | Promise<void>>()
 
-// clearCompanionStorage 单调递增的 epoch 计数器。OPFS 写操作在 commit 前对照 epoch：
-// 不一致就视为过期登出，丢弃写入——避免上一位用户的 in-flight write 把新用户的
-// 文件写到刚清空的 OPFS 目录里（典型场景：登出与新登入间隔 < OPFS clear I/O 时间）。
+// clearCompanionStorage 单调递增的 epoch 计数器。异步写路径在落地前对照 epoch：
+// 不一致就视为过期登出，丢弃写入——避免上一位用户的 in-flight 写入把数据
+// 写到刚清空的存储里（典型场景：登出与新登入间隔小于清理 I/O 时间）。
 let clearEpoch = 0
 
 /** 当前 clearCompanionStorage epoch；异步写操作在 commit 前用它判活。 */
@@ -226,7 +226,7 @@ export async function clearCompanionStorage(): Promise<void> {
     }
   } catch {}
 
-  // 触发所有上层模块注册的清理处理器（包含 OPFS 缓存清空与内存 Atom 状态重置）
+  // 触发所有上层模块注册的清理处理器（含磁盘缓存清空与内存 Atom 状态重置）
   const tasks: Array<Promise<unknown> | void> = []
 
   for (const handler of CLEAR_HANDLERS) {
@@ -239,7 +239,7 @@ export async function clearCompanionStorage(): Promise<void> {
     } catch {}
   }
 
-  // 真等所有 handler（包括异步 OPFS 清理）落地——调用方需在 $auth.set 前 await 此函数，
+  // 真等所有 handler（包括异步清理）落地——调用方需在 $auth.set 前 await 此函数，
   // 避免 React 在 clear 完成前用陈旧 localStorage 值重渲染。
   await Promise.allSettled(tasks)
 }

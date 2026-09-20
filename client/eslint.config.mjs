@@ -513,7 +513,7 @@ export default [
     // 生产渲染面（精灵窗 / 工具窗 / 共享层）禁止裸 fetch：后端签名 URL 是相对路径，
     // 渲染进程 origin（dev 的 vite / 打包后的 file://）解析不到，请求会打到 vite 拿回
     // Vite 的 HTML 入口回退。后端数据与字节一律走主进程桥（api / apiAsset /
-    // apiAssetBuffer / apiAssetModelUrl）。确需直连处逐行 eslint-disable 写明 URL 来源。
+    // apiAssetBuffer）。确需直连处逐行 eslint-disable 写明 URL 来源。
     files: [
       'renderer/app/**/*.{ts,tsx}',
       'renderer/modules/**/*.{ts,tsx}',
@@ -527,7 +527,7 @@ export default [
           selector:
             "CallExpression[callee.name='fetch'], CallExpression[callee.type='MemberExpression'][callee.property.name='fetch']",
           message:
-            '生产渲染面禁裸 fetch——后端相对 URL 在渲染进程 origin 上解析不到。走 window.spiritagent 的 api / apiAsset / apiAssetBuffer / apiAssetModelUrl 桥；例外逐行 eslint-disable 注明 URL 来源。'
+            '生产渲染面禁裸 fetch——后端相对 URL 在渲染进程 origin 上解析不到。走 window.spiritagent 的 api / apiAsset / apiAssetBuffer 桥；例外逐行 eslint-disable 注明 URL 来源。'
         }
       ]
     }

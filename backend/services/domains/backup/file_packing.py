@@ -13,10 +13,11 @@ from components import SETTINGS
 URL_PREFIXES: dict[str, str] = {
     "/api/companion/asset/": "companion-assets/",
     "/api/companion/avatar/file/": "companion-avatars/",
-    "/api/companion/model/file/": "companion-models/",
     "/api/media/videos/": "desktop-attachments/",
 }
-USER_DIRECTORIES = ("companion-assets", "companion-models")
+
+# 用户维度、整目录按 user_id 重命名的资产根目录；备份按该常量在父子两代实例间搬迁。
+USER_ASSET_ROOT = "companion-assets"
 
 
 def _storage_path(value: str) -> str:
@@ -100,8 +101,7 @@ class FileRestoreResult:
 def collect_files_for_export(user_id: int, rows: dict[str, list[dict[str, Any]]]) -> list[Path]:
     root = Path(SETTINGS.data_dir).resolve()
     files: set[Path] = set()
-    for namespace in USER_DIRECTORIES:
-        files.update(path for path in (root / namespace / str(user_id)).rglob("*") if path.is_file())
+    files.update(path for path in (root / USER_ASSET_ROOT / str(user_id)).rglob("*") if path.is_file())
     session_ids = {str(row["id"]) for row in rows.get("conversations", [])}
     for session_id in session_ids:
         files.update(path for path in (root / "desktop-attachments" / session_id).rglob("*") if path.is_file())
@@ -139,7 +139,7 @@ def restore_files(
                 continue
             relative = PurePosixPath(source.relative_to(source_root).as_posix())
             parts = relative.parts
-            if parts[0] in USER_DIRECTORIES and len(parts) >= 3 and parts[1] == str(source_uid):
+            if parts[0] == USER_ASSET_ROOT and len(parts) >= 3 and parts[1] == str(source_uid):
                 target_relative = PurePosixPath(parts[0], str(target_uid), *parts[2:])
             elif parts[0] == "desktop-attachments" and len(parts) >= 3:
                 if parts[1] not in conversations:

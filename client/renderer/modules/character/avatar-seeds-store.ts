@@ -1,6 +1,6 @@
 // 激活形象的种子图本地缓存：自备图参考图（头像种子 / 全身种子）由客户端在
 // 生成、确认与水合时写入并持久化，弹窗直接读本地缓存展示。
-// 原始 asset 路径入库，展示 URL 经 resolvePortraitUrl 解析（优先 OPFS 本地字节）。
+// 原始 asset 路径入库，展示 URL 经 resolvePortraitUrl 解析。
 
 import { atom } from 'nanostores'
 
@@ -12,7 +12,7 @@ export interface AvatarSeeds {
   avatarId: number | null
   /** 半身头像展示 URL（asset_url），独立全身参考的自备图参考图。 */
   avatarUrl: string | null
-  /** 独立全身种子图展示 URL（seed_fullbody_url），模型 / 换装 / 房间的自备图参考图。 */
+  /** 独立全身种子图展示 URL（seed_fullbody_url），换装 / 房间的自备图参考图。 */
   fullbodySeedUrl: string | null
 }
 

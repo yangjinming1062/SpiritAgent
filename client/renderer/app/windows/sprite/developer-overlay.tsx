@@ -2,7 +2,6 @@ import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 
 import { $spriteEmotion, $spriteState } from '@/modules/character'
-import { $engineFps, $powerProfile, $rendererBackend } from '@/modules/character/rendering/model'
 import { X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 
@@ -13,9 +12,6 @@ export function DeveloperOverlay(): React.JSX.Element | null {
   const spriteState = useStore($spriteState)
   const emotion = useStore($spriteEmotion)
   const logs = useStore($devLogs)
-  const backend = useStore($rendererBackend)
-  const powerProfile = useStore($powerProfile)
-  const fps = useStore($engineFps)
   const [minimized, setMinimized] = useState(false)
   const overlayRef = useRef<HTMLDivElement>(null)
 
@@ -68,13 +64,6 @@ export function DeveloperOverlay(): React.JSX.Element | null {
             </div>
             <div>
               Emotion: <span className="text-strong">{emotion || 'none'}</span>
-            </div>
-            <div>
-              Render: <span className="text-white font-bold">{backend ?? '…'}</span>
-            </div>
-            <div>
-              Power: <span className="text-white font-bold">{powerProfile}</span>{' '}
-              <span className="text-emerald-600">({fps.toFixed(0)} fps)</span>
             </div>
           </div>
 

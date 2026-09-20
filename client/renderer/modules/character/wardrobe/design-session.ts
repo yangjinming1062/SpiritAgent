@@ -6,7 +6,6 @@ import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/sto
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 import { pickAvatarImage, type PickedImage, resolvePortraitUrl } from '../avatar-image'
-import { $renderMode } from '../presentation/render-mode-store'
 import { generateVideoPack } from '../rendering/video/video-pack-store'
 
 import { hydrateWardrobe } from './wardrobe-store'
@@ -249,9 +248,8 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
         setMessages([])
         onConfirmed()
 
-        if ($renderMode.get() === 'video') {
-          void generateVideoPack({ outfitId: draft.id })
-        }
+        // 视频形象是唯一渲染方式：确认新外观后为它创建独立动作包。
+        void generateVideoPack({ outfitId: draft.id })
       }
     } catch (err) {
       if (!isCurrent(revision, epoch)) {

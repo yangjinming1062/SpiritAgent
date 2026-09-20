@@ -10,7 +10,6 @@ from modules.companion import (
     AvatarGenerateRequest,
     AvatarHistoryResponse,
     AvatarUploadRequest,
-    CompanionModelResponse,
     CompanionOperationResponse,
     FullbodyAdoptRequest,
     FullbodyConfirmFrontRequest,
@@ -20,8 +19,6 @@ from modules.companion import (
     FullbodySeedKind,
     ImageAdoptRequest,
     ImagePromptResponse,
-    ModelGenerateRequest,
-    ModelSeedGenerateRequest,
     OnboardingStateResponse,
     OutfitAdoptRequest,
     OutfitConfirmRequest,
@@ -35,7 +32,6 @@ from modules.companion import (
     OutfitResponse,
     PersonaResponse,
     PersonaUpdate,
-    RenderModeRequest,
     VideoPackCreateRequest,
     VideoPackGenerateRequest,
     VideoPackListResponse,
@@ -50,9 +46,6 @@ from services.application.generation import (
     FrontSeedMissingError,
     FullbodyGenerationError,
     ImageSealedError,
-    ModelGenerationError,
-    ModelGenerationInProgressError,
-    ModelProviderNotConfiguredError,
     OutfitDraftExpiredError,
     OutfitError,
     OutfitNotFoundError,
@@ -76,18 +69,14 @@ from services.application.generation import (
     delete_video_pack,
     finalize_avatar,
     generate_avatar,
-    generate_companion_model,
     generate_fullbody_front_reference,
     generate_fullbody_reference,
-    generate_model_seed_back,
-    generate_model_seed_front,
     get_active_avatar,
     get_avatar_job_lock,
     get_outfit_policy,
     list_avatar_history,
     list_outfits,
     list_pack_responses,
-    model_response,
     outfit_response,
     prepare_fullbody_prompt,
     prepare_outfit_prompt,
@@ -104,16 +93,13 @@ from services.application.generation import (
 from services.domains.companion import (
     PersonaValidationError,
     confirm_portrait,
-    get_active_model,
     get_onboarding_state,
     get_or_create_persona,
     schedule_personality_tag_refresh,
-    set_render_mode,
     update_persona,
 )
 from services.infrastructure.assets import (
     resolve_companion_asset_path,
-    resolve_companion_model_path,
     serve_ranged_file,
     verify_signed_asset_request,
     verify_signed_avatar_request,
@@ -142,7 +128,6 @@ async def get_persona(user: CurrentUser, db: DbSession) -> PersonaResponse:
         is_complete=persona.is_complete,
         definition_json=persona.definition_json,
         personality_tags=tags if isinstance(tags, list) else [],
-        render_mode=persona.render_mode or "video",
         current_mood=persona.current_mood,
     )
 
@@ -161,7 +146,6 @@ async def put_persona(body: PersonaUpdate, user: CurrentUser, db: DbSession) -> 
         is_complete=persona.is_complete,
         definition_json=persona.definition_json,
         personality_tags=tags if isinstance(tags, list) else [],
-        render_mode=persona.render_mode or "video",
         current_mood=persona.current_mood,
     )
 
@@ -406,82 +390,6 @@ async def post_fullbody_front_reference(
     return avatar_response(asset)
 
 
-@router.post("/avatar/{avatar_id}/fullbody/model-front", response_model=AvatarAssetResponse)
-@limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
-async def post_model_seed_front(
-    request: Request,
-    avatar_id: int,
-    body: ModelSeedGenerateRequest,
-    user: CurrentUser,
-) -> AvatarAssetResponse:
-    try:
-        async with get_avatar_job_lock(user.id):
-            asset = await generate_model_seed_front(
-                user_id=user.id,
-                avatar_id=avatar_id,
-                feedback=body.feedback,
-                mode=body.mode,
-            )
-    except AvatarNotFoundError as exc:
-        raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
-    except FrontSeedMissingError as exc:
-        raise HTTPException(status_code=400, detail={"error": "请先确认外观参考正面立绘", "reason": str(exc)})
-    except AvatarSourceUnreadableError as exc:
-        raise HTTPException(status_code=409, detail={"error": str(exc)})
-    except FullbodyGenerationError as exc:
-        err_detail = getattr(exc, "internal", str(exc))
-        logger.warning("model front seed generation failed", extra={"user_id": user.id, "error": err_detail})
-        raise HTTPException(status_code=502, detail={"error": str(exc), "reason": str(exc)})
-    except AvatarGenerationError as exc:
-        logger.warning("model front seed guard rejected", extra={"user_id": user.id, "error": exc.internal})
-        raise HTTPException(status_code=400, detail={"error": str(exc)})
-    except MissingLlmConfigError as exc:
-        logger.warning("post_model_seed_front missing config", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "LLM provider 未配置，请先在设置中配置 chat provider", "reason": str(exc)},
-        )
-    return avatar_response(asset)
-
-
-@router.post("/avatar/{avatar_id}/fullbody/back", response_model=AvatarAssetResponse)
-@limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
-async def post_model_seed_back(
-    request: Request,
-    avatar_id: int,
-    body: ModelSeedGenerateRequest,
-    user: CurrentUser,
-) -> AvatarAssetResponse:
-    try:
-        async with get_avatar_job_lock(user.id):
-            asset = await generate_model_seed_back(
-                user_id=user.id,
-                avatar_id=avatar_id,
-                feedback=body.feedback,
-                mode=body.mode,
-            )
-    except AvatarNotFoundError as exc:
-        raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
-    except FrontSeedMissingError as exc:
-        raise HTTPException(status_code=400, detail={"error": "请先生成正面全身图", "reason": str(exc)})
-    except AvatarSourceUnreadableError as exc:
-        raise HTTPException(status_code=409, detail={"error": str(exc)})
-    except FullbodyGenerationError as exc:
-        err_detail = getattr(exc, "internal", str(exc))
-        logger.warning("fullbody back generation failed", extra={"user_id": user.id, "error": err_detail})
-        raise HTTPException(status_code=502, detail={"error": str(exc), "reason": str(exc)})
-    except AvatarGenerationError as exc:
-        logger.warning("fullbody back guard rejected", extra={"user_id": user.id, "error": exc.internal})
-        raise HTTPException(status_code=400, detail={"error": str(exc)})
-    except MissingLlmConfigError as exc:
-        logger.warning("post_model_seed_back missing config", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "LLM provider 未配置，请先在设置中配置 chat provider", "reason": str(exc)},
-        )
-    return avatar_response(asset)
-
-
 @router.post("/avatar/{avatar_id}/fullbody/confirm-front", response_model=AvatarAssetResponse)
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_confirm_front(
@@ -600,76 +508,14 @@ async def post_fullbody_adopt(
     return avatar_response(asset)
 
 
-@router.get("/model", response_model=CompanionModelResponse | None)
-async def get_model(user: CurrentUser, db: DbSession) -> CompanionModelResponse | None:
-    model = await get_active_model(db, user.id)
-    if model is None:
-        return None
-    return model_response(model)
-
-
-@router.post("/model", response_model=CompanionModelResponse, status_code=status.HTTP_201_CREATED)
-@limiter.limit(lambda: f"{SETTINGS.companion_model_generate_rate_limit_per_minute}/minute")
-async def post_model(
-    request: Request,  # required by @limiter.limit
-    user: CurrentUser,
-    db: DbSession,
-    body: ModelGenerateRequest = Body(default_factory=ModelGenerateRequest),
-) -> CompanionModelResponse:
-    try:
-        model = await generate_companion_model(
-            db,
-            user_id=user.id,
-            species_override=body.species_override,
-            provider_override=body.provider,
-            force=body.force,
-        )
-    except ModelGenerationInProgressError as exc:
-        logger.info("post_model already in progress", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(status_code=409, detail={"error": str(exc)})
-    except ModelProviderNotConfiguredError as exc:
-        logger.warning("post_model provider not configured", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(status_code=400, detail={"error": str(exc)})
-    except ModelGenerationError as exc:
-        logger.warning("post_model generation error", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(status_code=502, detail={"error": str(exc)})
-    return model_response(model)
-
-
-@router.post("/render-mode", response_model=PersonaResponse)
-async def post_render_mode(body: RenderModeRequest, user: CurrentUser, db: DbSession) -> PersonaResponse:
-    persona = await set_render_mode(db, user_id=user.id, render_mode=body.render_mode)
-
-    if body.render_mode == "model":
-        try:
-            await generate_companion_model(db, user_id=user.id, force=False)
-        except ModelGenerationError as exc:
-            logger.info("render_mode model dispatch skipped", extra={"user_id": user.id, "error": str(exc)})
-    elif body.render_mode == "video":
-        # 切到视频时顺带按当前外观发起生成（复用同参考版本的激活包，不重复付费）；失败只记录，
-        # 不阻塞偏好保存，用户可在视频分区看到失败原因并重试。
-        try:
-            await create_video_pack_from_reference(db, user.id, force=False)
-        except VideoPackError as exc:
-            logger.info("render_mode video dispatch skipped", extra={"user_id": user.id, "error": str(exc)})
-
-    return PersonaResponse(
-        definition_json=persona.definition_json or "{}",
-        is_complete=persona.is_complete,
-        personality_tags=[],
-        render_mode=persona.render_mode or "video",
-        current_mood=persona.current_mood,
-    )
-
-
 def _outfit_http_error(exc: OutfitError) -> HTTPException:
     if isinstance(exc, OutfitNotFoundError):
-        return HTTPException(status_code=404, detail={"error": "找不到对应的外观", "reason": str(exc)})
+        raise HTTPException(status_code=404, detail={"error": "找不到对应的外观", "reason": str(exc)})
     if isinstance(exc, OutfitDraftExpiredError):
-        return HTTPException(status_code=409, detail={"error": str(exc), "reason": "draft_expired"})
+        raise HTTPException(status_code=409, detail={"error": str(exc), "reason": "draft_expired"})
     if isinstance(exc, OutfitStateError):
-        return HTTPException(status_code=409, detail={"error": str(exc), "reason": "invalid_state"})
-    return HTTPException(status_code=400, detail={"error": str(exc), "reason": "invalid_request"})
+        raise HTTPException(status_code=409, detail={"error": str(exc), "reason": "invalid_state"})
+    raise HTTPException(status_code=400, detail={"error": str(exc), "reason": "invalid_request"})
 
 
 @router.get("/outfits", response_model=OutfitListResponse)
@@ -1055,24 +901,5 @@ async def serve_companion_asset(
     result = resolve_companion_asset_path(user_id, filename)
     if result is None:
         raise HTTPException(status_code=404, detail="Asset not found")
-    path, content_type = result
-    return await serve_ranged_file(request, path, content_type)
-
-
-@public_router.get("/model/file/{user_id}/{filename:path}")
-async def serve_model_file(
-    request: Request,
-    user_id: int,
-    filename: str,
-    session: OptionalSession,
-    expires: int | None = None,
-    sig: str | None = None,
-) -> Response:
-    is_authed = session is not None and (session[0].id == user_id)
-    if not is_authed and not verify_signed_asset_request(user_id, filename, expires, sig):
-        raise HTTPException(status_code=403, detail="Invalid or expired signature")
-    result = resolve_companion_model_path(user_id, filename)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Model not found")
     path, content_type = result
     return await serve_ranged_file(request, path, content_type)

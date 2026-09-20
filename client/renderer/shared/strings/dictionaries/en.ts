@@ -1024,10 +1024,8 @@ export const dict: Dictionary = {
       send: 'Send'
     },
     appearance: {
-      modeModel: 'Model',
-      modeVideo: 'Video',
       videoNotReady:
-        'Video look is not ready yet: the desktop shows the model or the egg fallback. Outfit references can be managed here in the meantime.',
+        'Video look is not ready yet: the desktop shows the egg fallback. Outfit references can be managed here in the meantime.',
       videoReady: (version: number, clips: number) => `Video look ready (version ${version}, ${clips} actions)`,
       videoIdle: 'Idle',
       videoWalkLeft: 'Walk left',
@@ -1056,30 +1054,9 @@ export const dict: Dictionary = {
       videoGenStageDefault: 'Generating the video look…',
       videoGenHint:
         'Generates separate idle, walking and suspended actions from the same reference. Preview or regenerate each action. Confirming a new outfit creates a new video look; the existing look stays until it is ready.',
-      modelHint:
-        'Switching to the model walks you through a wizard to generate each model front portrait (multi-view providers also add a back portrait); each requires a manual tap. Once confirmed, the cloud-side model is generated (1–3 minutes). During generation and on failure the video or the programmatic egg takes over.',
       companionSize: 'Companion size',
       companionSizeHint: 'Default display scale of the sprite on the desktop.',
-      scaleAria: 'Companion size',
-      modelStatusReady: 'Model ready',
-      modelStatusGenerating: 'Generating model…',
-      modelStatusFailed: 'Model generation failed',
-      modelStatusMissing: 'No model yet',
-      modelSeeds: 'Modeling seed images',
-      modelSeedsLoadFailed: 'Could not load model seed images. Click “Update look” to retry.',
-      modelSeedFront: 'Front seed',
-      modelSeedBack: 'Back seed',
-      modelSeedMissing: 'Not generated',
-      modelUpdateAction: 'Update look…',
-      modelUpdateDesc:
-        'Regenerate the modeling seed images; once confirmed, the model is rebuilt (1–3 minutes) while the current look stays.',
-      modelRebuildAction: 'Rebuild model',
-      modelRebuildTitle: 'Rebuild model',
-      modelRebuildBody:
-        'The model will be regenerated from the current seed images (1–3 minutes) and swapped in automatically when done.',
-      modelDressingNote: 'A model look is fixed at modeling time; design new outfits under Appearance reference.',
-      modelWizardConfirm: 'Confirm and rebuild',
-      modelStageAria: 'Model look preview'
+      scaleAria: 'Companion size'
     },
     room: {
       intro: 'Change the mood, roll back to an earlier room, or lock the room policy — all here.',

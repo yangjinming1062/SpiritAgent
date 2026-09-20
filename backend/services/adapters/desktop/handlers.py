@@ -62,13 +62,10 @@ from services.application.chat import (
 )
 from services.application.generation import (
     AVATAR_JOB_LOCKS,
-    MODEL_JOB_LOCKS,
     AvatarGenerationError,
-    ModelGenerationError,
     get_avatar_job_lock,
     raise_if_image_sealed,
     regenerate_avatar,
-    request_model_download_retry,
 )
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.companion import (
@@ -259,7 +256,6 @@ def _clear_user_gateway_state(user_id: int) -> None:
     _last_check_affect_ts.pop(user_id, None)
     _last_should_act_ts.pop(user_id, None)
     AVATAR_JOB_LOCKS.pop(user_id, None)
-    MODEL_JOB_LOCKS.pop(user_id, None)
 
 
 async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | None = None) -> bool:
@@ -1826,20 +1822,6 @@ def _register_session_handlers(
         return {"queued": True, "job_id": job_id}
 
     dispatcher.register("avatar.regenerate", avatar_regenerate)
-
-    async def companion_model_retry_download(params: dict) -> dict:
-        # 已付费 3D 结果的下载恢复：在 web 进程内调 request_model_download_retry，能力链重新驱动到 SPEC 校验。
-        model_id = params.get("model_id")
-        if not _is_nonneg_int(model_id) or model_id <= 0:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "model_id must be a positive int")
-        async with SESSION_LOCAL() as db:
-            try:
-                model = await request_model_download_retry(db, user_id=user_id, model_id=model_id)
-            except ModelGenerationError as exc:
-                raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
-        return {"model_id": model.id, "status": model.status}
-
-    dispatcher.register("companion.model.retryDownload", companion_model_retry_download)
 
     async def tts_list_voices(params: dict) -> dict:
         # 语音目录（plan §3.5 / §6）。可选 language 过滤——未知值直接返回完整目录，避免将来新增 tag 时 400。

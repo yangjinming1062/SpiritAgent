@@ -520,7 +520,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   const [fullbodyHistoryIndices, setFullbodyHistoryIndices] = useState<Record<string, number>>({})
 
-  // 全身画幅随物种骨骼分桶（竖/方/横并存）：确认卡取景框比例跟随当前立绘图片本身
+  // 确认卡取景框比例跟随当前立绘图片本身
   const fullbodyRatio = useNaturalAspectRatio(fullbodyFrontUrl)
 
   // 在「形象描述」题目提交上来的参考图。本地用 IndexedDB 草稿缓存持久化，

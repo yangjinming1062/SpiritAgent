@@ -5,14 +5,7 @@ import { persistString, storedString } from '@/shared/lib/storage'
 import { $surfaceOpen } from '@/shared/store/surfaces'
 
 import { $focusContext, $lastIdleSeconds } from './activity'
-import {
-  $clipOverride,
-  $effectiveTier,
-  $spriteAction,
-  $spriteEmotion,
-  $spriteState,
-  setSpriteState
-} from './companion-store'
+import { $effectiveTier, $spriteAction, $spriteEmotion, $spriteState, setSpriteState } from './companion-store'
 import { $llmAutonomy } from './prefs'
 
 export function getBaseSpriteHeight(): number {
@@ -60,8 +53,8 @@ type EdgeDockSide = 'none' | 'left' | 'right'
 
 const $spatialLocale = atom<SpatialLocale>('home')
 
-// 可见内容包围盒（归一化到舞台盒）：角色实际可见像素的范围，由渲染层上报——
-// 模型用轮廓 alpha 外接矩形；蛋等未上报路径按整盒兜底。
+// 可见内容包围盒（归一化到舞台盒）：角色实际可见像素的范围，由渲染层上报；
+// 蛋等未上报路径按整盒兜底。
 // 必须先于下方位置原子声明：home 初值求值期就经 contentBox 读它，晚声明会 TDZ 崩页。
 export const $spriteContentRect = atom<{ left: number; top: number; right: number; bottom: number } | null>(null)
 
@@ -605,7 +598,6 @@ export function startDrag(): void {
   clearDockState()
 
   $spatialLocomotion.set('drag')
-  $clipOverride.set('drag')
   $spriteState.set('interacting')
 }
 
@@ -649,7 +641,6 @@ export function endDragAt(pos: { x: number; y: number }): void {
   $spatialPos.set(safe)
   $homePosition.set(safe)
   $spatialLocomotion.set('still')
-  $clipOverride.set('drag_end')
   $spriteAction.set('drag_end')
   setSpriteState('interacting', { durationMs: 500 })
   $spatialLocale.set('home')
@@ -675,7 +666,7 @@ export function resetToHomePosition(): void {
 export function initSpatial(): () => void {
   // 启动恢复的出屏判定依赖内容包围盒（整盒兜底会把透明留白算进身体，出屏量与
   // dock 落点都会算偏）。getPosition 的 IPC 往返几乎总是快于渲染层装配上报——
-  // rect 未上报时等首次上报再恢复；3s 兜底防模型/蛋等不上报的渲染路径丢失恢复。
+  // rect 未上报时等首次上报再恢复；3s 兜底防视频/蛋等不上报的渲染路径丢失恢复。
   const restoreSavedPosition = (saved: { x: number; y: number }): void => {
     if (userInteracted) {
       return
@@ -825,7 +816,7 @@ export function initSpatial(): () => void {
     $spatialPos.set($isEdgeDocked.get() ? { ...cur, y: next.y } : next)
   })
 
-  // 渲染层装配/模型加载完成后才上报内容包围盒——启动期按新盒重贴 home 与当前位
+  // 渲染层装配/视频加载完成后才上报内容包围盒——启动期按新盒重贴 home 与当前位
   // （脚从画布底落到角色脚底）。用户已拖拽过则位置属用户意志，不自动迁移。
   const unlistenContent = $spriteContentRect.listen(() => {
     if (userInteracted) {

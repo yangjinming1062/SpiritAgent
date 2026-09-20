@@ -11,7 +11,6 @@ export {
 export { awaitAvatarRegeneration, resolveAvatarRegeneration } from './avatar-regen-store'
 export { $avatarSeeds, clearAvatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds } from './avatar-seeds-store'
 export {
-  $clipOverride,
   $companionLifecycle,
   $effectiveTier,
   $spriteAction,
@@ -91,15 +90,11 @@ export {
   setResponsePreference
 } from './prefs'
 export {
-  $renderMode,
-  type CharacterRenderMode,
   type CompanionPresentation,
   type CompanionRendererKind,
   pickAvailableClip,
   resolveCompanionPresentation,
   resolveVideoAction,
-  setRenderMode,
-  switchRenderMode,
   type VideoActionKey
 } from './presentation'
 export { bindProactiveLineSpeaker, type ProactiveLineOptions } from './proactive-speak'

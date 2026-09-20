@@ -48,13 +48,12 @@ from services.infrastructure.llm import (
 )
 
 from .avatar_service import (
-    _fullbody_aspect_for,
-    _fullbody_size_for,
+    _FULLBODY_ASPECT,
+    _FULLBODY_SIZE,
     _generate_one_portrait_with_moderation_retry,
     _persist_portrait_bytes,
     _persist_portrait_or_draft,
     _read_temp_media_bytes,
-    _resolve_fullbody_rig_type,
     delete_portrait_file,
     get_avatar_job_lock,
     load_avatar_bytes_as_data_uri,
@@ -220,8 +219,8 @@ async def list_outfits(db: AsyncSession, user_id: int) -> list[OutfitResponse]:
 async def _outfit_generation_context(
     db: AsyncSession,
     user_id: int,
-) -> tuple[AvatarAsset, str, str, str, str, str]:
-    """返回 (激活头像, 物种, 外貌, 性格, 画风, 骨骼类型)；守卫失败抛 OutfitStateError。"""
+) -> tuple[AvatarAsset, str, str, str, str]:
+    """返回 (激活头像, 物种, 外貌, 性格, 画风)；守卫失败抛 OutfitStateError。"""
     avatar = await _active_avatar(db, user_id)
     if avatar is None:
         raise OutfitStateError("找不到激活头像行，请先完成形象确认")
@@ -232,15 +231,12 @@ async def _outfit_generation_context(
     # 外观立绘属外观参考链：画风恒 REFERENCE_ILLUSTRATION_STYLE，与形象参考同一动漫插画画风
     style = REFERENCE_ILLUSTRATION_STYLE
     species = str(definition.get("biological_type") or "").strip()
-    # 与正面种子同桶取 rig（缓存命中则零 LLM 调用）——换装立绘画幅/姿态与确认形象一致，衣柜内不漂移
-    rig_type = await _resolve_fullbody_rig_type(db, user_id, avatar, species)
     return (
         avatar,
         species,
         str(definition.get("appearance") or "").strip(),
         str(definition.get("personality") or "").strip(),
         style,
-        rig_type,
     )
 
 
@@ -286,7 +282,6 @@ async def _generate_outfit_fullbody(
     user_id: int,
     *,
     species: str,
-    rig_type: str,
     style: str,
     appearance: str,
     personality: str,
@@ -296,11 +291,11 @@ async def _generate_outfit_fullbody(
     image_edit: bool = False,
     edit_base_uri: str | None = None,
 ) -> str:
-    """生成换装全身立绘草稿（persist=False 落 temp-media）；返回裸路径。画幅与姿态模板随 rig_type 分桶。
+    """生成换装全身立绘草稿（persist=False 落 temp-media）；返回裸路径。画幅与姿态模板恒 9:16。
 
     微调模式传 prompt_override + edit_base_uri（编辑底图替换种子参考，提示词只含增量，identity_uri 为 None）。"""
     prompt = prompt_override or build_outfit_prompt(
-        template=resolve_fullbody_template(species, rig_type, style),
+        template=resolve_fullbody_template(species, style),
         style_id=style,
         feedback=feedback,
         appearance=appearance,
@@ -310,7 +305,7 @@ async def _generate_outfit_fullbody(
         prompt,
         user_id,
         reference_image=edit_base_uri if image_edit else identity_uri,
-        size=_fullbody_size_for(rig_type),
+        size=_FULLBODY_SIZE,
         persist=False,
         image_edit=image_edit,
     )
@@ -337,7 +332,6 @@ async def create_outfit_draft(
         appearance,
         personality,
         style,
-        rig_type,
     ) = await _outfit_generation_context(db, user_id)
     identity_uri = await _require_fullbody_seed_readable(avatar)
     # 结束读事务：整合与生图往返期间不占连接（短会话纪律）
@@ -367,7 +361,6 @@ async def create_outfit_draft(
     draft_url = await _generate_outfit_fullbody(
         user_id,
         species=species,
-        rig_type=rig_type,
         style=style,
         appearance=appearance,
         personality=personality,
@@ -417,7 +410,6 @@ async def regenerate_outfit_draft(
         appearance,
         personality,
         style,
-        rig_type,
     ) = await _outfit_generation_context(db, user_id)
 
     source = safe_json_loads(outfit.source_json or "{}", default={})
@@ -443,7 +435,7 @@ async def regenerate_outfit_draft(
         # 着装描述恒为一段完整文本（设计稿已整合原始文字要求），再叠加本次修改要求
         combined_feedback = "；".join(part for part in (garment_text or description, effective_feedback) if part)
         prompt = build_outfit_prompt(
-            template=resolve_fullbody_template(species, rig_type, style),
+            template=resolve_fullbody_template(species, style),
             style_id=style,
             feedback=combined_feedback,
             appearance=appearance,
@@ -453,7 +445,6 @@ async def regenerate_outfit_draft(
     draft_url = await _generate_outfit_fullbody(
         user_id,
         species=species,
-        rig_type=rig_type,
         style=style,
         appearance=appearance,
         personality=personality,
@@ -538,7 +529,6 @@ async def prepare_outfit_prompt(
         appearance,
         personality,
         style,
-        rig_type,
     ) = await _outfit_generation_context(db, user_id)
     await _require_fullbody_seed_readable(avatar)
     # 结束读事务：整合往返期间不占连接（短会话纪律）
@@ -555,12 +545,12 @@ async def prepare_outfit_prompt(
         )
     feedback = garment_text or effective_description or "为角色设计一套新的着装"
     return build_outfit_prompt(
-        template=resolve_fullbody_template(species, rig_type, style),
+        template=resolve_fullbody_template(species, style),
         style_id=style,
         feedback=feedback,
         appearance=appearance,
         personality=personality,
-        canvas_aspect=_fullbody_aspect_for(rig_type),
+        canvas_aspect=_FULLBODY_ASPECT,
     )
 
 
@@ -586,7 +576,6 @@ async def prepare_outfit_regenerate_prompt(
         appearance,
         personality,
         style,
-        rig_type,
     ) = await _outfit_generation_context(db, user_id)
     await _require_fullbody_seed_readable(avatar)
     source = safe_json_loads(outfit.source_json or "{}", default={})
@@ -602,12 +591,12 @@ async def prepare_outfit_regenerate_prompt(
     if not combined_feedback:
         raise OutfitError("请先描述想要的着装或修改要求")
     return build_outfit_prompt(
-        template=resolve_fullbody_template(species, rig_type, style),
+        template=resolve_fullbody_template(species, style),
         style_id=style,
         feedback=combined_feedback,
         appearance=appearance,
         personality=personality,
-        canvas_aspect=_fullbody_aspect_for(rig_type),
+        canvas_aspect=_FULLBODY_ASPECT,
     )
 
 

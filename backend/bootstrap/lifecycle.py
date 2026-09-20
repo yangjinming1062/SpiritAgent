@@ -27,8 +27,6 @@ from services.application.generation import (
     drain_room_backdrop_jobs,
     drain_video_jobs,
     drain_video_pack_generation,
-    recover_stuck_model_generations,
-    resume_inflight_pipelines,
     resume_pending_video_jobs,
     resume_processing_video_packs,
     resume_video_generation_jobs,
@@ -77,9 +75,6 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # IM 通道桥：拉起各用户已启用的渠道绑定，回合不依赖用户 WS。
     await start_channel_manager()
     await resume_pending_video_jobs()
-    await recover_stuck_model_generations()
-    # 模型生成管道并入 web 后：从持久状态（companion_models.status IN FLIGHT）重启尚未完成的 task。
-    await resume_inflight_pipelines()
     # 视频包按参考生成：凭持久化句柄（任务 ID / 产物 / 脚本）续跑，不重复提交付费任务。
     await resume_video_generation_jobs()
     # 视频包上传导入：无可续跑句柄的 processing 行按失败落库并广播。

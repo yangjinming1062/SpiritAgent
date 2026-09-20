@@ -67,8 +67,6 @@ contextBridge.exposeInMainWorld('spiritagent', {
     ipcRenderer.invoke(IPC.invoke.apiAsset, request),
   apiAssetBuffer: (request: { preferCache?: boolean; contentHash?: string; url: string }) =>
     ipcRenderer.invoke(IPC.invoke.apiAssetBuffer, request),
-  apiAssetModelUrl: (request: { contentHash?: string; url: string }) =>
-    ipcRenderer.invoke(IPC.invoke.apiAssetModelUrl, request),
   sessionHistory: {
     get: (sessionId: string) => ipcRenderer.invoke(IPC.invoke.sessionHistoryGet, sessionId),
     save: (sessionId: string, snapshot: SessionHistorySnapshot) =>

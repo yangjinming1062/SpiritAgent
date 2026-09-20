@@ -1,6 +1,5 @@
 import asyncio
 import base64
-import gzip
 import hashlib
 import hmac
 import secrets
@@ -127,7 +126,6 @@ def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str
         "jpg": "image/jpeg",
         "jpeg": "image/jpeg",
         "webp": "image/webp",
-        "glb": "model/gltf-binary",
         "mp4": "video/mp4",
         "webm": "video/webm",
         "mov": "video/quicktime",
@@ -184,13 +182,6 @@ def unlink_companion_asset(storage_path: str | None) -> Path | None:
         return None
 
 
-def compress_glb(data: bytes) -> bytes:
-    """用 gzip level 6 无损压缩 GLB 字节，保持逐位精度的同时大幅缩减传输体积。"""
-    if len(data) >= 2 and data[0] == 0x1F and data[1] == 0x8B:
-        return data
-    return gzip.compress(data, compresslevel=6)
-
-
 def sniff_media_ext(data: bytes) -> str | None:
     """识别图片、视频与音频的文件签名；不保证文件完整或可解码。"""
     for magic, ext in _MEDIA_MAGIC:
@@ -214,52 +205,9 @@ def sniff_media_ext(data: bytes) -> str | None:
     return None
 
 
-def _models_root() -> Path:
-    return Path(SETTINGS.data_dir) / "companion-models"
-
-
-def save_companion_model(data: bytes, *, user_id: int, compress: bool = True) -> str:
-    user_dir = _models_root() / str(user_id)
-    user_dir.mkdir(parents=True, exist_ok=True)
-    token = secrets.token_urlsafe(8)
-    filename = f"model_{token}.glb"
-    payload = compress_glb(data) if compress else data
-    with open(user_dir / filename, "wb") as f:
-        f.write(payload)
-    logger.info(
-        "Saved companion 3D model",
-        extra={"user_id": user_id, "size": len(payload), "raw_size": len(data), "compressed": compress},
-    )
-    return f"companion-models/{user_id}/{filename}"
-
-
-def resolve_companion_model_path(user_id: int, filename: str) -> tuple[Path, str] | None:
-    name = Path(filename).name
-    if "/" in name or "\\" in name or ".." in name:
-        return None
-    filepath = _models_root() / str(user_id) / name
-    if not filepath.exists():
-        return None
-    return filepath, "model/gltf-binary"
-
-
 def compute_file_sha256(path: Path | str) -> str:
     h = hashlib.sha256()
     with open(path, "rb") as f:
         while chunk := f.read(256 * 1024):
             h.update(chunk)
     return h.hexdigest()
-
-
-def get_companion_model_sha256(user_id: int, filename: str) -> str | None:
-    resolved = resolve_companion_model_path(user_id, filename)
-    if resolved is None:
-        return None
-    return compute_file_sha256(resolved[0])
-
-
-def build_signed_model_url(user_id: int, filename: str, *, ttl_seconds: int = _ASSET_URL_TTL_SECONDS) -> str:
-    expires_at = int(time.time()) + ttl_seconds
-    sig = _sign(user_id, filename, expires_at)
-    qs = urlencode({"expires": expires_at, "sig": sig})
-    return f"/api/companion/model/file/{user_id}/{filename}?{qs}"

@@ -969,9 +969,7 @@ export const dict = {
       send: '发送'
     },
     appearance: {
-      modeModel: '模型',
-      modeVideo: '视频',
-      videoNotReady: '视频形象尚未就绪：桌面先以模型或蛋形呈现，这里可先管理外观参考。',
+      videoNotReady: '视频形象尚未就绪：桌面先以蛋形呈现，这里可先管理外观参考。',
       videoReady: (version: number, clips: number) => `视频形象已就绪（版本 ${version}，包含 ${clips} 个动作）`,
       videoIdle: '待机',
       videoWalkLeft: '向左行走',
@@ -999,28 +997,9 @@ export const dict = {
       videoGenStageDefault: '视频形象生成中…',
       videoGenHint:
         '从同一参考图分别生成待机、左右行走和悬空动作。可逐个预览或重做；新服装确认后生成新的视频外观，成功前保留原形象。',
-      modelHint:
-        '切到模型会先在向导内逐张生成模型正面立绘（多视角供应商再补一张背面立绘），每张均需手动点按触发；全部确认后触发云端模型生成（1~3 分钟），生成期间与失败时由视频或程序化蛋兜底显示。',
       companionSize: '形象大小',
       companionSizeHint: '精灵在桌面上的默认显示比例。',
-      scaleAria: '形象大小',
-      modelStatusReady: '模型已就绪',
-      modelStatusGenerating: '模型生成中…',
-      modelStatusFailed: '模型生成失败',
-      modelStatusMissing: '尚未生成模型',
-      modelSeeds: '建模种子图',
-      modelSeedsLoadFailed: '建模种子图加载失败，请点击“更新形象”重试。',
-      modelSeedFront: '正面种子',
-      modelSeedBack: '背面种子',
-      modelSeedMissing: '未生成',
-      modelUpdateAction: '更新形象…',
-      modelUpdateDesc: '重新生成建模种子图，全部确认后重建模型（约 1~3 分钟），期间保持当前显示。',
-      modelRebuildAction: '重新建模',
-      modelRebuildTitle: '重建模型',
-      modelRebuildBody: '将基于当前种子图重新生成模型（约 1~3 分钟），完成后自动替换显示。',
-      modelDressingNote: '模型形象的穿着在建模时固定，更换穿着请到外观参考设计新装。',
-      modelWizardConfirm: '确认，重建模型',
-      modelStageAria: '模型形象预览'
+      scaleAria: '形象大小'
     },
     room: {
       intro: '换个心情、回滚到之前的房间、或者锁定房间政策——都在这里。',

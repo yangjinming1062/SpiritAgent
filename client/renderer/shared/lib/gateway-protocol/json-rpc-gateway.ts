@@ -11,7 +11,6 @@ type GatewayEventName =
   | 'companion.video.activated'
   | 'companion.video.failed'
   | 'companion.video.ready'
-  | 'companion.render_mode.changed'
   | 'companion.room.failed'
   | 'companion.room.invalidated'
   | 'companion.room.progress'

@@ -6,7 +6,6 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 
 import { personaFromWire } from './persona-mappers'
-import { $renderMode, setRenderMode } from './presentation/render-mode-store'
 
 export interface PersonaDefinition {
   name: string
@@ -37,7 +36,6 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
     definition_json?: string
     is_complete?: boolean
     personality_tags?: string[]
-    render_mode?: string
     current_mood?: string | null
   }>({
     path: '/api/companion/persona'
@@ -77,15 +75,11 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
   const parsed = safeJsonParse<Record<string, string>>(p.definition_json, {})
 
   // 必须在所有持久化写入之前做第二次 auth 检查：登出 race 里 response 已经返回，
-  // setRenderMode 把 stale 值写进刚 clearCompanionStorage 清空的 localStorage——
-  // 下一位用户读到错误的 renderMode。第二道闸门同时守护 setRenderMode / $persona.set /
-  // $personalityTags.set 三处写入（中间无 await，原子性由 JS 单线程保证）。
+  // 把 stale 值写进刚 clearCompanionStorage 清空的 localStorage 会污染下一位用户。
+  // 第二道闸门同时守护 $persona.set / $personalityTags.set 两处写入
+  // （中间无 await，原子性由 JS 单线程保证）。
   if ($auth.get().kind !== 'authenticated') {
     return { ok: false }
-  }
-
-  if ((p.render_mode === 'model' || p.render_mode === 'video') && p.render_mode !== $renderMode.get()) {
-    setRenderMode(p.render_mode)
   }
 
   $persona.set(

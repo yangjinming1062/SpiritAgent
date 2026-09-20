@@ -1,4 +1,4 @@
-"""生成应用流程：形象、外观、房间、模型与媒体生成的生命周期编排。"""
+"""生成应用流程：形象、外观、房间与媒体生成的生命周期编排。"""
 
 from .avatar_service import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
@@ -18,8 +18,6 @@ from .avatar_service import (
     generate_avatar,
     generate_fullbody_front_reference,
     generate_fullbody_reference,
-    generate_model_seed_back,
-    generate_model_seed_front,
     get_active_avatar,
     get_avatar_job_lock,
     list_avatar_history,
@@ -41,19 +39,6 @@ from .image_generation import (
     generate_images,
     resolve_image_gen_chain,
 )
-from .model.pipeline import (
-    MODEL_JOB_LOCKS,
-    ModelGenerationError,
-    ModelGenerationInProgressError,
-    ModelProviderNotConfiguredError,
-    recover_stuck_model_generations,
-    resume_inflight_pipelines,
-    signed_model_url,
-)
-from .model_service import (
-    generate_companion_model,
-    request_model_download_retry,
-)
 from .outfit_service import (
     OutfitDraftExpiredError,
     OutfitError,
@@ -74,7 +59,6 @@ from .outfit_service import (
 )
 from .response_builders import (
     avatar_response,
-    model_response,
     outfit_response,
 )
 from .room_backdrop_service import (
@@ -155,10 +139,6 @@ __all__ = [
     "VideoPackStateError",
     "ImageGenerationError",
     "ImageSealedError",
-    "MODEL_JOB_LOCKS",
-    "ModelGenerationError",
-    "ModelGenerationInProgressError",
-    "ModelProviderNotConfiguredError",
     "OutfitDraftExpiredError",
     "OutfitError",
     "OutfitNotFoundError",
@@ -198,9 +178,6 @@ __all__ = [
     "enqueue_video_job",
     "finalize_avatar",
     "generate_avatar",
-    "generate_companion_model",
-    "generate_model_seed_back",
-    "generate_model_seed_front",
     "generate_fullbody_front_reference",
     "generate_fullbody_reference",
     "generate_images",
@@ -216,7 +193,6 @@ __all__ = [
     "list_avatar_history",
     "list_outfits",
     "load_avatar_bytes_as_data_uri",
-    "model_response",
     "normalize_avatar_url_to_bare",
     "outfit_response",
     "prepare_fullbody_prompt",
@@ -227,23 +203,19 @@ __all__ = [
     "regenerate_avatar",
     "regenerate_avatar_from_image",
     "regenerate_outfit_draft",
-    "request_model_download_retry",
     "resolve_image_gen_chain",
     "resolve_self_reference_data_uri",
     "resolve_uploaded_avatar_path",
-    "resume_inflight_pipelines",
     "resume_pending_video_jobs",
     "resume_processing_video_packs",
     "resume_video_generation_jobs",
     "resume_room_generation",
     "response_for_backdrop",
-    "recover_stuck_model_generations",
     "schedule_initial_room",
     "schedule_room_generation",
     "schedule_room_prompt",
     "select_avatar",
     "set_backdrop_policy",
     "set_outfit_policy",
-    "signed_model_url",
     "upload_avatar",
 ]

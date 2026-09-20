@@ -310,7 +310,6 @@ export interface IpcInvokeContract {
     url: string
   }) => Promise<string> | string
   'spiritagent:api:asset-buffer': (request: { preferCache?: boolean; contentHash?: string; url: string }) => Promise<Uint8Array> | Uint8Array
-  'spiritagent:api:asset-model-url': (request: { contentHash?: string; url: string }) => string | Promise<string>
 
   // 会话历史本地缓存（user 维度由主进程从当前会话解析；登出/换号清空走主进程 auth 的 clearLocalAssetCaches）
   'spiritagent:session-history:get': (sessionId: string) => SessionHistorySnapshot | null | Promise<SessionHistorySnapshot | null>
@@ -470,7 +469,6 @@ export const IPC = {
     api: 'spiritagent:api',
     apiAsset: 'spiritagent:api:asset',
     apiAssetBuffer: 'spiritagent:api:asset-buffer',
-    apiAssetModelUrl: 'spiritagent:api:asset-model-url',
     sessionHistoryGet: 'spiritagent:session-history:get',
     sessionHistorySave: 'spiritagent:session-history:save',
     sessionHistoryRemove: 'spiritagent:session-history:remove',

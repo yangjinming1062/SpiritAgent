@@ -77,36 +77,6 @@ class Settings(BaseSettings):
     # 抠像 onnx 模型（data_dir/models/<name>.onnx）：背景不纯色时必需，纯色背景走色键不依赖。
     matting_model: str = Field(default="isnet-general-use", validation_alias="MATTING_MODEL")
 
-    model_generation_provider: str = Field(default="tripo", validation_alias="MODEL_GENERATION_PROVIDER")
-    model_generation_poll_interval_seconds: float = Field(
-        default=5.0,
-        validation_alias="MODEL_GENERATION_POLL_INTERVAL_SECONDS",
-    )
-    model_generation_poll_backoff_max_seconds: float = Field(
-        default=40.0,
-        validation_alias="MODEL_GENERATION_POLL_BACKOFF_MAX_SECONDS",
-    )
-    model_generation_max_poll_seconds: float = Field(
-        default=1800.0,
-        validation_alias="MODEL_GENERATION_MAX_POLL_SECONDS",
-    )
-
-    tripo_api_key: str = Field(default="", validation_alias="TRIPO_API_KEY")
-    tripo_base_url: str = Field(default="https://openapi.tripo3d.ai/v3", validation_alias="TRIPO_BASE_URL")
-    tripo_model_version: str = Field(default="v3.1-20260211", validation_alias="TRIPO_MODEL_VERSION")
-    tripo_face_limit: int = Field(default=2000000, validation_alias="TRIPO_FACE_LIMIT")
-    tripo_texture_quality: str = Field(default="extreme", validation_alias="TRIPO_TEXTURE_QUALITY")
-    tripo_geometry_quality: str = Field(default="detailed", validation_alias="TRIPO_GEOMETRY_QUALITY")
-    tripo_enable_autofix: bool = Field(default=True, validation_alias="TRIPO_ENABLE_AUTOFIX")
-
-    hunyuan_api_key: str = Field(default="", validation_alias="HUNYUAN_API_KEY")
-    hunyuan_base_url: str = Field(default="https://tokenhub.tencentmaas.com", validation_alias="HUNYUAN_BASE_URL")
-    hunyuan_model_version: str = Field(default="hy-3d-3.1", validation_alias="HUNYUAN_MODEL_VERSION")
-    hunyuan_generate_type: str = Field(default="Normal", validation_alias="HUNYUAN_GENERATE_TYPE")
-    hunyuan_face_count: int = Field(default=0, validation_alias="HUNYUAN_FACE_COUNT")
-    hunyuan_enable_pbr: bool = Field(default=True, validation_alias="HUNYUAN_ENABLE_PBR")
-    hunyuan_result_format: str = Field(default="GLB", validation_alias="HUNYUAN_RESULT_FORMAT")
-
     companion_asset_signing_key: str
     ssrf_allowed_cidrs: str = Field(default="", validation_alias="SSRF_ALLOWED_CIDRS")
 
@@ -235,10 +205,6 @@ class Settings(BaseSettings):
     companion_avatar_generate_rate_limit_per_minute: int = Field(
         default=3,
         validation_alias="COMPANION_AVATAR_GENERATE_RATE_LIMIT_PER_MINUTE",
-    )
-    companion_model_generate_rate_limit_per_minute: int = Field(
-        default=1,
-        validation_alias="COMPANION_MODEL_GENERATE_RATE_LIMIT_PER_MINUTE",
     )
     companion_outfit_generate_rate_limit_per_hour: int = Field(
         default=1,

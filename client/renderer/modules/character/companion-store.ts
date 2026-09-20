@@ -33,7 +33,6 @@ export const $spriteEmotion = atom<SpriteEmotion | null>(null)
 // 可选的结构化动作提示（如 turn_away），用于细化情绪片段；渲染器按资产实际支持选择兑现。
 export const $spriteAction = atom<string | null>(null)
 const $previousState = atom<SpriteStateName>('idle')
-export const $clipOverride = atom<string | null>(null)
 
 // 跨模块共享的水合去重缓存：同 key 的并发水合只跑一次。
 const inFlightHydrations = new Map<string, Promise<unknown>>()
@@ -217,11 +216,10 @@ function runOnce(key: string, fn: () => Promise<unknown>): Promise<unknown> {
 }
 
 export async function ensureCompanionHydrated(deps: {
-  hydrateModel: () => Promise<unknown>
   hydratePersona: () => Promise<unknown>
   hydratePortrait?: () => Promise<unknown>
 }): Promise<void> {
-  const tasks = [runOnce('persona', deps.hydratePersona), runOnce('model', deps.hydrateModel)]
+  const tasks = [runOnce('persona', deps.hydratePersona)]
 
   if (deps.hydratePortrait) {
     tasks.push(runOnce('portrait', deps.hydratePortrait))
@@ -236,7 +234,7 @@ export async function ensureCompanionHydrated(deps: {
 
 // 清掉所有瞬态/活动计时器与排队状态——登出后 orphan 计时器在新会话里会写 $spriteState。
 // 必须在文件末尾：闭包按引用捕获 transientTimer / activityResetTimer / activityCounter / $previousState /
-// $clipOverride / $effectiveTierOverride，提前声明会在 HMR 同步调用时撞 TDZ。
+// $effectiveTierOverride，提前声明会在 HMR 同步调用时撞 TDZ。
 registerStorageClearHandler(() => {
   if (transientTimer) {
     clearTimeout(transientTimer)
@@ -255,6 +253,5 @@ registerStorageClearHandler(() => {
   $spriteAction.set(null)
   $spriteState.set('idle')
   $previousState.set('idle')
-  $clipOverride.set(null)
   $effectiveTierOverride.set(null)
 })

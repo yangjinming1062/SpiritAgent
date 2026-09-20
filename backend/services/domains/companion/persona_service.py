@@ -3,7 +3,6 @@ from typing import Any
 
 from components import DEFAULT_LANGUAGE, get_logger, resolve_prompt_text, safe_json_loads
 from modules.companion import AvatarAsset, Persona
-from modules.ws import emit_ws_event
 from prompts.companion import PERSONA_LABELS_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -237,20 +236,3 @@ async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, va
     missing_character = next((f for f in _CHARACTER_ONBOARDING_FIELDS if not answers.get(f)), None)
     next_field = missing_character if missing_character is not None else "portrait"
     return _state(answers, next_field, False)
-
-
-async def set_render_mode(db: AsyncSession, *, user_id: int, render_mode: str) -> Persona:
-    """写入渲染方式偏好；变化时广播 companion.render_mode.changed，客户端据此收敛各窗口显示。
-    偏好只决定界面分区与目标形象的生成意图，不代表任何形象资产已经就绪。"""
-    persona = await get_or_create_persona(db, user_id)
-    previous = persona.render_mode
-    persona.render_mode = render_mode
-    if previous != render_mode:
-        emit_ws_event(
-            db,
-            user_id=user_id,
-            event_type="companion.render_mode.changed",
-            payload={"new_mode": render_mode},
-        )
-    await db.commit()
-    return persona

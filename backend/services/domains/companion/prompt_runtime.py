@@ -18,14 +18,11 @@ from services.infrastructure.llm import (
 )
 
 from .actions import DEFAULT_ACTIONS, NON_LLM_ACTIONS
-from .appearance import build_outfit_extras, get_active_model
+from .appearance import build_outfit_extras
 from .emotions import BUILTIN_EMOTIONS
 from .persona_service import render_extras
 
 logger = get_logger(__name__)
-
-# 应用状态机与用户直接交互使用的 clip 不得被自主情境推理主动点播。
-_NON_AUTONOMOUS_CLIP_KEYS = frozenset({"idle", "emotional", "interacting", "poke", "drag"})
 
 
 class CompanionPromptContext(BaseModel):
@@ -66,15 +63,8 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         ).scalar()
         language = resolve_language(language_setting or DEFAULT_LANGUAGE)
         definition = safe_json_loads(persona.definition_json or "{}", default={})
-        available_actions: list[str] = []
-        active_model = await get_active_model(db, user_id)
-        if active_model is not None:
-            clip_map = safe_json_loads(active_model.clip_map_json or "{}", default={})
-            if isinstance(clip_map, dict):
-                # 两条路径共用同一排除集：本地物理/交互触发动作不得进入 LLM 可点播清单
-                available_actions = sorted(set(clip_map) - _NON_AUTONOMOUS_CLIP_KEYS - NON_LLM_ACTIONS)
-        if not available_actions:
-            available_actions = sorted(set(DEFAULT_ACTIONS) - NON_LLM_ACTIONS)
+        # 本地物理 / 交互触发动作不进入 LLM 可点播清单；渲染层按视频资产实际支持兑现。
+        available_actions = sorted(DEFAULT_ACTIONS - NON_LLM_ACTIONS)
         return CompanionPromptContext(
             language=language,
             persona_extras=render_extras(definition, language=language),

@@ -11,7 +11,7 @@ Backend 运行于 Linux Docker 容器；Client、Runner 和 Installer 支持 Win
 | 模块 | 负责 | 不负责 |
 |---|---|---|
 | Backend | 对话编排、供应商调用、云端工具、角色与记忆、资产、调度及持久化 | 本机工具执行、桌面窗口与像素坐标 |
-| Client | 桌面交互与渲染、登录凭据、本地设置、云端连接、Runner 生命周期及请求中转 | 模型供应商密钥、云端业务状态的权威副本 |
+| Client | 桌面交互与渲染、登录凭据、本地设置、云端连接、Runner 生命周期及请求中转 | 云端业务状态的权威副本 |
 | Runner | 本机终端、文件、浏览器等工具，报告实际能力 | 后端登录凭据、云端角色与会话状态 |
 
 进程拆分隔离职责和凭据，不构成完整安全沙箱。Installer 只负责首次安装和环境修复；安装后的运行与更新由 Client 管理。
@@ -19,7 +19,7 @@ Backend 运行于 Linux Docker 容器；Client、Runner 和 Installer 支持 Win
 ## 2. 架构拓扑
 
 ```text
-Client 渲染层 ←→ Client 主进程 ←→ Backend web ←→ PostgreSQL / 资产存储 / 模型供应商
+Client 渲染层 ←→ Client 主进程 ←→ Backend web ←→ PostgreSQL / 资产存储
                        ↕
                      Runner
 ```
@@ -86,7 +86,7 @@ IM 桥运行于 web 进程；每用户每渠道绑定独立历史，复用云端
 
 ### 6.2 形象与环境资产（跨模块契约）
 
-资产生成、激活和渲染分离。换装、全身参考重绘与渲染切换不解锁身份；普通任务生图不改变当前房间。输入、派生失效与恢复归 [PIPELINE](PIPELINE.md)，显示降级归 [DESIGN](DESIGN.md#12-渲染模式与降级体系永不空白)。
+资产生成、激活和渲染分离。换装与全身参考重绘不解锁身份；普通任务生图不改变当前房间。输入、派生失效与恢复归 [PIPELINE](PIPELINE.md)，显示降级归 [DESIGN](DESIGN.md#12-形象降级与兜底体系永不空白)。
 
 ### 6.3 表达层契约
 

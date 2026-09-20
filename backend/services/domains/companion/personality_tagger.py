@@ -2,7 +2,7 @@ import json
 from typing import Protocol
 
 from components import get_logger, safe_json_loads
-from prompts.companion import PERSONALITY_TAGGER_PROMPT, TAG_SEEDS_BY_RIG
+from prompts.companion import PERSONALITY_TAGGER_PROMPT, TAG_SEEDS_BY_SPECIES
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.llm import ProviderConfig
@@ -28,7 +28,6 @@ async def analyze_personality_tags(
     user_id: int | None = None,
     *,
     species: str | None = None,
-    rig_type: str | None = None,
     db: AsyncSession | None = None,
     provider_config: ProviderConfig | None = None,
 ) -> list[str]:
@@ -38,17 +37,15 @@ async def analyze_personality_tags(
         data = raw_data if isinstance(raw_data, dict) else {}
 
         char_species = species or data.get("biological_type", "人类")
-        char_rig = rig_type or "biped"
 
-        rig_seeds = TAG_SEEDS_BY_RIG.get(char_rig, TAG_SEEDS_BY_RIG["biped"])
-        common_seeds = TAG_SEEDS_BY_RIG["common"]
-        candidate_seeds = list(dict.fromkeys(common_seeds + rig_seeds))
+        species_seeds = TAG_SEEDS_BY_SPECIES.get(char_species, [])
+        common_seeds = TAG_SEEDS_BY_SPECIES["common"]
+        candidate_seeds = list(dict.fromkeys(common_seeds + species_seeds))
 
         user_payload = json.dumps(
             {
                 "name": data.get("name", "角色"),
                 "species": char_species,
-                "rig_type": char_rig,
                 "personality": data.get("personality") or "",
                 "speaking_style": data.get("speaking_style") or "",
                 "candidate_seeds": candidate_seeds[:40],

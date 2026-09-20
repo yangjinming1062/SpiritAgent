@@ -13,7 +13,7 @@ from .logger import get_logger
 logger = get_logger(__name__)
 
 _FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-_MEDIA_EXTENSIONS = ("jpg", "png", "jpeg", "webp", "glb", "wav", "mp3")
+_MEDIA_EXTENSIONS = ("jpg", "png", "jpeg", "webp", "wav", "mp3")
 
 
 def _storage_dir() -> Path:

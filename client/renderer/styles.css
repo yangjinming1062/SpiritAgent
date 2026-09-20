@@ -1103,19 +1103,6 @@ canvas {
   }
 }
 
-/* ── Model companion canvas ─────────────────────────────────────────────────────
-    Full-bleed canvas inside the sprite stage; companion-model mounts the
-    WebGL/WebGPU context here. */
-.companion-model-canvas {
-  display: block;
-  width: 100% !important;
-  height: 100% !important;
-}
-
-/* ── Companion-specific animations ───────────────────────────────────────────
-   EggStage / 程序化蛋兜底 / 语音波形 共用的关键帧。
-   安装器组件已经在自己的 tailwind 配置里有同名类（animate-egg-pulse 等），
-   桌面这些是独立实现的镜像，避免跨包共享。 */
 @keyframes egg-pulse {
   0%,
   100% {

@@ -1,5 +1,5 @@
 from components import DEFAULT_LANGUAGE, resolve_prompt_text
-from modules.companion import CompanionModel, CompanionOutfit
+from modules.companion import CompanionOutfit
 from prompts.companion import OUTFIT_LABELS_TEXTS
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,11 +25,3 @@ async def build_outfit_extras(
         return ""
     label = resolve_prompt_text(OUTFIT_LABELS_TEXTS, language)
     return f"{label}\n{outfit.name}:{outfit.description.strip()[:600]}"
-
-
-async def get_active_model(db: AsyncSession, user_id: int) -> CompanionModel | None:
-    return (
-        await db.execute(
-            select(CompanionModel).where(CompanionModel.user_id == user_id, CompanionModel.active.is_(True)),
-        )
-    ).scalar_one_or_none()

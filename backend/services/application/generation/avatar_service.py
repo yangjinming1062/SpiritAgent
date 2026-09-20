@@ -3,7 +3,6 @@ import contextlib
 import json
 import secrets
 from pathlib import Path
-from typing import Literal
 
 from components import (
     REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
@@ -15,12 +14,10 @@ from components import (
     safe_json_loads,
     save_file,
 )
-from modules.companion import AvatarAsset, ImageReviseMode, Persona
+from modules.companion import AvatarAsset, FullbodySeedKind, ImageReviseMode, Persona
 from prompts.generation import (
     AVATAR_PRESENTATION_REFERENCE,
     AVATAR_REFERENCE_TEMPLATE,
-    EDIT_PRESERVE_3D_BACK,
-    EDIT_PRESERVE_3D_FRONT,
     EDIT_PRESERVE_FULLBODY,
     EDIT_PRESERVE_IDENTITY,
     EDIT_PRESERVE_REFERENCE,
@@ -30,7 +27,7 @@ from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.companion import classify_species, get_or_create_persona, load_persona_definition, select_rig_type
+from services.domains.companion import get_or_create_persona, load_persona_definition
 from services.infrastructure.assets import build_data_uri, build_signed_avatar_url, resolve_companion_asset_path
 from services.infrastructure.llm import (
     REFERENCE_ILLUSTRATION_STYLE,
@@ -40,8 +37,6 @@ from services.infrastructure.llm import (
     chat,
     enhance_avatar_prompt,
     is_content_policy_error_message,
-    is_preset_species,
-    resolve_fullbody_style,
     resolve_fullbody_template,
 )
 
@@ -50,35 +45,16 @@ from .image_generation import ImageGenerationError, generate_images
 
 logger = get_logger(__name__)
 
-# 全身种子自备图点位；值与 REST 路径段一致。front-reference 是确认形象的外观参考立绘
-# （渲染方式无关的身份锚）；model-front / model-back 是模型建模种子。
-FullbodySeedKind = Literal["reference", "front-reference", "model-front", "back"]
-
 _DEFAULT_STYLE: str = "portrait"
 _AVATAR_SIZE: str = "1024x1024"
-# 全身种子画幅随骨骼类型分桶（DESIGN §5.4 任意物种）：双足维持既有竖版（主路径零扰动），
-# 方/横桶分辨率不低于竖版以保住主体像素密度（种子图是参考立绘与建模种子的直接输入）；
-# 像素串经 SIZE_TO_ASPECT 翻译成宽高比供各图生供应商消费。键集须覆盖 rig_type_selector._RIG_TYPES。
-_RIG_FULLBODY_SIZES: dict[str, str] = {
-    "biped": "1024x1792",  # 9:16
-    "quadruped": "1536x1536",  # 1:1
-    "avian": "1536x1536",  # 1:1
-    "hexapod": "1536x1536",  # 1:1
-    "serpentine": "1792x1344",  # 4:3
-    "aquatic": "1792x1344",  # 4:3
-    "octopod": "1792x1024",  # 16:9
-}
-
-# 自备图提示词只告知宽高比不写像素尺寸（分辨率由外部工具决定）；宽高比直接从供应商
-# 尺寸翻译表派生，保证与生图请求同一份事实，新增画幅桶时随 SIZE_TO_ASPECT 同步生效。
-_RIG_FULLBODY_ASPECTS: dict[str, str] = {rig: SIZE_TO_ASPECT[size] for rig, size in _RIG_FULLBODY_SIZES.items()}
+# 全身种子竖版画幅（DESIGN §5.4）：9:16，作为参考立绘与视频链身份的输入。
+_FULLBODY_SIZE: str = "1024x1792"
+_FULLBODY_ASPECT: str = SIZE_TO_ASPECT[_FULLBODY_SIZE]
 _AVATAR_QUALITY: str = "standard"
 _AVATAR_IMAGE_FIELDS: tuple[str, ...] = (
     "asset_url",
     "seed_fullbody_url",
     "reference_image_url",
-    "model_seed_front_url",
-    "model_seed_back_url",
 )
 _UPLOAD_EXTS: dict[str, str] = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "image/gif": "gif"}
 ALLOWED_AVATAR_UPLOAD_MIME_TYPES: frozenset[str] = frozenset(_UPLOAD_EXTS)
@@ -791,7 +767,7 @@ def load_avatar_bytes_as_data_uri(asset_url_or_path: str | None) -> str | None:
 
 
 def load_character_reference_data_uri(asset: AvatarAsset) -> str | None:
-    """日常出镜读取独立全身参考，不使用头像或建模种子。"""
+    """日常出镜读取独立全身参考，不使用头像。"""
     return load_avatar_bytes_as_data_uri(asset.seed_fullbody_url)
 
 
@@ -936,7 +912,7 @@ async def _read_temp_media_bytes(bare_path: str) -> tuple[bytes, str] | None:
 
 
 async def finalize_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
-    """确认头像及日常全身参考；建模草稿只由各自确认入口转正，返回头像步骤不能提前锁定形象。"""
+    """确认头像及日常全身参考；参考草稿只由各自确认入口转正，返回头像步骤不能提前锁定形象。"""
     asset = (
         await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
     ).scalar_one_or_none()
@@ -1041,7 +1017,6 @@ async def _install_fullbody_seed(
     metadata: dict[str, str | None],
     require_active: bool = False,
     activate: bool = False,
-    clear_back: bool = False,
     replace_previous: bool = False,
     cleanup_url: str | None = None,
 ) -> AvatarAsset:
@@ -1049,8 +1024,8 @@ async def _install_fullbody_seed(
     保证两条路径的落库语义一致。metadata 值为 None 表示移除该键。
 
     require_active 要求目标行仍是激活头像（独立全身参考的守卫）；activate 翻转该用户激活行
-    （front-reference 语义）；clear_back 清空背面种子（模型正面语义）；replace_previous 在提交后删除
-    被替换的旧文件；cleanup_url 在目标行消失时删除本次产物（期间角色被切换的竞态）。"""
+    （front-reference 语义）；replace_previous 在提交后删除被替换的旧文件；cleanup_url 在
+    目标行消失时删除本次产物（期间角色被切换的竞态）。"""
 
     async def _write(session: AsyncSession) -> AvatarAsset:
         query = select(AvatarAsset).where(AvatarAsset.id == avatar_id, AvatarAsset.user_id == user_id)
@@ -1072,8 +1047,6 @@ async def _install_fullbody_seed(
                     payload[key] = value
             target.prompt_json = json.dumps(payload, ensure_ascii=False)
         setattr(target, field, url)
-        if clear_back:
-            target.model_seed_back_url = ""
         if activate:
             await session.execute(
                 update(AvatarAsset)
@@ -1124,7 +1097,6 @@ async def generate_fullbody_reference(
                 raise AvatarSourceUnreadableError("头像读取失败，请稍后重试")
         species, appearance, personality_text = _fullbody_identity_fields(persona)
         definition = load_persona_definition(persona)
-        rig_type = await _resolve_fullbody_rig_type(None, user_id, asset, species)
         if mode != "edit":
             user_ref_uri = (
                 f"data:{reference_content_type or 'image/png'};base64,{reference_image}" if reference_image else None
@@ -1145,7 +1117,7 @@ async def generate_fullbody_reference(
                 user_id,
                 reference_image=edit_uri if mode == "edit" else ref_uri,
                 secondary_reference_image=None if mode == "edit" else user_ref_uri,
-                size=_fullbody_size_for(rig_type),
+                size=_FULLBODY_SIZE,
                 persist=persona.is_portrait_confirmed,
                 image_edit=mode == "edit",
             )
@@ -1161,7 +1133,6 @@ async def generate_fullbody_reference(
             url=generated_url,
             metadata={
                 "fullbody_reference_prompt": prompt,
-                "fullbody_rig_type": rig_type,
             },
             require_active=True,
             replace_previous=True,
@@ -1180,12 +1151,11 @@ async def generate_fullbody_front_reference(
     """按外观参考动漫插画画风（REFERENCE_ILLUSTRATION_STYLE，服务端固定）与用户微调要求生成/重绘外观参考正面立绘。
     主体参考恒为独立全身种子图，保留身材比例；身份细节以其源头（半身头像 + 角色定义）间接锚定，
     不回退半身像。mode="edit"（微调）编辑上一版参考立绘，未提及区域逐像素保留。确认后即锁定形象，
-    与渲染方式无关（模型 / 视频链均以它为身份锚）。"""
+    视频链以它为身份锚。"""
     if user_id is None:
         raise ValueError("user_id is required")
     asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id, check_sealed=True)
     species, appearance, personality = _fullbody_identity_fields(persona)
-    rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
 
     effective_feedback = feedback.strip() if (feedback and feedback.strip()) else ""
     if mode == "edit":
@@ -1206,9 +1176,8 @@ async def generate_fullbody_front_reference(
         ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
         if ref_uri is None:
             raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
-        template = resolve_fullbody_template(species, rig_type, REFERENCE_ILLUSTRATION_STYLE)
+        template = resolve_fullbody_template(species, REFERENCE_ILLUSTRATION_STYLE)
         prompt = build_fullbody_prompt(
-            "front",
             template=template,
             style_id=REFERENCE_ILLUSTRATION_STYLE,
             feedback=effective_feedback or None,
@@ -1221,7 +1190,7 @@ async def generate_fullbody_front_reference(
             prompt,
             user_id,
             reference_image=edit_uri if mode == "edit" else ref_uri,
-            size=_fullbody_size_for(rig_type),
+            size=_FULLBODY_SIZE,
             persist=False,
             image_edit=mode == "edit",
         )
@@ -1240,220 +1209,9 @@ async def generate_fullbody_front_reference(
             field="reference_image_url",
             url=front_url,
             metadata={
-                "fullbody_rig_type": rig_type,
                 "fullbody_feedback": effective_feedback or None,
             },
             activate=True,
-        )
-
-    if db is None:
-        async with SESSION_LOCAL() as write_db:
-            return await _write(write_db)
-    return await _write(db)
-
-
-def _fullbody_size_for(rig_type: str) -> str:
-    """全身画幅按骨骼类型取桶；未知类型回落双足竖版（与分类失败默认 biped 一致）。"""
-    return _RIG_FULLBODY_SIZES.get(rig_type, _RIG_FULLBODY_SIZES["biped"])
-
-
-def _fullbody_aspect_for(rig_type: str) -> str:
-    """自备图提示词用的画幅宽高比，与生图请求同源派生；回落规则与 _fullbody_size_for 一致。"""
-    return _RIG_FULLBODY_ASPECTS.get(rig_type, _RIG_FULLBODY_ASPECTS["biped"])
-
-
-async def _resolve_fullbody_rig_type(db: AsyncSession | None, user_id: int, avatar: AvatarAsset, species: str) -> str:
-    """全身种子骨骼类型：优先沿用头像行已记的 rig（重绘与换装间画幅/姿态稳定，不随分类抖动漂移），
-    缺省按物种分类一次——avatar_service 各全身生成流随后随 prompt_json 持久化；预设物种恒 biped 免 LLM 调用。"""
-    payload = safe_json_loads(avatar.prompt_json, default={})
-    cached = payload.get("fullbody_rig_type") if isinstance(payload, dict) else None
-    if isinstance(cached, str) and cached in _RIG_FULLBODY_SIZES:
-        return cached
-    if is_preset_species(species):
-        return "biped"
-    return await select_rig_type(chat, species, db=db, user_id=user_id)
-
-
-async def _resolve_fullbody_3d_style(db: AsyncSession | None, user_id: int, avatar: AvatarAsset, species: str) -> str:
-    """模型种子画风：优先沿用头像行已记的模型种子画风（正背成对一致），缺省按物种路由。"""
-    payload = safe_json_loads(avatar.prompt_json, default={})
-    cached = payload.get("fullbody_3d_style") if isinstance(payload, dict) else None
-    if cached:
-        return str(cached)
-    has_humanoid_face = None
-    if not is_preset_species(species):
-        has_humanoid_face = (await classify_species(chat, species, db=db, user_id=user_id))[1]
-    return resolve_fullbody_style(species, has_humanoid_face)
-
-
-async def generate_model_seed_front(
-    db: AsyncSession | None = None,
-    user_id: int | None = None,
-    *,
-    avatar_id: int,
-    mode: ImageReviseMode,
-    feedback: str | None = None,
-) -> AvatarAsset:
-    """生成/重绘建模专用正面种子（A-pose、按物种路由画风）。
-
-    身份与身材参考与外观参考生成同源——恒用独立全身种子图（其身份源自半身头像种子），
-    不引用已生成的全身立绘以免迭代失真；仅姿态切换为建模所需（画风按物种路由，类人与参考立绘一致），
-    属派生而非身份变更：不受形象锁定约束，也不覆盖外观参考立绘（衣柜与视频链的身份锚）。重绘后旧背面种子随之失效。
-    mode="edit"（微调）编辑上一版模型正面种子，A-pose 与白底由 preserve 条款保留。"""
-    if user_id is None:
-        raise ValueError("user_id is required")
-    asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
-
-    if not asset.reference_image_url:
-        raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; confirm the front reference first")
-
-    species, appearance, personality = _fullbody_identity_fields(persona)
-    effective_style = await _resolve_fullbody_3d_style(db, user_id, asset, species)
-    rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
-    effective_feedback = feedback.strip() if (feedback and feedback.strip()) else ""
-
-    if mode == "edit":
-        if not effective_feedback:
-            raise AvatarGenerationError("请先描述要微调的内容")
-        if not asset.model_seed_front_url:
-            raise AvatarGenerationError("尚无上一版模型正面种子，请先重新生成")
-        edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.model_seed_front_url)
-        if not edit_uri:
-            raise AvatarSourceUnreadableError("上一版模型正面种子缺失或无法读取，请先重新生成")
-        prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_3D_FRONT)
-    else:
-        ref_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
-        if ref_uri is None:
-            raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
-        template = resolve_fullbody_template(species, rig_type, effective_style, a_pose=True)
-        prompt = build_fullbody_prompt(
-            "front",
-            template=template,
-            style_id=effective_style,
-            feedback=effective_feedback or None,
-            appearance=appearance,
-            personality=personality,
-        )
-
-    try:
-        front_url, _, _, _ = await _generate_one_portrait_with_moderation_retry(
-            prompt,
-            user_id,
-            reference_image=edit_uri if mode == "edit" else ref_uri,
-            size=_fullbody_size_for(rig_type),
-            persist=persona.is_portrait_confirmed,
-            image_edit=mode == "edit",
-        )
-    except AvatarGenerationError as exc:
-        raise FullbodyGenerationError(str(exc), internal=exc.internal) from exc
-    except Exception as exc:
-        raise FullbodyGenerationError("模型正面立绘生成失败，请稍后重试", internal=str(exc)) from exc
-
-    async def _write(session: AsyncSession) -> AvatarAsset:
-        return await _install_fullbody_seed(
-            session,
-            user_id,
-            avatar_id=avatar_id,
-            field="model_seed_front_url",
-            url=front_url,
-            metadata={
-                "fullbody_3d_style": effective_style,
-                "fullbody_rig_type": rig_type,
-                "fullbody_3d_feedback": effective_feedback or None,
-            },
-            clear_back=True,
-        )
-
-    if db is None:
-        async with SESSION_LOCAL() as write_db:
-            return await _write(write_db)
-    return await _write(db)
-
-
-async def generate_model_seed_back(
-    db: AsyncSession | None = None,
-    user_id: int | None = None,
-    *,
-    avatar_id: int,
-    mode: ImageReviseMode,
-    feedback: str | None = None,
-) -> AvatarAsset:
-    """按模型正面种子为参考图生成/重绘背面全身图（模型升级阶段的背面种子确认；无模型正面种子时回退外观参考立绘）。
-
-    形象锁定后仍可调用：参考图恒为已确认的正面种子，是视角派生而非身份变更，不受 raise_if_image_sealed 约束。
-    mode="edit"（微调）编辑上一版背面种子，背面视点与正面一致性由 preserve 条款保留。"""
-    if user_id is None:
-        raise ValueError("user_id is required")
-    asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
-
-    effective_front_url = asset.model_seed_front_url or asset.reference_image_url
-    if not effective_front_url:
-        raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; generate front fullbody first")
-
-    species, appearance, personality = _fullbody_identity_fields(persona)
-
-    effective_style = await _resolve_fullbody_3d_style(db, user_id, asset, species)
-    rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
-    effective_feedback = feedback.strip() if (feedback and feedback.strip()) else ""
-
-    if mode == "edit":
-        if not effective_feedback:
-            raise AvatarGenerationError("请先描述要微调的内容")
-        if not asset.model_seed_back_url:
-            raise AvatarGenerationError("尚无上一版背面种子，请先重新生成")
-        edit_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.model_seed_back_url)
-        if not edit_uri:
-            raise AvatarSourceUnreadableError("上一版背面种子缺失或无法读取，请先重新生成")
-        prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_3D_BACK)
-    else:
-        template = resolve_fullbody_template(species, rig_type, effective_style, a_pose=True)
-        front_ref_uri = (
-            await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.model_seed_front_url)
-            if asset.model_seed_front_url
-            else None
-        ) or (
-            await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.reference_image_url)
-            if asset.reference_image_url
-            else None
-        )
-        if front_ref_uri is None:
-            # 与自备图提示词同一语义：AI 路径也必须带得上正面参考图，不能静默改成纯文生图或错用全身自然肖像。
-            raise AvatarSourceUnreadableError("上一版正面种子缺失或无法读取，请先重新生成")
-        prompt = build_fullbody_prompt(
-            "back",
-            template=template,
-            style_id=effective_style,
-            feedback=effective_feedback or None,
-            appearance=appearance,
-            personality=personality,
-        )
-
-    try:
-        back_url, _, _, _ = await _generate_one_portrait_with_moderation_retry(
-            prompt,
-            user_id,
-            reference_image=edit_uri if mode == "edit" else front_ref_uri,
-            size=_fullbody_size_for(rig_type),
-            persist=persona.is_portrait_confirmed,
-            image_edit=mode == "edit",
-        )
-    except AvatarGenerationError as exc:
-        raise FullbodyGenerationError(str(exc), internal=exc.internal) from exc
-    except Exception as exc:
-        raise FullbodyGenerationError("背面全身图生成失败，请稍后重试", internal=str(exc)) from exc
-
-    async def _write(session: AsyncSession) -> AvatarAsset:
-        return await _install_fullbody_seed(
-            session,
-            user_id,
-            avatar_id=avatar_id,
-            field="model_seed_back_url",
-            url=back_url,
-            metadata={
-                "fullbody_3d_style": effective_style,
-                "fullbody_rig_type": rig_type,
-                "fullbody_back_feedback": effective_feedback or None,
-            },
         )
 
     if db is None:
@@ -1469,7 +1227,7 @@ async def confirm_fullbody_front(
     avatar_id: int,
     front_url: str | None = None,
 ) -> AvatarAsset:
-    """确认正面全身图。模型正面与背面种子图不在引导期生成——它们是建模输入的派生产物，由模型升级路径按需生成（generate_model_seed_front / generate_model_seed_back）。"""
+    """确认正面全身图。"""
     if user_id is None:
         raise ValueError("user_id is required")
     asset, _persona = await _fetch_fullbody_target(db, user_id, avatar_id, check_sealed=True)
@@ -1488,8 +1246,6 @@ async def confirm_fullbody_front(
         if target is None:
             raise AvatarNotFoundError(f"avatar {avatar_id} not found")
         target.reference_image_url = effective_front_url
-        target.model_seed_front_url = ""
-        target.model_seed_back_url = ""
         # 确认动作把 temp-media 草稿种子图提升到 companion-avatars；草稿过期则抛可重试错误而非留下死链
         if target.reference_image_url.startswith("temp-media/"):
             moved = await _read_temp_media_bytes(target.reference_image_url)
@@ -1498,13 +1254,6 @@ async def confirm_fullbody_front(
                     f"temp-media file expired for reference_image_url: {target.reference_image_url} — please regenerate the fullbody front",
                 )
             target.reference_image_url, _, _ = await _persist_portrait_bytes(moved[0], moved[1])
-        payload = safe_json_loads(target.prompt_json, default={})
-        if isinstance(payload, dict):
-            payload.pop("fullbody_3d_style", None)
-            payload.pop("fullbody_3d_feedback", None)
-            payload.pop("fullbody_back_feedback", None)
-            payload.pop("fullbody_samples", None)
-            target.prompt_json = json.dumps(payload, ensure_ascii=False)
         return await _commit_asset(session, target)
 
     if db is None:
@@ -1524,8 +1273,7 @@ async def prepare_fullbody_prompt(
     """自备图提示词：组装用户将拿去外部工具的完整提示词，不做生图。
     前置守卫镜像对应生成函数的重新生成路径；edit 语境不适用（编辑依赖上一版底图，外部工具没有），
     反馈恒并入重新生成语义的反馈槽。onboarding 完成后种子图恒在，提示词恒为参考图锚定变体；
-    种子缺失按 AI 路径同一文案失败，不降级纯文字。画风按链路取用：front-reference 恒 REFERENCE_ILLUSTRATION_STYLE，
-    模型种子按物种路由。"""
+    种子缺失按 AI 路径同一文案失败，不降级纯文字。front-reference 提示词恒为 REFERENCE_ILLUSTRATION_STYLE 画风。"""
     if user_id is None:
         raise ValueError("user_id is required")
     effective_feedback = feedback.strip() if (feedback and feedback.strip()) else ""
@@ -1537,7 +1285,6 @@ async def prepare_fullbody_prompt(
             raise AvatarSourceUnreadableError("头像种子图缺失或无法读取，请重新生成头像")
         species, appearance, personality_text = _fullbody_identity_fields(persona)
         definition = load_persona_definition(persona)
-        rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
         return build_fullbody_reference_prompt(
             species=species,
             gender=definition.get("gender", ""),
@@ -1545,7 +1292,7 @@ async def prepare_fullbody_prompt(
             personality=personality_text,
             feedback=effective_feedback or None,
             has_user_reference=False,
-            canvas_aspect=_fullbody_aspect_for(rig_type),
+            canvas_aspect=_FULLBODY_ASPECT,
         )
     if kind == "front-reference":
         asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id, check_sealed=True)
@@ -1555,43 +1302,15 @@ async def prepare_fullbody_prompt(
         if not isinstance(prompt_payload, dict) or not prompt_payload.get("avatar_prompt"):
             raise SeedPromptMissingError(f"avatar {avatar_id} has no cached avatar_prompt")
         species, appearance, personality = _fullbody_identity_fields(persona)
-        rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
         return build_fullbody_prompt(
-            "front",
-            template=resolve_fullbody_template(species, rig_type, REFERENCE_ILLUSTRATION_STYLE),
+            template=resolve_fullbody_template(species, REFERENCE_ILLUSTRATION_STYLE),
             style_id=REFERENCE_ILLUSTRATION_STYLE,
             feedback=effective_feedback or None,
             appearance=appearance,
             personality=personality,
-            canvas_aspect=_fullbody_aspect_for(rig_type),
+            canvas_aspect=_FULLBODY_ASPECT,
         )
-    asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
-    if kind == "model-front":
-        if not asset.reference_image_url:
-            raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; confirm the front reference first")
-        if not await _seed_bytes_available(asset.seed_fullbody_url):
-            raise AvatarSourceUnreadableError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
-    elif kind == "back":
-        if not (asset.model_seed_front_url or asset.reference_image_url):
-            raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; generate front fullbody first")
-        # 自备图背面的参考与 AI 路径同源（模型正面优先，缺时回退外观参考立绘）；仅有路径但文件不可读时同样失败。
-        front_ok = await _seed_bytes_available(asset.model_seed_front_url) or await _seed_bytes_available(
-            asset.reference_image_url,
-        )
-        if not front_ok:
-            raise AvatarSourceUnreadableError("上一版正面种子缺失或无法读取，请先重新生成")
-    species, appearance, personality = _fullbody_identity_fields(persona)
-    effective_style = await _resolve_fullbody_3d_style(db, user_id, asset, species)
-    rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
-    return build_fullbody_prompt(
-        "front" if kind == "model-front" else "back",
-        template=resolve_fullbody_template(species, rig_type, effective_style, a_pose=True),
-        style_id=effective_style,
-        feedback=effective_feedback or None,
-        appearance=appearance,
-        personality=personality,
-        canvas_aspect=_fullbody_aspect_for(rig_type),
-    )
+    raise ValueError(f"unknown fullbody seed kind: {kind}")
 
 
 async def adopt_fullbody_seed(
@@ -1616,20 +1335,13 @@ async def adopt_fullbody_seed(
         else:
             asset, persona = await _fetch_fullbody_target(db, user_id, avatar_id)
         species, appearance, personality_text = _fullbody_identity_fields(persona)
-        # 前置守卫先于落盘（同各生成函数的守卫位置）：守卫失败时不能留下已持久化的孤儿文件
-        # （model-front/model-back 在形象确认后写的是永久路径，无 TTL 兜底清理）。
+        # 前置守卫先于落盘（同各生成函数的守卫位置）：守卫失败时不能留下已持久化的孤儿文件。
         # 采纳只安装用户回传的图，不消费头像种子字节；种子守卫属于提示词/AI 生成路径，不在此处重复。
-        if kind == "model-front":
-            if not asset.reference_image_url:
-                raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; confirm the front reference first")
-        elif kind == "back" and not (asset.model_seed_front_url or asset.reference_image_url):
-            raise FrontSeedMissingError(f"avatar {avatar_id} has no front seed; generate front fullbody first")
         # 与各生成函数的 persist 语义一致：front-reference 恒为草稿，其余确认后永久
         persist = kind != "front-reference" and persona.is_portrait_confirmed
         url, _, _ = await _persist_portrait_or_draft(data, user_id, content_type, persist=persist)
 
         if kind == "reference":
-            rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
             definition = load_persona_definition(persona)
             prompt = build_fullbody_reference_prompt(
                 species=species,
@@ -1638,7 +1350,7 @@ async def adopt_fullbody_seed(
                 personality=personality_text,
                 feedback=None,
                 has_user_reference=False,
-                canvas_aspect=_fullbody_aspect_for(rig_type),
+                canvas_aspect=_FULLBODY_ASPECT,
             )
             return await _install_fullbody_seed(
                 db,
@@ -1648,50 +1360,19 @@ async def adopt_fullbody_seed(
                 url=url,
                 metadata={
                     "fullbody_reference_prompt": prompt,
-                    "fullbody_rig_type": rig_type,
                 },
                 require_active=True,
                 replace_previous=True,
                 cleanup_url=url,
             )
-        if kind == "front-reference":
-            return await _install_fullbody_seed(
-                db,
-                user_id,
-                avatar_id=avatar_id,
-                field="reference_image_url",
-                url=url,
-                metadata={
-                    "fullbody_rig_type": await _resolve_fullbody_rig_type(db, user_id, asset, species),
-                    "fullbody_feedback": None,
-                },
-                activate=True,
-            )
-        effective_style = await _resolve_fullbody_3d_style(db, user_id, asset, species)
-        rig_type = await _resolve_fullbody_rig_type(db, user_id, asset, species)
-        if kind == "model-front":
-            return await _install_fullbody_seed(
-                db,
-                user_id,
-                avatar_id=avatar_id,
-                field="model_seed_front_url",
-                url=url,
-                metadata={
-                    "fullbody_3d_style": effective_style,
-                    "fullbody_rig_type": rig_type,
-                    "fullbody_3d_feedback": None,
-                },
-                clear_back=True,
-            )
         return await _install_fullbody_seed(
             db,
             user_id,
             avatar_id=avatar_id,
-            field="model_seed_back_url",
+            field="reference_image_url",
             url=url,
             metadata={
-                "fullbody_3d_style": effective_style,
-                "fullbody_rig_type": rig_type,
-                "fullbody_back_feedback": None,
+                "fullbody_feedback": None,
             },
+            activate=True,
         )

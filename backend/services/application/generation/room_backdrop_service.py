@@ -60,7 +60,7 @@ logger = get_logger(__name__)
 
 # 进程内每用户锁：生图与 activate 走同一锁防并发把同一 persona 的 active 状态撞出多行。
 _BACKDROP_LOCKS: dict[int, asyncio.Lock] = {}
-# 进程内任务表，便于 lifespan 重启时接续（与模型管线同思路；规模小、本期不接入启动恢复）。
+# 进程内任务表；规模小、本期不接入启动恢复。
 _INFLIGHT_TASKS: dict[int, asyncio.Task[None]] = {}
 
 _DEFAULT_FAILURE_UTTERANCE = "房间还没收拾完，你先坐一会儿。"

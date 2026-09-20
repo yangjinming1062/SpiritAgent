@@ -1,20 +1,12 @@
-import contextlib
-
 from components import safe_json_loads
 from modules.companion import (
     AvatarAsset,
     AvatarAssetResponse,
-    CompanionModel,
-    CompanionModelResponse,
     CompanionOutfit,
     OutfitResponse,
 )
 
-from services.infrastructure.assets import get_companion_model_sha256
-from services.infrastructure.model_generation import provider_supports_multiview
-
 from .avatar_service import re_sign_bare_path
-from .model.pipeline import signed_model_url
 
 
 def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
@@ -26,9 +18,6 @@ def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
         asset_url=asset.asset_url,
         seed_fullbody_url=asset.seed_fullbody_url or "",
         reference_image_url=asset.reference_image_url or "",
-        model_seed_front_url=asset.model_seed_front_url or "",
-        model_seed_back_url=asset.model_seed_back_url or "",
-        supports_multiview=provider_supports_multiview(),
         prompt=payload.get("avatar_prompt", ""),
         status="succeeded",
     )
@@ -43,28 +32,4 @@ def outfit_response(outfit: CompanionOutfit) -> OutfitResponse:
         fullbody_url=re_sign_bare_path(outfit.fullbody_url) or "",
         status=outfit.status,
         active=outfit.active,
-    )
-
-
-def model_response(model: CompanionModel) -> CompanionModelResponse:
-    """把模型行转换为接口响应，补齐签名地址与内容哈希。"""
-    content_hash = model.content_hash or None
-    if not content_hash and model.asset_url:
-        parts = model.asset_url.split("/", 2)
-        if len(parts) == 3:
-            with contextlib.suppress(Exception):
-                content_hash = get_companion_model_sha256(int(parts[1]), parts[2])
-
-    return CompanionModelResponse(
-        id=model.id,
-        species=model.species,
-        provider=model.provider,
-        asset_url=signed_model_url(model) or model.asset_url,
-        status=model.status,
-        has_rig=model.has_rig,
-        rig_type=model.rig_type,
-        rig_naming=model.rig_naming,
-        style=model.style or "realistic",
-        content_hash=content_hash,
-        clip_map=safe_json_loads(model.clip_map_json or "{}", default={}),
     )

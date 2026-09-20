@@ -1,5 +1,3 @@
-import fsp from 'node:fs/promises'
-
 import {
   type DesktopBootProgress,
   IPC,
@@ -15,7 +13,6 @@ import { dataUrlFromBuffer } from '../shared/mime'
 import { HttpError, isUnauthorized, sendToSender } from '../shared/utils'
 
 import type { AssetDiskCache } from './asset-disk-cache'
-import type { ModelDiskCache } from './model-disk-cache'
 
 // 鉴权失效广播：按结构化 status 判断，不解析错误文案。
 function notifyAuthExpiredOn401(error: unknown, connection: SpiritAgentConnection, sender: WebContents): void {
@@ -98,7 +95,6 @@ interface ConnectionIpcDeps {
   getMainWindow?: () => BrowserWindow | null | undefined
   ipcMain: IpcMain
   mintWsTicket?: (baseUrl: string, token: string | null) => Promise<string | null>
-  modelDiskCache?: null | ModelDiskCache
   resolvePathTimeoutMs: (path?: string, method?: string, fallbackMs?: number) => number
   setCachedWsUrl?: (wsUrl: string) => void
 }
@@ -117,7 +113,6 @@ export function registerConnectionIpc({
   getMainWindow,
   ipcMain,
   mintWsTicket,
-  modelDiskCache,
   resolvePathTimeoutMs,
   setCachedWsUrl
 }: ConnectionIpcDeps): void {
@@ -232,42 +227,6 @@ export function registerConnectionIpc({
   )
 
   ipcMain.handle(
-    IPC.invoke.apiAssetModelUrl,
-    async (_event, request: { contentHash?: string; url: string }): Promise<string> => {
-      const connection = await ensureBackend()
-      const raw = String(request.url || '')
-
-      if (!raw) {
-        throw new Error('asset url is required')
-      }
-
-      if (!modelDiskCache) {
-        throw new Error('apiAssetModelUrl requires the model disk cache; ensure spiritagentHome is configured')
-      }
-
-      try {
-        const cached = await modelDiskCache.ensureCached({
-          baseUrl: connection.baseUrl,
-          contentHash: request.contentHash,
-          fetchFn: fetchImpl,
-          token: connection.token || undefined,
-          url: raw
-        })
-
-        const normalizedPath = cached.filePath.replace(/\\/g, '/')
-
-        return `spiritagent-media:///${normalizedPath}`
-      } catch (error: unknown) {
-        // 与兄弟 handler `apiAsset` / `apiAssetBuffer` 对齐:401 触发广播,
-        // 渲染层 `onSessionExpired` 监听器可触发重新登录。
-        notifyAuthExpiredOn401(error, connection, _event.sender)
-
-        throw error
-      }
-    }
-  )
-
-  ipcMain.handle(
     IPC.invoke.apiAssetBuffer,
     async (_event, request?: { preferCache?: boolean; contentHash?: string; url?: string }) => {
       const connection = await ensureBackend()
@@ -275,30 +234,6 @@ export function registerConnectionIpc({
 
       if (!raw) {
         throw new Error('asset url is required')
-      }
-
-      const { pathname } = new URL(raw, connection.baseUrl)
-
-      const isModel = pathname.includes('/model/file/')
-
-      if (modelDiskCache && isModel) {
-        try {
-          const cached = await modelDiskCache.ensureCached({
-            baseUrl: connection.baseUrl,
-            contentHash: request?.contentHash,
-            fetchFn: fetchImpl,
-            token: connection.token || undefined,
-            url: raw
-          })
-
-          return await fsp.readFile(cached.filePath)
-        } catch (error: unknown) {
-          // 与兄弟 handler 对齐：401 触发 session-expired 广播，否则模型下载
-          // 的鉴权过期只能靠其他请求兜底提示。
-          notifyAuthExpiredOn401(error, connection, _event.sender)
-
-          throw error
-        }
       }
 
       const identityCache = assetDiskCache

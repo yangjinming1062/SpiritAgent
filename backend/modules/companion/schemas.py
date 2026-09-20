@@ -16,7 +16,6 @@ class PersonaResponse(BaseModel):
     definition_json: str
     is_complete: bool
     personality_tags: list[str] = Field(default_factory=list)
-    render_mode: str = "video"
     current_mood: str | None = None
 
 
@@ -32,9 +31,6 @@ class AvatarAssetResponse(BaseModel):
     asset_url: str
     seed_fullbody_url: str = ""
     reference_image_url: str = ""
-    model_seed_front_url: str = ""
-    model_seed_back_url: str = ""
-    supports_multiview: bool = False
     prompt: str = ""
     status: SucceededStatus = "succeeded"
 
@@ -55,14 +51,6 @@ class FullbodyReferenceFrontGenerateRequest(BaseModel):
     mode: ImageReviseMode
 
 
-# 模型种子（A-pose 正面 / 背面）生成共用请求体；画风由服务端按物种路由并随行持久化，正背恒成对一致
-class ModelSeedGenerateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    feedback: str | None = Field(default=None, max_length=500)
-    mode: ImageReviseMode
-
-
 class FullbodyConfirmFrontRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -70,7 +58,7 @@ class FullbodyConfirmFrontRequest(BaseModel):
 
 
 # 全身种子自备图点位；值与 REST 路径段一致
-FullbodySeedKind = Literal["reference", "front-reference", "model-front", "back"]
+FullbodySeedKind = Literal["reference", "front-reference"]
 
 
 class FullbodyPromptRequest(BaseModel):
@@ -122,37 +110,6 @@ class AvatarFromImageRequest(BaseModel):
 
 class AvatarHistoryResponse(BaseModel):
     history: list[AvatarAssetResponse]
-
-
-class CompanionModelResponse(BaseModel):
-    id: int
-    asset_url: str | None = None
-    provider: str
-    species: str = "人类"
-    rig_type: str = "biped"
-    rig_naming: str = "tripo"
-    # 模型生成所用的 seed 风格，路由客户端渲染风格。
-    style: str = "realistic"
-    status: str = "succeeded"
-    has_rig: bool
-    content_hash: str | None = None
-    # 语义键 → GLB 内 clip 名；客户端据此兑现动作，自身不持有任何供应商命名。
-    clip_map: dict[str, str] = Field(default_factory=dict)
-
-
-class ModelGenerateRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    species_override: str | None = Field(default=None, max_length=64)
-    provider: Literal["tripo", "hunyuan"] | None = None
-    # False 幂等返回现有 active 模型；True 强制付费重新生成。
-    force: bool = False
-
-
-class RenderModeRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    render_mode: Literal["model", "video"]
 
 
 class OutfitCreateRequest(BaseModel):

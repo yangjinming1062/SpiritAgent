@@ -551,57 +551,8 @@ input[type="file"] { font-size: 0.78rem; }
                             </div>
                         </div>
 
-                        <!-- 3. 图生模型资产 -->
-                        <div class="card" style="margin-bottom:1.25rem;">
-                            <div class="card-head">
-                                <h2>伙伴模型资产生成</h2>
-                                <span class="hint">Tripo3D、混元 3D 生模参数</span>
-                            </div>
-                            <div style="padding:1.1rem;">
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
-                                    <div class="field">
-                                        <label>图生模型首选供应商</label>
-                                        <select id="sys_model_generation_provider">
-                                            <option value="tripo">tripo (Tripo3D 自动绑骨)</option>
-                                            <option value="hunyuan">hunyuan (腾讯混元 3D)</option>
-                                        </select>
-                                    </div>
-                                    <div class="field"><label>模型轮询间隔 (秒)</label><input type="number" step="0.5" id="sys_model_generation_poll_interval_seconds"></div>
-                                    <div class="field"><label>模型轮询退避上限 (秒)</label><input type="number" step="1" id="sys_model_generation_poll_backoff_max_seconds"></div>
-                                    <div class="field"><label>模型最大超时 (秒)</label><input type="number" step="10" id="sys_model_generation_max_poll_seconds"></div>
-                                </div>
-                                <div class="svc-grid" style="margin-bottom:1rem;">
-                                    <div class="svc-card">
-                                        <h3>Tripo3D 配置</h3>
-                                        <div class="field">
-                                            <div class="label-row"><label>API Key</label><span class="keybadge off" id="sys_tripo_key_badge">未设置</span></div>
-                                            <input type="password" id="sys_tripo_api_key" placeholder="留空保持原有配置">
-                                        </div>
-                                        <div class="field"><label>Base URL</label><input type="text" id="sys_tripo_base_url"></div>
-                                        <div class="field"><label>模型版本</label><input type="text" id="sys_tripo_model_version"></div>
-                                        <div class="field"><label>面数限制</label><input type="number" id="sys_tripo_face_limit"></div>
-                                        <div class="field"><label>贴图质量</label><input type="text" id="sys_tripo_texture_quality" placeholder="extreme / detailed / standard"></div>
-                                        <div class="field"><label>几何质量</label><input type="text" id="sys_tripo_geometry_quality" placeholder="detailed / standard"></div>
-                                        <label class="checkbox-row" style="margin-top:0.5rem;"><input type="checkbox" id="sys_tripo_enable_autofix"> 启用模型自动修复</label>
-                                    </div>
-                                    <div class="svc-card">
-                                        <h3>腾讯混元 3D 配置</h3>
-                                        <div class="field">
-                                            <div class="label-row"><label>API Key</label><span class="keybadge off" id="sys_hunyuan_key_badge">未设置</span></div>
-                                            <input type="password" id="sys_hunyuan_api_key" placeholder="留空保持原有配置">
-                                        </div>
-                                        <div class="field"><label>Base URL</label><input type="text" id="sys_hunyuan_base_url"></div>
-                                        <div class="field"><label>模型版本</label><input type="text" id="sys_hunyuan_model_version"></div>
-                                        <div class="field"><label>生成模式</label><input type="text" id="sys_hunyuan_generate_type" placeholder="Normal / LowPoly / Geometry / Sketch"></div>
-                                        <div class="field"><label>面数限制</label><input type="number" id="sys_hunyuan_face_count"></div>
-                                        <div class="field"><label>产物格式</label><input type="text" id="sys_hunyuan_result_format" placeholder="GLB"></div>
-                                        <label class="checkbox-row" style="margin-top:0.5rem;"><input type="checkbox" id="sys_hunyuan_enable_pbr"> 启用 PBR 材质</label>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-
                         <!-- 4. 聊天压缩与会话 -->
+                        <div class="card" style="margin-bottom:1.25rem;">
                         <div class="card" style="margin-bottom:1.25rem;">
                             <div class="card-head">
                                 <h2>对话编排与上下文压缩</h2>
@@ -735,7 +686,6 @@ input[type="file"] { font-size: 0.78rem; }
                                     <div class="field"><label>语音合成 TTS (/分钟)</label><input type="number" id="sys_media_tts_rate_limit_per_minute"></div>
                                     <div class="field"><label>视频附件上传 (/分钟)</label><input type="number" id="sys_media_video_rate_limit_per_minute"></div>
                                     <div class="field"><label>伴侣头像生成 (/分钟)</label><input type="number" id="sys_companion_avatar_generate_rate_limit_per_minute"></div>
-                                    <div class="field"><label>伴侣模型生成 (/分钟)</label><input type="number" id="sys_companion_model_generate_rate_limit_per_minute"></div>
                                     <div class="field"><label>伴侣换装外观生成 (/小时)</label><input type="number" id="sys_companion_outfit_generate_rate_limit_per_hour"></div>
                                 </div>
                                 <h3 style="margin:1rem 0 0.5rem; font-size:0.88rem;">房间背景、叙事时刻与安全配额</h3>
@@ -1388,12 +1338,11 @@ async function deleteUser(id) {
     catch (e) { toast(e.message, 'err'); }
 }
 
-// ── User backup ─────────────────────────────────────────
 const BACKUP_SECTION_LABELS = Object.freeze({
     user_preferences: '用户偏好', conversations: '会话', messages: '消息',
     user_model_configs: '模型配置与凭据', avatar_assets: '角色形象',
     companion_outfits: '衣橱', companion_room_backdrops: '房间', personas: '角色定义',
-    companion_models: '模型', user_settings: '用户设置',
+    user_settings: '用户设置',
     cron_jobs: '定时任务', memories: '长期记忆', companion_moments: '片刻',
     companion_diary_entries: '日记', asset_files: '资产文件',
 });
@@ -1723,9 +1672,6 @@ function renderAiCards(editorName) {
 }
 
 const SETTING_TEXT_KEYS = [
-    'model_generation_provider',
-    'tripo_base_url', 'tripo_model_version', 'tripo_texture_quality', 'tripo_geometry_quality',
-    'hunyuan_base_url', 'hunyuan_model_version', 'hunyuan_generate_type', 'hunyuan_result_format',
     'web_search_backend', 'web_extract_backend', 'tavily_base_url',
     'ssrf_allowed_cidrs', 'public_base_url', 'log_level', 'log_format'
 ];
@@ -1733,8 +1679,6 @@ const SETTING_TEXT_KEYS = [
 const SETTING_NUM_KEYS = [
     'llm_request_timeout_seconds', 'llm_stream_idle_timeout_seconds', 'llm_max_retry_attempts', 'llm_base_retry_delay', 'llm_max_retry_delay', 'default_llm_context_tokens',
     'video_gen_poll_interval_seconds', 'video_gen_poll_backoff_max_seconds', 'video_gen_max_poll_seconds', 'video_gen_tool_wait_seconds', 'video_gen_download_max_bytes',
-    'model_generation_poll_interval_seconds', 'model_generation_poll_backoff_max_seconds', 'model_generation_max_poll_seconds',
-    'tripo_face_limit', 'hunyuan_face_count',
     'context_compression_threshold', 'context_summary_target_tokens', 'context_summary_max_input_messages', 'chat_active_window_minutes', 'ipc_future_timeout_seconds',
     'agent_max_loop_turns',
     'companion_check_affect_min_interval_seconds', 'companion_interact_min_interval_seconds', 'companion_llm_cooldown_seconds', 'companion_interact_failure_cooldown_seconds',
@@ -1745,7 +1689,7 @@ const SETTING_NUM_KEYS = [
     'nightly_message_truncate_chars', 'nightly_planning_max_tokens', 'nightly_diary_max_tokens', 'diary_max_content_chars',
     'scheduler_interval_seconds', 'cron_max_active_per_user',
     'login_rate_limit_per_minute', 'llm_completion_rate_limit_per_minute', 'llm_completion_rate_limit_per_ip_per_minute', 'media_stt_rate_limit_per_minute', 'media_tts_rate_limit_per_minute', 'media_video_rate_limit_per_minute',
-    'companion_avatar_generate_rate_limit_per_minute', 'companion_model_generate_rate_limit_per_minute', 'companion_outfit_generate_rate_limit_per_hour',
+    'companion_avatar_generate_rate_limit_per_minute', 'companion_outfit_generate_rate_limit_per_hour',
     'room_llm_replace_per_24h', 'room_max_attempts', 'room_history_keep', 'moment_llm_per_day',
     'max_attachments_per_turn', 'attachment_session_quota_bytes', 'journal_media_download_max_bytes', 'backup_archive_max_bytes',
     'web_search_default_results',
@@ -1754,16 +1698,13 @@ const SETTING_NUM_KEYS = [
 ];
 
 const SETTING_BOOL_KEYS = [
-    'tripo_enable_autofix', 'hunyuan_enable_pbr',
     'enable_context_compression', 'rate_limit_enabled',
     'diary_nightly_enabled', 'llm_debug_logging'
 ];
 
 const SETTING_KEY_BADGES = [
-    { key: 'tripo_api_key', badge: 'sys_tripo_key_badge' },
-    { key: 'hunyuan_api_key', badge: 'sys_hunyuan_key_badge' },
     { key: 'brave_search_api_key', badge: 'sys_brave_key_badge' },
-    { key: 'tavily_api_key', badge: 'sys_tavily_key_badge' },
+    { key: 'tavily_search_api_key', badge: 'sys_tavily_key_badge' },
     { key: 'metrics_auth_token', badge: 'sys_metrics_token_badge' }
 ];
 

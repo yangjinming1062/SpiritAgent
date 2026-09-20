@@ -32,8 +32,6 @@ from .prompt_engineer import (
     chat,
     describe_garment_image,
     enhance_avatar_prompt,
-    is_preset_species,
-    resolve_fullbody_style,
     resolve_fullbody_template,
 )
 from .providers import (
@@ -143,7 +141,6 @@ __all__ = [
     "generate_embeddings",
     "get_async_client",
     "is_content_policy_error_message",
-    "is_preset_species",
     "message_to_response_items",
     "pick_voice_id",
     "provider_for_service",
@@ -153,7 +150,6 @@ __all__ = [
     "resolve",
     "resolve_context_tokens",
     "resolve_embedding_provider",
-    "resolve_fullbody_style",
     "resolve_fullbody_template",
     "resolve_provider_chain",
     "resolve_provider_config",

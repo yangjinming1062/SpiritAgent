@@ -8,18 +8,8 @@ import {
   playSpriteActionSequence,
   resolveAvatarRegeneration,
   setSpriteState,
-  type SpriteEmotion,
-  switchRenderMode
+  type SpriteEmotion
 } from '@/modules/character'
-import {
-  $clipMap,
-  $modelGenError,
-  $modelGenProgress,
-  $modelGenState,
-  clearModelRetry,
-  setModelFailed,
-  setModelInfo
-} from '@/modules/character/rendering/model'
 import {
   $videoGenError,
   $videoGenStage,
@@ -34,8 +24,8 @@ import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
-// 角色 / 形象事件处理器：心情、自主具身表达、模型与外观、衣柜与头像重生。
-// 全部只更新 character 域（及其模型渲染域）的状态，不接触会话。
+// 角色 / 形象事件处理器：心情、自主具身表达、衣柜、头像重生与视频包生成。
+// 全部只更新 character 域的状态，不接触会话。
 
 const SWEAT_EMOTIONS: ReadonlySet<string> = new Set(['scared', 'embarrassed', 'concerned', 'apologetic'])
 
@@ -80,88 +70,6 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
       if (mood) {
         $companionMood.set(mood)
       }
-
-      break
-    }
-
-    case 'model.ready': {
-      // 后端在 /api/companion/model 生成结束后推送此事件。
-      // 只要 $modelInfo.asset_url 变化，模型引擎就会重新加载（见 ModelStage.tsx）。
-      // error 字段用于展示生成失败；目前 UI 只是记录日志，恢复流程在后续切片。
-      //
-      // 二次 auth 防御：顶层 guard 只挡 'pending'，'unauthenticated' 的事件正常落地
-      // 是为了 message.complete 不卡 thinking。但 model.ready 写持久化 atom（isPersistable
-      // 通过 → localStorage），登出 race 里到达会污染下一位用户的冷启动读数。这里显式再挡一次。
-      if (!authed()) {
-        break
-      }
-
-      const p = decodePayload<{
-        model_id?: number
-        asset_url?: string
-        species?: string
-        rig_type?: string
-        style?: string
-        content_hash?: string
-        error?: string
-        clip_map?: Readonly<Record<string, string>>
-      }>(event.payload)
-
-      if (p?.error) {
-        log.warn('events', 'model.ready error:', p.error)
-        setModelFailed(p.error)
-
-        break
-      }
-
-      $modelGenState.set('succeeded')
-      $modelGenProgress.set(null)
-      $modelGenError.set(null)
-      clearModelRetry()
-      setModelInfo({
-        id: p?.model_id ?? null,
-        asset_url: p?.asset_url ?? null,
-        species: p?.species ?? null,
-        rig_type: p?.rig_type ?? 'biped',
-        style: p?.style ?? 'realistic',
-        content_hash: p?.content_hash ?? null,
-        status: 'succeeded',
-        has_rig: true
-      })
-      // 运行时新生成的模型必须在此接住映射，否则角色会一直静止到下次水合。
-      $clipMap.set(p?.clip_map ?? {})
-
-      break
-    }
-
-    case 'model.gen.progress': {
-      const p = decodePayload<{ stage?: string; progress?: number }>(event.payload)
-
-      // uploading 是后端在提交新任务前串行发出的首事件，允许其他窗口发起的重建
-      // 开启新一轮。终态之后的其余迟到进度仍丢弃，避免重新出现生成覆盖层。
-      const genState = $modelGenState.get()
-
-      if (genState === 'succeeded' || genState === 'failed') {
-        if (p?.stage !== 'uploading') {
-          break
-        }
-
-        $modelGenError.set(null)
-        clearModelRetry()
-      }
-
-      $modelGenState.set(p?.stage === 'done' ? 'succeeded' : 'generating')
-      $modelGenProgress.set({ stage: p?.stage ?? '', progress: p?.progress ?? 0 })
-
-      break
-    }
-
-    case 'model.failed': {
-      const p = decodePayload<{ reason?: string; retry_download?: boolean; model_id?: number }>(event.payload)
-      setModelFailed(p?.reason ?? '模型生成失败', {
-        retryDownload: p?.retry_download === true,
-        modelId: p?.model_id ?? null
-      })
 
       break
     }
@@ -227,16 +135,6 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
         $videoGenStage.set(null)
         $videoGenError.set(p?.reason || '视频形象生成失败，请稍后重试')
         void hydrateVideoPack(true)
-      }
-
-      break
-    }
-
-    case 'companion.render_mode.changed': {
-      const p = decodePayload<{ new_mode?: 'model' | 'video' }>(event.payload)
-
-      if (p?.new_mode === 'model' || p?.new_mode === 'video') {
-        void switchRenderMode(p.new_mode)
       }
 
       break

@@ -45,8 +45,8 @@ export function HistoryGallery({
   )
 }
 
-// 立绘画幅随物种骨骼分桶（竖/方/横并存），取景框比例须跟随图片本身——
-// 这里探测 naturalWidth/Height 供容器设 aspectRatio；加载完成前返回 null（调用方回退双足竖版占位）。
+// 取景框比例须跟随立绘图片本身——
+// 这里探测 naturalWidth/Height 供容器设 aspectRatio；加载完成前返回 null（调用方回退竖版占位）。
 export function useNaturalAspectRatio(src: string | null | undefined): number | null {
   const [ratio, setRatio] = useState<number | null>(null)
 

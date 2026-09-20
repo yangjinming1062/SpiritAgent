@@ -2,11 +2,10 @@ import { $gateway } from '@/shared/store/gateway'
 import type { ReactionBucket } from '@/shared/types/reactions'
 
 import { $lastIdleSeconds, reportInteractionStat } from './activity'
-import { $clipOverride, $spriteAction, $spriteEmotion, setSpriteState } from './companion-store'
+import { $spriteAction, $spriteEmotion, setSpriteState } from './companion-store'
 import { $personalityTags } from './persona-store'
 import { $llmReactions } from './prefs'
 import { pickReaction, playReactionAudio } from './reactions/reaction-audio'
-import { $availableClipNames, $clipMap, resolveClip } from './rendering/model'
 import { emitVfx } from './vfx'
 
 export type NormalizedRegion = 'head' | 'body' | 'item'
@@ -146,7 +145,6 @@ export function handlePetInteraction(nx = 0.5, ny = 0.25): void {
   const tags = $personalityTags.get()
 
   emitVfx('heart', { nx, ny, count: 2 })
-  $clipOverride.set('petting')
   $spriteAction.set('petting')
   $spriteEmotion.set('happy')
   setSpriteState('interacting', { durationMs: 2500 })
@@ -159,7 +157,6 @@ export function handleDizzyInteraction(): void {
   const tags = $personalityTags.get()
 
   emitVfx('dizzy_stars')
-  $clipOverride.set('dizzy')
   $spriteAction.set('dizzy')
   $spriteEmotion.set('confused')
   setSpriteState('interacting', { durationMs: 3000 })
@@ -201,8 +198,6 @@ export function handlePokeInteraction(region?: string): void {
   const tags = $personalityTags.get()
   const bucket = bucketForPokeCount()
 
-  // 音效资产按 kebab 分档，线上语义键统一 snake 且不分档。
-  $clipOverride.set(resolveClip('poke', $clipMap.get(), $availableClipNames.get()))
   setSpriteState('interacting', { durationMs: 2000 })
 
   void triggerReaction(bucket, tags, region, 'poke')

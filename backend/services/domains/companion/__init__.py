@@ -2,7 +2,7 @@
 
 from .affect_check import AffectCheckResult, check_affect
 from .affect_emit import emit_companion_affect, emit_companion_message
-from .appearance import build_outfit_extras, get_active_model
+from .appearance import build_outfit_extras
 from .disturbance import (
     ALLOWED_TIERS,
     DEFAULT_TIER,
@@ -41,7 +41,6 @@ from .persona_service import (
     get_or_create_persona,
     load_persona_definition,
     render_extras,
-    set_render_mode,
     submit_onboarding_field,
     update_persona,
 )
@@ -57,7 +56,6 @@ from .proactive_runtime import (
     user_turn_activity,
 )
 from .prompt_runtime import load_companion_prompt_context, run_prompt_json
-from .rig_type_selector import classify_species, select_rig_type
 from .session_preset import is_work_preset, resolve_session_profile
 from .should_act import ALLOWED_ACTIONS, ShouldActResult, invalidate_user_should_act, should_act
 from .voice_catalog import (
@@ -101,14 +99,12 @@ __all__ = [
     "build_outfit_extras",
     "build_system_prompt_extras",
     "check_affect",
-    "classify_species",
     "confirm_portrait",
     "design_voice",
     "drain_persona_background",
     "emit_companion_affect",
     "emit_companion_message",
     "emit_companion_mood",
-    "get_active_model",
     "get_disturbance_tier",
     "get_onboarding_state",
     "get_or_create_persona",
@@ -129,8 +125,6 @@ __all__ = [
     "load_companion_prompt_context",
     "run_prompt_json",
     "schedule_personality_tag_refresh",
-    "select_rig_type",
-    "set_render_mode",
     "should_act",
     "submit_onboarding_field",
     "update_mood_from_companion_turn",

@@ -22,34 +22,6 @@ if TYPE_CHECKING:
     from modules.auth import User
 
 
-class CompanionModel(ModelBase, TimestampMixin):
-    """供应商生成的模型；status 流转：generating → pending_download → downloading → succeeded | failed；下载阶段任意失败 → download_failed（可通过 ``companion.model.retryDownload`` 重试，付费结果保存在 provider_task_id + download_urls_json 中）。"""
-
-    __tablename__ = "companion_models"
-
-    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    asset_url: Mapped[str] = mapped_column(Text, default="")
-    source_portrait_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    provider: Mapped[str] = mapped_column(String(64), default="base_texture")
-    species: Mapped[str] = mapped_column(String(64), default="人类", server_default=text("'人类'"))
-    rig_type: Mapped[str] = mapped_column(String(32), default="biped", server_default=text("'biped'"), index=True)
-    rig_naming: Mapped[str] = mapped_column(String(16), default="tripo", server_default=text("'tripo'"))
-    # 模型生成所用的 seed 图风格（refined_anime_cg | realistic），按物种路由，重试下载时保持同风格。
-    style: Mapped[str] = mapped_column(String(16), default="realistic", server_default=text("'realistic'"))
-    status: Mapped[str] = mapped_column(String(32), default="pending")
-    has_rig: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
-    # 供应商声明的「语义键 → 烘焙进 GLB 的 clip 名」；空字典即该产物不含动画。
-    clip_map_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
-    # 当前 provider_task_id 在链上的阶段：submit / rig / animate —— 用于进程崩溃接续时判断"该 task_id 指向的产物是不是最终含动画的 GLB"，避免把未完成链中的中间产物当终产物落盘。
-    provider_phase: Mapped[str] = mapped_column(String(16), default="submit", server_default=text("'submit'"))
-    content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="", server_default=text("''"))
-    error: Mapped[str | None] = mapped_column(Text, nullable=True)
-    active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
-    # 付费结果恢复句柄：生成完成瞬间、下载开始前写入，保证下载失败也不丢已计费资产；provider_task_id 是「再次查问即得 URL」的 id（云端 rigged 用 rig task id，其他用 submit id）。
-    provider_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
-    download_urls_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
-
-
 class CompanionOutfit(ModelBase, TimestampMixin):
     """外观（着装参考）：一套经确认的全身立绘 + LLM 着装描述。
     服装/发型属可换元素而非身份变更，不受形象锁定约束；激活装不可删 ⇒ 衣柜非空后永不回空。
@@ -77,7 +49,7 @@ REQUIRED_VIDEO_ACTIONS: tuple[str, ...] = ("idle", "walk_left", "walk_right", "d
 class CompanionVideoPack(ModelBase, TimestampMixin):
     """角色视频动作包（不可变版本）：一个外观版本的一套动作片段 + 描述符 manifest。
     status 流转：processing → ready | failed；ready 仅表示「必需动作全部有效且服务端
-    发布完成」，不改变模型链或其他形象状态。版本不可覆盖：单动作重做生成新版本行，
+    发布完成」，不改变其他形象状态。版本不可覆盖：单动作重做生成新版本行，
     可复用未变化动作的资源哈希；发布与激活只能由 video 编排在用户锁内翻转。"""
 
     __tablename__ = "companion_video_packs"
@@ -158,8 +130,6 @@ class Persona(ModelBase, TimestampMixin):
         index=True,
     )
     portrait_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # 渲染方式偏好：model（云端 GLB 模型）/ video（默认，视频形象；动作包未就绪时按兜底顺序显示）。
-    render_mode: Mapped[str] = mapped_column(String(8), default="video", server_default=text("'video'"), index=True)
     # 当前激活的房间图行；None = 尚未生成。
     active_backdrop_id: Mapped[int | None] = mapped_column(
         ForeignKey("companion_room_backdrops.id", ondelete="SET NULL"),
@@ -192,14 +162,11 @@ class AvatarAsset(ModelBase):
     prompt_json: Mapped[str] = mapped_column(Text)
     asset_url: Mapped[str] = mapped_column(String(2048))
     style: Mapped[str] = mapped_column(String(64), default="")
-    # 日常出镜的全身参考；独立于建模种子，锁定身份后仍可重绘。
+    # 日常出镜的全身参考；锁定身份后仍可重绘。
     seed_fullbody_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    # 确认形象的外观参考正面立绘（渲染方式无关的身份锚）：onboarding 确认后锁定身份；
+    # 确认形象的外观参考正面立绘（视频链的身份锚）：onboarding 确认后锁定身份；
     # 外观草稿与视频链以它为身份参考。
     reference_image_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    # 建模专用正面种子（A-pose、按物种路由画风），切模型时以参考立绘派生；不覆盖外观参考（衣柜与视频链的身份锚）
-    model_seed_front_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    model_seed_back_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

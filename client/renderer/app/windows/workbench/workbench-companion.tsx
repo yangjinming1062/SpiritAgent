@@ -3,7 +3,6 @@ import React, { lazy, Suspense, useCallback, useEffect, useRef } from 'react'
 
 import {
   $companionLifecycle,
-  $renderMode,
   $videoPackStatus,
   EggStage,
   emitVfx,
@@ -16,13 +15,6 @@ import {
   resolveCompanionPresentation,
   SpriteVfxOverlay
 } from '@/modules/character'
-import {
-  $glbLoadFailed,
-  $modelGenState,
-  $modelInfo,
-  $sprite3DHitTest,
-  hydrateModel
-} from '@/modules/character/rendering/model'
 import { $videoHitTest } from '@/modules/character/rendering/video'
 import { useInteractiveRegion } from '@/shared'
 import { $auth } from '@/shared/store/auth'
@@ -30,17 +22,11 @@ import { useStrings } from '@/shared/strings'
 
 import styles from './workbench.module.css'
 
-// 模型未就绪时由渲染裁决落程序化蛋兜底（DESIGN §1.2「永不空白」）。
-const ModelStage = lazy(() => import('@/modules/character/rendering/model').then(m => ({ default: m.ModelStage })))
 const VideoStage = lazy(() => import('@/modules/character/rendering/video').then(m => ({ default: m.VideoStage })))
 
 export function WorkbenchCompanion(): React.JSX.Element {
   const auth = useStore($auth)
   const lifecycle = useStore($companionLifecycle)
-  const mode = useStore($renderMode)
-  const modelInfo = useStore($modelInfo)
-  const glbLoadFailed = useStore($glbLoadFailed)
-  const modelGenState = useStore($modelGenState)
   const videoStatus = useStore($videoPackStatus)
   const dict = useStrings()
   const t = dict.workbench
@@ -48,16 +34,7 @@ export function WorkbenchCompanion(): React.JSX.Element {
   const pointerStartRef = useRef<{ time: number; x: number; y: number } | null>(null)
   const hasHydratedRef = useRef(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
-  const hit3DRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
   const hitVideoRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
-
-  useEffect(
-    () =>
-      $sprite3DHitTest.subscribe(fn => {
-        hit3DRef.current = fn
-      }),
-    []
-  )
 
   useEffect(
     () =>
@@ -67,16 +44,10 @@ export function WorkbenchCompanion(): React.JSX.Element {
     []
   )
 
-  // 偏好模式与资产状态归并为当前渲染层（presentation/render-resolver）。
+  // 视频就绪挂视频层，否则落程序化蛋兜底（DESIGN §1.2「永不空白」）。
   const presentation = React.useMemo(
-    () =>
-      resolveCompanionPresentation({
-        modelGenerating: modelGenState === 'generating',
-        modelReady: modelInfo.status === 'succeeded' && !glbLoadFailed,
-        mode,
-        videoReady: videoStatus === 'ready'
-      }),
-    [mode, modelInfo.status, glbLoadFailed, modelGenState, videoStatus]
+    () => resolveCompanionPresentation({ videoReady: videoStatus === 'ready' }),
+    [videoStatus]
   )
 
   const stageHitTest = useCallback(
@@ -93,12 +64,6 @@ export function WorkbenchCompanion(): React.JSX.Element {
         if (result !== null) {
           return result
         }
-      }
-
-      const probe3d = hit3DRef.current
-
-      if (probe3d) {
-        return probe3d(x, y) ?? true
       }
 
       return true
@@ -119,7 +84,6 @@ export function WorkbenchCompanion(): React.JSX.Element {
       hasHydratedRef.current = true
 
       void ensureCompanionHydrated({
-        hydrateModel,
         hydratePersona,
         hydratePortrait
       })
@@ -184,10 +148,8 @@ export function WorkbenchCompanion(): React.JSX.Element {
         <Suspense fallback={null}>
           {auth.kind !== 'authenticated' || presentation.renderer === 'fallback' ? (
             <EggStage onTap={handleTap} />
-          ) : presentation.renderer === 'video' ? (
-            <VideoStage />
           ) : (
-            <ModelStage />
+            <VideoStage />
           )}
         </Suspense>
         <SpriteVfxOverlay />

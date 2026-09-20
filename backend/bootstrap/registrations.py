@@ -27,14 +27,10 @@ from services.infrastructure.event_store import register_internal_event_handler
 from services.infrastructure.llm import ServiceType
 from services.infrastructure.llm import register as register_provider
 from services.infrastructure.llm.providers import gemini, grok, mimo, minimax, zhipu
-from services.infrastructure.model_generation import HunyuanCharacterModelProvider, TripoCharacterModelProvider
-from services.infrastructure.model_generation import register as register_model_generation_provider
 from services.infrastructure.tool_runtime import REGISTRY
 
 
 def register_providers() -> None:
-    register_model_generation_provider("hunyuan", HunyuanCharacterModelProvider)
-    register_model_generation_provider("tripo", TripoCharacterModelProvider)
     register_provider(ServiceType.image_gen, "gemini", gemini.GeminiImageGenProvider)
     register_provider(ServiceType.embedding, "gemini", gemini.GeminiEmbeddingProvider)
     register_provider(ServiceType.llm, "grok", grok.GrokChatProvider)

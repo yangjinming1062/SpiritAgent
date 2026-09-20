@@ -5,8 +5,6 @@ const MEDIA_MIME_TYPES: Record<string, string> = {
   '.bmp': 'image/bmp',
   '.flac': 'audio/flac',
   '.gif': 'image/gif',
-  '.glb': 'model/gltf-binary',
-  '.gltf': 'model/gltf+json',
   '.jpeg': 'image/jpeg',
   '.jpg': 'image/jpeg',
   '.m4a': 'audio/mp4',

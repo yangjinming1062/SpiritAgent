@@ -2,8 +2,8 @@
 编辑保持条款、服装参考图转写、房间背景规则与光线词典、审核合规改写、衣柜描述与房间陈设生成。
 确定性拼接器与 LLM 调用在 services 各层。
 
-保留在 prompt_engineer.py 的结构化提示词数据（见 README）：FullbodyTemplate 模板 dict（dataclass 载体）、
-_SPECIES_STYLE/_PRESET_SPECIES（类型化路由数据）。
+保留在 prompt_engineer.py 的结构化提示词数据（见 README）：FullbodyTemplate 与 _SPECIES_FLAVOR
+（物种姿态/特效 dict）。
 提示词语义约束见 docs/PIPELINE.md。"""
 
 AVATAR_SYSTEM_PROMPT = (
@@ -24,8 +24,7 @@ AVATAR_SYSTEM_PROMPT = (
 
 
 # 画风词典按生成链分槽，不得重新合并：anime_illustration 服务外观参考与外观立绘
-# （REFERENCE_ILLUSTRATION_STYLE 固定），refined_anime_cg / realistic 服务模型种子按物种路由；
-# 分槽原因见 docs/PIPELINE.md §2。
+# （REFERENCE_ILLUSTRATION_STYLE 固定），refined_anime_cg 是全身模板的缺省与兜底画风。
 STYLE_ANATOMY_GUARD = (
     "仅渲染角色原有的身体结构与材质；画风中的五官、毛发和服饰示例只用于角色实际拥有的部分，"
     "不因此增添人类嘴唇、睫毛、头发、服装或其他器官。"
@@ -46,7 +45,6 @@ FULLBODY_STYLE_WORDING: dict[str, str] = {
         "轮廓线完整清晰，人物与背景、服装各部件之间色块分界明确；"
         "服装材质质感考究（绸缎、薄纱、皮革等反光与透叠层次分明），光影柔和统一，画面完成度高。" + STYLE_ANATOMY_GUARD
     ),
-    "realistic": "写实角色摄影与真实材质渲染（photorealistic character render），生物肌理、毛发、皮肤或硬表面材质可信，棚拍光影自然，细节清晰。",
 }
 
 BIPED_A_POSE = (
@@ -60,7 +58,7 @@ BIPED_NATURAL_POSE = (
 )
 
 
-VIEW_PREFIX = {"front": "正面全身角色立绘", "back": "背面全身角色立绘"}
+FULLBODY_FRONT_LABEL = "正面全身角色立绘"
 
 UNCHOPPED_BODY_PARTS = "头顶、肢体末端、已有鞋履或该角色实际拥有的任何身体部位"
 
@@ -69,10 +67,6 @@ FULLBODY_PRESERVE_CHARACTER = (
     "保留原图角色的脸型、五官、体型、物种、性别、肤色或表面材质及标志性身体特征。"
     "服装、发型发色、配饰及不对称细节沿用原图，仅在下文明确要求时调整。"
     "外形文字仅作补充，不以文字重新设计原图角色；姿态、视角、画风与背景按下文调整。"
-)
-FULLBODY_BACK_VIEW = (
-    "将原图角色转为背向镜头，保持与正面一致的体型、穿着、配色和不对称细节，"
-    "按已有结构补全原图不可见的背部；不要水平翻转正面图或让角色回头露出正脸。"
 )
 OUTFIT_CHANGE_TEMPLATE = (
     "为原图角色更换服装、发型发色与配饰：{requirement}。"
@@ -211,17 +205,6 @@ EDIT_PRESERVE_REFERENCE = (
 
 EDIT_PRESERVE_OUTFIT = (
     f"{EDIT_PRESERVE_REFERENCE}。本次只修改服装、发型发色和配饰中明确指定的部分，未提及的造型细节保持不变"
-)
-
-EDIT_PRESERVE_3D_FRONT = (
-    f"{EDIT_KEEP_CHARACTER}；保留原图适合该角色身体结构的建模姿态、正面视点、纯白无缝背景与画风。"
-    f"全身完整入画，{UNCHOPPED_BODY_PARTS}不被裁切；仅微调不冲突的外观细节，不添加场景、道具、文字或水印"
-)
-
-EDIT_PRESERVE_3D_BACK = (
-    f"{EDIT_KEEP_CHARACTER}；保留背向镜头的背面视点、原图建模姿态、纯白无缝背景与画风，不回头露出正脸。"
-    f"全身完整入画，{UNCHOPPED_BODY_PARTS}不被裁切；仅微调不冲突的外观细节，"
-    "未指定的后脑发型与服装后侧设计保持不变，不添加场景、道具、文字或水印"
 )
 
 

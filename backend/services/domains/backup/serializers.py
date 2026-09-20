@@ -13,7 +13,6 @@ from modules.companion import (
     CompanionDiaryEntry,
     CompanionIntent,
     CompanionIntentView,
-    CompanionModel,
     CompanionMoment,
     CompanionMomentComment,
     CompanionOutfit,
@@ -42,7 +41,6 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
     "companion_outfits": CompanionOutfit,
     "companion_room_backdrops": CompanionRoomBackdrop,
     "personas": Persona,
-    "companion_models": CompanionModel,
     "user_settings": UserSetting,
     "cron_jobs": CronJob,
     "companion_intents": CompanionIntent,
@@ -56,7 +54,6 @@ TABLES = tuple(TABLE_MODELS)
 CONVERSATION_TABLES = frozenset({"conversations", "messages"})
 FOREIGN_KEYS: dict[str, dict[str, str]] = {
     "personas": {"active_backdrop_id": "companion_room_backdrops"},
-    "companion_models": {"source_portrait_id": "avatar_assets"},
     "cron_jobs": {"conversation_id": "conversations"},
     "companion_moments": {"memory_id": "memories", "session_id": "conversations"},
     "companion_moment_comments": {"moment_id": "companion_moments"},

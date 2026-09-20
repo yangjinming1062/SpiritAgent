@@ -33,7 +33,7 @@ from modules.auth import (
     get_current_admin_token,
     hash_activation_token,
 )
-from modules.companion import AvatarAsset, CompanionModel, Persona
+from modules.companion import AvatarAsset, Persona
 from modules.scheduler import (
     NightlyActivityLog,
     NightlyActivityLogItem,
@@ -149,15 +149,13 @@ async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
         await asyncio.to_thread(delete_portrait_file, av.asset_url)
 
     await db.execute(delete(AvatarAsset).where(AvatarAsset.user_id == user_id))
-    await db.execute(delete(CompanionModel).where(CompanionModel.user_id == user_id))
     await db.delete(await db.get(User, user_id))
     await db.commit()
 
-    for sub in ("companion-assets", "companion-models"):
-        d = Path(SETTINGS.data_dir) / sub / str(user_id)
-        if d.exists():
-            # 用户资产可达 GB 级，删除移出事件循环
-            await asyncio.to_thread(_rm_user_asset_dir, d)
+    # 用户资产可达 GB 级，删除移出事件循环
+    d = Path(SETTINGS.data_dir) / "companion-assets" / str(user_id)
+    if d.exists():
+        await asyncio.to_thread(_rm_user_asset_dir, d)
     return {"message": "用户已删除。"}
 
 

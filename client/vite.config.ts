@@ -24,12 +24,6 @@ export default defineConfig({
       },
       output: {
         manualChunks(id) {
-          if (id.includes('three/addons/') || id.includes('three/examples/')) {
-            return 'vendor-three-addons'
-          }
-          if (id.includes('node_modules/three/') || id.endsWith('/three')) {
-            return 'vendor-three-core'
-          }
           if (
             id.includes('node_modules/react/') ||
             id.includes('node_modules/react-dom/') ||

@@ -6,8 +6,6 @@ import {
   $avatarSeeds,
   $outfitPolicy,
   $outfits,
-  $renderMode,
-  activateOutfit,
   deleteOutfit,
   generateVideoPack,
   GenerationActionsGroup,
@@ -83,9 +81,8 @@ export function OutfitSection(): React.JSX.Element {
       await window.spiritagent.api({ path: `/api/companion/outfits/${id}/confirm`, method: 'POST', body: {} })
       await hydrateWardrobe()
 
-      if ($renderMode.get() === 'video') {
-        void generateVideoPack({ outfitId: id })
-      }
+      // 确认转正后为该外观创建动作包；已有同参考就绪包时后端直接复用，不重复付费。
+      void generateVideoPack({ outfitId: id })
     } catch (err) {
       log.warn('outfit', 'retry confirm failed', err)
     }
@@ -284,11 +281,7 @@ export function OutfitSection(): React.JSX.Element {
                             disabled={busyId === outfit.id}
                             onClick={e => {
                               e.stopPropagation()
-                              withBusy(outfit.id, () =>
-                                $renderMode.get() === 'video'
-                                  ? generateVideoPack({ outfitId: outfit.id })
-                                  : activateOutfit(outfit.id)
-                              )
+                              withBusy(outfit.id, () => generateVideoPack({ outfitId: outfit.id }))
                             }}
                             title={t.actions.wearTitle}
                             type="button"

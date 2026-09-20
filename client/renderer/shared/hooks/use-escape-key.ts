@@ -14,8 +14,8 @@ export interface UseEscapeKeyOptions {
 }
 
 // 统一的"挂 window 键盘事件、命中 Esc、调用 handler"原语，
-// 取代 ConfirmDialog / WizardModal / PortraitLightbox / ActivationOverlay /
-// model-seed-wizard 等向导组件中重复出现的 `addEventListener('keydown', …, true)` 样板。
+// 取代 ConfirmDialog / WizardModal / PortraitLightbox / ActivationOverlay
+// 等向导组件中重复出现的 `addEventListener('keydown', …, true)` 样板。
 // handler 走 useLatestRef 镜像最新引用，调用方无需 useCallback。
 export function useEscapeKey(
   handler: () => void,

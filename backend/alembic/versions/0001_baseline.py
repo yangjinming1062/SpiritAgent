@@ -80,8 +80,6 @@ def upgrade() -> None:
         sa.Column("style", sa.String(length=64), nullable=False),
         sa.Column("seed_fullbody_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("reference_image_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
-        sa.Column("model_seed_front_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
-        sa.Column("model_seed_back_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("seed", sa.Integer(), nullable=True),
         sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -91,34 +89,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_avatar_assets_active"), "avatar_assets", ["active"], unique=False)
     op.create_index(op.f("ix_avatar_assets_user_id"), "avatar_assets", ["user_id"], unique=False)
-    op.create_table(
-        "companion_models",
-        sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("asset_url", sa.Text(), nullable=False),
-        sa.Column("source_portrait_id", sa.Integer(), nullable=True),
-        sa.Column("provider", sa.String(length=64), nullable=False),
-        sa.Column("species", sa.String(length=64), server_default=sa.text("'人类'"), nullable=False),
-        sa.Column("rig_type", sa.String(length=32), server_default=sa.text("'biped'"), nullable=False),
-        sa.Column("rig_naming", sa.String(length=16), server_default=sa.text("'tripo'"), nullable=False),
-        sa.Column("style", sa.String(length=16), server_default=sa.text("'realistic'"), nullable=False),
-        sa.Column("status", sa.String(length=32), nullable=False),
-        sa.Column("has_rig", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
-        sa.Column("clip_map_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
-        sa.Column("provider_phase", sa.String(length=16), server_default=sa.text("'submit'"), nullable=False),
-        sa.Column("content_hash", sa.String(length=64), server_default=sa.text("''"), nullable=True),
-        sa.Column("error", sa.Text(), nullable=True),
-        sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
-        sa.Column("provider_task_id", sa.String(length=128), nullable=True),
-        sa.Column("download_urls_json", sa.Text(), nullable=True),
-        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(op.f("ix_companion_models_active"), "companion_models", ["active"], unique=False)
-    op.create_index(op.f("ix_companion_models_rig_type"), "companion_models", ["rig_type"], unique=False)
-    op.create_index(op.f("ix_companion_models_user_id"), "companion_models", ["user_id"], unique=False)
     op.create_table(
         "companion_outfits",
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -340,7 +310,6 @@ def upgrade() -> None:
         sa.Column("is_complete", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("is_portrait_confirmed", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("portrait_confirmed_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("render_mode", sa.String(length=8), server_default=sa.text("'video'"), nullable=False),
         sa.Column("active_backdrop_id", sa.Integer(), nullable=True),
         sa.Column("backdrop_policy", sa.String(length=16), server_default=sa.text("'llm_may_replace'"), nullable=False),
         sa.Column("outfit_policy", sa.String(length=16), server_default=sa.text("'llm_may_replace'"), nullable=False),
@@ -354,7 +323,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_personas_is_complete"), "personas", ["is_complete"], unique=False)
     op.create_index(op.f("ix_personas_is_portrait_confirmed"), "personas", ["is_portrait_confirmed"], unique=False)
-    op.create_index(op.f("ix_personas_render_mode"), "personas", ["render_mode"], unique=False)
     op.create_index(op.f("ix_personas_user_id"), "personas", ["user_id"], unique=True)
     op.create_table(
         "companion_moments",
@@ -702,13 +670,6 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("active"),
     )
-    op.create_index(
-        "uq_companion_models_one_active",
-        "companion_models",
-        ["user_id"],
-        unique=True,
-        postgresql_where=sa.text("active"),
-    )
     # 每用户一个激活中外观（并发 confirm 的硬保证，服务层另有用户级锁）
     op.create_index(
         "uq_companion_outfits_one_active",
@@ -843,7 +804,6 @@ def downgrade() -> None:
         "cron_jobs",
         "companion_video_jobs",
         "companion_video_packs",
-        "companion_models",
         "companion_outfits",
         "avatar_assets",
         "conversations",

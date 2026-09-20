@@ -42,8 +42,6 @@ STARTUP_ONLY_KEYS: frozenset[str] = frozenset(
 # 敏感字段：返回给前端时脱敏掩码，保存时空字符串默认保持原值
 SENSITIVE_KEYS: frozenset[str] = frozenset(
     {
-        "tripo_api_key",
-        "hunyuan_api_key",
         "brave_search_api_key",
         "tavily_api_key",
         "metrics_auth_token",

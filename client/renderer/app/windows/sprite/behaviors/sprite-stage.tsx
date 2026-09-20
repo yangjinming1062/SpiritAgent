@@ -3,7 +3,6 @@ import { type PointerEvent, type ReactNode, useCallback, useEffect, useRef } fro
 
 import { handleDragEndInteraction } from '@/modules/character'
 import {
-  $clipOverride,
   $edgeDockSide,
   $homePosition,
   $isEdgeDocked,
@@ -22,7 +21,6 @@ import {
 } from '@/modules/character'
 import { emitVfx, SpriteVfxOverlay } from '@/modules/character'
 import { FootGlow } from '@/modules/character'
-import { $sprite3DHitTest } from '@/modules/character/rendering/model'
 import { $videoHitTest } from '@/modules/character/rendering/video'
 import { clearExternalAttachment, pushExternalAttachment } from '@/modules/conversation'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
@@ -88,17 +86,8 @@ export function SpriteStage({
   const lastTapRef = useRef(0)
   const pos = useStore($spatialPos)
   const scale = useStore($spatialScale)
-  // 实时模型轮廓探测与视频遮罩探测，通过 ref 同步以保证 hitTest 闭包稳定。
-  const hit3DRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
+  // 视频遮罩探测，通过 ref 同步以保证 hitTest 闭包稳定。
   const hitVideoRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
-
-  useEffect(
-    () =>
-      $sprite3DHitTest.subscribe(fn => {
-        hit3DRef.current = fn
-      }),
-    []
-  )
 
   useEffect(
     () =>
@@ -127,8 +116,7 @@ export function SpriteStage({
     [hidden]
   )
 
-  // 命中按渲染路径精化：视频走 alpha 遮罩查表，模型走实时轮廓探测
-  // （读回未落地返回 null 保留矩形兜底）；都缺席（桌面蛋 / 加载空挡）才回退整矩形
+  // 命中按渲染路径精化：视频走 alpha 遮罩查表；缺席（桌面蛋 / 加载空挡）才回退整矩形
   // ——否则矩形空白区会挡住底下应用的点击。
   const stageHitTest = useCallback((x: number, y: number): boolean => {
     const probeVideo = hitVideoRef.current
@@ -139,12 +127,6 @@ export function SpriteStage({
       if (result !== null) {
         return result
       }
-    }
-
-    const probe3d = hit3DRef.current
-
-    if (probe3d) {
-      return probe3d(x, y) ?? true
     }
 
     return true
@@ -249,7 +231,6 @@ export function SpriteStage({
     // 接取动效（DESIGN §6.3「触发接取动效与爱心/音符反馈」）：抬手接住 + 爱心/音符粒子
     emitVfx('heart', { nx: 0.5, ny: 0.25, count: 3 })
     emitVfx('music_notes', { nx: 0.35, ny: 0.15, count: 3 })
-    $clipOverride.set('present_right')
     $spriteAction.set('present_right')
     setSpriteState('interacting', { durationMs: 2000 })
     clearExternalAttachment()

@@ -8,7 +8,6 @@ import {
   $companionLifecycle,
   $companionVoiceId,
   $contextMenuPos,
-  $renderMode,
   $videoPackStatus,
   EggStage,
   ensureCompanionHydrated,
@@ -25,7 +24,6 @@ import {
   setCompanionVoiceId,
   startActivityMonitor
 } from '@/modules/character'
-import { $glbLoadFailed, $modelGenState, $modelInfo, hydrateModel } from '@/modules/character/rendering/model'
 import { MediaViewerOverlay } from '@/modules/media'
 import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
 import { NotificationStack, useGatewayRequest } from '@/shared'
@@ -46,12 +44,6 @@ import { toggleWhisper, WhisperOverlay } from './whisper'
 
 setSurfaceRole('sprite')
 
-// 模型渲染管线：把组件连同其 three + draco wasm + GLTF loader 全家桶
-// 从启动关键路径挪走。Onboarding 期间 (showOnboarding 为 true) 本来就不挂载，
-// 让 Vite 把 three.module.js + draco_decoder.wasm 等 25MB 模块拆成单独 chunk，
-// 在 lifecycle=ready 后按需请求，避开启动尖峰把风扇拉满。
-// 兜底层直接渲染程序化蛋（DESIGN §1.2「永不空白」）。
-const ModelStage = lazy(() => import('@/modules/character/rendering/model').then(m => ({ default: m.ModelStage })))
 const VideoStage = lazy(() => import('@/modules/character/rendering/video').then(m => ({ default: m.VideoStage })))
 
 export function SpriteWindow(): React.JSX.Element {
@@ -63,10 +55,6 @@ export function SpriteWindow(): React.JSX.Element {
   const gatewayState = useStore($gatewayState)
   const surfaceOpen = useStore($surfaceOpen)
   const lifecycle = useStore($companionLifecycle)
-  const mode = useStore($renderMode)
-  const modelInfo = useStore($modelInfo)
-  const glbLoadFailed = useStore($glbLoadFailed)
-  const modelGenState = useStore($modelGenState)
   const videoStatus = useStore($videoPackStatus)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [activationOpen, setActivationOpen] = useState(false)
@@ -216,7 +204,6 @@ export function SpriteWindow(): React.JSX.Element {
         }
 
         await ensureCompanionHydrated({
-          hydrateModel,
           hydratePersona,
           hydratePortrait
         })
@@ -267,17 +254,10 @@ export function SpriteWindow(): React.JSX.Element {
     })
   }, [lifecycle, gatewayState, requestGateway])
 
-  // 偏好模式与资产状态归并为当前渲染层（presentation/render-resolver）：
-  // 模型就绪或生成中挂模型舞台，否则落程序化蛋兜底；视频未提供时不误报。
+  // 视频就绪挂视频层，否则落程序化蛋兜底（DESIGN §1.2「永不空白」）。
   const presentation = React.useMemo(
-    () =>
-      resolveCompanionPresentation({
-        modelGenerating: modelGenState === 'generating',
-        modelReady: modelInfo.status === 'succeeded' && !glbLoadFailed,
-        mode,
-        videoReady: videoStatus === 'ready'
-      }),
-    [mode, modelInfo.status, glbLoadFailed, modelGenState, videoStatus]
+    () => resolveCompanionPresentation({ videoReady: videoStatus === 'ready' }),
+    [videoStatus]
   )
 
   const onTap = (): void => {
@@ -315,8 +295,6 @@ export function SpriteWindow(): React.JSX.Element {
     toggleWhisper()
   }
 
-  // onboarding 完成触发模型生成（base_texture 供应商是即时的——
-  // 模型生成触发在 confirm-front 成功回调里完成——onboarding 流程只负责"展示与完成"，不再触发模型任务。
   const onOnboardingComplete = (): void => {
     setOnboardingOpen(false)
     setCompanionLifecycle('ready')
@@ -337,15 +315,7 @@ export function SpriteWindow(): React.JSX.Element {
         {eggVisible ? (
           <EggStage onTap={() => setOnboardingOpen(true)} />
         ) : showOnboarding ? null : (
-          <Suspense fallback={null}>
-            {presentation.renderer === 'video' ? (
-              <VideoStage />
-            ) : presentation.renderer === 'model' ? (
-              <ModelStage />
-            ) : (
-              <EggStage />
-            )}
-          </Suspense>
+          <Suspense fallback={null}>{presentation.renderer === 'video' ? <VideoStage /> : <EggStage />}</Suspense>
         )}
       </SpriteStage>
       <SpriteContextMenu

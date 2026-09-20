@@ -31,7 +31,6 @@ import { registerFilesIpc } from './ipc/files'
 import { registerGatewayIpc } from './ipc/gateway'
 import { registerLogIpc } from './ipc/log'
 import { registerMediaIpc } from './ipc/media'
-import { createModelDiskCache } from './ipc/model-disk-cache'
 import { registerOnboardingAudioIpc } from './ipc/onboarding-audio'
 import { registerPrefsIpc } from './ipc/prefs'
 import { autoStartBridge, autoStopBridge, registerRunnerIpc } from './ipc/runner'
@@ -403,11 +402,6 @@ registerOnboardingAudioIpc({
 })
 const electronFetch = electronNet.fetch as unknown as typeof globalThis.fetch
 
-const modelDiskCache = createModelDiskCache({
-  defaultFetchFn: electronFetch,
-  spiritagentHome: SPIRITAGENT_HOME
-})
-
 const assetDiskCache = createAssetDiskCache({
   defaultFetchFn: electronFetch,
   spiritagentHome: SPIRITAGENT_HOME
@@ -427,7 +421,6 @@ registerConnectionIpc({
   getMainWindow: () => mainWindow,
   ipcMain,
   mintWsTicket: backendHttp.mintWsTicket,
-  modelDiskCache,
   resolvePathTimeoutMs,
   setCachedWsUrl
 })
@@ -493,7 +486,7 @@ const autoUpdater = createAutoUpdater({
 
 registerAuthIpc({
   clearLocalAssetCaches: async () => {
-    await Promise.all([assetDiskCache.clear(), modelDiskCache.clear(), sessionHistoryDiskCache.clear()])
+    await Promise.all([assetDiskCache.clear(), sessionHistoryDiskCache.clear()])
   },
   deps: bridgeDeps,
   ipcMain

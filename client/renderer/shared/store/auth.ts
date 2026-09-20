@@ -36,7 +36,7 @@ export async function hydrateAuth(): Promise<void> {
 }
 
 // 鉴权广播应用：clearCompanionStorage 与 $auth.set 严格串行——避免新用户的
-// hydrate 在 OPFS / localStorage 清完之前读到旧用户残留（renderMode / 模型缓存）。
+// hydrate 在 localStorage 清完之前读到旧用户残留。
 // 代价是广播回调延迟 ~5–30ms，仍在合理范围。
 export async function applyAuthBroadcast(payload: DesktopAuthBroadcast): Promise<void> {
   const { snapshot } = payload
