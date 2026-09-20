@@ -23,10 +23,7 @@ if TYPE_CHECKING:
 
 
 class CompanionOutfit(ModelBase, TimestampMixin):
-    """外观（着装参考）：一套经确认的全身立绘 + LLM 着装描述。
-    服装/发型属可换元素而非身份变更，不受形象锁定约束；激活装不可删 ⇒ 衣柜非空后永不回空。
-    status 流转：draft → ready | failed | expired；ready 表示参考图就绪，
-    不代表任何可播放形象（模型 / 视频）已就绪。"""
+    """衣橱外观及其着装参考；ready 表示参考就绪，视频状态由动作包维护。"""
 
     __tablename__ = "companion_outfits"
 
@@ -39,6 +36,10 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     status: Mapped[str] = mapped_column(String(16), default="draft", server_default=text("'draft'"), index=True)
     # 审计：用户着装描述 / feedback / 参考图前缀标记，仿 AvatarAsset.prompt_json
     source_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
+    is_initial: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
+    # 与首次视频包同事务置位；删除视频包不撤销已启动事实。
+    initial_video_started: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
+    initial_video_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
 
 
@@ -164,9 +165,8 @@ class AvatarAsset(ModelBase):
     style: Mapped[str] = mapped_column(String(64), default="")
     # 日常出镜的全身参考；锁定身份后仍可重绘。
     seed_fullbody_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    # 确认形象的外观参考正面立绘（视频链的身份锚）：onboarding 确认后锁定身份；
-    # 外观草稿与视频链以它为身份参考。
-    reference_image_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
+    # 锁定身份的持久标志，不能由可重绘的种子路径推断。
+    is_fullbody_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

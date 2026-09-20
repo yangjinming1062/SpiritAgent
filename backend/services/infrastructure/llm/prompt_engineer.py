@@ -1,40 +1,20 @@
-"""图生提示词组装引擎 — 确定性提示词构建器与LLM辅助工具。
-
-数据流转：Persona 表（definition_json）→ 物种模板与姿态路由（resolve_fullbody_template）
-与角色身份设定提取（appearance / personality）→ build_fullbody_prompt() 拼接
-[画风描述] + [角色设定] + [物种特效] + [反馈] → image_generation_tool 发送至生图供应商
-（MiniMax / Gemini / Grok）生成种子图。
-
-对外公开的提示词构建方法：
-- enhance_avatar_prompt()   [LLM]      Persona 角色定义 → 半身头像图（bust avatar）提示词
-- describe_garment_image()  [LLM]      用户服装参考图与文字要求 → 整合的着装设计稿（换装参考不直传生图，生图恒单参考）
-- build_fullbody_prompt()   [确定性]   物种姿态模板 + 画风 + Persona 设定 → 全身立绘提示词
-
-全身图提示词按稳定优先级组装：主体 → 物种姿态 → 完整画幅 →
-参考图身份锚点 → 渲染风格 → Persona 外观与克制气质 → 物种特效 → 不冲突的用户反馈 →
-纯白背景与排除项。
-
-辅助工具说明：物种姿态路由、体态模板定义见下文各常量与类。
-"""
+"""角色提示词装配与视觉模型辅助；身体结构不经过固定物种分类。"""
 
 import json
-from dataclasses import dataclass, replace
-from typing import Any, Final, Literal
+from typing import Any
 
-from components import SESSION_LOCAL, safe_json_loads
+from components import SESSION_LOCAL, get_logger, safe_json_loads
 from modules.companion import Persona
 from prompts.generation import (
     AVATAR_SYSTEM_PROMPT,
-    BIPED_A_POSE,
-    BIPED_NATURAL_POSE,
-    FULLBODY_FRONT_LABEL,
+    CHARACTER_FORM_INSTRUCTIONS,
+    CHARACTER_VISUAL_STYLE,
+    FULLBODY_FRAME,
     FULLBODY_PRESERVE_CHARACTER,
     FULLBODY_REWRITE_LEAD,
-    FULLBODY_STYLE_WORDING,
     GARMENT_DESCRIBE_SYSTEM,
     IMAGE_EDIT_TEMPLATE,
     OUTFIT_CHANGE_TEMPLATE,
-    UNCHOPPED_BODY_PARTS,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -49,39 +29,11 @@ from .llm_retry import call_with_retry
 from .providers import ProviderConfig, ServiceType, resolve_context_tokens, try_resolve
 from .responses import build_responses_kwargs
 
-FullbodyStyle = Literal["refined_anime_cg", "anime_illustration"]
-
-# 外观参考链（外观参考立绘、外观及对应自备图提示词）的服务端固定画风。该链交付的是
-# 动漫插画风格的角色参考图，写实或照片级输入不适合后续形象链消费，因此画风服务端固定，
-# 也不消费客户端传参。
-REFERENCE_ILLUSTRATION_STYLE: Final = "anime_illustration"
+logger = get_logger(__name__)
 
 
-@dataclass(frozen=True)
-class FullbodyTemplate:
-    features: str
-    pose: str
-    flavor: str = ""
-    style: FullbodyStyle = "refined_anime_cg"
-
-
-def _biped_template(pose: str) -> FullbodyTemplate:
-    return FullbodyTemplate(
-        features="身体朝向正前方，正面视点。",
-        pose=pose,
-    )
-
-
-_SPECIES_TEMPLATES: dict[str, FullbodyTemplate] = {
-    "人类": _biped_template(BIPED_NATURAL_POSE),
-    "精灵": _biped_template(BIPED_NATURAL_POSE),
-    "机甲": _biped_template(BIPED_A_POSE),
-}
-
-_SPECIES_FLAVOR: dict[str, str] = {
-    "灵兽": "原图若有发光纹路、标记或图腾，保留其形状与分布，不额外添加。",
-    "幻形": "原图若有半透明、发光或粒子效果，保留其表现，不改变角色轮廓。",
-}
+class VisualReasoningError(RuntimeError):
+    """视觉推理失败；异常文本可展示，供应商诊断只写入日志。"""
 
 
 def build_image_edit_prompt(feedback: str, *, preserve: str) -> str:
@@ -191,132 +143,87 @@ async def enhance_avatar_prompt(
     feedback: str | None = None,
     provider_config: ProviderConfig | None = None,
 ) -> str:
-    """把 persona 定义改写为一段聚焦的中文半身头像（bust）prompt；结果写入 ``AvatarAsset.avatar_prompt``，供 ``build_fullbody_prompt`` 作为身份锚点保证全身图与头像视觉一致。"""
+    """把 persona 定义改写为中文头像 prompt 并附上统一风格；图像参考另在生图时传入。"""
     payload = _persona_visual_payload(persona, feedback)
     user_payload = json.dumps(payload, ensure_ascii=False)
     raw = await chat(db, user_id, AVATAR_SYSTEM_PROMPT, user_payload, provider_config=provider_config)
-    return _strip_markdown_fence(raw)
+    return _strip_markdown_fence(raw) + "\n\n" + CHARACTER_VISUAL_STYLE
 
 
-def resolve_fullbody_template(
+async def describe_character_form(
+    user_id: int | None,
+    *,
     species: str,
-    style: FullbodyStyle = "refined_anime_cg",
-) -> FullbodyTemplate:
-    """解析完整的全身图模板：人类与精灵用自然站姿，机甲用 A-pose，其余物种回退自然站姿并附加物种特效；
-    画风不影响姿态。"""
-    if species in _SPECIES_TEMPLATES:
-        template = _SPECIES_TEMPLATES[species]
-    else:
-        template = _biped_template(BIPED_NATURAL_POSE)
-        flavor = _SPECIES_FLAVOR.get(species, "")
-        if flavor:
-            template = replace(template, flavor=flavor)
-    return template if template.style == style else replace(template, style=style)
-
-
-def _fullbody_frame_clause(canvas_aspect: str | None) -> str:
-    """完整画幅约束：统一描述，不按物种枚举可能不存在的部位（翅膀/尾巴等）。"""
-    clause = (
-        "从头到脚完整可见的全身构图，主体完整入画且四周留有安全边距，"
-        f"不裁切{UNCHOPPED_BODY_PARTS}，不得改成半身或膝上构图；镜头平视，透视自然。"
-    )
-    if canvas_aspect:
-        return f"画幅比例 {canvas_aspect}；{clause}"
-    return clause
-
-
-def build_fullbody_prompt(
-    *,
-    template: FullbodyTemplate,
-    style_id: FullbodyStyle | None = None,
-    feedback: str | None = None,
-    appearance: str = "",
-    personality: str = "",
-    avatar_prompt: str = "",
-    persona: Persona | dict | None = None,
-    canvas_aspect: str | None = None,
+    appearance: str,
+    personality: str,
+    feedback: str = "",
+    reference_images: tuple[str, ...],
 ) -> str:
-    """拼装一条正面全身生图 prompt（无 LLM 往返）；由 ``application/generation/avatar_service`` 与换装链调用。全身图由外貌设定、性格特点、画风词典与用户额外要求装配，外形特征由主参考图锚定（外观参考源自全身种子图、换装主参考为全身种子图），不带入头像阶段特异性的 avatar_prompt。canvas_aspect 写入画幅宽高比（如 "9:16"），供没有独立 size 通道的自备图语境告知比例；AI 路径的画幅由生图请求的 size 传达，不传。"""
-    style_key = style_id or template.style or "refined_anime_cg"
-    style_wording = FULLBODY_STYLE_WORDING.get(style_key, FULLBODY_STYLE_WORDING["refined_anime_cg"])
-
-    if persona is not None:
-        definition = persona if isinstance(persona, dict) else _persona_payload(persona)
-        if not appearance:
-            appearance = str(definition.get("appearance") or "").strip()
-        if not personality:
-            personality = str(definition.get("personality") or "").strip()
-
-    frame_clause = _fullbody_frame_clause(canvas_aspect)
-    head = FULLBODY_REWRITE_LEAD.format(target=FULLBODY_FRONT_LABEL)
-    identity_clause = FULLBODY_PRESERVE_CHARACTER
-    constraint_scope = "角色身份、指定视角、姿势、画风或背景规则"
-    parts = [
-        head,
-        f"{template.pose}{template.features}",
-        frame_clause,
-        identity_clause,
-        style_wording,
-    ]
-    identity_parts: list[str] = []
-    appearance_clause = _prompt_clause(appearance)
-    personality_clause = _prompt_clause(personality)
-    if appearance_clause:
-        identity_parts.append(f"外形特征：{appearance_clause}")
-    if personality_clause:
-        identity_parts.append(f"性格气质：{personality_clause}（只通过克制的神态和姿态体现）")
-
-    if identity_parts:
-        parts.append(f"角色设定：{'；'.join(identity_parts)}。")
-
-    if template.flavor:
-        parts.append(template.flavor)
-    feedback_clause = _prompt_clause(feedback or "")
-    if feedback_clause:
-        parts.append(f"用户补充的视觉要求：{feedback_clause}。仅在不冲突时采用，不得覆盖{constraint_scope}。")
-    parts.append("纯白无缝平面背景，均匀柔和的棚拍光；无场景、地面投影、道具、边框、文字、标志或水印。")
-    return "".join(parts)
+    """视觉模型根据开放描述与实际参考判断材质、结构和稳定待机姿态。"""
+    return await vision_chat(
+        user_id,
+        CHARACTER_FORM_INSTRUCTIONS,
+        json.dumps(
+            {
+                "biological_type": species,
+                "appearance": appearance,
+                "personality": personality,
+                "feedback": feedback,
+            },
+            ensure_ascii=False,
+        ),
+        reference_images=reference_images,
+    )
 
 
-def build_outfit_prompt(
+async def build_outfit_prompt(
     *,
-    template: FullbodyTemplate,
-    style_id: FullbodyStyle | None = None,
+    user_id: int,
+    reference_image: str,
+    species: str,
     feedback: str,
     appearance: str = "",
     personality: str = "",
     canvas_aspect: str | None = None,
 ) -> str:
-    """换装立绘 prompt：在正面全身 prompt 之上叠加「锁身份、换穿着」约束；身份与身材由主参考图（独立全身种子图）锚定，着装要求进 feedback 槽。canvas_aspect 语义同 build_fullbody_prompt。"""
-    base = build_fullbody_prompt(
-        template=template,
-        style_id=style_id,
+    """换装与自备图共用动态身体判断；固定统一视觉风格与身份、画幅边界。"""
+    direction = await describe_character_form(
+        user_id,
+        species=species,
         appearance=appearance,
         personality=personality,
-        canvas_aspect=canvas_aspect,
+        feedback=feedback,
+        reference_images=(reference_image,),
     )
-    return base + OUTFIT_CHANGE_TEMPLATE.format(requirement=_prompt_clause(feedback))
+    return "\n".join(
+        (
+            FULLBODY_REWRITE_LEAD,
+            FULLBODY_PRESERVE_CHARACTER,
+            CHARACTER_VISUAL_STYLE,
+            f"画幅比例 {canvas_aspect}；{FULLBODY_FRAME}" if canvas_aspect else FULLBODY_FRAME,
+            direction,
+            OUTFIT_CHANGE_TEMPLATE.format(requirement=_prompt_clause(feedback)),
+            "纯白无缝平面背景，均匀柔和棚拍光；稳定待机姿态，无场景、投影、道具、文字或水印。",
+        ),
+    )
 
 
-async def describe_garment_image(
+async def vision_chat(
     user_id: int | None,
-    image_uri: str,
-    requirement: str = "",
+    system_prompt: str,
+    user_payload: str,
+    *,
+    reference_images: tuple[str, ...],
 ) -> str:
-    """把用户服装参考图（可附文字要求）整合为一段着装设计稿，再进着装要求；生图调用恒为单参考图（身份锚点），
-    消除双图条件下的画风与身份渗漏。
-
-    requirement 是用户随图附带的着装要求，非空时与图片一起交给模型整合，冲突处以用户要求为准。
-    视觉链为空时抛 MissingLlmConfigError，全链失败抛 RuntimeError；由调用方决定降级与文案。
-    链解析用独立短会话，视觉调用期间不占调用方连接（短会话纪律）。"""
+    """带实际图像的视觉推理；独立短会话解析配置，无可用模型时明确失败。"""
+    if not reference_images or any(not uri for uri in reference_images):
+        raise ValueError("visual reasoning requires readable reference images")
     async with SESSION_LOCAL() as chain_db:
         chain = await resolve_vision_chain(chain_db, user_id)
     if not chain:
-        raise MissingLlmConfigError("no vision-capable llm provider configured")
-    content: list[dict[str, str]] = [{"type": "input_image", "image_url": image_uri}]
-    user_requirement = requirement.strip()
-    if user_requirement:
-        content.append({"type": "input_text", "text": f"用户对着装的要求：{user_requirement}"})
+        raise VisualReasoningError("未配置视觉模型，请先配置支持图片的模型")
+    content = [{"type": "input_image", "image_url": uri} for uri in reference_images]
+    content.append({"type": "input_text", "text": user_payload})
     errors: list[str] = []
     for config in chain:
         try:
@@ -328,15 +235,30 @@ async def describe_garment_image(
                 client,
                 **build_responses_kwargs(
                     model=config.model,
-                    instructions=GARMENT_DESCRIBE_SYSTEM,
+                    instructions=system_prompt,
                     input_items=[{"role": "user", "content": content}],
-                    max_output_tokens=1000,
+                    max_output_tokens=4000,
                 ),
             )
-            description = response.output_text.strip()
-            if description:
-                return description
-            errors.append(f"{config.provider_name}: empty description")
+            result = _strip_markdown_fence(response.output_text)
+            if result:
+                return result
+            errors.append(f"{config.provider_name}: empty response")
         except Exception as exc:
             errors.append(f"{config.provider_name}: {exc}")
-    raise RuntimeError(f"garment image describe failed: {'; '.join(errors)}")
+    logger.warning("visual reasoning failed", extra={"user_id": user_id, "errors": errors})
+    raise VisualReasoningError("视觉分析失败，请稍后重试")
+
+
+async def describe_garment_image(
+    user_id: int | None,
+    image_uri: str,
+    requirement: str = "",
+) -> str:
+    """将服装参考图与文字要求整合为可迁移的着装设计稿。"""
+    return await vision_chat(
+        user_id,
+        GARMENT_DESCRIBE_SYSTEM,
+        json.dumps({"requirement": requirement.strip()}, ensure_ascii=False),
+        reference_images=(image_uri,),
+    )

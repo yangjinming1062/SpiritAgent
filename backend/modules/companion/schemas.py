@@ -30,7 +30,7 @@ class AvatarAssetResponse(BaseModel):
     id: int
     asset_url: str
     seed_fullbody_url: str = ""
-    reference_image_url: str = ""
+    is_fullbody_confirmed: bool = False
     prompt: str = ""
     status: SucceededStatus = "succeeded"
 
@@ -44,21 +44,14 @@ class FullbodyReferenceGenerateRequest(BaseModel):
     mode: ImageReviseMode
 
 
-class FullbodyReferenceFrontGenerateRequest(BaseModel):
+class FullbodyConfirmRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    feedback: str | None = Field(default=None, max_length=500)
-    mode: ImageReviseMode
+    expected_url: str = Field(min_length=1, max_length=2048)
 
 
-class FullbodyConfirmFrontRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    front_url: str | None = Field(default=None, max_length=2048)
-
-
-# 全身种子自备图点位；值与 REST 路径段一致
-FullbodySeedKind = Literal["reference", "front-reference"]
+class FullbodyConfirmResponse(AvatarAssetResponse):
+    video_error: str | None = None
 
 
 class FullbodyPromptRequest(BaseModel):
@@ -89,11 +82,11 @@ class AvatarGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class AvatarUploadRequest(BaseModel):
+class AvatarPromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    image: str = Field(min_length=1, max_length=8 * 1024 * 1024)
-    content_type: str | None = Field(default=None, max_length=64)
+    feedback: str | None = Field(default=None, max_length=500)
+    has_reference: bool = False
 
 
 class AvatarFromImageRequest(BaseModel):
@@ -146,8 +139,7 @@ class OutfitAdoptRequest(BaseModel):
 
 
 class OutfitConfirmRequest(BaseModel):
-    """确认入柜：无请求字段。与同模块其他 POST 一致，以可缺省的空模型收 body，
-    空对象不触发 422；确认只表示参考图就绪，不触发任何生成。"""
+    """确认不接受图片或其他字段。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -159,6 +151,7 @@ class OutfitRegeneratePromptRequest(BaseModel):
 
 
 class OutfitResponse(BaseModel):
+    initial_video_error: str | None = None
     id: int
     name: str
     description: str | None = None

@@ -3,6 +3,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 
 import { PortraitLightbox } from '@/shared'
+import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
@@ -16,7 +17,7 @@ import { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-sourc
 interface FullbodyReferencePanelProps {
   avatarId: number
   initialReference?: PickedImage | null
-  onContinue?: () => void
+  onContinue?: (expectedUrl: string) => Promise<void>
   onBack?: () => void
 }
 
@@ -36,26 +37,36 @@ export function FullbodyReferencePanel({
   const [reference, setReference] = useState(initialReference)
   const [referenceError, setReferenceError] = useState(false)
   const [selecting, setSelecting] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [confirmError, setConfirmError] = useState<string | null>(null)
   const [zoom, setZoom] = useState(false)
   const [selfSourceOpen, setSelfSourceOpen] = useState(false)
   const onboarding = Boolean(onContinue)
   const current = state.avatarId === avatarId
   const preview = current ? state.previewUrl : null
-  const busy = !current || state.busy || selecting
+  const busy = !current || state.busy || selecting || confirming
 
   useEffect(() => {
-    let live = true
     void hydrateAvatarSeeds()
-    void hydrateFullbodyReference(avatarId).then((loaded: boolean): void => {
-      if (live && loaded && onboarding && !$fullbodyReference.get().rawUrl) {
-        void regenerateFullbodyReference(avatarId, '', initialReference)
-      }
-    })
+    void hydrateFullbodyReference(avatarId)
+  }, [avatarId])
 
-    return (): void => {
-      live = false
+  const confirm = async (): Promise<void> => {
+    if (!onContinue || !state.rawUrl || busy) {
+      return
     }
-  }, [avatarId, initialReference, onboarding])
+
+    setConfirming(true)
+    setConfirmError(null)
+
+    try {
+      await onContinue(state.rawUrl)
+    } catch (error) {
+      setConfirmError(backendDetailMessage(error, t.errors.load))
+    } finally {
+      setConfirming(false)
+    }
+  }
 
   const chooseReference = async (): Promise<void> => {
     setSelecting(true)
@@ -195,6 +206,7 @@ export function FullbodyReferencePanel({
           // 头像为独立全身参考身份锚点：打开前确保种子缓存已水合。
           void hydrateAvatarSeeds().finally(() => setSelfSourceOpen(true))
         }}
+        regenerateDisabled={busy}
         regenerateLabel={current && state.rawUrl ? undefined : genActions.generate}
         selfSourceDisabled={busy}
       />
@@ -213,6 +225,12 @@ export function FullbodyReferencePanel({
           </button>
         </div>
       )}
+      {confirmError && (
+        <p className="text-xs text-danger-fg" role="alert">
+          {confirmError}
+        </p>
+      )}
+      {onboarding && <p className={HINT_TEXT}>{t.confirmHint}</p>}
       {(onBack || onContinue) && (
         <div className="flex flex-wrap items-center gap-2">
           {onBack && (
@@ -224,7 +242,7 @@ export function FullbodyReferencePanel({
             <button
               className={BTN_PRIMARY}
               disabled={busy || !preview || !state.rawUrl || state.error !== null}
-              onClick={onContinue}
+              onClick={() => void confirm()}
               type="button"
             >
               {t.continue}

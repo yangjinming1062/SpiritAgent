@@ -9,6 +9,7 @@ import { $auth } from '@/shared/store/auth'
 type OutfitStatus = 'draft' | 'ready' | 'failed' | 'expired'
 
 interface WardrobeOutfit {
+  initialVideoError: string | null
   id: number
   name: string
   description: string | null
@@ -19,6 +20,7 @@ interface WardrobeOutfit {
 }
 
 interface OutfitResponse {
+  initial_video_error?: string | null
   id: number
   name: string
   description: string | null
@@ -85,6 +87,7 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
         id: o.id,
         name: o.name,
         description: o.description ?? null,
+        initialVideoError: o.initial_video_error || null,
         fullbodyPath,
         fullbodyUrl: old?.fullbodyPath === fullbodyPath ? old.fullbodyUrl : null,
         status: (o.status || 'draft') as OutfitStatus,

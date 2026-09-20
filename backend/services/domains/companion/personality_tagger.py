@@ -2,7 +2,7 @@ import json
 from typing import Protocol
 
 from components import get_logger, safe_json_loads
-from prompts.companion import PERSONALITY_TAGGER_PROMPT, TAG_SEEDS_BY_SPECIES
+from prompts.companion import PERSONALITY_TAGGER_PROMPT
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.llm import ProviderConfig
@@ -36,19 +36,13 @@ async def analyze_personality_tags(
         raw_data = safe_json_loads(definition_json, default={})
         data = raw_data if isinstance(raw_data, dict) else {}
 
-        char_species = species or data.get("biological_type", "人类")
-
-        species_seeds = TAG_SEEDS_BY_SPECIES.get(char_species, [])
-        common_seeds = TAG_SEEDS_BY_SPECIES["common"]
-        candidate_seeds = list(dict.fromkeys(common_seeds + species_seeds))
-
         user_payload = json.dumps(
             {
                 "name": data.get("name", "角色"),
-                "species": char_species,
+                "species": species or data.get("biological_type") or "",
+                "appearance": data.get("appearance") or "",
                 "personality": data.get("personality") or "",
                 "speaking_style": data.get("speaking_style") or "",
-                "candidate_seeds": candidate_seeds[:40],
             },
             ensure_ascii=False,
         )
@@ -60,14 +54,9 @@ async def analyze_personality_tags(
 
         parsed = safe_json_loads(cleaned_raw, default=None)
         if isinstance(parsed, list):
-            tags = [str(t).strip() for t in parsed if str(t).strip()]
+            tags = [t.strip() for t in parsed if isinstance(t, str) and t.strip()]
         else:
-            # 兼容非 JSON 逗号/换行分隔
-            tags = [
-                t.strip(" \"'[]\n\r\t")
-                for t in cleaned_raw.replace("，", ",").replace("\n", ",").split(",")
-                if t.strip(" \"'[]\n\r\t")
-            ]
+            return []
 
         # 去重且保持顺序
         if deduped := list(dict.fromkeys(tags)):

@@ -9,14 +9,13 @@ from modules.companion import (
     AvatarFromImageRequest,
     AvatarGenerateRequest,
     AvatarHistoryResponse,
-    AvatarUploadRequest,
+    AvatarPromptRequest,
     CompanionOperationResponse,
     FullbodyAdoptRequest,
-    FullbodyConfirmFrontRequest,
+    FullbodyConfirmRequest,
+    FullbodyConfirmResponse,
     FullbodyPromptRequest,
-    FullbodyReferenceFrontGenerateRequest,
     FullbodyReferenceGenerateRequest,
-    FullbodySeedKind,
     ImageAdoptRequest,
     ImagePromptResponse,
     OnboardingStateResponse,
@@ -37,30 +36,30 @@ from modules.companion import (
     VideoPackListResponse,
     VideoPackResponse,
 )
+from pydantic import ValidationError
 from services.adapters.http import limiter
 from services.application.generation import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
     AvatarGenerationError,
     AvatarNotFoundError,
     AvatarSourceUnreadableError,
-    FrontSeedMissingError,
     FullbodyGenerationError,
     ImageSealedError,
     OutfitDraftExpiredError,
     OutfitError,
     OutfitNotFoundError,
     OutfitStateError,
-    SeedPromptMissingError,
     VideoPackError,
     VideoPackNotFoundError,
     VideoPackStateError,
     activate_outfit,
     activate_video_pack,
+    adopt_avatar_seed,
     adopt_fullbody_seed,
     adopt_outfit_draft_image,
     adopt_outfit_regenerate_image,
     avatar_response,
-    confirm_fullbody_front,
+    confirm_fullbody_seed,
     confirm_outfit,
     create_outfit_draft,
     create_video_pack_from_clips,
@@ -69,7 +68,6 @@ from services.application.generation import (
     delete_video_pack,
     finalize_avatar,
     generate_avatar,
-    generate_fullbody_front_reference,
     generate_fullbody_reference,
     get_active_avatar,
     get_avatar_job_lock,
@@ -78,6 +76,7 @@ from services.application.generation import (
     list_outfits,
     list_pack_responses,
     outfit_response,
+    prepare_avatar_prompt,
     prepare_fullbody_prompt,
     prepare_outfit_prompt,
     prepare_outfit_regenerate_prompt,
@@ -88,7 +87,7 @@ from services.application.generation import (
     schedule_initial_room,
     select_avatar,
     set_outfit_policy,
-    upload_avatar,
+    start_initial_video,
 )
 from services.domains.companion import (
     PersonaValidationError,
@@ -104,7 +103,7 @@ from services.infrastructure.assets import (
     verify_signed_asset_request,
     verify_signed_avatar_request,
 )
-from services.infrastructure.llm import MissingLlmConfigError
+from services.infrastructure.llm import LLMRuntimeError, MissingLlmConfigError, VisualReasoningError
 
 router = get_router()
 
@@ -263,37 +262,35 @@ async def post_avatar_from_image(
     return avatar_response(asset)
 
 
-@router.post("/avatar/upload", response_model=AvatarAssetResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/avatar/prompt", response_model=ImagePromptResponse)
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
-async def post_avatar_upload(
-    request: Request,  # required by @limiter.limit
-    user: CurrentUser,
-    body: AvatarUploadRequest,
-) -> AvatarAssetResponse:
+async def post_avatar_prompt(request: Request, body: AvatarPromptRequest, user: CurrentUser) -> ImagePromptResponse:
+    try:
+        prompt = await prepare_avatar_prompt(user.id, feedback=body.feedback, has_reference=body.has_reference)
+    except AvatarGenerationError as exc:
+        raise _avatar_http_error(exc)
+    except MissingLlmConfigError:
+        raise HTTPException(status_code=502, detail={"error": "提示词服务未配置，仍可直接上传准备好的种子图"})
+    except (LLMRuntimeError, RuntimeError, ValidationError):
+        logger.warning("avatar prompt failed", extra={"user_id": user.id}, exc_info=True)
+        raise HTTPException(
+            status_code=502,
+            detail={"error": "提示词暂时无法生成，请稍后重试；仍可直接上传准备好的种子图"},
+        )
+    return ImagePromptResponse(prompt=prompt)
+
+
+@router.post("/avatar/adopt", response_model=AvatarAssetResponse, status_code=status.HTTP_201_CREATED)
+@limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
+async def post_avatar_adopt(request: Request, body: FullbodyAdoptRequest, user: CurrentUser) -> AvatarAssetResponse:
     raw, content_type = _decode_upload_image(body.image, body.content_type)
     if not raw:
-        raise HTTPException(status_code=400, detail="Invalid image data")
-    async with SESSION_LOCAL() as pre_db:
-        persona = await get_or_create_persona(pre_db, user.id)
-        if not persona.is_complete:
-            raise HTTPException(
-                status_code=409,
-                detail={"error": "请先完成 onboarding 再上传形象", "reason": "persona is incomplete"},
-            )
+        raise HTTPException(status_code=400, detail={"error": "请选择有效的种子图"})
     try:
         async with get_avatar_job_lock(user.id):
-            asset = await upload_avatar(
-                user_id=user.id,
-                persona=persona,
-                data=raw,
-                content_type=content_type or "image/png",
-            )
-    except ImageSealedError as exc:
-        raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
-    except Exception as exc:
-        logger.warning("post_avatar_upload failed", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(status_code=500, detail={"error": "上传头像失败，请稍后重试", "reason": str(exc)})
-
+            asset = await adopt_avatar_seed(user_id=user.id, data=raw, content_type=content_type or "image/png")
+    except AvatarGenerationError as exc:
+        raise _avatar_http_error(exc)
     return avatar_response(asset)
 
 
@@ -337,6 +334,8 @@ async def post_fullbody_reference(
         raise HTTPException(status_code=404, detail={"error": str(exc)})
     except AvatarSourceUnreadableError as exc:
         raise HTTPException(status_code=409, detail={"error": str(exc)})
+    except VisualReasoningError as exc:
+        raise HTTPException(status_code=502, detail={"error": str(exc)})
     except FullbodyGenerationError as exc:
         # 供应商链失败包装层：str 已透传公开文案（如编辑能力缺失指引），502 语义是可重试失败。
         logger.warning("fullbody reference generation failed", extra={"user_id": user.id, "error": exc.internal})
@@ -350,83 +349,30 @@ async def post_fullbody_reference(
     return avatar_response(asset)
 
 
-@router.post("/avatar/{avatar_id}/fullbody/front-reference", response_model=AvatarAssetResponse)
+@router.post("/avatar/{avatar_id}/fullbody/confirm", response_model=FullbodyConfirmResponse)
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
-async def post_fullbody_front_reference(
+async def post_fullbody_confirm(
     request: Request,
     avatar_id: int,
-    body: FullbodyReferenceFrontGenerateRequest,
+    body: FullbodyConfirmRequest,
     user: CurrentUser,
-) -> AvatarAssetResponse:
+) -> FullbodyConfirmResponse:
     try:
-        async with get_avatar_job_lock(user.id):
-            asset = await generate_fullbody_front_reference(
-                user_id=user.id,
-                avatar_id=avatar_id,
-                feedback=body.feedback,
-                mode=body.mode,
-            )
-    except AvatarNotFoundError as exc:
-        raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
-    except ImageSealedError as exc:
-        raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
-    except SeedPromptMissingError as exc:
-        raise HTTPException(status_code=400, detail={"error": "头像缺失提示词缓存，请重新生成头像", "reason": str(exc)})
-    except AvatarSourceUnreadableError as exc:
-        raise HTTPException(status_code=409, detail={"error": str(exc)})
-    except FullbodyGenerationError as exc:
-        err_detail = getattr(exc, "internal", str(exc))
-        logger.warning("fullbody front-reference generation failed", extra={"user_id": user.id, "error": err_detail})
-        raise HTTPException(status_code=502, detail={"error": str(exc), "reason": str(exc)})
+        asset = await confirm_fullbody_seed(user.id, avatar_id=avatar_id, expected_url=body.expected_url)
     except AvatarGenerationError as exc:
-        logger.warning("fullbody front-reference guard rejected", extra={"user_id": user.id, "error": exc.internal})
-        raise HTTPException(status_code=400, detail={"error": str(exc)})
-    except MissingLlmConfigError as exc:
-        logger.warning("post_fullbody_front_reference missing config", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "LLM provider 未配置，请先在设置中配置 chat provider", "reason": str(exc)},
-        )
-    return avatar_response(asset)
-
-
-@router.post("/avatar/{avatar_id}/fullbody/confirm-front", response_model=AvatarAssetResponse)
-@limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
-async def post_fullbody_confirm_front(
-    request: Request,
-    avatar_id: int,
-    body: FullbodyConfirmFrontRequest,
-    user: CurrentUser,
-    db: DbSession,
-) -> AvatarAssetResponse:
-    try:
-        async with get_avatar_job_lock(user.id):
-            asset = await confirm_fullbody_front(
-                db,
-                user.id,
-                avatar_id=avatar_id,
-                front_url=body.front_url,
-            )
-    except AvatarNotFoundError as exc:
-        raise HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
-    except ImageSealedError as exc:
-        raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
-    except FrontSeedMissingError as exc:
-        raise HTTPException(status_code=400, detail={"error": "请先生成正面全身图", "reason": str(exc)})
-    except AvatarSourceUnreadableError as exc:
-        raise HTTPException(
-            status_code=409,
-            detail={"error": "全身立绘草稿已过期，请重新生成正面全身图", "reason": str(exc)},
-        )
+        raise _avatar_http_error(exc)
+    video_error = await start_initial_video(user.id)
     try:
         await schedule_initial_room(user.id)
     except Exception:
         logger.warning("initial room scheduling failed", extra={"user_id": user.id}, exc_info=True)
-    return avatar_response(asset)
+    return FullbodyConfirmResponse(**avatar_response(asset).model_dump(), video_error=video_error)
 
 
-def _fullbody_self_source_http_error(exc: AvatarGenerationError) -> HTTPException:
+def _avatar_http_error(exc: AvatarGenerationError | VisualReasoningError) -> HTTPException:
     """自备图提示词/采纳端点共用的错误映射：语义与对应生成端点一致。"""
+    if isinstance(exc, VisualReasoningError):
+        return HTTPException(status_code=502, detail={"error": str(exc)})
     if isinstance(exc, AvatarNotFoundError):
         return HTTPException(status_code=404, detail={"error": "找不到对应的形象", "reason": str(exc)})
     if isinstance(exc, ImageSealedError):
@@ -434,22 +380,14 @@ def _fullbody_self_source_http_error(exc: AvatarGenerationError) -> HTTPExceptio
     if isinstance(exc, AvatarSourceUnreadableError):
         # 与 AI 生成端点一致：种子/头像文件不可读是需用户先修复源资产的状态冲突，不是普通请求错误。
         return HTTPException(status_code=409, detail={"error": str(exc)})
-    if isinstance(exc, SeedPromptMissingError):
-        return HTTPException(
-            status_code=400,
-            detail={"error": "头像缺失提示词缓存，请重新生成头像", "reason": str(exc)},
-        )
-    if isinstance(exc, FrontSeedMissingError):
-        return HTTPException(status_code=400, detail={"error": "请先生成或确认正面全身图", "reason": str(exc)})
     return HTTPException(status_code=400, detail={"error": str(exc)})
 
 
-@router.post("/avatar/{avatar_id}/fullbody/{kind}/prompt", response_model=ImagePromptResponse)
+@router.post("/avatar/{avatar_id}/fullbody/reference/prompt", response_model=ImagePromptResponse)
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_prompt(
     request: Request,
     avatar_id: int,
-    kind: FullbodySeedKind,
     user: CurrentUser,
     body: FullbodyPromptRequest = Body(default_factory=FullbodyPromptRequest),
 ) -> ImagePromptResponse:
@@ -458,11 +396,10 @@ async def post_fullbody_prompt(
         prompt = await prepare_fullbody_prompt(
             user_id=user.id,
             avatar_id=avatar_id,
-            kind=kind,
             feedback=body.feedback,
         )
-    except AvatarGenerationError as exc:
-        raise _fullbody_self_source_http_error(exc)
+    except (AvatarGenerationError, VisualReasoningError) as exc:
+        raise _avatar_http_error(exc)
     except MissingLlmConfigError as exc:
         logger.warning("fullbody prompt missing config", extra={"user_id": user.id, "error": str(exc)})
         raise HTTPException(
@@ -473,7 +410,7 @@ async def post_fullbody_prompt(
 
 
 @router.post(
-    "/avatar/{avatar_id}/fullbody/{kind}/adopt",
+    "/avatar/{avatar_id}/fullbody/reference/adopt",
     response_model=AvatarAssetResponse,
     status_code=status.HTTP_201_CREATED,
 )
@@ -481,7 +418,6 @@ async def post_fullbody_prompt(
 async def post_fullbody_adopt(
     request: Request,
     avatar_id: int,
-    kind: FullbodySeedKind,
     body: FullbodyAdoptRequest,
     user: CurrentUser,
 ) -> AvatarAssetResponse:
@@ -493,12 +429,11 @@ async def post_fullbody_adopt(
         asset = await adopt_fullbody_seed(
             user_id=user.id,
             avatar_id=avatar_id,
-            kind=kind,
             data=raw,
             content_type=content_type or "image/png",
         )
     except AvatarGenerationError as exc:
-        raise _fullbody_self_source_http_error(exc)
+        raise _avatar_http_error(exc)
     except MissingLlmConfigError as exc:
         logger.warning("fullbody adopt missing config", extra={"user_id": user.id, "error": str(exc)})
         raise HTTPException(
@@ -508,7 +443,9 @@ async def post_fullbody_adopt(
     return avatar_response(asset)
 
 
-def _outfit_http_error(exc: OutfitError) -> HTTPException:
+def _outfit_http_error(exc: OutfitError | VisualReasoningError) -> HTTPException:
+    if isinstance(exc, VisualReasoningError):
+        return HTTPException(status_code=502, detail={"error": str(exc), "reason": "generation_failed"})
     if isinstance(exc, OutfitNotFoundError):
         raise HTTPException(status_code=404, detail={"error": "找不到对应的外观", "reason": str(exc)})
     if isinstance(exc, OutfitDraftExpiredError):
@@ -547,7 +484,7 @@ async def post_outfit(
             image=raw,
             content_type=content_type,
         )
-    except OutfitError as exc:
+    except (OutfitError, VisualReasoningError) as exc:
         raise _outfit_http_error(exc)
     except AvatarGenerationError as exc:
         logger.warning(
@@ -580,7 +517,7 @@ async def post_outfit_prompt(
             image=raw,
             content_type=content_type,
         )
-    except OutfitError as exc:
+    except (OutfitError, VisualReasoningError) as exc:
         raise _outfit_http_error(exc)
     except AvatarGenerationError as exc:
         logger.warning(
@@ -627,7 +564,7 @@ async def post_outfit_regenerate(
 ) -> OutfitResponse:
     try:
         outfit = await regenerate_outfit_draft(db, user.id, outfit_id, feedback=body.feedback, mode=body.mode)
-    except OutfitError as exc:
+    except (OutfitError, VisualReasoningError) as exc:
         raise _outfit_http_error(exc)
     except AvatarGenerationError as exc:
         # AvatarGenerationError 的 str 按契约是公开文案（含编辑能力缺失等可行动指引），透传不替换。
@@ -651,7 +588,7 @@ async def post_outfit_regenerate_prompt(
     """自备图提示词（草稿重绘语境）：反馈整合同草稿重绘，身份由全身种子图锚定。"""
     try:
         prompt = await prepare_outfit_regenerate_prompt(db, user.id, outfit_id, feedback=body.feedback)
-    except OutfitError as exc:
+    except (OutfitError, VisualReasoningError) as exc:
         raise _outfit_http_error(exc)
     except AvatarGenerationError as exc:
         logger.warning(

@@ -57,9 +57,11 @@ from services.infrastructure.llm import (
     VideoGenProvider,
     VideoGenRequest,
     VideoJobStatus,
+    VisualReasoningError,
     execute_with_fallback,
     resolve,
     resolve_provider_chain,
+    resolve_vision_chain,
 )
 from services.infrastructure.video_processing import (
     MAX_CANVAS_HEIGHT,
@@ -261,6 +263,7 @@ async def create_pack_from_reference(
     *,
     outfit_id: int | None = None,
     force: bool = False,
+    initial_only: bool = False,
     source_pack_id: int | None = None,
     action: str | None = None,
     feedback: str = "",
@@ -272,7 +275,6 @@ async def create_pack_from_reference(
         persona = await get_or_create_persona(db, user_id)
         if not persona.is_complete:
             raise VideoPackStateError("请先完成 onboarding")
-        await _reject_concurrent_build(db, user_id)
         source = await _get_pack(db, user_id, source_pack_id) if source_pack_id is not None else None
         if source_pack_id is not None and (
             source is None or source.status not in ("ready", "failed") or not source.reference_path
@@ -289,6 +291,21 @@ async def create_pack_from_reference(
         outfit = (await db.execute(query)).scalar_one_or_none()
         if outfit is None:
             raise VideoPackStateError("请先确认外观参考图")
+        if initial_only:
+            existing = await db.scalar(
+                select(CompanionVideoPack)
+                .where(
+                    CompanionVideoPack.user_id == user_id,
+                    CompanionVideoPack.outfit_id == outfit.id,
+                )
+                .order_by(CompanionVideoPack.id.desc())
+                .limit(1),
+            )
+            if existing is not None:
+                return existing
+            if outfit.initial_video_started:
+                raise VideoPackStateError("默认视频任务已移除，请在外观页重新生成")
+        await _reject_concurrent_build(db, user_id)
         avatar = (
             await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
         ).scalar_one_or_none()
@@ -314,8 +331,8 @@ async def create_pack_from_reference(
                 await db.commit()
                 return reusable
         await _video_providers(user_id)
-        if not await resolve_provider_chain(db, user_id, "llm"):
-            raise VideoPackStateError("未配置文本模型，无法撰写动作脚本")
+        if not await resolve_vision_chain(db, user_id):
+            raise VideoPackStateError("未配置视觉模型，无法根据角色参考图撰写动作脚本")
         image_chain, image_error = await resolve_image_gen_chain(db, user_id, "reference", image_edit=True)
         if not image_chain:
             raise VideoPackStateError(image_error or "请配置图像编辑供应商以生成动作姿态")
@@ -346,7 +363,7 @@ async def create_pack_from_reference(
             personality_tags=safe_json_loads(persona.personality_tags_json or "[]", default=[]),
             outfit_description=outfit.description or "",
             feedback=feedback,
-            active_outfit_id=active_outfit_id,
+            active_outfit_id=outfit.id if initial_only else active_outfit_id,
         )
         pack = await _insert_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
         pack.reference_path = reference_path
@@ -441,6 +458,15 @@ async def _insert_pack(
     outfit: CompanionOutfit,
     reference_hash: str,
 ) -> CompanionVideoPack:
+    if outfit.is_initial:
+        outfit.initial_video_started = True
+        outfit.initial_video_error = None
+        emit_ws_event(
+            db,
+            user_id=user_id,
+            event_type="companion.outfit.updated",
+            payload={"outfit_id": outfit.id, "worn": False},
+        )
     pack = CompanionVideoPack(
         user_id=user_id,
         avatar_id=avatar.id if avatar is not None else None,
@@ -826,8 +852,8 @@ async def _generate_pack(pack_id: int) -> None:
         if pending:
             await _emit_pack_event(pack.user_id, "companion.video.progress", {"packId": pack_id, "stage": "script"})
             script = await compose_action_script(
-                None,
                 pack.user_id,
+                reference_image=await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path)),
                 persona_definition=context.persona_definition,
                 personality_tags=context.personality_tags,
                 outfit_description=context.outfit_description,
@@ -890,7 +916,10 @@ def _generation_error(exc: Exception) -> str:
         return "提交结果未知，未自动重发；请核对供应商任务后再决定是否重做"
     if isinstance(exc, ProviderError):
         return _provider_failure_copy(str(exc))
-    if isinstance(exc, (VideoProcessError, VideoPackError, VideoScriptError, ImageGenerationError)):
+    if isinstance(
+        exc,
+        (VideoProcessError, VideoPackError, VideoScriptError, ImageGenerationError, VisualReasoningError),
+    ):
         return str(exc)[:500]
     return "动作处理失败，可重试已有任务或素材"
 
@@ -913,20 +942,27 @@ async def _generate_action(pack: CompanionVideoPack, job: CompanionVideoJob) -> 
                 raise VideoPackError("提交结果未知，未自动重发；请核对供应商任务")
             reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
             if not job.pose_path:
-                if job.stage == "pose":
-                    raise VideoPackError("动作姿态生成结果未知，请核对后重做此动作")
-                await progress("pose")
-                paths = await generate_images(
-                    build_pose_prompt(entry),
-                    user_id=pack.user_id,
-                    reference_image=reference_uri,
-                    size="1024x1536",
-                    image_edit=True,
-                    persist_user_assets=True,
-                )
-                job.pose_path = paths[0]
+                if job.action == "idle":
+                    job.pose_path = pack.reference_path
+                else:
+                    if job.stage == "pose":
+                        raise VideoPackError("动作姿态生成结果未知，请核对后重做此动作")
+                    await progress("pose")
+                    paths = await generate_images(
+                        build_pose_prompt(entry),
+                        user_id=pack.user_id,
+                        reference_image=reference_uri,
+                        size="1024x1792",
+                        image_edit=True,
+                        persist_user_assets=True,
+                    )
+                    job.pose_path = paths[0]
                 await _advance_job(job.id, stage="pose", pose_path=job.pose_path)
-            pose_uri = await _process_thread(_image_data_uri, _artifact_abs_path(job.pose_path))
+            pose_uri = (
+                reference_uri
+                if job.pose_path == pack.reference_path
+                else await _process_thread(_image_data_uri, _artifact_abs_path(job.pose_path))
+            )
             submitted: dict[str, str] = {}
 
             async def submit(provider: VideoGenProvider) -> VideoJobStatus:

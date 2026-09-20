@@ -44,9 +44,10 @@ export const dict: Dictionary = {
   },
 
   selfSource: {
+    guidanceAction: 'Need to create an image? Get the prompt and references',
     open: 'Use your own image',
-    openTitle: 'Generate this image yourself (copy the prompt, then upload the result)',
-    hint: 'Copy the prompt below, hand it to your image tool together with the reference image(s), then pick and upload the result here. The tool redraws from the reference following this description.',
+    openTitle: 'Upload a finished image, or get a prompt to create one elsewhere',
+    hint: 'Upload a finished image directly, or expand the prompt and references to create it elsewhere. Check the identity, visual style and framing before adopting.',
     referenceTitle: 'Reference images (provide with the prompt)',
     referenceHint:
       'Hand the reference image(s) and prompt to your image tool; use thumbnail actions to copy or save. Click to enlarge.',
@@ -55,8 +56,7 @@ export const dict: Dictionary = {
     referenceZoom: 'Reference preview',
     refs: {
       avatarSeed: 'Avatar seed',
-      fullbodySeed: 'Full-body seed',
-      seedModelFront: 'Model front portrait'
+      fullbodySeed: 'Full-body seed'
     },
     promptLoading: 'Preparing the prompt…',
     promptFailed: 'Failed to fetch the prompt. Please retry.',
@@ -88,7 +88,7 @@ export const dict: Dictionary = {
     groupHint: 'Refine changes only what you describe; Regenerate redraws the whole image from the references.',
     selfTitle: 'Bring your own image',
     selfHint:
-      'Copy the prompt and reference into an external image tool, then upload the result back here. No AI generation is used.'
+      'Upload a prepared image directly, or get a prompt and references to create one in an external tool first.'
   },
 
   boot: {
@@ -395,7 +395,9 @@ export const dict: Dictionary = {
       sectionMemory: 'Long-term memory',
       fullbodyReference: {
         title: 'Full-body seed image',
-        hint: 'Show the character’s proportions and personality in a graceful, natural pose. Used as the preferred reference for rooms, selfies and other scenes.',
+        hint: 'Consistent visual style and a stable idle pose suited to this character’s anatomy and personality. Used for the default video, outfits and scenes.',
+        confirmHint:
+          'Confirming locks the identity and starts the default video. The egg remains visible until the video is ready and activates automatically.',
         empty: 'No full-body seed image yet. Generate one from the current portrait and persona.',
         loading: 'Preparing the full-body seed image…',
         referenceLabel: 'User reference image',

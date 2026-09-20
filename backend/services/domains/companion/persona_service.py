@@ -99,14 +99,18 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
     async def _dual_write() -> Persona:
         await record_user_profile(db, MemoryScope(user_id, "companion"), user_profile)
         persona = await get_or_create_persona(db, user_id)
+        await db.refresh(persona, with_for_update=True)
         current_draft = load_persona_definition(persona)
         if current_draft.get("voice"):
             cleaned["voice"] = current_draft["voice"]
-        # DESIGN §5.4 形象锁定：形象确认后物种/性别/基础外貌不可再改——
-        # 定稿后的保存把三字段静默替换回既有值（客户端表单本就不展示），
-        # 且绝不重置 is_portrait_confirmed（§8 微调向导"不重置完成状态"）。
-        # 草稿缺该键（历史上未填过）时同样丢弃新值：锁定字段的"既有值"不存在，不能凭 PUT 凭空立起来。
-        if persona.is_portrait_confirmed:
+        # 锁定字段只保留已有值；原本缺失的字段也不能通过 PUT 补入。
+        sealed = await db.scalar(
+            select(AvatarAsset.is_fullbody_confirmed).where(
+                AvatarAsset.user_id == user_id,
+                AvatarAsset.active.is_(True),
+            ),
+        )
+        if sealed:
             for locked in ("biological_type", "gender", "appearance"):
                 if locked in current_draft:
                     cleaned[locked] = current_draft[locked]
@@ -165,7 +169,7 @@ def _state(answers: dict[str, str], next_field: str | None, complete: bool) -> d
 
 
 async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]:
-    """从数据库恢复引导进度；complete 以角色、头像、全身参考、外观参考立绘与音色为门槛。"""
+    """从数据库恢复引导进度；complete 以角色、头像、全身种子确认与音色为门槛。"""
     persona = await get_or_create_persona(db, user_id)
     draft = load_persona_definition(persona)
     if persona.is_complete:
@@ -178,10 +182,8 @@ async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]
         ).scalar_one_or_none()
         if avatar is None:
             return _state(merged, "portrait", False)
-        if not avatar.seed_fullbody_url or not avatar.reference_image_url:
+        if not avatar.seed_fullbody_url or not avatar.is_fullbody_confirmed:
             return _state(merged, "fullbody-reference", False)
-        if avatar.reference_image_url.startswith("temp-media/"):
-            return _state(merged, "fullbody", False)
         if not draft.get("voice"):
             # 合并草稿与 Memory，让桌面端在音色阶段仍能预填已答资料。
             return _state(merged, "voice", False)

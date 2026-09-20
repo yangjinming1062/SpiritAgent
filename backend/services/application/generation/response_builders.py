@@ -17,7 +17,7 @@ def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
         id=asset.id,
         asset_url=asset.asset_url,
         seed_fullbody_url=asset.seed_fullbody_url or "",
-        reference_image_url=asset.reference_image_url or "",
+        is_fullbody_confirmed=asset.is_fullbody_confirmed,
         prompt=payload.get("avatar_prompt", ""),
         status="succeeded",
     )
@@ -26,6 +26,7 @@ def avatar_response(asset: AvatarAsset) -> AvatarAssetResponse:
 def outfit_response(outfit: CompanionOutfit) -> OutfitResponse:
     """外观行转接口响应；立绘路径重签名（temp-media 草稿转 /api/media/files 形式）。"""
     return OutfitResponse(
+        initial_video_error=outfit.initial_video_error,
         id=outfit.id,
         name=outfit.name,
         description=outfit.description,

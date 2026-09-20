@@ -3,6 +3,7 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 
 import {
+  $outfits,
   $videoGenError,
   $videoGenStage,
   $videoGenState,
@@ -69,6 +70,8 @@ export function VideoSection(): React.JSX.Element {
   const authKind = useStore($auth).kind
   const active = useStore($videoPack)
   const packs = useStore($videoPacks)
+  const outfits = useStore($outfits)
+  const initialVideoError = packs.length === 0 ? outfits.find(outfit => outfit.active)?.initialVideoError : null
   const genState = useStore($videoGenState)
   const genStage = useStore($videoGenStage)
   const genError = useStore($videoGenError)
@@ -105,12 +108,15 @@ export function VideoSection(): React.JSX.Element {
   const stageText = busy ? (genStage ? t[STAGE_TEXT_KEYS[genStage]] : t.videoGenStageDefault) : null
 
   const statusLine =
-    genError ?? stageText ?? (active ? t.videoReady(active.packVersion, active.manifest.clips.length) : t.videoNotReady)
+    genError ??
+    stageText ??
+    initialVideoError ??
+    (active ? t.videoReady(active.packVersion, active.manifest.clips.length) : t.videoNotReady)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
       <div className="mx-4 mt-3 space-y-3 rounded-xl border border-line-hairline bg-surface-card px-3.5 py-2.5">
-        <p className={cn('text-xs', genError ? 'text-danger-fg' : 'text-body')}>{statusLine}</p>
+        <p className={cn('text-xs', genError || initialVideoError ? 'text-danger-fg' : 'text-body')}>{statusLine}</p>
         <p className={HINT_TEXT}>{t.videoGenHint}</p>
         <div className="flex flex-wrap gap-2">
           <button

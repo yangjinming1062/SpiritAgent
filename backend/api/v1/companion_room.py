@@ -96,12 +96,22 @@ async def post_room_adopt(
     body: ImageAdoptRequest,
 ) -> BackdropResponse:
     """自备图采纳：等待上传的行按生成链同一激活/事件语义转 ready。"""
+    return await _adopt_room_image(user.id, backdrop_id, body)
+
+
+@router.post("/room/adopt", response_model=BackdropResponse)
+async def post_room_upload(user: CurrentUser, body: ImageAdoptRequest) -> BackdropResponse:
+    """直接采纳自备房间图，无需先请求制作提示词。"""
+    return await _adopt_room_image(user.id, None, body)
+
+
+async def _adopt_room_image(user_id: int, backdrop_id: int | None, body: ImageAdoptRequest) -> BackdropResponse:
     try:
         data = base64.b64decode(body.image, validate=True)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid base64 image data")
     try:
-        row = await adopt_room_backdrop(user.id, backdrop_id, data=data)
+        row = await adopt_room_backdrop(user_id, backdrop_id, data=data)
     except RoomBackdropNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的房间图", "reason": str(exc)})
     except RoomBackdropStateError as exc:

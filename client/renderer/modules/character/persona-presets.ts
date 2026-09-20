@@ -9,7 +9,7 @@ export const PERSONALITY_PRESETS = [
   '腹黑呆萌',
   '高冷清冷'
 ] as const
-export const SPECIES_PRESETS = ['人类', '灵兽', '精灵', '机甲', '幻形'] as const
+export const SPECIES_PRESETS = ['人类', '猫', '狗', '鸟', '鱼', '龙'] as const
 export const CHARACTER_GENDER_PRESETS = ['女', '男', '其他', '不指定'] as const
 export const APPEARANCE_PRESETS = ['优雅古典', '现代利落', '萌系可爱', '冷酷暗黑'] as const
 export const SPEAKING_STYLE_PRESETS = ['温柔亲切', '俏皮带点小傲娇', '沉稳简洁', '轻快活泼', '专业干练'] as const

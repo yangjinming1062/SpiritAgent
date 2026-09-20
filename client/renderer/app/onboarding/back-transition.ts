@@ -5,7 +5,6 @@ type BackPhase =
   | 'q-character'
   | 'q-user'
   | 'voice'
-  | 'fullbody'
   | 'fullbody-reference'
   | 'portrait-choose'
   | 'portrait-avatar'
@@ -37,15 +36,11 @@ export function computeBackTransition(state: BackState, characterQuestionsCount:
       return { phase: 'voice', voiceStage: 'describe' }
     }
 
-    return state.imageSealed ? null : { phase: 'fullbody' }
+    return state.imageSealed ? null : { phase: 'fullbody-reference' }
   }
 
   if (state.imageSealed) {
     return null
-  }
-
-  if (state.phase === 'fullbody') {
-    return { phase: 'fullbody-reference' }
   }
 
   if (state.phase === 'fullbody-reference') {

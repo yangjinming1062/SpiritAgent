@@ -106,21 +106,15 @@ if (initialPersisted.assetUrl) {
 
 interface PortraitUrls {
   assetUrl?: string | null
-  seedFrontUrl?: string | null
-  seedBackUrl?: string | null
   id?: number | null
 }
 
-export async function applyPortrait(
-  urls: PortraitUrls
-): Promise<{ avatar: string | null; seedBack: string | null; seedFront: string | null }> {
+export async function applyPortrait(urls: PortraitUrls): Promise<{ avatar: string | null }> {
   const epoch = currentClearEpoch()
   const avatar = urls.assetUrl === undefined ? null : await resolvePortraitUrl(urls.assetUrl)
-  const seedFront = urls.seedFrontUrl === undefined ? null : await resolvePortraitUrl(urls.seedFrontUrl)
-  const seedBack = urls.seedBackUrl === undefined ? null : await resolvePortraitUrl(urls.seedBackUrl)
 
   if (currentClearEpoch() !== epoch) {
-    return { avatar: null, seedBack: null, seedFront: null }
+    return { avatar: null }
   }
 
   if (avatar) {
@@ -145,7 +139,7 @@ export async function applyPortrait(
     }
   }
 
-  return { avatar, seedBack, seedFront }
+  return { avatar }
 }
 
 export async function hydratePortrait(): Promise<void> {

@@ -5,7 +5,6 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import {
   $activeAvatarId,
-  $avatarSeeds,
   $portraitHistory,
   $portraitSelectedIdx,
   $portraitUrl,
@@ -18,7 +17,6 @@ import {
   clearDraftRefImage,
   clearPortraitHistory,
   FullbodyReferencePanel,
-  hydrateAvatarSeeds,
   hydratePortraitHistory,
   loadDraftRefImage,
   MAX_APPEARANCE,
@@ -31,7 +29,6 @@ import {
   type PortraitEntry,
   pushPortraitEntry,
   RELATIONSHIP_PRESETS,
-  resolvePortraitUrl,
   saveDraftRefImage,
   selectAvatar,
   selectPortraitEntry,
@@ -57,23 +54,16 @@ import {
   voiceSelectionId,
   warmAudioContext
 } from '@/modules/speech'
-import {
-  HistoryGallery,
-  type HistoryGalleryItem,
-  PortraitLightbox,
-  useGatewayRequest,
-  useNaturalAspectRatio
-} from '@/shared'
+import { type HistoryGalleryItem, useGatewayRequest } from '@/shared'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { FolderOpen, Sparkles } from '@/shared/lib/icons'
 import { isClientErrorIpc, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { safeJsonParse } from '@/shared/lib/safe-json'
+import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
 import { Chip, INPUT_CLASS } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
-import { useStrings } from '@/shared/strings'
-import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 import { computeBackTransition } from './back-transition'
 import { type OnboardingAudioTag, playOnboardingAudio } from './onboarding-audio'
@@ -86,7 +76,6 @@ type Phase =
   | 'hatching'
   | 'portrait-avatar'
   | 'fullbody-reference'
-  | 'fullbody'
   | 'q-user'
   | 'voice'
   | 'finishing'
@@ -147,7 +136,7 @@ const QUESTIONS: readonly Question[] = [
   {
     key: 'biological_type',
     text: '那我是哪种生灵呢？',
-    placeholder: '如：精灵、人类、龙…（可直接输入或选择标签）',
+    placeholder: '描述任意生灵，如猫、鸟、龙或自创生物；标签只是示例',
     required: true,
     multiline: false,
     audioTag: 'onboarding.q1',
@@ -289,7 +278,6 @@ const PHASE_QUESTIONS: Record<Phase, readonly Question[]> = {
   hatching: [],
   'portrait-avatar': [],
   'fullbody-reference': [],
-  fullbody: [],
   finishing: [],
   greeting: []
 }
@@ -346,7 +334,7 @@ const ONBOARDING_FIELD_KEYS: ReadonlySet<QKey> = new Set<QKey>([
   'voice'
 ])
 
-// 头像（半身像）生成。返回后端的原始响应；解析步骤由 applyPortrait 负责。
+// 头像生成。返回后端的原始响应；解析步骤由 applyPortrait 负责。
 async function generatePortrait(reference: PickedImage | null): Promise<{
   asset_url?: string
   id?: number
@@ -453,15 +441,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const voicePreparing = useStore($voicePreparing)
   const { requestGateway } = useGatewayRequest()
   const [phase, setPhase] = useState<Phase>('q-character')
-  // confirm-front 成功后置 true:形象已锁死 + 模型已启动,任何返回到 portrait-avatar / fullbody 的路径都禁用
+  // 身份锁定后禁止返回形象确认步骤。
   const [imageSealed, setImageSealed] = useState(false)
   const [qIndex, setQIndex] = useState(0)
   const onboardingSubmissionsRef = useRef(Promise.resolve())
   const [answers, setAnswers] = useState<OnboardingAnswers>({})
   const [input, setInput] = useState('')
   const [portraitUrl, setPortraitUrl] = useState<string | null>(null)
-  // 当前头像行 id 由 applyPortrait 写入全局 $activeAvatarId atom——
-  // 这里订阅它，让重生结果自动传播，省得我们在每个调用点都手写 setState。
+  // 订阅 applyPortrait 写入的头像，保持重绘结果同步。
   const activeAvatarId = useStore($activeAvatarId)
   // 历史画廊——头像面板下方的缩略图。
   const portraitHistory = useStore($portraitHistory)
@@ -499,36 +486,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [voiceAlternatives, setVoiceAlternatives] = useState<VoiceOption[]>([])
   // 失败提示挂在头像面板上——表单区被它压在下面。
   const [portraitPanelHint, setPortraitPanelHint] = useState<string | null>(null)
-  const [avatarUploading, setAvatarUploading] = useState(false)
+  const [avatarSelfSourceOpen, setAvatarSelfSourceOpen] = useState(false)
 
-  const [fullbodyLoading, setFullbodyLoading] = useState(false)
-  const [fullbodyLoadingText, setFullbodyLoadingText] = useState('正在为您生成正面全身立绘…')
-  const [fullbodyStyle, setFullbodyStyleState] = useState<string | null>('anime_illustration')
-  const [fullbodyFrontUrl, setFullbodyFrontUrl] = useState<string | null>(null)
-  const [fullbodyFrontRawUrl, setFullbodyFrontRawUrl] = useState<string | null>(null)
-  const [fullbodyFeedback, setFullbodyFeedback] = useState<string>('')
-  const [fullbodyHint, setFullbodyHint] = useState<string | null>(null)
-  const [fullbodyZoomUrl, setFullbodyZoomUrl] = useState<string | null>(null)
-  const [fullbodySelfSourceOpen, setFullbodySelfSourceOpen] = useState(false)
-  // 自备图参考图：正面立绘重绘读本地缓存的全身种子图（与 AI 生图同源）。
-  const selfSourceDict = useStrings().selfSource
-  const fullbodySeedUrl = useStore($avatarSeeds).fullbodySeedUrl
+  const [initialVideoError, setInitialVideoError] = useState<string | null>(null)
 
-  const [fullbodyHistories, setFullbodyHistories] = useState<
-    Record<string, Array<{ rawUrl: string | null; previewUrl: string }>>
-  >({})
-
-  const [fullbodyHistoryIndices, setFullbodyHistoryIndices] = useState<Record<string, number>>({})
-
-  // 确认卡取景框比例跟随当前立绘图片本身
-  const fullbodyRatio = useNaturalAspectRatio(fullbodyFrontUrl)
-
-  // 在「形象描述」题目提交上来的参考图。本地用 IndexedDB 草稿缓存持久化，
-  // 这样半身生成前崩溃后重启也能带回来。
+  // 身份参考图持久化为草稿，供引导重启恢复。
   const [refImage, setRefImage] = useState<PickedImage | null>(null)
 
-  // 头像重生时挑的展现/画风参考图——跟 Q4 的身份图共存，而不是替换它。
-  // 仅存内存：是临时性的重生辅助，不是持久化的身份资产。
+  // 光线与构图参考仅供本次重绘，保留在内存中。
   const [presentationRef, setPresentationRef] = useState<PickedImage | null>(null)
 
   const updateRefImage = (img: PickedImage | null): void => {
@@ -797,7 +762,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     const ans = currentAnswers ?? answers
     setHint(null)
 
-    // 先固化 persona 再进入头像阶段——让用户自主选择「AI 生成」或「直接上传」。
+    // 先固化 persona 再进入头像阶段——让用户自主选择「文字生成」或「参考图生成」。
     let personaOk = false
     await onboardingSubmissionsRef.current
 
@@ -859,144 +824,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setPhase('portrait-avatar')
     void playOnboardingAudio(url ? 'onboarding.portrait.ok' : 'onboarding.portrait.failed')
   }
-
-  // front-reference 生成 / 自备图采纳共用：把接口返回的正面种子落到本地状态。
-  const applyFullbodyFrontResponse = async (
-    res: { id?: number; asset_url?: string; reference_image_url?: string } | undefined
-  ): Promise<void> => {
-    const applied = await applyPortrait({
-      id: res?.id,
-      assetUrl: res?.asset_url,
-      seedFrontUrl: res?.reference_image_url
-    })
-
-    const rawFront = res?.reference_image_url || null
-    let resolvedUrl: string | null = null
-
-    if (applied.seedFront) {
-      resolvedUrl = applied.seedFront
-    } else if (rawFront) {
-      resolvedUrl = await resolvePortraitUrl(rawFront)
-    }
-
-    if (resolvedUrl) {
-      setFullbodyFrontRawUrl(rawFront)
-      setFullbodyFrontUrl(resolvedUrl)
-      setFullbodyHistories({ anime_illustration: [{ rawUrl: rawFront, previewUrl: resolvedUrl }] })
-      setFullbodyHistoryIndices({ anime_illustration: 0 })
-    } else {
-      setFullbodyHint('正面立绘加载失败，请重试')
-    }
-  }
-
-  const generateFullbodyFrontDirect = async (avatarId: number, styleId = 'anime_illustration'): Promise<void> => {
-    setFullbodyLoading(true)
-    setFullbodyLoadingText('正在为您生成正面全身立绘…')
-    setFullbodyHint(null)
-    setFullbodyStyleState(styleId)
-
-    try {
-      const res = await window.spiritagent.api<{
-        id?: number
-        asset_url?: string
-        reference_image_url?: string
-      }>({
-        path: `/api/companion/avatar/${avatarId}/fullbody/front-reference`,
-        method: 'POST',
-        // 画风由服务端固定（外观参考动漫插画风），请求不携带 style
-        body: {
-          mode: 'regenerate'
-        }
-      })
-
-      await applyFullbodyFrontResponse(res)
-    } catch (err) {
-      setFullbodyHint(err instanceof Error ? err.message : '生成正面全身立绘失败，请重试')
-    } finally {
-      setFullbodyLoading(false)
-    }
-  }
-
-  const fetchFullbodyFrontPrompt = async (): Promise<string> => {
-    const res = await window.spiritagent.api<{ prompt: string }>({
-      path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-reference/prompt`,
-      method: 'POST',
-      body: { feedback: fullbodyFeedback.trim() || undefined }
-    })
-
-    return res.prompt
-  }
-
-  const adoptFullbodyFrontImage = async (image: PickedImage): Promise<void> => {
-    setFullbodyLoading(true)
-    setFullbodyLoadingText('正在保存你上传的立绘…')
-    setFullbodyHint(null)
-
-    try {
-      const res = await window.spiritagent.api<{
-        id?: number
-        asset_url?: string
-        reference_image_url?: string
-      }>({
-        path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-reference/adopt`,
-        method: 'POST',
-        body: { image: image.base64, content_type: image.contentType }
-      })
-
-      await applyFullbodyFrontResponse(res)
-    } finally {
-      setFullbodyLoading(false)
-    }
-  }
-
-  // 重新加载只读取已有结果；首次进入且服务端明确无种子时才自动生成。
-  const hydrateFullbodyStage = async (generateIfMissing: boolean = false): Promise<void> => {
-    const avatarRes = await window.spiritagent.api<{
-      asset_url?: string | null
-      reference_image_url?: string | null
-      seed_fullbody_url?: string | null
-      id?: number
-    }>({
-      path: '/api/companion/avatar',
-      method: 'GET'
-    })
-
-    await applyLocalPortrait(avatarRes)
-    await patchAvatarSeeds({
-      avatarId: avatarRes?.id ?? null,
-      assetUrl: avatarRes?.asset_url || undefined,
-      fullbodySeedUrl: avatarRes?.seed_fullbody_url || undefined
-    })
-
-    const style = 'anime_illustration'
-    const seedFrontRaw = avatarRes?.reference_image_url || null
-
-    if (seedFrontRaw) {
-      const resolved = await resolvePortraitUrl(seedFrontRaw)
-      setFullbodyStyleState(style)
-      setFullbodyFrontRawUrl(seedFrontRaw)
-      setFullbodyFrontUrl(resolved)
-
-      if (resolved) {
-        setFullbodyHistories({ [style]: [{ rawUrl: seedFrontRaw, previewUrl: resolved }] })
-        setFullbodyHistoryIndices({ [style]: 0 })
-      } else {
-        setFullbodyHint('正面立绘预览加载失败，请重新加载；草稿过期时可重新生成。')
-      }
-    } else {
-      setFullbodyStyleState(style)
-      setFullbodyFrontRawUrl(null)
-      setFullbodyFrontUrl(null)
-      setFullbodyHistories({})
-      setFullbodyHistoryIndices({})
-
-      if (generateIfMissing && avatarRes?.id) {
-        await generateFullbodyFrontDirect(avatarRes.id, style)
-      }
-    }
-  }
-
-  const hydrateFullbodyStageRef = useLatestRef(hydrateFullbodyStage)
 
   // 断点恢复（DESIGN §5.2）：网关一旦连通，
   // 就把还没答完的草稿拉回来，让 onboarding 中途崩溃/退出后能从下一道未答的题继续。
@@ -1105,16 +932,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               setPhase('portrait-avatar')
               setPortraitPanelHint('形象恢复失败，请重试')
             }
-          } else if (nextField === 'fullbody') {
-            try {
-              // portrait 确认后 persona 已定稿;resume 直接落到 fullbody 阶段。
-              setPhase('fullbody')
-              await hydratePortraitHistory()
-              await hydrateFullbodyStageRef.current(true)
-            } catch {
-              setPhase('fullbody')
-              setFullbodyHint('全身立绘恢复失败，请重试')
-            }
           } else if (nextField === 'voice') {
             // next_field==='voice' 意味着描述句本身还没回答——落在 describe 上，而不是 catalog。
             setImageSealed(true)
@@ -1142,7 +959,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         setVoiceCatalog(r.catalog.voices)
       }
     })()
-  }, [gatewayState, requestGateway, onCompleted, hydrateFullbodyStageRef])
+  }, [gatewayState, requestGateway, onCompleted])
 
   useEffect(() => {
     if (gatewayState !== 'open' || voiceCatalog.length > 0) {
@@ -1223,56 +1040,48 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setHint(null)
   }
 
-  const uploadCustomAvatar = async (): Promise<void> => {
-    const picked = await pickAvatarImage('选择一张头像图片')
+  const fetchAvatarPrompt = async (): Promise<string> => {
+    const response = await window.spiritagent.api<{ prompt: string }>({
+      path: '/api/companion/avatar/prompt',
+      method: 'POST',
+      body: { feedback: $regenFeedback.get().trim() || undefined, has_reference: Boolean(refImage) }
+    })
 
-    if (!picked) {
+    return response.prompt
+  }
+
+  const adoptAvatarSeed = async (image: PickedImage): Promise<void> => {
+    const epoch = currentClearEpoch()
+
+    const response = await window.spiritagent.api<{ id: number; asset_url: string }>({
+      path: '/api/companion/avatar/adopt',
+      method: 'POST',
+      body: { image: image.base64, content_type: image.contentType }
+    })
+
+    if (currentClearEpoch() !== epoch) {
       return
     }
 
-    if ('error' in picked) {
-      setPortraitPanelHint(picked.error)
+    const applied = await applyLocalPortrait(response)
 
+    if (currentClearEpoch() !== epoch) {
       return
     }
 
-    setAvatarUploading(true)
+    if (!applied.avatar) {
+      throw new Error('种子图已保存，预览加载失败，请重新加载')
+    }
+
+    pushPortraitEntry({ assetUrl: applied.assetUrl, avatarId: applied.id, portraitUrl: applied.avatar })
+    $regenFeedback.set('')
+    setPresentationRef(null)
     setPortraitPanelHint(null)
-
-    try {
-      const res = await window.spiritagent.api<{
-        asset_url?: string
-        id?: number
-      }>({
-        body: {
-          content_type: picked.image.contentType,
-          image: picked.image.base64
-        },
-        method: 'POST',
-        path: '/api/companion/avatar/upload'
-      })
-
-      const applied = await applyLocalPortrait(res)
-
-      if (applied.avatar) {
-        pushPortraitEntry({
-          assetUrl: applied.assetUrl,
-          avatarId: applied.id ?? activeAvatarId,
-          portraitUrl: applied.avatar
-        })
-        $regenFeedback.set('')
-        setPhase('portrait-avatar')
-        void playOnboardingAudio('onboarding.portrait.ok')
-      }
-    } catch (err) {
-      setPortraitPanelHint(err instanceof Error ? err.message : '上传头像失败，请稍后重试')
-    } finally {
-      setAvatarUploading(false)
-    }
+    setPhase('portrait-avatar')
   }
 
   const pickPresentationImage = async (): Promise<void> => {
-    const picked = await pickAvatarImage('选择一张风格参考图')
+    const picked = await pickAvatarImage('选择光线与构图参考图')
 
     if (!picked) {
       return
@@ -1323,177 +1132,50 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setPresentationRef(null)
 
     setPhase('fullbody-reference')
-    setFullbodyStyleState('anime_illustration')
-    setFullbodyFrontUrl(null)
-    setFullbodyFrontRawUrl(null)
-    setFullbodyFeedback('')
-    setFullbodyHint(null)
-    setFullbodyZoomUrl(null)
-    setFullbodyHistories({})
-    setFullbodyHistoryIndices({})
   }
 
-  const loadFullbodyStage = async (generateIfMissing: boolean = false): Promise<void> => {
-    setPhase('fullbody')
-    setFullbodyLoading(true)
-    setFullbodyHint(null)
-
-    try {
-      await hydrateFullbodyStage(generateIfMissing)
-    } catch {
-      setFullbodyHint('全身立绘恢复失败，请重试')
-    } finally {
-      setFullbodyLoading(false)
+  const confirmFullbody = async (expectedUrl: string): Promise<void> => {
+    if (!activeAvatarId) {
+      throw new Error('请先选择头像')
     }
-  }
 
-  const onSelectFullbodyHistoryEntry = useCallback(
-    (idx: number) => {
-      if (!fullbodyStyle) {
-        return
-      }
+    const epoch = currentClearEpoch()
 
-      const list = fullbodyHistories[fullbodyStyle] || []
+    const res = await window.spiritagent.api<{
+      id: number
+      asset_url: string
+      seed_fullbody_url: string
+      video_error?: string | null
+    }>({
+      path: `/api/companion/avatar/${activeAvatarId}/fullbody/confirm`,
+      method: 'POST',
+      body: { expected_url: expectedUrl }
+    })
 
-      if (idx >= 0 && idx < list.length) {
-        const entry = list[idx]
-        setFullbodyHistoryIndices(prev => ({ ...prev, [fullbodyStyle]: idx }))
-        setFullbodyFrontUrl(entry.previewUrl)
-        setFullbodyFrontRawUrl(entry.rawUrl)
-      }
-    },
-    [fullbodyHistories, fullbodyStyle]
-  )
-
-  const regenerateFullbodyFront = async (mode: ImageReviseMode = 'regenerate'): Promise<void> => {
-    if (!activeAvatarId || !fullbodyStyle || fullbodyLoading) {
+    if (currentClearEpoch() !== epoch || $activeAvatarId.get() !== activeAvatarId) {
       return
     }
 
-    // 微调编辑上一版正面种子，要求先有图与反馈；首次生成走重新生成路径。
-    if (mode === 'edit' && (!fullbodyFrontUrl || !fullbodyFeedback.trim())) {
+    await applyLocalPortrait(res)
+
+    if (currentClearEpoch() !== epoch) {
       return
     }
 
-    const history = fullbodyHistories[fullbodyStyle] || []
-    const selectedHistoryIndex = fullbodyHistoryIndices[fullbodyStyle] ?? history.length - 1
+    await patchAvatarSeeds({ avatarId: res.id, fullbodySeedUrl: res.seed_fullbody_url })
 
-    if (mode === 'edit' && selectedHistoryIndex !== history.length - 1) {
-      setFullbodyHint('微调只能基于最近生成的一版，请先在历史中选择最新图片')
-
+    if (currentClearEpoch() !== epoch) {
       return
     }
 
-    setFullbodyLoading(true)
-    setFullbodyLoadingText(mode === 'edit' ? '正在按反馈微调正面全身图…' : '正在按要求重新生成正面全身图…')
-    setFullbodyHint(null)
-
-    try {
-      const res = await window.spiritagent.api<{
-        id?: number
-        asset_url?: string
-        reference_image_url?: string
-      }>({
-        path: `/api/companion/avatar/${activeAvatarId}/fullbody/front-reference`,
-        method: 'POST',
-        body: {
-          feedback: fullbodyFeedback.trim() || undefined,
-          mode
-        }
-      })
-
-      const applied = await applyPortrait({
-        id: res?.id,
-        assetUrl: res?.asset_url,
-        seedFrontUrl: res?.reference_image_url
-      })
-
-      const rawFront = res?.reference_image_url || null
-      let resolvedUrl: string | null = null
-
-      if (applied.seedFront) {
-        resolvedUrl = applied.seedFront
-      } else if (rawFront) {
-        resolvedUrl = await resolvePortraitUrl(rawFront)
-      }
-
-      if (resolvedUrl) {
-        setFullbodyFrontRawUrl(rawFront)
-        setFullbodyFrontUrl(resolvedUrl)
-
-        let targetIdx = 0
-        setFullbodyHistories(prev => {
-          let currentList = prev[fullbodyStyle] || []
-
-          if (currentList.length === 0 && fullbodyFrontUrl) {
-            currentList = [{ rawUrl: fullbodyFrontRawUrl, previewUrl: fullbodyFrontUrl }]
-          }
-
-          const nextList = [...currentList, { rawUrl: rawFront, previewUrl: resolvedUrl }]
-
-          if (nextList.length > 5) {
-            nextList.shift()
-          }
-
-          targetIdx = nextList.length - 1
-
-          return { ...prev, [fullbodyStyle]: nextList }
-        })
-
-        setFullbodyHistoryIndices(prev => ({ ...prev, [fullbodyStyle]: targetIdx }))
-      }
-    } catch (err) {
-      setFullbodyHint(err instanceof Error ? err.message : '重新生成正面全身图失败，请重试')
-    } finally {
-      setFullbodyLoading(false)
-    }
-  }
-
-  const confirmFullbodyFront = async (): Promise<void> => {
-    if (!activeAvatarId || !fullbodyStyle || fullbodyLoading) {
-      return
-    }
-
-    const avatarId = activeAvatarId
-    const frontUrl = fullbodyFrontRawUrl
-
-    setFullbodyLoading(true)
-    setFullbodyLoadingText('正在确认全身形象…')
-    setFullbodyHint(null)
-
-    try {
-      const res = await window.spiritagent.api<{
-        id?: number
-        asset_url?: string
-      }>({
-        path: `/api/companion/avatar/${avatarId}/fullbody/confirm-front`,
-        method: 'POST',
-        body: {
-          front_url: frontUrl || undefined
-        }
-      })
-
-      await applyPortrait({
-        id: res?.id,
-        assetUrl: res?.asset_url
-      })
-      // 形象确认后立即锁死 onBack 路径(返回到 voice → q-character → portrait-avatar → fullbody 会让
-      // 用户重新调整正面视图,与已确认的形象不一致)。
-      setImageSealed(true)
-
-      // 后端确认成功后才能推进——失败时停在当前步,保留按钮可重试。
-      setPhase('voice')
-      setVoiceStage('describe')
-      setQIndex(0)
-      setInput('')
-      setAnswerKind(null)
-      setHint(null)
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : '确认失败，请稍后重试'
-      setFullbodyHint(msg)
-    } finally {
-      setFullbodyLoading(false)
-    }
+    setInitialVideoError(res.video_error || null)
+    setImageSealed(true)
+    setPhase('voice')
+    setVoiceStage('describe')
+    setQIndex(0)
+    setInput('')
+    setAnswerKind(null)
+    setHint(null)
   }
 
   const previewVoice = (next: VoiceOption, context: string): void =>
@@ -1572,21 +1254,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const otherVoices = voice ? voiceCatalog.filter(v => voiceSelectionId(v) !== voiceSelectionId(voice)) : []
   // 只要还有候选项，「换一个」就在候选项里循环。
   const voiceCandidates = voice ? [voice, ...(voiceAlternatives.length ? voiceAlternatives : otherVoices)] : []
-
-  const currentFullbodyHistory: HistoryGalleryItem[] = useMemo(() => {
-    if (!fullbodyStyle) {
-      return []
-    }
-
-    const list = fullbodyHistories[fullbodyStyle] || []
-
-    return list.map(item => ({ url: item.previewUrl }))
-  }, [fullbodyHistories, fullbodyStyle])
-
-  const fullbodyEditUsesLatest =
-    currentFullbodyHistory.length > 0 &&
-    (fullbodyHistoryIndices[fullbodyStyle || ''] ?? currentFullbodyHistory.length - 1) ===
-      currentFullbodyHistory.length - 1
 
   const canGoBack =
     computeBackTransition({ phase, qIndex, voiceStage, imageSealed }, CHARACTER_QUESTIONS.length) !== null
@@ -1737,9 +1404,26 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             <div>
               <p className="text-[15px] font-medium text-strong">选择头像获取方式</p>
               <p className="mt-1 text-xs text-body">
-                形象设定已保存！您可以让 AI 根据设定构思形象，或直接上传现有的头像图片。
+                先准备头像种子，再准备全身种子。每一步都可选择生成，或直接上传成品。
               </p>
 
+              <div className="mt-3 rounded-xl border border-line-hairline bg-fill-trough p-3">
+                <p className="text-xs text-body">生成参考图（可选）</p>
+                <p className="mt-1 text-[11px] text-muted">用于生成时借鉴外形，不会直接成为头像。</p>
+                <div className="mt-2 flex items-center gap-2">
+                  {refImage && (
+                    <img alt="生成参考图" className="size-12 rounded-md object-contain" src={refImage.previewUrl} />
+                  )}
+                  <button className="text-xs text-strong" onClick={() => void pickReferenceImage()} type="button">
+                    {refImage ? '更换参考图' : '添加参考图'}
+                  </button>
+                  {refImage && (
+                    <button className="text-xs text-muted" onClick={() => updateRefImage(null)} type="button">
+                      移除
+                    </button>
+                  )}
+                </div>
+              </div>
               <div className="mt-4 flex flex-col gap-3">
                 <button
                   className="rounded-xl border border-line-hairline bg-surface-card p-4 text-left transition hover:border-line-strong hover:bg-fill-hover active:scale-[0.99]"
@@ -1753,24 +1437,24 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     <span className="text-xs text-muted">AI 绘制 →</span>
                   </div>
                   <p className="mt-1.5 text-[11px] leading-relaxed text-body">
-                    基于您刚才填写的形象描述与参考图，自动构思并生成半身头像（生成后可微调或重新生成）。
+                    基于您刚才填写的形象描述与参考图，生成角色头像，之后可预览、微调或重新生成。
                   </p>
                 </button>
 
                 <button
                   className="rounded-xl border border-line-hairline bg-surface-card p-4 text-left transition hover:border-line-strong hover:bg-fill-hover active:scale-[0.99] disabled:opacity-40"
-                  disabled={avatarUploading}
-                  onClick={() => void uploadCustomAvatar()}
+                  disabled={avatarBusy}
+                  onClick={() => setAvatarSelfSourceOpen(true)}
                   type="button"
                 >
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-1.5 text-[14px] font-medium text-strong">
-                      <FolderOpen className="size-4 text-muted" /> 直接上传已有头像
+                      <FolderOpen className="size-4 text-muted" /> 上传自备头像种子
                     </span>
-                    <span className="text-xs text-muted">本地上传 →</span>
+                    <span className="text-xs text-muted">选择图片 →</span>
                   </div>
                   <p className="mt-1.5 text-[11px] leading-relaxed text-body">
-                    跳过 AI 生成，直接使用您本地准备好的图片作为伙伴头像。
+                    直接使用准备好的头像，不调用图像生成。也可获取提示词，在外部制作后上传。
                   </p>
                 </button>
 
@@ -1785,17 +1469,11 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                       <span className="text-xs text-muted">已有草稿 →</span>
                     </div>
                     <p className="mt-1.5 text-[11px] leading-relaxed text-body">
-                      保留之前生成或上传的头像草稿，直接进入确认与全身立绘阶段。
+                      保留之前生成或上传的头像草稿，直接进入确认与全身种子阶段。
                     </p>
                   </button>
                 )}
               </div>
-
-              {avatarUploading && (
-                <div className="mt-3">
-                  <SpinnerWithText size="h-5 w-5" text="正在上传头像…" />
-                </div>
-              )}
 
               {portraitPanelHint && <p className="mt-3 text-xs text-rose-300/90">{portraitPanelHint}</p>}
 
@@ -1807,6 +1485,21 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             </div>
           )}
 
+          <SelfSourceImageFlow
+            adopt={adoptAvatarSeed}
+            fetchPrompt={fetchAvatarPrompt}
+            hint="请使用单个角色、纯白背景的头像。采纳后还可预览和调整，确认后再准备全身种子。"
+            onClose={() => setAvatarSelfSourceOpen(false)}
+            onUseAi={() => {
+              setAvatarSelfSourceOpen(false)
+              void startAiHatching()
+            }}
+            open={avatarSelfSourceOpen}
+            referenceImages={refImage ? [{ label: '形象参考图', url: refImage.previewUrl }] : undefined}
+            referenceRequired={Boolean(refImage)}
+            title="自备头像种子"
+          />
+
           {phase === 'hatching' && <SpinnerWithText size="h-6 w-6" text={hint || '让我想想我该是什么样子…'} />}
 
           {(phase === 'portrait-avatar' || phase === 'greeting') && (
@@ -1814,7 +1507,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               avatarUrl={portraitUrl}
               hint={portraitPanelHint}
               history={currentHistoryItems}
-              introHint={phase === 'portrait-avatar' ? '先确认半身头像' : null}
+              introHint={phase === 'portrait-avatar' ? '先确认头像种子' : null}
               name={answers.name?.trim() || '伙伴'}
               onSelectEntry={onSelectHistoryEntry}
               selectedIdx={portraitSelectedIdx}
@@ -1825,8 +1518,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             <div className="mt-4">
               {avatarBusy ? (
                 <SpinnerWithText text="正在重新生成头像…" />
-              ) : avatarUploading ? (
-                <SpinnerWithText text="正在上传头像…" />
               ) : (
                 <>
                   <RegenFeedbackInput />
@@ -1850,16 +1541,16 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                         onClick={() => void pickPresentationImage()}
                         type="button"
                       >
-                        {presentationRef ? '换风格参考图' : '＋ 风格参考图'}
+                        {presentationRef ? '更换构图参考' : '＋ 光线与构图参考'}
                       </button>
                       {presentationRef && (
                         <>
                           <img
-                            alt="风格参考"
+                            alt="光线与构图参考"
                             className="h-9 w-9 rounded-md object-cover"
                             src={presentationRef.previewUrl}
                           />
-                          <span className="text-[10px] text-faint">参考风格/展现形式，不影响角色形象</span>
+                          <span className="text-[10px] text-faint">参考光线与构图，沿用统一视觉风格</span>
                           <button
                             className="ml-auto text-muted transition hover:text-strong"
                             onClick={() => setPresentationRef(null)}
@@ -1882,7 +1573,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                       </button>
                       <button
                         className="text-body transition hover:text-strong disabled:opacity-40"
-                        disabled={avatarBusy || avatarUploading}
+                        disabled={avatarBusy}
                         onClick={() => {
                           setPortraitPanelHint(null)
                           void regenerateAvatarPortrait()
@@ -1892,7 +1583,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                         重新生成
                       </button>
                       <EditAvatarButton
-                        busy={avatarBusy || avatarUploading}
+                        busy={avatarBusy}
                         disabledByReference={Boolean(refImage || presentationRef)}
                         onEdit={() => {
                           setPortraitPanelHint(null)
@@ -1901,11 +1592,11 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                       />
                       <button
                         className="rounded-full border border-line-standard px-3 py-1 text-strong transition hover:bg-fill-hover disabled:opacity-40"
-                        disabled={avatarBusy || avatarUploading}
-                        onClick={() => void uploadCustomAvatar()}
+                        disabled={avatarBusy}
+                        onClick={() => setAvatarSelfSourceOpen(true)}
                         type="button"
                       >
-                        自己上传
+                        自备种子图
                       </button>
                     </div>
                     <button
@@ -1929,176 +1620,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               initialReference={refImage}
               key={activeAvatarId}
               onBack={onBack}
-              onContinue={() => void loadFullbodyStage(true)}
+              onContinue={confirmFullbody}
             />
           )}
 
-          {phase === 'fullbody' && (
-            <div className="mt-2">
-              {fullbodyLoading ? (
-                <div className="py-8 text-center">
-                  <SpinnerWithText size="h-6 w-6" text={fullbodyLoadingText} />
-                </div>
-              ) : (
-                <div>
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <p className="text-[14px] font-medium text-strong">确认全身立绘</p>
-                      <p className="mt-0.5 text-xs text-body">已为您生成正面立绘，可直接确认或输入要求微调重绘。</p>
-                    </div>
-                  </div>
-
-                  <div
-                    className="relative mx-auto mt-3 flex aspect-[9/16] max-h-[320px] w-auto items-center justify-center overflow-hidden rounded-xl border border-line-hairline bg-fill-trough group"
-                    style={fullbodyRatio ? { aspectRatio: fullbodyRatio } : undefined}
-                  >
-                    {fullbodyFrontUrl ? (
-                      <button
-                        aria-label="放大查看"
-                        className="relative block h-full w-full cursor-zoom-in overflow-hidden border-0 bg-transparent p-0"
-                        onClick={() => setFullbodyZoomUrl(fullbodyFrontUrl)}
-                        type="button"
-                      >
-                        <img alt="正面全身立绘" className="h-full w-full object-contain" src={fullbodyFrontUrl} />
-                        <div className="absolute top-2 right-2 rounded-full bg-black/60 p-1.5 text-white/80 opacity-0 backdrop-blur-sm transition group-hover:opacity-100 hover:bg-black/80 hover:text-white">
-                          <svg
-                            className="h-3.5 w-3.5"
-                            fill="none"
-                            stroke="currentColor"
-                            strokeWidth={2}
-                            viewBox="0 0 24 24"
-                          >
-                            <path
-                              d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v6m3-3H7"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                            />
-                          </svg>
-                        </div>
-                      </button>
-                    ) : (
-                      <div className="p-4 text-center">
-                        <p className="mb-2 text-xs text-muted">暂无预览图</p>
-                        <button
-                          className="rounded-full bg-fill-hover px-3 py-1 text-xs text-strong hover:bg-fill-active"
-                          onClick={() => void loadFullbodyStage()}
-                          type="button"
-                        >
-                          重新加载
-                        </button>
-                        {activeAvatarId && (
-                          <button
-                            className="rounded-full bg-fill-hover px-3 py-1 text-xs text-strong hover:bg-fill-active"
-                            onClick={() => void generateFullbodyFrontDirect(activeAvatarId, 'anime_illustration')}
-                            type="button"
-                          >
-                            重新生成
-                          </button>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {currentFullbodyHistory.length > 1 && (
-                    <div className="mt-2">
-                      <HistoryGallery
-                        entries={currentFullbodyHistory}
-                        onSelect={onSelectFullbodyHistoryEntry}
-                        selectedIdx={fullbodyHistoryIndices['anime_illustration'] ?? currentFullbodyHistory.length - 1}
-                      />
-                    </div>
-                  )}
-
-                  <div className="mt-3">
-                    <textarea
-                      className={`${INPUT_CLASS} text-xs`}
-                      maxLength={MAX_APPEARANCE}
-                      onChange={e => setFullbodyFeedback(e.target.value)}
-                      placeholder="对正面立绘有微调要求？例如：头发再长一点、换个服饰配色…（可留空直接确认）"
-                      rows={2}
-                      value={fullbodyFeedback}
-                    />
-                  </div>
-
-                  {fullbodyHint && <p className="mt-2 text-xs text-rose-300/90">{fullbodyHint}</p>}
-
-                  <div className="mt-3 flex items-center justify-between text-xs">
-                    <button className="text-body transition hover:text-strong" onClick={onBack} type="button">
-                      上一步
-                    </button>
-                    <div className="flex gap-3">
-                      <button
-                        className="text-body transition hover:text-strong disabled:opacity-40"
-                        disabled={
-                          fullbodyLoading || !fullbodyFrontUrl || !fullbodyFeedback.trim() || !fullbodyEditUsesLatest
-                        }
-                        onClick={() => void regenerateFullbodyFront('edit')}
-                        title={
-                          fullbodyEditUsesLatest
-                            ? '在当前立绘上修改，其余保持不变（需先填写要求）'
-                            : '微调只能基于最近生成的一版，请先在历史中选择最新图片'
-                        }
-                        type="button"
-                      >
-                        微调
-                      </button>
-                      <button
-                        className="text-body transition hover:text-strong disabled:opacity-40"
-                        disabled={fullbodyLoading}
-                        onClick={() => void regenerateFullbodyFront('regenerate')}
-                        type="button"
-                      >
-                        重新生成
-                      </button>
-                      <button
-                        className="text-body transition hover:text-strong disabled:opacity-40"
-                        disabled={fullbodyLoading}
-                        onClick={() => {
-                          // front-reference 自备图参考是全身种子图：进入 fullbody 阶段时已写入缓存，打开前再补齐一次。
-                          void hydrateAvatarSeeds().finally(() => setFullbodySelfSourceOpen(true))
-                        }}
-                        title="我自己生成这张图（复制提示词，生成后回传上传）"
-                        type="button"
-                      >
-                        使用自己的图
-                      </button>
-                      <button
-                        className="inline-flex h-9 items-center justify-center rounded-lg bg-accent px-4 text-sm font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40"
-                        disabled={fullbodyLoading || !fullbodyFrontUrl}
-                        onClick={() => void confirmFullbodyFront()}
-                        type="button"
-                      >
-                        确认形象
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              )}
-
-              {fullbodyZoomUrl && (
-                <PortraitLightbox
-                  name={answers.name?.trim() || '伙伴'}
-                  onClose={() => setFullbodyZoomUrl(null)}
-                  url={fullbodyZoomUrl}
-                />
-              )}
-
-              <SelfSourceImageFlow
-                adopt={adoptFullbodyFrontImage}
-                fetchPrompt={fetchFullbodyFrontPrompt}
-                onClose={() => setFullbodySelfSourceOpen(false)}
-                onUseAi={() => {
-                  setFullbodySelfSourceOpen(false)
-                  // 走标准重绘入口保留已填的反馈；generateFullbodyFrontDirect 不带 feedback，只用于断点恢复的自动补生成。
-                  void regenerateFullbodyFront('regenerate')
-                }}
-                open={fullbodySelfSourceOpen}
-                referenceImages={
-                  fullbodySeedUrl ? [{ label: selfSourceDict.refs.fullbodySeed, url: fullbodySeedUrl }] : undefined
-                }
-                title="正面全身立绘 · 使用自己的图"
-              />
-            </div>
+          {initialVideoError && (
+            <p className="text-xs text-rose-300/90" role="status">
+              默认外观已保存，视频尚未开始生成：{initialVideoError}。完成引导后可在外观页重试。
+            </p>
           )}
 
           {phase === 'voice' && voiceStage === 'catalog' && voice && (

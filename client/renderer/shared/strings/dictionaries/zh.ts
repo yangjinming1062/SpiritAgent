@@ -42,9 +42,10 @@ export const dict = {
   },
 
   selfSource: {
+    guidanceAction: '需要制作图片？获取提示词与参考图',
     open: '使用自己的图',
-    openTitle: '我自己生成这张图（复制提示词，生成后回传上传）',
-    hint: '复制下方提示词，连同参考图一起交给你喜欢的生图工具，然后选图上传。外部工具按参考图重绘，画面内容以这段描述为准。',
+    openTitle: '直接上传成品，或获取提示词在外部制作',
+    hint: '已有图片可以直接选图采纳，无需生成。需要在外部制作时，展开提示词与参考图；采纳前请核对身份、视觉风格与画面要求。',
     referenceTitle: '参考图（随提示词一起提供）',
     referenceHint: '把参考图和提示词一起交给外部工具；缩略图上可复制或另存，点击查看大图。',
     referenceMissing:
@@ -52,8 +53,7 @@ export const dict = {
     referenceZoom: '参考图预览',
     refs: {
       avatarSeed: '头像种子图',
-      fullbodySeed: '全身种子图',
-      seedModelFront: '模型正面立绘'
+      fullbodySeed: '全身种子图'
     },
     promptLoading: '正在准备提示词…',
     promptFailed: '提示词获取失败，请重试。',
@@ -83,8 +83,8 @@ export const dict = {
     editRequiresFeedback: '微调需先填写要求',
     regenerateHint: '按参考与要求整体重绘',
     groupHint: '微调只修改要求的部分，其余保持不变；重新生成按参考与要求整体重绘。',
-    selfTitle: '用自己生成的图',
-    selfHint: '复制提示词与参考图，在外部工具生成后回传采纳，不调用 AI 生成。'
+    selfTitle: '使用自备图',
+    selfHint: '直接上传准备好的图片；需要制作时，可获取提示词与参考图，在外部工具完成后上传。'
   },
 
   boot: {
@@ -371,7 +371,8 @@ export const dict = {
       sectionMemory: '长期记忆',
       fullbodyReference: {
         title: '全身种子图',
-        hint: '以自然优美的姿态展现身材比例与整体气质，作为房间、自拍等出镜画面的优先参考。',
+        hint: '展示完整身体与性格气质，采用适合自身结构、可以稳定保持的待机姿态，作为默认视频、换装与出镜画面的参考。',
+        confirmHint: '确认后锁定身份并开始生成默认视频形象；未就绪时保留蛋形，完成后自动启用。',
         empty: '还没有全身种子图，可以根据当前头像与角色设定生成。',
         loading: '正在准备全身种子图，请稍候…',
         referenceLabel: '用户参考图',

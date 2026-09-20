@@ -388,7 +388,7 @@ export async function prepareRoomPrompt(notes?: string): Promise<string> {
     throw new Error(getStrings().living.toasts.roomRegenerateFailed)
   }
 
-  void hydrateRoomBackdrop()
+  await hydrateRoomBackdrop()
 
   return result.value.prompt
 }
@@ -397,21 +397,16 @@ export async function prepareRoomPrompt(notes?: string): Promise<string> {
 export async function adoptRoomImage(image: { base64: string; contentType: string }): Promise<void> {
   const pending = $pendingBackdrop.get()
 
-  // 水合未完成或失败时没有可挂靠的行：必须显式失败，静默返回会让调用方误报「房间已就绪」。
-  if (!pending) {
-    throw new Error(getStrings().living.toasts.roomRegenerateFailed)
-  }
+  const id = pending?.source === USER_UPLOAD_SOURCE ? Number.parseInt(pending.id, 10) : null
 
-  const id = Number.parseInt(pending.id, 10)
-
-  if (Number.isNaN(id)) {
+  if (id !== null && Number.isNaN(id)) {
     throw new Error(getStrings().living.toasts.roomRegenerateFailed)
   }
 
   const result = await authedApi({
     body: { image: image.base64, content_type: image.contentType },
     method: 'POST',
-    path: `/api/companion/room/${id}/adopt`
+    path: id === null ? '/api/companion/room/adopt' : `/api/companion/room/${id}/adopt`
   })
 
   if (!result.ok) {

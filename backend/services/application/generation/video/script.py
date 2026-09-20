@@ -13,9 +13,8 @@ from prompts.generation import (
     VIDEO_PROMPT_SKELETON,
 )
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.infrastructure.llm import chat
+from services.infrastructure.llm import vision_chat
 
 VideoAction = Literal["idle", "walk_left", "walk_right", "drag"]
 ACTION_DURATIONS: dict[VideoAction, int] = {"idle": 1, "walk_left": 2, "walk_right": 2, "drag": 2}
@@ -40,9 +39,9 @@ class ActionScript(BaseModel):
 
 
 async def compose_action_script(
-    db: AsyncSession | None,
     user_id: int,
     *,
+    reference_image: str,
     persona_definition: dict[str, str],
     personality_tags: list[str],
     outfit_description: str,
@@ -65,7 +64,12 @@ async def compose_action_script(
     }
     last_error = "缺少有效动作"
     for _attempt in range(2):
-        raw = await chat(db, user_id, VIDEO_ACTION_SCRIPT_INSTRUCTIONS, json.dumps(payload, ensure_ascii=False))
+        raw = await vision_chat(
+            user_id,
+            VIDEO_ACTION_SCRIPT_INSTRUCTIONS,
+            json.dumps(payload, ensure_ascii=False),
+            reference_images=(reference_image,),
+        )
         try:
             script = ActionScript.model_validate(parse_llm_json(raw))
             keys = [entry.action for entry in script.actions]

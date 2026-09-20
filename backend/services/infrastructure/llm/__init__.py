@@ -22,17 +22,15 @@ from .llm_client import (
 from .llm_fallback import execute_with_fallback
 from .llm_retry import LLMRuntimeError, call_with_retry
 from .prompt_engineer import (
-    REFERENCE_ILLUSTRATION_STYLE,
-    FullbodyStyle,
-    FullbodyTemplate,
-    build_fullbody_prompt,
+    VisualReasoningError,
     build_image_edit_prompt,
     build_outfit_prompt,
     call_llm_once,
     chat,
+    describe_character_form,
     describe_garment_image,
     enhance_avatar_prompt,
-    resolve_fullbody_template,
+    vision_chat,
 )
 from .providers import (
     SIZE_TO_ASPECT,
@@ -87,19 +85,17 @@ from .user_config import UserLlmConfig, resolve_user_llm_config
 from .voice_catalog import VoiceEntry, pick_voice_id, voices_for_provider
 
 __all__ = [
+    "VisualReasoningError",
     "BaseProvider",
     "ChatProvider",
     "ClassifiedError",
     "EmbeddingProvider",
     "FailoverReason",
-    "FullbodyStyle",
-    "FullbodyTemplate",
     "ImageAsset",
     "ImageGenProvider",
     "ImageGenRequest",
     "ImageGenResult",
     "LLMRuntimeError",
-    "REFERENCE_ILLUSTRATION_STYLE",
     "MiMoChatProvider",
     "MiMoSTTProvider",
     "MiMoTTSProvider",
@@ -122,7 +118,6 @@ __all__ = [
     "VoiceEntry",
     "aclose_all",
     "approx_responses_tokens",
-    "build_fullbody_prompt",
     "build_image_edit_prompt",
     "build_outfit_prompt",
     "build_responses_kwargs",
@@ -134,7 +129,9 @@ __all__ = [
     "default_base_url",
     "default_context_tokens_for",
     "default_model_for",
+    "describe_character_form",
     "describe_garment_image",
+    "vision_chat",
     "enhance_avatar_prompt",
     "execute_with_fallback",
     "generate_embedding",
@@ -150,7 +147,6 @@ __all__ = [
     "resolve",
     "resolve_context_tokens",
     "resolve_embedding_provider",
-    "resolve_fullbody_template",
     "resolve_provider_chain",
     "resolve_provider_config",
     "resolve_reference_bytes",

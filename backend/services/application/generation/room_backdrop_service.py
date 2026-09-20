@@ -268,7 +268,7 @@ async def activate_backdrop(
         await _emit_backdrop_event(
             user_id,
             "companion.room.ready",
-            _event_payload(target, persona),
+            _event_payload(target),
         )
         return target
 
@@ -354,7 +354,7 @@ async def reconcile_room_outfit(user_id: int) -> RoomOutfitReconcileResult:
             await _emit_backdrop_event(
                 user_id,
                 "companion.room.ready",
-                _event_payload(candidate, persona),
+                _event_payload(candidate),
             )
             return RoomOutfitReconcileResult("reused", backdrop_id=candidate.id)
 
@@ -519,10 +519,7 @@ async def schedule_room_prompt(
     intent: str = "rebuild",
     notes: str | None = None,
 ) -> CompanionRoomBackdrop:
-    """自备图第一步：创建 source=user_upload 的 pending 行并落库 brief 与提示词
-    （身份恒由全身种子图锚定），不启动任何生图任务；用户回传图像后经
-    adopt_room_backdrop 转 ready，放弃则 discard。落库的提示词与客户端展示的完全一致。
-    种子缺失按 AI 路径同一文案失败，不降级纯文字。"""
+    """准备自备图记录，保存并返回外部制作提示词。"""
     async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
         if persona is None or not persona.is_complete:
@@ -583,8 +580,7 @@ async def schedule_room_prompt(
             )
         ).scalar_one_or_none()
         if fresh is None:
-            # 组装期间被新的房间请求取代：行已不归本次请求所有，但仍把刚组装好的
-            # 提示词返回给调用方——prompt 文本正是该请求的全部产出，返回空串会让用户白跑一趟。
+            # 已被新请求取代时只返回制作资料，不再更新数据库。
             row.brief = brief
             row.prompt = prompt
             return row
@@ -597,28 +593,39 @@ async def schedule_room_prompt(
 
 async def adopt_room_backdrop(
     user_id: int,
-    backdrop_id: int,
+    backdrop_id: int | None,
     *,
     data: bytes,
 ) -> CompanionRoomBackdrop:
     """自备图采纳：校验用户上传的房间图并落库，行按生成链同一激活/事件语义转 ready。
-    brief 与提示词沿用提示词步骤落库的原文；着装指纹取提示词步骤的快照。"""
+    有目标行时沿用其提示词与着装快照；直接上传先校验图片，再创建本次采纳的待提交行。"""
     try:
         data, mime = await asyncio.to_thread(_decode_reference_image, data)
     except Exception as exc:
         raise RoomBackdropError("图片无法读取，请换一张有效的 PNG / JPEG / WebP / GIF 图片") from exc
 
     async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
-        row = (
-            await db.execute(
+        if backdrop_id is None:
+            persona = await db.scalar(select(Persona).where(Persona.user_id == user_id))
+            if persona is None or not persona.is_complete:
+                raise RoomBackdropStateError("请先完成角色设定")
+            row = CompanionRoomBackdrop(
+                user_id=user_id,
+                status=BackdropStatus.PENDING.value,
+                origin=BackdropOrigin.USER_REQUEST.value,
+                intent=BackdropIntent.REBUILD.value,
+                outfit_fingerprint=await _current_outfit_fingerprint(db, user_id),
+                source=BackdropSource.USER_UPLOAD.value,
+            )
+        else:
+            row = await db.scalar(
                 select(CompanionRoomBackdrop).where(
                     CompanionRoomBackdrop.id == backdrop_id,
                     CompanionRoomBackdrop.user_id == user_id,
                 ),
             )
-        ).scalar_one_or_none()
-        if row is None:
-            raise RoomBackdropNotFoundError(f"backdrop {backdrop_id} not found")
+            if row is None:
+                raise RoomBackdropNotFoundError(f"backdrop {backdrop_id} not found")
         if row.status != BackdropStatus.PENDING.value or row.source != BackdropSource.USER_UPLOAD.value:
             raise RoomBackdropStateError("该房间记录不在等待上传状态")
         avatar = (
@@ -633,6 +640,12 @@ async def adopt_room_backdrop(
             raise RoomBackdropStateError("全身种子图缺失，请在设置的“角色与记忆”中重新生成")
         seed_portrait = avatar.seed_fullbody_url
         origin = row.origin
+        if backdrop_id is None:
+            await _supersede_pending(db, user_id)
+            db.add(row)
+            await db.commit()
+            backdrop_id = row.id
+            _cancel_inflight_task(user_id)
 
     ext = {"image/gif": "gif", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}.get(mime, "jpg")
     storage_path = await asset_store.save_companion_asset_async(
@@ -1187,15 +1200,12 @@ async def _finalize_ready_row(
             await _emit_backdrop_event(
                 user_id,
                 "companion.room.ready",
-                _event_payload(row, persona),
+                _event_payload(row),
             )
     return should_activate
 
 
-def _event_payload(
-    row: CompanionRoomBackdrop,
-    persona: Persona | None,
-) -> dict[str, Any]:
+def _event_payload(row: CompanionRoomBackdrop) -> dict[str, Any]:
     url = row.public_url or ""
     if row.media_path and row.media_path.startswith("companion-assets/"):
         url = asset_store.signed_companion_asset_url(row.media_path) or url

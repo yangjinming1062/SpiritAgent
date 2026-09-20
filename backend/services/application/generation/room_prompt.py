@@ -45,7 +45,7 @@ def build_room_prompt(ctx: RoomPromptContext) -> str:
     """角色图确定外貌，场景图提供环境与所需姿势；当前着装描述优先于图片中的穿着。"""
     intent_value = ctx.intent.value if isinstance(ctx.intent, BackdropIntent) else str(ctx.intent)
     lighting = INTENT_LIGHTING.get(intent_value, INTENT_LIGHTING["decorate"])
-    species = (ctx.species or "人类").strip() or "人类"
+    species = (ctx.species or "").strip()
     reference = "图 1" if ctx.has_reference_image else "参考图"
     parts = [ROOM_SCENE_TEMPLATE.format(reference=reference, species=species)]
     appearance = _prompt_clause(ctx.appearance or "")
