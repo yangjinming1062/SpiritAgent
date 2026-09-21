@@ -48,6 +48,7 @@ from .streaming import (
     _ensure_tool_call_ids,
     _generate_llm_response,
     _IncompleteResponseError,
+    _InvalidCompanionReplyError,
     _LLMTurnResult,
 )
 from .tool_dispatch import _ToolDispatchContext
@@ -383,6 +384,7 @@ async def _run_chat_turn(
             )
             input_length = len(current_context["input"])
             retry_available = True
+            reply_format_feedback = None
             while True:
                 try:
                     return await _generate_llm_response(
@@ -402,6 +404,7 @@ async def _run_chat_turn(
                         reply_preference=inputs.response_preference if complete_response else None,
                         voice_id=inputs.speech_voice,
                         allow_silence=ephemeral and headless and complete_response,
+                        reply_format_feedback=reply_format_feedback,
                         split_paragraphs=conv.system_preset_id == "companion"
                         and not conv.is_automation
                         and preset_override is None,
@@ -412,6 +415,13 @@ async def _run_chat_turn(
                         raise
                     retry_available = False
                     logger.warning("Retrying incomplete LLM response before text delivery: %s", exc)
+                except _InvalidCompanionReplyError as exc:
+                    del current_context["input"][input_length:]
+                    if not retry_available:
+                        raise
+                    retry_available = False
+                    reply_format_feedback = exc.feedback
+                    logger.warning("Retrying final companion reply after format validation failed")
 
         def set_response_started() -> None:
             nonlocal response_started

@@ -29,8 +29,14 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 
 - [夜间能力目录](../services/application/nightly/nightly_planning.py)——描述与参数选项随能力可用性装配，动作预算从执行端常量传入 `plan_limits`；检查规划提示词时同时核对目录、互斥组和参考图能力。
 - [语音气泡演绎能力](../services/infrastructure/llm/providers/speech_style.py)——按实际供应商、模型与音色装配能力和 JSON 示例，附加到陪伴终端请求；检查正文规则时一并核对。
+- [时间与共享块装配](../services/application/chat/prompt_blocks.py)——工具开关与实际解锁集合决定能力描述，时间资料只表达经过时间，不推断用户经历。
+- [音色设计说明](../services/infrastructure/llm/providers/minimax/tts.py)与 [MiMo 对应说明](../services/infrastructure/llm/providers/mimo/tts.py)——供应商支持的描述维度，供用户创建音色；不能混入逐条语音的正文。
 - 数据库 `AvatarAsset.prompt_json` 等审计字段是生成时快照，不是定义源。
 
 ## Runner 例外
 
 `runner/tools/browser/helpers.py` 内嵌浏览器内容抽取提示词。Runner 与 Backend 无共享代码包（独立 pyproject、物理解耦），不为单条提示词引入跨模块共享机制；该提示词调整时同步在本 README 登记，并按 [PROTOCOL](../../docs/PROTOCOL.md) 的 runner 契约验证。
+
+## 发布脚本例外
+
+[gen_release_notes.py](../../scripts/gen_release_notes.py) 独立运行，维护提交摘要的系统提示词；提交记录是资料，验证范围和功能影响范围须分别保留，不从提交推断发布或测试已经完成。

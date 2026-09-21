@@ -43,6 +43,8 @@ async def _summarize_doc(client: AsyncOpenAI, model_name: str, doc: dict) -> Non
             temperature=0.1,
         )
         response = await call_with_retry(client, **request)
+        if response.status != "completed" or not response.output_text.strip():
+            raise RuntimeError("Web summary response did not complete with text")
         doc["content"] = response.output_text
     except Exception as e:
         # 单文档失败必须隔离，否则会拖垮整批 gather（httpx、JSON 解析、LLMRuntimeError、空 choices 都落在这一层）。

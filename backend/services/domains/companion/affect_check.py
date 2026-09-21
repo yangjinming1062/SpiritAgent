@@ -1,6 +1,7 @@
 from typing import Any
 
 from components import (
+    LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
     coerce_hour_0_23,
     coerce_non_negative_float,
@@ -24,9 +25,6 @@ class AffectCheckResult(BaseModel):
     emotion: str = "neutral"
     actions: list[str] = Field(default_factory=list, max_length=3)
     reason: str = Field(default="", max_length=200)
-
-
-_MAX_RESPONSE_TOKENS = 340
 
 
 def _normalize_actions(raw: object, allowed: set[str]) -> list[str]:
@@ -71,7 +69,7 @@ async def check_affect(
             **({"long_term_memories": ctx.memories_block} if ctx.memories_block else {}),
             **({"recent_context": recent_context} if recent_context else {}),
         },
-        max_output_tokens=_MAX_RESPONSE_TOKENS,
+        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         log_prefix="affect_check",
     )
     if parsed is None:

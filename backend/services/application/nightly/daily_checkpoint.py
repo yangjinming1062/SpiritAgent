@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any
 
-from components import DEFAULT_LANGUAGE, get_logger, session_scope
+from components import DEFAULT_LANGUAGE, LLM_MAX_OUTPUT_TOKENS, get_logger, session_scope
 from modules.conversation import Message
 from prompts.nightly import CHECKPOINT_SUMMARY_INSTRUCTIONS
 from sqlalchemy import func, select
@@ -13,8 +13,6 @@ from services.domains.media import prune_videos_in_range
 from services.infrastructure.llm import UserLlmConfig
 
 logger = get_logger(__name__)
-
-_SUMMARY_MAX_TOKENS = 800
 
 # Checkpoint 子类型——daily_summary（nightly）和 compress_summary（运行时 token 阈值）。两者在 LLM 读路径都充当"我之前的内容已被摘要"。
 _CHECKPOINT_SUBTYPES: frozenset[str] = frozenset({"daily_summary", "compress_summary"})
@@ -62,7 +60,7 @@ async def run_daily_checkpoint(
             "recent_conversation": chat_content,
             "conversation_gap": conversation_gap,
         },
-        max_output_tokens=_SUMMARY_MAX_TOKENS,
+        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         log_prefix="daily_checkpoint",
         temperature=0.0,
     )

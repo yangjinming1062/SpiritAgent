@@ -9,6 +9,7 @@ import time
 from typing import Any
 
 from components import (
+    LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
     get_logger,
     is_user_in_maintenance,
@@ -34,7 +35,6 @@ _IMPULSE_MIN_INTERVAL_SECONDS = 45 * 60
 _IMPULSE_MAX_INTERVAL_SECONDS = 90 * 60
 _NEXT_CHECK_AT: dict[int, float] = {}
 
-_MAX_RESPONSE_TOKENS = 400
 _RECENT_MOMENT_LIMIT = 10
 
 
@@ -98,7 +98,7 @@ async def maybe_run_moment_impulse(user_id: int) -> None:
         llm_cfg,
         resolve_prompt_text(MOMENT_IMPULSE_INSTRUCTIONS, ctx.language),
         payload,
-        max_output_tokens=_MAX_RESPONSE_TOKENS,
+        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         log_prefix="moment_impulse",
         temperature=0.7,
     )

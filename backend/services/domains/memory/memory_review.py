@@ -48,6 +48,7 @@ async def assess_memory_changes(
             MEMORY_POLICY + "\n" + MEMORY_REVIEW_INSTRUCTIONS,
             payload,
             max_output_tokens=6000,
+            json_output=True,
         )
         try:
             parsed = MemoryDecisions.model_validate(parse_llm_json(raw))

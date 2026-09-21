@@ -16,6 +16,8 @@ JSONRPC_SLASH_BUSY: int = -32002
 JSONRPC_SLASH_GENERIC: int = -32003
 
 # LLM 调用与对话链路：温度边界、标题生成、重试与摘要预算等代码级回退值。
+# 通用调用的输出预算，包含推理与正文。
+LLM_MAX_OUTPUT_TOKENS: int = 8192
 # 归一化 [0,1] 刻度下的温度校验边界与各链路默认值。
 TEMPERATURE_MIN: float = 0.0
 TEMPERATURE_MAX: float = 1.0
@@ -27,7 +29,6 @@ TITLE_SNIPPET_MAX_CHARS: int = 500
 TITLE_MAX_CHARS: int = 80
 # LLM 标题生成失败或跳过时的回退标题。
 DEFAULT_SESSION_TITLE: str = "New Conversation"
-TITLE_GENERATION_MAX_TOKENS: int = 500
 LLM_RETRY_MIN_TIMEOUT: float = 1.0
 # 给 LLM 留出余量避免中途截断。
 CONTEXT_SUMMARY_HEADROOM_FACTOR: int = 2

@@ -1,7 +1,14 @@
 import json
 from typing import Any
 
-from components import CONTEXT_SUMMARY_HEADROOM_FACTOR, DEFAULT_LANGUAGE, SETTINGS, get_logger
+from components import (
+    CONTEXT_SUMMARY_HEADROOM_FACTOR,
+    DEFAULT_LANGUAGE,
+    LLM_MAX_OUTPUT_TOKENS,
+    SETTINGS,
+    get_logger,
+    resolve_prompt_text,
+)
 from prompts.chat import CONTEXT_SUMMARY_PROMPTS
 
 from services.infrastructure.llm import (
@@ -11,11 +18,6 @@ from services.infrastructure.llm import (
 )
 
 logger = get_logger(__name__)
-
-
-def _summary_prompt(language: str) -> str:
-    lang = (language or "").strip().lower()
-    return CONTEXT_SUMMARY_PROMPTS.get(lang, CONTEXT_SUMMARY_PROMPTS[DEFAULT_LANGUAGE])
 
 
 def _pick_compressible_block(
@@ -40,10 +42,10 @@ async def _summarize_block(
     temperature: float | None = None,
     language: str = DEFAULT_LANGUAGE,
 ) -> tuple[str, bool, int, int]:
-    """通过 Responses API 对输入项生成摘要；输出截断时保留原上下文。"""
+    """通过 Responses API 对输入项生成摘要；响应未完成时保留原上下文。"""
     request = build_responses_kwargs(
         model=model,
-        instructions=_summary_prompt(language),
+        instructions=resolve_prompt_text(CONTEXT_SUMMARY_PROMPTS, language),
         input_items=[
             {
                 "role": "user",
@@ -60,17 +62,14 @@ async def _summarize_block(
             },
         ],
         temperature=temperature if temperature is not None else 0.0,
-        max_output_tokens=target_tokens * CONTEXT_SUMMARY_HEADROOM_FACTOR,
+        max_output_tokens=max(LLM_MAX_OUTPUT_TOKENS, target_tokens * CONTEXT_SUMMARY_HEADROOM_FACTOR),
     )
     response = await call_with_retry(client, **request)
-    was_truncated = (
-        response.status == "incomplete"
-        and getattr(getattr(response, "incomplete_details", None), "reason", None) == "max_output_tokens"
-    )
+    completed = response.status == "completed"
     usage = getattr(response, "usage", None)
     prompt_tokens = getattr(usage, "input_tokens", 0) if usage else 0
     completion_tokens = getattr(usage, "output_tokens", 0) if usage else 0
-    return response.output_text.strip(), was_truncated, prompt_tokens, completion_tokens
+    return response.output_text.strip(), completed, prompt_tokens, completion_tokens
 
 
 async def compress_history_if_needed(
@@ -110,7 +109,7 @@ async def compress_history_if_needed(
         return context, None
 
     try:
-        summary, was_truncated, prompt_tokens, completion_tokens = await _summarize_block(
+        summary, completed, prompt_tokens, completion_tokens = await _summarize_block(
             block,
             client=client,
             model=model,
@@ -122,9 +121,9 @@ async def compress_history_if_needed(
         logger.warning("context_compressor: summary call failed, leaving history unchanged", extra={"error": str(exc)})
         return context, None
 
-    if was_truncated:
+    if not completed:
         logger.warning(
-            "context_compressor: LLM hit max_tokens cap while summarizing, leaving history unchanged",
+            "context_compressor: summary response did not complete, leaving history unchanged",
             extra={"message_count": len(block)},
         )
         return context, None

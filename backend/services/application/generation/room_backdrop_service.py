@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from components import (
+    LLM_MAX_OUTPUT_TOKENS,
     REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     ROOM_BACKDROP_DOWNLOAD_MAX_BYTES,
     ROOM_BACKDROP_FAILURES_TOTAL,
@@ -53,7 +54,6 @@ from services.domains.companion import (
     character_snapshot_is_current,
     load_character_snapshot,
     load_persona_definition,
-    render_character_identity,
     require_character_snapshot,
 )
 from services.domains.journal import create_user_moment
@@ -522,7 +522,6 @@ async def schedule_room_prompt(
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
         if persona is None or not persona.is_complete:
             raise RoomBackdropStateError("persona not ready; complete onboarding first")
-        definition = load_persona_definition(persona)
         identity = await _room_identity(db, user_id)
         avatar = (
             await db.execute(
@@ -561,8 +560,6 @@ async def schedule_room_prompt(
     brief = await _compose_brief(user_id, intent=intent, notes=notes)
     prompt = build_room_prompt(
         RoomPromptContext(
-            species=definition.get("biological_type", ""),
-            identity=render_character_identity(identity),
             intent=intent,
             outfit_description=await _current_outfit_description(user_id),
             brief=brief,
@@ -944,7 +941,7 @@ async def _run_pipeline(
 
 
 async def _compose_brief(user_id: int, *, intent: str, notes: str | None) -> str:
-    """便宜 LLM 装配的房间简述（≤ 100 字）；失败时降级为静态模板。"""
+    """装配简短房间建议；无效输出使用默认陈设，用户原始要求仍独立传给生图模型。"""
     async with SESSION_LOCAL() as db:
         llm_cfg = await resolve_user_llm_config(db, user_id)
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
@@ -959,7 +956,8 @@ async def _compose_brief(user_id: int, *, intent: str, notes: str | None) -> str
             llm_cfg,
             ROOM_BRIEF_SYSTEM,
             payload,
-            max_output_tokens=200,
+            max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
+            json_output=True,
         )
     except Exception as exc:  # noqa: BLE001 - 房间简述失败统一降级本地模板，不能连坐生图
         logger.info(
@@ -969,9 +967,10 @@ async def _compose_brief(user_id: int, *, intent: str, notes: str | None) -> str
         return _fallback_brief(intent)
     parsed = parse_llm_json(raw) or {}
     brief = (parsed.get("brief") if isinstance(parsed, dict) else None) or ""
-    if not brief.strip():
+    if not isinstance(brief, str) or not 1 <= len(brief.strip()) <= 100:
+        logger.info("room brief invalid; using default suggestions", extra={"user_id": user_id})
         return _fallback_brief(intent)
-    return brief.strip()[:100]
+    return brief.strip()
 
 
 def _fallback_brief(intent: str) -> str:
@@ -1012,7 +1011,6 @@ async def _do_one_attempt(
         ).scalar_one_or_none()
         if backdrop is None:
             return
-        persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
         avatar = (
             await db.execute(
                 select(AvatarAsset).where(
@@ -1033,14 +1031,11 @@ async def _do_one_attempt(
                 .limit(1),
             )
         ).scalar_one_or_none()
-    definition = load_persona_definition(persona) if persona else {}
     if avatar is None or not (identity_uri := await asyncio.to_thread(load_character_reference_data_uri, avatar)):
         raise RoomBackdropStateError("全身形象缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     outfit_description = (outfit.description or "").strip() if outfit is not None else ""
     prompt = build_room_prompt(
         RoomPromptContext(
-            species=definition.get("biological_type", ""),
-            identity=render_character_identity(CharacterCardSnapshot.model_validate_json(backdrop.character_card_json)),
             intent=intent,
             outfit_description=outfit_description,
             brief=brief,

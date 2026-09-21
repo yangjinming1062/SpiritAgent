@@ -83,11 +83,13 @@ async def _extract_part(user_id: int, extraction_id: str, part: Literal["portrai
             raise ValueError("source image is unreadable")
         source_hash = hashlib.sha256(base64.b64decode(uri.split(",", 1)[1], validate=True)).hexdigest()
         model = PortraitFeatures if part == "portrait" else BodyFeatures
+        schema = model.model_json_schema()
+        schema["required"] = list(model.model_fields)
         async with asyncio.timeout(_ANALYSIS_TIMEOUT):
             raw = await vision_chat(
                 user_id,
                 CHARACTER_CARD_EXTRACTION,
-                json.dumps({"source": part, "schema": model.model_json_schema()}, ensure_ascii=False),
+                json.dumps({"source": part, "schema": schema}, ensure_ascii=False),
                 reference_images=(uri,),
             )
         payload = parse_llm_json(raw)

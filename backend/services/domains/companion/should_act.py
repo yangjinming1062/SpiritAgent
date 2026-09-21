@@ -1,7 +1,14 @@
 import time
 from typing import Any
 
-from components import SETTINGS, coerce_hour_0_23, coerce_non_negative_float, get_logger, resolve_prompt_text
+from components import (
+    LLM_MAX_OUTPUT_TOKENS,
+    SETTINGS,
+    coerce_hour_0_23,
+    coerce_non_negative_float,
+    get_logger,
+    resolve_prompt_text,
+)
 from prompts.companion import SHOULD_ACT_INSTRUCTIONS
 from pydantic import BaseModel, Field
 
@@ -32,9 +39,6 @@ class ShouldActResult(BaseModel):
     action: str | None = None
     params: dict[str, Any] | None = None
     reason: str = Field(default="", max_length=200)
-
-
-_MAX_RESPONSE_TOKENS = 260
 
 
 def _normalize_approach_params(params: dict[str, Any] | None) -> dict[str, str] | None:
@@ -86,7 +90,7 @@ async def should_act(
             **({"focused_category": focused_category} if focused_category else {}),
             **({"long_term_memories": ctx.memories_block} if ctx.memories_block else {}),
         },
-        max_output_tokens=_MAX_RESPONSE_TOKENS,
+        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         log_prefix="should_act",
     )
     if parsed is None:

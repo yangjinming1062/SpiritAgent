@@ -1,6 +1,6 @@
 from typing import Any
 
-from components import SESSION_LOCAL, get_logger, resolve_prompt_text
+from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, get_logger, resolve_prompt_text
 from modules.ws import emit_ws_event
 from prompts.companion import MOOD_INSTRUCTIONS
 
@@ -13,7 +13,6 @@ from .prompt_runtime import load_companion_prompt_context, run_prompt_json
 logger = get_logger(__name__)
 
 _MOOD_MAX_LEN = 200
-_MAX_RESPONSE_TOKENS = 120
 
 
 def normalize_mood(raw: object) -> str | None:
@@ -63,7 +62,7 @@ async def update_mood_from_companion_turn(
             **({"current_mood": ctx.current_mood} if ctx.current_mood else {}),
             **({"recent_context": recent_context} if recent_context else {}),
         },
-        max_output_tokens=_MAX_RESPONSE_TOKENS,
+        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         log_prefix="mood_update",
         temperature=0.5,
     )

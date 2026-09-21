@@ -8,8 +8,6 @@ from zoneinfo import ZoneInfo
 
 from components import (
     DEFAULT_LANGUAGE,
-    TIME_NOTE_EN_HEAD,
-    TIME_NOTE_ZH_HEAD,
     format_day_marker,
     format_local_date_str,
     format_time_anchor,
@@ -28,15 +26,6 @@ def get_local_day_utc_bounds(now_utc: datetime, tz_str: str) -> tuple[datetime, 
     utc_start = local_start.astimezone(ZoneInfo("UTC"))
     utc_end = local_end.astimezone(ZoneInfo("UTC"))
     return utc_start, utc_end, user_now, user_now.strftime("%Y-%m-%d")
-
-
-def is_injected_time_item(item: dict[str, str]) -> bool:
-    text = (item.get("content") or "").lstrip()
-    return (
-        (text.startswith("--- ") and text.endswith(" ---"))
-        or text.startswith(TIME_NOTE_ZH_HEAD)
-        or text.startswith(TIME_NOTE_EN_HEAD)
-    )
 
 
 def _message_text(msg: Message) -> str:

@@ -6,7 +6,7 @@
 
 import asyncio
 
-from components import SESSION_LOCAL, get_logger, resolve_prompt_text, track_user_task
+from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, get_logger, resolve_prompt_text, track_user_task
 from modules.companion import MomentCommentRole
 from prompts.nightly import MOMENT_REPLY_INSTRUCTIONS
 
@@ -15,8 +15,6 @@ from services.domains.journal import create_moment_comment, get_moment
 from services.infrastructure.llm import call_llm_once, resolve_user_llm_config
 
 logger = get_logger(__name__)
-
-_MAX_REPLY_TOKENS = 300
 
 
 def schedule_companion_reply(user_id: int, moment_id: str) -> None:
@@ -68,9 +66,8 @@ async def _generate_reply_inner(user_id: int, moment_id: str) -> None:
             llm_cfg,
             resolve_prompt_text(MOMENT_REPLY_INSTRUCTIONS, ctx.language),
             payload,
-            max_output_tokens=_MAX_REPLY_TOKENS,
+            max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         )
-        or ""
     ).strip()
     if not reply:
         logger.info("moment reply: empty response", extra={"user_id": user_id})

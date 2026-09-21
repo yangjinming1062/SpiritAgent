@@ -1,6 +1,7 @@
 from typing import Any
 
 from components import (
+    LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
     coerce_hour_0_23,
     coerce_non_negative_float,
@@ -37,8 +38,6 @@ REGION_NAMES_ZH: dict[str, str] = {
     "front_hair": "前发刘海",
     "skirt": "裙摆",
 }
-
-_MAX_RESPONSE_TOKENS = 180
 
 
 async def interact(
@@ -90,7 +89,7 @@ async def interact(
             **({"recent_context": recent_context} if recent_context else {}),
             **({"today_interaction_summary": today_stats} if today_stats else {}),
         },
-        max_output_tokens=_MAX_RESPONSE_TOKENS,
+        max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         log_prefix="interact",
         temperature=0.7,
     )

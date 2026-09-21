@@ -16,5 +16,6 @@ class MiMoChatProvider(OpenAIResponsesChatProvider):
     # token-plan 的 /v1/responses 网关拒绝 input_video（"input item type 'input_video' is not supported"），
     # 而 chat 管线是 Responses-only；如需 mimo 进视频回退链需另建协议适配。
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "medium", "high"})
+    supports_json_object: ClassVar[bool] = True
     # MiMo 文档支持温度区间 [0.0, 1.5]
     TEMPERATURE_MAX: ClassVar[float] = 1.5

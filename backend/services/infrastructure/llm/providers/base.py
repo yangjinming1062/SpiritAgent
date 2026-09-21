@@ -84,6 +84,9 @@ class ProviderResultUnknownError(Exception):
 class ChatProvider(BaseProvider):
     service_type: ServiceType = ServiceType.llm
 
+    # 是否已验证 json_object 模式也接受顶层数组；只支持对象的模式不能约束陪伴回复。
+    supports_json_array: ClassVar[bool] = False
+    supports_json_object: ClassVar[bool] = False
     # True 表示接受 image_url 内容部件；文本模型仅文本时需配合视觉变体（见 DEFAULT_VISION_MODELS）。
     supports_vision: ClassVar[bool] = False
     # True 表示接受 Responses 形状的 input_video 内容部件；仅 chat.completions 支持视频的供应商（如 mimo）不能声明。

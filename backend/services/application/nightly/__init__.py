@@ -4,13 +4,11 @@ from .journal_nightly import project_today
 from .nightly_activity import run_nightly_pipeline
 from .nightly_helpers import (
     get_local_day_utc_bounds,
-    is_injected_time_item,
     prefilter_messages_for_nightly,
 )
 
 __all__ = [
     "get_local_day_utc_bounds",
-    "is_injected_time_item",
     "prefilter_messages_for_nightly",
     "project_today",
     "run_nightly_pipeline",

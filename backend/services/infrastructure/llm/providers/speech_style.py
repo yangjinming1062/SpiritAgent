@@ -80,6 +80,8 @@ def speech_style_guidance(provider: str, model: str) -> str:
             f"MiniMax emotion values for this model: {json.dumps(emotions, ensure_ascii=False)}. emotion may be null for automatic delivery.\n"
             f"Full inline cue tag catalogue for this model: {json.dumps(cues, ensure_ascii=False)}. Use ONLY these exact tag values.\n"
             "speed: 0.5 to 2, where 1 is normal. pauses: optional {before, seconds}, 0.01 to 99.99 seconds, at most two decimal places. "
+            "Each pause's before is an exact phrase occurring once AFTER some spoken text in this bubble; "
+            "never anchor it to the opening word. Omit pauses when punctuation provides enough separation. "
             "Pauses must be between spoken words, never at the start/end or consecutive. This model has no free-form style or director field.\n"
         )
     else:

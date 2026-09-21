@@ -2,7 +2,7 @@ import json
 import re
 from typing import Any
 
-from components import get_logger
+from components import get_logger, is_time_context_text
 
 logger = get_logger(__name__)
 
@@ -137,6 +137,19 @@ def _normalize_older_response_item(item: dict, *, replace_images: bool, max_char
     return _truncate_response_text(normalized, max_chars)
 
 
+def _is_user_anchor(item: dict[str, Any]) -> bool:
+    if item.get("role") != "user":
+        return False
+    content = item.get("content")
+    if isinstance(content, str):
+        return not is_time_context_text(content)
+    if isinstance(content, list) and len(content) == 1:
+        part = content[0]
+        if isinstance(part, dict) and part.get("type") == "input_text":
+            return not is_time_context_text(part.get("text") or "")
+    return True
+
+
 def truncate_responses_context(
     context: dict[str, Any],
     max_recent_items: int = 40,
@@ -146,10 +159,18 @@ def truncate_responses_context(
     """deterministic Responses input-window fallback; instructions are never dropped."""
     items = context["input"]
     keep_start = max(0, len(items) - max_recent_items)
-    for _ in range(max_recent_items):
-        if keep_start <= 0 or items[keep_start].get("type") != "function_call_output":
+    call_positions = {
+        item["call_id"]: index
+        for index, item in enumerate(items)
+        if item.get("type") == "function_call" and item.get("call_id")
+    }
+    # 并行调用先成批写入，再写结果；按 call_id 扩展边界，不能只退到最近一个调用。
+    for index in range(len(items) - 1, -1, -1):
+        if index < keep_start:
             break
-        keep_start -= 1
+        item = items[index]
+        if item.get("type") == "function_call_output":
+            keep_start = min(keep_start, call_positions.get(item.get("call_id"), index))
 
     tail = items[keep_start:]
     kept = [
@@ -161,7 +182,7 @@ def truncate_responses_context(
         for index, item in enumerate(tail)
     ]
     if keep_start > 0:
-        anchor = next((item for item in items[:keep_start] if item.get("role") == "user"), None)
+        anchor = next((item for item in reversed(items[:keep_start]) if _is_user_anchor(item)), None)
         removed = keep_start - (1 if anchor is not None else 0)
         marker = {
             "role": "user",
@@ -172,9 +193,10 @@ def truncate_responses_context(
                 },
             ],
         }
-        kept = (
+        prefix = (
             [_normalize_older_response_item(anchor, replace_images=True, max_chars=max_chars_per_item), marker]
             if anchor is not None
             else [marker]
         )
+        kept = prefix + kept
     return {"instructions": context["instructions"], "input": kept}

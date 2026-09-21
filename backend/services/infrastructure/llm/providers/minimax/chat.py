@@ -12,6 +12,8 @@ class MiniMaxChatProvider(OpenAIResponsesChatProvider):
     DEFAULT_MODELS: ClassVar[dict[str, str]] = {"llm": "MiniMax-M3"}
     DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"llm": 1_000_000}
     supports_vision: ClassVar[bool] = True
+    supports_json_array: ClassVar[bool] = True
+    supports_json_object: ClassVar[bool] = True
     # 文本与视觉共用 M3。
     DEFAULT_VISION_MODELS: ClassVar[dict[str, str]] = {"llm": "MiniMax-M3"}
     # M3 的 /v1/responses 接受扁平 input_video（data URL 实测 49MB 可用；容器仅 mp4/mov，webm 被拒）。

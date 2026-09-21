@@ -9,9 +9,11 @@ from zoneinfo import ZoneInfoNotFoundError
 
 from components import (
     DEFAULT_LANGUAGE,
+    LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
     SETTINGS,
     get_logger,
+    is_time_context_text,
     parse_llm_json,
     resolve_language,
     resolve_prompt_text,
@@ -35,7 +37,6 @@ from services.infrastructure.llm import MissingLlmConfigError, call_llm_once, re
 
 from .nightly_helpers import (
     get_local_day_utc_bounds,
-    is_injected_time_item,
     prefilter_messages_for_nightly,
 )
 
@@ -151,7 +152,7 @@ async def project_today(
 
     action_facts = nightly_actions or []
     if (
-        not any(m["role"] == "user" and not is_injected_time_item(m) for m in clean)
+        not any(m["role"] == "user" and not is_time_context_text(m["content"]) for m in clean)
         and not action_facts
         and not moment_interactions
     ):
@@ -219,7 +220,8 @@ async def _compose_diary(
             llm_cfg,
             resolve_prompt_text(JOURNAL_DIARY_TEXTS, language),
             payload,
-            max_output_tokens=600,
+            max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
+            json_output=True,
         )
     except MissingLlmConfigError as exc:
         logger.warning(

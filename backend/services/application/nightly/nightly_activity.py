@@ -9,6 +9,7 @@ from components import (
     DEFAULT_LANGUAGE,
     SETTINGS,
     get_logger,
+    is_time_context_text,
     parse_llm_json,
     resolve_language,
     resolve_prompt_text,
@@ -41,7 +42,7 @@ from services.infrastructure.llm import call_llm_once, resolve_user_llm_config
 
 from .daily_checkpoint import run_daily_checkpoint
 from .journal_nightly import project_today
-from .nightly_helpers import get_local_day_utc_bounds, is_injected_time_item, prefilter_messages_for_nightly
+from .nightly_helpers import get_local_day_utc_bounds, prefilter_messages_for_nightly
 from .nightly_planning import ActionExecutionResult, DateContext, PlanningResult, run_nightly_planning
 
 logger = get_logger(__name__)
@@ -86,6 +87,7 @@ async def _stage_4_self_diary(
         resolve_prompt_text(NIGHTLY_REFLECTION_TEXTS, language),
         payload,
         max_output_tokens=SETTINGS.nightly_diary_max_tokens,
+        json_output=True,
     )
     parsed = parse_llm_json(raw)
     if not isinstance(parsed, dict):
@@ -338,7 +340,7 @@ async def _run_nightly_pipeline_inner(
 
         clean_main_messages = prefilter_messages_for_nightly(main_msgs, user_tz=tz_str)
         clean_messages = clean_main_messages
-        has_user_messages = any(m["role"] == "user" and not is_injected_time_item(m) for m in clean_messages)
+        has_user_messages = any(m["role"] == "user" and not is_time_context_text(m["content"]) for m in clean_messages)
 
         user_lang_row = (
             await db.execute(
@@ -378,7 +380,9 @@ async def _run_nightly_pipeline_inner(
                 ),
             )
         ).scalar_one()
-        today_msg_count = sum(1 for m in clean_main_messages if m["role"] == "user" and not is_injected_time_item(m))
+        today_msg_count = sum(
+            1 for m in clean_main_messages if m["role"] == "user" and not is_time_context_text(m["content"])
+        )
         seven_day_avg = round(past_7_count / 7.0, 2)
 
         # 日期推算

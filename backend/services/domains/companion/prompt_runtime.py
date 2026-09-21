@@ -11,10 +11,12 @@ from services.contracts import MemoryScope
 from services.domains.memory import format_memories_block
 from services.infrastructure.llm import (
     LLMRuntimeError,
+    ServiceType,
     UserLlmConfig,
     build_responses_kwargs,
     call_with_retry,
     client_for_config,
+    try_resolve,
 )
 
 from .actions import DEFAULT_ACTIONS, NON_LLM_ACTIONS
@@ -100,6 +102,7 @@ async def run_prompt_json(
 
     try:
         client = client_for_config(llm_config)
+        provider_cls = try_resolve(ServiceType.llm, llm_config.get("provider_name") or "")
         request = build_responses_kwargs(
             model=model_name,
             instructions=instructions,
@@ -111,12 +114,16 @@ async def run_prompt_json(
             ],
             temperature=temperature,
             max_output_tokens=max_output_tokens,
+            text={"format": {"type": "json_object"}} if getattr(provider_cls, "supports_json_object", False) else None,
         )
         response = await call_with_retry(client, **request)
     except (TimeoutError, LLMRuntimeError) as exc:
         logger.warning(f"{log_prefix}: LLM call failed", extra={"user_id": user_id, "error": str(exc)})
         return PromptOutcome(parsed=None, reason="llm_error")
 
+    if response.status != "completed":
+        logger.info(f"{log_prefix}: incomplete response", extra={"user_id": user_id, "status": response.status})
+        return PromptOutcome(parsed=None, reason="incomplete_response")
     raw = response.output_text
     parsed = parse_llm_json(raw)
     if not isinstance(parsed, dict):

@@ -5,8 +5,8 @@ import sqlalchemy.exc
 from components import (
     DEFAULT_LANGUAGE,
     DEFAULT_SESSION_TITLE,
+    LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
-    TITLE_GENERATION_MAX_TOKENS,
     TITLE_GENERATION_TEMPERATURE,
     TITLE_MAX_CHARS,
     TITLE_SNIPPET_MAX_CHARS,
@@ -79,9 +79,11 @@ async def auto_generate_title(
                 llm_config.get("provider_name") or provider_name,
                 temperature if temperature is not None else TITLE_GENERATION_TEMPERATURE,
             ),
-            max_output_tokens=TITLE_GENERATION_MAX_TOKENS,
+            max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         )
         response = await call_with_retry(client, **request)
+        if response.status != "completed":
+            return
         if not (title := _clean_title(response.output_text)):
             return
 

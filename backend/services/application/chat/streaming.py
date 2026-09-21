@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import json
 import random
 import time
 from collections.abc import Callable
@@ -8,7 +9,8 @@ from typing import Any, Literal
 
 from components import DEFAULT_LANGUAGE, TOOL_CALL_ID_HEX_PREFIX_LEN, get_logger, new_request_id, resolve_prompt_text
 from modules.conversation import CompanionReply
-from prompts.chat import COMPANION_NO_VOICE_GUIDANCES, COMPANION_REPLY_GUIDANCES
+from prompts.chat import COMPANION_NO_VOICE_GUIDANCES, COMPANION_REPLY_GUIDANCES, COMPANION_REPLY_REPAIR_GUIDANCES
+from pydantic import ValidationError
 
 from services.infrastructure.llm import (
     FailoverReason,
@@ -35,6 +37,16 @@ class _IncompleteResponseError(RuntimeError):
     def __init__(self, reason: str, *, text_emitted: bool) -> None:
         self.retryable = not text_emitted and reason != "content_filter"
         super().__init__(f"LLM response incomplete: {reason}")
+
+
+class _InvalidCompanionReplyError(RuntimeError):
+    def __init__(self, error: ValueError) -> None:
+        self.feedback = (
+            error.json(include_input=False, include_url=False, include_context=False)
+            if isinstance(error, ValidationError)
+            else json.dumps([{"msg": str(error)}], ensure_ascii=False)
+        )
+        super().__init__("Invalid companion reply format")
 
 
 @dataclass
@@ -128,6 +140,7 @@ async def _generate_llm_response(
     reply_preference: Literal["text", "voice"] | None = None,
     voice_id: str = "",
     allow_silence: bool = False,
+    reply_format_feedback: str | None = None,
 ) -> _LLMTurnResult:
     """单次 LLM 调用与正文交付；流式首事件或完整响应到达时触发回退哨兵，工具轮正文只在 stream 模式实时显示。"""
     client = provider.raw_client()
@@ -149,14 +162,22 @@ async def _generate_llm_response(
             if speech_config
             else resolve_prompt_text(COMPANION_NO_VOICE_GUIDANCES, lang)
         )
+        if reply_format_feedback:
+            instructions += resolve_prompt_text(COMPANION_REPLY_REPAIR_GUIDANCES, lang).replace(
+                "{errors}",
+                reply_format_feedback,
+            )
     kwargs = build_responses_kwargs(
         model=model_name,
         instructions=instructions,
         input_items=context["input"],
-        tools=active_schemas,
+        tools=[] if reply_format_feedback else active_schemas,
         stream=delivery != "complete",
         reasoning=reasoning,
         temperature=scaled_temperature,
+        text={"format": {"type": "json_object"}}
+        if reply_preference is not None and provider.supports_json_array
+        else None,
     )
 
     # 仅记录送往 LLM 的多模态 part 形状：Vertex beta API 400 ``INVALID_ARGUMENT`` 多为代理未能转译 ``inline_data``，通过日志中的实际 part 列表可定位问题而无需抓包。
@@ -304,7 +325,7 @@ async def _generate_llm_response(
                     allow_silence=allow_silence,
                 )
             except ValueError as exc:
-                raise RuntimeError("Invalid companion reply format") from exc
+                raise _InvalidCompanionReplyError(exc) from exc
         else:
             await _emit_bubble_events(bubbles.feed(text))
             await _emit_bubble_events(bubbles.flush())

@@ -32,7 +32,9 @@ from prompts.chat import (
     COMPANION_WAIT_GUIDANCES,
     LANGUAGE_DIRECTIVES,
     MEDIA_GUIDANCES,
+    MEMORY_RECALL_GUIDANCES,
     MEMORY_TOOL_GUIDANCES,
+    NO_TOOL_GUIDANCES,
     OUTFIT_DEMEANOR_GUIDANCES,
     PLATFORM_HINTS_TEXTS,
     SESSION_SEARCH_GUIDANCES,
@@ -78,7 +80,7 @@ def _companion_output_guidance_block(config: AgentPromptConfig) -> str:
 
 def _companion_tool_guidance_block(config: AgentPromptConfig) -> str | None:
     if not config.valid_tool_names:
-        return None
+        return resolve_prompt_text(NO_TOOL_GUIDANCES, config.language)
     parts: list[str] = []
     if _should_inject_tool_use_enforcement(config.tool_use_enforcement):
         parts.append(resolve_prompt_text(COMPANION_TOOL_GUIDANCES, config.language))
@@ -121,11 +123,12 @@ def _has_any_tool(config: AgentPromptConfig, names: tuple[str, ...]) -> bool:
 
 
 def _memory_tool_guidance_block(config: AgentPromptConfig) -> str | None:
-    return (
-        resolve_prompt_text(MEMORY_TOOL_GUIDANCES, config.language)
-        if _has_any_tool(config, ("memory", "memory_retain", "memory_recall"))
-        else None
-    )
+    parts: list[str] = []
+    if "memory_recall" in config.valid_tool_names:
+        parts.append(resolve_prompt_text(MEMORY_RECALL_GUIDANCES, config.language))
+    if {"memory_inspect", "memory_retain"}.issubset(config.valid_tool_names):
+        parts.append(resolve_prompt_text(MEMORY_TOOL_GUIDANCES, config.language))
+    return "\n".join(parts) or None
 
 
 def _session_search_guidance_block(config: AgentPromptConfig) -> str | None:
@@ -168,17 +171,21 @@ def _attachment_guidance_block(config: AgentPromptConfig) -> str | None:
 
 
 def _tool_use_enforcement_block(config: AgentPromptConfig) -> str | None:
+    if not config.valid_tool_names:
+        return resolve_prompt_text(NO_TOOL_GUIDANCES, config.language)
     return (
         resolve_prompt_text(TOOL_USE_ENFORCEMENTS, config.language)
-        if config.valid_tool_names and _should_inject_tool_use_enforcement(config.tool_use_enforcement)
+        if _should_inject_tool_use_enforcement(config.tool_use_enforcement)
         else None
     )
 
 
 def _work_tool_guidance_block(config: AgentPromptConfig) -> str | None:
+    if not config.valid_tool_names:
+        return resolve_prompt_text(NO_TOOL_GUIDANCES, config.language)
     return (
         resolve_prompt_text(WORK_TOOL_GUIDANCES, config.language)
-        if config.valid_tool_names and _should_inject_tool_use_enforcement(config.tool_use_enforcement)
+        if _should_inject_tool_use_enforcement(config.tool_use_enforcement)
         else None
     )
 

@@ -63,7 +63,7 @@ VIDEO_GENERATION_DESC = (
 
 VIDEO_GENERATION_PARAM_DESCS = {
     "prompt": "Describe the video content.",
-    "subject": "Set to 'self' when the current character appears in the video. Their confirmed physical features and current styling are applied to the first frame, including a supplied first_frame_image. Describe the scene, pose and action without reconstructing appearance from memory.",
+    "subject": "Set to 'self' for a new depiction of the current character. Their confirmed physical features and current styling are applied to the first frame, including a supplied first_frame_image. To animate an existing image unchanged, omit subject, even if it depicts this character. Describe the scene, pose and action without reconstructing appearance from memory.",
     "duration": "Clip length in seconds, default 6. This tool accepts 4-15; the configured provider may be stricter: MiniMax-Hailuo requires 6 or 10, MiniMax-H3 and Grok accept this tool's full range.",
     "resolution": "Output resolution, default 768P. Choose only a value supported by the configured provider: MiniMax-Hailuo 512P/768P/1080P; MiniMax-H3 768P/2K; Grok supports 1080P among this tool's exposed options.",
     "first_frame_image": "Provider-accessible URL or data URL of an actual first-frame image (i2v mode); use an existing supplied or generated image, never invent a URL.",

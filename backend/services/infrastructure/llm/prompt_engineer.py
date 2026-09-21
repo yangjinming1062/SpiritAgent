@@ -3,7 +3,7 @@
 import json
 from typing import Any
 
-from components import SESSION_LOCAL, get_logger, safe_json_loads
+from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, get_logger, safe_json_loads
 from modules.companion import Persona
 from prompts.generation import (
     AVATAR_SYSTEM_PROMPT,
@@ -100,6 +100,8 @@ async def chat(
         input_items=[{"role": "user", "content": [{"type": "input_text", "text": user_payload}]}],
     )
     response = await call_with_retry(client, **request)
+    if response.status != "completed":
+        raise RuntimeError(f"Prompt response not completed: {response.status}")
     text = response.output_text.strip()
     if not text:
         raise RuntimeError("prompt enhancer returned an empty response")
@@ -113,7 +115,8 @@ async def call_llm_once(
     *,
     max_output_tokens: int,
     reasoning_effort: str | None = None,
-) -> str | None:
+    json_output: bool = False,
+) -> str:
     """执行单次非流式调用；推理档位仅在当前供应商明确支持时下发。"""
     client = client_for_config(llm_cfg)
     provider_name = llm_cfg.get("provider_name", "")
@@ -130,9 +133,14 @@ async def call_llm_once(
         input_items=[{"role": "user", "content": [{"type": "input_text", "text": user_content}]}],
         max_output_tokens=max_output_tokens,
         reasoning=reasoning,
+        text={"format": {"type": "json_object"}}
+        if json_output and getattr(provider_cls, "supports_json_object", False)
+        else None,
     )
     resp = await call_with_retry(client, context_length=context_length, **request)
-    return resp.output_text if resp else None
+    if resp is None or resp.status != "completed":
+        raise RuntimeError(f"LLM response not completed: {getattr(resp, 'status', None)}")
+    return resp.output_text
 
 
 async def enhance_avatar_prompt(
@@ -240,9 +248,12 @@ async def vision_chat(
                     model=config.model,
                     instructions=system_prompt,
                     input_items=[{"role": "user", "content": content}],
-                    max_output_tokens=4000,
+                    max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
                 ),
             )
+            if response.status != "completed":
+                errors.append(f"{config.provider_name}: incomplete response ({response.status})")
+                continue
             result = _strip_markdown_fence(response.output_text)
             if result:
                 return result

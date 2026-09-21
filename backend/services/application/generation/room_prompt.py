@@ -26,8 +26,6 @@ from prompts.generation import (
 
 @dataclass(frozen=True)
 class RoomPromptContext:
-    species: str
-    identity: str
     intent: BackdropIntent | str
     outfit_description: str = ""
     brief: str = ""
@@ -41,14 +39,11 @@ def _prompt_clause(value: str) -> str:
 
 
 def build_room_prompt(ctx: RoomPromptContext) -> str:
-    """角色卡与角色图共同确定身份；场景、姿势和当前造型分别装配。"""
+    """房间以空间描述为主，角色身份只由参考图表达；当前造型独立装配。"""
     intent_value = ctx.intent.value if isinstance(ctx.intent, BackdropIntent) else str(ctx.intent)
     lighting = INTENT_LIGHTING.get(intent_value, INTENT_LIGHTING["decorate"])
-    species = (ctx.species or "").strip()
     reference = "图 1" if ctx.has_reference_image else "参考图"
-    parts = [ROOM_SCENE_TEMPLATE.format(reference=reference, species=species)]
-    if ctx.identity:
-        parts.append(ctx.identity)
+    parts = [ROOM_SCENE_TEMPLATE.format(reference=reference)]
     if ctx.has_reference_image:
         parts.append(ROOM_SCENE_REFERENCE)
     outfit = _prompt_clause(ctx.outfit_description or "")

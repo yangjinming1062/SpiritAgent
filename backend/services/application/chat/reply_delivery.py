@@ -13,12 +13,12 @@ def parse_companion_reply(
     allow_silence: bool = False,
 ) -> CompanionReply | None:
     source = CompanionReplyInput.model_validate_json(raw)
-    if not source.bubbles:
+    if not source.root:
         if allow_silence:
             return None
         raise ValueError("A user reply requires at least one bubble")
     bubbles: list[TextBubble | VoiceBubble] = []
-    for bubble in source.bubbles:
+    for bubble in source.root:
         if bubble.type == "text":
             bubbles.append(bubble)
             continue

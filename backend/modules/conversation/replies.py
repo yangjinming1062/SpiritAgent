@@ -1,7 +1,7 @@
 import json
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, RootModel
 
 from modules.media import SpeechCue, SpeechDirection, SpeechPause, SpeechStyle
 
@@ -32,10 +32,8 @@ class VoiceBubbleInput(BaseModel):
     speech: SpeechPerformance
 
 
-class CompanionReplyInput(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    bubbles: list[Annotated[TextBubble | VoiceBubbleInput, Field(discriminator="type")]] = Field(
+class CompanionReplyInput(RootModel):
+    root: list[Annotated[TextBubble | VoiceBubbleInput, Field(discriminator="type")]] = Field(
         max_length=16,
     )
 
@@ -84,4 +82,4 @@ class CompanionReply(BaseModel):
             if isinstance(bubble, VoiceBubble):
                 item["speech"] = bubble.speech.model_dump(exclude={"provider", "model"}, exclude_none=True)
             bubbles.append(item)
-        return json.dumps({"bubbles": bubbles}, ensure_ascii=False)
+        return json.dumps(bubbles, ensure_ascii=False)
