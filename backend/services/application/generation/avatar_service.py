@@ -760,7 +760,7 @@ async def resolve_self_reference_data_uri(user_id: int) -> str:
         asset = await get_active_avatar(db, user_id)
     data_uri = await asyncio.to_thread(load_character_reference_data_uri, asset) if asset is not None else None
     if not data_uri:
-        raise AvatarGenerationError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+        raise AvatarGenerationError("全身形象缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     return data_uri
 
 
@@ -910,7 +910,7 @@ async def _prepare_fullbody_reference(
     """返回头像参考与完整提示词，供内部生成和外部制作共用。"""
     reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.asset_url)
     if not reference:
-        raise AvatarSourceUnreadableError("头像种子图缺失或无法读取，请重新生成头像")
+        raise AvatarSourceUnreadableError("头像缺失或无法读取，请重新生成头像")
     definition = load_persona_definition(persona)
     species = str(definition.get("biological_type") or "").strip()
     appearance = str(definition.get("appearance") or "").strip()
@@ -1045,10 +1045,10 @@ async def confirm_fullbody_seed(user_id: int, *, avatar_id: int, expected_url: s
             _re_sign_avatar_url(asset)
             return asset
         if not asset.seed_fullbody_url or normalize_avatar_url_to_bare(expected_url) != asset.seed_fullbody_url:
-            raise AvatarSourceUnreadableError("全身种子图已变更，请重新加载后确认")
+            raise AvatarSourceUnreadableError("全身形象已变更，请重新加载后确认")
         uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
         if not uri:
-            raise AvatarSourceUnreadableError("全身种子图缺失或已过期，请重新生成")
+            raise AvatarSourceUnreadableError("全身形象缺失或已过期，请重新生成")
         # 默认外观拥有独立文件，后续重绘种子不能删除既有外观或改变在途视频参考。
         raw = await asyncio.to_thread(base64.b64decode, uri.split(",", 1)[1], validate=True)
         content_type = uri.split(";", 1)[0].removeprefix("data:")

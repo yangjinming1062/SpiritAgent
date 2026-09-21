@@ -80,10 +80,10 @@ async def _require_fullbody_seed_readable(avatar: AvatarAsset) -> str:
     不可读是源资产状态冲突（与 avatar/room 自备图、AI 换装同语义），抛 OutfitStateError
     由 API 映射为 409，不能降级纯文字。"""
     if not avatar.seed_fullbody_url:
-        raise OutfitStateError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+        raise OutfitStateError("全身形象缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
     if uri is None:
-        raise OutfitStateError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+        raise OutfitStateError("全身形象缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     return uri
 
 
@@ -184,7 +184,7 @@ async def _outfit_generation_context(
     """返回 (激活头像, 物种, 外貌, 性格)；守卫失败抛 OutfitStateError。"""
     avatar = await _active_avatar(db, user_id)
     if avatar is None or not avatar.is_fullbody_confirmed:
-        raise OutfitStateError("请先确认全身种子图")
+        raise OutfitStateError("请先确认全身形象")
     persona = await get_or_create_persona(db, user_id)
     if not persona.is_complete:
         raise OutfitStateError("请先完成 onboarding 再设计外观")

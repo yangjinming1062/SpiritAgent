@@ -405,7 +405,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         "media.video",
         30,
-        "创作永久保存到片刻的短视频；depicts_self=true 时以独立全身种子图作为首帧并保留其穿着，不自动应用当前衣橱。narration 是使用当前音色生成的独立音轨，不保证口型同步。",
+        "创作永久保存到片刻的短视频；depicts_self=true 时以独立的全身形象作为首帧并保留其穿着，不自动应用当前衣橱。narration 是使用当前音色生成的独立音轨，不保证口型同步。",
         {
             "prompt": "string",
             "title": "string",

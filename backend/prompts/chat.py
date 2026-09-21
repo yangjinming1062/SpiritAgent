@@ -561,13 +561,13 @@ MEDIA_GUIDANCES: dict[str, str] = {
 
 COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {
     "zh": (
-        "当前角色本人出镜时传 subject='self'：平台会把规范种子图作为身份参考（图片）或第一帧（视频）注入。"
+        "当前角色本人出镜时传 subject='self'：平台会自动把角色形象作为身份参考（图片）或第一帧（视频）注入。"
         "不要凭记忆补写角色外貌，把提示词集中在场景、姿态与动作上。"
     ),
     "en": (
-        "When the current character appears, pass subject='self'. The platform injects the canonical seed image "
-        "as the identity reference for an image or first frame for a video. Do not reconstruct the character's "
-        "appearance from memory; focus the prompt on scene, pose, and action."
+        "When the current character appears, pass subject='self'. The platform automatically injects "
+        "the character's image as the identity reference for an image, or the first frame for a video. "
+        "Do not reconstruct the character's appearance from memory; focus the prompt on scene, pose, and action."
     ),
 }
 

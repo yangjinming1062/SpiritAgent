@@ -270,12 +270,12 @@ async def post_avatar_prompt(request: Request, body: AvatarPromptRequest, user: 
     except AvatarGenerationError as exc:
         raise _avatar_http_error(exc)
     except MissingLlmConfigError:
-        raise HTTPException(status_code=502, detail={"error": "提示词服务未配置，仍可直接上传准备好的种子图"})
+        raise HTTPException(status_code=502, detail={"error": "提示词服务未配置，仍可直接上传准备好的图片"})
     except (LLMRuntimeError, RuntimeError, ValidationError):
         logger.warning("avatar prompt failed", extra={"user_id": user.id}, exc_info=True)
         raise HTTPException(
             status_code=502,
-            detail={"error": "提示词暂时无法生成，请稍后重试；仍可直接上传准备好的种子图"},
+            detail={"error": "提示词暂时无法生成，请稍后重试；仍可直接上传准备好的图片"},
         )
     return ImagePromptResponse(prompt=prompt)
 
@@ -285,7 +285,7 @@ async def post_avatar_prompt(request: Request, body: AvatarPromptRequest, user: 
 async def post_avatar_adopt(request: Request, body: FullbodyAdoptRequest, user: CurrentUser) -> AvatarAssetResponse:
     raw, content_type = _decode_upload_image(body.image, body.content_type)
     if not raw:
-        raise HTTPException(status_code=400, detail={"error": "请选择有效的种子图"})
+        raise HTTPException(status_code=400, detail={"error": "请选择有效的图片"})
     try:
         async with get_avatar_job_lock(user.id):
             asset = await adopt_avatar_seed(user_id=user.id, data=raw, content_type=content_type or "image/png")

@@ -509,7 +509,7 @@ async def schedule_room_prompt(
             )
             is None
         ):
-            raise RoomBackdropStateError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+            raise RoomBackdropStateError("全身形象缺失或无法读取，请在设置的“角色与记忆”中重新生成")
         await _supersede_pending(db, user_id)
         row = CompanionRoomBackdrop(
             user_id=user_id,
@@ -604,7 +604,7 @@ async def adopt_room_backdrop(
             )
         ).scalar_one_or_none()
         if avatar is None or not avatar.seed_fullbody_url:
-            raise RoomBackdropStateError("全身种子图缺失，请在设置的“角色与记忆”中重新生成")
+            raise RoomBackdropStateError("全身形象缺失，请在设置的“角色与记忆”中重新生成")
         seed_portrait = avatar.seed_fullbody_url
         origin = row.origin
         if backdrop_id is None:
@@ -992,7 +992,7 @@ async def _do_one_attempt(
         ).scalar_one_or_none()
     definition = load_persona_definition(persona) if persona else {}
     if avatar is None or not (identity_uri := await asyncio.to_thread(load_character_reference_data_uri, avatar)):
-        raise RoomBackdropStateError("全身种子图缺失或无法读取，请在设置的“角色与记忆”中重新生成")
+        raise RoomBackdropStateError("全身形象缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     outfit_description = (outfit.description or "").strip() if outfit is not None else ""
     prompt = build_room_prompt(
         RoomPromptContext(
