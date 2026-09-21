@@ -42,9 +42,11 @@ async def _synthesize_one(client: AsyncOpenAI, voice: str, text: str) -> bytes:
     return base64.b64decode(choice.message.audio.data)
 
 
-async def _generate(manifest: dict, output_dir: Path) -> int:
+async def _generate(manifest: dict, output_dir: Path, only_tags: set[str] | None) -> int:
     voice = manifest["voice"]
-    files = manifest["files"]
+    entries = [e for e in manifest["files"] if only_tags is None or e["tag"] in only_tags]
+    if not entries:
+        raise SystemExit("no manifest entries match the --tag filter")
     output_dir.mkdir(parents=True, exist_ok=True)
 
     api_key = os.environ.get("MIMO_API_KEY") or os.environ.get("TTS_API_KEY")
@@ -65,7 +67,7 @@ async def _generate(manifest: dict, output_dir: Path) -> int:
         async with sem:
             return await one(entry)
 
-    results = await asyncio.gather(*(bounded(e) for e in files))
+    results = await asyncio.gather(*(bounded(e) for e in entries))
     for path in results:
         print(f"  wrote {path.relative_to(REPO_ROOT)} ({path.stat().st_size} bytes)")
 
@@ -104,6 +106,12 @@ def _check(manifest: dict, output_dir: Path) -> int:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--check", action="store_true", help="Verify manifest + mp3 sync bytes; do not regenerate.")
+    parser.add_argument(
+        "--tag",
+        action="append",
+        metavar="TAG",
+        help="Only synthesize entries with this tag; repeatable. Defaults to the whole manifest.",
+    )
     parser.add_argument("--manifest", type=Path, default=MANIFEST_PATH)
     parser.add_argument("--output-dir", type=Path, default=OUTPUT_DIR)
     args = parser.parse_args()
@@ -115,7 +123,8 @@ def main() -> int:
     if args.check:
         return _check(manifest, args.output_dir)
 
-    written = asyncio.run(_generate(manifest, args.output_dir))
+    only_tags = set(args.tag) if args.tag else None
+    written = asyncio.run(_generate(manifest, args.output_dir, only_tags))
     print(f"done: {written} files")
     return 0
 

@@ -12,7 +12,7 @@ export interface OnboardingAnswers {
   speaking_style?: string
   user_call_name?: string
   user_gender?: string
-  user_age_bucket?: string
+  user_birthday?: string
   user_hobbies?: string
   user_freeform?: string
   voice?: string
@@ -28,7 +28,7 @@ export interface PersonaPayload {
   appearance?: string
   user_call_name?: string
   user_gender?: string
-  user_age_bucket?: string
+  user_birthday?: string
   user_hobbies?: string
   user_freeform?: string
 }
@@ -78,7 +78,7 @@ export function assemblePersona(answers: OnboardingAnswers, previous?: Partial<P
     ['relationship', answers.relationship ?? prev.relationship, MAX_RELATIONSHIP],
     ['user_call_name', answers.user_call_name ?? prev.user_call_name, MAX_USER_TEXT],
     ['user_gender', answers.user_gender ?? prev.user_gender, MAX_USER_TEXT],
-    ['user_age_bucket', answers.user_age_bucket ?? prev.user_age_bucket, MAX_USER_TEXT],
+    ['user_birthday', answers.user_birthday ?? prev.user_birthday, MAX_USER_TEXT],
     ['user_hobbies', answers.user_hobbies ?? prev.user_hobbies, MAX_USER_TEXT],
     ['user_freeform', answers.user_freeform ?? prev.user_freeform, MAX_USER_TEXT]
   ]
@@ -101,7 +101,7 @@ export function assembleCharacterPersona(answers: OnboardingAnswers): PersonaPay
 
   delete payload.user_call_name
   delete payload.user_gender
-  delete payload.user_age_bucket
+  delete payload.user_birthday
   delete payload.user_hobbies
   delete payload.user_freeform
 

@@ -11,7 +11,7 @@
     { "tag": "onboarding.q5",  "text": "您希望我是什么性格？" },
     { "tag": "onboarding.q6",  "text": "我该怎么称呼您？" },
     { "tag": "onboarding.q7",  "text": "您方便告诉我您的性别吗？" },
-    { "tag": "onboarding.q8",  "text": "您属于哪个年龄段？" },
+    { "tag": "onboarding.q8",  "text": "您方便告诉我您的生日吗？" },
     { "tag": "onboarding.q9",  "text": "您平时喜欢什么？" },
     { "tag": "onboarding.q10", "text": "您希望我说话的风格是什么样的？" },
     { "tag": "onboarding.q11", "text": "还有什么想告诉我、或者想叮嘱我的吗？" },

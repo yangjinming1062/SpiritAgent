@@ -40,7 +40,10 @@ export const dict: Dictionary = {
     update: 'Update',
     on: 'On',
     off: 'Off',
-    processing: 'Processing…'
+    pickDate: 'Pick a date',
+    processing: 'Processing…',
+    // 日期选择器表头，周一起始。
+    weekdayShort: ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'] as readonly string[]
   },
 
   selfSource: {
@@ -458,7 +461,7 @@ export const dict: Dictionary = {
         speakingStylePlaceholder: 'Leave blank to auto-derive from personality',
         userCallName: 'How should I address you',
         userGender: 'Your gender',
-        userAgeBucket: 'Age range',
+        userBirthday: 'Birthday',
         userHobbies: 'Hobbies',
         userFreeform: "Anything else you'd like to share"
       },
@@ -477,7 +480,7 @@ export const dict: Dictionary = {
         speakingStyleFallback: 'Auto-derive',
         userCallName: 'Call name',
         userGender: 'My gender',
-        userAgeBucket: 'Age range',
+        userBirthday: 'Birthday',
         userHobbies: 'Hobbies',
         userFreeform: 'Notes'
       }
@@ -547,7 +550,7 @@ export const dict: Dictionary = {
         fields: {
           user_call_name: 'Call name',
           user_gender: 'Gender',
-          user_age_bucket: 'Age range',
+          user_birthday: 'Birthday',
           user_hobbies: 'Hobbies',
           user_freeform: 'Notes'
         }

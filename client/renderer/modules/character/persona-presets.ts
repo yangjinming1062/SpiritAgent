@@ -23,7 +23,6 @@ export const VOICE_PRESETS = [
   '活力男声',
   '少年音'
 ] as const
-export const USER_AGE_BUCKET_PRESETS = ['18 以下', '18-25', '26-35', '36-50', '50+'] as const
 export const USER_GENDER_PRESETS = ['女', '男', '其他', '不愿说'] as const
 
 export type RelationshipPreset = (typeof RELATIONSHIP_PRESETS)[number]

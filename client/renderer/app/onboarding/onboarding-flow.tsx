@@ -37,7 +37,6 @@ import {
   SPEAKING_STYLE_PRESETS,
   SPECIES_PRESETS,
   useInteractiveRegion,
-  USER_AGE_BUCKET_PRESETS,
   USER_GENDER_PRESETS,
   VOICE_PRESETS
 } from '@/modules/character'
@@ -62,7 +61,7 @@ import { isClientErrorIpc, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
-import { Chip, INPUT_CLASS } from '@/shared/panel'
+import { Chip, DatePicker, INPUT_CLASS } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
 
 import { computeBackTransition } from './back-transition'
@@ -107,6 +106,7 @@ interface Question {
   allowImage?: boolean
   // 与 `presets` 互斥：双层入口，而不是「点 chip 就把输入框填好」。
   kinds?: readonly AnswerKind[]
+  date?: boolean
 }
 
 // "名字 / 昵称" 是称呼的类别，不是称呼本身——把 chip 的字面文本写进输入框会
@@ -123,6 +123,9 @@ const CALL_NAME_KINDS: readonly AnswerKind[] = [
   },
   { chip: '自填', label: '那，想让我怎么叫您？', placeholder: '随便写，我记住就是了…' }
 ]
+
+// 引导题面与 UI 文案都是硬编码中文，日期选择器的星期表头保持同一来源。
+const DATE_PICKER_WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'] as const
 
 const QUESTIONS: readonly Question[] = [
   {
@@ -223,14 +226,14 @@ const QUESTIONS: readonly Question[] = [
     presets: USER_GENDER_PRESETS
   },
   {
-    key: 'user_age_bucket',
-    text: '您属于哪个年龄段？',
-    placeholder: '或自由描述…',
+    key: 'user_birthday',
+    text: '您方便告诉我您的生日吗？',
+    placeholder: '选择日期（可不填）',
     required: false,
     multiline: false,
     audioTag: 'onboarding.q8',
     max: MAX_USER_TEXT,
-    presets: USER_AGE_BUCKET_PRESETS
+    date: true
   },
   {
     key: 'user_hobbies',
@@ -328,7 +331,7 @@ const ONBOARDING_FIELD_KEYS: ReadonlySet<QKey> = new Set<QKey>([
   'speaking_style',
   'user_call_name',
   'user_gender',
-  'user_age_bucket',
+  'user_birthday',
   'user_hobbies',
   'user_freeform',
   'voice'
@@ -1330,6 +1333,15 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     ref={textareaRef}
                     rows={3}
                     value={input}
+                  />
+                ) : question.date ? (
+                  <DatePicker
+                    className="mt-3"
+                    clearLabel="清除"
+                    onChange={setInput}
+                    placeholder={question.placeholder}
+                    value={input}
+                    weekdayLabels={DATE_PICKER_WEEKDAYS}
                   />
                 ) : (
                   <input

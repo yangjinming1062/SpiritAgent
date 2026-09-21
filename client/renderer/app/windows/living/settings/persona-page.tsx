@@ -20,7 +20,7 @@ interface RetuneInitial {
   relationship: string
   user_call_name: string
   user_gender: string
-  user_age_bucket: string
+  user_birthday: string
   user_hobbies: string
   user_freeform: string
 }
@@ -56,7 +56,7 @@ export function PersonaPage(): React.ReactElement {
         relationship: persona?.relationship ?? '',
         user_call_name: profile.user_call_name ?? '',
         user_gender: profile.user_gender ?? '',
-        user_age_bucket: profile.user_age_bucket ?? '',
+        user_birthday: profile.user_birthday ?? '',
         user_hobbies: profile.user_hobbies ?? '',
         user_freeform: profile.user_freeform ?? ''
       })

@@ -51,7 +51,6 @@ export {
   SPEAKING_STYLE_PRESETS,
   type SpeakingStylePreset,
   SPECIES_PRESETS,
-  USER_AGE_BUCKET_PRESETS,
   USER_GENDER_PRESETS,
   VOICE_PRESETS
 } from './persona-presets'

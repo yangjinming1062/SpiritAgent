@@ -38,7 +38,10 @@ export const dict = {
     update: '更新',
     on: '开',
     off: '关',
-    processing: '处理中…'
+    pickDate: '选择日期',
+    processing: '处理中…',
+    // 日期选择器表头，周一起始。
+    weekdayShort: ['一', '二', '三', '四', '五', '六', '日'] as readonly string[]
   },
 
   selfSource: {
@@ -431,7 +434,7 @@ export const dict = {
         speakingStylePlaceholder: '留空将根据性格自动派生',
         userCallName: '希望被怎么称呼',
         userGender: '你的性别',
-        userAgeBucket: '年龄段',
+        userBirthday: '生日',
         userHobbies: '爱好',
         userFreeform: '还有什么想告诉我'
       },
@@ -450,7 +453,7 @@ export const dict = {
         speakingStyleFallback: '自动派生',
         userCallName: '称呼',
         userGender: '我的性别',
-        userAgeBucket: '年龄段',
+        userBirthday: '生日',
         userHobbies: '爱好',
         userFreeform: '补充'
       }
@@ -514,7 +517,7 @@ export const dict = {
         fields: {
           user_call_name: '称呼',
           user_gender: '性别',
-          user_age_bucket: '年龄段',
+          user_birthday: '生日',
           user_hobbies: '爱好',
           user_freeform: '补充'
         }

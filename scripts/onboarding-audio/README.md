@@ -16,7 +16,7 @@ tag 绑定文案而非题号；改题序不需重合成，改文案、声音或�
 uv run --project backend python scripts/onboarding-audio/generate_onboarding_audio.py
 ```
 
-当前命令会重新合成整个 manifest 并覆盖 MP3，不是增量操作；删 tag 后手工清理不再使用的文件。静态检查：
+当前命令默认重新合成整个 manifest 并覆盖 MP3；`--tag onboarding.q8`（可重复）只合成指定条目。删 tag 后手工清理不再使用的文件。静态检查：
 
 ```bash
 uv run --project backend python scripts/onboarding-audio/generate_onboarding_audio.py --check

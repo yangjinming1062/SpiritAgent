@@ -4,16 +4,17 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { MAX_USER_TEXT } from '@/modules/character'
 import { useGatewayRequest } from '@/shared'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
+import { BTN_GHOST, BTN_SUBTLE, DatePicker, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-type ProfileFieldKey = 'user_call_name' | 'user_gender' | 'user_age_bucket' | 'user_hobbies' | 'user_freeform'
+type ProfileFieldKey = 'user_call_name' | 'user_gender' | 'user_birthday' | 'user_hobbies' | 'user_freeform'
 
 interface ProfileField {
   context: string
   key: ProfileFieldKey
   multiline?: boolean
+  date?: boolean
 }
 
 interface ProfileMemoryRow {
@@ -30,6 +31,7 @@ interface ProfileListResponse {
 
 interface ProfileEntryEditorProps {
   busy: boolean
+  date?: boolean
   deleteLabel: string
   dirty: boolean
   inputId: string
@@ -51,7 +53,7 @@ const PROFILE_PRESET_ID = 'companion'
 const PROFILE_FIELDS: readonly ProfileField[] = [
   { context: 'user_profile:preferred_name', key: 'user_call_name' },
   { context: 'user_profile:gender', key: 'user_gender' },
-  { context: 'user_profile:age_bucket', key: 'user_age_bucket' },
+  { context: 'user_profile:birthday', key: 'user_birthday', date: true },
   { context: 'user_profile:hobbies', key: 'user_hobbies', multiline: true },
   { context: 'user_profile:freeform', key: 'user_freeform', multiline: true }
 ]
@@ -273,6 +275,7 @@ export function UserProfileSection({
             return (
               <ProfileEntryEditor
                 busy={busy}
+                date={field.date}
                 deleteLabel={t.delete}
                 dirty={dirty}
                 inputId={`profile-${field.key}`}
@@ -323,6 +326,7 @@ export function UserProfileSection({
 
 function ProfileEntryEditor({
   busy,
+  date = false,
   deleteLabel,
   dirty,
   inputId,
@@ -337,6 +341,8 @@ function ProfileEntryEditor({
   savedLabel,
   value
 }: ProfileEntryEditorProps): React.ReactElement {
+  const dict = useStrings()
+
   const inputProps = {
     className: cn(INPUT_CLASS, multiline && 'resize-none'),
     disabled: busy,
@@ -351,7 +357,21 @@ function ProfileEntryEditor({
       <label className={cn(HINT_TEXT, 'mb-2 block')} htmlFor={inputId}>
         {label}
       </label>
-      {multiline ? <textarea {...inputProps} rows={3} /> : <input {...inputProps} />}
+      {multiline ? (
+        <textarea {...inputProps} rows={3} />
+      ) : date ? (
+        <DatePicker
+          clearLabel={dict.common.clear}
+          disabled={busy}
+          id={inputId}
+          onChange={onChange}
+          placeholder={dict.common.pickDate}
+          value={value}
+          weekdayLabels={dict.common.weekdayShort}
+        />
+      ) : (
+        <input {...inputProps} />
+      )}
       <div className="mt-2 flex items-center gap-2">
         <button className={BTN_SUBTLE} disabled={busy || !dirty} onClick={onSave} type="button">
           {saveLabel}

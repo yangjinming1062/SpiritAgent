@@ -1,4 +1,6 @@
 import json
+import re
+from datetime import date
 from typing import Any
 
 from components import DEFAULT_LANGUAGE, get_logger, resolve_prompt_text, safe_json_loads
@@ -32,7 +34,7 @@ ONBOARDING_FIELDS: tuple[str, ...] = (
     "voice",
     "user_call_name",
     "user_gender",
-    "user_age_bucket",
+    "user_birthday",
     "user_hobbies",
     "user_freeform",
 )
@@ -49,6 +51,26 @@ class PersonaValidationError(ValueError):
     def __init__(self, message: str, field: str | None = None) -> None:
         super().__init__(message)
         self.field = field
+
+
+# user_birthday 统一为 YYYY-MM-DD 真实日期；两个写入口各自校验，不信任前端。
+_BIRTHDAY_PATTERN: re.Pattern[str] = re.compile(r"\d{4}-\d{2}-\d{2}")
+
+
+def _validate_birthday(value: str | None) -> None:
+    """空白视为未填写，直接通过。"""
+    stripped = (value or "").strip()
+    if not stripped:
+        return
+    if not _BIRTHDAY_PATTERN.fullmatch(stripped):
+        raise PersonaValidationError("persona.user_birthday must be formatted as YYYY-MM-DD", "user_birthday")
+    try:
+        date.fromisoformat(stripped)
+    except ValueError as exc:
+        raise PersonaValidationError(
+            f"persona.user_birthday is not a real date: {stripped!r}",
+            "user_birthday",
+        ) from exc
 
 
 def load_persona_definition(persona: Persona | None) -> dict[str, str]:
@@ -93,6 +115,7 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
     if not isinstance(definition, dict):
         raise PersonaValidationError("persona definition must be an object")
     user_profile = extract_user_profile(definition)
+    _validate_birthday(user_profile.get("user_birthday"))
     persona_def = {k: v for k, v in definition.items() if not k.startswith("user_")}
     cleaned = _validate_definition(persona_def)
 
@@ -200,6 +223,8 @@ async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, va
     """写入一条引导回答；is_complete 之后仅 user_*/voice 可改，角色字段须走 PUT /persona。"""
     if field not in ONBOARDING_FIELDS:
         raise PersonaValidationError(f"unknown onboarding field: {field!r}", field)
+    if field == "user_birthday":
+        _validate_birthday(value)
     persona = await get_or_create_persona(db, user_id)
     if persona.is_complete:
         # 后置阶段字段仍允许在此提交，详见单 PUT 双写契约

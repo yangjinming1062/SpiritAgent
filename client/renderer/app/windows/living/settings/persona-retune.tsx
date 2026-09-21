@@ -14,7 +14,7 @@ import {
   type SpeakingStylePreset
 } from '@/modules/character'
 import { cn } from '@/shared/lib/utils'
-import { BTN_GHOST, BTN_PRIMARY, Chip, INPUT_CLASS, WizardModal } from '@/shared/panel'
+import { BTN_GHOST, BTN_PRIMARY, Chip, DatePicker, INPUT_CLASS, WizardModal } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 interface PersonaRetuneProps {
@@ -25,7 +25,7 @@ interface PersonaRetuneProps {
     relationship: string
     user_call_name: string
     user_gender: string
-    user_age_bucket: string
+    user_birthday: string
     user_hobbies: string
     user_freeform: string
   }
@@ -43,7 +43,7 @@ type PersonaFieldKey =
   | 'name'
   | 'personality'
   | 'speakingStyle'
-  | 'userAgeBucket'
+  | 'userBirthday'
   | 'userCallName'
   | 'userFreeform'
   | 'userGender'
@@ -56,6 +56,7 @@ type FieldSchema = {
   max?: number
   placeholder?: string
   multiline?: boolean
+  date?: boolean
 }
 
 type StepSchema = { title: string; fields: FieldSchema[] }
@@ -98,7 +99,7 @@ export function PersonaRetune({ initial, onClose }: PersonaRetuneProps): React.R
       fields: [
         { key: 'userCallName', label: t.fields.userCallName },
         { key: 'userGender', label: t.fields.userGender },
-        { key: 'userAgeBucket', label: t.fields.userAgeBucket }
+        { key: 'userBirthday', label: t.fields.userBirthday, date: true }
       ]
     },
     {
@@ -117,7 +118,7 @@ export function PersonaRetune({ initial, onClose }: PersonaRetuneProps): React.R
     { fallback: t.reviewRows.speakingStyleFallback, key: 'speakingStyle', label: t.reviewRows.speakingStyle },
     { key: 'userCallName', label: t.reviewRows.userCallName },
     { key: 'userGender', label: t.reviewRows.userGender },
-    { key: 'userAgeBucket', label: t.reviewRows.userAgeBucket },
+    { key: 'userBirthday', label: t.reviewRows.userBirthday },
     { key: 'userHobbies', label: t.reviewRows.userHobbies },
     { key: 'userFreeform', label: t.reviewRows.userFreeform }
   ]).current
@@ -137,7 +138,7 @@ export function PersonaRetune({ initial, onClose }: PersonaRetuneProps): React.R
   const [speakingStyle, setSpeakingStyle] = useState(initial.speaking_style)
   const [userCallName, setUserCallName] = useState(initial.user_call_name)
   const [userGender, setUserGender] = useState(initial.user_gender)
-  const [userAgeBucket, setUserAgeBucket] = useState(initial.user_age_bucket)
+  const [userBirthday, setUserBirthday] = useState(initial.user_birthday)
   const [userHobbies, setUserHobbies] = useState(initial.user_hobbies)
   const [userFreeform, setUserFreeform] = useState(initial.user_freeform)
 
@@ -147,7 +148,7 @@ export function PersonaRetune({ initial, onClose }: PersonaRetuneProps): React.R
     name: setName,
     personality: setPersonality,
     speakingStyle: setSpeakingStyle,
-    userAgeBucket: setUserAgeBucket,
+    userBirthday: setUserBirthday,
     userCallName: setUserCallName,
     userFreeform: setUserFreeform,
     userGender: setUserGender,
@@ -159,7 +160,7 @@ export function PersonaRetune({ initial, onClose }: PersonaRetuneProps): React.R
     name,
     personality,
     speakingStyle,
-    userAgeBucket,
+    userBirthday,
     userCallName,
     userFreeform,
     userGender,
@@ -203,7 +204,7 @@ export function PersonaRetune({ initial, onClose }: PersonaRetuneProps): React.R
                 relationship,
                 user_call_name: userCallName,
                 user_gender: userGender,
-                user_age_bucket: userAgeBucket,
+                user_birthday: userBirthday,
                 user_hobbies: userHobbies,
                 user_freeform: userFreeform
               },
@@ -278,13 +279,7 @@ export function PersonaRetune({ initial, onClose }: PersonaRetuneProps): React.R
         <div className="space-y-2.5">
           <p className="text-[11px] text-body">{t.retuneStepPrefix(step + 1, steps[step].title)}</p>
           {steps[step].fields.map(field => (
-            <Field
-              autoDerivedLabel={t.autoDerivedChip}
-              field={field}
-              key={field.key}
-              onChange={setters[field.key]}
-              value={values[field.key]}
-            />
+            <Field field={field} key={field.key} onChange={setters[field.key]} value={values[field.key]} />
           ))}
         </div>
       ) : (
@@ -302,13 +297,14 @@ export function PersonaRetune({ initial, onClose }: PersonaRetuneProps): React.R
 }
 
 interface FieldProps {
-  autoDerivedLabel: string
   field: FieldSchema
   value: string
   onChange: (v: string) => void
 }
 
-function Field({ autoDerivedLabel, field, value, onChange }: FieldProps): React.ReactElement {
+function Field({ field, value, onChange }: FieldProps): React.ReactElement {
+  const dict = useStrings()
+
   // presets 列表的最后一项如果是空字符串，表示「自动派生 / 清空」选项——
   // 只有 speaking_style 上才有意义。
   const isClearPreset = field.presets && field.presets[field.presets.length - 1] === ''
@@ -325,6 +321,14 @@ function Field({ autoDerivedLabel, field, value, onChange }: FieldProps): React.
           placeholder={field.placeholder}
           rows={2}
           value={value}
+        />
+      ) : field.date ? (
+        <DatePicker
+          clearLabel={dict.common.clear}
+          onChange={handleChange}
+          placeholder={dict.common.pickDate}
+          value={value}
+          weekdayLabels={dict.common.weekdayShort}
         />
       ) : (
         <input
@@ -344,7 +348,7 @@ function Field({ autoDerivedLabel, field, value, onChange }: FieldProps): React.
               <Chip
                 active={active}
                 key={p || 'clear'}
-                label={isClear ? autoDerivedLabel : p}
+                label={isClear ? dict.settings.persona.autoDerivedChip : p}
                 onClick={() => handleChange(p)}
               />
             )

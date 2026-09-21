@@ -40,7 +40,7 @@ Use forgotten only when an original user message explicitly requests erasure of 
 CONTEXT_LABELS: dict[str, str] = {
     "user_call_name": "user_profile:preferred_name",
     "user_gender": "user_profile:gender",
-    "user_age_bucket": "user_profile:age_bucket",
+    "user_birthday": "user_profile:birthday",
     "user_hobbies": "user_profile:hobbies",
     "user_freeform": "user_profile:freeform",
 }

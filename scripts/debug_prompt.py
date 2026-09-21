@@ -29,7 +29,7 @@ DEFAULT_MOCK_PERSONA: dict[str, str] = {
 DEFAULT_MOCK_USER_PROFILE: dict[str, str] = {
     "preferred_name": "阿明",
     "gender": "男",
-    "age_bucket": "26-35岁",
+    "birthday": "1995-03-14",
     "hobbies": "写代码、打游戏、看动漫、听音乐",
     "freeform": "平时经常写代码，希望你在旁边陪伴聊天并在需要时协助分析问题",
 }
@@ -323,9 +323,9 @@ def main() -> int:
     )
     parser.add_argument("--user-gender", default=DEFAULT_MOCK_USER_PROFILE["gender"], help="用户性别")
     parser.add_argument(
-        "--user-age",
-        default=DEFAULT_MOCK_USER_PROFILE["age_bucket"],
-        help="用户年龄段",
+        "--user-birthday",
+        default=DEFAULT_MOCK_USER_PROFILE["birthday"],
+        help="用户生日",
     )
     parser.add_argument(
         "--user-hobbies",
@@ -380,7 +380,7 @@ def main() -> int:
     user_profile_dict = {
         "preferred_name": args.user_name,
         "gender": args.user_gender,
-        "age_bucket": args.user_age,
+        "birthday": args.user_birthday,
         "hobbies": args.user_hobbies,
         "freeform": args.user_freeform,
     }
