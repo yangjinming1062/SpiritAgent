@@ -46,13 +46,12 @@ const AVATAR_FETCH_TIMEOUT_MS = 120_000
 // 外观列表同步请求包含供应商回退；单个供应商默认可等待 300 秒，另需下载与落盘。
 const OUTFIT_FETCH_TIMEOUT_MS = 15 * 60_000
 
-// 自备图的 prompt 端点含 LLM 往返（身体结构判断 / 参考图整合 / 房间 brief），adopt 含
-// 8MiB 图片校验与落盘：与各自生成端点共用同一放宽档。
+// 外观提示词涉及模型调用，上传采纳涉及图片校验与落盘，均需放宽超时。
 const OUTFIT_GENERATION_PATH_PATTERN =
   /^\/api\/companion\/outfits(?:\/(?:prompt|adopt)|\/\d+\/(?:regenerate|prompt|adopt|confirm))?$/i
 
 const AVATAR_SLOW_PATH_PATTERN =
-  /^\/api\/(?:companion\/(?:avatar(?:\/(?:from-image|prompt|adopt)|\/\d+\/fullbody\/(?:reference|confirm)(?:\/(?:prompt|adopt))?)?|sprite|room\/(?:prompt|adopt|\d+\/adopt))|media\/(?:image_gen|video_gen))$/i
+  /^\/api\/(?:companion\/(?:avatar(?:\/(?:from-image|prompt|adopt)|\/\d+\/fullbody\/(?:reference|confirm)(?:\/(?:prompt|adopt))?)?|sprite|scenes\/(?:prompt|adopt|\d+\/adopt))|media\/(?:image_gen|video_gen))$/i
 
 const SAFE_ENV_SUFFIXES: Set<string> = new Set(['dist', 'example', 'sample', 'template'])
 const SENSITIVE_EXTENSIONS: Set<string> = new Set(['.kdbx', '.p12', '.pem', '.pfx'])

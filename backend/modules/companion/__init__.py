@@ -19,9 +19,9 @@ from .journal import (
     MomentSource,
 )
 from .models import (
-    BACKDROP_POLICY_DEFAULT,
     OUTFIT_POLICY_DEFAULT,
     REQUIRED_VIDEO_ACTIONS,
+    SCENE_POLICY_DEFAULT,
     AvatarAsset,
     CompanionOutfit,
     CompanionVideoJob,
@@ -29,13 +29,13 @@ from .models import (
     Persona,
 )
 from .models_loop import COMPANION_CRON_SOURCE_PREFIX, CompanionIntent, companion_cron_source_key
-from .room_backdrop import (
-    BackdropIntent,
-    BackdropOrigin,
-    BackdropPolicy,
-    BackdropSource,
-    BackdropStatus,
-    CompanionRoomBackdrop,
+from .scene import (
+    CompanionScene,
+    SceneGenerationAttempt,
+    SceneOrigin,
+    ScenePolicy,
+    SceneSource,
+    SceneStatus,
 )
 from .schemas import (
     AvatarAssetResponse,
@@ -84,15 +84,16 @@ from .schemas_loop import (
     CompanionWaitRequest,
     CompanionWakeEvent,
 )
-from .schemas_room import (
-    BackdropListResponse,
-    BackdropPolicyRequest,
-    BackdropPolicyResponse,
-    BackdropResponse,
-    RoomActivateRequest,
-    RoomGenerateRequest,
-    RoomPromptRequest,
-    RoomStateResponse,
+from .schemas_scene import (
+    SceneActivateRequest,
+    SceneDescriptionRequest,
+    SceneGenerateRequest,
+    SceneListResponse,
+    ScenePolicyRequest,
+    ScenePolicyResponse,
+    ScenePromptRequest,
+    SceneResponse,
+    SceneStateResponse,
 )
 from .schemas_video import (
     VideoPackCreateRequest,
@@ -102,6 +103,7 @@ from .schemas_video import (
 )
 
 __all__ = [
+    "SceneGenerationAttempt",
     "BodyFeatures",
     "CharacterCardExtract",
     "CharacterCardResponse",
@@ -120,18 +122,17 @@ __all__ = [
     "CompanionWaitRequest",
     "CompanionWakeEvent",
     "companion_cron_source_key",
-    "BACKDROP_POLICY_DEFAULT",
+    "SCENE_POLICY_DEFAULT",
     "OUTFIT_POLICY_DEFAULT",
     "REQUIRED_VIDEO_ACTIONS",
-    "BackdropIntent",
-    "BackdropListResponse",
-    "BackdropOrigin",
-    "BackdropPolicy",
-    "BackdropPolicyRequest",
-    "BackdropPolicyResponse",
-    "BackdropResponse",
-    "BackdropSource",
-    "BackdropStatus",
+    "SceneListResponse",
+    "SceneOrigin",
+    "ScenePolicy",
+    "ScenePolicyRequest",
+    "ScenePolicyResponse",
+    "SceneResponse",
+    "SceneSource",
+    "SceneStatus",
     "AvatarAsset",
     "AvatarAssetResponse",
     "AvatarFromImageRequest",
@@ -145,7 +146,7 @@ __all__ = [
     "CompanionOutfit",
     "CompanionVideoJob",
     "CompanionVideoPack",
-    "CompanionRoomBackdrop",
+    "CompanionScene",
     "DiaryEntryResponse",
     "DiaryListResponse",
     "DiarySource",
@@ -177,10 +178,11 @@ __all__ = [
     "Persona",
     "PersonaResponse",
     "PersonaUpdate",
-    "RoomActivateRequest",
-    "RoomGenerateRequest",
-    "RoomPromptRequest",
-    "RoomStateResponse",
+    "SceneDescriptionRequest",
+    "SceneActivateRequest",
+    "SceneGenerateRequest",
+    "ScenePromptRequest",
+    "SceneStateResponse",
     "VideoPackCreateRequest",
     "VideoPackGenerateRequest",
     "VideoPackListResponse",

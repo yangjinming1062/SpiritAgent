@@ -29,7 +29,7 @@ WS 和本地 IPC 使用 JSON-RPC 2.0；REST、上传及下载不套 RPC 信封�
 
 ### 1.0 后端不下发窗口开关与工位背景
 
-Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供资源和语义，不下发窗口像素指令，也不生成独立工作台背景。普通聊天生图只交付媒体，更换房间必须走房间资源或专属工具。
+Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供资源和语义，不下发窗口像素指令，也不生成独立工作台背景。普通聊天生图只交付媒体，更换场景必须走场景资源或专属工具。
 
 ### 1.1 通道分工（WS vs REST 路由原则）
 
@@ -43,7 +43,7 @@ Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供�
 |---|---|
 | 对话、引导、工具同步、记忆管理、命令 | [桌面 handlers](../backend/services/adapters/desktop/handlers.py) |
 | 会话 REST 与传输结构 | [会话端点](../backend/api/v1/sessions.py)、[schema](../backend/modules/conversation/schemas.py) |
-| 伙伴、形象、着装与生活资源 | [伙伴端点](../backend/api/v1/companion.py)、[伙伴 schema](../backend/modules/companion/schemas.py)、[房间 schema](../backend/modules/companion/schemas_room.py) |
+| 伙伴、形象、着装与生活资源 | [伙伴端点](../backend/api/v1/companion.py)、[伙伴 schema](../backend/modules/companion/schemas.py)、[场景 schema](../backend/modules/companion/schemas_scene.py) |
 
 引导恢复依据服务端状态及已有资产；完成条件与身份锁定范围见 [DESIGN](DESIGN.md#5-初始化与-onboarding)。
 
@@ -51,9 +51,13 @@ Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供�
 
 角色卡通过 `GET/PATCH /api/companion/character-card` 读取及局部编辑，`POST /api/companion/character-card/extract` 发起重新提取或失败重试；结构见 [schema](../backend/modules/companion/character_card.py)。写请求校验预期形象 ID 与修订号，冲突返回 `409`，客户端保留草稿。`changes` 未提供的字段不变，`null` 恢复自动值，空字符串显式清空。分析状态与已发布内容独立：重新分析失败不撤销可用资料。`companion.character_card.updated` 与状态同事务入 outbox，客户端重新读取，不覆盖编辑草稿。
 
-房间锁定禁止自主换房与夜间着装对齐重建，允许用户显式请求换房。换装成功不即时重建房间图；夜间流水线检查着装指纹，不一致时优先复用历史中指纹匹配的 ready 房间，否则再按夜间自主路径重建。历史回滚指纹冲突返回 `409`。生成期间旧图保留至新图就绪。
+场景资产与当前环境独立维护。路由与字段见 [场景 API](../backend/api/v1/companion_scenes.py) 和 [schema](../backend/modules/companion/schemas_scene.py)；列表查询与当前状态分别由 `/api/companion/scenes` 和 `/api/companion/scenes/state` 提供。生成要求与提示词不作为成品描述，创建来源不因启用改写。着装选择、衣橱独立性与描述恢复见 [PIPELINE](PIPELINE.md#11-共用参考与种子图派生)。
 
-聊天换房工具通过从 1 开始的 `reference_image_index` 选择最近一条带图用户消息中的图片；未指定不使用用户图，越界或不可读时失败，不静默退回纯文字。图片和用户回合身份由编排层注入；自主回合不得借此使用用户参考图。显式用户换房不占自主配额。
+状态与 outbox 事件同事务提交。`companion.scene.updated` 只通知资产或任务、政策更新；`companion.scene.activated` 表示环境已成功切换。两者携带单调递增 `version`，客户端水合后端真源并忽略旧事件及迟到读取。持久化 `switch_version` 在新自动切换意图、用户启用或政策更新时递增；后台任务仅在版本、身份和政策仍有效时自动启用，否则保留为场景资产。重复启用当前场景幂等，用户再次选择当前环境会撤销旧切换意图。
+
+`scene_list`、`scene_get`、`scene_create`、`scene_activate` 供陪伴、IM 和自主回合使用；工具结果返回当前环境；[对话编排](../backend/services/application/chat/README.md#提示词与运行时数据)负责每轮刷新。每回合最多接受一次环境切换，优先复用已有场景。`request_mode=user_request` 仅用于真实用户回合：工具引用本轮原文，后端核对来源并由独立判断确认明确场景请求。普通聊天不绕过自主政策；其他操作使用 `autonomous`，服从锁定、在线档位和新增额度。参考图通过从 1 开始的 `reference_image_index` 选择最近一条带图用户消息的附件，图片和真实回合身份由编排层注入。
+
+在线自主新增使用滚动 24 小时提交额度，付费提交账本不随场景删除而返还；复用不占额度。夜间使用 `scene.activate`／`scene.create` 和既有计划预算，不依赖换装；只有已完成启用记录进入生活事实，场景操作不自动发布片刻。
 
 片刻与日记均由伙伴创建：片刻用户只能评论或删除本人评论；日记后台只能追加已编辑内容。生活空间工具只向陪伴预设开放，装配与派发两层均校验，不能仅隐藏界面入口。
 
@@ -71,7 +75,7 @@ Backend 事件统一使用 `method=event`，`type`、`payload`、`seq` 位于 `p
 | `tool.start/complete`、`error` | 按会话路由的过程与错误 |
 | `tool.call` | 用户级设备指令，按 `call_id` 派发，不受当前可见会话过滤 |
 | `companion.message/mood/affect` | 分别交付已持久化主动台词、独立心情和视觉表达 |
-| 形象、外观、房间、片刻、日记、视频与通道事件 | 更新对应资源或触发重新读取；不一律写入聊天历史 |
+| 形象、外观、场景、片刻、日记、视频与通道事件 | 更新对应资源或触发重新读取；不一律写入聊天历史 |
 | `system.notification` | 自动化结果通知，完整内容留在任务会话 |
 
 业务通知面向该用户的桌面交付，不能因目标会话未打开而丢弃。载荷中的 `session_id` 可用于落卡或跳转，不必然代表会话路由闸门。字段与转换见 [emitter](../backend/services/adapters/desktop/emitter.py) 和 [客户端事件路由](../client/renderer/app/runtime/gateway-event-router.ts)。
@@ -303,7 +307,7 @@ Electron 使用自身更新与平台校验链，不等同于 Runner 清单验签
 
 导入前进入用户维护态，拒绝新操作并等待已进入操作、可中断任务及已提交付费任务按规则收敛，再写入数据。结束后清理旧运行镜像并从数据库恢复，Client 重新挂载会话，不能继续使用已删除 ID。细节见 [Backend](../backend/README.md#数据与运行可靠性)。
 
-角色卡随所属头像备份，恢复时重映射身份引用并保留自动值、用户覆盖及已发布来源指纹；候选分析内容与在途执行状态不恢复为运行任务。未完成初次分析的卡恢复为可重试失败，已有有效资料的卡恢复为就绪。房间快照中的形象引用同样重映射。
+角色卡随所属头像备份，恢复时重映射身份引用并保留自动值、用户覆盖及已发布来源指纹；候选分析内容与在途执行状态不恢复为运行任务。未完成初次分析的卡恢复为可重试失败，已有有效资料的卡恢复为就绪。场景快照中的形象引用同样重映射，场景与衣橱无依赖；恢复的在途场景关闭自动启用并转为可手动处理的状态，供应商临时结果地址不恢复。在线生图提交账本不导出、不恢复，不因资产覆盖重置已用额度。
 
 ## 6. ID 语义
 

@@ -1,7 +1,12 @@
+import json
 import re
 
-from components import format_local_date_str, resolve_language, utc_now
+from components import format_local_date_str, resolve_language, resolve_prompt_text, utc_now
 from modules.system import AgentPromptConfig, PromptPreset
+from prompts.chat import OUTFIT_DEMEANOR_GUIDANCES, SCENE_CONTEXT_GUIDANCES
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from services.domains.companion import build_outfit_extras, get_scene_state, scene_environment
 
 from .prompt_blocks import BLOCK_RENDERERS, substitute
 from .prompt_presets import _build_body
@@ -20,6 +25,22 @@ def build_system_prompt(
     return substitute(_build_body(preset, config.language), render_results)
 
 
+async def build_companion_environment_prompt(db: AsyncSession, user_id: int, *, language: str) -> str:
+    state = await get_scene_state(db, user_id)
+    parts: list[str] = []
+    if state.active is None:
+        outfit = await build_outfit_extras(db, user_id, language=language)
+        if outfit:
+            parts.extend([outfit, resolve_prompt_text(OUTFIT_DEMEANOR_GUIDANCES, language)])
+    parts.extend(
+        [
+            resolve_prompt_text(SCENE_CONTEXT_GUIDANCES, language),
+            json.dumps(scene_environment(state), ensure_ascii=False),
+        ],
+    )
+    return "\n\n".join(parts)
+
+
 def refresh_volatile_header_in_prompt(
     instructions: str,
     *,
@@ -28,7 +49,7 @@ def refresh_volatile_header_in_prompt(
 ) -> str:
     """发送前最后一刻刷新 volatile header 行的日期部分，保留原 label。
 
-    设计取舍：只刷日期这一行；persona / outfit / native_memory 等由 per-turn
+    设计取舍：只刷日期这一行；persona / native_memory 等由 per-turn
     重建覆盖，build→send 排队窗口内被改的概率可忽略——全量重渲染会破坏
     native_memory 注入且需多查 5 次库。保留 label 是为了防止 raw ``lang='fr'``
     解析后被错换成成中文/英文标签。

@@ -1,18 +1,14 @@
-// 生活空间根组件：房间背景 + 顶栏 + 左栏 + 右栏（视图路由）。
-//
-// 伙伴由房间背景图呈现；外观页另提供独立形象预览。
-// 关掉时主进程互斥会把焦点还给工作台或精灵。
-
 import { useStore } from '@nanostores/react'
 import { useEffect } from 'react'
 import type React from 'react'
 
 import { SpriteStatusBadge } from '@/modules/character'
 import { MediaViewerOverlay } from '@/modules/media'
-import { hydrateRoomBackdrop } from '@/modules/room'
+import { hydrateScene } from '@/modules/scene'
 import { ArrowRight, Home } from '@/shared/lib/icons'
 import { WindowControls } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
+import { $gatewayState } from '@/shared/store/gateway'
 import { requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
@@ -20,10 +16,11 @@ import { LivingRail } from './living-rail'
 import { LivingStage } from './living-stage'
 import { $livingView } from './living-store'
 import styles from './living.module.css'
-import { RoomBackdrop } from './room-backdrop'
+import { SceneBackdrop } from './scene-backdrop'
 
 export function LivingRoot(): React.JSX.Element {
   const auth = useStore($auth)
+  const gatewayState = useStore($gatewayState)
   const livingView = useStore($livingView)
   const dict = useStrings()
   const t = dict.living
@@ -34,9 +31,9 @@ export function LivingRoot(): React.JSX.Element {
 
   useEffect(() => {
     if (auth.kind === 'authenticated') {
-      void hydrateRoomBackdrop()
+      void hydrateScene()
     }
-  }, [auth.kind])
+  }, [auth.kind, gatewayState])
 
   useEffect(() => {
     const root = document.documentElement
@@ -50,7 +47,7 @@ export function LivingRoot(): React.JSX.Element {
   return (
     <div className={styles.windowFrame}>
       <MediaViewerOverlay />
-      <RoomBackdrop />
+      <SceneBackdrop />
       <div aria-hidden="true" className={styles.glassPlate} />
       <div className={styles.shell} data-living-view={livingView} data-surface="living">
         <header

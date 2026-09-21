@@ -29,7 +29,7 @@ async def image_generation_tool(
 ) -> str:
     """通过 image_gen 供应商链生成图片；结果按用户永久资产落盘，经鉴权资产通道加载。
 
-    注意：本工具仅产生会话媒体卡片，禁止用于替换房间背景图（换房请使用 room_backdrop_update）。
+    本工具创作供用户查看的图片；改变伙伴所在的环境需使用 scene_list、scene_activate 或 scene_create。
     """
     if subject == "self":
         if user_id is None:

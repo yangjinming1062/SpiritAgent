@@ -16,7 +16,7 @@ from services.infrastructure.llm import vision_chat
 
 from .avatar_service import get_avatar_job_lock, load_avatar_bytes_as_data_uri
 from .initial_appearance import start_initial_video
-from .room_backdrop_service import schedule_initial_room
+from .scene_service import schedule_initial_scene
 
 logger = get_logger(__name__)
 _tasks: dict[int, asyncio.Task[None]] = {}
@@ -171,7 +171,7 @@ async def _extract_character(user_id: int) -> None:
             await db.commit()
         if ready:
             await start_initial_video(user_id)
-            await schedule_initial_room(user_id)
+            await schedule_initial_scene(user_id)
     except Exception:
         logger.exception("character card task failed", extra={"user_id": user_id})
         async with SESSION_LOCAL() as db:

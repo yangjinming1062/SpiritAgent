@@ -1,6 +1,6 @@
 import { $chatSessionId } from '@/modules/conversation'
 import { onJournalEvent } from '@/modules/memory'
-import { onBackdropEvent } from '@/modules/room'
+import { onSceneEvent } from '@/modules/scene'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
@@ -133,14 +133,10 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
       break
 
-    case 'companion.room.ready':
+    case 'companion.scene.activated':
 
-    case 'companion.room.failed':
-
-    case 'companion.room.invalidated':
-
-    case 'companion.room.progress':
-      onBackdropEvent(event)
+    case 'companion.scene.updated':
+      onSceneEvent(event)
 
       break
 

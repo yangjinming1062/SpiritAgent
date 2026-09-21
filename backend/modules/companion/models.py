@@ -14,8 +14,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-# 房间 / 外观政策默认值；同步显式字符串以便其他地方引用。
-BACKDROP_POLICY_DEFAULT: str = "llm_may_replace"
+# 场景 / 外观政策默认值；同步显式字符串以便其他地方引用。
+SCENE_POLICY_DEFAULT: str = "llm_may_replace"
 OUTFIT_POLICY_DEFAULT: str = "llm_may_replace"
 
 if TYPE_CHECKING:
@@ -131,17 +131,19 @@ class Persona(ModelBase, TimestampMixin):
         index=True,
     )
     portrait_confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    # 当前激活的房间图行；None = 尚未生成。
-    active_backdrop_id: Mapped[int | None] = mapped_column(
-        ForeignKey("companion_room_backdrops.id", ondelete="SET NULL"),
+    # 当前环境仅由成功启用的场景确定。
+    active_scene_id: Mapped[int | None] = mapped_column(
+        ForeignKey("companion_scenes.id", ondelete="SET NULL"),
         nullable=True,
     )
-    # 房间图政策：llm_may_replace（默认，LLM 可主动换房）/ locked（用户锁住，LLM 主动换房被拒）。
-    backdrop_policy: Mapped[str] = mapped_column(
+    # 锁定仅限制自主新增与切换。
+    scene_policy: Mapped[str] = mapped_column(
         String(16),
-        default=BACKDROP_POLICY_DEFAULT,
-        server_default=text(f"'{BACKDROP_POLICY_DEFAULT}'"),
+        default=SCENE_POLICY_DEFAULT,
+        server_default=text(f"'{SCENE_POLICY_DEFAULT}'"),
     )
+    scene_switch_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
+    scene_state_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     # 外观政策：llm_may_replace（默认，夜间可自主换装 / 添置外观）/ locked（仅用户可操作）。
     outfit_policy: Mapped[str] = mapped_column(
         String(16),

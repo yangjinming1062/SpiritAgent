@@ -13,7 +13,7 @@ from services.adapters.tools.builtin import (
     register_companion_wait,
     register_image_generation,
     register_journal,
-    register_room_backdrop,
+    register_scene,
     register_send_message,
     register_video_generation,
     register_web,
@@ -59,7 +59,7 @@ def register_tools() -> None:
     register_companion_wait(REGISTRY)
     register_image_generation(REGISTRY)
     register_journal(REGISTRY)
-    register_room_backdrop(REGISTRY)
+    register_scene(REGISTRY)
     register_send_message(REGISTRY)
     register_video_generation(REGISTRY)
     register_web(REGISTRY)

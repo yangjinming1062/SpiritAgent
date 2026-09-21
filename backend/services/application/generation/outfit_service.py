@@ -87,7 +87,7 @@ class OutfitDraftExpiredError(OutfitError):
 async def _require_fullbody_seed_readable(avatar: AvatarAsset) -> str:
     """换装/自备图身份锚点：全身种子路径存在且字节可读，返回 data URI。
 
-    不可读是源资产状态冲突（与 avatar/room 自备图、AI 换装同语义），抛 OutfitStateError
+    不可读是源资产状态冲突（与 avatar/scenes 自备图、AI 换装同语义），抛 OutfitStateError
     由 API 映射为 409，不能降级纯文字。"""
     if not avatar.seed_fullbody_url:
         raise OutfitStateError("全身形象缺失或无法读取，请在设置的“角色与记忆”中重新生成")
@@ -628,7 +628,7 @@ async def activate_outfit(
     require_current_identity: bool = False,
 ) -> CompanionOutfit:
     """即时穿着就绪外观：翻转该用户的激活外观。`active` 是当前生效着装描述的唯一权威，
-    供房间 / 出镜媒体生成消费；对渲染形象的影响由各形象链自行处理。"""
+    供出镜媒体生成消费；对渲染形象的影响由各形象链自行处理。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:

@@ -70,6 +70,15 @@ from .proactive_runtime import (
     user_turn_activity,
 )
 from .prompt_runtime import load_companion_prompt_context, run_prompt_json
+from .scenes import (
+    SceneState,
+    get_pending_scene,
+    get_scene,
+    get_scene_state,
+    list_scenes,
+    response_for_scene,
+    scene_environment,
+)
 from .session_preset import is_work_preset, resolve_session_profile
 from .should_act import ALLOWED_ACTIONS, ShouldActResult, invalidate_user_should_act, should_act
 from .voice_catalog import (
@@ -80,6 +89,13 @@ from .voice_catalog import (
 )
 
 __all__ = [
+    "SceneState",
+    "get_pending_scene",
+    "get_scene",
+    "get_scene_state",
+    "list_scenes",
+    "response_for_scene",
+    "scene_environment",
     "CharacterCardConflictError",
     "CharacterCardNotReadyError",
     "character_card_response",

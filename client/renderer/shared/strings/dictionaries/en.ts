@@ -430,9 +430,9 @@ export const dict: Dictionary = {
         title: 'Full-body image',
         hint: 'Consistent visual style and a stable idle pose suited to this character’s anatomy and personality. Used for the default video, outfits and scenes.',
         confirmHint:
-          'Confirmation starts character analysis, followed by the default video and room. You can continue onboarding.',
+          'Confirmation starts character analysis, followed by the default video and scene. You can continue onboarding.',
         adoptHint:
-          'Adopting confirms this full-body image and starts character analysis, followed by the default video and room.',
+          'Adopting confirms this full-body image and starts character analysis, followed by the default video and scene.',
         empty: 'No full-body image yet. Generate one from the current portrait and persona.',
         loading: 'Preparing the full-body image…',
         referenceLabel: 'User reference image',
@@ -549,14 +549,17 @@ export const dict: Dictionary = {
         day: { label: 'Day', description: 'Warm and bright, full of energy' },
         'night-clear': {
           label: 'Night clear',
-          description: 'Dark translucent surface — the room shows through the shell'
+          description: 'Dark translucent surface — the scene shows through the shell'
         },
-        'day-clear': { label: 'Day clear', description: 'Light translucent surface — the room shows through the shell' }
+        'day-clear': {
+          label: 'Day clear',
+          description: 'Light translucent surface — the scene shows through the shell'
+        }
       },
       materialHeading: 'Material effects',
       materialTransparent: 'Clear mode (transparent)',
       materialTransparentDesc:
-        'Enables liquid glass and frosted translucency — the room image flows with light, and the desktop companion feels airy.',
+        'Enables liquid glass and frosted translucency — the scene image flows with light, and the desktop companion feels airy.',
       materialTransparentDayNight: 'Day transparent / Night transparent',
       materialSolid: 'Solid mode (classic)',
       materialSolidDesc:
@@ -899,7 +902,7 @@ export const dict: Dictionary = {
       thresholdSliderHint: 'Drag the handle left/right to adjust the threshold',
       thresholdSliderMax: '100% full capacity',
       thresholdSliderDescription:
-        'When context reaches the chosen ratio, older history is automatically summarised in the background to free up room and keep memory coherent.',
+        'When context reaches the chosen ratio, older history is automatically summarised in the background to free up scene and keep memory coherent.',
 
       saveFailed: 'Could not save session parameters. Please try again.',
       resetConfirm: 'Session parameters reset to defaults',
@@ -973,7 +976,7 @@ export const dict: Dictionary = {
       diary: 'Diary',
       appearance: 'Appearance',
       channels: 'Channels',
-      room: 'Room',
+      scene: 'Scene',
       settings: 'Settings',
       companionFallback: 'Companion',
       avatarMood: (name: string) => `${name}'s mood`
@@ -1096,79 +1099,91 @@ export const dict: Dictionary = {
       companionSizeHint: 'Default display scale of the sprite on the desktop.',
       scaleAria: 'Companion size'
     },
-    room: {
-      intro: 'Change the mood, roll back to an earlier room, or lock the room policy — all here.',
+    scene: {
+      intro:
+        'Scenes show where your companion is and what they are doing. Scene clothing is independent of the Appearance page. Save scenes and use them again.',
       referenceHint:
-        'Add a room photo, including one with people, to guide the decor and mood. You can also ask your companion to copy a pose.',
-      referenceLabel: 'Room reference image',
-      chooseReference: 'Choose reference image',
-      replaceReference: 'Replace reference image',
-      removeReference: 'Remove reference image',
-      referenceError: 'The image could not be read or is too large. Choose a smaller PNG, JPEG, WebP or GIF image.',
-      notesLabel: 'Room and pose instructions',
-      notesPlaceholder:
-        'For example: use this room as a reference and have my companion sit sideways by the window, wearing their current outfit.',
-      noBackdrop: 'No active room backdrop yet',
-      currentBadge: 'Current room',
-      currentAltFallback: 'Active room',
-      pendingOverlay: 'Setting up a new room…',
-      pendingOverlayHint: 'Decorating based on your companion and daily vibe — a moment and you can move in',
-      waitingUploadOverlay: 'Waiting for your room image',
-      waitingUploadHint: 'The prompt is ready. Upload your image anytime, or discard it for now.',
-      waitingUploadAction: 'Pick image to upload',
-      waitingUploadDiscard: 'Discard',
-      failedOverlay: 'Room setup failed',
-      failedOverlayHint: 'Generation service is busy or the network is unstable — tap to retry',
-      retryButton: 'Try again',
-      briefFallback: 'A warm, cozy living space',
-      briefPending: 'New room being decorated…',
-      subbriefReady: 'Tailored to your companion and current mood',
-      subbriefPending: 'Switches over seamlessly once ready',
-      generateButton: 'Generate new room',
-      generatingButton: 'Generating…',
-      historyTitle: 'Rollback history',
-      historySubtitle: 'Last N',
-      historyEmpty: 'No rollback history yet',
-      historyAltFallback: 'Previous room',
+        'A reference can guide the environment, activity and composition. To use its clothing, say so in the outfit description.',
+      referenceLabel: 'Scene reference',
+      chooseReference: 'Choose reference',
+      replaceReference: 'Replace reference',
+      removeReference: 'Remove reference',
+      referenceError: 'Choose a valid PNG, JPEG, WebP or GIF image.',
+      notesLabel: 'Environment and activity',
+      notesPlaceholder: 'For example: an evening walk along the beach.',
+      outfitLabel: 'Outfit description (optional)',
+      outfitPlaceholder: 'For example: a white short-sleeved shirt, blue shorts, white sneakers and a straw hat.',
+      outfitHint: 'Leave blank to use the current outfit, or describe the complete outfit for this scene.',
+      noScene: 'No active scene yet',
+      currentBadge: 'Current scene',
+      currentAltFallback: 'Current scene',
+      pendingOverlay: 'Preparing scene…',
+      pendingOverlayHint:
+        'The image and description are saved to your library. Your current background stays in place.',
+      waitingUploadOverlay: 'Waiting for a scene image',
+      waitingUploadHint: 'The uploaded image is saved first. Choose Activate when ready.',
+      waitingUploadAction: 'Upload image',
+      generateButton: 'Create scene',
+      generatingButton: 'Creating…',
+      historyTitle: 'Scene library',
+      historyEmpty: 'No matching scenes',
+      historyAltFallback: 'Scene image',
       historyCurrentLabel: 'Current',
-      historyRollbackLabel: 'Use this one',
-      historyRollbackAria: (id: string) => `Roll back to previous room ${id}`,
-      viewOriginal: 'Zoom to view',
-      viewOriginalAria: 'Zoom to view current room image',
-      historyViewLabel: 'Zoom to view',
-      historyViewAria: (id: string) => `Zoom to view previous room ${id}`,
-      historyViewCurrentAria: 'Zoom to view previous room (currently active)',
+      historyRollbackLabel: 'Activate',
+      viewOriginal: 'View full image',
       historyDeleteLabel: 'Delete',
-      historyDeleteAria: (id: string) => `Delete previous room ${id}`,
-      historyDeleteTitle: 'Delete this previous room',
-      historyDeleteConfirmTitle: 'Delete this previous room?',
-      historyDeleteConfirmDescription:
-        'This cannot be undone. The room is removed from rollback history and frees a slot. The room currently in use is not deleted.',
-      policyTitle: 'Room policy',
-      policyLabel: 'Companion-driven room changes',
+      historyDeleteTitle: 'Delete scene',
+      historyDeleteConfirmTitle: 'Delete this scene?',
+      historyDeleteConfirmDescription: 'The image and scene information will be permanently removed from your library.',
+      policyTitle: 'Autonomy policy',
+      policyLabel: 'Autonomous scene changes',
       policyDesc:
-        'When locked, the companion refuses to change rooms autonomously or rebuild during nightly alignment, only responding to your direct request. Unlocked, the companion can switch rooms whenever the mood strikes.',
+        'Locking prevents autonomous creation and switching. Explicit requests and manual actions remain available. Nightly activity also follows its own policy.',
       policyStatusLocked: 'Locked',
       policyStatusUnlocked: 'Allowed',
-      policyToggleAria: 'Allow companion-driven room changes'
+      policyToggleAria: 'Allow autonomous scene creation and switching',
+      createTitle: 'Create a scene',
+      savedHint: 'Saved first. Activate manually when ready.',
+      slow: 'Still processing. Check for an update.',
+      refresh: 'Check status',
+      cancelTask: 'Cancel task',
+      search: 'Search titles or descriptions',
+      titleLabel: 'Short title',
+      descriptionLabel: 'Description',
+      save: 'Save',
+      cancel: 'Cancel',
+      edit: 'Edit details',
+      retryAnalysis: 'Retry description',
+      previous: 'Previous',
+      next: 'Next',
+      untitled: 'Untitled scene',
+      needsDescription: 'An image and description are required before activation.',
+      historyDeleteAria: (id: string) => `Delete scene ${id}`,
+      statuses: {
+        pending: 'Preparing',
+        ready: 'Saved',
+        description_failed: 'Description needed',
+        failed: 'Creation failed',
+        cancelled: 'Cancelled'
+      }
     },
-    roomBackdrop: {
-      failedText: 'Tidying the room…',
-      pendingText: 'Setting up the room'
+    sceneBackdrop: {
+      failedText: 'Tidying the scene…',
+      pendingText: 'Setting up the scene'
     },
     toasts: {
-      roomSlow: 'Room generation is taking longer than expected — please retry shortly',
-      roomReady: 'New room is ready!',
-      roomReadyAlt: 'New room is all set!',
-      roomRegenerateFailed: 'Failed to change rooms… try again in a moment',
-      roomRollbackFailed: 'Rollback failed — the previous room may no longer be available',
-      roomRollbackSuccess: 'Switched back to a previous room',
-      roomDeleteFailed: 'Delete failed — please retry shortly',
-      roomDeleteSuccess: 'Previous room deleted',
-      roomLockFailed: "Couldn't update the lock setting",
-      roomLocked: 'Locked — companion-driven room changes are disabled',
-      roomUnlocked: 'Unlocked — the companion may change rooms on their own',
-      roomFailedFallback: 'Room generation failed, please retry shortly'
+      sceneSlow: 'Still processing. Check for an update.',
+      sceneReady: 'Saved to scene library',
+      sceneReadyAlt: 'Saved to scene library',
+      sceneRegenerateFailed: 'Scene operation failed. Check the details and retry.',
+      sceneRollbackFailed: 'Could not activate scene',
+      sceneRollbackSuccess: 'Scene activated',
+      sceneDeleteFailed: 'Delete failed — please retry shortly',
+      sceneDeleteSuccess: 'Scene deleted',
+      sceneLockFailed: "Couldn't update the lock setting",
+      sceneLocked: 'Autonomous scene changes locked',
+      sceneUnlocked: 'Autonomous scene changes allowed',
+      sceneFailedFallback: 'Scene preparation failed. Check task status.'
     }
   },
 

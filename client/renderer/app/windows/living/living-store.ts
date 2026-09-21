@@ -1,14 +1,11 @@
-// 生活空间右栏当前选中页：聊天 / 外观 / 片刻 / 日记 / 通道 / 房间 / 设置。
-//
-// 视图通过 hash 路由持久化（hash 变化也持久化到 localStorage），
-// 这样工作台切到生活空间时能恢复到上次的视图。
+// 视图通过 hash 与 localStorage 持久化，重开生活空间时恢复。
 
 import { atom } from 'nanostores'
 
 import { normalizeHashPath } from '@/shared/lib/hash-route'
 import { definePersistedEnum } from '@/shared/lib/storage'
 
-export type LivingView = 'chat' | 'appearance' | 'moments' | 'diary' | 'channels' | 'room' | 'settings'
+export type LivingView = 'chat' | 'appearance' | 'moments' | 'diary' | 'channels' | 'scene' | 'settings'
 
 export type LivingSettingsSection = 'persona' | 'voice' | 'interaction' | 'theme' | 'shortcuts' | 'about'
 
@@ -18,7 +15,7 @@ export const LIVING_VIEWS: ReadonlyArray<LivingView> = [
   'moments',
   'diary',
   'channels',
-  'room',
+  'scene',
   'settings'
 ]
 

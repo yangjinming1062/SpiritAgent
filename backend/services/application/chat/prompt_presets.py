@@ -28,7 +28,10 @@ LIFE_SPACE_TOOL_NAMES = frozenset(
         "companion_wait",
         "diary_write",
         "moment_create",
-        "room_backdrop_update",
+        "scene_list",
+        "scene_get",
+        "scene_create",
+        "scene_activate",
     },
 )
 AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(

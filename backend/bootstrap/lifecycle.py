@@ -26,13 +26,14 @@ from services.application.configuration import load_and_apply_system_settings
 from services.application.generation import (
     drain_character_extractions,
     drain_outfit_descriptions,
-    drain_room_backdrop_jobs,
+    drain_scene_jobs,
     drain_video_jobs,
     drain_video_pack_generation,
     resume_character_extractions,
     resume_initial_appearance,
     resume_pending_video_jobs,
     resume_processing_video_packs,
+    resume_scene_jobs,
     resume_video_generation_jobs,
 )
 from services.domains.companion import drain_persona_background
@@ -84,6 +85,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # 视频包上传导入：无可续跑句柄的 processing 行按失败落库并广播。
     await resume_processing_video_packs()
     await resume_character_extractions()
+    await resume_scene_jobs()
     await resume_initial_appearance()
 
     async def _cleanup_loop():
@@ -112,7 +114,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             drain_persona_background(),
             drain_character_extractions(),
             drain_outfit_descriptions(),
-            drain_room_backdrop_jobs(),
+            drain_scene_jobs(),
             drain_video_jobs(),
             drain_video_pack_generation(),
             drain_event_tasks(),

@@ -33,7 +33,7 @@ from .constants import (
     MAX_VOICE_DESIGN_PROMPT_CHARS,
     NIGHTLY_PLANNING_REASONING_EFFORT,
     REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
-    ROOM_BACKDROP_DOWNLOAD_MAX_BYTES,
+    SCENE_DOWNLOAD_MAX_BYTES,
     SEARCH_INPUT_MAX_LEN,
     SESSION_HISTORY_PRE_BUFFER,
     SESSION_HISTORY_TRUNCATE_THRESHOLD,
@@ -86,11 +86,11 @@ from .hashing import sha256_hex, sha512_b64
 from .logger import get_logger, set_request_user_id, setup_logging
 from .network import download_capped, is_safe_outbound, safe_outbound_async_client, safe_outbound_async_transport
 from .observability import (
-    ROOM_BACKDROP_FAILURES_TOTAL,
-    ROOM_BACKDROP_IMAGES_TOTAL,
-    ROOM_BACKDROP_LLM_TRIGGERS_TOTAL,
     RPC_REQUEST_DURATION_SECONDS,
     RPC_REQUESTS_TOTAL,
+    SCENE_FAILURES_TOTAL,
+    SCENE_IMAGES_TOTAL,
+    SCENE_LLM_TRIGGERS_TOTAL,
     async_trace_span,
     render_metrics_response,
 )
@@ -145,10 +145,10 @@ __all__ = [
     "REMOTE_ASSET_DOWNLOAD_MAX_BYTES",
     "REQUEST_ID_HEADER",
     "ProviderCard",
-    "ROOM_BACKDROP_DOWNLOAD_MAX_BYTES",
-    "ROOM_BACKDROP_FAILURES_TOTAL",
-    "ROOM_BACKDROP_IMAGES_TOTAL",
-    "ROOM_BACKDROP_LLM_TRIGGERS_TOTAL",
+    "SCENE_DOWNLOAD_MAX_BYTES",
+    "SCENE_FAILURES_TOTAL",
+    "SCENE_IMAGES_TOTAL",
+    "SCENE_LLM_TRIGGERS_TOTAL",
     "RPC_REQUESTS_TOTAL",
     "RPC_REQUEST_DURATION_SECONDS",
     "SEARCH_INPUT_MAX_LEN",

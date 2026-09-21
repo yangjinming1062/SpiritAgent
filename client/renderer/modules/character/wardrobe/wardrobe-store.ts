@@ -184,7 +184,7 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
   }
 }
 
-/** 穿着就绪外观：翻转当前生效着装描述（房间 / 出镜媒体消费），不触发任何生成。 */
+/** 启用已就绪外观，不触发生成。 */
 export async function activateOutfit(outfitId: number): Promise<boolean> {
   try {
     await window.spiritagent.api({ path: `/api/companion/outfits/${outfitId}/activate`, method: 'PUT' })

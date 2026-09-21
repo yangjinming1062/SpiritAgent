@@ -193,7 +193,7 @@ export function SelfSourceImageFlow({
     const isCurrent = (): boolean => version === flowVersionRef.current && epoch === currentClearEpoch()
 
     try {
-      // 房间提示词会准备待上传记录；已请求时先等它收敛，避免迟到记录取代采纳结果。
+      // 场景提示词会准备待上传记录；已请求时先等它收敛，避免迟到记录取代采纳结果。
       await promptLoadRef.current
 
       if (!isCurrent()) {

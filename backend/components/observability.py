@@ -21,22 +21,22 @@ RPC_REQUEST_DURATION_SECONDS = Histogram(
     ["method"],
 )
 
-# 房间图生图成本与成功率：origin 区分 onboarding / outfit / user_request / llm / nightly；result 区分 ready / failed。
-ROOM_BACKDROP_IMAGES_TOTAL = Counter(
-    "spiritagent_room_backdrop_images_total",
-    "Total room backdrop image generation attempts by origin and result",
+# 场景图片提交与就绪结果；描述失败单独按阶段计数。
+SCENE_IMAGES_TOTAL = Counter(
+    "spiritagent_scene_images_total",
+    "Total scene backdrop image generation attempts by origin and result",
     ["origin", "result"],
 )
-# LLM 主动触发房间图的当日成功计数（按用户本地日统计在应用层；这里只打原始事件）。
-ROOM_BACKDROP_LLM_TRIGGERS_TOTAL = Counter(
-    "spiritagent_room_backdrop_llm_triggers_total",
-    "LLM-triggered room backdrop tool calls by outcome (accepted / rejected_locked / rejected_quota / rejected_silent)",
+# 场景新增工具请求；付费额度由持久化提交账本管理。
+SCENE_LLM_TRIGGERS_TOTAL = Counter(
+    "spiritagent_scene_llm_triggers_total",
+    "Scene creation tool requests by outcome (accepted / rejected)",
     ["outcome"],
 )
-# 失败的人格化 utterance 标签（避免暴露 provider 名）
-ROOM_BACKDROP_FAILURES_TOTAL = Counter(
-    "spiritagent_room_backdrop_failures_total",
-    "Room backdrop generation failures by stage (brief / imagine / store / image_error)",
+# 场景失败阶段，不包含供应商或用户内容。
+SCENE_FAILURES_TOTAL = Counter(
+    "spiritagent_scene_failures_total",
+    "Scene failures by stage (prepare / submitting / store / analyze)",
     ["stage"],
 )
 

@@ -14,6 +14,7 @@ from modules.auth import ChatRequestClientContext
 from modules.conversation import Conversation, Message
 from modules.system import ChatRequest, PromptPreset
 
+from services.contracts import SceneTurnState
 from services.domains.companion import is_work_preset, list_companion_intents, user_turn_activity
 from services.domains.conversation import DEFAULT_PRESET_ID, IM_KIND, SPECIAL_KIND, conversation_memory_scope
 from services.domains.media import inline_video_parts, prune_videos_in_range
@@ -51,6 +52,7 @@ from .streaming import (
     _InvalidCompanionReplyError,
     _LLMTurnResult,
 )
+from .system_prompt import build_companion_environment_prompt
 from .tool_dispatch import _ToolDispatchContext
 from .turn_inputs import (
     _load_memory_query_text,
@@ -342,6 +344,7 @@ async def _run_chat_turn(
         delegate_executor=partial(run_delegated_turn, run_turn=run_chat_turn),
         headless=headless,
         excluded_tool_names=effective_excluded_tool_names,
+        scene_turn=SceneTurnState(user_text=req.message.content),
         user_images=_latest_user_images(current_context["input"]),
         user_initiated=not ephemeral
         and not conv.is_automation
@@ -356,7 +359,12 @@ async def _run_chat_turn(
     complete_response = companion_reply and preset_override is None
     if buffer_text:
         await emitter.send_json({"type": "message.start"})
+    base_instructions = current_context["instructions"]
     while True:
+        if resolved_preset.id == DEFAULT_PRESET_ID and not conv.is_automation:
+            async with session_scope() as db:
+                environment = await build_companion_environment_prompt(db, user_id, language=inputs.language)
+            current_context["instructions"] = base_instructions + "\n\n" + environment
         if not budget.consume():
             await emitter.send_json(
                 {

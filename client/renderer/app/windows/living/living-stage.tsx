@@ -3,7 +3,7 @@
 // - chat: ChatPanel（生活空间变体的对话 + 输入；与工作台共用）
 // - appearance: AppearancePage（外观：渲染模式与着装设计）
 // - moments / diary: 后端直连两页
-// - channels / room: 单文件页
+// - channels / scene: 单文件页
 // - settings: LivingSettings（分区胶囊：角色/音色/交互/外观/快捷键/关于）
 
 import { useStore } from '@nanostores/react'
@@ -27,7 +27,7 @@ import { DiaryPage } from './diary-page'
 import { $livingView, type LivingView } from './living-store'
 import styles from './living.module.css'
 import { MomentsPage } from './moments-page'
-import { RoomPage } from './room-page'
+import { ScenePage } from './scene-page'
 import { LivingSettings } from './settings/living-settings'
 
 // 视图 → 渲染组件的闭包表（`chat` 走 ChatStage 局部组件，其他直接挂页）。
@@ -38,7 +38,7 @@ const VIEW_RENDERERS: Record<LivingView, () => React.JSX.Element> = {
   chat: () => <ChatStage />,
   diary: () => <DiaryPage />,
   moments: () => <MomentsPage />,
-  room: () => <RoomPage />,
+  scene: () => <ScenePage />,
   settings: () => <LivingSettings />
 }
 

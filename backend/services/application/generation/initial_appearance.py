@@ -9,7 +9,7 @@ from services.domains.companion import load_character_snapshot
 
 from .avatar_service import get_avatar_job_lock
 from .outfit_service import schedule_outfit_description
-from .room_backdrop_service import schedule_initial_room
+from .scene_service import schedule_initial_scene
 from .video import VideoPackError, create_pack_from_reference
 
 logger = get_logger(__name__)
@@ -66,4 +66,4 @@ async def resume_initial_appearance() -> None:
         ).all()
     for user_id in users:
         await start_initial_video(user_id)
-        await schedule_initial_room(user_id)
+        await schedule_initial_scene(user_id)

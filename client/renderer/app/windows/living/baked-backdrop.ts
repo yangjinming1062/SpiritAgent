@@ -1,4 +1,4 @@
-// 预模糊的房间背景位图：把 CSS blur 烘焙进一次性的离屏 canvas，
+// 预模糊的生活空间背景位图：把 CSS blur 烘焙进一次性的离屏 canvas，
 // Ken Burns 动画只变换已烘焙的静态层——否则合成器要对被模糊的层做逐帧重采样。
 // 烘焙分辨率取窗口 CSS 尺寸的 1/2（模糊后无需全分辨率），缓存当前 URL、尺寸与主题的结果。
 
@@ -9,7 +9,7 @@ const BAKE_SCALE = 0.5
 // 烘焙画布外扩 12%：补偿 Ken Burns 放大与 blur 边缘收缩，避免动画帧露出未覆盖区。
 const BAKE_OVERSCAN = 1.12
 
-interface BakedBackdrop {
+interface BakedScene {
   dataUrl: string
   url: string
   theme: SpiritAgentUiTheme
@@ -17,12 +17,12 @@ interface BakedBackdrop {
   width: number
 }
 
-async function bakeBackdrop(
+async function bakeScene(
   url: string,
   width: number,
   height: number,
   theme: SpiritAgentUiTheme
-): Promise<BakedBackdrop | null> {
+): Promise<BakedScene | null> {
   const img = new Image()
 
   // 主进程资源桥返回可读的 data URL，远端签名图不依赖 CDN 的 canvas CORS 配置。
@@ -68,13 +68,13 @@ async function bakeBackdrop(
 }
 
 /** 返回烘焙位图；url/尺寸变化时重烘焙，失败（解码失败/无 2D 上下文）返回 null 由调用方回退。 */
-export function useBakedBackdrop(
+export function useBakedScene(
   url: string | null,
   width: number,
   height: number,
   theme: SpiritAgentUiTheme
-): BakedBackdrop | null {
-  const [baked, setBaked] = useState<BakedBackdrop | null>(null)
+): BakedScene | null {
+  const [baked, setBaked] = useState<BakedScene | null>(null)
 
   useEffect(() => {
     if (!url || width <= 0 || height <= 0) {
@@ -85,7 +85,7 @@ export function useBakedBackdrop(
 
     let alive = true
 
-    void bakeBackdrop(url, width, height, theme)
+    void bakeScene(url, width, height, theme)
       .then(result => {
         if (alive) {
           setBaked(result)

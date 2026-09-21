@@ -13,7 +13,7 @@ html[data-maximized='true'] .windowFrame {
   padding: 0;
 }
 
-/* 四档共用整窗底板：清透档只铺 --glass-tint，日色/夜色铺高不透明度底板，避免房间图从内容区单独透出。 */
+/* 四档共用整窗底板：清透档只铺 --glass-tint，日色/夜色铺高不透明度底板，避免场景图从内容区单独透出。 */
 .glassPlate {
   background: var(--ui-window-fill);
   border-radius: 24px;
@@ -573,7 +573,7 @@ html[class~='no-blur'] .glassPlate {
   -webkit-backdrop-filter: none !important;
 }
 
-/* 舞台在 no-blur 下绝不涂实，房间底图始终透出 */
+/* 舞台在 no-blur 下绝不涂实，场景底图始终透出 */
 html[class~='no-blur'] .stage {
   backdrop-filter: none !important;
   -webkit-backdrop-filter: none !important;

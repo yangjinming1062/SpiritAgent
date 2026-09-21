@@ -2,5 +2,6 @@
 
 from .delegation import DelegateAction
 from .memory import EmbeddingItem, MemoryScope, MemorySource
+from .scenes import SceneTurnState
 
-__all__ = ["DelegateAction", "EmbeddingItem", "MemoryScope", "MemorySource"]
+__all__ = ["SceneTurnState", "DelegateAction", "EmbeddingItem", "MemoryScope", "MemorySource"]

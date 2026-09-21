@@ -16,7 +16,9 @@ class ToolsetDef:
 TOOLSET_CATALOG: dict[str, ToolsetDef] = {
     "memory": ToolsetDef(names=("memory_retain", "memory_recall", "memory_inspect", "moment_create", "diary_write")),
     "web_tools": ToolsetDef(names=("web_search", "web_extract")),
-    "image_generation": ToolsetDef(names=("image_generate", "room_backdrop_update")),
+    "image_generation": ToolsetDef(
+        names=("image_generate", "scene_list", "scene_get", "scene_create", "scene_activate"),
+    ),
     "messaging": ToolsetDef(names=("send_message_tool",)),
     "scheduled_tasks": ToolsetDef(names=("cronjob", "companion_wait")),
     "agent_delegation": ToolsetDef(names=("agent_delegate_tool",)),

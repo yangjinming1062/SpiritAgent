@@ -1,14 +1,16 @@
 # 生成服务
 
-编排形象、外观、房间和媒体生成，管理任务互斥、提交、落库与激活；供应商传输归 infrastructure。参考来源、产物和跨端恢复见 [PIPELINE](../../../../docs/PIPELINE.md)。
+编排形象、外观、场景和媒体生成，管理任务互斥、提交、落库与激活；供应商传输归 infrastructure。参考来源、产物和跨端恢复见 [PIPELINE](../../../../docs/PIPELINE.md)。
 
-入口：[角色卡分析](character_card.py)、[出镜身份装配](visual_identity.py)、[初始外观](initial_appearance.py)、[形象](avatar_service.py)、[外观](outfit_service.py)、[房间](room_backdrop_service.py)、[视频包](video/)、[聊天视频](video_jobs.py)。
+入口：[角色卡分析](character_card.py)、[出镜身份装配](visual_identity.py)、[初始外观](initial_appearance.py)、[形象](avatar_service.py)、[外观](outfit_service.py)、[场景](scene_service.py)、[视频包](video/)、[聊天视频](video_jobs.py)。
 
 ## 事务与任务
 
 头像生成、全身生成、选择和确认共用用户级锁。供应商等待期间结束读事务或关闭会话，写入前核对当前身份、状态和源路径，避免迟到结果覆盖其他操作。状态与刷新事件同事务提交；成功后清理旧图，失败或冲突时回收未采纳产物。
 
 草稿转存失败须可重试；只有所有图片均为过期草稿的头像行才可清理，正式头像或全身参考不能连带删除。读取后脱离 ORM 再签名，避免把临时 URL 写回资产列。
+
+场景后台任务在用户维护期间等待自然收敛，保留已提交的付费结果并完成状态落库；用户显式取消与进程停止仍可取消任务。
 
 角色卡提取任务纳入用户维护及进程启停管理；发布、重试与生成快照约束见 [PIPELINE](../../../../docs/PIPELINE.md#113-角色卡与固定外形)。
 
@@ -20,9 +22,7 @@
 
 拼图位置与单幅输出由 [image_generation.py](image_generation.py) 处理；外部制作提示词的宽高比与请求尺寸同源。编辑保持条款集中在 prompts，按点位选择；允许修改头像外貌的条款不能用于换装。生成与采纳共用安装入口，统一落库和文件清理。
 
-房间用户要求独立、完整地传入提示词，不经简述截断。用户参考图须在替换旧 pending 前完成读取、校验并固定为任务输入，后续尝试复用；参考图不独立持久化，任务中断后须重新提交。
-
-在线与夜间房间任务共享互斥与政策检查，配额分别计算；不从普通生图入口修改当前房间。着装对齐见 [PROTOCOL](../../../../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。
+[scene_service.py](scene_service.py)管理场景任务互斥、切换版本与 outbox 事务；用户参考图在任务创建前校验并冻结。参考装配、描述分析与中断恢复见 [PIPELINE](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)，启用与额度见 [PROTOCOL](../../../../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。
 
 ## 视频包与验证
 

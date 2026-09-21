@@ -50,7 +50,7 @@ export function LivingRail(): React.JSX.Element {
     { icon: CalendarPlus, id: 'diary', label: t.diary },
     { icon: Shirt, id: 'appearance', label: t.appearance },
     { icon: Globe, id: 'channels', label: t.channels },
-    { icon: Home, id: 'room', label: t.room }
+    { icon: Home, id: 'scene', label: t.scene }
   ]
 
   return (

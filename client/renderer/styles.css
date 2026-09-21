@@ -252,7 +252,7 @@
     --ui-bubble-user-bg: color-mix(in srgb, var(--ui-accent) 22%, rgba(12, 14, 20, 0.28));
   }
 
-  /* 生活空间清透：房间图磨砂 + 更低底板；对话页更透，设置页用液态玻璃胶囊而非乳白实底。 */
+  /* 生活空间清透：场景图磨砂 + 更低底板；对话页更透，设置页用液态玻璃胶囊而非乳白实底。 */
   html[data-role='living'][data-effect='clear'][data-palette='day'] {
     --glass-tint-alpha: 0.03;
     --ui-window-fill: var(--glass-tint);
@@ -1333,7 +1333,7 @@ html[data-palette='day'] .sa-slider::-moz-range-thumb {
 .sprite-state-dot[data-state='interacting'] { background: var(--sprite-state-interacting); }
 .sprite-state-dot[data-state='disconnected'] { background: var(--sprite-state-disconnected); }
 
-/* 生活空间打开期间：精灵在房间里画里，不应出现在桌面上。
+/* 生活空间打开期间：精灵在场景里画里，不应出现在桌面上。
    SpriteStage 自身 opacity 由 inline style 控制；这里用 CSS 把整 stage 退到 0，
    命中区一并失效，避免误触。 */
 html[data-sprite-hidden='true'] [data-sprite-stage] {

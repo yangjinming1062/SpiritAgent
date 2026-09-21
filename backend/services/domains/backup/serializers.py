@@ -20,8 +20,9 @@ from modules.companion import (
     CompanionMoment,
     CompanionMomentComment,
     CompanionOutfit,
-    CompanionRoomBackdrop,
+    CompanionScene,
     Persona,
+    SceneDescriptionRequest,
     companion_cron_source_key,
 )
 from modules.conversation import CompanionReply, Conversation, Message
@@ -44,7 +45,7 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
     "avatar_assets": AvatarAsset,
     "companion_character_cards": CompanionCharacterCard,
     "companion_outfits": CompanionOutfit,
-    "companion_room_backdrops": CompanionRoomBackdrop,
+    "companion_scenes": CompanionScene,
     "personas": Persona,
     "user_settings": UserSetting,
     "cron_jobs": CronJob,
@@ -59,7 +60,7 @@ TABLES = tuple(TABLE_MODELS)
 CONVERSATION_TABLES = frozenset({"conversations", "messages"})
 FOREIGN_KEYS: dict[str, dict[str, str]] = {
     "companion_character_cards": {"avatar_id": "avatar_assets"},
-    "personas": {"active_backdrop_id": "companion_room_backdrops"},
+    "personas": {"active_scene_id": "companion_scenes"},
     "cron_jobs": {"conversation_id": "conversations"},
     "companion_moments": {"memory_id": "memories", "session_id": "conversations"},
     "companion_moment_comments": {"moment_id": "companion_moments"},
@@ -79,6 +80,8 @@ def _columns(table: str) -> list[str]:
     if table == "user_preferences":
         return ["nightly_activity_enabled"]
     excluded = {"user_id", "dedup_key"} if table == "messages" else {"user_id"}
+    if table == "companion_scenes":
+        excluded.add("result_url")
     return [column.name for column in TABLE_MODELS[table].__table__.columns if column.name not in excluded]
 
 
@@ -339,15 +342,23 @@ def _build_payload(
         reply = CompanionReply.model_validate_json(payload["reply_json"])
         payload["reply_json"] = reply.model_dump_json()
         payload["content"] = reply.dialogue()
-    if table == "companion_room_backdrops":
+    if table == "companion_scenes":
+        if payload.get("status") == "ready":
+            SceneDescriptionRequest.model_validate(
+                {"title": payload.get("title"), "description": payload.get("description")},
+            )
+            if not payload.get("media_path"):
+                raise ValueError("Ready scene image is missing from backup")
         snapshot = CharacterCardSnapshot.model_validate_json(payload["character_card_json"])
         avatar_id = id_map.get("avatar_assets", {}).get(str(snapshot.avatar_id))
         if avatar_id is None:
-            raise ValueError("Room character reference is missing from backup")
+            raise ValueError("Scene character reference is missing from backup")
         payload["character_card_json"] = snapshot.model_copy(update={"avatar_id": int(avatar_id)}).model_dump_json()
-        payload["outfit_fingerprint"] = str(
-            id_map.get("companion_outfits", {}).get(str(raw.get("outfit_fingerprint")), ""),
-        )
+        payload["auto_activate"] = False
+        payload["result_url"] = ""
+        if payload.get("status") == "pending":
+            payload["status"] = "description_failed" if payload.get("media_path") else "failed"
+            payload["error"] = "恢复的场景任务需要手动重试"
     if table == "companion_diary_entries":
         for key, ref in (("memory_ids", "memories"), ("moment_ids", "companion_moments")):
             payload[key] = [

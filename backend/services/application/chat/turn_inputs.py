@@ -28,7 +28,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.application.chat import NativeMemory
 from services.contracts import MemoryScope, MemorySource
 from services.domains.companion import (
-    build_outfit_extras,
     build_system_prompt_extras,
     get_disturbance_tier,
     is_work_preset,
@@ -443,15 +442,10 @@ async def build_turn_inputs(
         else None
     )
     # 入口处一次性 normalize 语言：避免 lang="fr" 等未支持值在 volatile header 与 day marker 处分别走不同分支；
-    # user_profile_extras / outfit_extras 都能拿到正确的 language，而非默认值 zh。
+    # user_profile_extras 使用相同的 language，而非默认值 zh。
     session_lang = resolve_language(user_settings.get("language", DEFAULT_LANGUAGE))
     user_profile_extras = (
         await build_user_profile_extras(db, memory_scope, language=session_lang) if memory_scope is not None else ""
-    )
-    outfit_extras = (
-        await build_outfit_extras(db, user_id, language=session_lang)
-        if persona is not None and persona.is_complete
-        else ""
     )
     # 自动化任务不装配伙伴人格、用户画像或长期记忆；其它 preset 即使 persona 未完成也能承载背景上下文。
     background_memory_extras = (
@@ -496,7 +490,6 @@ async def build_turn_inputs(
             character=await load_character_snapshot(db, user_id) if persona is not None else None,
         ),
         user_profile_extras=user_profile_extras,
-        outfit_extras=outfit_extras,
         background_memory_extras=background_memory_extras,
         proactive_memory_extras=proactive_memory_extras,
         language=session_lang,

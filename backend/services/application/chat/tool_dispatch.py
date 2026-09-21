@@ -1,11 +1,11 @@
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from components import async_trace_span, redact_sensitive_text, safe_json_loads, tool_error
 
 from services.application.chat import NativeMemory
-from services.contracts import DelegateAction, MemoryScope
+from services.contracts import DelegateAction, MemoryScope, SceneTurnState
 from services.infrastructure.desktop import MANAGER, create_future, discard_call, wait_future
 from services.infrastructure.tool_runtime import (
     REGISTRY,
@@ -45,6 +45,7 @@ class _ToolDispatchContext:
     excluded_tool_names: frozenset[str] = frozenset()
     user_images: tuple[str, ...] = ()
     user_initiated: bool = False
+    scene_turn: SceneTurnState = field(default_factory=SceneTurnState)
 
 
 def _redact_tool_payload(result_str: str) -> str | list:
@@ -166,6 +167,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
                         emitter=ctx.emitter,
                         user_images=ctx.user_images,
                         user_initiated=ctx.user_initiated,
+                        scene_turn=ctx.scene_turn,
                     )
                     result_str = (
                         await ctx.delegate_executor(result, ctx.user_id, ctx.llm_config)

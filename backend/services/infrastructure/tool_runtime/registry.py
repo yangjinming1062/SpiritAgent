@@ -25,6 +25,7 @@ RESERVED_KEYS = frozenset(
         "user_settings",
         "user_images",
         "user_initiated",
+        "scene_turn",
         "system_preset_id",
         "scope",
         "memory_scope",

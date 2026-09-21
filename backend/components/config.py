@@ -191,8 +191,8 @@ class Settings(BaseSettings):
         default=1,
         validation_alias="COMPANION_OUTFIT_GENERATE_RATE_LIMIT_PER_HOUR",
     )
-    room_llm_replace_per_24h: int = Field(default=1, validation_alias="ROOM_LLM_REPLACE_PER_24H")
-    room_max_attempts: int = Field(default=3, validation_alias="ROOM_MAX_ATTEMPTS")
+    scene_llm_create_per_24h: int = Field(default=1, validation_alias="SCENE_LLM_CREATE_PER_24H")
+    scene_store_max_attempts: int = Field(default=3, validation_alias="SCENE_STORE_MAX_ATTEMPTS")
     moment_llm_per_day: int = Field(default=3, validation_alias="MOMENT_LLM_PER_DAY")
     moment_autonomous_per_day: int = Field(default=3, validation_alias="MOMENT_AUTONOMOUS_PER_DAY")
     diary_nightly_enabled: bool = Field(default=True, validation_alias="DIARY_NIGHTLY_ENABLED")

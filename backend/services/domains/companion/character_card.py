@@ -97,7 +97,6 @@ def render_character_identity(snapshot: CharacterCardSnapshot | None) -> str:
         return ""
     return CHARACTER_IDENTITY_TEMPLATE.format(
         features=json.dumps(snapshot.features.model_dump(), ensure_ascii=False),
-        overrides=json.dumps(snapshot.overrides.model_dump(exclude_none=True), ensure_ascii=False),
     )
 
 

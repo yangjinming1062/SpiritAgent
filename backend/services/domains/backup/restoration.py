@@ -6,8 +6,9 @@ from typing import Any, Literal
 
 from components import get_logger
 from modules.auth import User
-from modules.companion import COMPANION_CRON_SOURCE_PREFIX
+from modules.companion import COMPANION_CRON_SOURCE_PREFIX, Persona
 from modules.scheduler import CronJob
+from modules.ws import emit_ws_event
 from sqlalchemy import String, cast, select
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,15 +36,14 @@ BACKUP_RESTORE_ORDER: tuple[str, ...] = (
 # 父类覆盖会改变仍被保留的子类引用；子类没有随本次恢复清理时须保留父类。
 # None 表示引用嵌在 JSON / 数组等非关系列中，只要存在保留行就按可能有关联处理。
 OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = {
-    "avatar_assets": (("companion_character_cards", "avatar_id"), ("companion_room_backdrops", None)),
+    "avatar_assets": (("companion_character_cards", "avatar_id"), ("companion_scenes", None)),
     "cron_jobs": (("companion_intents", "source_key"),),
     "conversations": (
         ("cron_jobs", "conversation_id"),
         ("companion_moments", "session_id"),
         ("memories", None),
     ),
-    "companion_outfits": (("companion_room_backdrops", None),),
-    "companion_room_backdrops": (("personas", "active_backdrop_id"),),
+    "companion_scenes": (("personas", "active_scene_id"),),
     "memories": (("companion_moments", "memory_id"), ("companion_diary_entries", None)),
     "companion_moments": (("companion_diary_entries", None),),
 }
@@ -331,6 +331,11 @@ async def restore_backup_rows(
     )
     compatible_rows = {table: records for table, records in rows.items() if table in successful_tables}
     rewriter = UrlRewriter({})
+    existing_scene_versions = (
+        await db.execute(
+            select(Persona.scene_state_version, Persona.scene_switch_version).where(Persona.user_id == target_user_id),
+        )
+    ).one_or_none()
     try:
         if mode == "overwrite":
             compatible_rows, clear_failures = await _clear_compatible_rows(db, target_user_id, compatible_rows)
@@ -380,6 +385,20 @@ async def restore_backup_rows(
                 mode=mode,
                 import_batch_id=import_batch_id,
             )
+        if imported.get("personas") or imported.get("companion_scenes"):
+            persona = await db.scalar(
+                select(Persona).where(Persona.user_id == target_user_id).execution_options(populate_existing=True),
+            )
+            if persona is not None:
+                previous_state, previous_switch = existing_scene_versions or (0, 0)
+                persona.scene_state_version = max(persona.scene_state_version, previous_state) + 1
+                persona.scene_switch_version = max(persona.scene_switch_version, previous_switch) + 1
+                emit_ws_event(
+                    db,
+                    user_id=target_user_id,
+                    event_type="companion.scene.updated",
+                    payload={"version": persona.scene_state_version, "switch_version": persona.scene_switch_version},
+                )
         return BackupRestoreResult(
             imported=imported,
             restored_files=len(rewriter.created),

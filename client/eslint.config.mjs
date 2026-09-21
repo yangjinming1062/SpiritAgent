@@ -238,7 +238,7 @@ export default [
                 '@/modules/speech/*',
                 '@/modules/media/*',
                 '@/modules/memory/*',
-                '@/modules/room/*',
+                '@/modules/scene/*',
                 '@/modules/character/rendering/*'
               ],
               message: '跨模块只能经目标模块的公共 barrel（@/modules/*；character 渲染域为 @/modules/character/rendering/model、/video）；模块内部用相对路径。'
@@ -263,7 +263,7 @@ export default [
                 '@/modules/speech/*',
                 '@/modules/media/*',
                 '@/modules/memory/*',
-                '@/modules/room/*'
+                '@/modules/scene/*'
               ],
               message: '跨模块只能经目标模块的公共 barrel（@/modules/*）。'
             },
@@ -428,7 +428,7 @@ export default [
                 '@/modules/speech/*',
                 '@/modules/media/*',
                 '@/modules/memory/*',
-                '@/modules/room/*'
+                '@/modules/scene/*'
               ],
               message: '运行时与工作流不得反向导入窗口组件。'
             },

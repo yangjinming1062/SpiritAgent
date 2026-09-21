@@ -657,7 +657,7 @@ input[type="file"] { font-size: 0.78rem; }
     <div class="modal-card">
         <div class="modal-head"><h2>导出用户备份</h2></div>
         <div class="modal-body">
-            <p>包含角色与形象、衣橱、房间背景、用户画像与设置、音色、长期记忆、片刻、日记和定时任务。</p>
+            <p>包含角色与形象、衣橱、生活空间背景、用户画像与设置、音色、长期记忆、片刻、日记和定时任务。</p>
             <label class="checkbox-row"><input type="checkbox" id="exportConversations"> 包含会话记录（消息、上下文与现存附件）</label>
             <p class="hint">默认不包含会话记录。备份包含用户 API 凭据，请妥善保存。导入后请重新启动客户端以刷新数据。</p>
         </div>
@@ -677,7 +677,7 @@ input[type="file"] { font-size: 0.78rem; }
         </div>
         <div class="modal-body">
             <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">
-                导入目标用户 #<span id="backupUserId"></span>。恢复备份中包含的角色、形象与衣橱、房间、设置与凭据、长期记忆、片刻、日记和定时任务；仅当备份包含会话记录时才恢复会话。各类数据会尽力恢复，不兼容的内容将在完成后列出。导入后请重新启动客户端。
+                导入目标用户 #<span id="backupUserId"></span>。恢复备份中包含的角色、形象与衣橱、场景、设置与凭据、长期记忆、片刻、日记和定时任务；仅当备份包含会话记录时才恢复会话。各类数据会尽力恢复，不兼容的内容将在完成后列出。导入后请重新启动客户端。
             </p>
             <div class="field">
                 <label>导入模式</label>
@@ -1097,7 +1097,7 @@ async function deleteUser(id) {
 const BACKUP_SECTION_LABELS = Object.freeze({
     user_preferences: '用户偏好', conversations: '会话', messages: '消息',
     user_model_configs: '模型配置与凭据', avatar_assets: '角色形象',
-    companion_outfits: '衣橱', companion_room_backdrops: '房间', personas: '角色定义',
+    companion_outfits: '衣橱', companion_scenes: '场景', personas: '角色定义',
     user_settings: '用户设置',
     cron_jobs: '定时任务', memories: '长期记忆', companion_moments: '片刻',
     companion_diary_entries: '日记', asset_files: '资产文件',
@@ -1540,10 +1540,10 @@ const SETTINGS_SECTIONS = [
                 num('companion_avatar_generate_rate_limit_per_minute', '伴侣头像生成 (/分钟)'),
                 num('companion_outfit_generate_rate_limit_per_hour', '伴侣换装外观生成 (/小时)'),
             ]],
-            ['sub', '房间背景、叙事时刻与安全配额'],
+            ['sub', '生活空间背景、叙事时刻与安全配额'],
             ['grid', [
-                num('room_llm_replace_per_24h', '角色主动换房上限 (/24小时)'),
-                num('room_max_attempts', '房间生成最大重试次数'),
+                num('scene_llm_create_per_24h', '角色自主新增场景上限 (/24小时)'),
+                num('scene_store_max_attempts', '场景图片转存最大重试次数'),
                 num('moment_llm_per_day', '角色主动记时刻配额 (/天)'),
                 num('max_attachments_per_turn', '单回合附件数量上限', 1),
                 num('attachment_session_quota_bytes', '会话附件目录配额 (字节)', 1048576),

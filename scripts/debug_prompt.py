@@ -50,8 +50,9 @@ def _build_mock_user_profile_extras(profile: dict[str, str], *, language: str = 
 async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -> dict[str, Any]:
     from components import SESSION_LOCAL
     from modules.companion import Persona
+    from services.application.chat.system_prompt import build_companion_environment_prompt
     from services.contracts.memory import MemoryScope
-    from services.domains.companion import build_outfit_extras, build_system_prompt_extras, load_character_snapshot
+    from services.domains.companion import build_system_prompt_extras, load_character_snapshot
     from services.domains.conversation import validate_memory_scope
     from services.domains.memory import (
         build_user_profile_extras,
@@ -74,8 +75,8 @@ async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -
         )
 
         user_profile_extras = await build_user_profile_extras(db, scope, language=language)
-        outfit_extras = (
-            await build_outfit_extras(db, user_id, language=language) if persona and persona.is_complete else ""
+        environment_prompt = (
+            await build_companion_environment_prompt(db, user_id, language=language) if preset_id == "companion" else ""
         )
         background_memory_extras = await format_background_memory_block(db, scope, language=language)
         proactive_memory_extras = format_proactive_memory_block([], language=language)
@@ -85,7 +86,7 @@ async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -
         return {
             "persona_extras": persona_extras,
             "user_profile_extras": user_profile_extras,
-            "outfit_extras": outfit_extras,
+            "environment_prompt": environment_prompt,
             "background_memory_extras": background_memory_extras,
             "proactive_memory_extras": proactive_memory_extras,
             "tools": tools,
@@ -124,7 +125,7 @@ def assemble_debug_prompt(
     if db_data is not None:
         persona_extras = db_data["persona_extras"]
         user_profile_extras = db_data["user_profile_extras"]
-        outfit_extras = db_data["outfit_extras"]
+        outfit_extras = ""
         background_memory_extras = db_data["background_memory_extras"]
         proactive_memory_extras = db_data["proactive_memory_extras"]
         tools = db_data["tools"] if enable_tools else []
@@ -164,6 +165,8 @@ def assemble_debug_prompt(
     )
 
     instructions = build_system_prompt(agent_config, preset=resolve_preset(preset_id))
+    if db_data is not None and db_data.get("environment_prompt"):
+        instructions += "\n\n" + db_data["environment_prompt"]
 
     # 走生产装配：构造 ORM-like mock Message，让陪伴预设带上日期分界与时刻提示。
     if message_sent_at is not None:

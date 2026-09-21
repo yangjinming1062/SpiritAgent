@@ -21,14 +21,12 @@ from components import (
 )
 from modules.auth import User
 from modules.companion import (
-    BackdropIntent,
-    BackdropOrigin,
-    BackdropStatus,
     CompanionMoment,
     CompanionOutfit,
-    CompanionRoomBackdrop,
-    MomentKind,
+    CompanionScene,
     Persona,
+    SceneOrigin,
+    SceneStatus,
 )
 from modules.media import VideoGenJob
 from modules.scheduler import NightlyActivityAction, NightlyActivityLog
@@ -47,29 +45,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.generation import (
     activate_outfit,
+    activate_scene,
     confirm_outfit,
     create_outfit_draft,
     enqueue_video_job,
     generate_images,
-    get_room_state,
     load_self_visual_context,
     prepare_self_video_reference,
     resolve_image_gen_chain,
-    resume_room_generation,
-    schedule_room_generation,
+    resume_scene_generation,
+    schedule_scene_generation,
 )
 from services.contracts import MemoryScope
 from services.domains.automation import create_job, remove_job
-from services.domains.companion import load_character_snapshot, render_character_identity, render_character_profile
+from services.domains.companion import (
+    get_scene_state,
+    load_character_snapshot,
+    render_character_identity,
+    render_character_profile,
+    scene_environment,
+)
 from services.domains.journal import create_generated_moment, create_user_moment
 from services.infrastructure.assets import save_companion_asset
 from services.infrastructure.llm import call_llm_once, resolve_provider_chain, synthesize_speech
 
 logger = get_logger(__name__)
 
-_ROOM_WAIT_SECONDS = 15 * 60
+_SCENE_WAIT_SECONDS = 15 * 60
 _POLL_SECONDS = 3.0
-_ROOM_INTENTS = frozenset(intent.value for intent in BackdropIntent)
 _IMAGE_SIZES = frozenset(
     (
         "1024x1024",
@@ -93,6 +96,7 @@ _SUCCESS_ACTION_STATUSES = frozenset(("succeeded", "partial"))
 _ACTION_ID_PATTERN = re.compile(r"[^a-zA-Z0-9_-]+")
 _MAX_ACTIONS = 8
 _MAX_MEDIA_ACTIONS = 2
+_MAX_PAID_ACTIONS = 4
 
 
 class NightlyCapability(BaseModel):
@@ -148,11 +152,11 @@ class OutfitCreateArgs(BaseModel):
     reason: str = ""
 
 
-class RoomChangeArgs(BaseModel):
+class SceneCreateArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    intent: str = "mood"
-    notes: str | None = None
+    notes: str = Field(min_length=1, max_length=2000)
+    outfit_description: str | None = Field(default=None, max_length=2000)
     reason: str = ""
 
 
@@ -238,7 +242,7 @@ class ActionExecutionResult(BaseModel):
     warning: str | None = None
     dependencies: list[str] | None = None
     outfit_id: int | None = None
-    backdrop_id: int | None = None
+    scene_id: int | None = None
     moment_id: str | None = None
     job_id: int | None = None
     cron_job_id: str | None = None
@@ -260,7 +264,7 @@ class PlanningPolicies(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     outfit: str = "llm_may_replace"
-    room: str = "llm_may_replace"
+    scene: str = "llm_may_replace"
     media: bool = True
     voice: bool = True
 
@@ -282,10 +286,11 @@ class PersonaContext(BaseModel):
     current_mood: str | None = None
 
 
-class RoomContext(BaseModel):
+class SceneContext(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    active_brief: str = ""
+    environment: dict[str, Any] = Field(default_factory=dict)
+    library: list[dict[str, Any]] = Field(default_factory=list)
     generation_pending: bool = False
 
 
@@ -343,7 +348,7 @@ class PlanningContext(BaseModel):
     selected_voice_id: str = ""
     language: str = ""
     persona: PersonaContext
-    room: RoomContext
+    scene: SceneContext
     wardrobe: list[WardrobeItem] = Field(default_factory=list)
     recent_autonomous_actions: list[RecentActionSummary] = Field(default_factory=list)
     recent_moments: list[RecentMomentSummary] = Field(default_factory=list)
@@ -371,21 +376,24 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         paid=True,
     ),
     NightlyCapability(
-        "room.change",
+        "scene.activate",
         20,
-        "重新布置角色的房间，画面保留本人和当前穿着；若画面必须展示本次新装，依赖对应换装动作。",
-        {
-            "intent": "decorate|seasonal|mood|rebuild",
-            "notes": "string",
-            "reason": "string",
-        },
-        exclusive_group="room",
+        "启用 scene.library 中适合的已有场景，不消耗生图额度，不依赖外观着装。",
+        {"scene_id": "integer", "reason": "string"},
+        exclusive_group="scene",
+    ),
+    NightlyCapability(
+        "scene.create",
+        20,
+        "已有场景不适合时创建并启用新场景。notes 描述地点、环境与活动；outfit_description 填写本次明确的完整着装设计，无着装要求时省略。",
+        {"notes": "string", "outfit_description": "string (optional)", "reason": "string"},
+        exclusive_group="scene",
         paid=True,
     ),
     NightlyCapability(
         "moment.create",
         30,
-        "写下一条没有媒体的生活空间片刻，例如一张便笺、愿望或值得纪念的小事。",
+        "写下一条文字片刻，例如一张便笺、愿望或值得纪念的小事。",
         {"title": "string", "body": "string", "emotion": "string"},
         exclusive_group="text_moment",
     ),
@@ -498,12 +506,13 @@ def _capability_availability(
             policy.outfit != "locked" and providers.image_reference and persona_ready,
             "换装已锁定或形象/生图不可用",
         ),
-        "room.change": (
-            policy.room != "locked"
+        "scene.activate": (policy.scene != "locked" and bool(context.scene.library), "场景已锁定或没有可用场景"),
+        "scene.create": (
+            policy.scene != "locked"
             and providers.image_reference
             and persona_ready
-            and not context.room.generation_pending,
-            "房间已锁定、形象/生图不可用或已有房间正在生成",
+            and not context.scene.generation_pending,
+            "场景已锁定、形象/生图不可用或已有场景正在生成",
         ),
         "moment.create": (True, ""),
         "media.image": (
@@ -554,7 +563,19 @@ async def _collect_context(user_id: int) -> PlanningContext:
             .scalars()
             .all()
         )
-        room = await get_room_state(db, user_id)
+        scene = await get_scene_state(db, user_id)
+        scene_rows = list(
+            (
+                await db.scalars(
+                    select(CompanionScene)
+                    .where(
+                        CompanionScene.user_id == user_id,
+                        CompanionScene.status == SceneStatus.READY.value,
+                    )
+                    .order_by(CompanionScene.id.desc()),
+                )
+            ).all(),
+        )
         character = await load_character_snapshot(db, user_id)
         setting_rows = (
             await db.execute(
@@ -602,11 +623,10 @@ async def _collect_context(user_id: int) -> PlanningContext:
     definition.pop("appearance", None)
     if character is not None:
         definition["fixed_features"] = render_character_profile(character)
-    active_room = room.active
     context = PlanningContext(
         policies=PlanningPolicies(
             outfit=persona.outfit_policy if persona is not None else "llm_may_replace",
-            room=room.policy,
+            scene=scene.policy,
             media=_setting_value(settings, "companion.autonomous_media", True) is True,
             voice=_setting_value(settings, "companion.autonomous_voice", True) is True,
         ),
@@ -625,9 +645,10 @@ async def _collect_context(user_id: int) -> PlanningContext:
             definition=definition,
             current_mood=persona.current_mood if persona is not None else None,
         ),
-        room=RoomContext(
-            active_brief=active_room.brief if active_room is not None else "",
-            generation_pending=room.pending is not None,
+        scene=SceneContext(
+            environment=scene_environment(scene),
+            library=[{"id": row.id, "title": row.title, "description": row.description} for row in scene_rows],
+            generation_pending=scene.pending is not None,
         ),
         wardrobe=[
             WardrobeItem(
@@ -687,6 +708,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
     seen_ids: set[str] = set()
     seen_groups: set[str] = set()
     media_count = 0
+    paid_count = 0
     actions: list[dict[str, Any]] = []
     for index, raw in enumerate(raw_actions):
         if len(actions) >= _MAX_ACTIONS:
@@ -698,6 +720,8 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
         if spec is None or capability_name not in available_names:
             continue
         if spec.exclusive_group and spec.exclusive_group in seen_groups:
+            continue
+        if spec.paid and paid_count >= _MAX_PAID_ACTIONS:
             continue
         if capability_name.startswith("media."):
             if media_count >= _MAX_MEDIA_ACTIONS:
@@ -724,10 +748,15 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
                 "_order": index,
             },
         )
+        if spec.paid:
+            paid_count += 1
         if spec.exclusive_group:
             seen_groups.add(spec.exclusive_group)
     valid_ids = {item["id"] for item in actions}
+    outfit_ids = {item["id"] for item in actions if item["capability"].startswith("outfit.")}
     for action in actions:
+        if action["capability"].startswith("scene."):
+            action["depends_on"] = [dep for dep in action["depends_on"] if dep not in outfit_ids]
         action["depends_on"] = [dep for dep in action["depends_on"] if dep in valid_ids and dep != action["id"]]
     actions.sort(key=lambda item: (item["phase"], item["_order"]))
     planned_actions = [
@@ -827,7 +856,7 @@ async def _load_action_rows(log_id: int) -> list[NightlyActivityAction]:
         for row in running:
             progress_key = {
                 "outfit.create": "outfit_id",
-                "room.change": "backdrop_id",
+                "scene.create": "scene_id",
                 "media.video": "job_id",
             }.get(row.capability)
             if progress_key and isinstance(row.result, dict) and row.result.get(progress_key):
@@ -988,123 +1017,85 @@ async def _execute_outfit_create(
     return result
 
 
-async def _wait_for_backdrop(
+async def _wait_for_scene(
     user_id: int,
-    backdrop_id: int,
-) -> CompanionRoomBackdrop | None:
-    deadline = monotonic() + _ROOM_WAIT_SECONDS
+    scene_id: int,
+) -> CompanionScene | None:
+    deadline = monotonic() + _SCENE_WAIT_SECONDS
     while monotonic() < deadline:
         async with SESSION_LOCAL() as db:
             row = (
                 await db.execute(
-                    select(CompanionRoomBackdrop).where(
-                        CompanionRoomBackdrop.user_id == user_id,
-                        CompanionRoomBackdrop.id == backdrop_id,
+                    select(CompanionScene).where(
+                        CompanionScene.user_id == user_id,
+                        CompanionScene.id == scene_id,
                     ),
                 )
             ).scalar_one_or_none()
             if row is None or row.status in (
-                BackdropStatus.FAILED.value,
-                BackdropStatus.SUPERSEDED.value,
+                SceneStatus.FAILED.value,
+                SceneStatus.CANCELLED.value,
+                SceneStatus.DESCRIPTION_FAILED.value,
             ):
                 return None
-            if row.status == BackdropStatus.READY.value:
-                active_id = await db.scalar(
-                    select(Persona.active_backdrop_id).where(Persona.user_id == user_id),
-                )
-                return row if active_id == row.id else None
+            if row.status == SceneStatus.READY.value:
+                return row if row.activated_at is not None else None
         await asyncio.sleep(_POLL_SECONDS)
     return None
 
 
-async def _wait_for_room_moment(user_id: int, media_path: str) -> str | None:
-    deadline = monotonic() + 5.0
-    while monotonic() < deadline:
-        async with SESSION_LOCAL() as db:
-            moment_id = await db.scalar(
-                select(CompanionMoment.id)
-                .where(
-                    CompanionMoment.user_id == user_id,
-                    CompanionMoment.source == "nightly",
-                    CompanionMoment.media_url == media_path,
-                )
-                .order_by(CompanionMoment.occurred_at.desc())
-                .limit(1),
-            )
-        if moment_id:
-            return str(moment_id)
-        await asyncio.sleep(0.25)
-    return None
-
-
-async def _execute_room_change(
+async def _execute_scene_activate(
     user_id: int,
     args: dict[str, Any],
     context: PlanningContext,
     *_: Any,
 ) -> ActionExecutionResult:
-    try:
-        parsed_args = RoomChangeArgs.model_validate(args)
-    except ValidationError:
-        parsed_args = RoomChangeArgs()
-    intent = _text(parsed_args.intent, 16)
-    if intent not in _ROOM_INTENTS:
-        intent = BackdropIntent.MOOD.value
-    resume_result = context.resume_result
-    resume_backdrop_id = resume_result.get("backdrop_id") if isinstance(resume_result, dict) else None
-    try:
-        backdrop_id = int(resume_backdrop_id)  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        row = await schedule_room_generation(
+    async with SESSION_LOCAL() as db:
+        row = await activate_scene(db, user_id, int(args["scene_id"]), origin=SceneOrigin.NIGHTLY.value)
+    result = ActionExecutionResult(
+        status="succeeded",
+        scene_id=row.id,
+        fact=f"当前所在的场景变为「{row.title}」：{row.description}",
+    )
+    await _record_executor_state(context, "succeeded", result)
+    return result
+
+
+async def _execute_scene_create(
+    user_id: int,
+    args: dict[str, Any],
+    context: PlanningContext,
+    *_: Any,
+) -> ActionExecutionResult:
+    parsed_args = SceneCreateArgs.model_validate(args)
+    resume_result = context.resume_result or {}
+    scene_id = resume_result.get("scene_id")
+    if scene_id is None:
+        row = await schedule_scene_generation(
             user_id,
-            origin=BackdropOrigin.NIGHTLY.value,
-            intent=intent,
-            notes=_text(parsed_args.notes, 500) or None,
+            origin=SceneOrigin.NIGHTLY.value,
+            notes=_text(parsed_args.notes, 2000),
+            outfit_description=parsed_args.outfit_description,
+            auto_activate=True,
         )
-        backdrop_id = row.id
-        await _record_executor_state(
-            context,
-            "running",
-            ActionExecutionResult(status="running", backdrop_id=backdrop_id),
-        )
+        scene_id = row.id
+        await _record_executor_state(context, "running", ActionExecutionResult(status="running", scene_id=scene_id))
     else:
-        await resume_room_generation(
-            user_id,
-            backdrop_id,
-            notes=_text(parsed_args.notes, 500) or None,
-        )
-    ready = await _wait_for_backdrop(user_id, backdrop_id)
+        scene_id = int(scene_id)
+        await resume_scene_generation(user_id, scene_id)
+    ready = await _wait_for_scene(user_id, scene_id)
     if ready is None:
         return ActionExecutionResult(
-            status="failed",
-            backdrop_id=backdrop_id,
-            reason="room generation did not finish active",
+            status="interrupted",
+            scene_id=scene_id,
+            reason="场景尚未确认启用，不能记录到达事实；可查询原任务",
         )
-    moment_id = await _wait_for_room_moment(user_id, ready.media_path) if ready.media_path else None
-    moment_error = ""
-    if moment_id is None and ready.media_path:
-        try:
-            async with SESSION_LOCAL() as db:
-                moment = await create_user_moment(
-                    db,
-                    user_id,
-                    title="房间布置",
-                    body=ready.brief,
-                    media_url=ready.media_path,
-                    kind=MomentKind.SCENE.value,
-                    source="nightly",
-                )
-            moment_id = str(moment.id)
-        except Exception as exc:
-            moment_error = str(exc)
     result = ActionExecutionResult(
-        status="succeeded" if moment_id else "partial",
-        backdrop_id=ready.id,
-        moment_id=moment_id,
-        fact=f"重新布置了房间：{ready.brief}",
-        warning=moment_error or None,
+        status="succeeded",
+        scene_id=ready.id,
+        fact=f"当前所在的场景变为「{ready.title}」：{ready.description}",
     )
-    await _record_executor_state(context, result.status, result)
+    await _record_executor_state(context, "succeeded", result)
     return result
 
 
@@ -1192,17 +1183,17 @@ async def _runtime_capability_allowed(
     async with SESSION_LOCAL() as db:
         user = await db.get(User, user_id)
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
-        room_pending: tuple[int, str] | None = None
-        if capability == "room.change":
-            room_pending = (
+        scene_pending: tuple[int, str] | None = None
+        if capability == "scene.create":
+            scene_pending = (
                 await db.execute(
                     select(
-                        CompanionRoomBackdrop.id,
-                        CompanionRoomBackdrop.origin,
+                        CompanionScene.id,
+                        CompanionScene.origin,
                     )
                     .where(
-                        CompanionRoomBackdrop.user_id == user_id,
-                        CompanionRoomBackdrop.status == BackdropStatus.PENDING.value,
+                        CompanionScene.user_id == user_id,
+                        CompanionScene.status == SceneStatus.PENDING.value,
                     )
                     .limit(1),
                 )
@@ -1225,16 +1216,16 @@ async def _runtime_capability_allowed(
     settings = {str(key): str(value) for key, value in rows}
     if capability.startswith("outfit.") and persona is not None and persona.outfit_policy == "locked":
         return False, "outfit policy locked"
-    if capability == "room.change" and persona is not None and persona.backdrop_policy == "locked":
-        return False, "room policy locked"
-    if capability == "room.change" and room_pending is not None:
-        resume_backdrop_id = None
+    if capability.startswith("scene.") and persona is not None and persona.scene_policy == "locked":
+        return False, "scene policy locked"
+    if capability == "scene.create" and scene_pending is not None:
+        resume_scene_id = None
         if isinstance(resume_result, dict):
             with suppress(TypeError, ValueError):
-                resume_backdrop_id = int(resume_result.get("backdrop_id"))
-        pending_id, pending_origin = room_pending
-        if pending_id != resume_backdrop_id and pending_origin != BackdropOrigin.OUTFIT.value:
-            return False, "another room generation is already pending"
+                resume_scene_id = int(resume_result.get("scene_id"))
+        pending_id, _pending_origin = scene_pending
+        if pending_id != resume_scene_id:
+            return False, "another scene generation is already pending"
     if (
         capability in ("media.image", "media.video")
         and _setting_value(settings, "companion.autonomous_media", True) is not True
@@ -1641,7 +1632,8 @@ CapabilityExecutor = Callable[
 _EXECUTORS: dict[str, CapabilityExecutor] = {
     "outfit.wear": _execute_outfit_wear,
     "outfit.create": _execute_outfit_create,
-    "room.change": _execute_room_change,
+    "scene.create": _execute_scene_create,
+    "scene.activate": _execute_scene_activate,
     "moment.create": _execute_moment_create,
     "media.image": _execute_media_image,
     "media.video": _execute_media_video,
@@ -1820,7 +1812,11 @@ async def run_nightly_planning(
     plan = await _stored_plan(log_id)
     if plan is None:
         payload = {
-            "plan_limits": {"max_actions": _MAX_ACTIONS, "max_media_actions": _MAX_MEDIA_ACTIONS},
+            "plan_limits": {
+                "max_actions": _MAX_ACTIONS,
+                "max_media_actions": _MAX_MEDIA_ACTIONS,
+                "max_paid_actions": _MAX_PAID_ACTIONS,
+            },
             "contextual_memories": contextual_memories,
             "background_memories_state": background_memories,
             "user_profile": user_profile,

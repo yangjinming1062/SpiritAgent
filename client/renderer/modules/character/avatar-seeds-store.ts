@@ -12,7 +12,7 @@ export interface AvatarSeeds {
   avatarId: number | null
   /** 半身头像展示 URL（asset_url），独立全身参考的自备图参考图。 */
   avatarUrl: string | null
-  /** 独立全身种子图展示 URL（seed_fullbody_url），换装 / 房间的自备图参考图。 */
+  /** 独立全身种子图展示 URL（seed_fullbody_url），换装 / 场景的自备图参考图。 */
   fullbodySeedUrl: string | null
 }
 
