@@ -47,15 +47,8 @@ let lastSignalContext: string | null = null
 let pendingSignalContextChange = false
 let signalRevision = 0
 
-const localStatsCounters: Record<'poke' | 'chat_turn', number> = {
-  poke: 0,
-  chat_turn: 0
-}
-
-const lastStatsSentAt: Record<'poke' | 'chat_turn', number> = {
-  poke: 0,
-  chat_turn: 0
-}
+let localChatTurnCount = 0
+let lastChatTurnSentAt = 0
 
 function maybeTriggerAffectCheck(idleSeconds: number, locked: boolean): void {
   // 情境表情与动作是桌面精灵的自主表达，只在精灵可见且用户选择自主档时推理。
@@ -492,33 +485,33 @@ function stopActivityMonitor(): void {
   runnerReady = false
 }
 
-// 客户端 stats RPC 节流。低于阈值（任意 kind < 10）时客户端发送每次事件，
-// 让后端的每日计数器及时累计；一旦某个 kind 越过阈值，行已经写入，
-// 同 kind 的后续事件只需刷新行内容。每 kind 至多每 60 秒采样一次，
+// 客户端 stats RPC 节流。低于阈值（chat_turn < 10）时客户端发送每次事件，
+// 让后端的每日计数器及时累计；一旦越过阈值，行已经写入，
+// 后续事件只需刷新行内容。至多每 60 秒采样一次，
 // 在不损失有意义的聚合粒度的前提下限制越过阈值后的 DB 写入频率。
 // 后端的 ``record_interaction`` 仍会增加内存计数器，
 // 因此客户端短暂丢事件不会让 ``threshold_met`` 退回 false
-export function reportInteractionStat(kind: 'poke' | 'chat_turn'): void {
+export function reportInteractionStat(kind: 'chat_turn'): void {
   const gateway = $gateway.get()
 
   if (!gateway) {
     return
   }
 
-  localStatsCounters[kind] += 1
+  localChatTurnCount += 1
 
   // 阈值与后端的 ``STATS_THRESHOLD = 10`` 对齐。低于阈值时
   // 每次事件都发送，让每日计数器及时累加；越过阈值后，
-  // 每 kind 每分钟最多合并成一次 RPC——每日行已落库，
+  // 每分钟最多合并成一次 RPC——每日行已落库，
   // 后端的内存计数器才是 ``threshold_met`` 的真值。后续事件
   // 在每次合并发送时仍会更新行内容（高峰小时 / hour_buckets）。
   const now = Date.now()
 
-  if (localStatsCounters[kind] > 10 && now - lastStatsSentAt[kind] < STATS_POST_THRESHROTTLE_MS) {
+  if (localChatTurnCount > 10 && now - lastChatTurnSentAt < STATS_POST_THRESHROTTLE_MS) {
     return
   }
 
-  lastStatsSentAt[kind] = now
+  lastChatTurnSentAt = now
 
   void gateway.request('companion.record_interaction_stats', { kind, hour: new Date().getHours() }).catch(() => {
     /* 即发即忘；失败静默吞掉 */

@@ -4,13 +4,12 @@
  * - 挂载于 SpriteStage 上层（pointer-events: none），零性能负担；
  * - 暴露全局 emitVfx(type, options) 方法，零耦合供手势、交互与状态机触发；
  * - 粒子生命周期由内部 requestAnimationFrame 调度更新，淡出自动销毁；
- * - 支持 heart(爱心/抚摸)、anger(怒气十字/连戳激怒)、sweat(冷汗/提空)、
- *   dizzy_stars(眩晕星环)、music_notes(音符律动)、sleep_zzz(打盹)。
+ * - 支持 heart(爱心)、sweat(冷汗/提空)、music_notes(音符律动)、sleep_zzz(打盹)。
  */
 
 import { useEffect, useRef, useState } from 'react'
 
-type VfxType = 'heart' | 'petal' | 'anger' | 'sweat' | 'dizzy_stars' | 'music_notes' | 'sleep_zzz'
+type VfxType = 'heart' | 'petal' | 'sweat' | 'music_notes' | 'sleep_zzz'
 
 interface VfxEmitOptions {
   count?: number
@@ -47,7 +46,7 @@ function registerVfxWake(fn: (() => void) | null): void {
 }
 
 export function emitVfx(type: VfxType, opts: VfxEmitOptions = {}): void {
-  const count = opts.count ?? (type === 'anger' || type === 'dizzy_stars' ? 1 : 3)
+  const count = opts.count ?? 3
   const now = performance.now()
 
   // 默认在精灵头部上方偏中间
@@ -67,12 +66,7 @@ export function emitVfx(type: VfxType, opts: VfxEmitOptions = {}): void {
       rotation: (Math.random() - 0.5) * 0.4,
       vRot: (Math.random() - 0.5) * 0.6,
       createdAt: now,
-      durationMs: type === 'dizzy_stars' ? 2200 : type === 'anger' ? 1200 : 1600
-    }
-
-    if (type === 'dizzy_stars') {
-      p.vy = 0
-      p.vx = 0
+      durationMs: 1600
     }
 
     activeParticles.push(p)
@@ -90,7 +84,7 @@ export function clearVfx(type: VfxType): void {
   }
 }
 
-function renderParticleIcon(p: Particle, elapsed: number): React.JSX.Element {
+function renderParticleIcon(p: Particle, _elapsed: number): React.JSX.Element {
   switch (p.type) {
     case 'heart':
       return <span style={{ fontSize: 24, filter: 'drop-shadow(0 2px 4px rgba(255,105,180,0.5))' }}>💖</span>
@@ -98,29 +92,8 @@ function renderParticleIcon(p: Particle, elapsed: number): React.JSX.Element {
     case 'petal':
       return <span style={{ fontSize: 20, filter: 'drop-shadow(0 1px 3px rgba(255,192,203,0.6))' }}>🌸</span>
 
-    case 'anger':
-      return <span style={{ fontSize: 26, filter: 'drop-shadow(0 2px 4px rgba(255,0,0,0.6))' }}>💢</span>
-
     case 'sweat':
       return <span style={{ fontSize: 22, filter: 'drop-shadow(0 2px 4px rgba(0,191,255,0.6))' }}>💦</span>
-    case 'dizzy_stars': {
-      // 头部椭圆轨道环绕
-      const angle = (elapsed / 300) * Math.PI * 2
-      const orbitX = Math.cos(angle) * 28
-      const orbitY = Math.sin(angle) * 10
-
-      return (
-        <span
-          style={{
-            fontSize: 22,
-            transform: `translate(${orbitX}px, ${orbitY}px)`,
-            filter: 'drop-shadow(0 2px 4px rgba(255,215,0,0.8))'
-          }}
-        >
-          💫
-        </span>
-      )
-    }
 
     case 'music_notes':
       return <span style={{ fontSize: 22, filter: 'drop-shadow(0 2px 4px rgba(147,112,219,0.6))' }}>🎵</span>

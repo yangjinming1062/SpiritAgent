@@ -370,10 +370,6 @@ export const dict: Dictionary = {
       tierAriaLabel: 'Disturbance tier',
       smartHeading: 'Smart reactions & autonomy',
       smartHint: 'Enables smarter reasoning and decision-making; disable to reduce LLM calls.',
-      pokeThinking: 'Poke reactions',
-      pokeThinkingAria: 'Poke reactions',
-      pokeThinkingDesc:
-        'When poked, the LLM generates reaction copy and expressions (off uses preset feedback). Drags always use local presets.',
       idleAffect: 'Idle situational expression',
       idleAffectAria: 'Idle situational mood',
       idleAffectDesc:
@@ -1186,7 +1182,7 @@ export const dict: Dictionary = {
     backToChatTooltip: 'Back to workstation chat (Esc)',
     openLiving: 'Living Space',
     openLivingTooltip: 'Switch to Living Space',
-    companionTitle: (brandName: string) => `${brandName} companion (hold to drag the whole Workbench, tap to interact)`,
+    companionTitle: (brandName: string) => `${brandName} companion (hold to drag the whole Workbench)`,
     station: {
       tabsAria: 'Station settings navigation',
       tabs: {

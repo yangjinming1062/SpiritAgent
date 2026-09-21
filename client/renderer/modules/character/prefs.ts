@@ -79,7 +79,6 @@ function makeBooleanPref(key: string, fallback: boolean, cloudKey: string): Bool
   }
 }
 
-const llmReactionsPref = makeBooleanPref('da.companion.llmReactions', true, 'companion.llm_reactions')
 const llmAffectPref = makeBooleanPref('da.companion.llmAffect', true, 'companion.llm_affect')
 const llmAutonomyPref = makeBooleanPref('da.companion.llmAutonomy', true, 'companion.llm_autonomy')
 
@@ -88,11 +87,10 @@ const autonomousVoicePref = makeBooleanPref('da.companion.autonomousVoice', true
 
 export const $autonomousMedia = autonomousMediaPref.$atom
 export const $autonomousVoice = autonomousVoicePref.$atom
-export const $llmReactions = llmReactionsPref.$atom
 export const $llmAffect = llmAffectPref.$atom
 export const $llmAutonomy = llmAutonomyPref.$atom
 
-export { autonomousMediaPref, autonomousVoicePref, llmAffectPref, llmAutonomyPref, llmReactionsPref }
+export { autonomousMediaPref, autonomousVoicePref, llmAffectPref, llmAutonomyPref }
 
 // 云端水合应用：只接受类型匹配的键，坏值静默跳过（fail-open）。
 // 借道既有 setter 落 localStorage + atom；回写的 prefs:set 上报在主进程侧
@@ -119,10 +117,6 @@ export function initCompanionPrefsSync(): () => void {
 
     if (companion.response_preference === 'text' || companion.response_preference === 'voice') {
       setResponsePreference(companion.response_preference)
-    }
-
-    if (typeof companion.llm_reactions === 'boolean') {
-      llmReactionsPref.set(companion.llm_reactions)
     }
 
     if (typeof companion.llm_affect === 'boolean') {

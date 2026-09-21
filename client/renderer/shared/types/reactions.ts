@@ -1,4 +1,4 @@
-export type ReactionBucket = 'poke-light' | 'poke-medium' | 'poke-heavy' | 'drag'
+export type ReactionBucket = 'drag'
 
 export interface ReactionEntry {
   id: string

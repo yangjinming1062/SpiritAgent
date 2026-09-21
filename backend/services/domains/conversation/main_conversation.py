@@ -13,7 +13,7 @@ IM_KIND = "im"
 STANDARD_KIND = "standard"
 
 # UI-only 子类型：渲染端展示但排除出 LLM 上下文；与 SPECIAL_KIND 同处一处保证所有会话读取者一致。status_proactive 故意不在此集合——它是用户可回应的真实轮次。
-UI_ONLY_SUBTYPES: frozenset[str] = frozenset({"hint", "status_interaction", "status_reaction"})
+UI_ONLY_SUBTYPES: frozenset[str] = frozenset({"hint"})
 
 # 后台视频任务完成后的送达行：媒体列携带可播放 URL，渲染端显示为媒体卡。故意不在 UI_ONLY_SUBTYPES——主会话工具帧被摘要行替代后，这行是 LLM 回答「视频好了吗」的结果来源。
 MEDIA_STATUS_SUBTYPE: str = "status_media"

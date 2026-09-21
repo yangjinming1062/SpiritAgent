@@ -28,7 +28,6 @@ from components import (
     adopt_inbound,
     coerce_hour_0_23,
     coerce_non_negative_float,
-    coerce_non_negative_int,
     get_logger,
     is_user_in_maintenance,
     path_attach_ref,
@@ -69,7 +68,6 @@ from services.application.generation import (
 )
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.companion import (
-    REGION_NAMES_ZH,
     PersonaValidationError,
     check_affect,
     design_voice,
@@ -77,7 +75,6 @@ from services.domains.companion import (
     get_disturbance_tier,
     get_onboarding_state,
     get_or_create_persona,
-    interact,
     invalidate_user_interaction_stats,
     list_tts_voices,
     match_user_voice,
@@ -221,17 +218,6 @@ async def _noop_send_strict(data: dict[str, Any]) -> bool:
 # 进程级节流：buggy renderer 可能狂打 check_affect 烧 LLM 配额。
 _last_check_affect_ts: dict[int, float] = {}
 
-# 失败短冷却：成本窗口只在成功时全额消耗的话，供应商持续故障时连戳会把成本闸门
-# 打成筛子；短冷却让故障模式也有封顶，又不把瞬时失败的用户锁满完整成本窗口。
-_last_interact_ts: dict[int, float] = {}
-# per-(user, kind) 存冷却到期时刻（monotonic），成功与失败分别写 SETTINGS 的长短冷却。
-_llm_cooldown_until: dict[int, dict[str, float]] = {}
-# per-(user, kind) 的 in-flight 守卫：慢的 LLM 反应还没回时，避免再触发第二次并发反应。
-_inflight_interact: set[tuple[int, str]] = set()
-
-# per-user 的 prompt.submit（renderer 发起的 chat turn）in-flight 守卫；companion.interact 读它，保证用户正在输入时戳一戳反应不会落下——否则两条路径会向同一个主会话交叉写入行，下一次 LLM 上下文里时间线就乱了。
-_inflight_prompt: set[int] = set()
-
 SHOULD_ACT_ANTIDUP_SECONDS = 2.0
 _last_should_act_ts: dict[int, float] = {}
 
@@ -249,10 +235,6 @@ _conversation_locks: dict[str, asyncio.Lock] = {}
 def _clear_user_gateway_state(user_id: int) -> None:
     REGISTRY.clear_runner_tools(user_id)
     discard_user(user_id)
-    _inflight_prompt.discard(user_id)
-    _inflight_interact.difference_update({item for item in _inflight_interact if item[0] == user_id})
-    _last_interact_ts.pop(user_id, None)
-    _llm_cooldown_until.pop(user_id, None)
     _last_check_affect_ts.pop(user_id, None)
     _last_should_act_ts.pop(user_id, None)
     AVATAR_JOB_LOCKS.pop(user_id, None)
@@ -1326,10 +1308,6 @@ def _register_session_handlers(
                     f"session {runtime.session_id!r} already has an in-flight turn",
                 )
 
-        # 跨门：companion 反应正在该用户主会话上空跑。
-        if any(uid == user_id for uid, _ in _inflight_interact):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "companion reaction in-flight; please retry after it lands")
-
         response_preference = params.get("response_preference")
         if response_preference is not None and response_preference not in ("text", "voice"):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "response_preference must be text or voice")
@@ -1405,34 +1383,30 @@ def _register_session_handlers(
         cur_ctx = user_session.session_client_context if user_session else None
 
         async def _run_turn() -> None:
-            _inflight_prompt.add(user_id)
             try:
-                try:
-                    if edited_messages is not None:
-                        await disp.push_event(
-                            "message.edited",
-                            {"session_id": runtime.session_id, "messages": edited_messages},
-                            session_id=runtime.session_id,
-                        )
-                    await run_chat_turn(
-                        req,
-                        cur_cfg,
-                        user_id,
-                        emitter,
-                        session_client_context=cur_ctx,
-                        track_task=_track,
-                        session_settings=runtime.settings,
-                        precursor_user_message_ids=precursor_user_message_ids or None,
-                        persisted_message_id=persisted_message_id,
+                if edited_messages is not None:
+                    await disp.push_event(
+                        "message.edited",
+                        {"session_id": runtime.session_id, "messages": edited_messages},
+                        session_id=runtime.session_id,
                     )
-                except (WebSocketDisconnect, asyncio.CancelledError):
-                    raise
-                except Exception as e:
-                    logger.exception("prompt.submit chat_turn failed")
-                    with contextlib.suppress(Exception):
-                        await disp.push_error_event(str(e), session_id=runtime.session_id)
-            finally:
-                _inflight_prompt.discard(user_id)
+                await run_chat_turn(
+                    req,
+                    cur_cfg,
+                    user_id,
+                    emitter,
+                    session_client_context=cur_ctx,
+                    track_task=_track,
+                    session_settings=runtime.settings,
+                    precursor_user_message_ids=precursor_user_message_ids or None,
+                    persisted_message_id=persisted_message_id,
+                )
+            except (WebSocketDisconnect, asyncio.CancelledError):
+                raise
+            except Exception as e:
+                logger.exception("prompt.submit chat_turn failed")
+                with contextlib.suppress(Exception):
+                    await disp.push_error_event(str(e), session_id=runtime.session_id)
 
         runtime.chat_task = asyncio.create_task(_run_turn())
         _track(runtime.chat_task)
@@ -1533,88 +1507,22 @@ def _register_session_handlers(
     dispatcher.register("companion.signal", companion_signal)
 
     async def companion_record_interaction_stats(params: dict) -> dict:
-        # poke / chat_turn 每事件统计供每日 Memory 汇总用，无 LLM 开销；desktop 侧合并到 STATS_THRESHOLD 后切分钟级节流。
+        # chat_turn 每事件统计供每日 Memory 汇总用，无 LLM 开销；desktop 侧合并到 STATS_THRESHOLD 后切分钟级节流。
         # hour 是用户本地小时（客户端上报 getHours()），与本地日期键同口径，夜间反思按本地日读取。
         kind = params.get("kind")
         hour = params.get("hour")
         if not isinstance(hour, int) or not 0 <= hour <= 23:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "hour must be int in [0, 23]")
-        if kind not in ("poke", "chat_turn"):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"kind must be one of poke/chat_turn, got {kind!r}")
+        if kind != "chat_turn":
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"kind must be chat_turn, got {kind!r}")
         return await record_interaction(user_id, kind, hour)
 
     dispatcher.register("companion.record_interaction_stats", companion_record_interaction_stats)
 
-    async def companion_interact(params: dict) -> dict:
-        # PROTOCOL §1.4：kind 支持 poke/pet/dizzy 三类语义（摸头、眩晕与戳击同级走 LLM 反应）。
-        kind = params.get("kind")
-        if kind not in ("poke", "pet", "dizzy"):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"kind must be one of poke/pet/dizzy, got {kind!r}")
-
-        # 戳摸即「理了伙伴」——被节流拦掉的也算接触，刷新常规档被冷落问候的计时起点。
-        note_user_contact(user_id)
-        await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
-
-        now = time.monotonic()
-        if _user_throttled(_last_interact_ts, user_id, SETTINGS.companion_interact_min_interval_seconds, now):
-            return {"text": None, "emotion": None, "reason": "throttled"}
-
-        # 跨门：renderer 发起的 chat turn 正在主会话上空跑——戳一戳可能在 in-flight 用户消息入库前写入 status_interaction 行，或 status_reaction 落在还在生成的助手回复前；按 throttled 契约静默丢弃。
-        if user_id in _inflight_prompt:
-            return {"text": None, "emotion": None, "reason": "user_busy"}
-
-        user_cooldowns = _llm_cooldown_until.setdefault(user_id, {})
-        if now < user_cooldowns.get(kind, 0.0):
-            return {"text": None, "emotion": None, "reason": "rate_limited"}
-
-        # per-(user, kind) 去重 in-flight 调用：慢的 LLM 响应不该让第二个反应请求溜过去。
-        inflight_key = (user_id, kind)
-        if inflight_key in _inflight_interact:
-            return {"text": None, "emotion": None, "reason": "inflight"}
-        _inflight_interact.add(inflight_key)
-        # anti-dup 节流总是消费；成本窗口按结果分级——成功走完整成本窗口，失败走短冷却
-        _last_interact_ts[user_id] = now
-
-        poke_count = coerce_non_negative_int(params.get("poke_count"))
-        idle_seconds = float(coerce_non_negative_float(params.get("idle_seconds")))
-        local_hour = coerce_hour_0_23(params.get("local_hour"))
-        region = params.get("region")
-        if region is not None and not isinstance(region, str):
-            region = None
-        cfg = user_session.llm_config if user_session else llm_config
-
-        try:
-            res = await interact(user_id, kind, poke_count, idle_seconds, local_hour, cfg, region=region)
-        finally:
-            _inflight_interact.discard(inflight_key)
-
-        if res.text is None:
-            # 失败也封短冷却：LLM 调用已付过钱，故障模式下成本闸门同样要生效
-            user_cooldowns[kind] = now + SETTINGS.companion_interact_failure_cooldown_seconds
-            return res.model_dump()
-
-        # 只有用户实际看到的反应才值得写历史行——未应答的戳一戳否则会污染主会话。
-        # 痕迹行按 kind 记不同的动作描述（poke 带区域细分）。
-        if kind == "pet":
-            action_name = "（摸了摸精灵的头）"
-        elif kind == "dizzy":
-            action_name = "（把精灵晃晕了）"
-        else:
-            action_name = "（戳了戳精灵）"
-            if region and (region_zh := REGION_NAMES_ZH.get(region)):
-                action_name = f"（戳了戳精灵的{region_zh}）"
-        await _record_main_conversation(user_id, "user", action_name, "status_interaction")
-        await _record_main_conversation(user_id, "assistant", res.text, "status_reaction")
-        # 不论 DB 结果如何都消耗完整冷却：LLM 调用已经付过钱，持久化失败不该为第二次调用打开门。
-        user_cooldowns[kind] = now + SETTINGS.companion_llm_cooldown_seconds
-        return res.model_dump()
-
-    dispatcher.register("companion.interact", companion_interact)
-
     async def companion_should_act(params: dict) -> dict:
         kind = params.get("kind", "periodic_provision")
-        if kind not in ("periodic_provision",):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"invalid kind {kind!r}")
+        if kind != "periodic_provision":
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"kind must be periodic_provision, got {kind!r}")
 
         # 空间自主决策只服务自主档；客户端另以桌面精灵可见性拦截。
         if await get_disturbance_tier(user_id) != "autonomous":

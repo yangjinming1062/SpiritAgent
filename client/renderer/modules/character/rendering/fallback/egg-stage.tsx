@@ -7,7 +7,7 @@ import { useStrings } from '@/shared/strings'
 
 import { openContextMenu } from '../../sprite/context-menu-store'
 
-// 桌面常驻「蛋」：透明置顶窗口里呼吸 / 裂纹闪光 / hover 注视，等待用户戳击启动 onboarding。
+// 桌面常驻「蛋」：透明置顶窗口里呼吸 / 裂纹闪光 / hover 注视，等待用户点击启动 onboarding。
 // 设计来源：docs/DESIGN.md §4 / §5.1——「蛋破碎后开始对话」意味着蛋必须作为独立桌面存在物，
 // 而非跳过的中间态。Installer 端的 Egg 组件是流程动画，桌面这个是常驻精灵。
 const CRACK_PATHS = [
@@ -178,9 +178,9 @@ export function EggStage({ size = 280, onTap }: EggStageProps): React.JSX.Elemen
         </g>
       </svg>
 
-      {promptVisible && (
+      {onTap && promptVisible && (
         <div className="pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs text-body animate-pulse">
-          戳一戳，让我醒来
+          点击我，让我醒来
         </div>
       )}
     </div>

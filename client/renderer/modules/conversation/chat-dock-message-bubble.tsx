@@ -40,8 +40,6 @@ interface MessageBubbleProps {
   variant?: ConversationVariant
 }
 
-// 戳 / 拖拽追踪：侧对齐但视觉上弱化。
-const STATUS_TRACE_SUBTYPES = new Set(['status_interaction', 'status_reaction'])
 // 后台视频完成的送达行：正文是给 LLM 的摘要，渲染端只显示媒体卡。
 const MEDIA_STATUS_SUBTYPE = 'status_media'
 
@@ -194,15 +192,6 @@ function MessageBubbleWithBody({
         <div className="max-w-[90%] rounded-full border border-line-standard bg-surface-card/60 px-3 py-1 text-center text-xs leading-relaxed text-muted backdrop-blur-glass shadow-xs">
           {body.text}
         </div>
-      </div>
-    )
-  }
-
-  if (STATUS_TRACE_SUBTYPES.has(subtype)) {
-    return wrapWithTimeDivider(
-      timeDivider,
-      <div className={`my-0.5 flex ${isUser ? 'justify-end' : 'justify-start'} px-2`}>
-        <div className="max-w-[80%] text-[11px] italic text-faint">{body.text}</div>
       </div>
     )
   }

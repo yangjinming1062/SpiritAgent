@@ -5,13 +5,10 @@ import {
   $companionLifecycle,
   $videoPackStatus,
   EggStage,
-  emitVfx,
   ensureCompanionHydrated,
-  handlePetInteraction,
   hydratePersona,
   hydratePortrait,
   hydrateVideoPack,
-  reportUserActivity,
   resolveCompanionPresentation,
   SpriteVfxOverlay
 } from '@/modules/character'
@@ -31,7 +28,6 @@ export function WorkbenchCompanion(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.workbench
   const brandName = dict.brand.name
-  const pointerStartRef = useRef<{ time: number; x: number; y: number } | null>(null)
   const hasHydratedRef = useRef(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
   const hitVideoRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
@@ -95,62 +91,18 @@ export function WorkbenchCompanion(): React.JSX.Element {
     }
   }, [auth.kind, lifecycle])
 
-  const handleTap = (): void => {
-    reportUserActivity()
-
-    if (auth.kind === 'authenticated') {
-      handlePetInteraction()
-    } else {
-      emitVfx('heart', { count: 3, nx: 0.5, ny: 0.25 })
-    }
-  }
-
-  const onPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
-    if (e.button !== 0) {
-      return
-    }
-
-    pointerStartRef.current = { time: performance.now(), x: e.clientX, y: e.clientY }
-  }
-
-  const onPointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
-    const start = pointerStartRef.current
-    pointerStartRef.current = null
-
-    if (!start) {
-      return
-    }
-
-    const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y)
-    const elapsed = performance.now() - start.time
-
-    // 微小位移且短按视为点击戳击/摸头反馈；长按或位移则由系统原生拖拽接管
-    if (dist <= 6 && elapsed < 400) {
-      handleTap()
-    }
-  }
-
   return (
     <div
       className={styles.companionWrapper}
       onContextMenu={e => {
         e.preventDefault()
       }}
-      onPointerCancel={() => {
-        pointerStartRef.current = null
-      }}
-      onPointerDown={onPointerDown}
-      onPointerUp={onPointerUp}
       ref={wrapperRef}
       title={t.companionTitle(brandName)}
     >
       <div className={styles.companionInner}>
         <Suspense fallback={null}>
-          {auth.kind !== 'authenticated' || presentation.renderer === 'fallback' ? (
-            <EggStage onTap={handleTap} />
-          ) : (
-            <VideoStage />
-          )}
+          {auth.kind !== 'authenticated' || presentation.renderer === 'fallback' ? <EggStage /> : <VideoStage />}
         </Suspense>
         <SpriteVfxOverlay />
       </div>

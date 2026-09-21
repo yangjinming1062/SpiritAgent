@@ -11,7 +11,7 @@ export async function speakProactive(
     return
   }
 
-  // 静止档位会压掉主动外联，但用户主动触发的反应（戳 / 拖拽）始终出声。
+  // 静止档位会压掉主动外联，但用户主动触发的反应（如拖拽释放）始终出声。
   // Affect 永远不受门控——调用方自己设情绪状态。
   const tier = $effectiveTier.get()
 

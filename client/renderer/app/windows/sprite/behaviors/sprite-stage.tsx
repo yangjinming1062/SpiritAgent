@@ -80,7 +80,7 @@ export function SpriteStage({
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // 单击延迟执行，给双击让路：否则双击会先触发一次戳击/摸头（反应、统计甚至 LLM）。
+  // 单击延迟执行，给双击让路：避免双击首击误触发单击动作。
   const tapTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const lastTapRef = useRef(0)
@@ -389,7 +389,7 @@ export function SpriteStage({
       return
     }
 
-    // 只有左键松开触发 tap / double-tap；右键打开右键菜单且不触发戳击反应
+    // 只有左键松开触发 tap / double-tap；右键打开右键菜单
     if (e.button !== 0) {
       return
     }

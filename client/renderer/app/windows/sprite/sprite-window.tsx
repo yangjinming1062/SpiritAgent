@@ -11,7 +11,6 @@ import {
   $videoPackStatus,
   EggStage,
   ensureCompanionHydrated,
-  handlePokeInteraction,
   hydratePersona,
   hydratePortrait,
   hydratePortraitHistory,
@@ -98,9 +97,8 @@ export function SpriteWindow(): React.JSX.Element {
     []
   )
 
-  // 未鉴权时自动开激活浮层：首次 hydrateAuth 完成（pending → unauthenticated）、
-  // 以及反激活之后。原先只能戳精灵触发，但未鉴权时精灵实体本身不可见、戳不到，
-  // 这条链路在未激活用户那里是断的。
+  // 未鉴权时自动开激活浮层：首次 hydrateAuth 完成（pending → unauthenticated）
+  // 以及反激活之后，保障未激活用户的激活入口可用。
   useEffect(() => {
     if (auth.kind === 'unauthenticated') {
       setActivationOpen(true)
@@ -133,7 +131,7 @@ export function SpriteWindow(): React.JSX.Element {
   // 3) 仅在 state?.complete === true 时把 lifecycle 设为 'ready'。
   //    不要回退到 persona.is_complete（角色题保存后它会在 onboarding 中途变成 true）。
   // 4) 若 state?.complete 不是 true，则 lifecycle='onboarding'，但 onboardingOpen 保持 false：
-  //    让桌面蛋先常驻（DESIGN §4「蛋破碎后开始对话」），由用户戳击蛋才进入向导。
+  //    让桌面蛋先常驻（DESIGN §4「蛋破碎后开始对话」），由用户点击蛋才进入向导。
   useEffect(() => {
     if (auth.kind !== 'authenticated') {
       setCompanionLifecycle('unauthed')
@@ -161,7 +159,7 @@ export function SpriteWindow(): React.JSX.Element {
 
       const onboardingDone = state?.complete === true
       setCompanionLifecycle(onboardingDone ? 'ready' : 'onboarding')
-      // onboardingOpen 仅在用户主动戳击蛋 / 重新进入向导时才打开；
+      // onboardingOpen 仅在用户主动点击蛋 / 重新进入向导时才打开；
       // 保持 false 让 eggVisible 走通桌面蛋分支。
       setOnboardingOpen(false)
 
@@ -264,12 +262,7 @@ export function SpriteWindow(): React.JSX.Element {
     if (authed) {
       if (lifecycle === 'onboarding') {
         setOnboardingOpen(true)
-
-        return
       }
-
-      // 单击触发戳击反应；双击精灵才打开轻语卡片。
-      handlePokeInteraction()
 
       return
     }

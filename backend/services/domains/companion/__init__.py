@@ -38,8 +38,7 @@ from .intents import (
     queue_companion_intent,
     set_companion_wait,
 )
-from .interact import REGION_NAMES_ZH, InteractResult, interact
-from .interaction_stats import invalidate_user_interaction_stats, read_today_summary, record_interaction
+from .interaction_stats import invalidate_user_interaction_stats, record_interaction
 from .mood import (
     emit_companion_mood,
     normalize_mood,
@@ -117,10 +116,8 @@ __all__ = [
     "AffectCheckResult",
     "BUILTIN_EMOTIONS",
     "DEFAULT_TIER",
-    "InteractResult",
     "ONBOARDING_FIELDS",
     "PersonaValidationError",
-    "REGION_NAMES_ZH",
     "ShouldActResult",
     "TIER_SETTING_KEY",
     "analyze_personality_tags",
@@ -136,7 +133,6 @@ __all__ = [
     "get_disturbance_tier",
     "get_onboarding_state",
     "get_or_create_persona",
-    "interact",
     "invalidate_user_interaction_stats",
     "invalidate_user_should_act",
     "is_still",
@@ -146,7 +142,6 @@ __all__ = [
     "match_user_voice",
     "normalize_mood",
     "normalize_voice_language",
-    "read_today_summary",
     "record_interaction",
     "render_extras",
     "resolve_session_profile",

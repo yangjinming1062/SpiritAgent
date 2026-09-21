@@ -65,7 +65,7 @@ async def should_act(
     llm_config: UserLlmConfig | dict[str, Any] | None = None,
 ) -> ShouldActResult:
     """由 LLM 决策伙伴此刻是否要采取自主空间行为。"""
-    if kind not in ("periodic_provision",):
+    if kind != "periodic_provision":
         return ShouldActResult(should_act=False, reason="invalid_kind")
 
     ctx = await load_companion_prompt_context(user_id)

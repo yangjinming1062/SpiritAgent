@@ -8,7 +8,6 @@ import {
   $effectiveTier,
   $llmAffect,
   $llmAutonomy,
-  $llmReactions,
   $responsePreference,
   $userPreferredTier,
   autonomousMediaPref,
@@ -17,7 +16,6 @@ import {
   type DisturbanceTier,
   llmAffectPref,
   llmAutonomyPref,
-  llmReactionsPref,
   pushEffectiveDisturbanceTier,
   type ResponsePreference,
   setDisturbanceTier,
@@ -51,7 +49,6 @@ export function InteractionPage(): React.ReactElement {
 
   const tier = useStore($userPreferredTier)
   const responsePreference = useStore($responsePreference)
-  const llmReactions = useStore($llmReactions)
   const llmAffect = useStore($llmAffect)
   const llmAutonomy = useStore($llmAutonomy)
   const autonomousMedia = useStore($autonomousMedia)
@@ -176,9 +173,6 @@ export function InteractionPage(): React.ReactElement {
         <p className={cn(SECTION_TITLE, 'mb-1')}>{t.smartHeading}</p>
         <p className={cn(HINT_TEXT, 'mb-2')}>{t.smartHint}</p>
         <SettingCard>
-          <SettingRow description={t.pokeThinkingDesc} label={t.pokeThinking}>
-            <Toggle ariaLabel={t.pokeThinkingAria} checked={llmReactions} onChange={llmReactionsPref.set} />
-          </SettingRow>
           <SettingRow description={t.idleAffectDesc} label={t.idleAffect}>
             <Toggle ariaLabel={t.idleAffectAria} checked={llmAffect} onChange={llmAffectPref.set} />
           </SettingRow>

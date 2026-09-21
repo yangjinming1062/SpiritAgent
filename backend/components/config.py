@@ -117,21 +117,6 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="COMPANION_CHECK_AFFECT_MIN_INTERVAL_SECONDS",
     )
-    companion_interact_min_interval_seconds: float = Field(
-        default=1.5,
-        gt=0,
-        validation_alias="COMPANION_INTERACT_MIN_INTERVAL_SECONDS",
-    )
-    companion_llm_cooldown_seconds: float = Field(
-        default=300.0,
-        gt=0,
-        validation_alias="COMPANION_LLM_COOLDOWN_SECONDS",
-    )
-    companion_interact_failure_cooldown_seconds: float = Field(
-        default=60.0,
-        gt=0,
-        validation_alias="COMPANION_INTERACT_FAILURE_COOLDOWN_SECONDS",
-    )
     companion_approach_cooldown_seconds: float = Field(
         default=1800.0,
         gt=0,

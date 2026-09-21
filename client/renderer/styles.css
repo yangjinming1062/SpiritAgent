@@ -1335,7 +1335,7 @@ html[data-palette='day'] .sa-slider::-moz-range-thumb {
 
 /* 生活空间打开期间：精灵在房间里画里，不应出现在桌面上。
    SpriteStage 自身 opacity 由 inline style 控制；这里用 CSS 把整 stage 退到 0，
-   命中区一并失效，避免「戳不到」的体验。 */
+   命中区一并失效，避免误触。 */
 html[data-sprite-hidden='true'] [data-sprite-stage] {
   opacity: 0 !important;
   pointer-events: none !important;

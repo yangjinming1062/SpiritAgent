@@ -64,7 +64,7 @@ export function pickReaction(bucket: ReactionBucket, companionTags: string[]): R
 }
 
 /** 本地反应池入口（DESIGN §6.3 离线/机械降级）。首次播放合成一次并落盘，
- *  之后每次戳都是本地读盘。换音色或改台词会让缓存键失效，自动重新生成。 */
+ *  之后每次触发都是本地读盘。换音色或改台词会让缓存键失效，自动重新生成。 */
 export async function playReactionAudio(entry: ReactionEntry | null): Promise<boolean> {
   if (!entry) {
     return false

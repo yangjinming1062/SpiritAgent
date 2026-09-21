@@ -18,8 +18,6 @@ DEFAULT_ACTIONS: frozenset[str] = frozenset(
         "lean_forward",
         "shy",
         "idle_glance",
-        "petting",
-        "dizzy",
         "edge_cling",
         "click",
         "long_press",

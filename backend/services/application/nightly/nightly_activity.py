@@ -360,7 +360,7 @@ async def _run_nightly_pipeline_inner(
             utc_end=utc_end,
         )
 
-        # 7 天基线活动统计（主会话，仅真轮——戳一戳 status 行 role 也是 "user"，会被当成参与度）。
+        # 7 天基线活动统计（主会话，排除 UI-only 子类型）。
         seven_days_ago_utc = utc_start - timedelta(days=7)
         past_7_count = (
             await db.execute(

@@ -351,9 +351,6 @@ export const dict = {
       tierAriaLabel: '打扰档位',
       smartHeading: '智能反应与自主行为',
       smartHint: '让伙伴具备更智能的思考与决策能力；关闭可降低 LLM 调用消耗。',
-      pokeThinking: '戳击思考回应',
-      pokeThinkingAria: '戳击思考回应',
-      pokeThinkingDesc: '戳击时由 LLM 生成反应文案与表情（关闭使用预制反馈）；拖拽始终使用本地预制反馈',
       idleAffect: '空闲情境表达',
       idleAffectAria: '空闲情境情绪',
       idleAffectDesc: '自主档且桌面精灵显示时，空闲 30 分钟以上由 LLM 决定情境表情与动作',
@@ -1121,7 +1118,7 @@ export const dict = {
     backToChatTooltip: '返回工位对话 (Esc)',
     openLiving: '生活空间',
     openLivingTooltip: '切换到生活空间',
-    companionTitle: (brandName: string) => `${brandName} 伴工精灵（按住可拖动整个工作台，轻点互动）`,
+    companionTitle: (brandName: string) => `${brandName} 伴工精灵（按住可拖动整个工作台）`,
     station: {
       tabsAria: '工位设置分区导航',
       tabs: {
