@@ -165,6 +165,7 @@ async def describe_character_form(
     appearance: str,
     personality: str,
     feedback: str = "",
+    outfit_description: str = "",
     reference_images: tuple[str, ...],
     identity: str = "",
 ) -> str:
@@ -178,6 +179,7 @@ async def describe_character_form(
                 "appearance": appearance,
                 "personality": personality,
                 "feedback": feedback,
+                "outfit_description": outfit_description,
             },
             ensure_ascii=False,
         ),
@@ -190,8 +192,9 @@ async def build_outfit_prompt(
     user_id: int,
     reference_image: str,
     species: str,
-    feedback: str,
+    requirement: str,
     identity: str,
+    feedback: str = "",
     personality: str = "",
     canvas_aspect: str | None = None,
 ) -> str:
@@ -203,6 +206,7 @@ async def build_outfit_prompt(
         identity=identity,
         personality=personality,
         feedback=feedback,
+        outfit_description=requirement,
         reference_images=(reference_image,),
     )
     return "\n".join(
@@ -213,7 +217,12 @@ async def build_outfit_prompt(
             CHARACTER_VISUAL_STYLE,
             f"画幅比例 {canvas_aspect}；{FULLBODY_FRAME}" if canvas_aspect else FULLBODY_FRAME,
             direction,
-            OUTFIT_CHANGE_TEMPLATE.format(requirement=_prompt_clause(feedback)),
+            OUTFIT_CHANGE_TEMPLATE.format(
+                requirements=json.dumps(
+                    {"outfit_description": requirement, "feedback": feedback},
+                    ensure_ascii=False,
+                ),
+            ),
             "纯白无缝平面背景，均匀柔和棚拍光；稳定待机姿态，无场景、投影、道具、文字或水印。",
         ),
     )

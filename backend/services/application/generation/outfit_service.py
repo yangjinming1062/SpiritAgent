@@ -311,7 +311,7 @@ async def create_outfit_draft(
         species=species,
         identity=render_character_identity(identity),
         personality=personality,
-        feedback=feedback,
+        requirement=feedback,
     )
     draft_url = await _generate_outfit_fullbody(
         user_id,
@@ -380,13 +380,12 @@ async def regenerate_outfit_draft(
         if not garment_text and source.get("reference_image_path"):
             # 旧草稿或上次整合失败：重新生成时补一次整合，成功则随本次 source_json 持久化
             garment_text = await _describe_reference_garment(user_id, source, requirement=description)
-        # 着装描述恒为一段完整文本（设计稿已整合原始文字要求），再叠加本次修改要求
-        combined_feedback = "；".join(part for part in (garment_text or description, effective_feedback) if part)
         prompt = await build_outfit_prompt(
             user_id=user_id,
             reference_image=reference_uri,
             species=species,
-            feedback=combined_feedback,
+            requirement=garment_text or description,
+            feedback=effective_feedback,
             identity=render_character_identity(identity),
             personality=personality,
         )
@@ -493,7 +492,7 @@ async def prepare_outfit_prompt(
         user_id=user_id,
         reference_image=identity_uri,
         species=species,
-        feedback=feedback,
+        requirement=feedback,
         identity=render_character_identity(identity),
         personality=personality,
         canvas_aspect=_FULLBODY_ASPECT,
@@ -526,14 +525,14 @@ async def prepare_outfit_regenerate_prompt(
     garment_text = str(source.get("reference_description") or "").strip()
     if not garment_text and source.get("reference_image_path"):
         garment_text = await _describe_reference_garment(user_id, source, requirement=description)
-    combined_feedback = "；".join(part for part in (garment_text or description, effective_feedback) if part)
-    if not combined_feedback:
+    if not (garment_text or description or effective_feedback):
         raise OutfitError("请先描述想要的着装或修改要求")
     return await build_outfit_prompt(
         user_id=user_id,
         reference_image=identity_uri,
         species=species,
-        feedback=combined_feedback,
+        requirement=garment_text or description,
+        feedback=effective_feedback,
         identity=render_character_identity(identity),
         personality=personality,
         canvas_aspect=_FULLBODY_ASPECT,

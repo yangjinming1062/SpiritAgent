@@ -32,6 +32,7 @@ from prompts.chat import (
     COMPANION_WAIT_GUIDANCES,
     LANGUAGE_DIRECTIVES,
     MEDIA_GUIDANCES,
+    MEDIA_VIDEO_GUIDANCES,
     MEMORY_RECALL_GUIDANCES,
     MEMORY_TOOL_GUIDANCES,
     NO_TOOL_GUIDANCES,
@@ -152,11 +153,12 @@ def _work_skills_guidance_block(config: AgentPromptConfig) -> str | None:
 
 
 def _media_guidance_block(config: AgentPromptConfig) -> str | None:
-    return (
-        resolve_prompt_text(MEDIA_GUIDANCES, config.language)
-        if _has_any_tool(config, ("image_generate", "video_generate"))
-        else None
-    )
+    if not _has_any_tool(config, ("image_generate", "video_generate")):
+        return None
+    parts = [resolve_prompt_text(MEDIA_GUIDANCES, config.language)]
+    if "video_generate" in config.valid_tool_names:
+        parts.append(resolve_prompt_text(MEDIA_VIDEO_GUIDANCES, config.language))
+    return "\n".join(parts)
 
 
 def _companion_media_guidance_block(config: AgentPromptConfig) -> str | None:
@@ -167,7 +169,9 @@ def _companion_media_guidance_block(config: AgentPromptConfig) -> str | None:
 
 
 def _attachment_guidance_block(config: AgentPromptConfig) -> str | None:
-    return resolve_prompt_text(ATTACHMENT_GUIDANCES, config.language) if config.valid_tool_names else None
+    return (
+        resolve_prompt_text(ATTACHMENT_GUIDANCES, config.language) if "read_file" in config.valid_tool_names else None
+    )
 
 
 def _tool_use_enforcement_block(config: AgentPromptConfig) -> str | None:

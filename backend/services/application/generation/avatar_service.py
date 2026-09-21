@@ -20,8 +20,8 @@ from modules.ws import emit_ws_event
 from prompts.generation import (
     AVATAR_PRESENTATION_REFERENCE,
     AVATAR_REFERENCE_TEMPLATE,
+    EDIT_PRESERVE_AVATAR,
     EDIT_PRESERVE_FULLBODY,
-    EDIT_PRESERVE_IDENTITY,
     MODERATION_SANITIZATION_PROMPT,
     SELF_IMAGE_OUTFIT_DESCRIPTION,
 )
@@ -671,7 +671,7 @@ async def _edit_active_avatar(
     if not edit_uri:
         raise AvatarSourceUnreadableError("当前头像文件缺失或无法读取，请重新生成")
 
-    prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_IDENTITY)
+    prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_AVATAR)
     persist = persona.is_portrait_confirmed
     return await _generate_avatar_step(
         db,
@@ -935,6 +935,7 @@ async def _prepare_fullbody_reference(
         appearance=appearance,
         personality=personality,
         feedback=feedback or "",
+        outfit_description=outfit_description,
         reference_images=(reference, secondary_reference) if secondary_reference else (reference,),
         identity=render_character_identity(identity),
     )

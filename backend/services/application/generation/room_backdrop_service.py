@@ -897,7 +897,7 @@ async def _run_pipeline(
             "companion.room.progress",
             {"backdrop_id": backdrop_id, "stage": "brief"},
         )
-        brief = await _compose_brief(user_id, intent=intent, notes=notes)
+        brief = await _compose_brief(user_id, intent=intent, notes=notes, has_scene_reference=bool(reference_image))
         try:
             await _do_one_attempt(
                 backdrop_id,
@@ -940,8 +940,8 @@ async def _run_pipeline(
     await _mark_failed(backdrop_id, _DEFAULT_FAILURE_UTTERANCE)
 
 
-async def _compose_brief(user_id: int, *, intent: str, notes: str | None) -> str:
-    """装配简短房间建议；无效输出使用默认陈设，用户原始要求仍独立传给生图模型。"""
+async def _compose_brief(user_id: int, *, intent: str, notes: str | None, has_scene_reference: bool = False) -> str:
+    """装配可选房间建议；空字符串表示无需补充设计，用户要求独立保留。"""
     async with SESSION_LOCAL() as db:
         llm_cfg = await resolve_user_llm_config(db, user_id)
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
@@ -950,6 +950,7 @@ async def _compose_brief(user_id: int, *, intent: str, notes: str | None) -> str
         "intent": intent,
         "personality": definition.get("personality", ""),
         "notes": notes or "",
+        "has_scene_reference": has_scene_reference,
     }
     try:
         raw = await call_llm_once(
@@ -964,12 +965,12 @@ async def _compose_brief(user_id: int, *, intent: str, notes: str | None) -> str
             "room brief fallback to template",
             extra={"user_id": user_id, "error": str(exc)},
         )
-        return _fallback_brief(intent)
+        return "" if has_scene_reference else _fallback_brief(intent)
     parsed = parse_llm_json(raw) or {}
-    brief = (parsed.get("brief") if isinstance(parsed, dict) else None) or ""
-    if not isinstance(brief, str) or not 1 <= len(brief.strip()) <= 100:
+    brief = parsed.get("brief") if isinstance(parsed, dict) else None
+    if not isinstance(brief, str) or len(brief.strip()) > 100:
         logger.info("room brief invalid; using default suggestions", extra={"user_id": user_id})
-        return _fallback_brief(intent)
+        return "" if has_scene_reference else _fallback_brief(intent)
     return brief.strip()
 
 

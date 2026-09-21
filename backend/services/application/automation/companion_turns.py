@@ -37,7 +37,7 @@ _READ_ONLY_TOOLS: frozenset[str] = frozenset(
 
 
 def _build_proactive_hint(intent: CompanionIntentView, disturbance_tier: str) -> str:
-    return "[INTERNAL COMPANION WAKE — runtime data, not user speech]\n" + json.dumps(
+    return "[Follow-up context — reference data, not a new user message]\n" + json.dumps(
         {"intent": intent.model_dump(mode="json"), "effective_disturbance_tier": disturbance_tier},
         ensure_ascii=False,
     )
