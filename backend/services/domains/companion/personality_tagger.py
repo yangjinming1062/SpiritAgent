@@ -40,7 +40,6 @@ async def analyze_personality_tags(
             {
                 "name": data.get("name", "角色"),
                 "species": species or data.get("biological_type") or "",
-                "appearance": data.get("appearance") or "",
                 "personality": data.get("personality") or "",
                 "speaking_style": data.get("speaking_style") or "",
             },

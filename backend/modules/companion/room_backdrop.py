@@ -75,6 +75,7 @@ class CompanionRoomBackdrop(ModelBase, TimestampMixin):
         default=BackdropSource.GENERATED.value,
         server_default=text("'generated'"),
     )
+    character_card_json: Mapped[str] = mapped_column(Text)
     brief: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     prompt: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     media_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))

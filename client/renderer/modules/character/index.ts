@@ -11,6 +11,15 @@ export {
 export { awaitAvatarRegeneration, resolveAvatarRegeneration } from './avatar-regen-store'
 export { $avatarSeeds, clearAvatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds } from './avatar-seeds-store'
 export {
+  $characterCard,
+  BODY_FEATURE_KEYS,
+  extractCharacterCard,
+  hydrateCharacterCard,
+  PORTRAIT_FEATURE_KEYS,
+  saveCharacterCard
+} from './character-card-store'
+export type { CharacterCard, CharacterFeatureKey, CharacterFeatures, CharacterOverrides } from './character-card-store'
+export {
   $companionLifecycle,
   $effectiveTier,
   $spriteAction,
@@ -142,6 +151,7 @@ export { $contextMenuOpen, $contextMenuPos, closeContextMenu, openContextMenu } 
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
 export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'
 export { useOutfitDesignSession } from './wardrobe/design-session'
+
 export {
   $outfitPolicy,
   $outfits,

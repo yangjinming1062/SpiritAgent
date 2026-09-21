@@ -392,6 +392,40 @@ export const dict: Dictionary = {
         'Let the companion use its current voice for an audio keepsake or add narration to a surprise image or video.'
     },
     persona: {
+      characterCard: {
+        edit: 'Edit',
+        title: 'Character card',
+        description:
+          'Stable features extracted from the confirmed portrait and full-body image. Outfits manage clothes, hairstyle, hair color, makeup and accessories.',
+        portrait: 'Portrait',
+        body: 'Full-body image',
+        portraitFeatures: 'Face and head',
+        bodyFeatures: 'Body features',
+        restore: 'Use extracted value',
+        edited: 'Edited',
+        unknown: 'Not observed or not applicable',
+        analyzing:
+          'Analyzing fixed features from the portrait and full-body image. No field-by-field confirmation needed.',
+        failed: 'Analysis failed. Your confirmed images and published character details are preserved. You can retry.',
+        retry: 'Retry analysis',
+        extract: 'Extract again',
+        reload: 'Reload',
+        saved: 'Saved for future generation. Existing images and videos will stay as they are.',
+        conflict: 'The character card was updated elsewhere. Your changes are preserved. Review before merging.',
+        merge: 'Keep changes with latest version',
+        loadFailed: 'Could not load character card. Please retry.',
+        operationFailed: 'The operation failed. Your changes are preserved.',
+        fields: {
+          head_shape: 'Head shape',
+          facial_features: 'Facial features',
+          facial_surface: 'Facial surface',
+          head_identifiers: 'Distinctive head features',
+          body_shape: 'Body shape',
+          proportions: 'Proportions',
+          limbs_and_appendages: 'Limbs and natural appendages',
+          body_surface: 'Body surface and markings'
+        }
+      },
       title: 'Persona & memory',
       intro: 'Edit the persona and review what the companion remembers — all in one place.',
       sectionTitle: 'Persona',
@@ -400,14 +434,15 @@ export const dict: Dictionary = {
         title: 'Full-body image',
         hint: 'Consistent visual style and a stable idle pose suited to this character’s anatomy and personality. Used for the default video, outfits and scenes.',
         confirmHint:
-          'Confirming locks the identity and starts the default video. The egg remains visible until the video is ready and activates automatically.',
+          'Confirmation starts character analysis, followed by the default video and room. You can continue onboarding.',
         adoptHint:
-          'Adopting confirms this full-body image right away: identity is locked and the default video preparation starts.',
+          'Adopting confirms this full-body image and starts character analysis, followed by the default video and room.',
         empty: 'No full-body image yet. Generate one from the current portrait and persona.',
         loading: 'Preparing the full-body image…',
         referenceLabel: 'User reference image',
         refLabel: 'Reference image (optional, used by Regenerate only)',
-        refHint: 'Adds physique, clothing and pose cues. The confirmed portrait anchors facial identity.',
+        refHint:
+          'Adds physique, clothing and pose cues. The portrait anchors identity; explicit character-card edits take precedence.',
         chooseReference: 'Choose reference image',
         replaceReference: 'Replace reference image',
         removeReference: 'Remove reference image',

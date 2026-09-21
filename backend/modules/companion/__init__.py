@@ -1,3 +1,14 @@
+from .character_card import (
+    BodyFeatures,
+    CharacterCardExtract,
+    CharacterCardResponse,
+    CharacterCardSnapshot,
+    CharacterCardUpdate,
+    CharacterFeatures,
+    CharacterOverrides,
+    CompanionCharacterCard,
+    PortraitFeatures,
+)
 from .journal import (
     CompanionDiaryEntry,
     CompanionMoment,
@@ -35,7 +46,6 @@ from .schemas import (
     CompanionOperationResponse,
     FullbodyAdoptRequest,
     FullbodyConfirmRequest,
-    FullbodyConfirmResponse,
     FullbodyPromptRequest,
     FullbodyReferenceGenerateRequest,
     ImageAdoptRequest,
@@ -92,6 +102,15 @@ from .schemas_video import (
 )
 
 __all__ = [
+    "BodyFeatures",
+    "CharacterCardExtract",
+    "CharacterCardResponse",
+    "CharacterCardSnapshot",
+    "CharacterCardUpdate",
+    "CharacterFeatures",
+    "CharacterOverrides",
+    "CompanionCharacterCard",
+    "PortraitFeatures",
     "COMPANION_CRON_SOURCE_PREFIX",
     "MAX_COMPANION_FAILURES",
     "CompanionIntent",
@@ -132,7 +151,6 @@ __all__ = [
     "DiarySource",
     "FullbodyAdoptRequest",
     "FullbodyConfirmRequest",
-    "FullbodyConfirmResponse",
     "FullbodyPromptRequest",
     "FullbodyReferenceGenerateRequest",
     "ImageAdoptRequest",

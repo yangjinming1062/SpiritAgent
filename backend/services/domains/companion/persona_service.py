@@ -4,7 +4,7 @@ from datetime import date
 from typing import Any
 
 from components import DEFAULT_LANGUAGE, get_logger, resolve_prompt_text, safe_json_loads
-from modules.companion import AvatarAsset, Persona
+from modules.companion import AvatarAsset, CharacterCardSnapshot, Persona
 from prompts.companion import PERSONA_LABELS_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -13,6 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.contracts import MemoryScope
 from services.domains.conversation import ensure_system_conversations_for_user
 from services.domains.memory import extract_user_profile, read_user_profile, record_user_profile
+
+from .character_card import render_character_profile
 
 logger = get_logger(__name__)
 
@@ -168,20 +170,25 @@ async def confirm_portrait(db: AsyncSession, user_id: int) -> Persona:
     return persona
 
 
-def build_system_prompt_extras(persona: Persona | None, *, language: str = DEFAULT_LANGUAGE) -> str:
+def build_system_prompt_extras(
+    persona: Persona | None,
+    *,
+    language: str = DEFAULT_LANGUAGE,
+    character: CharacterCardSnapshot | None = None,
+) -> str:
     """从 persona.definition_json 按当前 session 语言实时渲染角色设定块。"""
     if persona is None or not persona.is_complete:
         return ""
     definition = load_persona_definition(persona)
     if not definition:
         return ""
-    return render_extras(definition, language=language)
+    return render_extras(definition, language=language) + "\n" + render_character_profile(character)
 
 
 def render_extras(definition: dict[str, str], *, language: str = DEFAULT_LANGUAGE) -> str:
     lines = [resolve_prompt_text(PERSONA_LABELS_TEXTS, language)]
     for key in _REQUIRED_FIELDS + _OPTIONAL_FIELDS:
-        if key in definition:
+        if key in definition and key != "appearance":
             label = key.replace("_", " ").capitalize()
             lines.append(f"- **{label}**: {definition[key]}")
     return "\n".join(lines)

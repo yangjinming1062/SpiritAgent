@@ -3,6 +3,7 @@ import {
   $effectiveTier,
   $screenLocked,
   emitVfx,
+  hydrateCharacterCard,
   hydrateVideoPack,
   hydrateWardrobe,
   playSpriteActionSequence,
@@ -69,6 +70,14 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
 
       if (mood) {
         $companionMood.set(mood)
+      }
+
+      break
+    }
+
+    case 'companion.character_card.updated': {
+      if (authed()) {
+        void hydrateCharacterCard().catch(error => log.warn('character-card', 'Refresh failed', error))
       }
 
       break

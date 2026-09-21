@@ -1,8 +1,8 @@
 """视频动作包编排：外观版本 → 动作片段处理 → 不可变包发布 → 激活。
 
 状态与阶段分离（status × stage）逐任务持久化；FFmpeg 等待走工作线程，
-不占数据库长事务。发布与激活共用头像用户级锁：发布凭 reference_hash 拒绝迟到
-结果，新包构建失败不清空旧激活包。
+不占数据库长事务。发布与激活共用头像用户级锁：生成包沿用冻结资料完成，
+自动激活核对参考和角色卡修订；新包构建失败不清空旧激活包。
 
 两条创建入口：
 - 上传导入：`create_pack_from_clips`，用户提供已制作片段（或长视频区间）；
@@ -28,6 +28,7 @@ from components import (
     download_capped,
     get_logger,
     safe_json_loads,
+    track_user_task,
     utc_now,
 )
 from modules.companion import (
@@ -42,7 +43,12 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from services.domains.companion import get_or_create_persona, load_persona_definition
+from services.domains.companion import (
+    character_snapshot_is_current,
+    get_or_create_persona,
+    load_persona_definition,
+    require_character_snapshot,
+)
 from services.infrastructure.assets import (
     save_companion_asset_async,
     signed_companion_asset_url,
@@ -79,6 +85,7 @@ from services.infrastructure.video_processing.quality import select_loop
 
 from ..avatar_service import get_avatar_job_lock, load_avatar_bytes_as_data_uri
 from ..image_generation import ImageGenerationError, generate_images, resolve_image_gen_chain
+from ..visual_identity import align_character_reference, needs_identity_alignment
 from .manifest import (
     MANIFEST_SCHEMA,
     ManifestValidationError,
@@ -309,9 +316,15 @@ async def create_pack_from_reference(
         avatar = (
             await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
         ).scalar_one_or_none()
-        reference_hash = await _reference_hash(outfit, avatar)
-        if source is not None and source.reference_hash != reference_hash:
-            raise VideoPackStateError("外观参考已变更，请生成完整新包")
+        if source is not None and (avatar is None or source.avatar_id != avatar.id):
+            raise VideoPackStateError("角色形象已切换，请生成完整新包")
+        reference_hash = source.reference_hash if source is not None else await _reference_hash(outfit, avatar)
+        source_context = GenerationContext.model_validate_json(source.context_json) if source is not None else None
+        identity = (
+            source_context.identity if source_context is not None else await require_character_snapshot(db, user_id)
+        )
+        if source_context is not None and source_context.reference_alignment != "ready":
+            raise VideoPackStateError("参考图尚未准备完成，请生成完整新包")
         if not force and source is None:
             reusable = (
                 await db.execute(
@@ -321,12 +334,17 @@ async def create_pack_from_reference(
                         CompanionVideoPack.outfit_id == outfit.id,
                         CompanionVideoPack.reference_hash == reference_hash,
                         CompanionVideoPack.status == "ready",
+                        CompanionVideoPack.reference_path != "",
                     )
                     .order_by(CompanionVideoPack.pack_version.desc())
                     .limit(1),
                 )
             ).scalar_one_or_none()
-            if reusable is not None:
+            if (
+                reusable is not None
+                and GenerationContext.model_validate_json(reusable.context_json).identity == identity
+                and await character_snapshot_is_current(db, user_id, identity)
+            ):
                 await _activate_locked(db, reusable)
                 await db.commit()
                 return reusable
@@ -340,12 +358,14 @@ async def create_pack_from_reference(
             require_matting_model()
         except VideoProcessError as exc:
             raise VideoPackStateError(str(exc)) from exc
-        reference_uri = await _process_thread(load_avatar_bytes_as_data_uri, outfit.fullbody_url)
-        if not reference_uri:
-            raise VideoPackStateError("外观参考图不可读")
         if source is not None:
             reference_path = source.reference_path
+            if not _artifact_abs_path(reference_path).is_file():
+                raise VideoPackStateError("该视频包的冻结参考图不可读")
         else:
+            reference_uri = await _process_thread(load_avatar_bytes_as_data_uri, outfit.fullbody_url)
+            if not reference_uri:
+                raise VideoPackStateError("外观参考图不可读")
             reference_data = await _process_thread(base64.b64decode, reference_uri.split(",", 1)[1])
             reference_path = await save_companion_asset_async(
                 reference_data,
@@ -358,13 +378,22 @@ async def create_pack_from_reference(
                 select(CompanionOutfit.id).where(CompanionOutfit.user_id == user_id, CompanionOutfit.active.is_(True)),
             )
         ).scalar_one_or_none()
-        context = GenerationContext(
-            persona_definition=load_persona_definition(persona),
-            personality_tags=safe_json_loads(persona.personality_tags_json or "[]", default=[]),
-            outfit_description=outfit.description or "",
-            feedback=feedback,
-            active_outfit_id=outfit.id if initial_only else active_outfit_id,
-        )
+        if source_context is not None:
+            context = source_context.model_copy(update={"feedback": feedback, "active_outfit_id": active_outfit_id})
+        else:
+            outfit_source = safe_json_loads(outfit.source_json, default={})
+            applied_revision = outfit_source.get("character_card_revision") if isinstance(outfit_source, dict) else None
+            context = GenerationContext(
+                identity=identity,
+                reference_alignment="pending" if needs_identity_alignment(identity, applied_revision) else "ready",
+                persona_definition={
+                    key: value for key, value in load_persona_definition(persona).items() if key != "appearance"
+                },
+                personality_tags=safe_json_loads(persona.personality_tags_json or "[]", default=[]),
+                outfit_description=outfit.description or "",
+                feedback=feedback,
+                active_outfit_id=outfit.id if initial_only else active_outfit_id,
+            )
         pack = await _insert_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
         pack.reference_path = reference_path
         pack.context_json = context.model_dump_json()
@@ -407,7 +436,7 @@ async def create_pack_from_reference(
             db.add(job)
         await db.commit()
         await db.refresh(pack)
-    _kick_generate(pack.id)
+    _kick_generate(pack.id, user_id)
     return pack
 
 
@@ -434,8 +463,13 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionV
         avatar = (
             await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
         ).scalar_one_or_none()
-        if outfit is None or await _reference_hash(outfit, avatar) != pack.reference_hash:
-            raise VideoPackStateError("该视频包对应的参考已变更，请生成完整新包")
+        if outfit is None or avatar is None or pack.avatar_id != avatar.id:
+            raise VideoPackStateError("该视频包对应的角色形象已切换，请生成完整新包")
+        if not _artifact_abs_path(pack.reference_path).is_file():
+            raise VideoPackStateError("该视频包的冻结参考图不可读")
+        context = GenerationContext.model_validate_json(pack.context_json)
+        if context.reference_alignment == "running":
+            raise VideoPackStateError("参考图生成结果未知，请核对后生成完整新包")
         jobs = list(
             (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.pack_id == pack_id))).scalars(),
         )
@@ -446,7 +480,7 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionV
             job.status, job.error = "queued", None
         pack.status, pack.error = "processing", None
         await db.commit()
-    _kick_generate(pack_id)
+    _kick_generate(pack_id, user_id)
     return pack
 
 
@@ -646,10 +680,9 @@ async def _publish_ready(
     cover_path: str | None,
     auto_activate: bool,
 ) -> bool:
-    """manifest 校验、落库发布 ready；迟到构建（参考版本已变化）按失败落库。
+    """校验并发布不可变资产；生成包的迟到结果保留为历史版本。
 
-    自动激活只在生成路径使用：用户显式请求过生成，就绪即翻转为唯一激活包；
-    发布和自动激活在同一事务中提交。"""
+    自动激活核对当前参考与角色卡，和 ready 发布在同一事务提交。"""
     async with SESSION_LOCAL() as db:
         pack = await db.get(CompanionVideoPack, pack_id)
         if pack is None:
@@ -695,7 +728,8 @@ async def _publish_ready_locked(
                 select(AvatarAsset).where(AvatarAsset.user_id == pack.user_id, AvatarAsset.active.is_(True)),
             )
         ).scalar_one_or_none()
-        if outfit is None or await _reference_hash(outfit, avatar) != pack.reference_hash:
+        reference_is_current = outfit is not None and await _reference_hash(outfit, avatar) == pack.reference_hash
+        if not reference_is_current and not pack.reference_path:
             pack.status = "failed"
             pack.error = "外观参考已变更，本次生成结果已过期，请重新生成"
             await _mark_jobs(db, pack.id, status="failed", stage="publish", error=pack.error)
@@ -731,7 +765,7 @@ async def _publish_ready_locked(
             event_type="companion.video.ready",
             payload={"packId": pack.id, "outfitId": pack.outfit_id, "packVersion": pack.pack_version},
         )
-        if auto_activate:
+        if auto_activate and reference_is_current:
             context = GenerationContext.model_validate_json(pack.context_json)
             active_outfit_id = (
                 await db.execute(
@@ -741,7 +775,11 @@ async def _publish_ready_locked(
                     ),
                 )
             ).scalar_one_or_none()
-            if active_outfit_id in (context.active_outfit_id, pack.outfit_id):
+            if active_outfit_id in (context.active_outfit_id, pack.outfit_id) and await character_snapshot_is_current(
+                db,
+                pack.user_id,
+                context.identity,
+            ):
                 await _activate_locked(db, pack)
         await db.commit()
     return True
@@ -829,6 +867,50 @@ async def _video_providers(user_id: int) -> list[tuple[ProviderConfig, VideoGenP
     return providers
 
 
+async def _prepare_pack_identity(pack: CompanionVideoPack, context: GenerationContext) -> GenerationContext:
+    if context.reference_alignment == "ready":
+        return context
+    if context.reference_alignment == "running":
+        raise VideoPackStateError("参考图生成结果未知，请核对后生成完整新包")
+    source = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    context.reference_alignment = "running"
+    async with SESSION_LOCAL() as db:
+        row = await db.get(CompanionVideoPack, pack.id)
+        if row is None or row.status != "processing":
+            raise VideoPackStateError("视频任务已失效")
+        row.context_json = context.model_dump_json()
+        await db.commit()
+    try:
+        path = await align_character_reference(pack.user_id, source, context.identity, context.outfit_description)
+    except ImageGenerationError as exc:
+        if not exc.result_unknown:
+            async with SESSION_LOCAL() as db:
+                row = await db.get(CompanionVideoPack, pack.id)
+                if row is not None and row.status == "processing":
+                    context.reference_alignment = "pending"
+                    row.context_json = context.model_dump_json()
+                    await db.commit()
+        raise
+    previous_path = pack.reference_path
+    try:
+        async with SESSION_LOCAL() as db:
+            row = await db.get(CompanionVideoPack, pack.id)
+            if row is None or row.status != "processing":
+                raise VideoPackStateError("视频任务已失效")
+            context.reference_alignment = "ready"
+            row.reference_path = path
+            row.context_json = context.model_dump_json()
+            await db.commit()
+    except BaseException:
+        unlink_companion_asset(path)
+        raise
+    pack.reference_path = path
+    pack.context_json = context.model_dump_json()
+    # 只有新整包进入此阶段，旧包的共享参考不在此处回收。
+    unlink_companion_asset(previous_path)
+    return context
+
+
 async def _generate_pack(pack_id: int) -> None:
     """成功动作独立落盘；重启及重试不重做已成功动作，不重复提交未知付费请求。"""
     try:
@@ -848,12 +930,14 @@ async def _generate_pack(pack_id: int) -> None:
                 .all()
             )
         context = GenerationContext.model_validate_json(pack.context_json)
+        context = await _prepare_pack_identity(pack, context)
         pending = [job for job in jobs if job.status != "succeeded" and job.status != "failed" and not job.script_json]
         if pending:
             await _emit_pack_event(pack.user_id, "companion.video.progress", {"packId": pack_id, "stage": "script"})
             script = await compose_action_script(
                 pack.user_id,
                 reference_image=await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path)),
+                identity=context.identity,
                 persona_definition=context.persona_definition,
                 personality_tags=context.personality_tags,
                 outfit_description=context.outfit_description,
@@ -935,6 +1019,7 @@ async def _generate_action(pack: CompanionVideoPack, job: CompanionVideoJob) -> 
         )
 
     entry = ActionScriptEntry.model_validate_json(job.script_json or "{}")
+    context = GenerationContext.model_validate_json(pack.context_json)
     if not job.artifact_path:
         if not job.provider_task_id:
             providers = await _video_providers(pack.user_id)
@@ -949,7 +1034,7 @@ async def _generate_action(pack: CompanionVideoPack, job: CompanionVideoJob) -> 
                         raise VideoPackError("动作姿态生成结果未知，请核对后重做此动作")
                     await progress("pose")
                     paths = await generate_images(
-                        build_pose_prompt(entry),
+                        build_pose_prompt(entry, context.identity),
                         user_id=pack.user_id,
                         reference_image=reference_uri,
                         size="1024x1792",
@@ -969,7 +1054,7 @@ async def _generate_action(pack: CompanionVideoPack, job: CompanionVideoJob) -> 
                 submitted.update(provider=provider.provider_name, model=provider.config.model)
                 return await provider.submit(
                     VideoGenRequest(
-                        prompt=build_video_prompt(entry),
+                        prompt=build_video_prompt(entry, context.identity),
                         duration=ACTION_DURATIONS[entry.action],
                         resolution="720p",
                         first_frame_image=pose_uri,
@@ -1097,12 +1182,13 @@ async def _poll_generation(provider: VideoGenProvider, task_id: str) -> VideoJob
         await asyncio.sleep(sleep_for)
 
 
-def _kick_generate(pack_id: int) -> None:
+def _kick_generate(pack_id: int, user_id: int) -> None:
     if pack_id in _GEN_INFLIGHT:
         return
     task = asyncio.create_task(_generate_pack(pack_id), name=f"companion.video.generate.{pack_id}")
     _GEN_TASKS.add(task)
     _GEN_INFLIGHT.add(pack_id)
+    track_user_task(user_id, task, cancel_on_maintenance=False)
 
     def _done(_task: asyncio.Task[None]) -> None:
         _GEN_TASKS.discard(_task)
@@ -1135,7 +1221,7 @@ async def resume_video_generation_jobs() -> None:
             .all()
         )
     for pack in packs:
-        _kick_generate(pack.id)
+        _kick_generate(pack.id, pack.user_id)
 
 
 async def _activate_locked(db: AsyncSession, pack: CompanionVideoPack) -> None:
@@ -1281,6 +1367,7 @@ async def list_pack_responses(db: AsyncSession, user_id: int) -> list[dict]:
         response["can_retry"] = (
             bool(pack.reference_path)
             and pack.status == "failed"
+            and GenerationContext.model_validate_json(pack.context_json).reference_alignment != "running"
             and (any(_can_resume_job(job) for job in pack_jobs) or _can_publish_jobs(pack_jobs))
         )
         response["actions"] = []

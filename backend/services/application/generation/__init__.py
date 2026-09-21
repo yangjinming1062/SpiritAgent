@@ -26,17 +26,17 @@ from .avatar_service import (
     re_sign_bare_path,
     regenerate_avatar,
     regenerate_avatar_from_image,
-    resolve_self_reference_data_uri,
     resolve_uploaded_avatar_path,
     select_avatar,
 )
+from .character_card import drain_character_extractions, resume_character_extractions, schedule_character_extraction
 from .image_generation import (
     ImageGenerationError,
     compose_image_references,
     generate_images,
     resolve_image_gen_chain,
 )
-from .initial_appearance import resume_initial_videos, start_initial_video
+from .initial_appearance import resume_initial_appearance
 from .outfit_service import (
     OutfitDraftExpiredError,
     OutfitError,
@@ -119,10 +119,15 @@ from .video_jobs import (
     get_job,
     resume_pending_video_jobs,
 )
+from .visual_identity import load_self_visual_context, prepare_self_video_reference
 
 __all__ = [
-    "resume_initial_videos",
-    "start_initial_video",
+    "load_self_visual_context",
+    "prepare_self_video_reference",
+    "drain_character_extractions",
+    "resume_character_extractions",
+    "schedule_character_extraction",
+    "resume_initial_appearance",
     "ALLOWED_AVATAR_UPLOAD_MIME_TYPES",
     "AVATAR_JOB_LOCKS",
     "AvatarGenerationError",
@@ -204,7 +209,6 @@ __all__ = [
     "regenerate_avatar_from_image",
     "regenerate_outfit_draft",
     "resolve_image_gen_chain",
-    "resolve_self_reference_data_uri",
     "resolve_uploaded_avatar_path",
     "resume_pending_video_jobs",
     "resume_processing_video_packs",

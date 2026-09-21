@@ -90,6 +90,36 @@ def upgrade() -> None:
     op.create_index(op.f("ix_avatar_assets_active"), "avatar_assets", ["active"], unique=False)
     op.create_index(op.f("ix_avatar_assets_user_id"), "avatar_assets", ["user_id"], unique=False)
     op.create_table(
+        "companion_character_cards",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("avatar_id", sa.Integer(), nullable=False),
+        sa.Column("revision", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("automatic_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("overrides_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("portrait_result_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("body_result_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("extraction_id", sa.String(36), nullable=False),
+        sa.Column("status", sa.String(16), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("portrait_status", sa.String(16), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("body_status", sa.String(16), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("portrait_source_path", sa.String(2048), nullable=False),
+        sa.Column("body_source_path", sa.String(2048), nullable=False),
+        sa.Column("portrait_source_hash", sa.String(64), server_default=sa.text("''"), nullable=False),
+        sa.Column("body_source_hash", sa.String(64), server_default=sa.text("''"), nullable=False),
+        sa.Column("portrait_pending_hash", sa.String(64), server_default=sa.text("''"), nullable=False),
+        sa.Column("body_pending_hash", sa.String(64), server_default=sa.text("''"), nullable=False),
+        sa.Column("error", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["avatar_id"], ["avatar_assets.id"], ondelete="CASCADE"),
+        sa.UniqueConstraint("avatar_id"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index("ix_companion_character_cards_user_id", "companion_character_cards", ["user_id"])
+    op.create_index("ix_companion_character_cards_status", "companion_character_cards", ["status"])
+    op.create_table(
         "companion_outfits",
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("name", sa.String(length=64), nullable=False),
@@ -279,6 +309,7 @@ def upgrade() -> None:
         sa.Column("intent", sa.String(length=16), server_default=sa.text("'decorate'"), nullable=False),
         # generated = AI 生成；user_upload = 用户自备图（等待回传的 pending 行不参与生成恢复）。
         sa.Column("source", sa.String(length=16), server_default=sa.text("'generated'"), nullable=False),
+        sa.Column("character_card_json", sa.Text(), nullable=False),
         sa.Column("brief", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("prompt", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("media_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
@@ -808,6 +839,7 @@ def downgrade() -> None:
         "companion_video_jobs",
         "companion_video_packs",
         "companion_outfits",
+        "companion_character_cards",
         "avatar_assets",
         "conversations",
         "users",

@@ -10,6 +10,10 @@ from modules.auth import User, UserModelConfig
 from modules.companion import (
     COMPANION_CRON_SOURCE_PREFIX,
     AvatarAsset,
+    CharacterCardSnapshot,
+    CharacterFeatures,
+    CharacterOverrides,
+    CompanionCharacterCard,
     CompanionDiaryEntry,
     CompanionIntent,
     CompanionIntentView,
@@ -38,6 +42,7 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
     "conversations": Conversation,
     "user_model_configs": UserModelConfig,
     "avatar_assets": AvatarAsset,
+    "companion_character_cards": CompanionCharacterCard,
     "companion_outfits": CompanionOutfit,
     "companion_room_backdrops": CompanionRoomBackdrop,
     "personas": Persona,
@@ -53,6 +58,7 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
 TABLES = tuple(TABLE_MODELS)
 CONVERSATION_TABLES = frozenset({"conversations", "messages"})
 FOREIGN_KEYS: dict[str, dict[str, str]] = {
+    "companion_character_cards": {"avatar_id": "avatar_assets"},
     "personas": {"active_backdrop_id": "companion_room_backdrops"},
     "cron_jobs": {"conversation_id": "conversations"},
     "companion_moments": {"memory_id": "memories", "session_id": "conversations"},
@@ -60,6 +66,7 @@ FOREIGN_KEYS: dict[str, dict[str, str]] = {
     "messages": {"conversation_id": "conversations"},
 }
 UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
+    "companion_character_cards": ("avatar_id",),
     "personas": (),
     "user_model_configs": (),
     "user_settings": ("setting_key",),
@@ -103,6 +110,10 @@ async def serialize_rows(
                     payload[col] = ensure_utc(value).isoformat()
                 elif isinstance(value, date):
                     payload[col] = value.isoformat()
+            if table == "companion_character_cards":
+                payload["portrait_result_json"] = payload["body_result_json"] = "{}"
+                payload["portrait_pending_hash"] = payload["body_pending_hash"] = ""
+                payload["portrait_source_path"] = payload["body_source_path"] = ""
             if table == "memories" and payload.get("embedding") is not None:
                 payload["embedding"] = list(map(float, payload["embedding"]))
             result.append(payload)
@@ -255,6 +266,21 @@ def _build_payload(
         ):
             raise ValueError(f"Missing {ref_table} reference in {table}.{key}")
         payload[key] = mapped
+    if table == "companion_character_cards":
+        if payload.get("avatar_id") is None:
+            raise ValueError("Character card avatar is missing from backup")
+        revision = payload.get("revision")
+        if not isinstance(revision, int) or isinstance(revision, bool) or revision < 0:
+            raise ValueError("Invalid character card revision")
+        payload["automatic_json"] = CharacterFeatures.model_validate_json(payload["automatic_json"]).model_dump_json()
+        payload["overrides_json"] = CharacterOverrides.model_validate_json(payload["overrides_json"]).model_dump_json(
+            exclude_none=True,
+        )
+        payload["portrait_result_json"] = payload["body_result_json"] = "{}"
+        payload["portrait_pending_hash"] = payload["body_pending_hash"] = ""
+        payload["portrait_source_path"] = payload["body_source_path"] = ""
+        payload["status"] = payload["portrait_status"] = payload["body_status"] = "ready" if revision else "failed"
+        payload["error"] = None if revision else "恢复的角色资料尚未完成分析，请重试"
     if table == "messages" and payload.get("conversation_id") is None:
         raise ValueError("Message conversation is missing from backup")
     if table == "conversations":
@@ -314,6 +340,11 @@ def _build_payload(
         payload["reply_json"] = reply.model_dump_json()
         payload["content"] = reply.dialogue()
     if table == "companion_room_backdrops":
+        snapshot = CharacterCardSnapshot.model_validate_json(payload["character_card_json"])
+        avatar_id = id_map.get("avatar_assets", {}).get(str(snapshot.avatar_id))
+        if avatar_id is None:
+            raise ValueError("Room character reference is missing from backup")
+        payload["character_card_json"] = snapshot.model_copy(update={"avatar_id": int(avatar_id)}).model_dump_json()
         payload["outfit_fingerprint"] = str(
             id_map.get("companion_outfits", {}).get(str(raw.get("outfit_fingerprint")), ""),
         )

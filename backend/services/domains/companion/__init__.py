@@ -3,6 +3,21 @@
 from .affect_check import AffectCheckResult, check_affect
 from .affect_emit import emit_companion_affect, emit_companion_message
 from .appearance import build_outfit_extras
+from .character_card import (
+    CharacterCardConflictError,
+    CharacterCardNotReadyError,
+    character_card_response,
+    character_snapshot_is_current,
+    emit_character_card_updated,
+    get_character_card,
+    load_character_snapshot,
+    register_character_card,
+    render_character_identity,
+    render_character_profile,
+    request_character_extraction,
+    require_character_snapshot,
+    update_character_card,
+)
 from .disturbance import (
     ALLOWED_TIERS,
     DEFAULT_TIER,
@@ -66,6 +81,19 @@ from .voice_catalog import (
 )
 
 __all__ = [
+    "CharacterCardConflictError",
+    "CharacterCardNotReadyError",
+    "character_card_response",
+    "character_snapshot_is_current",
+    "emit_character_card_updated",
+    "get_character_card",
+    "load_character_snapshot",
+    "register_character_card",
+    "render_character_identity",
+    "render_character_profile",
+    "request_character_extraction",
+    "require_character_snapshot",
+    "update_character_card",
     "can_start_companion_turn",
     "clear_user_proactive_state",
     "get_personality_tags",

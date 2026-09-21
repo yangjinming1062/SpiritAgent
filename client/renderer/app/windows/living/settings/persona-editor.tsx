@@ -113,7 +113,6 @@ export function PersonaSection(): React.JSX.Element {
               {t.editAction}
             </button>
           </div>
-          {persona?.appearance ? <p className="text-[11px] leading-relaxed text-muted">{persona.appearance}</p> : null}
         </div>
       </section>
     )

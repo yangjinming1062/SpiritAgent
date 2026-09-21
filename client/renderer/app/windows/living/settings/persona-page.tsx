@@ -9,6 +9,7 @@ import { BTN_SUBTLE, HINT_TEXT, SECTION_TITLE, SettingsSectionIntro } from '@/sh
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
+import { CharacterCardSection } from './character-card-section'
 import { MemorySection } from './memory-section'
 import { PersonaSection } from './persona-editor'
 import { PersonaRetune } from './persona-retune'
@@ -71,6 +72,7 @@ export function PersonaPage(): React.ReactElement {
       <div className="space-y-6">
         <SettingsSectionIntro hint={t.intro} title={t.title} />
         <PersonaSection />
+        {avatarId != null && <CharacterCardSection avatarId={avatarId} key={`card-${avatarId}`} />}
         {avatarId != null && <FullbodyReferencePanel avatarId={avatarId} key={avatarId} />}
 
         {persona?.name && (

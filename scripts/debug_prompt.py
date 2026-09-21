@@ -51,7 +51,7 @@ async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -
     from components import SESSION_LOCAL
     from modules.companion import Persona
     from services.contracts.memory import MemoryScope
-    from services.domains.companion import build_outfit_extras, build_system_prompt_extras
+    from services.domains.companion import build_outfit_extras, build_system_prompt_extras, load_character_snapshot
     from services.domains.conversation import validate_memory_scope
     from services.domains.memory import (
         build_user_profile_extras,
@@ -67,7 +67,11 @@ async def _load_from_db(user_id: int, *, preset_id: str, language: str = "zh") -
         persona = (
             await db.scalar(select(Persona).where(Persona.user_id == user_id)) if preset_id == "companion" else None
         )
-        persona_extras = build_system_prompt_extras(persona, language=language) if persona else ""
+        persona_extras = build_system_prompt_extras(
+            persona,
+            language=language,
+            character=await load_character_snapshot(db, user_id) if persona is not None else None,
+        )
 
         user_profile_extras = await build_user_profile_extras(db, scope, language=language)
         outfit_extras = (

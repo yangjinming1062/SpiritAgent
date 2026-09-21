@@ -9,12 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.assets import asset_store, save_companion_asset_async, sniff_media_ext
 from services.infrastructure.llm import (
+    FailoverReason,
     ImageGenProvider,
     ImageGenRequest,
     ImageGenResult,
     MissingLlmConfigError,
     ProviderConfig,
     ServiceType,
+    classify_api_error,
     execute_with_fallback,
     resolve,
     resolve_provider_chain,
@@ -29,9 +31,10 @@ _EXT_BY_MIME = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "
 class ImageGenerationError(Exception):
     """生图执行失败；str(exc) 可给工具 JSON / 调用方展示。"""
 
-    def __init__(self, message: str, *, internal: str | None = None) -> None:
+    def __init__(self, message: str, *, internal: str | None = None, result_unknown: bool = False) -> None:
         super().__init__(message)
         self.internal = internal or message
+        self.result_unknown = result_unknown
 
 
 async def resolve_image_gen_chain(
@@ -155,7 +158,10 @@ async def generate_images(
         raise ImageGenerationError("图片生成服务未配置", internal=str(e)) from e
     except Exception as e:
         logger.exception("image generation failed", extra={"user_id": user_id})
-        raise ImageGenerationError("图片生成失败，请稍后重试", internal=str(e)) from e
+        classified = getattr(e, "classified", None) or classify_api_error(e)
+        unknown = classified.reason == FailoverReason.result_unknown
+        message = "图片生成结果未知，请核对供应商任务后再决定是否重做" if unknown else "图片生成失败，请稍后重试"
+        raise ImageGenerationError(message, internal=str(e), result_unknown=unknown) from e
 
     if not result.images:
         raise ImageGenerationError("图片生成服务返回空结果")
@@ -188,11 +194,11 @@ async def generate_images(
                     ext=ext,
                 )
                 urls.append(public_url)
-    except Exception as exc:
+    except BaseException as exc:
         if as_user_assets:
             for url in urls:
                 await asyncio.to_thread(asset_store.unlink_companion_asset, url)
-        if isinstance(exc, ImageGenerationError):
+        if not isinstance(exc, Exception) or isinstance(exc, ImageGenerationError):
             raise
         logger.warning("generated image storage failed", extra={"user_id": user_id}, exc_info=True)
         raise ImageGenerationError("生成图片无法保存，请稍后重试", internal=str(exc)) from exc

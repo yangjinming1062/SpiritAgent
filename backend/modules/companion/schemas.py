@@ -50,10 +50,6 @@ class FullbodyConfirmRequest(BaseModel):
     expected_url: str = Field(min_length=1, max_length=2048)
 
 
-class FullbodyConfirmResponse(AvatarAssetResponse):
-    video_error: str | None = None
-
-
 class FullbodyPromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

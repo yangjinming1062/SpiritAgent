@@ -2,13 +2,15 @@
 
 编排形象、外观、房间和媒体生成，管理任务互斥、提交、落库与激活；供应商传输归 infrastructure。参考来源、产物和跨端恢复见 [PIPELINE](../../../../docs/PIPELINE.md)。
 
-入口：[初始外观](initial_appearance.py)、[形象](avatar_service.py)、[外观](outfit_service.py)、[房间](room_backdrop_service.py)、[视频包](video/)、[聊天视频](video_jobs.py)。
+入口：[角色卡分析](character_card.py)、[出镜身份装配](visual_identity.py)、[初始外观](initial_appearance.py)、[形象](avatar_service.py)、[外观](outfit_service.py)、[房间](room_backdrop_service.py)、[视频包](video/)、[聊天视频](video_jobs.py)。
 
 ## 事务与任务
 
 头像生成、全身生成、选择和确认共用用户级锁。供应商等待期间结束读事务或关闭会话，写入前核对当前身份、状态和源路径，避免迟到结果覆盖其他操作。状态与刷新事件同事务提交；成功后清理旧图，失败或冲突时回收未采纳产物。
 
 草稿转存失败须可重试；只有所有图片均为过期草稿的头像行才可清理，正式头像或全身参考不能连带删除。读取后脱离 ORM 再签名，避免把临时 URL 写回资产列。
+
+角色卡提取任务纳入用户维护及进程启停管理；发布、重试与生成快照约束见 [PIPELINE](../../../../docs/PIPELINE.md#113-角色卡与固定外形)。
 
 默认外观、视频启动标记与启动错误使用 ORM 显式字段，启动标记与首个视频包同事务写入。外观描述任务按用户及外观合并在途请求，停机时取消并等待退出。
 

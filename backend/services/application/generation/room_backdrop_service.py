@@ -36,6 +36,7 @@ from modules.companion import (
     BackdropPolicy,
     BackdropSource,
     BackdropStatus,
+    CharacterCardSnapshot,
     CompanionOutfit,
     CompanionRoomBackdrop,
     MomentKind,
@@ -47,7 +48,14 @@ from prompts.generation import ROOM_BRIEF_SYSTEM
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.companion import load_persona_definition
+from services.domains.companion import (
+    CharacterCardNotReadyError,
+    character_snapshot_is_current,
+    load_character_snapshot,
+    load_persona_definition,
+    render_character_identity,
+    require_character_snapshot,
+)
 from services.domains.journal import create_user_moment
 from services.infrastructure.assets import asset_store
 from services.infrastructure.llm import call_llm_once, resolve_reference_bytes, resolve_user_llm_config
@@ -321,7 +329,11 @@ async def reconcile_room_outfit(user_id: int) -> RoomOutfitReconcileResult:
                     backdrop_id=pending.id,
                     reason="pending user upload in progress",
                 )
-            if pending.outfit_fingerprint == current_fingerprint:
+            if pending.outfit_fingerprint == current_fingerprint and await character_snapshot_is_current(
+                db,
+                user_id,
+                CharacterCardSnapshot.model_validate_json(pending.character_card_json),
+            ):
                 return RoomOutfitReconcileResult(
                     "rebuild_scheduled",
                     backdrop_id=pending.id,
@@ -343,7 +355,11 @@ async def reconcile_room_outfit(user_id: int) -> RoomOutfitReconcileResult:
                 .limit(1),
             )
         ).scalar_one_or_none()
-        if candidate is not None:
+        if candidate is not None and await character_snapshot_is_current(
+            db,
+            user_id,
+            CharacterCardSnapshot.model_validate_json(candidate.character_card_json),
+        ):
             if pending is not None:
                 await _supersede_pending(db, user_id)
                 _cancel_inflight_task(user_id)
@@ -367,6 +383,13 @@ async def reconcile_room_outfit(user_id: int) -> RoomOutfitReconcileResult:
     except RoomBackdropError as exc:
         return RoomOutfitReconcileResult("skipped", reason=str(exc))
     return RoomOutfitReconcileResult("rebuild_scheduled", backdrop_id=row.id)
+
+
+async def _room_identity(db: AsyncSession, user_id: int) -> CharacterCardSnapshot:
+    try:
+        return await require_character_snapshot(db, user_id)
+    except CharacterCardNotReadyError as exc:
+        raise RoomBackdropStateError(str(exc)) from exc
 
 
 async def _current_outfit_fingerprint(db: AsyncSession, user_id: int) -> str:
@@ -432,6 +455,12 @@ async def schedule_room_generation(
     if reference_image is not None:
         reference_image = await _prepare_reference_image(reference_image)
     async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
+        if origin == BackdropOrigin.ONBOARDING.value:
+            existing = await db.scalar(
+                select(CompanionRoomBackdrop.id).where(CompanionRoomBackdrop.user_id == user_id).limit(1),
+            )
+            if existing is not None:
+                raise RoomBackdropStateError("初始房间已准备，不重复创建")
         if origin == BackdropOrigin.LLM.value:
             await _consume_llm_quota(db, user_id)
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
@@ -439,6 +468,7 @@ async def schedule_room_generation(
             raise RoomBackdropStateError("persona not ready; complete onboarding first")
         if origin in _AUTONOMOUS_ORIGINS and persona.backdrop_policy == BackdropPolicy.LOCKED.value:
             raise RoomBackdropLockedError("房间已被你锁住，想换就解开再说。")
+        identity = await _room_identity(db, user_id)
         await _supersede_pending(db, user_id)
         outfit_fingerprint = await _current_outfit_fingerprint(db, user_id)
         row = CompanionRoomBackdrop(
@@ -447,6 +477,7 @@ async def schedule_room_generation(
             origin=origin,
             intent=intent,
             outfit_fingerprint=outfit_fingerprint,
+            character_card_json=identity.model_dump_json(),
         )
         db.add(row)
         await db.commit()
@@ -492,6 +523,7 @@ async def schedule_room_prompt(
         if persona is None or not persona.is_complete:
             raise RoomBackdropStateError("persona not ready; complete onboarding first")
         definition = load_persona_definition(persona)
+        identity = await _room_identity(db, user_id)
         avatar = (
             await db.execute(
                 select(AvatarAsset).where(
@@ -518,6 +550,7 @@ async def schedule_room_prompt(
             intent=intent,
             outfit_fingerprint=await _current_outfit_fingerprint(db, user_id),
             source=BackdropSource.USER_UPLOAD.value,
+            character_card_json=identity.model_dump_json(),
         )
         db.add(row)
         await db.commit()
@@ -529,7 +562,7 @@ async def schedule_room_prompt(
     prompt = build_room_prompt(
         RoomPromptContext(
             species=definition.get("biological_type", ""),
-            appearance=definition.get("appearance", ""),
+            identity=render_character_identity(identity),
             intent=intent,
             outfit_description=await _current_outfit_description(user_id),
             brief=brief,
@@ -572,6 +605,7 @@ async def adopt_room_backdrop(
         raise RoomBackdropError("图片无法读取，请换一张有效的 PNG / JPEG / WebP / GIF 图片") from exc
 
     async with _backdrop_lock(user_id), SESSION_LOCAL() as db:
+        identity = await _room_identity(db, user_id)
         if backdrop_id is None:
             persona = await db.scalar(select(Persona).where(Persona.user_id == user_id))
             if persona is None or not persona.is_complete:
@@ -583,6 +617,7 @@ async def adopt_room_backdrop(
                 intent=BackdropIntent.REBUILD.value,
                 outfit_fingerprint=await _current_outfit_fingerprint(db, user_id),
                 source=BackdropSource.USER_UPLOAD.value,
+                character_card_json=identity.model_dump_json(),
             )
         else:
             row = await db.scalar(
@@ -767,7 +802,15 @@ async def resume_room_generation(
 
 
 async def schedule_initial_room(user_id: int) -> CompanionRoomBackdrop | None:
-    """全身立绘确认后调用；与模型/视频资产生成并行，不挡问候。"""
+    """完整角色卡发布后补首次房间；已有任务或房间不重复生成。"""
+    async with SESSION_LOCAL() as db:
+        if await load_character_snapshot(db, user_id) is None:
+            return None
+        existing = await db.scalar(
+            select(CompanionRoomBackdrop.id).where(CompanionRoomBackdrop.user_id == user_id).limit(1),
+        )
+        if existing is not None:
+            return None
     try:
         return await schedule_room_generation(
             user_id,
@@ -997,7 +1040,7 @@ async def _do_one_attempt(
     prompt = build_room_prompt(
         RoomPromptContext(
             species=definition.get("biological_type", ""),
-            appearance=definition.get("appearance", ""),
+            identity=render_character_identity(CharacterCardSnapshot.model_validate_json(backdrop.character_card_json)),
             intent=intent,
             outfit_description=outfit_description,
             brief=brief,
@@ -1149,9 +1192,18 @@ async def _finalize_ready_row(
         is_same_outfit = (
             not current_fingerprint or not row.outfit_fingerprint or row.outfit_fingerprint == current_fingerprint
         )
-        should_activate = is_same_outfit and (
-            origin not in _AUTONOMOUS_ORIGINS
-            or (persona is not None and persona.backdrop_policy != BackdropPolicy.LOCKED.value)
+        same_identity = await character_snapshot_is_current(
+            db,
+            user_id,
+            CharacterCardSnapshot.model_validate_json(row.character_card_json),
+        )
+        should_activate = (
+            same_identity
+            and is_same_outfit
+            and (
+                origin not in _AUTONOMOUS_ORIGINS
+                or (persona is not None and persona.backdrop_policy != BackdropPolicy.LOCKED.value)
+            )
         )
         if should_activate:
             if persona is None:

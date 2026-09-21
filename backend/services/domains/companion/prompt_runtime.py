@@ -19,6 +19,7 @@ from services.infrastructure.llm import (
 
 from .actions import DEFAULT_ACTIONS, NON_LLM_ACTIONS
 from .appearance import build_outfit_extras
+from .character_card import load_character_snapshot, render_character_profile
 from .emotions import BUILTIN_EMOTIONS
 from .persona_service import render_extras
 
@@ -67,7 +68,9 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         available_actions = sorted(DEFAULT_ACTIONS - NON_LLM_ACTIONS)
         return CompanionPromptContext(
             language=language,
-            persona_extras=render_extras(definition, language=language),
+            persona_extras=render_extras(definition, language=language)
+            + "\n"
+            + render_character_profile(await load_character_snapshot(db, user_id)),
             current_mood=persona.current_mood or "",
             outfit_block=await build_outfit_extras(db, user_id, language=language),
             memories_block=await format_memories_block(db, MemoryScope(user_id, "companion")),

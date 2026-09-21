@@ -4,7 +4,7 @@ import json
 from typing import Literal
 
 from components import parse_llm_json
-from modules.companion import REQUIRED_VIDEO_ACTIONS
+from modules.companion import REQUIRED_VIDEO_ACTIONS, CharacterCardSnapshot
 from prompts.generation import (
     VIDEO_ACTION_POSE_TEMPLATE,
     VIDEO_ACTION_SCRIPT_INSTRUCTIONS,
@@ -14,6 +14,7 @@ from prompts.generation import (
 )
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from services.domains.companion import render_character_identity
 from services.infrastructure.llm import vision_chat
 
 VideoAction = Literal["idle", "walk_left", "walk_right", "drag"]
@@ -42,6 +43,7 @@ async def compose_action_script(
     user_id: int,
     *,
     reference_image: str,
+    identity: CharacterCardSnapshot,
     persona_definition: dict[str, str],
     personality_tags: list[str],
     outfit_description: str,
@@ -66,7 +68,7 @@ async def compose_action_script(
     for _attempt in range(2):
         raw = await vision_chat(
             user_id,
-            VIDEO_ACTION_SCRIPT_INSTRUCTIONS,
+            VIDEO_ACTION_SCRIPT_INSTRUCTIONS + "\n" + render_character_identity(identity),
             json.dumps(payload, ensure_ascii=False),
             reference_images=(reference_image,),
         )
@@ -82,7 +84,7 @@ async def compose_action_script(
     raise VideoScriptError("动作脚本生成失败，请重试") from ValueError(last_error)
 
 
-def build_video_prompt(entry: ActionScriptEntry) -> str:
+def build_video_prompt(entry: ActionScriptEntry, identity: CharacterCardSnapshot) -> str:
     prompt = VIDEO_PROMPT_SKELETON.format(
         action=VIDEO_ACTION_SEMANTICS[entry.action],
         motion=entry.motion_prompt,
@@ -90,8 +92,12 @@ def build_video_prompt(entry: ActionScriptEntry) -> str:
     )
     if entry.action == "idle":
         prompt += "\n\n" + VIDEO_IDLE_MOTION_CONSTRAINTS
-    return prompt
+    return prompt + "\n" + render_character_identity(identity)
 
 
-def build_pose_prompt(entry: ActionScriptEntry) -> str:
-    return VIDEO_ACTION_POSE_TEMPLATE.format(action=VIDEO_ACTION_SEMANTICS[entry.action], pose=entry.pose_prompt)
+def build_pose_prompt(entry: ActionScriptEntry, identity: CharacterCardSnapshot) -> str:
+    return (
+        VIDEO_ACTION_POSE_TEMPLATE.format(action=VIDEO_ACTION_SEMANTICS[entry.action], pose=entry.pose_prompt)
+        + "\n"
+        + render_character_identity(identity)
+    )

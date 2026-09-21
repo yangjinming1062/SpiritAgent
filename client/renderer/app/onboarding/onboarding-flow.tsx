@@ -255,15 +255,12 @@ const QUESTIONS: readonly Question[] = [
   }
 ]
 
-// 这些字段的值会驱动模型，因此用户在确认头像后不能再改。
-// 题面旁边会渲染一个红色 `*`，向导顶部还有 banner 提示用户这一限制。
-const LOCKED_FIELD_KEYS: ReadonlySet<QKey> = new Set(['biological_type', 'gender', 'appearance'])
+// 确认全身形象后固定；外形细节由角色卡维护。
+const LOCKED_FIELD_KEYS: ReadonlySet<QKey> = new Set(['biological_type', 'gender'])
 
-// 锁定字段 → 字段名（DESIGN §5.4 横幅按字段聚焦提示）。
 const LOCKED_FIELD_LABELS: Partial<Record<QKey, string>> = {
   biological_type: '物种',
-  gender: '性别',
-  appearance: '基础外貌'
+  gender: '性别'
 }
 
 // 分段边界由 ``voice`` 这道题的位置决定——之前全是角色子阶段，
@@ -493,8 +490,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   // 失败提示挂在头像面板上——表单区被它压在下面。
   const [portraitPanelHint, setPortraitPanelHint] = useState<string | null>(null)
   const [avatarSelfSourceOpen, setAvatarSelfSourceOpen] = useState(false)
-
-  const [initialVideoError, setInitialVideoError] = useState<string | null>(null)
 
   // 身份参考图持久化为草稿，供引导重启恢复。
   const [refImage, setRefImage] = useState<PickedImage | null>(null)
@@ -1175,7 +1170,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       id: number
       asset_url: string
       seed_fullbody_url: string
-      video_error?: string | null
     }>({
       path: `/api/companion/avatar/${activeAvatarId}/fullbody/confirm`,
       method: 'POST',
@@ -1198,7 +1192,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return
     }
 
-    setInitialVideoError(res.video_error || null)
     setImageSealed(true)
     setPhase('voice')
     setVoiceStage('describe')
@@ -1663,12 +1656,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               onBack={onBack}
               onContinue={confirmFullbody}
             />
-          )}
-
-          {initialVideoError && (
-            <p className="text-xs text-rose-300/90" role="status">
-              默认外观已保存，视频尚未开始生成：{initialVideoError}。完成引导后可在外观页重试。
-            </p>
           )}
 
           {phase === 'voice' && voiceStage === 'catalog' && voice && (

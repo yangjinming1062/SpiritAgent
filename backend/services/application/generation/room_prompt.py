@@ -14,7 +14,6 @@ from modules.companion import BackdropIntent
 from prompts.generation import (
     HARD_RULES_ZH,
     INTENT_LIGHTING,
-    ROOM_APPEARANCE_TEMPLATE,
     ROOM_BRIEF_TEMPLATE,
     ROOM_KEEP_OUTFIT_TEMPLATE,
     ROOM_LIGHTING_TEMPLATE,
@@ -28,7 +27,7 @@ from prompts.generation import (
 @dataclass(frozen=True)
 class RoomPromptContext:
     species: str
-    appearance: str
+    identity: str
     intent: BackdropIntent | str
     outfit_description: str = ""
     brief: str = ""
@@ -42,15 +41,14 @@ def _prompt_clause(value: str) -> str:
 
 
 def build_room_prompt(ctx: RoomPromptContext) -> str:
-    """角色图确定外貌，场景图提供环境与所需姿势；当前着装描述优先于图片中的穿着。"""
+    """角色卡与角色图共同确定身份；场景、姿势和当前造型分别装配。"""
     intent_value = ctx.intent.value if isinstance(ctx.intent, BackdropIntent) else str(ctx.intent)
     lighting = INTENT_LIGHTING.get(intent_value, INTENT_LIGHTING["decorate"])
     species = (ctx.species or "").strip()
     reference = "图 1" if ctx.has_reference_image else "参考图"
     parts = [ROOM_SCENE_TEMPLATE.format(reference=reference, species=species)]
-    appearance = _prompt_clause(ctx.appearance or "")
-    if appearance:
-        parts.append(ROOM_APPEARANCE_TEMPLATE.format(appearance=appearance))
+    if ctx.identity:
+        parts.append(ctx.identity)
     if ctx.has_reference_image:
         parts.append(ROOM_SCENE_REFERENCE)
     outfit = _prompt_clause(ctx.outfit_description or "")

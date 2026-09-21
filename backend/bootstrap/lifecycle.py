@@ -24,11 +24,13 @@ from services.adapters.scheduler import drain as drain_cron
 from services.adapters.scheduler import start_scheduler, stop_scheduler
 from services.application.configuration import load_and_apply_system_settings
 from services.application.generation import (
+    drain_character_extractions,
     drain_outfit_descriptions,
     drain_room_backdrop_jobs,
     drain_video_jobs,
     drain_video_pack_generation,
-    resume_initial_videos,
+    resume_character_extractions,
+    resume_initial_appearance,
     resume_pending_video_jobs,
     resume_processing_video_packs,
     resume_video_generation_jobs,
@@ -81,7 +83,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     await resume_video_generation_jobs()
     # 视频包上传导入：无可续跑句柄的 processing 行按失败落库并广播。
     await resume_processing_video_packs()
-    await resume_initial_videos()
+    await resume_character_extractions()
+    await resume_initial_appearance()
 
     async def _cleanup_loop():
         while True:
@@ -107,6 +110,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         await asyncio.gather(
             drain_cron(),
             drain_persona_background(),
+            drain_character_extractions(),
             drain_outfit_descriptions(),
             drain_room_backdrop_jobs(),
             drain_video_jobs(),

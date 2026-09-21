@@ -32,6 +32,7 @@ from services.domains.companion import (
     build_system_prompt_extras,
     get_disturbance_tier,
     is_work_preset,
+    load_character_snapshot,
 )
 from services.domains.configuration import DEFAULT_CONFIG
 from services.domains.conversation import (
@@ -489,7 +490,11 @@ async def build_turn_inputs(
         model=model_name,
         client_context=_merge_client_context(session_client_context, req.client_context),
         identity_prompt=identity_prompt,
-        persona_extras=build_system_prompt_extras(persona, language=session_lang),
+        persona_extras=build_system_prompt_extras(
+            persona,
+            language=session_lang,
+            character=await load_character_snapshot(db, user_id) if persona is not None else None,
+        ),
         user_profile_extras=user_profile_extras,
         outfit_extras=outfit_extras,
         background_memory_extras=background_memory_extras,

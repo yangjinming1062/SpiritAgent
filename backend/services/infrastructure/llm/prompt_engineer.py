@@ -158,11 +158,12 @@ async def describe_character_form(
     personality: str,
     feedback: str = "",
     reference_images: tuple[str, ...],
+    identity: str = "",
 ) -> str:
     """视觉模型根据开放描述与实际参考判断材质、结构和稳定待机姿态。"""
     return await vision_chat(
         user_id,
-        CHARACTER_FORM_INSTRUCTIONS,
+        CHARACTER_FORM_INSTRUCTIONS + ("\n\n" + identity if identity else ""),
         json.dumps(
             {
                 "biological_type": species,
@@ -182,7 +183,7 @@ async def build_outfit_prompt(
     reference_image: str,
     species: str,
     feedback: str,
-    appearance: str = "",
+    identity: str,
     personality: str = "",
     canvas_aspect: str | None = None,
 ) -> str:
@@ -190,7 +191,8 @@ async def build_outfit_prompt(
     direction = await describe_character_form(
         user_id,
         species=species,
-        appearance=appearance,
+        appearance="",
+        identity=identity,
         personality=personality,
         feedback=feedback,
         reference_images=(reference_image,),
@@ -199,6 +201,7 @@ async def build_outfit_prompt(
         (
             FULLBODY_REWRITE_LEAD,
             FULLBODY_PRESERVE_CHARACTER,
+            identity,
             CHARACTER_VISUAL_STYLE,
             f"画幅比例 {canvas_aspect}；{FULLBODY_FRAME}" if canvas_aspect else FULLBODY_FRAME,
             direction,

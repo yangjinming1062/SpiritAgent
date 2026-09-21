@@ -10,10 +10,12 @@ from modules.companion import (
     AvatarGenerateRequest,
     AvatarHistoryResponse,
     AvatarPromptRequest,
+    CharacterCardExtract,
+    CharacterCardResponse,
+    CharacterCardUpdate,
     CompanionOperationResponse,
     FullbodyAdoptRequest,
     FullbodyConfirmRequest,
-    FullbodyConfirmResponse,
     FullbodyPromptRequest,
     FullbodyReferenceGenerateRequest,
     ImageAdoptRequest,
@@ -84,17 +86,22 @@ from services.application.generation import (
     regenerate_outfit_draft,
     resolve_uploaded_avatar_path,
     retry_video_pack,
-    schedule_initial_room,
+    schedule_character_extraction,
     select_avatar,
     set_outfit_policy,
-    start_initial_video,
 )
 from services.domains.companion import (
+    CharacterCardConflictError,
+    CharacterCardNotReadyError,
     PersonaValidationError,
+    character_card_response,
     confirm_portrait,
+    get_character_card,
     get_onboarding_state,
     get_or_create_persona,
+    request_character_extraction,
     schedule_personality_tag_refresh,
+    update_character_card,
     update_persona,
 )
 from services.infrastructure.assets import (
@@ -117,6 +124,45 @@ async def get_onboarding_state_route(
 ) -> OnboardingStateResponse:
     result = await get_onboarding_state(db, user.id)
     return OnboardingStateResponse(**result)
+
+
+@router.get("/character-card", response_model=CharacterCardResponse | None)
+async def get_character_card_route(user: CurrentUser, db: DbSession) -> CharacterCardResponse | None:
+    card = await get_character_card(db, user.id)
+    return character_card_response(card) if card is not None else None
+
+
+@router.patch("/character-card", response_model=CharacterCardResponse)
+async def patch_character_card_route(
+    body: CharacterCardUpdate,
+    user: CurrentUser,
+    db: DbSession,
+) -> CharacterCardResponse:
+    try:
+        return await update_character_card(db, user.id, body)
+    except (CharacterCardConflictError, CharacterCardNotReadyError) as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
+
+
+@router.post("/character-card/extract", response_model=CharacterCardResponse)
+@limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
+async def extract_character_card_route(
+    request: Request,
+    body: CharacterCardExtract,
+    user: CurrentUser,
+    db: DbSession,
+) -> CharacterCardResponse:
+    try:
+        result = await request_character_extraction(
+            db,
+            user.id,
+            expected_avatar_id=body.expected_avatar_id,
+            expected_revision=body.expected_revision,
+        )
+    except (CharacterCardConflictError, CharacterCardNotReadyError) as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
+    schedule_character_extraction(user.id)
+    return result
 
 
 @router.get("/persona", response_model=PersonaResponse)
@@ -334,6 +380,8 @@ async def post_fullbody_reference(
         raise HTTPException(status_code=404, detail={"error": str(exc)})
     except AvatarSourceUnreadableError as exc:
         raise HTTPException(status_code=409, detail={"error": str(exc)})
+    except CharacterCardNotReadyError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
     except VisualReasoningError as exc:
         raise HTTPException(status_code=502, detail={"error": str(exc)})
     except FullbodyGenerationError as exc:
@@ -349,28 +397,26 @@ async def post_fullbody_reference(
     return avatar_response(asset)
 
 
-@router.post("/avatar/{avatar_id}/fullbody/confirm", response_model=FullbodyConfirmResponse)
+@router.post("/avatar/{avatar_id}/fullbody/confirm", response_model=AvatarAssetResponse)
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_confirm(
     request: Request,
     avatar_id: int,
     body: FullbodyConfirmRequest,
     user: CurrentUser,
-) -> FullbodyConfirmResponse:
+) -> AvatarAssetResponse:
     try:
         asset = await confirm_fullbody_seed(user.id, avatar_id=avatar_id, expected_url=body.expected_url)
     except AvatarGenerationError as exc:
         raise _avatar_http_error(exc)
-    video_error = await start_initial_video(user.id)
-    try:
-        await schedule_initial_room(user.id)
-    except Exception:
-        logger.warning("initial room scheduling failed", extra={"user_id": user.id}, exc_info=True)
-    return FullbodyConfirmResponse(**avatar_response(asset).model_dump(), video_error=video_error)
+    schedule_character_extraction(user.id)
+    return avatar_response(asset)
 
 
 def _avatar_http_error(exc: AvatarGenerationError | VisualReasoningError) -> HTTPException:
     """自备图提示词/采纳端点共用的错误映射：语义与对应生成端点一致。"""
+    if isinstance(exc, CharacterCardNotReadyError):
+        return HTTPException(status_code=409, detail={"error": str(exc)})
     if isinstance(exc, VisualReasoningError):
         return HTTPException(status_code=502, detail={"error": str(exc)})
     if isinstance(exc, AvatarNotFoundError):
@@ -755,6 +801,8 @@ async def post_video_pack_generate(
             action=body.action,
             feedback=body.feedback,
         )
+    except CharacterCardNotReadyError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
     except VideoPackError as exc:
         raise _video_pack_http_error(exc)
     return VideoPackResponse(

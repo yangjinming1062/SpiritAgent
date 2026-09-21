@@ -13,11 +13,14 @@ from prompts.tools import (
 
 from services.application.generation import (
     AvatarGenerationError,
+    ImageGenerationError,
     enqueue_video_job,
     get_job,
-    resolve_self_reference_data_uri,
+    load_self_visual_context,
+    prepare_self_video_reference,
 )
-from services.infrastructure.llm import MissingLlmConfigError
+from services.domains.companion import render_character_identity
+from services.infrastructure.llm import MissingLlmConfigError, VisualReasoningError
 from services.infrastructure.tool_runtime import REGISTRY
 
 logger = get_logger(__name__)
@@ -35,18 +38,20 @@ async def video_generation_tool(
     **_,
 ) -> str:
     """通过 MiniMax 异步生成视频；本工具等待 video_gen_tool_wait_seconds（默认 180s）后返回链接或待查询的 task_id。"""
-    if subject == "self" and not first_frame_image:
-        if user_id is None:
-            return tool_error("生成自己的形象需要用户上下文")
-        try:
-            first_frame_image = await resolve_self_reference_data_uri(user_id)
-        except AvatarGenerationError as e:
-            return tool_error(str(e))
-        prompt = SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
     if not isinstance(duration, int) or not 4 <= duration <= 15:
         return tool_error("duration must be an integer between 4 and 15 seconds")
     if resolution not in ("512P", "768P", "1080P", "2K"):
         return tool_error("resolution must be one of 512P / 768P / 1080P / 2K")
+
+    if subject == "self":
+        if user_id is None:
+            return tool_error("生成自己的形象需要用户上下文")
+        try:
+            visual = await load_self_visual_context(user_id)
+            first_frame_image = await prepare_self_video_reference(visual, user_id, first_frame_image)
+        except (AvatarGenerationError, VisualReasoningError, ImageGenerationError) as e:
+            return tool_error(str(e))
+        prompt = SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt) + "\n" + render_character_identity(visual.identity)
 
     try:
         if user_id is not None:

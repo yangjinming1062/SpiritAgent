@@ -36,6 +36,7 @@ from modules.settings import UserSetting
 from prompts.generation import (
     NIGHTLY_SELF_VIDEO_REFERENCE_TEMPLATE,
     SELF_IMAGE_CURRENT_OUTFIT,
+    SELF_IMAGE_OUTFIT_DESCRIPTION,
     SELF_IMAGE_OUTFIT_REFERENCE,
     SELF_IMAGE_REFERENCE_TEMPLATE,
 )
@@ -51,14 +52,15 @@ from services.application.generation import (
     enqueue_video_job,
     generate_images,
     get_room_state,
-    load_avatar_bytes_as_data_uri,
+    load_self_visual_context,
+    prepare_self_video_reference,
     resolve_image_gen_chain,
-    resolve_self_reference_data_uri,
     resume_room_generation,
     schedule_room_generation,
 )
 from services.contracts import MemoryScope
 from services.domains.automation import create_job, remove_job
+from services.domains.companion import load_character_snapshot, render_character_identity, render_character_profile
 from services.domains.journal import create_generated_moment, create_user_moment
 from services.infrastructure.assets import save_companion_asset
 from services.infrastructure.llm import call_llm_once, resolve_provider_chain, synthesize_speech
@@ -553,6 +555,7 @@ async def _collect_context(user_id: int) -> PlanningContext:
             .all()
         )
         room = await get_room_state(db, user_id)
+        character = await load_character_snapshot(db, user_id)
         setting_rows = (
             await db.execute(
                 select(UserSetting.setting_key, UserSetting.setting_value).where(
@@ -596,6 +599,9 @@ async def _collect_context(user_id: int) -> PlanningContext:
     )
     if not isinstance(definition, dict):
         definition = {}
+    definition.pop("appearance", None)
+    if character is not None:
+        definition["fixed_features"] = render_character_profile(character)
     active_room = room.active
     context = PlanningContext(
         policies=PlanningPolicies(
@@ -971,7 +977,7 @@ async def _execute_outfit_create(
         )
     if not ready.active:
         async with SESSION_LOCAL() as db:
-            ready = await activate_outfit(db, user_id, ready.id)
+            ready = await activate_outfit(db, user_id, ready.id, require_current_identity=True)
     display_name = ready.name if ready.name != "新外观" else description[:40]
     result = ActionExecutionResult(
         status="succeeded",
@@ -1120,25 +1126,6 @@ async def _wait_for_video(user_id: int, job_id: int) -> VideoGenJob | None:
                 return row
         await asyncio.sleep(_POLL_SECONDS)
     return None
-
-
-async def _current_visual_references(user_id: int) -> tuple[str, str | None]:
-    identity = await resolve_self_reference_data_uri(user_id)
-    async with SESSION_LOCAL() as db:
-        outfit = (
-            await db.execute(
-                select(CompanionOutfit)
-                .where(
-                    CompanionOutfit.user_id == user_id,
-                    CompanionOutfit.active.is_(True),
-                    CompanionOutfit.status == "ready",
-                )
-                .order_by(CompanionOutfit.id.desc())
-                .limit(1),
-            )
-        ).scalar_one_or_none()
-    outfit_reference = load_avatar_bytes_as_data_uri(outfit.fullbody_url) if outfit is not None else None
-    return identity, outfit_reference
 
 
 def _audio_extension(mime: str) -> str:
@@ -1306,11 +1293,18 @@ async def _execute_media_image(
     size = _text(parsed_args.size, 16)
     identity = outfit = None
     if parsed_args.depicts_self is True:
-        identity, outfit = await _current_visual_references(user_id)
-        prompt = SELF_IMAGE_REFERENCE_TEMPLATE.format(
-            reference="图 1" if outfit else "参考图",
-            outfit=SELF_IMAGE_OUTFIT_REFERENCE if outfit else SELF_IMAGE_CURRENT_OUTFIT,
-            prompt=prompt,
+        visual = await load_self_visual_context(user_id)
+        identity, outfit = visual.reference_image, visual.outfit_reference
+        prompt = (
+            SELF_IMAGE_REFERENCE_TEMPLATE.format(
+                reference="图 1" if outfit else "参考图",
+                outfit=SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=visual.outfit_description)
+                if visual.outfit_description
+                else (SELF_IMAGE_OUTFIT_REFERENCE if outfit else SELF_IMAGE_CURRENT_OUTFIT),
+                prompt=prompt,
+            )
+            + "\n"
+            + render_character_identity(visual.identity)
         )
     urls = await generate_images(
         prompt,
@@ -1365,10 +1359,6 @@ async def _execute_media_video(
     body = _text(parsed_args.body, 500)
     if not prompt or not title:
         return ActionExecutionResult(status="failed", reason="missing video prompt or title")
-    first_frame = None
-    if parsed_args.depicts_self is True:
-        first_frame = await resolve_self_reference_data_uri(user_id)
-        prompt = NIGHTLY_SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
     try:
         duration = int(parsed_args.duration)
     except (TypeError, ValueError):
@@ -1380,6 +1370,15 @@ async def _execute_media_video(
     try:
         job_id = int(resume_job_id)  # type: ignore[arg-type]
     except (TypeError, ValueError):
+        first_frame = None
+        if parsed_args.depicts_self is True:
+            visual = await load_self_visual_context(user_id)
+            first_frame = await prepare_self_video_reference(visual, user_id)
+            prompt = (
+                NIGHTLY_SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
+                + "\n"
+                + render_character_identity(visual.identity)
+            )
         async with SESSION_LOCAL() as db:
             job = await enqueue_video_job(
                 db,

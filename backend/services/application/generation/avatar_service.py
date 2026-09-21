@@ -15,7 +15,7 @@ from components import (
     safe_json_loads,
     save_file,
 )
-from modules.companion import AvatarAsset, CompanionOutfit, ImageReviseMode, Persona
+from modules.companion import AvatarAsset, CharacterCardSnapshot, CompanionOutfit, ImageReviseMode, Persona
 from modules.ws import emit_ws_event
 from prompts.generation import (
     AVATAR_PRESENTATION_REFERENCE,
@@ -23,12 +23,20 @@ from prompts.generation import (
     EDIT_PRESERVE_FULLBODY,
     EDIT_PRESERVE_IDENTITY,
     MODERATION_SANITIZATION_PROMPT,
+    SELF_IMAGE_OUTFIT_DESCRIPTION,
 )
 from pydantic import ValidationError
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.companion import get_or_create_persona, load_persona_definition
+from services.domains.companion import (
+    character_snapshot_is_current,
+    get_or_create_persona,
+    load_persona_definition,
+    register_character_card,
+    render_character_identity,
+    require_character_snapshot,
+)
 from services.infrastructure.assets import build_data_uri, build_signed_avatar_url, resolve_companion_asset_path
 from services.infrastructure.llm import (
     SIZE_TO_ASPECT,
@@ -754,16 +762,6 @@ def load_character_reference_data_uri(asset: AvatarAsset) -> str | None:
     return load_avatar_bytes_as_data_uri(asset.seed_fullbody_url)
 
 
-async def resolve_self_reference_data_uri(user_id: int) -> str:
-    """聊天与夜间出镜共用角色参考；自建短会话，不跨媒体生成持有事务。"""
-    async with SESSION_LOCAL() as db:
-        asset = await get_active_avatar(db, user_id)
-    data_uri = await asyncio.to_thread(load_character_reference_data_uri, asset) if asset is not None else None
-    if not data_uri:
-        raise AvatarGenerationError("全身形象缺失或无法读取，请在设置的“角色与记忆”中重新生成")
-    return data_uri
-
-
 async def regenerate_avatar_from_image(
     db: AsyncSession | None = None,
     user_id: int | None = None,
@@ -906,6 +904,7 @@ async def _prepare_fullbody_reference(
     feedback: str | None,
     secondary_reference: str | None = None,
     canvas_aspect: str | None = None,
+    identity: CharacterCardSnapshot | None = None,
 ) -> tuple[str, str]:
     """返回头像参考与完整提示词，供内部生成和外部制作共用。"""
     reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.asset_url)
@@ -913,7 +912,22 @@ async def _prepare_fullbody_reference(
         raise AvatarSourceUnreadableError("头像缺失或无法读取，请重新生成头像")
     definition = load_persona_definition(persona)
     species = str(definition.get("biological_type") or "").strip()
-    appearance = str(definition.get("appearance") or "").strip()
+    outfit_description = ""
+    if asset.is_fullbody_confirmed:
+        async with SESSION_LOCAL() as card_db:
+            if identity is None:
+                identity = await require_character_snapshot(card_db, user_id)
+            outfit_description = (
+                await card_db.scalar(
+                    select(CompanionOutfit.description).where(
+                        CompanionOutfit.user_id == user_id,
+                        CompanionOutfit.active.is_(True),
+                        CompanionOutfit.status == "ready",
+                    ),
+                )
+                or ""
+            )
+    appearance = "" if asset.is_fullbody_confirmed else str(definition.get("appearance") or "").strip()
     personality = str(definition.get("personality") or "").strip()
     direction = await describe_character_form(
         user_id,
@@ -922,6 +936,7 @@ async def _prepare_fullbody_reference(
         personality=personality,
         feedback=feedback or "",
         reference_images=(reference, secondary_reference) if secondary_reference else (reference,),
+        identity=render_character_identity(identity),
     )
     prompt = build_fullbody_reference_prompt(
         body_direction=direction,
@@ -933,6 +948,9 @@ async def _prepare_fullbody_reference(
         has_user_reference=bool(secondary_reference),
         canvas_aspect=canvas_aspect,
     )
+    prompt += "\n" + render_character_identity(identity)
+    if outfit_description:
+        prompt += "\n" + SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=outfit_description)
     return reference, prompt
 
 
@@ -942,6 +960,7 @@ async def _install_fullbody_seed(
     avatar_id: int,
     url: str,
     prompt: str | None,
+    identity: CharacterCardSnapshot | None = None,
 ) -> AvatarAsset:
     """调用方持用户锁；提交新种子后清理旧图，失败时回收未采纳产物。"""
     async with SESSION_LOCAL() as session:
@@ -955,6 +974,8 @@ async def _install_fullbody_seed(
             )
             if target is None:
                 raise AvatarNotFoundError("当前角色已切换，请重新打开全身参考图")
+            if identity is not None and not await character_snapshot_is_current(session, user_id, identity):
+                raise AvatarGenerationError("角色卡已更新，请重新生成全身形象")
             previous_url = target.seed_fullbody_url
             raw = safe_json_loads(target.prompt_json, default={})
             payload = raw if isinstance(raw, dict) else {}
@@ -990,6 +1011,8 @@ async def generate_fullbody_reference(
         asset, persona = await _fetch_fullbody_target(None, user_id, avatar_id)
         if not asset.active:
             raise AvatarNotFoundError("请先选择当前角色的头像")
+        async with SESSION_LOCAL() as card_db:
+            identity = await require_character_snapshot(card_db, user_id) if asset.is_fullbody_confirmed else None
         effective_feedback = (feedback or "").strip()
         secondary_reference = None
         if mode == "edit":
@@ -1000,7 +1023,10 @@ async def generate_fullbody_reference(
             reference_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, asset.seed_fullbody_url)
             if not reference_uri:
                 raise AvatarSourceUnreadableError("上一版全身参考缺失或无法读取，请先重新生成")
-            prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_FULLBODY)
+            prompt = build_image_edit_prompt(
+                effective_feedback,
+                preserve=EDIT_PRESERVE_FULLBODY + "\n" + render_character_identity(identity),
+            )
         else:
             secondary_reference = (
                 f"data:{reference_content_type or 'image/png'};base64,{reference_image}" if reference_image else None
@@ -1011,6 +1037,7 @@ async def generate_fullbody_reference(
                 persona,
                 feedback=effective_feedback,
                 secondary_reference=secondary_reference,
+                identity=identity,
             )
         try:
             generated_url, _, _, _ = await _generate_one_portrait_with_moderation_retry(
@@ -1030,6 +1057,7 @@ async def generate_fullbody_reference(
             avatar_id=avatar_id,
             url=generated_url,
             prompt=prompt,
+            identity=identity,
         )
 
 
@@ -1060,6 +1088,7 @@ async def confirm_fullbody_seed(user_id: int, *, avatar_id: int, expected_url: s
                 asset.seed_fullbody_url = seed_path
             outfit_path, _, _ = await _persist_portrait_bytes(raw, content_type)
             asset.is_fullbody_confirmed = True
+            register_character_card(db, asset)
             outfit = CompanionOutfit(
                 user_id=user_id,
                 name="默认外观",
