@@ -78,6 +78,9 @@ class Settings(BaseSettings):
     matting_model: str = Field(default="isnet-general-use", validation_alias="MATTING_MODEL")
 
     companion_asset_signing_key: str
+    # 出站 SSRF 守卫总开关，默认关闭：DNS 污染 / fake-ip 代理等环境易误拦正常出站，
+    # 由部署者权衡内网访问风险后自行开启。
+    ssrf_guard_enabled: bool = Field(default=False, validation_alias="SSRF_GUARD_ENABLED")
     ssrf_allowed_cidrs: str = Field(default="", validation_alias="SSRF_ALLOWED_CIDRS")
 
     llm_request_timeout_seconds: float = Field(default=300.0, validation_alias="LLM_REQUEST_TIMEOUT_SECONDS")

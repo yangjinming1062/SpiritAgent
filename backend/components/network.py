@@ -34,7 +34,7 @@ def _ip_in_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
 
 
 def _ssrf_allowed_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
-    """运维声明的 IP 段豁免保留段拒绝——给 fake-ip TUN 代理（Clash 等，把所有域名解析到 198.18.0.0/15 或 IPv6 fdfe:dcba:9876::/64 等）的逃生口；云元数据 / CGNAT 块与 hostname 黑名单始终无条件。"""
+    """运维声明的 IP 段豁免保留段拒绝——给 fake-ip TUN 代理（Clash 等，把所有域名解析到 198.18.0.0/15 或 IPv6 fdfe:dcba:9876::/64 等）的逃生口；云元数据 / CGNAT 块与 hostname 黑名单不受此豁免影响。"""
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
     for part in (SETTINGS.ssrf_allowed_cidrs or "").split(","):
         part = part.strip()
@@ -78,10 +78,14 @@ def _evaluate_hostname(host: str) -> tuple[bool, str]:
 def is_safe_outbound(host: str) -> tuple[bool, str]:
     """对出站目标做完整的 SSRF 校验：hostname 黑名单 + (若是 IP 字面量)保留段检查 + DNS 解析 + 全部解析结果的策略评估。
 
+    守卫关闭（``SETTINGS.ssrf_guard_enabled``）时直接放行。
+
     同步函数：会执行 ``socket.getaddrinfo``。在事件循环里调用方请走
     ``anyio.to_thread.run_sync`` / ``asyncio.to_thread``，或直接使用
     ``_SafeOutboundAsyncBackend``（``safe_outbound_async_client`` / ``download_capped``）。
     """
+    if not SETTINGS.ssrf_guard_enabled:
+        return True, ""
     ok, reason = _evaluate_hostname(host)
     if not ok:
         return False, reason
@@ -130,6 +134,8 @@ class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
     * 实际 connect 使用已校验 IP 直连，原始 host 仍由 httpcore 用于
       HTTP Host、TLS SNI 与证书主机名校验；
     * 重定向由 httpx 自动跟随，每一跳都会重新走 ``connect_tcp``。
+
+    守卫关闭时跳过策略层，建连行为与 httpcore 默认后端一致。
     """
 
     async def connect_tcp(  # type: ignore[override]
@@ -140,6 +146,15 @@ class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
         local_address: str | None = None,
         socket_options: Iterable[tuple] | None = None,
     ) -> httpcore._backends.base.AsyncNetworkStream:
+        if not SETTINGS.ssrf_guard_enabled:
+            return await super().connect_tcp(
+                host,
+                port,
+                timeout=timeout,
+                local_address=local_address,
+                socket_options=socket_options,
+            )
+
         # hostname 黑名单在进 DNS 之前先判一次，省一次解析也省一次工作线程。
         ok, reason = _evaluate_hostname(host)
         if not ok:
