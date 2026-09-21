@@ -28,7 +28,6 @@
     --border-2: color-mix(in srgb, #17171a 14%, transparent);
 
     --row-hover: color-mix(in srgb, #0053fd 4.5%, transparent);
-    --row-active: color-mix(in srgb, #0053fd 9%, transparent);
 
     --green: #1f8a65;
     --green-soft: color-mix(in srgb, #1f8a65 12%, #fff);
@@ -68,7 +67,7 @@ body {
 button, input, select, textarea { font: inherit; color: inherit; }
 .mono { font-family: var(--font-mono); font-size: 0.78rem; }
 .text-3 { color: var(--text-3); }
-.text-red { color: var(--red); }
+.hint { color: var(--text-3); font-size: 0.76rem; }
 
 /* ── Brand mark ─────────────────────────────────────────── */
 .logo { display: inline-flex; flex: none; }
@@ -108,9 +107,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .pill::before { content: ''; width: 0.4rem; height: 0.4rem; border-radius: 50%; background: currentColor; opacity: 0.85; }
 .pill--green { color: var(--green); background: var(--green-soft); }
 .pill--red { color: var(--red); background: var(--red-soft); }
-.pill--amber { color: var(--amber); background: var(--amber-soft); }
 .pill--muted { color: var(--text-2); background: color-mix(in srgb, var(--fg) 5%, transparent); }
-.pill--primary { color: var(--primary); background: var(--primary-soft); }
 
 .svc-dot {
     display: inline-flex; align-items: center;
@@ -175,6 +172,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 
 .nav { display: flex; flex-direction: column; gap: 0.15rem; }
 .nav-item {
+    position: relative;
     display: flex; align-items: center; gap: 0.6rem;
     padding: 0.55rem 0.65rem;
     border: 1px solid transparent;
@@ -187,6 +185,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .nav-item:hover { background: var(--primary-softer); color: var(--primary); }
 .nav-item.active { background: var(--primary-soft); color: var(--primary); }
+.nav-item.active::before {
+    content: '';
+    position: absolute; left: -0.75rem; top: 50%;
+    transform: translateY(-50%);
+    width: 0.2rem; height: 1.15rem;
+    border-radius: 999px;
+    background: var(--primary);
+}
 .nav-item svg { flex: none; opacity: 0.9; }
 
 .side-foot { margin-top: auto; padding-top: 0.75rem; border-top: 1px solid var(--border); }
@@ -292,6 +298,24 @@ select { cursor: pointer; }
 .inline-form { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .inline-form select { width: auto; min-width: 10rem; }
 
+/* ── Settings form ──────────────────────────────────────── */
+.card-pad { padding: 1.1rem; }
+.card-head .hint { font-weight: 500; }
+.subhead { margin: 1.25rem 0 0.75rem; font-size: 0.86rem; font-weight: 700; color: var(--fg); }
+.card-pad > .subhead:first-child { margin-top: 0; }
+.card-pad > .grid { margin-bottom: 1rem; }
+.card-pad > .grid:last-child { margin-bottom: 0; }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 0.75rem; }
+.grid--wide { grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); }
+.field--narrow { max-width: 20rem; }
+.settings-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 0.75rem; flex-wrap: wrap;
+    margin-bottom: 1.25rem;
+}
+.settings-bar--end { justify-content: flex-end; margin-bottom: 2rem; }
+.settings-bar .lead { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }
+
 /* ── Upload form ────────────────────────────────────────── */
 .upload-grid { display: grid; grid-template-columns: 1fr; gap: 0.85rem; padding: 1.1rem; }
 .upload-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
@@ -328,22 +352,18 @@ input[type="file"] { font-size: 0.78rem; }
 @keyframes modal-in { from { opacity: 0; transform: translateY(0.5rem); } to { opacity: 1; transform: none; } }
 .modal-head { display: flex; align-items: center; gap: 0.75rem; padding: 1.1rem 1.25rem; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
 .modal-head h2 { margin: 0; font-size: 1.02rem; font-weight: 700; letter-spacing: -0.01em; flex: 1; }
-.modal-close { border: 0; background: transparent; cursor: pointer; color: var(--text-3); width: 1.75rem; height: 1.75rem; border-radius: var(--radius-sm); display: grid; place-items: center; }
+.modal-close { border: 0; background: transparent; cursor: pointer; color: var(--text-3); font-size: 1rem; line-height: 1; width: 1.75rem; height: 1.75rem; border-radius: var(--radius-sm); display: grid; place-items: center; }
 .modal-close:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); }
 .modal-body { padding: 1.25rem; }
 .modal-foot { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 1rem 1.25rem; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--surface); }
 
 /* model config service cards */
-.svc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: 1rem; }
 .svc-card {
     border: 1px solid var(--border);
     border-radius: var(--radius);
     padding: 0.9rem;
     background: var(--surface-2);
 }
-.svc-card.required { border-color: color-mix(in srgb, var(--primary) 30%, var(--border)); }
-.svc-card h3 { margin: 0 0 0.65rem; font-size: 0.82rem; font-weight: 700; display: flex; align-items: center; gap: 0.4rem; }
-.svc-card .req { font-size: 0.62rem; font-weight: 700; color: var(--primary); background: var(--primary-soft); padding: 0.05rem 0.35rem; border-radius: 0.2rem; text-transform: uppercase; letter-spacing: 0.03em; }
 
 /* ── AIConfig card editors ─────────────────────────────── */
 :is(#aiCardSettings, #userAiCardSettings) .hint { font-size: 0.78rem; color: var(--text-3); line-height: 1.6; }
@@ -379,6 +399,7 @@ input[type="file"] { font-size: 0.78rem; }
     .side-foot { margin: 0; padding: 0; border: 0; }
     .side-foot .btn { width: auto; }
     .nav-item span { display: none; }
+    .nav-item.active::before { display: none; }
     .topbar-inner, .content { padding-left: 1rem; padding-right: 1rem; }
 }
 
@@ -519,248 +540,18 @@ input[type="file"] { font-size: 0.78rem; }
 
                     <!-- ── System Settings ────────────────────── -->
                     <section id="panel-settings" class="panel">
-                        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:1rem; flex-wrap:wrap; gap:0.5rem;">
+                        <div class="settings-bar">
                             <div>
-                                <span style="font-weight:700; font-size:1.05rem;">系统参数设置</span>
-                                <span class="hint" style="margin-left:0.5rem; color:var(--text-3);">保存后即刻在内存与数据库中生效，无需重启服务</span>
+                                <div class="lead">系统参数设置</div>
+                                <span class="hint">保存后即刻在内存与数据库中生效，无需重启服务</span>
                             </div>
                             <button class="btn btn--primary" onclick="saveSystemSettingsForm()">保存系统设置</button>
                         </div>
 
                         <div id="aiCardSettings"></div>
-                        <div class="card" style="margin-bottom:1.25rem;">
-                            <div class="card-head"><h2>能力运行参数</h2><span class="hint">请求、重试与媒体任务的全局运行参数</span></div>
-                            <div style="padding:1.1rem;">
-                                <h3 style="margin:0 0 0.75rem; font-size:0.88rem;">LLM 调用超时与重试调优</h3>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem;">
-                                    <div class="field"><label>请求超时时间 (秒)</label><input type="number" step="1" id="sys_llm_request_timeout_seconds"></div>
-                                    <div class="field"><label>流式静默超时 (秒)</label><input type="number" step="1" id="sys_llm_stream_idle_timeout_seconds"></div>
-                                    <div class="field"><label>失败最大重试次数</label><input type="number" step="1" id="sys_llm_max_retry_attempts"></div>
-                                    <div class="field"><label>初始重试退避 (秒)</label><input type="number" step="0.5" id="sys_llm_base_retry_delay"></div>
-                                    <div class="field"><label>最大重试延迟 (秒)</label><input type="number" step="1" id="sys_llm_max_retry_delay"></div>
-                                    <div class="field"><label>默认 Token 兜底容量</label><input type="number" step="1000" id="sys_default_llm_context_tokens"></div>
-                                </div>
-                                <h3 style="margin:1.25rem 0 0.75rem; font-size:0.88rem;">视频生成轮询与下载调优</h3>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem;">
-                                    <div class="field"><label>轮询间隔 (秒)</label><input type="number" step="0.5" id="sys_video_gen_poll_interval_seconds"></div>
-                                    <div class="field"><label>轮询退避上限 (秒)</label><input type="number" step="1" id="sys_video_gen_poll_backoff_max_seconds"></div>
-                                    <div class="field"><label>最大轮询超时 (秒)</label><input type="number" step="10" id="sys_video_gen_max_poll_seconds"></div>
-                                    <div class="field"><label>工具等待超时 (秒)</label><input type="number" step="10" id="sys_video_gen_tool_wait_seconds"></div>
-                                    <div class="field"><label>产物下载上限 (字节)</label><input type="number" step="1048576" id="sys_video_gen_download_max_bytes"></div>
-                                </div>
-                            </div>
-                        </div>
+                        <div id="systemSettingsForm"></div>
 
-                        <!-- 4. 聊天压缩与会话 -->
-                        <div class="card" style="margin-bottom:1.25rem;">
-                        <div class="card" style="margin-bottom:1.25rem;">
-                            <div class="card-head">
-                                <h2>对话编排与上下文压缩</h2>
-                            </div>
-                            <div style="padding:1.1rem; display:grid; grid-template-columns:repeat(auto-fill, minmax(14rem, 1fr)); gap:0.75rem;">
-                                <div class="field" style="grid-column:1/-1;">
-                                    <label class="checkbox-row"><input type="checkbox" id="sys_enable_context_compression"> 启用长会话自动上下文压缩摘要</label>
-                                </div>
-                                <div class="field"><label>工具循环轮数上限</label><input type="number" step="1" id="sys_agent_max_loop_turns"></div>
-                                <div class="field"><label>压缩触发阈值 (比例 0.1~0.9)</label><input type="number" step="0.05" id="sys_context_compression_threshold"></div>
-                                <div class="field"><label>摘要压缩目标 Token 数</label><input type="number" step="100" id="sys_context_summary_target_tokens"></div>
-                                <div class="field"><label>单次摘要最大输入消息条数</label><input type="number" step="1" id="sys_context_summary_max_input_messages"></div>
-                                <div class="field"><label>活跃会话判定窗口 (分钟)</label><input type="number" step="1" id="sys_chat_active_window_minutes"></div>
-                                <div class="field"><label>IPC 异步调用等待超时 (秒)</label><input type="number" step="10" id="sys_ipc_future_timeout_seconds"></div>
-                            </div>
-                        </div>
-
-                        <!-- 5. 陪伴交互与主动行为 -->
-                        <div class="card" style="margin-bottom:1.25rem;">
-                            <div class="card-head">
-                                <h2>陪伴交互与主动行为</h2>
-                                <span class="hint">桌面互动节流、LLM 成本冷却与主动回合预算</span>
-                            </div>
-                            <div style="padding:1.1rem;">
-                                <h3 style="margin:0 0 0.75rem; font-size:0.88rem;">互动节流与成本冷却</h3>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
-                                    <div class="field"><label>情境推理最小间隔 (秒)</label><input type="number" step="0.5" id="sys_companion_check_affect_min_interval_seconds"></div>
-                                    <div class="field"><label>互动触发最小间隔 (秒)</label><input type="number" step="0.5" id="sys_companion_interact_min_interval_seconds"></div>
-                                    <div class="field"><label>互动反应成本冷却 (秒)</label><input type="number" step="10" id="sys_companion_llm_cooldown_seconds"></div>
-                                    <div class="field"><label>互动失败短冷却 (秒)</label><input type="number" step="5" id="sys_companion_interact_failure_cooldown_seconds"></div>
-                                    <div class="field"><label>主动搭话冷却 (秒)</label><input type="number" step="30" id="sys_companion_approach_cooldown_seconds"></div>
-                                    <div class="field"><label>用户接触静默窗口 (秒)</label><input type="number" step="5" id="sys_companion_contact_quiet_seconds"></div>
-                                    <div class="field"><label>桌面断线宽限 (秒)</label><input type="number" step="5" id="sys_desktop_disconnect_grace_seconds"></div>
-                                </div>
-                                <h3 style="margin:1rem 0 0.75rem; font-size:0.88rem;">主动回合预算</h3>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem;">
-                                    <div class="field"><label>待处理意图上限 (条)</label><input type="number" step="1" id="sys_companion_max_pending_intents"></div>
-                                    <div class="field"><label>主动回合最小间隔 (秒)</label><input type="number" step="5" id="sys_companion_min_turn_interval_seconds"></div>
-                                    <div class="field"><label>主动回合超时 (秒)</label><input type="number" step="10" id="sys_companion_turn_timeout_seconds"></div>
-                                    <div class="field"><label>主动回合工具循环上限 (轮)</label><input type="number" step="1" id="sys_companion_max_loop_turns"></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 6. 记忆与夜间整理 -->
-                        <div class="card" style="margin-bottom:1.25rem;">
-                            <div class="card-head">
-                                <h2>记忆维护与夜间整理</h2>
-                                <span class="hint">记忆维护节流、夜间窗口与规划日记预算</span>
-                            </div>
-                            <div style="padding:1.1rem;">
-                                <h3 style="margin:0 0 0.75rem; font-size:0.88rem;">记忆维护与召回注入</h3>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
-                                    <div class="field"><label>记忆维护最小间隔 (秒)</label><input type="number" step="60" id="sys_memory_review_interval_seconds"></div>
-                                    <div class="field"><label>召回内容截断 (字)</label><input type="number" step="100" id="sys_memory_recall_max_content_chars"></div>
-                                    <div class="field"><label>提示词注入记忆条数</label><input type="number" step="1" id="sys_memory_prompt_max_memories"></div>
-                                </div>
-                                <h3 style="margin:1rem 0 0.75rem; font-size:0.88rem;">夜间整理与规划</h3>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
-                                    <div class="field"><label>夜间窗口开始 (时)</label><input type="number" step="1" min="0" max="23" id="sys_nightly_window_start_hour"></div>
-                                    <div class="field"><label>夜间窗口结束 (时)</label><input type="number" step="1" min="0" max="23" id="sys_nightly_window_end_hour"></div>
-                                    <div class="field"><label>夜间扫描间隔 (秒)</label><input type="number" step="10" id="sys_nightly_scan_interval_seconds"></div>
-                                    <div class="field"><label>整理召回行数上限</label><input type="number" step="10" id="sys_nightly_consolidate_max_recall_rows"></div>
-                                    <div class="field"><label>夜间消息截断 (字)</label><input type="number" step="100" id="sys_nightly_message_truncate_chars"></div>
-                                    <div class="field"><label>规划最大 Token</label><input type="number" step="1000" id="sys_nightly_planning_max_tokens"></div>
-                                    <div class="field"><label>日记最大 Token</label><input type="number" step="100" id="sys_nightly_diary_max_tokens"></div>
-                                    <div class="field"><label>日记内容上限 (字)</label><input type="number" step="100" id="sys_diary_max_content_chars"></div>
-                                </div>
-                                <h3 style="margin:1rem 0 0.75rem; font-size:0.88rem;">调度与自动化</h3>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem;">
-                                    <div class="field"><label>调度器 tick 周期 (秒)</label><input type="number" step="1" id="sys_scheduler_interval_seconds"></div>
-                                    <div class="field"><label>单用户活跃 Cron 上限</label><input type="number" step="1" id="sys_cron_max_active_per_user"></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 7. 联网搜索与抓取 -->
-                        <div class="card" style="margin-bottom:1.25rem;">
-                            <div class="card-head">
-                                <h2>联网搜索与网页抓取 (Web Search & Extract)</h2>
-                            </div>
-                            <div style="padding:1.1rem; display:grid; grid-template-columns:repeat(auto-fill, minmax(14rem, 1fr)); gap:0.75rem;">
-                                <div class="field">
-                                    <label>搜索后端</label>
-                                    <select id="sys_web_search_backend">
-                                        <option value="ddgs">ddgs (DuckDuckGo 免密钥)</option>
-                                        <option value="brave-free">brave-free (Brave Search)</option>
-                                        <option value="tavily">tavily (Tavily AI 搜索)</option>
-                                    </select>
-                                </div>
-                                <div class="field">
-                                    <label>抓取提取后端</label>
-                                    <select id="sys_web_extract_backend">
-                                        <option value="tavily">tavily (Tavily AI 抓取)</option>
-                                        <option value="ddgs">ddgs</option>
-                                    </select>
-                                </div>
-                                <div class="field">
-                                    <div class="label-row"><label>Brave Search API Key</label><span class="keybadge off" id="sys_brave_key_badge">未设置</span></div>
-                                    <input type="password" id="sys_brave_search_api_key" placeholder="留空保持原有配置">
-                                </div>
-                                <div class="field">
-                                    <div class="label-row"><label>Tavily API Key</label><span class="keybadge off" id="sys_tavily_key_badge">未设置</span></div>
-                                    <input type="password" id="sys_tavily_api_key" placeholder="留空保持原有配置">
-                                </div>
-                                <div class="field" style="grid-column:1/-1;">
-                                    <label>Tavily Base URL (可选覆盖)</label>
-                                    <input type="text" id="sys_tavily_base_url" placeholder="留空使用官方默认地址">
-                                </div>
-                                <div class="field">
-                                    <label>默认搜索结果条数</label>
-                                    <input type="number" step="1" min="1" id="sys_web_search_default_results">
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 8. 频控与防护配额 -->
-                        <div class="card" style="margin-bottom:1.25rem;">
-                            <div class="card-head">
-                                <h2>接口限流与安全防护</h2>
-                            </div>
-                            <div style="padding:1.1rem;">
-                                <div class="field" style="margin-bottom:1rem;">
-                                    <label class="checkbox-row"><input type="checkbox" id="sys_rate_limit_enabled"> 开启接口速率限制 (Rate Limiting)</label>
-                                </div>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
-                                    <div class="field"><label>登录频次上限 (/分钟)</label><input type="number" id="sys_login_rate_limit_per_minute"></div>
-                                    <div class="field"><label>单用户 LLM 对话补全 (/分钟)</label><input type="number" id="sys_llm_completion_rate_limit_per_minute"></div>
-                                    <div class="field"><label>单 IP LLM 对话补全 (/分钟)</label><input type="number" id="sys_llm_completion_rate_limit_per_ip_per_minute"></div>
-                                    <div class="field"><label>语音识别 STT (/分钟)</label><input type="number" id="sys_media_stt_rate_limit_per_minute"></div>
-                                    <div class="field"><label>语音合成 TTS (/分钟)</label><input type="number" id="sys_media_tts_rate_limit_per_minute"></div>
-                                    <div class="field"><label>视频附件上传 (/分钟)</label><input type="number" id="sys_media_video_rate_limit_per_minute"></div>
-                                    <div class="field"><label>伴侣头像生成 (/分钟)</label><input type="number" id="sys_companion_avatar_generate_rate_limit_per_minute"></div>
-                                    <div class="field"><label>伴侣换装外观生成 (/小时)</label><input type="number" id="sys_companion_outfit_generate_rate_limit_per_hour"></div>
-                                </div>
-                                <h3 style="margin:1rem 0 0.5rem; font-size:0.88rem;">房间背景、叙事时刻与安全配额</h3>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
-                                    <div class="field"><label>角色主动换房上限 (/24小时)</label><input type="number" id="sys_room_llm_replace_per_24h"></div>
-                                    <div class="field"><label>房间生成最大重试次数</label><input type="number" id="sys_room_max_attempts"></div>
-                                    <div class="field"><label>历史可用房间保留数量</label><input type="number" id="sys_room_history_keep"></div>
-                                    <div class="field"><label>角色主动记时刻配额 (/天)</label><input type="number" id="sys_moment_llm_per_day"></div>
-                                    <div class="field"><label>单回合附件数量上限</label><input type="number" step="1" id="sys_max_attachments_per_turn"></div>
-                                    <div class="field"><label>会话附件目录配额 (字节)</label><input type="number" step="1048576" id="sys_attachment_session_quota_bytes"></div>
-                                    <div class="field"><label>日记生成媒体下载上限 (字节)</label><input type="number" step="1048576" id="sys_journal_media_download_max_bytes"></div>
-                                    <div class="field"><label>用户备份压缩包上限 (字节)</label><input type="number" step="1048576" id="sys_backup_archive_max_bytes"></div>
-                                </div>
-                                <div class="field">
-                                    <label class="checkbox-row"><input type="checkbox" id="sys_diary_nightly_enabled"> 开启夜间日记提炼批处理</label>
-                                </div>
-                                <div class="field" style="margin-top:0.75rem;">
-                                    <label>SSRF 豁免 IP 网段 (逗号分隔 CIDR)</label>
-                                    <input type="text" id="sys_ssrf_allowed_cidrs" placeholder="例如 198.18.0.0/15,fdfe:dcba:9876::/64">
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- 9. 渠道接入与系统运行时 -->
-                        <div class="card" style="margin-bottom:1.5rem;">
-                            <div class="card-head">
-                                <h2>外部渠道与系统运行时</h2>
-                            </div>
-                            <div style="padding:1.1rem;">
-                                <h3 style="margin:0 0 0.5rem; font-size:0.88rem;">微信 iLink 外部 IM 渠道</h3>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem; margin-bottom:1rem;">
-                                    <div class="field"><label>在途排队入站消息上限</label><input type="number" id="sys_channels_turn_queue_max"></div>
-                                    <div class="field"><label>入站限速频次 (/分钟)</label><input type="number" id="sys_channels_inbound_rate_per_minute"></div>
-                                    <div class="field"><label>守卫重试退避时间 (秒)</label><input type="number" id="sys_channels_restart_backoff_seconds"></div>
-                                    <div class="field"><label>微信回复单条分片上限 (字)</label><input type="number" id="sys_weixin_reply_max_chars"></div>
-                                    <div class="field"><label>长轮询客户端超时 (秒)</label><input type="number" id="sys_weixin_ilink_poll_timeout_seconds"></div>
-                                </div>
-                                <h3 style="margin:1rem 0 0.5rem; font-size:0.88rem;">运行时与日志调优</h3>
-                                <div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(13rem, 1fr)); gap:0.75rem;">
-                                    <div class="field"><label>公网访问基础地址 (public_base_url)</label><input type="text" id="sys_public_base_url" placeholder="https://example.com"></div>
-                                    <div class="field"><label>临时媒体文件存活时长 (小时)</label><input type="number" id="sys_temp_file_ttl_hours"></div>
-                                    <div class="field"><label>用户登录 Token 有效期 (分钟)</label><input type="number" id="sys_access_token_expire_minutes"></div>
-                                    <div class="field">
-                                        <label>日志输出级别</label>
-                                        <select id="sys_log_level">
-                                            <option value="DEBUG">DEBUG</option>
-                                            <option value="INFO">INFO</option>
-                                            <option value="WARNING">WARNING</option>
-                                            <option value="ERROR">ERROR</option>
-                                            <option value="CRITICAL">CRITICAL</option>
-                                        </select>
-                                    </div>
-                                    <div class="field">
-                                        <label>日志格式</label>
-                                        <select id="sys_log_format">
-                                            <option value="json">json</option>
-                                            <option value="text">text</option>
-                                        </select>
-                                    </div>
-                                    <div class="field">
-                                        <div class="label-row"><label>指标采集鉴权 Token</label><span class="keybadge off" id="sys_metrics_token_badge">未设置</span></div>
-                                        <input type="password" id="sys_metrics_auth_token" placeholder="留空不设鉴权">
-                                    </div>
-                                </div>
-                                <div class="field" style="margin-top:0.75rem;">
-                                    <label class="checkbox-row"><input type="checkbox" id="sys_llm_debug_logging"> 开启 LLM Debug 面包屑追踪日志</label>
-                                </div>
-                                <div class="field" style="max-width:20rem;">
-                                    <label>LLM Debug 单字段截断字符数</label>
-                                    <input type="number" id="sys_llm_debug_max_chars">
-                                </div>
-                            </div>
-                        </div>
-
-                        <div style="display:flex; justify-content:flex-end; gap:0.75rem; margin-bottom:2rem;">
+                        <div class="settings-bar settings-bar--end">
                             <button class="btn btn--primary" style="padding:0.6rem 1.8rem; font-size:0.9rem;" onclick="saveSystemSettingsForm()">保存全部系统设置</button>
                         </div>
                     </section>
@@ -831,13 +622,11 @@ input[type="file"] { font-size: 0.78rem; }
 </div>
 
 <!-- ── User modal ───────────────────────────────────────── -->
-<div id="userModal" class="modal" onclick="if(event.target===this)closeModal('userModal')">
+<div id="userModal" class="modal">
     <div class="modal-card">
         <div class="modal-head">
             <h2 id="userModalTitle">创建用户</h2>
-            <button class="modal-close" onclick="closeModal('userModal')" aria-label="关闭">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
+            <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
             <input type="hidden" id="editUserId">
@@ -864,7 +653,7 @@ input[type="file"] { font-size: 0.78rem; }
     </div>
 </div>
 
-<div id="userExportModal" class="modal" onclick="if(event.target===this)closeModal('userExportModal')">
+<div id="userExportModal" class="modal">
     <div class="modal-card">
         <div class="modal-head"><h2>导出用户备份</h2></div>
         <div class="modal-body">
@@ -880,13 +669,11 @@ input[type="file"] { font-size: 0.78rem; }
 </div>
 
 <!-- ── User backup modal ─────────────────────────────────── -->
-<div id="userBackupModal" class="modal" onclick="if(event.target===this)closeModal('userBackupModal')">
+<div id="userBackupModal" class="modal">
     <div class="modal-card">
         <div class="modal-head">
             <h2>导入用户备份</h2>
-            <button class="modal-close" onclick="closeModal('userBackupModal')" aria-label="关闭">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
+            <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
             <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">
@@ -914,13 +701,11 @@ input[type="file"] { font-size: 0.78rem; }
 </div>
 
 <!-- ── Activation code modal ─────────────────────────────── -->
-<div id="activationModal" class="modal" onclick="if(event.target===this)closeModal('activationModal')">
+<div id="activationModal" class="modal">
     <div class="modal-card">
         <div class="modal-head">
             <h2>激活码已生成</h2>
-            <button class="modal-close" onclick="closeModal('activationModal')" aria-label="关闭">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
+            <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
             <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">请将此激活码发送给用户，用于客户端激活。</p>
@@ -934,13 +719,11 @@ input[type="file"] { font-size: 0.78rem; }
 </div>
 
 <!-- ── Activation code management modal ──────────────────── -->
-<div id="activationManageModal" class="modal" onclick="if(event.target===this)closeModal('activationManageModal')">
+<div id="activationManageModal" class="modal">
     <div class="modal-card">
         <div class="modal-head">
             <h2 id="activationManageTitle">激活码管理</h2>
-            <button class="modal-close" onclick="closeModal('activationManageModal')" aria-label="关闭">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
+            <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
             <input type="hidden" id="activationManageUserId">
@@ -967,13 +750,11 @@ input[type="file"] { font-size: 0.78rem; }
 </div>
 
 <!-- ── Model config modal ──────────────────────────────── -->
-<div id="modelModal" class="modal" onclick="if(event.target===this)closeModal('modelModal')">
+<div id="modelModal" class="modal">
     <div class="modal-card wide">
         <div class="modal-head">
             <h2 id="modelModalTitle">配置凭证</h2>
-            <button class="modal-close" onclick="closeModal('modelModal')" aria-label="关闭">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>
-            </button>
+            <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
             <input type="hidden" id="modelUserId">
@@ -1018,7 +799,6 @@ function fmtDate(s) {
     if (isNaN(d)) return '—';
     return d.toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
-function fmtDateOnly(s) { return s ? s.split('T')[0] : ''; }
 function fmtSize(b) {
     if (b === null || b === undefined || isNaN(b)) return '';
     if (b === 0) return '0 B';
@@ -1041,17 +821,21 @@ function stateRow(colspan, msg, hint = '', err = false) {
     return `<tr class="state-row ${err ? 'err' : ''}"><td colspan="${colspan}"><div class="state-msg">${esc(msg)}</div>${hint ? `<div class="state-hint">${esc(hint)}</div>` : ''}</td></tr>`;
 }
 
+function renderTable(tbodyId, countId, data, { unit, cols, empty, emptyHint, row }) {
+    const items = getItems(data);
+    $('#' + countId).textContent = items.length ? `${items.length} ${unit}` : '';
+    $(tbodyId).innerHTML = items.length ? items.map(row).join('') : stateRow(cols, empty, emptyHint);
+}
+
+const TAB_LOADERS = { users: loadUsers, models: loadModelConfigs, settings: loadSystemSettings, versions: loadVersions, logs: loadLogs };
+
 function showTab(name) {
     $$('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
     $$('.panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + name));
     const t = TABS[name];
     $('#topTitle').textContent = t.title;
     $('#topDesc').textContent = t.desc;
-    if (name === 'users') loadUsers();
-    if (name === 'models') loadModelConfigs();
-    if (name === 'settings') loadSystemSettings();
-    if (name === 'versions') loadVersions();
-    if (name === 'logs') loadLogs();
+    TAB_LOADERS[name]();
 }
 
 function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
@@ -1110,12 +894,9 @@ async function loadUsers() {
 }
 
 function renderUsers(data) {
-    const tbody = $('#userList');
-    const items = getItems(data);
-    $('#userCount').textContent = items.length ? `${items.length} 个用户` : '';
-    if (!items.length) { tbody.innerHTML = stateRow(5, '暂无用户', '点击右上角“创建用户”添加'); return; }
-    tbody.innerHTML = items.map(u => {
-        return `<tr>
+    renderTable('#userList', 'userCount', data, {
+        unit: '个用户', cols: 5, empty: '暂无用户', emptyHint: '点击右上角“创建用户”添加',
+        row: u => `<tr>
             <td class="td-id">${u.id}</td>
             <td><div class="cell-strong">${esc(u.username)}</div></td>
             <td>${u.nightly_activity_enabled ? pill('启用', 'green') : pill('关闭', 'muted')}</td>
@@ -1128,8 +909,8 @@ function renderUsers(data) {
                 <button class="btn btn--ghost btn--sm" onclick="importUserPrompt(${u.id})">导入</button>
                 <button class="btn btn--danger btn--sm" onclick="deleteUser(${u.id})">删除</button>
             </td>
-        </tr>`;
-    }).join('');
+        </tr>`,
+    });
 }
 
 // ── baseUrl 默认值：现有激活码里的 b > 后端 public_base_url > localhost:10620 ──
@@ -1210,19 +991,25 @@ async function saveUser() {
     } catch (e) { toast(e.message, 'err'); }
 }
 
-async function regenerateToken() {
+async function patchActivationUser(id, payload, { btn, busy, done, onCode } = {}) {
+    const original = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = busy; }
+    try {
+        const data = await (await apiFetch(`/api/admin/users/${id}`, { method: 'PATCH', body: JSON.stringify(payload) })).json();
+        if (data.activation_code && onCode) onCode(data.activation_code);
+        toast(done);
+        loadUsers();
+    } catch (e) { toast(e.message, 'err'); }
+    finally { if (btn) { btn.disabled = false; btn.textContent = original; } }
+}
+
+function regenerateToken() {
     const id = $('#editUserId').value;
     if (!id) return;
-    const baseUrl = $('#baseUrl').value.trim() || 'http://localhost:10620';
-    try {
-        const resp = await apiFetch(`/api/admin/users/${id}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ regenerate_token: true, base_url: baseUrl }),
-        });
-        const data = await resp.json();
-        toast('激活码已重新生成');
-        if (data.activation_code) showActivationCode(data.activation_code);
-    } catch (e) { toast(e.message, 'err'); }
+    patchActivationUser(id, { regenerate_token: true, base_url: $('#baseUrl').value.trim() || 'http://localhost:10620' }, {
+        done: '激活码已重新生成',
+        onCode: showActivationCode,
+    });
 }
 
 function showActivationCode(code) {
@@ -1230,17 +1017,19 @@ function showActivationCode(code) {
     openModal('activationModal');
 }
 
-async function copyActivationCode() {
-    const code = $('#activationCodeText').value;
-    if (!code) return;
+async function copyText(value, fallbackInput) {
+    if (!value) return;
     try {
-        await navigator.clipboard.writeText(code);
-        toast('已复制到剪贴板');
-    } catch (e) {
-        const ta = $('#activationCodeText');
-        ta.select(); document.execCommand('copy');
-        toast('已复制到剪贴板');
+        await navigator.clipboard.writeText(value);
+    } catch {
+        fallbackInput.select();
+        document.execCommand('copy');
     }
+    toast('已复制到剪贴板');
+}
+
+async function copyActivationCode() {
+    await copyText($('#activationCodeText').value, $('#activationCodeText'));
 }
 
 async function manageActivation(id) {
@@ -1262,69 +1051,36 @@ async function manageActivation(id) {
     openModal('activationManageModal');
 }
 
-async function updateBaseUrlFromManage() {
-    const id = $('#activationManageUserId').value;
-    if (!id) return;
-    const baseUrl = $('#activationManageBaseUrl').value.trim() || 'http://localhost:10620';
-    const btn = $('#activationManageUpdateUrlBtn');
-    btn.disabled = true; btn.textContent = '更新中…';
-    try {
-        const resp = await apiFetch(`/api/admin/users/${id}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ base_url: baseUrl }),
-        });
-        const data = await resp.json();
-        if (data.activation_code) {
-            $('#activationManageCode').value = data.activation_code;
-            $('#activationManageResult').style.display = '';
-            $('#activationManageCopyBtn').style.display = '';
-            $('#activationManageUpdateUrlBtn').style.display = '';
-            const user = (tabCache.users?.items ?? []).find(u => u.id === Number(id));
-            if (user) user.activation_code = data.activation_code;
-        }
-        toast('后端地址已更新，激活码已刷新');
-        loadUsers();
-    } catch (e) { toast(e.message, 'err'); }
-    finally { btn.disabled = false; btn.textContent = '更新后端地址'; }
+function setManageCode(id, code) {
+    const user = (tabCache.users?.items ?? []).find(u => u.id === Number(id));
+    if (user) user.activation_code = code;
+    if ($('#activationManageUserId').value !== id) return;
+    $('#activationManageCode').value = code;
+    $('#activationManageResult').style.display = '';
+    $('#activationManageCopyBtn').style.display = '';
+    $('#activationManageUpdateUrlBtn').style.display = '';
 }
 
-async function regenerateFromManage() {
+function updateBaseUrlFromManage() {
     const id = $('#activationManageUserId').value;
     if (!id) return;
-    const baseUrl = $('#activationManageBaseUrl').value.trim() || 'http://localhost:10620';
-    const btn = $('#activationManageGenBtn');
-    btn.disabled = true; btn.textContent = '生成中…';
-    try {
-        const resp = await apiFetch(`/api/admin/users/${id}`, {
-            method: 'PATCH',
-            body: JSON.stringify({ regenerate_token: true, base_url: baseUrl }),
-        });
-        const data = await resp.json();
-        if (data.activation_code) {
-            $('#activationManageCode').value = data.activation_code;
-            $('#activationManageResult').style.display = '';
-            $('#activationManageCopyBtn').style.display = '';
-            $('#activationManageUpdateUrlBtn').style.display = '';
-            const user = (tabCache.users?.items ?? []).find(u => u.id === Number(id));
-            if (user) user.activation_code = data.activation_code;
-        }
-        toast('激活码已重新生成');
-        loadUsers();
-    } catch (e) { toast(e.message, 'err'); }
-    finally { btn.disabled = false; btn.textContent = '重新生成激活码'; }
+    patchActivationUser(id, { base_url: $('#activationManageBaseUrl').value.trim() || 'http://localhost:10620' }, {
+        btn: $('#activationManageUpdateUrlBtn'), busy: '更新中…', done: '后端地址已更新，激活码已刷新',
+        onCode: code => setManageCode(id, code),
+    });
+}
+
+function regenerateFromManage() {
+    const id = $('#activationManageUserId').value;
+    if (!id) return;
+    patchActivationUser(id, { regenerate_token: true, base_url: $('#activationManageBaseUrl').value.trim() || 'http://localhost:10620' }, {
+        btn: $('#activationManageGenBtn'), busy: '生成中…', done: '激活码已重新生成',
+        onCode: code => setManageCode(id, code),
+    });
 }
 
 async function copyActivationManageCode() {
-    const code = $('#activationManageCode').value;
-    if (!code) return;
-    try {
-        await navigator.clipboard.writeText(code);
-        toast('已复制到剪贴板');
-    } catch (e) {
-        const ta = $('#activationManageCode');
-        ta.select(); document.execCommand('copy');
-        toast('已复制到剪贴板');
-    }
+    await copyText($('#activationManageCode').value, $('#activationManageCode'));
 }
 
 async function toggleUser(id) {
@@ -1448,29 +1204,28 @@ async function loadModelConfigs() {
 }
 
 function renderModels(data) {
-    const tbody = $('#modelList');
-    const items = getItems(data);
-    $('#modelCount').textContent = items.length ? `${items.length} 条配置` : '';
-    if (!items.length) { tbody.innerHTML = stateRow(4, '暂无凭证配置', '选择用户后点击“设置配置”'); return; }
-    tbody.innerHTML = items.map(c => {
-        const capabilities = c.ai_config.capabilities;
-        const llm = capabilities.llm[0];
-        return `<tr>
-            <td class="td-id">#${c.user_id}</td>
-            <td><div class="cell-strong">${llm ? esc(aiProviderLabel(llm.provider)) : '<span class="text-3">继承系统配置</span>'}</div><div class="cell-sub mono">${llm ? esc(llm.model_name) : ''}</div></td>
-            <td class="td-services">
-                ${svcDot('LLM', capabilities.llm.length > 0)}
-                ${svcDot('STT', capabilities.stt.length > 0)}
-                ${svcDot('TTS', capabilities.tts.length > 0)}
-                ${svcDot('图像', capabilities.image_gen.length > 0)}
-                ${svcDot('视频', capabilities.video_gen.length > 0)}
-            </td>
-            <td class="td-actions">
-                <button class="btn btn--ghost btn--sm" onclick="showModelConfigForUser(${c.user_id})">编辑</button>
-                <button class="btn btn--danger btn--sm" onclick="deleteModelConfig(${c.user_id})">删除</button>
-            </td>
-        </tr>`;
-    }).join('');
+    renderTable('#modelList', 'modelCount', data, {
+        unit: '条配置', cols: 4, empty: '暂无凭证配置', emptyHint: '选择用户后点击“设置配置”',
+        row: c => {
+            const capabilities = c.ai_config.capabilities;
+            const llm = capabilities.llm[0];
+            return `<tr>
+                <td class="td-id">#${c.user_id}</td>
+                <td><div class="cell-strong">${llm ? esc(aiProviderLabel(llm.provider)) : '<span class="text-3">继承系统配置</span>'}</div><div class="cell-sub mono">${llm ? esc(llm.model_name) : ''}</div></td>
+                <td class="td-services">
+                    ${svcDot('LLM', capabilities.llm.length > 0)}
+                    ${svcDot('STT', capabilities.stt.length > 0)}
+                    ${svcDot('TTS', capabilities.tts.length > 0)}
+                    ${svcDot('图像', capabilities.image_gen.length > 0)}
+                    ${svcDot('视频', capabilities.video_gen.length > 0)}
+                </td>
+                <td class="td-actions">
+                    <button class="btn btn--ghost btn--sm" onclick="showModelConfigForUser(${c.user_id})">编辑</button>
+                    <button class="btn btn--danger btn--sm" onclick="deleteModelConfig(${c.user_id})">删除</button>
+                </td>
+            </tr>`;
+        },
+    });
 }
 
 function showModelConfig() {
@@ -1671,42 +1426,196 @@ function renderAiCards(editorName) {
     };
 }
 
-const SETTING_TEXT_KEYS = [
-    'web_search_backend', 'web_extract_backend', 'tavily_base_url',
-    'ssrf_allowed_cidrs', 'public_base_url', 'log_level', 'log_format'
+// ── 系统设置表单：唯一事实来源，渲染 DOM 并派生读写键名列表 ──
+const num = (key, label, step, extra = {}) => ({ key, label, type: 'number', step, ...extra });
+const text = (key, label, placeholder) => ({ key, label, type: 'text', placeholder });
+const bool = (key, label) => ({ key, label, type: 'bool' });
+const sel = (key, label, options) => ({ key, label, type: 'select', options });
+const secret = (key, label, placeholder) => ({ key, label, type: 'secret', placeholder });
+
+const SETTINGS_SECTIONS = [
+    {
+        title: '能力运行参数', hint: '请求、重试与媒体任务的全局运行参数',
+        blocks: [
+            ['sub', 'LLM 调用超时与重试调优'],
+            ['grid', [
+                num('llm_request_timeout_seconds', '请求超时时间 (秒)', 1),
+                num('llm_stream_idle_timeout_seconds', '流式静默超时 (秒)', 1),
+                num('llm_max_retry_attempts', '失败最大重试次数', 1),
+                num('llm_base_retry_delay', '初始重试退避 (秒)', 0.5),
+                num('llm_max_retry_delay', '最大重试延迟 (秒)', 1),
+                num('default_llm_context_tokens', '默认 Token 兜底容量', 1000),
+            ]],
+            ['sub', '视频生成轮询与下载调优'],
+            ['grid', [
+                num('video_gen_poll_interval_seconds', '轮询间隔 (秒)', 0.5),
+                num('video_gen_poll_backoff_max_seconds', '轮询退避上限 (秒)', 1),
+                num('video_gen_max_poll_seconds', '最大轮询超时 (秒)', 10),
+                num('video_gen_tool_wait_seconds', '工具等待超时 (秒)', 10),
+                num('video_gen_download_max_bytes', '产物下载上限 (字节)', 1048576),
+            ]],
+        ],
+    },
+    {
+        title: '对话编排与上下文压缩', hint: '工具循环预算与长会话摘要压缩',
+        blocks: [
+            ['field', bool('enable_context_compression', '启用长会话自动上下文压缩摘要')],
+            ['grid', [
+                num('agent_max_loop_turns', '工具循环轮数上限', 1),
+                num('context_compression_threshold', '压缩触发阈值 (比例 0.1~0.9)', 0.05),
+                num('context_summary_target_tokens', '摘要压缩目标 Token 数', 100),
+                num('chat_active_window_minutes', '活跃会话判定窗口 (分钟)', 1),
+                num('ipc_future_timeout_seconds', 'IPC 异步调用等待超时 (秒)', 10),
+            ], true],
+        ],
+    },
+    {
+        title: '陪伴交互与主动行为', hint: '桌面互动节流、LLM 成本冷却与主动回合预算',
+        blocks: [
+            ['sub', '互动节流与成本冷却'],
+            ['grid', [
+                num('companion_check_affect_min_interval_seconds', '情境推理最小间隔 (秒)', 0.5),
+                num('companion_interact_min_interval_seconds', '互动触发最小间隔 (秒)', 0.5),
+                num('companion_llm_cooldown_seconds', '互动反应成本冷却 (秒)', 10),
+                num('companion_interact_failure_cooldown_seconds', '互动失败短冷却 (秒)', 5),
+                num('companion_approach_cooldown_seconds', '主动搭话冷却 (秒)', 30),
+                num('companion_contact_quiet_seconds', '用户接触静默窗口 (秒)', 5),
+                num('desktop_disconnect_grace_seconds', '桌面断线宽限 (秒)', 5),
+            ]],
+            ['sub', '主动回合预算'],
+            ['grid', [
+                num('companion_max_pending_intents', '待处理意图上限 (条)', 1),
+                num('companion_min_turn_interval_seconds', '主动回合最小间隔 (秒)', 5),
+                num('companion_turn_timeout_seconds', '主动回合超时 (秒)', 10),
+                num('companion_max_loop_turns', '主动回合工具循环上限 (轮)', 1),
+            ]],
+        ],
+    },
+    {
+        title: '记忆维护与夜间整理', hint: '记忆维护节流、夜间窗口与规划日记预算',
+        blocks: [
+            ['sub', '记忆维护与召回注入'],
+            ['grid', [
+                num('memory_review_interval_seconds', '记忆维护最小间隔 (秒)', 60),
+                num('memory_recall_max_content_chars', '召回内容截断 (字)', 100),
+                num('memory_prompt_max_memories', '提示词注入记忆条数', 1),
+            ]],
+            ['sub', '夜间整理与规划'],
+            ['grid', [
+                num('nightly_window_start_hour', '夜间窗口开始 (时)', 1, { min: 0, max: 23 }),
+                num('nightly_window_end_hour', '夜间窗口结束 (时)', 1, { min: 0, max: 23 }),
+                num('nightly_scan_interval_seconds', '夜间扫描间隔 (秒)', 10),
+                num('nightly_planning_max_tokens', '规划最大 Token', 1000),
+                num('nightly_diary_max_tokens', '日记最大 Token', 100),
+                num('diary_max_content_chars', '日记内容上限 (字)', 100),
+            ]],
+            ['sub', '调度与自动化'],
+            ['grid', [
+                num('scheduler_interval_seconds', '调度器 tick 周期 (秒)', 1),
+                num('cron_max_active_per_user', '单用户活跃 Cron 上限', 1),
+            ]],
+        ],
+    },
+    {
+        title: '联网搜索与网页抓取', hint: 'Web Search & Extract 后端与凭据',
+        blocks: [
+            ['grid', [
+                sel('web_search_backend', '搜索后端', [['ddgs', 'ddgs (DuckDuckGo 免密钥)'], ['brave-free', 'brave-free (Brave Search)'], ['tavily', 'tavily (Tavily AI 搜索)']]),
+                sel('web_extract_backend', '抓取提取后端', [['tavily', 'tavily (Tavily AI 抓取)'], ['ddgs', 'ddgs']]),
+                secret('brave_search_api_key', 'Brave Search API Key', '留空保持原有配置'),
+                secret('tavily_api_key', 'Tavily API Key', '留空保持原有配置'),
+                text('tavily_base_url', 'Tavily Base URL (可选覆盖)', '留空使用官方默认地址'),
+                num('web_search_default_results', '默认搜索结果条数', 1, { min: 1 }),
+            ], true],
+        ],
+    },
+    {
+        title: '接口限流与安全防护', hint: '频控、生成配额与附件空间',
+        blocks: [
+            ['field', bool('rate_limit_enabled', '开启接口速率限制 (Rate Limiting)')],
+            ['grid', [
+                num('login_rate_limit_per_minute', '登录频次上限 (/分钟)'),
+                num('llm_completion_rate_limit_per_minute', '单用户 LLM 对话补全 (/分钟)'),
+                num('llm_completion_rate_limit_per_ip_per_minute', '单 IP LLM 对话补全 (/分钟)'),
+                num('media_stt_rate_limit_per_minute', '语音识别 STT (/分钟)'),
+                num('media_tts_rate_limit_per_minute', '语音合成 TTS (/分钟)'),
+                num('media_video_rate_limit_per_minute', '视频附件上传 (/分钟)'),
+                num('companion_avatar_generate_rate_limit_per_minute', '伴侣头像生成 (/分钟)'),
+                num('companion_outfit_generate_rate_limit_per_hour', '伴侣换装外观生成 (/小时)'),
+            ]],
+            ['sub', '房间背景、叙事时刻与安全配额'],
+            ['grid', [
+                num('room_llm_replace_per_24h', '角色主动换房上限 (/24小时)'),
+                num('room_max_attempts', '房间生成最大重试次数'),
+                num('moment_llm_per_day', '角色主动记时刻配额 (/天)'),
+                num('max_attachments_per_turn', '单回合附件数量上限', 1),
+                num('attachment_session_quota_bytes', '会话附件目录配额 (字节)', 1048576),
+                num('journal_media_download_max_bytes', '日记生成媒体下载上限 (字节)', 1048576),
+            ]],
+            ['field', bool('diary_nightly_enabled', '开启夜间日记提炼批处理')],
+            ['field', text('ssrf_allowed_cidrs', 'SSRF 豁免 IP 网段 (逗号分隔 CIDR)', '例如 198.18.0.0/15,fdfe:dcba:9876::/64')],
+        ],
+    },
+    {
+        title: '外部渠道与系统运行时', hint: 'IM 渠道参数、公网地址与日志调优',
+        blocks: [
+            ['sub', '微信 iLink 外部 IM 渠道'],
+            ['grid', [
+                num('channels_turn_queue_max', '在途排队入站消息上限'),
+                num('channels_inbound_rate_per_minute', '入站限速频次 (/分钟)'),
+                num('channels_restart_backoff_seconds', '守卫重试退避时间 (秒)'),
+                num('weixin_reply_max_chars', '微信回复单条分片上限 (字)'),
+                num('weixin_ilink_poll_timeout_seconds', '长轮询客户端超时 (秒)'),
+            ]],
+            ['sub', '运行时与日志调优'],
+            ['grid', [
+                text('public_base_url', '公网访问基础地址 (public_base_url)', 'https://example.com'),
+                num('temp_file_ttl_hours', '临时媒体文件存活时长 (小时)'),
+                num('access_token_expire_minutes', '用户登录 Token 有效期 (分钟)'),
+                sel('log_level', '日志输出级别', ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'].map(v => [v, v])),
+                sel('log_format', '日志格式', [['json', 'json'], ['text', 'text']]),
+                secret('metrics_auth_token', '指标采集鉴权 Token', '留空不设鉴权'),
+            ]],
+            ['field', bool('llm_debug_logging', '开启 LLM Debug 面包屑追踪日志')],
+            ['field', { ...num('llm_debug_max_chars', 'LLM Debug 单字段截断字符数'), narrow: true }],
+        ],
+    },
 ];
 
-const SETTING_NUM_KEYS = [
-    'llm_request_timeout_seconds', 'llm_stream_idle_timeout_seconds', 'llm_max_retry_attempts', 'llm_base_retry_delay', 'llm_max_retry_delay', 'default_llm_context_tokens',
-    'video_gen_poll_interval_seconds', 'video_gen_poll_backoff_max_seconds', 'video_gen_max_poll_seconds', 'video_gen_tool_wait_seconds', 'video_gen_download_max_bytes',
-    'context_compression_threshold', 'context_summary_target_tokens', 'context_summary_max_input_messages', 'chat_active_window_minutes', 'ipc_future_timeout_seconds',
-    'agent_max_loop_turns',
-    'companion_check_affect_min_interval_seconds', 'companion_interact_min_interval_seconds', 'companion_llm_cooldown_seconds', 'companion_interact_failure_cooldown_seconds',
-    'companion_approach_cooldown_seconds', 'companion_contact_quiet_seconds', 'desktop_disconnect_grace_seconds',
-    'companion_max_pending_intents', 'companion_min_turn_interval_seconds', 'companion_turn_timeout_seconds', 'companion_max_loop_turns',
-    'memory_review_interval_seconds', 'memory_recall_max_content_chars', 'memory_prompt_max_memories',
-    'nightly_window_start_hour', 'nightly_window_end_hour', 'nightly_scan_interval_seconds', 'nightly_consolidate_max_recall_rows',
-    'nightly_message_truncate_chars', 'nightly_planning_max_tokens', 'nightly_diary_max_tokens', 'diary_max_content_chars',
-    'scheduler_interval_seconds', 'cron_max_active_per_user',
-    'login_rate_limit_per_minute', 'llm_completion_rate_limit_per_minute', 'llm_completion_rate_limit_per_ip_per_minute', 'media_stt_rate_limit_per_minute', 'media_tts_rate_limit_per_minute', 'media_video_rate_limit_per_minute',
-    'companion_avatar_generate_rate_limit_per_minute', 'companion_outfit_generate_rate_limit_per_hour',
-    'room_llm_replace_per_24h', 'room_max_attempts', 'room_history_keep', 'moment_llm_per_day',
-    'max_attachments_per_turn', 'attachment_session_quota_bytes', 'journal_media_download_max_bytes', 'backup_archive_max_bytes',
-    'web_search_default_results',
-    'channels_turn_queue_max', 'channels_inbound_rate_per_minute', 'channels_restart_backoff_seconds', 'weixin_reply_max_chars', 'weixin_ilink_poll_timeout_seconds',
-    'temp_file_ttl_hours', 'access_token_expire_minutes', 'llm_debug_max_chars'
-];
+const SETTINGS_FIELDS = SETTINGS_SECTIONS.flatMap(s => s.blocks.flatMap(b => (b[0] === 'grid' ? b[1] : b[0] === 'field' ? [b[1]] : [])));
+const SETTING_NUM_KEYS = SETTINGS_FIELDS.filter(f => f.type === 'number').map(f => f.key);
+const SETTING_TEXT_KEYS = SETTINGS_FIELDS.filter(f => f.type === 'text' || f.type === 'select').map(f => f.key);
+const SETTING_BOOL_KEYS = SETTINGS_FIELDS.filter(f => f.type === 'bool').map(f => f.key);
+const SETTING_KEY_BADGES = SETTINGS_FIELDS.filter(f => f.type === 'secret').map(f => ({ key: f.key, badge: `sys_${f.key}_badge` }));
 
-const SETTING_BOOL_KEYS = [
-    'enable_context_compression', 'rate_limit_enabled',
-    'diary_nightly_enabled', 'llm_debug_logging'
-];
+function settingsFieldHtml(f) {
+    const id = `sys_${f.key}`;
+    if (f.type === 'bool') {
+        return `<div class="field"><label class="checkbox-row"><input type="checkbox" id="${id}"> ${f.label}</label></div>`;
+    }
+    if (f.type === 'select') {
+        const options = f.options.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
+        return `<div class="field"><label>${f.label}</label><select id="${id}">${options}</select></div>`;
+    }
+    if (f.type === 'secret') {
+        return `<div class="field"><div class="label-row"><label>${f.label}</label><span class="keybadge off" id="${id}_badge">未设置</span></div><input type="password" id="${id}" placeholder="${f.placeholder}"></div>`;
+    }
+    const attrs = ` type="${f.type}"${f.step ? ` step="${f.step}"` : ''}${f.min !== undefined ? ` min="${f.min}"` : ''}${f.max !== undefined ? ` max="${f.max}"` : ''}${f.placeholder ? ` placeholder="${f.placeholder}"` : ''}`;
+    return `<div class="field${f.narrow ? ' field--narrow' : ''}"><label>${f.label}</label><input${attrs} id="${id}"></div>`;
+}
 
-const SETTING_KEY_BADGES = [
-    { key: 'brave_search_api_key', badge: 'sys_brave_key_badge' },
-    { key: 'tavily_search_api_key', badge: 'sys_tavily_key_badge' },
-    { key: 'metrics_auth_token', badge: 'sys_metrics_token_badge' }
-];
+function renderSettingsForm() {
+    $('#systemSettingsForm').innerHTML = SETTINGS_SECTIONS.map(s => `
+        <div class="card" style="margin-bottom:1.25rem">
+            <div class="card-head"><h2>${s.title}</h2><span class="hint">${s.hint}</span></div>
+            <div class="card-pad">${s.blocks.map(b => b[0] === 'sub'
+                ? `<h3 class="subhead">${b[1]}</h3>`
+                : b[0] === 'grid'
+                    ? `<div class="grid${b[2] ? ' grid--wide' : ''}">${b[1].map(settingsFieldHtml).join('')}</div>`
+                    : settingsFieldHtml(b[1])).join('')}</div>
+        </div>`).join('');
+}
+renderSettingsForm();
 
 async function loadSystemSettings() {
     aiSettingsLoaded = false;
@@ -1806,27 +1715,26 @@ async function loadLogs() {
 }
 
 function renderLogs(data) {
-    const tbody = $('#logList');
-    const items = getItems(data);
-    $('#logCount').textContent = items.length ? `${items.length} 条记录` : '';
-    if (!items.length) { tbody.innerHTML = stateRow(6, '暂无夜间活动记录', '当夜间流水线运行后会在此展示'); return; }
-    tbody.innerHTML = items.map(r => {
-        const statusPill = pill(
-            r.status === 'completed' ? '已完成' :
-            r.status === 'completed_with_errors' ? '部分失败' :
-            r.status === 'skipped' ? '跳过' : '失败',
-            r.status === 'completed' ? 'green' :
-            r.status === 'skipped' ? 'muted' : 'red'
-        );
-        return `<tr style="cursor:pointer" onclick="openLogDetail(${r.id})">
-            <td class="td-id">${r.id}</td>
-            <td><div class="cell-strong">${esc(String(r.user_id))}</div><div class="cell-sub">${esc(r.summary || '')}</div></td>
-            <td>${esc(r.target_date)}</td>
-            <td>${statusPill}</td>
-            <td>${fmtDate(r.updated_at || r.created_at)}</td>
-            <td class="td-actions"><button class="btn btn--ghost btn--sm" onclick="event.stopPropagation(); openLogDetail(${r.id})">查看</button></td>
-        </tr>`;
-    }).join('');
+    renderTable('#logList', 'logCount', data, {
+        unit: '条记录', cols: 6, empty: '暂无夜间活动记录', emptyHint: '当夜间流水线运行后会在此展示',
+        row: r => {
+            const statusPill = pill(
+                r.status === 'completed' ? '已完成' :
+                r.status === 'completed_with_errors' ? '部分失败' :
+                r.status === 'skipped' ? '跳过' : '失败',
+                r.status === 'completed' ? 'green' :
+                r.status === 'skipped' ? 'muted' : 'red'
+            );
+            return `<tr style="cursor:pointer" onclick="openLogDetail(${r.id})">
+                <td class="td-id">${r.id}</td>
+                <td><div class="cell-strong">${esc(String(r.user_id))}</div><div class="cell-sub">${esc(r.summary || '')}</div></td>
+                <td>${esc(r.target_date)}</td>
+                <td>${statusPill}</td>
+                <td>${fmtDate(r.updated_at || r.created_at)}</td>
+                <td class="td-actions"><button class="btn btn--ghost btn--sm" onclick="event.stopPropagation(); openLogDetail(${r.id})">查看</button></td>
+            </tr>`;
+        },
+    });
 }
 
 async function openLogDetail(id) {
@@ -1848,30 +1756,29 @@ async function loadVersions() {
 }
 
 function renderVersions(data) {
-    const tbody = $('#versionList');
-    const items = getItems(data);
-    $('#versionCount').textContent = items.length ? `${items.length} 个版本` : '';
-    if (!items.length) { tbody.innerHTML = stateRow(6, '暂无历史版本', '上传一个 .zip 更新包以开始分发'); return; }
-    tbody.innerHTML = items.map(v => {
-        const size = fmtSize(v.exe_size);
-        return `<tr>
-            <td><div class="cell-strong">v${esc(v.version)}</div><div class="cell-sub mono">${size ? esc(size) : '—'}</div></td>
-            <td class="td-notes">${esc(v.release_notes) || '<span class="text-3">—</span>'}</td>
-            <td class="td-platforms">
-                ${plat('Windows', !!v.exe_filename)}
-                ${plat('macOS', !!v.mac_filename)}
-                ${plat('Runner', !!v.runner_filename)}
-            </td>
-            <td>${v.is_active ? pill('上线', 'green') : pill('下线', 'muted')}</td>
-            <td><div>${fmtDate(v.created_at)}</div><div class="cell-sub">${esc(v.created_by) || '—'}</div></td>
-            <td class="td-actions">
-                ${v.is_active
-                    ? `<button class="btn btn--ghost btn--sm" onclick="setActive(${v.id}, false)">下线</button>`
-                    : `<button class="btn btn--primary btn--sm" onclick="setActive(${v.id}, true)">上线</button>`}
-                <button class="btn btn--danger btn--sm" onclick="deleteVersion(${v.id})">删除</button>
-            </td>
-        </tr>`;
-    }).join('');
+    renderTable('#versionList', 'versionCount', data, {
+        unit: '个版本', cols: 6, empty: '暂无历史版本', emptyHint: '上传一个 .zip 更新包以开始分发',
+        row: v => {
+            const size = fmtSize(v.exe_size);
+            return `<tr>
+                <td><div class="cell-strong">v${esc(v.version)}</div><div class="cell-sub mono">${size ? esc(size) : '—'}</div></td>
+                <td class="td-notes">${esc(v.release_notes) || '<span class="text-3">—</span>'}</td>
+                <td class="td-platforms">
+                    ${plat('Windows', !!v.exe_filename)}
+                    ${plat('macOS', !!v.mac_filename)}
+                    ${plat('Runner', !!v.runner_filename)}
+                </td>
+                <td>${v.is_active ? pill('上线', 'green') : pill('下线', 'muted')}</td>
+                <td><div>${fmtDate(v.created_at)}</div><div class="cell-sub">${esc(v.created_by) || '—'}</div></td>
+                <td class="td-actions">
+                    ${v.is_active
+                        ? `<button class="btn btn--ghost btn--sm" onclick="setActive(${v.id}, false)">下线</button>`
+                        : `<button class="btn btn--primary btn--sm" onclick="setActive(${v.id}, true)">上线</button>`}
+                    <button class="btn btn--danger btn--sm" onclick="deleteVersion(${v.id})">删除</button>
+                </td>
+            </tr>`;
+        },
+    });
 }
 
 async function setActive(id, active) {
@@ -1908,16 +1815,24 @@ $('#uploadForm').addEventListener('submit', async (e) => {
 function openModal(id) { $('#' + id).classList.add('open'); document.body.style.overflow = 'hidden'; }
 function closeModal(id) { $('#' + id).classList.remove('open'); document.body.style.overflow = ''; }
 
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $$('.modal.open').forEach(m => m.classList.remove('open')); });
+// 弹窗统一交互：遮罩点击与 ✕ 按钮关闭，Esc 关闭全部
+document.addEventListener('click', (e) => {
+    const target = e.target instanceof Element ? e.target : null;
+    if (!target) return;
+    if (target.classList.contains('modal')) { closeModal(target.id); return; }
+    const closer = target.closest('[data-close]');
+    if (closer) closeModal(closer.closest('.modal').id);
+});
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { $$('.modal.open').forEach(m => m.classList.remove('open')); document.body.style.overflow = ''; }
+});
 </script>
 
-<div id="logDetailModal" class="modal" onclick="if(event.target===this)closeModal('logDetailModal')">
+<div id="logDetailModal" class="modal">
     <div class="modal-card wide">
         <div class="modal-head">
             <h2 id="logDetailTitle">日志详情</h2>
-            <button class="modal-close" onclick="closeModal('logDetailModal')" aria-label="关闭">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
+            <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
             <pre id="logDetailBody" style="white-space:pre-wrap;word-break:break-word;font-size:0.82rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1rem;max-height:60vh;overflow:auto"></pre>

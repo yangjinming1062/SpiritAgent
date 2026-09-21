@@ -420,7 +420,7 @@ async def _run_nightly_pipeline_inner(
 
     # 维护完成后重新读取有效事实，规划与日记不复用维护前的过期快照。
     async with session_scope() as db:
-        recall_rows = await list_memories(db, scope, kind="recall", limit=SETTINGS.nightly_consolidate_max_recall_rows)
+        recall_rows = await list_memories(db, scope, kind="recall", limit=None)
         user_profile = await read_user_profile(db, scope)
     updated_contextual = {
         str(r["id"]): f"[{r['basis']}] {r['content']}" for r in recall_rows if r["usage"] == "contextual"

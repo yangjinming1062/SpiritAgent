@@ -208,8 +208,7 @@ async def get_room_state(db: AsyncSession, user_id: int) -> RoomState:
                 .order_by(
                     CompanionRoomBackdrop.ready_at.desc().nullslast(),
                     CompanionRoomBackdrop.id.desc(),
-                )
-                .limit(SETTINGS.room_history_keep),
+                ),
             )
         )
         .scalars()
@@ -418,38 +417,6 @@ async def _supersede_pending(db: AsyncSession, user_id: int) -> None:
         )
         .values(status=BackdropStatus.SUPERSEDED.value),
     )
-
-
-async def _trim_history(db: AsyncSession, user_id: int) -> None:
-    """保留最近 N 张 ready（不淘汰当前 active）；更早的标 superseded 并从 companion-assets 物理清理。"""
-    keep = int(SETTINGS.room_history_keep)
-    if keep <= 0:
-        return
-    persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
-    active_id = persona.active_backdrop_id if persona is not None else None
-
-    stmt = select(CompanionRoomBackdrop).where(
-        CompanionRoomBackdrop.user_id == user_id,
-        CompanionRoomBackdrop.status == BackdropStatus.READY.value,
-    )
-    if active_id is not None:
-        stmt = stmt.where(CompanionRoomBackdrop.id != active_id)
-    stmt = stmt.order_by(
-        CompanionRoomBackdrop.ready_at.desc().nullslast(),
-        CompanionRoomBackdrop.id.desc(),
-    ).offset(keep)
-    stale_rows = list((await db.execute(stmt)).scalars().all())
-    if not stale_rows:
-        return
-    stale_ids = [r.id for r in stale_rows]
-    await db.execute(
-        update(CompanionRoomBackdrop)
-        .where(CompanionRoomBackdrop.id.in_(stale_ids))
-        .values(status=BackdropStatus.SUPERSEDED.value),
-    )
-    for r in stale_rows:
-        if r.media_path and r.media_path.startswith("companion-assets/"):
-            asset_store.unlink_companion_asset(r.media_path)
 
 
 async def schedule_room_generation(
@@ -1192,7 +1159,6 @@ async def _finalize_ready_row(
                 db.add(persona)
                 await db.flush()
             persona.active_backdrop_id = row.id
-        await _trim_history(db, user_id)
         await db.commit()
         await db.refresh(row)
         ROOM_BACKDROP_IMAGES_TOTAL.labels(origin=origin, result="ready").inc()

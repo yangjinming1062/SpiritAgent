@@ -46,14 +46,14 @@ async def list_memories(
     status: str = "active",
     tag: str | None = None,
     q: str | None = None,
-    limit: int = _LIST_DEFAULT_LIMIT,
+    limit: int | None = _LIST_DEFAULT_LIMIT,
 ) -> list[dict[str, Any]]:
-    """列出用户记忆，可按 kind / tag 过滤，q 对 content 与 context 做子串匹配。"""
+    """列出用户记忆；内部批处理可用 limit=None 读取全部，分页调用仍限制条数。"""
     if kind is not None and kind not in KIND_TO_PREFIX:
         raise ValueError(f"kind must be one of {sorted(KIND_TO_PREFIX)}")
     if tag is not None and tag not in RECALL_TAGS:
         raise ValueError(f"tag must be in {sorted(RECALL_TAGS)}")
-    if limit <= 0 or limit > _LIST_MAX_LIMIT:
+    if limit is not None and (limit <= 0 or limit > _LIST_MAX_LIMIT):
         limit = _LIST_DEFAULT_LIMIT
 
     if status not in {"active", "candidate", "invalidated", "expired"}:

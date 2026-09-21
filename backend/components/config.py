@@ -103,8 +103,7 @@ class Settings(BaseSettings):
     tavily_base_url: str = Field(default="", validation_alias="TAVILY_BASE_URL")
 
     context_compression_threshold: float = Field(default=0.70, validation_alias="CONTEXT_COMPRESSION_THRESHOLD")
-    context_summary_target_tokens: int = Field(default=2000, validation_alias="CONTEXT_SUMMARY_TARGET_TOKENS")
-    context_summary_max_input_messages: int = Field(default=30, validation_alias="CONTEXT_SUMMARY_MAX_INPUT_MESSAGES")
+    context_summary_target_tokens: int = Field(default=5000, validation_alias="CONTEXT_SUMMARY_TARGET_TOKENS")
     enable_context_compression: bool = Field(default=True, validation_alias="ENABLE_CONTEXT_COMPRESSION")
     ipc_future_timeout_seconds: float = Field(default=300.0, validation_alias="IPC_FUTURE_TIMEOUT_SECONDS")
 
@@ -165,7 +164,7 @@ class Settings(BaseSettings):
         validation_alias="MEMORY_REVIEW_INTERVAL_SECONDS",
     )
     memory_recall_max_content_chars: int = Field(
-        default=4_000,
+        default=8_000,
         gt=0,
         validation_alias="MEMORY_RECALL_MAX_CONTENT_CHARS",
     )
@@ -175,14 +174,8 @@ class Settings(BaseSettings):
     nightly_window_start_hour: int = Field(default=0, ge=0, le=23, validation_alias="NIGHTLY_WINDOW_START_HOUR")
     nightly_window_end_hour: int = Field(default=5, ge=0, le=23, validation_alias="NIGHTLY_WINDOW_END_HOUR")
     nightly_scan_interval_seconds: float = Field(default=300.0, gt=0, validation_alias="NIGHTLY_SCAN_INTERVAL_SECONDS")
-    nightly_consolidate_max_recall_rows: int = Field(
-        default=200,
-        gt=0,
-        validation_alias="NIGHTLY_CONSOLIDATE_MAX_RECALL_ROWS",
-    )
-    nightly_message_truncate_chars: int = Field(default=4_000, gt=0, validation_alias="NIGHTLY_MESSAGE_TRUNCATE_CHARS")
-    nightly_planning_max_tokens: int = Field(default=16_000, gt=0, validation_alias="NIGHTLY_PLANNING_MAX_TOKENS")
-    nightly_diary_max_tokens: int = Field(default=800, gt=0, validation_alias="NIGHTLY_DIARY_MAX_TOKENS")
+    nightly_planning_max_tokens: int = Field(default=128_000, gt=0, validation_alias="NIGHTLY_PLANNING_MAX_TOKENS")
+    nightly_diary_max_tokens: int = Field(default=8_000, gt=0, validation_alias="NIGHTLY_DIARY_MAX_TOKENS")
     diary_max_content_chars: int = Field(default=1_000, gt=0, validation_alias="DIARY_MAX_CONTENT_CHARS")
     scheduler_interval_seconds: float = Field(default=60.0, gt=0, validation_alias="SCHEDULER_INTERVAL_SECONDS")
     cron_max_active_per_user: int = Field(default=10, gt=0, validation_alias="CRON_MAX_ACTIVE_PER_USER")
@@ -212,13 +205,12 @@ class Settings(BaseSettings):
     )
     room_llm_replace_per_24h: int = Field(default=1, validation_alias="ROOM_LLM_REPLACE_PER_24H")
     room_max_attempts: int = Field(default=3, validation_alias="ROOM_MAX_ATTEMPTS")
-    room_history_keep: int = Field(default=5, validation_alias="ROOM_HISTORY_KEEP")
     moment_llm_per_day: int = Field(default=3, validation_alias="MOMENT_LLM_PER_DAY")
     moment_autonomous_per_day: int = Field(default=3, validation_alias="MOMENT_AUTONOMOUS_PER_DAY")
     diary_nightly_enabled: bool = Field(default=True, validation_alias="DIARY_NIGHTLY_ENABLED")
     rate_limit_storage_url: str = Field(default="", validation_alias="RATE_LIMIT_STORAGE_URL")
 
-    # 附件、生成媒体与备份压缩包的体积/条数配额。
+    # 附件与生成媒体的体积/条数配额。
     max_attachments_per_turn: int = Field(default=16, gt=0, validation_alias="MAX_ATTACHMENTS_PER_TURN")
     attachment_session_quota_bytes: int = Field(
         default=512 * 1024 * 1024,
@@ -229,11 +221,6 @@ class Settings(BaseSettings):
         default=100 * 1024 * 1024,
         gt=0,
         validation_alias="JOURNAL_MEDIA_DOWNLOAD_MAX_BYTES",
-    )
-    backup_archive_max_bytes: int = Field(
-        default=500 * 1024 * 1024,
-        gt=0,
-        validation_alias="BACKUP_ARCHIVE_MAX_BYTES",
     )
 
     metrics_enabled: bool = Field(default=True, validation_alias="METRICS_ENABLED")

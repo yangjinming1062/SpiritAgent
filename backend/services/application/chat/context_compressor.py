@@ -21,16 +21,13 @@ def _summary_prompt(language: str) -> str:
 def _pick_compressible_block(
     rest: list[dict[str, Any]],
     *,
-    max_input_messages: int,
     preserve_recent: int = 4,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """挑选最旧的连续非 system 块进行压缩；保留最近的若干条消息不动。"""
     if len(rest) <= preserve_recent + 1:
         return [], rest
-    candidates = rest[:-preserve_recent] if preserve_recent else rest
-    block = candidates[:max_input_messages]
-    leftover = candidates[max_input_messages:]
-    keep = leftover + rest[-preserve_recent:] if preserve_recent else leftover
+    block = rest[:-preserve_recent] if preserve_recent else rest
+    keep = rest[-preserve_recent:] if preserve_recent else []
     return block, keep
 
 
@@ -85,7 +82,6 @@ async def compress_history_if_needed(
     enabled: bool | None = None,
     threshold_ratio: float | None = None,
     target_tokens: int | None = None,
-    max_input_messages: int | None = None,
     temperature: float | None = None,
     language: str = DEFAULT_LANGUAGE,
     current_tokens: int | None = None,
@@ -108,9 +104,8 @@ async def compress_history_if_needed(
             return context, None
 
     target = target_tokens if target_tokens is not None else SETTINGS.context_summary_target_tokens
-    cap = max_input_messages if max_input_messages is not None else SETTINGS.context_summary_max_input_messages
 
-    block, keep = _pick_compressible_block(context["input"], max_input_messages=cap)
+    block, keep = _pick_compressible_block(context["input"])
     if not block:
         return context, None
 

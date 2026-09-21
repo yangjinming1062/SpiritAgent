@@ -354,16 +354,9 @@ async def import_user_backup(
         extract_root = Path(tmp_dir) / "extract"
         extract_root.mkdir(parents=True, exist_ok=True)
 
-        # 分块 spool：边读边写边累加，超 500 MB 直接拒
-        total = 0
+        # 分块 spool，避免大压缩包整体驻留内存
         with open(zip_path, "wb") as out:
             while chunk := await file.read(ARCHIVE_UPLOAD_CHUNK_BYTES):
-                total += len(chunk)
-                if total > SETTINGS.backup_archive_max_bytes:
-                    raise HTTPException(
-                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                        detail=f"Archive exceeds {SETTINGS.backup_archive_max_bytes} bytes",
-                    )
                 await asyncio.to_thread(out.write, chunk)
 
         await asyncio.to_thread(_extract_and_validate_zip, zip_path, extract_root)
