@@ -52,7 +52,14 @@ export function FullbodyReferencePanel({
   }, [avatarId])
 
   const confirm = async (): Promise<void> => {
-    if (!onContinue || !state.rawUrl || busy) {
+    if (!onContinue || selecting || confirming) {
+      return
+    }
+
+    // 读 store 而非渲染闭包：自备图采纳后要立即确认刚水合的结果。
+    const latest = $fullbodyReference.get()
+
+    if (latest.avatarId !== avatarId || !latest.rawUrl || latest.busy) {
       return
     }
 
@@ -60,7 +67,7 @@ export function FullbodyReferencePanel({
     setConfirmError(null)
 
     try {
-      await onContinue(state.rawUrl)
+      await onContinue(latest.rawUrl)
     } catch (error) {
       setConfirmError(backendDetailMessage(error, t.errors.load))
     } finally {
@@ -112,6 +119,8 @@ export function FullbodyReferencePanel({
       body: { image: image.base64, content_type: image.contentType }
     })
     await hydrateFullbodyReference(avatarId)
+    // 引导内采纳即确认并继续，失败留在本面板可手动重试；设置页无后续步骤，不自动确认。
+    await confirm()
   }
 
   // 独立全身参考以头像为身份锚点（与 AI 生图同源）；优先读种子缓存，回落到当前头像。
@@ -253,6 +262,7 @@ export function FullbodyReferencePanel({
       <SelfSourceImageFlow
         adopt={adoptSelfSourceImage}
         fetchPrompt={fetchSelfSourcePrompt}
+        hint={onboarding ? t.adoptHint : undefined}
         onClose={() => setSelfSourceOpen(false)}
         onUseAi={() => {
           setSelfSourceOpen(false)

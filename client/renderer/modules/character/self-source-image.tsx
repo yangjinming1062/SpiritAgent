@@ -12,7 +12,7 @@ import { useStrings } from '@/shared/strings'
 
 import { pickAvatarImage, type PickedImage } from './avatar-image'
 
-/** 外部工具按提示词生图时需一并提供的种子参考图；label 说明图的用途（如「全身种子图」）。 */
+/** 外部工具按提示词生图时需一并提供的种子参考图；label 说明图的用途（如「全身形象」）。 */
 export interface SelfSourceReferenceImage {
   label: string
   url: string

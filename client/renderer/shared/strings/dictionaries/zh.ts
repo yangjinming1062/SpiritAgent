@@ -52,11 +52,11 @@ export const dict = {
     referenceTitle: '参考图（随提示词一起提供）',
     referenceHint: '把参考图和提示词一起交给外部工具；缩略图上可复制或另存，点击查看大图。',
     referenceMissing:
-      '当前未能展示种子参考图。提示词以参考图为身份锚点，请先在设置的“角色与记忆”中补齐种子图，或稍后重试。',
+      '当前没有可展示的参考图。提示词以头像为形象基准，请先在设置的“角色与记忆”中确认头像，或稍后重试。',
     referenceZoom: '参考图预览',
     refs: {
-      avatarSeed: '头像种子图',
-      fullbodySeed: '全身种子图'
+      avatarSeed: '头像',
+      fullbodySeed: '全身形象'
     },
     promptLoading: '正在准备提示词…',
     promptFailed: '提示词获取失败，请重试。',
@@ -86,7 +86,7 @@ export const dict = {
     editRequiresFeedback: '微调需先填写要求',
     regenerateHint: '按参考与要求整体重绘',
     groupHint: '微调只修改要求的部分，其余保持不变；重新生成按参考与要求整体重绘。',
-    selfTitle: '使用自备图',
+    selfTitle: '使用自己的图片',
     selfHint: '直接上传准备好的图片；需要制作时，可获取提示词与参考图，在外部工具完成后上传。'
   },
 
@@ -373,11 +373,12 @@ export const dict = {
       sectionTitle: '角色',
       sectionMemory: '长期记忆',
       fullbodyReference: {
-        title: '全身种子图',
+        title: '全身形象',
         hint: '展示完整身体与性格气质，采用适合自身结构、可以稳定保持的待机姿态，作为默认视频、换装与出镜画面的参考。',
         confirmHint: '确认后锁定身份并开始生成默认视频形象；未就绪时保留蛋形，完成后自动启用。',
-        empty: '还没有全身种子图，可以根据当前头像与角色设定生成。',
-        loading: '正在准备全身种子图，请稍候…',
+        adoptHint: '采纳后将直接确认这张全身形象：锁定身份并开始准备默认视频。',
+        empty: '还没有全身形象，可以根据当前头像与角色设定生成。',
+        loading: '正在准备全身形象，请稍候…',
         referenceLabel: '用户参考图',
         refLabel: '参考图（可选，仅「重新生成」时生效）',
         refHint: '补充体型、服装和姿态；脸部身份以已确认的头像为准。',
@@ -387,16 +388,16 @@ export const dict = {
         pickError: '图片选择失败，请尝试较小的 PNG、JPEG、WebP 或 GIF 图片。',
         feedbackLabel: '想怎么调整？（可留空）',
         feedbackPlaceholder: '希望怎样展现体态或姿势？可留空直接生成。',
-        generate: '生成全身种子图',
-        regenerate: '重新生成全身种子图',
+        generate: '生成全身形象',
+        regenerate: '重新生成全身形象',
         edit: '微调',
         editDisabledByReference: '附参考图时不可微调，请先移除参考图',
         reload: '重新加载',
-        enlarge: '放大查看全身种子图',
+        enlarge: '放大查看全身形象',
         back: '上一步',
         continue: '确认并继续',
         errors: {
-          load: '全身种子图读取失败，请重新加载。',
+          load: '全身形象读取失败，请重新加载。',
           generate: '生成未完成，已保留原图。请先重新加载查看结果，再决定是否重试生成。',
           preview: '图片已保存，但预览加载失败，请重新加载。'
         }

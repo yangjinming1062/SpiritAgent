@@ -446,6 +446,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [phase, setPhase] = useState<Phase>('q-character')
   // 身份锁定后禁止返回形象确认步骤。
   const [imageSealed, setImageSealed] = useState(false)
+  const [portraitDirectAdopt, setPortraitDirectAdopt] = useState(false)
+  // /portrait/confirm 在途时禁用头像阶段全部操作，避免确认结果与并发生成、返回竞争。
+  const [sealingPortrait, setSealingPortrait] = useState(false)
   const [qIndex, setQIndex] = useState(0)
   const onboardingSubmissionsRef = useRef(Promise.resolve())
   const [answers, setAnswers] = useState<OnboardingAnswers>({})
@@ -737,7 +740,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   const onBack = (): void => {
     // 形象确认后模型已启动,任何返回路径都禁用——纯函数 ``computeBackTransition`` 在 imageSealed 时直接返 null。
-    const intent = computeBackTransition({ phase, qIndex, voiceStage, imageSealed }, CHARACTER_QUESTIONS.length)
+    const intent = computeBackTransition(
+      { phase, qIndex, voiceStage, imageSealed, portraitDirectAdopt },
+      CHARACTER_QUESTIONS.length
+    )
 
     if (!intent) {
       return
@@ -795,6 +801,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
     const img = imageOverride !== undefined ? imageOverride : refImage
     setPhase('hatching')
+    setPortraitDirectAdopt(false)
     setHint(null)
     void playOnboardingAudio('onboarding.hatching')
 
@@ -988,6 +995,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     playAudioOnSuccess: true,
     onRegenerated: ({ avatar }) => {
       setPortraitPanelHint(null)
+      // 重绘与微调产物按 AI 结果对待，需经确认步骤。
+      setPortraitDirectAdopt(false)
 
       if (avatar) {
         setPortraitUrl(avatar)
@@ -1073,14 +1082,16 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
 
     if (!applied.avatar) {
-      throw new Error('种子图已保存，预览加载失败，请重新加载')
+      throw new Error('头像已保存，预览加载失败，请重新加载')
     }
 
     pushPortraitEntry({ assetUrl: applied.assetUrl, avatarId: applied.id, portraitUrl: applied.avatar })
     $regenFeedback.set('')
     setPresentationRef(null)
     setPortraitPanelHint(null)
-    setPhase('portrait-avatar')
+    // 自备图即心仪头像，采纳后直接确认。
+    setPortraitDirectAdopt(true)
+    await sealPortrait()
   }
 
   const pickPresentationImage = async (): Promise<void> => {
@@ -1100,7 +1111,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setHint(null)
   }
 
-  const confirmPortrait = async (): Promise<void> => {
+  // 确认头像并进入全身阶段；失败落到确认步骤展示原因，可原地重试。
+  const sealPortrait = async (): Promise<void> => {
+    if (sealingPortrait) {
+      return
+    }
+
+    setSealingPortrait(true)
+
     try {
       await window.spiritagent.api({
         path: '/api/companion/portrait/confirm',
@@ -1125,16 +1143,25 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       // 非 IPC 失败（网络、JSON 解析、IPC envelope）：onClick 里的 `void` 会把异常吞掉——
       // 这里显式提示并拒绝推进。
 
-      console.warn('confirmPortrait failed unexpectedly', error)
+      console.warn('sealPortrait failed unexpectedly', error)
       setPortraitPanelHint('确认失败，请检查网络后重试')
+      setPhase('portrait-avatar')
 
       return
+    } finally {
+      setSealingPortrait(false)
     }
 
     clearPortraitHistory()
     setPresentationRef(null)
 
     setPhase('fullbody-reference')
+  }
+
+  // 草稿此前已预览过，继续即确认。
+  const continueCurrentPortrait = async (): Promise<void> => {
+    setPortraitDirectAdopt(true)
+    await sealPortrait()
   }
 
   const confirmFullbody = async (expectedUrl: string): Promise<void> => {
@@ -1259,7 +1286,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const voiceCandidates = voice ? [voice, ...(voiceAlternatives.length ? voiceAlternatives : otherVoices)] : []
 
   const canGoBack =
-    computeBackTransition({ phase, qIndex, voiceStage, imageSealed }, CHARACTER_QUESTIONS.length) !== null
+    computeBackTransition(
+      { phase, qIndex, voiceStage, imageSealed, portraitDirectAdopt },
+      CHARACTER_QUESTIONS.length
+    ) !== null
 
   return (
     <div className="fixed inset-0 z-50 pointer-events-none" style={{ pointerEvents: 'none' }}>
@@ -1416,7 +1446,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             <div>
               <p className="text-[15px] font-medium text-strong">选择头像获取方式</p>
               <p className="mt-1 text-xs text-body">
-                先准备头像种子，再准备全身种子。每一步都可选择生成，或直接上传成品。
+                先为伙伴确定头像，再准备全身形象。可以让 AI 绘制，也可以直接上传您准备好的图片。
               </p>
 
               <div className="mt-3 rounded-xl border border-line-hairline bg-fill-trough p-3">
@@ -1438,7 +1468,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               </div>
               <div className="mt-4 flex flex-col gap-3">
                 <button
-                  className="rounded-xl border border-line-hairline bg-surface-card p-4 text-left transition hover:border-line-strong hover:bg-fill-hover active:scale-[0.99]"
+                  className="rounded-xl border border-line-hairline bg-surface-card p-4 text-left transition hover:border-line-strong hover:bg-fill-hover active:scale-[0.99] disabled:opacity-40"
+                  disabled={sealingPortrait}
                   onClick={() => void startAiHatching()}
                   type="button"
                 >
@@ -1455,25 +1486,26 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
                 <button
                   className="rounded-xl border border-line-hairline bg-surface-card p-4 text-left transition hover:border-line-strong hover:bg-fill-hover active:scale-[0.99] disabled:opacity-40"
-                  disabled={avatarBusy}
+                  disabled={avatarBusy || sealingPortrait}
                   onClick={() => setAvatarSelfSourceOpen(true)}
                   type="button"
                 >
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-1.5 text-[14px] font-medium text-strong">
-                      <FolderOpen className="size-4 text-muted" /> 上传自备头像种子
+                      <FolderOpen className="size-4 text-muted" /> 使用我自己的图片
                     </span>
                     <span className="text-xs text-muted">选择图片 →</span>
                   </div>
                   <p className="mt-1.5 text-[11px] leading-relaxed text-body">
-                    直接使用准备好的头像，不调用图像生成。也可获取提示词，在外部制作后上传。
+                    直接上传一张您准备好的图片作为头像；也可以获取提示词，在外部绘制后上传。
                   </p>
                 </button>
 
                 {activeAvatarId != null && portraitUrl && (
                   <button
-                    className="rounded-xl border border-line-hairline bg-surface-card p-4 text-left transition hover:border-line-strong hover:bg-fill-hover active:scale-[0.99]"
-                    onClick={() => setPhase('portrait-avatar')}
+                    className="rounded-xl border border-line-hairline bg-surface-card p-4 text-left transition hover:border-line-strong hover:bg-fill-hover active:scale-[0.99] disabled:opacity-40"
+                    disabled={avatarBusy || sealingPortrait}
+                    onClick={() => void continueCurrentPortrait()}
                     type="button"
                   >
                     <div className="flex items-center justify-between">
@@ -1481,7 +1513,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                       <span className="text-xs text-muted">已有草稿 →</span>
                     </div>
                     <p className="mt-1.5 text-[11px] leading-relaxed text-body">
-                      保留之前生成或上传的头像草稿，直接进入确认与全身种子阶段。
+                      沿用之前的头像草稿，直接进入全身形象准备。
                     </p>
                   </button>
                 )}
@@ -1490,7 +1522,12 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               {portraitPanelHint && <p className="mt-3 text-xs text-rose-300/90">{portraitPanelHint}</p>}
 
               <div className="mt-4 flex items-center justify-between text-xs">
-                <button className="text-body transition hover:text-strong" onClick={onBack} type="button">
+                <button
+                  className="text-body transition hover:text-strong disabled:opacity-30"
+                  disabled={sealingPortrait}
+                  onClick={onBack}
+                  type="button"
+                >
                   上一步
                 </button>
               </div>
@@ -1500,7 +1537,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           <SelfSourceImageFlow
             adopt={adoptAvatarSeed}
             fetchPrompt={fetchAvatarPrompt}
-            hint="请使用单个角色、纯白背景的头像。采纳后还可预览和调整，确认后再准备全身种子。"
+            hint="请使用单个角色、纯白背景的图片，采纳后将直接作为头像。"
             onClose={() => setAvatarSelfSourceOpen(false)}
             onUseAi={() => {
               setAvatarSelfSourceOpen(false)
@@ -1509,7 +1546,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             open={avatarSelfSourceOpen}
             referenceImages={refImage ? [{ label: '形象参考图', url: refImage.previewUrl }] : undefined}
             referenceRequired={Boolean(refImage)}
-            title="自备头像种子"
+            title="使用自己的图片"
           />
 
           {phase === 'hatching' && <SpinnerWithText size="h-6 w-6" text={hint || '让我想想我该是什么样子…'} />}
@@ -1519,7 +1556,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               avatarUrl={portraitUrl}
               hint={portraitPanelHint}
               history={currentHistoryItems}
-              introHint={phase === 'portrait-avatar' ? '先确认头像种子' : null}
+              introHint={phase === 'portrait-avatar' ? '预览并确认您的头像' : null}
               name={answers.name?.trim() || '伙伴'}
               onSelectEntry={onSelectHistoryEntry}
               selectedIdx={portraitSelectedIdx}
@@ -1578,6 +1615,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     <div className="flex gap-3">
                       <button
                         className="text-body transition hover:text-strong disabled:opacity-40"
+                        disabled={sealingPortrait}
                         onClick={onBack}
                         type="button"
                       >
@@ -1585,7 +1623,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                       </button>
                       <button
                         className="text-body transition hover:text-strong disabled:opacity-40"
-                        disabled={avatarBusy}
+                        disabled={avatarBusy || sealingPortrait}
                         onClick={() => {
                           setPortraitPanelHint(null)
                           void regenerateAvatarPortrait()
@@ -1595,26 +1633,18 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                         重新生成
                       </button>
                       <EditAvatarButton
-                        busy={avatarBusy}
+                        busy={avatarBusy || sealingPortrait}
                         disabledByReference={Boolean(refImage || presentationRef)}
                         onEdit={() => {
                           setPortraitPanelHint(null)
                           void editAvatarPortrait()
                         }}
                       />
-                      <button
-                        className="rounded-full border border-line-standard px-3 py-1 text-strong transition hover:bg-fill-hover disabled:opacity-40"
-                        disabled={avatarBusy}
-                        onClick={() => setAvatarSelfSourceOpen(true)}
-                        type="button"
-                      >
-                        自备种子图
-                      </button>
                     </div>
                     <button
                       className="inline-flex h-8 items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40"
-                      disabled={activeAvatarId == null}
-                      onClick={() => void confirmPortrait()}
+                      disabled={activeAvatarId == null || sealingPortrait}
+                      onClick={() => void sealPortrait()}
                       type="button"
                     >
                       确认
@@ -1622,7 +1652,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                   </div>
                 </>
               )}
-              {portraitPanelHint && <p className="mt-2 text-xs text-rose-300/90">{portraitPanelHint}</p>}
             </div>
           )}
 

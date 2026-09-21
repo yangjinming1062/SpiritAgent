@@ -55,11 +55,11 @@ export const dict: Dictionary = {
     referenceHint:
       'Hand the reference image(s) and prompt to your image tool; use thumbnail actions to copy or save. Click to enlarge.',
     referenceMissing:
-      'Seed reference images are unavailable. This prompt is anchored to a reference image — regenerate the seed in Settings → Character & Memory, or retry later.',
+      'No reference image is available right now. The prompt is anchored to the avatar — confirm the avatar in Settings → Character & Memory first, or retry later.',
     referenceZoom: 'Reference preview',
     refs: {
-      avatarSeed: 'Avatar seed',
-      fullbodySeed: 'Full-body seed'
+      avatarSeed: 'Avatar',
+      fullbodySeed: 'Full body'
     },
     promptLoading: 'Preparing the prompt…',
     promptFailed: 'Failed to fetch the prompt. Please retry.',
@@ -89,7 +89,7 @@ export const dict: Dictionary = {
     editRequiresFeedback: 'Describe the changes first to refine',
     regenerateHint: 'Redraws the whole image from the references and your brief',
     groupHint: 'Refine changes only what you describe; Regenerate redraws the whole image from the references.',
-    selfTitle: 'Bring your own image',
+    selfTitle: 'Use your own image',
     selfHint:
       'Upload a prepared image directly, or get a prompt and references to create one in an external tool first.'
   },
@@ -397,12 +397,14 @@ export const dict: Dictionary = {
       sectionTitle: 'Persona',
       sectionMemory: 'Long-term memory',
       fullbodyReference: {
-        title: 'Full-body seed image',
+        title: 'Full-body image',
         hint: 'Consistent visual style and a stable idle pose suited to this character’s anatomy and personality. Used for the default video, outfits and scenes.',
         confirmHint:
           'Confirming locks the identity and starts the default video. The egg remains visible until the video is ready and activates automatically.',
-        empty: 'No full-body seed image yet. Generate one from the current portrait and persona.',
-        loading: 'Preparing the full-body seed image…',
+        adoptHint:
+          'Adopting confirms this full-body image right away: identity is locked and the default video preparation starts.',
+        empty: 'No full-body image yet. Generate one from the current portrait and persona.',
+        loading: 'Preparing the full-body image…',
         referenceLabel: 'User reference image',
         refLabel: 'Reference image (optional, used by Regenerate only)',
         refHint: 'Adds physique, clothing and pose cues. The confirmed portrait anchors facial identity.',
@@ -412,16 +414,16 @@ export const dict: Dictionary = {
         pickError: 'Could not select the image. Try a smaller PNG, JPEG, WebP or GIF file.',
         feedbackLabel: 'What should change? (optional)',
         feedbackPlaceholder: 'Describe any changes to the body or pose, or leave blank to generate.',
-        generate: 'Generate full-body seed',
-        regenerate: 'Regenerate full-body seed',
+        generate: 'Generate full-body image',
+        regenerate: 'Regenerate full-body image',
         edit: 'Refine',
         editDisabledByReference: 'Refine is unavailable while a reference image is attached — remove it first',
         reload: 'Reload',
-        enlarge: 'Enlarge full-body seed image',
+        enlarge: 'Enlarge full-body image',
         back: 'Back',
         continue: 'Confirm and continue',
         errors: {
-          load: 'Could not load the full-body seed image. Please reload.',
+          load: 'Could not load the full-body image. Please reload.',
           generate:
             'Generation did not finish. The previous preview is preserved. Reload to check the result before generating again.',
           preview: 'The image was saved, but its preview could not load. Please reload.'

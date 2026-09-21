@@ -1,5 +1,5 @@
 // 把 ``onBack`` 的转移决策抽成纯函数,便于测试且隔离状态机逻辑。
-// 输入是当前阶段 + qIndex + voiceStage + imageSealed,输出是下一个状态意图或 null(表示"无变化")。
+// 输出是下一个状态意图或 null(表示"无变化")。
 
 type BackPhase =
   | 'q-character'
@@ -18,6 +18,8 @@ interface BackState {
   qIndex: number
   voiceStage: BackVoiceStage
   imageSealed: boolean
+  // 头像未经确认步骤直接采用（自备图或「继续当前头像」）时为 true——全身阶段返回选择步骤而非确认步骤。
+  portraitDirectAdopt: boolean
 }
 
 interface BackIntent {
@@ -44,7 +46,7 @@ export function computeBackTransition(state: BackState, characterQuestionsCount:
   }
 
   if (state.phase === 'fullbody-reference') {
-    return { phase: 'portrait-avatar' }
+    return state.portraitDirectAdopt ? { phase: 'portrait-choose' } : { phase: 'portrait-avatar' }
   }
 
   if (state.phase === 'portrait-avatar') {
