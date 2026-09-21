@@ -550,8 +550,8 @@ BROWSER_VISION_SCHEMA: dict[str, Any] = {
         "the page looks like - especially for CAPTCHAs, visual verification challenges, "
         "Canvas/WebGL graphics, complex layouts, or cases where the text snapshot misses "
         "important visual information. Set annotate=true to inject high-contrast Set-of-Marks "
-        "[N] visual badges on all interactive elements. Includes a screenshot_path that you "
-        "can share with the user by including MEDIA:<screenshot_path> in your response. "
+        "[N] visual badges on all interactive elements. Includes a local screenshot_path for later use; "
+        "the screenshot is supplied to the model for inspection, not automatically delivered to the user. "
         "Requires browser_navigate to be called first."
     ),
     "parameters": {
