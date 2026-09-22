@@ -9,6 +9,8 @@ import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 
+import { VIDEO_ACTION_KEYS } from '../../presentation/types'
+
 import type { VideoPackManifest } from './types'
 
 export interface ActiveVideoPack {
@@ -61,6 +63,8 @@ export const $videoGenError = atom<string | null>(null)
 let inflight: Promise<void> | null = null
 let generationRevision = 0
 let requestingGeneration = false
+// 同一包的同一动作只自动发起一次；失败后交回外观页手动入口。
+const requestedMissingActions = new Set<string>()
 
 /** 事件优先于旧请求响应；终态事件要求在已有水合之后重新读取。 */
 export function videoPackEventReceived(): void {
@@ -71,6 +75,7 @@ registerStorageClearHandler(() => {
   inflight = null
   generationRevision += 1
   requestingGeneration = false
+  requestedMissingActions.clear()
   $videoPacks.set([])
   $videoPack.set(null)
   $videoPackStatus.set('idle')
@@ -346,6 +351,81 @@ export async function generateVideoPack(
   await hydrateVideoPack(true)
 
   return true
+}
+
+/** 缺失动作的按需补齐：对当前激活包发起单动作请求。失败只记日志，不自动重试。 */
+export async function requestMissingVideoAction(pack: ActiveVideoPack, action: string): Promise<boolean> {
+  if ($auth.get().kind !== 'authenticated') {
+    return false
+  }
+
+  if (!(VIDEO_ACTION_KEYS as readonly string[]).includes(action)) {
+    return false
+  }
+
+  if (pack.manifest.clips.some(clip => clip.action === action)) {
+    return false
+  }
+
+  // 同一外观已有该动作任务记录（含失败）时不自动重提，交回外观页手动处理。
+  const outfitId = pack.manifest.appearance_id
+
+  if (
+    $videoPacks.get().some(entry => entry.outfit_id === outfitId && entry.actions.some(item => item.action === action))
+  ) {
+    return false
+  }
+
+  const dedupeKey = `${pack.packId}:${action}`
+
+  if (requestedMissingActions.has(dedupeKey)) {
+    return false
+  }
+
+  if (requestingGeneration || $videoGenState.get() === 'generating') {
+    return false
+  }
+
+  const epoch = currentClearEpoch()
+  const revision = generationRevision
+  requestingGeneration = true
+
+  try {
+    const res = await authedApi<VideoPackWire>({
+      body: { source_pack_id: pack.packId, action },
+      method: 'POST',
+      path: '/api/companion/video-packs/generate'
+    })
+
+    // 无论接受或拒绝都只自动发起一次，避免渲染循环反复打同一请求。
+    requestedMissingActions.add(dedupeKey)
+
+    if (epoch !== currentClearEpoch()) {
+      return false
+    }
+
+    // 事件优先于本响应：失败事件先到时，不得用迟到的 processing 回写生成中并清空错误。
+    if (revision !== generationRevision) {
+      return res.ok
+    }
+
+    if (!res.ok || !res.value) {
+      log.warn('video-pack-store', 'missing action generation rejected', { action })
+
+      return false
+    }
+
+    if (res.value.status === 'processing') {
+      $videoGenState.set('generating')
+      $videoGenStage.set('script')
+      $videoGenError.set(null)
+      await hydrateVideoPack(true)
+    }
+
+    return true
+  } finally {
+    requestingGeneration = false
+  }
 }
 
 export async function activateVideoPack(packId: number): Promise<boolean> {

@@ -140,7 +140,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_companion_outfits_user_id"), "companion_outfits", ["user_id"], unique=False)
     op.create_index(op.f("ix_companion_outfits_status"), "companion_outfits", ["status"], unique=False)
     op.create_index(op.f("ix_companion_outfits_active"), "companion_outfits", ["active"], unique=False)
-    # 角色视频动作包：包版本不可覆盖，单动作重做生成新版本行；发布与激活由服务层在用户锁内翻转。
+    # 角色视频动作包：包版本不可覆盖，单动作请求生成新版本行；发布与激活由服务层在用户锁内翻转。
     op.create_table(
         "companion_video_packs",
         sa.Column("user_id", sa.Integer(), nullable=False),

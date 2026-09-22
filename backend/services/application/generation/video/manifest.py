@@ -8,6 +8,7 @@ manifest 只含数据：不可变资源路径 + 内容哈希、画布与脚底�
 import re
 from typing import Literal
 
+from modules.companion import REQUIRED_VIDEO_ACTIONS
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.infrastructure.video_processing import (
@@ -16,9 +17,6 @@ from services.infrastructure.video_processing import (
 )
 
 MANIFEST_SCHEMA = "spiritagent.video.pack/1"
-
-# 首版必需动作；manifest 可携带更多可选动作，但缺必需动作不得发布。
-REQUIRED_ACTIONS: tuple[str, ...] = ("idle", "walk_left", "walk_right", "drag")
 DEFAULT_ACTION: str = "idle"
 
 _ACTION_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,31}$")
@@ -104,7 +102,7 @@ def validate_pack_manifest(manifest: VideoPackManifest) -> None:
         if clip.action == manifest.default_action and not clip.loop:
             raise ManifestValidationError("默认动作必须可循环")
 
-    missing = [action for action in REQUIRED_ACTIONS if action not in seen]
+    missing = [action for action in REQUIRED_VIDEO_ACTIONS if action not in seen]
     if missing:
         raise ManifestValidationError("缺少必需动作：" + "、".join(missing))
     if manifest.default_action not in seen:

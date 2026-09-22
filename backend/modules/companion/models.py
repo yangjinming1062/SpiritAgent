@@ -43,14 +43,16 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
 
 
-# 视频动作包必需动作；可选动作（wave/nod 等）允许出现在 manifest 但不阻塞 ready。
-REQUIRED_VIDEO_ACTIONS: tuple[str, ...] = ("idle", "walk_left", "walk_right", "drag")
+# 发布与激活的必需动作：首包生成集合；缺失时不得 ready。其余已知动作按首次使用补齐。
+REQUIRED_VIDEO_ACTIONS: tuple[str, ...] = ("idle", "drag")
+# 已实现的全部动作键：请求校验与任务排序；可选动作（wave/nod 等）可出现在 manifest 但不在该集合。
+VIDEO_ACTION_KEYS: tuple[str, ...] = ("idle", "walk_left", "walk_right", "drag")
 
 
 class CompanionVideoPack(ModelBase, TimestampMixin):
     """角色视频动作包（不可变版本）：一个外观版本的一套动作片段 + 描述符 manifest。
-    status 流转：processing → ready | failed；ready 仅表示「必需动作全部有效且服务端
-    发布完成」，不改变其他形象状态。版本不可覆盖：单动作重做生成新版本行，
+    status 流转：processing → ready | failed；ready 仅表示「本版本必须动作全部有效且服务端
+    发布完成」（含必需动作与 must_actions），不改变其他形象状态。版本不可覆盖：单动作请求生成新版本行，
     可复用未变化动作的资源哈希；发布与激活只能由 video 编排在用户锁内翻转。"""
 
     __tablename__ = "companion_video_packs"
@@ -71,7 +73,7 @@ class CompanionVideoPack(ModelBase, TimestampMixin):
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
     # 参考版本哈希：换装 / 参考变更后迟到的构建结果凭它被拒，不覆盖新外观的包
     reference_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
-    # 同一包及其单动作重做版本共用冻结参考字节；context_json 保存生成时角色资料。
+    # 同一包及其单动作请求版本共用冻结参考字节；context_json 保存生成时角色资料。
     reference_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     context_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)

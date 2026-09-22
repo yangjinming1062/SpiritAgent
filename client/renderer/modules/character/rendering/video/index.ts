@@ -9,6 +9,7 @@ export {
   activateVideoPack,
   generateVideoPack,
   hydrateVideoPack,
+  requestMissingVideoAction,
   resolveVideoClipUrl,
   videoPackEventReceived
 } from './video-pack-store'

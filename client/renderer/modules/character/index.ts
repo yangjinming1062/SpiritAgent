@@ -101,6 +101,7 @@ export {
   pickAvailableClip,
   resolveCompanionPresentation,
   resolveVideoAction,
+  VIDEO_ACTION_KEYS,
   type VideoActionKey
 } from './presentation'
 export { bindProactiveLineSpeaker, type ProactiveLineOptions } from './proactive-speak'
@@ -115,7 +116,8 @@ export {
   $videoPackStatus,
   activateVideoPack,
   generateVideoPack,
-  hydrateVideoPack
+  hydrateVideoPack,
+  requestMissingVideoAction
 } from './rendering/video'
 export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritual-walk'
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'

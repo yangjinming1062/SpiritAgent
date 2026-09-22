@@ -1077,14 +1077,15 @@ export const dict: Dictionary = {
       videoVersions: 'Video look versions',
       videoVersion: (version: number, outfit: number) => `Outfit ${outfit} · Version ${version}`,
       videoActive: 'Active',
-      videoActionPending: 'Action is not ready',
+      videoActionOnDemand: 'This action is generated automatically when needed.',
+      videoGenMissingAction: 'Generate this action',
       videoRedoAction: 'Regenerate this action',
       videoFeedback: 'Describe the desired movement (optional)',
       videoGenAction: 'Generate video look',
       videoRegenAction: 'Regenerate video look',
       videoRegenTitle: 'Regenerate video look',
       videoRegenBody:
-        'A fresh action set will be scripted and generated from the current outfit reference; it replaces the display and activates automatically when ready.',
+        'The actions will be re-scripted and generated from the current outfit reference; it replaces the display and activates automatically when ready.',
       videoGenStagePose: 'Preparing the action pose…',
       videoGenStageScript: 'Writing the action script from the character’s personality…',
       videoGenStageSubmit: 'Submitting the video generation task…',
@@ -1094,7 +1095,7 @@ export const dict: Dictionary = {
       videoGenStagePublish: 'Publishing the action pack…',
       videoGenStageDefault: 'Generating the video look…',
       videoGenHint:
-        'Generates separate idle, walking and suspended actions from the same reference. Preview or regenerate each action. Confirming a new outfit creates a new video look; the existing look stays until it is ready.',
+        'Generates the idle and suspended actions from the reference; walking and other actions are added automatically when needed. Preview or regenerate each action. Confirming a new outfit creates a new video look; the existing look stays until it is ready.',
       companionSize: 'Companion size',
       companionSizeHint: 'Default display scale of the sprite on the desktop.',
       scaleAria: 'Companion size'

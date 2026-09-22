@@ -11,7 +11,8 @@ import {
   $videoPacks,
   activateVideoPack,
   generateVideoPack,
-  hydrateVideoPack
+  hydrateVideoPack,
+  VIDEO_ACTION_KEYS
 } from '@/modules/character'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, ConfirmDialog, HINT_TEXT, INPUT_CLASS } from '@/shared/panel'
@@ -171,28 +172,34 @@ export function VideoSection(): React.JSX.Element {
           </select>
         ) : null}
         <div className="grid grid-cols-2 gap-3">
-          {selected?.actions.map(clip => (
-            <div className="space-y-2 rounded-lg border border-line-hairline p-2" key={clip.action}>
-              <span className="text-xs text-strong">{actionNames[clip.action] ?? clip.action}</span>
-              {clip.clip_url ? (
-                <ActionPreview url={clip.clip_url} />
-              ) : (
-                <p className={HINT_TEXT}>{clip.error ?? t.videoActionPending}</p>
-              )}
-              {clip.motion_prompt ? <p className={HINT_TEXT}>{clip.motion_prompt}</p> : null}
-              <button
-                className={BTN_SUBTLE}
-                disabled={busy || !selected.can_regenerate}
-                onClick={() => {
-                  setRedoAction(clip.action)
-                  setFeedback('')
-                }}
-                type="button"
-              >
-                {t.videoRedoAction}
-              </button>
-            </div>
-          ))}
+          {selected
+            ? VIDEO_ACTION_KEYS.map(action => {
+                const clip = selected.actions.find(entry => entry.action === action)
+
+                return (
+                  <div className="space-y-2 rounded-lg border border-line-hairline p-2" key={action}>
+                    <span className="text-xs text-strong">{actionNames[action] ?? action}</span>
+                    {clip?.clip_url ? (
+                      <ActionPreview url={clip.clip_url} />
+                    ) : (
+                      <p className={HINT_TEXT}>{clip?.error ?? t.videoActionOnDemand}</p>
+                    )}
+                    {clip?.motion_prompt ? <p className={HINT_TEXT}>{clip.motion_prompt}</p> : null}
+                    <button
+                      className={BTN_SUBTLE}
+                      disabled={busy || !selected.can_regenerate}
+                      onClick={() => {
+                        setRedoAction(action)
+                        setFeedback('')
+                      }}
+                      type="button"
+                    >
+                      {clip ? t.videoRedoAction : t.videoGenMissingAction}
+                    </button>
+                  </div>
+                )
+              })
+            : null}
         </div>
         {redoAction && selected ? (
           <div className="space-y-2">

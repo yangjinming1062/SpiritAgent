@@ -20,7 +20,7 @@ class VideoClipUpload(BaseModel):
 
 
 class VideoPackCreateRequest(BaseModel):
-    """上传片段创建视频包：外观 ID + 必需动作片段；画布缺省 512x768。"""
+    """上传片段创建视频包：外观 ID + 动作片段（至少包含必需动作）；画布缺省 512x768。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -31,7 +31,8 @@ class VideoPackCreateRequest(BaseModel):
 
 
 class VideoPackGenerateRequest(BaseModel):
-    """按参考生成视频包：缺省取当前激活且已确认的外观；force 跳过同参考版本的包复用。"""
+    """按参考生成视频包：缺省取当前激活且已确认的外观；force 跳过同参考版本的包复用。
+    source_pack_id + action 为单动作请求（补齐缺失动作或重做已有动作）。"""
 
     model_config = ConfigDict(extra="forbid")
 

@@ -17,7 +17,13 @@ import {
 import { log } from '@/shared/lib/log'
 
 import type { VideoClipSpec } from './types'
-import { $videoPack, $videoPackStatus, type ActiveVideoPack, resolveVideoClipUrl } from './video-pack-store'
+import {
+  $videoPack,
+  $videoPackStatus,
+  type ActiveVideoPack,
+  requestMissingVideoAction,
+  resolveVideoClipUrl
+} from './video-pack-store'
 
 // 命中探测（舞台像素坐标）：返回 true 命中身体 / false 透明 / null 无数据。
 export const $videoHitTest = atom<((nx: number, ny: number) => boolean | null) | null>(null)
@@ -131,6 +137,11 @@ export function VideoStage(): React.JSX.Element {
     }
 
     const clip = clipFor(pack, action)
+
+    // 缺素材时自动补齐；仅在明确动作上触发，待机回退不发请求。
+    if (clip.action !== action && action !== 'idle') {
+      void requestMissingVideoAction(pack, action)
+    }
 
     if (currentClip.current?.path === clip.path) {
       return

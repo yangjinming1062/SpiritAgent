@@ -2,7 +2,6 @@
 
 from .manifest import (
     MANIFEST_SCHEMA,
-    REQUIRED_ACTIONS,
     ManifestValidationError,
     VideoClipSpec,
     VideoPackCanvas,
@@ -27,7 +26,6 @@ from .service import (
 
 __all__ = [
     "MANIFEST_SCHEMA",
-    "REQUIRED_ACTIONS",
     "ManifestValidationError",
     "VideoClipSpec",
     "VideoPackCanvas",

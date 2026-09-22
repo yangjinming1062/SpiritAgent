@@ -16,7 +16,16 @@ export function resolveVideoAction(input: VideoActionInput): VideoActionKey {
   }
 
   if (input.locomotion === 'walk' || input.locomotion === 'walk_fast') {
-    return input.deltaXSign < 0 ? 'walk_left' : 'walk_right'
+    if (input.deltaXSign < 0) {
+      return 'walk_left'
+    }
+
+    if (input.deltaXSign > 0) {
+      return 'walk_right'
+    }
+
+    // 方向未知（起步/同位）时回退待机，避免误触发按需生成。
+    return 'idle'
   }
 
   return 'idle'

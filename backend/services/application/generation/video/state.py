@@ -20,6 +20,8 @@ class GenerationContext(BaseModel):
     outfit_description: str
     feedback: str
     active_outfit_id: int | None
+    # 本版本必须成功的动作；空表示旧数据，按全部任务判定。
+    must_actions: list[str] = []
 
 
 class ActionResult(BaseModel):
