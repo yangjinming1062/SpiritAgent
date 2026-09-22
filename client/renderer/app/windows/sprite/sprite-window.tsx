@@ -5,12 +5,13 @@ import { ActivationOverlay, BootFailureOverlay, OnboardingFlow } from '@/app/onb
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
 import { speakProactive } from '@/app/workflows/proactive-delivery'
 import {
+  $actionCatalogStatus,
   $companionLifecycle,
   $companionVoiceId,
   $contextMenuPos,
-  $videoPackStatus,
   EggStage,
   ensureCompanionHydrated,
+  hydrateActionCatalog,
   hydratePersona,
   hydratePortrait,
   hydratePortraitHistory,
@@ -54,7 +55,7 @@ export function SpriteWindow(): React.JSX.Element {
   const gatewayState = useStore($gatewayState)
   const surfaceOpen = useStore($surfaceOpen)
   const lifecycle = useStore($companionLifecycle)
-  const videoStatus = useStore($videoPackStatus)
+  const videoStatus = useStore($actionCatalogStatus)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [activationOpen, setActivationOpen] = useState(false)
   const hasHydratedRef = useRef(false)
@@ -206,6 +207,7 @@ export function SpriteWindow(): React.JSX.Element {
           hydratePortrait
         })
         void hydrateVideoPack()
+        void hydrateActionCatalog()
       })()
     }
 

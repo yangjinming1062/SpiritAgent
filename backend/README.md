@@ -4,7 +4,7 @@
 
 负责云端对话编排、角色与记忆、资产、调度和持久化；本机执行委托 Runner，窗口与渲染归 Client。
 
-按任务进入：[对话编排](services/application/chat/README.md)、[记忆](services/domains/memory/README.md)、[生成服务](services/application/generation/README.md)。本文只维护后端共用的依赖、配置、生命周期和运行约束。
+按任务进入：[对话编排](services/application/chat/README.md)、[记忆](services/domains/memory/README.md)、[生成服务](services/application/generation/README.md)、[动作库](services/domains/actions/README.md)。本文只维护后端共用的依赖、配置、生命周期和运行约束。
 
 ## 2. 设计意图
 
@@ -31,7 +31,7 @@ modules / components / common / prompts 不反向依赖服务实现
 
 `contracts` 不导入服务实现；`domains` 不依赖 application / adapters；`application` 不依赖 adapters；`infrastructure` 不反向依赖业务；`adapters` 只做协议适配。
 
-跨域和应用包间依赖仅允许已登记的单向关系：conversation 是会话底座；companion / journal 按需使用 memory；自动化复用 chat / nightly，chat 复用回合后整理，nightly 调用生成服务。新增依赖同时核对业务理由与 [分层检查器](../scripts/check_services_architecture.py)，不使用延迟导入掩盖依赖环。
+跨域和应用包间依赖仅允许已登记的单向关系：conversation 是会话底座；companion / journal 按需使用 memory；companion 只读 actions 目录快照（LLM 可点播动作清单随当前包目录变化）；自动化复用 chat / nightly，chat 复用回合后整理，nightly 调用生成服务；actions 调用 generation 制作素材，nightly 与 chat 读取 actions 动作上下文。新增依赖同时核对业务理由与 [分层检查器](../scripts/check_services_architecture.py)，不使用延迟导入掩盖依赖环。
 
 ### 3.3 api 入口
 

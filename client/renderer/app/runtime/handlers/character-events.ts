@@ -1,15 +1,14 @@
 import {
+  $actionCatalog,
   $companionMood,
-  $effectiveTier,
   $screenLocked,
-  emitVfx,
+  acceptPlayCommand,
+  actionCatalogChanged,
+  type ActionPlayCommand,
   hydrateCharacterCard,
   hydrateVideoPack,
   hydrateWardrobe,
-  playSpriteActionSequence,
-  resolveAvatarRegeneration,
-  setSpriteState,
-  type SpriteEmotion
+  resolveAvatarRegeneration
 } from '@/modules/character'
 import {
   $videoGenError,
@@ -25,17 +24,8 @@ import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
-// 角色 / 形象事件处理器：心情、自主具身表达、衣柜、头像重生与视频包生成。
+// 角色 / 形象事件处理器：心情、衣柜、头像重生与视频动作播放。
 // 全部只更新 character 域的状态，不接触会话。
-
-const SWEAT_EMOTIONS: ReadonlySet<string> = new Set(['scared', 'embarrassed', 'concerned', 'apologetic'])
-
-// 高唤醒负面情绪冒冷汗（DESIGN §6.3 粒子清单 💦 的情绪侧触发点）
-function maybeEmotionVfx(emotion?: string): void {
-  if (emotion && SWEAT_EMOTIONS.has(emotion)) {
-    emitVfx('sweat', { nx: 0.5, ny: 0.2, count: 2 })
-  }
-}
 
 function authed(): boolean {
   return $auth.get().kind === 'authenticated'
@@ -43,28 +33,6 @@ function authed(): boolean {
 
 export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext): void {
   switch (event.type) {
-    case 'companion.affect': {
-      // 云端独立具身表达只服务自主档下当前可见的桌面精灵，不进入聊天回合。
-      const payload = decodePayload<{ actions?: string[]; emotion?: string }>(event.payload)
-
-      const emotion = payload?.emotion
-      const actions = Array.isArray(payload?.actions) ? payload.actions.filter(a => typeof a === 'string') : []
-      const autonomous = $effectiveTier.get() === 'autonomous'
-
-      const canAnimate = autonomous && !$chatVisible.get() && !$screenLocked.get() && !ctx.isProxy
-
-      if (canAnimate && ((emotion && emotion !== 'neutral') || actions.length > 0)) {
-        maybeEmotionVfx(emotion)
-        setSpriteState('emotional', {
-          action: actions[0],
-          emotion: (emotion && emotion !== 'neutral' ? emotion : 'neutral') as SpriteEmotion
-        })
-        playSpriteActionSequence(actions)
-      }
-
-      break
-    }
-
     case 'companion.mood': {
       const mood = decodePayload<{ mood?: string }>(event.payload)?.mood?.trim()
 
@@ -86,6 +54,68 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
     case 'companion.outfit.updated': {
       // 衣柜状态变化（重绘草稿/确认转正/穿着翻转/删除）——重拉列表；列表端点是真相源，事件只当刷新触发。
       void hydrateWardrobe()
+
+      break
+    }
+
+    case 'companion.action.catalog_changed': {
+      // 目录变更（新动作入库/素材版本推进）：重新水合当前包目录；同包刷新不打断在播实例。
+      if (authed()) {
+        actionCatalogChanged()
+        void hydrateVideoPack(true)
+      }
+
+      break
+    }
+
+    case 'companion.action.job_updated': {
+      // 动作生成进度：驱动生成态文案；具体阶段文本由外观页消费包列表渲染。
+      if (authed()) {
+        videoPackEventReceived()
+        void hydrateVideoPack(true)
+      }
+
+      break
+    }
+
+    case 'companion.action.play_requested': {
+      // 播放指令：经统一调度器裁决（安全控制/拖拽优先，表达仅在基础状态为 idle 时生效——
+      // 由 VideoStage 的 resolvePresentation 完成）；此处只校验目录与包归属后受理。
+      // 仅当前可见的精灵舞台执行：隐藏工作台代理窗口、锁屏或聊天覆盖时不播放、不回执“已展示”。
+      if (!authed() || ctx.isProxy || $screenLocked.get() || $chatVisible.get()) {
+        break
+      }
+
+      const p = decodePayload<ActionPlayCommand>(event.payload)
+
+      if (!p?.play_id || !p.pack_id || !p.action_id) {
+        break
+      }
+
+      const catalog = $actionCatalog.get()
+
+      if (!catalog) {
+        break
+      }
+
+      const clip = catalog.clipsById.get(p.action_id)
+
+      if (clip) {
+        const command: ActionPlayCommand = {
+          play_id: p.play_id,
+          target_device: p.target_device ?? '',
+          target_surface: p.target_surface ?? '',
+          pack_id: p.pack_id,
+          appearance_epoch: p.appearance_epoch ?? 0,
+          action_id: p.action_id,
+          asset_revision_id: p.asset_revision_id ?? null,
+          repeat_count: p.repeat_count ?? 1,
+          expires_at: p.expires_at ?? null,
+          source: p.source ?? 'chat_expression'
+        }
+
+        acceptPlayCommand(command, clip, catalog.packId)
+      }
 
       break
     }

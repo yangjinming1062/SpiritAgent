@@ -11,24 +11,6 @@ from services.domains.conversation import (
 from .proactive_runtime import note_outreach_throttle
 
 
-async def emit_companion_affect(user_id: int, emotion: str | None = None, *, actions: list[str] | None = None) -> None:
-    """广播桌面精灵的结构化视觉表达。"""
-    emotion_token = emotion if emotion and emotion != "neutral" else None
-    action_tokens = [action for action in (actions or []) if action][:3]
-    if not emotion_token and not action_tokens:
-        return
-
-    payload: dict[str, object] = {}
-    if emotion_token:
-        payload["emotion"] = emotion_token
-    if action_tokens:
-        payload["actions"] = action_tokens
-
-    async with SESSION_LOCAL() as db:
-        emit_ws_event(db, user_id=user_id, event_type="companion.affect", payload=payload)
-        await db.commit()
-
-
 async def append_companion_message(db: AsyncSession, user_id: int, reply: CompanionReply) -> None:
     text = reply.dialogue()
     main_conv = await get_or_create_special_conversation(db, user_id, "companion", commit=False)

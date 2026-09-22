@@ -2,10 +2,11 @@ import { useStore } from '@nanostores/react'
 import React, { lazy, Suspense, useCallback, useEffect, useRef } from 'react'
 
 import {
+  $actionCatalogStatus,
   $companionLifecycle,
-  $videoPackStatus,
   EggStage,
   ensureCompanionHydrated,
+  hydrateActionCatalog,
   hydratePersona,
   hydratePortrait,
   hydrateVideoPack,
@@ -24,7 +25,7 @@ const VideoStage = lazy(() => import('@/modules/character/rendering/video').then
 export function WorkbenchCompanion(): React.JSX.Element {
   const auth = useStore($auth)
   const lifecycle = useStore($companionLifecycle)
-  const videoStatus = useStore($videoPackStatus)
+  const videoStatus = useStore($actionCatalogStatus)
   const dict = useStrings()
   const t = dict.workbench
   const brandName = dict.brand.name
@@ -84,6 +85,7 @@ export function WorkbenchCompanion(): React.JSX.Element {
         hydratePortrait
       })
       void hydrateVideoPack()
+      void hydrateActionCatalog()
     }
 
     return () => {

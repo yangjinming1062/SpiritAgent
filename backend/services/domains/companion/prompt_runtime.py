@@ -8,6 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from services.contracts import MemoryScope
+from services.domains.actions.repository import get_active_pack, list_pack_actions
 from services.domains.memory import format_memories_block
 from services.infrastructure.llm import (
     LLMRuntimeError,
@@ -19,10 +20,8 @@ from services.infrastructure.llm import (
     try_resolve,
 )
 
-from .actions import DEFAULT_ACTIONS, NON_LLM_ACTIONS
 from .appearance import build_outfit_extras
 from .character_card import load_character_snapshot, render_character_profile
-from .emotions import BUILTIN_EMOTIONS
 from .persona_service import render_extras
 
 logger = get_logger(__name__)
@@ -36,8 +35,8 @@ class CompanionPromptContext(BaseModel):
     current_mood: str
     outfit_block: str
     memories_block: str
-    allowed_emotions: set[str]
-    available_actions: list[str]
+    # 每项含 action_id/name/use_when 等；系统产品槽位不进清单。
+    available_actions: list[dict[str, Any]]
 
 
 class PromptOutcome(NamedTuple):
@@ -66,8 +65,28 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         ).scalar()
         language = resolve_language(language_setting or DEFAULT_LANGUAGE)
         definition = safe_json_loads(persona.definition_json or "{}", default={})
-        # 本地物理 / 交互触发动作不进入 LLM 可点播清单；渲染层按视频资产实际支持兑现。
-        available_actions = sorted(DEFAULT_ACTIONS - NON_LLM_ACTIONS)
+        # LLM 可点播的表达动作来自当前激活包；系统产品槽位不进清单，动态动作即表达能力。
+        pack = await get_active_pack(db, user_id)
+        available_actions: list[dict[str, Any]] = []
+        if pack is not None:
+            for row in await list_pack_actions(db, pack.id, enabled_only=True):
+                if row.status != "succeeded" or not row.video_path:
+                    continue
+                if row.system_slot:
+                    continue
+                duration_ms = row.actual_duration_ms or int((row.target_duration_seconds or 0) * 1000)
+                available_actions.append(
+                    {
+                        "action_id": row.id,
+                        "name": row.name or row.key,
+                        "motion_description": row.motion_description,
+                        "use_when": safe_json_loads(row.use_when or "[]", default=[]),
+                        "avoid_when": safe_json_loads(row.avoid_when or "[]", default=[]),
+                        "kind": row.kind,
+                        "duration_seconds": round(duration_ms / 1000, 3) if duration_ms else 0.0,
+                    },
+                )
+        available_actions.sort(key=lambda item: item["action_id"])
         return CompanionPromptContext(
             language=language,
             persona_extras=render_extras(definition, language=language)
@@ -76,7 +95,6 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
             current_mood=persona.current_mood or "",
             outfit_block=await build_outfit_extras(db, user_id, language=language),
             memories_block=await format_memories_block(db, MemoryScope(user_id, "companion")),
-            allowed_emotions=set(BUILTIN_EMOTIONS),
             available_actions=available_actions,
         )
 

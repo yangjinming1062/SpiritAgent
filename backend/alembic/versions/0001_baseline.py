@@ -140,20 +140,26 @@ def upgrade() -> None:
     op.create_index(op.f("ix_companion_outfits_user_id"), "companion_outfits", ["user_id"], unique=False)
     op.create_index(op.f("ix_companion_outfits_status"), "companion_outfits", ["status"], unique=False)
     op.create_index(op.f("ix_companion_outfits_active"), "companion_outfits", ["active"], unique=False)
-    # 角色视频动作包：包版本不可覆盖，单动作请求生成新版本行；发布与激活由服务层在用户锁内翻转。
+    # 动作库：pack / action / proposal / playback。
     op.create_table(
-        "companion_video_packs",
+        "companion_action_packs",
         sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("character_id", sa.Integer(), nullable=True),
         sa.Column("avatar_id", sa.Integer(), nullable=True),
         sa.Column("outfit_id", sa.Integer(), nullable=True),
         sa.Column("pack_version", sa.Integer(), server_default=sa.text("1"), nullable=False),
-        sa.Column("status", sa.String(length=16), server_default=sa.text("'processing'"), nullable=False),
-        sa.Column("manifest_json", sa.Text(), server_default=sa.text("''"), nullable=False),
-        sa.Column("manifest_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
-        sa.Column("content_hash", sa.String(length=64), nullable=True),
-        sa.Column("reference_hash", sa.String(length=64), nullable=True),
+        sa.Column("visual_revision", sa.Integer(), server_default=sa.text("1"), nullable=False),
         sa.Column("reference_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
-        sa.Column("context_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("reference_hash", sa.String(length=64), server_default=sa.text("''"), nullable=False),
+        sa.Column("character_snapshot", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("outfit_snapshot", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("context_json", sa.Text(), nullable=True),
+        sa.Column("canvas_spec", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("catalog_version", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("manifest_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("manifest_json", sa.Text(), nullable=True),
+        sa.Column("content_hash", sa.String(length=64), nullable=True),
+        sa.Column("status", sa.String(length=16), server_default=sa.text("'processing'"), nullable=False),
         sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -163,38 +169,133 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["outfit_id"], ["companion_outfits.id"]),
         sa.PrimaryKeyConstraint("id"),
     )
-    op.create_index(op.f("ix_companion_video_packs_user_id"), "companion_video_packs", ["user_id"], unique=False)
-    op.create_index(op.f("ix_companion_video_packs_status"), "companion_video_packs", ["status"], unique=False)
-    op.create_index(op.f("ix_companion_video_packs_active"), "companion_video_packs", ["active"], unique=False)
+    op.create_index(op.f("ix_companion_action_packs_user_id"), "companion_action_packs", ["user_id"], unique=False)
+    op.create_index(op.f("ix_companion_action_packs_status"), "companion_action_packs", ["status"], unique=False)
+    op.create_index(op.f("ix_companion_action_packs_active"), "companion_action_packs", ["active"], unique=False)
     op.create_table(
-        "companion_video_jobs",
+        "companion_actions",
         sa.Column("user_id", sa.Integer(), nullable=False),
-        sa.Column("pack_id", sa.Integer(), nullable=True),
-        sa.Column("outfit_id", sa.Integer(), nullable=True),
-        sa.Column("action", sa.String(length=32), server_default=sa.text("'idle'"), nullable=False),
+        sa.Column("pack_id", sa.Integer(), nullable=False),
+        sa.Column("key", sa.String(length=32), nullable=False),
+        sa.Column("name", sa.String(length=64), server_default=sa.text("''"), nullable=False),
+        sa.Column("system_slot", sa.String(length=16), server_default=sa.text("''"), nullable=False),
+        sa.Column("kind", sa.String(length=8), server_default=sa.text("'once'"), nullable=False),
+        sa.Column("motion_description", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("use_when", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
+        sa.Column("avoid_when", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
+        sa.Column("tags", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
+        sa.Column("enabled", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
+        sa.Column("metadata_revision", sa.Integer(), server_default=sa.text("1"), nullable=False),
         sa.Column("status", sa.String(length=16), server_default=sa.text("'queued'"), nullable=False),
-        sa.Column("stage", sa.String(length=16), server_default=sa.text("'submit'"), nullable=False),
+        sa.Column("stage", sa.String(length=16), server_default=sa.text("'design'"), nullable=False),
         sa.Column("provider", sa.String(length=64), server_default=sa.text("''"), nullable=False),
         sa.Column("model", sa.String(length=64), nullable=True),
         sa.Column("provider_task_id", sa.String(length=128), nullable=True),
         sa.Column("reference_hash", sa.String(length=64), nullable=True),
         sa.Column("input_hash", sa.String(length=64), nullable=True),
-        sa.Column("script_json", sa.Text(), nullable=True),
+        sa.Column("outfit_id", sa.Integer(), nullable=True),
+        sa.Column("submitted", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("retry_safe", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
+        sa.Column("error", sa.Text(), nullable=True),
         sa.Column("artifact_path", sa.String(length=2048), nullable=True),
         sa.Column("pose_path", sa.String(length=2048), nullable=True),
-        sa.Column("result_json", sa.Text(), nullable=True),
         sa.Column("result_path", sa.String(length=2048), nullable=True),
-        sa.Column("attempt", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("script_json", sa.Text(), nullable=True),
+        sa.Column("result_json", sa.Text(), nullable=True),
+        # 动态动作：提案设计规格冻结（name/motion_description/duration_seconds/clip_kind）。
+        sa.Column("source_design_json", sa.Text(), nullable=True),
+        sa.Column("video_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("video_hash", sa.String(length=64), server_default=sa.text("''"), nullable=False),
+        sa.Column("target_duration_seconds", sa.Float(), server_default=sa.text("2.0"), nullable=False),
+        sa.Column("actual_duration_ms", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("frames", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("loopable", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("cover_path", sa.String(length=2048), nullable=True),
+        sa.Column("hitmask_path", sa.String(length=2048), nullable=True),
+        sa.Column("hitmask_grid_w", sa.Integer(), nullable=True),
+        sa.Column("hitmask_grid_h", sa.Integer(), nullable=True),
+        sa.Column("hitmask_fps", sa.Integer(), nullable=True),
+        sa.Column("enter_pose", sa.String(length=64), nullable=True),
+        sa.Column("exit_pose", sa.String(length=64), nullable=True),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["pack_id"], ["companion_action_packs.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("pack_id", "key", name="uq_companion_actions_pack_key"),
+    )
+    op.create_index(
+        "uq_companion_actions_pack_slot",
+        "companion_actions",
+        ["pack_id", "system_slot"],
+        unique=True,
+        postgresql_where=sa.text("system_slot <> ''"),
+    )
+    op.create_index(op.f("ix_companion_actions_user_id"), "companion_actions", ["user_id"], unique=False)
+    op.create_index(op.f("ix_companion_actions_pack_id"), "companion_actions", ["pack_id"], unique=False)
+    op.create_index(op.f("ix_companion_actions_status"), "companion_actions", ["status"], unique=False)
+    op.create_table(
+        "action_proposals",
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("pack_id", sa.Integer(), nullable=False),
+        sa.Column("source", sa.String(length=16), server_default=sa.text("'autonomous'"), nullable=False),
+        sa.Column("source_message_ids", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
+        sa.Column("reason", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("semantic_fingerprint", sa.String(length=64), server_default=sa.text("''"), nullable=False),
+        sa.Column("design_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("candidate_action_ids", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
+        sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("review_decision", sa.String(length=16), nullable=True),
+        sa.Column("review_reason", sa.Text(), nullable=True),
+        # 评审 approve 时刻：制作额度按批准日（用户本地日）结算，与受理日区分。
+        sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("idempotency_key", sa.String(length=64), server_default=sa.text("''"), nullable=False),
+        sa.Column("action_id", sa.Integer(), nullable=True),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["pack_id"], ["companion_action_packs.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("user_id", "source", "idempotency_key", name="uq_action_proposals_user_source_key"),
+    )
+    op.create_index(op.f("ix_action_proposals_user_id"), "action_proposals", ["user_id"], unique=False)
+    op.create_index(op.f("ix_action_proposals_pack_id"), "action_proposals", ["pack_id"], unique=False)
+    op.create_index(op.f("ix_action_proposals_status"), "action_proposals", ["status"], unique=False)
+    op.create_index(
+        op.f("ix_action_proposals_semantic_fingerprint"),
+        "action_proposals",
+        ["semantic_fingerprint"],
+        unique=False,
+    )
+    op.create_table(
+        "action_playbacks",
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("play_id", sa.String(length=64), nullable=False),
+        sa.Column("pack_id", sa.Integer(), nullable=False),
+        sa.Column("action_id", sa.Integer(), nullable=False),
+        sa.Column("appearance_epoch", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("target_device", sa.String(length=64), server_default=sa.text("''"), nullable=False),
+        sa.Column("target_surface", sa.String(length=64), server_default=sa.text("''"), nullable=False),
+        sa.Column("source", sa.String(length=16), server_default=sa.text("'chat_expression'"), nullable=False),
+        sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("repeat_count", sa.Integer(), server_default=sa.text("1"), nullable=False),
+        sa.Column("status", sa.String(length=16), server_default=sa.text("'queued'"), nullable=False),
+        sa.Column("visible_duration_ms", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["pack_id"], ["companion_video_packs.id"]),
+        sa.ForeignKeyConstraint(["pack_id"], ["companion_action_packs.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["action_id"], ["companion_actions.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("play_id", name="uq_action_playbacks_play_id"),
     )
-    op.create_index(op.f("ix_companion_video_jobs_user_id"), "companion_video_jobs", ["user_id"], unique=False)
-    op.create_index(op.f("ix_companion_video_jobs_status"), "companion_video_jobs", ["status"], unique=False)
+    op.create_index(op.f("ix_action_playbacks_user_id"), "action_playbacks", ["user_id"], unique=False)
+    op.create_index(op.f("ix_action_playbacks_action_id"), "action_playbacks", ["action_id"], unique=False)
+    op.create_index(op.f("ix_action_playbacks_status"), "action_playbacks", ["status"], unique=False)
     op.create_table(
         "conversations",
         sa.Column("memory_reviewed_message_id", sa.Integer(), server_default="0", nullable=False),
@@ -852,8 +953,10 @@ def downgrade() -> None:
         "memories",
         "login_records",
         "cron_jobs",
-        "companion_video_jobs",
-        "companion_video_packs",
+        "action_playbacks",
+        "action_proposals",
+        "companion_actions",
+        "companion_action_packs",
         "companion_outfits",
         "companion_character_cards",
         "avatar_assets",

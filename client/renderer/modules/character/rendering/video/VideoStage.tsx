@@ -1,5 +1,8 @@
-/** 视频渲染层：挂载透明 WebM 片段，按动作切换，双 video 交替避免黑帧。
- * 片段播放为原地循环；移动与拖拽由容器位移表达（spatial 是位置真源）。
+/** 视频渲染层：挂载透明 WebM 片段，按统一调度器结果切换，双 video 交替避免黑帧。
+ * 基础状态（idle/walk/drag）仍是表现优先级真源；动态动作为数据化表达请求
+ * （play_id + appearance_epoch + TTL），由 actions 模块下发。
+ * once 片段监听 ended，结束后回基础状态；循环素材默认播一次，repeat_count 有界。
+ * 移动与拖拽由容器位移表达（spatial 是位置真源）。
  * 命中：按当前片段的 alpha 命中遮罩查表（容器平移与缩放已由舞台坐标归一化）。 */
 
 import { useStore } from '@nanostores/react'
@@ -7,23 +10,23 @@ import { atom } from 'nanostores'
 import React, { useEffect, useRef, useState } from 'react'
 
 import {
+  $actionCatalog,
+  $actionCatalogStatus,
+  $activePlayInstance,
   $spatialLocomotion,
   $spatialPos,
   $spriteContentRect,
-  pickAvailableClip,
+  type ActionHitmask,
+  type ActionPlayInstance,
+  finishPlayInstance,
+  reportReceipt,
+  resolveActionClipUrl,
+  resolveHitmask,
   resolveVideoAction,
+  shouldStartInstance,
   type VideoActionKey
 } from '@/modules/character'
 import { log } from '@/shared/lib/log'
-
-import type { VideoClipSpec } from './types'
-import {
-  $videoPack,
-  $videoPackStatus,
-  type ActiveVideoPack,
-  requestMissingVideoAction,
-  resolveVideoClipUrl
-} from './video-pack-store'
 
 // 命中探测（舞台像素坐标）：返回 true 命中身体 / false 透明 / null 无数据。
 export const $videoHitTest = atom<((nx: number, ny: number) => boolean | null) | null>(null)
@@ -52,15 +55,34 @@ function useCurrentAction(): VideoActionKey {
   return action
 }
 
-function clipFor(pack: ActiveVideoPack, action: VideoActionKey): VideoClipSpec {
-  const available = new Set(pack.manifest.clips.map(c => c.action))
-  const wanted = pickAvailableClip(action, available, pack.manifest.default_action)
+/** 统一调度裁决：安全控制与拖拽/移动优先于表达；表达请求只在基础状态为 idle 时生效。
+ * 抢占（拖拽/移动/新请求）时结清被替换实例：上报 interrupted 并结束其生命周期。 */
+type Presentation =
+  | { kind: 'expression'; instance: ActionPlayInstance; mountKey: string }
+  | { kind: 'base'; action: VideoActionKey; mountKey: string }
 
-  return (
-    pack.manifest.clips.find(c => c.action === wanted) ??
-    pack.manifest.clips.find(c => c.action === pack.manifest.default_action) ??
-    pack.manifest.clips[0]
-  )
+function settleReplacedInstance(previous: ActionPlayInstance | null): void {
+  if (previous === null) {
+    return
+  }
+
+  // TTL 已过的被替换实例按过期收尾，不再上报中断（服务端同样按 TTL 过期处理）。
+  if (previous.expiresAtMs !== null && Date.now() > previous.expiresAtMs) {
+    finishPlayInstance(previous.generation)
+
+    return
+  }
+
+  void reportReceipt({ play_id: previous.playId }, 'interrupted', 'preempted')
+  finishPlayInstance(previous.generation)
+}
+
+function resolvePresentation(baseAction: VideoActionKey, instance: ActionPlayInstance | null): Presentation {
+  if (instance !== null && baseAction === 'idle') {
+    return { kind: 'expression', instance, mountKey: `play:${instance.playId}` }
+  }
+
+  return { kind: 'base', action: baseAction, mountKey: `base:${baseAction}` }
 }
 
 /** 等到真实解码首帧就绪，旧画面在加载和失败期间继续播放。 */
@@ -121,32 +143,68 @@ async function loadVideo(el: HTMLVideoElement, url: string, signal: AbortSignal)
   })
 }
 
+interface MountedClip {
+  key: string
+  generation: number
+  playId: string | null
+}
+
 export function VideoStage(): React.JSX.Element {
-  const pack = useStore($videoPack)
-  const action = useCurrentAction()
+  const catalog = useStore($actionCatalog)
+  const playInstance = useStore($activePlayInstance)
+  const baseAction = useCurrentAction()
   const videos = useRef<[HTMLVideoElement | null, HTMLVideoElement | null]>([null, null])
   const front = useRef<number | null>(null)
   const [visible, setVisible] = useState<number | null>(null)
-  const currentClip = useRef<VideoClipSpec | null>(null)
+  const mounted = useRef<MountedClip | null>(null)
+  const hitmaskRef = useRef<ActionHitmask | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
-  const canvas = pack?.manifest.canvas
+  const canvas = catalog?.manifest.canvas
 
+  const presentation = resolvePresentation(baseAction, playInstance)
+
+  // 目标 clip：表达实例按 action_id；基础动作查系统槽位；缺素材回退 idle 槽位（不自动付费补齐）。
+  const targetClip =
+    presentation.kind === 'expression'
+      ? (catalog?.clipsById.get(presentation.instance.actionId) ?? null)
+      : (catalog?.clipsBySlot.get(presentation.action) ?? null)
+
+  const idleClip = catalog?.clipsBySlot.get('idle') ?? null
+  const clip = targetClip ?? (presentation.kind === 'base' && presentation.action === 'idle' ? targetClip : idleClip)
+
+  // 切换键含包与素材版本：A→B 外观即使同为 idle 也强制重载；同动作素材更新（asset_revision 推进）同样重载。
+  const clipSwitchKey = clip ? `${clip.video_ref}@${clip.asset_revision}` : 'none'
+  const mountKey = `${presentation.mountKey}|${catalog?.packId ?? 0}|${clipSwitchKey}`
+
+  // 抢占结清：presentation 变化时，被替换的在途表达实例上报 interrupted 并结束。
+  const prevInstanceRef = useRef<ActionPlayInstance | null>(null)
   useEffect(() => {
-    if (!pack) {
+    const currentInstance = presentation.kind === 'expression' ? presentation.instance : null
+
+    if (currentInstance !== null && currentInstance !== prevInstanceRef.current) {
+      // 新表达请求替换旧实例（无论旧实例是否还在播放）。
+      settleReplacedInstance(prevInstanceRef.current)
+    } else if (currentInstance === null && prevInstanceRef.current !== null) {
+      // 表达被基础动作（拖拽/移动/安全控制）抢占。
+      settleReplacedInstance(prevInstanceRef.current)
+    }
+
+    prevInstanceRef.current = currentInstance
+  }, [presentation])
+
+  // 挂载/切换片段：相同 mountKey 不重复切换；新 play 实例（新 play_id）从头播放。
+  useEffect(() => {
+    if (!catalog || !clip) {
       return
     }
 
-    const clip = clipFor(pack, action)
-
-    // 缺素材时自动补齐；仅在明确动作上触发，待机回退不发请求。
-    if (clip.action !== action && action !== 'idle') {
-      void requestMissingVideoAction(pack, action)
-    }
-
-    if (currentClip.current?.path === clip.path) {
+    if (mounted.current?.key === mountKey) {
       return
     }
 
+    // 表达实例：loop 仅当素材可循环且请求了多次；基础动作持续循环。
+    const loop = presentation.kind === 'base' || (clip.loopable && presentation.instance.repeatCount > 1)
+    const instance = presentation.kind === 'expression' ? presentation.instance : null
     const controller = new AbortController()
     let pauseTimer = 0
 
@@ -160,7 +218,7 @@ export function VideoStage(): React.JSX.Element {
       }
 
       try {
-        const url = await resolveVideoClipUrl(pack, clip.action)
+        const url = await resolveActionClipUrl(catalog, clip)
 
         if (controller.signal.aborted) {
           return
@@ -176,9 +234,23 @@ export function VideoStage(): React.JSX.Element {
           return
         }
 
+        // 表达实例从头播放；真实可见后才上报 started（备用播放器预热不计）。
+        if (instance !== null) {
+          el.currentTime = 0
+          el.loop = loop
+
+          if (!shouldStartInstance(instance)) {
+            return
+          }
+
+          void reportReceipt({ play_id: instance.playId }, 'started')
+        } else {
+          el.loop = true
+        }
+
         const previous = front.current
         front.current = slot
-        currentClip.current = clip
+        mounted.current = { key: mountKey, generation: instance?.generation ?? 0, playId: instance?.playId ?? null }
         setVisible(slot)
         pauseTimer = window.setTimeout(() => {
           if (previous !== null && front.current !== previous) {
@@ -192,8 +264,12 @@ export function VideoStage(): React.JSX.Element {
 
         log.warn('video-stage', 'Could not play action', error)
 
-        if (front.current === null) {
-          $videoPackStatus.set('unavailable')
+        if (instance !== null) {
+          void reportReceipt({ play_id: instance.playId }, 'rejected', 'load failed')
+          finishPlayInstance(instance.generation)
+        } else if (!front.current) {
+          // 首个基础片段加载失败：目录不可用，外层回落蛋形兜底（不悬空空白）。
+          $actionCatalogStatus.set('unavailable')
         }
       }
     })()
@@ -208,7 +284,118 @@ export function VideoStage(): React.JSX.Element {
         }
       }
     }
-  }, [pack, action])
+    // mountKey 已含 play_id / 包 / 素材版本 / 基础动作；clip 随 mountKey 唯一确定。
+  }, [catalog, clip, mountKey, presentation])
+
+  // 命中遮罩按 clip 加载：不随渲染重跑取消；切换动作时更新。
+  useEffect(() => {
+    if (!clip) {
+      hitmaskRef.current = null
+
+      return
+    }
+
+    let cancelled = false
+
+    void resolveHitmask(clip).then(hm => {
+      if (!cancelled) {
+        hitmaskRef.current = hm
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [clip])
+
+  // 循环计数：repeat_count > 1 的 loop 表达在播满次数后 completed 并回基础状态
+  //（el.loop=true 不触发 ended，手动计数）。
+  useEffect(() => {
+    const instance = presentation.kind === 'expression' ? presentation.instance : null
+
+    if (instance === null || instance.repeatCount <= 1 || !instance.clip.loopable) {
+      return
+    }
+
+    let played = 0
+    let fired = false
+    const elements = videos.current
+
+    const handleLoopEnd = (): void => {
+      const current = mounted.current
+
+      if (!current || current.playId !== instance.playId || fired) {
+        return
+      }
+
+      played += 1
+
+      if (played >= instance.repeatCount) {
+        fired = true
+        void reportReceipt({ play_id: instance.playId }, 'completed', '', played * instance.clip.duration_ms)
+        finishPlayInstance(instance.generation)
+      }
+    }
+
+    // 时间更新近似周期边界：currentTime 回绕（新一轮开始）计一次。
+    let lastTime = 0
+
+    const handleTimeUpdate = (): void => {
+      const el = front.current === null ? null : elements[front.current]
+
+      if (!el) {
+        return
+      }
+
+      if (lastTime > el.currentTime) {
+        handleLoopEnd()
+      }
+
+      lastTime = el.currentTime
+    }
+
+    for (const el of elements) {
+      el?.addEventListener('timeupdate', handleTimeUpdate)
+    }
+
+    return () => {
+      for (const el of elements) {
+        el?.removeEventListener('timeupdate', handleTimeUpdate)
+      }
+    }
+  }, [presentation])
+
+  // once 片段结束：上报 completed 并回到基础状态；旧回调凭 playId/generation 不影响新实例。
+  useEffect(() => {
+    const elements = videos.current
+    const instance = presentation.kind === 'expression' ? presentation.instance : null
+    const playId = instance?.playId ?? ''
+
+    const handleEnded = (): void => {
+      const current = mounted.current
+
+      if (!current || !instance) {
+        return
+      }
+
+      if (current.playId !== playId) {
+        return
+      }
+
+      void reportReceipt({ play_id: playId }, 'completed', '', Math.round(instance.clip.duration_ms))
+      finishPlayInstance(instance.generation)
+    }
+
+    for (const el of elements) {
+      el?.addEventListener('ended', handleEnded)
+    }
+
+    return () => {
+      for (const el of elements) {
+        el?.removeEventListener('ended', handleEnded)
+      }
+    }
+  }, [presentation])
 
   useEffect(() => {
     if (!canvas) {
@@ -222,12 +409,11 @@ export function VideoStage(): React.JSX.Element {
 
   useEffect(() => {
     $videoHitTest.set((px, py) => {
-      const clip = currentClip.current
       const el = front.current === null ? null : videos.current[front.current]
-      const grid = clip?.hitmask_grid
+      const hitmask = hitmaskRef.current
       const rect = rootRef.current?.getBoundingClientRect()
 
-      if (!clip || !grid || !el || !rect || !el.videoWidth || !el.videoHeight || !clip.hitmask.length) {
+      if (!hitmask || !el || !rect || !el.videoWidth || !el.videoHeight || !hitmask.frames.length) {
         return null
       }
 
@@ -241,10 +427,10 @@ export function VideoStage(): React.JSX.Element {
         return false
       }
 
-      const [gw, gh] = grid
+      const [gw, gh] = hitmask.grid
       const col = Math.floor(nx * gw)
       const row = Math.floor(ny * gh)
-      const sample = clip.hitmask[Math.min(clip.hitmask.length - 1, Math.floor(el.currentTime * clip.hitmask_fps))]
+      const sample = hitmask.frames[Math.min(hitmask.frames.length - 1, Math.floor(el.currentTime * hitmask.fps))]
 
       return ((sample?.[row] ?? 0) & (1 << col)) !== 0
     })
@@ -267,14 +453,10 @@ export function VideoStage(): React.JSX.Element {
 
   return (
     <div className="relative h-full w-full" ref={rootRef}>
-      {visible === null && pack?.coverUrl ? (
-        <img alt="" className="absolute inset-0 h-full w-full object-contain" src={pack.coverUrl} />
-      ) : null}
       {[0, 1].map(slot => (
         <video
           className="absolute inset-0 h-full w-full object-contain"
           key={slot}
-          loop
           muted
           playsInline
           preload="auto"

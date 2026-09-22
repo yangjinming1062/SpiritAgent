@@ -28,6 +28,7 @@ from modules.companion import (
     SceneOrigin,
     SceneStatus,
 )
+from modules.companion.schemas_actions import ActionDesignRequest
 from modules.media import VideoGenJob
 from modules.scheduler import NightlyActivityAction, NightlyActivityLog
 from modules.settings import UserSetting
@@ -43,6 +44,12 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.application.actions import (
+    accept_proposal,
+    build_action_context,
+    schedule_action_generation,
+    schedule_proposal_review,
+)
 from services.application.generation import (
     activate_outfit,
     activate_scene,
@@ -58,6 +65,7 @@ from services.application.generation import (
     schedule_scene_generation,
 )
 from services.contracts import MemoryScope
+from services.domains.actions.repository import get_action
 from services.domains.automation import create_job, remove_job
 from services.domains.companion import (
     get_scene_state,
@@ -357,6 +365,8 @@ class PlanningContext(BaseModel):
     persona: PersonaContext
     scene: SceneContext
     wardrobe: list[WardrobeItem] = Field(default_factory=list)
+    # 动作库摘要：当前包就绪动作、在途提案与近期拒绝，供 action.design 评估缺口。
+    actions: dict[str, Any] = Field(default_factory=dict)
     recent_autonomous_actions: list[RecentActionSummary] = Field(default_factory=list)
     recent_moments: list[RecentMomentSummary] = Field(default_factory=list)
     available_capabilities: list[AvailableCapability] = Field(default_factory=list)
@@ -457,6 +467,30 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         {"name": "string", "schedule": "five-field UTC cron", "prompt": "string"},
         exclusive_group="outreach",
     ),
+    NightlyCapability(
+        "action.design",
+        25,
+        "为当前形象提交一个可反复使用的新动作提案（如张开双臂、打哈欠、一段舞蹈），不是一次性视频作品。"
+        "先查看 actions.library 的动作内容和适用条件，以及 in_flight_proposals、recent_rejections，"
+        "确有缺口才使用；无明确价值时选择不使用。"
+        "name 是动作显示名称；motion_description 写单主体可见的姿态、节奏与神态，"
+        "不含场景、镜头或产品概念；use_when / avoid_when 说明何时适用或避免；reason 说明为何需要新动作。"
+        "duration_seconds 为 0.5–10 秒；clip_kind 为 loop（连续运动周期）或 once（完整动作自然收束）。"
+        "once 制作后仍可重复使用。单主体原地运动、固定镜头、全身入画，保持身体结构与穿着，"
+        "不新增人物、道具、场景、对话或音轨。依赖换装时把 depends_on 填为对应换装动作，"
+        "素材属于执行时启用的形象，不能跨形象复用。受理仅表示申请成功，独立评审和制作随后进行；"
+        "后续片刻或联系不能以依赖此项为依据宣称动作已做好或已表演。",
+        {
+            "name": "string",
+            "motion_description": "string",
+            "use_when": "optional list[string]",
+            "avoid_when": "optional list[string]",
+            "reason": "string",
+            "duration_seconds": "number 0.5-10",
+            "clip_kind": "loop|once",
+        },
+        paid=True,
+    ),
 )
 _CAPABILITY_BY_NAME = {cap.name: cap for cap in _CAPABILITIES}
 
@@ -543,6 +577,10 @@ def _capability_availability(
             "夜间自主语音或 TTS 供应商不可用",
         ),
         "outreach.schedule": (True, ""),
+        "action.design": (
+            bool(context.actions.get("pack_id")) and providers.video,
+            "没有就绪的外观动作包或视频供应商不可用",
+        ),
     }
     available: list[AvailableCapability] = []
     blocked: list[BlockedCapability] = []
@@ -562,6 +600,18 @@ def _capability_availability(
         else:
             blocked.append(BlockedCapability(name=capability.name, reason=reason))
     return available, blocked
+
+
+async def _planning_action_context(db: Any, user_id: int) -> dict[str, Any]:
+    """动作库摘要：当前包就绪动作、在途提案与近期拒绝，供缺口评估。"""
+    snapshot = await build_action_context(db, user_id)
+    return {
+        "pack_id": snapshot.pack_id,
+        "catalog_version": snapshot.catalog_version,
+        "library": snapshot.ready_actions,
+        "in_flight_proposals": snapshot.in_flight_proposals,
+        "recent_rejections": snapshot.recent_rejections,
+    }
 
 
 async def _collect_context(user_id: int) -> PlanningContext:
@@ -628,6 +678,8 @@ async def _collect_context(user_id: int) -> PlanningContext:
             .scalars()
             .all()
         )
+        # 动作库摘要在会话生命周期内读取，避免 session 关闭后重开未托管事务。
+        action_snapshot = await _planning_action_context(db, user_id)
 
     definition = safe_json_loads(
         persona.definition_json if persona is not None else "{}",
@@ -675,6 +727,7 @@ async def _collect_context(user_id: int) -> PlanningContext:
             )
             for outfit in outfits
         ],
+        actions=action_snapshot,
         recent_autonomous_actions=[
             RecentActionSummary(
                 date=row.target_date.isoformat(),
@@ -1650,6 +1703,74 @@ async def _execute_outreach_schedule(
     return result
 
 
+async def _execute_action_design(
+    user_id: int,
+    args: dict[str, Any],
+    context: PlanningContext,
+    dependencies: list[str],
+    date_context: DateContext,
+) -> ActionExecutionResult:
+    """夜间动作设计：受理提案 → 独立评审 → approve 后入队生成。
+
+    事实只叙述受理或重试，不将异步制作写成完成。
+    """
+    name = _text(args.get("name"), 64)
+    motion = _text(args.get("motion_description"), 600)
+    reason = _text(args.get("reason"), 400)
+    if not name or len(motion) < 10:
+        return ActionExecutionResult(status="failed", reason="动作设计缺少名称或有效运动描述")
+
+    # 换装依赖：夜间先换装时，动作设计须绑定换装后实际就绪的包。
+    pack_ready = any(item.status == "ready" for item in context.wardrobe)
+    if not pack_ready:
+        return ActionExecutionResult(status="failed", reason="当前没有就绪的形象动作，无法设计新动作")
+
+    try:
+        request = ActionDesignRequest(
+            name=name,
+            motion_description=motion,
+            use_when=[_text(v, 120) for v in (args.get("use_when") or []) if isinstance(v, str)][:8],
+            avoid_when=[_text(v, 120) for v in (args.get("avoid_when") or []) if isinstance(v, str)][:8],
+            reason=reason or "夜间能力评估：存在表达缺口",
+            duration_seconds=float(args.get("duration_seconds") or 4),
+            clip_kind=str(args.get("clip_kind") or "once"),
+        )
+    except Exception:
+        return ActionExecutionResult(status="failed", reason="动作设计参数不合法")
+
+    async with SESSION_LOCAL() as db:
+        result = await accept_proposal(db, user_id, request, source="autonomous")
+        retry_pack_id = None
+        if result.outcome == "pending_review" and result.action_id is not None and result.proposal_id is None:
+            action = await get_action(db, result.action_id)
+            retry_pack_id = action.pack_id if action is not None else None
+        if result.outcome == "reused":
+            await db.commit()
+            return ActionExecutionResult(
+                status="succeeded",
+                fact=result.message or f"已有可复用动作「{name}」，无需新建",
+            )
+        if result.outcome != "pending_review" or (result.proposal_id is None and retry_pack_id is None):
+            return ActionExecutionResult(
+                status="failed",
+                reason=result.message or "提案未受理",
+            )
+        await db.commit()
+
+    if result.proposal_id is not None:
+        # 评审异步执行；结论经 proposal 状态回流，夜间事实只叙述「已提交制作申请」。
+        schedule_proposal_review(result.proposal_id, user_id)
+        return ActionExecutionResult(
+            status="succeeded",
+            fact=f"提交了新动作「{name}」的制作申请（等待独立评审与制作，尚未确认就绪）",
+        )
+    schedule_action_generation(retry_pack_id, result.action_id, user_id)
+    return ActionExecutionResult(
+        status="succeeded",
+        fact=f"已申请重新制作动作「{name}」，尚未确认就绪",
+    )
+
+
 CapabilityExecutor = Callable[
     [int, dict[str, Any], PlanningContext, list[str], DateContext],
     Awaitable[ActionExecutionResult],
@@ -1665,6 +1786,7 @@ _EXECUTORS: dict[str, CapabilityExecutor] = {
     "media.video": _execute_media_video,
     "media.voice": _execute_media_voice,
     "outreach.schedule": _execute_outreach_schedule,
+    "action.design": _execute_action_design,
 }
 
 

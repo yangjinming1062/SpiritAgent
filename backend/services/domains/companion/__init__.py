@@ -1,7 +1,6 @@
 """伙伴业务域：身份、心情、互动规则、外观状态读模型、打扰档位与音色目录。"""
 
-from .affect_check import AffectCheckResult, check_affect
-from .affect_emit import emit_companion_affect, emit_companion_message
+from .affect_emit import emit_companion_message
 from .appearance import build_outfit_extras
 from .character_card import (
     CharacterCardConflictError,
@@ -26,6 +25,7 @@ from .disturbance import (
     is_still,
 )
 from .emotions import BUILTIN_EMOTIONS
+from .idle_expression import IdleExpressionResult, check_idle_expression
 from .intents import (
     begin_companion_intent,
     cancel_companion_wait,
@@ -129,7 +129,7 @@ __all__ = [
     "set_companion_wait",
     "ALLOWED_ACTIONS",
     "ALLOWED_TIERS",
-    "AffectCheckResult",
+    "IdleExpressionResult",
     "BUILTIN_EMOTIONS",
     "DEFAULT_TIER",
     "ONBOARDING_FIELDS",
@@ -139,11 +139,10 @@ __all__ = [
     "analyze_personality_tags",
     "build_outfit_extras",
     "build_system_prompt_extras",
-    "check_affect",
+    "check_idle_expression",
     "confirm_portrait",
     "design_voice",
     "drain_persona_background",
-    "emit_companion_affect",
     "emit_companion_message",
     "emit_companion_mood",
     "get_disturbance_tier",

@@ -112,10 +112,10 @@ class Settings(BaseSettings):
 
     # 对话回合与陪伴交互节奏：控制工具循环上限、桌面互动的 LLM 成本窗口与主动行为的静默门槛。
     agent_max_loop_turns: int = Field(default=150, gt=0, validation_alias="AGENT_MAX_LOOP_TURNS")
-    companion_check_affect_min_interval_seconds: float = Field(
+    companion_idle_expression_min_interval_seconds: float = Field(
         default=2.0,
         gt=0,
-        validation_alias="COMPANION_CHECK_AFFECT_MIN_INTERVAL_SECONDS",
+        validation_alias="COMPANION_IDLE_EXPRESSION_MIN_INTERVAL_SECONDS",
     )
     companion_approach_cooldown_seconds: float = Field(
         default=1800.0,
@@ -157,6 +157,26 @@ class Settings(BaseSettings):
         validation_alias="MEMORY_RECALL_MAX_CONTENT_CHARS",
     )
     memory_prompt_max_memories: int = Field(default=10, gt=0, validation_alias="MEMORY_PROMPT_MAX_MEMORIES")
+
+    # 动作库运营配置：单动作时长上限与每日制作额度按用户本地日结算；
+    # 评审不设日限额；创建/自动使用独立开关。
+    action_max_duration_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        le=12.0,
+        validation_alias="ACTION_MAX_DURATION_SECONDS",
+    )
+    action_autonomous_create_daily_limit: int = Field(
+        default=2,
+        gt=0,
+        validation_alias="ACTION_AUTONOMOUS_CREATE_DAILY_LIMIT",
+    )
+    action_user_requested_create_daily_limit: int = Field(
+        default=3,
+        gt=0,
+        validation_alias="ACTION_USER_REQUESTED_CREATE_DAILY_LIMIT",
+    )
+    action_autocreate_enabled: bool = Field(default=True, validation_alias="ACTION_AUTOCREATE_ENABLED")
 
     # 夜间整理窗口、规划与日记预算；调度器 tick 周期与用户 Cron 配额。
     nightly_window_start_hour: int = Field(default=0, ge=0, le=23, validation_alias="NIGHTLY_WINDOW_START_HOUR")

@@ -16,6 +16,7 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 | `companion.py` | 心情、空闲表达、空间行为、动态性格标签、角色设定与着装块标题 | `services/domains/companion/` |
 | `generation.py` | 角色、外观、场景与出镜媒体的图像及视频提示词；共享风格机制见 [PIPELINE](../../docs/PIPELINE.md#11-共用参考与种子图派生) | `services/infrastructure/llm/prompt_engineer.py`、`services/application/generation/`、`services/application/nightly/`、`services/adapters/tools/builtin/` |
 | `memory.py` | 记忆维护政策（MEMORY_POLICY）、审查指令、用户资料上下文标签与块标题 | `services/domains/memory/`（memory_policy、memory_review、memory_bootstrap） |
+| `actions.py` | 动作检索、设计提案、状态检查与播放工具描述及独立评审指令 | `services/adapters/tools/builtin/action_tool.py`、`services/application/actions/review.py` |
 | `nightly.py` | 夜间规划、每日检查点、用户可见日记、内部夜间反思、片刻回复、片刻冲动决策 | `services/application/nightly/`、`services/application/moments/` |
 | `tools.py` | 16 个工具 schema 的主描述与参数描述 | `services/adapters/tools/`（builtin/ 与同级 *.py） |
 
@@ -40,6 +41,13 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 - [时间与共享块装配](../services/application/chat/prompt_blocks.py)——工具开关与实际解锁集合决定能力描述，时间资料只表达经过时间，不推断用户经历。
 - [音色设计说明](../services/infrastructure/llm/providers/minimax/tts.py)与 [MiMo 对应说明](../services/infrastructure/llm/providers/mimo/tts.py)——供应商支持的描述维度，供用户创建音色；不能混入逐条语音的正文。
 - 数据库 `AvatarAsset.prompt_json` 等审计字段是生成时快照，不是定义源。
+
+### 动作相关装配入口
+
+- 对话：`actions.py` 工具说明与字段 schema → `application/actions/context.py` 动态资料 → 工具结果续轮；工具关闭时资料仍可保留，不能据此假设有操作能力。
+- 夜间：`nightly.py::PLANNING_SYSTEM_PROMPT` 与夜间能力目录 → 提案受理 → 后台独立评审；受理成功只证明已申请，后续叙事不能据此推断已制作或已表演。
+- 制作：`actions.py::ACTION_REVIEW_INSTRUCTIONS` 与冻结参考图、候选动作 → `generation.py::VIDEO_ACTION_SCRIPT_INSTRUCTIONS` → 起始姿态图 → 视频。动作描述完整传递；loop 连续循环，once 自然收束，可回到起始姿态但不要求首尾同帧。
+- 空闲：`companion.py::IDLE_EXPRESSION_INSTRUCTIONS` 与当前可用动作的内容、适用/避免条件 → 单个 action_id → 统一播放。中英文保持相同的选择与空值语义。
 
 ## Runner 例外
 

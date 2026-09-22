@@ -36,6 +36,7 @@ from components import (
 from fastapi import WebSocket, WebSocketDisconnect
 from modules.auth import ChatRequestClientContext
 from modules.companion import CompanionSignal
+from modules.companion.schemas_actions import ActionPlayRequest
 from modules.conversation import Conversation, Message
 from modules.system import ChatMessageRequest, ChatRequest, PromptPresetListResponse, PromptPresetSummary
 from modules.ws import COMPANION_TURN_EVENT
@@ -43,6 +44,7 @@ from pydantic import ValidationError
 from sqlalchemy import delete, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.application.actions import request_playback
 from services.application.chat import (
     SlashCommandContext,
     SlashCommandResult,
@@ -69,7 +71,7 @@ from services.application.generation import (
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.companion import (
     PersonaValidationError,
-    check_affect,
+    check_idle_expression,
     design_voice,
     emit_companion_message,
     get_disturbance_tier,
@@ -215,8 +217,8 @@ async def _noop_send_strict(data: dict[str, Any]) -> bool:
     return False
 
 
-# 进程级节流：buggy renderer 可能狂打 check_affect 烧 LLM 配额。
-_last_check_affect_ts: dict[int, float] = {}
+# 进程级节流：buggy renderer 可能狂打 idle_expression 烧 LLM 配额。
+_last_idle_expression_ts: dict[int, float] = {}
 
 SHOULD_ACT_ANTIDUP_SECONDS = 2.0
 _last_should_act_ts: dict[int, float] = {}
@@ -235,7 +237,7 @@ _conversation_locks: dict[str, asyncio.Lock] = {}
 def _clear_user_gateway_state(user_id: int) -> None:
     REGISTRY.clear_runner_tools(user_id)
     discard_user(user_id)
-    _last_check_affect_ts.pop(user_id, None)
+    _last_idle_expression_ts.pop(user_id, None)
     _last_should_act_ts.pop(user_id, None)
     AVATAR_JOB_LOCKS.pop(user_id, None)
 
@@ -1469,26 +1471,49 @@ def _register_session_handlers(
 
     dispatcher.register("companion.set_timezone", companion_set_timezone)
 
-    async def companion_check_affect(params: dict) -> dict:
-        # desktop idle 监视器在阈值+冷却后调用；LLM 决策是否发出 companion.affect 切换到情境情绪（无气泡、无 TTS）。
-        # 具身情境推理只服务自主档下的桌面精灵；客户端另以表面可见性拦截，服务端在档位边界兜底非官方调用。
+    async def companion_idle_expression(params: dict) -> dict:
+        # desktop idle 监视器在阈值+冷却后调用；LLM 决定是否播一个动作，播放走统一 play_requested。
         if await get_disturbance_tier(user_id) != "autonomous":
-            return {"emotion": None, "actions": [], "reason": "autonomous tier required"}
+            return {"expressed": False, "action_id": None, "reason": "autonomous tier required"}
         now = time.monotonic()
-        if _user_throttled(_last_check_affect_ts, user_id, SETTINGS.companion_check_affect_min_interval_seconds, now):
+        if _user_throttled(
+            _last_idle_expression_ts,
+            user_id,
+            SETTINGS.companion_idle_expression_min_interval_seconds,
+            now,
+        ):
             logger.debug(
-                "check_affect: throttled",
-                extra={"user_id": user_id, "since_sec": round(now - _last_check_affect_ts.get(user_id, 0.0), 3)},
+                "idle_expression: throttled",
+                extra={"user_id": user_id, "since_sec": round(now - _last_idle_expression_ts.get(user_id, 0.0), 3)},
             )
-            return {"emotion": None, "reason": "throttled"}
-        _last_check_affect_ts[user_id] = now
+            return {"expressed": False, "action_id": None, "reason": "throttled"}
+        _last_idle_expression_ts[user_id] = now
 
         idle_seconds = coerce_non_negative_float(params.get("idle_seconds"))
         local_hour = coerce_hour_0_23(params.get("local_hour"))
         cfg = user_session.llm_config if user_session else llm_config
-        return await check_affect(user_id, idle_seconds, local_hour, cfg)
+        result = await check_idle_expression(user_id, idle_seconds, local_hour, cfg)
+        if result.expressed and result.action_id is not None:
+            async with SESSION_LOCAL() as db:
+                play = await request_playback(
+                    db,
+                    user_id,
+                    ActionPlayRequest(action_id=result.action_id, reason="idle expression"),
+                    source="autonomous",
+                )
+                await db.commit()
+            return {
+                "expressed": play.outcome == "queued",
+                "action_id": result.action_id,
+                "reason": play.message or result.reason,
+            }
+        return {
+            "expressed": False,
+            "action_id": None,
+            "reason": result.reason,
+        }
 
-    dispatcher.register("companion.check_affect", companion_check_affect)
+    dispatcher.register("companion.idle_expression", companion_idle_expression)
 
     async def companion_signal(params: dict) -> dict[str, bool]:
         try:

@@ -1,5 +1,6 @@
-/** 视频动作包 store：水合当前激活包、解析展示 URL、维护加载状态。
- * 包字节经主进程受控资产桥读取（内容哈希缓存）；登出清空，迟到水合丢弃。 */
+/** 视频包生成流程 store：外观页发起生成、进度状态与包列表。
+ * 可播清单与播放实例由 actions 模块维护；本 store 只管理生成任务状态机。
+ * 渲染层不得经本 store 触发付费：缺失动作由显式服务流程统一鉴权、去重、记账。 */
 
 import { atom } from 'nanostores'
 
@@ -9,26 +10,10 @@ import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 
-import { VIDEO_ACTION_KEYS } from '../../presentation/types'
-
-import type { VideoPackManifest } from './types'
-
-export interface ActiveVideoPack {
-  packId: number
-  packVersion: number
-  coverUrl: string | null
-  manifest: VideoPackManifest
-  /** action → 可用于 <video src> 的本地展示 URL（已预解析 idle；其余懒解析） */
-  clipUrls: Map<string, string>
-}
-
-export type VideoPackStatus = 'idle' | 'loading' | 'ready' | 'unavailable'
-
-/** 按参考生成的任务阶段（对应后端 companion.video.progress 的 stage） */
-export type VideoGenStage = 'script' | 'pose' | 'submit' | 'generate' | 'download' | 'process' | 'publish'
-
 export interface VideoActionWire {
   action: string
+  name: string
+  kind: string
   status: string
   stage: string
   error: string | null
@@ -51,20 +36,18 @@ export interface VideoPackWire {
 
 export const $videoPacks = atom<VideoPackWire[]>([])
 
-export const $videoPack = atom<ActiveVideoPack | null>(null)
-export const $videoPackStatus = atom<VideoPackStatus>('idle')
-
 // 生成状态机：事件驱动（progress/failed）优先，hydrate 用包列表兜底识别 processing 包；
 // 登出清空。failed 携带后端公开文案，可从生成入口重试。
 export const $videoGenState = atom<'idle' | 'generating' | 'failed'>('idle')
 export const $videoGenStage = atom<VideoGenStage | null>(null)
 export const $videoGenError = atom<string | null>(null)
 
+/** 按参考生成的任务阶段（对应后端 companion.video.progress 的 stage） */
+export type VideoGenStage = 'script' | 'pose' | 'submit' | 'generate' | 'download' | 'process' | 'publish'
+
 let inflight: Promise<void> | null = null
 let generationRevision = 0
 let requestingGeneration = false
-// 同一包的同一动作只自动发起一次；失败后交回外观页手动入口。
-const requestedMissingActions = new Set<string>()
 
 /** 事件优先于旧请求响应；终态事件要求在已有水合之后重新读取。 */
 export function videoPackEventReceived(): void {
@@ -75,27 +58,13 @@ registerStorageClearHandler(() => {
   inflight = null
   generationRevision += 1
   requestingGeneration = false
-  requestedMissingActions.clear()
   $videoPacks.set([])
-  $videoPack.set(null)
-  $videoPackStatus.set('idle')
   $videoGenState.set('idle')
   $videoGenStage.set(null)
   $videoGenError.set(null)
 })
 
-async function resolveClipUrl(rawUrl: string): Promise<string | null> {
-  try {
-    return await window.spiritagent.apiAsset({ url: rawUrl, preferCache: true })
-  } catch (err) {
-    log.warn('video-pack-store', 'clip url resolve failed', err)
-
-    return null
-  }
-}
-
-/** 水合激活视频包：无激活包 → unavailable；就绪包解析 manifest 并预取 idle 片段。
- * 同时识别 processing 包还原生成中状态（事件丢失或离线期间的兜底）。 */
+/** 刷新包列表与生成状态；事件丢失或离线期间的兜底。 */
 export async function hydrateVideoPack(refresh = false): Promise<void> {
   if ($auth.get().kind !== 'authenticated') {
     return
@@ -120,26 +89,14 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
   const revision = generationRevision
 
   const load = (async (): Promise<void> => {
-    if (!$videoPack.get()) {
-      $videoPackStatus.set('loading')
-    }
-
     try {
       const res = await authedApi<{ packs?: VideoPackWire[] }>({ path: '/api/companion/video-packs' })
 
-      if (epoch !== currentClearEpoch()) {
+      if (epoch !== currentClearEpoch() || revision !== generationRevision) {
         return
       }
 
       if (!res.ok || !res.value) {
-        if (!$videoPack.get()) {
-          $videoPackStatus.set('unavailable')
-        }
-
-        return
-      }
-
-      if (revision !== generationRevision) {
         return
       }
 
@@ -158,89 +115,8 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
         $videoGenError.set(failed?.error ?? null)
         $videoGenStage.set(null)
       }
-
-      const active = packs.find(p => p.active && p.status === 'ready' && p.manifest_url)
-
-      if (!active?.manifest_url) {
-        $videoPack.set(null)
-        $videoPackStatus.set('unavailable')
-
-        return
-      }
-
-      if ($videoPack.get()?.packId === active.id && $videoPackStatus.get() === 'ready') {
-        return
-      }
-
-      const manifestUrl = await resolveClipUrl(active.manifest_url)
-
-      if (epoch !== currentClearEpoch()) {
-        return
-      }
-
-      if (!manifestUrl) {
-        if (!$videoPack.get()) {
-          $videoPackStatus.set('unavailable')
-        }
-
-        return
-      }
-
-      // eslint-disable-next-line no-restricted-syntax -- manifestUrl 是 apiAsset 桥返回的本地资产 URL（spiritagent-media:// 或 blob），非后端相对路径
-      const resp = await fetch(manifestUrl)
-      const manifest = (await resp.json()) as VideoPackManifest
-
-      if (epoch !== currentClearEpoch()) {
-        return
-      }
-
-      if (manifest.schema_version !== 'spiritagent.video.pack/1' || !Array.isArray(manifest.clips)) {
-        log.warn('video-pack-store', 'unsupported pack manifest schema')
-
-        if (!$videoPack.get()) {
-          $videoPackStatus.set('unavailable')
-        }
-
-        return
-      }
-
-      const idle = manifest.clips.find(c => c.action === manifest.default_action) ?? manifest.clips[0]
-      const idleUrl = idle ? await resolveClipUrl(idle.path) : null
-
-      if (epoch !== currentClearEpoch()) {
-        return
-      }
-
-      const clipUrls = new Map<string, string>()
-
-      if (idleUrl) {
-        clipUrls.set(idle.action, idleUrl)
-      }
-
-      if (!idleUrl) {
-        if (!$videoPack.get()) {
-          $videoPackStatus.set('unavailable')
-        }
-
-        return
-      }
-
-      const coverUrl = manifest.cover_path ? await resolveClipUrl(manifest.cover_path) : null
-
-      if (epoch !== currentClearEpoch() || revision !== generationRevision) {
-        return
-      }
-
-      $videoPack.set({ packId: active.id, packVersion: active.pack_version, manifest, clipUrls, coverUrl })
-      $videoPackStatus.set('ready')
     } catch (err) {
       log.warn('video-pack-store', 'hydrateVideoPack failed', err)
-
-      if (epoch === currentClearEpoch()) {
-        if (!$videoPack.get()) {
-          $videoPackStatus.set('unavailable')
-        }
-      }
     } finally {
       if (epoch === currentClearEpoch()) {
         inflight = null
@@ -255,29 +131,6 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
   inflight = load
 
   return load
-}
-
-/** 按需解析动作片段的展示 URL；失败返回 null（渲染层回退默认动作）。 */
-export async function resolveVideoClipUrl(pack: ActiveVideoPack, action: string): Promise<string | null> {
-  const cached = pack.clipUrls.get(action)
-
-  if (cached) {
-    return cached
-  }
-
-  const clip = pack.manifest.clips.find(c => c.action === action)
-
-  if (!clip) {
-    return null
-  }
-
-  const url = await resolveClipUrl(clip.path)
-
-  if (url) {
-    pack.clipUrls.set(action, url)
-  }
-
-  return url
 }
 
 /** 发起按参考生成（LLM 演绎脚本 → i2v → 服务端处理）；进度与结果经 companion.video 事件回流。
@@ -303,7 +156,6 @@ export async function generateVideoPack(
   }
 
   const epoch = currentClearEpoch()
-
   const revision = generationRevision
   requestingGeneration = true
 
@@ -351,81 +203,6 @@ export async function generateVideoPack(
   await hydrateVideoPack(true)
 
   return true
-}
-
-/** 缺失动作的按需补齐：对当前激活包发起单动作请求。失败只记日志，不自动重试。 */
-export async function requestMissingVideoAction(pack: ActiveVideoPack, action: string): Promise<boolean> {
-  if ($auth.get().kind !== 'authenticated') {
-    return false
-  }
-
-  if (!(VIDEO_ACTION_KEYS as readonly string[]).includes(action)) {
-    return false
-  }
-
-  if (pack.manifest.clips.some(clip => clip.action === action)) {
-    return false
-  }
-
-  // 同一外观已有该动作任务记录（含失败）时不自动重提，交回外观页手动处理。
-  const outfitId = pack.manifest.appearance_id
-
-  if (
-    $videoPacks.get().some(entry => entry.outfit_id === outfitId && entry.actions.some(item => item.action === action))
-  ) {
-    return false
-  }
-
-  const dedupeKey = `${pack.packId}:${action}`
-
-  if (requestedMissingActions.has(dedupeKey)) {
-    return false
-  }
-
-  if (requestingGeneration || $videoGenState.get() === 'generating') {
-    return false
-  }
-
-  const epoch = currentClearEpoch()
-  const revision = generationRevision
-  requestingGeneration = true
-
-  try {
-    const res = await authedApi<VideoPackWire>({
-      body: { source_pack_id: pack.packId, action },
-      method: 'POST',
-      path: '/api/companion/video-packs/generate'
-    })
-
-    // 无论接受或拒绝都只自动发起一次，避免渲染循环反复打同一请求。
-    requestedMissingActions.add(dedupeKey)
-
-    if (epoch !== currentClearEpoch()) {
-      return false
-    }
-
-    // 事件优先于本响应：失败事件先到时，不得用迟到的 processing 回写生成中并清空错误。
-    if (revision !== generationRevision) {
-      return res.ok
-    }
-
-    if (!res.ok || !res.value) {
-      log.warn('video-pack-store', 'missing action generation rejected', { action })
-
-      return false
-    }
-
-    if (res.value.status === 'processing') {
-      $videoGenState.set('generating')
-      $videoGenStage.set('script')
-      $videoGenError.set(null)
-      await hydrateVideoPack(true)
-    }
-
-    return true
-  } finally {
-    requestingGeneration = false
-  }
 }
 
 export async function activateVideoPack(packId: number): Promise<boolean> {

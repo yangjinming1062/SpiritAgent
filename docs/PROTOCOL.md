@@ -47,7 +47,7 @@ Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供�
 
 引导恢复依据服务端状态及已有资产；完成条件与身份锁定范围见 [DESIGN](DESIGN.md#5-初始化与-onboarding)。
 
-`fullbody/confirm` 通过 `expected_url` 校验客户端预览与当前待确认种子一致；确认响应不等待角色分析或派生生成，分析状态通过角色卡读取，默认视频启动失败仍通过外观状态交付。默认外观、视频启动与重复确认的处理见 [PIPELINE](PIPELINE.md#2-视频动作包链)，编辑和自备图规则见 [参考与派生关系](PIPELINE.md#11-共用参考与种子图派生)。
+`fullbody/confirm` 通过 `expected_url` 校验客户端预览与当前待确认种子一致；确认响应不等待角色分析或派生生成，分析状态通过角色卡读取，默认视频启动失败仍通过外观状态交付。默认外观、视频启动与重复确认的处理见 [PIPELINE](PIPELINE.md#2-动作资产链)，编辑和自备图规则见 [参考与派生关系](PIPELINE.md#11-共用参考与种子图派生)。
 
 角色卡通过 `GET/PATCH /api/companion/character-card` 读取及局部编辑，`POST /api/companion/character-card/extract` 发起重新提取或失败重试；结构见 [schema](../backend/modules/companion/character_card.py)。写请求校验预期形象 ID 与修订号，冲突返回 `409`，客户端保留草稿。`changes` 未提供的字段不变，`null` 恢复自动值，空字符串显式清空。分析状态与已发布内容独立：重新分析失败不撤销可用资料。`companion.character_card.updated` 与状态同事务入 outbox，客户端重新读取，不覆盖编辑草稿。
 
@@ -74,8 +74,9 @@ Backend 事件统一使用 `method=event`，`type`、`payload`、`seq` 位于 `p
 | `message.edited/deleted`、`command.result`、`compress.completed` | 按各自契约替换历史、插入状态或更新消息，不统一当普通气泡追加 |
 | `tool.start/complete`、`error` | 按会话路由的过程与错误 |
 | `tool.call` | 用户级设备指令，按 `call_id` 派发，不受当前可见会话过滤 |
-| `companion.message/mood/affect` | 分别交付已持久化主动台词、独立心情和视觉表达 |
+| `companion.message/mood` | 分别交付已持久化主动台词与独立心情 |
 | 形象、外观、场景、片刻、日记、视频与通道事件 | 更新对应资源或触发重新读取；不一律写入聊天历史 |
+| `companion.action.catalog_changed` / `job_updated` / `play_requested` | 动作目录变更、生成进度与播放指令；播放请求带 play_id、pack_id、appearance_epoch、TTL |
 | `system.notification` | 自动化结果通知，完整内容留在任务会话 |
 
 业务通知面向该用户的桌面交付，不能因目标会话未打开而丢弃。载荷中的 `session_id` 可用于落卡或跳转，不必然代表会话路由闸门。字段与转换见 [emitter](../backend/services/adapters/desktop/emitter.py) 和 [客户端事件路由](../client/renderer/app/runtime/gateway-event-router.ts)。
@@ -92,9 +93,9 @@ Client 按事件序号去重并通过 `session.ack` 确认消费进度。ACK 只
 
 ### 1.4 聊天、心情、视觉表达与空间契约
 
-正文只承载可读台词；`companion.mood` 更新身份区，不创建消息；`companion.affect` 只驱动情绪和动作；`companion.should_act` 返回空间意图，由 Client 计算位置。未知情绪回退 neutral，动作受当前形象能力限制，控制字段不得编码进聊天文本。
+正文只承载可读台词；`companion.mood` 更新身份区，不创建消息；视觉表达只经 `companion.action.play_requested` 派发；`companion.should_act` 返回空间意图，由 Client 计算位置。动作受当前形象能力限制，控制字段不得编码进聊天文本。
 
-当前心情由桌面用户陪伴回合独立更新，不由工作、IM、自动化或主动回合顺带生成。自主视觉和空间咨询须通过档位、可见性与锁屏闸门，视觉表达还需满足空闲条件。
+当前心情由桌面用户陪伴回合独立更新，不由工作、IM、自动化或主动回合顺带生成。自主视觉表达与空间咨询须通过档位、可见性与锁屏闸门，空闲视觉表达还需满足空闲条件。
 
 **回复与偏好。** 陪伴回复采用[结构化气泡](../backend/modules/conversation/replies.py)，模型最终输出顶层 JSON 数组，每个对象是一条独立消息（一个气泡），对象内的换行、段落和标点不再拆分消息；历史回灌使用同样的数组格式。由模型逐泡选择文字或语音；仅语音携带 `speech` 演绎，按实际 MiMo / MiniMax 能力校验。`companion.response_preference` 保存偏好，`prompt.submit.response_preference` 携带本轮快照；客户端不据此转换消息或自动播放。
 
@@ -190,16 +191,19 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 响应与 `command.result` 可能同时到达，Client 幂等消费；`hydrate=true` 替换历史，否则展示状态。自动压缩的 `compress.completed` 插入压缩状态，不与手动压缩的全量替换混用。
 
-### 1.10 视频动作包方法
+### 1.10 动作库与播放契约
 
-入口与载荷定义见 [companion API](../backend/api/v1/companion.py) 和 [视频 schema](../backend/modules/companion/schemas_video.py)。
+动作资产（`action_design`）是冻结外观包中可反复使用的表现能力；与一次性视频作品（`video_generate`）分离。入口见 [companion actions API](../backend/api/v1/companion_actions.py) 与 [动作 schema](../backend/modules/companion/schemas_actions.py)。
 
-- 创建请求指定已确认外观；同参考就绪包可复用并启用。首包只生成必需动作（待机、拖拽）；单动作请求须同时指定源包与动作并生成新版本，必需动作结果未知且不是本次目标时拒绝。继承、must_actions、合并与回收语义见 [PIPELINE](PIPELINE.md#23-版本恢复与删除)。不能混入另一参考版本的素材。客户端仅在同一外观无任何持久化任务记录时自动发起缺失动作；已有失败记录的交回外观页手动重做，失败不自动重试。
-- 列表返回包状态、可恢复 / 可重做能力，以及逐动作状态、预览地址与演绎描述。上传包不提供生成式单动作请求，未知提交不提供自动恢复入口。所有资源按当前用户签名，返回地址不写回存储字段。
-- `retry` 恢复已知供应商任务或已有源素材，或在 must_actions 已齐时仅重试发布；已有同一冻结参考与身份的更新就绪包时返回合并后的新版本。`activate` 同事务启用视频包和对应外观，拒绝回退到更新就绪包之前的版本。合并与清理条件见 [PIPELINE](PIPELINE.md#23-版本恢复与删除)。构建中或使用中的包不可删除。
-- `companion.video.progress / ready / failed / activated` 只更新生成状态和资源，不写入聊天历史；事件丢失或重连后以列表恢复状态。
+**LLM 工具：** `action_search` / `action_design` / `action_inspect` / `action_play`。source、用户、会话、预算日、系统槽位与目标包由服务端绑定；`expected_pack_id` 仅为乐观并发守卫。视觉表达一律经 `action_play` 派发（对话与非对话相同）。工具立即返回受理结果，不等待评审或视频；结果不进入聊天视频自动送达链。
 
-服装设计在确认参考图后显式请求该外观的视频包；后端外观参考图确认只负责转正图像。新包成功前保留原形象，生成失败可以从外观列表继续发起，不能把参考图就绪显示为视频就绪。完整生成与资源恢复语义见 [PIPELINE](PIPELINE.md#2-视频动作包链)。
+**额度：** 制作额度按用户本地日、approve 时强制；不设评审日限额。额度不写入模型上下文。播放无手动入口，由模型自主判断。
+
+**快照：** 每次模型调用前刷新 `{{ACTION_CONTEXT}}`（就绪动作、在途提案、近期拒绝）。
+
+**播放：** 事件 `companion.action.catalog_changed` / `job_updated` / `play_requested`。所有动态呈现（含 `action_play` 与空闲表达）统一汇入 `play_requested`。指令含 play_id、pack_id、appearance_epoch、TTL、repeat_count。回执 `POST /api/companion/actions/playback/{play_id}/receipt` 按 play_id 幂等；queued ≠ completed。同一请求仅一台可见设备执行；被抢占时上报 interrupted。
+
+**REST 管理：** 目录、手动设计、停用、重做、删除。动作目录（`spiritagent.action.pack`）即当前视频包可播清单。切换外观时动作随包切换，不跨包引用；重做在同包原地更新素材版本。
 
 ## 2. Client ↔ Runner 契约
 

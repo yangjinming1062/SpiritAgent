@@ -1,3 +1,20 @@
+export {
+  $actionCatalog,
+  $actionCatalogStatus,
+  $activePlayInstance,
+  acceptPlayCommand,
+  actionCatalogChanged,
+  type ActionHitmask,
+  type ActionPlayCommand,
+  type ActionPlayInstance,
+  clipKey,
+  finishPlayInstance,
+  hydrateActionCatalog,
+  reportReceipt,
+  resolveActionClipUrl,
+  resolveHitmask,
+  shouldStartInstance
+} from './actions'
 export { $focusContext, $screenLocked, reportInteractionStat, startActivityMonitor } from './activity'
 export { startAutonomyProvision, stopAutonomyProvision } from './autonomy'
 export {
@@ -28,7 +45,6 @@ export {
   $userPreferredTier,
   type DisturbanceTier,
   ensureCompanionHydrated,
-  playSpriteActionSequence,
   pushEffectiveDisturbanceTier,
   reportUserActivity,
   setCompanionLifecycle,
@@ -111,13 +127,10 @@ export {
   $videoGenStage,
   $videoGenState,
   $videoHitTest,
-  $videoPack,
   $videoPacks,
-  $videoPackStatus,
   activateVideoPack,
   generateVideoPack,
-  hydrateVideoPack,
-  requestMissingVideoAction
+  hydrateVideoPack
 } from './rendering/video'
 export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritual-walk'
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'

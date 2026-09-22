@@ -1,7 +1,9 @@
 type GatewayEventName =
   | 'command.result'
   | 'compress.completed'
-  | 'companion.affect'
+  | 'companion.action.catalog_changed'
+  | 'companion.action.job_updated'
+  | 'companion.action.play_requested'
   | 'companion.mood'
   | 'companion.diary.upserted'
   | 'companion.message'

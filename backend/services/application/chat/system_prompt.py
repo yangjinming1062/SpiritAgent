@@ -6,6 +6,7 @@ from modules.system import AgentPromptConfig, PromptPreset
 from prompts.chat import OUTFIT_DEMEANOR_GUIDANCES, SCENE_CONTEXT_GUIDANCES
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.application.actions.context import build_action_context
 from services.domains.companion import build_outfit_extras, get_scene_state, scene_environment
 
 from .prompt_blocks import BLOCK_RENDERERS, substitute
@@ -38,6 +39,9 @@ async def build_companion_environment_prompt(db: AsyncSession, user_id: int, *, 
             json.dumps(scene_environment(state), ensure_ascii=False),
         ],
     )
+    # 动作快照：每次模型调用前刷新（含工具续轮），频繁变化的动作数据不写入稳定身份前缀。
+    action_context = await build_action_context(db, user_id)
+    parts.append(action_context.to_prompt_block(language=language))
     return "\n\n".join(parts)
 
 

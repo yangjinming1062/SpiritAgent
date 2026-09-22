@@ -41,11 +41,17 @@ APPLICATION_FLOW_EDGES = {
     ("services.application.chat", "services.application.nightly"),
     ("services.application.nightly", "services.application.generation"),
     ("services.application.automation", "services.application.nightly"),
+    # actions 编排素材制作走 generation；夜间/对话读取动作上下文走 actions。
+    ("services.application.actions", "services.application.generation"),
+    ("services.application.chat", "services.application.actions"),
+    ("services.application.nightly", "services.application.actions"),
 }
 # domains 内显式声明的跨域单向依赖（域级，与 backend/README.md §3.2 例外表一致）。
 DOMAIN_FLOW_EDGES = {
     ("services.domains.companion", "services.domains.memory"),
     ("services.domains.journal", "services.domains.memory"),
+    # companion 读取动作目录快照（LLM 可点播清单随当前包目录变化）；actions 不反向依赖。
+    ("services.domains.companion", "services.domains.actions"),
 }
 # 各域可单向导入的底座域（backend/README.md §3.2）。
 DOMAIN_BASE = "services.domains.conversation"

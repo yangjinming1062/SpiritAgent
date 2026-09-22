@@ -60,8 +60,8 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
     ),
     ToolDomain(
         id="media",
-        description_zh="图片、视频与场景",
-        description_en="Images, video, and scenes",
+        description_zh="图片、视频、场景与角色动作",
+        description_en="Images, video, scenes, and character actions",
         aliases=(
             "media",
             "image_generation",
@@ -77,6 +77,11 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
             "场景",
             "环境",
             "背景",
+            "action",
+            "actions",
+            "动作",
+            "表演",
+            "动作库",
         ),
         extra_tools=(
             "image_generate",
@@ -86,6 +91,10 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
             "scene_activate",
             "video_generate",
             "video_generate_status",
+            "action_search",
+            "action_design",
+            "action_inspect",
+            "action_play",
         ),
     ),
     ToolDomain(

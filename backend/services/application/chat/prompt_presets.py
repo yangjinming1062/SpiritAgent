@@ -32,6 +32,7 @@ LIFE_SPACE_TOOL_NAMES = frozenset(
         "scene_get",
         "scene_create",
         "scene_activate",
+        "action_play",
     },
 )
 AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(

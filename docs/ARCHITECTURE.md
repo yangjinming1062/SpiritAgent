@@ -26,7 +26,7 @@ Client 渲染层 ←→ Client 主进程 ←→ Backend web ←→ PostgreSQL / 
 
 Client 主进程是云端身份与本机执行的桥梁。Runner 请求模型能力时，经 Client 转交 Backend，不直接获取代理使用的凭据。
 
-Backend 的依赖方向为 `adapters → application → domains`；业务层可使用 `infrastructure`，各层可使用 `contracts`。基础设施不反向导入业务层，跨域流程由应用层组织，注册和启停集中于 `bootstrap`。精确允许依赖及检查入口见 [Backend](../backend/README.md#3-架构设计)，不在本文复制包级清单。
+Backend 的依赖方向为 `adapters → application → domains`；业务层可使用 `infrastructure`，各层可使用 `contracts`。基础设施不反向导入业务层，跨域流程由应用层组织，注册和启停集中于 `bootstrap`。动作领域（`domains/actions` + `application/actions`）负责动作资产、策略、预算与播放协调；素材生成（`application/generation/video`）只做脚本/姿态/视频素材制作，不反向调用 actions。精确允许依赖及检查入口见 [Backend](../backend/README.md#3-架构设计)，不在本文复制包级清单。
 
 ## 3. 状态归属
 
@@ -34,6 +34,7 @@ Backend 的依赖方向为 `adapters → application → domains`；业务层可
 |---|---|---|
 | 角色、角色卡、会话、长期记忆、片刻、日记 | Backend 数据库 | Client 展示和提交操作；不得用旧视图覆盖已提交数据 |
 | 形象、外观、场景及激活关系 | Backend 数据库与资产存储 | Client 缓存字节和展示状态，缓存命中不改变激活关系 |
+| 动作库（含提案、素材版本、目录、播放账本） | Backend 数据库与资产存储 | Client 缓存片段字节与播放实例状态，不决定动作是否可用 |
 | 可同步用户偏好 | Backend 配置 | Client 保存带用户归属的离线镜像；冲突按协议处理 |
 | 激活凭据、本机连接和机密配置 | Client 主进程 | 仅向 Runner 提供执行所需配置，不向渲染层暴露凭据 |
 | 窗口、位置、当前可见表面 | Client | Backend 不决定开窗、桌面坐标和窗口吸附 |

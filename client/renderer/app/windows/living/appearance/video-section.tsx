@@ -3,16 +3,16 @@ import type React from 'react'
 import { useEffect, useState } from 'react'
 
 import {
+  $actionCatalog,
   $outfits,
   $videoGenError,
   $videoGenStage,
   $videoGenState,
-  $videoPack,
   $videoPacks,
   activateVideoPack,
   generateVideoPack,
-  hydrateVideoPack,
-  VIDEO_ACTION_KEYS
+  hydrateActionCatalog,
+  hydrateVideoPack
 } from '@/modules/character'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, ConfirmDialog, HINT_TEXT, INPUT_CLASS } from '@/shared/panel'
@@ -69,7 +69,7 @@ function ActionPreview({ url }: { url: string }): React.JSX.Element {
 
 export function VideoSection(): React.JSX.Element {
   const authKind = useStore($auth).kind
-  const active = useStore($videoPack)
+  const active = useStore($actionCatalog)
   const packs = useStore($videoPacks)
   const outfits = useStore($outfits)
   const initialVideoError = packs.length === 0 ? outfits.find(outfit => outfit.active)?.initialVideoError : null
@@ -91,9 +91,35 @@ export function VideoSection(): React.JSX.Element {
     drag: t.videoDrag
   }
 
+  // 动作网格消费任务行（系统槽位 + 动态动作）；
+  // 动态动作优先显示名称（提案命名），系统槽位用固定文案。
+  // 缺失的必需/可选系统槽位仍展示占位格，保留受控补齐入口。
+  const gridActions: { key: string; label: string }[] = []
+  const seenKeys = new Set<string>()
+
+  for (const entry of selected?.actions ?? []) {
+    if (seenKeys.has(entry.action)) {
+      continue
+    }
+
+    seenKeys.add(entry.action)
+    gridActions.push({
+      key: entry.action,
+      label: entry.name || actionNames[entry.action] || entry.action
+    })
+  }
+
+  for (const slot of ['idle', 'drag', 'walk_left', 'walk_right'] as const) {
+    if (!seenKeys.has(slot)) {
+      seenKeys.add(slot)
+      gridActions.push({ key: slot, label: actionNames[slot] })
+    }
+  }
+
   useEffect(() => {
     if (authKind === 'authenticated') {
       void hydrateVideoPack()
+      void hydrateActionCatalog()
     }
   }, [authKind])
   useEffect(() => {
@@ -112,7 +138,7 @@ export function VideoSection(): React.JSX.Element {
     genError ??
     stageText ??
     initialVideoError ??
-    (active ? t.videoReady(active.packVersion, active.manifest.clips.length) : t.videoNotReady)
+    (active ? t.videoReady(active.catalogVersion, active.manifest.clips.length) : t.videoNotReady)
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
@@ -173,23 +199,24 @@ export function VideoSection(): React.JSX.Element {
         ) : null}
         <div className="grid grid-cols-2 gap-3">
           {selected
-            ? VIDEO_ACTION_KEYS.map(action => {
-                const clip = selected.actions.find(entry => entry.action === action)
+            ? gridActions.map(({ key, label }) => {
+                const clip = selected.actions.find(entry => entry.action === key)
 
                 return (
-                  <div className="space-y-2 rounded-lg border border-line-hairline p-2" key={action}>
-                    <span className="text-xs text-strong">{actionNames[action] ?? action}</span>
+                  <div className="space-y-2 rounded-lg border border-line-hairline p-2" key={key}>
+                    <span className="text-xs text-strong">{label}</span>
                     {clip?.clip_url ? (
                       <ActionPreview url={clip.clip_url} />
                     ) : (
                       <p className={HINT_TEXT}>{clip?.error ?? t.videoActionOnDemand}</p>
                     )}
                     {clip?.motion_prompt ? <p className={HINT_TEXT}>{clip.motion_prompt}</p> : null}
+                    {/* 系统槽位与动态动作均可单动作重做；动态重做保留动作身份，只替换素材。 */}
                     <button
                       className={BTN_SUBTLE}
                       disabled={busy || !selected.can_regenerate}
                       onClick={() => {
-                        setRedoAction(action)
+                        setRedoAction(key)
                         setFeedback('')
                       }}
                       type="button"

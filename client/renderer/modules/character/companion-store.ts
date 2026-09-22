@@ -160,11 +160,6 @@ export function setSpriteState(
   $spriteState.set(name)
 }
 
-/** 播放动作提示：只取首个动作进入 $spriteAction；渲染器按资产实际支持兑现，缺素材时跳过。 */
-export function playSpriteActionSequence(actions: readonly string[]): void {
-  $spriteAction.set(actions[0] ?? null)
-}
-
 export function reportUserActivity(): void {
   const current = $spriteState.get()
 

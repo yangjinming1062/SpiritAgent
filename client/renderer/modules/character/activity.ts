@@ -36,7 +36,7 @@ const CHECK_COOLDOWN_MS = 60 * 60 * 1000
 const STATS_POST_THRESHROTTLE_MS = 60_000
 
 let timer: ReturnType<typeof setInterval> | null = null
-let lastAffectCheckAt = 0
+let lastIdleExpressionAt = 0
 let lastTierPushed: DisturbanceTier | null = null
 let runnerReady = false
 let offPhaseSub: (() => void) | null = null
@@ -50,8 +50,8 @@ let signalRevision = 0
 let localChatTurnCount = 0
 let lastChatTurnSentAt = 0
 
-function maybeTriggerAffectCheck(idleSeconds: number, locked: boolean): void {
-  // 情境表情与动作是桌面精灵的自主表达，只在精灵可见且用户选择自主档时推理。
+function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void {
+  // 空闲自主表演只在精灵可见且用户选择自主档时推理；播放指令由后端统一派发。
   if (
     !$llmAffect.get() ||
     $effectiveTier.get() !== 'autonomous' ||
@@ -64,7 +64,7 @@ function maybeTriggerAffectCheck(idleSeconds: number, locked: boolean): void {
 
   const now = Date.now()
 
-  if (now - lastAffectCheckAt < CHECK_COOLDOWN_MS) {
+  if (now - lastIdleExpressionAt < CHECK_COOLDOWN_MS) {
     return
   }
 
@@ -72,10 +72,10 @@ function maybeTriggerAffectCheck(idleSeconds: number, locked: boolean): void {
   // 不在此硬编码跳过——避免与服务端时区/策略漂移。
   const hour = new Date().getHours()
 
-  lastAffectCheckAt = now
+  lastIdleExpressionAt = now
   const gateway = $gateway.get()
   void gateway
-    ?.request('companion.check_affect', {
+    ?.request('companion.idle_expression', {
       idle_seconds: idleSeconds,
       local_hour: hour
     })
@@ -403,7 +403,7 @@ async function pollSnapshot(generation: number): Promise<void> {
     return
   }
 
-  maybeTriggerAffectCheck(snapshot.locked !== undefined ? idleSeconds : -1, $screenLocked.get())
+  maybeTriggerIdleExpression(snapshot.locked !== undefined ? idleSeconds : -1, $screenLocked.get())
 }
 
 export function startActivityMonitor(): () => void {

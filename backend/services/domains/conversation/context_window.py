@@ -9,7 +9,7 @@ RECENT_CONTEXT_CHAR_CAP = 200
 
 
 async def load_recent_context_window(db: AsyncSession, user_id: int, max_messages: int = 10) -> str:
-    """主对话最近 N 条正常对话消息的紧凑文本，供 idle affect 的一次性 prompt 使用。
+    """主对话最近 N 条正常对话消息的紧凑文本，供空闲表达的一次性 prompt 使用。
 
     ``status_proactive`` 保留（那是用户可以回应的真实轮次），只剔除 ``UI_ONLY_SUBTYPES``。
     """

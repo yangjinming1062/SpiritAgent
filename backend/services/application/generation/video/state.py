@@ -5,7 +5,7 @@ from typing import Literal
 from modules.companion import CharacterCardSnapshot
 from pydantic import BaseModel, ConfigDict
 
-from services.infrastructure.video_processing.quality import LoopWindow
+from services.infrastructure.video_processing.quality import FullClipWindow, LoopWindow
 
 from .manifest import VideoClipSpec
 
@@ -25,8 +25,10 @@ class GenerationContext(BaseModel):
 
 
 class ActionResult(BaseModel):
+    """单动作处理结果；quality 为 loop 接点窗口或 once 完整窗口。"""
+
     model_config = ConfigDict(extra="forbid")
 
     clip: VideoClipSpec
     cover_path: str
-    quality: LoopWindow | None = None
+    quality: LoopWindow | FullClipWindow | None = None

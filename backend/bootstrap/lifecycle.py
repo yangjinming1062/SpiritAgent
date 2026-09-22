@@ -22,6 +22,7 @@ from services.adapters.channels import start_channel_manager, stop_channel_manag
 from services.adapters.desktop import drain as drain_user_sessions
 from services.adapters.scheduler import drain as drain_cron
 from services.adapters.scheduler import start_scheduler, stop_scheduler
+from services.application.actions import drain_proposal_reviews, resume_proposal_reviews
 from services.application.configuration import load_and_apply_system_settings
 from services.application.generation import (
     drain_character_extractions,
@@ -84,6 +85,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     await resume_video_generation_jobs()
     # 视频包上传导入：无可续跑句柄的 processing 行按失败落库并广播。
     await resume_processing_video_packs()
+    # 动作提案：pending 评审重新调度（approve 后自动接生成编排）。
+    await resume_proposal_reviews()
     await resume_character_extractions()
     await resume_scene_jobs()
     await resume_initial_appearance()
@@ -117,6 +120,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             drain_scene_jobs(),
             drain_video_jobs(),
             drain_video_pack_generation(),
+            drain_proposal_reviews(),
             drain_event_tasks(),
             drain_user_sessions(),
             return_exceptions=True,

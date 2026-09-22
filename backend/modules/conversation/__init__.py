@@ -1,5 +1,12 @@
 from .models import Conversation, Message
-from .replies import CompanionReply, CompanionReplyInput, ReplyAudio, TextBubble, VoiceBubble, VoiceBubbleView
+from .replies import (
+    CompanionReply,
+    CompanionReplyInput,
+    ReplyAudio,
+    TextBubble,
+    VoiceBubble,
+    VoiceBubbleView,
+)
 from .schemas import (
     DesktopSessionInfo,
     DesktopSessionListResponse,

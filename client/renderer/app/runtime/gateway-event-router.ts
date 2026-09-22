@@ -36,7 +36,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
   // 聊天回合事件（message.start/delta/complete/persisted、tool.*、error）携带发出该事件的会话 session_id。
   // 来自渲染层当前未查看会话的事件不应作用于可见聊天——
   // 例如后台任务会话的工具帧；没有这道门的话，用户会看到它们像主会话回复。
-  // WSEvent 驱动的事件（companion.message/affect/mood、avatar.regenerated）没有 session_id，直接放行。
+  // WSEvent 驱动的事件（companion.message/mood、avatar.regenerated）没有 session_id，直接放行。
   if (event.session_id !== undefined) {
     const current = $chatSessionId.get()
 
@@ -97,13 +97,17 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
       break
 
-    case 'companion.affect':
-
     case 'companion.mood':
 
     case 'companion.character_card.updated':
 
     case 'companion.outfit.updated':
+
+    case 'companion.action.catalog_changed':
+
+    case 'companion.action.job_updated':
+
+    case 'companion.action.play_requested':
 
     case 'companion.video.activated':
 

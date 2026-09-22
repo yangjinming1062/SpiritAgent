@@ -26,6 +26,6 @@
 
 ## 视频包与验证
 
-上传导入与按参考生成共用交付链；生成上下文与动作结果由 [state.py](video/state.py) 校验。上传包不拥有可重做的冻结参考。按需动作、版本与恢复见 [PIPELINE](../../../../docs/PIPELINE.md#2-视频动作包链)。
+上传导入与按参考生成共用交付链；生成上下文与动作结果由 [state.py](video/state.py) 校验。上传包不拥有可重做的冻结参考。素材制作与恢复见 [PIPELINE](../../../../docs/PIPELINE.md#2-动作资产链)。
 
 检查命令见 [Backend](../../../README.md#6-验证入口)，生成与恢复验收见 [PIPELINE](../../../../docs/PIPELINE.md#4-按改动选择验证)。
