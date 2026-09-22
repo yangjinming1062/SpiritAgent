@@ -1036,8 +1036,8 @@ export const dict = {
       scaleAria: '形象大小'
     },
     scene: {
-      intro: '场景展示伙伴当前身处的环境与活动。场景穿着独立于外观页，可保存并反复使用。',
-      referenceHint: '参考图可提供环境、活动与构图。要参考其中的穿着，请在着装描述中说明。',
+      intro: '场景展示伙伴当前身处的环境与活动。场景穿着独立于衣柜外观，可保存并反复使用。',
+      referenceHint: '参考图提供环境与构图线索，其中的人物不会进入成品。要参考其中的穿着，请在着装描述中完整说明。',
       referenceLabel: '场景参考图',
       chooseReference: '选择参考图',
       replaceReference: '更换参考图',
@@ -1047,7 +1047,7 @@ export const dict = {
       notesPlaceholder: '例如：傍晚的海边，伙伴沿沙滩散步。',
       outfitLabel: '着装描述（可选）',
       outfitPlaceholder: '例如：白色短袖衬衫、蓝色短裤、白色运动鞋和草帽。',
-      outfitHint: '留空沿用当前着装；填写时请描述本次场景中的整套穿着。',
+      outfitHint: '留空沿用衣柜已启用外观；填写时是本次场景的完整造型替换，请写全服装、配色、发型发色、鞋履与配饰。',
       noScene: '尚未启用场景',
       currentBadge: '当前场景',
       currentAltFallback: '当前场景',
@@ -1070,7 +1070,7 @@ export const dict = {
       historyDeleteConfirmDescription: '图片及场景信息会从场景库中删除，此操作不可恢复。',
       policyTitle: '自主政策',
       policyLabel: '伙伴自主切换场景',
-      policyDesc: '锁定后禁止自主新增与切换；你仍可明确要求或手动操作。夜间同时遵守夜间活动政策。',
+      policyDesc: '锁定后禁止自主新增与切换；你仍可在场景页面手动创建与切换。夜间同时遵守夜间活动政策。',
       policyStatusLocked: '已锁定',
       policyStatusUnlocked: '允许',
       policyToggleAria: '允许伙伴自主新增与切换',

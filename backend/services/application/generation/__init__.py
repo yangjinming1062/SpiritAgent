@@ -110,7 +110,13 @@ from .video_jobs import (
     get_job,
     resume_pending_video_jobs,
 )
-from .visual_identity import load_self_visual_context, prepare_self_video_reference
+from .visual_identity import (
+    SelfVisualPlan,
+    apply_outfit_override,
+    load_self_visual_context,
+    plan_outfit_description,
+    prepare_self_video_reference,
+)
 
 __all__ = [
     "SceneError",
@@ -133,6 +139,9 @@ __all__ = [
     "set_scene_policy",
     "load_self_visual_context",
     "prepare_self_video_reference",
+    "SelfVisualPlan",
+    "apply_outfit_override",
+    "plan_outfit_description",
     "drain_character_extractions",
     "resume_character_extractions",
     "schedule_character_extraction",

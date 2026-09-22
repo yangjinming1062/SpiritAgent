@@ -1,16 +1,15 @@
-"""场景发现、复用与创建；用户明确请求与自主决定使用不同授权路径。"""
+"""场景发现、复用与创建；聊天工具只走自主路径，用户手动创建与切换走场景页面。"""
 
 import json
 from typing import Any
 
-from components import LLM_MAX_OUTPUT_TOKENS, SCENE_LLM_TRIGGERS_TOTAL, SESSION_LOCAL, parse_llm_json, tool_error
+from components import SCENE_LLM_TRIGGERS_TOTAL, SESSION_LOCAL, tool_error
 from modules.companion import CompanionScene, SceneOrigin
-from prompts.tools import SCENE_REQUEST_CHECK_SYSTEM, SCENE_TOOL_DESCRIPTIONS
+from prompts.tools import SCENE_TOOL_DESCRIPTIONS
 
 from services.application.generation import SceneError, activate_scene, schedule_scene_generation
 from services.contracts import SceneTurnState
-from services.domains.companion import get_disturbance_tier, get_scene, get_scene_state, list_scenes, scene_environment
-from services.infrastructure.llm import call_llm_once
+from services.domains.companion import get_scene, get_scene_state, list_scenes, scene_environment
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 
@@ -59,130 +58,72 @@ async def scene_get_tool(scene_id: int, user_id: int | None = None, **_: Any) ->
     return await _result(user_id, scene=_asset(row))
 
 
-async def _origin(
-    user_id: int,
-    request_mode: str,
-    request_basis: str,
-    user_initiated: bool,
-    scene_turn: SceneTurnState,
-    llm_config: dict[str, Any],
-) -> str:
-    if request_mode == "user_request":
-        quote = request_basis.strip()
-        if not user_initiated or not quote or quote not in scene_turn.user_text:
-            raise SceneError("用户请求路径需要真实本轮用户明确要求切换或创建场景的原文依据")
-        try:
-            raw = await call_llm_once(
-                llm_config,
-                SCENE_REQUEST_CHECK_SYSTEM,
-                {"user_message": scene_turn.user_text, "quoted_basis": quote},
-                max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
-                json_output=True,
-            )
-        except Exception as exc:
-            raise SceneError("暂时无法核对场景请求，请稍后重试；当前环境保持不变") from exc
-        parsed = parse_llm_json(raw)
-        if not isinstance(parsed, dict) or parsed.get("explicit_scene_request") is not True:
-            raise SceneError("当前用户消息未明确要求场景操作；伙伴自主决定应使用 autonomous 并遵守政策与额度")
-        return SceneOrigin.USER_REQUEST.value
-    if request_mode != "autonomous":
-        raise SceneError("request_mode 无效")
-    if await get_disturbance_tier(user_id) in {"still", "silent"}:
-        raise SceneError("静止档不发起在线自主场景变化")
-    return SceneOrigin.LLM.value
-
-
 async def scene_create_tool(
     notes: str,
     outfit_description: str | None = None,
-    request_mode: str = "autonomous",
-    request_basis: str = "",
-    reference_image_index: int | None = None,
+    auto_activate: bool = False,
     user_id: int | None = None,
-    user_initiated: bool = False,
-    user_images: tuple[str, ...] = (),
     scene_turn: SceneTurnState | None = None,
-    llm_config: dict[str, Any] | None = None,
     **_: Any,
 ) -> str:
     if user_id is None or scene_turn is None:
-        return tool_error("场景切换需要有效回合上下文")
+        return tool_error("场景创建需要有效回合上下文")
     async with scene_turn.lock:
         if not scene_turn.inspected:
             return tool_error("请先用 scene_list 检查已有场景，适合时直接启用")
-        if scene_turn.switch_claimed:
-            return tool_error("本回合已提交一次环境切换，请查询结果，不要重复切换")
-        if not notes.strip() or len(notes) > 2000:
-            return tool_error("请提供不超过 2000 字符的具体场景设计")
+        if scene_turn.create_claimed:
+            return tool_error("本回合已提交一次场景创建，请查询结果，不要重复创建")
+        if auto_activate and scene_turn.switch_claimed:
+            return tool_error("本回合已提交一次环境切换，不能再申请自动启用")
+        if not notes.strip():
+            return tool_error("请提供具体的场景设计")
         try:
-            origin = await _origin(user_id, request_mode, request_basis, user_initiated, scene_turn, llm_config or {})
-            reference = None
-            if reference_image_index is not None:
-                if (
-                    origin != SceneOrigin.USER_REQUEST.value
-                    or type(reference_image_index) is not int
-                    or not 1 <= reference_image_index <= len(user_images)
-                ):
-                    return tool_error("场景参考需要用户明确请求和有效的当前附件序号")
-                reference = user_images[reference_image_index - 1]
             row = await schedule_scene_generation(
                 user_id,
-                origin=origin,
+                origin=SceneOrigin.LLM.value,
                 notes=notes,
                 outfit_description=outfit_description,
-                reference_image=reference,
-                auto_activate=True,
+                auto_activate=auto_activate,
             )
         except SceneError as exc:
             SCENE_LLM_TRIGGERS_TOTAL.labels(outcome="rejected").inc()
             return tool_error(str(exc))
-        scene_turn.switch_claimed = True
+        scene_turn.create_claimed = True
+        if auto_activate:
+            scene_turn.switch_claimed = True
         SCENE_LLM_TRIGGERS_TOTAL.labels(outcome="accepted").inc()
         return await _result(
             user_id,
             accepted=True,
             scene=_asset(row),
+            auto_activate_requested=auto_activate,
             activated=False,
-            message="场景正在准备；只有成功启用后才能叙述已经到达",
+            message=(
+                "场景正在准备，完成后保存到场景库并尝试自动启用；只有 environment.current 更新才表示已经到达"
+                if auto_activate
+                else "场景正在准备，完成后保存到场景库；当前环境保持不变"
+            ),
         )
 
 
 async def scene_activate_tool(
     scene_id: int,
-    request_mode: str = "autonomous",
-    request_basis: str = "",
     user_id: int | None = None,
-    user_initiated: bool = False,
     scene_turn: SceneTurnState | None = None,
-    llm_config: dict[str, Any] | None = None,
     **_: Any,
 ) -> str:
     if user_id is None or scene_turn is None:
         return tool_error("场景切换需要有效回合上下文")
     async with scene_turn.lock:
         if scene_turn.switch_claimed:
-            return tool_error("本回合已提交一次环境切换")
+            return tool_error("本回合已提交一次环境切换，请查询结果，不要重复切换")
         try:
-            origin = await _origin(user_id, request_mode, request_basis, user_initiated, scene_turn, llm_config or {})
             async with SESSION_LOCAL() as db:
-                row = await activate_scene(db, user_id, scene_id, origin=origin)
+                row = await activate_scene(db, user_id, scene_id, origin=SceneOrigin.LLM.value)
         except SceneError as exc:
             return tool_error(str(exc))
         scene_turn.switch_claimed = True
         return await _result(user_id, activated=True, scene=_asset(row))
-
-
-_REQUEST_PROPERTIES = {
-    "request_mode": {
-        "type": "string",
-        "enum": ["autonomous", "user_request"],
-        "description": "默认 autonomous；真实本轮用户明确要求场景操作才用 user_request，用户发起聊天本身不是授权。",
-    },
-    "request_basis": {
-        "type": "string",
-        "description": "user_request 必须引用本轮用户明确要求场景操作的原文；普通旅行讨论、创作或假设不算。",
-    },
-}
 
 
 def register(registry: ToolsRegistry) -> None:
@@ -202,31 +143,24 @@ def register(registry: ToolsRegistry) -> None:
             "scene_create",
             scene_create_tool,
             {
-                **_REQUEST_PROPERTIES,
                 "notes": {
                     "type": "string",
-                    "maxLength": 2000,
-                    "description": "具体的地点、环境、活动与氛围。着装写在 outfit_description 中。",
+                    "description": "场景的环境与活动设计；非空，写全地点、氛围、伙伴正在做的事等必要细节。",
                 },
                 "outfit_description": {
                     "type": "string",
-                    "maxLength": 2000,
-                    "description": "本次明确提出的完整着装描述，包括衣物、配色、鞋履和配饰等；未提出着装要求时省略。",
+                    "description": "本次自主设计的完整造型，包括服装、配色、发型发色、妆容、鞋履与配饰；无需指定造型时省略，沿用衣柜已启用外观描述。",
                 },
-                "reference_image_index": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "description": "可选，仅用于用户明确请求：最近一条带图用户消息中的图片序号，从 1 开始；不使用参考图时省略。",
+                "auto_activate": {
+                    "type": "boolean",
+                    "description": (
+                        "默认 false，仅创建并保存到场景库，当前环境不变。自主决定在准备完成后切换时传 true，仍须通过政策校验。"
+                    ),
                 },
             },
             ["notes"],
         ),
-        (
-            "scene_activate",
-            scene_activate_tool,
-            {**_REQUEST_PROPERTIES, "scene_id": {"type": "integer", "minimum": 1}},
-            ["scene_id"],
-        ),
+        ("scene_activate", scene_activate_tool, {"scene_id": {"type": "integer", "minimum": 1}}, ["scene_id"]),
     ]
     for name, handler, properties, required in definitions:
         registry.register(

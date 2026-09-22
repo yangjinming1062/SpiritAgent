@@ -6,7 +6,8 @@ from dataclasses import dataclass, field
 
 @dataclass
 class SceneTurnState:
-    user_text: str = ""
     inspected: bool = False
+    # 创建与切换分别限一次；创建并申请自动启用时同时占用切换额度。
+    create_claimed: bool = False
     switch_claimed: bool = False
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)

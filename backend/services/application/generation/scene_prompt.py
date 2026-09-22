@@ -19,7 +19,7 @@ class ScenePromptContext:
 
 
 def build_scene_prompt(ctx: ScenePromptContext) -> str:
-    parts = [SCENE_TEMPLATE.format(reference="图 1" if ctx.has_reference_image else "参考图")]
+    parts = [SCENE_TEMPLATE.format(identity_reference="图 1" if ctx.has_reference_image else "参考图")]
     if ctx.notes.strip():
         parts.append(SCENE_NOTES_TEMPLATE.format(notes=ctx.notes.strip()))
     if ctx.outfit_description.strip():

@@ -44,6 +44,7 @@ from prompts.generation import SCENE_DESCRIBE_SYSTEM
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.contracts import MemoryScope
 from services.domains.companion import (
     CharacterCardNotReadyError,
     character_snapshot_is_current,
@@ -52,6 +53,7 @@ from services.domains.companion import (
     load_character_snapshot,
     require_character_snapshot,
 )
+from services.domains.memory import read_user_profile
 from services.infrastructure.assets import asset_store
 from services.infrastructure.llm import resolve_reference_bytes, vision_chat
 
@@ -216,8 +218,6 @@ async def _new_scene(
     outfit_description: str | None = None,
 ) -> CompanionScene:
     outfit_description = (outfit_description or "").strip()
-    if len(outfit_description) > 2000:
-        raise SceneError("着装描述不能超过 2000 字符")
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         persona = await _persona(db, user_id)
         await _check_policy(db, persona, origin)
@@ -654,17 +654,54 @@ async def resume_scene_jobs() -> None:
         await resume_scene_generation(user_id, scene_id)
 
 
+_INITIAL_SCENE_DEFAULT_NOTES = (
+    "伙伴在自己的房间里自然地生活：整洁的日常起居空间，光线柔和，桌椅、床铺与少量个人物品摆放合理，"
+    "伙伴正从事一项安静自然的日常活动。"
+)
+# 初始引导素材仅限这些字段；外貌与物种不用于推断兴趣、职业或经历。
+_INITIAL_SCENE_SOURCE_FIELDS = ("personality", "speaking_style", "relationship")
+
+
+def _initial_scene_notes(persona: Persona, user_profile: dict[str, str]) -> str:
+    materials: list[str] = []
+    definition = persona.definition_json
+    if isinstance(definition, str):
+        try:
+            definition = json.loads(definition)
+        except ValueError:
+            definition = {}
+    if isinstance(definition, dict):
+        for field in _INITIAL_SCENE_SOURCE_FIELDS:
+            value = str(definition.get(field) or "").strip()
+            if value:
+                materials.append(value)
+    hobbies = str(user_profile.get("user_hobbies") or "").strip()
+    if hobbies:
+        materials.append(f"用户兴趣：{hobbies}")
+    if not materials:
+        return _INITIAL_SCENE_DEFAULT_NOTES
+    return (
+        "伙伴在自己的房间中自然地生活。以下是已确认的角色资料，仅用于设计与其中环境或活动相关的部分，"
+        "不据此虚构兴趣、职业或经历：" + "；".join(materials)
+    )
+
+
 async def schedule_initial_scene(user_id: int) -> CompanionScene | None:
     async with SESSION_LOCAL() as db:
+        persona = await db.scalar(select(Persona).where(Persona.user_id == user_id))
+        if persona is None or not persona.is_complete:
+            return None
         if await load_character_snapshot(db, user_id) is None:
             return None
         if await db.scalar(select(CompanionScene.id).where(CompanionScene.user_id == user_id).limit(1)):
             return None
+        user_profile = await read_user_profile(db, MemoryScope(user_id, "companion"))
+        notes = _initial_scene_notes(persona, user_profile)
     try:
         return await schedule_scene_generation(
             user_id,
             origin=SceneOrigin.ONBOARDING.value,
-            notes="伙伴在自己的房间中自然地生活，依据角色气质设计温馨的日常环境与活动。",
+            notes=notes,
             auto_activate=True,
         )
     except SceneStateError:

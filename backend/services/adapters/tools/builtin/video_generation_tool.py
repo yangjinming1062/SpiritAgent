@@ -3,7 +3,11 @@ import json
 from datetime import timedelta
 
 from components import SESSION_LOCAL, SETTINGS, get_logger, tool_error, utc_now
-from prompts.generation import SELF_VIDEO_REFERENCE_TEMPLATE
+from prompts.generation import (
+    SELF_VIDEO_KEEP_OUTFIT,
+    SELF_VIDEO_OUTFIT_DESCRIPTION,
+    SELF_VIDEO_REFERENCE_TEMPLATE,
+)
 from prompts.tools import (
     VIDEO_GENERATION_DESC,
     VIDEO_GENERATION_PARAM_DESCS,
@@ -14,9 +18,11 @@ from prompts.tools import (
 from services.application.generation import (
     AvatarGenerationError,
     ImageGenerationError,
+    apply_outfit_override,
     enqueue_video_job,
     get_job,
     load_self_visual_context,
+    plan_outfit_description,
     prepare_self_video_reference,
 )
 from services.domains.companion import render_character_identity
@@ -35,6 +41,7 @@ async def video_generation_tool(
     user_id: int | None = None,
     parent_session_id: str | None = None,
     subject: str | None = None,
+    outfit_override: str | None = None,
     **_,
 ) -> str:
     """通过 MiniMax 异步生成视频；本工具等待 video_gen_tool_wait_seconds（默认 180s）后返回链接或待查询的 task_id。"""
@@ -48,10 +55,23 @@ async def video_generation_tool(
             return tool_error("生成自己的形象需要用户上下文")
         try:
             visual = await load_self_visual_context(user_id)
-            first_frame_image = await prepare_self_video_reference(visual, user_id, first_frame_image)
+            plan = apply_outfit_override(visual, outfit_override)
+            final_outfit = plan_outfit_description(plan)
+            first_frame_image = await prepare_self_video_reference(plan, user_id, first_frame_image)
         except (AvatarGenerationError, VisualReasoningError, ImageGenerationError) as e:
             return tool_error(str(e))
-        prompt = SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt) + "\n" + render_character_identity(visual.identity)
+        prompt = (
+            SELF_VIDEO_REFERENCE_TEMPLATE.format(
+                prompt=prompt,
+                outfit=(
+                    SELF_VIDEO_OUTFIT_DESCRIPTION.format(outfit=final_outfit)
+                    if final_outfit
+                    else SELF_VIDEO_KEEP_OUTFIT
+                ),
+            )
+            + "\n"
+            + render_character_identity(visual.identity)
+        )
 
     try:
         if user_id is not None:
@@ -168,6 +188,10 @@ VIDEO_GENERATION_SCHEMA = {
                 "type": "string",
                 "enum": ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
                 "description": VIDEO_GENERATION_PARAM_DESCS["aspect_ratio"],
+            },
+            "outfit_override": {
+                "type": "string",
+                "description": VIDEO_GENERATION_PARAM_DESCS["outfit_override"],
             },
         },
         "required": ["prompt"],

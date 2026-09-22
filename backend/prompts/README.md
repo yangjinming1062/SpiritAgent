@@ -19,6 +19,14 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 | `nightly.py` | 夜间规划、每日检查点、用户可见日记、内部夜间反思、片刻回复、片刻冲动决策 | `services/application/nightly/`、`services/application/moments/` |
 | `tools.py` | 16 个工具 schema 的主描述与参数描述 | `services/adapters/tools/`（builtin/ 与同级 *.py） |
 
+### 场景相关装配入口
+
+- `chat.py::SCENE_TOOL_GUIDANCES` / `tools.py::SCENE_TOOL_DESCRIPTIONS`：自主创建与启用的决策、输入及结果语义，由 `scene_tool.py` 执行；客户端手动操作与工具路径独立，契约见 [PROTOCOL §12](../../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。
+- `generation.py::SELF_IMAGE_*` / `SELF_VIDEO_*`：只表达本次造型；来源与回退规则在 `visual_identity.py` 与工具参数描述。
+- `generation.py::SCENE_TEMPLATE` / `SCENE_REFERENCE` / `SCENE_IMAGE_RULES`：由 `scene_prompt.py` 按实际参考数量装配。
+- `generation.py::SCENE_DESCRIBE_SYSTEM`：成品描述双用途，JSON 契约与 `modules/companion` 的 `SceneDescriptionRequest` 对齐。
+- 初始场景默认文案在 `scene_service.py::_INITIAL_SCENE_DEFAULT_NOTES`。
+
 ### 命名约定
 
 - 双语 dict 键为 `zh`/`en`，消费方用 `components.resolve_prompt_text` 取文本。

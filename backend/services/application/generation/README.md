@@ -22,7 +22,7 @@
 
 拼图位置与单幅输出由 [image_generation.py](image_generation.py) 处理；外部制作提示词的宽高比与请求尺寸同源。编辑保持条款集中在 prompts，按点位选择；允许修改头像外貌的条款不能用于换装。生成与采纳共用安装入口，统一落库和文件清理。
 
-[scene_service.py](scene_service.py)管理场景任务互斥、切换版本与 outbox 事务；用户参考图在任务创建前校验并冻结。参考装配、描述分析与中断恢复见 [PIPELINE](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)，启用与额度见 [PROTOCOL](../../../../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。
+[scene_service.py](scene_service.py)管理场景任务互斥、切换版本与 outbox 事务；用户参考图与完整造型的 `outfit_description` 在任务创建前校验并冻结。参考装配、描述分析与中断恢复见 [PIPELINE](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)，启用与额度见 [PROTOCOL](../../../../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。[visual_identity.py](visual_identity.py) 统一出镜媒体的造型选择，经 `SelfVisualPlan` 冻结本次最终造型；规则见 [PIPELINE](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)。
 
 ## 视频包与验证
 

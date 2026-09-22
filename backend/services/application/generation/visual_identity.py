@@ -1,4 +1,8 @@
-"""出镜媒体共用的固定身份、当前造型及视频参考准备。"""
+"""出镜媒体共用的固定身份、本次生成造型及视频参考准备。
+
+造型来源统一命名：衣柜已启用外观、当前场景可见穿着、本次生成造型；
+`outfit_override` 只作用于本次产物，不修改衣柜或当前场景。
+"""
 
 import asyncio
 from dataclasses import dataclass
@@ -22,6 +26,18 @@ class SelfVisualContext:
     outfit_description: str
     outfit_reference: str | None
     outfit_revision: int | None
+
+
+@dataclass(frozen=True)
+class SelfVisualPlan:
+    """同一生成任务冻结的最终造型，重试和恢复沿用。"""
+
+    context: SelfVisualContext
+    override_outfit_description: str = ""
+
+
+def _normalize_override(outfit_override: str | None) -> str:
+    return (outfit_override or "").strip()
 
 
 async def load_self_visual_context(user_id: int) -> SelfVisualContext:
@@ -55,6 +71,15 @@ async def load_self_visual_context(user_id: int) -> SelfVisualContext:
     )
 
 
+def apply_outfit_override(context: SelfVisualContext, outfit_override: str | None) -> SelfVisualPlan:
+    override = _normalize_override(outfit_override)
+    return SelfVisualPlan(context=context, override_outfit_description=override)
+
+
+def plan_outfit_description(plan: SelfVisualPlan) -> str:
+    return plan.override_outfit_description or plan.context.outfit_description
+
+
 async def align_character_reference(
     user_id: int,
     reference_image: str,
@@ -82,16 +107,25 @@ def needs_identity_alignment(identity: CharacterCardSnapshot, applied_revision: 
     )
 
 
-async def prepare_self_video_reference(context: SelfVisualContext, user_id: int, frame: str | None = None) -> str:
-    reference = frame or context.outfit_reference or context.reference_image
-    applied_revision = context.outfit_revision if frame is None and context.outfit_reference else None
+async def prepare_self_video_reference(plan: SelfVisualPlan, user_id: int, frame: str | None = None) -> str:
+    """视频首帧参考；覆盖生效时不复用不相符的衣柜图，改按角色卡派生参考。"""
+    context = plan.context
+    override = plan.override_outfit_description
+    reference = frame or context.reference_image
+    outfit_reference_usable = not override
+    if frame is None and outfit_reference_usable:
+        reference = context.outfit_reference or context.reference_image
+    applied_revision = (
+        context.outfit_revision if frame is None and outfit_reference_usable and context.outfit_reference else None
+    )
     if (
         frame is None
+        and outfit_reference_usable
         and not needs_identity_alignment(context.identity, applied_revision)
         and (context.outfit_reference is not None or not context.outfit_description)
     ):
         return reference
-    path = await align_character_reference(user_id, reference, context.identity, context.outfit_description)
+    path = await align_character_reference(user_id, reference, context.identity, plan_outfit_description(plan))
     try:
         result = await asyncio.to_thread(load_avatar_bytes_as_data_uri, path)
         if not result:

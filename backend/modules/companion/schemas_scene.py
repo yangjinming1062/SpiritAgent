@@ -49,8 +49,8 @@ class SceneStateResponse(BaseModel):
 class SceneGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    notes: str | None = Field(default=None, max_length=2000)
-    outfit_description: str | None = Field(default=None, max_length=2000)
+    notes: str | None = None
+    outfit_description: str | None = None
     image: str | None = Field(default=None, min_length=1, max_length=8 * 1024 * 1024)
     content_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"] = "image/png"
 
@@ -58,8 +58,8 @@ class SceneGenerateRequest(BaseModel):
 class ScenePromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    notes: str | None = Field(default=None, max_length=2000)
-    outfit_description: str | None = Field(default=None, max_length=2000)
+    notes: str | None = None
+    outfit_description: str | None = None
 
 
 class SceneActivateRequest(BaseModel):

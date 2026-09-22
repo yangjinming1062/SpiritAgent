@@ -7,8 +7,10 @@ from prompts.tools import IMAGE_GENERATION_DESC, IMAGE_GENERATION_PARAM_DESCS
 from services.application.generation import (
     AvatarGenerationError,
     ImageGenerationError,
+    apply_outfit_override,
     generate_images,
     load_self_visual_context,
+    plan_outfit_description,
 )
 from services.domains.companion import render_character_identity
 from services.infrastructure.llm import VisualReasoningError
@@ -25,25 +27,31 @@ async def image_generation_tool(
     reference_image: str | None = None,
     secondary_reference_image: str | None = None,
     subject: str | None = None,
+    outfit_override: str | None = None,
     **kwargs,
 ) -> str:
     """通过 image_gen 供应商链生成图片；结果按用户永久资产落盘，经鉴权资产通道加载。
 
     本工具创作供用户查看的图片；改变伙伴所在的环境需使用 scene_list、scene_activate 或 scene_create。
     """
+
     if subject == "self":
         if user_id is None:
             return tool_error("生成自己的形象需要用户上下文")
         try:
             visual = await load_self_visual_context(user_id)
-            reference_image = visual.reference_image
         except (AvatarGenerationError, VisualReasoningError) as e:
             return tool_error(str(e))
+        plan = apply_outfit_override(visual, outfit_override)
+        final_outfit = plan_outfit_description(plan)
+        reference_image = visual.reference_image
+        # 覆盖生效时第二参考图（衣柜图）与覆盖造型不相符，不再注入。
+        secondary_reference_image = None if plan.override_outfit_description else secondary_reference_image
         prompt = (
             SELF_IMAGE_REFERENCE_TEMPLATE.format(
                 reference="图 1" if secondary_reference_image else "参考图",
-                outfit=SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=visual.outfit_description)
-                if visual.outfit_description
+                outfit=SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=final_outfit)
+                if final_outfit
                 else SELF_IMAGE_KEEP_OUTFIT,
                 prompt=prompt,
             )
@@ -99,6 +107,10 @@ IMAGE_GENERATION_SCHEMA = {
                 "description": IMAGE_GENERATION_PARAM_DESCS["size"],
             },
             "n": {"type": "integer", "description": IMAGE_GENERATION_PARAM_DESCS["n"]},
+            "outfit_override": {
+                "type": "string",
+                "description": IMAGE_GENERATION_PARAM_DESCS["outfit_override"],
+            },
         },
         "required": ["prompt"],
     },

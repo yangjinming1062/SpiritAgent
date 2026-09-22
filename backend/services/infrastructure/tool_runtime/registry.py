@@ -23,8 +23,6 @@ RESERVED_KEYS = frozenset(
         "user_id",
         "llm_config",
         "user_settings",
-        "user_images",
-        "user_initiated",
         "scene_turn",
         "system_preset_id",
         "scope",

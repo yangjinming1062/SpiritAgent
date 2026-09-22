@@ -46,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.application.generation import (
     activate_outfit,
     activate_scene,
+    apply_outfit_override,
     confirm_outfit,
     create_outfit_draft,
     enqueue_video_job,
@@ -155,9 +156,13 @@ class OutfitCreateArgs(BaseModel):
 class SceneCreateArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    notes: str = Field(min_length=1, max_length=2000)
-    outfit_description: str | None = Field(default=None, max_length=2000)
+    notes: str = Field(min_length=1)
+    outfit_description: str | None = None
     reason: str = ""
+
+
+def _non_blank(value: str | None) -> str:
+    return value.strip() if isinstance(value, str) else ""
 
 
 class MomentCreateArgs(BaseModel):
@@ -220,6 +225,8 @@ class PlannedAction(BaseModel):
     phase: int
     depends_on: list[str] = Field(default_factory=list)
     arguments: dict[str, Any] = Field(default_factory=dict)
+    # 规划产生的非法场景→换装依赖，执行时产生可诊断失败。
+    illegal_outfit_deps: list[str] = Field(default_factory=list)
 
 
 class NormalizedPlan(BaseModel):
@@ -378,15 +385,22 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         "scene.activate",
         20,
-        "启用 scene.library 中适合的已有场景，不消耗生图额度，不依赖外观着装。",
+        "启用 scene.library 中适合的已有场景，不消耗生图额度。场景与衣柜相互独立：不通过依赖换装动作表达场景穿着，"
+        "需要特定造型时把完整设计写入所建场景的 outfit_description。",
         {"scene_id": "integer", "reason": "string"},
         exclusive_group="scene",
     ),
     NightlyCapability(
         "scene.create",
         20,
-        "已有场景不适合时创建并启用新场景。notes 描述地点、环境与活动；outfit_description 填写本次明确的完整着装设计，无着装要求时省略。",
-        {"notes": "string", "outfit_description": "string (optional)", "reason": "string"},
+        "已有场景不适合时创建并启用新场景。notes 描述地点、环境与活动，必须非空；"
+        "outfit_description 填写本次明确的完整着装设计，无着装要求时省略。"
+        "场景与衣柜相互独立，不通过依赖换装动作表达场景穿着。",
+        {
+            "notes": "string (non-blank)",
+            "outfit_description": "string (optional)",
+            "reason": "string",
+        },
         exclusive_group="scene",
         paid=True,
     ),
@@ -400,7 +414,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         "media.image",
         30,
-        "创作保存到片刻的图片；depicts_self=true 时使用角色身份与当前造型参考。narration 是可选的独立语音，不会让图片中的人物活动。",
+        "创作保存到片刻的图片；depicts_self=true 时使用角色身份与衣柜已启用外观描述。narration 是可选的独立语音，不会让图片中的人物活动。",
         {
             "prompt": "string",
             "title": "string",
@@ -415,7 +429,8 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         "media.video",
         30,
-        "创作保存到片刻的短视频；depicts_self=true 时使用符合角色固定外形与当前造型的首帧，保持其穿着。展示本次新装须依赖对应换装动作。narration 是使用当前音色生成的独立音轨，不保证口型同步。",
+        "创作保存到片刻的短视频；depicts_self=true 时使用符合角色固定外形与衣柜已启用外观的首帧并保持其穿着。"
+        "仅当确实要展示衣柜中新换的外观时才依赖对应换装动作，场景穿着不构成这种依赖。narration 是使用当前音色生成的独立音轨，不保证口型同步。",
         {
             "prompt": "string",
             "title": "string",
@@ -756,7 +771,9 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
     outfit_ids = {item["id"] for item in actions if item["capability"].startswith("outfit.")}
     for action in actions:
         if action["capability"].startswith("scene."):
-            action["depends_on"] = [dep for dep in action["depends_on"] if dep not in outfit_ids]
+            illegal = [dep for dep in action["depends_on"] if dep in outfit_ids]
+            if illegal:
+                action["_invalid_scene_outfit_deps"] = illegal
         action["depends_on"] = [dep for dep in action["depends_on"] if dep in valid_ids and dep != action["id"]]
     actions.sort(key=lambda item: (item["phase"], item["_order"]))
     planned_actions = [
@@ -766,6 +783,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             phase=item["phase"],
             depends_on=item["depends_on"],
             arguments=item["arguments"],
+            illegal_outfit_deps=item.get("_invalid_scene_outfit_deps", []),
         )
         for item in actions
     ]
@@ -833,6 +851,7 @@ async def _persist_plan(
                     arguments={
                         "depends_on": action.depends_on,
                         "values": action.arguments,
+                        **({"illegal_outfit_deps": action.illegal_outfit_deps} if action.illegal_outfit_deps else {}),
                     },
                 ),
             )
@@ -1067,15 +1086,22 @@ async def _execute_scene_create(
     context: PlanningContext,
     *_: Any,
 ) -> ActionExecutionResult:
-    parsed_args = SceneCreateArgs.model_validate(args)
+    try:
+        parsed_args = SceneCreateArgs.model_validate(args)
+    except ValidationError:
+        return ActionExecutionResult(status="failed", reason="scene.create 需要非空的 notes 文本")
+    notes = _non_blank(parsed_args.notes)
+    outfit_description = _non_blank(parsed_args.outfit_description)
+    if not notes:
+        return ActionExecutionResult(status="failed", reason="scene.create notes 不能为空白")
     resume_result = context.resume_result or {}
     scene_id = resume_result.get("scene_id")
     if scene_id is None:
         row = await schedule_scene_generation(
             user_id,
             origin=SceneOrigin.NIGHTLY.value,
-            notes=_text(parsed_args.notes, 2000),
-            outfit_description=parsed_args.outfit_description,
+            notes=notes,
+            outfit_description=outfit_description or None,
             auto_activate=True,
         )
         scene_id = row.id
@@ -1364,7 +1390,7 @@ async def _execute_media_video(
         first_frame = None
         if parsed_args.depicts_self is True:
             visual = await load_self_visual_context(user_id)
-            first_frame = await prepare_self_video_reference(visual, user_id)
+            first_frame = await prepare_self_video_reference(apply_outfit_override(visual, None), user_id)
             prompt = (
                 NIGHTLY_SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
                 + "\n"
@@ -1661,6 +1687,20 @@ async def _execute_persisted_actions(
             res_dict = {"capability": row.capability, **(row.result or {"status": row.status})}
             results[row.action_key] = ActionExecutionResult.model_validate(res_dict)
             continue
+        raw_args = row.arguments or {}
+        illegal_deps = raw_args.get("illegal_outfit_deps") if isinstance(raw_args, dict) else None
+        if isinstance(illegal_deps, list) and illegal_deps and str(row.capability).startswith("scene."):
+            result = ActionExecutionResult(
+                status="failed",
+                reason="场景与衣柜相互独立，不能依赖换装动作表达场景穿着；把完整造型写入 outfit_description",
+                dependencies=[str(dep) for dep in illegal_deps],
+                capability=row.capability,
+            )
+            await _set_action_state(row.id, "failed", result.model_dump(exclude_none=True))
+            row.status = "failed"
+            row.result = result.model_dump(exclude_none=True)
+            results[row.action_key] = result
+            continue
         dependencies = (row.arguments or {}).get("depends_on", [])
         unsatisfied = [
             dep for dep in dependencies if dep not in by_key or by_key[dep].status not in _SUCCESS_ACTION_STATUSES
@@ -1752,6 +1792,16 @@ async def _execute_ephemeral_actions(
     results: dict[str, ActionExecutionResult] = {}
     statuses: dict[str, str] = {}
     for action in plan.actions:
+        if action.illegal_outfit_deps:
+            result = ActionExecutionResult(
+                status="failed",
+                reason="场景与衣柜相互独立，不能依赖换装动作表达场景穿着；把完整造型写入 outfit_description",
+                dependencies=action.illegal_outfit_deps,
+                capability=action.capability,
+            )
+            statuses[action.id] = result.status
+            results[action.id] = result
+            continue
         unsatisfied = [dep for dep in action.depends_on if statuses.get(dep) not in _SUCCESS_ACTION_STATUSES]
         if unsatisfied:
             result = ActionExecutionResult(

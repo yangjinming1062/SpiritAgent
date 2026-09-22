@@ -1101,9 +1101,9 @@ export const dict: Dictionary = {
     },
     scene: {
       intro:
-        'Scenes show where your companion is and what they are doing. Scene clothing is independent of the Appearance page. Save scenes and use them again.',
+        'Scenes show where your companion is and what they are doing. Scene clothing is independent of the wardrobe. Save scenes and use them again.',
       referenceHint:
-        'A reference can guide the environment, activity and composition. To use its clothing, say so in the outfit description.',
+        'A reference guides the environment and composition; people in it never appear in the result. To use its clothing, describe the complete outfit in the outfit description.',
       referenceLabel: 'Scene reference',
       chooseReference: 'Choose reference',
       replaceReference: 'Replace reference',
@@ -1113,7 +1113,8 @@ export const dict: Dictionary = {
       notesPlaceholder: 'For example: an evening walk along the beach.',
       outfitLabel: 'Outfit description (optional)',
       outfitPlaceholder: 'For example: a white short-sleeved shirt, blue shorts, white sneakers and a straw hat.',
-      outfitHint: 'Leave blank to use the current outfit, or describe the complete outfit for this scene.',
+      outfitHint:
+        'Leave blank to keep the wardrobe’s active outfit; filling this in replaces the full look for this scene — include clothing, colors, hairstyle, footwear and accessories.',
       noScene: 'No active scene yet',
       currentBadge: 'Current scene',
       currentAltFallback: 'Current scene',
@@ -1138,7 +1139,7 @@ export const dict: Dictionary = {
       policyTitle: 'Autonomy policy',
       policyLabel: 'Autonomous scene changes',
       policyDesc:
-        'Locking prevents autonomous creation and switching. Explicit requests and manual actions remain available. Nightly activity also follows its own policy.',
+        'Locking prevents autonomous creation and switching. You can still create and switch scenes manually on the scene page. Nightly activity also follows its own policy.',
       policyStatusLocked: 'Locked',
       policyStatusUnlocked: 'Allowed',
       policyToggleAria: 'Allow autonomous scene creation and switching',

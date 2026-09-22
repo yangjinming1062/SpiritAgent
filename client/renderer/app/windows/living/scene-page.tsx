@@ -439,7 +439,6 @@ export function ScenePage(): React.JSX.Element {
             aria-label={t.notesLabel}
             className={INPUT_CLASS}
             disabled={busy}
-            maxLength={2000}
             onChange={(event): void => setNotes(event.target.value)}
             placeholder={t.notesPlaceholder}
             rows={3}
@@ -450,7 +449,6 @@ export function ScenePage(): React.JSX.Element {
             <textarea
               className={INPUT_CLASS}
               disabled={busy}
-              maxLength={2000}
               onChange={(event): void => setOutfitDescription(event.target.value)}
               placeholder={t.outfitPlaceholder}
               rows={2}
