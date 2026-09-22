@@ -521,7 +521,7 @@ def _classify_by_exception_type(
     if isinstance(error, TimeoutError | ConnectionError | OSError | ssl.SSLError):
         return result_fn(FailoverReason.timeout, retryable=True)
 
-    # 内部边界类型（Gemini/Zhipu/raw httpx 走 ProviderError 而非 SDK；状态码缺位时 defer 到 Phase B/D）
+    # 内部边界类型（Gemini/raw httpx 走 ProviderError 而非 SDK；状态码缺位时 defer 到 Phase B/D）
     if isinstance(error, ProviderError):
         if status_code is not None:
             return _classify_by_status(

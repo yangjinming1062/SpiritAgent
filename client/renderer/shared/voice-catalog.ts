@@ -16,8 +16,7 @@ export const GENDER_FILTER_VALUES = ['', 'female', 'male', 'neutral'] as const
 const PROVIDER_LABELS: Record<string, string> = {
   grok: 'xAI',
   minimax: 'MiniMax',
-  mimo: 'MiMo',
-  zhipu: '智谱'
+  mimo: 'MiMo'
 }
 
 export function voiceProviderLabel(provider: string): string {

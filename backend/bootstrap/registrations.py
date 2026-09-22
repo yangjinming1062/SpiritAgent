@@ -27,7 +27,7 @@ from services.domains.companion import (
 from services.infrastructure.event_store import register_internal_event_handler
 from services.infrastructure.llm import ServiceType
 from services.infrastructure.llm import register as register_provider
-from services.infrastructure.llm.providers import gemini, grok, mimo, minimax, zhipu
+from services.infrastructure.llm.providers import gemini, grok, mimo, minimax
 from services.infrastructure.tool_runtime import REGISTRY
 
 
@@ -48,10 +48,6 @@ def register_providers() -> None:
     register_provider(ServiceType.tts, "minimax", minimax.MiniMaxTTSProvider)
     register_provider(ServiceType.stt, "minimax", minimax.MiniMaxSTTProvider)
     register_provider(ServiceType.embedding, "minimax", minimax.MiniMaxEmbeddingProvider)
-    register_provider(ServiceType.stt, "zhipu", zhipu.ZhipuSTTProvider)
-    register_provider(ServiceType.tts, "zhipu", zhipu.ZhipuTTSProvider)
-    register_provider(ServiceType.image_gen, "zhipu", zhipu.ZhipuImageGenProvider)
-    register_provider(ServiceType.embedding, "zhipu", zhipu.ZhipuEmbeddingProvider)
 
 
 def register_tools() -> None:

@@ -68,7 +68,7 @@ class GrokTTSProvider(TTSProvider):
 
         resp = await self._client.post("/tts", json=payload)
 
-        # TTS 200 直接返回音频字节；raise_for_provider_response 检查 JSON 信封，体非 JSON 时返回 {}，与 zhipu/tts.py 保持同一模式。
+        # TTS 200 直接返回音频字节；raise_for_provider_response 检查 JSON 信封，体非 JSON 时返回 {}。
         raise_for_provider_response(resp, family=self.provider_name, model=self.config.model)
 
         mime = "audio/mpeg" if codec == "mp3" else f"audio/{codec}"

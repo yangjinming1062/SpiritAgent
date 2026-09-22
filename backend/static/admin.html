@@ -1270,7 +1270,7 @@ async function deleteModelConfig(userId) {
 
 
 // ── System Settings ─────────────────────────────────────
-const AI_NAMES = {mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok', zhipu: '智谱 BigModel'};
+const AI_NAMES = {mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok'};
 const AI_SERVICES = {llm: '大语言模型 LLM', stt: '语音识别 STT', tts: '语音合成 TTS', image_gen: '图像生成', video_gen: '视频生成'};
 function emptyAiConfig() { return {providers: [], capabilities: {llm: [], stt: [], tts: [], image_gen: [], video_gen: []}}; }
 const aiEditors = {

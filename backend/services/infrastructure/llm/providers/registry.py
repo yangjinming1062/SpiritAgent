@@ -53,14 +53,6 @@ PROVIDER_DEFAULT_URLS: dict[str, dict[str, str]] = {
         "video_gen": "https://api.x.ai/v1",
         "embedding": "",
     },
-    "zhipu": {
-        "llm": "",
-        "stt": "https://open.bigmodel.cn/api/paas/v4",
-        "tts": "https://open.bigmodel.cn/api/paas/v4",
-        "image_gen": "https://open.bigmodel.cn/api/paas/v4",
-        "video_gen": "",
-        "embedding": "https://open.bigmodel.cn/api/paas/v4",
-    },
 }
 
 
