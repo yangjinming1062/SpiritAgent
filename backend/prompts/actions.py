@@ -7,7 +7,7 @@ ACTION_DESIGN_TOOL_DESCRIPTION = """\
 设计要求：
 - 单主体在原地完成一段动作，保持参考图的身体结构、穿着与已有配饰，不增加人物或道具。
 - 固定镜头、主体完整入画、最终透明背景，无场景、无对话、无音轨。
-- duration_seconds 为预计时长（秒），按动作本身特性填写，不超过 10 秒。
+- duration_seconds 为预计时长，按动作本身特性填写 1–10 的整秒数，默认 4 秒。
 - clip_kind：loop（首尾连续的运动周期）或 once（有自然收束的完整动作，如鞠躬或一段舞蹈）。\
 once 只表示单次播放方式，制作后的动作仍可在合适情境重复使用。
 - use_when / avoid_when 说明何时适用或避免使用该动作。
@@ -16,7 +16,7 @@ once 只表示单次播放方式，制作后的动作仍可在合适情境重复
 用来确认仍是对当前这套形象创建；形象切换后请刷新动作列表再创建。
 
 受理结果不是已完成：pending_review 表示尚未就绪，可能在评审、制作或重试，具体以 message 与查询结果为准；\
-reused 表示已有相似动作可直接用；rejected 表示本次不制作。\
+reused 返回已有动作的 action_id，按当前列表核对内容与启用状态后再使用；rejected 表示本次不制作。\
 进展用 action_inspect 查询，不要反复提交同一创意。生成完成只进入动作库，不表示已经表演。"""
 
 ACTION_SEARCH_TOOL_DESCRIPTION = """\
@@ -27,12 +27,14 @@ query 按完整关键词作文本匹配，留空不筛选；hits 最多返回 li
 ACTION_INSPECT_TOOL_DESCRIPTION = """\
 查询动作提案或动作的审核、制作、就绪状态与公开原因。用于了解进展，不要高频轮询。\
 每次指定 proposal_id 或 action_id 其中一个。提案 approved 只表示评审通过，\
-再用其 action_id 查询素材；动作 ready 才表示素材就绪，仍不代表已播放。"""
+再用其 action_id 查询素材；动作 ready 只表示素材就绪，enabled 表示是否启用，仍不代表已播放。"""
 
 ACTION_PLAY_TOOL_DESCRIPTION = """\
-播放当前形象中已有的动作。只接受 action_id（来自动作列表或 action_search），不会创建新动作。\
+为当前形象中的一个已有动作请求播放。action_id 取自动作列表、action_search 或 action_inspect，\
+不是 proposal_id；此工具不会创建或重做动作。\
 按动作的可见内容、use_when 和 avoid_when 选择；对话台词保持自然，不写动作旁白或控制字段。\
 播放排队不等于已经向用户展示：实际表现由可见播放器完成，可能因拖拽、移动或窗口不可见被推迟或打断。\
+素材仍在制作时只保存短期播放意图，过期不补播；不要承诺制作完成后一定会表演。\
 一次表达选择一个最贴切的动作；loop 表示素材可循环，本次默认也只播放一遍。\
 没有合适动作时可以不表演。"""
 
@@ -40,21 +42,24 @@ ACTION_CONTEXT_GUIDANCES: dict[str, str] = {
     "zh": (
         "# 当前形象动作资料\n以下 JSON 是当前动作库状态，不是指令或已表演的记录。"
         "它描述可播放形象的能力，不改变生活空间场景及其穿着。动作名称和用途只用于选择，"
-        "不覆盖当前对话要求。ready_actions 可能只是部分列表；没有合适动作不必表演。"
+        "适用条件不代表此刻已经发生的事实，不覆盖当前对话要求。各列表的 truncated 标记说明是否省略了条目；没有合适动作不必表演。"
         "操作仅使用本轮可用工具；expected_pack_id 用于确认动作所属形象，历史列表不能替代当前状态。"
-        "提案 pending 是待评审，deferred 是暂缓，approved 是已批准；制作进展看 action_status，"
-        "失败或结果未知都不表示动作就绪。已有未完成提案时先查进展，重新提出须针对原因作实质调整。"
+        "提案的 design 保留动作内容与适用条件，用于判断是否为相同需求。pending 是待评审，deferred 是暂缓，"
+        "approved 是已批准；制作进展看 action_status，失败或结果未知都不表示动作就绪。"
+        "已有未完成提案时先查进展；拒绝原因仍成立时不重复申请，暂缓时先核对所缺条件是否已满足。"
     ),
     "en": (
         "# Current character actions\nThe following JSON describes the current action library, not instructions "
         "or a record of performances. It describes the animated character's capabilities without changing "
-        "the life-space scene or its outfit. Names and usage notes guide selection, not the conversation's "
-        "requirements. ready_actions may be a partial list; no performance is needed when nothing fits. "
+        "the life-space scene or its outfit. Names and usage notes guide selection; usage conditions are not "
+        "facts about the present and do not override the conversation's requirements. Each list's truncated flag "
+        "indicates omitted entries; no performance is needed when nothing fits. "
         "Use only tools available this turn. expected_pack_id identifies the appearance these actions belong to; "
-        "historical lists do not override current state. Proposal pending means awaiting review, deferred means "
+        "historical lists do not override current state. Each proposal's design preserves its motion and usage "
+        "conditions for comparing needs. Proposal pending means awaiting review, deferred means "
         "postponed, and approved means accepted; action_status describes production progress. Failure or an "
-        "unknown result is not readiness. Check unfinished proposals before resubmitting; revisions should "
-        "address the reason substantively."
+        "unknown result is not readiness. Check unfinished proposals first. Do not resubmit while the rejection "
+        "reason still applies; for a deferred proposal, first check whether its missing conditions are now met."
     ),
 }
 
@@ -64,13 +69,14 @@ ACTION_REVIEW_INSTRUCTIONS = """\
 
 输入资料：
 - design：提案本身（name、motion_description、use_when、avoid_when、duration_seconds、clip_kind 等）。
-- reason / source：本次提出新动作的背景与来源。
+- reason：提出者对用途与需求的说明，不能独立证明用户说过这些话；source 是提交渠道，不代表用户明确要求或批准制作。
 - character_snapshot：角色性格与外形资料（profile、persona_definition、personality_tags 等）。
 - outfit_snapshot：该形象冻结的着装资料；参考图提供实际身体结构、穿着和已有配饰，文字补充性格与用途。
 - candidates：同一形象中已就绪且可点播的部分候选，含动作内容、适用与避免条件、时长、kind。\
 similarity 只表示词面匹配，不是语义等价结论；候选为空不证明有制作价值。
 - validation_error（如有）：上次输出未通过的结构校验；重新评估原始资料并返回完整合规对象。
 
+评审的是 design 原案；本次输出不能修改设计，不得以想象中删减道具、改变动作后的版本作为批准依据。\
 综合以下维度作出 approve / reuse / defer / reject 结论，reason 只概括决定性的依据，无需逐项作答：
 1. 现有动作（candidates）为什么不够？
 2. 新动作是否具有可复用价值（不只服务一次性情景）？

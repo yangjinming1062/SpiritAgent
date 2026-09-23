@@ -54,6 +54,9 @@ class ActionSpec(BaseModel):
     system_slot: str = ""
     name: str = Field(default="", max_length=64)
     semantics: str = Field(default="", max_length=600)
+    use_when: list[str] = Field(default_factory=list)
+    avoid_when: list[str] = Field(default_factory=list)
+    feedback: str = ""
     duration_seconds: float
     clip_kind: str = Field(pattern="^(loop|once)$")
 
@@ -111,6 +114,9 @@ async def compose_action_script(
                 "name": spec.name,
                 "system_slot": spec.system_slot,
                 "description": spec.semantics_or(),
+                "use_when": spec.use_when,
+                "avoid_when": spec.avoid_when,
+                "feedback": spec.feedback,
                 "duration_seconds": spec.duration_seconds,
                 "clip_kind": spec.clip_kind,
             }

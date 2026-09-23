@@ -10,7 +10,7 @@ import re
 from pathlib import Path
 
 from components import SETTINGS, parse_llm_json, utc_now
-from modules.companion import Persona
+from modules.companion import CharacterCardSnapshot, Persona
 from modules.companion.actions import ActionProposal, CompanionAction, CompanionActionPack
 from prompts.actions import ACTION_REVIEW_INSTRUCTIONS
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
@@ -19,7 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.actions.policy import ActionPolicyError, consume_create_slot
 from services.domains.actions.repository import list_pack_actions, upsert_action
-from services.domains.companion import load_character_snapshot, render_character_profile
+from services.domains.companion import render_character_profile
 from services.infrastructure.assets import build_data_uri, sniff_media_ext
 from services.infrastructure.llm import vision_chat
 
@@ -35,28 +35,34 @@ class ReviewVerdict(BaseModel):
 
 
 async def _review_payload(db: AsyncSession, user_id: int, proposal: ActionProposal, pack: CompanionActionPack) -> dict:
-    """评审资料：提案 + 性格/外形快照 + 当前着装 + 按提案检索的相似动作候选。"""
+    """评审资料：提案、性格与冻结外形/着装，以及同包相似动作候选。"""
     design = json.loads(proposal.design_json or "{}")
     candidates = await _similar_action_candidates(db, pack.id, design)
-    character = await load_character_snapshot(db, user_id)
     character_data: dict = {}
     raw_character = (pack.character_snapshot or "").strip()
     if raw_character and raw_character != "{}":
         character_data = json.loads(raw_character)
-    if character is not None:
-        character_data.setdefault("profile", render_character_profile(character))
-    # 评审须能判断「是否符合性格」：补上 Persona 定义与性格标签（生成上下文冻结或实时人设）。
     context = json.loads(pack.context_json or "{}") if pack.context_json else {}
-    if context.get("persona_definition"):
+    if not character_data.get("profile") and context.get("identity"):
+        character_data["profile"] = render_character_profile(CharacterCardSnapshot.model_validate(context["identity"]))
+    # 固定外形只取本包快照；人设缺失时才补充实时性格资料。
+    if "persona_definition" in context:
         character_data["persona_definition"] = context["persona_definition"]
-    if context.get("personality_tags"):
+    if "personality_tags" in context:
         character_data["personality_tags"] = context["personality_tags"]
     if "persona_definition" not in character_data or "personality_tags" not in character_data:
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
         if persona is not None:
             definition = json.loads(persona.definition_json or "{}")
-            character_data.setdefault("persona_definition", definition)
-            character_data.setdefault("personality_tags", definition.get("personality_tags") or [])
+            character_data.setdefault(
+                "persona_definition",
+                {
+                    key: value
+                    for key, value in definition.items()
+                    if key in ("name", "personality", "speaking_style", "relationship")
+                },
+            )
+            character_data.setdefault("personality_tags", json.loads(persona.personality_tags_json or "[]"))
     outfit_data: dict = {}
     raw_outfit = (pack.outfit_snapshot or "").strip()
     if raw_outfit and raw_outfit != "{}":

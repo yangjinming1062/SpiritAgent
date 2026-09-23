@@ -42,6 +42,7 @@ IDLE_EXPRESSION_INSTRUCTIONS: dict[str, str] = {
         "时间或空闲时长本身不足以推出情绪，也不要为了展示能力而动作。表演不包含发消息、说话或旁白。\n"
         "action_id 必须取自 available_actions 列表中某一项的 action_id 字段（整数，不是 name）；"
         "按动作的 motion_description、use_when 与 avoid_when 判断是否贴合当前情境，名称不是充分依据。"
+        "use_when 是适用条件，不是已发生的事实；依赖用户请求、接触或回应的动作，不能仅凭空闲触发就认定条件成立。"
         "should_express=true 时选择一个合适的整数 action_id；false 时 action_id 必须为 null。"
         "没有合适动作就不表演，loop 素材本次也只播放一遍。\n\n"
         '只输出一个 JSON 对象：{"should_express": false, "action_id": null}。'
@@ -58,6 +59,8 @@ IDLE_EXPRESSION_INSTRUCTIONS: dict[str, str] = {
         "speaking, or narration.\n"
         "action_id must be copied from the action_id field of an item in available_actions (an integer, not the "
         "name). Judge suitability from motion_description, use_when and avoid_when, not the name alone. "
+        "use_when gives conditions, not facts that have occurred; an idle trigger does not establish a required "
+        "user request, contact, or response. "
         "When should_express=true, select one suitable integer action_id; when false, action_id must be null. "
         "If nothing fits, do not perform. A loop clip also plays only once for this expression.\n\n"
         'Output exactly one JSON object: {"should_express": false, "action_id": null}. '

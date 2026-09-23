@@ -418,7 +418,12 @@ async def create_pack_from_reference(
             )
         ).scalar_one_or_none()
         if source_context is not None:
-            context = source_context.model_copy(update={"feedback": feedback, "active_outfit_id": active_outfit_id})
+            action_feedback = dict(source_context.action_feedback)
+            if action is not None and feedback.strip():
+                action_feedback[action] = feedback.strip()[:1000]
+            context = source_context.model_copy(
+                update={"action_feedback": action_feedback, "active_outfit_id": active_outfit_id},
+            )
         else:
             outfit_source = safe_json_loads(outfit.source_json, default={})
             applied_revision = outfit_source.get("character_card_revision") if isinstance(outfit_source, dict) else None
@@ -442,7 +447,7 @@ async def create_pack_from_reference(
             {"profile": render_character_profile(identity)},
             ensure_ascii=False,
         )
-        pack.outfit_snapshot = json.dumps({"description": outfit.description or ""}, ensure_ascii=False)
+        pack.outfit_snapshot = json.dumps({"description": context.outfit_description}, ensure_ascii=False)
         # 新整包只建必需动作；单动作请求继承源包全部已有动作并补齐或重做目标动作。
         # 成功动作直接复用；可续跑的失败动作保留句柄重新排队；结果未知的非目标非必需动作
         # 保留失败记录且不阻塞其他动作重做。must_actions 持久化本版本必须成功的集合。
@@ -1178,6 +1183,8 @@ async def _generate_pack(pack_id: int) -> None:
                             system_slot="",
                             name=str(design.get("name", job.action)),
                             semantics=str(design.get("motion_description", "")),
+                            use_when=list(design.get("use_when") or []),
+                            avoid_when=list(design.get("avoid_when") or []),
                             duration_seconds=float(design.get("duration_seconds", 2.0) or 2.0),
                             clip_kind=str(design.get("clip_kind", "once") or "once"),
                         ),
@@ -1190,6 +1197,8 @@ async def _generate_pack(pack_id: int) -> None:
                             clip_kind=str(job.kind or "once"),
                         ),
                     )
+            for spec in specs:
+                spec.feedback = context.action_feedback.get(spec.action, "")
             script = await compose_action_script(
                 pack.user_id,
                 reference_image=await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path)),
@@ -1515,6 +1524,8 @@ async def _dynamic_action_spec(job: CompanionVideoJob) -> ActionSpec | None:
         system_slot=slot,
         name=str(design.get("name", job.name or job.action)),
         semantics=str(design.get("motion_description", job.motion_description or "")),
+        use_when=list(design.get("use_when") or []),
+        avoid_when=list(design.get("avoid_when") or []),
         duration_seconds=float(design.get("duration_seconds", job.target_duration_seconds or 2.0) or 2.0),
         clip_kind=str(design.get("clip_kind", job.kind or "once") or "once"),
     )
@@ -1563,7 +1574,7 @@ async def _queue_in_place_redo(
     if feedback.strip() and pack.context_json:
         context = safe_json_loads(pack.context_json, default={})
         if isinstance(context, dict):
-            context["feedback"] = feedback.strip()[:1000]
+            context.setdefault("action_feedback", {})[action] = feedback.strip()[:1000]
             pack.context_json = json.dumps(context, ensure_ascii=False)
     await db.flush()
     return job
@@ -1687,6 +1698,7 @@ async def _compose_single_action_script(
     context: GenerationContext,
 ) -> ActionScriptEntry:
     await _emit_pack_event(pack.user_id, "companion.action.job_updated", {"packId": pack.id, "stage": "script"})
+    spec = spec.model_copy(update={"feedback": context.action_feedback.get(spec.action, "")})
     script = await compose_action_script(
         pack.user_id,
         reference_image=await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path)),

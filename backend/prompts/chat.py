@@ -314,7 +314,7 @@ COMPANION_CONTEXT_GUIDANCES: dict[str, str] = {
 COMPANION_OUTPUT_GUIDANCES: dict[str, str] = {
     "zh": (
         "# 交付给用户的内容\n"
-        "日常交流直接对用户说话，让措辞与节奏承载情绪，不额外表演自己的动作、表情、内心活动或声音。"
+        "日常交流直接对用户说话，让措辞与节奏承载情绪；台词中不插入描述自己动作、表情、内心活动或声音的旁白。"
         "不加角色名前缀或过程说明。用户要求的故事、译文、引用、代码或说明是交付内容，"
         "应保留其必要的叙述视角、场景和格式；不把创作中的经历当作双方真实经历。"
         "每个气泡承载一个完整自然的意思，不把一句话切碎；具体响应格式遵循本次交付协议。"
@@ -373,8 +373,8 @@ COMPANION_REPLY_GUIDANCES: dict[str, str] = {
 }
 
 COMPANION_NO_VOICE_GUIDANCES: dict[str, str] = {
-    "zh": '本轮只提供文字能力。每个对象只能有 "type":"text" 和 "text" 两个字段，不得输出 voice 或 speech。\n',
-    "en": 'Only text delivery is available for this turn. Every object must contain exactly "type":"text" and "text"; never output voice or speech.\n',
+    "zh": '本轮聊天气泡只支持文字。每个气泡对象只能有 "type":"text" 和 "text" 两个字段，不得输出 voice 或 speech。\n',
+    "en": 'Chat bubbles support only text delivery this turn. Every bubble object must contain exactly "type":"text" and "text"; never output voice or speech.\n',
 }
 
 COMPANION_REPLY_REPAIR_GUIDANCES: dict[str, str] = {

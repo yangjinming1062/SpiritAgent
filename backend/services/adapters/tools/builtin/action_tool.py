@@ -156,6 +156,7 @@ async def action_inspect_tool(
                     "id": action.id,
                     "name": action.name,
                     "status": "ready" if (action.status == "succeeded" and action.video_path) else action.status,
+                    "enabled": action.enabled,
                     "stage": action.stage,
                     "error": action.error,
                 },
@@ -220,14 +221,16 @@ def register(registry: ToolsRegistry) -> None:
                 },
                 "reason": {"type": "string", "maxLength": 400, "description": "为何需要新动作；已有近义动作时先复用。"},
                 "duration_seconds": {
-                    "type": "number",
-                    "minimum": 0.5,
+                    "type": "integer",
+                    "minimum": 1,
                     "maximum": 10,
-                    "description": "预计时长（秒），按动作特性填写，不超过 10 秒。",
+                    "default": 4,
+                    "description": "预计时长（整秒），按动作特性填写 1–10，默认 4 秒。",
                 },
                 "clip_kind": {
                     "type": "string",
                     "enum": ["loop", "once"],
+                    "default": "once",
                     "description": "loop 首尾可循环；once 完整播放一次。",
                 },
                 "expected_pack_id": {
@@ -253,12 +256,12 @@ def register(registry: ToolsRegistry) -> None:
                 "action_id": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "动作 ID（来自动作列表或 action_search）。",
+                    "description": "当前形象中的 action_id（来自动作列表、action_search 或 action_inspect），不是 proposal_id。",
                 },
                 "reason": {"type": "string", "maxLength": 200, "description": "本次表演的简短情境依据。"},
                 "expected_pack_id": {
                     "type": "integer",
-                    "description": "action_search 返回的 pack_id，用来确认仍是对当前这套形象播放。",
+                    "description": "当前上下文的 expected_pack_id 或 action_search 返回的 pack_id，用来确认仍是对当前这套形象播放。",
                 },
             },
             ["action_id"],

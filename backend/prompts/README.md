@@ -44,9 +44,9 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 
 ### 动作相关装配入口
 
-- 对话：`actions.py` 工具说明与字段 schema → `application/actions/context.py` 动态资料 → 工具结果续轮；工具关闭时资料仍可保留，不能据此假设有操作能力。
+- 对话：`actions.py` 工具说明与字段 schema → `application/actions/context.py` 动态资料 → 工具结果续轮；气泡正文与语音格式只约束台词交付，工具关闭时资料仍可保留，不能据此假设有操作能力。
 - 夜间：`nightly.py::PLANNING_SYSTEM_PROMPT` 与夜间能力目录 → 提案受理 → 后台独立评审；受理成功只证明已申请，后续叙事不能据此推断已制作或已表演。
-- 制作：`actions.py::ACTION_REVIEW_INSTRUCTIONS` 与冻结参考图、候选动作 → `generation.py::VIDEO_ACTION_SCRIPT_INSTRUCTIONS` → 起始姿态图 → 视频。动作描述完整传递；loop 连续循环，once 自然收束，可回到起始姿态但不要求首尾同帧。
+- 制作：`actions.py::ACTION_REVIEW_INSTRUCTIONS` 与冻结参考图、候选动作 → `generation.py::VIDEO_ACTION_SCRIPT_INSTRUCTIONS` → 起始姿态图 → 视频。动作内容、用途与反馈范围的传递见 [PIPELINE §2.2](../../docs/PIPELINE.md#22-逐动作生成)；loop 连续循环，once 自然收束，可回到起始姿态但不要求首尾同帧。
 - 空闲：`companion.py::IDLE_EXPRESSION_INSTRUCTIONS` 与当前可用动作的内容、适用/避免条件 → 单个 action_id → 统一播放。中英文保持相同的选择与空值语义。
 
 ## Runner 例外

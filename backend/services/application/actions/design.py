@@ -64,7 +64,7 @@ async def accept_proposal(
             return ActionDesignResult(
                 outcome="reused",
                 action_id=existing.id,
-                message=f"已有相似动作「{existing.name}」，直接使用即可",
+                message=f"已有动作「{existing.name}」，请核对其内容与启用状态后复用",
             )
         if existing and existing.status in ("queued", "running", "result_unknown"):
             return ActionDesignResult(

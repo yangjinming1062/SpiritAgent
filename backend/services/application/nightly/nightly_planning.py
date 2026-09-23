@@ -471,22 +471,24 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         "action.design",
         25,
         "为当前形象提交一个可反复使用的新动作提案（如张开双臂、打哈欠、一段舞蹈），不是一次性视频作品。"
-        "先查看 actions.library 的动作内容和适用条件，以及 in_flight_proposals、recent_rejections，"
+        "先查看 autonomous_context.actions.library 的动作内容和适用条件，以及同处的 in_flight_proposals、recent_rejections；"
+        "提案的 design 是原设计，reason 是评审理由，status 与 action_status 分别说明评审和制作进展。"
         "确有缺口才使用；无明确价值时选择不使用。"
         "name 是动作显示名称；motion_description 写单主体可见的姿态、节奏与神态，"
         "不含场景、镜头或产品概念；use_when / avoid_when 说明何时适用或避免；reason 说明为何需要新动作。"
-        "duration_seconds 为 0.5–10 秒；clip_kind 为 loop（连续运动周期）或 once（完整动作自然收束）。"
+        "duration_seconds 为 1–10 的整秒数；clip_kind 为 loop（连续运动周期）或 once（完整动作自然收束）。"
         "once 制作后仍可重复使用。单主体原地运动、固定镜头、全身入画，保持身体结构与穿着，"
         "不新增人物、道具、场景、对话或音轨。依赖换装时把 depends_on 填为对应换装动作，"
-        "素材属于执行时启用的形象，不能跨形象复用。受理仅表示申请成功，独立评审和制作随后进行；"
+        "列表只描述规划时的形象，不能据此断定换装后的动作缺口；素材属于执行时启用的形象，不能跨形象复用。"
+        "受理仅表示申请成功，独立评审和制作随后进行；"
         "后续片刻或联系不能以依赖此项为依据宣称动作已做好或已表演。",
         {
-            "name": "string",
-            "motion_description": "string",
-            "use_when": "optional list[string]",
-            "avoid_when": "optional list[string]",
-            "reason": "string",
-            "duration_seconds": "number 0.5-10",
+            "name": "string, 1-64 characters",
+            "motion_description": "string, 10-600 characters",
+            "use_when": "optional list[string], at most 8 items, each at most 120 characters",
+            "avoid_when": "optional list[string], at most 8 items, each at most 120 characters",
+            "reason": "string, 1-400 characters",
+            "duration_seconds": "integer 1-10",
             "clip_kind": "loop|once",
         },
         paid=True,

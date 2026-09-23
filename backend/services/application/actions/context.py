@@ -51,7 +51,9 @@ class ActionContextSnapshot:
             ],
             "ready_actions_truncated": len(self.ready_actions) > 12,
             "in_flight_proposals": self.in_flight_proposals[:6],
+            "in_flight_proposals_truncated": len(self.in_flight_proposals) > 6,
             "recent_rejections": self.recent_rejections[:3],
+            "recent_rejections_truncated": len(self.recent_rejections) > 3,
             **({"device_visible": False} if not self.device_visible else {}),
         }
         return resolve_prompt_text(ACTION_CONTEXT_GUIDANCES, language) + "\n" + json.dumps(payload, ensure_ascii=False)
@@ -93,11 +95,13 @@ async def build_action_context(
     proposals = (
         (
             await db.execute(
-                select(ActionProposal).where(
+                select(ActionProposal)
+                .where(
                     ActionProposal.user_id == user_id,
                     ActionProposal.pack_id == pack.id,
                     ActionProposal.status.in_(("pending", "deferred", "approved")),
-                ),
+                )
+                .order_by(ActionProposal.created_at.desc(), ActionProposal.id.desc()),
             )
         )
         .scalars()
@@ -116,7 +120,7 @@ async def build_action_context(
                 "action_status": action.status if action is not None else None,
                 "reason": p.review_reason or "",
                 "error": action.error if action is not None else None,
-                "name": json.loads(p.design_json or "{}").get("name", ""),
+                "design": json.loads(p.design_json or "{}"),
             },
         )
 
@@ -141,7 +145,7 @@ async def build_action_context(
         snapshot.recent_rejections.append(
             {
                 "proposal_id": p.id,
-                "name": design.get("name", ""),
+                "design": design,
                 "reason": p.review_reason or "",
             },
         )

@@ -3,7 +3,7 @@
 from typing import Literal
 
 from modules.companion import CharacterCardSnapshot
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 from services.infrastructure.video_processing.quality import FullClipWindow, LoopWindow
 
@@ -19,6 +19,7 @@ class GenerationContext(BaseModel):
     personality_tags: list[str]
     outfit_description: str
     feedback: str
+    action_feedback: dict[str, str] = Field(default_factory=dict)
     active_outfit_id: int | None
     # 本版本必须成功的动作；空表示旧数据，按全部任务判定。
     must_actions: list[str] = []
