@@ -152,10 +152,14 @@ async def enhance_avatar_prompt(
     persona: Persona,
     *,
     feedback: str | None = None,
+    has_reference: bool = False,
     provider_config: ProviderConfig | None = None,
 ) -> str:
     """把 persona 定义改写为中文头像 prompt 并附上统一风格；图像参考另在生图时传入。"""
-    payload = _persona_visual_payload(persona, feedback)
+    visual = _persona_visual_payload(persona, feedback)
+    if has_reference:
+        visual = {key: visual[key] for key in ("personality", "feedback")}
+    payload = {**visual, "has_reference": has_reference}
     user_payload = json.dumps(payload, ensure_ascii=False)
     raw = await chat(db, user_id, AVATAR_SYSTEM_PROMPT, user_payload, provider_config=provider_config)
     return _strip_markdown_fence(raw) + "\n\n" + CHARACTER_VISUAL_STYLE
@@ -169,6 +173,8 @@ async def describe_character_form(
     personality: str,
     feedback: str = "",
     outfit_description: str = "",
+    previous_feedback: list[str] | None = None,
+    body_baseline: dict[str, str] | None = None,
     reference_images: tuple[str, ...],
     identity: str = "",
     allow_body_change: bool = False,
@@ -187,6 +193,8 @@ async def describe_character_form(
                 "personality": personality,
                 "feedback": feedback,
                 "outfit_description": outfit_description,
+                "previous_feedback": previous_feedback or [],
+                "body_baseline": body_baseline or {},
             },
             ensure_ascii=False,
         ),
@@ -202,6 +210,7 @@ async def build_outfit_prompt(
     requirement: str,
     identity: str,
     feedback: str = "",
+    previous_feedback: list[str] | None = None,
     personality: str = "",
     canvas_aspect: str | None = None,
 ) -> str:
@@ -213,6 +222,7 @@ async def build_outfit_prompt(
         identity=identity,
         personality=personality,
         feedback=feedback,
+        previous_feedback=previous_feedback,
         outfit_description=requirement,
         reference_images=(reference_image,),
     )
@@ -226,7 +236,11 @@ async def build_outfit_prompt(
             direction,
             OUTFIT_CHANGE_TEMPLATE.format(
                 requirements=json.dumps(
-                    {"outfit_description": requirement, "feedback": feedback},
+                    {
+                        "outfit_description": requirement,
+                        "previous_feedback": previous_feedback or [],
+                        "feedback": feedback,
+                    },
                     ensure_ascii=False,
                 ),
             ),

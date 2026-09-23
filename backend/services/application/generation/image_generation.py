@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.assets import asset_store, save_companion_asset_async, sniff_media_ext
 from services.infrastructure.llm import (
+    SIZE_TO_ASPECT,
     ClassifiedError,
     FailoverReason,
     ImageGenProvider,
@@ -152,6 +153,7 @@ async def generate_images(
                 ImageGenRequest(
                     prompt=prompt,
                     size=size,
+                    aspect_ratio=size if ":" in size else SIZE_TO_ASPECT.get(size),
                     n=n,
                     reference_image=reference_image,
                     secondary_reference_image=secondary_reference_image,

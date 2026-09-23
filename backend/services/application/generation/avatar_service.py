@@ -37,7 +37,6 @@ from prompts.generation import (
     CHARACTER_CARD_EXTRACTION,
     EDIT_PRESERVE_AVATAR,
     EDIT_PRESERVE_FULLBODY,
-    FULLBODY_PRIOR_OUTFIT_DESCRIPTION,
     MODERATION_SANITIZATION_PROMPT,
     PORTRAIT_IDENTITY_TEMPLATE,
 )
@@ -90,9 +89,10 @@ AVATAR_JOB_LOCKS: dict[int, asyncio.Lock] = {}
 async def _sanitize_prompt_for_moderation(user_id: int, prompt: str) -> str:
     """合规改写被审核拒绝的提示词，失败时返回原文。"""
     try:
-        sanitized = await chat(None, user_id, MODERATION_SANITIZATION_PROMPT, prompt)
-        sanitized = sanitized.strip()
-        return sanitized if sanitized else prompt
+        raw = await chat(None, user_id, MODERATION_SANITIZATION_PROMPT, prompt)
+        payload = parse_llm_json(raw)
+        sanitized = payload.get("prompt") if isinstance(payload, dict) and set(payload) == {"prompt"} else None
+        return sanitized.strip() if isinstance(sanitized, str) and sanitized.strip() else prompt
     except Exception:
         # 失败回退到原文属设计意图：内容审核改写是可选优化；保留 exc_info 供排查 LLM/网络层问题。
         logger.warning(
@@ -1011,7 +1011,7 @@ async def regenerate_avatar_from_image(
         raise ValueError("user_id is required")
     persona = await _verified_persona(db, user_id, persona)
     try:
-        avatar_prompt = await enhance_avatar_prompt(db, user_id, persona, feedback=description)
+        avatar_prompt = await enhance_avatar_prompt(db, user_id, persona, feedback=description, has_reference=True)
     except (ValidationError, RuntimeError) as exc:
         raise AvatarGenerationError("prompt enhancement failed", internal=str(exc)) from exc
     secondary_uri = (
@@ -1162,6 +1162,9 @@ async def _prepare_fullbody_reference(
             )
     appearance = "" if asset.is_fullbody_confirmed else str(definition.get("appearance") or "").strip()
     personality = str(definition.get("personality") or "").strip()
+    body_baseline = (
+        {key: getattr(identity.features, key) for key in BodyFeatures.model_fields} if identity is not None else {}
+    )
     direction = await describe_character_form(
         user_id,
         species=species,
@@ -1169,6 +1172,7 @@ async def _prepare_fullbody_reference(
         personality=personality,
         feedback=feedback or "",
         outfit_description=outfit_description,
+        body_baseline=body_baseline,
         reference_images=(reference, secondary_reference) if secondary_reference else (reference,),
         identity=_portrait_identity(identity),
         allow_body_change=True,
@@ -1181,11 +1185,11 @@ async def _prepare_fullbody_reference(
         personality=personality,
         feedback=feedback,
         has_user_reference=bool(secondary_reference),
+        body_baseline=body_baseline,
+        outfit_description=outfit_description,
         canvas_aspect=canvas_aspect,
     )
     prompt += "\n" + _portrait_identity(identity)
-    if outfit_description:
-        prompt += "\n" + FULLBODY_PRIOR_OUTFIT_DESCRIPTION.format(outfit=outfit_description)
     return reference, prompt
 
 
@@ -1361,6 +1365,7 @@ async def confirm_fullbody_seed(user_id: int, *, avatar_id: int, expected_url: s
                 status="ready",
                 active=True,
                 is_initial=True,
+                source_json=json.dumps({"identity_reference_path": asset.seed_fullbody_url}, ensure_ascii=False),
             )
             db.add(outfit)
             await db.flush()
@@ -1459,7 +1464,7 @@ async def adopt_avatar_seed(
 async def prepare_avatar_prompt(user_id: int, *, feedback: str | None = None, has_reference: bool = False) -> str:
     """头像自备图提示词；有参考时明确其身份用途，无图时按开放角色描述生成。"""
     persona = await _verified_persona(None, user_id, None)
-    prompt = await enhance_avatar_prompt(None, user_id, persona, feedback=feedback)
+    prompt = await enhance_avatar_prompt(None, user_id, persona, feedback=feedback, has_reference=has_reference)
     if not has_reference:
         return prompt
     return AVATAR_REFERENCE_TEMPLATE.format(

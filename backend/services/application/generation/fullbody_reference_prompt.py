@@ -14,6 +14,8 @@ def build_fullbody_reference_prompt(
     personality: str,
     feedback: str | None,
     has_user_reference: bool,
+    body_baseline: dict[str, str] | None = None,
+    outfit_description: str = "",
     canvas_aspect: str | None = None,
 ) -> str:
     """AI 与自备图共用头像扩展语义；自备图通过 canvas_aspect 告知画幅，AI 由请求 size 传达。"""
@@ -30,6 +32,8 @@ def build_fullbody_reference_prompt(
                 "appearance": appearance,
                 "personality": personality,
                 "feedback": feedback or "",
+                "body_baseline": body_baseline or {},
+                "outfit_description": outfit_description,
             },
             ensure_ascii=False,
         ),

@@ -22,7 +22,9 @@
 
 ## 图像输入与装配
 
-单图与双图参考由 [image_generation.py](image_generation.py) 按供应商原生能力装配；身份图始终是主参考，双图需要供应商明确支持。外部制作提示词的宽高比与请求尺寸同源。编辑保持条款集中在 prompts，按点位选择；允许修改头像外貌的条款不能用于换装。生成与采纳共用安装入口，统一落库和文件清理。
+单图与双图参考由 [image_generation.py](image_generation.py) 按供应商原生能力装配；身份图优先于派生文字，双图需要供应商明确支持。参考与角色卡的职责见 [PIPELINE §1.1](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)。外部制作提示词的宽高比与请求尺寸同源。编辑保持条款集中在 prompts，按点位选择；允许修改头像外貌的条款不能用于换装。生成与采纳共用安装入口，统一落库和文件清理。
+
+聊天与夜间出镜图片共用 `visual_identity.py::build_self_image_prompt`。新出镜视频先按视频要求生成起始画面；显式首帧通过身份图与原画面分工校准。首帧生成和校准均走图片质量链，视频恢复沿用已保存的首帧，完整语义及能力限制见 [PIPELINE §1.1](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)。
 
 [scene_service.py](scene_service.py)管理场景任务互斥、切换版本与 outbox 事务；用户参考图与完整造型的 `outfit_description` 在任务创建前校验并冻结。参考装配、描述分析与中断恢复见 [PIPELINE](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)，启用与额度见 [PROTOCOL](../../../../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。[visual_identity.py](visual_identity.py) 统一出镜媒体的造型选择，经 `SelfVisualPlan` 冻结本次最终造型；规则见 [PIPELINE](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)。
 

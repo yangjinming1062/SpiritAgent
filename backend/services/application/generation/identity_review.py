@@ -12,6 +12,8 @@ from prompts.generation import (
 
 from services.infrastructure.llm import vision_chat
 
+from .media_chain import MEDIA_IDENTITY_ACCEPT_SCORE
+
 logger = get_logger(__name__)
 
 
@@ -26,7 +28,7 @@ async def _score_media(
     try:
         raw = await vision_chat(
             user_id,
-            prompt,
+            prompt.format(accept_score=MEDIA_IDENTITY_ACCEPT_SCORE),
             json.dumps({"image_count": len(images), "identity": identity_text}, ensure_ascii=False),
             reference_images=images,
         )

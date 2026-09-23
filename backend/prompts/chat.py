@@ -599,8 +599,8 @@ MEDIA_GUIDANCES: dict[str, str] = {
 }
 
 MEDIA_VIDEO_GUIDANCES: dict[str, str] = {
-    "zh": "把已有图片做成动画时，用 video_generate 的 first_frame_image 指定该图片的实际地址；要保持图中角色与造型时省略 subject，即使图中有当前角色本人。只有需要按当前角色身份与造型调整首帧时才同时传 subject='self'。",
-    "en": "To animate an existing image, set video_generate's first_frame_image to its actual address. Omit subject to preserve the image's character and styling, even if it depicts the current character. Add subject='self' only to align that frame to the current identity and styling.",
+    "zh": "把已有图片做成动画时，用 video_generate 的 first_frame_image 指定该图片的实际地址；要保持图中角色与造型时省略 subject，即使图中有当前角色本人。需要按当前角色身份校准首帧时才同时传 subject='self'，首帧可见造型仍保留；需要更换造型时另传 outfit_override。",
+    "en": "To animate an existing image, set video_generate's first_frame_image to its actual address. Omit subject to preserve the image's character and styling, even if it depicts the current character. Add subject='self' to align that frame to the current identity while retaining its visible styling; use outfit_override as well to change styling.",
 }
 
 COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {
@@ -609,7 +609,8 @@ COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {
         "三个来源要分清：衣柜已启用外观是默认造型；当前场景可见穿着是场景描述里的穿着信息；本次生成造型是实际传入这一次"
         "图片或视频的造型。用户明确要求按当前场景穿着出镜时，把场景描述中可用、可见的穿着整理成完整描述传入 outfit_override；"
         "场景穿着信息不足时不虚构整套衣物，如实说明限制。outfit_override 只作用于本次产物，不修改衣柜或当前场景。"
-        "不要凭记忆补写角色外貌，把提示词集中在场景、姿态与动作上。"
+        "不要凭记忆补写角色外貌，把提示词集中在场景、姿态与动作上；造型修改统一放入 outfit_override，"
+        "保持已确认的面容、物种与身体比例。"
     ),
     "en": (
         "When creating a new depiction of the current character with an available media tool, pass subject='self'; "
@@ -619,7 +620,8 @@ COMPANION_SELF_MEDIA_GUIDANCES: dict[str, str] = {
         "When the user asks to appear as dressed in the current scene, organize the usable visible clothing from the "
         "scene description into outfit_override; never invent full garments from insufficient details — state the "
         "limitation instead. outfit_override affects only this output, not the wardrobe or the scene. "
-        "Do not reconstruct the character's appearance from memory; focus the prompt on scene, pose, and action."
+        "Do not reconstruct appearance from memory; focus the prompt on scene, pose, and action. "
+        "Put styling changes in outfit_override and keep the confirmed face, species and body proportions."
     ),
 }
 

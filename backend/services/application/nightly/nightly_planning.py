@@ -33,13 +33,7 @@ from modules.companion import (
 from modules.media import VideoGenJob
 from modules.scheduler import NightlyActivityAction, NightlyActivityLog
 from modules.settings import UserSetting
-from prompts.generation import (
-    NIGHTLY_SELF_VIDEO_REFERENCE_TEMPLATE,
-    SELF_IMAGE_CURRENT_OUTFIT,
-    SELF_IMAGE_OUTFIT_DESCRIPTION,
-    SELF_IMAGE_OUTFIT_REFERENCE,
-    SELF_IMAGE_REFERENCE_TEMPLATE,
-)
+from prompts.generation import NIGHTLY_SELF_VIDEO_REFERENCE_TEMPLATE
 from prompts.nightly import OUTREACH_CONTEXT_TEMPLATE, PLANNING_SYSTEM_PROMPT
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
@@ -55,6 +49,7 @@ from services.application.generation import (
     activate_outfit,
     activate_scene,
     apply_outfit_override,
+    build_self_image_prompt,
     confirm_outfit,
     create_outfit_draft,
     enqueue_video_job,
@@ -445,7 +440,8 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         "media.video",
         30,
-        "创作保存到片刻的短视频；depicts_self=true 时使用符合角色固定外形与衣柜已启用外观的首帧并保持其穿着。"
+        "创作保存到片刻的短视频；depicts_self=true 时先按视频要求生成符合角色固定外形与衣柜已启用外观的起始画面，"
+        "再保持其身份与穿着生成视频，需要 image_reference=true。"
         "仅当确实要展示衣柜中新换的外观时才依赖对应换装动作，场景穿着不构成这种依赖。narration 是使用当前音色生成的独立音轨，不保证口型同步。",
         {
             "prompt": "string",
@@ -799,21 +795,21 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             continue
         if spec.paid and paid_count >= _MAX_PAID_ACTIONS:
             continue
-        if capability_name.startswith("media."):
-            if media_count >= _MAX_MEDIA_ACTIONS:
-                continue
-            media_count += 1
+        if capability_name.startswith("media.") and media_count >= _MAX_MEDIA_ACTIONS:
+            continue
         action_id = _normalize_action_id(raw.get("id"), index, seen_ids)
         dependencies = [
             _ACTION_ID_PATTERN.sub("_", str(item))[:48] for item in raw.get("depends_on", []) if isinstance(item, str)
         ]
         args = raw.get("arguments") if isinstance(raw.get("arguments"), dict) else {}
         if (
-            capability_name == "media.image"
+            capability_name in ("media.image", "media.video")
             and args.get("depicts_self") is True
             and not context.providers.image_reference
         ):
             continue
+        if capability_name.startswith("media."):
+            media_count += 1
         actions.append(
             {
                 "id": action_id,
@@ -1380,18 +1376,9 @@ async def _execute_media_image(
     if parsed_args.depicts_self is True:
         visual = await load_self_visual_context(user_id)
         identity = visual.reference_image
-        outfit = await optional_outfit_image_reference(apply_outfit_override(visual, None), user_id)
-        prompt = (
-            SELF_IMAGE_REFERENCE_TEMPLATE.format(
-                reference="图 1" if outfit else "参考图",
-                outfit=SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=visual.outfit_description)
-                if visual.outfit_description
-                else (SELF_IMAGE_OUTFIT_REFERENCE if outfit else SELF_IMAGE_CURRENT_OUTFIT),
-                prompt=prompt,
-            )
-            + "\n"
-            + render_character_identity(visual.identity)
-        )
+        plan = apply_outfit_override(visual, None)
+        outfit = await optional_outfit_image_reference(plan, user_id)
+        prompt = build_self_image_prompt(plan, prompt, has_outfit_reference=bool(outfit))
     if parsed_args.depicts_self is True:
         urls = await generate_character_images(
             prompt,
@@ -1484,7 +1471,12 @@ async def _execute_media_video(
         first_frame = None
         if parsed_args.depicts_self is True:
             visual = await load_self_visual_context(user_id)
-            first_frame = await prepare_self_video_reference(apply_outfit_override(visual, None), user_id)
+            first_frame = await prepare_self_video_reference(
+                apply_outfit_override(visual, None),
+                user_id,
+                prompt=prompt,
+                aspect_ratio=aspect_ratio if aspect_ratio in _VIDEO_ASPECT_RATIOS else "16:9",
+            )
             prompt = (
                 NIGHTLY_SELF_VIDEO_REFERENCE_TEMPLATE.format(prompt=prompt)
                 + "\n"

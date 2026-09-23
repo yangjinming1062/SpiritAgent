@@ -132,6 +132,7 @@ from .video_jobs import (
 from .visual_identity import (
     SelfVisualPlan,
     apply_outfit_override,
+    build_self_image_prompt,
     load_self_visual_context,
     optional_outfit_image_reference,
     plan_outfit_description,
@@ -139,6 +140,7 @@ from .visual_identity import (
 )
 
 __all__ = [
+    "build_self_image_prompt",
     "SceneError",
     "SceneLockedError",
     "SceneNotFoundError",

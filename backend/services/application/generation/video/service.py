@@ -442,6 +442,9 @@ async def create_pack_from_reference(
         else:
             outfit_source = safe_json_loads(outfit.source_json, default={})
             applied_revision = outfit_source.get("character_card_revision") if isinstance(outfit_source, dict) else None
+            applied_identity_path = (
+                outfit_source.get("identity_reference_path") if isinstance(outfit_source, dict) else None
+            )
             identity_uri = await _process_thread(
                 load_avatar_bytes_as_data_uri,
                 avatar.seed_fullbody_url if avatar else "",
@@ -459,7 +462,14 @@ async def create_pack_from_reference(
             context = GenerationContext(
                 identity=identity,
                 identity_reference_path=identity_reference_path,
-                reference_alignment="pending" if needs_identity_alignment(identity, applied_revision) else "ready",
+                reference_alignment="pending"
+                if needs_identity_alignment(
+                    identity,
+                    applied_revision,
+                    identity_reference_path=avatar.seed_fullbody_url if avatar else "",
+                    applied_identity_reference_path=applied_identity_path,
+                )
+                else "ready",
                 persona_definition={
                     key: value for key, value in load_persona_definition(persona).items() if key != "appearance"
                 },
@@ -1223,6 +1233,7 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
     if context.reference_alignment == "ready":
         return context
     source = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
+    outfit_reference = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
 
     async def save_progress(state: ImageChainState) -> None:
         context.reference_chain = state
@@ -1236,9 +1247,9 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
 
     path = await align_character_reference(
         pack.user_id,
-        source,
+        outfit_reference,
         context.identity,
-        context.outfit_description,
+        "",
         identity_reference=source,
         state=context.reference_chain,
         save_progress=save_progress,

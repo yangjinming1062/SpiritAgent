@@ -61,7 +61,7 @@ class QwenVideoGenProvider(VideoGenProvider):
                 "resolution": api_resolution,
                 "ratio": req.aspect_ratio or "adaptive",
                 "duration": req.duration,
-                "prompt_extend": True,
+                "prompt_extend": not bool(req.first_frame_image or req.last_frame_image),
                 "watermark": False,
             },
         }

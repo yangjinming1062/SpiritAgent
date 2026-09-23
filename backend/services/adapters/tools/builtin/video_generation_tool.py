@@ -4,8 +4,8 @@ from datetime import timedelta
 
 from components import SESSION_LOCAL, SETTINGS, get_logger, tool_error, utc_now
 from prompts.generation import (
+    IMAGE_ANIMATION_TEMPLATE,
     SELF_VIDEO_KEEP_OUTFIT,
-    SELF_VIDEO_OUTFIT_DESCRIPTION,
     SELF_VIDEO_REFERENCE_TEMPLATE,
 )
 from prompts.tools import (
@@ -22,7 +22,6 @@ from services.application.generation import (
     enqueue_video_job,
     get_job,
     load_self_visual_context,
-    plan_outfit_description,
     prepare_self_video_reference,
 )
 from services.domains.companion import render_character_identity
@@ -56,25 +55,25 @@ async def video_generation_tool(
         try:
             visual = await load_self_visual_context(user_id)
             plan = apply_outfit_override(visual, outfit_override)
-            explicit_frame = bool(first_frame_image)
-            final_outfit = (
-                plan_outfit_description(plan) if not explicit_frame or plan.override_outfit_description else ""
+            first_frame_image = await prepare_self_video_reference(
+                plan,
+                user_id,
+                first_frame_image,
+                prompt=prompt,
+                aspect_ratio=aspect_ratio,
             )
-            first_frame_image = await prepare_self_video_reference(plan, user_id, first_frame_image)
         except (AvatarGenerationError, VisualReasoningError, ImageGenerationError) as e:
             return tool_error(str(e))
         prompt = (
             SELF_VIDEO_REFERENCE_TEMPLATE.format(
                 prompt=prompt,
-                outfit=(
-                    SELF_VIDEO_OUTFIT_DESCRIPTION.format(outfit=final_outfit)
-                    if final_outfit
-                    else SELF_VIDEO_KEEP_OUTFIT
-                ),
+                outfit=SELF_VIDEO_KEEP_OUTFIT,
             )
             + "\n"
             + render_character_identity(visual.identity)
         )
+    elif first_frame_image:
+        prompt = IMAGE_ANIMATION_TEMPLATE.format(prompt=prompt)
 
     try:
         if user_id is not None:

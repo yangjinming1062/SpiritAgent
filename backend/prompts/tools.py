@@ -58,7 +58,7 @@ _SELF_MEDIA_OUTFIT_OVERRIDE_DESC = (
 )
 
 IMAGE_GENERATION_PARAM_DESCS = {
-    "prompt": "A detailed, descriptive prompt for the image to generate.",
+    "prompt": "Describe the image content. With subject='self', specify environment, pose and action; put styling changes in outfit_override, and keep the confirmed face, anatomy and body proportions.",
     "subject": (
         "Set to 'self' when the current character appears in the image. Their reference image, confirmed physical "
         "features and the wardrobe's active outfit description are supplied automatically; describe the scene, pose, "
@@ -79,10 +79,11 @@ VIDEO_GENERATION_DESC = (
 )
 
 VIDEO_GENERATION_PARAM_DESCS = {
-    "prompt": "Describe the video content.",
+    "prompt": "Describe motion, setting and camera behavior. With subject='self', keep the confirmed face, anatomy and body proportions; styling changes belong in outfit_override and are applied before animation.",
     "subject": (
         "Set to 'self' for a new depiction of the current character. Their confirmed physical features and the "
-        "selected styling are applied to a generated first frame. A supplied first_frame_image keeps its visible "
+        "selected styling are applied to a first frame generated for the requested setting and opening pose. "
+        "A supplied first_frame_image keeps its visible "
         "styling unless outfit_override explicitly changes it. To animate an "
         "existing image unchanged, omit subject, even if it depicts this character. Describe the scene, pose and "
         "action without reconstructing appearance from memory."

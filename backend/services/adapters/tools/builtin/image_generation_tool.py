@@ -2,23 +2,17 @@ import asyncio
 import json
 
 from components import SESSION_LOCAL, get_logger, tool_error
-from prompts.generation import (
-    SELF_IMAGE_KEEP_OUTFIT,
-    SELF_IMAGE_OUTFIT_DESCRIPTION,
-    SELF_IMAGE_OUTFIT_REFERENCE,
-    SELF_IMAGE_REFERENCE_TEMPLATE,
-)
 from prompts.tools import IMAGE_GENERATION_DESC, IMAGE_GENERATION_PARAM_DESCS
 
 from services.application.generation import (
     AvatarGenerationError,
     ImageGenerationError,
     apply_outfit_override,
+    build_self_image_prompt,
     generate_character_images,
     generate_images,
     load_self_visual_context,
     optional_outfit_image_reference,
-    plan_outfit_description,
 )
 from services.domains.companion import character_snapshot_is_current, render_character_identity
 from services.infrastructure.assets import unlink_companion_asset
@@ -52,21 +46,9 @@ async def image_generation_tool(
         except (AvatarGenerationError, VisualReasoningError) as e:
             return tool_error(str(e))
         plan = apply_outfit_override(visual, outfit_override)
-        final_outfit = plan_outfit_description(plan)
         reference_image = visual.reference_image
         secondary_reference_image = await optional_outfit_image_reference(plan, user_id)
-        prompt = (
-            SELF_IMAGE_REFERENCE_TEMPLATE.format(
-                reference="图 1" if secondary_reference_image else "参考图",
-                outfit=SELF_IMAGE_OUTFIT_DESCRIPTION.format(outfit=final_outfit)
-                if final_outfit
-                else SELF_IMAGE_KEEP_OUTFIT,
-                prompt=prompt,
-            )
-            + "\n"
-            + (SELF_IMAGE_OUTFIT_REFERENCE + "\n" if secondary_reference_image else "")
-            + render_character_identity(visual.identity)
-        )
+        prompt = build_self_image_prompt(plan, prompt, has_outfit_reference=bool(secondary_reference_image))
     try:
         if subject == "self":
             urls = await generate_character_images(

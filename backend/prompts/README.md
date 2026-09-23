@@ -23,10 +23,12 @@ Python 修改走仓库标准入口（`pre-commit`、`check_imports.py --strict-i
 ### 场景相关装配入口
 
 - `chat.py::SCENE_TOOL_GUIDANCES` / `tools.py::SCENE_TOOL_DESCRIPTIONS`：自主创建与启用的决策、输入及结果语义，由 `scene_tool.py` 执行；客户端手动操作与工具路径独立，契约见 [PROTOCOL §12](../../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。
-- `generation.py::SELF_IMAGE_*` / `SELF_VIDEO_*`：只表达本次造型；来源与回退规则在 `visual_identity.py` 与工具参数描述。
+- `generation.py::SELF_IMAGE_*` / `SELF_VIDEO_*`：只表达本次造型；图片由 `visual_identity.py::build_self_image_prompt` 共用于聊天与夜间，来源与回退规则在同模块及工具参数描述。
 - `generation.py::SCENE_TEMPLATE` / `SCENE_REFERENCE` / `SCENE_IMAGE_RULES`：由 `scene_prompt.py` 按实际参考数量装配。
 - `generation.py::SCENE_DESCRIBE_SYSTEM`：成品描述双用途，JSON 契约与 `modules/companion` 的 `SceneDescriptionRequest` 对齐。
 - 初始场景默认文案在 `scene_service.py::_INITIAL_SCENE_DEFAULT_NOTES`。
+
+完整外观链路及各分支的审查导航见 [PIPELINE §4.1](../../docs/PIPELINE.md#41-完整提示词链检查入口)。
 
 ### 命名约定
 

@@ -392,7 +392,7 @@ export const dict: Dictionary = {
         edit: 'Edit',
         title: 'Character card',
         description:
-          'Stable features extracted from the confirmed portrait and full-body image. Outfits manage clothes, hairstyle, hair color, makeup and accessories.',
+          'Supporting descriptions from the confirmed portrait and full-body image. The images remain the source for appearance. Outfits manage clothes, hairstyle, hair color, makeup and accessories.',
         portrait: 'Portrait',
         body: 'Full-body image',
         portraitFeatures: 'Face and head',
@@ -406,7 +406,8 @@ export const dict: Dictionary = {
         retry: 'Retry analysis',
         extract: 'Extract again',
         reload: 'Reload',
-        saved: 'Saved for future generation. Existing images and videos will stay as they are.',
+        saved:
+          'Descriptions saved. Future generation keeps the confirmed appearance. To change the body, redraw and accept a new full-body image.',
         conflict: 'The character card was updated elsewhere. Your changes are preserved. Review before merging.',
         merge: 'Keep changes with latest version',
         loadFailed: 'Could not load character card. Please retry.',
@@ -448,7 +449,7 @@ export const dict: Dictionary = {
         referenceLabel: 'User reference image',
         refLabel: 'Reference image (optional, used by Regenerate only)',
         refHint:
-          'Adds physique, clothing and pose cues. The portrait anchors identity; explicit character-card edits take precedence.',
+          'Adds physique, clothing and pose cues. The confirmed portrait determines the face and species; character-card text is supplementary.',
         chooseReference: 'Choose reference image',
         replaceReference: 'Replace reference image',
         removeReference: 'Remove reference image',

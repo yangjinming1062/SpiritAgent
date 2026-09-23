@@ -71,7 +71,7 @@ ACTION_REVIEW_INSTRUCTIONS = """\
 - design：提案本身（name、motion_description、use_when、avoid_when、duration_seconds、clip_kind 等）。
 - reason：提出者对用途与需求的说明，不能独立证明用户说过这些话；source 是提交渠道，不代表用户明确要求或批准制作。
 - character_snapshot：角色性格与外形资料（profile、persona_definition、personality_tags 等）。
-- outfit_snapshot：该形象冻结的着装资料；参考图提供实际身体结构、穿着和已有配饰，文字补充性格与用途。
+- outfit_snapshot：该形象冻结的着装资料；有参考图时，固定外形、穿着、已有配饰与可见结构均以图像为准，character_snapshot 的 profile 与着装文字仅补充相容信息；着装与动作不能改变图中的固定身份。
 - candidates：同一形象中已就绪且可点播的部分候选，含动作内容、适用与避免条件、时长、kind。\
 similarity 只表示词面匹配，不是语义等价结论；候选为空不证明有制作价值。
 - validation_error（如有）：上次输出未通过的结构校验；重新评估原始资料并返回完整合规对象。

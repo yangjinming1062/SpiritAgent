@@ -6,17 +6,22 @@ from ..base import ImageAsset, ImageGenProvider, ImageGenRequest, ImageGenResult
 from ..http import download_as_b64, get_http
 from ._errors import raise_for_qwen_response
 
-# 千问文生图/图像编辑用「宽*高」；aspect 按官方推荐尺寸映射。
+# 千问文生图/图像编辑用「宽*高」；尺寸保持请求的画幅比例。
 _ASPECT_TO_SIZE: dict[str, str] = {
     "1:1": "1024*1024",
     "16:9": "1280*720",
     "9:16": "720*1280",
-    "4:3": "1152*768",
-    "3:4": "768*1152",
+    "4:3": "1152*864",
+    "3:4": "864*1152",
+    "3:2": "1152*768",
+    "2:3": "768*1152",
+    "21:9": "1512*648",
 }
 
 
 def _resolve_size(req: ImageGenRequest) -> str | None:
+    if req.aspect_ratio and req.aspect_ratio in _ASPECT_TO_SIZE:
+        return _ASPECT_TO_SIZE[req.aspect_ratio]
     if req.size:
         # OpenAI 像素串（1024x1792）或已是「宽*高」时直接规范化
         if "x" in req.size.lower() or "*" in req.size:
@@ -56,7 +61,7 @@ class QwenImageGenProvider(ImageGenProvider):
             "result_format": "message",
             "n": max(1, min(6, int(req.n or 1))),
             "watermark": False,
-            "prompt_extend": True,
+            "prompt_extend": not bool(req.reference_image),
         }
         size = _resolve_size(req)
         if size:
