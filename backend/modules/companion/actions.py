@@ -25,17 +25,6 @@ from sqlalchemy.orm import Mapped, mapped_column
 SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag", "walk_left", "walk_right")
 # 发布与激活的必需槽位：首包生成集合；缺失时不得 ready。
 REQUIRED_SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag")
-# clip 播放模式：loop 可循环接点；once 完整播放一次。
-CLIP_KINDS: tuple[str, ...] = ("loop", "once")
-# 提案来源：服务端绑定，LLM 不可自行声明。
-PROPOSAL_SOURCES: tuple[str, ...] = ("user_requested", "autonomous", "system")
-# 提案评审结论。
-REVIEW_DECISIONS: tuple[str, ...] = ("approve", "reuse", "defer", "reject")
-# 生成任务状态与阶段。
-JOB_STATUSES: tuple[str, ...] = ("queued", "running", "review", "succeeded", "failed", "cancelled", "result_unknown")
-JOB_STAGES: tuple[str, ...] = ("design", "script", "pose", "submit", "generate", "download", "process", "publish")
-# 播放回执状态。
-PLAYBACK_STATUSES: tuple[str, ...] = ("queued", "started", "completed", "interrupted", "rejected")
 
 
 class CompanionActionPack(ModelBase, TimestampMixin):
@@ -136,21 +125,6 @@ class CompanionAction(ModelBase, TimestampMixin):
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 动态动作的提案设计规格冻结；系统动作为空。
     source_design_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-
-    def __init__(self, *args, **kwargs):
-        if "action" in kwargs and "key" not in kwargs:
-            kwargs["key"] = kwargs.pop("action")
-        if kwargs.get("key") in SYSTEM_SLOTS and "system_slot" not in kwargs:
-            kwargs["system_slot"] = kwargs["key"]
-        super().__init__(*args, **kwargs)
-
-    @property
-    def action(self) -> str:
-        return self.key
-
-    @action.setter
-    def action(self, value: str) -> None:
-        self.key = value
 
     # 生效素材参数
     video_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))

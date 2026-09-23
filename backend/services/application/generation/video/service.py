@@ -124,9 +124,6 @@ from .state import ActionResult, GenerationContext
 
 logger = get_logger(__name__)
 
-CompanionVideoPack = CompanionActionPack
-CompanionVideoJob = CompanionAction
-
 _DEFAULT_CANVAS = (512, 768)
 _SOURCE_EXT_BY_MIME = {
     "video/webm": ".webm",
@@ -205,9 +202,9 @@ async def _reject_concurrent_build(db: AsyncSession, user_id: int) -> None:
     """同一用户同时只允许一个构建中的视频包，避免发布与激活竞态。"""
     processing = (
         await db.execute(
-            select(CompanionVideoPack.id).where(
-                CompanionVideoPack.user_id == user_id,
-                CompanionVideoPack.status == "processing",
+            select(CompanionActionPack.id).where(
+                CompanionActionPack.user_id == user_id,
+                CompanionActionPack.status == "processing",
             ),
         )
     ).scalar_one_or_none()
@@ -223,7 +220,7 @@ async def create_pack_from_clips(
     clips: dict[str, tuple[bytes, str]],
     canvas: tuple[int, int] = _DEFAULT_CANVAS,
     action_ranges: dict[str, tuple[float, float]] | None = None,
-) -> CompanionVideoPack:
+) -> CompanionActionPack:
     """上传动作片段创建视频包：校验外观归属与片段后建 processing 包行，处理在后台进行。
 
     clips 为「动作键 → (源片段字节, MIME)」；action_ranges 提供长视频的每动作起止秒（可选）。
@@ -262,11 +259,12 @@ async def create_pack_from_clips(
         pack = await _insert_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
         for action, (data, content_type) in clips.items():
             db.add(
-                CompanionVideoJob(
+                CompanionAction(
                     user_id=user_id,
                     pack_id=pack.id,
                     outfit_id=outfit.id,
                     key=action,
+                    system_slot=action if action in SYSTEM_SLOTS else "",
                     kind="loop",
                     status="queued",
                     stage="process",
@@ -296,7 +294,7 @@ async def create_pack_from_reference(
     source_pack_id: int | None = None,
     action: str | None = None,
     feedback: str = "",
-) -> CompanionVideoPack:
+) -> CompanionActionPack:
     """独立短动作视频；单动作请求在 ready 包上原地重做（保持 pack_id，只推进素材版本），
     仅在包尚未 ready 时形成新版本并复用冻结参考。"""
     if (source_pack_id is None) != (action is None):
@@ -331,12 +329,12 @@ async def create_pack_from_reference(
             raise VideoPackStateError("请先确认外观参考图")
         if initial_only:
             existing = await db.scalar(
-                select(CompanionVideoPack)
+                select(CompanionActionPack)
                 .where(
-                    CompanionVideoPack.user_id == user_id,
-                    CompanionVideoPack.outfit_id == outfit.id,
+                    CompanionActionPack.user_id == user_id,
+                    CompanionActionPack.outfit_id == outfit.id,
                 )
-                .order_by(CompanionVideoPack.id.desc())
+                .order_by(CompanionActionPack.id.desc())
                 .limit(1),
             )
             if existing is not None:
@@ -361,15 +359,15 @@ async def create_pack_from_reference(
         if not force and source is None:
             reusable = (
                 await db.execute(
-                    select(CompanionVideoPack)
+                    select(CompanionActionPack)
                     .where(
-                        CompanionVideoPack.user_id == user_id,
-                        CompanionVideoPack.outfit_id == outfit.id,
-                        CompanionVideoPack.reference_hash == reference_hash,
-                        CompanionVideoPack.status == "ready",
-                        CompanionVideoPack.reference_path != "",
+                        CompanionActionPack.user_id == user_id,
+                        CompanionActionPack.outfit_id == outfit.id,
+                        CompanionActionPack.reference_hash == reference_hash,
+                        CompanionActionPack.status == "ready",
+                        CompanionActionPack.reference_path != "",
                     )
-                    .order_by(CompanionVideoPack.pack_version.desc())
+                    .order_by(CompanionActionPack.pack_version.desc())
                     .limit(1),
                 )
             ).scalar_one_or_none()
@@ -401,9 +399,9 @@ async def create_pack_from_reference(
         previous = {}
         if source is not None:
             previous = {
-                job.action: job
+                job.key: job
                 for job in (
-                    await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.pack_id == source.id))
+                    await db.execute(select(CompanionAction).where(CompanionAction.pack_id == source.id))
                 ).scalars()
             }
             # 必需动作结果未知且不是本次目标时拒绝，避免目标动作付费完成后整包仍无法发布。
@@ -469,6 +467,7 @@ async def create_pack_from_reference(
                 outfit_description=outfit.description or "",
                 feedback=feedback,
                 active_outfit_id=outfit.id if initial_only else active_outfit_id,
+                must_actions=[],
             )
         pack = await _insert_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
         pack.reference_path = reference_path
@@ -490,11 +489,12 @@ async def create_pack_from_reference(
         must_actions: set[str] = set(REQUIRED_SYSTEM_SLOTS)
         for key in sorted(action_keys, key=_action_order):
             old = _inheritable_job(previous.get(key)) if key != action else None
-            job = CompanionVideoJob(
+            job = CompanionAction(
                 user_id=user_id,
                 pack_id=pack.id,
                 outfit_id=outfit.id,
-                action=key,
+                key=key,
+                system_slot=key if key in SYSTEM_SLOTS else "",
                 status="queued",
                 stage="script",
                 reference_hash=reference_hash,
@@ -564,7 +564,7 @@ def _action_order(action: str) -> tuple[int, str]:
     return (SYSTEM_SLOTS.index(action) if action in SYSTEM_SLOTS else len(SYSTEM_SLOTS), action)
 
 
-def _can_resume_job(job: CompanionVideoJob) -> bool:
+def _can_resume_job(job: CompanionAction) -> bool:
     if job.status in ("succeeded", "review") or job.stage == "merged":
         return False
     if job.generation_state_json:
@@ -587,23 +587,22 @@ def _can_resume_job(job: CompanionVideoJob) -> bool:
     )
 
 
-def _inheritable_job(job: CompanionVideoJob | None) -> CompanionVideoJob | None:
+def _inheritable_job(job: CompanionAction | None) -> CompanionAction | None:
     """已迁出续跑入口的任务行不参与继承与再清理。"""
     if job is None or job.stage == "merged":
         return None
     return job
 
 
-def _must_succeed_actions(jobs: list[CompanionVideoJob], context_must: set[str] | list[str]) -> set[str]:
-    """本版本必须成功的动作。must_actions 为空表示旧数据 / 上传包，按全部任务判定。"""
-    must = set(context_must)
-    if must:
-        return must | set(REQUIRED_SYSTEM_SLOTS)
-    return {job.action for job in jobs} | set(REQUIRED_SYSTEM_SLOTS)
+def _must_succeed_actions(jobs: list[CompanionAction], context_must: set[str] | list[str] | None) -> set[str]:
+    """本版本必须成功的动作。无生成上下文（上传包）时按全部任务判定。"""
+    if context_must is None:
+        return {job.key for job in jobs} | set(REQUIRED_SYSTEM_SLOTS)
+    return set(context_must) | set(REQUIRED_SYSTEM_SLOTS)
 
 
-def _can_publish_jobs(jobs: list[CompanionVideoJob], context_must: set[str] | list[str]) -> bool:
-    by_action = {job.action: job for job in jobs}
+def _can_publish_jobs(jobs: list[CompanionAction], context_must: set[str] | list[str] | None) -> bool:
+    by_action = {job.key: job for job in jobs}
     for action in _must_succeed_actions(jobs, context_must):
         job = by_action.get(action)
         if job is None or job.status != "succeeded" or not job.result_json:
@@ -611,7 +610,7 @@ def _can_publish_jobs(jobs: list[CompanionVideoJob], context_must: set[str] | li
     return True
 
 
-async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionVideoPack:
+async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionActionPack:
     """只恢复已知任务或本地素材；不自动重发结果未知的生成请求。"""
     async with get_avatar_job_lock(user_id):
         await _reject_concurrent_build(db, user_id)
@@ -632,25 +631,23 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionV
         if context.reference_chain.phase == "submitting" and context.reference_chain.best() is None:
             raise VideoPackStateError("参考图生成结果未知，请核对后生成完整新包")
         jobs = list(
-            (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.pack_id == pack_id))).scalars(),
+            (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == pack_id))).scalars(),
         )
         newer = await _newer_ready_pack(db, pack)
         if newer is not None and not _same_generation_lineage(pack, newer):
             newer = None
         if newer is not None:
-            by_action = {job.action: job for job in jobs}
+            by_action = {job.key: job for job in jobs}
             newer_jobs = (
-                (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.pack_id == newer.id)))
-                .scalars()
-                .all()
+                (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == newer.id))).scalars().all()
             )
             for job in newer_jobs:
                 # 最新成功结果优先；尚未完成的动作沿用原任务句柄和脚本。
-                if job.status == "succeeded" or job.action not in by_action:
-                    by_action[job.action] = job
-            jobs = sorted(by_action.values(), key=lambda job: _action_order(job.action))
+                if job.status == "succeeded" or job.key not in by_action:
+                    by_action[job.key] = job
+            jobs = sorted(by_action.values(), key=lambda job: _action_order(job.key))
             must_actions = _must_succeed_actions(jobs, context.must_actions)
-            must_actions.update(job.action for job in jobs if job.status == "succeeded" or _can_resume_job(job))
+            must_actions.update(job.key for job in jobs if job.status == "succeeded" or _can_resume_job(job))
             context = context.model_copy(update={"must_actions": sorted(must_actions, key=_action_order)})
         recoverable = [job for job in jobs if _can_resume_job(job)]
         if not recoverable and not _can_publish_jobs(jobs, context.must_actions):
@@ -679,16 +676,16 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionV
     return pack
 
 
-async def _newer_ready_pack(db: AsyncSession, pack: CompanionVideoPack) -> CompanionVideoPack | None:
+async def _newer_ready_pack(db: AsyncSession, pack: CompanionActionPack) -> CompanionActionPack | None:
     return await db.scalar(
-        select(CompanionVideoPack)
+        select(CompanionActionPack)
         .where(
-            CompanionVideoPack.user_id == pack.user_id,
-            CompanionVideoPack.outfit_id == pack.outfit_id,
-            CompanionVideoPack.pack_version > pack.pack_version,
-            CompanionVideoPack.status == "ready",
+            CompanionActionPack.user_id == pack.user_id,
+            CompanionActionPack.outfit_id == pack.outfit_id,
+            CompanionActionPack.pack_version > pack.pack_version,
+            CompanionActionPack.status == "ready",
         )
-        .order_by(CompanionVideoPack.pack_version.desc())
+        .order_by(CompanionActionPack.pack_version.desc())
         .limit(1),
     )
 
@@ -700,7 +697,7 @@ async def _insert_pack(
     avatar: AvatarAsset | None,
     outfit: CompanionOutfit,
     reference_hash: str,
-) -> CompanionVideoPack:
+) -> CompanionActionPack:
     if outfit.is_initial:
         outfit.initial_video_started = True
         outfit.initial_video_error = None
@@ -710,7 +707,7 @@ async def _insert_pack(
             event_type="companion.outfit.updated",
             payload={"outfit_id": outfit.id, "worn": False},
         )
-    pack = CompanionVideoPack(
+    pack = CompanionActionPack(
         user_id=user_id,
         avatar_id=avatar.id if avatar is not None else None,
         outfit_id=outfit.id,
@@ -720,9 +717,9 @@ async def _insert_pack(
     # 版本号 = 同外观历史最大版本 + 1；版本不可覆盖，单动作请求即新版本。
     latest_version = (
         await db.execute(
-            select(CompanionVideoPack.pack_version)
-            .where(CompanionVideoPack.user_id == user_id, CompanionVideoPack.outfit_id == outfit.id)
-            .order_by(CompanionVideoPack.pack_version.desc())
+            select(CompanionActionPack.pack_version)
+            .where(CompanionActionPack.user_id == user_id, CompanionActionPack.outfit_id == outfit.id)
+            .order_by(CompanionActionPack.pack_version.desc())
             .limit(1),
         )
     ).scalar_one_or_none()
@@ -844,7 +841,7 @@ async def _emit_pack_event(user_id: int, event_type: str, payload: dict) -> None
 async def _advance_job(job_id: int, *, stage: str, status: str = "processing", **fields: object) -> None:
     """推进生成任务行阶段；终态行不再被覆写。"""
     async with SESSION_LOCAL() as db:
-        job = await db.get(CompanionVideoJob, job_id)
+        job = await db.get(CompanionAction, job_id)
         if job is None or job.status == "cancelled":
             raise asyncio.CancelledError
         if job.status in ("succeeded", "review", "failed"):
@@ -872,19 +869,19 @@ async def _mark_jobs(
     if stage is not None:
         values["stage"] = stage
     stmt = (
-        update(CompanionVideoJob)
-        .where(CompanionVideoJob.pack_id == pack_id, CompanionVideoJob.status.not_in(("succeeded", "review", "failed")))
+        update(CompanionAction)
+        .where(CompanionAction.pack_id == pack_id, CompanionAction.status.not_in(("succeeded", "review", "failed")))
         .values(**values)
         .execution_options(synchronize_session=False)
     )
     if keys is not None:
-        stmt = stmt.where(CompanionVideoJob.key.in_(keys))
+        stmt = stmt.where(CompanionAction.key.in_(keys))
     await db.execute(stmt)
 
 
 async def _fail_pack(pack_id: int, exc: Exception) -> None:
     async with SESSION_LOCAL() as db:
-        pack = await db.get(CompanionVideoPack, pack_id)
+        pack = await db.get(CompanionActionPack, pack_id)
         if pack is None or pack.status != "processing":
             return
         message = str(exc)[:500] or exc.__class__.__name__
@@ -912,7 +909,7 @@ async def _publish_ready(
 
     自动激活核对当前参考与角色卡，和 ready 发布在同一事务提交。"""
     async with SESSION_LOCAL() as db:
-        pack = await db.get(CompanionVideoPack, pack_id)
+        pack = await db.get(CompanionActionPack, pack_id)
         if pack is None:
             return False
         user_id = pack.user_id
@@ -967,7 +964,7 @@ async def _publish_ready(
         )
 
 
-async def _publish_catalog_in_session(db: AsyncSession, pack: CompanionVideoPack) -> int | None:
+async def _publish_catalog_in_session(db: AsyncSession, pack: CompanionActionPack) -> int | None:
     """从任务行聚合发布动作目录（spiritagent.action.pack），CAS 推进。
 
     目录即当前视频包的可播动作清单。必需系统槽位不齐时跳过（不发布、不破坏现有目录）。
@@ -993,7 +990,7 @@ async def _publish_ready_locked(
     identity_review_reason: str,
 ) -> bool:
     async with SESSION_LOCAL() as db:
-        pack = await db.get(CompanionVideoPack, pack_id)
+        pack = await db.get(CompanionActionPack, pack_id)
         if pack is None or pack.status != "processing":
             return False
 
@@ -1018,7 +1015,7 @@ async def _publish_ready_locked(
             return False
 
     async with SESSION_LOCAL() as db:
-        pack = await db.get(CompanionVideoPack, pack_id)
+        pack = await db.get(CompanionActionPack, pack_id)
         if pack is None or pack.status != "processing":
             return False
         ready_keys = {spec.action for spec in clip_specs}
@@ -1050,9 +1047,7 @@ async def _publish_ready_locked(
             keys={spec.action for spec in clip_specs},
         )
         # 任务行规格回写：实际时长/帧数/loopable 供目录发布消费。
-        job_rows = (
-            (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.pack_id == pack_id))).scalars().all()
-        )
+        job_rows = (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == pack_id))).scalars().all()
         spec_by_key = {spec.action: spec for spec in clip_specs}
         for job_row in job_rows:
             spec = spec_by_key.get(job_row.key)
@@ -1118,7 +1113,7 @@ async def _build_pack(
     cover_path: str | None = None
     try:
         async with SESSION_LOCAL() as db:
-            pack = await db.get(CompanionVideoPack, pack_id)
+            pack = await db.get(CompanionActionPack, pack_id)
             if pack is None:
                 return
             user_id = pack.user_id
@@ -1145,8 +1140,8 @@ async def _build_pack(
                 clip_specs.append(spec)
                 async with SESSION_LOCAL() as db:
                     await db.execute(
-                        update(CompanionVideoJob)
-                        .where(CompanionVideoJob.pack_id == pack_id, CompanionVideoJob.key == action)
+                        update(CompanionAction)
+                        .where(CompanionAction.pack_id == pack_id, CompanionAction.key == action)
                         .values(
                             status="succeeded",
                             stage="publish",
@@ -1226,7 +1221,7 @@ async def _video_providers(
     return providers
 
 
-async def _prepare_pack_identity(pack: CompanionVideoPack, context: GenerationContext) -> GenerationContext:
+async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationContext) -> GenerationContext:
     if context.reference_alignment == "ready":
         return context
     source = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
@@ -1235,7 +1230,7 @@ async def _prepare_pack_identity(pack: CompanionVideoPack, context: GenerationCo
         context.reference_chain = state
         context.reference_alignment = "running"
         async with SESSION_LOCAL() as db:
-            row = await db.get(CompanionVideoPack, pack.id)
+            row = await db.get(CompanionActionPack, pack.id)
             if row is None or row.status != "processing":
                 raise asyncio.CancelledError
             row.context_json = context.model_dump_json()
@@ -1252,7 +1247,7 @@ async def _prepare_pack_identity(pack: CompanionVideoPack, context: GenerationCo
     )
     previous_path = pack.reference_path
     async with SESSION_LOCAL() as db:
-        row = await db.get(CompanionVideoPack, pack.id)
+        row = await db.get(CompanionActionPack, pack.id)
         if row is None or row.status != "processing":
             raise VideoPackStateError("视频任务已失效")
         context.reference_alignment = "ready"
@@ -1269,15 +1264,13 @@ async def _generate_pack(pack_id: int) -> None:
     """成功动作独立落盘；重启及重试不重做已成功动作，不重复提交未知付费请求。"""
     try:
         async with SESSION_LOCAL() as db:
-            pack = await db.get(CompanionVideoPack, pack_id)
+            pack = await db.get(CompanionActionPack, pack_id)
             if pack is None or pack.status != "processing":
                 return
             jobs = (
                 (
                     await db.execute(
-                        select(CompanionVideoJob)
-                        .where(CompanionVideoJob.pack_id == pack_id)
-                        .order_by(CompanionVideoJob.id),
+                        select(CompanionAction).where(CompanionAction.pack_id == pack_id).order_by(CompanionAction.id),
                     )
                 )
                 .scalars()
@@ -1291,13 +1284,13 @@ async def _generate_pack(pack_id: int) -> None:
             await _emit_pack_event(pack.user_id, "companion.video.progress", {"packId": pack_id, "stage": "script"})
             specs = []
             for job in pending:
-                if job.action in SYSTEM_ACTION_SEMANTICS:
+                if job.key in SYSTEM_ACTION_SEMANTICS:
                     # 系统槽位固定语义；待机一秒短循环，其余系统动作两秒。
-                    idle = job.action == "idle"
+                    idle = job.key == "idle"
                     specs.append(
                         ActionSpec(
-                            action=job.action,
-                            system_slot=job.action,
+                            action=job.key,
+                            system_slot=job.key,
                             duration_seconds=1.0 if idle else 2.0,
                             clip_kind="loop",
                         ),
@@ -1308,9 +1301,9 @@ async def _generate_pack(pack_id: int) -> None:
                 if design:
                     specs.append(
                         ActionSpec(
-                            action=job.action,
+                            action=job.key,
                             system_slot="",
-                            name=str(design.get("name", job.action)),
+                            name=str(design.get("name", job.key)),
                             semantics=str(design.get("motion_description", "")),
                             use_when=list(design.get("use_when") or []),
                             avoid_when=list(design.get("avoid_when") or []),
@@ -1321,7 +1314,7 @@ async def _generate_pack(pack_id: int) -> None:
                 else:
                     specs.append(
                         ActionSpec(
-                            action=job.action,
+                            action=job.key,
                             duration_seconds=float(job.target_duration_seconds or 2.0),
                             clip_kind=str(job.kind or "once"),
                         ),
@@ -1342,9 +1335,7 @@ async def _generate_pack(pack_id: int) -> None:
                 for job, entry in zip(pending, script.actions, strict=True):
                     job.script_json = entry.model_dump_json()
                     await db.execute(
-                        update(CompanionVideoJob)
-                        .where(CompanionVideoJob.id == job.id)
-                        .values(script_json=job.script_json),
+                        update(CompanionAction).where(CompanionAction.id == job.id).values(script_json=job.script_json),
                     )
                 await db.commit()
         for job in jobs:
@@ -1353,33 +1344,31 @@ async def _generate_pack(pack_id: int) -> None:
             try:
                 await _generate_action(pack, job)
             except Exception as exc:  # noqa: BLE001 — 动作失败隔离，其他已请求动作仍可交付并独立重做
-                logger.exception("video action failed", extra={"pack_id": pack_id, "action": job.action})
+                logger.exception("video action failed", extra={"pack_id": pack_id, "action": job.key})
                 message = _generation_error(exc)
                 await _advance_job(job.id, stage=job.stage, status="failed", error=message)
         async with SESSION_LOCAL() as db:
             results = (
-                (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.pack_id == pack_id)))
-                .scalars()
-                .all()
+                (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == pack_id))).scalars().all()
             )
         # 阻塞发布：must_actions（必需 + 本版本必须成功）未完成。继承的其他未知失败不阻塞。
         blocking = [
-            job for job in results if (job.status != "succeeded" or not job.result_json) and job.action in must_actions
+            job for job in results if (job.status != "succeeded" or not job.result_json) and job.key in must_actions
         ]
         if blocking:
             await _fail_pack(
                 pack_id,
-                VideoPackError("；".join(f"{job.action}: {job.error or '动作未完成'}" for job in blocking)),
+                VideoPackError("；".join(f"{job.key}: {job.error or '动作未完成'}" for job in blocking)),
             )
             return
         specs: list[VideoClipSpec] = []
         cover_path = None
-        for job in sorted(results, key=lambda job: _action_order(job.action)):
+        for job in sorted(results, key=lambda job: _action_order(job.key)):
             if job.status != "succeeded" or not job.result_json:
                 continue
             result = ActionResult.model_validate_json(job.result_json)
             specs.append(result.clip)
-            if job.action == "idle":
+            if job.key == "idle":
                 cover_path = result.cover_path
         # 同血缘其他版本已成功、本包缺失的动作并入清单，避免恢复旧版本时丢掉新成果。
         have = {clip.action for clip in specs}
@@ -1417,7 +1406,7 @@ def _generation_error(exc: Exception) -> str:
     return "动作处理失败，可重试已有任务或素材"
 
 
-async def _generate_action(pack: CompanionVideoPack, job: CompanionVideoJob) -> None:
+async def _generate_action(pack: CompanionActionPack, job: CompanionAction) -> None:
     """整包生成路径：脚本已由 _generate_pack 预写（含规格），直接续管线。"""
     entry = ActionScriptEntry.model_validate_json(job.script_json or "{}")
     context = GenerationContext.model_validate_json(pack.context_json)
@@ -1442,8 +1431,8 @@ async def _action_frames(spec: VideoClipSpec) -> tuple[str, ...]:
 
 
 async def _run_action_pipeline(
-    pack: CompanionVideoPack,
-    job: CompanionVideoJob,
+    pack: CompanionActionPack,
+    job: CompanionAction,
     entry: ActionScriptEntry,
     context: GenerationContext,
 ) -> None:
@@ -1464,7 +1453,7 @@ async def _run_action_pipeline(
     identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
     reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
     if not job.pose_path:
-        if job.action == "idle":
+        if job.key == "idle":
             job.pose_path = pack.reference_path
         else:
             pose_state = (
@@ -1598,7 +1587,7 @@ async def _run_action_pipeline(
                     "kind": "action",
                     "pack_id": pack.id,
                     "action_id": job.id,
-                    "title": job.name or job.action,
+                    "title": job.name or job.key,
                 },
             )
     state.finish()
@@ -1636,8 +1625,8 @@ async def _run_action_pipeline(
 
 
 async def _run_action_attempt(
-    pack: CompanionVideoPack,
-    job: CompanionVideoJob,
+    pack: CompanionActionPack,
+    job: CompanionAction,
     entry: ActionScriptEntry,
     context: GenerationContext,
     state: MediaChainState,
@@ -1648,7 +1637,7 @@ async def _run_action_attempt(
         await _emit_pack_event(
             pack.user_id,
             "companion.video.progress",
-            {"packId": pack.id, "stage": stage, "action": job.action},
+            {"packId": pack.id, "stage": stage, "action": job.key},
         )
 
     if not job.artifact_path and state.source_path and _artifact_abs_path(state.source_path).is_file():
@@ -1733,7 +1722,7 @@ async def _run_action_attempt(
             loop = await _process_thread(select_full_clip, matte, max_seconds=entry.duration_seconds)
         spec, cover, hitmask_path = await _prepare_clip_spec(
             work,
-            job.action,
+            job.key,
             matte,
             pack.user_id,
             *_DEFAULT_CANVAS,
@@ -1796,7 +1785,7 @@ def _kick_generate(pack_id: int, user_id: int) -> None:
     task.add_done_callback(_done)
 
 
-async def _dynamic_action_spec(job: CompanionVideoJob) -> ActionSpec | None:
+async def _dynamic_action_spec(job: CompanionAction) -> ActionSpec | None:
     """动作规格：动态动作来自提案设计 JSON；系统槽位用固定语义与时长。"""
     design = safe_json_loads(job.source_design_json or "{}", default={})
     if not design and not job.system_slot:
@@ -1804,15 +1793,15 @@ async def _dynamic_action_spec(job: CompanionVideoJob) -> ActionSpec | None:
     slot = job.system_slot or ""
     if slot and not design:
         return ActionSpec(
-            action=job.action,
+            action=job.key,
             system_slot=slot,
             duration_seconds=1.0 if slot == "idle" else 2.0,
             clip_kind="loop",
         )
     return ActionSpec(
-        action=job.action,
+        action=job.key,
         system_slot=slot,
-        name=str(design.get("name", job.name or job.action)),
+        name=str(design.get("name", job.name or job.key)),
         semantics=str(design.get("motion_description", job.motion_description or "")),
         use_when=list(design.get("use_when") or []),
         avoid_when=list(design.get("avoid_when") or []),
@@ -1823,18 +1812,18 @@ async def _dynamic_action_spec(job: CompanionVideoJob) -> ActionSpec | None:
 
 async def _queue_in_place_redo(
     db: AsyncSession,
-    pack: CompanionVideoPack,
+    pack: CompanionActionPack,
     action: str,
     feedback: str,
-) -> CompanionVideoJob:
+) -> CompanionAction:
     """ready 包上单动作原地重做：保留动作身份与元数据，只重置素材生成状态。"""
     job = (
         await db.execute(
-            select(CompanionVideoJob).where(CompanionVideoJob.pack_id == pack.id, CompanionVideoJob.key == action),
+            select(CompanionAction).where(CompanionAction.pack_id == pack.id, CompanionAction.key == action),
         )
     ).scalar_one_or_none()
     if job is None:
-        job = CompanionVideoJob(
+        job = CompanionAction(
             user_id=pack.user_id,
             pack_id=pack.id,
             outfit_id=pack.outfit_id,
@@ -1925,16 +1914,16 @@ async def _generate_dynamic_actions(pack_id: int, *, action_ids: list[int] | Non
     """ready 包上动态动作的生成编排：规格来自提案设计，逐动作制作后发布新目录。"""
     try:
         async with SESSION_LOCAL() as db:
-            pack = await db.get(CompanionVideoPack, pack_id)
+            pack = await db.get(CompanionActionPack, pack_id)
             if pack is None or pack.status != "ready":
                 return
-            stmt = select(CompanionVideoJob).where(
-                CompanionVideoJob.pack_id == pack_id,
-                CompanionVideoJob.status.in_(("queued", "processing", "result_unknown")),
+            stmt = select(CompanionAction).where(
+                CompanionAction.pack_id == pack_id,
+                CompanionAction.status.in_(("queued", "processing", "result_unknown")),
             )
             if action_ids is not None:
-                stmt = stmt.where(CompanionVideoJob.id.in_(action_ids))
-            jobs = (await db.execute(stmt.order_by(CompanionVideoJob.id))).scalars().all()
+                stmt = stmt.where(CompanionAction.id.in_(action_ids))
+            jobs = (await db.execute(stmt.order_by(CompanionAction.id))).scalars().all()
             if not jobs:
                 return
         context = GenerationContext.model_validate_json(pack.context_json) if pack.context_json else None
@@ -1956,8 +1945,8 @@ async def _generate_dynamic_actions(pack_id: int, *, action_ids: list[int] | Non
 
 
 async def _generate_one_dynamic(
-    pack: CompanionVideoPack,
-    job: CompanionVideoJob,
+    pack: CompanionActionPack,
+    job: CompanionAction,
     context: GenerationContext,
 ) -> None:
     """单个动态动作：脚本（按提案规格）→ 姿态 → 提交 → 轮询 → 下载 → 抠像 → 落库。"""
@@ -1983,14 +1972,14 @@ async def _generate_one_dynamic(
     job.script_json = entry.model_dump_json()
     async with SESSION_LOCAL() as db:
         await db.execute(
-            update(CompanionVideoJob).where(CompanionVideoJob.id == job.id).values(script_json=job.script_json),
+            update(CompanionAction).where(CompanionAction.id == job.id).values(script_json=job.script_json),
         )
         await db.commit()
     await _run_action_pipeline(pack, job, entry, context)
 
 
 async def _compose_single_action_script(
-    pack: CompanionVideoPack,
+    pack: CompanionActionPack,
     spec: ActionSpec,
     context: GenerationContext,
 ) -> ActionScriptEntry:
@@ -2012,16 +2001,16 @@ async def _compose_single_action_script(
 async def _fail_dynamic_jobs(pack_id: int, message: str, *, action_ids: list[int] | None = None) -> None:
     async with SESSION_LOCAL() as db:
         stmt = (
-            update(CompanionVideoJob)
+            update(CompanionAction)
             .where(
-                CompanionVideoJob.pack_id == pack_id,
-                CompanionVideoJob.status == "queued",
+                CompanionAction.pack_id == pack_id,
+                CompanionAction.status == "queued",
             )
             .values(status="failed", error=message[:500])
             .execution_options(synchronize_session=False)
         )
         if action_ids is not None:
-            stmt = stmt.where(CompanionVideoJob.id.in_(action_ids))
+            stmt = stmt.where(CompanionAction.id.in_(action_ids))
         await db.execute(stmt)
         await db.commit()
 
@@ -2029,7 +2018,7 @@ async def _fail_dynamic_jobs(pack_id: int, message: str, *, action_ids: list[int
 async def _publish_dynamic_catalog(pack_id: int) -> None:
     """动态动作完成后发布动作目录快照（CAS），并广播目录变更。"""
     async with SESSION_LOCAL() as db:
-        pack = await db.get(CompanionVideoPack, pack_id)
+        pack = await db.get(CompanionActionPack, pack_id)
         if pack is None:
             return
         version = await _try_publish_catalog(db, pack)
@@ -2044,7 +2033,7 @@ async def _publish_dynamic_catalog(pack_id: int) -> None:
         await db.commit()
 
 
-async def _try_publish_catalog(db: AsyncSession, pack: CompanionVideoPack) -> int | None:
+async def _try_publish_catalog(db: AsyncSession, pack: CompanionActionPack) -> int | None:
     """发布动作目录；失败保留素材与版本行，可通过再次发布恢复。"""
     assets_dir = Path(SETTINGS.data_dir) / "companion-assets" / str(pack.user_id)
     assets_dir.mkdir(parents=True, exist_ok=True)
@@ -2058,7 +2047,7 @@ async def _try_publish_catalog(db: AsyncSession, pack: CompanionVideoPack) -> in
 async def republish_action_catalog(user_id: int, pack_id: int) -> int | None:
     """目录发布失败后的恢复入口：仅重发快照，不重新付费生成。"""
     async with SESSION_LOCAL() as db:
-        pack = await db.get(CompanionVideoPack, pack_id)
+        pack = await db.get(CompanionActionPack, pack_id)
         if pack is None or pack.user_id != user_id:
             return None
         version = await _try_publish_catalog(db, pack)
@@ -2079,9 +2068,9 @@ async def _fulfill_pending_intents(pack_id: int) -> None:
         jobs = (
             (
                 await db.execute(
-                    select(CompanionVideoJob).where(
-                        CompanionVideoJob.pack_id == pack_id,
-                        CompanionVideoJob.status == "succeeded",
+                    select(CompanionAction).where(
+                        CompanionAction.pack_id == pack_id,
+                        CompanionAction.status == "succeeded",
                     ),
                 )
             )
@@ -2107,9 +2096,9 @@ async def resume_video_generation_jobs() -> None:
         packs = (
             (
                 await db.execute(
-                    select(CompanionVideoPack).where(
-                        CompanionVideoPack.status == "processing",
-                        CompanionVideoPack.reference_path != "",
+                    select(CompanionActionPack).where(
+                        CompanionActionPack.status == "processing",
+                        CompanionActionPack.reference_path != "",
                     ),
                 )
             )
@@ -2119,13 +2108,13 @@ async def resume_video_generation_jobs() -> None:
         # ready 包上仍有 queued/processing 动态动作（含已取得供应商句柄的）：逐包恢复生成。
         dynamic_rows = (
             await db.execute(
-                select(CompanionVideoPack.id, CompanionVideoPack.user_id)
-                .join(CompanionVideoJob, CompanionVideoJob.pack_id == CompanionVideoPack.id)
+                select(CompanionActionPack.id, CompanionActionPack.user_id)
+                .join(CompanionAction, CompanionAction.pack_id == CompanionActionPack.id)
                 .where(
-                    CompanionVideoPack.status == "ready",
-                    CompanionVideoJob.status.in_(("queued", "processing", "result_unknown")),
+                    CompanionActionPack.status == "ready",
+                    CompanionAction.status.in_(("queued", "processing", "result_unknown")),
                 )
-                .group_by(CompanionVideoPack.id, CompanionVideoPack.user_id),
+                .group_by(CompanionActionPack.id, CompanionActionPack.user_id),
             )
         ).all()
     for pack in packs:
@@ -2154,10 +2143,10 @@ def _kick_dynamic_resume(pack_id: int, user_id: int) -> None:
     task.add_done_callback(_done)
 
 
-async def _activate_locked(db: AsyncSession, pack: CompanionVideoPack) -> None:
+async def _activate_locked(db: AsyncSession, pack: CompanionActionPack) -> None:
     await db.execute(
-        update(CompanionVideoPack)
-        .where(CompanionVideoPack.user_id == pack.user_id, CompanionVideoPack.active.is_(True))
+        update(CompanionActionPack)
+        .where(CompanionActionPack.user_id == pack.user_id, CompanionActionPack.active.is_(True))
         .values(active=False)
         .execution_options(synchronize_session=False),
     )
@@ -2196,7 +2185,7 @@ async def _activate_locked(db: AsyncSession, pack: CompanionVideoPack) -> None:
     )
 
 
-async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionVideoPack:
+async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionActionPack:
     async with get_avatar_job_lock(user_id):
         pack = await _get_pack(db, user_id, pack_id)
         if pack is None:
@@ -2224,7 +2213,7 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> Compani
     return pack
 
 
-def _pack_assets(pack: CompanionVideoPack, jobs: list[CompanionVideoJob]) -> set[str]:
+def _pack_assets(pack: CompanionActionPack, jobs: list[CompanionAction]) -> set[str]:
     paths = {pack.reference_path, pack.manifest_path}
     context = _load_generation_context(pack)
     if context is not None:
@@ -2259,13 +2248,15 @@ def _pack_assets(pack: CompanionVideoPack, jobs: list[CompanionVideoJob]) -> set
     return paths - {""}
 
 
-async def _remove_packs(db: AsyncSession, user_id: int, targets: list[CompanionVideoPack]) -> set[str]:
+async def _remove_packs(db: AsyncSession, user_id: int, targets: list[CompanionActionPack]) -> set[str]:
     """删除目标包及其任务行（调用方负责提交）；返回不再被其余包引用、可回收的资产路径。
     单动作版本间共享资源（冻结参考、复用片段），只有最后一个引用消失才回收。"""
-    packs = (await db.execute(select(CompanionVideoPack).where(CompanionVideoPack.user_id == user_id))).scalars().all()
-    jobs = (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.user_id == user_id))).scalars().all()
+    packs = (
+        (await db.execute(select(CompanionActionPack).where(CompanionActionPack.user_id == user_id))).scalars().all()
+    )
+    jobs = (await db.execute(select(CompanionAction).where(CompanionAction.user_id == user_id))).scalars().all()
     target_ids = {pack.id for pack in targets}
-    jobs_by_pack: dict[int, list[CompanionVideoJob]] = {}
+    jobs_by_pack: dict[int, list[CompanionAction]] = {}
     for job in jobs:
         if job.pack_id is not None:
             jobs_by_pack.setdefault(job.pack_id, []).append(job)
@@ -2282,7 +2273,7 @@ async def _remove_packs(db: AsyncSession, user_id: int, targets: list[CompanionV
     return candidates
 
 
-def _load_generation_context(pack: CompanionVideoPack) -> GenerationContext | None:
+def _load_generation_context(pack: CompanionActionPack) -> GenerationContext | None:
     """解析生成包上下文；上传包 context_json 为占位，返回 None。"""
     raw = (pack.context_json or "").strip()
     if not raw or raw == "{}":
@@ -2293,7 +2284,7 @@ def _load_generation_context(pack: CompanionVideoPack) -> GenerationContext | No
         return None
 
 
-def _same_generation_lineage(kept: CompanionVideoPack, other: CompanionVideoPack) -> bool:
+def _same_generation_lineage(kept: CompanionActionPack, other: CompanionActionPack) -> bool:
     """迁移前核对冻结参考与角色身份，避免旧身份句柄混入新包。"""
     if (
         not kept.reference_path
@@ -2307,8 +2298,8 @@ def _same_generation_lineage(kept: CompanionVideoPack, other: CompanionVideoPack
     return kept_ctx is not None and other_ctx is not None and kept_ctx.identity == other_ctx.identity
 
 
-def _copy_job_to_pack(job: CompanionVideoJob, pack: CompanionVideoPack) -> CompanionVideoJob:
-    return CompanionVideoJob(
+def _copy_job_to_pack(job: CompanionAction, pack: CompanionActionPack) -> CompanionAction:
+    return CompanionAction(
         user_id=job.user_id,
         pack_id=pack.id,
         outfit_id=job.outfit_id,
@@ -2356,50 +2347,52 @@ def _copy_job_to_pack(job: CompanionVideoJob, pack: CompanionVideoPack) -> Compa
     )
 
 
-async def _sibling_success_results(pack: CompanionVideoPack) -> list[tuple[str, ActionResult]]:
+async def _sibling_success_results(pack: CompanionActionPack) -> list[tuple[str, ActionResult]]:
     """同外观同血缘其他包上已成功的动作结果（用于补齐本包缺失片段）。"""
     async with SESSION_LOCAL() as db:
         rows = (
             await db.execute(
-                select(CompanionVideoJob, CompanionVideoPack)
-                .join(CompanionVideoPack, CompanionVideoPack.id == CompanionVideoJob.pack_id)
+                select(CompanionAction, CompanionActionPack)
+                .join(CompanionActionPack, CompanionActionPack.id == CompanionAction.pack_id)
                 .where(
-                    CompanionVideoPack.user_id == pack.user_id,
-                    CompanionVideoPack.outfit_id == pack.outfit_id,
-                    CompanionVideoPack.id != pack.id,
-                    CompanionVideoJob.status == "succeeded",
-                    CompanionVideoJob.result_json.is_not(None),
+                    CompanionActionPack.user_id == pack.user_id,
+                    CompanionActionPack.outfit_id == pack.outfit_id,
+                    CompanionActionPack.id != pack.id,
+                    CompanionAction.status == "succeeded",
+                    CompanionAction.result_json.is_not(None),
                 )
                 # 同动作多版本成功时取最新，与「冲突动作优先保留最新成功结果」一致。
-                .order_by(CompanionVideoPack.pack_version.desc(), CompanionVideoJob.id.desc()),
+                .order_by(CompanionActionPack.pack_version.desc(), CompanionAction.id.desc()),
             )
         ).all()
     found: list[tuple[str, ActionResult]] = []
     seen: set[str] = set()
     for job, other in rows:
-        if job.action in seen or not _same_generation_lineage(pack, other):
+        if job.key in seen or not _same_generation_lineage(pack, other):
             continue
         if job.reference_hash and pack.reference_hash and job.reference_hash != pack.reference_hash:
             continue
-        seen.add(job.action)
-        found.append((job.action, ActionResult.model_validate_json(job.result_json)))
+        seen.add(job.key)
+        found.append((job.key, ActionResult.model_validate_json(job.result_json)))
     return found
 
 
-async def _carry_incomplete_jobs(db: AsyncSession, kept: CompanionVideoPack, targets: list[CompanionVideoPack]) -> None:
+async def _carry_incomplete_jobs(
+    db: AsyncSession,
+    kept: CompanionActionPack,
+    targets: list[CompanionActionPack],
+) -> None:
     """清理前把将删除包上的有效记录迁到 kept：不可续跑失败记录，以及 kept 缺失的成功结果。
     可续跑任务不迁入（保留源包作续跑入口）；血缘不一致的任务不迁入。"""
     target_ids = {pack.id for pack in targets if _same_generation_lineage(kept, pack)}
     if not target_ids:
         return
     kept_jobs = {
-        job.action: job
-        for job in (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.pack_id == kept.id))).scalars()
+        job.key: job
+        for job in (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == kept.id))).scalars()
     }
     kept_success = {action for action, job in kept_jobs.items() if job.status == "succeeded" and job.result_json}
-    rows = (
-        (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.pack_id.in_(target_ids)))).scalars().all()
-    )
+    rows = (await db.execute(select(CompanionAction).where(CompanionAction.pack_id.in_(target_ids)))).scalars().all()
     cloned = False
     for job in rows:
         if job.stage == "merged":
@@ -2409,22 +2402,22 @@ async def _carry_incomplete_jobs(db: AsyncSession, kept: CompanionVideoPack, tar
         if _can_resume_job(job):
             continue
         if job.status == "succeeded" and job.result_json:
-            if job.action in kept_success:
+            if job.key in kept_success:
                 continue
-        elif job.action in kept_jobs:
+        elif job.key in kept_jobs:
             continue
         clone = _copy_job_to_pack(job, kept)
         db.add(clone)
-        kept_jobs[job.action] = clone
+        kept_jobs[job.key] = clone
         if job.status == "succeeded" and job.result_json:
-            kept_success.add(job.action)
+            kept_success.add(job.key)
         cloned = True
     if cloned:
         # autoflush=False：先 flush 让迁入行进入资产引用查询，避免源素材被回收。
         await db.flush()
 
 
-async def _retire_superseded_locked(db: AsyncSession, kept: CompanionVideoPack) -> set[str]:
+async def _retire_superseded_locked(db: AsyncSession, kept: CompanionActionPack) -> set[str]:
     """kept 激活后删除同外观其余历史包（含任务行），返回可回收路径（调用方持有用户锁）。
     构建中的包不动；同血缘包上不可续跑的失败记录先迁到 kept。
     仍有可续跑任务的包保留，作为续跑入口。完整版本不堆积。"""
@@ -2432,24 +2425,24 @@ async def _retire_superseded_locked(db: AsyncSession, kept: CompanionVideoPack) 
         pack
         for pack in (
             await db.execute(
-                select(CompanionVideoPack).where(
-                    CompanionVideoPack.user_id == kept.user_id,
-                    CompanionVideoPack.outfit_id == kept.outfit_id,
+                select(CompanionActionPack).where(
+                    CompanionActionPack.user_id == kept.user_id,
+                    CompanionActionPack.outfit_id == kept.outfit_id,
                 ),
             )
         ).scalars()
         if pack.pack_version < kept.pack_version and pack.status != "processing"
     ]
     succeeded = {
-        job.action
-        for job in (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.pack_id == kept.id))).scalars()
+        job.key
+        for job in (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == kept.id))).scalars()
         if job.status == "succeeded" and job.result_json
     }
-    deletable: list[CompanionVideoPack] = []
+    deletable: list[CompanionActionPack] = []
     for pack in targets:
-        jobs = (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.pack_id == pack.id))).scalars().all()
+        jobs = (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == pack.id))).scalars().all()
         if _same_generation_lineage(kept, pack) and any(
-            _can_resume_job(job) and job.action not in succeeded for job in jobs
+            _can_resume_job(job) and job.key not in succeeded for job in jobs
         ):
             continue
         deletable.append(pack)
@@ -2477,15 +2470,18 @@ async def delete_pack(db: AsyncSession, user_id: int, pack_id: int) -> None:
     _unlink_assets(candidates)
 
 
-async def _get_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionVideoPack | None:
+async def _get_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionActionPack | None:
     return (
         await db.execute(
-            select(CompanionVideoPack).where(CompanionVideoPack.id == pack_id, CompanionVideoPack.user_id == user_id),
+            select(CompanionActionPack).where(
+                CompanionActionPack.id == pack_id,
+                CompanionActionPack.user_id == user_id,
+            ),
         )
     ).scalar_one_or_none()
 
 
-def pack_response(pack: CompanionVideoPack) -> dict:
+def pack_response(pack: CompanionActionPack) -> dict:
     """视频包行转响应；manifest URL 现签，片段资源 URL 由客户端按 manifest 拉取。"""
     return {
         "id": pack.id,
@@ -2506,16 +2502,16 @@ async def list_pack_responses(db: AsyncSession, user_id: int) -> list[dict]:
     packs = (
         (
             await db.execute(
-                select(CompanionVideoPack)
-                .where(CompanionVideoPack.user_id == user_id)
-                .order_by(CompanionVideoPack.created_at.desc()),
+                select(CompanionActionPack)
+                .where(CompanionActionPack.user_id == user_id)
+                .order_by(CompanionActionPack.created_at.desc()),
             )
         )
         .scalars()
         .all()
     )
-    jobs = (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.user_id == user_id))).scalars().all()
-    jobs_by_pack: dict[int, list[CompanionVideoJob]] = {}
+    jobs = (await db.execute(select(CompanionAction).where(CompanionAction.user_id == user_id))).scalars().all()
+    jobs_by_pack: dict[int, list[CompanionAction]] = {}
     for job in jobs:
         if job.pack_id is not None:
             jobs_by_pack.setdefault(job.pack_id, []).append(job)
@@ -2524,21 +2520,21 @@ async def list_pack_responses(db: AsyncSession, user_id: int) -> list[dict]:
         response = pack_response(pack)
         pack_jobs = jobs_by_pack.get(pack.id, [])
         pack_context = _load_generation_context(pack)
-        must_actions = pack_context.must_actions if pack_context is not None else []
+        context_must = pack_context.must_actions if pack_context is not None else None
         response["can_regenerate"] = bool(pack.reference_path) and pack.status in ("ready", "failed")
         response["can_retry"] = (
             bool(pack.reference_path)
             and pack.status == "failed"
             and pack_context is not None
             and pack_context.reference_alignment != "running"
-            and (any(_can_resume_job(job) for job in pack_jobs) or _can_publish_jobs(pack_jobs, must_actions))
+            and (any(_can_resume_job(job) for job in pack_jobs) or _can_publish_jobs(pack_jobs, context_must))
         )
         response["actions"] = []
-        for job in sorted(pack_jobs, key=lambda job: _action_order(job.action)):
+        for job in sorted(pack_jobs, key=lambda job: _action_order(job.key)):
             script = ActionScriptEntry.model_validate_json(job.script_json) if job.script_json else None
             response["actions"].append(
                 {
-                    "action": job.action,
+                    "action": job.key,
                     "name": job.name or "",
                     "kind": job.kind,
                     "status": job.status,
@@ -2558,7 +2554,7 @@ async def resume_processing_packs() -> None:
     resume_video_generation_jobs 续跑，此处跳过。"""
     async with SESSION_LOCAL() as db:
         packs = (
-            (await db.execute(select(CompanionVideoPack).where(CompanionVideoPack.status == "processing")))
+            (await db.execute(select(CompanionActionPack).where(CompanionActionPack.status == "processing")))
             .scalars()
             .all()
         )

@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .journal import DiarySource
+from .journal import DiarySource, MomentCommentRole, MomentKind, MomentSource
 
 MomentMediaTypeLiteral = Literal["", "image", "video", "audio"]
 
@@ -13,7 +13,7 @@ MomentMediaTypeLiteral = Literal["", "image", "video", "audio"]
 class MomentCommentResponse(BaseModel):
     id: str
     moment_id: str
-    role: str
+    role: MomentCommentRole
     content: str
     created_at: datetime | None = None
 
@@ -21,8 +21,7 @@ class MomentCommentResponse(BaseModel):
 class MomentResponse(BaseModel):
     id: str
     occurred_at: datetime
-    # kind / source 为自由字符串：存量行含已停写的枚举值（greeting/user/system 等），仍需可读
-    kind: str
+    kind: MomentKind
     title: str
     body: str
     emotion: str | None = None
@@ -30,7 +29,7 @@ class MomentResponse(BaseModel):
     media_type: MomentMediaTypeLiteral = ""
     audio_url: str | None = None
     media_metadata: dict | None = None
-    source: str
+    source: MomentSource
     comments: list[MomentCommentResponse] = Field(default_factory=list)
 
 

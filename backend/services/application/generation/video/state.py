@@ -24,8 +24,8 @@ class GenerationContext(BaseModel):
     feedback: str
     action_feedback: dict[str, str] = Field(default_factory=dict)
     active_outfit_id: int | None
-    # 本版本必须成功的动作；空表示旧数据，按全部任务判定。
-    must_actions: list[str] = []
+    # 本版本必须成功的动作。
+    must_actions: list[str]
 
 
 class ActionResult(BaseModel):

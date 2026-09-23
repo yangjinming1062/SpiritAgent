@@ -70,19 +70,6 @@ class NightlyActivityLog(ModelBase):
         onupdate=func.now(),
     )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "user_id": self.user_id,
-            "system_preset_id": self.system_preset_id,
-            "target_date": self.target_date.isoformat() if self.target_date else None,
-            "status": self.status,
-            "summary": self.summary,
-            "payload": self.payload,
-            "created_at": self.created_at.isoformat() if self.created_at else None,
-            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
-        }
-
 
 class NightlyActivityAction(ModelBase):
     """夜间计划的持久化动作账本；可核对的在途子任务续跑，无法核对的动作终止且不重放。"""

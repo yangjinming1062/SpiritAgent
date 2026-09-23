@@ -15,7 +15,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-# 场景 / 外观政策默认值；同步显式字符串以便其他地方引用。
+# 场景 / 外观政策默认值。
 SCENE_POLICY_DEFAULT: str = "llm_may_replace"
 OUTFIT_POLICY_DEFAULT: str = "llm_may_replace"
 

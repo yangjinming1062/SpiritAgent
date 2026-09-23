@@ -21,6 +21,10 @@ from modules.companion import (
     CompanionMomentComment,
     CompanionOutfit,
     CompanionScene,
+    DiarySource,
+    MomentCommentRole,
+    MomentKind,
+    MomentSource,
     Persona,
     SceneDescriptionRequest,
     companion_cron_source_key,
@@ -170,6 +174,19 @@ async def insert_rows(
                 conversation = await db.get(Conversation, payload["session_id"])
                 if conversation.user_id != target_user_id or conversation.system_preset_id != "companion":
                     raise ValueError("Companion moment refers to a different conversation scope")
+            if table == "companion_moments":
+                if payload.get("kind") not in {kind.value for kind in MomentKind}:
+                    raise ValueError("Invalid moment kind")
+                if payload.get("source") not in {source.value for source in MomentSource}:
+                    raise ValueError("Invalid moment source")
+            if table == "companion_moment_comments" and payload.get("role") not in {
+                role.value for role in MomentCommentRole
+            }:
+                raise ValueError("Invalid moment comment role")
+            if table == "companion_diary_entries" and payload.get("source") not in {
+                source.value for source in DiarySource
+            }:
+                raise ValueError("Invalid diary source")
         existing = None
         if mode == "merge" and table in UNIQUE_KEYS:
             existing = await db.scalar(
