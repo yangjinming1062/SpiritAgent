@@ -33,12 +33,11 @@ from .avatar_service import (
     select_avatar,
 )
 from .character_card import drain_character_extractions, resume_character_extractions, schedule_character_extraction
+from .character_images import generate_character_images
 from .identity_review import (
-    MEDIA_IDENTITY_ACCEPT_SCORE,
     review_character_frames,
     score_character_frames,
     score_character_image,
-    select_best_character_images,
 )
 from .image_generation import (
     ImageGenerationError,
@@ -46,6 +45,7 @@ from .image_generation import (
     resolve_image_gen_chain,
 )
 from .initial_appearance import resume_initial_appearance
+from .media_chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from .media_review import (
     MediaReviewStateError,
     accept_media_review,
@@ -92,6 +92,7 @@ from .scene_service import (
     resume_scene_generation,
     resume_scene_jobs,
     retry_scene_description,
+    scene_generation_wait_seconds,
     schedule_initial_scene,
     schedule_scene_generation,
     schedule_scene_prompt,
@@ -126,6 +127,7 @@ from .video_jobs import (
     enqueue_video_job,
     get_job,
     resume_pending_video_jobs,
+    video_generation_wait_seconds,
 )
 from .visual_identity import (
     SelfVisualPlan,
@@ -179,7 +181,6 @@ __all__ = [
     "review_character_frames",
     "score_character_frames",
     "score_character_image",
-    "select_best_character_images",
     "latest_fullbody_candidate",
     "retry_fullbody_candidate_analysis",
     "AvatarNotFoundError",
@@ -220,6 +221,9 @@ __all__ = [
     "generate_avatar",
     "generate_fullbody_reference",
     "generate_images",
+    "generate_character_images",
+    "scene_generation_wait_seconds",
+    "video_generation_wait_seconds",
     "get_active_avatar",
     "get_avatar_job_lock",
     "get_job",

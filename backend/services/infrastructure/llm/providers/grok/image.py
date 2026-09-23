@@ -50,6 +50,8 @@ class GrokImageGenProvider(ImageGenProvider):
         if not urls:
             raise RuntimeError(f"grok image_gen returned no images: {body}")
 
+        if req.response_format == "url":
+            return ImageGenResult(images=[ImageAsset(url=url) for url in urls], model=self.config.model, raw=body)
         b64s = await asyncio.gather(*(download_as_b64(u) for u in urls))
         assets = [ImageAsset(b64=b, mime="image/png") for b in b64s]
 
@@ -75,6 +77,8 @@ class GrokImageGenProvider(ImageGenProvider):
         if not urls:
             raise RuntimeError(f"grok image_edit returned no images: {body}")
 
+        if req.response_format == "url":
+            return ImageGenResult(images=[ImageAsset(url=url) for url in urls], model=self.config.model, raw=body)
         b64s = await asyncio.gather(*(download_as_b64(u) for u in urls))
         assets = [ImageAsset(b64=b, mime="image/png") for b in b64s]
 

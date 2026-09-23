@@ -48,7 +48,7 @@ class MiniMaxImageGenProvider(ImageGenProvider):
             for b64 in data.get("image_base64", []) or []:
                 assets.append(ImageAsset(b64=b64, mime="image/jpeg"))
         else:
-            for url in data.get("image_url", []) or []:
+            for url in data.get("image_urls", []) or []:
                 assets.append(ImageAsset(url=url, mime="image/jpeg"))
 
         if not assets:

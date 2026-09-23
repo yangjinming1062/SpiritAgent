@@ -123,6 +123,10 @@ def video_job_asset_path(user_id: int, job_id: int, attempt: int) -> str:
 
 def _save_video_job_asset(data: bytes, user_id: int, job_id: int, attempt: int) -> str:
     bare_path = video_job_asset_path(user_id, job_id, attempt)
+    return _save_generation_asset(data, user_id, bare_path)
+
+
+def _save_generation_asset(data: bytes, user_id: int, bare_path: str) -> str:
     user_dir = _assets_root() / str(user_id)
     user_dir.mkdir(parents=True, exist_ok=True)
     target = user_dir / bare_path.rsplit("/", 1)[-1]
@@ -143,6 +147,67 @@ def _save_video_job_asset(data: bytes, user_id: int, job_id: int, attempt: int) 
 async def save_video_job_asset_async(data: bytes, *, user_id: int, job_id: int, attempt: int) -> str:
     """取消时等原子写盘完成；已落盘结果保留给恢复路径，不当作失败清理。"""
     task = asyncio.create_task(asyncio.to_thread(_save_video_job_asset, data, user_id, job_id, attempt))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
+
+
+def action_source_asset_path(user_id: int, generation_id: str, attempt: int, ext: str) -> str:
+    if (
+        user_id <= 0
+        or attempt < 0
+        or ext not in {"mp4", "webm", "mov", "mkv"}
+        or len(generation_id) != 32
+        or any(char not in "0123456789abcdef" for char in generation_id)
+    ):
+        raise ValueError("invalid action source asset key")
+    return f"companion-assets/{user_id}/action_{generation_id}_a{attempt}.{ext}"
+
+
+async def save_action_source_asset_async(
+    data: bytes,
+    *,
+    user_id: int,
+    generation_id: str,
+    attempt: int,
+    ext: str,
+) -> str:
+    path = action_source_asset_path(user_id, generation_id, attempt, ext)
+    task = asyncio.create_task(asyncio.to_thread(_save_generation_asset, data, user_id, path))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
+
+
+def image_chain_asset_path(user_id: int, generation_id: str, attempt: int, slot: int, ext: str) -> str:
+    if (
+        user_id <= 0
+        or attempt < 0
+        or slot < 0
+        or ext not in {"png", "jpg", "webp", "gif"}
+        or len(generation_id) != 32
+        or any(char not in "0123456789abcdef" for char in generation_id)
+    ):
+        raise ValueError("invalid image chain asset key")
+    return f"companion-assets/{user_id}/image_{generation_id}_a{attempt}_s{slot}.{ext}"
+
+
+async def save_image_chain_asset_async(
+    data: bytes,
+    *,
+    user_id: int,
+    generation_id: str,
+    attempt: int,
+    slot: int,
+    ext: str,
+) -> str:
+    """固定候选路径先由任务登记；取消时保留原子写入结果供恢复。"""
+    path = image_chain_asset_path(user_id, generation_id, attempt, slot, ext)
+    task = asyncio.create_task(asyncio.to_thread(_save_generation_asset, data, user_id, path))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:

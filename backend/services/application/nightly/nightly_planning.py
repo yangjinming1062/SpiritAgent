@@ -58,14 +58,16 @@ from services.application.generation import (
     confirm_outfit,
     create_outfit_draft,
     enqueue_video_job,
+    generate_character_images,
     generate_images,
     load_self_visual_context,
     optional_outfit_image_reference,
     prepare_self_video_reference,
     resolve_image_gen_chain,
     resume_scene_generation,
+    scene_generation_wait_seconds,
     schedule_scene_generation,
-    select_best_character_images,
+    video_generation_wait_seconds,
 )
 from services.contracts import MemoryScope
 from services.domains.actions import get_action
@@ -79,7 +81,7 @@ from services.domains.companion import (
     scene_environment,
 )
 from services.domains.journal import create_generated_moment, create_user_moment
-from services.infrastructure.assets import save_companion_asset
+from services.infrastructure.assets import save_companion_asset, unlink_companion_asset
 from services.infrastructure.llm import call_llm_once, resolve_provider_chain, synthesize_speech
 
 logger = get_logger(__name__)
@@ -1099,7 +1101,8 @@ async def _wait_for_scene(
     user_id: int,
     scene_id: int,
 ) -> CompanionScene | None:
-    deadline = monotonic() + _SCENE_WAIT_SECONDS
+    started = monotonic()
+    deadline = started + _SCENE_WAIT_SECONDS
     while monotonic() < deadline:
         async with SESSION_LOCAL() as db:
             row = (
@@ -1116,6 +1119,7 @@ async def _wait_for_scene(
                 SceneStatus.DESCRIPTION_FAILED.value,
             ):
                 return None
+            deadline = max(deadline, started + scene_generation_wait_seconds(row))
             if row.status == SceneStatus.READY.value:
                 return row if row.activated_at is not None else None
         await asyncio.sleep(_POLL_SECONDS)
@@ -1185,9 +1189,12 @@ async def _execute_scene_create(
 
 
 async def _wait_for_video(user_id: int, job_id: int) -> VideoGenJob | None:
-    deadline = monotonic() + (
-        float(SETTINGS.video_gen_max_poll_seconds) * (SETTINGS.character_media_regeneration_max_retries + 1) + 90
-    )
+    async with SESSION_LOCAL() as db:
+        initial = await db.get(VideoGenJob, job_id)
+        if initial is None or initial.user_id != user_id:
+            return None
+        budget = video_generation_wait_seconds(initial)
+    deadline = monotonic() + budget
     while monotonic() < deadline:
         async with SESSION_LOCAL() as db:
             row = (
@@ -1385,33 +1392,28 @@ async def _execute_media_image(
             + "\n"
             + render_character_identity(visual.identity)
         )
-    urls = await generate_images(
-        prompt,
-        size=size if size in _IMAGE_SIZES else "1024x1024",
-        n=1,
-        user_id=user_id,
-        reference_image=identity,
-        secondary_reference_image=outfit,
-        persist_user_assets=True,
-    )
     if parsed_args.depicts_self is True:
-
-        async def regenerate_one() -> str:
-            return (
-                await generate_images(
-                    prompt,
-                    size=size if size in _IMAGE_SIZES else "1024x1024",
-                    n=1,
-                    user_id=user_id,
-                    reference_image=identity,
-                    secondary_reference_image=outfit,
-                    persist_user_assets=True,
-                )
-            )[0]
-
-        urls = await select_best_character_images(user_id, identity, urls, regenerate_one)
+        urls = await generate_character_images(
+            prompt,
+            size=size if size in _IMAGE_SIZES else "1024x1024",
+            user_id=user_id,
+            reference_image=identity,
+            identity_reference=identity,
+            secondary_reference_image=outfit,
+            identity_text=render_character_identity(visual.identity),
+        )
+    else:
+        urls = await generate_images(
+            prompt,
+            size=size if size in _IMAGE_SIZES else "1024x1024",
+            user_id=user_id,
+            persist_user_assets=True,
+        )
+    if parsed_args.depicts_self is True:
         async with SESSION_LOCAL() as db:
             if not await character_snapshot_is_current(db, user_id, visual.identity):
+                for url in urls:
+                    await asyncio.to_thread(unlink_companion_asset, url)
                 result = ActionExecutionResult(status="blocked", reason="角色外形已更新，旧参考生成的图片未发布")
                 await _record_executor_state(context, "blocked", result)
                 return result
@@ -1423,6 +1425,8 @@ async def _execute_media_image(
     if parsed_args.depicts_self is True:
         async with SESSION_LOCAL() as db:
             if not await character_snapshot_is_current(db, user_id, visual.identity):
+                for url in urls:
+                    await asyncio.to_thread(unlink_companion_asset, url)
                 result = ActionExecutionResult(status="blocked", reason="角色外形已更新，旧参考生成的图片未发布")
                 await _record_executor_state(context, "blocked", result)
                 return result
@@ -1495,9 +1499,9 @@ async def _execute_media_video(
                 duration=duration,
                 resolution="768P",
                 first_frame_image=first_frame,
-                model=None,
                 aspect_ratio=aspect_ratio if aspect_ratio in _VIDEO_ASPECT_RATIOS else "16:9",
                 identity_reference_path=visual.reference_path if parsed_args.depicts_self is True else None,
+                identity=visual.identity if parsed_args.depicts_self is True else None,
             )
         job_id = job.id
         if job.status == "result_unknown":

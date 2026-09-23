@@ -81,7 +81,7 @@ def _columns(table: str) -> list[str]:
         return ["nightly_activity_enabled"]
     excluded = {"user_id", "dedup_key"} if table == "messages" else {"user_id"}
     if table == "companion_scenes":
-        excluded.add("result_url")
+        excluded.update({"generation_state_json", "secondary_reference_image"})
     return [column.name for column in TABLE_MODELS[table].__table__.columns if column.name not in excluded]
 
 
@@ -355,7 +355,8 @@ def _build_payload(
             raise ValueError("Scene character reference is missing from backup")
         payload["character_card_json"] = snapshot.model_copy(update={"avatar_id": int(avatar_id)}).model_dump_json()
         payload["auto_activate"] = False
-        payload["result_url"] = ""
+        payload["generation_state_json"] = None
+        payload["secondary_reference_image"] = ""
         if payload.get("status") == "pending":
             payload["status"] = "description_failed" if payload.get("media_path") else "failed"
             payload["error"] = "恢复的场景任务需要手动重试"

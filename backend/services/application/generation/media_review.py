@@ -28,6 +28,15 @@ async def create_media_review(
     publication: dict | None = None,
 ) -> int:
     async with SESSION_LOCAL() as db:
+        existing = await db.scalar(
+            select(CompanionMediaReview).where(
+                CompanionMediaReview.user_id == user_id,
+                CompanionMediaReview.media_type == media_type,
+                CompanionMediaReview.media_url == media_url,
+            ),
+        )
+        if existing is not None and existing.publication == publication:
+            return existing.id
         row = CompanionMediaReview(
             user_id=user_id,
             media_type=media_type,

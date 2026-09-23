@@ -7,6 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from services.infrastructure.video_processing import FullClipWindow, LoopWindow
 
+from ..character_images import ImageChainState
 from .manifest import VideoClipSpec
 
 
@@ -14,6 +15,8 @@ class GenerationContext(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     identity: CharacterCardSnapshot
+    identity_reference_path: str
+    reference_chain: ImageChainState = Field(default_factory=ImageChainState)
     reference_alignment: Literal["pending", "running", "ready"]
     persona_definition: dict[str, str]
     personality_tags: list[str]
@@ -32,4 +35,5 @@ class ActionResult(BaseModel):
 
     clip: VideoClipSpec
     cover_path: str
+    hitmask_path: str = ""
     quality: LoopWindow | FullClipWindow | None = None

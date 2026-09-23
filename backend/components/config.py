@@ -97,12 +97,6 @@ class Settings(BaseSettings):
     video_gen_max_poll_seconds: float = Field(default=900.0, validation_alias="VIDEO_GEN_MAX_POLL_SECONDS")
     video_gen_tool_wait_seconds: float = Field(default=180.0, validation_alias="VIDEO_GEN_TOOL_WAIT_SECONDS")
     video_gen_download_max_bytes: int = Field(default=209715200, validation_alias="VIDEO_GEN_DOWNLOAD_MAX_BYTES")
-    character_media_regeneration_max_retries: int = Field(
-        default=1,
-        ge=0,
-        le=5,
-        validation_alias="CHARACTER_MEDIA_REGENERATION_MAX_RETRIES",
-    )
 
     web_search_backend: str = Field(default="ddgs", validation_alias="WEB_SEARCH_BACKEND")
     web_extract_backend: str = Field(default="tavily", validation_alias="WEB_EXTRACT_BACKEND")

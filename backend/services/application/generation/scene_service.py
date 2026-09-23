@@ -5,7 +5,6 @@ import base64
 import io
 import json
 from datetime import timedelta
-from pathlib import Path
 
 from components import (
     DEFAULT_LANGUAGE,
@@ -15,10 +14,7 @@ from components import (
     SCENE_IMAGES_TOTAL,
     SESSION_LOCAL,
     SETTINGS,
-    download_capped,
-    get_file_path,
     get_logger,
-    log_paid_call,
     parse_llm_json,
     track_user_task,
     utc_now,
@@ -57,15 +53,30 @@ from services.domains.memory import read_user_profile
 from services.infrastructure.assets import asset_store
 from services.infrastructure.llm import resolve_reference_bytes, vision_chat
 
-from .avatar_service import load_avatar_bytes_as_data_uri, load_character_reference_data_uri
-from .identity_review import MEDIA_IDENTITY_ACCEPT_SCORE, score_character_image
-from .image_generation import ImageGenerationError, generate_images
+from .avatar_service import load_character_reference_data_uri
+from .character_images import ImageChainState, generate_character_images
+from .media_chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from .scene_prompt import ScenePromptContext, build_scene_prompt
 
 logger = get_logger(__name__)
 _SCENE_LOCKS: dict[int, asyncio.Lock] = {}
 _INFLIGHT_TASKS: dict[tuple[int, int], asyncio.Task[None]] = {}
 _AUTONOMOUS_ORIGINS = frozenset((SceneOrigin.LLM.value, SceneOrigin.NIGHTLY.value))
+
+
+def scene_generation_wait_seconds(scene: CompanionScene) -> float:
+    state = (
+        ImageChainState.model_validate_json(scene.generation_state_json)
+        if scene.generation_state_json
+        else ImageChainState()
+    )
+    return max(
+        900,
+        len(state.providers)
+        * (2 * SETTINGS.llm_request_timeout_seconds + 120 * max(1, SETTINGS.scene_store_max_attempts))
+        + SETTINGS.llm_request_timeout_seconds
+        + 90,
+    )
 
 
 class SceneError(RuntimeError):
@@ -215,7 +226,7 @@ async def _new_scene(
     notes: str,
     source: str,
     auto_activate: bool,
-    has_reference: bool = False,
+    reference_image: str | None = None,
     outfit_description: str | None = None,
 ) -> CompanionScene:
     outfit_description = (outfit_description or "").strip()
@@ -267,11 +278,12 @@ async def _new_scene(
             prompt=build_scene_prompt(
                 ScenePromptContext(
                     notes=notes,
-                    has_reference_image=has_reference,
+                    has_reference_image=bool(reference_image),
                     outfit_description=outfit_description or "",
                 ),
             ),
             character_card_json=identity.model_dump_json(),
+            secondary_reference_image=reference_image or "",
             seed_portrait_media_id=avatar.seed_fullbody_url,
             auto_activate=auto_activate,
             switch_version=persona.scene_switch_version,
@@ -300,10 +312,10 @@ async def schedule_scene_generation(
         notes=notes or "",
         source=SceneSource.GENERATED.value,
         auto_activate=auto_activate,
-        has_reference=reference_image is not None,
+        reference_image=reference_image,
         outfit_description=outfit_description,
     )
-    _launch_task(row.id, user_id, reference_image=reference_image)
+    _launch_task(row.id, user_id)
     return row
 
 
@@ -386,11 +398,16 @@ async def delete_scene(user_id: int, scene_id: int) -> None:
         if row.status == "pending":
             raise SceneStateError("请先取消场景任务")
         media_path = row.media_path
+        state = (
+            ImageChainState.model_validate_json(row.generation_state_json)
+            if row.generation_state_json
+            else ImageChainState()
+        )
         await db.delete(row)
         _event(db, persona, "companion.scene.updated", scene_id)
         await db.commit()
-    if media_path:
-        await asyncio.to_thread(asset_store.unlink_companion_asset, media_path)
+    for path in {media_path, state.pending_path or "", *(candidate.path for candidate in state.candidates)} - {""}:
+        await asyncio.to_thread(asset_store.unlink_companion_asset, path)
 
 
 async def edit_scene_description(user_id: int, scene_id: int, description: SceneDescriptionRequest) -> CompanionScene:
@@ -441,7 +458,6 @@ async def _save_image(user_id: int, scene_id: int, data: bytes, mime: str) -> No
             if row is None or row.status != "pending":
                 return
             row.media_path = path
-            row.result_url = ""
             row.stage = "analyze"
             _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
             await db.commit()
@@ -463,17 +479,14 @@ async def _scene_image_uri(user_id: int, path: str) -> str:
     return f"data:{mime};base64,{encoded.decode('ascii')}"
 
 
-async def _analyze(user_id: int, scene_id: int) -> bool:
+async def _analyze(user_id: int, scene_id: int) -> None:
     async with SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
         if row is None or row.status != "pending" or not row.media_path:
-            return False
+            return
         path = row.media_path
-        identity_path = row.seed_portrait_media_id
-        generated = row.source == SceneSource.GENERATED.value
-        best_path = row.identity_best_path
-        best_score = row.identity_best_score
-        attempt_count = row.attempt_count
+        review_status = row.identity_review
+        review_reason = row.identity_review_reason
         language = await db.scalar(
             select(UserSetting.setting_value).where(
                 UserSetting.user_id == user_id,
@@ -481,45 +494,6 @@ async def _analyze(user_id: int, scene_id: int) -> bool:
             ),
         )
     data_uri = await _scene_image_uri(user_id, path)
-    selected_path = path
-    review_status = "accepted"
-    review_reason = ""
-    retry = False
-    if generated:
-        identity_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, identity_path)
-        score = await score_character_image(user_id, identity_uri, data_uri)
-        if score is not None and (not best_path or score > best_score):
-            best_path, best_score = path, score
-        elif not best_path:
-            best_path = path
-        retry = (
-            score is not None
-            and score < MEDIA_IDENTITY_ACCEPT_SCORE
-            and attempt_count <= SETTINGS.character_media_regeneration_max_retries
-        )
-        selected_path = best_path
-        review_status = "pass" if best_score >= MEDIA_IDENTITY_ACCEPT_SCORE else "auto_selected"
-        review_reason = f"自动选择可用候选，身份一致性评分 {best_score if best_score >= 0 else '不可用'}"
-        async with _scene_lock(user_id), SESSION_LOCAL() as db:
-            row = await get_scene(db, user_id, scene_id)
-            if row is None or row.status != "pending" or row.media_path != path:
-                return False
-            row.identity_best_path = best_path
-            row.identity_best_score = best_score
-            row.identity_review_reason = review_reason
-            if retry:
-                row.media_path = ""
-                row.result_url = ""
-                row.stage = "retry_pending"
-                _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
-                await db.commit()
-                return True
-            row.media_path = selected_path
-            row.identity_review = review_status
-            row.stage = "analyze"
-            await db.commit()
-        if selected_path != path:
-            data_uri = await _scene_image_uri(user_id, selected_path)
     raw = await vision_chat(
         user_id,
         SCENE_DESCRIBE_SYSTEM,
@@ -529,8 +503,8 @@ async def _analyze(user_id: int, scene_id: int) -> bool:
     description = SceneDescriptionRequest.model_validate(parse_llm_json(raw))
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
-        if row is None or row.status != "pending" or row.media_path != selected_path:
-            return False
+        if row is None or row.status != "pending" or row.media_path != path:
+            return
         row.title = description.title
         row.description = description.description
         row.identity_review = review_status
@@ -554,81 +528,87 @@ async def _analyze(user_id: int, scene_id: int) -> bool:
             _event(db, persona, "companion.scene.activated", scene_id)
         await db.commit()
         SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="ready").inc()
-    return False
+    return
 
 
-async def _run_pipeline(scene_id: int, user_id: int, reference_image: str | None = None) -> None:
-    async with _scene_lock(user_id), SESSION_LOCAL() as db:
+async def _run_pipeline(scene_id: int, user_id: int) -> None:
+    async with SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
         if row is None or row.status != "pending":
             return
-        if row.media_path:
-            analyze = True
-        else:
-            analyze = False
-            result_url = row.result_url
-            prompt = row.prompt
-            avatar = await db.scalar(
-                select(AvatarAsset).where(
-                    AvatarAsset.user_id == user_id,
-                    AvatarAsset.id == CharacterCardSnapshot.model_validate_json(row.character_card_json).avatar_id,
-                ),
+        if row.source == SceneSource.USER_UPLOAD.value and not row.media_path:
+            return
+        state = (
+            ImageChainState.model_validate_json(row.generation_state_json)
+            if row.generation_state_json
+            else ImageChainState()
+        )
+        needs_image = not row.media_path
+        prompt = row.prompt
+        reference_image = row.secondary_reference_image or None
+        identity_uri = state.inputs.identity_reference if state.inputs else None
+        if needs_image and identity_uri is None:
+            avatar = await db.get(
+                AvatarAsset,
+                CharacterCardSnapshot.model_validate_json(row.character_card_json).avatar_id,
             )
-            if not result_url:
-                if row.stage == "submitting":
-                    raise SceneStateError("生图请求结果未知，未重复提交付费请求；请核对后重新创建")
-                if row.source == SceneSource.USER_UPLOAD.value:
-                    return
-                if avatar is None or avatar.seed_fullbody_url != row.seed_portrait_media_id:
-                    raise SceneStateError("身份参考已变化，请重新创建场景")
-                identity_uri = await asyncio.to_thread(load_character_reference_data_uri, avatar)
-                if not identity_uri:
-                    raise SceneStateError("全身参考图无法读取，请重新生成")
-                if row.origin == SceneOrigin.LLM.value:
-                    if row.attempt_count == 0:
+            if avatar is None or avatar.seed_fullbody_url != row.seed_portrait_media_id:
+                raise SceneStateError("身份参考已变化，请重新创建场景")
+            identity_uri = await asyncio.to_thread(load_character_reference_data_uri, avatar)
+            if not identity_uri:
+                raise SceneStateError("全身参考图无法读取，请重新生成")
+
+    async def save_progress(progress: ImageChainState) -> None:
+        async with _scene_lock(user_id), SESSION_LOCAL() as db:
+            fresh = await get_scene(db, user_id, scene_id)
+            if fresh is None or fresh.status != "pending":
+                raise asyncio.CancelledError
+            previous = (
+                ImageChainState.model_validate_json(fresh.generation_state_json)
+                if fresh.generation_state_json
+                else None
+            )
+            if progress.phase == "submitting" and (
+                previous is None or previous.phase != "submitting" or previous.active_index != progress.active_index
+            ):
+                await _check_policy(db, await _persona(db, user_id), fresh.origin)
+                if fresh.origin == SceneOrigin.LLM.value:
+                    if fresh.attempt_count == 0:
                         await _consume_llm_quota(db, user_id)
                     db.add(SceneGenerationAttempt(user_id=user_id, scene_id=scene_id))
-                await _check_policy(db, await _persona(db, user_id), row.origin)
-                row.stage = "submitting"
-                row.attempt_count += 1
-                _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
-                await db.commit()
-    if not analyze:
-        if not result_url:
-            # 提交标记先落库；异常或重启不盲目重发结果未知的付费请求。
-            SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="attempt").inc()
-            urls = await generate_images(
-                prompt + ("\n优先精确保持身份参考中的面容、物种与身体比例。" if row.attempt_count > 1 else ""),
-                size="1792x1024",
-                n=1,
-                user_id=user_id,
-                reference_image=identity_uri,
-                secondary_reference_image=reference_image,
-            )
-            if not urls:
-                raise ImageGenerationError("empty scene result")
-            result_url = urls[0]
-            async with _scene_lock(user_id), SESSION_LOCAL() as db:
-                fresh = await get_scene(db, user_id, scene_id)
-                if fresh is None or fresh.status != "pending":
-                    return
-                fresh.result_url = result_url
-                fresh.stage = "store"
-                _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
-                await db.commit()
-            log_paid_call("scene", "image_generated", user_id=user_id, scene_id=scene_id)
-        # 仅下载可以重试。供应商提交始终只执行一次。
-        for attempt in range(max(1, int(SETTINGS.scene_store_max_attempts))):
-            try:
-                data, mime = await _fetch_image_bytes(result_url)
-                await asyncio.to_thread(_decode_reference_image, data)
-                await _save_image(user_id, scene_id, data, mime)
-                break
-            except Exception:
-                if attempt + 1 >= max(1, int(SETTINGS.scene_store_max_attempts)):
-                    raise
-    if await _analyze(user_id, scene_id):
-        await _run_pipeline(scene_id, user_id, reference_image)
+                fresh.attempt_count += 1
+                SCENE_IMAGES_TOTAL.labels(origin=fresh.origin, result="attempt").inc()
+            fresh.generation_state_json = progress.model_dump_json()
+            fresh.stage = progress.phase
+            best = progress.best()
+            if progress.phase == "complete" and best is not None:
+                fresh.media_path = best.path
+                fresh.stage = "analyze"
+                fresh.identity_review = (
+                    "pass" if best.score is not None and best.score >= MEDIA_IDENTITY_ACCEPT_SCORE else "auto_selected"
+                )
+                fresh.identity_review_reason = (
+                    f"自动选择可用候选，身份一致性评分 {best.score if best.score is not None else '不可用'}"
+                )
+                if progress.stop_reason == "result_unknown":
+                    fresh.identity_review_reason += "；后续提交结果未确认，已停止自动生成"
+            _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+            await db.commit()
+
+    if needs_image:
+        await generate_character_images(
+            prompt,
+            size="1792x1024",
+            user_id=user_id,
+            reference_image=identity_uri,
+            identity_reference=identity_uri,
+            secondary_reference_image=reference_image,
+            state=state,
+            save_progress=save_progress,
+            store_attempts=SETTINGS.scene_store_max_attempts,
+            max_image_bytes=SCENE_DOWNLOAD_MAX_BYTES,
+        )
+    await _analyze(user_id, scene_id)
 
 
 async def _mark_failed(user_id: int, scene_id: int, error: str) -> None:
@@ -645,45 +625,47 @@ async def _mark_failed(user_id: int, scene_id: int, error: str) -> None:
 
 
 async def _restore_best_scene(user_id: int, scene_id: int) -> bool:
-    """中断后只用已落盘最佳图，不在缺少冻结参考或未知提交状态下重发。"""
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
-        if (
-            row is None
-            or row.status != "pending"
-            or row.stage not in ("submitting", "retry_pending")
-            or row.result_url
-            or not row.identity_best_path
-        ):
+        if row is None or row.status != "pending" or row.media_path or not row.generation_state_json:
             return False
-        parsed = asset_store.parse_companion_asset_path(row.identity_best_path)
-        if parsed is None or parsed[0] != user_id or asset_store.resolve_companion_asset_path(*parsed) is None:
+        state = ImageChainState.model_validate_json(row.generation_state_json)
+        best = state.best()
+        if best is None:
             return False
-        row.media_path = row.identity_best_path
+        parsed = asset_store.parse_companion_asset_path(best.path)
+        if parsed is None or asset_store.resolve_companion_asset_path(*parsed) is None:
+            return False
+        state.stop_reason = state.stop_reason or "generation_interrupted"
+        state.phase = "complete"
+        row.generation_state_json = state.model_dump_json()
+        row.media_path = best.path
         row.stage = "analyze"
-        row.attempt_count = max(row.attempt_count, SETTINGS.character_media_regeneration_max_retries + 1)
         row.identity_review = "auto_selected"
-        row.identity_review_reason = "自动重生成的提交结果未确认，保留已知的最佳场景图片"
+        row.identity_review_reason = "后续生成未完成，已保留评分最高的场景图片"
         _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
         await db.commit()
-        return True
+    for candidate in state.candidates:
+        if candidate.path != best.path:
+            await asyncio.to_thread(asset_store.unlink_companion_asset, candidate.path)
+    return True
 
 
-def _launch_task(scene_id: int, user_id: int, *, reference_image: str | None = None) -> None:
+def _launch_task(scene_id: int, user_id: int) -> None:
     existing = _INFLIGHT_TASKS.get((user_id, scene_id))
     if existing is not None and not existing.done() and not existing.cancelling():
         return
 
     async def runner() -> None:
         try:
-            await _run_pipeline(scene_id, user_id, reference_image)
+            await _run_pipeline(scene_id, user_id)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             logger.exception("scene pipeline failed", extra={"scene_id": scene_id, "user_id": user_id})
             if await _restore_best_scene(user_id, scene_id):
                 try:
-                    await _run_pipeline(scene_id, user_id, reference_image)
+                    await _run_pipeline(scene_id, user_id)
                     return
                 except Exception:
                     logger.exception("best scene recovery failed", extra={"scene_id": scene_id, "user_id": user_id})
@@ -714,14 +696,13 @@ def _launch_task(scene_id: int, user_id: int, *, reference_image: str | None = N
 async def resume_scene_generation(user_id: int, scene_id: int) -> bool:
     if (task := _INFLIGHT_TASKS.get((user_id, scene_id))) is not None and not task.done():
         return True
-    await _restore_best_scene(user_id, scene_id)
     async with SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
         if row is None or row.status != "pending":
             return False
         if row.stage == "waiting_upload":
             return True
-        resumable = bool(row.media_path or row.result_url or row.stage == "retry_pending")
+        resumable = bool(row.media_path or row.generation_state_json or row.stage == "prepare")
     if resumable:
         _launch_task(scene_id, user_id)
     else:
@@ -829,14 +810,3 @@ async def _prepare_reference_image(reference: str) -> str:
         raise SceneError("参考图无法读取，请选择有效图片") from exc
     encoded = await asyncio.to_thread(base64.b64encode, data)
     return f"data:{mime};base64,{encoded.decode('ascii')}"
-
-
-async def _fetch_image_bytes(url: str) -> tuple[bytes, str]:
-    if "/api/media/files/" in url:
-        fid = url.rsplit("/", 1)[-1].split("?", maxsplit=1)[0]
-        result = get_file_path(fid)
-        if result:
-            path, mime = result
-            return await asyncio.to_thread(Path(path).read_bytes), mime
-    data = await download_capped(url, max_bytes=SCENE_DOWNLOAD_MAX_BYTES, timeout=120.0)
-    return await asyncio.to_thread(_decode_reference_image, data)

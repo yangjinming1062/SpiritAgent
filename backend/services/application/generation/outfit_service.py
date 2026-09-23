@@ -40,25 +40,30 @@ from services.domains.companion import (
     render_character_identity,
     require_character_snapshot,
 )
+from services.infrastructure.assets import unlink_companion_asset
 from services.infrastructure.llm import (
     build_image_edit_prompt,
     build_outfit_prompt,
     chat,
     describe_garment_image,
+    is_content_policy_error_message,
 )
 
 from .avatar_service import (
     _FULLBODY_ASPECT,
     _FULLBODY_SIZE,
-    _generate_one_portrait_with_moderation_retry,
+    AvatarGenerationError,
     _persist_portrait_bytes,
     _persist_portrait_or_draft,
     _read_temp_media_bytes,
+    _sanitize_prompt_for_moderation,
     delete_portrait_file,
     get_avatar_job_lock,
     load_avatar_bytes_as_data_uri,
     resolve_uploaded_avatar_path,
 )
+from .character_images import generate_character_images, image_asset_bytes
+from .image_generation import ImageGenerationError
 from .response_builders import outfit_response
 
 logger = get_logger(__name__)
@@ -254,17 +259,40 @@ async def _generate_outfit_fullbody(
     *,
     prompt: str,
     reference_image: str,
+    identity_reference: str,
+    identity: CharacterCardSnapshot,
     image_edit: bool = False,
 ) -> str:
-    draft_url, _, _, _ = await _generate_one_portrait_with_moderation_retry(
-        prompt,
-        user_id,
-        reference_image=reference_image,
-        size=_FULLBODY_SIZE,
-        persist=False,
-        image_edit=image_edit,
-    )
-    return draft_url
+    async def generate(text: str) -> list[str]:
+        return await generate_character_images(
+            text,
+            user_id=user_id,
+            reference_image=reference_image,
+            identity_reference=identity_reference,
+            identity_text=render_character_identity(identity),
+            size=_FULLBODY_SIZE,
+            image_edit=image_edit,
+        )
+
+    try:
+        try:
+            paths = await generate(prompt)
+        except ImageGenerationError as exc:
+            if exc.result_unknown or not is_content_policy_error_message(exc.internal):
+                raise
+            sanitized = await _sanitize_prompt_for_moderation(user_id, prompt)
+            if sanitized == prompt:
+                raise
+            paths = await generate(sanitized)
+    except ImageGenerationError as exc:
+        raise AvatarGenerationError(str(exc), internal=exc.internal) from exc
+    try:
+        data, mime = await image_asset_bytes(paths[0])
+        draft_url, _, _ = await _persist_portrait_or_draft(data, user_id, mime, persist=False)
+        return draft_url
+    finally:
+        for path in paths:
+            await asyncio.to_thread(unlink_companion_asset, path)
 
 
 async def create_outfit_draft(
@@ -317,6 +345,8 @@ async def create_outfit_draft(
         user_id,
         prompt=prompt,
         reference_image=identity_uri,
+        identity_reference=identity_uri,
+        identity=identity,
     )
 
     async with get_avatar_job_lock(user_id):
@@ -394,6 +424,8 @@ async def regenerate_outfit_draft(
         user_id,
         prompt=prompt,
         reference_image=reference_uri,
+        identity_reference=await _require_fullbody_seed_readable(avatar),
+        identity=identity,
         image_edit=mode == "edit",
     )
 

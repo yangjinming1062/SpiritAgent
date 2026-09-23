@@ -19,7 +19,8 @@ from services.infrastructure.assets import unlink_companion_asset
 from services.infrastructure.llm import resolve_reference_bytes
 
 from .avatar_service import AvatarSourceUnreadableError, load_avatar_bytes_as_data_uri
-from .image_generation import ImageGenerationError, generate_images, resolve_image_gen_chain
+from .character_images import ImageChainState, ImageProgressWriter, generate_character_images
+from .image_generation import ImageGenerationError, resolve_image_gen_chain
 
 
 @dataclass(frozen=True)
@@ -105,6 +106,9 @@ async def align_character_reference(
     outfit_description: str,
     *,
     preserve_frame: bool = False,
+    identity_reference: str,
+    state: ImageChainState | None = None,
+    save_progress: ImageProgressWriter | None = None,
 ) -> str:
     """返回本次生成独有的持久参考；调用者承担保存或回收，不改变原图。"""
     size = "1024x1792"
@@ -118,7 +122,7 @@ async def align_character_reference(
 
         size = await asyncio.to_thread(frame_size)
     template = CHARACTER_FRAME_ALIGN if preserve_frame else CHARACTER_REFERENCE_ALIGN
-    paths = await generate_images(
+    paths = await generate_character_images(
         template.format(
             identity=render_character_identity(identity),
             outfit=outfit_description or "沿用原图可见造型",
@@ -129,7 +133,10 @@ async def align_character_reference(
         reference_image=reference_image,
         size=size,
         image_edit=True,
-        persist_user_assets=True,
+        identity_reference=identity_reference,
+        identity_text=render_character_identity(identity),
+        state=state,
+        save_progress=save_progress,
     )
     return paths[0]
 
@@ -165,6 +172,7 @@ async def prepare_self_video_reference(plan: SelfVisualPlan, user_id: int, frame
         context.identity,
         plan.override_outfit_description if frame is not None else plan_outfit_description(plan),
         preserve_frame=frame is not None,
+        identity_reference=context.reference_image,
     )
     try:
         result = await asyncio.to_thread(load_avatar_bytes_as_data_uri, path)

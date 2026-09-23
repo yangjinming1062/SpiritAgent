@@ -18,7 +18,6 @@ import hashlib
 import json
 import tempfile
 from collections.abc import Callable
-from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 
@@ -51,10 +50,13 @@ from services.domains.companion import (
     character_snapshot_is_current,
     get_or_create_persona,
     load_persona_definition,
+    render_character_identity,
     render_character_profile,
     require_character_snapshot,
 )
 from services.infrastructure.assets import (
+    action_source_asset_path,
+    save_action_source_asset_async,
     save_companion_asset_async,
     signed_companion_asset_url,
     sniff_media_ext,
@@ -93,8 +95,17 @@ from services.infrastructure.video_processing import (
 )
 
 from ..avatar_service import get_avatar_job_lock, load_avatar_bytes_as_data_uri
-from ..identity_review import review_character_frames
-from ..image_generation import ImageGenerationError, generate_images, resolve_image_gen_chain
+from ..character_images import ImageChainState, generate_character_images
+from ..identity_review import review_character_frames, score_character_frames
+from ..image_generation import ImageGenerationError, resolve_image_gen_chain
+from ..media_chain import (
+    FrozenMediaProvider,
+    MediaCandidate,
+    MediaChainState,
+    MediaProviderFailedError,
+    media_failure_reason,
+    resolve_frozen_media_provider,
+)
 from ..media_review import create_media_review
 from ..visual_identity import align_character_reference, needs_identity_alignment
 from .manifest import (
@@ -290,7 +301,7 @@ async def create_pack_from_reference(
     仅在包尚未 ready 时形成新版本并复用冻结参考。"""
     if (source_pack_id is None) != (action is None):
         raise VideoPackStateError("单动作请求必须指定有效视频包与动作")
-    async with get_avatar_job_lock(user_id):
+    async with get_avatar_job_lock(user_id), contextlib.AsyncExitStack() as pending_assets:
         persona = await get_or_create_persona(db, user_id)
         if not persona.is_complete:
             raise VideoPackStateError("请先完成 onboarding")
@@ -417,6 +428,7 @@ async def create_pack_from_reference(
                 label="video_reference",
                 ext=sniff_media_ext(reference_data) or "png",
             )
+            pending_assets.callback(unlink_companion_asset, reference_path)
         active_outfit_id = (
             await db.execute(
                 select(CompanionOutfit.id).where(CompanionOutfit.user_id == user_id, CompanionOutfit.active.is_(True)),
@@ -432,8 +444,23 @@ async def create_pack_from_reference(
         else:
             outfit_source = safe_json_loads(outfit.source_json, default={})
             applied_revision = outfit_source.get("character_card_revision") if isinstance(outfit_source, dict) else None
+            identity_uri = await _process_thread(
+                load_avatar_bytes_as_data_uri,
+                avatar.seed_fullbody_url if avatar else "",
+            )
+            if not identity_uri:
+                raise VideoPackStateError("全身身份参考无法读取")
+            identity_data = await _process_thread(base64.b64decode, identity_uri.split(",", 1)[1])
+            identity_reference_path = await save_companion_asset_async(
+                identity_data,
+                user_id=user_id,
+                label="video_identity",
+                ext=sniff_media_ext(identity_data) or "png",
+            )
+            pending_assets.callback(unlink_companion_asset, identity_reference_path)
             context = GenerationContext(
                 identity=identity,
+                identity_reference_path=identity_reference_path,
                 reference_alignment="pending" if needs_identity_alignment(identity, applied_revision) else "ready",
                 persona_definition={
                     key: value for key, value in load_persona_definition(persona).items() if key != "appearance"
@@ -488,6 +515,8 @@ async def create_pack_from_reference(
                     "provider",
                     "model",
                     "provider_task_id",
+                    "generation_state_json",
+                    "pose_generation_state_json",
                     "input_hash",
                     "script_json",
                     "artifact_path",
@@ -524,6 +553,7 @@ async def create_pack_from_reference(
         context = context.model_copy(update={"must_actions": sorted(must_actions, key=_action_order)})
         pack.context_json = context.model_dump_json()
         await db.commit()
+        pending_assets.pop_all()
         await db.refresh(pack)
     _kick_generate(pack.id, user_id)
     return pack
@@ -537,8 +567,23 @@ def _action_order(action: str) -> tuple[int, str]:
 def _can_resume_job(job: CompanionVideoJob) -> bool:
     if job.status in ("succeeded", "review") or job.stage == "merged":
         return False
+    if job.generation_state_json:
+        state = MediaChainState.model_validate_json(job.generation_state_json)
+        if (state.phase == "submitting" or state.stop_reason == "result_unknown") and state.best() is None:
+            return False
+        if state.phase == "ready" and not state.needs_next() and state.best() is None:
+            return False
+    if job.pose_generation_state_json:
+        pose = ImageChainState.model_validate_json(job.pose_generation_state_json)
+        if (pose.phase == "submitting" or pose.stop_reason == "result_unknown") and pose.best() is None:
+            return False
     return bool(
-        job.provider_task_id or job.artifact_path or job.stage == "script" or (job.stage == "pose" and job.pose_path),
+        job.provider_task_id
+        or job.artifact_path
+        or job.generation_state_json
+        or job.pose_generation_state_json
+        or job.stage == "script"
+        or (job.stage == "pose" and job.pose_path),
     )
 
 
@@ -584,7 +629,7 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionV
         context = _load_generation_context(pack)
         if context is None:
             raise VideoPackStateError("该视频包缺少有效生成上下文，请生成完整新包")
-        if context.reference_alignment == "running":
+        if context.reference_chain.phase == "submitting" and context.reference_chain.best() is None:
             raise VideoPackStateError("参考图生成结果未知，请核对后生成完整新包")
         jobs = list(
             (await db.execute(select(CompanionVideoJob).where(CompanionVideoJob.pack_id == pack_id))).scalars(),
@@ -752,6 +797,7 @@ async def _prepare_clip_spec(
         label=f"video_{action}",
         ext="webm",
     )
+    saved = [stored]
     try:
         cover_stored = await save_companion_asset_async(
             await _process_thread(cover.read_bytes),
@@ -759,6 +805,7 @@ async def _prepare_clip_spec(
             label=f"video_{action}_cover",
             ext="webp",
         )
+        saved.append(cover_stored)
         hitmask_stored = await save_companion_asset_async(
             json.dumps(hitmask, ensure_ascii=False).encode("utf-8"),
             user_id=user_id,
@@ -766,7 +813,8 @@ async def _prepare_clip_spec(
             ext="json",
         )
     except BaseException:
-        unlink_companion_asset(stored)
+        for path in saved:
+            unlink_companion_asset(path)
         raise
     return (
         VideoClipSpec(
@@ -797,7 +845,9 @@ async def _advance_job(job_id: int, *, stage: str, status: str = "processing", *
     """推进生成任务行阶段；终态行不再被覆写。"""
     async with SESSION_LOCAL() as db:
         job = await db.get(CompanionVideoJob, job_id)
-        if job is None or job.status in ("succeeded", "review", "failed"):
+        if job is None or job.status == "cancelled":
+            raise asyncio.CancelledError
+        if job.status in ("succeeded", "review", "failed"):
             return
         job.status = status
         job.stage = stage
@@ -870,14 +920,8 @@ async def _publish_ready(
         generated = pack.context_json is not None
         if generated:
             context = _load_generation_context(pack)
-            avatar = await db.get(AvatarAsset, context.identity.avatar_id) if context is not None else None
-            if (
-                context is not None
-                and avatar is not None
-                and avatar.user_id == user_id
-                and await character_snapshot_is_current(db, user_id, context.identity)
-            ):
-                reference_path = avatar.seed_fullbody_url
+            if context is not None:
+                reference_path = context.identity_reference_path
     if generated and cover_path:
         try:
             reference_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, reference_path)
@@ -904,6 +948,7 @@ async def _publish_ready(
                 reference_uri,
                 tuple(frame_uris),
                 pack_wide=True,
+                identity_text=render_character_identity(context.identity) if context else "",
             )
         except Exception:
             logger.warning("video pack identity review failed", extra={"pack_id": pack_id}, exc_info=True)
@@ -1184,53 +1229,38 @@ async def _video_providers(
 async def _prepare_pack_identity(pack: CompanionVideoPack, context: GenerationContext) -> GenerationContext:
     if context.reference_alignment == "ready":
         return context
-    if context.reference_alignment == "running":
-        raise VideoPackStateError("参考图生成结果未知，请核对后生成完整新包")
-    async with SESSION_LOCAL() as db:
-        avatar = await db.get(AvatarAsset, context.identity.avatar_id)
-        current_identity = await character_snapshot_is_current(db, pack.user_id, context.identity)
-        seed_path = avatar.seed_fullbody_url if avatar is not None and avatar.user_id == pack.user_id else None
-    source = (
-        await asyncio.to_thread(load_avatar_bytes_as_data_uri, seed_path)
-        if current_identity
-        else await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    source = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
+
+    async def save_progress(state: ImageChainState) -> None:
+        context.reference_chain = state
+        context.reference_alignment = "running"
+        async with SESSION_LOCAL() as db:
+            row = await db.get(CompanionVideoPack, pack.id)
+            if row is None or row.status != "processing":
+                raise asyncio.CancelledError
+            row.context_json = context.model_dump_json()
+            await db.commit()
+
+    path = await align_character_reference(
+        pack.user_id,
+        source,
+        context.identity,
+        context.outfit_description,
+        identity_reference=source,
+        state=context.reference_chain,
+        save_progress=save_progress,
     )
-    if not source:
-        raise VideoPackStateError("当前全身形象无法读取，请先修复参考图")
-    context.reference_alignment = "running"
+    previous_path = pack.reference_path
     async with SESSION_LOCAL() as db:
         row = await db.get(CompanionVideoPack, pack.id)
         if row is None or row.status != "processing":
             raise VideoPackStateError("视频任务已失效")
+        context.reference_alignment = "ready"
+        row.reference_path = path
         row.context_json = context.model_dump_json()
         await db.commit()
-    try:
-        path = await align_character_reference(pack.user_id, source, context.identity, context.outfit_description)
-    except ImageGenerationError as exc:
-        if not exc.result_unknown:
-            async with SESSION_LOCAL() as db:
-                row = await db.get(CompanionVideoPack, pack.id)
-                if row is not None and row.status == "processing":
-                    context.reference_alignment = "pending"
-                    row.context_json = context.model_dump_json()
-                    await db.commit()
-        raise
-    previous_path = pack.reference_path
-    try:
-        async with SESSION_LOCAL() as db:
-            row = await db.get(CompanionVideoPack, pack.id)
-            if row is None or row.status != "processing":
-                raise VideoPackStateError("视频任务已失效")
-            context.reference_alignment = "ready"
-            row.reference_path = path
-            row.context_json = context.model_dump_json()
-            await db.commit()
-    except BaseException:
-        unlink_companion_asset(path)
-        raise
     pack.reference_path = path
     pack.context_json = context.model_dump_json()
-    # 只有新整包进入此阶段，旧包的共享参考不在此处回收。
     unlink_companion_asset(previous_path)
     return context
 
@@ -1394,14 +1424,224 @@ async def _generate_action(pack: CompanionVideoPack, job: CompanionVideoJob) -> 
     await _run_action_pipeline(pack, job, entry, context)
 
 
+async def _action_frames(spec: VideoClipSpec) -> tuple[str, ...]:
+    frames: list[str] = []
+    with tempfile.TemporaryDirectory(prefix="action-identity-") as directory:
+        for index, second in enumerate((0.0, spec.duration_ms / 2000, max(0.0, spec.duration_ms / 1000 - 0.15))):
+            frame = Path(directory) / f"{index}.webp"
+            await _process_thread(
+                extract_cover,
+                _artifact_abs_path(spec.path),
+                frame,
+                canvas_w=_DEFAULT_CANVAS[0],
+                canvas_h=_DEFAULT_CANVAS[1],
+                at_seconds=second,
+            )
+            frames.append(await _process_thread(_image_data_uri, frame))
+    return tuple(frames)
+
+
 async def _run_action_pipeline(
     pack: CompanionVideoPack,
     job: CompanionVideoJob,
     entry: ActionScriptEntry,
     context: GenerationContext,
 ) -> None:
-    """姿态 → 提交 → 轮询 → 下载 → 抠像 → 验收 → 落库；整包与动态动作共用。"""
+    state = (
+        MediaChainState.model_validate_json(job.generation_state_json)
+        if job.generation_state_json
+        else MediaChainState()
+    )
+    if not state.providers:
+        providers = await _video_providers(
+            pack.user_id,
+            needs_loop_frames=entry.clip_kind == "loop",
+            duration_seconds=entry.duration_seconds,
+        )
+        state.providers = [FrozenMediaProvider.from_config(config) for config, _ in providers]
+        job.generation_state_json = state.model_dump_json()
+        await _advance_job(job.id, stage=job.stage, generation_state_json=job.generation_state_json)
+    identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
+    reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    if not job.pose_path:
+        if job.action == "idle":
+            job.pose_path = pack.reference_path
+        else:
+            pose_state = (
+                ImageChainState.model_validate_json(job.pose_generation_state_json)
+                if job.pose_generation_state_json
+                else ImageChainState()
+            )
 
+            async def save_pose(progress: ImageChainState) -> None:
+                job.pose_generation_state_json = progress.model_dump_json()
+                job.stage = "pose"
+                await _advance_job(job.id, stage="pose", pose_generation_state_json=job.pose_generation_state_json)
+
+            paths = await generate_character_images(
+                build_pose_prompt(entry, context.identity),
+                user_id=pack.user_id,
+                reference_image=reference_uri,
+                identity_reference=identity_uri,
+                identity_text=render_character_identity(context.identity),
+                size="1024x1792",
+                image_edit=True,
+                state=pose_state,
+                save_progress=save_pose,
+            )
+            job.pose_path = paths[0]
+        await _advance_job(job.id, stage="pose", pose_path=job.pose_path)
+
+    async def save_state() -> None:
+        job.generation_state_json = state.model_dump_json()
+        await _advance_job(job.id, stage=job.stage, generation_state_json=job.generation_state_json)
+
+    if state.phase == "submitting":
+        state.stop_reason = "result_unknown"
+        await save_state()
+    while state.phase != "complete" and not state.stop_reason:
+        if state.phase == "ready":
+            if not state.needs_next():
+                break
+            index = state.next_index
+            config = await resolve_frozen_media_provider(pack.user_id, "video_gen", state.providers[index])
+            if config is None:
+                state.next_index += 1
+                await save_state()
+                continue
+            state.begin(index)
+            job.provider, job.model = config.provider_name, config.model
+            job.provider_task_id = None
+            job.artifact_path = None
+            job.stage = "submit"
+            job.generation_state_json = state.model_dump_json()
+            await _advance_job(
+                job.id,
+                stage="submit",
+                generation_state_json=job.generation_state_json,
+                provider=job.provider,
+                model=job.model,
+                provider_task_id=None,
+                artifact_path=None,
+            )
+        try:
+            if state.phase != "evaluating":
+                result = await _run_action_attempt(pack, job, entry, context, state)
+                candidate = MediaCandidate(
+                    path=result.clip.path,
+                    attempt=state.active_index or 0,
+                    result_json=result.model_dump_json(),
+                    artifacts=[job.artifact_path, result.clip.path, result.cover_path, result.hitmask_path],
+                )
+                state.candidates.append(candidate)
+                state.phase = "evaluating"
+                await save_state()
+            candidate = next(item for item in state.candidates if item.attempt == state.active_index)
+            if not candidate.evaluated:
+                result = ActionResult.model_validate_json(candidate.result_json)
+                try:
+                    frames = await _action_frames(result.clip)
+                    score = await score_character_frames(
+                        pack.user_id,
+                        identity_uri,
+                        frames,
+                        identity_text=render_character_identity(context.identity),
+                    )
+                except Exception:
+                    logger.warning("action identity score unavailable", extra={"action_id": job.id}, exc_info=True)
+                    score = None
+                state.accept_score(candidate, score)
+            state.phase = "ready"
+            await save_state()
+        except Exception as exc:
+            reason, can_continue = media_failure_reason(exc)
+            # 只有明确未提交成功的 API 错误允许技术回退；轮询、下载、后处理继续原任务。
+            if (state.phase == "submitting" and can_continue) or isinstance(exc, MediaProviderFailedError):
+                state.phase = "ready"
+                await save_state()
+                continue
+            if state.best() is None and state.phase != "submitting":
+                await save_state()
+                raise
+            state.stop_reason = reason
+            await save_state()
+            if state.best() is None:
+                raise
+            break
+    best = state.best()
+    if best is None:
+        if state.stop_reason == "result_unknown":
+            raise ProviderResultUnknownError("POST", "video_gen")
+        raise VideoPackError("视频供应商链未返回可用素材")
+    unused_source = job.artifact_path
+    result = ActionResult.model_validate_json(best.result_json)
+    spec = result.clip
+    review_id = None
+    if pack.status == "ready":
+        try:
+            frames = await _action_frames(spec)
+            verdict, reason = await review_character_frames(
+                pack.user_id,
+                identity_uri,
+                frames,
+                identity_text=render_character_identity(context.identity),
+            )
+        except Exception:
+            verdict, reason = "review", "动作视频的自动检查未完成，请预览确认"
+        if verdict == "review":
+            review_id = await create_media_review(
+                pack.user_id,
+                "video",
+                spec.path,
+                reason,
+                publication={
+                    "kind": "action",
+                    "pack_id": pack.id,
+                    "action_id": job.id,
+                    "title": job.name or job.action,
+                },
+            )
+    state.finish()
+    job.generation_state_json = state.model_dump_json()
+    await _advance_job(
+        job.id,
+        stage="publish",
+        status="review" if review_id else "succeeded",
+        generation_state_json=job.generation_state_json,
+        result_path=spec.path,
+        result_json=result.model_dump_json(),
+        artifact_path=best.artifacts[0],
+        provider=state.providers[best.attempt].provider,
+        model=state.providers[best.attempt].model,
+        provider_task_id=None,
+        video_path=spec.path,
+        video_hash=spec.sha256,
+        actual_duration_ms=spec.duration_ms,
+        frames=spec.frames,
+        loopable=entry.clip_kind == "loop",
+        cover_path=result.cover_path,
+        hitmask_path=result.hitmask_path,
+        hitmask_grid_w=HITMASK_GRID_W,
+        hitmask_grid_h=HITMASK_GRID_H,
+        hitmask_fps=HITMASK_FPS,
+        error="后续提交结果未确认，已保留最佳素材" if state.stop_reason == "result_unknown" else None,
+    )
+    keep = set(best.artifacts) | {pack.reference_path, context.identity_reference_path, job.pose_path}
+    if unused_source and unused_source not in keep:
+        await asyncio.to_thread(unlink_companion_asset, unused_source)
+    for candidate in state.candidates:
+        for path in candidate.artifacts:
+            if path not in keep:
+                await asyncio.to_thread(unlink_companion_asset, path)
+
+
+async def _run_action_attempt(
+    pack: CompanionVideoPack,
+    job: CompanionVideoJob,
+    entry: ActionScriptEntry,
+    context: GenerationContext,
+    state: MediaChainState,
+) -> ActionResult:
     async def progress(stage: str) -> None:
         job.stage = stage
         await _advance_job(job.id, stage=stage)
@@ -1411,93 +1651,73 @@ async def _run_action_pipeline(
             {"packId": pack.id, "stage": stage, "action": job.action},
         )
 
+    if not job.artifact_path and state.source_path and _artifact_abs_path(state.source_path).is_file():
+        job.artifact_path = state.source_path
+        await _advance_job(job.id, stage="process", artifact_path=job.artifact_path)
     if not job.artifact_path:
-        if not job.provider_task_id:
-            providers = await _video_providers(
-                pack.user_id,
-                needs_loop_frames=entry.clip_kind == "loop",
-                duration_seconds=entry.duration_seconds,
-            )
-            if job.stage == "submit":
-                raise VideoPackError("提交结果未知，未自动重发；请核对供应商任务")
-            reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
-            if not job.pose_path:
-                if job.action == "idle":
-                    job.pose_path = pack.reference_path
-                else:
-                    if job.stage == "pose":
-                        raise VideoPackError("动作姿态生成结果未知，请核对后重做此动作")
-                    await progress("pose")
-                    paths = await generate_images(
-                        build_pose_prompt(entry, context.identity),
-                        user_id=pack.user_id,
-                        reference_image=reference_uri,
-                        size="1024x1792",
-                        image_edit=True,
-                        persist_user_assets=True,
+        if not state.result_url:
+            config = await resolve_frozen_media_provider(pack.user_id, "video_gen", state.providers[state.active_index])
+            if config is None:
+                raise VideoPackError("视频供应商配置已变更，原任务无法继续")
+            provider = resolve(ServiceType.video_gen, config.provider_name)(config)
+            if not job.provider_task_id:
+                pose_uri = await _process_thread(_image_data_uri, _artifact_abs_path(job.pose_path))
+                reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+
+                async def submit(current: VideoGenProvider) -> VideoJobStatus:
+                    status = await current.submit(
+                        VideoGenRequest(
+                            prompt=build_video_prompt(entry, context.identity),
+                            duration=int(round(entry.duration_seconds)),
+                            resolution=_action_resolution(current) or "720p",
+                            first_frame_image=pose_uri,
+                            last_frame_image=pose_uri if entry.clip_kind == "loop" else None,
+                            reference_images=(reference_uri,) if current.supports_reference_images else (),
+                        ),
                     )
-                    job.pose_path = paths[0]
-                await _advance_job(job.id, stage="pose", pose_path=job.pose_path)
-            pose_uri = (
-                reference_uri
-                if job.pose_path == pack.reference_path
-                else await _process_thread(_image_data_uri, _artifact_abs_path(job.pose_path))
-            )
-            submitted: dict[str, str] = {}
+                    if not status.task_id:
+                        raise ProviderResultUnknownError("POST", config.base_url)
+                    return status
 
-            async def submit(provider: VideoGenProvider) -> VideoJobStatus:
-                submitted.update(provider=provider.provider_name, model=provider.config.model)
-                # once 动作只约束身份与起始状态，不强制首尾同帧；
-                # loop 动作首末帧锚定同一姿态关键帧。
-                anchor_last = entry.clip_kind == "loop"
-                return await provider.submit(
-                    VideoGenRequest(
-                        prompt=build_video_prompt(entry, context.identity),
-                        duration=int(round(entry.duration_seconds)),
-                        resolution=_action_resolution(provider) or "720p",
-                        first_frame_image=pose_uri,
-                        last_frame_image=pose_uri if anchor_last else None,
-                        reference_images=(reference_uri,) if provider.supports_reference_images else (),
-                    ),
+                status = await execute_with_fallback(None, pack.user_id, "video_gen", call_fn=submit, _chain=[config])
+                job.provider_task_id = status.task_id
+                state.phase = "processing"
+                job.generation_state_json = state.model_dump_json()
+                await _advance_job(
+                    job.id,
+                    stage="generate",
+                    provider_task_id=job.provider_task_id,
+                    generation_state_json=job.generation_state_json,
                 )
-
-            await progress("submit")
-            status = await execute_with_fallback(
-                None,
-                pack.user_id,
-                "video_gen",
-                call_fn=submit,
-                _chain=[cfg for cfg, _ in providers],
-            )
-            if not status.task_id:
-                raise ProviderResultUnknownError("视频提交未返回任务句柄")
-            job.provider, job.model, job.provider_task_id = submitted["provider"], submitted["model"], status.task_id
-            await _advance_job(
-                job.id,
-                stage="generate",
-                provider=job.provider,
-                model=job.model,
-                provider_task_id=job.provider_task_id,
-            )
-        await progress("generate")
-        provider = await _pinned_provider(pack.user_id, job.provider, job.model or "")
-        status = await _poll_generation(provider, job.provider_task_id)
-        if status.status != "succeeded":
-            raise VideoPackError(_provider_failure_copy(status.error))
+            if state.phase != "storing":
+                await progress("generate")
+                status = await _poll_generation(provider, job.provider_task_id)
+                if status.status != "succeeded":
+                    raise MediaProviderFailedError(_provider_failure_copy(status.error))
+                state.result_url = status.download_url
+                state.result_file_id = status.file_id
+                state.phase = "storing"
+                job.generation_state_json = state.model_dump_json()
+                await _advance_job(job.id, stage="download", generation_state_json=job.generation_state_json)
+            if not state.result_url and state.result_file_id:
+                state.result_url = (await provider.fetch(state.result_file_id)).download_url
+            job.generation_state_json = state.model_dump_json()
+            await _advance_job(job.id, stage="download", generation_state_json=job.generation_state_json)
         await progress("download")
-        url = status.download_url
-        if not url and status.file_id:
-            url = (await provider.fetch(status.file_id)).download_url
-        if not url:
+        if not state.result_url:
             raise VideoPackError("供应商未返回视频下载地址")
-        data = await download_capped(url, max_bytes=MAX_SOURCE_BYTES, timeout=180)
+        data = await download_capped(state.result_url, max_bytes=MAX_SOURCE_BYTES, timeout=180)
         ext = sniff_media_ext(data)
         if ext not in _SOURCE_MEDIA_EXTS:
             raise VideoPackError("供应商返回了不支持的视频格式")
-        job.artifact_path = await save_companion_asset_async(
+        state.source_path = action_source_asset_path(pack.user_id, state.generation_id, state.active_index, ext)
+        job.generation_state_json = state.model_dump_json()
+        await _advance_job(job.id, stage="download", generation_state_json=job.generation_state_json)
+        job.artifact_path = await save_action_source_asset_async(
             data,
             user_id=pack.user_id,
-            label=f"video_{job.action}_source",
+            generation_id=state.generation_id,
+            attempt=state.active_index,
             ext=ext,
         )
         await _advance_job(job.id, stage="process", artifact_path=job.artifact_path)
@@ -1520,75 +1740,7 @@ async def _run_action_pipeline(
             start=loop.start,
             end=loop.end,
         )
-        review_id = None
-        if pack.status == "ready":
-            try:
-                reference_uri = await _process_thread(load_avatar_bytes_as_data_uri, pack.reference_path)
-                frame_uris: list[str] = []
-                for index, second in enumerate(
-                    (0.0, spec.duration_ms / 2000, max(0.0, spec.duration_ms / 1000 - 0.15)),
-                ):
-                    frame = work / f"identity-{index}.webp"
-                    await _process_thread(
-                        extract_cover,
-                        _artifact_abs_path(spec.path),
-                        frame,
-                        canvas_w=_DEFAULT_CANVAS[0],
-                        canvas_h=_DEFAULT_CANVAS[1],
-                        at_seconds=second,
-                    )
-                    frame_uris.append(await _process_thread(_image_data_uri, frame))
-                verdict, reason = await review_character_frames(pack.user_id, reference_uri, tuple(frame_uris))
-            except Exception:
-                logger.warning("dynamic action identity review failed", extra={"action_id": job.id}, exc_info=True)
-                verdict, reason = "review", "动作视频的自动检查未完成，请预览确认"
-            if verdict == "review":
-                review_id = await create_media_review(
-                    pack.user_id,
-                    "video",
-                    spec.path,
-                    reason,
-                    publication={
-                        "kind": "action",
-                        "pack_id": pack.id,
-                        "action_id": job.id,
-                        "title": job.name or job.action,
-                    },
-                )
-        await _advance_job(
-            job.id,
-            stage="publish",
-            status="review" if review_id else "succeeded",
-            result_path=spec.path,
-            result_json=ActionResult(clip=spec, cover_path=cover, quality=loop).model_dump_json(),
-            video_path=spec.path,
-            video_hash=spec.sha256,
-            actual_duration_ms=spec.duration_ms,
-            frames=spec.frames,
-            loopable=entry.clip_kind == "loop",
-            cover_path=cover,
-            hitmask_path=hitmask_path,
-            hitmask_grid_w=HITMASK_GRID_W,
-            hitmask_grid_h=HITMASK_GRID_H,
-            hitmask_fps=HITMASK_FPS,
-            error=None,
-        )
-
-
-async def _pinned_provider(
-    user_id: int,
-    provider_name: str,
-    model_name: str,
-) -> VideoGenProvider:
-    """轮询用供应商实例钉死在提交时的 provider+model 上（任务 ID 跨协议不通用）。"""
-    async with SESSION_LOCAL() as db:
-        chain = await resolve_provider_chain(db, user_id, "video_gen")
-    matched = next((cfg for cfg in chain if cfg.provider_name == provider_name), None)
-    if matched is None:
-        raise VideoPackError("视频供应商配置已变更，请重新生成", internal=f"provider {provider_name} missing")
-    if model_name and model_name != matched.model:
-        matched = replace(matched, model=model_name)
-    return resolve(ServiceType.video_gen, matched.provider_name)(matched)
+        return ActionResult(clip=spec, cover_path=cover, hitmask_path=hitmask_path, quality=loop)
 
 
 _POLICY_KEYWORDS = ("policy", "unsafe", "content_filter", "敏感", "违规", "moderation")
@@ -1702,6 +1854,9 @@ async def _queue_in_place_redo(
         job.provider_task_id = None
         job.artifact_path = None
         job.pose_path = None
+        job.generation_state_json = None
+        job.pose_generation_state_json = None
+        job.script_json = None
         job.result_path = None
         job.result_json = None
         job.video_path = ""
@@ -1820,7 +1975,11 @@ async def _generate_one_dynamic(
     if spec is None:
         raise VideoPackError("动态动作缺少提案规格，请重做")
 
-    entry = await _compose_single_action_script(pack, spec, context)
+    entry = (
+        ActionScriptEntry.model_validate_json(job.script_json)
+        if job.script_json
+        else await _compose_single_action_script(pack, spec, context)
+    )
     job.script_json = entry.model_dump_json()
     async with SESSION_LOCAL() as db:
         await db.execute(
@@ -2067,10 +2226,23 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> Compani
 
 def _pack_assets(pack: CompanionVideoPack, jobs: list[CompanionVideoJob]) -> set[str]:
     paths = {pack.reference_path, pack.manifest_path}
+    context = _load_generation_context(pack)
+    if context is not None:
+        paths.add(context.identity_reference_path)
+        paths.update(candidate.path for candidate in context.reference_chain.candidates)
+        paths.add(context.reference_chain.pending_path or "")
     cover = safe_json_loads(pack.manifest_json or "{}", default={})
     if isinstance(cover, dict) and cover.get("cover_path"):
         paths.add(str(cover["cover_path"]))
     for job in jobs:
+        if job.generation_state_json:
+            state = MediaChainState.model_validate_json(job.generation_state_json)
+            paths.add(state.source_path or "")
+            paths.update(path for candidate in state.candidates for path in candidate.artifacts)
+        if job.pose_generation_state_json:
+            pose_state = ImageChainState.model_validate_json(job.pose_generation_state_json)
+            paths.update(candidate.path for candidate in pose_state.candidates)
+            paths.add(pose_state.pending_path or "")
         paths.update(
             (
                 job.artifact_path or "",
@@ -2155,6 +2327,8 @@ def _copy_job_to_pack(job: CompanionVideoJob, pack: CompanionVideoPack) -> Compa
         provider=job.provider,
         model=job.model,
         provider_task_id=job.provider_task_id,
+        generation_state_json=job.generation_state_json,
+        pose_generation_state_json=job.pose_generation_state_json,
         reference_hash=job.reference_hash,
         input_hash=job.input_hash,
         script_json=job.script_json,

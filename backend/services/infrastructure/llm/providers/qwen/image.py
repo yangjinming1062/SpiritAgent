@@ -38,6 +38,7 @@ class QwenImageGenProvider(ImageGenProvider):
     supports_reference_image: ClassVar[bool] = True
     supports_multiple_reference_images: ClassVar[bool] = True
     supports_image_edit: ClassVar[bool] = True
+    max_images_per_request: ClassVar[int | None] = 6
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
@@ -77,6 +78,8 @@ class QwenImageGenProvider(ImageGenProvider):
         if not urls:
             raise RuntimeError(f"qwen image_gen returned no images: {body}")
 
+        if req.response_format == "url":
+            return ImageGenResult(images=[ImageAsset(url=url) for url in urls], model=self.config.model, raw=body)
         b64s = await asyncio.gather(*(download_as_b64(u) for u in urls))
         assets = [ImageAsset(b64=b, mime="image/png") for b in b64s]
         return ImageGenResult(images=assets, model=self.config.model, raw=body)

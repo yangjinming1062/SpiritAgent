@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 from components import SESSION_LOCAL, get_logger, tool_error
@@ -13,13 +14,14 @@ from services.application.generation import (
     AvatarGenerationError,
     ImageGenerationError,
     apply_outfit_override,
+    generate_character_images,
     generate_images,
     load_self_visual_context,
     optional_outfit_image_reference,
     plan_outfit_description,
-    select_best_character_images,
 )
 from services.domains.companion import character_snapshot_is_current, render_character_identity
+from services.infrastructure.assets import unlink_companion_asset
 from services.infrastructure.llm import VisualReasoningError
 from services.infrastructure.tool_runtime import REGISTRY
 
@@ -66,36 +68,35 @@ async def image_generation_tool(
             + render_character_identity(visual.identity)
         )
     try:
-        urls = await generate_images(
-            prompt,
-            size=size,
-            n=n,
-            user_id=user_id,
-            reference_image=reference_image,
-            secondary_reference_image=secondary_reference_image,
-            persist_user_assets=True,
-        )
+        if subject == "self":
+            urls = await generate_character_images(
+                prompt,
+                size=size,
+                n=n,
+                user_id=user_id,
+                reference_image=reference_image,
+                secondary_reference_image=secondary_reference_image,
+                identity_reference=visual.reference_image,
+                identity_text=render_character_identity(visual.identity),
+            )
+        else:
+            urls = await generate_images(
+                prompt,
+                size=size,
+                n=n,
+                user_id=user_id,
+                reference_image=reference_image,
+                secondary_reference_image=secondary_reference_image,
+                persist_user_assets=True,
+            )
     except ImageGenerationError as e:
         return tool_error(str(e))
     logger.info("Generated images", extra={"image_count": len(urls), "prompt": prompt, "user_id": user_id})
     if subject == "self":
-
-        async def regenerate_one() -> str:
-            return (
-                await generate_images(
-                    prompt,
-                    size=size,
-                    n=1,
-                    user_id=user_id,
-                    reference_image=reference_image,
-                    secondary_reference_image=secondary_reference_image,
-                    persist_user_assets=True,
-                )
-            )[0]
-
-        urls = await select_best_character_images(user_id, visual.reference_image, urls, regenerate_one)
         async with SESSION_LOCAL() as db:
             if not await character_snapshot_is_current(db, user_id, visual.identity):
+                for url in urls:
+                    await asyncio.to_thread(unlink_companion_asset, url)
                 return tool_error("生成期间角色外形已更新，本轮图片未交付，请使用新形象再生成")
     return json.dumps(
         {"success": True, "urls": urls},

@@ -16,11 +16,7 @@ def upgrade() -> None:
     op.add_column("video_gen_jobs", sa.Column("candidate_file_id", sa.String(64), nullable=True))
     op.add_column(
         "video_gen_jobs",
-        sa.Column("identity_best_score", sa.Integer(), server_default=sa.text("-1"), nullable=False),
-    )
-    op.add_column(
-        "video_gen_jobs",
-        sa.Column("identity_retries_used", sa.Integer(), server_default=sa.text("0"), nullable=False),
+        sa.Column("generation_attempt_index", sa.Integer(), server_default=sa.text("0"), nullable=False),
     )
     op.add_column(
         "companion_scenes",
@@ -29,14 +25,6 @@ def upgrade() -> None:
     op.add_column(
         "companion_scenes",
         sa.Column("identity_review_reason", sa.Text(), server_default=sa.text("''"), nullable=False),
-    )
-    op.add_column(
-        "companion_scenes",
-        sa.Column("identity_best_path", sa.String(2048), server_default=sa.text("''"), nullable=False),
-    )
-    op.add_column(
-        "companion_scenes",
-        sa.Column("identity_best_score", sa.Integer(), server_default=sa.text("-1"), nullable=False),
     )
     op.add_column(
         "companion_action_packs",
@@ -84,15 +72,12 @@ def downgrade() -> None:
     op.drop_table("companion_media_reviews")
     op.drop_column("video_gen_jobs", "candidate_video_url")
     op.drop_column("video_gen_jobs", "candidate_file_id")
-    op.drop_column("video_gen_jobs", "identity_best_score")
-    op.drop_column("video_gen_jobs", "identity_retries_used")
+    op.drop_column("video_gen_jobs", "generation_attempt_index")
     op.drop_index("ix_companion_fullbody_candidates_status", table_name="companion_fullbody_candidates")
     op.drop_index("ix_companion_fullbody_candidates_avatar_id", table_name="companion_fullbody_candidates")
     op.drop_index("ix_companion_fullbody_candidates_user_id", table_name="companion_fullbody_candidates")
     op.drop_table("companion_fullbody_candidates")
     op.drop_column("companion_scenes", "identity_review_reason")
     op.drop_column("companion_scenes", "identity_review")
-    op.drop_column("companion_scenes", "identity_best_path")
-    op.drop_column("companion_scenes", "identity_best_score")
     op.drop_column("companion_action_packs", "identity_review_reason")
     op.drop_column("companion_action_packs", "identity_review")

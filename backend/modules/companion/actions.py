@@ -118,6 +118,8 @@ class CompanionAction(ModelBase, TimestampMixin):
         index=True,
     )
     stage: Mapped[str] = mapped_column(String(16), default="design", server_default=text("'design'"))
+    generation_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    pose_generation_state_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     provider: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     model: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     provider_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)

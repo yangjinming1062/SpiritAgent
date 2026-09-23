@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.assets import asset_store, save_companion_asset_async, sniff_media_ext
 from services.infrastructure.llm import (
+    ClassifiedError,
     FailoverReason,
     ImageGenProvider,
     ImageGenRequest,
@@ -27,10 +28,19 @@ _EXT_BY_MIME = {"image/png": "png", "image/jpeg": "jpg", "image/webp": "webp", "
 class ImageGenerationError(Exception):
     """生图执行失败；str(exc) 可给工具 JSON / 调用方展示。"""
 
-    def __init__(self, message: str, *, internal: str | None = None, result_unknown: bool = False) -> None:
+    def __init__(
+        self,
+        message: str,
+        *,
+        internal: str | None = None,
+        result_unknown: bool = False,
+        can_fallback: bool = False,
+    ) -> None:
         super().__init__(message)
         self.internal = internal or message
         self.result_unknown = result_unknown
+        self.can_fallback = can_fallback
+        self.classified: ClassifiedError | None = None
 
 
 async def resolve_image_gen_chain(
@@ -87,13 +97,18 @@ async def generate_images(
     secondary_reference_image: str | None = None,
     persist_user_assets: bool = False,
     image_edit: bool = False,
+    provider_config: ProviderConfig | None = None,
+    defer_storage: bool = False,
 ) -> list[str]:
     """走 image_gen 供应商链生成图片并落盘；成功返回 URL 列表，失败抛 ImageGenerationError。
 
     ``persist_user_assets=True`` 且提供 ``user_id`` 时，结果转存为 ``companion-assets/{user_id}/`` 永久资产并返回裸路径；否则落 temp-media（或透传供应商 URL）。
     ``image_edit=True`` 时 reference_image 是编辑底图，供应商链按图像编辑能力过滤；编辑不接受双参考拼图，
     secondary 与 image_edit 同给视为调用方违约，立即报错而非静默丢弃。
+    ``defer_storage=True`` 返回原生 URL / data URI，由质量编排先保存结果再下载转存。
     """
+    if defer_storage and persist_user_assets:
+        raise ValueError("defer_storage and persist_user_assets are mutually exclusive")
     if image_edit and secondary_reference_image:
         raise ImageGenerationError(
             "图像编辑不支持附加参考图，请改用重新生成",
@@ -102,7 +117,9 @@ async def generate_images(
     try:
         if secondary_reference_image and not reference_image:
             raise ImageGenerationError("第二参考图需要同时提供身份参考图")
-        if user_id is not None:
+        if provider_config is not None:
+            chain, err = [provider_config], None
+        elif user_id is not None:
             async with SESSION_LOCAL() as db:
                 chain, err = await resolve_image_gen_chain(
                     db,
@@ -138,6 +155,7 @@ async def generate_images(
                     n=n,
                     reference_image=reference_image,
                     secondary_reference_image=secondary_reference_image,
+                    response_format="url" if defer_storage else "b64",
                 ),
             )
 
@@ -152,10 +170,12 @@ async def generate_images(
         classified = getattr(e, "classified", None) or classify_api_error(e)
         unknown = classified.reason == FailoverReason.result_unknown
         message = "图片生成结果未知，请核对供应商任务后再决定是否重做" if unknown else "图片生成失败，请稍后重试"
-        raise ImageGenerationError(message, internal=str(e), result_unknown=unknown) from e
+        error = ImageGenerationError(message, internal=str(e), result_unknown=unknown)
+        error.classified = classified
+        raise error from e
 
     if not result.images:
-        raise ImageGenerationError("图片生成服务返回空结果")
+        raise ImageGenerationError("图片生成服务返回空结果", can_fallback=True)
 
     urls: list[str] = []
     as_user_assets = persist_user_assets and user_id is not None
@@ -171,6 +191,9 @@ async def generate_images(
             elif asset.b64 is not None:
                 if not asset.b64:
                     logger.warning("image asset has empty b64; skipping", extra={"mime": asset.mime})
+                    continue
+                if defer_storage:
+                    urls.append(f"data:{asset.mime or 'image/jpeg'};base64,{asset.b64}")
                     continue
                 data = await asyncio.to_thread(base64.b64decode, asset.b64)
                 if as_user_assets:
@@ -194,7 +217,7 @@ async def generate_images(
         logger.warning("generated image storage failed", extra={"user_id": user_id}, exc_info=True)
         raise ImageGenerationError("生成图片无法保存，请稍后重试", internal=str(exc)) from exc
     if not urls:
-        raise ImageGenerationError("图片生成服务返回空结果")
+        raise ImageGenerationError("图片生成服务返回空结果", can_fallback=True)
     used_provider = active_provider[-1] if active_provider else None
     logger.info(
         "Generated images",

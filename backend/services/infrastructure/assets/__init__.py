@@ -2,15 +2,19 @@
 
 from . import asset_store
 from .asset_store import (
+    action_source_asset_path,
     build_data_uri,
     build_signed_asset_url,
     build_signed_avatar_url,
     client_asset_url,
     compute_file_sha256,
+    image_chain_asset_path,
     parse_companion_asset_path,
     resolve_companion_asset_path,
+    save_action_source_asset_async,
     save_companion_asset,
     save_companion_asset_async,
+    save_image_chain_asset_async,
     save_video_job_asset_async,
     signed_companion_asset_url,
     sniff_media_ext,
@@ -22,6 +26,8 @@ from .asset_store import (
 from .http_range import serve_ranged_file
 
 __all__ = [
+    "action_source_asset_path",
+    "save_action_source_asset_async",
     "asset_store",
     "build_data_uri",
     "build_signed_asset_url",
@@ -33,6 +39,8 @@ __all__ = [
     "save_companion_asset",
     "save_companion_asset_async",
     "save_video_job_asset_async",
+    "image_chain_asset_path",
+    "save_image_chain_asset_async",
     "serve_ranged_file",
     "signed_companion_asset_url",
     "video_job_asset_path",

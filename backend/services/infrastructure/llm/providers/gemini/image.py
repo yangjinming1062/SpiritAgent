@@ -23,6 +23,7 @@ class GeminiImageGenProvider(ImageGenProvider):
     supports_multiple_reference_images: ClassVar[bool] = True
     # inlineData + 文本触发原生图像编辑（增量重绘、保留未提及区域），多轮迭代可无状态地把上一轮输出再喂回。
     supports_image_edit: ClassVar[bool] = True
+    max_images_per_request: ClassVar[int | None] = 1
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)

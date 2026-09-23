@@ -30,6 +30,6 @@
 
 上传导入与按参考生成共用交付链；生成上下文与动作结果由 [state.py](video/state.py) 校验。上传包不拥有可重做的冻结参考。素材制作与恢复见 [PIPELINE](../../../../docs/PIPELINE.md#2-动作资产链)。
 
-角色出镜的图片和视频由 [identity_review.py](identity_review.py) 对已确认的全身图做视觉核查。全身候选图与整包视频的疑点处理见上文；[media_review.py](media_review.py) 管理动态动作复核。聊天、片刻与夜间内容使用宽松的可见身份评分，明确走样时按 `CHARACTER_MEDIA_REGENERATION_MAX_RETRIES` 有界重生成，预算用尽则保留最高分的已知产物。聊天视频在评分前持久化可恢复的本地候选，结果未知的重提交不得再次发送。
+[media_chain.py](media_chain.py)定义无凭据的供应商快照、游标与候选选择，[character_images.py](character_images.py)编排身份保持图片，[identity_review.py](identity_review.py)只负责评分和严格复核。场景、聊天视频及动作任务持久化进度，姿态图和视频分别推进各自的能力链；原始参考、已选首帧及成功动作复用。动作包独立冻结全身身份图，避免用低分派生图作为评分依据。[media_review.py](media_review.py)管理最终动作疑点复核。选择、保底、未知提交与清理规则统一见 [PIPELINE](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)。
 
 检查命令见 [Backend](../../../README.md#6-验证入口)，生成与恢复验收见 [PIPELINE](../../../../docs/PIPELINE.md#4-按改动选择验证)。

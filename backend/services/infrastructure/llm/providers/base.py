@@ -130,6 +130,9 @@ class ImageGenResult:
 class ImageGenProvider(BaseProvider):
     service_type: ServiceType = ServiceType.image_gen
 
+    # 单次原生请求的输出数量上限；None 表示适配器完整透传 n。
+    max_images_per_request: ClassVar[int | None] = None
+
     # True 表示供应商原生消费 reference_image（图生图）；False 则对参考图请求跳过，避免图→文→图。
     supports_reference_image: ClassVar[bool] = False
     # True 表示同时消费 secondary_reference_image（双参考图生图）；False 时调用链会过滤掉，退而求其次选单参考图供应商。

@@ -87,9 +87,9 @@ async def video_generation_tool(
                     duration=duration,
                     resolution=resolution,
                     first_frame_image=first_frame_image,
-                    model=None,
                     aspect_ratio=aspect_ratio,
                     identity_reference_path=visual.reference_path if subject == "self" else None,
+                    identity=visual.identity if subject == "self" else None,
                 )
         else:
             return tool_error("视频生成服务需要用户上下文")
