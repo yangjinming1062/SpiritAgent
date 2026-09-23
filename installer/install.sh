@@ -272,7 +272,7 @@ stage_unpack_runner() {
     fi
   fi
 
-  # 不再做安装后烟测：构建链在打包前跑 scripts/check_runner_facade.py，wheel 与 server.py 不一致不会进入安装包。
+  # 构建链在打包前跑 scripts/check_runner_facade.py，安装后不做烟测。
 
   # 拷贝 onboarding 引导音频：语言子目录（zh/、en/、…）1:1 映射至 $SPIRITAGENT_HOME/audio/onboarding/<lang>/。
   local audio_count=0
@@ -305,20 +305,14 @@ stage_unpack_desktop() {
     return 1
   fi
 
-  # 按格式定位产物
+  # 按格式定位产物：macOS 仅支持 dmg。
   local artifact=""
   case "$DESKTOP_FORMAT" in
     dmg)
       artifact=$(ls -1 "$BUNDLED_DESKTOP_DIR"/*.dmg 2>/dev/null | head -1 || true)
       ;;
-    nsis)
-      artifact=$(ls -1 "$BUNDLED_DESKTOP_DIR"/*.exe 2>/dev/null | head -1 || true)
-      ;;
-    zip)
-      artifact=$(ls -1 "$BUNDLED_DESKTOP_DIR"/*.zip 2>/dev/null | head -1 || true)
-      ;;
     *)
-      emit_stage_err unpack-desktop "unknown desktop format: $DESKTOP_FORMAT"
+      emit_stage_err unpack-desktop "desktop format '$DESKTOP_FORMAT' is not supported on this platform (use install.ps1 on Windows)"
       return 1
       ;;
   esac
@@ -328,41 +322,32 @@ stage_unpack_desktop() {
     return 1
   fi
 
-  case "$DESKTOP_FORMAT" in
-    dmg)
-      # macOS：挂载 DMG，把 SpiritAgent.app 拷到 /Applications，卸载并清空 xattr。
-      if [[ "$(uname -s)" != "Darwin" ]]; then
-        emit_stage_err unpack-desktop "dmg format requires macOS host"
-        return 1
-      fi
-      local mount_point
-      mount_point=$(hdiutil attach -nobrowse -readonly "$artifact" 2>/dev/null | awk '/\/Volumes/{print $3; exit}')
-      if [[ -z "$mount_point" ]]; then
-        emit_stage_err unpack-desktop "failed to mount $artifact"
-        return 1
-      fi
-      if [[ ! -d "$mount_point/SpiritAgent.app" ]]; then
-        hdiutil detach "$mount_point" 2>/dev/null || true
-        emit_stage_err unpack-desktop "SpiritAgent.app not found in DMG $artifact"
-        return 1
-      fi
-      rm -rf /Applications/SpiritAgent.app
-      # 拷贝失败须先卸载 DMG 再报错，避免 set -e 退出时挂载点泄漏。
-      if ! cp -R "$mount_point/SpiritAgent.app" /Applications/SpiritAgent.app; then
-        hdiutil detach "$mount_point" 2>/dev/null || true
-        emit_stage_err unpack-desktop "failed to copy SpiritAgent.app from $artifact"
-        return 1
-      fi
-      hdiutil detach "$mount_point" 2>/dev/null || true
-      xattr -cr /Applications/SpiritAgent.app 2>/dev/null || true
-      printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "unpack-desktop", "data": {"installed_path": "/Applications/SpiritAgent.app", "format": "dmg"}}\n'
-      ;;
-    nsis|zip)
-      # POSIX 上不支持这些格式；Windows 用户改走 install.ps1。
-      emit_stage_err unpack-desktop "desktop format '$DESKTOP_FORMAT' is not supported on this platform (use install.ps1 on Windows)"
-      return 1
-      ;;
-  esac
+  # macOS：挂载 DMG，把 SpiritAgent.app 拷到 /Applications，卸载并清空 xattr。
+  if [[ "$(uname -s)" != "Darwin" ]]; then
+    emit_stage_err unpack-desktop "dmg format requires macOS host"
+    return 1
+  fi
+  local mount_point
+  mount_point=$(hdiutil attach -nobrowse -readonly "$artifact" 2>/dev/null | awk '/\/Volumes/{print $3; exit}')
+  if [[ -z "$mount_point" ]]; then
+    emit_stage_err unpack-desktop "failed to mount $artifact"
+    return 1
+  fi
+  if [[ ! -d "$mount_point/SpiritAgent.app" ]]; then
+    hdiutil detach "$mount_point" 2>/dev/null || true
+    emit_stage_err unpack-desktop "SpiritAgent.app not found in DMG $artifact"
+    return 1
+  fi
+  rm -rf /Applications/SpiritAgent.app
+  # 拷贝失败须先卸载 DMG 再报错，避免 set -e 退出时挂载点泄漏。
+  if ! cp -R "$mount_point/SpiritAgent.app" /Applications/SpiritAgent.app; then
+    hdiutil detach "$mount_point" 2>/dev/null || true
+    emit_stage_err unpack-desktop "failed to copy SpiritAgent.app from $artifact"
+    return 1
+  fi
+  hdiutil detach "$mount_point" 2>/dev/null || true
+  xattr -cr /Applications/SpiritAgent.app 2>/dev/null || true
+  printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "unpack-desktop", "data": {"installed_path": "/Applications/SpiritAgent.app", "format": "dmg"}}\n'
 }
 
 # 阶段 5：安装技能

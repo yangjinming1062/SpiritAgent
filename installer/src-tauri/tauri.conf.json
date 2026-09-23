@@ -65,10 +65,5 @@
       "minimumSystemVersion": "11.0",
       "hardenedRuntime": true
     }
-  },
-  "plugins": {
-    "shell": {
-      "open": true
-    }
   }
 }

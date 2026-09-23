@@ -187,8 +187,7 @@
 }
 
 /* ──────────────────────────────────────────────────────────────────────────
-   安装器专属：发光晕、蛋脉动、破壳闪光等关键帧。色值已切到 cyber-glass 的
-   --ui-accent (蓝紫 #7d9bff)，保留原节奏（3.4s 呼吸、0.6s 闪光、0.6s 震颤）。 */
+   安装器关键帧：发光晕、蛋脉动、破壳闪光。色值使用 cyber-glass 的 --ui-accent。 */
 
 @keyframes spiritagent-fade-in {
   from {
@@ -205,7 +204,7 @@
   animation: spiritagent-fade-in 0.45s ease-out both;
 }
 
-/* 伙伴氛围光：cyber-glass 蓝紫调（之前是琥珀色），用 --ui-accent-soft 让玻璃发光。 */
+/* 氛围光：cyber-glass 蓝紫，用 --ui-accent-soft 让玻璃发光。 */
 .spiritagent-glow {
   position: absolute;
   left: 50%;

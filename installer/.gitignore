@@ -1,14 +1,12 @@
 # Rust / Cargo
 /src-tauri/target/
-/src-tauri/Cargo.lock
 
 # Vite / build output
 /dist/
 /dist-ssr/
 *.local
 
-# TypeScript build info + tsc emit (we don't ship .js for the
-# vite.config.ts; Vite reads it directly via ts-node-style loader).
+# TypeScript build info + tsc emit
 *.tsbuildinfo
 vite.config.d.ts
 vite.config.js
@@ -35,6 +33,3 @@ yarn-error.log*
 
 # Node
 node_modules/
-
-# Internal placeholder (re-create if needed)
-.tauri-note

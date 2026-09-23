@@ -141,7 +141,7 @@ mod tests {
         fs::write(payload.join(kind.filename()), b"#!/bin/sh\necho fake\n").unwrap();
     }
 
-    /// 生产环境下 bundle.resources 中的脚本才是正解；本测试就是验证移除 GitHub 回退后解析器的首选路径。
+    /// bundle.resources 中的脚本是生产首选路径。
     #[test]
     fn resolve_bundled_returns_script_in_payload() {
         let tmp = unique_tmp_dir("bundled-ok");

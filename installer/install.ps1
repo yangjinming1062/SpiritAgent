@@ -264,7 +264,7 @@ function Stage-UnpackRunner {
         }
     }
 
-    # 不做安装后烟测：构建链在打包前跑 scripts/check_runner_facade.py，wheel 与 server.py 不一致不会进入安装包。
+    # 构建链在打包前跑 scripts/check_runner_facade.py，安装后不做烟测。
 
     # 拷贝 onboarding 引导音频：语言子目录（zh\、en\、…）1:1 映射至 $SpiritAgentHome\audio\onboarding\<lang>\。
     $audioCount = 0
@@ -300,7 +300,6 @@ function Stage-UnpackDesktop {
     $artifact = $null
     switch ($InstallerFormat) {
         "nsis" { $artifact = Get-ChildItem -Path $BundledDesktopDir -Filter "*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1 }
-        "msi"  { $artifact = Get-ChildItem -Path $BundledDesktopDir -Filter "*.msi"  -File -ErrorAction SilentlyContinue | Select-Object -First 1 }
         "zip"  { $artifact = Get-ChildItem -Path $BundledDesktopDir -Filter "*.zip"  -File -ErrorAction SilentlyContinue | Select-Object -First 1 }
         default {
             Emit-StageErr "unpack-desktop" "unknown desktop format: $InstallerFormat"
@@ -329,21 +328,6 @@ function Stage-UnpackDesktop {
             }
             $escPath = Escape-JsonString $installDir
             Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"unpack-desktop`", `"data`": {`"installed_path`": `"$escPath`", `"format`": `"nsis`"}}"
-            return 0
-        }
-        "msi" {
-            # msiexec /qn 静默安装，无 UI；REBOOT=ReallySuppress 抑制重启提示。
-            $proc = Start-Process -FilePath "msiexec.exe" `
-                                  -ArgumentList @("/i", $artifactPath, "/qn", "REBOOT=ReallySuppress") `
-                                  -Wait -NoNewWindow -PassThru
-            if ($proc.ExitCode -ne 0) {
-                Emit-StageErr "unpack-desktop" "msiexec exited with code $($proc.ExitCode)"
-                return 1
-            }
-            $localPrograms = Join-Path $env:LOCALAPPDATA "Programs"
-            $installDir = Join-Path $localPrograms "SpiritAgent"
-            $escPath = Escape-JsonString $installDir
-            Write-Output "__SPIRITAGENT_STAGE_RESULT__:{`"ok`": true, `"stage`": `"unpack-desktop`", `"data`": {`"installed_path`": `"$escPath`", `"format`": `"msi`"}}"
             return 0
         }
         "zip" {

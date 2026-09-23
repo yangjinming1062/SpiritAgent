@@ -32,11 +32,11 @@ pub struct BundleContext {
     pub bundle_dir: Option<std::path::PathBuf>,
     /// `<bundle>/payload/runner/`，承载 runner wheel 与 `server.py`。
     pub bundled_runner_dir: Option<std::path::PathBuf>,
-    /// `<bundle>/payload/desktop/`，承载桌面安装器（dmg / nsis）。
+    /// `<bundle>/payload/client/`，承载桌面安装器（dmg / nsis）。
     pub bundled_desktop_dir: Option<std::path::PathBuf>,
     /// `<bundle>/payload/skills/`，Stage-InstallSkills 数据来源。
     pub bundled_skills_dir: Option<std::path::PathBuf>,
-    /// `<bundle>/payload/onboarding-audio/<lang>/`，按语言组织的云端 TTS 引导音频。
+    /// `<bundle>/payload/onboarding-audio/`，按语言子目录组织的引导音频。
     pub bundled_onboarding_audio_dir: Option<std::path::PathBuf>,
     /// `dmg` | `nsis`，unpack-desktop 阶段据此选择 hdiutil attach 或 NSIS /S。
     pub installer_format: Option<String>,
@@ -311,7 +311,7 @@ final non-json banner
     }
 
     #[test]
-    fn parse_stage_result_fallback_picks_last_json_line() {
+    fn parse_stage_result_rejects_bare_json_without_sentinel() {
         let stdout = r#"
 [bootstrap] some info
 {"ok": false, "stage": "venv", "reason": "bad python"}
@@ -336,7 +336,7 @@ trailing info
     }
 
     #[test]
-    fn parse_manifest_fallback_finds_stages_array() {
+    fn parse_manifest_rejects_bare_json_without_sentinel() {
         let stdout = r#"
 info line
 {"stages": [{"name": "uv", "title": "uv", "category": "prereqs", "needs_user_input": false}], "protocol_version": 1}

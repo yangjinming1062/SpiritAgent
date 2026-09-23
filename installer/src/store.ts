@@ -89,7 +89,6 @@ interface BootstrapLogEvent {
 interface BootstrapCompleteEvent {
   type: 'complete'
   installRoot: string
-  marker: unknown
 }
 
 interface BootstrapFailedEvent {
@@ -219,7 +218,7 @@ export async function initialize(): Promise<void> {
 
 export async function startInstall(): Promise<void> {
   clearRouteTimer()
-  // 重试前重置状态；安装脚本在构建期 pin 完毕，commit/branch 始终为 null。
+  // 重试前重置状态。
   $bootstrap.set(INITIAL)
   $route.set('progress')
 
@@ -230,8 +229,6 @@ export async function startInstall(): Promise<void> {
 
   await invoke('start_bootstrap', {
     args: {
-      commit: null,
-      branch: null,
       spiritagent_home: null
     },
     onEvent: channel

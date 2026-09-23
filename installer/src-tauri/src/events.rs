@@ -82,7 +82,6 @@ pub enum BootstrapEvent {
     Complete {
         #[serde(rename = "installRoot")]
         install_root: String,
-        marker: Option<serde_json::Value>,
     },
     /// 流程中止时发送一次。
     Failed {

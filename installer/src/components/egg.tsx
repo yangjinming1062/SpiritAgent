@@ -69,14 +69,14 @@ export function Egg({
         aria-label="唤生-蛋"
       >
         <defs>
-          {/* 环境氛围光：cyber-glass 蓝紫（--ui-accent #7d9bff）；蛋本身保留琥珀色，与冷调玻璃底色形成温暖锚点。 */}
+          {/* 环境氛围光：cyber-glass 蓝紫；蛋壳保留琥珀色作为暖色锚点。 */}
           <radialGradient id="egg-ambient-glow" cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor="#7d9bff" stopOpacity="0.42" />
             <stop offset="60%" stopColor="#7d9bff" stopOpacity="0.14" />
             <stop offset="100%" stopColor="#7d9bff" stopOpacity="0" />
           </radialGradient>
 
-          {/* 破壳时的核心暖光：蛋的"温暖"签名色——玻璃冷调外的情感锚点。 */}
+          {/* 破壳时的核心暖光 */}
           <radialGradient id="egg-core-light" cx="50%" cy="50%" r="50%">
             <stop offset="0%" stopColor="#ffffff" stopOpacity="1" />
             <stop offset="35%" stopColor="#fff4d6" stopOpacity="0.95" />

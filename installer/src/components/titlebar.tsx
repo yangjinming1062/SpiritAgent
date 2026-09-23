@@ -11,7 +11,7 @@ export function Titlebar(): React.JSX.Element {
       data-tauri-drag-region
       className="relative z-20 flex shrink-0 items-center justify-between border-b border-line-hairline bg-glass px-4 py-2 backdrop-blur-xs select-none"
     >
-      {/* 左侧：品牌 + 状态文案（状态由 App.tsx 注入；这里只占位） */}
+      {/* 左侧：品牌 */}
       <div className="flex items-center gap-2">
         <span className="font-['Collapse'] text-sm font-bold tracking-[0.08em] text-accent">
           SPIRITAGENT

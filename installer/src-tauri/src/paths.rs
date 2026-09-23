@@ -30,7 +30,7 @@ pub fn spiritagent_home() -> PathBuf {
         }
     }
 
-    // Linux / fallback
+    // 其它平台 fallback
     if let Some(home) = dirs::home_dir() {
         return home.join(".spiritagent");
     }

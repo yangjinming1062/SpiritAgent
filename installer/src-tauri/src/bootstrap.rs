@@ -1,12 +1,12 @@
 //! Bootstrap 编排：驱动 install.ps1 / install.sh 按阶段执行，并通过 Tauri `bootstrap` 通道推送进度事件；
-//! forensic 日志写入 SPIRITAGENT_HOME/logs/bootstrap-installer.log。
+//! 日志写入 SPIRITAGENT_HOME/logs/bootstrap-installer.log。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
 use anyhow::{anyhow, Result};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use tauri::ipc::Channel;
 use tauri::{AppHandle, Manager, State};
 use tokio::sync::{mpsc, Mutex};
@@ -18,27 +18,14 @@ use crate::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct StartBootstrapArgs {
-    /// 提交 pin 覆盖；缺省取构建期烘焙的 `BUILD_PIN_COMMIT`。
-    pub commit: Option<String>,
-    /// 分支 pin 覆盖；缺省取 `BUILD_PIN_BRANCH`。
-    pub branch: Option<String>,
     /// SPIRITAGENT_HOME 覆盖，仅测试使用；生产路径走 OS 默认。
     pub spiritagent_home: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct BootstrapStatus {
-    pub running: bool,
-    pub completed: bool,
-    pub install_root: Option<String>,
-    pub last_error: Option<String>,
-}
-
-/// bootstrap 运行期间的句柄，挂在 AppState 上：携带取消通道与最近终态，便于窗口刷新后重新查询。
+/// bootstrap 运行期间的句柄，挂在 AppState 上，供取消与防重入。
 pub struct BootstrapHandle {
     pub cancel_tx: mpsc::Sender<()>,
-    pub started_at: Instant,
-    pub status: BootstrapStatus,
+    pub running: bool,
 }
 
 #[tauri::command]
@@ -50,23 +37,16 @@ pub async fn start_bootstrap(
 ) -> Result<(), String> {
     let mut guard = state.bootstrap.lock().await;
     if let Some(h) = guard.as_ref() {
-        if h.status.running {
+        if h.running {
             return Err("Bootstrap is already running".into());
         }
     }
 
     let (cancel_tx, cancel_rx) = mpsc::channel::<()>(1);
-    let handle = BootstrapHandle {
+    *guard = Some(BootstrapHandle {
         cancel_tx,
-        started_at: Instant::now(),
-        status: BootstrapStatus {
-            running: true,
-            completed: false,
-            install_root: None,
-            last_error: None,
-        },
-    };
-    *guard = Some(handle);
+        running: true,
+    });
     drop(guard);
 
     let app_for_task = app.clone();
@@ -75,23 +55,10 @@ pub async fn start_bootstrap(
     let cancel_rx = Arc::new(Mutex::new(Some(cancel_rx)));
 
     tokio::spawn(async move {
-        let result = run_bootstrap(app_for_task.clone(), args_for_task, cancel_rx, on_event).await;
-
-        // 把终态回写到 AppState，使 get_bootstrap_status() 在任务结束后仍可读。
+        let _ = run_bootstrap(app_for_task, args_for_task, cancel_rx, on_event).await;
         let mut guard = state_for_task.bootstrap.lock().await;
         if let Some(h) = guard.as_mut() {
-            h.status.running = false;
-            match &result {
-                Ok(install_root) => {
-                    h.status.completed = true;
-                    h.status.install_root = Some(install_root.clone());
-                    h.status.last_error = None;
-                }
-                Err(err) => {
-                    h.status.completed = false;
-                    h.status.last_error = Some(err.to_string());
-                }
-            }
+            h.running = false;
         }
     });
 
@@ -105,27 +72,6 @@ pub async fn cancel_bootstrap(state: State<'_, Arc<AppState>>) -> Result<(), Str
         let _ = h.cancel_tx.try_send(());
     }
     Ok(())
-}
-
-#[tauri::command]
-pub async fn get_bootstrap_status(
-    state: State<'_, Arc<AppState>>,
-) -> Result<BootstrapStatus, String> {
-    let guard = state.bootstrap.lock().await;
-    Ok(match guard.as_ref() {
-        Some(h) => BootstrapStatus {
-            running: h.status.running,
-            completed: h.status.completed,
-            install_root: h.status.install_root.clone(),
-            last_error: h.status.last_error.clone(),
-        },
-        None => BootstrapStatus {
-            running: false,
-            completed: false,
-            install_root: None,
-            last_error: None,
-        },
-    })
 }
 
 /// 启动已安装的 SpiritAgent 桌面端后关闭安装器窗口；路径由各平台规范安装位置解析。
@@ -269,14 +215,6 @@ pub(crate) fn spawn_installed_desktop() -> std::io::Result<()> {
 }
 
 #[cfg(target_os = "macos")]
-pub(crate) fn open_macos_app_detached(app_bundle: &std::path::Path) -> std::io::Result<()> {
-    let mut cmd = std::process::Command::new("/usr/bin/open");
-    cmd.arg(app_bundle);
-    cmd.current_dir(crate::paths::spiritagent_home());
-    cmd.spawn().map(|_child| ())
-}
-
-#[cfg(target_os = "macos")]
 fn app_bundle_for_exe(exe: &std::path::Path) -> Option<PathBuf> {
     let app = exe.parent()?.parent()?.parent()?.to_path_buf();
     if app.extension().and_then(|e| e.to_str()) == Some("app") && app.is_dir() {
@@ -326,22 +264,7 @@ async fn run_bootstrap(
 ) -> Result<String> {
     let kind = ScriptKind::for_current_os();
 
-    // 安装标记事件中的 pin 元数据：脚本已 bundle，无需 pin 解析；这里只记录用户 pin 的版本。
-    let pinned_commit = args
-        .commit
-        .clone()
-        .or_else(|| option_env!("BUILD_PIN_COMMIT").map(|s| s.to_string()));
-    let pinned_branch = args
-        .branch
-        .clone()
-        .or_else(|| option_env!("BUILD_PIN_BRANCH").map(|s| s.to_string()));
-
-    tracing::info!(
-        pinned_commit = ?pinned_commit,
-        pinned_branch = ?pinned_branch,
-        kind = ?kind,
-        "bootstrap starting"
-    );
+    tracing::info!(?kind, "bootstrap starting");
 
     let on_event_for_log = on_event.clone();
     let emit_log = move |line: &str| {
@@ -353,11 +276,11 @@ async fn run_bootstrap(
                 stream: LogStream::Stdout,
             },
         );
-        // 走 info!，确保默认 INFO 过滤下能落到 bootstrap-installer.log；此前 debug! 在 install.ps1 失败时只剩 "bootstrap starting" 一行。
+        // info! 级别保证默认过滤下能落到 bootstrap-installer.log。
         tracing::info!(target: "bootstrap.log", "{line}");
     };
 
-    // 1) 解析 install.{ps1,sh}：dev 入口 → Tauri bundle.resources；安装器不自联网。
+    // 1) 解析 install.{ps1,sh}：dev 入口 → Tauri bundle.resources → 嵌入 zip；安装器不自联网。
     let script = install_script::resolve(&app, kind, &emit_log)
         .await
         .map_err(|e| {
@@ -383,7 +306,7 @@ async fn run_bootstrap(
         source_note
     ));
 
-    // 2) 拉取 manifest：脚本已 bundle，不再接收 -IncludeDesktop / -Commit / -Branch，这些参数仅在 marker 事件里使用。
+    // 2) 拉取 manifest。
     let manifest_args = vec!["-Manifest".to_string()];
 
     let bundle_ctx = build_bundle_context(&app);
@@ -594,14 +517,14 @@ async fn run_bootstrap(
         }
     }
 
-    // 4) 解析 install_root。6 阶段脚本不再向 `<spiritagent_home>/spiritagent-agent/` 克隆仓库，所有负载直接落 $SPIRITAGENT_HOME（bin/、skills/、.spiritagent-bootstrap-complete），所以 install_root 即 spiritagent_home。
+    // 4) install_root 即 spiritagent_home：负载直接落 $SPIRITAGENT_HOME。
     let spiritagent_home = args
         .spiritagent_home
         .clone()
         .unwrap_or_else(|| crate::paths::spiritagent_home().to_string_lossy().into_owned());
     let install_root = PathBuf::from(&spiritagent_home);
 
-    // 自拷贝到 SPIRITAGENT_HOME/spiritagent-setup.exe，为快捷方式提供稳定目标；若已在目标位置会自动跳过。最佳努力，失败不中断安装。
+    // 自拷贝到 SPIRITAGENT_HOME/spiritagent-setup.exe，为快捷方式提供稳定目标；已在目标位置则跳过。最佳努力，失败不中断安装。
     if let Err(err) = crate::paths::copy_self_to_spiritagent_home() {
         tracing::warn!(?err, "failed to copy installer into SPIRITAGENT_HOME (non-fatal)");
         emit_log(&format!(
@@ -613,10 +536,6 @@ async fn run_bootstrap(
         &on_event,
         BootstrapEvent::Complete {
             install_root: install_root.to_string_lossy().into_owned(),
-            marker: Some(serde_json::json!({
-                "pinnedCommit": pinned_commit,
-                "pinnedBranch": pinned_branch,
-            })),
         },
     );
 
@@ -716,7 +635,6 @@ fn build_bundle_context(app: &AppHandle) -> BundleContext {
     let mut payload = bundle_dir.as_ref().map(|d| d.join("payload"));
 
     if !payload.as_ref().map(|p| p.is_dir()).unwrap_or(false) {
-        // 单 exe 分发：resource_dir/payload 不存在时退回嵌入 zip 解压目录。
         if let Ok(embedded) = crate::embedded_payload::payload_dir() {
             payload = Some(embedded);
         }
@@ -745,7 +663,7 @@ fn build_bundle_context(app: &AppHandle) -> BundleContext {
 }
 
 fn emit_event(on_event: &Channel<BootstrapEvent>, event: BootstrapEvent) {
-    // 关键状态翻转也落到滚动日志，避免只剩 "starting" + 最终摘要；日志行已在 sink 回调内自处理，这里只覆盖生命周期帧。
+    // 生命周期帧落到滚动日志；脚本日志行由 sink 回调处理。
     match &event {
         BootstrapEvent::Manifest { stages, .. } => {
             tracing::info!(
@@ -776,7 +694,7 @@ fn emit_event(on_event: &Channel<BootstrapEvent>, event: BootstrapEvent) {
             tracing::error!(stage = ?stage, error = %error, "bootstrap FAILED");
         }
         BootstrapEvent::Log { .. } => {
-            // 日志行已通过 run_install_script 的 sink 回调落日志，此处不再重复。
+            // 日志行已由 sink 回调落盘。
         }
     }
     if let Err(e) = on_event.send(event) {

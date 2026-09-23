@@ -49,8 +49,7 @@ function describeArc(
   ].join(' ')
 }
 
-// Halo 走 cyber-glass 主题：默认段 --ui-accent (#7d9bff 蓝紫)，运行中段加重发光滤镜。
-// 失败段换 destructive 红；未完成段用 ui-line-standard 蓝紫低饱和（之前是白底浅蓝，对玻璃暗底来说会糊掉）。
+// Halo 走 cyber-glass 主题：完成段 --ui-accent，失败段 destructive，未完成段低饱和描边。
 export function Halo({
   total = 6,
   done,
@@ -79,7 +78,7 @@ export function Halo({
         aria-label="Installer Stage Halo"
       >
         <defs>
-          {/* 段落发光滤镜：halo-glow-filter 给完成段蓝色发光，halo-fail-fliter 给失败段红色发光 */}
+          {/* 段落发光滤镜 */}
           <filter id="halo-glow-filter" x="-20%" y="-20%" width="140%" height="140%">
             <feGaussianBlur stdDeviation="3" result="blur" />
             <feMerge>
