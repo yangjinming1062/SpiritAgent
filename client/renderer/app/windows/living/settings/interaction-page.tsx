@@ -12,7 +12,6 @@ import {
   $userPreferredTier,
   autonomousMediaPref,
   autonomousVoicePref,
-  DISTURBANCE_TIERS,
   type DisturbanceTier,
   llmAffectPref,
   llmAutonomyPref,
@@ -37,6 +36,18 @@ import {
 import { getSpiritAgentConfig, saveSpiritAgentConfig } from '@/shared/spiritagent'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
+
+interface DisturbanceTierOption {
+  hint: string
+  id: DisturbanceTier
+  label: string
+}
+
+const DISTURBANCE_TIERS: readonly DisturbanceTierOption[] = [
+  { id: 'still', label: '静止', hint: '不发起任何主动行为，只回应你' },
+  { id: 'normal', label: '常规', hint: '文字问候等原地轻互动' },
+  { id: 'autonomous', label: '自主', hint: '自由移动与语音，全能力开放' }
+] as const
 
 const RECORDING_OPTIONS = [15, 30, 60, 120, 300] as const
 const DEFAULT_RECORDING_SECONDS = 60

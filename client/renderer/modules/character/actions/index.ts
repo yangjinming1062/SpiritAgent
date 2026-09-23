@@ -3,9 +3,7 @@
 export {
   $activePlayInstance,
   acceptPlayCommand,
-  currentAppearanceEpoch,
   finishPlayInstance,
-  isInstanceCurrent,
   nextAppearanceEpoch,
   reportReceipt,
   shouldStartInstance
@@ -14,7 +12,6 @@ export {
   $actionCatalog,
   $actionCatalogStatus,
   actionCatalogChanged,
-  clipKey,
   hydrateActionCatalog,
   resolveActionClipUrl,
   resolveHitmask

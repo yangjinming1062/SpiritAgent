@@ -36,7 +36,6 @@ import {
   setCompanionVoiceId,
   SPEAKING_STYLE_PRESETS,
   SPECIES_PRESETS,
-  useInteractiveRegion,
   USER_GENDER_PRESETS,
   VOICE_PRESETS
 } from '@/modules/character'
@@ -57,6 +56,7 @@ import { type HistoryGalleryItem, useGatewayRequest } from '@/shared'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { FolderOpen, Sparkles } from '@/shared/lib/icons'
+import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { isClientErrorIpc, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { currentClearEpoch } from '@/shared/lib/storage'

@@ -207,7 +207,7 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
 }
 
 /** clip 缓存键：系统槽位优先，动态动作用 `id:<action_id>`。 */
-export function clipKey(clip: ActionClipEntry): string {
+function clipKey(clip: ActionClipEntry): string {
   return clip.system_slot || `id:${clip.action_id}`
 }
 

@@ -1,4 +1,11 @@
-export { isLatestGen, nextGen, playDataUrl, registerAmplitudeSink, stopAudio, warmAudioContext } from './audio-track'
+export {
+  isLatestGen,
+  nextGen,
+  playDataUrl,
+  stopAudio,
+  type AudioPlaybackResult,
+  warmAudioContext
+} from './audio-track'
 export { requestSynth, speak, speakScripted, stopSpeaking } from './tts'
 export {
   designVoice,

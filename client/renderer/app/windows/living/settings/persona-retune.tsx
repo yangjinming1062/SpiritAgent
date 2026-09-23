@@ -186,7 +186,7 @@ export function PersonaRetune({ initial, onClose }: PersonaRetuneProps): React.R
     setSaving(true)
     setHint(null)
 
-    // C2：把 PUT（写）与 hydrate（读）的失败模式分开——与 persona-editor 同理。
+    // 把 PUT（写）与 hydrate（读）的失败模式分开：
     // PUT 成功之后即便 GET 短暂失败，也不能被当成保存失败。
     //
     // 把当前 persona 作为 `previous` 传入，让锁定的视觉锚点字段原样带回——见 docs/DESIGN.md §5.4。

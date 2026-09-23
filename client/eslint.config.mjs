@@ -363,7 +363,7 @@ export default [
     }
   },
   {
-    // character 渲染域（model/video）：可消费 character barrel 与 speech 口型振幅，禁入应用层与会话。
+    // character 渲染域（model/video）：经 character 公共 barrel 访问角色能力，禁入应用层、会话与媒体模块。
     files: ['renderer/modules/character/rendering/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
     rules: {

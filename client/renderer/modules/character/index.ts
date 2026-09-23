@@ -7,7 +7,6 @@ export {
   type ActionHitmask,
   type ActionPlayCommand,
   type ActionPlayInstance,
-  clipKey,
   finishPlayInstance,
   hydrateActionCatalog,
   reportReceipt,
@@ -59,12 +58,9 @@ export {
   type SpriteEmotion,
   type SpriteStateName
 } from './companion-store'
-export { DISTURBANCE_TIERS } from './disturbance-tiers'
 export { FullbodyReferencePanel } from './fullbody-reference-panel'
 export { $fullbodyReference, hydrateFullbodyReference, regenerateFullbodyReference } from './fullbody-reference-store'
 export { GenerationActionsGroup } from './generation-actions'
-export { handleDragEndInteraction } from './interaction'
-export { $memoryBrowserTab, type MemoryTab, setMemoryBrowserTab } from './memory-browser-store'
 export {
   assembleCharacterPersona,
   assemblePersona,
@@ -120,19 +116,18 @@ export {
 export {
   type CompanionPresentation,
   type CompanionRendererKind,
-  pickAvailableClip,
   resolveCompanionPresentation,
   resolveVideoAction,
   VIDEO_ACTION_KEYS,
   type VideoActionKey
 } from './presentation'
 export { bindProactiveLineSpeaker, type ProactiveLineOptions } from './proactive-speak'
+export { handleDragEndInteraction } from './reactions/reaction-audio'
 export { EggStage } from './rendering/fallback/egg-stage'
 export {
   $videoGenError,
   $videoGenStage,
   $videoGenState,
-  $videoHitTest,
   $videoPacks,
   activateVideoPack,
   generateVideoPack,
@@ -142,7 +137,6 @@ export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritua
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {
   $defaultScale,
-  $dragVelocity,
   $edgeDockSide,
   $homePosition,
   $isEdgeDocked,
@@ -160,13 +154,13 @@ export {
   type Locomotion,
   resetToHomePosition,
   setDefaultScale,
-  setLocale,
+  setSpatialLocale,
   startDrag,
   undockFromEdge,
   updateDragPosition
 } from './spatial'
 export { SpriteStatusBadge } from './sprite-status-badge'
-export { $contextMenuOpen, $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/context-menu-store'
+export { $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/context-menu-store'
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
 export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'
 export { useOutfitDesignSession } from './wardrobe/design-session'
@@ -180,4 +174,3 @@ export {
   type OutfitPolicy,
   setOutfitPolicy
 } from './wardrobe/wardrobe-store'
-export { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'

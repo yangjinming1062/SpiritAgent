@@ -552,18 +552,6 @@ html[data-effect='clear'] .chatInputWrapper {
   padding: 32px;
 }
 
-.placeholderTitle {
-  font-size: 18px;
-  font-weight: 600;
-  margin: 0 0 8px;
-}
-
-.placeholderHint {
-  font-size: 13px;
-  margin: 0;
-  opacity: 0.7;
-}
-
 html[class~='no-blur'] .shell,
 html[class~='no-blur'] .titlebar,
 html[class~='no-blur'] .rail,

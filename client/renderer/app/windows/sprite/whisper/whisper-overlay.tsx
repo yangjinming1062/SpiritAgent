@@ -16,11 +16,12 @@ import {
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { $whisperOpen } from '@/shared/store/chat-visibility'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $surfaceOpen } from '@/shared/store/surfaces'
 import { getStrings } from '@/shared/strings'
 
-import { $whisperOffset, $whisperOpen, closeWhisper, setWhisperOffset } from './whisper-store'
+import { $whisperOffset, closeWhisper, setWhisperOffset } from './whisper-store'
 
 const WHISPER_WIDTH = 380
 const WHISPER_HEIGHT = 540

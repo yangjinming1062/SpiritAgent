@@ -3,7 +3,6 @@ export {
   $diaryLoading,
   $moments,
   $momentsLoading,
-  clearJournal,
   commentMoment,
   deleteMomentComment,
   type DiaryEntry,

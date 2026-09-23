@@ -21,7 +21,7 @@ import {
 } from '@/modules/character'
 import { emitVfx, SpriteVfxOverlay } from '@/modules/character'
 import { FootGlow } from '@/modules/character'
-import { $videoHitTest } from '@/modules/character/rendering/video'
+import { useVideoPixelHitTest } from '@/modules/character/rendering/video'
 import { clearExternalAttachment, pushExternalAttachment } from '@/modules/conversation'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
@@ -74,7 +74,6 @@ export function SpriteStage({
     moved: boolean
     lastX: number
     lastY: number
-    lastTime: number
     pressedAt: number
   } | null>(null)
 
@@ -86,19 +85,10 @@ export function SpriteStage({
   const lastTapRef = useRef(0)
   const pos = useStore($spatialPos)
   const scale = useStore($spatialScale)
-  // 视频遮罩探测，通过 ref 同步以保证 hitTest 闭包稳定。
-  const hitVideoRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
-
-  useEffect(
-    () =>
-      $videoHitTest.subscribe(fn => {
-        hitVideoRef.current = fn
-      }),
-    []
-  )
+  // 命中按渲染路径精化：视频走 alpha 遮罩查表；缺席（桌面蛋 / 加载空挡）才回退整矩形。
+  const stageHitTest = useVideoPixelHitTest()
 
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null)
-  const pendingVelRef = useRef<{ vx: number; vy: number } | null>(null)
   const dragRafRef = useRef<number | null>(null)
   const displayProbeAtRef = useRef(0)
   const lastDragPointRef = useRef<{ x: number; y: number } | null>(null)
@@ -118,20 +108,6 @@ export function SpriteStage({
 
   // 命中按渲染路径精化：视频走 alpha 遮罩查表；缺席（桌面蛋 / 加载空挡）才回退整矩形
   // ——否则矩形空白区会挡住底下应用的点击。
-  const stageHitTest = useCallback((x: number, y: number): boolean => {
-    const probeVideo = hitVideoRef.current
-
-    if (probeVideo) {
-      const result = probeVideo(x, y)
-
-      if (result !== null) {
-        return result
-      }
-    }
-
-    return true
-  }, [])
-
   useInteractiveRegion(SPRITE_REGION_ID, mountRef, stageRect, stageHitTest)
 
   useEffect(() => {
@@ -272,7 +248,6 @@ export function SpriteStage({
       moved: false,
       lastX: e.clientX,
       lastY: e.clientY,
-      lastTime: now,
       pressedAt: now
     }
     cancelMovement()
@@ -328,26 +303,20 @@ export function SpriteStage({
         probeDisplaySwitch()
       }
 
-      const now = performance.now()
-      const dt = Math.max(1, now - d.lastTime)
-      const vx = (e.clientX - d.lastX) / dt
-      const vy = (e.clientY - d.lastY) / dt
       d.lastX = e.clientX
       d.lastY = e.clientY
-      d.lastTime = now
 
       const nextX = Math.round(d.originX + dx)
       const nextY = Math.round(d.originY + dy)
 
       pendingPosRef.current = { x: nextX, y: nextY }
-      pendingVelRef.current = { vx, vy }
 
       if (dragRafRef.current === null) {
         dragRafRef.current = requestAnimationFrame(() => {
           dragRafRef.current = null
 
           if (pendingPosRef.current) {
-            updateDragPosition(pendingPosRef.current, pendingVelRef.current ?? undefined)
+            updateDragPosition(pendingPosRef.current)
           }
         })
       }
@@ -374,12 +343,9 @@ export function SpriteStage({
       dragRafRef.current = null
     }
 
-    const lastVel = pendingVelRef.current ?? undefined
-
     if (pendingPosRef.current) {
-      updateDragPosition(pendingPosRef.current, lastVel)
+      updateDragPosition(pendingPosRef.current)
       pendingPosRef.current = null
-      pendingVelRef.current = null
     }
 
     if (drag?.moved) {

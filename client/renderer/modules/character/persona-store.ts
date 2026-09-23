@@ -46,7 +46,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
       return { ok: false }
     }
 
-    // C2：调用方刚刚成功 PUT 了新 persona 时，这里的 GET 短暂失败不代表保存失败——
+    // 调用方刚刚成功 PUT 了新 persona 时，这里的 GET 短暂失败不代表保存失败——
     // 后端是有数据的。传 `silent: true` 保持 $persona 不动，避免同时弹出「保存失败」提示
     // 又让设置页因为 $persona 变 null 而隐藏「编辑」按钮。GET 失败由调用方作为软提示暴露。
     if (!opts.silent && $auth.get().kind === 'authenticated') {

@@ -1,9 +1,9 @@
 import { useStore } from '@nanostores/react'
 import { type FormEvent, useRef, useState } from 'react'
 
-import { useInteractiveRegion } from '@/modules/character'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { Loader2, Sparkles, X } from '@/shared/lib/icons'
+import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { cn } from '@/shared/lib/utils'
 import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS } from '@/shared/panel'
 import { $auth, activate } from '@/shared/store/auth'

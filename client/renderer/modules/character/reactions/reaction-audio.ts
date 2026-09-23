@@ -1,6 +1,8 @@
 import { presentationPorts } from '@/shared/presentation-ports'
 import type { ReactionBucket, ReactionEntry } from '@/shared/types/reactions'
 
+import { $personalityTags } from '../persona-store'
+
 import manifestJson from './manifest.json'
 
 interface ManifestShape {
@@ -71,4 +73,10 @@ export async function playReactionAudio(entry: ReactionEntry | null): Promise<bo
   }
 
   return await presentationPorts().speakScripted(entry.text, undefined, 'reaction')
+}
+
+export function handleDragEndInteraction(): void {
+  const entry = pickReaction('drag', $personalityTags.get())
+
+  void playReactionAudio(entry)
 }

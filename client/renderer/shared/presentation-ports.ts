@@ -22,24 +22,16 @@ export interface SetSpriteStateOptions {
   force?: boolean
 }
 
-export type AudioPlaybackResult = 'completed' | 'interrupted' | 'failed'
-
 export interface PresentationPorts {
   $activeAvatarId: Atom<number | null>
   $companionVoiceId: Atom<string>
   $portraitUrl: Atom<string | null>
   $screenLocked: Atom<boolean>
-  $spriteState: Atom<SpriteStateName>
-  $voicePreparing: Atom<boolean>
   getResponsePreference: () => 'text' | 'voice'
   openMediaViewer: (item: ChatMediaItem) => void
-  playDataUrl: (dataUrl: string, onDone?: () => void) => Promise<AudioPlaybackResult>
-  requestSynth: (text: string, voice?: string, context?: string, persist?: boolean) => Promise<string>
   setSpriteState: (name: SpriteStateName, options?: SetSpriteStateOptions) => void
   /** 预制台词的合成+播放（内容寻址落盘缓存）：角色反应池经此送达，避免模块直连语音引擎。 */
   speakScripted: (text: string, voice?: string, context?: string) => Promise<boolean>
-  stopAudio: () => void
-  stopSpeaking: () => void
 }
 
 let ports: PresentationPorts | null = null

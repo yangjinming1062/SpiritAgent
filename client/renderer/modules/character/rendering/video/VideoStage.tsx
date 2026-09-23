@@ -6,7 +6,6 @@
  * 命中：按当前片段的 alpha 命中遮罩查表（容器平移与缩放已由舞台坐标归一化）。 */
 
 import { useStore } from '@nanostores/react'
-import { atom } from 'nanostores'
 import React, { useEffect, useRef, useState } from 'react'
 
 import {
@@ -26,10 +25,10 @@ import {
   shouldStartInstance,
   type VideoActionKey
 } from '@/modules/character'
+import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
 
-// 命中探测（舞台像素坐标）：返回 true 命中身体 / false 透明 / null 无数据。
-export const $videoHitTest = atom<((nx: number, ny: number) => boolean | null) | null>(null)
+import { $videoHitTest } from './video-hit-test'
 
 function useCurrentAction(): VideoActionKey {
   const [action, setAction] = useState<VideoActionKey>('idle')
@@ -291,6 +290,7 @@ export function VideoStage(): React.JSX.Element {
   useEffect(() => {
     if (!clip) {
       hitmaskRef.current = null
+      probeInteractiveRegions()
 
       return
     }
@@ -300,6 +300,7 @@ export function VideoStage(): React.JSX.Element {
     void resolveHitmask(clip).then(hm => {
       if (!cancelled) {
         hitmaskRef.current = hm
+        probeInteractiveRegions()
       }
     })
 
@@ -307,6 +308,10 @@ export function VideoStage(): React.JSX.Element {
       cancelled = true
     }
   }, [clip])
+
+  useEffect(() => {
+    probeInteractiveRegions()
+  }, [visible])
 
   // 循环计数：repeat_count > 1 的 loop 表达在播满次数后 completed 并回基础状态
   //（el.loop=true 不触发 ended，手动计数）。

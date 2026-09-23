@@ -85,13 +85,7 @@ import { readStoredBackendUrl } from './shared/config'
 import { buildPrefsHydratedFromConfig, createConfigSync, uiThemeFromConfig } from './shared/lib/config-sync'
 import * as runnerConfigStore from './shared/lib/runner-config-store'
 import { mimeTypeForPath } from './shared/mime'
-import {
-  broadcastToAllWindows,
-  errorMessage,
-  fileExists,
-  hideAndSkipTaskbar,
-  sendToWindow
-} from './shared/utils'
+import { broadcastToAllWindows, errorMessage, fileExists, hideAndSkipTaskbar, sendToWindow } from './shared/utils'
 
 const USER_DATA_OVERRIDE = process.env.SPIRITAGENT_DESKTOP_USER_DATA_DIR
 

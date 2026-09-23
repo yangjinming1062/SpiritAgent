@@ -1,4 +1,4 @@
-﻿import { clamp } from '@runtime'
+import { clamp } from '@runtime'
 
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
@@ -14,7 +14,7 @@ import {
   getBaseSpriteHeight,
   getBaseSpriteWidth,
   moveTo,
-  setLocale,
+  setSpatialLocale,
   startRoam
 } from './spatial'
 
@@ -76,7 +76,7 @@ function executeApproach(): void {
     const perch = computePerchPlacement(geom, $defaultScale.get())
 
     if (perch) {
-      setLocale('perch', {
+      setSpatialLocale('perch', {
         position: perch.pos,
         scaleLimit: perch.scale,
         locomotion: approachLocomotion(perch.pos)
@@ -113,7 +113,7 @@ function executeAutonomousAction(action: string): void {
         const perch = computePerchPlacement(ctx.windowGeom, $defaultScale.get())
 
         if (perch) {
-          setLocale('perch', { position: perch.pos, scaleLimit: perch.scale })
+          setSpatialLocale('perch', { position: perch.pos, scaleLimit: perch.scale })
         }
       }
 

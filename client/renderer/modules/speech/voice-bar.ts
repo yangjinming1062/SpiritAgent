@@ -4,6 +4,8 @@ import { $whisperOpen } from '@/shared/store/chat-visibility'
 import { $surfaceOpen, isLivingProxyWindow } from '@/shared/store/surfaces'
 import type { ReplyAudio } from '@/shared/types/spiritagent'
 
+import { playDataUrl, stopAudio } from './audio-track'
+
 // 聊天语音仅播放服务端保存的音频，不从文字合成，不受回应偏好影响。
 export interface VoiceBarProjection {
   getAudio(messageId: string): ReplyAudio | null | undefined
@@ -44,7 +46,7 @@ export function cancelVoiceBar(): void {
   proj.setLoading(null)
   proj.setFailed(null)
   // 同一音频通道还承载直接互动；停止也须作废尚未完成的合成。
-  presentationPorts().stopAudio()
+  stopAudio()
 }
 
 export async function toggleVoiceBar(messageId: string): Promise<void> {
@@ -87,7 +89,7 @@ export async function toggleVoiceBar(messageId: string): Promise<void> {
     proj.setLoading(null)
     proj.setPlaying(messageId)
 
-    const result = await presentationPorts().playDataUrl(dataUrl, () => {
+    const result = await playDataUrl(dataUrl, () => {
       if (token === playToken) {
         proj.setPlaying(null)
       }

@@ -1,5 +1,6 @@
 import { getAudioContextCtor } from '@/shared/lib/audio-context-ctor'
-import type { AudioPlaybackResult } from '@/shared/presentation-ports'
+
+export type AudioPlaybackResult = 'completed' | 'interrupted' | 'failed'
 
 let current: HTMLAudioElement | null = null
 let currentDone: (() => void) | null = null
@@ -7,12 +8,7 @@ let currentListeners: [string, EventListener][] = []
 let playGen = 0
 
 let audioCtx: AudioContext | null = null
-let analyser: AnalyserNode | null = null
-let analyserSource: MediaElementAudioSourceNode | null = null
-let amplitudeSink: ((amp: number) => void) | null = null
-let amplitudeBuffer: Uint8Array | null = null
-let amplitudeRaf: number | null = null
-let amplitudeActive = false
+let playbackSource: MediaElementAudioSourceNode | null = null
 
 function detachListeners(audio: HTMLAudioElement): void {
   for (const [type, fn] of currentListeners) {
@@ -20,6 +16,18 @@ function detachListeners(audio: HTMLAudioElement): void {
   }
 
   currentListeners = []
+}
+
+function disconnectPlaybackSource(): void {
+  if (playbackSource) {
+    try {
+      playbackSource.disconnect()
+    } catch {
+      /* ignore */
+    }
+
+    playbackSource = null
+  }
 }
 
 export function stopAudio(): void {
@@ -40,25 +48,7 @@ export function stopAudio(): void {
     currentDone = null
   }
 
-  if (analyserSource) {
-    try {
-      analyserSource.disconnect()
-    } catch {
-      /* ignore */
-    }
-
-    analyserSource = null
-  }
-
-  // 同时标记振幅循环退出，并立即取消待处理的帧。
-  amplitudeActive = false
-
-  if (amplitudeRaf !== null) {
-    cancelAnimationFrame(amplitudeRaf)
-    amplitudeRaf = null
-  }
-
-  amplitudeSink?.(0)
+  disconnectPlaybackSource()
 }
 
 export function nextGen(): number {
@@ -72,14 +62,68 @@ export function isLatestGen(gen: number): boolean {
 /** 把模块 AudioContext 拉到 running——q1 冷启动时调用，避免 MediaElementSource 重路由吃掉首帧。
  *
  * AudioContext 进入 running 后保持运行；不再主动 `suspend()`，否则每次切换语音条
- * 都要 `await ctx.resume()`，与 MediaElementSource 重路由和 AnalyserNode 的 FFT
- * 缓冲叠加会让首帧从 destination 输出前被覆盖/丢弃。挂起改由系统/浏览器接管
- *（`document.hidden` / 屏锁时 Chromium 会自动挂起空闲 ctx），释放 WASAPI 定时器。 */
+ * 都要 `await ctx.resume()`，与 MediaElementSource 重路由叠加会让首帧从 destination
+ * 输出前被覆盖/丢弃。挂起改由系统/浏览器接管（`document.hidden` / 屏锁时 Chromium
+ * 会自动挂起空闲 ctx），释放 WASAPI 定时器。 */
 export function warmAudioContext(): void {
-  ensureAnalyser()
+  ensureAudioContext()
 
   if (audioCtx && audioCtx.state === 'suspended') {
     void audioCtx.resume().catch(() => undefined)
+  }
+}
+
+function ensureAudioContext(): void {
+  if (audioCtx) {
+    return
+  }
+
+  const Ctor = getAudioContextCtor()
+
+  if (!Ctor) {
+    return
+  }
+
+  audioCtx = new Ctor()
+}
+
+/** 先恢复并接好 Web Audio 输出链，再启动媒体时间轴；否则冷启动重路由期间
+ *  时间轴仍会前进，实际出声时已跳过开头。 */
+async function connectPlaybackGraph(audio: HTMLAudioElement, gen: number): Promise<void> {
+  if (!isLatestGen(gen) || current !== audio) {
+    return
+  }
+
+  ensureAudioContext()
+
+  const ctx = audioCtx
+
+  if (!ctx) {
+    // 不支持 Web Audio——直接走 HTMLAudioElement 输出，不要崩。
+    return
+  }
+
+  if (ctx.state === 'suspended') {
+    await ctx.resume().catch(() => undefined)
+  }
+
+  if (!isLatestGen(gen) || current !== audio || ctx.state !== 'running') {
+    return
+  }
+
+  // 每个 audio 元素创建一个 MediaElementSource。跨多次切换复用会泄漏图节点，
+  // 并触发 "HTMLMediaElement already connected" 的 DOMException。
+  try {
+    disconnectPlaybackSource()
+    playbackSource = ctx.createMediaElementSource(audio)
+    playbackSource.connect(ctx.destination)
+  } catch {
+    // 该元素已经被连接（用全新的 Audio() 不应发生，但某些测试环境会复用节点）。
+    return
+  }
+
+  if (!isLatestGen(gen) || current !== audio) {
+    disconnectPlaybackSource()
   }
 }
 
@@ -112,24 +156,7 @@ export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise
       currentDone = null
     }
 
-    amplitudeActive = false
-
-    if (amplitudeRaf !== null) {
-      cancelAnimationFrame(amplitudeRaf)
-      amplitudeRaf = null
-    }
-
-    if (analyserSource) {
-      try {
-        analyserSource.disconnect()
-      } catch {
-        /* ignore */
-      }
-
-      analyserSource = null
-    }
-
-    amplitudeSink?.(0)
+    disconnectPlaybackSource()
 
     resolvePlayback(result)
 
@@ -152,9 +179,7 @@ export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise
     ['error', errorHandler]
   ]
 
-  // 先恢复并接好 Web Audio 输出链，再启动媒体时间轴；否则冷启动
-  // 重路由期间时间轴仍会前进，实际出声时已跳过开头。
-  await startAmplitudeLoop(audio, gen)
+  await connectPlaybackGraph(audio, gen)
 
   if (fired || !isLatestGen(gen) || current !== audio) {
     fireDone('interrupted')
@@ -162,12 +187,10 @@ export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise
     return await playbackEnded
   }
 
-  const playPromise = audio.play().then(
+  const playResult = await audio.play().then(
     () => true,
     () => false
   )
-
-  const playResult = await playPromise
 
   if (!playResult) {
     fireDone('failed')
@@ -178,117 +201,4 @@ export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise
   }
 
   return await playbackEnded
-}
-
-// ── Analyser-driven amplitude for model lip sync ─────────────────────────────
-
-/** Subscribe to the live audio amplitude [0..1]. Returns a cleanup fn. */
-export function registerAmplitudeSink(fn: ((amp: number) => void) | null): () => void {
-  amplitudeSink = fn
-
-  return () => {
-    if (amplitudeSink === fn) {
-      amplitudeSink = null
-    }
-  }
-}
-
-function ensureAnalyser(): void {
-  if (analyser && audioCtx) {
-    return
-  }
-
-  const Ctor = getAudioContextCtor()
-
-  if (!Ctor) {
-    return
-  }
-
-  audioCtx = new Ctor()
-  analyser = audioCtx.createAnalyser()
-  analyser.fftSize = 1024
-  amplitudeBuffer = new Uint8Array(new ArrayBuffer(analyser.frequencyBinCount))
-}
-
-async function startAmplitudeLoop(audio: HTMLAudioElement, gen: number): Promise<void> {
-  if (!isLatestGen(gen) || current !== audio) {
-    return
-  }
-
-  ensureAnalyser()
-
-  const ctx = audioCtx
-  const analyserNode = analyser
-
-  if (!ctx || !analyserNode || !amplitudeBuffer) {
-    // 不支持 Web Audio——静默跳过口型同步，不要崩。
-    return
-  }
-
-  if (ctx.state === 'suspended') {
-    await ctx.resume().catch(() => undefined)
-  }
-
-  if (!isLatestGen(gen) || current !== audio || ctx.state !== 'running') {
-    return
-  }
-
-  // 每个 audio 元素创建一个 MediaElementSource。跨多次切换复用（例如连续的
-  // speak() 调用）会泄漏图节点，并触发 "HTMLMediaElement already connected" 的
-  // DOMException。
-  try {
-    analyserSource?.disconnect()
-    analyserSource = ctx.createMediaElementSource(audio)
-    analyserSource.connect(analyserNode)
-    analyserNode.connect(ctx.destination)
-  } catch {
-    // 该元素已经被连接（用全新的 Audio() 不应发生，但某些测试环境会复用节点）。
-    return
-  }
-
-  if (!isLatestGen(gen) || current !== audio) {
-    try {
-      analyserSource.disconnect()
-    } catch {
-      /* ignore */
-    }
-
-    analyserSource = null
-
-    return
-  }
-
-  amplitudeActive = true
-
-  if (amplitudeRaf !== null) {
-    cancelAnimationFrame(amplitudeRaf)
-    amplitudeRaf = null
-  }
-
-  const buf = amplitudeBuffer as Uint8Array<ArrayBuffer>
-
-  const tick = () => {
-    if (!amplitudeActive || !analyser || !isLatestGen(gen) || current !== audio || !amplitudeSink) {
-      amplitudeActive = false
-      amplitudeRaf = null
-
-      return
-    }
-
-    analyser.getByteTimeDomainData(buf)
-    // 累加相对 0x80（静音中点）的偏差并归一化。
-    let sum = 0
-
-    for (let i = 0; i < buf.length; i++) {
-      const dev = buf[i] - 128
-      sum += dev < 0 ? -dev : dev
-    }
-
-    const avg = sum / buf.length
-    // 128 是满幅方波的理论最大值；夹到 1。
-    amplitudeSink?.(Math.min(1, avg / 96))
-    amplitudeRaf = requestAnimationFrame(tick)
-  }
-
-  amplitudeRaf = requestAnimationFrame(tick)
 }

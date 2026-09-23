@@ -1,6 +1,5 @@
-// 工具芯片时间轴：当前实现走每条消息内的可折叠 ToolTimeline；
-// 这里先把它从 MessageBubble 抽出再透出，让 ConversationSurface 与后续工作台
-// Run Rail 都能复用同一组件。
+// 工具芯片时间轴：当前实现走每条消息内的可折叠 ToolTimeline，
+// 供 ConversationSurface 与工作台 Run Rail 共用。
 
 import type React from 'react'
 

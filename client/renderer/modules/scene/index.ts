@@ -5,7 +5,6 @@ export {
   $sceneLibrary,
   $scenePage,
   $scenePolicy,
-  $sceneQuery,
   $sceneTaskSlow,
   $sceneTaskStatus,
   $sceneTotal,

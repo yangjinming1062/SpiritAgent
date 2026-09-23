@@ -130,8 +130,6 @@ function isCommandNameStart(ch: string): boolean {
   return false
 }
 
-// --- 模糊匹配（弹层过滤） ---
-
 /**
  * 模糊匹配打分：完全等于 100；前缀匹配按命中长度递减；子序列匹配按距离顺序得分。
  * 返回 0 表示不匹配（过滤掉），正值越大匹配越好。

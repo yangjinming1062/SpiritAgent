@@ -38,7 +38,7 @@ speech 拥有播放状态，conversation 只维护其投影；character 拥有�
 
 ### 动画状态机（8 态）
 
-[companion-store.ts](modules/character/companion-store.ts)是优先级真源。瞬态保存恢复目标，旧计时器不得覆盖新持续状态，重复瞬态不嵌套恢复目标。语音准备与实际播放分开；尾随点播可驱动口型而不切 speaking，聊天完成不触发 emotional。
+[companion-store.ts](modules/character/companion-store.ts)是优先级真源。瞬态保存恢复目标，旧计时器不得覆盖新持续状态，重复瞬态不嵌套恢复目标。语音准备与实际播放分开；尾随点播不切 speaking，聊天完成不触发 emotional。
 
 ### 情绪表达与当前心情
 
@@ -86,7 +86,7 @@ speech 拥有播放状态，conversation 只维护其投影；character 拥有�
 
 ### Speech（modules/speech）
 
-speech 管音频播放、直接交互台词合成与实际音量振幅。聊天文字没有合成入口；聊天语音只在点击时播放后端保存的音频，缺失音频经会话语音重试端点恢复。播放状态归 speech，会话气泡与音频视图归 conversation，由应用工作流装配。新播放、停止、换会话、表面隐藏或锁屏使旧下载和播放结果失效。
+speech 管音频播放与直接交互台词合成。聊天文字没有合成入口；聊天语音只在点击时播放后端保存的音频，缺失音频经会话语音重试端点恢复。播放状态归 speech，会话气泡与音频视图归 conversation，由应用工作流装配。新播放、停止、换会话、表面隐藏或锁屏使旧下载和播放结果失效。
 
 播放结果区分完成、中断与失败；其他声音抢占属于中断，不把语音条标记为不可用。
 

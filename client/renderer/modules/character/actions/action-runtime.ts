@@ -53,10 +53,6 @@ export function nextAppearanceEpoch(): number {
   return appearanceEpochCounter
 }
 
-export function currentAppearanceEpoch(): number {
-  return appearanceEpochCounter
-}
-
 /** 受理播放指令：校验包归属 / TTL / play_id 去重，生成播放实例。
  * 拖拽等更高优先级交互由调度器在调用前裁决，本函数不做交互判断。
  * appearance_epoch 采用“客户端单调计数、服务端只透传目录版本”的宽松契约：
@@ -156,9 +152,4 @@ export function finishPlayInstance(generation: number): void {
   if ($activePlayInstance.get()?.generation === generation) {
     $activePlayInstance.set(null)
   }
-}
-
-/** 当前实例是否仍有效（未被更新请求替换）。 */
-export function isInstanceCurrent(instance: ActionPlayInstance): boolean {
-  return $activePlayInstance.get()?.generation === instance.generation
 }

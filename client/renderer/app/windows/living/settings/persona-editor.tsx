@@ -46,7 +46,7 @@ export function PersonaSection(): React.JSX.Element {
     setSaving(true)
     setHint(null)
 
-    // C2：PUT 与 hydrate 的失败模式分开——PUT 成功后即便 GET 短暂失败，
+    // PUT 与 hydrate 的失败模式分开——PUT 成功后即便 GET 短暂失败，
     // 也不能当成保存失败（诱导用户重试会造成重复写入）。
     // 把当前 persona 作为 previous 传入，让锁定的视觉锚点字段原样带回。
     let putOk = false

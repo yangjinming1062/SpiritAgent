@@ -1,9 +1,9 @@
-﻿import { useStore } from '@nanostores/react'
+import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useRef } from 'react'
 
 import { $desktopBoot } from '@/app/runtime/boot-store'
-import { useInteractiveRegion } from '@/modules/character'
+import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { BTN_PRIMARY, EmptyState } from '@/shared/panel'
 import { setPrimaryGateway } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'

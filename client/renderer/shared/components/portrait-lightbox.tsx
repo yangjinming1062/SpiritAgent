@@ -45,37 +45,6 @@ export function HistoryGallery({
   )
 }
 
-// 取景框比例须跟随立绘图片本身——
-// 这里探测 naturalWidth/Height 供容器设 aspectRatio；加载完成前返回 null（调用方回退竖版占位）。
-export function useNaturalAspectRatio(src: string | null | undefined): number | null {
-  const [ratio, setRatio] = useState<number | null>(null)
-
-  useEffect(() => {
-    setRatio(null)
-
-    if (!src) {
-      return
-    }
-
-    let alive = true
-    const img = new Image()
-
-    img.onload = () => {
-      if (alive && img.naturalWidth > 0 && img.naturalHeight > 0) {
-        setRatio(img.naturalWidth / img.naturalHeight)
-      }
-    }
-
-    img.src = src
-
-    return () => {
-      alive = false
-    }
-  }, [src])
-
-  return ratio
-}
-
 const MIN_SCALE = 1
 const MAX_SCALE = 8
 const WHEEL_ZOOM_STEP = 1.12

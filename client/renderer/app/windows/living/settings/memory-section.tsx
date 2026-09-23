@@ -1,8 +1,8 @@
 import { useStore } from '@nanostores/react'
+import { atom } from 'nanostores'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { $memoryBrowserTab, type MemoryTab, setMemoryBrowserTab } from '@/modules/character'
 import { $systemPresets, fetchSystemPresets } from '@/modules/conversation'
 import { useGatewayRequest } from '@/shared'
 import { cn } from '@/shared/lib/utils'
@@ -11,6 +11,10 @@ import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
 import { UserProfileSection } from './user-profile-section'
+
+type MemoryTab = 'active' | 'candidate' | 'invalidated' | 'expired'
+
+const $memoryBrowserTab = atom<MemoryTab>('active')
 
 interface MemoryRow {
   id: number
@@ -55,7 +59,7 @@ export function MemorySection(): React.ReactElement {
         <PanelSelect
           ariaLabel={dict.settings.memory.presetLabel}
           onChange={next => {
-            setMemoryBrowserTab('active')
+            $memoryBrowserTab.set('active')
             setPresetId(next)
           }}
           options={presets.map(preset => ({ value: preset.id, label: preset.name }))}
@@ -219,7 +223,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
 
   const switchTab = (next: MemoryTab): void => {
     if (next !== tab) {
-      setMemoryBrowserTab(next)
+      $memoryBrowserTab.set(next)
     }
   }
 

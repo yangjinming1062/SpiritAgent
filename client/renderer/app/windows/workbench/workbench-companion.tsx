@@ -13,7 +13,7 @@ import {
   resolveCompanionPresentation,
   SpriteVfxOverlay
 } from '@/modules/character'
-import { $videoHitTest } from '@/modules/character/rendering/video'
+import { useVideoPixelHitTest } from '@/modules/character/rendering/video'
 import { useInteractiveRegion } from '@/shared'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
@@ -31,15 +31,7 @@ export function WorkbenchCompanion(): React.JSX.Element {
   const brandName = dict.brand.name
   const hasHydratedRef = useRef(false)
   const wrapperRef = useRef<HTMLDivElement>(null)
-  const hitVideoRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
-
-  useEffect(
-    () =>
-      $videoHitTest.subscribe(fn => {
-        hitVideoRef.current = fn
-      }),
-    []
-  )
+  const videoHitTest = useVideoPixelHitTest(1)
 
   // 视频就绪挂视频层，否则落程序化蛋兜底（DESIGN §1.2「永不空白」）。
   const presentation = React.useMemo(
@@ -53,19 +45,9 @@ export function WorkbenchCompanion(): React.JSX.Element {
         return true
       }
 
-      const probeVideo = hitVideoRef.current
-
-      if (probeVideo) {
-        const result = probeVideo(x, y)
-
-        if (result !== null) {
-          return result
-        }
-      }
-
-      return true
+      return videoHitTest(x, y)
     },
-    [auth.kind]
+    [auth.kind, videoHitTest]
   )
 
   useInteractiveRegion('workbench-companion', wrapperRef, undefined, stageHitTest, 1)

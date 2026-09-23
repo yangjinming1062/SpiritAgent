@@ -215,7 +215,7 @@ export function SpriteWindow(): React.JSX.Element {
       cancelled = true
       window.removeEventListener('keydown', onKey)
       stopActivity()
-      // StrictMode dev double-invoke 兼容：cleanup 把 ref 复位，让 re-mount 重新水合。
+      // StrictMode dev double-invoke：cleanup 把 ref 复位，让 re-mount 重新水合。
       // 生产环境不会触发（无 cleanup → 无 re-mount），同 effect 不重复跑。
       hasHydratedRef.current = false
     }
@@ -235,7 +235,7 @@ export function SpriteWindow(): React.JSX.Element {
         return
       }
 
-      // 清除过期的 id，使下次 speak() 不再带 voice 参数（原 checkCompanionVoiceValidity 内部行为）。
+      // 清除过期的 id，使下次 speak() 不再带 voice 参数。
       setCompanionVoiceId('')
 
       const voice = getStrings().notifications.voice

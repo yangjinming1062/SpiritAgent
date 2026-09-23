@@ -10,7 +10,7 @@ import {
   resetToHomePosition,
   setDefaultScale,
   setDisturbanceTier,
-  setLocale
+  setSpatialLocale
 } from '@/modules/character'
 import { EyeOff, Home, type IconComponent, KeyRound, Monitor } from '@/shared/lib/icons'
 import { isRegionHit, useInteractiveRegion } from '@/shared/lib/interactive-regions'
@@ -105,7 +105,7 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
     void requestCloseSurface()
     resetToHomePosition()
     setDefaultScale(1)
-    setLocale('home', { locomotion: 'fly' })
+    setSpatialLocale('home', { locomotion: 'fly' })
   }
 
   const handleHideSprite = () => {

@@ -306,8 +306,7 @@ async function pollSnapshot(generation: number): Promise<void> {
   }
 
   // ``system.snapshot`` 聚合全部四个信号。任一拒绝会保留所有 atom
-  // 不动（探针失败时黏住上次值），与原先四次调用 ``Promise.all`` 的
-  // 逐探针语义保持一致。
+  // 不动（探针失败时黏住上次值）。
   const snapshotResult = await desktop.runnerInvoke('system.snapshot', {}).catch(() => null)
 
   if (generation !== monitorGeneration) {

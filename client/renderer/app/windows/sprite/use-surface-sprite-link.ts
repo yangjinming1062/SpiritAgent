@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useEffect } from 'react'
 
-import { setLocale } from '@/modules/character'
+import { setSpatialLocale } from '@/modules/character'
 import { $surfaceOpen } from '@/shared/store/surfaces'
 
 export function useSurfaceSpriteLink(): void {
@@ -10,7 +10,7 @@ export function useSurfaceSpriteLink(): void {
   useEffect(() => {
     if (open === 'living') {
       // 生活空间由场景呈现伙伴，隐藏桌面精灵。
-      setLocale('home', { instant: true })
+      setSpatialLocale('home', { instant: true })
       document.documentElement.dataset.spriteHidden = 'true'
 
       return
@@ -19,11 +19,11 @@ export function useSurfaceSpriteLink(): void {
     delete document.documentElement.dataset.spriteHidden
 
     if (open === 'workbench') {
-      setLocale('workbench', { instant: true })
+      setSpatialLocale('workbench', { instant: true })
 
       return
     }
 
-    setLocale('home', { instant: true })
+    setSpatialLocale('home', { instant: true })
   }, [open])
 }

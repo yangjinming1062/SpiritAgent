@@ -3,7 +3,6 @@ import { atom, computed } from 'nanostores'
 import { $surfaceOpen } from './surfaces'
 
 // 用户当前正在看的对话承载位置；唯一真相源。
-// 取代散落的 `$surfaceOpen === null` + `$whisperOpen` 复合判断。
 export type ChatDestination = 'living' | 'workbench' | 'whisper'
 
 // 轻语卡片可见性：独立于 $surfaceOpen（生活空间/工作台是 IPC 驱动的 BrowserWindow，

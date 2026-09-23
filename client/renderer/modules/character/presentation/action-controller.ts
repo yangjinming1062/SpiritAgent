@@ -30,8 +30,3 @@ export function resolveVideoAction(input: VideoActionInput): VideoActionKey {
 
   return 'idle'
 }
-
-/** 渲染器实际可兑现的动作集合：缺素材的动作回退 idle，不悬空等待。 */
-export function pickAvailableClip<K extends string>(requested: K, available: ReadonlySet<string>, fallback: K): K {
-  return available.has(requested) ? requested : fallback
-}

@@ -47,6 +47,7 @@ export default defineConfig({
     alias: {
       '@': path.resolve(__dirname, './renderer'),
       '@shared': path.resolve(__dirname, './renderer/shared'),
+      '@client-shared': path.resolve(__dirname, './shared'),
       '@ipc/contracts': path.resolve(__dirname, './shared/ipc/contracts'),
       '@runtime': path.resolve(__dirname, './shared/runtime')
     },

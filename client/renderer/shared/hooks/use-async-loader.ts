@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-// 规范的"挂载时拉取、持有结果、暴露错误"循环。取代每个设置页里重复出现的
-// `useEffect` + `useRef('cancelled')` + try/catch/finally 大约 12 行的样板。
+// 规范的"挂载时拉取、持有结果、暴露错误"循环。
 // 调用方传入一个 resolve 出数据（或抛出）的 `load` 函数；hook 负责挂载、
 // 卸载时取消、错误状态以及手动 `reload` 触发。
 //

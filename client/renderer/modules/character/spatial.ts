@@ -63,7 +63,6 @@ export const $spatialPos = atom<{ x: number; y: number }>(getHomePosition())
 export const $homePosition = atom<{ x: number; y: number }>(getHomePosition())
 export const $spatialScale = atom<number>($defaultScale.get())
 export const $spatialLocomotion = atom<Locomotion>('still')
-export const $dragVelocity = atom<{ vx: number; vy: number }>({ vx: 0, vy: 0 })
 export const $edgeDockSide = atom<EdgeDockSide>('none')
 export const $isEdgeDocked = atom<boolean>(false)
 
@@ -373,7 +372,7 @@ export function setDefaultScale(scale: number): void {
   updateAdaptiveScale()
 }
 
-export function setLocale(
+export function setSpatialLocale(
   locale: SpatialLocale,
   opts?: {
     position?: { x: number; y: number }
@@ -426,7 +425,7 @@ export function updateSpatialDecision(): void {
     stopRoam()
 
     if ($spatialLocale.get() !== 'home') {
-      setLocale('home')
+      setSpatialLocale('home')
     }
 
     return
@@ -454,7 +453,7 @@ export function updateSpatialDecision(): void {
       const perch = computePerchPlacement(ctx!.windowGeom!, $defaultScale.get())
 
       if (perch) {
-        setLocale('perch', { position: perch.pos, scaleLimit: perch.scale })
+        setSpatialLocale('perch', { position: perch.pos, scaleLimit: perch.scale })
       }
     }
 
@@ -472,7 +471,7 @@ export function updateSpatialDecision(): void {
   stopRoam()
 
   if ($spatialLocale.get() === 'perch' || $spatialLocale.get() === 'roam') {
-    setLocale('home')
+    setSpatialLocale('home')
   }
 }
 
@@ -515,7 +514,7 @@ function roamStep(): void {
         // 桌面不再空闲（用户回来了）→ 结束漫游、走回 home（DESIGN §3.2 roam 仅桌面空闲时）
         if ($spriteState.get() !== 'idle' || $lastIdleSeconds.get() < ROAM_IDLE_THRESHOLD_SECONDS) {
           stopRoam()
-          setLocale('home')
+          setSpatialLocale('home')
 
           return
         }
@@ -601,17 +600,12 @@ export function startDrag(): void {
   $spriteState.set('interacting')
 }
 
-export function updateDragPosition(pos: { x: number; y: number }, vel?: { vx: number; vy: number }): void {
+export function updateDragPosition(pos: { x: number; y: number }): void {
   // DESIGN §3.7：全身始终在屏内。拖拽过程中逐帧钳制，不能等 endDragAt 才修正。
   $spatialPos.set(clampPosToViewport(pos))
-
-  if (vel) {
-    $dragVelocity.set(vel)
-  }
 }
 
 export function endDragAt(pos: { x: number; y: number }): void {
-  $dragVelocity.set({ vx: 0, vy: 0 })
   const vw = window.innerWidth
   const c = contentBox()
   const dockMargin = 40
@@ -657,7 +651,6 @@ export function resetToHomePosition(): void {
   $homePosition.set(home)
   $spatialLocale.set('home')
   $spatialLocomotion.set('still')
-  $dragVelocity.set({ vx: 0, vy: 0 })
 
   $spatialPos.set(home)
   void window.spiritagent.sprite.setPosition(home)
@@ -781,7 +774,7 @@ export function initSpatial(): () => void {
       }
     } else {
       if ($spatialLocale.get() === 'perch' || $spatialLocale.get() === 'workbench') {
-        setLocale('home')
+        setSpatialLocale('home')
       }
 
       updateSpatialDecision()
@@ -857,7 +850,7 @@ export function initSpatial(): () => void {
     const locale = $spatialLocale.get()
 
     if (locale === 'home') {
-      setLocale('home', { instant: true })
+      setSpatialLocale('home', { instant: true })
     }
   }
 
