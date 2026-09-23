@@ -90,6 +90,57 @@ def upgrade() -> None:
     op.create_index(op.f("ix_avatar_assets_active"), "avatar_assets", ["active"], unique=False)
     op.create_index(op.f("ix_avatar_assets_user_id"), "avatar_assets", ["user_id"], unique=False)
     op.create_table(
+        "companion_fullbody_candidates",
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("avatar_id", sa.Integer(), nullable=False),
+        sa.Column("base_fullbody_url", sa.String(length=2048), nullable=False),
+        sa.Column("base_revision", sa.Integer(), nullable=False),
+        sa.Column("image_url", sa.String(length=2048), nullable=False),
+        sa.Column("body_features_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
+        sa.Column("body_source_hash", sa.String(length=64), server_default=sa.text("''"), nullable=False),
+        sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("error", sa.Text(), nullable=True),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["avatar_id"], ["avatar_assets.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(
+        op.f("ix_companion_fullbody_candidates_user_id"),
+        "companion_fullbody_candidates",
+        ["user_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_companion_fullbody_candidates_avatar_id"),
+        "companion_fullbody_candidates",
+        ["avatar_id"],
+        unique=False,
+    )
+    op.create_index(
+        op.f("ix_companion_fullbody_candidates_status"),
+        "companion_fullbody_candidates",
+        ["status"],
+        unique=False,
+    )
+    op.create_table(
+        "companion_media_reviews",
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("media_type", sa.String(length=8), nullable=False),
+        sa.Column("media_url", sa.String(length=2048), nullable=False),
+        sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
+        sa.Column("reason", sa.Text(), server_default=sa.text("''"), nullable=False),
+        sa.Column("publication", sa.JSON(), nullable=True),
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id"),
+    )
+    op.create_index(op.f("ix_companion_media_reviews_user_id"), "companion_media_reviews", ["user_id"], unique=False)
+    op.create_table(
         "companion_character_cards",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -159,6 +210,8 @@ def upgrade() -> None:
         sa.Column("manifest_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("manifest_json", sa.Text(), nullable=True),
         sa.Column("content_hash", sa.String(length=64), nullable=True),
+        sa.Column("identity_review", sa.String(length=16), server_default=sa.text("'none'"), nullable=False),
+        sa.Column("identity_review_reason", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("status", sa.String(length=16), server_default=sa.text("'processing'"), nullable=False),
         sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("error", sa.Text(), nullable=True),
@@ -426,6 +479,8 @@ def upgrade() -> None:
         sa.Column("prompt", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("media_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("seed_portrait_media_id", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
+        sa.Column("identity_review", sa.String(length=16), server_default=sa.text("'none'"), nullable=False),
+        sa.Column("identity_review_reason", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("attempt_count", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("requested_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("ready_at", sa.DateTime(timezone=True), nullable=True),
@@ -673,12 +728,15 @@ def upgrade() -> None:
         sa.Column("model", sa.String(length=128), nullable=False),
         sa.Column("prompt", sa.Text(), nullable=False),
         sa.Column("generation_state_json", sa.Text(), nullable=False),
+        sa.Column("generation_attempt_index", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("params_json", sa.Text(), nullable=False),
         sa.Column("status", sa.String(length=16), nullable=False),
         sa.Column("provider_task_id", sa.String(length=128), nullable=True),
         sa.Column("provider_file_id", sa.String(length=128), nullable=True),
         sa.Column("file_id", sa.String(length=64), nullable=True),
         sa.Column("video_url", sa.Text(), nullable=True),
+        sa.Column("candidate_video_url", sa.Text(), nullable=True),
+        sa.Column("candidate_file_id", sa.String(length=64), nullable=True),
         sa.Column("error_reason", sa.String(length=64), nullable=True),
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -935,6 +993,7 @@ def downgrade() -> None:
     # 先子表再父表（messages → conversations → users）。
     # channel_deliveries / channel_peers 在 channel_bindings 之后 drop（binding_id FK）；
     # companion_actions / companion_action_packs 在 companion_outfits 之前 drop（pack_id / outfit_id FK）；
+    # companion_fullbody_candidates 在 avatar_assets 之前 drop（avatar_id FK）；
     # nightly_activity_actions 在 nightly_activity_logs 之后 drop（log_id FK）；system_settings 无 FK 引用，置于最末。
     for table in (
         "messages",
@@ -963,6 +1022,8 @@ def downgrade() -> None:
         "companion_action_packs",
         "companion_outfits",
         "companion_character_cards",
+        "companion_media_reviews",
+        "companion_fullbody_candidates",
         "avatar_assets",
         "conversations",
         "users",
