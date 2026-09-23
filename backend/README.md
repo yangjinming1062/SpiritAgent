@@ -4,7 +4,7 @@
 
 负责云端对话编排、角色与记忆、资产、调度和持久化；本机执行委托 Runner，窗口与渲染归 Client。
 
-按任务进入：[对话编排](services/application/chat/README.md)、[记忆](services/domains/memory/README.md)、[生成服务](services/application/generation/README.md)、[动作库](services/domains/actions/README.md)。本文只维护后端共用的依赖、配置、生命周期和运行约束。
+按任务进入：[对话编排](services/application/chat/README.md)、[记忆](services/domains/memory/README.md)、[生成服务](services/application/generation/README.md)、[动作库](services/domains/actions/README.md)、[提示词](prompts/README.md)。自动化、夜间、片刻与陪伴域无独立 README，入口见 `services/application/`、`services/domains/`。本文只维护后端共用的依赖、配置、生命周期和运行约束。
 
 ## 2. 设计意图
 
@@ -49,7 +49,7 @@ modules / components / common / prompts 不反向依赖服务实现
 
 `bootstrap` 是唯一装配入口。供应商、工具、渠道、内部事件及域钩子显式注册；注册可重复，未登记能力显式失败。
 
-启动依次完成配置检查、迁移、配置水合与目录准备、调度器、事件回路、渠道桥和任务恢复。停止先关闭清理任务与调度入口，再收敛模块任务，停止渠道桥与事件回路，最后释放数据库和连接池。
+启动依次完成配置检查、迁移、配置水合与目录准备、调度器、事件回路、渠道桥和任务恢复（聊天视频、视频包生成/导入、动作提案评审、角色卡提取、场景、初始外观）。停止先关闭清理任务与调度入口，再收敛模块任务，停止渠道桥与事件回路，最后释放数据库、Web 供应商与 LLM 连接池。
 
 `MANAGER`、`REGISTRY`、`SETTINGS` 和用户锁等单例遵守单进程边界；bootstrap 管装配，不另建通用依赖注入容器。
 
@@ -89,7 +89,7 @@ modules / components / common / prompts 不反向依赖服务实现
 
 适配器由装配层注册。接收锁保证落库与入队顺序，投递锁避免并发补发；登录、入站、回合、typing 和补发均归绑定实例，退出或重建前取消并等待整棵任务树。
 
-iLink 轮询持续返回 `-14` 才按登录失效处理；发送时的同码仅代表回复上下文失效，等待下一次来信，不直接触发重新扫码。媒体经渠道加解密转换，配对、排队、只读与本机授权见 [PROTOCOL](../docs/PROTOCOL.md#17-im-通道桥接apichannels)。
+iLink 轮询持续返回 `-14` 才按登录失效处理；发送时的同码仅代表回复上下文失效，等待下一次来信，不直接触发重新扫码。媒体经渠道加解密转换；配对、排队、只读与本机授权见 [PROTOCOL](../docs/PROTOCOL.md#17-im-通道桥接apichannels)。
 
 ### 供应商与网络错误
 

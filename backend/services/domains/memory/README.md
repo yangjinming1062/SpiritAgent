@@ -1,6 +1,6 @@
 # 预设记忆
 
-负责召回、证据维护、人工编辑和恢复有效性。调用方只使用公共入口，不直接改记录或复制策略：[memory_learning.py](memory_learning.py)执行学习决策，[memory_store.py](memory_store.py)管理存储，[memory_policy.py](memory_policy.py)定义统一策略。
+负责召回、证据维护、人工编辑和恢复有效性。调用方只使用公共入口，不直接改记录或复制策略：[memory_learning.py](memory_learning.py)执行学习决策，[memory_store.py](memory_store.py)管理存储，[memory_policy.py](memory_policy.py)定义统一策略，[memory_admin.py](memory_admin.py)提供人工列表与编辑。
 
 作用域由认证会话固定，隔离与管理协议见 [PROTOCOL](../../../../docs/PROTOCOL.md#预设记忆与学习作用域)。
 

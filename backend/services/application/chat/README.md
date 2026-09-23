@@ -2,9 +2,24 @@
 
 统一编排桌面、IM、Cron 与子 Agent 回合。领域层管理业务，基础设施层负责供应商传输；本包只组织上下文、模型、工具和交付。依赖见 [Backend](../../../README.md#32-services-五层)，跨端输出见 [PROTOCOL](../../../../docs/PROTOCOL.md#14-聊天心情视觉表达与空间契约)。
 
+## 关键入口
+
+| 入口 | 职责 |
+|---|---|
+| [orchestrator.py](orchestrator.py) | 回合执行：轮数预算、无进展守卫、委派与供应商回退锁定 |
+| [turn_inputs.py](turn_inputs.py) | 回合装配：工具开关、推断设置、用户与会话设置合并 |
+| [prompt_presets.py](prompt_presets.py) / [prompt_blocks.py](prompt_blocks.py) | 预设装配与共享块渲染 |
+| [system_prompt.py](system_prompt.py) / [title_generator.py](title_generator.py) / [context_compressor.py](context_compressor.py) | 系统提示词、标题、运行时压缩 |
+| [reply_delivery.py](reply_delivery.py) / [bubble.py](bubble.py) / [streaming.py](streaming.py) | 气泡校验、结构化回复与文本流式路径 |
+| [tool_dispatch.py](tool_dispatch.py) / [delegation.py](delegation.py) | 工具派发与 `DelegateAction` 执行层接管 |
+| [chat_emitter.py](chat_emitter.py) / [persistence.py](persistence.py) | 会话事件与消息落库 |
+| [slash_commands.py](slash_commands.py) / [native_memory.py](native_memory.py) / [background_review.py](background_review.py) | 斜杠命令、原生记忆与回合后整理 |
+
+提示词主体文本集中在 [prompts](../../../prompts/README.md)。
+
 ## 提示词与运行时数据
 
-[prompt_presets.py](prompt_presets.py)负责预设装配，[prompt_blocks.py](prompt_blocks.py)渲染共享块，提示词主体文本集中在 [prompts](../../../prompts/README.md)。身份、用户资料、记忆、附件和工具结果作为资料输入，不扩大权限；同一陪伴工具循环使用完整预设，不切换到另一套准备人格。
+身份、用户资料、记忆、附件和工具结果作为资料输入，不扩大权限；同一陪伴工具循环使用完整预设，不切换到另一套准备人格。
 
 专业预设只装配职业目标与本域资料；automation 使用独立任务边界，不带陪伴人格、记忆维护或实时用户答复假设。主动回合的沉默规则属于系统指令，意图和档位属于尾部运行资料；普通用户回合不注入沉默选项。
 
