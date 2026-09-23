@@ -188,6 +188,8 @@ class VideoGenProvider(BaseProvider):
     # 支持 first_frame_image 图生视频；False 时带首帧的请求跳过该供应商。
     supports_first_frame: bool = False
     supports_loop_frames: bool = False
+    # 消费 reference_images 身份参考；False 时编排层省略该字段，不排除该供应商。
+    supports_reference_images: bool = False
 
     @abstractmethod
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus: ...

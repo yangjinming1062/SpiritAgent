@@ -882,7 +882,7 @@ async def post_video_pack_generate(
     user: CurrentUser,
     db: DbSession,
 ) -> VideoPackResponse:
-    """按参考生成视频包：逐动作脚本与关键帧 → Grok 首尾帧短片 → 语义抠像与循环验收。
+    """按参考生成视频包：逐动作脚本与关键帧 → 视频供应商链首尾帧短片 → 语义抠像与循环验收。
     生成与处理在后台进行，进度与结果经 companion.video.progress / ready / failed 事件回流。"""
     try:
         pack = await create_video_pack_from_reference(

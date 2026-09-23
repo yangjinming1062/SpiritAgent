@@ -40,6 +40,7 @@ class GrokVideoGenProvider(VideoGenProvider):
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
         self.supports_loop_frames = config.model == "grok-imagine-video-1.5"
+        self.supports_reference_images = self.supports_loop_frames
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         model = req.model or self.config.model

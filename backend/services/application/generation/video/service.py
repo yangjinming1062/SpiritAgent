@@ -7,7 +7,7 @@
 两条创建入口：
 - 上传导入：`create_pack_from_clips`，用户提供已制作片段（或长视频区间）；
 - 按参考生成：`create_pack_from_reference`，LLM 演绎脚本 → 独立动作姿态 →
-  Grok 首尾帧短片 → 语义抠像与循环验收 → 不可变包发布。
+  视频供应商链首尾帧短片 → 语义抠像与循环验收 → 不可变包发布。
   供应商任务句柄在提交后立即落库，重启后凭句柄续轮询，不重复提交付费任务。
 """
 
@@ -286,7 +286,7 @@ async def create_pack_from_reference(
     action: str | None = None,
     feedback: str = "",
 ) -> CompanionVideoPack:
-    """独立 Grok 短动作；单动作请求在 ready 包上原地重做（保持 pack_id，只推进素材版本），
+    """独立短动作视频；单动作请求在 ready 包上原地重做（保持 pack_id，只推进素材版本），
     仅在包尚未 ready 时形成新版本并复用冻结参考。"""
     if (source_pack_id is None) != (action is None):
         raise VideoPackStateError("单动作请求必须指定有效视频包与动作")
@@ -375,7 +375,9 @@ async def create_pack_from_reference(
                 await db.commit()
                 _unlink_assets(retired)
                 return reusable
-        await _video_providers(user_id)
+        # 必需系统槽位：idle 待机 1s、drag 2s，均为 loop；按各自时长档确认链上有人能做。
+        for slot_seconds in (1.0, 2.0):
+            await _video_providers(user_id, needs_loop_frames=True, duration_seconds=slot_seconds)
         if not await resolve_vision_chain(db, user_id):
             raise VideoPackStateError("未配置视觉模型，无法根据角色参考图撰写动作脚本")
         image_chain, image_error = await resolve_image_gen_chain(db, user_id, "reference", image_edit=True)
@@ -1132,21 +1134,50 @@ async def _build_pack(
         await _fail_pack(pack_id, exc)
 
 
-async def _video_providers(user_id: int) -> list[tuple[ProviderConfig, VideoGenProvider]]:
+def _action_resolution(provider: VideoGenProvider) -> str | None:
+    """动作素材 720p 等价档；供应商未声明分辨率时沿用 720p。"""
+    if provider.resolutions is None:
+        return "720p"
+    for candidate in ("720p", "720P", "768P"):
+        if candidate in provider.resolutions:
+            return candidate
+    return None
+
+
+def _provider_matches_action(
+    provider: VideoGenProvider,
+    *,
+    needs_loop_frames: bool,
+    duration_seconds: float,
+) -> bool:
+    if not provider.supports_first_frame:
+        return False
+    if needs_loop_frames and not provider.supports_loop_frames:
+        return False
+    seconds = int(round(duration_seconds))
+    if provider.durations is not None and seconds not in provider.durations:
+        return False
+    return _action_resolution(provider) is not None
+
+
+async def _video_providers(
+    user_id: int,
+    *,
+    needs_loop_frames: bool,
+    duration_seconds: float,
+) -> list[tuple[ProviderConfig, VideoGenProvider]]:
+    """按本次动作需求筛选 `video_gen` 链，保持链序；不点名供应商。"""
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "video_gen")
-    providers = [
-        (cfg, resolve(ServiceType.video_gen, cfg.provider_name)(cfg)) for cfg in chain if cfg.provider_name == "grok"
-    ]
-    providers = [
-        (cfg, provider)
-        for cfg, provider in providers
-        if provider.supports_first_frame
-        and provider.supports_loop_frames
-        and all(duration in (provider.durations or ()) for duration in (1, 2, 4, 6, 8, 10))
-    ]
+    providers: list[tuple[ProviderConfig, VideoGenProvider]] = []
+    for cfg in chain:
+        provider = resolve(ServiceType.video_gen, cfg.provider_name)(cfg)
+        if _provider_matches_action(provider, needs_loop_frames=needs_loop_frames, duration_seconds=duration_seconds):
+            providers.append((cfg, provider))
     if not providers:
-        raise VideoPackStateError("请配置支持首尾帧的 Grok 1.5 视频供应商；短动作不会回退到 MiniMax")
+        capability = "首尾帧" if needs_loop_frames else "首帧"
+        seconds = int(round(duration_seconds))
+        raise VideoPackStateError(f"请配置支持{capability}、时长可填 {seconds} 秒的视频供应商")
     return providers
 
 
@@ -1382,7 +1413,11 @@ async def _run_action_pipeline(
 
     if not job.artifact_path:
         if not job.provider_task_id:
-            providers = await _video_providers(pack.user_id)
+            providers = await _video_providers(
+                pack.user_id,
+                needs_loop_frames=entry.clip_kind == "loop",
+                duration_seconds=entry.duration_seconds,
+            )
             if job.stage == "submit":
                 raise VideoPackError("提交结果未知，未自动重发；请核对供应商任务")
             reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
@@ -1418,11 +1453,11 @@ async def _run_action_pipeline(
                 return await provider.submit(
                     VideoGenRequest(
                         prompt=build_video_prompt(entry, context.identity),
-                        duration=entry.duration_seconds,
-                        resolution="720p",
+                        duration=int(round(entry.duration_seconds)),
+                        resolution=_action_resolution(provider) or "720p",
                         first_frame_image=pose_uri,
                         last_frame_image=pose_uri if anchor_last else None,
-                        reference_images=(reference_uri,),
+                        reference_images=(reference_uri,) if provider.supports_reference_images else (),
                     ),
                 )
 
