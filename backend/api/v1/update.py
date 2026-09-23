@@ -44,13 +44,14 @@ async def _get_latest(db: AsyncSession) -> UpdateVersion:
 
 
 def _pick_asset(versions_dir: Path, *patterns: str) -> Path | None:
-    """按调用顺序拼接 pattern 后排序，取 versions_dir 中最后一条匹配文件；临时/暂存条目（*.tmp.zip 等上传残留）排除，避免返回不完整文件。"""
+    """按调用顺序拼接 pattern 后排序，取 versions_dir 中最后一条匹配文件；排除 ``.tmp.*`` 暂存名，避免返回不完整文件。"""
     if not patterns:
         return None
     matches: list[Path] = []
     for pattern in patterns:
         matches.extend(versions_dir.glob(pattern))
-    return sorted([m for m in matches if not m.name.startswith(".tmp.")])[-1] if matches else None
+    candidates = [m for m in matches if not m.name.startswith(".tmp.")]
+    return sorted(candidates)[-1] if candidates else None
 
 
 @router.get("/latest.yml", response_model=ReleaseManifestResponse)

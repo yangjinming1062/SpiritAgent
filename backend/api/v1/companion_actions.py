@@ -1,10 +1,9 @@
 """动作库 REST 入口：目录、提案、播放回执、额度状态与管理操作。"""
 
-import json
 from pathlib import Path
 
 from common import get_router
-from components import SETTINGS, DbSession
+from components import SETTINGS, DbSession, safe_json_loads
 from fastapi import HTTPException
 from modules.auth import CurrentUser
 from modules.companion import (
@@ -16,6 +15,7 @@ from modules.companion import (
     ActionPlaybackReceipt,
     ActionSummary,
     CompanionAction,
+    CompanionOperationResponse,
 )
 from modules.ws import emit_ws_event
 from services.application.actions import accept_proposal
@@ -71,9 +71,9 @@ async def get_catalog(user: CurrentUser, db: DbSession) -> ActionCatalogResponse
             system_slot=action.system_slot or "",
             kind=action.kind,
             motion_description=action.motion_description,
-            use_when=json.loads(action.use_when or "[]"),
-            avoid_when=json.loads(action.avoid_when or "[]"),
-            tags=json.loads(action.tags or "[]"),
+            use_when=safe_json_loads(action.use_when or "[]", default=[]),
+            avoid_when=safe_json_loads(action.avoid_when or "[]", default=[]),
+            tags=safe_json_loads(action.tags or "[]", default=[]),
             enabled=action.enabled,
         )
         for action in actions
@@ -108,7 +108,7 @@ async def submit_playback_receipt(
     receipt: ActionPlaybackReceipt,
     user: CurrentUser,
     db: DbSession,
-) -> dict:
+) -> CompanionOperationResponse:
     """播放回执：校验归属与状态；按 play_id 幂等聚合。"""
     entry = await get_playback(db, play_id)
     if entry is None or entry.user_id != user.id:
@@ -121,7 +121,7 @@ async def submit_playback_receipt(
         error=receipt.error,
     )
     await db.commit()
-    return {"ok": True}
+    return CompanionOperationResponse(ok=True)
 
 
 @router.get("/budget", response_model=ActionBudgetStatus)
@@ -145,7 +145,7 @@ async def set_action_enabled(
     enabled: bool,
     user: CurrentUser,
     db: DbSession,
-) -> dict:
+) -> dict[str, bool]:
     """停用立即从自主选择与播放目录排除；系统槽位不可停用（产品必需能力）。
     变更后同步发布目录，客户端不再保留已停用动作的播放资格。"""
     action = await _owned_action(db, user.id, action_id)
@@ -157,8 +157,8 @@ async def set_action_enabled(
     return {"ok": True, "enabled": enabled}
 
 
-@router.delete("/{action_id}")
-async def delete_action(action_id: int, user: CurrentUser, db: DbSession) -> dict:
+@router.delete("/{action_id}", response_model=CompanionOperationResponse)
+async def delete_action(action_id: int, user: CurrentUser, db: DbSession) -> CompanionOperationResponse:
     """删除动作与素材版本行；必需系统槽位必须保有可用替代后才能移除。
     素材文件在 manifest 与版本引用释放后按引用回收，不在本请求内同步删文件。
     删除后同步发布目录，基础调度不再引用已移除动作。"""
@@ -168,4 +168,4 @@ async def delete_action(action_id: int, user: CurrentUser, db: DbSession) -> dic
     await db.delete(action)
     await db.commit()
     await _republish_catalog(db, user.id)
-    return {"ok": True}
+    return CompanionOperationResponse(ok=True)

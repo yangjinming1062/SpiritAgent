@@ -66,7 +66,7 @@ logger = get_logger(__name__)
 
 router = get_router(dependencies=[Depends(get_current_admin_token)])
 
-# 1 MB 分块上传，匹配 update.py 的 CHUNK_SIZE 数量级。
+# 备份 zip 分块读写；update.py 上传用更小的 CHUNK_SIZE，此处独立取 1 MB 减少往返。
 ARCHIVE_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
@@ -156,10 +156,10 @@ async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
     d = Path(SETTINGS.data_dir) / "companion-assets" / str(user_id)
     if d.exists():
         await asyncio.to_thread(_rm_user_asset_dir, d)
-    return {"message": "用户已删除。"}
+    return MessageResponse(message="用户已删除。")
 
 
-@router.patch("/users/{user_id}/toggle-active")
+@router.patch("/users/{user_id}/toggle-active", response_model=UserResponse)
 async def toggle_user_active(user_id: int, db: DbSession) -> UserResponse:
     user = await get_or_404(db, User, id=user_id, detail="用户不存在。")
     user.is_active = not user.is_active
@@ -190,13 +190,13 @@ async def list_model_configs(db: DbSession) -> UserModelConfigListResponse:
 
 
 @router.get("/runtime-info")
-async def runtime_info() -> dict:
+async def runtime_info() -> dict[str, str]:
     """把 ``public_base_url`` 暴露给 admin 页：创建账号时自动填进激活码的 ``baseUrl``，留空时前端再降级到 ``http://localhost:10620``。"""
     return {"public_base_url": SETTINGS.public_base_url or ""}
 
 
 @router.get("/system-settings")
-async def get_system_settings(db: DbSession) -> dict[str, Any]:
+async def get_system_settings() -> dict[str, Any]:
     """获取系统全部动态配置项（敏感 Key 自动脱敏）。"""
     return await get_system_settings_for_admin()
 
@@ -240,14 +240,14 @@ async def upsert_model_config(user_id: int, payload: UserModelConfigRequest, db:
     else:
         db.add(UserModelConfig(user_id=user_id, ai_config=ai_config.model_dump()))
     await db.commit()
-    return {"message": "模型配置已更新。"}
+    return MessageResponse(message="模型配置已更新。")
 
 
 @router.delete("/{user_id}/model-config")
 async def delete_model_config(user_id: int, db: DbSession) -> MessageResponse:
     await db.delete(await get_or_404(db, UserModelConfig, user_id=user_id, detail="模型配置不存在。"))
     await db.commit()
-    return {"message": "模型配置已删除。"}
+    return MessageResponse(message="模型配置已删除。")
 
 
 def _create_export_zip(

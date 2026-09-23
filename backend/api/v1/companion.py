@@ -125,6 +125,7 @@ from services.infrastructure.assets import (
 from services.infrastructure.llm import LLMRuntimeError, MissingLlmConfigError, VisualReasoningError
 
 router = get_router()
+logger = get_logger(__name__)
 
 
 def _media_review_response(row: CompanionMediaReview) -> MediaReviewResponse:
@@ -172,9 +173,6 @@ async def post_visual_media_review_reject(review_id: int, user: CurrentUser) -> 
     if row.status == "accepted":
         raise HTTPException(status_code=409, detail={"error": "该媒体已被采纳"})
     return _media_review_response(row)
-
-
-logger = get_logger(__name__)
 
 
 @router.get("/onboarding/state", response_model=OnboardingStateResponse)
@@ -586,12 +584,12 @@ def _outfit_http_error(exc: OutfitError | VisualReasoningError) -> HTTPException
     if isinstance(exc, VisualReasoningError):
         return HTTPException(status_code=502, detail={"error": str(exc), "reason": "generation_failed"})
     if isinstance(exc, OutfitNotFoundError):
-        raise HTTPException(status_code=404, detail={"error": "找不到对应的外观", "reason": str(exc)})
+        return HTTPException(status_code=404, detail={"error": "找不到对应的外观", "reason": str(exc)})
     if isinstance(exc, OutfitDraftExpiredError):
-        raise HTTPException(status_code=409, detail={"error": str(exc), "reason": "draft_expired"})
+        return HTTPException(status_code=409, detail={"error": str(exc), "reason": "draft_expired"})
     if isinstance(exc, OutfitStateError):
-        raise HTTPException(status_code=409, detail={"error": str(exc), "reason": "invalid_state"})
-    raise HTTPException(status_code=400, detail={"error": str(exc), "reason": "invalid_request"})
+        return HTTPException(status_code=409, detail={"error": str(exc), "reason": "invalid_state"})
+    return HTTPException(status_code=400, detail={"error": str(exc), "reason": "invalid_request"})
 
 
 @router.get("/outfits", response_model=OutfitListResponse)
