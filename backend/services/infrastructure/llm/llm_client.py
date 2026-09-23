@@ -2,7 +2,7 @@ import asyncio
 import time
 from collections.abc import Iterable
 from dataclasses import replace
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from components import SETTINGS, AIConfig, ProviderCard, get_logger, load_ai_config
 from modules.auth import UserModelConfig
@@ -29,6 +29,9 @@ from .providers import (
 )
 from .providers.http import get_async_client
 from .providers.openai_responses import OpenAIResponsesChatProvider
+
+if TYPE_CHECKING:
+    from .user_config import UserLlmConfig
 
 logger = get_logger(__name__)
 
@@ -59,9 +62,9 @@ def _log_embedding(
     )
 
 
-def client_for_config(llm_config: dict) -> AsyncOpenAI:
-    """从已解析的 ``llm_config`` 字典构建 ``AsyncOpenAI``；缺键时抛 ``KeyError``（可能拿到不完整字典的调用方如后台队列需自行预校验）。"""
-    return get_async_client(llm_config["api_key"], llm_config["base_url"])
+def client_for_config(llm_config: "UserLlmConfig") -> AsyncOpenAI:
+    """从已解析的用户 LLM 配置构建 ``AsyncOpenAI``；缺字段时抛 ``KeyError``（可能拿到不完整配置的调用方如后台队列需自行预校验）。"""
+    return get_async_client(llm_config.api_key, llm_config.base_url)
 
 
 def scale_temperature(provider_name: str | None, normalized: float) -> float:

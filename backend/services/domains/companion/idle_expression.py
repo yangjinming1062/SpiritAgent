@@ -3,8 +3,6 @@
 只产出 action_id；统一播放由调用方经 request_playback 派发。
 """
 
-from typing import Any
-
 from components import (
     LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
@@ -34,7 +32,7 @@ async def check_idle_expression(
     user_id: int,
     idle_seconds: float,
     local_hour: int,
-    llm_config: UserLlmConfig | dict[str, Any],
+    llm_config: UserLlmConfig,
 ) -> IdleExpressionResult:
     """空闲触发的 LLM 推理；决定是否播一个当前形象已就绪动作。"""
     ctx = await load_companion_prompt_context(user_id)

@@ -124,6 +124,7 @@ class JsonRpcDispatcher:
             await self._send(frame)
             return True
         except Exception:
+            logger.debug("strict send failed", exc_info=True)
             return False
 
     def start_writer(self) -> None:

@@ -4,7 +4,6 @@ from .domains import (
     DOMAIN_CATALOG,
     ToolDomain,
     apply_search_tools_catalog,
-    format_available_domain_lines,
     resolve_tools_for_domain,
     search_domains_and_tools,
 )
@@ -13,7 +12,6 @@ from .model_tools import coerce_tool_args
 from .registry import (
     REGISTRY,
     RESERVED_KEYS,
-    AvailabilityCheck,
     ToolsRegistry,
     schema_name,
 )
@@ -56,7 +54,6 @@ __all__ = [
     "ToolGuardrailDecision",
     "ToolsetDef",
     "ToolsRegistry",
-    "AvailabilityCheck",
     "append_toolguard_guidance",
     "apply_search_tools_catalog",
     "canonical_tool_args",
@@ -65,7 +62,6 @@ __all__ = [
     "coerce_tool_args",
     "disabled_backend_tool_names",
     "file_mutation_result_landed",
-    "format_available_domain_lines",
     "get_read_block_error",
     "is_multimodal_tool_result",
     "is_write_denied",

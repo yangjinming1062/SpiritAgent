@@ -18,9 +18,6 @@ from .character_card import (
     update_character_card,
 )
 from .disturbance import (
-    ALLOWED_TIERS,
-    DEFAULT_TIER,
-    TIER_SETTING_KEY,
     get_disturbance_tier,
     is_still,
 )
@@ -128,14 +125,11 @@ __all__ = [
     "queue_companion_intent",
     "set_companion_wait",
     "ALLOWED_ACTIONS",
-    "ALLOWED_TIERS",
     "IdleExpressionResult",
     "BUILTIN_EMOTIONS",
-    "DEFAULT_TIER",
     "ONBOARDING_FIELDS",
     "PersonaValidationError",
     "ShouldActResult",
-    "TIER_SETTING_KEY",
     "analyze_personality_tags",
     "build_outfit_extras",
     "build_system_prompt_extras",

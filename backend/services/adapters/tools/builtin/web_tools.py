@@ -11,7 +11,7 @@ from prompts.tools import (
     WEB_SUMMARY_INSTRUCTIONS,
 )
 
-from services.infrastructure.llm import build_responses_kwargs, call_with_retry, client_for_config
+from services.infrastructure.llm import UserLlmConfig, build_responses_kwargs, call_with_retry, client_for_config
 from services.infrastructure.tool_runtime import REGISTRY
 from services.infrastructure.web import resolve_extract_provider, resolve_search_provider
 
@@ -52,10 +52,10 @@ async def _summarize_doc(client: AsyncOpenAI, model_name: str, doc: dict) -> Non
         doc["content"] = content[:5000]
 
 
-async def _summarize_documents(documents: list[dict], llm_config: dict) -> None:
+async def _summarize_documents(documents: list[dict], llm_config: UserLlmConfig) -> None:
     if not documents:
         return
-    model_name = llm_config["model_name"]
+    model_name = llm_config.model_name
     client = client_for_config(llm_config)
     # 限制并发数，避免 50 个 URL 时同时打开 50 条 LLM 流。
     sem = asyncio.Semaphore(4)

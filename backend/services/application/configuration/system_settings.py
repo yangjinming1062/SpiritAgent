@@ -119,9 +119,7 @@ def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
             logger.warning("Failed to rotate LLM HTTP client caches", exc_info=True)
 
 
-async def get_system_settings_for_admin(
-    _db: AsyncSession | None = None,
-) -> dict[str, Any]:
+async def get_system_settings_for_admin() -> dict[str, Any]:
     """查询当前系统全部动态设置供管理后台编辑。敏感 key 不暴露原值，通过 key_set 标识是否已配置。"""
     result: dict[str, Any] = {}
     for key in type(SETTINGS).model_fields:
@@ -210,4 +208,4 @@ async def save_system_settings(
         if changed_keys:
             logger.info("System settings updated: %s", ", ".join(sorted(changed_keys)))
             _apply_runtime_side_effects(changed_keys)
-        return await get_system_settings_for_admin(db)
+        return await get_system_settings_for_admin()

@@ -62,7 +62,7 @@ async def should_act(
     fullscreen: bool = False,
     screen_locked: bool = False,
     seconds_since_last_action: float = 0.0,
-    llm_config: UserLlmConfig | dict[str, Any] | None = None,
+    llm_config: UserLlmConfig | None = None,
 ) -> ShouldActResult:
     """由 LLM 决策伙伴此刻是否要采取自主空间行为。"""
     if kind != "periodic_provision":

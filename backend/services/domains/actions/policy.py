@@ -191,9 +191,6 @@ async def check_can_play(
     db: AsyncSession,
     user_id: int,
     action: CompanionAction,
-    *,
-    source: str = "chat_expression",  # noqa: ARG001 — 保留来源语义供审计，播放不按来源限流
-    now: datetime | None = None,  # noqa: ARG001 — 无冷却后暂无时间比较
 ) -> None:
     if not action.enabled:
         raise ActionPolicyError("该动作已停用")

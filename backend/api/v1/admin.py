@@ -198,7 +198,7 @@ async def runtime_info() -> dict:
 @router.get("/system-settings")
 async def get_system_settings(db: DbSession) -> dict[str, Any]:
     """获取系统全部动态配置项（敏感 Key 自动脱敏）。"""
-    return await get_system_settings_for_admin(db)
+    return await get_system_settings_for_admin()
 
 
 @router.put("/system-settings")

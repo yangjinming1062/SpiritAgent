@@ -22,6 +22,7 @@ from modules.companion import Persona
 from modules.conversation import CompanionReply, Conversation, Message
 from modules.settings import UserSetting
 from modules.system import AgentPromptConfig, ChatRequest, PromptPreset
+from openai import AsyncOpenAI
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,7 +85,7 @@ class TurnInputs:
     """``build_turn_inputs`` 的输出：orchestrator 与各轮辅助函数所需字段，避免重复查询 DB。"""
 
     context: dict[str, Any]
-    client: Any
+    client: AsyncOpenAI
     memory_scope: MemoryScope | None
     native_memory: NativeMemory | None
     model_name: str

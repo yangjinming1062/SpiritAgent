@@ -241,13 +241,15 @@ async def _periodic_flusher_loop():
     try:
         while True:
             await asyncio.sleep(1.0)
-            with contextlib.suppress(Exception):
+            try:
                 await _flush_gateway_delivered()
+            except Exception:
+                logger.warning("flush gateway delivered markers failed", exc_info=True)
     except asyncio.CancelledError:
         pass
 
 
-async def ws_event_loop(dsn: str):
+async def ws_event_loop(dsn: str) -> None:
     """基于 PostgreSQL LISTEN/NOTIFY 的 outbox 派发：进程持有专用 asyncpg 连接（被 LISTEN pin 住），出错后 5s 重连以避免 PG 重启/网络抖动让派发器永久失聪。"""
     logger.info("Starting background WS event loop with PG LISTEN/NOTIFY.")
     seen_version = -1  # 初始传递 -1，使启动时第一轮立即执行排空已提交事件

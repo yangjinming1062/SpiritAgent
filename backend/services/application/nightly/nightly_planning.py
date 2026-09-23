@@ -82,7 +82,7 @@ from services.domains.companion import (
 )
 from services.domains.journal import create_generated_moment, create_user_moment
 from services.infrastructure.assets import save_companion_asset, unlink_companion_asset
-from services.infrastructure.llm import call_llm_once, resolve_provider_chain, synthesize_speech
+from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_provider_chain, synthesize_speech
 
 logger = get_logger(__name__)
 
@@ -2026,7 +2026,7 @@ async def _execute_ephemeral_actions(
 
 
 async def run_nightly_planning(
-    llm_cfg: dict[str, Any],
+    llm_cfg: UserLlmConfig,
     user_id: int,
     contextual_memories: dict[str, str],
     background_memories: dict[str, str],

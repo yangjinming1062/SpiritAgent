@@ -56,10 +56,6 @@ class MomentNotFoundError(JournalError):
     pass
 
 
-class DiaryNotFoundError(JournalError):
-    pass
-
-
 async def persist_moment_media(user_id: int, media_identifier: str | None) -> str | None:
     """把片刻媒体固化为正式资产（``companion-assets/{user_id}/``）后返回裸路径。
 

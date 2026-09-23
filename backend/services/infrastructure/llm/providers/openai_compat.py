@@ -24,8 +24,7 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
             res = await self._client.embeddings.create(input=texts, model=model)
             return [item.embedding for item in sorted(res.data, key=lambda x: x.index)]
         except Exception as exc:
-            # 保留 status_code + 结构化 body —— 让 error_classifier 的 Phase B（错误码 fallback）可读；
-            # 之前直接重抛 ProviderError(...) 会丢掉这些字段，强制走消息模式匹配（脆弱）。
+            # 保留 status_code + 结构化 body，供 error_classifier 的 Phase B（错误码 fallback）读取；只重抛消息会让其被迫走脆弱的文本匹配。
             body = getattr(exc, "body", None)
             if body is None:
                 response = getattr(exc, "response", None)

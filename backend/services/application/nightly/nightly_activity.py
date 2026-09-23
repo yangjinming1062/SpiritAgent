@@ -37,7 +37,7 @@ from services.domains.memory import (
     review_memories,
     upsert_slotted_memory,
 )
-from services.infrastructure.llm import call_llm_once, resolve_user_llm_config
+from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_user_llm_config
 
 from .daily_checkpoint import run_daily_checkpoint
 from .journal_nightly import project_today
@@ -51,7 +51,7 @@ _PLANNING_RECALL_HIGHLIGHTS: int = 10
 
 
 async def _stage_4_self_diary(
-    llm_cfg: dict[str, Any],
+    llm_cfg: UserLlmConfig,
     scope: MemoryScope,
     clean_messages: list[dict[str, str]],
     contextual_memories: dict[str, str],
@@ -399,7 +399,7 @@ async def _run_nightly_pipeline_inner(
         }
 
         llm_cfg = await resolve_user_llm_config(db, user_id)
-        if not (llm_cfg.get("api_key") and llm_cfg.get("base_url") and llm_cfg.get("model_name")):
+        if not (llm_cfg.api_key and llm_cfg.base_url and llm_cfg.model_name):
             logger.info(
                 "nightly_activity: skipped, missing llm config",
                 extra={"user_id": user_id},

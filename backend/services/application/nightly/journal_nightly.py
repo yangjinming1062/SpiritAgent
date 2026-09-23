@@ -33,7 +33,7 @@ from services.domains.companion import load_persona_definition
 from services.domains.conversation import UI_ONLY_SUBTYPES
 from services.domains.journal import upsert_diary
 from services.domains.memory import resolve_user_timezone
-from services.infrastructure.llm import MissingLlmConfigError, call_llm_once, resolve_user_llm_config
+from services.infrastructure.llm import MissingLlmConfigError, UserLlmConfig, call_llm_once, resolve_user_llm_config
 
 from .nightly_helpers import (
     get_local_day_utc_bounds,
@@ -48,7 +48,7 @@ async def project_today(
     reference_utc: datetime | None = None,
     *,
     pre_messages: list[dict[str, str]] | None = None,
-    llm_cfg: dict[str, Any] | None = None,
+    llm_cfg: UserLlmConfig | None = None,
     nightly_actions: list[dict[str, Any]] | None = None,
     moment_interactions: list[dict[str, Any]] | None = None,
     language: str | None = None,
@@ -193,7 +193,7 @@ async def project_today(
 
 async def _compose_diary(
     user_id: int,
-    llm_cfg: dict[str, Any] | None,
+    llm_cfg: UserLlmConfig | None,
     clean_messages: list[dict[str, str]],
     target_date: date,
     nightly_actions: list[dict[str, Any]],
@@ -201,7 +201,7 @@ async def _compose_diary(
     moment_interactions: list[dict[str, Any]] | None = None,
     language: str = DEFAULT_LANGUAGE,
 ) -> tuple[str, str | None]:
-    if not (llm_cfg and llm_cfg.get("api_key") and llm_cfg.get("base_url") and llm_cfg.get("model_name")):
+    if not (llm_cfg and llm_cfg.api_key and llm_cfg.base_url and llm_cfg.model_name):
         logger.warning(
             "journal_nightly: missing llm config",
             extra={"user_id": user_id},

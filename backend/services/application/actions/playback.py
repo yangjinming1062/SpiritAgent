@@ -70,7 +70,7 @@ async def request_playback(
         return ActionPlayResult(outcome="rejected", message="该动作素材尚未就绪")
 
     try:
-        await check_can_play(db, user_id, action, source=source)
+        await check_can_play(db, user_id, action)
     except ActionPolicyError as exc:
         return ActionPlayResult(outcome="rejected", message=str(exc))
 

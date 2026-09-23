@@ -955,7 +955,6 @@ async def _publish_ready(
     async with get_avatar_job_lock(user_id):
         return await _publish_ready_locked(
             pack_id,
-            canvas=canvas,
             clip_specs=clip_specs,
             cover_path=cover_path,
             auto_activate=auto_activate,
@@ -982,7 +981,6 @@ async def _publish_catalog_in_session(db: AsyncSession, pack: CompanionActionPac
 async def _publish_ready_locked(
     pack_id: int,
     *,
-    canvas: tuple[int, int],  # noqa: ARG001 — 画布写入 pack.canvas_spec；发布目录时由任务行聚合
     clip_specs: list[VideoClipSpec],
     cover_path: str | None,
     auto_activate: bool,
@@ -2042,24 +2040,6 @@ async def _try_publish_catalog(db: AsyncSession, pack: CompanionActionPack) -> i
     except Exception:  # noqa: BLE001 — 发布失败不毁掉已成功素材，保留重试入口
         logger.exception("dynamic catalog publish failed", extra={"pack_id": pack.id})
         return None
-
-
-async def republish_action_catalog(user_id: int, pack_id: int) -> int | None:
-    """目录发布失败后的恢复入口：仅重发快照，不重新付费生成。"""
-    async with SESSION_LOCAL() as db:
-        pack = await db.get(CompanionActionPack, pack_id)
-        if pack is None or pack.user_id != user_id:
-            return None
-        version = await _try_publish_catalog(db, pack)
-        if version is not None:
-            emit_ws_event(
-                db,
-                user_id=user_id,
-                event_type="companion.action.catalog_changed",
-                payload={"packId": pack.id, "catalogVersion": version},
-            )
-        await db.commit()
-        return version
 
 
 async def _fulfill_pending_intents(pack_id: int) -> None:

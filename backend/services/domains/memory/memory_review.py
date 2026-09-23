@@ -33,7 +33,7 @@ async def assess_memory_changes(
     source: MemorySource,
     context: MemoryReviewContext,
     *,
-    llm_config: UserLlmConfig | dict[str, Any],
+    llm_config: UserLlmConfig,
     proposal: dict[str, Any] | None = None,
     advance_review: bool = False,
 ) -> list[MemoryRecord]:
@@ -67,7 +67,7 @@ async def review_memories(
     *,
     session_id: int | None = None,
     through_message_id: int | None = None,
-    llm_config: UserLlmConfig | dict[str, Any] | None = None,
+    llm_config: UserLlmConfig | None = None,
 ) -> None:
     async with _REVIEW_LOCKS.setdefault(scope, asyncio.Lock()):
         started_at = utc_now()

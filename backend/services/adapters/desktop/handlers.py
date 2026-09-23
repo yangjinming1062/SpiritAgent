@@ -98,7 +98,6 @@ from services.domains.conversation import (
     conversation_memory_scope,
     fork_conversation_from_message,
     get_or_create_special_conversation,
-    get_special_conversation,
     replace_last_user_message,
     resolve_memory_scope,
     resolve_undo_target,
@@ -357,7 +356,6 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
                 dispatcher = user_session.dispatcher
                 runtime_sessions = user_session.runtime_sessions
                 MANAGER.register_dispatcher(user_id, dispatcher)
-                MANAGER.register_runtime_sessions(user_id, runtime_sessions)
                 logger.info("Resumed active user gateway session across reconnect", extra={"user_id": user_id})
             else:
                 replay_buffer = ReplayBuffer(
@@ -386,7 +384,6 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
                 )
                 _USER_SESSIONS[user_id] = user_session
                 MANAGER.register_dispatcher(user_id, dispatcher)
-                MANAGER.register_runtime_sessions(user_id, runtime_sessions)
 
                 _register_session_handlers(
                     dispatcher,
@@ -566,20 +563,6 @@ def _get_runtime(runtime_sessions: dict[str, RuntimeSession], params: dict[str, 
     return runtime
 
 
-async def _record_main_conversation(user_id: int, role: str, content: str, subtype: str) -> None:
-    """向主会话追加一条 status 行：best-effort，丢失历史行不能让用户等的 RPC 失败。"""
-    try:
-        async with SESSION_LOCAL() as db:
-            if main_conv := await get_special_conversation(db, user_id, "companion"):
-                db.add(Message(conversation_id=main_conv.id, role=role, content=content, subtype=subtype))
-                await db.commit()
-    except Exception:
-        logger.exception(
-            "failed to persist main-conversation status row",
-            extra={"user_id": user_id, "subtype": subtype},
-        )
-
-
 # 新消息类型注册常量（与 status_* 平级；不读 status_pill 路径，要走专门 subtype 渲染分支）。
 MESSAGE_SUBTYPE_STATUS_CLEARED: str = "status_cleared"
 
@@ -716,8 +699,8 @@ async def do_session_undo(
 ) -> dict:
     """session.undo_to_message 的共享实现：业务校验 + per-conversation lock + in-flight guard + 服务调用 + 多窗口广播。
 
-    透传 runtime_sessions / dispatcher 是为了 REST 与 WS 共用同一份安全网——REST 从 MANAGER 查表后传入，
-    即可复用锁、in-flight 守卫与广播；不传时退化为「无 in-flight / 无广播」基础版（仅服务调用 + 锁）。
+    透传 runtime_sessions / dispatcher 是为了 REST 与 WS 共用同一份安全网——调用方传入后即可复用锁、
+    in-flight 守卫与广播；不传时退化为「无 in-flight / 无广播」基础版（仅服务调用 + 锁）。
     """
     runtime = runtime_sessions.get(session_id) if runtime_sessions else None
     lock = _conversation_locks.setdefault(str(session_id), asyncio.Lock())
@@ -1725,7 +1708,13 @@ def _register_session_handlers(
                             ).scalar()
                             regen_busy = not bool(got)
                         except Exception:
-                            regen_busy = False
+                            # 探测失败不能当成未占用放行，否则并发生成会互相覆盖。
+                            logger.warning(
+                                "avatar regen advisory lock probe failed",
+                                extra={"user_id": user_id},
+                                exc_info=True,
+                            )
+                            regen_busy = True
 
                     if regen_busy:
                         payload = {"job_id": job_id, "error": "伙伴正在生成形象，请稍候"}

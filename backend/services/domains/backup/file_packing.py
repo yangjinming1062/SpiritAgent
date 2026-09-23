@@ -83,10 +83,6 @@ class UrlRewriter:
             return self(value)
         return value
 
-    def write_manifest(self, storage_path: str | None, content: str) -> None:
-        if storage_path and (target := (Path(SETTINGS.data_dir) / storage_path).resolve()) in self.created:
-            target.write_text(content, encoding="utf-8")
-
     def rollback(self) -> None:
         for path in reversed(self.created):
             path.unlink(missing_ok=True)

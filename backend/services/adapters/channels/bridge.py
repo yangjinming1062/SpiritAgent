@@ -32,7 +32,7 @@ from .registry import resolve as _resolve_channel
 logger = get_logger(__name__)
 
 # 未知对端的首条消息触发的固定配对回复（pending 态只发一次）；放行由主人在 Hub / REST 审批。
-PAIRING_NOTICE = "我还不认识你哦～已经请伙伴的主人确认了，批准之后我们再聊吧！"
+PAIRING_NOTICE = "（对方尚未通过配对审批，已请主人确认；批准后再继续对话）"
 
 # 回合已产出但渠道投递全失败时的兜底提示：不静默，让对端知道伙伴方才说话了。
 _DELIVERY_FAILED_FALLBACK = "（伙伴刚想说话，但消息没能送达到这个渠道，请稍后再试）"
@@ -44,7 +44,7 @@ _QUEUE_FULL_NOTICE = "（正在处理的任务比较多，这条消息没有被�
 # 模糊匹配会把正常发言吞成中断。已审批对端等同本人、可驱动本机终端，中止是唯一的刹车。
 _STOP_COMMANDS = frozenset({"停", "停止", "停下", "stop", "/stop"})
 
-_STOP_ACK = "好，我停下了。"
+_STOP_ACK = "（已停止本轮回复）"
 
 # 桌面连接状态作为环境事实注入 IM 回合。离线时 runner 工具会被整体清出注册表；提示只报告可验证的
 # “当前未连接”，不猜测设备是否关机、网络是否中断等具体原因。

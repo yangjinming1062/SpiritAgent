@@ -5,7 +5,7 @@ from typing import Any, Literal
 from components import safe_json_loads
 from pydantic import BaseModel, ConfigDict, Field
 
-from services.infrastructure.llm import ServiceType, resolve_context_tokens
+from services.infrastructure.llm import ServiceType, UserLlmConfig, resolve_context_tokens
 
 
 class SessionSettingsPatch(BaseModel):
@@ -79,15 +79,15 @@ def new_runtime_session(
     return RuntimeSession(conversation_id=conversation_id, cwd=cwd, settings=settings, kind=kind)
 
 
-def runtime_info_snapshot(llm_config: dict[str, Any], runtime: RuntimeSession) -> dict[str, Any]:
+def runtime_info_snapshot(llm_config: UserLlmConfig, runtime: RuntimeSession) -> dict[str, Any]:
     """发给 renderer 的 SessionRuntimeInfo 负载。renderer 容忍缺失字段，未读的 settings 键不在契约内。"""
-    provider = llm_config.get("provider_name") or "openai"
+    provider = llm_config.provider_name or "openai"
     context_window = resolve_context_tokens(provider, ServiceType.llm)
 
     return {
         "cwd": runtime.cwd,
         "branch": None,
-        "model": llm_config.get("model_name"),
+        "model": llm_config.model_name,
         "provider": provider,
         "running": bool(runtime.chat_task and not runtime.chat_task.done()),
         "settings": dict(runtime.settings),

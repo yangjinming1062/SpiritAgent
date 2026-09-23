@@ -140,7 +140,7 @@ async def _score_self_video(
         return "scored" if score is not None else "unavailable", score
     except Exception:
         logger.warning("chat video identity scoring failed", extra={"user_id": user_id}, exc_info=True)
-        return "invalid", None
+        return "unavailable", None
 
 
 def _on_video_task_error(task: asyncio.Task) -> None:

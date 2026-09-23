@@ -1,5 +1,3 @@
-from typing import Any
-
 from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, get_logger, resolve_prompt_text
 from modules.ws import emit_ws_event
 from prompts.companion import MOOD_INSTRUCTIONS
@@ -39,7 +37,7 @@ async def update_mood_from_companion_turn(
     user_id: int,
     user_message: str,
     assistant_message: str,
-    llm_config: UserLlmConfig | dict[str, Any],
+    llm_config: UserLlmConfig,
 ) -> str | None:
     """在陪伴聊天完成后单独推理心情；结果不进入消息正文。"""
     ctx = await load_companion_prompt_context(user_id)

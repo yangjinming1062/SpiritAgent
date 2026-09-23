@@ -103,6 +103,7 @@ from .video import (
     VideoPackNotFoundError,
     VideoPackStateError,
     list_pack_responses,
+    resume_video_generation_jobs,
 )
 from .video import (
     activate_pack as activate_video_pack,
@@ -118,7 +119,6 @@ from .video import (
 )
 from .video import drain_video_generation as drain_video_pack_generation
 from .video import resume_processing_packs as resume_processing_video_packs
-from .video import resume_video_generation_jobs as resume_video_generation_jobs
 from .video import (
     retry_pack as retry_video_pack,
 )

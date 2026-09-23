@@ -35,7 +35,7 @@ def _gap_days(prev_date_str: str | None, today_str: str) -> int | None:
 
 
 async def run_daily_checkpoint(
-    llm_cfg: UserLlmConfig | dict[str, Any],
+    llm_cfg: UserLlmConfig,
     user_id: int,
     utc_start: datetime,
     utc_end: datetime,

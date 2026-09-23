@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from services.infrastructure.llm import (
     LLMRuntimeError,
+    UserLlmConfig,
     build_responses_kwargs,
     call_with_retry,
     client_for_config,
@@ -45,7 +46,7 @@ async def auto_generate_title(
     conversation_id: int,
     user_message: str,
     assistant_response: str,
-    llm_config: dict[str, str],
+    llm_config: UserLlmConfig,
     language: str = DEFAULT_LANGUAGE,
     temperature: float | None = None,
     provider_name: str | None = None,
@@ -54,7 +55,7 @@ async def auto_generate_title(
     try:
         client = client_for_config(llm_config)
         request = build_responses_kwargs(
-            model=llm_config["model_name"],
+            model=llm_config.model_name,
             instructions=_title_prompt(language),
             input_items=[
                 {
@@ -76,7 +77,7 @@ async def auto_generate_title(
             # 供应商身份优先取 llm_config 自带的链头 provider_name（正是本次实际调用的 client）；
             # 入参 provider_name 仅在 llm_config 无身份字段时兜底，避免图片回合视觉链头 ≠ 聊天链头时按错误比例换算。
             temperature=scale_temperature(
-                llm_config.get("provider_name") or provider_name,
+                llm_config.provider_name or provider_name,
                 temperature if temperature is not None else TITLE_GENERATION_TEMPERATURE,
             ),
             max_output_tokens=LLM_MAX_OUTPUT_TOKENS,

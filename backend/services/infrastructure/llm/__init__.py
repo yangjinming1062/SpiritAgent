@@ -74,7 +74,6 @@ from .responses import (
     approx_responses_tokens,
     build_responses_kwargs,
     message_to_response_items,
-    tool_schema_for_responses,
 )
 from .stt_service import transcribe_audio
 from .tts_service import (
@@ -159,7 +158,6 @@ __all__ = [
     "speech_style_guidance",
     "speech_style_matches",
     "synthesize_speech",
-    "tool_schema_for_responses",
     "transcribe_audio",
     "try_resolve",
     "voices_for_provider",

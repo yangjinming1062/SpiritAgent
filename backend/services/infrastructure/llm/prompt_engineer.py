@@ -30,6 +30,7 @@ from .llm_client import (
 from .llm_retry import call_with_retry
 from .providers import ProviderConfig, ServiceType, resolve_context_tokens, try_resolve
 from .responses import build_responses_kwargs
+from .user_config import UserLlmConfig
 
 logger = get_logger(__name__)
 
@@ -111,7 +112,7 @@ async def chat(
 
 
 async def call_llm_once(
-    llm_cfg: dict[str, Any],
+    llm_cfg: UserLlmConfig,
     system_prompt: str,
     user_payload: Any,
     *,
@@ -121,7 +122,7 @@ async def call_llm_once(
 ) -> str:
     """执行单次非流式调用；推理档位仅在当前供应商明确支持时下发。"""
     client = client_for_config(llm_cfg)
-    provider_name = llm_cfg.get("provider_name", "")
+    provider_name = llm_cfg.provider_name
     context_length = resolve_context_tokens(provider_name, ServiceType.llm)
     provider_cls = try_resolve(ServiceType.llm, provider_name)
     supported_efforts = getattr(provider_cls, "REASONING_EFFORTS", frozenset())
@@ -130,7 +131,7 @@ async def call_llm_once(
         json.dumps(user_payload, ensure_ascii=False) if isinstance(user_payload, dict | list) else str(user_payload)
     )
     request = build_responses_kwargs(
-        model=llm_cfg["model_name"],
+        model=llm_cfg.model_name,
         instructions=system_prompt,
         input_items=[{"role": "user", "content": [{"type": "input_text", "text": user_content}]}],
         max_output_tokens=max_output_tokens,

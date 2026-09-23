@@ -1,6 +1,5 @@
 """记忆业务域：记忆 CRUD、召回、画像、时区与命名空间规范。"""
 
-from . import memory_admin, memory_namespaces
 from .memory_admin import (
     list_memories,
     memory_counts,
@@ -69,9 +68,7 @@ __all__ = [
     "format_memories_block",
     "format_proactive_memory_block",
     "list_memories",
-    "memory_admin",
     "memory_counts",
-    "memory_namespaces",
     "normalize_recall_context",
     "participates_in_recall",
     "read_user_profile",

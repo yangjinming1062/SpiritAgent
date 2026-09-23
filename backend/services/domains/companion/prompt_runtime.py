@@ -101,7 +101,7 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
 
 async def run_prompt_json(
     user_id: int,
-    llm_config: UserLlmConfig | dict[str, Any],
+    llm_config: UserLlmConfig,
     instructions: str,
     payload: dict[str, Any],
     *,
@@ -110,17 +110,13 @@ async def run_prompt_json(
     temperature: float = 0.2,
 ) -> PromptOutcome:
     """执行一次结构化伙伴推理；静态规则放 instructions，运行时数据作为 JSON 输入。"""
-    model_name = (
-        llm_config.model_name
-        if isinstance(llm_config, UserLlmConfig)
-        else (llm_config.get("model_name") if isinstance(llm_config, dict) else "")
-    )
+    model_name = llm_config.model_name
     if not model_name:
         return PromptOutcome(parsed=None, reason="llm_error")
 
     try:
         client = client_for_config(llm_config)
-        provider_cls = try_resolve(ServiceType.llm, llm_config.get("provider_name") or "")
+        provider_cls = try_resolve(ServiceType.llm, llm_config.provider_name or "")
         request = build_responses_kwargs(
             model=model_name,
             instructions=instructions,

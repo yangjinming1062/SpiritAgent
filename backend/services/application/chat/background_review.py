@@ -2,13 +2,14 @@ from components import get_logger
 
 from services.contracts import MemoryScope
 from services.domains.memory import review_memories
+from services.infrastructure.llm import UserLlmConfig
 
 logger = get_logger(__name__)
 
 
 async def run_background_memory_review(
     scope: MemoryScope,
-    llm_config: dict,
+    llm_config: UserLlmConfig,
     *,
     session_id: int,
     through_message_id: int,
