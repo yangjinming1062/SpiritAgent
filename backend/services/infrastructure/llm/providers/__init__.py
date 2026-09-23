@@ -3,6 +3,7 @@ from . import (
     grok,  # noqa: F401
     mimo,  # noqa: F401
     minimax,  # noqa: F401
+    qwen,  # noqa: F401
 )
 from ._reference import resolve_reference_bytes
 from ._size_aspect import SIZE_TO_ASPECT
