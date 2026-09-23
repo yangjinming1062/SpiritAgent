@@ -44,7 +44,8 @@ IMAGE_GENERATION_DESC = (
     "Generate an image from a text description and return its URLs for automatic conversation media delivery. "
     "This does not change the avatar, wardrobe's active outfit, or scene; scene changes require scene_list and "
     "scene_activate/scene_create when available. "
-    "Only subject='self' supplies an identity reference here; this schema does not accept arbitrary image attachments for editing."
+    "Only subject='self' supplies an identity reference here; this schema does not accept arbitrary image attachments for editing. "
+    "Self images use bounded automatic identity correction; the best known result is delivered."
 )
 
 _SELF_MEDIA_OUTFIT_OVERRIDE_DESC = (
@@ -74,14 +75,15 @@ VIDEO_GENERATION_DESC = (
     "Returns the video URL on success, or a pending task_id for long jobs — check it later "
     "with video_generate_status. Pending is not completion: keep the original task_id, do not submit the same "
     "job again or poll continuously. If status is result_unknown or retry_safe=false, verify the original "
-    "job before any retry."
+    "job before any retry. Self videos use bounded automatic identity correction and keep the best known result."
 )
 
 VIDEO_GENERATION_PARAM_DESCS = {
     "prompt": "Describe the video content.",
     "subject": (
         "Set to 'self' for a new depiction of the current character. Their confirmed physical features and the "
-        "selected styling are applied to the first frame, including a supplied first_frame_image. To animate an "
+        "selected styling are applied to a generated first frame. A supplied first_frame_image keeps its visible "
+        "styling unless outfit_override explicitly changes it. To animate an "
         "existing image unchanged, omit subject, even if it depicts this character. Describe the scene, pose and "
         "action without reconstructing appearance from memory."
     ),
@@ -97,7 +99,8 @@ VIDEO_GENERATION_PARAM_DESCS = {
 }
 
 VIDEO_STATUS_DESC = (
-    "Check an existing video_generate task. Returns its current status and url only on success. "
+    "Check an existing video_generate task. Returns its current status and url when the asset exists; "
+    "a completed self video has already passed bounded automatic selection. "
     "A queued, processing, or downloading job is still pending; result_unknown does not mean a safe retry."
 )
 

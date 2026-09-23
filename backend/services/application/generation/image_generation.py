@@ -1,10 +1,7 @@
 import asyncio
 import base64
-import io
 
 from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_logger, save_file
-from PIL import Image, ImageDraw, ImageOps
-from prompts.generation import REFERENCE_SHEET_PROMPT
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.assets import asset_store, save_companion_asset_async, sniff_media_ext
@@ -20,7 +17,6 @@ from services.infrastructure.llm import (
     execute_with_fallback,
     resolve,
     resolve_provider_chain,
-    resolve_reference_bytes,
 )
 
 logger = get_logger(__name__)
@@ -43,6 +39,7 @@ async def resolve_image_gen_chain(
     reference_image: str | None,
     *,
     image_edit: bool = False,
+    multiple_references: bool = False,
 ) -> tuple[list[ProviderConfig], str | None]:
     """在传入 reference_image 时按图生图能力过滤 image_gen 供应商链；image_edit 时改按图像编辑能力过滤。"""
     full = await resolve_provider_chain(db, user_id, "image_gen")
@@ -56,29 +53,21 @@ async def resolve_image_gen_chain(
             if image_edit
             else resolve(ServiceType.image_gen, c.provider_name).supports_reference_image
         )
+        and (
+            not multiple_references
+            or resolve(ServiceType.image_gen, c.provider_name).supports_multiple_reference_images
+        )
     ]
     if full and not capable:
         error = (
-            "当前图片生成供应商均不支持图像编辑，请启用 gemini / grok 其中之一"
+            "当前图片生成供应商不支持分别输入两张参考图，请配置支持双图的供应商"
+            if multiple_references
+            else "当前图片生成供应商均不支持图像编辑，请启用 gemini / grok 其中之一"
             if image_edit
-            else "当前图片生成供应商均不支持以图生图，请启用 minimax / gemini / grok 其中之一"
+            else "当前图片生成供应商均不支持以图生图，请启用 minimax / gemini / grok / qwen 其中之一"
         )
         return capable, error
     return capable, None
-
-
-def compose_image_references(primary: bytes, secondary: bytes) -> bytes:
-    sheet = Image.new("RGB", (2048, 1088), "white")
-    draw = ImageDraw.Draw(sheet)
-    for index, raw in enumerate((primary, secondary)):
-        with Image.open(io.BytesIO(raw)) as source:
-            image = ImageOps.exif_transpose(source).convert("RGBA")
-            image.thumbnail((1024, 1024), Image.Resampling.LANCZOS)
-            sheet.paste(image, (index * 1024 + (1024 - image.width) // 2, 64 + (1024 - image.height) // 2), image)
-        draw.text((index * 1024 + 24, 20), f"REFERENCE {index + 1}", fill="black", font_size=24)
-    output = io.BytesIO()
-    sheet.save(output, format="PNG")
-    return output.getvalue()
 
 
 async def _persist_user_asset_async(data: bytes, user_id: int) -> str:
@@ -111,16 +100,8 @@ async def generate_images(
             internal="image_edit with secondary reference",
         )
     try:
-        if reference_image and secondary_reference_image:
-            primary, secondary = await asyncio.gather(
-                resolve_reference_bytes(reference_image),
-                resolve_reference_bytes(secondary_reference_image),
-            )
-            sheet = await asyncio.to_thread(compose_image_references, primary[0], secondary[0])
-            encoded = await asyncio.to_thread(base64.b64encode, sheet)
-            reference_image = "data:image/png;base64," + encoded.decode("ascii")
-            prompt = REFERENCE_SHEET_PROMPT + prompt
-        req = ImageGenRequest(prompt=prompt, size=size, n=n, reference_image=reference_image)
+        if secondary_reference_image and not reference_image:
+            raise ImageGenerationError("第二参考图需要同时提供身份参考图")
         if user_id is not None:
             async with SESSION_LOCAL() as db:
                 chain, err = await resolve_image_gen_chain(
@@ -128,6 +109,7 @@ async def generate_images(
                     user_id,
                     reference_image,
                     image_edit=image_edit,
+                    multiple_references=bool(secondary_reference_image),
                 )
         else:
             chain, err = await resolve_image_gen_chain(
@@ -135,6 +117,7 @@ async def generate_images(
                 None,
                 reference_image,
                 image_edit=image_edit,
+                multiple_references=bool(secondary_reference_image),
             )
         if err:
             logger.warning("image generation chain error", extra={"error": err, "user_id": user_id})
@@ -148,7 +131,15 @@ async def generate_images(
                 type(p).__name__,
             )
             active_provider.append(prov_name)
-            return await p.generate(req)
+            return await p.generate(
+                ImageGenRequest(
+                    prompt=prompt,
+                    size=size,
+                    n=n,
+                    reference_image=reference_image,
+                    secondary_reference_image=secondary_reference_image,
+                ),
+            )
 
         result = await execute_with_fallback(None, user_id, "image_gen", call_fn=_generate_call, _chain=chain)
     except ImageGenerationError:

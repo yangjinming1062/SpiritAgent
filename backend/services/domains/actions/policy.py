@@ -9,11 +9,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import SETTINGS
-from modules.companion.actions import (
-    ActionProposal,
-    CompanionAction,
-)
-from modules.companion.schemas_actions import ActionBudgetStatus
+from modules.companion import ActionBudgetStatus, ActionProposal, CompanionAction
 from modules.settings import UserSetting
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession

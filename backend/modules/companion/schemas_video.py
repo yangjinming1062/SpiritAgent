@@ -58,6 +58,8 @@ class VideoPackResponse(BaseModel):
     pack_version: int
     status: str
     active: bool = False
+    identity_review: Literal["none", "pass", "review", "accepted"] = "none"
+    identity_review_reason: str = ""
     content_hash: str | None = None
     manifest_url: str | None = None
     can_retry: bool = False

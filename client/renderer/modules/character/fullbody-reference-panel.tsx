@@ -9,7 +9,13 @@ import { useStrings } from '@/shared/strings'
 
 import { pickAvatarImage, type PickedImage } from './avatar-image'
 import { $avatarSeeds, hydrateAvatarSeeds } from './avatar-seeds-store'
-import { $fullbodyReference, hydrateFullbodyReference, regenerateFullbodyReference } from './fullbody-reference-store'
+import {
+  $fullbodyReference,
+  acceptFullbodyCandidate,
+  hydrateFullbodyReference,
+  regenerateFullbodyReference,
+  retryFullbodyCandidateAnalysis
+} from './fullbody-reference-store'
 import { GenerationActionsGroup } from './generation-actions'
 import { $portraitUrl } from './portrait-store'
 import { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
@@ -154,6 +160,37 @@ export function FullbodyReferencePanel({
         <p aria-live="polite" className={HINT_TEXT}>
           {t.loading}
         </p>
+      )}
+      {!onboarding && current && state.candidateId && (
+        <div className="space-y-2 rounded-xl border border-line-hairline bg-fill-trough p-3">
+          <p className={HINT_TEXT}>{t.candidateHint}</p>
+          {state.candidateError && (
+            <p className="text-xs text-danger-fg" role="alert">
+              {state.candidateError}
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            {state.candidateStatus === 'ready' ? (
+              <button
+                className={BTN_PRIMARY}
+                disabled={busy}
+                onClick={() => void acceptFullbodyCandidate(avatarId)}
+                type="button"
+              >
+                {t.acceptCandidate}
+              </button>
+            ) : (
+              <button
+                className={BTN_SUBTLE}
+                disabled={busy}
+                onClick={() => void retryFullbodyCandidateAnalysis(avatarId)}
+                type="button"
+              >
+                {t.retryCandidateAnalysis}
+              </button>
+            )}
+          </div>
+        </div>
       )}
       <div className="space-y-1">
         <label className={FIELD_LABEL} htmlFor="fullbody-reference-feedback">

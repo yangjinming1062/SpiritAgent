@@ -4,11 +4,7 @@ import hashlib
 import json
 from datetime import datetime
 
-from modules.companion.actions import (
-    ActionPlayback,
-    CompanionAction,
-    CompanionActionPack,
-)
+from modules.companion import ActionPlayback, CompanionAction, CompanionActionPack
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 

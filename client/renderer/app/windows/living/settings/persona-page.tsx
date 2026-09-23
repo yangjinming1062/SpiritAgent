@@ -10,6 +10,7 @@ import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
 import { CharacterCardSection } from './character-card-section'
+import { MediaReviewQueue } from './media-review-queue'
 import { MemorySection } from './memory-section'
 import { PersonaSection } from './persona-editor'
 import { PersonaRetune } from './persona-retune'
@@ -74,6 +75,7 @@ export function PersonaPage(): React.ReactElement {
         <PersonaSection />
         {avatarId != null && <CharacterCardSection avatarId={avatarId} key={`card-${avatarId}`} />}
         {avatarId != null && <FullbodyReferencePanel avatarId={avatarId} key={avatarId} />}
+        {avatarId != null && <MediaReviewQueue />}
 
         {persona?.name && (
           <section>

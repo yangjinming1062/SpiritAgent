@@ -1,13 +1,16 @@
 import {
   $actionCatalog,
+  $activeAvatarId,
   $companionMood,
   $screenLocked,
   acceptPlayCommand,
   actionCatalogChanged,
   type ActionPlayCommand,
   hydrateCharacterCard,
+  hydrateFullbodyReference,
   hydrateVideoPack,
   hydrateWardrobe,
+  refreshAvatarSeeds,
   resolveAvatarRegeneration
 } from '@/modules/character'
 import {
@@ -46,6 +49,13 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
     case 'companion.character_card.updated': {
       if (authed()) {
         void hydrateCharacterCard().catch(error => log.warn('character-card', 'Refresh failed', error))
+        void refreshAvatarSeeds()
+          .then(() => {
+            const avatarId = $activeAvatarId.get()
+
+            return avatarId == null ? undefined : hydrateFullbodyReference(avatarId)
+          })
+          .catch(error => log.warn('avatar-seeds', 'Refresh failed', error))
       }
 
       break

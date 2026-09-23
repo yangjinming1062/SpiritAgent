@@ -6,11 +6,11 @@
 import asyncio
 
 from components import SESSION_LOCAL, get_logger, track_user_task
-from modules.companion.actions import ActionProposal
+from modules.companion import ActionProposal
 from sqlalchemy import select
 
 from services.application.generation.video.service import kick_dynamic_action
-from services.domains.actions.policy import get_action_accept_lock
+from services.domains.actions import get_action_accept_lock
 
 from .review import review_proposal
 

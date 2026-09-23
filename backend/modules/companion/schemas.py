@@ -35,6 +35,23 @@ class AvatarAssetResponse(BaseModel):
     status: SucceededStatus = "succeeded"
 
 
+class FullbodyCandidateResponse(BaseModel):
+    id: int
+    avatar_id: int
+    image_url: str
+    status: Literal["pending", "ready", "failed", "accepted", "rejected"]
+    error: str | None = None
+
+
+class MediaReviewResponse(BaseModel):
+    id: int
+    status: Literal["pending", "accepted", "rejected"]
+    reason: str = ""
+    media_type: Literal["image", "video"]
+    media_url: str
+    title: str = ""
+
+
 class FullbodyReferenceGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -42,6 +59,7 @@ class FullbodyReferenceGenerateRequest(BaseModel):
     image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
     content_type: str | None = Field(default=None, max_length=64)
     mode: ImageReviseMode
+    candidate_id: int | None = Field(default=None, gt=0)
 
 
 class FullbodyConfirmRequest(BaseModel):

@@ -401,10 +401,20 @@ export const dict = {
       intro: '人设怎么改、记得什么，都在这里。',
       sectionTitle: '角色',
       sectionMemory: '长期记忆',
+      mediaReviewTitle: '待确认的动作视频',
+      mediaReviewLoadError: '待确认动作加载失败，请刷新重试',
+      mediaReviewEmpty: '当前没有待确认的动作',
+      mediaReviewRefresh: '刷新',
       fullbodyReference: {
         title: '全身形象',
         hint: '展示完整身体与性格气质，采用适合自身结构、可以稳定保持的待机姿态，作为默认视频、换装与出镜画面的参考。',
         confirmHint: '确认后自动整理角色卡，再准备默认视频与初始房间场景；你可以继续完成引导。',
+        candidateHint:
+          '这是待采纳的新全身形象。身材可以改变；采纳后才会作为后续生成的身体依据。旧视频会继续播放，直到你制作好新视频形象。',
+        acceptCandidate: '采纳新全身形象',
+        retryCandidateAnalysis: '重试身体特征分析',
+        acceptCandidateFailed: '采纳失败，请重试',
+        retryCandidateAnalysisFailed: '分析失败，请重试',
         adoptHint: '采纳后直接确认这张全身形象，并在后台整理角色卡、准备默认视频与初始房间场景。',
         empty: '还没有全身形象，可以根据当前头像与角色设定生成。',
         loading: '正在准备全身形象，请稍候…',
@@ -645,7 +655,13 @@ export const dict = {
     sendFailed: '发送失败',
 
     media: {
-      imageLoading: '图片加载中…'
+      imageLoading: '图片加载中…',
+      reviewHint: '角色外形需要你核对。此媒体目前仅供预览。',
+      reviewAccept: '确认形象并采纳',
+      reviewReject: '不采纳',
+      reviewRejected: '此媒体未被采纳。',
+      reviewLoadError: '核对状态读取失败，请稍后重试',
+      reviewAcceptError: '采纳失败，请稍后重试'
     },
 
     copy: {
@@ -1011,6 +1027,8 @@ export const dict = {
       videoDrag: '悬空拖拽',
       videoResume: '继续处理已有素材',
       videoActivate: '穿着这套视频外观',
+      videoIdentityReviewHint: '新视频形象的角色外形需要你核对；当前视频仍会播放。',
+      videoIdentityReviewActivate: '确认形象并穿着',
       videoVersions: '视频外观版本',
       videoVersion: (version: number, outfit: number) => `外观 ${outfit} · 版本 ${version}`,
       videoActive: '使用中',

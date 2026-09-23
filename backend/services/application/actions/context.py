@@ -9,13 +9,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from components import resolve_prompt_text
-from modules.companion.actions import ActionProposal, CompanionActionPack
+from modules.companion import ActionProposal, CompanionActionPack
 from prompts.actions import ACTION_CONTEXT_GUIDANCES
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.actions.repository import list_pack_actions
-from services.domains.actions.usage import action_to_dict
+from services.domains.actions import action_to_dict, list_pack_actions
 
 
 @dataclass

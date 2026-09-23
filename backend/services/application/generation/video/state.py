@@ -5,7 +5,7 @@ from typing import Literal
 from modules.companion import CharacterCardSnapshot
 from pydantic import BaseModel, ConfigDict, Field
 
-from services.infrastructure.video_processing.quality import FullClipWindow, LoopWindow
+from services.infrastructure.video_processing import FullClipWindow, LoopWindow
 
 from .manifest import VideoClipSpec
 

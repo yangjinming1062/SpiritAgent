@@ -35,8 +35,7 @@ from components import (
 )
 from fastapi import WebSocket, WebSocketDisconnect
 from modules.auth import ChatRequestClientContext
-from modules.companion import CompanionSignal
-from modules.companion.schemas_actions import ActionPlayRequest
+from modules.companion import ActionPlayRequest, CompanionSignal
 from modules.conversation import Conversation, Message
 from modules.system import ChatMessageRequest, ChatRequest, PromptPresetListResponse, PromptPresetSummary
 from modules.ws import COMPANION_TURN_EVENT

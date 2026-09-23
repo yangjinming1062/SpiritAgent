@@ -82,11 +82,15 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
 
     case 'video_gen.completed': {
       // 后台视频任务完成（WSEvent outbox 路径，信封不带 session_id，载荷自带）。
-      const p = decodePayload<{ task_id?: string; url?: string; session_id?: string; media?: ChatMediaItem[] }>(
-        event.payload
-      )
+      const p = decodePayload<{
+        task_id?: string
+        url?: string
+        session_id?: string
+        media?: ChatMediaItem[]
+      }>(event.payload)
 
       const sessionId = p?.session_id
+
       const media: ChatMediaItem[] = p?.media?.length ? p.media : p?.url ? [{ type: 'video', url: p.url }] : []
 
       if (!media.length) {
@@ -94,9 +98,10 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       }
 
       const sys = getStrings().notifications.system
+      const message = sys.videoReady
 
       if (sessionId) {
-        rememberPendingMessage(sessionId, sys.videoReady)
+        rememberPendingMessage(sessionId, message)
       }
 
       if (sessionId && sessionId === $chatSessionId.get()) {
@@ -106,7 +111,7 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
         if ($chatVisible.get() && sessionId) {
           notify({
             kind: 'success',
-            message: sys.videoReady,
+            message,
             action: {
               label: sys.view,
               onClick: () => {
@@ -115,7 +120,7 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
             }
           })
         } else {
-          showMediaHint(sys.videoReady, sessionId)
+          showMediaHint(message, sessionId)
         }
       }
 

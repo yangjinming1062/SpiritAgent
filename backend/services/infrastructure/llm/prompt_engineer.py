@@ -8,6 +8,8 @@ from modules.companion import Persona
 from prompts.generation import (
     AVATAR_SYSTEM_PROMPT,
     CHARACTER_FORM_INSTRUCTIONS,
+    CHARACTER_FORM_KEEP_BODY,
+    CHARACTER_FORM_REDRAW_BODY,
     CHARACTER_VISUAL_STYLE,
     FULLBODY_FRAME,
     FULLBODY_PRESERVE_CHARACTER,
@@ -168,11 +170,15 @@ async def describe_character_form(
     outfit_description: str = "",
     reference_images: tuple[str, ...],
     identity: str = "",
+    allow_body_change: bool = False,
 ) -> str:
     """视觉模型根据开放描述与实际参考判断材质、结构和稳定待机姿态。"""
     return await vision_chat(
         user_id,
-        CHARACTER_FORM_INSTRUCTIONS + ("\n\n" + identity if identity else ""),
+        CHARACTER_FORM_INSTRUCTIONS
+        + "\n\n"
+        + (CHARACTER_FORM_REDRAW_BODY if allow_body_change else CHARACTER_FORM_KEEP_BODY)
+        + ("\n\n" + identity if identity else ""),
         json.dumps(
             {
                 "biological_type": species,

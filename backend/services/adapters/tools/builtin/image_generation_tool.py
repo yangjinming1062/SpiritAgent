@@ -1,7 +1,12 @@
 import json
 
-from components import get_logger, tool_error
-from prompts.generation import SELF_IMAGE_KEEP_OUTFIT, SELF_IMAGE_OUTFIT_DESCRIPTION, SELF_IMAGE_REFERENCE_TEMPLATE
+from components import SESSION_LOCAL, get_logger, tool_error
+from prompts.generation import (
+    SELF_IMAGE_KEEP_OUTFIT,
+    SELF_IMAGE_OUTFIT_DESCRIPTION,
+    SELF_IMAGE_OUTFIT_REFERENCE,
+    SELF_IMAGE_REFERENCE_TEMPLATE,
+)
 from prompts.tools import IMAGE_GENERATION_DESC, IMAGE_GENERATION_PARAM_DESCS
 
 from services.application.generation import (
@@ -10,9 +15,11 @@ from services.application.generation import (
     apply_outfit_override,
     generate_images,
     load_self_visual_context,
+    optional_outfit_image_reference,
     plan_outfit_description,
+    select_best_character_images,
 )
-from services.domains.companion import render_character_identity
+from services.domains.companion import character_snapshot_is_current, render_character_identity
 from services.infrastructure.llm import VisualReasoningError
 from services.infrastructure.tool_runtime import REGISTRY
 
@@ -45,8 +52,7 @@ async def image_generation_tool(
         plan = apply_outfit_override(visual, outfit_override)
         final_outfit = plan_outfit_description(plan)
         reference_image = visual.reference_image
-        # 覆盖生效时第二参考图（衣柜图）与覆盖造型不相符，不再注入。
-        secondary_reference_image = None if plan.override_outfit_description else secondary_reference_image
+        secondary_reference_image = await optional_outfit_image_reference(plan, user_id)
         prompt = (
             SELF_IMAGE_REFERENCE_TEMPLATE.format(
                 reference="图 1" if secondary_reference_image else "参考图",
@@ -56,6 +62,7 @@ async def image_generation_tool(
                 prompt=prompt,
             )
             + "\n"
+            + (SELF_IMAGE_OUTFIT_REFERENCE + "\n" if secondary_reference_image else "")
             + render_character_identity(visual.identity)
         )
     try:
@@ -71,7 +78,29 @@ async def image_generation_tool(
     except ImageGenerationError as e:
         return tool_error(str(e))
     logger.info("Generated images", extra={"image_count": len(urls), "prompt": prompt, "user_id": user_id})
-    return json.dumps({"success": True, "urls": urls}, ensure_ascii=False)
+    if subject == "self":
+
+        async def regenerate_one() -> str:
+            return (
+                await generate_images(
+                    prompt,
+                    size=size,
+                    n=1,
+                    user_id=user_id,
+                    reference_image=reference_image,
+                    secondary_reference_image=secondary_reference_image,
+                    persist_user_assets=True,
+                )
+            )[0]
+
+        urls = await select_best_character_images(user_id, visual.reference_image, urls, regenerate_one)
+        async with SESSION_LOCAL() as db:
+            if not await character_snapshot_is_current(db, user_id, visual.identity):
+                return tool_error("生成期间角色外形已更新，本轮图片未交付，请使用新形象再生成")
+    return json.dumps(
+        {"success": True, "urls": urls},
+        ensure_ascii=False,
+    )
 
 
 # MiniMax 长宽比 + 通过供应商 size→aspect_ratio 映射回传统 DALL·E 像素尺寸的兼容集合。

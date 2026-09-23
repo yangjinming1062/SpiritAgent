@@ -8,7 +8,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 
 from services.contracts import MemoryScope
-from services.domains.actions.repository import get_active_pack, list_pack_actions
+from services.domains.actions import get_active_pack, list_pack_actions
 from services.domains.memory import format_memories_block
 from services.infrastructure.llm import (
     LLMRuntimeError,

@@ -8,6 +8,7 @@ from .avatar_service import (
     AvatarSourceUnreadableError,
     FullbodyGenerationError,
     ImageSealedError,
+    accept_fullbody_candidate,
     adopt_avatar_seed,
     adopt_fullbody_seed,
     confirm_fullbody_seed,
@@ -17,6 +18,7 @@ from .avatar_service import (
     generate_fullbody_reference,
     get_active_avatar,
     get_avatar_job_lock,
+    latest_fullbody_candidate,
     list_avatar_history,
     load_avatar_bytes_as_data_uri,
     normalize_avatar_url_to_bare,
@@ -27,16 +29,31 @@ from .avatar_service import (
     regenerate_avatar,
     regenerate_avatar_from_image,
     resolve_uploaded_avatar_path,
+    retry_fullbody_candidate_analysis,
     select_avatar,
 )
 from .character_card import drain_character_extractions, resume_character_extractions, schedule_character_extraction
+from .identity_review import (
+    MEDIA_IDENTITY_ACCEPT_SCORE,
+    review_character_frames,
+    score_character_frames,
+    score_character_image,
+    select_best_character_images,
+)
 from .image_generation import (
     ImageGenerationError,
-    compose_image_references,
     generate_images,
     resolve_image_gen_chain,
 )
 from .initial_appearance import resume_initial_appearance
+from .media_review import (
+    MediaReviewStateError,
+    accept_media_review,
+    create_media_review,
+    get_media_review,
+    list_pending_media_reviews,
+    reject_media_review,
+)
 from .outfit_service import (
     OutfitDraftExpiredError,
     OutfitError,
@@ -114,6 +131,7 @@ from .visual_identity import (
     SelfVisualPlan,
     apply_outfit_override,
     load_self_visual_context,
+    optional_outfit_image_reference,
     plan_outfit_description,
     prepare_self_video_reference,
 )
@@ -138,6 +156,7 @@ __all__ = [
     "schedule_scene_prompt",
     "set_scene_policy",
     "load_self_visual_context",
+    "optional_outfit_image_reference",
     "prepare_self_video_reference",
     "SelfVisualPlan",
     "apply_outfit_override",
@@ -149,6 +168,20 @@ __all__ = [
     "ALLOWED_AVATAR_UPLOAD_MIME_TYPES",
     "AVATAR_JOB_LOCKS",
     "AvatarGenerationError",
+    "accept_fullbody_candidate",
+    "accept_media_review",
+    "create_media_review",
+    "get_media_review",
+    "list_pending_media_reviews",
+    "reject_media_review",
+    "MediaReviewStateError",
+    "MEDIA_IDENTITY_ACCEPT_SCORE",
+    "review_character_frames",
+    "score_character_frames",
+    "score_character_image",
+    "select_best_character_images",
+    "latest_fullbody_candidate",
+    "retry_fullbody_candidate_analysis",
     "AvatarNotFoundError",
     "AvatarSourceUnreadableError",
     "FullbodyGenerationError",
@@ -174,7 +207,6 @@ __all__ = [
     "adopt_outfit_draft_image",
     "adopt_outfit_regenerate_image",
     "avatar_response",
-    "compose_image_references",
     "confirm_fullbody_seed",
     "confirm_outfit",
     "create_outfit_draft",

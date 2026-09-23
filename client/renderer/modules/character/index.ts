@@ -26,7 +26,13 @@ export {
   saveDraftRefImage
 } from './avatar-image'
 export { awaitAvatarRegeneration, resolveAvatarRegeneration } from './avatar-regen-store'
-export { $avatarSeeds, clearAvatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds } from './avatar-seeds-store'
+export {
+  $avatarSeeds,
+  clearAvatarSeeds,
+  hydrateAvatarSeeds,
+  patchAvatarSeeds,
+  refreshAvatarSeeds
+} from './avatar-seeds-store'
 export {
   $characterCard,
   BODY_FEATURE_KEYS,

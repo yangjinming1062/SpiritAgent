@@ -7,10 +7,11 @@ import json
 from typing import Any
 
 from components import SESSION_LOCAL, tool_error
-from modules.companion.actions import ActionProposal, CompanionAction
-from modules.companion.schemas_actions import (
+from modules.companion import (
     ActionDesignRequest,
     ActionPlayRequest,
+    ActionProposal,
+    CompanionAction,
 )
 from prompts.actions import (
     ACTION_DESIGN_TOOL_DESCRIPTION,
@@ -23,12 +24,12 @@ from sqlalchemy import select
 from services.application.actions.design import accept_proposal
 from services.application.actions.pipeline import schedule_action_generation, schedule_proposal_review
 from services.application.actions.playback import request_playback
-from services.domains.actions.repository import (
+from services.domains.actions import (
+    action_to_dict,
     get_action,
     get_active_pack,
     list_pack_actions,
 )
-from services.domains.actions.usage import action_to_dict
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 

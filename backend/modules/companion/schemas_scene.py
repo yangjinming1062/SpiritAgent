@@ -21,6 +21,8 @@ class SceneResponse(BaseModel):
     prompt: str = ""
     url: str = ""
     seed_portrait_media_id: str = ""
+    identity_review: Literal["none", "pass", "review", "accepted", "auto_selected"] = "none"
+    identity_review_reason: str = ""
     auto_activate: bool = False
     switch_version: int = 0
     error: str | None = None

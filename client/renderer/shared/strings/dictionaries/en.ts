@@ -426,11 +426,21 @@ export const dict: Dictionary = {
       intro: 'Edit the persona and review what the companion remembers — all in one place.',
       sectionTitle: 'Persona',
       sectionMemory: 'Long-term memory',
+      mediaReviewTitle: 'Action videos to confirm',
+      mediaReviewLoadError: 'Could not load actions to confirm. Refresh to try again.',
+      mediaReviewEmpty: 'No actions need confirmation right now.',
+      mediaReviewRefresh: 'Refresh',
       fullbodyReference: {
         title: 'Full-body image',
         hint: 'Consistent visual style and a stable idle pose suited to this character’s anatomy and personality. Used for the default video, outfits and scenes.',
         confirmHint:
           'Confirmation starts character analysis, followed by the default video and scene. You can continue onboarding.',
+        candidateHint:
+          'This full-body image is awaiting acceptance. Body proportions may change; accepting it updates the body reference for future generations. The old video stays visible until you create a new one.',
+        acceptCandidate: 'Accept new full-body image',
+        retryCandidateAnalysis: 'Retry body analysis',
+        acceptCandidateFailed: 'Could not accept this image. Try again.',
+        retryCandidateAnalysisFailed: 'Analysis failed. Try again.',
         adoptHint:
           'Adopting confirms this full-body image and starts character analysis, followed by the default video and scene.',
         empty: 'No full-body image yet. Generate one from the current portrait and persona.',
@@ -696,7 +706,13 @@ export const dict: Dictionary = {
     sendFailed: 'Send failed',
 
     media: {
-      imageLoading: 'Loading image…'
+      imageLoading: 'Loading image…',
+      reviewHint: 'Check the character’s appearance. This media is only a preview for now.',
+      reviewAccept: 'Confirm and accept',
+      reviewReject: 'Reject',
+      reviewRejected: 'This media was not accepted.',
+      reviewLoadError: 'Could not load review status. Try again later.',
+      reviewAcceptError: 'Could not accept this media. Try again later.'
     },
 
     copy: {
@@ -1074,6 +1090,8 @@ export const dict: Dictionary = {
       videoDrag: 'Suspended',
       videoResume: 'Resume existing work',
       videoActivate: 'Wear this video look',
+      videoIdentityReviewHint: 'Check this video character’s appearance; the current video keeps playing.',
+      videoIdentityReviewActivate: 'Confirm appearance and wear',
       videoVersions: 'Video look versions',
       videoVersion: (version: number, outfit: number) => `Outfit ${outfit} · Version ${version}`,
       videoActive: 'Active',

@@ -33,14 +33,12 @@ from components import (
     utc_now,
 )
 from modules.companion import (
-    AvatarAsset,
-    CompanionOutfit,
-)
-from modules.companion.actions import (
     REQUIRED_SYSTEM_SLOTS,
     SYSTEM_SLOTS,
+    AvatarAsset,
     CompanionAction,
     CompanionActionPack,
+    CompanionOutfit,
 )
 from modules.ws import emit_ws_event
 from pydantic import ValidationError
@@ -48,8 +46,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from services.domains.actions.publishing import publish_action_catalog
-from services.domains.actions.usage import fulfill_deferred_play_intents
+from services.domains.actions import fulfill_deferred_play_intents, publish_action_catalog
 from services.domains.companion import (
     character_snapshot_is_current,
     get_or_create_persona,
@@ -78,6 +75,9 @@ from services.infrastructure.llm import (
     resolve_vision_chain,
 )
 from services.infrastructure.video_processing import (
+    HITMASK_FPS,
+    HITMASK_GRID_H,
+    HITMASK_GRID_W,
     MAX_CANVAS_HEIGHT,
     MAX_CANVAS_WIDTH,
     MAX_SOURCE_BYTES,
@@ -85,14 +85,17 @@ from services.infrastructure.video_processing import (
     VideoProcessError,
     build_hitmask,
     extract_cover,
+    matte_video,
     prepare_action_clip,
+    require_matting_model,
+    select_full_clip,
+    select_loop,
 )
-from services.infrastructure.video_processing.matting import matte_video, require_matting_model
-from services.infrastructure.video_processing.process import HITMASK_FPS, HITMASK_GRID_H, HITMASK_GRID_W
-from services.infrastructure.video_processing.quality import select_full_clip, select_loop
 
 from ..avatar_service import get_avatar_job_lock, load_avatar_bytes_as_data_uri
+from ..identity_review import review_character_frames
 from ..image_generation import ImageGenerationError, generate_images, resolve_image_gen_chain
+from ..media_review import create_media_review
 from ..visual_identity import align_character_reference, needs_identity_alignment
 from .manifest import (
     VideoClipSpec,
@@ -530,7 +533,7 @@ def _action_order(action: str) -> tuple[int, str]:
 
 
 def _can_resume_job(job: CompanionVideoJob) -> bool:
-    if job.status == "succeeded" or job.stage == "merged":
+    if job.status in ("succeeded", "review") or job.stage == "merged":
         return False
     return bool(
         job.provider_task_id or job.artifact_path or job.stage == "script" or (job.stage == "pose" and job.pose_path),
@@ -792,7 +795,7 @@ async def _advance_job(job_id: int, *, stage: str, status: str = "processing", *
     """推进生成任务行阶段；终态行不再被覆写。"""
     async with SESSION_LOCAL() as db:
         job = await db.get(CompanionVideoJob, job_id)
-        if job is None or job.status in ("succeeded", "failed"):
+        if job is None or job.status in ("succeeded", "review", "failed"):
             return
         job.status = status
         job.stage = stage
@@ -818,7 +821,7 @@ async def _mark_jobs(
         values["stage"] = stage
     stmt = (
         update(CompanionVideoJob)
-        .where(CompanionVideoJob.pack_id == pack_id, CompanionVideoJob.status.not_in(("succeeded", "failed")))
+        .where(CompanionVideoJob.pack_id == pack_id, CompanionVideoJob.status.not_in(("succeeded", "review", "failed")))
         .values(**values)
         .execution_options(synchronize_session=False)
     )
@@ -861,6 +864,50 @@ async def _publish_ready(
         if pack is None:
             return False
         user_id = pack.user_id
+        reference_path = pack.reference_path
+        generated = pack.context_json is not None
+        if generated:
+            context = _load_generation_context(pack)
+            avatar = await db.get(AvatarAsset, context.identity.avatar_id) if context is not None else None
+            if (
+                context is not None
+                and avatar is not None
+                and avatar.user_id == user_id
+                and await character_snapshot_is_current(db, user_id, context.identity)
+            ):
+                reference_path = avatar.seed_fullbody_url
+    if generated and cover_path:
+        try:
+            reference_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, reference_path)
+            frame_uris: list[str] = []
+            with tempfile.TemporaryDirectory(prefix="spiritagent-identity-") as directory:
+                for spec in clip_specs:
+                    if spec.action not in REQUIRED_SYSTEM_SLOTS:
+                        continue
+                    for position, second in enumerate(
+                        (0.0, spec.duration_ms / 2000, max(0.0, spec.duration_ms / 1000 - 0.15)),
+                    ):
+                        frame_path = Path(directory) / f"{spec.action}-{position}.webp"
+                        await _process_thread(
+                            extract_cover,
+                            _artifact_abs_path(spec.path),
+                            frame_path,
+                            canvas_w=canvas[0],
+                            canvas_h=canvas[1],
+                            at_seconds=second,
+                        )
+                        frame_uris.append(await _process_thread(_image_data_uri, frame_path))
+            review_status, review_reason = await review_character_frames(
+                user_id,
+                reference_uri,
+                tuple(frame_uris),
+                pack_wide=True,
+            )
+        except Exception:
+            logger.warning("video pack identity review failed", extra={"pack_id": pack_id}, exc_info=True)
+            review_status, review_reason = "review", "视频形象的自动检查未完成，请预览后手动启用"
+    else:
+        review_status, review_reason = ("review", "视频封面不可用，请预览后手动启用") if generated else ("accepted", "")
     async with get_avatar_job_lock(user_id):
         return await _publish_ready_locked(
             pack_id,
@@ -868,6 +915,8 @@ async def _publish_ready(
             clip_specs=clip_specs,
             cover_path=cover_path,
             auto_activate=auto_activate,
+            identity_review=review_status,
+            identity_review_reason=review_reason,
         )
 
 
@@ -893,6 +942,8 @@ async def _publish_ready_locked(
     clip_specs: list[VideoClipSpec],
     cover_path: str | None,
     auto_activate: bool,
+    identity_review: str,
+    identity_review_reason: str,
 ) -> bool:
     async with SESSION_LOCAL() as db:
         pack = await db.get(CompanionVideoPack, pack_id)
@@ -939,6 +990,8 @@ async def _publish_ready_locked(
             return False
         pack.status = "ready"
         pack.error = None
+        pack.identity_review = identity_review
+        pack.identity_review_reason = identity_review_reason
         if cover_path:
             pack.manifest_json = json.dumps({"cover_path": cover_path}, ensure_ascii=False)
         # 仅将本次进入目录的任务标为成功；未产出素材的任务不冒充成功。
@@ -979,7 +1032,12 @@ async def _publish_ready_locked(
             payload={"packId": pack.id, "catalogVersion": pack.catalog_version},
         )
         retired: set[str] = set()
-        if auto_activate and reference_is_current and await _newer_ready_pack(db, pack) is None:
+        if (
+            auto_activate
+            and identity_review in ("pass", "accepted")
+            and reference_is_current
+            and await _newer_ready_pack(db, pack) is None
+        ):
             context = GenerationContext.model_validate_json(pack.context_json)
             active_outfit_id = (
                 await db.execute(
@@ -1097,7 +1155,17 @@ async def _prepare_pack_identity(pack: CompanionVideoPack, context: GenerationCo
         return context
     if context.reference_alignment == "running":
         raise VideoPackStateError("参考图生成结果未知，请核对后生成完整新包")
-    source = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    async with SESSION_LOCAL() as db:
+        avatar = await db.get(AvatarAsset, context.identity.avatar_id)
+        current_identity = await character_snapshot_is_current(db, pack.user_id, context.identity)
+        seed_path = avatar.seed_fullbody_url if avatar is not None and avatar.user_id == pack.user_id else None
+    source = (
+        await asyncio.to_thread(load_avatar_bytes_as_data_uri, seed_path)
+        if current_identity
+        else await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
+    )
+    if not source:
+        raise VideoPackStateError("当前全身形象无法读取，请先修复参考图")
     context.reference_alignment = "running"
     async with SESSION_LOCAL() as db:
         row = await db.get(CompanionVideoPack, pack.id)
@@ -1219,7 +1287,7 @@ async def _generate_pack(pack_id: int) -> None:
                     )
                 await db.commit()
         for job in jobs:
-            if job.status in ("succeeded", "failed"):
+            if job.status in ("succeeded", "failed", "review"):
                 continue
             try:
                 await _generate_action(pack, job)
@@ -1417,10 +1485,45 @@ async def _run_action_pipeline(
             start=loop.start,
             end=loop.end,
         )
+        review_id = None
+        if pack.status == "ready":
+            try:
+                reference_uri = await _process_thread(load_avatar_bytes_as_data_uri, pack.reference_path)
+                frame_uris: list[str] = []
+                for index, second in enumerate(
+                    (0.0, spec.duration_ms / 2000, max(0.0, spec.duration_ms / 1000 - 0.15)),
+                ):
+                    frame = work / f"identity-{index}.webp"
+                    await _process_thread(
+                        extract_cover,
+                        _artifact_abs_path(spec.path),
+                        frame,
+                        canvas_w=_DEFAULT_CANVAS[0],
+                        canvas_h=_DEFAULT_CANVAS[1],
+                        at_seconds=second,
+                    )
+                    frame_uris.append(await _process_thread(_image_data_uri, frame))
+                verdict, reason = await review_character_frames(pack.user_id, reference_uri, tuple(frame_uris))
+            except Exception:
+                logger.warning("dynamic action identity review failed", extra={"action_id": job.id}, exc_info=True)
+                verdict, reason = "review", "动作视频的自动检查未完成，请预览确认"
+            if verdict == "review":
+                review_id = await create_media_review(
+                    pack.user_id,
+                    "video",
+                    spec.path,
+                    reason,
+                    publication={
+                        "kind": "action",
+                        "pack_id": pack.id,
+                        "action_id": job.id,
+                        "title": job.name or job.action,
+                    },
+                )
         await _advance_job(
             job.id,
             stage="publish",
-            status="succeeded",
+            status="review" if review_id else "succeeded",
             result_path=spec.path,
             result_json=ActionResult(clip=spec, cover_path=cover, quality=loop).model_dump_json(),
             video_path=spec.path,
@@ -1914,6 +2017,11 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> Compani
         ).scalar_one_or_none()
         if outfit is None or await _reference_hash(outfit, avatar) != pack.reference_hash:
             raise VideoPackStateError("该视频包对应的参考已变更")
+        context = _load_generation_context(pack)
+        if context is not None and not await character_snapshot_is_current(db, user_id, context.identity):
+            raise VideoPackStateError("视频形象使用旧身体资料，请先制作新视频包")
+        if pack.identity_review == "review":
+            pack.identity_review = "accepted"
         await _activate_locked(db, pack)
         retired = await _retire_superseded_locked(db, pack)
         await db.commit()
@@ -2176,6 +2284,8 @@ def pack_response(pack: CompanionVideoPack) -> dict:
         "pack_version": pack.pack_version,
         "status": pack.status,
         "active": pack.active,
+        "identity_review": pack.identity_review,
+        "identity_review_reason": pack.identity_review_reason,
         "content_hash": pack.content_hash or None,
         "manifest_url": signed_companion_asset_url(pack.manifest_path) if pack.status == "ready" else None,
         "error": pack.error or None,

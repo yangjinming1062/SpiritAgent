@@ -57,7 +57,8 @@ from services.domains.memory import read_user_profile
 from services.infrastructure.assets import asset_store
 from services.infrastructure.llm import resolve_reference_bytes, vision_chat
 
-from .avatar_service import load_character_reference_data_uri
+from .avatar_service import load_avatar_bytes_as_data_uri, load_character_reference_data_uri
+from .identity_review import MEDIA_IDENTITY_ACCEPT_SCORE, score_character_image
 from .image_generation import ImageGenerationError, generate_images
 from .scene_prompt import ScenePromptContext, build_scene_prompt
 
@@ -450,18 +451,7 @@ async def _save_image(user_id: int, scene_id: int, data: bytes, mime: str) -> No
             await asyncio.to_thread(asset_store.unlink_companion_asset, path)
 
 
-async def _analyze(user_id: int, scene_id: int) -> None:
-    async with SESSION_LOCAL() as db:
-        row = await get_scene(db, user_id, scene_id)
-        if row is None or row.status != "pending" or not row.media_path:
-            return
-        path = row.media_path
-        language = await db.scalar(
-            select(UserSetting.setting_value).where(
-                UserSetting.user_id == user_id,
-                UserSetting.setting_key == "language",
-            ),
-        )
+async def _scene_image_uri(user_id: int, path: str) -> str:
     parsed_path = asset_store.parse_companion_asset_path(path)
     local = (
         asset_store.resolve_companion_asset_path(*parsed_path) if parsed_path and parsed_path[0] == user_id else None
@@ -470,7 +460,66 @@ async def _analyze(user_id: int, scene_id: int) -> None:
         raise SceneStateError("场景图片无法读取")
     data, mime = await asyncio.to_thread(_decode_reference_image, await asyncio.to_thread(local[0].read_bytes))
     encoded = await asyncio.to_thread(base64.b64encode, data)
-    data_uri = f"data:{mime};base64,{encoded.decode('ascii')}"
+    return f"data:{mime};base64,{encoded.decode('ascii')}"
+
+
+async def _analyze(user_id: int, scene_id: int) -> bool:
+    async with SESSION_LOCAL() as db:
+        row = await get_scene(db, user_id, scene_id)
+        if row is None or row.status != "pending" or not row.media_path:
+            return False
+        path = row.media_path
+        identity_path = row.seed_portrait_media_id
+        generated = row.source == SceneSource.GENERATED.value
+        best_path = row.identity_best_path
+        best_score = row.identity_best_score
+        attempt_count = row.attempt_count
+        language = await db.scalar(
+            select(UserSetting.setting_value).where(
+                UserSetting.user_id == user_id,
+                UserSetting.setting_key == "language",
+            ),
+        )
+    data_uri = await _scene_image_uri(user_id, path)
+    selected_path = path
+    review_status = "accepted"
+    review_reason = ""
+    retry = False
+    if generated:
+        identity_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, identity_path)
+        score = await score_character_image(user_id, identity_uri, data_uri)
+        if score is not None and (not best_path or score > best_score):
+            best_path, best_score = path, score
+        elif not best_path:
+            best_path = path
+        retry = (
+            score is not None
+            and score < MEDIA_IDENTITY_ACCEPT_SCORE
+            and attempt_count <= SETTINGS.character_media_regeneration_max_retries
+        )
+        selected_path = best_path
+        review_status = "pass" if best_score >= MEDIA_IDENTITY_ACCEPT_SCORE else "auto_selected"
+        review_reason = f"自动选择可用候选，身份一致性评分 {best_score if best_score >= 0 else '不可用'}"
+        async with _scene_lock(user_id), SESSION_LOCAL() as db:
+            row = await get_scene(db, user_id, scene_id)
+            if row is None or row.status != "pending" or row.media_path != path:
+                return False
+            row.identity_best_path = best_path
+            row.identity_best_score = best_score
+            row.identity_review_reason = review_reason
+            if retry:
+                row.media_path = ""
+                row.result_url = ""
+                row.stage = "retry_pending"
+                _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+                await db.commit()
+                return True
+            row.media_path = selected_path
+            row.identity_review = review_status
+            row.stage = "analyze"
+            await db.commit()
+        if selected_path != path:
+            data_uri = await _scene_image_uri(user_id, selected_path)
     raw = await vision_chat(
         user_id,
         SCENE_DESCRIBE_SYSTEM,
@@ -480,10 +529,12 @@ async def _analyze(user_id: int, scene_id: int) -> None:
     description = SceneDescriptionRequest.model_validate(parse_llm_json(raw))
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
-        if row is None or row.status != "pending" or row.media_path != path:
-            return
+        if row is None or row.status != "pending" or row.media_path != selected_path:
+            return False
         row.title = description.title
         row.description = description.description
+        row.identity_review = review_status
+        row.identity_review_reason = review_reason
         row.status = SceneStatus.READY.value
         row.stage = "complete"
         row.ready_at = utc_now()
@@ -503,6 +554,7 @@ async def _analyze(user_id: int, scene_id: int) -> None:
             _event(db, persona, "companion.scene.activated", scene_id)
         await db.commit()
         SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="ready").inc()
+    return False
 
 
 async def _run_pipeline(scene_id: int, user_id: int, reference_image: str | None = None) -> None:
@@ -533,7 +585,8 @@ async def _run_pipeline(scene_id: int, user_id: int, reference_image: str | None
                 if not identity_uri:
                     raise SceneStateError("全身参考图无法读取，请重新生成")
                 if row.origin == SceneOrigin.LLM.value:
-                    await _consume_llm_quota(db, user_id)
+                    if row.attempt_count == 0:
+                        await _consume_llm_quota(db, user_id)
                     db.add(SceneGenerationAttempt(user_id=user_id, scene_id=scene_id))
                 await _check_policy(db, await _persona(db, user_id), row.origin)
                 row.stage = "submitting"
@@ -545,7 +598,7 @@ async def _run_pipeline(scene_id: int, user_id: int, reference_image: str | None
             # 提交标记先落库；异常或重启不盲目重发结果未知的付费请求。
             SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="attempt").inc()
             urls = await generate_images(
-                prompt,
+                prompt + ("\n优先精确保持身份参考中的面容、物种与身体比例。" if row.attempt_count > 1 else ""),
                 size="1792x1024",
                 n=1,
                 user_id=user_id,
@@ -574,7 +627,8 @@ async def _run_pipeline(scene_id: int, user_id: int, reference_image: str | None
             except Exception:
                 if attempt + 1 >= max(1, int(SETTINGS.scene_store_max_attempts)):
                     raise
-    await _analyze(user_id, scene_id)
+    if await _analyze(user_id, scene_id):
+        await _run_pipeline(scene_id, user_id, reference_image)
 
 
 async def _mark_failed(user_id: int, scene_id: int, error: str) -> None:
@@ -590,6 +644,31 @@ async def _mark_failed(user_id: int, scene_id: int, error: str) -> None:
         SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="failed").inc()
 
 
+async def _restore_best_scene(user_id: int, scene_id: int) -> bool:
+    """中断后只用已落盘最佳图，不在缺少冻结参考或未知提交状态下重发。"""
+    async with _scene_lock(user_id), SESSION_LOCAL() as db:
+        row = await get_scene(db, user_id, scene_id)
+        if (
+            row is None
+            or row.status != "pending"
+            or row.stage not in ("submitting", "retry_pending")
+            or row.result_url
+            or not row.identity_best_path
+        ):
+            return False
+        parsed = asset_store.parse_companion_asset_path(row.identity_best_path)
+        if parsed is None or parsed[0] != user_id or asset_store.resolve_companion_asset_path(*parsed) is None:
+            return False
+        row.media_path = row.identity_best_path
+        row.stage = "analyze"
+        row.attempt_count = max(row.attempt_count, SETTINGS.character_media_regeneration_max_retries + 1)
+        row.identity_review = "auto_selected"
+        row.identity_review_reason = "自动重生成的提交结果未确认，保留已知的最佳场景图片"
+        _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        await db.commit()
+        return True
+
+
 def _launch_task(scene_id: int, user_id: int, *, reference_image: str | None = None) -> None:
     existing = _INFLIGHT_TASKS.get((user_id, scene_id))
     if existing is not None and not existing.done() and not existing.cancelling():
@@ -602,6 +681,12 @@ def _launch_task(scene_id: int, user_id: int, *, reference_image: str | None = N
             raise
         except Exception as exc:
             logger.exception("scene pipeline failed", extra={"scene_id": scene_id, "user_id": user_id})
+            if await _restore_best_scene(user_id, scene_id):
+                try:
+                    await _run_pipeline(scene_id, user_id, reference_image)
+                    return
+                except Exception:
+                    logger.exception("best scene recovery failed", extra={"scene_id": scene_id, "user_id": user_id})
             async with SESSION_LOCAL() as db:
                 row = await get_scene(db, user_id, scene_id)
                 error = (
@@ -629,13 +714,14 @@ def _launch_task(scene_id: int, user_id: int, *, reference_image: str | None = N
 async def resume_scene_generation(user_id: int, scene_id: int) -> bool:
     if (task := _INFLIGHT_TASKS.get((user_id, scene_id))) is not None and not task.done():
         return True
+    await _restore_best_scene(user_id, scene_id)
     async with SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
         if row is None or row.status != "pending":
             return False
         if row.stage == "waiting_upload":
             return True
-        resumable = bool(row.media_path or row.result_url)
+        resumable = bool(row.media_path or row.result_url or row.stage == "retry_pending")
     if resumable:
         _launch_task(scene_id, user_id)
     else:

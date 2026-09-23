@@ -580,7 +580,8 @@ MEDIA_GUIDANCES: dict[str, str] = {
         "若尚未解锁媒体工具，先调用 `search_tools(query='media')`。"
         "你生成的图片与视频会自动以预览卡片形式随回复一起交给用户——"
         "不要在文本里粘贴原始媒体 URL 或 Markdown 图片语法；改为简要描述结果。\n"
-        "普通媒体生成只产生对话附件，不会改变当前形象、穿着或场景。仅在工具确认成功且产物可用时称为完成；"
+        "普通媒体生成只产生对话附件，不会改变当前形象、穿着或场景。"
+        "仅在工具确认成功且产物可用时称为完成；"
         "pending 表示仍在生成，任务标识本身不证明成功。失败或结果不明时如实说明，后续核对原任务，不因结果未知重复提交。\n"
     ),
     "en": (
@@ -590,7 +591,8 @@ MEDIA_GUIDANCES: dict[str, str] = {
         "cards attached to your reply — do NOT paste raw media URLs or markdown image "
         "syntax into your text; describe the result briefly instead.\n"
         "Ordinary media generation creates conversation attachments; it does not change the current avatar, "
-        "outfit, or scene. Claim completion only when the tool confirms success and an output is available. "
+        "outfit, or scene. "
+        "Claim completion only when the tool confirms success and an output is available. "
         "Pending means still generating; a task ID alone does not prove success. Report failed or unknown "
         "outcomes accurately, check the original task later, and do not resubmit because its outcome is unknown.\n"
     ),

@@ -32,7 +32,7 @@ PROPOSAL_SOURCES: tuple[str, ...] = ("user_requested", "autonomous", "system")
 # 提案评审结论。
 REVIEW_DECISIONS: tuple[str, ...] = ("approve", "reuse", "defer", "reject")
 # 生成任务状态与阶段。
-JOB_STATUSES: tuple[str, ...] = ("queued", "running", "succeeded", "failed", "cancelled", "result_unknown")
+JOB_STATUSES: tuple[str, ...] = ("queued", "running", "review", "succeeded", "failed", "cancelled", "result_unknown")
 JOB_STAGES: tuple[str, ...] = ("design", "script", "pose", "submit", "generate", "download", "process", "publish")
 # 播放回执状态。
 PLAYBACK_STATUSES: tuple[str, ...] = ("queued", "started", "completed", "interrupted", "rejected")
@@ -63,6 +63,8 @@ class CompanionActionPack(ModelBase, TimestampMixin):
     manifest_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     manifest_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
+    identity_review: Mapped[str] = mapped_column(String(16), default="none", server_default=text("'none'"))
+    identity_review_reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     status: Mapped[str] = mapped_column(
         String(16),
         default="processing",

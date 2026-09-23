@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from common import ModelBase
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -22,6 +22,10 @@ class VideoGenJob(ModelBase):
     provider_file_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
     file_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidate_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    candidate_file_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    identity_best_score: Mapped[int] = mapped_column(Integer, default=-1, server_default=text("-1"))
+    identity_retries_used: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     error_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)

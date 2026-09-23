@@ -7,17 +7,15 @@ from common import get_router
 from components import SETTINGS, DbSession
 from fastapi import HTTPException
 from modules.auth import CurrentUser
-from modules.companion.actions import (
+from modules.companion import (
     REQUIRED_SYSTEM_SLOTS,
-    CompanionAction,
-)
-from modules.companion.schemas_actions import (
     ActionBudgetStatus,
     ActionCatalogResponse,
     ActionDesignRequest,
     ActionDesignResult,
     ActionPlaybackReceipt,
     ActionSummary,
+    CompanionAction,
 )
 from modules.ws import emit_ws_event
 from services.application.actions import accept_proposal
@@ -28,9 +26,9 @@ from services.domains.actions import (
     get_daily_budget_status,
     get_playback,
     list_pack_actions,
+    publish_action_catalog,
     record_play_result,
 )
-from services.domains.actions.publishing import publish_action_catalog
 from services.infrastructure.assets import signed_companion_asset_url
 from sqlalchemy.ext.asyncio import AsyncSession
 

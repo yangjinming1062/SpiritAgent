@@ -13,13 +13,16 @@ from modules.companion import (
     CharacterCardExtract,
     CharacterCardResponse,
     CharacterCardUpdate,
+    CompanionMediaReview,
     CompanionOperationResponse,
     FullbodyAdoptRequest,
+    FullbodyCandidateResponse,
     FullbodyConfirmRequest,
     FullbodyPromptRequest,
     FullbodyReferenceGenerateRequest,
     ImageAdoptRequest,
     ImagePromptResponse,
+    MediaReviewResponse,
     OnboardingStateResponse,
     OutfitAdoptRequest,
     OutfitConfirmRequest,
@@ -47,6 +50,7 @@ from services.application.generation import (
     AvatarSourceUnreadableError,
     FullbodyGenerationError,
     ImageSealedError,
+    MediaReviewStateError,
     OutfitDraftExpiredError,
     OutfitError,
     OutfitNotFoundError,
@@ -54,6 +58,8 @@ from services.application.generation import (
     VideoPackError,
     VideoPackNotFoundError,
     VideoPackStateError,
+    accept_fullbody_candidate,
+    accept_media_review,
     activate_outfit,
     activate_video_pack,
     adopt_avatar_seed,
@@ -73,10 +79,13 @@ from services.application.generation import (
     generate_fullbody_reference,
     get_active_avatar,
     get_avatar_job_lock,
+    get_media_review,
     get_outfit_policy,
+    latest_fullbody_candidate,
     list_avatar_history,
     list_outfits,
     list_pack_responses,
+    list_pending_media_reviews,
     outfit_response,
     prepare_avatar_prompt,
     prepare_fullbody_prompt,
@@ -84,7 +93,9 @@ from services.application.generation import (
     prepare_outfit_regenerate_prompt,
     regenerate_avatar_from_image,
     regenerate_outfit_draft,
+    reject_media_review,
     resolve_uploaded_avatar_path,
+    retry_fullbody_candidate_analysis,
     retry_video_pack,
     schedule_character_extraction,
     select_avatar,
@@ -105,6 +116,7 @@ from services.domains.companion import (
     update_persona,
 )
 from services.infrastructure.assets import (
+    client_asset_url,
     resolve_companion_asset_path,
     serve_ranged_file,
     verify_signed_asset_request,
@@ -113,6 +125,54 @@ from services.infrastructure.assets import (
 from services.infrastructure.llm import LLMRuntimeError, MissingLlmConfigError, VisualReasoningError
 
 router = get_router()
+
+
+def _media_review_response(row: CompanionMediaReview) -> MediaReviewResponse:
+    return MediaReviewResponse(
+        id=row.id,
+        status=row.status,
+        reason=row.reason,
+        media_type=row.media_type,
+        media_url=client_asset_url(row.media_url),
+        title=str((row.publication or {}).get("title") or ""),
+    )
+
+
+@router.get("/media-reviews", response_model=list[MediaReviewResponse])
+async def get_pending_visual_media_reviews(user: CurrentUser) -> list[MediaReviewResponse]:
+    return [_media_review_response(row) for row in await list_pending_media_reviews(user.id)]
+
+
+@router.get("/media-reviews/{review_id}", response_model=MediaReviewResponse)
+async def get_visual_media_review(review_id: int, user: CurrentUser) -> MediaReviewResponse:
+    row = await get_media_review(user.id, review_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail={"error": "待确认动作不存在"})
+    return _media_review_response(row)
+
+
+@router.post("/media-reviews/{review_id}/accept", response_model=MediaReviewResponse)
+async def post_visual_media_review_accept(review_id: int, user: CurrentUser) -> MediaReviewResponse:
+    try:
+        row = await accept_media_review(user.id, review_id)
+    except MediaReviewStateError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
+    if row is None:
+        raise HTTPException(status_code=404, detail={"error": "待确认动作不存在"})
+    if row.status == "rejected":
+        raise HTTPException(status_code=409, detail={"error": "该媒体已被拒绝"})
+    return _media_review_response(row)
+
+
+@router.post("/media-reviews/{review_id}/reject", response_model=MediaReviewResponse)
+async def post_visual_media_review_reject(review_id: int, user: CurrentUser) -> MediaReviewResponse:
+    row = await reject_media_review(user.id, review_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail={"error": "待确认动作不存在"})
+    if row.status == "accepted":
+        raise HTTPException(status_code=409, detail={"error": "该媒体已被采纳"})
+    return _media_review_response(row)
+
 
 logger = get_logger(__name__)
 
@@ -358,14 +418,14 @@ async def put_avatar_select(avatar_id: int, user: CurrentUser, db: DbSession) ->
     return avatar_response(asset)
 
 
-@router.post("/avatar/{avatar_id}/fullbody/reference", response_model=AvatarAssetResponse)
+@router.post("/avatar/{avatar_id}/fullbody/reference", response_model=AvatarAssetResponse | FullbodyCandidateResponse)
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_fullbody_reference(
     request: Request,
     avatar_id: int,
     body: FullbodyReferenceGenerateRequest,
     user: CurrentUser,
-) -> AvatarAssetResponse:
+) -> AvatarAssetResponse | FullbodyCandidateResponse:
     raw, content_type = _decode_upload_image(body.image, body.content_type)
     try:
         asset = await generate_fullbody_reference(
@@ -375,6 +435,7 @@ async def post_fullbody_reference(
             reference_image=base64.b64encode(raw).decode("utf-8") if raw else None,
             reference_content_type=content_type,
             mode=body.mode,
+            candidate_id=body.candidate_id,
         )
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": str(exc)})
@@ -394,6 +455,38 @@ async def post_fullbody_reference(
         raise HTTPException(status_code=400, detail={"error": str(exc)})
     except MissingLlmConfigError:
         raise HTTPException(status_code=502, detail={"error": "生成服务未配置，请先在设置中配置供应商"})
+    return asset if isinstance(asset, FullbodyCandidateResponse) else avatar_response(asset)
+
+
+@router.get("/avatar/{avatar_id}/fullbody/candidate", response_model=FullbodyCandidateResponse | None)
+async def get_fullbody_candidate(avatar_id: int, user: CurrentUser) -> FullbodyCandidateResponse | None:
+    return await latest_fullbody_candidate(user.id, avatar_id)
+
+
+@router.post("/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/analyze", response_model=FullbodyCandidateResponse)
+async def post_fullbody_candidate_analyze(
+    avatar_id: int,
+    candidate_id: int,
+    user: CurrentUser,
+) -> FullbodyCandidateResponse:
+    try:
+        return await retry_fullbody_candidate_analysis(user.id, avatar_id, candidate_id)
+    except AvatarNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": str(exc)}) from exc
+    except AvatarGenerationError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
+
+
+@router.post("/avatar/{avatar_id}/fullbody/candidate/{candidate_id}/accept", response_model=AvatarAssetResponse)
+async def post_fullbody_candidate_accept(
+    avatar_id: int,
+    candidate_id: int,
+    user: CurrentUser,
+) -> AvatarAssetResponse:
+    try:
+        asset = await accept_fullbody_candidate(user.id, avatar_id, candidate_id)
+    except AvatarGenerationError as exc:
+        raise _avatar_http_error(exc) from exc
     return avatar_response(asset)
 
 
@@ -457,7 +550,7 @@ async def post_fullbody_prompt(
 
 @router.post(
     "/avatar/{avatar_id}/fullbody/reference/adopt",
-    response_model=AvatarAssetResponse,
+    response_model=AvatarAssetResponse | FullbodyCandidateResponse,
     status_code=status.HTTP_201_CREATED,
 )
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
@@ -466,7 +559,7 @@ async def post_fullbody_adopt(
     avatar_id: int,
     body: FullbodyAdoptRequest,
     user: CurrentUser,
-) -> AvatarAssetResponse:
+) -> AvatarAssetResponse | FullbodyCandidateResponse:
     """自备图采纳：用户外部生成的图像按对应种子生成成功的语义落库。"""
     raw, content_type = _decode_upload_image(body.image, body.content_type)
     if not raw:
@@ -486,7 +579,7 @@ async def post_fullbody_adopt(
             status_code=502,
             detail={"error": "生成服务未配置，请先在设置中配置供应商", "reason": str(exc)},
         )
-    return avatar_response(asset)
+    return asset if isinstance(asset, FullbodyCandidateResponse) else avatar_response(asset)
 
 
 def _outfit_http_error(exc: OutfitError | VisualReasoningError) -> HTTPException:

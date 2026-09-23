@@ -1,6 +1,8 @@
 """动作资产域：repository、policy、usage。"""
 
 from .policy import (
+    DEFERRED_PLAY_INTENT_TTL_SECONDS,
+    PLAY_INTENT_TTL_SECONDS,
     ActionPolicyError,
     check_can_accept,
     check_can_play,
@@ -13,6 +15,7 @@ from .policy import (
     max_duration_seconds,
     resolve_action_budget_date,
 )
+from .publishing import CatalogValidationError, publish_action_catalog
 from .repository import (
     StaleCatalogError,
     get_action,
@@ -28,7 +31,10 @@ from .repository import (
 from .usage import action_to_dict, fulfill_deferred_play_intents, record_play_result
 
 __all__ = [
+    "DEFERRED_PLAY_INTENT_TTL_SECONDS",
+    "PLAY_INTENT_TTL_SECONDS",
     "ActionPolicyError",
+    "CatalogValidationError",
     "StaleCatalogError",
     "action_to_dict",
     "check_can_accept",
@@ -46,6 +52,7 @@ __all__ = [
     "list_pack_actions",
     "make_semantic_fingerprint",
     "max_duration_seconds",
+    "publish_action_catalog",
     "publish_catalog",
     "record_play_result",
     "fulfill_deferred_play_intents",

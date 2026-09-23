@@ -29,6 +29,7 @@ export interface VideoPackWire {
   actions: VideoActionWire[]
   status: string
   active: boolean
+  identity_review: 'none' | 'pass' | 'review' | 'accepted'
   manifest_url: string | null
   can_retry: boolean
   can_regenerate: boolean

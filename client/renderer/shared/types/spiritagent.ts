@@ -44,6 +44,7 @@ export interface ChatMediaItem {
   type: 'image' | 'video' | 'audio'
   url: string
   audio_url?: string
+  review_id?: string
 }
 
 /** 用户侧聊天附件：图片为 data URL，视频为后端上传返回的会话级 URL；水合与发送共用同一形状。 */

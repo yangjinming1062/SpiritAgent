@@ -21,6 +21,8 @@ from components import (
 )
 from modules.auth import User
 from modules.companion import (
+    ActionDesignRequest,
+    AvatarAsset,
     CompanionMoment,
     CompanionOutfit,
     CompanionScene,
@@ -28,7 +30,6 @@ from modules.companion import (
     SceneOrigin,
     SceneStatus,
 )
-from modules.companion.schemas_actions import ActionDesignRequest
 from modules.media import VideoGenJob
 from modules.scheduler import NightlyActivityAction, NightlyActivityLog
 from modules.settings import UserSetting
@@ -59,15 +60,18 @@ from services.application.generation import (
     enqueue_video_job,
     generate_images,
     load_self_visual_context,
+    optional_outfit_image_reference,
     prepare_self_video_reference,
     resolve_image_gen_chain,
     resume_scene_generation,
     schedule_scene_generation,
+    select_best_character_images,
 )
 from services.contracts import MemoryScope
-from services.domains.actions.repository import get_action
+from services.domains.actions import get_action
 from services.domains.automation import create_job, remove_job
 from services.domains.companion import (
+    character_snapshot_is_current,
     get_scene_state,
     load_character_snapshot,
     render_character_identity,
@@ -1181,7 +1185,9 @@ async def _execute_scene_create(
 
 
 async def _wait_for_video(user_id: int, job_id: int) -> VideoGenJob | None:
-    deadline = monotonic() + float(SETTINGS.video_gen_max_poll_seconds) + 30
+    deadline = monotonic() + (
+        float(SETTINGS.video_gen_max_poll_seconds) * (SETTINGS.character_media_regeneration_max_retries + 1) + 90
+    )
     while monotonic() < deadline:
         async with SESSION_LOCAL() as db:
             row = (
@@ -1366,7 +1372,8 @@ async def _execute_media_image(
     identity = outfit = None
     if parsed_args.depicts_self is True:
         visual = await load_self_visual_context(user_id)
-        identity, outfit = visual.reference_image, visual.outfit_reference
+        identity = visual.reference_image
+        outfit = await optional_outfit_image_reference(apply_outfit_override(visual, None), user_id)
         prompt = (
             SELF_IMAGE_REFERENCE_TEMPLATE.format(
                 reference="图 1" if outfit else "参考图",
@@ -1385,12 +1392,40 @@ async def _execute_media_image(
         user_id=user_id,
         reference_image=identity,
         secondary_reference_image=outfit,
+        persist_user_assets=True,
     )
+    if parsed_args.depicts_self is True:
+
+        async def regenerate_one() -> str:
+            return (
+                await generate_images(
+                    prompt,
+                    size=size if size in _IMAGE_SIZES else "1024x1024",
+                    n=1,
+                    user_id=user_id,
+                    reference_image=identity,
+                    secondary_reference_image=outfit,
+                    persist_user_assets=True,
+                )
+            )[0]
+
+        urls = await select_best_character_images(user_id, identity, urls, regenerate_one)
+        async with SESSION_LOCAL() as db:
+            if not await character_snapshot_is_current(db, user_id, visual.identity):
+                result = ActionExecutionResult(status="blocked", reason="角色外形已更新，旧参考生成的图片未发布")
+                await _record_executor_state(context, "blocked", result)
+                return result
     audio_path, voice_id, narration_error = await _optional_narration(
         user_id,
         parsed_args.narration,
         context,
     )
+    if parsed_args.depicts_self is True:
+        async with SESSION_LOCAL() as db:
+            if not await character_snapshot_is_current(db, user_id, visual.identity):
+                result = ActionExecutionResult(status="blocked", reason="角色外形已更新，旧参考生成的图片未发布")
+                await _record_executor_state(context, "blocked", result)
+                return result
     async with SESSION_LOCAL() as db:
         moment = await create_generated_moment(
             db,
@@ -1462,6 +1497,7 @@ async def _execute_media_video(
                 first_frame_image=first_frame,
                 model=None,
                 aspect_ratio=aspect_ratio if aspect_ratio in _VIDEO_ASPECT_RATIOS else "16:9",
+                identity_reference_path=visual.reference_path if parsed_args.depicts_self is True else None,
             )
         job_id = job.id
         if job.status == "result_unknown":
@@ -1500,6 +1536,24 @@ async def _execute_media_video(
                 voice_id=voice_id,
             ),
         )
+    if parsed_args.depicts_self is True:
+        params = safe_json_loads(completed.params_json or "{}", default={})
+        reference_path = params.get("identity_reference_path") if isinstance(params, dict) else None
+        async with SESSION_LOCAL() as db:
+            current_seed = await db.scalar(
+                select(AvatarAsset.seed_fullbody_url).where(
+                    AvatarAsset.user_id == user_id,
+                    AvatarAsset.active.is_(True),
+                ),
+            )
+        if reference_path != current_seed:
+            result = ActionExecutionResult(
+                status="blocked",
+                job_id=job_id,
+                reason="角色外形已更新，旧参考生成的视频未发布",
+            )
+            await _record_executor_state(context, "blocked", result)
+            return result
     async with SESSION_LOCAL() as db:
         moment = await create_generated_moment(
             db,

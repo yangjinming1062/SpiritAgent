@@ -102,6 +102,8 @@ def response_for_scene(row: CompanionScene) -> dict[str, Any]:
         "prompt": row.prompt,
         "url": (asset_store.signed_companion_asset_url(row.media_path) or "") if row.media_path else "",
         "seed_portrait_media_id": row.seed_portrait_media_id,
+        "identity_review": row.identity_review,
+        "identity_review_reason": row.identity_review_reason,
         "error": row.error,
         "auto_activate": row.auto_activate,
         "switch_version": row.switch_version,

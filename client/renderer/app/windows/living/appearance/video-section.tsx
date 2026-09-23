@@ -145,6 +145,11 @@ export function VideoSection(): React.JSX.Element {
       <div className="mx-4 mt-3 space-y-3 rounded-xl border border-line-hairline bg-surface-card px-3.5 py-2.5">
         <p className={cn('text-xs', genError || initialVideoError ? 'text-danger-fg' : 'text-body')}>{statusLine}</p>
         <p className={HINT_TEXT}>{t.videoGenHint}</p>
+        {selected?.identity_review === 'review' && (
+          <p className="text-xs text-amber-300" role="status">
+            {t.videoIdentityReviewHint}
+          </p>
+        )}
         <div className="flex flex-wrap gap-2">
           <button
             className={BTN_PRIMARY}
@@ -175,7 +180,7 @@ export function VideoSection(): React.JSX.Element {
               onClick={() => void activateVideoPack(selected.id)}
               type="button"
             >
-              {t.videoActivate}
+              {selected.identity_review === 'review' ? t.videoIdentityReviewActivate : t.videoActivate}
             </button>
           ) : null}
         </div>

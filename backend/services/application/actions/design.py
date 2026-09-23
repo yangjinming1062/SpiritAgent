@@ -9,17 +9,14 @@ import json
 import re
 import unicodedata
 
-from modules.companion.actions import ActionProposal
-from modules.companion.schemas_actions import ActionDesignRequest, ActionDesignResult
+from modules.companion import ActionDesignRequest, ActionDesignResult, ActionProposal
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.actions.policy import (
+from services.domains.actions import (
     ActionPolicyError,
     check_can_accept,
     get_action_accept_lock,
-)
-from services.domains.actions.repository import (
     get_action_by_key,
     get_active_pack,
     make_semantic_fingerprint,

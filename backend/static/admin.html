@@ -1454,6 +1454,10 @@ const SETTINGS_SECTIONS = [
                 num('video_gen_tool_wait_seconds', '工具等待超时 (秒)', 10),
                 num('video_gen_download_max_bytes', '产物下载上限 (字节)', 1048576),
             ]],
+            ['sub', '出镜媒体身份重生成'],
+            ['grid', [
+                num('character_media_regeneration_max_retries', '身份偏差最大重生成次数', 1, { min: 0, max: 5 }),
+            ]],
         ],
     },
     {

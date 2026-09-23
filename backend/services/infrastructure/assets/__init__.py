@@ -11,11 +11,13 @@ from .asset_store import (
     resolve_companion_asset_path,
     save_companion_asset,
     save_companion_asset_async,
+    save_video_job_asset_async,
     signed_companion_asset_url,
     sniff_media_ext,
     unlink_companion_asset,
     verify_signed_asset_request,
     verify_signed_avatar_request,
+    video_job_asset_path,
 )
 from .http_range import serve_ranged_file
 
@@ -30,8 +32,10 @@ __all__ = [
     "resolve_companion_asset_path",
     "save_companion_asset",
     "save_companion_asset_async",
+    "save_video_job_asset_async",
     "serve_ranged_file",
     "signed_companion_asset_url",
+    "video_job_asset_path",
     "sniff_media_ext",
     "unlink_companion_asset",
     "verify_signed_asset_request",

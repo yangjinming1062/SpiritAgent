@@ -6,17 +6,19 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from modules.companion.schemas_actions import ActionPlayCommand, ActionPlayRequest, ActionPlayResult
+from modules.companion import ActionPlayCommand, ActionPlayRequest, ActionPlayResult
 from modules.ws import emit_ws_event
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.actions.policy import (
+from services.domains.actions import (
     DEFERRED_PLAY_INTENT_TTL_SECONDS,
     PLAY_INTENT_TTL_SECONDS,
     ActionPolicyError,
     check_can_play,
+    get_action,
+    get_active_pack,
+    record_playback,
 )
-from services.domains.actions.repository import get_action, get_active_pack, record_playback
 
 
 async def request_playback(

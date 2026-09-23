@@ -49,9 +49,14 @@ Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供�
 
 `fullbody/confirm` 通过 `expected_url` 校验客户端预览与当前待确认种子一致；确认响应不等待角色分析或派生生成，分析状态通过角色卡读取，默认视频启动失败仍通过外观状态交付。默认外观、视频启动与重复确认的处理见 [PIPELINE](PIPELINE.md#2-动作资产链)，编辑和自备图规则见 [参考与派生关系](PIPELINE.md#11-共用参考与种子图派生)。
 
+角色首次全身确认后，`POST /avatar/{id}/fullbody/reference` 与 `/reference/adopt` 返回待采纳候选图，不立即替换当前种子；`GET /avatar/{id}/fullbody/candidate` 恢复最近的有效候选，`POST /avatar/{id}/fullbody/candidate/{candidate_id}/analyze` 重试身体分析，`POST /avatar/{id}/fullbody/candidate/{candidate_id}/accept` 在预期原图和角色卡修订仍一致时采纳。采纳只更新角色卡身体字段并清除旧身体覆盖，已有外观与视频不自动重建；首次引导仍用 `fullbody/confirm`。
+
 角色卡通过 `GET/PATCH /api/companion/character-card` 读取及局部编辑，`POST /api/companion/character-card/extract` 发起重新提取或失败重试；结构见 [schema](../backend/modules/companion/character_card.py)。写请求校验预期形象 ID 与修订号，冲突返回 `409`，客户端保留草稿。`changes` 未提供的字段不变，`null` 恢复自动值，空字符串显式清空。分析状态与已发布内容独立：重新分析失败不撤销可用资料。`companion.character_card.updated` 与状态同事务入 outbox，客户端重新读取，不覆盖编辑草稿。
 
 场景资产与当前环境独立维护。路由与字段见 [场景 API](../backend/api/v1/companion_scenes.py) 和 [schema](../backend/modules/companion/schemas_scene.py)；列表查询与当前状态分别由 `/api/companion/scenes` 和 `/api/companion/scenes/state` 提供。生成要求与提示词不作为成品描述，创建来源不因启用改写。着装选择、衣橱独立性与描述恢复见 [PIPELINE](PIPELINE.md#11-共用参考与种子图派生)。
+自动启用仍核对场景版本、身份与政策。视频包按核查状态控制自动激活，疑点包保留素材与手动启用入口；现有旧包在新包准备与复核期间继续播放。评分与重试见 [PIPELINE](PIPELINE.md#11-共用参考与种子图派生)。
+
+动态动作的待确认视频通过 `GET /api/companion/media-reviews` 列出；`GET /media-reviews/{id}` 读取状态，`POST /media-reviews/{id}/accept` 或 `/reject` 由用户决策。采纳后动作才进入可播目录。聊天、场景、片刻与夜间内容不创建人工复核项；视频任务在 `downloading`、`evaluating` 与重生成期间可凭供应商句柄或已落盘资产恢复，结果未知的重提交不会自动再次发送。
 
 状态与 outbox 事件同事务提交。`companion.scene.updated` 只通知资产或任务、政策更新；`companion.scene.activated` 表示环境已成功切换。两者携带单调递增 `version`，客户端水合后端真源并忽略旧事件及迟到读取。持久化 `switch_version` 在新自动切换意图、用户启用或政策更新时递增；后台任务仅在版本、身份和政策仍有效时自动启用，否则保留为场景资产。重复启用当前场景幂等，用户再次选择当前环境会撤销旧切换意图。
 

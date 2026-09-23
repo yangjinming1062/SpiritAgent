@@ -3,6 +3,7 @@ from typing import TYPE_CHECKING
 
 from common import ModelBase, TimestampMixin
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     ForeignKey,
@@ -102,3 +103,32 @@ class AvatarAsset(ModelBase):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
     user: Mapped["User"] = relationship(back_populates="avatar_assets")
+
+
+class FullbodyCandidate(ModelBase, TimestampMixin):
+    """已确认角色的待采纳全身图；采纳前不改变当前身份。"""
+
+    __tablename__ = "companion_fullbody_candidates"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    avatar_id: Mapped[int] = mapped_column(ForeignKey("avatar_assets.id", ondelete="CASCADE"), index=True)
+    base_fullbody_url: Mapped[str] = mapped_column(String(2048))
+    base_revision: Mapped[int] = mapped_column(Integer)
+    image_url: Mapped[str] = mapped_column(String(2048))
+    body_features_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
+    body_source_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"), index=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class CompanionMediaReview(ModelBase, TimestampMixin):
+    """出镜媒体正式交付前的用户核对记录。"""
+
+    __tablename__ = "companion_media_reviews"
+
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    media_type: Mapped[str] = mapped_column(String(8))
+    media_url: Mapped[str] = mapped_column(String(2048))
+    status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"))
+    reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
+    publication: Mapped[dict | None] = mapped_column(JSON, nullable=True)

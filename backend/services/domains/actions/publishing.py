@@ -8,10 +8,7 @@ import json
 import re
 from pathlib import Path
 
-from modules.companion.actions import (
-    REQUIRED_SYSTEM_SLOTS,
-    CompanionActionPack,
-)
+from modules.companion import REQUIRED_SYSTEM_SLOTS, CompanionActionPack
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 

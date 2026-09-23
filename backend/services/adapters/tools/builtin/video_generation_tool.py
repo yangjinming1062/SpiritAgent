@@ -56,7 +56,10 @@ async def video_generation_tool(
         try:
             visual = await load_self_visual_context(user_id)
             plan = apply_outfit_override(visual, outfit_override)
-            final_outfit = plan_outfit_description(plan)
+            explicit_frame = bool(first_frame_image)
+            final_outfit = (
+                plan_outfit_description(plan) if not explicit_frame or plan.override_outfit_description else ""
+            )
             first_frame_image = await prepare_self_video_reference(plan, user_id, first_frame_image)
         except (AvatarGenerationError, VisualReasoningError, ImageGenerationError) as e:
             return tool_error(str(e))
@@ -86,6 +89,7 @@ async def video_generation_tool(
                     first_frame_image=first_frame_image,
                     model=None,
                     aspect_ratio=aspect_ratio,
+                    identity_reference_path=visual.reference_path if subject == "self" else None,
                 )
         else:
             return tool_error("视频生成服务需要用户上下文")
@@ -118,7 +122,15 @@ async def video_generation_tool(
             return tool_error("video job disappeared")
         if row.status == "succeeded":
             logger.info("video_generation_tool succeeded", extra={"job_id": job.id})
-            return json.dumps({"success": True, "url": row.video_url, "task_id": str(job.id)}, ensure_ascii=False)
+            return json.dumps(
+                {
+                    "success": True,
+                    "url": row.video_url,
+                    "task_id": str(job.id),
+                    **({"warning": row.error_message} if row.error_message else {}),
+                },
+                ensure_ascii=False,
+            )
         if row.status in ("failed", "result_unknown"):
             return tool_error(row.error_message or "video generation failed")
 
@@ -150,6 +162,8 @@ async def video_generate_status_tool(task_id: int, user_id: int | None = None, *
     payload = {"task_id": str(row.id), "status": row.status}
     if row.status == "succeeded":
         payload["url"] = row.video_url
+        if row.error_message:
+            payload["warning"] = row.error_message
     elif row.status == "failed":
         payload["error"] = row.error_message
     elif row.status == "result_unknown":

@@ -10,15 +10,24 @@ import re
 from pathlib import Path
 
 from components import SETTINGS, parse_llm_json, utc_now
-from modules.companion import CharacterCardSnapshot, Persona
-from modules.companion.actions import ActionProposal, CompanionAction, CompanionActionPack
+from modules.companion import (
+    ActionProposal,
+    CharacterCardSnapshot,
+    CompanionAction,
+    CompanionActionPack,
+    Persona,
+)
 from prompts.actions import ACTION_REVIEW_INSTRUCTIONS
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.actions.policy import ActionPolicyError, consume_create_slot
-from services.domains.actions.repository import list_pack_actions, upsert_action
+from services.domains.actions import (
+    ActionPolicyError,
+    consume_create_slot,
+    list_pack_actions,
+    upsert_action,
+)
 from services.domains.companion import render_character_profile
 from services.infrastructure.assets import build_data_uri, sniff_media_ext
 from services.infrastructure.llm import vision_chat

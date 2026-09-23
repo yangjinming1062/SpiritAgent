@@ -20,7 +20,7 @@ from prompts.generation import (
 )
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from services.domains.actions.policy import max_duration_seconds
+from services.domains.actions import max_duration_seconds
 from services.domains.companion import render_character_identity
 from services.infrastructure.llm import vision_chat
 

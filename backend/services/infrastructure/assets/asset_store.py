@@ -2,6 +2,7 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import os
 import secrets
 import time
 from pathlib import Path
@@ -110,6 +111,42 @@ async def save_companion_asset_async(data: bytes, *, user_id: int, label: str, e
         result = (await asyncio.gather(task, return_exceptions=True))[0]
         if isinstance(result, str):
             await asyncio.to_thread(unlink_companion_asset, result)
+        raise
+
+
+def video_job_asset_path(user_id: int, job_id: int, attempt: int) -> str:
+    """视频任务每次已知提交对应唯一落盘位置，供崩溃后按任务恢复。"""
+    if user_id <= 0 or job_id <= 0 or attempt < 0:
+        raise ValueError("invalid video job asset key")
+    return f"companion-assets/{user_id}/chat_video_job_{job_id}_a{attempt}.mp4"
+
+
+def _save_video_job_asset(data: bytes, user_id: int, job_id: int, attempt: int) -> str:
+    bare_path = video_job_asset_path(user_id, job_id, attempt)
+    user_dir = _assets_root() / str(user_id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    target = user_dir / bare_path.rsplit("/", 1)[-1]
+    if target.exists():
+        return bare_path
+    temporary = user_dir / f".{target.name}.{secrets.token_urlsafe(8)}.tmp"
+    try:
+        with open(temporary, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return bare_path
+
+
+async def save_video_job_asset_async(data: bytes, *, user_id: int, job_id: int, attempt: int) -> str:
+    """取消时等原子写盘完成；已落盘结果保留给恢复路径，不当作失败清理。"""
+    task = asyncio.create_task(asyncio.to_thread(_save_video_job_asset, data, user_id, job_id, attempt))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
         raise
 
 

@@ -4,8 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from modules.companion.actions import ActionPlayback, CompanionAction
-from modules.companion.schemas_actions import ActionPlayCommand
+from modules.companion import ActionPlayback, ActionPlayCommand, CompanionAction
 from modules.ws import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession

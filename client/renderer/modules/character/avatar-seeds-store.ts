@@ -71,6 +71,7 @@ let inflight: Promise<AvatarSeeds> | null = null
 let seedEpoch = 0
 /** 每次持久化写入递增；hydrate 用它检测飞行期间是否有更新，避免用旧网络结果覆盖新 patch。 */
 let writeSeq = 0
+let patchRequestSeq = 0
 /** patch 串行队列：并发写方各自 await resolve 后按到达顺序合并字段，避免整行覆盖丢对侧种子。 */
 let patchChain: Promise<void> = Promise.resolve()
 
@@ -204,6 +205,7 @@ async function runPatchAvatarSeeds(patch: AvatarSeedsPatch): Promise<void> {
 
 /** 生成 / 确认 / 水合路径写入已知种子：更新内存展示 URL，并持久化原始 asset 路径。 */
 export function patchAvatarSeeds(patch: AvatarSeedsPatch): Promise<void> {
+  patchRequestSeq += 1
   const task = patchChain.then(() => runPatchAvatarSeeds(patch))
   patchChain = task.catch(() => undefined)
 
@@ -314,4 +316,29 @@ export function hydrateAvatarSeeds(): Promise<AvatarSeeds> {
   inflight = load
 
   return load
+}
+
+/** 角色卡事件后的服务端刷新：即使本地两张图都已缓存，也以最新已采纳种子替换旧路径。 */
+export async function refreshAvatarSeeds(): Promise<void> {
+  const gen = seedEpoch
+  const epoch = currentClearEpoch()
+  const seq = writeSeq
+  const requestSeq = patchRequestSeq
+  const response = await window.spiritagent.api<AvatarWire>({ path: '/api/companion/avatar' })
+
+  if (isStale(gen, epoch) || writeSeq !== seq || patchRequestSeq !== requestSeq || !response?.id) {
+    return
+  }
+
+  const currentId = seedsPersisted.get().avatarId
+
+  if (currentId != null && response.id !== currentId) {
+    return
+  }
+
+  await patchAvatarSeeds({
+    avatarId: response.id,
+    assetUrl: response.asset_url || null,
+    fullbodySeedUrl: response.seed_fullbody_url || null
+  })
 }

@@ -75,7 +75,7 @@ def extract_turn_media(tool_results: list[dict]) -> list[dict[str, str]]:
         if res.get("name") == "image_generate":
             urls = parsed.get("urls")
             if isinstance(urls, list):
-                media.extend({"type": "image", "url": u} for u in urls if isinstance(u, str) and u)
+                media.extend({"type": "image", "url": url} for url in urls if isinstance(url, str) and url)
         elif isinstance(parsed.get("url"), str) and parsed["url"]:
             media.append({"type": "video", "url": parsed["url"]})
     return media
