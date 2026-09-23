@@ -830,8 +830,8 @@ def upgrade() -> None:
     )
     # 每用户一个激活视频包：先停用后激活的翻转由此兜底。
     op.create_index(
-        "uq_companion_video_packs_one_active",
-        "companion_video_packs",
+        "uq_companion_action_packs_one_active",
+        "companion_action_packs",
         ["user_id"],
         unique=True,
         postgresql_where=sa.text("active"),
@@ -930,7 +930,7 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS notify_ws_event()")
     # 先子表再父表（messages → conversations → users）。
     # channel_deliveries / channel_peers 在 channel_bindings 之后 drop（binding_id FK）；
-    # companion_video_jobs / companion_video_packs 在 companion_outfits 之前 drop（pack_id / outfit_id FK）；
+    # companion_actions / companion_action_packs 在 companion_outfits 之前 drop（pack_id / outfit_id FK）；
     # nightly_activity_actions 在 nightly_activity_logs 之后 drop（log_id FK）；system_settings 无 FK 引用，置于最末。
     for table in (
         "messages",
