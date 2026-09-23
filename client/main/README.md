@@ -46,7 +46,7 @@ Runner 配置补丁只接受工作台 sender。离线编辑与云端冲突不提
 
 Client 创建 IPC 端点并鉴权 Runner。断连、退出和开始停止立即作废缓存；新握手先推配置，再取工具，迟到查询不能恢复旧资格。
 
-`bridge-deps` 显式注入会话、进程、RPC 和日志。握手关联查询的失效控制不等于已经完整消费 Runner `run_generation`，当前接入限制见协议文档。
+会话懒创建与 token 重接由 `backend/session-runtime` 承担；Runner 桥持有、自动启停与 IPC 由 `ipc/runner` 的 host 承担。登录恢复经回调接回 host，握手关联查询的失效控制不等于已经完整消费 Runner `run_generation`，当前接入限制见协议文档。
 
 更新使用 Home 下的 uv，在原 venv 安装 wheel 并替换 `server.py`，不承诺安装原子切换或自动回滚。导入面一致性在构建期检查，损坏环境交安装器修复。
 

@@ -16,224 +16,232 @@ import type { BackendSessionPort } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
 import { errorMessage } from '../shared/utils'
 
-interface RunnerIpcDeps {
+export interface RunnerHostOptions {
   createReverseRpc: (options: ReverseRpcOptions) => (method: string, params?: unknown) => Promise<unknown>
   createRunnerBridge: (options: RunnerBridgeOptions) => RunnerBridge
   createRunnerProcess: (options: CreateRunnerProcessOptions) => RunnerProcess
   createRunnerWsServer: (options: CreateRunnerWsServerOptions) => RunnerWsServer
-  spiritagentHome?: null | string
   ensureBackendSession: () => BackendSessionPort
   fileExists?: (p: string) => boolean
   getMainWindow?: () => BrowserWindow | null | undefined
   rememberLog: (chunk: string) => void
-  runnerBridge?: null | RunnerBridge
+  spiritagentHome?: null | string
   taggedLogger: (tag: string) => (msg: string) => void
 }
 
-function ensureRunnerBridge(deps: RunnerIpcDeps): RunnerBridge {
-  if (deps.runnerBridge) {
-    return deps.runnerBridge
-  }
-
-  const pushConfig = () => {
-    const bridge = deps.runnerBridge
-
-    if (!bridge) {
-      return Promise.resolve()
-    }
-
-    return bridge.dispatch('spiritagent.config.update', { config: store.read() })
-  }
-
-  deps.runnerBridge = deps.createRunnerBridge({
-    spiritagentHome: deps.spiritagentHome,
-    log: deps.taggedLogger('[runner-bridge]'),
-    processFactory: (args?: RunnerBridgeStartOptions) =>
-      deps.createRunnerProcess({
-        spiritagentHome: deps.spiritagentHome,
-        devPython: process.env.SPIRITAGENT_DESKTOP_PYTHON || null,
-        executable: args?.executable || process.env.SPIRITAGENT_DESKTOP_RUNNER_EXECUTABLE || null,
-        fileExists: deps.fileExists,
-        log: deps.taggedLogger('[runner]'),
-        repoRoot: process.env.SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT || null
-      }),
-    pushConfig,
-    reverseRpcFactory: ({ backendSession, log: rpcLog }: ReverseRpcOptions) =>
-      deps.createReverseRpc({
-        backendSession,
-        log: rpcLog || deps.taggedLogger('[runner-reverse]')
-      }),
-    wsServerFactory: ({ authToken, log: wsLog, onReverseRpc }: CreateRunnerWsServerOptions) =>
-      deps.createRunnerWsServer({
-        authToken,
-        log: wsLog || deps.taggedLogger('[runner-ws]'),
-        onReverseRpc
-      })
-  })
-
-  store.setPushTarget(pushConfig)
-
-  deps.runnerBridge.onEvent?.((ev: RunnerBridgeEvent) => {
-    const win = deps.getMainWindow?.()
-
-    if (win && !win.isDestroyed()) {
-      const payload: DesktopRunnerStatusEvent = { type: ev.type }
-      win.webContents.send(IPC.event.runnerStatus, payload)
-    }
-  })
-
-  return deps.runnerBridge
+export interface RunnerHost {
+  autoStart: () => void
+  autoStop: () => void
+  getBridge: () => null | RunnerBridge
+  registerIpc: (ipcMain: IpcMain) => void
 }
 
-async function startRunnerBridgeForCurrentSession(
-  deps: RunnerIpcDeps
-): Promise<{ error?: string; noop?: boolean; ok: boolean; reason?: string; status?: RunnerBridgeStatus }> {
-  const session = deps.ensureBackendSession().getSession()
+/** Runner 桥的唯一持有者：懒创建、登录自动启停，并向 IPC 与外部读者暴露窄接口。 */
+export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
+  let runnerBridge: null | RunnerBridge = null
 
-  if (!session?.hasToken) {
-    return { ok: false, reason: 'no-session' }
-  }
+  function ensureRunnerBridge(): RunnerBridge {
+    if (runnerBridge) {
+      return runnerBridge
+    }
 
-  const bridge = ensureRunnerBridge(deps)
-  const status = bridge.getStatus()
+    const pushConfig = () => {
+      if (!runnerBridge) {
+        return Promise.resolve()
+      }
 
-  if (status.phase === 'running' || status.phase === 'starting') {
-    return { noop: true, ok: true, status }
-  }
+      return runnerBridge.dispatch('spiritagent.config.update', { config: store.read() })
+    }
 
-  try {
-    const next = await bridge.start({
-      backendSession: deps.ensureBackendSession(),
-      readyTimeoutMs: 8_000
+    runnerBridge = options.createRunnerBridge({
+      spiritagentHome: options.spiritagentHome,
+      log: options.taggedLogger('[runner-bridge]'),
+      processFactory: (args?: RunnerBridgeStartOptions) =>
+        options.createRunnerProcess({
+          spiritagentHome: options.spiritagentHome,
+          devPython: process.env.SPIRITAGENT_DESKTOP_PYTHON || null,
+          executable: args?.executable || process.env.SPIRITAGENT_DESKTOP_RUNNER_EXECUTABLE || null,
+          fileExists: options.fileExists,
+          log: options.taggedLogger('[runner]'),
+          repoRoot: process.env.SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT || null
+        }),
+      pushConfig,
+      reverseRpcFactory: ({ backendSession, log: rpcLog }: ReverseRpcOptions) =>
+        options.createReverseRpc({
+          backendSession,
+          log: rpcLog || options.taggedLogger('[runner-reverse]')
+        }),
+      wsServerFactory: ({ authToken, log: wsLog, onReverseRpc }: CreateRunnerWsServerOptions) =>
+        options.createRunnerWsServer({
+          authToken,
+          log: wsLog || options.taggedLogger('[runner-ws]'),
+          onReverseRpc
+        })
     })
 
-    return { ok: true, status: next }
-  } catch (error: unknown) {
-    const msg = errorMessage(error)
+    store.setPushTarget(pushConfig)
 
-    return { error: msg, ok: false }
-  }
-}
+    runnerBridge.onEvent?.((ev: RunnerBridgeEvent) => {
+      const win = options.getMainWindow?.()
 
-async function stopRunnerBridgeForCurrentSession(
-  deps: RunnerIpcDeps,
-  { reason }: { reason?: string } = {}
-): Promise<{ errors?: string[]; noop?: boolean; ok: boolean }> {
-  if (!deps.runnerBridge) {
-    return { noop: true, ok: true }
-  }
-
-  return deps.runnerBridge.stop({ reason: reason || 'desktop-stop' })
-}
-
-export function autoStartBridge(deps: RunnerIpcDeps): void {
-  startRunnerBridgeForCurrentSession(deps)
-    .then(result => {
-      if (!result?.ok && !result?.noop) {
-        deps.rememberLog(`[runner-bridge] auto-start failed: ${result.error || 'unknown'}`)
+      if (win && !win.isDestroyed()) {
+        const payload: DesktopRunnerStatusEvent = { type: ev.type }
+        win.webContents.send(IPC.event.runnerStatus, payload)
       }
     })
-    .catch((error: unknown) => {
-      const msg = errorMessage(error)
-      deps.rememberLog(`[runner-bridge] auto-start error: ${msg}`)
-    })
-}
 
-export function autoStopBridge(deps: RunnerIpcDeps): void {
-  stopRunnerBridgeForCurrentSession(deps, { reason: 'session-cleared' }).catch((error: unknown) => {
-    const msg = errorMessage(error)
-    deps.rememberLog(`[runner-bridge] auto-stop failed: ${msg}`)
-  })
-}
-
-export function registerRunnerIpc({ deps, ipcMain }: { deps: RunnerIpcDeps; ipcMain?: IpcMain }): void {
-  if (!ipcMain) {
-    return
+    return runnerBridge
   }
 
-  ipcMain.handle(IPC.invoke.runnerGetTools, async () => {
-    const deadline = Date.now() + 6000
+  async function startForCurrentSession(): Promise<{
+    error?: string
+    noop?: boolean
+    ok: boolean
+    reason?: string
+    status?: RunnerBridgeStatus
+  }> {
+    const session = options.ensureBackendSession().getSession()
 
-    while (Date.now() < deadline) {
-      const bridge = deps.runnerBridge
-
-      if (bridge) {
-        const tools = bridge.getTools()
-
-        if (tools.length > 0) {
-          return tools
-        }
-
-        const status = bridge.getStatus()
-
-        if (
-          status.phase === 'error' ||
-          status.phase === 'stopped' ||
-          status.phase === 'stopping' ||
-          status.phase === 'idle'
-        ) {
-          return []
-        }
-      }
-
-      await new Promise(resolve => setTimeout(resolve, 100))
+    if (!session?.hasToken) {
+      return { ok: false, reason: 'no-session' }
     }
 
-    return deps.runnerBridge?.getTools() || []
-  })
-
-  ipcMain.handle(
-    IPC.invoke.runnerInvoke,
-    async (_event, name: string, args?: Record<string, unknown>, skillScope?: MemoryToolScope, callId?: string) => {
-      if (typeof name !== 'string' || !name) {
-        throw new Error('runner:invoke requires a non-empty tool name')
-      }
-
-      const bridge = ensureRunnerBridge(deps)
-
-      // call_id 透传给 runner 的调用日志（PROTOCOL §2.5）：runner 据此查询/认领已有执行，
-      // 中断后凭记录区分「已执行」与「从未开始」，避免盲目重跑本机副作用。
-      const invokeParams: Record<string, unknown> = { name, args: args ?? {} }
-
-      if (callId) {
-        invokeParams.call_id = callId
-      }
-
-      if (skillScope) {
-        return bridge.dispatch('execute_scoped_tool', { ...invokeParams, skill_scope: skillScope })
-      }
-
-      return bridge.dispatch('execute_tool', invokeParams)
-    }
-  )
-
-  ipcMain.handle(IPC.invoke.runnerGetState, async (): Promise<DesktopRunnerState> => {
-    const bridge = deps.runnerBridge
-
-    if (!bridge) {
-      return { phase: 'idle' }
-    }
-
-    return { phase: bridge.getStatus().phase }
-  })
-
-  ipcMain.handle(IPC.invoke.runnerCancel, async () => {
-    const bridge = deps.runnerBridge
-
-    if (!bridge) {
-      return { noop: true, ok: true }
-    }
-
+    const bridge = ensureRunnerBridge()
     const status = bridge.getStatus()
 
-    if (status.phase !== 'running' || !status.wsServer?.connected) {
-      return { noop: true, ok: true }
+    if (status.phase === 'running' || status.phase === 'starting') {
+      return { noop: true, ok: true, status }
     }
 
     try {
-      return await bridge.dispatch('spiritagent.cancel', {})
-    } catch {
-      return { noop: true, ok: false }
+      const next = await bridge.start({
+        backendSession: options.ensureBackendSession(),
+        readyTimeoutMs: 8_000
+      })
+
+      return { ok: true, status: next }
+    } catch (error: unknown) {
+      return { error: errorMessage(error), ok: false }
     }
-  })
+  }
+
+  async function stopCurrentSession({ reason }: { reason?: string } = {}): Promise<{
+    errors?: string[]
+    noop?: boolean
+    ok: boolean
+  }> {
+    if (!runnerBridge) {
+      return { noop: true, ok: true }
+    }
+
+    return runnerBridge.stop({ reason: reason || 'desktop-stop' })
+  }
+
+  function autoStart(): void {
+    startForCurrentSession()
+      .then(result => {
+        if (!result?.ok && !result?.noop) {
+          options.rememberLog(`[runner-bridge] auto-start failed: ${result.error || 'unknown'}`)
+        }
+      })
+      .catch((error: unknown) => {
+        options.rememberLog(`[runner-bridge] auto-start error: ${errorMessage(error)}`)
+      })
+  }
+
+  function autoStop(): void {
+    stopCurrentSession({ reason: 'session-cleared' }).catch((error: unknown) => {
+      options.rememberLog(`[runner-bridge] auto-stop failed: ${errorMessage(error)}`)
+    })
+  }
+
+  function registerIpc(ipcMain: IpcMain): void {
+    ipcMain.handle(IPC.invoke.runnerGetTools, async () => {
+      const deadline = Date.now() + 6000
+
+      while (Date.now() < deadline) {
+        const bridge = runnerBridge
+
+        if (bridge) {
+          const tools = bridge.getTools()
+
+          if (tools.length > 0) {
+            return tools
+          }
+
+          const status = bridge.getStatus()
+
+          if (
+            status.phase === 'error' ||
+            status.phase === 'stopped' ||
+            status.phase === 'stopping' ||
+            status.phase === 'idle'
+          ) {
+            return []
+          }
+        }
+
+        await new Promise(resolve => setTimeout(resolve, 100))
+      }
+
+      return runnerBridge?.getTools() || []
+    })
+
+    ipcMain.handle(
+      IPC.invoke.runnerInvoke,
+      async (_event, name: string, args?: Record<string, unknown>, skillScope?: MemoryToolScope, callId?: string) => {
+        if (typeof name !== 'string' || !name) {
+          throw new Error('runner:invoke requires a non-empty tool name')
+        }
+
+        const bridge = ensureRunnerBridge()
+
+        // call_id 透传给 runner 的调用日志（PROTOCOL §2.5）：runner 据此查询/认领已有执行，
+        // 中断后凭记录区分「已执行」与「从未开始」，避免盲目重跑本机副作用。
+        const invokeParams: Record<string, unknown> = { name, args: args ?? {} }
+
+        if (callId) {
+          invokeParams.call_id = callId
+        }
+
+        if (skillScope) {
+          return bridge.dispatch('execute_scoped_tool', { ...invokeParams, skill_scope: skillScope })
+        }
+
+        return bridge.dispatch('execute_tool', invokeParams)
+      }
+    )
+
+    ipcMain.handle(IPC.invoke.runnerGetState, async (): Promise<DesktopRunnerState> => {
+      const bridge = runnerBridge
+
+      if (!bridge) {
+        return { phase: 'idle' }
+      }
+
+      return { phase: bridge.getStatus().phase }
+    })
+
+    ipcMain.handle(IPC.invoke.runnerCancel, async () => {
+      const bridge = runnerBridge
+
+      if (!bridge) {
+        return { noop: true, ok: true }
+      }
+
+      const status = bridge.getStatus()
+
+      if (status.phase !== 'running' || !status.wsServer?.connected) {
+        return { noop: true, ok: true }
+      }
+
+      try {
+        return await bridge.dispatch('spiritagent.cancel', {})
+      } catch {
+        return { noop: true, ok: false }
+      }
+    })
+  }
+
+  return { autoStart, autoStop, getBridge: () => runnerBridge, registerIpc }
 }

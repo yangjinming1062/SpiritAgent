@@ -13,8 +13,8 @@ interface SkillsIpcDeps {
   ipcMain: IpcMain
 }
 
-// 把"启/禁用某项"的两段相似分支合并——校验字段名、相同字段 enabled、
-// 同样在 disabled 集合里增删并写回。差异通过 section / keyField / idField 注入。
+// 技能与工具集的启/禁用共用同一写入路径：校验字段、在 disabled 集合增删并写回。
+// 差异通过 section / idField 注入。
 async function toggleDisabled({
   section,
   idField,

@@ -21,7 +21,7 @@ export interface SessionHistoryDiskCache {
 }
 
 export interface SessionHistoryDiskCacheOptions {
-  spiritagentHome?: null | string
+  spiritagentHome: string
 }
 
 function isSessionIdSafe(sessionId: string): boolean {
@@ -78,10 +78,6 @@ function sanitizeSnapshot(input: Partial<SessionHistorySnapshot> | null | undefi
 export function createSessionHistoryDiskCache({
   spiritagentHome
 }: SessionHistoryDiskCacheOptions): SessionHistoryDiskCache {
-  if (!spiritagentHome) {
-    throw new Error('createSessionHistoryDiskCache: spiritagentHome is required')
-  }
-
   const cacheRoot = path.resolve(spiritagentHome, 'cache', 'sessions')
   const writeQueues = new Map<string, Promise<void>>()
 

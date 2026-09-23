@@ -13,11 +13,7 @@ export interface TtsDiskCache {
   write: (options: { buffer: Buffer; language: string; mimeType: string; text: string; voice: string }) => Promise<void>
 }
 
-export function createTtsDiskCache({ spiritagentHome }: { spiritagentHome?: null | string }): TtsDiskCache {
-  if (!spiritagentHome) {
-    throw new Error('createTtsDiskCache: spiritagentHome is required')
-  }
-
+export function createTtsDiskCache({ spiritagentHome }: { spiritagentHome: string }): TtsDiskCache {
   const dirFor = (language: string) => path.resolve(spiritagentHome, 'audio', 'tts-cache', language)
 
   const pathFor = (voice: string, text: string, language: string) =>

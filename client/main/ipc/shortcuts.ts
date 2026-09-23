@@ -10,7 +10,7 @@ import {
 import { type BrowserWindow, globalShortcut, type IpcMain } from 'electron'
 
 import * as store from '../shared/lib/runner-config-store'
-import { errorMessage, sendToMain } from '../shared/utils'
+import { errorMessage, sendToWindow } from '../shared/utils'
 
 /** 窄接口：短cuts 只需要切表面，不依赖 lifecycle/surfaces 具体类型。 */
 interface SurfaceToggler {
@@ -40,7 +40,7 @@ function broadcastShortcutsChanged(state: DesktopShortcutsState): void {
     return
   }
 
-  sendToMain(deps.getMainWindow(), IPC.event.shortcutsChanged, state)
+  sendToWindow(deps.getMainWindow(), IPC.event.shortcutsChanged, state)
 }
 
 function readShortcutsConfig(): DesktopShortcutsConfig {

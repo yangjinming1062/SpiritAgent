@@ -194,11 +194,9 @@ export function registerConnectionIpc({
 
       const connection = await ensureBackend()
 
-      const identityCache = assetDiskCache
-
-      if (identityCache && (request?.preferCache || isCompanionIdentityAsset(raw, connection.baseUrl))) {
+      if (assetDiskCache && (request?.preferCache || isCompanionIdentityAsset(raw, connection.baseUrl))) {
         return await runCachedAsset(_event.sender, connection, async () => {
-          const cached = await identityCache.ensureCached({
+          const cached = await assetDiskCache.ensureCached({
             preferCache: request?.preferCache,
             baseUrl: connection.baseUrl,
             contentHash: request?.contentHash,
@@ -236,11 +234,9 @@ export function registerConnectionIpc({
         throw new Error('asset url is required')
       }
 
-      const identityCache = assetDiskCache
-
-      if (identityCache && (request?.preferCache || isCompanionIdentityAsset(raw, connection.baseUrl))) {
+      if (assetDiskCache && (request?.preferCache || isCompanionIdentityAsset(raw, connection.baseUrl))) {
         return await runCachedAsset(_event.sender, connection, async () => {
-          const cached = await identityCache.ensureCached({
+          const cached = await assetDiskCache.ensureCached({
             preferCache: request?.preferCache,
             baseUrl: connection.baseUrl,
             contentHash: request?.contentHash,

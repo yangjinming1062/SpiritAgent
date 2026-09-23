@@ -2,7 +2,7 @@ import { type DesktopGatewayEvent, type DesktopGatewayRpcResponse, type DesktopG
 import { BrowserWindow, type IpcMain, type IpcMainInvokeEvent } from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
-import { broadcastToAllWindows, sendToMain } from '../shared/utils'
+import { broadcastToAllWindows, sendToWindow } from '../shared/utils'
 
 export interface GatewayIpcDeps {
   getMainWindow: () => BrowserWindow | null | undefined
@@ -67,7 +67,7 @@ export function registerGatewayIpc({ getMainWindow, ipcMain, rememberLog }: Gate
 
     for (const win of BrowserWindow.getAllWindows()) {
       if (win.webContents.id !== event.sender.id) {
-        sendToMain(win, IPC.event.gatewayEvent, { event: payload.event })
+        sendToWindow(win, IPC.event.gatewayEvent, { event: payload.event })
       }
     }
   })
@@ -98,7 +98,7 @@ export function registerGatewayIpc({ getMainWindow, ipcMain, rememberLog }: Gate
 
         pendingRequests.set(id, { reject, resolve, timeout })
 
-        sendToMain(mainWin, IPC.event.gatewayRpcDispatch, {
+        sendToWindow(mainWin, IPC.event.gatewayRpcDispatch, {
           id,
           method,
           params: payload?.params

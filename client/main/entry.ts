@@ -23,6 +23,7 @@ import { BackendRequestError, createBackendClient } from './backend/client'
 import { createEnsureBackend } from './backend/ensure-backend'
 import { createBackendHttp } from './backend/http'
 import { createBackendSession, type SessionSnapshot } from './backend/session'
+import { createSessionRuntime } from './backend/session-runtime'
 import { createAssetDiskCache } from './ipc/asset-disk-cache'
 import { registerAuthIpc } from './ipc/auth'
 import { registerClipboardIpc } from './ipc/clipboard'
@@ -33,7 +34,7 @@ import { registerLogIpc } from './ipc/log'
 import { registerMediaIpc } from './ipc/media'
 import { registerOnboardingAudioIpc } from './ipc/onboarding-audio'
 import { registerPrefsIpc } from './ipc/prefs'
-import { autoStartBridge, autoStopBridge, registerRunnerIpc } from './ipc/runner'
+import { createRunnerHost } from './ipc/runner'
 import { registerRunnerConfigIpc } from './ipc/runner-config'
 import { registerSessionHistoryIpc } from './ipc/session-history'
 import { createSessionHistoryDiskCache } from './ipc/session-history-disk-cache'
@@ -66,7 +67,6 @@ import { createContextMenuHelpers } from './lifecycle/window-context-menu-helper
 import { createWindowHandlers } from './lifecycle/window-handlers'
 import { createZoomPersistence } from './lifecycle/zoom-persistence'
 import { createRunnerBridge } from './runner/bridge'
-import { createBridgeDeps } from './runner/bridge-deps'
 import { createRunnerProcess } from './runner/process'
 import { createReverseRpc } from './runner/reverse-rpc'
 import { createRunnerWsServer } from './runner/rpc-ws'
@@ -86,12 +86,11 @@ import { buildPrefsHydratedFromConfig, createConfigSync, uiThemeFromConfig } fro
 import * as runnerConfigStore from './shared/lib/runner-config-store'
 import { mimeTypeForPath } from './shared/mime'
 import {
-  atomicWriteFile,
   broadcastToAllWindows,
   errorMessage,
   fileExists,
   hideAndSkipTaskbar,
-  sendToMain
+  sendToWindow
 } from './shared/utils'
 
 const USER_DATA_OVERRIDE = process.env.SPIRITAGENT_DESKTOP_USER_DATA_DIR
@@ -109,7 +108,7 @@ if (process.env.SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK !== '1') {
 
 // `whenReady` 内的 `createSpriteWindow()` 之前若收到第二实例事件，会被 Electron 直接丢弃。
 // 顶层先挂一个轻量 listener 把事件折叠成标志；完整 forwarder 注册后再兑现一次。
-// 模块级可变状态集中在此（原则五）。
+// 模块级可变状态集中在此。
 let pendingSecondInstance = false
 let mainWindow: BrowserWindow | null = null
 let surfaces: null | SurfacesManager = null
@@ -260,7 +259,7 @@ const windowHandlers = createWindowHandlers({
   openExternalUrl,
   powerMonitor,
   rememberLog: (chunk: string) => rememberLog(chunk),
-  sendPowerResume: () => sendToMain(mainWindow, IPC.event.powerResume),
+  sendPowerResume: () => sendToWindow(mainWindow, IPC.event.powerResume),
   session,
   zoomPersistence
 })
@@ -437,47 +436,62 @@ registerMediaIpc({
   log: chunk => rememberLog(chunk)
 })
 
-// BridgeDeps 工厂接收所有依赖为参数；它本身不再持有模块顶层 free variable，
-// 这样既保留 36 字段契约，又把"对象工厂 vs 对象字面量"的差异常规化为参数注入。
-const bridgeDeps = createBridgeDeps({
-  app,
-  atomicWriteFile,
-  autoStartBridge,
-  autoStopBridge,
-  backendHttp,
-  broadcastAuthChanged,
-  buildClientContext,
-  createBackendSession,
+// 会话与 Runner 运行时分责：会话懒创建与 token 重接在 session-runtime；
+// Runner 桥的持有、自动启停与 IPC 在 runner host。登录恢复经 onRestored 接回 host.autoStart。
+let isQuitting = false
+// onRestored 异步回调里才调用；先占位避免 session/runtime 互相前置。
+let runnerHost: ReturnType<typeof createRunnerHost>
+
+const sessionRuntime = createSessionRuntime(
+  {
+    createSession: createBackendSession,
+    desktopVersion: () => backendHttp.resolveSpiritAgentVersion(),
+    errorMessage,
+    fetchImpl: (url, init) => electronNet.fetch(url, init as Parameters<typeof electronNet.fetch>[1]),
+    getTokenSetter: fn => {
+      getAuthToken = fn
+    },
+    log: chunk => rememberLog(chunk),
+    onRestored: snapshot => {
+      if (snapshot) {
+        broadcastAuthChanged(snapshot)
+        runnerHost.autoStart()
+      } else {
+        rebuildTrayMenu()
+      }
+    },
+    readStoredBackendUrl: () => readStoredBackendUrl(SPIRITAGENT_HOME),
+    safeStorage,
+    spiritagentHome: SPIRITAGENT_HOME,
+    userDataDir: app.getPath('userData')
+  },
+  buildClientContext
+)
+
+runnerHost = createRunnerHost({
   createReverseRpc,
   createRunnerBridge,
   createRunnerProcess,
   createRunnerWsServer,
-  electronNet,
-  errorMessage,
+  ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
   fileExists,
-  getAuthToken: {
-    getter: () => getAuthToken(),
-    setter: fn => {
-      getAuthToken = fn
-    }
-  },
   getMainWindow: () => mainWindow,
-  getSpriteWindow: () => mainWindow,
-  readStoredBackendUrl,
-  rebuildTrayMenu,
-  rememberLog: (chunk: string) => rememberLog(chunk),
-  resetBackendCache,
-  safeStorage,
-  spiritagentHome: SPIRITAGENT_HOME
+  rememberLog: chunk => rememberLog(chunk),
+  spiritagentHome: SPIRITAGENT_HOME,
+  taggedLogger: prefix => chunk => rememberLog(`${prefix} ${chunk}`)
 })
 
 const autoUpdater = createAutoUpdater({
   app,
   appRoot: APP_ROOT,
-  bridgeDeps,
-  createRunnerUpdater: ({ bridgeDeps: deps, fetchImpl }) =>
+  runtime: {
+    ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
+    getRunnerBridge: () => runnerHost.getBridge(),
+    spiritagentHome: SPIRITAGENT_HOME
+  },
+  createRunnerUpdater: ({ runtime: updaterRuntime, fetchImpl }) =>
     new RunnerUpdater({
-      bridgeDeps: deps,
+      runtime: updaterRuntime,
       fetchImpl: fetchImpl as typeof globalThis.fetch
     }),
   electronNet,
@@ -488,15 +502,24 @@ registerAuthIpc({
   clearLocalAssetCaches: async () => {
     await Promise.all([assetDiskCache.clear(), sessionHistoryDiskCache.clear()])
   },
-  deps: bridgeDeps,
+  deps: {
+    autoStartBridge: () => runnerHost.autoStart(),
+    autoStopBridge: () => runnerHost.autoStop(),
+    broadcastAuthChanged,
+    buildClientContext: () => sessionRuntime.buildClientContext(),
+    ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
+    rebuildTrayMenu,
+    resetBackendCache,
+    spiritagentHome: SPIRITAGENT_HOME
+  },
   ipcMain
 })
 registerSessionHistoryIpc({
-  ensureBackendSession: () => bridgeDeps.ensureBackendSession(),
+  ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
   ipcMain,
   sessionHistoryDiskCache
 })
-registerRunnerIpc({ deps: bridgeDeps, ipcMain })
+runnerHost.registerIpc(ipcMain)
 registerRunnerConfigIpc({
   ipcMain,
   isAuthorizedSender: event => {
@@ -505,7 +528,11 @@ registerRunnerConfigIpc({
     return Boolean(win && surfaces?.isSurfaceWindow('workbench', win))
   }
 })
-registerSkillsIpc({ spiritagentHome: SPIRITAGENT_HOME, getRunnerBridge: () => bridgeDeps.runnerBridge, ipcMain })
+registerSkillsIpc({
+  spiritagentHome: SPIRITAGENT_HOME,
+  getRunnerBridge: () => runnerHost.getBridge(),
+  ipcMain
+})
 registerUpdateIpc({
   broadcast: broadcastToAllWindows,
   electron: { app },
@@ -518,11 +545,11 @@ registerSpriteIpc({
   ipcMain
 })
 
-bridgeDeps.rewireAuthToken()
+sessionRuntime.rewireAuthToken()
 
 setTimeout(() => {
-  if (bridgeDeps.ensureBackendSession().getSession()?.hasToken) {
-    autoStartBridge(bridgeDeps)
+  if (sessionRuntime.ensureBackendSession().getSession()?.hasToken) {
+    runnerHost.autoStart()
   }
 }, 200).unref?.()
 
@@ -550,9 +577,9 @@ void app.whenReady().then(async () => {
 
   registerSingleInstanceForwarder({
     app,
-    bridgeDeps,
     createWindow: createSpriteWindow,
     getAppIconPath,
+    getMainWindow: () => mainWindow,
     Menu,
     nativeImage,
     rememberLog,
@@ -568,9 +595,11 @@ void app.whenReady().then(async () => {
 
   installTray({
     app,
-    bridgeDeps,
     createWindow: createSpriteWindow,
+    ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
     getAppIconPath,
+    getIsQuitting: () => isQuitting,
+    getMainWindow: () => mainWindow,
     Menu,
     nativeImage,
     rememberLog,
@@ -579,7 +608,7 @@ void app.whenReady().then(async () => {
   })
 
   app.on('activate', () => {
-    const win = bridgeDeps.getMainWindow()
+    const win = mainWindow
 
     if (!win || win.isDestroyed()) {
       createSpriteWindow()
@@ -590,7 +619,7 @@ void app.whenReady().then(async () => {
 })
 
 app.on('before-quit', () => {
-  bridgeDeps.setQuitting(true)
+  isQuitting = true
   destroyTray()
   cleanupShortcuts()
 
@@ -608,7 +637,7 @@ app.on('will-quit', event => {
   willQuitCleanupDone = true
   event.preventDefault()
 
-  const stopPromise = bridgeDeps.runnerBridge ? bridgeDeps.runnerBridge.stop({ reason: 'app-quit' }) : Promise.resolve()
+  const stopPromise = runnerHost.getBridge()?.stop({ reason: 'app-quit' }) ?? Promise.resolve()
   const timeoutMs = 3000
 
   void Promise.race([

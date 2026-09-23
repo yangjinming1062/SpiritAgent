@@ -36,7 +36,7 @@ export interface BackendSessionLike {
   getToken: () => null | string
 }
 
-/** bridge-deps 组装需要的完整会话面（activate/restore/logout/refresh）。 */
+/** 会话运行时需要的完整会话面（activate/restore/logout/refresh）。 */
 export interface BackendSessionPort extends BackendSessionLike {
   activate: (payload?: { clientContext?: unknown; code?: string }) => Promise<null | SessionSnapshotPort>
   authHeaders?: () => Record<string, string>

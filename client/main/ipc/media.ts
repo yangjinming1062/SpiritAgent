@@ -170,12 +170,6 @@ class BoundedTtsQueue {
   }
 }
 
-function decodeDataUrl(dataUrl?: string): { data: Buffer; mime: string } {
-  const parsed = parseDataUrl(dataUrl || '')
-
-  return { data: parsed.data, mime: parsed.mime }
-}
-
 async function postMultipart({
   fetchImpl,
   form,
@@ -358,7 +352,7 @@ function setCachedTts(key: string, value: { dataUrl: string; mimeType: string })
 }
 
 interface MediaIpcDeps {
-  spiritagentHome?: null | string
+  spiritagentHome: string
   ensureBackend: () => Promise<{ baseUrl: string; token?: null | string }>
   fetchImpl?: typeof globalThis.fetch
   ipcMain: IpcMain
@@ -378,7 +372,7 @@ export function registerMediaIpc({
 
   ipcMain.handle(IPC.invoke.mediaStt, async (_event, payload?: MediaSttPayload) => {
     const sttId = ++sttSeq
-    const { data, mime } = decodeDataUrl(payload?.dataUrl)
+    const { data, mime } = parseDataUrl(payload?.dataUrl || '')
 
     if (data.length > STT_MAX_AUDIO_BYTES) {
       throw new Error(`Audio too large (${data.length} bytes; max ${STT_MAX_AUDIO_BYTES})`)

@@ -5,91 +5,91 @@ import { atomicWriteFile, errorMessage, safeReadJson } from '../utils'
 const FILENAME = 'desktop-settings.json'
 
 // 内存数据：磁盘路径、当前镜像、首次读取懒标记。
-let _storePath: null | string = null
-let _config: Record<string, unknown> = {}
-let _loaded = false
+let storePath: null | string = null
+let config: Record<string, unknown> = {}
+let loaded = false
 
 // 写锁：串行化 write/patch/mutate 之间的落盘与推送。
-let _writeLock: null | Promise<unknown> = null
+let writeLock: null | Promise<unknown> = null
 
 // 同步协调：由 bridge 设置的 pushTarget、config-sync.ts 的 cloudSync 委托，
 // 以及 applyCloudMirror 期间抑制本地变更通知的标志（防回环）。
-let _pushTarget: null | ((config: Record<string, unknown>) => Promise<unknown> | void) = null
-let _cloudSync: null | { onLocalChange: (config: Record<string, unknown>) => void } = null
-let _suppressCloudSync = false
+let pushTarget: null | ((config: Record<string, unknown>) => Promise<unknown> | void) = null
+let cloudSync: null | { onLocalChange: (config: Record<string, unknown>) => void } = null
+let suppressCloudSync = false
 
 export function init({ spiritagentHome }: { spiritagentHome: null | string }): void {
-  _storePath = spiritagentHome ? path.join(spiritagentHome, FILENAME) : null
-  _loaded = false
+  storePath = spiritagentHome ? path.join(spiritagentHome, FILENAME) : null
+  loaded = false
 }
 
-function _load(): Record<string, unknown> {
-  if (_loaded) {
-    return _config
+function load(): Record<string, unknown> {
+  if (loaded) {
+    return config
   }
 
-  _loaded = true
-  _config = {}
+  loaded = true
+  config = {}
 
-  if (!_storePath) {
-    return _config
+  if (!storePath) {
+    return config
   }
 
-  const parsed = safeReadJson<Record<string, unknown>>(_storePath)
+  const parsed = safeReadJson<Record<string, unknown>>(storePath)
 
   if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    _config = parsed
+    config = parsed
   }
 
-  return _config
+  return config
 }
 
 /** 跨调用共享同一引用；变更必须经由 ``write`` / ``patch`` / ``mutate`` 进行。*/
 export function read(): Record<string, unknown> {
-  return _load()
+  return load()
 }
 
 export function setPushTarget(fn: null | ((config: Record<string, unknown>) => Promise<unknown> | void)): void {
-  _pushTarget = typeof fn === 'function' ? fn : null
+  pushTarget = typeof fn === 'function' ? fn : null
 }
 
 export function setCloudSync(delegate: null | { onLocalChange: (config: Record<string, unknown>) => void }): void {
-  _cloudSync = delegate
+  cloudSync = delegate
 }
 
 async function runLocked<T>(task: () => Promise<T>): Promise<T> {
-  while (_writeLock) {
-    await _writeLock.catch(() => {})
+  while (writeLock) {
+    await writeLock.catch(() => {})
   }
 
   const inflight = task()
-  _writeLock = inflight
+  writeLock = inflight
 
   try {
     return await inflight
   } finally {
-    _writeLock = null
+    writeLock = null
   }
 }
 
-async function _persistAndPush(): Promise<void> {
-  if (_storePath) {
-    const content = JSON.stringify(_config, null, 2)
-    await atomicWriteFile(_storePath, content)
+async function persistAndPush(): Promise<void> {
+  if (storePath) {
+    const content = JSON.stringify(config, null, 2)
+    await atomicWriteFile(storePath, content)
   }
 
   // 吞掉派发错误——bridge 在登录前可能尚未连接。
-  if (_pushTarget && _config) {
+  if (pushTarget && config) {
     try {
-      await _pushTarget(_config)
+      await pushTarget(config)
     } catch {
       /* runner 未连接——待下次 runner-ready 时再推送配置 */
     }
   }
 
-  // 本地写入后通知云同步（水合写入经 _suppressCloudSync 抑制，防止回环）。
-  if (_cloudSync && !_suppressCloudSync) {
-    _cloudSync.onLocalChange(_config)
+  // 本地写入后通知云同步（水合写入经 suppressCloudSync 抑制，防止回环）。
+  if (cloudSync && !suppressCloudSync) {
+    cloudSync.onLocalChange(config)
   }
 }
 
@@ -104,17 +104,17 @@ export async function applyCloudMirror(sections: Record<string, unknown>): Promi
   }
 
   await runLocked(async () => {
-    _load()
-    _suppressCloudSync = true
+    load()
+    suppressCloudSync = true
 
     try {
       for (const [section, value] of Object.entries(sections)) {
-        _config[section] = value
+        config[section] = value
       }
 
-      await _persistAndPush()
+      await persistAndPush()
     } finally {
-      _suppressCloudSync = false
+      suppressCloudSync = false
     }
   })
 }
@@ -125,8 +125,8 @@ export async function write(obj: unknown): Promise<{ error?: string; ok: boolean
       return { error: 'config must be a plain object', ok: false }
     }
 
-    _config = obj as Record<string, unknown>
-    await _persistAndPush()
+    config = obj as Record<string, unknown>
+    await persistAndPush()
 
     return { ok: true }
   })
@@ -141,17 +141,17 @@ export async function patch(
   }
 
   return runLocked(async () => {
-    _load()
+    load()
 
-    if (_config) {
+    if (config) {
       if (op === 'delete') {
-        deleteIn(_config, keyPath)
+        deleteIn(config, keyPath)
       } else {
-        setIn(_config, keyPath, value)
+        setIn(config, keyPath, value)
       }
     }
 
-    await _persistAndPush()
+    await persistAndPush()
 
     return { ok: true }
   })
@@ -169,19 +169,19 @@ export async function mutate<T>(
 
   try {
     await runLocked(async () => {
-      _load()
-      const snapshot = JSON.parse(JSON.stringify(_config ?? {}))
+      load()
+      const snapshot = JSON.parse(JSON.stringify(config ?? {}))
 
       try {
-        if (_config) {
-          mutated = fn(_config)
+        if (config) {
+          mutated = fn(config)
         }
       } catch (err) {
-        _config = snapshot
+        config = snapshot
         throw err
       }
 
-      await _persistAndPush()
+      await persistAndPush()
     })
 
     return { mutated, ok: true }
@@ -193,7 +193,7 @@ export async function mutate<T>(
 }
 
 export function getDisabledSet(section = 'skills'): Set<string> {
-  const sectionData = _load()[section] as { disabled?: unknown } | undefined
+  const sectionData = load()[section] as { disabled?: unknown } | undefined
   const raw = sectionData?.disabled
 
   if (!Array.isArray(raw)) {

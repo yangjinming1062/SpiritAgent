@@ -39,22 +39,22 @@ export interface MinimalRunnerBridge {
 }
 
 export interface RunnerUpdaterDeps {
-  bridgeDeps: {
+  runtime: {
     spiritagentHome: string
     ensureBackendSession?: () => BackendSessionLike | null | undefined
-    runnerBridge?: null | MinimalRunnerBridge
+    getRunnerBridge?: () => null | MinimalRunnerBridge
   }
   fetchImpl?: typeof globalThis.fetch
   log?: (level: string, message: string, ...args: unknown[]) => void
 }
 
 export class RunnerUpdater {
-  private bridgeDeps: RunnerUpdaterDeps['bridgeDeps']
+  private runtime: RunnerUpdaterDeps['runtime']
   private fetchImpl: typeof globalThis.fetch
   private log?: RunnerUpdaterDeps['log']
 
-  constructor({ bridgeDeps, fetchImpl = globalThis.fetch, log }: RunnerUpdaterDeps) {
-    this.bridgeDeps = bridgeDeps
+  constructor({ runtime, fetchImpl = globalThis.fetch, log }: RunnerUpdaterDeps) {
+    this.runtime = runtime
     this.fetchImpl = fetchImpl
     this.log = log
   }
@@ -69,7 +69,7 @@ export class RunnerUpdater {
     updateBaseUrl: string
     version: string
   }): Promise<void> {
-    const home = this.bridgeDeps.spiritagentHome
+    const home = this.runtime.spiritagentHome
     const stagingDir = path.join(home, 'runner.staging')
 
     await fsp.rm(stagingDir, { force: true, recursive: true })
@@ -153,7 +153,7 @@ export class RunnerUpdater {
 
   // 阶段 2：在新版 Electron 进程内完成安装。
   async installPending(): Promise<{ error?: string; noop?: boolean; ok: boolean }> {
-    const home = this.bridgeDeps.spiritagentHome
+    const home = this.runtime.spiritagentHome
     const sentinelPath = path.join(home, '.pending-runner-update.json')
 
     if (!fs.existsSync(sentinelPath)) {
@@ -190,10 +190,11 @@ export class RunnerUpdater {
       return { error: reason, ok: false }
     }
 
-    const stopIfBridged = () =>
-      this.bridgeDeps?.runnerBridge
-        ? this.bridgeDeps.runnerBridge.stop({ reason: 'update' })
-        : Promise.resolve(undefined)
+    const stopIfBridged = () => {
+      const bridge = this.runtime?.getRunnerBridge?.()
+
+      return bridge ? bridge.stop({ reason: 'update' }) : Promise.resolve(undefined)
+    }
 
     try {
       if (!fs.existsSync(venvPython)) {
@@ -239,10 +240,12 @@ export class RunnerUpdater {
         return await fail('server-py-copy-failed', err)
       }
 
-      if (this.bridgeDeps?.runnerBridge) {
+      const bridge = this.runtime?.getRunnerBridge?.()
+
+      if (bridge) {
         try {
-          await this.bridgeDeps.runnerBridge.start({
-            backendSession: this.bridgeDeps.ensureBackendSession?.(),
+          await bridge.start({
+            backendSession: this.runtime.ensureBackendSession?.(),
             readyTimeoutMs: 10_000
           })
           startedNew = true
@@ -259,10 +262,12 @@ export class RunnerUpdater {
     } catch (err) {
       return await fail('unknown', err)
     } finally {
-      if (stopResult && !startedNew && this.bridgeDeps?.runnerBridge) {
+      const bridge = this.runtime?.getRunnerBridge?.()
+
+      if (stopResult && !startedNew && bridge) {
         try {
-          await this.bridgeDeps.runnerBridge.start({
-            backendSession: this.bridgeDeps.ensureBackendSession?.(),
+          await bridge.start({
+            backendSession: this.runtime.ensureBackendSession?.(),
             readyTimeoutMs: 8_000
           })
         } catch (err: unknown) {

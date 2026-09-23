@@ -12,7 +12,7 @@ const MAX_BYTES = 256 * 1024
 interface OnboardingAudioIpcDeps {
   app?: null | Partial<App>
   appRoot?: string
-  spiritagentHome?: null | string
+  spiritagentHome: string
   devAudioRoot?: string
   hardening: {
     resolveReadableFileForIpc: (
@@ -33,18 +33,6 @@ export function registerOnboardingAudioIpc({
   ipcMain,
   mimeTypeForPath
 }: OnboardingAudioIpcDeps): void {
-  if (!hardening) {
-    throw new Error('registerOnboardingAudioIpc: hardening is required')
-  }
-
-  if (!spiritagentHome) {
-    throw new Error('registerOnboardingAudioIpc: spiritagentHome is required')
-  }
-
-  if (typeof mimeTypeForPath !== 'function') {
-    throw new Error('registerOnboardingAudioIpc: mimeTypeForPath is required')
-  }
-
   const audioRoot = path.resolve(spiritagentHome, 'audio', 'onboarding', 'zh')
 
   let devAudioRoot = explicitDevAudioRoot

@@ -32,7 +32,7 @@ function sameWindowButtonPosition(
 
 /**
  * 后端连接缓存：token / 窗口态变化时失效重建；并发共享 in-flight Promise。
- * 从 entry.ts 拆出，避免入口同时持有连接策略与窗口装配。
+ * 连接策略与窗口装配分离，入口只做装配。
  */
 export function createEnsureBackend(deps: EnsureBackendDeps): {
   ensureBackend: () => Promise<SpiritAgentConnection>

@@ -21,10 +21,10 @@ export function directoryExists(filePath: string): boolean {
   }
 }
 
-// 守护 webContents.send：关闭/重载期间主窗口可能已销毁。
+// 守护 webContents.send：关闭/重载期间窗口可能已销毁。
 // channel 收紧为 `IpcEventChannel`(`webContents.send` 是主→渲单向事件),
 // 不联合 `IpcSendChannel`(那是渲染→主的 `ipcRenderer.send` 方向)。
-export function sendToMain<C extends IpcEventChannel>(
+export function sendToWindow<C extends IpcEventChannel>(
   mainWindow: BrowserWindow | null | undefined,
   channel: C,
   ...payload: IpcEventContract[C]
@@ -45,7 +45,7 @@ export function sendToMain<C extends IpcEventChannel>(
 // 广播给所有打开的 BrowserWindow（包含精灵窗、生活空间、工作台）
 export function broadcastToAllWindows<C extends IpcEventChannel>(channel: C, ...payload: IpcEventContract[C]): void {
   for (const win of BrowserWindow.getAllWindows()) {
-    sendToMain(win, channel, ...payload)
+    sendToWindow(win, channel, ...payload)
   }
 }
 

@@ -30,7 +30,7 @@ export interface CachedAsset {
 
 export interface AssetDiskCacheOptions {
   defaultFetchFn?: typeof globalThis.fetch
-  spiritagentHome?: null | string
+  spiritagentHome: string
 }
 
 export interface EnsureAssetOptions {
@@ -90,10 +90,6 @@ function resolveBackendAssetUrl(rawUrl: string, baseUrl?: null | string): string
 }
 
 export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetDiskCacheOptions): AssetDiskCache {
-  if (!spiritagentHome) {
-    throw new Error('createAssetDiskCache: spiritagentHome is required')
-  }
-
   const cacheDir = path.resolve(spiritagentHome, 'cache', 'assets')
   const inFlightDownloads = new Map<string, Promise<CachedAsset>>()
   let epoch = 0

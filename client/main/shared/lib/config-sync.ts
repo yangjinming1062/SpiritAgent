@@ -394,7 +394,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
     }
 
     clearTimers()
-    // 旧用户的未上传编辑不再尝试上云（token 已换/失效）；镜像值留在本地，
+    // 旧用户的未上传编辑不尝试上云（token 已换/失效）；镜像值留在本地，
     // 归属戳保证换号水合不会把它们泄给新用户。
     dirty = false
     hydratedUserId = userId

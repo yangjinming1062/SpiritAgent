@@ -118,7 +118,7 @@ export function createSpriteWindowFactory(deps: SpriteWindowDeps): {
 
     // macOS 用 'screen-saver' z-band（位于 floating 之上，能压过 exclusive fullscreen 游戏）；
     // Win/Linux 回退 'floating'。Windows 的 exclusive fullscreen 完全绕过 DWM，
-    // 伙伴窗口无法覆盖在上面（已记录的限制）。
+    // 伙伴窗口无法覆盖在上面（已知限制）。
     if (deps.isMac) {
       mainWindow.setAlwaysOnTop(true, 'screen-saver', 1)
     } else {

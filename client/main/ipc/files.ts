@@ -142,7 +142,7 @@ export function registerFilesIpc({ electron, hardening, ipcMain, mimeTypeForPath
       return
     }
 
-    // 路径须已由 preload getPathForFile 或 selectPaths 注册；此处不再自授白名单。
+    // 路径须已由 preload getPathForFile 或 selectPaths 注册；此处不自授白名单。
     pendingFeedPaths.length = 0
     pendingFeedPaths.push(...cleaned)
     // 已打开的生活空间靠广播即时收到；刚创建的窗口在挂载时 take 补齐。

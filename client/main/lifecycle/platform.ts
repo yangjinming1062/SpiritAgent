@@ -11,7 +11,6 @@ interface DetectRemoteDisplayOptions {
  * 会产生不稳定、闪烁的画面。
  * 需要禁用 GPU 时返回一个简短的 reason 字符串，否则返回 null。
  * `SPIRITAGENT_DESKTOP_DISABLE_GPU` 环境变量可以覆盖检测结果。
- * 纯函数、无依赖，便于单元测试。
  */
 export function detectRemoteDisplay(options: DetectRemoteDisplayOptions = {}): null | string {
   const env = options.env ?? process.env

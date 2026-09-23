@@ -31,7 +31,7 @@ import {
 import { contextBridge, ipcRenderer, type IpcRendererEvent, webUtils } from 'electron'
 
 // Electron 32+ 移除了 File.path——桌面文件拖拽的真实路径只能经 webUtils.getPathForFile 拿到。
-// 解析成功即写入主进程可读白名单；不再向渲染层暴露 registerUserSelectedPaths，
+// 解析成功即写入主进程可读白名单；不向渲染层暴露 registerUserSelectedPaths，
 // 防止 XSS 用任意路径自授后 readFileDataUrl 外传。
 contextBridge.exposeInMainWorld('spiritagentWebUtils', {
   getPathForFile: (file: File): string => {

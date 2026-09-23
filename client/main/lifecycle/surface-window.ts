@@ -5,7 +5,6 @@ import type { SurfacesManager } from './surfaces'
 import type { ZoomPersistence } from './zoom-persistence'
 
 // 入口面互斥窗口工厂：living 是生活空间，workbench 是工作台。
-// 形态按 SpiritAgent-客户端开发计划 §2.5 / §4 默认尺寸落定。
 const SURFACE_DEFAULTS: Record<SurfaceId, { height: number; minHeight: number; minWidth: number; width: number }> = {
   living: { height: 720, minHeight: 560, minWidth: 880, width: 1080 },
   workbench: { height: 800, minHeight: 640, minWidth: 1264, width: 1532 }

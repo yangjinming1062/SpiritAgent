@@ -21,10 +21,10 @@ interface RunnerUpdaterPort {
   }) => Promise<void>
 }
 
-/** 仅更新器需要的 bridge 视图；结构对齐 RunnerUpdaterDeps，不 import runner。 */
-interface BridgeForUpdater {
+/** 仅更新器需要的会话/桥视图；结构对齐 RunnerUpdaterDeps，不 import runner。 */
+interface RuntimeForUpdater {
   ensureBackendSession?: () => BackendSessionLike | null | undefined
-  runnerBridge?: null | {
+  getRunnerBridge?: () => null | {
     start: (options: { backendSession?: BackendSessionLike | null; readyTimeoutMs?: number }) => Promise<unknown>
     stop: (options: { reason: string }) => Promise<unknown>
   }
@@ -34,9 +34,9 @@ interface BridgeForUpdater {
 interface AutoUpdaterOptions {
   app: Pick<App, 'getPath' | 'getVersion' | 'isPackaged'>
   appRoot: string
-  bridgeDeps: BridgeForUpdater
+  runtime: RuntimeForUpdater
   /** 由 entry 注入，切断 lifecycle→runner 实现导入。 */
-  createRunnerUpdater: (deps: { bridgeDeps: BridgeForUpdater; fetchImpl: unknown }) => RunnerUpdaterPort
+  createRunnerUpdater: (deps: { runtime: RuntimeForUpdater; fetchImpl: unknown }) => RunnerUpdaterPort
   electronNet: Net
   spiritagentHome: null | string
 }
@@ -44,7 +44,7 @@ interface AutoUpdaterOptions {
 export function createAutoUpdater({
   app,
   appRoot,
-  bridgeDeps,
+  runtime,
   createRunnerUpdater,
   electronNet,
   spiritagentHome
@@ -58,7 +58,7 @@ export function createAutoUpdater({
     }
 
     singleton = createRunnerUpdater({
-      bridgeDeps,
+      runtime,
       fetchImpl: electronNet.fetch as unknown as typeof globalThis.fetch
     })
 

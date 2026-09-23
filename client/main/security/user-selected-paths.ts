@@ -2,7 +2,7 @@ import path from 'node:path'
 
 /**
  * 渲染层可读文件白名单：仅允许经对话框 selectPaths 或拖拽/粘贴注册的路径。
- * 防止 XSS / 依赖投毒后 IPC 任意读盘外传（审查问题 10）。
+ * 防止 XSS / 依赖投毒后 IPC 任意读盘外传。
  */
 const MAX_ENTRIES = 256
 const userSelectedPaths = new Set<string>()

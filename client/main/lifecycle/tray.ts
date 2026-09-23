@@ -12,7 +12,7 @@ import {
 import type { BackendSessionLike } from '../shared/backend-port'
 import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
-import { broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, sendToMain } from '../shared/utils'
+import { broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, sendToWindow } from '../shared/utils'
 
 import type { SurfacesManager } from './surfaces'
 
@@ -20,12 +20,9 @@ interface TrayDeps {
   Menu: typeof Menu
   Tray: typeof Tray
   app: App
-  bridgeDeps: {
-    backendSession?: BackendSessionLike | null
-    ensureBackendSession?: () => BackendSessionLike | null | undefined
-    getMainWindow: () => BrowserWindow | null | undefined
-    isQuitting?: boolean
-  }
+  ensureBackendSession?: () => BackendSessionLike | null | undefined
+  getIsQuitting?: () => boolean
+  getMainWindow: () => BrowserWindow | null | undefined
   createWindow: () => void
   getAppIconPath: () => null | string
   nativeImage: typeof nativeImage
@@ -67,11 +64,11 @@ let trayDeps: null | TrayDeps = null
 
 // 设置和激活/反激活放在托盘右键菜单里，而不是应用内界面。
 function isAuthenticated(): boolean {
-  return Boolean(trayDeps?.bridgeDeps?.ensureBackendSession?.()?.getSession()?.hasToken)
+  return Boolean(trayDeps?.ensureBackendSession?.()?.getSession()?.hasToken)
 }
 
 function isSpriteVisible(): boolean {
-  const win = trayDeps?.bridgeDeps?.getMainWindow?.()
+  const win = trayDeps?.getMainWindow?.()
 
   if (!win || win.isDestroyed()) {
     return false
@@ -81,7 +78,7 @@ function isSpriteVisible(): boolean {
 }
 
 function sendToMainWindow<C extends IpcEventChannel>(channel: C, ...payload: IpcEventContract[C]): void {
-  sendToMain(trayDeps?.bridgeDeps?.getMainWindow?.(), channel, ...payload)
+  sendToWindow(trayDeps?.getMainWindow?.(), channel, ...payload)
 }
 
 function getCurrentLanguage(): 'en' | 'zh' {
@@ -160,7 +157,6 @@ function buildTrayMenu(): Menu | null {
   if (authed) {
     // DESIGN §6.1：对话模式触发源之一是托盘——聊天面板是渲染层 React state，
     // 拉起窗口外还要通知渲染器开面板（与 trayActivate 同一模式）。
-    // 客户端重构后这里换成两个入口：生活空间 / 工作台。
     template.push(
       { type: 'separator' },
       {
@@ -225,7 +221,7 @@ export function rebuildTrayMenu(): void {
 
 export function installCloseInterceptor(win: BrowserWindow): void {
   win.on('close', event => {
-    if (trayDeps?.bridgeDeps.isQuitting) {
+    if (trayDeps?.getIsQuitting?.()) {
       return
     }
 
@@ -242,7 +238,7 @@ export function installCloseInterceptor(win: BrowserWindow): void {
 }
 
 function hideMainWindow(): void {
-  const win = trayDeps?.bridgeDeps?.getMainWindow?.()
+  const win = trayDeps?.getMainWindow?.()
 
   if (win && !win.isDestroyed()) {
     hideAndSkipTaskbar(win)
@@ -252,7 +248,7 @@ function hideMainWindow(): void {
 }
 
 export function showMainWindow(): void {
-  const win = trayDeps?.bridgeDeps?.getMainWindow?.()
+  const win = trayDeps?.getMainWindow?.()
 
   if (!win || win.isDestroyed()) {
     trayDeps?.createWindow()
@@ -281,7 +277,7 @@ export function showMainWindow(): void {
 }
 
 export function resetMainWindowPosition(): void {
-  const win = trayDeps?.bridgeDeps?.getMainWindow?.()
+  const win = trayDeps?.getMainWindow?.()
 
   if (!win || win.isDestroyed()) {
     trayDeps?.createWindow()
@@ -409,7 +405,7 @@ export function registerSingleInstanceForwarder(deps: TrayDeps): void {
   trayDeps = deps
   deps.app.on('second-instance', () => {
     deps.rememberLog?.('[instance] second-instance forwarded')
-    const win = deps.bridgeDeps.getMainWindow()
+    const win = deps.getMainWindow()
 
     if (!win || win.isDestroyed()) {
       deps.createWindow()

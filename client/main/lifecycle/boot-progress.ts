@@ -1,7 +1,7 @@
 import { clampBootProgress, type DesktopBootProgress, IPC } from '@ipc/contracts'
 import type { BrowserWindow } from 'electron'
 
-import { sendToMain } from '../shared/utils'
+import { sendToWindow } from '../shared/utils'
 
 interface BootProgressOptions {
   getMainWindow: () => BrowserWindow | null
@@ -20,7 +20,7 @@ export function createBootProgressMachine({ getMainWindow, rememberLog }: BootPr
   }
 
   function broadcast(): void {
-    sendToMain(getMainWindow(), IPC.event.bootProgress, state)
+    sendToWindow(getMainWindow(), IPC.event.bootProgress, state)
   }
 
   function update(update: Partial<DesktopBootProgress>, options: { allowDecrease?: boolean } = {}): void {
