@@ -220,28 +220,22 @@ class LocalImageGenProvider(ImageGenProvider):
     async def _resolve_model_files(self) -> tuple[str, str, str]:
         if self._model_files is not None:
             return self._model_files
-        try:
-            resp = await self._client.get("/object_info/UNETLoader")
-            resp.raise_for_status()
-            unet_opts: list[str] = (
-                resp.json().get("UNETLoader", {}).get("input", {}).get("required", {}).get("unet_name", [[]])[0]
-            )
-            resp = await self._client.get("/object_info/CLIPLoader")
-            resp.raise_for_status()
-            clip_opts: list[str] = (
-                resp.json().get("CLIPLoader", {}).get("input", {}).get("required", {}).get("clip_name", [[]])[0]
-            )
-            resp = await self._client.get("/object_info/VAELoader")
-            resp.raise_for_status()
-            vae_opts: list[str] = (
-                resp.json().get("VAELoader", {}).get("input", {}).get("required", {}).get("vae_name", [[]])[0]
-            )
-        except Exception as exc:
-            raise ProviderError(
-                f"local image_gen cannot reach ComfyUI: {type(exc).__name__}",
-                provider=self.provider_name,
-                model=self.config.model,
-            ) from exc
+        # 保留原始传输和 HTTP 异常，供上层判定供应商回退。
+        resp = await self._client.get("/object_info/UNETLoader")
+        resp.raise_for_status()
+        unet_opts: list[str] = (
+            resp.json().get("UNETLoader", {}).get("input", {}).get("required", {}).get("unet_name", [[]])[0]
+        )
+        resp = await self._client.get("/object_info/CLIPLoader")
+        resp.raise_for_status()
+        clip_opts: list[str] = (
+            resp.json().get("CLIPLoader", {}).get("input", {}).get("required", {}).get("clip_name", [[]])[0]
+        )
+        resp = await self._client.get("/object_info/VAELoader")
+        resp.raise_for_status()
+        vae_opts: list[str] = (
+            resp.json().get("VAELoader", {}).get("input", {}).get("required", {}).get("vae_name", [[]])[0]
+        )
 
         def _pick(options: list[str], *prefixes: str) -> str:
             for p in prefixes:

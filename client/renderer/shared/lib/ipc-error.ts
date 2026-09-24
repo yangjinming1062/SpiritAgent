@@ -1,4 +1,4 @@
-const IPC_ENVELOPE_RE = /Error invoking remote method '[^']+': Error: (.+)$/
+const IPC_ENVELOPE_RE = /Error invoking remote method '[^']+': (?:Error|HttpError): ([\s\S]+)$/
 
 export function unwrapIpcErrorMessage(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error)
