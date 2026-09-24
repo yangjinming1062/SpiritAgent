@@ -125,6 +125,8 @@ docker compose --profile monitoring up -d
 
 容器与卷见 [docker-compose.yml](docker-compose.yml)，指标抓取见 [Prometheus 配置](monitoring/prometheus.yml)。Backend 不参与桌面安装包构建。
 
+后端镜像安装 FFmpeg（含 `ffprobe`），用于视频探测、抠像和转码；构建时检查两个命令可执行。更新 Dockerfile 后，在 `backend` 目录执行 `docker compose up -d --build backend` 重建并替换容器。配置本地 ComfyUI 供应商时，其地址必须从后端容器内可达。
+
 ### 参数配置与后台动态热更新
 
 登录 `/admin/` 管理供应商、能力链与运营参数。保存按 §3.4 生效，不要求重启容器；密钥继承与脱敏见协议文档。

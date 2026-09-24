@@ -5,6 +5,12 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && ffmpeg -version \
+    && ffprobe -version \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN pip install uv
 
 COPY backend/pyproject.toml backend/uv.lock ./
