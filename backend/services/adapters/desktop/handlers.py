@@ -622,14 +622,16 @@ async def _do_compress_history(
     checkpoint = Message(
         conversation_id=conv.id,
         role="system",
-        content=f"[🗜️ 对话压缩 — {compress_info['replaced_count']} 条早期消息已压缩]\n{compress_info['summary']}",
+        content=f"[🗜️ 对话压缩 — {compress_info.replaced_count} 条早期消息已压缩]\n{compress_info.summary}",
         subtype="compress_summary",
-        prompt_tokens=compress_info.get("prompt_tokens", 0),
-        completion_tokens=compress_info.get("completion_tokens", 0),
+        summary_through_message_id=compress_info.through_message_id,
+        prompt_tokens=compress_info.prompt_tokens,
+        completion_tokens=compress_info.completion_tokens,
     )
     db.add(checkpoint)
     await db.commit()
-    await prune_videos_in_range(db, conv.id, hi=checkpoint.id)
+    if prune_before := compress_info.prune_before_message_id:
+        await prune_videos_in_range(db, conv.id, hi=prune_before, preserve_queued=True)
     await db.commit()
 
     new_inputs = await build_turn_inputs(
@@ -646,8 +648,8 @@ async def _do_compress_history(
     return {
         "session_id": runtime.session_id,
         "compressed": True,
-        "replaced_count": compress_info["replaced_count"],
-        "summary": compress_info["summary"],
+        "replaced_count": compress_info.replaced_count,
+        "summary": compress_info.summary,
         "messages": delivered,
         "usage": {
             "total_tokens": new_inputs.estimated_tokens,

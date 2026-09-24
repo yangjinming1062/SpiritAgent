@@ -189,14 +189,16 @@ async def create_user_moment(
     session_id: int | None = None,
     memory_id: int | None = None,
 ) -> CompanionMoment:
+    if not title.strip() or len(title.strip()) > 64 or len(body.strip()) > 500:
+        raise ValueError("片刻标题须为 1–64 字符，正文最多 500 字符；内容尚未保存")
     persisted_media = await persist_moment_media(user_id, media_url)
     persisted_audio = await persist_moment_media(user_id, audio_url)
     row = CompanionMoment(
         id=str(uuid4()),
         user_id=user_id,
         kind=kind,
-        title=title.strip()[:64],
-        body=body.strip()[:500],
+        title=title.strip(),
+        body=body.strip(),
         emotion=(emotion or None),
         media_url=persisted_media,
         media_type=media_type or _moment_media_type(persisted_media),
@@ -385,6 +387,8 @@ async def create_moment_comment(
     content: str,
     role: str = MomentCommentRole.USER.value,
 ) -> CompanionMomentComment:
+    if not content.strip() or len(content.strip()) > 500:
+        raise ValueError("评论须为 1–500 字符；内容尚未保存")
     moment = await get_moment(db, user_id, moment_id)
     if moment is None:
         raise MomentNotFoundError(f"moment {moment_id} not found")
@@ -393,7 +397,7 @@ async def create_moment_comment(
         moment_id=moment.id,
         user_id=user_id,
         role=role,
-        content=content.strip()[:500],
+        content=content.strip(),
     )
     db.add(row)
     await db.commit()
@@ -481,14 +485,17 @@ async def upsert_diary(
     moment_ids: list[str] | None = None,
     _retried: bool = False,
 ) -> CompanionDiaryEntry:
+    title, body = title.strip(), body.strip()
+    if len(title) > 128 or not body or len(body) > 2000:
+        raise ValueError("日记标题最多 128 字符，本次正文须为 1–2000 字符；内容尚未保存")
     row = await get_diary_by_date(db, user_id, entry_date)
     if row is None:
         row = CompanionDiaryEntry(
             id=str(uuid4()),
             user_id=user_id,
             entry_date=entry_date,
-            title=title.strip()[:128],
-            body=body.strip()[:2000],
+            title=title,
+            body=body,
             mood=mood,
             source=source,
             memory_ids=memory_ids or [],
@@ -498,9 +505,12 @@ async def upsert_diary(
     else:
         # 同日已有日记时只追加不覆盖：夜间补记带专属分隔语，LLM 补记合并正文与标题。
         sep = "\n\n——夜间补记——\n" if source == DiarySource.NIGHTLY.value else "\n\n"
-        row.body = (row.body + sep + body.strip()[:2000])[:4000]
+        remaining = max(0, 4000 - len(row.body) - len(sep))
+        if len(body) > remaining:
+            raise ValueError(f"当日日记还可追加 {remaining} 字符；本次内容尚未保存，请精简补记，原日记保持不变")
+        row.body = row.body + sep + body
         if not row.title and title:
-            row.title = title.strip()[:128]
+            row.title = title
         row.mood = mood or row.mood
         if memory_ids:
             row.memory_ids = list(dict.fromkeys((row.memory_ids or []) + memory_ids))
@@ -591,7 +601,16 @@ async def collect_moment_interactions(
             "source": m.source,
             # call_llm_once 的 json.dumps 无 default，datetime 必须先转字符串
             "occurred_at": m.occurred_at.isoformat() if m.occurred_at else None,
-            "comments": [{"role": c.role, "content": c.content} for c in (m.comments or [])],
+            "posted_in_window": m.occurred_at is not None and utc_start <= m.occurred_at < utc_end,
+            "comments": [
+                {
+                    "role": c.role,
+                    "content": c.content,
+                    "created_at": c.created_at.isoformat() if c.created_at else None,
+                    "in_window": c.created_at is not None and utc_start <= c.created_at < utc_end,
+                }
+                for c in (m.comments or [])
+            ],
         }
         for m in rows
     ]

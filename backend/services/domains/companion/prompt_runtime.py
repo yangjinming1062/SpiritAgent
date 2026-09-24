@@ -20,20 +20,17 @@ from services.infrastructure.llm import (
     try_resolve,
 )
 
-from .appearance import build_outfit_extras
-from .character_card import load_character_snapshot, render_character_profile
 from .persona_service import render_extras
 
 logger = get_logger(__name__)
 
 
 class CompanionPromptContext(BaseModel):
-    """人设、心情、记忆、着装与具身能力快照，每次提示词只加载一次，避免调用方重复查询。"""
+    """供心情、表达和片刻使用的人设、心情、记忆与可用动作；不注入视觉生成资料。"""
 
     language: str
     persona_extras: str
     current_mood: str
-    outfit_block: str
     memories_block: str
     # 每项含 action_id/name/use_when 等；系统产品槽位不进清单。
     available_actions: list[dict[str, Any]]
@@ -49,7 +46,7 @@ class PromptOutcome(NamedTuple):
 async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext | None:
     """返回用于提示词的人设与记忆快照；人设未就绪时返回 None。
 
-    从 user_settings 内部解析 language（caller 不必传），驱动 outfit_block 与 persona_extras 的双语渲染。
+    从 user_settings 解析 language，驱动 persona_extras 的双语渲染。
     """
     async with SESSION_LOCAL() as db:
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
@@ -89,11 +86,8 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         available_actions.sort(key=lambda item: item["action_id"])
         return CompanionPromptContext(
             language=language,
-            persona_extras=render_extras(definition, language=language)
-            + "\n"
-            + render_character_profile(await load_character_snapshot(db, user_id)),
+            persona_extras=render_extras(definition, language=language),
             current_mood=persona.current_mood or "",
-            outfit_block=await build_outfit_extras(db, user_id, language=language),
             memories_block=await format_memories_block(db, MemoryScope(user_id, "companion")),
             available_actions=available_actions,
         )

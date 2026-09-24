@@ -1162,7 +1162,8 @@ EXECUTE_CODE_SCHEMA = {
         "you need 3+ tool calls with processing logic between them, need to filter/reduce "
         "large tool outputs before they enter your context, need conditional branching "
         "(if X then Y else Z), or need to loop (fetch N pages, process N files, retry on "
-        "failure).\n\n"
+        "failure when safe). Tool availability and authorization remain the same as for direct calls; "
+        "the imported helper names do not unlock disabled tools.\n\n"
         "Use normal tool calls instead when: single tool call with no processing, you need "
         "to see the full result and apply complex reasoning, or the task requires interactive "
         "user input.\n\n"
@@ -1190,8 +1191,10 @@ EXECUTE_CODE_SCHEMA = {
         "with control chars\n"
         "  shell_quote(s: str) — shlex.quote(); use when interpolating dynamic strings into "
         "shell commands\n"
-        "  retry(fn, max_attempts=3, delay=2) — retry with exponential backoff for "
-        "transient failures"
+        "  retry(fn, max_attempts=3, delay=2) — retry raised exceptions with exponential backoff; "
+        "it does not inspect tool error results or determine whether retrying is safe. Use only for "
+        "read-only or otherwise verified repeatable work. After an unknown outcome, check the original "
+        "operation before repeating a write, send, purchase, or submission."
     ),
     "parameters": {
         "type": "object",

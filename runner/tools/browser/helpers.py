@@ -84,7 +84,7 @@ def _extract_relevant_content(snapshot_text: str, user_task: str) -> str:
                 {"role": "system", "content": BROWSER_EXTRACT_INSTRUCTIONS},
                 {"role": "user", "content": payload},
             ],
-            max_tokens=4000,
+            max_tokens=8192,
             temperature=0.1,
             timeout=30.0,
         )

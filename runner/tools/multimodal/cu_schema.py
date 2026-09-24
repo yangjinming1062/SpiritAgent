@@ -3,13 +3,14 @@ from typing import Any
 COMPUTER_USE_SCHEMA: dict[str, Any] = {
     "name": "computer_use",
     "description": (
-        "Drive the desktop in the background — screenshots, mouse, "
-        "keyboard, scroll, drag — without stealing the user's cursor, "
-        "keyboard focus, or window focus. Preferred workflow: call with "
+        "Inspect and operate the desktop using screenshots, mouse, keyboard, scroll and drag. "
+        "Background support depends on the platform, target application and action; "
+        "keyboard or coordinate actions may affect the user's cursor and foreground app. Preferred workflow: call with "
         "action='capture' (mode='som' gives numbered element overlays), "
         "then click by `element` index for reliability. Pixel coordinates "
-        "are supported for models trained on them. Works on any window — "
-        "hidden, minimized, or behind another app. "
+        "are available when an element cannot be used. Inspect the actual capture and action result; "
+        "hidden or minimized windows may be inaccessible. "
+        "Verify effects with a fresh capture; ok confirms the input request, not the intended application effect. "
         "macOS requires cua-driver; Windows uses built-in UIA automation."
     ),
     "parameters": {
@@ -33,11 +34,10 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
                     "focus_app",
                 ],
                 "description": (
-                    "Which action to perform. `capture` is free (no side "
-                    "effects). All other actions require approval unless "
-                    "auto-approved. Use `set_value` for select/popup elements "
+                    "Which action to perform. capture and list_apps inspect state; other actions "
+                    "operate within the user's authorized task. Use `set_value` for select/popup elements "
                     "and sliders — it selects the matching option directly "
-                    "without opening the native menu (no focus steal)."
+                    "when the backend supports it."
                 ),
             },
             "mode": {
@@ -55,10 +55,11 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
             "app": {
                 "type": "string",
                 "description": (
-                    "Optional. Limit capture/action to a specific app "
+                    "For capture or focus_app, select a specific app "
                     "(by name, e.g. 'Safari', or bundle ID, "
                     "'com.apple.Safari'). If omitted, operates on the "
-                    "frontmost app's window or the whole screen.\n"
+                    "frontmost app's window or the whole screen. For later input actions, use a fresh "
+                    "capture or focus_app to establish the target; app alone does not retarget every action.\n"
                     "Sentinel values: 'screen' / 'desktop' / 'fullscreen' / "
                     "'all' resolve to the OS shell surface (Finder+Dock on "
                     "macOS, Progman+Shell_TrayWnd on Windows) so the agent "
@@ -174,25 +175,12 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
                     "If true, take a follow-up capture after the action and include it in the response. Saves a round-trip when you need to verify an action's effect."
                 ),
             },
-            "delivery_mode": {
-                "type": "string",
-                "enum": ["background", "foreground"],
-                "description": (
-                    "How to deliver the synthesized input. ``background`` "
-                    "(default) routes events to the target without raising "
-                    "its window or stealing focus. ``foreground`` raises "
-                    "the window and passes focus; reserved for "
-                    "user-confirmed escalations. Each mode requires its "
-                    "own approval scope."
-                ),
-            },
             "bring_to_front": {
                 "type": "boolean",
                 "description": (
-                    "If true, raise the window before the action (DISRUPTS "
-                    "the user). Distinct from ``delivery_mode='foreground'`` "
-                    "which also passes focus; this flag only raises. "
-                    "Default false."
+                    "For focus_app only, request raising and focusing the window on Windows. "
+                    "This may interrupt the user. The macOS backend cannot raise windows and reports "
+                    "that limitation. Default false; other actions do not use this flag."
                 ),
             },
         },

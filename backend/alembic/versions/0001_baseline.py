@@ -788,6 +788,7 @@ def upgrade() -> None:
         sa.Column("content_type", sa.String(length=32), server_default=sa.text("'text'"), nullable=False),
         sa.Column("media_json", sa.Text(), nullable=True),
         sa.Column("summary_date", sa.String(length=10), nullable=True),
+        sa.Column("summary_through_message_id", sa.Integer(), nullable=True),
         # IM 入站消息先落库再确认接收；queued 批的上下文排序位置由 context_order 表达，
         # dedup_key 唯一约束做渠道重投去重。
         sa.Column("queued", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),

@@ -177,8 +177,8 @@ def _non_blank(value: str | None) -> str:
 class MomentCreateArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    title: str
-    body: str
+    title: str = Field(min_length=1, max_length=64)
+    body: str = Field(min_length=1, max_length=500)
     emotion: str | None = None
     reason: str = ""
 
@@ -186,43 +186,43 @@ class MomentCreateArgs(BaseModel):
 class MediaImageArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    prompt: str
-    title: str
-    body: str = ""
+    prompt: str = Field(min_length=1, max_length=4000)
+    title: str = Field(min_length=1, max_length=64)
+    body: str = Field(default="", max_length=500)
     size: str = "1024x1024"
-    depicts_self: bool = False
-    narration: str | None = None
+    depicts_self: bool = Field(default=False, strict=True)
+    narration: str | None = Field(default=None, max_length=800)
     reason: str = ""
 
 
 class MediaVideoArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    prompt: str
-    title: str
-    body: str = ""
+    prompt: str = Field(min_length=1, max_length=4000)
+    title: str = Field(min_length=1, max_length=64)
+    body: str = Field(default="", max_length=500)
     duration: int | str = 6
     aspect_ratio: str = "16:9"
-    depicts_self: bool = False
-    narration: str | None = None
+    depicts_self: bool = Field(default=False, strict=True)
+    narration: str | None = Field(default=None, max_length=800)
     reason: str = ""
 
 
 class MediaVoiceArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    text: str
-    title: str
-    body: str = ""
+    text: str = Field(min_length=1, max_length=800)
+    title: str = Field(min_length=1, max_length=64)
+    body: str = Field(default="", max_length=500)
     reason: str = ""
 
 
 class OutreachScheduleArgs(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    name: str = "主动问候"
-    schedule: str
-    prompt: str
+    name: str = Field(default="主动问候", max_length=100)
+    schedule: str = Field(min_length=1, max_length=100)
+    prompt: str = Field(min_length=1, max_length=4000)
     reason: str = ""
 
 
@@ -466,7 +466,11 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         "outreach.schedule",
         40,
         "安排次日主动联系；从计划时间起等待用户在线，最晚保留到用户本地次日结束。",
-        {"name": "string", "schedule": "five-field UTC cron", "prompt": "string"},
+        {
+            "name": "string, at most 100 characters",
+            "schedule": "five-field UTC cron",
+            "prompt": "self-contained instruction, at most 4000 characters",
+        },
         exclusive_group="outreach",
     ),
     NightlyCapability(
@@ -757,17 +761,10 @@ async def _collect_context(user_id: int) -> PlanningContext:
     return context
 
 
-def _normalize_action_id(raw: Any, index: int, seen: set[str]) -> str:
-    candidate = _ACTION_ID_PATTERN.sub("_", _text(raw, 48)).strip("_")
-    if not candidate:
-        candidate = f"action_{index + 1}"
-    base = candidate
-    suffix = 2
-    while candidate in seen:
-        candidate = f"{base}_{suffix}"
-        suffix += 1
-    seen.add(candidate)
-    return candidate
+def _validate_action_id(raw: Any, seen: set[str]) -> None:
+    if not isinstance(raw, str) or not raw or len(raw) > 48 or _ACTION_ID_PATTERN.search(raw) or raw in seen:
+        raise ValueError("Each action requires a unique ID of 1-48 letters, digits, underscores or hyphens")
+    seen.add(raw)
 
 
 def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
@@ -776,8 +773,12 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
     available_names = {item.name for item in context.available_capabilities}
     raw_actions = parsed.get("actions")
     if not isinstance(raw_actions, list):
-        raw_actions = []
+        raise ValueError("nightly plan requires an actions array; use [] for no action")
     seen_ids: set[str] = set()
+    for raw in raw_actions:
+        if not isinstance(raw, dict):
+            raise ValueError("Each planned action must be an object")
+        _validate_action_id(raw.get("id"), seen_ids)
     seen_groups: set[str] = set()
     media_count = 0
     paid_count = 0
@@ -785,8 +786,6 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
     for index, raw in enumerate(raw_actions):
         if len(actions) >= _MAX_ACTIONS:
             break
-        if not isinstance(raw, dict):
-            continue
         capability_name = _text(raw.get("capability"), 64)
         spec = _CAPABILITY_BY_NAME.get(capability_name)
         if spec is None or capability_name not in available_names:
@@ -797,10 +796,14 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             continue
         if capability_name.startswith("media.") and media_count >= _MAX_MEDIA_ACTIONS:
             continue
-        action_id = _normalize_action_id(raw.get("id"), index, seen_ids)
-        dependencies = [
-            _ACTION_ID_PATTERN.sub("_", str(item))[:48] for item in raw.get("depends_on", []) if isinstance(item, str)
-        ]
+        action_id = raw["id"]
+        # 能力或预算过滤不删除前置条件；执行端对未完成的依赖跳过后续动作。
+        dependencies = raw.get("depends_on", [])
+        if not isinstance(dependencies, list) or any(
+            not isinstance(dep, str) or not dep or len(dep) > 48 or _ACTION_ID_PATTERN.search(dep)
+            for dep in dependencies
+        ):
+            raise ValueError("depends_on must contain exact action IDs")
         args = raw.get("arguments") if isinstance(raw.get("arguments"), dict) else {}
         if (
             capability_name in ("media.image", "media.video")
@@ -824,14 +827,12 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
             paid_count += 1
         if spec.exclusive_group:
             seen_groups.add(spec.exclusive_group)
-    valid_ids = {item["id"] for item in actions}
     outfit_ids = {item["id"] for item in actions if item["capability"].startswith("outfit.")}
     for action in actions:
         if action["capability"].startswith("scene."):
             illegal = [dep for dep in action["depends_on"] if dep in outfit_ids]
             if illegal:
                 action["_invalid_scene_outfit_deps"] = illegal
-        action["depends_on"] = [dep for dep in action["depends_on"] if dep in valid_ids and dep != action["id"]]
     actions.sort(key=lambda item: (item["phase"], item["_order"]))
     planned_actions = [
         PlannedAction(
@@ -1876,9 +1877,7 @@ async def _execute_persisted_actions(
             results[row.action_key] = result
             continue
         dependencies = (row.arguments or {}).get("depends_on", [])
-        unsatisfied = [
-            dep for dep in dependencies if dep not in by_key or by_key[dep].status not in _SUCCESS_ACTION_STATUSES
-        ]
+        unsatisfied = [dep for dep in dependencies if dep not in by_key or by_key[dep].status != "succeeded"]
         if unsatisfied:
             result = ActionExecutionResult(
                 status="skipped",
@@ -1976,7 +1975,7 @@ async def _execute_ephemeral_actions(
             statuses[action.id] = result.status
             results[action.id] = result
             continue
-        unsatisfied = [dep for dep in action.depends_on if statuses.get(dep) not in _SUCCESS_ACTION_STATUSES]
+        unsatisfied = [dep for dep in action.depends_on if statuses.get(dep) != "succeeded"]
         if unsatisfied:
             result = ActionExecutionResult(
                 status="skipped",

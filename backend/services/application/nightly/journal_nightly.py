@@ -236,12 +236,18 @@ async def _compose_diary(
     title = ""
     body = ""
     if isinstance(parsed, dict):
-        title = (parsed.get("title") or "").strip()[:128]
-        body = (parsed.get("body") or "").strip()[:2000]
-    if not body:
+        title = parsed.get("title")
+        body = parsed.get("body")
+    if (
+        not isinstance(title, str)
+        or not isinstance(body, str)
+        or len(title) > 128
+        or len(body) > 2000
+        or not body.strip()
+    ):
         logger.warning(
-            "journal_nightly: empty body from compose",
+            "journal_nightly: invalid diary fields from compose",
             extra={"user_id": user_id},
         )
         return "", None
-    return title, body
+    return title.strip(), body.strip()

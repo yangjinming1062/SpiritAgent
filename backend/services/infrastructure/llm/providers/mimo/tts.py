@@ -165,6 +165,8 @@ class MiMoTTSProvider(TTSProvider):
         )
         response = await self._client.chat.completions.create(model=model, messages=messages, audio=audio_kwargs)
         choice = response.choices[0] if response.choices else None
+        if choice is not None and choice.finish_reason != "stop":
+            raise RuntimeError(f"MiMo TTS response did not complete: {choice.finish_reason}")
         if not choice or not getattr(choice.message, "audio", None):
             raise RuntimeError("MiMo TTS returned no audio")
         mime = "audio/mpeg" if fmt == "mp3" else f"audio/{fmt}"
@@ -180,6 +182,8 @@ class MiMoTTSProvider(TTSProvider):
             audio={"format": "mp3", "optimize_text_preview": True},
         )
         choice = response.choices[0] if response.choices else None
+        if choice is not None and choice.finish_reason != "stop":
+            raise RuntimeError(f"MiMo voice design response did not complete: {choice.finish_reason}")
         if not choice or not getattr(choice.message, "audio", None):
             raise RuntimeError("MiMo voice design returned no audio")
         return VoiceDesignResult(

@@ -51,10 +51,8 @@ class ActionResult:
     #   code       — 数值状态码，与 typed_error code 对应
     verified: bool = False
     effect: str = ""
-    escalation: str = "done"
+    escalation: str = ""
     code: int = 0
-    # 后端实现标注动作走的是哪条投递通道，runner 调用方据此按通道应用不同的审批范围；默认 "background"
-    delivery_mode: str = "background"
 
 
 # app= 的哨兵值，目标是 OS 桌面壳层（桌面背景 / 任务栏）而非某个具体应用。

@@ -10,6 +10,7 @@ from components import (
     coerce_non_negative_float,
     get_logger,
     resolve_prompt_text,
+    utc_now,
 )
 from prompts.companion import IDLE_EXPRESSION_INSTRUCTIONS
 from pydantic import BaseModel
@@ -49,6 +50,7 @@ async def check_idle_expression(
         llm_config,
         resolve_prompt_text(IDLE_EXPRESSION_INSTRUCTIONS, ctx.language),
         {
+            "current_time": utc_now().isoformat(),
             "persona": ctx.persona_extras,
             "idle_minutes": round(coerce_non_negative_float(idle_seconds) / 60, 2),
             "local_hour": h if (h := coerce_hour_0_23(local_hour)) >= 0 else None,
@@ -62,15 +64,13 @@ async def check_idle_expression(
     if parsed is None:
         return IdleExpressionResult(expressed=False, reason=fail_reason or "unparseable")
 
-    if not bool(parsed.get("should_express")):
+    if parsed.get("should_express") is not True:
         logger.info("idle_expression: skip", extra={"user_id": user_id})
         return IdleExpressionResult(expressed=False)
 
     allowed_ids = {int(item["action_id"]) for item in ctx.available_actions}
-    raw_id = parsed.get("action_id")
-    try:
-        action_id = int(raw_id)
-    except (TypeError, ValueError):
+    action_id = parsed.get("action_id")
+    if type(action_id) is not int:
         return IdleExpressionResult(expressed=False, reason="invalid action_id")
     if action_id not in allowed_ids:
         return IdleExpressionResult(expressed=False, reason="action_id not in available_actions")

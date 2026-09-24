@@ -23,7 +23,7 @@ from modules.conversation import CompanionReply, Conversation, Message
 from modules.settings import UserSetting
 from modules.system import AgentPromptConfig, ChatRequest, PromptPreset
 from openai import AsyncOpenAI
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.chat import NativeMemory
@@ -42,6 +42,7 @@ from services.domains.conversation import (
     UI_ONLY_SUBTYPES,
     InferenceDefaults,
     conversation_memory_scope,
+    load_context_messages,
     resolve_preset_meta,
 )
 from services.domains.memory import (
@@ -118,30 +119,8 @@ async def _load_memory_query_text(
 ) -> str:
     if use_request and req.message.role == "user":
         return req.message.content or ""
-    checkpoint_id = (
-        await db.execute(
-            select(func.max(Message.id)).where(
-                Message.conversation_id == conv.id,
-                Message.id > conv.context_after_message_id,
-                Message.subtype.in_(("daily_summary", "compress_summary")),
-            ),
-        )
-    ).scalar()
-    stmt = select(Message.content).where(
-        Message.conversation_id == conv.id,
-        func.coalesce(Message.context_order, Message.id) > conv.context_after_message_id,
-        Message.role == "user",
-        Message.queued.is_(False),
-    )
-    if checkpoint_id:
-        stmt = stmt.where(func.coalesce(Message.context_order, Message.id) >= checkpoint_id)
-    # 始终取最近一条用户消息作记忆召回锚点；use_request 仅用于优先取请求内消息
-    content = (
-        await db.execute(
-            stmt.order_by(func.coalesce(Message.context_order, Message.id).desc(), Message.id.desc()).limit(1),
-        )
-    ).scalar()
-    return content or ""
+    history = await load_context_messages(db, conv)
+    return next((m.content or "" for m in reversed(history) if m.role == "user"), "")
 
 
 def _resolve_turn_preset(conv: Conversation, preset_override: PromptPreset | None) -> PromptPreset:
@@ -295,13 +274,14 @@ def _history_to_responses_context(
 
     陪伴预设把日期分界与用户时刻作为独立输入项插入，不写入消息正文；工作预设跳过。
     """
-    context: dict[str, Any] = {"instructions": system_prompt, "input": []}
+    context: dict[str, Any] = {"instructions": system_prompt, "input": [], "source_message_ids": []}
     prev_date_key: str | None = None
     last_user_at: datetime | None = None
 
     valid_msgs = [m for m in db_msgs if getattr(m, "subtype", None) not in UI_ONLY_SUBTYPES]
 
     for msg in valid_msgs:
+        item_start = len(context["input"])
         if inject_time_perception:
             prev_date_key = _maybe_append_day_marker(
                 context["input"],
@@ -316,13 +296,19 @@ def _history_to_responses_context(
             if clock:
                 context["input"].append(_user_time_item(clock))
             last_user_at = msg.created_at
+        source_id = msg.summary_through_message_id if msg.subtype in ("daily_summary", "compress_summary") else msg.id
+        if source_id is None:
+            raise ValueError("Conversation summary requires an original message boundary")
+        context["source_message_ids"].extend([source_id] * (len(context["input"]) - item_start))
 
     if inject_time_perception and (not valid_msgs or valid_msgs[-1].role != "user"):
+        item_start = len(context["input"])
         now = utc_now()
         prev_date_key = _maybe_append_day_marker(context["input"], now, prev_date_key, user_local_tz, lang)
         clock = format_time_anchor(now, None, user_local_tz, lang)
         if clock:
             context["input"].append(_user_time_item(clock))
+        context["source_message_ids"].extend([None] * (len(context["input"]) - item_start))
 
     return context
 
@@ -355,26 +341,7 @@ async def build_turn_inputs(
     if conversation_memory_scope(conv, user_id) != memory_scope:
         raise ValueError("Turn memory scope mismatch")
     resolved_preset = _resolve_turn_preset(conv, preset_override)
-    # LLM 上下文从最新检查点开始（夜间 daily_summary 或进行中 compress_summary），其前消息已被摘要覆盖；原行留在 DB，仅缩窄本次读取范围。
-    checkpoint_id = (
-        await db.execute(
-            select(func.max(Message.id)).where(
-                Message.conversation_id == conv.id,
-                Message.id > conv.context_after_message_id,
-                Message.subtype.in_(("daily_summary", "compress_summary")),
-            ),
-        )
-    ).scalar()
-
-    context_order = func.coalesce(Message.context_order, Message.id)
-    stmt = select(Message).where(
-        Message.conversation_id == conv.id,
-        context_order > conv.context_after_message_id,
-        Message.queued.is_(False),
-    )
-    if checkpoint_id:
-        stmt = stmt.where(context_order >= checkpoint_id)
-    history = (await db.execute(stmt.order_by(context_order.asc(), Message.id.asc()))).scalars().all()
+    history = await load_context_messages(db, conv)
     first_user_msg = next((m for m in history if m.role == "user"), None)
     first_user_msg_content = first_user_msg.content if first_user_msg else None
 

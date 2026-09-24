@@ -14,10 +14,10 @@ _MOOD_MAX_LEN = 200
 
 
 def normalize_mood(raw: object) -> str | None:
-    text = str(raw or "").strip()
-    if not text:
+    text = raw.strip() if isinstance(raw, str) else ""
+    if not text or len(text) > _MOOD_MAX_LEN:
         return None
-    return text[:_MOOD_MAX_LEN]
+    return text
 
 
 async def emit_companion_mood(user_id: int, mood: str) -> None:
@@ -56,6 +56,8 @@ async def update_mood_from_companion_turn(
             "persona": ctx.persona_extras,
             "user_message": user_message[-2000:],
             "assistant_message": assistant_message[-2000:],
+            "user_message_truncated": len(user_message) > 2000,
+            "assistant_message_truncated": len(assistant_message) > 2000,
             **({"long_term_memories": ctx.memories_block} if ctx.memories_block else {}),
             **({"current_mood": ctx.current_mood} if ctx.current_mood else {}),
             **({"recent_context": recent_context} if recent_context else {}),
@@ -70,7 +72,7 @@ async def update_mood_from_companion_turn(
 
     mood = normalize_mood(parsed.get("mood"))
     if mood is None:
-        logger.info("mood_update: empty mood", extra={"user_id": user_id})
+        logger.info("mood_update: invalid mood", extra={"user_id": user_id})
         return None
 
     await emit_companion_mood(user_id, mood)

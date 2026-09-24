@@ -1,5 +1,5 @@
 from .bootstrap import ensure_system_conversations_for_user
-from .context_window import load_recent_context_window
+from .context_window import load_context_messages, load_recent_context_window
 from .edit import EditNotAllowedError, replace_last_user_message
 from .fork import ForkNotAllowedError, SourceNotFoundError, fork_conversation_from_message
 from .formatting import format_messages_compact, message_text
@@ -49,6 +49,7 @@ __all__ = [
     "get_or_create_special_conversation",
     "get_special_conversation",
     "load_recent_context_window",
+    "load_context_messages",
     "resolve_preset_meta",
     "resolve_undo_target",
     "undo_conversation_to_message",

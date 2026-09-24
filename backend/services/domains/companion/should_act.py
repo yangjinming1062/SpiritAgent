@@ -30,7 +30,7 @@ def invalidate_user_should_act(user_id: int) -> None:
     _last_approach_at.pop(user_id, None)
 
 
-# approach 开场白的硬上限：prompt 要 10–30 字，这里兜住 LLM 超发的长文（按字符截断）。
+# 超长开场白不交付，避免裁切改变伙伴表达。
 _MAX_APPROACH_TEXT_CHARS = 80
 
 
@@ -47,8 +47,8 @@ def _normalize_approach_params(params: dict[str, Any] | None) -> dict[str, str] 
     返回 None = 没有可用的开场白，调用方降级 stay——没有话可说的搭话只剩走位，失去意义。
     """
     raw_text = params.get("text") if isinstance(params, dict) else None
-    text = str(raw_text).strip()[:_MAX_APPROACH_TEXT_CHARS] if isinstance(raw_text, str) else ""
-    if not text:
+    text = raw_text.strip() if isinstance(raw_text, str) else ""
+    if not text or len(text) > _MAX_APPROACH_TEXT_CHARS:
         return None
     return {"text": text}
 
@@ -67,6 +67,8 @@ async def should_act(
     """由 LLM 决策伙伴此刻是否要采取自主空间行为。"""
     if kind != "periodic_provision":
         return ShouldActResult(should_act=False, reason="invalid_kind")
+    if screen_locked or fullscreen:
+        return ShouldActResult(should_act=False, action="stay", reason="screen_unavailable")
 
     ctx = await load_companion_prompt_context(user_id)
     if ctx is None:
@@ -96,7 +98,7 @@ async def should_act(
     if parsed is None:
         return ShouldActResult(should_act=False, reason=fail_reason or "llm_error")
 
-    should_act_bool = bool(parsed.get("should_act"))
+    should_act_bool = parsed.get("should_act") is True
     action = str(parsed.get("action") or "stay").lower().strip()
     reason = str(parsed.get("reason") or "")[:200]
     params = parsed.get("params") if isinstance(parsed.get("params"), dict) else None
@@ -116,10 +118,12 @@ async def should_act(
             return ShouldActResult(should_act=False, action="stay", reason="approach_cooldown")
         normalized = _normalize_approach_params(params)
         if normalized is None:
-            logger.info("should_act: approach downgraded (no text)", extra={"user_id": user_id, "reason": reason})
-            return ShouldActResult(should_act=False, action="stay", reason=(f"approach_no_text: {reason}")[:200])
+            logger.info("should_act: approach downgraded (invalid text)", extra={"user_id": user_id, "reason": reason})
+            return ShouldActResult(should_act=False, action="stay", reason=(f"approach_invalid_text: {reason}")[:200])
         _last_approach_at[user_id] = now
         params = normalized
+    else:
+        params = {}
 
     logger.info("should_act: decided to act", extra={"user_id": user_id, "action": action, "reason": reason})
     return ShouldActResult(should_act=True, action=action, params=params, reason=reason)

@@ -82,6 +82,11 @@ async def create_completion(req: CompletionRequest, request: Request, user: Curr
         )
         raise classified_http_exception(classified) from e
 
+    if response.status != "completed":
+        logger.warning("LLM completion incomplete user=%s status=%s", user.id, response.status)
+        raise classified_http_exception(
+            classify_api_error(RuntimeError("LLM response did not complete"), model=req.model or ""),
+        )
     content = response.output_text
     if not content:
         logger.warning("LLM returned 2xx with empty output user=%s", user.id)

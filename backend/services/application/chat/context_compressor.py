@@ -1,4 +1,5 @@
 import json
+from dataclasses import dataclass
 from typing import Any
 
 from components import (
@@ -20,17 +21,71 @@ from services.infrastructure.llm import (
 logger = get_logger(__name__)
 
 
+@dataclass(frozen=True)
+class CompressionInfo:
+    summary: str
+    replaced_count: int
+    prompt_tokens: int
+    completion_tokens: int
+    through_message_id: int
+    prune_before_message_id: int | None
+
+
+def _summary_items(block: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """摘要仅接收文字与媒体引用，不把未提供视觉内容的 base64 当作文字资料。"""
+    items = []
+    for item in block:
+        content = item.get("content")
+        if not isinstance(content, list):
+            items.append(item)
+            continue
+        parts = []
+        for part in content:
+            if isinstance(part, dict) and part.get("type") in ("input_image", "input_video"):
+                source = part.get("image_url") or part.get("video_url") or ""
+                reference = source if isinstance(source, str) and not source.startswith("data:") else "inline media"
+                parts.append(
+                    {
+                        "type": "input_text",
+                        "text": f"[Media reference: {reference}; contents not supplied to this summary]",
+                    },
+                )
+            else:
+                parts.append(part)
+        items.append({**item, "content": parts})
+    return items
+
+
 def _pick_compressible_block(
     rest: list[dict[str, Any]],
     *,
+    source_message_ids: list[int | None],
     preserve_recent: int = 4,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """挑选最旧的连续非 system 块进行压缩；保留最近的若干条消息不动。"""
+    """压缩连续历史前缀，保留最近输入及无持久化来源的本轮资料。"""
+    if len(rest) != len(source_message_ids):
+        raise ValueError("Every context item requires a source message ID or an explicit runtime marker")
     if len(rest) <= preserve_recent + 1:
         return [], rest
-    block = rest[:-preserve_recent] if preserve_recent else rest
-    keep = rest[-preserve_recent:] if preserve_recent else []
-    return block, keep
+    keep_start = len(rest) - preserve_recent if preserve_recent else len(rest)
+    keep_start = min(keep_start, next((i for i, mid in enumerate(source_message_ids) if mid is None), len(rest)))
+    call_positions = {
+        item["call_id"]: index
+        for index, item in enumerate(rest)
+        if item.get("type") == "function_call" and item.get("call_id")
+    }
+    # 一条持久化消息可展开成多个输入项，工具批次也不可在 call/result 之间断开。
+    while keep_start:
+        previous_start = keep_start
+        for item in rest[keep_start:]:
+            if item.get("type") == "function_call_output":
+                keep_start = min(keep_start, call_positions.get(item.get("call_id"), keep_start))
+        if keep_start < len(source_message_ids):
+            while keep_start and source_message_ids[keep_start - 1] == source_message_ids[keep_start]:
+                keep_start -= 1
+        if keep_start == previous_start:
+            break
+    return rest[:keep_start], rest[keep_start:]
 
 
 async def _summarize_block(
@@ -53,7 +108,7 @@ async def _summarize_block(
                     {
                         "type": "input_text",
                         "text": json.dumps(
-                            {"target_tokens": target_tokens, "conversation_items": block},
+                            {"target_tokens": target_tokens, "conversation_items": _summary_items(block)},
                             ensure_ascii=False,
                             default=str,
                         ),
@@ -85,7 +140,7 @@ async def compress_history_if_needed(
     language: str = DEFAULT_LANGUAGE,
     current_tokens: int | None = None,
     force: bool = False,
-) -> tuple[dict[str, Any], dict[str, Any] | None]:
+) -> tuple[dict[str, Any], CompressionInfo | None]:
     """按需或强制压缩历史；成功返回压缩后的 Responses 上下文，失败或无需压缩返回原上下文。"""
     if not force:
         if enabled is None:
@@ -104,9 +159,13 @@ async def compress_history_if_needed(
 
     target = target_tokens if target_tokens is not None else SETTINGS.context_summary_target_tokens
 
-    block, keep = _pick_compressible_block(context["input"])
+    source_ids: list[int | None] = context["source_message_ids"]
+    block, keep = _pick_compressible_block(context["input"], source_message_ids=source_ids)
     if not block:
         return context, None
+    through_id = source_ids[len(block) - 1]
+    if through_id is None:
+        raise ValueError("Compression requires an original message boundary")
 
     try:
         summary, completed, prompt_tokens, completion_tokens = await _summarize_block(
@@ -142,7 +201,12 @@ async def compress_history_if_needed(
             },
         ],
     }
-    compressed: dict[str, Any] = {"instructions": context["instructions"], "input": [placeholder, *keep]}
+    kept_ids = source_ids[replaced_count:]
+    compressed: dict[str, Any] = {
+        "instructions": context["instructions"],
+        "input": [placeholder, *keep],
+        "source_message_ids": [through_id, *kept_ids],
+    }
     logger.info(
         "context_compressor: summarized messages into one summary",
         extra={
@@ -153,9 +217,11 @@ async def compress_history_if_needed(
             "new_count": len(compressed["input"]),
         },
     )
-    return compressed, {
-        "summary": summary,
-        "replaced_count": replaced_count,
-        "prompt_tokens": prompt_tokens,
-        "completion_tokens": completion_tokens,
-    }
+    return compressed, CompressionInfo(
+        summary=summary,
+        replaced_count=replaced_count,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        through_message_id=through_id,
+        prune_before_message_id=min((mid for mid in kept_ids if mid is not None), default=None),
+    )

@@ -39,5 +39,7 @@ class QwenSTTProvider(STTProvider):
             extra_body={"asr_options": asr_options} if asr_options else {},
         )
         choice = response.choices[0] if response.choices else None
+        if choice is not None and choice.finish_reason != "stop":
+            raise RuntimeError(f"Qwen transcription did not complete: {choice.finish_reason}")
         text = (choice.message.content or "") if choice and choice.message else ""
         return STTResult(text=text.strip(), raw=response)

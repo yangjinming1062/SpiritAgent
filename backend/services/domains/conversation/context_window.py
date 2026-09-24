@@ -1,11 +1,46 @@
-from modules.conversation import Message
-from sqlalchemy import select
+from modules.conversation import Conversation, Message
+from sqlalchemy import func, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .formatting import format_messages_compact
 from .main_conversation import UI_ONLY_SUBTYPES, get_special_conversation
 
 RECENT_CONTEXT_CHAR_CAP = 200
+CHECKPOINT_SUBTYPES = ("daily_summary", "compress_summary")
+
+
+async def load_context_messages(db: AsyncSession, conv: Conversation) -> list[Message]:
+    """按摘要的原消息覆盖边界读取未总结的历史，保留 IM 消费顺序。"""
+    checkpoint = await db.scalar(
+        select(Message)
+        .where(
+            Message.conversation_id == conv.id,
+            Message.id > conv.context_after_message_id,
+            Message.subtype.in_(CHECKPOINT_SUBTYPES),
+        )
+        .order_by(Message.id.desc())
+        .limit(1),
+    )
+    order = func.coalesce(Message.context_order, Message.id)
+    stmt = select(Message).where(
+        Message.conversation_id == conv.id,
+        order > conv.context_after_message_id,
+        Message.queued.is_(False),
+        Message.subtype.is_(None) | Message.subtype.notin_((*UI_ONLY_SUBTYPES, *CHECKPOINT_SUBTYPES)),
+    )
+    if checkpoint is not None:
+        boundary = await db.scalar(
+            select(Message).where(
+                Message.conversation_id == conv.id,
+                Message.id == checkpoint.summary_through_message_id,
+                Message.subtype.is_(None) | Message.subtype.notin_(CHECKPOINT_SUBTYPES),
+            ),
+        )
+        if boundary is None:
+            raise ValueError("Conversation summary requires an original message boundary")
+        stmt = stmt.where(tuple_(order, Message.id) > (boundary.context_order or boundary.id, boundary.id))
+    rows = list((await db.scalars(stmt.order_by(order, Message.id))).all())
+    return [checkpoint, *rows] if checkpoint is not None else rows
 
 
 async def load_recent_context_window(db: AsyncSession, user_id: int, max_messages: int = 10) -> str:

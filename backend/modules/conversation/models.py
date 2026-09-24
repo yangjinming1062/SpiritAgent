@@ -84,6 +84,8 @@ class Message(ModelBase):
     reply_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 在 subtype="daily_summary" 的 system 消息上设置，让每日 checkpoint 不用解析 content 文本就能读到截止日期；content 仍是人类可读版本，本列才是结构化源。
     summary_date: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
+    # 摘要实际覆盖到的原消息 id，与摘要插入位置及 IM 消费排序分开。
+    summary_through_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # IM 入站消息先落库再确认接收：queued=True 表示已被接收但尚未被任何回合消费；
     # 消费时整批清除。接收顺序即 id 序，回合顺序由消费动作表达。
     queued: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), nullable=False)

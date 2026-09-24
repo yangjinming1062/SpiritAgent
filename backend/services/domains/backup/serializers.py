@@ -1,5 +1,6 @@
 import asyncio
 import json
+from bisect import bisect_left
 from datetime import date, datetime
 from pathlib import Path
 from typing import Any
@@ -303,6 +304,13 @@ def _build_payload(
         payload["error"] = None if revision else "恢复的角色资料尚未完成分析，请重试"
     if table == "messages" and payload.get("conversation_id") is None:
         raise ValueError("Message conversation is missing from backup")
+    if table == "messages":
+        through_id = payload.get("summary_through_message_id")
+        if payload.get("subtype") in ("daily_summary", "compress_summary"):
+            if type(through_id) is not int or through_id <= 0:
+                raise ValueError("Conversation summary requires an original message boundary")
+        elif through_id is not None:
+            raise ValueError("Only summary messages may have a summary boundary")
     if table == "conversations":
         payload["parent_id"] = None
         if not isinstance(payload.get("context_after_message_id"), int) or payload["context_after_message_id"] < 0:
@@ -394,7 +402,33 @@ async def restore_conversation_context(
 ) -> None:
     conversations = {str(row["id"]): row for row in rows.get("conversations", [])}
     messages = {str(row["id"]): row for row in rows.get("messages", [])}
+    for original_id, raw in messages.items():
+        if raw.get("subtype") not in ("daily_summary", "compress_summary"):
+            continue
+        source_id = str(raw["summary_through_message_id"])
+        source = messages.get(source_id)
+        if (
+            source is None
+            or str(source["conversation_id"]) != str(raw["conversation_id"])
+            or source.get("subtype") in ("daily_summary", "compress_summary")
+        ):
+            raise ValueError("Conversation summary boundary is missing from backup")
+        checkpoint = await db.get(Message, int(id_map["messages"][original_id]))
+        checkpoint.summary_through_message_id = int(id_map["messages"][source_id])
     for original_id, raw in conversations.items():
+        ordered_messages = sorted(
+            (message for message in messages.values() if str(message["conversation_id"]) == original_id),
+            key=lambda message: int(message["id"]),
+        )
+        original_ids = [int(message["id"]) for message in ordered_messages]
+        mapped_ids = [int(id_map["messages"][str(mid)]) for mid in original_ids]
+        for message in ordered_messages:
+            if (order := message.get("context_order")) is None:
+                continue
+            # 消费位置可能落在两个接收 id 之间；保留其相对次序，不沿用导入前的数值。
+            position = bisect_left(original_ids, order)
+            restored = await db.get(Message, int(id_map["messages"][str(message["id"])]))
+            restored.context_order = mapped_ids[position] if position < len(mapped_ids) else mapped_ids[-1] + 1
         watermark = raw["context_after_message_id"]
         if watermark:
             mapped = [

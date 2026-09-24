@@ -124,7 +124,7 @@ MOMENT_CREATE_DESC = (
 
 MOMENT_CREATE_PARAM_DESCS = {
     "title": "短标题（≤ 24 字）",
-    "body": "以伙伴视角写正文，中文通常 80–240 字，英文保持相近信息量；可以直接对用户说话，不代替用户断言感受或经历",
+    "body": "以伙伴视角写正文，中文通常 80–240 字；所有语言均最多 500 字符（含空格与标点）。可以直接对用户说话，不代替用户断言感受或经历",
     "emotion": "可选情绪 token，如 happy/sad/curious/neutral；不确定时省略",
     "kind": "内容性质：emotion=情绪感受 / together=共同经历 / scene=场景画面；默认 emotion",
 }
@@ -136,7 +136,7 @@ DIARY_WRITE_DESC = (
 )
 
 DIARY_WRITE_PARAM_DESCS = {
-    "body": "日记正文（≤ 1000 字）",
+    "body": "本次补记正文，所有语言均最多 1000 字符（含空格与标点）；容量不足时按工具返回精简本次内容，已保存的部分不要重复提交",
     "mood": "可选情绪 token",
     "date": "ISO 日期（YYYY-MM-DD）；缺省为用户本地今天",
     "title": "可选标题",

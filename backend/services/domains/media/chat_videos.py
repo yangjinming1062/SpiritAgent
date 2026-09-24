@@ -203,12 +203,18 @@ async def enforce_session_quota(db: AsyncSession, session_id: str, incoming_byte
     )
 
 
-async def prune_videos_in_range(db: AsyncSession, conversation_id: int, *, lo: int = 0, hi: int | None = None) -> None:
+async def prune_videos_in_range(
+    db: AsyncSession,
+    conversation_id: int,
+    *,
+    lo: int = 0,
+    hi: int | None = None,
+    preserve_queued: bool = False,
+) -> None:
     """清理 ``[lo, hi)`` 区间用户行引用的视频文件并改写 part。
 
-    调用时机：压缩/夜间摘要检查点落库后（``hi``=检查点 id，区间行已被摘要覆盖）与
-    历史截断删除前（``lo``=截断起点）。这些行不会再进上下文读路径，视频是死重量；
-    改写占位而非只删文件，保证水合渲染与 LLM 上下文都不残留死链 URL。
+    摘要按实际覆盖范围清理并保留未消费的 IM 消息，历史撤回按删除范围清理；区间外仍有引用的文件保留。
+    已删除文件的区间内引用改写为占位，不留下死链。
     """
     conditions = [
         Message.conversation_id == conversation_id,
@@ -219,6 +225,8 @@ async def prune_videos_in_range(db: AsyncSession, conversation_id: int, *, lo: i
     ]
     if hi is not None:
         conditions.append(Message.id < hi)
+    if preserve_queued:
+        conditions.append(Message.queued.is_(False))
     rows = (await db.execute(select(Message.id, Message.content).where(*conditions))).all()
     if not rows:
         return
@@ -232,6 +240,26 @@ async def prune_videos_in_range(db: AsyncSession, conversation_id: int, *, lo: i
                 file_id = _file_id_from_url(str(part.get("video_url") or ""), str(conversation_id))
                 if file_id is not None:
                     file_ids.add(file_id)
+    if not file_ids:
+        return
+    outside = (Message.id < lo) | (Message.id >= hi) if hi is not None else Message.id < lo
+    if preserve_queued:
+        outside = outside | Message.queued.is_(True)
+    retained = await db.scalars(
+        select(Message.content).where(
+            Message.conversation_id == conversation_id,
+            outside,
+            Message.role == "user",
+            Message.content_type == "multimodal_v1",
+            Message.content.like('%"input_video"%'),
+        ),
+    )
+    for content in retained:
+        parts = safe_json_loads(content, default=[])
+        if isinstance(parts, list):
+            for part in parts:
+                if isinstance(part, dict) and part.get("type") == "input_video":
+                    file_ids.discard(_file_id_from_url(str(part.get("video_url") or ""), str(conversation_id)))
     if not file_ids:
         return
     root = session_dir(SETTINGS.data_dir, str(conversation_id)).resolve()

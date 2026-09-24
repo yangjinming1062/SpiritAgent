@@ -42,6 +42,8 @@ async def moment_create_tool(
     clean_body = (body or "").strip()
     if not clean_title or not clean_body:
         return tool_error("时刻标题和内容不能为空")
+    if len(clean_title) > 24 or len(clean_body) > 500:
+        return tool_error("片刻标题最多 24 字符，正文最多 500 字符；请精简后提交，内容尚未保存")
     tier = disturbance_tier or (kwargs.get("user_settings") or {}).get("companion.disturbance_tier")
     if tier is None and user_id is not None:
         tier = await get_disturbance_tier(user_id)
@@ -86,6 +88,8 @@ async def diary_write_tool(
     clean_body = (body or "").strip()
     if not clean_body:
         return tool_error("日记内容不能为空")
+    if len(clean_body) > 1000:
+        return tool_error("本次日记补记最多 1000 字符，请精简后提交；内容尚未保存")
     tier = disturbance_tier or (kwargs.get("user_settings") or {}).get("companion.disturbance_tier")
     if tier is None and user_id is not None:
         tier = await get_disturbance_tier(user_id)
@@ -102,15 +106,18 @@ async def diary_write_tool(
 
     async with SESSION_LOCAL() as db:
         entry_date = target_date or await resolve_user_local_today(db, user_id)
-        row = await upsert_diary(
-            db,
-            user_id,
-            entry_date=entry_date,
-            title=(title or "").strip(),
-            body=clean_body,
-            mood=mood,
-            source=DiarySource.LLM.value,
-        )
+        try:
+            row = await upsert_diary(
+                db,
+                user_id,
+                entry_date=entry_date,
+                title=(title or "").strip(),
+                body=clean_body,
+                mood=mood,
+                source=DiarySource.LLM.value,
+            )
+        except ValueError as exc:
+            return tool_error(str(exc))
     return json.dumps({"success": True, "diary_id": row.id, "entry_date": entry_date.isoformat()}, ensure_ascii=False)
 
 
@@ -120,8 +127,8 @@ MOMENT_CREATE_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "title": {"type": "string", "description": MOMENT_CREATE_PARAM_DESCS["title"]},
-            "body": {"type": "string", "description": MOMENT_CREATE_PARAM_DESCS["body"]},
+            "title": {"type": "string", "maxLength": 24, "description": MOMENT_CREATE_PARAM_DESCS["title"]},
+            "body": {"type": "string", "maxLength": 500, "description": MOMENT_CREATE_PARAM_DESCS["body"]},
             "emotion": {"type": "string", "description": MOMENT_CREATE_PARAM_DESCS["emotion"]},
             "kind": {
                 "type": "string",
@@ -139,7 +146,7 @@ DIARY_WRITE_SCHEMA = {
     "parameters": {
         "type": "object",
         "properties": {
-            "body": {"type": "string", "description": DIARY_WRITE_PARAM_DESCS["body"]},
+            "body": {"type": "string", "maxLength": 1000, "description": DIARY_WRITE_PARAM_DESCS["body"]},
             "mood": {"type": "string", "description": DIARY_WRITE_PARAM_DESCS["mood"]},
             "date": {"type": "string", "description": DIARY_WRITE_PARAM_DESCS["date"]},
             "title": {"type": "string", "description": DIARY_WRITE_PARAM_DESCS["title"]},

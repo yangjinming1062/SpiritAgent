@@ -69,8 +69,8 @@ async def _generate_reply_inner(user_id: int, moment_id: str) -> None:
             max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         )
     ).strip()
-    if not reply:
-        logger.info("moment reply: empty response", extra={"user_id": user_id})
+    if not reply or len(reply) > 500:
+        logger.info("moment reply: empty or oversized response", extra={"user_id": user_id})
         return
 
     async with SESSION_LOCAL() as db:

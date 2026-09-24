@@ -156,12 +156,16 @@ def build_prompt_input(from_ref: str, to_ref: str, commits: list[Commit]) -> str
             blocks.append("（其余提交省略）")
             break
         blocks.append(block)
+    if len(commits) > MAX_COMMITS:
+        blocks.append(f"（另有 {len(commits) - MAX_COMMITS} 条提交未包含在本次资料中）")
     header = f"SpiritAgent 从 {from_ref} 到 {to_ref} 的提交记录（新在前）：\n"
     return header + "\n\n".join(blocks)
 
 
 def extract_response_text(data: dict) -> str | None:
     """OpenAI Responses 协议的输出提取；取不到正文返回 None。"""
+    if data.get("status") != "completed":
+        return None
     output_text = data.get("output_text")
     if isinstance(output_text, str) and output_text.strip():
         return output_text

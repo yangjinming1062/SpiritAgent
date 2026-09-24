@@ -27,7 +27,8 @@ SYSTEM_GET_IDLE_SCHEMA = {
 SYSTEM_IS_LOCKED_SCHEMA = {
     "name": "system.is_screen_locked",
     "description": (
-        "True iff the workstation session is locked. False when the platform can't determine the lock state — a wrong 'locked' answer is worse than a conservative False."
+        "True when the workstation session is detected as locked. False means unlocked or unavailable detection; "
+        "it does not by itself prove the desktop is available or that the user welcomes contact."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }

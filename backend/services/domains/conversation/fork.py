@@ -88,26 +88,34 @@ async def fork_conversation_from_message(
     await db.flush()
 
     # 统计列清零；tool_calls / media_json / content_type 原样复制以保证工具调用链自洽。
+    copies: dict[int, Message] = {}
     for row in rows:
-        db.add(
-            Message(
-                conversation_id=new_conv.id,
-                role=row.role,
-                subtype=row.subtype,
-                content=row.content,
-                tool_calls=row.tool_calls,
-                tool_call_id=row.tool_call_id,
-                prompt_tokens=0,
-                completion_tokens=0,
-                turn_duration_ms=0,
-                content_type=row.content_type,
-                media_json=row.media_json,
-                reasoning_content=row.reasoning_content,
-                reply_json=row.reply_json,
-                summary_date=row.summary_date,
-                created_at=row.created_at,
-            ),
+        copy = Message(
+            conversation_id=new_conv.id,
+            role=row.role,
+            subtype=row.subtype,
+            content=row.content,
+            tool_calls=row.tool_calls,
+            tool_call_id=row.tool_call_id,
+            prompt_tokens=0,
+            completion_tokens=0,
+            turn_duration_ms=0,
+            content_type=row.content_type,
+            media_json=row.media_json,
+            reasoning_content=row.reasoning_content,
+            reply_json=row.reply_json,
+            summary_date=row.summary_date,
+            created_at=row.created_at,
         )
+        db.add(copy)
+        copies[row.id] = copy
+    await db.flush()
+    for row in rows:
+        if row.subtype in ("daily_summary", "compress_summary"):
+            boundary = copies.get(row.summary_through_message_id)
+            if boundary is None:
+                raise SourceNotFoundError("摘要覆盖边界不在可派生历史中")
+            copies[row.id].summary_through_message_id = boundary.id
 
     await db.commit()
     await db.refresh(new_conv)

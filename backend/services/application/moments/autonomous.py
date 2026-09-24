@@ -14,6 +14,7 @@ from components import (
     get_logger,
     is_user_in_maintenance,
     resolve_prompt_text,
+    utc_now,
 )
 from modules.companion import CompanionMoment, MomentKind, MomentSource
 from prompts.nightly import MOMENT_IMPULSE_INSTRUCTIONS
@@ -82,6 +83,7 @@ async def maybe_run_moment_impulse(user_id: int) -> None:
         return
 
     payload: dict[str, Any] = {
+        "current_time": utc_now().isoformat(),
         "output_language": ctx.language,
         "persona": ctx.persona_extras,
         "recent_moments": [{"title": t, "body": b} for t, b in recent],
@@ -105,14 +107,18 @@ async def maybe_run_moment_impulse(user_id: int) -> None:
     if parsed is None:
         logger.info("moment_impulse: skipped", extra={"user_id": user_id, "reason": fail_reason})
         return
-    if not parsed.get("post"):
+    if parsed.get("post") is not True:
         return
-    title = str(parsed.get("title") or "").strip()
-    body = str(parsed.get("body") or "").strip()
-    if not title or not body:
-        logger.info("moment_impulse: post missing title/body", extra={"user_id": user_id})
+    title, body, emotion = parsed.get("title"), parsed.get("body"), parsed.get("emotion")
+    if (
+        not isinstance(title, str)
+        or not 1 <= len(title.strip()) <= 24
+        or not isinstance(body, str)
+        or not 1 <= len(body.strip()) <= 500
+        or emotion not in ("happy", "curious", "calm", "miss", "thoughtful", "proud", "soft")
+    ):
+        logger.info("moment_impulse: invalid post fields", extra={"user_id": user_id})
         return
-    emotion = str(parsed.get("emotion") or "").strip()[:32] or None
 
     async with SESSION_LOCAL() as db:
         row = await create_user_moment(

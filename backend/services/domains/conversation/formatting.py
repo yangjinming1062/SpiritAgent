@@ -1,7 +1,7 @@
+import json
+
 from components import safe_json_loads
 from modules.conversation import Message
-
-_ROLE_LABELS: dict[str, str] = {"user": "用户", "assistant": "伙伴"}
 
 
 def message_text(m: Message) -> str:
@@ -22,7 +22,23 @@ def message_text(m: Message) -> str:
 
 
 def format_messages_compact(msgs: list[Message], *, char_cap: int | None = None) -> str:
-    """把消息列表格式化为「角色: 文本」紧凑文本，供 LLM 提示复用。"""
-    return "\n".join(
-        f"{_ROLE_LABELS.get(m.role, m.role)}: {text[:char_cap]}" for m in msgs if (text := message_text(m))
-    )
+    """保留发言归属、时间、截断与工具关联；正文中的换行不能伪装成另一条发言。"""
+    records = []
+    for msg in msgs:
+        text = message_text(msg)
+        if not text and not msg.tool_calls:
+            continue
+        record = {
+            "role": msg.role,
+            "created_at": msg.created_at.isoformat() if msg.created_at else None,
+            "content": text[:char_cap],
+            "truncated": char_cap is not None and len(text) > char_cap,
+        }
+        if msg.subtype:
+            record["subtype"] = msg.subtype
+        if msg.tool_calls:
+            record["tool_calls"] = safe_json_loads(msg.tool_calls, default=[])
+        if msg.tool_call_id:
+            record["tool_call_id"] = msg.tool_call_id
+        records.append(record)
+    return json.dumps(records, ensure_ascii=False) if records else ""

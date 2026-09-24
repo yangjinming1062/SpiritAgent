@@ -21,7 +21,7 @@ from modules.companion import Persona
 from modules.conversation import Conversation, Message
 from modules.scheduler import NightlyActivityLog
 from modules.settings import UserSetting
-from prompts.nightly import NIGHTLY_REFLECTION_TEXTS
+from prompts.nightly import NIGHTLY_REFLECTION_TEXTS, REFLECTION_REPAIR_INSTRUCTIONS
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -72,6 +72,7 @@ async def _stage_4_self_diary(
         **({"moment_interactions": moment_interactions} if moment_interactions else {}),
         "local_date": local_date_str,
         "language": language,
+        "max_content_chars": SETTINGS.diary_max_content_chars,
     }
     async with session_scope() as db:
         persona = await db.scalar(select(Persona).where(Persona.user_id == user_id))
@@ -81,23 +82,26 @@ async def _stage_4_self_diary(
             for key in ("name", "personality", "speaking_style", "relationship")
             if definition.get(key)
         }
-    raw = await call_llm_once(
-        llm_cfg,
-        resolve_prompt_text(NIGHTLY_REFLECTION_TEXTS, language),
-        payload,
-        max_output_tokens=SETTINGS.nightly_diary_max_tokens,
-        json_output=True,
-    )
-    parsed = parse_llm_json(raw)
-    if not isinstance(parsed, dict):
-        logger.warning(
-            "nightly_activity: stage 4 failed to parse diary JSON",
-            extra={"user_id": user_id},
+    instructions = resolve_prompt_text(NIGHTLY_REFLECTION_TEXTS, language)
+    for attempt in range(2):
+        raw = await call_llm_once(
+            llm_cfg,
+            instructions + (REFLECTION_REPAIR_INSTRUCTIONS if attempt else ""),
+            payload,
+            max_output_tokens=SETTINGS.nightly_diary_max_tokens,
+            json_output=True,
         )
-        return False
-
-    content = (parsed.get("content") or "").strip()[: SETTINGS.diary_max_content_chars]
-    if not content:
+        parsed = parse_llm_json(raw)
+        raw_content = parsed.get("content") if isinstance(parsed, dict) and set(parsed) == {"content"} else None
+        content = raw_content.strip() if isinstance(raw_content, str) else ""
+        if content and len(content) <= SETTINGS.diary_max_content_chars:
+            break
+        payload["validation_feedback"] = {
+            "error": "Expected one object with a non-blank string content within max_content_chars",
+            "received_content_chars": len(content),
+        }
+    else:
+        logger.warning("nightly_activity: invalid reflection after repair", extra={"user_id": user_id})
         return False
 
     diary_context = f"diary:{local_date_str}"

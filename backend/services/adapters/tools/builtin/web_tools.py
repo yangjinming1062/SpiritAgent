@@ -33,7 +33,11 @@ async def _summarize_doc(client: AsyncOpenAI, model_name: str, doc: dict) -> Non
                         {
                             "type": "input_text",
                             "text": json.dumps(
-                                {"source_url": doc.get("url"), "content": content[:50000]},
+                                {
+                                    "source_url": doc.get("url"),
+                                    "content": content[:50000],
+                                    "source_excerpted": len(content) > 50000,
+                                },
                                 ensure_ascii=False,
                             ),
                         },
@@ -46,10 +50,15 @@ async def _summarize_doc(client: AsyncOpenAI, model_name: str, doc: dict) -> Non
         if response.status != "completed" or not response.output_text.strip():
             raise RuntimeError("Web summary response did not complete with text")
         doc["content"] = response.output_text
+        doc["content_kind"] = "summary"
+        doc["source_excerpted"] = len(content) > 50000
     except Exception as e:
         # 单文档失败必须隔离，否则会拖垮整批 gather（httpx、JSON 解析、LLMRuntimeError、空 choices 都落在这一层）。
         logger.warning("Failed to summarize content", extra={"error_msg": str(e)})
         doc["content"] = content[:5000]
+        doc["content_kind"] = "extracted_text"
+        doc["source_excerpted"] = len(content) > 5000
+        doc["summarization_failed"] = True
 
 
 async def _summarize_documents(documents: list[dict], llm_config: UserLlmConfig) -> None:

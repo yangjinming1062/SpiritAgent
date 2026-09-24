@@ -36,5 +36,7 @@ class MiMoSTTProvider(STTProvider):
             extra_body={"asr_options": {"language": language}},
         )
         choice = response.choices[0] if response.choices else None
+        if choice is not None and choice.finish_reason != "stop":
+            raise RuntimeError(f"MiMo transcription did not complete: {choice.finish_reason}")
         text = (choice.message.content or "") if choice and choice.message else ""
         return STTResult(text=text, raw=response)

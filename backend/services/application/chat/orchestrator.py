@@ -226,6 +226,7 @@ async def _run_chat_turn(
             companion_proactive_turn=ephemeral and headless and resolved_preset.id == "companion",
             excluded_tool_names=effective_excluded_tool_names,
         )
+        runtime_item_start = len(inputs.context["input"])
         if resolved_preset.id == "companion":
             waits = await list_companion_intents(db, user_id)
             if waits:
@@ -242,6 +243,7 @@ async def _run_chat_turn(
                 )
         if ephemeral:
             inputs.context["input"].extend(message_to_response_items(req.message.model_dump(exclude_none=True)))
+        inputs.context["source_message_ids"].extend([None] * (len(inputs.context["input"]) - runtime_item_start))
 
     compression_enabled = safe_json_loads(
         effective_settings.get("chat.enable_context_compression", ""),
@@ -274,16 +276,17 @@ async def _run_chat_turn(
             checkpoint = Message(
                 conversation_id=conv.id,
                 role="system",
-                content=f"[🗜️ 对话压缩 — {compress_info['replaced_count']} 条早期消息已压缩]\n{compress_info['summary']}",
+                content=f"[🗜️ 对话压缩 — {compress_info.replaced_count} 条早期消息已压缩]\n{compress_info.summary}",
                 subtype="compress_summary",
-                prompt_tokens=compress_info.get("prompt_tokens", 0),
-                completion_tokens=compress_info.get("completion_tokens", 0),
+                summary_through_message_id=compress_info.through_message_id,
+                prompt_tokens=compress_info.prompt_tokens,
+                completion_tokens=compress_info.completion_tokens,
             )
             db.add(checkpoint)
             await db.commit()
             checkpoint_id = checkpoint.id
-            # 检查点之前的视频不会再进读路径，磁盘是死重量；清理并改写历史行 part。
-            await prune_videos_in_range(db, conv.id, hi=checkpoint_id)
+            if prune_before := compress_info.prune_before_message_id:
+                await prune_videos_in_range(db, conv.id, hi=prune_before, preserve_queued=True)
             await db.commit()
         # 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补。
         await emitter.send_json(

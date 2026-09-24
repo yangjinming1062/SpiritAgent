@@ -175,22 +175,7 @@ def handle_computer_use(args: dict[str, Any], **kwargs) -> Any:
 
 def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) -> Any:
     capture_after = bool(args.get("capture_after"))
-    delivery_mode = str(args.get("delivery_mode") or "background").strip().lower()
-    if delivery_mode not in {"background", "foreground"}:
-        delivery_mode = "background"
     bring_to_front = bool(args.get("bring_to_front"))
-
-    def _tag(res: ActionResult) -> ActionResult:
-        """把 delivery_mode 与默认 verdict 字段盖到结果上，不经过后端 ABC。
-
-        delivery_mode 总是被覆盖 — runner 是唯一知道本次调用 scope（background/foreground）的层。
-        escalation 仅在后端保持 dataclass 默认（""）时回填为 "done" / "verify_fresh_state"；
-        后端已设置 "escalate" 或其他真实值时予以保留，绝不被 runner 启发式静默覆盖。
-        """
-        res.delivery_mode = delivery_mode
-        if not res.escalation:
-            res.escalation = "done" if res.ok else "verify_fresh_state"
-        return res
 
     match action:
         case "capture":
@@ -213,14 +198,14 @@ def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) ->
                 return json.dumps(
                     {"error": f"wait: 'seconds' {seconds} > max 30; loop with a shorter wait if you need longer"},
                 )
-            return _maybe_follow_capture(backend, _tag(backend.wait(seconds)), capture_after)
+            return _maybe_follow_capture(backend, backend.wait(seconds), capture_after)
         case "list_apps":
             apps = backend.list_apps()
             return json.dumps({"apps": apps, "count": len(apps)})
         case "focus_app":
             if not (app := args.get("app")):
                 return json.dumps({"error": "focus_app requires `app`"})
-            return _maybe_follow_capture(backend, _tag(backend.focus_app(app, bring_to_front)), capture_after)
+            return _maybe_follow_capture(backend, backend.focus_app(app, bring_to_front), capture_after)
         case "click" | "double_click" | "right_click" | "middle_click":
             button = (
                 "right"
@@ -238,7 +223,7 @@ def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) ->
                 click_count=2 if action == "double_click" else 1,
                 modifiers=args.get("modifiers"),
             )
-            return _maybe_follow_capture(backend, _tag(res), capture_after)
+            return _maybe_follow_capture(backend, res, capture_after)
         case "drag":
             if args.get("from_element") is None and not args.get("from_coordinate"):
                 return json.dumps({"error": "drag requires from_coordinate/to_coordinate or from_element/to_element"})
@@ -250,7 +235,7 @@ def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) ->
                 button=args.get("button", "left"),
                 modifiers=args.get("modifiers"),
             )
-            return _maybe_follow_capture(backend, _tag(res), capture_after)
+            return _maybe_follow_capture(backend, res, capture_after)
         case "scroll":
             coord = args.get("coordinate") or (None, None)
             res = backend.scroll(
@@ -261,15 +246,15 @@ def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) ->
                 y=coord[1],
                 modifiers=args.get("modifiers"),
             )
-            return _maybe_follow_capture(backend, _tag(res), capture_after)
+            return _maybe_follow_capture(backend, res, capture_after)
         case "type":
-            return _maybe_follow_capture(backend, _tag(backend.type_text(args.get("text", ""))), capture_after)
+            return _maybe_follow_capture(backend, backend.type_text(args.get("text", "")), capture_after)
         case "key":
-            return _maybe_follow_capture(backend, _tag(backend.key(args.get("keys", ""))), capture_after)
+            return _maybe_follow_capture(backend, backend.key(args.get("keys", "")), capture_after)
         case "set_value":
             if (val := args.get("value")) is None:
                 return json.dumps({"error": "set_value requires `value`"})
-            return _maybe_follow_capture(backend, _tag(backend.set_value(str(val), args.get("element"))), capture_after)
+            return _maybe_follow_capture(backend, backend.set_value(str(val), args.get("element")), capture_after)
     return json.dumps({"error": f"unknown action {action!r}"})
 
 
@@ -379,8 +364,7 @@ def _action_result_payload(res: ActionResult) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "ok": res.ok,
         "action": res.action,
-        "delivery_mode": res.delivery_mode,
-        "escalation": res.escalation,
+        "escalation": res.escalation or ("done" if res.ok else "verify_fresh_state"),
     }
     if res.message:
         payload["message"] = clean_output(res.message)
@@ -411,8 +395,7 @@ def _maybe_follow_capture(backend: ComputerUseBackend, res: ActionResult, do_cap
         prefix_parts = [
             f"[{res.action}]",
             f"ok={res.ok}",
-            f"delivery_mode={res.delivery_mode}",
-            f"escalation={res.escalation}",
+            f"escalation={action_payload['escalation']}",
         ]
         if safe_message:
             prefix_parts.append(f"message={safe_message!r}")

@@ -97,7 +97,7 @@ async def review_memories(
                 config = llm_config or await resolve_user_llm_config(db, scope.user_id)
             if not context.messages and (session_id is not None or not context.memories):
                 return
-            if not (config.get("api_key") and config.get("base_url") and config.get("model_name")):
+            if not (config.api_key and config.base_url and config.model_name):
                 raise ValueError("Memory review requires an available LLM configuration")
             await assess_memory_changes(
                 scope,

@@ -88,25 +88,19 @@ REMOTE_TOOL_DESCRIPTION = """Execute shell commands on the configured remote hos
 The remote platform, tools, package manager, and filesystem depend on that host.
 """
 
-TERMINAL_COMMON_DESCRIPTION = """Do NOT use cat/head/tail to read files — use read_file instead.
-Do NOT use grep/rg/find to search — use search_files instead.
-Do NOT use ls to list directories — use search_files(target='files') instead.
-Do NOT use sed/awk to edit files — use patch instead.
-Do NOT use echo/cat heredoc to create files — use write_file instead.
-Reserve terminal for: builds, installs, git, processes, scripts, network, package managers, and anything
-that needs a shell.
+TERMINAL_COMMON_DESCRIPTION = """Prefer available file tools for reading, searching, listing, writing and patching
+when they operate on the required filesystem. Use terminal for builds, installs, git, processes,
+scripts, network and shell tasks, or when the file tools cannot access the target environment.
+Preserve the target host and paths; a local file tool does not establish the contents of a remote file.
 
 Foreground (default): Commands return INSTANTLY when done, even if the timeout is high.
 Set timeout=300 for long builds/scripts — you'll still get the result in seconds if it's fast.
 Prefer foreground for short commands.
-Background: Set background=true to get a session_id. Almost always pair with notify_on_complete=true —
-bg without notify runs SILENTLY and you have no way to learn it finished short of calling
-process(action='poll') yourself. Two legitimate uses:
-  (1) Long-lived processes that never exit (servers, watchers, daemons) — silent is correct,
-      there's no exit to notify on.
-  (2) Long-running bounded tasks (tests, builds, deploys, CI pollers, batch jobs) — MUST set
-      notify_on_complete=true. Without it you'll either forget to poll or sit blocked waiting
-      for the user to surface the result.
+Background: Set background=true to get a session_id. A session_id means the process started,
+not that its work succeeded. For bounded work, inspect the exit status and output with an available
+process tool; use notify_on_complete=true when a later completion notification is useful.
+Servers and watchers normally stay silent. Check that process tools are available before relying
+on later polling, stdin or termination; otherwise prefer foreground for bounded work.
 For servers/watchers, do NOT use shell-level background wrappers (nohup/disown/setsid/trailing '&')
 in foreground mode. Use background=true so SpiritAgent can track lifecycle and output.
 After starting a server, verify readiness with a health check or log signal, then run tests in a
