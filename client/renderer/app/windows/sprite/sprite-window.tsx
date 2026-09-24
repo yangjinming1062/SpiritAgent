@@ -188,7 +188,6 @@ export function SpriteWindow(): React.JSX.Element {
       return
     }
 
-    let cancelled = false
     const onKey = () => reportUserActivity()
     window.addEventListener('keydown', onKey)
 
@@ -197,22 +196,15 @@ export function SpriteWindow(): React.JSX.Element {
     if (!hasHydratedRef.current) {
       hasHydratedRef.current = true
 
-      void (async () => {
-        if (cancelled || $auth.get().kind !== 'authenticated') {
-          return
-        }
-
-        await ensureCompanionHydrated({
-          hydratePersona,
-          hydratePortrait
-        })
-        void hydrateVideoPack()
-        void hydrateActionCatalog()
-      })()
+      void hydrateActionCatalog()
+      void hydrateVideoPack()
+      void ensureCompanionHydrated({
+        hydratePersona,
+        hydratePortrait
+      })
     }
 
     return () => {
-      cancelled = true
       window.removeEventListener('keydown', onKey)
       stopActivity()
       // StrictMode dev double-invoke：cleanup 把 ref 复位，让 re-mount 重新水合。
@@ -310,7 +302,7 @@ export function SpriteWindow(): React.JSX.Element {
         {eggVisible ? (
           <EggStage onTap={() => setOnboardingOpen(true)} />
         ) : showOnboarding ? null : (
-          <Suspense fallback={null}>{presentation.renderer === 'video' ? <VideoStage /> : <EggStage />}</Suspense>
+          <Suspense fallback={null}>{authed && presentation.renderer === 'video' ? <VideoStage /> : <EggStage />}</Suspense>
         )}
       </SpriteStage>
       <SpriteContextMenu

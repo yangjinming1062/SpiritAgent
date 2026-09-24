@@ -62,12 +62,12 @@ export function WorkbenchCompanion(): React.JSX.Element {
     if (!hasHydratedRef.current) {
       hasHydratedRef.current = true
 
+      void hydrateActionCatalog()
+      void hydrateVideoPack()
       void ensureCompanionHydrated({
         hydratePersona,
         hydratePortrait
       })
-      void hydrateVideoPack()
-      void hydrateActionCatalog()
     }
 
     return () => {
