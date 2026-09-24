@@ -635,7 +635,7 @@ export function ChatParamsPanel({
               </span>
             </div>
 
-            <div className="grid grid-cols-4 gap-1 rounded-lg border border-line-hairline bg-fill-hover/50 p-1">
+            <div className="grid grid-cols-4 gap-1 rounded-lg border border-line-hairline bg-fill-hover/50 p-1 sm:grid-cols-4 lg:grid-cols-8">
               {getReasoningOptions(params.reasoningOptions).map(opt => {
                 const active = reasoning === opt.value
 

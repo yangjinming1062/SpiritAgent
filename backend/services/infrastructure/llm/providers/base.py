@@ -1,10 +1,52 @@
 from abc import ABC, abstractmethod
+from collections.abc import Collection
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
 
 from modules.media import SpeechStyle
 from openai import AsyncOpenAI
+
+# 产品对外暴露的推理强度档位（升序）。供应商实际支持集是其子集，由 ChatProvider.REASONING_EFFORTS 声明。
+ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
+REASONING_EFFORT_ORDER: tuple[ReasoningEffort, ...] = (
+    "none",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+    "max",
+    "ultra",
+)
+REASONING_EFFORT_RANK: dict[str, int] = {effort: rank for rank, effort in enumerate(REASONING_EFFORT_ORDER)}
+PRODUCT_REASONING_EFFORTS: frozenset[str] = frozenset(REASONING_EFFORT_ORDER)
+
+
+def resolve_provider_reasoning_effort(requested: str | None, supported: Collection[str]) -> str | None:
+    """把产品推理档位映射到供应商实际支持的档位。
+
+    - 空值或集合外值：不下发 reasoning。
+    - 请求档恰好被支持：原样透传。
+    - 请求档不在支持集：取不高于请求强度的最高支持档（含 ``none``）；例如选 ultra 但只支持到 xhigh → xhigh，选 minimal 但不支持 → none。
+    - 没有不高于请求强度的支持档（例如选 minimal 但供应商只有 low 起）：不下发 reasoning。
+    """
+    if not requested:
+        return None
+    raw = requested.strip().lower()
+    if raw not in PRODUCT_REASONING_EFFORTS:
+        return None
+    if raw in supported:
+        return raw
+    request_rank = REASONING_EFFORT_RANK[raw]
+    candidates = [
+        effort
+        for effort in supported
+        if effort in REASONING_EFFORT_RANK and REASONING_EFFORT_RANK[effort] <= request_rank
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda effort: REASONING_EFFORT_RANK[effort])
 
 
 class ServiceType(StrEnum):

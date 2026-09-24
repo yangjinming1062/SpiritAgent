@@ -10,7 +10,7 @@ export interface AgentFormState {
 }
 
 // 推断档位的合法值集合：选项渲染与后端返回值校验共用，避免两处清单漂移。
-export const REASONING_OPTIONS = ['none', 'low', 'medium', 'high'] as const
+export const REASONING_OPTIONS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
 
 export function AgentDefaultsSection({
   disabled,

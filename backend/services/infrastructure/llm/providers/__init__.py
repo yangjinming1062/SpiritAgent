@@ -8,6 +8,9 @@ from . import (
 from ._reference import resolve_reference_bytes
 from ._size_aspect import SIZE_TO_ASPECT
 from .base import (
+    PRODUCT_REASONING_EFFORTS,
+    REASONING_EFFORT_ORDER,
+    REASONING_EFFORT_RANK,
     BaseProvider,
     ChatProvider,
     EmbeddingProvider,
@@ -18,6 +21,7 @@ from .base import (
     ProviderConfig,
     ProviderError,
     ProviderResultUnknownError,
+    ReasoningEffort,
     ServiceType,
     STTProvider,
     STTResult,
@@ -28,6 +32,7 @@ from .base import (
     VideoGenRequest,
     VideoJobStatus,
     VoiceDesignResult,
+    resolve_provider_reasoning_effort,
 )
 from .http import aclose_all, rotate_http_clients
 from .mimo import (
@@ -54,7 +59,10 @@ from .registry import (
 
 __all__ = [
     "OPENAI_COMPATIBLE_PROVIDERS",
+    "PRODUCT_REASONING_EFFORTS",
     "PROVIDER_DEFAULT_URLS",
+    "REASONING_EFFORT_ORDER",
+    "REASONING_EFFORT_RANK",
     "BaseProvider",
     "ChatProvider",
     "EmbeddingProvider",
@@ -68,6 +76,7 @@ __all__ = [
     "ProviderConfig",
     "ProviderError",
     "ProviderResultUnknownError",
+    "ReasoningEffort",
     "SIZE_TO_ASPECT",
     "STTProvider",
     "STTResult",
@@ -89,6 +98,7 @@ __all__ = [
     "register",
     "resolve",
     "resolve_context_tokens",
+    "resolve_provider_reasoning_effort",
     "resolve_reference_bytes",
     "rotate_http_clients",
     "supports_video",

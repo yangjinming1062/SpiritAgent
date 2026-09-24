@@ -28,7 +28,13 @@ from .llm_client import (
     resolve_vision_chain,
 )
 from .llm_retry import call_with_retry
-from .providers import ProviderConfig, ServiceType, resolve_context_tokens, try_resolve
+from .providers import (
+    ProviderConfig,
+    ServiceType,
+    resolve_context_tokens,
+    resolve_provider_reasoning_effort,
+    try_resolve,
+)
 from .responses import build_responses_kwargs
 from .user_config import UserLlmConfig
 
@@ -120,13 +126,14 @@ async def call_llm_once(
     reasoning_effort: str | None = None,
     json_output: bool = False,
 ) -> str:
-    """执行单次非流式调用；推理档位仅在当前供应商明确支持时下发。"""
+    """执行单次非流式调用；推理档位按供应商支持集映射，超出上限时自动降级到最高支持档。"""
     client = client_for_config(llm_cfg)
     provider_name = llm_cfg.provider_name
     context_length = resolve_context_tokens(provider_name, ServiceType.llm)
     provider_cls = try_resolve(ServiceType.llm, provider_name)
     supported_efforts = getattr(provider_cls, "REASONING_EFFORTS", frozenset())
-    reasoning = {"effort": reasoning_effort} if reasoning_effort in supported_efforts else None
+    resolved_effort = resolve_provider_reasoning_effort(reasoning_effort, supported_efforts)
+    reasoning = {"effort": resolved_effort} if resolved_effort else None
     user_content = (
         json.dumps(user_payload, ensure_ascii=False) if isinstance(user_payload, dict | list) else str(user_payload)
     )

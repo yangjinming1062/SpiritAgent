@@ -1,11 +1,11 @@
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from components import safe_json_loads
 from pydantic import BaseModel, ConfigDict, Field
 
-from services.infrastructure.llm import ServiceType, UserLlmConfig, resolve_context_tokens
+from services.infrastructure.llm import ReasoningEffort, ServiceType, UserLlmConfig, resolve_context_tokens
 
 
 class SessionSettingsPatch(BaseModel):
@@ -13,7 +13,7 @@ class SessionSettingsPatch(BaseModel):
 
     temperature: float | None = Field(default=None, ge=0, le=1, allow_inf_nan=False)
     context_compression_threshold: float | None = Field(default=None, ge=0.3, le=1, allow_inf_nan=False)
-    reasoning_effort: Literal["none", "low", "medium", "high"] | None = None
+    reasoning_effort: ReasoningEffort | None = None
 
 
 class SessionRuntimeInfo(BaseModel):

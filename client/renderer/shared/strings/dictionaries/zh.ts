@@ -304,14 +304,19 @@ export const dict = {
         heading: '智能体默认',
         intro: '适用于未单独设置参数的普通对话；不影响任何特殊会话。',
         reasoningEffort: '推理深度',
-        reasoningEffortDesc: '模型每轮推理的强度。none 关闭推理，low/medium/high 逐级加深。',
+        reasoningEffortDesc:
+          '模型每轮推理的强度。none 关闭推理，minimal/low/medium/high/xhigh/max/ultra 逐级加深；超出供应商上限时自动使用其最高支持档。',
         backgroundReview: '后台记忆整理',
         backgroundReviewDesc: '异步从普通对话历史中抽取记忆，不控制特殊会话的记忆整理。',
         reasoningOptions: {
           none: '关闭',
+          minimal: '极简',
           low: '低',
           medium: '中',
-          high: '高'
+          high: '高',
+          xhigh: '超高',
+          max: '极限',
+          ultra: '终极'
         }
       },
       contextCompression: {
@@ -832,15 +837,23 @@ export const dict = {
       },
       reasoningOptions: {
         none: '关闭',
+        minimal: '极简',
         low: '低',
         medium: '中',
-        high: '高'
+        high: '高',
+        xhigh: '超高',
+        max: '极限',
+        ultra: '终极'
       },
       reasoningHints: {
         high: '深推理，适合复杂方案与证明。',
         low: '短思考，适合简单问答。',
         medium: '常规推导，适合开发与排错。',
-        none: '直接作答，响应最快。'
+        none: '直接作答，响应最快。',
+        minimal: '极轻思考，略高于关闭，适合极简问答。',
+        xhigh: '超深推理，适合复杂推演与研究级任务。',
+        max: '逼近供应商上限的极限推理，尽量多想。',
+        ultra: '产品最高档；供应商不支持时自动降级到其最高支持档。'
       },
 
       contextCapsuleAria: '查看上下文记忆与压缩管理',

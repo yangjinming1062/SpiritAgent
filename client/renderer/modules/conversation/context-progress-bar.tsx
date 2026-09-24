@@ -13,7 +13,7 @@ const DEFAULT_THRESHOLD = 0.7
 const DEFAULT_LIMIT = 1_000_000
 const DEFAULT_TEMPERATURE = 0.7
 
-export const REASONING_EFFORT_VALUES = ['none', 'low', 'medium', 'high'] as const
+export const REASONING_EFFORT_VALUES = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
 
 export type ReasoningEffort = (typeof REASONING_EFFORT_VALUES)[number]
 

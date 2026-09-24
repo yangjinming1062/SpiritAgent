@@ -1,5 +1,6 @@
 from dataclasses import dataclass
-from typing import Literal
+
+from services.infrastructure.llm import ReasoningEffort
 
 DEFAULT_PRESET_ID = "companion"
 
@@ -8,7 +9,7 @@ DEFAULT_PRESET_ID = "companion"
 class InferenceDefaults:
     temperature: float
     context_compression_threshold: float
-    reasoning_effort: Literal["none", "low", "medium", "high"]
+    reasoning_effort: ReasoningEffort
 
 
 @dataclass(frozen=True)

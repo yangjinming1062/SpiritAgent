@@ -316,15 +316,19 @@ export const dict: Dictionary = {
         intro: 'Applies to ordinary conversations without session overrides. Does not affect special sessions.',
         reasoningEffort: 'Reasoning depth',
         reasoningEffortDesc:
-          'How hard the model reasons each turn. none disables reasoning; low / medium / high deepen progressively.',
+          'How hard the model reasons each turn. none disables reasoning; minimal / low / medium / high / xhigh / max / ultra deepen progressively. Above the provider ceiling, the highest supported level is used.',
         backgroundReview: 'Background memory consolidation',
         backgroundReviewDesc:
           'Extracts memories from ordinary conversations without changing memory consolidation in special sessions.',
         reasoningOptions: {
           none: 'Off',
+          minimal: 'Minimal',
           low: 'Low',
           medium: 'Medium',
-          high: 'High'
+          high: 'High',
+          xhigh: 'X-High',
+          max: 'Max',
+          ultra: 'Ultra'
         }
       },
       contextCompression: {
@@ -884,15 +888,23 @@ export const dict: Dictionary = {
       },
       reasoningOptions: {
         none: 'Off',
+        minimal: 'Minimal',
         low: 'Low',
         medium: 'Medium',
-        high: 'High'
+        high: 'High',
+        xhigh: 'X-High',
+        max: 'Max',
+        ultra: 'Ultra'
       },
       reasoningHints: {
         high: 'Deep reasoning — suited for complex plans and proofs.',
         low: 'Quick thinking — best for simple Q&A.',
         medium: 'Standard reasoning — good for development and debugging.',
-        none: 'Direct answers — fastest response.'
+        none: 'Direct answers — fastest response.',
+        minimal: 'Barely-there thinking — just above off, for the simplest prompts.',
+        xhigh: 'Extra-deep reasoning — for research-grade problems and hard proofs.',
+        max: 'Near-ceiling reasoning — think as hard as the provider allows.',
+        ultra: 'Highest product level; falls back to the provider’s top supported level automatically.'
       },
 
       contextCapsuleAria: 'View context memory and compression management',

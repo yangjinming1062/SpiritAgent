@@ -53,8 +53,10 @@ from services.domains.memory import (
     retrieve_proactive_memories,
 )
 from services.infrastructure.llm import (
+    PRODUCT_REASONING_EFFORTS,
     MissingLlmConfigError,
     ProviderConfig,
+    ReasoningEffort,
     ServiceType,
     approx_responses_tokens,
     message_to_response_items,
@@ -76,9 +78,6 @@ from .prompt_presets import (
 from .system_prompt import build_system_prompt
 
 logger = get_logger(__name__)
-
-# 三家 Responses 供应商共同接受的安全枚举；供应商专属档位在 provider 层过滤。
-ALLOWED_REASONING_EFFORTS = frozenset({"none", "low", "medium", "high"})
 
 
 @dataclass(frozen=True)
@@ -151,7 +150,7 @@ def resolve_inference_settings(settings: dict[str, str], *, conv: Conversation) 
     return InferenceDefaults(
         temperature=parse_temperature(settings.get("agent.temperature"), defaults.temperature),
         context_compression_threshold=threshold if threshold >= 0.3 else defaults.context_compression_threshold,
-        reasoning_effort=cast(Literal["none", "low", "medium", "high"], reasoning or defaults.reasoning_effort),
+        reasoning_effort=cast(ReasoningEffort, reasoning or defaults.reasoning_effort),
     )
 
 
@@ -536,7 +535,7 @@ def _parse_reasoning_effort(raw: str | None) -> str | None:
     if not raw:
         return None
     raw = raw.strip().lower()
-    return raw if raw in ALLOWED_REASONING_EFFORTS else None
+    return raw if raw in PRODUCT_REASONING_EFFORTS else None
 
 
 def parse_temperature(raw: Any, default: float) -> float:

@@ -248,7 +248,7 @@ Backend `user_settings` 是可同步偏好的真源，Client 保存带用户归�
 
 Runner 仅内存持有配置，每次工具调用读取；握手后、首个执行前推送 full config，重启后重新推送。用户打扰偏好可恢复，旧设备计算的生效档位不能直接当作新设备现状。
 
-普通 standard 会话继承用户 `agent.* / chat.*` 默认，special 使用预设默认，IM 使用陪伴场景默认，再叠加各会话覆盖。`session.set_settings` 只接受规定的温度、压缩阈值和推理强度；null 删除覆盖，空 patch 只读取生效值。先提交再更新运行时，“恢复默认”删除覆盖而非固化当前默认数值。
+普通 standard 会话继承用户 `agent.* / chat.*` 默认，special 使用预设默认，IM 使用陪伴场景默认，再叠加各会话覆盖。`session.set_settings` 只接受规定的温度、压缩阈值和推理强度；null 删除覆盖，空 patch 只读取生效值。先提交再更新运行时，“恢复默认”删除覆盖而非固化当前默认数值。推理强度产品档位为 `none/minimal/low/medium/high/xhigh/max/ultra`；供应商实际支持集是其子集，请求档不在支持集时自动取不高于请求强度的最高支持档（例如 ultra → xhigh，minimal 不支持时 → none）。
 
 ### 2.5 本机调用日志
 

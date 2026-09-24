@@ -18,6 +18,7 @@ from services.infrastructure.llm import (
     ProviderConfig,
     build_responses_kwargs,
     call_with_retry,
+    resolve_provider_reasoning_effort,
     speech_style_guidance,
 )
 
@@ -144,11 +145,11 @@ async def _generate_llm_response(
 ) -> _LLMTurnResult:
     """单次 LLM 调用与正文交付；流式首事件或完整响应到达时触发回退哨兵，工具轮正文只在 stream 模式实时显示。"""
     client = provider.raw_client()
-    reasoning = (
-        {"effort": reasoning_effort}
-        if reasoning_effort and reasoning_effort in getattr(provider, "REASONING_EFFORTS", frozenset())
-        else None
+    resolved_effort = resolve_provider_reasoning_effort(
+        reasoning_effort,
+        getattr(provider, "REASONING_EFFORTS", frozenset()),
     )
+    reasoning = {"effort": resolved_effort} if resolved_effort else None
     scaled_temperature = provider.scale_temperature(temperature) if temperature is not None else None
     instructions = refresh_volatile_header_in_prompt(
         context["instructions"],
