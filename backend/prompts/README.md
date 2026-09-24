@@ -39,6 +39,8 @@ Python 修改走仓库标准入口（见 [scripts/README §8](../../scripts/READ
 
 完整外观链路及各分支的审查导航见 [PIPELINE §4.1](../../docs/PIPELINE.md#41-完整提示词链检查入口)。
 
+头像整理与身体判断只整理各自任务所需的描述，画风约束在最终生图请求装配；纯文字头像另由装配器追加 `AVATAR_IMAGE_RULES`。审核改写保留原请求的画风与参考分工，不根据改写模型是否实际收到图片重新选择画风。
+
 ### 命名约定
 
 - 双语 dict 键为 `zh`/`en`，消费方用 `components.resolve_prompt_text` 取文本。
@@ -47,7 +49,7 @@ Python 修改走仓库标准入口（见 [scripts/README §8](../../scripts/READ
 
 ### 保留在服务层的提示词数据（不在本包，调整时从所在文件入手）
 
-- [夜间能力目录](../services/application/nightly/nightly_planning.py)——描述与参数选项随能力可用性装配，动作预算从执行端常量传入 `plan_limits`；检查规划提示词时同时核对目录、互斥组和参考图能力。
+- [夜间能力目录](../services/application/nightly/nightly_planning.py)——描述与参数选项随能力可用性装配，字段说明包含类型、用途及必要的可选性、长度和取值约束；说明供规划模型阅读，实际校验由参数模型与执行器负责。动作预算从执行端常量传入 `plan_limits`；检查规划提示词时同时核对目录、互斥组和参考图能力。
 - [语音气泡演绎能力](../services/infrastructure/llm/providers/speech_style.py)——按实际供应商、模型与音色装配能力和 JSON 示例，附加到陪伴终端请求；检查正文规则时一并核对。
 - [时间与共享块装配](../services/application/chat/prompt_blocks.py)——工具开关与实际解锁集合决定能力描述，时间资料只表达经过时间，不推断用户经历。
 - [陪伴小推理资料](../services/domains/companion/prompt_runtime.py)——心情、空闲表达、空间行为与片刻使用人设和相关记忆，不附加完整视觉形象资料；近期对话保留原始角色、时间和截断标记，旧请求不自动成为当前触发条件。

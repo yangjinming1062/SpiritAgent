@@ -58,7 +58,14 @@ _SELF_MEDIA_OUTFIT_OVERRIDE_DESC = (
 )
 
 IMAGE_GENERATION_PARAM_DESCS = {
-    "prompt": "Describe the image content. With subject='self', specify environment, pose and action; put styling changes in outfit_override, and keep the confirmed face, anatomy and body proportions.",
+    "prompt": (
+        "Write a self-contained visual description: subject, one visible moment, composition, environment, lighting "
+        "and requested style. Describe the positions, contact and support needed for an action, rather than only "
+        "naming it. Preserve the user's concrete requirements; do not add unrelated detail or quality-tag lists. "
+        "Quote only text that must actually appear in the image and specify its placement; keep instructions and "
+        "exclusions outside those quotes. With subject='self', describe environment, pose and action without "
+        "redesigning the confirmed face, anatomy or body proportions; put styling changes in outfit_override."
+    ),
     "subject": (
         "Set to 'self' when the current character appears in the image. Their reference image, confirmed physical "
         "features and the wardrobe's active outfit description are supplied automatically; describe the scene, pose, "

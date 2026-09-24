@@ -6,6 +6,7 @@ from typing import Any
 from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, get_logger, safe_json_loads
 from modules.companion import Persona
 from prompts.generation import (
+    AVATAR_IMAGE_RULES,
     AVATAR_SYSTEM_PROMPT,
     CHARACTER_FORM_INSTRUCTIONS,
     CHARACTER_FORM_KEEP_BODY,
@@ -169,7 +170,11 @@ async def enhance_avatar_prompt(
     payload = {**visual, "has_reference": has_reference}
     user_payload = json.dumps(payload, ensure_ascii=False)
     raw = await chat(db, user_id, AVATAR_SYSTEM_PROMPT, user_payload, provider_config=provider_config)
-    return _strip_markdown_fence(raw) + "\n\n" + CHARACTER_VISUAL_STYLE
+    parts = [_strip_markdown_fence(raw)]
+    if not has_reference:
+        parts.append(AVATAR_IMAGE_RULES)
+    parts.append(CHARACTER_VISUAL_STYLE)
+    return "\n\n".join(parts)
 
 
 async def describe_character_form(
