@@ -105,7 +105,7 @@ async function showOutfits(state: WardrobeSnapshot, version: number, cacheOnly: 
       try {
         const url = await window.spiritagent.apiAsset({ url: o.fullbody_url, preferCache: true, cacheOnly })
 
-        if (current()) {
+        if (url && current()) {
           $outfits.set($outfits.get().map(item => (item.id === o.id ? { ...item, fullbodyUrl: url } : item)))
         }
       } catch (err) {

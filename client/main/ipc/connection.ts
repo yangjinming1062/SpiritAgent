@@ -185,11 +185,7 @@ export function registerConnectionIpc({
 
         const cached = await assetDiskCache.get(raw, request?.contentHash)
 
-        if (!cached) {
-          throw new Error('asset cache miss')
-        }
-
-        return cached.dataUrl
+        return cached?.dataUrl ?? null
       }
 
       const connection = await ensureBackend()

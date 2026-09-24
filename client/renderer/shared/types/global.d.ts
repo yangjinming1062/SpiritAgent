@@ -52,7 +52,7 @@ declare global {
       logout: AsyncIpc<IpcInvokeContract['spiritagent:auth:logout']>
       getSession: AsyncIpc<IpcInvokeContract['spiritagent:auth:get-session']>
       api: <T = unknown>(request: SpiritAgentApiRequest) => Promise<T>
-      /** 把后端服务的二进制资产以 data URL 的形式取回(见 connection.cjs)。 */
+      /** 把后端服务的二进制资产以 data URL 的形式取回；仅查本地缓存时未命中返回 null。 */
       apiAsset: AsyncIpc<IpcInvokeContract['spiritagent:api:asset']>
       /** 把后端服务的二进制资产以原始字节取回——用于视频片段等大体积负载,
        * 不能接受 base64 膨胀。支持通过 contentHash 做磁盘缓存。 */

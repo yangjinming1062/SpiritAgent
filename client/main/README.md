@@ -52,6 +52,8 @@ Client 创建 IPC 端点并鉴权 Runner（`x-spiritagent-auth` 握手，token �
 
 字节缓存键为内容哈希或规范化 URL；历史与账号清理见 [Client](../README.md#资产与历史缓存)。下载、写盘和回调均须遵守取消与用户代次。
 
+`cacheOnly` 只查询本地缓存，不请求 Backend；资产未命中返回 `null`，由调用方按缺少本地副本处理。
+
 [hardening.ts](security/hardening.ts)按路径和方法配置请求等待，同步生成入口有更长超时（avatar、outfit、voice 等）。新增入口须核对超时规则。超时不代表后端任务已停；401 按结构化状态处理，不匹配错误文案。
 
 STT / TTS 经 [媒体入口](ipc/media.ts)调用云端，使用有界队列、并发和速率控制；TTS 内存与在途合并不入队，磁盘命中与云端调用走队列，缓存命中不耗云端额度。窗口不复制这套限制。图片附件降采样到 2048px / 6MB 上限。

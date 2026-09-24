@@ -82,6 +82,10 @@ export async function toggleVoiceBar(messageId: string): Promise<void> {
 
     const dataUrl = await window.spiritagent.apiAsset({ url: audio.url, preferCache: true })
 
+    if (!dataUrl) {
+      throw new Error('Voice audio is unavailable')
+    }
+
     if (token !== playToken || proj.getAudio(messageId)?.url !== audio.url || !isVoiceSurfaceVisible()) {
       return
     }

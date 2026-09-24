@@ -31,6 +31,10 @@ async function bakeScene(
       ? await window.spiritagent.apiAsset({ preferCache: true, url })
       : url
 
+  if (!source) {
+    return null
+  }
+
   try {
     await new Promise<void>((resolve, reject) => {
       img.onload = () => resolve()

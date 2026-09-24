@@ -308,7 +308,7 @@ export interface IpcInvokeContract {
     cacheOnly?: boolean
     contentHash?: string
     url: string
-  }) => Promise<string> | string
+  }) => Promise<string | null> | string | null
   'spiritagent:api:asset-buffer': (request: { preferCache?: boolean; contentHash?: string; url: string }) => Promise<Uint8Array> | Uint8Array
 
   // 会话历史本地缓存（user 维度由主进程从当前会话解析；登出/换号清空走主进程 auth 的 clearLocalAssetCaches）
