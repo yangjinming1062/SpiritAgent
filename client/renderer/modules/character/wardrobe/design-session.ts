@@ -6,7 +6,6 @@ import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/sto
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 import { pickAvatarImage, type PickedImage, resolvePortraitUrl } from '../avatar-image'
-import { generateVideoPack } from '../rendering/video/video-pack-store'
 
 import { hydrateWardrobe } from './wardrobe-store'
 
@@ -236,7 +235,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     setBusy(true)
 
     try {
-      // 先锁定参考图；视频模式确认后为这一外观创建独立动作包。
+      // 确认只把草稿立绘转正为参考图，不触发生成、不自动穿着（PIPELINE §1.1.2）。
       await window.spiritagent.api({
         path: `/api/companion/outfits/${draft.id}/confirm`,
         method: 'POST',
@@ -247,9 +246,6 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
         setDraft(null)
         setMessages([])
         onConfirmed()
-
-        // 视频形象是唯一渲染方式：确认新外观后为它创建独立动作包。
-        void generateVideoPack({ outfitId: draft.id })
       }
     } catch (err) {
       if (!isCurrent(revision, epoch)) {

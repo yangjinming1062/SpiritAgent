@@ -7,7 +7,6 @@ import {
   $outfitPolicy,
   $outfits,
   deleteOutfit,
-  generateVideoPack,
   GenerationActionsGroup,
   hydrateAvatarSeeds,
   hydrateWardrobe,
@@ -19,7 +18,7 @@ import {
   useOutfitDesignSession
 } from '@/modules/character'
 import { PortraitLightbox } from '@/shared'
-import { ArrowBackUp, Check, FileImage, ImagePlus, Pencil, Plus, Send, Trash2 } from '@/shared/lib/icons'
+import { ArrowBackUp, FileImage, ImageIcon, ImagePlus, Pencil, Plus, Send, Trash2 } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_ICON, BTN_PRIMARY, HINT_TEXT, INPUT_CLASS, Spinner, Toggle } from '@/shared/panel'
@@ -30,10 +29,12 @@ import type { ImageReviseMode } from '@/shared/types/spiritagent'
 const CARD_ACTION_CLASS =
   'inline-flex h-6 items-center justify-center rounded-lg bg-black/60 px-1.5 text-white/70 backdrop-blur-sm transition hover:bg-black/80 hover:text-white disabled:pointer-events-none disabled:opacity-40'
 
-// 外观页外观分区（DESIGN §6.1）：左侧外观画廊（政策开关 + 设计入口 + 卡片流），
-// 右侧大图展示穿着中/选中外观；「设计新装」进入设计态后底部展开全宽设计抽屉，
-// 描述 / 参考图 / 微调反馈 / 确认入柜都在抽屉内完成。视频模式确认参考图后请求生成对应视频包。
-export function OutfitSection(): React.JSX.Element {
+// 着装是外观页的首层资产；选择着装只切换预览与动作目录，穿着由明确操作完成。
+interface OutfitSectionProps {
+  onSelectOutfit: (id: number) => void
+}
+
+export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX.Element {
   const outfits = useStore($outfits)
   const outfitPolicy = useStore($outfitPolicy)
   const avatarSeeds = useStore($avatarSeeds)
@@ -43,7 +44,6 @@ export function OutfitSection(): React.JSX.Element {
   const selfSourceDict = dict.selfSource
   const [busyId, setBusyId] = useState<number | null>(null)
   const [policyBusy, setPolicyBusy] = useState(false)
-  const [selectedId, setSelectedId] = useState<number | null>(null)
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
   const [designing, setDesigning] = useState(false)
   const [text, setText] = useState('')
@@ -58,13 +58,6 @@ export function OutfitSection(): React.JSX.Element {
     void hydrateWardrobe()
   })
 
-  // 选中项被删除 / 列表刷新后兜底回落到穿着中（或第一项）。
-  useEffect(() => {
-    if (!outfits.some(o => o.id === selectedId)) {
-      setSelectedId(outfits.find(o => o.active)?.id ?? outfits[0]?.id ?? null)
-    }
-  }, [outfits, selectedId])
-
   useEffect(() => {
     messagesRef.current?.scrollTo?.({ top: messagesRef.current.scrollHeight })
   }, [session.messages])
@@ -74,15 +67,12 @@ export function OutfitSection(): React.JSX.Element {
     void action().finally(() => setBusyId(null))
   }
 
-  // 失败外观重新确认（草稿立绘仍在）：转正为参考图就绪。
+  // 失败外观重新确认（草稿立绘仍在）：转正为参考图就绪，不触发动作生成。
   const retryConfirm = async (id: number): Promise<void> => {
     try {
       // 与设计会话确认一致：始终带 JSON body（可空），避免无 body 的 POST 被 422。
       await window.spiritagent.api({ path: `/api/companion/outfits/${id}/confirm`, method: 'POST', body: {} })
       await hydrateWardrobe()
-
-      // 确认转正后为该外观创建动作包；已有同参考就绪包时后端直接复用，不重复付费。
-      void generateVideoPack({ outfitId: id })
     } catch (err) {
       log.warn('outfit', 'retry confirm failed', err)
     }
@@ -95,7 +85,6 @@ export function OutfitSection(): React.JSX.Element {
 
     session.reset()
     setDesigning(true)
-    setSelectedId(null)
     requestAnimationFrame(() => inputRef.current?.focus())
   }
 
@@ -106,8 +95,7 @@ export function OutfitSection(): React.JSX.Element {
     setPolicyBusy(false)
   }
 
-  const selected = outfits.find(o => o.id === selectedId) ?? null
-  const previewUrl = designing ? session.draft?.previewUrl : (selected?.fullbodyUrl ?? null)
+  const previewUrl = session.draft?.previewUrl ?? null
 
   // 首次生成（无草稿）：描述/参考图创建新设计。
   const sendCreation = (): void => {
@@ -184,187 +172,176 @@ export function OutfitSection(): React.JSX.Element {
     : undefined
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1">
-        {/* 左：外观画廊（政策开关 + 设计入口 + 方形大图卡流） */}
-        <div className="flex w-60 shrink-0 flex-col border-r border-line-hairline">
-          <div className="border-b border-line-hairline px-3 py-3">
-            <div className="flex items-center justify-between gap-2">
-              <div className="min-w-0">
-                <p className="text-[11px] font-medium text-strong">{t.policyLabel}</p>
-                <p className="mt-0.5 truncate text-[10px] text-faint">
-                  {outfitPolicy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
-                </p>
-              </div>
-              <Toggle
-                ariaLabel={t.policyToggleAria}
-                checked={outfitPolicy !== 'locked'}
-                disabled={policyBusy}
-                onChange={() => void togglePolicy()}
-              />
-            </div>
-            <p className="mt-1.5 text-[10px] leading-relaxed text-muted">{t.policyDesc}</p>
-            <button
-              className={cn(BTN_PRIMARY, 'mt-2.5 w-full')}
-              disabled={session.busy}
-              onClick={startDesign}
-              type="button"
-            >
-              <Plus className="mr-1 size-3.5" />
-              {t.startAction}
-            </button>
+    <div className="flex min-h-0 flex-1 flex-col border-b border-line-hairline bg-surface-panel">
+      <section aria-labelledby="appearance-outfits-heading" className="flex min-h-0 shrink-0 flex-col">
+        <div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 pt-3">
+          <div className="flex min-w-0 items-baseline gap-2">
+            <h2 className="text-sm font-semibold text-strong" id="appearance-outfits-heading">
+              {t.wardrobeHeading}
+            </h2>
+            <span className="text-[11px] text-muted">{t.outfitCount(outfits.length)}</span>
           </div>
-          <div className="min-h-0 flex-1 space-y-2 overflow-y-auto px-2.5 pt-4 pb-3">
-            {outfits.length === 0 ? (
-              <p className="px-1 pt-2 text-xs text-muted">{t.empty}</p>
-            ) : (
-              outfits.map(outfit => {
-                const statusLabel = t.statusLabels[outfit.status] ?? ''
-                const deletable = !outfit.active
-                const isActiveCard = !designing && selectedId === outfit.id
-
-                return (
-                  <div
-                    className={`group relative cursor-pointer overflow-hidden rounded-xl border text-left transition ${
-                      isActiveCard
-                        ? 'border-accent-line bg-accent-soft'
-                        : 'border-line-hairline bg-surface-card hover:border-line-strong'
-                    }`}
-                    key={outfit.id}
-                    onClick={() => {
-                      setDesigning(false)
-                      setSelectedId(outfit.id)
-                    }}
-                  >
-                    <div className="relative aspect-square w-full bg-fill-trough">
-                      {outfit.fullbodyUrl && (
-                        <img
-                          alt={outfit.name}
-                          className="absolute inset-0 h-full w-full object-contain"
-                          loading="lazy"
-                          src={outfit.fullbodyUrl}
-                        />
-                      )}
-
-                      {outfit.active && (
-                        <span className="absolute left-1.5 top-1.5 rounded-md bg-emerald-500/85 px-1.5 py-0.5 text-[10px] font-medium text-white">
-                          {t.wearing}
-                        </span>
-                      )}
-                      {statusLabel && (
-                        <span className="absolute bottom-1.5 left-1.5 rounded-md bg-black/70 px-1.5 py-0.5 text-[10px] text-white">
-                          {statusLabel}
-                        </span>
-                      )}
-
-                      <div className="absolute right-1.5 top-1.5 flex items-center gap-1 opacity-0 transition group-hover:opacity-100">
-                        {(outfit.status === 'draft' || outfit.status === 'failed') && (
-                          <button
-                            aria-label={t.actions.continueDesign}
-                            className={CARD_ACTION_CLASS}
-                            onClick={e => {
-                              e.stopPropagation()
-                              session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
-                              setDesigning(true)
-                              setSelectedId(null)
-                            }}
-                            title={t.actions.continueDesignTitle}
-                            type="button"
-                          >
-                            <Pencil className="size-3.5" />
-                          </button>
-                        )}
-                        {outfit.status === 'ready' && !outfit.active && (
-                          <button
-                            aria-label={t.actions.wear}
-                            className={CARD_ACTION_CLASS}
-                            disabled={busyId === outfit.id}
-                            onClick={e => {
-                              e.stopPropagation()
-                              withBusy(outfit.id, () => generateVideoPack({ outfitId: outfit.id }))
-                            }}
-                            title={t.actions.wearTitle}
-                            type="button"
-                          >
-                            <Check className="size-3.5" />
-                          </button>
-                        )}
-                        {outfit.status === 'failed' && (
-                          <button
-                            className={CARD_ACTION_CLASS}
-                            disabled={busyId === outfit.id}
-                            onClick={e => {
-                              e.stopPropagation()
-                              withBusy(outfit.id, () => retryConfirm(outfit.id))
-                            }}
-                            type="button"
-                          >
-                            {t.actions.retry}
-                          </button>
-                        )}
-                        {deletable && (
-                          <button
-                            aria-label={t.actions.delete}
-                            className={cn(CARD_ACTION_CLASS, 'hover:text-rose-300')}
-                            disabled={busyId === outfit.id}
-                            onClick={e => {
-                              e.stopPropagation()
-                              withBusy(outfit.id, () => deleteOutfit(outfit.id))
-                            }}
-                            title={t.actions.deleteTitle}
-                            type="button"
-                          >
-                            <Trash2 className="size-3.5" />
-                          </button>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="px-2.5 py-2">
-                      <p className="truncate text-[11px] font-medium text-strong">{outfit.name}</p>
-                      <p className="mt-0.5 truncate text-[10px] text-muted">{outfit.description}</p>
-                    </div>
-                  </div>
-                )
-              })
-            )}
+          <div className="flex items-center gap-2" title={t.policyDesc}>
+            <span className="text-[11px] text-muted">{t.policyLabel}</span>
+            <span className="text-[10px] text-faint">
+              {outfitPolicy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}
+            </span>
+            <Toggle
+              ariaLabel={t.policyToggleAria}
+              checked={outfitPolicy !== 'locked'}
+              disabled={policyBusy}
+              onChange={() => void togglePolicy()}
+            />
           </div>
         </div>
 
-        {/* 右：大图。固定方形取景框：全身图比例随物种而异，不假设方形——contain 完整
-            呈现，长方图两侧留空。外层 inset 定位拿到确定的高宽（auto 高容器里
-            百分比 max 解析不到，图会按内容自然高溢出可视区），内层 h-full +
-            aspect-square 取可用区内最大正方形。 */}
-        <div className="relative min-h-0 flex-1">
-          {previewUrl ? (
-            <div className="absolute inset-4 grid place-items-center">
-              <button
-                className="relative block aspect-square h-full max-w-full cursor-zoom-in overflow-hidden rounded-xl border border-line-hairline bg-fill-trough"
-                onClick={() => setZoomUrl(previewUrl)}
-                type="button"
+        <div
+          className={cn(
+            'flex flex-wrap content-start items-start gap-3 px-4 py-4',
+            designing && 'max-h-[246px] overflow-y-auto'
+          )}
+        >
+          {outfits.map(outfit => {
+            const statusLabel = outfit.active ? t.wearing : (t.statusLabels[outfit.status] ?? '')
+            const canEdit = outfit.status === 'draft' || outfit.status === 'failed'
+            const canDelete = !outfit.active
+
+            return (
+              <article
+                className="group relative w-40 shrink-0 overflow-hidden rounded-xl border border-line-hairline bg-surface-card transition hover:border-line-strong"
+                key={outfit.id}
               >
-                <img alt={t.imageAlt} className="absolute inset-0 h-full w-full object-contain" src={previewUrl} />
-              </button>
-            </div>
-          ) : (
-            <div className="absolute inset-4 grid place-items-center text-center">
-              <div>
-                <div className="text-xs text-body">
-                  {designing ? t.previewPlaceholderDesigning : t.previewPlaceholderIdle}
+                <button
+                  className="block w-full text-left"
+                  onClick={() => {
+                    setDesigning(false)
+                    onSelectOutfit(outfit.id)
+                  }}
+                  type="button"
+                >
+                  <div className="relative aspect-[4/5] overflow-hidden bg-fill-trough">
+                    {outfit.fullbodyUrl ? (
+                      <img
+                        alt={outfit.name}
+                        className="absolute inset-0 h-full w-full object-contain"
+                        loading="lazy"
+                        src={outfit.fullbodyUrl}
+                      />
+                    ) : null}
+                    {statusLabel ? (
+                      <span
+                        className={cn(
+                          'absolute bottom-1.5 left-1.5 max-w-[calc(100%-12px)] truncate rounded-md px-1.5 py-0.5 text-[10px] text-white',
+                          outfit.active ? 'bg-emerald-600/90' : 'bg-black/70'
+                        )}
+                      >
+                        {statusLabel}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className="px-2 py-1.5">
+                    <p className="truncate text-[11px] font-medium text-strong">{outfit.name}</p>
+                  </div>
+                </button>
+
+                <div className="absolute right-1 top-1 flex gap-1 opacity-100 transition md:opacity-0 md:group-hover:opacity-100 md:group-focus-within:opacity-100">
+                  {outfit.fullbodyUrl ? (
+                    <button
+                      aria-label={t.zoomOutfit(outfit.name)}
+                      className={CARD_ACTION_CLASS}
+                      onClick={() => setZoomUrl(outfit.fullbodyUrl)}
+                      title={t.imageAlt}
+                      type="button"
+                    >
+                      <ImageIcon className="size-3.5" />
+                    </button>
+                  ) : null}
+                  {canEdit && (
+                    <button
+                      aria-label={t.actions.continueDesign}
+                      className={CARD_ACTION_CLASS}
+                      onClick={() => {
+                        session.adoptDraft(outfit.id, outfit.fullbodyUrl ?? '')
+                        setDesigning(true)
+                      }}
+                      title={t.actions.continueDesignTitle}
+                      type="button"
+                    >
+                      <Pencil className="size-3.5" />
+                    </button>
+                  )}
+                  {outfit.status === 'failed' && (
+                    <button
+                      aria-label={t.actions.retry}
+                      className={CARD_ACTION_CLASS}
+                      disabled={busyId === outfit.id}
+                      onClick={() => withBusy(outfit.id, () => retryConfirm(outfit.id))}
+                      title={t.actions.retry}
+                      type="button"
+                    >
+                      {t.actions.retry}
+                    </button>
+                  )}
+                  {canDelete && (
+                    <button
+                      aria-label={t.actions.delete}
+                      className={cn(CARD_ACTION_CLASS, 'hover:text-rose-300')}
+                      disabled={busyId === outfit.id}
+                      onClick={() => withBusy(outfit.id, () => deleteOutfit(outfit.id))}
+                      title={t.actions.deleteTitle}
+                      type="button"
+                    >
+                      <Trash2 className="size-3.5" />
+                    </button>
+                  )}
                 </div>
+              </article>
+            )
+          })}
+
+          {outfits.length === 0 ? <p className="self-center text-xs text-muted">{t.empty}</p> : null}
+          <button
+            className="flex w-40 shrink-0 flex-col overflow-hidden rounded-xl border border-dashed border-line-strong bg-surface-card text-body transition hover:border-accent-line hover:text-strong disabled:opacity-50"
+            disabled={session.busy}
+            onClick={startDesign}
+            type="button"
+          >
+            <span className="flex aspect-[4/5] w-full items-center justify-center bg-fill-trough">
+              <span className="grid size-8 place-items-center rounded-full bg-accent-soft text-accent">
+                <Plus className="size-4" />
+              </span>
+            </span>
+            <span className="px-2 py-1.5 text-center text-[11px]">{t.startAction}</span>
+          </button>
+        </div>
+      </section>
+
+      {designing ? (
+        <div className="relative mx-4 mb-3 mt-2 h-36 overflow-hidden rounded-xl border border-line-hairline bg-fill-trough">
+          {previewUrl ? (
+            <button
+              className="absolute inset-0 grid w-full place-items-center cursor-zoom-in"
+              onClick={() => setZoomUrl(previewUrl)}
+              type="button"
+            >
+              <img alt={t.imageAlt} className="h-full w-full object-contain" src={previewUrl} />
+            </button>
+          ) : (
+            <div className="absolute inset-0 grid place-items-center px-4 text-center">
+              <div>
+                <div className="text-xs text-body">{t.previewPlaceholderDesigning}</div>
                 <div className="mt-1 text-[10px] text-faint">{t.previewHint}</div>
               </div>
             </div>
           )}
-
-          {designing && session.busy && (
-            <div className="absolute inset-4 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/40">
+          {session.busy ? (
+            <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/40">
               <Spinner className="size-5" />
               <span className="text-xs text-white">{t.generating}</span>
             </div>
-          )}
+          ) : null}
         </div>
-      </div>
+      ) : null}
 
       {/* 设计抽屉：进入设计态后展开，占满画廊与舞台以下的整行。 */}
       {designing && (

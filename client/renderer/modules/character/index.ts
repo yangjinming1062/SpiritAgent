@@ -126,12 +126,16 @@ export { handleDragEndInteraction } from './reactions/reaction-audio'
 export { EggStage } from './rendering/fallback/egg-stage'
 export {
   $videoGenError,
+  $videoGenScope,
   $videoGenStage,
   $videoGenState,
   $videoPacks,
   activateVideoPack,
   generateVideoPack,
-  hydrateVideoPack
+  hydrateVideoPack,
+  type VideoGenError,
+  type VideoGenScope,
+  videoGenScopeMatches
 } from './rendering/video'
 export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritual-walk'
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
@@ -165,7 +169,6 @@ export { useOutfitDesignSession } from './wardrobe/design-session'
 export {
   $outfitPolicy,
   $outfits,
-  activateOutfit,
   deleteOutfit,
   hydrateWardrobe,
   type OutfitPolicy,

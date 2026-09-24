@@ -1290,7 +1290,11 @@ async def _generate_pack(pack_id: int) -> None:
         must_actions = _must_succeed_actions(jobs, context.must_actions)
         pending = [job for job in jobs if job.status != "succeeded" and job.status != "failed" and not job.script_json]
         if pending:
-            await _emit_pack_event(pack.user_id, "companion.video.progress", {"packId": pack_id, "stage": "script"})
+            await _emit_pack_event(
+                pack.user_id,
+                "companion.video.progress",
+                {"packId": pack_id, "outfitId": pack.outfit_id, "stage": "script"},
+            )
             specs = []
             for job in pending:
                 if job.key in SYSTEM_ACTION_SEMANTICS:
@@ -1389,7 +1393,11 @@ async def _generate_pack(pack_id: int) -> None:
             if action == "idle" and cover_path is None:
                 cover_path = result.cover_path
         specs.sort(key=lambda clip: _action_order(clip.action))
-        await _emit_pack_event(pack.user_id, "companion.video.progress", {"packId": pack_id, "stage": "publish"})
+        await _emit_pack_event(
+            pack.user_id,
+            "companion.video.progress",
+            {"packId": pack_id, "outfitId": pack.outfit_id, "stage": "publish"},
+        )
         await _publish_ready(
             pack_id,
             canvas=_DEFAULT_CANVAS,
@@ -1646,7 +1654,7 @@ async def _run_action_attempt(
         await _emit_pack_event(
             pack.user_id,
             "companion.video.progress",
-            {"packId": pack.id, "stage": stage, "action": job.key},
+            {"packId": pack.id, "outfitId": pack.outfit_id, "stage": stage, "action": job.key},
         )
 
     if not job.artifact_path and state.source_path and _artifact_abs_path(state.source_path).is_file():

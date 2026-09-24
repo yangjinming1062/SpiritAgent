@@ -184,20 +184,6 @@ export async function setOutfitPolicy(policy: OutfitPolicy): Promise<boolean> {
   }
 }
 
-/** 启用已就绪外观，不触发生成。 */
-export async function activateOutfit(outfitId: number): Promise<boolean> {
-  try {
-    await window.spiritagent.api({ path: `/api/companion/outfits/${outfitId}/activate`, method: 'PUT' })
-    await hydrateWardrobe()
-
-    return true
-  } catch (err) {
-    log.warn('wardrobe', 'activateOutfit failed', err)
-
-    return false
-  }
-}
-
 export async function deleteOutfit(outfitId: number): Promise<boolean> {
   try {
     await window.spiritagent.api({ path: `/api/companion/outfits/${outfitId}`, method: 'DELETE' })

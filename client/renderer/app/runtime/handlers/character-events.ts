@@ -3,6 +3,7 @@ import {
   $activeAvatarId,
   $companionMood,
   $screenLocked,
+  $videoPacks,
   acceptPlayCommand,
   actionCatalogChanged,
   type ActionPlayCommand,
@@ -15,6 +16,7 @@ import {
 } from '@/modules/character'
 import {
   $videoGenError,
+  $videoGenScope,
   $videoGenStage,
   $videoGenState,
   type VideoGenStage,
@@ -24,6 +26,7 @@ import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
 import { $chatVisible } from '@/shared/store/chat-visibility'
+import { getStrings } from '@/shared/strings'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
@@ -137,10 +140,13 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
         break
       }
 
+      const p = decodePayload<{ packId?: number; outfitId?: number | null }>(event.payload)
+
       videoPackEventReceived()
       $videoGenState.set('idle')
       $videoGenStage.set(null)
       $videoGenError.set(null)
+      $videoGenScope.set({ outfitId: p?.outfitId ?? null, packId: p?.packId ?? null })
       void hydrateVideoPack(true)
 
       break
@@ -152,7 +158,7 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
         break
       }
 
-      const p = decodePayload<{ stage?: string }>(event.payload)
+      const p = decodePayload<{ stage?: string; packId?: number; outfitId?: number | null }>(event.payload)
 
       const stages: readonly VideoGenStage[] = [
         'script',
@@ -166,23 +172,38 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
 
       const stage = stages.find(s => s === p?.stage) ?? null
 
+      const progressPack = p?.packId == null ? null : ($videoPacks.get().find(pack => pack.id === p.packId) ?? null)
+
+      const previousScope = $videoGenScope.get()
+
+      const previousOutfitId =
+        p?.packId != null && previousScope?.packId === p.packId ? (previousScope?.outfitId ?? null) : null
+
+      const outfitId = p?.outfitId ?? progressPack?.outfit_id ?? previousOutfitId
+
       videoPackEventReceived()
       $videoGenState.set('generating')
       $videoGenStage.set(stage)
       $videoGenError.set(null)
+      $videoGenScope.set({ outfitId, packId: p?.packId ?? null })
 
       break
     }
 
     case 'companion.video.failed': {
-      const p = decodePayload<{ reason?: string }>(event.payload)
+      const p = decodePayload<{ reason?: string; packId?: number; outfitId?: number | null }>(event.payload)
       log.warn('events', 'video pack failed:', p?.reason)
 
       if (authed()) {
         videoPackEventReceived()
         $videoGenState.set('failed')
         $videoGenStage.set(null)
-        $videoGenError.set(p?.reason || '视频形象生成失败，请稍后重试')
+        $videoGenScope.set({ outfitId: p?.outfitId ?? null, packId: p?.packId ?? null })
+        $videoGenError.set({
+          message: p?.reason || getStrings().living.appearance.videoGenRequestFailed,
+          outfitId: p?.outfitId ?? null,
+          packId: p?.packId ?? null
+        })
         void hydrateVideoPack(true)
       }
 

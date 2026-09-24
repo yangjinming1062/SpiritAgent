@@ -1,20 +1,22 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 
-import { $defaultScale, hydrateAvatarSeeds, hydrateWardrobe, setDefaultScale } from '@/modules/character'
+import { $defaultScale, $outfits, hydrateAvatarSeeds, hydrateWardrobe, setDefaultScale } from '@/modules/character'
 import { Slider } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
+import { OutfitSection } from './outfit-section'
 import { VideoSection } from './video-section'
 
-// 外观页（DESIGN §5.5 / §6.1）：视频形象分区承担逐动作预览、重做与外观参考（着装）管理。
-// 顶栏只保留桌面显示设置（形象大小）。
+// 外观页按着装 → 动作组织；顶栏只保留桌面显示设置（形象大小）。
 export function AppearancePage(): React.JSX.Element {
   const defaultScale = useStore($defaultScale)
   const authKind = useStore($auth).kind
+  const outfits = useStore($outfits)
   const t = useStrings().living.appearance
+  const [selectedOutfitId, setSelectedOutfitId] = useState<number | null>(null)
 
   // 外观列表在 auth 就绪后再水合——冷启动直接进入本页时 hydrateAuth 的 IPC 往返
   // 尚未完成，提前调用会因 pending 静默跳过。种子图走本地缓存，缺失时补拉。
@@ -24,6 +26,12 @@ export function AppearancePage(): React.JSX.Element {
       void hydrateAvatarSeeds()
     }
   }, [authKind])
+
+  useEffect(() => {
+    if (selectedOutfitId !== null && !outfits.some(outfit => outfit.id === selectedOutfitId)) {
+      setSelectedOutfitId(null)
+    }
+  }, [outfits, selectedOutfitId])
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -46,7 +54,13 @@ export function AppearancePage(): React.JSX.Element {
         </div>
       </div>
 
-      <VideoSection />
+      <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        {selectedOutfitId === null ? (
+          <OutfitSection onSelectOutfit={setSelectedOutfitId} />
+        ) : (
+          <VideoSection onBack={() => setSelectedOutfitId(null)} outfitId={selectedOutfitId} />
+        )}
+      </div>
     </div>
   )
 }

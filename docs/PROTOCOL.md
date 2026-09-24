@@ -83,6 +83,7 @@ Backend 事件统一使用 `method=event`，`type`、`payload`、`seq` 位于 `p
 | `tool.call` | 用户级设备指令，按 `call_id` 派发，不受当前可见会话过滤 |
 | `companion.message/mood` | 分别交付已持久化主动台词与独立心情 |
 | 形象、外观、场景、片刻、日记、视频与通道事件 | 更新对应资源或触发重新读取；不一律写入聊天历史 |
+| `companion.video.progress/ready/failed/activated` | 载荷含 `packId`、`outfitId`；进度另含 `stage`，客户端按资源归属展示并重新读取状态 |
 | `companion.action.catalog_changed` / `job_updated` / `play_requested` | 动作目录变更、生成进度与播放指令；播放请求带 play_id、pack_id、appearance_epoch、TTL |
 | `system.notification` | 自动化结果通知，完整内容留在任务会话 |
 
