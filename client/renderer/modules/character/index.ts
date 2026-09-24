@@ -137,9 +137,7 @@ export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritua
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {
   $defaultScale,
-  $edgeDockSide,
   $homePosition,
-  $isEdgeDocked,
   $spatialLocomotion,
   $spatialPos,
   $spatialScale,
@@ -156,7 +154,6 @@ export {
   setDefaultScale,
   setSpatialLocale,
   startDrag,
-  undockFromEdge,
   updateDragPosition
 } from './spatial'
 export { SpriteStatusBadge } from './sprite-status-badge'

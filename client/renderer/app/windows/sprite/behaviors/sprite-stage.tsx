@@ -3,9 +3,7 @@ import { type PointerEvent, type ReactNode, useCallback, useEffect, useRef } fro
 
 import { handleDragEndInteraction } from '@/modules/character'
 import {
-  $edgeDockSide,
   $homePosition,
-  $isEdgeDocked,
   $spatialLocomotion,
   $spatialPos,
   $spatialScale,
@@ -16,7 +14,6 @@ import {
   getBaseSpriteWidth,
   setSpriteState,
   startDrag,
-  undockFromEdge,
   updateDragPosition
 } from '@/modules/character'
 import { emitVfx, SpriteVfxOverlay } from '@/modules/character'
@@ -24,7 +21,7 @@ import { FootGlow } from '@/modules/character'
 import { useVideoPixelHitTest } from '@/modules/character/rendering/video'
 import { clearExternalAttachment, pushExternalAttachment } from '@/modules/conversation'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
-import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { holdWindowMouseCapture, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
 
 import { openWhisper } from '../whisper'
@@ -45,11 +42,6 @@ const DOUBLE_TAP_MS = 320
 const LONG_PRESS_MS = 500
 // 投喂分流：纯图片/视频走轻语快速回复；混有其它文件时整批进生活空间。
 const MEDIA_DROP_PATH_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif|mp4|mov|webm|m4v|avi|mkv)$/i
-
-// 调这里：贴边站位的整体倾角（度）。精灵站在屏内贴边位置，
-// 绕贴边侧脚底向屏内倾——上半身轻微探进屏幕方向。
-// 左贴边用 +（顺时针向屏内倒），右贴边用 −。
-const EDGE_DOCK_LEAN_DEG = 14
 
 // 一旦光标跨到另一块显示器，pointer capture 会持续投递跨视口坐标；
 // 探测主进程的频率最多为此间隔。
@@ -74,8 +66,14 @@ export function SpriteStage({
     moved: boolean
     lastX: number
     lastY: number
-    pressedAt: number
+    pointerId: number
+    target: HTMLDivElement
+    releaseCapture: () => void
+    longPressed: boolean
   } | null>(null)
+
+  const gestureGenerationRef = useRef(0)
+  const displayProbePendingRef = useRef(false)
 
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -91,6 +89,7 @@ export function SpriteStage({
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null)
   const dragRafRef = useRef<number | null>(null)
   const displayProbeAtRef = useRef(0)
+  const lastDragPositionRef = useRef<{ x: number; y: number } | null>(null)
   const lastDragPointRef = useRef<{ x: number; y: number } | null>(null)
 
   const stageRect = useCallback(
@@ -110,24 +109,86 @@ export function SpriteStage({
   // ——否则矩形空白区会挡住底下应用的点击。
   useInteractiveRegion(SPRITE_REGION_ID, mountRef, stageRect, stageHitTest)
 
-  useEffect(() => {
-    return () => {
-      if (dragRafRef.current !== null) {
-        cancelAnimationFrame(dragRafRef.current)
-        dragRafRef.current = null
-      }
+  const finishGesture = useCallback((cancelled: boolean) => {
+    const drag = dragRef.current
+    dragRef.current = null
 
-      if (tapTimerRef.current !== null) {
-        clearTimeout(tapTimerRef.current)
-        tapTimerRef.current = null
-      }
-
-      if (longPressTimerRef.current !== null) {
-        clearTimeout(longPressTimerRef.current)
-        longPressTimerRef.current = null
-      }
+    if (longPressTimerRef.current !== null) {
+      clearTimeout(longPressTimerRef.current)
+      longPressTimerRef.current = null
     }
+
+    if (dragRafRef.current !== null) {
+      cancelAnimationFrame(dragRafRef.current)
+      dragRafRef.current = null
+    }
+
+    if (cancelled && tapTimerRef.current !== null) {
+      clearTimeout(tapTimerRef.current)
+      tapTimerRef.current = null
+    }
+
+    if (cancelled) {
+      lastTapRef.current = 0
+    }
+
+    if (!drag) {
+      pendingPosRef.current = null
+
+      return null
+    }
+
+    lastDragPointRef.current = drag.moved ? { x: drag.lastX, y: drag.lastY } : null
+
+    lastDragPositionRef.current = drag.moved
+      ? { x: drag.originX + drag.lastX - drag.startX, y: drag.originY + drag.lastY - drag.startY }
+      : null
+
+    if (drag.moved) {
+      if (pendingPosRef.current) {
+        updateDragPosition(pendingPosRef.current)
+      }
+
+      endDragAt($spatialPos.get(), cancelled)
+    }
+
+    pendingPosRef.current = null
+
+    // 先清空手势再释放 DOM 捕获，避免 lostpointercapture 重复提交。
+    try {
+      if (drag.target.hasPointerCapture(drag.pointerId)) {
+        drag.target.releasePointerCapture(drag.pointerId)
+      }
+    } finally {
+      drag.releaseCapture()
+    }
+
+    if (drag.moved && !cancelled) {
+      handleDragEndInteraction()
+    }
+
+    return drag
   }, [])
+
+  useEffect(() => {
+    const cancel = () => {
+      finishGesture(true)
+    }
+
+    window.addEventListener('blur', cancel)
+
+    return () => {
+      window.removeEventListener('blur', cancel)
+      finishGesture(true)
+      gestureGenerationRef.current += 1
+    }
+  }, [finishGesture])
+
+  useEffect(() => {
+    if (hidden) {
+      finishGesture(true)
+    }
+  }, [hidden, finishGesture])
 
   // 精灵窗口只占一块显示器；要把精灵搬到另一块显示器上就要移动窗口。
   // 主进程会把窗口对齐到光标所在显示器并返回两个窗口原点。
@@ -138,16 +199,18 @@ export function SpriteStage({
   const probeDisplaySwitch = useCallback((): void => {
     const now = performance.now()
 
-    if (now - displayProbeAtRef.current < DISPLAY_SWITCH_PROBE_MS) {
+    if (displayProbePendingRef.current || now - displayProbeAtRef.current < DISPLAY_SWITCH_PROBE_MS) {
       return
     }
 
     displayProbeAtRef.current = now
+    displayProbePendingRef.current = true
+    const generation = gestureGenerationRef.current
 
     void window.spiritagent.sprite
       .moveToCursorDisplay()
       .then(switched => {
-        if (!switched) {
+        if (!switched || generation !== gestureGenerationRef.current) {
           return
         }
 
@@ -183,16 +246,27 @@ export function SpriteStage({
           pendingPosRef.current.y += dy
         }
 
-        const pos = $spatialPos.get()
-        const next = { x: pos.x + dx, y: pos.y + dy }
-        $spatialPos.set(next)
+        // 旧屏位置可能已被边界钳制；使用指针计算的原始位置，避免把丢失的位移带入新屏。
+        const raw = d?.moved
+          ? { x: d.originX + d.lastX - d.startX, y: d.originY + d.lastY - d.startY }
+          : lastDragPositionRef.current
+
+        if (!raw) {
+          return
+        }
+
+        updateDragPosition({ x: raw.x + dx, y: raw.y + dy })
 
         if (!dragging) {
+          const next = $spatialPos.get()
           $homePosition.set(next)
           void window.spiritagent.sprite.setPosition(next)
         }
       })
-      .catch(() => {})
+      .catch(error => console.warn('Sprite display switch failed', error))
+      .finally(() => {
+        displayProbePendingRef.current = false
+      })
   }, [])
 
   // 文件投喂（DESIGN §6.3）：解析真实文件路径并推到 chat-dock。
@@ -230,7 +304,7 @@ export function SpriteStage({
   }
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>): void => {
-    if (hidden || !stageHitTest(e.clientX, e.clientY)) {
+    if (hidden || dragRef.current || !stageHitTest(e.clientX, e.clientY)) {
       return
     }
 
@@ -239,16 +313,26 @@ export function SpriteStage({
       return
     }
 
-    const now = performance.now()
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    const releaseCapture = holdWindowMouseCapture()
+    gestureGenerationRef.current += 1
+    lastDragPointRef.current = null
+    lastDragPositionRef.current = null
+    pendingPosRef.current = null
+    const origin = $spatialPos.get()
     dragRef.current = {
       startX: e.clientX,
       startY: e.clientY,
-      originX: pos.x,
-      originY: pos.y,
+      originX: origin.x,
+      originY: origin.y,
       moved: false,
       lastX: e.clientX,
       lastY: e.clientY,
-      pressedAt: now
+      pointerId: e.pointerId,
+      target: e.currentTarget,
+      releaseCapture,
+      longPressed: false
     }
     cancelMovement()
 
@@ -262,6 +346,7 @@ export function SpriteStage({
       const d = dragRef.current
 
       if (d && !d.moved) {
+        d.longPressed = true
         // 触发时附带 VFX + sprite action：与拖拽的 drag_end 区分。
         // DESIGN §6.3 长按/拖拽与抛掷：「拖拽始终使用本地预制反馈」——长按是
         // 用户主动且未移动，可触发专属 sprite action 让其他模块响应。
@@ -279,7 +364,13 @@ export function SpriteStage({
 
     const d = dragRef.current
 
-    if (!d) {
+    if (!d || d.pointerId !== e.pointerId) {
+      return
+    }
+
+    if ((e.buttons & 1) === 0) {
+      finishGesture(true)
+
       return
     }
 
@@ -289,7 +380,12 @@ export function SpriteStage({
     if (!d.moved && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
       d.moved = true
       startDrag()
-      e.currentTarget.setPointerCapture(e.pointerId)
+      lastTapRef.current = 0
+
+      if (tapTimerRef.current !== null) {
+        clearTimeout(tapTimerRef.current)
+        tapTimerRef.current = null
+      }
 
       // drag 一旦开始就放弃 long-press 等待：与拖拽是互斥的两条交互通道。
       if (longPressTimerRef.current) {
@@ -317,6 +413,7 @@ export function SpriteStage({
 
           if (pendingPosRef.current) {
             updateDragPosition(pendingPosRef.current)
+            pendingPosRef.current = null
           }
         })
       }
@@ -324,45 +421,24 @@ export function SpriteStage({
   }
 
   const onPointerUp = (e: PointerEvent<HTMLDivElement>): void => {
-    if (hidden) {
+    const active = dragRef.current
+
+    if (!active || active.pointerId !== e.pointerId || e.button !== 0) {
       return
     }
 
-    if (longPressTimerRef.current) {
-      clearTimeout(longPressTimerRef.current)
-      longPressTimerRef.current = null
+    if (active.moved) {
+      active.lastX = e.clientX
+      active.lastY = e.clientY
+      pendingPosRef.current = {
+        x: Math.round(active.originX + e.clientX - active.startX),
+        y: Math.round(active.originY + e.clientY - active.startY)
+      }
     }
 
-    ;(e.currentTarget as Element).releasePointerCapture?.(e.pointerId)
-    const drag = dragRef.current
-    dragRef.current = null
-    lastDragPointRef.current = drag?.moved ? { x: drag.lastX, y: drag.lastY } : null
+    const drag = finishGesture(hidden)
 
-    if (dragRafRef.current !== null) {
-      cancelAnimationFrame(dragRafRef.current)
-      dragRafRef.current = null
-    }
-
-    if (pendingPosRef.current) {
-      updateDragPosition(pendingPosRef.current)
-      pendingPosRef.current = null
-    }
-
-    if (drag?.moved) {
-      endDragAt($spatialPos.get())
-      handleDragEndInteraction()
-
-      return
-    }
-
-    // 只有左键松开触发 tap / double-tap；右键打开右键菜单
-    if (e.button !== 0) {
-      return
-    }
-
-    if ($isEdgeDocked.get()) {
-      undockFromEdge()
-
+    if (!drag || hidden || drag.moved || drag.longPressed) {
       return
     }
 
@@ -406,14 +482,6 @@ export function SpriteStage({
   const spriteW = getBaseSpriteWidth()
   const spriteH = getBaseSpriteHeight()
 
-  // 贴边倾角只挂在内层 wrapper 上（外层每帧更新 translate3d/scale，CSS 过渡会打架）：
-  // 绕贴边侧的脚底为轴把整个人向屏内倾，松开/拖走时 420ms 缓动回正。
-  const edgeDockSide = useStore($edgeDockSide)
-
-  const leanDeg = edgeDockSide === 'left' ? EDGE_DOCK_LEAN_DEG : edgeDockSide === 'right' ? -EDGE_DOCK_LEAN_DEG : 0
-
-  const leanOrigin = edgeDockSide === 'left' ? '0% 100%' : edgeDockSide === 'right' ? '100% 100%' : '50% 50%'
-
   return (
     <div className="fixed inset-0" data-sprite-stage style={{ pointerEvents: 'none' }}>
       <div
@@ -433,7 +501,16 @@ export function SpriteStage({
           e.preventDefault()
           void handleDrop(e.dataTransfer?.files)
         }}
-        onPointerCancel={onPointerUp}
+        onLostPointerCapture={e => {
+          if (dragRef.current?.pointerId === e.pointerId) {
+            finishGesture(true)
+          }
+        }}
+        onPointerCancel={e => {
+          if (dragRef.current?.pointerId === e.pointerId) {
+            finishGesture(true)
+          }
+        }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
@@ -452,19 +529,9 @@ export function SpriteStage({
           willChange: 'transform, opacity'
         }}
       >
-        <div
-          style={{
-            width: '100%',
-            height: '100%',
-            transform: `rotate(${leanDeg}deg)`,
-            transformOrigin: leanOrigin,
-            transition: 'transform 420ms cubic-bezier(0.33, 1, 0.68, 1)'
-          }}
-        >
-          <FootGlow />
-          {children}
-          <SpriteVfxOverlay />
-        </div>
+        <FootGlow />
+        {children}
+        <SpriteVfxOverlay />
       </div>
     </div>
   )

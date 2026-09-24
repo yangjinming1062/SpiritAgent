@@ -7,6 +7,7 @@ export type InteractiveRegion = {
 }
 
 interface GlobalInteractiveState {
+  captureHoldsByWindow: Map<number, Set<symbol>>
   isIgnoringByWindow: Map<number, boolean>
   lastPointsByWindow: Map<number, { x: number; y: number }>
   probesByWindow: Map<number, () => void>
@@ -20,6 +21,7 @@ const g = globalThis as unknown as {
 
 if (!g.__spiritagent_interactive_state__) {
   g.__spiritagent_interactive_state__ = {
+    captureHoldsByWindow: new Map(),
     isIgnoringByWindow: new Map(),
     lastPointsByWindow: new Map(),
     probesByWindow: new Map(),
@@ -29,6 +31,22 @@ if (!g.__spiritagent_interactive_state__) {
 }
 
 const state = g.__spiritagent_interactive_state__
+state.captureHoldsByWindow ??= new Map()
+
+/** 手势期间保持窗口接收鼠标；返回的释放函数可重复调用。 */
+export function holdWindowMouseCapture(windowId = 0): () => void {
+  const holds = state.captureHoldsByWindow.get(windowId) ?? new Set<symbol>()
+  state.captureHoldsByWindow.set(windowId, holds)
+  const token = Symbol()
+  holds.add(token)
+  state.probesByWindow.get(windowId)?.()
+
+  return () => {
+    if (holds.delete(token)) {
+      state.probesByWindow.get(windowId)?.()
+    }
+  }
+}
 
 function bucket(windowId: number): Map<string, InteractiveRegion> {
   let m = state.regionsByWindow.get(windowId)
@@ -209,13 +227,22 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
 
       const timer = setTimeout(() => {
         state.releaseTimers.delete(windowId)
-        setIgnoreMouseEvents(true, true)
+
+        if (!state.captureHoldsByWindow.get(windowId)?.size) {
+          setIgnoreMouseEvents(true, true)
+        }
       }, 100)
 
       state.releaseTimers.set(windowId, timer)
     }
 
     const probe = () => {
+      if (state.captureHoldsByWindow.get(windowId)?.size) {
+        captureImmediate()
+
+        return
+      }
+
       const p = state.lastPointsByWindow.get(windowId)
 
       if (!p) {
@@ -234,11 +261,7 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
     const onMouseMove = (e: MouseEvent) => {
       state.lastPointsByWindow.set(windowId, { x: e.clientX, y: e.clientY })
 
-      if (isPointInteractive(e.clientX, e.clientY, windowId)) {
-        captureImmediate()
-      } else {
-        releaseDebounced()
-      }
+      probe()
     }
 
     window.addEventListener('mousemove', onMouseMove, { passive: true })

@@ -50,7 +50,7 @@ speech 拥有播放状态，conversation 只维护其投影；character 拥有�
 
 ### 用户直接交互与命中
 
-精灵舞台对接窗口捕获，手势识别产生语义。单击等待双击判定，双击成立取消待执行单击；就绪后按实际像素命中，光晕和透明留白不计入。捕获在 mousemove 阶段完成，不能等 mousedown；异步命中更新后即使指针静止也重判。菜单只登记自身区域，关闭事件不穿透触发手势。
+精灵舞台对接窗口捕获，手势识别产生语义。单击等待双击判定，双击成立取消待执行单击；就绪后按实际像素命中，光晕和透明留白不计入。捕获在 mousemove 阶段完成，不能等 mousedown；异步命中更新后即使指针静止也重判。菜单只登记自身区域，关闭事件不穿透触发手势。有效按下即捕获指针并持有窗口鼠标捕获，手势结束前不因透明像素变化开启穿透；取消、失焦、隐藏和卸载统一释放，不触发点击或拖拽释放反馈。
 
 [reactions](modules/character/reactions/)提供拖拽等反应池；预制台词经 `speakScripted` 送达，不直连语音引擎。
 
@@ -64,7 +64,7 @@ speech 拥有播放状态，conversation 只维护其投影；character 拥有�
 
 ### 空间行为（位置 × 移动 × 缩放）
 
-[spatial.ts](modules/character/spatial.ts)拥有位置，[autonomy.ts](modules/character/autonomy.ts)解释云端意图。拖拽取消旧路径，完整入口打开冻结桌面移动；stay 或推理失败不转成本地漫游，本地规则仅在智能关闭时生效。
+[spatial.ts](modules/character/spatial.ts)拥有位置，[autonomy.ts](modules/character/autonomy.ts)解释云端意图。拖拽取消旧路径，松手按可见范围落位并保存；历史屏外落点恢复到屏内，不以容器旋转或半隐藏表示姿态。完整入口打开冻结桌面移动；stay 或推理失败不转成本地漫游，本地规则仅在智能关闭时生效。
 
 本地漫游需真实空闲信号，未知则不动；位置适配不足时放弃，不缩成不可辨识大小。仪式行走可跳过，失败仍执行原工具，`system.click_at` 不补第二次点击。
 

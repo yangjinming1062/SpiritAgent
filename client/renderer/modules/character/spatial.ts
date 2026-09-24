@@ -19,10 +19,6 @@ export function getBaseSpriteWidth(): number {
 
 const REST_MARGIN = 24
 
-/** 调这里：贴边时藏进屏外的可见宽度比例。人「站在屏幕外」，屏内的存在感靠舞台层
- * 整体倾角（sprite-stage 的 EDGE_DOCK_LEAN_DEG）把上半身探进来，因此要比直立时藏得更深。 */
-const EDGE_DOCK_HIDDEN_FRACTION = 0.65
-
 const WALK_SPEED = 80
 const FLY_SPEED = 400
 const SCALE_TRANSITION_MS = 300
@@ -49,8 +45,6 @@ type SpatialLocale = 'home' | 'perch' | 'roam' | 'target' | 'workbench'
 // - 'jump' 是单次脉冲。
 export type Locomotion = 'still' | 'walk' | 'walk_fast' | 'fly' | 'drag' | 'jump'
 
-type EdgeDockSide = 'none' | 'left' | 'right'
-
 const $spatialLocale = atom<SpatialLocale>('home')
 
 // 可见内容包围盒（归一化到舞台盒）：角色实际可见像素的范围，由渲染层上报；
@@ -63,8 +57,6 @@ export const $spatialPos = atom<{ x: number; y: number }>(getHomePosition())
 export const $homePosition = atom<{ x: number; y: number }>(getHomePosition())
 export const $spatialScale = atom<number>($defaultScale.get())
 export const $spatialLocomotion = atom<Locomotion>('still')
-export const $edgeDockSide = atom<EdgeDockSide>('none')
-export const $isEdgeDocked = atom<boolean>(false)
 
 // 窗口视口尺寸——单一真实源，由 initSpatial 已有的 resize 监听器更新。
 interface ViewportSize {
@@ -103,7 +95,6 @@ function getHomePosition(): { x: number; y: number } {
 }
 
 // 不变量（DESIGN §3.7）：精灵全身始终完整在屏内——垂直方向任何时候不裁切身体；
-// 唯一的局部隐藏是左右贴边探头（§3.2，仅水平方向缩进屏外）。
 // 「全身」按可见像素计：贴边是角色贴边，不是渲染画布贴边——舞台盒四周的透明
 // 留白可以越出屏幕。钳制与落位一律用缩放后的可见内容包围盒（见 contentBox）。
 
@@ -407,13 +398,8 @@ export function setSpatialLocale(
 }
 
 export function updateSpatialDecision(): void {
-  // 贴边趴姿锁定、生活空间或工作台在屏、拖拽中均冻结桌面空间决策
-  if (
-    $spatialLocomotion.get() === 'drag' ||
-    $surfaceOpen.get() === 'living' ||
-    $surfaceOpen.get() === 'workbench' ||
-    $isEdgeDocked.get()
-  ) {
+  // 生活空间或工作台在屏、拖拽中均冻结桌面空间决策
+  if ($spatialLocomotion.get() === 'drag' || $surfaceOpen.get() === 'living' || $surfaceOpen.get() === 'workbench') {
     return
   }
 
@@ -488,7 +474,7 @@ function generateRoamWaypoint(): { x: number; y: number } {
 }
 
 export function startRoam(): void {
-  if (roaming || $isEdgeDocked.get() || $surfaceOpen.get() === 'living' || $surfaceOpen.get() === 'workbench') {
+  if (roaming || $surfaceOpen.get() === 'living' || $surfaceOpen.get() === 'workbench') {
     return
   }
 
@@ -537,64 +523,10 @@ function stopRoam(): void {
   cancelMovement()
 }
 
-function clearDockState(): void {
-  if ($isEdgeDocked.get()) {
-    $isEdgeDocked.set(false)
-  }
-
-  if ($edgeDockSide.get() !== 'none') {
-    $edgeDockSide.set('none')
-  }
-}
-
-function dockToEdge(side: 'left' | 'right'): void {
-  cancelMovement()
-  const vw = window.innerWidth
-  const c = contentBox()
-  const charW = Math.max(1, c.right - c.left)
-  const targetY = clamp($spatialPos.get().y, -c.top, window.innerHeight - c.bottom)
-
-  const targetX =
-    side === 'left'
-      ? -c.left - EDGE_DOCK_HIDDEN_FRACTION * charW
-      : vw - c.left - (1 - EDGE_DOCK_HIDDEN_FRACTION) * charW
-
-  $isEdgeDocked.set(true)
-  $edgeDockSide.set(side)
-
-  moveTo({ x: targetX, y: targetY }, 'walk', () => {
-    $spatialPos.set({ x: targetX, y: targetY })
-    $homePosition.set({ x: targetX, y: targetY })
-    void window.spiritagent.sprite.setPosition({ x: targetX, y: targetY })
-  })
-}
-
-export function undockFromEdge(): void {
-  if (!$isEdgeDocked.get()) {
-    return
-  }
-
-  cancelMovement()
-  const side = $edgeDockSide.get()
-  const vw = window.innerWidth
-  const c = contentBox()
-  const curPos = $spatialPos.get()
-
-  const targetX = side === 'left' ? -c.left + REST_MARGIN : vw - c.right - REST_MARGIN
-  clearDockState()
-
-  moveTo({ x: targetX, y: curPos.y }, 'walk', () => {
-    $spatialPos.set({ x: targetX, y: curPos.y })
-    $homePosition.set({ x: targetX, y: curPos.y })
-    void window.spiritagent.sprite.setPosition({ x: targetX, y: curPos.y })
-  })
-}
-
 export function startDrag(): void {
   userInteracted = true
   stopRoam()
   cancelMovement()
-  clearDockState()
 
   $spatialLocomotion.set('drag')
   $spriteState.set('interacting')
@@ -605,38 +537,18 @@ export function updateDragPosition(pos: { x: number; y: number }): void {
   $spatialPos.set(clampPosToViewport(pos))
 }
 
-export function endDragAt(pos: { x: number; y: number }): void {
-  const vw = window.innerWidth
-  const c = contentBox()
-  const dockMargin = 40
-
-  // 1. 优先判定屏幕左右边缘吸附——只有无入口窗时贴边（生活 / 工作台打开时桌面精灵均收起）。
-  if ($surfaceOpen.get() === null) {
-    const leftDist = pos.x + c.left
-    const rightDist = vw - (pos.x + c.right)
-
-    if (leftDist <= dockMargin) {
-      dockToEdge('left')
-
-      return
-    }
-
-    if (rightDist <= dockMargin) {
-      dockToEdge('right')
-
-      return
-    }
-  }
-
-  // 2. 松手定居：把坐标收紧到 viewport 内，全身完整入屏（DESIGN §3.7）
+export function endDragAt(pos: { x: number; y: number }, cancelled = false): void {
   const safe = clampPosToViewport(pos)
 
-  clearDockState()
   $spatialPos.set(safe)
   $homePosition.set(safe)
   $spatialLocomotion.set('still')
-  $spriteAction.set('drag_end')
-  setSpriteState('interacting', { durationMs: 500 })
+
+  if (!cancelled) {
+    $spriteAction.set('drag_end')
+  }
+
+  setSpriteState('interacting', { durationMs: cancelled ? 0 : 500 })
   $spatialLocale.set('home')
   void window.spiritagent.sprite.setPosition(safe)
 }
@@ -645,7 +557,6 @@ export function resetToHomePosition(): void {
   userInteracted = false
   stopRoam()
   cancelMovement()
-  clearDockState()
 
   const home = getHomePosition()
   $homePosition.set(home)
@@ -657,51 +568,23 @@ export function resetToHomePosition(): void {
 }
 
 export function initSpatial(): () => void {
-  // 启动恢复的出屏判定依赖内容包围盒（整盒兜底会把透明留白算进身体，出屏量与
-  // dock 落点都会算偏）。getPosition 的 IPC 往返几乎总是快于渲染层装配上报——
-  // rect 未上报时等首次上报再恢复；3s 兜底防视频/蛋等不上报的渲染路径丢失恢复。
+  let disposed = false
+
+  // 等待可见内容包围盒后恢复；旧版屏外位置统一收回可见区域。
   const restoreSavedPosition = (saved: { x: number; y: number }): void => {
-    if (userInteracted) {
+    if (disposed || userInteracted) {
       return
     }
 
-    const vw = window.innerWidth
-    const c = contentBox()
-    const charW = Math.max(1, c.right - c.left)
+    const next = clampPosToViewport(saved)
+    $homePosition.set(next)
 
-    // 贴边残留判定看「已出屏多少」而不是「离边缘多近」：正常 home 距右缘
-    // REST_MARGIN，永远不该命中；至少缩进隐藏比例的一半才算贴边残留。
-    const minOutPx = EDGE_DOCK_HIDDEN_FRACTION * charW * 0.5
-    const leftOutPx = -(saved.x + c.left)
-    const rightOutPx = saved.x + c.right - vw
+    if ($spatialLocale.get() === 'home') {
+      $spatialPos.set(next)
+    }
 
-    const side: 'left' | 'right' | null = leftOutPx >= minOutPx ? 'left' : rightOutPx >= minOutPx ? 'right' : null
-
-    if (side) {
-      // 与 dockToEdge 同一公式吸附回精确贴边位，直接以趴姿出现（不重播移动）。
-      const targetX =
-        side === 'left'
-          ? -c.left - EDGE_DOCK_HIDDEN_FRACTION * charW
-          : vw - c.left - (1 - EDGE_DOCK_HIDDEN_FRACTION) * charW
-
-      const targetY = clamp(saved.y, -c.top, window.innerHeight - c.bottom)
-      const dockPos = { x: targetX, y: targetY }
-
-      $isEdgeDocked.set(true)
-      $edgeDockSide.set(side)
-      $homePosition.set(dockPos)
-
-      if ($spatialLocale.get() === 'home') {
-        $spatialPos.set(dockPos)
-      }
-    } else {
-      clearDockState()
-      const next = clampPosToViewport(saved)
-      $homePosition.set(next)
-
-      if ($spatialLocale.get() === 'home') {
-        $spatialPos.set(next)
-      }
+    if (next.x !== saved.x || next.y !== saved.y) {
+      void window.spiritagent.sprite.setPosition(next)
     }
   }
 
@@ -723,7 +606,7 @@ export function initSpatial(): () => void {
   void window.spiritagent.sprite
     .getPosition()
     .then(saved => {
-      if (!saved || userInteracted) {
+      if (disposed || !saved || userInteracted) {
         return
       }
 
@@ -756,15 +639,10 @@ export function initSpatial(): () => void {
     })
     .catch(() => {
       settleSavedRectWait()
-      clearDockState()
     })
 
   const unlistenSurface = $surfaceOpen.listen(open => {
     if (open === 'living' || open === 'workbench') {
-      if ($isEdgeDocked.get()) {
-        undockFromEdge()
-      }
-
       stopRoam()
       cancelMovement()
       $spatialLocomotion.set('still')
@@ -805,8 +683,7 @@ export function initSpatial(): () => void {
     const cur = $spatialPos.get()
     const next = clampPosToViewport(cur)
 
-    // 贴边探头的 x 是故意越界的，只收紧 y。
-    $spatialPos.set($isEdgeDocked.get() ? { ...cur, y: next.y } : next)
+    $spatialPos.set(next)
   })
 
   // 渲染层装配/视频加载完成后才上报内容包围盒——启动期按新盒重贴 home 与当前位
@@ -816,9 +693,7 @@ export function initSpatial(): () => void {
       return
     }
 
-    // 贴边残留的 x 是故意越界的，只收紧 y（与下方 scale 监听同一例外）。
-    const clamped = clampPosToViewport($homePosition.get())
-    const next = $isEdgeDocked.get() ? { ...$homePosition.get(), y: clamped.y } : clamped
+    const next = clampPosToViewport($homePosition.get())
 
     $homePosition.set(next)
 
@@ -857,6 +732,7 @@ export function initSpatial(): () => void {
   window.addEventListener('resize', onResize)
 
   return () => {
+    disposed = true
     settleSavedRectWait()
     unlistenSurface()
     unlistenState()
