@@ -12,7 +12,6 @@ from modules.companion import CharacterCardSnapshot
 from prompts.generation import (
     VIDEO_ACTION_POSE_TEMPLATE,
     VIDEO_ACTION_SCRIPT_INSTRUCTIONS,
-    VIDEO_IDLE_MOTION_CONSTRAINTS,
     VIDEO_PROMPT_LOOP_CYCLE,
     VIDEO_PROMPT_LOOP_TAIL,
     VIDEO_PROMPT_ONCE_CYCLE,
@@ -26,10 +25,22 @@ from services.infrastructure.llm import vision_chat
 
 # 系统槽位的固定语义；动态动作语义由提案规格携带。
 SYSTEM_ACTION_SEMANTICS: dict[str, str] = {
-    "idle": "保持参考图中的稳定待机姿态，身体几乎不动，仅有符合实际生理结构的极轻微自然活动",
-    "walk_left": "身体侧向画面左侧，已有头部也朝左，原地循环表现向左的自然移动；不是正面对镜头横向跨步，身体中心不平移",
-    "walk_right": "身体侧向画面右侧，已有头部也朝右，原地循环表现向右的自然移动；不是正面对镜头横向跨步，身体中心不平移",
-    "drag": "身体整体悬空时符合自身结构的轻微摆动，不添加手脚或提拉道具",
+    "idle": (
+        "沿用参考图中的稳定待机姿态与神态，身体朝向、已有附属结构、重心和视线持续稳定；"
+        "全片几乎不动，仅允许符合实际结构的极轻微自然活动，有相应器官时才可眨眼或呼吸；"
+        "不做手势、转头、重心转移或摇晃"
+    ),
+    "walk_left": (
+        "身体及已有头部持续侧向画面左侧，以符合实际结构的步态、游动、蠕动或振翅原地循环表现向左移动；"
+        "躯干中心不平移，不正对镜头横向跨步，不转身或回头"
+    ),
+    "walk_right": (
+        "身体及已有头部持续侧向画面右侧，以符合实际结构的步态、游动、蠕动或振翅原地循环表现向右移动；"
+        "躯干中心不平移，不正对镜头横向跨步，不转身或回头"
+    ),
+    "drag": (
+        "身体整体悬空且全程不触地，按已有结构做轻微连续的周期性摆动，片尾与开头自然衔接而不停住；不添加手脚或提拉道具"
+    ),
 }
 
 
@@ -112,7 +123,6 @@ async def compose_action_script(
             {
                 "action": spec.action,
                 "name": spec.name,
-                "system_slot": spec.system_slot,
                 "description": spec.semantics_or(),
                 "use_when": spec.use_when,
                 "avoid_when": spec.avoid_when,
@@ -156,8 +166,6 @@ def build_video_prompt(entry: ActionScriptEntry, identity: CharacterCardSnapshot
         tail_clause=VIDEO_PROMPT_LOOP_TAIL if is_loop else "",
         cycle_clause=VIDEO_PROMPT_LOOP_CYCLE if is_loop else VIDEO_PROMPT_ONCE_CYCLE,
     )
-    if entry.action == "idle":
-        prompt += "\n\n" + VIDEO_IDLE_MOTION_CONSTRAINTS
     return prompt + "\n" + render_character_identity(identity)
 
 
