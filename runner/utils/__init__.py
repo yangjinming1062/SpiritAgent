@@ -25,21 +25,17 @@ from .constants import (
     get_skills_dir,
     get_spiritagent_dir,
     get_spiritagent_home,
-    get_spiritagent_home_override,
     get_subprocess_home,
 )
 from .credential_files import (
     get_credential_file_mounts,
-    get_external_skills_dirs,
     iter_cache_files,
     iter_skills_files,
     register_credential_file,
 )
 from .desktop_transport import (
-    HANDSHAKE_AUTH_HEADER,
     PIPE_TRANSPORT,
     UNIX_TRANSPORT,
-    DesktopConnection,
     DesktopEndpoint,
     connect_desktop,
     read_endpoint,
@@ -48,9 +44,6 @@ from .env_helpers import inject_context_spiritagent_home, sanitize_subprocess_en
 from .env_passthrough import is_env_passthrough, register_env_passthrough
 from .file_io import atomic_replace
 from .file_safety import (
-    build_write_denied_paths,
-    build_write_denied_prefixes,
-    canonicalize_path,
     get_cross_profile_warning,
     get_read_block_error,
     get_sandbox_mirror_warning,
@@ -68,10 +61,10 @@ from .interrupt import (
 from .job_object import init_runner_job_object
 from .memory_scope import CURRENT_SKILL_SCOPE, SkillScope, learned_skills_root, visible_skill_path, visible_skill_roots
 from .path_helpers import append_sane_path_entries, find_bash, find_python, msys_to_windows_path, resolve_safe_cwd
-from .pid import PidState, kill_tree, pid_exists, pid_state
-from .process_tree import TerminationResult, terminate_tree
+from .pid import pid_exists
+from .process_tree import terminate_tree
 from .redact import SECRET_PREFIX_RE, redact_sensitive_text
-from .reverse_rpc import call_llm, call_llm_sync, set_handler, set_main_loop
+from .reverse_rpc import call_llm_sync, set_handler, set_main_loop
 from .url_safety import (
     async_is_safe_url,
     check_website_access,
@@ -84,25 +77,18 @@ from .url_safety import (
 __all__ = [
     "CREATE_NO_WINDOW",
     "CURRENT_SKILL_SCOPE",
-    "DesktopConnection",
     "DesktopEndpoint",
-    "HANDSHAKE_AUTH_HEADER",
     "IS_MACOS",
     "IS_WINDOWS",
     "PIPE_TRANSPORT",
     "SECRET_PREFIX_RE",
     "SkillScope",
-    "TerminationResult",
     "UNIX_TRANSPORT",
     "append_sane_path_entries",
     "async_is_safe_url",
     "atomic_replace",
-    "build_write_denied_paths",
     "call_journal",
-    "build_write_denied_prefixes",
-    "call_llm",
     "call_llm_sync",
-    "canonicalize_path",
     "cfg_bool",
     "cfg_get",
     "cfg_int",
@@ -118,13 +104,11 @@ __all__ = [
     "get_cross_profile_warning",
     "get_disabled_config_names",
     "get_env_type",
-    "get_external_skills_dirs",
     "get_read_block_error",
     "get_sandbox_mirror_warning",
     "get_skills_dir",
     "get_spiritagent_dir",
     "get_spiritagent_home",
-    "get_spiritagent_home_override",
     "get_subprocess_home",
     "get_windows_sensitive_prefixes",
     "has_traversal_component",
@@ -138,15 +122,12 @@ __all__ = [
     "is_write_denied",
     "iter_cache_files",
     "iter_skills_files",
-    "kill_tree",
     "learned_skills_root",
     "load_config",
     "msys_to_windows_path",
     "network_reachable",
     "normalize_url_for_request",
-    "PidState",
     "pid_exists",
-    "pid_state",
     "read_endpoint",
     "redact_sensitive_text",
     "register_credential_file",

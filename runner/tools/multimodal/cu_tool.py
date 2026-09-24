@@ -29,7 +29,7 @@ _BLOCKED_KEY_COMBOS = {
     frozenset({"ctrl", "option", "delete"}),
     frozenset({"win", "l"}),
     frozenset({"win", "d"}),
-    # 补——按关键词触发即可覆盖任意组合（带 cmd 的也算）：
+    # 按关键词触发即可覆盖任意组合（带 cmd 的也算）：
     # cmd+q (quit frontmost app)、cmd+w (close window)、cmd+m (minimize window)、
     # cmd+option+esc (force-quit dialog)、cmd+shift+3/4/5 (截屏全屏/窗口/选区)
     frozenset({"cmd", "q"}),
@@ -69,8 +69,7 @@ _BLOCKED_TYPE_PATTERNS = [
     re.compile(r"curl\s+.*?(?:\|\||&&|[|;])\s*sh\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"wget\s+.*?(?:\|\||&&|[|;])\s*bash", re.IGNORECASE | re.DOTALL),
     re.compile(r"wget\s+.*?(?:\|\||&&|[|;])\s*sh\b", re.IGNORECASE | re.DOTALL),
-    # 补——之前漏的反向 shell 兜底：
-    # 反引号命令替换（`cmd`），$(...) 与 ${...} 参数展开。
+    # 反向 shell 兜底：反引号命令替换（`cmd`），$(...) 与 ${...} 参数展开。
     re.compile(r"`[^`]*`", re.DOTALL),
     re.compile(r"\$\([^)]*\)", re.DOTALL),
     re.compile(r"\$\{[^}]*\}", re.DOTALL),
@@ -107,15 +106,13 @@ def _get_backend() -> ComputerUseBackend:
                 _backend = CuaDriverBackend()
             elif name == "win":
                 _backend = WinBackend()
-            elif name == "noop":
-                _backend = _NoopBackend()
             elif name in {"auto", ""}:
                 if sys.platform == "darwin" and cua_driver_binary_available():
                     _backend = CuaDriverBackend()
                 elif sys.platform == "win32":
                     _backend = WinBackend()
                 else:
-                    _backend = _NoopBackend()
+                    raise RuntimeError(f"computer_use is not available on platform {sys.platform!r}")
             else:
                 raise RuntimeError(f"Unknown computer_use backend={name!r}")
             try:
@@ -125,44 +122,6 @@ def _get_backend() -> ComputerUseBackend:
                 _backend = None
                 raise
         return _backend
-
-
-class _NoopBackend(ComputerUseBackend):
-    def start(self) -> None:
-        pass
-
-    def stop(self) -> None:
-        pass
-
-    def is_available(self) -> bool:
-        return False
-
-    def capture(self, mode: str = "som", app: str | None = None) -> CaptureResult:
-        return CaptureResult(mode=mode, width=1024, height=768)
-
-    def click(self, **kw) -> ActionResult:
-        return ActionResult(ok=True, action="click")
-
-    def drag(self, **kw) -> ActionResult:
-        return ActionResult(ok=True, action="drag")
-
-    def scroll(self, **kw) -> ActionResult:
-        return ActionResult(ok=True, action="scroll")
-
-    def type_text(self, text: str) -> ActionResult:
-        return ActionResult(ok=True, action="type")
-
-    def key(self, keys: str) -> ActionResult:
-        return ActionResult(ok=True, action="key")
-
-    def list_apps(self) -> list[dict[str, Any]]:
-        return []
-
-    def focus_app(self, app: str, bring_to_front: bool = False) -> ActionResult:
-        return ActionResult(ok=True, action="focus_app")
-
-    def set_value(self, value: str, element: int | None = None) -> ActionResult:
-        return ActionResult(ok=True, action="set_value")
 
 
 def handle_computer_use(args: dict[str, Any], **kwargs) -> Any:

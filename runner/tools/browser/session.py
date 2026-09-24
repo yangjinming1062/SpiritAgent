@@ -35,7 +35,6 @@ except (TypeError, ValueError):
 @dataclass
 class SessionInfo:
     task_id: str
-    cdp_url: str = ""
     launch_handle: object | None = None
     started_at: float = field(default_factory=time.time)
     last_active_at: float = field(default_factory=time.time)

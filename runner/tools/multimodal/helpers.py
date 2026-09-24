@@ -203,7 +203,7 @@ def resize_image_for_vision(
 
     quality_steps = (85, 70, 50) if pil_format == "JPEG" else (None,)
     prev_dims = (img.width, img.height)
-    # 跟踪见到的最小候选，以便在没有任何一次迭代满足 max_base64_bytes 时仍能返回最佳结果 — 旧版兜底返回的是原尺寸 base64，与调用方在缩放失败时想要的相反
+    # 跟踪最小候选；全部迭代超限时返回最佳结果，不回落原尺寸 base64（调用方在缩放失败时需要更小的载荷）
     best_candidate: str | None = None
 
     for attempt in range(5):

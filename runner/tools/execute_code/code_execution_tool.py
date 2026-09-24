@@ -1054,7 +1054,6 @@ def _kill_process_group(proc: subprocess.Popen, escalate: bool = False) -> None:
         terminate_tree(
             proc,
             graceful_timeout=1.0,
-            # force_timeout 与原 ``proc.wait(timeout=5)`` 的 5s 等待对齐。
             force_timeout=5.0,
             escalate=escalate,
         )

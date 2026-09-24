@@ -15,6 +15,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any
 
+from utils import safe_schedule_threadsafe
+
 from .engine import (
     build_snapshot_text,
 )
@@ -64,7 +66,7 @@ class Refs:
     def note_navigation(self, url: str, *, is_main_root: bool) -> bool:
         """记录一次 root 帧导航，返回是否需要清空 _last_refs。
 
-        与旧内联块 (L1580-1592) 等价：URL 变化且不是 about:blank 时记录 normalized URL，
+        URL 变化且不是 about:blank 时记录 normalized URL，
         并在 main root 时推进 _root_doc_generation。任何 main root 导航都清空 ref 缓存：
         - 真实 URL 变化：旧 ref 指向已销毁 DOM
         - 同 URL reload (F5)：SoM `data-spiritagent-som` 属性是 JS 注入、随 reload 消失；
@@ -89,7 +91,7 @@ class Refs:
     def record_som(self, elements: list[dict[str, Any]]) -> None:
         """screenshot(annotate=True) 路径写入 SoM ref 条目（覆盖现有 is_visual 条目）。
 
-        不再写裸数字键 `str(index)`：会与 AXTree 的 eN / @eN 命名空间冲突，
+        不写裸数字键 `str(index)`：会与 AXTree 的 eN / @eN 命名空间冲突，
         导致 AXTree 清空后裸数字 ref 仍解析到旧的 SoM 视觉 ref。
         """
         with self._lock:
@@ -131,8 +133,6 @@ class Refs:
             return {"ok": True, "snapshot": text, "refs": refs, "element_count": len(refs) // 2 if refs else 0}
 
         try:
-            from utils import safe_schedule_threadsafe  # late import
-
             fut = safe_schedule_threadsafe(_do_snapshot(), loop)
             if fut is None:
                 return {"ok": False, "error": "Supervisor loop unavailable"}

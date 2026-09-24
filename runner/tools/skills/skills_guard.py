@@ -542,7 +542,7 @@ THREAT_PATTERNS = [
     (r"docker\s+pull\s+", "docker_pull", "medium", "supply_chain", "pulls a Docker image at runtime"),
     # ── 提权 ──
     # `allowed-tools:` 是 agent-skill 规范下 SKILL.md frontmatter 的必填字段 — 每个合规 skill 都会声明，单独出现不能视为威胁信号。
-    # 保留为 informational（low）finding 以便审计；不再驱动 verdict。
+    # 仅作 informational（low）finding 供审计；不驱动 verdict。
     (
         r"^allowed-tools\s*:",
         "allowed_tools_field",

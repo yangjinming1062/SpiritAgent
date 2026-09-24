@@ -1461,15 +1461,5 @@ class SupervisorRegistry:
         if sup is not None:
             sup.stop()
 
-    def stop_all(self) -> None:
-        with self._lock:
-            sups = list(self._supervisors.values())
-            self._supervisors.clear()
-        for sup in sups:
-            try:
-                sup.stop()
-            except Exception as e:
-                logger.debug("Error stopping supervisor %s: %s", sup.task_id, e)
-
 
 SUPERVISOR_REGISTRY = SupervisorRegistry()

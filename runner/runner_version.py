@@ -9,7 +9,7 @@ _CACHED_VERSION: str | None = None
 
 
 def _read_source_tree_version() -> str | None:
-    """从源码树 ``pyproject.toml`` 读版本; 仅在直接跑 checkout 时存在, wheel 安装没有旁边这份 pyproject, 必须走包元数据。"""
+    """从源码树 ``pyproject.toml`` 读版本; 仅在直接跑 checkout 时存在, wheel 安装没有旁边这份 pyproject。"""
     pyproject = Path(__file__).resolve().parent / "pyproject.toml"
     text = ""
     with contextlib.suppress(OSError):
@@ -18,8 +18,8 @@ def _read_source_tree_version() -> str | None:
     return match.group(1) if match else None
 
 
-def _read_wheel_version() -> str:
-    """解析 Runner 自身版本: 优先安装元数据(wheel 构建时打入), 源码树 pyproject.toml 兜底 — 避免两份 ``__version__`` 字面量走偏; 每进程至多一次。"""
+def _resolve_version() -> str:
+    """解析 Runner 自身版本: 源码树 pyproject.toml 优先, 否则安装元数据; 每进程至多一次。"""
     global _CACHED_VERSION
     with _LOCK:
         if _CACHED_VERSION is not None:
@@ -35,4 +35,4 @@ def _safe_metadata_version() -> str | None:
     return None
 
 
-__version__ = _read_wheel_version()
+__version__ = _resolve_version()

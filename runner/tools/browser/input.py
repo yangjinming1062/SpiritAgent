@@ -196,7 +196,7 @@ class InputDispatch:
                     return {"ok": False, "error": f"Target at '{ref}' did not focus an editable input field"}
 
             # macOS 用 Meta (Command) = bit 8；其它平台用 Control = bit 2。
-            # 修过历史上 `4 if darwin` 把 Mac 的 Alt+A 误发，导致 select-all 失效。
+            # 不得写成 4（Alt），否则 Mac 上 select-all 会变成 Alt+A。
             modifiers = 8 if sys.platform == "darwin" else 2
             for evt in (
                 {"type": "rawKeyDown", "windowsVirtualKeyCode": 65, "modifiers": modifiers, "key": "a"},
@@ -335,7 +335,7 @@ class InputDispatch:
 
     def press_key(self, key: str, modifiers: int = 0) -> dict[str, Any]:
         sid = self._session_id_provider()
-        # 未在 ``KEY_CODE_MAP`` 命中的 key 不再静默成功: 静默成功会让模型误以为表单已提交, 是 agent loop 里最糟的失败模式。
+        # 未在 ``KEY_CODE_MAP`` 命中的 key 必须报错: 静默成功会让模型误以为表单已提交, 是 agent loop 里最糟的失败模式。
         if key.lower() not in KEY_CODE_MAP:
             return {
                 "ok": False,

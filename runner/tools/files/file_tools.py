@@ -508,7 +508,6 @@ _file_ops_cache: dict = {}
 # 记录每个任务的读取，用于检测重读循环与去重。每个 task_id 存储：
 #   "last_key":     最近一次 read/search 调用的 key（或 None）
 #   "consecutive":  完全相同的调用连续重复的次数
-#   "read_history": (path, offset, limit) 元组集合，供 get_read_files_summary 使用
 #   "dedup":        (resolved_path, offset, limit) → mtime 浮点 的字典，
 #                   用于跳过未变化文件的重读。上下文压缩时重置（原内容被
 #                   摘要化掉，模型需要再拿到完整内容）。
@@ -560,7 +559,6 @@ def _reset_patch_failures(task_id: str, resolved_paths: list) -> None:
 # task_id；无这些上限的话，1 万次读取的会话会累积 ~1.5MB 的 dict/set 状态，
 # 而其中大部分后续不再被引用（只有最近几次读取用于去重、循环检测与外部
 # 编辑警告）。硬上限把累积量控制在几百 KB，与会话长度无关。
-_READ_HISTORY_CAP = 500  # set; used only by get_read_files_summary
 _DEDUP_CAP = 1000  # dict; skip-identical-reread guard
 _READ_TIMESTAMPS_CAP = 1000  # dict; external-edit detection for write/patch
 _READ_DEDUP_STATUS_MESSAGE = (
@@ -573,22 +571,11 @@ def _cap_read_tracker_data(task_data: dict) -> None:
     """对每个任务的 read-tracker 子容器强制大小上限。
 
     调用方必须持有 ``_read_tracker_lock``。驱逐策略：
-      * ``read_history``（set）：溢出时任意弹出。集合仅供诊断摘要，丢老的
-        条目只是裁掉摘要的尾部，可接受。
       * ``dedup`` / ``read_timestamps``（dict）：按插入顺序弹出最旧（Python 3.7+
         dict 保证有序）。被驱逐条目在下次重读时失去 dedup 跳过（文件会被
         重发一次），以及失去外部编辑 mtime 比对（write/patch 退回到非
         mtime 检查）。两种都是优雅降级，不是 bug。
     """
-    rh = task_data.get("read_history")
-    if rh is not None and len(rh) > _READ_HISTORY_CAP:
-        excess = len(rh) - _READ_HISTORY_CAP
-        for _ in range(excess):
-            try:
-                rh.pop()
-            except KeyError:
-                break
-
     dedup = task_data.get("dedup")
     if dedup is not None and len(dedup) > _DEDUP_CAP:
         excess = len(dedup) - _DEDUP_CAP
@@ -863,7 +850,6 @@ def read_file_tool(
                 {
                     "last_key": None,
                     "consecutive": 0,
-                    "read_history": set(),
                     "dedup": {},
                     "dedup_hits": {},
                     "read_timestamps": {},
@@ -971,7 +957,6 @@ def read_file_tool(
             # reset its hit counter.  (File either changed or stat failed
             # earlier and we fell through.)
             task_data["dedup_hits"].pop(dedup_key, None)
-            task_data["read_history"].add((path, offset, limit))
             if task_data["last_key"] == read_key:
                 task_data["consecutive"] += 1
             else:
@@ -1065,7 +1050,7 @@ def _update_read_timestamp(filepath: str, task_id: str) -> None:
 
     write_file 和 patch 之后调用：同任务的连续编辑会用新时间戳覆盖旧值，
     避免误报陈旧警告。同时清空该路径的 dedup 缓存，让随后的 read_file
-    拿到新内容（修复 #13144）。
+    拿到新内容。
     """
     # 先清 dedup（再进入锁更新时间戳）
     _invalidate_dedup_for_path(filepath, task_id)
@@ -1388,7 +1373,6 @@ def search_tool(
                 {
                     "last_key": None,
                     "consecutive": 0,
-                    "read_history": set(),
                     "dedup": {},
                     "dedup_hits": {},
                     "read_timestamps": {},

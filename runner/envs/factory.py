@@ -1,5 +1,4 @@
-from typing import Any
-
+from ._env_base import BaseEnvironment
 from ._env_local import LocalEnvironment
 from ._env_ssh import SSHEnvironment
 
@@ -10,7 +9,7 @@ def create_environment(
     timeout: int,
     ssh_config: dict | None = None,
     local_config: dict | None = None,
-) -> Any:
+) -> BaseEnvironment:
     """按 env_type 实例化对应的终端环境（local / ssh），并打上 `env_type` 标签。"""
     lc = local_config or {}
     if env_type == "local":

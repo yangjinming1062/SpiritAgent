@@ -71,7 +71,7 @@ _current_reconnect_streak = 0
 # runner_ready / capabilities 变化通知 / info 三处同源携带。
 _RUN_GENERATION = uuid.uuid4().hex
 
-# 重连退避 + 端点文件轮询间隔。H6: 不再有硬上限; Runner 在 Desktop 进程级拆除前无限退避。
+# 重连退避 + 端点文件轮询间隔。无硬上限；Runner 在 Desktop 进程级拆除前无限退避。
 BASE_BACKOFF_S = 2.0
 MAX_BACKOFF_S = 30.0
 _ENDPOINT_POLL_S = 1.0
@@ -112,7 +112,7 @@ def _has_vision_content(kwargs: dict[str, Any]) -> bool:
 
 
 def reset_llm_rate_limits() -> None:
-    """重置单会话反向 RPC 累计计数器（在建立新连接或测试时调用）。"""
+    """重置单会话反向 RPC 累计计数器（建立新连接时调用）。"""
     global _llm_requests_count, _llm_bytes_count
     _llm_requests_count = 0
     _llm_bytes_count = 0

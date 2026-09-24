@@ -12,7 +12,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import IO, Protocol
 
-from utils import CREATE_NO_WINDOW, cfg_get, get_spiritagent_home, is_interrupted, load_config
+from utils import CREATE_NO_WINDOW, cfg_get, is_interrupted, load_config
 
 from ._cmd_rewrite import _rewrite_compound_background, _transform_sudo_command
 
@@ -40,14 +40,6 @@ def _file_mtime_key(host_path: str) -> tuple[float, int] | None:
         return ((st := Path(host_path).stat()).st_mtime, st.st_size)
     except OSError:
         return None
-
-
-def get_sandbox_dir() -> Path:
-    """解析终端沙箱根目录：配置覆盖优先；否则以应用根目录下的 `sandboxes` 作为基目录。"""
-    override = cfg_get(load_config(), "terminal", "sandbox_dir")
-    base = Path(str(override)) if override else (get_spiritagent_home() / "sandboxes")
-    base.mkdir(parents=True, exist_ok=True)
-    return base
 
 
 def _pipe_stdin(proc: subprocess.Popen, data: str) -> None:

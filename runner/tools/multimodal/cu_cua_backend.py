@@ -48,8 +48,6 @@ _CUA_DRIVER_SAFE_ENV_EXACT = frozenset(
         "TEMP",
         # X11 / Wayland 显示服务提示
         "DISPLAY",
-        "QT5",
-        "QT6",
     },
 )
 _CUA_DRIVER_SAFE_ENV_PREFIXES = (
@@ -186,7 +184,7 @@ def _build_cua_driver_env() -> dict[str, str]:
     丢弃名字包含密钥子串（TOKEN / JWT / SECRET / ...）的变量，
     另外尊重通过 register_env_passthrough(...) 注册的额外变量 — 这是调用方开启 cua-driver 运行时所需变量的入口。
 
-    与旧实现的 os.environ.copy() 相比，此实现可让 Desktop 的 JWT、Backend base URL 以及任何 safeStorage 密文
+    本实现让 Desktop 的 JWT、Backend base URL 以及任何 safeStorage 密文
     都不会泄漏到 cua-driver 进程树中 — macOS 上不会通过 ps -E 泄漏（Windows 上 cua-driver 也不支持 wmic process 查询）。
 
     弱密钥子串（KEY、AUTH）只在词边界匹配，因此 KEYBOARD_LAYOUT / XKB_KEYMAP / OAUTH_CLIENT_ID 得以保留，
@@ -474,7 +472,7 @@ class CuaDriverBackend(ComputerUseBackend):
         self._bridge = _AsyncBridge()
         self._session = _CuaDriverSession(self._bridge)
         # ``_state_lock`` 守住 ``_active_pid`` / ``_active_window_id`` / ``_last_app`` 三个字段的并发读写;
-        # 之前没有任何锁, 并发 ``computer_use`` 调用会让 ``click`` 落到错的进程。
+        # 无锁时并发 ``computer_use`` 会让 ``click`` 落到错的进程。
         self._state_lock = threading.RLock()
         self._active_pid = None
         self._active_window_id = None

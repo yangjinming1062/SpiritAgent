@@ -44,9 +44,9 @@ def get_spiritagent_metadata(frontmatter: dict[str, Any] | None) -> dict[str, An
     return spiritagent if isinstance(spiritagent, dict) else {}
 
 
-def get_disabled_skill_names(section: str = "skills") -> set[str]:
-    """从内存配置中读取 <section>.disabled 列表。section 默认 "skills"；传 "toolsets" 可让兄弟 toolsets section 复用同一解析路径。"""
-    return get_disabled_config_names(section)
+def get_disabled_skill_names() -> set[str]:
+    """从内存配置中读取 ``skills.disabled`` 列表。"""
+    return get_disabled_config_names("skills")
 
 
 def is_excluded_skill_path(path: Path) -> bool:

@@ -91,7 +91,7 @@ MAX_PROCESSES = 64  # 同时跟踪的进程上限, LRU 淘汰
 # Watch 模式限流 — 每 session 维度。
 # 硬规则: 两条 watch-match 通知的间隔至少 WATCH_MIN_INTERVAL_SECONDS。
 # 在冷却窗口内的匹配会被丢弃并计为一次 strike。连续 WATCH_STRIKE_LIMIT 个 strike 窗口后,
-# 改用 notify_on_complete(进程退出时一次通知, 不再中途刷屏)。
+# 升级为 notify_on_complete(进程退出时一次通知)。
 WATCH_MIN_INTERVAL_SECONDS = 15  # 两次匹配通知之间最小间隔(秒)
 WATCH_STRIKE_LIMIT = 3  # 连续 strike 数阈值, 超后升级为 notify_on_complete
 
@@ -233,7 +233,7 @@ class ProcessRegistry:
                     session._watch_consecutive_strikes += 1
                     if session._watch_consecutive_strikes >= WATCH_STRIKE_LIMIT:
                         session._watch_disabled = True
-                        # 进程真正退出时再补一次通知, 不再中途刷屏。
+                        # 进程真正退出时再补一次通知。
                         session.notify_on_complete = True
                         should_disable = True
                 return_early = True
@@ -406,8 +406,7 @@ class ProcessRegistry:
         Windows 委派 ``utils.pid.kill_tree`` (``taskkill /T /F``)。
         """
         # host-PID 场景通常没有 stashed pgid, helper 内部通过 ``os.getpgid`` 探测;
-        # ``escalate=False`` 与旧实现保持一致 —— 软杀超时后 psutil 兜底 SIGKILL 残存 PID,
-        # 不再为本地活跃分支做额外的 SIGKILL 升级。
+        # ``escalate=False``: 软杀超时后 psutil 兜底 SIGKILL 残存 PID, 本地活跃分支不做额外 SIGKILL 升级。
         try:
             terminate_tree(pid, graceful_timeout=0.5, force_timeout=1.0)
         except (ProcessLookupError, PermissionError, OSError):
@@ -520,7 +519,7 @@ class ProcessRegistry:
             # Popen 之后启动失败 — 把孤儿子进程连同 setsid 派生的后代一起杀掉再上抛, 否则会留下不可见的野进程。
             try:
                 # 异常路径内的清理, 必须 try/except 包裹, 任何新抛错被外层 ``except: pass`` 吞掉。
-                # ``escalate=True`` 与原 inline SIGKILL-on-group 行为对齐 —— 既然进程已经"启动失败",
+                # ``escalate=True`` 对齐 inline SIGKILL-on-group — 既然进程已经"启动失败",
                 # 不需要给它留 graceful_timeout, 直接强杀整组 + psutil 兜底。
                 terminate_tree(proc, graceful_timeout=0.5, force_timeout=1.0, escalate=True)
             except Exception:
@@ -759,7 +758,7 @@ class ProcessRegistry:
 
         reader 线程仅在 ``stdout.read()`` 返回 EOF 的 ``finally`` 里把 ``session.exited`` 置 True; 但若直接
         Popen 子进程已经退出, 而某个派生进程(例如自更新重启 gateway 派生的守护)还抓着 stdout pipe 不放, reader
-        会无限阻塞, 外部 ``poll()`` 永远返回 "running"(issue #17327 — 飞书那边 7 分钟里 poll 了 74 次)。
+        会无限阻塞, 外部 ``poll()`` 永远返回 "running"。
 
         本方法把这个窗口关上: ``session.exited`` 仍是 False 但 ``Popen.poll()`` 已经返回 exit code 时,
         非阻塞把可读字节抽走, 然后把 ``exited`` 翻过去。被遗留的 reader 线程是 daemon, 进程退出时一同回收。

@@ -1,6 +1,5 @@
 import atexit
 import contextlib
-import inspect
 import logging
 import threading
 import time
@@ -120,7 +119,7 @@ def cleanup_all_environments() -> int:
     return cleaned
 
 
-def cleanup_vm(task_id: str, *, force_remove: bool = False) -> None:
+def cleanup_vm(task_id: str) -> None:
     """清理指定 task 的终端环境：从活跃表中摘除、清理文件缓存、关闭底层环境。"""
     env = None
     with env_lock:
@@ -132,11 +131,7 @@ def cleanup_vm(task_id: str, *, force_remove: bool = False) -> None:
     if env is None:
         return
     try:
-        sig = inspect.signature(env.cleanup)
-        if "force_remove" in sig.parameters:
-            env.cleanup(force_remove=force_remove)
-        else:
-            env.cleanup()
+        env.cleanup()
         logger.info("Manually cleaned up environment for task: %s", task_id)
     except Exception as e:
         _log_cleanup_error(task_id, e)

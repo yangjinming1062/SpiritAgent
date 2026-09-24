@@ -14,6 +14,8 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from utils import safe_schedule_threadsafe
+
 logger = logging.getLogger(__name__)
 
 DIALOG_POLICY_MUST_RESPOND = "must_respond"
@@ -374,7 +376,6 @@ class DialogManager:
         loop = self._loop_provider()
         if loop is None or not loop.is_running():
             return {"ok": False, "error": "Supervisor loop is not running"}
-        from utils import safe_schedule_threadsafe  # late import: avoid utils at module load
 
         try:
             fut = safe_schedule_threadsafe(_do_respond(), loop)

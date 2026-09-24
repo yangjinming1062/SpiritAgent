@@ -82,8 +82,8 @@ def normalize_url_for_request(url: str) -> str:
 def _global_allow_private_urls() -> bool:
     """仅读取 ``security.allow_private_urls`` (跨工具的 SSRF 全局闸门).
 
-    历史原因曾把 ``browser.allow_private_urls`` 也 OR 进来 — 但 ``browser.*`` 是开发者本地调试 localhost 的逃生口,
-    让它顺带关掉 vision_analyze / webhook 等所有 HTTP 工具的 SSRF 是危险的设计耦合。现在两者作用域独立:
+    不要把 ``browser.allow_private_urls`` OR 进来 — ``browser.*`` 是开发者本地调试 localhost 的逃生口,
+    顺带关掉 vision_analyze / webhook 等所有 HTTP 工具的 SSRF 会形成危险的设计耦合。
     本函数专门管全局 HTTP 闸门, 浏览器本地访问由 ``_allow_private_urls()`` 在 ``browser/session.py`` 单独判读。
     """
     try:

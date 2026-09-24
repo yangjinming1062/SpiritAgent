@@ -247,8 +247,7 @@ def _find_all_skills(*, skip_disabled: bool = False) -> list[dict[str, Any]]:
                     continue
                 raw_name = frontmatter.get("name", skill_md.parent.name)
                 if not isinstance(raw_name, str) or not raw_name.strip():
-                    # YAML 中 name: 123（或 list）以前会在此处抛错，skill 静默从列表中消失，仅留 debug 日志 —
-                    # 改为显式提示
+                    # name 必须是非空字符串；非法 name 记 WARNING 后跳过，避免技能静默从列表消失
                     logger.warning(
                         "skills_list: skill at %s has a non-string name (%r); skipping",
                         skill_md.parent,

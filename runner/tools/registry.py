@@ -26,15 +26,10 @@ def tool_error(msg: str, **extra) -> str:
     return json.dumps({"error": str(msg)} | extra, ensure_ascii=False)
 
 
-def tool_result(data=None, **kwargs) -> str:
-    """构造一个 JSON 结果信封。"""
-    return json.dumps(data if data is not None else kwargs, ensure_ascii=False)
-
-
 class ToolError(Exception):
     """``async_dispatch`` 在工具无法执行时抛出。
 
-    沙箱 RPC 入口 ``dispatch`` 会吞掉该异常并转换为遗留的 JSON 错误信封; WS 入口
+    沙箱 RPC 入口 ``dispatch`` 会吞掉该异常并转换为 JSON 错误信封; WS 入口
     ``async_dispatch`` 则让它上抛, 以便调用方映射成 JSON-RPC 错误帧。
     """
 
@@ -131,27 +126,6 @@ class ToolRegistry:
         """返回已注册工具名的快照(用于 ``get_schemas_for_llm`` 等过滤流程)。"""
         with self._lock:
             return list(self._tools.keys())
-
-    def get_schemas(self) -> list[dict]:
-        """收集所有已注册工具的 JSON Schema; 未声明 schema 的工具直接抛错(启动期硬错误优于 LLM 拿到半截 schema)。"""
-        with self._lock:
-            known = list(self._tools.items())
-            explicit = dict(self._schemas)
-        schemas = []
-        missing: list[str] = []
-        for name, _func in known:
-            if name in explicit:
-                schemas.append(explicit[name])
-                continue
-            missing.append(name)
-        if missing:
-            # 在这里硬失败, 比让一个未 schema 的工具在第一次调用时再爆更有用 — 爆炸半径相同, 但发现时机提前到启动期。
-            raise RuntimeError(
-                "Tool(s) registered without an explicit schema: "
-                + ", ".join(sorted(missing))
-                + ". Add `schema=...` to their register_tool() call.",
-            )
-        return schemas
 
     def get_schemas_for_llm(self, disabled_toolset_ids: set[str]) -> list[dict]:
         """根据 ``toolsets.disabled`` 过滤后的 schema 列表 — 由 ``server.py`` 的 ``get_tools`` RPC 用, 防止 Desktop 把禁用 toolset 喂给后端 LLM。
