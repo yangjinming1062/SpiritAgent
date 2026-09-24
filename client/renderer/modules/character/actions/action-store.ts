@@ -52,8 +52,12 @@ registerStorageClearHandler(() => {
 })
 
 async function resolveUrl(rawUrl: string): Promise<string | null> {
+  const url = rawUrl.startsWith('companion-assets/')
+    ? `/api/companion/asset/${rawUrl.slice('companion-assets/'.length)}`
+    : rawUrl
+
   try {
-    return await window.spiritagent.apiAsset({ url: rawUrl, preferCache: true })
+    return await window.spiritagent.apiAsset({ url, preferCache: true })
   } catch (err) {
     log.warn('action-store', 'asset resolve failed', err)
 
