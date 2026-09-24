@@ -51,32 +51,38 @@ async def resolve_image_gen_chain(
     *,
     image_edit: bool = False,
     multiple_references: bool = False,
+    background: str | None = None,
 ) -> tuple[list[ProviderConfig], str | None]:
-    """在传入 reference_image 时按图生图能力过滤 image_gen 供应商链；image_edit 时改按图像编辑能力过滤。"""
+    """在传入 reference_image 时按图生图能力过滤 image_gen 供应商链；image_edit 时改按图像编辑能力过滤。
+
+    ``background="transparent"`` 时只保留声明原生透明输出的供应商。
+    """
     full = await resolve_provider_chain(db, user_id, "image_gen")
-    if not reference_image:
+
+    def _supports(cfg: ProviderConfig) -> bool:
+        cls = resolve(ServiceType.image_gen, cfg.provider_name)
+        if background == "transparent" and not cls.supports_transparent_background:
+            return False
+        if not reference_image:
+            return True
+        if image_edit and not cls.supports_image_edit:
+            return False
+        if not image_edit and not cls.supports_reference_image:
+            return False
+        return not multiple_references or cls.supports_multiple_reference_images
+
+    capable = [c for c in full if _supports(c)]
+    if not reference_image and background != "transparent":
         return full, None
-    capable = [
-        c
-        for c in full
-        if (
-            resolve(ServiceType.image_gen, c.provider_name).supports_image_edit
-            if image_edit
-            else resolve(ServiceType.image_gen, c.provider_name).supports_reference_image
-        )
-        and (
-            not multiple_references
-            or resolve(ServiceType.image_gen, c.provider_name).supports_multiple_reference_images
-        )
-    ]
     if full and not capable:
-        error = (
-            "当前图片生成供应商不支持分别输入两张参考图，请配置支持双图的供应商"
-            if multiple_references
-            else "当前图片生成供应商均不支持图像编辑，请启用 gemini / grok 其中之一"
-            if image_edit
-            else "当前图片生成供应商均不支持以图生图，请启用 minimax / gemini / grok / qwen 其中之一"
-        )
+        if background == "transparent" and not reference_image:
+            error = "当前图片生成供应商均不支持原生透明背景，请启用 local"
+        elif multiple_references:
+            error = "当前图片生成供应商不支持分别输入两张参考图，请配置支持双图的供应商"
+        elif image_edit:
+            error = "当前图片生成供应商均不支持图像编辑，请启用 gemini / grok / local 其中之一"
+        else:
+            error = "当前图片生成供应商均不支持以图生图，请启用 minimax / gemini / grok / qwen / local 其中之一"
         return capable, error
     return capable, None
 
@@ -100,6 +106,7 @@ async def generate_images(
     image_edit: bool = False,
     provider_config: ProviderConfig | None = None,
     defer_storage: bool = False,
+    background: str | None = None,
 ) -> list[str]:
     """走 image_gen 供应商链生成图片并落盘；成功返回 URL 列表，失败抛 ImageGenerationError。
 
@@ -107,6 +114,7 @@ async def generate_images(
     ``image_edit=True`` 时 reference_image 是编辑底图，供应商链按图像编辑能力过滤；编辑不接受双参考拼图，
     secondary 与 image_edit 同给视为调用方违约，立即报错而非静默丢弃。
     ``defer_storage=True`` 返回原生 URL / data URI，由质量编排先保存结果再下载转存。
+    ``background="transparent"`` 请求原生透明 PNG，链上只保留已验证 alpha 输出的供应商（如 local）。
     """
     if defer_storage and persist_user_assets:
         raise ValueError("defer_storage and persist_user_assets are mutually exclusive")
@@ -119,6 +127,12 @@ async def generate_images(
         if secondary_reference_image and not reference_image:
             raise ImageGenerationError("第二参考图需要同时提供身份参考图")
         if provider_config is not None:
+            provider_cls = resolve(ServiceType.image_gen, provider_config.provider_name)
+            if background == "transparent" and not provider_cls.supports_transparent_background:
+                raise ImageGenerationError(
+                    "当前图片生成供应商不支持原生透明背景",
+                    internal=f"{provider_config.provider_name} does not support transparent output",
+                )
             chain, err = [provider_config], None
         elif user_id is not None:
             async with SESSION_LOCAL() as db:
@@ -128,6 +142,7 @@ async def generate_images(
                     reference_image,
                     image_edit=image_edit,
                     multiple_references=bool(secondary_reference_image),
+                    background=background,
                 )
         else:
             chain, err = await resolve_image_gen_chain(
@@ -136,6 +151,7 @@ async def generate_images(
                 reference_image,
                 image_edit=image_edit,
                 multiple_references=bool(secondary_reference_image),
+                background=background,
             )
         if err:
             logger.warning("image generation chain error", extra={"error": err, "user_id": user_id})
@@ -158,6 +174,7 @@ async def generate_images(
                     reference_image=reference_image,
                     secondary_reference_image=secondary_reference_image,
                     response_format="url" if defer_storage else "b64",
+                    background="transparent" if background == "transparent" else None,
                 ),
             )
 
@@ -186,7 +203,7 @@ async def generate_images(
             if asset.url:
                 if as_user_assets:
                     # 供应商地址短时效：下载→魔数校验→转存正式资产，失败即本轮报错重试，不把短效 URL 落库。
-                    data = await download_capped(asset.url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=120.0)
+                    data = await download_capped(asset.url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=360.0)
                     urls.append(await _persist_user_asset_async(data, user_id))
                 else:
                     urls.append(asset.url)

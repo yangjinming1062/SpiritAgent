@@ -21,6 +21,7 @@ from .providers import (
     default_model_for,
     default_video_model_for,
     default_vision_model_for,
+    provider_requires_api_key,
     providers_supporting,
     resolve,
     supports_video,
@@ -121,7 +122,8 @@ def _chain_from_ai_config(
         )
         if card.provider == "minimax" and service_type != "llm" and base_url.endswith("/v1"):
             base_url = base_url[:-3]
-        if api_key and base_url and card.provider in supporting:
+        key_ok = bool(api_key) or not provider_requires_api_key(service_type, card.provider)
+        if key_ok and base_url and card.provider in supporting:
             result.append(
                 ProviderConfig(
                     base_url=base_url,
@@ -154,7 +156,8 @@ def _embedding_chain_from_ai_config(
         )
         if card.provider == "minimax" and base_url.endswith("/v1"):
             base_url = base_url[:-3]
-        if api_key and base_url and card.provider in supporting:
+        key_ok = bool(api_key) or not provider_requires_api_key(ServiceType.embedding, card.provider)
+        if key_ok and base_url and card.provider in supporting:
             result.append(
                 ProviderConfig(
                     base_url=base_url,

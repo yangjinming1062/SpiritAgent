@@ -139,7 +139,8 @@ class Settings(BaseSettings):
         validation_alias="COMPANION_MIN_TURN_INTERVAL_SECONDS",
     )
     companion_turn_timeout_seconds: float = Field(
-        default=120.0,
+        # 自主回合可能调用本地慢速生图；实际执行仍受意图到期时间约束。
+        default=3600.0,
         gt=0,
         validation_alias="COMPANION_TURN_TIMEOUT_SECONDS",
     )

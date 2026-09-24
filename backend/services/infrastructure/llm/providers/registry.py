@@ -61,6 +61,15 @@ PROVIDER_DEFAULT_URLS: dict[str, dict[str, str]] = {
         "video_gen": "https://maas.qianwenaiapi.com/api/v1",
         "embedding": "https://maas.qianwenaiapi.com/compatible-mode/v1",
     },
+    # 本地 qwen（ComfyUI）：默认本机；远程部署在配置里改 base_url。
+    "local": {
+        "llm": "",
+        "stt": "",
+        "tts": "",
+        "image_gen": "http://127.0.0.1:8188",
+        "video_gen": "",
+        "embedding": "",
+    },
 }
 
 
@@ -122,6 +131,16 @@ def default_context_tokens_for(provider: str, service_type: str) -> int:
 def supports_vision(provider_name: str) -> bool:
     """是否注册了具备视觉能力的 chat 类。"""
     return provider_name in _PROVIDER_SUPPORTS_VISION
+
+
+def provider_requires_api_key(service_type: ServiceType | str, provider_name: str) -> bool:
+    cls = try_resolve(
+        service_type if isinstance(service_type, ServiceType) else ServiceType(service_type),
+        provider_name,
+    )
+    if cls is None:
+        return True
+    return bool(getattr(cls, "requires_api_key", True))
 
 
 def default_vision_model_for(provider_name: str) -> str:

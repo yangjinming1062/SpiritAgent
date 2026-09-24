@@ -49,7 +49,7 @@ _REQUEST_VALIDATION_PATTERNS = (
 
 async def download_as_b64(url: str) -> str:
     """下载供应商返回的 CDN 图并编码 base64；走安全 transport（SSRF 守卫）并限制大小。"""
-    data = await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=60.0)
+    data = await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=360.0)
     return base64.b64encode(data).decode("utf-8")
 
 

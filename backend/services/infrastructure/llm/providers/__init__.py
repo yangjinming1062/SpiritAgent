@@ -1,6 +1,7 @@
 from . import (
     gemini,  # noqa: F401 — 供应商子包须可被 bootstrap 以 providers.<pkg> 引用；注册由 bootstrap/registrations.py 执行
     grok,  # noqa: F401
+    local,  # noqa: F401
     mimo,  # noqa: F401
     minimax,  # noqa: F401
     qwen,  # noqa: F401
@@ -35,6 +36,7 @@ from .base import (
     resolve_provider_reasoning_effort,
 )
 from .http import aclose_all, rotate_http_clients
+from .local import LocalImageGenProvider
 from .mimo import (
     MiMoChatProvider,
     MiMoSTTProvider,
@@ -48,6 +50,7 @@ from .registry import (
     default_model_for,
     default_video_model_for,
     default_vision_model_for,
+    provider_requires_api_key,
     providers_supporting,
     register,
     resolve,
@@ -70,6 +73,7 @@ __all__ = [
     "ImageGenProvider",
     "ImageGenRequest",
     "ImageGenResult",
+    "LocalImageGenProvider",
     "MiMoChatProvider",
     "MiMoSTTProvider",
     "MiMoTTSProvider",
@@ -94,6 +98,7 @@ __all__ = [
     "default_model_for",
     "default_video_model_for",
     "default_vision_model_for",
+    "provider_requires_api_key",
     "providers_supporting",
     "register",
     "resolve",

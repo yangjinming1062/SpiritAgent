@@ -27,7 +27,7 @@ from services.domains.companion import (
 from services.infrastructure.event_store import register_internal_event_handler
 from services.infrastructure.llm import ServiceType
 from services.infrastructure.llm import register as register_provider
-from services.infrastructure.llm.providers import gemini, grok, mimo, minimax, qwen
+from services.infrastructure.llm.providers import gemini, grok, local, mimo, minimax, qwen
 from services.infrastructure.tool_runtime import REGISTRY
 
 
@@ -54,6 +54,7 @@ def register_providers() -> None:
     register_provider(ServiceType.image_gen, "qwen", qwen.QwenImageGenProvider)
     register_provider(ServiceType.video_gen, "qwen", qwen.QwenVideoGenProvider)
     register_provider(ServiceType.embedding, "qwen", qwen.QwenEmbeddingProvider)
+    register_provider(ServiceType.image_gen, "local", local.LocalImageGenProvider)
 
 
 def register_tools() -> None:

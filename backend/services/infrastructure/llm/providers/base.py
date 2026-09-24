@@ -83,6 +83,8 @@ class BaseProvider(ABC):
     DEFAULT_VISION_MODELS: ClassVar[dict[str, str]] = {}
     # 与 DEFAULT_MODELS["llm"] 不同时的视频理解模型；空表示沿用文本/视觉默认。
     DEFAULT_VIDEO_MODELS: ClassVar[dict[str, str]] = {}
+    # False 表示该能力可不带 api_key（如本机无鉴权服务）；能力链解析据此放宽空密钥。
+    requires_api_key: ClassVar[bool] = True
 
     def __init__(self, config: ProviderConfig) -> None:
         self.config = config

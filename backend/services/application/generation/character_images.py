@@ -85,7 +85,7 @@ async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD
         except ValueError as exc:
             raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True) from exc
     else:
-        data = await download_capped(path, max_bytes=max_bytes, timeout=120.0)
+        data = await download_capped(path, max_bytes=max_bytes, timeout=360.0)
         ext = asset_store.sniff_media_ext(data)
         mime = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}.get(
             ext,
