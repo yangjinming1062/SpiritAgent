@@ -291,6 +291,7 @@ export function SpriteWindow(): React.JSX.Element {
       {showOnboarding && <OnboardingFlow onCompleted={onOnboardingComplete} />}
       <SpriteStage
         hidden={showOnboarding || surfaceOpen === 'living' || surfaceOpen === 'workbench'}
+        interactionEnabled={!activationOpen}
         onContextMenu={e => {
           $contextMenuPos.set({ x: e.clientX, y: e.clientY })
         }}

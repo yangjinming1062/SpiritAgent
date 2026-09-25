@@ -28,6 +28,7 @@ import { openWhisper } from '../whisper'
 
 interface SpriteStageProps {
   children: ReactNode
+  interactionEnabled?: boolean
   onTap?: (nx: number, ny: number) => void
   onDoubleTap?: () => void
   onContextMenu?: (e: React.MouseEvent) => void
@@ -51,6 +52,7 @@ const SPRITE_REGION_ID = 'sprite-stage'
 
 export function SpriteStage({
   children,
+  interactionEnabled = true,
   onTap,
   onDoubleTap,
   onContextMenu,
@@ -94,7 +96,7 @@ export function SpriteStage({
 
   const stageRect = useCallback(
     (el: HTMLElement): DOMRect | null => {
-      if (hidden) {
+      if (hidden || !interactionEnabled) {
         return null
       }
 
@@ -102,7 +104,7 @@ export function SpriteStage({
 
       return rect.width === 0 || rect.height === 0 ? null : rect
     },
-    [hidden]
+    [hidden, interactionEnabled]
   )
 
   // 命中按渲染路径精化：视频走 alpha 遮罩查表；缺席（桌面蛋 / 加载空挡）才回退整矩形

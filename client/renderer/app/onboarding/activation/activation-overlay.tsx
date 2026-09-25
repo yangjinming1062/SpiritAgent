@@ -20,13 +20,10 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<null | string>(null)
-  const overlayRef = useRef<HTMLDivElement>(null)
+  const formRef = useRef<HTMLFormElement>(null)
 
-  // 把全出血浮层注册为可交互区域，让 textarea 与提交按钮
-  // 在默认鼠标穿透的精灵窗口里仍然可以点击——不注册的话，
-  // 窗口的 setIgnoreMouseEvents(true, ...) 会吞掉所有点击。
-  // 镜像 BootFailureOverlay 的模式。
-  useInteractiveRegion('activation', overlayRef, () => new DOMRect(0, 0, window.innerWidth, window.innerHeight))
+  // 只让卡片接收鼠标；桌面其他位置继续穿透到下方窗口，且不因点击背景关闭。
+  useInteractiveRegion('activation', formRef)
 
   useEscapeKey(onClose, { capture: false, stopPropagation: false, busy })
 
@@ -54,16 +51,12 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
   }
 
   return (
-    <div
-      className="fixed inset-0 z-[1200] flex items-center justify-center p-6"
-      onClick={e => {
-        if (e.target === e.currentTarget && !busy) {
-          onClose()
-        }
-      }}
-      ref={overlayRef}
-    >
-      <form className={`relative w-full max-w-lg rounded-2xl p-7 text-strong ${SURFACE_OVERLAY}`} onSubmit={onSubmit}>
+    <div className="fixed inset-0 z-[1200] flex items-center justify-center p-6">
+      <form
+        className={`relative w-full max-w-lg rounded-2xl p-7 text-strong ${SURFACE_OVERLAY}`}
+        onSubmit={onSubmit}
+        ref={formRef}
+      >
         <div className="mb-5 flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-xl border border-line-standard bg-fill-faint text-accent">
