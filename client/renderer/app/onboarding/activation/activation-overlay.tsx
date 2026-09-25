@@ -5,7 +5,7 @@ import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { Loader2, Sparkles, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { cn } from '@/shared/lib/utils'
-import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS } from '@/shared/panel'
+import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, SURFACE_OVERLAY } from '@/shared/panel'
 import { $auth, activate } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
@@ -55,7 +55,7 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
 
   return (
     <div
-      className="fixed inset-0 z-[1200] flex items-center justify-center bg-black/75 p-6"
+      className="fixed inset-0 z-[1200] flex items-center justify-center p-6"
       onClick={e => {
         if (e.target === e.currentTarget && !busy) {
           onClose()
@@ -63,10 +63,7 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
       }}
       ref={overlayRef}
     >
-      <form
-        className="relative w-full max-w-lg rounded-2xl border border-line-standard bg-surface-panel p-7 text-strong shadow-2xl"
-        onSubmit={onSubmit}
-      >
+      <form className={`relative w-full max-w-lg rounded-2xl p-7 text-strong ${SURFACE_OVERLAY}`} onSubmit={onSubmit}>
         <div className="mb-5 flex items-start justify-between gap-3">
           <div className="flex items-center gap-3">
             <div className="flex size-10 items-center justify-center rounded-xl border border-line-standard bg-fill-faint text-accent">
@@ -85,7 +82,7 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
         </div>
 
         {error && (
-          <div className="mb-4 rounded-lg border border-rose-300/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">
+          <div className="mb-4 rounded-lg border border-danger-line bg-danger-bg px-3 py-2 text-sm text-danger-fg">
             {error}
           </div>
         )}

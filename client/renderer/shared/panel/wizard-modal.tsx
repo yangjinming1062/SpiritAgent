@@ -5,6 +5,7 @@ import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 
 import { PanelHeader } from './components'
+import { SURFACE_OVERLAY } from './palette'
 
 interface WizardModalProps {
   regionId: string
@@ -21,7 +22,7 @@ interface WizardModalProps {
 // 全屏 rect 在挂载后不再变化，提到模块层避免每次 render 重建函数与对象。
 const fullscreenRect = (): DOMRect => new DOMRect(0, 0, window.innerWidth, window.innerHeight)
 
-// 伙伴窗线性向导的模态外壳：暗化背板 + 居中卡片。Esc 在捕获阶段拦截并阻断
+// 伙伴窗线性向导的模态外壳：居中浮层卡（不铺全屏暗化遮罩）。Esc 在捕获阶段拦截并阻断
 // 冒泡——外层 FloatingPanel 的 Esc 处理器不会连坐关闭整个设置面板。
 export function WizardModal({
   regionId,
@@ -40,11 +41,11 @@ export function WizardModal({
 
   return (
     <div
-      className="pointer-events-auto fixed inset-0 z-[60] flex items-center justify-center bg-black/40 px-6 py-6 backdrop-blur-sm"
+      className="pointer-events-auto fixed inset-0 z-[60] flex items-center justify-center px-6 py-6"
       ref={overlayRef}
     >
       <div
-        className={`flex max-h-[85vh] w-full ${widthClass} flex-col overflow-hidden rounded-2xl border border-line-standard bg-surface-panel text-strong shadow-2xl`}
+        className={`flex max-h-[85vh] w-full ${widthClass} flex-col overflow-hidden rounded-2xl text-strong ${SURFACE_OVERLAY}`}
       >
         <PanelHeader onClose={onClose} title={title} />
         <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">{children}</div>

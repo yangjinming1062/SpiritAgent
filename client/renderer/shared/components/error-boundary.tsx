@@ -1,7 +1,7 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 
 import { log } from '@/shared/lib/log'
-import { BTN_PRIMARY, BTN_SUBTLE, EmptyState } from '@/shared/panel'
+import { BTN_PRIMARY, BTN_SUBTLE, EmptyState, SURFACE_OVERLAY } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 interface ErrorBoundaryFallbackProps {
@@ -55,8 +55,8 @@ function RootErrorFallback({ error, reset }: ErrorBoundaryFallbackProps): React.
   const t = useStrings()
 
   return (
-    <div className="fixed inset-0 z-[1500] grid place-items-center bg-surface-chrome p-6 text-strong">
-      <div className="w-full max-w-md">
+    <div className="fixed inset-0 z-[1500] grid place-items-center p-6">
+      <div className={`w-full max-w-md rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`}>
         <EmptyState
           action={
             <div className="flex gap-2">

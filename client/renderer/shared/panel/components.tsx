@@ -17,7 +17,8 @@ import {
   SETTINGS_INTRO_HINT,
   SETTINGS_INTRO_TITLE,
   SETTINGS_ROW_DESC,
-  SETTINGS_ROW_TITLE
+  SETTINGS_ROW_TITLE,
+  SURFACE_OVERLAY
 } from './palette'
 
 // 拖拽柄事件组的透传形状（usePanelDrag 的 bind）——shared 侧不依赖 companion hooks，
@@ -526,7 +527,8 @@ export function PanelSelect<T extends string>({
           aria-activedescendant={`${listId}-opt-${activeIndex}`}
           aria-label={ariaLabel}
           className={cn(
-            'absolute right-0 z-50 max-h-64 min-w-full overflow-y-auto rounded-xl border border-line-standard bg-surface-panel p-1 shadow-2xl',
+            'absolute right-0 z-50 max-h-64 min-w-full overflow-y-auto rounded-xl p-1',
+            SURFACE_OVERLAY,
             dropUp ? 'bottom-full mb-1' : 'mt-1'
           )}
           id={listId}
@@ -619,7 +621,7 @@ interface ConfirmDialogProps {
   onConfirm: () => void | Promise<void>
 }
 
-// 警示性确认的小型弹窗（清空密钥、重置配置）。自包含深色卡，不依赖 Radix。
+// 警示性确认的小型弹窗（清空密钥、重置配置）。自包含浮层卡，不依赖 Radix。
 export function ConfirmDialog({
   open,
   onOpenChange,
@@ -641,14 +643,14 @@ export function ConfirmDialog({
 
   return (
     <div
-      className="fixed inset-0 z-[80] flex items-center justify-center bg-black/40 p-6 backdrop-blur-sm"
+      className="fixed inset-0 z-[80] flex items-center justify-center p-6"
       onPointerDown={e => {
         if (!busy && e.target === e.currentTarget) {
           onOpenChange(false)
         }
       }}
     >
-      <div className="w-full max-w-md rounded-2xl border border-line-strong bg-surface-panel p-5 text-strong shadow-2xl">
+      <div className={`w-full max-w-md rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`}>
         <h3 className="text-sm font-semibold">{title}</h3>
         {description && <p className="mt-2 text-xs leading-relaxed text-muted">{description}</p>}
         <div className="mt-5 flex justify-end gap-2">

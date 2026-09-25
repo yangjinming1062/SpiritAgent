@@ -2,7 +2,8 @@
 // 全部消费 styles.css 的语义 token（--ui-*），主题在 html[data-theme] 上换肤。
 // 分层：大面板实体表面（阶梯 chrome→panel→card），瞬时浮层走 overlay（可读、不跟窗壳玻璃同一透明度）。
 
-// 精灵右键等桌面浮层：跟色彩轴走，不继承清透档的低 alpha。
+// 独立浮层表面（右键菜单、模态卡、下拉列表）：跟色彩轴走，不继承清透档的低 alpha。
+// 模态只铺这张卡，不用全屏暗化遮罩——透明精灵窗上会压黑桌面，日色下还容易配深字看不清。
 export const SURFACE_OVERLAY = 'liquid-glass-overlay'
 
 // 按钮

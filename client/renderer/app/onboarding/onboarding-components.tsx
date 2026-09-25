@@ -36,7 +36,7 @@ export function PortraitPanel({
         url={avatarUrl}
       />
       {gallery}
-      {hint && <p className="text-xs text-rose-300/90">{hint}</p>}
+      {hint && <p className="text-xs text-danger-fg">{hint}</p>}
       {zoomedUrl && <PortraitLightbox name={name} onClose={() => setZoomedUrl(null)} url={zoomedUrl} />}
     </div>
   )

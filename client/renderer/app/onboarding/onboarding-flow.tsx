@@ -61,7 +61,7 @@ import { isClientErrorIpc, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
-import { Chip, DatePicker, INPUT_CLASS } from '@/shared/panel'
+import { Chip, DatePicker, INPUT_CLASS, SURFACE_OVERLAY } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
 
 import { computeBackTransition } from './back-transition'
@@ -1299,10 +1299,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           touchAction: 'none'
         }}
       >
-        <div
-          className="w-full rounded-2xl border border-line-standard bg-surface-panel p-5 text-strong shadow-2xl"
-          style={{ pointerEvents: 'auto' }}
-        >
+        <div className={`w-full rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`} style={{ pointerEvents: 'auto' }}>
           {voicePreparing && <p className="mb-2 text-center text-[10px] text-muted">正在准备声音…</p>}
           {phase === 'q-character' && question && LOCKED_FIELD_KEYS.has(question.key) && (
             <p className="mb-2 rounded-md border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-[10px] leading-relaxed text-strong">
@@ -1428,7 +1425,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     </button>
                   </div>
                 </div>
-                {hint && <p className="mt-2 text-xs text-amber-300/80">{hint}</p>}
+                {hint && <p className="mt-2 text-xs text-strong">{hint}</p>}
                 <p className="mt-2 text-right text-[10px] text-faint">
                   {qIndex + 1} / {currentList.length}
                 </p>
@@ -1512,7 +1509,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                 )}
               </div>
 
-              {portraitPanelHint && <p className="mt-3 text-xs text-rose-300/90">{portraitPanelHint}</p>}
+              {portraitPanelHint && <p className="mt-3 text-xs text-danger-fg">{portraitPanelHint}</p>}
 
               <div className="mt-4 flex items-center justify-between text-xs">
                 <button

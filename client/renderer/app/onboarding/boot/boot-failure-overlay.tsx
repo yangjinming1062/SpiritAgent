@@ -4,7 +4,7 @@ import { useRef } from 'react'
 
 import { $desktopBoot } from '@/app/runtime/boot-store'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { BTN_PRIMARY, EmptyState } from '@/shared/panel'
+import { BTN_PRIMARY, EmptyState, SURFACE_OVERLAY } from '@/shared/panel'
 import { setPrimaryGateway } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'
 
@@ -36,11 +36,11 @@ export function BootFailureOverlay(): React.JSX.Element | null {
   return (
     <div
       aria-live="assertive"
-      className="fixed inset-0 z-[1500] grid place-items-center bg-black/65 p-6 text-white backdrop-blur-lg"
+      className="fixed inset-0 z-[1500] grid place-items-center p-6"
       ref={overlayRef}
       role="alertdialog"
     >
-      <div className="w-full max-w-md">
+      <div className={`w-full max-w-md rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`}>
         <EmptyState
           action={
             <button className={BTN_PRIMARY} onClick={onRetry} type="button">
