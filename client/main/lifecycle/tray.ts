@@ -82,6 +82,8 @@ const TRAY_STRINGS = {
   }
 } as const
 
+const MAC_TRAY_ICON_SIZE = 16
+
 let trayInstance: null | Tray = null
 let trayDeps: null | TrayDeps = null
 let accountOperationBusy = false
@@ -121,6 +123,27 @@ function accountLabel(username: string, baseUrl: string, duplicate: boolean): st
   }
 
   return `${username} (${baseUrl})`
+}
+
+function resizeMacTrayIcon(
+  image: ReturnType<typeof nativeImage.createFromPath>,
+  nativeImageApi: typeof nativeImage
+): ReturnType<typeof nativeImage.createFromPath> {
+  const trayImage = nativeImageApi.createEmpty()
+
+  for (const scaleFactor of [1, 2]) {
+    const pixelSize = MAC_TRAY_ICON_SIZE * scaleFactor
+    const representation = image.resize({ height: pixelSize, width: pixelSize })
+
+    trayImage.addRepresentation({
+      buffer: representation.toPNG(),
+      height: pixelSize,
+      scaleFactor,
+      width: pixelSize
+    })
+  }
+
+  return trayImage
 }
 
 async function switchFromTray(accountId: string): Promise<void> {
@@ -479,6 +502,10 @@ export function installTray(deps: TrayDeps): null | Tray {
       deps.rememberLog('[tray] no usable icon resolved — operating in hide-only mode')
 
       return null
+    }
+
+    if (process.platform === 'darwin') {
+      image = resizeMacTrayIcon(image, deps.nativeImage)
     }
   } catch (err) {
     const message = errorMessage(err)
