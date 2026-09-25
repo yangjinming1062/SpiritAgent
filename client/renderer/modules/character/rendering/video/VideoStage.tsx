@@ -18,6 +18,8 @@ import {
   type ActionHitmask,
   type ActionPlayInstance,
   finishPlayInstance,
+  getBaseSpriteHeight,
+  getBaseSpriteWidth,
   reportReceipt,
   resolveActionClipUrl,
   resolveHitmask,
@@ -407,7 +409,21 @@ export function VideoStage(): React.JSX.Element {
       return
     }
 
-    $spriteContentRect.set({ left: 0, top: 0, right: canvas.width, bottom: canvas.height })
+    // $spriteContentRect 是舞台盒上的 0–1 归一化包围盒，不能写入画布像素宽高。
+    // 视频 object-contain 铺进舞台：把整幅画布映射到 contain 后的落位，
+    // 人物脚底贴画布底，因此 content.bottom 即角色脚底（DESIGN §3.7 全身在屏）。
+    const stageW = getBaseSpriteWidth()
+    const stageH = getBaseSpriteHeight()
+    const contain = Math.min(stageW / canvas.width, stageH / canvas.height)
+    const drawW = (canvas.width * contain) / stageW
+    const drawH = (canvas.height * contain) / stageH
+
+    $spriteContentRect.set({
+      left: (1 - drawW) / 2,
+      top: (1 - drawH) / 2,
+      right: (1 + drawW) / 2,
+      bottom: (1 + drawH) / 2
+    })
 
     return () => $spriteContentRect.set(null)
   }, [canvas])
