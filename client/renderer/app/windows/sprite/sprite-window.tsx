@@ -129,8 +129,7 @@ export function SpriteWindow(): React.JSX.Element {
   // 2) 不可用时回退到 requestGateway('onboarding.get_state')。
   // 3) 仅在 state?.complete === true 时把 lifecycle 设为 'ready'。
   //    不要回退到 persona.is_complete（角色题保存后它会在 onboarding 中途变成 true）。
-  // 4) 若 state?.complete 不是 true，则 lifecycle='onboarding'，但 onboardingOpen 保持 false：
-  //    让桌面蛋先常驻（DESIGN §4「蛋破碎后开始对话」），由用户点击蛋才进入向导。
+  // 4) 未完成时保持引导关闭；无缓存形象才显示桌面蛋，点击形象进入向导。
   useEffect(() => {
     if (auth.kind !== 'authenticated') {
       setCompanionLifecycle('unauthed')
@@ -158,8 +157,7 @@ export function SpriteWindow(): React.JSX.Element {
 
       const onboardingDone = state?.complete === true
       setCompanionLifecycle(onboardingDone ? 'ready' : 'onboarding')
-      // onboardingOpen 仅在用户主动点击蛋 / 重新进入向导时才打开；
-      // 保持 false 让 eggVisible 走通桌面蛋分支。
+      // 引导只由用户点击形象主动打开。
       setOnboardingOpen(false)
 
       if (onboardingDone) {
@@ -177,7 +175,7 @@ export function SpriteWindow(): React.JSX.Element {
 
   const authed = auth.kind === 'authenticated'
   const showOnboarding = authed && lifecycle === 'onboarding' && onboardingOpen
-  const eggVisible = authed && lifecycle === 'onboarding' && !onboardingOpen
+  const eggVisible = authed && lifecycle === 'onboarding' && !onboardingOpen && videoStatus !== 'ready'
 
   useEffect(() => {
     if (auth.kind !== 'authenticated' || lifecycle !== 'ready') {
@@ -300,9 +298,7 @@ export function SpriteWindow(): React.JSX.Element {
         {eggVisible ? (
           <EggStage showPrompt />
         ) : showOnboarding ? null : (
-          <Suspense fallback={null}>
-            {authed && presentation.renderer === 'video' ? <VideoStage /> : <EggStage />}
-          </Suspense>
+          <Suspense fallback={null}>{presentation.renderer === 'video' ? <VideoStage /> : <EggStage />}</Suspense>
         )}
       </SpriteStage>
       <SpriteContextMenu

@@ -8,6 +8,7 @@ import {
   type DesktopGatewayRpcRequest,
   type DesktopGatewayRpcResponse,
   type DesktopGatewayState,
+  type DesktopLogoutPayload,
   type DesktopPrefsHydrated,
   type DesktopRunnerStatusEvent,
   type DesktopShortcutsSetPayload,
@@ -93,7 +94,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
   getVersion: () => ipcRenderer.invoke(IPC.invoke.version),
   log: (payload: { args: unknown[]; level: 'error' | 'info' | 'warn'; scope: string }) =>
     ipcRenderer.invoke(IPC.invoke.logEmit, payload),
-  logout: (expectedSessionId?: string) => ipcRenderer.invoke(IPC.invoke.authLogout, expectedSessionId),
+  logout: (payload: DesktopLogoutPayload) => ipcRenderer.invoke(IPC.invoke.authLogout, payload),
   media: {
     onboardingAudio: {
       read: (tag: string) => ipcRenderer.invoke(IPC.invoke.onboardingAudioRead, tag)

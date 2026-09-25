@@ -28,7 +28,7 @@ import { log } from '@/shared/lib/log'
 import { reconnectBackoffMs } from '@/shared/lib/reconnect'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
 import { SpiritAgentGateway } from '@/shared/spiritagent'
-import { logout } from '@/shared/store/auth'
+import { expireSession } from '@/shared/store/auth'
 import { reportPrimaryGatewayState, setPrimaryGateway, tearDownPrimaryGateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
@@ -378,7 +378,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
         stopSpeaking()
 
         if (st === 'closed' && gateway.lastCloseCode === WS_CLOSE_POLICY_VIOLATION) {
-          void logout(sessionId)
+          void expireSession(sessionId)
 
           return
         }

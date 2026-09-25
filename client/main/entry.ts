@@ -307,7 +307,7 @@ function getWindowState(): {
   return readSpriteWindowState({ getMainWindow: () => mainWindow, isMac: IS_MAC })
 }
 
-async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort): Promise<void> {
+async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort, clearAccountCache = false): Promise<void> {
   rebuildTrayMenu()
 
   const authenticated = Boolean(snapshot?.hasToken)
@@ -324,7 +324,11 @@ async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort): Promi
         }
       : null
 
-  const payload: DesktopAuthBroadcast = { authenticated, snapshot: authSnapshot }
+  const payload: DesktopAuthBroadcast = {
+    authenticated,
+    clearAccountCache,
+    snapshot: authSnapshot
+  }
 
   // 用户身份变化触发配置水合（登录/换号；登出只停摆待写）。
   await configSync.handleAuthUserChanged(authenticated ? (snapshot?.accountId ?? null) : null)
@@ -523,6 +527,8 @@ const authActions = registerAuthIpc({
     broadcastAuthChanged,
     buildClientContext: () => sessionRuntime.buildClientContext(),
     ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
+    getSessionAfterRestore: () => sessionRuntime.getSessionAfterRestore(),
+    log: chunk => rememberLog(chunk),
     rebuildTrayMenu,
     resetBackendCache,
     spiritagentHome: SPIRITAGENT_HOME

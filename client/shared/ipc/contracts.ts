@@ -187,8 +187,15 @@ export interface DesktopActivatePayload {
   code: string
 }
 
+export interface DesktopLogoutPayload {
+  expectedSessionId?: string
+  reason: 'expired' | 'user'
+}
+
 export interface DesktopAuthBroadcast {
   authenticated: boolean
+  /** 主进程确认主动登出或换号后清理旧账户缓存；会话过期为 false。 */
+  clearAccountCache: boolean
   snapshot: DesktopAuthSnapshot | null
 }
 
@@ -286,9 +293,7 @@ export interface IpcInvokeContract {
   // 鉴权
   'spiritagent:auth:activate': (payload: DesktopActivatePayload) => DesktopAuthSnapshot | Promise<DesktopAuthSnapshot>
   'spiritagent:auth:refresh': () => DesktopAuthSnapshot | Promise<DesktopAuthSnapshot>
-  'spiritagent:auth:logout': (
-    expectedSessionId?: string
-  ) =>
+  'spiritagent:auth:logout': (payload: DesktopLogoutPayload) =>
     | { backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }
     | Promise<{ backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }>
   'spiritagent:auth:get-session': () => DesktopAuthSnapshot | null | Promise<DesktopAuthSnapshot | null>

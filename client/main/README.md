@@ -44,7 +44,7 @@ Runner 配置 read / write / patch 均只接受工作台 sender。离线编辑�
 
 Client 创建 IPC 端点并鉴权 Runner（`x-spiritagent-auth` 握手，token 走环境变量不进 argv）。断连、退出和开始停止立即作废缓存；新握手先推配置，再取工具，迟到查询不能恢复旧资格。
 
-会话懒创建与 token 重接由 `backend/session-runtime` 承担；Runner 桥持有、自动启停与 IPC 由 `ipc/runner` 的 host 承担。登录恢复经回调接回 host。`call_id` 可选，缺省不记调用日志；当前接入限制见 [PROTOCOL](../../docs/PROTOCOL.md#23-runner_ready-capabilities-与-health-状态)。
+会话懒创建与 token 重接由 `backend/session-runtime` 承担；首次 `getSession` 等待凭据恢复结束。Runner 桥持有、自动启停与 IPC 由 `ipc/runner` 的 host 承担。登录恢复经回调接回 host。`call_id` 可选，缺省不记调用日志；当前接入限制见 [PROTOCOL](../../docs/PROTOCOL.md#23-runner_ready-capabilities-与-health-状态)。
 
 更新优先用 Home 下的 uv，否则 PATH 回落，在原 venv 安装 wheel 并替换 `server.py`，不承诺安装原子切换或自动回滚。损坏环境交安装器修复。
 

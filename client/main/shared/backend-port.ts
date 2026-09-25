@@ -41,6 +41,8 @@ export interface BackendSessionLike {
 /** 会话运行时需要的完整会话面（activate/restore/logout/refresh）。 */
 export interface BackendSessionPort extends BackendSessionLike {
   activate: (payload?: { clientContext?: unknown; code?: string }) => Promise<null | SessionSnapshotPort>
+  /** Token 失效后仍返回本机选中的账户。 */
+  getSelectedAccountId: () => null | string
   listAccounts: () => Array<{ active: boolean; baseUrl: string; id: string; username: string }>
   logout: (expectedSessionId?: string) => Promise<{ ignored?: boolean; ok: boolean }>
   refresh: (payload?: { clientContext?: unknown }) => Promise<null | SessionSnapshotPort>

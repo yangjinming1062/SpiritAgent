@@ -41,13 +41,13 @@ export function WorkbenchCompanion(): React.JSX.Element {
 
   const stageHitTest = useCallback(
     (x: number, y: number): boolean => {
-      if (auth.kind !== 'authenticated') {
+      if (presentation.renderer === 'fallback') {
         return true
       }
 
       return videoHitTest(x, y)
     },
-    [auth.kind, videoHitTest]
+    [presentation.renderer, videoHitTest]
   )
 
   useInteractiveRegion('workbench-companion', wrapperRef, undefined, stageHitTest, 1)
@@ -85,9 +85,7 @@ export function WorkbenchCompanion(): React.JSX.Element {
       title={t.companionTitle(brandName)}
     >
       <div className={styles.companionInner}>
-        <Suspense fallback={null}>
-          {auth.kind !== 'authenticated' || presentation.renderer === 'fallback' ? <EggStage /> : <VideoStage />}
-        </Suspense>
+        <Suspense fallback={null}>{presentation.renderer === 'fallback' ? <EggStage /> : <VideoStage />}</Suspense>
         <SpriteVfxOverlay />
       </div>
     </div>

@@ -107,6 +107,7 @@ export interface BackendSession {
   activate: (payload?: { clientContext?: unknown; code?: string }) => Promise<null | SessionSnapshot>
   client: () => BackendClient
   getSession: () => null | SessionSnapshot
+  getSelectedAccountId: () => null | string
   getToken: () => null | string
   listAccounts: () => AccountSummary[]
   logout: (
@@ -599,6 +600,11 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     activate,
     client,
     getSession: snapshot,
+    getSelectedAccountId: () => {
+      loadAccounts()
+
+      return activeAccountId
+    },
     getToken,
     listAccounts,
     logout,

@@ -6,6 +6,7 @@ import type { buildClientContext as BuildClientContextFn } from '../shared/clien
 export interface SessionRuntime {
   buildClientContext: () => ReturnType<typeof BuildClientContextFn>
   ensureBackendSession: () => BackendSessionPort
+  getSessionAfterRestore: () => Promise<null | SessionSnapshotPort>
   rewireAuthToken: () => void
 }
 
@@ -39,6 +40,7 @@ export function createSessionRuntime(
   buildClientContextFn: typeof BuildClientContextFn
 ): SessionRuntime {
   let session: null | BackendSessionPort = null
+  let restorePromise: Promise<void> = Promise.resolve()
 
   function ensureBackendSession(): BackendSessionPort {
     if (session) {
@@ -54,21 +56,20 @@ export function createSessionRuntime(
       userDataDir: deps.userDataDir
     })
 
-    try {
-      session
-        .restoreSession()
-        .then((snapshot: null | SessionSnapshotPort) => {
-          deps.onRestored(snapshot)
-        })
-        .catch((error: unknown) => {
-          deps.log(`[session] restore failed: ${deps.errorMessage(error)}`)
-          deps.onRestored(null)
-        })
-    } catch (error: unknown) {
+    restorePromise = session.restoreSession().then(deps.onRestored, (error: unknown) => {
       deps.log(`[session] restore failed: ${deps.errorMessage(error)}`)
-    }
+      deps.onRestored(null)
+    })
 
     return session
+  }
+
+  async function getSessionAfterRestore(): Promise<null | SessionSnapshotPort> {
+    const current = ensureBackendSession()
+
+    await restorePromise
+
+    return current.getSession()
   }
 
   return {
@@ -78,6 +79,7 @@ export function createSessionRuntime(
         spiritagentHome: deps.spiritagentHome
       }),
     ensureBackendSession,
+    getSessionAfterRestore,
     rewireAuthToken: () => {
       deps.getTokenSetter(() => ensureBackendSession().getToken() ?? null)
     }
