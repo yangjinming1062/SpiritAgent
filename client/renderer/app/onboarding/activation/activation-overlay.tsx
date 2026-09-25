@@ -51,9 +51,9 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
   }
 
   return (
-    <div className="fixed inset-0 z-[1200] flex items-center justify-center p-6">
+    <div className="pointer-events-none fixed inset-0 z-[1200] flex items-center justify-center p-6">
       <form
-        className={`relative w-full max-w-lg rounded-2xl p-7 text-strong ${SURFACE_OVERLAY}`}
+        className={`pointer-events-auto relative w-full max-w-lg rounded-2xl p-7 text-strong ${SURFACE_OVERLAY}`}
         onSubmit={onSubmit}
         ref={formRef}
       >

@@ -291,7 +291,6 @@ export function SpriteWindow(): React.JSX.Element {
       {showOnboarding && <OnboardingFlow onCompleted={onOnboardingComplete} />}
       <SpriteStage
         hidden={showOnboarding || surfaceOpen === 'living' || surfaceOpen === 'workbench'}
-        interactionEnabled={!activationOpen}
         onContextMenu={e => {
           $contextMenuPos.set({ x: e.clientX, y: e.clientY })
         }}
@@ -299,7 +298,7 @@ export function SpriteWindow(): React.JSX.Element {
         onTap={onTap}
       >
         {eggVisible ? (
-          <EggStage onTap={() => setOnboardingOpen(true)} />
+          <EggStage showPrompt />
         ) : showOnboarding ? null : (
           <Suspense fallback={null}>
             {authed && presentation.renderer === 'video' ? <VideoStage /> : <EggStage />}

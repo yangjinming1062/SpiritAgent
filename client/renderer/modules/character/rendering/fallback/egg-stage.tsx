@@ -21,10 +21,10 @@ const IDLE_LOOK_BOB_MS = 3200
 
 interface EggStageProps {
   size?: number
-  onTap?: () => void
+  showPrompt?: boolean
 }
 
-export function EggStage({ size = 280, onTap }: EggStageProps): React.JSX.Element {
+export function EggStage({ size = 280, showPrompt = false }: EggStageProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const eyesRef = useRef<SVGGElement>(null)
   const surfaceOpen = useStore($surfaceOpen)
@@ -98,14 +98,6 @@ export function EggStage({ size = 280, onTap }: EggStageProps): React.JSX.Elemen
         e.preventDefault()
         openContextMenu({ x: e.clientX, y: e.clientY })
       }}
-      onPointerDown={e => {
-        if (e.button !== 0) {
-          return
-        }
-
-        e.stopPropagation()
-        onTap?.()
-      }}
       ref={containerRef}
       style={{ width: size, height: size, opacity: surfaceOpen !== null ? 0.25 : 1 }}
     >
@@ -178,7 +170,7 @@ export function EggStage({ size = 280, onTap }: EggStageProps): React.JSX.Elemen
         </g>
       </svg>
 
-      {onTap && promptVisible && (
+      {showPrompt && promptVisible && (
         <div className="pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs text-body animate-pulse">
           点击我，让我醒来
         </div>
