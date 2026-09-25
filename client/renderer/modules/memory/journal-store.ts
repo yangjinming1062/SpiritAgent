@@ -246,11 +246,17 @@ function upsertComment(momentId: string, comment: MomentCommentEntry): void {
 }
 
 export async function commentMoment(momentId: string, content: string): Promise<boolean> {
+  const epoch = currentClearEpoch()
+
   const result = await authedApi<MomentCommentWire>({
     body: { content },
     method: 'POST',
     path: `/api/companion/moments/${momentId}/comments`
   })
+
+  if (epoch !== currentClearEpoch()) {
+    return false
+  }
 
   if (!result.ok) {
     if (result.reason === 'err') {
@@ -270,10 +276,16 @@ export async function commentMoment(momentId: string, content: string): Promise<
 }
 
 export async function deleteMomentComment(momentId: string, commentId: string): Promise<boolean> {
+  const epoch = currentClearEpoch()
+
   const result = await authedApi<null>({
     method: 'DELETE',
     path: `/api/companion/moments/${momentId}/comments/${commentId}`
   })
+
+  if (epoch !== currentClearEpoch()) {
+    return false
+  }
 
   if (!result.ok) {
     if (result.reason === 'err') {
@@ -331,6 +343,10 @@ export function onJournalEvent(event: { payload?: unknown; type: string }): void
 }
 
 export function clearJournal(): void {
+  momentsRevision++
+  diaryRevision++
   $moments.set([])
+  $momentsLoading.set(false)
   $diaryByDate.set({})
+  $diaryLoading.set(false)
 }

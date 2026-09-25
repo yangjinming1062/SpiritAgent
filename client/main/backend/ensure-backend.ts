@@ -16,6 +16,7 @@ interface EnsureBackendDeps {
     }) => void
   }
   getAuthToken: () => string | null
+  getCurrentBaseUrl?: () => string | null
   getWindowState: () => {
     isFullscreen: boolean
     nativeOverlayWidth: number
@@ -104,7 +105,8 @@ export function createEnsureBackend(deps: EnsureBackendDeps): {
         }
 
         deps.bootProgress.advance('backend.resolve', `Resolving ${deps.appName} backend`, 8)
-        const remote = await deps.backendHttp.resolveRemoteBackend()
+        const currentBaseUrl = deps.getCurrentBaseUrl?.()
+        const remote = currentBaseUrl ? { baseUrl: currentBaseUrl } : await deps.backendHttp.resolveRemoteBackend()
 
         if (!remote) {
           throw new Error(`No remote ${deps.appName} backend configured.`)

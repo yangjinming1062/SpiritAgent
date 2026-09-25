@@ -12,5 +12,5 @@ export function useAccountLifecycle(): void {
   }, [])
 
   useMainProcessListener('onAuthChanged', payload => void applyAuthBroadcast(payload), [])
-  useMainProcessListener('onSessionExpired', () => void logout(), [])
+  useMainProcessListener('onSessionExpired', sessionId => void logout(sessionId), [])
 }

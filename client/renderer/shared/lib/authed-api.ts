@@ -12,23 +12,35 @@ type AuthedApiResult<T> =
   | { ok: false; reason: 'err'; error: unknown }
 
 export async function authedApi<T>(opts: SpiritAgentApiRequest): Promise<AuthedApiResult<T>> {
-  if ($auth.get().kind !== 'authenticated') {
+  const auth = $auth.get()
+
+  if (auth.kind !== 'authenticated') {
     return { ok: false, reason: 'unauth' }
   }
 
-  // 同步快照 clearEpoch：IPC 往返里若触发登出，epoch 会被推进——本次 response 视为过期，
-  // 调用方不需要再各自重读 $auth 防御「收到响应 → 写入持久层 → 写完发现 auth 已经翻了」这条路径。
+  // 请求结果只属于发起时的鉴权会话和清理代次。
   const epoch = currentClearEpoch()
+  const sessionId = auth.snapshot.sessionId
+
+  const isCurrent = (): boolean => {
+    const current = $auth.get()
+
+    return current.kind === 'authenticated' && current.snapshot.sessionId === sessionId && currentClearEpoch() === epoch
+  }
 
   try {
     const value = (await window.spiritagent.api<T>(opts)) as T | null
 
-    if ($auth.get().kind !== 'authenticated' || currentClearEpoch() !== epoch) {
+    if (!isCurrent()) {
       return { ok: false, reason: 'unauth' }
     }
 
     return { ok: true, value }
   } catch (error) {
+    if (!isCurrent()) {
+      return { ok: false, reason: 'unauth' }
+    }
+
     return { ok: false, error, reason: 'err' }
   }
 }

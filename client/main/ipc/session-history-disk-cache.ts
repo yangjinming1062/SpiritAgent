@@ -15,13 +15,17 @@ export interface SessionHistorySnapshot {
 
 export interface SessionHistoryDiskCache {
   clear: () => Promise<void>
-  get: (userId: number, sessionId: string) => Promise<null | SessionHistorySnapshot>
-  remove: (userId: number, sessionId: string) => Promise<void>
-  save: (userId: number, sessionId: string, snapshot: SessionHistorySnapshot) => Promise<void>
+  get: (accountId: string, sessionId: string) => Promise<null | SessionHistorySnapshot>
+  remove: (accountId: string, sessionId: string) => Promise<void>
+  save: (accountId: string, sessionId: string, snapshot: SessionHistorySnapshot) => Promise<void>
 }
 
 export interface SessionHistoryDiskCacheOptions {
   spiritagentHome: string
+}
+
+function isAccountIdSafe(accountId: string): boolean {
+  return /^[a-f0-9]{64}$/.test(accountId)
 }
 
 function isSessionIdSafe(sessionId: string): boolean {
@@ -80,26 +84,27 @@ export function createSessionHistoryDiskCache({
 }: SessionHistoryDiskCacheOptions): SessionHistoryDiskCache {
   const cacheRoot = path.resolve(spiritagentHome, 'cache', 'sessions')
   const writeQueues = new Map<string, Promise<void>>()
+  let epoch = 0
 
-  function userDir(userId: number): string {
-    return path.join(cacheRoot, String(userId))
+  function accountDir(accountId: string): string {
+    return path.join(cacheRoot, accountId)
   }
 
-  function sessionPath(userId: number, sessionId: string): string {
-    return path.join(userDir(userId), `${sessionId}.json`)
+  function sessionPath(accountId: string, sessionId: string): string {
+    return path.join(accountDir(accountId), `${sessionId}.json`)
   }
 
   async function ensureDir(dir: string): Promise<void> {
     await fsp.mkdir(dir, { recursive: true })
   }
 
-  async function get(userId: number, sessionId: string): Promise<null | SessionHistorySnapshot> {
-    if (!Number.isInteger(userId) || userId <= 0 || !isSessionIdSafe(sessionId)) {
+  async function get(accountId: string, sessionId: string): Promise<null | SessionHistorySnapshot> {
+    if (!isAccountIdSafe(accountId) || !isSessionIdSafe(sessionId)) {
       return null
     }
 
     try {
-      const raw = await fsp.readFile(sessionPath(userId, sessionId), 'utf8')
+      const raw = await fsp.readFile(sessionPath(accountId, sessionId), 'utf8')
 
       return sanitizeSnapshot(JSON.parse(raw) as Partial<SessionHistorySnapshot>)
     } catch {
@@ -107,8 +112,8 @@ export function createSessionHistoryDiskCache({
     }
   }
 
-  async function save(userId: number, sessionId: string, snapshot: Partial<SessionHistorySnapshot>): Promise<void> {
-    if (!Number.isInteger(userId) || userId <= 0 || !isSessionIdSafe(sessionId)) {
+  async function save(accountId: string, sessionId: string, snapshot: Partial<SessionHistorySnapshot>): Promise<void> {
+    if (!isAccountIdSafe(accountId) || !isSessionIdSafe(sessionId)) {
       return
     }
 
@@ -118,18 +123,33 @@ export function createSessionHistoryDiskCache({
       return
     }
 
-    const file = sessionPath(userId, sessionId)
-    const key = `${userId}:${sessionId}`
+    const file = sessionPath(accountId, sessionId)
+    const key = `${accountId}:${sessionId}`
+    const saveEpoch = epoch
     const prev = writeQueues.get(key) ?? Promise.resolve()
 
     const next = prev
       .then(async () => {
-        await ensureDir(userDir(userId))
+        if (saveEpoch !== epoch) {
+          return
+        }
+
+        await ensureDir(accountDir(accountId))
+
+        if (saveEpoch !== epoch) {
+          return
+        }
+
         const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
 
         try {
           await fsp.writeFile(tmp, JSON.stringify(sanitized), 'utf8')
-          await fsp.rename(tmp, file)
+
+          if (saveEpoch === epoch) {
+            await fsp.rename(tmp, file)
+          } else {
+            await fsp.unlink(tmp).catch(() => {})
+          }
         } catch {
           await fsp.unlink(tmp).catch(() => {})
         }
@@ -144,15 +164,19 @@ export function createSessionHistoryDiskCache({
     }
   }
 
-  async function remove(userId: number, sessionId: string): Promise<void> {
-    if (!Number.isInteger(userId) || userId <= 0 || !isSessionIdSafe(sessionId)) {
+  async function remove(accountId: string, sessionId: string): Promise<void> {
+    if (!isAccountIdSafe(accountId) || !isSessionIdSafe(sessionId)) {
       return
     }
 
     // 走同一写入队列：避免在途 save 在 rm 之后落盘，复活已删快照。
-    const key = `${userId}:${sessionId}`
+    const key = `${accountId}:${sessionId}`
+    const removeEpoch = epoch
     const prev = writeQueues.get(key) ?? Promise.resolve()
-    const next = prev.then(() => fsp.rm(sessionPath(userId, sessionId), { force: true })).catch(() => {})
+
+    const next = prev
+      .then(() => (removeEpoch === epoch ? fsp.rm(sessionPath(accountId, sessionId), { force: true }) : undefined))
+      .catch(() => {})
 
     writeQueues.set(key, next)
     await next
@@ -163,6 +187,8 @@ export function createSessionHistoryDiskCache({
   }
 
   async function clear(): Promise<void> {
+    epoch += 1
+    await Promise.allSettled([...writeQueues.values()])
     writeQueues.clear()
     await fsp.rm(cacheRoot, { recursive: true, force: true }).catch(() => {})
   }

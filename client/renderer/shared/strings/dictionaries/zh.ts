@@ -150,6 +150,8 @@ export const dict = {
   },
 
   activation: {
+    addTitle: '添加账户',
+    addSubtitle: '粘贴新账户的激活码。验证失败时当前账户会保持不变。',
     title: (brandName: string) => `激活 ${brandName}`,
     subtitle: '粘贴您收到的激活码以开始使用。',
     close: '关闭',

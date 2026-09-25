@@ -15,9 +15,16 @@ import { HttpError, isUnauthorized, sendToSender } from '../shared/utils'
 import type { AssetDiskCache } from './asset-disk-cache'
 
 // 鉴权失效广播：按结构化 status 判断，不解析错误文案。
-function notifyAuthExpiredOn401(error: unknown, connection: SpiritAgentConnection, sender: WebContents): void {
-  if (isUnauthorized(error) && connection.token) {
-    sendToSender(sender, IPC.event.authSessionExpired)
+function notifyAuthExpiredOn401(
+  error: unknown,
+  connection: SpiritAgentConnection,
+  sender: WebContents,
+  getCurrentAuth: () => null | { sessionId: string; token: string }
+): void {
+  const current = getCurrentAuth()
+
+  if (isUnauthorized(error) && connection.token && current?.token === connection.token) {
+    sendToSender(sender, IPC.event.authSessionExpired, current.sessionId)
   }
 }
 
@@ -34,12 +41,13 @@ function isCompanionIdentityAsset(rawUrl: string, baseUrl: string): boolean {
 async function runCachedAsset<T>(
   sender: WebContents,
   connection: SpiritAgentConnection,
+  getCurrentAuth: () => null | { sessionId: string; token: string },
   run: () => Promise<T>
 ): Promise<T> {
   try {
     return await run()
   } catch (error: unknown) {
-    notifyAuthExpiredOn401(error, connection, sender)
+    notifyAuthExpiredOn401(error, connection, sender, getCurrentAuth)
 
     throw error
   }
@@ -51,12 +59,14 @@ async function fetchFromBackend({
   connection,
   sender,
   fetchImpl,
+  getCurrentAuth,
   timeoutMs
 }: {
   rawUrl: string
   connection: SpiritAgentConnection
   sender: WebContents
   fetchImpl?: typeof globalThis.fetch
+  getCurrentAuth: () => null | { sessionId: string; token: string }
   timeoutMs: number
 }): Promise<Response> {
   const { pathname, search } = new URL(rawUrl, connection.baseUrl)
@@ -69,8 +79,8 @@ async function fetchFromBackend({
   })
 
   if (!res.ok) {
-    if (res.status === 401 && connection.token) {
-      sendToSender(sender, IPC.event.authSessionExpired)
+    if (res.status === 401) {
+      notifyAuthExpiredOn401(new HttpError(401, 'Unauthorized'), connection, sender, getCurrentAuth)
     }
 
     const text = await res.text().catch(() => '')
@@ -92,6 +102,7 @@ interface ConnectionIpcDeps {
     options?: { body?: unknown; method?: string; timeoutMs?: number }
   ) => Promise<unknown>
   getBootProgressState: () => DesktopBootProgress
+  getCurrentAuth: () => null | { sessionId: string; token: string }
   getMainWindow?: () => BrowserWindow | null | undefined
   ipcMain: IpcMain
   mintWsTicket?: (baseUrl: string, token: string | null) => Promise<string | null>
@@ -110,6 +121,7 @@ export function registerConnectionIpc({
   fetchImpl,
   fetchJson,
   getBootProgressState,
+  getCurrentAuth,
   getMainWindow,
   ipcMain,
   mintWsTicket,
@@ -163,7 +175,7 @@ export function registerConnectionIpc({
         timeoutMs
       })
     } catch (error: unknown) {
-      notifyAuthExpiredOn401(error, connection, _event.sender)
+      notifyAuthExpiredOn401(error, connection, _event.sender, getCurrentAuth)
 
       throw error
     }
@@ -191,7 +203,7 @@ export function registerConnectionIpc({
       const connection = await ensureBackend()
 
       if (assetDiskCache && (request?.preferCache || isCompanionIdentityAsset(raw, connection.baseUrl))) {
-        return await runCachedAsset(_event.sender, connection, async () => {
+        return await runCachedAsset(_event.sender, connection, getCurrentAuth, async () => {
           const cached = await assetDiskCache.ensureCached({
             preferCache: request?.preferCache,
             baseUrl: connection.baseUrl,
@@ -210,6 +222,7 @@ export function registerConnectionIpc({
         rawUrl: raw,
         connection,
         fetchImpl,
+        getCurrentAuth,
         sender: _event.sender,
         timeoutMs: defaultFetchTimeoutMs
       })
@@ -231,7 +244,7 @@ export function registerConnectionIpc({
       }
 
       if (assetDiskCache && (request?.preferCache || isCompanionIdentityAsset(raw, connection.baseUrl))) {
-        return await runCachedAsset(_event.sender, connection, async () => {
+        return await runCachedAsset(_event.sender, connection, getCurrentAuth, async () => {
           const cached = await assetDiskCache.ensureCached({
             preferCache: request?.preferCache,
             baseUrl: connection.baseUrl,
@@ -250,6 +263,7 @@ export function registerConnectionIpc({
         rawUrl: raw,
         connection,
         fetchImpl,
+        getCurrentAuth,
         sender: _event.sender,
         timeoutMs: defaultFetchTimeoutMs
       })

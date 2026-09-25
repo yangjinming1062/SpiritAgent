@@ -31,9 +31,10 @@ export interface RunnerHostOptions {
 
 export interface RunnerHost {
   autoStart: () => void
-  autoStop: () => void
+  autoStop: () => Promise<void>
   getBridge: () => null | RunnerBridge
   registerIpc: (ipcMain: IpcMain) => void
+  restartForCurrentSession: () => Promise<void>
 }
 
 /** Runner 桥的唯一持有者：懒创建、登录自动启停，并向 IPC 与外部读者暴露窄接口。 */
@@ -149,10 +150,25 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
       })
   }
 
-  function autoStop(): void {
-    stopCurrentSession({ reason: 'session-cleared' }).catch((error: unknown) => {
+  async function autoStop(): Promise<void> {
+    await stopCurrentSession({ reason: 'session-cleared' }).catch((error: unknown) => {
       options.rememberLog(`[runner-bridge] auto-stop failed: ${errorMessage(error)}`)
     })
+  }
+
+  async function restartForCurrentSession(): Promise<void> {
+    try {
+      await stopCurrentSession({ reason: 'account-switch' })
+      const result = await startForCurrentSession()
+
+      if (!result.ok && !result.noop) {
+        options.rememberLog(
+          `[runner-bridge] account switch start failed: ${result.error || result.reason || 'unknown'}`
+        )
+      }
+    } catch (error) {
+      options.rememberLog(`[runner-bridge] account switch restart failed: ${errorMessage(error)}`)
+    }
   }
 
   function registerIpc(ipcMain: IpcMain): void {
@@ -243,5 +259,5 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
     })
   }
 
-  return { autoStart, autoStop, getBridge: () => runnerBridge, registerIpc }
+  return { autoStart, autoStop, getBridge: () => runnerBridge, registerIpc, restartForCurrentSession }
 }

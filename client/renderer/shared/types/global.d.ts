@@ -132,7 +132,6 @@ declare global {
       onSessionExpired: EventSubscription<'spiritagent:auth:session-expired'>
       onAuthChanged: EventSubscription<'spiritagent:auth:changed'>
       onRunnerStatus: EventSubscription<'spiritagent:runner:status'>
-      onTrayLogout: EventSubscription<'spiritagent:tray:logout'>
       onTrayActivate: EventSubscription<'spiritagent:tray:activate'>
       onTrayResetPosition: EventSubscription<'spiritagent:tray:reset-position'>
       onUiThemeChanged: EventSubscription<'spiritagent:ui-theme-changed'>

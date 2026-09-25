@@ -1,6 +1,7 @@
 import { atom } from 'nanostores'
 
 import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { getStrings } from '@/shared/strings'
 
 export type NotificationKind = 'error' | 'warning' | 'info' | 'success'
@@ -168,3 +169,5 @@ export function clearNotifications(): void {
     item.onDismiss?.()
   }
 }
+
+registerStorageClearHandler(clearNotifications)

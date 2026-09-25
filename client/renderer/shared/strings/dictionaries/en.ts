@@ -155,6 +155,8 @@ export const dict: Dictionary = {
   },
 
   activation: {
+    addTitle: 'Add Account',
+    addSubtitle: 'Paste the new account’s activation code. Your current account stays active if verification fails.',
     title: (brandName: string) => `Activate ${brandName}`,
     subtitle: 'Paste the activation code you received to get started.',
     close: 'Close',

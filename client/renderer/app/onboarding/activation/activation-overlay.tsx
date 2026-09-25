@@ -19,6 +19,7 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
   const t = dict.activation
   const [code, setCode] = useState('')
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<null | string>(null)
   const overlayRef = useRef<HTMLDivElement>(null)
 
   // 把全出血浮层注册为可交互区域，让 textarea 与提交按钮
@@ -29,7 +30,7 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
 
   useEscapeKey(onClose, { capture: false, stopPropagation: false, busy })
 
-  const error = auth.kind === 'unauthenticated' ? auth.error : null
+  const addAccount = auth.kind === 'authenticated'
   const trimmed = code.trim()
 
   const onSubmit = async (event: FormEvent) => {
@@ -40,12 +41,13 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
     }
 
     setBusy(true)
+    setError(null)
 
     try {
       await activate({ code: trimmed })
       onClose()
-    } catch {
-      // 错误信息挂在 $auth.error 上，banner 会读取它。
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
       setBusy(false)
     }
@@ -71,8 +73,10 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
               <Sparkles className="size-5" />
             </div>
             <div>
-              <h2 className="text-lg font-semibold tracking-tight">{t.title(dict.brand.name)}</h2>
-              <p className="text-sm text-faint">{t.subtitle}</p>
+              <h2 className="text-lg font-semibold tracking-tight">
+                {addAccount ? t.addTitle : t.title(dict.brand.name)}
+              </h2>
+              <p className="text-sm text-faint">{addAccount ? t.addSubtitle : t.subtitle}</p>
             </div>
           </div>
           <button aria-label={t.close} className={BTN_ICON} disabled={busy} onClick={onClose} type="button">

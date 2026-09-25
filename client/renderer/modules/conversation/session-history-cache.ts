@@ -3,6 +3,7 @@ import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
 import {
+  currentClearEpoch,
   persistString,
   registerCompanionStorageKey,
   registerStorageClearHandler,
@@ -38,6 +39,12 @@ export class SessionHistoryChangedError extends Error {
 
 function canPersist(): boolean {
   return $auth.get().kind === 'authenticated'
+}
+
+function currentAuthSessionId(): null | string {
+  const auth = $auth.get()
+
+  return auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
 }
 
 function lastIdFrom(messages: SessionMessage[]): null | number {
@@ -91,6 +98,13 @@ function getMemoryHistory(sessionId: string): null | HistoryCacheState {
 }
 
 export async function loadLocalSessionHistory(sessionId: string): Promise<null | HistoryCacheState> {
+  const authSessionId = currentAuthSessionId()
+  const epoch = currentClearEpoch()
+
+  if (!authSessionId) {
+    return null
+  }
+
   const memory = getMemoryHistory(sessionId)
 
   if (memory) {
@@ -102,7 +116,12 @@ export async function loadLocalSessionHistory(sessionId: string): Promise<null |
   }
 
   try {
-    const snap = await window.spiritagent.sessionHistory.get(sessionId)
+    const snap = await window.spiritagent.sessionHistory.get(sessionId, authSessionId)
+
+    if (epoch !== currentClearEpoch() || currentAuthSessionId() !== authSessionId) {
+      return null
+    }
+
     const current = getMemoryHistory(sessionId)
 
     if (current || invalidations.has(sessionId)) {
@@ -327,13 +346,14 @@ function schedulePersist(sessionId: string): void {
 
 async function persistNow(sessionId: string): Promise<void> {
   const state = memoryBySession.get(sessionId)
+  const authSessionId = currentAuthSessionId()
 
-  if (!canPersist() || !state || invalidations.has(sessionId)) {
+  if (!authSessionId || !state || invalidations.has(sessionId)) {
     return
   }
 
   try {
-    await window.spiritagent.sessionHistory.save(sessionId, toSnapshot(state))
+    await window.spiritagent.sessionHistory.save(sessionId, toSnapshot(state), authSessionId)
   } catch (err) {
     log.warn('session-history', 'persist failed:', err)
   }
@@ -362,9 +382,13 @@ export function invalidateSessionHistory(sessionId: string): void {
     persistTimers.delete(sessionId)
   }
 
-  void window.spiritagent.sessionHistory.remove(sessionId).catch(err => {
-    log.warn('session-history', 'remove stale history failed:', err)
-  })
+  const authSessionId = currentAuthSessionId()
+
+  if (authSessionId) {
+    void window.spiritagent.sessionHistory.remove(sessionId, authSessionId).catch(err => {
+      log.warn('session-history', 'remove stale history failed:', err)
+    })
+  }
 }
 
 /** 会话被删除后清掉内存与磁盘快照，避免已删对话内容留盘。 */
@@ -378,7 +402,11 @@ export function forgetSessionHistory(sessionId: string): void {
     persistTimers.delete(sessionId)
   }
 
-  void window.spiritagent.sessionHistory.remove(sessionId).catch(() => {})
+  const authSessionId = currentAuthSessionId()
+
+  if (authSessionId) {
+    void window.spiritagent.sessionHistory.remove(sessionId, authSessionId).catch(() => {})
+  }
 }
 
 registerStorageClearHandler(() => {

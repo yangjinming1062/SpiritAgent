@@ -1,4 +1,5 @@
 import { IPC, type IpcEventChannel, type IpcEventContract, type SurfaceId } from '@ipc/contracts'
+import type { dialog } from 'electron'
 import {
   type App,
   type BrowserWindow,
@@ -9,7 +10,7 @@ import {
   type Tray
 } from 'electron'
 
-import type { BackendSessionLike } from '../shared/backend-port'
+import type { BackendSessionPort } from '../shared/backend-port'
 import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
 import { broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, sendToWindow } from '../shared/utils'
@@ -20,21 +21,33 @@ interface TrayDeps {
   Menu: typeof Menu
   Tray: typeof Tray
   app: App
-  ensureBackendSession?: () => BackendSessionLike | null | undefined
+  dialog: typeof dialog
+  ensureBackendSession?: () => BackendSessionPort | null | undefined
   getIsQuitting?: () => boolean
   getMainWindow: () => BrowserWindow | null | undefined
   createWindow: () => void
   getAppIconPath: () => null | string
   nativeImage: typeof nativeImage
   rememberLog: (chunk: string) => void
+  removeAccount: (accountId: string) => Promise<void>
   surfaces?: SurfacesManager
+  switchAccount: (accountId: string) => Promise<unknown>
 }
 
 const TRAY_STRINGS = {
   zh: {
     brandName: '唤生',
     activate: '激活...',
-    deactivate: '反激活',
+    accountSwitch: '切换账户',
+    addAccount: '添加账户…',
+    removeAccount: '移除账户',
+    removeConfirm: (username: string) => `从本机移除「${username}」？之后若想使用此账户，需要重新输入激活码。`,
+    removeCurrentConfirm: (username: string) =>
+      `从本机移除当前账户「${username}」并退出登录？之后若想使用此账户，需要重新输入激活码。`,
+    confirmRemove: '移除',
+    cancel: '取消',
+    switchFailed: '切换账户失败',
+    removeFailed: '移除账户失败',
     hide: '隐藏',
     language: '语言 / Language',
     living: '生活空间',
@@ -47,7 +60,17 @@ const TRAY_STRINGS = {
   en: {
     brandName: 'SpiritAgent',
     activate: 'Activate...',
-    deactivate: 'Deactivate',
+    accountSwitch: 'Switch Account',
+    addAccount: 'Add Account…',
+    removeAccount: 'Remove Account',
+    removeConfirm: (username: string) =>
+      `Remove “${username}” from this device? You will need its activation code to add it again.`,
+    removeCurrentConfirm: (username: string) =>
+      `Remove the current account “${username}” and sign out? You will need its activation code to add it again.`,
+    confirmRemove: 'Remove',
+    cancel: 'Cancel',
+    switchFailed: 'Could not switch account',
+    removeFailed: 'Could not remove account',
     hide: 'Hide',
     language: 'Language / 语言',
     living: 'Living Space',
@@ -61,8 +84,8 @@ const TRAY_STRINGS = {
 
 let trayInstance: null | Tray = null
 let trayDeps: null | TrayDeps = null
+let accountOperationBusy = false
 
-// 设置和激活/反激活放在托盘右键菜单里，而不是应用内界面。
 function isAuthenticated(): boolean {
   return Boolean(trayDeps?.ensureBackendSession?.()?.getSession()?.hasToken)
 }
@@ -79,6 +102,76 @@ function isSpriteVisible(): boolean {
 
 function sendToMainWindow<C extends IpcEventChannel>(channel: C, ...payload: IpcEventContract[C]): void {
   sendToWindow(trayDeps?.getMainWindow?.(), channel, ...payload)
+}
+
+function showActivation(): void {
+  showMainWindow()
+  const win = trayDeps?.getMainWindow?.()
+
+  if (win?.webContents.isLoading()) {
+    win.webContents.once('did-finish-load', () => sendToWindow(win, IPC.event.trayActivate))
+  } else {
+    sendToMainWindow(IPC.event.trayActivate)
+  }
+}
+
+function accountLabel(username: string, baseUrl: string, duplicate: boolean): string {
+  if (!duplicate) {
+    return username
+  }
+
+  return `${username} (${baseUrl})`
+}
+
+async function switchFromTray(accountId: string): Promise<void> {
+  if (!trayDeps || accountOperationBusy) {
+    return
+  }
+
+  accountOperationBusy = true
+  rebuildTrayMenu()
+
+  try {
+    await trayDeps.switchAccount(accountId)
+  } catch (error) {
+    trayDeps.dialog.showErrorBox(TRAY_STRINGS[getCurrentLanguage()].switchFailed, errorMessage(error))
+  } finally {
+    accountOperationBusy = false
+    rebuildTrayMenu()
+  }
+}
+
+async function removeFromTray(accountId: string, username: string, active: boolean): Promise<void> {
+  if (!trayDeps || accountOperationBusy) {
+    return
+  }
+
+  const t = TRAY_STRINGS[getCurrentLanguage()]
+
+  const result = await trayDeps.dialog.showMessageBox({
+    buttons: [t.cancel, t.confirmRemove],
+    cancelId: 0,
+    defaultId: 0,
+    message: active ? t.removeCurrentConfirm(username) : t.removeConfirm(username),
+    noLink: true,
+    type: 'warning'
+  })
+
+  if (result.response !== 1) {
+    return
+  }
+
+  accountOperationBusy = true
+  rebuildTrayMenu()
+
+  try {
+    await trayDeps.removeAccount(accountId)
+  } catch (error) {
+    trayDeps.dialog.showErrorBox(t.removeFailed, errorMessage(error))
+  } finally {
+    accountOperationBusy = false
+    rebuildTrayMenu()
+  }
 }
 
 function getCurrentLanguage(): 'en' | 'zh' {
@@ -135,12 +228,7 @@ function buildTrayMenu(): Menu | null {
   } else {
     mainActionLabel = t.activate
 
-    mainActionClick = () => {
-      showMainWindow()
-      // 仅拉窗口不够——激活浮层是 React state，关掉后只能再翻回 true；
-      // 通知渲染器把 activationOpen 翻回来。
-      sendToMainWindow(IPC.event.trayActivate)
-    }
+    mainActionClick = showActivation
   }
 
   const template: MenuItemConstructorOptions[] = [
@@ -199,9 +287,43 @@ function buildTrayMenu(): Menu | null {
     }
   )
 
-  if (authed) {
-    template.push({ type: 'separator' }, { click: () => sendToMainWindow(IPC.event.trayLogout), label: t.deactivate })
+  const accounts = trayDeps.ensureBackendSession?.()?.listAccounts() ?? []
+  const counts = new Map<string, number>()
+
+  for (const account of accounts) {
+    counts.set(account.username, (counts.get(account.username) ?? 0) + 1)
   }
+
+  const accountItems: MenuItemConstructorOptions[] = accounts.map(account => ({
+    checked: account.active,
+    click: () => {
+      void switchFromTray(account.id)
+    },
+    enabled: !accountOperationBusy,
+    label: accountLabel(account.username, account.baseUrl, (counts.get(account.username) ?? 0) > 1),
+    type: 'radio'
+  }))
+
+  if (accountItems.length) {
+    accountItems.push({ type: 'separator' })
+  }
+
+  accountItems.push({ click: showActivation, enabled: !accountOperationBusy, label: t.addAccount })
+
+  if (accounts.length) {
+    accountItems.push({
+      enabled: !accountOperationBusy,
+      label: t.removeAccount,
+      submenu: accounts.map(account => ({
+        click: () => {
+          void removeFromTray(account.id, account.username, account.active)
+        },
+        label: accountLabel(account.username, account.baseUrl, (counts.get(account.username) ?? 0) > 1)
+      }))
+    })
+  }
+
+  template.push({ type: 'separator' }, { label: t.accountSwitch, submenu: accountItems })
 
   template.push({ type: 'separator' }, { click: () => quitAppFully(), label: t.quit(t.brandName) })
 

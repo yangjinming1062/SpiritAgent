@@ -16,39 +16,42 @@ export function registerSessionHistoryIpc({
   ipcMain,
   sessionHistoryDiskCache
 }: SessionHistoryIpcDeps): void {
-  function currentUserId(): null | number {
-    const id = ensureBackendSession().getSession()?.user?.id
+  function currentAccountId(authSessionId: string): null | string {
+    const current = ensureBackendSession().getSession()
 
-    return typeof id === 'number' && Number.isFinite(id) && id > 0 ? id : null
+    return current?.sessionId === authSessionId ? current.accountId : null
   }
 
-  ipcMain.handle(IPC.invoke.sessionHistoryGet, async (_event, sessionId: string) => {
-    const userId = currentUserId()
+  ipcMain.handle(IPC.invoke.sessionHistoryGet, async (_event, sessionId: string, authSessionId: string) => {
+    const accountId = currentAccountId(authSessionId)
 
-    if (!userId) {
+    if (!accountId) {
       return null
     }
 
-    return sessionHistoryDiskCache.get(userId, sessionId)
+    return sessionHistoryDiskCache.get(accountId, sessionId)
   })
 
-  ipcMain.handle(IPC.invoke.sessionHistorySave, async (_event, sessionId: string, snapshot: SessionHistorySnapshot) => {
-    const userId = currentUserId()
+  ipcMain.handle(
+    IPC.invoke.sessionHistorySave,
+    async (_event, sessionId: string, snapshot: SessionHistorySnapshot, authSessionId: string) => {
+      const accountId = currentAccountId(authSessionId)
 
-    if (!userId) {
+      if (!accountId) {
+        return
+      }
+
+      await sessionHistoryDiskCache.save(accountId, sessionId, snapshot)
+    }
+  )
+
+  ipcMain.handle(IPC.invoke.sessionHistoryRemove, async (_event, sessionId: string, authSessionId: string) => {
+    const accountId = currentAccountId(authSessionId)
+
+    if (!accountId) {
       return
     }
 
-    await sessionHistoryDiskCache.save(userId, sessionId, snapshot)
-  })
-
-  ipcMain.handle(IPC.invoke.sessionHistoryRemove, async (_event, sessionId: string) => {
-    const userId = currentUserId()
-
-    if (!userId) {
-      return
-    }
-
-    await sessionHistoryDiskCache.remove(userId, sessionId)
+    await sessionHistoryDiskCache.remove(accountId, sessionId)
   })
 }

@@ -6,8 +6,6 @@
 import type { DesktopSurfaceOpenPayload, SurfaceId } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
-import { registerStorageClearHandler } from '@/shared/lib/storage'
-
 export const $surfaceOpen = atom<null | SurfaceId>(null)
 
 export type SurfaceRole = 'living' | 'workbench' | 'sprite'
@@ -28,11 +26,6 @@ export function isLivingProxyWindow(): boolean {
 
   return false
 }
-
-registerStorageClearHandler(() => {
-  $surfaceOpen.set(null)
-  $surfaceRole.set(null)
-})
 
 export interface OpenSurfaceOptions {
   sessionId?: string

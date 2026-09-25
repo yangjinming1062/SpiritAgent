@@ -72,14 +72,14 @@ async function runLocked<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
-async function persistAndPush(): Promise<void> {
+async function persistAndPush(pushRunner = true): Promise<void> {
   if (storePath) {
     const content = JSON.stringify(config, null, 2)
     await atomicWriteFile(storePath, content)
   }
 
   // 吞掉派发错误——bridge 在登录前可能尚未连接。
-  if (pushTarget && config) {
+  if (pushRunner && pushTarget && config) {
     try {
       await pushTarget(config)
     } catch {
@@ -98,12 +98,19 @@ async function persistAndPush(): Promise<void> {
  * 整节替换进镜像（其余节与本机机密原样保留），落盘并推 runner，
  * 不触发云同步委托。sections 为空时是 no-op。
  */
-export async function applyCloudMirror(sections: Record<string, unknown>): Promise<void> {
+export async function applyCloudMirror(
+  sections: Record<string, unknown>,
+  isCurrent: () => boolean = () => true
+): Promise<void> {
   if (!sections || typeof sections !== 'object') {
     return
   }
 
   await runLocked(async () => {
+    if (!isCurrent()) {
+      return
+    }
+
     load()
     suppressCloudSync = true
 
@@ -157,9 +164,10 @@ export async function patch(
   })
 }
 
-/** fn 在写锁内就地变更配置；其返回值会作为 ``mutated`` 透出。*/
+/** fn 在写锁内变更配置；`pushRunner: false` 时只落盘、不推送 Runner。 */
 export async function mutate<T>(
-  fn: (config: Record<string, unknown>) => T
+  fn: (config: Record<string, unknown>) => T,
+  { pushRunner = true }: { pushRunner?: boolean } = {}
 ): Promise<{ error?: string; mutated?: T; ok: boolean }> {
   if (typeof fn !== 'function') {
     return { error: 'mutate requires a function', ok: false }
@@ -181,7 +189,7 @@ export async function mutate<T>(
         throw err
       }
 
-      await persistAndPush()
+      await persistAndPush(pushRunner)
     })
 
     return { mutated, ok: true }

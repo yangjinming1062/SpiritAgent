@@ -29,7 +29,7 @@ import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
 import { NotificationStack, useGatewayRequest } from '@/shared'
 import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
-import { $auth, logout } from '@/shared/store/auth'
+import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { notify } from '@/shared/store/notifications'
 import { hydrateRunnerStatus } from '@/shared/store/runner-status'
@@ -81,10 +81,6 @@ export function SpriteWindow(): React.JSX.Element {
     void hydrateRunnerStatus()
   }, [])
 
-  // 托盘菜单的「登出」入口会触发这个桥；主进程侧登出也会在下一次会话检查时
-  // 触发 `onSessionExpired`，但显式路由能让用户在点托盘项时 UI 更跟手。
-  useMainProcessListener('onTrayLogout', () => void logout(), [])
-
   // 托盘「激活...」入口的对偶：主进程只调 showMainWindow() 不够——
   // 激活浮层是 React state，关掉之后必须显式翻回来，否则就是死锁。
   useMainProcessListener('onTrayActivate', () => setActivationOpen(true), [])
@@ -99,10 +95,12 @@ export function SpriteWindow(): React.JSX.Element {
   )
 
   // 未鉴权时自动开激活浮层：首次 hydrateAuth 完成（pending → unauthenticated）
-  // 以及反激活之后，保障未激活用户的激活入口可用。
+  // 以及移除当前账户或会话失效之后，保障未激活用户的激活入口可用。
   useEffect(() => {
     if (auth.kind === 'unauthenticated') {
       setActivationOpen(true)
+    } else if (auth.kind === 'authenticated') {
+      setActivationOpen(false)
     }
   }, [auth.kind])
 
@@ -289,7 +287,7 @@ export function SpriteWindow(): React.JSX.Element {
 
   return (
     <>
-      {activationOpen && !authed && <ActivationOverlay onClose={() => setActivationOpen(false)} />}
+      {activationOpen && <ActivationOverlay onClose={() => setActivationOpen(false)} />}
       {showOnboarding && <OnboardingFlow onCompleted={onOnboardingComplete} />}
       <SpriteStage
         hidden={showOnboarding || surfaceOpen === 'living' || surfaceOpen === 'workbench'}
@@ -302,7 +300,9 @@ export function SpriteWindow(): React.JSX.Element {
         {eggVisible ? (
           <EggStage onTap={() => setOnboardingOpen(true)} />
         ) : showOnboarding ? null : (
-          <Suspense fallback={null}>{authed && presentation.renderer === 'video' ? <VideoStage /> : <EggStage />}</Suspense>
+          <Suspense fallback={null}>
+            {authed && presentation.renderer === 'video' ? <VideoStage /> : <EggStage />}
+          </Suspense>
         )}
       </SpriteStage>
       <SpriteContextMenu

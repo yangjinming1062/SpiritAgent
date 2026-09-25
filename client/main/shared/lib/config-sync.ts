@@ -30,10 +30,9 @@ const LOCAL_ONLY_KEYS: Record<string, readonly string[]> = {
   browser: ['profile_dir']
 }
 
-// 本地镜像归属戳：desktop-settings.json 的本地专属节，标记镜像属于哪个用户，
-// 换号残留的镜像在水合前按不信任处理（清空同步节、不上传），防止把 A 的编辑泄给 B。
+// 镜像归属不匹配时清空同步节，避免跨账户上传。
 interface MirrorStamp {
-  user_id?: null | number
+  account_id?: null | string
 }
 
 const FLUSH_DEBOUNCE_MS = 1500
@@ -57,8 +56,8 @@ export interface ConfigSyncDeps {
 export interface ConfigSync {
   /** runner-config-store 的本地变更委托；在 store 写锁内同步调用，必须非阻塞。 */
   onLocalChange: (config: Record<string, unknown>) => void
-  /** 用户身份变化（登录/登出/换号）；userId 变更时触发一次水合。 */
-  handleAuthUserChanged: (userId: null | number) => void
+  /** 用户身份变化（登录/登出/换号）；跨后端同号也须视为不同身份。 */
+  handleAuthUserChanged: (accountId: null | string) => Promise<void>
   flush: () => Promise<void>
 }
 
@@ -88,7 +87,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
   let client: null | BackendClientPort = null
   let clientBaseUrl = ''
   let dirty = false
-  let hydratedUserId: null | number = null
+  let hydratedAccountId: null | string = null
   let hydrating = false
   let flushing = false
   let flushTimer: null | NodeJS.Timeout = null
@@ -256,7 +255,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
 
     hydrating = true
     const epoch = authEpoch
-    const uid = hydratedUserId
+    const accountId = hydratedAccountId
 
     try {
       // 未上云的本地编辑先落云，避免被云端旧值覆盖；失败（离线）则保留本地下次再试。
@@ -270,7 +269,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
 
       const conn = await deps.ensureBackend()
 
-      if (epoch !== authEpoch || !conn.token || uid === null) {
+      if (epoch !== authEpoch || !conn.token || accountId === null) {
         return
       }
 
@@ -285,20 +284,25 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       const cloud = pickSyncedSections(res.config ?? {})
       const local = store.read()
       const stamp = objectSection(local, 'sync') as MirrorStamp
-      // 归属戳是唯一信任依据：不匹配或缺失都视为不可信——
-      // 清空同步节、只进云端内容、不回传本地，防止把无法确认归属的本地编辑泄给当前用户。
-      const trusted = stamp.user_id === uid
+      const trusted = stamp.account_id === accountId
 
       if (!trusted) {
-        await store.mutate(config => {
-          for (const section of SYNCED_SECTIONS) {
-            delete config[section]
-          }
+        await store.mutate(
+          config => {
+            if (epoch !== authEpoch) {
+              return
+            }
 
-          for (const key of SYNCED_PRIMITIVES) {
-            delete config[key]
-          }
-        })
+            for (const section of SYNCED_SECTIONS) {
+              delete config[section]
+            }
+
+            for (const key of SYNCED_PRIMITIVES) {
+              delete config[key]
+            }
+          },
+          { pushRunner: false }
+        )
       }
 
       if (epoch !== authEpoch) {
@@ -355,9 +359,9 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       }
 
       // 节有变化或归属戳缺失/过期时落盘（含戳），否则零写入。
-      if (Object.keys(changed).length > 0 || stamp.user_id !== uid) {
-        changed.sync = { user_id: uid }
-        await store.applyCloudMirror(changed)
+      if (Object.keys(changed).length > 0 || !trusted) {
+        changed.sync = { account_id: accountId }
+        await store.applyCloudMirror(changed, () => epoch === authEpoch)
       }
 
       if (epoch !== authEpoch) {
@@ -382,26 +386,55 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       hydrating = false
 
       // 在途 hydrate 期间换号：补跑当前用户水合，避免被吞掉。
-      if (epoch !== authEpoch && hydratedUserId !== null) {
+      if (epoch !== authEpoch && hydratedAccountId !== null) {
         void hydrate()
       }
     }
   }
 
-  function handleAuthUserChanged(userId: null | number): void {
-    if (userId === hydratedUserId) {
+  async function handleAuthUserChanged(accountId: null | string): Promise<void> {
+    if (accountId === hydratedAccountId) {
       return
     }
 
     clearTimers()
-    // 旧用户的未上传编辑不尝试上云（token 已换/失效）；镜像值留在本地，
-    // 归属戳保证换号水合不会把它们泄给新用户。
     dirty = false
-    hydratedUserId = userId
+    lastFlushedJson = '{}'
+    hydratedAccountId = accountId
     authEpoch++
 
-    if (userId !== null) {
-      void hydrate()
+    if (accountId !== null) {
+      const epoch = authEpoch
+      const stamp = objectSection(store.read(), 'sync') as MirrorStamp
+
+      if (stamp.account_id !== accountId) {
+        const result = await store.mutate(
+          config => {
+            if (epoch !== authEpoch) {
+              return
+            }
+
+            for (const section of SYNCED_SECTIONS) {
+              delete config[section]
+            }
+
+            for (const key of SYNCED_PRIMITIVES) {
+              delete config[key]
+            }
+
+            config.sync = { account_id: accountId }
+          },
+          { pushRunner: false }
+        )
+
+        if (!result.ok) {
+          deps.log(`[config-sync] account isolation persistence failed: ${result.error || 'unknown'}`)
+        }
+      }
+
+      if (epoch === authEpoch) {
+        void hydrate()
+      }
     }
   }
 

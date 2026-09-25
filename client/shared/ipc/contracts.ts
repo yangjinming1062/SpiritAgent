@@ -175,8 +175,10 @@ export function clampBootProgress(value: number): number {
 }
 
 export interface DesktopAuthSnapshot {
+  accountId: string
   baseUrl: null | string
   hasToken: boolean
+  sessionId: string
   tokenExpiresAt: null | number
   user: null | { username: string }
 }
@@ -284,9 +286,11 @@ export interface IpcInvokeContract {
   // 鉴权
   'spiritagent:auth:activate': (payload: DesktopActivatePayload) => DesktopAuthSnapshot | Promise<DesktopAuthSnapshot>
   'spiritagent:auth:refresh': () => DesktopAuthSnapshot | Promise<DesktopAuthSnapshot>
-  'spiritagent:auth:logout': () =>
-    | { backendUnreachable?: boolean; error?: string; ok: boolean }
-    | Promise<{ backendUnreachable?: boolean; error?: string; ok: boolean }>
+  'spiritagent:auth:logout': (
+    expectedSessionId?: string
+  ) =>
+    | { backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }
+    | Promise<{ backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }>
   'spiritagent:auth:get-session': () => DesktopAuthSnapshot | null | Promise<DesktopAuthSnapshot | null>
 
   // 入口面（互斥 living / workbench）
@@ -311,10 +315,17 @@ export interface IpcInvokeContract {
   }) => Promise<string | null> | string | null
   'spiritagent:api:asset-buffer': (request: { preferCache?: boolean; contentHash?: string; url: string }) => Promise<Uint8Array> | Uint8Array
 
-  // 会话历史本地缓存（user 维度由主进程从当前会话解析；登出/换号清空走主进程 auth 的 clearLocalAssetCaches）
-  'spiritagent:session-history:get': (sessionId: string) => SessionHistorySnapshot | null | Promise<SessionHistorySnapshot | null>
-  'spiritagent:session-history:save': (sessionId: string, snapshot: SessionHistorySnapshot) => Promise<void> | void
-  'spiritagent:session-history:remove': (sessionId: string) => Promise<void> | void
+  // 会话历史本地缓存：请求携带发起时的鉴权会话，主进程核对后按账户隔离。
+  'spiritagent:session-history:get': (
+    sessionId: string,
+    authSessionId: string
+  ) => SessionHistorySnapshot | null | Promise<SessionHistorySnapshot | null>
+  'spiritagent:session-history:save': (
+    sessionId: string,
+    snapshot: SessionHistorySnapshot,
+    authSessionId: string
+  ) => Promise<void> | void
+  'spiritagent:session-history:remove': (sessionId: string, authSessionId: string) => Promise<void> | void
 
   // 文件 / 剪贴板 / 日志
   'spiritagent:readFileDataUrl': (filePath: string) => Promise<string> | string
@@ -420,7 +431,7 @@ export interface IpcInvokeContract {
 // 2. 主进程向渲染进程推送事件（通过 webContents.send / ipcRenderer.on）
 export interface IpcEventContract {
   'spiritagent:auth:changed': [payload: DesktopAuthBroadcast]
-  'spiritagent:auth:session-expired': []
+  'spiritagent:auth:session-expired': [sessionId: string]
   'spiritagent:boot-progress': [payload: DesktopBootProgress]
   'spiritagent:power-resume': []
   'spiritagent:prefs-hydrated': [payload: DesktopPrefsHydrated]
@@ -429,7 +440,6 @@ export interface IpcEventContract {
   'spiritagent:surface:changed': [payload: DesktopSurfaceChangedEvent]
   'spiritagent:chat:pending-feed': [payload: string[]]
   'spiritagent:tray:activate': []
-  'spiritagent:tray:logout': []
   'spiritagent:tray:reset-position': []
   'spiritagent:ui-theme-changed': [payload: DesktopUiThemeBroadcast]
   'spiritagent:update-event': [payload: DesktopUpdateEvent]
@@ -526,7 +536,6 @@ export const IPC = {
     surfaceChanged: 'spiritagent:surface:changed',
     chatPendingFeed: 'spiritagent:chat:pending-feed',
     trayActivate: 'spiritagent:tray:activate',
-    trayLogout: 'spiritagent:tray:logout',
     trayResetPosition: 'spiritagent:tray:reset-position',
     uiThemeChanged: 'spiritagent:ui-theme-changed',
     updateEvent: 'spiritagent:update-event',

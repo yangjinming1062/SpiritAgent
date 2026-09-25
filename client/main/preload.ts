@@ -68,10 +68,12 @@ contextBridge.exposeInMainWorld('spiritagent', {
   apiAssetBuffer: (request: { preferCache?: boolean; contentHash?: string; url: string }) =>
     ipcRenderer.invoke(IPC.invoke.apiAssetBuffer, request),
   sessionHistory: {
-    get: (sessionId: string) => ipcRenderer.invoke(IPC.invoke.sessionHistoryGet, sessionId),
-    save: (sessionId: string, snapshot: SessionHistorySnapshot) =>
-      ipcRenderer.invoke(IPC.invoke.sessionHistorySave, sessionId, snapshot),
-    remove: (sessionId: string) => ipcRenderer.invoke(IPC.invoke.sessionHistoryRemove, sessionId)
+    get: (sessionId: string, authSessionId: string) =>
+      ipcRenderer.invoke(IPC.invoke.sessionHistoryGet, sessionId, authSessionId),
+    save: (sessionId: string, snapshot: SessionHistorySnapshot, authSessionId: string) =>
+      ipcRenderer.invoke(IPC.invoke.sessionHistorySave, sessionId, snapshot, authSessionId),
+    remove: (sessionId: string, authSessionId: string) =>
+      ipcRenderer.invoke(IPC.invoke.sessionHistoryRemove, sessionId, authSessionId)
   },
   getBootProgress: () => ipcRenderer.invoke(IPC.invoke.bootProgressGet),
   getConnection: () => ipcRenderer.invoke(IPC.invoke.connection),
@@ -91,7 +93,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
   getVersion: () => ipcRenderer.invoke(IPC.invoke.version),
   log: (payload: { args: unknown[]; level: 'error' | 'info' | 'warn'; scope: string }) =>
     ipcRenderer.invoke(IPC.invoke.logEmit, payload),
-  logout: () => ipcRenderer.invoke(IPC.invoke.authLogout),
+  logout: (expectedSessionId?: string) => ipcRenderer.invoke(IPC.invoke.authLogout, expectedSessionId),
   media: {
     onboardingAudio: {
       read: (tag: string) => ipcRenderer.invoke(IPC.invoke.onboardingAudioRead, tag)
@@ -105,7 +107,6 @@ contextBridge.exposeInMainWorld('spiritagent', {
   onRunnerStatus: (cb: (payload: DesktopRunnerStatusEvent) => void) => subscribe(IPC.event.runnerStatus, cb),
   onSessionExpired: (cb: () => void) => subscribe(IPC.event.authSessionExpired, cb),
   onTrayActivate: (cb: () => void) => subscribe(IPC.event.trayActivate, cb),
-  onTrayLogout: (cb: () => void) => subscribe(IPC.event.trayLogout, cb),
   onTrayResetPosition: (cb: () => void) => subscribe(IPC.event.trayResetPosition, cb),
   onPrefsHydrated: (cb: (payload: DesktopPrefsHydrated) => void) => subscribe(IPC.event.prefsHydrated, cb),
   onUiThemeChanged: (cb: (payload: DesktopUiThemeBroadcast) => void) => subscribe(IPC.event.uiThemeChanged, cb),

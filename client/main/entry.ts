@@ -22,7 +22,7 @@ import log from 'electron-log/main'
 import { BackendRequestError, createBackendClient } from './backend/client'
 import { createEnsureBackend } from './backend/ensure-backend'
 import { createBackendHttp } from './backend/http'
-import { createBackendSession, type SessionSnapshot } from './backend/session'
+import { createBackendSession } from './backend/session'
 import { createSessionRuntime } from './backend/session-runtime'
 import { createAssetDiskCache } from './ipc/asset-disk-cache'
 import { registerAuthIpc } from './ipc/auth'
@@ -80,6 +80,7 @@ import {
   resolveReadableFileForIpc
 } from './security/hardening'
 import { spiritagentHome } from './security/paths'
+import type { SessionSnapshotPort } from './shared/backend-port'
 import { buildClientContext } from './shared/client-context'
 import { readStoredBackendUrl } from './shared/config'
 import { buildPrefsHydratedFromConfig, createConfigSync, uiThemeFromConfig } from './shared/lib/config-sync'
@@ -170,6 +171,7 @@ const { ensureBackend, resetBackendCache, setCachedWsUrl } = createEnsureBackend
   backendHttp,
   bootProgress,
   getAuthToken: () => getAuthToken(),
+  getCurrentBaseUrl: () => sessionRuntime?.ensureBackendSession().getSession()?.baseUrl ?? null,
   getWindowState
 })
 
@@ -305,7 +307,7 @@ function getWindowState(): {
   return readSpriteWindowState({ getMainWindow: () => mainWindow, isMac: IS_MAC })
 }
 
-function broadcastAuthChanged(snapshot: null | SessionSnapshot): void {
+async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort): Promise<void> {
   rebuildTrayMenu()
 
   const authenticated = Boolean(snapshot?.hasToken)
@@ -313,8 +315,10 @@ function broadcastAuthChanged(snapshot: null | SessionSnapshot): void {
   const authSnapshot: DesktopAuthSnapshot | null =
     authenticated && snapshot
       ? {
+          accountId: snapshot.accountId,
           baseUrl: snapshot.baseUrl,
           hasToken: snapshot.hasToken,
+          sessionId: snapshot.sessionId,
           tokenExpiresAt: snapshot.tokenExpiresAt,
           user: snapshot.user?.username ? { username: snapshot.user.username } : null
         }
@@ -323,7 +327,11 @@ function broadcastAuthChanged(snapshot: null | SessionSnapshot): void {
   const payload: DesktopAuthBroadcast = { authenticated, snapshot: authSnapshot }
 
   // 用户身份变化触发配置水合（登录/换号；登出只停摆待写）。
-  configSync.handleAuthUserChanged(authenticated ? (snapshot?.user?.id ?? null) : null)
+  await configSync.handleAuthUserChanged(authenticated ? (snapshot?.accountId ?? null) : null)
+
+  if (snapshot && sessionRuntime.ensureBackendSession().getSession()?.sessionId !== snapshot.sessionId) {
+    return
+  }
 
   broadcastToAllWindows(IPC.event.authChanged, payload)
 }
@@ -411,6 +419,13 @@ registerConnectionIpc({
   fetchImpl: electronFetch,
   fetchJson: backendHttp.fetchJson,
   getBootProgressState: () => bootProgress.getState(),
+  getCurrentAuth: () => {
+    const current = sessionRuntime.ensureBackendSession()
+    const sessionId = current.getSession()?.sessionId
+    const token = current.getToken()
+
+    return sessionId && token ? { sessionId, token } : null
+  },
   getMainWindow: () => mainWindow,
   ipcMain,
   mintWsTicket: backendHttp.mintWsTicket,
@@ -447,9 +462,14 @@ const sessionRuntime = createSessionRuntime(
     },
     log: chunk => rememberLog(chunk),
     onRestored: snapshot => {
-      if (snapshot) {
-        broadcastAuthChanged(snapshot)
-        runnerHost.autoStart()
+      if (snapshot && sessionRuntime.ensureBackendSession().getSession()?.sessionId === snapshot.sessionId) {
+        void broadcastAuthChanged(snapshot)
+          .then(() => {
+            if (sessionRuntime.ensureBackendSession().getSession()?.sessionId === snapshot.sessionId) {
+              runnerHost.autoStart()
+            }
+          })
+          .catch(error => rememberLog(`[session] restored auth broadcast failed: ${errorMessage(error)}`))
       } else {
         rebuildTrayMenu()
       }
@@ -492,13 +512,14 @@ const autoUpdater = createAutoUpdater({
   spiritagentHome: SPIRITAGENT_HOME
 })
 
-registerAuthIpc({
+const authActions = registerAuthIpc({
   clearLocalAssetCaches: async () => {
     await Promise.all([assetDiskCache.clear(), sessionHistoryDiskCache.clear()])
   },
   deps: {
     autoStartBridge: () => runnerHost.autoStart(),
     autoStopBridge: () => runnerHost.autoStop(),
+    restartBridge: () => runnerHost.restartForCurrentSession(),
     broadcastAuthChanged,
     buildClientContext: () => sessionRuntime.buildClientContext(),
     ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
@@ -508,6 +529,7 @@ registerAuthIpc({
   },
   ipcMain
 })
+
 registerSessionHistoryIpc({
   ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
   ipcMain,
@@ -572,11 +594,15 @@ void app.whenReady().then(async () => {
   registerSingleInstanceForwarder({
     app,
     createWindow: createSpriteWindow,
+    dialog,
+    ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
     getAppIconPath,
     getMainWindow: () => mainWindow,
     Menu,
     nativeImage,
     rememberLog,
+    removeAccount: authActions.removeAccount,
+    switchAccount: authActions.switchAccount,
     Tray
   })
 
@@ -590,6 +616,7 @@ void app.whenReady().then(async () => {
   installTray({
     app,
     createWindow: createSpriteWindow,
+    dialog,
     ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
     getAppIconPath,
     getIsQuitting: () => isQuitting,
@@ -597,6 +624,8 @@ void app.whenReady().then(async () => {
     Menu,
     nativeImage,
     rememberLog,
+    removeAccount: authActions.removeAccount,
+    switchAccount: authActions.switchAccount,
     surfaces: surfaces ?? undefined,
     Tray
   })

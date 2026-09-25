@@ -103,9 +103,10 @@ async function syncRunnerTools(gateway: SpiritAgentGateway, isCurrent: () => boo
 
 interface GatewayBootOptions {
   handleGatewayEvent: (event: GatewayEvent) => void
+  sessionId: string
 }
 
-export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void {
+export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOptions): void {
   const handleEventRef = useRef(handleGatewayEvent)
 
   handleEventRef.current = handleGatewayEvent
@@ -256,6 +257,10 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
     setPrimaryGateway(gateway)
 
     const offState = gateway.onState(st => {
+      if (cancelled) {
+        return
+      }
+
       if (st !== 'open') {
         toolsSyncGeneration++
       }
@@ -373,7 +378,7 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
         stopSpeaking()
 
         if (st === 'closed' && gateway.lastCloseCode === WS_CLOSE_POLICY_VIOLATION) {
-          void logout()
+          void logout(sessionId)
 
           return
         }
@@ -484,5 +489,5 @@ export function useGatewayBoot({ handleGatewayEvent }: GatewayBootOptions): void
       stopAutonomyProvision()
       tearDownPrimaryGateway()
     }
-  }, [])
+  }, [sessionId])
 }

@@ -2,7 +2,7 @@ import { atom, computed } from 'nanostores'
 
 import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
-import { persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
+import { currentClearEpoch, persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
 import { $gateway } from '@/shared/store/gateway'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
@@ -239,6 +239,7 @@ function applyLocalTitle(sessionId: string, title: null | string): void {
 }
 
 export async function renameSession(sessionId: string, title: string): Promise<void> {
+  const epoch = currentClearEpoch()
   const next = title.trim().slice(0, TITLE_MAX_CHARS)
   const previous = findSessionInfo(sessionId)?.title ?? null
 
@@ -251,6 +252,10 @@ export async function renameSession(sessionId: string, title: string): Promise<v
   try {
     await patchSessionOrThrow(sessionId, { title: next })
   } catch (err) {
+    if (epoch !== currentClearEpoch()) {
+      return
+    }
+
     applyLocalTitle(sessionId, previous)
     log.error('session-list', 'Failed to rename session:', err)
     notify({
@@ -263,6 +268,10 @@ export async function renameSession(sessionId: string, title: string): Promise<v
     return
   }
 
+  if (epoch !== currentClearEpoch()) {
+    return
+  }
+
   void fetchSessions()
 
   if ($archivedSessions.get().some(s => s.id === sessionId)) {
@@ -271,7 +280,13 @@ export async function renameSession(sessionId: string, title: string): Promise<v
 }
 
 export async function pinSession(sessionId: string, pinned: boolean): Promise<void> {
+  const epoch = currentClearEpoch()
+
   if (!(await patchSession(sessionId, { pinned }))) {
+    return
+  }
+
+  if (epoch !== currentClearEpoch()) {
     return
   }
 
@@ -279,7 +294,13 @@ export async function pinSession(sessionId: string, pinned: boolean): Promise<vo
 }
 
 export async function archiveSession(sessionId: string, archived: boolean): Promise<void> {
+  const epoch = currentClearEpoch()
+
   if (!(await patchSession(sessionId, { archived }))) {
+    return
+  }
+
+  if (epoch !== currentClearEpoch()) {
     return
   }
 
@@ -288,11 +309,16 @@ export async function archiveSession(sessionId: string, archived: boolean): Prom
     await openMainSession()
   }
 
+  if (epoch !== currentClearEpoch()) {
+    return
+  }
+
   void fetchSessions()
   void fetchArchived()
 }
 
 export async function createNewSession(systemPresetId?: string | null): Promise<string | null> {
+  const epoch = currentClearEpoch()
   const gw = $gateway.get()
 
   if (!gw) {
@@ -307,6 +333,11 @@ export async function createNewSession(systemPresetId?: string | null): Promise<
     }
 
     const res = await gw.request<{ session_id: string; info?: SessionResumeResponse['info'] }>('session.create', params)
+
+    if (epoch !== currentClearEpoch() || $gateway.get() !== gw) {
+      return null
+    }
+
     setChatSession(res.session_id)
     resetChatMessages()
 
@@ -358,6 +389,7 @@ export async function fetchSystemPresets(force = false): Promise<void> {
 
 /** 从源会话的某条消息派生新会话：调用 session.fork RPC，命中后立即自动挂载新会话并 hydrate 历史。失败返回 null。 */
 export async function forkConversation(sourceSessionId: string, sourceMessageId: number): Promise<string | null> {
+  const epoch = currentClearEpoch()
   const gw = $gateway.get()
 
   if (!gw) {
@@ -369,6 +401,10 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
       source_session_id: sourceSessionId,
       source_message_id: sourceMessageId
     })
+
+    if (epoch !== currentClearEpoch() || $gateway.get() !== gw) {
+      return null
+    }
 
     // 与 switchSession 同一形态：先 setChatSession 清残留状态 + 持久化新 id，再 hydrate 灌消息流
     setChatSession(res.session_id)
@@ -394,6 +430,7 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
 
 /** 撤回消息：在同一会话内硬删除 ``Message.id >= source_message_id`` 的全部行（含锚点本身），并把锚点载荷落回输入框作为草稿。失败返回 null，错误已记录日志。 */
 export async function undoToMessage(sessionId: string, sourceMessageId: number): Promise<UndoResponse | null> {
+  const epoch = currentClearEpoch()
   const gw = $gateway.get()
 
   if (!gw) {
@@ -406,6 +443,10 @@ export async function undoToMessage(sessionId: string, sourceMessageId: number):
       source_message_id: sourceMessageId,
       confirmed: true
     })
+
+    if (epoch !== currentClearEpoch() || $gateway.get() !== gw) {
+      return null
+    }
 
     if (res.anchor) {
       $chatDraftFromUndo.set({
@@ -486,13 +527,20 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
     return null
   }
 
-  openMainPromise = (async () => {
+  const epoch = currentClearEpoch()
+  const isCurrent = (): boolean => epoch === currentClearEpoch() && $gateway.get() === gw
+
+  const load = (async () => {
     try {
       // 已知陪伴会话 id 时走本地秒开 + 增量；未知（首装/清缓存）才 get_main 全量。
       const knownCompanionId = $companionSessionId.get() || $persistedCompanionSessionId.get()
 
       if (knownCompanionId) {
         const local = await loadLocalSessionHistory(knownCompanionId)
+
+        if (!isCurrent()) {
+          return null
+        }
 
         if (local) {
           $companionSessionId.set(knownCompanionId)
@@ -507,6 +555,10 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
                 gw.request<SessionResumeResponse>('session.resume', { session_id: knownCompanionId, ...body })
             })
 
+            if (!isCurrent()) {
+              return null
+            }
+
             hydrateChatMessages(synced.messages, synced.info)
             onMounted?.({
               current_seq: synced.currentSeq,
@@ -518,6 +570,10 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
             return knownCompanionId
           } catch (error) {
+            if (!isCurrent()) {
+              return null
+            }
+
             if (error instanceof SessionHistoryChangedError) {
               log.warn('session-list', 'History is changing; keeping current session:', error)
 
@@ -530,6 +586,11 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
       }
 
       const res = await gw.request<SessionResumeResponse>('session.get_main')
+
+      if (!isCurrent()) {
+        return null
+      }
+
       $companionSessionId.set(res.session_id)
       setPersistedCompanionSessionId(res.session_id)
       setChatSession(res.session_id)
@@ -544,25 +605,50 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
       return res.session_id
     } catch (err) {
-      log.error('session-list', 'Failed to open main session:', err)
+      if (isCurrent()) {
+        log.error('session-list', 'Failed to open main session:', err)
+      }
 
       return null
-    } finally {
-      openMainPromise = null
     }
   })()
 
-  return openMainPromise
+  openMainPromise = load
+
+  try {
+    return await load
+  } finally {
+    if (openMainPromise === load) {
+      openMainPromise = null
+    }
+  }
 }
 
 registerStorageClearHandler(() => {
+  sessionsToken++
+  archivedToken++
+  searchToken++
+  presetsToken++
+  switchSessionToken++
+  openMainPromise = null
   $companionSessionId.set(null)
   $sessions.set([])
+  $sessionsLoading.set(false)
+  $sessionSort.set('recent')
+  $sessionSearch.set('')
   $archivedSessions.set([])
+  $archivedLoading.set(false)
+  $archiveOpen.set(false)
   $searchResults.set([])
+  $searchLoading.set(false)
+  $systemPresets.set([])
+  $systemPresetsFetched.set(false)
+  $systemPresetsLoading.set(false)
 })
 
 export async function deleteSession(sessionId: string): Promise<void> {
+  const epoch = currentClearEpoch()
+
   try {
     await window.spiritagent.api({ method: 'DELETE', path: `/api/sessions/${sessionId}` })
   } catch (err) {
@@ -571,10 +657,18 @@ export async function deleteSession(sessionId: string): Promise<void> {
     return
   }
 
+  if (epoch !== currentClearEpoch()) {
+    return
+  }
+
   forgetSessionHistory(sessionId)
 
   if ($chatSessionId.get() === sessionId) {
     await openMainSession()
+  }
+
+  if (epoch !== currentClearEpoch()) {
+    return
   }
 
   void fetchSessions()

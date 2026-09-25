@@ -2,7 +2,7 @@ import { atom } from 'nanostores'
 
 import { authedApi } from '@/shared/lib/authed-api'
 import { safeJsonParse } from '@/shared/lib/safe-json'
-import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 
 import { personaFromWire } from './persona-mappers'
@@ -30,6 +30,21 @@ function resetPersona(): void {
 registerStorageClearHandler(resetPersona)
 
 export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; error?: unknown }> {
+  const auth = $auth.get()
+
+  if (auth.kind !== 'authenticated') {
+    return { ok: false }
+  }
+
+  const sessionId = auth.snapshot.sessionId
+  const epoch = currentClearEpoch()
+
+  const isCurrent = (): boolean => {
+    const current = $auth.get()
+
+    return current.kind === 'authenticated' && current.snapshot.sessionId === sessionId && epoch === currentClearEpoch()
+  }
+
   // 全部结构化 persona 字段都在 definition_json（JSON 字符串 blob）里面，
   // 而不是作为顶层扁平 key 出现在线协议里。
   const result = await authedApi<{
@@ -41,6 +56,10 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
     path: '/api/companion/persona'
   })
 
+  if (!isCurrent()) {
+    return { ok: false }
+  }
+
   if (!result.ok) {
     if (result.reason === 'unauth') {
       return { ok: false }
@@ -49,7 +68,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
     // 调用方刚刚成功 PUT 了新 persona 时，这里的 GET 短暂失败不代表保存失败——
     // 后端是有数据的。传 `silent: true` 保持 $persona 不动，避免同时弹出「保存失败」提示
     // 又让设置页因为 $persona 变 null 而隐藏「编辑」按钮。GET 失败由调用方作为软提示暴露。
-    if (!opts.silent && $auth.get().kind === 'authenticated') {
+    if (!opts.silent) {
       $persona.set(null)
       $personalityTags.set([])
       $companionMood.set(null)
@@ -74,11 +93,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
 
   const parsed = safeJsonParse<Record<string, string>>(p.definition_json, {})
 
-  // 必须在所有持久化写入之前做第二次 auth 检查：登出 race 里 response 已经返回，
-  // 把 stale 值写进刚 clearCompanionStorage 清空的 localStorage 会污染下一位用户。
-  // 第二道闸门同时守护 $persona.set / $personalityTags.set 两处写入
-  // （中间无 await，原子性由 JS 单线程保证）。
-  if ($auth.get().kind !== 'authenticated') {
+  if (!isCurrent()) {
     return { ok: false }
   }
 

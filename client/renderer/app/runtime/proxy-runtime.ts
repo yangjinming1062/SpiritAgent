@@ -1,7 +1,10 @@
+import { useStore } from '@nanostores/react'
 import { useEffect } from 'react'
 
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
-import { reportPrimaryGatewayState } from '@/shared/store/gateway'
+import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
+import { $auth } from '@/shared/store/auth'
+import { reportPrimaryGatewayState, setPrimaryGateway } from '@/shared/store/gateway'
 
 import { handleGatewayEvent } from './gateway-event-router'
 
@@ -9,7 +12,11 @@ import { handleGatewayEvent } from './gateway-event-router'
 // 代理事件泵与连接状态上报。tool.call 是宿主专属设备指令，代理窗口不接收——
 // 宿主分发与重放去重在 handlers/tool-dispatch。
 export function ProxyGatewayPump(): null {
+  const auth = useStore($auth)
+  const sessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null
+
   useEffect(() => {
+    setPrimaryGateway(new IpcGatewayProxy())
     const desktop = window.spiritagent
 
     if (!desktop) {
@@ -38,7 +45,7 @@ export function ProxyGatewayPump(): null {
       offState?.()
       offEvent?.()
     }
-  }, [])
+  }, [sessionId])
 
   return null
 }

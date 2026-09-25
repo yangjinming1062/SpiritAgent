@@ -26,6 +26,7 @@ import { bindPresentation } from './bind-presentation'
 function SurfaceAuthBootstrap(): null {
   useAccountLifecycle()
   const auth = useStore($auth)
+  const accountId = auth.kind === 'authenticated' ? auth.snapshot.accountId : null
 
   useEffect(() => {
     if (auth.kind !== 'authenticated') {
@@ -45,7 +46,7 @@ function SurfaceAuthBootstrap(): null {
     return () => {
       window.removeEventListener('focus', onFocus)
     }
-  }, [auth.kind])
+  }, [accountId, auth.kind])
 
   return null
 }
@@ -54,6 +55,13 @@ function SurfaceGlassBudgetGuard(): null {
   useEffect(() => initGlassBudgetGuard(), [])
 
   return null
+}
+
+function AccountScopedSurface({ RootComponent }: { RootComponent: React.ComponentType }): React.JSX.Element {
+  const auth = useStore($auth)
+  const key = auth.kind === 'authenticated' ? auth.snapshot.accountId : auth.kind
+
+  return <RootComponent key={key} />
 }
 
 export function bootstrapSurface(label: string, RootComponent: React.ComponentType): void {
@@ -98,7 +106,7 @@ export function bootstrapSurface(label: string, RootComponent: React.ComponentTy
             <SurfaceGlassBudgetGuard />
             <SurfaceAuthBootstrap />
             <ProxyGatewayPump />
-            <RootComponent />
+            <AccountScopedSurface RootComponent={RootComponent} />
           </HashRouter>
         </HapticsProvider>
       </ErrorBoundary>
