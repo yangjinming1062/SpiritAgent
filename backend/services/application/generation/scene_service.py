@@ -54,7 +54,8 @@ from services.infrastructure.assets import asset_store
 from services.infrastructure.llm import resolve_reference_bytes, vision_chat
 
 from .avatar_service import load_character_reference_data_uri
-from .character_images import ImageChainState, generate_character_images
+from .character_images import ImageChainState, drop_size_mismatched_candidates, generate_character_images
+from .image_generation import ImageGenerationError
 from .media_chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from .scene_prompt import ScenePromptContext, build_scene_prompt
 
@@ -607,6 +608,7 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
             save_progress=save_progress,
             store_attempts=SETTINGS.scene_store_max_attempts,
             max_image_bytes=SCENE_DOWNLOAD_MAX_BYTES,
+            size_enforced=True,
         )
     await _analyze(user_id, scene_id)
 
@@ -629,26 +631,49 @@ async def _restore_best_scene(user_id: int, scene_id: int) -> bool:
         row = await get_scene(db, user_id, scene_id)
         if row is None or row.status != "pending" or row.media_path or not row.generation_state_json:
             return False
-        state = ImageChainState.model_validate_json(row.generation_state_json)
-        best = state.best()
-        if best is None:
-            return False
+        original_state_json = row.generation_state_json
+        state = ImageChainState.model_validate_json(original_state_json)
+
+    if state.inputs is not None:
+        state.inputs.size_enforced = True
+    try:
+        rejected_paths = await drop_size_mismatched_candidates(state)
+    except ImageGenerationError:
+        logger.warning(
+            "scene candidate could not be size-verified; preserving it without promotion",
+            extra={"scene_id": scene_id, "user_id": user_id},
+            exc_info=True,
+        )
+        return False
+
+    best = state.best()
+    if best is not None:
         parsed = asset_store.parse_companion_asset_path(best.path)
         if parsed is None or asset_store.resolve_companion_asset_path(*parsed) is None:
             return False
         state.stop_reason = state.stop_reason or "generation_interrupted"
         state.phase = "complete"
+
+    async with _scene_lock(user_id), SESSION_LOCAL() as db:
+        row = await get_scene(db, user_id, scene_id)
+        if row is None or row.status != "pending" or row.media_path or row.generation_state_json != original_state_json:
+            return False
         row.generation_state_json = state.model_dump_json()
-        row.media_path = best.path
-        row.stage = "analyze"
-        row.identity_review = "auto_selected"
-        row.identity_review_reason = "后续生成未完成，已保留评分最高的场景图片"
-        _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        if best is not None:
+            row.media_path = best.path
+            row.stage = "analyze"
+            row.identity_review = "auto_selected"
+            row.identity_review_reason = "后续生成未完成，已保留评分最高的场景图片"
+            _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
         await db.commit()
-    for candidate in state.candidates:
-        if candidate.path != best.path:
-            await asyncio.to_thread(asset_store.unlink_companion_asset, candidate.path)
-    return True
+
+    for path in rejected_paths:
+        await asyncio.to_thread(asset_store.unlink_companion_asset, path)
+    if best is not None:
+        for candidate in state.candidates:
+            if candidate.path != best.path:
+                await asyncio.to_thread(asset_store.unlink_companion_asset, candidate.path)
+    return best is not None
 
 
 def _launch_task(scene_id: int, user_id: int) -> None:

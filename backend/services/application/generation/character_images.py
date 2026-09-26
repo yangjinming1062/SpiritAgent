@@ -10,7 +10,14 @@ from PIL import Image
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.infrastructure.assets import asset_store, build_data_uri
-from services.infrastructure.llm import ProviderConfig, ServiceType, resolve, resolve_reference_bytes
+from services.infrastructure.llm import (
+    ASPECT_RATIOS,
+    SIZE_TO_ASPECT,
+    ProviderConfig,
+    ServiceType,
+    resolve,
+    resolve_reference_bytes,
+)
 
 from .identity_review import score_character_image
 from .image_generation import ImageGenerationError, generate_images, resolve_image_gen_chain
@@ -23,6 +30,9 @@ from .media_chain import (
 )
 
 logger = get_logger(__name__)
+
+# 2% 容差覆盖 local 1792x1024 与 16:9 的差异，并拒绝 5:3。
+_SIZE_ASPECT_TOLERANCE = 0.02
 
 
 class CharacterImageInput(BaseModel):
@@ -37,6 +47,8 @@ class CharacterImageInput(BaseModel):
     identity_reference: str
     identity_text: str = ""
     max_image_bytes: int = Field(default=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, gt=0)
+    # 画幅机械门禁（分功能启用）：目前仅生活空间场景（背景铺满）要求严格 16:9。
+    size_enforced: bool = False
 
 
 class ImageChainState(MediaChainState):
@@ -45,21 +57,95 @@ class ImageChainState(MediaChainState):
     pending_slots: list[int] = Field(default_factory=list)
     pending_path: str | None = None
     remaining_slots: list[int] = Field(default_factory=list)
+    size_rejected: int = 0
 
 
 ImageProgressWriter = Callable[[ImageChainState], Awaitable[None]]
 
 
-def _validate_image(data: bytes) -> str:
+def _expected_aspect_ratio(size: str) -> float | None:
+    """请求 size（像素串或画幅标签）的目标宽高比；无法解析时不启用核对。"""
+    text = size.strip()
+    if text in ASPECT_RATIOS:
+        return ASPECT_RATIOS[text]
+    mapped = SIZE_TO_ASPECT.get(text)
+    if mapped:
+        return ASPECT_RATIOS[mapped]
+    if "x" in text.lower():
+        try:
+            width_s, height_s = text.lower().split("x", 1)
+            width, height = int(width_s), int(height_s)
+            if width > 0 and height > 0:
+                return width / height
+        except ValueError:
+            return None
+    return None
+
+
+def _size_matches_request(size: str, width: int, height: int) -> bool:
+    expected = _expected_aspect_ratio(size)
+    if expected is None or width <= 0 or height <= 0:
+        return True
+    actual = width / height
+    return abs(actual - expected) <= expected * _SIZE_ASPECT_TOLERANCE
+
+
+def _validate_image(data: bytes, *, size: str | None = None, size_enforced: bool = False) -> str:
     ext = asset_store.sniff_media_ext(data)
     if ext not in ("png", "jpg", "webp", "gif"):
         raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True)
     try:
         with Image.open(io.BytesIO(data)) as image:
             image.load()
+            width, height = image.width, image.height
     except Exception as exc:
         raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True) from exc
+    if size_enforced and size and not _size_matches_request(size, width, height):
+        logger.info(
+            "character image size gate rejected candidate",
+            extra={"width": width, "height": height, "requested_size": size},
+        )
+        raise ImageGenerationError(
+            f"生成图片画幅不符合要求（{width}x{height}）",
+            can_fallback=True,
+            size_mismatch=True,
+        )
     return ext
+
+
+async def drop_size_mismatched_candidates(state: ImageChainState) -> list[str]:
+    """从候选中移除画幅不合格项，返回其路径供调用方持久化状态后清理。"""
+    if state.inputs is None or not state.inputs.size_enforced or not state.candidates:
+        return []
+    inspected: list[tuple[MediaCandidate, bool]] = []
+    for candidate in state.candidates:
+        try:
+            data, _ = await image_asset_bytes(candidate.path, max_bytes=state.inputs.max_image_bytes)
+            with Image.open(io.BytesIO(data)) as image:
+                image.load()
+                matches = _size_matches_request(state.inputs.size, image.width, image.height)
+        except Exception as exc:
+            raise ImageGenerationError(
+                "已保存的图片无法读取，不能核验画幅",
+                internal=f"candidate={candidate.path}: {exc}",
+            ) from exc
+        inspected.append((candidate, matches))
+
+    kept: list[MediaCandidate] = []
+    rejected_paths: list[str] = []
+    for candidate, matches in inspected:
+        if matches:
+            kept.append(candidate)
+            continue
+        state.size_rejected += 1
+        rejected_paths.append(candidate.path)
+        logger.info(
+            "character image size gate dropped saved candidate",
+            extra={"path": candidate.path, "requested_size": state.inputs.size},
+        )
+    if len(kept) != len(state.candidates):
+        state.candidates = kept
+    return rejected_paths
 
 
 async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES) -> tuple[bytes, str]:
@@ -109,12 +195,14 @@ async def _complete_images(
         raise ImageGenerationError("图片任务缺少生成输入")
     selected = [candidate.path for slot in range(state.inputs.n) if (candidate := state.best(slot)) is not None]
     if not selected:
-        raise ImageGenerationError(
-            "图片生成结果未知，请核对供应商任务后再决定是否重做"
-            if state.stop_reason == "result_unknown"
-            else "图片生成失败，未取得可用候选",
-            result_unknown=state.stop_reason == "result_unknown",
-        )
+        if state.stop_reason == "result_unknown":
+            raise ImageGenerationError(
+                "图片生成结果未知，请核对供应商任务后再决定是否重做",
+                result_unknown=True,
+            )
+        if state.size_rejected:
+            raise ImageGenerationError("生成图片画幅不符合要求")
+        raise ImageGenerationError("图片生成失败，未取得可用候选")
     state.finish(state.inputs.n)
     await _save_progress(state, writer)
     for candidate in state.candidates:
@@ -144,6 +232,7 @@ async def generate_character_images(
     save_progress: ImageProgressWriter | None = None,
     store_attempts: int = 1,
     max_image_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
+    size_enforced: bool = False,
 ) -> list[str]:
     """返回已保存的用户资产；恢复只消费冻结输入、已知结果和未提交的链尾。"""
     state = state if state is not None else ImageChainState()
@@ -161,6 +250,7 @@ async def generate_character_images(
             identity_reference=identity_reference,
             identity_text=identity_text,
             max_image_bytes=max_image_bytes,
+            size_enforced=size_enforced,
         )
         async with SESSION_LOCAL() as db:
             chain, error = await resolve_image_gen_chain(
@@ -180,6 +270,16 @@ async def generate_character_images(
             ).max_images_per_request
         configs = dict(enumerate(chain))
         await _save_progress(state, save_progress)
+    elif size_enforced and not state.inputs.size_enforced:
+        # 画幅门禁是调用方策略而非生成输入；恢复的旧状态仍按当前功能要求生效。
+        state.inputs.size_enforced = True
+        await _save_progress(state, save_progress)
+    if state.inputs.size_enforced:
+        rejected_paths = await drop_size_mismatched_candidates(state)
+        if rejected_paths:
+            await _save_progress(state, save_progress)
+            for path in rejected_paths:
+                await asyncio.to_thread(asset_store.unlink_companion_asset, path)
     inputs = state.inputs
     if state.phase == "submitting":
         state.stop_reason = "result_unknown"
@@ -201,7 +301,12 @@ async def generate_character_images(
                                 state.pending_path if stored else state.pending_urls[0],
                                 max_bytes=inputs.max_image_bytes,
                             )
-                            ext = await asyncio.to_thread(_validate_image, data)
+                            ext = await asyncio.to_thread(
+                                _validate_image,
+                                data,
+                                size=inputs.size,
+                                size_enforced=inputs.size_enforced,
+                            )
                             state.pending_path = asset_store.image_chain_asset_path(
                                 user_id,
                                 state.generation_id,
@@ -221,6 +326,8 @@ async def generate_character_images(
                             break
                         except Exception as exc:
                             if isinstance(exc, ImageGenerationError) and exc.can_fallback:
+                                if exc.size_mismatch:
+                                    state.size_rejected += 1
                                 break
                             if attempt + 1 < max(1, store_attempts):
                                 continue

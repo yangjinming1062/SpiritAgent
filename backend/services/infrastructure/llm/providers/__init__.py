@@ -7,7 +7,7 @@ from . import (
     qwen,  # noqa: F401
 )
 from ._reference import resolve_reference_bytes
-from ._size_aspect import SIZE_TO_ASPECT
+from ._size_aspect import ASPECT_RATIOS, SIZE_TO_ASPECT
 from .base import (
     PRODUCT_REASONING_EFFORTS,
     REASONING_EFFORT_ORDER,
@@ -61,6 +61,7 @@ from .registry import (
 )
 
 __all__ = [
+    "ASPECT_RATIOS",
     "OPENAI_COMPATIBLE_PROVIDERS",
     "PRODUCT_REASONING_EFFORTS",
     "PROVIDER_DEFAULT_URLS",

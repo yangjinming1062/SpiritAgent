@@ -34,6 +34,7 @@ from .prompt_engineer import (
     vision_chat,
 )
 from .providers import (
+    ASPECT_RATIOS,
     PRODUCT_REASONING_EFFORTS,
     REASONING_EFFORT_ORDER,
     REASONING_EFFORT_RANK,
@@ -91,6 +92,7 @@ from .user_config import UserLlmConfig, resolve_user_llm_config
 from .voice_catalog import VoiceEntry, pick_voice_id, voices_for_provider
 
 __all__ = [
+    "ASPECT_RATIOS",
     "VisualReasoningError",
     "BaseProvider",
     "ChatProvider",

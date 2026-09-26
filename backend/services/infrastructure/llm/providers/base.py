@@ -151,6 +151,9 @@ class ImageGenRequest:
     reference_image: str | None = None
     # 第二参考图（如风格/演示参考）；只有 supports_multiple_reference_images 的供应商会消费。
     secondary_reference_image: str | None = None
+    # True 表示以 reference_image 为底图的增量编辑，输出画布应贴近参考图；
+    # False 表示参考图仅作身份/造型条件，输出画布服从 size / aspect_ratio。
+    image_edit: bool = False
     response_format: Literal["b64", "url"] = "b64"
     # 背景输出策略：transparent 请求原生透明输出（透明 PNG），只允许发给声明
     # supports_transparent_background 的供应商链；None 不向请求添加字段，保持默认行为。

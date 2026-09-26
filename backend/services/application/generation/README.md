@@ -41,6 +41,6 @@
 
 上传导入与按参考生成共用交付链；[video/state.py](video/state.py) 持久化生成上下文（`GenerationContext`）与单动作结果（`ActionResult`），脚本与描述符见 [video/script.py](video/script.py)、[video/manifest.py](video/manifest.py)。上传包不拥有可重做的冻结参考。
 
-[media_chain.py](media_chain.py)定义无凭据的供应商快照、游标与候选选择，[character_images.py](character_images.py)编排身份保持图片，[identity_review.py](identity_review.py)只负责评分和严格复核。场景、聊天视频及动作任务持久化进度，姿态图和视频分别推进各自的能力链；原始参考、已选首帧及成功动作复用。动作包独立冻结全身身份图。[media_review.py](media_review.py) 管理出镜媒体复核；选择、保底、未知提交与清理规则统一见 [PIPELINE §1.1](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)、[§2](../../../../docs/PIPELINE.md#2-动作资产链)。
+[media_chain.py](media_chain.py)定义无凭据的供应商快照、游标与候选选择，[character_images.py](character_images.py)编排身份保持图片并在启用 `size_enforced` 时按请求画幅丢弃不合格候选，[identity_review.py](identity_review.py)只负责评分和严格复核。场景、聊天视频及动作任务持久化进度，姿态图和视频分别推进各自的能力链；原始参考、已选首帧及成功动作复用。动作包独立冻结全身身份图。[media_review.py](media_review.py) 管理出镜媒体复核；选择、保底、未知提交与清理规则统一见 [PIPELINE §1.1](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)、[§2](../../../../docs/PIPELINE.md#2-动作资产链)。
 
 检查命令见 [Backend](../../../README.md#6-验证入口)，生成与恢复验收见 [PIPELINE](../../../../docs/PIPELINE.md#4-按改动选择验证)。

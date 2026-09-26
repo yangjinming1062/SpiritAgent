@@ -36,11 +36,13 @@ class ImageGenerationError(Exception):
         internal: str | None = None,
         result_unknown: bool = False,
         can_fallback: bool = False,
+        size_mismatch: bool = False,
     ) -> None:
         super().__init__(message)
         self.internal = internal or message
         self.result_unknown = result_unknown
         self.can_fallback = can_fallback
+        self.size_mismatch = size_mismatch
         self.classified: ClassifiedError | None = None
 
 
@@ -173,6 +175,7 @@ async def generate_images(
                     n=n,
                     reference_image=reference_image,
                     secondary_reference_image=secondary_reference_image,
+                    image_edit=image_edit,
                     response_format="url" if defer_storage else "b64",
                     background="transparent" if background == "transparent" else None,
                 ),

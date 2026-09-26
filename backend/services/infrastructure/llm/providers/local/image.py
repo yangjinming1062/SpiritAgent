@@ -143,7 +143,16 @@ def _edit_graph(
     unet_name: str,
     clip_name: str,
     vae_name: str,
+    width: int,
+    height: int,
+    image_edit: bool = False,
 ) -> dict[str, Any]:
+    """带参考图工作流。
+
+    ``image_edit=True`` 时采样 latent 取编码节点输出，画布随第一张参考图；
+    否则用 width×height 的 EmptyLatentImage，输出尺寸服从请求 size/aspect。
+    """
+    latent_image: list[Any] = ["4", 2] if image_edit else ["5", 0]
     nodes: dict[str, Any] = {
         "1": {
             "class_type": "UNETLoader",
@@ -170,7 +179,7 @@ def _edit_graph(
                 "model": ["1", 0],
                 "positive": ["4", 0],
                 "negative": ["4", 1],
-                "latent_image": ["4", 2],
+                "latent_image": latent_image,
                 "seed": seed,
                 "steps": _STEPS,
                 "cfg": 1,
@@ -185,6 +194,11 @@ def _edit_graph(
             "inputs": {"images": ["7", 0]},
         },
     }
+    if not image_edit:
+        nodes["5"] = {
+            "class_type": "EmptyLatentImage",
+            "inputs": {"width": width, "height": height, "batch_size": 1},
+        }
     for i, name in enumerate(image_names, start=1):
         load_id = f"1{i}"
         nodes[load_id] = {"class_type": "LoadImage", "inputs": {"image": name}}
@@ -404,6 +418,7 @@ class LocalImageGenProvider(ImageGenProvider):
         for i in range(count):
             seed = (int(time.time() * 1000) + i) % (2**31)
             if image_names:
+                width, height = _resolve_wh(req)
                 graph = _edit_graph(
                     prompt=prompt,
                     seed=seed,
@@ -411,6 +426,9 @@ class LocalImageGenProvider(ImageGenProvider):
                     unet_name=unet_name,
                     clip_name=clip_name,
                     vae_name=vae_name,
+                    width=width,
+                    height=height,
+                    image_edit=bool(req.image_edit),
                 )
             else:
                 width, height = _resolve_wh(req)

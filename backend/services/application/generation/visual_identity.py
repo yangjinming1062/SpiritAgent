@@ -26,7 +26,7 @@ from sqlalchemy import select
 
 from services.domains.companion import render_character_identity, require_character_snapshot
 from services.infrastructure.assets import unlink_companion_asset
-from services.infrastructure.llm import resolve_reference_bytes
+from services.infrastructure.llm import ASPECT_RATIOS, resolve_reference_bytes
 
 from .avatar_service import AvatarSourceUnreadableError, load_avatar_bytes_as_data_uri
 from .character_images import ImageChainState, ImageProgressWriter, generate_character_images
@@ -138,17 +138,7 @@ async def align_character_reference(
         def frame_aspect() -> str:
             with Image.open(io.BytesIO(raw)) as image:
                 ratio = image.width / image.height
-            aspects = {
-                "1:1": 1.0,
-                "16:9": 16 / 9,
-                "9:16": 9 / 16,
-                "4:3": 4 / 3,
-                "3:4": 3 / 4,
-                "3:2": 3 / 2,
-                "2:3": 2 / 3,
-                "21:9": 21 / 9,
-            }
-            return min(aspects, key=lambda key: abs(aspects[key] - ratio))
+            return min(ASPECT_RATIOS, key=lambda key: abs(ASPECT_RATIOS[key] - ratio))
 
         aspect = size = await asyncio.to_thread(frame_aspect)
     separate_reference = reference_image != identity_reference
