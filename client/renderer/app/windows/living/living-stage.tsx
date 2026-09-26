@@ -1,10 +1,10 @@
 // 生活空间右栏：根据 living-view 切换内容。
 //
 // - chat: ChatPanel（生活空间变体的对话 + 输入；与工作台共用）
-// - appearance: AppearancePage（外观：渲染模式与着装设计）
+// - appearance: AppearancePage（衣柜：着装与动作管理）
 // - moments / diary: 后端直连两页
 // - channels / scene: 单文件页
-// - settings: LivingSettings（分区胶囊：角色/音色/交互/外观/快捷键/关于）
+// - settings: LivingSettings（分区胶囊：角色/音色/交互/主题/快捷键/关于）
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'

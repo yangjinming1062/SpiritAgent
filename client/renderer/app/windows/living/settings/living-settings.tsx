@@ -1,4 +1,4 @@
-// 生活空间「设置」：顶部分区胶囊切换角色/音色/交互/外观/快捷键/关于。
+// 生活空间「设置」：顶部分区胶囊切换角色/音色/交互/主题/快捷键/关于。
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
@@ -55,7 +55,7 @@ export function LivingSettings(): React.JSX.Element {
     interaction: nav.interaction,
     persona: nav.persona,
     shortcuts: nav.shortcuts,
-    theme: nav.appearance,
+    theme: nav.theme,
     voice: nav.voice
   }
 

@@ -12,14 +12,13 @@ import { useStrings } from '@/shared/strings'
 
 export function ThemePage(): React.JSX.Element {
   const dict = useStrings()
-  const appearance = dict.settings.appearance
   const themeText = dict.settings.theme
   const active = useStore($theme)
   const reduceTransparency = useStore($manualReduceTransparency)
 
   return (
     <div className="space-y-6">
-      <SettingsSectionIntro hint={appearance.hint} title={appearance.heading} />
+      <SettingsSectionIntro hint={themeText.hint} title={themeText.heading} />
 
       <section>
         <p className={cn(SECTION_TITLE, 'mb-2.5')}>{themeText.themesHeading}</p>

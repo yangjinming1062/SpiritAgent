@@ -164,7 +164,7 @@ export const dict = {
     nav: {
       inference: '推理与对话',
       about: '关于',
-      appearance: '外观',
+      theme: '主题',
       channels: '聊天通道',
       interaction: '交互',
       navAriaLabel: '设置分区导航',
@@ -238,10 +238,6 @@ export const dict = {
         blockedLabel: '已拉黑',
         actionFailed: '操作失败'
       }
-    },
-    appearance: {
-      heading: '外观',
-      hint: '主题同时应用到生活空间与工作台两个窗口，伙伴形象不受影响。'
     },
     about: {
       heading: (brandFullName: string) => brandFullName,
@@ -373,7 +369,7 @@ export const dict = {
       characterCard: {
         edit: '编辑',
         title: '角色卡',
-        description: '从已确认的头像和全身图整理辅助描述，外形始终以图片为准。服装、发型、发色、妆容和配饰由外观管理。',
+        description: '从已确认的头像和全身图整理辅助描述，外形始终以图片为准。服装、发型、发色、妆容和配饰由衣柜管理。',
         portrait: '头像',
         body: '全身形象',
         portraitFeatures: '面部与头部',
@@ -509,6 +505,8 @@ export const dict = {
       designFailed: '生成失败，换个描述试试？'
     },
     theme: {
+      heading: '主题',
+      hint: '主题同时应用到生活空间与工作台两个窗口，伙伴形象不受影响。',
       themesHeading: '主题方案',
       themesAriaLabel: '主题方案',
       activeBadge: '生效中',
@@ -932,7 +930,7 @@ export const dict = {
       chat: '对话',
       moments: '片刻',
       diary: '日记',
-      appearance: '外观',
+      wardrobe: '衣柜',
       channels: '通道',
       scene: '场景',
       settings: '设置',
@@ -976,7 +974,7 @@ export const dict = {
       outfitCount: (count: number) => `${count} 套`,
       zoomOutfit: (name: string) => `查看${name}大图`,
       policyLabel: '角色自主换装',
-      policyDesc: '开启后，伙伴可在夜间挑选已有外观或为自己设计新装。',
+      policyDesc: '开启后，伙伴可在夜间挑选已有着装或为自己设计新装。',
       policyStatusLocked: '已锁定',
       policyStatusUnlocked: '允许换装',
       policyToggleAria: '允许角色自主换装',
@@ -1029,7 +1027,7 @@ export const dict = {
       videoActionCancel: '取消',
       videoOutfitNotReady: '这套着装还没有动作包，生成后即可预览和穿上。',
       videoSelectOutfit: '返回衣柜并选择一套着装，查看它专属的动作。',
-      videoBackToOutfits: '返回着装列表',
+      videoBackToOutfits: '返回衣柜',
       videoLoading: '正在读取这套着装的动作…',
       videoIdle: '待机',
       videoWalkLeft: '向左行走',
@@ -1068,7 +1066,7 @@ export const dict = {
       scaleAria: '形象大小'
     },
     scene: {
-      intro: '场景展示伙伴当前身处的环境与活动。场景穿着独立于衣柜外观，可保存并反复使用。',
+      intro: '场景展示伙伴当前身处的环境与活动。场景穿着独立于衣柜中的着装，可保存并反复使用。',
       referenceHint: '参考图提供环境与构图线索，其中的人物不会进入成品。要参考其中的穿着，请在着装描述中完整说明。',
       referenceLabel: '场景参考图',
       chooseReference: '选择参考图',
@@ -1079,7 +1077,8 @@ export const dict = {
       notesPlaceholder: '例如：傍晚的海边，伙伴沿沙滩散步。',
       outfitLabel: '着装描述（可选）',
       outfitPlaceholder: '例如：白色短袖衬衫、蓝色短裤、白色运动鞋和草帽。',
-      outfitHint: '留空沿用衣柜已启用外观；填写时是本次场景的完整造型替换，请写全服装、配色、发型发色、鞋履与配饰。',
+      outfitHint:
+        '留空沿用衣柜中当前启用的着装；填写时是本次场景的完整造型替换，请写全服装、配色、发型发色、鞋履与配饰。',
       noScene: '尚未启用场景',
       currentBadge: '当前场景',
       currentAltFallback: '当前场景',

@@ -382,7 +382,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         "outfit.wear",
         10,
-        "穿上衣橱中一套已就绪（status=ready）的外观。outfit_id 取 wardrobe 中实际存在的 id；已经穿着的无需重复选择。",
+        "穿上衣柜中一套已就绪（status=ready）的外观。outfit_id 取 wardrobe 中实际存在的 id；已经穿着的无需重复选择。",
         {
             "outfit_id": "integer：wardrobe 中 status=ready 且尚未穿着的外观 id，不填名称或自造 id。",
             "reason": "string（可选）：选择这套已有外观的具体理由。",
@@ -392,10 +392,10 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         "outfit.create",
         10,
-        "构思并生成一套新外观并穿上；只在现有衣橱不合适或特殊节点时使用。",
+        "构思并生成一套新外观并穿上；只在现有衣柜不合适或特殊节点时使用。",
         {
             "description": "string（非空，最多 500 字符）：完整的新造型设计，包括服装、配色及需要改变的发型、妆容或配饰；保持角色固定身份，不写场景或动作。",
-            "reason": "string（可选）：现有衣橱不能满足的需要，以及本次新建外观的依据。",
+            "reason": "string（可选）：现有衣柜不能满足的需要，以及本次新建外观的依据。",
         },
         exclusive_group="outfit",
         paid=True,

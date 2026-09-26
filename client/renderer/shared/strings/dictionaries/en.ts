@@ -169,7 +169,7 @@ export const dict: Dictionary = {
     nav: {
       inference: 'Inference & chat',
       about: 'About',
-      appearance: 'Appearance',
+      theme: 'Theme',
       channels: 'Chat channels',
       interaction: 'Interaction',
       navAriaLabel: 'Settings section navigation',
@@ -248,10 +248,6 @@ export const dict: Dictionary = {
         blockedLabel: 'Blocked',
         actionFailed: 'Action failed'
       }
-    },
-    appearance: {
-      heading: 'Appearance',
-      hint: "Themes apply to both the Living Space and the Workbench windows; the companion's appearance is unaffected."
     },
     about: {
       heading: (brandFullName: string) => brandFullName,
@@ -541,6 +537,8 @@ export const dict: Dictionary = {
       designFailed: 'Generation failed — try a different description?'
     },
     theme: {
+      heading: 'Theme',
+      hint: "Themes apply to both the Living Space and the Workbench windows; the companion's appearance is unaffected.",
       themesHeading: 'Theme presets',
       themesAriaLabel: 'Theme presets',
       activeBadge: 'Active',
@@ -988,7 +986,7 @@ export const dict: Dictionary = {
       chat: 'Chat',
       moments: 'Moments',
       diary: 'Diary',
-      appearance: 'Appearance',
+      wardrobe: 'Wardrobe',
       channels: 'Channels',
       scene: 'Scene',
       settings: 'Settings',
@@ -1093,7 +1091,7 @@ export const dict: Dictionary = {
       videoActionCancel: 'Cancel',
       videoOutfitNotReady: 'This outfit has no action pack yet. Generate one to preview and wear it.',
       videoSelectOutfit: 'Return to the wardrobe and choose an outfit to see its actions.',
-      videoBackToOutfits: 'Back to outfits',
+      videoBackToOutfits: 'Back to wardrobe',
       videoLoading: 'Loading actions for this outfit…',
       videoIdle: 'Idle',
       videoWalkLeft: 'Walk left',

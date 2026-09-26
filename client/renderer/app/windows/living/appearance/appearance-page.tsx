@@ -18,7 +18,7 @@ import { useStrings } from '@/shared/strings'
 import { OutfitSection } from './outfit-section'
 import { VideoSection } from './video-section'
 
-// 外观页按着装 → 动作组织；顶栏只保留桌面显示设置（形象大小）。
+// 衣柜页按着装 → 动作组织；顶栏只保留桌面显示设置（形象大小）。
 export function AppearancePage(): React.JSX.Element {
   const defaultScale = useStore($defaultScale)
   const authKind = useStore($auth).kind
@@ -26,7 +26,7 @@ export function AppearancePage(): React.JSX.Element {
   const t = useStrings().living.appearance
   const [selectedOutfitId, setSelectedOutfitId] = useState<number | null>(null)
 
-  // 外观列表在 auth 就绪后再水合——冷启动直接进入本页时 hydrateAuth 的 IPC 往返
+  // 衣柜列表在 auth 就绪后再水合——冷启动直接进入本页时 hydrateAuth 的 IPC 往返
   // 尚未完成，提前调用会因 pending 静默跳过。种子图走本地缓存，缺失时补拉。
   useEffect(() => {
     if (authKind === 'authenticated') {

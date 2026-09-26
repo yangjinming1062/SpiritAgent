@@ -82,7 +82,7 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
     }
 
     case 'companion.action.job_updated': {
-      // 动作生成进度：驱动生成态文案；具体阶段文本由外观页消费包列表渲染。
+      // 动作生成进度：驱动生成态文案；具体阶段文本由衣柜页消费包列表渲染。
       if (authed()) {
         videoPackEventReceived()
         void hydrateVideoPack(true)

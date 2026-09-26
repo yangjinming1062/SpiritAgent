@@ -1,4 +1,4 @@
-"""衣橱草稿、确认、穿着与删除；共享事务约束见本模块 README。"""
+"""衣柜草稿、确认、穿着与删除；共享事务约束见本模块 README。"""
 
 import asyncio
 import base64
@@ -700,7 +700,7 @@ async def activate_outfit(
             card = await get_character_card(db, user_id, lock=True)
             source = safe_json_loads(outfit.source_json, default={})
             if card is None or not isinstance(source, dict) or source.get("character_card_revision") != card.revision:
-                raise OutfitStateError("角色卡已更新，本次外观保留在衣橱，请重新生成后穿着")
+                raise OutfitStateError("角色卡已更新，本次外观保留在衣柜，请重新生成后穿着")
 
         await db.execute(
             update(CompanionOutfit)

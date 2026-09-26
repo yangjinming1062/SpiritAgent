@@ -65,7 +65,7 @@ speech 拥有播放状态，conversation 只维护其投影；character 拥有�
 
 ### 空间行为（位置 × 移动 × 缩放）
 
-[spatial.ts](modules/character/spatial.ts)拥有位置，[autonomy.ts](modules/character/autonomy.ts)解释云端意图。外观页修改默认比例后经主进程同步到精灵窗，并沿用平滑缩放路径即时生效。拖拽取消旧路径，松手按可见范围落位并保存；历史屏外落点恢复到屏内，不以容器旋转或半隐藏表示姿态。完整入口打开冻结桌面移动；stay 或推理失败不转成本地漫游，本地规则仅在智能关闭时生效。
+[spatial.ts](modules/character/spatial.ts)拥有位置，[autonomy.ts](modules/character/autonomy.ts)解释云端意图。衣柜页修改默认比例后经主进程同步到精灵窗，并沿用平滑缩放路径即时生效。拖拽取消旧路径，松手按可见范围落位并保存；历史屏外落点恢复到屏内，不以容器旋转或半隐藏表示姿态。完整入口打开冻结桌面移动；stay 或推理失败不转成本地漫游，本地规则仅在智能关闭时生效。
 
 本地漫游需真实空闲信号，未知则不动；位置适配不足时放弃，不缩成不可辨识大小。仪式行走可跳过，失败仍执行原工具，`system.click_at` 不补第二次点击。
 

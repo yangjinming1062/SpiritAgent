@@ -29,7 +29,7 @@ import type { ImageReviseMode } from '@/shared/types/spiritagent'
 const CARD_ACTION_CLASS =
   'inline-flex h-6 items-center justify-center rounded-lg bg-black/60 px-1.5 text-white/70 backdrop-blur-sm transition hover:bg-black/80 hover:text-white disabled:pointer-events-none disabled:opacity-40'
 
-// 着装是外观页的首层资产；选择着装只切换预览与动作目录，穿着由明确操作完成。
+// 着装是衣柜页的首层资产；选择着装只切换预览与动作目录，穿着由明确操作完成。
 interface OutfitSectionProps {
   onSelectOutfit: (id: number) => void
 }
@@ -67,7 +67,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
     void action().finally(() => setBusyId(null))
   }
 
-  // 失败外观重新确认（草稿立绘仍在）：转正为参考图就绪，不触发动作生成。
+  // 失败着装重新确认（草稿立绘仍在）：转正为参考图就绪，不触发动作生成。
   const retryConfirm = async (id: number): Promise<void> => {
     try {
       // 与设计会话确认一致：始终带 JSON body（可空），避免无 body 的 POST 被 422。
@@ -118,7 +118,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
     setText('')
   }
 
-  // 自备图（外观立绘）：有草稿时提示词/采纳都走草稿重绘语境，否则走创建语境。
+  // 自备图（着装立绘）：有草稿时提示词/采纳都走草稿重绘语境，否则走创建语境。
   const fetchOutfitSelfSourcePrompt = async (): Promise<string> => {
     if (session.draft) {
       const res = await window.spiritagent.api<{ prompt: string }>({

@@ -24,7 +24,7 @@ if TYPE_CHECKING:
 
 
 class CompanionOutfit(ModelBase, TimestampMixin):
-    """衣橱外观及其着装参考；ready 表示参考就绪，视频状态由动作包维护。"""
+    """衣柜外观及其着装参考；ready 表示参考就绪，视频状态由动作包维护。"""
 
     __tablename__ = "companion_outfits"
 

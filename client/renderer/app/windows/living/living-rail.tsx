@@ -48,7 +48,7 @@ export function LivingRail(): React.JSX.Element {
     { icon: MessageSquareText, id: 'chat', label: t.chat },
     { icon: Sparkles, id: 'moments', label: t.moments },
     { icon: CalendarPlus, id: 'diary', label: t.diary },
-    { icon: Shirt, id: 'appearance', label: t.appearance },
+    { icon: Shirt, id: 'appearance', label: t.wardrobe },
     { icon: Globe, id: 'channels', label: t.channels },
     { icon: Home, id: 'scene', label: t.scene }
   ]
