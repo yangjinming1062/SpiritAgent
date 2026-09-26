@@ -5,8 +5,8 @@ import { cn } from '@/shared/lib/utils'
 
 import { INPUT_CLASS } from './palette'
 
-// 自绘日期选择：YYYY-MM-DD 每位数字一个滚轮。value 空串表示未选择（显示短横），
-// 首次拨动以今天为基准写入。
+// 自绘日期选择：YYYY / MM / DD 三组整段滚轮（1993 的邻位是 1992/1994）。
+// value 空串表示未选择（显示短横），首次拨动以今天为基准写入。
 // 年份钳在四位：0–99 会被 JS Date 重映射到 1900+，也写不出 YYYY-MM-DD。
 
 const pad2 = (n: number): string => String(n).padStart(2, '0')
@@ -54,25 +54,16 @@ function todayFields(): Fields {
   return { d: now.getDate(), m: now.getMonth() + 1, y: now.getFullYear() }
 }
 
-// 拨动某一位（0 = 个位，1 = 十位…）：字段 ±10^place。
-// 年与日个位在上下界环回；日十位钉在当月天数，避免二月拨出怪值；
-// 月十位只有 0/1，保留个位并夹到 1–12。年月变动后日再夹回当月合法日。
-function stepField(fields: Fields, axis: 'd' | 'm' | 'y', place: number, delta: number): Fields {
+// 年/月/日各自环回；年月变动后日夹回当月合法日（如 1-31 → 2 月会变 2-28）。
+function stepField(fields: Fields, axis: 'd' | 'm' | 'y', delta: number): Fields {
   const next: Fields = { ...fields }
-  const amount = delta * 10 ** place
 
   if (axis === 'y') {
-    next.y = wrapInto(next.y + amount, MIN_YEAR, MAX_YEAR)
+    next.y = wrapInto(next.y + delta, MIN_YEAR, MAX_YEAR)
   } else if (axis === 'm') {
-    if (place === 0) {
-      next.m = wrapInto(next.m + delta, 1, 12)
-    } else {
-      const tens = next.m >= 10 ? 1 : 0
-      next.m = clamp(wrapInto(tens + delta, 0, 1) * 10 + (next.m % 10), 1, 12)
-    }
+    next.m = wrapInto(next.m + delta, 1, 12)
   } else {
-    const max = daysInMonth(next.y, next.m)
-    next.d = place === 0 ? wrapInto(next.d + amount, 1, max) : clamp(next.d + amount, 1, max)
+    next.d = wrapInto(next.d + delta, 1, daysInMonth(next.y, next.m))
   }
 
   next.d = clamp(next.d, 1, daysInMonth(next.y, next.m))
@@ -83,16 +74,24 @@ function stepField(fields: Fields, axis: 'd' | 'm' | 'y', place: number, delta: 
 // 轨迹板 deltaY 细碎，按阈值累计成整格再拨。
 const WHEEL_NOTCH = 40
 
-function DigitWheel({
-  digit,
+function FieldWheel({
   disabled,
+  format,
   label,
-  onStep
+  max,
+  min,
+  minW = 'min-w-[2ch]',
+  onStep,
+  value
 }: {
-  digit: number | null
   disabled: boolean
+  format: (n: number) => string
   label: string
+  max: number
+  min: number
+  minW?: string
   onStep: (delta: number) => void
+  value: number | null
 }): React.JSX.Element {
   const ref = useRef<HTMLDivElement>(null)
   const accRef = useRef(0)
@@ -125,18 +124,18 @@ function DigitWheel({
     return () => el.removeEventListener('wheel', onWheel)
   }, [disabled, onStep])
 
-  const prev = digit === null ? null : wrapInto(digit - 1, 0, 9)
-  const next = digit === null ? null : wrapInto(digit + 1, 0, 9)
+  const prev = value === null ? null : wrapInto(value - 1, min, max)
+  const next = value === null ? null : wrapInto(value + 1, min, max)
 
   return (
     <div
       aria-label={label}
-      aria-valuemax={9}
-      aria-valuemin={0}
-      aria-valuenow={digit ?? undefined}
-      aria-valuetext={digit === null ? '未选择' : String(digit)}
+      aria-valuemax={max}
+      aria-valuemin={min}
+      aria-valuenow={value ?? undefined}
+      aria-valuetext={value === null ? '未选择' : format(value)}
       className={cn(
-        'flex h-[52px] w-7 cursor-ns-resize select-none flex-col items-center justify-center rounded-md transition',
+        'flex h-[52px] cursor-ns-resize select-none flex-col items-center justify-center rounded-md px-1 transition',
         'hover:bg-fill-hover focus-visible:outline focus-visible:outline-1 focus-visible:outline-focus-line',
         disabled && 'pointer-events-none opacity-40'
       )}
@@ -158,25 +157,31 @@ function DigitWheel({
       <div
         aria-hidden
         className={cn(
-          'h-3 w-full text-[10px] leading-3 text-faint',
+          'h-3 w-full text-center text-[10px] leading-3 text-faint',
           prev === null ? '' : 'cursor-pointer hover:text-muted'
         )}
         onClick={() => onStep(-1)}
       >
-        {prev ?? ' '}
+        {prev === null ? ' ' : format(prev)}
       </div>
-      <span className={cn('text-sm font-semibold leading-6', digit === null ? 'text-faint' : 'text-strong')}>
-        {digit ?? '–'}
+      <span
+        className={cn(
+          minW,
+          'text-center text-sm font-semibold leading-6 tabular-nums',
+          value === null ? 'text-faint' : 'text-strong'
+        )}
+      >
+        {value === null ? '–' : format(value)}
       </span>
       <div
         aria-hidden
         className={cn(
-          'h-3 w-full text-[10px] leading-3 text-faint',
+          'h-3 w-full text-center text-[10px] leading-3 text-faint',
           next === null ? '' : 'cursor-pointer hover:text-muted'
         )}
         onClick={() => onStep(1)}
       >
-        {next ?? ' '}
+        {next === null ? ' ' : format(next)}
       </div>
     </div>
   )
@@ -212,34 +217,53 @@ export function DatePicker({
   const parsed = parseISODate(value)
   const fields = parsed ?? todayFields()
 
-  const step = (axis: 'd' | 'm' | 'y', place: number, delta: number): void => {
+  const step = (axis: 'd' | 'm' | 'y', delta: number): void => {
     if (disabled) {
       return
     }
 
-    const next = stepField(fields, axis, place, delta)
+    const next = stepField(fields, axis, delta)
     onChange(toISODate(next.y, next.m, next.d))
   }
 
-  const digitAt = (axis: 'd' | 'm' | 'y', place: number): number | null =>
-    parsed ? Math.floor(parsed[axis] / 10 ** place) % 10 : null
+  const fieldAt = (axis: 'd' | 'm' | 'y'): number | null => parsed?.[axis] ?? null
 
   return (
     <div className={className} id={id}>
       <div
         aria-label={placeholder}
-        className={cn(INPUT_CLASS, 'flex items-center justify-center gap-0.5 px-2 py-2', disabled && 'opacity-40')}
+        className={cn(INPUT_CLASS, 'flex items-center justify-center gap-1 px-2 py-2', disabled && 'opacity-40')}
       >
-        <DigitWheel digit={digitAt('y', 3)} disabled={disabled} label="年千位" onStep={d => step('y', 3, d)} />
-        <DigitWheel digit={digitAt('y', 2)} disabled={disabled} label="年百位" onStep={d => step('y', 2, d)} />
-        <DigitWheel digit={digitAt('y', 1)} disabled={disabled} label="年十位" onStep={d => step('y', 1, d)} />
-        <DigitWheel digit={digitAt('y', 0)} disabled={disabled} label="年个位" onStep={d => step('y', 0, d)} />
+        <FieldWheel
+          disabled={disabled}
+          format={n => String(n)}
+          label="年"
+          max={MAX_YEAR}
+          min={MIN_YEAR}
+          minW="min-w-[4ch]"
+          onStep={d => step('y', d)}
+          value={fieldAt('y')}
+        />
         <Sep />
-        <DigitWheel digit={digitAt('m', 1)} disabled={disabled} label="月十位" onStep={d => step('m', 1, d)} />
-        <DigitWheel digit={digitAt('m', 0)} disabled={disabled} label="月个位" onStep={d => step('m', 0, d)} />
+        <FieldWheel
+          disabled={disabled}
+          format={pad2}
+          label="月"
+          max={12}
+          min={1}
+          onStep={d => step('m', d)}
+          value={fieldAt('m')}
+        />
         <Sep />
-        <DigitWheel digit={digitAt('d', 1)} disabled={disabled} label="日十位" onStep={d => step('d', 1, d)} />
-        <DigitWheel digit={digitAt('d', 0)} disabled={disabled} label="日个位" onStep={d => step('d', 0, d)} />
+        <FieldWheel
+          disabled={disabled}
+          format={pad2}
+          label="日"
+          max={daysInMonth(fields.y, fields.m)}
+          min={1}
+          onStep={d => step('d', d)}
+          value={fieldAt('d')}
+        />
       </div>
       <div className="mt-1.5 flex items-center gap-2">
         {!value && placeholder ? <span className="text-[10px] text-faint">{placeholder}</span> : null}

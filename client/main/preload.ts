@@ -160,8 +160,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
   sprite: {
     onDefaultScaleChanged: (cb: (payload: DesktopSpriteScalePayload) => void) =>
       subscribe(IPC.event.spriteDefaultScaleChanged, cb),
-    setDefaultScale: (payload: DesktopSpriteScalePayload) =>
-      ipcRenderer.send(IPC.send.spriteSetDefaultScale, payload),
+    setDefaultScale: (payload: DesktopSpriteScalePayload) => ipcRenderer.send(IPC.send.spriteSetDefaultScale, payload),
     getPosition: () => ipcRenderer.invoke(IPC.invoke.spriteGetPosition),
     hide: () => ipcRenderer.invoke(IPC.invoke.spriteHide),
     moveToCursorDisplay: () => ipcRenderer.invoke(IPC.invoke.spriteMoveToCursorDisplay),
