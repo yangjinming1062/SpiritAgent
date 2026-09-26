@@ -449,6 +449,13 @@ export const dict = {
         editDisabledByReference: '附参考图时不可微调，请先移除参考图',
         reload: '重新加载',
         enlarge: '放大查看全身形象',
+        historyTitle: '历史形象',
+        historyVersion: '版本',
+        historyCurrent: '当前',
+        historyCurrentUnavailable: '当前预览暂不可用，可以从下方选择历史版本。',
+        historySelectedHint: '已选中较早的版本。确认会先恢复这张图；要继续调整，请先将它设为当前版本。',
+        restoreVersion: '设为当前版本',
+        restoreFailed: '恢复此版本失败，请重试。',
         back: '上一步',
         continue: '确认并继续',
         errors: {

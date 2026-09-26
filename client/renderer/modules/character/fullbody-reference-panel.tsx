@@ -13,8 +13,10 @@ import { $avatarSeeds, hydrateAvatarSeeds } from './avatar-seeds-store'
 import {
   $fullbodyReference,
   acceptFullbodyCandidate,
+  clearFullbodyReferenceHistory,
   hydrateFullbodyReference,
   regenerateFullbodyReference,
+  restoreFullbodyReferenceVersion,
   retryFullbodyCandidateAnalysis
 } from './fullbody-reference-store'
 import { GenerationActionsGroup } from './generation-actions'
@@ -50,12 +52,20 @@ export function FullbodyReferencePanel({
   const [zoom, setZoom] = useState(false)
   const [selfSourceOpen, setSelfSourceOpen] = useState(false)
   const [sourceStep, setSourceStep] = useState<OnboardingSourceStep>('choose')
+  const [selectedHistoryId, setSelectedHistoryId] = useState<string | null>(null)
   const onboarding = Boolean(onContinue)
   const current = state.avatarId === avatarId
-  const preview = current ? state.previewUrl : null
+  const currentRawUrl = current ? state.rawUrl : null
+  const preview = current && state.error !== 'load' && state.error !== 'preview' ? state.previewUrl : null
   const busy = !current || state.busy || selecting || confirming
+  const history = current ? state.history : []
+  const selectedHistory = history.find(entry => entry.id === selectedHistoryId) ?? null
+  const displayedPreview = selectedHistory?.previewUrl ?? preview
+  const currentImageUnavailable = state.error === 'load' || state.error === 'preview'
+
   // 有结果后进入预览确认；此前引导只展示当前选定的获取方式。
-  const showSourceChoice = onboarding && !preview && sourceStep === 'choose'
+  const showSourceChoice =
+    onboarding && !preview && !currentRawUrl && history.length === 0 && state.error === null && sourceStep === 'choose'
 
   useEffect(() => {
     void hydrateAvatarSeeds()
@@ -70,7 +80,7 @@ export function FullbodyReferencePanel({
     // 读 store 而非渲染闭包：自备图采纳后要立即确认刚水合的结果。
     const latest = $fullbodyReference.get()
 
-    if (latest.avatarId !== avatarId || !latest.rawUrl || latest.busy) {
+    if (latest.avatarId !== avatarId || (!latest.rawUrl && !selectedHistory) || latest.busy) {
       return
     }
 
@@ -78,7 +88,23 @@ export function FullbodyReferencePanel({
     setConfirmError(null)
 
     try {
-      await onContinue(latest.rawUrl)
+      if (selectedHistory && !(await restoreFullbodyReferenceVersion(avatarId, selectedHistory.id))) {
+        setConfirmError(t.restoreFailed)
+
+        return
+      }
+
+      const confirmed = $fullbodyReference.get()
+
+      if (confirmed.avatarId !== avatarId || !confirmed.rawUrl || confirmed.busy) {
+        setConfirmError(t.restoreFailed)
+
+        return
+      }
+
+      await onContinue(confirmed.rawUrl)
+      clearFullbodyReferenceHistory(avatarId)
+      setSelectedHistoryId(null)
     } catch (error) {
       setConfirmError(backendDetailMessage(error, t.errors.load))
     } finally {
@@ -103,6 +129,7 @@ export function FullbodyReferencePanel({
   const regenerate = async (): Promise<void> => {
     if (await regenerateFullbodyReference(avatarId, feedback, reference)) {
       setFeedback('')
+      setSelectedHistoryId(null)
     }
   }
 
@@ -110,6 +137,28 @@ export function FullbodyReferencePanel({
   const edit = async (): Promise<void> => {
     if (await regenerateFullbodyReference(avatarId, feedback, null, 'edit')) {
       setFeedback('')
+      setSelectedHistoryId(null)
+    }
+  }
+
+  const restoreSelectedHistory = async (): Promise<void> => {
+    if (!selectedHistory || busy) {
+      return
+    }
+
+    setConfirmError(null)
+    setConfirming(true)
+
+    try {
+      if (await restoreFullbodyReferenceVersion(avatarId, selectedHistory.id)) {
+        setSelectedHistoryId(null)
+      } else {
+        setConfirmError(t.restoreFailed)
+      }
+    } catch {
+      setConfirmError(t.restoreFailed)
+    } finally {
+      setConfirming(false)
     }
   }
 
@@ -194,24 +243,81 @@ export function FullbodyReferencePanel({
             <p className={SECTION_TITLE}>{t.title}</p>
             <p className={HINT_TEXT}>{t.hint}</p>
           </div>
-          {preview ? (
+          {displayedPreview ? (
             <button
               aria-label={t.enlarge}
               className="mx-auto block w-full cursor-zoom-in overflow-hidden rounded-xl border border-line-hairline bg-fill-trough"
               onClick={() => setZoom(true)}
               type="button"
             >
-              <img alt={t.title} className="mx-auto max-h-64 max-w-full object-contain" src={preview} />
+              <img alt={t.title} className="mx-auto max-h-64 max-w-full object-contain" src={displayedPreview} />
             </button>
           ) : (
             <p className="rounded-xl border border-line-hairline bg-fill-trough px-4 py-6 text-center text-xs text-muted">
-              {busy ? t.loading : t.empty}
+              {busy ? t.loading : history.length > 0 ? t.historyCurrentUnavailable : t.empty}
             </p>
           )}
           {current && state.busy && (
             <p aria-live="polite" className={HINT_TEXT}>
               {t.loading}
             </p>
+          )}
+          {onboarding && current && history.length > 0 && (
+            <div className="space-y-2">
+              <p className={FIELD_LABEL}>{t.historyTitle}</p>
+              <div className="flex flex-wrap gap-2">
+                {history.map((entry, index) => (
+                  <button
+                    aria-label={`${t.historyVersion} ${index + 1}`}
+                    aria-pressed={selectedHistoryId === entry.id}
+                    className={`overflow-hidden rounded-lg border bg-fill-trough text-left transition ${
+                      selectedHistoryId === entry.id
+                        ? 'border-accent ring-1 ring-accent'
+                        : 'border-line-hairline hover:border-line-strong'
+                    }`}
+                    disabled={busy}
+                    key={entry.id}
+                    onClick={() => setSelectedHistoryId(entry.id)}
+                    type="button"
+                  >
+                    <img alt="" className="h-16 w-16 object-contain" src={entry.previewUrl} />
+                    <span className="block px-1 pb-1 text-center text-[10px] text-muted">
+                      {t.historyVersion} {index + 1}
+                    </span>
+                  </button>
+                ))}
+                {preview && (
+                  <button
+                    aria-label={t.historyCurrent}
+                    aria-pressed={!selectedHistory}
+                    className={`overflow-hidden rounded-lg border bg-fill-trough text-left transition ${
+                      !selectedHistory
+                        ? 'border-accent ring-1 ring-accent'
+                        : 'border-line-hairline hover:border-line-strong'
+                    }`}
+                    disabled={busy}
+                    onClick={() => setSelectedHistoryId(null)}
+                    type="button"
+                  >
+                    <img alt="" className="h-16 w-16 object-contain" src={preview} />
+                    <span className="block px-1 pb-1 text-center text-[10px] text-muted">{t.historyCurrent}</span>
+                  </button>
+                )}
+              </div>
+              {selectedHistory && (
+                <div className="space-y-2">
+                  <p className={HINT_TEXT}>{t.historySelectedHint}</p>
+                  <button
+                    className={BTN_SUBTLE}
+                    disabled={busy}
+                    onClick={() => void restoreSelectedHistory()}
+                    type="button"
+                  >
+                    {t.restoreVersion}
+                  </button>
+                </div>
+              )}
+            </div>
           )}
           {!onboarding && current && state.candidateId && (
             <div className="space-y-2 rounded-xl border border-line-hairline bg-fill-trough p-3">
@@ -294,16 +400,22 @@ export function FullbodyReferencePanel({
             )}
           </div>
           <GenerationActionsGroup
-            editDisabled={busy || !feedback.trim() || !!reference}
+            editDisabled={
+              busy || Boolean(selectedHistory) || currentImageUnavailable || !preview || !feedback.trim() || !!reference
+            }
             editReason={
               reference ? t.editDisabledByReference : !feedback.trim() ? genActions.editRequiresFeedback : undefined
             }
             onEdit={current && state.rawUrl ? () => void edit() : undefined}
             onRegenerate={() => void regenerate()}
             onSelfSource={onboarding ? undefined : openSelfSource}
-            regenerateDisabled={busy}
+            regenerateDisabled={
+              busy || Boolean(selectedHistory) || currentImageUnavailable || (history.length > 0 && !currentRawUrl)
+            }
             regenerateLabel={current && state.rawUrl ? undefined : genActions.generate}
-            selfSourceDisabled={busy}
+            selfSourceDisabled={
+              busy || Boolean(selectedHistory) || currentImageUnavailable || (history.length > 0 && !currentRawUrl)
+            }
           />
           {current && state.error && (
             <div className="space-y-2">
@@ -343,7 +455,7 @@ export function FullbodyReferencePanel({
           {onContinue && (
             <button
               className={BTN_PRIMARY}
-              disabled={busy || !preview || !state.rawUrl || state.error !== null}
+              disabled={busy || !displayedPreview || (!selectedHistory && (!state.rawUrl || state.error !== null))}
               onClick={() => void confirm()}
               type="button"
             >
@@ -373,7 +485,9 @@ export function FullbodyReferencePanel({
         referenceImages={selfSourceReferences}
         title={selfSourceTitle}
       />
-      {zoom && preview && <PortraitLightbox name={t.title} onClose={() => setZoom(false)} url={preview} />}
+      {zoom && displayedPreview && (
+        <PortraitLightbox name={t.title} onClose={() => setZoom(false)} url={displayedPreview} />
+      )}
     </section>
   )
 }

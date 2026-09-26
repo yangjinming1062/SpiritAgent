@@ -59,7 +59,13 @@ export {
   type SpriteStateName
 } from './companion-store'
 export { FullbodyReferencePanel } from './fullbody-reference-panel'
-export { $fullbodyReference, hydrateFullbodyReference, regenerateFullbodyReference } from './fullbody-reference-store'
+export {
+  $fullbodyReference,
+  clearFullbodyReferenceHistory,
+  hydrateFullbodyReference,
+  regenerateFullbodyReference,
+  restoreFullbodyReferenceVersion
+} from './fullbody-reference-store'
 export { GenerationActionsGroup } from './generation-actions'
 export {
   assembleCharacterPersona,

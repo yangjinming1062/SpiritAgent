@@ -478,6 +478,14 @@ export const dict: Dictionary = {
         editDisabledByReference: 'Refine is unavailable while a reference image is attached — remove it first',
         reload: 'Reload',
         enlarge: 'Enlarge full-body image',
+        historyTitle: 'Previous images',
+        historyVersion: 'Version',
+        historyCurrent: 'Current',
+        historyCurrentUnavailable: 'The current preview is unavailable. Choose a previous version below.',
+        historySelectedHint:
+          'An earlier version is selected. Confirming restores it first; to keep refining, set it as the current version.',
+        restoreVersion: 'Set as current version',
+        restoreFailed: 'Could not restore this version. Please try again.',
         back: 'Back',
         continue: 'Confirm and continue',
         errors: {
