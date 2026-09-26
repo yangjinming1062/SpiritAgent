@@ -1,8 +1,16 @@
+import { SPRITE_SCALE_LIMITS } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 
-import { $defaultScale, $outfits, hydrateAvatarSeeds, hydrateWardrobe, setDefaultScale } from '@/modules/character'
+import {
+  $defaultScale,
+  $outfits,
+  hydrateAvatarSeeds,
+  hydrateWardrobe,
+  setDefaultScale,
+  syncDefaultScale
+} from '@/modules/character'
 import { Slider } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
@@ -27,6 +35,8 @@ export function AppearancePage(): React.JSX.Element {
     }
   }, [authKind])
 
+  useEffect(() => window.spiritagent.sprite.onDefaultScaleChanged(syncDefaultScale), [])
+
   useEffect(() => {
     if (selectedOutfitId !== null && !outfits.some(outfit => outfit.id === selectedOutfitId)) {
       setSelectedOutfitId(null)
@@ -41,8 +51,8 @@ export function AppearancePage(): React.JSX.Element {
           <div className="w-28">
             <Slider
               ariaLabel={t.scaleAria}
-              max={3}
-              min={0.3}
+              max={SPRITE_SCALE_LIMITS.max}
+              min={SPRITE_SCALE_LIMITS.min}
               onChange={setDefaultScale}
               step={0.05}
               value={defaultScale}

@@ -1,3 +1,4 @@
+import { type DesktopSpriteScalePayload, SPRITE_SCALE_LIMITS } from '@ipc/contracts'
 import { clamp } from '@runtime'
 import { atom } from 'nanostores'
 
@@ -34,8 +35,8 @@ const EMOTION_SCALE_BOOST: Record<string, number> = {
   surprised: 1.6
 }
 
-const MIN_SCALE = 0.3
-const MAX_SCALE = 3
+const MIN_SCALE = SPRITE_SCALE_LIMITS.min
+const MAX_SCALE = SPRITE_SCALE_LIMITS.max
 
 type SpatialLocale = 'home' | 'perch' | 'roam' | 'target' | 'workbench'
 
@@ -356,11 +357,31 @@ function updateAdaptiveScale(): void {
   setScaleTarget(computeTargetScale())
 }
 
-export function setDefaultScale(scale: number): void {
+function applyDefaultScale(scale: number): number | null {
+  if (!Number.isFinite(scale)) {
+    return null
+  }
+
   const clamped = clamp(scale, MIN_SCALE, MAX_SCALE)
   $defaultScale.set(clamped)
   persistString(SCALE_KEY, String(clamped))
   updateAdaptiveScale()
+
+  return clamped
+}
+
+export function syncDefaultScale({ scale }: DesktopSpriteScalePayload): void {
+  applyDefaultScale(scale)
+}
+
+export function setDefaultScale(scale: number): void {
+  const clamped = applyDefaultScale(scale)
+
+  if (clamped === null) {
+    return
+  }
+
+  window.spiritagent.sprite.setDefaultScale({ scale: clamped })
 }
 
 export function setSpatialLocale(
@@ -569,6 +590,7 @@ export function resetToHomePosition(): void {
 
 export function initSpatial(): () => void {
   let disposed = false
+  const unlistenDefaultScale = window.spiritagent.sprite.onDefaultScaleChanged(syncDefaultScale)
 
   // 等待可见内容包围盒后恢复；旧版屏外位置统一收回可见区域。
   const restoreSavedPosition = (saved: { x: number; y: number }): void => {
@@ -734,6 +756,7 @@ export function initSpatial(): () => void {
   return () => {
     disposed = true
     settleSavedRectWait()
+    unlistenDefaultScale()
     unlistenSurface()
     unlistenState()
     unlistenEmotion()

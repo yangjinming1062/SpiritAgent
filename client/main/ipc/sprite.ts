@@ -1,9 +1,9 @@
 import path from 'node:path'
 
-import { IPC } from '@ipc/contracts'
+import { IPC, SPRITE_SCALE_LIMITS } from '@ipc/contracts'
 import type { BrowserWindow, IpcMain, Screen } from 'electron'
 
-import { atomicWriteFile, hideAndSkipTaskbar, safeReadJson } from '../shared/utils'
+import { atomicWriteFile, broadcastToAllWindows, hideAndSkipTaskbar, safeReadJson } from '../shared/utils'
 
 const POSITION_FILE = 'companion-position.json'
 
@@ -52,6 +52,25 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
       fn(win)
     }
   }
+
+  ipcMain.on(IPC.send.spriteSetDefaultScale, (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object' || !('scale' in payload)) {
+      return
+    }
+
+    const { scale } = payload
+
+    if (
+      typeof scale !== 'number' ||
+      !Number.isFinite(scale) ||
+      scale < SPRITE_SCALE_LIMITS.min ||
+      scale > SPRITE_SCALE_LIMITS.max
+    ) {
+      return
+    }
+
+    broadcastToAllWindows(IPC.event.spriteDefaultScaleChanged, { scale })
+  })
 
   ipcMain.handle(IPC.invoke.spriteHide, async () => {
     withWindow(hideAndSkipTaskbar)

@@ -115,6 +115,12 @@ export interface DesktopUiThemeBroadcast {
   theme: SpiritAgentUiTheme
 }
 
+export interface DesktopSpriteScalePayload {
+  scale: number
+}
+
+export const SPRITE_SCALE_LIMITS = { max: 3, min: 0.3 } as const
+
 // 渲染层偏好写穿透：key 为点键（companion.voice_id / ui.theme 等），value 原样入云同步管道。
 export interface SpiritAgentPrefsSet {
   key: string
@@ -443,6 +449,7 @@ export interface IpcEventContract {
   'spiritagent:runner:status': [payload: DesktopRunnerStatusEvent]
   'spiritagent:shortcuts:changed': [payload: DesktopShortcutsState]
   'spiritagent:surface:changed': [payload: DesktopSurfaceChangedEvent]
+  'spiritagent:sprite:default-scale-changed': [payload: DesktopSpriteScalePayload]
   'spiritagent:chat:pending-feed': [payload: string[]]
   'spiritagent:tray:activate': []
   'spiritagent:tray:reset-position': []
@@ -457,6 +464,7 @@ export interface IpcEventContract {
 export interface IpcSendContract {
   'spiritagent:prefs:set': [payload: SpiritAgentPrefsSet]
   'spiritagent:ui-theme': [payload: SpiritAgentUiTheme]
+  'spiritagent:sprite:set-default-scale': [payload: DesktopSpriteScalePayload]
   'spiritagent:gateway:broadcast-state': [payload: { state: DesktopGatewayState }]
   'spiritagent:gateway:broadcast-event': [payload: { event: DesktopGatewayEvent }]
   'spiritagent:gateway:rpc-reply': [payload: DesktopGatewayRpcResponse]
@@ -539,6 +547,7 @@ export const IPC = {
     runnerStatus: 'spiritagent:runner:status',
     shortcutsChanged: 'spiritagent:shortcuts:changed',
     surfaceChanged: 'spiritagent:surface:changed',
+    spriteDefaultScaleChanged: 'spiritagent:sprite:default-scale-changed',
     chatPendingFeed: 'spiritagent:chat:pending-feed',
     trayActivate: 'spiritagent:tray:activate',
     trayResetPosition: 'spiritagent:tray:reset-position',
@@ -551,6 +560,7 @@ export const IPC = {
   send: {
     prefsSet: 'spiritagent:prefs:set',
     uiTheme: 'spiritagent:ui-theme',
+    spriteSetDefaultScale: 'spiritagent:sprite:set-default-scale',
     gatewayBroadcastState: 'spiritagent:gateway:broadcast-state',
     gatewayBroadcastEvent: 'spiritagent:gateway:broadcast-event',
     gatewayRpcReply: 'spiritagent:gateway:rpc-reply'

@@ -121,6 +121,8 @@ declare global {
         }
       }
       sprite: {
+        onDefaultScaleChanged: EventSubscription<'spiritagent:sprite:default-scale-changed'>
+        setDefaultScale: (payload: IpcSendContract['spiritagent:sprite:set-default-scale'][0]) => void
         hide: AsyncIpc<IpcInvokeContract['spiritagent:sprite:hide']>
         setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-ignore-mouse-events']>
         getPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:get-position']>

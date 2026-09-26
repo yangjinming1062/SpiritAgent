@@ -13,6 +13,7 @@ import {
   type DesktopRunnerStatusEvent,
   type DesktopShortcutsSetPayload,
   type DesktopShortcutsState,
+  type DesktopSpriteScalePayload,
   type DesktopSurfaceChangedEvent,
   type DesktopSurfaceOpenPayload,
   type DesktopUiThemeBroadcast,
@@ -157,6 +158,10 @@ contextBridge.exposeInMainWorld('spiritagent', {
     setEnabled: (payload: { enabled: boolean; name: string }) => ipcRenderer.invoke(IPC.invoke.skillSetEnabled, payload)
   },
   sprite: {
+    onDefaultScaleChanged: (cb: (payload: DesktopSpriteScalePayload) => void) =>
+      subscribe(IPC.event.spriteDefaultScaleChanged, cb),
+    setDefaultScale: (payload: DesktopSpriteScalePayload) =>
+      ipcRenderer.send(IPC.send.spriteSetDefaultScale, payload),
     getPosition: () => ipcRenderer.invoke(IPC.invoke.spriteGetPosition),
     hide: () => ipcRenderer.invoke(IPC.invoke.spriteHide),
     moveToCursorDisplay: () => ipcRenderer.invoke(IPC.invoke.spriteMoveToCursorDisplay),

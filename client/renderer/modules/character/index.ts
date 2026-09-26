@@ -158,6 +158,7 @@ export {
   setDefaultScale,
   setSpatialLocale,
   startDrag,
+  syncDefaultScale,
   updateDragPosition
 } from './spatial'
 export { SpriteStatusBadge } from './sprite-status-badge'
