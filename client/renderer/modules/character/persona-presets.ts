@@ -1,4 +1,4 @@
-export const RELATIONSHIP_PRESETS = ['亲密的爱人', '灵魂伴侣', '赛博管家', '知己好友', '宠物', '伙伴'] as const
+export const RELATIONSHIP_PRESETS = ['爱人', '灵魂伴侣', '赛博管家', '知己好友', '宠物', '伙伴'] as const
 export const PERSONALITY_PRESETS = [
   '温柔体贴',
   '活泼好动',

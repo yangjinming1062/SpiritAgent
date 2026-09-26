@@ -138,7 +138,7 @@ const QUESTIONS: readonly Question[] = [
   {
     key: 'biological_type',
     text: '那我是哪种生灵呢？',
-    placeholder: '描述任意生灵，如猫、鸟、龙或自创生物；标签只是示例',
+    placeholder: '或者自由描述…',
     required: true,
     multiline: false,
     audioTag: 'onboarding.q1',
