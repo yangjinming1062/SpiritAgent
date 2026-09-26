@@ -41,9 +41,7 @@ export const dict: Dictionary = {
     on: 'On',
     off: 'Off',
     pickDate: 'Pick a date',
-    processing: 'Processing…',
-    // 日期选择器表头，周一起始。
-    weekdayShort: ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'] as readonly string[]
+    processing: 'Processing…'
   },
 
   selfSource: {

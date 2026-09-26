@@ -367,7 +367,6 @@ function ProfileEntryEditor({
           onChange={onChange}
           placeholder={dict.common.pickDate}
           value={value}
-          weekdayLabels={dict.common.weekdayShort}
         />
       ) : (
         <input {...inputProps} />

@@ -123,9 +123,6 @@ const CALL_NAME_KINDS: readonly AnswerKind[] = [
   { chip: '自填', label: '那，想让我怎么叫您？', placeholder: '随便写，我记住就是了…' }
 ]
 
-// 引导题面与 UI 文案都是硬编码中文，日期选择器的星期表头保持同一来源。
-const DATE_PICKER_WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'] as const
-
 const QUESTIONS: readonly Question[] = [
   {
     key: 'name',
@@ -1360,7 +1357,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     onChange={setInput}
                     placeholder={question.placeholder}
                     value={input}
-                    weekdayLabels={DATE_PICKER_WEEKDAYS}
                   />
                 ) : (
                   <input

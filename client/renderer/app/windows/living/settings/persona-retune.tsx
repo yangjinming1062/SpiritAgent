@@ -328,7 +328,6 @@ function Field({ field, value, onChange }: FieldProps): React.ReactElement {
           onChange={handleChange}
           placeholder={dict.common.pickDate}
           value={value}
-          weekdayLabels={dict.common.weekdayShort}
         />
       ) : (
         <input

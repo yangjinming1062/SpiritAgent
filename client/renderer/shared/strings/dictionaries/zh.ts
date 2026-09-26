@@ -39,9 +39,7 @@ export const dict = {
     on: '开',
     off: '关',
     pickDate: '选择日期',
-    processing: '处理中…',
-    // 日期选择器表头，周一起始。
-    weekdayShort: ['一', '二', '三', '四', '五', '六', '日'] as readonly string[]
+    processing: '处理中…'
   },
 
   selfSource: {
