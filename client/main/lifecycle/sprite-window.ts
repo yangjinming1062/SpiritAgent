@@ -116,14 +116,8 @@ export function createSpriteWindowFactory(deps: SpriteWindowDeps): {
     applySpriteBounds(readRestPosition(deps.app.getPath('userData'))?.origin)
     mainWindow.setIgnoreMouseEvents(true, { forward: deps.spriteTransparent })
 
-    // macOS 用 'screen-saver' z-band（位于 floating 之上，能压过 exclusive fullscreen 游戏）；
-    // Win/Linux 回退 'floating'。Windows 的 exclusive fullscreen 完全绕过 DWM，
-    // 伙伴窗口无法覆盖在上面（已知限制）。
-    if (deps.isMac) {
-      mainWindow.setAlwaysOnTop(true, 'screen-saver', 1)
-    } else {
-      mainWindow.setAlwaysOnTop(true, 'floating')
-    }
+    // floating 层保持置顶，同时让 macOS 输入法候选窗等系统浮层显示在精灵上方。
+    mainWindow.setAlwaysOnTop(true, 'floating')
 
     if (deps.isMac && icon) {
       deps.app.dock?.setIcon(icon)

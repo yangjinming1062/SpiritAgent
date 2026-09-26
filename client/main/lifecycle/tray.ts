@@ -447,11 +447,7 @@ export function resetMainWindowPosition(): void {
     win.setSkipTaskbar(true)
   }
 
-  if (process.platform === 'darwin') {
-    win.setAlwaysOnTop(true, 'screen-saver', 1)
-  } else {
-    win.setAlwaysOnTop(true, 'floating')
-  }
+  win.setAlwaysOnTop(true, 'floating')
 
   if (!win.isVisible()) {
     win.show()
