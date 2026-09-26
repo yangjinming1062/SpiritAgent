@@ -6,16 +6,21 @@ from typing import Any
 from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, get_logger, safe_json_loads
 from modules.companion import Persona
 from prompts.generation import (
+    AVATAR_CREATION_TEMPLATE,
     AVATAR_IMAGE_RULES,
+    AVATAR_PRESENTATION_REFERENCE,
+    AVATAR_REFERENCE_TEMPLATE,
     AVATAR_SYSTEM_PROMPT,
     CHARACTER_FORM_INSTRUCTIONS,
     CHARACTER_FORM_KEEP_BODY,
     CHARACTER_FORM_REDRAW_BODY,
+    CHARACTER_FORM_SECONDARY_REFERENCE,
     CHARACTER_VISUAL_STYLE,
     FULLBODY_FRAME,
     FULLBODY_PRESERVE_CHARACTER,
     FULLBODY_REWRITE_LEAD,
     GARMENT_DESCRIBE_SYSTEM,
+    IMAGE_EDIT_APPEARANCE_TEMPLATE,
     IMAGE_EDIT_TEMPLATE,
     OUTFIT_CHANGE_TEMPLATE,
 )
@@ -46,12 +51,17 @@ class VisualReasoningError(RuntimeError):
     """视觉推理失败；异常文本可展示，供应商诊断只写入日志。"""
 
 
-def build_image_edit_prompt(feedback: str, *, preserve: str) -> str:
+def build_image_edit_prompt(feedback: str, *, preserve: str, appearance_description: str = "") -> str:
     """图像编辑 prompt：输入图是编辑底图（上一版产物），只按用户本次反馈做增量修改。"""
     clause = _prompt_clause(feedback)
     if not clause:
         raise ValueError("image edit requires non-empty feedback")
-    return IMAGE_EDIT_TEMPLATE.format(feedback=clause, preserve=preserve)
+    prompt = IMAGE_EDIT_TEMPLATE.format(feedback=clause, preserve=preserve)
+    if appearance_description.strip():
+        prompt += "\n\n" + IMAGE_EDIT_APPEARANCE_TEMPLATE.format(
+            appearance=json.dumps(appearance_description.strip(), ensure_ascii=False),
+        )
+    return prompt
 
 
 def _strip_markdown_fence(raw: str) -> str:
@@ -87,6 +97,59 @@ def _persona_visual_payload(persona: Persona, feedback: str | None) -> dict[str,
     }
 
 
+def build_avatar_prompt_from_appearance(
+    *,
+    biological_type: str,
+    gender: str,
+    appearance: str,
+    personality: str,
+    feedback: str | None = None,
+) -> str:
+    """把已整理的外貌描述与头像硬性画面要求装配为最终生图提示词。"""
+    payload = json.dumps(
+        {
+            "biological_type": biological_type,
+            "gender": gender,
+            "appearance": appearance,
+            "personality": personality,
+            "feedback": (feedback or "").strip(),
+        },
+        ensure_ascii=False,
+    )
+    return "\n\n".join(
+        (
+            AVATAR_CREATION_TEMPLATE.format(payload=payload),
+            AVATAR_IMAGE_RULES,
+            CHARACTER_VISUAL_STYLE,
+        ),
+    )
+
+
+def build_avatar_reference_prompt(
+    *,
+    appearance_description: str,
+    personality: str,
+    feedback: str | None = None,
+    has_presentation_reference: bool = False,
+    description: str = "",
+) -> str:
+    """装配身份参考头像提示词；明确外貌文字只覆盖其涉及的视觉维度。"""
+    prompt = AVATAR_REFERENCE_TEMPLATE.format(
+        reference="图 1" if has_presentation_reference else "参考图",
+        presentation=AVATAR_PRESENTATION_REFERENCE if has_presentation_reference else "",
+        payload=json.dumps(
+            {
+                "appearance": appearance_description.strip(),
+                "personality": personality.strip(),
+                "feedback": (feedback or "").strip(),
+            },
+            ensure_ascii=False,
+        ),
+        description=f"画面与神态建议：{description.strip()}" if description.strip() else "",
+    )
+    return "\n\n".join((prompt.strip(), AVATAR_IMAGE_RULES, CHARACTER_VISUAL_STYLE))
+
+
 async def chat(
     db: AsyncSession | None,
     user_id: int | None,
@@ -96,11 +159,13 @@ async def chat(
     provider_config: ProviderConfig | None = None,
 ) -> str:
     """单次非流式 chat 往返；空内容视为错误，避免把空 prompt 透传给生图供应商。"""
-    provider = (
-        provider_from_config(provider_config)
-        if provider_config is not None
-        else await provider_for_service(db, user_id, "llm")
-    )
+    if provider_config is not None:
+        provider = provider_from_config(provider_config)
+    elif db is None and user_id is not None:
+        async with SESSION_LOCAL() as config_db:
+            provider = await provider_for_service(config_db, user_id, "llm")
+    else:
+        provider = await provider_for_service(db, user_id, "llm")
     client = provider.raw_client()
     if client is None:
         raise MissingLlmConfigError(f"llm provider '{provider.provider_name}' does not expose the Responses API")
@@ -163,18 +228,17 @@ async def enhance_avatar_prompt(
     has_reference: bool = False,
     provider_config: ProviderConfig | None = None,
 ) -> str:
-    """把 persona 定义改写为中文头像 prompt 并附上统一风格；图像参考另在生图时传入。"""
+    """整理角色资料；无图时返回完整提示词，有图时返回供参考图装配器使用的画面建议。"""
     visual = _persona_visual_payload(persona, feedback)
     if has_reference:
         visual = {key: visual[key] for key in ("personality", "feedback")}
     payload = {**visual, "has_reference": has_reference}
     user_payload = json.dumps(payload, ensure_ascii=False)
     raw = await chat(db, user_id, AVATAR_SYSTEM_PROMPT, user_payload, provider_config=provider_config)
-    parts = [_strip_markdown_fence(raw)]
-    if not has_reference:
-        parts.append(AVATAR_IMAGE_RULES)
-    parts.append(CHARACTER_VISUAL_STYLE)
-    return "\n\n".join(parts)
+    description = _strip_markdown_fence(raw)
+    if has_reference:
+        return description
+    return "\n\n".join((description, AVATAR_IMAGE_RULES, CHARACTER_VISUAL_STYLE))
 
 
 async def describe_character_form(
@@ -197,6 +261,7 @@ async def describe_character_form(
         CHARACTER_FORM_INSTRUCTIONS
         + "\n\n"
         + (CHARACTER_FORM_REDRAW_BODY if allow_body_change else CHARACTER_FORM_KEEP_BODY)
+        + ("\n\n" + CHARACTER_FORM_SECONDARY_REFERENCE if len(reference_images) > 1 else "")
         + ("\n\n" + identity if identity else ""),
         json.dumps(
             {

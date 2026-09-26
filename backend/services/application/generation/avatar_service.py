@@ -32,8 +32,6 @@ from modules.companion import (
 )
 from modules.ws import emit_ws_event
 from prompts.generation import (
-    AVATAR_PRESENTATION_REFERENCE,
-    AVATAR_REFERENCE_TEMPLATE,
     CHARACTER_CARD_EXTRACTION,
     EDIT_PRESERVE_AVATAR,
     EDIT_PRESERVE_FULLBODY,
@@ -56,6 +54,8 @@ from services.domains.companion import (
 from services.infrastructure.assets import build_data_uri, build_signed_avatar_url, resolve_companion_asset_path
 from services.infrastructure.llm import (
     SIZE_TO_ASPECT,
+    build_avatar_prompt_from_appearance,
+    build_avatar_reference_prompt,
     build_image_edit_prompt,
     chat,
     describe_character_form,
@@ -64,6 +64,12 @@ from services.infrastructure.llm import (
     vision_chat,
 )
 
+from .appearance_preparation import (
+    AppearanceParts,
+    AppearancePreparationError,
+    AppearanceSourceChangedError,
+    prepare_appearance_parts,
+)
 from .fullbody_reference_prompt import build_fullbody_reference_prompt
 from .image_generation import ImageGenerationError, generate_images
 
@@ -156,12 +162,57 @@ class AvatarGenerationError(RuntimeError):
         self.internal = internal or public
 
 
+class AvatarAppearancePreparationError(AvatarGenerationError):
+    """头像或全身描述拆分失败；本次图像请求未提交。"""
+
+
+class AvatarAppearanceChangedError(AvatarGenerationError):
+    """拆分等待期间用户修改了外貌资料。"""
+
+
 class AvatarNotFoundError(AvatarGenerationError):
     """目标头像行不存在或不属于调用者。"""
 
 
 class FullbodyGenerationError(AvatarGenerationError):
     """全身图生成失败。"""
+
+
+async def _prepare_appearance_parts(user_id: int, persona: Persona) -> AppearanceParts | None:
+    """只有原始外貌描述非空时才调用拆分模型，并将状态错误映射到形象业务错误。"""
+    appearance = str(load_persona_definition(persona).get("appearance") or "").strip()
+    try:
+        return await prepare_appearance_parts(user_id, expected_appearance=appearance)
+    except AppearanceSourceChangedError as exc:
+        raise AvatarAppearanceChangedError(str(exc), internal=str(exc)) from exc
+    except AppearancePreparationError as exc:
+        raise AvatarAppearancePreparationError(str(exc), internal=str(exc)) from exc
+
+
+def _avatar_creative_prompt(
+    persona: Persona,
+    *,
+    appearance: str,
+    feedback: str | None = None,
+    reference_image: bool = False,
+    presentation_image: bool = False,
+) -> str:
+    definition = load_persona_definition(persona)
+    personality = str(definition.get("personality") or "").strip()
+    if reference_image:
+        return build_avatar_reference_prompt(
+            appearance_description=appearance,
+            personality=personality,
+            feedback=feedback,
+            has_presentation_reference=presentation_image,
+        )
+    return build_avatar_prompt_from_appearance(
+        biological_type=str(definition.get("biological_type") or "").strip(),
+        gender=str(definition.get("gender") or "").strip(),
+        appearance=appearance,
+        personality=personality,
+        feedback=feedback,
+    )
 
 
 def fullbody_candidate_response(candidate: FullbodyCandidate) -> FullbodyCandidateResponse:
@@ -725,10 +776,14 @@ async def generate_avatar(
     if user_id is None:
         raise ValueError("user_id is required")
     persona = await _verified_persona(db, user_id, persona)
-    try:
-        avatar_prompt = await enhance_avatar_prompt(db, user_id, persona)
-    except (ValidationError, RuntimeError) as exc:
-        raise AvatarGenerationError("prompt enhancement failed", internal=str(exc)) from exc
+    parts = await _prepare_appearance_parts(user_id, persona)
+    if parts is not None:
+        avatar_prompt = _avatar_creative_prompt(persona, appearance=parts.portrait_description)
+    else:
+        try:
+            avatar_prompt = await enhance_avatar_prompt(db, user_id, persona)
+        except (ValidationError, RuntimeError) as exc:
+            raise AvatarGenerationError("prompt enhancement failed", internal=str(exc)) from exc
     return await _generate_avatar_step(
         db,
         user_id,
@@ -855,12 +910,26 @@ async def regenerate_avatar(
     persona = await _verified_persona(db, user_id, persona)
 
     if mode == "edit":
-        return await _edit_active_avatar(db, user_id, persona, feedback=feedback, style=style)
+        return await _edit_active_avatar(
+            db,
+            user_id,
+            persona,
+            feedback=feedback,
+            style=style,
+        )
 
-    try:
-        avatar_prompt = await enhance_avatar_prompt(db, user_id, persona, feedback=feedback)
-    except (ValidationError, RuntimeError) as exc:
-        raise AvatarGenerationError("prompt enhancement failed", internal=str(exc)) from exc
+    parts = await _prepare_appearance_parts(user_id, persona)
+    if parts is not None:
+        avatar_prompt = _avatar_creative_prompt(
+            persona,
+            appearance=parts.portrait_description,
+            feedback=feedback,
+        )
+    else:
+        try:
+            avatar_prompt = await enhance_avatar_prompt(db, user_id, persona, feedback=feedback)
+        except (ValidationError, RuntimeError) as exc:
+            raise AvatarGenerationError("prompt enhancement failed", internal=str(exc)) from exc
     return await _generate_avatar_step(
         db,
         user_id,
@@ -904,7 +973,12 @@ async def _edit_active_avatar(
     if not edit_uri:
         raise AvatarSourceUnreadableError("当前头像文件缺失或无法读取，请重新生成")
 
-    prompt = build_image_edit_prompt(effective_feedback, preserve=EDIT_PRESERVE_AVATAR)
+    parts = await _prepare_appearance_parts(user_id, persona)
+    prompt = build_image_edit_prompt(
+        effective_feedback,
+        preserve=EDIT_PRESERVE_AVATAR,
+        appearance_description=parts.portrait_description if parts is not None else "",
+    )
     persist = persona.is_portrait_confirmed
     return await _generate_avatar_step(
         db,
@@ -1010,20 +1084,37 @@ async def regenerate_avatar_from_image(
     if user_id is None:
         raise ValueError("user_id is required")
     persona = await _verified_persona(db, user_id, persona)
-    try:
-        avatar_prompt = await enhance_avatar_prompt(db, user_id, persona, feedback=description, has_reference=True)
-    except (ValidationError, RuntimeError) as exc:
-        raise AvatarGenerationError("prompt enhancement failed", internal=str(exc)) from exc
+    parts = await _prepare_appearance_parts(user_id, persona)
+    if parts is not None:
+        avatar_prompt = _avatar_creative_prompt(
+            persona,
+            appearance=parts.portrait_description,
+            feedback=description,
+            reference_image=True,
+            presentation_image=presentation_data is not None,
+        )
+    else:
+        try:
+            base_description = await enhance_avatar_prompt(
+                db,
+                user_id,
+                persona,
+                feedback=description,
+                has_reference=True,
+            )
+        except (ValidationError, RuntimeError) as exc:
+            raise AvatarGenerationError("prompt enhancement failed", internal=str(exc)) from exc
+        avatar_prompt = build_avatar_reference_prompt(
+            appearance_description="",
+            personality="",
+            description=base_description,
+            feedback=description,
+            has_presentation_reference=presentation_data is not None,
+        )
     secondary_uri = (
         await asyncio.to_thread(build_data_uri, presentation_data, presentation_content_type or "image/png")
         if presentation_data is not None
         else None
-    )
-    avatar_prompt = AVATAR_REFERENCE_TEMPLATE.format(
-        reference="图 1" if secondary_uri else "参考图",
-        presentation=AVATAR_PRESENTATION_REFERENCE if secondary_uri else "",
-        description=avatar_prompt,
-        feedback=(description or "").strip() or "无",
     )
     return await _generate_avatar_step(
         db,
@@ -1160,7 +1251,11 @@ async def _prepare_fullbody_reference(
                 )
                 or ""
             )
-    appearance = "" if asset.is_fullbody_confirmed else str(definition.get("appearance") or "").strip()
+    if asset.is_fullbody_confirmed:
+        appearance = ""
+    else:
+        parts = await _prepare_appearance_parts(user_id, persona)
+        appearance = parts.fullbody_description if parts is not None else ""
     personality = str(definition.get("personality") or "").strip()
     body_baseline = (
         {key: getattr(identity.features, key) for key in BodyFeatures.model_fields} if identity is not None else {}
@@ -1284,9 +1379,14 @@ async def generate_fullbody_reference(
             reference_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, edit_path)
             if not reference_uri:
                 raise AvatarSourceUnreadableError("上一版全身参考缺失或无法读取，请先重新生成")
+            appearance_description = ""
+            if not asset.is_fullbody_confirmed:
+                parts = await _prepare_appearance_parts(user_id, persona)
+                appearance_description = parts.fullbody_description if parts is not None else ""
             prompt = build_image_edit_prompt(
                 effective_feedback,
                 preserve=EDIT_PRESERVE_FULLBODY + "\n" + _portrait_identity(identity),
+                appearance_description=appearance_description,
             )
         else:
             secondary_reference = (
@@ -1464,12 +1564,20 @@ async def adopt_avatar_seed(
 async def prepare_avatar_prompt(user_id: int, *, feedback: str | None = None, has_reference: bool = False) -> str:
     """头像自备图提示词；有参考时明确其身份用途，无图时按开放角色描述生成。"""
     persona = await _verified_persona(None, user_id, None)
+    parts = await _prepare_appearance_parts(user_id, persona)
+    if parts is not None:
+        return _avatar_creative_prompt(
+            persona,
+            appearance=parts.portrait_description,
+            feedback=feedback,
+            reference_image=has_reference,
+        )
     prompt = await enhance_avatar_prompt(None, user_id, persona, feedback=feedback, has_reference=has_reference)
     if not has_reference:
         return prompt
-    return AVATAR_REFERENCE_TEMPLATE.format(
-        reference="参考图",
-        presentation="",
+    return build_avatar_reference_prompt(
+        appearance_description="",
+        personality="",
         description=prompt,
-        feedback=feedback or "无",
+        feedback=feedback,
     )

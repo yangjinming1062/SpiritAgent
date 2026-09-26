@@ -39,7 +39,7 @@ Python 修改走仓库标准入口（见 [scripts/README §8](../../scripts/READ
 
 完整外观链路及各分支的审查导航见 [PIPELINE §4.1](../../docs/PIPELINE.md#41-完整提示词链检查入口)。
 
-头像整理与身体判断只整理各自任务所需的描述，画风约束在最终生图请求装配；纯文字头像另由装配器追加 `AVATAR_IMAGE_RULES`。审核改写保留原请求的画风与参考分工，不根据改写模型是否实际收到图片重新选择画风。
+外貌拆分使用 `APPEARANCE_SPLIT_SYSTEM_PROMPT`，调用方附上由 `AppearanceParts` 生成的 JSON Schema；输入、空值及各阶段的资料优先级见 [PIPELINE §1.1](../../docs/PIPELINE.md#11-共用参考与种子图派生)。头像统一由装配器追加 `AVATAR_IMAGE_RULES` 和画风；微调的初始资料通过 `IMAGE_EDIT_APPEARANCE_TEMPLATE` 单独附加，不混入固定身份与画面约束。审核改写保留最终请求的参考分工与资料优先级。
 
 ### 命名约定
 

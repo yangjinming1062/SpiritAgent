@@ -23,6 +23,8 @@ from .llm_fallback import execute_with_fallback
 from .llm_retry import LLMRuntimeError, call_with_retry
 from .prompt_engineer import (
     VisualReasoningError,
+    build_avatar_prompt_from_appearance,
+    build_avatar_reference_prompt,
     build_image_edit_prompt,
     build_outfit_prompt,
     call_llm_once,
@@ -127,6 +129,8 @@ __all__ = [
     "VoiceEntry",
     "aclose_all",
     "approx_responses_tokens",
+    "build_avatar_prompt_from_appearance",
+    "build_avatar_reference_prompt",
     "build_image_edit_prompt",
     "build_outfit_prompt",
     "build_responses_kwargs",

@@ -45,6 +45,8 @@ from pydantic import ValidationError
 from services.adapters.http import limiter
 from services.application.generation import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
+    AvatarAppearanceChangedError,
+    AvatarAppearancePreparationError,
     AvatarGenerationError,
     AvatarNotFoundError,
     AvatarSourceUnreadableError,
@@ -295,6 +297,10 @@ async def post_avatar(
     try:
         async with get_avatar_job_lock(user.id):
             asset = await generate_avatar(user_id=user.id, persona=persona)
+    except AvatarAppearanceChangedError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
+    except AvatarAppearancePreparationError as exc:
+        raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except AvatarGenerationError as exc:
@@ -350,6 +356,10 @@ async def post_avatar_from_image(
                 presentation_data=pres_raw,
                 presentation_content_type=pres_content_type,
             )
+    except AvatarAppearanceChangedError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
+    except AvatarAppearancePreparationError as exc:
+        raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except AvatarGenerationError as exc:
@@ -435,6 +445,11 @@ async def post_fullbody_reference(
             mode=body.mode,
             candidate_id=body.candidate_id,
         )
+    except AvatarAppearanceChangedError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
+    except AvatarAppearancePreparationError as exc:
+        logger.warning("appearance split failed before fullbody generation", extra={"user_id": user.id}, exc_info=exc)
+        raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": str(exc)})
     except AvatarSourceUnreadableError as exc:
@@ -506,6 +521,10 @@ async def post_fullbody_confirm(
 
 def _avatar_http_error(exc: AvatarGenerationError | VisualReasoningError) -> HTTPException:
     """自备图提示词/采纳端点共用的错误映射：语义与对应生成端点一致。"""
+    if isinstance(exc, AvatarAppearanceChangedError):
+        return HTTPException(status_code=409, detail={"error": str(exc)})
+    if isinstance(exc, AvatarAppearancePreparationError):
+        return HTTPException(status_code=502, detail={"error": str(exc)})
     if isinstance(exc, CharacterCardNotReadyError):
         return HTTPException(status_code=409, detail={"error": str(exc)})
     if isinstance(exc, VisualReasoningError):

@@ -141,6 +141,8 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
                     cleaned[locked] = current_draft[locked]
                 else:
                     cleaned.pop(locked, None)
+        if (current_draft.get("appearance") or "").strip() != (cleaned.get("appearance") or "").strip():
+            persona.appearance_parts_json = "{}"
         persona.definition_json = json.dumps(cleaned, ensure_ascii=False)
         # persona_extras 不缓存：build_system_prompt_extras 在运行期按 session language 从
         # definition_json 实时渲染，避免英语会话拿到 onboarding 时烤进去的中文头部。

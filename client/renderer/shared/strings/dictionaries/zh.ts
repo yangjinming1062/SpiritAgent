@@ -426,7 +426,8 @@ export const dict = {
         empty: '还没有全身形象，可以根据当前头像与角色设定生成。',
         loading: '正在准备全身形象，请稍候…',
         sourceChoiceTitle: '选择全身形象获取方式',
-        sourceChoiceHint: '先确定完整身体形象，之后用于默认视频、换装与出镜画面。可以让 AI 绘制，也可以直接上传您准备好的图片。',
+        sourceChoiceHint:
+          '先确定完整身体形象，之后用于默认视频、换装与出镜画面。可以让 AI 绘制，也可以直接上传您准备好的图片。',
         sourceAi: 'AI 生成',
         sourceAiArrow: 'AI 绘制 →',
         sourceAiHint: '基于当前头像与角色设定生成全身形象；可附参考图让结果更符合预期，之后可预览、微调或重新生成。',
@@ -436,7 +437,8 @@ export const dict = {
         backToSourceChoice: '换一种获取方式',
         referenceLabel: '用户参考图',
         refLabel: '参考图（可选）',
-        refHint: '可以附加一张参考图，让生成结果更符合预期；用于补充体型、服装和姿态线索，不会直接成为本步结果。面容与物种以已确认头像为准。',
+        refHint:
+          '可以附加一张参考图，让生成结果更符合预期；用于补充体型、服装和姿态线索，不会直接成为本步结果。面容与物种以已确认头像为准。',
         chooseReference: '选择参考图',
         replaceReference: '更换参考图',
         removeReference: '移除参考图',

@@ -6,6 +6,7 @@
 
 | 入口 | 职责 |
 |---|---|
+| [appearance_preparation.py](appearance_preparation.py) | 按源描述版本拆分并缓存引导阶段的头像与全身外貌资料 |
 | [character_card.py](character_card.py) | 角色卡分析任务 |
 | [visual_identity.py](visual_identity.py) | 出镜身份与本次造型（`SelfVisualPlan`），共用 `build_self_image_prompt` |
 | [initial_appearance.py](initial_appearance.py) / [avatar_service.py](avatar_service.py) | 初始外观与头像/全身候选 |
@@ -18,6 +19,8 @@
 | [response_builders.py](response_builders.py) | 头像/外观响应装配 |
 
 ## 事务与任务
+
+引导阶段的非空外貌描述按用户串行准备，源文本与拆分结果独立存入 `Persona.appearance_parts_json`，两项均为空的有效结果也缓存。写回时锁定并核对源文本；失败不提交后续图像生成，源描述变化返回状态冲突。拆分及提示词调用在短会话内读取用户模型配置，关闭会话后再等待模型。各生成入口的资料使用与直接上传行为见 [PIPELINE §1.1](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)。
 
 头像生成、全身生成、选择和确认共用用户级锁。供应商等待期间结束读事务或关闭会话，写入前核对当前身份、状态和源路径，避免迟到结果覆盖其他操作。状态与刷新事件同事务提交；未采纳候选被新候选替换时清理其图片，已采纳的旧全身图保留给冻结的历史任务。
 

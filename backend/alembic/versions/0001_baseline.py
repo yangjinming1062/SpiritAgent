@@ -512,6 +512,7 @@ def upgrade() -> None:
         "personas",
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("definition_json", sa.Text(), nullable=False),
+        sa.Column("appearance_parts_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("personality_tags_json", sa.Text(), server_default=sa.text("'[]'"), nullable=False),
         sa.Column("is_complete", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("is_portrait_confirmed", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
