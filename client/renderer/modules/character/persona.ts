@@ -53,7 +53,7 @@ export function assemblePersona(answers: OnboardingAnswers, previous?: Partial<P
   const name = answers.name?.trim() || '伙伴'
   const personality = answers.personality?.trim() || DEFAULT_PERSONALITY
 
-  // 客户端只透传用户输入，不做程序化转换；未填写时不注入默认性格
+  // 客户端只透传用户输入；未填写时保留已有值，不注入默认说话风格。
   const userPickedStyle = answers.speaking_style?.trim()
   const speakingStyle = userPickedStyle || previous?.speaking_style?.trim() || ''
 

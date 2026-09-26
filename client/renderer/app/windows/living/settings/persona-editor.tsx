@@ -6,13 +6,14 @@ import {
   assemblePersona,
   hydratePersona,
   PERSONALITY_PRESETS,
-  RELATIONSHIP_PRESETS
+  RELATIONSHIP_PRESETS,
+  SPEAKING_STYLE_PRESETS
 } from '@/modules/character'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, Chip, FIELD_LABEL, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
-// 可编辑的 persona 字段：name / relationship / personality。
+// 可编辑的 persona 字段：name / relationship / personality / speaking_style。
 // 锁定的视觉锚点字段（biological_type / gender）刻意不可编辑——见 docs/DESIGN.md §5.4。
 export function PersonaSection(): React.JSX.Element {
   const dict = useStrings()
@@ -23,6 +24,7 @@ export function PersonaSection(): React.JSX.Element {
   const [name, setName] = useState(persona?.name ?? '')
   const [relationship, setRelationship] = useState(persona?.relationship ?? '')
   const [personality, setPersonality] = useState(persona?.personality ?? '')
+  const [speakingStyle, setSpeakingStyle] = useState(persona?.speakingStyle ?? '')
   const [saving, setSaving] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
 
@@ -30,15 +32,23 @@ export function PersonaSection(): React.JSX.Element {
     setName(persona?.name ?? '')
     setRelationship(persona?.relationship ?? '')
     setPersonality(persona?.personality ?? '')
+    setSpeakingStyle(persona?.speakingStyle ?? '')
     setHint(null)
     setEditing(true)
   }
 
   const save = async (): Promise<void> => {
     const trimmed = name.trim()
+    const trimmedSpeakingStyle = speakingStyle.trim()
 
     if (!trimmed) {
       setHint(t.hintEmptyName)
+
+      return
+    }
+
+    if (!trimmedSpeakingStyle) {
+      setHint(t.hintEmptySpeakingStyle)
 
       return
     }
@@ -59,7 +69,8 @@ export function PersonaSection(): React.JSX.Element {
               {
                 name: trimmed,
                 personality: personality.trim(),
-                relationship: relationship.trim()
+                relationship: relationship.trim(),
+                speaking_style: trimmedSpeakingStyle
               },
               persona ?? undefined
             )
@@ -91,25 +102,46 @@ export function PersonaSection(): React.JSX.Element {
   }
 
   if (!editing) {
-    const tags = [persona?.relationship, persona?.personality].filter(Boolean)
+    const details = [
+      { label: t.relationshipLabel, value: persona?.relationship },
+      { label: t.personalityLabel, value: persona?.personality },
+      { label: t.speakingStyleLabel, value: persona?.speakingStyle }
+    ].filter(({ value }) => Boolean(value))
 
     return (
       <section>
         <p className={cn(SECTION_TITLE, 'mb-2')}>{t.sectionTitle}</p>
-        <div className="liquid-glass-card space-y-3 rounded-2xl p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
+        <div className="liquid-glass-card rounded-2xl p-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <div className="min-w-0 flex-1">
               <div className="flex items-center gap-2">
                 <span className="size-2 shrink-0 rounded-full bg-accent shadow-[0_0_6px_var(--ui-accent)]" />
-                <p className="truncate text-[15px] font-medium tracking-tight text-strong">
+                <p
+                  className="truncate text-[15px] font-medium tracking-tight text-strong"
+                  title={persona?.name ?? t.defaultName}
+                >
                   {persona?.name ?? t.defaultName}
                 </p>
               </div>
-              <p className="mt-1 text-[13px] leading-relaxed text-body">
-                {tags.length ? tags.join(' · ') : t.noPersonality}
-              </p>
+              {details.length > 0 ? (
+                <dl className="mt-2 space-y-1.5">
+                  {details.map(({ label, value }) => (
+                    <div className="flex min-w-0 items-baseline gap-2" key={label}>
+                      <dt className="w-24 shrink-0 text-[12px] text-muted">
+                        {label}
+                        {t.detailSeparator}
+                      </dt>
+                      <dd className="min-w-0 flex-1 truncate text-[13px] leading-5 text-body" title={value}>
+                        {value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : (
+                <p className="mt-1 text-[13px] leading-relaxed text-body">{t.noPersonality}</p>
+              )}
             </div>
-            <button className={BTN_GHOST} onClick={startEdit} type="button">
+            <button className={cn(BTN_GHOST, 'shrink-0 whitespace-nowrap')} onClick={startEdit} type="button">
               {t.editAction}
             </button>
           </div>
@@ -156,6 +188,21 @@ export function PersonaSection(): React.JSX.Element {
           <div className="mt-1.5 flex flex-wrap gap-1.5">
             {PERSONALITY_PRESETS.map(p => (
               <Chip active={personality === p} key={p} label={p} onClick={() => setPersonality(p)} />
+            ))}
+          </div>
+        </label>
+        <label className="block">
+          <span className={FIELD_LABEL}>{t.speakingStyleLabel}</span>
+          <input
+            className={INPUT_CLASS}
+            onChange={e => setSpeakingStyle(e.target.value)}
+            placeholder={t.speakingStylePlaceholder}
+            required
+            value={speakingStyle}
+          />
+          <div className="mt-1.5 flex flex-wrap gap-1.5">
+            {SPEAKING_STYLE_PRESETS.map(p => (
+              <Chip active={speakingStyle === p} key={p} label={p} onClick={() => setSpeakingStyle(p)} />
             ))}
           </div>
         </label>

@@ -510,53 +510,13 @@ export const dict: Dictionary = {
       relationshipPlaceholder: 'Or describe freely…',
       personalityLabel: 'Personality',
       personalityPlaceholder: 'Describe freely…',
+      detailSeparator: ':',
+      speakingStyleLabel: 'Speaking style',
+      speakingStylePlaceholder: 'Describe the tone and expression style you want',
       hintEmptyName: "You'll need to give me a name first",
+      hintEmptySpeakingStyle: 'Please enter a speaking style',
       hintSaveFailed: 'Save failed, please try again',
-      hintHydrateFailed: 'Saved, but the local refresh failed — please try again',
-      retuneAction: 'Retune via chat',
-      retuneHint:
-        'Step-by-step chat retuning for name, personality, speaking style and your info (existing long-term memory is kept)',
-      retuneModalTitle: 'Retune persona via chat',
-      retuneLoadFailed: "Couldn't load your profile right now — please try again later",
-      retunePrev: 'Back',
-      retuneNext: 'Next',
-      retuneStepPrefix: (n: number, total: string | number) => `Step ${n} · ${total}`,
-      retuneReviewTitle: 'Review',
-      retuneEmpty: '—',
-      retuneSaveFailed: 'Save failed, please try again',
-      autoDerivedChip: 'Auto-derive',
-      fields: {
-        name: 'Persona name',
-        namePlaceholder: 'Give me a name',
-        relationship: 'Relationship / role',
-        personality: 'Personality',
-        speakingStyle: 'Speaking style (optional)',
-        speakingStylePlaceholder: 'Leave blank to auto-derive from personality',
-        userCallName: 'How should I address you',
-        userGender: 'Your gender',
-        userBirthday: 'Birthday',
-        userHobbies: 'Hobbies',
-        userFreeform: "Anything else you'd like to share"
-      },
-      steps: {
-        name: 'Persona definition: name',
-        relationship: 'Relationship / role',
-        personalityStyle: 'Personality & speaking style',
-        aboutBasics: 'Help the companion know you: basics',
-        aboutHobbies: 'Help the companion know you: hobbies & extras'
-      },
-      reviewRows: {
-        name: 'Name',
-        relationship: 'Relationship',
-        personality: 'Personality',
-        speakingStyle: 'Speaking style',
-        speakingStyleFallback: 'Auto-derive',
-        userCallName: 'Call name',
-        userGender: 'My gender',
-        userBirthday: 'Birthday',
-        userHobbies: 'Hobbies',
-        userFreeform: 'Notes'
-      }
+      hintHydrateFailed: 'Saved, but the local refresh failed — please try again'
     },
     voice: {
       title: 'Voice',
