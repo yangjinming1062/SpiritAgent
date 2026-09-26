@@ -6,7 +6,6 @@
     { "tag": "onboarding.q0",  "text": "您好…我还不认识自己。您愿意给我一个名字吗？" },
     { "tag": "onboarding.q1",  "text": "那我是哪种生灵呢？" },
     { "tag": "onboarding.q2",  "text": "嗯…那我是男性、女性、还是…" },
-    { "tag": "onboarding.q3",  "text": "您希望我长什么样？说说头发、眼睛、体型、标志性细节…" },
     { "tag": "onboarding.q4",  "text": "好的，那您希望我是什么样的身份？" },
     { "tag": "onboarding.q5",  "text": "您希望我是什么性格？" },
     { "tag": "onboarding.q6",  "text": "我该怎么称呼您？" },

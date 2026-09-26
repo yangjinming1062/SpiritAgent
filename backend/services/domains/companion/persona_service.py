@@ -20,7 +20,7 @@ logger = get_logger(__name__)
 
 # 人设字段顺序属于对外契约的一部分，它决定渲染出的系统提示词片段形状
 _REQUIRED_FIELDS: tuple[str, ...] = ("name", "personality", "speaking_style")
-_OPTIONAL_FIELDS: tuple[str, ...] = ("appearance", "relationship", "biological_type", "gender")
+_OPTIONAL_FIELDS: tuple[str, ...] = ("relationship", "biological_type", "gender")
 _KNOWN_FIELDS: frozenset[str] = frozenset(_REQUIRED_FIELDS + _OPTIONAL_FIELDS)
 _MAX_FIELD_LEN: int = 500
 
@@ -29,7 +29,6 @@ ONBOARDING_FIELDS: tuple[str, ...] = (
     "name",
     "biological_type",
     "gender",
-    "appearance",
     "relationship",
     "personality",
     "speaking_style",
@@ -76,12 +75,14 @@ def _validate_birthday(value: str | None) -> None:
 
 
 def load_persona_definition(persona: Persona | None) -> dict[str, str]:
-    """从 Persona 实例读取 definition_json。"""
+    """从 Persona 实例读取当前支持的引导字段。"""
     if persona is None:
         return {}
     raw = getattr(persona, "definition_json", None) or "{}"
     draft = safe_json_loads(raw, default={})
-    return draft if isinstance(draft, dict) else {}
+    if not isinstance(draft, dict):
+        return {}
+    return {key: value for key, value in draft.items() if key in ONBOARDING_FIELDS and isinstance(value, str)}
 
 
 def _validate_definition(definition: dict[str, Any]) -> dict[str, str]:
@@ -136,13 +137,11 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
             ),
         )
         if sealed:
-            for locked in ("biological_type", "gender", "appearance"):
+            for locked in ("biological_type", "gender"):
                 if locked in current_draft:
                     cleaned[locked] = current_draft[locked]
                 else:
                     cleaned.pop(locked, None)
-        if (current_draft.get("appearance") or "").strip() != (cleaned.get("appearance") or "").strip():
-            persona.appearance_parts_json = "{}"
         persona.definition_json = json.dumps(cleaned, ensure_ascii=False)
         # persona_extras 不缓存：build_system_prompt_extras 在运行期按 session language 从
         # definition_json 实时渲染，避免英语会话拿到 onboarding 时烤进去的中文头部。
@@ -190,7 +189,7 @@ def build_system_prompt_extras(
 def render_extras(definition: dict[str, str], *, language: str = DEFAULT_LANGUAGE) -> str:
     lines = [resolve_prompt_text(PERSONA_LABELS_TEXTS, language)]
     for key in _REQUIRED_FIELDS + _OPTIONAL_FIELDS:
-        if key in definition and key != "appearance":
+        if key in definition:
             label = key.replace("_", " ").capitalize()
             lines.append(f"- **{label}**: {definition[key]}")
     return "\n".join(lines)

@@ -264,6 +264,11 @@ function updateReference(
       }
 
       const rawUrl = candidate?.image_url || response.seed_fullbody_url || null
+
+      if (generate && !rawUrl) {
+        throw new Error('未收到完整的全身图结果，请重新加载查看后再决定是否重试')
+      }
+
       const previewUrl = await resolvePortraitUrl(rawUrl, { preferCache: true })
 
       if (!isCurrent()) {
@@ -311,7 +316,7 @@ function updateReference(
         })
       }
 
-      return !rawUrl || Boolean(previewUrl)
+      return isCurrent() && (!rawUrl || Boolean(previewUrl))
     } catch (error) {
       if (isCurrent()) {
         log.warn('fullbody-reference', generate ? 'Generation failed' : 'Loading failed', error)

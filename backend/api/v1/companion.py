@@ -1,4 +1,5 @@
 import base64
+import json
 
 from common import get_router
 from components import SESSION_LOCAL, SETTINGS, DbSession, get_logger, safe_json_loads
@@ -36,6 +37,7 @@ from modules.companion import (
     OutfitResponse,
     PersonaResponse,
     PersonaUpdate,
+    PortraitConfirmRequest,
     VideoPackCreateRequest,
     VideoPackGenerateRequest,
     VideoPackListResponse,
@@ -45,8 +47,6 @@ from pydantic import ValidationError
 from services.adapters.http import limiter
 from services.application.generation import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
-    AvatarAppearanceChangedError,
-    AvatarAppearancePreparationError,
     AvatarGenerationError,
     AvatarNotFoundError,
     AvatarSourceUnreadableError,
@@ -112,6 +112,7 @@ from services.domains.companion import (
     get_character_card,
     get_onboarding_state,
     get_or_create_persona,
+    load_persona_definition,
     request_character_extraction,
     schedule_personality_tag_refresh,
     update_character_card,
@@ -231,7 +232,7 @@ async def get_persona(user: CurrentUser, db: DbSession) -> PersonaResponse:
     tags = safe_json_loads(persona.personality_tags_json or "[]", default=[])
     return PersonaResponse(
         is_complete=persona.is_complete,
-        definition_json=persona.definition_json,
+        definition_json=json.dumps(load_persona_definition(persona), ensure_ascii=False),
         personality_tags=tags if isinstance(tags, list) else [],
         current_mood=persona.current_mood,
     )
@@ -257,11 +258,17 @@ async def put_persona(body: PersonaUpdate, user: CurrentUser, db: DbSession) -> 
 
 @router.post("/portrait/confirm", response_model=CompanionOperationResponse)
 async def post_portrait_confirm(
+    body: PortraitConfirmRequest,
     user: CurrentUser,
     db: DbSession,
 ) -> CompanionOperationResponse:
     try:
         async with get_avatar_job_lock(user.id):
+            previewed = await get_active_avatar(db, user.id)
+            if previewed is None:
+                raise HTTPException(status_code=404, detail={"error": "请先生成或上传头像"})
+            if previewed.id != body.expected_avatar_id:
+                raise HTTPException(status_code=409, detail={"error": "当前头像已更新，请重新加载预览后确认"})
             asset = await finalize_avatar(db, user.id)
             if asset is None:
                 raise HTTPException(status_code=404, detail={"error": "请先生成或上传头像"})
@@ -296,11 +303,7 @@ async def post_avatar(
             )
     try:
         async with get_avatar_job_lock(user.id):
-            asset = await generate_avatar(user_id=user.id, persona=persona)
-    except AvatarAppearanceChangedError as exc:
-        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
-    except AvatarAppearancePreparationError as exc:
-        raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
+            asset = await generate_avatar(user_id=user.id, persona=persona, feedback=body.feedback)
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except AvatarGenerationError as exc:
@@ -356,10 +359,6 @@ async def post_avatar_from_image(
                 presentation_data=pres_raw,
                 presentation_content_type=pres_content_type,
             )
-    except AvatarAppearanceChangedError as exc:
-        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
-    except AvatarAppearancePreparationError as exc:
-        raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except AvatarGenerationError as exc:
@@ -445,11 +444,6 @@ async def post_fullbody_reference(
             mode=body.mode,
             candidate_id=body.candidate_id,
         )
-    except AvatarAppearanceChangedError as exc:
-        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
-    except AvatarAppearancePreparationError as exc:
-        logger.warning("appearance split failed before fullbody generation", extra={"user_id": user.id}, exc_info=exc)
-        raise HTTPException(status_code=502, detail={"error": str(exc)}) from exc
     except AvatarNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": str(exc)})
     except AvatarSourceUnreadableError as exc:
@@ -521,10 +515,6 @@ async def post_fullbody_confirm(
 
 def _avatar_http_error(exc: AvatarGenerationError | VisualReasoningError) -> HTTPException:
     """自备图提示词/采纳端点共用的错误映射：语义与对应生成端点一致。"""
-    if isinstance(exc, AvatarAppearanceChangedError):
-        return HTTPException(status_code=409, detail={"error": str(exc)})
-    if isinstance(exc, AvatarAppearancePreparationError):
-        return HTTPException(status_code=502, detail={"error": str(exc)})
     if isinstance(exc, CharacterCardNotReadyError):
         return HTTPException(status_code=409, detail={"error": str(exc)})
     if isinstance(exc, VisualReasoningError):

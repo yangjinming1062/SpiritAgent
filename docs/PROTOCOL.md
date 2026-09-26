@@ -47,7 +47,9 @@ Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供�
 
 引导恢复依据服务端状态及已有资产；完成条件与身份锁定范围见 [DESIGN](DESIGN.md#5-初始化与-onboarding)。
 
-`fullbody/confirm` 通过 `expected_url` 校验客户端预览与当前待确认种子一致；确认响应不等待角色分析或派生生成，分析状态通过角色卡读取，默认视频启动失败仍通过外观状态交付。默认外观、视频启动与重复确认的处理见 [PIPELINE](PIPELINE.md#2-动作资产链)，编辑和自备图规则见 [参考与派生关系](PIPELINE.md#11-共用参考与种子图派生)。
+`POST /api/companion/avatar` 接受可选 `feedback`，空请求仍可生成；各绘图接口的字段与限长见 [伙伴 schema](../backend/modules/companion/schemas.py)。头像 POST 与 `avatar.regenerate` RPC 不因断连或空结果自动重发，通过读取当前头像恢复预览。
+
+`portrait/confirm` 在用户级锁内校验预览的 `expected_avatar_id`，不一致返回 `409`；`fullbody/confirm` 以 `expected_url` 核对当前全身图。全身确认不等待角色分析或派生生成，分析进度见角色卡，视频启动失败见外观状态。初始资产与重复确认见 [PIPELINE](PIPELINE.md#2-动作资产链)，编辑和自备图见 [参考与派生关系](PIPELINE.md#11-共用参考与种子图派生)。
 
 角色首次全身确认后，`POST /avatar/{id}/fullbody/reference` 与 `/reference/adopt` 返回待采纳候选图，不立即替换当前种子；`GET /avatar/{id}/fullbody/candidate` 恢复最近的有效候选，`POST /avatar/{id}/fullbody/candidate/{candidate_id}/analyze` 重试身体分析，`POST /avatar/{id}/fullbody/candidate/{candidate_id}/accept` 在预期原图和角色卡修订仍一致时采纳。采纳只更新角色卡身体字段并清除旧身体覆盖，已有外观与视频不自动重建；首次引导仍用 `fullbody/confirm`。
 

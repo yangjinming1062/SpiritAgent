@@ -9,7 +9,6 @@ import {
   $portraitSelectedIdx,
   $portraitUrl,
   $regenFeedback,
-  APPEARANCE_PRESETS,
   applyPortrait,
   assembleCharacterPersona,
   assemblePersona,
@@ -19,7 +18,7 @@ import {
   FullbodyReferencePanel,
   hydratePortraitHistory,
   loadDraftRefImage,
-  MAX_APPEARANCE,
+  MAX_IMAGE_DESCRIPTION,
   MAX_USER_TEXT,
   type OnboardingAnswers,
   patchAvatarSeeds,
@@ -55,6 +54,7 @@ import {
 import { type HistoryGalleryItem, useGatewayRequest } from '@/shared'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
+import { authedApi } from '@/shared/lib/authed-api'
 import { FolderOpen, Sparkles } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { isClientErrorIpc, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
@@ -149,17 +149,6 @@ const QUESTIONS: readonly Question[] = [
     multiline: false,
     audioTag: 'onboarding.q2',
     presets: CHARACTER_GENDER_PRESETS
-  },
-  {
-    // appearance：外貌特征——驱动模型 prompt 与角色外貌描述。
-    key: 'appearance',
-    text: '您希望我长什么样？说说头发、眼睛、体型、标志性细节…',
-    placeholder: '比如：金发绿眼、额间一道疤、机械义眼…',
-    required: false,
-    multiline: true,
-    audioTag: 'onboarding.q3',
-    max: MAX_APPEARANCE,
-    presets: APPEARANCE_PRESETS
   },
   {
     key: 'relationship',
@@ -318,7 +307,6 @@ const ONBOARDING_FIELD_KEYS: ReadonlySet<QKey> = new Set<QKey>([
   'name',
   'biological_type',
   'gender',
-  'appearance',
   'relationship',
   'personality',
   'speaking_style',
@@ -329,32 +317,6 @@ const ONBOARDING_FIELD_KEYS: ReadonlySet<QKey> = new Set<QKey>([
   'user_freeform',
   'voice'
 ])
-
-// 头像生成。返回后端的原始响应；解析步骤由 applyPortrait 负责。
-async function generatePortrait(reference: PickedImage | null): Promise<{
-  asset_url?: string
-  id?: number
-} | null> {
-  try {
-    const res = await window.spiritagent.api<{
-      asset_url?: string
-      id?: number
-    }>({
-      path: reference ? '/api/companion/avatar/from-image' : '/api/companion/avatar',
-      method: 'POST',
-      body: reference ? { content_type: reference.contentType, image: reference.base64 } : {}
-    })
-
-    return res
-  } catch (error) {
-    // 把确定性的失败重抛出去，避免 retryTransient 烧掉 120 秒的头像预算。
-    if (isClientErrorIpc(error)) {
-      throw error
-    }
-
-    return null
-  }
-}
 
 async function savePersona(payload: ReturnType<typeof assemblePersona>): Promise<boolean> {
   try {
@@ -380,15 +342,20 @@ interface OnboardingFlowProps {
 }
 
 // 放到 OnboardingFlow 外面：否则它订阅的 $regenFeedback 会在每次按键时让整个对话框重渲染。
-function RegenFeedbackInput(): React.JSX.Element {
+function RegenFeedbackInput({ id, initial = false }: { id?: string; initial?: boolean }): React.JSX.Element {
   const value = useStore($regenFeedback)
 
   return (
     <textarea
       className={`${INPUT_CLASS} text-xs`}
-      maxLength={MAX_APPEARANCE}
+      id={id}
+      maxLength={MAX_IMAGE_DESCRIPTION}
       onChange={e => $regenFeedback.set(e.target.value)}
-      placeholder="哪里不满意？比如：头发再短一点、眼睛再大一点、表情更温和…（可留空直接重新生成）"
+      placeholder={
+        initial
+          ? '比如：金发绿眼、额间一道疤、机械义眼…（可留空）'
+          : '哪里不满意？比如：头发再短一点、眼睛再大一点、表情更温和…（可留空直接重新生成）'
+      }
       rows={2}
       value={value}
     />
@@ -447,12 +414,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [answers, setAnswers] = useState<OnboardingAnswers>({})
   const [input, setInput] = useState('')
   const [portraitUrl, setPortraitUrl] = useState<string | null>(null)
+  const [portraitPreviewId, setPortraitPreviewId] = useState<number | null>(null)
+  const mountedRef = useRef(false)
   // 订阅 applyPortrait 写入的头像，保持重绘结果同步。
   const activeAvatarId = useStore($activeAvatarId)
   // 历史画廊——头像面板下方的缩略图。
   const portraitHistory = useStore($portraitHistory)
   const portraitSelectedIdx = useStore($portraitSelectedIdx)
-  // voice 阶段先跑 Q7 描述输入，再进入目录选择器。
+  // voice 阶段先描述音色，再进入目录选择器。
   const [voiceStage, setVoiceStage] = useState<VoiceStage>('describe')
 
   // 失败时保留当前头像：它已经持有解析好的字节。
@@ -466,13 +435,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       | null
       | undefined
   ): Promise<{ assetUrl: string | null; avatar: string | null; id: number | null }> => {
-    const { avatar } = await applyPortrait({
-      id: response?.id,
-      assetUrl: response?.asset_url
-    })
+    const { avatar } = await applyPortrait(
+      { id: response?.id, assetUrl: response?.asset_url },
+      () => mountedRef.current
+    )
 
     if (avatar) {
       setPortraitUrl(avatar)
+      setPortraitPreviewId(response?.id ?? null)
     }
 
     return { assetUrl: response?.asset_url ?? null, avatar, id: response?.id ?? null }
@@ -523,7 +493,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   useInteractiveRegion('onboarding', containerRef, interactiveRegionRect)
 
   useEffect(() => {
+    mountedRef.current = true
+
     return () => {
+      mountedRef.current = false
       stopSpeaking()
     }
   }, [])
@@ -532,14 +505,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   useEffect(() => {
     warmAudioContext()
   }, [])
-
-  // 反馈 textarea 在多个头像面板之间共享。阶段切换时清空，
-  // 避免 onboarding 里输入的「头发再短一点」泄漏到后续重生流程里。
-  useEffect(() => {
-    if (phase === 'portrait-avatar') {
-      $regenFeedback.set('')
-    }
-  }, [phase])
 
   // 拖拽用 document 级监听器（而不是容器上的 React onPointerMove），
   // 这样光标离开对话框矩形后拖拽仍能继续。阈值过滤点击；表单控件由下面的 wrapper 屏蔽。
@@ -785,45 +750,25 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setPhase('portrait-choose')
   }
 
-  const startAiHatching = async (imageOverride?: PickedImage | null): Promise<void> => {
+  const startAiHatching = async (): Promise<void> => {
     if (imageSealed) {
       return
     }
 
-    const img = imageOverride !== undefined ? imageOverride : refImage
     setPhase('hatching')
     setPortraitDirectAdopt(false)
+    setPortraitPanelHint(null)
     setHint(null)
     void playOnboardingAudio('onboarding.hatching')
 
-    let url: string | null = null
+    const succeeded = await generateAvatarPortrait()
 
-    try {
-      // DESIGN §5.3：avatar 生成最多 3 次（1 次初试 + 2 次重试），不暴露技术错误。
-      const applied = await applyLocalPortrait(await retryTransient(() => generatePortrait(img), 1500, 3))
-      url = applied.avatar
-
-      if (url) {
-        pushPortraitEntry({
-          assetUrl: applied.assetUrl,
-          avatarId: applied.id ?? activeAvatarId,
-          portraitUrl: url
-        })
-      }
-    } catch {
-      // 确定性的 4xx（参考图不可用、persona 不完整）不能让流程卡在 'hatching'——
-      // 直接落到 portrait 阶段，那里仍然支持带反馈或不带反馈的重生。
-      url = null
+    if (succeeded === null) {
+      return
     }
 
-    if (!url) {
-      // 接下来渲染的是 portrait 面板；`hint` 只在表单里能看到。
-      setPortraitPanelHint(img ? '这张参考图我没能用上…待会儿再换一张吧' : '我还没想好…')
-    }
-
-    // avatar 阶段：用户审视头像并确认——确认即锁定形象，并解锁 voice 子阶段。
     setPhase('portrait-avatar')
-    void playOnboardingAudio(url ? 'onboarding.portrait.ok' : 'onboarding.portrait.failed')
+    void playOnboardingAudio(succeeded ? 'onboarding.portrait.ok' : 'onboarding.portrait.failed')
   }
 
   // 断点恢复（DESIGN §5.2）：网关一旦连通，
@@ -977,20 +922,23 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   // 第一步——头像重生：新建一行 avatar，新 id 通过 hook 内 applyPortrait 自动发布到 ``$activeAvatarId``。
   // 微调（edit）编辑上一版头像；重新生成保持种子全量重绘。附参考图时微调不可用（参考图属重新生成意图）。
   const {
+    generate: generateAvatarPortrait,
     regenerate: regenerateAvatarPortrait,
     edit: editAvatarPortrait,
+    reload: reloadAvatarPortrait,
     busy: avatarBusy
   } = useRegeneratePortrait({
     refImage,
     presentationRef,
     playAudioOnSuccess: true,
-    onRegenerated: ({ avatar }) => {
+    onRegenerated: ({ avatar, id }) => {
       setPortraitPanelHint(null)
       // 重绘与微调产物按 AI 结果对待，需经确认步骤。
       setPortraitDirectAdopt(false)
 
       if (avatar) {
         setPortraitUrl(avatar)
+        setPortraitPreviewId(id)
       }
     },
     onError: setPortraitPanelHint
@@ -1013,6 +961,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
       if (entry.portraitUrl) {
         setPortraitUrl(entry.portraitUrl)
+        setPortraitPreviewId(entry.avatarId)
         $portraitUrl.set(entry.portraitUrl)
       }
 
@@ -1062,13 +1011,13 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       body: { image: image.base64, content_type: image.contentType }
     })
 
-    if (currentClearEpoch() !== epoch) {
+    if (!mountedRef.current || currentClearEpoch() !== epoch) {
       return
     }
 
     const applied = await applyLocalPortrait(response)
 
-    if (currentClearEpoch() !== epoch) {
+    if (!mountedRef.current || currentClearEpoch() !== epoch) {
       return
     }
 
@@ -1082,7 +1031,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setPortraitPanelHint(null)
     // 自备图即心仪头像，采纳后直接确认。
     setPortraitDirectAdopt(true)
-    await sealPortrait()
+    await sealPortrait(applied.id)
   }
 
   const pickPresentationImage = async (): Promise<void> => {
@@ -1103,18 +1052,27 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   }
 
   // 确认头像并进入全身阶段；失败落到确认步骤展示原因，可原地重试。
-  const sealPortrait = async (): Promise<void> => {
-    if (sealingPortrait) {
+  const sealPortrait = async (expectedAvatarId: number | null = portraitPreviewId): Promise<void> => {
+    if (sealingPortrait || expectedAvatarId === null) {
       return
     }
 
     setSealingPortrait(true)
 
     try {
-      await window.spiritagent.api({
+      const result = await authedApi({
         path: '/api/companion/portrait/confirm',
-        method: 'POST'
+        method: 'POST',
+        body: { expected_avatar_id: expectedAvatarId }
       })
+
+      if (!mountedRef.current || (!result.ok && result.reason === 'unauth')) {
+        return
+      }
+
+      if (!result.ok) {
+        throw result.error
+      }
     } catch (error) {
       // 409 表示 temp-media 已过期——头像文件已不在，绝不能继续推进。
       // 退回 avatar 阶段，让用户重新生成。
@@ -1145,6 +1103,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
     clearPortraitHistory()
     setPresentationRef(null)
+    $regenFeedback.set('')
 
     setPhase('fullbody-reference')
   }
@@ -1424,7 +1383,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     <span className="text-xs text-muted">AI 绘制 →</span>
                   </div>
                   <p className="mt-1.5 text-[11px] leading-relaxed text-body">
-                    基于您刚才填写的形象描述生成角色头像，之后可预览、微调或重新生成。
+                    可在生成前补充头像描述与参考图，之后预览、微调或重新生成。
                   </p>
                 </button>
 
@@ -1482,8 +1441,15 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             <div>
               <p className="text-[15px] font-medium text-strong">用 AI 生成头像</p>
               <p className="mt-1 text-xs text-body">
-                将根据您刚才填写的形象描述绘制头像。可以附加一张参考图，让生成结果更符合预期；不附也可以直接生成。
+                可以描述希望头像呈现的面容、发型、颜色和辨识细节，也可以附加参考图。留空即可按角色设定生成。
               </p>
+
+              <div className="mt-3 space-y-1">
+                <label className="text-xs text-body" htmlFor="onboarding-portrait-description">
+                  头像描述（可选）
+                </label>
+                <RegenFeedbackInput id="onboarding-portrait-description" initial />
+              </div>
 
               <div className="mt-3 rounded-xl border border-line-hairline bg-fill-trough p-3">
                 <p className="text-xs text-body">参考图（可选）</p>
@@ -1607,7 +1573,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     </div>
                   </div>
                   <div className="mt-3 flex items-center justify-between text-xs">
-                    <div className="flex gap-3">
+                    <div className="flex flex-wrap gap-3">
                       <button
                         className="text-body transition hover:text-strong disabled:opacity-40"
                         disabled={sealingPortrait}
@@ -1635,10 +1601,23 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                           void editAvatarPortrait()
                         }}
                       />
+                      <button
+                        className="text-body transition hover:text-strong disabled:opacity-40"
+                        disabled={avatarBusy || sealingPortrait}
+                        onClick={() => void reloadAvatarPortrait()}
+                        type="button"
+                      >
+                        重新加载
+                      </button>
                     </div>
                     <button
                       className="inline-flex h-8 items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40"
-                      disabled={activeAvatarId == null || sealingPortrait}
+                      disabled={
+                        !portraitUrl ||
+                        portraitPreviewId == null ||
+                        portraitPreviewId !== activeAvatarId ||
+                        sealingPortrait
+                      }
                       onClick={() => void sealPortrait()}
                       type="button"
                     >

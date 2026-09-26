@@ -6,7 +6,6 @@ from typing import Any
 from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, get_logger, safe_json_loads
 from modules.companion import Persona
 from prompts.generation import (
-    AVATAR_CREATION_TEMPLATE,
     AVATAR_IMAGE_RULES,
     AVATAR_PRESENTATION_REFERENCE,
     AVATAR_REFERENCE_TEMPLATE,
@@ -20,7 +19,6 @@ from prompts.generation import (
     FULLBODY_PRESERVE_CHARACTER,
     FULLBODY_REWRITE_LEAD,
     GARMENT_DESCRIBE_SYSTEM,
-    IMAGE_EDIT_APPEARANCE_TEMPLATE,
     IMAGE_EDIT_TEMPLATE,
     OUTFIT_CHANGE_TEMPLATE,
 )
@@ -51,17 +49,12 @@ class VisualReasoningError(RuntimeError):
     """视觉推理失败；异常文本可展示，供应商诊断只写入日志。"""
 
 
-def build_image_edit_prompt(feedback: str, *, preserve: str, appearance_description: str = "") -> str:
+def build_image_edit_prompt(feedback: str, *, preserve: str) -> str:
     """图像编辑 prompt：输入图是编辑底图（上一版产物），只按用户本次反馈做增量修改。"""
     clause = _prompt_clause(feedback)
     if not clause:
         raise ValueError("image edit requires non-empty feedback")
-    prompt = IMAGE_EDIT_TEMPLATE.format(feedback=clause, preserve=preserve)
-    if appearance_description.strip():
-        prompt += "\n\n" + IMAGE_EDIT_APPEARANCE_TEMPLATE.format(
-            appearance=json.dumps(appearance_description.strip(), ensure_ascii=False),
-        )
-    return prompt
+    return IMAGE_EDIT_TEMPLATE.format(feedback=clause, preserve=preserve)
 
 
 def _strip_markdown_fence(raw: str) -> str:
@@ -91,43 +84,13 @@ def _persona_visual_payload(persona: Persona, feedback: str | None) -> dict[str,
     return {
         "biological_type": definition.get("biological_type") or "",
         "gender": definition.get("gender") or "",
-        "appearance": definition.get("appearance") or "",
         "personality": definition.get("personality") or "",
         "feedback": (feedback or "").strip(),
     }
 
 
-def build_avatar_prompt_from_appearance(
-    *,
-    biological_type: str,
-    gender: str,
-    appearance: str,
-    personality: str,
-    feedback: str | None = None,
-) -> str:
-    """把已整理的外貌描述与头像硬性画面要求装配为最终生图提示词。"""
-    payload = json.dumps(
-        {
-            "biological_type": biological_type,
-            "gender": gender,
-            "appearance": appearance,
-            "personality": personality,
-            "feedback": (feedback or "").strip(),
-        },
-        ensure_ascii=False,
-    )
-    return "\n\n".join(
-        (
-            AVATAR_CREATION_TEMPLATE.format(payload=payload),
-            AVATAR_IMAGE_RULES,
-            CHARACTER_VISUAL_STYLE,
-        ),
-    )
-
-
 def build_avatar_reference_prompt(
     *,
-    appearance_description: str,
     personality: str,
     feedback: str | None = None,
     has_presentation_reference: bool = False,
@@ -139,7 +102,6 @@ def build_avatar_reference_prompt(
         presentation=AVATAR_PRESENTATION_REFERENCE if has_presentation_reference else "",
         payload=json.dumps(
             {
-                "appearance": appearance_description.strip(),
                 "personality": personality.strip(),
                 "feedback": (feedback or "").strip(),
             },
@@ -245,7 +207,6 @@ async def describe_character_form(
     user_id: int | None,
     *,
     species: str,
-    appearance: str,
     personality: str,
     feedback: str = "",
     outfit_description: str = "",
@@ -266,7 +227,6 @@ async def describe_character_form(
         json.dumps(
             {
                 "biological_type": species,
-                "appearance": appearance,
                 "personality": personality,
                 "feedback": feedback,
                 "outfit_description": outfit_description,
@@ -295,7 +255,6 @@ async def build_outfit_prompt(
     direction = await describe_character_form(
         user_id,
         species=species,
-        appearance="",
         identity=identity,
         personality=personality,
         feedback=feedback,

@@ -68,6 +68,12 @@ class FullbodyConfirmRequest(BaseModel):
     expected_url: str = Field(min_length=1, max_length=2048)
 
 
+class PortraitConfirmRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    expected_avatar_id: int = Field(gt=0)
+
+
 class FullbodyPromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -94,6 +100,8 @@ class ImageAdoptRequest(BaseModel):
 
 class AvatarGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+    feedback: str | None = Field(default=None, max_length=500)
 
 
 class AvatarPromptRequest(BaseModel):

@@ -71,6 +71,7 @@ from services.domains.companion import (
     character_snapshot_is_current,
     get_scene_state,
     load_character_snapshot,
+    load_persona_definition,
     render_character_identity,
     render_character_profile,
     scene_environment,
@@ -707,13 +708,7 @@ async def _collect_context(user_id: int) -> PlanningContext:
         # 动作库摘要在会话生命周期内读取，避免 session 关闭后重开未托管事务。
         action_snapshot = await _planning_action_context(db, user_id)
 
-    definition = safe_json_loads(
-        persona.definition_json if persona is not None else "{}",
-        default={},
-    )
-    if not isinstance(definition, dict):
-        definition = {}
-    definition.pop("appearance", None)
+    definition = load_persona_definition(persona)
     if character is not None:
         definition["fixed_features"] = render_character_profile(character)
     context = PlanningContext(

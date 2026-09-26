@@ -12,7 +12,11 @@ const RECONNECTABLE_GATEWAY_ERROR =
   /not connected|connection closed|connection reset|socket closed|session expired|session not found|reauth|unauthorized|token expired|ticket expired/i
 
 export interface UseGatewayRequestResult {
-  requestGateway: <T>(method: string, params?: Record<string, unknown>) => Promise<T>
+  requestGateway: <T>(
+    method: string,
+    params?: Record<string, unknown>,
+    options?: { retryOnReconnect?: boolean }
+  ) => Promise<T>
 }
 
 export function useGatewayRequest(): UseGatewayRequestResult {
@@ -73,7 +77,7 @@ export function useGatewayRequest(): UseGatewayRequestResult {
   }, [gatewayStateRef])
 
   const requestGateway = useCallback(
-    async <T>(method: string, params: Record<string, unknown> = {}) => {
+    async <T>(method: string, params: Record<string, unknown> = {}, options: { retryOnReconnect?: boolean } = {}) => {
       const gateway = gatewayRef.current
 
       if (!gateway) {
@@ -85,7 +89,7 @@ export function useGatewayRequest(): UseGatewayRequestResult {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
 
-        if (!RECONNECTABLE_GATEWAY_ERROR.test(message)) {
+        if (options.retryOnReconnect === false || !RECONNECTABLE_GATEWAY_ERROR.test(message)) {
           throw error
         }
 

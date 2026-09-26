@@ -1,10 +1,12 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { PortraitLightbox } from '@/shared'
+import { authedApi } from '@/shared/lib/authed-api'
 import { FolderOpen, Sparkles } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { currentClearEpoch } from '@/shared/lib/storage'
 import { BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
@@ -20,6 +22,7 @@ import {
   retryFullbodyCandidateAnalysis
 } from './fullbody-reference-store'
 import { GenerationActionsGroup } from './generation-actions'
+import { MAX_IMAGE_DESCRIPTION } from './persona'
 import { $portraitUrl } from './portrait-store'
 import { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 
@@ -41,6 +44,7 @@ export function FullbodyReferencePanel({
   const genActions = useStrings().generationActions
   const selfSource = useStrings().selfSource
   const state = useStore($fullbodyReference)
+  const mountedRef = useRef(false)
   const portraitUrl = useStore($portraitUrl)
   const avatarSeeds = useStore($avatarSeeds)
   const [feedback, setFeedback] = useState('')
@@ -56,6 +60,7 @@ export function FullbodyReferencePanel({
   const onboarding = Boolean(onContinue)
   const current = state.avatarId === avatarId
   const currentRawUrl = current ? state.rawUrl : null
+  const initialGeneration = onboarding && !currentRawUrl
   const preview = current && state.error !== 'load' && state.error !== 'preview' ? state.previewUrl : null
   const busy = !current || state.busy || selecting || confirming
   const history = current ? state.history : []
@@ -68,8 +73,13 @@ export function FullbodyReferencePanel({
     onboarding && !preview && !currentRawUrl && history.length === 0 && state.error === null && sourceStep === 'choose'
 
   useEffect(() => {
+    mountedRef.current = true
     void hydrateAvatarSeeds()
     void hydrateFullbodyReference(avatarId)
+
+    return () => {
+      mountedRef.current = false
+    }
   }, [avatarId])
 
   const confirm = async (): Promise<void> => {
@@ -96,7 +106,13 @@ export function FullbodyReferencePanel({
 
       const confirmed = $fullbodyReference.get()
 
-      if (confirmed.avatarId !== avatarId || !confirmed.rawUrl || confirmed.busy) {
+      if (
+        confirmed.avatarId !== avatarId ||
+        !confirmed.rawUrl ||
+        !confirmed.previewUrl ||
+        confirmed.error ||
+        confirmed.busy
+      ) {
         setConfirmError(t.restoreFailed)
 
         return
@@ -173,12 +189,41 @@ export function FullbodyReferencePanel({
   }
 
   const adoptSelfSourceImage = async (image: PickedImage): Promise<void> => {
-    await window.spiritagent.api({
+    const epoch = currentClearEpoch()
+
+    const result = await authedApi<{ seed_fullbody_url?: string; image_url?: string }>({
       path: `/api/companion/avatar/${avatarId}/fullbody/reference/adopt`,
       method: 'POST',
       body: { image: image.base64, content_type: image.contentType }
     })
-    await hydrateFullbodyReference(avatarId)
+
+    if (!mountedRef.current || epoch !== currentClearEpoch() || (!result.ok && result.reason === 'unauth')) {
+      return
+    }
+
+    if (!result.ok) {
+      throw result.error
+    }
+
+    const expectedUrl = result.value?.image_url || result.value?.seed_fullbody_url
+    const hydrated = await hydrateFullbodyReference(avatarId)
+
+    if (!mountedRef.current || epoch !== currentClearEpoch()) {
+      return
+    }
+
+    const latest = $fullbodyReference.get()
+
+    if (
+      !expectedUrl ||
+      !hydrated ||
+      latest.avatarId !== avatarId ||
+      latest.rawUrl?.split('?')[0] !== expectedUrl.split('?')[0]
+    ) {
+      throw new Error(t.adoptPreviewFailed)
+    }
+
+    setFeedback('')
     // 引导内采纳即确认并继续，失败留在本面板可手动重试；设置页无后续步骤，不自动确认。
     await confirm()
   }
@@ -352,15 +397,16 @@ export function FullbodyReferencePanel({
           )}
           <div className="space-y-1">
             <label className={FIELD_LABEL} htmlFor="fullbody-reference-feedback">
-              {t.feedbackLabel}
+              {initialGeneration ? t.descriptionLabel : t.feedbackLabel}
             </label>
+            <p className={HINT_TEXT}>{t.descriptionHint}</p>
             <textarea
               className={INPUT_CLASS}
               disabled={busy}
               id="fullbody-reference-feedback"
-              maxLength={500}
+              maxLength={MAX_IMAGE_DESCRIPTION}
               onChange={(event): void => setFeedback(event.target.value)}
-              placeholder={t.feedbackPlaceholder}
+              placeholder={initialGeneration ? t.descriptionPlaceholder : t.feedbackPlaceholder}
               rows={2}
               value={feedback}
             />

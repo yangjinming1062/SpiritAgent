@@ -10,7 +10,6 @@ def build_fullbody_reference_prompt(
     body_direction: str,
     species: str,
     gender: str,
-    appearance: str,
     personality: str,
     feedback: str | None,
     has_user_reference: bool,
@@ -29,7 +28,6 @@ def build_fullbody_reference_prompt(
             {
                 "species": species,
                 "gender": gender,
-                "appearance": appearance,
                 "personality": personality,
                 "feedback": feedback or "",
                 "body_baseline": body_baseline or {},

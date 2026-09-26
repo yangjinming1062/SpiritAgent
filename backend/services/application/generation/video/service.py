@@ -470,9 +470,7 @@ async def create_pack_from_reference(
                     applied_identity_reference_path=applied_identity_path,
                 )
                 else "ready",
-                persona_definition={
-                    key: value for key, value in load_persona_definition(persona).items() if key != "appearance"
-                },
+                persona_definition=load_persona_definition(persona),
                 personality_tags=safe_json_loads(persona.personality_tags_json or "[]", default=[]),
                 outfit_description=outfit.description or "",
                 feedback=feedback,

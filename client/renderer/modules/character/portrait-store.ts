@@ -53,10 +53,7 @@ export const $portraitUrl = atom<string | null>(null)
 // 服务端读取当前 avatar 行，这里只是为画廊选择做镜像。
 export const $activeAvatarId = atom<number | null>(initialPersisted.avatarId)
 
-// 用户在按「重新生成」之前输入的反馈文本。在所有暴露重生流程的面板间共享
-// （onboarding / 伙伴设置 / 重新对话微调性格 / 角色 inline 编辑），
-// 这样用户在某个面板里输入了一半再切到另一个面板时草稿不会丢。
-// 每次重生成功后由 useRegeneratePortrait 清掉。
+// 头像首次生成、重生与微调共用的本次描述；不持久化，成功加载预览后清空。
 export const $regenFeedback = atom<string>('')
 
 export interface PortraitEntry {
@@ -75,6 +72,7 @@ registerStorageClearHandler(() => {
   $activeAvatarId.set(null)
   $portraitHistory.set([])
   $portraitSelectedIdx.set(0)
+  $regenFeedback.set('')
 })
 
 function persistPortrait(next: PersistedPortrait): void {
@@ -109,11 +107,19 @@ interface PortraitUrls {
   id?: number | null
 }
 
-export async function applyPortrait(urls: PortraitUrls): Promise<{ avatar: string | null }> {
+export async function applyPortrait(
+  urls: PortraitUrls,
+  isCurrent: () => boolean = () => true
+): Promise<{ avatar: string | null }> {
   const epoch = currentClearEpoch()
+
+  if (!isCurrent()) {
+    return { avatar: null }
+  }
+
   const avatar = urls.assetUrl === undefined ? null : await resolvePortraitUrl(urls.assetUrl)
 
-  if (currentClearEpoch() !== epoch) {
+  if (currentClearEpoch() !== epoch || !isCurrent()) {
     return { avatar: null }
   }
 

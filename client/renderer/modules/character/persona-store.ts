@@ -14,7 +14,6 @@ export interface PersonaDefinition {
   relationship?: string
   biological_type?: string
   gender?: string
-  appearance?: string
 }
 
 export const $persona = atom<PersonaDefinition | null>(null)
@@ -99,7 +98,6 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
 
   $persona.set(
     personaFromWire({
-      appearance: parsed.appearance,
       biological_type: parsed.biological_type,
       gender: parsed.gender,
       name: parsed.name ?? '伙伴',

@@ -3,8 +3,6 @@
 from .avatar_service import (
     ALLOWED_AVATAR_UPLOAD_MIME_TYPES,
     AVATAR_JOB_LOCKS,
-    AvatarAppearanceChangedError,
-    AvatarAppearancePreparationError,
     AvatarGenerationError,
     AvatarNotFoundError,
     AvatarSourceUnreadableError,
@@ -173,8 +171,6 @@ __all__ = [
     "resume_initial_appearance",
     "ALLOWED_AVATAR_UPLOAD_MIME_TYPES",
     "AVATAR_JOB_LOCKS",
-    "AvatarAppearanceChangedError",
-    "AvatarAppearancePreparationError",
     "AvatarGenerationError",
     "accept_fullbody_candidate",
     "accept_media_review",

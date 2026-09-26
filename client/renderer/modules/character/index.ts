@@ -70,12 +70,11 @@ export { GenerationActionsGroup } from './generation-actions'
 export {
   assembleCharacterPersona,
   assemblePersona,
-  MAX_APPEARANCE,
+  MAX_IMAGE_DESCRIPTION,
   MAX_USER_TEXT,
   type OnboardingAnswers
 } from './persona'
 export {
-  APPEARANCE_PRESETS,
   CHARACTER_GENDER_PRESETS,
   PERSONALITY_PRESETS,
   type PersonalityPreset,

@@ -448,6 +448,7 @@ export const dict: Dictionary = {
         retryCandidateAnalysisFailed: 'Analysis failed. Try again.',
         adoptHint:
           'Adopting confirms this full-body image and starts character analysis, followed by the default video and scene.',
+        adoptPreviewFailed: 'The image was saved, but its preview is not ready. Reload before confirming.',
         empty: 'No full-body image yet. Generate one from the current portrait and persona.',
         loading: 'Preparing the full-body image…',
         sourceChoiceTitle: 'Choose how to get the full-body image',
@@ -456,7 +457,7 @@ export const dict: Dictionary = {
         sourceAi: 'AI generate',
         sourceAiArrow: 'AI draw →',
         sourceAiHint:
-          'Generate from the current portrait and persona. Optionally attach a reference so the result matches your intent; preview, refine or regenerate afterwards.',
+          'Generate from the confirmed portrait. Add body and outfit details or a reference image, then preview, refine or regenerate.',
         sourceSelf: 'Direct upload',
         sourceSelfArrow: 'Choose image →',
         sourceSelfHint:
@@ -470,6 +471,10 @@ export const dict: Dictionary = {
         replaceReference: 'Replace reference image',
         removeReference: 'Remove reference image',
         pickError: 'Could not select the image. Try a smaller PNG, JPEG, WebP or GIF file.',
+        descriptionLabel: 'Full-body description (optional)',
+        descriptionPlaceholder: 'For example: slender build, mechanical arm, dark blue robe, natural standing pose…',
+        descriptionHint:
+          'The confirmed portrait defines the face and species. This description applies only to this generation.',
         feedbackLabel: 'What should change? (optional)',
         feedbackPlaceholder: 'Describe any changes to the body or pose, or leave blank to generate.',
         generate: 'Generate full-body image',

@@ -1,8 +1,6 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import {
-  $activeAvatarId,
-  $portraitUrl,
   $regenFeedback,
   applyPortrait,
   awaitAvatarRegeneration,
@@ -10,68 +8,46 @@ import {
   pushPortraitEntry
 } from '@/modules/character'
 import { useGatewayRequest } from '@/shared'
+import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { currentClearEpoch } from '@/shared/lib/storage'
+import { $auth } from '@/shared/store/auth'
 
 import { playOnboardingAudio } from './onboarding-audio'
 
 interface UseRegeneratePortraitOptions {
-  /**
-   * 走 refImage 分支（POST /avatar/from-image），而不是 avatar.regenerate RPC。
-   * 空字符串会清除之前的参考图。
-   */
   refImage?: PickedImage | null
-  /**
-   * 与身份锚一起以 ``presentation_image`` 发送的可选表现/风格参考。
-   * 仅多参考供应商会消费它。当 ``refImage`` 不存在时，本字段充当唯一参考
-   * （主 ``image``）而非辅图。
-   */
+  /** 有身份参考时仅提供光线与构图；否则作为唯一参考图。 */
   presentationRef?: PickedImage | null
-  /**
-   * 成功时播放 onboarding.portrait.regenerate。
-   * 默认关闭，避免非 onboarding 页面意外加上没有申请的音效行为。
-   */
   playAudioOnSuccess?: boolean
-  /**
-   * 通过 `regenerate(feedback)` 传入的可选逐次反馈。
-   */
   feedback?: string
-  /**
-   * 每次成功重生成后用刚解析到的 data URL 触发。把全局 `$portraitUrl` 同步到
-   * 自己本地状态的页面（如 onboarding 的成对预览）需要接入它来镜像 atom 更新；
-   * 已通过 `useStore($portraitUrl)` 订阅的页面可以省略。
-   */
-  onRegenerated?: (urls: { avatar: string | null; id: number | null }) => void
-  /** 后台生成失败时把服务端公开文案交给所在页面展示。 */
+  onRegenerated?: (urls: { avatar: string; id: number | null }) => void
   onError?: (message: string) => void
 }
 
+interface PortraitResponse {
+  asset_url?: string | null
+  id?: number
+  job_id?: string
+  queued?: boolean
+  error?: string
+}
+
 interface UseRegeneratePortraitResult {
-  /**
-   * 逐次反馈优先于 options.feedback 和共享的 $regenFeedback atom。
-   * 会 trim；空串转为 undefined。无论反馈来自哪条路径，
-   * 每次成功 regenerate 后都会清空 atom。
-   *
-   * overrideRef：逐次身份参考覆盖（DESIGN §5.4「自己上传」上传即重绘——
-   * 调用点刚写入新 refImage 时 hook 闭包还持有旧值，只能经参数传新图）。
-   */
+  /** null 表示请求已失效或已有请求在途；false 表示失败且保留输入。 */
+  generate: (feedback?: string, overrideRef?: PickedImage | null) => Promise<boolean | null>
   regenerate: (feedback?: string, overrideRef?: PickedImage | null) => Promise<void>
-  /**
-   * 微调当前头像：编辑上一版产物，未提及区域保留。要求 feedback 非空、
-   * 不接受参考图（参考图只属于重新生成意图）。后台 job 的错误载荷经
-   * onError 交给调用页面展示。
-   */
   edit: (feedback?: string) => Promise<void>
+  reload: () => Promise<void>
   busy: boolean
 }
 
-/**
- * 跨 onboarding、伙伴设置 → 形象、重新对话微调性格、PersonaSection 内联编辑
- * 共用的重生成形象流程。负责同步/排队分流、busy 标记、提示文案、音效提示；
- * 调用方提供一个绑定到 $regenFeedback 的 textarea（通过 $regenFeedback.set /
- * useStore）或逐次传入 feedback。
- */
+// 首次生成、重生与微调共用单次提交、预览落地和描述清理；不重发结果未知的付费请求。
 export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}): UseRegeneratePortraitResult {
   const { requestGateway } = useGatewayRequest()
   const [busy, setBusy] = useState(false)
+  const mountedRef = useRef(false)
+  const runningRef = useRef(false)
+  const operationRef = useRef(0)
 
   const {
     refImage,
@@ -82,160 +58,178 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
     onError
   } = options
 
-  const resolveFeedback = useCallback(
-    (callFeedback?: string): string | undefined => {
-      const fromCall = callFeedback?.trim() || undefined
-      const fromOptions = optionFeedback?.trim() || undefined
-      const fromAtom = $regenFeedback.get().trim() || undefined
+  useEffect(() => {
+    mountedRef.current = true
 
-      return fromCall ?? fromOptions ?? fromAtom
-    },
-    [optionFeedback]
-  )
+    return () => {
+      mountedRef.current = false
+      operationRef.current += 1
+      runningRef.current = false
+    }
+  }, [])
 
-  const onAppliedFactory = useCallback(
-    (playAudio: boolean): ((assetUrl?: string | null) => void) =>
-      (assetUrl?: string | null): void => {
-        pushPortraitEntry({
-          assetUrl,
-          avatarId: $activeAvatarId.get(),
-          portraitUrl: $portraitUrl.get()
-        })
-        $regenFeedback.set('')
+  const run = useCallback(
+    async (
+      mode: 'generate' | 'regenerate' | 'edit' | 'reload',
+      callFeedback?: string,
+      overrideRef?: PickedImage | null
+    ): Promise<boolean | null> => {
+      const auth = $auth.get()
 
-        if (playAudio) {
+      if (!mountedRef.current || runningRef.current || auth.kind !== 'authenticated') {
+        return null
+      }
+
+      const draft = $regenFeedback.get()
+      // 显式空串表示本次不附描述，不回退到其他来源的旧输入。
+      const feedback = (callFeedback ?? optionFeedback ?? draft).trim() || undefined
+
+      if (mode === 'edit' && !feedback) {
+        return null
+      }
+
+      const epoch = currentClearEpoch()
+      const sessionId = auth.snapshot.sessionId
+      const operation = ++operationRef.current
+
+      const isCurrent = (): boolean => {
+        const current = $auth.get()
+
+        return (
+          mountedRef.current &&
+          operationRef.current === operation &&
+          currentClearEpoch() === epoch &&
+          current.kind === 'authenticated' &&
+          current.snapshot.sessionId === sessionId
+        )
+      }
+
+      runningRef.current = true
+      setBusy(true)
+
+      try {
+        const identityRef = overrideRef !== undefined ? overrideRef : refImage
+        const presentation = mode === 'generate' ? null : presentationRef
+        const primaryRef = identityRef ?? presentation
+        const secondaryRef = identityRef ? presentation : null
+        let result: PortraitResponse | null
+
+        if (mode === 'reload') {
+          result = await window.spiritagent.api<PortraitResponse>({ path: '/api/companion/avatar', method: 'GET' })
+        } else if (mode !== 'edit' && (primaryRef || mode === 'generate')) {
+          result = await window.spiritagent.api<PortraitResponse>({
+            method: 'POST',
+            path: primaryRef ? '/api/companion/avatar/from-image' : '/api/companion/avatar',
+            body: primaryRef
+              ? {
+                  content_type: primaryRef.contentType,
+                  image: primaryRef.base64,
+                  description: feedback,
+                  ...(secondaryRef && {
+                    presentation_content_type: secondaryRef.contentType,
+                    presentation_image: secondaryRef.base64
+                  })
+                }
+              : { feedback }
+          })
+        } else {
+          const queued = await requestGateway<PortraitResponse>(
+            'avatar.regenerate',
+            { feedback, mode },
+            { retryOnReconnect: false }
+          )
+
+          if (!isCurrent()) {
+            return null
+          }
+
+          result = queued?.queued && queued.job_id ? await awaitAvatarRegeneration(queued.job_id) : queued
+        }
+
+        if (!isCurrent()) {
+          return null
+        }
+
+        if (result?.error) {
+          onError?.(result.error)
+
+          return false
+        }
+
+        if (!result?.asset_url) {
+          onError?.('未收到生成结果，已保留描述。请重新加载查看头像后再决定是否重试。')
+
+          return false
+        }
+
+        const applied = await applyPortrait({ assetUrl: result.asset_url, id: result.id }, isCurrent)
+
+        if (!isCurrent()) {
+          return null
+        }
+
+        if (!applied.avatar) {
+          onError?.('头像已保存，但预览加载失败，已保留描述。请重新加载查看。')
+
+          return false
+        }
+
+        pushPortraitEntry({ assetUrl: result.asset_url, avatarId: result.id ?? null, portraitUrl: applied.avatar })
+
+        if (mode !== 'reload' && $regenFeedback.get() === draft) {
+          $regenFeedback.set('')
+        }
+
+        onRegenerated?.({ avatar: applied.avatar, id: result.id ?? null })
+
+        if ((mode === 'regenerate' || mode === 'edit') && playAudioOnSuccess) {
           void playOnboardingAudio('onboarding.portrait.regenerate')
         }
-      },
-    []
-  )
 
-  // avatar.regenerate RPC 的同步/排队分流与结果落地，regenerate 与 edit 共用。
-  const runAvatarRegen = useCallback(
-    async (params: { feedback?: string; mode: 'edit' | 'regenerate' }): Promise<void> => {
-      const onApplied = onAppliedFactory(playAudioOnSuccess)
+        return true
+      } catch (error) {
+        if (!isCurrent()) {
+          return null
+        }
 
-      const queued = await requestGateway<{
-        asset_url?: string | null
-        id?: number
-        job_id?: string
-        queued?: boolean
-        error?: string
-      }>('avatar.regenerate', params)
+        onError?.(backendDetailMessage(error, '生成未完成，已保留描述。请重新加载查看头像后再决定是否重试。'))
 
-      const settled =
-        queued && 'asset_url' in queued
-          ? queued
-          : queued?.queued && queued.job_id
-            ? await awaitAvatarRegeneration(queued.job_id)
-            : null
+        return false
+      } finally {
+        if (operationRef.current === operation) {
+          runningRef.current = false
 
-      if (settled?.error) {
-        throw new Error(settled.error)
-      }
-
-      if (settled?.asset_url) {
-        const applied = await applyPortrait({
-          assetUrl: settled.asset_url,
-          id: settled.id
-        })
-
-        onRegenerated?.({ ...applied, id: settled.id ?? null })
-        onApplied(settled.asset_url)
+          if (mountedRef.current) {
+            setBusy(false)
+          }
+        }
       }
     },
-    [requestGateway, playAudioOnSuccess, onAppliedFactory, onRegenerated]
+    [refImage, presentationRef, optionFeedback, onRegenerated, onError, playAudioOnSuccess, requestGateway]
+  )
+
+  const generate = useCallback(
+    (feedback?: string, overrideRef?: PickedImage | null) => run('generate', feedback, overrideRef),
+    [run]
   )
 
   const regenerate = useCallback(
-    async (callFeedback?: string, overrideRef?: PickedImage | null): Promise<void> => {
-      const feedback = resolveFeedback(callFeedback)
-      const effRefImage = overrideRef !== undefined ? overrideRef : refImage
-
-      setBusy(true)
-      const onApplied = onAppliedFactory(playAudioOnSuccess)
-
-      try {
-        // Q4 图是身份锚；presentationRef 是风格/表现提示。
-        // 没有 Q4 图时，presentation ref 变成唯一的参考图（主图）而非辅图。
-        const primaryRef = effRefImage ?? presentationRef
-        const secondaryRef = effRefImage ? presentationRef : null
-
-        if (primaryRef) {
-          const res = await window.spiritagent.api<{
-            asset_url?: string | null
-            id?: number
-          }>({
-            body: {
-              content_type: primaryRef.contentType,
-              description: feedback,
-              image: primaryRef.base64,
-              ...(secondaryRef && {
-                presentation_content_type: secondaryRef.contentType,
-                presentation_image: secondaryRef.base64
-              })
-            },
-            method: 'POST',
-            path: '/api/companion/avatar/from-image'
-          })
-
-          if (res?.asset_url) {
-            const applied = await applyPortrait({
-              assetUrl: res.asset_url,
-              id: res.id
-            })
-
-            onRegenerated?.({ ...applied, id: res.id ?? null })
-            onApplied(res.asset_url)
-
-            return
-          }
-        }
-
-        await runAvatarRegen({ feedback, mode: 'regenerate' })
-      } catch (error) {
-        onError?.(error instanceof Error ? error.message : '伙伴形象生成失败，请稍后重试')
-      } finally {
-        setBusy(false)
-      }
+    async (feedback?: string, overrideRef?: PickedImage | null): Promise<void> => {
+      await run('regenerate', feedback, overrideRef)
     },
-    // 依赖项用解构出来的基本值，而非 `options` 对象本身——调用方每次渲染
-    // 都会传入新字面量，否则会让 `regenerate` 每次渲染都获得新身份，
-    // 抵消下游 React.memo 的效果。optionFeedback 参与依赖是为了让调用方
-    // 在不重新挂载 hook 的情况下更改它。
-    [
-      refImage,
-      presentationRef,
-      playAudioOnSuccess,
-      resolveFeedback,
-      onAppliedFactory,
-      onRegenerated,
-      onError,
-      runAvatarRegen
-    ]
+    [run]
   )
 
-  // 微调走 avatar.regenerate RPC + mode:"edit"；上传图路径（from-image）是重新生成专属，微调不进入。
   const edit = useCallback(
-    async (callFeedback?: string): Promise<void> => {
-      const feedback = resolveFeedback(callFeedback)
-
-      if (!feedback) {
-        return
-      }
-
-      setBusy(true)
-
-      try {
-        await runAvatarRegen({ feedback, mode: 'edit' })
-      } catch (error) {
-        onError?.(error instanceof Error ? error.message : '伙伴形象微调失败，请稍后重试')
-      } finally {
-        setBusy(false)
-      }
+    async (feedback?: string): Promise<void> => {
+      await run('edit', feedback)
     },
-    [onError, resolveFeedback, runAvatarRegen]
+    [run]
   )
 
-  return { busy, regenerate, edit }
+  const reload = useCallback(async (): Promise<void> => {
+    await run('reload')
+  }, [run])
+
+  return { busy, generate, regenerate, edit, reload }
 }

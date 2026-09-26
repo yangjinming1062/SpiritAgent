@@ -2,9 +2,6 @@ export interface OnboardingAnswers {
   name?: string
   biological_type?: string
   gender?: string
-  // appearance：外貌特征（脸 / 体型 / 标志性细节）。驱动形象生成提示词；
-  // 锁定之后的编辑里会被保留。
-  appearance?: string
   // relationship：用户与精灵的关系（知己好友 / 赛博管家等）。只进入对话系统提示词，
   // 不参与性格标签分析与形象生成——关系是两者之间的，不是精灵自身的属性。
   relationship?: string
@@ -25,7 +22,6 @@ export interface PersonaPayload {
   relationship?: string
   biological_type?: string
   gender?: string
-  appearance?: string
   user_call_name?: string
   user_gender?: string
   user_birthday?: string
@@ -34,7 +30,7 @@ export interface PersonaPayload {
 }
 
 const DEFAULT_PERSONALITY = '温柔体贴'
-export const MAX_APPEARANCE = 500
+export const MAX_IMAGE_DESCRIPTION = 500
 export const MAX_USER_TEXT = 2000
 const MAX_SPECIES_GENDER = 64
 const MAX_RELATIONSHIP = 500
@@ -74,7 +70,6 @@ export function assemblePersona(answers: OnboardingAnswers, previous?: Partial<P
   const optional: Array<[keyof PersonaPayload, string | undefined, number]> = [
     ['biological_type', answers.biological_type ?? prev.biological_type, MAX_SPECIES_GENDER],
     ['gender', answers.gender ?? prev.gender, MAX_SPECIES_GENDER],
-    ['appearance', answers.appearance ?? prev.appearance, MAX_APPEARANCE],
     ['relationship', answers.relationship ?? prev.relationship, MAX_RELATIONSHIP],
     ['user_call_name', answers.user_call_name ?? prev.user_call_name, MAX_USER_TEXT],
     ['user_gender', answers.user_gender ?? prev.user_gender, MAX_USER_TEXT],
