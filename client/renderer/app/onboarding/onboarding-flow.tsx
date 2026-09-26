@@ -72,6 +72,7 @@ import { useRegeneratePortrait } from './use-regenerate-portrait'
 type Phase =
   | 'q-character'
   | 'portrait-choose'
+  | 'portrait-generate'
   | 'hatching'
   | 'portrait-avatar'
   | 'fullbody-reference'
@@ -102,8 +103,6 @@ interface Question {
   audioTag: OnboardingAudioTag
   presets?: readonly string[]
   max?: number
-  // 允许用户在文本答案之外再附带一张参考图。
-  allowImage?: boolean
   // 与 `presets` 互斥：双层入口，而不是「点 chip 就把输入框填好」。
   kinds?: readonly AnswerKind[]
   date?: boolean
@@ -163,8 +162,7 @@ const QUESTIONS: readonly Question[] = [
     multiline: true,
     audioTag: 'onboarding.q3',
     max: MAX_APPEARANCE,
-    presets: APPEARANCE_PRESETS,
-    allowImage: true
+    presets: APPEARANCE_PRESETS
   },
   {
     key: 'relationship',
@@ -275,6 +273,7 @@ const PHASE_QUESTIONS: Record<Phase, readonly Question[]> = {
   'q-user': USER_QUESTIONS,
   voice: VOICE_QUESTIONS,
   'portrait-choose': [],
+  'portrait-generate': [],
   hatching: [],
   'portrait-avatar': [],
   'fullbody-reference': [],
@@ -766,7 +765,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     const ans = currentAnswers ?? answers
     setHint(null)
 
-    // 先固化 persona 再进入头像阶段——让用户自主选择「文字生成」或「参考图生成」。
+    // 先固化 persona 再进入头像阶段——让用户在「AI 生成」与「直接上传」两条入口里选。
     let personaOk = false
     await onboardingSubmissionsRef.current
 
@@ -1377,30 +1376,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     value={input}
                   />
                 )}
-                {question.allowImage && (
-                  <div className="mt-3 flex items-center gap-2 text-xs">
-                    <button
-                      className="rounded-full border border-dashed border-line-standard px-3 py-1 text-body transition hover:bg-fill-hover"
-                      onClick={() => void pickReferenceImage()}
-                      type="button"
-                    >
-                      {refImage ? '换一张参考图' : '＋ 上传参考图'}
-                    </button>
-                    {refImage && (
-                      <>
-                        <img alt="参考图" className="h-9 w-9 rounded-md object-cover" src={refImage.previewUrl} />
-                        <span className="text-[10px] text-faint">我会照着它画自己</span>
-                        <button
-                          className="ml-auto text-muted transition hover:text-strong"
-                          onClick={() => updateRefImage(null)}
-                          type="button"
-                        >
-                          移除
-                        </button>
-                      </>
-                    )}
-                  </div>
-                )}
                 <div className="mt-4 flex items-center justify-between text-xs">
                   <button
                     className="text-body transition hover:text-strong disabled:opacity-30"
@@ -1439,38 +1414,21 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                 先为伙伴确定头像，再准备全身形象。可以让 AI 绘制，也可以直接上传您准备好的图片。
               </p>
 
-              <div className="mt-3 rounded-xl border border-line-hairline bg-fill-trough p-3">
-                <p className="text-xs text-body">生成参考图（可选）</p>
-                <p className="mt-1 text-[11px] text-muted">用于生成时借鉴外形，不会直接成为头像。</p>
-                <div className="mt-2 flex items-center gap-2">
-                  {refImage && (
-                    <img alt="生成参考图" className="size-12 rounded-md object-contain" src={refImage.previewUrl} />
-                  )}
-                  <button className="text-xs text-strong" onClick={() => void pickReferenceImage()} type="button">
-                    {refImage ? '更换参考图' : '添加参考图'}
-                  </button>
-                  {refImage && (
-                    <button className="text-xs text-muted" onClick={() => updateRefImage(null)} type="button">
-                      移除
-                    </button>
-                  )}
-                </div>
-              </div>
               <div className="mt-4 flex flex-col gap-3">
                 <button
                   className="rounded-xl border border-line-hairline bg-surface-card p-4 text-left transition hover:border-line-strong hover:bg-fill-hover active:scale-[0.99] disabled:opacity-40"
                   disabled={sealingPortrait}
-                  onClick={() => void startAiHatching()}
+                  onClick={() => setPhase('portrait-generate')}
                   type="button"
                 >
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-1.5 text-[14px] font-medium text-strong">
-                      <Sparkles className="size-4 text-muted" /> 让 AI 为我生成头像
+                      <Sparkles className="size-4 text-muted" /> AI 生成
                     </span>
                     <span className="text-xs text-muted">AI 绘制 →</span>
                   </div>
                   <p className="mt-1.5 text-[11px] leading-relaxed text-body">
-                    基于您刚才填写的形象描述与参考图，生成角色头像，之后可预览、微调或重新生成。
+                    基于您刚才填写的形象描述生成角色头像，之后可预览、微调或重新生成。
                   </p>
                 </button>
 
@@ -1482,12 +1440,12 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                 >
                   <div className="flex items-center justify-between">
                     <span className="flex items-center gap-1.5 text-[14px] font-medium text-strong">
-                      <FolderOpen className="size-4 text-muted" /> 使用我自己的图片
+                      <FolderOpen className="size-4 text-muted" /> 直接上传
                     </span>
                     <span className="text-xs text-muted">选择图片 →</span>
                   </div>
                   <p className="mt-1.5 text-[11px] leading-relaxed text-body">
-                    直接上传一张您准备好的图片作为头像；也可以获取提示词，在外部绘制后上传。
+                    上传一张您准备好的图片作为头像；也可以获取提示词，在外部绘制后上传。
                   </p>
                 </button>
 
@@ -1524,6 +1482,56 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             </div>
           )}
 
+          {phase === 'portrait-generate' && (
+            <div>
+              <p className="text-[15px] font-medium text-strong">用 AI 生成头像</p>
+              <p className="mt-1 text-xs text-body">
+                将根据您刚才填写的形象描述绘制头像。可以附加一张参考图，让生成结果更符合预期；不附也可以直接生成。
+              </p>
+
+              <div className="mt-3 rounded-xl border border-line-hairline bg-fill-trough p-3">
+                <p className="text-xs text-body">参考图（可选）</p>
+                <p className="mt-1 text-[11px] text-muted">用于生成时借鉴外形，不会直接成为头像。</p>
+                <div className="mt-2 flex items-center gap-2">
+                  {refImage && (
+                    <img alt="生成参考图" className="size-12 rounded-md object-contain" src={refImage.previewUrl} />
+                  )}
+                  <button className="text-xs text-strong" onClick={() => void pickReferenceImage()} type="button">
+                    {refImage ? '更换参考图' : '添加参考图'}
+                  </button>
+                  {refImage && (
+                    <button className="text-xs text-muted" onClick={() => updateRefImage(null)} type="button">
+                      移除
+                    </button>
+                  )}
+                </div>
+                {hint && <p className="mt-2 text-xs text-strong">{hint}</p>}
+              </div>
+
+              <div className="mt-4 flex items-center justify-between text-xs">
+                <button
+                  className="text-body transition hover:text-strong disabled:opacity-40"
+                  disabled={sealingPortrait}
+                  onClick={() => {
+                    setHint(null)
+                    setPhase('portrait-choose')
+                  }}
+                  type="button"
+                >
+                  上一步
+                </button>
+                <button
+                  className="inline-flex h-8 items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40"
+                  disabled={sealingPortrait}
+                  onClick={() => void startAiHatching()}
+                  type="button"
+                >
+                  开始生成
+                </button>
+              </div>
+            </div>
+          )}
+
           <SelfSourceImageFlow
             adopt={adoptAvatarSeed}
             fetchPrompt={fetchAvatarPrompt}
@@ -1531,12 +1539,13 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             onClose={() => setAvatarSelfSourceOpen(false)}
             onUseAi={() => {
               setAvatarSelfSourceOpen(false)
-              void startAiHatching()
+              setHint(null)
+              setPhase('portrait-generate')
             }}
             open={avatarSelfSourceOpen}
             referenceImages={refImage ? [{ label: '形象参考图', url: refImage.previewUrl }] : undefined}
             referenceRequired={Boolean(refImage)}
-            title="使用自己的图片"
+            title="直接上传"
           />
 
           {phase === 'hatching' && <SpinnerWithText size="h-6 w-6" text={hint || '让我想想我该是什么样子…'} />}
@@ -1648,7 +1657,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           {phase === 'fullbody-reference' && activeAvatarId != null && (
             <FullbodyReferencePanel
               avatarId={activeAvatarId}
-              initialReference={refImage}
               key={activeAvatarId}
               onBack={onBack}
               onContinue={confirmFullbody}

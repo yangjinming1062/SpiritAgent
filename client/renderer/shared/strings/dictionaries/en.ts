@@ -452,10 +452,22 @@ export const dict: Dictionary = {
           'Adopting confirms this full-body image and starts character analysis, followed by the default video and scene.',
         empty: 'No full-body image yet. Generate one from the current portrait and persona.',
         loading: 'Preparing the full-body image…',
+        sourceChoiceTitle: 'Choose how to get the full-body image',
+        sourceChoiceHint:
+          'Set the full-body look first — it feeds the default video, outfits and scenes. Draw with AI, or upload an image you already prepared.',
+        sourceAi: 'AI generate',
+        sourceAiArrow: 'AI draw →',
+        sourceAiHint:
+          'Generate from the current portrait and persona. Optionally attach a reference so the result matches your intent; preview, refine or regenerate afterwards.',
+        sourceSelf: 'Direct upload',
+        sourceSelfArrow: 'Choose image →',
+        sourceSelfHint:
+          'Upload an image you prepared as the full-body look, or fetch a prompt and draw it externally first.',
+        backToSourceChoice: 'Choose another way',
         referenceLabel: 'User reference image',
-        refLabel: 'Reference image (optional, used by Regenerate only)',
+        refLabel: 'Reference image (optional)',
         refHint:
-          'Adds physique, clothing and pose cues. The confirmed portrait determines the face and species; character-card text is supplementary.',
+          'Optionally attach a reference so the result matches your intent. It adds physique, clothing and pose cues and does not become this step’s result. The confirmed portrait determines the face and species.',
         chooseReference: 'Choose reference image',
         replaceReference: 'Replace reference image',
         removeReference: 'Remove reference image',

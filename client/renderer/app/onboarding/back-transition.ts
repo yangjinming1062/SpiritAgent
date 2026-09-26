@@ -7,6 +7,7 @@ type BackPhase =
   | 'voice'
   | 'fullbody-reference'
   | 'portrait-choose'
+  | 'portrait-generate'
   | 'portrait-avatar'
   | 'hatching'
   | 'finishing'
@@ -50,6 +51,10 @@ export function computeBackTransition(state: BackState, characterQuestionsCount:
   }
 
   if (state.phase === 'portrait-avatar') {
+    return { phase: 'portrait-choose' }
+  }
+
+  if (state.phase === 'portrait-generate') {
     return { phase: 'portrait-choose' }
   }
 
