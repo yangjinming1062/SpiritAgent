@@ -73,6 +73,8 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
       backgroundColor: '#00000000',
       frame: false,
       hasShadow: false,
+      // Windows 任务栏/Alt-Tab 取窗口 icon；不传会退回 electron.exe 自带图标。
+      icon,
       height: initialHeight,
       minHeight: defaults.minHeight,
       minWidth: defaults.minWidth,

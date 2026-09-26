@@ -93,6 +93,7 @@ export function createSpriteWindowFactory(deps: SpriteWindowDeps): {
       backgroundColor: '#00000000',
       frame: false,
       hasShadow: false,
+      icon,
       height: 320,
       movable: false,
       resizable: false,

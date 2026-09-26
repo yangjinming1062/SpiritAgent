@@ -209,8 +209,11 @@ const { rendererUrlFor } = createRendererPaths({
   rememberLog: (chunk: string) => rememberLog(chunk)
 })
 
+// Windows 任务栏/窗口图标优先 .ico（多尺寸位图）；macOS dock 用 png 即可。
 const APP_ICON_PATHS = [
+  ...(process.platform === 'win32' ? [path.join(APP_ROOT, 'assets', 'icon.ico')] : []),
   path.join(APP_ROOT, 'assets', 'icon.png'),
+  path.join(APP_ROOT, 'assets', 'icon.ico'),
   path.join(process.resourcesPath, 'icon.ico'),
   path.join(unpackedPathFor(APP_ROOT), 'icon.ico')
 ]
