@@ -13,7 +13,7 @@ from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
-from services.domains.conversation import message_text
+from services.domains.conversation import message_contains_text, message_text
 
 from .memory_bootstrap import resolve_user_timezone
 from .memory_policy import MemoryDecision
@@ -159,7 +159,7 @@ async def load_review_context(
     if new_only:
         stmt = stmt.where(Message.id > Conversation.memory_reviewed_message_id)
     if query:
-        stmt = stmt.where(Message.content.icontains(query, autoescape=True))
+        stmt = stmt.where(message_contains_text(query))
     # 先取最新的 MESSAGE_LIMIT 条（即时检查优先保留最新消息），呈现时按 id 升序重排
     rows = list((await db.scalars(stmt.order_by(Message.id.desc()).limit(MESSAGE_LIMIT))).all())
     forgotten = list((await db.scalars(select(Memory).where(scope_filter(scope), Memory.status == "forgotten"))).all())

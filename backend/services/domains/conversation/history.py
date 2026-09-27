@@ -60,7 +60,7 @@ async def build_session_messages(
     tool_name_by_call_id: dict[str, str] = {}
     result: list[dict] = []
     for msg in messages:
-        item: dict = {"role": msg.role, "content": msg.content}
+        item: dict = {"role": msg.role, "content": msg.content, "content_type": msg.content_type}
         if msg.subtype:
             item["subtype"] = msg.subtype
         # IM 入站已接收未消费（queued）的消息在水合中如实呈现，刷新后排队状态可见。
@@ -71,7 +71,9 @@ async def build_session_messages(
             if isinstance(media, list) and media:
                 item["media"] = client_media_entries([e for e in media if isinstance(e, dict)])
         if msg.reply_json:
-            item["bubbles"] = client_reply_bubbles(CompanionReply.model_validate_json(msg.reply_json))
+            reply = CompanionReply.model_validate_json(msg.reply_json)
+            reply.validate_content(msg.content or "")
+            item["bubbles"] = client_reply_bubbles(reply)
         if msg.reasoning_content:
             item["reasoning"] = msg.reasoning_content
         if include_id:

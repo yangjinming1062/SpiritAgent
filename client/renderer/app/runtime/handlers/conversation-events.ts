@@ -166,7 +166,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       triggerFootGlowPulse('completed', 1200)
 
       // 每日互动统计——chat_turn 仅在确有文本可统计时计数
-      if (!ctx.isProxy && text.trim()) {
+      if (!ctx.isProxy && (payload?.bubbles?.some(bubble => bubble.text.trim()) || text.trim())) {
         reportInteractionStat('chat_turn')
       }
 

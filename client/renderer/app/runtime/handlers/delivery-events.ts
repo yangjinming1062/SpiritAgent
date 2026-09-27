@@ -31,7 +31,7 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
         media?: ChatMediaItem[]
       }>(event.payload)
 
-      const text = payload?.text ?? ''
+      const text = payload?.bubbles ? (payload.bubbles.at(-1)?.text ?? '') : (payload?.text ?? '')
 
       const displayText = chatDisplayText(text)
 

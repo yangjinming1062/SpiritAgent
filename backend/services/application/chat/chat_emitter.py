@@ -20,6 +20,8 @@ class HeadlessEmitter:
     def final_text(self) -> str:
         for message in reversed(self.messages):
             if message.get("type") == "message.complete":
+                if "reply" in message:
+                    return message["content"]
                 return str(message.get("text") or "")
         return ""
 
@@ -29,6 +31,14 @@ class HeadlessEmitter:
             if message.get("type") == "message.complete":
                 data = message.get("reply")
                 return CompanionReply.model_validate(data) if data else None
+        return None
+
+    @property
+    def final_reply_content(self) -> str | None:
+        for message in reversed(self.messages):
+            if message.get("type") == "message.complete":
+                content = message.get("content")
+                return content if isinstance(content, str) else None
         return None
 
     @property

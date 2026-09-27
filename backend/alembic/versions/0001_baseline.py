@@ -812,6 +812,18 @@ def upgrade() -> None:
         sa.Column("reply_json", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.CheckConstraint(
+            "content_type IN ('text', 'multimodal_v1', 'companion_reply')",
+            name="ck_messages_content_type",
+        ),
+        sa.CheckConstraint(
+            "(content_type = 'companion_reply') = (reply_json IS NOT NULL)",
+            name="ck_messages_reply_delivery",
+        ),
+        sa.CheckConstraint(
+            "content_type != 'companion_reply' OR (role = 'assistant' AND content IS NOT NULL AND tool_calls IS NULL)",
+            name="ck_messages_reply_content",
+        ),
         sa.ForeignKeyConstraint(["conversation_id"], ["conversations.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("dedup_key", name="uq_messages_dedup_key"),

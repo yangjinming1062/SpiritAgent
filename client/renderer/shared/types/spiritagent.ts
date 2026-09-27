@@ -59,8 +59,7 @@ export interface ReplyAudio {
 }
 export type CompanionBubble = { type: 'text'; text: string } | { type: 'voice'; text: string; audio: ReplyAudio | null }
 
-export interface SessionMessage {
-  bubbles?: CompanionBubble[]
+interface SessionMessageFields {
   content: unknown
   context?: unknown
   /** 后端 DB row id（build_session_messages(include_id=True) 下发）；用于 fork / undo 按钮回传给后端的 source_message_id。 */
@@ -77,6 +76,12 @@ export interface SessionMessage {
   tool_calls?: unknown
   tool_name?: string
 }
+
+export type SessionMessage = SessionMessageFields &
+  (
+    | { content_type: 'companion_reply'; bubbles: CompanionBubble[]; role: 'assistant' }
+    | { content_type: 'multimodal_v1' | 'text'; bubbles?: never }
+  )
 
 /** `session.undo_to_message` RPC 的 anchor 子类型：撤回后服务端把锚点行的载荷推回客户端落输入框。 */
 export interface UndoAnchor {

@@ -11,11 +11,10 @@ from components import (
     format_day_marker,
     format_local_date_str,
     format_time_anchor,
-    safe_json_loads,
 )
 from modules.conversation import Message
 
-from services.domains.conversation import UI_ONLY_SUBTYPES
+from services.domains.conversation import UI_ONLY_SUBTYPES, message_text
 
 
 def get_local_day_utc_bounds(now_utc: datetime, tz_str: str) -> tuple[datetime, datetime, datetime, str]:
@@ -26,25 +25,6 @@ def get_local_day_utc_bounds(now_utc: datetime, tz_str: str) -> tuple[datetime, 
     utc_start = local_start.astimezone(ZoneInfo("UTC"))
     utc_end = local_end.astimezone(ZoneInfo("UTC"))
     return utc_start, utc_end, user_now, user_now.strftime("%Y-%m-%d")
-
-
-def _message_text(msg: Message) -> str:
-    if msg.role == "assistant":
-        return (msg.content or "").strip()
-    if msg.role != "user":
-        return ""
-    text_content = (msg.content or "").strip()
-    if getattr(msg, "content_type", "text") == "multimodal_v1":
-        parsed = safe_json_loads(msg.content or "")
-        if isinstance(parsed, list):
-            text_content = "\n".join(
-                t
-                for p in parsed
-                if isinstance(p, dict)
-                and p.get("type") in {"input_text", "text"}
-                and (t := (p.get("text") or "").strip())
-            )
-    return text_content
 
 
 def prefilter_messages_for_nightly(
@@ -62,7 +42,7 @@ def prefilter_messages_for_nightly(
             continue
         if getattr(msg, "subtype", None) in UI_ONLY_SUBTYPES:
             continue
-        text_content = _message_text(msg)
+        text_content = message_text(msg)
         if not text_content:
             continue
         cur_date_key = format_local_date_str(msg.created_at, user_tz, lang) if msg.created_at is not None else None

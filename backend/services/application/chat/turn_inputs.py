@@ -19,7 +19,7 @@ from components import (
 )
 from modules.auth import ChatRequestClientContext
 from modules.companion import Persona
-from modules.conversation import CompanionReply, Conversation, Message
+from modules.conversation import Conversation, Message
 from modules.settings import UserSetting
 from modules.system import AgentPromptConfig, ChatRequest, PromptPreset
 from openai import AsyncOpenAI
@@ -205,10 +205,8 @@ def db_message_to_response_items(msg: Message) -> list[dict[str, Any]]:
     if msg.subtype in UI_ONLY_SUBTYPES:
         return []
 
-    content_val: str | list = (
-        CompanionReply.model_validate_json(msg.reply_json).context_json() if msg.reply_json else msg.content or ""
-    )
-    is_multimodal = getattr(msg, "content_type", "text") == "multimodal_v1"
+    content_val: str | list = msg.content or ""
+    is_multimodal = msg.content_type == "multimodal_v1"
     if is_multimodal:
         parsed = safe_json_loads(content_val if isinstance(content_val, str) else "")
         content_val = parsed if isinstance(parsed, list) else content_val
@@ -234,7 +232,7 @@ def db_message_to_response_items(msg: Message) -> list[dict[str, Any]]:
 
 def _user_row_has_video_part(msg: Message) -> bool:
     """多模态用户行是否含 ``input_video`` part；链选择据此优先走视频能力供应商。"""
-    if msg.role != "user" or getattr(msg, "content_type", "text") != "multimodal_v1":
+    if msg.role != "user" or msg.content_type != "multimodal_v1":
         return False
     parsed = safe_json_loads(msg.content if isinstance(msg.content, str) else "", default=[])
     return isinstance(parsed, list) and any(isinstance(p, dict) and p.get("type") == "input_video" for p in parsed)
@@ -348,7 +346,7 @@ async def build_turn_inputs(
     # 视频判定优先于图片（视频链通常也具备视觉，反之不然）；链为空时显式报错而非回落文本链——
     # 回落只会换来供应商网关拒收 input_video 的不可读 400。
     turn_has_video = any(_user_row_has_video_part(m) for m in history)
-    turn_has_images = any(getattr(m, "content_type", "text") == "multimodal_v1" for m in history if m.role == "user")
+    turn_has_images = any(m.content_type == "multimodal_v1" for m in history if m.role == "user")
     llm_chain = None
     provider = None
     if turn_has_video:

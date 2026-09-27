@@ -1,24 +1,49 @@
 import json
 
 from components import safe_json_loads
-from modules.conversation import Message
+from modules.conversation import CompanionReplyInput, Message
+from sqlalchemy import ColumnElement, case, cast, column, func, select
+from sqlalchemy.dialects.postgresql import JSONB
+
+
+def message_contains_text(query: str) -> ColumnElement[bool]:
+    """逐泡匹配台词，解码 JSON 转义并排除演绎字段。"""
+    parts = (
+        func.jsonb_array_elements(cast(Message.content, JSONB)).table_valued(column("value", JSONB)).render_derived()
+    )
+    bubble_match = (
+        select(1)
+        .select_from(parts)
+        .where(parts.c.value["text"].astext.icontains(query, autoescape=True))
+        .correlate(Message)
+        .exists()
+    )
+    return case(
+        (Message.content_type == "companion_reply", bubble_match),
+        else_=Message.content.icontains(query, autoescape=True),
+    )
 
 
 def message_text(m: Message) -> str:
-    """从 Message 行抽取纯文本；``content_type == "multimodal_v1"`` 行只返回 text part，避免 JSON 数组泄到 prompt 里。"""
+    """提取可读内容；结构化回复保留逐泡数组，只移除演绎，不合并气泡。"""
     raw = (m.content or "").strip()
+    content_type = m.content_type
 
-    if not raw or getattr(m, "content_type", "text") != "multimodal_v1":
+    if not raw:
+        return ""
+
+    if content_type == "multimodal_v1":
+        parsed = safe_json_loads(raw, default=None)
+        if isinstance(parsed, list):
+            return "\n".join(
+                p.get("text", "") for p in parsed if isinstance(p, dict) and p.get("type") in {"input_text", "text"}
+            ).strip()
         return raw
 
-    parsed = safe_json_loads(raw, default=None)
-
-    if not isinstance(parsed, list):
-        return raw
-
-    return "\n".join(
-        p.get("text", "") for p in parsed if isinstance(p, dict) and p.get("type") in {"input_text", "text"}
-    ).strip()
+    if content_type == "companion_reply":
+        source = CompanionReplyInput.model_validate_json(raw)
+        return json.dumps([bubble.model_dump(include={"type", "text"}) for bubble in source.root], ensure_ascii=False)
+    return raw
 
 
 def format_messages_compact(msgs: list[Message], *, char_cap: int | None = None) -> str:
@@ -28,11 +53,27 @@ def format_messages_compact(msgs: list[Message], *, char_cap: int | None = None)
         text = message_text(msg)
         if not text and not msg.tool_calls:
             continue
+        content: str | list[dict[str, str]] = text[:char_cap]
+        truncated = char_cap is not None and len(text) > char_cap
+        if msg.content_type == "companion_reply":
+            source = CompanionReplyInput.model_validate_json(msg.content or "")
+            content = []
+            remaining = char_cap
+            truncated = False
+            for bubble in source.root:
+                if remaining is not None and remaining <= 0:
+                    truncated = True
+                    break
+                dialogue = bubble.text[:remaining]
+                content.append({"type": bubble.type, "text": dialogue})
+                truncated |= dialogue != bubble.text
+                if remaining is not None:
+                    remaining -= len(dialogue)
         record = {
             "role": msg.role,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,
-            "content": text[:char_cap],
-            "truncated": char_cap is not None and len(text) > char_cap,
+            "content": content,
+            "truncated": truncated,
         }
         if msg.subtype:
             record["subtype"] = msg.subtype

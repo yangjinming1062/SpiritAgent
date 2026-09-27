@@ -1,9 +1,8 @@
-import json
 from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, RootModel
 
-from modules.media import SpeechCue, SpeechDirection, SpeechPause, SpeechStyle
+from modules.media import SPEECH_STYLE_ADAPTER, SpeechCue, SpeechDirection, SpeechPause, SpeechStyle
 
 
 class SpeechPerformance(BaseModel):
@@ -72,14 +71,21 @@ class CompanionReply(BaseModel):
         max_length=16,
     )
 
-    def dialogue(self) -> str:
-        return "\n\n".join(bubble.text for bubble in self.bubbles)
-
-    def context_json(self) -> str:
-        bubbles = []
-        for bubble in self.bubbles:
-            item = {"type": bubble.type, "text": bubble.text}
-            if isinstance(bubble, VoiceBubble):
-                item["speech"] = bubble.speech.model_dump(exclude={"provider", "model"}, exclude_none=True)
-            bubbles.append(item)
-        return json.dumps(bubbles, ensure_ascii=False)
+    def validate_content(self, content: str) -> None:
+        """原文与交付态必须对应同一组气泡和演绎；供应商绑定与音频仅存在于交付态。"""
+        source = CompanionReplyInput.model_validate_json(content)
+        if len(source.root) != len(self.bubbles):
+            raise ValueError("Reply content and delivery bubbles differ")
+        for raw, delivered in zip(source.root, self.bubbles, strict=True):
+            if raw.type != delivered.type or raw.text != delivered.text:
+                raise ValueError("Reply content and delivery dialogue differ")
+            if isinstance(raw, VoiceBubbleInput) and isinstance(delivered, VoiceBubble):
+                style = SPEECH_STYLE_ADAPTER.validate_python(
+                    {
+                        **raw.speech.model_dump(exclude_unset=True),
+                        "provider": delivered.speech.provider,
+                        "model": delivered.speech.model,
+                    },
+                )
+                if style != delivered.speech:
+                    raise ValueError("Reply content and delivery performance differ")

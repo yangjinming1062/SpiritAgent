@@ -1,5 +1,5 @@
 from components import SESSION_LOCAL
-from modules.conversation import CompanionReply, Message, TextBubble
+from modules.conversation import CompanionReply, CompanionReplyInput, Message, TextBubble
 from modules.ws import emit_ws_event
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,13 +11,14 @@ from services.domains.conversation import (
 from .proactive_runtime import note_outreach_throttle
 
 
-async def append_companion_message(db: AsyncSession, user_id: int, reply: CompanionReply) -> None:
-    text = reply.dialogue()
+async def append_companion_message(db: AsyncSession, user_id: int, reply: CompanionReply, content: str) -> None:
+    reply.validate_content(content)
     main_conv = await get_or_create_special_conversation(db, user_id, "companion", commit=False)
     message = Message(
         conversation_id=main_conv.id,
         role="assistant",
-        content=text,
+        content=content,
+        content_type="companion_reply",
         reply_json=reply.model_dump_json(),
         subtype="status_proactive",
     )
@@ -28,7 +29,6 @@ async def append_companion_message(db: AsyncSession, user_id: int, reply: Compan
         user_id=user_id,
         event_type="companion.message",
         payload={
-            "text": text,
             "bubbles": client_reply_bubbles(reply),
             "session_id": str(main_conv.id),
             "message_id": message.id,
@@ -45,7 +45,9 @@ async def emit_companion_message(user_id: int, text: str) -> None:
     clean_text = text.strip()
     if not clean_text:
         return
+    bubble = TextBubble(type="text", text=clean_text)
+    content = CompanionReplyInput(root=[bubble]).model_dump_json()
     async with SESSION_LOCAL() as db:
-        await append_companion_message(db, user_id, CompanionReply(bubbles=[TextBubble(type="text", text=clean_text)]))
+        await append_companion_message(db, user_id, CompanionReply(bubbles=[bubble]), content)
         await db.commit()
     note_outreach_throttle(user_id)

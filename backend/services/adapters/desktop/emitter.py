@@ -51,7 +51,7 @@ class JsonRpcEmitter:
         if raw_type == "message.complete":
             usage = data.get("usage")
             return {
-                "text": data.get("text", ""),
+                **({"text": data["text"]} if "text" in data else {}),
                 **({"bubbles": data["bubbles"]} if isinstance(data.get("bubbles"), list) else {}),
                 **({"reasoning": data["reasoning"]} if data.get("reasoning") else {}),
                 **({"media": data["media"]} if isinstance(data.get("media"), list) else {}),

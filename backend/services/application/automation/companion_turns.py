@@ -106,6 +106,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                 user_id,
                 trigger,
                 reply=reply,
+                reply_content=emitter.final_reply_content,
                 followup=plan.followup,
                 contact_revision=revision,
                 user_message_id=message_id,

@@ -337,11 +337,19 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
       continue
     }
 
-    const textContent = m.role === 'assistant' ? chatDisplayText(extractText(m)) : extractText(m)
+    const companionBubbles = m.role === 'assistant' && m.content_type === 'companion_reply' ? m.bubbles : undefined
+
+    const textContent =
+      m.content_type === 'companion_reply'
+        ? ''
+        : m.role === 'assistant'
+          ? chatDisplayText(extractText(m))
+          : extractText(m)
+
     const reasoningContent = typeof m.reasoning === 'string' ? m.reasoning : ''
 
     // 无正文无媒体的助手行（工具中间帧）不单独占气泡；其推理过程并到下一可见助手行。
-    if (m.role === 'assistant' && !textContent.trim() && !m.media?.length) {
+    if (m.role === 'assistant' && !companionBubbles?.length && !textContent.trim() && !m.media?.length) {
       if (reasoningContent.trim()) {
         pendingReasoning.push(reasoningContent)
       }
@@ -353,13 +361,14 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
       flushPendingReasoning(m.timestamp)
     }
 
-    totalChars += textContent.length
+    totalChars +=
+      m.content_type === 'companion_reply' && typeof m.content === 'string' ? m.content.length : textContent.length
 
-    // 助手按结构化气泡恢复；陪伴用户行按空行拆分，与实时呈现对齐。
+    // 结构化助手回复逐泡呈现；陪伴用户行按空行拆分，与实时呈现对齐。
     const canSplit = !m.subtype && m.role === 'user' && splitUserBubblesEnabled()
 
-    const segments = m.bubbles
-      ? m.bubbles.map(bubble => bubble.text)
+    const segments = companionBubbles
+      ? companionBubbles.map(bubble => bubble.text)
       : canSplit
         ? textContent
             .split(/\r?\n(?:[ \t]*\r?\n)+/)
@@ -387,9 +396,9 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
       bodies[id] = {
         text: segment,
         editableText: m.role === 'user' ? textContent : undefined,
-        replyType: m.bubbles?.[index]?.type,
-        replyIndex: m.bubbles ? index : undefined,
-        replyAudio: m.bubbles?.[index]?.type === 'voice' ? m.bubbles[index].audio : undefined,
+        replyType: companionBubbles?.[index]?.type,
+        replyIndex: companionBubbles ? index : undefined,
+        replyAudio: companionBubbles?.[index]?.type === 'voice' ? companionBubbles[index].audio : undefined,
         reasoning: m.role === 'assistant' && index === 0 ? takeReasoning(reasoningContent || undefined) : undefined,
         toolName: m.tool_name ?? null,
         tools: m.tool_name ? [m.tool_name] : undefined,
@@ -426,11 +435,12 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
 }
 
 function extractText(m: SessionMessage): string {
-  // ``SessionMessage.content`` 类型未知——部分用户消息以 JSON parts 数组
-  // 到达（含 image_url 等多模态部分）；只渲染用户可见文本，避免漏出
-  // ``[{"type": "input_image", ...}]`` 之类的非文本部分。
   if (typeof m.content !== 'string') {
     return ''
+  }
+
+  if (m.content_type !== 'multimodal_v1') {
+    return m.content
   }
 
   let parsed: unknown
@@ -446,9 +456,11 @@ function extractText(m: SessionMessage): string {
   }
 
   return parsed
-    .filter((p): p is { type?: string; text?: string } => typeof p === 'object' && p !== null)
-    .filter(p => p.type === 'input_text' && typeof p.text === 'string')
-    .map(p => p.text as string)
+    .filter(
+      (p): p is { type: 'input_text'; text: string } =>
+        typeof p === 'object' && p !== null && p.type === 'input_text' && typeof p.text === 'string'
+    )
+    .map(p => p.text)
     .join('\n')
     .trim()
 }
@@ -457,7 +469,7 @@ function extractText(m: SessionMessage): string {
 // 供气泡渲染媒体卡；纯文本行与无附件行返回 undefined。被清理的视频行只剩
 // [视频已清理] 文本 part，天然落不进附件列表。
 function extractUserAttachments(m: SessionMessage): ChatAttachment[] | undefined {
-  if (typeof m.content !== 'string') {
+  if (m.content_type !== 'multimodal_v1' || typeof m.content !== 'string') {
     return undefined
   }
 

@@ -45,7 +45,7 @@ def _clean_title(raw: str) -> str:
 async def auto_generate_title(
     conversation_id: int,
     user_message: str,
-    assistant_response: str,
+    assistant_response: str | list[str],
     llm_config: UserLlmConfig,
     language: str = DEFAULT_LANGUAGE,
     temperature: float | None = None,
@@ -53,6 +53,17 @@ async def auto_generate_title(
 ) -> None:
     """用 LLM 生成会话标题并持久化（仅在仍是默认标题时覆盖）。"""
     try:
+        assistant_snippet: str | list[str]
+        if isinstance(assistant_response, str):
+            assistant_snippet = assistant_response[:TITLE_SNIPPET_MAX_CHARS]
+        else:
+            assistant_snippet = []
+            remaining = TITLE_SNIPPET_MAX_CHARS
+            for text in assistant_response:
+                if remaining <= 0:
+                    break
+                assistant_snippet.append(text[:remaining])
+                remaining -= len(text)
         client = client_for_config(llm_config)
         request = build_responses_kwargs(
             model=llm_config.model_name,
@@ -66,7 +77,7 @@ async def auto_generate_title(
                             "text": json.dumps(
                                 {
                                     "user": (user_message or "")[:TITLE_SNIPPET_MAX_CHARS],
-                                    "assistant": (assistant_response or "")[:TITLE_SNIPPET_MAX_CHARS],
+                                    "assistant": assistant_snippet,
                                 },
                                 ensure_ascii=False,
                             ),

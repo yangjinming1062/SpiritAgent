@@ -192,7 +192,8 @@ async def _persist_assistant_no_tool_turn(
 ) -> None:
     """保存终端答复与媒体，交付气泡，并调度可选的回合后任务。"""
     if reply is not None:
-        turn_content = reply.dialogue()
+        reply.validate_content(turn_content)
+    assistant_response = [bubble.text for bubble in reply.bubbles] if reply is not None else turn_content
     assistant_message_id: int | None = None
     if persist and (turn_content or media or reasoning):
         async with session_scope() as db:
@@ -200,6 +201,7 @@ async def _persist_assistant_no_tool_turn(
                 conversation_id=conv.id,
                 role="assistant",
                 content=turn_content or None,
+                content_type="companion_reply" if reply is not None else "text",
                 media_json=json.dumps(media, ensure_ascii=False) if media else None,
                 reasoning_content=reasoning or None,
                 reply_json=reply.model_dump_json() if reply else None,
@@ -221,7 +223,7 @@ async def _persist_assistant_no_tool_turn(
             auto_generate_title(
                 conv.id,
                 first_user_msg_content,
-                turn_content,
+                assistant_response,
                 llm_config,
                 language=effective_settings.get("language", DEFAULT_LANGUAGE),
                 temperature=title_temp,
@@ -259,9 +261,9 @@ async def _persist_assistant_no_tool_turn(
     await emitter.send_json(
         {
             "type": "message.complete",
-            "text": turn_content,
+            **({"text": turn_content} if reply is None else {}),
             **({"bubbles": client_reply_bubbles(reply)} if reply else {}),
-            **({"reply": reply.model_dump(mode="json")} if reply and not persist else {}),
+            **({"reply": reply.model_dump(mode="json"), "content": turn_content} if reply and not persist else {}),
             **({"reasoning": displayed_reasoning} if displayed_reasoning else {}),
             **({"media": client_media_entries(media)} if media else {}),
             **({"usage": final_usage_payload} if final_usage_payload else {}),
@@ -275,12 +277,13 @@ async def _persist_assistant_no_tool_turn(
         and turn_content
         and conv.kind == SPECIAL_KIND
         and conv.system_preset_id == DEFAULT_PRESET_ID
+        and reply is not None
     ):
         mood_task = asyncio.create_task(
             update_mood_from_companion_turn(
                 user_id,
                 req.message.content or "",
-                turn_content,
+                [bubble.text for bubble in reply.bubbles],
                 llm_config,
             ),
         )

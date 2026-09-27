@@ -362,6 +362,7 @@ async def finish_companion_intent(
     request: CompanionTurnRequest,
     *,
     reply: CompanionReply | None = None,
+    reply_content: str | None = None,
     followup: CompanionWaitRequest | None = None,
     contact_revision: int,
     user_message_id: int,
@@ -413,7 +414,9 @@ async def finish_companion_intent(
                 )
         else:
             if reply:
-                await append_companion_message(db, user_id, reply)
+                if reply_content is None:
+                    raise ValueError("Companion reply requires original content")
+                await append_companion_message(db, user_id, reply, reply_content)
                 delivered = True
             if followup is None:
                 row.status = "completed"

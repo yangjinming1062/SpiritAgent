@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from common import ModelBase, TimestampMixin
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Integer, String, Text, func, select, text
@@ -64,6 +64,20 @@ class Conversation(ModelBase, TimestampMixin):
 
 class Message(ModelBase):
     __tablename__ = "messages"
+    __table_args__ = (
+        CheckConstraint(
+            "content_type IN ('text', 'multimodal_v1', 'companion_reply')",
+            name="ck_messages_content_type",
+        ),
+        CheckConstraint(
+            "(content_type = 'companion_reply') = (reply_json IS NOT NULL)",
+            name="ck_messages_reply_delivery",
+        ),
+        CheckConstraint(
+            "content_type != 'companion_reply' OR (role = 'assistant' AND content IS NOT NULL AND tool_calls IS NULL)",
+            name="ck_messages_reply_content",
+        ),
+    )
 
     conversation_id: Mapped[int] = mapped_column(ForeignKey("conversations.id", ondelete="CASCADE"), index=True)
     role: Mapped[str] = mapped_column(String(64))
@@ -74,13 +88,16 @@ class Message(ModelBase):
     prompt_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     completion_tokens: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     turn_duration_ms: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    # 标记 `content` 是纯文本（"text"）还是 JSON 编码的多模态 parts 数组（"multimodal_v1"）。
-    content_type: Mapped[str] = mapped_column(String(32), default="text", server_default=text("'text'"))
+    content_type: Mapped[Literal["text", "multimodal_v1", "companion_reply"]] = mapped_column(
+        String(32),
+        default="text",
+        server_default=text("'text'"),
+    )
     # 助手消息附带的生成媒体（JSON 数组，元素为 {"type": "image"|"video"|"audio", "url": ..., "audio_url"?: ...}）；与 content 正交，读路径只送渲染端，不进 LLM 上下文。
     media_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 助手推理过程原文；只给工作台展示与历史水合，装配 Responses 输入时不回灌。
     reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 陪伴结构化回复的真源；content 是仅供检索、记忆与汇总使用的台词投影。
+    # content 原样保存陪伴回复的气泡 JSON 数组（模型输出）；reply_json 另存交付态（语音绑定与音频）。
     reply_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 在 subtype="daily_summary" 的 system 消息上设置，让每日 checkpoint 不用解析 content 文本就能读到截止日期；content 仍是人类可读版本，本列才是结构化源。
     summary_date: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)

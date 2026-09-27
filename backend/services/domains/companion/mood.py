@@ -36,7 +36,7 @@ async def emit_companion_mood(user_id: int, mood: str) -> None:
 async def update_mood_from_companion_turn(
     user_id: int,
     user_message: str,
-    assistant_message: str,
+    assistant_bubbles: list[str],
     llm_config: UserLlmConfig,
 ) -> str | None:
     """在陪伴聊天完成后单独推理心情；结果不进入消息正文。"""
@@ -47,6 +47,14 @@ async def update_mood_from_companion_turn(
     async with SESSION_LOCAL() as db:
         recent_context = await load_recent_context_window(db, user_id) or ""
 
+    remaining = 2000
+    recent_bubbles: list[str] = []
+    for text in reversed(assistant_bubbles):
+        if remaining <= 0:
+            break
+        recent_bubbles.append(text[-remaining:])
+        remaining -= len(text)
+    recent_bubbles.reverse()
     parsed, fail_reason = await run_prompt_json(
         user_id,
         llm_config,
@@ -55,9 +63,9 @@ async def update_mood_from_companion_turn(
             "output_language": ctx.language,
             "persona": ctx.persona_extras,
             "user_message": user_message[-2000:],
-            "assistant_message": assistant_message[-2000:],
+            "assistant_bubbles": recent_bubbles,
             "user_message_truncated": len(user_message) > 2000,
-            "assistant_message_truncated": len(assistant_message) > 2000,
+            "assistant_bubbles_truncated": sum(len(text) for text in assistant_bubbles) > 2000,
             **({"long_term_memories": ctx.memories_block} if ctx.memories_block else {}),
             **({"current_mood": ctx.current_mood} if ctx.current_mood else {}),
             **({"recent_context": recent_context} if recent_context else {}),

@@ -104,6 +104,7 @@ async def synthesize_reply_audio(
             original = row.reply_json
             session_id = str(row.conversation_id)
             reply = CompanionReply.model_validate_json(original)
+            reply.validate_content(row.content or "")
         if bubble_index is not None and (
             not 0 <= bubble_index < len(reply.bubbles) or reply.bubbles[bubble_index].type != "voice"
         ):

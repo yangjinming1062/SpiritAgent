@@ -2,7 +2,7 @@ from .bootstrap import ensure_system_conversations_for_user
 from .context_window import load_context_messages, load_recent_context_window
 from .edit import EditNotAllowedError, replace_last_user_message
 from .fork import ForkNotAllowedError, SourceNotFoundError, fork_conversation_from_message
-from .formatting import format_messages_compact, message_text
+from .formatting import format_messages_compact, message_contains_text, message_text
 from .history import build_session_messages, client_media_entries
 from .main_conversation import (
     IM_KIND,
@@ -22,6 +22,7 @@ __all__ = [
     "EditNotAllowedError",
     "replace_last_user_message",
     "message_text",
+    "message_contains_text",
     "conversation_memory_scope",
     "resolve_memory_scope",
     "validate_memory_scope",

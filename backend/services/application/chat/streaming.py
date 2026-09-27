@@ -339,7 +339,7 @@ async def _generate_llm_response(
 
     turn_duration_ms = int((time.monotonic() - turn_start_time) * 1000)
 
-    turn_content = reply.dialogue() if reply else "\n\n".join(turn_parts)
+    turn_content = "".join(pending_text) if reply is not None else "\n\n".join(turn_parts)
     turn_reasoning = "".join(reasoning_parts).strip() or None
 
     return _LLMTurnResult(

@@ -28,6 +28,7 @@ from services.adapters.http import limiter
 from services.domains.conversation import (
     SPECIAL_KIND,
     client_reply_bubbles,
+    message_contains_text,
     resolve_preset_meta,
     synthesize_reply_audio,
 )
@@ -247,13 +248,13 @@ async def search_sessions(
             )
         ).all()
     ]
-    # 内容扫描是最贵路径（messages.content 全表 LIKE），封顶 200 个独立会话 id。
+    # 内容扫描封顶 200 个独立会话 id。
     content_match_ids = [
         row[0]
         for row in (
             await db.execute(
                 select(Message.conversation_id)
-                .where(Message.content.ilike(pattern, escape=SQL_LIKE_ESCAPE_CHAR))
+                .where(message_contains_text(q))
                 .join(Conversation, Conversation.id == Message.conversation_id)
                 .where(Conversation.user_id == user.id)
                 .distinct()

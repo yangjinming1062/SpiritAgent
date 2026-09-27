@@ -366,7 +366,6 @@ def _build_payload(
     if table == "messages" and payload.get("reply_json"):
         reply = CompanionReply.model_validate_json(payload["reply_json"])
         payload["reply_json"] = reply.model_dump_json()
-        payload["content"] = reply.dialogue()
     if table == "companion_scenes":
         if payload.get("status") == "ready":
             SceneDescriptionRequest.model_validate(
