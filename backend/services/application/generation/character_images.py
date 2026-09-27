@@ -7,6 +7,7 @@ from pathlib import Path
 
 from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_file_path, get_logger
 from PIL import Image
+from prompts.generation import IMAGE_OPAQUE_BACKGROUND, IMAGE_TRANSPARENT_BACKGROUND
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.infrastructure.assets import asset_store, build_data_uri
@@ -49,6 +50,7 @@ class CharacterImageInput(BaseModel):
     max_image_bytes: int = Field(default=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, gt=0)
     # 画幅机械门禁（分功能启用）：目前仅生活空间场景（背景铺满）要求严格 16:9。
     size_enforced: bool = False
+    prefer_transparent_background: bool = False
 
 
 class ImageChainState(MediaChainState):
@@ -90,7 +92,13 @@ def _size_matches_request(size: str, width: int, height: int) -> bool:
     return abs(actual - expected) <= expected * _SIZE_ASPECT_TOLERANCE
 
 
-def _validate_image(data: bytes, *, size: str | None = None, size_enforced: bool = False) -> str:
+def _validate_image(
+    data: bytes,
+    *,
+    size: str | None = None,
+    size_enforced: bool = False,
+    require_transparency: bool = False,
+) -> str:
     ext = asset_store.sniff_media_ext(data)
     if ext not in ("png", "jpg", "webp", "gif"):
         raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True)
@@ -98,8 +106,11 @@ def _validate_image(data: bytes, *, size: str | None = None, size_enforced: bool
         with Image.open(io.BytesIO(data)) as image:
             image.load()
             width, height = image.width, image.height
+            alpha_range = image.convert("RGBA").getchannel("A").getextrema() if require_transparency else None
     except Exception as exc:
         raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True) from exc
+    if alpha_range is not None and (alpha_range[0] > 8 or alpha_range[1] < 128):
+        raise ImageGenerationError("供应商未返回有效透明背景图片", can_fallback=True)
     if size_enforced and size and not _size_matches_request(size, width, height):
         logger.info(
             "character image size gate rejected candidate",
@@ -233,6 +244,7 @@ async def generate_character_images(
     store_attempts: int = 1,
     max_image_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     size_enforced: bool = False,
+    prefer_transparent_background: bool = False,
 ) -> list[str]:
     """返回已保存的用户资产；恢复只消费冻结输入、已知结果和未提交的链尾。"""
     state = state if state is not None else ImageChainState()
@@ -251,6 +263,7 @@ async def generate_character_images(
             identity_text=identity_text,
             max_image_bytes=max_image_bytes,
             size_enforced=size_enforced,
+            prefer_transparent_background=prefer_transparent_background,
         )
         async with SESSION_LOCAL() as db:
             chain, error = await resolve_image_gen_chain(
@@ -262,12 +275,19 @@ async def generate_character_images(
             )
         if error or not chain:
             raise ImageGenerationError(error or "图片生成服务未配置")
+        if prefer_transparent_background:
+            # 原生透明优先；组内保持用户链序，非透明供应商保留为安全回退。
+            chain.sort(
+                key=lambda config: (
+                    not resolve(ServiceType.image_gen, config.provider_name).supports_transparent_background
+                ),
+            )
         state.providers = [FrozenMediaProvider.from_config(config) for config in chain]
         for provider in state.providers:
-            provider.max_images_per_request = resolve(
-                ServiceType.image_gen,
-                provider.provider,
-            ).max_images_per_request
+            provider_cls = resolve(ServiceType.image_gen, provider.provider)
+            provider.max_images_per_request = provider_cls.max_images_per_request
+            if prefer_transparent_background and provider_cls.supports_transparent_background:
+                provider.background = "transparent"
         configs = dict(enumerate(chain))
         await _save_progress(state, save_progress)
     elif size_enforced and not state.inputs.size_enforced:
@@ -306,6 +326,8 @@ async def generate_character_images(
                                 data,
                                 size=inputs.size,
                                 size_enforced=inputs.size_enforced,
+                                require_transparency=state.providers[state.active_index or 0].background
+                                == "transparent",
                             )
                             state.pending_path = asset_store.image_chain_asset_path(
                                 user_id,
@@ -402,8 +424,12 @@ async def generate_character_images(
             state.begin(index)
             await _save_progress(state, save_progress)
             try:
+                background = state.providers[index].background
+                prompt = inputs.prompt
+                if inputs.prefer_transparent_background:
+                    prompt += "\n" + (IMAGE_TRANSPARENT_BACKGROUND if background else IMAGE_OPAQUE_BACKGROUND)
                 urls = await generate_images(
-                    inputs.prompt,
+                    prompt,
                     size=inputs.size,
                     n=len(slots),
                     user_id=user_id,
@@ -412,6 +438,7 @@ async def generate_character_images(
                     image_edit=inputs.image_edit,
                     provider_config=config,
                     defer_storage=True,
+                    background=background,
                 )
             except ImageGenerationError as exc:
                 reason, can_continue = media_failure_reason(exc)

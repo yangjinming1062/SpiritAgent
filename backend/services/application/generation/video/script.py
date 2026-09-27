@@ -22,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 from services.domains.actions import max_duration_seconds
 from services.domains.companion import render_character_identity
 from services.infrastructure.llm import vision_chat
+from services.infrastructure.video_processing import ACTION_FRAME_MARGIN
 
 # 系统槽位的固定语义；动态动作语义由提案规格携带。
 SYSTEM_ACTION_SEMANTICS: dict[str, str] = {
@@ -171,7 +172,11 @@ def build_video_prompt(entry: ActionScriptEntry, identity: CharacterCardSnapshot
 
 def build_pose_prompt(entry: ActionScriptEntry, identity: CharacterCardSnapshot) -> str:
     return (
-        VIDEO_ACTION_POSE_TEMPLATE.format(action=entry.motion_prompt, pose=entry.pose_prompt)
+        VIDEO_ACTION_POSE_TEMPLATE.format(
+            action=entry.motion_prompt,
+            pose=entry.pose_prompt,
+            margin_percent=ACTION_FRAME_MARGIN * 100,
+        )
         + "\n"
         + render_character_identity(identity)
     )

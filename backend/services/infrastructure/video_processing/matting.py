@@ -11,7 +11,7 @@ from components import SETTINGS
 from numpy.typing import NDArray
 from PIL import Image
 
-from .ffmpeg import VideoProcessError, alpha_input_args, probe_video, run_ffmpeg
+from .ffmpeg import VideoProcessError, _binary, _run, alpha_input_args, probe_video, run_ffmpeg
 
 Array = NDArray[np.float32]
 
@@ -72,7 +72,34 @@ def matte_video(src: Path, dst: Path) -> MatteResult:
     if probe.duration_seconds > 12 or probe.width * probe.height > 3840 * 2160:
         raise VideoProcessError("请提供不超过 12 秒的单动作视频")
     dst.parent.mkdir(parents=True, exist_ok=True)
+    native_alpha = False
     if probe.has_alpha:
+        # 在原分辨率上取最小 alpha；缩小后再判断会抹掉细窄的透明边缘。
+        decoded = _run(
+            [
+                _binary("ffmpeg"),
+                "-v",
+                "error",
+                *alpha_input_args(src),
+                "-i",
+                str(src),
+                "-vf",
+                "alphaextract,scale=in_range=full:out_range=full,format=yuv444p,"
+                "signalstats,metadata=mode=print:key=lavfi.signalstats.YMIN:file=-",
+                "-f",
+                "null",
+                "-",
+            ],
+        )
+        minima = [
+            int(line.split("=", 1)[1])
+            for line in decoded.stdout.decode().splitlines()
+            if line.startswith("lavfi.signalstats.YMIN=")
+        ]
+        if decoded.returncode or not minima:
+            raise VideoProcessError("视频透明通道解码失败", internal=decoded.stderr.decode(errors="replace")[:1000])
+        native_alpha = min(minima) <= 8
+    if native_alpha:
         run_ffmpeg(
             [*alpha_input_args(src), "-i", str(src), "-an", "-c:v", "ffv1", "-pix_fmt", "bgra", str(dst)],
             label="透明解码",

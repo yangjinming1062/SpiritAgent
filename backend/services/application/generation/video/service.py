@@ -55,7 +55,9 @@ from services.domains.companion import (
     require_character_snapshot,
 )
 from services.infrastructure.assets import (
+    action_pose_asset_path,
     action_source_asset_path,
+    save_action_pose_asset_async,
     save_action_source_asset_async,
     save_companion_asset_async,
     signed_companion_asset_url,
@@ -85,10 +87,12 @@ from services.infrastructure.video_processing import (
     MAX_SOURCE_BYTES,
     TARGET_EXT,
     VideoProcessError,
+    action_frame_video_input,
     build_hitmask,
     extract_cover,
     matte_video,
     prepare_action_clip,
+    prepare_action_frame,
     require_matting_model,
     select_full_clip,
     select_loop,
@@ -125,6 +129,7 @@ from .state import ActionResult, GenerationContext
 logger = get_logger(__name__)
 
 _DEFAULT_CANVAS = (512, 768)
+_SYSTEM_ACTION_SECONDS = 2.0
 _SOURCE_EXT_BY_MIME = {
     "video/webm": ".webm",
     "video/mp4": ".mp4",
@@ -192,6 +197,11 @@ def _image_data_uri(path: Path) -> str:
     if mime is None:
         raise VideoPackError("参考图格式无效")
     return f"data:{mime};base64," + base64.b64encode(data).decode("ascii")
+
+
+def _action_video_frame_uri(path: Path) -> str:
+    data = action_frame_video_input(path.read_bytes())
+    return "data:image/png;base64," + base64.b64encode(data).decode("ascii")
 
 
 def _artifact_abs_path(stored: str) -> Path:
@@ -384,9 +394,7 @@ async def create_pack_from_reference(
                 await db.commit()
                 _unlink_assets(retired)
                 return reusable
-        # 必需系统槽位：idle 待机 1s、drag 2s，均为 loop；按各自时长档确认链上有人能做。
-        for slot_seconds in (1.0, 2.0):
-            await _video_providers(user_id, needs_loop_frames=True, duration_seconds=slot_seconds)
+        await _video_providers(user_id, needs_loop_frames=True, duration_seconds=_SYSTEM_ACTION_SECONDS)
         if not await resolve_vision_chain(db, user_id):
             raise VideoPackStateError("未配置视觉模型，无法根据角色参考图撰写动作脚本")
         image_chain, image_error = await resolve_image_gen_chain(db, user_id, "reference", image_edit=True)
@@ -503,6 +511,8 @@ async def create_pack_from_reference(
                 outfit_id=outfit.id,
                 key=key,
                 system_slot=key if key in SYSTEM_SLOTS else "",
+                kind="loop" if key in SYSTEM_SLOTS else "once",
+                target_duration_seconds=_SYSTEM_ACTION_SECONDS,
                 status="queued",
                 stage="script",
                 reference_hash=reference_hash,
@@ -1296,13 +1306,11 @@ async def _generate_pack(pack_id: int) -> None:
             specs = []
             for job in pending:
                 if job.key in SYSTEM_ACTION_SEMANTICS:
-                    # 系统槽位固定语义；待机一秒短循环，其余系统动作两秒。
-                    idle = job.key == "idle"
                     specs.append(
                         ActionSpec(
                             action=job.key,
                             system_slot=job.key,
-                            duration_seconds=1.0 if idle else 2.0,
+                            duration_seconds=_SYSTEM_ACTION_SECONDS,
                             clip_kind="loop",
                         ),
                     )
@@ -1467,34 +1475,40 @@ async def _run_action_pipeline(
         await _advance_job(job.id, stage=job.stage, generation_state_json=job.generation_state_json)
     identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
     reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
-    if not job.pose_path:
-        if job.key == "idle":
-            job.pose_path = pack.reference_path
-        else:
-            pose_state = (
-                ImageChainState.model_validate_json(job.pose_generation_state_json)
-                if job.pose_generation_state_json
-                else ImageChainState()
-            )
+    if (
+        state.phase == "ready"
+        and state.active_index is None
+        and state.needs_next()
+        and (not job.pose_path or not _artifact_abs_path(job.pose_path).is_file())
+    ):
+        pose_state = (
+            ImageChainState.model_validate_json(job.pose_generation_state_json)
+            if job.pose_generation_state_json
+            else ImageChainState()
+        )
 
-            async def save_pose(progress: ImageChainState) -> None:
-                job.pose_generation_state_json = progress.model_dump_json()
-                job.stage = "pose"
-                await _advance_job(job.id, stage="pose", pose_generation_state_json=job.pose_generation_state_json)
+        async def save_pose(progress: ImageChainState) -> None:
+            job.pose_generation_state_json = progress.model_dump_json()
+            job.stage = "pose"
+            await _advance_job(job.id, stage="pose", pose_generation_state_json=job.pose_generation_state_json)
 
-            paths = await generate_character_images(
-                build_pose_prompt(entry, context.identity),
-                user_id=pack.user_id,
-                reference_image=reference_uri,
-                identity_reference=identity_uri,
-                identity_text=render_character_identity(context.identity),
-                size="1024x1792",
-                image_edit=True,
-                state=pose_state,
-                save_progress=save_pose,
-            )
-            job.pose_path = paths[0]
+        paths = await generate_character_images(
+            build_pose_prompt(entry, context.identity),
+            user_id=pack.user_id,
+            reference_image=reference_uri,
+            identity_reference=identity_uri,
+            identity_text=render_character_identity(context.identity),
+            size="1024x1792",
+            image_edit=True,
+            prefer_transparent_background=True,
+            state=pose_state,
+            save_progress=save_pose,
+        )
+        job.pose_path = action_pose_asset_path(pack.user_id, pose_state.generation_id)
         await _advance_job(job.id, stage="pose", pose_path=job.pose_path)
+        pose_data = await _process_thread(_artifact_abs_path(paths[0]).read_bytes)
+        prepared = await _process_thread(prepare_action_frame, pose_data)
+        await save_action_pose_asset_async(prepared, user_id=pack.user_id, generation_id=pose_state.generation_id)
 
     async def save_state() -> None:
         job.generation_state_json = state.model_dump_json()
@@ -1621,6 +1635,8 @@ async def _run_action_pipeline(
         video_path=spec.path,
         video_hash=spec.sha256,
         actual_duration_ms=spec.duration_ms,
+        kind=entry.clip_kind,
+        target_duration_seconds=entry.duration_seconds,
         frames=spec.frames,
         loopable=entry.clip_kind == "loop",
         cover_path=result.cover_path,
@@ -1665,7 +1681,9 @@ async def _run_action_attempt(
                 raise VideoPackError("视频供应商配置已变更，原任务无法继续")
             provider = resolve(ServiceType.video_gen, config.provider_name)(config)
             if not job.provider_task_id:
-                pose_uri = await _process_thread(_image_data_uri, _artifact_abs_path(job.pose_path))
+                if not job.pose_path or not _artifact_abs_path(job.pose_path).is_file():
+                    raise VideoPackError("动作起始姿态图不可读，请恢复原素材")
+                pose_uri = await _process_thread(_action_video_frame_uri, _artifact_abs_path(job.pose_path))
                 reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
 
                 async def submit(current: VideoGenProvider) -> VideoJobStatus:
@@ -1810,7 +1828,7 @@ async def _dynamic_action_spec(job: CompanionAction) -> ActionSpec | None:
         return ActionSpec(
             action=job.key,
             system_slot=slot,
-            duration_seconds=1.0 if slot == "idle" else 2.0,
+            duration_seconds=_SYSTEM_ACTION_SECONDS,
             clip_kind="loop",
         )
     return ActionSpec(

@@ -2,6 +2,7 @@
 
 from . import asset_store
 from .asset_store import (
+    action_pose_asset_path,
     action_source_asset_path,
     build_data_uri,
     build_signed_asset_url,
@@ -11,6 +12,7 @@ from .asset_store import (
     image_chain_asset_path,
     parse_companion_asset_path,
     resolve_companion_asset_path,
+    save_action_pose_asset_async,
     save_action_source_asset_async,
     save_companion_asset,
     save_companion_asset_async,
@@ -26,6 +28,8 @@ from .asset_store import (
 from .http_range import serve_ranged_file
 
 __all__ = [
+    "action_pose_asset_path",
+    "save_action_pose_asset_async",
     "action_source_asset_path",
     "save_action_source_asset_async",
     "asset_store",

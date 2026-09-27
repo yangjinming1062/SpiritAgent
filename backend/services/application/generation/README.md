@@ -57,6 +57,8 @@
 
 上传导入与生成共用交付链，[video/state.py](video/state.py)保存上下文与单动作结果，上传包没有可重做的冻结参考。
 
+姿态图的透明输出、留白准备与视频透明化边界见 [视频与交付](../../../../docs/PIPELINE.md#视频与交付)。
+
 [media_chain.py](media_chain.py)持有无凭据的供应商快照、游标与候选；[character_images.py](character_images.py)执行身份图片链与可选画幅门禁；[identity_review.py](identity_review.py)评分复核，[media_review.py](media_review.py)维护人工复核。任务分别持久化图片、视频进度，复用原始参考、已选首帧与成功动作；动作包独立冻结全身身份图。保底和清理见 [恢复规则](../../../../docs/PIPELINE.md#持久化与恢复)。
 
 ## 验证入口

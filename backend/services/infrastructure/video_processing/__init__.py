@@ -4,6 +4,7 @@
 """
 
 from .ffmpeg import VideoProbe, VideoProcessError, probe_video, run_ffmpeg
+from .frames import ACTION_FRAME_MARGIN, action_frame_video_input, prepare_action_frame
 from .matting import MatteResult, matte_video, require_matting_model
 from .process import (
     HITMASK_FPS,
@@ -22,6 +23,7 @@ from .process import (
 from .quality import FullClipWindow, LoopWindow, select_full_clip, select_loop
 
 __all__ = [
+    "ACTION_FRAME_MARGIN",
     "HITMASK_FPS",
     "HITMASK_GRID_H",
     "HITMASK_GRID_W",
@@ -36,10 +38,12 @@ __all__ = [
     "MatteResult",
     "VideoProbe",
     "VideoProcessError",
+    "action_frame_video_input",
     "build_hitmask",
     "extract_cover",
     "matte_video",
     "prepare_action_clip",
+    "prepare_action_frame",
     "probe_video",
     "require_matting_model",
     "run_ffmpeg",

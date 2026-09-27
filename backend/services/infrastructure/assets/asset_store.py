@@ -183,6 +183,22 @@ async def save_action_source_asset_async(
         raise
 
 
+def action_pose_asset_path(user_id: int, generation_id: str) -> str:
+    if user_id <= 0 or len(generation_id) != 32 or any(char not in "0123456789abcdef" for char in generation_id):
+        raise ValueError("invalid action pose asset key")
+    return f"companion-assets/{user_id}/action_pose_{generation_id}.png"
+
+
+async def save_action_pose_asset_async(data: bytes, *, user_id: int, generation_id: str) -> str:
+    path = action_pose_asset_path(user_id, generation_id)
+    task = asyncio.create_task(asyncio.to_thread(_save_generation_asset, data, user_id, path))
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        await task
+        raise
+
+
 def image_chain_asset_path(user_id: int, generation_id: str, attempt: int, slot: int, ext: str) -> str:
     if (
         user_id <= 0
