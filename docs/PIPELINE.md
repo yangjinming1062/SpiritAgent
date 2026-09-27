@@ -227,6 +227,8 @@ flowchart LR
 
 系统槽位：`idle`、`drag`、`walk_left`、`walk_right`；首包必需 idle/drag。系统动作采用固定时长的循环规格，定义见[视频编排](../backend/services/application/generation/video/service.py)。动态动作有稳定 `action_id`，名称与用途开放，不占用系统槽位，由 LLM 提案，经独立评审后生成。
 
+拖拽动作从首帧起持续表现躯干上部被提起、其余身体随重力松弛下垂的悬空姿态，按角色已有结构适配；提拉处与躯干主体稳定，仅下垂末端轻微随动。姿态与衣物均不承地，不以站姿左右摇摆表达拖拽。
+
 ### 评审与制作
 
 #### 提案与评审
