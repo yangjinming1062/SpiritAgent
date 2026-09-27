@@ -68,7 +68,7 @@ def select_loop(src: Path, *, max_seconds: float = 2) -> LoopWindow:
         axis=1,
     )
     if np.max((border > 0.5).mean(axis=1)) > 0.04:
-        raise VideoProcessError("角色贴边裁切或背景残留，请重新生成此动作")
+        raise VideoProcessError("画面边缘仍有不透明内容，可能是角色贴边或背景残留。")
     frames[..., :3] *= alpha[..., None]
     best: tuple[float, int, int] | None = None
     # 区间为 [i,j)。存在下一帧时比较该端点；到素材末尾时比较最后实帧，
@@ -145,7 +145,7 @@ def _check_common_gates(alpha: np.ndarray) -> None:
         axis=1,
     )
     if np.max((border > 0.5).mean(axis=1)) > 0.04:
-        raise VideoProcessError("角色贴边裁切或背景残留，请重新生成此动作")
+        raise VideoProcessError("画面边缘仍有不透明内容，可能是角色贴边或背景残留。")
 
 
 def select_full_clip(src: Path, *, max_seconds: float = 10) -> FullClipWindow:

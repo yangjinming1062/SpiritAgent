@@ -1025,6 +1025,7 @@ export const dict = {
       videoActionNoMatch: '没有匹配的动作',
       videoActionEmpty: '选择一个动作查看预览与操作。',
       videoActionCancel: '取消',
+      videoActionRetryWaitHint: '其他动作仍在生成；动作包完成后即可重新生成此动作。',
       videoOutfitNotReady: '这套着装还没有动作包，生成后即可预览和穿上。',
       videoSelectOutfit: '返回衣柜并选择一套着装，查看它专属的动作。',
       videoBackToOutfits: '返回衣柜',

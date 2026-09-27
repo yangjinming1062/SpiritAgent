@@ -163,6 +163,8 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
   // 搜索只过滤列表；已选动作仍保留在详情区，避免输入时预览被抢走。
   const selectedAction = actions.find(action => action.key === selectedActionKey) ?? visibleActions[0] ?? null
   const actionIsGenerating = !!selectedAction && isActionInProgress(selectedAction.status)
+  const selectedActionFailed = !!selectedAction && (selectedAction.status === 'failed' || !!selectedAction.error)
+  const actionRetryWaiting = selectedActionFailed && selectedPack?.status === 'processing'
 
   const stageText =
     scopedBusy && selectedPack?.status === 'processing' && genStage ? t[STAGE_TEXT_KEYS[genStage]] : null
@@ -512,6 +514,20 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                         {selectedAction.clipUrl ? t.videoRedoAction : t.videoGenMissingAction}
                       </button>
                     </div>
+                  </div>
+                ) : actionRetryWaiting ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+                    <span className="text-[10px] text-muted" id="video-action-retry-wait-hint" role="status">
+                      {t.videoActionRetryWaitHint}
+                    </span>
+                    <button
+                      aria-describedby="video-action-retry-wait-hint"
+                      className={BTN_SUBTLE}
+                      disabled
+                      type="button"
+                    >
+                      {t.videoRedoAction}
+                    </button>
                   </div>
                 ) : canGenerateAction ? (
                   <div className="mt-3 flex justify-end">

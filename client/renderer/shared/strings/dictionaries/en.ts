@@ -1089,6 +1089,7 @@ export const dict: Dictionary = {
       videoActionNoMatch: 'No matching actions',
       videoActionEmpty: 'Select an action to see its preview and controls.',
       videoActionCancel: 'Cancel',
+      videoActionRetryWaitHint: 'Other actions are still generating. You can retry this action when the pack finishes.',
       videoOutfitNotReady: 'This outfit has no action pack yet. Generate one to preview and wear it.',
       videoSelectOutfit: 'Return to the wardrobe and choose an outfit to see its actions.',
       videoBackToOutfits: 'Back to wardrobe',
