@@ -532,6 +532,13 @@ const authActions = registerAuthIpc({
     ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
     getSessionAfterRestore: () => sessionRuntime.getSessionAfterRestore(),
     log: chunk => rememberLog(chunk),
+    onAccountIdentityChanged: async () => {
+      try {
+        await surfaces?.closeSurface()
+      } finally {
+        showMainWindow()
+      }
+    },
     rebuildTrayMenu,
     resetBackendCache,
     spiritagentHome: SPIRITAGENT_HOME

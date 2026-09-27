@@ -13,6 +13,7 @@ interface AuthIpcDeps {
   ensureBackendSession: () => BackendSessionPort
   getSessionAfterRestore: () => Promise<null | SessionSnapshotPort>
   log: (message: string) => void
+  onAccountIdentityChanged?: () => Promise<void>
   rebuildTrayMenu?: () => void
   resetBackendCache?: () => void
   restartBridge?: () => Promise<void>
@@ -64,7 +65,18 @@ export function registerAuthIpc({
     }
 
     deps.rebuildTrayMenu?.()
-    await deps.broadcastAuthChanged?.(next, clearAccountCache)
+
+    try {
+      await deps.broadcastAuthChanged?.(next, clearAccountCache)
+    } finally {
+      if (changed) {
+        try {
+          await deps.onAccountIdentityChanged?.()
+        } catch (error) {
+          deps.log(`[auth] returning to sprite after account change failed: ${errorMessage(error)}`)
+        }
+      }
+    }
 
     if (!next) {
       await deps.autoStopBridge?.()

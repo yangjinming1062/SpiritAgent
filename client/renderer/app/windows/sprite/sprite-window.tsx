@@ -52,6 +52,7 @@ export function SpriteWindow(): React.JSX.Element {
   const notificationStackRef = useRef<HTMLDivElement>(null)
   useInteractiveRegion('notification-stack', notificationStackRef)
   const auth = useStore($auth)
+  const accountId = auth.kind === 'authenticated' ? auth.snapshot.accountId : null
   const gatewayState = useStore($gatewayState)
   const surfaceOpen = useStore($surfaceOpen)
   const lifecycle = useStore($companionLifecycle)
@@ -129,7 +130,7 @@ export function SpriteWindow(): React.JSX.Element {
   // 2) 不可用时回退到 requestGateway('onboarding.get_state')。
   // 3) 仅在 state?.complete === true 时把 lifecycle 设为 'ready'。
   //    不要回退到 persona.is_complete（角色题保存后它会在 onboarding 中途变成 true）。
-  // 4) 未完成时保持引导关闭；无缓存形象才显示桌面蛋，点击形象进入向导。
+  // 4) 仅 complete === true 视为已完成；未完成的账户自动进入向导。
   useEffect(() => {
     if (auth.kind !== 'authenticated') {
       setCompanionLifecycle('unauthed')
@@ -157,8 +158,7 @@ export function SpriteWindow(): React.JSX.Element {
 
       const onboardingDone = state?.complete === true
       setCompanionLifecycle(onboardingDone ? 'ready' : 'onboarding')
-      // 引导只由用户点击形象主动打开。
-      setOnboardingOpen(false)
+      setOnboardingOpen(!onboardingDone)
 
       if (onboardingDone) {
         void hydratePortrait()
@@ -171,7 +171,7 @@ export function SpriteWindow(): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [auth.kind, requestGateway])
+  }, [accountId, auth.kind, requestGateway])
 
   const authed = auth.kind === 'authenticated'
   const showOnboarding = authed && lifecycle === 'onboarding' && onboardingOpen

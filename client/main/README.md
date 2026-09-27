@@ -49,7 +49,7 @@
 
 ## 窗口与几何
 
-[surfaces.ts](lifecycle/surfaces.ts)串行裁决开关，生活空间与工作台最多一个可见；工作台移动由主进程跟随显示器，渲染状态不传递几何。激活卡片限命中区域，未认证唤起须更新渲染状态，不只 raise 窗口。
+[surfaces.ts](lifecycle/surfaces.ts)串行裁决开关，生活空间与工作台最多一个可见；账户身份变化时收起完整入口并显示桌面精灵，避免沿用上个账户的窗口状态。工作台移动由主进程跟随显示器，渲染状态不传递几何。激活卡片限命中区域，未认证唤起须更新渲染状态，不只 raise 窗口。
 
 [快捷键](ipc/shortcuts.ts)返回注册冲突与失败。Windows 关窗隐藏到托盘，macOS 保留 Dock；多屏、透明命中见 [Client](../README.md#窗口与主题)，用户行为见 [DESIGN](../../docs/DESIGN.md#窗口与会话)。
 
