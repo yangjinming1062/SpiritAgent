@@ -8,6 +8,8 @@ export interface VideoActionInput {
   locomotion: 'still' | 'walk' | 'walk_fast' | 'fly' | 'drag' | 'jump'
   /** 最近一次容器位移的 x 方向符号（-1 左 / +1 右 / 0 未变）。 */
   deltaXSign: number
+  /** 空间状态要求的探身姿态；行走和拖拽中的运动动作优先。 */
+  peekAction?: 'peek_left' | 'peek_right' | null
 }
 
 export function resolveVideoAction(input: VideoActionInput): VideoActionKey {
@@ -26,6 +28,10 @@ export function resolveVideoAction(input: VideoActionInput): VideoActionKey {
 
     // 方向未知（起步/同位）时回退待机，避免误触发按需生成。
     return 'idle'
+  }
+
+  if (input.peekAction) {
+    return input.peekAction
   }
 
   return 'idle'

@@ -8,7 +8,7 @@ import json
 import re
 from pathlib import Path
 
-from modules.companion import REQUIRED_SYSTEM_SLOTS, CompanionActionPack
+from modules.companion import REQUIRED_SYSTEM_SLOTS, CompanionActionPack, PeekGeometry, parse_content_rect
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -36,6 +36,8 @@ class ActionClipSpec(BaseModel):
     hitmask_ref: str | None = None
     hitmask_grid: tuple[int, int] | None = None
     hitmask_fps: int = Field(gt=0, le=60)
+    peek_geometry: PeekGeometry | None = None
+    content_rect: tuple[float, float, float, float] | None = None
 
 
 class ActionPackCanvas(BaseModel):
@@ -102,6 +104,9 @@ async def build_catalog_manifest(
         if action.status != "succeeded" or not action.video_path:
             continue
 
+        peek_geometry = PeekGeometry.from_stored_json(action.peek_geometry_json)
+        content_rect = parse_content_rect(action.content_rect_json)
+
         duration_ms = action.actual_duration_ms or int(action.target_duration_seconds * 1000) or 2000
         frames = action.frames or int(action.target_duration_seconds * 24) or 48
 
@@ -123,6 +128,8 @@ async def build_catalog_manifest(
                     else None
                 ),
                 hitmask_fps=action.hitmask_fps or 24,
+                peek_geometry=peek_geometry,
+                content_rect=content_rect,
             ),
         )
         if action.system_slot:

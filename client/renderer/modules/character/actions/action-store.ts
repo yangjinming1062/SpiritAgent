@@ -10,7 +10,7 @@ import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } f
 import { $auth } from '@/shared/store/auth'
 
 import { nextAppearanceEpoch } from './action-runtime'
-import type { ActionCatalogManifest, ActionClipEntry } from './action-types'
+import type { ActionCatalogManifest, ActionClipEntry, NormalizedRect } from './action-types'
 
 export interface ActiveActionCatalog {
   packId: number
@@ -18,9 +18,7 @@ export interface ActiveActionCatalog {
   manifest: ActionCatalogManifest
   /** clip 标识（system_slot 或 `id:动作ID`）→ 本地展示 URL。 */
   clipUrls: Map<string, string>
-  /** action_id → clip 条目。 */
   clipsById: Map<number, ActionClipEntry>
-  /** system_slot → clip 条目。 */
   clipsBySlot: Map<string, ActionClipEntry>
 }
 
@@ -32,7 +30,6 @@ interface CatalogWireResponse {
   manifest_url?: string | null
 }
 
-/** 最近一次成功水合的目录快照。 */
 interface PersistedActionCatalog {
   packId: number
   catalogVersion: number
@@ -76,6 +73,8 @@ export const $actionCatalogStatus = atom<ActionCatalogStatus>('idle')
 
 let inflight: Promise<void> | null = null
 let hydrationRevision = 0
+const peekEnsures = new Map<string, Promise<boolean>>()
+const attemptedPeekEnsures = new Set<string>()
 
 /** 目录变更事件（companion.action.catalog_changed）到达时触发重新水合。 */
 export function actionCatalogChanged(): void {
@@ -83,8 +82,147 @@ export function actionCatalogChanged(): void {
   void hydrateActionCatalog(true)
 }
 
+export async function ensurePeekAction(action: 'peek_left' | 'peek_right'): Promise<boolean> {
+  if ($auth.get().kind !== 'authenticated') {
+    return false
+  }
+
+  const initial = $actionCatalog.get()
+  const existing = initial?.clipsBySlot.get(action)
+
+  if (existing) {
+    return Boolean(existing.peek_geometry)
+  }
+
+  if (!initial) {
+    return false
+  }
+
+  const key = `${initial.packId}:${action}`
+  const pending = peekEnsures.get(key)
+
+  if (pending) {
+    return pending
+  }
+
+  if (attemptedPeekEnsures.has(key)) {
+    return false
+  }
+
+  const epoch = currentClearEpoch()
+
+  const isCurrent = (): boolean =>
+    epoch === currentClearEpoch() &&
+    initial.packId === $actionCatalog.get()?.packId &&
+    $auth.get().kind === 'authenticated'
+
+  attemptedPeekEnsures.add(key)
+  let terminal = false
+
+  const ensure = (async (): Promise<boolean> => {
+    const accepted = await authedApi<unknown>({
+      body: { action },
+      method: 'POST',
+      path: `/api/companion/video-packs/${initial.packId}/ensure-system-action`
+    })
+
+    if (!accepted.ok || !isCurrent()) {
+      return false
+    }
+
+    const deadline = Date.now() + 15 * 60_000
+
+    while (Date.now() < deadline && isCurrent()) {
+      await new Promise<void>(resolve => window.setTimeout(resolve, 5000))
+
+      if (!isCurrent()) {
+        return false
+      }
+
+      // 目录事件已交付素材时，不再查询生成任务。
+      const published = $actionCatalog.get()?.clipsBySlot.get(action)
+
+      if (published) {
+        terminal = !published.peek_geometry
+
+        return !terminal
+      }
+
+      const listed = await authedApi<{
+        packs?: Array<{
+          actions?: Array<{
+            action: string
+            peek_geometry?: ActionClipEntry['peek_geometry']
+            status: string
+          }>
+          id: number
+        }>
+      }>({ path: '/api/companion/video-packs' })
+
+      if (!isCurrent()) {
+        return false
+      }
+
+      if (!listed.ok || !listed.value) {
+        continue
+      }
+
+      const actionState = listed.value.packs
+        ?.find(pack => pack.id === initial.packId)
+        ?.actions?.find(entry => entry.action === action)
+
+      if (
+        actionState?.status === 'failed' ||
+        actionState?.status === 'review' ||
+        actionState?.status === 'result_unknown'
+      ) {
+        terminal = true
+
+        return false
+      }
+
+      if (actionState?.status === 'succeeded') {
+        if (!actionState.peek_geometry) {
+          terminal = true
+
+          return false
+        }
+
+        await hydrateActionCatalog(true)
+
+        if (isCurrent() && $actionCatalog.get()?.clipsBySlot.get(action)?.peek_geometry) {
+          return true
+        }
+      }
+    }
+
+    return false
+  })()
+    .catch(error => {
+      log.warn('action-store', 'Could not ensure peek action', error)
+
+      return false
+    })
+    .finally(() => {
+      if (peekEnsures.get(key) === ensure) {
+        peekEnsures.delete(key)
+      }
+
+      // 终态由衣柜显式处理；网络失败或目录尚未发布可复查同一服务端任务。
+      if (!terminal && epoch === currentClearEpoch()) {
+        attemptedPeekEnsures.delete(key)
+      }
+    })
+
+  peekEnsures.set(key, ensure)
+
+  return ensure
+}
+
 registerStorageClearHandler(() => {
   inflight = null
+  peekEnsures.clear()
+  attemptedPeekEnsures.clear()
   hydrationRevision += 1
   nextAppearanceEpoch()
   $actionCatalog.set(null)
@@ -99,10 +237,11 @@ function buildCatalogIndexes(manifest: ActionCatalogManifest): {
   const clipsBySlot = new Map<string, ActionClipEntry>()
 
   for (const clip of manifest.clips) {
-    clipsById.set(clip.action_id, clip)
+    const normalized = safeClip(clip)
+    clipsById.set(normalized.action_id, normalized)
 
-    if (clip.system_slot) {
-      clipsBySlot.set(clip.system_slot, clip)
+    if (normalized.system_slot) {
+      clipsBySlot.set(normalized.system_slot, normalized)
     }
   }
 
@@ -121,6 +260,51 @@ function clipKey(clip: ActionClipEntry): string {
 
 function pickIdleClip(manifest: ActionCatalogManifest): ActionClipEntry | null {
   return manifest.clips.find(c => c.system_slot === manifest.default_action) ?? manifest.clips[0] ?? null
+}
+
+function isNormalizedRect(value: unknown): value is NormalizedRect {
+  return (
+    Array.isArray(value) &&
+    value.length === 4 &&
+    value.every(coordinate => Number.isFinite(coordinate) && coordinate >= 0 && coordinate <= 1) &&
+    value[0] < value[2] &&
+    value[1] < value[3]
+  )
+}
+
+function isValidPeekGeometry(clip: ActionClipEntry): boolean {
+  const geometry = clip.peek_geometry
+  const expectedSide = clip.system_slot === 'peek_left' ? 'left' : clip.system_slot === 'peek_right' ? 'right' : null
+
+  if (
+    !geometry ||
+    !expectedSide ||
+    geometry.side !== expectedSide ||
+    !Number.isFinite(geometry.cut_x) ||
+    geometry.cut_x <= 0.1 ||
+    geometry.cut_x >= 0.9 ||
+    !isNormalizedRect(geometry.focus_rect)
+  ) {
+    return false
+  }
+
+  const [left, , right] = geometry.focus_rect
+
+  return expectedSide === 'left' ? right < geometry.cut_x : left > geometry.cut_x
+}
+
+function safeClip(clip: ActionClipEntry): ActionClipEntry {
+  const content_rect = isNormalizedRect(clip.content_rect) ? clip.content_rect : null
+
+  if (clip.system_slot === 'peek_left' || clip.system_slot === 'peek_right') {
+    return {
+      ...clip,
+      content_rect,
+      peek_geometry: isValidPeekGeometry(clip) ? clip.peek_geometry : null
+    }
+  }
+
+  return { ...clip, content_rect }
 }
 
 /** 本地快照先挂目录并标 ready；idle 预取磁盘缓存。 */

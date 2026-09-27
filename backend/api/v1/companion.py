@@ -39,6 +39,7 @@ from modules.companion import (
     PersonaUpdate,
     PortraitConfirmRequest,
     VideoPackCreateRequest,
+    VideoPackEnsureSystemActionRequest,
     VideoPackGenerateRequest,
     VideoPackListResponse,
     VideoPackResponse,
@@ -76,6 +77,7 @@ from services.application.generation import (
     create_video_pack_from_reference,
     delete_outfit,
     delete_video_pack,
+    ensure_video_system_action,
     finalize_avatar,
     generate_avatar,
     generate_fullbody_reference,
@@ -903,6 +905,29 @@ async def post_video_pack_generate(
         )
     except CharacterCardNotReadyError as exc:
         raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
+    except VideoPackError as exc:
+        raise _video_pack_http_error(exc)
+    return VideoPackResponse(
+        id=pack.id,
+        outfit_id=pack.outfit_id,
+        pack_version=pack.pack_version,
+        status=pack.status,
+        active=pack.active,
+    )
+
+
+@router.post("/video-packs/{pack_id}/ensure-system-action", response_model=VideoPackResponse)
+@limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
+async def post_video_pack_ensure_system_action(
+    request: Request,
+    pack_id: int,
+    body: VideoPackEnsureSystemActionRequest,
+    user: CurrentUser,
+    db: DbSession,
+) -> VideoPackResponse:
+    """按需补齐当前外观包的探身动作。"""
+    try:
+        pack = await ensure_video_system_action(db, user.id, pack_id, body.action)
     except VideoPackError as exc:
         raise _video_pack_http_error(exc)
     return VideoPackResponse(

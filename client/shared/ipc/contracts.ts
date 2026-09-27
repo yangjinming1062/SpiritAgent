@@ -119,6 +119,33 @@ export interface DesktopSpriteScalePayload {
   scale: number
 }
 
+export interface DesktopSpritePosition {
+  x: number
+  y: number
+  screenEdge?: { side: 'left' | 'right'; yRatio: number }
+}
+
+export interface DesktopSpriteRestPosition extends DesktopSpritePosition {
+  origin?: { x: number; y: number }
+}
+
+export interface DesktopWindowSceneSnapshot {
+  runnerInstanceId: string
+  viewport: { displayId: number; height: number; scaleFactor: number; width: number; x: number; y: number }
+  windows: Array<{
+    focused: boolean
+    h: number
+    id: string
+    displayId: number
+    pid: number
+    visible: boolean
+    w: number
+    x: number
+    y: number
+    zOrder: number
+  }>
+}
+
 export const SPRITE_SCALE_LIMITS = { max: 3, min: 0.3 } as const
 
 // 渲染层偏好写穿透：key 为点键（companion.voice_id / ui.theme 等），value 原样入云同步管道。
@@ -430,9 +457,14 @@ export interface IpcInvokeContract {
   }) => Promise<void> | void
   'spiritagent:sprite:get-position': () =>
     | null
-    | { origin?: { x: number; y: number }; x: number; y: number }
-    | Promise<null | { origin?: { x: number; y: number }; x: number; y: number }>
-  'spiritagent:sprite:set-position': (payload: { x: number; y: number }) => Promise<void> | void
+    | DesktopSpriteRestPosition
+    | Promise<null | DesktopSpriteRestPosition>
+  'spiritagent:sprite:set-position': (payload: DesktopSpritePosition) => Promise<void> | void
+  'spiritagent:sprite:get-window-scene': () =>
+    | DesktopWindowSceneSnapshot
+    | null
+    | Promise<DesktopWindowSceneSnapshot | null>
+  'spiritagent:sprite:move-to-display': (point: { x: number; y: number }) => Promise<void> | void
   'spiritagent:sprite:move-to-cursor-display': () =>
     | null
     | { cursor: { x: number; y: number }; from: { x: number; y: number }; to: { x: number; y: number } }
@@ -534,6 +566,8 @@ export const IPC = {
     spriteSetIgnoreMouseEvents: 'spiritagent:sprite:set-ignore-mouse-events',
     spriteGetPosition: 'spiritagent:sprite:get-position',
     spriteSetPosition: 'spiritagent:sprite:set-position',
+    spriteGetWindowScene: 'spiritagent:sprite:get-window-scene',
+    spriteMoveToDisplay: 'spiritagent:sprite:move-to-display',
     spriteMoveToCursorDisplay: 'spiritagent:sprite:move-to-cursor-display',
     updateCheck: 'spiritagent:update:check',
     updateGetState: 'spiritagent:update:get-state'

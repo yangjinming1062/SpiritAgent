@@ -1,63 +1,72 @@
-/** 视频渲染层：挂载透明 WebM 片段，按统一调度器结果切换，双 video 交替避免黑帧。
- * 基础状态（idle/walk/drag）仍是表现优先级真源；动态动作为数据化表达请求
- * （play_id + appearance_epoch + TTL），由 actions 模块下发。
- * once 片段监听 ended，结束后回基础状态；循环素材默认播一次，repeat_count 有界。
- * 移动与拖拽由容器位移表达（spatial 是位置真源）。
- * 命中：按当前片段的 alpha 命中遮罩查表（容器平移与缩放已由舞台坐标归一化）。 */
+/** 双 video 保留旧画面直到新帧就绪；位置与播放实例分别由 spatial、actions 管理。 */
 
 import { useStore } from '@nanostores/react'
-import React, { useEffect, useRef, useState } from 'react'
+import { clamp } from '@runtime'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 
 import {
   $actionCatalog,
   $actionCatalogStatus,
   $activePlayInstance,
+  $peekPreparation,
+  $screenLocked,
   $spatialLocomotion,
+  $spatialPeek,
   $spatialPos,
+  $spatialScale,
+  $spriteCanvasRect,
   $spriteContentRect,
+  $viewport,
+  type ActionClipEntry,
   type ActionHitmask,
   type ActionPlayInstance,
+  cancelPeekPreparation,
+  commitPeekPreparation,
   finishPlayInstance,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
+  leavePeekForExpression,
+  peekMaskRects,
   reportReceipt,
   resolveActionClipUrl,
   resolveHitmask,
   resolveVideoAction,
+  restorePeekAfterExpression,
   shouldStartInstance,
   type VideoActionKey
 } from '@/modules/character'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
+import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { $videoHitTest } from './video-hit-test'
 
 function useCurrentAction(): VideoActionKey {
-  const [action, setAction] = useState<VideoActionKey>('idle')
-  const lastXRef = useRef<number | null>(null)
+  const [deltaXSign, setDeltaXSign] = useState(0)
+  const locomotion = useStore($spatialLocomotion)
+  const activePeek = useStore($spatialPeek)
+  const preparation = useStore($peekPreparation)
 
   useEffect(() => {
-    let raf = 0
+    let timer = 0
+    let lastX = $spatialPos.get().x
 
     const tick = (): void => {
-      const pos = $spatialPos.get()
-      const last = lastXRef.current
-      lastXRef.current = pos.x
-      const deltaXSign = last === null || pos.x === last ? 0 : pos.x > last ? 1 : -1
-      setAction(resolveVideoAction({ locomotion: $spatialLocomotion.get(), deltaXSign }))
-      raf = window.setTimeout(tick, 120)
+      const x = $spatialPos.get().x
+      setDeltaXSign(Math.sign(x - lastX))
+      lastX = x
+      timer = window.setTimeout(tick, 120)
     }
 
     tick()
 
-    return () => window.clearTimeout(raf)
+    return () => window.clearTimeout(timer)
   }, [])
 
-  return action
+  return resolveVideoAction({ locomotion, deltaXSign, peekAction: activePeek?.action ?? preparation?.action ?? null })
 }
 
-/** 统一调度裁决：安全控制与拖拽/移动优先于表达；表达请求只在基础状态为 idle 时生效。
- * 抢占（拖拽/移动/新请求）时结清被替换实例：上报 interrupted 并结束其生命周期。 */
 type Presentation =
   | { kind: 'expression'; instance: ActionPlayInstance; mountKey: string }
   | { kind: 'base'; action: VideoActionKey; mountKey: string }
@@ -67,7 +76,7 @@ function settleReplacedInstance(previous: ActionPlayInstance | null): void {
     return
   }
 
-  // TTL 已过的被替换实例按过期收尾，不再上报中断（服务端同样按 TTL 过期处理）。
+  // 过期实例按 TTL 收尾，不另报抢占。
   if (previous.expiresAtMs !== null && Date.now() > previous.expiresAtMs) {
     finishPlayInstance(previous.generation)
 
@@ -78,8 +87,26 @@ function settleReplacedInstance(previous: ActionPlayInstance | null): void {
   finishPlayInstance(previous.generation)
 }
 
-function resolvePresentation(baseAction: VideoActionKey, instance: ActionPlayInstance | null): Presentation {
-  if (instance !== null && baseAction === 'idle') {
+function shouldStartVisibleInstance(instance: ActionPlayInstance): boolean {
+  if (!shouldStartInstance(instance)) {
+    return false
+  }
+
+  if ($screenLocked.get() || $chatVisible.get()) {
+    settleReplacedInstance(instance)
+
+    return false
+  }
+
+  return true
+}
+
+function resolvePresentation(
+  baseAction: VideoActionKey,
+  instance: ActionPlayInstance | null,
+  deferExpression = false
+): Presentation {
+  if (instance !== null && baseAction === 'idle' && !deferExpression) {
     return { kind: 'expression', instance, mountKey: `play:${instance.playId}` }
   }
 
@@ -144,56 +171,169 @@ async function loadVideo(el: HTMLVideoElement, url: string, signal: AbortSignal)
   })
 }
 
+function prepareFirstFrame(el: HTMLVideoElement, signal: AbortSignal): Promise<boolean> {
+  return new Promise(resolve => {
+    let settled = false
+    let callbackId: number | null = null
+    const timer = window.setTimeout(() => finish(false), 3000)
+
+    const finish = (ready: boolean): void => {
+      if (settled) {
+        return
+      }
+
+      settled = true
+      window.clearTimeout(timer)
+      signal.removeEventListener('abort', aborted)
+
+      if (callbackId !== null) {
+        el.cancelVideoFrameCallback(callbackId)
+      }
+
+      resolve(ready)
+    }
+
+    const aborted = (): void => finish(false)
+    signal.addEventListener('abort', aborted, { once: true })
+
+    if (signal.aborted) {
+      aborted()
+
+      return
+    }
+
+    try {
+      el.pause()
+      el.currentTime = 0
+      void el.play().then(
+        () => {
+          if (!settled) {
+            callbackId = el.requestVideoFrameCallback(() => finish(true))
+          }
+        },
+        () => finish(false)
+      )
+    } catch {
+      finish(false)
+    }
+  })
+}
+
 interface MountedClip {
   key: string
-  generation: number
   playId: string | null
 }
 
 export function VideoStage(): React.JSX.Element {
   const catalog = useStore($actionCatalog)
   const playInstance = useStore($activePlayInstance)
+  const viewport = useStore($viewport)
   const baseAction = useCurrentAction()
+  const spatialPeek = useStore($spatialPeek)
+  const peekPreparation = useStore($peekPreparation)
   const videos = useRef<[HTMLVideoElement | null, HTMLVideoElement | null]>([null, null])
   const front = useRef<number | null>(null)
   const [visible, setVisible] = useState<number | null>(null)
+  const [visibleClip, setVisibleClip] = useState<ActionClipEntry | null>(null)
   const mounted = useRef<MountedClip | null>(null)
+  const peekExitGeneration = useRef<number | null>(null)
   const hitmaskRef = useRef<ActionHitmask | null>(null)
   const rootRef = useRef<HTMLDivElement>(null)
   const canvas = catalog?.manifest.canvas
 
-  const presentation = resolvePresentation(baseAction, playInstance)
+  useEffect(() => {
+    const cancelHiddenPlayback = (): void => {
+      if ($screenLocked.get() || $chatVisible.get()) {
+        settleReplacedInstance($activePlayInstance.get())
+      }
+    }
 
-  // 目标 clip：表达实例按 action_id；基础动作查系统槽位；缺素材回退 idle 槽位（不自动付费补齐）。
+    const unlistenLock = $screenLocked.subscribe(cancelHiddenPlayback)
+    const unlistenVisibility = $chatVisible.subscribe(cancelHiddenPlayback)
+
+    return () => {
+      unlistenLock()
+      unlistenVisibility()
+      settleReplacedInstance($activePlayInstance.get())
+    }
+  }, [])
+
+  const canvasRect = useMemo(() => {
+    if (!canvas) {
+      return null
+    }
+
+    const stageH = Math.round(clamp(viewport.height / 3, 260, 960))
+    const stageW = Math.round(stageH * 0.85)
+    const contain = Math.min(stageW / canvas.width, stageH / canvas.height)
+    const drawW = (canvas.width * contain) / stageW
+    const drawH = (canvas.height * contain) / stageH
+
+    return {
+      left: (1 - drawW) / 2,
+      top: (1 - drawH) / 2,
+      right: (1 + drawW) / 2,
+      bottom: (1 + drawH) / 2
+    }
+  }, [canvas, viewport.height])
+
+  const deferExpressionForPeek = playInstance !== null && (spatialPeek !== null || peekPreparation !== null)
+
+  const presentation = useMemo(
+    () => resolvePresentation(baseAction, playInstance, deferExpressionForPeek),
+    [baseAction, playInstance, deferExpressionForPeek]
+  )
+
+  useEffect(() => {
+    if (playInstance && (spatialPeek || peekPreparation)) {
+      if (peekExitGeneration.current !== playInstance.generation) {
+        peekExitGeneration.current = playInstance.generation
+        leavePeekForExpression()
+      }
+
+      return
+    }
+
+    if (!playInstance && !spatialPeek && peekExitGeneration.current !== null) {
+      peekExitGeneration.current = null
+      void restorePeekAfterExpression()
+    }
+  }, [playInstance, spatialPeek, peekPreparation])
+
   const targetClip =
     presentation.kind === 'expression'
       ? (catalog?.clipsById.get(presentation.instance.actionId) ?? null)
       : (catalog?.clipsBySlot.get(presentation.action) ?? null)
 
   const idleClip = catalog?.clipsBySlot.get('idle') ?? null
-  const clip = targetClip ?? (presentation.kind === 'base' && presentation.action === 'idle' ? targetClip : idleClip)
+  const clip = targetClip ?? idleClip
 
-  // 切换键含包与素材版本：A→B 外观即使同为 idle 也强制重载；同动作素材更新（asset_revision 推进）同样重载。
+  const preparationForClip =
+    presentation.kind === 'base' &&
+    peekPreparation?.action === presentation.action &&
+    peekPreparation.packId === catalog?.packId &&
+    clip?.system_slot === peekPreparation.action
+      ? peekPreparation
+      : null
+
+  // 包、素材版本和播放请求均参与切换键，同一路径的新请求也须重播。
   const clipSwitchKey = clip ? `${clip.video_ref}@${clip.asset_revision}` : 'none'
-  const mountKey = `${presentation.mountKey}|${catalog?.packId ?? 0}|${clipSwitchKey}`
+  const stableMountKey = `${presentation.mountKey}|${catalog?.packId ?? 0}|${clipSwitchKey}`
+  const preparationKey = preparationForClip ? `|prepare:${preparationForClip.generation}` : ''
+  const mountKey = `${stableMountKey}${preparationKey}`
 
-  // 抢占结清：presentation 变化时，被替换的在途表达实例上报 interrupted 并结束。
   const prevInstanceRef = useRef<ActionPlayInstance | null>(null)
   useEffect(() => {
-    const currentInstance = presentation.kind === 'expression' ? presentation.instance : null
+    const currentInstance =
+      presentation.kind === 'expression' ? presentation.instance : deferExpressionForPeek ? playInstance : null
 
-    if (currentInstance !== null && currentInstance !== prevInstanceRef.current) {
-      // 新表达请求替换旧实例（无论旧实例是否还在播放）。
-      settleReplacedInstance(prevInstanceRef.current)
-    } else if (currentInstance === null && prevInstanceRef.current !== null) {
-      // 表达被基础动作（拖拽/移动/安全控制）抢占。
+    if (currentInstance !== prevInstanceRef.current) {
       settleReplacedInstance(prevInstanceRef.current)
     }
 
     prevInstanceRef.current = currentInstance
-  }, [presentation])
+  }, [deferExpressionForPeek, playInstance, presentation])
 
-  // 挂载/切换片段：相同 mountKey 不重复切换；新 play 实例（新 play_id）从头播放。
   useEffect(() => {
     if (!catalog || !clip) {
       return
@@ -229,7 +369,8 @@ export function VideoStage(): React.JSX.Element {
           throw new Error('Video asset unavailable')
         }
 
-        await loadVideo(el, url, controller.signal)
+        el.loop = loop
+        const [, hitmask] = await Promise.all([loadVideo(el, url, controller.signal), resolveHitmask(clip)])
 
         if (controller.signal.aborted) {
           return
@@ -237,27 +378,64 @@ export function VideoStage(): React.JSX.Element {
 
         // 表达实例从头播放；真实可见后才上报 started（备用播放器预热不计）。
         if (instance !== null) {
-          el.currentTime = 0
-          el.loop = loop
+          if (!(await prepareFirstFrame(el, controller.signal))) {
+            throw new Error('First video frame unavailable')
+          }
 
-          if (!shouldStartInstance(instance)) {
+          if (!shouldStartVisibleInstance(instance)) {
             return
           }
-
-          void reportReceipt({ play_id: instance.playId }, 'started')
-        } else {
-          el.loop = true
         }
 
-        const previous = front.current
-        front.current = slot
-        mounted.current = { key: mountKey, generation: instance?.generation ?? 0, playId: instance?.playId ?? null }
-        setVisible(slot)
-        pauseTimer = window.setTimeout(() => {
-          if (previous !== null && front.current !== previous) {
-            elements[previous]?.pause()
+        const showFirstFrame = (): void => {
+          const previous = front.current
+          front.current = slot
+          mounted.current = {
+            key: preparationForClip ? stableMountKey : mountKey,
+            playId: instance?.playId ?? null
           }
-        }, 140)
+          hitmaskRef.current = hitmask
+          // 遮挡与播放器同一帧提交，不把淡出的完整身体套进探身蒙版。
+          flushSync(() => {
+            setVisible(slot)
+            setVisibleClip(clip)
+          })
+
+          if (instance !== null) {
+            window.requestAnimationFrame(() => {
+              if (
+                front.current === slot &&
+                mounted.current?.playId === instance.playId &&
+                shouldStartVisibleInstance(instance)
+              ) {
+                void reportReceipt({ play_id: instance.playId }, 'started')
+              }
+            })
+          }
+
+          pauseTimer = window.setTimeout(() => {
+            if (previous !== null && front.current !== previous) {
+              elements[previous]?.pause()
+            }
+          }, 140)
+        }
+
+        if (preparationForClip) {
+          if (
+            !(await commitPeekPreparation(
+              preparationForClip.action,
+              preparationForClip.generation,
+              () => prepareFirstFrame(el, controller.signal),
+              showFirstFrame
+            ))
+          ) {
+            if (!controller.signal.aborted) {
+              el.pause()
+            }
+          }
+        } else {
+          showFirstFrame()
+        }
       } catch (error) {
         if (controller.signal.aborted) {
           return
@@ -268,8 +446,10 @@ export function VideoStage(): React.JSX.Element {
         if (instance !== null) {
           void reportReceipt({ play_id: instance.playId }, 'rejected', 'load failed')
           finishPlayInstance(instance.generation)
-        } else if (!front.current) {
-          // 首个基础片段加载失败：目录不可用，外层回落蛋形兜底（不悬空空白）。
+        } else if (preparationForClip) {
+          cancelPeekPreparation(preparationForClip.action, preparationForClip.generation)
+        } else if (front.current === null) {
+          // 首帧失败由外层回落；已有画面则继续保留。
           $actionCatalogStatus.set('unavailable')
         }
       }
@@ -285,38 +465,13 @@ export function VideoStage(): React.JSX.Element {
         }
       }
     }
-    // mountKey 已含 play_id / 包 / 素材版本 / 基础动作；clip 随 mountKey 唯一确定。
-  }, [catalog, clip, mountKey, presentation])
-
-  // 命中遮罩按 clip 加载：不随渲染重跑取消；切换动作时更新。
-  useEffect(() => {
-    if (!clip) {
-      hitmaskRef.current = null
-      probeInteractiveRegions()
-
-      return
-    }
-
-    let cancelled = false
-
-    void resolveHitmask(clip).then(hm => {
-      if (!cancelled) {
-        hitmaskRef.current = hm
-        probeInteractiveRegions()
-      }
-    })
-
-    return () => {
-      cancelled = true
-    }
-  }, [clip])
+  }, [catalog, clip, mountKey, preparationForClip, presentation, stableMountKey])
 
   useEffect(() => {
     probeInteractiveRegions()
-  }, [visible])
+  }, [visible, spatialPeek])
 
-  // 循环计数：repeat_count > 1 的 loop 表达在播满次数后 completed 并回基础状态
-  //（el.loop=true 不触发 ended，手动计数）。
+  // el.loop 不触发 ended，按 currentTime 回绕统计轮数。
   useEffect(() => {
     const instance = presentation.kind === 'expression' ? presentation.instance : null
 
@@ -344,13 +499,12 @@ export function VideoStage(): React.JSX.Element {
       }
     }
 
-    // 时间更新近似周期边界：currentTime 回绕（新一轮开始）计一次。
     let lastTime = 0
 
-    const handleTimeUpdate = (): void => {
+    const handleTimeUpdate = (event: Event): void => {
       const el = front.current === null ? null : elements[front.current]
 
-      if (!el) {
+      if (!el || event.currentTarget !== el || mounted.current?.playId !== instance.playId) {
         return
       }
 
@@ -372,16 +526,16 @@ export function VideoStage(): React.JSX.Element {
     }
   }, [presentation])
 
-  // once 片段结束：上报 completed 并回到基础状态；旧回调凭 playId/generation 不影响新实例。
+  // 只接收当前可见实例的结束事件。
   useEffect(() => {
     const elements = videos.current
     const instance = presentation.kind === 'expression' ? presentation.instance : null
     const playId = instance?.playId ?? ''
 
-    const handleEnded = (): void => {
+    const handleEnded = (event: Event): void => {
       const current = mounted.current
 
-      if (!current || !instance) {
+      if (!current || !instance || front.current === null || event.currentTarget !== elements[front.current]) {
         return
       }
 
@@ -405,34 +559,59 @@ export function VideoStage(): React.JSX.Element {
   }, [presentation])
 
   useEffect(() => {
-    if (!canvas) {
+    $spriteCanvasRect.set(canvasRect)
+  }, [canvasRect])
+
+  useEffect(() => {
+    if (!canvas || !canvasRect) {
+      $spriteContentRect.set(null)
+
       return
     }
 
-    // $spriteContentRect 是舞台盒上的 0–1 归一化包围盒，不能写入画布像素宽高。
-    // 视频 object-contain 铺进舞台：把整幅画布映射到 contain 后的落位，
-    // 人物脚底贴画布底，因此 content.bottom 即角色脚底（DESIGN「位置、移动与缩放」 全身在屏）。
-    const stageW = getBaseSpriteWidth()
-    const stageH = getBaseSpriteHeight()
-    const contain = Math.min(stageW / canvas.width, stageH / canvas.height)
-    const drawW = (canvas.width * contain) / stageW
-    const drawH = (canvas.height * contain) / stageH
+    // 将素材轮廓映射到舞台；旧目录按整画布兜底。
+    const drawW = canvasRect.right - canvasRect.left
+    const drawH = canvasRect.bottom - canvasRect.top
+    const bounds: readonly [number, number, number, number] = visibleClip?.content_rect ?? [0, 0, 1, 1]
 
-    $spriteContentRect.set({
-      left: (1 - drawW) / 2,
-      top: (1 - drawH) / 2,
-      right: (1 + drawW) / 2,
-      bottom: (1 + drawH) / 2
-    })
+    const contentRect = {
+      left: canvasRect.left + bounds[0] * drawW,
+      top: canvasRect.top + bounds[1] * drawH,
+      right: canvasRect.left + bounds[2] * drawW,
+      bottom: canvasRect.top + bounds[3] * drawH
+    }
 
-    return () => $spriteContentRect.set(null)
-  }, [canvas])
+    $spriteContentRect.set(contentRect)
+  }, [canvas, canvasRect, visibleClip])
+
+  useEffect(
+    () => () => {
+      $spriteCanvasRect.set(null)
+      $spriteContentRect.set(null)
+    },
+    []
+  )
 
   useEffect(() => {
     $videoHitTest.set((px, py) => {
       const el = front.current === null ? null : videos.current[front.current]
       const hitmask = hitmaskRef.current
       const rect = rootRef.current?.getBoundingClientRect()
+
+      // 遮挡先于 alpha 缺失回退，隐藏区域始终穿透。
+      const pos = $spatialPos.get()
+      const stageScale = $spatialScale.get()
+      const masked = peekMaskRects($spatialPeek.get(), pos, stageScale, getBaseSpriteWidth(), getBaseSpriteHeight())
+      const localX = (px - pos.x) / stageScale
+      const localY = (py - pos.y) / stageScale
+
+      if (
+        masked.some(
+          block => localX >= block.left && localX < block.right && localY >= block.top && localY < block.bottom
+        )
+      ) {
+        return false
+      }
 
       if (!hitmask || !el || !rect || !el.videoWidth || !el.videoHeight || !hitmask.frames.length) {
         return null
@@ -484,7 +663,10 @@ export function VideoStage(): React.JSX.Element {
           ref={el => {
             videos.current[slot] = el
           }}
-          style={{ opacity: visible === slot ? 1 : 0, transition: 'opacity 120ms linear' }}
+          style={{
+            opacity: visible === slot ? 1 : 0,
+            transition: spatialPeek || peekPreparation ? 'none' : 'opacity 120ms linear'
+          }}
         />
       ))}
     </div>

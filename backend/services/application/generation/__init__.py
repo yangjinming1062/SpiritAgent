@@ -119,6 +119,7 @@ from .video import (
     delete_pack as delete_video_pack,
 )
 from .video import drain_video_generation as drain_video_pack_generation
+from .video import ensure_system_action as ensure_video_system_action
 from .video import resume_processing_packs as resume_processing_video_packs
 from .video import (
     retry_pack as retry_video_pack,
@@ -202,6 +203,7 @@ __all__ = [
     "activate_video_pack",
     "create_video_pack_from_clips",
     "create_video_pack_from_reference",
+    "ensure_video_system_action",
     "retry_video_pack",
     "delete_video_pack",
     "list_pack_responses",

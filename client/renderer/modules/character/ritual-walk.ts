@@ -11,7 +11,7 @@ import {
   computePerchPlacement,
   getBaseSpriteWidth,
   moveDurationMs,
-  moveTo,
+  setSpatialLocale,
   updateSpatialDecision
 } from './spatial'
 
@@ -105,7 +105,7 @@ export async function performRitualWalk<T>(
     // 到达回调在行走被取消时不会触发（spatial 的 surface/drag 中止路径直接丢弃它）；
     // 仪式行走只是装饰，限时等待后必须继续执行原工具，不能让行走挂起整条工具链。
     await Promise.race([
-      new Promise<void>(resolve => moveTo(perch, locomotion, resolve)),
+      new Promise<void>(resolve => setSpatialLocale('perch', { position: perch, locomotion, onArrive: resolve })),
       sleep(moveDurationMs(dist, locomotion) + WALK_ABORT_GRACE_MS)
     ])
 

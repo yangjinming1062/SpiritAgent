@@ -4,6 +4,7 @@
 （`spiritagent.action.pack`）维护。
 """
 
+from modules.companion import PeekGeometry
 from pydantic import BaseModel, ConfigDict, Field
 
 from services.infrastructure.video_processing import (
@@ -31,6 +32,8 @@ class VideoClipSpec(BaseModel):
     hitmask: list[list[int]] = Field(default_factory=list)
     hitmask_grid: tuple[int, int] | None = None
     hitmask_fps: int = Field(gt=0, le=60)
+    peek_geometry: PeekGeometry | None = None
+    content_rect: tuple[float, float, float, float] | None = None
 
 
 class VideoPackCanvas(BaseModel):

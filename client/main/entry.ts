@@ -573,7 +573,20 @@ registerUpdateIpc({
 })
 
 registerSpriteIpc({
-  deps: { getSpriteWindow: () => mainWindow, getUserDataDir: () => app.getPath('userData'), screen },
+  deps: {
+    getSpriteWindow: () => mainWindow,
+    getUserDataDir: () => app.getPath('userData'),
+    getWindowSnapshot: async () => {
+      const bridge = runnerHost.getBridge()
+
+      if (!bridge) {
+        return null
+      }
+
+      return bridge.dispatch('execute_tool', { args: {}, name: 'system.get_windows' }, { timeoutMs: 1500 })
+    },
+    screen
+  },
   ipcMain
 })
 

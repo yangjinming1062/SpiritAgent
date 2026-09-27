@@ -225,7 +225,9 @@ flowchart LR
 
 ### 系统动作与动态动作
 
-系统槽位：`idle`、`drag`、`walk_left`、`walk_right`；首包必需 idle/drag。系统动作采用固定时长的循环规格，定义见[视频编排](../backend/services/application/generation/video/service.py)。动态动作有稳定 `action_id`，名称与用途开放，不占用系统槽位，由 LLM 提案，经独立评审后生成。
+系统槽位与必需项见 [动作定义](../backend/modules/companion/actions.py)，时长与循环规格见[视频编排](../backend/services/application/generation/video/service.py)。动态动作有稳定 `action_id`，名称与用途开放，不占系统槽位，由 LLM 提案并经独立评审后生成。
+
+左右探身分别制作，保留两侧外观差异；完整透明角色从首帧保持侧倾，只做轻微自然活动。视觉模型用成品首、中、末帧校准遮挡线和识别区域，alpha 遮罩提供内容轮廓；校准失败仍保留素材供预览。客户端消费与旧包兼容见[动作契约](PROTOCOL.md#动作目录与播放)。
 
 拖拽动作从首帧起持续表现躯干上部被提起、其余身体随重力松弛下垂的悬空姿态，按角色已有结构适配；提拉处与躯干主体稳定，仅下垂末端轻微随动。姿态与衣物均不承地，不以站姿左右摇摆表达拖拽。
 
@@ -301,7 +303,7 @@ pack 切历史后可接纳原冻结资料的晚到成果，但不激活、不抢
 | 生活场景 | 初始引导／手动／聊天工具／夜间的环境要求与选定造型 → [场景装配](../backend/services/application/generation/scene_prompt.py) → 身份单图或环境双图生成 → 成品描述 → 当前环境；已保存场景按最新描述重绘并原位换图 | 有无造型、有无环境参考、文图冲突、外部制作、分析失败、重绘中继续使用旧图、身份变化、重启冻结输入与未知提交 |
 | 出镜图片 | [聊天工具说明](../backend/prompts/tools.py)或[夜间规划](../backend/services/application/nightly/nightly_planning.py) → [共用身份与造型装配](../backend/services/application/generation/visual_identity.py) → 图片评分选择 → 对话／片刻 | 默认造型、仅造型图、显式覆盖、缺图、身份修订、单／双参考 |
 | 出镜视频 | [视频工具](../backend/services/adapters/tools/builtin/video_generation_tool.py)或夜间规划 → 造型选择与首帧校准 → [视频任务](../backend/services/application/generation/video_jobs.py) → 抽帧评分 → 交付 | 默认首帧、显式首帧、造型覆盖、原样动画化省略 subject、后台恢复 |
-| 动作视频 | 提案与冻结身份／着装 → [独立评审](../backend/services/application/actions/review.py) → [逐动作脚本](../backend/services/application/generation/video/script.py) → 姿态图 → 视频 → 机械门禁与严格身份复核 → 动作目录 | idle／drag／左右行走／动态动作、loop／once、单动作反馈、结构重试、附加参考能力、旧包快照 |
+| 动作视频 | 提案与冻结身份／着装 → [独立评审](../backend/services/application/actions/review.py) → [逐动作脚本](../backend/services/application/generation/video/script.py) → 姿态图 → 视频 → 机械门禁与严格身份复核 → 动作目录 | idle／drag／左右行走／左右探身／动态动作、loop／once、单动作反馈、结构重试、附加参考能力、旧包快照 |
 | 公共回退 | 完整提示词 → [审核改写](../backend/services/application/generation/avatar_service.py)、[图片质量链](../backend/services/application/generation/character_images.py)与[身份评分](../backend/services/application/generation/identity_review.py) → 保存最佳候选或明确失败 | 安全改写空值、可见身份冲突、证据不足、低分、评分不可用、未知付费结果、恢复冻结输入 |
 
 ### 验收范围

@@ -2,11 +2,34 @@ import logging
 import re
 import subprocess
 import time
-from typing import Any
+import uuid
+from typing import Any, NotRequired, TypedDict
 
 from utils import IS_MACOS, IS_WINDOWS
 
 logger = logging.getLogger(__name__)
+_WINDOW_SCENE_INSTANCE_ID = uuid.uuid4().hex
+
+
+class WindowInfo(TypedDict):
+    title: str
+    name: str
+    x: int
+    y: int
+    w: int
+    h: int
+    focused: bool
+    visible: bool
+    window_id: str
+    pid: int
+    z_order: int
+
+
+class WindowScene(TypedDict):
+    windows: list[WindowInfo]
+    runner_instance_id: NotRequired[str]
+
+
 try:
     import psutil  # type: ignore[import-not-found]
 except ImportError:
@@ -23,7 +46,7 @@ try:
         CGWindowListCopyWindowInfo,
         kCGAnyInputEventType,
         kCGEventSourceStateHIDSystemState,
-        kCGNullWindowId,
+        kCGNullWindowID,
         kCGWindowListOptionOnScreenOnly,
     )
 except ImportError:
@@ -31,7 +54,7 @@ except ImportError:
     CGWindowListCopyWindowInfo = None  # type: ignore[assignment,misc]
     kCGAnyInputEventType = None  # type: ignore[assignment,misc]
     kCGEventSourceStateHIDSystemState = None  # type: ignore[assignment,misc]
-    kCGNullWindowId = None  # type: ignore[assignment,misc]
+    kCGNullWindowID = None  # type: ignore[assignment,misc]
     kCGWindowListOptionOnScreenOnly = None  # type: ignore[assignment,misc]
 try:
     import Quartz  # type: ignore[import-not-found]
@@ -98,8 +121,8 @@ def get_power_state() -> dict[str, Any]:
     return state
 
 
-def get_windows() -> dict[str, Any]:
-    """可见顶层窗口列表 ``{"windows": [{title, name, x, y, w, h, focused}, ...]}``; 不可用时为空列表。"""
+def get_windows() -> WindowScene:
+    """可见顶层窗口快照；探测失败时不提供 Runner 实例标识。"""
     if IS_WINDOWS:
         return _windows_windows()
     if IS_MACOS:
@@ -386,6 +409,11 @@ def _focus_windows() -> dict[str, Any]:
         return {}
     try:
         user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetWindow.restype = wintypes.HWND
+        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+        user32.GetAncestor.restype = wintypes.HWND
 
         hwnd = user32.GetForegroundWindow()
         if not hwnd:
@@ -393,8 +421,8 @@ def _focus_windows() -> dict[str, Any]:
         # 跳过 explorer 容器与不可见系统窗口 — 向后遍历 Z-order 找到用户实际交互的顶层可见窗口。
         for _ in range(8):
             buf = ctypes.create_unicode_buffer(256)
-            user32.GetClassNameW(hwnd, buf, 256)
-            if buf.value not in ("Shell_TrayWnd", "WorkerW", "Progman") and user32.IsWindowVisible(hwnd):
+            user32.GetClassNameW(wintypes.HWND(hwnd), buf, 256)
+            if buf.value not in ("Shell_TrayWnd", "WorkerW", "Progman") and user32.IsWindowVisible(wintypes.HWND(hwnd)):
                 break
             next_hwnd = user32.GetWindow(hwnd, 2)  # GW_HWNDNEXT = 2
             if not next_hwnd:
@@ -415,7 +443,7 @@ def _focus_windows() -> dict[str, Any]:
                 ("rcCaret", wintypes.RECT),
             ]
 
-        tid = user32.GetWindowThreadProcessId(hwnd, None)
+        tid = user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), None)
         info = _GuiThreadInfo(cbSize=ctypes.sizeof(_GuiThreadInfo))
         user32.GetGUIThreadInfo(tid, ctypes.byref(info))
         real_hwnd = info.hwndFocus or info.hwndActive or hwnd
@@ -423,16 +451,17 @@ def _focus_windows() -> dict[str, Any]:
         top = user32.GetAncestor(real_hwnd, 2) or real_hwnd or hwnd
 
         pid = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(top, ctypes.byref(pid))
+        user32.GetWindowThreadProcessId(wintypes.HWND(top), ctypes.byref(pid))
         title_buf = ctypes.create_unicode_buffer(512)
-        length = user32.GetWindowTextW(top, title_buf, 512)
+        length = user32.GetWindowTextW(wintypes.HWND(top), title_buf, 512)
         title = title_buf.value[:length]
         exe = _process_exe(pid.value)
         rect = wintypes.RECT()
-        user32.GetWindowRect(top, ctypes.byref(rect))
+        user32.GetWindowRect(wintypes.HWND(top), ctypes.byref(rect))
         return {
             "name": exe or title,
             "pid": pid.value,
+            "window_id": f"win:{int(top):X}",
             "title": title,
             "kind": "user",
             "x": rect.left,
@@ -459,11 +488,12 @@ def _focus_macos() -> dict[str, Any]:
             "kind": "user",
         }
         if CGWindowListCopyWindowInfo is not None:
-            for win in CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowId):
-                if win.get("kCGWindowOwnerPID", -1) != app.processIdentifier():
+            for win in CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID):
+                if win.get("kCGWindowOwnerPID", -1) != app.processIdentifier() or win.get("kCGWindowLayer", 0) != 0:
                     continue
                 b = win.get("kCGWindowBounds")
-                if b and b.get("Width", 0) > 0:
+                if b and b.get("Width", 0) > 0 and b.get("Height", 0) > 0:
+                    result["window_id"] = f"mac:{int(win.get('kCGWindowNumber', 0))}"
                     result["x"] = int(b.get("X", 0))
                     result["y"] = int(b.get("Y", 0))
                     result["w"] = int(b["Width"])
@@ -551,7 +581,7 @@ def _fullscreen_macos() -> bool:
             return False
         focused_pid = app.processIdentifier()
         # kCGWindowListOptionOnScreenOnly 排除离屏/最小化窗口; 再按 PID 过滤, 看 AppKit 头文件暴露的全屏位/窗口状态位。
-        windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowId)
+        windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
         NSWindowStyleMaskFullScreen = 1 << 14  # 来自 AppKit 头文件
         for win in windows:
             owner_pid = win.get("kCGWindowOwnerPID", -1)
@@ -578,11 +608,24 @@ def _process_exe(pid: int) -> str:
         return ""
     try:
         kernel32 = ctypes.windll.kernel32
-        psapi = ctypes.windll.psapi
+        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel32.OpenProcess.restype = wintypes.HANDLE
+        kernel32.QueryFullProcessImageNameW.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            wintypes.LPWSTR,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
         h = kernel32.OpenProcess(0x1000, False, pid)
+        if not h:
+            return ""
         try:
             buf = ctypes.create_unicode_buffer(512)
-            psapi.GetModuleFileNameExW(h, None, buf, 512)
+            size = wintypes.DWORD(len(buf))
+            if not kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+                return ""
             return buf.value.rsplit("\\", 1)[-1] if buf.value else ""
         finally:
             kernel32.CloseHandle(h)
@@ -590,39 +633,52 @@ def _process_exe(pid: int) -> str:
         return ""
 
 
-def _windows_windows() -> dict[str, Any]:
+def _windows_windows() -> WindowScene:
     if ctypes is None or wintypes is None:
         return {"windows": []}
     try:
         user32 = ctypes.windll.user32
+        user32.GetForegroundWindow.restype = wintypes.HWND
+        dwm_attribute = ctypes.windll.dwmapi.DwmGetWindowAttribute
+        dwm_attribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+        dwm_attribute.restype = ctypes.c_long
         foreground = user32.GetForegroundWindow()
-        results: list[dict[str, Any]] = []
+        results: list[WindowInfo] = []
         exe_cache: dict[int, str] = {}
 
         @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
         def cb(hwnd: int, _lparam: int) -> bool:
-            if not user32.IsWindowVisible(hwnd):
+            handle = wintypes.HWND(hwnd)
+            if not user32.IsWindowVisible(handle) or user32.IsIconic(handle):
+                return True
+            cloaked = wintypes.DWORD()
+            if dwm_attribute(handle, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked)) == 0 and cloaked.value:
                 return True
             buf = ctypes.create_unicode_buffer(256)
-            user32.GetClassNameW(hwnd, buf, 256)
+            user32.GetClassNameW(handle, buf, 256)
             if buf.value in _SHELL_WINDOW_CLASSES:
                 return True
             rect = wintypes.RECT()
-            if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+            # DWMWA_EXTENDED_FRAME_BOUNDS 为物理可见边界，不含透明缩放边框，也不做 DPI 虚拟化。
+            if dwm_attribute(handle, 9, ctypes.byref(rect), ctypes.sizeof(rect)) != 0:
                 return True
             w = max(0, rect.right - rect.left)
             h = max(0, rect.bottom - rect.top)
             if w <= 0 or h <= 0:
                 return True
-            length = user32.GetWindowTextLengthW(hwnd)
+            length = user32.GetWindowTextLengthW(handle)
             if length == 0:
                 return True
             tb = ctypes.create_unicode_buffer(length + 1)
-            user32.GetWindowTextW(hwnd, tb, length + 1)
+            user32.GetWindowTextW(handle, tb, length + 1)
             pid = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+            user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
             pid_val = pid.value
-            exe = exe_cache.get(pid_val) or exe_cache.setdefault(pid_val, _process_exe(pid_val))
+            if pid_val not in exe_cache:
+                exe_cache[pid_val] = _process_exe(pid_val)
+            exe = exe_cache[pid_val]
+            if exe.casefold() == "spiritagent.exe":
+                return True
             results.append(
                 {
                     "title": tb.value,
@@ -632,18 +688,23 @@ def _windows_windows() -> dict[str, Any]:
                     "w": w,
                     "h": h,
                     "focused": hwnd == foreground,
+                    "visible": True,
+                    "window_id": f"win:{int(hwnd):X}",
+                    "pid": pid_val,
+                    "z_order": len(results),
                 },
             )
             return True
 
-        user32.EnumWindows(cb, 0)
-        return {"windows": results}
+        if not user32.EnumWindows(cb, 0):
+            raise OSError("Window enumeration failed")
+        return {"windows": results, "runner_instance_id": _WINDOW_SCENE_INSTANCE_ID}
     except Exception as e:
         logger.debug("win get_windows failed: %s", e)
         return {"windows": []}
 
 
-def _windows_macos() -> dict[str, Any]:
+def _windows_macos() -> WindowScene:
     if Quartz is None or CGWindowListCopyWindowInfo is None:
         return {"windows": []}
     try:
@@ -652,14 +713,19 @@ def _windows_macos() -> dict[str, Any]:
             app = NSWorkspace.sharedWorkspace().frontmostApplication()
             if app:
                 focused_pid = app.processIdentifier()
-        results: list[dict[str, Any]] = []
-        for win in CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowId):
+        results: list[WindowInfo] = []
+        focused_window_seen = False
+        for win in CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID):
             if win.get("kCGWindowLayer", 0) != 0:
                 continue
             b = win.get("kCGWindowBounds")
             if not b or b.get("Width", 0) <= 0:
                 continue
             owner = win.get("kCGWindowOwnerName", "")
+            if (owner or "").casefold() in {"spiritagent", "唤生"}:
+                continue
+            focused = win.get("kCGWindowOwnerPID", -1) == focused_pid and not focused_window_seen
+            focused_window_seen |= focused
             results.append(
                 {
                     "title": win.get("kCGWindowName", "") or owner,
@@ -668,10 +734,14 @@ def _windows_macos() -> dict[str, Any]:
                     "y": int(b.get("Y", 0)),
                     "w": int(b["Width"]),
                     "h": int(b["Height"]),
-                    "focused": win.get("kCGWindowOwnerPID", -1) == focused_pid,
+                    "focused": focused,
+                    "visible": True,
+                    "window_id": f"mac:{int(win.get('kCGWindowNumber', 0))}",
+                    "pid": int(win.get("kCGWindowOwnerPID", 0)),
+                    "z_order": len(results),
                 },
             )
-        return {"windows": results}
+        return {"windows": results, "runner_instance_id": _WINDOW_SCENE_INSTANCE_ID}
     except Exception as e:
         logger.debug("macos get_windows failed: %s", e)
         return {"windows": []}

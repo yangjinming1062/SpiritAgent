@@ -126,6 +126,8 @@ declare global {
         hide: AsyncIpc<IpcInvokeContract['spiritagent:sprite:hide']>
         setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-ignore-mouse-events']>
         getPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:get-position']>
+        getWindowScene: AsyncIpc<IpcInvokeContract['spiritagent:sprite:get-window-scene']>
+        moveToDisplay: AsyncIpc<IpcInvokeContract['spiritagent:sprite:move-to-display']>
         setPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-position']>
         moveToCursorDisplay: AsyncIpc<IpcInvokeContract['spiritagent:sprite:move-to-cursor-display']>
       }

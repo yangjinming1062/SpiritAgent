@@ -12,6 +12,7 @@ import {
   activateVideoPack,
   generateVideoPack,
   hydrateVideoPack,
+  type VideoActionWire,
   videoGenScopeMatches
 } from '@/modules/character'
 import { ArrowLeft } from '@/shared/lib/icons'
@@ -39,6 +40,7 @@ interface ActionEntry {
   error: string | null
   clipUrl: string | null
   motionPrompt: string
+  peekGeometry: VideoActionWire['peek_geometry']
 }
 
 function isActionInProgress(status: string): boolean {
@@ -120,7 +122,9 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     idle: t.videoIdle,
     walk_left: t.videoWalkLeft,
     walk_right: t.videoWalkRight,
-    drag: t.videoDrag
+    drag: t.videoDrag,
+    peek_left: t.videoPeekLeft,
+    peek_right: t.videoPeekRight
   }
 
   const actions: ActionEntry[] = []
@@ -134,15 +138,16 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     seenKeys.add(entry.action)
     actions.push({
       key: entry.action,
-      label: entry.name || actionNames[entry.action] || entry.action.replace(/_/g, ' '),
+      label: actionNames[entry.action] || entry.name || entry.action.replace(/_/g, ' '),
       status: entry.status,
       error: entry.error,
       clipUrl: entry.clip_url,
-      motionPrompt: entry.motion_prompt
+      motionPrompt: entry.motion_prompt,
+      peekGeometry: entry.peek_geometry
     })
   }
 
-  for (const slot of ['idle', 'drag', 'walk_left', 'walk_right'] as const) {
+  for (const slot of ['idle', 'drag', 'walk_left', 'walk_right', 'peek_left', 'peek_right'] as const) {
     if (!seenKeys.has(slot)) {
       seenKeys.add(slot)
       actions.push({
@@ -151,7 +156,8 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
         status: 'missing',
         error: null,
         clipUrl: null,
-        motionPrompt: ''
+        motionPrompt: '',
+        peekGeometry: null
       })
     }
   }
@@ -266,13 +272,25 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     })
   }
 
-  const actionStatus = (action: ActionEntry): { label: string; className: string } => {
-    if (action.clipUrl) {
-      return { label: t.videoActionReady, className: 'bg-emerald-400' }
-    }
-
+  const actionStatus = (action: ActionEntry): { label: string; hint?: string; className: string } => {
     if (isActionInProgress(action.status)) {
       return { label: t.videoActionGenerating, className: 'bg-amber-400' }
+    }
+
+    if (action.status === 'result_unknown') {
+      return { label: t.videoActionResultUnknown, hint: t.videoActionResultUnknownHint, className: 'bg-amber-400' }
+    }
+
+    if (action.status === 'review') {
+      return { label: t.videoActionReview, hint: t.videoActionReviewHint, className: 'bg-amber-400' }
+    }
+
+    if ((action.key === 'peek_left' || action.key === 'peek_right') && action.clipUrl && !action.peekGeometry) {
+      return { label: t.videoPeekCalibrationFailed, hint: t.videoPeekCalibrationFailedHint, className: 'bg-amber-400' }
+    }
+
+    if (action.clipUrl) {
+      return { label: t.videoActionReady, className: 'bg-emerald-400' }
     }
 
     if (action.status === 'failed' || action.error) {
@@ -431,12 +449,12 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                       setEditingAction(null)
                       setFeedback('')
                     }}
-                    title={status.label}
+                    title={status.hint ?? status.label}
                     type="button"
                   >
                     <span className={cn('size-1.5 shrink-0 rounded-full', status.className)} />
                     <span className="min-w-0 flex-1 truncate text-xs">{action.label}</span>
-                    <span className="shrink-0 text-[10px] text-muted">{status.label}</span>
+                    <span className="max-w-[50%] shrink-0 truncate text-[10px] text-muted">{status.label}</span>
                   </button>
                 )
               })}
@@ -452,13 +470,10 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-strong">{selectedAction.label}</p>
-                    <p className="mt-0.5 text-[11px] text-muted">{actionStatus(selectedAction).label}</p>
+                    <p className="mt-0.5 text-[11px] text-muted">
+                      {actionStatus(selectedAction).hint ?? actionStatus(selectedAction).label}
+                    </p>
                   </div>
-                  {selectedAction.clipUrl ? (
-                    <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">
-                      {t.videoActionReady}
-                    </span>
-                  ) : null}
                 </div>
 
                 <div className="mt-3 flex min-h-0 flex-1 items-center justify-center overflow-hidden rounded-lg bg-fill-trough">
@@ -467,11 +482,9 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                   ) : (
                     <div className="max-w-md px-5 text-center">
                       <p className="text-xs text-body">
-                        {actionIsGenerating
-                          ? t.videoActionGenerating
-                          : selectedAction.status === 'failed' || selectedAction.error
-                            ? t.videoActionFailed
-                            : t.videoActionOnDemand}
+                        {selectedAction.status === 'missing'
+                          ? t.videoActionOnDemand
+                          : actionStatus(selectedAction).label}
                       </p>
                       {selectedAction.error ? (
                         <p className="mt-1 text-[11px] text-danger-fg">{selectedAction.error}</p>

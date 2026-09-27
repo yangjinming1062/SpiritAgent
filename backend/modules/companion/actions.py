@@ -22,7 +22,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column
 
 # 系统动作槽位：产品语义占位，动态动作不可占用或覆盖。
-SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag", "walk_left", "walk_right")
+SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag", "walk_left", "walk_right", "peek_left", "peek_right")
 # 发布与激活的必需槽位：首包生成集合；缺失时不得 ready。
 REQUIRED_SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag")
 
@@ -140,6 +140,8 @@ class CompanionAction(ModelBase, TimestampMixin):
     hitmask_fps: Mapped[int | None] = mapped_column(Integer, nullable=True)
     enter_pose: Mapped[str | None] = mapped_column(String(64), nullable=True)
     exit_pose: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    peek_geometry_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    content_rect_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
 class ActionProposal(ModelBase, TimestampMixin):

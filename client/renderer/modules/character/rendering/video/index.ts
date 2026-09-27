@@ -12,5 +12,5 @@ export {
   videoGenScopeMatches,
   videoPackEventReceived
 } from './video-pack-store'
-export type { VideoGenError, VideoGenScope, VideoGenStage } from './video-pack-store'
+export type { VideoActionWire, VideoGenError, VideoGenScope, VideoGenStage } from './video-pack-store'
 export { VideoStage } from './VideoStage'

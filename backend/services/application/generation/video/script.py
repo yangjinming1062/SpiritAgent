@@ -1,17 +1,14 @@
-"""逐动作演绎：模型决定角色如何行动，代码固定动作契约与独立短片约束。
-
-动作规格是开放数据：系统动作沿用固定语义与时长；动态动作由审核通过的提案提供
-name / motion_description / duration_seconds / clip_kind。
-时长在设计校验、供应商参数与最终产物三处守卫（上限见 domains/actions/policy）。
-"""
+"""动作脚本与探身定位：模型描述画面，代码绑定规格并校验结果。"""
 
 import json
 
-from components import parse_llm_json
-from modules.companion import CharacterCardSnapshot
+from components import get_logger, parse_llm_json
+from modules.companion import CharacterCardSnapshot, PeekGeometry
 from prompts.generation import (
     VIDEO_ACTION_POSE_TEMPLATE,
     VIDEO_ACTION_SCRIPT_INSTRUCTIONS,
+    VIDEO_PEEK_ACTION_DESCRIPTION,
+    VIDEO_PEEK_GEOMETRY_INSTRUCTIONS,
     VIDEO_PROMPT_LOOP_CYCLE,
     VIDEO_PROMPT_LOOP_TAIL,
     VIDEO_PROMPT_ONCE_CYCLE,
@@ -23,6 +20,8 @@ from services.domains.actions import max_duration_seconds
 from services.domains.companion import render_character_identity
 from services.infrastructure.llm import vision_chat
 from services.infrastructure.video_processing import ACTION_FRAME_MARGIN
+
+logger = get_logger(__name__)
 
 # 系统槽位的固定语义；动态动作语义由提案规格携带。
 SYSTEM_ACTION_SEMANTICS: dict[str, str] = {
@@ -39,6 +38,8 @@ SYSTEM_ACTION_SEMANTICS: dict[str, str] = {
         "身体及已有头部持续侧向画面右侧，以符合实际结构的步态、游动、蠕动或振翅原地循环表现向右移动；"
         "躯干中心不平移，不正对镜头横向跨步，不转身或回头"
     ),
+    "peek_left": VIDEO_PEEK_ACTION_DESCRIPTION.format(direction="左", opposite="右"),
+    "peek_right": VIDEO_PEEK_ACTION_DESCRIPTION.format(direction="右", opposite="左"),
     "drag": (
         "从起始时刻就呈被上方无形力量轻轻拎起的松弛悬垂姿态，提拉处在躯干上部，其余身体受重力向下垂落，全程离地。"
         "按已有结构表现受力：有肩背时肩部略提、躯干微前倾；有手臂时双臂沿体侧松垂，肘腕放松；"
@@ -163,6 +164,35 @@ async def compose_action_script(
             last_error = str(exc)
             payload["validation_error"] = last_error
     raise VideoScriptError("动作脚本生成失败，请重试") from ValueError(last_error)
+
+
+async def inspect_peek_geometry(
+    user_id: int,
+    action: str,
+    identity_uri: str,
+    frame_uris: tuple[str, ...],
+) -> PeekGeometry | None:
+    """定位成品采样帧的遮挡线；不可用时返回 None。"""
+    if action not in ("peek_left", "peek_right") or not identity_uri or len(frame_uris) != 3:
+        return None
+    expected_side = "left" if action == "peek_left" else "right"
+    try:
+        raw = await vision_chat(
+            user_id,
+            VIDEO_PEEK_GEOMETRY_INSTRUCTIONS,
+            json.dumps({"expected_side": expected_side}),
+            reference_images=(identity_uri, *frame_uris),
+        )
+        payload = parse_llm_json(raw)
+        if not isinstance(payload, dict) or payload.get("usable") is not True:
+            return None
+        geometry = PeekGeometry.model_validate(
+            {"side": payload.get("side"), "cut_x": payload.get("cut_x"), "focus_rect": payload.get("focus_rect")},
+        )
+        return geometry if geometry.side == expected_side else None
+    except Exception:
+        logger.warning("peek geometry calibration failed", extra={"user_id": user_id, "action": action}, exc_info=True)
+        return None
 
 
 def build_video_prompt(entry: ActionScriptEntry, identity: CharacterCardSnapshot) -> str:

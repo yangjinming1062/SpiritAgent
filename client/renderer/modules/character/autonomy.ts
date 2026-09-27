@@ -4,18 +4,23 @@ import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
 import { $runnerPhase } from '@/shared/store/runner-status'
 
+import { $activePlayInstance } from './actions'
 import { $focusContext, $lastIdleSeconds, $screenLocked } from './activity'
 import { $effectiveTier } from './companion-store'
 import { $llmAutonomy } from './prefs'
 import {
   $defaultScale,
+  $homePosition,
+  $spatialLocomotion,
   $spatialPos,
+  captureWindowPeekIntent,
   computePerchPlacement,
+  enterWindowPeek,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
-  moveTo,
   setSpatialLocale,
-  startRoam
+  startRoam,
+  type WindowPeekIntent
 } from './spatial'
 
 const CONSULT_MIN_INTERVAL_MS = 60_000
@@ -41,6 +46,20 @@ let lastSnapshot: Snapshot | null = null
 let backgroundTimer: ReturnType<typeof setInterval> | null = null
 let unsubs: Array<() => void> = []
 let active = false
+let provisionGeneration = 0
+
+function canConsultAutonomy(): boolean {
+  return (
+    active &&
+    $runnerPhase.get() === 'running' &&
+    $llmAutonomy.get() &&
+    $effectiveTier.get() === 'autonomous' &&
+    !$chatVisible.get() &&
+    !$screenLocked.get() &&
+    $spatialLocomotion.get() !== 'drag' &&
+    !$activePlayInstance.get()
+  )
+}
 
 function stateChanged(oldSnap: Snapshot, newSnap: Snapshot): boolean {
   return (
@@ -61,7 +80,7 @@ function approachLocomotion(target: { x: number; y: number }): 'walk' | 'fly' {
 
 // 走过去搭话（DESIGN「位置、移动与缩放」「自主动作与空间智能」）：开场白由后端经 companion.message 通道投递（边走边说），
 // 客户端只负责走位——有焦点窗口落在窗口旁（复用 perch 落位与缩身，搭话后就地陪工）；
-// 用户在桌面（无窗口）时走到屏幕中下部站定，不动 locale，后续空间决策自然接管。
+// 用户在桌面（无窗口）时走到屏幕中下部站定，后续空间决策自然接管。
 function executeApproach(): void {
   // 锁屏不搭话；聊天开着时空间决策本就冻结。
   if ($screenLocked.get() || $chatVisible.get()) {
@@ -97,24 +116,18 @@ function executeApproach(): void {
     y: clamp(vh * 0.6, 24, vh - h - 24)
   }
 
-  moveTo(point, approachLocomotion(point))
+  setSpatialLocale('target', { position: point, locomotion: approachLocomotion(point) })
 }
 
-function executeAutonomousAction(action: string): void {
+function executeAutonomousAction(action: string, peekIntent: WindowPeekIntent | null): void {
   switch (action) {
     case 'roam':
       startRoam()
 
       break
     case 'perch': {
-      const ctx = $focusContext.get()
-
-      if (ctx?.windowGeom && ctx.category !== 'unknown' && !ctx.fullscreen) {
-        const perch = computePerchPlacement(ctx.windowGeom, $defaultScale.get())
-
-        if (perch) {
-          setSpatialLocale('perch', { position: perch.pos, scaleLimit: perch.scale })
-        }
+      if (peekIntent) {
+        void enterWindowPeek(peekIntent)
       }
 
       break
@@ -132,7 +145,7 @@ function executeAutonomousAction(action: string): void {
 
 async function consultAutonomyLLM(force = false): Promise<void> {
   // 空间智能只服务当前可见的桌面精灵；生活空间等表面打开时精灵已收起，不发起推理。
-  if (!$llmAutonomy.get() || $effectiveTier.get() !== 'autonomous' || $chatVisible.get() || $screenLocked.get()) {
+  if (!canConsultAutonomy()) {
     return
   }
 
@@ -171,6 +184,20 @@ async function consultAutonomyLLM(force = false): Promise<void> {
   lastSnapshot = newSnapshot
 
   const secondsSinceLastAction = lastAutonomousActionAt > 0 ? (now - lastAutonomousActionAt) / 1000 : 9999
+  const generation = provisionGeneration
+  const home = $homePosition.get()
+
+  const isCurrent = (): boolean =>
+    generation === provisionGeneration &&
+    gateway === $gateway.get() &&
+    home === $homePosition.get() &&
+    canConsultAutonomy()
+
+  const peekIntent = await captureWindowPeekIntent()
+
+  if (!isCurrent()) {
+    return
+  }
 
   try {
     const res = await gateway.request<ShouldActRpcResponse>('companion.should_act', {
@@ -183,9 +210,9 @@ async function consultAutonomyLLM(force = false): Promise<void> {
       seconds_since_last_action: secondsSinceLastAction
     })
 
-    if (res?.should_act && res.action) {
+    if (isCurrent() && res?.should_act && res.action) {
       lastAutonomousActionAt = Date.now()
-      executeAutonomousAction(res.action)
+      executeAutonomousAction(res.action, peekIntent)
     }
   } catch {
     /* 静默捕获；LLM 错误时不做任何自主动作 */
@@ -209,6 +236,7 @@ export function startAutonomyProvision(): () => void {
   unsubs.push(
     $screenLocked.subscribe(locked => {
       if (locked) {
+        provisionGeneration += 1
         lastSnapshot = null
 
         return
@@ -221,6 +249,7 @@ export function startAutonomyProvision(): () => void {
   unsubs.push(
     $chatVisible.subscribe(visible => {
       if (visible) {
+        provisionGeneration += 1
         lastSnapshot = null
 
         return
@@ -232,10 +261,27 @@ export function startAutonomyProvision(): () => void {
   unsubs.push(
     $llmAutonomy.subscribe(enabled => {
       if (!enabled) {
+        provisionGeneration += 1
         lastSnapshot = null
       } else {
         onStateOrEventChange()
       }
+    })
+  )
+  unsubs.push(
+    $effectiveTier.subscribe(tier => {
+      if (tier !== 'autonomous') {
+        provisionGeneration += 1
+        lastSnapshot = null
+      } else {
+        onStateOrEventChange()
+      }
+    })
+  )
+  unsubs.push(
+    $runnerPhase.listen(() => {
+      provisionGeneration += 1
+      lastSnapshot = null
     })
   )
 
@@ -255,6 +301,7 @@ export function startAutonomyProvision(): () => void {
 
 export function stopAutonomyProvision(): void {
   active = false
+  provisionGeneration += 1
 
   if (backgroundTimer !== null) {
     clearInterval(backgroundTimer)

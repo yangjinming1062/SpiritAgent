@@ -4,9 +4,67 @@ source / user_id / 预算日 / 系统槽位由服务端绑定。时长上限由�
 schema 只守绝对上限 12 秒。
 """
 
-from pydantic import BaseModel, ConfigDict, Field
+import json
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
 ABSOLUTE_MAX_DURATION_SECONDS = 12.0
+
+
+class PeekGeometry(BaseModel):
+    """成品画布中的遮挡线与覆盖各采样帧的识别区域。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    side: Literal["left", "right"]
+    cut_x: float = Field(gt=0.1, lt=0.9)
+    focus_rect: tuple[float, float, float, float]
+
+    @field_validator("focus_rect")
+    @classmethod
+    def validate_focus_rect(cls, value: tuple[float, float, float, float]) -> tuple[float, float, float, float]:
+        left, top, right, bottom = value
+        if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+            raise ValueError("focus_rect must be an ordered normalized rectangle")
+        return value
+
+    @model_validator(mode="after")
+    def focus_is_on_revealed_side(self) -> "PeekGeometry":
+        left, _top, right, _bottom = self.focus_rect
+        if self.side == "left" and right >= self.cut_x:
+            raise ValueError("left focus region must be left of the cut")
+        if self.side == "right" and left <= self.cut_x:
+            raise ValueError("right focus region must be right of the cut")
+        return self
+
+    @classmethod
+    def from_stored_json(cls, raw: str | None) -> "PeekGeometry | None":
+        if not raw:
+            return None
+        try:
+            return cls.model_validate_json(raw)
+        except ValidationError:
+            return None
+
+
+def parse_content_rect(raw: str | None) -> tuple[float, float, float, float] | None:
+    """解析持久化的内容轮廓；缺失或非法时返回 None。"""
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(data, list | tuple) or len(data) != 4:
+        return None
+    try:
+        left, top, right, bottom = (float(value) for value in data)
+    except (TypeError, ValueError):
+        return None
+    if not (0 <= left < right <= 1 and 0 <= top < bottom <= 1):
+        return None
+    return left, top, right, bottom
 
 
 class ActionDesignRequest(BaseModel):

@@ -87,10 +87,11 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ### 空间行为
 
-- [spatial.ts](modules/character/spatial.ts)拥有位置，[autonomy.ts](modules/character/autonomy.ts)解释云端意图。
+- [spatial.ts](modules/character/spatial.ts)拥有位置与异步意图生命周期，[spatial-peek.ts](modules/character/spatial-peek.ts)计算探身落位及绘制、命中共用的遮挡矩形，[autonomy.ts](modules/character/autonomy.ts)解释云端意图。
 - 衣柜页修改默认比例后经主进程同步到精灵窗，并沿用平滑缩放路径即时生效。
-- 拖拽取消旧路径，松手按可见范围落位并保存；历史屏外落点恢复到屏内，不以容器旋转或半隐藏表示姿态。
-- 完整入口打开冻结桌面移动；stay 或推理失败不转成本地漫游，本地规则仅在智能关闭时生效。
+- 拖拽、换包和卸载撤销探身准备；自主请求返回时重验可见性、档位、锁屏、智能开关和服务代次。栖息交互见 [DESIGN](../../docs/DESIGN.md#位置移动与缩放)，坐标与兼容见 [PROTOCOL](../../docs/PROTOCOL.md#动作目录与播放)。
+- 探身位置、遮挡和命中随解码首帧一起生效，失败保留旧画面。表演移出遮挡后才上报 `started`，结束时重验返回目标。
+- stay 或推理失败不触发本地漫游；本地空间规则仅在智能关闭时生效。
 - 本地漫游需真实空闲信号，未知则不动；位置适配不足时放弃，不缩成不可辨识大小。
 - 仪式行走可跳过，失败仍执行原工具，`system.click_at` 不补第二次点击。
 
@@ -140,7 +141,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ## 视频渲染
 
-- 视频层消费视频包 manifest 与透明 WebM 片段：包字节走主进程资产桥与内容哈希缓存，播放为原地循环；动作切换经双 video 首帧就绪后淡入淡出交换，不以黑帧或空帧过渡。
+- 视频层消费 manifest 与透明 WebM；字节走主进程资产桥和内容哈希缓存，双 video 待新帧就绪后替换旧画面。
 - 命中按实际播放时间查询逐帧 alpha 遮罩，并扣除等比显示留白。
 - 移动与拖拽由容器位移表达，播放不驱动嘴部或视线。
 - 包未就绪或加载失败由 render-resolver 落 [fallback](modules/character/rendering/fallback/)，不空挂视频元素。

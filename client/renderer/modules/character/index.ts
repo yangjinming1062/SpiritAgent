@@ -4,9 +4,11 @@ export {
   $activePlayInstance,
   acceptPlayCommand,
   actionCatalogChanged,
+  type ActionClipEntry,
   type ActionHitmask,
   type ActionPlayCommand,
   type ActionPlayInstance,
+  ensurePeekAction,
   finishPlayInstance,
   hydrateActionCatalog,
   reportReceipt,
@@ -138,6 +140,7 @@ export {
   activateVideoPack,
   generateVideoPack,
   hydrateVideoPack,
+  type VideoActionWire,
   type VideoGenError,
   type VideoGenScope,
   videoGenScopeMatches
@@ -147,25 +150,34 @@ export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-sourc
 export {
   $defaultScale,
   $homePosition,
+  $peekPreparation,
   $spatialLocomotion,
+  $spatialPeek,
   $spatialPos,
   $spatialScale,
+  $spriteCanvasRect,
   $spriteContentRect,
   $viewport,
   cancelMovement,
+  cancelPeekPreparation,
+  commitPeekPreparation,
   computeOverlayAnchorBesideSprite,
   endDragAt,
+  enterWindowPeek,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
   initSpatial,
+  leavePeekForExpression,
   type Locomotion,
   resetToHomePosition,
+  restorePeekAfterExpression,
   setDefaultScale,
   setSpatialLocale,
   startDrag,
   syncDefaultScale,
   updateDragPosition
 } from './spatial'
+export { peekMaskRects, type SpatialPeek } from './spatial-peek'
 export { SpriteStatusBadge } from './sprite-status-badge'
 export { $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/context-menu-store'
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'

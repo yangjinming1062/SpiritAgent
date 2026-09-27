@@ -11,6 +11,8 @@ import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/sto
 import { $auth } from '@/shared/store/auth'
 import { getStrings } from '@/shared/strings'
 
+import type { PeekGeometry } from '../../actions'
+
 export interface VideoActionWire {
   action: string
   name: string
@@ -20,6 +22,7 @@ export interface VideoActionWire {
   error: string | null
   clip_url: string | null
   motion_prompt: string
+  peek_geometry?: PeekGeometry | null
 }
 
 export interface VideoPackWire {

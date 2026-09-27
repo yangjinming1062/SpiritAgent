@@ -26,6 +26,9 @@ interface FocusContext {
   category: FocusCategory
   fullscreen: boolean
   windowGeom?: { x: number; y: number; w: number; h: number }
+  windowId?: string
+  windowPid?: number
+  runnerInstanceId?: string
 }
 
 export const $focusContext = atom<FocusContext | null>(null)
@@ -92,6 +95,7 @@ interface FocusedAppInfo {
   y?: number
   w?: number
   h?: number
+  window_id?: string
 }
 
 type CategoryTable = Record<Exclude<FocusCategory, 'unknown' | 'other'>, readonly string[]>
@@ -325,6 +329,12 @@ async function pollSnapshot(generation: number): Promise<void> {
 
   const snapshot = snapshotResult as SystemSnapshot
 
+  const windowScene = await desktop.sprite.getWindowScene().catch(() => null)
+
+  if (generation !== monitorGeneration) {
+    return
+  }
+
   // 锁屏场景：仅在快照包含该字段时才更新原子。
   if (snapshot.locked !== undefined) {
     const isLocked = Boolean(snapshot.locked)
@@ -360,18 +370,41 @@ async function pollSnapshot(generation: number): Promise<void> {
     const focused = snapshot.focused_app as FocusedAppInfo
     const category = classifyFocusedApp(focused)
 
+    const sceneWindow = windowScene?.windows.find(
+      item => item.focused && (!focused.window_id || item.id === focused.window_id)
+    )
+
+    // 栖息只使用主进程统一转换后的视口坐标；探测失败不混入原生物理坐标。
     const windowGeom =
-      focused.w != null && focused.h != null
-        ? { x: focused.x ?? 0, y: focused.y ?? 0, w: focused.w, h: focused.h }
+      sceneWindow && windowScene
+        ? {
+            x: sceneWindow.x - windowScene.viewport.x,
+            y: sceneWindow.y - windowScene.viewport.y,
+            w: sceneWindow.w,
+            h: sceneWindow.h
+          }
         : undefined
 
     const cur = $focusContext.get()
 
     const geomChanged =
-      (windowGeom?.x ?? -1) !== (cur?.windowGeom?.x ?? -1) || (windowGeom?.y ?? -1) !== (cur?.windowGeom?.y ?? -1)
+      (windowGeom?.x ?? -1) !== (cur?.windowGeom?.x ?? -1) ||
+      (windowGeom?.y ?? -1) !== (cur?.windowGeom?.y ?? -1) ||
+      (windowGeom?.w ?? -1) !== (cur?.windowGeom?.w ?? -1) ||
+      (windowGeom?.h ?? -1) !== (cur?.windowGeom?.h ?? -1) ||
+      sceneWindow?.id !== cur?.windowId ||
+      sceneWindow?.pid !== cur?.windowPid ||
+      windowScene?.runnerInstanceId !== cur?.runnerInstanceId
 
     if (!cur || cur.category !== category || cur.fullscreen !== fullscreen || geomChanged) {
-      $focusContext.set({ category, fullscreen, windowGeom })
+      $focusContext.set({
+        category,
+        fullscreen,
+        runnerInstanceId: windowScene?.runnerInstanceId,
+        windowGeom,
+        windowId: sceneWindow?.id,
+        windowPid: sceneWindow?.pid
+      })
     }
   } else if (fullscreenProbeOk) {
     // focused-app 探测为空但 fullscreen 成功：保留分类
@@ -380,7 +413,14 @@ async function pollSnapshot(generation: number): Promise<void> {
     const cur = $focusContext.get()
 
     if (cur && cur.fullscreen !== fullscreen) {
-      $focusContext.set({ category: cur.category, fullscreen, windowGeom: cur.windowGeom })
+      $focusContext.set({
+        category: cur.category,
+        fullscreen,
+        runnerInstanceId: cur.runnerInstanceId,
+        windowGeom: cur.windowGeom,
+        windowId: cur.windowId,
+        windowPid: cur.windowPid
+      })
     }
   }
 

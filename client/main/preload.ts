@@ -13,6 +13,7 @@ import {
   type DesktopRunnerStatusEvent,
   type DesktopShortcutsSetPayload,
   type DesktopShortcutsState,
+  type DesktopSpritePosition,
   type DesktopSpriteScalePayload,
   type DesktopSurfaceChangedEvent,
   type DesktopSurfaceOpenPayload,
@@ -162,11 +163,13 @@ contextBridge.exposeInMainWorld('spiritagent', {
       subscribe(IPC.event.spriteDefaultScaleChanged, cb),
     setDefaultScale: (payload: DesktopSpriteScalePayload) => ipcRenderer.send(IPC.send.spriteSetDefaultScale, payload),
     getPosition: () => ipcRenderer.invoke(IPC.invoke.spriteGetPosition),
+    getWindowScene: () => ipcRenderer.invoke(IPC.invoke.spriteGetWindowScene),
+    moveToDisplay: (point: { x: number; y: number }) => ipcRenderer.invoke(IPC.invoke.spriteMoveToDisplay, point),
     hide: () => ipcRenderer.invoke(IPC.invoke.spriteHide),
     moveToCursorDisplay: () => ipcRenderer.invoke(IPC.invoke.spriteMoveToCursorDisplay),
     setIgnoreMouseEvents: (payload: { forward?: boolean; ignore: boolean }) =>
       ipcRenderer.invoke(IPC.invoke.spriteSetIgnoreMouseEvents, payload),
-    setPosition: (payload: { x: number; y: number }) => ipcRenderer.invoke(IPC.invoke.spriteSetPosition, payload)
+    setPosition: (payload: DesktopSpritePosition) => ipcRenderer.invoke(IPC.invoke.spriteSetPosition, payload)
   },
   toolsets: {
     list: () => ipcRenderer.invoke(IPC.invoke.toolsetsList),

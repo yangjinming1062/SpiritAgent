@@ -33,6 +33,7 @@
 - 对话：`actions.py` 工具说明与字段 schema → `application/actions/context.py` 动态资料 → 工具结果续轮；气泡正文与语音格式只约束台词交付，工具关闭时资料仍可保留，不能据此假设有操作能力。
 - 夜间：`nightly.py::PLANNING_SYSTEM_PROMPT` 与夜间能力目录 → 提案受理 → 后台独立评审；受理成功只证明已申请，后续叙事不能据此推断已制作或已表演。
 - 制作：`actions.py::ACTION_REVIEW_INSTRUCTIONS` 与冻结参考图、候选动作 → `generation.py::VIDEO_ACTION_SCRIPT_INSTRUCTIONS` → 起始姿态图与运动描述 → 视频。内置和动态动作共用描述字段；loop 连续循环，once 自然收束。反馈与交付见 [评审与制作](../../docs/PIPELINE.md#评审与制作)。
+- 探身：`generation.py` 的 `VIDEO_PEEK_ACTION_DESCRIPTION` 与 `VIDEO_PEEK_GEOMETRY_INSTRUCTIONS` 分别供[动作脚本与定位校准](../services/application/generation/video/script.py)消费；产物要求见 [PIPELINE](../../docs/PIPELINE.md#系统动作与动态动作)。
 - 空闲：`companion.py::IDLE_EXPRESSION_INSTRUCTIONS` 与当前可用动作的内容、适用/避免条件 → 单个 `action_id` → 统一播放。中英文保持相同的选择与空值语义。
 
 完整外观链路及各分支的审查导航见 [完整提示词链检查入口](../../docs/PIPELINE.md#完整提示词链检查入口)。

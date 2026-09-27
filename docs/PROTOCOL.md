@@ -245,6 +245,9 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 - 所有动态呈现汇入 `companion.action.play_requested`，目录和任务事件仅更新资源。Client 按 `play_id` 去重，按 `pack_id` 与 `appearance_epoch` 校验归属和代次，遵守 TTL / `repeat_count`。
 - 播放回执按 `play_id` 幂等，同一请求只由一台可见设备执行；queued 不算完成，抢占报 interrupted，表演事实只来自播放器回执。
 - REST 管目录、设计、停用、重做和删除。动作目录即当前包可播清单，换装随包切换，不跨包引用；重做在同包更新素材版本。
+- clip 可选携带 `peek_geometry`（遮挡线及需保留的识别区域）和 `content_rect`（内容轮廓），坐标归一化到最终视频画布，结构见 [schema](../backend/modules/companion/schemas_actions.py)。缺少有效探身定位时不启用遮挡；旧目录缺少内容轮廓时按完整画布落位。
+- [探身补齐接口](../backend/api/v1/companion.py)的输入见 [schema](../backend/modules/companion/schemas_video.py)。仅当前激活且具有可读冻结参考的包可补齐；按包和槽位复用任务，素材成功但目录缺失时只重试发布。失败或未知结果不自动重新付费，由衣柜显式处理；无冻结参考的导入包不自动重建。
+- 窗口快照见 [IPC 类型](../client/shared/ipc/contracts.ts)：仅精灵宿主可读取快照和请求跟随目标跨屏；主进程将原生几何转换为 DIP，并提供精灵视口原点，渲染层换算视口内位置。绑定包含窗口标识、进程身份和 Runner 实例标识，重启使旧绑定失效；这些本机数据不进入云端自主上下文。
 
 ## 本机工具
 

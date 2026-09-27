@@ -10,11 +10,14 @@
 | RPC、能力与取消 | [server.py](server.py)、[call_journal.py](utils/call_journal.py)；核对 [Client 桥](../client/main/runner/rpc-ws.ts) |
 | 本地与 SSH 执行 | [环境工厂](envs/factory.py)、[终端工具](tools/terminal/terminal_tool.py)、[清理](envs/cleanup.py) |
 | 浏览器或桌面操作 | [浏览器 supervisor](tools/browser/supervisor.py)、[桌面工具](tools/multimodal/cu_tool.py)；真实应用状态验证 |
+| 桌面情境与窗口快照 | [activity.py](tools/system/activity.py) → [Client 窗口桥](../client/main/ipc/sprite.ts)；坐标与绑定见 [动作契约](../docs/PROTOCOL.md#动作目录与播放) |
 | 学习技能 | [skills_tool.py](tools/skills/skills_tool.py)、[skills_guard.py](tools/skills/skills_guard.py)；检查平台与作用域 |
 
 ## 设计意图
 
 - 工具共享环境生命周期，各能力通过公共基础设施协作。
+- macOS 情境探测使用 PyObjC；平台依赖见 [pyproject.toml](pyproject.toml)。
+- Windows 窗口快照使用 [DWM 可见边界](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect)，避免 DPI 虚拟化和透明边框干扰；排除最小化和 cloaked 窗口。
 - 当前是高信任执行模式：对端准入和工具集开关构成执行授权，通用终端与文件工具保留本机访问能力。
 - 网络、路径检查降低风险；不提供逐次裁决或通用强隔离沙箱。
 

@@ -38,6 +38,8 @@ from modules.companion import (
     CompanionAction,
     CompanionActionPack,
     CompanionOutfit,
+    PeekGeometry,
+    parse_content_rect,
 )
 from modules.ws import emit_ws_event
 from pydantic import ValidationError
@@ -123,6 +125,7 @@ from .script import (
     build_pose_prompt,
     build_video_prompt,
     compose_action_script,
+    inspect_peek_geometry,
 )
 from .state import ActionResult, GenerationContext
 
@@ -140,8 +143,9 @@ _SOURCE_EXT_BY_MIME = {
 _SOURCE_MEDIA_EXTS = {"mp4", "webm", "mov", "mkv"}
 
 _BUILD_TASKS: set[asyncio.Task[None]] = set()
-_GEN_TASKS: set[asyncio.Task[None]] = set()
+_GEN_TASKS: set[asyncio.Task[None] | asyncio.Task[bool]] = set()
 _GEN_INFLIGHT: set[int] = set()
+_GEN_PENDING: set[int] = set()
 
 
 async def _process_thread[T](fn: Callable[..., T], *args: object, **kwargs: object) -> T:
@@ -206,6 +210,29 @@ def _action_video_frame_uri(path: Path) -> str:
 
 def _artifact_abs_path(stored: str) -> Path:
     return Path(SETTINGS.data_dir) / stored
+
+
+def _hitmask_content_rect(hitmask: list[list[int]]) -> tuple[float, float, float, float] | None:
+    occupied_columns = 0
+    top = HITMASK_GRID_H
+    bottom = 0
+    column_mask = (1 << HITMASK_GRID_W) - 1
+    for frame in hitmask:
+        for y, row in enumerate(frame):
+            row &= column_mask
+            if row:
+                occupied_columns |= row
+                top = min(top, y)
+                bottom = max(bottom, y + 1)
+    if not occupied_columns:
+        return None
+    columns = [x for x in range(HITMASK_GRID_W) if occupied_columns & (1 << x)]
+    return (
+        columns[0] / HITMASK_GRID_W,
+        top / HITMASK_GRID_H,
+        (columns[-1] + 1) / HITMASK_GRID_W,
+        bottom / HITMASK_GRID_H,
+    )
 
 
 async def _reject_concurrent_build(db: AsyncSession, user_id: int) -> None:
@@ -539,6 +566,8 @@ async def create_pack_from_reference(
                     "script_json",
                     "artifact_path",
                     "result_json",
+                    "peek_geometry_json",
+                    "content_rect_json",
                     "pose_path",
                     "result_path",
                     "source_design_json",
@@ -798,6 +827,7 @@ async def _prepare_clip_spec(
         canvas_w=canvas_w,
         canvas_h=canvas_h,
     )
+    content_rect = _hitmask_content_rect(hitmask)
     cover = work / f"{action}_cover.webp"
     await _process_thread(
         extract_cover,
@@ -843,6 +873,7 @@ async def _prepare_clip_spec(
             hitmask=hitmask,
             hitmask_grid=(HITMASK_GRID_W, HITMASK_GRID_H),
             hitmask_fps=HITMASK_FPS,
+            content_rect=content_rect,
         ),
         cover_stored,
         hitmask_stored,
@@ -888,7 +919,10 @@ async def _mark_jobs(
         values["stage"] = stage
     stmt = (
         update(CompanionAction)
-        .where(CompanionAction.pack_id == pack_id, CompanionAction.status.not_in(("succeeded", "review", "failed")))
+        .where(
+            CompanionAction.pack_id == pack_id,
+            CompanionAction.status.not_in(("succeeded", "review", "failed", "result_unknown")),
+        )
         .values(**values)
         .execution_options(synchronize_session=False)
     )
@@ -1073,6 +1107,8 @@ async def _publish_ready_locked(
             job_row.video_hash = spec.sha256
             job_row.actual_duration_ms = spec.duration_ms
             job_row.frames = spec.frames
+            job_row.peek_geometry_json = spec.peek_geometry.model_dump_json() if spec.peek_geometry else None
+            job_row.content_rect_json = json.dumps(spec.content_rect) if spec.content_rect else None
             # loopable 按动作行自身 kind：once 动作（如完整舞蹈）不标记可循环。
             job_row.loopable = job_row.kind == "loop"
         # 动作目录 = 当前视频包可播清单：从任务行聚合发布。
@@ -1166,6 +1202,7 @@ async def _build_pack(
                             video_hash=spec.sha256,
                             actual_duration_ms=spec.duration_ms,
                             frames=spec.frames,
+                            content_rect_json=json.dumps(spec.content_rect) if spec.content_rect else None,
                             cover_path=cover_stored,
                             hitmask_path=hitmask_stored,
                             hitmask_grid_w=HITMASK_GRID_W,
@@ -1365,7 +1402,8 @@ async def _generate_pack(pack_id: int) -> None:
             except Exception as exc:  # noqa: BLE001 — 动作失败隔离，其他已请求动作仍可交付并独立重做
                 logger.exception("video action failed", extra={"pack_id": pack_id, "action": job.key})
                 message = _generation_error(exc)
-                await _advance_job(job.id, stage=job.stage, status="failed", error=message)
+                status = "result_unknown" if isinstance(exc, ProviderResultUnknownError) else "failed"
+                await _advance_job(job.id, stage=job.stage, status=status, error=message)
         async with SESSION_LOCAL() as db:
             results = (
                 (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == pack_id))).scalars().all()
@@ -1595,9 +1633,22 @@ async def _run_action_pipeline(
     result = ActionResult.model_validate_json(best.result_json)
     spec = result.clip
     review_id = None
-    if pack.status == "ready":
+    frames: tuple[str, ...] = ()
+    if job.system_slot in ("peek_left", "peek_right") or pack.status == "ready":
         try:
             frames = await _action_frames(spec)
+        except Exception:
+            logger.warning("video action frame sampling failed", extra={"action_id": job.id}, exc_info=True)
+
+    if job.system_slot in ("peek_left", "peek_right"):
+        geometry = await inspect_peek_geometry(pack.user_id, job.system_slot, identity_uri, frames)
+        spec = spec.model_copy(update={"peek_geometry": geometry})
+        result = result.model_copy(update={"clip": spec})
+
+    if pack.status == "ready":
+        try:
+            if not frames:
+                raise VideoPackError("动作视频画面无法读取")
             verdict, reason = await review_character_frames(
                 pack.user_id,
                 identity_uri,
@@ -1628,6 +1679,8 @@ async def _run_action_pipeline(
         generation_state_json=job.generation_state_json,
         result_path=spec.path,
         result_json=result.model_dump_json(),
+        peek_geometry_json=spec.peek_geometry.model_dump_json() if spec.peek_geometry else None,
+        content_rect_json=json.dumps(spec.content_rect) if spec.content_rect else None,
         artifact_path=best.artifacts[0],
         provider=state.providers[best.attempt].provider,
         model=state.providers[best.attempt].model,
@@ -1814,11 +1867,15 @@ def _kick_generate(pack_id: int, user_id: int) -> None:
     def _done(_task: asyncio.Task[None]) -> None:
         _GEN_TASKS.discard(_task)
         _GEN_INFLIGHT.discard(pack_id)
+        pending = pack_id in _GEN_PENDING
+        _GEN_PENDING.discard(pack_id)
+        if pending and not _task.cancelled() and _task.exception() is None:
+            _kick_dynamic_generation(pack_id, user_id, queued_only=True)
 
     task.add_done_callback(_done)
 
 
-async def _dynamic_action_spec(job: CompanionAction) -> ActionSpec | None:
+def _dynamic_action_spec(job: CompanionAction) -> ActionSpec | None:
     """动作规格：动态动作来自提案设计 JSON；系统槽位用固定语义与时长。"""
     design = safe_json_loads(job.source_design_json or "{}", default={})
     if not design and not job.system_slot:
@@ -1862,7 +1919,7 @@ async def _queue_in_place_redo(
             outfit_id=pack.outfit_id,
             key=action,
             system_slot=action if action in SYSTEM_SLOTS else "",
-            name=action,
+            name="" if action in SYSTEM_SLOTS else action,
             kind="loop" if action in SYSTEM_SLOTS else "once",
             status="queued",
             stage="design",
@@ -1881,6 +1938,8 @@ async def _queue_in_place_redo(
         job.script_json = None
         job.result_path = None
         job.result_json = None
+        job.peek_geometry_json = None
+        job.content_rect_json = None
         job.video_path = ""
         job.video_hash = ""
         job.cover_path = None
@@ -1896,85 +1955,83 @@ async def _queue_in_place_redo(
 
 
 def kick_dynamic_action(pack_id: int, action_id: int, user_id: int) -> None:
-    """approve 后启动动态动作生成：向当前 pack 追加单动作任务并异步制作。
+    """启动已落库的单动作任务；同包在途时由其收尾消费队列。"""
+    _kick_dynamic_generation(pack_id, user_id, action_ids=[action_id])
 
-    与整包生成共用 _GEN_INFLIGHT 防重；动作生成直接挂在 ready 包上，
-    完成后发布新目录快照（catalog_version+1），不新建 pack。
-    同包已有生成在途时只登记排队，由在途任务收尾时继续扫描。
-    """
+
+def _kick_dynamic_generation(
+    pack_id: int,
+    user_id: int,
+    *,
+    action_ids: list[int] | None = None,
+    queued_only: bool = False,
+) -> None:
     if pack_id in _GEN_INFLIGHT:
+        # 空队列查询与任务收尾之间也可能提交新动作，唤醒信号须保留到收尾。
+        _GEN_PENDING.add(pack_id)
         return
     task = asyncio.create_task(
-        _generate_dynamic_actions(pack_id, action_ids=[action_id]),
-        name=f"companion.video.dynamic.{pack_id}.{action_id}",
+        _generate_dynamic_actions(pack_id, action_ids=action_ids, queued_only=queued_only),
+        name=f"companion.video.dynamic.{pack_id}",
     )
     _GEN_TASKS.add(task)
     _GEN_INFLIGHT.add(pack_id)
     track_user_task(user_id, task, cancel_on_maintenance=False)
 
-    def _done(_task: asyncio.Task[None]) -> None:
+    def _done(_task: asyncio.Task[bool]) -> None:
         _GEN_TASKS.discard(_task)
         _GEN_INFLIGHT.discard(pack_id)
-        # 收尾后继续消费排队动作：A 生成期间批准的 B 不会永远停在 queued。
-        if not _task.cancelled() and _task.exception() is None:
-            _kick_pending_dynamic(pack_id, user_id)
+        pending = pack_id in _GEN_PENDING
+        _GEN_PENDING.discard(pack_id)
+        if _task.cancelled() or _task.exception() is not None:
+            return
+        # 单动作失败不阻塞其他排队项；整批无进展时停止，避免空转或反复恢复未知结果。
+        if pending or action_ids is not None or _task.result():
+            _kick_dynamic_generation(pack_id, user_id, queued_only=True)
 
     task.add_done_callback(_done)
 
 
-def _kick_pending_dynamic(pack_id: int, user_id: int) -> None:
-    """扫描并启动该包上仍 queued 的动态动作（不限 action_ids）。"""
-    if pack_id in _GEN_INFLIGHT:
-        return
-    task = asyncio.create_task(
-        _generate_dynamic_actions(pack_id),
-        name=f"companion.video.dynamic.pending.{pack_id}",
-    )
-    _GEN_TASKS.add(task)
-    _GEN_INFLIGHT.add(pack_id)
-    track_user_task(user_id, task, cancel_on_maintenance=False)
-
-    def _done(_task: asyncio.Task[None]) -> None:
-        _GEN_TASKS.discard(_task)
-        _GEN_INFLIGHT.discard(pack_id)
-        if not _task.cancelled() and _task.exception() is None:
-            _kick_pending_dynamic(pack_id, user_id)
-
-    task.add_done_callback(_done)
-
-
-async def _generate_dynamic_actions(pack_id: int, *, action_ids: list[int] | None = None) -> None:
-    """ready 包上动态动作的生成编排：规格来自提案设计，逐动作制作后发布新目录。"""
+async def _generate_dynamic_actions(
+    pack_id: int,
+    *,
+    action_ids: list[int] | None = None,
+    queued_only: bool = False,
+) -> bool:
+    """按冻结规格制作 ready 包中的动作，随后发布目录。"""
     try:
         async with SESSION_LOCAL() as db:
             pack = await db.get(CompanionActionPack, pack_id)
             if pack is None or pack.status != "ready":
-                return
+                return False
             stmt = select(CompanionAction).where(
                 CompanionAction.pack_id == pack_id,
-                CompanionAction.status.in_(("queued", "processing", "result_unknown")),
+                CompanionAction.status.in_(("queued",) if queued_only else ("queued", "processing", "result_unknown")),
             )
             if action_ids is not None:
                 stmt = stmt.where(CompanionAction.id.in_(action_ids))
             jobs = (await db.execute(stmt.order_by(CompanionAction.id))).scalars().all()
             if not jobs:
-                return
+                return False
         context = GenerationContext.model_validate_json(pack.context_json) if pack.context_json else None
         if context is None:
             await _fail_dynamic_jobs(pack_id, "生成上下文缺失，请重做该动作", action_ids=action_ids)
-            return
+            return False
         for job in jobs:
             try:
                 await _generate_one_dynamic(pack, job, context)
             except Exception as exc:  # noqa: BLE001 — 单动作失败隔离，不影响已就绪目录
                 logger.exception("dynamic action failed", extra={"pack_id": pack_id, "action_id": job.id})
-                await _advance_job(job.id, stage=job.stage, status="failed", error=_generation_error(exc))
+                status = "result_unknown" if isinstance(exc, ProviderResultUnknownError) else "failed"
+                await _advance_job(job.id, stage=job.stage, status=status, error=_generation_error(exc))
         # 全部目标动作处理后发布新目录快照（失败动作不并入），并兑现未过期表达意图。
         await _publish_dynamic_catalog(pack_id)
         await _fulfill_pending_intents(pack_id)
+        return True
     except Exception as exc:  # noqa: BLE001 — 后台任务兜底：失败必须落库可见
         logger.exception("dynamic action generation crashed", extra={"pack_id": pack_id})
         await _fail_dynamic_jobs(pack_id, _generation_error(exc), action_ids=action_ids)
+        return False
 
 
 async def _generate_one_dynamic(
@@ -1982,18 +2039,9 @@ async def _generate_one_dynamic(
     job: CompanionAction,
     context: GenerationContext,
 ) -> None:
-    """单个动态动作：脚本（按提案规格）→ 姿态 → 提交 → 轮询 → 下载 → 抠像 → 落库。"""
+    """复用已保存脚本，缺失时按冻结规格撰写，再交给素材管线。"""
 
-    async def progress(stage: str) -> None:
-        job.stage = stage
-        await _advance_job(job.id, stage=stage)
-        await _emit_pack_event(
-            pack.user_id,
-            "companion.action.job_updated",
-            {"packId": pack.id, "actionId": job.id, "stage": stage},
-        )
-
-    spec = await _dynamic_action_spec(job)
+    spec = _dynamic_action_spec(job)
     if spec is None:
         raise VideoPackError("动态动作缺少提案规格，请重做")
 
@@ -2135,27 +2183,82 @@ async def resume_video_generation_jobs() -> None:
     for pack in packs:
         _kick_generate(pack.id, pack.user_id)
     for pack_id, user_id in dynamic_rows:
-        _kick_dynamic_resume(pack_id, user_id)
+        _kick_dynamic_generation(pack_id, user_id)
 
 
-def _kick_dynamic_resume(pack_id: int, user_id: int) -> None:
-    """恢复 ready 包上的全部 queued 动态动作（不限 action_ids）。"""
-    if pack_id in _GEN_INFLIGHT:
-        return
+async def ensure_system_action(
+    db: AsyncSession,
+    user_id: int,
+    pack_id: int,
+    action: str,
+) -> CompanionActionPack:
+    """复用当前包的探身任务，仅在槽位缺失时创建。"""
+    if action not in ("peek_left", "peek_right"):
+        raise VideoPackError("只支持补齐左右探身动作")
 
-    task = asyncio.create_task(
-        _generate_dynamic_actions(pack_id),
-        name=f"companion.video.dynamic.resume.{pack_id}",
-    )
-    _GEN_TASKS.add(task)
-    _GEN_INFLIGHT.add(pack_id)
-    track_user_task(user_id, task, cancel_on_maintenance=False)
+    kick_action_id: int | None = None
+    republish = False
+    async with get_avatar_job_lock(user_id):
+        pack = (
+            await db.execute(
+                select(CompanionActionPack)
+                .where(
+                    CompanionActionPack.id == pack_id,
+                    CompanionActionPack.user_id == user_id,
+                    CompanionActionPack.active.is_(True),
+                    CompanionActionPack.status == "ready",
+                )
+                .with_for_update(),
+            )
+        ).scalar_one_or_none()
+        if pack is None:
+            raise VideoPackNotFoundError("当前动作包已变化，请重新读取")
+        context = _load_generation_context(pack)
+        if context is None or not pack.reference_path or context.reference_alignment != "ready":
+            raise VideoPackStateError("该动作包没有可用的冻结参考图，无法自动补齐探身动作")
+        if not all(
+            _artifact_abs_path(path).is_file() for path in (pack.reference_path, context.identity_reference_path)
+        ):
+            raise VideoPackStateError("该动作包的冻结参考图不可读，请重新生成视频形象")
 
-    def _done(_task: asyncio.Task[None]) -> None:
-        _GEN_TASKS.discard(_task)
-        _GEN_INFLIGHT.discard(pack_id)
+        job = (
+            await db.execute(
+                select(CompanionAction).where(
+                    CompanionAction.pack_id == pack.id,
+                    CompanionAction.key == action,
+                ),
+            )
+        ).scalar_one_or_none()
+        if job is None:
+            job = CompanionAction(
+                user_id=user_id,
+                pack_id=pack.id,
+                outfit_id=pack.outfit_id,
+                key=action,
+                name="",
+                system_slot=action,
+                kind="loop",
+                status="queued",
+                stage="design",
+                target_duration_seconds=_SYSTEM_ACTION_SECONDS,
+                reference_hash=pack.reference_hash,
+            )
+            db.add(job)
+            await db.flush()
+            kick_action_id = job.id
+        elif job.status == "queued" or (job.status == "processing" and pack.id not in _GEN_INFLIGHT):
+            kick_action_id = job.id
+        elif job.status == "succeeded":
+            # 素材成功但目录发布失败时，只重试发布，不重新生成。
+            republish = True
+        await db.commit()
 
-    task.add_done_callback(_done)
+    if kick_action_id is not None:
+        kick_dynamic_action(pack_id, kick_action_id, user_id)
+    elif republish:
+        await _publish_dynamic_catalog(pack_id)
+    await db.refresh(pack)
+    return pack
 
 
 async def _activate_locked(db: AsyncSession, pack: CompanionActionPack) -> None:
@@ -2341,6 +2444,8 @@ def _copy_job_to_pack(job: CompanionAction, pack: CompanionActionPack) -> Compan
         artifact_path=job.artifact_path,
         pose_path=job.pose_path,
         result_json=job.result_json,
+        peek_geometry_json=job.peek_geometry_json,
+        content_rect_json=job.content_rect_json,
         result_path=job.result_path,
         source_design_json=job.source_design_json,
         error=job.error,
@@ -2557,6 +2662,8 @@ async def list_pack_responses(db: AsyncSession, user_id: int) -> list[dict]:
                     "error": job.error,
                     "clip_url": signed_companion_asset_url(job.result_path) if job.result_path else None,
                     "motion_prompt": script.motion_prompt if script else "",
+                    "peek_geometry": PeekGeometry.from_stored_json(job.peek_geometry_json),
+                    "content_rect": parse_content_rect(job.content_rect_json),
                 },
             )
         responses.append(response)

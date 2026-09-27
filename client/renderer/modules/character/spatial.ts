@@ -1,16 +1,24 @@
-import { type DesktopSpriteScalePayload, SPRITE_SCALE_LIMITS } from '@ipc/contracts'
+import { type DesktopSpriteScalePayload, type DesktopWindowSceneSnapshot, SPRITE_SCALE_LIMITS } from '@ipc/contracts'
 import { clamp } from '@runtime'
 import { atom } from 'nanostores'
 
-import { persistString, storedString } from '@/shared/lib/storage'
+import { log } from '@/shared/lib/log'
+import { persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
 import { $surfaceOpen } from '@/shared/store/surfaces'
 
-import { $focusContext, $lastIdleSeconds } from './activity'
+import { $actionCatalog, $activePlayInstance, ensurePeekAction } from './actions'
+import type { PeekGeometry } from './actions'
+import { $focusContext, $lastIdleSeconds, $screenLocked } from './activity'
 import { $effectiveTier, $spriteAction, $spriteEmotion, $spriteState, setSpriteState } from './companion-store'
 import { $llmAutonomy } from './prefs'
+import {
+  computeScreenPeekLayout,
+  computeWindowPeekLayout,
+  type SpatialPeek,
+  type WindowPeekLayout
+} from './spatial-peek'
 
 export function getBaseSpriteHeight(): number {
-  // 默认高度为显示器高度的 1/3，限制在 [260, 960] 区间内
   return Math.round(clamp(window.innerHeight / 3, 260, 960))
 }
 
@@ -23,8 +31,7 @@ const REST_MARGIN = 24
 const WALK_SPEED = 80
 const FLY_SPEED = 400
 const SCALE_TRANSITION_MS = 300
-// roam 的桌面空闲门槛（DESIGN「位置、移动与缩放」「桌面空闲 + 高活跃档位时随机游走」）；
-// $lastIdleSeconds 为 -1（Runner 离线/未知）时保守视为不空闲。
+// Runner 离线或空闲时间未知（-1）时不漫游。
 const ROAM_IDLE_THRESHOLD_SECONDS = 90
 const SCALE_KEY = 'da.companion.defaultScale'
 
@@ -38,19 +45,25 @@ const EMOTION_SCALE_BOOST: Record<string, number> = {
 const MIN_SCALE = SPRITE_SCALE_LIMITS.min
 const MAX_SCALE = SPRITE_SCALE_LIMITS.max
 
-type SpatialLocale = 'home' | 'perch' | 'roam' | 'target' | 'workbench'
+type SpatialLocale = 'home' | 'perch' | 'roam' | 'screen_peek' | 'window_peek' | 'target' | 'workbench'
 
-// Locomotion 枚举（spatial 权威，渲染层消费）：
-// - 'still' / 'walk' / 'fly' / 'drag' 是原有 4 项；
-// - 'walk_fast' 是走路加速版；
-// - 'jump' 是单次脉冲。
+type WindowPeekBinding = Pick<Extract<SpatialPeek, { mode: 'window' }>, 'runnerInstanceId' | 'windowId' | 'windowPid'>
+
+export type PeekPreparation = {
+  action: 'peek_left' | 'peek_right'
+  generation: number
+  packId: number
+} & (
+  | { mode: 'screen'; animate: boolean; screenEdge: { side: 'left' | 'right'; yRatio: number } }
+  | ({ mode: 'window' } & WindowPeekBinding)
+)
+
+// 空间层裁决运动方式；jump 为单次脉冲。
 export type Locomotion = 'still' | 'walk' | 'walk_fast' | 'fly' | 'drag' | 'jump'
 
 const $spatialLocale = atom<SpatialLocale>('home')
 
-// 可见内容包围盒（归一化到舞台盒）：角色实际可见像素的范围，由渲染层上报；
-// 蛋等未上报路径按整盒兜底。
-// 必须先于下方位置原子声明：home 初值求值期就经 contentBox 读它，晚声明会 TDZ 崩页。
+// 舞台内归一化内容范围；未上报时按整盒处理。初始 home 会读取它，须先声明。
 export const $spriteContentRect = atom<{ left: number; top: number; right: number; bottom: number } | null>(null)
 
 export const $defaultScale = atom<number>(readDefaultScale())
@@ -58,8 +71,10 @@ export const $spatialPos = atom<{ x: number; y: number }>(getHomePosition())
 export const $homePosition = atom<{ x: number; y: number }>(getHomePosition())
 export const $spatialScale = atom<number>($defaultScale.get())
 export const $spatialLocomotion = atom<Locomotion>('still')
+export const $spatialPeek = atom<SpatialPeek | null>(null)
+export const $peekPreparation = atom<PeekPreparation | null>(null)
+export const $spriteCanvasRect = atom<{ left: number; top: number; right: number; bottom: number } | null>(null)
 
-// 窗口视口尺寸——单一真实源，由 initSpatial 已有的 resize 监听器更新。
 interface ViewportSize {
   width: number
   height: number
@@ -83,10 +98,21 @@ let perchScaleLimit: number | null = null
 let userInteracted = false
 let roamTimer: ReturnType<typeof setTimeout> | null = null
 let roaming = false
+let peekIntentGeneration = 0
+let screenEdgeHome: { side: 'left' | 'right'; yRatio: number } | null = null
+let windowTracker: ReturnType<typeof setInterval> | null = null
+let windowSnapshotPending = false
+let expressionExitToken = 0
+let expressionPeekReturn: { peek: SpatialPeek | PeekPreparation; packId: number } | null = null
+
+interface PendingWindowPeek extends WindowPeekBinding {
+  action: 'peek_left' | 'peek_right'
+  generation: number
+}
+
+let pendingWindowPeek: PendingWindowPeek | null = null
 
 function getHomePosition(): { x: number; y: number } {
-  // home 是休息落点，scale 恒为用户默认比例（瞬时放大只在互动中发生）；
-  // 脚底贴视口底（站在任务栏上沿），右侧留呼吸间距。
   const c = contentBox($defaultScale.get())
 
   return {
@@ -95,11 +121,7 @@ function getHomePosition(): { x: number; y: number } {
   }
 }
 
-// 不变量（DESIGN「位置、移动与缩放」）：精灵全身始终完整在屏内——垂直方向任何时候不裁切身体；
-// 「全身」按可见像素计：贴边是角色贴边，不是渲染画布贴边——舞台盒四周的透明
-// 留白可以越出屏幕。钳制与落位一律用缩放后的可见内容包围盒（见 contentBox）。
-
-// 舞台盒内的可见内容包围盒（缩放后像素）。未上报时按整盒兜底（保守：贴不到边缘）。
+// 普通落位约束缩放后的内容像素，透明留白可越界；探身另按露出范围落位。
 function contentBox(scale = $spatialScale.get()): { left: number; top: number; right: number; bottom: number } {
   const r = $spriteContentRect.get()
 
@@ -111,8 +133,8 @@ function contentBox(scale = $spatialScale.get()): { left: number; top: number; r
   }
 }
 
-function clampPosToViewport(pos: { x: number; y: number }): { x: number; y: number } {
-  const c = contentBox()
+function clampPosToViewport(pos: { x: number; y: number }, scale = $spatialScale.get()): { x: number; y: number } {
+  const c = contentBox(scale)
   const vw = window.innerWidth
   const vh = window.innerHeight
   const maxY = vh - c.bottom
@@ -128,8 +150,7 @@ export interface PerchPlacement {
   scale: number
 }
 
-/** 栖息落位（DESIGN「位置、移动与缩放」）：窗口右缘优先、左缘次之；两侧放不下全尺寸时等比例缩到
- * 能舒适栖身（不低于 MIN_SCALE），连最小尺寸都容不下才放弃。 */
+/** 普通栖息选可容纳比例较大的一侧，同等空间优先右侧；低于 MIN_SCALE 时放弃。 */
 export function computePerchPlacement(
   geom: { x: number; y: number; w: number; h: number },
   maxScale: number
@@ -137,10 +158,16 @@ export function computePerchPlacement(
   const margin = 8
   const spriteW = getBaseSpriteWidth()
   const spriteH0 = getBaseSpriteHeight()
+  const content = $spriteContentRect.get()
+  const contentLeft = content?.left ?? 0
+  const contentTop = content?.top ?? 0
+  const contentRight = content?.right ?? 1
+  const contentBottom = content?.bottom ?? 1
+  const contentW = Math.max(1, (contentRight - contentLeft) * spriteW)
   const rightAvail = Math.max(0, window.innerWidth - REST_MARGIN - (geom.x + geom.w) - margin)
   const leftAvail = Math.max(0, geom.x - margin - REST_MARGIN)
-  const rightScale = Math.min(maxScale, rightAvail / spriteW)
-  const leftScale = Math.min(maxScale, leftAvail / spriteW)
+  const rightScale = Math.min(maxScale, rightAvail / contentW)
+  const leftScale = Math.min(maxScale, leftAvail / contentW)
 
   let side: 'left' | 'right'
   let scale: number
@@ -155,21 +182,23 @@ export function computePerchPlacement(
     return null
   }
 
-  const spriteH = spriteH0 * scale
-  const x = side === 'right' ? geom.x + geom.w + margin : geom.x - margin - spriteW * scale
+  const contentTopPx = contentTop * spriteH0 * scale
+  const contentBottomPx = contentBottom * spriteH0 * scale
+
+  const x =
+    side === 'right'
+      ? geom.x + geom.w + margin - contentLeft * spriteW * scale
+      : geom.x - margin - contentRight * spriteW * scale
 
   const y = Math.max(
-    REST_MARGIN,
-    Math.min(geom.y + geom.h - spriteH - margin, window.innerHeight - spriteH - REST_MARGIN)
+    -contentTopPx,
+    Math.min(geom.y + geom.h - margin - contentBottomPx, window.innerHeight - REST_MARGIN - contentBottomPx)
   )
 
   return { pos: { x, y }, scale }
 }
 
-// 精灵旁边浮动的瞬时弹层（聊天面板、proactive 气泡）的锚点定位：默认放在精灵右侧，
-// 放不下则翻转到左侧。`gap` 是精灵与弹层之间的间距；`overlayMaxW` 是弹层最大可能宽度
-// （仅用于翻转判定）。`top` 锚定到精灵头部区域（top + verticalRatio * 缩放后高度），
-// 并限制在视口范围内。
+// 弹层按实际露出范围定位；右侧放不下时翻到左侧，并限制在视口内。
 export function computeOverlayAnchorBesideSprite(opts: {
   pos: { x: number; y: number }
   scale: number
@@ -181,16 +210,36 @@ export function computeOverlayAnchorBesideSprite(opts: {
   verticalRatio?: number
 }): { left: number; top: number } {
   const { pos, scale, gap, overlayMaxW, overlayH = 0, vw, vh, verticalRatio = 0 } = opts
-  const spriteW = getBaseSpriteWidth() * scale
-  const spriteH = getBaseSpriteHeight() * scale
-  const spriteRight = pos.x + spriteW
-  const fitsRight = spriteRight + gap + overlayMaxW <= vw
+  const content = contentBox(scale)
+  const peek = $spatialPeek.get()
+  let visibleLeft = pos.x + content.left
+  let visibleRight = pos.x + content.right
+  let visibleTop = pos.y + content.top
 
-  const left = fitsRight ? spriteRight + gap : Math.max(0, pos.x - gap - overlayMaxW)
+  if (peek?.mode === 'screen') {
+    const cut = pos.x + peek.cutX * getBaseSpriteWidth() * scale
+    visibleTop = pos.y + peek.focusRect[1] * getBaseSpriteHeight() * scale
+
+    if (peek.side === 'left') {
+      visibleRight = Math.min(visibleRight, cut)
+    } else {
+      visibleLeft = Math.max(visibleLeft, cut)
+    }
+  } else if (peek?.mode === 'window') {
+    visibleLeft = pos.x + peek.focusRect[0] * getBaseSpriteWidth() * scale
+    visibleRight = pos.x + peek.focusRect[2] * getBaseSpriteWidth() * scale
+    visibleTop = pos.y + peek.focusRect[1] * getBaseSpriteHeight() * scale
+  }
+
+  const fitsRight = visibleRight + gap + overlayMaxW <= vw
+
+  const left = fitsRight ? visibleRight + gap : Math.max(0, visibleLeft - gap - overlayMaxW)
 
   const top = Math.max(
     0,
-    overlayH > 0 ? Math.min(vh - overlayH, pos.y + spriteH * verticalRatio) : pos.y + spriteH * verticalRatio
+    overlayH > 0
+      ? Math.min(vh - overlayH, visibleTop + getBaseSpriteHeight() * scale * verticalRatio)
+      : visibleTop + getBaseSpriteHeight() * scale * verticalRatio
   )
 
   return { left, top }
@@ -217,10 +266,12 @@ function tick(now: number): void {
   const t = Math.min(1, (now - moveStartTime) / moveDuration)
   const eased = easeInOut(t)
 
-  $spatialPos.set({
+  const position = {
     x: moveStart.x + (moveTarget.x - moveStart.x) * eased,
     y: moveStart.y + (moveTarget.y - moveStart.y) * eased
-  })
+  }
+
+  $spatialPos.set(t === 1 && !$spatialPeek.get() ? clampPosToViewport(position) : position)
 
   if (t < 1) {
     rafId = requestAnimationFrame(tick)
@@ -348,7 +399,8 @@ function computeTargetScale(): number {
   }
 
   // 栖息缩身上限压过情绪放大：空间不够时先保证舒适栖身
-  const cap = $spatialLocale.get() === 'perch' ? perchScaleLimit : null
+  const hasScaleLimit = $spatialLocale.get() === 'perch' || $spatialLocale.get() === 'window_peek'
+  const cap = hasScaleLimit ? perchScaleLimit : null
 
   return cap !== null ? Math.min(target, cap) : target
 }
@@ -384,23 +436,788 @@ export function setDefaultScale(scale: number): void {
   window.spiritagent.sprite.setDefaultScale({ scale: clamped })
 }
 
+function sameScreenEdge(
+  a: { side: 'left' | 'right'; yRatio: number },
+  b: { side: 'left' | 'right'; yRatio: number }
+): boolean {
+  return a.side === b.side && a.yRatio === b.yRatio
+}
+
+function applyScreenPeek(
+  target: { side: 'left' | 'right'; yRatio: number },
+  geometry: PeekGeometry,
+  persist: boolean,
+  animate = false
+): void {
+  const canvasRect = $spriteCanvasRect.get()
+
+  if (!geometry || !canvasRect) {
+    return
+  }
+
+  const { peek, position } = computeScreenPeekLayout(
+    target,
+    geometry,
+    canvasRect,
+    { width: window.innerWidth, height: window.innerHeight },
+    { width: getBaseSpriteWidth(), height: getBaseSpriteHeight() },
+    $spatialScale.get()
+  )
+
+  cancelMovement()
+  $spatialPeek.set(peek)
+  $spatialLocale.set('screen_peek')
+  $homePosition.set(position)
+
+  const savePosition = (savedPosition: { x: number; y: number } = position): void => {
+    void window.spiritagent.sprite.setPosition({
+      ...savedPosition,
+      screenEdge: { side: target.side, yRatio: target.yRatio }
+    })
+  }
+
+  if (animate) {
+    moveTo(position, 'fly', () => {
+      const latestGeometry = $actionCatalog
+        .get()
+        ?.clipsBySlot.get(target.side === 'right' ? 'peek_left' : 'peek_right')?.peek_geometry
+
+      if (latestGeometry && screenEdgeHome && sameScreenEdge(screenEdgeHome, target)) {
+        applyScreenPeek(target, latestGeometry, false)
+      }
+
+      if (persist) {
+        savePosition($spatialPos.get())
+      }
+    })
+  } else {
+    $spatialPos.set(position)
+    $spatialLocomotion.set('still')
+
+    if (persist) {
+      savePosition()
+    }
+  }
+}
+
+async function activateScreenPeek(target: { side: 'left' | 'right'; yRatio: number }, animate = false): Promise<void> {
+  if ($screenLocked.get() || $surfaceOpen.get() !== null) {
+    return
+  }
+
+  const action = target.side === 'right' ? 'peek_left' : 'peek_right'
+  const existing = $peekPreparation.get()
+
+  if (
+    existing?.mode === 'screen' &&
+    existing.action === action &&
+    sameScreenEdge(existing.screenEdge, target) &&
+    existing.packId === $actionCatalog.get()?.packId
+  ) {
+    return
+  }
+
+  const generation = ++peekIntentGeneration
+  const ready = await ensurePeekAction(action)
+
+  if (!ready || generation !== peekIntentGeneration || !screenEdgeHome || !sameScreenEdge(screenEdgeHome, target)) {
+    return
+  }
+
+  const catalog = $actionCatalog.get()
+
+  if (catalog?.clipsBySlot.get(action)?.peek_geometry) {
+    $peekPreparation.set({ action, animate, generation, mode: 'screen', packId: catalog.packId, screenEdge: target })
+  }
+}
+
+async function readWindowScene(): Promise<DesktopWindowSceneSnapshot | null> {
+  return window.spiritagent.sprite.getWindowScene().catch(error => {
+    log.warn('spatial', 'Could not read window scene', error)
+
+    return null
+  })
+}
+
+function findBoundWindow(
+  scene: DesktopWindowSceneSnapshot | null,
+  binding: WindowPeekBinding
+): DesktopWindowSceneSnapshot['windows'][number] | undefined {
+  return scene?.runnerInstanceId === binding.runnerInstanceId
+    ? scene.windows.find(item => item.visible && item.id === binding.windowId && item.pid === binding.windowPid)
+    : undefined
+}
+
+function buildWindowPeekLayout(
+  scene: DesktopWindowSceneSnapshot,
+  target: DesktopWindowSceneSnapshot['windows'][number],
+  action: 'peek_left' | 'peek_right'
+): WindowPeekLayout | null {
+  return computeWindowPeekLayout(
+    scene,
+    target,
+    action,
+    $actionCatalog.get()?.clipsBySlot.get(action),
+    $spriteCanvasRect.get(),
+    getBaseSpriteWidth(),
+    getBaseSpriteHeight(),
+    $defaultScale.get(),
+    MIN_SCALE
+  )
+}
+
+function isCurrentPeekPreparation(preparation: PeekPreparation): boolean {
+  return (
+    $peekPreparation.get() === preparation &&
+    preparation.generation === peekIntentGeneration &&
+    $actionCatalog.get()?.packId === preparation.packId &&
+    !$screenLocked.get() &&
+    $surfaceOpen.get() === null &&
+    !$activePlayInstance.get() &&
+    (preparation.mode === 'screen' || canEnterWindowPeek())
+  )
+}
+
+export function cancelPeekPreparation(action: 'peek_left' | 'peek_right', generation?: number): void {
+  const preparation = $peekPreparation.get()
+
+  if (
+    !preparation ||
+    preparation.action !== action ||
+    (generation !== undefined && preparation.generation !== generation)
+  ) {
+    return
+  }
+
+  $peekPreparation.set(null)
+  peekIntentGeneration += 1
+
+  if (preparation.mode === 'window' && screenEdgeHome && !$screenLocked.get() && $surfaceOpen.get() === null) {
+    void activateScreenPeek(screenEdgeHome)
+  }
+}
+
+/** 首帧就绪后同步提交探身位置、遮挡与播放器。 */
+export async function commitPeekPreparation(
+  action: 'peek_left' | 'peek_right',
+  generation: number,
+  prepareFirstFrame: () => Promise<boolean>,
+  showFirstFrame: () => void
+): Promise<boolean> {
+  const preparation = $peekPreparation.get()
+
+  if (!preparation || preparation.action !== action || preparation.generation !== generation) {
+    return false
+  }
+
+  if (!isCurrentPeekPreparation(preparation)) {
+    cancelPeekPreparation(action, generation)
+
+    return false
+  }
+
+  const catalog = $actionCatalog.get()
+  const geometry = catalog?.clipsBySlot.get(action)?.peek_geometry
+
+  if (!geometry) {
+    cancelPeekPreparation(action, generation)
+
+    return false
+  }
+
+  if (preparation.mode === 'screen' && (!screenEdgeHome || !sameScreenEdge(screenEdgeHome, preparation.screenEdge))) {
+    cancelPeekPreparation(action, generation)
+
+    return false
+  }
+
+  // 解码失败不能先移动宿主窗口；后续窗口快照也须取自解码完成后。
+  if (!(await prepareFirstFrame())) {
+    cancelPeekPreparation(action, generation)
+
+    return false
+  }
+
+  if (!isCurrentPeekPreparation(preparation)) {
+    return false
+  }
+
+  if (preparation.mode === 'screen') {
+    applyScreenPeek(preparation.screenEdge, geometry, true, preparation.animate)
+    $peekPreparation.set(null)
+    showFirstFrame()
+
+    return true
+  }
+
+  let scene = await readWindowScene()
+  let target = findBoundWindow(scene, preparation)
+
+  if (!isCurrentPeekPreparation(preparation) || !scene || !target) {
+    cancelPeekPreparation(action, generation)
+
+    return false
+  }
+
+  if (target.displayId !== scene.viewport.displayId) {
+    await window.spiritagent.sprite.moveToDisplay({ x: target.x + target.w / 2, y: target.y + target.h / 2 })
+    scene = await readWindowScene()
+    target = findBoundWindow(scene, preparation)
+
+    if (!isCurrentPeekPreparation(preparation) || !scene || !target || target.displayId !== scene.viewport.displayId) {
+      cancelPeekPreparation(action, generation)
+
+      return false
+    }
+  }
+
+  const layout = buildWindowPeekLayout(scene, target, action)
+
+  if (!layout || !isCurrentPeekPreparation(preparation)) {
+    const tryOtherSide = !layout && action === 'peek_right' && isCurrentPeekPreparation(preparation)
+    cancelPeekPreparation(action, generation)
+
+    if (tryOtherSide) {
+      preparePendingWindowPeek({
+        action: 'peek_left',
+        generation: ++peekIntentGeneration,
+        windowId: preparation.windowId,
+        windowPid: preparation.windowPid,
+        runnerInstanceId: preparation.runnerInstanceId
+      })
+    }
+
+    return false
+  }
+
+  stopWindowPeekTracker()
+  perchScaleLimit = layout.scale
+  setScaleTarget(layout.scale, true)
+  $spatialPeek.set(layout.peek)
+  setSpatialLocale('window_peek', { instant: true, position: layout.position, scaleLimit: layout.scale })
+  $peekPreparation.set(null)
+  windowTracker = setInterval(() => void updateWindowPeek(), 100)
+  showFirstFrame()
+
+  return true
+}
+
+function stopWindowPeekTracker(): void {
+  if (windowTracker !== null) {
+    clearInterval(windowTracker)
+    windowTracker = null
+  }
+}
+
+/** 撤销探身意图、表演返回目标与窗口跟踪，保留栖息地和当前位置。 */
+function clearPeekState(): SpatialPeek | null {
+  const peek = $spatialPeek.get()
+  peekIntentGeneration += 1
+  expressionExitToken += 1
+  expressionPeekReturn = null
+  pendingWindowPeek = null
+  $peekPreparation.set(null)
+  stopWindowPeekTracker()
+  $spatialPeek.set(null)
+
+  return peek
+}
+
+function abandonPeekMode(): void {
+  const peek = clearPeekState()
+  const wasPeeking = peek !== null || $spatialLocale.get() === 'screen_peek' || $spatialLocale.get() === 'window_peek'
+
+  if (!wasPeeking) {
+    return
+  }
+
+  cancelMovement()
+  perchScaleLimit = null
+  updateAdaptiveScale()
+  const raw = peek?.mode === 'window' ? $homePosition.get() : $spatialPos.get()
+  const position = clampPosToViewport(raw)
+  $spatialLocale.set('home')
+  $spatialPos.set(position)
+  $spatialLocomotion.set('still')
+  void window.spiritagent.sprite.setPosition({
+    ...position,
+    ...(screenEdgeHome ? { screenEdge: screenEdgeHome } : {})
+  })
+}
+
+function leaveWindowPeek(): void {
+  clearPeekState()
+  perchScaleLimit = null
+  updateAdaptiveScale()
+  const home = clampPosToViewport($homePosition.get())
+  $spatialLocale.set('home')
+  $spatialPos.set(home)
+  $spatialLocomotion.set('still')
+
+  if (screenEdgeHome) {
+    void activateScreenPeek(screenEdgeHome, true)
+  }
+}
+
+async function updateWindowPeek(): Promise<void> {
+  if (windowSnapshotPending || $spatialPeek.get()?.mode !== 'window') {
+    return
+  }
+
+  windowSnapshotPending = true
+  const generation = peekIntentGeneration
+
+  try {
+    const peek = $spatialPeek.get()
+
+    if (!peek || peek.mode !== 'window') {
+      return
+    }
+
+    if ($screenLocked.get() || $surfaceOpen.get() !== null) {
+      leaveWindowPeek()
+
+      return
+    }
+
+    const scene = await readWindowScene()
+
+    if (generation !== peekIntentGeneration || $spatialPeek.get() !== peek) {
+      return
+    }
+
+    const target = findBoundWindow(scene, peek)
+
+    if (!scene || !target) {
+      leaveWindowPeek()
+
+      return
+    }
+
+    if (target.displayId !== scene.viewport.displayId) {
+      await window.spiritagent.sprite.moveToDisplay({ x: target.x + target.w / 2, y: target.y + target.h / 2 })
+
+      return
+    }
+
+    const layout = buildWindowPeekLayout(scene, target, peek.action)
+
+    if (!layout) {
+      leaveWindowPeek()
+
+      return
+    }
+
+    perchScaleLimit = layout.scale
+    setScaleTarget(layout.scale, true)
+    $spatialPeek.set(layout.peek)
+    $spatialPos.set(layout.position)
+  } catch (error) {
+    log.warn('spatial', 'Could not follow window peek', error)
+
+    if (generation === peekIntentGeneration) {
+      leaveWindowPeek()
+    }
+  } finally {
+    windowSnapshotPending = false
+  }
+}
+
+let activatingWindowPeek = false
+
+function preparePendingWindowPeek(intent: PendingWindowPeek): void {
+  pendingWindowPeek = intent
+  void ensurePeekAction(intent.action).then(ready => {
+    if (pendingWindowPeek !== intent || intent.generation !== peekIntentGeneration) {
+      return
+    }
+
+    if (ready) {
+      void tryStartPendingWindowPeek()
+    } else {
+      pendingWindowPeek = null
+
+      if ($spatialLocale.get() === 'home' && screenEdgeHome) {
+        void activateScreenPeek(screenEdgeHome)
+      }
+    }
+  })
+}
+
+async function tryStartPendingWindowPeek(): Promise<boolean> {
+  const intent = pendingWindowPeek
+
+  if (
+    activatingWindowPeek ||
+    !intent ||
+    intent.generation !== peekIntentGeneration ||
+    $screenLocked.get() ||
+    $surfaceOpen.get() !== null
+  ) {
+    return false
+  }
+
+  const clip = $actionCatalog.get()?.clipsBySlot.get(intent.action)
+  const packId = $actionCatalog.get()?.packId
+
+  if (!clip?.peek_geometry || packId === undefined) {
+    return false
+  }
+
+  activatingWindowPeek = true
+
+  try {
+    const scene = await readWindowScene()
+
+    if (pendingWindowPeek !== intent || intent.generation !== peekIntentGeneration) {
+      return false
+    }
+
+    const target = findBoundWindow(scene, intent)
+
+    if (!scene || !target) {
+      pendingWindowPeek = null
+
+      return false
+    }
+
+    if (target.displayId === scene.viewport.displayId && !buildWindowPeekLayout(scene, target, intent.action)) {
+      if (intent.action === 'peek_right') {
+        preparePendingWindowPeek({ ...intent, action: 'peek_left' })
+      } else {
+        pendingWindowPeek = null
+      }
+
+      return false
+    }
+
+    pendingWindowPeek = null
+    stopRoam()
+    stopWindowPeekTracker()
+
+    if ($spatialPeek.get() || $peekPreparation.get()) {
+      const previousPeek = $spatialPeek.get()
+      $spatialPeek.set(null)
+      $peekPreparation.set(null)
+      $spatialLocale.set('home')
+      $spatialPos.set(clampPosToViewport(previousPeek?.mode === 'window' ? $homePosition.get() : $spatialPos.get()))
+      perchScaleLimit = null
+      updateAdaptiveScale()
+    }
+
+    $peekPreparation.set({
+      action: intent.action,
+      generation: intent.generation,
+      mode: 'window',
+      packId,
+      runnerInstanceId: intent.runnerInstanceId,
+      windowId: intent.windowId,
+      windowPid: intent.windowPid
+    })
+
+    return true
+  } catch (error) {
+    log.warn('spatial', 'Could not prepare window peek', error)
+
+    if (pendingWindowPeek === intent) {
+      pendingWindowPeek = null
+    }
+
+    return false
+  } finally {
+    activatingWindowPeek = false
+  }
+}
+
+export interface WindowPeekIntent extends WindowPeekBinding {
+  packId: number
+  generation: number
+}
+
+function canEnterWindowPeek(): boolean {
+  return (
+    !$screenLocked.get() &&
+    $surfaceOpen.get() === null &&
+    $effectiveTier.get() === 'autonomous' &&
+    $spatialLocomotion.get() !== 'drag' &&
+    !$activePlayInstance.get() &&
+    !$focusContext.get()?.fullscreen
+  )
+}
+
+/** 冻结决策发起时的窗口，避免迟到结果跟随新焦点。 */
+export async function captureWindowPeekIntent(): Promise<WindowPeekIntent | null> {
+  const category = $focusContext.get()?.category
+  const generation = peekIntentGeneration
+  const packId = $actionCatalog.get()?.packId
+
+  if (!canEnterWindowPeek() || category === 'unknown' || category === 'gaming' || packId === undefined) {
+    return null
+  }
+
+  const scene = await readWindowScene()
+  const focused = scene?.windows.find(item => item.focused && item.visible)
+
+  if (
+    !scene ||
+    !focused ||
+    !canEnterWindowPeek() ||
+    generation !== peekIntentGeneration ||
+    packId !== $actionCatalog.get()?.packId
+  ) {
+    return null
+  }
+
+  return { windowId: focused.id, windowPid: focused.pid, runnerInstanceId: scene.runnerInstanceId, packId, generation }
+}
+
+export async function enterWindowPeek(captured?: WindowPeekIntent): Promise<boolean> {
+  const target = captured ?? (await captureWindowPeekIntent())
+
+  if (
+    !target ||
+    !canEnterWindowPeek() ||
+    target.generation !== peekIntentGeneration ||
+    target.packId !== $actionCatalog.get()?.packId
+  ) {
+    return false
+  }
+
+  const activePeek = $spatialPeek.get()
+  const preparation = $peekPreparation.get()
+
+  if (activePeek?.mode === 'window' || preparation?.mode === 'window' || pendingWindowPeek) {
+    return true
+  }
+
+  const scene = await readWindowScene()
+
+  const focused = findBoundWindow(scene, target)
+
+  if (
+    !scene ||
+    !focused ||
+    !canEnterWindowPeek() ||
+    target.generation !== peekIntentGeneration ||
+    target.packId !== $actionCatalog.get()?.packId
+  ) {
+    return false
+  }
+
+  const intent: PendingWindowPeek = {
+    action: 'peek_right',
+    generation: ++peekIntentGeneration,
+    windowId: focused.id,
+    windowPid: focused.pid,
+    runnerInstanceId: scene.runnerInstanceId
+  }
+
+  preparePendingWindowPeek(intent)
+  stopRoam()
+
+  const perch =
+    focused.displayId === scene.viewport.displayId
+      ? computePerchPlacement(
+          { x: focused.x - scene.viewport.x, y: focused.y - scene.viewport.y, w: focused.w, h: focused.h },
+          $defaultScale.get()
+        )
+      : null
+
+  setSpatialLocale('perch', { position: perch?.pos ?? clampPosToViewport($spatialPos.get()), scaleLimit: perch?.scale })
+
+  return true
+}
+
+export function leavePeekForExpression(): boolean {
+  const peek = $spatialPeek.get() ?? $peekPreparation.get()
+  const packId = $actionCatalog.get()?.packId
+
+  if (!peek || packId === undefined) {
+    return false
+  }
+
+  if (expressionPeekReturn) {
+    return true
+  }
+
+  const token = ++expressionExitToken
+  expressionPeekReturn = { peek, packId }
+  peekIntentGeneration += 1
+  pendingWindowPeek = null
+  $peekPreparation.set(null)
+  stopWindowPeekTracker()
+
+  if (!$spatialPeek.get()) {
+    return true
+  }
+
+  $spatialLocale.set('home')
+  perchScaleLimit = null
+  updateAdaptiveScale()
+  const targetScale = computeTargetScale()
+  const activePeek = $spatialPeek.get()
+
+  const visiblePosition =
+    activePeek?.mode === 'window' ? computePerchPlacement(activePeek.targetRect, targetScale)?.pos : null
+
+  const raw = visiblePosition ?? $spatialPos.get()
+  // 表达可能比探身更宽，离开遮挡时按完整画布预留空间。
+  const canvas = $spriteCanvasRect.get()
+  const width = getBaseSpriteWidth() * targetScale
+  const height = getBaseSpriteHeight() * targetScale
+
+  const destination = {
+    x: clamp(raw.x, -(canvas?.left ?? 0) * width, window.innerWidth - (canvas?.right ?? 1) * width),
+    y: clamp(raw.y, -(canvas?.top ?? 0) * height, window.innerHeight - (canvas?.bottom ?? 1) * height)
+  }
+
+  moveTo(destination, 'fly', () => {
+    if (token === expressionExitToken && expressionPeekReturn) {
+      $spatialPeek.set(null)
+      $spatialLocale.set('home')
+    }
+  })
+
+  return true
+}
+
+export async function restorePeekAfterExpression(): Promise<void> {
+  const previous = expressionPeekReturn
+  expressionPeekReturn = null
+  const token = ++expressionExitToken
+
+  if (
+    !previous ||
+    previous.packId !== $actionCatalog.get()?.packId ||
+    $screenLocked.get() ||
+    $surfaceOpen.get() !== null ||
+    $spatialLocomotion.get() === 'drag'
+  ) {
+    return
+  }
+
+  if (previous.peek.mode === 'screen') {
+    if (screenEdgeHome) {
+      await activateScreenPeek(screenEdgeHome, true)
+    }
+
+    return
+  }
+
+  if (!canEnterWindowPeek()) {
+    return
+  }
+
+  const scene = await readWindowScene()
+
+  if (token !== expressionExitToken || !canEnterWindowPeek()) {
+    return
+  }
+
+  const target = findBoundWindow(scene, previous.peek)
+
+  if (!scene || !target) {
+    setSpatialLocale('home', { instant: true })
+
+    return
+  }
+
+  const layout = buildWindowPeekLayout(scene, target, previous.peek.action)
+
+  if (target.displayId === scene.viewport.displayId && !layout) {
+    setSpatialLocale('home', { instant: true })
+
+    return
+  }
+
+  const packId = $actionCatalog.get()?.packId
+
+  if (packId === undefined) {
+    return
+  }
+
+  const generation = ++peekIntentGeneration
+  $peekPreparation.set({
+    action: previous.peek.action,
+    generation,
+    mode: 'window',
+    packId,
+    runnerInstanceId: scene.runnerInstanceId,
+    windowId: target.id,
+    windowPid: target.pid
+  })
+}
+
 export function setSpatialLocale(
   locale: SpatialLocale,
   opts?: {
     position?: { x: number; y: number }
     locomotion?: 'walk' | 'fly'
     instant?: boolean
-    /** perch 专属：空间不足缩身后的缩放上限（DESIGN「位置、移动与缩放」）；缺省 = 不限 */
+    /** 普通与窗口栖息的缩放上限；缺省时不限。 */
     scaleLimit?: number
     onArrive?: () => void
   }
 ): void {
-  const limitChanged = perchScaleLimit !== (locale === 'perch' ? (opts?.scaleLimit ?? null) : null)
-  perchScaleLimit = locale === 'perch' ? (opts?.scaleLimit ?? null) : null
+  if (locale === 'home' && screenEdgeHome) {
+    if ($spatialLocale.get() === 'screen_peek' || $peekPreparation.get()?.mode === 'screen') {
+      return
+    }
+
+    abandonPeekMode()
+    stopRoam()
+    perchScaleLimit = null
+    $spatialLocale.set('home')
+    updateAdaptiveScale()
+    const home = clampPosToViewport($homePosition.get(), computeTargetScale())
+
+    const returnToEdge = (): void => {
+      opts?.onArrive?.()
+
+      if (screenEdgeHome) {
+        void activateScreenPeek(screenEdgeHome, !opts?.instant)
+      }
+    }
+
+    if (opts?.instant) {
+      $spatialPos.set(home)
+      returnToEdge()
+    } else {
+      moveTo(home, opts?.locomotion ?? 'walk', returnToEdge)
+    }
+
+    return
+  }
+
+  const previousPeek = locale !== 'screen_peek' && locale !== 'window_peek' ? $spatialPeek.get() : null
+
+  if (locale !== 'screen_peek' && locale !== 'window_peek') {
+    expressionExitToken += 1
+    expressionPeekReturn = null
+    $peekPreparation.set(null)
+    const keepPendingWindow = locale === 'perch' && pendingWindowPeek !== null
+
+    if (!keepPendingWindow) {
+      peekIntentGeneration += 1
+      pendingWindowPeek = null
+    }
+
+    stopWindowPeekTracker()
+    $spatialPeek.set(null)
+  }
+
+  const hasScaleLimit = locale === 'perch' || locale === 'window_peek'
+  const limitChanged = perchScaleLimit !== (hasScaleLimit ? (opts?.scaleLimit ?? null) : null)
+  perchScaleLimit = hasScaleLimit ? (opts?.scaleLimit ?? null) : null
   $spatialLocale.set(locale)
 
   if (limitChanged) {
     updateAdaptiveScale()
+  }
+
+  if (previousPeek) {
+    const raw = previousPeek.mode === 'window' ? $homePosition.get() : $spatialPos.get()
+    $spatialPos.set(clampPosToViewport(raw, computeTargetScale()))
   }
 
   // home 落点可能记录于更低 scale 的时期；按当前 scale 重钳，情绪放大期间回 home 不裁脚。
@@ -419,33 +1236,63 @@ export function setSpatialLocale(
 }
 
 export function updateSpatialDecision(): void {
-  // 生活空间或工作台在屏、拖拽中均冻结桌面空间决策
   if ($spatialLocomotion.get() === 'drag' || $surfaceOpen.get() === 'living' || $surfaceOpen.get() === 'workbench') {
     return
   }
 
-  const state = $spriteState.get()
-  const tier = $effectiveTier.get()
+  if (expressionPeekReturn || $activePlayInstance.get()) {
+    return
+  }
 
-  // 静止档的硬约束优先于一切——这是用户偏好，LLM 自主模式也没有上下文可以参考。
+  const tier = $effectiveTier.get()
+  const preparation = $peekPreparation.get()
+
+  if (preparation?.mode === 'window' && tier !== 'autonomous') {
+    cancelPeekPreparation(preparation.action, preparation.generation)
+
+    return
+  }
+
+  if (preparation) {
+    return
+  }
+
+  const state = $spriteState.get()
+
+  // 静止档恢复栖息地；常规档只停止自主移动。
   if (tier === 'still') {
     stopRoam()
 
-    if ($spatialLocale.get() !== 'home') {
+    if ($spatialLocale.get() === 'window_peek') {
+      leaveWindowPeek()
+    }
+
+    if ($spatialLocale.get() !== 'home' && $spatialLocale.get() !== 'screen_peek') {
       setSpatialLocale('home')
     }
 
     return
   }
 
-  // 常规档不发起任何自动移动——停在原地，只停掉进行中的漫游（DESIGN「位置、移动与缩放」）。
   if (tier !== 'autonomous') {
     stopRoam()
+
+    if (pendingWindowPeek) {
+      peekIntentGeneration += 1
+      pendingWindowPeek = null
+    }
+
+    if ($spatialLocale.get() === 'window_peek') {
+      leaveWindowPeek()
+    }
 
     return
   }
 
-  // 自主档下 LLM 自主模式负责 perch/roam/home 的切换；本地规则不再决策。
+  if ($spatialLocale.get() === 'window_peek') {
+    return
+  }
+
   if ($llmAutonomy.get()) {
     return
   }
@@ -456,12 +1303,8 @@ export function updateSpatialDecision(): void {
   if (canPerch) {
     stopRoam()
 
-    if ($spatialLocale.get() !== 'perch' && state === 'idle') {
-      const perch = computePerchPlacement(ctx!.windowGeom!, $defaultScale.get())
-
-      if (perch) {
-        setSpatialLocale('perch', { position: perch.pos, scaleLimit: perch.scale })
-      }
+    if ($spatialLocale.get() !== 'perch' && $spatialLocale.get() !== 'window_peek' && state === 'idle') {
+      void enterWindowPeek()
     }
 
     return
@@ -500,7 +1343,16 @@ export function startRoam(): void {
   }
 
   roaming = true
+  const previousPeek = clearPeekState()
+  perchScaleLimit = null
   $spatialLocale.set('roam')
+  updateAdaptiveScale()
+
+  if (previousPeek) {
+    const raw = previousPeek.mode === 'window' ? $homePosition.get() : $spatialPos.get()
+    $spatialPos.set(clampPosToViewport(raw, computeTargetScale()))
+  }
+
   roamStep()
 }
 
@@ -518,7 +1370,7 @@ function roamStep(): void {
           return
         }
 
-        // 桌面不再空闲（用户回来了）→ 结束漫游、走回 home（DESIGN「位置、移动与缩放」 roam 仅桌面空闲时）
+        // 每次续行前重验空闲条件。
         if ($spriteState.get() !== 'idle' || $lastIdleSeconds.get() < ROAM_IDLE_THRESHOLD_SECONDS) {
           stopRoam()
           setSpatialLocale('home')
@@ -546,20 +1398,36 @@ function stopRoam(): void {
 
 export function startDrag(): void {
   userInteracted = true
+  clearPeekState()
   stopRoam()
-  cancelMovement()
 
   $spatialLocomotion.set('drag')
   $spriteState.set('interacting')
 }
 
 export function updateDragPosition(pos: { x: number; y: number }): void {
-  // DESIGN「位置、移动与缩放」：全身始终在屏内。拖拽过程中逐帧钳制，不能等 endDragAt 才修正。
-  $spatialPos.set(clampPosToViewport(pos))
+  const c = contentBox()
+  const w = getBaseSpriteWidth() * $spatialScale.get()
+  $spatialPos.set({
+    x: clamp(pos.x, -w * 0.8, window.innerWidth - w * 0.2),
+    y: clamp(pos.y, -c.top, window.innerHeight - c.bottom)
+  })
 }
 
 export function endDragAt(pos: { x: number; y: number }, cancelled = false): void {
   const safe = clampPosToViewport(pos)
+
+  const c = contentBox()
+  const fullWidth = Math.max(1, c.right - c.left)
+  const leftClipped = Math.max(0, -(pos.x + c.left))
+  const rightClipped = Math.max(0, pos.x + c.right - window.innerWidth)
+
+  const side =
+    !cancelled && rightClipped / fullWidth >= 0.25
+      ? 'right'
+      : !cancelled && leftClipped / fullWidth >= 0.25
+        ? 'left'
+        : null
 
   $spatialPos.set(safe)
   $homePosition.set(safe)
@@ -571,13 +1439,34 @@ export function endDragAt(pos: { x: number; y: number }, cancelled = false): voi
 
   setSpriteState('interacting', { durationMs: cancelled ? 0 : 500 })
   $spatialLocale.set('home')
+  perchScaleLimit = null
+  updateAdaptiveScale()
+
+  if (side) {
+    const yRatio = safe.y / Math.max(1, window.innerHeight)
+    screenEdgeHome = { side, yRatio }
+    void window.spiritagent.sprite.setPosition({ ...safe, screenEdge: { side, yRatio } })
+    void activateScreenPeek(screenEdgeHome, true)
+
+    return
+  }
+
+  if (!cancelled) {
+    screenEdgeHome = null
+  } else if (screenEdgeHome) {
+    void activateScreenPeek(screenEdgeHome)
+
+    return
+  }
+
   void window.spiritagent.sprite.setPosition(safe)
 }
 
 export function resetToHomePosition(): void {
   userInteracted = false
+  clearPeekState()
+  screenEdgeHome = null
   stopRoam()
-  cancelMovement()
 
   const home = getHomePosition()
   $homePosition.set(home)
@@ -592,8 +1481,18 @@ export function initSpatial(): () => void {
   let disposed = false
   const unlistenDefaultScale = window.spiritagent.sprite.onDefaultScaleChanged(syncDefaultScale)
 
+  const unlistenStorageClear = registerStorageClearHandler(() => {
+    abandonPeekMode()
+    screenEdgeHome = null
+    userInteracted = false
+  })
+
   // 等待可见内容包围盒后恢复；旧版屏外位置统一收回可见区域。
-  const restoreSavedPosition = (saved: { x: number; y: number }): void => {
+  const restoreSavedPosition = (saved: {
+    x: number
+    y: number
+    screenEdge?: { side: 'left' | 'right'; yRatio: number }
+  }): void => {
     if (disposed || userInteracted) {
       return
     }
@@ -606,7 +1505,15 @@ export function initSpatial(): () => void {
     }
 
     if (next.x !== saved.x || next.y !== saved.y) {
-      void window.spiritagent.sprite.setPosition(next)
+      void window.spiritagent.sprite.setPosition({
+        ...next,
+        ...(saved.screenEdge ? { screenEdge: saved.screenEdge } : {})
+      })
+    }
+
+    if (saved.screenEdge) {
+      screenEdgeHome = saved.screenEdge
+      void activateScreenPeek(saved.screenEdge)
     }
   }
 
@@ -665,6 +1572,12 @@ export function initSpatial(): () => void {
 
   const unlistenSurface = $surfaceOpen.listen(open => {
     if (open === 'living' || open === 'workbench') {
+      peekIntentGeneration += 1
+
+      if ($spatialPeek.get() || pendingWindowPeek || $peekPreparation.get()) {
+        abandonPeekMode()
+      }
+
       stopRoam()
       cancelMovement()
       $spatialLocomotion.set('still')
@@ -673,6 +1586,10 @@ export function initSpatial(): () => void {
         $spatialLocale.set('workbench')
       }
     } else {
+      if (screenEdgeHome) {
+        void activateScreenPeek(screenEdgeHome)
+      }
+
       if ($spatialLocale.get() === 'perch' || $spatialLocale.get() === 'workbench') {
         setSpatialLocale('home')
       }
@@ -695,10 +1612,40 @@ export function initSpatial(): () => void {
 
   const unlistenFocus = $focusContext.listen(() => updateSpatialDecision())
 
-  // 情绪瞬时放大等 scale 变化不得让已落位的精灵溢出视口（DESIGN「位置、移动与缩放」 全身在屏）。
-  // 拖拽中由逐帧钳制兜底；移动动画中的插值点恒在两端点之间，端点已界内，无需钳。
+  const unlistenLock = $screenLocked.listen(locked => {
+    if (locked) {
+      abandonPeekMode()
+    } else {
+      if (screenEdgeHome) {
+        void activateScreenPeek(screenEdgeHome)
+      }
+
+      updateSpatialDecision()
+    }
+  })
+
+  // 拖拽逐帧限制位置；移动完成时按最终比例重新落位。
   const unlistenScale = $spatialScale.listen(() => {
     if ($spatialLocomotion.get() === 'drag' || rafId !== null) {
+      return
+    }
+
+    const locale = $spatialLocale.get()
+
+    if (locale === 'screen_peek' && screenEdgeHome) {
+      const action = screenEdgeHome.side === 'right' ? 'peek_left' : 'peek_right'
+      const geometry = $actionCatalog.get()?.clipsBySlot.get(action)?.peek_geometry
+
+      if (geometry) {
+        applyScreenPeek(screenEdgeHome, geometry, false)
+      }
+
+      return
+    }
+
+    if (locale === 'window_peek') {
+      void updateWindowPeek()
+
       return
     }
 
@@ -708,28 +1655,127 @@ export function initSpatial(): () => void {
     $spatialPos.set(next)
   })
 
-  // 渲染层装配/视频加载完成后才上报内容包围盒——启动期按新盒重贴 home 与当前位
-  // （脚从画布底落到角色脚底）。用户已拖拽过则位置属用户意志，不自动迁移。
+  // 片段切换只重钳当前位置，不能把表演落点或离开探身的路径拉回 home。
   const unlistenContent = $spriteContentRect.listen(() => {
-    if (userInteracted) {
+    if (!screenEdgeHome) {
+      $homePosition.set(clampPosToViewport($homePosition.get()))
+    }
+
+    if (!$spatialPeek.get() && $spatialLocomotion.get() === 'still' && rafId === null) {
+      $spatialPos.set(clampPosToViewport($spatialPos.get()))
+    }
+  })
+
+  const restoreScreenDock = (): void => {
+    if (
+      screenEdgeHome &&
+      $spatialLocale.get() === 'home' &&
+      !$spatialPeek.get() &&
+      !$peekPreparation.get() &&
+      !expressionPeekReturn &&
+      !$activePlayInstance.get() &&
+      $spatialLocomotion.get() === 'still'
+    ) {
+      void activateScreenPeek(screenEdgeHome)
+    }
+  }
+
+  const unlistenCanvas = $spriteCanvasRect.listen(() => {
+    const peek = $spatialPeek.get()
+
+    if (peek?.mode === 'screen' && screenEdgeHome) {
+      const geometry = $actionCatalog.get()?.clipsBySlot.get(peek.action)?.peek_geometry
+
+      if (geometry) {
+        applyScreenPeek(screenEdgeHome, geometry, false)
+      }
+    } else if (peek?.mode === 'window') {
+      void updateWindowPeek()
+    } else {
+      restoreScreenDock()
+    }
+  })
+
+  const reprepareWindowPeek = (
+    peek: Pick<Extract<SpatialPeek, { mode: 'window' }>, 'action' | 'runnerInstanceId' | 'windowId' | 'windowPid'>
+  ): void => {
+    clearPeekState()
+    perchScaleLimit = null
+    updateAdaptiveScale()
+    const position = clampPosToViewport($homePosition.get())
+    $spatialLocale.set('home')
+    $spatialPos.set(position)
+    $spatialLocomotion.set('still')
+
+    if (!peek.windowId || !peek.windowPid || !peek.runnerInstanceId) {
       return
     }
 
-    const next = clampPosToViewport($homePosition.get())
-
-    $homePosition.set(next)
-
-    if ($spatialLocale.get() === 'home' && $spatialLocomotion.get() !== 'drag') {
-      cancelMovement()
-      $spatialPos.set(next)
+    const intent = {
+      action: peek.action,
+      generation: ++peekIntentGeneration,
+      windowId: peek.windowId,
+      windowPid: peek.windowPid,
+      runnerInstanceId: peek.runnerInstanceId
     }
+
+    preparePendingWindowPeek(intent)
+  }
+
+  let previousCatalog = $actionCatalog.get()
+
+  const unlistenCatalog = $actionCatalog.listen(catalog => {
+    const previous = previousCatalog
+    previousCatalog = catalog
+
+    if (previous?.packId !== catalog?.packId) {
+      abandonPeekMode()
+      restoreScreenDock()
+
+      return
+    }
+
+    const peek = $spatialPeek.get()
+    const preparation = $peekPreparation.get()
+    const action = peek?.action ?? preparation?.action
+    const before = action ? previous?.clipsBySlot.get(action) : null
+    const after = action ? catalog?.clipsBySlot.get(action) : null
+
+    if (before && after && before.asset_revision === after.asset_revision && before.video_ref === after.video_ref) {
+      return
+    }
+
+    if (preparation?.mode === 'screen' && screenEdgeHome) {
+      cancelPeekPreparation(preparation.action, preparation.generation)
+      void activateScreenPeek(screenEdgeHome)
+    } else if (preparation?.mode === 'window') {
+      reprepareWindowPeek({
+        action: preparation.action,
+        runnerInstanceId: preparation.runnerInstanceId,
+        windowId: preparation.windowId,
+        windowPid: preparation.windowPid
+      })
+    } else if (peek?.mode === 'screen' && screenEdgeHome) {
+      const edge = screenEdgeHome
+      const visible = clampPosToViewport($spatialPos.get())
+      peekIntentGeneration += 1
+      $spatialPeek.set(null)
+      $spatialLocale.set('home')
+      $spatialPos.set(visible)
+      void activateScreenPeek(edge)
+    } else if (peek?.mode === 'window') {
+      reprepareWindowPeek(peek)
+    } else {
+      restoreScreenDock()
+    }
+
+    void tryStartPendingWindowPeek()
   })
 
   const onResize = () => {
     $viewport.set({ width: window.innerWidth, height: window.innerHeight })
 
-    // 拖拽中切换显示器也会触发 resize，事件携带新显示器的视口——此时若重新
-    // 推算 home/locale，会把精灵从光标下抽走。
+    // 跨屏拖拽由指针路径重映射位置，resize 不接管。
     if ($spatialLocomotion.get() === 'drag') {
       return
     }
@@ -744,10 +1790,28 @@ export function initSpatial(): () => void {
 
     $homePosition.set(clamped)
 
+    // 跟随目标跨屏也会触发 resize；保留已冻结的窗口和首帧准备代次。
+    if ($peekPreparation.get()?.mode === 'window' || pendingWindowPeek) {
+      $spatialPos.set(clampPosToViewport($spatialPos.get()))
+
+      return
+    }
+
     const locale = $spatialLocale.get()
 
     if (locale === 'home') {
       setSpatialLocale('home', { instant: true })
+    } else if (locale === 'screen_peek' && screenEdgeHome) {
+      const action = screenEdgeHome.side === 'right' ? 'peek_left' : 'peek_right'
+      const geometry = $actionCatalog.get()?.clipsBySlot.get(action)?.peek_geometry
+
+      if (geometry) {
+        applyScreenPeek(screenEdgeHome, geometry, true)
+      } else {
+        void activateScreenPeek(screenEdgeHome)
+      }
+    } else if (locale === 'window_peek') {
+      void updateWindowPeek()
     }
   }
 
@@ -755,6 +1819,7 @@ export function initSpatial(): () => void {
 
   return () => {
     disposed = true
+    abandonPeekMode()
     settleSavedRectWait()
     unlistenDefaultScale()
     unlistenSurface()
@@ -762,8 +1827,13 @@ export function initSpatial(): () => void {
     unlistenEmotion()
     unlistenTier()
     unlistenFocus()
+    unlistenLock()
     unlistenScale()
     unlistenContent()
+    unlistenCanvas()
+    unlistenCatalog()
+    unlistenStorageClear()
+    stopWindowPeekTracker()
     window.removeEventListener('resize', onResize)
     stopRoam()
     cancelMovement()

@@ -12,9 +12,16 @@ export {
   $actionCatalog,
   $actionCatalogStatus,
   actionCatalogChanged,
+  ensurePeekAction,
   hydrateActionCatalog,
   resolveActionClipUrl,
   resolveHitmask
 } from './action-store'
 export type { ActionCatalogStatus, ActionHitmask, ActiveActionCatalog } from './action-store'
-export type { ActionPlaybackStatus, ActionPlayCommand, ActionPlayInstance } from './action-types'
+export type {
+  ActionClipEntry,
+  ActionPlaybackStatus,
+  ActionPlayCommand,
+  ActionPlayInstance,
+  PeekGeometry
+} from './action-types'

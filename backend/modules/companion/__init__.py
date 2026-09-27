@@ -92,6 +92,8 @@ from .schemas_actions import (
     ActionSearchHit,
     ActionSearchResponse,
     ActionSummary,
+    PeekGeometry,
+    parse_content_rect,
 )
 from .schemas_journal import (
     DiaryEntryResponse,
@@ -123,6 +125,7 @@ from .schemas_scene import (
 )
 from .schemas_video import (
     VideoPackCreateRequest,
+    VideoPackEnsureSystemActionRequest,
     VideoPackGenerateRequest,
     VideoPackListResponse,
     VideoPackResponse,
@@ -181,6 +184,8 @@ __all__ = [
     "ActionSearchHit",
     "ActionSearchResponse",
     "ActionSummary",
+    "PeekGeometry",
+    "parse_content_rect",
     "AvatarAssetResponse",
     "FullbodyCandidateResponse",
     "MediaReviewResponse",
@@ -232,6 +237,7 @@ __all__ = [
     "ScenePromptRequest",
     "SceneStateResponse",
     "VideoPackCreateRequest",
+    "VideoPackEnsureSystemActionRequest",
     "VideoPackGenerateRequest",
     "VideoPackListResponse",
     "VideoPackResponse",

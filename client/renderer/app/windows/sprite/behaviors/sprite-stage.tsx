@@ -5,6 +5,7 @@ import { handleDragEndInteraction } from '@/modules/character'
 import {
   $homePosition,
   $spatialLocomotion,
+  $spatialPeek,
   $spatialPos,
   $spatialScale,
   $spriteAction,
@@ -12,6 +13,7 @@ import {
   endDragAt,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
+  peekMaskRects,
   setSpriteState,
   startDrag,
   updateDragPosition
@@ -83,6 +85,7 @@ export function SpriteStage({
   const lastTapRef = useRef(0)
   const pos = useStore($spatialPos)
   const scale = useStore($spatialScale)
+  const peek = useStore($spatialPeek)
   // 命中按渲染路径精化：视频走 alpha 遮罩查表；缺席（桌面蛋 / 加载空挡）才回退整矩形。
   const stageHitTest = useVideoPixelHitTest()
 
@@ -149,7 +152,7 @@ export function SpriteStage({
         updateDragPosition(pendingPosRef.current)
       }
 
-      endDragAt($spatialPos.get(), cancelled)
+      endDragAt(cancelled ? $spatialPos.get() : (lastDragPositionRef.current ?? $spatialPos.get()), cancelled)
     }
 
     pendingPosRef.current = null
@@ -481,9 +484,29 @@ export function SpriteStage({
 
   const spriteW = getBaseSpriteWidth()
   const spriteH = getBaseSpriteHeight()
+  const maskRects = peekMaskRects(peek, pos, scale, spriteW, spriteH)
 
   return (
     <div className="fixed inset-0" data-sprite-stage style={{ pointerEvents: 'none' }}>
+      {peek ? (
+        <svg aria-hidden="true" className="pointer-events-none absolute size-0" focusable="false">
+          <defs>
+            <mask height={spriteH} id="spiritagent-peek-mask" maskUnits="userSpaceOnUse" width={spriteW}>
+              <rect fill="white" height={spriteH} width={spriteW} x="0" y="0" />
+              {maskRects.map((rect, index) => (
+                <rect
+                  fill="black"
+                  height={rect.bottom - rect.top}
+                  key={index}
+                  width={rect.right - rect.left}
+                  x={rect.left}
+                  y={rect.top}
+                />
+              ))}
+            </mask>
+          </defs>
+        </svg>
+      ) : null}
       <div
         className={`absolute transition-opacity duration-200 ${hidden ? 'pointer-events-none opacity-0 invisible' : 'opacity-100'}`}
         onContextMenu={e => {
@@ -524,6 +547,8 @@ export function SpriteStage({
           touchAction: 'none',
           visibility: hidden ? 'hidden' : 'visible',
           opacity: hidden ? 0 : 1,
+          mask: peek ? 'url(#spiritagent-peek-mask)' : undefined,
+          WebkitMask: peek ? 'url(#spiritagent-peek-mask)' : undefined,
           transform: `translate3d(${pos.x}px, ${pos.y}px, 0px) scale(${scale})`,
           transformOrigin: 'top left',
           willChange: 'transform, opacity'

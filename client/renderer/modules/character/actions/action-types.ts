@@ -1,6 +1,8 @@
 /** 动作模块类型：播放指令、回执与目录条目。
  * IPC 契约类型仍归 shared/ipc；此处仅模块内类型。 */
 
+export type NormalizedRect = readonly [left: number, top: number, right: number, bottom: number]
+
 /** manifest 中单个动作片段（spiritagent.action.pack 的 clip）。 */
 export interface ActionClipEntry {
   readonly action_id: number
@@ -15,6 +17,14 @@ export interface ActionClipEntry {
   readonly hitmask_ref: string | null
   readonly hitmask_grid: readonly [number, number] | null
   readonly hitmask_fps: number
+  readonly peek_geometry?: PeekGeometry | null
+  readonly content_rect?: NormalizedRect | null
+}
+
+export interface PeekGeometry {
+  readonly side: 'left' | 'right'
+  readonly cut_x: number
+  readonly focus_rect: NormalizedRect
 }
 
 /** 目录 manifest（spiritagent.action.pack）。 */
