@@ -1,52 +1,69 @@
-# Main 主进程
+# Client 主进程
 
-可信主进程持有凭据、窗口、Runner、配置镜像、磁盘缓存和更新。渲染层经 `window.spiritagent` 与 `spiritagentWebUtils.getPathForFile` 使用受控能力；跨窗口协作见 [Client](../README.md)，通道类型见 [shared/ipc](../shared/ipc/)。
+可信主进程持有凭据、窗口、Runner、配置镜像、磁盘缓存与更新。渲染层通过 `window.spiritagent` 和 `spiritagentWebUtils.getPathForFile` 使用受控能力。跨窗口协作见 [Client](../README.md)，通道类型见 [shared/ipc](../shared/ipc/)。
 
 ## 包边界
 
-`entry.ts` 是唯一组合根，负责显式装配，不展开业务逻辑。`backend` 管会话与 HTTP，`runner` 管进程和本地 RPC，`lifecycle` 管窗口、托盘、媒体协议与更新，`ipc` 按能力注册通道，`security` 管准入，`shared` 为叶子层。
+| 包或入口 | 职责 |
+|---|---|
+| `entry.ts` | 唯一组合根，显式装配，不展开业务逻辑 |
+| `backend` | 会话与 HTTP |
+| `runner` | 进程与本地 RPC |
+| `lifecycle` | 窗口、托盘、媒体协议与更新 |
+| `ipc` | 按能力注册通道 |
+| `security` | sender、路径与能力准入 |
+| `shared` | 叶子层，经装配层注入结构端口，不导入 backend / runner 实现 |
 
-`shared` 不导入 backend / runner 实现，通过结构端口由装配层注入。主进程输出 ESM `entry.js`，沙盒 preload 输出 CJS `preload.cjs`；preload 混入 ESM import 会使桥接失效。`main/shared` 与 `client/shared` 不同层，后者是跨进程契约包。
+主进程产物为 ESM `entry.js`，沙盒 preload 为 CJS `preload.cjs`；混入 ESM import 会使 preload 桥失效。`main/shared` 与跨进程契约包 `client/shared` 分层独立。
 
-## 启动与装配
+## 启动与退出
 
-`SPIRITAGENT_DESKTOP_USER_DATA_DIR` 覆盖下取 `<override>/spiritagent-home` 为 Home，并 `setPath('userData')`；配置、日志与缓存不另找目录。默认单实例；`SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK=1` 只用于并行验证，第二实例事件在转发器就绪前折叠保存，之后兑现一次。
+- `SPIRITAGENT_DESKTOP_USER_DATA_DIR` 覆盖下取 `<override>/spiritagent-home` 为 Home，并 `setPath('userData')`；配置、日志与缓存不另找目录。
+- 默认单实例；`SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK=1` 只用于并行验证，第二实例事件在转发器就绪前折叠保存，之后兑现一次。
+- 远程显示可禁用 GPU 并关闭精灵透明。
+- Chromium 后台节流全局关闭，渲染功耗由引擎管理。
+- 关窗不退出；退出发起配置 flush、`flushSync` 日志并有界等待 Runner，超时仍可能残留进程。
 
-远程显示可禁用 GPU 并关闭精灵透明。Chromium 后台节流全局关闭，渲染功耗由引擎管理。关窗不退出；真正退出发起配置 flush 并 `flushSync` 日志，再有界等待 Runner 停止（约 3s），超时可能残留进程，不能宣称已保证全部清理。
+## 渲染面准入
 
-## 凭据与渲染面隔离
+### 凭据与请求
 
-多个账户的激活凭据分别加密落盘，JWT 仅内存；会话文件记录当前账户。托盘账户操作留在主进程，preload 不暴露持久凭据读取。`api()` 只允许相对路径和 channels / companion / config / sessions 前缀，拒绝绝对 URL、协议相对地址和路径穿越，避免携凭据访问任意地址。
+凭据存储与换号语义见 [PROTOCOL](../../docs/PROTOCOL.md#凭据落盘)。托盘账户操作留在主进程，preload 不暴露持久凭据读取。`api()` 仅访问受控相对路径，拒绝绝对 URL、协议相对地址与穿越；白名单见 [api-allowlist.ts](security/api-allowlist.ts)。
 
-文件读取仅接受选择器或拖拽登记的路径，渲染层不能自行授予白名单；敏感路径另行阻断。白名单仅进程内且有容量限制，重启须重新选择，历史附件路径不自动恢复权限。`chat:set-pending-feed` 信箱不校验白名单，取用方仍须走受控读取。
+### 文件与媒体
+
+- 文件读取仅接受选择器或拖拽登记的路径，渲染层不能自行授予白名单；敏感路径另行阻断。
+- 白名单仅进程内且有容量限制，重启须重新选择，历史附件路径不自动恢复权限。
+- `chat:set-pending-feed` 信箱不校验白名单，取用方仍须走受控读取。
 
 `spiritagent-media:` 只读取 Home 下允许的 cache / audio 资源并校验路径与扩展名，不能成为任意文件读取接口。
 
-## 网关宿主—代理
+## 网关宿主与代理
 
-仅宿主窗口可上报网关状态、注入事件和答复代理 RPC，其他表面只能发请求；网关票 `ws-url` 仅对宿主发放。所有入口核对 sender，不能只依赖 TypeScript 类型。`tool.call` 不转发到其他窗口。
 
-代理等待设超时（45s），网关 closed / error 时统一 reject。会话凭据通过实时 getter 读取，不捕获过期 token。后端连接缓存 reset 递增代次，迟到连接不得写回（归 `backend/ensure-backend`）。
 
-## 表面互斥与几何
+- 只有宿主可获取网关票 `ws-url`、上报网关状态、注入事件和答复代理 RPC，入口核对 sender。
+- 其他表面只能请求代理能力；`tool.call` 不转发到其他窗口，TypeScript 类型不能代替运行时校验。
 
-并发 open / close 通过串行链裁决，生活空间与工作台最多一个可见。工作台移动时由主进程跟随显示器，渲染状态不传递几何。激活卡片由置顶精灵窗承载，交互区域限于卡片；未认证时唤起激活界面须更新渲染状态，不能只 raise 窗口。用户可见行为见 [DESIGN](../../docs/DESIGN.md#61-双入口窗口架构与交互范式)。
+[代理等待](ipc/gateway.ts)有超时，网关 closed / error 时统一 reject。凭据经实时 getter 读取；[连接缓存](backend/ensure-backend.ts) reset 递增代次，迟到连接不得写回。
 
-快捷键由主进程注册并返回冲突或失败状态。Windows 关闭隐藏到托盘，macOS 隐藏但保留 Dock；多屏和透明命中规则归 [Client](../README.md#窗口与主题)。
+## 窗口与几何
 
-## 配置镜像与云同步
+[surfaces.ts](lifecycle/surfaces.ts)串行裁决开关，生活空间与工作台最多一个可见；工作台移动由主进程跟随显示器，渲染状态不传递几何。激活卡片限命中区域，未认证唤起须更新渲染状态，不只 raise 窗口。
 
-镜像写锁串行执行原子落盘、Runner 推送和防抖上云。应用云端镜像期间抑制变更回环；账户归属不匹配时先清理本地同步节。机密与设备配置不上云。
+[快捷键](ipc/shortcuts.ts)返回注册冲突与失败。Windows 关窗隐藏到托盘，macOS 保留 Dock；多屏、透明命中见 [Client](../README.md#窗口与主题)，用户行为见 [DESIGN](../../docs/DESIGN.md#窗口与会话)。
 
-Runner 配置 read / write / patch 均只接受工作台 sender。离线编辑与云端冲突不提供版本化合并，精确恢复语义见 [PROTOCOL](../../docs/PROTOCOL.md#24-配置所有权与云端同步)。
+## 配置镜像
+
+[runner-config.ts](ipc/runner-config.ts)串行完成原子落盘、Runner 推送与防抖上云；云端镜像水合期间抑制回环。read / write / patch 只接受工作台 sender；字段白名单、账户隔离与冲突语义见 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
 
 ## Runner 生命周期
 
-Client 创建 IPC 端点并鉴权 Runner（`x-spiritagent-auth` 握手，token 走环境变量不进 argv）。断连、退出和开始停止立即作废缓存；新握手先推配置，再取工具，迟到查询不能恢复旧资格。
+[ipc/runner.ts](ipc/runner.ts)的 host 管端点、桥和自动启停；token 经环境变量传递，不进 argv。握手配置、工具同步与资格撤销遵循 [PROTOCOL](../../docs/PROTOCOL.md#握手与工具同步)，迟到查询不能恢复旧资格。
 
-会话懒创建与 token 重接由 `backend/session-runtime` 承担；首次 `getSession` 等待凭据恢复结束。Runner 桥持有、自动启停与 IPC 由 `ipc/runner` 的 host 承担。登录恢复经回调接回 host。`call_id` 可选，缺省不记调用日志；当前接入限制见 [PROTOCOL](../../docs/PROTOCOL.md#23-runner_ready-capabilities-与-health-状态)。
+[session-runtime.ts](backend/session-runtime.ts)负责懒创建、token 重接及登录恢复回调；首次 getSession 等待凭据恢复。无 call_id 不记日志，限制见[调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
 
-更新优先用 Home 下的 uv，否则 PATH 回落，在原 venv 安装 wheel 并替换 `server.py`，不承诺安装原子切换或自动回滚。损坏环境交安装器修复。
+[更新器](runner/updater.ts)优先用 Home 下的 uv，再回落 PATH，在原 venv 安装；不承诺原子切换或自动回滚，损坏环境由 Installer 修复。验签顺序见 [更新契约](../../docs/PROTOCOL.md#自更新签名)。
 
 ## 网络与缓存
 
@@ -56,7 +73,11 @@ Client 创建 IPC 端点并鉴权 Runner（`x-spiritagent-auth` 握手，token �
 
 [hardening.ts](security/hardening.ts)按路径和方法配置请求等待，同步生成入口有更长超时（avatar、outfit、voice 等）。新增入口须核对超时规则。超时不代表后端任务已停；401 按结构化状态处理，不匹配错误文案。
 
-STT / TTS 经 [媒体入口](ipc/media.ts)调用云端，使用有界队列、并发和速率控制；TTS 内存与在途合并不入队，磁盘命中与云端调用走队列，缓存命中不耗云端额度。窗口不复制这套限制。图片附件降采样到 2048px / 6MB 上限。
+### 语音与附件
+
+- STT / TTS 经 [媒体入口](ipc/media.ts)调用云端，使用有界队列、并发和速率控制；TTS 内存与在途合并不入队，磁盘命中与云端调用走队列，缓存命中不耗云端额度。
+- 窗口不复制这套限制。
+- 图片附件按[文件入口](ipc/files.ts)的尺寸与字节上限降采样。
 
 ## 构建产物
 
@@ -66,4 +87,4 @@ tsup 构建 main / preload，共享 IPC 通过 alias 解析；开发监听只覆
 
 ## 验证入口
 
-命令见 [Scripts](../../scripts/README.md#8-按改动选择验证)。覆盖错误 sender、未授权路径、换号、连接 reset 后迟到结果、退出超时和更新失败；preload 与入口变更另查实际构建产物。
+命令见 [Scripts](../../scripts/README.md#按改动选择验证)。覆盖错误 sender、未授权路径、换号、连接 reset 后迟到结果、退出超时和更新失败；preload 与入口变更另查实际构建产物。

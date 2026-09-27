@@ -70,7 +70,7 @@ logger = get_logger(__name__)
 
 _DEFAULT_STYLE: str = "portrait"
 _AVATAR_SIZE: str = "1024x1024"
-# 全身种子竖版画幅（DESIGN §5.4）：9:16，作为参考立绘与视频链身份的输入。
+# 全身种子竖版画幅（PIPELINE「头像与全身」）：9:16，作为参考立绘与视频链身份的输入。
 _FULLBODY_SIZE: str = "1024x1792"
 _FULLBODY_ASPECT: str = SIZE_TO_ASPECT[_FULLBODY_SIZE]
 _AVATAR_QUALITY: str = "standard"
@@ -751,7 +751,7 @@ async def get_active_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | Non
 
 async def select_avatar(db: AsyncSession, user_id: int, avatar_id: int) -> AvatarAsset:
     """将指定头像设为激活态，并取消该用户其余头像的激活。"""
-    # DESIGN §5.4 形象锁定：锁定后切换激活头像等于换掉已确认的视觉身份（
+    # DESIGN「身份锁定与角色卡」 形象锁定：锁定后切换激活头像等于换掉已确认的视觉身份（
     # 生成的模型与外观仍指向原形象行），与重生路径同罪，协议直连也要拒绝
     persona = await get_or_create_persona(db, user_id)
     await raise_if_image_sealed(db, user_id, persona)

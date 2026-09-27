@@ -73,7 +73,7 @@ export const $chatSessionId = atom<string | null>(storedString(CHAT_SESSION_ID_K
 // 与 $chatSessionId 同层，避免 session-list-store 反向依赖 chat-store 造成循环初始化。
 export const $companionSessionId = atom<string | null>(null)
 // IM 守卫与语音入口的权威 kind 源：写值由 hydrate 把服务端 info.kind 注入。
-// 与 PROTOCOL §2.1 Conversation.kind 对齐：special / standard / im。
+// 与 PROTOCOL「会话种类与历史修改」 对齐：special / standard / im。
 export type ChatSessionKind = 'im' | 'special' | 'standard'
 
 function normalizeChatSessionKind(raw: unknown): ChatSessionKind {
@@ -243,7 +243,7 @@ interface ProactiveBubbleState {
 
 export const $proactiveBubble = atom<ProactiveBubbleState | null>(null)
 
-// 外部投喂（DESIGN §6.3「文件投喂」）——SpriteStage 拖拽文件到精灵本体时，
+// 外部投喂（DESIGN「拖拽与直接交互」「文件投喂」）——SpriteStage 拖拽文件到精灵本体时，
 // 把文件路径推到此处。对话组件订阅并把首个图像文件塞入附件占位。
 interface PendingExternalAttachment {
   paths: string[]

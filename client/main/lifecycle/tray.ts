@@ -266,7 +266,7 @@ function buildTrayMenu(): Menu | null {
   ]
 
   if (authed) {
-    // DESIGN §6.1：对话模式触发源之一是托盘——聊天面板是渲染层 React state，
+    // DESIGN「窗口与会话」：对话模式触发源之一是托盘——聊天面板是渲染层 React state，
     // 拉起窗口外还要通知渲染器开面板（与 trayActivate 同一模式）。
     template.push(
       { type: 'separator' },

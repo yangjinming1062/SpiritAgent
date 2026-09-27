@@ -1,6 +1,6 @@
 """backend 服务分层架构检查。
 
-检查项（与 backend/README.md §3 架构地图及 RULES 模块独立原则对应）：
+检查项（与 backend/README.md「代码与依赖」及 RULES 模块独立原则对应）：
 1. 站内导入必须可解析（不含 .venv / site-packages / 标准库）。
 2. 包级（模块级导入）不允许出现依赖环。
 3. 层间白名单：contracts 纯净；domains 不跨业务域、不依赖 application/adapters；
@@ -46,14 +46,14 @@ APPLICATION_FLOW_EDGES = {
     ("services.application.chat", "services.application.actions"),
     ("services.application.nightly", "services.application.actions"),
 }
-# domains 内显式声明的跨域单向依赖（域级，与 backend/README.md §3.2 例外表一致）。
+# domains 内显式声明的跨域单向依赖（域级，与 backend/README.md「services 依赖边界」 例外表一致）。
 DOMAIN_FLOW_EDGES = {
     ("services.domains.companion", "services.domains.memory"),
     ("services.domains.journal", "services.domains.memory"),
     # companion 读取动作目录快照（LLM 可点播清单随当前包目录变化）；actions 不反向依赖。
     ("services.domains.companion", "services.domains.actions"),
 }
-# 各域可单向导入的底座域（backend/README.md §3.2）。
+# 各域可单向导入的底座域（backend/README.md「services 依赖边界」）。
 DOMAIN_BASE = "services.domains.conversation"
 BOTTOM = ("common", "components", "modules", "prompts")
 

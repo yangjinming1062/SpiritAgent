@@ -105,7 +105,7 @@ def _validate_definition(definition: dict[str, Any]) -> dict[str, str]:
 
 
 async def get_or_create_persona(db: AsyncSession, user_id: int) -> Persona:
-    """查询人设，不存在则暂存一条待插入行。刻意不 commit，以便调用方把 user_profile + persona 放在同一事务里写（ARCH §7.5）。"""
+    """查询人设，不存在则暂存一条待插入行。刻意不 commit，以便调用方把 user_profile + persona 放在同一事务里写（backend/README.md「数据与运行可靠性」）。"""
     persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
     if persona is None:
         persona = Persona(user_id=user_id, definition_json="{}")

@@ -17,7 +17,7 @@ class ChannelManager:
     """绑定任务的进程内生命周期管理：启动加载 + REST 触发启停 + 每绑定守卫重试。
 
     无周期对账循环——REST 变更直接调 start/stop_binding，任务死亡由守卫循环自愈（非 fatal 退避重建）；
-    单 web 进程语义（backend/README §6）下不需要 omp-wechat 那套端口单例锁/failover。
+    单 web 进程语义（backend/README.md「设计意图」）下不需要 omp-wechat 那套端口单例锁/failover。
     """
 
     def __init__(self) -> None:

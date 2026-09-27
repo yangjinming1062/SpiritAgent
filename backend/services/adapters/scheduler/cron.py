@@ -54,7 +54,7 @@ _BG = TaskBag("scheduler.cron")
 # 每个慢扫描的在飞 task：LLM 流水线可能比扫描间隔跑得更久，而 per-user 去重标记只在成功后才写——不挡住重入会让同一用户的流水线并行跑两遍。
 _SCANS: dict[str, asyncio.Task] = {}
 
-# per-user 最近一次记忆审核运行时间戳：进程本地——匹配 ARCH §5 单实例语义（多 replica 会分裂状态）。
+# per-user 最近一次记忆审核运行时间戳：进程本地——匹配 ARCHITECTURE「部署与运行时边界」（多 replica 会分裂状态）。
 _LAST_MEMORY_REVIEW: dict[MemoryScope, float] = {}
 
 # per-user 最近一次成功的 nightly pipeline 运行的本地日期字符串。

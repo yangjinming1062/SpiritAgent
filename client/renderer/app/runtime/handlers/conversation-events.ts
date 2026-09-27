@@ -193,7 +193,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
     }
 
     case 'command.result': {
-      // 服务端在 command.dispatch RPC response 之外另行广播此事件（PROTOCOL §1.3）；
+      // 服务端在 command.dispatch RPC response 之外另行广播此事件（PROTOCOL「事件路由」）；
       // 触发它的窗口已通过 RPC 路径自己渲染过 pill，本路径只服务其他窗口的同步渲染。
       // RPC 路径的 pushStatusPill 已在 slash command 执行中幂等执行。
       const payload = decodePayload<SlashCommandResultPayload>(event.payload)
@@ -223,7 +223,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
     }
 
     case 'compress.completed': {
-      // 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补（PROTOCOL §1.3）。
+      // 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补（PROTOCOL「事件路由」）。
       const p = decodePayload<{ subtype?: string; text?: string; message_id?: number }>(event.payload)
 
       if (p?.subtype === 'compress_summary' && typeof p.text === 'string') {

@@ -844,7 +844,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_channel_peers_binding_id"), "channel_peers", ["binding_id"], unique=False)
     op.create_index(op.f("ix_channel_peers_status"), "channel_peers", ["status"], unique=False)
-    # 渠道待补发队列：执行与投递独立，恢复语义见 docs/PROTOCOL.md §1.7。
+    # 渠道待补发队列：执行与投递独立，恢复语义见 docs/PROTOCOL.md「IM 通道」。
     op.create_table(
         "channel_deliveries",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -972,7 +972,7 @@ def upgrade() -> None:
         postgresql_ops={"context": "gin_trgm_ops"},
     )
 
-    # Outbox 表的 LISTEN/NOTIFY 唤醒触发器（docs/ARCHITECTURE.md §5）。
+    # Outbox 表的 LISTEN/NOTIFY 唤醒触发器（docs/ARCHITECTURE.md「调度与异步交付」）。
     op.execute("""
 CREATE FUNCTION notify_ws_event() RETURNS trigger AS $$
 BEGIN

@@ -212,7 +212,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
 
         const bridge = ensureRunnerBridge()
 
-        // call_id 透传给 runner 的调用日志（PROTOCOL §2.5）：runner 据此查询/认领已有执行，
+        // call_id 透传给 runner 的调用日志（PROTOCOL「调用日志与未知结果」）：runner 据此查询/认领已有执行，
         // 中断后凭记录区分「已执行」与「从未开始」，避免盲目重跑本机副作用。
         const invokeParams: Record<string, unknown> = { name, args: args ?? {} }
 

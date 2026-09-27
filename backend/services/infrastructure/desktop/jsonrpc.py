@@ -33,7 +33,7 @@ class JsonRpcError(Exception):
 # Handler 返回 JSON-RPC result。raise JsonRpcError 会以结构化错误回复；其他异常统一变 -32603。
 Handler = Callable[[dict], Awaitable[Any]]
 
-# 必须从给 renderer 的错误里抹掉的服务端内部痕迹（ARCH §11#2：-32603 严禁包含数据库账号、服务器本地路径等栈帧细节）。精选而非宽泛：文件系统路径、DSN/URL 凭据、OpenAI/httpx 异常格式、Python traceback 行。
+# 必须从给 renderer 的错误里抹掉的服务端内部痕迹（PROTOCOL「错误信封」：错误不包含凭据、数据库连接或服务端本地路径）。精选而非宽泛：文件系统路径、DSN/URL 凭据、OpenAI/httpx 异常格式、Python traceback 行。
 _REDACT_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\s*Traceback \(most recent call last\):.*", re.DOTALL),
     re.compile(r"(/[A-Za-z0-9_.+-]+){2,}/[A-Za-z0-9_.-]+\.py:\d+"),
@@ -240,7 +240,7 @@ class JsonRpcDispatcher:
             await self._reply_error(msg_id, e.code, e.message, e.data)
             return
         except Exception as e:
-            # 不外泄内部细节：完整异常记在服务端日志，向 renderer 发清洗后的标签。ARCH §11#2。
+            # 不外泄内部细节：完整异常记在服务端日志，向 renderer 发清洗后的标签。PROTOCOL「错误信封」。
             logger.exception("jsonrpc method failed", extra={"method": method})
             label = f"{type(e).__name__}: {e}"
             await self._reply_error(msg_id, JSONRPC_INTERNAL_ERROR, redact_message(label))
@@ -308,7 +308,7 @@ class JsonRpcDispatcher:
         await self.enqueue_event(event_type, payload, session_id=session_id)
 
     async def push_error_event(self, message: str, session_id: str | None = None) -> None:
-        # push_event 绕开 _reply_error，原始异常文本必须在此处显式 redact（ARCH §11#2）。
+        # push_event 绕开 _reply_error，原始异常文本必须在此处显式 redact（PROTOCOL「错误信封」）。
         await self.push_event("error", {"message": redact_message(message)}, session_id=session_id)
 
     async def replay(self, last_seq: int) -> list[dict[str, Any]] | None:

@@ -17,13 +17,13 @@ import {
 
 const RETRY_MS = 300
 const RETRY_COUNT = 5
-// DESIGN §3.6：远距离飞、近距离走。低于该距离的目标走过去更有"走过去动手"的仪式感。
+// DESIGN「仪式性行走」：远距离飞、近距离走。低于该距离的目标走过去更有"走过去动手"的仪式感。
 const WALK_RANGE_PX = 400
 // 行走动画被中止（生活空间打开 / 开始拖拽会取消移动且不回调）时的宽限：
 // 到点即视为行走结束，就地继续执行原工具。
 const WALK_ABORT_GRACE_MS = 2000
 
-// 仪式行走失败的离线/机械降级台词（DESIGN §3.6 / RULES 原则七边界）——
+// 仪式行走失败的离线/机械降级台词（DESIGN「仪式性行走」 / RULES 原则七边界）——
 // 走 speakProactive 的档位门控：静止档静默、常规档仅气泡、自主档开口。
 const TARGET_LOST_LINES = ['咦…我没找到那个窗口，先直接试试吧。', '那个窗口在哪呀…我先直接试。']
 const PERCH_TIGHT_LINES = ['这边好挤，我够不着…先直接试试吧。']
@@ -113,7 +113,7 @@ export async function performRitualWalk<T>(
     $spriteAction.set(dx >= 0 ? 'point_right' : 'point_left')
     await sleep(800)
 
-    // DESIGN §3.6：抵达后播放专属「点击/触碰」肢体动作，
+    // DESIGN「仪式性行走」：抵达后播放专属「点击/触碰」肢体动作，
     // 与通用 interacting 状态区别开来——动作优先于状态动画。
     $spriteAction.set('click')
     setSpriteState('interacting', { durationMs: 1500 })

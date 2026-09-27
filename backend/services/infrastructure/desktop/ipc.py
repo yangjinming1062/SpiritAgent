@@ -65,7 +65,7 @@ async def wait_future(user_id: int, call_id: str, fut: asyncio.Future, *, timeou
     try:
         return await asyncio.wait_for(fut, timeout=effective_timeout)
     except TimeoutError:
-        # 超时不代表未执行：Runner 侧调用日志（PROTOCOL §2.5）按 call_id 记录实际结局，
+        # 超时不代表未执行：Runner 侧调用日志（PROTOCOL「调用日志与未知结果」）按 call_id 记录实际结局，
         # 重试前先核对，避免把可能已落地的副作用再执行一遍。
         return json.dumps(
             {

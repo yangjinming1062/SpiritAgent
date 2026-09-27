@@ -4,8 +4,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # 打扰档位由客户端主导（本地偏好 + 活动监视器覆盖），生效值经配置同步管道落库到
-# user_settings 点键（PROTOCOL §2.4），供重启后服务端门控继续生效。
-# 三档与 DESIGN §6.2 对齐：静止（still）在服务端硬切断主动外联；桌面视觉表达与空间决策
+# user_settings 点键（PROTOCOL「配置所有权与云同步」），供重启后服务端门控继续生效。
+# 三档与 DESIGN「主动陪伴」 对齐：静止（still）在服务端硬切断主动外联；桌面视觉表达与空间决策
 # 仅在自主（autonomous）档放行。客户端按同一生效档位控制展示、语音与精灵动作。
 ALLOWED_TIERS = frozenset({"autonomous", "normal", "still"})
 DEFAULT_TIER = "normal"

@@ -10,7 +10,7 @@ import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { openWhisper } from '../whisper'
 
-// 伙伴主动消息的临时气泡：对话入口均未打开时显示在伙伴身边（DESIGN §6.2）。
+// 伙伴主动消息的临时气泡：对话入口均未打开时显示在伙伴身边（DESIGN「主动陪伴」）。
 // 生活空间 / 工作台 / 轻语任一打开时消息已在对话流里，这里不再重复显示。
 // 富媒体不进气泡——媒体送达提示也只以文本出现，点击打开轻语陪伴对话。
 //

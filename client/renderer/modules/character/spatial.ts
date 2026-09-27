@@ -23,7 +23,7 @@ const REST_MARGIN = 24
 const WALK_SPEED = 80
 const FLY_SPEED = 400
 const SCALE_TRANSITION_MS = 300
-// roam 的桌面空闲门槛（DESIGN §3.2「桌面空闲 + 高活跃档位时随机游走」）；
+// roam 的桌面空闲门槛（DESIGN「位置、移动与缩放」「桌面空闲 + 高活跃档位时随机游走」）；
 // $lastIdleSeconds 为 -1（Runner 离线/未知）时保守视为不空闲。
 const ROAM_IDLE_THRESHOLD_SECONDS = 90
 const SCALE_KEY = 'da.companion.defaultScale'
@@ -95,7 +95,7 @@ function getHomePosition(): { x: number; y: number } {
   }
 }
 
-// 不变量（DESIGN §3.7）：精灵全身始终完整在屏内——垂直方向任何时候不裁切身体；
+// 不变量（DESIGN「位置、移动与缩放」）：精灵全身始终完整在屏内——垂直方向任何时候不裁切身体；
 // 「全身」按可见像素计：贴边是角色贴边，不是渲染画布贴边——舞台盒四周的透明
 // 留白可以越出屏幕。钳制与落位一律用缩放后的可见内容包围盒（见 contentBox）。
 
@@ -128,7 +128,7 @@ export interface PerchPlacement {
   scale: number
 }
 
-/** 栖息落位（DESIGN §3.3）：窗口右缘优先、左缘次之；两侧放不下全尺寸时等比例缩到
+/** 栖息落位（DESIGN「位置、移动与缩放」）：窗口右缘优先、左缘次之；两侧放不下全尺寸时等比例缩到
  * 能舒适栖身（不低于 MIN_SCALE），连最小尺寸都容不下才放弃。 */
 export function computePerchPlacement(
   geom: { x: number; y: number; w: number; h: number },
@@ -390,7 +390,7 @@ export function setSpatialLocale(
     position?: { x: number; y: number }
     locomotion?: 'walk' | 'fly'
     instant?: boolean
-    /** perch 专属：空间不足缩身后的缩放上限（DESIGN §3.3）；缺省 = 不限 */
+    /** perch 专属：空间不足缩身后的缩放上限（DESIGN「位置、移动与缩放」）；缺省 = 不限 */
     scaleLimit?: number
     onArrive?: () => void
   }
@@ -438,7 +438,7 @@ export function updateSpatialDecision(): void {
     return
   }
 
-  // 常规档不发起任何自动移动——停在原地，只停掉进行中的漫游（DESIGN §3.5）。
+  // 常规档不发起任何自动移动——停在原地，只停掉进行中的漫游（DESIGN「位置、移动与缩放」）。
   if (tier !== 'autonomous') {
     stopRoam()
 
@@ -518,7 +518,7 @@ function roamStep(): void {
           return
         }
 
-        // 桌面不再空闲（用户回来了）→ 结束漫游、走回 home（DESIGN §3.2 roam 仅桌面空闲时）
+        // 桌面不再空闲（用户回来了）→ 结束漫游、走回 home（DESIGN「位置、移动与缩放」 roam 仅桌面空闲时）
         if ($spriteState.get() !== 'idle' || $lastIdleSeconds.get() < ROAM_IDLE_THRESHOLD_SECONDS) {
           stopRoam()
           setSpatialLocale('home')
@@ -554,7 +554,7 @@ export function startDrag(): void {
 }
 
 export function updateDragPosition(pos: { x: number; y: number }): void {
-  // DESIGN §3.7：全身始终在屏内。拖拽过程中逐帧钳制，不能等 endDragAt 才修正。
+  // DESIGN「位置、移动与缩放」：全身始终在屏内。拖拽过程中逐帧钳制，不能等 endDragAt 才修正。
   $spatialPos.set(clampPosToViewport(pos))
 }
 
@@ -695,7 +695,7 @@ export function initSpatial(): () => void {
 
   const unlistenFocus = $focusContext.listen(() => updateSpatialDecision())
 
-  // 情绪瞬时放大等 scale 变化不得让已落位的精灵溢出视口（DESIGN §3.7 全身在屏）。
+  // 情绪瞬时放大等 scale 变化不得让已落位的精灵溢出视口（DESIGN「位置、移动与缩放」 全身在屏）。
   // 拖拽中由逐帧钳制兜底；移动动画中的插值点恒在两端点之间，端点已界内，无需钳。
   const unlistenScale = $spatialScale.listen(() => {
     if ($spatialLocomotion.get() === 'drag' || rafId !== null) {

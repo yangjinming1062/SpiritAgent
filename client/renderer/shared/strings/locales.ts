@@ -1,5 +1,5 @@
 // 与后端 components/constants.py 的 SUPPORTED_LANGUAGES 对齐（zh | en）。
-// 新增语言需同步：后端 SUPPORTED_LANGUAGES + 本文件 SUPPORTED_LOCALES + 全部双语 dict 键集（PROTOCOL §1.4）。
+// 新增语言需同步：后端 SUPPORTED_LANGUAGES + 本文件 SUPPORTED_LOCALES + 全部双语 dict 键集（PROTOCOL「语言与时区」）。
 export const SUPPORTED_LOCALES = ['zh', 'en'] as const
 
 export type Locale = (typeof SUPPORTED_LOCALES)[number]

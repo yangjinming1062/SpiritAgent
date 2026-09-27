@@ -50,7 +50,7 @@ function stateChanged(oldSnap: Snapshot, newSnap: Snapshot): boolean {
   )
 }
 
-// 走过去搭话的远近距离分界（DESIGN §3.6 同款语义：远飞近走）。
+// 走过去搭话的远近距离分界（DESIGN「仪式性行走」 同款语义：远飞近走）。
 const APPROACH_WALK_RANGE_PX = 400
 
 function approachLocomotion(target: { x: number; y: number }): 'walk' | 'fly' {
@@ -59,7 +59,7 @@ function approachLocomotion(target: { x: number; y: number }): 'walk' | 'fly' {
   return Math.hypot(target.x - cur.x, target.y - cur.y) > APPROACH_WALK_RANGE_PX ? 'fly' : 'walk'
 }
 
-// 走过去搭话（DESIGN §3.5/§6.4）：开场白由后端经 companion.message 通道投递（边走边说），
+// 走过去搭话（DESIGN「位置、移动与缩放」「自主动作与空间智能」）：开场白由后端经 companion.message 通道投递（边走边说），
 // 客户端只负责走位——有焦点窗口落在窗口旁（复用 perch 落位与缩身，搭话后就地陪工）；
 // 用户在桌面（无窗口）时走到屏幕中下部站定，不动 locale，后续空间决策自然接管。
 function executeApproach(): void {

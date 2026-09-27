@@ -19,7 +19,7 @@ const COMPANION_VOICE_ID_STORAGE_KEY = registerCompanionStorageKey('da.companion
 const RESPONSE_PREFERENCE_STORAGE_KEY = registerCompanionStorageKey('da.companion.responsePreference')
 
 // localStorage 仍是各窗口的即时缓存（同步读、离线可用）；每次写入额外经
-// prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL §2.4）。
+// prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL「配置所有权与云同步」）。
 // 水合广播（initCompanionPrefsSync）用云端值回写缓存与 atom，跨端收敛。
 function reportCloud(key: string, value: unknown): void {
   window.spiritagent?.prefs?.set({ key, value })

@@ -64,7 +64,7 @@ export interface SpiritAgentConnection {
   wsUrl: string
 }
 
-/** 渲染进程可见的连接投影——只暴露网关地址；刻意不含 token（ARCHITECTURE §3 隐藏凭证）。 */
+/** 渲染进程可见的连接投影——只暴露网关地址；刻意不含 token（ARCHITECTURE「信任边界与安全」）。 */
 export type SpiritAgentConnectionPublic = Pick<SpiritAgentConnection, 'wsUrl'>
 
 export type SpiritAgentUiPalette = 'night' | 'day'
@@ -157,7 +157,7 @@ export interface DesktopShortcutsSetPayload {
 // 主题与快捷键由主进程各自的专用同步通道处理。
 export interface DesktopPrefsHydrated {
   companion: Record<string, unknown>
-  // 顶层原始值同步键（PROTOCOL §1.4），从 user_settings.language 透传过来；
+  // 顶层原始值同步键（PROTOCOL「配置所有权与云同步」），从 user_settings.language 透传过来；
   // null/undefined 表示云端未设置（回落 DEFAULT_LOCALE）。
   language?: null | string
 }

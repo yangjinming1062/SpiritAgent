@@ -18,7 +18,7 @@ async def send_message_tool(
     target_webhook: str | None = None,
     **kwargs,
 ) -> str:
-    # 伙伴原生主动路径：未传 webhook 时直接以 companion.message 形式投递给客户端（docs/ARCHITECTURE.md §7.4 将本工具复用为伙伴主动触达通道）。
+    # 伙伴原生主动路径：未传 webhook 时直接以 companion.message 形式投递给客户端（docs/ARCHITECTURE.md「事件持久化」）。
     # 客户端是打扰档位的单一事实源，但后端在源头也做一次防御性拦截：非官方客户端走 /api/chat/ws 会绕过客户端侧过滤器，
     # 故静止档不写 WSEvent——静止档不做任何主动表达。
     if not target_webhook:

@@ -52,7 +52,7 @@ async function synth(
   } catch (err) {
     stopAudio()
 
-    // 环境路径按 DESIGN §7 静默降级为纯文字，但留诊断日志定位供应商故障。
+    // 环境路径按 DESIGN「语音保存与恢复」 静默降级为纯文字，但留诊断日志定位供应商故障。
     console.warn('[tts] synthesis failed', err)
 
     return false
@@ -67,7 +67,7 @@ export async function speak(text: string, voice?: string, context?: string): Pro
 }
 
 /** 需要落盘的合成入口（音色试听、文档化的本地反应池）。按内容寻址落盘，
- *  同一组 (音色, 台词) 只消耗一次云端额度。离线/机械降级边界见 DESIGN §6.3。 */
+ *  同一组 (音色, 台词) 只消耗一次云端额度。离线/机械降级边界见 DESIGN「拖拽与直接交互」。 */
 export async function speakScripted(text: string, voice?: string, context?: string): Promise<boolean> {
   return await synth(text, voice, context, true)
 }

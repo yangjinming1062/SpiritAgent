@@ -36,7 +36,7 @@ async def run_daily_checkpoint(
     language: str = DEFAULT_LANGUAGE,
 ) -> None:
     """合并最新摘要与截至目标本地日末的原文；模型等待期间的新消息仍保留在读路径。"""
-    # 读、写两阶段各自持有短 session——中间 LLM 调用不能 pin 连接池（README §4 短事务规则）。
+    # 读、写两阶段各自持有短 session——中间 LLM 调用不能 pin 连接池（backend/README.md「数据与运行可靠性」）。
     async with session_scope() as db:
         inputs = await _collect_inputs(db, user_id, utc_start, utc_end)
     if inputs is None:

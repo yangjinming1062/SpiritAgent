@@ -277,7 +277,7 @@ export default [
     }
   },
   {
-    // 业务模块互不导入；需要两个模块一起完成的事情进 app/workflows（client/README.md §3）。
+    // 业务模块互不导入；需要两个模块一起完成的事情进 app/workflows（client/renderer/README.md「分层与目录」）。
     files: ['renderer/modules/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
     rules: {
@@ -313,7 +313,7 @@ export default [
             },
             {
               group: ['@/modules/character', '@/modules/speech'],
-              message: 'conversation 不导入形象/语音模块：形象与语音经呈现端口及 voice-link 接缝（client/README.md §3）。'
+              message: 'conversation 不导入形象/语音模块：形象与语音经呈现端口及 voice-link 接缝（client/renderer/README.md「分层与目录」）。'
             }
           ]
         }

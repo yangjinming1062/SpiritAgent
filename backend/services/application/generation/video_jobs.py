@@ -295,7 +295,7 @@ _POLICY_KEYWORDS = ("policy", "unsafe", "content_filter", "敏感", "违规", "m
 
 
 def _failure_user_message(reason: str, exc: BaseException | None) -> str:
-    """按失败原因挑选预设文案；策略审核相关的异常文本仅做关键词嗅探，原始异常文本绝不流到渲染端（ARCH §11#2）。"""
+    """按失败原因挑选预设文案；策略审核相关的异常文本仅做关键词嗅探，原始异常文本绝不流到渲染端（PROTOCOL「错误信封」）。"""
     msg = _FAILURE_COPY.get(reason, "视频生成失败，请稍后重试")
     if exc is not None:
         text = str(exc).lower()

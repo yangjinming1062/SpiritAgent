@@ -159,7 +159,7 @@ export function PortraitLightbox({
   // 灯箱打开时滚轮不得滚动底层页面；仅指针落在取景框内时才缩放。
   // overlay 在 portal 内部挂载，与 effect 同步执行；若未来改为延迟挂载需改用 ref callback。
   // 触控板两指捏合在不同浏览器派发 wheel+ctrlKey 或 GestureEvent；手机双指捏合不派发
-  // wheel，pinch-to-zoom 暂未支持，见 docs/DESIGN.md §6.1。
+  // wheel，pinch-to-zoom 暂未支持，见 docs/DESIGN.md「主题与图片查看」。
   useEffect(() => {
     const el = overlayRef.current
 

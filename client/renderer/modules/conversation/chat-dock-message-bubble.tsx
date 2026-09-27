@@ -25,7 +25,7 @@ import { ChatVoiceBar, TranscriptBlock } from './chat-voice-bar'
 import { formatConversationTime } from './conversation-time'
 import { ToolChipTimeline } from './tool-chip-timeline'
 
-// 居中的元信息行，而非聊天气泡。Slash 命令结果与历史清空标记（详见 PROTOCOL §1.9）走同一形态。
+// 居中的元信息行，而非聊天气泡。Slash 命令结果与历史清空标记（详见 PROTOCOL「Slash 命令」）走同一形态。
 const SYSTEM_PILL_SUBTYPES = new Set(['status_cleared', 'status_command_result'])
 
 // 对话摘要与上下文压缩检查点：居中的分界线式可折叠卡片，默认折叠、点击展开摘要全文。

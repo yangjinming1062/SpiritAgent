@@ -290,7 +290,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
         if (bootCompleted) {
           dismissOverlayOnce()
           // 重连后"打起精神"：如果之前表达过 disconnected 降级，就回到 idle
-          // （DESIGN §6.5）。纯视觉表现（动画状态机切回 idle 姿态/微动），保持静默回神。
+          // （DESIGN「故障体验」）。纯视觉表现（动画状态机切回 idle 姿态/微动），保持静默回神。
           const cur = $spriteState.get()
 
           if (cur === 'disconnected') {
@@ -390,7 +390,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
           graceTimer = setTimeout(() => {
             graceTimer = null
             setSpriteState('disconnected')
-            // DESIGN §6.5：犯困/走神 → 挂载 sleep_zzz 气泡；重连后由 onState='open'
+            // DESIGN「故障体验」：犯困/走神 → 挂载 sleep_zzz 气泡；重连后由 onState='open'
             // 分支清掉气泡并平滑切回 idle 状态。
             emitVfx('sleep_zzz', { nx: 0.5, ny: 0.05 })
           }, graceMs)

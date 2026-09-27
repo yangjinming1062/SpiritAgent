@@ -37,7 +37,7 @@ class CompletionRequest(BaseModel):
 @limiter.limit(lambda: f"{SETTINGS.llm_completion_rate_limit_per_minute}/minute")
 @limiter.limit(lambda: f"{SETTINGS.llm_completion_rate_limit_per_ip_per_minute}/minute", key_func=get_remote_address)
 async def create_completion(req: CompletionRequest, request: Request, user: CurrentUser) -> CompletionResponse:
-    """Desktop Runner 代理 LLM 调用的无状态补全端点：错误响应走非泄露分类信封（异常细节留在服务端日志，renderer 只看到 {error, reason, status}，reason 为稳定 FailoverReason 枚举值，对应 docs/ARCHITECTURE.md §3.1 的 -32603 约束）；调用走 provider 链路，首个供应商遇鉴权/计费/模型不存在错误时自动透明切换下一家。"""
+    """Desktop Runner 代理 LLM 调用的无状态补全端点：错误响应走非泄露分类信封（异常细节留在服务端日志，renderer 只看到 {error, reason, status}，reason 为稳定 FailoverReason 枚举值，见 docs/PROTOCOL.md「错误信封」）；调用走 provider 链路，首个供应商遇鉴权/计费/模型不存在错误时自动透明切换下一家。"""
 
     async def _call(provider: Any) -> Any:
         client = provider.raw_client()

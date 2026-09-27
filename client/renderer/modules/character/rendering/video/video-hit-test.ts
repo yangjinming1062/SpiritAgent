@@ -7,7 +7,7 @@ import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 export const $videoHitTest = atom<((nx: number, ny: number) => boolean | null) | null>(null)
 
 /** 视频 alpha 遮罩命中：缺席（桌面蛋 / 加载空挡）回退整矩形，避免空白区挡住下层点击。
- *  异步遮罩落地后主动 probe，保证指针静止时也按最新遮罩重判（README §6）。 */
+ *  异步遮罩落地后主动 probe，保证指针静止时也按最新遮罩重判（client/renderer/README.md「直接交互与命中」）。 */
 export function useVideoPixelHitTest(windowId = 0): (x: number, y: number) => boolean {
   const hitVideoRef = useRef<((x: number, y: number) => boolean | null) | null>(null)
 

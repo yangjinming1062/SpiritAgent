@@ -48,7 +48,7 @@ class ChannelPeer(ModelBase, TimestampMixin):
 
 
 class ChannelDelivery(ModelBase, TimestampMixin):
-    """渠道待补发记录；执行与投递独立，恢复语义见 PROTOCOL §1.7。"""
+    """渠道待补发记录；执行与投递独立，恢复语义见 PROTOCOL「IM 通道」。"""
 
     __tablename__ = "channel_deliveries"
 

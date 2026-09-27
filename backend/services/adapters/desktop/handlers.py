@@ -1563,7 +1563,7 @@ def _register_session_handlers(
             seconds_since_last_action=seconds_since_last_action,
             llm_config=cfg,
         )
-        # 走过去搭话（DESIGN §3.5/§6.4）：开场白经 companion.message 通道独立投递，
+        # 走过去搭话（DESIGN「位置、移动与缩放」「自主动作与空间智能」）：开场白经 companion.message 通道独立投递，
         # 客户端边走边说；RPC 响应只承载走位动作。text 的规范化已在 should_act 内完成，
         # 这里对空文本做防御性跳过（should_act 对无文本的 approach 已降级 stay）。
         if res.action == "approach" and isinstance(res.params, dict) and str(res.params.get("text") or "").strip():
@@ -1688,7 +1688,7 @@ def _register_session_handlers(
             persona = await get_or_create_persona(db, user_id)
             if not persona.is_complete:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, "finish onboarding before regenerating avatar")
-            # DESIGN §5.4 形象锁定：确认后重生路径关闭——即时拒绝而非后台任务失败
+            # DESIGN「身份锁定与角色卡」 形象锁定：确认后重生路径关闭——即时拒绝而非后台任务失败
             await raise_if_image_sealed(db, user_id, persona)
         job_id = f"avatar_regen_{user_id}_{secrets.token_urlsafe(6)}"
         lock = get_avatar_job_lock(user_id)
@@ -1747,7 +1747,7 @@ def _register_session_handlers(
     dispatcher.register("avatar.regenerate", avatar_regenerate)
 
     async def tts_list_voices(params: dict) -> dict:
-        # 语音目录（plan §3.5 / §6）。可选 language 过滤——未知值直接返回完整目录，避免将来新增 tag 时 400。
+        # 语音目录。可选 language 过滤——未知值直接返回完整目录，避免将来新增 tag 时 400。
         language = params.get("language")
         if language is not None and not isinstance(language, str):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "language must be a string")

@@ -33,7 +33,7 @@ export function WorkbenchCompanion(): React.JSX.Element {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const videoHitTest = useVideoPixelHitTest(1)
 
-  // 视频就绪挂视频层，否则落程序化蛋兜底（DESIGN §1.2「永不空白」）。
+  // 视频就绪挂视频层，否则落程序化蛋兜底（DESIGN「呈现与降级」「永不空白」）。
   const presentation = React.useMemo(
     () => resolveCompanionPresentation({ videoReady: videoStatus === 'ready' }),
     [videoStatus]

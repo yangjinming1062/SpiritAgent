@@ -612,7 +612,7 @@ async def patch_outfit_policy(body: OutfitPolicyRequest, user: CurrentUser, db: 
     return OutfitPolicyResponse(policy=await set_outfit_policy(db, user.id, body.policy))
 
 
-# 换装路由不检查形象锁定：服装/发型是可换元素而非身份变更（DESIGN §5.4 豁免，同背面种子先例）
+# 换装路由不检查形象锁定：服装/发型是可换元素而非身份变更（见 DESIGN「身份、穿着与动态能力」）
 @router.post("/outfits", response_model=OutfitResponse, status_code=status.HTTP_201_CREATED)
 @limiter.limit(lambda: f"{SETTINGS.companion_outfit_generate_rate_limit_per_hour}/hour")
 async def post_outfit(

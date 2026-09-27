@@ -39,7 +39,7 @@ type GatewayEventName =
   | 'avatar.regenerated'
   | (string & {})
 
-/** Slash 命令结果 payload：与 docs/PROTOCOL.md §1.3 `command.result` 事件载荷一致。 */
+/** Slash 命令结果 payload：与 docs/PROTOCOL.md「事件路由」 `command.result` 事件载荷一致。 */
 export interface SlashCommandResultPayload {
   /** 实际执行的主名（不带 /）。 */
   command: string

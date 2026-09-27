@@ -6,7 +6,7 @@ import { errorMessage } from '../utils'
 import * as store from './runner-config-store'
 
 // 云端 ⇄ 本地镜像的同步节白名单（desktop-settings.json 顶层节）。
-// 不在名单内的节（terminal、spiritagent 等机密/设备相关节与未知节）永不离开本机（PROTOCOL §2.4/§5.3）。
+// 不在名单内的节（terminal、spiritagent 等机密/设备相关节与未知节）永不离开本机（PROTOCOL「配置所有权与云同步」「凭据落盘」）。
 // "language" 是顶层原始值键（与后端 user_settings.setting_key 对齐），由 hydrate/pick 单独按原始值处理。
 const SYNCED_SECTIONS = [
   'skills',

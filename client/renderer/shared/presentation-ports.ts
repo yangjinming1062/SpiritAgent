@@ -3,7 +3,7 @@ import type { Atom } from 'nanostores'
 import type { ChatMediaItem } from './types/spiritagent'
 
 // chat 不依赖形象层：companion 加载时绑定实现，chat 只经本端口访问。
-// 详见 client/README.md §3 与 eslint chat 边界规则。
+// 详见 client/renderer/README.md「分层与目录」 与 eslint chat 边界规则。
 
 export type SpriteStateName =
   | 'idle'

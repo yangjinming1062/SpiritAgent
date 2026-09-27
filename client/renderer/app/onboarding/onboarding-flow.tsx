@@ -541,7 +541,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   // 题面文本，显示在输入框下方。
   const spokenText = question?.text ?? ''
 
-  // 每道题出现时朗读（DESIGN §5.2 预制语音）。
+  // 每道题出现时朗读（DESIGN「引导与后台准备」 预制语音）。
   useEffect(() => {
     if (phase !== 'q-character' && phase !== 'q-user' && phase !== 'voice') {
       return
@@ -599,7 +599,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     const nextAnswers: OnboardingAnswers = { ...answers, [q.key]: cleaned }
     setAnswers(nextAnswers)
 
-    // 逐字段增量持久化（DESIGN §5.2 断点恢复）；fire-and-forget——绝不阻塞 UI 等草稿保存。
+    // 逐字段增量持久化（DESIGN「引导与后台准备」 断点恢复）；fire-and-forget——绝不阻塞 UI 等草稿保存。
     // 网关未打开前是空操作。
     if (gatewayState === 'open' && ONBOARDING_FIELD_KEYS.has(q.key)) {
       void submitOnboardingAnswer(q.key, cleaned ?? null)
@@ -771,7 +771,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     void playOnboardingAudio(succeeded ? 'onboarding.portrait.ok' : 'onboarding.portrait.failed')
   }
 
-  // 断点恢复（DESIGN §5.2）：网关一旦连通，
+  // 断点恢复（DESIGN「引导与后台准备」）：网关一旦连通，
   // 就把还没答完的草稿拉回来，让 onboarding 中途崩溃/退出后能从下一道未答的题继续。
   // 只跑一次，绝不重复 resume。
   useEffect(() => {
@@ -1209,7 +1209,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     updateRefImage(null)
     setPhase('greeting')
 
-    // DESIGN §5.7：首句问候用确认后的音色说出——TTS（speakScripted 按
+    // DESIGN「引导与后台准备」：首句问候用确认后的音色说出——TTS（speakScripted 按
     // (音色, 台词) 内容寻址缓存）优先，失败才回退预渲染音频片段。
     const greetingName = ans.name?.trim() || ''
     const greetingText = greetingName ? `你好呀！我是${greetingName}，以后就由我陪你啦。` : '你好呀！以后就由我陪你啦。'

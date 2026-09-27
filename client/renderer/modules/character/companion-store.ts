@@ -6,7 +6,7 @@ import { definePersistedEnum, registerStorageClearHandler } from '@/shared/lib/s
 // 渲染层按 unauthed → onboarding（向导进行中）→ ready（向导完成后）流转。
 export type CompanionLifecycle = 'unauthed' | 'onboarding' | 'ready'
 
-// 第二阶段状态机（DESIGN §2）。
+// 表现状态机（DESIGN「状态与播放优先级」）。
 export type SpriteStateName =
   | 'idle'
   | 'listening'
@@ -37,7 +37,7 @@ const $previousState = atom<SpriteStateName>('idle')
 // 跨模块共享的水合去重缓存：同 key 的并发水合只跑一次。
 const inFlightHydrations = new Map<string, Promise<unknown>>()
 
-// 打扰档位门控伙伴的主动行为（DESIGN §6.2）。
+// 打扰档位门控伙伴的主动行为（DESIGN「主动陪伴」）。
 // 三档：still（静止，停止一切主动 LLM 调用与分析，仅响应交互）、
 // normal（常规，仅文字问候等原地轻互动）、autonomous（自主，开放桌面精灵视觉与空间表达）。
 // 用户主动行为永不被门控——只门控主动外发（companion.message）与主动推理发起。

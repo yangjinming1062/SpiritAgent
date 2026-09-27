@@ -411,7 +411,7 @@ export function VideoStage(): React.JSX.Element {
 
     // $spriteContentRect 是舞台盒上的 0–1 归一化包围盒，不能写入画布像素宽高。
     // 视频 object-contain 铺进舞台：把整幅画布映射到 contain 后的落位，
-    // 人物脚底贴画布底，因此 content.bottom 即角色脚底（DESIGN §3.7 全身在屏）。
+    // 人物脚底贴画布底，因此 content.bottom 即角色脚底（DESIGN「位置、移动与缩放」 全身在屏）。
     const stageW = getBaseSpriteWidth()
     const stageH = getBaseSpriteHeight()
     const contain = Math.min(stageW / canvas.width, stageH / canvas.height)

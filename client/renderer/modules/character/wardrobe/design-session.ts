@@ -235,7 +235,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     setBusy(true)
 
     try {
-      // 确认只把草稿立绘转正为参考图，不触发生成、不自动穿着（PIPELINE §1.1.2）。
+      // 确认只把草稿立绘转正为参考图，不触发生成、不自动穿着（PIPELINE「用户自备图」）。
       await window.spiritagent.api({
         path: `/api/companion/outfits/${draft.id}/confirm`,
         method: 'POST',

@@ -108,7 +108,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
     setText('')
   }
 
-  // 草稿反馈的两个显式操作（DESIGN §5.4）：微调编辑上一版须带反馈，重新生成允许空反馈整体重绘。
+  // 草稿反馈的两个显式操作（DESIGN「形象获取与确认」）：微调编辑上一版须带反馈，重新生成允许空反馈整体重绘。
   const sendRevise = (mode: ImageReviseMode): void => {
     if (session.busy || (mode === 'edit' && !text.trim())) {
       return

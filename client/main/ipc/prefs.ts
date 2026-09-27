@@ -14,7 +14,7 @@ interface PrefsIpcDeps {
 // （镜像原子写 + runner 推送 + 云端防抖上云，见 shared/lib/config-sync.ts）。
 // 拖拽类高频源由渲染侧防抖（floating-panel 600ms），此处立即合入。
 // 只放行偏好节前缀——terminal 等本机节不允许经此通道写入。
-// "language" 作为顶层原始值同步键（PROTOCOL §1.4）单独放行，与后端 user_settings.language 一一对应。
+// "language" 作为顶层原始值同步键（PROTOCOL「配置所有权与云同步」）单独放行，与后端 user_settings.language 一一对应。
 const ALLOWED_KEY_PREFIXES = ['companion.', 'shortcuts.', 'ui.'] as const
 const ALLOWED_PRIMITIVE_KEYS = ['language'] as const
 

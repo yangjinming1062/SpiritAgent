@@ -82,7 +82,7 @@ _CURRENT_EXECUTE_TASK: asyncio.Task | None = None
 _CURRENT_EXECUTE_REQ_ID: str | None = None
 _ACTIVE_CANCELLATIONS: dict[str, threading.Event] = {}
 
-# PROTOCOL §3 反向 RPC 速率守卫：单会话累计限额（200 帧 / 1MB 文本 / 10MB 视觉），防止工具失控刷爆 LLM。
+# PROTOCOL「反向模型请求」 反向 RPC 速率守卫：单会话累计限额（200 帧 / 1MB 文本 / 10MB 视觉），防止工具失控刷爆 LLM。
 MAX_LLM_REQUESTS_PER_SESSION = 200
 MAX_LLM_TEXT_BYTES_PER_SESSION = 1 * 1024 * 1024  # 1 MiB
 MAX_LLM_VISION_BYTES_PER_SESSION = 10 * 1024 * 1024  # 10 MiB

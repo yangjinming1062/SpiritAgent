@@ -37,7 +37,7 @@ interface SpriteStageProps {
 // 12px 是为了避免触控板微抖动被误判为拖拽、把双击吞掉。
 const DRAG_THRESHOLD = 12
 const DOUBLE_TAP_MS = 320
-// 长按阈值（DESIGN §6.3）：按住未移动 ≥ 500ms 触发 long_press 精灵动作与粒子；
+// 长按阈值（DESIGN「拖拽与直接交互」）：按住未移动 ≥ 500ms 触发 long_press 精灵动作与粒子；
 // 拖拽一旦启动即取消等待，两条交互通道互斥。
 const LONG_PRESS_MS = 500
 // 投喂分流：纯图片/视频走轻语快速回复；混有其它文件时整批进生活空间。
@@ -269,7 +269,7 @@ export function SpriteStage({
       })
   }, [])
 
-  // 文件投喂（DESIGN §6.3）：解析真实文件路径并推到 chat-dock。
+  // 文件投喂（DESIGN「拖拽与直接交互」）：解析真实文件路径并推到 chat-dock。
   // 纯媒体进轻语（快速看图/视频）；含非媒体文件时整批进生活空间。
   const handleDrop = (fileList: FileList | null | undefined): void => {
     const paths = resolveDroppedFiles(fileList)
@@ -278,7 +278,7 @@ export function SpriteStage({
       return
     }
 
-    // 接取动效（DESIGN §6.3「触发接取动效与爱心/音符反馈」）：抬手接住 + 爱心/音符粒子
+    // 接取动效（DESIGN「拖拽与直接交互」「触发接取动效与爱心/音符反馈」）：抬手接住 + 爱心/音符粒子
     emitVfx('heart', { nx: 0.5, ny: 0.25, count: 3 })
     emitVfx('music_notes', { nx: 0.35, ny: 0.15, count: 3 })
     $spriteAction.set('present_right')
@@ -348,7 +348,7 @@ export function SpriteStage({
       if (d && !d.moved) {
         d.longPressed = true
         // 触发时附带 VFX + sprite action：与拖拽的 drag_end 区分。
-        // DESIGN §6.3 长按/拖拽与抛掷：「拖拽始终使用本地预制反馈」——长按是
+        // DESIGN「拖拽与直接交互」 长按/拖拽与抛掷：「拖拽始终使用本地预制反馈」——长按是
         // 用户主动且未移动，可触发专属 sprite action 让其他模块响应。
         emitVfx('heart', { nx: 0.5, ny: 0.25, count: 2 })
         $spriteAction.set('long_press')

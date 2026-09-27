@@ -22,7 +22,7 @@ interface GenerationActionsGroupProps {
   dense?: boolean
 }
 
-// 微调与重新生成是两个显式操作（DESIGN §5.4），自备图是不调用 AI 的独立路径。
+// 微调与重新生成是两个显式操作（DESIGN「形象获取与确认」），自备图是不调用 AI 的独立路径。
 export function GenerationActionsGroup({
   onRegenerate,
   regenerateDisabled = false,

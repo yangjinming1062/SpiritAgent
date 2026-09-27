@@ -1,6 +1,6 @@
 import { defineConfig } from 'tsup'
 
-// preload 走 CJS（沙盒不识别 ESM，理由见 README §4）。
+// preload 走 CJS（沙盒不识别 ESM，理由见 main/README.md「包边界」）。
 // config 里不放 watch 键：config.watch 一旦 truthy 会把裸 `tsup` 单次构建也劫持成
 // watch 模式永不退出；而 CLI 的 `--watch` 又会覆盖 config 值——裸 `--watch` 退化为
 // 布尔 true，tsup 改为 watch 整个 "."，chokidar 在 Windows 上对全树（含 node_modules）

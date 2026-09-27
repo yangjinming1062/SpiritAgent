@@ -16,7 +16,7 @@ from .ffmpeg import VideoProcessError, _binary, _run, alpha_input_args, probe_al
 
 logger = get_logger(__name__)
 
-# 交付常量（PIPELINE §视频）：主格式与画布上限
+# 交付常量（PIPELINE「透明化与一致性」）：主格式与画布上限
 TARGET_EXT = "webm"
 MAX_CLIP_SECONDS = 12.0
 MAX_SOURCE_BYTES = 96 * 1024 * 1024

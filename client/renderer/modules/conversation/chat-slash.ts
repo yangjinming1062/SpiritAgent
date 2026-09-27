@@ -65,7 +65,7 @@ function slashPreCheck(pending: PendingAttachment | null, sending: boolean): str
  * 单条 slash 命令的执行入口：confirm → RPC → hydrate/pill → 错误映射。所有三处调用方
  * （send() 兜底路径、textarea onKeyDown 选中、SlashCommandPopover 点击）都走这里。
  *
- * 需确认的命令每次调用都会弹 window.confirm——PROTOCOL §1.9 明确要求前端必须弹，
+ * 需确认的命令每次调用都会弹 window.confirm，以取得 PROTOCOL「Slash 命令」要求的确认，
  * 即便弹层/Enter 路径已经把意图表达得很清楚。
  */
 async function executeSlashCommand(

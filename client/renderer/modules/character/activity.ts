@@ -68,7 +68,7 @@ function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void 
     return
   }
 
-  // 夜间政策权威在服务端（ARCHITECTURE §5.1 夜间与档位正交）；客户端只传 local_hour，
+  // 夜间政策权威在服务端（ARCHITECTURE「打扰档位与情境」 夜间与档位正交）；客户端只传 local_hour，
   // 不在此硬编码跳过——避免与服务端时区/策略漂移。
   const hour = new Date().getHours()
 

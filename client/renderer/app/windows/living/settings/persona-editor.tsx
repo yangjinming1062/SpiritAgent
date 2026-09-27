@@ -14,7 +14,7 @@ import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, Chip, FIELD_LABEL, INPUT_CLASS, SEC
 import { useStrings } from '@/shared/strings'
 
 // 可编辑的 persona 字段：name / relationship / personality / speaking_style。
-// 锁定的视觉锚点字段（biological_type / gender）刻意不可编辑——见 docs/DESIGN.md §5.4。
+// 锁定的视觉锚点字段（biological_type / gender）刻意不可编辑——见 docs/DESIGN.md「身份锁定与角色卡」。
 export function PersonaSection(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.settings.persona

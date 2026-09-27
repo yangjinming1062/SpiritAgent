@@ -99,7 +99,7 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
 
   // 该回合的帧是否落在用户正看着的会话里。不是则 tool.start / message.complete 都被上方
   // 会话闸门拦下，没有任何帧能驱动或复位精灵，只能由本分支自持工作态，让「伙伴在帮忙」的
-  // 叙事在桌面成立（ARCHITECTURE §8 不变量 9）。
+  // 叙事在桌面成立（ARCHITECTURE「工具与表达」）。
   // 用 session_id 比对而非枚举回合类型：遥控、自主、子 agent 乃至以后新增的回合种类都自动落对，
   // 枚举法漏一种就是「机器在动、精灵发呆」，且不会有任何报错。
   const selfDriven = !p.headless && (!p.session_id || p.session_id !== $chatSessionId.get())
@@ -157,7 +157,7 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
       await gateway?.request('tool.result', { call_id: p.call_id, result })
     } catch (err) {
       try {
-        // DESIGN §6.5「Runner 宕机人格化拒绝层」：原始错误不回传 LLM——
+        // DESIGN「故障体验」：原始错误不回传 LLM——
         // message 可能含路径/系统调用细节，LLM 可能照念给用户。诚实（承认没做到）
         // 但不暴露技术细节；原始错误只进本地日志留痕。
         log.warn('events', `runner tool ${name} failed:`, err)
