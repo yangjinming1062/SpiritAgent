@@ -70,6 +70,8 @@ from .prompt_runtime import load_companion_prompt_context, run_prompt_json
 from .scenes import (
     SceneState,
     get_pending_scene,
+    get_pending_scene_task,
+    get_regenerating_scene,
     get_scene,
     get_scene_state,
     list_scenes,
@@ -88,8 +90,10 @@ from .voice_catalog import (
 __all__ = [
     "SceneState",
     "get_pending_scene",
+    "get_pending_scene_task",
     "get_scene",
     "get_scene_state",
+    "get_regenerating_scene",
     "list_scenes",
     "response_for_scene",
     "scene_environment",

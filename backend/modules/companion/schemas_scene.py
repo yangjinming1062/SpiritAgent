@@ -8,6 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from .scene import SceneOrigin, ScenePolicy, SceneSource, SceneStatus
 
 
+class SceneRegenerationResponse(BaseModel):
+    task_id: str
+    status: Literal["pending", "ready", "failed", "cancelled"]
+    stage: str
+    error: str | None = None
+
+
 class SceneResponse(BaseModel):
     id: int
     status: SceneStatus
@@ -30,6 +37,7 @@ class SceneResponse(BaseModel):
     requested_at: datetime | None = None
     ready_at: datetime | None = None
     activated_at: datetime | None = None
+    regeneration: SceneRegenerationResponse | None = None
 
 
 class SceneListResponse(BaseModel):
@@ -44,6 +52,7 @@ class SceneStateResponse(BaseModel):
     active: SceneResponse | None = None
     policy: ScenePolicy = ScenePolicy.LLM_MAY_REPLACE
     pending: SceneResponse | None = None
+    regenerating: SceneResponse | None = None
     version: int = 0
     switch_version: int = 0
 

@@ -117,6 +117,7 @@ from .schemas_scene import (
     ScenePolicyRequest,
     ScenePolicyResponse,
     ScenePromptRequest,
+    SceneRegenerationResponse,
     SceneResponse,
     SceneStateResponse,
 )
@@ -153,6 +154,7 @@ __all__ = [
     "ScenePolicy",
     "ScenePolicyRequest",
     "ScenePolicyResponse",
+    "SceneRegenerationResponse",
     "SceneResponse",
     "SceneSource",
     "SceneStatus",

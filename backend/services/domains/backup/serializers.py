@@ -86,7 +86,7 @@ def _columns(table: str) -> list[str]:
         return ["nightly_activity_enabled"]
     excluded = {"user_id", "dedup_key"} if table == "messages" else {"user_id"}
     if table == "companion_scenes":
-        excluded.update({"generation_state_json", "secondary_reference_image"})
+        excluded.update({"generation_state_json", "regeneration_state_json", "secondary_reference_image"})
     return [column.name for column in TABLE_MODELS[table].__table__.columns if column.name not in excluded]
 
 
@@ -381,6 +381,11 @@ def _build_payload(
         payload["character_card_json"] = snapshot.model_copy(update={"avatar_id": int(avatar_id)}).model_dump_json()
         payload["auto_activate"] = False
         payload["generation_state_json"] = None
+        payload["regeneration_status"] = None
+        payload["regeneration_stage"] = None
+        payload["regeneration_error"] = None
+        payload["regeneration_task_id"] = None
+        payload["regeneration_state_json"] = None
         payload["secondary_reference_image"] = ""
         if payload.get("status") == "pending":
             payload["status"] = "description_failed" if payload.get("media_path") else "failed"

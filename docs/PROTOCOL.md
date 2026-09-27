@@ -56,6 +56,11 @@ Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供�
 角色卡通过 `GET/PATCH /api/companion/character-card` 读取及局部编辑，`POST /api/companion/character-card/extract` 发起重新提取或失败重试；结构见 [schema](../backend/modules/companion/character_card.py)。写请求校验预期形象 ID 与修订号，冲突返回 `409`，客户端保留草稿。`changes` 未提供的字段不变，`null` 恢复自动值，空字符串显式清空。分析状态与已发布内容独立：重新分析失败不撤销可用资料。`companion.character_card.updated` 与状态同事务入 outbox，客户端重新读取，不覆盖编辑草稿。
 
 场景资产与当前环境独立维护。路由与字段见 [场景 API](../backend/api/v1/companion_scenes.py) 和 [schema](../backend/modules/companion/schemas_scene.py)；列表查询与当前状态分别由 `/api/companion/scenes` 和 `/api/companion/scenes/state` 提供。生成要求与提示词不作为成品描述，创建来源不因启用改写。着装选择、衣柜独立性与描述恢复见 [PIPELINE](PIPELINE.md#11-共用参考与种子图派生)。
+
+`POST /api/companion/scenes/{scene_id}/regenerate` 对已有可用场景重新生成图片，返回 `202` 和该场景响应，不新建场景。`SceneResponse.regeneration` 返回最近一次重生成的任务状态；`SceneStateResponse.regenerating` 只在有进行中任务时提供目标场景，`pending` 保持创建／分析任务语义。`POST /api/companion/scenes/{scene_id}/discard` 可取消任一类进行中场景任务；取消重生成保留成品。
+
+目标场景原有状态和图片在重生成期间保持可用；创建、上传准备、分析与重生成共用用户级单任务限制。完成时仅替换该场景图片及其来源和身份快照，以 `companion.scene.updated` 通知，不改变 `active_scene_id` 或 `scene_switch_version`。异步提交核验任务标识、角色卡快照与全身图来源，身份资料变化时保留旧图。失败或取消保留成品；备份恢复清除重生成运行状态。输入冻结与供应商恢复见 [PIPELINE](PIPELINE.md#11-共用参考与种子图派生)。
+
 自动启用仍核对场景版本、身份与政策。视频包按核查状态控制自动激活，疑点包保留素材与手动启用入口；现有旧包在新包准备与复核期间继续播放。评分与供应商链择优见 [PIPELINE](PIPELINE.md#11-共用参考与种子图派生)。
 
 动态动作的待确认视频通过 `GET /api/companion/media-reviews` 列出；`GET /media-reviews/{id}` 读取状态，`POST /media-reviews/{id}/accept` 或 `/reject` 由用户决策。采纳后动作才进入可播目录。聊天、场景、片刻与夜间内容不创建人工复核项；视频任务在 `downloading`、`evaluating` 与重生成期间可凭供应商句柄或已落盘资产恢复，结果未知的重提交不会自动再次发送。

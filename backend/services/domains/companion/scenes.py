@@ -15,6 +15,7 @@ class SceneState:
     active: CompanionScene | None
     policy: ScenePolicy
     pending: CompanionScene | None
+    regenerating: CompanionScene | None
     version: int
     switch_version: int
 
@@ -37,6 +38,33 @@ async def get_pending_scene(db: AsyncSession, user_id: int) -> CompanionScene | 
     )
 
 
+async def get_regenerating_scene(db: AsyncSession, user_id: int) -> CompanionScene | None:
+    return await db.scalar(
+        select(CompanionScene)
+        .where(
+            CompanionScene.user_id == user_id,
+            CompanionScene.regeneration_status == "pending",
+        )
+        .order_by(CompanionScene.id.desc())
+        .limit(1),
+    )
+
+
+async def get_pending_scene_task(db: AsyncSession, user_id: int) -> CompanionScene | None:
+    return await db.scalar(
+        select(CompanionScene)
+        .where(
+            CompanionScene.user_id == user_id,
+            or_(
+                CompanionScene.status == SceneStatus.PENDING.value,
+                CompanionScene.regeneration_status == "pending",
+            ),
+        )
+        .order_by(CompanionScene.id.desc())
+        .limit(1),
+    )
+
+
 async def get_scene_state(db: AsyncSession, user_id: int) -> SceneState:
     persona = await db.scalar(select(Persona).where(Persona.user_id == user_id))
     active = await get_scene(db, user_id, persona.active_scene_id) if persona and persona.active_scene_id else None
@@ -44,6 +72,7 @@ async def get_scene_state(db: AsyncSession, user_id: int) -> SceneState:
         active=active if active and active.status == SceneStatus.READY.value else None,
         policy=ScenePolicy(persona.scene_policy) if persona else ScenePolicy.LLM_MAY_REPLACE,
         pending=await get_pending_scene(db, user_id),
+        regenerating=await get_regenerating_scene(db, user_id),
         version=persona.scene_state_version if persona else 0,
         switch_version=persona.scene_switch_version if persona else 0,
     )
@@ -111,6 +140,16 @@ def response_for_scene(row: CompanionScene) -> dict[str, Any]:
         "requested_at": row.requested_at,
         "ready_at": row.ready_at,
         "activated_at": row.activated_at,
+        "regeneration": (
+            {
+                "task_id": row.regeneration_task_id,
+                "status": row.regeneration_status,
+                "stage": row.regeneration_stage or "",
+                "error": row.regeneration_error,
+            }
+            if row.regeneration_status and row.regeneration_task_id
+            else None
+        ),
     }
 
 

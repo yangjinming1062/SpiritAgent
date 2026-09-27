@@ -29,6 +29,7 @@ from services.application.generation import (
     delete_scene,
     discard_scene,
     edit_scene_description,
+    regenerate_scene,
     retry_scene_description,
     schedule_scene_generation,
     schedule_scene_prompt,
@@ -52,6 +53,9 @@ async def read_scene_state(
         switch_version=state.switch_version,
         policy=state.policy,
         pending=SceneResponse(**response_for_scene(state.pending)) if state.pending is not None else None,
+        regenerating=(
+            SceneResponse(**response_for_scene(state.regenerating)) if state.regenerating is not None else None
+        ),
     )
 
 
@@ -128,6 +132,19 @@ async def post_scene_discard(
         row = await discard_scene(user.id, scene_id)
     except SceneNotFoundError as exc:
         raise HTTPException(status_code=404, detail={"error": "找不到对应的场景", "reason": str(exc)})
+    except SceneStateError as exc:
+        raise HTTPException(status_code=409, detail={"error": str(exc), "reason": str(exc)})
+    except SceneError as exc:
+        raise HTTPException(status_code=400, detail={"error": str(exc), "reason": str(exc)})
+    return SceneResponse(**response_for_scene(row))
+
+
+@router.post("/scenes/{scene_id}/regenerate", response_model=SceneResponse, status_code=202)
+async def post_scene_regenerate(user: CurrentUser, scene_id: int) -> SceneResponse:
+    try:
+        row = await regenerate_scene(user.id, scene_id)
+    except SceneNotFoundError as exc:
+        raise HTTPException(status_code=404, detail={"error": str(exc), "reason": str(exc)})
     except SceneStateError as exc:
         raise HTTPException(status_code=409, detail={"error": str(exc), "reason": str(exc)})
     except SceneError as exc:

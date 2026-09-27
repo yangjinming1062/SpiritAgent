@@ -11,7 +11,7 @@
 | [initial_appearance.py](initial_appearance.py) / [avatar_service.py](avatar_service.py) | 初始外观与头像/全身候选 |
 | [outfit_service.py](outfit_service.py) / [fullbody_reference_prompt.py](fullbody_reference_prompt.py) | 换装命名与全身参考提示词/画幅 |
 | [image_generation.py](image_generation.py) / [scene_prompt.py](scene_prompt.py) | 图像参考装配与场景提示词装配 |
-| [scene_service.py](scene_service.py) | 场景任务互斥、切换版本与 outbox |
+| [scene_service.py](scene_service.py) | 场景创建、描述分析、图片重生成与切换版本 |
 | [video/](video/) / [video_jobs.py](video_jobs.py) | 视频包（script、manifest、state、service）与聊天视频 |
 | [media_chain.py](media_chain.py) / [character_images.py](character_images.py) / [identity_review.py](identity_review.py) | 供应商链择优、身份保持图片、评分与严格复核 |
 | [media_review.py](media_review.py) | 出镜媒体用户复核状态 |
@@ -35,7 +35,7 @@
 
 聊天与夜间出镜图片共用 `visual_identity.py::build_self_image_prompt`。新出镜视频先按视频要求生成起始画面；显式首帧通过身份图与原画面分工校准。首帧生成和校准均走图片质量链，视频恢复沿用已保存的首帧。
 
-[scene_service.py](scene_service.py)管理场景任务互斥、切换版本与 outbox 事务；用户参考图与完整造型的 `outfit_description` 在任务创建前校验并冻结。[visual_identity.py](visual_identity.py) 统一出镜媒体的造型选择，经 `SelfVisualPlan` 冻结本次最终造型。参考装配、描述分析、启用额度与中断恢复见 [PIPELINE §1.1](../../../../docs/PIPELINE.md#11-共用参考与种子图派生) 与 [PROTOCOL §1.2](../../../../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。
+[scene_service.py](scene_service.py)管理场景任务互斥、切换版本与 outbox 事务，创建与重绘共用 [scene_prompt.py](scene_prompt.py) 装配。[visual_identity.py](visual_identity.py) 统一出镜媒体的造型选择，经 `SelfVisualPlan` 冻结本次最终造型。输入选择、描述分析与供应商恢复见 [PIPELINE §1.1](../../../../docs/PIPELINE.md#11-共用参考与种子图派生)，任务状态、原位换图与启用约束见 [PROTOCOL §1.2](../../../../docs/PROTOCOL.md#12-伙伴生命周期方法方法级契约)。
 
 ## 视频包与验证
 

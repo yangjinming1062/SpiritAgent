@@ -9,6 +9,12 @@ import { getStrings } from '@/shared/strings'
 
 export type SceneStatus = 'cancelled' | 'description_failed' | 'failed' | 'pending' | 'ready'
 export type ScenePolicy = 'llm_may_replace' | 'locked'
+export interface SceneRegeneration {
+  task_id: string
+  status: 'cancelled' | 'failed' | 'pending' | 'ready'
+  stage: string
+  error: string | null
+}
 export interface ActiveScene {
   id: string
   title: string
@@ -23,6 +29,7 @@ export interface ActiveScene {
   source: string
   origin: string
   error: string | null
+  regeneration: SceneRegeneration | null
 }
 export type SceneAsset = ActiveScene
 interface SceneWire extends Omit<ActiveScene, 'id' | 'thumbnailUrl'> {
@@ -31,6 +38,7 @@ interface SceneWire extends Omit<ActiveScene, 'id' | 'thumbnailUrl'> {
 interface SceneStateWire {
   active: SceneWire | null
   pending: SceneWire | null
+  regenerating: SceneWire | null
   policy: ScenePolicy
   version: number
   switch_version: number
@@ -49,7 +57,10 @@ export interface SceneGenerationInput {
 
 export const $activeScene = atom<ActiveScene | null>(null)
 export const $pendingScene = atom<ActiveScene | null>(null)
+export const $sceneRegenerating = atom<ActiveScene | null>(null)
 export const $sceneLibrary = atom<SceneAsset[]>([])
+export const $sceneDetails = atom<Record<string, SceneAsset>>({})
+export const $sceneLibraryStatus = atom<'idle' | 'loading' | 'loaded' | 'error'>('idle')
 export const $scenePolicy = atom<ScenePolicy>('llm_may_replace')
 export const $sceneTaskStatus = atom<'none' | 'pending' | 'waiting_upload'>('none')
 export const $sceneTaskSlow = atom(false)
@@ -57,6 +68,7 @@ export const $sceneTotal = atom(0)
 export const $scenePage = atom(0)
 export const $sceneQuery = atom('')
 const PAGE_SIZE = 24
+const detailCache = new Map<string, SceneAsset>()
 let stateRequest = 0
 let listRequest = 0
 let version = -1
@@ -72,7 +84,26 @@ async function resolveScene(row: SceneWire): Promise<ActiveScene> {
     url = (await window.spiritagent?.apiAsset({ url })) || url
   }
 
-  return { ...row, id: String(row.id), url, thumbnailUrl: url }
+  return { ...row, id: String(row.id), url, thumbnailUrl: url, regeneration: row.regeneration ?? null }
+}
+
+function cacheSceneDetails(entries: SceneAsset[]): void {
+  for (const entry of entries) {
+    detailCache.delete(entry.id)
+    detailCache.set(entry.id, entry)
+  }
+
+  while (detailCache.size > 48) {
+    const oldest = detailCache.keys().next().value
+
+    if (oldest === undefined) {
+      break
+    }
+
+    detailCache.delete(oldest)
+  }
+
+  $sceneDetails.set(Object.fromEntries(detailCache))
 }
 
 async function preload(url: string): Promise<void> {
@@ -122,7 +153,11 @@ registerStorageClearHandler(() => {
   stopPoll()
   $activeScene.set(null)
   $pendingScene.set(null)
+  $sceneRegenerating.set(null)
   $sceneLibrary.set([])
+  detailCache.clear()
+  $sceneDetails.set({})
+  $sceneLibraryStatus.set('idle')
   $sceneTaskStatus.set('none')
   $sceneTaskSlow.set(false)
   $scenePolicy.set('llm_may_replace')
@@ -136,12 +171,17 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
   const epoch = currentClearEpoch()
   $sceneQuery.set(query)
   $scenePage.set(page)
+  $sceneLibraryStatus.set('loading')
 
   const result = await authedApi<SceneListWire>({
     path: `/api/companion/scenes?q=${encodeURIComponent(query)}&offset=${page * PAGE_SIZE}&limit=${PAGE_SIZE}`
   })
 
   if (!result.ok || !result.value) {
+    if (request === listRequest && epoch === currentClearEpoch()) {
+      $sceneLibraryStatus.set('error')
+    }
+
     return
   }
 
@@ -153,6 +193,10 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
   } catch (error) {
     log.warn('scene', 'Scene library images could not be loaded:', error)
 
+    if (request === listRequest && epoch === currentClearEpoch()) {
+      $sceneLibraryStatus.set('error')
+    }
+
     return
   }
 
@@ -161,10 +205,37 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
   }
 
   $sceneLibrary.set(entries)
+  cacheSceneDetails(entries)
   $sceneTotal.set(value.total)
+  $sceneLibraryStatus.set('loaded')
 
   if (page > 0 && entries.length === 0) {
     void loadSceneLibrary(query, page - 1)
+  }
+}
+
+export async function loadSceneDetail(sceneId: string): Promise<SceneAsset | null> {
+  const epoch = currentClearEpoch()
+  const result = await authedApi<SceneWire>({ path: `/api/companion/scenes/${encodeURIComponent(sceneId)}` })
+
+  if (epoch !== currentClearEpoch() || !result.ok || !result.value) {
+    return null
+  }
+
+  try {
+    const scene = await resolveScene(result.value)
+
+    if (epoch !== currentClearEpoch()) {
+      return null
+    }
+
+    cacheSceneDetails([scene])
+
+    return scene
+  } catch (error) {
+    log.warn('scene', 'Scene detail image could not be loaded:', error)
+
+    return null
   }
 }
 
@@ -199,31 +270,54 @@ export async function hydrateScene(): Promise<void> {
     }
 
     const pending = state.pending ? await resolveScene(state.pending) : null
+    const regenerating = state.regenerating ? await resolveScene(state.regenerating) : null
 
     if (request !== stateRequest || epoch !== currentClearEpoch() || state.version < Math.max(version, eventVersion)) {
       return
     }
 
     const oldPending = $pendingScene.get()
+    const oldRegenerating = $sceneRegenerating.get()
     version = state.version
     $activeScene.set(active)
     $pendingScene.set(pending)
+    $sceneRegenerating.set(regenerating)
+    cacheSceneDetails([
+      ...(active ? [active] : []),
+      ...(pending ? [pending] : []),
+      ...(regenerating ? [regenerating] : [])
+    ])
     $scenePolicy.set(state.policy)
     const taskStatus = !pending ? 'none' : pending.stage === 'waiting_upload' ? 'waiting_upload' : 'pending'
     $sceneTaskStatus.set(taskStatus)
 
-    if (taskStatus === 'pending' && !$sceneTaskSlow.get()) {
+    if ((taskStatus === 'pending' || regenerating) && !$sceneTaskSlow.get()) {
       startPoll()
-    } else if (taskStatus !== 'pending') {
+    } else if (taskStatus !== 'pending' && !regenerating) {
       stopPoll()
       $sceneTaskSlow.set(false)
     }
 
     if (oldPending && !pending) {
-      const detail = await authedApi<SceneWire>({ path: `/api/companion/scenes/${oldPending.id}` })
+      const detail = await loadSceneDetail(oldPending.id)
 
-      if (request === stateRequest && epoch === currentClearEpoch() && detail.ok && detail.value?.status === 'ready') {
+      if (request === stateRequest && epoch === currentClearEpoch() && detail?.status === 'ready') {
         notify({ kind: 'success', message: getStrings().living.toasts.sceneReady })
+      }
+    }
+
+    if (oldRegenerating && (!regenerating || oldRegenerating.id !== regenerating.id)) {
+      const finished = await loadSceneDetail(oldRegenerating.id)
+
+      if (request === stateRequest && epoch === currentClearEpoch()) {
+        if (finished?.regeneration?.status === 'ready') {
+          notify({ kind: 'success', message: getStrings().living.toasts.sceneImageRegenerated })
+        } else if (finished?.regeneration?.status === 'failed') {
+          notify({
+            kind: 'warning',
+            message: finished.regeneration.error || getStrings().living.toasts.sceneRegenerateFailed
+          })
+        }
       }
     }
 
@@ -266,9 +360,9 @@ async function mutate<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body
   return result.value
 }
 
-export async function createScene(input: SceneGenerationInput = {}): Promise<boolean> {
-  if (submitting || $sceneTaskStatus.get() !== 'none') {
-    return false
+export async function createScene(input: SceneGenerationInput = {}): Promise<ActiveScene | null> {
+  if (submitting || $sceneTaskStatus.get() !== 'none' || $sceneRegenerating.get() !== null) {
+    return null
   }
 
   const epoch = currentClearEpoch()
@@ -280,7 +374,7 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<boo
     const result = await authedApi<SceneWire>({ path: '/api/companion/scenes/generate', method: 'POST', body: input })
 
     if (epoch !== currentClearEpoch()) {
-      return false
+      return null
     }
 
     if (!result.ok || !result.value) {
@@ -302,13 +396,19 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<boo
     startPoll()
     await hydrateScene()
 
-    return true
+    if (epoch !== currentClearEpoch()) {
+      return null
+    }
+
+    const created = await resolveScene(result.value)
+
+    return epoch === currentClearEpoch() ? created : null
   } catch (error) {
     if (epoch === currentClearEpoch()) {
       notify({ kind: 'warning', message: sceneError(error) })
     }
 
-    return false
+    return null
   } finally {
     if (epoch === currentClearEpoch()) {
       submitting = false
@@ -324,18 +424,15 @@ export async function prepareScenePrompt(
   return row.prompt
 }
 
-export async function adoptSceneImage(image: { base64: string; contentType: string }): Promise<void> {
+export async function adoptSceneImage(image: { base64: string; contentType: string }, sceneId?: string): Promise<void> {
   const pending = $pendingScene.get()
-  const path = pending?.stage === 'waiting_upload' ? `/${pending.id}/adopt` : '/adopt'
+  const targetId = sceneId ?? (pending?.stage === 'waiting_upload' ? pending.id : undefined)
+  const path = targetId ? `/${encodeURIComponent(targetId)}/adopt` : '/adopt'
   await mutate(path, 'POST', { image: image.base64, content_type: image.contentType })
 }
 
-export async function discardPendingScene(): Promise<void> {
-  const pending = $pendingScene.get()
-
-  if (pending) {
-    await mutate(`/${pending.id}/discard`, 'POST')
-  }
+export async function cancelSceneTask(sceneId: string): Promise<void> {
+  await mutate(`/${sceneId}/discard`, 'POST')
 }
 
 export async function activateScene(sceneId: string): Promise<void> {
@@ -360,6 +457,10 @@ export async function deleteScene(sceneId: string): Promise<void> {
 
 export async function editScene(sceneId: string, title: string, description: string): Promise<void> {
   await mutate(`/${sceneId}`, 'PATCH', { title, description })
+}
+
+export async function regenerateScene(sceneId: string): Promise<void> {
+  await mutate(`/${sceneId}/regenerate`, 'POST')
 }
 
 export async function analyzeScene(sceneId: string): Promise<void> {
