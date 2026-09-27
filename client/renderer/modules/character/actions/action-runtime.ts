@@ -7,6 +7,7 @@
 
 import { atom } from 'nanostores'
 
+import { authedApi } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 
 import type { ActionPlaybackStatus, ActionPlayCommand, ActionPlayInstance } from './action-types'
@@ -130,20 +131,19 @@ export async function reportReceipt(
   reason: string = '',
   visibleDurationMs: number = 0
 ): Promise<void> {
-  try {
-    const { authedApi } = await import('@/shared/lib/authed-api')
-    await authedApi({
-      body: {
-        play_id: command.play_id,
-        status,
-        visible_duration_ms: visibleDurationMs,
-        error: reason || null
-      },
-      method: 'POST',
-      path: `/api/companion/actions/playback/${command.play_id}/receipt`
-    })
-  } catch (err) {
-    log.warn('action-runtime', 'receipt report failed', err)
+  const result = await authedApi({
+    body: {
+      play_id: command.play_id,
+      status,
+      visible_duration_ms: visibleDurationMs,
+      error: reason || null
+    },
+    method: 'POST',
+    path: `/api/companion/actions/playback/${command.play_id}/receipt`
+  })
+
+  if (!result.ok && result.reason === 'err') {
+    log.warn('action-runtime', 'receipt report failed', result.error)
   }
 }
 

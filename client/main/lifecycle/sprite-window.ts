@@ -4,22 +4,6 @@ import { readRestPosition } from '../ipc/sprite'
 
 import type { ZoomPersistence } from './zoom-persistence'
 
-const TITLEBAR_HEIGHT = 34
-const MACOS_TRAFFIC_LIGHTS_HEIGHT = 14
-
-const WINDOW_BUTTON_POSITION = {
-  x: 24,
-  y: TITLEBAR_HEIGHT / 2 - MACOS_TRAFFIC_LIGHTS_HEIGHT / 2
-}
-
-const NATIVE_OVERLAY_BUTTON_WIDTH = 144
-
-export interface WindowState {
-  isFullscreen: boolean
-  nativeOverlayWidth: number
-  windowButtonPosition: { x: number; y: number } | null
-}
-
 export interface SpriteWindowDeps {
   app: Pick<App, 'dock' | 'getPath' | 'isPackaged'>
   bootProgress: { broadcast: () => void }
@@ -34,32 +18,6 @@ export interface SpriteWindowDeps {
   windowHandlers: { installStandardWindowHandlers: (win: BrowserWindow) => void }
   zoomPersistence: Pick<ZoomPersistence, 'restorePersistedZoomLevel'>
   installCloseInterceptor: (win: BrowserWindow) => void
-}
-
-function getWindowButtonPosition(
-  getMainWindow: () => null | BrowserWindow,
-  isMac: boolean
-): null | {
-  x: number
-  y: number
-} {
-  if (!isMac) {
-    return null
-  }
-
-  return getMainWindow()?.getWindowButtonPosition?.() || WINDOW_BUTTON_POSITION
-}
-
-function getNativeOverlayWidth(isMac: boolean): number {
-  return isMac ? 0 : NATIVE_OVERLAY_BUTTON_WIDTH
-}
-
-export function getWindowState(deps: { getMainWindow: () => null | BrowserWindow; isMac: boolean }): WindowState {
-  return {
-    isFullscreen: Boolean(deps.getMainWindow()?.isFullScreen?.()),
-    nativeOverlayWidth: getNativeOverlayWidth(deps.isMac),
-    windowButtonPosition: getWindowButtonPosition(deps.getMainWindow, deps.isMac)
-  }
 }
 
 export function createSpriteWindowFactory(deps: SpriteWindowDeps): {

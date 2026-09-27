@@ -23,12 +23,10 @@ import {
 } from '@/modules/conversation'
 import { cancelVoiceBar, stopSpeaking } from '@/modules/speech'
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
-import { resolveGatewayWsUrl } from '@/shared/lib/gateway-ws-url'
 import { log } from '@/shared/lib/log'
 import { reconnectBackoffMs } from '@/shared/lib/reconnect'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
 import { SpiritAgentGateway } from '@/shared/spiritagent'
-import { expireSession } from '@/shared/store/auth'
 import { reportPrimaryGatewayState, setPrimaryGateway, tearDownPrimaryGateway } from '@/shared/store/gateway'
 import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
@@ -36,12 +34,10 @@ import type { SessionResumeResponse } from '@/shared/types/spiritagent'
 
 import { applyDesktopBootProgress, completeDesktopBoot, failDesktopBoot, setDesktopBootStep } from './boot-store'
 
-// 后端对鉴权失败（token 过期 / 被吊销）使用 WS close 1008——
-// 此时触发登出，而不是用无效 token 不断重连。
+// 1008 停止重连；会话过期由主进程的鉴权失败通知确认。
 const WS_CLOSE_POLICY_VIOLATION = 1008
 
-// 每次（重）开后重推一次生效档位（含活动覆盖）：离线期间的档位变化可能尚未
-// 上云，重推保证后端闸门尽快收敛到最新生效值。即发即忘。
+// 重连后补报离线期间可能变化的生效档位。
 function syncDisturbanceTier(): void {
   const tier = $effectiveTier.get()
 
@@ -52,8 +48,7 @@ function syncDisturbanceTier(): void {
   pushEffectiveDisturbanceTier(tier)
 }
 
-// 每次连接上报本地 IANA 时区：后端的夜间批处理与互动统计都按用户本地日聚合，
-// 缺这一行时整个夜间流水线（画像/整理/规划/日记）会静默跳过。即发即忘。
+// 夜间调度与互动统计按本地 IANA 时区聚合。
 function syncTimezone(gateway: SpiritAgentGateway): void {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone
 
@@ -64,10 +59,7 @@ function syncTimezone(gateway: SpiritAgentGateway): void {
   void gateway.request('companion.set_timezone', { timezone }).catch(() => {})
 }
 
-// 把 Runner 当前能力发布到后端注册表：工具列表非空即「本机工具可执行」，
-// 空列表同样发送——后端 update_runner_tools([]) 会清空该用户注册表，
-// 使 has_runner_tools 判 false，断开/停止期间新派发立即被拒（fail-closed），
-// 空表只阻止新派发，已经发出的调用仍按原有结果与超时规则收尾。
+// 空工具表撤销新调用资格，已派发调用仍按原结果与超时规则收尾。
 async function syncRunnerTools(gateway: SpiritAgentGateway, isCurrent: () => boolean, revoke: boolean): Promise<void> {
   const desktop = window.spiritagent
 
@@ -82,19 +74,14 @@ async function syncRunnerTools(gateway: SpiritAgentGateway, isCurrent: () => boo
       return
     }
 
-    const names = tools.map(t => t?.name).filter(Boolean) as string[]
-
-    const hasFileTools = names.includes('read_file') || names.includes('list_directory')
+    const hasFileTools = tools.some(tool => tool.name === 'read_file' || tool.name === 'list_directory')
 
     if (!hasFileTools) {
       log.warn('gateway-boot', 'tools.sync: LLM will lack file tools in this session')
     }
 
     const res = await gateway.request<{ count: number }>('tools.sync', { tools, skill_scope_version: 1 })
-    log.info(
-      'gateway-boot',
-      `tools.sync: synced ${res.count || tools.length} runner tools to gateway (hasFileTools=${hasFileTools})`
-    )
+    log.info('gateway-boot', `tools.sync: synced ${res.count} runner tools to gateway (hasFileTools=${hasFileTools})`)
   } catch (error) {
     const msg = error instanceof Error ? error.message : String(error)
     log.error('gateway-boot', `tools.sync failed: ${msg}`)
@@ -122,11 +109,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
       return () => void (cancelled = true)
     }
 
-    // macOS 睡眠会静默丢掉渲染端的 WebSocket。后端 Python 进程仍在跑，
-    // 但唤醒时没人重开 socket，应用永远卡在 "Starting…"。一旦初次启动成功，
-    // 我们就把任何非 open 状态视为可恢复，按退避重连，
-    // 并在唤醒相关的 OS / 浏览器信号（电源恢复、网络上线、窗口变为可见）触发
-    // 时主动 nudge 一次重连。
+    // 初次启动后按退避重连，电源恢复、网络上线和窗口可见时立即重试。
     let bootCompleted = false
     let bootOverlayDismissed = false
     let reconnecting = false
@@ -168,25 +151,19 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
     }
 
     const attemptReconnect = async () => {
-      if (cancelled || reconnecting || gatewayOpen()) {
+      if (cancelled || reconnecting || gatewayOpen() || gateway.lastCloseCode === WS_CLOSE_POLICY_VIOLATION) {
         return
       }
 
       reconnecting = true
 
       try {
-        const conn = await desktop.getConnection()
+        const wsUrl = await desktop.getGatewayWsUrl()
 
         if (cancelled) {
           return
         }
 
-        // 重连前重新生成 WS URL。OAuth 票据是一次性的且 TTL 很短，
-        // 所以缓存 conn.wsUrl 里那条票据在初次启动后的每次重连都已失效——
-        // 复用只会换来一条神秘的"无法连接到网关"。resolveGatewayWsUrl 会签发
-        // 新票据（OAuth 模式下会抛 reauth 错误，而不是拿着过期票据硬连）。
-        // local/token 网关的 URL 携带的是长效 token，重新签发是廉价的空操作。
-        const wsUrl = await resolveGatewayWsUrl(desktop, conn)
         await gateway.connect(wsUrl)
 
         if (cancelled) {
@@ -198,6 +175,10 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
         lastReconnectError = null
         reconnectErrorNotified = false
       } catch (error) {
+        if (cancelled) {
+          return
+        }
+
         lastReconnectError = error instanceof Error ? error : new Error(String(error))
         log.warn('gateway-boot', 'attemptReconnect failed', lastReconnectError)
       } finally {
@@ -215,7 +196,13 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
     }
 
     function scheduleReconnect(): void {
-      if (cancelled || reconnecting || reconnectTimer !== null || gatewayOpen()) {
+      if (
+        cancelled ||
+        reconnecting ||
+        reconnectTimer !== null ||
+        gatewayOpen() ||
+        gateway.lastCloseCode === WS_CLOSE_POLICY_VIOLATION
+      ) {
         return
       }
 
@@ -280,17 +267,10 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
         void fetchSlashCommandMeta()
         startAutonomyProvision()
 
-        // 断连阶段挂的 sleep_zzz 气泡需要主动清掉，否则即便精灵已经"醒来"
-        // 头顶的 z 字符仍会停留到自然 expiry。
         clearVfx('sleep_zzz')
 
-        // 正常的唤醒后重连不会再次调用 completeDesktopBoot()，
-        // 所以这里在再次 open 后把启动进度浮层收掉——否则它会一直挂着。
-        // 初次启动时是 no-op。
         if (bootCompleted) {
           dismissOverlayOnce()
-          // 重连后"打起精神"：如果之前表达过 disconnected 降级，就回到 idle
-          // （DESIGN「故障体验」）。纯视觉表现（动画状态机切回 idle 姿态/微动），保持静默回神。
           const cur = $spriteState.get()
 
           if (cur === 'disconnected') {
@@ -298,11 +278,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
           }
         }
 
-        // 重新挂载会话，避免下一次 prompt.submit 触发"找不到 session"。
-        // 初次启动时 $chatSessionId 从 localStorage 恢复为上次活跃会话；重连时
-        // 则是内存里的现行会话。后端每次 WS 断开都会清空内存里的 runtime_sessions，
-        // session.resume 从持久化的 DB 会话记录里把运行时重新派生出来。恢复的
-        // 会话已被删除（或换了账号）时 resume 报错，清掉持久化 id 并回退主会话。
+        // 恢复服务端会话并同步历史；失败仅回退仍被选中的会话。
         const sid = $chatSessionId.get()
 
         const syncMountSeq = (res: { current_seq?: number }) => {
@@ -316,9 +292,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
             try {
               const local = await loadLocalSessionHistory(sid)
 
-              // 等待期间用户可能已切走会话（如通知点击跳转）；迟到的旧会话
-              // 数据不得写入新会话，seq 也不能按旧会话的 resume 结果重置。
-              if ($chatSessionId.get() !== sid) {
+              if (cancelled || $chatSessionId.get() !== sid) {
                 return
               }
 
@@ -338,12 +312,12 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
                 request: body => gateway.request<SessionResumeResponse>('session.resume', { session_id: sid, ...body })
               })
 
-              if ($chatSessionId.get() !== sid) {
+              if (cancelled || $chatSessionId.get() !== sid) {
                 return
               }
 
               if (synced.currentSeq > 0) {
-                syncMountSeq({ current_seq: synced.currentSeq })
+                gateway.resetSeq(synced.currentSeq)
               }
 
               const liveHasMessages = $chatMessageList.get().length > 0
@@ -354,14 +328,13 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
                 hydrateSessionSettings(synced.info)
               }
             } catch (error) {
-              if (error instanceof SessionHistoryChangedError) {
-                log.warn('gateway-boot', 'History is changing; keeping current session:', error)
-
+              if (cancelled || $chatSessionId.get() !== sid) {
                 return
               }
 
-              // 同样只在用户仍停留在本会话时才回退主会话；否则会误清新会话。
-              if ($chatSessionId.get() !== sid) {
+              if (error instanceof SessionHistoryChangedError) {
+                log.warn('gateway-boot', 'History is changing; keeping current session:', error)
+
                 return
               }
 
@@ -377,12 +350,6 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
         cancelVoiceBar()
         stopSpeaking()
 
-        if (st === 'closed' && gateway.lastCloseCode === WS_CLOSE_POLICY_VIOLATION) {
-          void expireSession(sessionId)
-
-          return
-        }
-
         // 安排断连宽限状态；超时则固定进入 disconnected，重连前不再做额外升级。
         if (graceTimer === null) {
           const isForeground = document.visibilityState === 'visible'
@@ -390,8 +357,6 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
           graceTimer = setTimeout(() => {
             graceTimer = null
             setSpriteState('disconnected')
-            // DESIGN「故障体验」：犯困/走神 → 挂载 sleep_zzz 气泡；重连后由 onState='open'
-            // 分支清掉气泡并平滑切回 idle 状态。
             emitVfx('sleep_zzz', { nx: 0.5, ny: 0.05 })
           }, graceMs)
         }
@@ -441,7 +406,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
 
     async function boot(): Promise<void> {
       try {
-        const conn = await desktop.getConnection()
+        const wsUrl = await desktop.getGatewayWsUrl()
 
         if (cancelled) {
           return
@@ -452,7 +417,6 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
           message: getStrings().boot.steps.connectingGateway,
           progress: 95
         })
-        const wsUrl = await resolveGatewayWsUrl(desktop, conn)
         await gateway.connect(wsUrl)
 
         if (cancelled) {

@@ -4,7 +4,7 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { $systemPresets, fetchSystemPresets } from '@/modules/conversation'
-import { useGatewayRequest } from '@/shared'
+import { requestGateway } from '@/shared'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS, PanelSelect } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
@@ -77,7 +77,6 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
   const t = dict.settings.memory
 
   const tab = useStore($memoryBrowserTab)
-  const { requestGateway } = useGatewayRequest()
 
   const [rows, setRows] = useState<MemoryRow[]>([])
   const [counts, setCounts] = useState<MemoryCounts | null>(null)
@@ -132,7 +131,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
         }
       }
     },
-    [presetId, requestGateway, t.loadFailedHint, t.loadFailedToast]
+    [presetId, t.loadFailedHint, t.loadFailedToast]
   )
 
   useEffect(() => {
@@ -190,7 +189,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
         }
       }
     },
-    [presetId, draftById, requestGateway, rows, t.saveFailedHint, t.saveFailedToast, tab]
+    [presetId, draftById, rows, t.saveFailedHint, t.saveFailedToast, tab]
   )
 
   const del = useCallback(
@@ -218,7 +217,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
         }
       }
     },
-    [presetId, requestGateway, t.deleteFailedHint, t.deleteFailedToast, tab]
+    [presetId, t.deleteFailedHint, t.deleteFailedToast, tab]
   )
 
   const switchTab = (next: MemoryTab): void => {

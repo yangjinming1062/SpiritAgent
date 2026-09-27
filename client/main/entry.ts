@@ -52,7 +52,7 @@ import { createMenu } from './lifecycle/menu'
 import { createOpenExternalUrl } from './lifecycle/open-external-url'
 import { detectRemoteDisplay } from './lifecycle/platform'
 import { createRendererPaths, unpackedPathFor } from './lifecycle/renderer-paths'
-import { createSpriteWindowFactory, getWindowState as readSpriteWindowState } from './lifecycle/sprite-window'
+import { createSpriteWindowFactory } from './lifecycle/sprite-window'
 import { createSurfaceWindowFactory } from './lifecycle/surface-window'
 import { createSurfacesManager, type SurfacesManager } from './lifecycle/surfaces'
 import {
@@ -157,7 +157,6 @@ const APP_NAME = '唤生'
 const backendHttp = createBackendHttp({
   app,
   electronNet,
-  rememberLog: (chunk: string) => rememberLog(chunk),
   spiritagentHome: SPIRITAGENT_HOME
 })
 
@@ -166,13 +165,12 @@ const bootProgress = createBootProgressMachine({
   rememberLog: (chunk: string) => rememberLog(chunk)
 })
 
-const { ensureBackend, resetBackendCache, setCachedWsUrl } = createEnsureBackend({
+const { ensureBackend, resetBackendCache } = createEnsureBackend({
   appName: APP_NAME,
   backendHttp,
   bootProgress,
   getAuthToken: () => getAuthToken(),
-  getCurrentBaseUrl: () => sessionRuntime?.ensureBackendSession().getSession()?.baseUrl ?? null,
-  getWindowState
+  getCurrentBaseUrl: () => sessionRuntime?.ensureBackendSession().getSession()?.baseUrl ?? null
 })
 
 // 云端配置同步协调器：backend user_settings 为真源，desktop-settings.json 是镜像
@@ -302,14 +300,6 @@ const { createSurfaceWindow, navigateSurfaceWindow } = createSurfaceWindowFactor
   zoomPersistence
 })
 
-function getWindowState(): {
-  isFullscreen: boolean
-  nativeOverlayWidth: number
-  windowButtonPosition: { x: number; y: number } | null
-} {
-  return readSpriteWindowState({ getMainWindow: () => mainWindow, isMac: IS_MAC })
-}
-
 async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort, clearAccountCache = false): Promise<void> {
   rebuildTrayMenu()
 
@@ -436,8 +426,7 @@ registerConnectionIpc({
   getMainWindow: () => mainWindow,
   ipcMain,
   mintWsTicket: backendHttp.mintWsTicket,
-  resolvePathTimeoutMs,
-  setCachedWsUrl
+  resolvePathTimeoutMs
 })
 registerGatewayIpc({
   getMainWindow: () => mainWindow,

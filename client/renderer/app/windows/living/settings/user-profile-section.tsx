@@ -2,7 +2,7 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { MAX_USER_TEXT } from '@/modules/character'
-import { useGatewayRequest } from '@/shared'
+import { requestGateway } from '@/shared'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_SUBTLE, DatePicker, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
@@ -66,7 +66,6 @@ export function UserProfileSection({
   const dict = useStrings()
   const t = dict.settings.memory
   const p = t.profile
-  const { requestGateway } = useGatewayRequest()
 
   const [rowsByContext, setRowsByContext] = useState<Record<string, ProfileMemoryRow>>({})
   const [extraRows, setExtraRows] = useState<ProfileMemoryRow[]>([])
@@ -123,7 +122,7 @@ export function UserProfileSection({
         setLoading(false)
       }
     }
-  }, [onCount, requestGateway, t.loadFailedHint, t.loadFailedToast])
+  }, [onCount, t.loadFailedHint, t.loadFailedToast])
 
   useEffect(() => {
     mountedRef.current = true

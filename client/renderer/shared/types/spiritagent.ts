@@ -21,9 +21,9 @@ export interface SessionInfo {
   started_at: number
   title: null | string
   tool_call_count: number
-  /** 系统预设 id（5 套之一）；NULL = 用户普通对话，chat 时按 resolve_preset 降级到 companion。 */
+  /** 固定记忆域与展示预设，不由 kind 推断。 */
   system_preset_id?: null | string
-  /** 与 system_preset_id 对应的 icon_key；NULL 时降级为 companion.icon_key，供侧边栏图标直接渲染。 */
+  /** 对应预设的侧边栏图标。 */
   system_preset_icon_key?: null | string
 }
 

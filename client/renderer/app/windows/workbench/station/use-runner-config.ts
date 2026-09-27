@@ -38,38 +38,39 @@ interface UseRunnerConfigResult {
   config: Config | null
   setConfig: React.Dispatch<React.SetStateAction<Config | null>>
   isLoading: boolean
-  write: (content: string) => Promise<SaveResult>
+  write: (config: Config) => Promise<SaveResult>
 }
 
 export function useRunnerConfig(errorKey: string): UseRunnerConfigResult {
   const [config, setConfig] = useState<Config | null>(null)
 
-  const loader = useAsyncLoader<{ ok: boolean; error?: string; content?: string }>(
-    () => window.spiritagent.runnerConfig.read(),
-    errorKey
-  )
+  const loader = useAsyncLoader(async () => {
+    const result = await window.spiritagent.runnerConfig.read()
+
+    if (!result.ok) {
+      throw new Error(result.error)
+    }
+
+    return result.config
+  })
 
   useEffect(() => {
     if (loader.error) {
       notifyError(loader.error, errorKey)
     }
+  }, [loader.error, errorKey])
 
-    if (loader.data?.ok && typeof loader.data.content === 'string') {
-      try {
-        setConfig(JSON.parse(loader.data.content))
-      } catch (err) {
-        notifyError(err, errorKey)
-      }
+  useEffect(() => {
+    if (loader.data) {
+      setConfig(loader.data)
     }
-  }, [loader.data, loader.error, errorKey])
-
-  const isLoading = loader.isLoading
+  }, [loader.data])
 
   const toWriteResult = (res: Awaited<ReturnType<typeof window.spiritagent.runnerConfig.write>>): SaveResult =>
     res.ok ? { ok: true } : { ok: false, error: res.error || 'unknown error' }
 
-  const write = async (content: string): Promise<SaveResult> =>
-    toWriteResult(await window.spiritagent.runnerConfig.write(content))
+  const write = async (next: Config): Promise<SaveResult> =>
+    toWriteResult(await window.spiritagent.runnerConfig.write(next))
 
-  return { config, setConfig, isLoading, write }
+  return { config, setConfig, isLoading: loader.isLoading, write }
 }

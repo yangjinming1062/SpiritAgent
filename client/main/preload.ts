@@ -79,7 +79,6 @@ contextBridge.exposeInMainWorld('spiritagent', {
       ipcRenderer.invoke(IPC.invoke.sessionHistoryRemove, sessionId, authSessionId)
   },
   getBootProgress: () => ipcRenderer.invoke(IPC.invoke.bootProgressGet),
-  getConnection: () => ipcRenderer.invoke(IPC.invoke.connection),
   getGatewayWsUrl: () => ipcRenderer.invoke(IPC.invoke.gatewayWsUrl),
   gatewayRequest: (payload: { method: string; params?: Record<string, unknown> }) =>
     ipcRenderer.invoke(IPC.invoke.gatewayRequest, payload),
@@ -122,7 +121,7 @@ contextBridge.exposeInMainWorld('spiritagent', {
   runnerConfig: {
     patch: (patch: RunnerConfigPatch) => ipcRenderer.invoke(IPC.invoke.runnerConfigPatch, patch),
     read: () => ipcRenderer.invoke(IPC.invoke.runnerConfigRead),
-    write: (configString: string) => ipcRenderer.invoke(IPC.invoke.runnerConfigWrite, configString)
+    write: (config: Record<string, unknown>) => ipcRenderer.invoke(IPC.invoke.runnerConfigWrite, config)
   },
   runnerGetState: () => ipcRenderer.invoke(IPC.invoke.runnerGetState),
   runnerGetTools: () => ipcRenderer.invoke(IPC.invoke.runnerGetTools),

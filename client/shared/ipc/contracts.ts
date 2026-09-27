@@ -54,19 +54,6 @@ export interface DesktopRunnerState {
   phase: DesktopRunnerPhase
 }
 
-/** 主进程内部连接缓存：含会话 JWT，仅在 main 使用，禁止直发渲染进程。 */
-export interface SpiritAgentConnection {
-  baseUrl: string
-  isFullscreen: boolean
-  nativeOverlayWidth: number
-  token: null | string
-  windowButtonPosition: null | { x: number; y: number }
-  wsUrl: string
-}
-
-/** 渲染进程可见的连接投影——只暴露网关地址；刻意不含 token（ARCHITECTURE「信任边界与安全」）。 */
-export type SpiritAgentConnectionPublic = Pick<SpiritAgentConnection, 'wsUrl'>
-
 export type SpiritAgentUiPalette = 'night' | 'day'
 export type SpiritAgentUiEffect = 'solid' | 'clear'
 export type SpiritAgentUiTheme = 'night' | 'day' | 'night-clear' | 'day-clear'
@@ -314,7 +301,6 @@ export interface DesktopGatewayRpcResponse {
 // 1. 请求-响应（渲染进程 -> 主进程，通过 ipcRenderer.invoke / ipcMain.handle）
 export interface IpcInvokeContract {
   // 连接与启动
-  'spiritagent:connection': () => SpiritAgentConnectionPublic | Promise<SpiritAgentConnectionPublic>
   'spiritagent:gateway:ws-url': () => Promise<string> | string
   'spiritagent:gateway:request': (payload: {
     method: string
@@ -396,10 +382,11 @@ export interface IpcInvokeContract {
   'spiritagent:runner:get-state': () => DesktopRunnerState | Promise<DesktopRunnerState>
   'spiritagent:runner:get-tools': () => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>
   'spiritagent:runner-config:read': () =>
-    | { content?: string; error?: string; ok: boolean }
-    | Promise<{ content?: string; error?: string; ok: boolean }>
+    | { config: Record<string, unknown>; ok: true }
+    | { error: string; ok: false }
+    | Promise<{ config: Record<string, unknown>; ok: true } | { error: string; ok: false }>
   'spiritagent:runner-config:write': (
-    configString: string
+    config: Record<string, unknown>
   ) => { error?: string; ok: boolean } | Promise<{ error?: string; ok: boolean }>
   'spiritagent:runner-config:patch': (
     patch: RunnerConfigPatch
@@ -516,7 +503,6 @@ export const IPC = {
     authRefresh: 'spiritagent:auth:refresh',
     authLogout: 'spiritagent:auth:logout',
     authGetSession: 'spiritagent:auth:get-session',
-    connection: 'spiritagent:connection',
     gatewayWsUrl: 'spiritagent:gateway:ws-url',
     gatewayRequest: 'spiritagent:gateway:request',
     gatewayGetState: 'spiritagent:gateway:get-state',

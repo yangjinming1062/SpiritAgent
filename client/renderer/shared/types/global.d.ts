@@ -1,13 +1,4 @@
-// `window.spiritagent` 渲染层 API 面的 ambient 声明。
-//
-// 唯一的"载荷类型"与"通道名"真理源在 `@ipc/contracts` (`client/shared/ipc/contracts.ts`)。
-// 本文件只描述 *形状*:通道名 → 方法签名。所有参数与返回类型通过
-// `IpcInvokeContract[K]` / `IpcEventContract[K]` 查表引用契约,
-// 任何契约字段变更会在两侧 `tsc --noEmit` 同时报错。
-//
-// `api` 是例外 — 保留 `<T = unknown>` 泛型,因为渲染层有 11+ 处
-// `await window.spiritagent.api<MyResponse>(req)` 调用;契约
-// `IpcInvokeContract['spiritagent:api']` 是非泛型的,直接查表会让泛型调用点全报错。
+// 渲染桥签名由 @ipc/contracts 派生；api 保留调用方指定响应类型的泛型。
 
 import type {
   DesktopGatewayEvent,
@@ -19,14 +10,9 @@ import type {
   SpiritAgentApiRequest
 } from '@ipc/contracts'
 
-// 把契约里的 `(payload) => R | Promise<R>` 收窄为 `(...args) => Promise<R>`,
-// 渲染层所有调用点假设返回纯 `Promise<R>`(否则 `getGatewayWsUrl().then(...)`
-// 会因联合类型无法识别 `.then` 报错;且 `() => R | Promise<R>` 协变于
-// `() => Promise<R>`,反向赋值给期望 `() => Promise<R>` 的类型会失败)。
+// ipcRenderer.invoke 始终异步，主进程 handler 可同步返回。
 type AsyncIpc<T extends (...args: never[]) => unknown> = (...args: Parameters<T>) => Promise<Awaited<ReturnType<T>>>
 
-// 事件订阅方法的形态辅助:`IpcEventContract[K]` 是 `[payload: T]` 元组(有载荷)
-// 或 `[]`(空)。根据长度分支:
 type EventSubscription<K extends keyof IpcEventContract> = IpcEventContract[K] extends [infer P]
   ? (callback: (payload: P) => void) => () => void
   : (callback: () => void) => () => void
@@ -36,7 +22,6 @@ export {}
 declare global {
   interface Window {
     spiritagent: {
-      getConnection: AsyncIpc<IpcInvokeContract['spiritagent:connection']>
       getGatewayWsUrl: AsyncIpc<IpcInvokeContract['spiritagent:gateway:ws-url']>
       gatewayRequest: <T = unknown>(payload: { method: string; params?: Record<string, unknown> }) => Promise<T>
       gatewayGetState: AsyncIpc<IpcInvokeContract['spiritagent:gateway:get-state']>

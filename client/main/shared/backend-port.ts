@@ -3,6 +3,11 @@
  * 只描述结构契约，不 import backend 实现，保持 shared 为叶子、runner 与 backend 互不直连。
  */
 
+export interface BackendConnection {
+  baseUrl: string
+  token: null | string
+}
+
 export interface BackendRequestPortOptions {
   body?: unknown
   headers?: Record<string, string>
@@ -49,16 +54,4 @@ export interface BackendSessionPort extends BackendSessionLike {
   removeAccount: (accountId: string) => Promise<void>
   restoreSession: () => Promise<null | SessionSnapshotPort>
   switchAccount: (accountId: string, payload?: { clientContext?: unknown }) => Promise<null | SessionSnapshotPort>
-}
-
-export interface BackendHttpPort {
-  fetchJson: (
-    url: string,
-    token?: string,
-    options?: { body?: unknown; method?: string; timeoutMs?: number }
-  ) => Promise<unknown>
-  mintWsTicket?: (baseUrl: string, token: null | string) => Promise<null | string>
-  resolveRemoteBackend?: () => Promise<null | { baseUrl: string }>
-  resolveSpiritAgentVersion: () => string
-  waitForSpiritAgent?: (baseUrl: string, token?: string) => Promise<void>
 }

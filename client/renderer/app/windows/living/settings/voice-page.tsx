@@ -14,7 +14,7 @@ import {
   VoiceProviderBadge,
   voiceSelectionId
 } from '@/modules/speech'
-import { useGatewayRequest } from '@/shared'
+import { requestGateway } from '@/shared'
 import { Check } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import {
@@ -38,7 +38,6 @@ export function VoicePage(): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.voice
 
-  const { requestGateway } = useGatewayRequest()
   const persona = useStore($persona)
   const currentVoice = useStore($companionVoiceId)
   const locale = useStore($locale)
@@ -68,7 +67,7 @@ export function VoicePage(): React.ReactElement {
         setCatalog(r.catalog)
       }
     })
-  }, [locale, requestGateway])
+  }, [locale])
 
   const runDesign = async (): Promise<void> => {
     const prompt = designPrompt.trim()

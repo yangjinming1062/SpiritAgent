@@ -7,7 +7,7 @@ import {
   type PickedImage,
   pushPortraitEntry
 } from '@/modules/character'
-import { useGatewayRequest } from '@/shared'
+import { requestGateway } from '@/shared'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
@@ -43,7 +43,6 @@ interface UseRegeneratePortraitResult {
 
 // 首次生成、重生与微调共用单次提交、预览落地和描述清理；不重发结果未知的付费请求。
 export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}): UseRegeneratePortraitResult {
-  const { requestGateway } = useGatewayRequest()
   const [busy, setBusy] = useState(false)
   const mountedRef = useRef(false)
   const runningRef = useRef(false)
@@ -133,11 +132,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
               : { feedback }
           })
         } else {
-          const queued = await requestGateway<PortraitResponse>(
-            'avatar.regenerate',
-            { feedback, mode },
-            { retryOnReconnect: false }
-          )
+          const queued = await requestGateway<PortraitResponse>('avatar.regenerate', { feedback, mode })
 
           if (!isCurrent()) {
             return null
@@ -205,7 +200,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
         }
       }
     },
-    [refImage, presentationRef, optionFeedback, onRegenerated, onError, playAudioOnSuccess, requestGateway]
+    [refImage, presentationRef, optionFeedback, onRegenerated, onError, playAudioOnSuccess]
   )
 
   const generate = useCallback(

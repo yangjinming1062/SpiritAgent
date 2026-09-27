@@ -64,7 +64,6 @@ export {
   $archivedLoading,
   $archivedSessions,
   $archiveOpen,
-  $currentSessionKind,
   $currentSessionTitle,
   $searchLoading,
   $searchResults,

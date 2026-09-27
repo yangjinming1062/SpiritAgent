@@ -6,7 +6,7 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream } from 'node:stream/web'
 
-import { dataUrlFromBuffer, mimeTypeForPath } from '../shared/mime'
+import { mimeTypeForPath } from '../shared/mime'
 import { HttpError } from '../shared/utils'
 
 const DEFAULT_TIMEOUT_MS = 15_000
@@ -22,9 +22,6 @@ interface AssetMeta {
 
 export interface CachedAsset {
   buffer: Buffer
-  dataUrl: string
-  filePath: string
-  fromCache: boolean
   mime: string
 }
 
@@ -51,7 +48,13 @@ export interface AssetDiskCache {
 
 function normalizeAssetKey(rawUrl: string, contentHash?: string): string {
   if (contentHash && contentHash.trim()) {
-    return contentHash.trim()
+    const hash = contentHash.trim().toLowerCase()
+
+    if (!/^[a-f0-9]{64}$/.test(hash)) {
+      throw new Error('asset contentHash must be a SHA-256 digest')
+    }
+
+    return hash
   }
 
   try {
@@ -91,7 +94,8 @@ function resolveBackendAssetUrl(rawUrl: string, baseUrl?: null | string): string
 
 export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetDiskCacheOptions): AssetDiskCache {
   const cacheDir = path.resolve(spiritagentHome, 'cache', 'assets')
-  const inFlightDownloads = new Map<string, Promise<CachedAsset>>()
+  const inFlightDownloads = new Map<string, { controller: AbortController; promise: Promise<CachedAsset> }>()
+  let clearing: Promise<void> | null = null
   let epoch = 0
 
   async function ensureDir(): Promise<void> {
@@ -131,12 +135,14 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
     try {
       await fsp.writeFile(tmp, JSON.stringify(meta), 'utf8')
       await fsp.rename(tmp, getMetaPath(key))
-    } catch {
+    } catch (error) {
       await fsp.unlink(tmp).catch(() => {})
+
+      throw error
     }
   }
 
-  async function get(rawUrl: string, contentHash?: string): Promise<CachedAsset | null> {
+  async function readCached(rawUrl: string, contentHash?: string): Promise<CachedAsset | null> {
     const key = normalizeAssetKey(rawUrl, contentHash)
     const binPath = getBinPath(key)
 
@@ -151,9 +157,6 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
 
       return {
         buffer,
-        dataUrl: dataUrlFromBuffer(buffer, mime),
-        filePath: binPath,
-        fromCache: true,
         mime
       }
     } catch {
@@ -161,15 +164,40 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
     }
   }
 
-  async function clear(): Promise<void> {
-    epoch += 1
-    inFlightDownloads.clear()
-    await fsp.rm(cacheDir, { recursive: true, force: true })
-    await ensureDir()
+  async function get(rawUrl: string, contentHash?: string): Promise<CachedAsset | null> {
+    const readEpoch = epoch
+    await clearing
+    const asset = await readCached(rawUrl, contentHash)
+
+    return readEpoch === epoch ? asset : null
   }
 
-  async function download(opts: EnsureAssetOptions): Promise<CachedAsset> {
-    const downloadEpoch = epoch
+  function clear(): Promise<void> {
+    if (clearing) {
+      return clearing
+    }
+
+    epoch += 1
+    const downloads = [...inFlightDownloads.values()]
+    inFlightDownloads.clear()
+
+    for (const download of downloads) {
+      download.controller.abort(new Error('asset cache cleared'))
+    }
+
+    // 旧写入完成后再删目录；新下载等待清理，避免旧任务删除或恢复新账户的文件。
+    clearing = (async () => {
+      await Promise.allSettled(downloads.map(download => download.promise))
+      await fsp.rm(cacheDir, { recursive: true, force: true })
+      await ensureDir()
+    })().finally(() => {
+      clearing = null
+    })
+
+    return clearing
+  }
+
+  async function download(opts: EnsureAssetOptions, cancellation: AbortSignal): Promise<CachedAsset> {
     await ensureDir()
 
     const { baseUrl, contentHash, fetchFn = defaultFetchFn || globalThis.fetch, rawUrl, timeoutMs, token } = opts
@@ -181,11 +209,8 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
     const key = normalizeAssetKey(rawUrl, contentHash)
     const binPath = getBinPath(key)
     const partialPath = getPartialPath(key)
-    const localCached = await get(rawUrl, contentHash)
-
-    if (downloadEpoch !== epoch) {
-      throw new Error('asset cache cleared')
-    }
+    const localCached = await readCached(rawUrl, contentHash)
+    cancellation.throwIfAborted()
 
     if (localCached && (contentHash || opts.preferCache)) {
       return localCached
@@ -193,6 +218,7 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
 
     const targetUrl = resolveBackendAssetUrl(rawUrl, baseUrl)
     const effectiveTimeout = timeoutMs ?? DEFAULT_TIMEOUT_MS
+    const signal = AbortSignal.any([cancellation, AbortSignal.timeout(effectiveTimeout)])
 
     async function executeFetch(retryCount = 0): Promise<Response> {
       const headers: Record<string, string> = {}
@@ -213,27 +239,20 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
         }
       }
 
-      const controller = new AbortController()
-
-      const timer = setTimeout(() => {
-        controller.abort(new Error(`Asset fetch timed out after ${effectiveTimeout}ms`))
-      }, effectiveTimeout)
-
       try {
         return await fetchFn(targetUrl, {
           headers,
-          signal: controller.signal
+          signal
         })
       } catch (fetchErr) {
-        if (retryCount < 1) {
+        if (retryCount < 1 && !signal.aborted) {
           await new Promise(resolve => setTimeout(resolve, 150))
+          signal.throwIfAborted()
 
           return executeFetch(retryCount + 1)
         }
 
         throw fetchErr
-      } finally {
-        clearTimeout(timer)
       }
     }
 
@@ -242,6 +261,8 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
     try {
       res = await executeFetch()
     } catch (networkErr) {
+      cancellation.throwIfAborted()
+
       if (localCached) {
         console.warn(
           `[asset-disk-cache] Network fetch failed for ${rawUrl}; serving local stale cache fallback:`,
@@ -254,9 +275,7 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
       throw networkErr
     }
 
-    if (downloadEpoch !== epoch) {
-      throw new Error('asset cache cleared')
-    }
+    cancellation.throwIfAborted()
 
     if (res.status === 304 && localCached) {
       return localCached
@@ -292,9 +311,10 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
         readableNodeStream = Readable.from(Buffer.from(arrayBuf))
       }
 
-      await pipeline(readableNodeStream, writeStream)
+      await pipeline(readableNodeStream, writeStream, { signal })
     } catch (streamErr) {
       await fsp.unlink(partialPath).catch(() => {})
+      cancellation.throwIfAborted()
 
       if (localCached) {
         console.warn(`[asset-disk-cache] Stream error for ${rawUrl}; serving local stale cache fallback:`, streamErr)
@@ -317,10 +337,7 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
       throw new Error(`empty asset body: ${rawUrl}`)
     }
 
-    if (downloadEpoch !== epoch) {
-      await fsp.unlink(partialPath).catch(() => {})
-      throw new Error('asset cache cleared')
-    }
+    cancellation.throwIfAborted()
 
     await fsp.rename(partialPath, binPath)
 
@@ -333,31 +350,40 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
     })
 
     const buffer = await fsp.readFile(binPath)
+    cancellation.throwIfAborted()
 
     return {
       buffer,
-      dataUrl: dataUrlFromBuffer(buffer, mime),
-      filePath: binPath,
-      fromCache: false,
       mime
     }
   }
 
   async function ensureCached(opts: EnsureAssetOptions): Promise<CachedAsset> {
+    const requestEpoch = epoch
+    await clearing
+
+    if (requestEpoch !== epoch) {
+      throw new Error('asset cache cleared')
+    }
+
     const raw = String(opts?.rawUrl || '')
     const key = normalizeAssetKey(raw, opts?.contentHash)
 
-    if (inFlightDownloads.has(key)) {
-      return await inFlightDownloads.get(key)!
+    const pending = inFlightDownloads.get(key)
+
+    if (pending) {
+      return pending.promise
     }
 
-    const promise = download(opts).finally(() => {
-      if (inFlightDownloads.get(key) === promise) {
+    const controller = new AbortController()
+
+    const promise = download(opts, controller.signal).finally(() => {
+      if (inFlightDownloads.get(key)?.promise === promise) {
         inFlightDownloads.delete(key)
       }
     })
 
-    inFlightDownloads.set(key, promise)
+    inFlightDownloads.set(key, { controller, promise })
 
     return await promise
   }

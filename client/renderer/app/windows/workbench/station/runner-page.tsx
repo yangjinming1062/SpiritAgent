@@ -82,7 +82,7 @@ export function RunnerPage(): React.JSX.Element {
     setIsSaving(true)
 
     try {
-      const result = await write(JSON.stringify(config, null, 2))
+      const result = await write(config)
 
       if (!result.ok) {
         throw new Error(result.error)
@@ -101,7 +101,6 @@ export function RunnerPage(): React.JSX.Element {
 
   const updateField = useCallback(
     (path: readonly string[], value: unknown) => {
-      // 调用点已被 `if (!config)` 早返守卫过，这里 config 一定非空。
       setConfig(prev => (prev ? setIn(prev, path, value) : prev))
       setIsDirty(true)
     },
@@ -110,7 +109,6 @@ export function RunnerPage(): React.JSX.Element {
 
   const envType = ((getIn(config, ['terminal', 'env_type']) as string) || 'local').toLowerCase()
 
-  // SSH 连接参数只在环境类型选了 SSH 时出现，其余分组行是稳定的模块级结构
   const rowGroups = useMemo<readonly { heading: string; rows: readonly Row[] }[]>(() => {
     const groups: { heading: string; rows: readonly Row[] }[] = [
       {

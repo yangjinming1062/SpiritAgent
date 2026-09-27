@@ -41,11 +41,7 @@ const SESSION_SORT_KEY = 'da.companion.sessionSort'
 export const TITLE_MAX_CHARS = 80
 
 export function isCompanionSession(session: null | SessionInfo | undefined): boolean {
-  if (!session) {
-    return false
-  }
-
-  return session.system_preset_id === 'companion' || session.kind === 'companion'
+  return session?.system_preset_id === 'companion'
 }
 
 export const $sessions = atom<SessionInfo[]>([])
@@ -89,11 +85,7 @@ function findCurrentSession(): SessionInfo | undefined {
     return undefined
   }
 
-  return (
-    $sessions.get().find(s => s.id === id) ??
-    $archivedSessions.get().find(s => s.id === id) ??
-    $searchResults.get().find(s => s.id === id)
-  )
+  return findSessionInfo(id)
 }
 
 export const $currentSessionTitle = computed([$chatSessionId, $sessions, $archivedSessions, $searchResults], () => {
@@ -101,11 +93,6 @@ export const $currentSessionTitle = computed([$chatSessionId, $sessions, $archiv
 
   return (info?.title && info.title.trim()) || getStrings().chat.defaultSessionTitle
 })
-
-export const $currentSessionKind = computed(
-  [$chatSessionId, $sessions, $archivedSessions, $searchResults],
-  () => findCurrentSession()?.kind ?? ''
-)
 
 export async function ensureChatSession(): Promise<string> {
   const existing = $chatSessionId.get()

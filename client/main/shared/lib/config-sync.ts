@@ -1,6 +1,6 @@
 import { type DesktopPrefsHydrated, normalizeUiTheme, type SpiritAgentUiTheme } from '@ipc/contracts'
 
-import type { BackendClientPort } from '../backend-port'
+import type { BackendClientPort, BackendConnection } from '../backend-port'
 import { errorMessage } from '../utils'
 
 import * as store from './runner-config-store'
@@ -39,14 +39,9 @@ const FLUSH_DEBOUNCE_MS = 1500
 const RETRY_BACKOFF_INITIAL_MS = 5000
 const RETRY_BACKOFF_MAX_MS = 60000
 
-interface ConfigSyncConnection {
-  baseUrl: string
-  token: null | string
-}
-
 export interface ConfigSyncDeps {
   createBackendClient: (options: { baseUrl: string }) => BackendClientPort
-  ensureBackend: () => Promise<ConfigSyncConnection>
+  ensureBackend: () => Promise<BackendConnection>
   /** 网络/5xx 等可重试错误；由 entry 注入 BackendRequestError 判定，shared 不依赖 backend。 */
   isRetryableError: (error: unknown) => boolean
   log: (chunk: string) => void

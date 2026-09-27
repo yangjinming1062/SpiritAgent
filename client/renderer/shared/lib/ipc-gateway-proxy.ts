@@ -15,12 +15,4 @@ export class IpcGatewayProxy implements SpiritAgentGatewayLike {
 
     return await window.spiritagent.gatewayRequest<T>({ method, params })
   }
-
-  close(): void {
-    // 代理不主动拆除底层的长连接 WebSocket
-  }
-
-  resetSeq(_seq: number): void {
-    // 序列号由 Host 端统一维持与去重
-  }
 }

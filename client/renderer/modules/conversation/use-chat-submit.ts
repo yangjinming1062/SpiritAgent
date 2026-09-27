@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useCallback, useRef, useState } from 'react'
 
-import { useGatewayRequest } from '@/shared'
+import { requestGateway } from '@/shared'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { parseSlashInput } from '@/shared/lib/slash-commands'
@@ -60,7 +60,6 @@ export function useChatSubmit({
   onClearExternalPaths,
   onPreCheckFail
 }: UseChatSubmitOptions): ChatSubmit {
-  const { requestGateway } = useGatewayRequest()
   const [text, setText] = useState('')
   const [pending, setPending] = useState<PendingAttachment | null>(null)
   const [sending, setSending] = useState(false)
@@ -301,7 +300,7 @@ export function useChatSubmit({
       sendingRef.current = false
       setSending(false)
     }
-  }, [externalPathsRef, gatewayState, isReadOnlySession, onClearExternalPaths, onPreCheckFail, requestGateway])
+  }, [externalPathsRef, gatewayState, isReadOnlySession, onClearExternalPaths, onPreCheckFail])
 
   const handleStop = useCallback(async () => {
     conversationVoiceSink().cancel()
@@ -332,7 +331,7 @@ export function useChatSubmit({
 
     presentationPorts().setSpriteState('idle', { force: true })
     submitPendingBatch()
-  }, [requestGateway])
+  }, [])
 
   return {
     cancelEdit: () => {

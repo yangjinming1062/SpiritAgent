@@ -26,7 +26,7 @@ import {
 } from '@/modules/character'
 import { MediaViewerOverlay } from '@/modules/media'
 import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
-import { NotificationStack, useGatewayRequest } from '@/shared'
+import { NotificationStack, requestGateway } from '@/shared'
 import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared/lib/interactive-regions'
 import { $auth } from '@/shared/store/auth'
@@ -60,7 +60,6 @@ export function SpriteWindow(): React.JSX.Element {
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [activationOpen, setActivationOpen] = useState(false)
   const hasHydratedRef = useRef(false)
-  const { requestGateway } = useGatewayRequest()
 
   const validityCheckedRef = useRef(false)
 
@@ -171,7 +170,7 @@ export function SpriteWindow(): React.JSX.Element {
     return () => {
       cancelled = true
     }
-  }, [accountId, auth.kind, requestGateway])
+  }, [accountId, auth.kind])
 
   const authed = auth.kind === 'authenticated'
   const showOnboarding = authed && lifecycle === 'onboarding' && onboardingOpen
@@ -240,7 +239,7 @@ export function SpriteWindow(): React.JSX.Element {
         }
       })
     })
-  }, [lifecycle, gatewayState, requestGateway])
+  }, [lifecycle, gatewayState])
 
   // 视频就绪挂视频层，否则落程序化蛋兜底（DESIGN「呈现与降级」「永不空白」）。
   const presentation = React.useMemo(

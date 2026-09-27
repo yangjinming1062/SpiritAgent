@@ -1,10 +1,10 @@
-import type { SpiritAgentConnection } from '@ipc/contracts'
+import type { BackendConnection } from '../shared/backend-port'
 
 import type { BackendHttp } from './http'
 
 interface EnsureBackendDeps {
   appName: string
-  backendHttp: BackendHttp
+  backendHttp: Pick<BackendHttp, 'resolveRemoteBackend' | 'waitForSpiritAgent'>
   bootProgress: {
     advance: (phase: string, message: string, progress: number) => void
     update: (payload: {
@@ -16,148 +16,88 @@ interface EnsureBackendDeps {
     }) => void
   }
   getAuthToken: () => string | null
-  getCurrentBaseUrl?: () => string | null
-  getWindowState: () => {
-    isFullscreen: boolean
-    nativeOverlayWidth: number
-    windowButtonPosition: null | { x: number; y: number }
-  }
+  getCurrentBaseUrl: () => string | null
 }
 
-function sameWindowButtonPosition(
-  a: null | undefined | { x: number; y: number },
-  b: null | undefined | { x: number; y: number }
-): boolean {
-  return !!a && !!b && a.x === b.x && a.y === b.y
-}
-
-/**
- * 后端连接缓存：token / 窗口态变化时失效重建；并发共享 in-flight Promise。
- * 连接策略与窗口装配分离，入口只做装配。
- */
 export function createEnsureBackend(deps: EnsureBackendDeps): {
-  ensureBackend: () => Promise<SpiritAgentConnection>
+  ensureBackend: () => Promise<BackendConnection>
   resetBackendCache: () => void
-  setCachedWsUrl: (wsUrl: string) => void
 } {
-  let cachedBackend: SpiritAgentConnection | null = null
-  let pendingBackend: Promise<SpiritAgentConnection> | null = null
-  // reset 时递增：在途 resolve 完成后若代数已变则不写回缓存。
+  let cachedBaseUrl: string | null = null
+  let pendingBackend: Promise<string> | null = null
+  let requestedBaseUrl: string | null | undefined
   let generation = 0
 
   function resetBackendCache(): void {
     generation++
-    cachedBackend = null
+    cachedBaseUrl = null
     pendingBackend = null
   }
 
-  function setCachedWsUrl(wsUrl: string): void {
-    if (cachedBackend) {
-      cachedBackend = { ...cachedBackend, wsUrl }
+  function assertCurrent(startGeneration: number): void {
+    if (startGeneration !== generation || requestedBaseUrl !== deps.getCurrentBaseUrl()) {
+      throw new Error('Backend connection was reset during resolve.')
     }
   }
 
-  async function ensureBackend(): Promise<SpiritAgentConnection> {
-    if (cachedBackend) {
-      const token = deps.getAuthToken()
-      const tokenChanged = token !== cachedBackend.token
-      const windowState = deps.getWindowState()
+  async function resolveBackend(startGeneration: number): Promise<string> {
+    const token = deps.getAuthToken()
+    const currentBaseUrl = deps.getCurrentBaseUrl()
+    deps.bootProgress.advance('backend.resolve', `Resolving ${deps.appName} backend`, 8)
+    const baseUrl = currentBaseUrl ?? (await deps.backendHttp.resolveRemoteBackend())?.baseUrl
+    assertCurrent(startGeneration)
 
-      if (
-        !tokenChanged &&
-        cachedBackend.isFullscreen === windowState.isFullscreen &&
-        cachedBackend.nativeOverlayWidth === windowState.nativeOverlayWidth &&
-        sameWindowButtonPosition(windowState.windowButtonPosition, cachedBackend.windowButtonPosition)
-      ) {
-        return cachedBackend
-      }
+    if (!baseUrl) {
+      throw new Error(`No remote ${deps.appName} backend configured.`)
     }
 
-    // 并发调用共享一条 in-flight Promise,避免重复跑 boot phase
-    if (pendingBackend) {
-      return pendingBackend
+    deps.bootProgress.advance('backend.remote', `Connecting to remote ${deps.appName} backend at ${baseUrl}`, 24)
+    await deps.backendHttp.waitForSpiritAgent(baseUrl, token || undefined)
+    assertCurrent(startGeneration)
+
+    deps.bootProgress.update({
+      error: null,
+      message: `Remote ${deps.appName} backend is ready`,
+      phase: 'backend.ready',
+      progress: 94,
+      running: true
+    })
+    cachedBaseUrl = baseUrl
+
+    return baseUrl
+  }
+
+  async function ensureBackend(): Promise<BackendConnection> {
+    const currentBaseUrl = deps.getCurrentBaseUrl()
+
+    if (requestedBaseUrl !== currentBaseUrl) {
+      resetBackendCache()
+      requestedBaseUrl = currentBaseUrl
+    }
+
+    // 凭据按请求读取；后端切换无需等待异步的账户变更广播。
+    if (cachedBaseUrl) {
+      return { baseUrl: cachedBaseUrl, token: deps.getAuthToken() }
     }
 
     const startGeneration = generation
-    // IIFE 的 finally 需要引用自身判断归属，只能用 let 分两步赋值
-    let mine: null | Promise<SpiritAgentConnection> = null
 
-    mine = (async () => {
-      try {
-        if (cachedBackend) {
-          const liveWindowState = deps.getWindowState()
-          const wsBase = cachedBackend.baseUrl.replace(/^http/, 'ws')
-          const token = deps.getAuthToken()
-          const wsTicket = await deps.backendHttp.mintWsTicket(cachedBackend.baseUrl, token)
-
-          if (startGeneration !== generation) {
-            throw new Error('Backend connection was reset during resolve.')
-          }
-
-          cachedBackend = {
-            ...cachedBackend,
-            ...liveWindowState,
-            token,
-            wsUrl: wsTicket ? `${wsBase}/api/chat/ws?ticket=${wsTicket}` : `${wsBase}/api/chat/ws`
-          }
-
-          return cachedBackend
-        }
-
-        deps.bootProgress.advance('backend.resolve', `Resolving ${deps.appName} backend`, 8)
-        const currentBaseUrl = deps.getCurrentBaseUrl?.()
-        const remote = currentBaseUrl ? { baseUrl: currentBaseUrl } : await deps.backendHttp.resolveRemoteBackend()
-
-        if (!remote) {
-          throw new Error(`No remote ${deps.appName} backend configured.`)
-        }
-
-        const token = deps.getAuthToken()
-        deps.bootProgress.advance(
-          'backend.remote',
-          `Connecting to remote ${deps.appName} backend at ${remote.baseUrl}`,
-          24
-        )
-        await deps.backendHttp.waitForSpiritAgent(remote.baseUrl, token || undefined)
-
-        if (startGeneration !== generation) {
-          throw new Error('Backend connection was reset during resolve.')
-        }
-
-        deps.bootProgress.update({
-          error: null,
-          message: `Remote ${deps.appName} backend is ready`,
-          phase: 'backend.ready',
-          progress: 94,
-          running: true
-        })
-        const wsBase = remote.baseUrl.replace(/^http/, 'ws')
-        const wsTicket = await deps.backendHttp.mintWsTicket(remote.baseUrl, token)
-
-        if (startGeneration !== generation) {
-          throw new Error('Backend connection was reset during resolve.')
-        }
-
-        cachedBackend = {
-          baseUrl: remote.baseUrl,
-          token,
-          wsUrl: wsTicket ? `${wsBase}/api/chat/ws?ticket=${wsTicket}` : `${wsBase}/api/chat/ws`,
-          ...deps.getWindowState()
-        }
-
-        return cachedBackend
-      } finally {
-        // 只清自己这条 pending，避免被 reset 后启动的并发 resolve 被误抹掉。
-        if (mine && pendingBackend === mine) {
+    if (!pendingBackend) {
+      const pending = resolveBackend(startGeneration).finally(() => {
+        // reset 后的新请求不属于本次解析。
+        if (pendingBackend === pending) {
           pendingBackend = null
         }
-      }
-    })()
+      })
 
-    pendingBackend = mine
+      pendingBackend = pending
+    }
 
-    return mine
+    const baseUrl = await pendingBackend
+    assertCurrent(startGeneration)
+
+    return { baseUrl, token: deps.getAuthToken() }
   }
 
-  return { ensureBackend, resetBackendCache, setCachedWsUrl }
+  return { ensureBackend, resetBackendCache }
 }

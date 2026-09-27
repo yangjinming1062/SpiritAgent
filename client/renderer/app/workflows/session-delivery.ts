@@ -1,10 +1,7 @@
-import { $companionSessionId, switchSession } from '@/modules/conversation'
+import { $companionSessionId } from '@/modules/conversation'
 import { requestOpenSurface } from '@/shared/store/surfaces'
 
-// 会话送达工作流：通知 / 主动消息点击后把用户带到正确的会话表面。
-// 陪伴会话进轻语卡片；工作会话切会话并打开工作台聊天视图。
-// 直接 openWhisper(工作会话 id) 会被强制拉回主陪伴会话并丢掉目标内容。
-// 轻语开启器由 app/bootstrap 绑定——工作流不反向导入窗口组件。
+// 陪伴会话交给轻语；工作会话由目标窗口消费 sessionId，来源窗口不切换会话。
 
 type WhisperOpener = (sessionId?: string) => void
 
@@ -25,6 +22,5 @@ export function openSessionSurface(sessionId: string): void {
     return
   }
 
-  void switchSession(sessionId)
   void requestOpenSurface('workbench', { sessionId, view: 'chat' })
 }

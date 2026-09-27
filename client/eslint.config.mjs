@@ -142,7 +142,6 @@ export default [
   // —— main 子域边界：shared 为叶子；backend↛runner；runner↛backend/ipc；ipc↛lifecycle ——
   {
     files: ['main/shared/**/*.{ts,tsx}'],
-    ignores: ['main/shared/backend-port.ts'],
     rules: {
       'no-restricted-imports': [
         'error',
@@ -241,7 +240,7 @@ export default [
                 '@/modules/scene/*',
                 '@/modules/character/rendering/*'
               ],
-              message: '跨模块只能经目标模块的公共 barrel（@/modules/*；character 渲染域为 @/modules/character/rendering/model、/video）；模块内部用相对路径。'
+              message: '跨模块只能经目标模块的公共 barrel（@/modules/*；character 渲染域为 @/modules/character/rendering/video）；模块内部用相对路径。'
             }
           ]
         }
@@ -249,7 +248,7 @@ export default [
     }
   },
   {
-    // app 组合层：character 深路径禁止，但渲染域的两个公共入口（rendering/model、rendering/video）放行。
+    // app 组合层：character 深路径禁止，但渲染域公共入口（rendering/video）放行。
     files: ['renderer/app/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
     rules: {
@@ -268,8 +267,8 @@ export default [
               message: '跨模块只能经目标模块的公共 barrel（@/modules/*）。'
             },
             {
-              regex: '^@/modules/character/(?!rendering/(model|video)$).+',
-              message: 'character 只经公共 barrel（@/modules/character）与渲染域入口（rendering/model、/video）访问。'
+              regex: '^@/modules/character/(?!rendering/video$).+',
+              message: 'character 只经公共 barrel（@/modules/character）与渲染域入口（rendering/video）访问。'
             }
           ]
         }
@@ -363,7 +362,7 @@ export default [
     }
   },
   {
-    // character 渲染域（model/video）：经 character 公共 barrel 访问角色能力，禁入应用层、会话与媒体模块。
+    // character 渲染域：经 character 公共 barrel 访问角色能力，禁入应用层、会话与媒体模块。
     files: ['renderer/modules/character/rendering/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
     rules: {
@@ -433,7 +432,7 @@ export default [
               message: '运行时与工作流不得反向导入窗口组件。'
             },
             {
-              regex: '^@/modules/character/(?!rendering/(model|video)$).+',
+              regex: '^@/modules/character/(?!rendering/video$).+',
               message: 'character 只经公共 barrel 与渲染域入口访问。'
             }
           ]

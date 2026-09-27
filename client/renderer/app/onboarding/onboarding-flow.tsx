@@ -51,7 +51,7 @@ import {
   voiceSelectionId,
   warmAudioContext
 } from '@/modules/speech'
-import { type HistoryGalleryItem, useGatewayRequest } from '@/shared'
+import { type HistoryGalleryItem, requestGateway } from '@/shared'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { authedApi } from '@/shared/lib/authed-api'
@@ -402,7 +402,6 @@ function SpinnerWithText({ text, size = 'h-5 w-5' }: { text: string; size?: stri
 export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.Element | null {
   const gatewayState = useStore($gatewayState)
   const voicePreparing = useStore($voicePreparing)
-  const { requestGateway } = useGatewayRequest()
   const [phase, setPhase] = useState<Phase>('q-character')
   // 身份锁定后禁止返回形象确认步骤。
   const [imageSealed, setImageSealed] = useState(false)
@@ -564,20 +563,17 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     return () => stopSpeaking()
   }, [phase, qIndex, currentList, answersRef])
 
-  const submitOnboardingAnswer = useCallback(
-    (field: QKey, value: string | null) => {
-      const submission = onboardingSubmissionsRef.current
-        .then(async () => {
-          await requestGateway('onboarding.submit', { field, value })
-        })
-        .catch(() => undefined)
+  const submitOnboardingAnswer = useCallback((field: QKey, value: string | null) => {
+    const submission = onboardingSubmissionsRef.current
+      .then(async () => {
+        await requestGateway('onboarding.submit', { field, value })
+      })
+      .catch(() => undefined)
 
-      onboardingSubmissionsRef.current = submission
+    onboardingSubmissionsRef.current = submission
 
-      return submission
-    },
-    [requestGateway]
-  )
+    return submission
+  }, [])
 
   useEffect(() => {
     const isQuestionPhase = phase === 'q-character' || phase === 'q-user' || phase === 'voice'
@@ -664,7 +660,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
       void speakScripted(sampleLine(answers.name || ''), voiceSelectionId(selected), 'onboarding.voice.preview')
     })()
-  }, [phase, voiceStage, requestGateway, answers.voice, answers.name])
+  }, [phase, voiceStage, answers.voice, answers.name])
 
   const onSend = (): void => {
     const q = currentList[qIndex]
@@ -905,7 +901,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         setVoiceCatalog(r.catalog.voices)
       }
     })()
-  }, [gatewayState, requestGateway, onCompleted])
+  }, [gatewayState, onCompleted])
 
   useEffect(() => {
     if (gatewayState !== 'open' || voiceCatalog.length > 0) {
@@ -917,7 +913,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         setVoiceCatalog(r.catalog.voices)
       }
     })
-  }, [gatewayState, requestGateway, voiceCatalog.length])
+  }, [gatewayState, voiceCatalog.length])
 
   // 第一步——头像重生：新建一行 avatar，新 id 通过 hook 内 applyPortrait 自动发布到 ``$activeAvatarId``。
   // 微调（edit）编辑上一版头像；重新生成保持种子全量重绘。附参考图时微调不可用（参考图属重新生成意图）。

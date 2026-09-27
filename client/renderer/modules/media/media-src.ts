@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import type { ChatMediaItem } from '@/shared/types/spiritagent'
 
 // 图片 data URL 进程内缓存：同一 URL 的媒体卡与查看器共享，避免重复 IPC 拉取。
@@ -62,6 +62,8 @@ export function useResolvedMediaSrc(item: ChatMediaItem): string | null {
   useEffect(() => {
     let cancelled = false
     let objectUrl: string | null = null
+    const epoch = currentClearEpoch()
+    const isCurrent = (): boolean => !cancelled && epoch === currentClearEpoch()
 
     if (!item.url) {
       return
@@ -75,17 +77,19 @@ export function useResolvedMediaSrc(item: ChatMediaItem): string | null {
           const fetched = direct || cached ? null : await resolveImageSrc(item.url)
           const dataUrl = direct || cached || fetched || null
 
+          if (!isCurrent()) {
+            return
+          }
+
           if (fetched) {
             setImageSrc(item.url, fetched)
           }
 
-          if (!cancelled) {
-            setResolved({ url: item.url, type: item.type, src: dataUrl })
-          }
+          setResolved({ url: item.url, type: item.type, src: dataUrl })
         } else {
           const buf = await window.spiritagent.apiAssetBuffer({ url: item.url, preferCache: true })
 
-          if (buf && !cancelled) {
+          if (buf && isCurrent()) {
             const clean = item.url.split(/[?#]/)[0]
             const ext = clean.slice(clean.lastIndexOf('.')).toLowerCase()
             // 拷贝进全新 ArrayBuffer——IPC 返回的 Uint8Array 类型上可能是 SharedArrayBuffer 视图，不满足 BlobPart。

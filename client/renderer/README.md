@@ -4,12 +4,10 @@
 
 ## 分层与目录
 
-
-
 | 层 | 边界 |
 |---|---|
 | app | 窗口入口只初始化和挂载；runtime / workflows 不反向导入 windows，窗口间不互相导入 |
-| modules | conversation、character、speech、media、memory、scene；不依赖 app 或其他模块，图中例外除外 |
+| modules | 不依赖 app；conversation 可消费 media 展示原语，character 渲染域可消费 speech，其余跨模块协作由 app 装配 |
 | shared | 无业务依赖；其中窗口环境的 IPC 与网关实现不得被主进程导入 |
 | `@ipc` | 跨进程契约来源，渲染侧不重复定义 |
 
@@ -37,7 +35,6 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 各窗口独立水合，任何异步回写须核对用户、会话、回合和清理代次；共享代码不代表共享内存。
 - 账户切换清理旧账户资料、会话与通知并按 `accountId` 重挂载；桌面精灵按目标账户状态自动进入未完成的 onboarding。完整入口开关状态由主进程维护。
 - 鉴权请求仅接受发起会话仍有效的结果。
-
 - `tool.call` 只由宿主执行，按 call_id 去重，不受可见会话过滤；其他会话过程受会话守卫。
 - headless 不显示工作态，非当前会话的可见调用自行以引用计数持有工作态，只释放自身仍拥有的状态。
 - 消息入列与提醒分开：已提交陪伴消息按 ID 合并，提醒受可见性等条件控制；自动化系统通知不套陪伴打扰闸门。
@@ -104,6 +101,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 附件绑定加入时的会话，视频上传完成前不可发送；切换后丢弃旧附件及迟到结果。
 - 编辑与普通草稿分离，取消恢复普通草稿；编辑文本不解析 Slash，成功只消费修订事件。
 - 会话参数显示后端生效值，只接受当前会话最新保存结果；恢复默认删除覆盖。
+- 会话只读状态直接消费历史水合的 `info.kind`；陪伴归属由 `system_preset_id` 判定。
 - 工作台确认目标不是陪伴后才挂载对话面板。
 - 快照、增量与重放按 [Client](../README.md#资产与历史缓存)处理。
 
@@ -150,7 +148,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 控件消费共享 panel 与语义 token，不硬编码主题色。首帧播种遵守 Client 规则，弹层命中随拖动更新。
 
-减透明由 OS、设备、用户偏好和帧预算共同决定，只有用户偏好上云；监视器随表面释放，后台时间不计入性能判断。场景预模糊结果按图、尺寸和主题失效，不再叠 CSS 模糊；降级不得填满圆角外透明区。
+减透明由 OS、设备、用户偏好和帧预算共同决定，只有用户偏好上云；监视器随表面释放，后台时间不计入性能判断。场景预模糊结果按图、尺寸和主题失效，避免叠加 CSS 模糊；降级不得填满圆角外透明区。
 
 ## 验证入口
 
