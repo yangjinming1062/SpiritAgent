@@ -272,6 +272,9 @@ def upgrade() -> None:
         sa.Column("hitmask_fps", sa.Integer(), nullable=True),
         sa.Column("enter_pose", sa.String(length=64), nullable=True),
         sa.Column("exit_pose", sa.String(length=64), nullable=True),
+        # 动作探身定位与内容轮廓，供发布与播放读取。
+        sa.Column("peek_geometry_json", sa.Text(), nullable=True),
+        sa.Column("content_rect_json", sa.Text(), nullable=True),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -475,6 +478,12 @@ def upgrade() -> None:
         sa.Column("activated_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("generation_state_json", sa.Text(), nullable=True),
+        # 场景图片独立重生成：与首次生成任务状态分离。
+        sa.Column("regeneration_status", sa.String(length=24), nullable=True),
+        sa.Column("regeneration_stage", sa.String(length=24), nullable=True),
+        sa.Column("regeneration_error", sa.Text(), nullable=True),
+        sa.Column("regeneration_task_id", sa.String(length=36), nullable=True),
+        sa.Column("regeneration_state_json", sa.Text(), nullable=True),
         sa.Column("secondary_reference_image", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("prompt", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("media_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
@@ -492,6 +501,12 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_companion_scenes_user_id"), "companion_scenes", ["user_id"], unique=False)
     op.create_index(op.f("ix_companion_scenes_status"), "companion_scenes", ["status"], unique=False)
+    op.create_index(
+        op.f("ix_companion_scenes_regeneration_status"),
+        "companion_scenes",
+        ["regeneration_status"],
+        unique=False,
+    )
     op.create_table(
         "scene_generation_attempts",
         sa.Column("user_id", sa.Integer(), nullable=False),
