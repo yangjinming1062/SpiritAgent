@@ -317,7 +317,8 @@ COMPANION_OUTPUT_GUIDANCES: dict[str, str] = {
         "日常交流直接对用户说话，让措辞与节奏承载情绪；台词中不插入描述自己动作、表情、内心活动或声音的旁白。"
         "不加角色名前缀或过程说明。用户要求的故事、译文、引用、代码或说明是交付内容，"
         "应保留其必要的叙述视角、场景和格式；不把创作中的经历当作双方真实经历。"
-        "每个气泡承载一个完整自然的意思，不把一句话切碎；具体响应格式遵循本次交付协议。"
+        "每个气泡承载一个完整自然的意思，不把一句话切碎。"
+        "具体响应格式遵循本次交付协议。"
     ),
     "en": (
         "# Content delivered to the user\n"
@@ -325,8 +326,9 @@ COMPANION_OUTPUT_GUIDANCES: dict[str, str] = {
         "without adding narration of your own actions, expressions, inner thoughts, or vocal performance. "
         "Omit speaker labels and process commentary. Requested stories, translations, quotations, code, and "
         "explanations are deliverables: preserve their necessary perspective, scenery, and formatting. "
-        "Fictional experiences are not shared real-world experiences. Each bubble "
-        "carries one complete natural thought; follow the delivery protocol supplied for this turn."
+        "Fictional experiences are not shared real-world experiences. Each bubble carries one complete "
+        "natural thought; do not fragment a sentence. "
+        "Follow the delivery protocol supplied for this turn."
     ),
 }
 
@@ -335,7 +337,12 @@ COMPANION_REPLY_GUIDANCES: dict[str, str] = {
         "\n# 回复形式与格式\n"
         '最终回复只输出一个 JSON 数组，例如 [{"type":"text","text":"一条消息"}]，'
         "不加外层对象、代码围栏或额外说明。"
-        "数组中的每个对象是一条独立消息，显示为一个气泡；同一条消息的换行和段落放在该对象的 text 中。"
+        "每个对象表示一条单独发送的聊天消息，也就是一个气泡。"
+        "日常聊天中，停顿后会另起一条的回应、补充或追问分别放进不同对象；"
+        '例如先回应再追问应写成 [{"type":"text","text":"回应"},{"type":"text","text":"追问"}]，'
+        "不能放进同一个 text 再用空行分隔。连续说出的多句话仍可放在同一个对象中。"
+        "用户要求的故事、译文、说明、列表或代码如果本来是一条交付消息，其内部换行、空行和段落只用于排版，"
+        "保留在同一个 text 中。"
         "text 放对话或用户要求的交付内容，不放控制标记或发送通知。\n"
         "{delivery}\n"
         "每轮最多 16 个气泡，回应用户时至少一个。"
@@ -346,8 +353,13 @@ COMPANION_REPLY_GUIDANCES: dict[str, str] = {
         "\n# Reply form and format\n"
         'Return only a JSON array, for example [{"type":"text","text":"One message"}], '
         "without an enclosing object, code fences or commentary. "
-        "Each array object is one independent message, displayed as one bubble. Put all line breaks and "
-        "paragraphs belonging to that message in its text field. "
+        "Each object represents one separately sent chat message (one bubble). "
+        "In ordinary chat, put a response, follow-up, or question that you would send after a pause in a separate object. "
+        'For example, a response followed by a separate question is [{"type":"text","text":"Response"},'
+        '{"type":"text","text":"Question"}], never one text field separated by a blank line. '
+        "Several sentences spoken continuously may stay in one object. When a requested story, translation, explanation, "
+        "list, or code block is one deliverable message, keep its formatting line breaks, blank lines, and paragraphs "
+        "inside that object's text field. "
         "Text contains dialogue or the requested deliverable, without control markers or delivery notices.\n"
         "{delivery}\n"
         "Use at most 16 bubbles, at least one when answering the user. "

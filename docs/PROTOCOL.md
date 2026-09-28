@@ -107,7 +107,7 @@ flowchart TD
 
 ### 结构化回复与终端交付
 
-陪伴回复采用[结构化气泡](../backend/modules/conversation/replies.py)，模型最终输出顶层 JSON 数组，每个对象是一条独立消息（一个气泡），对象内的换行、段落和标点不再拆分消息；历史回灌使用同样的数组格式。由模型逐泡选择文字或语音；仅语音携带 `speech` 演绎，按实际 MiMo / MiniMax 能力校验。`companion.response_preference` 保存偏好，`prompt.submit.response_preference` 携带本轮快照；客户端不据此转换消息或自动播放。
+陪伴回复采用[结构化气泡](../backend/modules/conversation/replies.py)，模型最终输出顶层 JSON 数组，每个对象是一条独立发送的消息（一个气泡）。日常聊天中，回应后另起的补充或追问使用新对象，连贯多句可留在同一对象；故事、列表、代码等单条交付内容的段落也留在该对象。空行本身不作为切分依据，历史回灌保留数组边界。由模型逐泡选择文字或语音；仅语音携带 `speech` 演绎，按实际 MiMo / MiniMax 能力校验。`companion.response_preference` 保存偏好，`prompt.submit.response_preference` 携带本轮快照；客户端不据此转换消息或自动播放。
 
 | 消费方 | 回复内容 |
 |---|---|

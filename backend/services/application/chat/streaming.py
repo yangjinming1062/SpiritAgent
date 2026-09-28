@@ -157,7 +157,6 @@ async def _generate_llm_response(
     user_local_tz: str | None = None,
     lang: str = DEFAULT_LANGUAGE,
     speech_config: ProviderConfig | None = None,
-    split_paragraphs: bool = False,
     reply_preference: Literal["text", "voice"] | None = None,
     voice_id: str = "",
     allow_silence: bool = False,
@@ -252,7 +251,7 @@ async def _generate_llm_response(
     final_usage_payload: dict | None = None
     pending_text: list[str] = []
 
-    bubbles = BubbleSplitter(split_paragraphs=split_paragraphs)
+    bubbles = BubbleSplitter()
 
     reply: CompanionReply | None = None
     completed_response: Any = None

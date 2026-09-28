@@ -393,9 +393,6 @@ async def _run_chat_turn(
                         voice_id=inputs.speech_voice,
                         allow_silence=ephemeral and headless and complete_response,
                         reply_format_error=reply_format_error,
-                        split_paragraphs=conv.system_preset_id == "companion"
-                        and not conv.is_automation
-                        and preset_override is None,
                     )
                 except _IncompleteResponseError as exc:
                     del current_context["input"][input_length:]

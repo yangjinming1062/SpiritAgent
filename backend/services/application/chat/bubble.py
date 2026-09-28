@@ -1,4 +1,7 @@
-"""连续助手气泡的流式切分器：将 markdown 分隔线 ``---`` 转换为 BubbleEvent 让发射器插入 bubble.break 帧。"""
+"""流式助手气泡切分。
+
+结构化回复用 JSON 对象表达气泡边界；文本流只按 Markdown ``---`` 分隔线拆泡，空行和段落保留为正文。
+"""
 
 from dataclasses import dataclass
 
@@ -26,13 +29,9 @@ class BubbleEvent:
 class BubbleSplitter:
     """缓冲文本流并在 ``---`` 行处切分为多个气泡。"""
 
-    def __init__(self, *, split_paragraphs: bool = False) -> None:
+    def __init__(self) -> None:
         self._buf = ""
         self._at_start = True
-        self._separators = (*_SEPARATORS, "\n\n", "\r\n\r\n") if split_paragraphs else _SEPARATORS
-        self._prefixes = tuple(
-            sorted({sep[:i] for sep in self._separators for i in range(1, len(sep))}, key=len, reverse=True),
-        )
 
     def feed(self, text: str) -> list[BubbleEvent]:
         if not text:
@@ -46,7 +45,7 @@ class BubbleSplitter:
             self._buf = ""
         while True:
             stripped = False
-            for sep in self._separators:
+            for sep in _SEPARATORS:
                 if self._buf.endswith(sep):
                     self._buf = self._buf[: -len(sep)]
                     stripped = True
@@ -75,7 +74,7 @@ class BubbleSplitter:
         while True:
             idx = -1
             sep_len = 0
-            for sep in self._separators:
+            for sep in _SEPARATORS:
                 i = self._buf.find(sep)
                 if i != -1 and (idx == -1 or i < idx):
                     idx = i
@@ -83,7 +82,7 @@ class BubbleSplitter:
             if idx == -1:
                 break
             # 空行也可能是较长 --- 分隔符的开头，等后续字节消歧。
-            if self._buf[idx:] in self._prefixes:
+            if self._buf[idx:] in _PARTIAL_PREFIXES:
                 break
             before = self._buf[:idx]
             if before:
@@ -92,7 +91,7 @@ class BubbleSplitter:
             self._buf = self._buf[idx + sep_len :]
 
         # 仅输出已确定不是分隔符前缀的部分，暂留可能跨 chunk 演变为分隔符的后缀。
-        for prefix in self._prefixes:
+        for prefix in _PARTIAL_PREFIXES:
             if self._buf.endswith(prefix):
                 emit = self._buf[: -len(prefix)]
                 if emit:
