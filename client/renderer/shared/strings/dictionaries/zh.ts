@@ -920,7 +920,16 @@ export const dict = {
 
   companion: {
     statusBusy: '忙碌中',
-    statusCompanion: '陪伴中'
+    statusCompanion: '陪伴中',
+    egg: {
+      wake: '点击我，让我醒来',
+      preparing: '正在准备伙伴动作…',
+      generating: '伙伴动作生成中…',
+      failed: '动作生成失败',
+      unavailable: '伙伴动作尚未就绪',
+      retry: '重试',
+      openWardrobe: '打开衣柜'
+    }
   },
 
   living: {

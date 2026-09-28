@@ -4,6 +4,8 @@ import React, { lazy, Suspense, useCallback, useEffect, useRef } from 'react'
 import {
   $actionCatalogStatus,
   $companionLifecycle,
+  $videoGenStage,
+  $videoGenState,
   EggStage,
   ensureCompanionHydrated,
   hydrateActionCatalog,
@@ -16,6 +18,7 @@ import {
 import { useVideoPixelHitTest } from '@/modules/character/rendering/video'
 import { useInteractiveRegion } from '@/shared'
 import { $auth } from '@/shared/store/auth'
+import { requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
 import styles from './workbench.module.css'
@@ -26,6 +29,8 @@ export function WorkbenchCompanion(): React.JSX.Element {
   const auth = useStore($auth)
   const lifecycle = useStore($companionLifecycle)
   const videoStatus = useStore($actionCatalogStatus)
+  const videoGenState = useStore($videoGenState)
+  const videoGenStage = useStore($videoGenStage)
   const dict = useStrings()
   const t = dict.workbench
   const brandName = dict.brand.name
@@ -33,10 +38,15 @@ export function WorkbenchCompanion(): React.JSX.Element {
   const wrapperRef = useRef<HTMLDivElement>(null)
   const videoHitTest = useVideoPixelHitTest(1)
 
-  // 视频就绪挂视频层，否则落程序化蛋兜底（DESIGN「呈现与降级」「永不空白」）。
+  // 视频就绪挂视频层，否则落蛋形并给出真实状态（DESIGN「呈现与降级」）。
   const presentation = React.useMemo(
-    () => resolveCompanionPresentation({ videoReady: videoStatus === 'ready' }),
-    [videoStatus]
+    () =>
+      resolveCompanionPresentation({
+        catalogStatus: videoStatus,
+        generationStage: videoGenStage,
+        generationState: videoGenState
+      }),
+    [videoStatus, videoGenState, videoGenStage]
   )
 
   const stageHitTest = useCallback(
@@ -85,7 +95,28 @@ export function WorkbenchCompanion(): React.JSX.Element {
       title={t.companionTitle(brandName)}
     >
       <div className={styles.companionInner}>
-        <Suspense fallback={null}>{presentation.renderer === 'fallback' ? <EggStage /> : <VideoStage />}</Suspense>
+        <Suspense fallback={null}>
+          {presentation.renderer === 'fallback' ? (
+            <EggStage
+              hasRecoveryAction={presentation.fallbackActionAvailable}
+              message={presentation.fallbackMessage}
+              onStatusAction={() => {
+                if (presentation.fallbackStatus === 'failed') {
+                  void requestOpenSurface('living', { view: 'appearance' })
+
+                  return
+                }
+
+                void hydrateActionCatalog(true)
+                void hydrateVideoPack(true)
+              }}
+              status={presentation.fallbackStatus}
+              windowId={1}
+            />
+          ) : (
+            <VideoStage />
+          )}
+        </Suspense>
         <SpriteVfxOverlay />
       </div>
     </div>

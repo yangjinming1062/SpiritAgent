@@ -121,11 +121,13 @@ export {
   setResponsePreference
 } from './prefs'
 export {
+  type CompanionFallbackStatus,
   type CompanionPresentation,
   type CompanionRendererKind,
   resolveCompanionPresentation,
   resolveVideoAction,
   VIDEO_ACTION_KEYS,
+  VIDEO_GEN_STAGE_TEXT_KEYS,
   type VideoActionKey
 } from './presentation'
 export { bindProactiveLineSpeaker, type ProactiveLineOptions } from './proactive-speak'

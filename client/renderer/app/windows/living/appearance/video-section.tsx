@@ -12,6 +12,7 @@ import {
   activateVideoPack,
   generateVideoPack,
   hydrateVideoPack,
+  VIDEO_GEN_STAGE_TEXT_KEYS,
   type VideoActionWire,
   videoGenScopeMatches
 } from '@/modules/character'
@@ -20,16 +21,6 @@ import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, ConfirmDialog, HINT_TEXT, INPUT_CLASS } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
-
-const STAGE_TEXT_KEYS = {
-  script: 'videoGenStageScript',
-  pose: 'videoGenStagePose',
-  submit: 'videoGenStageSubmit',
-  generate: 'videoGenStageGenerate',
-  download: 'videoGenStageDownload',
-  process: 'videoGenStageProcess',
-  publish: 'videoGenStagePublish'
-} as const
 
 const ACTION_IN_PROGRESS = new Set(['queued', 'running', 'processing'])
 
@@ -173,7 +164,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
   const actionRetryWaiting = selectedActionFailed && selectedPack?.status === 'processing'
 
   const stageText =
-    scopedBusy && selectedPack?.status === 'processing' && genStage ? t[STAGE_TEXT_KEYS[genStage]] : null
+    scopedBusy && selectedPack?.status === 'processing' && genStage ? t[VIDEO_GEN_STAGE_TEXT_KEYS[genStage]] : null
 
   // 请求级错误（生成/穿着失败、并发拒绝）：已有动作包时也必须露出，不能落到「已就绪」。
   const requestError = scopedError

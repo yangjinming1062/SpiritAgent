@@ -2,9 +2,11 @@ import { useStore } from '@nanostores/react'
 import { clamp } from '@runtime'
 import { useEffect, useRef, useState } from 'react'
 
+import { useInteractiveRegion } from '@/shared'
 import { $surfaceOpen } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
+import type { CompanionFallbackStatus } from '../../presentation'
 import { openContextMenu } from '../../sprite/context-menu-store'
 
 // 桌面常驻「蛋」：透明置顶窗口里呼吸 / 裂纹闪光 / hover 注视，等待用户点击启动 onboarding。
@@ -21,12 +23,27 @@ const IDLE_LOOK_BOB_MS = 3200
 
 interface EggStageProps {
   size?: number
+  /** 引导未完成的可点唤醒；与 status 互斥。 */
   showPrompt?: boolean
+  status?: CompanionFallbackStatus | null
+  message?: string
+  hasRecoveryAction?: boolean
+  onStatusAction?: () => void
+  windowId?: number
 }
 
-export function EggStage({ size = 280, showPrompt = false }: EggStageProps): React.JSX.Element {
+export function EggStage({
+  size = 280,
+  showPrompt = false,
+  status = null,
+  message = '',
+  hasRecoveryAction = false,
+  onStatusAction,
+  windowId = 0
+}: EggStageProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
   const eyesRef = useRef<SVGGElement>(null)
+  const statusRef = useRef<HTMLDivElement>(null)
   const surfaceOpen = useStore($surfaceOpen)
   const dict = useStrings()
   const [promptVisible, setPromptVisible] = useState(false)
@@ -36,6 +53,9 @@ export function EggStage({ size = 280, showPrompt = false }: EggStageProps): Rea
 
     return () => clearTimeout(t)
   }, [])
+
+  // 透明窗口上状态条须注册可点区域，否则点不到重试。
+  useInteractiveRegion('egg-status', statusRef, undefined, undefined, windowId)
 
   useEffect(() => {
     let pointerActive = false
@@ -170,9 +190,31 @@ export function EggStage({ size = 280, showPrompt = false }: EggStageProps): Rea
         </g>
       </svg>
 
-      {showPrompt && promptVisible && (
+      {showPrompt && !status && promptVisible && (
         <div className="pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs text-body animate-pulse">
-          点击我，让我醒来
+          {dict.companion.egg.wake}
+        </div>
+      )}
+
+      {status && (
+        <div
+          className="absolute -bottom-10 left-1/2 flex w-[min(280px,90vw)] -translate-x-1/2 flex-col items-center gap-1"
+          ref={statusRef}
+        >
+          <p className="text-center text-xs leading-snug text-body">{message}</p>
+          {hasRecoveryAction && onStatusAction && (
+            <button
+              className="rounded-full border border-border/60 bg-surface/80 px-3 py-0.5 text-[11px] text-strong hover:border-accent/50"
+              onClick={e => {
+                e.stopPropagation()
+                onStatusAction()
+              }}
+              onPointerDown={e => e.stopPropagation()}
+              type="button"
+            >
+              {status === 'failed' ? dict.companion.egg.openWardrobe : dict.companion.egg.retry}
+            </button>
+          )}
         </div>
       )}
     </div>

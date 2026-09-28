@@ -9,6 +9,8 @@ import {
   $companionLifecycle,
   $companionVoiceId,
   $contextMenuPos,
+  $videoGenStage,
+  $videoGenState,
   EggStage,
   ensureCompanionHydrated,
   hydrateActionCatalog,
@@ -57,6 +59,8 @@ export function SpriteWindow(): React.JSX.Element {
   const surfaceOpen = useStore($surfaceOpen)
   const lifecycle = useStore($companionLifecycle)
   const videoStatus = useStore($actionCatalogStatus)
+  const videoGenState = useStore($videoGenState)
+  const videoGenStage = useStore($videoGenStage)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [activationOpen, setActivationOpen] = useState(false)
   const hasHydratedRef = useRef(false)
@@ -241,10 +245,15 @@ export function SpriteWindow(): React.JSX.Element {
     })
   }, [lifecycle, gatewayState])
 
-  // 视频就绪挂视频层，否则落程序化蛋兜底（DESIGN「呈现与降级」「永不空白」）。
+  // 视频就绪挂视频层，否则落蛋形并给出真实状态（DESIGN「呈现与降级」）。
   const presentation = React.useMemo(
-    () => resolveCompanionPresentation({ videoReady: videoStatus === 'ready' }),
-    [videoStatus]
+    () =>
+      resolveCompanionPresentation({
+        catalogStatus: videoStatus,
+        generationStage: videoGenStage,
+        generationState: videoGenState
+      }),
+    [videoStatus, videoGenState, videoGenStage]
   )
 
   const onTap = (): void => {
@@ -297,7 +306,27 @@ export function SpriteWindow(): React.JSX.Element {
         {eggVisible ? (
           <EggStage showPrompt />
         ) : showOnboarding ? null : (
-          <Suspense fallback={null}>{presentation.renderer === 'video' ? <VideoStage /> : <EggStage />}</Suspense>
+          <Suspense fallback={null}>
+            {presentation.renderer === 'video' ? (
+              <VideoStage />
+            ) : (
+              <EggStage
+                hasRecoveryAction={presentation.fallbackActionAvailable}
+                message={presentation.fallbackMessage}
+                onStatusAction={() => {
+                  if (presentation.fallbackStatus === 'failed') {
+                    void requestOpenSurface('living', { view: 'appearance' })
+
+                    return
+                  }
+
+                  void hydrateActionCatalog(true)
+                  void hydrateVideoPack(true)
+                }}
+                status={presentation.fallbackStatus}
+              />
+            )}
+          </Suspense>
         )}
       </SpriteStage>
       <SpriteContextMenu

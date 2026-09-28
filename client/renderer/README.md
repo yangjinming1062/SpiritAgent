@@ -49,7 +49,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 - 瞬态保存恢复目标，旧计时器不得覆盖持续状态，重复瞬态不嵌套目标；语音准备与播放分开，尾随点播不切 speaking，完成聊天不触发 emotional。
 - [actions](modules/character/actions/)消费 play_id / pack_id / appearance epoch，去重并拒绝过期或跨包结果；动态动作不进入表现状态机，回执遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
-- `presentation/render-resolver` 按 videoReady 选择 video 或 fallback，未就绪不空挂视频元素。
+- `presentation/render-resolver` 按动作目录和生成状态选择 video 或 fallback，并提供对应的本地化状态；未就绪不空挂视频元素。
 
 ### 打扰与自主行为
 
@@ -142,7 +142,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 视频层消费 manifest 与透明 WebM；字节走主进程资产桥和内容哈希缓存，双 video 待新帧就绪后替换旧画面。
 - 命中按实际播放时间查询逐帧 alpha 遮罩，并扣除等比显示留白。
 - 移动与拖拽由容器位移表达，播放不驱动嘴部或视线。
-- 包未就绪或加载失败由 render-resolver 落 [fallback](modules/character/rendering/fallback/)，不空挂视频元素。
+- 包未就绪或加载失败由 render-resolver 落 [fallback](modules/character/rendering/fallback/)，不空挂视频元素；蛋上区分准备中、生成中、失败与尚未就绪。
 
 ## 主题与玻璃效果
 

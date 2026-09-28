@@ -1,11 +1,60 @@
-import type { CompanionPresentation } from './types'
+import { getStrings } from '@/shared/strings'
 
-/** 归并资产就绪状态，得出当前应挂载的渲染层。
- * 视频包就绪才挂视频层；未就绪落通用兜底（程序化蛋），不伪造任何资源。 */
-export function resolveCompanionPresentation(opts: { videoReady: boolean }): CompanionPresentation {
-  if (opts.videoReady) {
-    return { renderer: 'video', videoReady: true }
+import type { VideoGenStage } from '../rendering/video'
+
+import type { CompanionFallbackStatus, CompanionPresentation } from './types'
+
+export const VIDEO_GEN_STAGE_TEXT_KEYS = {
+  script: 'videoGenStageScript',
+  pose: 'videoGenStagePose',
+  submit: 'videoGenStageSubmit',
+  generate: 'videoGenStageGenerate',
+  download: 'videoGenStageDownload',
+  process: 'videoGenStageProcess',
+  publish: 'videoGenStagePublish'
+} as const satisfies Record<VideoGenStage, string>
+
+type GenerationStage = keyof typeof VIDEO_GEN_STAGE_TEXT_KEYS
+
+function fallback(
+  fallbackStatus: CompanionFallbackStatus,
+  fallbackMessage: string,
+  fallbackActionAvailable: boolean
+): CompanionPresentation {
+  return {
+    fallbackActionAvailable,
+    fallbackMessage,
+    fallbackStatus,
+    renderer: 'fallback'
+  }
+}
+
+/** 视频就绪挂视频层；否则落蛋形，并区分准备中 / 生成中 / 失败 / 尚未就绪。 */
+export function resolveCompanionPresentation(opts: {
+  catalogStatus: 'idle' | 'loading' | 'ready' | 'unavailable'
+  generationState: 'idle' | 'generating' | 'failed'
+  generationStage?: GenerationStage | null
+}): CompanionPresentation {
+  if (opts.catalogStatus === 'ready') {
+    return { renderer: 'video' }
   }
 
-  return { renderer: 'fallback', videoReady: false }
+  const appearance = getStrings().living.appearance
+  const egg = getStrings().companion.egg
+
+  if (opts.generationState === 'generating') {
+    const stage = opts.generationStage
+
+    return fallback('generating', stage ? appearance[VIDEO_GEN_STAGE_TEXT_KEYS[stage]] : egg.generating, false)
+  }
+
+  if (opts.generationState === 'failed') {
+    return fallback('failed', egg.failed, true)
+  }
+
+  if (opts.catalogStatus === 'idle' || opts.catalogStatus === 'loading') {
+    return fallback('preparing', egg.preparing, false)
+  }
+
+  return fallback('unavailable', egg.unavailable, true)
 }

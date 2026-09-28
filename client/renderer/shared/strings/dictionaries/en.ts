@@ -976,7 +976,16 @@ export const dict: Dictionary = {
 
   companion: {
     statusBusy: 'Busy',
-    statusCompanion: 'With you'
+    statusCompanion: 'With you',
+    egg: {
+      wake: 'Tap me to wake up',
+      preparing: 'Preparing your companion’s actions…',
+      generating: 'Generating your companion’s actions…',
+      failed: 'Action generation failed',
+      unavailable: 'Actions are not ready yet',
+      retry: 'Retry',
+      openWardrobe: 'Open wardrobe'
+    }
   },
 
   living: {
