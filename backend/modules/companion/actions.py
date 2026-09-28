@@ -4,6 +4,7 @@
 系统槽位是产品语义（idle/drag/walk_left/walk_right），动态动作不可占用。
 """
 
+import hashlib
 from datetime import datetime
 
 from common import ModelBase, TimestampMixin
@@ -25,6 +26,23 @@ from sqlalchemy.orm import Mapped, mapped_column
 SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag", "walk_left", "walk_right", "peek_left", "peek_right")
 # 发布与激活的必需槽位：首包生成集合；缺失时不得 ready。
 REQUIRED_SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag")
+
+
+def make_action_reference_hash(
+    outfit_id: int | None,
+    fullbody_path: str,
+    avatar_id: int | None,
+    reference_uri: str,
+) -> str:
+    payload = "|".join(
+        (
+            str(outfit_id) if outfit_id is not None else "",
+            fullbody_path,
+            str(avatar_id) if avatar_id is not None else "",
+            reference_uri,
+        ),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 class CompanionActionPack(ModelBase, TimestampMixin):

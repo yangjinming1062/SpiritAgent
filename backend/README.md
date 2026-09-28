@@ -47,6 +47,7 @@
 | 各领域 → conversation | 会话底座 |
 | companion / journal → memory | 陪伴与叙事读取记忆 |
 | companion → actions | 只读当前包动作目录快照 |
+| backup → actions | 恢复动作资产后重建目录并复用发布校验 |
 | automation → chat / nightly | 复用自动化执行流程 |
 | chat → nightly | 回合后整理 |
 | nightly → generation | 制作夜间资产 |

@@ -37,7 +37,7 @@ def _storage_path(value: str) -> str:
 def _strings(value: Any) -> Iterator[str]:
     if isinstance(value, str):
         yield value
-        if value.startswith(("{", "[")):
+        if value.lstrip().startswith(("{", "[")):
             try:
                 parsed = json.loads(value)
             except ValueError:
@@ -74,7 +74,7 @@ class UrlRewriter:
         if isinstance(value, list):
             return [self.rewrite(item) for item in value]
         if isinstance(value, str):
-            if value.startswith(("{", "[")):
+            if value.lstrip().startswith(("{", "[")):
                 try:
                     parsed = json.loads(value)
                 except ValueError:

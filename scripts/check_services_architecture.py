@@ -48,6 +48,8 @@ APPLICATION_FLOW_EDGES = {
 }
 # domains 内显式声明的跨域单向依赖（域级，与 backend/README.md「services 依赖边界」 例外表一致）。
 DOMAIN_FLOW_EDGES = {
+    # 备份按恢复后的动作行重建可播目录，复用发布校验。
+    ("services.domains.backup", "services.domains.actions"),
     ("services.domains.companion", "services.domains.memory"),
     ("services.domains.journal", "services.domains.memory"),
     # companion 读取动作目录快照（LLM 可点播清单随当前包目录变化）；actions 不反向依赖。

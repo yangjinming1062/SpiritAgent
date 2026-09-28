@@ -15,7 +15,7 @@ from .policy import (
     max_duration_seconds,
     resolve_action_budget_date,
 )
-from .publishing import CatalogValidationError, publish_action_catalog
+from .publishing import CatalogValidationError, build_catalog_manifest, publish_action_catalog
 from .repository import (
     StaleCatalogError,
     get_action,
@@ -37,6 +37,7 @@ __all__ = [
     "CatalogValidationError",
     "StaleCatalogError",
     "action_to_dict",
+    "build_catalog_manifest",
     "check_can_accept",
     "check_can_play",
     "check_suppression",

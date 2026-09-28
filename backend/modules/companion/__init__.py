@@ -5,6 +5,7 @@ from .actions import (
     ActionProposal,
     CompanionAction,
     CompanionActionPack,
+    make_action_reference_hash,
 )
 from .character_card import (
     BodyFeatures,
@@ -169,6 +170,7 @@ __all__ = [
     "ActionProposal",
     "CompanionAction",
     "CompanionActionPack",
+    "make_action_reference_hash",
     "REQUIRED_SYSTEM_SLOTS",
     "SYSTEM_SLOTS",
     "ABSOLUTE_MAX_DURATION_SECONDS",

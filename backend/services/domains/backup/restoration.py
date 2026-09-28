@@ -13,9 +13,11 @@ from sqlalchemy import String, cast, select
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .action_assets import restore_action_catalogs, validate_action_files
 from .cascade import clear_user_scoped_rows
 from .file_packing import UrlRewriter, restore_files
 from .serializers import (
+    ACTION_TABLES,
     CONVERSATION_TABLES,
     TABLE_MODELS,
     TABLES,
@@ -36,7 +38,13 @@ BACKUP_RESTORE_ORDER: tuple[str, ...] = (
 # 父类覆盖会改变仍被保留的子类引用；子类没有随本次恢复清理时须保留父类。
 # None 表示引用嵌在 JSON / 数组等非关系列中，只要存在保留行就按可能有关联处理。
 OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = {
-    "avatar_assets": (("companion_character_cards", "avatar_id"), ("companion_scenes", None)),
+    "avatar_assets": (
+        ("companion_character_cards", "avatar_id"),
+        ("companion_scenes", None),
+        ("companion_action_packs", "avatar_id"),
+    ),
+    "companion_outfits": (("companion_action_packs", "outfit_id"),),
+    "companion_action_packs": (("companion_actions", "pack_id"),),
     "cron_jobs": (("companion_intents", "source_key"),),
     "conversations": (
         ("cron_jobs", "conversation_id"),
@@ -139,6 +147,21 @@ def load_backup_rows(
                     reason="配套的会话或消息数据无效，无法单独恢复。",
                 ),
             )
+    if set(manifest_tables) & ACTION_TABLES and not ACTION_TABLES.issubset(rows):
+        for table in manifest_tables:
+            if table in ACTION_TABLES and table in rows:
+                rows.pop(table)
+                failures.append(BackupImportFailure(table, row_counts[table], "视频包与动作必须同时恢复。"))
+    elif not set(manifest_tables) & ACTION_TABLES:
+        started = sum(bool(row.get("initial_video_started")) for row in rows.get("companion_outfits", []))
+        if started:
+            failures.append(
+                BackupImportFailure(
+                    "companion_action_packs",
+                    started,
+                    "备份未包含视频包和动作记录，视频文件无法自动恢复为可播放形象。",
+                ),
+            )
     return BackupReadResult(rows=rows, failures=tuple(failures))
 
 
@@ -154,22 +177,21 @@ async def _restore_table(
     mode: BackupImportMode,
     import_batch_id: str,
 ) -> tuple[dict[str, int | str], int]:
-    async with db.begin_nested():
-        new_map, inserted = await insert_rows(
-            db,
-            table,
-            records,
-            user_id,
-            rewriter,
-            id_map,
-            mode=mode,
-            import_batch_id=import_batch_id,
-        )
-        staged_id_map = {**id_map, table: new_map}
-        if table == "messages":
-            await restore_conversation_context(db, rows, staged_id_map)
-        elif table == "memories":
-            await restore_memory_context(db, rows, staged_id_map, user_id, import_batch_id)
+    new_map, inserted = await insert_rows(
+        db,
+        table,
+        records,
+        user_id,
+        rewriter,
+        id_map,
+        mode=mode,
+        import_batch_id=import_batch_id,
+    )
+    staged_id_map = {**id_map, table: new_map}
+    if table == "messages":
+        await restore_conversation_context(db, rows, staged_id_map)
+    elif table == "memories":
+        await restore_memory_context(db, rows, staged_id_map, user_id, import_batch_id)
     return new_map, inserted
 
 
@@ -177,6 +199,9 @@ async def _preflight_tables(
     db: AsyncSession,
     rows: dict[str, list[dict[str, Any]]],
     *,
+    extract_root: Path,
+    source_user_id: int,
+    target_user_id: int,
     mode: BackupImportMode,
     import_batch_id: str,
 ) -> tuple[set[str], tuple[BackupImportFailure, ...]]:
@@ -188,36 +213,51 @@ async def _preflight_tables(
         db.add(validation_user)
         await db.flush()
         for table in BACKUP_RESTORE_ORDER:
-            if table not in rows:
+            if table not in rows or table == "companion_actions":
                 continue
-            available_rows = {name: rows[name] for name in successful | {table}}
+            group = ("companion_action_packs", "companion_actions") if table == "companion_action_packs" else (table,)
+            available_rows = {name: rows[name] for name in successful | set(group) if name in rows}
+            staged_map = dict(id_map)
             try:
-                new_map, _ = await _restore_table(
-                    db,
-                    table,
-                    rows[table],
-                    available_rows,
-                    validation_user.id,
-                    UrlRewriter({}),
-                    id_map,
-                    mode=mode,
-                    import_batch_id=import_batch_id,
-                )
+                async with db.begin_nested():
+                    for member in group:
+                        staged_map[member], _ = await _restore_table(
+                            db,
+                            member,
+                            rows[member],
+                            available_rows,
+                            validation_user.id,
+                            UrlRewriter({}),
+                            staged_map,
+                            mode=mode,
+                            import_batch_id=import_batch_id,
+                        )
+                    if table == "companion_action_packs":
+                        await asyncio.to_thread(
+                            validate_action_files,
+                            available_rows,
+                            extract_root,
+                            source_user_id,
+                            target_user_id,
+                        )
+                        await restore_action_catalogs(
+                            db,
+                            available_rows,
+                            staged_map,
+                            validation_user.id,
+                            UrlRewriter({}),
+                            write_files=False,
+                        )
             except (KeyError, StatementError, TypeError, ValueError) as exc:
-                logger.warning(
-                    "backup table failed compatibility preflight",
-                    extra={"table": table},
-                )
-                failures.append(
-                    BackupImportFailure(
-                        section=table,
-                        count=len(rows[table]),
-                        reason=_failure_reason(exc),
-                    ),
+                logger.warning("backup table failed compatibility preflight", extra={"table": table})
+                failures.extend(
+                    BackupImportFailure(member, len(rows[member]), _failure_reason(exc))
+                    for member in group
+                    if member in rows
                 )
                 continue
-            id_map[table] = new_map
-            successful.add(table)
+            id_map = staged_map
+            successful.update(group)
         if CONVERSATION_TABLES.issubset(rows) and not CONVERSATION_TABLES.issubset(successful):
             for table in BACKUP_RESTORE_ORDER:
                 if table not in CONVERSATION_TABLES or table not in successful:
@@ -272,7 +312,27 @@ async def _clear_compatible_rows(
 ) -> tuple[dict[str, list[dict[str, Any]]], tuple[BackupImportFailure, ...]]:
     remaining = dict(compatible_rows)
     failures: list[BackupImportFailure] = []
+    if ACTION_TABLES.issubset(remaining):
+        action_failure = None
+        for parent, field in (("avatar_assets", "avatar_id"), ("companion_outfits", "outfit_id")):
+            if any(row.get(field) is not None for row in remaining["companion_action_packs"]) and (
+                await _has_retained_dependent(db, parent, target_user_id, remaining)
+            ):
+                action_failure = "视频资产引用的身份或外观无法安全覆盖。"
+                break
+        if action_failure is None:
+            try:
+                async with db.begin_nested():
+                    await clear_user_scoped_rows(db, target_user_id, list(ACTION_TABLES))
+            except IntegrityError:
+                action_failure = "现有视频资产仍被其他内容引用，无法覆盖。"
+        if action_failure is not None:
+            for table in TABLES:
+                if table in ACTION_TABLES:
+                    failures.append(BackupImportFailure(table, len(remaining.pop(table)), action_failure))
     for table in reversed(TABLES):
+        if table in ACTION_TABLES:
+            continue
         if table not in remaining or table in {"user_preferences", "messages"}:
             continue
         if await _has_retained_dependent(db, table, target_user_id, remaining):
@@ -326,6 +386,9 @@ async def restore_backup_rows(
     successful_tables, failures = await _preflight_tables(
         db,
         rows,
+        extract_root=extract_root,
+        source_user_id=source_user_id,
+        target_user_id=target_user_id,
         mode=mode,
         import_batch_id=import_batch_id,
     )
@@ -384,6 +447,15 @@ async def restore_backup_rows(
                 id_map,
                 mode=mode,
                 import_batch_id=import_batch_id,
+            )
+        if ACTION_TABLES.issubset(imported):
+            await restore_action_catalogs(
+                db,
+                compatible_rows,
+                id_map,
+                target_user_id,
+                rewriter,
+                write_files=True,
             )
         if imported.get("personas") or imported.get("companion_scenes"):
             persona = await db.scalar(

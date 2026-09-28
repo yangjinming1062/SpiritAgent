@@ -14,6 +14,8 @@ from modules.companion import (
     CharacterCardSnapshot,
     CharacterFeatures,
     CharacterOverrides,
+    CompanionAction,
+    CompanionActionPack,
     CompanionCharacterCard,
     CompanionDiaryEntry,
     CompanionIntent,
@@ -40,6 +42,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.contracts import MemoryScope
 from services.domains.conversation import validate_memory_scope
 
+from .action_assets import restore_action_payload
 from .file_packing import UrlRewriter
 
 # 表白名单与依赖顺序单源维护；列从模型读取，新增持久字段不会静默漏备份。
@@ -50,6 +53,8 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
     "avatar_assets": AvatarAsset,
     "companion_character_cards": CompanionCharacterCard,
     "companion_outfits": CompanionOutfit,
+    "companion_action_packs": CompanionActionPack,
+    "companion_actions": CompanionAction,
     "companion_scenes": CompanionScene,
     "personas": Persona,
     "user_settings": UserSetting,
@@ -63,8 +68,11 @@ TABLE_MODELS: dict[str, type[ModelBase]] = {
 }
 TABLES = tuple(TABLE_MODELS)
 CONVERSATION_TABLES = frozenset({"conversations", "messages"})
+ACTION_TABLES = frozenset({"companion_action_packs", "companion_actions"})
 FOREIGN_KEYS: dict[str, dict[str, str]] = {
     "companion_character_cards": {"avatar_id": "avatar_assets"},
+    "companion_action_packs": {"avatar_id": "avatar_assets", "outfit_id": "companion_outfits"},
+    "companion_actions": {"pack_id": "companion_action_packs", "outfit_id": "companion_outfits"},
     "personas": {"active_scene_id": "companion_scenes"},
     "cron_jobs": {"conversation_id": "conversations"},
     "companion_moments": {"memory_id": "memories", "session_id": "conversations"},
@@ -281,12 +289,13 @@ def _build_payload(
         mapped = id_map.get(ref_table, {}).get(str(value)) if value is not None else None
         if (
             value is not None
-            and ref_table in id_map
             and mapped is None
-            and key not in {"avatar_id", "source_portrait_id"}
+            and (table in ACTION_TABLES or ref_table in id_map and key not in {"avatar_id", "source_portrait_id"})
         ):
             raise ValueError(f"Missing {ref_table} reference in {table}.{key}")
         payload[key] = mapped
+    if table in ACTION_TABLES:
+        restore_action_payload(table, payload, id_map, user_id)
     if table == "companion_character_cards":
         if payload.get("avatar_id") is None:
             raise ValueError("Character card avatar is missing from backup")

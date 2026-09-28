@@ -41,6 +41,7 @@ from modules.companion import (
     PeekGeometry,
     VideoActionResponse,
     VideoPackResponse,
+    make_action_reference_hash,
     parse_content_rect,
 )
 from modules.ws import emit_ws_event
@@ -179,15 +180,12 @@ class VideoPackStateError(VideoPackError):
 async def _reference_hash(outfit: CompanionOutfit | None, avatar: AvatarAsset | None) -> str:
     """参考版本指纹包含外观 ID、身份 ID 与参考图实际字节，阻断迟到结果。"""
     reference = await _process_thread(load_avatar_bytes_as_data_uri, outfit.fullbody_url) if outfit is not None else ""
-    payload = "|".join(
-        (
-            str(outfit.id) if outfit is not None else "",
-            outfit.fullbody_url if outfit is not None else "",
-            str(avatar.id) if avatar is not None else "",
-            reference or "",
-        ),
+    return make_action_reference_hash(
+        outfit.id if outfit is not None else None,
+        outfit.fullbody_url if outfit is not None else "",
+        avatar.id if avatar is not None else None,
+        reference or "",
     )
-    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def _source_ext(content_type: str) -> str:
