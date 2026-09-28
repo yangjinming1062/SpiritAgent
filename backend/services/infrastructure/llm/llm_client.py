@@ -64,7 +64,7 @@ def _log_embedding(
 
 
 def client_for_config(llm_config: "UserLlmConfig") -> AsyncOpenAI:
-    """从已解析的用户 LLM 配置构建 ``AsyncOpenAI``；缺字段时抛 ``KeyError``（可能拿到不完整配置的调用方如后台队列需自行预校验）。"""
+    """按已解析配置取得共享客户端。"""
     return get_async_client(llm_config.api_key, llm_config.base_url)
 
 
@@ -174,11 +174,8 @@ async def resolve_provider_chain(
     db: AsyncSession | None,
     user_id: int | None,
     service_type: str,
-    *,
-    user_cfg: UserModelConfig | None = None,
 ) -> list[ProviderConfig]:
-    if user_cfg is None:
-        user_cfg = await _load_user_config(db, user_id)
+    user_cfg = await _load_user_config(db, user_id)
     if service_type == ServiceType.embedding:
         system_chain = _embedding_chain_from_ai_config(SETTINGS.ai_config)
         if user_cfg is None:

@@ -17,7 +17,7 @@ import contextlib
 import hashlib
 import json
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import timedelta
 from pathlib import Path
 
@@ -39,6 +39,8 @@ from modules.companion import (
     CompanionActionPack,
     CompanionOutfit,
     PeekGeometry,
+    VideoActionResponse,
+    VideoPackResponse,
     parse_content_rect,
 )
 from modules.ws import emit_ws_event
@@ -641,14 +643,14 @@ def _inheritable_job(job: CompanionAction | None) -> CompanionAction | None:
     return job
 
 
-def _must_succeed_actions(jobs: list[CompanionAction], context_must: set[str] | list[str] | None) -> set[str]:
+def _must_succeed_actions(jobs: Sequence[CompanionAction], context_must: set[str] | list[str] | None) -> set[str]:
     """本版本必须成功的动作。无生成上下文（上传包）时按全部任务判定。"""
     if context_must is None:
         return {job.key for job in jobs} | set(REQUIRED_SYSTEM_SLOTS)
     return set(context_must) | set(REQUIRED_SYSTEM_SLOTS)
 
 
-def _can_publish_jobs(jobs: list[CompanionAction], context_must: set[str] | list[str] | None) -> bool:
+def _can_publish_jobs(jobs: Sequence[CompanionAction], context_must: set[str] | list[str] | None) -> bool:
     by_action = {job.key: job for job in jobs}
     for action in _must_succeed_actions(jobs, context_must):
         job = by_action.get(action)
@@ -2601,23 +2603,60 @@ async def _get_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionAc
     ).scalar_one_or_none()
 
 
-def pack_response(pack: CompanionActionPack) -> dict:
-    """视频包行转响应；manifest URL 现签，片段资源 URL 由客户端按 manifest 拉取。"""
-    return {
-        "id": pack.id,
-        "outfit_id": pack.outfit_id,
-        "pack_version": pack.pack_version,
-        "status": pack.status,
-        "active": pack.active,
-        "identity_review": pack.identity_review,
-        "identity_review_reason": pack.identity_review_reason,
-        "content_hash": pack.content_hash or None,
-        "manifest_url": signed_companion_asset_url(pack.manifest_path) if pack.status == "ready" else None,
-        "error": pack.error or None,
-    }
+def _pack_response(pack: CompanionActionPack, jobs: Sequence[CompanionAction]) -> VideoPackResponse:
+    """列表与单包共用响应装配；资源 URL 仅在出口签名。"""
+    context = _load_generation_context(pack)
+    actions = []
+    for job in sorted(jobs, key=lambda job: _action_order(job.key)):
+        script = ActionScriptEntry.model_validate_json(job.script_json) if job.script_json else None
+        actions.append(
+            VideoActionResponse(
+                action=job.key,
+                status=job.status,
+                stage=job.stage,
+                error=job.error,
+                clip_url=signed_companion_asset_url(job.result_path) if job.result_path else None,
+                motion_prompt=script.motion_prompt if script else "",
+                peek_geometry=PeekGeometry.from_stored_json(job.peek_geometry_json),
+                content_rect=parse_content_rect(job.content_rect_json),
+            ),
+        )
+    return VideoPackResponse(
+        id=pack.id,
+        outfit_id=pack.outfit_id,
+        pack_version=pack.pack_version,
+        status=pack.status,
+        active=pack.active,
+        identity_review=pack.identity_review,
+        identity_review_reason=pack.identity_review_reason,
+        content_hash=pack.content_hash or None,
+        manifest_url=signed_companion_asset_url(pack.manifest_path) if pack.status == "ready" else None,
+        error=pack.error or None,
+        can_regenerate=bool(pack.reference_path) and pack.status in ("ready", "failed"),
+        can_retry=(
+            bool(pack.reference_path)
+            and pack.status == "failed"
+            and context is not None
+            and context.reference_alignment != "running"
+            and (any(_can_resume_job(job) for job in jobs) or _can_publish_jobs(jobs, context.must_actions))
+        ),
+        actions=actions,
+    )
 
 
-async def list_pack_responses(db: AsyncSession, user_id: int) -> list[dict]:
+async def load_pack_response(db: AsyncSession, pack: CompanionActionPack) -> VideoPackResponse:
+    jobs = (
+        await db.scalars(
+            select(CompanionAction).where(
+                CompanionAction.user_id == pack.user_id,
+                CompanionAction.pack_id == pack.id,
+            ),
+        )
+    ).all()
+    return _pack_response(pack, jobs)
+
+
+async def list_pack_responses(db: AsyncSession, user_id: int) -> list[VideoPackResponse]:
     """用户的视频包列表（按创建时间倒序）；manifest URL 现签。"""
     packs = (
         (
@@ -2630,44 +2669,14 @@ async def list_pack_responses(db: AsyncSession, user_id: int) -> list[dict]:
         .scalars()
         .all()
     )
+    if not packs:
+        return []
     jobs = (await db.execute(select(CompanionAction).where(CompanionAction.user_id == user_id))).scalars().all()
     jobs_by_pack: dict[int, list[CompanionAction]] = {}
     for job in jobs:
         if job.pack_id is not None:
             jobs_by_pack.setdefault(job.pack_id, []).append(job)
-    responses = []
-    for pack in packs:
-        response = pack_response(pack)
-        pack_jobs = jobs_by_pack.get(pack.id, [])
-        pack_context = _load_generation_context(pack)
-        context_must = pack_context.must_actions if pack_context is not None else None
-        response["can_regenerate"] = bool(pack.reference_path) and pack.status in ("ready", "failed")
-        response["can_retry"] = (
-            bool(pack.reference_path)
-            and pack.status == "failed"
-            and pack_context is not None
-            and pack_context.reference_alignment != "running"
-            and (any(_can_resume_job(job) for job in pack_jobs) or _can_publish_jobs(pack_jobs, context_must))
-        )
-        response["actions"] = []
-        for job in sorted(pack_jobs, key=lambda job: _action_order(job.key)):
-            script = ActionScriptEntry.model_validate_json(job.script_json) if job.script_json else None
-            response["actions"].append(
-                {
-                    "action": job.key,
-                    "name": job.name or "",
-                    "kind": job.kind,
-                    "status": job.status,
-                    "stage": job.stage,
-                    "error": job.error,
-                    "clip_url": signed_companion_asset_url(job.result_path) if job.result_path else None,
-                    "motion_prompt": script.motion_prompt if script else "",
-                    "peek_geometry": PeekGeometry.from_stored_json(job.peek_geometry_json),
-                    "content_rect": parse_content_rect(job.content_rect_json),
-                },
-            )
-        responses.append(response)
-    return responses
+    return [_pack_response(pack, jobs_by_pack.get(pack.id, [])) for pack in packs]
 
 
 async def resume_processing_packs() -> None:

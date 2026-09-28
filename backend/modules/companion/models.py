@@ -86,7 +86,7 @@ class Persona(ModelBase, TimestampMixin):
 
 
 class AvatarAsset(ModelBase):
-    """asset_url 存在 companion-avatars/（持久）以让重新登录跨过 24h temp-media TTL。"""
+    """头像与全身参考保存裸路径；引导草稿可指向 temp-media/。"""
 
     __tablename__ = "avatar_assets"
     # 部分唯一索引（每用户一个 active）位于 alembic baseline——需要 WHERE 子句。

@@ -131,32 +131,23 @@ async def list_sessions(
             func.count(Message.id).label("msg_count"),
             func.coalesce(func.sum(Message.prompt_tokens), 0).label("input_tok"),
             func.coalesce(func.sum(Message.completion_tokens), 0).label("output_tok"),
+            func.count(Message.id).filter(Message.tool_calls.isnot(None)).label("tool_count"),
         )
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(Conversation.user_id == user.id)
         .group_by(Message.conversation_id)
         .subquery()
     )
-
-    tool_stats = (
-        select(Message.conversation_id, func.count(Message.id).label("tool_count"))
-        .where(Message.tool_calls.isnot(None))
-        .group_by(Message.conversation_id)
-        .subquery()
-    )
-
     q = q.outerjoin(msg_stats, Conversation.id == msg_stats.c.conversation_id)
-    q = q.outerjoin(tool_stats, Conversation.id == tool_stats.c.conversation_id)
-
-    q = q.add_columns(msg_stats.c.msg_count, msg_stats.c.input_tok, msg_stats.c.output_tok, tool_stats.c.tool_count)
+    q = q.add_columns(msg_stats.c.msg_count, msg_stats.c.input_tok, msg_stats.c.output_tok, msg_stats.c.tool_count)
 
     if archived == "only":
         q = q.where(Conversation.archived_at.isnot(None))
     elif archived == "exclude":
-        # 默认（include_subagents=False）仅 parent_id IS NULL 的顶层会话；开启后显示主+子代理，但两者都排除已归档行。
         q = q.where(Conversation.archived_at.is_(None))
         if not include_subagents:
             q = q.where(Conversation.parent_id.is_(None))
-    # 其他 archived 取值由 Literal 在 HTTP 边界 422 拦截，此处 fallthrough 实际不可达，保留 no-op 供未来扩展。
-    # include_subagents 仅作用于 archived="exclude"；"only"/"include" 路径忽略它（子代理导航走搜索端点与直链，不在 archived 切换 UI 内）。
+    # include_subagents 只约束未归档列表，归档视图保留子会话。
     if min_messages > 0:
         q = q.where(func.coalesce(msg_stats.c.msg_count, 0) >= min_messages)
 
@@ -166,13 +157,12 @@ async def list_sessions(
         # 归档视图按归档时间倒序，方便刚归档的先出现；order 参数对归档列表无意义。
         q = q.order_by(desc(Conversation.archived_at))
     else:
-        # 排序链：特殊对话恒第一（companion/developer/product_manager/copywriter/language_teacher 等系统预设对话，按系统预设 ID 排序对齐），手动置顶次之（pinned_at 新的在前），再按所选 order。置顶集占结果前缀，limit 分页不会截断它。
+        # 系统预设、手动置顶优先，再按所选字段排序和分页。
         order_col = {
             "recent": desc(Conversation.updated_at),
             "created": desc(Conversation.created_at),
             "messages": desc(func.coalesce(msg_stats.c.msg_count, 0)),
         }[order]
-        # 5 套系统预设排序槽（仅作用于系统预设对话，普通对话不按预设重排）
         preset_rank = case(
             (
                 Conversation.kind == SPECIAL_KIND,
@@ -233,39 +223,16 @@ async def search_sessions(
     )
     pattern = f"%{escaped}%"
 
-    # 拆两条查询：标题/id 匹配 vs 包含匹配消息的会话；Python 端合并——内容扫描路径封顶独立会话 id，分两条读路径便于限流与可读性。
-    title_match_ids = [
-        row[0]
-        for row in (
-            await db.execute(
-                select(Conversation.id).where(
-                    Conversation.user_id == user.id,
-                    or_(
-                        Conversation.title.ilike(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
-                        cast(Conversation.id, String).like(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
-                    ),
-                ),
-            )
-        ).all()
-    ]
-    # 内容扫描封顶 200 个独立会话 id。
-    content_match_ids = [
-        row[0]
-        for row in (
-            await db.execute(
-                select(Message.conversation_id)
-                .where(message_contains_text(q))
-                .join(Conversation, Conversation.id == Message.conversation_id)
-                .where(Conversation.user_id == user.id)
-                .distinct()
-                .limit(200),
-            )
-        ).all()
-    ]
-
-    merged_ids = set(title_match_ids) | set(content_match_ids)
-    if not merged_ids:
-        return DesktopSessionSearchResponse(sessions=[])
+    # 内容候选仍限制为 200 个会话，标题和 ID 匹配不占此额度。
+    content_match_ids = (
+        select(Message.conversation_id)
+        .where(message_contains_text(q))
+        .join(Conversation, Conversation.id == Message.conversation_id)
+        .where(Conversation.user_id == user.id)
+        .distinct()
+        .limit(200)
+        .correlate(None)
+    )
 
     archived_filter = {
         "only": Conversation.archived_at.isnot(None),
@@ -276,7 +243,14 @@ async def search_sessions(
     rows_query = (
         select(Conversation, _preview_subquery, func.count(Message.id).label("msg_count"))
         .outerjoin(Message, Message.conversation_id == Conversation.id)
-        .where(Conversation.id.in_(merged_ids))
+        .where(
+            Conversation.user_id == user.id,
+            or_(
+                Conversation.title.ilike(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
+                cast(Conversation.id, String).like(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
+                Conversation.id.in_(content_match_ids),
+            ),
+        )
         .group_by(Conversation.id)
         .order_by(desc(Conversation.updated_at))
         .limit(20)

@@ -104,6 +104,7 @@ from .video import (
     VideoPackNotFoundError,
     VideoPackStateError,
     list_pack_responses,
+    load_pack_response,
     resume_video_generation_jobs,
 )
 from .video import (
@@ -207,6 +208,7 @@ __all__ = [
     "retry_video_pack",
     "delete_video_pack",
     "list_pack_responses",
+    "load_pack_response",
     "activate_outfit",
     "adopt_fullbody_seed",
     "adopt_avatar_seed",

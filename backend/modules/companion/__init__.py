@@ -124,6 +124,7 @@ from .schemas_scene import (
     SceneStateResponse,
 )
 from .schemas_video import (
+    VideoActionResponse,
     VideoPackCreateRequest,
     VideoPackEnsureSystemActionRequest,
     VideoPackGenerateRequest,
@@ -240,6 +241,7 @@ __all__ = [
     "VideoPackEnsureSystemActionRequest",
     "VideoPackGenerateRequest",
     "VideoPackListResponse",
+    "VideoActionResponse",
     "VideoPackResponse",
     "VoiceEntry",
     "VoiceMatchResponse",

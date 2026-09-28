@@ -287,7 +287,7 @@ async def _generate_outfit_fullbody(
         raise AvatarGenerationError(str(exc), internal=exc.internal) from exc
     try:
         data, mime = await image_asset_bytes(paths[0])
-        draft_url, _, _ = await _persist_portrait_or_draft(data, user_id, mime, persist=False)
+        draft_url = await _persist_portrait_or_draft(data, user_id, mime, persist=False)
         return draft_url
     finally:
         for path in paths:
@@ -328,7 +328,7 @@ async def create_outfit_draft(
     garment_text: str | None = None
     if image is not None:
         # 参考图立即转存 companion-avatars（temp-media 会过期，重新生成还要复用）
-        ref_path, _, _ = await _persist_portrait_bytes(
+        ref_path = await _persist_portrait_bytes(
             image,
             content_type or "image/png",
         )
@@ -507,7 +507,7 @@ async def confirm_outfit(
             moved = await _read_temp_media_bytes(outfit.fullbody_url)
             if moved is None:
                 raise OutfitDraftExpiredError("外观草稿已过期，请重新生成")
-            outfit.fullbody_url, _, _ = await _persist_portrait_bytes(
+            outfit.fullbody_url = await _persist_portrait_bytes(
                 moved[0],
                 moved[1],
             )
@@ -610,7 +610,7 @@ async def adopt_outfit_draft_image(
     """自备图采纳（创建语境）：用户外部生成的立绘按创建草稿语义入库（temp-media 草稿，确认后转正）。"""
     await _outfit_generation_context(db, user_id)
     effective_description = (description or "").strip()
-    fullbody_url, _, _ = await _persist_portrait_or_draft(
+    fullbody_url = await _persist_portrait_or_draft(
         data,
         user_id,
         content_type or "image/png",
@@ -647,7 +647,7 @@ async def adopt_outfit_regenerate_image(
         raise OutfitStateError("仅草稿或失败状态可以微调重绘")
     original_url = outfit.fullbody_url
 
-    fullbody_url, _, _ = await _persist_portrait_or_draft(
+    fullbody_url = await _persist_portrait_or_draft(
         data,
         user_id,
         content_type or "image/png",

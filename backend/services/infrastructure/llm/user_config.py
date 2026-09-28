@@ -1,6 +1,4 @@
-from modules.auth import UserModelConfig
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .llm_client import resolve_provider_chain
@@ -16,9 +14,7 @@ class UserLlmConfig(BaseModel):
 
 
 async def resolve_user_llm_config(db: AsyncSession, user_id: int) -> UserLlmConfig:
-    # 所有凭据都来自 chat 路径同一链头，下游调用方（scheduler、title 生成）看到一致的供应商。
-    config = (await db.execute(select(UserModelConfig).where(UserModelConfig.user_id == user_id))).scalar_one_or_none()
-    chain = await resolve_provider_chain(db, user_id, "llm", user_cfg=config)
+    chain = await resolve_provider_chain(db, user_id, "llm")
     head = chain[0] if chain else None
     return UserLlmConfig(
         api_key=head.api_key if head else "",

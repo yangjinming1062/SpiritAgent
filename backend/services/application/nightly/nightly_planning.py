@@ -1,4 +1,4 @@
-"""夜间 Stage 3：能力目录驱动的自主规划、持久化动作账本与顺序执行。"""
+"""夜间自主规划、持久化动作账本与顺序执行。"""
 
 import asyncio
 import json
@@ -867,9 +867,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
     )
 
 
-async def _stored_plan(log_id: int | None) -> NormalizedPlan | None:
-    if log_id is None:
-        return None
+async def _stored_plan(log_id: int) -> NormalizedPlan | None:
     async with SESSION_LOCAL() as db:
         log = await db.get(NightlyActivityLog, log_id)
         payload = log.payload if log is not None and isinstance(log.payload, dict) else {}
@@ -883,13 +881,11 @@ async def _stored_plan(log_id: int | None) -> NormalizedPlan | None:
 
 
 async def _persist_plan(
-    log_id: int | None,
+    log_id: int,
     user_id: int,
     target_date: date,
     plan: NormalizedPlan,
 ) -> None:
-    if log_id is None:
-        return
     async with SESSION_LOCAL() as db:
         log = await db.get(NightlyActivityLog, log_id)
         if log is None:
@@ -1856,6 +1852,48 @@ _EXECUTORS: dict[str, CapabilityExecutor] = {
 }
 
 
+async def _execute_persisted_action(
+    row: NightlyActivityAction,
+    by_key: dict[str, NightlyActivityAction],
+    user_id: int,
+    context: PlanningContext,
+    facts: list[str],
+    date_context: DateContext,
+) -> ActionExecutionResult:
+    arguments = row.arguments or {}
+    illegal_deps = arguments.get("illegal_outfit_deps")
+    if illegal_deps and row.capability.startswith("scene."):
+        return ActionExecutionResult(
+            status="failed",
+            reason="场景与衣柜相互独立，不能依赖换装动作表达场景穿着；把完整造型写入 outfit_description",
+            dependencies=illegal_deps,
+        )
+    unsatisfied = [
+        dep for dep in arguments.get("depends_on", []) if dep not in by_key or by_key[dep].status != "succeeded"
+    ]
+    if unsatisfied:
+        return ActionExecutionResult(status="skipped", reason="dependency not completed", dependencies=unsatisfied)
+    runtime_allowed, blocked_reason = await _runtime_capability_allowed(user_id, row.capability, row.result)
+    if not runtime_allowed:
+        return ActionExecutionResult(status="blocked", reason=blocked_reason)
+    executor = _EXECUTORS.get(row.capability)
+    if executor is None:
+        return ActionExecutionResult(status="blocked", reason="capability executor unavailable")
+
+    await _set_action_state(row.id, "running")
+    row.status = "running"
+    action_context = context.model_copy(update={"action_row_id": row.id, "resume_result": row.result})
+    try:
+        return await executor(user_id, arguments.get("values", {}), action_context, facts, date_context)
+    except Exception as exc:
+        logger.warning(
+            "nightly capability action failed",
+            extra={"user_id": user_id, "action": row.action_key, "capability": row.capability, "error": str(exc)},
+            exc_info=True,
+        )
+        return ActionExecutionResult(status="failed", reason=str(exc))
+
+
 async def _execute_persisted_actions(
     log_id: int,
     user_id: int,
@@ -1872,160 +1910,20 @@ async def _execute_persisted_actions(
     results: dict[str, ActionExecutionResult] = {}
     for row in rows:
         if row.status in _TERMINAL_ACTION_STATUSES:
-            res_dict = {"capability": row.capability, **(row.result or {"status": row.status})}
-            results[row.action_key] = ActionExecutionResult.model_validate(res_dict)
-            continue
-        raw_args = row.arguments or {}
-        illegal_deps = raw_args.get("illegal_outfit_deps") if isinstance(raw_args, dict) else None
-        if isinstance(illegal_deps, list) and illegal_deps and str(row.capability).startswith("scene."):
-            result = ActionExecutionResult(
-                status="failed",
-                reason="场景与衣柜相互独立，不能依赖换装动作表达场景穿着；把完整造型写入 outfit_description",
-                dependencies=[str(dep) for dep in illegal_deps],
-                capability=row.capability,
+            result = ActionExecutionResult.model_validate(
+                {"capability": row.capability, **(row.result or {"status": row.status})},
             )
-            await _set_action_state(row.id, "failed", result.model_dump(exclude_none=True))
-            row.status = "failed"
-            row.result = result.model_dump(exclude_none=True)
-            results[row.action_key] = result
-            continue
-        dependencies = (row.arguments or {}).get("depends_on", [])
-        unsatisfied = [dep for dep in dependencies if dep not in by_key or by_key[dep].status != "succeeded"]
-        if unsatisfied:
-            result = ActionExecutionResult(
-                status="skipped",
-                reason="dependency not completed",
-                dependencies=unsatisfied,
-                capability=row.capability,
-            )
-            await _set_action_state(row.id, "skipped", result.model_dump(exclude_none=True))
-            row.status = "skipped"
-            row.result = result.model_dump(exclude_none=True)
-            results[row.action_key] = result
-            continue
-        runtime_allowed, blocked_reason = await _runtime_capability_allowed(
-            user_id,
-            row.capability,
-            row.result if isinstance(row.result, dict) else None,
-        )
-        if not runtime_allowed:
-            result = ActionExecutionResult(
-                status="blocked",
-                reason=blocked_reason,
-                capability=row.capability,
-            )
-            await _set_action_state(row.id, "blocked", result.model_dump(exclude_none=True))
-            row.status = "blocked"
-            row.result = result.model_dump(exclude_none=True)
-            results[row.action_key] = result
-            continue
-        executor = _EXECUTORS.get(row.capability)
-        if executor is None:
-            result = ActionExecutionResult(
-                status="blocked",
-                reason="capability executor unavailable",
-                capability=row.capability,
-            )
-            await _set_action_state(row.id, "blocked", result.model_dump(exclude_none=True))
         else:
-            await _set_action_state(row.id, "running")
-            row.status = "running"
-            try:
-                action_context = context.model_copy(
-                    update={
-                        "action_row_id": row.id,
-                        "resume_result": row.result if isinstance(row.result, dict) else None,
-                    },
-                )
-                result = await executor(
-                    user_id,
-                    (row.arguments or {}).get("values", {}),
-                    action_context,
-                    facts,
-                    date_context,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "nightly capability action failed",
-                    extra={
-                        "user_id": user_id,
-                        "action": row.action_key,
-                        "capability": row.capability,
-                        "error": str(exc),
-                    },
-                    exc_info=True,
-                )
-                result = ActionExecutionResult(status="failed", reason=str(exc))
-            status = result.status if result.status in _TERMINAL_ACTION_STATUSES else "failed"
-            result.status = status
+            result = await _execute_persisted_action(row, by_key, user_id, context, facts, date_context)
+            result.status = result.status if result.status in _TERMINAL_ACTION_STATUSES else "failed"
             result.capability = row.capability
-            await _set_action_state(row.id, status, result.model_dump(exclude_none=True))
-        row.status = result.status
-        row.result = result.model_dump(exclude_none=True)
-        if row.status in _SUCCESS_ACTION_STATUSES and result.fact:
-            facts.append(result.fact)
+            payload = result.model_dump(exclude_none=True)
+            await _set_action_state(row.id, result.status, payload)
+            row.status = result.status
+            row.result = payload
+            if result.status in _SUCCESS_ACTION_STATUSES and result.fact:
+                facts.append(result.fact)
         results[row.action_key] = result
-    return results
-
-
-async def _execute_ephemeral_actions(
-    plan: NormalizedPlan,
-    user_id: int,
-    context: PlanningContext,
-    date_context: DateContext,
-) -> dict[str, ActionExecutionResult]:
-    facts: list[str] = []
-    results: dict[str, ActionExecutionResult] = {}
-    statuses: dict[str, str] = {}
-    for action in plan.actions:
-        if action.illegal_outfit_deps:
-            result = ActionExecutionResult(
-                status="failed",
-                reason="场景与衣柜相互独立，不能依赖换装动作表达场景穿着；把完整造型写入 outfit_description",
-                dependencies=action.illegal_outfit_deps,
-                capability=action.capability,
-            )
-            statuses[action.id] = result.status
-            results[action.id] = result
-            continue
-        unsatisfied = [dep for dep in action.depends_on if statuses.get(dep) != "succeeded"]
-        if unsatisfied:
-            result = ActionExecutionResult(
-                status="skipped",
-                reason="dependency not completed",
-                capability=action.capability,
-            )
-        else:
-            runtime_allowed, blocked_reason = await _runtime_capability_allowed(
-                user_id,
-                action.capability,
-            )
-            if not runtime_allowed:
-                result = ActionExecutionResult(
-                    status="blocked",
-                    reason=blocked_reason,
-                    capability=action.capability,
-                )
-            else:
-                try:
-                    result = await _EXECUTORS[action.capability](
-                        user_id,
-                        action.arguments,
-                        context,
-                        facts,
-                        date_context,
-                    )
-                    result.capability = action.capability
-                except Exception as exc:  # noqa: BLE001 - 临时执行模式同样要求单动作故障隔离
-                    result = ActionExecutionResult(
-                        status="failed",
-                        reason=str(exc),
-                        capability=action.capability,
-                    )
-        statuses[action.id] = result.status
-        if result.status in _SUCCESS_ACTION_STATUSES and result.fact:
-            facts.append(result.fact)
-        results[action.id] = result
     return results
 
 
@@ -2036,14 +1934,13 @@ async def run_nightly_planning(
     background_memories: dict[str, str],
     user_profile: dict[str, str],
     recall_highlights: list[dict[str, Any]],
-    date_context: DateContext | dict[str, Any],
+    date_context: DateContext,
     anomaly_stats: dict[str, Any],
     today_conversations: list[dict[str, str]],
     *,
     moment_interactions: list[dict[str, Any]] | None = None,
-    log_id: int | None = None,
+    log_id: int,
 ) -> PlanningResult:
-    date_ctx = date_context if isinstance(date_context, DateContext) else DateContext.model_validate(date_context)
     context = await _collect_context(user_id)
     plan = await _stored_plan(log_id)
     if plan is None:
@@ -2063,7 +1960,7 @@ async def run_nightly_planning(
                 exclude={"action_row_id", "resume_result"},
                 exclude_none=True,
             ),
-            **date_ctx.model_dump(),
+            **date_context.model_dump(),
             **anomaly_stats,
         }
         raw = await call_llm_once(
@@ -2078,19 +1975,11 @@ async def run_nightly_planning(
         await _persist_plan(
             log_id,
             user_id,
-            date.fromisoformat(str(date_ctx.source_date)),
+            date.fromisoformat(date_context.source_date),
             plan,
         )
     context.plan_theme = plan.theme
-    if log_id is not None:
-        actions = await _execute_persisted_actions(
-            log_id,
-            user_id,
-            context,
-            date_ctx,
-        )
-    else:
-        actions = await _execute_ephemeral_actions(plan, user_id, context, date_ctx)
+    actions = await _execute_persisted_actions(log_id, user_id, context, date_context)
     return PlanningResult(
         theme=plan.theme,
         rationale=plan.rationale,

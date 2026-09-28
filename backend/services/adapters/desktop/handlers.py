@@ -63,6 +63,7 @@ from services.application.chat import (
 from services.application.generation import (
     AVATAR_JOB_LOCKS,
     AvatarGenerationError,
+    avatar_response,
     get_avatar_job_lock,
     raise_if_image_sealed,
     regenerate_avatar,
@@ -1722,7 +1723,7 @@ def _register_session_handlers(
                         payload = {"job_id": job_id, "error": "伙伴正在生成形象，请稍候"}
                     else:
                         asset = await regenerate_avatar(user_id=user_id, feedback=feedback, mode=mode)
-                        payload = {"job_id": job_id, "asset_url": asset.asset_url, "id": asset.id}
+                        payload = {"job_id": job_id, "asset_url": avatar_response(asset).asset_url, "id": asset.id}
                 except AvatarGenerationError as exc:
                     logger.warning("avatar regenerate failed", extra={"user_id": user_id, "error": exc.internal})
                     payload = {"job_id": job_id, "error": str(exc)}

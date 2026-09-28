@@ -50,13 +50,11 @@ def format_messages_compact(msgs: list[Message], *, char_cap: int | None = None)
     """保留发言归属、时间、截断与工具关联；正文中的换行不能伪装成另一条发言。"""
     records = []
     for msg in msgs:
-        text = message_text(msg)
-        if not text and not msg.tool_calls:
-            continue
-        content: str | list[dict[str, str]] = text[:char_cap]
-        truncated = char_cap is not None and len(text) > char_cap
+        content: str | list[dict[str, str]]
         if msg.content_type == "companion_reply":
-            source = CompanionReplyInput.model_validate_json(msg.content or "")
+            if not (msg.content or "").strip() and not msg.tool_calls:
+                continue
+            source = CompanionReplyInput.model_validate_json(msg.content)
             content = []
             remaining = char_cap
             truncated = False
@@ -69,6 +67,12 @@ def format_messages_compact(msgs: list[Message], *, char_cap: int | None = None)
                 truncated |= dialogue != bubble.text
                 if remaining is not None:
                     remaining -= len(dialogue)
+        else:
+            text = message_text(msg)
+            if not text and not msg.tool_calls:
+                continue
+            content = text[:char_cap]
+            truncated = char_cap is not None and len(text) > char_cap
         record = {
             "role": msg.role,
             "created_at": msg.created_at.isoformat() if msg.created_at else None,

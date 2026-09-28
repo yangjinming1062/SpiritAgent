@@ -90,6 +90,7 @@ from services.application.generation import (
     list_outfits,
     list_pack_responses,
     list_pending_media_reviews,
+    load_pack_response,
     outfit_response,
     prepare_avatar_prompt,
     prepare_fullbody_prompt,
@@ -285,7 +286,6 @@ async def get_avatar(user: CurrentUser, db: DbSession) -> AvatarAssetResponse:
     asset = await get_active_avatar(db, user.id)
     if asset is None:
         raise HTTPException(status_code=404, detail="No avatar found")
-    # get_active_avatar 读时已重签 asset_url，此处禁止再次重签。
     return avatar_response(asset)
 
 
@@ -842,7 +842,7 @@ def _decode_clip_upload(data_b64: str, content_type: str | None) -> tuple[bytes,
 
 @router.get("/video-packs", response_model=VideoPackListResponse)
 async def get_video_packs(user: CurrentUser, db: DbSession) -> VideoPackListResponse:
-    return VideoPackListResponse(packs=[VideoPackResponse(**item) for item in await list_pack_responses(db, user.id)])
+    return VideoPackListResponse(packs=await list_pack_responses(db, user.id))
 
 
 @router.post("/video-packs", response_model=VideoPackResponse, status_code=status.HTTP_201_CREATED)
@@ -960,11 +960,7 @@ async def put_video_pack_activate(pack_id: int, user: CurrentUser, db: DbSession
         pack = await activate_video_pack(db, user.id, pack_id)
     except VideoPackError as exc:
         raise _video_pack_http_error(exc)
-    item = await list_pack_responses(db, user.id)
-    for entry in item:
-        if entry["id"] == pack.id:
-            return VideoPackResponse(**entry)
-    raise HTTPException(status_code=404, detail={"error": "视频包不存在"})
+    return await load_pack_response(db, pack)
 
 
 @router.delete("/video-packs/{pack_id}", response_model=CompanionOperationResponse)
