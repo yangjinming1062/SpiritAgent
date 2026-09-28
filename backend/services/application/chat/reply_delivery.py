@@ -1,7 +1,25 @@
 from modules.conversation import CompanionReply, CompanionReplyInput, TextBubble, VoiceBubble
 from modules.media import SPEECH_STYLE_ADAPTER
 
-from services.infrastructure.llm import ProviderConfig, speech_style_matches
+from services.infrastructure.llm import ProviderConfig, speech_performance_schema, speech_style_matches
+
+
+def companion_reply_schema(speech_config: ProviderConfig | None, *, allow_silence: bool) -> dict:
+    schema = CompanionReplyInput.model_json_schema()
+    schema["minItems"] = 0 if allow_silence else 1
+    definitions = schema["$defs"]
+    if speech_config is None:
+        schema["items"] = {"$ref": "#/$defs/TextBubble"}
+        schema["$defs"] = {"TextBubble": definitions["TextBubble"]}
+    else:
+        performance = speech_performance_schema(speech_config.provider_name, speech_config.model)
+        schema["$defs"] = {
+            "TextBubble": definitions["TextBubble"],
+            "VoiceBubbleInput": definitions["VoiceBubbleInput"],
+            **performance.pop("$defs", {}),
+            "SpeechPerformance": performance,
+        }
+    return schema
 
 
 def parse_companion_reply(
@@ -23,7 +41,7 @@ def parse_companion_reply(
             bubbles.append(bubble)
             continue
         if speech_config is None:
-            raise ValueError("Voice reply requires a configured TTS provider")
+            raise ValueError("Reply bubble type must be 'text'")
         if not bubble.speech.model_fields_set:
             raise ValueError("Voice reply requires per-bubble performance")
         style = SPEECH_STYLE_ADAPTER.validate_python(
@@ -34,7 +52,7 @@ def parse_companion_reply(
             },
         )
         if not speech_style_matches(style, speech_config.provider_name, speech_config.model):
-            raise ValueError("Voice performance exceeds configured TTS capabilities")
+            raise ValueError("Speech performance does not match the required speech schema")
         if any(bubble.text.count(cue.before) != 1 for cue in style.cues):
             raise ValueError("Voice cue must match this bubble's dialogue exactly once")
         if style.provider == "minimax":

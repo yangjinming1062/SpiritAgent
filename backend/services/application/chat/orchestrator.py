@@ -372,7 +372,7 @@ async def _run_chat_turn(
             )
             input_length = len(current_context["input"])
             retry_available = True
-            reply_format_feedback = None
+            reply_format_error = None
             while True:
                 try:
                     return await _generate_llm_response(
@@ -392,7 +392,7 @@ async def _run_chat_turn(
                         reply_preference=inputs.response_preference if complete_response else None,
                         voice_id=inputs.speech_voice,
                         allow_silence=ephemeral and headless and complete_response,
-                        reply_format_feedback=reply_format_feedback,
+                        reply_format_error=reply_format_error,
                         split_paragraphs=conv.system_preset_id == "companion"
                         and not conv.is_automation
                         and preset_override is None,
@@ -408,7 +408,7 @@ async def _run_chat_turn(
                     if not retry_available:
                         raise
                     retry_available = False
-                    reply_format_feedback = exc.feedback
+                    reply_format_error = exc
                     logger.warning("Retrying final companion reply after format validation failed")
 
         def set_response_started() -> None:
@@ -442,6 +442,16 @@ async def _run_chat_turn(
                 exc_info=True,
             )
             await _emit_llm_error(emitter, exc)
+            break
+        except _InvalidCompanionReplyError:
+            await emitter.send_json(
+                {
+                    "type": "error",
+                    "message": "本次回复的格式不正确，请重试。"
+                    if inputs.language == "zh"
+                    else "The reply could not be generated in the required format. Please try again.",
+                },
+            )
             break
         except (MissingLlmConfigError, RuntimeError) as exc:
             # 配置缺失或响应未正常完成：结束本轮；完整响应失败也可能发生在请求已开始之后。

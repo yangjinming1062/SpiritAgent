@@ -77,7 +77,7 @@ from .providers import (
     rotate_http_clients,
     try_resolve,
 )
-from .providers.speech_style import speech_style_guidance, speech_style_matches
+from .providers.speech_style import speech_performance_schema, speech_style_guidance, speech_style_matches
 from .responses import (
     approx_responses_tokens,
     build_responses_kwargs,
@@ -171,6 +171,7 @@ __all__ = [
     "resolve_vision_chain",
     "rotate_http_clients",
     "scale_temperature",
+    "speech_performance_schema",
     "speech_style_guidance",
     "speech_style_matches",
     "synthesize_speech",

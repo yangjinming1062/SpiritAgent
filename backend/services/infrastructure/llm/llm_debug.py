@@ -47,6 +47,8 @@ def _summarize_content_part(part: Any) -> Any:
 
 
 def _summarize_response_item(item: Any) -> dict[str, Any]:
+    if hasattr(item, "model_dump"):
+        item = item.model_dump(exclude_none=True)
     if not isinstance(item, dict):
         return {"type": getattr(item, "type", f"<{type(item).__name__}>")}
     out: dict[str, Any] = {"type": item.get("type") or item.get("role", "unknown")}
@@ -79,7 +81,7 @@ def summarize_llm_request(kwargs: dict[str, Any]) -> dict[str, Any]:
             {"type": tool.get("type"), "name": tool.get("name")} for tool in tools if isinstance(tool, dict)
         ]
         out["num_tools"] = len(tools)
-    for key in ("temperature", "top_p", "max_output_tokens", "reasoning", "text"):
+    for key in ("temperature", "top_p", "max_output_tokens", "reasoning", "text", "tool_choice"):
         if kwargs.get(key) is not None:
             out[key] = kwargs[key]
     return out
@@ -96,12 +98,16 @@ def summarize_llm_response(response: Any) -> dict[str, Any]:
     output = getattr(response, "output", None) or []
     out["output"] = [_summarize_response_item(item) for item in output]
     out["num_output_items"] = len(output)
+    if details := getattr(response, "incomplete_details", None):
+        out["incomplete_reason"] = getattr(details, "reason", None)
     if usage := getattr(response, "usage", None):
         out["usage"] = {
             "input_tokens": getattr(usage, "input_tokens", None),
             "output_tokens": getattr(usage, "output_tokens", None),
             "total_tokens": getattr(usage, "total_tokens", None),
         }
+        if details := getattr(usage, "output_tokens_details", None):
+            out["usage"]["reasoning_tokens"] = getattr(details, "reasoning_tokens", None)
     return out
 
 

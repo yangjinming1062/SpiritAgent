@@ -1,4 +1,4 @@
-from typing import Any
+from typing import Any, Literal
 
 from components import approx_text_tokens
 
@@ -85,6 +85,7 @@ def build_responses_kwargs(
     instructions: str,
     input_items: list[dict[str, Any]],
     tools: list[dict[str, Any]] | None = None,
+    tool_choice: Literal["auto", "none"] | None = None,
     stream: bool = False,
     temperature: float | None = None,
     max_output_tokens: int | None = None,
@@ -102,6 +103,7 @@ def build_responses_kwargs(
     if tools:
         request["tools"] = [tool_schema_for_responses(tool) for tool in tools]
     for key, value in (
+        ("tool_choice", tool_choice),
         ("temperature", temperature),
         ("max_output_tokens", max_output_tokens),
         ("reasoning", reasoning),

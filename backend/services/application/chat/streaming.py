@@ -9,7 +9,12 @@ from typing import Any, Literal
 
 from components import DEFAULT_LANGUAGE, TOOL_CALL_ID_HEX_PREFIX_LEN, get_logger, new_request_id, resolve_prompt_text
 from modules.conversation import CompanionReply
-from prompts.chat import COMPANION_NO_VOICE_GUIDANCES, COMPANION_REPLY_GUIDANCES, COMPANION_REPLY_REPAIR_GUIDANCES
+from prompts.chat import (
+    COMPANION_REPLY_GUIDANCES,
+    COMPANION_REPLY_REPAIR_GUIDANCES,
+    COMPANION_TEXT_REPLY_GUIDANCES,
+    COMPANION_VOICE_REPLY_GUIDANCES,
+)
 from pydantic import ValidationError
 
 from services.infrastructure.llm import (
@@ -24,7 +29,7 @@ from services.infrastructure.llm import (
 
 from .bubble import BubbleEvent, BubbleSplitter
 from .chat_emitter import Emitter
-from .reply_delivery import parse_companion_reply
+from .reply_delivery import companion_reply_schema, parse_companion_reply
 from .system_prompt import refresh_volatile_header_in_prompt
 
 logger = get_logger(__name__)
@@ -41,11 +46,12 @@ class _IncompleteResponseError(RuntimeError):
 
 
 class _InvalidCompanionReplyError(RuntimeError):
-    def __init__(self, error: ValueError) -> None:
-        self.feedback = (
-            error.json(include_input=False, include_url=False, include_context=False)
+    def __init__(self, error: ValueError, raw_reply: str) -> None:
+        self.raw_reply = raw_reply
+        self.validation_errors = (
+            error.errors(include_input=False, include_url=False, include_context=False)
             if isinstance(error, ValidationError)
-            else json.dumps([{"msg": str(error)}], ensure_ascii=False)
+            else [{"type": "value_error", "loc": (), "msg": str(error)}]
         )
         super().__init__("Invalid companion reply format")
 
@@ -122,6 +128,20 @@ def _reasoning_item_text(item: Any) -> str:
     return "\n\n".join(texts)
 
 
+def _reply_repair_history(input_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """保留历史顺序与工具结果事实，恢复请求不再携带原生工具续轮帧或中间推理。"""
+    return [
+        {
+            "role": "user",
+            "content": [{"type": "input_text", "text": json.dumps({"tool_history": item}, ensure_ascii=False)}],
+        }
+        if item.get("type") in {"function_call", "function_call_output"}
+        else item
+        for item in input_items
+        if item.get("type") != "reasoning"
+    ]
+
+
 async def _generate_llm_response(
     emitter: Emitter,
     model_name: str,
@@ -141,7 +161,7 @@ async def _generate_llm_response(
     reply_preference: Literal["text", "voice"] | None = None,
     voice_id: str = "",
     allow_silence: bool = False,
-    reply_format_feedback: str | None = None,
+    reply_format_error: _InvalidCompanionReplyError | None = None,
 ) -> _LLMTurnResult:
     """单次 LLM 调用与正文交付；流式首事件或完整响应到达时触发回退哨兵，工具轮正文只在 stream 模式实时显示。"""
     client = provider.raw_client()
@@ -156,23 +176,52 @@ async def _generate_llm_response(
         user_local_tz=user_local_tz,
         lang=lang,
     )
+    request_input = context["input"]
     if reply_preference is not None:
-        instructions += resolve_prompt_text(COMPANION_REPLY_GUIDANCES, lang).replace("{preference}", reply_preference)
-        instructions += (
-            speech_style_guidance(speech_config.provider_name, speech_config.model)
-            if speech_config
-            else resolve_prompt_text(COMPANION_NO_VOICE_GUIDANCES, lang)
+        delivery_guidance = resolve_prompt_text(
+            COMPANION_VOICE_REPLY_GUIDANCES if speech_config else COMPANION_TEXT_REPLY_GUIDANCES,
+            lang,
+        ).replace("{preference}", reply_preference)
+        reply_guidance = resolve_prompt_text(COMPANION_REPLY_GUIDANCES, lang).replace(
+            "{delivery}",
+            delivery_guidance,
         )
-        if reply_format_feedback:
-            instructions += resolve_prompt_text(COMPANION_REPLY_REPAIR_GUIDANCES, lang).replace(
-                "{errors}",
-                reply_format_feedback,
+        if speech_config:
+            reply_guidance += speech_style_guidance(speech_config.provider_name, speech_config.model)
+        if reply_format_error is not None:
+            schema = companion_reply_schema(speech_config, allow_silence=allow_silence)
+            repair_guidance = resolve_prompt_text(COMPANION_REPLY_REPAIR_GUIDANCES, lang).replace(
+                "{schema}",
+                json.dumps(schema, ensure_ascii=False),
             )
+            # 修复资料和阶段指令仅属于本次请求，不进入持久历史或下一轮工具上下文。
+            request_input = [
+                *_reply_repair_history(request_input),
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": json.dumps(
+                                {
+                                    "invalid_reply": reply_format_error.raw_reply,
+                                    "validation_errors": reply_format_error.validation_errors,
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    ],
+                },
+                {"role": "developer", "content": reply_guidance + repair_guidance},
+            ]
+        else:
+            instructions += reply_guidance
     kwargs = build_responses_kwargs(
         model=model_name,
         instructions=instructions,
-        input_items=context["input"],
-        tools=[] if reply_format_feedback else active_schemas,
+        input_items=request_input,
+        tools=[] if reply_format_error is not None else active_schemas,
+        tool_choice="none" if reply_format_error is not None else None,
         stream=delivery != "complete",
         reasoning=reasoning,
         temperature=scaled_temperature,
@@ -206,7 +255,33 @@ async def _generate_llm_response(
     bubbles = BubbleSplitter(split_paragraphs=split_paragraphs)
 
     reply: CompanionReply | None = None
+    completed_response: Any = None
     text_emitted = False
+
+    def invalid_reply(error: ValueError, raw_reply: str) -> _InvalidCompanionReplyError:
+        exc = _InvalidCompanionReplyError(error, raw_reply)
+        # Pydantic 的 msg 和 extra_forbidden 路径末项仍可能带原始输入，不能写入常规日志。
+        diagnostics = [
+            {
+                "type": detail["type"],
+                "loc": (*detail["loc"][:-1], "<extra>") if detail["type"] == "extra_forbidden" else detail["loc"],
+            }
+            for detail in exc.validation_errors
+        ]
+        logger.warning(
+            "Companion reply validation failed",
+            extra={
+                "provider": provider.provider_name,
+                "model": model_name,
+                "response_id": getattr(completed_response, "id", None),
+                "status": getattr(completed_response, "status", None),
+                "usage": final_usage_payload,
+                "repair_attempt": reply_format_error is not None,
+                "validation_errors": diagnostics,
+                "reply_chars": len(raw_reply),
+            },
+        )
+        return exc
 
     async def _send_text(text: str) -> None:
         nonlocal text_emitted
@@ -243,6 +318,7 @@ async def _generate_llm_response(
                     await emitter.send_json({"type": "reasoning.delta", "content": extracted})
 
     if delivery == "complete":
+        completed_response = response
         if on_response_started is not None:
             on_response_started()
         if response.status == "incomplete":
@@ -295,6 +371,7 @@ async def _generate_llm_response(
                     )
                 elif event_type == "response.completed":
                     response_finished = True
+                    completed_response = getattr(chunk, "response", None)
                     if usage := getattr(getattr(chunk, "response", None), "usage", None):
                         final_prompt_tokens, final_completion_tokens = usage.input_tokens, usage.output_tokens
                         final_usage_payload = _usage_payload(usage)
@@ -313,6 +390,12 @@ async def _generate_llm_response(
                 with contextlib.suppress(Exception):
                     await _emit_bubble_events(bubbles.flush())
 
+    if reply_format_error is not None and tool_calls_list:
+        raise invalid_reply(
+            ValueError("Tool calls are not allowed during final reply repair"),
+            getattr(completed_response, "output_text", "") or "".join(pending_text),
+        )
+
     # 确认完整终态且没有工具调用，才交付正文；工具轮的重叠台词不能先进入气泡或 TTS。
     if delivery != "stream" and not tool_calls_list:
         text = "".join(pending_text)
@@ -326,7 +409,7 @@ async def _generate_llm_response(
                     allow_silence=allow_silence,
                 )
             except ValueError as exc:
-                raise _InvalidCompanionReplyError(exc) from exc
+                raise invalid_reply(exc, text) from exc
         else:
             await _emit_bubble_events(bubbles.feed(text))
             await _emit_bubble_events(bubbles.flush())

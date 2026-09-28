@@ -1,6 +1,6 @@
 import json
 
-from modules.media import SpeechStyle
+from modules.media import MiMoSpeechStyle, MiniMaxSpeechStyle, SpeechStyle
 
 _MINIMAX_CUES = {
     "laughs": "笑声",
@@ -97,6 +97,28 @@ def speech_style_guidance(provider: str, model: str) -> str:
         "exact substring occurring once in this bubble's text. Never add dialogue merely to create an anchor. "
         "All direction stays in speech; text contains only actual spoken words.\n"
     )
+
+
+def speech_performance_schema(provider: str, model: str) -> dict:
+    """从演绎校验模型生成本轮输入结构，供应商绑定由服务端完成。"""
+    style_model = {"mimo": MiMoSpeechStyle, "minimax": MiniMaxSpeechStyle}[provider]
+    schema = style_model.model_json_schema()
+    schema["minProperties"] = 1
+    for field in ("provider", "model"):
+        schema["properties"].pop(field)
+        schema["required"].remove(field)
+    if provider == "minimax":
+        emotions = list(_MINIMAX_EMOTIONS)
+        if model in _MINIMAX_EXTENDED_EMOTION_MODELS:
+            emotions.extend(("fluent", "whisper"))
+        for variant in schema["properties"]["emotion"]["anyOf"]:
+            if variant.get("type") == "string":
+                variant["enum"] = emotions
+        if model in _MINIMAX_CUE_MODELS:
+            schema["$defs"]["SpeechCue"]["properties"]["tag"]["enum"] = list(_MINIMAX_CUES)
+        else:
+            schema["properties"]["cues"]["maxItems"] = 0
+    return schema
 
 
 def speech_style_matches(style: SpeechStyle, provider: str, model: str) -> bool:
