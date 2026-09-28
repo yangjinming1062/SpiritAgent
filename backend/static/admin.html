@@ -5,29 +5,26 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SpiritAgent 管理后台</title>
 <style>
-/* ── SpiritAgent product tokens (ported from desktop/renderer/styles.css) ──
-   The admin console reuses the product's own palette, type stack, radius
-   scale and hairline border language so it reads as the same product, not a
-   generic template. Light-only — an internal ops door, not a marketing face. */
 :root {
     --primary: #0053fd;
-    --primary-ink: color-mix(in srgb, #0053fd 88%, #000);   /* hover/pressed */
+    --primary-ink: color-mix(in srgb, #0053fd 88%, #000);
     --primary-fg: #fcfcfc;
     --primary-soft: color-mix(in srgb, #0053fd 10%, #fff);
     --primary-softer: color-mix(in srgb, #0053fd 5%, #fff);
 
     --fg: #17171a;
-    --text-2: color-mix(in srgb, #17171a 66%, transparent);
+    --text-2: color-mix(in srgb, #17171a 68%, transparent);
     --text-3: color-mix(in srgb, #17171a 46%, transparent);
 
-    --bg: #f8faff;
+    --bg: #f3f5fa;
     --surface: #ffffff;
-    --surface-2: #fcfcfc;
+    --surface-2: #f8f9fc;
+    --surface-3: #eef1f7;
 
     --border: color-mix(in srgb, #17171a 9%, transparent);
     --border-2: color-mix(in srgb, #17171a 14%, transparent);
 
-    --row-hover: color-mix(in srgb, #0053fd 4.5%, transparent);
+    --row-hover: color-mix(in srgb, #0053fd 4%, transparent);
 
     --green: #1f8a65;
     --green-soft: color-mix(in srgb, #1f8a65 12%, #fff);
@@ -36,17 +33,19 @@
     --amber: #c08532;
     --amber-soft: color-mix(in srgb, #c08532 14%, #fff);
 
-    --radius: 0.625rem;
-    --radius-sm: 0.4rem;
-    --radius-lg: 0.875rem;
+    --radius: 0.55rem;
+    --radius-sm: 0.38rem;
+    --radius-lg: 0.85rem;
 
     --shadow-sm: 0 0.0625rem 0.125rem color-mix(in srgb, #000 5%, transparent);
     --shadow-md: 0 0.5rem 1.25rem color-mix(in srgb, #000 9%, transparent);
     --shadow-lg: 0 1rem 2.5rem color-mix(in srgb, #000 14%, transparent);
 
-    --font-sans: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif,
-        'Apple Color Emoji', 'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
+    --font-sans: 'Segoe UI', -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
     --font-mono: 'Cascadia Code', 'JetBrains Mono', 'SF Mono', ui-monospace, Consolas, monospace;
+
+    --sidebar-w: 15.25rem;
+    --topbar-h: 3.6rem;
 }
 
 * { box-sizing: border-box; }
@@ -65,38 +64,47 @@ body {
     text-rendering: optimizeLegibility;
 }
 button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
 .mono { font-family: var(--font-mono); font-size: 0.78rem; }
 .text-3 { color: var(--text-3); }
 .hint { color: var(--text-3); font-size: 0.76rem; }
-
-/* ── Brand mark ─────────────────────────────────────────── */
 .logo { display: inline-flex; flex: none; }
 
-/* ── Buttons ────────────────────────────────────────────── */
 .btn {
     display: inline-flex; align-items: center; justify-content: center; gap: 0.4rem;
-    padding: 0.5rem 0.9rem;
+    padding: 0.48rem 0.88rem;
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--fg);
     font-size: 0.8125rem; font-weight: 600;
     line-height: 1.2;
-    cursor: pointer;
     transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease, opacity 0.12s ease;
     white-space: nowrap;
 }
 .btn:disabled { opacity: 0.45; cursor: not-allowed; }
 .btn--primary { background: var(--primary); color: var(--primary-fg); }
 .btn--primary:not(:disabled):hover { background: var(--primary-ink); }
-.btn--ghost { border-color: var(--border-2); color: var(--text-2); background: var(--surface); }
-.btn--ghost:not(:disabled):hover { background: var(--primary-softer); border-color: var(--primary); color: var(--primary); }
+.btn--ghost {
+    border-color: var(--border-2);
+    color: var(--text-2);
+    background: var(--surface);
+}
+.btn--ghost:not(:disabled):hover {
+    background: var(--primary-softer);
+    border-color: color-mix(in srgb, var(--primary) 35%, var(--border-2));
+    color: var(--primary);
+}
 .btn--danger { background: var(--red); color: #fff; }
 .btn--danger:not(:disabled):hover { background: color-mix(in srgb, var(--red) 86%, #000); }
-.btn--sm { padding: 0.32rem 0.6rem; font-size: 0.75rem; font-weight: 600; }
+.btn--sm { padding: 0.3rem 0.58rem; font-size: 0.75rem; }
 .btn--block { width: 100%; }
+.btn--icon {
+    width: 1.85rem; height: 1.85rem; padding: 0;
+    border-color: var(--border-2); background: var(--surface); color: var(--text-2);
+}
+.btn--icon:not(:disabled):hover { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 35%, var(--border-2)); background: var(--primary-softer); }
 
-/* ── Pills / chips ──────────────────────────────────────── */
 .pill {
     display: inline-flex; align-items: center; gap: 0.3rem;
     padding: 0.12rem 0.5rem;
@@ -130,57 +138,69 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .keybadge.on { color: var(--green); background: var(--green-soft); }
 .keybadge.off { color: var(--text-3); background: color-mix(in srgb, var(--fg) 5%, transparent); }
 
-/* ── Login ──────────────────────────────────────────────── */
 #login {
     position: fixed; inset: 0; z-index: 1000;
     display: flex; align-items: center; justify-content: center;
-    background: var(--bg);
-    background-image:
-        radial-gradient(120% 90% at 100% 0%, color-mix(in srgb, var(--primary) 7%, transparent), transparent 55%),
-        radial-gradient(120% 90% at 0% 100%, color-mix(in srgb, var(--primary) 5%, transparent), transparent 55%);
+    background:
+        radial-gradient(90% 70% at 100% 0%, color-mix(in srgb, var(--primary) 9%, transparent), transparent 55%),
+        radial-gradient(80% 70% at 0% 100%, color-mix(in srgb, var(--primary) 6%, transparent), transparent 55%),
+        var(--bg);
     padding: 1.5rem;
 }
 .login-card {
-    width: 100%; max-width: 23rem;
+    width: 100%; max-width: 23.5rem;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-lg);
     box-shadow: var(--shadow-md);
-    padding: 2.25rem 2rem 2rem;
+    padding: 2.15rem 1.95rem 1.85rem;
 }
-.login-brand { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 1.5rem; }
-.login-brand .wordmark { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }
-.login-brand .tag { font-size: 0.7rem; font-weight: 600; color: var(--primary); background: var(--primary-soft); padding: 0.1rem 0.45rem; border-radius: 999px; }
-.login-card h1 { margin: 0 0 0.25rem; font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
-.login-card .sub { margin: 0 0 1.5rem; color: var(--text-3); font-size: 0.82rem; }
-#loginError { display: none; margin-top: 0.75rem; padding: 0.55rem 0.7rem; border-radius: var(--radius-sm); background: var(--red-soft); color: var(--red); font-size: 0.8rem; font-weight: 500; }
+.login-brand { display: flex; align-items: center; gap: 0.65rem; margin-bottom: 1.35rem; }
+.login-brand .wordmark { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.02em; }
+.login-brand .tag {
+    font-size: 0.7rem; font-weight: 600; color: var(--primary);
+    background: var(--primary-soft); padding: 0.12rem 0.48rem; border-radius: 999px;
+}
+.login-card h1 { margin: 0 0 0.3rem; font-size: 1.35rem; font-weight: 700; letter-spacing: -0.02em; }
+.login-card .sub { margin: 0 0 1.45rem; color: var(--text-3); font-size: 0.84rem; }
+#loginError {
+    display: none; margin-top: 0.75rem; padding: 0.55rem 0.7rem;
+    border-radius: var(--radius-sm); background: var(--red-soft); color: var(--red);
+    font-size: 0.8rem; font-weight: 500;
+}
 
-/* ── App shell ──────────────────────────────────────────── */
 #app { display: none; }
-.shell { display: grid; grid-template-columns: 14.5rem 1fr; min-height: 100vh; }
+.shell { display: grid; grid-template-columns: var(--sidebar-w) 1fr; min-height: 100vh; }
 
 .sidebar {
     background: var(--surface);
     border-right: 1px solid var(--border);
     display: flex; flex-direction: column;
-    padding: 1.1rem 0.75rem;
+    padding: 1rem 0.75rem;
     position: sticky; top: 0; height: 100vh;
+    z-index: 30;
 }
-.side-brand { display: flex; align-items: center; gap: 0.55rem; padding: 0.35rem 0.5rem 1.1rem; }
-.side-brand .wordmark { font-size: 0.98rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.1; }
+.side-brand { display: flex; align-items: center; gap: 0.55rem; padding: 0.25rem 0.45rem 1rem; }
+.side-brand .wordmark { font-size: 0.98rem; font-weight: 700; letter-spacing: -0.01em; line-height: 1.15; display: block; }
 .side-brand .tag { display: block; font-size: 0.68rem; font-weight: 500; color: var(--text-3); }
 
-.nav { display: flex; flex-direction: column; gap: 0.15rem; }
+.nav { display: flex; flex-direction: column; gap: 1.15rem; }
+.nav-group { display: flex; flex-direction: column; gap: 0.12rem; }
+.nav-label {
+    padding: 0 0.55rem 0.35rem;
+    font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase; color: var(--text-3);
+}
 .nav-item {
     position: relative;
-    display: flex; align-items: center; gap: 0.6rem;
-    padding: 0.55rem 0.65rem;
+    display: flex; align-items: center; gap: 0.58rem;
+    padding: 0.52rem 0.62rem;
     border: 1px solid transparent;
     border-radius: var(--radius-sm);
     background: transparent;
     color: var(--text-2);
     font-size: 0.84rem; font-weight: 600;
-    text-align: left; width: 100%; cursor: pointer;
+    text-align: left; width: 100%;
     transition: background 0.12s ease, color 0.12s ease;
 }
 .nav-item:hover { background: var(--primary-softer); color: var(--primary); }
@@ -202,21 +222,26 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .topbar {
     position: sticky; top: 0; z-index: 20;
     background: color-mix(in srgb, var(--bg) 88%, transparent);
-    backdrop-filter: blur(0.5rem) saturate(1.1);
-    -webkit-backdrop-filter: blur(0.5rem) saturate(1.1);
+    backdrop-filter: blur(0.55rem) saturate(1.15);
+    -webkit-backdrop-filter: blur(0.55rem) saturate(1.15);
     border-bottom: 1px solid var(--border);
+    min-height: var(--topbar-h);
 }
-.topbar-inner { padding: 1rem 1.75rem; }
-.topbar h1 { margin: 0; font-size: 1.15rem; font-weight: 700; letter-spacing: -0.015em; }
-.topbar .desc { margin: 0.15rem 0 0; color: var(--text-3); font-size: 0.8rem; }
+.topbar-inner {
+    padding: 0.85rem 1.65rem;
+    display: flex; align-items: flex-start; gap: 1rem;
+}
+.topbar-text { flex: 1; min-width: 0; }
+.topbar h1 { margin: 0; font-size: 1.12rem; font-weight: 700; letter-spacing: -0.02em; }
+.topbar .desc { margin: 0.12rem 0 0; color: var(--text-3); font-size: 0.8rem; }
+.topbar-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
 
-.content { padding: 1.5rem 1.75rem 4rem; }
-.wrap { max-width: 72rem; margin: 0 auto; display: flex; flex-direction: column; gap: 1.25rem; }
+.content { padding: 1.35rem 1.65rem 4rem; }
+.wrap { max-width: 78rem; margin: 0 auto; display: flex; flex-direction: column; gap: 1.15rem; }
 
 .panel { display: none; }
-.panel.active { display: block; }
+.panel.active { display: flex; flex-direction: column; gap: 1.15rem; }
 
-/* ── Card ───────────────────────────────────────────────── */
 .card {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -226,19 +251,25 @@ button, input, select, textarea { font: inherit; color: inherit; }
 }
 .card-head {
     display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap;
-    padding: 0.95rem 1.1rem;
+    padding: 0.88rem 1.05rem;
     border-bottom: 1px solid var(--border);
+    background: linear-gradient(to bottom, var(--surface), var(--surface-2));
 }
-.card-head h2 { margin: 0; font-size: 0.98rem; font-weight: 700; letter-spacing: -0.01em; }
+.card-head h2 { margin: 0; font-size: 0.95rem; font-weight: 700; letter-spacing: -0.01em; }
 .card-head .spacer { flex: 1; }
-.card-head .count { font-size: 0.75rem; font-weight: 600; color: var(--text-3); background: color-mix(in srgb, var(--fg) 5%, transparent); padding: 0.1rem 0.5rem; border-radius: 999px; }
+.card-head .count {
+    font-size: 0.75rem; font-weight: 600; color: var(--text-3);
+    background: color-mix(in srgb, var(--fg) 5%, transparent);
+    padding: 0.1rem 0.5rem; border-radius: 999px;
+}
+.card-pad { padding: 1.05rem; }
+.card-head .hint { font-weight: 500; }
 
-/* ── Table ──────────────────────────────────────────────── */
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; min-width: 44rem; }
-th, td { text-align: left; padding: 0.7rem 1.1rem; vertical-align: middle; }
+th, td { text-align: left; padding: 0.68rem 1.05rem; vertical-align: middle; }
 thead th {
-    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+    font-size: 0.7rem; font-weight: 700; letter-spacing: 0.045em; text-transform: uppercase;
     color: var(--text-3);
     border-bottom: 1px solid var(--border-2);
     background: var(--surface-2);
@@ -250,19 +281,26 @@ tbody tr { transition: background 0.1s ease; }
 tbody tr:hover { background: var(--row-hover); }
 .td-id { font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-3); white-space: nowrap; }
 .td-actions { white-space: nowrap; text-align: right; }
-.td-actions .btn + .btn { margin-left: 0.3rem; }
+.td-actions .btn + .btn { margin-left: 0.28rem; }
 .td-services, .td-platforms { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .td-notes { max-width: 18rem; color: var(--text-2); }
 .cell-strong { font-weight: 600; color: var(--fg); }
 .cell-sub { color: var(--text-3); font-size: 0.74rem; margin-top: 0.1rem; word-break: break-all; }
+.cell-user { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
+.avatar {
+    width: 1.85rem; height: 1.85rem; border-radius: 0.5rem;
+    display: grid; place-items: center;
+    font-size: 0.72rem; font-weight: 700;
+    color: var(--primary); background: var(--primary-soft);
+    flex: none;
+}
+.avatar.off { color: var(--text-3); background: var(--surface-3); }
 
-/* ── States (loading / empty / error) ───────────────────── */
 .state-row td { text-align: center; padding: 2.5rem 1rem; }
 .state-row .state-msg { color: var(--text-2); font-weight: 600; }
 .state-row .state-hint { color: var(--text-3); font-size: 0.8rem; margin-top: 0.25rem; }
 .state-row.err .state-msg { color: var(--red); }
 
-/* ── Forms ──────────────────────────────────────────────── */
 .field { margin-bottom: 0.95rem; }
 .field:last-child { margin-bottom: 0; }
 .field > label { display: block; font-size: 0.78rem; font-weight: 600; margin-bottom: 0.3rem; }
@@ -277,9 +315,9 @@ tbody tr:hover { background: var(--row-hover); }
 .callout strong { font-weight: 700; color: var(--fg); }
 .field .label-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.3rem; }
 .field .label-row > label { margin: 0; }
-input[type="text"], input[type="password"], input[type="date"], input[type="search"], select, textarea {
+input[type="text"], input[type="password"], input[type="date"], input[type="search"], input[type="number"], select, textarea {
     width: 100%;
-    padding: 0.5rem 0.65rem;
+    padding: 0.48rem 0.62rem;
     border: 1px solid var(--border-2);
     border-radius: var(--radius-sm);
     background: var(--surface);
@@ -294,30 +332,26 @@ input:focus, select:focus, textarea:focus {
 .checkbox-row input { width: 1rem; height: 1rem; accent-color: var(--primary); }
 select { cursor: pointer; }
 
-/* inline form row (models panel head) */
 .inline-form { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .inline-form select { width: auto; min-width: 10rem; }
+.inline-form input[type="number"], .inline-form input[type="date"] { width: auto; }
 
-/* ── Settings form ──────────────────────────────────────── */
-.card-pad { padding: 1.1rem; }
-.card-head .hint { font-weight: 500; }
-.subhead { margin: 1.25rem 0 0.75rem; font-size: 0.86rem; font-weight: 700; color: var(--fg); }
+.subhead {
+    margin: 1.2rem 0 0.7rem;
+    font-size: 0.84rem; font-weight: 700; color: var(--fg);
+}
 .card-pad > .subhead:first-child { margin-top: 0; }
 .card-pad > .grid { margin-bottom: 1rem; }
 .card-pad > .grid:last-child { margin-bottom: 0; }
-.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: 0.75rem; }
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+    gap: 0.75rem;
+}
 .grid--wide { grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr)); }
 .field--narrow { max-width: 20rem; }
-.settings-bar {
-    display: flex; align-items: center; justify-content: space-between;
-    gap: 0.75rem; flex-wrap: wrap;
-    margin-bottom: 1.25rem;
-}
-.settings-bar--end { justify-content: flex-end; margin-bottom: 2rem; }
-.settings-bar .lead { font-size: 1.05rem; font-weight: 700; letter-spacing: -0.01em; }
 
-/* ── Upload form ────────────────────────────────────────── */
-.upload-grid { display: grid; grid-template-columns: 1fr; gap: 0.85rem; padding: 1.1rem; }
+.upload-grid { display: grid; grid-template-columns: 1fr; gap: 0.85rem; padding: 1.05rem; }
 .upload-row { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; }
 .upload-row .file-name { color: var(--text-3); font-size: 0.8rem; }
 .upload-row input[type="text"] { flex: 1; min-width: 12rem; }
@@ -325,12 +359,85 @@ input[type="file"] { font-size: 0.78rem; }
 .file-drop {
     border: 1px dashed var(--border-2);
     border-radius: var(--radius-sm);
-    padding: 0.65rem 0.8rem;
+    padding: 0.62rem 0.8rem;
     background: var(--surface-2);
+    cursor: pointer;
 }
+.file-drop:hover { border-color: color-mix(in srgb, var(--primary) 40%, var(--border-2)); background: var(--primary-softer); }
 #uploadStatus { font-size: 0.8rem; margin: 0; min-height: 1.1rem; }
 
-/* ── Modal ──────────────────────────────────────────────── */
+.settings-layout {
+    display: grid;
+    grid-template-columns: 13.5rem minmax(0, 1fr);
+    gap: 1.15rem;
+    align-items: start;
+}
+.settings-rail {
+    position: sticky; top: calc(var(--topbar-h) + 1rem);
+    display: flex; flex-direction: column; gap: 0.65rem;
+    max-height: calc(100vh - var(--topbar-h) - 2.5rem);
+}
+.settings-search {
+    position: relative;
+}
+.settings-search input {
+    padding-left: 1.9rem;
+    background: var(--surface);
+}
+.settings-search svg {
+    position: absolute; left: 0.58rem; top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-3); pointer-events: none;
+}
+.rail-nav {
+    display: flex; flex-direction: column; gap: 0.15rem;
+    padding: 0.35rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: auto;
+}
+.rail-link {
+    display: block;
+    padding: 0.48rem 0.58rem;
+    border: 0; border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--text-2);
+    font-size: 0.8rem; font-weight: 600;
+    text-align: left; width: 100%;
+    transition: background 0.12s ease, color 0.12s ease;
+}
+.rail-link:hover { background: var(--primary-softer); color: var(--primary); }
+.rail-link.active { background: var(--primary-soft); color: var(--primary); }
+.settings-main { display: flex; flex-direction: column; gap: 1.15rem; min-width: 0; }
+.settings-bar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 0.75rem; flex-wrap: wrap;
+    padding: 0.85rem 1.05rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+}
+.settings-bar .lead { font-size: 1.02rem; font-weight: 700; letter-spacing: -0.015em; }
+.settings-bar .status {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    font-size: 0.75rem; font-weight: 600; color: var(--text-3);
+}
+.settings-bar .status.dirty { color: var(--amber); }
+.settings-section.is-hidden { display: none; }
+.settings-field.is-hidden { display: none; }
+.settings-empty {
+    display: none;
+    padding: 2rem 1rem;
+    text-align: center;
+    color: var(--text-3);
+    background: var(--surface);
+    border: 1px dashed var(--border-2);
+    border-radius: var(--radius);
+}
+.settings-empty.show { display: block; }
+
 .modal {
     display: none; position: fixed; inset: 0; z-index: 200;
     align-items: center; justify-content: center;
@@ -350,31 +457,78 @@ input[type="file"] { font-size: 0.78rem; }
 }
 .modal-card.wide { max-width: 56rem; }
 @keyframes modal-in { from { opacity: 0; transform: translateY(0.5rem); } to { opacity: 1; transform: none; } }
-.modal-head { display: flex; align-items: center; gap: 0.75rem; padding: 1.1rem 1.25rem; border-bottom: 1px solid var(--border); position: sticky; top: 0; background: var(--surface); }
+.modal-head {
+    display: flex; align-items: center; gap: 0.75rem;
+    padding: 1.05rem 1.2rem;
+    border-bottom: 1px solid var(--border);
+    position: sticky; top: 0; background: var(--surface); z-index: 1;
+}
 .modal-head h2 { margin: 0; font-size: 1.02rem; font-weight: 700; letter-spacing: -0.01em; flex: 1; }
-.modal-close { border: 0; background: transparent; cursor: pointer; color: var(--text-3); font-size: 1rem; line-height: 1; width: 1.75rem; height: 1.75rem; border-radius: var(--radius-sm); display: grid; place-items: center; }
+.modal-close {
+    border: 0; background: transparent; cursor: pointer; color: var(--text-3);
+    font-size: 1rem; line-height: 1; width: 1.75rem; height: 1.75rem;
+    border-radius: var(--radius-sm); display: grid; place-items: center;
+}
 .modal-close:hover { background: color-mix(in srgb, var(--fg) 6%, transparent); color: var(--fg); }
-.modal-body { padding: 1.25rem; }
-.modal-foot { display: flex; justify-content: flex-end; gap: 0.5rem; padding: 1rem 1.25rem; border-top: 1px solid var(--border); position: sticky; bottom: 0; background: var(--surface); }
+.modal-body { padding: 1.2rem; }
+.modal-foot {
+    display: flex; justify-content: flex-end; gap: 0.5rem;
+    padding: 0.95rem 1.2rem;
+    border-top: 1px solid var(--border);
+    position: sticky; bottom: 0; background: var(--surface);
+}
 
-/* model config service cards */
 .svc-card {
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 0.9rem;
+    padding: 0.85rem;
     background: var(--surface-2);
 }
 
-/* ── AIConfig card editors ─────────────────────────────── */
 :is(#aiCardSettings, #userAiCardSettings) .hint { font-size: 0.78rem; color: var(--text-3); line-height: 1.6; }
-:is(#aiCardSettings, #userAiCardSettings) .ai-card-head .btn { padding: 0.25rem 0.35rem; }
-:is(#aiCardSettings, #userAiCardSettings) .ai-card-head { display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.8rem; }
-:is(#aiCardSettings, #userAiCardSettings) .ai-card-head strong { flex: 1; }
+:is(#aiCardSettings, #userAiCardSettings) .ai-card-head .btn { padding: 0.22rem 0.34rem; }
+:is(#aiCardSettings, #userAiCardSettings) .ai-card-head {
+    display: flex; align-items: center; gap: 0.4rem; margin-bottom: 0.75rem;
+}
+:is(#aiCardSettings, #userAiCardSettings) .ai-card-head strong { flex: 1; min-width: 0; }
 :is(#aiCardSettings, #userAiCardSettings) [data-ai-handle] { cursor: grab; }
-:is(#aiCardSettings, #userAiCardSettings) .ai-drop-target { outline: 2px solid var(--primary); outline-offset: -2px; }
+:is(#aiCardSettings, #userAiCardSettings) .ai-drop-target {
+    outline: 2px solid var(--primary);
+    outline-offset: -2px;
+    background: var(--primary-softer);
+}
 
-/* ── Toast ──────────────────────────────────────────────── */
-#toast-wrap { position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 300; display: flex; flex-direction: column; gap: 0.5rem; }
+.menu { position: relative; display: inline-block; }
+.menu-pop {
+    display: none;
+    position: absolute; right: 0; top: calc(100% + 0.28rem);
+    min-width: 9.5rem;
+    padding: 0.28rem;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    box-shadow: var(--shadow-md);
+    z-index: 40;
+    text-align: left;
+}
+.menu.open .menu-pop { display: flex; flex-direction: column; gap: 0.1rem; }
+.menu-item {
+    border: 0; background: transparent;
+    padding: 0.42rem 0.55rem;
+    border-radius: 0.3rem;
+    font-size: 0.8rem; font-weight: 600;
+    color: var(--text-2);
+    text-align: left; width: 100%;
+}
+.menu-item:hover { background: var(--primary-softer); color: var(--primary); }
+.menu-item.danger { color: var(--red); }
+.menu-item.danger:hover { background: var(--red-soft); color: var(--red); }
+.menu-sep { height: 1px; background: var(--border); margin: 0.22rem 0.2rem; }
+
+#toast-wrap {
+    position: fixed; right: 1.25rem; bottom: 1.25rem; z-index: 300;
+    display: flex; flex-direction: column; gap: 0.5rem;
+}
 .toast {
     background: var(--surface); border: 1px solid var(--border);
     border-left: 3px solid var(--primary);
@@ -390,27 +544,47 @@ input[type="file"] { font-size: 0.78rem; }
 .toast.err { border-left-color: var(--red); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(0.4rem); } to { opacity: 1; transform: none; } }
 
-/* ── Responsive ─────────────────────────────────────────── */
+@media (max-width: 1100px) {
+    .settings-layout { grid-template-columns: 1fr; }
+    .settings-rail {
+        position: static; max-height: none;
+        flex-direction: row; flex-wrap: wrap; align-items: center;
+    }
+    .settings-search { flex: 1; min-width: 12rem; }
+    .rail-nav { flex-direction: row; flex-wrap: wrap; width: 100%; }
+    .rail-link { width: auto; }
+}
+
 @media (max-width: 860px) {
     .shell { grid-template-columns: 1fr; }
-    .sidebar { position: static; height: auto; flex-direction: row; align-items: center; gap: 0.5rem; padding: 0.6rem 0.75rem; overflow-x: auto; }
-    .side-brand { padding: 0; border: 0; }
-    .nav { flex-direction: row; }
-    .side-foot { margin: 0; padding: 0; border: 0; }
+    .sidebar {
+        position: static; height: auto; flex-direction: row; align-items: center;
+        gap: 0.55rem; padding: 0.65rem 0.75rem; overflow-x: auto;
+    }
+    .side-brand { padding: 0; border: 0; flex: none; }
+    .side-brand .tag { display: none; }
+    .nav { flex-direction: row; gap: 0.35rem; flex: 1; }
+    .nav-group { flex-direction: row; gap: 0.15rem; }
+    .nav-label { display: none; }
+    .side-foot { margin: 0; padding: 0; border: 0; flex: none; }
     .side-foot .btn { width: auto; }
     .nav-item span { display: none; }
     .nav-item.active::before { display: none; }
     .topbar-inner, .content { padding-left: 1rem; padding-right: 1rem; }
+    .topbar-inner { flex-direction: column; align-items: stretch; }
+    .topbar-actions { justify-content: flex-start; }
 }
 
 @media (prefers-reduced-motion: reduce) {
-    *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+    }
 }
 </style>
 </head>
 <body>
 
-<!-- ── Login ─────────────────────────────────────────────── -->
 <div id="login">
     <div class="login-card">
         <div class="login-brand">
@@ -439,7 +613,6 @@ input[type="file"] { font-size: 0.78rem; }
     </div>
 </div>
 
-<!-- ── App ──────────────────────────────────────────────── -->
 <div id="app">
     <div class="shell">
         <aside class="sidebar">
@@ -454,27 +627,36 @@ input[type="file"] { font-size: 0.78rem; }
                     <span class="tag">管理后台</span>
                 </div>
             </div>
-            <nav class="nav">
-                <button class="nav-item active" data-tab="users" onclick="showTab('users')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
-                    <span>用户管理</span>
-                </button>
-                <button class="nav-item" data-tab="models" onclick="showTab('models')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
-                    <span>模型配置</span>
-                </button>
-                <button class="nav-item" data-tab="settings" onclick="showTab('settings')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-                    <span>系统设置</span>
-                </button>
-                <button class="nav-item" data-tab="versions" onclick="showTab('versions')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-                    <span>版本管理</span>
-                </button>
-                <button class="nav-item" data-tab="logs" onclick="showTab('logs')">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
-                    <span>活动日志</span>
-                </button>
+            <nav class="nav" aria-label="主导航">
+                <div class="nav-group">
+                    <div class="nav-label">账户</div>
+                    <button class="nav-item active" data-tab="users" onclick="showTab('users')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+                        <span>用户管理</span>
+                    </button>
+                    <button class="nav-item" data-tab="models" onclick="showTab('models')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 2 2 7l10 5 10-5-10-5Z"/><path d="m2 17 10 5 10-5"/><path d="m2 12 10 5 10-5"/></svg>
+                        <span>模型配置</span>
+                    </button>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-label">能力</div>
+                    <button class="nav-item" data-tab="settings" onclick="showTab('settings')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+                        <span>系统设置</span>
+                    </button>
+                </div>
+                <div class="nav-group">
+                    <div class="nav-label">运维</div>
+                    <button class="nav-item" data-tab="versions" onclick="showTab('versions')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        <span>版本管理</span>
+                    </button>
+                    <button class="nav-item" data-tab="logs" onclick="showTab('logs')">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+                        <span>活动日志</span>
+                    </button>
+                </div>
             </nav>
             <div class="side-foot">
                 <button class="btn btn--ghost btn--sm" onclick="logout()">
@@ -487,27 +669,31 @@ input[type="file"] { font-size: 0.78rem; }
         <main class="main">
             <header class="topbar">
                 <div class="topbar-inner">
-                    <h1 id="topTitle">用户管理</h1>
-                    <p class="desc" id="topDesc"></p>
+                    <div class="topbar-text">
+                        <h1 id="topTitle">用户管理</h1>
+                        <p class="desc" id="topDesc"></p>
+                    </div>
                 </div>
             </header>
 
             <div class="content">
                 <div class="wrap">
 
-                    <!-- ── Users ─────────────────────────────── -->
                     <section id="panel-users" class="panel active">
                         <div class="card">
                             <div class="card-head">
                                 <h2>用户列表</h2>
                                 <span class="count" id="userCount"></span>
                                 <span class="spacer"></span>
-                                <button class="btn btn--primary btn--sm" onclick="showCreateUser()">＋ 创建用户</button>
+                                <div class="inline-form">
+                                    <input type="search" id="userSearch" placeholder="筛选用户名或 ID" style="width:12rem" oninput="filterUsers()">
+                                    <button class="btn btn--primary btn--sm" onclick="showCreateUser()">＋ 创建用户</button>
+                                </div>
                             </div>
                             <div class="table-scroll">
                                 <table>
                                     <thead><tr>
-                                        <th>ID</th><th>用户名</th><th>夜间活动</th><th>状态</th><th style="text-align:right">操作</th>
+                                        <th>用户</th><th>夜间活动</th><th>状态</th><th>创建时间</th><th style="text-align:right">操作</th>
                                     </tr></thead>
                                     <tbody id="userList"><tr class="state-row"><td colspan="5"><div class="state-msg">加载中…</div></td></tr></tbody>
                                 </table>
@@ -515,7 +701,6 @@ input[type="file"] { font-size: 0.78rem; }
                         </div>
                     </section>
 
-                    <!-- ── Models ────────────────────────────── -->
                     <section id="panel-models" class="panel">
                         <div class="card">
                             <div class="card-head">
@@ -538,25 +723,37 @@ input[type="file"] { font-size: 0.78rem; }
                         </div>
                     </section>
 
-                    <!-- ── System Settings ────────────────────── -->
                     <section id="panel-settings" class="panel">
-                        <div class="settings-bar">
-                            <div>
-                                <div class="lead">系统参数设置</div>
-                                <span class="hint">保存后即刻在内存与数据库中生效，无需重启服务</span>
+                        <div class="settings-layout">
+                            <aside class="settings-rail" aria-label="设置分类">
+                                <div class="settings-search">
+                                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+                                    <input type="search" id="settingsSearch" placeholder="搜索设置项…" oninput="filterSettingsFields()">
+                                </div>
+                                <nav class="rail-nav" id="settingsRail"></nav>
+                            </aside>
+
+                            <div class="settings-main">
+                                <div class="settings-bar">
+                                    <div>
+                                        <div class="lead">系统参数设置</div>
+                                        <div class="status" id="settingsDirty">保存后即刻在内存与数据库中生效，无需重启服务</div>
+                                    </div>
+                                    <button class="btn btn--primary" id="settingsSaveBtn" onclick="saveSystemSettingsForm()">保存系统设置</button>
+                                </div>
+
+                                <div id="aiCardSettings"></div>
+                                <div id="systemSettingsForm"></div>
+                                <div class="settings-empty" id="settingsEmpty">没有匹配的设置项，试试其他关键词。</div>
+
+                                <div class="settings-bar">
+                                    <div class="status" id="settingsDirtyBottom">修改后点击保存生效</div>
+                                    <button class="btn btn--primary" onclick="saveSystemSettingsForm()">保存全部系统设置</button>
+                                </div>
                             </div>
-                            <button class="btn btn--primary" onclick="saveSystemSettingsForm()">保存系统设置</button>
-                        </div>
-
-                        <div id="aiCardSettings"></div>
-                        <div id="systemSettingsForm"></div>
-
-                        <div class="settings-bar settings-bar--end">
-                            <button class="btn btn--primary" style="padding:0.6rem 1.8rem; font-size:0.9rem;" onclick="saveSystemSettingsForm()">保存全部系统设置</button>
                         </div>
                     </section>
 
-                    <!-- ── Versions ──────────────────────────── -->
                     <section id="panel-versions" class="panel">
                         <div class="card">
                             <div class="card-head"><h2>发布新版本</h2></div>
@@ -591,7 +788,6 @@ input[type="file"] { font-size: 0.78rem; }
                         </div>
                     </section>
 
-                    <!-- ── Logs ──────────────────────────────────────── -->
                     <section id="panel-logs" class="panel">
                         <div class="card">
                             <div class="card-head">
@@ -621,7 +817,6 @@ input[type="file"] { font-size: 0.78rem; }
     </div>
 </div>
 
-<!-- ── User modal ───────────────────────────────────────── -->
 <div id="userModal" class="modal">
     <div class="modal-card">
         <div class="modal-head">
@@ -655,9 +850,12 @@ input[type="file"] { font-size: 0.78rem; }
 
 <div id="userExportModal" class="modal">
     <div class="modal-card">
-        <div class="modal-head"><h2>导出用户备份</h2></div>
+        <div class="modal-head">
+            <h2>导出用户备份</h2>
+            <button class="modal-close" data-close aria-label="关闭">✕</button>
+        </div>
         <div class="modal-body">
-            <p>包含角色与形象、衣柜、生活空间背景、用户画像与设置、音色、长期记忆、片刻、日记和定时任务。</p>
+            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">包含角色与形象、衣柜、生活空间背景、用户画像与设置、音色、长期记忆、片刻、日记和定时任务。</p>
             <label class="checkbox-row"><input type="checkbox" id="exportConversations"> 包含会话记录（消息、上下文与现存附件）</label>
             <p class="hint">默认不包含会话记录。备份包含用户 API 凭据，请妥善保存。导入后请重新启动客户端以刷新数据。</p>
         </div>
@@ -668,7 +866,6 @@ input[type="file"] { font-size: 0.78rem; }
     </div>
 </div>
 
-<!-- ── User backup modal ─────────────────────────────────── -->
 <div id="userBackupModal" class="modal">
     <div class="modal-card">
         <div class="modal-head">
@@ -700,7 +897,6 @@ input[type="file"] { font-size: 0.78rem; }
     </div>
 </div>
 
-<!-- ── Activation code modal ─────────────────────────────── -->
 <div id="activationModal" class="modal">
     <div class="modal-card">
         <div class="modal-head">
@@ -718,7 +914,6 @@ input[type="file"] { font-size: 0.78rem; }
     </div>
 </div>
 
-<!-- ── Activation code management modal ──────────────────── -->
 <div id="activationManageModal" class="modal">
     <div class="modal-card">
         <div class="modal-head">
@@ -749,7 +944,6 @@ input[type="file"] { font-size: 0.78rem; }
     </div>
 </div>
 
-<!-- ── Model config modal ──────────────────────────────── -->
 <div id="modelModal" class="modal">
     <div class="modal-card wide">
         <div class="modal-head">
@@ -768,19 +962,34 @@ input[type="file"] { font-size: 0.78rem; }
     </div>
 </div>
 
+<div id="logDetailModal" class="modal">
+    <div class="modal-card wide">
+        <div class="modal-head">
+            <h2 id="logDetailTitle">日志详情</h2>
+            <button class="modal-close" data-close aria-label="关闭">✕</button>
+        </div>
+        <div class="modal-body">
+            <pre id="logDetailBody" style="white-space:pre-wrap;word-break:break-word;font-size:0.82rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1rem;max-height:60vh;overflow:auto"></pre>
+        </div>
+        <div class="modal-foot">
+            <button class="btn btn--ghost" onclick="closeModal('logDetailModal')">关闭</button>
+        </div>
+    </div>
+</div>
+
 <div id="toast-wrap"></div>
 
 <script>
 const API_BASE = '';
 const TOKEN_KEY = 'spiritagent_admin_token';
-const tabCache = { users: null, models: null, settings: null, versions: null, logs: null };
+const tabCache = { users: null, models: null, logs: null };
 
 const TABS = {
     users:    { title: '用户管理', desc: '管理可登录客户端的账户、使用权限与激活码' },
     models:   { title: '模型配置', desc: '为每个用户配置 LLM、语音、图像与视频的接入凭证' },
     settings: { title: '系统设置', desc: '全局业务参数、AI 供应商凭据与运行时调优配置（实时热生效，无需重启容器）' },
     versions: { title: '版本管理', desc: '上传并分发桌面端与 Runner 的更新包' },
-    logs: { title: '活动日志', desc: '查看夜间自主活动流水线运行记录' },
+    logs:     { title: '活动日志', desc: '查看夜间自主活动流水线运行记录' },
 };
 
 const $  = (s, r = document) => r.querySelector(s);
@@ -814,7 +1023,12 @@ function toast(msg, type = 'ok') {
     el.className = `toast ${type}`;
     el.textContent = msg;
     wrap.appendChild(el);
-    setTimeout(() => { el.style.opacity = '0'; el.style.transform = 'translateY(0.4rem)'; el.style.transition = 'all .16s ease'; setTimeout(() => el.remove(), 200); }, 2600);
+    setTimeout(() => {
+        el.style.opacity = '0';
+        el.style.transform = 'translateY(0.4rem)';
+        el.style.transition = 'all .16s ease';
+        setTimeout(() => el.remove(), 200);
+    }, 2600);
 }
 
 function stateRow(colspan, msg, hint = '', err = false) {
@@ -827,6 +1041,28 @@ function renderTable(tbodyId, countId, data, { unit, cols, empty, emptyHint, row
     $(tbodyId).innerHTML = items.length ? items.map(row).join('') : stateRow(cols, empty, emptyHint);
 }
 
+function closeAllMenus() {
+    $$('.menu.open').forEach(m => m.classList.remove('open'));
+}
+
+function menuHtml(actions) {
+    const items = actions.map(a => {
+        if (a === '|') return '<div class="menu-sep"></div>';
+        return `<button type="button" class="menu-item${a.danger ? ' danger' : ''}" onclick="event.stopPropagation(); closeAllMenus(); ${a.onclick}">${esc(a.label)}</button>`;
+    }).join('');
+    return `<div class="menu">
+        <button type="button" class="btn btn--icon" aria-label="更多操作" onclick="event.stopPropagation(); toggleMenu(this)" title="更多操作">⋯</button>
+        <div class="menu-pop">${items}</div>
+    </div>`;
+}
+
+function toggleMenu(btn) {
+    const menu = btn.closest('.menu');
+    const wasOpen = menu.classList.contains('open');
+    closeAllMenus();
+    if (!wasOpen) menu.classList.add('open');
+}
+
 const TAB_LOADERS = { users: loadUsers, models: loadModelConfigs, settings: loadSystemSettings, versions: loadVersions, logs: loadLogs };
 
 function showTab(name) {
@@ -835,6 +1071,7 @@ function showTab(name) {
     const t = TABS[name];
     $('#topTitle').textContent = t.title;
     $('#topDesc').textContent = t.desc;
+    closeAllMenus();
     TAB_LOADERS[name]();
 }
 
@@ -867,7 +1104,6 @@ function logout() {
     location.reload();
 }
 
-// ── Login ────────────────────────────────────────────────
 $('#loginForm').addEventListener('submit', (e) => {
     e.preventDefault();
     const u = $('#loginUser').value.trim(), p = $('#loginPass').value;
@@ -884,7 +1120,6 @@ $('#loginForm').addEventListener('submit', (e) => {
 
 if (getToken()) enterApp();
 
-// ── Users ────────────────────────────────────────────────
 async function loadUsers() {
     try {
         const data = await (await apiFetch('/api/admin/users')).json();
@@ -893,27 +1128,48 @@ async function loadUsers() {
     } catch (e) { $('#userList').innerHTML = stateRow(5, '加载失败：' + e.message, '', true); }
 }
 
-function renderUsers(data) {
-    renderTable('#userList', 'userCount', data, {
-        unit: '个用户', cols: 5, empty: '暂无用户', emptyHint: '点击右上角“创建用户”添加',
-        row: u => `<tr>
-            <td class="td-id">${u.id}</td>
-            <td><div class="cell-strong">${esc(u.username)}</div></td>
-            <td>${u.nightly_activity_enabled ? pill('启用', 'green') : pill('关闭', 'muted')}</td>
-            <td>${u.is_active ? pill('启用', 'green') : pill('停用', 'red')}</td>
-            <td class="td-actions">
-                <button class="btn btn--ghost btn--sm" onclick="manageActivation(${u.id})">激活码</button>
-                <button class="btn btn--ghost btn--sm" onclick="editUser(${u.id})">编辑</button>
-                <button class="btn btn--ghost btn--sm" onclick="toggleUser(${u.id})">${u.is_active ? '停用' : '启用'}</button>
-                <button class="btn btn--ghost btn--sm" onclick="exportUserPrompt(${u.id})">导出</button>
-                <button class="btn btn--ghost btn--sm" onclick="importUserPrompt(${u.id})">导入</button>
-                <button class="btn btn--danger btn--sm" onclick="deleteUser(${u.id})">删除</button>
-            </td>
-        </tr>`,
-    });
+function filterUsers() {
+    if (tabCache.users) renderUsers(tabCache.users);
 }
 
-// ── baseUrl 默认值：现有激活码里的 b > 后端 public_base_url > localhost:10620 ──
+function renderUsers(data) {
+    const q = ($('#userSearch')?.value || '').trim().toLowerCase();
+    const all = getItems(data);
+    const items = q
+        ? all.filter(u => String(u.id).includes(q) || String(u.username).toLowerCase().includes(q))
+        : all;
+    $('#userCount').textContent = items.length ? (items.length === all.length ? `${items.length} 个用户` : `${items.length} / ${all.length} 个用户`) : '';
+    $('#userList').innerHTML = items.length ? items.map(u => {
+        const initial = esc((u.username || '?').slice(0, 1).toUpperCase());
+        return `<tr>
+            <td>
+                <div class="cell-user">
+                    <div class="avatar ${u.is_active ? '' : 'off'}">${initial}</div>
+                    <div style="min-width:0">
+                        <div class="cell-strong">${esc(u.username)}</div>
+                        <div class="cell-sub">#${u.id}${u.activation_code ? ' · 已生成激活码' : ' · 未生成激活码'}</div>
+                    </div>
+                </div>
+            </td>
+            <td>${u.nightly_activity_enabled ? pill('启用', 'green') : pill('关闭', 'muted')}</td>
+            <td>${u.is_active ? pill('启用', 'green') : pill('停用', 'red')}</td>
+            <td><div>${fmtDate(u.created_at)}</div></td>
+            <td class="td-actions">
+                <button class="btn btn--ghost btn--sm" onclick="editUser(${u.id})">编辑</button>
+                <button class="btn btn--ghost btn--sm" onclick="manageActivation(${u.id})">激活码</button>
+                ${menuHtml([
+                    { label: u.is_active ? '停用账户' : '启用账户', onclick: `toggleUser(${u.id})` },
+                    { label: '导出备份', onclick: `exportUserPrompt(${u.id})` },
+                    { label: '导入备份', onclick: `importUserPrompt(${u.id})` },
+                    '|',
+                    { label: '彻底删除', onclick: `deleteUser(${u.id})`, danger: true },
+                ])}
+            </td>
+        </tr>`;
+    }).join('') : stateRow(5, q ? '没有匹配的用户' : '暂无用户', q ? '换个关键词试试' : '点击右上角“创建用户”添加');
+}
+
+// baseUrl 回退顺序：激活码中的 b > public_base_url > localhost:10620
 let runtimeInfoCache = null;
 
 async function fetchRuntimeInfo() {
@@ -956,18 +1212,21 @@ async function showCreateUser() {
     $('#username').focus();
 }
 
+function findCachedUser(id) {
+    return (tabCache.users?.items ?? []).find(u => u.id === Number(id)) ?? null;
+}
+
 async function editUser(id) {
-    try {
-        const u = await (await apiFetch('/api/admin/users/' + id)).json();
-        $('#userModalTitle').textContent = '编辑用户';
-        $('#editUserId').value = u.id;
-        $('#username').value = u.username; $('#username').disabled = true;
-        $('#baseUrl').value = await resolveDefaultBaseUrl(u.activation_code);
-        $('#baseUrl').disabled = false;
-        $('#nightlyEnabled').checked = u.nightly_activity_enabled;
-        $('#regenField').style.display = '';
-        openModal('userModal');
-    } catch (e) { toast(e.message, 'err'); }
+    const u = findCachedUser(id);
+    if (!u) { toast('用户数据未加载，请稍后重试', 'err'); return; }
+    $('#userModalTitle').textContent = '编辑用户';
+    $('#editUserId').value = u.id;
+    $('#username').value = u.username; $('#username').disabled = true;
+    $('#baseUrl').value = await resolveDefaultBaseUrl(u.activation_code);
+    $('#baseUrl').disabled = false;
+    $('#nightlyEnabled').checked = u.nightly_activity_enabled;
+    $('#regenField').style.display = '';
+    openModal('userModal');
 }
 
 async function saveUser() {
@@ -976,7 +1235,9 @@ async function saveUser() {
     if (!baseUrl) { toast('请填写后端地址', 'err'); $('#baseUrl').focus(); return; }
     const payload = { nightly_activity_enabled: $('#nightlyEnabled').checked };
     if (!id) {
-        payload.username = $('#username').value.trim();
+        const username = $('#username').value.trim();
+        if (!username) { toast('请填写用户名', 'err'); $('#username').focus(); return; }
+        payload.username = username;
     }
     payload.base_url = baseUrl;
     try {
@@ -1033,7 +1294,7 @@ async function copyActivationCode() {
 }
 
 async function manageActivation(id) {
-    const user = (tabCache.users?.items ?? []).find(u => u.id === id);
+    const user = findCachedUser(id);
     $('#activationManageUserId').value = id;
     $('#activationManageTitle').textContent = '激活码管理' + (user ? ' · ' + user.username : '');
     const code = user?.activation_code || '';
@@ -1052,9 +1313,9 @@ async function manageActivation(id) {
 }
 
 function setManageCode(id, code) {
-    const user = (tabCache.users?.items ?? []).find(u => u.id === Number(id));
+    const user = findCachedUser(id);
     if (user) user.activation_code = code;
-    if ($('#activationManageUserId').value !== id) return;
+    if ($('#activationManageUserId').value !== String(id)) return;
     $('#activationManageCode').value = code;
     $('#activationManageResult').style.display = '';
     $('#activationManageCopyBtn').style.display = '';
@@ -1084,14 +1345,20 @@ async function copyActivationManageCode() {
 }
 
 async function toggleUser(id) {
-    try { await apiFetch(`/api/admin/users/${id}/toggle-active`, { method: 'PATCH' }); toast('状态已切换'); loadUsers(); }
-    catch (e) { toast(e.message, 'err'); }
+    try {
+        await apiFetch(`/api/admin/users/${id}/toggle-active`, { method: 'PATCH' });
+        toast('状态已切换');
+        loadUsers();
+    } catch (e) { toast(e.message, 'err'); }
 }
 
 async function deleteUser(id) {
     if (!confirm('确定彻底删除此用户及其所有关联数据？此操作不可撤销。')) return;
-    try { await apiFetch(`/api/admin/users/${id}`, { method: 'DELETE' }); toast('用户已删除'); loadUsers(); }
-    catch (e) { toast(e.message, 'err'); }
+    try {
+        await apiFetch(`/api/admin/users/${id}`, { method: 'DELETE' });
+        toast('用户已删除');
+        loadUsers();
+    } catch (e) { toast(e.message, 'err'); }
 }
 
 const BACKUP_SECTION_LABELS = Object.freeze({
@@ -1111,7 +1378,7 @@ function exportUserPrompt(id) {
 }
 
 async function exportUser(id) {
-    const user = (tabCache.users?.items ?? []).find(u => u.id === id);
+    const user = findCachedUser(id);
     const label = user ? user.username : `#${id}`;
     const btn = $('#exportSubmitBtn');
     const includeConversations = $('#exportConversations').checked;
@@ -1139,7 +1406,7 @@ async function exportUser(id) {
 }
 
 function importUserPrompt(id) {
-    const user = (tabCache.users?.items ?? []).find(u => u.id === id);
+    const user = findCachedUser(id);
     $('#backupUserId').textContent = `${id}${user ? ' (' + user.username + ')' : ''}`;
     $('#backupFile').value = '';
     $('#backupStatus').textContent = '';
@@ -1191,13 +1458,13 @@ async function submitUserBackup() {
     }
 }
 
-// ── Model configs ────────────────────────────────────────
 async function loadModelConfigs() {
     try {
         const [configsResp, usersResp] = await Promise.all([apiFetch('/api/admin/model-configs'), apiFetch('/api/admin/users')]);
         const data = await configsResp.json();
         const userData = await usersResp.json();
         tabCache.models = data;
+        tabCache.users = userData;
         renderModels(data);
         $('#modelUserSelect').innerHTML = '<option value="">选择用户…</option>' + getItems(userData).map(u => `<option value="${u.id}">${esc(u.username)} (#${u.id})</option>`).join('');
     } catch (e) { $('#modelList').innerHTML = stateRow(4, '加载失败：' + e.message, '', true); }
@@ -1236,6 +1503,7 @@ function showModelConfig() {
 
 function setKeyBadge(id, set) {
     const el = $('#' + id);
+    if (!el) return;
     el.textContent = set ? '已设置' : '未设置';
     el.className = 'keybadge ' + (set ? 'on' : 'off');
 }
@@ -1253,7 +1521,7 @@ function showModelConfigForUser(userId) {
 
 async function saveModelConfig() {
     const userId = $('#modelUserId').value;
-    const payload = {ai_config: aiEditors.user.config};
+    const payload = { ai_config: aiEditors.user.config };
     try {
         await apiFetch(`/api/admin/${userId}/model-config`, { method: 'PUT', body: JSON.stringify(payload) });
         closeModal('modelModal');
@@ -1264,21 +1532,23 @@ async function saveModelConfig() {
 
 async function deleteModelConfig(userId) {
     if (!confirm('确定删除此用户的凭证配置？')) return;
-    try { await apiFetch(`/api/admin/${userId}/model-config`, { method: 'DELETE' }); toast('凭证配置已删除'); loadModelConfigs(); }
-    catch (e) { toast(e.message, 'err'); }
+    try {
+        await apiFetch(`/api/admin/${userId}/model-config`, { method: 'DELETE' });
+        toast('凭证配置已删除');
+        loadModelConfigs();
+    } catch (e) { toast(e.message, 'err'); }
 }
 
-
-// ── System Settings ─────────────────────────────────────
-const AI_NAMES = {mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok', qwen: '千问'};
-const AI_SERVICES = {llm: '大语言模型 LLM', stt: '语音识别 STT', tts: '语音合成 TTS', image_gen: '图像生成', video_gen: '视频生成'};
-function emptyAiConfig() { return {providers: [], capabilities: {llm: [], stt: [], tts: [], image_gen: [], video_gen: []}}; }
+const AI_NAMES = { mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok', qwen: '千问' };
+const AI_SERVICES = { llm: '大语言模型 LLM', stt: '语音识别 STT', tts: '语音合成 TTS', image_gen: '图像生成', video_gen: '视频生成' };
+function emptyAiConfig() { return { providers: [], capabilities: { llm: [], stt: [], tts: [], image_gen: [], video_gen: [] } }; }
 const aiEditors = {
-    system: {root: '#aiCardSettings', config: emptyAiConfig(), support: {}, inheritedProviders: []},
-    user: {root: '#userAiCardSettings', config: emptyAiConfig(), support: {}, inheritedProviders: []},
+    system: { root: '#aiCardSettings', config: emptyAiConfig(), support: {}, inheritedProviders: [] },
+    user: { root: '#userAiCardSettings', config: emptyAiConfig(), support: {}, inheritedProviders: [] },
 };
 let aiDrag = null;
 let aiSettingsLoaded = false;
+let settingsDirty = false;
 
 function aiList(editor, group) {
     return group === 'providers' ? editor.config.providers : editor.config.capabilities[group];
@@ -1315,13 +1585,17 @@ function renderAiCards(editorName) {
             const source = aiSource(editor, provider);
             return `<option value="${esc(provider)}">${library ? '' : source ? '引用：' : '独立配置：'}${esc(aiProviderLabel(provider))}</option>`;
         }).join('') + (library ? '<option value="__custom__">自定义 provider</option>' : '');
-        return `<section class="card" style="margin-bottom:1.25rem" data-ai-group="${group}">
+        return `<section class="card settings-section" style="margin-bottom:1.15rem" data-ai-group="${group}" data-search-text="${esc(((library ? '供应商信息库 providers' : AI_SERVICES[group]) + ' ' + group).toLowerCase())}">
             <div class="card-head" style="flex-wrap:wrap;gap:0.75rem">
                 <h2>${library ? '供应商信息库' : AI_SERVICES[group]}</h2>
                 <span class="pill pill--${cards.length ? 'green' : 'muted'}">${cards.length ? cards.length + ' 张卡片' : editorName === 'user' && !library ? '继承系统' : '未配置'}</span>
-                <div style="display:flex;gap:0.5rem;margin-left:auto;flex-wrap:wrap"><select aria-label="${library ? '选择供应商' : '选择能力配置来源'}" data-ai-add-source>${options || '<option value="">没有可添加的供应商</option>'}</select>${library ? '<input type="text" data-ai-custom-provider placeholder="自定义 provider 名称" maxlength="64" style="width:12rem">' : ''}<button class="btn btn--primary" data-ai-action="add">＋ 添加卡片</button></div>
+                <div style="display:flex;gap:0.5rem;margin-left:auto;flex-wrap:wrap">
+                    <select aria-label="${library ? '选择供应商' : '选择能力配置来源'}" data-ai-add-source>${options || '<option value="">没有可添加的供应商</option>'}</select>
+                    ${library ? '<input type="text" data-ai-custom-provider placeholder="自定义 provider 名称" maxlength="64" style="width:12rem">' : ''}
+                    <button class="btn btn--primary btn--sm" data-ai-action="add">＋ 添加卡片</button>
+                </div>
             </div>
-            <div style="padding:1.1rem">
+            <div style="padding:1.05rem">
                 <p class="hint" style="margin:0 0 1rem">${library ? 'provider 名称是唯一标识。自定义名称对应的后端实现注册后会出现在能力候选中；保存信息不会自动启用任何能力。' : editorName === 'user' ? '按卡片顺序调用；未添加卡片表示继承系统能力链。留空字段先继承用户同名 provider，再继承系统同名 provider。' : '按卡片顺序调用，失败时按回退规则尝试下一张；未添加卡片表示该能力未配置。留空字段继承同名 provider 的信息，可单独填写覆盖。'}</p>
                 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,310px),1fr));gap:1rem">
                     ${cards.map((card, index) => {
@@ -1352,7 +1626,7 @@ function renderAiCards(editorName) {
     }).join('');
     root.oninput = event => {
         if (event.target.matches('[data-ai-custom-provider]')) {
-          event.target.closest('[data-ai-group]').querySelector('[data-ai-add-source]').value = '__custom__';
+            event.target.closest('[data-ai-group]').querySelector('[data-ai-add-source]').value = '__custom__';
             return;
         }
         const field = event.target.dataset.aiField;
@@ -1361,6 +1635,7 @@ function renderAiCards(editorName) {
         const index = Number(event.target.closest('[data-ai-index]').dataset.aiIndex);
         aiList(editor, group)[index][field] = event.target.value;
         if (field === 'api_key' && event.target.value) aiList(editor, group)[index].clear_api_key = false;
+        if (editorName === 'system') markSettingsDirty();
     };
     root.onclick = event => {
         const button = event.target.closest('[data-ai-action]');
@@ -1382,21 +1657,22 @@ function renderAiCards(editorName) {
                 toast('该 provider 已存在，名称不能冲突', 'err');
                 return;
             }
-            cards.push({provider: value, api_key: '', base_url: '', model_name: ''});
+            cards.push({ provider: value, api_key: '', base_url: '', model_name: '' });
         } else if (action === 'remove') {
             cards.splice(index, 1);
         } else if (action === 'clear-key') {
-            Object.assign(cards[index], {api_key: '', api_key_set: false, clear_api_key: true});
+            Object.assign(cards[index], { api_key: '', api_key_set: false, clear_api_key: true });
         } else {
             const target = index + (action === 'up' ? -1 : 1);
             if (target < 0 || target >= cards.length) return;
             cards.splice(target, 0, cards.splice(index, 1)[0]);
         }
         renderAiCards(editorName);
+        if (editorName === 'system') markSettingsDirty();
     };
     root.ondragstart = event => {
         if (!event.target.matches('[data-ai-handle]')) { event.preventDefault(); return; }
-        aiDrag = {editorName, group: event.target.closest('[data-ai-group]').dataset.aiGroup, index: Number(event.target.closest('[data-ai-index]').dataset.aiIndex)};
+        aiDrag = { editorName, group: event.target.closest('[data-ai-group]').dataset.aiGroup, index: Number(event.target.closest('[data-ai-index]').dataset.aiIndex) };
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setData('text/plain', String(aiDrag.index));
     };
@@ -1419,6 +1695,7 @@ function renderAiCards(editorName) {
         cards.splice(Number(target.dataset.aiIndex), 0, cards.splice(aiDrag.index, 1)[0]);
         aiDrag = null;
         renderAiCards(editorName);
+        if (editorName === 'system') markSettingsDirty();
     };
     root.ondragend = () => {
         aiDrag = null;
@@ -1426,7 +1703,7 @@ function renderAiCards(editorName) {
     };
 }
 
-// ── 系统设置表单：唯一事实来源，渲染 DOM 并派生读写键名列表 ──
+// SETTINGS_SECTIONS 是设置表单的唯一事实来源，并派生读写键名。
 const num = (key, label, step, extra = {}) => ({ key, label, type: 'number', step, ...extra });
 const text = (key, label, placeholder) => ({ key, label, type: 'text', placeholder });
 const bool = (key, label) => ({ key, label, type: 'bool' });
@@ -1455,8 +1732,7 @@ const SETTINGS_SECTIONS = [
                 num('video_gen_download_max_bytes', '产物下载上限 (字节)', 1048576),
             ]],
             ['sub', '出镜媒体身份重生成'],
-            ['grid', [
-            ]],
+            ['grid', []],
         ],
     },
     {
@@ -1590,23 +1866,25 @@ const SETTING_KEY_BADGES = SETTINGS_FIELDS.filter(f => f.type === 'secret').map(
 
 function settingsFieldHtml(f) {
     const id = `sys_${f.key}`;
+    const search = esc(`${f.label} ${f.key}`.toLowerCase());
+    const wrapOpen = `<div class="field settings-field${f.narrow ? ' field--narrow' : ''}" data-search-text="${search}">`;
     if (f.type === 'bool') {
-        return `<div class="field"><label class="checkbox-row"><input type="checkbox" id="${id}"> ${f.label}</label></div>`;
+        return `${wrapOpen}<label class="checkbox-row"><input type="checkbox" id="${id}"> ${f.label}</label></div>`;
     }
     if (f.type === 'select') {
         const options = f.options.map(([value, label]) => `<option value="${value}">${label}</option>`).join('');
-        return `<div class="field"><label>${f.label}</label><select id="${id}">${options}</select></div>`;
+        return `${wrapOpen}<label>${f.label}</label><select id="${id}">${options}</select></div>`;
     }
     if (f.type === 'secret') {
-        return `<div class="field"><div class="label-row"><label>${f.label}</label><span class="keybadge off" id="${id}_badge">未设置</span></div><input type="password" id="${id}" placeholder="${f.placeholder}"></div>`;
+        return `${wrapOpen}<div class="label-row"><label>${f.label}</label><span class="keybadge off" id="${id}_badge">未设置</span></div><input type="password" id="${id}" placeholder="${f.placeholder}"></div>`;
     }
     const attrs = ` type="${f.type}"${f.step ? ` step="${f.step}"` : ''}${f.min !== undefined ? ` min="${f.min}"` : ''}${f.max !== undefined ? ` max="${f.max}"` : ''}${f.placeholder ? ` placeholder="${f.placeholder}"` : ''}`;
-    return `<div class="field${f.narrow ? ' field--narrow' : ''}"><label>${f.label}</label><input${attrs} id="${id}"></div>`;
+    return `${wrapOpen}<label>${f.label}</label><input${attrs} id="${id}"></div>`;
 }
 
 function renderSettingsForm() {
-    $('#systemSettingsForm').innerHTML = SETTINGS_SECTIONS.map(s => `
-        <div class="card" style="margin-bottom:1.25rem">
+    $('#systemSettingsForm').innerHTML = SETTINGS_SECTIONS.map((s, idx) => `
+        <div class="card settings-section" id="settings-sec-${idx}" data-search-text="${esc(`${s.title} ${s.hint}`.toLowerCase())}" style="margin-bottom:1.15rem">
             <div class="card-head"><h2>${s.title}</h2><span class="hint">${s.hint}</span></div>
             <div class="card-pad">${s.blocks.map(b => b[0] === 'sub'
                 ? `<h3 class="subhead">${b[1]}</h3>`
@@ -1614,16 +1892,89 @@ function renderSettingsForm() {
                     ? `<div class="grid${b[2] ? ' grid--wide' : ''}">${b[1].map(settingsFieldHtml).join('')}</div>`
                     : settingsFieldHtml(b[1])).join('')}</div>
         </div>`).join('');
+
+    $('#settingsRail').innerHTML = SETTINGS_SECTIONS.map((s, idx) =>
+        `<button type="button" class="rail-link${idx === 0 ? ' active' : ''}" data-rail-target="settings-sec-${idx}">${esc(s.title)}</button>`
+    ).join('');
+
+    $('#settingsRail').onclick = (e) => {
+        const link = e.target.closest('[data-rail-target]');
+        if (!link) return;
+        $$('#settingsRail .rail-link').forEach(x => x.classList.toggle('active', x === link));
+        const target = document.getElementById(link.dataset.railTarget);
+        if (target) target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+
+    $('#systemSettingsForm').addEventListener('input', markSettingsDirty);
+    $('#systemSettingsForm').addEventListener('change', markSettingsDirty);
 }
 renderSettingsForm();
 
+function markSettingsDirty() {
+    if (settingsDirty) return;
+    settingsDirty = true;
+    const label = '有未保存的修改';
+    const top = $('#settingsDirty');
+    const bottom = $('#settingsDirtyBottom');
+    if (top) { top.textContent = label; top.classList.add('dirty'); }
+    if (bottom) { bottom.textContent = label; bottom.classList.add('dirty'); }
+}
+
+function clearSettingsDirty() {
+    settingsDirty = false;
+    const top = $('#settingsDirty');
+    const bottom = $('#settingsDirtyBottom');
+    if (top) { top.textContent = '保存后即刻在内存与数据库中生效，无需重启服务'; top.classList.remove('dirty'); }
+    if (bottom) { bottom.textContent = '修改后点击保存生效'; bottom.classList.remove('dirty'); }
+}
+
+function filterSettingsFields() {
+    const q = ($('#settingsSearch')?.value || '').trim().toLowerCase();
+    let visible = 0;
+
+    $$('#systemSettingsForm .settings-field').forEach(field => {
+        const text = field.dataset.searchText || field.textContent.toLowerCase();
+        const hit = !q || text.includes(q);
+        field.classList.toggle('is-hidden', !hit);
+        if (hit) visible++;
+    });
+
+    $$('#systemSettingsForm .settings-section').forEach(section => {
+        const fields = $$('.settings-field', section).filter(el => !el.classList.contains('is-hidden'));
+        const selfHit = !q || (section.dataset.searchText || '').includes(q);
+        const show = !q || selfHit || fields.length > 0;
+        section.classList.toggle('is-hidden', !show);
+        if (show) {
+            $$('.subhead', section).forEach(h => {
+                if (!q) { h.classList.remove('is-hidden'); return; }
+                let node = h.nextElementSibling;
+                let hasVisible = false;
+                while (node && !node.classList.contains('subhead')) {
+                    if (node.classList.contains('settings-field') && !node.classList.contains('is-hidden')) hasVisible = true;
+                    if (node.classList.contains('grid') && $$('.settings-field:not(.is-hidden)', node).length) hasVisible = true;
+                    node = node.nextElementSibling;
+                }
+                h.classList.toggle('is-hidden', !hasVisible && !h.textContent.toLowerCase().includes(q));
+            });
+        }
+    });
+
+    $$('#aiCardSettings .settings-section').forEach(section => {
+        const hit = !q || (section.dataset.searchText || '').toLowerCase().includes(q) || (section.textContent || '').toLowerCase().includes(q);
+        section.classList.toggle('is-hidden', !hit);
+    });
+
+    const aiVisible = $$('#aiCardSettings .settings-section:not(.is-hidden)').length > 0;
+    const empty = $('#settingsEmpty');
+    if (empty) empty.classList.toggle('show', !!q && visible === 0 && !aiVisible);
+}
+
 async function loadSystemSettings() {
     aiSettingsLoaded = false;
+    clearSettingsDirty();
     try {
         const resp = await apiFetch('/api/admin/system-settings');
-        const data = await resp.json();
-        tabCache.settings = data;
-        renderSystemSettings(data);
+        renderSystemSettings(await resp.json());
     } catch (e) {
         toast('加载系统设置失败：' + e.message, 'err');
     }
@@ -1657,6 +2008,7 @@ function renderSystemSettings(data) {
         if (inputEl) inputEl.value = '';
         setKeyBadge(item.badge, !!data[item.key + '_set']);
     }
+    clearSettingsDirty();
 }
 
 async function saveSystemSettingsForm() {
@@ -1690,17 +2042,13 @@ async function saveSystemSettingsForm() {
             method: 'PUT',
             body: JSON.stringify(payload)
         });
-        const data = await resp.json();
-        tabCache.settings = data;
-        renderSystemSettings(data);
+        renderSystemSettings(await resp.json());
         toast('系统设置已保存并实时生效');
     } catch (e) {
         toast('保存系统设置失败：' + e.message, 'err');
     }
 }
 
-
-// ── Logs ────────────────────────────────────────────────
 async function loadLogs() {
     const userId = $('#logUserId').value.trim();
     const dateVal = $('#logDate').value;
@@ -1746,11 +2094,9 @@ async function openLogDetail(id) {
     openModal('logDetailModal');
 }
 
-// ── Versions ─────────────────────────────────────────────
 async function loadVersions() {
     try {
         const data = await (await apiFetch('/api/update/versions')).json();
-        tabCache.versions = data;
         renderVersions(data);
     } catch (e) { $('#versionList').innerHTML = stateRow(6, '加载失败：' + e.message, '', true); }
 }
@@ -1774,7 +2120,9 @@ function renderVersions(data) {
                     ${v.is_active
                         ? `<button class="btn btn--ghost btn--sm" onclick="setActive(${v.id}, false)">下线</button>`
                         : `<button class="btn btn--primary btn--sm" onclick="setActive(${v.id}, true)">上线</button>`}
-                    <button class="btn btn--danger btn--sm" onclick="deleteVersion(${v.id})">删除</button>
+                    ${menuHtml([
+                        { label: '永久删除', onclick: `deleteVersion(${v.id})`, danger: true },
+                    ])}
                 </td>
             </tr>`;
         },
@@ -1782,17 +2130,25 @@ function renderVersions(data) {
 }
 
 async function setActive(id, active) {
-    try { await apiFetch(`/api/update/versions/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: active }) }); toast(active ? '版本已上线' : '版本已下线'); loadVersions(); }
-    catch (e) { toast(e.message, 'err'); }
+    try {
+        await apiFetch(`/api/update/versions/${id}`, { method: 'PATCH', body: JSON.stringify({ is_active: active }) });
+        toast(active ? '版本已上线' : '版本已下线');
+        loadVersions();
+    } catch (e) { toast(e.message, 'err'); }
 }
 
 async function deleteVersion(id) {
     if (!confirm('确定永久删除此版本及其文件？此操作不可撤销。')) return;
-    try { await apiFetch(`/api/update/versions/${id}`, { method: 'DELETE' }); toast('版本已删除'); loadVersions(); }
-    catch (e) { toast(e.message, 'err'); }
+    try {
+        await apiFetch(`/api/update/versions/${id}`, { method: 'DELETE' });
+        toast('版本已删除');
+        loadVersions();
+    } catch (e) { toast(e.message, 'err'); }
 }
 
-$('#fileInput').addEventListener('change', (e) => { $('#fileName').textContent = e.target.files[0] ? e.target.files[0].name : ''; });
+$('#fileInput').addEventListener('change', (e) => {
+    $('#fileName').textContent = e.target.files[0] ? e.target.files[0].name : '';
+});
 
 $('#uploadForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -1809,39 +2165,36 @@ $('#uploadForm').addEventListener('submit', async (e) => {
         $('#uploadForm').reset(); $('#fileName').textContent = '';
         toast('新版本已发布');
         loadVersions();
-    } catch (err) { status.textContent = '发布失败：' + err.message; status.style.color = 'var(--red)'; }
+    } catch (err) {
+        status.textContent = '发布失败：' + err.message;
+        status.style.color = 'var(--red)';
+    }
 });
 
 function openModal(id) { $('#' + id).classList.add('open'); document.body.style.overflow = 'hidden'; }
 function closeModal(id) { $('#' + id).classList.remove('open'); document.body.style.overflow = ''; }
 
-// 弹窗统一交互：遮罩点击与 ✕ 按钮关闭，Esc 关闭全部
 document.addEventListener('click', (e) => {
     const target = e.target instanceof Element ? e.target : null;
     if (!target) return;
+    if (!target.closest('.menu')) closeAllMenus();
     if (target.classList.contains('modal')) { closeModal(target.id); return; }
     const closer = target.closest('[data-close]');
     if (closer) closeModal(closer.closest('.modal').id);
 });
 document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') { $$('.modal.open').forEach(m => m.classList.remove('open')); document.body.style.overflow = ''; }
+    if (e.key === 'Escape') {
+        closeAllMenus();
+        $$('.modal.open').forEach(m => m.classList.remove('open'));
+        document.body.style.overflow = '';
+        return;
+    }
+    if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S') && $('#panel-settings')?.classList.contains('active')) {
+        e.preventDefault();
+        saveSystemSettingsForm();
+    }
 });
 </script>
-
-<div id="logDetailModal" class="modal">
-    <div class="modal-card wide">
-        <div class="modal-head">
-            <h2 id="logDetailTitle">日志详情</h2>
-            <button class="modal-close" data-close aria-label="关闭">✕</button>
-        </div>
-        <div class="modal-body">
-            <pre id="logDetailBody" style="white-space:pre-wrap;word-break:break-word;font-size:0.82rem;background:var(--surface-2);border:1px solid var(--border);border-radius:var(--radius-sm);padding:1rem;max-height:60vh;overflow:auto"></pre>
-        </div>
-        <div class="modal-foot">
-            <button class="btn btn--ghost" onclick="closeModal('logDetailModal')">关闭</button>
-        </div>
-    </div>
-</div>
 
 </body>
 </html>
