@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import time
 from collections.abc import Iterator
@@ -154,10 +155,22 @@ def restore_files(
                 raise ValueError("Backup destination escapes data directory")
             target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists():
-                target = target.with_name(f"{target.stem}_imp_{uuid4().hex}{target.suffix}")
-            rewriter.created.append(target)
-            shutil.copy2(source, target)
-            rewriter._mapping[str(relative)] = target.relative_to(root).as_posix()
+                if not target.is_file():
+                    raise ValueError("Backup destination exists and is not a file")
+            else:
+                staged = target.with_name(f".{target.name}.restore_{uuid4().hex}")
+                try:
+                    shutil.copy2(source, staged)
+                    try:
+                        os.link(staged, target)
+                    except FileExistsError:
+                        if not target.is_file():
+                            raise ValueError("Backup destination exists and is not a file")
+                    else:
+                        rewriter.created.append(target)
+                finally:
+                    staged.unlink(missing_ok=True)
+            rewriter._mapping[str(relative)] = target_relative.as_posix()
         for old, new in temp_ids.items():
             rewriter._mapping[f"/api/media/files/{old}"] = f"/api/media/files/{new}"
             meta_path = root / "temp-media" / f"{new}.json"
