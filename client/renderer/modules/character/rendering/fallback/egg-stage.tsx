@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import { clamp } from '@runtime'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { useInteractiveRegion } from '@/shared'
 import { $surfaceOpen } from '@/shared/store/surfaces'
@@ -22,7 +22,7 @@ const CLICK_PROMPT_MS = 2000
 const IDLE_LOOK_BOB_MS = 3200
 
 interface EggStageProps {
-  size?: number
+  size?: number | string
   /** 引导未完成的可点唤醒；与 status 互斥。 */
   showPrompt?: boolean
   status?: CompanionFallbackStatus | null
@@ -42,6 +42,7 @@ export function EggStage({
   windowId = 0
 }: EggStageProps): React.JSX.Element {
   const containerRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<SVGPathElement>(null)
   const eyesRef = useRef<SVGGElement>(null)
   const statusRef = useRef<HTMLDivElement>(null)
   const surfaceOpen = useStore($surfaceOpen)
@@ -56,6 +57,15 @@ export function EggStage({
 
   // 透明窗口上状态条须注册可点区域，否则点不到重试。
   useInteractiveRegion('egg-status', statusRef, undefined, undefined, windowId)
+
+  const hitBody = useCallback((x: number, y: number): boolean => {
+    const body = bodyRef.current
+    const matrix = body?.getScreenCTM()
+
+    return !!body && !!matrix && body.isPointInFill(new DOMPoint(x, y).matrixTransform(matrix.inverse()))
+  }, [])
+
+  useInteractiveRegion('egg-body', containerRef, undefined, hitBody, windowId)
 
   useEffect(() => {
     let pointerActive = false
@@ -116,17 +126,25 @@ export function EggStage({
       className="relative flex items-center justify-center select-none transition-opacity duration-300"
       onContextMenu={e => {
         e.preventDefault()
-        openContextMenu({ x: e.clientX, y: e.clientY })
+
+        if (windowId === 0) {
+          openContextMenu({ x: e.clientX, y: e.clientY })
+        }
       }}
       ref={containerRef}
-      style={{ width: size, height: size, opacity: surfaceOpen !== null ? 0.25 : 1 }}
+      style={{
+        width: size,
+        aspectRatio: '1',
+        flexShrink: 0,
+        opacity: windowId === 0 && surfaceOpen !== null ? 0.25 : 1
+      }}
     >
       <svg
         aria-label={`${dict.brand.name} Egg`}
         className="overflow-visible"
-        height={size}
+        height="100%"
         viewBox="0 0 320 320"
-        width={size}
+        width="100%"
       >
         <defs>
           <radialGradient cx="50%" cy="50%" id="egg-ambient-glow" r="50%">
@@ -152,6 +170,7 @@ export function EggStage({
           <path
             d="M 160 50 C 95 50 75 135 75 185 C 75 245 112 290 160 290 C 208 290 245 245 245 185 C 245 135 225 50 160 50 Z"
             fill="var(--color-egg-shell, #fff4d6)"
+            ref={bodyRef}
             stroke="color-mix(in srgb, var(--color-foreground, #17171a) 12%, transparent)"
             strokeWidth="2"
           />
@@ -198,8 +217,17 @@ export function EggStage({
 
       {status && (
         <div
-          className="absolute -bottom-10 left-1/2 flex w-[min(280px,90vw)] -translate-x-1/2 flex-col items-center gap-1"
+          className={`absolute left-1/2 flex w-[min(280px,90vw)] -translate-x-1/2 flex-col items-center gap-1 ${windowId === 0 ? '' : 'rounded-xl px-2 py-1 shadow-lg'}`}
           ref={statusRef}
+          style={
+            {
+              bottom: windowId === 0 ? '-2.5rem' : '8px',
+              background: windowId === 0 ? undefined : 'var(--ui-overlay)',
+              border: windowId === 0 ? undefined : '1px solid var(--ui-line-standard)',
+              maxWidth: windowId === 0 ? undefined : '100%',
+              WebkitAppRegion: 'no-drag'
+            } as React.CSSProperties
+          }
         >
           <p className="text-center text-xs leading-snug text-body">{message}</p>
           {hasRecoveryAction && onStatusAction && (

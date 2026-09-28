@@ -1,12 +1,22 @@
 /* ── 生活空间超高质感液态玻璃（Liquid Glass）样式层 ── */
 
 .windowFrame {
+  align-items: flex-end;
   background: transparent;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
   height: 100vh;
   padding: 0;
   position: relative;
   width: 100vw;
+}
+
+.contentFrame {
+  flex: 1;
+  height: 100%;
+  min-width: 0;
+  position: relative;
 }
 
 html[data-maximized='true'] .windowFrame {
@@ -152,7 +162,9 @@ html[data-palette='night'] .titlebar {
   background: rgba(255, 255, 255, 0.45);
   border: 1px solid rgba(0, 0, 0, 0.08);
   border-radius: 9999px;
-  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.8), 0 2px 8px rgba(0, 0, 0, 0.04);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.8),
+    0 2px 8px rgba(0, 0, 0, 0.04);
   color: var(--ui-text-strong);
   cursor: pointer;
   display: inline-flex;
@@ -172,7 +184,9 @@ html[data-palette='night'] .titlebar {
 html[data-effect='clear'] .workbenchButton {
   background: rgba(var(--glass-tint-rgb), 0.36);
   border: 1px solid rgba(255, 255, 255, 0.55);
-  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.85), 0 2px 8px rgba(80, 64, 48, 0.06);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.85),
+    0 2px 8px rgba(80, 64, 48, 0.06);
 }
 
 html[data-effect='clear'] .workbenchButton:hover {
@@ -187,14 +201,18 @@ html[data-effect='clear'] .workbenchButton:hover {
 html[data-palette='night'] .workbenchButton {
   background: rgba(255, 255, 255, 0.08);
   border: 1px solid rgba(255, 255, 255, 0.16);
-  box-shadow: inset 0 1px 0.5px rgba(255, 255, 255, 0.2), 0 4px 12px rgba(0, 0, 0, 0.15);
+  box-shadow:
+    inset 0 1px 0.5px rgba(255, 255, 255, 0.2),
+    0 4px 12px rgba(0, 0, 0, 0.15);
   color: var(--ui-text-strong);
 }
 
 html[data-palette='night'] .workbenchButton:hover {
   background: rgba(255, 255, 255, 0.14);
   border-color: rgba(255, 255, 255, 0.26);
-  box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.3), 0 6px 16px rgba(0, 0, 0, 0.25);
+  box-shadow:
+    inset 0 1px 1px rgba(255, 255, 255, 0.3),
+    0 6px 16px rgba(0, 0, 0, 0.25);
 }
 
 .body {
@@ -479,7 +497,8 @@ html[data-palette='night'] .navItem:hover {
 }
 
 html[data-palette='night'] .navItemActive {
-  background: linear-gradient(135deg, rgba(70, 110, 190, 0.45) 0%, rgba(35, 65, 130, 0.35) 100%), rgba(255, 255, 255, 0.1);
+  background:
+    linear-gradient(135deg, rgba(70, 110, 190, 0.45) 0%, rgba(35, 65, 130, 0.35) 100%), rgba(255, 255, 255, 0.1);
   border: 0.8px solid rgba(255, 255, 255, 0.35);
   box-shadow:
     inset 0 1px 1px rgba(255, 255, 255, 0.4),

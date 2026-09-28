@@ -7,6 +7,16 @@ export const dict: Dictionary = {
   },
 
   common: {
+    companionControl: {
+      title: 'Companion',
+      show: 'Show companion',
+      left: 'Left side',
+      right: 'Right side',
+      temporaryEdge: 'Not enough room beside the window; companion is temporarily hidden',
+      temporaryMaximized: 'Companion is temporarily hidden while maximized',
+      saveFailed: 'Could not save companion display settings. Please try again.',
+      dragTitle: (name: string) => `Drag ${name} to move the whole window`
+    },
     apply: 'Apply',
     back: 'Back',
     save: 'Save',
@@ -1263,7 +1273,6 @@ export const dict: Dictionary = {
     backToChatTooltip: 'Back to workstation chat (Esc)',
     openLiving: 'Living Space',
     openLivingTooltip: 'Switch to Living Space',
-    companionTitle: (brandName: string) => `${brandName} companion (hold to drag the whole Workbench)`,
     station: {
       tabsAria: 'Station settings navigation',
       tabs: {

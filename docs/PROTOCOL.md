@@ -246,6 +246,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 - 制作额度按用户本地日、approve 时强制，不设评审日限额，不向模型展示额度。无手动播放入口；模型每次调用前刷新 `ACTION_CONTEXT` 的就绪、在途和近期拒绝信息。
 - 所有动态呈现汇入 `companion.action.play_requested`，目录和任务事件仅更新资源。Client 按 `play_id` 去重，按 `pack_id` 与 `appearance_epoch` 校验归属和代次，遵守 TTL / `repeat_count`。
 - 播放回执按 `play_id` 幂等，同一请求只由一台可见设备执行；queued 不算完成，抢占报 interrupted，表演事实只来自播放器回执。
+- Client 主进程按 `play_id` 在本机可见舞台之间唯一认领，认领记录保留到请求过期；完整入口侧边伙伴可接收播放。收起、最小化、最大化、切窗或锁屏时中断播放并作废在途加载，恢复后回到待机，不补播旧请求。持续可见时换侧不中断；同包目录刷新不替换已受理实例的素材版本，迟到媒体事件不得生成第二种终态回执。
 - REST 管目录、设计、停用、重做和删除。动作目录即当前包可播清单，换装随包切换，不跨包引用；重做在同包更新素材版本。
 - clip 可选携带 `peek_geometry`（遮挡线及需保留的识别区域）和 `content_rect`（内容轮廓），坐标归一化到最终视频画布，结构见 [schema](../backend/modules/companion/schemas_actions.py)。缺少有效探身定位时不启用遮挡；旧目录缺少内容轮廓时按完整画布落位。
 - [探身补齐接口](../backend/api/v1/companion.py)的输入见 [schema](../backend/modules/companion/schemas_video.py)。仅当前激活且具有可读冻结参考的包可补齐；按包和槽位复用任务，素材成功但目录缺失时只重试发布。失败或未知结果不自动重新付费，由衣柜显式处理；无冻结参考的导入包不自动重建。

@@ -9,14 +9,14 @@ import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 
-import { nextAppearanceEpoch } from './action-runtime'
+import { resetActionPlayback } from './action-runtime'
 import type { ActionCatalogManifest, ActionClipEntry, NormalizedRect } from './action-types'
 
 export interface ActiveActionCatalog {
   packId: number
   catalogVersion: number
   manifest: ActionCatalogManifest
-  /** clip 标识（system_slot 或 `id:动作ID`）→ 本地展示 URL。 */
+  /** clip 标识与素材版本 → 本地展示 URL。 */
   clipUrls: Map<string, string>
   clipsById: Map<number, ActionClipEntry>
   clipsBySlot: Map<string, ActionClipEntry>
@@ -224,7 +224,7 @@ registerStorageClearHandler(() => {
   peekEnsures.clear()
   attemptedPeekEnsures.clear()
   hydrationRevision += 1
-  nextAppearanceEpoch()
+  resetActionPlayback()
   $actionCatalog.set(null)
   $actionCatalogStatus.set('idle')
 })
@@ -253,9 +253,9 @@ function persistCatalogSnapshot(packId: number, catalogVersion: number, manifest
   catalogSnapshot.set({ catalogVersion, manifest, packId })
 }
 
-/** clip 缓存键：系统槽位优先，动态动作用 `id:<action_id>`。 */
+/** 版本参与缓存键，避免目录刷新后把新素材交给已受理的旧实例。 */
 function clipKey(clip: ActionClipEntry): string {
-  return clip.system_slot || `id:${clip.action_id}`
+  return `${clip.system_slot || `id:${clip.action_id}`}@${clip.asset_revision}`
 }
 
 function pickIdleClip(manifest: ActionCatalogManifest): ActionClipEntry | null {
@@ -490,10 +490,9 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
 
       const { clipsById, clipsBySlot } = buildCatalogIndexes(manifest)
 
-      // 换外观（packId 变化）才推进世代：旧播放实例与迟到回调失效；
-      // 同包新增动作/目录刷新不推进——在播实例仍有效，避免无故打断。
+      // 换包时清理旧播放实例；同包目录刷新保留在播实例。
       if (!samePack || samePack.packId !== res.value.pack_id) {
-        nextAppearanceEpoch()
+        resetActionPlayback()
       }
 
       const catalogVersion = res.value.catalog_version ?? manifest.catalog_version

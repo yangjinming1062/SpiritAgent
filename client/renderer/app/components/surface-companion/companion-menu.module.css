@@ -1,0 +1,81 @@
+.root {
+  position: relative;
+  -webkit-app-region: no-drag;
+}
+
+.trigger {
+  background: var(--ui-fill-hover);
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 999px;
+  color: var(--ui-text-strong);
+  cursor: pointer;
+  font-size: 11.5px;
+  padding: 5px 12px;
+}
+
+.menu {
+  backdrop-filter: blur(24px) saturate(130%);
+  -webkit-backdrop-filter: blur(24px) saturate(130%);
+  background: var(--ui-overlay);
+  border: 1px solid var(--ui-line-standard);
+  border-radius: 12px;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.22);
+  color: var(--ui-text-strong);
+  min-width: 180px;
+  padding: 6px;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 100;
+}
+
+.item {
+  align-items: center;
+  border-radius: 7px;
+  color: inherit;
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  gap: 7px;
+  padding: 7px 8px;
+  text-align: left;
+  width: 100%;
+}
+
+.item:hover,
+.item:focus-visible {
+  background: var(--ui-fill-hover);
+}
+
+.item:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.mark {
+  flex: none;
+  width: 14px;
+}
+
+.separator {
+  border-top: 1px solid var(--ui-line-standard);
+  margin: 4px 0;
+}
+
+.notice,
+.error {
+  color: var(--ui-text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 6px 8px 4px;
+  max-width: 210px;
+}
+
+.error {
+  color: var(--ui-danger-fg);
+}
+
+html[class~='no-blur'] .menu {
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}

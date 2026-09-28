@@ -3,9 +3,8 @@
 export {
   $activePlayInstance,
   acceptPlayCommand,
-  finishPlayInstance,
-  nextAppearanceEpoch,
   reportReceipt,
+  settlePlayInstance,
   shouldStartInstance
 } from './action-runtime'
 export {
@@ -25,3 +24,4 @@ export type {
   ActionPlayInstance,
   PeekGeometry
 } from './action-types'
+export { isActionStageVisible, observeActionStageVisibility } from './action-visibility'

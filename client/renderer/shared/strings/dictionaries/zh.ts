@@ -5,6 +5,16 @@ export const dict = {
   },
 
   common: {
+    companionControl: {
+      title: '伙伴',
+      show: '显示伙伴',
+      left: '左侧',
+      right: '右侧',
+      temporaryEdge: '侧边空间不足，伙伴暂时收起',
+      temporaryMaximized: '窗口最大化时伙伴暂时收起',
+      saveFailed: '保存伙伴显示设置失败，请重试',
+      dragTitle: (name: string) => `拖动${name}可移动整个窗口`
+    },
     apply: '应用',
     back: '返回',
     save: '保存',
@@ -1193,7 +1203,6 @@ export const dict = {
     backToChatTooltip: '返回工位对话 (Esc)',
     openLiving: '生活空间',
     openLivingTooltip: '切换到生活空间',
-    companionTitle: (brandName: string) => `${brandName} 伴工精灵（按住可拖动整个工作台）`,
     station: {
       tabsAria: '工位设置分区导航',
       tabs: {

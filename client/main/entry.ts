@@ -53,6 +53,7 @@ import { createOpenExternalUrl } from './lifecycle/open-external-url'
 import { detectRemoteDisplay } from './lifecycle/platform'
 import { createRendererPaths, unpackedPathFor } from './lifecycle/renderer-paths'
 import { createSpriteWindowFactory } from './lifecycle/sprite-window'
+import { createSurfaceCompanionPreferences } from './lifecycle/surface-companion'
 import { createSurfaceWindowFactory } from './lifecycle/surface-window'
 import { createSurfacesManager, type SurfacesManager } from './lifecycle/surfaces'
 import {
@@ -107,6 +108,7 @@ if (process.env.SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK !== '1') {
 let pendingSecondInstance = false
 let mainWindow: BrowserWindow | null = null
 let surfaces: null | SurfacesManager = null
+let playbackClaimAccountId: null | string = null
 let getAuthToken = (): string | null => null
 // will-quit 有界等待 Runner 收尾，避免 fire-and-forget 留下孤儿子进程。
 let willQuitCleanupDone = false
@@ -231,6 +233,7 @@ app.setAboutPanelOptions({
 registerMediaProtocolScheme()
 
 const zoomPersistence = createZoomPersistence({ app, rememberLog })
+const surfaceCompanionPreferences = createSurfaceCompanionPreferences(app)
 
 const contextMenuHelpers = createContextMenuHelpers({ electronNet })
 
@@ -242,6 +245,8 @@ const menu = createMenu({
   getMainWindow: () => mainWindow,
   isMac: IS_MAC,
   menu: Menu,
+  minimizeWindow: win => surfaces?.minimizeWindow(win),
+  toggleMaximizeWindow: win => surfaces?.toggleMaximizeWindow(win),
   zoomPersistence
 })
 
@@ -290,6 +295,7 @@ const { createSurfaceWindow, navigateSurfaceWindow } = createSurfaceWindowFactor
   app,
   appName: APP_NAME,
   getAppIconPath,
+  getCompanionPreference: id => surfaceCompanionPreferences.get(id),
   getSurfaces: () => surfaces,
   isMac: IS_MAC,
   preloadPath: PRELOAD_PATH,
@@ -324,7 +330,14 @@ async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort, clearA
   }
 
   // 用户身份变化触发配置水合（登录/换号；登出只停摆待写）。
-  await configSync.handleAuthUserChanged(authenticated ? (snapshot?.accountId ?? null) : null)
+  const nextAccountId = authenticated ? (snapshot?.accountId ?? null) : null
+
+  if (playbackClaimAccountId !== nextAccountId) {
+    surfaces?.resetPlaybackClaims()
+    playbackClaimAccountId = nextAccountId
+  }
+
+  await configSync.handleAuthUserChanged(nextAccountId)
 
   if (snapshot && sessionRuntime.ensureBackendSession().getSession()?.sessionId !== snapshot.sessionId) {
     return
@@ -349,8 +362,11 @@ registerPrefsIpc({
 
 surfaces = createSurfacesManager({
   createWindow: createSurfaceWindow,
+  getCompanionPreference: id => surfaceCompanionPreferences.get(id),
+  getSpriteWindow: () => mainWindow,
   navigateWindow: navigateSurfaceWindow,
   rememberLog: (chunk: string) => rememberLog(chunk),
+  saveCompanionPreference: (id, preference) => surfaceCompanionPreferences.set(id, preference),
   syncSpriteToDisplay: display => {
     if (mainWindow && !mainWindow.isDestroyed()) {
       const currentMatching = screen.getDisplayMatching(mainWindow.getBounds())
@@ -588,6 +604,14 @@ setTimeout(() => {
 }, 200).unref?.()
 
 void app.whenReady().then(async () => {
+  surfaces?.setScreenLocked(powerMonitor.getSystemIdleState(1) === 'locked')
+  powerMonitor.on('lock-screen', () => surfaces?.setScreenLocked(true))
+  powerMonitor.on('unlock-screen', () => surfaces?.setScreenLocked(false))
+  powerMonitor.on('resume', () => surfaces?.setScreenLocked(powerMonitor.getSystemIdleState(1) === 'locked'))
+  screen.on('display-added', () => surfaces?.refreshCompanionGeometry())
+  screen.on('display-removed', () => surfaces?.refreshCompanionGeometry())
+  screen.on('display-metrics-changed', () => surfaces?.refreshCompanionGeometry())
+
   if (IS_MAC) {
     Menu.setApplicationMenu(menu.buildApplicationMenu())
   } else {

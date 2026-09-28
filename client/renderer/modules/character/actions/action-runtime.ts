@@ -15,15 +15,13 @@ import type { ActionPlaybackStatus, ActionPlayCommand, ActionPlayInstance } from
 /** 当前生效播放实例；null 表示无表达请求，回退基础状态机。 */
 export const $activePlayInstance = atom<ActionPlayInstance | null>(null)
 
-/** 外观世代：每次目录水合 / 外观切换递增；旧实例凭它被拒（A→B→A 后第一次 A 的迟到指令不播放）。 */
-let appearanceEpochCounter = 0
-
 /** 播放代次：新请求或抢占递增；旧 ended/error/timeout 回调凭它不终止新动作。 */
 let playGeneration = 0
 
 /** 已受理 play_id：同一指令重复到达不重建实例、不从头重播。 */
 const acceptedPlayIds = new Set<string>()
 const MAX_TRACKED_PLAY_IDS = 64
+const settledInstances = new WeakSet<ActionPlayInstance>()
 
 function rememberPlayId(playId: string): void {
   acceptedPlayIds.add(playId)
@@ -41,23 +39,15 @@ function isExpired(expiresAtMs: number | null): boolean {
   return expiresAtMs !== null && Date.now() > expiresAtMs
 }
 
-export function nextAppearanceEpoch(): number {
-  appearanceEpochCounter += 1
-
-  // 换装 / 目录水合后旧实例作废，避免沿用旧 play_id 与旧素材上报。
-  if ($activePlayInstance.get() !== null) {
-    $activePlayInstance.set(null)
-  }
-
+/** 换包或账号清理时作废旧实例，异步媒体回调继续核对当前播放代次。 */
+export function resetActionPlayback(): void {
+  $activePlayInstance.set(null)
   acceptedPlayIds.clear()
-
-  return appearanceEpochCounter
 }
 
 /** 受理播放指令：校验包归属 / TTL / play_id 去重，生成播放实例。
  * 拖拽等更高优先级交互由调度器在调用前裁决，本函数不做交互判断。
- * appearance_epoch 采用“客户端单调计数、服务端只透传目录版本”的宽松契约：
- * 指令 epoch 小于当前世代只说明产生于更早目录，仍允许播放（外观隔离由 pack_id 保证）。 */
+ * appearance_epoch 保留服务端目录版本；外观隔离由 pack_id 和在途请求守卫负责。 */
 export function acceptPlayCommand(
   command: ActionPlayCommand,
   clip: ActionPlayInstance['clip'] | null,
@@ -77,7 +67,7 @@ export function acceptPlayCommand(
   const expiresAtMs = command.expires_at !== null ? Date.parse(command.expires_at) : null
 
   // TTL：过期请求不补播。
-  if (isExpired(expiresAtMs)) {
+  if ((expiresAtMs !== null && !Number.isFinite(expiresAtMs)) || isExpired(expiresAtMs)) {
     void reportReceipt(command, 'rejected', 'expired')
 
     return null
@@ -115,8 +105,7 @@ export function shouldStartInstance(instance: ActionPlayInstance): boolean {
   }
 
   if (isExpired(instance.expiresAtMs)) {
-    void reportReceipt({ play_id: instance.playId }, 'rejected', 'expired')
-    finishPlayInstance(instance.generation)
+    settlePlayInstance(instance, 'rejected', 'expired')
 
     return false
   }
@@ -147,9 +136,21 @@ export async function reportReceipt(
   }
 }
 
-/** 结束当前表达：once 播完、循环次数耗尽或被抢占后调用；实例回到基础状态机。 */
-export function finishPlayInstance(generation: number): void {
-  if ($activePlayInstance.get()?.generation === generation) {
+/** 实例仅收尾一次；React 清理与迟到媒体事件不能给同一动作报告第二种终态。 */
+export function settlePlayInstance(
+  instance: ActionPlayInstance,
+  status: Exclude<ActionPlaybackStatus, 'started'>,
+  reason = '',
+  visibleDurationMs = 0
+): void {
+  if (settledInstances.has(instance)) {
+    return
+  }
+
+  settledInstances.add(instance)
+  void reportReceipt({ play_id: instance.playId }, status, reason, visibleDurationMs)
+
+  if ($activePlayInstance.get()?.generation === instance.generation) {
     $activePlayInstance.set(null)
   }
 }

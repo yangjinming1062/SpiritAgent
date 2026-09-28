@@ -1,16 +1,19 @@
 import {
   $actionCatalog,
+  $actionCatalogStatus,
   $activeAvatarId,
   $companionMood,
-  $screenLocked,
   $videoPacks,
   acceptPlayCommand,
   actionCatalogChanged,
   type ActionPlayCommand,
+  hydrateActionCatalog,
   hydrateCharacterCard,
   hydrateFullbodyReference,
   hydrateVideoPack,
   hydrateWardrobe,
+  isActionStageVisible,
+  observeActionStageVisibility,
   refreshAvatarSeeds,
   resolveAvatarRegeneration
 } from '@/modules/character'
@@ -25,10 +28,9 @@ import {
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
-import { $chatVisible } from '@/shared/store/chat-visibility'
 import { getStrings } from '@/shared/strings'
 
-import { decodePayload, type EventRouteContext } from '../gateway-event-util'
+import { decodePayload } from '../gateway-event-util'
 
 // 角色 / 形象事件处理器：心情、衣柜、头像重生与视频动作播放。
 // 全部只更新 character 域的状态，不接触会话。
@@ -37,7 +39,77 @@ function authed(): boolean {
   return $auth.get().kind === 'authenticated'
 }
 
-export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext): void {
+async function acceptRequestedAction(command: ActionPlayCommand, accountId: string, sessionId: string): Promise<void> {
+  let cancelled = false
+
+  const identityMatches = (): boolean => {
+    const identity = $auth.get()
+
+    return (
+      identity.kind === 'authenticated' &&
+      identity.snapshot.accountId === accountId &&
+      identity.snapshot.sessionId === sessionId
+    )
+  }
+
+  const clipMatches = (): boolean => {
+    const catalog = $actionCatalog.get()
+    const clip = catalog?.clipsById.get(command.action_id)
+
+    return (
+      !!clip &&
+      catalog?.packId === command.pack_id &&
+      (command.asset_revision_id === null || clip.asset_revision === command.asset_revision_id)
+    )
+  }
+
+  // 隐藏后再显示、换号后再切回、A→B→A 换装都不能复活等待中的旧请求。
+  const stops = [
+    observeActionStageVisibility(visible => {
+      cancelled ||= !visible
+    }),
+    $auth.listen(() => {
+      cancelled ||= !identityMatches()
+    }),
+    $actionCatalog.listen(catalog => {
+      cancelled ||= catalog === null || catalog.packId !== command.pack_id
+    }),
+    $actionCatalogStatus.listen(status => {
+      cancelled ||= status === 'unavailable'
+    })
+  ]
+
+  try {
+    if (!clipMatches() || $actionCatalogStatus.get() !== 'ready') {
+      await hydrateActionCatalog(true)
+    }
+
+    const canAccept = (): boolean =>
+      !cancelled &&
+      identityMatches() &&
+      clipMatches() &&
+      $actionCatalogStatus.get() === 'ready' &&
+      isActionStageVisible()
+
+    if (!canAccept()) {
+      return
+    }
+
+    if (!(await window.spiritagent.surface.claimPlay({ playId: command.play_id, expiresAt: command.expires_at }))) {
+      return
+    }
+
+    const catalog = $actionCatalog.get()
+
+    if (canAccept() && catalog) {
+      acceptPlayCommand(command, catalog.clipsById.get(command.action_id) ?? null, catalog.packId)
+    }
+  } finally {
+    stops.forEach(stop => stop())
+  }
+}
+
+export function handleCharacterEvent(event: GatewayEvent): void {
   switch (event.type) {
     case 'companion.mood': {
       const mood = decodePayload<{ mood?: string }>(event.payload)?.mood?.trim()
@@ -94,8 +166,10 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
     case 'companion.action.play_requested': {
       // 播放指令：经统一调度器裁决（安全控制/拖拽优先，表达仅在基础状态为 idle 时生效——
       // 由 VideoStage 的 resolvePresentation 完成）；此处只校验目录与包归属后受理。
-      // 仅当前可见的精灵舞台执行：隐藏工作台代理窗口、锁屏或聊天覆盖时不播放、不回执“已展示”。
-      if (!authed() || ctx.isProxy || $screenLocked.get() || $chatVisible.get()) {
+      // 可见舞台由主进程最终认领；代理窗的完整对话不遮挡侧边伙伴。
+      const identity = $auth.get()
+
+      if (identity.kind !== 'authenticated' || !isActionStageVisible()) {
         break
       }
 
@@ -105,30 +179,22 @@ export function handleCharacterEvent(event: GatewayEvent, ctx: EventRouteContext
         break
       }
 
-      const catalog = $actionCatalog.get()
-
-      if (!catalog) {
-        break
+      const command: ActionPlayCommand = {
+        play_id: p.play_id,
+        target_device: p.target_device ?? '',
+        target_surface: p.target_surface ?? '',
+        pack_id: p.pack_id,
+        appearance_epoch: p.appearance_epoch ?? 0,
+        action_id: p.action_id,
+        asset_revision_id: p.asset_revision_id ?? null,
+        repeat_count: p.repeat_count ?? 1,
+        expires_at: p.expires_at ?? null,
+        source: p.source ?? 'chat_expression'
       }
 
-      const clip = catalog.clipsById.get(p.action_id)
-
-      if (clip) {
-        const command: ActionPlayCommand = {
-          play_id: p.play_id,
-          target_device: p.target_device ?? '',
-          target_surface: p.target_surface ?? '',
-          pack_id: p.pack_id,
-          appearance_epoch: p.appearance_epoch ?? 0,
-          action_id: p.action_id,
-          asset_revision_id: p.asset_revision_id ?? null,
-          repeat_count: p.repeat_count ?? 1,
-          expires_at: p.expires_at ?? null,
-          source: p.source ?? 'chat_expression'
-        }
-
-        acceptPlayCommand(command, clip, catalog.packId)
-      }
+      void acceptRequestedAction(command, identity.snapshot.accountId, identity.snapshot.sessionId).catch(error =>
+        log.warn('action-playback', 'Could not claim playback', error)
+      )
 
       break
     }

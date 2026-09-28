@@ -77,6 +77,8 @@ declare global {
         maximize: AsyncIpc<IpcInvokeContract['spiritagent:surface:maximize']>
         minimize: AsyncIpc<IpcInvokeContract['spiritagent:surface:minimize']>
         getState: AsyncIpc<IpcInvokeContract['spiritagent:surface:get-state']>
+        setCompanion: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-companion']>
+        claimPlay: AsyncIpc<IpcInvokeContract['spiritagent:surface:claim-play']>
         setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:surface:set-ignore-mouse-events']>
         onChanged: EventSubscription<'spiritagent:surface:changed'>
       }

@@ -9,11 +9,13 @@ export {
   type ActionPlayCommand,
   type ActionPlayInstance,
   ensurePeekAction,
-  finishPlayInstance,
   hydrateActionCatalog,
+  isActionStageVisible,
+  observeActionStageVisibility,
   reportReceipt,
   resolveActionClipUrl,
   resolveHitmask,
+  settlePlayInstance,
   shouldStartInstance
 } from './actions'
 export { $focusContext, $screenLocked, reportInteractionStat, startActivityMonitor } from './activity'

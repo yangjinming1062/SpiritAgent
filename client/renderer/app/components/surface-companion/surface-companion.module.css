@@ -1,0 +1,38 @@
+.slot {
+  align-items: flex-end;
+  display: flex;
+  flex: none;
+  height: 100%;
+  min-width: 0;
+  position: relative;
+  user-select: none;
+  z-index: 10;
+}
+
+.wrapper {
+  align-items: center;
+  aspect-ratio: 125 / 275;
+  cursor: grab;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  min-height: 0;
+  position: relative;
+  width: 100%;
+  -webkit-app-region: drag;
+}
+
+.wrapper:active {
+  cursor: grabbing;
+}
+
+.inner {
+  align-items: flex-end;
+  display: flex;
+  height: 100%;
+  inset: 0;
+  justify-content: center;
+  overflow: visible;
+  position: absolute;
+  width: 100%;
+}

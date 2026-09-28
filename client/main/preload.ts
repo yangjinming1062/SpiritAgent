@@ -29,7 +29,9 @@ import {
   type SpiritAgentApiRequest,
   type SpiritAgentPrefsSet,
   type SpiritAgentSelectPathsOptions,
-  type SpiritAgentUiTheme
+  type SpiritAgentUiTheme,
+  type SurfaceCompanionPreference,
+  type SurfacePlaybackClaim
 } from '@ipc/contracts'
 import { contextBridge, ipcRenderer, type IpcRendererEvent, webUtils } from 'electron'
 
@@ -141,10 +143,13 @@ contextBridge.exposeInMainWorld('spiritagent', {
     close: () => ipcRenderer.invoke(IPC.invoke.surfaceClose),
     getState: () => ipcRenderer.invoke(IPC.invoke.surfaceGetState),
     isMaximized: () => ipcRenderer.invoke(IPC.invoke.surfaceIsMaximized),
+    claimPlay: (claim: SurfacePlaybackClaim) => ipcRenderer.invoke(IPC.invoke.surfaceClaimPlay, claim),
     maximize: () => ipcRenderer.invoke(IPC.invoke.surfaceMaximize),
     minimize: () => ipcRenderer.invoke(IPC.invoke.surfaceMinimize),
     onChanged: (cb: (payload: DesktopSurfaceChangedEvent) => void) => subscribe(IPC.event.surfaceChanged, cb),
     open: (payload: DesktopSurfaceOpenPayload) => ipcRenderer.invoke(IPC.invoke.surfaceOpen, payload),
+    setCompanion: (preference: SurfaceCompanionPreference) =>
+      ipcRenderer.invoke(IPC.invoke.surfaceSetCompanion, preference),
     setIgnoreMouseEvents: (payload: { forward?: boolean; ignore: boolean }) =>
       ipcRenderer.invoke(IPC.invoke.surfaceSetIgnoreMouseEvents, payload)
   },

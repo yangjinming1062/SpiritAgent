@@ -9,9 +9,20 @@ interface MenuOptions {
   isMac: boolean
   menu: typeof Menu
   zoomPersistence: ZoomPersistence
+  minimizeWindow: (win: BrowserWindow) => void
+  toggleMaximizeWindow: (win: BrowserWindow) => void
 }
 
-export function createMenu({ app, appName, getMainWindow, isMac, menu, zoomPersistence }: MenuOptions) {
+export function createMenu({
+  app,
+  appName,
+  getMainWindow,
+  isMac,
+  menu,
+  zoomPersistence,
+  minimizeWindow,
+  toggleMaximizeWindow
+}: MenuOptions) {
   function showAboutPanelFresh(): void {
     app.setAboutPanelOptions({
       applicationName: appName,
@@ -119,7 +130,30 @@ export function createMenu({ app, appName, getMainWindow, isMac, menu, zoomPersi
     template.push({
       label: 'Window',
       submenu: isMac
-        ? [{ role: 'minimize' }, { role: 'zoom' }, { role: 'front' }]
+        ? [
+            {
+              label: 'Minimize',
+              accelerator: 'CommandOrControl+M',
+              click: () => {
+                const win = targetWindow()
+
+                if (win) {
+                  minimizeWindow(win)
+                }
+              }
+            },
+            {
+              label: 'Zoom',
+              click: () => {
+                const win = targetWindow()
+
+                if (win) {
+                  toggleMaximizeWindow(win)
+                }
+              }
+            },
+            { role: 'front' }
+          ]
         : [{ role: 'minimize' }, { role: 'close' }]
     })
 

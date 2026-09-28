@@ -118,7 +118,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     case 'companion.video.ready':
 
     case 'avatar.regenerated':
-      handleCharacterEvent(event, ctx)
+      handleCharacterEvent(event)
 
       break
 

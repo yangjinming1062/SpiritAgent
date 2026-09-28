@@ -7,6 +7,8 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
+import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
 import { SpriteStatusBadge } from '@/modules/character'
 import {
   $chatSessionId,
@@ -30,7 +32,6 @@ import { useStrings } from '@/shared/strings'
 import { RunRail } from './run-rail'
 import { SessionSidebar } from './session-sidebar'
 import { StationSettings } from './station-settings'
-import { WorkbenchCompanion } from './workbench-companion'
 import styles from './workbench.module.css'
 
 function isStationSettingsHash(rawHash: string): boolean {
@@ -153,9 +154,7 @@ export function WorkbenchRoot(): React.JSX.Element {
 
   return (
     <div className={styles.windowContainer}>
-      <aside className={styles.companionSlot}>
-        <WorkbenchCompanion />
-      </aside>
+      <SurfaceCompanion surface="workbench" />
 
       <div className={styles.shell} data-surface="workbench" ref={shellRef}>
         <header
@@ -174,6 +173,7 @@ export function WorkbenchRoot(): React.JSX.Element {
           </div>
 
           <div className={styles.actionsArea}>
+            <CompanionMenu surface="workbench" />
             <button
               className={cn(styles.glassButton, settingsOpen && styles.glassButtonActive)}
               onClick={toggleSettings}
@@ -227,7 +227,7 @@ export function WorkbenchRoot(): React.JSX.Element {
           </main>
 
           <RunRail />
-          <MediaViewerOverlay windowId={1} />
+          <MediaViewerOverlay containerRef={shellRef} windowId={1} />
         </div>
       </div>
     </div>

@@ -1,9 +1,9 @@
 import { useStore } from '@nanostores/react'
 import { atom } from 'nanostores'
-import { useEffect, useRef } from 'react'
+import { type RefObject, useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 
-import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import type { ChatMediaItem } from '@/shared/types/spiritagent'
 
 import { InlineMedia } from './inline-media'
@@ -15,14 +15,21 @@ export function openMediaViewer(item: ChatMediaItem): void {
   $mediaViewer.set(item)
 }
 
-export function MediaViewerOverlay({ windowId = 0 }: { windowId?: number }): React.ReactPortal | null {
+export function MediaViewerOverlay({
+  windowId = 0,
+  containerRef
+}: {
+  windowId?: number
+  containerRef?: RefObject<HTMLElement | null>
+}): React.ReactPortal | null {
   const item = useStore($mediaViewer)
   const overlayRef = useRef<HTMLDivElement>(null)
 
-  // 打开时把整个视口注册为可交互区，避免点击穿透到下层窗口；函数引用稳定，effect 不会每次渲染重挂。
-  const getViewportRect = (): DOMRect => new DOMRect(0, 0, window.innerWidth, window.innerHeight)
+  useInteractiveRegion('media-viewer', overlayRef, undefined, undefined, windowId)
 
-  useInteractiveRegion('media-viewer', overlayRef, getViewportRect, undefined, windowId)
+  useLayoutEffect(() => {
+    probeInteractiveRegions(windowId)
+  }, [item, windowId])
 
   useEffect(() => {
     if (!item) {
@@ -46,14 +53,14 @@ export function MediaViewerOverlay({ windowId = 0 }: { windowId?: number }): Rea
 
   return createPortal(
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm"
+      className={`${containerRef ? 'absolute' : 'fixed'} inset-0 z-[100] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm`}
       onClick={() => $mediaViewer.set(null)}
       ref={overlayRef}
       style={{ pointerEvents: 'auto' }}
     >
       <ViewerSurface item={item} />
     </div>,
-    document.body
+    containerRef?.current ?? document.body
   )
 }
 

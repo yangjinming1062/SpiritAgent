@@ -10,7 +10,6 @@ import {
   $actionCatalogStatus,
   $activePlayInstance,
   $peekPreparation,
-  $screenLocked,
   $spatialLocomotion,
   $spatialPeek,
   $spatialPos,
@@ -23,22 +22,23 @@ import {
   type ActionPlayInstance,
   cancelPeekPreparation,
   commitPeekPreparation,
-  finishPlayInstance,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
+  isActionStageVisible,
   leavePeekForExpression,
+  observeActionStageVisibility,
   peekMaskRects,
   reportReceipt,
   resolveActionClipUrl,
   resolveHitmask,
   resolveVideoAction,
   restorePeekAfterExpression,
+  settlePlayInstance,
   shouldStartInstance,
   type VideoActionKey
 } from '@/modules/character'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
-import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { $videoHitTest } from './video-hit-test'
 
@@ -76,15 +76,7 @@ function settleReplacedInstance(previous: ActionPlayInstance | null): void {
     return
   }
 
-  // 过期实例按 TTL 收尾，不另报抢占。
-  if (previous.expiresAtMs !== null && Date.now() > previous.expiresAtMs) {
-    finishPlayInstance(previous.generation)
-
-    return
-  }
-
-  void reportReceipt({ play_id: previous.playId }, 'interrupted', 'preempted')
-  finishPlayInstance(previous.generation)
+  settlePlayInstance(previous, 'interrupted', 'preempted')
 }
 
 function shouldStartVisibleInstance(instance: ActionPlayInstance): boolean {
@@ -92,7 +84,7 @@ function shouldStartVisibleInstance(instance: ActionPlayInstance): boolean {
     return false
   }
 
-  if ($screenLocked.get() || $chatVisible.get()) {
+  if (!isActionStageVisible()) {
     settleReplacedInstance(instance)
 
     return false
@@ -222,6 +214,16 @@ function prepareFirstFrame(el: HTMLVideoElement, signal: AbortSignal): Promise<b
 interface MountedClip {
   key: string
   playId: string | null
+  started: boolean
+}
+
+function canCompleteInstance(instance: ActionPlayInstance, mounted: MountedClip | null): boolean {
+  return (
+    !!mounted?.started &&
+    mounted.playId === instance.playId &&
+    $activePlayInstance.get()?.generation === instance.generation &&
+    isActionStageVisible()
+  )
 }
 
 export function VideoStage(): React.JSX.Element {
@@ -242,18 +244,14 @@ export function VideoStage(): React.JSX.Element {
   const canvas = catalog?.manifest.canvas
 
   useEffect(() => {
-    const cancelHiddenPlayback = (): void => {
-      if ($screenLocked.get() || $chatVisible.get()) {
+    const stop = observeActionStageVisibility(visible => {
+      if (!visible) {
         settleReplacedInstance($activePlayInstance.get())
       }
-    }
-
-    const unlistenLock = $screenLocked.subscribe(cancelHiddenPlayback)
-    const unlistenVisibility = $chatVisible.subscribe(cancelHiddenPlayback)
+    })
 
     return () => {
-      unlistenLock()
-      unlistenVisibility()
+      stop()
       settleReplacedInstance($activePlayInstance.get())
     }
   }, [])
@@ -302,7 +300,7 @@ export function VideoStage(): React.JSX.Element {
 
   const targetClip =
     presentation.kind === 'expression'
-      ? (catalog?.clipsById.get(presentation.instance.actionId) ?? null)
+      ? presentation.instance.clip
       : (catalog?.clipsBySlot.get(presentation.action) ?? null)
 
   const idleClip = catalog?.clipsBySlot.get('idle') ?? null
@@ -392,7 +390,8 @@ export function VideoStage(): React.JSX.Element {
           front.current = slot
           mounted.current = {
             key: preparationForClip ? stableMountKey : mountKey,
-            playId: instance?.playId ?? null
+            playId: instance?.playId ?? null,
+            started: false
           }
           hitmaskRef.current = hitmask
           // 遮挡与播放器同一帧提交，不把淡出的完整身体套进探身蒙版。
@@ -408,6 +407,7 @@ export function VideoStage(): React.JSX.Element {
                 mounted.current?.playId === instance.playId &&
                 shouldStartVisibleInstance(instance)
               ) {
+                mounted.current.started = true
                 void reportReceipt({ play_id: instance.playId }, 'started')
               }
             })
@@ -444,8 +444,7 @@ export function VideoStage(): React.JSX.Element {
         log.warn('video-stage', 'Could not play action', error)
 
         if (instance !== null) {
-          void reportReceipt({ play_id: instance.playId }, 'rejected', 'load failed')
-          finishPlayInstance(instance.generation)
+          settlePlayInstance(instance, 'rejected', 'load failed')
         } else if (preparationForClip) {
           cancelPeekPreparation(preparationForClip.action, preparationForClip.generation)
         } else if (front.current === null) {
@@ -480,22 +479,17 @@ export function VideoStage(): React.JSX.Element {
     }
 
     let played = 0
-    let fired = false
     const elements = videos.current
 
     const handleLoopEnd = (): void => {
-      const current = mounted.current
-
-      if (!current || current.playId !== instance.playId || fired) {
+      if (!canCompleteInstance(instance, mounted.current)) {
         return
       }
 
       played += 1
 
       if (played >= instance.repeatCount) {
-        fired = true
-        void reportReceipt({ play_id: instance.playId }, 'completed', '', played * instance.clip.duration_ms)
-        finishPlayInstance(instance.generation)
+        settlePlayInstance(instance, 'completed', '', played * instance.clip.duration_ms)
       }
     }
 
@@ -530,21 +524,18 @@ export function VideoStage(): React.JSX.Element {
   useEffect(() => {
     const elements = videos.current
     const instance = presentation.kind === 'expression' ? presentation.instance : null
-    const playId = instance?.playId ?? ''
 
     const handleEnded = (event: Event): void => {
-      const current = mounted.current
-
-      if (!current || !instance || front.current === null || event.currentTarget !== elements[front.current]) {
+      if (
+        !instance ||
+        front.current === null ||
+        event.currentTarget !== elements[front.current] ||
+        !canCompleteInstance(instance, mounted.current)
+      ) {
         return
       }
 
-      if (current.playId !== playId) {
-        return
-      }
-
-      void reportReceipt({ play_id: playId }, 'completed', '', Math.round(instance.clip.duration_ms))
-      finishPlayInstance(instance.generation)
+      settlePlayInstance(instance, 'completed', '', Math.round(instance.clip.duration_ms))
     }
 
     for (const el of elements) {

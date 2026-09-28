@@ -49,6 +49,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 - 瞬态保存恢复目标，旧计时器不得覆盖持续状态，重复瞬态不嵌套目标；语音准备与播放分开，尾随点播不切 speaking，完成聊天不触发 emotional。
 - [actions](modules/character/actions/)消费 play_id / pack_id / appearance epoch，去重并拒绝过期或跨包结果；动态动作不进入表现状态机，回执遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
+- 两个完整入口共用 [侧边伙伴组件](app/components/surface-companion/surface-companion.tsx)；入口与播放器共用 [可见性判断](modules/character/actions/action-visibility.ts)，主进程快照按版本应用，锁屏不依赖 Runner 轮询。播放认领与取消遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
 - `presentation/render-resolver` 按动作目录和生成状态选择 video 或 fallback，并提供对应的本地化状态；未就绪不空挂视频元素。
 
 ### 打扰与自主行为
@@ -121,7 +122,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ### 媒体查看
 
-每个窗口独立挂载查看器，经端口打开。`MEDIA:` 标记在实时和历史投影中移除，结构化媒体才是展示来源；跨 chunk 保留待解析前缀。媒体字节经主进程读取，临时 URL 按 MIME 创建并在卸载回收。
+每个窗口独立挂载查看器，经端口打开；完整入口的浮层与命中限定在内容面板，保留外侧伙伴。`MEDIA:` 标记在实时和历史投影中移除，结构化媒体才是展示来源；跨 chunk 保留待解析前缀。媒体字节经主进程读取，临时 URL 按 MIME 创建并在卸载回收。
 
 ## 记忆与场景
 

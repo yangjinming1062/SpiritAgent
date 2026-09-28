@@ -5,7 +5,10 @@
 
 import { clamp } from '../runtime'
 
-export interface MemoryToolScope { user_id: number; system_preset_id: string }
+export interface MemoryToolScope {
+  user_id: number
+  system_preset_id: string
+}
 
 export interface DesktopVersionInfo {
   appVersion: string
@@ -94,8 +97,31 @@ export interface DesktopSurfaceOpenPayload {
   view?: string
 }
 
+export type SurfaceCompanionSide = 'left' | 'right'
+
+export interface SurfaceCompanionPreference {
+  enabled: boolean
+  side: SurfaceCompanionSide
+}
+
+export interface SurfaceCompanionState {
+  preference: SurfaceCompanionPreference
+  visible: boolean
+  slotWidth: number
+  outerWidth: number
+  hiddenReason: 'edge' | 'maximized' | 'minimized' | 'screen-locked' | 'window-hidden' | null
+}
+
+export interface SurfacePlaybackClaim {
+  playId: string
+  expiresAt: string | null
+}
+
 export interface DesktopSurfaceChangedEvent {
+  companions: Record<SurfaceId, SurfaceCompanionState>
   open: null | SurfaceId
+  revision: number
+  screenLocked: boolean
 }
 
 export interface DesktopUiThemeBroadcast {
@@ -312,7 +338,9 @@ export interface IpcInvokeContract {
   // 鉴权
   'spiritagent:auth:activate': (payload: DesktopActivatePayload) => DesktopAuthSnapshot | Promise<DesktopAuthSnapshot>
   'spiritagent:auth:refresh': () => DesktopAuthSnapshot | Promise<DesktopAuthSnapshot>
-  'spiritagent:auth:logout': (payload: DesktopLogoutPayload) =>
+  'spiritagent:auth:logout': (
+    payload: DesktopLogoutPayload
+  ) =>
     | { backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }
     | Promise<{ backendUnreachable?: boolean; error?: string; ignored?: boolean; ok: boolean }>
   'spiritagent:auth:get-session': () => DesktopAuthSnapshot | null | Promise<DesktopAuthSnapshot | null>
@@ -324,6 +352,10 @@ export interface IpcInvokeContract {
   'spiritagent:surface:maximize': () => Promise<void> | void
   'spiritagent:surface:is-maximized': () => Promise<boolean> | boolean
   'spiritagent:surface:get-state': () => DesktopSurfaceChangedEvent | Promise<DesktopSurfaceChangedEvent>
+  'spiritagent:surface:set-companion': (
+    preference: SurfaceCompanionPreference
+  ) => DesktopSurfaceChangedEvent | Promise<DesktopSurfaceChangedEvent>
+  'spiritagent:surface:claim-play': (claim: SurfacePlaybackClaim) => boolean | Promise<boolean>
   'spiritagent:surface:set-ignore-mouse-events': (payload: {
     forward?: boolean
     ignore: boolean
@@ -337,7 +369,11 @@ export interface IpcInvokeContract {
     contentHash?: string
     url: string
   }) => Promise<string | null> | string | null
-  'spiritagent:api:asset-buffer': (request: { preferCache?: boolean; contentHash?: string; url: string }) => Promise<Uint8Array> | Uint8Array
+  'spiritagent:api:asset-buffer': (request: {
+    preferCache?: boolean
+    contentHash?: string
+    url: string
+  }) => Promise<Uint8Array> | Uint8Array
 
   // 会话历史本地缓存：请求携带发起时的鉴权会话，主进程核对后按账户隔离。
   'spiritagent:session-history:get': (
@@ -442,10 +478,7 @@ export interface IpcInvokeContract {
     forward?: boolean
     ignore: boolean
   }) => Promise<void> | void
-  'spiritagent:sprite:get-position': () =>
-    | null
-    | DesktopSpriteRestPosition
-    | Promise<null | DesktopSpriteRestPosition>
+  'spiritagent:sprite:get-position': () => null | DesktopSpriteRestPosition | Promise<null | DesktopSpriteRestPosition>
   'spiritagent:sprite:set-position': (payload: DesktopSpritePosition) => Promise<void> | void
   'spiritagent:sprite:get-window-scene': () =>
     | DesktopWindowSceneSnapshot
@@ -539,6 +572,8 @@ export const IPC = {
     surfaceMaximize: 'spiritagent:surface:maximize',
     surfaceIsMaximized: 'spiritagent:surface:is-maximized',
     surfaceGetState: 'spiritagent:surface:get-state',
+    surfaceSetCompanion: 'spiritagent:surface:set-companion',
+    surfaceClaimPlay: 'spiritagent:surface:claim-play',
     surfaceSetIgnoreMouseEvents: 'spiritagent:surface:set-ignore-mouse-events',
     skillsList: 'spiritagent:skills:list',
     skillSetEnabled: 'spiritagent:skill:set-enabled',
