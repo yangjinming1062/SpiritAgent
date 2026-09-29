@@ -114,6 +114,7 @@ declare global {
         setIgnoreMouseEvents: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-ignore-mouse-events']>
         getPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:get-position']>
         getWindowScene: AsyncIpc<IpcInvokeContract['spiritagent:sprite:get-window-scene']>
+        mapScreenRect: AsyncIpc<IpcInvokeContract['spiritagent:sprite:map-screen-rect']>
         moveToDisplay: AsyncIpc<IpcInvokeContract['spiritagent:sprite:move-to-display']>
         setPosition: AsyncIpc<IpcInvokeContract['spiritagent:sprite:set-position']>
         moveToCursorDisplay: AsyncIpc<IpcInvokeContract['spiritagent:sprite:move-to-cursor-display']>
@@ -129,7 +130,9 @@ declare global {
       getVersion: AsyncIpc<IpcInvokeContract['spiritagent:version']>
       update: {
         check: AsyncIpc<IpcInvokeContract['spiritagent:update:check']>
+        download: AsyncIpc<IpcInvokeContract['spiritagent:update:download']>
         getState: AsyncIpc<IpcInvokeContract['spiritagent:update:get-state']>
+        install: AsyncIpc<IpcInvokeContract['spiritagent:update:install']>
         onEvent: EventSubscription<'spiritagent:update-event'>
       }
     }

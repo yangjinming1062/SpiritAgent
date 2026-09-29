@@ -4,18 +4,18 @@ import { log } from '@/shared/lib/log'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { $screenLocked } from './activity'
-import { $spriteAction, setSpriteState } from './companion-store'
+import { setSpriteState } from './companion-store'
 import { speakProactiveLine } from './proactive-speak'
 import {
   $defaultScale,
   $spatialPos,
   computePerchPlacement,
-  getBaseSpriteWidth,
   locomotionForDistance,
   moveDurationMs,
   setSpatialLocale,
   updateSpatialDecision
 } from './spatial'
+import { $spriteGesture, clearSpriteGesture, playSpriteGesture } from './sprite/gesture'
 
 const RETRY_MS = 300
 const RETRY_COUNT = 5
@@ -95,6 +95,17 @@ export async function findWindowByKeyword(keyword: string): Promise<WindowGeom |
   return match ? { x: match.x, y: match.y, w: match.w, h: match.h } : null
 }
 
+// Runner 给出原生屏幕坐标；落位与指向须用主进程换算后的精灵视口坐标，换算失败按定位不明处理。
+async function toViewportRect(geom: WindowGeom): Promise<WindowGeom | null> {
+  try {
+    return await window.spiritagent.sprite.mapScreenRect(geom)
+  } catch (error) {
+    log.warn('ritual-walk', 'Could not map target into the sprite viewport', error)
+
+    return null
+  }
+}
+
 export async function performRitualWalk<T>(
   findTarget: () => Promise<WindowGeom | null>,
   execute: () => Promise<T>,
@@ -111,14 +122,25 @@ export async function performRitualWalk<T>(
     geom = await findTarget()
   }
 
-  if (!geom) {
+  const view = geom ? await toViewportRect(geom) : null
+
+  if (!geom || !view) {
     void speakProactiveLine(pickLine(TARGET_LOST_LINES))
 
     return execute()
   }
 
+  const targetCenter = { x: view.x + view.w / 2, y: view.y + view.h / 2 }
+
+  // 目标不在精灵所在显示器内时走不过去，与栖身空间不足同样处理。
+  const inViewport =
+    targetCenter.x >= 0 &&
+    targetCenter.x < window.innerWidth &&
+    targetCenter.y >= 0 &&
+    targetCenter.y < window.innerHeight
+
   // 栖身落位与 events / autonomy 同规则：以用户默认比例为缩身上限。
-  const perch = computePerchPlacement(geom, $defaultScale.get())?.pos ?? null
+  const perch = inViewport ? (computePerchPlacement(view, $defaultScale.get())?.pos ?? null) : null
 
   if (!perch) {
     void speakProactiveLine(pickLine(PERCH_TIGHT_LINES))
@@ -126,32 +148,43 @@ export async function performRitualWalk<T>(
     return execute()
   }
 
-  const targetCenter = { x: geom.x + geom.w / 2, y: geom.y + geom.h / 2 }
+  let cueSeq: number | null = null
 
   try {
     const dist = Math.hypot(perch.x - $spatialPos.get().x, perch.y - $spatialPos.get().y)
     const locomotion = locomotionForDistance(dist)
+
     // 到达回调在行走被取消时不会触发（spatial 的 surface/drag 中止路径直接丢弃它）；
     // 仪式行走只是装饰，限时等待后必须继续执行原工具，不能让行走挂起整条工具链。
-    await Promise.race([
-      new Promise<void>(resolve => setSpatialLocale('perch', { position: perch, locomotion, onArrive: resolve })),
-      sleep(moveDurationMs(dist, locomotion) + WALK_ABORT_GRACE_MS)
+    const arrived = await Promise.race([
+      new Promise<boolean>(resolve =>
+        setSpatialLocale('perch', { position: perch, locomotion, onArrive: () => resolve(true) })
+      ),
+      sleep(moveDurationMs(dist, locomotion) + WALK_ABORT_GRACE_MS).then(() => false)
     ])
 
-    const dx = targetCenter.x - ($spatialPos.get().x + getBaseSpriteWidth() / 2)
-    $spriteAction.set(dx >= 0 ? 'point_right' : 'point_left')
+    // 行走未抵达（被拖拽或打开完整入口打断）时不再指向或预点击，直接执行原工具。
+    if (!arrived) {
+      return await execute()
+    }
+
+    // DESIGN「仪式性行走」：抵达后指向目标，再以点击提示标出实际操作位置。
+    cueSeq = playSpriteGesture({ kind: 'point', target: targetCenter })
     await sleep(800)
 
-    // DESIGN「仪式性行走」：抵达后播放专属「点击/触碰」肢体动作，
-    // 与通用 interacting 状态区别开来——动作优先于状态动画。
-    $spriteAction.set('click')
+    // 指向期间被打断（拖拽开始或完整入口打开会撤下提示）时同样跳过后续仪式。
+    if ($spriteGesture.get()?.seq !== cueSeq) {
+      return await execute()
+    }
+
+    cueSeq = playSpriteGesture({ kind: 'tap', target: targetCenter })
     setSpriteState('interacting', { durationMs: 1500 })
 
     // 预点击只对「点击不是工具本体」的仪式有意义（open_application 聚焦已开窗口）。
     // click_at 工具本身就是要执行的那次点击——再补一次就是双击。
     if (opts?.previewClick !== false && window.spiritagent?.runnerInvoke) {
       window.spiritagent
-        .runnerInvoke('system.click_at', { x: Math.round(targetCenter.x), y: Math.round(targetCenter.y) })
+        .runnerInvoke('system.click_at', { x: Math.round(geom.x + geom.w / 2), y: Math.round(geom.y + geom.h / 2) })
         .catch(error => {
           log.warn('ritual-walk', 'Preview click failed', error)
         })
@@ -159,15 +192,12 @@ export async function performRitualWalk<T>(
 
     await sleep(400)
 
-    const result = await execute()
-
-    // 执行结束后清除 click action，让后续状态机正常推进
-    if ($spriteAction.get() === 'click') {
-      $spriteAction.set(null)
+    return await execute()
+  } finally {
+    if (cueSeq !== null) {
+      clearSpriteGesture(cueSeq)
     }
 
-    return result
-  } finally {
     await sleep(800)
     updateSpatialDecision()
   }

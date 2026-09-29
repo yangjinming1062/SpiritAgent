@@ -16,9 +16,7 @@ export type SpriteStateName =
   | 'disconnected'
 
 export interface SetSpriteStateOptions {
-  action?: string | null
   durationMs?: number
-  emotion?: string
   force?: boolean
 }
 

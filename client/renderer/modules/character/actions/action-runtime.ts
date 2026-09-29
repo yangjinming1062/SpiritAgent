@@ -10,6 +10,8 @@ import { atom } from 'nanostores'
 import { authedApi } from '@/shared/lib/authed-api'
 import { log } from '@/shared/lib/log'
 
+import { endTransientState, setSpriteState } from '../companion-store'
+
 import type { ActionPlaybackStatus, ActionPlayCommand, ActionPlayInstance } from './action-types'
 
 /** 当前生效播放实例；null 表示无表达请求，回退基础状态机。 */
@@ -22,6 +24,17 @@ let playGeneration = 0
 const acceptedPlayIds = new Set<string>()
 const MAX_TRACKED_PLAY_IDS = 64
 const settledInstances = new WeakSet<ActionPlayInstance>()
+// 视频事件可能略晚于标称时长：情绪态以收尾为准，计时只作兜底。
+const EXPRESSION_STATE_GRACE_MS = 1000
+/** 当前以情绪态呈现的表达实例；只有它的收尾能结束情绪态。 */
+let expressionOwner: ActionPlayInstance | null = null
+
+function endExpressionState(): void {
+  if (expressionOwner !== null) {
+    expressionOwner = null
+    endTransientState('emotional')
+  }
+}
 
 function rememberPlayId(playId: string): void {
   acceptedPlayIds.add(playId)
@@ -39,27 +52,31 @@ function isExpired(expiresAtMs: number | null): boolean {
   return expiresAtMs !== null && Date.now() > expiresAtMs
 }
 
-/** 换包或账号清理时作废旧实例，异步媒体回调继续核对当前播放代次。 */
+/** 换包、外观代次变化或账号清理时作废旧实例，异步媒体回调继续核对当前播放代次。 */
 export function resetActionPlayback(): void {
+  endExpressionState()
   $activePlayInstance.set(null)
   acceptedPlayIds.clear()
 }
 
-/** 受理播放指令：校验包归属 / TTL / play_id 去重，生成播放实例。
- * 拖拽等更高优先级交互由调度器在调用前裁决，本函数不做交互判断。
- * appearance_epoch 保留服务端目录版本；外观隔离由 pack_id 和在途请求守卫负责。 */
+/** 受理已由主进程认领的播放指令：校验包与外观代次 / 素材 / TTL / play_id 去重，生成播放实例。
+ * 认领后请求不再交给其他舞台，不能受理时上报 rejected，避免账本停留在 queued。
+ * 拖拽等更高优先级交互由调度器在调用前裁决，本函数不做交互判断。 */
 export function acceptPlayCommand(
   command: ActionPlayCommand,
   clip: ActionPlayInstance['clip'] | null,
-  renderedPackId: number
+  rendered: { readonly packId: number; readonly appearanceEpoch: number | null }
 ): ActionPlayInstance | null {
-  if (clip === null) {
+  // 外观代次随每次激活递增：他包或旧代次（含换装后再穿回同一包）的请求不在当前外观执行。
+  if (command.pack_id !== rendered.packId || command.appearance_epoch !== rendered.appearanceEpoch) {
+    void reportReceipt(command, 'rejected', 'appearance changed')
+
     return null
   }
 
-  // 包不匹配：B 包画面不执行 A 包指令。
-  if (command.pack_id !== renderedPackId) {
-    void reportReceipt(command, 'rejected', 'pack mismatch')
+  // 同代次目录已移除该动作或推进了素材版本。
+  if (clip === null) {
+    void reportReceipt(command, 'rejected', 'clip unavailable')
 
     return null
   }
@@ -82,8 +99,6 @@ export function acceptPlayCommand(
 
   const instance: ActionPlayInstance = {
     playId: command.play_id,
-    packId: command.pack_id,
-    appearanceEpoch: command.appearance_epoch,
     actionId: command.action_id,
     assetRevisionId: command.asset_revision_id,
     clip,
@@ -111,6 +126,14 @@ export function shouldStartInstance(instance: ActionPlayInstance): boolean {
   }
 
   return true
+}
+
+/** 表达真实可见：上报 started，并在播放期间处于情绪态（DESIGN：由动作承载情绪）。 */
+export function markPlayInstanceStarted(instance: ActionPlayInstance): void {
+  void reportReceipt({ play_id: instance.playId }, 'started')
+  expressionOwner = instance
+  const plays = instance.clip.loopable ? instance.repeatCount : 1
+  setSpriteState('emotional', { durationMs: instance.clip.duration_ms * plays + EXPRESSION_STATE_GRACE_MS })
 }
 
 /** 上报播放回执；按 play_id 幂等，服务端聚合使用量。 */
@@ -149,6 +172,10 @@ export function settlePlayInstance(
 
   settledInstances.add(instance)
   void reportReceipt({ play_id: instance.playId }, status, reason, visibleDurationMs)
+
+  if (expressionOwner === instance) {
+    endExpressionState()
+  }
 
   if ($activePlayInstance.get()?.generation === instance.generation) {
     $activePlayInstance.set(null)

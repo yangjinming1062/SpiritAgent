@@ -48,7 +48,8 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 [companion-store.ts](modules/character/companion-store.ts)维护表现状态优先级，视频系统动作键定义于 [presentation/types.ts](modules/character/presentation/types.ts)，两者不混用。
 
 - 瞬态保存恢复目标，旧计时器不得覆盖持续状态，重复瞬态不嵌套目标；语音准备与播放分开，尾随点播不切 speaking，完成聊天不触发 emotional。
-- [actions](modules/character/actions/)消费 play_id / pack_id / appearance epoch，去重并拒绝过期或跨包结果；动态动作不进入表现状态机，回执遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
+- [actions](modules/character/actions/)按 play_id 去重，目录外观代次落后时先刷新再受理，已认领却不能播放的请求回执 rejected；换包或外观代次变化作废在播实例。动态动作不新增表现状态，表达真实可见（上报 started）期间以 emotional 瞬态呈现、收尾即恢复；判定与回执遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
+- 拖拽释放、接取与长按的整体形变，以及仪式指向与点击提示，经 [gesture](modules/character/sprite/gesture.ts) 由舞台容器呈现，不参与命中；情绪放大只作用于形象层，静止档、栖息与探身时不放大。
 - 两个完整入口共用 [侧边伙伴组件](app/components/surface-companion/surface-companion.tsx)；入口与播放器共用 [可见性判断](modules/character/actions/action-visibility.ts)，主进程快照按版本应用，锁屏不依赖 Runner 轮询。播放认领与取消遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
 - `presentation/render-resolver` 按动作目录和生成状态选择 video 或 fallback，并提供对应的本地化状态；未就绪不空挂视频元素。
 
@@ -58,6 +59,8 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 [companion-store.ts](modules/character/companion-store.ts)裁决档位；请求和消费两侧检查[自主行为条件](../../docs/DESIGN.md#自主动作与空间智能)，收起或锁屏后丢弃迟到结果，重连不补话。
 
+生效档位只由精灵窗推送：其他窗口缺少活动覆盖，只改偏好或临时安静，经 storage 事件同步。
+
 [activity.ts](modules/character/activity.ts)的快照单飞，停止后旧结果失效；变化只在可用上报成功后消费，失败期间保留。只报约定粗粒度信号，不传应用名或窗口标题；夜间政策由服务端决定，客户端只传 local_hour，自主媒体/语音偏好在 [prefs.ts](modules/character/prefs.ts)。
 
 ### 直接交互与命中
@@ -66,6 +69,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 单击等待双击判定，双击成立取消待执行单击；就绪后按实际像素命中，光晕和透明留白不计入。
 - 捕获在 mousemove 阶段完成，不能等 mousedown；异步命中更新后即使指针静止也重判。
 - 菜单只登记自身区域，关闭事件不穿透触发手势。
+- 命中区域按窗口捕获 ID 分组：精灵窗默认 0，完整入口在 [surface.tsx](app/bootstrap/surface.tsx) 经 `CaptureWindowIdContext` 提供 1，弹层（含 Portal）不传 ID 即随所在窗口；完整入口不挂载 ID 0 的捕获，否则会切换精灵窗穿透。
 - 有效按下即捕获指针并持有窗口鼠标捕获，手势结束前不因透明像素变化开启穿透；取消、失焦、隐藏和卸载统一释放，不触发点击或拖拽释放反馈。
 - [reactions](modules/character/reactions/)提供拖拽等反应池；预制台词经 `speakScripted` 送达，不直连语音引擎。
 
@@ -91,7 +95,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 探身位置、遮挡和命中随解码首帧一起生效，失败保留旧画面。表演移出遮挡后才上报 `started`，结束时重验返回目标。
 - stay 或推理失败不触发本地漫游；本地空间规则仅在智能关闭时生效。
 - 本地漫游需真实空闲信号，未知则不动；位置适配不足时放弃，不缩成不可辨识大小。
-- 仪式行走可跳过，失败仍执行原工具，`system.click_at` 不补第二次点击。
+- 仪式行走可跳过，失败仍执行原工具，`system.click_at` 不补第二次点击；目标经主进程换算到精灵视口，不在视口内不走动，未抵达或指向被打断时跳过指向与预点击。
 
 ## 会话与媒体
 

@@ -14,7 +14,7 @@ import { HapticsProvider } from '@/shared/components/haptics-provider'
 import { NotificationStack } from '@/shared/components/notifications'
 import { applyNoBlurIfNeeded, initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
 import { installClipboardShim } from '@/shared/lib/clipboard'
-import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { CaptureWindowIdContext, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
 import { installUpdateBridge } from '@/shared/lib/update-bridge'
 import { $auth } from '@/shared/store/auth'
@@ -108,19 +108,22 @@ export function bootstrapSurface(label: string, RootComponent: React.ComponentTy
     throw new Error(`${label}: missing #root element`)
   }
 
+  // 未指定窗口 ID 的交互区域（含 Portal 弹层）登记到 1，与根组件的捕获循环一致。
   createRoot(container).render(
     <StrictMode>
-      <ErrorBoundary label={label}>
-        <HapticsProvider>
-          <HashRouter>
-            <SurfaceGlassBudgetGuard />
-            <SurfaceAuthBootstrap />
-            <ProxyGatewayPump />
-            <AccountScopedSurface RootComponent={RootComponent} />
-            <SurfaceNotificationStack />
-          </HashRouter>
-        </HapticsProvider>
-      </ErrorBoundary>
+      <CaptureWindowIdContext value={1}>
+        <ErrorBoundary label={label}>
+          <HapticsProvider>
+            <HashRouter>
+              <SurfaceGlassBudgetGuard />
+              <SurfaceAuthBootstrap />
+              <ProxyGatewayPump />
+              <AccountScopedSurface RootComponent={RootComponent} />
+              <SurfaceNotificationStack />
+            </HashRouter>
+          </HapticsProvider>
+        </ErrorBoundary>
+      </CaptureWindowIdContext>
     </StrictMode>
   )
 }

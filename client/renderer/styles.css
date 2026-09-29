@@ -1213,6 +1213,83 @@ html[data-palette='day'] .sa-slider::-moz-range-thumb {
 .foot-glow[data-pulse='completed'] { --foot-glow-color: var(--sprite-state-completed); }
 .foot-glow[data-pulse='failed'] { --foot-glow-color: var(--sprite-state-failed); }
 
+/* 形象层：情绪放大以内容脚底为原点平滑缩放（原点由舞台内联给出）。 */
+.sprite-body {
+  inset: 0;
+  position: absolute;
+  transition: transform 300ms ease-in-out;
+}
+.sprite-body[data-expression-boost] {
+  transform: scale(1.12);
+}
+
+/* 仪式指向与点击提示：视口坐标，不参与命中。 */
+.sprite-target-cue {
+  height: 100%;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+  position: absolute;
+  width: 100%;
+}
+.sprite-target-cue__beam {
+  animation: sprite-cue-dash 0.8s linear infinite;
+  stroke: var(--sprite-state-interacting);
+  stroke-dasharray: 6 8;
+  stroke-linecap: round;
+  stroke-width: 2;
+}
+.sprite-target-cue__ring {
+  animation: sprite-cue-pulse 1s ease-out infinite;
+  fill: none;
+  stroke: var(--sprite-state-interacting);
+  stroke-width: 2.5;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.sprite-target-cue[data-kind='tap'] .sprite-target-cue__ring {
+  animation: sprite-cue-ripple 0.6s ease-out forwards;
+}
+
+@keyframes sprite-cue-dash {
+  to {
+    stroke-dashoffset: -14;
+  }
+}
+
+@keyframes sprite-cue-pulse {
+  from {
+    opacity: 0.9;
+    transform: scale(0.7);
+  }
+  to {
+    opacity: 0.25;
+    transform: scale(1.25);
+  }
+}
+
+@keyframes sprite-cue-ripple {
+  from {
+    opacity: 0.95;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 0;
+    transform: scale(2);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sprite-body {
+    transition: none;
+  }
+
+  .sprite-target-cue__beam,
+  .sprite-target-cue__ring {
+    animation: none;
+  }
+}
+
 /* 生活空间打开期间：精灵在场景里画里，不应出现在桌面上。
    SpriteStage 自身 opacity 由 inline style 控制；这里用 CSS 把整 stage 退到 0，
    命中区一并失效，避免误触。 */

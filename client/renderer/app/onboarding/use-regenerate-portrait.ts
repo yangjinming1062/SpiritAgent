@@ -12,8 +12,6 @@ import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 
-import { playOnboardingAudio } from './onboarding-audio'
-
 interface UseRegeneratePortraitOptions {
   refImage?: PickedImage | null
   /** 有身份参考时仅提供光线与构图；否则作为唯一参考图。 */
@@ -161,10 +159,6 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
         }
 
         onRegenerated?.({ avatar: applied.avatar, id: result.id ?? null })
-
-        if (mode === 'regenerate' || mode === 'edit') {
-          void playOnboardingAudio('onboarding.portrait.regenerate')
-        }
 
         return true
       } catch (error) {

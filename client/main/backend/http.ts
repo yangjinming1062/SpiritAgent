@@ -11,6 +11,11 @@ interface BackendHttpOptions {
   spiritagentHome: null | string
 }
 
+// net.fetch 走 Chromium 网络栈（系统代理与证书）；其签名不收 URL 对象，统一在此适配为标准 fetch。
+export function createElectronFetch(electronNet: Pick<Net, 'fetch'>): typeof globalThis.fetch {
+  return (input, init) => electronNet.fetch(input instanceof URL ? input.href : input, init)
+}
+
 export function createBackendHttp({ app, electronNet, spiritagentHome }: BackendHttpOptions) {
   function resolveSpiritAgentVersion(): string {
     return app.getVersion()

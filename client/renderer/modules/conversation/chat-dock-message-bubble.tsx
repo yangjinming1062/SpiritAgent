@@ -121,11 +121,8 @@ function MessageBubbleWithBody({
     </div>
   ) : null
 
-  const isSummaryCard =
-    SUMMARY_CARD_SUBTYPES.has(subtype) ||
-    (!subtype && (body.text.startsWith('[📝 截至') || body.text.startsWith('[🗜️ 对话压缩')))
-
-  if (isSummaryCard) {
+  // 摘要卡只凭 subtype 识别；正文格式不是识别契约，用户或模型写出相同文字仍是普通消息。
+  if (SUMMARY_CARD_SUBTYPES.has(subtype)) {
     // 解析 content：第一行（如 "[📝 截至 ...]" 或 "[🗜️ 对话压缩 — ...]"）是胶囊标题，剩余为摘要 body。
     const rawText = body.text
     const newlineIdx = rawText.indexOf('\n')

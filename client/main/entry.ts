@@ -1,10 +1,10 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import { type DesktopAuthBroadcast, type DesktopAuthSnapshot, IPC } from '@ipc/contracts'
+import { IPC } from '@ipc/contracts'
 import {
   app,
-  BrowserWindow,
+  type BrowserWindow,
   clipboard,
   dialog,
   net as electronNet,
@@ -17,15 +17,14 @@ import {
   session,
   Tray
 } from 'electron'
-import log from 'electron-log/main'
 
-import { BackendRequestError, createBackendClient } from './backend/client'
+import { createBackendClient, isRetryableBackendError } from './backend/client'
 import { createEnsureBackend } from './backend/ensure-backend'
-import { createBackendHttp } from './backend/http'
+import { createBackendHttp, createElectronFetch } from './backend/http'
 import { createBackendSession } from './backend/session'
 import { createSessionRuntime } from './backend/session-runtime'
 import { createAssetDiskCache } from './ipc/asset-disk-cache'
-import { registerAuthIpc } from './ipc/auth'
+import { createAuthBroadcaster, registerAuthIpc } from './ipc/auth'
 import { registerClipboardIpc } from './ipc/clipboard'
 import { registerConnectionIpc } from './ipc/connection'
 import { registerFilesIpc } from './ipc/files'
@@ -44,18 +43,21 @@ import { registerSpriteIpc } from './ipc/sprite'
 import { registerSystemIpc } from './ipc/system'
 import { registerUiThemeIpc } from './ipc/ui-theme'
 import { registerUpdateIpc } from './ipc/update'
+import { installAppQuit } from './lifecycle/app-quit'
 import { createAutoUpdater } from './lifecycle/auto-updater'
 import { createDesktopLogger } from './lifecycle/desktop-log'
-import { createMenu } from './lifecycle/menu'
+import { applyAppIdentity, createMenu } from './lifecycle/menu'
 import { createOpenExternalUrl } from './lifecycle/open-external-url'
-import { detectRemoteDisplay } from './lifecycle/platform'
-import { createRendererPaths, unpackedPathFor } from './lifecycle/renderer-paths'
+import { applyChromiumSwitches } from './lifecycle/platform'
+import { createAppIconResolver, createRendererPaths } from './lifecycle/renderer-paths'
+import { acquireSingleInstance } from './lifecycle/single-instance'
 import { createSpriteWindowFactory } from './lifecycle/sprite-window'
 import { createSurfaceCompanionPreferences } from './lifecycle/surface-companion'
 import { createSurfaceWindowFactory } from './lifecycle/surface-window'
 import { createSurfacesManager, type SurfacesManager } from './lifecycle/surfaces'
 import {
   destroyTray,
+  hideMainWindow,
   installCloseInterceptor,
   installTray,
   rebuildTrayMenu,
@@ -78,68 +80,29 @@ import {
   resolvePathTimeoutMs,
   resolveReadableFileForIpc
 } from './security/hardening'
-import { spiritagentHome } from './security/paths'
-import type { SessionSnapshotPort } from './shared/backend-port'
+import { resolveDesktopHome } from './security/paths'
 import { buildClientContext } from './shared/client-context'
 import { readStoredBackendUrl } from './shared/config'
-import { buildPrefsHydratedFromConfig, createConfigSync, uiThemeFromConfig } from './shared/lib/config-sync'
+import { createConfigSync, uiThemeFromConfig } from './shared/lib/config-sync'
 import * as runnerConfigStore from './shared/lib/runner-config-store'
 import { mimeTypeForPath } from './shared/mime'
-import { broadcastToAllWindows, errorMessage, fileExists, hideAndSkipTaskbar, sendToWindow } from './shared/utils'
-
-const USER_DATA_OVERRIDE = process.env.SPIRITAGENT_DESKTOP_USER_DATA_DIR
+import { broadcastToAllWindows, errorMessage, fileExists, sendToWindow } from './shared/utils'
 
 const DEV_SERVER = process.env.SPIRITAGENT_DESKTOP_DEV_SERVER
 const IS_PACKAGED = app.isPackaged
 const IS_MAC = process.platform === 'darwin'
 const APP_ROOT = app.getAppPath()
 
-if (process.env.SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK !== '1') {
-  if (!app.requestSingleInstanceLock()) {
-    app.exit(0)
-  }
-}
+const singleInstance = acquireSingleInstance(app)
 
-// `whenReady` 内的 `createSpriteWindow()` 之前若收到第二实例事件，会被 Electron 直接丢弃。
-// 顶层先挂一个轻量 listener 把事件折叠成标志；完整 forwarder 注册后再兑现一次。
 // 模块级可变状态集中在此。
-let pendingSecondInstance = false
 let mainWindow: BrowserWindow | null = null
 let surfaces: null | SurfacesManager = null
-let playbackClaimAccountId: null | string = null
 let getAuthToken = (): string | null => null
-// will-quit 有界等待 Runner 收尾，避免 fire-and-forget 留下孤儿子进程。
-let willQuitCleanupDone = false
 
-const onEarlySecondInstance = (): void => {
-  pendingSecondInstance = true
-}
+const REMOTE_DISPLAY_REASON = applyChromiumSwitches(app)
 
-app.on('second-instance', onEarlySecondInstance)
-
-const REMOTE_DISPLAY_REASON = detectRemoteDisplay()
-
-if (REMOTE_DISPLAY_REASON) {
-  app.disableHardwareAcceleration()
-  app.commandLine.appendSwitch('disable-gpu-compositing')
-  console.log(
-    `[spiritagent] remote display detected (${REMOTE_DISPLAY_REASON}); disabling GPU hardware acceleration to prevent flicker`
-  )
-}
-
-app.commandLine.appendSwitch('disable-renderer-backgrounding')
-app.commandLine.appendSwitch('disable-backgrounding-occluded-windows')
-app.commandLine.appendSwitch('disable-background-timer-throttling')
-
-function resolveSpiritAgentHome(): string {
-  if (USER_DATA_OVERRIDE) {
-    return path.join(path.resolve(USER_DATA_OVERRIDE), 'spiritagent-home')
-  }
-
-  return spiritagentHome()
-}
-
-const SPIRITAGENT_HOME = resolveSpiritAgentHome()
+const SPIRITAGENT_HOME = resolveDesktopHome()
 fs.mkdirSync(SPIRITAGENT_HOME, { recursive: true })
 app.setPath('userData', SPIRITAGENT_HOME)
 
@@ -154,9 +117,7 @@ runnerConfigStore.init({ spiritagentHome: SPIRITAGENT_HOME })
 
 const APP_NAME = '唤生'
 
-// net.fetch 走 Chromium 网络栈（系统代理与证书）；其签名不收 URL 对象，统一在此适配为标准 fetch。
-const electronFetch: typeof globalThis.fetch = (input, init) =>
-  electronNet.fetch(input instanceof URL ? input.href : input, init)
+const electronFetch = createElectronFetch(electronNet)
 
 const backendHttp = createBackendHttp({
   app,
@@ -177,7 +138,7 @@ const { ensureBackend, resetBackendCache } = createEnsureBackend({
 const configSync = createConfigSync({
   createBackendClient: ({ baseUrl }) => createBackendClient({ baseUrl, fetch: electronFetch }),
   ensureBackend: () => ensureBackend(),
-  isRetryableError: error => error instanceof BackendRequestError && (error.isNetwork || error.isServerError),
+  isRetryableError: isRetryableBackendError,
   log: chunk => rememberLog(chunk),
   onHydrated: payload => {
     const theme = uiThemeFromConfig(runnerConfigStore.read())
@@ -205,26 +166,9 @@ const { rendererUrlFor } = createRendererPaths({
   rememberLog: (chunk: string) => rememberLog(chunk)
 })
 
-// Windows 任务栏/窗口图标优先 .ico（多尺寸位图）；macOS dock 用 png 即可。
-const APP_ICON_PATHS = [
-  ...(process.platform === 'win32' ? [path.join(APP_ROOT, 'assets', 'icon.ico')] : []),
-  path.join(APP_ROOT, 'assets', 'icon.png'),
-  path.join(APP_ROOT, 'assets', 'icon.ico'),
-  path.join(process.resourcesPath, 'icon.ico'),
-  path.join(unpackedPathFor(APP_ROOT), 'icon.ico')
-]
+const getAppIconPath = createAppIconResolver(APP_ROOT)
 
-app.setName(APP_NAME)
-
-if (process.platform === 'win32') {
-  app.setAppUserModelId('io.spiritagent.agent')
-}
-
-app.setAboutPanelOptions({
-  applicationName: APP_NAME,
-  applicationVersion: backendHttp.resolveSpiritAgentVersion(),
-  copyright: `Copyright © 2026 ${APP_NAME}`
-})
+applyAppIdentity(app, APP_NAME)
 
 const zoomPersistence = createZoomPersistence({ app, rememberLog })
 const surfaceCompanionPreferences = createSurfaceCompanionPreferences(app)
@@ -260,14 +204,10 @@ const windowHandlers = createWindowHandlers({
   zoomPersistence
 })
 
-function getAppIconPath(): null | string {
-  return APP_ICON_PATHS.find(fileExists) || null
-}
-
 const SPRITE_TRANSPARENT = !REMOTE_DISPLAY_REASON
 const PRELOAD_PATH = path.join(import.meta.dirname, 'preload.cjs')
 
-const { createSpriteWindow } = createSpriteWindowFactory({
+const { createSpriteWindow, syncSpriteToDisplay } = createSpriteWindowFactory({
   app,
   getAppIconPath,
   getMainWindow: () => mainWindow,
@@ -300,59 +240,21 @@ const { createSurfaceWindow, navigateSurfaceWindow } = createSurfaceWindowFactor
   zoomPersistence
 })
 
-async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort, clearAccountCache = false): Promise<void> {
-  rebuildTrayMenu()
-
-  const authenticated = Boolean(snapshot?.hasToken)
-
-  const authSnapshot: DesktopAuthSnapshot | null =
-    authenticated && snapshot
-      ? {
-          accountId: snapshot.accountId,
-          baseUrl: snapshot.baseUrl,
-          hasToken: snapshot.hasToken,
-          sessionId: snapshot.sessionId,
-          tokenExpiresAt: snapshot.tokenExpiresAt,
-          user: snapshot.user?.username ? { username: snapshot.user.username } : null
-        }
-      : null
-
-  const payload: DesktopAuthBroadcast = {
-    authenticated,
-    clearAccountCache,
-    snapshot: authSnapshot
-  }
-
-  // 身份变化时配置同步丢弃上个身份未上云的待写；登录或换号后水合新身份。
-  const nextAccountId = authenticated ? (snapshot?.accountId ?? null) : null
-
-  if (playbackClaimAccountId !== nextAccountId) {
-    surfaces?.resetPlaybackClaims()
-    playbackClaimAccountId = nextAccountId
-  }
-
-  await configSync.handleAuthUserChanged(nextAccountId)
-
-  if (snapshot && sessionRuntime.ensureBackendSession().getSession()?.sessionId !== snapshot.sessionId) {
-    return
-  }
-
-  broadcastToAllWindows(IPC.event.authChanged, payload)
-}
+const authBroadcaster = createAuthBroadcaster({
+  autoStartBridge: () => runnerHost.autoStart(),
+  configSync,
+  ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
+  log: chunk => rememberLog(chunk),
+  rebuildTrayMenu,
+  resetPlaybackClaims: () => surfaces?.resetPlaybackClaims()
+})
 
 registerSystemIpc({
   electron: { app },
   ipcMain
 })
 registerUiThemeIpc({ ipcMain, log: chunk => rememberLog(chunk) })
-registerPrefsIpc({
-  ipcMain,
-  log: chunk => rememberLog(chunk),
-  onReduceTransparencyChanged: value => {
-    const { language } = buildPrefsHydratedFromConfig(runnerConfigStore.read())
-    broadcastToAllWindows(IPC.event.prefsHydrated, { companion: { reduce_transparency: value }, language })
-  }
-})
+registerPrefsIpc({ ipcMain, log: chunk => rememberLog(chunk) })
 
 surfaces = createSurfacesManager({
   createWindow: createSurfaceWindow,
@@ -361,24 +263,13 @@ surfaces = createSurfacesManager({
   navigateWindow: navigateSurfaceWindow,
   rememberLog: (chunk: string) => rememberLog(chunk),
   saveCompanionPreference: (id, preference) => surfaceCompanionPreferences.set(id, preference),
-  syncSpriteToDisplay: display => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      const currentMatching = screen.getDisplayMatching(mainWindow.getBounds())
-
-      if (currentMatching.id !== display.id) {
-        mainWindow.setBounds(display.workArea)
-      }
-    }
-  }
+  syncSpriteToDisplay
 })
 surfaces.registerIpcHandlers({ ipcMain })
 surfaces.hydrateLastSurface()
 registerShortcutsIpc({
   getMainWindow: () => mainWindow,
-  hideMainWindow: () => {
-    hideAndSkipTaskbar(mainWindow)
-    rebuildTrayMenu()
-  },
+  hideMainWindow,
   ipcMain,
   rememberLog: chunk => rememberLog(chunk),
   showMainWindow: () => showMainWindow(),
@@ -417,21 +308,13 @@ const sessionHistoryDiskCache = createSessionHistoryDiskCache({
   spiritagentHome: SPIRITAGENT_HOME
 })
 
-const getCurrentAuth = (): null | { sessionId: string; token: string } => {
-  const current = sessionRuntime.ensureBackendSession()
-  const sessionId = current.getSession()?.sessionId
-  const token = current.getToken()
-
-  return sessionId && token ? { sessionId, token } : null
-}
-
 registerConnectionIpc({
   assetDiskCache,
   defaultFetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
   ensureBackend,
   fetchImpl: electronFetch,
   fetchJson: backendHttp.fetchJson,
-  getCurrentAuth,
+  getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
   getMainWindow: () => mainWindow,
   ipcMain,
   mintWsTicket: backendHttp.mintWsTicket,
@@ -446,14 +329,13 @@ registerMediaIpc({
   spiritagentHome: SPIRITAGENT_HOME,
   ensureBackend,
   fetchImpl: electronFetch,
-  getCurrentAuth,
+  getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
   ipcMain,
   log: chunk => rememberLog(chunk)
 })
 
 // 会话与 Runner 运行时分责：会话懒创建与 token 重接在 session-runtime；
-// Runner 桥的持有、自动启停与 IPC 在 runner host。登录恢复经 onRestored 接回 host.autoStart。
-let isQuitting = false
+// Runner 桥的持有、自动启停与 IPC 在 runner host。登录恢复经 authBroadcaster 广播后接回 host.autoStart。
 // onRestored 异步回调里才调用；先占位避免 session/runtime 互相前置。
 let runnerHost: ReturnType<typeof createRunnerHost>
 
@@ -467,19 +349,7 @@ const sessionRuntime = createSessionRuntime(
       getAuthToken = fn
     },
     log: chunk => rememberLog(chunk),
-    onRestored: snapshot => {
-      if (snapshot && sessionRuntime.ensureBackendSession().getSession()?.sessionId === snapshot.sessionId) {
-        void broadcastAuthChanged(snapshot)
-          .then(() => {
-            if (sessionRuntime.ensureBackendSession().getSession()?.sessionId === snapshot.sessionId) {
-              runnerHost.autoStart()
-            }
-          })
-          .catch(error => rememberLog(`[session] restored auth broadcast failed: ${errorMessage(error)}`))
-      } else {
-        rebuildTrayMenu()
-      }
-    },
+    onRestored: snapshot => authBroadcaster.onSessionRestored(snapshot),
     readStoredBackendUrl: () => readStoredBackendUrl(SPIRITAGENT_HOME),
     safeStorage,
     spiritagentHome: SPIRITAGENT_HOME,
@@ -526,7 +396,7 @@ const authActions = registerAuthIpc({
     autoStartBridge: () => runnerHost.autoStart(),
     autoStopBridge: () => runnerHost.autoStop(),
     restartBridge: () => runnerHost.restartForCurrentSession(),
-    broadcastAuthChanged,
+    broadcastAuthChanged: authBroadcaster.broadcastAuthChanged,
     buildClientContext: () => sessionRuntime.buildClientContext(),
     ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
     getSessionAfterRestore: () => sessionRuntime.getSessionAfterRestore(),
@@ -553,11 +423,7 @@ registerSessionHistoryIpc({
 runnerHost.registerIpc(ipcMain)
 registerRunnerConfigIpc({
   ipcMain,
-  isAuthorizedSender: event => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-
-    return Boolean(win && surfaces?.isSurfaceWindow('workbench', win))
-  }
+  isAuthorizedSender: event => Boolean(surfaces?.isSurfaceSender('workbench', event.sender))
 })
 registerSkillsIpc({
   spiritagentHome: SPIRITAGENT_HOME,
@@ -567,23 +433,17 @@ registerSkillsIpc({
 registerUpdateIpc({
   broadcast: broadcastToAllWindows,
   electron: { app },
-  ensureFeedConfigured: () => autoUpdater.ensureFeedConfigured(),
-  ipcMain
+  feed: autoUpdater,
+  ipcMain,
+  isInstallSender: sender => Boolean(surfaces?.isSurfaceSender('living', sender)),
+  markQuitting: () => appQuit.markQuitting()
 })
 
 registerSpriteIpc({
   deps: {
+    getRunnerBridge: () => runnerHost.getBridge(),
     getSpriteWindow: () => mainWindow,
     getUserDataDir: () => app.getPath('userData'),
-    getWindowSnapshot: async () => {
-      const bridge = runnerHost.getBridge()
-
-      if (!bridge) {
-        return null
-      }
-
-      return bridge.dispatch('execute_tool', { args: {}, name: 'system.get_windows' }, { timeoutMs: 1500 })
-    },
     log: chunk => rememberLog(chunk),
     screen
   },
@@ -592,27 +452,11 @@ registerSpriteIpc({
 
 sessionRuntime.rewireAuthToken()
 
-setTimeout(() => {
-  if (sessionRuntime.ensureBackendSession().getSession()?.hasToken) {
-    runnerHost.autoStart()
-  }
-}, 200).unref?.()
+setTimeout(() => authBroadcaster.autoStartBridgeIfSignedIn(), 200).unref?.()
 
 void app.whenReady().then(async () => {
-  surfaces?.setScreenLocked(powerMonitor.getSystemIdleState(1) === 'locked')
-  powerMonitor.on('lock-screen', () => surfaces?.setScreenLocked(true))
-  powerMonitor.on('unlock-screen', () => surfaces?.setScreenLocked(false))
-  powerMonitor.on('resume', () => surfaces?.setScreenLocked(powerMonitor.getSystemIdleState(1) === 'locked'))
-  screen.on('display-added', () => surfaces?.refreshCompanionGeometry())
-  screen.on('display-removed', () => surfaces?.refreshCompanionGeometry())
-  screen.on('display-metrics-changed', () => surfaces?.refreshCompanionGeometry())
-
-  if (IS_MAC) {
-    Menu.setApplicationMenu(menu.buildApplicationMenu())
-  } else {
-    Menu.setApplicationMenu(null)
-  }
-
+  surfaces?.watchSystemEvents()
+  menu.installApplicationMenu()
   windowHandlers.installMediaPermissions()
   windowHandlers.installContentSecurityPolicy()
   windowHandlers.configureSpellChecker(app)
@@ -620,17 +464,7 @@ void app.whenReady().then(async () => {
   syncShortcutsFromConfig()
   autoUpdater.setup()
 
-  await autoUpdater
-    .getRunnerUpdater()
-    .installPending()
-    .then(result => {
-      if (!result.ok) {
-        log.warn('runner installPending failed:', result.error)
-      }
-    })
-    .catch(err => {
-      log.warn('runner installPending failed:', errorMessage(err))
-    })
+  await autoUpdater.installPendingRunnerUpdate()
   createSpriteWindow()
 
   registerSingleInstanceForwarder({
@@ -647,13 +481,8 @@ void app.whenReady().then(async () => {
     switchAccount: authActions.switchAccount,
     Tray
   })
-
-  app.removeListener('second-instance', onEarlySecondInstance)
-
-  if (pendingSecondInstance) {
-    pendingSecondInstance = false
-    showMainWindow()
-  }
+  // 早期第二实例事件须在转发器写入托盘依赖后兑现：showMainWindow 依赖它。
+  singleInstance.replayEarlySecondInstance(showMainWindow)
 
   installTray({
     app,
@@ -661,7 +490,7 @@ void app.whenReady().then(async () => {
     dialog,
     ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
     getAppIconPath,
-    getIsQuitting: () => isQuitting,
+    getIsQuitting: () => appQuit.isQuitting(),
     getMainWindow: () => mainWindow,
     Menu,
     nativeImage,
@@ -672,57 +501,15 @@ void app.whenReady().then(async () => {
     Tray
   })
 
-  app.on('activate', () => {
-    const win = mainWindow
-
-    if (!win || win.isDestroyed()) {
-      createSpriteWindow()
-    } else {
-      showMainWindow()
-    }
-  })
+  app.on('activate', () => showMainWindow())
 })
 
-app.on('before-quit', () => {
-  isQuitting = true
-  destroyTray()
-  cleanupShortcuts()
-
-  // 尽力上云，进程可能先退出：未上传的编辑只在云端缺少该键时由下次水合补传，云端已有的键以云端值为准。
-  void configSync.flush()
-
-  desktopLogger.flushSync()
-})
-
-app.on('will-quit', event => {
-  if (willQuitCleanupDone) {
-    return
-  }
-
-  willQuitCleanupDone = true
-  event.preventDefault()
-
-  const stopPromise = runnerHost.getBridge()?.stop({ reason: 'app-quit' }) ?? Promise.resolve()
-  const timeoutMs = 3000
-
-  void Promise.race([
-    stopPromise.catch(error => {
-      rememberLog(`[runner-bridge] quit cleanup failed: ${errorMessage(error)}`)
-    }),
-    new Promise(resolve => {
-      const timer = setTimeout(resolve, timeoutMs)
-
-      if (typeof timer.unref === 'function') {
-        timer.unref()
-      }
-    })
-  ]).then(() => {
-    desktopLogger.flushSync()
-    app.exit(0)
-  })
-})
-
-app.on('window-all-closed', () => {
-  // 常驻托盘：关窗不退出。真正退出由托盘/菜单的 app.quit → before-quit/will-quit 驱动；
-  // 这里不能再调 app.quit，否则会重入清理并双跑 runner stop。
+const appQuit = installAppQuit({
+  app,
+  cleanupShortcuts,
+  destroyTray,
+  flushConfig: () => configSync.flush(),
+  flushLog: () => desktopLogger.flushSync(),
+  log: chunk => rememberLog(chunk),
+  stopRunner: () => runnerHost.getBridge()?.stop({ reason: 'app-quit' }) ?? Promise.resolve()
 })

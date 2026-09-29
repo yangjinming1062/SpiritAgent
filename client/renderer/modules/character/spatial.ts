@@ -1,6 +1,6 @@
 import { type DesktopSpriteScalePayload, type DesktopWindowSceneSnapshot, SPRITE_SCALE_LIMITS } from '@ipc/contracts'
 import { clamp } from '@runtime'
-import { atom } from 'nanostores'
+import { atom, computed } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
 import { persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
@@ -9,14 +9,7 @@ import { $surfaceOpen } from '@/shared/store/surfaces'
 import { $actionCatalog, $activePlayInstance, ensurePeekAction } from './actions'
 import type { PeekGeometry } from './actions'
 import { $focusContext, $lastIdleSeconds, $screenLocked } from './activity'
-import {
-  $effectiveTier,
-  $spriteAction,
-  $spriteEmotion,
-  $spriteState,
-  holdInteracting,
-  setSpriteState
-} from './companion-store'
+import { $effectiveTier, $spriteState, holdInteracting, setSpriteState } from './companion-store'
 import { $llmAutonomy } from './prefs'
 import {
   computeScreenPeekLayout,
@@ -24,6 +17,7 @@ import {
   type SpatialPeek,
   type WindowPeekLayout
 } from './spatial-peek'
+import { clearSpriteGesture, playSpriteGesture } from './sprite/gesture'
 
 /** 未缩放舞台尺寸，只随视口高度变化；落位与视频画布共用。 */
 export function baseSpriteSize(viewportHeight: number): { width: number; height: number } {
@@ -50,13 +44,6 @@ const SCALE_TRANSITION_MS = 300
 // Runner 离线或空闲时间未知（-1）时不漫游。
 const ROAM_IDLE_THRESHOLD_SECONDS = 90
 const SCALE_KEY = 'da.companion.defaultScale'
-
-// 高唤醒度内置情绪的瞬时缩放因子。
-const EMOTION_SCALE_BOOST: Record<string, number> = {
-  excited: 1.5,
-  playful: 1.3,
-  surprised: 1.6
-}
 
 const MIN_SCALE = SPRITE_SCALE_LIMITS.min
 const MAX_SCALE = SPRITE_SCALE_LIMITS.max
@@ -97,6 +84,18 @@ interface ViewportSize {
 }
 
 export const $viewport = atom<ViewportSize>({ width: window.innerWidth, height: window.innerHeight })
+
+// 情绪放大：表达片段真实可见（emotional）时由形象层以脚底为原点放大；静止档、栖息与探身时不放大，保证不挤占目标与遮挡线。
+export const $expressionBoost = computed(
+  [$spriteState, $effectiveTier, $spatialLocale, $spatialPeek],
+  (state, tier, locale, peek) =>
+    state === 'emotional' &&
+    tier !== 'still' &&
+    peek === null &&
+    locale !== 'perch' &&
+    locale !== 'window_peek' &&
+    locale !== 'screen_peek'
+)
 
 let rafId: number | null = null
 let moveStart: { x: number; y: number } | null = null
@@ -410,19 +409,11 @@ function computeTargetScale(): number {
     return base
   }
 
-  let target = base
-  const emotion = $spriteEmotion.get()
-
-  if ($spriteState.get() === 'emotional' && emotion) {
-    const factor = EMOTION_SCALE_BOOST[emotion]
-    target = factor ? Math.min(base * factor, MAX_SCALE) : base
-  }
-
-  // 栖息缩身上限压过情绪放大：空间不够时先保证舒适栖身
+  // 栖息缩身上限：空间不够时先保证舒适栖身
   const hasScaleLimit = $spatialLocale.get() === 'perch' || $spatialLocale.get() === 'window_peek'
   const cap = hasScaleLimit ? perchScaleLimit : null
 
-  return cap !== null ? Math.min(target, cap) : target
+  return cap !== null ? Math.min(base, cap) : base
 }
 
 function updateAdaptiveScale(): void {
@@ -1418,6 +1409,7 @@ function stopRoam(): void {
 
 export function startDrag(): void {
   userInteracted = true
+  clearSpriteGesture()
   clearPeekState()
   stopRoam()
 
@@ -1453,8 +1445,9 @@ export function endDragAt(pos: { x: number; y: number }, cancelled = false): voi
   $homePosition.set(safe)
   $spatialLocomotion.set('still')
 
-  if (!cancelled) {
-    $spriteAction.set('drag_end')
+  // 落地形变只用于普通落位；贴边释放由探身过渡承接。
+  if (!cancelled && !side) {
+    playSpriteGesture({ kind: 'land' })
   }
 
   setSpriteState('interacting', { durationMs: cancelled ? 0 : 500 })
@@ -1594,6 +1587,7 @@ export function initSpatial(): () => void {
   const unlistenSurface = $surfaceOpen.listen(open => {
     if (open === 'living' || open === 'workbench') {
       peekIntentGeneration += 1
+      clearSpriteGesture()
 
       if ($spatialPeek.get() || pendingWindowPeek || $peekPreparation.get()) {
         abandonPeekMode()
@@ -1623,8 +1617,6 @@ export function initSpatial(): () => void {
     updateAdaptiveScale()
     updateSpatialDecision()
   })
-
-  const unlistenEmotion = $spriteEmotion.listen(() => updateAdaptiveScale())
 
   const unlistenTier = $effectiveTier.listen(() => {
     updateAdaptiveScale()
@@ -1845,7 +1837,6 @@ export function initSpatial(): () => void {
     unlistenDefaultScale()
     unlistenSurface()
     unlistenState()
-    unlistenEmotion()
     unlistenTier()
     unlistenFocus()
     unlistenLock()

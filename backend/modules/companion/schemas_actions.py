@@ -200,12 +200,13 @@ class ActionSummary(BaseModel):
 
 
 class ActionCatalogResponse(BaseModel):
-    """动作目录列表（按包隔离）。"""
+    """动作目录列表（按包隔离）。appearance_epoch 为当前包的激活代次，客户端据此判断播放指令新旧。"""
 
     model_config = ConfigDict(extra="forbid")
 
     pack_id: int
     catalog_version: int
+    appearance_epoch: int
     manifest_url: str | None = None
     actions: list[ActionSummary] = Field(default_factory=list)
 

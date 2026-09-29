@@ -154,7 +154,7 @@ async def insert_rows(
     model = TABLE_MODELS[table]
     new_map: dict[str, int | str] = {}
     inserted = 0
-    parents: list[tuple[Conversation, Any, datetime | None]] = []
+    lineages: list[tuple[Conversation, Any, Any, datetime | None]] = []
     for raw in sorted(raw_rows, key=lambda row: int(row["id"])) if table == "messages" else raw_rows:
         payload = _build_payload(table, raw, target_user_id, rewriter, id_map)
         if table == "memories":
@@ -250,8 +250,10 @@ async def insert_rows(
         new_map[str(raw["id"])] = instance.id
         inserted += 1
         if table == "conversations":
-            parents.append((instance, raw.get("parent_id"), payload.get("updated_at")))
-    for conversation, parent_id, updated_at in parents:
+            lineages.append((instance, raw.get("parent_id"), raw.get("forked_from_id"), payload.get("updated_at")))
+    for conversation, parent_id, forked_from_id, updated_at in lineages:
+        if parent_id is None and forked_from_id is None:
+            continue
         if parent_id is not None:
             if str(parent_id) not in new_map:
                 raise ValueError("Conversation parent is missing from backup")
@@ -259,9 +261,12 @@ async def insert_rows(
             parent = await db.get(Conversation, conversation.parent_id)
             if parent.user_id != target_user_id or parent.system_preset_id != conversation.system_preset_id:
                 raise ValueError("Conversation parent belongs to a different scope")
-            await db.flush()
-            if updated_at is not None:
-                conversation.updated_at = updated_at
+        if forked_from_id is not None:
+            # 派生来源只记录血缘，来源不在备份中时置空，不拒绝恢复。
+            conversation.forked_from_id = new_map.get(str(forked_from_id))
+        await db.flush()
+        if updated_at is not None:
+            conversation.updated_at = updated_at
     await db.flush()
     return new_map, inserted
 
@@ -321,7 +326,7 @@ def _build_payload(
         elif through_id is not None:
             raise ValueError("Only summary messages may have a summary boundary")
     if table == "conversations":
-        payload["parent_id"] = None
+        payload["parent_id"] = payload["forked_from_id"] = None
         if not isinstance(payload.get("context_after_message_id"), int) or payload["context_after_message_id"] < 0:
             raise ValueError("Invalid conversation context watermark")
         payload["context_after_message_id"] = 0
@@ -555,3 +560,26 @@ def deserialize_rows(extract_root: Path, tables: list[str]) -> dict[str, list[di
             raise ValueError("Backup contains multiple user preference rows")
         result[table] = rows
     return result
+
+
+# 缺少 forked_from_id 的旧备份把派生会话与子 Agent 会话都记在 parent_id。与 fork_lineage 迁移同一规则：委派标题
+# 或首条用户消息（导出按 id 排序）带委派前缀的是子 Agent 会话，其余转为派生来源。不再恢复此类旧备份时移除。
+_LEGACY_DELEGATION_TITLE = "Subagent Task"
+_LEGACY_DELEGATION_PREFIXES = ("[INTERNAL DELEGATION", "You are a subagent delegated")
+
+
+def split_legacy_fork_lineage(conversations: list[dict[str, Any]], messages: list[dict[str, Any]]) -> None:
+    first_user_content: dict[str, Any] = {}
+    for message in messages:
+        if message.get("role") == "user":
+            first_user_content.setdefault(str(message.get("conversation_id")), message.get("content"))
+    for conversation in conversations:
+        parent_id = conversation.get("parent_id")
+        if "forked_from_id" in conversation or parent_id is None:
+            continue
+        content = first_user_content.get(str(conversation.get("id")))
+        delegated = conversation.get("title") == _LEGACY_DELEGATION_TITLE or (
+            isinstance(content, str) and content.startswith(_LEGACY_DELEGATION_PREFIXES)
+        )
+        if not delegated:
+            conversation["parent_id"], conversation["forked_from_id"] = None, parent_id

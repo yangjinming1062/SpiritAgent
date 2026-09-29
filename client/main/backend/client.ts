@@ -37,6 +37,11 @@ export class BackendRequestError extends Error {
   }
 }
 
+/** 网络失败与 5xx 值得重试；其余错误重试也不会成功。 */
+export function isRetryableBackendError(error: unknown): boolean {
+  return error instanceof BackendRequestError && (error.isNetwork || error.isServerError)
+}
+
 export function normalizeBaseUrl(raw?: null | string): string {
   const value = String(raw || '').trim()
 

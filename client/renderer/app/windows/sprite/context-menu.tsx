@@ -5,14 +5,15 @@ import { useCallback, useEffect, useRef } from 'react'
 
 import {
   $contextMenuPos,
-  $effectiveTier,
+  $quietUntil,
   $userPreferredTier,
   closeContextMenu,
-  type DisturbanceTier,
+  endQuiet,
+  QUIET_MINUTES,
   resetToHomePosition,
   setDefaultScale,
-  setDisturbanceTier,
-  setSpatialLocale
+  setSpatialLocale,
+  startQuiet
 } from '@/modules/character'
 import { EyeOff, Home, type IconComponent, KeyRound, Monitor } from '@/shared/lib/icons'
 import { isRegionHit, useInteractiveRegion } from '@/shared/lib/interactive-regions'
@@ -59,60 +60,24 @@ function MenuDivider(): React.JSX.Element {
   return <div className="-mx-1.5 my-1 h-px bg-line-hairline opacity-60" />
 }
 
+// 剩余分钟向上取整，不足一分钟按 1 分钟显示。
+function quietMinutesLeft(until: number): number {
+  return Math.max(1, Math.ceil((until - Date.now()) / 60_000))
+}
+
 // 精灵右键快捷菜单（超高质感液态玻璃）：收敛为生活空间与工作台两大入口
 export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMenuProps): React.JSX.Element {
   const auth = useStore($auth)
   const pos = useStore($contextMenuPos)
-  // 按用户偏好判断安静：全屏 / 游戏的临时静止不算用户选择，不能被开关覆盖成常规。
+  // 临时安静只设置或清除截止时间，不改写档位偏好；已选静止档时无需临时安静，不显示该项。
   const preferredTier = useStore($userPreferredTier)
+  const quietUntil = useStore($quietUntil)
   const dict = useStrings()
   const visible = pos !== null
   const authed = auth.kind === 'authenticated'
-  const isStill = preferredTier === 'still'
 
   const backdropRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
-  const quietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  // 退出安静时恢复进入前的档位。
-  const restoreTierRef = useRef<DisturbanceTier>('normal')
-
-  useEffect(() => {
-    if (preferredTier !== 'still') {
-      restoreTierRef.current = preferredTier
-    }
-  }, [preferredTier])
-
-  useEffect(() => {
-    return () => {
-      if (quietTimerRef.current) {
-        clearTimeout(quietTimerRef.current)
-      }
-    }
-  }, [])
-
-  const toggleQuiet = () => {
-    if (quietTimerRef.current) {
-      clearTimeout(quietTimerRef.current)
-      quietTimerRef.current = null
-    }
-
-    if (isStill) {
-      setDisturbanceTier(restoreTierRef.current)
-    } else {
-      setDisturbanceTier('still')
-      // 50 分钟后自动恢复
-      quietTimerRef.current = setTimeout(
-        () => {
-          quietTimerRef.current = null
-
-          if ($effectiveTier.get() === 'still') {
-            setDisturbanceTier('normal')
-          }
-        },
-        50 * 60 * 1000
-      )
-    }
-  }
 
   const handleRest = () => {
     void requestCloseSurface()
@@ -206,11 +171,17 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
             <MenuItem accent icon={Home} label={dict.living.title} onClick={() => onOpenSurface?.('living')} />
             <MenuItem accent icon={Monitor} label={dict.workbench.title} onClick={() => onOpenSurface?.('workbench')} />
             <MenuDivider />
-            <MenuItem
-              icon={isStill ? IconVolume : IconVolumeOff}
-              label={isStill ? dict.companion.menu.quietOff : dict.companion.menu.quietOn}
-              onClick={toggleQuiet}
-            />
+            {preferredTier !== 'still' ? (
+              <MenuItem
+                icon={quietUntil === null ? IconVolumeOff : IconVolume}
+                label={
+                  quietUntil === null
+                    ? dict.companion.menu.quietOn(QUIET_MINUTES)
+                    : dict.companion.menu.quietOff(quietMinutesLeft(quietUntil))
+                }
+                onClick={quietUntil === null ? startQuiet : endQuiet}
+              />
+            ) : null}
             <MenuItem icon={IconRotateClockwise} label={dict.companion.menu.resetPosition} onClick={handleRest} />
             <MenuDivider />
             <MenuItem icon={EyeOff} label={dict.companion.menu.hide} onClick={handleHideSprite} />

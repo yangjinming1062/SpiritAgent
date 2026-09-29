@@ -22,6 +22,7 @@ from .disturbance import (
     is_still,
 )
 from .emotions import BUILTIN_EMOTIONS
+from .first_greeting import drain as drain_first_greeting
 from .idle_expression import IdleExpressionResult, check_idle_expression
 from .intents import (
     begin_companion_intent,
@@ -140,6 +141,7 @@ __all__ = [
     "check_idle_expression",
     "confirm_portrait",
     "design_voice",
+    "drain_first_greeting",
     "drain_persona_background",
     "emit_companion_message",
     "emit_companion_mood",

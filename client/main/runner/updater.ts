@@ -23,6 +23,7 @@ interface RunnerUpdateManifest {
   sha512: string
   signature: string
   size?: number
+  version: string
 }
 
 interface PendingRunnerSentinel {
@@ -69,7 +70,7 @@ export class RunnerUpdater {
     this.log = log
   }
 
-  // 阶段 1：在旧版 Electron 进程内预下载。
+  // 阶段 1：在旧版 Electron 进程内预下载。updateBaseUrl 即桌面更新源（`<后端>/api/update`），资产路径直接相对它。
   async prefetchRunnerAssets({
     publicKeyPath,
     updateBaseUrl,
@@ -92,7 +93,7 @@ export class RunnerUpdater {
 
     for (let attempt = 1; attempt <= MANIFEST_FETCH_ATTEMPTS; attempt++) {
       try {
-        const text = await this.fetchText(`${updateBaseUrl}/api/update/latest-runner.yml`)
+        const text = await this.fetchText(`${updateBaseUrl}/latest-runner.yml`)
         manifest = YAML.parse(text)
         primaryErr = null
 
@@ -110,8 +111,13 @@ export class RunnerUpdater {
       throw primaryErr ?? new Error('manifest fetch failed after retries')
     }
 
-    if (!manifest.path || !manifest.signature || !manifest.runner) {
+    if (!manifest.path || !manifest.signature || !manifest.runner || !manifest.version) {
       throw new Error('manifest missing required fields')
+    }
+
+    // 下载与预取之间可能发布了新版本；Runner 必须与已下载的桌面安装包同版本。
+    if (manifest.version !== version) {
+      throw new Error(`runner manifest version ${manifest.version} does not match desktop update ${version}`)
     }
 
     const manifestSignatureOk = this.verifySignature({
@@ -124,9 +130,9 @@ export class RunnerUpdater {
       throw new Error('manifest signature verification failed')
     }
 
-    const wheelUrl = `${updateBaseUrl}/api/update/${manifest.path}`
+    const wheelUrl = `${updateBaseUrl}/${manifest.path}`
     const wheelStagingPath = path.join(stagingDir, 'wheel.whl')
-    const serverPyUrlFinal = `${updateBaseUrl}/api/update/runner/server.py`
+    const serverPyUrlFinal = `${updateBaseUrl}/runner/server.py`
     const serverPyStagingPath = path.join(stagingDir, 'server.py')
 
     await Promise.all([
@@ -162,7 +168,7 @@ export class RunnerUpdater {
   }
 
   // 阶段 2：在新版 Electron 进程内完成安装。
-  async installPending(): Promise<{ error?: string; noop?: boolean; ok: boolean }> {
+  async installPending(appVersion: string): Promise<{ error?: string; noop?: boolean; ok: boolean }> {
     const home = this.runtime.spiritagentHome
     const sentinelPath = path.join(home, '.pending-runner-update.json')
 
@@ -179,6 +185,13 @@ export class RunnerUpdater {
       this.log?.('error', '[updater] sentinel unreadable', msg)
 
       return { error: 'sentinel unreadable', ok: false }
+    }
+
+    // 下载后未经「立即重启」而是普通重启时仍是旧版桌面：保留暂存，待同版本桌面启动时再装。
+    if (sentinel.version !== appVersion) {
+      this.log?.('info', `[updater] pending runner ${sentinel.version} kept; running desktop is ${appVersion}`)
+
+      return { noop: true, ok: true }
     }
 
     if (sentinel.attempt_count >= sentinel.max_attempts) {

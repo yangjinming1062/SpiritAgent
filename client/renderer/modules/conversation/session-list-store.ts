@@ -133,9 +133,10 @@ export async function fetchSessions(): Promise<void> {
 
     if (token === sessionsToken) {
       const sessions = res.sessions || []
-      // 列表接口按 parent_id 隐藏派生会话（与子代理会话同一过滤），本地补入的派生会话刷新后保留。
-      const localForks = $sessions.get().filter(s => s._lineage_root_id && !sessions.some(r => r.id === s.id))
-      $sessions.set([...localForks, ...sessions])
+      // 列表只返回一页；当前会话不在其中时沿用本地条目，避免工作台因找不到当前会话而切走。
+      const activeId = $chatSessionId.get()
+      const active = sessions.some(s => s.id === activeId) ? undefined : $sessions.get().find(s => s.id === activeId)
+      $sessions.set(active ? [...sessions, active] : sessions)
       const companion = sessions.find(isCompanionSession)
 
       if (companion) {
@@ -282,7 +283,7 @@ export async function pinSession(sessionId: string, pinned: boolean): Promise<vo
     return
   }
 
-  // 本地补入的派生会话刷新时沿用本地条目，置顶状态需先写入本地。
+  // 刷新结果不含当前会话时沿用本地条目，置顶状态需先写入本地。
   $sessions.set($sessions.get().map(s => (s.id === sessionId ? { ...s, pinned } : s)))
   void fetchSessions()
 }
@@ -307,7 +308,7 @@ export async function archiveSession(sessionId: string, archived: boolean): Prom
     return
   }
 
-  // 本地补入的派生会话不会被刷新移出列表，归档时直接移除。
+  // 未能切回主对话时它仍是当前会话，刷新会沿用本地条目，归档时直接移除。
   if (archived) {
     $sessions.set($sessions.get().filter(s => s.id !== sessionId))
   }
@@ -391,13 +392,12 @@ export async function fetchSystemPresets(): Promise<void> {
   }
 }
 
-// session.fork 不返回列表条目，按派生规则用源会话信息补齐；服务端标题另带副本后缀，本地沿用源标题。
+// session.fork 不返回列表条目，先按派生规则用源会话信息补齐；列表刷新后以服务端条目为准，标题带副本后缀。
 function forkSessionInfo(sourceSessionId: string, res: SessionResumeResponse): SessionInfo {
   const source = findSessionInfo(sourceSessionId)
   const now = Date.now()
 
   return {
-    _lineage_root_id: sourceSessionId,
     archived: false,
     cwd: res.info?.cwd ?? source?.cwd ?? null,
     ended_at: null,
@@ -449,8 +449,7 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
       nextCursor: res.next_cursor,
       truncated: res.truncated
     })
-    // 列表接口按 parent_id 隐藏派生会话（与子代理会话同一过滤），直接补入列表；
-    // 否则工作台找不到当前会话，不挂对话面板并会切走。
+    // 先补入本地条目，工作台才能立即挂载对话面板而不切走；随后刷新列表对齐服务端。
     $sessions.set([forkSessionInfo(sourceSessionId, res), ...$sessions.get()])
 
     if (token === navigationToken) {
@@ -458,6 +457,8 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
       setChatSession(res.session_id)
       hydrateChatMessages(res.messages || [], res.info)
     }
+
+    void fetchSessions()
 
     return res.session_id
   } catch (err) {
@@ -747,7 +748,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
     return
   }
 
-  // 本地补入的派生会话不会被刷新移出列表，删除时直接移除。
+  // 未能切回主对话时它仍是当前会话，刷新会沿用本地条目，删除时直接移除。
   $sessions.set($sessions.get().filter(s => s.id !== sessionId))
   void fetchSessions()
   void fetchArchived()

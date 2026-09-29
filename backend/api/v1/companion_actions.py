@@ -51,7 +51,7 @@ async def _republish_catalog(db: AsyncSession, user_id: int) -> None:
         db,
         user_id=user_id,
         event_type="companion.action.catalog_changed",
-        payload={"packId": pack.id, "catalogVersion": version},
+        payload={"packId": pack.id, "catalogVersion": version, "appearanceEpoch": pack.appearance_epoch},
     )
     await db.commit()
 
@@ -60,7 +60,7 @@ async def _republish_catalog(db: AsyncSession, user_id: int) -> None:
 async def get_catalog(user: CurrentUser, db: DbSession) -> ActionCatalogResponse:
     pack = await get_active_pack(db, user.id)
     if pack is None:
-        return ActionCatalogResponse(pack_id=0, catalog_version=0, actions=[])
+        return ActionCatalogResponse(pack_id=0, catalog_version=0, appearance_epoch=0, actions=[])
 
     actions = await list_pack_actions(db, pack.id, enabled_only=False)
     summaries = [
@@ -82,6 +82,7 @@ async def get_catalog(user: CurrentUser, db: DbSession) -> ActionCatalogResponse
     return ActionCatalogResponse(
         pack_id=pack.id,
         catalog_version=pack.catalog_version,
+        appearance_epoch=pack.appearance_epoch,
         manifest_url=manifest_url,
         actions=summaries,
     )

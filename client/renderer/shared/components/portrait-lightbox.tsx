@@ -67,7 +67,8 @@ function clampView(view: LightboxView, viewport: { height: number; width: number
 // 灯箱支持自由缩放：滚轮以指针为中心缩放，拖拽平移，双击在适应视口与放大之间切换。
 // 图片本身即窗口；半透明背景只在点击背景（非图片/工具条）时关闭。
 // 通过 createPortal 挂到 document.body，避免 onboarding 容器的 backdrop-filter
-// 把 position: fixed 锁死在对话框里。
+// 把 position: fixed 锁死在对话框里。窗口拖拽区不受 DOM 叠放遮挡，遮罩须设 no-drag，
+// 否则在标题栏或侧边伙伴上方点背景会拖动窗口而不是关闭。
 export function PortraitLightbox({
   name,
   onClose,
@@ -213,7 +214,7 @@ export function PortraitLightbox({
     <div
       aria-label={t.ui.lightbox.backdropAria}
       aria-modal="true"
-      className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-2 p-6"
+      className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-2 p-6 [-webkit-app-region:no-drag]"
       onClick={event => {
         if (event.target === event.currentTarget) {
           onClose()

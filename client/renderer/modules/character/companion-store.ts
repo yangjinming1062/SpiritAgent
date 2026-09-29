@@ -1,7 +1,13 @@
 import { atom, computed } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
-import { definePersistedEnum, registerStorageClearHandler } from '@/shared/lib/storage'
+import {
+  definePersistedEnum,
+  persistString,
+  registerCompanionStorageKey,
+  registerStorageClearHandler,
+  storedString
+} from '@/shared/lib/storage'
 
 // 渲染层按 unauthed → onboarding（向导进行中）→ ready（向导完成后）流转。
 export type CompanionLifecycle = 'unauthed' | 'onboarding' | 'ready'
@@ -17,8 +23,6 @@ export type SpriteStateName =
   | 'interacting'
   | 'disconnected'
 
-export type SpriteEmotion = string
-
 const lifecyclePersisted = definePersistedEnum<CompanionLifecycle>({
   allowed: ['unauthed', 'ready', 'onboarding'] as const,
   fallback: 'unauthed',
@@ -29,9 +33,6 @@ export const $companionLifecycle = lifecyclePersisted.$atom
 export const setCompanionLifecycle = lifecyclePersisted.set
 
 export const $spriteState = atom<SpriteStateName>('idle')
-export const $spriteEmotion = atom<SpriteEmotion | null>(null)
-// 可选的结构化动作提示（如 turn_away），用于细化情绪片段；渲染器按资产实际支持选择兑现。
-export const $spriteAction = atom<string | null>(null)
 const $previousState = atom<SpriteStateName>('idle')
 
 // 跨模块共享的水合去重缓存：同 key 的并发水合只跑一次。
@@ -43,10 +44,13 @@ const inFlightHydrations = new Map<string, Promise<unknown>>()
 // 用户主动行为永不被门控——只门控主动外发（companion.message）与主动推理发起。
 export type DisturbanceTier = 'still' | 'normal' | 'autonomous'
 
+const DISTURBANCE_TIERS = ['still', 'normal', 'autonomous'] as const satisfies readonly DisturbanceTier[]
+const DISTURBANCE_TIER_KEY = 'da.companion.disturbanceTier'
+
 const userPreferredTierPersisted = definePersistedEnum<DisturbanceTier>({
-  allowed: ['still', 'normal', 'autonomous'] as const,
+  allowed: DISTURBANCE_TIERS,
   fallback: 'normal',
-  key: 'da.companion.disturbanceTier',
+  key: DISTURBANCE_TIER_KEY,
   preserveOnLogout: true
 })
 
@@ -66,11 +70,83 @@ export function setDisturbanceTier(tier: DisturbanceTier): void {
 // 只有活动监视器（activity.ts）会写它。
 export const $effectiveTierOverride = atom<DisturbanceTier | null>(null)
 
-// 手动静止是硬锁定：即便活动监视器在用户已选静止时写入 override，
-// 渲染出的生效档位也保持静止。其他覆盖（normal / autonomous）
-// 仅在用户未选静止时生效。
-export const $effectiveTier = computed([$userPreferredTier, $effectiveTierOverride], (preferred, override) =>
-  preferred === 'still' ? 'still' : (override ?? preferred)
+// 临时安静（DESIGN「主动陪伴」）：截止前生效档位为静止，到期只清除截止时间，不改写档位偏好。
+// 截止时间只存本机、不经 prefs 上云；与档位偏好一样登出不清除——只约束本机，且至多持续一个时长。
+export const QUIET_MINUTES = 50
+const QUIET_DURATION_MS = QUIET_MINUTES * 60_000
+// 系统休眠期间计时器可能停走，按墙钟分段复查是否到期。
+const QUIET_RECHECK_MS = 60_000
+const QUIET_UNTIL_KEY = registerCompanionStorageKey('da.companion.quietUntil', { preserveOnLogout: true })
+
+// 截止时间（epoch 毫秒）；null 表示不在临时安静中。
+export const $quietUntil = atom<number | null>(null)
+
+let quietTimer: ReturnType<typeof setTimeout> | null = null
+
+// 系统时钟回拨时，读出的截止时间也不超过一个时长。
+function readStoredQuietUntil(): number | null {
+  const stored = storedString(QUIET_UNTIL_KEY)
+  const until = stored === null ? Number.NaN : Number(stored)
+
+  return Number.isFinite(until) ? Math.min(until, Date.now() + QUIET_DURATION_MS) : null
+}
+
+// 更新本窗状态并重排到期检查；已过期的截止时间直接清除，生效档位随之回到当前偏好与情境。
+function applyQuietUntil(until: number | null): void {
+  if (quietTimer) {
+    clearTimeout(quietTimer)
+    quietTimer = null
+  }
+
+  if (until !== null && until <= Date.now()) {
+    persistString(QUIET_UNTIL_KEY, null)
+    $quietUntil.set(null)
+
+    return
+  }
+
+  $quietUntil.set(until)
+
+  if (until !== null) {
+    quietTimer = setTimeout(() => applyQuietUntil($quietUntil.get()), Math.min(until - Date.now(), QUIET_RECHECK_MS))
+  }
+}
+
+function setQuietUntil(until: number | null): void {
+  persistString(QUIET_UNTIL_KEY, until === null ? null : String(until))
+  applyQuietUntil(until)
+}
+
+export function startQuiet(): void {
+  setQuietUntil(Date.now() + QUIET_DURATION_MS)
+}
+
+// 用户手动结束或明确选择档位时取消临时安静。
+export function endQuiet(): void {
+  setQuietUntil(null)
+}
+
+// 其他窗口写入档位偏好或临时安静后，经 storage 事件同步到本窗；key 为 null 表示存储被整体清空。
+export function syncDisturbanceFromStorage(key: string | null): void {
+  if (key === DISTURBANCE_TIER_KEY || key === null) {
+    const stored = storedString(DISTURBANCE_TIER_KEY)
+    $userPreferredTier.set(DISTURBANCE_TIERS.find(tier => tier === stored) ?? 'normal')
+  }
+
+  if (key === QUIET_UNTIL_KEY || key === null) {
+    applyQuietUntil(readStoredQuietUntil())
+  }
+}
+
+// 加载时按保存的截止时间恢复临时安静，重启不中断。
+applyQuietUntil(readStoredQuietUntil())
+
+// 手动静止与临时安静都是硬锁定：即便活动监视器写入 override，生效档位也保持静止；
+// 覆盖只在两者都不成立时生效。
+export const $effectiveTier = computed(
+  [$userPreferredTier, $effectiveTierOverride, $quietUntil],
+  (preferred, override, quietUntil) =>
+    preferred === 'still' || quietUntil !== null ? 'still' : (override ?? preferred)
 )
 
 const STATE_PRIORITY: Record<SpriteStateName, number> = {
@@ -92,10 +168,7 @@ let transientTimer: ReturnType<typeof setTimeout> | null = null
 let activityCounter = 0
 let activityResetTimer: ReturnType<typeof setTimeout> | null = null
 
-export function setSpriteState(
-  name: SpriteStateName,
-  options?: { action?: string | null; durationMs?: number; emotion?: SpriteEmotion; force?: boolean }
-): void {
+export function setSpriteState(name: SpriteStateName, options?: { durationMs?: number; force?: boolean }): void {
   const current = $spriteState.get()
 
   if (
@@ -114,34 +187,16 @@ export function setSpriteState(
       $previousState.set(current)
     }
 
-    if (options?.emotion) {
-      $spriteEmotion.set(options.emotion)
-      $spriteAction.set(options.action ?? null)
-    }
-
     $spriteState.set(name)
 
     if (transientTimer) {
       clearTimeout(transientTimer)
     }
 
-    const ms = options?.durationMs ?? (name === 'emotional' ? 2500 : 1800)
     transientTimer = setTimeout(() => {
       transientTimer = null
-      $spriteEmotion.set(null)
-      $spriteAction.set(null)
-      // 若瞬时过程中有更高优先级状态到达，优先取当前状态。
-      const currentAfter = $spriteState.get()
-      const storedPrev = $previousState.get()
-
-      const target = !TRANSIENT_STATES.has(currentAfter)
-        ? currentAfter
-        : TRANSIENT_STATES.has(storedPrev)
-          ? 'idle'
-          : storedPrev
-
-      $spriteState.set(target)
-    }, ms)
+      restoreAfterTransient()
+    }, options?.durationMs ?? 1800)
 
     return
   }
@@ -151,10 +206,32 @@ export function setSpriteState(
     transientTimer = null
   }
 
-  $spriteEmotion.set(options?.emotion ?? null)
-  $spriteAction.set(options?.action ?? null)
-
   $spriteState.set(name)
+}
+
+// 若瞬时过程中有更高优先级状态到达，优先取当前状态。
+function restoreAfterTransient(): void {
+  const currentAfter = $spriteState.get()
+  const storedPrev = $previousState.get()
+
+  const target = !TRANSIENT_STATES.has(currentAfter)
+    ? currentAfter
+    : TRANSIENT_STATES.has(storedPrev)
+      ? 'idle'
+      : storedPrev
+
+  $spriteState.set(target)
+}
+
+// 提前结束仍在进行的指定瞬态（如表达片段收尾），恢复仍有效的持续状态。
+export function endTransientState(name: SpriteStateName): void {
+  if ($spriteState.get() !== name || !transientTimer) {
+    return
+  }
+
+  clearTimeout(transientTimer)
+  transientTimer = null
+  restoreAfterTransient()
 }
 
 // 拖拽期间持续保持 interacting：撤销在途瞬态计时器并以按下前的持续状态为恢复目标，
@@ -203,8 +280,9 @@ export function reportUserActivity(): void {
   }, 10000)
 }
 
-// 生效档位（含活动覆盖）经配置管道上云，是后端闸门（主动消息 / cron / 视觉与空间推理）
+// 生效档位（含活动覆盖与临时安静）经配置管道上云，是后端闸门（主动消息 / cron / 视觉与空间推理）
 // 的唯一档位来源；与用户偏好分键——生效值是设备派生的，不回写本地偏好。
+// 只由精灵窗（活动监视与重连补报）推送：其他窗口没有活动覆盖，推送值可能与实际生效档位不一致。
 export function pushEffectiveDisturbanceTier(tier: DisturbanceTier): void {
   window.spiritagent?.prefs?.set({ key: 'companion.disturbance_tier', value: tier })
 }
@@ -258,8 +336,6 @@ registerStorageClearHandler(() => {
   inFlightHydrations.clear()
 
   activityCounter = 0
-  $spriteEmotion.set(null)
-  $spriteAction.set(null)
   $spriteState.set('idle')
   $previousState.set('idle')
   $effectiveTierOverride.set(null)

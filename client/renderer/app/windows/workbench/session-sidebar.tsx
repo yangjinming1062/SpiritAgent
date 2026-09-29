@@ -162,8 +162,8 @@ export function SessionSidebar(): React.JSX.Element {
     await switchSession(id)
   }
 
-  const isSpecialSession = (s: SessionInfo): boolean =>
-    s.kind === 'special' || (typeof s.system_preset_id === 'string' && s.system_preset_id in workbenchPresetLabels)
+  // 固定对话只看 kind（PROTOCOL「会话种类与历史修改」）：普通会话与派生会话同样带专业预设，不能据此归入固定分组。
+  const isSpecialSession = (s: SessionInfo): boolean => s.kind === 'special'
 
   const workbenchSessions = sessions.filter(s => !isCompanionSession(s))
 

@@ -1,10 +1,10 @@
 """陪伴域小推理提示词与标签文本：心情、空闲表达、自主空间行为、
-性格标签提炼、角色设定与着装块标题。
+性格标签提炼、角色设定与着装块标题，以及初次见面主动意图。
 推理运行时（run_prompt_json）与消费逻辑在 services.domains.companion。
 
 双语提示词（mood/idle_expression/should_act）消费方按 ctx.language 经
 resolve_prompt_text 取文本；性格标签按开放角色资料提炼，保持中文单语。
-输出语言由 payload 的 output_language 字段约定。
+输出语言由 payload 的 output_language 字段约定。初次见面意图按用户语言在入队时取文本。
 
 防注入套语：标准句 JSON_PAYLOAD_DATA_CLAUSE_ZH 定义在包 __init__；
 承载任务语境的变体（tagger 的候选词）就地表述，不强行统一。"""
@@ -139,4 +139,23 @@ PERSONA_LABELS_TEXTS: dict[str, str] = {
 OUTFIT_LABELS_TEXTS: dict[str, str] = {
     "zh": "# 当前着装",
     "en": "# Current outfit",
+}
+
+
+# 初次见面主动意图的说明，作为意图记录进入陪伴主动回合，与「本轮主动联系」规则一同生效；输出 `[]` 保持沉默仍是有效结果。
+FIRST_MEETING_INTENT_TEXTS: dict[str, str] = {
+    "zh": (
+        "用户刚认识你，这是你们第一次见面。若对话中还没有你们之间的交流，就按人设和双方关系自然地向用户打个招呼，"
+        "一两句话即可；用户资料里有希望的称呼时可以这样称呼对方。"
+        "关系设定不代表你们已有共同经历，不编造过去的相处或回忆，也不谈论软件设置或技术细节。"
+        "若用户已经先开口或你们已经聊过，就不再需要这次问候。"
+    ),
+    "en": (
+        "The user has just met you; this is your first meeting. If the conversation has no exchange between you yet, "
+        "greet the user naturally in character and in keeping with your relationship, in one or two sentences; "
+        "if the user profile gives a preferred name, you may address them by it. "
+        "The configured relationship does not mean you already share any history, so do not invent past time "
+        "together or memories, and do not talk about software setup or technical details. "
+        "If the user has already spoken first or you have already talked, this greeting is no longer needed."
+    ),
 }

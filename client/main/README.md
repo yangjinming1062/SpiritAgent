@@ -18,11 +18,13 @@
 
 ## 启动与退出
 
-- `SPIRITAGENT_DESKTOP_USER_DATA_DIR` 覆盖下取 `<override>/spiritagent-home` 为 Home，并 `setPath('userData')`；配置、日志与缓存不另找目录。
+`entry.ts` 按顺序调用各模块入口。ready 前依次为：[单实例锁](lifecycle/single-instance.ts)、[Chromium 开关](lifecycle/platform.ts)、确定 Home 并 `setPath('userData')`（须早于日志器、配置镜像与会话创建）、[应用名与 AppUserModelID](lifecycle/menu.ts)；新增模块只导出函数，不在导入时产生副作用。
+
+- `SPIRITAGENT_DESKTOP_USER_DATA_DIR` 覆盖下取 `<override>/spiritagent-home` 为 Home（[paths.ts](security/paths.ts)）；配置、日志与缓存不另找目录。
 - 默认单实例；`SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK=1` 只用于并行验证，第二实例事件在转发器就绪前折叠保存，之后兑现一次。
 - 远程显示可禁用 GPU 并关闭精灵透明。
 - Chromium 后台节流全局关闭，渲染功耗由引擎管理。
-- 关窗不退出；退出发起配置 flush、`flushSync` 日志并有界等待 Runner，超时仍可能残留进程。
+- 关窗不退出；[app-quit.ts](lifecycle/app-quit.ts) 在退出时发起配置 flush、`flushSync` 日志并有界等待 Runner，超时仍可能残留进程。重启安装更新在 `before-quit-for-update` 时置退出标志，再走同一退出链。
 
 ## 渲染面准入
 
@@ -59,9 +61,17 @@
 
 [ipc/runner.ts](ipc/runner.ts)的 host 管端点、桥和自动启停；token 经环境变量传递，不进 argv。握手配置、工具同步与资格撤销遵循 [PROTOCOL](../../docs/PROTOCOL.md#握手与工具同步)，迟到查询不能恢复旧资格。
 
-[session-runtime.ts](backend/session-runtime.ts)负责懒创建、token 重接及登录恢复回调；首次 getSession 等待凭据恢复。无 call_id 不记日志，限制见[调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
+[session-runtime.ts](backend/session-runtime.ts)负责懒创建、token 重接及登录恢复回调；首次 getSession 等待凭据恢复。恢复结果由 [auth.ts](ipc/auth.ts) 的广播器直接广播，不进鉴权操作队列，广播后仍是当前会话才自动启动 Runner；另有启动后 200 ms 的定时入口建立会话，已有 token 即自动启动。无 call_id 不记日志，限制见[调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
 
-[更新器](runner/updater.ts)优先用 Home 下的 uv，再回落 PATH，在原 venv 安装；不承诺原子切换或自动回滚，损坏环境由 Installer 修复。验签顺序见 [更新契约](../../docs/PROTOCOL.md#自更新签名)。
+[更新器](runner/updater.ts)优先用 Home 下的 uv，再回落 PATH，在原 venv 安装；不承诺原子切换或自动回滚，损坏环境由 Installer 修复。待装资产由 [auto-updater.ts](lifecycle/auto-updater.ts) 在创建精灵窗前安装。验签顺序见 [更新契约](../../docs/PROTOCOL.md#自更新签名)。
+
+## 桌面更新
+
+[ipc/update.ts](ipc/update.ts)持有更新状态、失败阶段与检查、下载、安装通道；[auto-updater.ts](lifecycle/auto-updater.ts)管理更新源与 Runner 预取。流程契约见 [自更新签名](../../docs/PROTOCOL.md#自更新签名)。
+
+- electron-updater 的 error 事件不带来源，阶段按最近发起的检查、下载或安装归属；新增触发入口须同步设置阶段。
+- 更新源在每次检查和下载前按保存的后端地址核对，不锁定首个地址；Runner 预取使用发现该版本时的更新源。
+- 安装包下载完成只广播 `preparing`，预取校验通过才广播 `downloaded`；重启安装只认该状态与生活空间 sender。
 
 ## 网络与缓存
 

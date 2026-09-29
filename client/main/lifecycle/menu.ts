@@ -13,6 +13,28 @@ interface MenuOptions {
   toggleMaximizeWindow: (win: BrowserWindow) => void
 }
 
+function setAboutPanel(app: Pick<App, 'getVersion' | 'setAboutPanelOptions'>, appName: string): void {
+  app.setAboutPanelOptions({
+    applicationName: appName,
+    applicationVersion: app.getVersion(),
+    copyright: `Copyright © 2026 ${appName}`
+  })
+}
+
+/** 应用名、Windows AppUserModelID 与关于面板；须在 app ready 前调用。AppUserModelID 与 package.json 的 build.appId 一致。 */
+export function applyAppIdentity(
+  app: Pick<App, 'getVersion' | 'setAboutPanelOptions' | 'setAppUserModelId' | 'setName'>,
+  appName: string
+): void {
+  app.setName(appName)
+
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('io.spiritagent.agent')
+  }
+
+  setAboutPanel(app, appName)
+}
+
 export function createMenu({
   app,
   appName,
@@ -24,11 +46,7 @@ export function createMenu({
   toggleMaximizeWindow
 }: MenuOptions) {
   function showAboutPanelFresh(): void {
-    app.setAboutPanelOptions({
-      applicationName: appName,
-      applicationVersion: app.getVersion(),
-      copyright: `Copyright © 2026 ${appName}`
-    })
+    setAboutPanel(app, appName)
     app.showAboutPanel()
   }
 
@@ -160,5 +178,10 @@ export function createMenu({
     return menu.buildFromTemplate(template)
   }
 
-  return { buildApplicationMenu }
+  // 只有 macOS 保留应用菜单（系统菜单栏与编辑快捷键）；其他平台移除默认菜单。
+  function installApplicationMenu(): void {
+    menu.setApplicationMenu(isMac ? buildApplicationMenu() : null)
+  }
+
+  return { installApplicationMenu }
 }

@@ -10,8 +10,17 @@ import {
   type SurfaceId,
   type SurfacePlaybackClaim
 } from '@ipc/contracts'
-import { BrowserWindow, type IpcMain, type IpcMainInvokeEvent, type Rectangle, screen } from 'electron'
+import {
+  BrowserWindow,
+  type IpcMain,
+  type IpcMainInvokeEvent,
+  powerMonitor,
+  type Rectangle,
+  screen,
+  type WebContents
+} from 'electron'
 
+import { isSenderWindow } from '../security/ipc-trust'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
 import { broadcastToAllWindows } from '../shared/utils'
 
@@ -21,16 +30,17 @@ import type { CreatedSurfaceWindow } from './surface-window'
 export interface SurfacesManager {
   closeSurface: () => Promise<void>
   hydrateLastSurface: () => SurfaceId
-  isSurfaceWindow: (id: SurfaceId, win: BrowserWindow) => boolean
+  /** sender 是否为该入口面当前窗口的 webContents；用于只允许特定入口调用的通道。 */
+  isSurfaceSender: (id: SurfaceId, sender: Pick<WebContents, 'id'>) => boolean
   minimizeWindow: (win: BrowserWindow) => void
   onWindowClosed: (id: SurfaceId, win: BrowserWindow) => void
   openSurface: (payload: DesktopSurfaceOpenPayload) => Promise<void>
-  refreshCompanionGeometry: () => void
   registerIpcHandlers: (deps: { ipcMain: IpcMain }) => void
   resetPlaybackClaims: () => void
-  setScreenLocked: (locked: boolean) => void
   toggleMaximizeWindow: (win: BrowserWindow) => void
   toggleSurface: (payload: DesktopSurfaceOpenPayload) => Promise<void>
+  /** 跟随锁屏与显示器变化，须在 app ready 后调用一次。 */
+  watchSystemEvents: () => void
 }
 
 interface SurfacesManagerOptions {
@@ -508,8 +518,8 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     }
   }
 
-  const isSurfaceWindow = (id: SurfaceId, win: BrowserWindow): boolean => {
-    return windows.get(id)?.win === win && !win.isDestroyed()
+  const isSurfaceSender = (id: SurfaceId, sender: Pick<WebContents, 'id'>): boolean => {
+    return isSenderWindow(sender, windows.get(id)?.win)
   }
 
   const refreshCompanionGeometry = (): void => {
@@ -538,6 +548,18 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   const setScreenLocked = (locked: boolean): void => {
     screenLocked = locked
     publish()
+  }
+
+  const watchSystemEvents = (): void => {
+    const syncScreenLocked = (): void => setScreenLocked(powerMonitor.getSystemIdleState(1) === 'locked')
+
+    syncScreenLocked()
+    powerMonitor.on('lock-screen', () => setScreenLocked(true))
+    powerMonitor.on('unlock-screen', () => setScreenLocked(false))
+    powerMonitor.on('resume', syncScreenLocked)
+    screen.on('display-added', () => refreshCompanionGeometry())
+    screen.on('display-removed', () => refreshCompanionGeometry())
+    screen.on('display-metrics-changed', () => refreshCompanionGeometry())
   }
 
   const resetPlaybackClaims = (): void => {
@@ -674,15 +696,14 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   return {
     closeSurface,
     hydrateLastSurface,
-    isSurfaceWindow,
+    isSurfaceSender,
     minimizeWindow,
     onWindowClosed,
     openSurface,
-    refreshCompanionGeometry,
     registerIpcHandlers,
     resetPlaybackClaims,
-    setScreenLocked,
     toggleMaximizeWindow,
-    toggleSurface
+    toggleSurface,
+    watchSystemEvents
   }
 }

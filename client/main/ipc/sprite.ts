@@ -1,13 +1,14 @@
 import path from 'node:path'
 
 import {
+  type DesktopScreenRect,
   type DesktopSpritePosition,
   type DesktopSpriteRestPosition,
   type DesktopWindowSceneSnapshot,
   IPC,
   SPRITE_SCALE_LIMITS
 } from '@ipc/contracts'
-import type { BrowserWindow, IpcMain, Screen } from 'electron'
+import type { BrowserWindow, IpcMain, Rectangle, Screen } from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
 import { atomicWriteFile, broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, safeReadJson } from '../shared/utils'
@@ -54,16 +55,42 @@ export function readRestPosition(userDataDir?: string): null | DesktopSpriteRest
   return null
 }
 
+// Runner 报告原生屏幕坐标：Windows 为物理像素，须换算到 DIP；其余平台已是 DIP。
+function toDipRect(screen: Screen, rect: Rectangle): Rectangle {
+  return process.platform === 'win32' ? screen.screenToDipRect(null, rect) : rect
+}
+
+function isScreenRect(value: unknown): value is DesktopScreenRect {
+  if (!value || typeof value !== 'object') {
+    return false
+  }
+
+  const { h, w, x, y } = value as Partial<Record<keyof DesktopScreenRect, unknown>>
+
+  return (
+    typeof x === 'number' &&
+    typeof y === 'number' &&
+    typeof w === 'number' &&
+    typeof h === 'number' &&
+    [x, y, w, h].every(Number.isFinite) &&
+    w > 0 &&
+    h > 0
+  )
+}
+
 interface SpriteIpcDeps {
   getSpriteWindow: () => BrowserWindow | null | undefined
   getUserDataDir: () => string
   log: (chunk: string) => void
   screen: Screen
-  getWindowSnapshot?: () => Promise<unknown>
+  /** 窗口场景取自 Runner 的 system.get_windows；Runner 未连接时为 null。 */
+  getRunnerBridge: () => null | {
+    dispatch: (method: string, params: Record<string, unknown>, opts: { timeoutMs: number }) => Promise<unknown>
+  }
 }
 
 export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcMain: IpcMain }): void {
-  const { getSpriteWindow, getUserDataDir, getWindowSnapshot, log, screen } = deps
+  const { getRunnerBridge, getSpriteWindow, getUserDataDir, log, screen } = deps
 
   const withWindow = (fn: (win: BrowserWindow) => void) => {
     const win = getSpriteWindow()
@@ -116,15 +143,16 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
 
   ipcMain.handle(IPC.invoke.spriteGetWindowScene, async (event): Promise<DesktopWindowSceneSnapshot | null> => {
     const win = getSpriteWindow()
+    const bridge = getRunnerBridge()
 
-    if (!isSenderWindow(event.sender, win) || !win || !getWindowSnapshot) {
+    if (!isSenderWindow(event.sender, win) || !win || !bridge) {
       return null
     }
 
     let snapshot: unknown
 
     try {
-      snapshot = await getWindowSnapshot()
+      snapshot = await bridge.dispatch('execute_tool', { args: {}, name: 'system.get_windows' }, { timeoutMs: 1500 })
 
       if (typeof snapshot === 'string') {
         snapshot = JSON.parse(snapshot) as unknown
@@ -178,8 +206,7 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
         return []
       }
 
-      const dip = process.platform === 'win32' ? screen.screenToDipRect(null, { x, y, width: w, height: h }) : null
-      const rect = { height: dip?.height ?? h, width: dip?.width ?? w, x: dip?.x ?? x, y: dip?.y ?? y }
+      const rect = toDipRect(screen, { height: h, width: w, x, y })
       const windowDisplay = screen.getDisplayMatching(rect)
 
       return [
@@ -210,6 +237,20 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
       },
       windows
     }
+  })
+
+  // 仪式行走目标：原生屏幕矩形换算为精灵视口内坐标，与窗口快照同一换算。
+  ipcMain.handle(IPC.invoke.spriteMapScreenRect, async (event, rect?: unknown): Promise<DesktopScreenRect | null> => {
+    const win = getSpriteWindow()
+
+    if (!isSenderWindow(event.sender, win) || !win || win.isDestroyed() || !isScreenRect(rect)) {
+      return null
+    }
+
+    const dip = toDipRect(screen, { height: rect.h, width: rect.w, x: rect.x, y: rect.y })
+    const bounds = win.getContentBounds()
+
+    return { h: dip.height, w: dip.width, x: dip.x - bounds.x, y: dip.y - bounds.y }
   })
 
   ipcMain.handle(IPC.invoke.spriteMoveToDisplay, async (event, point?: { x: number; y: number }) => {

@@ -46,7 +46,7 @@ from modules.companion import (
 )
 from modules.ws import emit_ws_event
 from pydantic import ValidationError
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
@@ -1123,7 +1123,11 @@ async def _publish_ready_locked(
             db,
             user_id=pack.user_id,
             event_type="companion.action.catalog_changed",
-            payload={"packId": pack.id, "catalogVersion": pack.catalog_version},
+            payload={
+                "packId": pack.id,
+                "catalogVersion": pack.catalog_version,
+                "appearanceEpoch": pack.appearance_epoch,
+            },
         )
         retired: set[str] = set()
         if (
@@ -2024,9 +2028,9 @@ async def _generate_dynamic_actions(
                 logger.exception("dynamic action failed", extra={"pack_id": pack_id, "action_id": job.id})
                 status = "result_unknown" if isinstance(exc, ProviderResultUnknownError) else "failed"
                 await _advance_job(job.id, stage=job.stage, status=status, error=_generation_error(exc))
-        # 全部目标动作处理后发布新目录快照（失败动作不并入），并兑现未过期表达意图。
+        # 全部目标动作处理后发布新目录快照（失败动作不并入），并兑现这些动作制作期间的表达意图。
         await _publish_dynamic_catalog(pack_id)
-        await _fulfill_pending_intents(pack_id)
+        await _fulfill_pending_intents([job.id for job in jobs])
         return True
     except Exception as exc:  # noqa: BLE001 — 后台任务兜底：失败必须落库可见
         logger.exception("dynamic action generation crashed", extra={"pack_id": pack_id})
@@ -2109,7 +2113,7 @@ async def _publish_dynamic_catalog(pack_id: int) -> None:
             db,
             user_id=pack.user_id,
             event_type="companion.action.catalog_changed",
-            payload={"packId": pack.id, "catalogVersion": version},
+            payload={"packId": pack.id, "catalogVersion": version, "appearanceEpoch": pack.appearance_epoch},
         )
         await db.commit()
 
@@ -2125,23 +2129,13 @@ async def _try_publish_catalog(db: AsyncSession, pack: CompanionActionPack) -> i
         return None
 
 
-async def _fulfill_pending_intents(pack_id: int) -> None:
-    """动作就绪后补发仍在有效期内的表达意图。"""
+async def _fulfill_pending_intents(action_ids: list[int]) -> None:
+    """本轮制作完成的动作补发制作期间保存、仍在有效期内的表达意图。
+
+    只兑现本轮目标动作：已就绪动作的即时请求在舞台隐藏等情况下未执行时留在 queued，不能借此补播。"""
     async with SESSION_LOCAL() as db:
-        jobs = (
-            (
-                await db.execute(
-                    select(CompanionAction).where(
-                        CompanionAction.pack_id == pack_id,
-                        CompanionAction.status == "succeeded",
-                    ),
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for job in jobs:
-            await fulfill_deferred_play_intents(db, job.id)
+        for action_id in action_ids:
+            await fulfill_deferred_play_intents(db, action_id)
         await db.commit()
 
 
@@ -2262,6 +2256,14 @@ async def ensure_system_action(
 
 
 async def _activate_locked(db: AsyncSession, pack: CompanionActionPack) -> None:
+    # 每次激活（含重新穿回同一包）推进用户级外观代次；调用方持用户锁，最大值 + 1 不会并发重复。
+    latest_epoch = (
+        await db.execute(
+            select(func.coalesce(func.max(CompanionActionPack.appearance_epoch), 0)).where(
+                CompanionActionPack.user_id == pack.user_id,
+            ),
+        )
+    ).scalar_one()
     await db.execute(
         update(CompanionActionPack)
         .where(CompanionActionPack.user_id == pack.user_id, CompanionActionPack.active.is_(True))
@@ -2271,6 +2273,7 @@ async def _activate_locked(db: AsyncSession, pack: CompanionActionPack) -> None:
     # bulk update synchronize_session=False 后必须显式标脏，重启激活同一行也能写回。
     pack.active = True
     flag_modified(pack, "active")
+    pack.appearance_epoch = latest_epoch + 1
     await db.execute(
         update(CompanionOutfit)
         .where(CompanionOutfit.user_id == pack.user_id)
@@ -2299,7 +2302,11 @@ async def _activate_locked(db: AsyncSession, pack: CompanionActionPack) -> None:
         db,
         user_id=pack.user_id,
         event_type="companion.action.catalog_changed",
-        payload={"packId": pack.id, "catalogVersion": pack.catalog_version},
+        payload={
+            "packId": pack.id,
+            "catalogVersion": pack.catalog_version,
+            "appearanceEpoch": pack.appearance_epoch,
+        },
     )
 
 

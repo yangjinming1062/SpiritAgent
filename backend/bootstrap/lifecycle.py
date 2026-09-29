@@ -37,7 +37,7 @@ from services.application.generation import (
     resume_scene_jobs,
     resume_video_generation_jobs,
 )
-from services.domains.companion import drain_persona_background
+from services.domains.companion import drain_first_greeting, drain_persona_background
 from services.infrastructure.event_store import drain_event_tasks, start_event_loop, stop_event_loop
 from services.infrastructure.llm import aclose_all
 from services.infrastructure.web import aclose as aclose_web_providers
@@ -114,6 +114,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         # 释放引擎前先 drain 模块级任务集合；避免 SIGTERM 把持有连接池的协程留在 commit 中途。
         await asyncio.gather(
             drain_cron(),
+            drain_first_greeting(),
             drain_persona_background(),
             drain_character_extractions(),
             drain_outfit_descriptions(),

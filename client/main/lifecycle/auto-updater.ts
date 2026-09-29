@@ -5,7 +5,6 @@ import type { App } from 'electron'
 import log from 'electron-log/main'
 // CJS 包没有 named export，使用处从 default import 解构 autoUpdater。
 import electronUpdaterPkg from 'electron-updater'
-import type { UpdateInfo } from 'electron-updater'
 
 import type { BackendSessionLike } from '../shared/backend-port'
 import { resolveNormalizedBackendUrl } from '../shared/config'
@@ -16,7 +15,7 @@ const UPDATE_INITIAL_CHECK_DELAY_MS = 30_000
 type RunnerUpdaterLog = (level: string, message: string, ...args: unknown[]) => void
 
 interface RunnerUpdaterPort {
-  installPending: () => Promise<{ error?: string; noop?: boolean; ok: boolean }>
+  installPending: (appVersion: string) => Promise<{ error?: string; noop?: boolean; ok: boolean }>
   prefetchRunnerAssets: (options: {
     publicKeyPath: null | string
     updateBaseUrl: string
@@ -67,7 +66,9 @@ export function createAutoUpdater({
   spiritagentHome
 }: AutoUpdaterOptions) {
   let singleton: null | RunnerUpdaterPort = null
-  let feedConfigured = false
+  let feedUrl: null | string = null
+  // electron-updater 按最近一次发现新版本的检查结果下载；记下那次检查的更新源，Runner 预取与之同源。
+  let availableFeedUrl: null | string = null
 
   function getRunnerUpdater(): RunnerUpdaterPort {
     if (singleton) {
@@ -86,12 +87,8 @@ export function createAutoUpdater({
     return fs.existsSync(candidate) ? candidate : null
   }
 
-  // 更新源来自激活时保存的后端地址；首次激活前没有地址，之后的检查再配置，无需重启。
+  // 更新源来自激活或换号时保存的后端地址；地址变化后在下一次检查或下载前重新配置，无需重启。
   function ensureFeedConfigured(): boolean {
-    if (feedConfigured) {
-      return true
-    }
-
     if (!app.isPackaged) {
       return false
     }
@@ -102,34 +99,47 @@ export function createAutoUpdater({
       return false
     }
 
-    const { autoUpdater } = electronUpdaterPkg
-    const updateBaseUrl = baseUrl + '/api/update'
+    const url = `${baseUrl}/api/update`
+
+    if (url !== feedUrl) {
+      electronUpdaterPkg.autoUpdater.setFeedURL({ provider: 'generic', url })
+      feedUrl = url
+    }
+
+    return true
+  }
+
+  /** 待下载的版本信息是否来自当前更新源；换后端或尚未发现新版本时须先重新检查。 */
+  function isAvailableUpdateCurrent(): boolean {
+    return feedUrl !== null && availableFeedUrl === feedUrl
+  }
+
+  // 桌面安装包下载后预取并校验同源同版本的 Runner 资产，写入待装标记，由同版本的新桌面进程启动时安装。
+  async function prefetchRunnerAssets(version: string): Promise<void> {
+    if (!availableFeedUrl) {
+      throw new Error('update feed is not configured')
+    }
+
     const publicKeyPath = getBundledPublicKeyPath()
 
     if (!publicKeyPath) {
-      log.warn('update.pub not found in extraResources; runner signature verification will fail')
+      throw new Error('update.pub not found in resources; runner assets cannot be verified')
     }
 
-    autoUpdater.setFeedURL({
-      provider: 'generic',
-      url: updateBaseUrl
-    })
-    feedConfigured = true
+    await getRunnerUpdater().prefetchRunnerAssets({ publicKeyPath, updateBaseUrl: availableFeedUrl, version })
+  }
 
-    autoUpdater.on('update-downloaded', (info: UpdateInfo) => {
-      log.info('desktop update downloaded; starting runner prefetch', info?.version)
-      getRunnerUpdater()
-        .prefetchRunnerAssets({
-          publicKeyPath,
-          updateBaseUrl,
-          version: info?.version || app.getVersion()
-        })
-        .catch(err => {
-          log.warn('runner prefetch failed:', errorMessage(err))
-        })
-    })
+  // 启动时安装上个进程预取的 Runner 资产；失败只记日志，不阻断启动。
+  async function installPendingRunnerUpdate(): Promise<void> {
+    try {
+      const result = await getRunnerUpdater().installPending(app.getVersion())
 
-    return true
+      if (!result.ok) {
+        log.warn('runner installPending failed:', result.error)
+      }
+    } catch (err) {
+      log.warn('runner installPending failed:', errorMessage(err))
+    }
   }
 
   function setup(): void {
@@ -142,6 +152,9 @@ export function createAutoUpdater({
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = false
     autoUpdater.logger = log
+    autoUpdater.on('update-available', () => {
+      availableFeedUrl = feedUrl
+    })
 
     if (!ensureFeedConfigured()) {
       log.info('no backend URL configured; update feed is configured on the first check after activation')
@@ -161,5 +174,5 @@ export function createAutoUpdater({
     }
   }
 
-  return { ensureFeedConfigured, getRunnerUpdater, setup }
+  return { ensureFeedConfigured, installPendingRunnerUpdate, isAvailableUpdateCurrent, prefetchRunnerAssets, setup }
 }

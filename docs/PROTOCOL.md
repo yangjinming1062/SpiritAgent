@@ -46,6 +46,8 @@ Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供�
 
 派生继承源预设、自动化归属与历史工具链、媒体和时间等信息，排除界面状态行并清零用量、耗时；复制历史不同时填入输入框。已有历史的会话不能直接换记忆域。
 
+派生会话是独立的普通会话，以 `forked_from_id` 记录来源，照常出现在会话列表与搜索中；删除来源只清空该记录。委派产生的子 Agent 会话以 `parent_id` 挂在发起会话下并随其级联删除，不出现在未归档会话列表与搜索中。字段见 [models](../backend/modules/conversation/models.py)。
+
 ### 预设记忆与学习作用域
 
 长期记忆及模型可读派生事实归属 `(user_id, system_preset_id)`，用户来自认证，会话决定固定预设；未知、缺失或越权作用域拒绝访问。跨预设不共享检索、摘要、反思或学习技能，automation 不装配这些能力。
@@ -73,7 +75,7 @@ Backend 事件统一使用 `method=event`，`type`、`payload`、`seq` 位于 `p
 | `companion.message/mood` | 分别交付已持久化主动台词与独立心情 |
 | 形象、外观、场景、片刻、日记、视频与通道事件 | 更新对应资源或触发重新读取；不一律写入聊天历史 |
 | `companion.video.progress/ready/failed/activated` | 载荷含 `packId`、`outfitId`；进度另含 `stage`，客户端按资源归属展示并重新读取状态 |
-| `companion.action.catalog_changed` / `job_updated` / `play_requested` | 动作目录变更、生成进度与播放指令；播放请求带 play_id、pack_id、appearance_epoch、TTL |
+| `companion.action.catalog_changed` / `job_updated` / `play_requested` | 动作目录变更、生成进度与播放指令；目录变更带 packId、catalogVersion、appearanceEpoch，播放请求带 play_id、pack_id、appearance_epoch、TTL |
 | `system.notification` | 自动化结果通知，完整内容留在任务会话 |
 
 - 业务通知面向该用户的桌面交付，不能因目标会话未打开而丢弃。
@@ -157,7 +159,7 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 `//` 或不符合命令起始规则的输入视为普通文本；符合命令形式但未识别时提示错误，不退回 `prompt.submit`。编辑消息时的斜杠按正文处理。需要确认的命令由服务端再次校验 `confirmed=true`；影响历史的命令另检查在途状态。clear 需确认，compress 无需确认；清空保留会话并写清理状态行，不等于删除长期记忆或撤销工具。remember 只写当前认证记忆域，自动化无记忆域。
 
-响应与 `command.result` 可能同时到达，Client 幂等消费；`hydrate=true` 替换历史，否则展示状态。自动压缩的 `compress.completed` 插入压缩状态，不与手动压缩的全量替换混用。
+响应与 `command.result` 可能同时到达，Client 幂等消费；`hydrate=true` 替换历史，否则展示状态。自动压缩的 `compress.completed` 插入压缩状态，不与手动压缩的全量替换混用。摘要检查点（含每日摘要）在历史与事件中以消息 `subtype`（`compress_summary` / `daily_summary`）标识，正文格式不作识别依据。
 
 ## 伙伴与资产
 
@@ -256,12 +258,14 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 - LLM 使用 `action_search` / `action_design` / `action_inspect` / `action_play`；source、用户、会话、预算日、系统槽位和目标包由服务端绑定，`expected_pack_id` 只作并发守卫。提案立即返回受理，不等评审/视频，也不进入聊天视频送达链。
 - 制作额度按用户本地日、approve 时强制，不设评审日限额，不向模型展示额度。无手动播放入口；模型每次调用前刷新 `ACTION_CONTEXT` 的就绪、在途和近期拒绝信息。
 - 所有动态呈现汇入 `companion.action.play_requested`，目录和任务事件仅更新资源。Client 按 `play_id` 去重，按 `pack_id` 与 `appearance_epoch` 校验归属和代次，遵守 TTL / `repeat_count`。
-- 播放回执按 `play_id` 幂等，同一请求只由一台可见设备执行；queued 不算完成，抢占报 interrupted，表演事实只来自播放器回执。
+- `appearance_epoch` 是服务端维护的视频包激活代次：每次激活（含换装后再穿回同一包）写入该用户已有最大代次加一；目录接口与 `catalog_changed` 携带包的当前代次，播放指令与账本记录受理时的代次。制作中保存的意图在动作就绪后，仅当所属包仍激活且代次未变才补发，否则账本记 rejected；补发只针对本轮制作完成的动作，不重发其他动作未执行的即时请求。
+- Client 比较指令与本地目录代次：同包旧代次说明该包已重新激活，直接认领并回执 rejected；其他不能直接播放的指令先强制刷新目录（覆盖恢复保留备份中的代次，新包代次可能低于本地旧包）。刷新后指令仍较新则不认领，交由已加载新代次的舞台或 TTL 收尾；较旧或包不同则认领后回执 rejected。本地快照未记录代次时，网络校准前不受理；换包或代次变化时作废旧播放实例。
+- 播放回执按 `play_id` 幂等，同一请求只由一台可见设备执行；queued 不算完成，认领后不能播放报 rejected，抢占报 interrupted，表演事实只来自播放器回执。
 - Client 主进程按 `play_id` 在本机可见舞台之间唯一认领，认领记录保留到请求过期；完整入口侧边伙伴可接收播放。收起、最小化、最大化、切窗或锁屏时中断播放并作废在途加载，恢复后回到待机，不补播旧请求。持续可见时换侧不中断；同包目录刷新不替换已受理实例的素材版本，迟到媒体事件不得生成第二种终态回执。
 - REST 管目录、设计、停用、重做和删除。动作目录即当前包可播清单，换装随包切换，不跨包引用；重做在同包更新素材版本。
 - clip 可选携带 `peek_geometry`（遮挡线及需保留的识别区域）和 `content_rect`（内容轮廓），坐标归一化到最终视频画布，结构见 [schema](../backend/modules/companion/schemas_actions.py)。缺少有效探身定位时不启用遮挡；旧目录缺少内容轮廓时按完整画布落位。
 - [探身补齐接口](../backend/api/v1/companion.py)的输入见 [schema](../backend/modules/companion/schemas_video.py)。仅当前激活且具有可读冻结参考的包可补齐；按包和槽位复用任务，素材成功但目录缺失时只重试发布。失败或未知结果不自动重新付费，由衣柜显式处理；无冻结参考的导入包不自动重建。
-- 窗口快照见 [IPC 类型](../client/shared/ipc/contracts.ts)：仅精灵宿主可读取快照和请求跟随目标跨屏；主进程将原生几何转换为 DIP，并提供精灵视口原点，渲染层换算视口内位置。绑定包含窗口标识、进程身份和 Runner 实例标识，重启使旧绑定失效；这些本机数据不进入云端自主上下文。
+- 窗口快照与仪式目标换算见 [IPC 类型](../client/shared/ipc/contracts.ts)：仅精灵宿主可读取快照、换算目标和请求跟随目标跨屏；主进程将 Runner 原生几何转换为 DIP，快照提供精灵视口原点由渲染层换算视口内位置，目标换算直接返回视口内坐标。绑定包含窗口标识、进程身份和 Runner 实例标识，重启使旧绑定失效；这些本机数据不进入云端自主上下文。
 
 ## 本机工具
 
@@ -415,9 +419,16 @@ AI 配置仅经管理入口维护。能力链按用户配置整体覆盖或继�
 
 Electron 使用自身更新与平台校验链，不等同于 Runner 清单验签。Runner wheel 校验 ECDSA P-256 签名和 SHA-512；清单签名覆盖 `path|sha512`，`server.py` 校验记录的 SHA-256。Skills 由 Installer 首装，Client 自更新不下载。
 
-先预取并校验，再停止 Runner、检查现有 venv、安装并启动；校验失败不进入安装。venv 路径保持不变，安装失败只做有限重试，不承诺原子切换或自动回滚；环境损坏由安装器修复。Installer 与更新器使用一致健康探针，不能只看完成标记。
+桌面更新由用户推进：
 
-实现见 [updater](../client/main/runner/updater.ts)，密钥管理见 [release-keys](../scripts/release-keys/README.md)。
+- 检查只报告可用版本；下载须用户触发，退出时不自动安装。更新源取当前保存的后端地址，换号改写地址后先按新地址重新检查再下载。
+- 安装包下载后，从同一更新源预取同版本 Runner 资产并校验，全部通过才进入可重启状态；预取或校验失败按下载失败上报、不提供重启，重新下载复用已缓存的安装包。失败事件标明检查、下载或安装阶段。
+- 重启安装只接受生活空间请求，且须处于已校验状态；更新退出确实开始（`before-quit-for-update`）时置退出标志，使窗口关闭不被拦截，再沿用退出时有界等待 Runner 的收尾。安装器未能启动时不退出，托盘常驻不受影响。
+- macOS 发布只产出 DMG，没有更新清单；检查如实报告失败，不视为已是最新。
+
+Runner 资产先预取并校验，再停止 Runner、检查现有 venv、安装并启动；校验失败不进入安装。待装资产只在版本一致的新桌面进程启动时安装，未经更新重启、仍是旧版时保留暂存。venv 路径保持不变，安装失败只做有限重试，不承诺原子切换或自动回滚；环境损坏由安装器修复。Installer 与更新器使用一致健康探针，不能只看完成标记。
+
+实现见 [update IPC](../client/main/ipc/update.ts)、[auto-updater](../client/main/lifecycle/auto-updater.ts) 与 [updater](../client/main/runner/updater.ts)，密钥管理见 [release-keys](../scripts/release-keys/README.md)。
 
 ### 备份校验与覆盖恢复
 
@@ -436,7 +447,7 @@ flowchart TD
 
 对话摘要的覆盖消息引用须随消息 ID 重映射，缺少原消息或跨会话引用时拒绝相关类别恢复。IM 消费排序位置也须映射到新消息序列，保持接收与消费次序的区别；摘要读取见[对话上下文约束](../backend/services/application/chat/README.md#上下文与记忆)。
 
-覆盖只清理本次通过预检且准备写入的数据类，旧包未声明内容保留；会破坏未恢复关联数据的类别不得先清空。会话与消息成对恢复，特殊会话按预设去重，普通会话独立映射，无法映射的附件单独报告。
+覆盖只清理本次通过预检且准备写入的数据类，旧包未声明内容保留；会破坏未恢复关联数据的类别不得先清空。会话与消息成对恢复，特殊会话按预设去重，普通会话独立映射，无法映射的附件单独报告。派生来源无法映射时置空，子 Agent 会话则须映射到同域发起会话；缺少派生来源字段的旧备份按委派标题或首条委派消息识别子 Agent 会话，其余带父会话的记录恢复为派生会话。
 
 文件恢复按目标相对路径处理：目标文件已存在时跳过复制，并将备份中的引用映射到该文件；导入不会覆盖同名文件或另建冲突副本。
 

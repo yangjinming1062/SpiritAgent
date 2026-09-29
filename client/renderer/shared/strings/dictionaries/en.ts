@@ -243,8 +243,15 @@ export const dict: Dictionary = {
       upToDate: 'Up to date',
       upToDateWithVersion: (value: number | string) => `Up to date (v${value})`,
       updateAvailable: (value: number | string) => `v${value} available`,
-      updateDownloaded: (value: number | string) => `v${value} ready, restart to install`,
-      updateError: (value: string) => `Update check failed: ${value}`
+      downloadUpdate: 'Download update',
+      retryDownload: 'Download again',
+      downloading: (percent: number) => `Downloading update ${percent}%`,
+      preparing: 'Preparing to install…',
+      updateDownloaded: (value: number | string) => `v${value} is ready; restart to finish installing`,
+      restartNow: 'Restart now',
+      checkError: (value: string) => `Update check failed: ${value}`,
+      downloadError: (value: string) => `Update download failed: ${value}`,
+      installError: (value: string) => `Update install failed: ${value}`
     },
     runner: {
       title: 'Runner configuration',
@@ -979,8 +986,8 @@ export const dict: Dictionary = {
     statusBusy: 'Busy',
     statusCompanion: 'With you',
     menu: {
-      quietOff: 'Allow interruptions',
-      quietOn: 'Quiet for a while',
+      quietOff: (minutes: number) => `End quiet (${minutes} min left)`,
+      quietOn: (minutes: number) => `Quiet for ${minutes} min`,
       resetPosition: 'Reset position',
       hide: 'Hide companion',
       activate: 'Activate / sign in'

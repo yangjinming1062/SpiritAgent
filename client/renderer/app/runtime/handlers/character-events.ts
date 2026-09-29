@@ -6,6 +6,7 @@ import {
   $videoPacks,
   acceptPlayCommand,
   actionCatalogChanged,
+  type ActionClipEntry,
   type ActionPlayCommand,
   hydrateActionCatalog,
   hydrateCharacterCard,
@@ -15,6 +16,7 @@ import {
   isActionStageVisible,
   observeActionStageVisibility,
   refreshAvatarSeeds,
+  reportReceipt,
   resolveAvatarRegeneration
 } from '@/modules/character'
 import {
@@ -52,18 +54,28 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
     )
   }
 
-  const clipMatches = (): boolean => {
+  // 外观代次随每次激活递增：指令较新说明本舞台目录落后；较旧或同代次包不同说明外观已被替换。
+  const appearance = (): 'behind' | 'current' | 'replaced' => {
     const catalog = $actionCatalog.get()
-    const clip = catalog?.clipsById.get(command.action_id)
 
-    return (
-      !!clip &&
-      catalog?.packId === command.pack_id &&
-      (command.asset_revision_id === null || clip.asset_revision === command.asset_revision_id)
-    )
+    if (!catalog || catalog.appearanceEpoch === null || command.appearance_epoch > catalog.appearanceEpoch) {
+      return 'behind'
+    }
+
+    return command.appearance_epoch === catalog.appearanceEpoch && command.pack_id === catalog.packId
+      ? 'current'
+      : 'replaced'
   }
 
-  // 隐藏后再显示、换号后再切回、A→B→A 换装都不能复活等待中的旧请求。
+  const matchedClip = (): ActionClipEntry | null => {
+    const clip = $actionCatalog.get()?.clipsById.get(command.action_id)
+
+    return clip && (command.asset_revision_id === null || clip.asset_revision === command.asset_revision_id)
+      ? clip
+      : null
+  }
+
+  // 隐藏后再显示、换号后再切回都不能复活等待中的旧请求；A→B→A 换装由外观代次拦截。
   const stops = [
     observeActionStageVisibility(visible => {
       cancelled ||= !visible
@@ -71,27 +83,32 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
     $auth.listen(() => {
       cancelled ||= !identityMatches()
     }),
-    $actionCatalog.listen(catalog => {
-      cancelled ||= catalog === null || catalog.packId !== command.pack_id
-    }),
     $actionCatalogStatus.listen(status => {
       cancelled ||= status === 'unavailable'
     })
   ]
 
+  const stageReady = (): boolean =>
+    !cancelled && identityMatches() && $actionCatalogStatus.get() === 'ready' && isActionStageVisible()
+
   try {
-    if (!clipMatches() || $actionCatalogStatus.get() !== 'ready') {
+    const local = $actionCatalog.get()
+
+    // 同包旧代次说明该包已重新激活，在所有舞台都已失效，直接认领并回执。其他不能直接播放的情况先强制刷新：
+    // 覆盖恢复保留备份中的代次，新包代次可能低于本地旧包。
+    const reactivated =
+      local?.packId === command.pack_id &&
+      local.appearanceEpoch !== null &&
+      command.appearance_epoch < local.appearanceEpoch
+
+    if (!reactivated && (appearance() !== 'current' || !matchedClip() || $actionCatalogStatus.get() !== 'ready')) {
       await hydrateActionCatalog(true)
     }
 
-    const canAccept = (): boolean =>
-      !cancelled &&
-      identityMatches() &&
-      clipMatches() &&
-      $actionCatalogStatus.get() === 'ready' &&
-      isActionStageVisible()
+    const state = appearance()
 
-    if (!canAccept()) {
+    // 刷新后仍落后时不认领：其他舞台可能已加载新代次，请求由有效期收尾；舞台不可用或当前外观缺少对应素材时同样不认领。
+    if (state === 'behind' || !stageReady() || (state === 'current' && !matchedClip())) {
       return
     }
 
@@ -99,10 +116,20 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
       return
     }
 
+    // 换号后无法以原账号回执，已认领的请求随有效期收尾。
+    if (!identityMatches()) {
+      return
+    }
+
+    // 已认领的请求不再交给其他舞台：不能播放时回执 rejected，避免账本停留在 queued。
     const catalog = $actionCatalog.get()
 
-    if (canAccept() && catalog) {
-      acceptPlayCommand(command, catalog.clipsById.get(command.action_id) ?? null, catalog.packId)
+    if (catalog === null) {
+      void reportReceipt(command, 'rejected', 'appearance changed')
+    } else if (!stageReady()) {
+      void reportReceipt(command, 'rejected', 'stage unavailable')
+    } else {
+      acceptPlayCommand(command, matchedClip(), catalog)
     }
   } finally {
     stops.forEach(stop => stop())
@@ -165,7 +192,7 @@ export function handleCharacterEvent(event: GatewayEvent): void {
 
     case 'companion.action.play_requested': {
       // 播放指令：经统一调度器裁决（安全控制/拖拽优先，表达仅在基础状态为 idle 时生效——
-      // 由 VideoStage 的 resolvePresentation 完成）；此处只校验目录与包归属后受理。
+      // 由 VideoStage 的 resolvePresentation 完成）；此处只校验目录、包与外观代次后受理。
       // 可见舞台由主进程最终认领；代理窗的完整对话不遮挡侧边伙伴。
       const identity = $auth.get()
 

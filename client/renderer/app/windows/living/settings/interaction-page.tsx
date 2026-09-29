@@ -5,7 +5,6 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   $autonomousMedia,
   $autonomousVoice,
-  $effectiveTier,
   $llmAffect,
   $llmAutonomy,
   $responsePreference,
@@ -13,9 +12,9 @@ import {
   autonomousMediaPref,
   autonomousVoicePref,
   type DisturbanceTier,
+  endQuiet,
   llmAffectPref,
   llmAutonomyPref,
-  pushEffectiveDisturbanceTier,
   type ResponsePreference,
   setDisturbanceTier,
   setResponsePreference
@@ -108,11 +107,11 @@ export function InteractionPage(): React.ReactElement {
     }
   }
 
+  // 明确选择档位即结束临时安静；先写偏好，精灵窗同步时不会短暂按旧偏好生效。
+  // 生效档位由精灵窗经 storage 同步后立即重算并推送（含活动覆盖），本窗不推送。
   const selectTier = (id: DisturbanceTier): void => {
     setDisturbanceTier(id)
-    // 推送 EFFECTIVE 档位（含活动覆盖）以保证后端闸门与渲染层一致。
-    // 否则在手动点击后，沉浸式焦点上下文会让后端在整个轮询周期内都保持 un-mute。
-    pushEffectiveDisturbanceTier($effectiveTier.get())
+    endQuiet()
   }
 
   return (

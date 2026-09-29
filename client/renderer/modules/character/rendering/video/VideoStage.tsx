@@ -26,9 +26,9 @@ import {
   getBaseSpriteWidth,
   isActionStageVisible,
   leavePeekForExpression,
+  markPlayInstanceStarted,
   observeActionStageVisibility,
   peekMaskRects,
-  reportReceipt,
   resolveActionClipUrl,
   resolveHitmask,
   resolveVideoAction,
@@ -407,7 +407,7 @@ export function VideoStage(): React.JSX.Element {
                 shouldStartVisibleInstance(instance)
               ) {
                 mounted.current.started = true
-                void reportReceipt({ play_id: instance.playId }, 'started')
+                markPlayInstanceStarted(instance)
               }
             })
           }

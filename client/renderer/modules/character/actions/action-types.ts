@@ -60,8 +60,6 @@ export type ActionPlaybackStatus = 'started' | 'completed' | 'interrupted' | 're
 /** 统一调度器裁决后的播放实例。 */
 export interface ActionPlayInstance {
   readonly playId: string
-  readonly packId: number
-  readonly appearanceEpoch: number
   readonly actionId: number
   readonly assetRevisionId: number | null
   readonly clip: ActionClipEntry

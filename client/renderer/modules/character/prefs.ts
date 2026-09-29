@@ -10,7 +10,7 @@ import {
   storedString
 } from '@/shared/lib/storage'
 
-import { setDisturbanceTier } from './companion-store'
+import { setDisturbanceTier, syncDisturbanceFromStorage } from './companion-store'
 
 // 回应偏好同步到后端供模型选择消息类型，不控制客户端合成或播放。
 export type ResponsePreference = 'text' | 'voice'
@@ -105,6 +105,8 @@ export function initCompanionPrefsSync(): () => void {
     if (event.key === RESPONSE_PREFERENCE_STORAGE_KEY || event.key === null) {
       refreshResponsePreference()
     }
+
+    syncDisturbanceFromStorage(event.key)
   }
 
   refreshResponsePreference()
@@ -140,8 +142,8 @@ export function initCompanionPrefsSync(): () => void {
       hydrateManualReduceTransparency(companion.reduce_transparency)
     }
 
-    // 打扰档位：只回写用户偏好（跨端恢复）；生效档位（companion.disturbance_tier）是设备
-    // 派生值，供后端闸门消费，不回写本地——活动循环本地重算。
+    // 打扰档位：只回写用户偏好（跨端恢复，不结束本机临时安静）；生效档位（companion.disturbance_tier）
+    // 是设备派生值，供后端闸门消费，不回写本地——活动循环本地重算。
     const tier = companion.disturbance_preference
 
     if (tier === 'still' || tier === 'normal' || tier === 'autonomous') {

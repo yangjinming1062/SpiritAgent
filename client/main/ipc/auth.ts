@@ -1,9 +1,104 @@
-import { type DesktopActivatePayload, type DesktopLogoutPayload, IPC } from '@ipc/contracts'
+import {
+  type DesktopActivatePayload,
+  type DesktopAuthBroadcast,
+  type DesktopAuthSnapshot,
+  type DesktopLogoutPayload,
+  IPC
+} from '@ipc/contracts'
 import type { IpcMain } from 'electron'
 
 import type { BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
 import { writeStoredBackendUrl } from '../shared/config'
-import { errorMessage } from '../shared/utils'
+import { broadcastToAllWindows, errorMessage } from '../shared/utils'
+
+interface AuthBroadcasterDeps {
+  autoStartBridge: () => void
+  configSync: { handleAuthUserChanged: (accountId: null | string) => Promise<void> }
+  ensureBackendSession: () => BackendSessionPort
+  log: (message: string) => void
+  rebuildTrayMenu: () => void
+  resetPlaybackClaims: () => void
+}
+
+export interface AuthBroadcaster {
+  /** 首次调用会懒建会话并触发凭据恢复；已有 token 时自动启动 Runner。 */
+  autoStartBridgeIfSignedIn: () => void
+  broadcastAuthChanged: (snapshot: null | SessionSnapshotPort, clearAccountCache?: boolean) => Promise<void>
+  /** 会话恢复回调：直接广播，不进鉴权操作队列；广播后仍是当前会话才自动启动 Runner。 */
+  onSessionRestored: (snapshot: null | SessionSnapshotPort) => void
+}
+
+export function createAuthBroadcaster(deps: AuthBroadcasterDeps): AuthBroadcaster {
+  let playbackClaimAccountId: null | string = null
+
+  function isCurrentSession(snapshot: SessionSnapshotPort): boolean {
+    return deps.ensureBackendSession().getSession()?.sessionId === snapshot.sessionId
+  }
+
+  async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort, clearAccountCache = false): Promise<void> {
+    deps.rebuildTrayMenu()
+
+    const authenticated = Boolean(snapshot?.hasToken)
+
+    const authSnapshot: DesktopAuthSnapshot | null =
+      authenticated && snapshot
+        ? {
+            accountId: snapshot.accountId,
+            baseUrl: snapshot.baseUrl,
+            hasToken: snapshot.hasToken,
+            sessionId: snapshot.sessionId,
+            tokenExpiresAt: snapshot.tokenExpiresAt,
+            user: snapshot.user?.username ? { username: snapshot.user.username } : null
+          }
+        : null
+
+    const payload: DesktopAuthBroadcast = {
+      authenticated,
+      clearAccountCache,
+      snapshot: authSnapshot
+    }
+
+    // 身份变化时配置同步丢弃上个身份未上云的待写；登录或换号后水合新身份。
+    const nextAccountId = authenticated ? (snapshot?.accountId ?? null) : null
+
+    if (playbackClaimAccountId !== nextAccountId) {
+      deps.resetPlaybackClaims()
+      playbackClaimAccountId = nextAccountId
+    }
+
+    await deps.configSync.handleAuthUserChanged(nextAccountId)
+
+    if (snapshot && !isCurrentSession(snapshot)) {
+      return
+    }
+
+    broadcastToAllWindows(IPC.event.authChanged, payload)
+  }
+
+  function onSessionRestored(snapshot: null | SessionSnapshotPort): void {
+    if (!snapshot || !isCurrentSession(snapshot)) {
+      deps.rebuildTrayMenu()
+
+      return
+    }
+
+    void broadcastAuthChanged(snapshot)
+      .then(() => {
+        if (isCurrentSession(snapshot)) {
+          deps.autoStartBridge()
+        }
+      })
+      .catch(error => deps.log(`[session] restored auth broadcast failed: ${errorMessage(error)}`))
+  }
+
+  function autoStartBridgeIfSignedIn(): void {
+    if (deps.ensureBackendSession().getSession()?.hasToken) {
+      deps.autoStartBridge()
+    }
+  }
+
+  return { autoStartBridgeIfSignedIn, broadcastAuthChanged, onSessionRestored }
+}
 
 interface AuthIpcDeps {
   autoStartBridge: () => void

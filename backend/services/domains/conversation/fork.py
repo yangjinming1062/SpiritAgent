@@ -71,10 +71,10 @@ async def fork_conversation_from_message(
             f"无可派生的消息：会话 {source_session_id!r} 在 message_id={source_message_id} 之前没有可复制行",
         )
 
-    # 继承 cwd / settings_json 让 runtime 启动即处于暖态；parent_id 串血缘供 REST lineage_root_id 暴露
+    # 继承 cwd / settings_json 让 runtime 启动即处于暖态；派生会话是独立的顶层会话，只记录来源。
     new_conv = Conversation(
         user_id=user_id,
-        parent_id=src.id,
+        forked_from_id=src.id,
         kind=STANDARD_KIND,
         title=f"{(src.title or '新对话')} — 副本",
         cwd=src.cwd,

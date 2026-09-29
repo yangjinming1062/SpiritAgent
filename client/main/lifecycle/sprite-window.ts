@@ -1,4 +1,4 @@
-import { type App, BrowserWindow, screen } from 'electron'
+import { type App, BrowserWindow, type Display, screen } from 'electron'
 
 import { readRestPosition } from '../ipc/sprite'
 import { errorMessage } from '../shared/utils'
@@ -24,6 +24,7 @@ export interface SpriteWindowDeps {
 export function createSpriteWindowFactory(deps: SpriteWindowDeps): {
   applySpriteBounds: (preferredOrigin?: { x: number; y: number }) => void
   createSpriteWindow: () => void
+  syncSpriteToDisplay: (display: Display) => void
 } {
   let boundsListenerInstalled = false
 
@@ -42,6 +43,19 @@ export function createSpriteWindowFactory(deps: SpriteWindowDeps): {
       : mainWindow.getBounds()
 
     mainWindow.setBounds(screen.getDisplayMatching(base).workArea)
+  }
+
+  // 由 surfaces 在完整入口换屏时调用：精灵窗不在目标显示器时铺到其工作区。
+  function syncSpriteToDisplay(display: Display): void {
+    const mainWindow = deps.getMainWindow()
+
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      return
+    }
+
+    if (screen.getDisplayMatching(mainWindow.getBounds()).id !== display.id) {
+      mainWindow.setBounds(display.workArea)
+    }
   }
 
   function createSpriteWindow(): void {
@@ -101,5 +115,5 @@ export function createSpriteWindowFactory(deps: SpriteWindowDeps): {
     })
   }
 
-  return { applySpriteBounds, createSpriteWindow }
+  return { applySpriteBounds, createSpriteWindow, syncSpriteToDisplay }
 }

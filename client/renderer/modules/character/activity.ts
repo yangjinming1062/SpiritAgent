@@ -8,6 +8,7 @@ import { $runnerPhase } from '@/shared/store/runner-status'
 import {
   $effectiveTier,
   $effectiveTierOverride,
+  $quietUntil,
   $userPreferredTier,
   type DisturbanceTier,
   pushEffectiveDisturbanceTier
@@ -45,6 +46,7 @@ let lastTierPushed: DisturbanceTier | null = null
 let runnerReady = false
 let offPhaseSub: (() => void) | null = null
 let offTierSub: (() => void) | null = null
+let offTierInputSub: (() => void) | null = null
 let monitorGeneration = 0
 let polling = false
 let lastSignalContext: string | null = null
@@ -206,43 +208,28 @@ function classifyFocusedApp(info: FocusedAppInfo): FocusCategory {
 // （常规下仍可气泡轻表达，自主下仍可 perch 陪工）。游戏即使窗口化也按沉浸处理。
 const IMMERSIVE_CATEGORIES: ReadonlySet<FocusCategory> = new Set(['gaming'])
 
-function computeLocalEffectiveTier(userPreferred: DisturbanceTier, ctx: FocusContext | null): DisturbanceTier {
-  // 手动 ``still`` 锁定：任何情况下都不被覆盖。
-  if (userPreferred === 'still') {
-    return 'still'
-  }
-
-  if (!ctx) {
-    return userPreferred
-  }
-
-  if (ctx.fullscreen || IMMERSIVE_CATEGORIES.has(ctx.category)) {
-    return 'still'
-  }
-
-  return userPreferred
+// 活动覆盖只表达沉浸情境；手动静止与临时安静由 $effectiveTier 统一裁决，不在此重复推导。
+function computeImmersiveOverride(ctx: FocusContext | null): DisturbanceTier | null {
+  return ctx && (ctx.fullscreen || IMMERSIVE_CATEGORIES.has(ctx.category)) ? 'still' : null
 }
 
 function maybePushTierOverride(): void {
-  const preferred = $userPreferredTier.get()
-  const ctx = $focusContext.get()
-  const desired = computeLocalEffectiveTier(preferred, ctx)
+  const nextOverride = computeImmersiveOverride($focusContext.get())
 
-  // 写入 override atom 让 $effectiveTier 重算，并把派生出的生效档位推给后端。
-  // 值未变则跳过 set——订阅者会级联到所有订阅者。
-  const nextOverride = desired === preferred ? null : desired
-
+  // 写入 override atom 让 $effectiveTier 重算；值未变则跳过 set——订阅者会级联到所有订阅者。
   if ($effectiveTierOverride.get() !== nextOverride) {
     $effectiveTierOverride.set(nextOverride)
   }
 
-  // 仅按值去重：只有生效值变化时才推送。
-  if (lastTierPushed === desired) {
+  // 推送统一裁决后的生效档位（含临时安静），仅按值去重：只有生效值变化时才推送。
+  const effective = $effectiveTier.get()
+
+  if (lastTierPushed === effective) {
     return
   }
 
-  lastTierPushed = desired
-  pushEffectiveDisturbanceTier(desired)
+  lastTierPushed = effective
+  pushEffectiveDisturbanceTier(effective)
 }
 
 // Runner 的活动快照聚合：一次 ``system.snapshot`` 往返取回四项信号；
@@ -319,7 +306,7 @@ async function pollSnapshot(generation: number): Promise<void> {
   }
 
   if (snapshotResult === null) {
-    // 探测失败：空闲时长置为未知，锁屏与焦点保留上次值；档位覆盖仍按当前偏好重算并上报。
+    // 探测失败：空闲时长置为未知，锁屏与焦点保留上次值；档位覆盖仍重算并上报当前生效档位。
     $lastIdleSeconds.set(-1)
     maybePushTierOverride()
     await reportCompanionSignal(false)
@@ -458,6 +445,15 @@ export function startActivityMonitor(): () => void {
     }
   })
 
+  // 偏好或临时安静变化（含其他窗口经 storage 同步）立即重算并推送，不等轮询，也不依赖 Runner 在线。
+  const offPreferred = $userPreferredTier.listen(() => maybePushTierOverride())
+  const offQuiet = $quietUntil.listen(() => maybePushTierOverride())
+
+  offTierInputSub = () => {
+    offPreferred()
+    offQuiet()
+  }
+
   let firstPollDone = false
 
   const kickFirstPoll = () => {
@@ -512,6 +508,11 @@ function stopActivityMonitor(): void {
   if (offTierSub) {
     offTierSub()
     offTierSub = null
+  }
+
+  if (offTierInputSub) {
+    offTierInputSub()
+    offTierInputSub = null
   }
 
   if (timer) {

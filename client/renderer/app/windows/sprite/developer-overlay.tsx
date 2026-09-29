@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef, useState } from 'react'
 
-import { $spriteEmotion, $spriteState } from '@/modules/character'
+import { $spriteState } from '@/modules/character'
 import { X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 
@@ -10,7 +10,6 @@ import { $devLogs, $devMode } from '../../runtime/dev-log'
 export function DeveloperOverlay(): React.JSX.Element | null {
   const isDev = useStore($devMode)
   const spriteState = useStore($spriteState)
-  const emotion = useStore($spriteEmotion)
   const logs = useStore($devLogs)
   const [minimized, setMinimized] = useState(false)
   const overlayRef = useRef<HTMLDivElement>(null)
@@ -58,13 +57,8 @@ export function DeveloperOverlay(): React.JSX.Element | null {
 
       {!minimized && (
         <div className="p-3 space-y-2">
-          <div className="grid grid-cols-2 gap-1 rounded border border-emerald-500/20 bg-black/50 p-2 text-xs">
-            <div>
-              State: <span className="text-white font-bold">{spriteState}</span>
-            </div>
-            <div>
-              Emotion: <span className="text-strong">{emotion || 'none'}</span>
-            </div>
+          <div className="rounded border border-emerald-500/20 bg-black/50 p-2 text-xs">
+            State: <span className="text-white font-bold">{spriteState}</span>
           </div>
 
           <div className="h-44 overflow-y-auto space-y-1 rounded border border-emerald-500/20 bg-black/60 p-2">

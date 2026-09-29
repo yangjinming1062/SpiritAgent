@@ -23,7 +23,7 @@ interface WizardModalProps {
 const fullscreenRect = (): DOMRect => new DOMRect(0, 0, window.innerWidth, window.innerHeight)
 
 // 线性向导的模态外壳：居中浮层卡（不铺全屏暗化遮罩）。Esc 在捕获阶段拦截并阻断传播，
-// 所在页面的 Esc 处理不会同时触发。
+// 所在页面的 Esc 处理不会同时触发。窗口拖拽区不受 DOM 叠放遮挡，外层须设 no-drag。
 export function WizardModal({
   regionId,
   title,
@@ -41,7 +41,7 @@ export function WizardModal({
 
   return (
     <div
-      className="pointer-events-auto fixed inset-0 z-[60] flex items-center justify-center px-6 py-6"
+      className="pointer-events-auto fixed inset-0 z-[60] flex items-center justify-center px-6 py-6 [-webkit-app-region:no-drag]"
       ref={overlayRef}
     >
       <div

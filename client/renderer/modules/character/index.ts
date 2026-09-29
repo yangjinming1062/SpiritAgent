@@ -10,6 +10,7 @@ export {
   type ActionPlayInstance,
   hydrateActionCatalog,
   isActionStageVisible,
+  markPlayInstanceStarted,
   observeActionStageVisibility,
   reportReceipt,
   resolveActionClipUrl,
@@ -41,17 +42,19 @@ export type { CharacterOverrides } from './character-card-store'
 export {
   $companionLifecycle,
   $effectiveTier,
-  $spriteAction,
-  $spriteEmotion,
+  $quietUntil,
   $spriteState,
   $userPreferredTier,
   type DisturbanceTier,
+  endQuiet,
   ensureCompanionHydrated,
   pushEffectiveDisturbanceTier,
+  QUIET_MINUTES,
   reportUserActivity,
   setCompanionLifecycle,
   setDisturbanceTier,
-  setSpriteState
+  setSpriteState,
+  startQuiet
 } from './companion-store'
 export { FullbodyReferencePanel } from './fullbody-reference-panel'
 export { hydrateFullbodyReference } from './fullbody-reference-store'
@@ -130,6 +133,7 @@ export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritua
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {
   $defaultScale,
+  $expressionBoost,
   $homePosition,
   $peekPreparation,
   $spatialLocomotion,
@@ -161,6 +165,8 @@ export { peekMaskRects } from './spatial-peek'
 export { SpriteStatusBadge } from './sprite-status-badge'
 export { $contextMenuPos, closeContextMenu } from './sprite/context-menu-store'
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
+export { playSpriteGesture } from './sprite/gesture'
+export { SpriteTargetCue, useSpriteBodyGesture } from './sprite/gesture-layer'
 export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'
 export { useOutfitDesignSession } from './wardrobe/design-session'
 

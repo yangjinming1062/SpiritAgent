@@ -11,7 +11,6 @@ type BackPhase =
   | 'portrait-avatar'
   | 'hatching'
   | 'finishing'
-  | 'greeting'
 type BackVoiceStage = 'describe' | 'catalog'
 
 interface BackState {

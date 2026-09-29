@@ -15,6 +15,8 @@ import type { ActionCatalogManifest, ActionClipEntry, NormalizedRect } from './a
 export interface ActiveActionCatalog {
   packId: number
   catalogVersion: number
+  /** 服务端外观激活代次；旧版快照未记录时为 null，网络校准前不受理播放指令。 */
+  appearanceEpoch: number | null
   manifest: ActionCatalogManifest
   /** clip 标识与素材版本 → 本地展示 URL。 */
   clipUrls: Map<string, string>
@@ -27,12 +29,15 @@ export type ActionCatalogStatus = 'idle' | 'loading' | 'ready' | 'unavailable'
 interface CatalogWireResponse {
   pack_id?: number
   catalog_version?: number
+  appearance_epoch?: number
   manifest_url?: string | null
 }
 
 interface PersistedActionCatalog {
   packId: number
   catalogVersion: number
+  /** 旧版快照没有该字段。 */
+  appearanceEpoch?: number
   manifest: ActionCatalogManifest | null
 }
 
@@ -59,7 +64,12 @@ function isPersistableCatalog(val: unknown): val is PersistedActionCatalog {
 
   const v = val as Partial<PersistedActionCatalog>
 
-  return typeof v.packId === 'number' && typeof v.catalogVersion === 'number' && isActionCatalogManifest(v.manifest)
+  return (
+    typeof v.packId === 'number' &&
+    typeof v.catalogVersion === 'number' &&
+    (v.appearanceEpoch === undefined || typeof v.appearanceEpoch === 'number') &&
+    isActionCatalogManifest(v.manifest)
+  )
 }
 
 const catalogSnapshot = definePersistedAtom<PersistedActionCatalog>({
@@ -248,9 +258,14 @@ function buildCatalogIndexes(manifest: ActionCatalogManifest): {
   return { clipsById, clipsBySlot }
 }
 
-function persistCatalogSnapshot(packId: number, catalogVersion: number, manifest: ActionCatalogManifest): void {
+function persistCatalogSnapshot(
+  packId: number,
+  catalogVersion: number,
+  appearanceEpoch: number,
+  manifest: ActionCatalogManifest
+): void {
   catalogSnapshot.reset()
-  catalogSnapshot.set({ catalogVersion, manifest, packId })
+  catalogSnapshot.set({ appearanceEpoch, catalogVersion, manifest, packId })
 }
 
 /** 版本参与缓存键，避免目录刷新后把新素材交给已受理的旧实例。 */
@@ -323,6 +338,7 @@ function restoreCachedActionCatalog(): void {
   const { clipsById, clipsBySlot } = buildCatalogIndexes(manifest)
 
   const catalog: ActiveActionCatalog = {
+    appearanceEpoch: snap.appearanceEpoch ?? null,
     catalogVersion: snap.catalogVersion,
     clipUrls: new Map(),
     clipsById,
@@ -428,8 +444,17 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
       }
 
       const samePack = $actionCatalog.get()
+      // 旧版服务端不返回代次，其播放指令代次恒为 0。
+      const appearanceEpoch = res.value.appearance_epoch ?? 0
 
       if (samePack && samePack.packId === res.value.pack_id && samePack.catalogVersion === res.value.catalog_version) {
+        // 同一目录仅代次变化（重新激活或旧快照校准）：只更新代次，并作废旧代次的播放实例。
+        if (samePack.appearanceEpoch !== appearanceEpoch) {
+          resetActionPlayback()
+          $actionCatalog.set({ ...samePack, appearanceEpoch })
+          persistCatalogSnapshot(samePack.packId, samePack.catalogVersion, appearanceEpoch, samePack.manifest)
+        }
+
         $actionCatalogStatus.set('ready')
 
         return
@@ -490,14 +515,15 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
 
       const { clipsById, clipsBySlot } = buildCatalogIndexes(manifest)
 
-      // 换包时清理旧播放实例；同包目录刷新保留在播实例。
-      if (!samePack || samePack.packId !== res.value.pack_id) {
+      // 换包或外观代次变化时清理旧播放实例；同代次目录刷新保留在播实例。
+      if (!samePack || samePack.packId !== res.value.pack_id || samePack.appearanceEpoch !== appearanceEpoch) {
         resetActionPlayback()
       }
 
       const catalogVersion = res.value.catalog_version ?? manifest.catalog_version
 
       $actionCatalog.set({
+        appearanceEpoch,
         catalogVersion,
         clipUrls,
         clipsById,
@@ -506,7 +532,7 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
         packId: res.value.pack_id
       })
       $actionCatalogStatus.set('ready')
-      persistCatalogSnapshot(res.value.pack_id, catalogVersion, manifest)
+      persistCatalogSnapshot(res.value.pack_id, catalogVersion, appearanceEpoch, manifest)
     } catch (err) {
       log.warn('action-store', 'hydrateActionCatalog failed', err)
 

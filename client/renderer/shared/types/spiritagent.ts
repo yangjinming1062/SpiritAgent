@@ -9,7 +9,6 @@ export interface SessionInfo {
   cwd?: null | string
   ended_at: null | number
   id: string
-  _lineage_root_id?: null | string
   input_tokens: number
   is_active: boolean
   last_active: number

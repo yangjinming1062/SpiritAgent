@@ -15,6 +15,7 @@ from services.domains.conversation import ensure_system_conversations_for_user
 from services.domains.memory import extract_user_profile, read_user_profile, record_user_profile
 
 from .character_card import render_character_profile
+from .first_greeting import enqueue_first_greeting, schedule_first_greeting_claim
 
 logger = get_logger(__name__)
 
@@ -199,32 +200,37 @@ def _state(answers: dict[str, str], next_field: str | None, complete: bool) -> d
     return {"answers": answers, "next_field": next_field, "complete": complete}
 
 
+async def _next_onboarding_step(db: AsyncSession, user_id: int, persona: Persona, draft: dict[str, str]) -> str | None:
+    """返回下一项必需的引导步骤；None 表示角色、头像、全身种子确认与音色均已完成。"""
+    if not persona.is_complete:
+        return next((f for f in _CHARACTER_ONBOARDING_FIELDS if not draft.get(f)), "portrait")
+    if not persona.is_portrait_confirmed:
+        return "portrait"
+    avatar = (
+        await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
+    ).scalar_one_or_none()
+    if avatar is None:
+        return "portrait"
+    if not avatar.seed_fullbody_url or not avatar.is_fullbody_confirmed:
+        return "fullbody-reference"
+    if not draft.get("voice"):
+        return "voice"
+    return None
+
+
 async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]:
     """从数据库恢复引导进度；complete 以角色、头像、全身种子确认与音色为门槛。"""
     persona = await get_or_create_persona(db, user_id)
     draft = load_persona_definition(persona)
-    if persona.is_complete:
-        user_profile = await read_user_profile(db, MemoryScope(user_id, "companion"))
-        merged = {**draft, **user_profile}
-        if not persona.is_portrait_confirmed:
-            return _state(merged, "portrait", False)
-        avatar = (
-            await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)))
-        ).scalar_one_or_none()
-        if avatar is None:
-            return _state(merged, "portrait", False)
-        if not avatar.seed_fullbody_url or not avatar.is_fullbody_confirmed:
-            return _state(merged, "fullbody-reference", False)
-        if not draft.get("voice"):
-            # 合并草稿与 Memory，让桌面端在音色阶段仍能预填已答资料。
-            return _state(merged, "voice", False)
+    next_step = await _next_onboarding_step(db, user_id, persona, draft)
+    if next_step is None:
         # 用户资料均可跳过，且完成后可单独遗忘；缺失资料不能重启 onboarding。
         return _state({}, None, True)
-    answers = draft
-    missing_character = next((f for f in _CHARACTER_ONBOARDING_FIELDS if not answers.get(f)), None)
-    if missing_character is not None:
-        return _state(answers, missing_character, False)
-    return _state(answers, "portrait", False)
+    if not persona.is_complete:
+        return _state(draft, next_step, False)
+    # 合并草稿与 Memory，让桌面端在形象与音色阶段仍能预填已答资料。
+    user_profile = await read_user_profile(db, MemoryScope(user_id, "companion"))
+    return _state({**draft, **user_profile}, next_step, False)
 
 
 async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, value: str | None) -> dict[str, Any]:
@@ -249,12 +255,20 @@ async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, va
         # voice 不是人设字段，故此处只动草稿
         if field == "voice":
             draft = load_persona_definition(persona)
+            was_complete = await _next_onboarding_step(db, user_id, persona, draft) is None
             if value and value.strip():
                 draft[field] = value.strip()[:_ONBOARDING_MAX_LEN]
             else:
                 draft.pop(field, None)
             persona.definition_json = json.dumps(draft, ensure_ascii=False)
+            # 音色是最后一项必需资料：只在本次写入使引导由未完成变为完成时，与草稿同事务保存初次问候意图；
+            # 已完成状态下的修改不会触发。
+            completed = not was_complete and await _next_onboarding_step(db, user_id, persona, draft) is None
+            if completed:
+                await enqueue_first_greeting(db, user_id)
             await db.commit()
+            if completed:
+                schedule_first_greeting_claim(user_id)
             return _state(draft, None, True)
         raise PersonaValidationError(
             f"onboarding field {field!r} cannot be edited after persona is finalized; use PUT /api/companion/persona",

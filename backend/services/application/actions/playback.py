@@ -1,6 +1,6 @@
 """播放请求与回执协调。queued 不等于 completed。
 
-素材未就绪时保存带 TTL 的表达意图，就绪且未过期才补播。
+素材未就绪时保存带 TTL 与外观代次的表达意图；就绪时未过期且代次仍是当前激活才补播。
 """
 
 import uuid
@@ -29,7 +29,6 @@ async def request_playback(
     source: str = "chat_expression",
     target_device: str = "",
     target_surface: str = "",
-    appearance_epoch: int = 0,
     repeat_count: int = 1,
 ) -> ActionPlayResult:
     pack = await get_active_pack(db, user_id)
@@ -46,7 +45,7 @@ async def request_playback(
     if not action.enabled:
         return ActionPlayResult(outcome="rejected", message="该动作已停用")
 
-    # 制作中：保存表达意图，完成后按有效期决定是否补播。
+    # 制作中：保存表达意图，完成后按有效期与外观代次决定是否补播。
     if action.status != "succeeded" or not action.video_path:
         if action.status in ("queued", "processing", "running", "result_unknown"):
             play_id = uuid.uuid4().hex
@@ -57,7 +56,7 @@ async def request_playback(
                 play_id=play_id,
                 pack_id=pack.id,
                 action_id=action.id,
-                appearance_epoch=appearance_epoch,
+                appearance_epoch=pack.appearance_epoch,
                 source=source,
                 expires_at=expires_at,
                 repeat_count=repeat_count,
@@ -83,7 +82,7 @@ async def request_playback(
         play_id=play_id,
         pack_id=pack.id,
         action_id=action.id,
-        appearance_epoch=appearance_epoch,
+        appearance_epoch=pack.appearance_epoch,
         source=source,
         expires_at=expires_at,
         repeat_count=repeat_count,
@@ -99,7 +98,7 @@ async def request_playback(
             target_device=target_device,
             target_surface=target_surface,
             pack_id=pack.id,
-            appearance_epoch=appearance_epoch,
+            appearance_epoch=pack.appearance_epoch,
             action_id=action.id,
             asset_revision_id=action.metadata_revision,
             repeat_count=repeat_count,

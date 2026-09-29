@@ -6,6 +6,8 @@ import type { buildClientContext as BuildClientContextFn } from '../shared/clien
 export interface SessionRuntime {
   buildClientContext: () => ReturnType<typeof BuildClientContextFn>
   ensureBackendSession: () => BackendSessionPort
+  /** 当前会话 ID 与 token；任一缺失时为 null。 */
+  getCurrentAuth: () => null | { sessionId: string; token: string }
   getSessionAfterRestore: () => Promise<null | SessionSnapshotPort>
   rewireAuthToken: () => void
 }
@@ -79,6 +81,13 @@ export function createSessionRuntime(
         spiritagentHome: deps.spiritagentHome
       }),
     ensureBackendSession,
+    getCurrentAuth: () => {
+      const current = ensureBackendSession()
+      const sessionId = current.getSession()?.sessionId
+      const token = current.getToken()
+
+      return sessionId && token ? { sessionId, token } : null
+    },
     getSessionAfterRestore,
     rewireAuthToken: () => {
       deps.getTokenSetter(() => ensureBackendSession().getToken() ?? null)

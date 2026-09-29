@@ -4,7 +4,7 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from modules.companion import ActionPlayback, ActionPlayCommand, CompanionAction
+from modules.companion import ActionPlayback, ActionPlayCommand, CompanionAction, CompanionActionPack
 from modules.ws import emit_ws_event
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -58,7 +58,12 @@ async def record_play_result(
 async def fulfill_deferred_play_intents(db: AsyncSession, action_id: int) -> list[str]:
     """动作就绪后兑现未过期的表达意图；返回已补发的 play_id。
 
-    过期意图只保留账本，不补播；已终态的回执不重复指令。"""
+    过期意图只保留账本，不补播；已终态的回执不重复指令。所属包已不是当前激活或激活代次已推进
+    （换装后再穿回同一包）的意图记为 rejected。"""
+    action = await db.get(CompanionAction, action_id)
+    if action is None or action.status != "succeeded" or not action.video_path or not action.enabled:
+        return []
+    pack = await db.get(CompanionActionPack, action.pack_id)
     now = datetime.now(UTC)
     rows = (
         (
@@ -78,8 +83,9 @@ async def fulfill_deferred_play_intents(db: AsyncSession, action_id: int) -> lis
             expires = entry.expires_at if entry.expires_at.tzinfo else entry.expires_at.replace(tzinfo=UTC)
             if expires < now:
                 continue
-        action = await db.get(CompanionAction, action_id)
-        if action is None or action.status != "succeeded" or not action.video_path or not action.enabled:
+        if pack is None or not pack.active or entry.appearance_epoch != pack.appearance_epoch:
+            entry.status = "rejected"
+            entry.error = "形象已切换，播放请求已取消"
             continue
         expires_at = now + timedelta(seconds=PLAY_INTENT_TTL_SECONDS)
         entry.expires_at = expires_at

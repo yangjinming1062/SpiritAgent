@@ -378,7 +378,7 @@ export function installCloseInterceptor(win: BrowserWindow): void {
   win.on('restore', () => rebuildTrayMenu())
 }
 
-function hideMainWindow(): void {
+export function hideMainWindow(): void {
   const win = trayDeps?.getMainWindow?.()
 
   if (win && !win.isDestroyed()) {

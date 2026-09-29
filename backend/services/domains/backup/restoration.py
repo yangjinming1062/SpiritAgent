@@ -25,6 +25,7 @@ from .serializers import (
     insert_rows,
     restore_conversation_context,
     restore_memory_context,
+    split_legacy_fork_lineage,
 )
 
 logger = get_logger(__name__)
@@ -147,6 +148,8 @@ def load_backup_rows(
                     reason="配套的会话或消息数据无效，无法单独恢复。",
                 ),
             )
+    if CONVERSATION_TABLES.issubset(rows):
+        split_legacy_fork_lineage(rows["conversations"], rows["messages"])
     if set(manifest_tables) & ACTION_TABLES and not ACTION_TABLES.issubset(rows):
         for table in manifest_tables:
             if table in ACTION_TABLES and table in rows:

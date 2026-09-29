@@ -98,7 +98,6 @@ def _conversation_to_session_info(
         cwd=conv.cwd,
         pinned=conv.pinned_at is not None,
         archived=conv.archived_at is not None,
-        lineage_root_id=str(conv.parent_id) if conv.parent_id is not None else None,
         system_preset_id=conv.system_preset_id,
         system_preset_icon_key=preset.icon_key if preset else "task",
     )
@@ -147,7 +146,7 @@ async def list_sessions(
         q = q.where(Conversation.archived_at.is_(None))
         if not include_subagents:
             q = q.where(Conversation.parent_id.is_(None))
-    # include_subagents 只约束未归档列表，归档视图保留子会话。
+    # parent_id 只标记子 Agent 会话，派生会话照常列出；include_subagents 只约束未归档列表，归档视图保留子会话。
     if min_messages > 0:
         q = q.where(func.coalesce(msg_stats.c.msg_count, 0) >= min_messages)
 
@@ -211,7 +210,7 @@ async def search_sessions(
     q: str = Query(..., min_length=1, description="Substring to match against title, message content, and id"),
     archived: Literal["only", "exclude", "include"] = "exclude",
 ) -> DesktopSessionSearchResponse:
-    """按标题、会话 id 或会话内任意消息检索；每用户最多 20 条（按最近活跃排序），q 必填且限长。"""
+    """按标题、会话 id 或会话内任意消息检索；每用户最多 20 条（按最近活跃排序），q 必填且限长，不含子 Agent 会话。"""
     # 限制搜索词长度——LIKE 对多 KB 字符串慢，无 UX 理由让用户搜 10k 字符。
     if len(q) > SEARCH_INPUT_MAX_LEN:
         q = q[:SEARCH_INPUT_MAX_LEN]
@@ -228,7 +227,7 @@ async def search_sessions(
         select(Message.conversation_id)
         .where(message_contains_text(q))
         .join(Conversation, Conversation.id == Message.conversation_id)
-        .where(Conversation.user_id == user.id)
+        .where(Conversation.user_id == user.id, Conversation.parent_id.is_(None))
         .distinct()
         .limit(200)
         .correlate(None)
@@ -245,6 +244,7 @@ async def search_sessions(
         .outerjoin(Message, Message.conversation_id == Conversation.id)
         .where(
             Conversation.user_id == user.id,
+            Conversation.parent_id.is_(None),
             or_(
                 Conversation.title.ilike(pattern, escape=SQL_LIKE_ESCAPE_CHAR),
                 cast(Conversation.id, String).like(pattern, escape=SQL_LIKE_ESCAPE_CHAR),

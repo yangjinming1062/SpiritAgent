@@ -170,6 +170,8 @@ contextBridge.exposeInMainWorld('spiritagent', {
     setDefaultScale: (payload: DesktopSpriteScalePayload) => ipcRenderer.send(IPC.send.spriteSetDefaultScale, payload),
     getPosition: () => invoke(IPC.invoke.spriteGetPosition),
     getWindowScene: () => invoke(IPC.invoke.spriteGetWindowScene),
+    mapScreenRect: (rect: InvokePayload<typeof IPC.invoke.spriteMapScreenRect>) =>
+      invoke(IPC.invoke.spriteMapScreenRect, rect),
     moveToDisplay: (point: InvokePayload<typeof IPC.invoke.spriteMoveToDisplay>) =>
       invoke(IPC.invoke.spriteMoveToDisplay, point),
     hide: () => invoke(IPC.invoke.spriteHide),
@@ -185,7 +187,9 @@ contextBridge.exposeInMainWorld('spiritagent', {
   },
   update: {
     check: () => invoke(IPC.invoke.updateCheck),
+    download: () => invoke(IPC.invoke.updateDownload),
     getState: () => invoke(IPC.invoke.updateGetState),
+    install: () => invoke(IPC.invoke.updateInstall),
     onEvent: (cb: (payload: DesktopUpdateEvent) => void) => subscribe(IPC.event.updateEvent, cb)
   },
   writeClipboard: (text: string) => invoke(IPC.invoke.writeClipboard, text),

@@ -114,7 +114,7 @@ async def _accept_reviewed_action(
             db,
             user_id=user_id,
             event_type="companion.action.catalog_changed",
-            payload={"packId": pack.id, "catalogVersion": version},
+            payload={"packId": pack.id, "catalogVersion": version, "appearanceEpoch": pack.appearance_epoch},
         )
 
 

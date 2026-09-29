@@ -79,7 +79,6 @@ type Phase =
   | 'q-user'
   | 'voice'
   | 'finishing'
-  | 'greeting'
 
 type VoiceStage = 'describe' | 'catalog'
 
@@ -263,8 +262,7 @@ const PHASE_QUESTIONS: Record<Phase, readonly Question[]> = {
   hatching: [],
   'portrait-avatar': [],
   'fullbody-reference': [],
-  finishing: [],
-  greeting: []
+  finishing: []
 }
 
 // 把 resume 的 next_field 路由到 q-user；`voice` 有自己的分支。
@@ -548,7 +546,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   // 题面文本，显示在输入框下方。
   const spokenText = question?.text ?? ''
 
-  // 保存失败退回题目时带回的提示：换题重置不能清掉它，此时由调用方播放提示音而不重读题面。
+  // 保存失败退回题目时带回的提示：换题重置不能清掉它，此时不重读题面。
   const carriedHintRef = useRef<string | null>(null)
 
   // 每道题出现时播放随安装包交付的预录题面语音。
@@ -779,13 +777,12 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       log.warn('onboarding', 'character persona save rejected', err)
       setPhase('q-character')
       setHint(backendDetailMessage(err, '角色资料保存失败，请检查填写内容后重试'))
-      void playOnboardingAudio('onboarding.hatching.retry')
 
       return
     }
 
     if (!personaOk) {
-      setHint('记忆还没存好，稍后再试试形象吧…')
+      setHint('角色资料保存失败，请检查网络后重试')
 
       return
     }
@@ -802,7 +799,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setPortraitDirectAdopt(false)
     setPortraitPanelHint(null)
     setHint(null)
-    void playOnboardingAudio('onboarding.hatching')
 
     const succeeded = await generateAvatarPortrait()
 
@@ -810,12 +806,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return
     }
 
+    // 失败时同样进入确认步骤，由头像面板显示原因。
     setPhase('portrait-avatar')
-
-    // 失败时面板显示原因，不播预录台词冒充伙伴评价画像。
-    if (succeeded) {
-      void playOnboardingAudio('onboarding.portrait.ok')
-    }
   }
 
   // 断点恢复（DESIGN「引导与后台准备」）：网关一旦连通，
@@ -1244,7 +1236,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
 
     // 服务端以音色草稿与完整资料判定引导完成：暂时性失败有限重试，仍失败则回到最后一题
-    // 提示重试，不清草稿、不问候、不标记完成。
+    // 提示重试，不清草稿、不标记完成。
     let failure: string | null = null
 
     try {
@@ -1268,31 +1260,13 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       carriedHintRef.current = failure
       setPhase('q-user')
       setQIndex(USER_QUESTIONS.length - 1)
-      void playOnboardingAudio('onboarding.finishing.retry')
 
       return
     }
 
     void clearDraftRefImage()
     updateRefImage(null)
-    setPhase('greeting')
-
-    // 首句问候用确认后的音色合成（speakScripted 按（音色，台词）内容寻址缓存），
-    // 失败才回退预渲染片段。
-    const greetingName = ans.name?.trim() || ''
-    const greetingText = greetingName ? `你好呀！我是${greetingName}，以后就由我陪你啦。` : '你好呀！以后就由我陪你啦。'
-
-    let ok = await speakScripted(greetingText).catch(() => false)
-
-    if (!ok) {
-      ok = await playOnboardingAudio('onboarding.greeting')
-    }
-
-    if (!ok) {
-      setHint('（声音暂时不可用）')
-    }
-
-    await sleep(ok ? 600 : 1800)
+    // 初次问候由伙伴在后端主动回合中生成并经陪伴消息送达，引导不等待也不代写台词。
     onCompleted()
   }
 
@@ -1595,14 +1569,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             title="直接上传"
           />
 
-          {phase === 'hatching' && <SpinnerWithText size="h-6 w-6" text={hint || '让我想想我该是什么样子…'} />}
+          {phase === 'hatching' && <SpinnerWithText size="h-6 w-6" text={hint || '正在生成头像…'} />}
 
-          {(phase === 'portrait-avatar' || phase === 'greeting') && (
+          {phase === 'portrait-avatar' && (
             <PortraitPanel
               avatarUrl={portraitUrl}
               hint={portraitPanelHint}
               history={currentHistoryItems}
-              introHint={phase === 'portrait-avatar' ? '预览并确认您的头像' : null}
+              introHint="预览并确认您的头像"
               name={answers.name?.trim() || '伙伴'}
               onSelectEntry={onSelectHistoryEntry}
               selectedIdx={portraitSelectedIdx}
@@ -1846,16 +1820,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             </div>
           )}
 
-          {phase === 'finishing' && <p className="py-6 text-center text-sm text-strong">正在记住您…</p>}
-
-          {phase === 'greeting' && (
-            <div className="mt-4">
-              <p className="text-center text-sm text-strong">
-                您好，我是{answers.name?.trim() || '您的伙伴'}。很高兴见到您！
-              </p>
-              {hint && <p className="mt-1 text-center text-[10px] text-muted">{hint}</p>}
-            </div>
-          )}
+          {phase === 'finishing' && <p className="py-6 text-center text-sm text-strong">正在保存资料…</p>}
         </div>
       </div>
     </div>

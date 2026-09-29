@@ -1,14 +1,7 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
-import {
-  $activeAvatarId,
-  $companionMood,
-  $persona,
-  $portraitUrl,
-  $spriteEmotion,
-  $spriteState
-} from '@/modules/character'
+import { $activeAvatarId, $companionMood, $persona, $portraitUrl, $spriteState } from '@/modules/character'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import {
   CalendarPlus,
@@ -40,7 +33,6 @@ export function LivingRail(): React.JSX.Element {
   const activeAvatarId = useStore($activeAvatarId)
   const view = useStore($livingView)
   const spriteState = useStore($spriteState)
-  const emotion = useStore($spriteEmotion)
   const displayName = persona?.name || t.companionFallback
   const moodText = companionMood?.trim()
 
@@ -59,7 +51,6 @@ export function LivingRail(): React.JSX.Element {
         <button
           aria-label={t.avatarMood(displayName)}
           className={styles.avatar}
-          data-emotion={emotion && emotion !== 'neutral' ? emotion : undefined}
           data-state={spriteState}
           onClick={() => triggerHaptic('tap')}
           type="button"

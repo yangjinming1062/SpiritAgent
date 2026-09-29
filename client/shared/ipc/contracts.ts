@@ -37,11 +37,15 @@ export interface DesktopUpdateProgress {
   transferred: number
 }
 
+export type DesktopUpdatePhase = 'check' | 'download' | 'install'
+
+// preparing：安装包已下载，正在预取并校验同版本 Runner 资产；downloaded 表示两者均已就绪，可重启安装。
 export type DesktopUpdateEvent =
   | { info?: DesktopUpdateInfo; type: 'available' }
   | { info?: DesktopUpdateInfo; type: 'downloaded' }
   | { info?: DesktopUpdateInfo; type: 'none' }
-  | { message: string; type: 'error' }
+  | { info?: DesktopUpdateInfo; type: 'preparing' }
+  | { message: string; phase: DesktopUpdatePhase; type: 'error' }
   | { progress: DesktopUpdateProgress; type: 'progress' }
   | { type: 'checking' }
 
@@ -155,6 +159,14 @@ export interface DesktopWindowSceneSnapshot {
     y: number
     zOrder: number
   }>
+}
+
+// 屏幕矩形：入参为 Runner 原生屏幕坐标，出参为精灵视口内 DIP 坐标。
+export interface DesktopScreenRect {
+  h: number
+  w: number
+  x: number
+  y: number
 }
 
 export const SPRITE_SCALE_LIMITS = { max: 3, min: 0.3 } as const
@@ -446,6 +458,9 @@ export interface IpcInvokeContract {
 
   // 更新
   'spiritagent:update:check': () => Promise<void> | void
+  'spiritagent:update:download': () => Promise<void> | void
+  /** 仅生活空间可调用，且须处于 downloaded 状态。 */
+  'spiritagent:update:install': () => Promise<void> | void
   'spiritagent:update:get-state': () => DesktopUpdateEvent | null | Promise<DesktopUpdateEvent | null>
 
   // 精灵窗口
@@ -460,6 +475,9 @@ export interface IpcInvokeContract {
     | DesktopWindowSceneSnapshot
     | null
     | Promise<DesktopWindowSceneSnapshot | null>
+  'spiritagent:sprite:map-screen-rect': (
+    rect: DesktopScreenRect
+  ) => DesktopScreenRect | null | Promise<DesktopScreenRect | null>
   'spiritagent:sprite:move-to-display': (point: { x: number; y: number }) => Promise<void> | void
   'spiritagent:sprite:move-to-cursor-display': () =>
     | null
@@ -561,9 +579,12 @@ export const IPC = {
     spriteGetPosition: 'spiritagent:sprite:get-position',
     spriteSetPosition: 'spiritagent:sprite:set-position',
     spriteGetWindowScene: 'spiritagent:sprite:get-window-scene',
+    spriteMapScreenRect: 'spiritagent:sprite:map-screen-rect',
     spriteMoveToDisplay: 'spiritagent:sprite:move-to-display',
     spriteMoveToCursorDisplay: 'spiritagent:sprite:move-to-cursor-display',
     updateCheck: 'spiritagent:update:check',
+    updateDownload: 'spiritagent:update:download',
+    updateInstall: 'spiritagent:update:install',
     updateGetState: 'spiritagent:update:get-state'
   } as const satisfies Record<string, IpcChannel>,
   event: {

@@ -50,6 +50,7 @@ class CompanionActionPack(ModelBase, TimestampMixin):
 
     动作按外观快照隔离；生成任务只向当前 pack 追加动作。
     catalog_version CAS 推进，提供目录不可变快照。
+    appearance_epoch 为最近一次激活的用户级外观代次，重新穿回同一包也会推进。
     """
 
     __tablename__ = "companion_action_packs"
@@ -79,6 +80,7 @@ class CompanionActionPack(ModelBase, TimestampMixin):
         index=True,
     )
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
+    appearance_epoch: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 

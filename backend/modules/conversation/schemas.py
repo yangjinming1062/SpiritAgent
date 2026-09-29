@@ -1,10 +1,8 @@
 from components import TITLE_MAX_CHARS
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 
 class DesktopSessionInfo(BaseModel):
-    model_config = ConfigDict(populate_by_name=True)
-
     id: str
     kind: str = "standard"
     title: str | None = None
@@ -22,7 +20,6 @@ class DesktopSessionInfo(BaseModel):
     is_active: bool = True
     cwd: str | None = None
     ended_at: int | None = None
-    lineage_root_id: str | None = Field(default=None, alias="_lineage_root_id", serialization_alias="_lineage_root_id")
     # NULL = 用户普通对话，chat 时按 resolve_preset 降级到 companion。
     system_preset_id: str | None = None
     # 已对 NULL 降级为 companion.icon_key，避免客户端再解析一次。枚举变更需同步 BUILTIN_PRESETS。

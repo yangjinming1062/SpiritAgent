@@ -23,8 +23,9 @@ const UPDATE_HANDLERS: UpdateHandlerMap = {
       transferred: p.progress.transferred,
       total: p.progress.total
     }),
+  preparing: p => setUpdateStatus({ status: 'preparing', version: p.info?.version ?? '' }),
   downloaded: p => setUpdateStatus({ status: 'downloaded', version: p.info?.version ?? '' }),
-  error: p => setUpdateStatus({ status: 'error', message: p.message })
+  error: p => setUpdateStatus({ status: 'error', phase: p.phase, message: p.message })
 }
 
 export function installUpdateBridge(): () => void {

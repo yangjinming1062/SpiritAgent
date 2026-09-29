@@ -3,6 +3,7 @@
 export {
   $activePlayInstance,
   acceptPlayCommand,
+  markPlayInstanceStarted,
   reportReceipt,
   settlePlayInstance,
   shouldStartInstance

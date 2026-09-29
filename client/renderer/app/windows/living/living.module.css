@@ -318,18 +318,6 @@ html[data-palette='night'] .identity {
   border-color: var(--ui-accent-line);
 }
 
-.avatar[data-emotion='happy'],
-.avatar[data-emotion='excited'],
-.avatar[data-emotion='playful'] {
-  border-color: var(--ui-accent);
-  box-shadow: 0 0 22px var(--ui-accent-soft);
-}
-
-.avatar[data-emotion='sad'],
-.avatar[data-emotion='sleepy'] {
-  filter: saturate(0.85);
-}
-
 @keyframes avatarPulse {
   0%,
   100% {

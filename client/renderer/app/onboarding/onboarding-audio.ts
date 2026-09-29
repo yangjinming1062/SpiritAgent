@@ -1,17 +1,10 @@
 import { beginVoicePreparing, endVoicePreparing, isLatestGen, nextGen, playDataUrl } from '@/modules/speech'
 import { log } from '@/shared/lib/log'
 
-// 预渲染的云端 TTS 片段，用于 onboarding 流程。Tag 列表对应
-// scripts/onboarding-audio/manifest.json；每个 tag 在
+// 引导问题的预渲染题面语音，是引导中唯一的预制语音（DESIGN「引导与后台准备」）。
+// Tag 列表对应 scripts/onboarding-audio/manifest.json；每个 tag 在
 // $SPIRITAGENT_HOME/audio/onboarding/zh/ 下对应唯一一个 mp3。
-export type OnboardingAudioTag =
-  | `onboarding.q${number}`
-  | 'onboarding.hatching'
-  | 'onboarding.hatching.retry'
-  | 'onboarding.portrait.ok'
-  | 'onboarding.portrait.regenerate'
-  | 'onboarding.finishing.retry'
-  | 'onboarding.greeting'
+export type OnboardingAudioTag = `onboarding.q${number}`
 
 export async function playOnboardingAudio(tag: OnboardingAudioTag): Promise<boolean> {
   const gen = nextGen()

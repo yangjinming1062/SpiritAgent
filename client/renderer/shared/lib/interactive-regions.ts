@@ -1,6 +1,9 @@
-import { type RefObject, useEffect, useRef } from 'react'
+import { createContext, type RefObject, useContext, useEffect, useRef } from 'react'
 
 import { log } from '@/shared/lib/log'
+
+// 当前窗口的鼠标捕获 ID：精灵窗取默认 0，完整入口在渲染根部提供 1，经 Portal 挂载的弹层同样继承。
+export const CaptureWindowIdContext = createContext<number>(0)
 
 export type InteractiveRegion = {
   getRect: () => DOMRect | null
@@ -140,13 +143,16 @@ export function isRegionHit(id: string, x: number, y: number, windowId: number =
 const defaultGetRect = (el: HTMLElement): DOMRect | null => el.getBoundingClientRect()
 
 // 通过 ref 获取可见矩形注册交互区域；返回 null 表示该帧退出交互。
+// 未传 windowId 时登记到 CaptureWindowIdContext 给出的当前窗口捕获 ID。
 export function useInteractiveRegion(
   id: string,
   ref: RefObject<HTMLElement | null>,
   getRect: (el: HTMLElement) => DOMRect | null = defaultGetRect,
   hitTest?: (x: number, y: number) => boolean,
-  windowId: number = 0
+  windowId?: number
 ): void {
+  const contextWindowId = useContext(CaptureWindowIdContext)
+  const regionWindowId = windowId ?? contextWindowId
   const getRectRef = useRef(getRect)
   getRectRef.current = getRect
   const hitTestRef = useRef(hitTest)
@@ -160,16 +166,16 @@ export function useInteractiveRegion(
 
         return el ? getRectRef.current(el) : null
       },
-      windowId,
+      regionWindowId,
       (x, y) => (hitTestRef.current ? hitTestRef.current(x, y) : true)
     )
 
-    return () => unregisterInteractiveRegion(id, windowId)
-  }, [id, ref, windowId])
+    return () => unregisterInteractiveRegion(id, regionWindowId)
+  }, [id, ref, regionWindowId])
 
   useEffect(() => {
-    state.probesByWindow.get(windowId)?.()
-  }, [hitTest, windowId])
+    state.probesByWindow.get(regionWindowId)?.()
+  }, [hitTest, regionWindowId])
 }
 
 export interface WindowMouseCaptureOptions {

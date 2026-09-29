@@ -232,8 +232,15 @@ export const dict = {
       upToDate: '已是最新版本',
       upToDateWithVersion: (value: number | string) => `已是最新版本（v${value}）`,
       updateAvailable: (value: number | string) => `v${value} 可用`,
-      updateDownloaded: (value: number | string) => `v${value} 已就绪,等待重启安装`,
-      updateError: (value: string) => `检查更新失败:${value}`
+      downloadUpdate: '下载更新',
+      retryDownload: '重新下载',
+      downloading: (percent: number) => `正在下载更新 ${percent}%`,
+      preparing: '正在准备安装…',
+      updateDownloaded: (value: number | string) => `v${value} 已就绪，重启后完成安装`,
+      restartNow: '立即重启',
+      checkError: (value: string) => `检查更新失败：${value}`,
+      downloadError: (value: string) => `下载更新失败：${value}`,
+      installError: (value: string) => `安装更新失败：${value}`
     },
     runner: {
       title: '执行器配置',
@@ -918,8 +925,8 @@ export const dict = {
     statusBusy: '忙碌中',
     statusCompanion: '陪伴中',
     menu: {
-      quietOff: '可以吵我了',
-      quietOn: '安静一会儿',
+      quietOff: (minutes: number) => `结束安静（剩 ${minutes} 分钟）`,
+      quietOn: (minutes: number) => `安静 ${minutes} 分钟`,
       resetPosition: '一键归位',
       hide: '隐藏角色',
       activate: '激活 / 登录'

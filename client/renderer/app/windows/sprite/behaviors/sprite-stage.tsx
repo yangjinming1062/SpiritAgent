@@ -3,20 +3,24 @@ import { type PointerEvent, type ReactNode, useCallback, useEffect, useRef } fro
 
 import { handleDragEndInteraction } from '@/modules/character'
 import {
+  $expressionBoost,
   $homePosition,
   $spatialLocomotion,
   $spatialPeek,
   $spatialPos,
   $spatialScale,
-  $spriteAction,
+  $spriteContentRect,
   cancelMovement,
   endDragAt,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
   peekMaskRects,
+  playSpriteGesture,
   setSpriteState,
+  SpriteTargetCue,
   startDrag,
-  updateDragPosition
+  updateDragPosition,
+  useSpriteBodyGesture
 } from '@/modules/character'
 import { emitVfx, SpriteVfxOverlay } from '@/modules/character'
 import { FootGlow } from '@/modules/character'
@@ -42,7 +46,7 @@ interface SpriteStageProps {
 // 12px 是为了避免触控板微抖动被误判为拖拽、把双击吞掉。
 const DRAG_THRESHOLD = 12
 const DOUBLE_TAP_MS = 320
-// 长按阈值：按住未移动 ≥ 500ms 触发 long_press 精灵动作与粒子；
+// 长按阈值：按住未移动 ≥ 500ms 触发长按形变与粒子；
 // 拖拽一旦启动即取消等待，两条交互通道互斥。
 const LONG_PRESS_MS = 500
 // 投喂分流：纯图片/视频走轻语快速回复；混有其它文件时整批进生活空间。
@@ -62,6 +66,7 @@ export function SpriteStage({
   hidden = false
 }: SpriteStageProps): React.JSX.Element {
   const mountRef = useRef<HTMLDivElement>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
 
   const dragRef = useRef<{
     startX: number
@@ -89,6 +94,8 @@ export function SpriteStage({
   const pos = useStore($spatialPos)
   const scale = useStore($spatialScale)
   const peek = useStore($spatialPeek)
+  const expressionBoost = useStore($expressionBoost)
+  const content = useStore($spriteContentRect)
   const stageHitTest = useVideoPixelHitTest()
 
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null)
@@ -113,6 +120,7 @@ export function SpriteStage({
   // 命中按渲染路径精化：视频走 alpha 遮罩查表；缺席（桌面蛋 / 加载空挡）才回退整矩形
   // ——否则矩形空白区会挡住底下应用的点击。
   useInteractiveRegion(SPRITE_REGION_ID, mountRef, stageRect, stageHitTest)
+  useSpriteBodyGesture(bodyRef)
 
   const finishGesture = useCallback((cancelled: boolean) => {
     const drag = dragRef.current
@@ -283,10 +291,10 @@ export function SpriteStage({
       return
     }
 
-    // 接取动效：抬手接住 + 爱心/音符粒子（本地机械反馈，不调用推理）。
+    // 接取反馈：下沉承接形变 + 爱心/音符粒子（本地机械反馈，不调用推理）。
     emitVfx('heart', { nx: 0.5, ny: 0.25, count: 3 })
     emitVfx('music_notes', { nx: 0.35, ny: 0.15, count: 3 })
-    $spriteAction.set('present_right')
+    playSpriteGesture({ kind: 'catch' })
     setSpriteState('interacting', { durationMs: 2000 })
     clearExternalAttachment()
 
@@ -354,9 +362,9 @@ export function SpriteStage({
 
       if (d && !d.moved) {
         d.longPressed = true
-        // 触发时附带 VFX + sprite action，与拖拽的 drag_end 区分；属本地机械反馈，不调用推理。
+        // 长按形变 + 粒子，与拖拽释放的落地形变区分；属本地机械反馈，不调用推理。
         emitVfx('heart', { nx: 0.5, ny: 0.25, count: 2 })
-        $spriteAction.set('long_press')
+        playSpriteGesture({ kind: 'squeeze' })
         setSpriteState('interacting', { durationMs: 800 })
       }
     }, LONG_PRESS_MS)
@@ -487,6 +495,8 @@ export function SpriteStage({
   const spriteW = getBaseSpriteWidth()
   const spriteH = getBaseSpriteHeight()
   const maskRects = peekMaskRects(peek, pos, scale, spriteW, spriteH)
+  // 形变与情绪放大以内容脚底中点为原点，透明留白不参与。
+  const bodyOrigin = `${((content?.left ?? 0) + (content?.right ?? 1)) * 50}% ${(content?.bottom ?? 1) * 100}%`
 
   return (
     <div className="fixed inset-0" data-sprite-stage style={{ pointerEvents: 'none' }}>
@@ -509,6 +519,7 @@ export function SpriteStage({
           </defs>
         </svg>
       ) : null}
+      <SpriteTargetCue hidden={hidden} />
       <div
         className={`absolute transition-opacity duration-200 ${hidden ? 'pointer-events-none opacity-0 invisible' : 'opacity-100'}`}
         onContextMenu={e => {
@@ -557,7 +568,15 @@ export function SpriteStage({
         }}
       >
         <FootGlow />
-        {children}
+        <div
+          className="sprite-body"
+          data-expression-boost={expressionBoost ? '' : undefined}
+          style={{ transformOrigin: bodyOrigin }}
+        >
+          <div className="absolute inset-0" ref={bodyRef} style={{ transformOrigin: bodyOrigin }}>
+            {children}
+          </div>
+        </div>
         <SpriteVfxOverlay />
       </div>
     </div>

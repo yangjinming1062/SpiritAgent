@@ -11,7 +11,7 @@
 | 模块 | 内容 | 渲染与装配 |
 |---|---|---|
 | `chat.py` | 预设体骨架（陪伴 / 工作 / 自动化）、四职业双语头部、系统提示词块、标题生成、上下文压缩 | `services/application/chat/`（prompt_blocks、prompt_presets、system_prompt、title_generator、context_compressor） |
-| `companion.py` | 心情、空闲表达、空间行为、动态性格标签、角色设定与着装块标题 | `services/domains/companion/` |
+| `companion.py` | 心情、空闲表达、空间行为、动态性格标签、角色设定与着装块标题、初次见面主动意图 | `services/domains/companion/` |
 | `generation.py` | 角色、外观、场景与出镜媒体的图像及视频提示词；共享风格机制见 [PIPELINE](../../docs/PIPELINE.md#提示词与供应商输入) | `services/infrastructure/llm/prompt_engineer.py`、`services/application/generation/`、`services/application/nightly/`、`services/adapters/tools/builtin/`、`services/domains/companion/character_card.py` |
 | `memory.py` | 记忆维护政策（`MEMORY_POLICY`）、审查指令、用户资料上下文标签与块标题 | `services/domains/memory/`（memory_review、memory_bootstrap）、`services/adapters/tools/memory.py` |
 | `actions.py` | 动作检索、设计提案、状态检查与播放工具描述及独立评审指令 | `services/adapters/tools/builtin/action_tool.py`、`services/application/actions/`（review、context） |
@@ -52,6 +52,7 @@
 - [语音气泡演绎能力](../services/infrastructure/llm/providers/speech_style.py)——按实际供应商、模型与音色装配能力和 JSON 示例，附加到陪伴终端请求；检查正文规则时一并核对。
 - [媒体气泡](../services/application/chat/streaming.py)——`chat.py::COMPANION_MEDIA_REPLY_GUIDANCES` 与可信产物清单装配到正常和恢复请求；`tools.py` 的批次生成、验图与重做说明对应 [chat_images.py](../services/application/generation/chat_images.py)。
 - [时间与共享块装配](../services/application/chat/prompt_blocks.py)——工具开关与实际解锁集合决定能力描述，时间资料只表达经过时间，不推断用户经历。
+- [初次见面意图](../services/domains/companion/first_greeting.py)——`companion.py::FIRST_MEETING_INTENT_TEXTS` 按用户语言写入意图记录，由[主动回合](../services/application/automation/companion_turns.py)作为资料消息与 `chat.py::COMPANION_PROACTIVE_GUIDANCES` 一同装配；两者对开口与沉默（`[]`）的约定须一致。
 - [陪伴小推理资料](../services/domains/companion/prompt_runtime.py)——心情、空闲表达、空间行为与片刻使用人设和相关记忆，不附加完整视觉形象资料；近期对话保留原始角色、时间和截断标记，旧请求不自动成为当前触发条件。
 - 音色设计说明：[MiniMax](../services/infrastructure/llm/providers/minimax/tts.py)、[MiMo](../services/infrastructure/llm/providers/mimo/tts.py) 等各供应商 TTS 模块的 `VOICE_DESIGN_GUIDE`——供应商支持的描述维度，供用户创建音色；不能混入逐条语音的正文。
 - 数据库 `AvatarAsset.prompt_json` 等审计字段是生成时快照，不是定义源。

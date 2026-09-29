@@ -18,8 +18,15 @@ class Conversation(ModelBase, TimestampMixin):
     )
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    # 仅子 Agent 会话指向发起会话，随其级联删除。
     parent_id: Mapped[int | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"),
+        nullable=True,
+        index=True,
+    )
+    # 派生来源；来源删除时置空，派生会话保留。
+    forked_from_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -40,8 +47,16 @@ class Conversation(ModelBase, TimestampMixin):
     is_renamable: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"), nullable=False)
 
     user: Mapped["User"] = relationship(back_populates="conversations")
-    parent: Mapped["Conversation | None"] = relationship(remote_side="Conversation.id", back_populates="children")
-    children: Mapped[list["Conversation"]] = relationship(back_populates="parent", passive_deletes=True)
+    parent: Mapped["Conversation | None"] = relationship(
+        remote_side="Conversation.id",
+        foreign_keys="Conversation.parent_id",
+        back_populates="children",
+    )
+    children: Mapped[list["Conversation"]] = relationship(
+        foreign_keys="Conversation.parent_id",
+        back_populates="parent",
+        passive_deletes=True,
+    )
     messages: Mapped[list["Message"]] = relationship(back_populates="conversation", passive_deletes=True)
 
     @classmethod
