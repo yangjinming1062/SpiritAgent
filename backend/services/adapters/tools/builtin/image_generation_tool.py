@@ -1,133 +1,76 @@
-import asyncio
-import json
-
-from components import SESSION_LOCAL, get_logger, tool_error
-from prompts.tools import IMAGE_GENERATION_DESC, IMAGE_GENERATION_PARAM_DESCS
+from components import tool_error
+from prompts.tools import IMAGE_GENERATION_DESC, IMAGE_REGENERATE_DESC, MEDIA_INSPECT_DESC
 
 from services.application.generation import (
-    AvatarGenerationError,
-    ImageGenerationError,
-    apply_outfit_override,
-    build_self_image_prompt,
-    generate_character_images,
-    generate_images,
-    load_self_visual_context,
-    optional_outfit_image_reference,
+    ImageBatch,
+    generate_chat_images,
+    inspect_chat_image,
+    regenerate_chat_image,
 )
-from services.domains.companion import character_snapshot_is_current, render_character_identity
-from services.infrastructure.assets import unlink_companion_asset
-from services.infrastructure.llm import VisualReasoningError
-from services.infrastructure.tool_runtime import REGISTRY
-
-logger = get_logger(__name__)
+from services.contracts import MediaTurnState
 
 
-async def image_generation_tool(
-    prompt: str,
-    size: str = "1024x1024",
-    n: int = 1,
-    user_id: int | None = None,
-    reference_image: str | None = None,
-    secondary_reference_image: str | None = None,
-    subject: str | None = None,
-    outfit_override: str | None = None,
+async def image_generation_tool(requests: list[dict], media_turn: MediaTurnState | None = None, **kwargs) -> str:
+    if media_turn is None:
+        return tool_error("图片生成需要会话上下文")
+    return await generate_chat_images(requests, media_turn)
+
+
+async def media_inspect_tool(media_id: str, media_turn: MediaTurnState | None = None, **kwargs) -> str:
+    if media_turn is None:
+        return tool_error("验图需要会话上下文")
+    return await inspect_chat_image(media_id, media_turn)
+
+
+async def image_regenerate_tool(
+    media_id: str,
+    inspection_id: str,
+    correction: str,
+    media_turn: MediaTurnState | None = None,
     **kwargs,
 ) -> str:
-    """通过 image_gen 供应商链生成图片；结果按用户永久资产落盘，经鉴权资产通道加载。
+    if media_turn is None:
+        return tool_error("重做需要会话上下文")
+    return await regenerate_chat_image(media_id, inspection_id, correction, media_turn)
 
-    本工具创作供用户查看的图片；改变伙伴所在的环境需使用 scene_list、scene_activate 或 scene_create。
-    """
-
-    if subject == "self":
-        if user_id is None:
-            return tool_error("生成自己的形象需要用户上下文")
-        try:
-            visual = await load_self_visual_context(user_id)
-        except (AvatarGenerationError, VisualReasoningError) as e:
-            return tool_error(str(e))
-        plan = apply_outfit_override(visual, outfit_override)
-        reference_image = visual.reference_image
-        secondary_reference_image = await optional_outfit_image_reference(plan, user_id)
-        prompt = build_self_image_prompt(plan, prompt, has_outfit_reference=bool(secondary_reference_image))
-    try:
-        if subject == "self":
-            urls = await generate_character_images(
-                prompt,
-                size=size,
-                n=n,
-                user_id=user_id,
-                reference_image=reference_image,
-                secondary_reference_image=secondary_reference_image,
-                identity_reference=visual.reference_image,
-                identity_text=render_character_identity(visual.identity),
-            )
-        else:
-            urls = await generate_images(
-                prompt,
-                size=size,
-                n=n,
-                user_id=user_id,
-                reference_image=reference_image,
-                secondary_reference_image=secondary_reference_image,
-                persist_user_assets=True,
-            )
-    except ImageGenerationError as e:
-        return tool_error(str(e))
-    logger.info("Generated images", extra={"image_count": len(urls), "prompt": prompt, "user_id": user_id})
-    if subject == "self":
-        async with SESSION_LOCAL() as db:
-            if not await character_snapshot_is_current(db, user_id, visual.identity):
-                for url in urls:
-                    await asyncio.to_thread(unlink_companion_asset, url)
-                return tool_error("生成期间角色外形已更新，本轮图片未交付，请使用新形象再生成")
-    return json.dumps(
-        {"success": True, "urls": urls},
-        ensure_ascii=False,
-    )
-
-
-# MiniMax 长宽比 + 通过供应商 size→aspect_ratio 映射回传统 DALL·E 像素尺寸的兼容集合。
-IMAGE_GENERATION_SIZES = [
-    "1024x1024",
-    "1024x1792",
-    "1792x1024",
-    "1:1",
-    "16:9",
-    "4:3",
-    "3:2",
-    "2:3",
-    "3:4",
-    "9:16",
-    "21:9",
-]
 
 IMAGE_GENERATION_SCHEMA = {
     "name": "image_generate",
     "description": IMAGE_GENERATION_DESC,
+    "parameters": ImageBatch.model_json_schema(),
+}
+MEDIA_INSPECT_SCHEMA = {
+    "name": "media_inspect",
+    "description": MEDIA_INSPECT_DESC,
     "parameters": {
         "type": "object",
         "properties": {
-            "prompt": {"type": "string", "description": IMAGE_GENERATION_PARAM_DESCS["prompt"]},
-            "subject": {
+            "media_id": {"type": "string", "description": "media_id returned by a media tool in this conversation."},
+        },
+        "required": ["media_id"],
+        "additionalProperties": False,
+    },
+}
+IMAGE_REGENERATE_SCHEMA = {
+    "name": "image_regenerate",
+    "description": IMAGE_REGENERATE_DESC,
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "media_id": {"type": "string", "description": "The inspected current image version."},
+            "inspection_id": {"type": "string", "description": "The actual media_inspect result identifying defects."},
+            "correction": {
                 "type": "string",
-                "enum": ["self"],
-                "description": IMAGE_GENERATION_PARAM_DESCS["subject"],
-            },
-            "size": {
-                "type": "string",
-                "enum": IMAGE_GENERATION_SIZES,
-                "description": IMAGE_GENERATION_PARAM_DESCS["size"],
-            },
-            "n": {"type": "integer", "description": IMAGE_GENERATION_PARAM_DESCS["n"]},
-            "outfit_override": {
-                "type": "string",
-                "description": IMAGE_GENERATION_PARAM_DESCS["outfit_override"],
+                "description": "Specific corrections to the reported defects, preserving the user's original request.",
             },
         },
-        "required": ["prompt"],
+        "required": ["media_id", "inspection_id", "correction"],
+        "additionalProperties": False,
     },
 }
 
 
 def register(registry) -> None:
-    REGISTRY.register("image_generate", IMAGE_GENERATION_SCHEMA, image_generation_tool)
+    registry.register("image_generate", IMAGE_GENERATION_SCHEMA, image_generation_tool)
+    registry.register("media_inspect", MEDIA_INSPECT_SCHEMA, media_inspect_tool)
+    registry.register("image_regenerate", IMAGE_REGENERATE_SCHEMA, image_regenerate_tool)

@@ -41,6 +41,7 @@ from services.domains.conversation import (
     SPECIAL_KIND,
     UI_ONLY_SUBTYPES,
     InferenceDefaults,
+    companion_context_content,
     conversation_memory_scope,
     load_context_messages,
     resolve_preset_meta,
@@ -206,6 +207,8 @@ def db_message_to_response_items(msg: Message) -> list[dict[str, Any]]:
         return []
 
     content_val: str | list = msg.content or ""
+    if msg.content_type == "companion_reply":
+        content_val = companion_context_content(msg)
     is_multimodal = msg.content_type == "multimodal_v1"
     if is_multimodal:
         parsed = safe_json_loads(content_val if isinstance(content_val, str) else "")

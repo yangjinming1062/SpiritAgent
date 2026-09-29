@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from common import ModelBase
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, func, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, func, text
 from sqlalchemy.orm import Mapped, mapped_column
 
 
@@ -12,6 +12,13 @@ class VideoGenJob(ModelBase):
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    structured_reply: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
+    media_id: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    reply_message_id: Mapped[int | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     provider: Mapped[str] = mapped_column(String(64), default="minimax")
     model: Mapped[str] = mapped_column(String(128))
     prompt: Mapped[str] = mapped_column(Text)

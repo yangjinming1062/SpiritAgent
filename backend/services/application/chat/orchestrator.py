@@ -16,7 +16,14 @@ from modules.system import ChatRequest, PromptPreset
 
 from services.contracts import SceneTurnState
 from services.domains.companion import is_work_preset, list_companion_intents, user_turn_activity
-from services.domains.conversation import DEFAULT_PRESET_ID, IM_KIND, SPECIAL_KIND, conversation_memory_scope
+from services.domains.conversation import (
+    DEFAULT_PRESET_ID,
+    IM_KIND,
+    SPECIAL_KIND,
+    conversation_memory_scope,
+    load_media_turn,
+    refresh_video_media,
+)
 from services.domains.media import inline_video_parts, prune_videos_in_range
 from services.domains.memory import embed_memory_text
 from services.infrastructure.llm import (
@@ -313,10 +320,19 @@ async def _run_chat_turn(
     active_tool_names: set[str] = ({"search_tools", "companion_wait"} & set(schemas_by_name)) | (
         history_unlocked & set(schemas_by_name)
     )
-    # 本轮所有工具批次产出的生成媒体，随终端 assistant 行落库并在 message.complete 下发。
-    turn_media: list[dict[str, str]] = []
     turn_reasoning_parts: list[str] = []
 
+    companion_reply = (
+        conv.kind == SPECIAL_KIND and conv.system_preset_id == DEFAULT_PRESET_ID and not conv.is_automation
+    )
+    complete_response = companion_reply and preset_override is None
+    async with session_scope() as db:
+        media_turn = await load_media_turn(
+            db,
+            conv,
+            structured_reply=complete_response,
+            request=req.message.content or "",
+        )
     dispatch_ctx = _ToolDispatchContext(
         user_id=user_id,
         llm_config=llm_config,
@@ -330,17 +346,16 @@ async def _run_chat_turn(
         headless=headless,
         excluded_tool_names=effective_excluded_tool_names,
         scene_turn=SceneTurnState(),
+        media_turn=media_turn,
     )
 
-    companion_reply = (
-        conv.kind == SPECIAL_KIND and conv.system_preset_id == DEFAULT_PRESET_ID and not conv.is_automation
-    )
     buffer_text = companion_reply or headless or ephemeral or conv.kind == IM_KIND
-    complete_response = companion_reply and preset_override is None
     if buffer_text:
         await emitter.send_json({"type": "message.start"})
     base_instructions = current_context["instructions"]
     while True:
+        async with session_scope() as db:
+            await refresh_video_media(db, media_turn)
         if resolved_preset.id == DEFAULT_PRESET_ID and not conv.is_automation:
             async with session_scope() as db:
                 environment = await build_companion_environment_prompt(db, user_id, language=inputs.language)
@@ -393,6 +408,7 @@ async def _run_chat_turn(
                         voice_id=inputs.speech_voice,
                         allow_silence=ephemeral and headless and complete_response,
                         reply_format_error=reply_format_error,
+                        media_turn=media_turn,
                     )
                 except _IncompleteResponseError as exc:
                     del current_context["input"][input_length:]
@@ -477,7 +493,7 @@ async def _run_chat_turn(
                 track_task,
                 memory_scope=inputs.memory_scope,
                 provider_name=inputs.provider_name,
-                media=turn_media,
+                media=media_turn.text_reply_media() if not complete_response else None,
                 reasoning=llm_result.reasoning,
                 reply=llm_result.reply,
                 turn_reasoning="\n\n".join(turn_reasoning_parts) or None,
@@ -492,20 +508,18 @@ async def _run_chat_turn(
                 active_tool_names.add(name)
         _ensure_tool_call_ids(llm_result.tool_calls_list)
 
-        turn_media.extend(
-            await _persist_assistant_with_tool_calls_and_results(
-                conv,
-                llm_result.tool_calls_list,
-                llm_result.final_prompt_tokens,
-                llm_result.final_completion_tokens,
-                llm_result.turn_duration_ms,
-                dispatch_ctx,
-                current_context,
-                active_tool_names,
-                schemas_by_name,
-                reasoning=llm_result.reasoning,
-                persist=not ephemeral,
-            ),
+        await _persist_assistant_with_tool_calls_and_results(
+            conv,
+            llm_result.tool_calls_list,
+            llm_result.final_prompt_tokens,
+            llm_result.final_completion_tokens,
+            llm_result.turn_duration_ms,
+            dispatch_ctx,
+            current_context,
+            active_tool_names,
+            schemas_by_name,
+            reasoning=llm_result.reasoning,
+            persist=not ephemeral,
         )
         for name in effective_excluded_tool_names:
             schemas_by_name.pop(name, None)

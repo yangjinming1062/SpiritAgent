@@ -24,6 +24,7 @@ RESERVED_KEYS = frozenset(
         "llm_config",
         "user_settings",
         "scene_turn",
+        "media_turn",
         "system_preset_id",
         "scope",
         "memory_scope",

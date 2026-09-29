@@ -85,6 +85,8 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
         ),
         extra_tools=(
             "image_generate",
+            "media_inspect",
+            "image_regenerate",
             "scene_list",
             "scene_get",
             "scene_create",

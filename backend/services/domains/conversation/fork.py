@@ -1,6 +1,6 @@
 """会话派生服务。`special` / `im` 语义上不可分叉，仅 `kind='standard'` 可派生——这是协议约束故抛业务异常，不走 HTTP 边界。"""
 
-from modules.conversation import Conversation, Message
+from modules.conversation import CompanionReply, Conversation, MediaBubble, Message
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -90,6 +90,15 @@ async def fork_conversation_from_message(
     # 统计列清零；tool_calls / media_json / content_type 原样复制以保证工具调用链自洽。
     copies: dict[int, Message] = {}
     for row in rows:
+        copied_reply = row.reply_json
+        if copied_reply:
+            reply = CompanionReply.model_validate_json(copied_reply)
+            for bubble in reply.bubbles:
+                if isinstance(bubble, MediaBubble):
+                    bubble.job_id = None
+                    if bubble.status == "pending":
+                        bubble.status, bubble.url, bubble.error = "failed", None, "生成任务属于原会话"
+            copied_reply = reply.model_dump_json()
         copy = Message(
             conversation_id=new_conv.id,
             role=row.role,
@@ -103,7 +112,7 @@ async def fork_conversation_from_message(
             content_type=row.content_type,
             media_json=row.media_json,
             reasoning_content=row.reasoning_content,
-            reply_json=row.reply_json,
+            reply_json=copied_reply,
             summary_date=row.summary_date,
             created_at=row.created_at,
         )

@@ -14,6 +14,7 @@ import type {
   ChatAttachment,
   ChatMediaItem,
   CompanionBubble,
+  CompanionMediaBubble,
   ReplyAudio,
   SessionMessage,
   SessionRuntimeInfo
@@ -35,7 +36,8 @@ export interface ChatMessageBody {
   /** 完整用户输入；陪伴拆泡与附件展示文案不能用作编辑原文。 */
   editableText?: string
   streamingText?: string
-  replyType?: 'text' | 'voice'
+  replyType?: CompanionBubble['type']
+  replyMedia?: CompanionMediaBubble
   replyIndex?: number
   replyAudio?: ReplyAudio | null
   text: string
@@ -48,6 +50,32 @@ export interface ChatMessageBody {
   cancelled?: boolean
   attachments?: ChatAttachment[]
   media?: ChatMediaItem[]
+}
+
+// 媒体终态可能早于完成帧；保留更新，避免迟到的等待快照把已就绪卡片覆盖回去。
+const mediaUpdates = new Map<string, CompanionMediaBubble>()
+const mediaUpdateKey = (messageId: number, mediaId: string): string => `${messageId}:${mediaId}`
+
+function companionBubbleBody(bubble: CompanionBubble, messageId?: number): Partial<ChatMessageBody> {
+  if (bubble.type === 'image' || bubble.type === 'video') {
+    const current = messageId === undefined ? undefined : mediaUpdates.get(mediaUpdateKey(messageId, bubble.media_id))
+    const media = current ?? bubble
+
+    if (messageId !== undefined && media.status !== 'pending') {
+      mediaUpdates.set(mediaUpdateKey(messageId, media.media_id), media)
+    }
+
+    return {
+      text: '',
+      replyType: media.type,
+      replyMedia: media,
+      media: media.status === 'ready' && media.url ? [{ type: media.type, url: media.url }] : undefined
+    }
+  }
+
+  return 'text' in bubble
+    ? { text: bubble.text, replyType: bubble.type, replyAudio: bubble.type === 'voice' ? bubble.audio : undefined }
+    : {}
 }
 
 const DEFAULT_CONTEXT_LIMIT = 1_000_000
@@ -270,6 +298,7 @@ export function setChatSession(id: string | null): void {
   $turnHadBubbleBreak.set(false)
 
   if ($chatSessionId.get() !== id) {
+    mediaUpdates.clear()
     $chatEditDraft.set(null)
     $sessionSettings.set({})
     resetSessionContextUsage()
@@ -368,7 +397,7 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
     const canSplit = !m.subtype && m.role === 'user' && splitUserBubblesEnabled()
 
     const segments = companionBubbles
-      ? companionBubbles.map(bubble => bubble.text)
+      ? companionBubbles.map(bubble => ('text' in bubble ? bubble.text : ''))
       : canSplit
         ? textContent
             .split(/\r?\n(?:[ \t]*\r?\n)+/)
@@ -396,16 +425,15 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
       bodies[id] = {
         text: segment,
         editableText: m.role === 'user' ? textContent : undefined,
-        replyType: companionBubbles?.[index]?.type,
         replyIndex: companionBubbles ? index : undefined,
-        replyAudio: companionBubbles?.[index]?.type === 'voice' ? companionBubbles[index].audio : undefined,
+        ...(companionBubbles?.[index] ? companionBubbleBody(companionBubbles[index], m.id) : {}),
         reasoning: m.role === 'assistant' && index === 0 ? takeReasoning(reasoningContent || undefined) : undefined,
         toolName: m.tool_name ?? null,
         tools: m.tool_name ? [m.tool_name] : undefined,
         streaming: false,
         queued: m.role === 'user' && m.queued,
         ...(m.role === 'user' && index === 0 ? omitUndefined(extractUserAttachments(m)) : {}),
-        ...(index === segments.length - 1 && m.media?.length ? { media: m.media } : {})
+        ...(!companionBubbles && index === segments.length - 1 && m.media?.length ? { media: m.media } : {})
       }
     }
   }
@@ -1026,14 +1054,19 @@ export function finalizeAssistantMessage(text?: string, media?: ChatMediaItem[],
 export function finalizeCompanionReply(
   bubbles: CompanionBubble[],
   messageId: number,
-  media?: ChatMediaItem[],
   reasoning?: string,
   proactive = false
 ): void {
   const list = $chatMessageList.get()
 
   if (list.some(item => item.backendMessageId === messageId)) {
-    bubbles.forEach((bubble, index) => updateVoiceBubble(messageId, index, bubble))
+    bubbles.forEach((bubble, index) => {
+      if (bubble.type === 'image' || bubble.type === 'video') {
+        updateMediaBubble(messageId, bubble.media_id, bubble)
+      } else {
+        updateVoiceBubble(messageId, index, bubble)
+      }
+    })
 
     return
   }
@@ -1057,14 +1090,12 @@ export function finalizeCompanionReply(
       ...(proactive ? { subtype: 'status_proactive' } : {})
     })
     $chatMessageBodies.setKey(id, {
-      text: bubble.text,
-      replyType: bubble.type,
+      text: '',
+      ...companionBubbleBody(bubble, messageId),
       replyIndex: index,
-      replyAudio: bubble.type === 'voice' ? bubble.audio : undefined,
       streaming: false,
       toolName: null,
-      ...(index === 0 ? { reasoning } : {}),
-      ...(index === bubbles.length - 1 ? { media } : {})
+      ...(index === 0 ? { reasoning } : {})
     })
   })
 
@@ -1076,6 +1107,37 @@ export function finalizeCompanionReply(
 
   if (!proactive) {
     $lastAssistantStreaming.set(false)
+  }
+}
+
+export function updateMediaBubble(messageId: number, mediaId: string, bubble: CompanionMediaBubble): void {
+  if (bubble.media_id !== mediaId) {
+    return
+  }
+
+  const key = mediaUpdateKey(messageId, mediaId)
+  const previous = mediaUpdates.get(key)
+
+  if (previous && previous.status !== 'pending') {
+    return
+  }
+
+  if (bubble.status !== 'pending') {
+    mediaUpdates.set(key, bubble)
+  }
+
+  for (const item of $chatMessageList.get()) {
+    const body = $chatMessageBodies.get()[item.id]
+
+    if (item.backendMessageId !== messageId || body?.replyMedia?.media_id !== mediaId) {
+      continue
+    }
+
+    if (body.replyMedia.status !== 'pending') {
+      continue
+    }
+
+    $chatMessageBodies.setKey(item.id, { ...body, ...companionBubbleBody(bubble, messageId) })
   }
 }
 
@@ -1128,6 +1190,7 @@ export function markAssistantTerminal({ error, cancelled }: { error?: string; ca
 
 // 重置消息列表与 bodies，不触碰 $chatSessionId 与 pending batch。
 export function resetChatMessages(): void {
+  mediaUpdates.clear()
   conversationVoiceSink().cancel()
   $chatEditDraft.set(null)
   $chatMessageList.set([])

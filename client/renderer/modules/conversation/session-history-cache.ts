@@ -256,7 +256,12 @@ export async function syncSessionHistory(params: {
   let invalidation = invalidations.get(params.sessionId)
   const body: { after_id?: number; last_seq?: number } = {}
 
-  if (!invalidation && local?.lastMessageId && local.lastMessageId > 0) {
+  // 离线期间的视频完成事件可能已过重放窗口，增量锚点无法发现原等待卡片的变化。
+  const hasPendingMedia = local?.messages.some(message =>
+    message.bubbles?.some(bubble => bubble.type === 'video' && bubble.status === 'pending')
+  )
+
+  if (!invalidation && !hasPendingMedia && local?.lastMessageId && local.lastMessageId > 0) {
     body.after_id = local.lastMessageId
   }
 
@@ -266,7 +271,7 @@ export async function syncSessionHistory(params: {
 
   let res = await params.request(body)
 
-  // 语音更新会修改旧行，after_id 无法取回；若更新撞上在途快照，重新获取全量。
+  // 语音和媒体更新会修改旧行，after_id 无法取回；若更新撞上在途快照，重新获取全量。
   // 连续更新时保留当前界面并交由调用方重试，不把过期快照水合回去。
   for (let retry = 0; invalidations.get(params.sessionId) !== invalidation; retry++) {
     if (retry >= 2) {

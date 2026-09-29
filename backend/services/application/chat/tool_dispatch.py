@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from components import async_trace_span, redact_sensitive_text, safe_json_loads, tool_error
 
 from services.application.chat import NativeMemory
-from services.contracts import DelegateAction, MemoryScope, SceneTurnState
+from services.contracts import DelegateAction, MediaTurnState, MemoryScope, SceneTurnState
 from services.infrastructure.desktop import MANAGER, create_future, discard_call, wait_future
 from services.infrastructure.tool_runtime import (
     REGISTRY,
@@ -41,6 +41,7 @@ class _ToolDispatchContext:
     guardrails: ToolCallGuardrailController
     emitter: Emitter
     delegate_executor: DelegateExecutor
+    media_turn: MediaTurnState | None = None
     headless: bool = False
     excluded_tool_names: frozenset[str] = frozenset()
     scene_turn: SceneTurnState = field(default_factory=SceneTurnState)
@@ -164,6 +165,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
                         parent_session_id=ctx.session_id,
                         emitter=ctx.emitter,
                         scene_turn=ctx.scene_turn,
+                        media_turn=ctx.media_turn,
                     )
                     result_str = (
                         await ctx.delegate_executor(result, ctx.user_id, ctx.llm_config)

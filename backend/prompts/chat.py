@@ -345,7 +345,7 @@ COMPANION_REPLY_GUIDANCES: dict[str, str] = {
         "保留在同一个 text 中。"
         "text 放对话或用户要求的交付内容，不放控制标记或发送通知。\n"
         "{delivery}\n"
-        "每轮最多 16 个气泡，回应用户时至少一个。"
+        "回应用户时至少一个气泡。"
         "需要工具时正常调用工具，此 JSON 格式只用于最终回复。"
         "上述纯文本展示和正文规则约束的是 text 字段，不能省略外层 JSON；即使只有一句话或用户要求只给正文，也把内容放进气泡。\n"
     ),
@@ -362,7 +362,7 @@ COMPANION_REPLY_GUIDANCES: dict[str, str] = {
         "inside that object's text field. "
         "Text contains dialogue or the requested deliverable, without control markers or delivery notices.\n"
         "{delivery}\n"
-        "Use at most 16 bubbles, at least one when answering the user. "
+        "Use at least one bubble when answering the user. "
         "Call tools normally when needed; this JSON format applies only to the final reply. "
         "The plain-text display and content rules above apply inside text fields; they never remove the outer "
         "JSON array. Even a one-line answer or a request for only the content must be delivered inside a bubble.\n"
@@ -370,13 +370,13 @@ COMPANION_REPLY_GUIDANCES: dict[str, str] = {
 }
 
 COMPANION_TEXT_REPLY_GUIDANCES: dict[str, str] = {
-    "zh": '每个气泡对象只包含 "type":"text" 和 "text" 两个字段，text 每泡最多 16000 字符。',
-    "en": 'Each bubble object contains exactly "type":"text" and "text". Each text field allows at most 16000 characters.',
+    "zh": '台词使用文字气泡，只包含 "type":"text" 和 "text" 两个字段，每泡最多 16000 字符。',
+    "en": 'Deliver dialogue in text bubbles containing exactly "type":"text" and "text", at most 16000 characters each.',
 }
 
 COMPANION_VOICE_REPLY_GUIDANCES: dict[str, str] = {
     "zh": (
-        "根据当前对话、用户本轮要求和偏好，为每个气泡选择文字或语音，同轮可以混合。"
+        "根据当前对话、用户本轮要求和偏好，为有台词的气泡选择文字或语音，同轮可以混合。"
         "偏好只是倾向：便于阅读、查找和复制的内容适合文字；声音能更好传达语气或情感时适合语音。\n"
         '文字气泡：{"type":"text","text":"台词"}；'
         '语音气泡：{"type":"voice","text":"朗读台词","speech":{演绎参数}}。'
@@ -388,7 +388,7 @@ COMPANION_VOICE_REPLY_GUIDANCES: dict[str, str] = {
         "本轮用户偏好：{preference}。"
     ),
     "en": (
-        "Choose text or voice for each bubble using the conversation, the user's current request and their preference; "
+        "Choose text or voice for dialogue bubbles using the conversation, the user's current request and their preference; "
         "you may mix both. Treat the preference as a tendency: text suits reading, lookup and copying; voice suits "
         "expressions whose tone or emotion benefits from being heard.\n"
         'Text: {"type":"text","text":"dialogue"}. '
@@ -399,6 +399,28 @@ COMPANION_VOICE_REPLY_GUIDANCES: dict[str, str] = {
         "Choosing voice does not establish delivery or playback.\n"
         "Each text bubble allows 16000 characters, each voice bubble 4000. "
         "User preference for this turn: {preference}."
+    ),
+}
+
+COMPANION_MEDIA_REPLY_GUIDANCES: dict[str, str] = {
+    "zh": (
+        "\n图片和视频也是独立气泡，按你要发送的顺序与台词气泡混排："
+        '{"type":"image","media_id":"工具返回的标识"} 或 '
+        '{"type":"video","media_id":"工具返回的标识"}。'
+        "媒体气泡只有 type 和 media_id，不填写 text、speech、URL 或状态。"
+        "可以只发送媒体。标识必须来自 available_media，类型必须一致；图片只引用 ready 产物，同一 goal_id 只选一个版本。"
+        "required_media_goals 中每个目标都需选一个气泡，pending 视频会先显示生成中的卡片并在完成后原位更新。"
+        "already_delivered 的 pending 视频已有等待卡片，只查询进度，不重复发送。"
+        "媒体状态由工具决定，pending 不代表已生成成功；最终气泡只交付已有产物，不触发重新生成。"
+    ),
+    "en": (
+        "\nImages and videos are separate bubbles, interleaved with dialogue bubbles in delivery order: "
+        '{"type":"image","media_id":"tool-issued ID"} or {"type":"video","media_id":"tool-issued ID"}. '
+        "Only type and media_id belong in media bubbles; no text, speech, URL or status. Media-only replies are valid. "
+        "Use matching IDs and types from available_media; images must be ready. Select one version per goal_id. Include every "
+        "required_media_goals entry. Pending videos display a waiting card and update in place; pending is not "
+        "generation success. Already-delivered pending videos have an existing card: query progress without sending another. "
+        "Final media bubbles reference existing outputs and never generate them again."
     ),
 }
 
@@ -625,8 +647,8 @@ SESSION_SEARCH_GUIDANCES: dict[str, str] = {
 MEDIA_GUIDANCES: dict[str, str] = {
     "zh": (
         "# 媒体生成与交付\n"
-        "若尚未解锁媒体工具，先调用 `search_tools(query='media')`。"
-        "你生成的图片与视频会自动以预览卡片形式随回复一起交给用户——"
+        "若尚未解锁媒体工具，先调用 `search_tools(query='media')`。图片用 image_generate 的 requests 一次提交本轮完整清单；每项的 subject、造型与数量分别设置。成功后通过 media_id 引用产物；只有 media_inspect 实际发现问题时，才用 image_regenerate 重做一次，不能换个描述再次初次生成。"
+        "按本轮回复协议交付工具返回的图片与视频；采用气泡数组时用媒体气泡安排顺序，文本渠道由系统附加预览卡片——"
         "不要在文本里粘贴原始媒体 URL 或 Markdown 图片语法；改为简要描述结果。\n"
         "普通媒体生成只产生对话附件，不会改变当前形象、穿着或场景。"
         "仅在工具确认成功且产物可用时称为完成；"
@@ -634,9 +656,9 @@ MEDIA_GUIDANCES: dict[str, str] = {
     ),
     "en": (
         "# Media Generation & Delivery\n"
-        "If media tools are not yet unlocked, call `search_tools(query='media')` first. "
-        "Images and videos you generate are delivered to the user automatically as preview "
-        "cards attached to your reply — do NOT paste raw media URLs or markdown image "
+        "If media tools are not yet unlocked, call `search_tools(query='media')` first. Submit the complete initial image batch in image_generate.requests, with each item's subject, styling and count. Refer to results by media_id; only an actual media_inspect finding permits one image_regenerate, not another initial batch. "
+        "Deliver generated media using this turn's reply protocol: media bubbles determine order in structured replies; text channels attach preview "
+        "cards to your reply — do NOT paste raw media URLs or markdown image "
         "syntax into your text; describe the result briefly instead.\n"
         "Ordinary media generation creates conversation attachments; it does not change the current avatar, "
         "outfit, or scene. "

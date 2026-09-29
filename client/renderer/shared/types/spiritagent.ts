@@ -57,7 +57,17 @@ export interface ReplyAudio {
   url: string
   duration: number
 }
-export type CompanionBubble = { type: 'text'; text: string } | { type: 'voice'; text: string; audio: ReplyAudio | null }
+export interface CompanionMediaBubble {
+  type: 'image' | 'video'
+  media_id: string
+  status: 'pending' | 'ready' | 'failed' | 'result_unknown'
+  url: string | null
+  error: string | null
+}
+export type CompanionBubble =
+  | { type: 'text'; text: string }
+  | { type: 'voice'; text: string; audio: ReplyAudio | null }
+  | CompanionMediaBubble
 
 interface SessionMessageFields {
   content: unknown

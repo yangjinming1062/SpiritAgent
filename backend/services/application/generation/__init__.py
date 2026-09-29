@@ -34,6 +34,7 @@ from .avatar_service import (
 )
 from .character_card import drain_character_extractions, resume_character_extractions, schedule_character_extraction
 from .character_images import generate_character_images
+from .chat_images import ImageBatch, generate_chat_images, inspect_chat_image, regenerate_chat_image
 from .identity_review import (
     review_character_frames,
     score_character_frames,
@@ -143,6 +144,10 @@ from .visual_identity import (
 )
 
 __all__ = [
+    "ImageBatch",
+    "generate_chat_images",
+    "inspect_chat_image",
+    "regenerate_chat_image",
     "build_self_image_prompt",
     "SceneError",
     "SceneLockedError",

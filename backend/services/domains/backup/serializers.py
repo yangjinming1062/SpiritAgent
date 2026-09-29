@@ -32,7 +32,7 @@ from modules.companion import (
     SceneDescriptionRequest,
     companion_cron_source_key,
 )
-from modules.conversation import CompanionReply, Conversation, Message
+from modules.conversation import CompanionReply, Conversation, MediaBubble, Message
 from modules.memory import MEMORY_EMBEDDING_DIM, Memory
 from modules.scheduler import CronJob
 from modules.settings import UserSetting
@@ -373,7 +373,15 @@ def _build_payload(
         payload["source_kind"] = "import"
         payload["source_refs"] = {"imported_memory_id": raw["id"], "original_source": payload["source_refs"]}
     if table == "messages" and payload.get("reply_json"):
+        if payload.get("media_json"):
+            raise ValueError("Structured replies cannot contain separate media attachments")
         reply = CompanionReply.model_validate_json(payload["reply_json"])
+        for bubble in reply.bubbles:
+            if isinstance(bubble, MediaBubble):
+                bubble.job_id = None
+                if bubble.status == "pending":
+                    bubble.status, bubble.url, bubble.error = "failed", None, "恢复的生成任务不可继续，请重新提出请求"
+        reply.validate_content(payload.get("content") or "")
         payload["reply_json"] = reply.model_dump_json()
     if table == "companion_scenes":
         if payload.get("status") == "ready":

@@ -65,6 +65,7 @@ Backend 事件统一使用 `method=event`，`type`、`payload`、`seq` 位于 `p
 | `message.start/delta/break/complete` | 开始、正文、分气泡和完成；完成帧补元数据，不重复追加全文 |
 | `message.persisted` | 将服务端用户消息 ID 绑定到活路径气泡；助手 ID 随完成帧返回 |
 | `message.voice` | 更新已保存语音气泡的音频，并使对应历史快照失效 |
+| `message.media` | 按消息 ID、媒体标识更新原位视频气泡，并使对应历史快照失效 |
 | `message.reasoning.delta` | 独立推理展示，不进入正文或下一轮模型输入 |
 | `message.edited/deleted`、`command.result`、`compress.completed` | 按各自契约替换历史、插入状态或更新消息，不统一当普通气泡追加 |
 | `tool.start/complete`、`error` | 按会话路由的过程与错误 |
@@ -107,18 +108,28 @@ flowchart TD
 
 ### 结构化回复与终端交付
 
-陪伴回复采用[结构化气泡](../backend/modules/conversation/replies.py)，模型最终输出顶层 JSON 数组，每个对象是一条独立发送的消息（一个气泡）。日常聊天中，回应后另起的补充或追问使用新对象，连贯多句可留在同一对象；故事、列表、代码等单条交付内容的段落也留在该对象。空行本身不作为切分依据，历史回灌保留数组边界。由模型逐泡选择文字或语音；仅语音携带 `speech` 演绎，按实际 MiMo / MiniMax 能力校验。`companion.response_preference` 保存偏好，`prompt.submit.response_preference` 携带本轮快照；客户端不据此转换消息或自动播放。
+陪伴回复采用[结构化气泡](../backend/modules/conversation/replies.py)，模型最终输出顶层 JSON 数组，每个对象是一个气泡。日常聊天中，回应后另起的补充或追问使用新对象，连贯多句可留在同一对象；故事、列表、代码等单条交付内容的段落也留在该对象。空行本身不作为切分依据，历史回灌保留数组边界。由模型逐泡选择 `text / voice / image / video` 并排列顺序，纯媒体回复有效，不设气泡数量上限；仅语音携带 `speech` 演绎，按实际 MiMo / MiniMax 能力校验。`companion.response_preference` 保存偏好，`prompt.submit.response_preference` 携带本轮快照；客户端不据此转换消息或自动播放。
 
 | 消费方 | 回复内容 |
 |---|---|
-| 数据库 | `content_type=companion_reply` 标识结构化回复；`content` 原样保存模型输出的气泡 JSON 数组；`reply_json` 保存同组气泡的演绎、语音绑定与音频 |
-| 对话上下文 | 回灌 `content` 中的气泡数组（类型、台词与语音演绎），排除供应商绑定、音频路径和时长 |
-| 客户端 | 历史携 `content_type`，结构化回复下发逐泡视图，只含类型、台词与音频地址和真实时长；逐对象显示为一条消息，不解释演绎 |
-| 内容消费 | 记忆、摘要、标题与心情逐泡读取台词，保留数组边界；`text` 正文保持文字语义，不按 JSON 外形推断气泡或附件 |
+| 数据库 | `content_type=companion_reply` 标识结构化回复；`content` 原样保存模型输出的数组；`reply_json` 保存同组气泡的演绎、语音绑定、音频及服务端绑定的媒体资产与真实状态；整轮为同一条 `Message`，媒体不重复写入 `media_json` |
+| 对话上下文 | 回灌 `content` 中的气泡数组，补入媒体真实状态，排除供应商绑定、资产路径和时长 |
+| 客户端 | 历史与实时下发同序逐泡视图；文字／语音保留台词与音频，媒体携标识、状态及服务端资产地址；不解释演绎 |
+| 内容消费 | 记忆、摘要、标题与心情逐泡读取台词和媒体真实状态，未完成媒体不能总结为已发送成功；TTS 只读取语音台词，搜索只匹配台词；`text` 正文不按 JSON 外形推断气泡或附件 |
 
 陪伴回合非流式取得最终回复，确认无工具调用后校验格式；格式错误、取消或异常不交付未确认正文。每回合至多保存一条可见终端消息，工具中间行只保留调用结构。工作台、IM 与自动化继续使用各自文本契约。
 
-缓冲回合只发一次 `message.start`；`message.complete.bubbles` 替换等待气泡，历史使用相同视图。客户端按消息 ID 与气泡索引去重，媒体挂末泡；用量使用终端值，不累加工具循环各轮计数。
+缓冲回合只发一次 `message.start`；`message.complete.bubbles` 替换等待气泡，历史使用相同视图。客户端按消息 ID 与气泡索引去重，媒体在自身位置渲染；用量使用终端值，不累加工具循环各轮计数。
+
+### 媒体引用、验图与原位交付
+
+模型只输出 `{type: "image" | "video", media_id: "工具产物标识"}`。执行层生成标识，校验当前用户、会话内已知工具产物、类型及就绪文件；视频可引用已受理任务。未知标识、类型错误、重复引用、遗漏本轮成功图片或已受理视频均进入一次格式恢复，恢复不执行工具。模型不能填写 URL、路径或状态。
+
+`image_generate.requests` 一次提交本轮完整清单，每项指定内容、生成参数和数量；初次生成合计最多 16 张，这是生成预算，不限制回复气泡数。派发前登记整批目标；清单受理后再次调用只返回已有状态，改变 prompt 或 call ID 不重新生成。`media_inspect(media_id)` 读取真实图片，检查原请求并复用身份评分，返回绑定具体版本的检查标识与问题。`image_regenerate(media_id, inspection_id, correction)` 只接受当前版本的有效问题检查，每目标最多重做一次。原图保留，修订版本有新标识但属于同一目标，最终只交付一个版本；文本渠道附加最新成功版本，重做失败保留原图。图片失败不能作为就绪产物发送，结果未知不重复提交。代码入口见 [chat_images.py](../backend/services/application/generation/chat_images.py)。
+
+视频每回合最多受理一个初次请求，已有 pending 任务只能查询。生活空间通过媒体气泡交付等待卡片，其他气泡正常发送。任务绑定消息与媒体标识，终态以 `message.media` 携 `message_id / media_id / bubble_index / bubble` 更新原卡片。落库与后台完成通过任务行锁协调；先完成后绑定读取真实终态，消息删除后不补建。重复更新幂等，终态不回退；缓存与重连恢复见 [Client](../client/README.md#历史同步)。其他文本会话使用附件及后台媒体送达机制。
+
+备份收集嵌套媒体资产并重写恢复后的用户路径；恢复与派生会话解除任务绑定，未完成视频标记为失败，不声称恢复了生成任务。图片原版与修订资产保留；未采纳质量候选仍按各生成链清理。
 
 ### 语音保存与重试
 

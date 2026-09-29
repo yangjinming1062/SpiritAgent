@@ -50,6 +50,7 @@
 
 - [夜间能力目录](../services/application/nightly/nightly_planning.py)——描述与参数选项随能力可用性装配，字段说明包含类型、用途及必要的可选性、长度和取值约束；说明供规划模型阅读，实际校验由参数模型与执行器负责。动作预算从执行端常量传入 `plan_limits`；检查规划提示词时同时核对目录、互斥组和参考图能力。
 - [语音气泡演绎能力](../services/infrastructure/llm/providers/speech_style.py)——按实际供应商、模型与音色装配能力和 JSON 示例，附加到陪伴终端请求；检查正文规则时一并核对。
+- [媒体气泡](../services/application/chat/streaming.py)——`chat.py::COMPANION_MEDIA_REPLY_GUIDANCES` 与可信产物清单装配到正常和恢复请求；`tools.py` 的批次生成、验图与重做说明对应 [chat_images.py](../services/application/generation/chat_images.py)。
 - [时间与共享块装配](../services/application/chat/prompt_blocks.py)——工具开关与实际解锁集合决定能力描述，时间资料只表达经过时间，不推断用户经历。
 - [陪伴小推理资料](../services/domains/companion/prompt_runtime.py)——心情、空闲表达、空间行为与片刻使用人设和相关记忆，不附加完整视觉形象资料；近期对话保留原始角色、时间和截断标记，旧请求不自动成为当前触发条件。
 - 音色设计说明：[MiniMax](../services/infrastructure/llm/providers/minimax/tts.py)、[MiMo](../services/infrastructure/llm/providers/mimo/tts.py) 等各供应商 TTS 模块的 `VOICE_DESIGN_GUIDE`——供应商支持的描述维度，供用户创建音色；不能混入逐条语音的正文。

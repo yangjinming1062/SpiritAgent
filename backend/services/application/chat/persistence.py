@@ -13,7 +13,7 @@ from components import (
     session_scope,
     track_user_task,
 )
-from modules.conversation import CompanionReply, Conversation, Message
+from modules.conversation import CompanionReply, Conversation, MediaBubble, Message
 from modules.system import ChatRequest
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,6 +23,7 @@ from services.domains.companion import update_mood_from_companion_turn
 from services.domains.conversation import (
     DEFAULT_PRESET_ID,
     SPECIAL_KIND,
+    bind_reply_videos,
     client_media_entries,
     client_reply_bubbles,
     synthesize_reply_audio,
@@ -42,7 +43,6 @@ logger = get_logger(__name__)
 # track_task=None 路径的兜底：模块级强引用集合，防止 CPython GC 在 await 期间销毁进行中的 task。
 # 与 scheduler/cron.py 的 _BG 同模式（TaskBag 在 components/background.py）。
 _BG = TaskBag("chat.persistence")
-_MEDIA_TOOL_NAMES = frozenset({"image_generate", "video_generate"})
 
 
 def _on_bg_error(task: asyncio.Task) -> None:
@@ -61,24 +61,6 @@ def _coerce_tool_result_content(content: Any) -> str:
     if isinstance(content, str):
         return content
     return json.dumps(content, ensure_ascii=False, default=str)
-
-
-def extract_turn_media(tool_results: list[dict]) -> list[dict[str, str]]:
-    """从工具结果中提取可送达渲染端的生成媒体；pending 与失败结果跳过。"""
-    media: list[dict[str, str]] = []
-    for res in tool_results:
-        if res.get("name") not in _MEDIA_TOOL_NAMES:
-            continue
-        parsed = safe_json_loads(res.get("content", ""), default=None)
-        if not isinstance(parsed, dict) or not parsed.get("success"):
-            continue
-        if res.get("name") == "image_generate":
-            urls = parsed.get("urls")
-            if isinstance(urls, list):
-                media.extend({"type": "image", "url": url} for url in urls if isinstance(url, str) and url)
-        elif isinstance(parsed.get("url"), str) and parsed["url"]:
-            media.append({"type": "video", "url": parsed["url"]})
-    return media
 
 
 def _build_persisted_content_from_parts(text: str, attachments: list[dict] | None) -> tuple[str, str]:
@@ -193,7 +175,6 @@ async def _persist_assistant_no_tool_turn(
     """保存终端答复与媒体，交付气泡，并调度可选的回合后任务。"""
     if reply is not None:
         reply.validate_content(turn_content)
-    assistant_response = [bubble.text for bubble in reply.bubbles] if reply is not None else turn_content
     assistant_message_id: int | None = None
     if persist and (turn_content or media or reasoning):
         async with session_scope() as db:
@@ -202,7 +183,7 @@ async def _persist_assistant_no_tool_turn(
                 role="assistant",
                 content=turn_content or None,
                 content_type="companion_reply" if reply is not None else "text",
-                media_json=json.dumps(media, ensure_ascii=False) if media else None,
+                media_json=json.dumps(media, ensure_ascii=False) if media and reply is None else None,
                 reasoning_content=reasoning or None,
                 reply_json=reply.model_dump_json() if reply else None,
                 prompt_tokens=final_prompt_tokens,
@@ -210,10 +191,23 @@ async def _persist_assistant_no_tool_turn(
                 turn_duration_ms=turn_duration_ms,
             )
             db.add(row)
+            await db.flush()
+            if reply is not None:
+                await bind_reply_videos(db, row, reply, user_id)
             await db.commit()
             assistant_message_id = row.id
     if reply and assistant_message_id is not None:
         reply = await synthesize_reply_audio(user_id, assistant_message_id)
+    assistant_response = (
+        [
+            json.dumps(bubble.model_dump(include={"type", "media_id", "status"}), ensure_ascii=False)
+            if isinstance(bubble, MediaBubble)
+            else bubble.text
+            for bubble in reply.bubbles
+        ]
+        if reply is not None
+        else turn_content
+    )
     if persist and conv.title == "New Conversation" and first_user_msg_content and turn_content:
         title_temp = parse_temperature(
             effective_settings.get("chat.title_generation_temperature"),
@@ -265,7 +259,7 @@ async def _persist_assistant_no_tool_turn(
             **({"bubbles": client_reply_bubbles(reply)} if reply else {}),
             **({"reply": reply.model_dump(mode="json"), "content": turn_content} if reply and not persist else {}),
             **({"reasoning": displayed_reasoning} if displayed_reasoning else {}),
-            **({"media": client_media_entries(media)} if media else {}),
+            **({"media": client_media_entries(media)} if media and reply is None else {}),
             **({"usage": final_usage_payload} if final_usage_payload else {}),
             **({"message_id": assistant_message_id} if isinstance(assistant_message_id, int) else {}),
         },
@@ -283,7 +277,7 @@ async def _persist_assistant_no_tool_turn(
             update_mood_from_companion_turn(
                 user_id,
                 req.message.content or "",
-                [bubble.text for bubble in reply.bubbles],
+                assistant_response,
                 llm_config,
             ),
         )
@@ -306,8 +300,8 @@ async def _persist_assistant_with_tool_calls_and_results(
     *,
     reasoning: str | None = None,
     persist: bool = True,
-) -> list[dict[str, str]]:
-    """持久化含 tool_calls 的 assistant Message、跑工具批处理，并同步更新 Responses 输入轨迹；返回本轮生成的可送达媒体。"""
+) -> None:
+    """持久化工具调用与结果、同步 Responses 输入；媒体产物由回合状态统一管理。"""
     context["input"].extend(tool_calls_list)
     if persist:
         async with session_scope() as db:
@@ -384,4 +378,3 @@ async def _persist_assistant_with_tool_calls_and_results(
                     ),
                 )
             await db.commit()
-    return extract_turn_media(tool_results)

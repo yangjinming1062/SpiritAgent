@@ -47,6 +47,7 @@ export {
   setTurnHadBubbleBreak,
   showMediaHint,
   submitPendingBatch,
+  updateMediaBubble,
   updateVoiceBubble
 } from './chat-store'
 export { type ChatSubmitState, ConversationInput, type ConversationInputProps } from './conversation-input'

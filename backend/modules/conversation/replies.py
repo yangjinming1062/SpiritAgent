@@ -1,6 +1,6 @@
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, RootModel
+from pydantic import BaseModel, ConfigDict, Field, RootModel, model_validator
 
 from modules.media import SPEECH_STYLE_ADAPTER, SpeechCue, SpeechDirection, SpeechPause, SpeechStyle
 
@@ -31,10 +31,32 @@ class VoiceBubbleInput(BaseModel):
     speech: SpeechPerformance
 
 
+class MediaBubbleInput(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    type: Literal["image", "video"]
+    media_id: str = Field(min_length=1, max_length=128)
+
+
+class MediaBubble(MediaBubbleInput):
+    status: Literal["pending", "ready", "failed", "result_unknown"]
+    url: str | None = Field(default=None, pattern=r"^companion-assets/\d+/[A-Za-z0-9._-]+$")
+    error: str | None = None
+    # 服务端绑定信息不下发模型，也不由客户端决定归属。
+    goal_id: str = Field(min_length=1, max_length=128)
+    job_id: int | None = Field(default=None, gt=0)
+
+    @model_validator(mode="after")
+    def validate_asset_state(self) -> "MediaBubble":
+        if (self.status == "ready") != bool(self.url):
+            raise ValueError("Ready media requires an asset; unfinished media cannot bind one")
+        if self.type == "image" and self.job_id is not None:
+            raise ValueError("Images cannot bind a video task")
+        return self
+
+
 class CompanionReplyInput(RootModel):
-    root: list[Annotated[TextBubble | VoiceBubbleInput, Field(discriminator="type")]] = Field(
-        max_length=16,
-    )
+    root: list[Annotated[TextBubble | VoiceBubbleInput | MediaBubbleInput, Field(discriminator="type")]]
 
 
 class ReplyAudio(BaseModel):
@@ -66,9 +88,8 @@ class VoiceBubble(BaseModel):
 class CompanionReply(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    bubbles: list[Annotated[TextBubble | VoiceBubble, Field(discriminator="type")]] = Field(
+    bubbles: list[Annotated[TextBubble | VoiceBubble | MediaBubble, Field(discriminator="type")]] = Field(
         min_length=1,
-        max_length=16,
     )
 
     def validate_content(self, content: str) -> None:
@@ -77,6 +98,15 @@ class CompanionReply(BaseModel):
         if len(source.root) != len(self.bubbles):
             raise ValueError("Reply content and delivery bubbles differ")
         for raw, delivered in zip(source.root, self.bubbles, strict=True):
+            if isinstance(raw, MediaBubbleInput):
+                if not isinstance(delivered, MediaBubble) or (raw.type, raw.media_id) != (
+                    delivered.type,
+                    delivered.media_id,
+                ):
+                    raise ValueError("Reply content and delivery media differ")
+                continue
+            if isinstance(delivered, MediaBubble):
+                raise ValueError("Reply content and delivery bubble types differ")
             if raw.type != delivered.type or raw.text != delivered.text:
                 raise ValueError("Reply content and delivery dialogue differ")
             if isinstance(raw, VoiceBubbleInput) and isinstance(delivered, VoiceBubble):

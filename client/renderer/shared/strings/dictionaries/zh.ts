@@ -651,6 +651,9 @@ export const dict = {
     sendFailed: '发送失败',
 
     media: {
+      generating: '视频生成中…',
+      generationFailed: '生成失败',
+      resultUnknown: '生成结果尚未确认',
       imageLoading: '图片加载中…',
       reviewHint: '角色外形需要你核对。此媒体目前仅供预览。',
       reviewAccept: '确认形象并采纳',

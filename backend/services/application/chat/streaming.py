@@ -10,6 +10,7 @@ from typing import Any, Literal
 from components import DEFAULT_LANGUAGE, TOOL_CALL_ID_HEX_PREFIX_LEN, get_logger, new_request_id, resolve_prompt_text
 from modules.conversation import CompanionReply
 from prompts.chat import (
+    COMPANION_MEDIA_REPLY_GUIDANCES,
     COMPANION_REPLY_GUIDANCES,
     COMPANION_REPLY_REPAIR_GUIDANCES,
     COMPANION_TEXT_REPLY_GUIDANCES,
@@ -17,6 +18,7 @@ from prompts.chat import (
 )
 from pydantic import ValidationError
 
+from services.contracts import MediaTurnState
 from services.infrastructure.llm import (
     FailoverReason,
     LLMRuntimeError,
@@ -161,6 +163,7 @@ async def _generate_llm_response(
     voice_id: str = "",
     allow_silence: bool = False,
     reply_format_error: _InvalidCompanionReplyError | None = None,
+    media_turn: MediaTurnState | None = None,
 ) -> _LLMTurnResult:
     """单次 LLM 调用与正文交付；流式首事件或完整响应到达时触发回退哨兵，工具轮正文只在 stream 模式实时显示。"""
     client = provider.raw_client()
@@ -185,6 +188,24 @@ async def _generate_llm_response(
             "{delivery}",
             delivery_guidance,
         )
+        if media_turn is not None:
+            reply_guidance += resolve_prompt_text(COMPANION_MEDIA_REPLY_GUIDANCES, lang)
+            reply_guidance += "\n" + json.dumps(
+                {
+                    "available_media": [
+                        {
+                            "media_id": a.media_id,
+                            "type": a.type,
+                            "goal_id": a.goal_id,
+                            "status": a.status,
+                            "already_delivered": a.bound_message_id is not None,
+                        }
+                        for a in media_turn.artifacts.values()
+                    ],
+                    "required_media_goals": sorted(media_turn.required_goals),
+                },
+                ensure_ascii=False,
+            )
         if speech_config:
             reply_guidance += speech_style_guidance(speech_config.provider_name, speech_config.model)
         if reply_format_error is not None:
@@ -406,6 +427,7 @@ async def _generate_llm_response(
                     voice_id=voice_id,
                     language=lang,
                     allow_silence=allow_silence,
+                    media_turn=media_turn,
                 )
             except ValueError as exc:
                 raise invalid_reply(exc, text) from exc

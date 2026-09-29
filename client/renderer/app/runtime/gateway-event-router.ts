@@ -69,6 +69,8 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'message.voice':
 
+    case 'message.media':
+
     case 'message.deleted':
 
     case 'message.edited':

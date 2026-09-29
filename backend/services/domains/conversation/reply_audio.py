@@ -4,10 +4,10 @@ import math
 from weakref import WeakValueDictionary
 
 from components import get_logger, session_scope
-from modules.conversation import CompanionReply, Conversation, Message, ReplyAudio, VoiceBubble
+from modules.conversation import CompanionReply, Conversation, MediaBubble, Message, ReplyAudio, VoiceBubble
 from modules.ws import emit_ws_event
 from mutagen import File as AudioFile
-from sqlalchemy import select, update
+from sqlalchemy import select
 
 from services.infrastructure.assets import asset_store, client_asset_url, save_companion_asset_async
 from services.infrastructure.llm import synthesize_speech
@@ -19,6 +19,17 @@ _locks: WeakValueDictionary[tuple[int, int], asyncio.Lock] = WeakValueDictionary
 def client_reply_bubbles(reply: CompanionReply) -> list[dict]:
     result: list[dict] = []
     for bubble in reply.bubbles:
+        if isinstance(bubble, MediaBubble):
+            result.append(
+                {
+                    "type": bubble.type,
+                    "media_id": bubble.media_id,
+                    "status": bubble.status,
+                    "url": client_asset_url(bubble.url) if bubble.url else None,
+                    "error": bubble.error,
+                },
+            )
+            continue
         item: dict = {"type": bubble.type, "text": bubble.text}
         if bubble.type == "voice":
             item["audio"] = (
@@ -84,7 +95,7 @@ async def synthesize_reply_audio(
     *,
     bubble_index: int | None = None,
 ) -> CompanionReply:
-    """按消息串行合成；成功音频幂等复用，短事务 CAS 防止删除或恢复后的迟到覆盖。"""
+    """按消息串行合成；短事务核对语音语义并合并最新媒体状态，防止迟到覆盖。"""
     key = (user_id, message_id)
     lock = _locks.setdefault(key, asyncio.Lock())
     async with asyncio.timeout(30):
@@ -101,9 +112,9 @@ async def synthesize_reply_audio(
             )
             if row is None or not row.reply_json:
                 raise LookupError("Reply not found")
-            original = row.reply_json
+            original_content = row.content
             session_id = str(row.conversation_id)
-            reply = CompanionReply.model_validate_json(original)
+            reply = CompanionReply.model_validate_json(row.reply_json)
             reply.validate_content(row.content or "")
         if bubble_index is not None and (
             not 0 <= bubble_index < len(reply.bubbles) or reply.bubbles[bubble_index].type != "voice"
@@ -123,20 +134,25 @@ async def synthesize_reply_audio(
             try:
                 bubble.audio = await _synthesize_bubble(user_id, bubble, deadline)
                 path = bubble.audio.url
-                updated = reply.model_dump_json()
                 async with session_scope() as db:
-                    changed = await db.scalar(
-                        update(Message)
+                    current = await db.scalar(
+                        select(Message)
                         .where(
                             Message.id == message_id,
-                            Message.reply_json == original,
                             Message.conversation.has(Conversation.user_id == user_id),
                         )
-                        .values(reply_json=updated)
-                        .returning(Message.id),
+                        .with_for_update(),
                     )
-                    if changed is None:
+                    if current is None or current.content != original_content or current.reply_json is None:
                         raise LookupError("Reply changed during synthesis")
+                    latest = CompanionReply.model_validate_json(current.reply_json)
+                    if index >= len(latest.bubbles) or latest.bubbles[index].model_dump(
+                        exclude={"audio"},
+                    ) != bubble.model_dump(exclude={"audio"}):
+                        raise LookupError("Voice bubble changed during synthesis")
+                    latest.bubbles[index] = bubble
+                    reply = latest
+                    current.reply_json = reply.model_dump_json()
                     emit_ws_event(
                         db,
                         user_id=user_id,
@@ -156,7 +172,6 @@ async def synthesize_reply_audio(
                         committed = True
                         raise
                     committed = True
-                    original = updated
             except LookupError:
                 raise
             except Exception:

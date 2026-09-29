@@ -1,7 +1,7 @@
 import json
 
 from components import safe_json_loads
-from modules.conversation import CompanionReplyInput, Message
+from modules.conversation import CompanionReply, CompanionReplyInput, MediaBubble, MediaBubbleInput, Message
 from sqlalchemy import ColumnElement, case, cast, column, func, select
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -24,6 +24,21 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
     )
 
 
+def companion_context_content(message: Message, *, dialogue_only: bool = False) -> str:
+    source = CompanionReplyInput.model_validate_json(message.content or "")
+    delivery = CompanionReply.model_validate_json(message.reply_json or "")
+    media = {b.media_id: b for b in delivery.bubbles if isinstance(b, MediaBubble)}
+    content = []
+    for bubble in source.root:
+        if isinstance(bubble, MediaBubbleInput):
+            item = bubble.model_dump()
+            item["status"] = media[bubble.media_id].status
+            content.append(item)
+        else:
+            content.append(bubble.model_dump(include={"type", "text"} if dialogue_only else None))
+    return json.dumps(content, ensure_ascii=False)
+
+
 def message_text(m: Message) -> str:
     """提取可读内容；结构化回复保留逐泡数组，只移除演绎，不合并气泡。"""
     raw = (m.content or "").strip()
@@ -41,8 +56,7 @@ def message_text(m: Message) -> str:
         return raw
 
     if content_type == "companion_reply":
-        source = CompanionReplyInput.model_validate_json(raw)
-        return json.dumps([bubble.model_dump(include={"type", "text"}) for bubble in source.root], ensure_ascii=False)
+        return companion_context_content(m, dialogue_only=True)
     return raw
 
 
@@ -54,17 +68,20 @@ def format_messages_compact(msgs: list[Message], *, char_cap: int | None = None)
         if msg.content_type == "companion_reply":
             if not (msg.content or "").strip() and not msg.tool_calls:
                 continue
-            source = CompanionReplyInput.model_validate_json(msg.content)
+            source = json.loads(companion_context_content(msg, dialogue_only=True))
             content = []
             remaining = char_cap
             truncated = False
-            for bubble in source.root:
+            for bubble in source:
                 if remaining is not None and remaining <= 0:
                     truncated = True
                     break
-                dialogue = bubble.text[:remaining]
-                content.append({"type": bubble.type, "text": dialogue})
-                truncated |= dialogue != bubble.text
+                if bubble["type"] in {"image", "video"}:
+                    content.append(bubble)
+                    continue
+                dialogue = bubble["text"][:remaining]
+                content.append({"type": bubble["type"], "text": dialogue})
+                truncated |= dialogue != bubble["text"]
                 if remaining is not None:
                     remaining -= len(dialogue)
         else:

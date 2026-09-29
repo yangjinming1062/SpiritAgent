@@ -25,7 +25,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.companion import character_snapshot_is_current, render_character_identity
-from services.domains.conversation import MEDIA_STATUS_SUBTYPE
+from services.domains.conversation import MEDIA_STATUS_SUBTYPE, update_video_reply
 from services.infrastructure.assets import (
     asset_store,
     build_data_uri,
@@ -217,6 +217,8 @@ async def enqueue_video_job(
     aspect_ratio: str | None,
     identity_reference_path: str | None = None,
     identity: CharacterCardSnapshot | None = None,
+    structured_reply: bool = False,
+    media_id: str | None = None,
 ) -> "VideoGenJob":
     """冻结能力链并提交首个任务；轮询绑定实际接单供应商，低分才推进链尾。"""
 
@@ -253,6 +255,8 @@ async def enqueue_video_job(
     job = VideoGenJob(
         user_id=user_id,
         session_id=session_id,
+        structured_reply=structured_reply,
+        media_id=media_id,
         provider=compatible[0].provider_name,
         model=compatible[0].model,
         prompt=prompt,
@@ -328,6 +332,10 @@ async def _record_failure(
         row.error_reason = reason
         row.error_message = user_msg
         session_id = row.session_id
+        if row.structured_reply:
+            await update_video_reply(db, row)
+            await db.commit()
+            return
         emit_ws_event(
             db,
             user_id=row.user_id,
@@ -384,6 +392,10 @@ async def _finalize_best_video(job_id: int, *, warning: str | None = None) -> No
         row.error_reason = state.stop_reason if warning else None
         row.error_message = warning
         session_id = row.session_id
+        if row.structured_reply:
+            await update_video_reply(db, row)
+            await db.commit()
+            return
         if session_id:
             with contextlib.suppress(TypeError, ValueError):
                 conversation = await db.get(Conversation, int(session_id))

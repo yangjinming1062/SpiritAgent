@@ -4,6 +4,7 @@ from modules.ws import emit_ws_event
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.conversation import (
+    bind_reply_videos,
     client_reply_bubbles,
     get_or_create_special_conversation,
 )
@@ -24,6 +25,7 @@ async def append_companion_message(db: AsyncSession, user_id: int, reply: Compan
     )
     db.add(message)
     await db.flush()
+    await bind_reply_videos(db, message, reply, user_id)
     emit_ws_event(
         db,
         user_id=user_id,

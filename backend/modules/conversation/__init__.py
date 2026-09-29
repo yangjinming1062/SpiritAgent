@@ -2,6 +2,8 @@ from .models import Conversation, Message
 from .replies import (
     CompanionReply,
     CompanionReplyInput,
+    MediaBubble,
+    MediaBubbleInput,
     ReplyAudio,
     TextBubble,
     VoiceBubble,
@@ -25,6 +27,8 @@ __all__ = [
     "DesktopSessionPatchRequest",
     "DesktopSessionSearchResponse",
     "Message",
+    "MediaBubble",
+    "MediaBubbleInput",
     "ReplyAudio",
     "TextBubble",
     "VoiceBubble",

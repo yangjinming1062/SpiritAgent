@@ -23,6 +23,7 @@ import {
   setTurnHadBubbleBreak,
   showMediaHint,
   submitPendingBatch,
+  updateMediaBubble,
   updateVoiceBubble
 } from '@/modules/conversation'
 import { cancelVoiceBar } from '@/modules/speech'
@@ -71,6 +72,30 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       // 下一条 message.delta 会开一个新气泡（后端已在它们之间插入 0.5–1.5 秒停顿）。
       setTurnHadBubbleBreak(true)
       finalizeAssistantMessage()
+
+      break
+    }
+
+    case 'message.media': {
+      const payload = decodePayload<{
+        session_id: string
+        message_id: number
+        media_id: string
+        bubble: CompanionBubble
+      }>(event.payload)
+
+      if (typeof payload.session_id === 'string') {
+        invalidateSessionHistory(payload.session_id)
+      }
+
+      if (
+        payload.session_id === $chatSessionId.get() &&
+        typeof payload.message_id === 'number' &&
+        typeof payload.media_id === 'string' &&
+        (payload.bubble?.type === 'image' || payload.bubble?.type === 'video')
+      ) {
+        updateMediaBubble(payload.message_id, payload.media_id, payload.bubble)
+      }
 
       break
     }
@@ -142,7 +167,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       const hadBreak = $turnHadBubbleBreak.get()
 
       if (payload?.bubbles && typeof payload.message_id === 'number') {
-        finalizeCompanionReply(payload.bubbles, payload.message_id, payload.media, payload.reasoning)
+        finalizeCompanionReply(payload.bubbles, payload.message_id, payload.reasoning)
       } else {
         finalizeAssistantMessage(
           hadBreak ? undefined : payload?.text,
@@ -156,9 +181,21 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       }
 
       // 媒体已送达但对话界面收起：气泡只做轻量系统提示，点击打开轻语/生活空间查看。
-      if (payload?.media?.length && !$chatVisible.get() && !screenLocked) {
+      if (
+        (payload?.media?.length ||
+          payload?.bubbles?.some(
+            bubble => (bubble.type === 'image' || bubble.type === 'video') && bubble.status === 'ready'
+          )) &&
+        !$chatVisible.get() &&
+        !screenLocked
+      ) {
         const sys = getStrings().notifications.system
-        showMediaHint(payload.media.some(m => m.type === 'video') ? sys.videoReady : sys.imageReady)
+        showMediaHint(
+          payload?.media?.some(m => m.type === 'video') ||
+            payload?.bubbles?.some(b => b.type === 'video' && b.status === 'ready')
+            ? sys.videoReady
+            : sys.imageReady
+        )
       }
 
       setSpriteState('idle', { force: true })
@@ -166,7 +203,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       triggerFootGlowPulse('completed', 1200)
 
       // 每日互动统计——chat_turn 仅在确有文本可统计时计数
-      if (!ctx.isProxy && (payload?.bubbles?.some(bubble => bubble.text.trim()) || text.trim())) {
+      if (!ctx.isProxy && (payload?.bubbles?.some(bubble => 'text' in bubble && bubble.text.trim()) || text.trim())) {
         reportInteractionStat('chat_turn')
       }
 

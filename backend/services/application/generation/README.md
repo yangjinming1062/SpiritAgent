@@ -11,6 +11,7 @@
 | [initial_appearance.py](initial_appearance.py) / [avatar_service.py](avatar_service.py) | 初始外观与头像/全身候选 |
 | [outfit_service.py](outfit_service.py) / [fullbody_reference_prompt.py](fullbody_reference_prompt.py) | 换装命名与全身参考提示词/画幅 |
 | [image_generation.py](image_generation.py) / [scene_prompt.py](scene_prompt.py) | 图像参考装配与场景提示词装配 |
+| [chat_images.py](chat_images.py) | 聊天图片批次登记、实际验图、版本与一次重做预算 |
 | [scene_service.py](scene_service.py) | 场景创建、描述分析、图片重生成与切换版本 |
 | [video/](video/) / [video_jobs.py](video_jobs.py) | 视频包（script、manifest、state、service）与聊天视频 |
 | [media_chain.py](media_chain.py) / [character_images.py](character_images.py) / [identity_review.py](identity_review.py) | 供应商链择优、身份保持图片、评分与严格复核 |
@@ -54,6 +55,8 @@
 聊天与夜间图片共用 [visual_identity.py](visual_identity.py) 的 `build_self_image_prompt`，`SelfVisualPlan` 冻结造型。视频首帧生成/校准也走图片质量链，恢复沿用已保存首帧，具体规则见 [出镜图片与视频](../../../../docs/PIPELINE.md#出镜图片与视频首帧)。
 
 ## 视频包与质量链
+
+聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。
 
 上传导入与生成共用交付链，[video/state.py](video/state.py)保存上下文与单动作结果，上传包没有可重做的冻结参考。
 

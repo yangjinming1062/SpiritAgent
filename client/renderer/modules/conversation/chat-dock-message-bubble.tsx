@@ -236,7 +236,7 @@ function MessageBubbleWithBody({
   const visibleText = isUser ? stripAttachmentDirectives(body.text) : body.text
   // 规整展示文本：流式追加时去除前导空行防撑大气泡上方，非流式时去除首尾多余空白，保留内部段落与换行。
   const displayText = body.streaming ? visibleText.trimStart() : visibleText.trim()
-  const hideTextBubble = isUser && !displayText && Boolean(body.attachments?.length)
+  const hideTextBubble = Boolean(body.replyMedia) || (isUser && !displayText && Boolean(body.attachments?.length))
   const tools = body.tools?.length ? body.tools : body.toolName ? [body.toolName] : []
   const toolOnly = tools.length > 0 && !displayText && !body.error && !body.cancelled
   const showToolIndicator = !isUser && tools.length > 0
@@ -256,6 +256,7 @@ function MessageBubbleWithBody({
     !body.streaming &&
     !body.attachments?.length &&
     !body.media?.length &&
+    !body.replyMedia &&
     !body.error &&
     !body.cancelled &&
     !hasVisibleReasoning
@@ -339,6 +340,19 @@ function MessageBubbleWithBody({
           ) : null}
           {!isUser && variant === 'workbench' && (body.reasoning || (body.streaming && !displayText)) ? (
             <ReasoningBlock reasoning={body.reasoning} streaming={body.streaming} />
+          ) : null}
+          {body.replyMedia && body.replyMedia.status !== 'ready' ? (
+            <div
+              className="rounded-2xl border border-line-standard bg-surface-card px-4 py-3 text-sm text-muted"
+              role="status"
+            >
+              {body.replyMedia.status === 'pending'
+                ? dict.chat.media.generating
+                : body.replyMedia.error ||
+                  (body.replyMedia.status === 'result_unknown'
+                    ? dict.chat.media.resultUnknown
+                    : dict.chat.media.generationFailed)}
+            </div>
           ) : null}
           {body.media?.length ? (
             <div className="mt-1 flex flex-col gap-1">

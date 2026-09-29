@@ -704,6 +704,9 @@ export const dict: Dictionary = {
     sendFailed: 'Send failed',
 
     media: {
+      generating: 'Generating video…',
+      generationFailed: 'Generation failed',
+      resultUnknown: 'Generation result is not yet confirmed',
       imageLoading: 'Loading image…',
       reviewHint: 'Check the character’s appearance. This media is only a preview for now.',
       reviewAccept: 'Confirm and accept',
