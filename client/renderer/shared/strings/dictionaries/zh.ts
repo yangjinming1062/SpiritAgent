@@ -262,9 +262,7 @@ export const dict = {
       security: '安全',
       securityRedactSecrets: '屏蔽敏感信息',
       browser: '浏览器设置',
-      browserAllowPrivateUrls: '允许内网访问',
-      debug: '调试开关',
-      debugInterrupt: '中断模式'
+      browserAllowPrivateUrls: '允许内网访问'
     },
     skills: {
       title: '技能',

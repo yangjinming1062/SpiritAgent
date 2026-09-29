@@ -15,6 +15,7 @@ from urllib.parse import quote, urlparse, urlsplit, urlunsplit
 import anyio
 import httpcore
 import httpx
+from anyio import to_thread
 
 from .config import is_truthy_value, load_config
 from .constants import get_spiritagent_home
@@ -23,25 +24,13 @@ logger = logging.getLogger(__name__)
 
 _BLOCKED_HOSTNAMES = frozenset({"metadata.google.internal", "metadata.goog"})
 
-_ALWAYS_BLOCKED_IPS = frozenset(
-    ipaddress.ip_address(ip)
-    for ip in (
-        "169.254.169.254",
-        "169.254.170.2",
-        "169.254.169.253",
-        "fd00:ec2::254",
-        "100.100.100.200",
-        "::ffff:169.254.169.254",
-        "::ffff:169.254.170.2",
-        "::ffff:169.254.169.253",
-        "::ffff:100.100.100.200",
-    )
-)
-
-_ALWAYS_BLOCKED_NETWORKS = (ipaddress.ip_network("169.254.0.0/16"), ipaddress.ip_network("::ffff:169.254.0.0/112"))
+# 云元数据端点：链路本地段覆盖 AWS / GCP / Azure 等 IPv4 地址，另列 AWS IPv6 与阿里云地址。
+_ALWAYS_BLOCKED_IPS = frozenset({ipaddress.ip_address("fd00:ec2::254"), ipaddress.ip_address("100.100.100.200")})
+_ALWAYS_BLOCKED_NETWORK = ipaddress.ip_network("169.254.0.0/16")
 
 _TRUSTED_PRIVATE_IP_HOSTS = frozenset({"multimedia.nt.qq.com.cn"})
 _CGNAT_NETWORK = ipaddress.ip_network("100.64.0.0/10")
+_NAT64_NETWORK = ipaddress.ip_network("64:ff9b::/96")
 
 _DEFAULT_WEBSITE_BLOCKLIST = {"enabled": False, "domains": [], "shared_files": []}
 
@@ -52,7 +41,7 @@ _cached_policy_time: float = 0.0
 
 
 def normalize_url_for_request(url: str) -> str:
-    if not isinstance(url, str) or not (raw := url.strip()):
+    if not (raw := url.strip()):
         return url
     try:
         parsed = urlsplit(raw)
@@ -80,43 +69,36 @@ def normalize_url_for_request(url: str) -> str:
 
 
 def _global_allow_private_urls() -> bool:
-    """仅读取 ``security.allow_private_urls`` (跨工具的 SSRF 全局闸门).
+    """只读 ``security.allow_private_urls``（HTTP 工具的全局 SSRF 闸门）。
 
-    不要把 ``browser.allow_private_urls`` OR 进来 — ``browser.*`` 是开发者本地调试 localhost 的逃生口,
-    顺带关掉 vision_analyze / webhook 等所有 HTTP 工具的 SSRF 会形成危险的设计耦合。
-    本函数专门管全局 HTTP 闸门, 浏览器本地访问由 ``_allow_private_urls()`` 在 ``browser/session.py`` 单独判读。
+    ``browser.allow_private_urls`` 只放行浏览器本地调试，由 ``browser/session.py`` 单独判读，不能并入此处。
     """
-    try:
-        cfg = load_config()
-        security = cfg.get("security")
-        return isinstance(security, dict) and is_truthy_value(security.get("allow_private_urls"), default=False)
-    except Exception:
-        return False
+    security = load_config().get("security")
+    return isinstance(security, dict) and is_truthy_value(security.get("allow_private_urls"))
+
+
+def _embedded_ipv4(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
+    """IPv4-mapped、6to4 与 NAT64 地址按内嵌 IPv4 判定，避免经 IPv6 形式绕过拦截。
+
+    IPv4-compatible ``::a.b.c.d`` 属 ``::/8`` 保留段，由 ``is_reserved`` 拦截。
+    """
+    if isinstance(ip, ipaddress.IPv6Address):
+        if (mapped := ip.ipv4_mapped) is not None:
+            return mapped
+        if (sixtofour := ip.sixtofour) is not None:
+            return sixtofour
+        if ip in _NAT64_NETWORK:
+            return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip
 
 
 def _is_always_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return ip in _ALWAYS_BLOCKED_IPS or any(ip in net for net in _ALWAYS_BLOCKED_NETWORKS)
+    ip = _embedded_ipv4(ip)
+    return ip in _ALWAYS_BLOCKED_IPS or ip in _ALWAYS_BLOCKED_NETWORK
 
 
 def _is_blocked_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    if isinstance(ip, ipaddress.IPv6Address):
-        # 把所有 IPv4-in-IPv6 变体映射成 IPv4 再判定; Python 默认只识别 ``::ffff:a.b.c.d`` 一种。
-        # NAT64 (``64:ff9b::/96``)、6to4 (``2002::/16``)、deprecated IPv4-compat (``::a.b.c.d``) 都不映射,
-        # 会让 ``169.254.169.254`` 通过 ``64:ff9b::169.254.169.254`` 绕开元数据端点拦截。
-        if (mapped := ip.ipv4_mapped) is not None:
-            ip = mapped
-        elif ip.sixtofour:  # 2002:WWXX:YYZZ:... -> a.b.c.d
-            ip = ip.sixtofour
-        elif (nat64_prefix := ipaddress.IPv6Network("64:ff9b::/96", False)) and ip in nat64_prefix:
-            tail = int(ip) & 0xFFFFFFFF
-            ip = ipaddress.IPv4Address(tail)
-        else:
-            # deprecated ``::a.b.c.d`` IPv4-compatible IPv6 address (RFC 4291 §2.5.5.1)
-            try:
-                if ip.ipv4_compat is not None:
-                    ip = ip.ipv4_compat  # type: ignore[attr-defined]
-            except (AttributeError, ValueError):
-                pass
+    ip = _embedded_ipv4(ip)
     return (
         ip.is_private
         or ip.is_loopback
@@ -206,15 +188,10 @@ def is_safe_url(url: str) -> bool:
 
         for _, _, _, _, sockaddr in addr_info:
             try:
-                verify_ip_not_blocked(sockaddr[0], hostname=hostname, scheme=scheme)
+                verify_ip_not_blocked(str(sockaddr[0]), hostname=hostname, scheme=scheme)
             except ValueError as e:
                 logger.warning("%s: %s -> %s", e, hostname, sockaddr[0])
                 return False
-
-        if _global_allow_private_urls():
-            logger.debug("Allowing private/internal resolution (security.allow_private_urls=true): %s", hostname)
-        elif _allows_private_ip_resolution(hostname, scheme):
-            logger.debug("Allowing trusted hostname despite private/internal resolution: %s", hostname)
         return True
     except Exception as exc:
         logger.warning("Blocked request — URL safety check error for %s: %s", url, exc)
@@ -225,11 +202,10 @@ async def async_is_safe_url(url: str) -> bool:
     return await asyncio.to_thread(is_safe_url, url)
 
 
-def _resolve_and_validate(host: str, port: int, *, scheme: str) -> list[tuple]:
-    """同步执行 DNS 解析并校验所有解析结果；返回通过校验的 sockaddr 列表。
+def _resolve_and_validate(host: str, port: int, *, scheme: str) -> list[str]:
+    """同步解析并校验全部结果，任一地址违规即整体拒绝；返回已校验 IP。
 
-    返回列表只含通过 ``verify_ip_not_blocked`` 的 IP；上层 ``socket.connect``
-    必须从该列表里取目标 IP，否则再次 DNS 解析会重新打开 rebinding 窗口。
+    建连只能使用返回的 IP，再次解析会重新打开 DNS rebinding 窗口。
     """
     try:
         addr_info = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
@@ -238,15 +214,15 @@ def _resolve_and_validate(host: str, port: int, *, scheme: str) -> list[tuple]:
     if not addr_info:
         raise httpcore.ConnectError(f"No addresses returned for {host}")
 
-    validated: list[tuple] = []
-    for family, socktype, proto, canon, sockaddr in addr_info:
-        ip_str = sockaddr[0]
+    validated: list[str] = []
+    for *_, sockaddr in addr_info:
+        ip_str = str(sockaddr[0])
         try:
             verify_ip_not_blocked(ip_str, hostname=host, scheme=scheme)
         except ValueError as exc:
             logger.warning("%s: %s -> %s", exc, host, ip_str)
             raise httpcore.ConnectError(f"SSRF guard: {exc}") from exc
-        validated.append((family, socktype, proto, canon, sockaddr))
+        validated.append(ip_str)
     return validated
 
 
@@ -254,94 +230,81 @@ def _scheme_for_port(port: int) -> str:
     return "https" if port == 443 else "http"
 
 
-# ---------------------------------------------------------------------------
-# httpcore NetworkBackend 实现：在 socket.connect 之前再次解析并校验目标 IP，
-# 直接使用已校验 IP 建连，原始 Host / TLS SNI / 证书主机名校验保持不变。
-# ---------------------------------------------------------------------------
+class _SafeAsyncBackend(httpcore.AsyncNetworkBackend):
+    """建连前重新解析并校验目标 IP，按已校验 IP 建连；httpcore 仍以原主机名发送 Host、TLS SNI 并校验证书。"""
 
+    def __init__(self) -> None:
+        self._inner: httpcore.AsyncNetworkBackend = httpcore.AnyIOBackend()
 
-class _SafeAsyncBackend(httpcore._backends.auto.AutoBackend):
-    """异步 httpcore 后端：connect_tcp 阶段强制重新解析并校验每一个目标 IP。
-
-    解析与 socket.create_connection 在工作线程里执行以避免阻塞事件循环；
-    实际 connect 走 inner backend 的 anyio/trio connect_tcp，传入已校验 IP，
-    原始 hostname 仍由 httpcore 用于 HTTP Host、TLS SNI 与证书校验。
-    """
-
-    async def connect_tcp(  # type: ignore[override]
+    async def connect_tcp(
         self,
         host: str,
         port: int,
         timeout: float | None = None,
         local_address: str | None = None,
-        socket_options: Iterable[tuple] | None = None,
-    ):
-        # hostname 黑名单在 DNS 之前先拦截，省一次解析也省一次工作线程。
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
         if _normalize_host(host) in _BLOCKED_HOSTNAMES:
             raise httpcore.ConnectError(f"Blocked request to internal hostname: {host}")
+        # 解析受连接超时约束；取消时不等待阻塞中的 getaddrinfo 返回。
+        try:
+            with anyio.fail_after(timeout):
+                ips = await to_thread.run_sync(
+                    partial(_resolve_and_validate, host, port, scheme=_scheme_for_port(port)),
+                    abandon_on_cancel=True,
+                )
+        except TimeoutError as exc:
+            raise httpcore.ConnectTimeout(f"DNS resolution timed out for {host}") from exc
 
-        addr_info = await anyio.to_thread.run_sync(
-            partial(_resolve_and_validate, host, port, scheme=_scheme_for_port(port)),
-        )
-
-        await self._init_backend()
-        last_error: Exception | None = None
-        for _family, _socktype, _proto, _canon, sockaddr in addr_info:
+        errors: list[httpcore.ConnectError | httpcore.ConnectTimeout] = []
+        for ip in ips:
             try:
-                return await self._backend.connect_tcp(
-                    sockaddr[0],
+                return await self._inner.connect_tcp(
+                    ip,
                     port,
                     timeout=timeout,
                     local_address=local_address,
                     socket_options=socket_options,
                 )
-            except (OSError, TimeoutError, httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
-                last_error = exc
-                continue
-        if last_error is not None:
-            raise last_error
-        raise httpcore.ConnectError(f"No validated addresses available for connect to {host}")
+            except (httpcore.ConnectError, httpcore.ConnectTimeout) as exc:
+                errors.append(exc)
+        raise errors[-1]
 
-    async def connect_unix_socket(  # type: ignore[override]
+    async def connect_unix_socket(
         self,
         path: str,
         timeout: float | None = None,
-        socket_options: Iterable[tuple] | None = None,
-    ):
-        await self._init_backend()
-        return await self._backend.connect_unix_socket(path, timeout=timeout, socket_options=socket_options)
+        socket_options: Iterable[httpcore.SOCKET_OPTION] | None = None,
+    ) -> httpcore.AsyncNetworkStream:
+        return await self._inner.connect_unix_socket(path, timeout=timeout, socket_options=socket_options)
 
-
-def _swap_pool_backend(pool: Any, backend: Any) -> None:
-    """替换 httpcore ConnectionPool 的 NetworkBackend；保持现有连接池其余配置不变。"""
-    pool._network_backend = backend  # noqa: SLF001 - httpcore 没有公开的 setter
+    async def sleep(self, seconds: float) -> None:
+        await self._inner.sleep(seconds)
 
 
 class SafeAsyncHTTPTransport(httpx.AsyncHTTPTransport):
-    """异步 HTTP 传输层：
+    """请求前按 URL 预检 SSRF 以快速失败，建连时由 ``_SafeAsyncBackend`` 复检；自动重定向的每一跳都重新经过两者。"""
 
-    * handle_async_request 在请求前对 URL 字符串做 SSRF 预检（快速失败）；
-    * 实际 socket.connect 由 ``_SafeAsyncBackend`` 在建连时再次解析并校验
-      所有目标 IP，并把 DNS 解析移出事件循环；
-    * 重定向由 httpx 自动处理，每一跳都会重新调用 ``_SafeAsyncBackend``。
-    """
-
-    def __init__(self, *args: Any, **kwargs: Any) -> None:
-        super().__init__(*args, **kwargs)
-        _swap_pool_backend(self._pool, _SafeAsyncBackend())
+    def __init__(self) -> None:
+        super().__init__()
+        # httpcore 没有替换连接池网络后端的公开入口，只能改写其私有属性。
+        pool: Any = self._pool
+        pool._network_backend = _SafeAsyncBackend()
 
     async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
-        url_str = str(request.url)
-        if not await async_is_safe_url(url_str):
-            raise ValueError(f"SSRF guard blocked request to unsafe URL: {url_str}")
+        url = str(request.url)
+        try:
+            safe = await asyncio.wait_for(async_is_safe_url(url), request.extensions.get("timeout", {}).get("connect"))
+        except TimeoutError as exc:
+            raise httpx.ConnectTimeout(f"DNS resolution timed out for {request.url.host}", request=request) from exc
+        if not safe:
+            raise ValueError(f"SSRF guard blocked request to unsafe URL: {url}")
         return await super().handle_async_request(request)
 
 
 def create_safe_async_client(**kwargs: Any) -> httpx.AsyncClient:
-    """创建挂载了 ``SafeAsyncHTTPTransport`` 的异步 ``httpx.AsyncClient``。"""
-    if "transport" not in kwargs:
-        kwargs["transport"] = SafeAsyncHTTPTransport()
-    return httpx.AsyncClient(**kwargs)
+    """创建经 ``SafeAsyncHTTPTransport`` 建连的 ``httpx.AsyncClient``；不接受自定义 ``transport``。"""
+    return httpx.AsyncClient(transport=SafeAsyncHTTPTransport(), **kwargs)
 
 
 class WebsitePolicyError(Exception):
@@ -378,15 +341,19 @@ def _iter_blocklist_file_rules(path: Path) -> list[str]:
 
 def _load_policy_config() -> dict[str, Any]:
     """从内存配置读取 ``security.website_blocklist``。"""
-    config = load_config()
-    if not isinstance(config, dict):
-        raise WebsitePolicyError("config root must be a mapping")
-    if not isinstance(security := config.get("security") or {}, dict):
+    if not isinstance(security := load_config().get("security") or {}, dict):
         raise WebsitePolicyError("security must be a mapping")
     if not isinstance(website_blocklist := security.get("website_blocklist") or {}, dict):
         raise WebsitePolicyError("security.website_blocklist must be a mapping")
 
     return _DEFAULT_WEBSITE_BLOCKLIST | website_blocklist
+
+
+def reset_cache() -> None:
+    """清空网站策略缓存（spiritagent.config.update 时调用）；共享规则文件的变化仍按 TTL 生效。"""
+    global _cached_policy
+    with _cache_lock:
+        _cached_policy = None
 
 
 def load_website_blocklist() -> dict[str, Any]:
@@ -403,7 +370,7 @@ def load_website_blocklist() -> dict[str, Any]:
         raise WebsitePolicyError("security.website_blocklist.domains must be a list")
     if not isinstance(raw_shared_files := policy.get("shared_files") or [], list):
         raise WebsitePolicyError("security.website_blocklist.shared_files must be a list")
-    if not isinstance(enabled := policy.get("enabled", True), bool):
+    if not isinstance(enabled := policy["enabled"], bool):
         raise WebsitePolicyError("security.website_blocklist.enabled must be a boolean")
 
     rules: list[dict[str, str]] = []
@@ -458,10 +425,6 @@ class WebsiteBlockMatch:
 
 
 def check_website_access(url: str) -> WebsiteBlockMatch | None:
-    with _cache_lock:
-        if _cached_policy is not None and not _cached_policy.get("enabled"):
-            return None
-
     if not (host := _extract_host_from_urlish(url)):
         return None
 

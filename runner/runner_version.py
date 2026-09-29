@@ -1,38 +1,20 @@
-import contextlib
 import re
-import threading
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 
-_LOCK = threading.Lock()
-_CACHED_VERSION: str | None = None
-
-
-def _read_source_tree_version() -> str | None:
-    """从源码树 ``pyproject.toml`` 读版本; 仅在直接跑 checkout 时存在, wheel 安装没有旁边这份 pyproject。"""
-    pyproject = Path(__file__).resolve().parent / "pyproject.toml"
-    text = ""
-    with contextlib.suppress(OSError):
-        text = pyproject.read_text(encoding="utf-8")
-    match = re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE) if text else None
-    return match.group(1) if match else None
-
 
 def _resolve_version() -> str:
-    """解析 Runner 自身版本: 源码树 pyproject.toml 优先, 否则安装元数据; 每进程至多一次。"""
-    global _CACHED_VERSION
-    with _LOCK:
-        if _CACHED_VERSION is not None:
-            return _CACHED_VERSION
-        resolved = _read_source_tree_version() or _safe_metadata_version()
-        _CACHED_VERSION = resolved or "0.0.0+unknown"
-    return _CACHED_VERSION
-
-
-def _safe_metadata_version() -> str | None:
-    with contextlib.suppress(PackageNotFoundError):
+    """Runner 自身版本：源码树 ``pyproject.toml`` 优先（直接运行 checkout 时），否则取 wheel 安装元数据。"""
+    try:
+        text = (Path(__file__).resolve().parent / "pyproject.toml").read_text(encoding="utf-8")
+    except OSError:
+        text = ""
+    if match := re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE):
+        return match.group(1)
+    try:
         return version("spirit-agent")
-    return None
+    except PackageNotFoundError:
+        return "0.0.0+unknown"
 
 
 __version__ = _resolve_version()

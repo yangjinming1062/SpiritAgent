@@ -1,14 +1,97 @@
 import logging
-import re
 import subprocess
 import time
 import uuid
 from typing import Any, NotRequired, TypedDict
 
+import psutil
 from utils import IS_MACOS, IS_WINDOWS
+
+if IS_WINDOWS:
+    import ctypes
+    from ctypes import wintypes
+
+    class _MONITORINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("rcMonitor", wintypes.RECT),
+            ("rcWork", wintypes.RECT),
+            ("dwFlags", wintypes.DWORD),
+        ]
+
+    class _GUITHREADINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD),
+            ("flags", wintypes.DWORD),
+            ("hwndActive", wintypes.HWND),
+            ("hwndFocus", wintypes.HWND),
+            ("hwndCapture", wintypes.HWND),
+            ("hwndMenuOwner", wintypes.HWND),
+            ("hwndMoveSize", wintypes.HWND),
+            ("hwndCaret", wintypes.HWND),
+            ("rcCaret", wintypes.RECT),
+        ]
+
+    class _LASTINPUTINFO(ctypes.Structure):
+        _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
+
+    _WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    # 私有 DLL 实例：在此声明的函数原型不影响其他模块经 ctypes.windll 的调用；HWND 按指针宽度传递。
+    _user32 = ctypes.WinDLL("user32")
+    _kernel32 = ctypes.WinDLL("kernel32")
+    _dwmapi = ctypes.WinDLL("dwmapi")
+    for _name, _argtypes, _restype in (
+        ("GetForegroundWindow", [], wintypes.HWND),
+        ("GetWindow", [wintypes.HWND, wintypes.UINT], wintypes.HWND),
+        ("GetAncestor", [wintypes.HWND, wintypes.UINT], wintypes.HWND),
+        ("GetClassNameW", [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
+        ("IsWindowVisible", [wintypes.HWND], wintypes.BOOL),
+        ("IsIconic", [wintypes.HWND], wintypes.BOOL),
+        ("GetWindowTextLengthW", [wintypes.HWND], ctypes.c_int),
+        ("GetWindowTextW", [wintypes.HWND, wintypes.LPWSTR, ctypes.c_int], ctypes.c_int),
+        ("GetWindowThreadProcessId", [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)], wintypes.DWORD),
+        ("GetWindowRect", [wintypes.HWND, ctypes.POINTER(wintypes.RECT)], wintypes.BOOL),
+        ("MonitorFromWindow", [wintypes.HWND, wintypes.DWORD], wintypes.HMONITOR),
+        ("GetMonitorInfoW", [wintypes.HMONITOR, ctypes.POINTER(_MONITORINFO)], wintypes.BOOL),
+        ("GetGUIThreadInfo", [wintypes.DWORD, ctypes.POINTER(_GUITHREADINFO)], wintypes.BOOL),
+        ("EnumWindows", [_WNDENUMPROC, wintypes.LPARAM], wintypes.BOOL),
+        ("GetLastInputInfo", [ctypes.POINTER(_LASTINPUTINFO)], wintypes.BOOL),
+        ("GetCursorPos", [ctypes.POINTER(wintypes.POINT)], wintypes.BOOL),
+        ("SetCursorPos", [ctypes.c_int, ctypes.c_int], wintypes.BOOL),
+        ("SystemParametersInfoW", [wintypes.UINT, wintypes.UINT, ctypes.c_void_p, wintypes.UINT], wintypes.BOOL),
+    ):
+        _fn = getattr(_user32, _name)
+        _fn.argtypes, _fn.restype = _argtypes, _restype
+    _kernel32.GetTickCount.restype = wintypes.DWORD
+    _kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    _kernel32.OpenProcess.restype = wintypes.HANDLE
+    _kernel32.QueryFullProcessImageNameW.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPWSTR,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    _kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+    _kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    _dwmapi.DwmGetWindowAttribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
+    _dwmapi.DwmGetWindowAttribute.restype = ctypes.c_long
+
+if IS_MACOS:
+    import Quartz
+    from AppKit import NSScreen, NSWorkspace
 
 logger = logging.getLogger(__name__)
 _WINDOW_SCENE_INSTANCE_ID = uuid.uuid4().hex
+
+_SHELL_WINDOW_CLASSES = frozenset(("Shell_TrayWnd", "WorkerW", "Progman"))
+_GW_HWNDNEXT = 2
+_GA_ROOT = 2
+_MONITOR_DEFAULTTONEAREST = 0x00000002
+_SPI_GETWORKAREA = 0x0030
+_DWMWA_EXTENDED_FRAME_BOUNDS = 9
+_DWMWA_CLOAKED = 14
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
 
 
 class WindowInfo(TypedDict):
@@ -30,48 +113,8 @@ class WindowScene(TypedDict):
     runner_instance_id: NotRequired[str]
 
 
-try:
-    import psutil  # type: ignore[import-not-found]
-except ImportError:
-    psutil = None  # type: ignore[assignment]
-try:
-    import ctypes
-    from ctypes import wintypes
-except ImportError:
-    ctypes = None  # type: ignore[assignment]
-    wintypes = None  # type: ignore[assignment]
-try:
-    from Quartz import (  # type: ignore[import-not-found]
-        CGEventSourceSecondsSinceLastEventType,
-        CGWindowListCopyWindowInfo,
-        kCGAnyInputEventType,
-        kCGEventSourceStateHIDSystemState,
-        kCGNullWindowID,
-        kCGWindowListOptionOnScreenOnly,
-    )
-except ImportError:
-    CGEventSourceSecondsSinceLastEventType = None  # type: ignore[assignment,misc]
-    CGWindowListCopyWindowInfo = None  # type: ignore[assignment,misc]
-    kCGAnyInputEventType = None  # type: ignore[assignment,misc]
-    kCGEventSourceStateHIDSystemState = None  # type: ignore[assignment,misc]
-    kCGNullWindowID = None  # type: ignore[assignment,misc]
-    kCGWindowListOptionOnScreenOnly = None  # type: ignore[assignment,misc]
-try:
-    import Quartz  # type: ignore[import-not-found]
-except ImportError:
-    Quartz = None  # type: ignore[assignment]
-try:
-    from AppKit import (
-        NSScreen,  # type: ignore[import-not-found]
-        NSWorkspace,  # type: ignore[import-not-found]
-    )
-except ImportError:
-    NSScreen = None  # type: ignore[assignment,misc]
-    NSWorkspace = None  # type: ignore[assignment]
-
-
 def get_idle_seconds() -> float:
-    """自上次用户输入以来的秒数; 不可用时返回 ``-1.0``。"""
+    """自上次用户输入以来的秒数；不可用时返回 ``-1.0``。"""
     if IS_WINDOWS:
         return _idle_windows()
     if IS_MACOS:
@@ -80,7 +123,7 @@ def get_idle_seconds() -> float:
 
 
 def is_screen_locked() -> bool:
-    """当且仅当工作站会话已锁屏; 无法判断时返回 ``False``(误报"已锁"比漏报更糟)。"""
+    """会话已锁屏时为 True；无法判断时返回 False（误报"已锁"比漏报更糟）。"""
     if IS_WINDOWS:
         return _locked_windows()
     if IS_MACOS:
@@ -89,7 +132,7 @@ def is_screen_locked() -> bool:
 
 
 def get_focused_app() -> dict[str, Any]:
-    """前台应用的 ``{name, pid, kind}``; 无法判断时返回 ``{}``。"""
+    """前台应用及其窗口；无法判断时返回 ``{}``。"""
     if IS_WINDOWS:
         return _focus_windows()
     if IS_MACOS:
@@ -98,7 +141,7 @@ def get_focused_app() -> dict[str, Any]:
 
 
 def is_fullscreen() -> bool:
-    """当且仅当前台窗口覆盖其显示器工作区 ≥ 95%; 未知/不可用时返回 ``False``。"""
+    """前台窗口覆盖其整个显示器时为 True；未知时返回 False。"""
     if IS_WINDOWS:
         return _fullscreen_windows()
     if IS_MACOS:
@@ -106,19 +149,12 @@ def is_fullscreen() -> bool:
     return False
 
 
-def get_power_state() -> dict[str, Any]:
-    """``{on_battery, screen_on, charging}`` — 布尔值默认 ``False``/``True``。"""
-    state: dict[str, Any] = {"on_battery": False, "screen_on": True, "charging": False}
-    if psutil is not None:
-        try:
-            battery = psutil.sensors_battery()
-        except Exception as e:
-            logger.debug("psutil.sensors_battery failed: %s", e)
-        else:
-            if battery is not None:
-                state["on_battery"] = not battery.power_plugged
-                state["charging"] = battery.power_plugged and battery.percent < 100
-    return state
+def get_power_state() -> dict[str, bool]:
+    """``{on_battery, charging}``；没有电池或供电状态未知时两者均为 False。"""
+    battery = psutil.sensors_battery()
+    if battery is None or battery.power_plugged is None:
+        return {"on_battery": False, "charging": False}
+    return {"on_battery": not battery.power_plugged, "charging": battery.power_plugged and battery.percent < 100}
 
 
 def get_windows() -> WindowScene:
@@ -130,574 +166,383 @@ def get_windows() -> WindowScene:
     return {"windows": []}
 
 
-_APP_NAME_FORBIDDEN_CHARS = frozenset("&|<>^\"'$()\\;{}\n\r\t")
-_APP_NAME_FORBIDDEN_RE = re.compile(r"\.\.|/ (?= )")
+# cmd.exe 元字符；macOS 的 open 不经 shell。前导 '-' 会被当成 open 的选项，Windows 前导 '/' 会被当成 start 的开关。
+_APP_NAME_FORBIDDEN_CHARS = frozenset("&|<>^\"'%$();{}\n\r\t")
 
 
 def _sanitize_app_name(name: str) -> str | None:
-    """拒绝含 cmd.exe / shell 元字符的应用名, 防 ``start`` / ``open -a`` 被拼接注入。"""
-    if not name:
-        return None
     stripped = name.strip()
-    if not stripped:
+    if not stripped or stripped.startswith("-") or (IS_WINDOWS and stripped.startswith("/")):
         return None
     if any(ch in _APP_NAME_FORBIDDEN_CHARS for ch in stripped):
-        return None
-    if _APP_NAME_FORBIDDEN_RE.search(stripped):
         return None
     return stripped
 
 
 def open_application(name: str) -> dict[str, Any]:
-    """启动 *name*(可执行名 / app 名 / 路径), 返回 ``{opened, name}``。"""
-    if not name or not str(name).strip():
+    """启动 *name*（可执行名 / 应用名 / 路径），返回 ``{opened, name}`` 或 ``{opened: false, error}``。"""
+    if not name.strip():
         return {"opened": False, "error": "application name is required"}
-    safe_name = _sanitize_app_name(name)
-    if safe_name is None:
-        return {"opened": False, "error": "application name contains forbidden shell metacharacters"}
+    if (safe_name := _sanitize_app_name(name)) is None:
+        return {"opened": False, "error": "application name contains characters that are not allowed"}
     try:
         if IS_WINDOWS:
+            # start 找不到程序时会弹系统错误框并阻塞，这里不等待其结果。
             subprocess.Popen(["cmd", "/c", "start", "", safe_name])
         elif IS_MACOS:
-            subprocess.Popen(["open", "-a", safe_name])
-        return {"opened": True, "name": safe_name}
-    except Exception as e:
+            result = subprocess.run(["open", "-a", safe_name], capture_output=True, text=True, timeout=15, check=False)
+            if result.returncode != 0:
+                detail = (result.stderr or result.stdout).strip() or f"open exited with code {result.returncode}"
+                return {"opened": False, "error": detail}
+        else:
+            return {"opened": False, "error": "unsupported platform"}
+    except (OSError, subprocess.TimeoutExpired) as e:
         logger.debug("open_application failed: %s", e)
         return {"opened": False, "error": str(e)}
+    return {"opened": True, "name": safe_name}
 
 
-def get_work_area() -> dict[str, Any]:
-    """主显示器工作区的 ``{x, y, w, h}``(已扣除任务栏/dock)。"""
+def get_work_area() -> dict[str, int]:
+    """主显示器扣除任务栏 / Dock 后的工作区 ``{x, y, w, h}``，与窗口快照同一坐标系。"""
     if IS_WINDOWS:
         return _work_area_windows()
     if IS_MACOS:
         return _work_area_macos()
-    return {"x": 0, "y": 0, "w": 1920, "h": 1080}
+    raise RuntimeError("unsupported platform")
 
 
-def get_cursor_pos() -> dict[str, Any]:
-    """当前全局鼠标位置的 ``{x, y}``。"""
+def get_cursor_pos() -> dict[str, int]:
+    """当前全局鼠标位置 ``{x, y}``。"""
     if IS_WINDOWS:
         return _cursor_windows()
     if IS_MACOS:
         return _cursor_macos()
-    return {"x": 0, "y": 0}
+    raise RuntimeError("unsupported platform")
 
 
 def click_at(x: int, y: int, button: str = "left", clicks: int = 1) -> dict[str, Any]:
-    """在全局屏幕坐标 (x, y) 处模拟一次鼠标点击。"""
-    if IS_WINDOWS:
-        return _click_at_windows(x, y, button, clicks)
-    if IS_MACOS:
-        return _click_at_macos(x, y, button, clicks)
-    return {"clicked": False, "error": "unsupported platform"}
+    """在全局屏幕坐标 (x, y) 处模拟鼠标点击；button 为 left / right / middle。"""
+    try:
+        if IS_WINDOWS:
+            _click_at_windows(x, y, button, clicks)
+        elif IS_MACOS:
+            _click_at_macos(x, y, button, clicks)
+        else:
+            return {"clicked": False, "error": "unsupported platform"}
+    except Exception as e:
+        logger.debug("click_at failed: %s", e)
+        return {"clicked": False, "error": str(e)}
+    return {"clicked": True, "x": x, "y": y, "button": button, "clicks": clicks}
+
+
+def _class_name(hwnd: int) -> str:
+    buf = ctypes.create_unicode_buffer(256)
+    return buf.value if _user32.GetClassNameW(hwnd, buf, 256) > 0 else ""
+
+
+def _window_text(hwnd: int) -> str:
+    if (length := _user32.GetWindowTextLengthW(hwnd)) <= 0:
+        return ""
+    buf = ctypes.create_unicode_buffer(length + 1)
+    _user32.GetWindowTextW(hwnd, buf, length + 1)
+    return buf.value
+
+
+def _window_pid(hwnd: int) -> int:
+    pid = wintypes.DWORD()
+    _user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value
+
+
+def _dwm_bounds(hwnd: int) -> tuple[int, int, int, int] | None:
+    """DWMWA_EXTENDED_FRAME_BOUNDS：物理像素的可见边界，不含透明缩放边框，也不受 DPI 虚拟化影响。"""
+    rect = wintypes.RECT()
+    if _dwmapi.DwmGetWindowAttribute(hwnd, _DWMWA_EXTENDED_FRAME_BOUNDS, ctypes.byref(rect), ctypes.sizeof(rect)):
+        return None
+    w, h = rect.right - rect.left, rect.bottom - rect.top
+    return (rect.left, rect.top, w, h) if w > 0 and h > 0 else None
+
+
+def _process_exe(pid: int) -> str:
+    """*pid* 的可执行文件名；无权限或进程已退出时返回空串。"""
+    handle = _kernel32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    if not handle:
+        return ""
+    try:
+        buf = ctypes.create_unicode_buffer(512)
+        size = wintypes.DWORD(len(buf))
+        if not _kernel32.QueryFullProcessImageNameW(handle, 0, buf, ctypes.byref(size)):
+            return ""
+        return buf.value.rsplit("\\", 1)[-1]
+    finally:
+        _kernel32.CloseHandle(handle)
 
 
 def _work_area_windows() -> dict[str, int]:
-    if ctypes is None or wintypes is None:
-        return {"x": 0, "y": 0, "w": 1920, "h": 1080}
-    try:
-        user32 = ctypes.windll.user32
-
-        class _RECT(ctypes.Structure):
-            _fields_ = [
-                ("left", wintypes.LONG),
-                ("top", wintypes.LONG),
-                ("right", wintypes.LONG),
-                ("bottom", wintypes.LONG),
-            ]
-
-        rect = _RECT()
-        # Use SPI_GETWORKAREA (0x0030) to get the work area rectangle
-        if user32.SystemParametersInfoW(0x0030, 0, ctypes.byref(rect), 0):
-            return {
-                "x": int(rect.left),
-                "y": int(rect.top),
-                "w": int(max(0, rect.right - rect.left)),
-                "h": int(max(0, rect.bottom - rect.top)),
-            }
-    except Exception as e:
-        logger.debug("win work_area probe failed: %s", e)
-    return {"x": 0, "y": 0, "w": 1920, "h": 1080}
+    rect = wintypes.RECT()
+    if not _user32.SystemParametersInfoW(_SPI_GETWORKAREA, 0, ctypes.byref(rect), 0):
+        raise ctypes.WinError()
+    return {"x": rect.left, "y": rect.top, "w": max(0, rect.right - rect.left), "h": max(0, rect.bottom - rect.top)}
 
 
 def _work_area_macos() -> dict[str, int]:
-    if NSWorkspace is None:
-        return {"x": 0, "y": 0, "w": 1920, "h": 1080}
-    try:
-        screen = NSScreen.mainScreen()
-        if screen:
-            frame = screen.visibleFrame()
-            return {
-                "x": int(frame.origin.x),
-                "y": int(frame.origin.y),
-                "w": int(frame.size.width),
-                "h": int(frame.size.height),
-            }
-    except Exception as e:
-        logger.debug("macos work_area probe failed: %s", e)
-    return {"x": 0, "y": 0, "w": 1920, "h": 1080}
+    if not (screens := NSScreen.screens()):
+        raise RuntimeError("no display found")
+    primary = screens[0]
+    full, visible = primary.frame(), primary.visibleFrame()
+    # AppKit 以主屏左下角为原点、y 向上；换算成与窗口快照和光标位置一致的左上角原点。
+    top = full.size.height - (visible.origin.y + visible.size.height)
+    return {"x": int(visible.origin.x), "y": int(top), "w": int(visible.size.width), "h": int(visible.size.height)}
 
 
 def _cursor_windows() -> dict[str, int]:
-    if ctypes is None or wintypes is None:
-        return {"x": 0, "y": 0}
-    try:
-        user32 = ctypes.windll.user32
-        pt = wintypes.POINT()
-        if user32.GetCursorPos(ctypes.byref(pt)):
-            return {"x": int(pt.x), "y": int(pt.y)}
-    except Exception as e:
-        logger.debug("win cursor probe failed: %s", e)
-    return {"x": 0, "y": 0}
+    pt = wintypes.POINT()
+    if not _user32.GetCursorPos(ctypes.byref(pt)):
+        raise ctypes.WinError()
+    return {"x": pt.x, "y": pt.y}
 
 
 def _cursor_macos() -> dict[str, int]:
-    if Quartz is None:
-        return {"x": 0, "y": 0}
-    try:
-        event = Quartz.CGEventCreate(None)
-        if event:
-            loc = Quartz.CGEventGetLocation(event)
-            return {"x": int(loc.x), "y": int(loc.y)}
-    except Exception as e:
-        logger.debug("macos cursor probe failed: %s", e)
-    return {"x": 0, "y": 0}
+    loc = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+    return {"x": int(loc.x), "y": int(loc.y)}
 
 
-def _click_at_windows(x: int, y: int, button: str = "left", clicks: int = 1) -> dict[str, Any]:
-    if ctypes is None:
-        return {"clicked": False, "error": "ctypes unavailable"}
-    try:
-        user32 = ctypes.windll.user32
-        user32.SetCursorPos(x, y)
+def _click_at_windows(x: int, y: int, button: str, clicks: int) -> None:
+    down_flag, up_flag = {"left": (0x0002, 0x0004), "right": (0x0008, 0x0010), "middle": (0x0020, 0x0040)}[button]
+    if not _user32.SetCursorPos(x, y):
+        raise ctypes.WinError()
+    time.sleep(0.02)
+    for _ in range(clicks):
+        _user32.mouse_event(down_flag, 0, 0, 0, 0)
+        time.sleep(0.01)
+        _user32.mouse_event(up_flag, 0, 0, 0, 0)
         time.sleep(0.02)
-        btn_lower = button.lower()
-        if btn_lower == "right":
-            down_flag, up_flag = 0x0008, 0x0010
-        elif btn_lower == "middle":
-            down_flag, up_flag = 0x0020, 0x0040
-        else:
-            down_flag, up_flag = 0x0002, 0x0004
 
-        for _ in range(max(1, clicks)):
-            user32.mouse_event(down_flag, 0, 0, 0, 0)
+
+def _click_at_macos(x: int, y: int, button: str, clicks: int) -> None:
+    down, up, mouse_button = {
+        "left": (Quartz.kCGEventLeftMouseDown, Quartz.kCGEventLeftMouseUp, Quartz.kCGMouseButtonLeft),
+        "right": (Quartz.kCGEventRightMouseDown, Quartz.kCGEventRightMouseUp, Quartz.kCGMouseButtonRight),
+        "middle": (Quartz.kCGEventOtherMouseDown, Quartz.kCGEventOtherMouseUp, Quartz.kCGMouseButtonCenter),
+    }[button]
+    for click_state in range(1, clicks + 1):
+        for event_type in (down, up):
+            event = Quartz.CGEventCreateMouseEvent(None, event_type, (x, y), mouse_button)
+            # 连击须递增 clickState，应用才会识别为双击而不是两次单击。
+            Quartz.CGEventSetIntegerValueField(event, Quartz.kCGMouseEventClickState, click_state)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
             time.sleep(0.01)
-            user32.mouse_event(up_flag, 0, 0, 0, 0)
-            time.sleep(0.02)
-        return {"clicked": True, "x": x, "y": y, "button": button, "clicks": clicks}
-    except Exception as e:
-        logger.debug("win click_at failed: %s", e)
-        return {"clicked": False, "error": str(e)}
-
-
-def _click_at_macos(x: int, y: int, button: str = "left", clicks: int = 1) -> dict[str, Any]:
-    if Quartz is None:
-        return {"clicked": False, "error": "Quartz unavailable"}
-    try:
-        btn_lower = button.lower()
-        if btn_lower == "right":
-            down_evt = Quartz.kCGEventRightMouseDown
-            up_evt = Quartz.kCGEventRightMouseUp
-            btn_type = Quartz.kCGMouseButtonRight
-        else:
-            down_evt = Quartz.kCGEventLeftMouseDown
-            up_evt = Quartz.kCGEventLeftMouseUp
-            btn_type = Quartz.kCGMouseButtonLeft
-
-        for _ in range(max(1, clicks)):
-            event_down = Quartz.CGEventCreateMouseEvent(None, down_evt, (x, y), btn_type)
-            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_down)
-            time.sleep(0.01)
-            event_up = Quartz.CGEventCreateMouseEvent(None, up_evt, (x, y), btn_type)
-            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event_up)
-            time.sleep(0.02)
-        return {"clicked": True, "x": x, "y": y, "button": button, "clicks": clicks}
-    except Exception as e:
-        logger.debug("macos click_at failed: %s", e)
-        return {"clicked": False, "error": str(e)}
+        time.sleep(0.02)
 
 
 def _idle_windows() -> float:
-    if ctypes is None or wintypes is None:
-        return -1.0
     try:
-
-        class LASTINPUTINFO(ctypes.Structure):
-            _fields_ = [("cbSize", wintypes.UINT), ("dwTime", wintypes.DWORD)]
-
-        info = LASTINPUTINFO()
-        info.cbSize = ctypes.sizeof(info)
-        if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(info)):
-            # GetTickCount64 + c_uint64 restype: 32 位 GetTickCount 约 24.8 天后有符号回绕, 长开机机器会恒判"刚有输入"。
-            ctypes.windll.kernel32.GetTickCount64.restype = ctypes.c_uint64
-            ticks = ctypes.windll.kernel32.GetTickCount64()
-            return max(0.0, (ticks - info.dwTime) / 1000.0)
+        info = _LASTINPUTINFO(cbSize=ctypes.sizeof(_LASTINPUTINFO))
+        if not _user32.GetLastInputInfo(ctypes.byref(info)):
+            return -1.0
+        # dwTime 与 GetTickCount 同为 32 位毫秒计数，约 49.7 天回绕一次，差值按 32 位取模。
+        return ((_kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000.0
     except Exception as e:
         logger.debug("win idle probe failed: %s", e)
-    return -1.0
+        return -1.0
 
 
 def _idle_macos() -> float:
-    if CGEventSourceSecondsSinceLastEventType is None:
+    try:
+        secs = Quartz.CGEventSourceSecondsSinceLastEventType(
+            Quartz.kCGEventSourceStateHIDSystemState,
+            Quartz.kCGAnyInputEventType,
+        )
+    except Exception as e:
+        logger.debug("macos idle probe failed: %s", e)
         return -1.0
-    secs = CGEventSourceSecondsSinceLastEventType(kCGEventSourceStateHIDSystemState, kCGAnyInputEventType)
-    return float(max(0.0, secs))
+    return max(0.0, float(secs))
 
 
 def _locked_windows() -> bool:
-    """检测 Windows 桌面是否已锁屏。
-
-    组合三个互相独立的信号(任一为真 ⇒ 锁屏):
-      1. ``GetForegroundWindow() == NULL`` — 桌面自身没有前台窗口。
-      2. ``GetClassName(hwnd) == 'LockScreenBackstop' / 'LogonUI'`` — Win10/11 锁屏窗口类。
-      3. 前台线程输入桌面的 ``GetUserObjectInformation()`` 返回非默认桌面名。
-    """
-    if ctypes is None:
-        return False
+    """锁屏时输入桌面切到 Winlogon，本会话取不到前台窗口；前台为锁屏窗口类时同样视为锁屏。"""
     try:
-        user32 = ctypes.windll.user32
-
-        hwnd = user32.GetForegroundWindow()
-        if not hwnd:
+        if not (hwnd := _user32.GetForegroundWindow()):
             return True
-        # (2) 类名匹配 — LogonUI 即 Win10/11 的锁屏。
-        buf = ctypes.create_unicode_buffer(256)
-        n = user32.GetClassNameW(hwnd, buf, 256)
-        cls = buf.value if n > 0 else ""
-        if cls in ("LockScreenBackstop", "LogonUI"):
-            return True
-        # (3) 输入桌面切换 — ``GetUserObjectInformation`` 是规范 API, 但成本高, 只在前两个便宜信号未触发时调用。
-        try:
-            thread_id = user32.GetWindowThreadProcessId(hwnd, None)
-            input_desktop = user32.GetThreadDesktop(thread_id)
-            default_desktop = user32.GetThreadDesktop(0)
-            if input_desktop and default_desktop and input_desktop != default_desktop:
-                return True
-        except Exception:
-            pass
-        return False
+        return _class_name(hwnd) in {"LockScreenBackstop", "LogonUI"}
     except Exception as e:
         logger.debug("win lock probe failed: %s", e)
         return False
 
 
 def _locked_macos() -> bool:
-    """当且仅当当前 macOS 会话已锁屏。
-
-    新版 ``kCGSSessionOnConsoleKey`` 在控制台上有用户登录(正常用 + 锁屏)时都返回 ``1``;
-    旧版驼峰命名 ``CGSSessionOnConsoleKey`` 只在控制台无用户(锁屏/loginwindow)时出现 — 因此:
-    锁屏 ⇔ 旧 key 存在 **或** 新 key 不存在。
-    """
-    if Quartz is None:
-        return False
+    """锁屏时会话字典带 ``CGSSessionScreenIsLocked``；快速切换用户离开控制台时 ``kCGSSessionOnConsoleKey`` 为假。"""
     try:
-        d = Quartz.CGSessionCopyCurrentDictionary()
+        session = Quartz.CGSessionCopyCurrentDictionary()
     except Exception as e:
         logger.debug("macos lock probe failed: %s", e)
         return False
-    if not d:
+    if not session:
         return False
-    on_console = bool(d.get("kCGSSessionOnConsoleKey", 0))
-    legacy_locked = "CGSSessionOnConsoleKey" in d and d.get("CGSSessionOnConsoleKey") is not None
-    return legacy_locked or not on_console
+    return bool(session.get("CGSSessionScreenIsLocked", False)) or not bool(
+        session.get("kCGSSessionOnConsoleKey", True),
+    )
 
 
 def _focus_windows() -> dict[str, Any]:
-    """检查 Windows 前台窗口(遍历 explorer 容器并读真正焦点 hwnd)。"""
-    if ctypes is None or wintypes is None:
-        return {}
     try:
-        user32 = ctypes.windll.user32
-        user32.GetForegroundWindow.restype = wintypes.HWND
-        user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
-        user32.GetWindow.restype = wintypes.HWND
-        user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
-        user32.GetAncestor.restype = wintypes.HWND
-
-        hwnd = user32.GetForegroundWindow()
-        if not hwnd:
+        if not (hwnd := _user32.GetForegroundWindow()):
             return {}
-        # 跳过 explorer 容器与不可见系统窗口 — 向后遍历 Z-order 找到用户实际交互的顶层可见窗口。
+        # 前台是桌面或任务栏等外壳窗口时，沿 Z 序找用户实际在用的可见顶层窗口。
         for _ in range(8):
-            buf = ctypes.create_unicode_buffer(256)
-            user32.GetClassNameW(wintypes.HWND(hwnd), buf, 256)
-            if buf.value not in ("Shell_TrayWnd", "WorkerW", "Progman") and user32.IsWindowVisible(wintypes.HWND(hwnd)):
+            if _class_name(hwnd) not in _SHELL_WINDOW_CLASSES and _user32.IsWindowVisible(hwnd):
                 break
-            next_hwnd = user32.GetWindow(hwnd, 2)  # GW_HWNDNEXT = 2
-            if not next_hwnd:
+            if not (next_hwnd := _user32.GetWindow(hwnd, _GW_HWNDNEXT)):
                 break
             hwnd = next_hwnd
 
-        # GetGUIThreadInfo: 读前台线程上真正 focus 的 hwnd(用户实际输入窗口, 而非最顶层 shell 容器)。
-        class _GuiThreadInfo(ctypes.Structure):
-            _fields_ = [
-                ("cbSize", wintypes.DWORD),
-                ("flags", wintypes.DWORD),
-                ("hwndActive", wintypes.HWND),
-                ("hwndFocus", wintypes.HWND),
-                ("hwndCapture", wintypes.HWND),
-                ("hwndMenuOwner", wintypes.HWND),
-                ("hwndMoveSize", wintypes.HWND),
-                ("hwndCaret", wintypes.HWND),
-                ("rcCaret", wintypes.RECT),
-            ]
-
-        tid = user32.GetWindowThreadProcessId(wintypes.HWND(hwnd), None)
-        info = _GuiThreadInfo(cbSize=ctypes.sizeof(_GuiThreadInfo))
-        user32.GetGUIThreadInfo(tid, ctypes.byref(info))
+        # 读该线程真正持有焦点的窗口，再取其顶层窗口，避免停在外壳容器上。
+        info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
+        _user32.GetGUIThreadInfo(_user32.GetWindowThreadProcessId(hwnd, None), ctypes.byref(info))
         real_hwnd = info.hwndFocus or info.hwndActive or hwnd
-        # 取焦点窗口的顶层 owner (GA_ROOT = 2)，若返回 0 则兜底回退到 real_hwnd / hwnd。
-        top = user32.GetAncestor(real_hwnd, 2) or real_hwnd or hwnd
+        top = _user32.GetAncestor(real_hwnd, _GA_ROOT) or real_hwnd
 
-        pid = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(wintypes.HWND(top), ctypes.byref(pid))
-        title_buf = ctypes.create_unicode_buffer(512)
-        length = user32.GetWindowTextW(wintypes.HWND(top), title_buf, 512)
-        title = title_buf.value[:length]
-        exe = _process_exe(pid.value)
-        rect = wintypes.RECT()
-        user32.GetWindowRect(wintypes.HWND(top), ctypes.byref(rect))
-        return {
-            "name": exe or title,
-            "pid": pid.value,
-            "window_id": f"win:{int(top):X}",
+        pid = _window_pid(top)
+        title = _window_text(top)
+        result: dict[str, Any] = {
+            "name": _process_exe(pid) or title,
+            "pid": pid,
+            "window_id": f"win:{top:X}",
             "title": title,
-            "kind": "user",
-            "x": rect.left,
-            "y": rect.top,
-            "w": max(0, rect.right - rect.left),
-            "h": max(0, rect.bottom - rect.top),
         }
+        if bounds := _dwm_bounds(top):
+            result |= dict(zip(("x", "y", "w", "h"), bounds, strict=True))
+        return result
     except Exception as e:
         logger.debug("win focus probe failed: %s", e)
         return {}
 
 
 def _focus_macos() -> dict[str, Any]:
-    if NSWorkspace is None:
-        return {}
     try:
-        app = NSWorkspace.sharedWorkspace().frontmostApplication()
-        if not app:
+        if not (app := NSWorkspace.sharedWorkspace().frontmostApplication()):
             return {}
+        pid = app.processIdentifier()
         result: dict[str, Any] = {
             "name": app.localizedName() or "",
-            "pid": app.processIdentifier(),
+            "pid": pid,
             "bundle": app.bundleIdentifier() or "",
-            "kind": "user",
         }
-        if CGWindowListCopyWindowInfo is not None:
-            for win in CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID):
-                if win.get("kCGWindowOwnerPID", -1) != app.processIdentifier() or win.get("kCGWindowLayer", 0) != 0:
-                    continue
-                b = win.get("kCGWindowBounds")
-                if b and b.get("Width", 0) > 0 and b.get("Height", 0) > 0:
-                    result["window_id"] = f"mac:{int(win.get('kCGWindowNumber', 0))}"
-                    result["x"] = int(b.get("X", 0))
-                    result["y"] = int(b.get("Y", 0))
-                    result["w"] = int(b["Width"])
-                    result["h"] = int(b["Height"])
-                    break
+        # 窗口列表按从前到后排列，取该应用第一个普通层窗口。
+        for win in Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID):
+            if win.get("kCGWindowOwnerPID", -1) != pid or win.get("kCGWindowLayer", 0) != 0:
+                continue
+            b = win.get("kCGWindowBounds")
+            if b and b.get("Width", 0) > 0 and b.get("Height", 0) > 0:
+                result |= {
+                    "window_id": f"mac:{int(win.get('kCGWindowNumber', 0))}",
+                    "x": int(b.get("X", 0)),
+                    "y": int(b.get("Y", 0)),
+                    "w": int(b["Width"]),
+                    "h": int(b["Height"]),
+                }
+                break
         return result
     except Exception as e:
         logger.debug("macos focus probe failed: %s", e)
         return {}
 
 
-_FULLSCREEN_COVERAGE_RATIO = 0.95
-
-
 def _fullscreen_windows() -> bool:
-    """前台窗口覆盖其显示器工作区 ≥ 95%。"""
-    if ctypes is None or wintypes is None:
-        return False
+    """前台窗口覆盖整个显示器（含任务栏区域）才算全屏；最大化窗口不覆盖任务栏，桌面外壳窗口不算。"""
     try:
-        user32 = ctypes.windll.user32
-
-        hwnd = user32.GetForegroundWindow()
-        if not hwnd:
+        if not (hwnd := _user32.GetForegroundWindow()) or _class_name(hwnd) in _SHELL_WINDOW_CLASSES:
             return False
-
-        class _Rect(ctypes.Structure):
-            _fields_ = [
-                ("left", wintypes.LONG),
-                ("top", wintypes.LONG),
-                ("right", wintypes.LONG),
-                ("bottom", wintypes.LONG),
-            ]
-
-        win = _Rect()
-        if not user32.GetWindowRect(hwnd, ctypes.byref(win)):
+        win = wintypes.RECT()
+        if not _user32.GetWindowRect(hwnd, ctypes.byref(win)):
             return False
-        win_w = max(0, win.right - win.left)
-        win_h = max(0, win.bottom - win.top)
-        if win_w <= 0 or win_h <= 0:
+        info = _MONITORINFO(cbSize=ctypes.sizeof(_MONITORINFO))
+        monitor = _user32.MonitorFromWindow(hwnd, _MONITOR_DEFAULTTONEAREST)
+        if not monitor or not _user32.GetMonitorInfoW(monitor, ctypes.byref(info)):
             return False
-
-        monitor = user32.MonitorFromWindow(hwnd, 0x00000002)  # MONITOR_DEFAULTTONEAREST
-        if not monitor:
-            return False
-        monitor_info = type(
-            "MI",
-            (ctypes.Structure,),
-            {
-                "_fields_": [
-                    ("cbSize", wintypes.DWORD),
-                    ("rcMonitor", _Rect),
-                    ("rcWork", _Rect),
-                    ("dwFlags", wintypes.DWORD),
-                ],
-            },
-        )()
-        monitor_info.cbSize = ctypes.sizeof(monitor_info)
-        if not user32.GetMonitorInfoW(monitor, ctypes.byref(monitor_info)):
-            return False
-        # 跟 *完整* 显示器区域 ``rcMonitor`` 比, 而不是工作区 ``rcWork``: 工作区不含任务栏,
-        # 已最大化窗口就一定覆盖工作区, 绝大多数用户的正常工作态会被误判成全屏; ``rcMonitor``
-        # 包含任务栏区, 只有真正进入全屏(任务栏自动隐藏)才能达到阈值。
-        monitor = monitor_info.rcMonitor
-        monitor_w = max(1, monitor.right - monitor.left)
-        monitor_h = max(1, monitor.bottom - monitor.top)
-        ratio = min(win_w / monitor_w, win_h / monitor_h)
-        return ratio >= _FULLSCREEN_COVERAGE_RATIO
+        mon = info.rcMonitor
+        return win.left <= mon.left and win.top <= mon.top and win.right >= mon.right and win.bottom >= mon.bottom
     except Exception as e:
         logger.debug("win fullscreen probe failed: %s", e)
         return False
 
 
 def _fullscreen_macos() -> bool:
-    """当且仅当前台 app 的 key window 在原生全屏模式(绿色按钮触发的那种)。
-
-    ``NSApplication.sharedApplication().windows()`` 只枚举 *Runner 自己进程内* 的 NSWindow(Runner 是无头 Python 进程,
-    根本没有); 跨进程窗口枚举必须走 CoreGraphics 的 ``CGWindowListCopyWindowInfo``, 这里就用它配合 ``NSWorkspace``
-    拿到的前台 PID 来完成。
-    """
-    if NSWorkspace is None or Quartz is None or CGWindowListCopyWindowInfo is None:
-        return False
+    """前台应用最前面的普通窗口覆盖其所在显示器全部区域（原生全屏会隐藏菜单栏）时为 True。"""
     try:
-        app = NSWorkspace.sharedWorkspace().frontmostApplication()
-        if not app:
+        if not (app := NSWorkspace.sharedWorkspace().frontmostApplication()):
             return False
-        focused_pid = app.processIdentifier()
-        # kCGWindowListOptionOnScreenOnly 排除离屏/最小化窗口; 再按 PID 过滤, 看 AppKit 头文件暴露的全屏位/窗口状态位。
-        windows = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
-        NSWindowStyleMaskFullScreen = 1 << 14  # 来自 AppKit 头文件
-        for win in windows:
-            owner_pid = win.get("kCGWindowOwnerPID", -1)
-            if owner_pid != focused_pid:
-                continue
-            # 窗口状态位 1 << 9 是现代 macOS 的 ``kCGWindowStateIsInFullscreen`` — 老版本的头文件没暴露这个常量, 直接按位掩码兜底。
-            if win.get("kCGWindowIsInFullscreen", 0) & 1:
-                return True
-            style_mask = win.get("kCGWindowStyleMask", 0)
-            if style_mask & NSWindowStyleMaskFullScreen:
-                return True
+        pid = app.processIdentifier()
+        bounds = next(
+            (
+                win["kCGWindowBounds"]
+                for win in Quartz.CGWindowListCopyWindowInfo(
+                    Quartz.kCGWindowListOptionOnScreenOnly,
+                    Quartz.kCGNullWindowID,
+                )
+                if win.get("kCGWindowOwnerPID", -1) == pid and win.get("kCGWindowLayer", 0) == 0
+            ),
+            None,
+        )
+        if not bounds:
+            return False
+        x, y, w, h = bounds["X"], bounds["Y"], bounds["Width"], bounds["Height"]
+        _, displays, _ = Quartz.CGGetActiveDisplayList(16, None, None)
+        for display in displays or ():
+            d = Quartz.CGDisplayBounds(display)
+            dx, dy, dw, dh = d.origin.x, d.origin.y, d.size.width, d.size.height
+            if dx <= x + w / 2 < dx + dw and dy <= y + h / 2 < dy + dh:
+                return x <= dx and y <= dy and x + w >= dx + dw and y + h >= dy + dh
         return False
     except Exception as e:
         logger.debug("macos fullscreen probe failed: %s", e)
         return False
 
 
-_SHELL_WINDOW_CLASSES = frozenset(("Shell_TrayWnd", "WorkerW", "Progman"))
-
-
-def _process_exe(pid: int) -> str:
-    """尽力获取 *pid* 的可执行文件名; 失败时返回空串。"""
-    if ctypes is None or wintypes is None:
-        return ""
-    try:
-        kernel32 = ctypes.windll.kernel32
-        kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
-        kernel32.OpenProcess.restype = wintypes.HANDLE
-        kernel32.QueryFullProcessImageNameW.argtypes = [
-            wintypes.HANDLE,
-            wintypes.DWORD,
-            wintypes.LPWSTR,
-            ctypes.POINTER(wintypes.DWORD),
-        ]
-        kernel32.QueryFullProcessImageNameW.restype = wintypes.BOOL
-        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-        h = kernel32.OpenProcess(0x1000, False, pid)
-        if not h:
-            return ""
-        try:
-            buf = ctypes.create_unicode_buffer(512)
-            size = wintypes.DWORD(len(buf))
-            if not kernel32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
-                return ""
-            return buf.value.rsplit("\\", 1)[-1] if buf.value else ""
-        finally:
-            kernel32.CloseHandle(h)
-    except Exception:
-        return ""
-
-
 def _windows_windows() -> WindowScene:
-    if ctypes is None or wintypes is None:
-        return {"windows": []}
     try:
-        user32 = ctypes.windll.user32
-        user32.GetForegroundWindow.restype = wintypes.HWND
-        dwm_attribute = ctypes.windll.dwmapi.DwmGetWindowAttribute
-        dwm_attribute.argtypes = [wintypes.HWND, wintypes.DWORD, ctypes.c_void_p, wintypes.DWORD]
-        dwm_attribute.restype = ctypes.c_long
-        foreground = user32.GetForegroundWindow()
+        foreground = _user32.GetForegroundWindow()
         results: list[WindowInfo] = []
         exe_cache: dict[int, str] = {}
 
-        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
-        def cb(hwnd: int, _lparam: int) -> bool:
-            handle = wintypes.HWND(hwnd)
-            if not user32.IsWindowVisible(handle) or user32.IsIconic(handle):
+        def collect(hwnd: int, _lparam: int) -> bool:
+            if not _user32.IsWindowVisible(hwnd) or _user32.IsIconic(hwnd):
                 return True
             cloaked = wintypes.DWORD()
-            if dwm_attribute(handle, 14, ctypes.byref(cloaked), ctypes.sizeof(cloaked)) == 0 and cloaked.value:
+            if (
+                _dwmapi.DwmGetWindowAttribute(hwnd, _DWMWA_CLOAKED, ctypes.byref(cloaked), ctypes.sizeof(cloaked)) == 0
+                and cloaked.value
+            ):
                 return True
-            buf = ctypes.create_unicode_buffer(256)
-            user32.GetClassNameW(handle, buf, 256)
-            if buf.value in _SHELL_WINDOW_CLASSES:
+            if _class_name(hwnd) in _SHELL_WINDOW_CLASSES or (bounds := _dwm_bounds(hwnd)) is None:
                 return True
-            rect = wintypes.RECT()
-            # DWMWA_EXTENDED_FRAME_BOUNDS 为物理可见边界，不含透明缩放边框，也不做 DPI 虚拟化。
-            if dwm_attribute(handle, 9, ctypes.byref(rect), ctypes.sizeof(rect)) != 0:
+            if not (title := _window_text(hwnd)):
                 return True
-            w = max(0, rect.right - rect.left)
-            h = max(0, rect.bottom - rect.top)
-            if w <= 0 or h <= 0:
+            pid = _window_pid(hwnd)
+            if pid not in exe_cache:
+                exe_cache[pid] = _process_exe(pid)
+            if (exe := exe_cache[pid]).casefold() == "spiritagent.exe":
                 return True
-            length = user32.GetWindowTextLengthW(handle)
-            if length == 0:
-                return True
-            tb = ctypes.create_unicode_buffer(length + 1)
-            user32.GetWindowTextW(handle, tb, length + 1)
-            pid = wintypes.DWORD()
-            user32.GetWindowThreadProcessId(handle, ctypes.byref(pid))
-            pid_val = pid.value
-            if pid_val not in exe_cache:
-                exe_cache[pid_val] = _process_exe(pid_val)
-            exe = exe_cache[pid_val]
-            if exe.casefold() == "spiritagent.exe":
-                return True
+            x, y, w, h = bounds
             results.append(
                 {
-                    "title": tb.value,
-                    "name": exe or tb.value,
-                    "x": rect.left,
-                    "y": rect.top,
+                    "title": title,
+                    "name": exe or title,
+                    "x": x,
+                    "y": y,
                     "w": w,
                     "h": h,
                     "focused": hwnd == foreground,
                     "visible": True,
-                    "window_id": f"win:{int(hwnd):X}",
-                    "pid": pid_val,
+                    "window_id": f"win:{hwnd:X}",
+                    "pid": pid,
                     "z_order": len(results),
                 },
             )
             return True
 
-        if not user32.EnumWindows(cb, 0):
-            raise OSError("Window enumeration failed")
+        if not _user32.EnumWindows(_WNDENUMPROC(collect), 0):
+            raise ctypes.WinError()
         return {"windows": results, "runner_instance_id": _WINDOW_SCENE_INSTANCE_ID}
     except Exception as e:
         logger.debug("win get_windows failed: %s", e)
@@ -705,25 +550,21 @@ def _windows_windows() -> WindowScene:
 
 
 def _windows_macos() -> WindowScene:
-    if Quartz is None or CGWindowListCopyWindowInfo is None:
-        return {"windows": []}
     try:
-        focused_pid = 0
-        if NSWorkspace is not None:
-            app = NSWorkspace.sharedWorkspace().frontmostApplication()
-            if app:
-                focused_pid = app.processIdentifier()
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        focused_pid = app.processIdentifier() if app else 0
         results: list[WindowInfo] = []
         focused_window_seen = False
-        for win in CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID):
+        for win in Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID):
             if win.get("kCGWindowLayer", 0) != 0:
                 continue
             b = win.get("kCGWindowBounds")
-            if not b or b.get("Width", 0) <= 0:
+            if not b or b.get("Width", 0) <= 0 or b.get("Height", 0) <= 0:
                 continue
-            owner = win.get("kCGWindowOwnerName", "")
-            if (owner or "").casefold() in {"spiritagent", "唤生"}:
+            owner = win.get("kCGWindowOwnerName", "") or ""
+            if owner.casefold() in {"spiritagent", "唤生"}:
                 continue
+            # 列表按从前到后排列，前台应用的第一个窗口即焦点窗口。
             focused = win.get("kCGWindowOwnerPID", -1) == focused_pid and not focused_window_seen
             focused_window_seen |= focused
             results.append(

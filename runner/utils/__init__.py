@@ -4,7 +4,6 @@ from .capabilities import (
     disk_free_bytes,
     network_reachable,
     snapshot,
-    snapshot_health,
 )
 from .clean import clean_output, strip_ansi
 from .config import (
@@ -31,33 +30,19 @@ from .credential_files import (
     get_credential_file_mounts,
     iter_cache_files,
     iter_skills_files,
-    register_credential_file,
 )
-from .desktop_transport import (
-    PIPE_TRANSPORT,
-    UNIX_TRANSPORT,
-    DesktopEndpoint,
-    connect_desktop,
-    read_endpoint,
-)
+from .desktop_transport import DesktopEndpoint, connect_desktop, read_endpoint
 from .env_helpers import inject_context_spiritagent_home, sanitize_subprocess_env
-from .env_passthrough import is_env_passthrough, register_env_passthrough
+from .env_passthrough import is_env_passthrough
 from .file_io import atomic_replace
 from .file_safety import (
-    get_cross_profile_warning,
     get_read_block_error,
-    get_sandbox_mirror_warning,
     get_windows_sensitive_prefixes,
     has_traversal_component,
     is_write_denied,
     validate_within_dir,
 )
-from .interrupt import (
-    is_interrupted,
-    reset_current_request,
-    set_current_request,
-    set_local_interrupt,
-)
+from .interrupt import is_interrupted, reset_cancel_event, set_cancel_event
 from .job_object import init_runner_job_object
 from .memory_scope import CURRENT_SKILL_SCOPE, SkillScope, learned_skills_root, visible_skill_path, visible_skill_roots
 from .path_helpers import append_sane_path_entries, find_bash, find_python, msys_to_windows_path, resolve_safe_cwd
@@ -80,10 +65,8 @@ __all__ = [
     "DesktopEndpoint",
     "IS_MACOS",
     "IS_WINDOWS",
-    "PIPE_TRANSPORT",
     "SECRET_PREFIX_RE",
     "SkillScope",
-    "UNIX_TRANSPORT",
     "append_sane_path_entries",
     "async_is_safe_url",
     "atomic_replace",
@@ -101,11 +84,9 @@ __all__ = [
     "find_bash",
     "find_python",
     "get_credential_file_mounts",
-    "get_cross_profile_warning",
     "get_disabled_config_names",
     "get_env_type",
     "get_read_block_error",
-    "get_sandbox_mirror_warning",
     "get_skills_dir",
     "get_spiritagent_dir",
     "get_spiritagent_home",
@@ -130,19 +111,15 @@ __all__ = [
     "pid_exists",
     "read_endpoint",
     "redact_sensitive_text",
-    "register_credential_file",
-    "register_env_passthrough",
-    "reset_current_request",
+    "reset_cancel_event",
     "resolve_safe_cwd",
     "safe_schedule_threadsafe",
     "sanitize_subprocess_env",
-    "set_current_request",
+    "set_cancel_event",
     "set_handler",
     "set_inmemory_config",
-    "set_local_interrupt",
     "set_main_loop",
     "snapshot",
-    "snapshot_health",
     "strip_ansi",
     "terminate_tree",
     "validate_within_dir",

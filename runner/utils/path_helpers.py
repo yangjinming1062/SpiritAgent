@@ -55,10 +55,8 @@ def find_bash() -> str:
         return custom
 
     lap = os.environ.get("LOCALAPPDATA", "")
-    # 优先查找 spiritagent 自带 Git Bash，再走标准 Git Bash 路径；shutil.which("bash") 兜底可能返回 WSL 的 C:\WINDOWS\system32\bash.EXE——它访问不了 Windows 临时路径。
+    # 先查 Git for Windows 的标准安装位置；shutil.which("bash") 兜底可能返回 WSL 的 C:\WINDOWS\system32\bash.EXE，它访问不了 Windows 临时路径。
     candidates = [
-        os.path.join(lap, "spiritagent", "git", "bin", "bash.exe"),
-        os.path.join(lap, "spiritagent", "git", "usr", "bin", "bash.exe"),
         os.path.join(os.environ.get("PROGRAMFILES", r"C:\Program Files"), "Git", "bin", "bash.exe"),
         os.path.join(os.environ.get("PROGRAMFILES(X86)", r"C:\Program Files (x86)"), "Git", "bin", "bash.exe"),
     ]
@@ -69,7 +67,7 @@ def find_bash() -> str:
             return candidate
     if found := shutil.which("bash"):
         return found
-    raise RuntimeError("Git Bash not found. Install Git for Windows or set terminal.git_bash_path in Desktop settings.")
+    raise RuntimeError("Git Bash not found. Install Git for Windows to use the local terminal.")
 
 
 def append_sane_path_entries(existing_path: str) -> str:

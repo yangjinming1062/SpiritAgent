@@ -11,23 +11,19 @@ import httpx
 from utils import (
     cfg_get,
     get_spiritagent_dir,
+    is_truthy_value,
     load_config,
 )
 
 from ..registry import tool_error
 from .camofox_state import get_camofox_identity
-from .helpers import (
-    SNAPSHOT_SUMMARIZE_THRESHOLD,
-    _extract_relevant_content,
-    _truncate_snapshot,
-    screenshot_multimodal_result,
-)
+from .helpers import _truncate_snapshot, screenshot_multimodal_result
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30
-_vnc_url: str | None = None
-_vnc_url_checked = False
+# 按 Camofox base URL 缓存健康探测得到的 VNC 地址；探测失败不缓存，下次重试。
+_vnc_urls: dict[str, str | None] = {}
 
 
 def get_camofox_url() -> str:
@@ -42,36 +38,26 @@ def is_camofox_mode() -> bool:
     return not cdp_override and bool(get_camofox_url())
 
 
-def check_camofox_available() -> bool:
-    """探测 Camofox 后端健康状态，顺便记下 VNC 地址（用于分享给用户围观）。"""
-    global _vnc_url, _vnc_url_checked
-    if not (url := get_camofox_url()):
-        return False
-    try:
-        resp = httpx.get(f"{url}/health", timeout=5)
-        if resp.status_code == 200 and not _vnc_url_checked:
-            if isinstance(vnc_port := resp.json().get("vncPort"), int) and 1 <= vnc_port <= 65535:
-                _vnc_url = f"http://{urlparse(url).hostname or 'localhost'}:{vnc_port}"
-            _vnc_url_checked = True
-        return resp.status_code == 200
-    except Exception:
-        return False
-
-
 def get_vnc_url() -> str | None:
-    """若 Camofox 暴露了 VNC 端口则返回其 URL，否则 None。"""
-    if not _vnc_url_checked:
-        check_camofox_available()
-    return _vnc_url
+    """若 Camofox 健康探测报告了 VNC 端口则返回其 URL（供用户围观浏览器），否则 None。"""
+    if not (base := get_camofox_url()):
+        return None
+    if base not in _vnc_urls:
+        try:
+            resp = httpx.get(f"{base}/health", timeout=5)
+            resp.raise_for_status()
+            vnc_port = resp.json().get("vncPort")
+        except (httpx.HTTPError, ValueError, AttributeError) as exc:
+            logger.debug("Camofox health check failed for %s: %s", base, exc)
+            return None
+        valid_port = isinstance(vnc_port, int) and 1 <= vnc_port <= 65535
+        _vnc_urls[base] = f"http://{urlparse(base).hostname or 'localhost'}:{vnc_port}" if valid_port else None
+    return _vnc_urls[base]
 
 
 def _get_camofox_config() -> dict[str, Any]:
-    try:
-        cfg = cfg_get(load_config(), "browser", "camofox", default={})
-        return cfg if isinstance(cfg, dict) else {}
-    except Exception as exc:
-        logger.warning("camofox config check failed, defaulting to disabled: %s", exc)
-        return {}
+    cfg = cfg_get(load_config(), "browser", "camofox", default={})
+    return cfg if isinstance(cfg, dict) else {}
 
 
 def _camofox_identity_override(task_id: str | None, camofox_cfg: dict[str, Any]) -> dict[str, str] | None:
@@ -80,18 +66,6 @@ def _camofox_identity_override(task_id: str | None, camofox_cfg: dict[str, Any])
     if not user_id:
         return None
     return {"user_id": user_id, "session_key": session_key}
-
-
-def _adopt_existing_tab_enabled(camofox_cfg: dict[str, Any]) -> bool:
-    if (val := camofox_cfg.get("adopt_existing_tab")) is not None:
-        return bool(val)
-    return False
-
-
-def _loopback_rewrite_enabled(camofox_cfg: dict[str, Any]) -> bool:
-    if (val := camofox_cfg.get("rewrite_loopback_urls")) is not None:
-        return bool(val)
-    return False
 
 
 def _loopback_rewrite_host(camofox_cfg: dict[str, Any]) -> str:
@@ -112,7 +86,7 @@ def _is_loopback_hostname(hostname: str | None) -> bool:
 
 def _rewrite_loopback_url_for_camofox(url: str) -> tuple[str, dict[str, str] | None]:
     camofox_cfg = _get_camofox_config()
-    if not _loopback_rewrite_enabled(camofox_cfg):
+    if not is_truthy_value(camofox_cfg.get("rewrite_loopback_urls")):
         return url, None
     try:
         parsed = urlsplit(url)
@@ -167,16 +141,16 @@ def _get_session(task_id: str | None) -> dict[str, Any]:
                     "tab_id": None,
                     "session_key": identity["session_key"],
                     "managed": True,
-                    "adopt_existing_tab": _adopt_existing_tab_enabled(camofox_cfg),
+                    "adopt_existing_tab": is_truthy_value(camofox_cfg.get("adopt_existing_tab")),
                 }
-            elif bool(camofox_cfg.get("managed_persistence")):
+            elif is_truthy_value(camofox_cfg.get("managed_persistence")):
                 identity = get_camofox_identity(task_id)
                 _sessions[task_id] = {
                     "user_id": identity["user_id"],
                     "tab_id": None,
                     "session_key": identity["session_key"],
                     "managed": True,
-                    "adopt_existing_tab": _adopt_existing_tab_enabled(camofox_cfg),
+                    "adopt_existing_tab": is_truthy_value(camofox_cfg.get("adopt_existing_tab")),
                 }
             else:
                 _sessions[task_id] = {
@@ -255,40 +229,35 @@ def camofox_navigate(url: str, task_id: str | None = None) -> str:
             )
         try:
             snap_data = _get(f"/tabs/{session['tab_id']}/snapshot", params={"userId": session["user_id"]})
-            snapshot_text = snap_data.get("snapshot", "")
-            if len(snapshot_text) > SNAPSHOT_SUMMARIZE_THRESHOLD:
-                snapshot_text = _truncate_snapshot(snapshot_text)
-            result["snapshot"] = snapshot_text
+            result["snapshot"] = _truncate_snapshot(snap_data.get("snapshot", ""))
             result["element_count"] = snap_data.get("refsCount", 0)
-        except Exception:
-            pass
+        except Exception as exc:
+            result["snapshot_error"] = f"{type(exc).__name__}: {exc}"
         return json.dumps(result, ensure_ascii=False)
     except httpx.HTTPStatusError as e:
         return tool_error(f"Navigation failed: {e}", success=False)
-    except (httpx.ConnectError, httpx.RequestError):
-        return json.dumps(
-            {
-                "success": False,
-                "error": f"Cannot connect to Camofox at {get_camofox_url()}. Is the server running? Start it first.",
-            },
-            ensure_ascii=False,
+    except httpx.RequestError as e:
+        return tool_error(
+            f"Cannot reach the Camofox browser service at {get_camofox_url()} ({type(e).__name__}); it may not be running.",
+            success=False,
         )
     except Exception as e:
         return tool_error(str(e), success=False)
 
 
-def camofox_snapshot(task_id: str | None = None, user_task: str | None = None) -> str:
-    """取 Camofox 后端的页面快照。"""
+def camofox_snapshot(task_id: str | None = None) -> str:
+    """取 Camofox 后端的页面快照，超长按行截断。"""
     try:
         session = _get_session(task_id)
         if not session["tab_id"]:
             return tool_error("No browser session. Call browser_navigate first.", success=False)
         data = _get(f"/tabs/{session['tab_id']}/snapshot", params={"userId": session["user_id"]})
-        snapshot = data.get("snapshot", "")
-        if len(snapshot) > SNAPSHOT_SUMMARIZE_THRESHOLD:
-            snapshot = _extract_relevant_content(snapshot, user_task) if user_task else _truncate_snapshot(snapshot)
         return json.dumps(
-            {"success": True, "snapshot": snapshot, "element_count": data.get("refsCount", 0)},
+            {
+                "success": True,
+                "snapshot": _truncate_snapshot(data.get("snapshot", "")),
+                "element_count": data.get("refsCount", 0),
+            },
             ensure_ascii=False,
         )
     except Exception as e:
@@ -401,8 +370,8 @@ def camofox_vision(annotate: bool = False, task_id: str | None = None) -> dict[s
                 annotation_context = (
                     f"\n\nAccessibility tree (element refs for interaction):\n{snap_data.get('snapshot', '')[:3000]}"
                 )
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.debug("Camofox snapshot for vision annotation failed: %s", exc)
 
         return screenshot_multimodal_result(screenshot_path, annotation_context)
     except Exception as e:

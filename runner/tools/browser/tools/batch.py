@@ -1,14 +1,12 @@
 import json
-import logging
+import threading
 from typing import Any
 
 from ...registry import registry
 from ..camofox import is_camofox_mode
 from ..check import check_browser_native_requirements
 from ..schemas import BROWSER_BATCH_SCHEMA
-from ._common import browser_session, camofox_unsupported, no_supervisor
-
-logger = logging.getLogger(__name__)
+from ._common import browser_session, camofox_unsupported, compact_snapshot, no_supervisor, pending_dialog_fields
 
 
 def browser_batch(
@@ -16,20 +14,14 @@ def browser_batch(
     return_snapshot: bool = True,
     wait_between_ms: int = 100,
     task_id: str | None = None,
-    cancel_token: Any = None,
+    cancel_token: threading.Event | None = None,
 ) -> str:
-    """在当前浏览器会话中连续批量执行一组原子动作。
-
-    减少跨进程/云端多轮往返延迟，支持 click, type, press, hover, scroll, wait, select 等动作。
-    """
+    """按序执行一组页面动作，首个失败即停止并返回已执行步骤。"""
     if is_camofox_mode():
         return camofox_unsupported("browser_batch")
 
     if not actions or not isinstance(actions, list):
         return json.dumps({"success": False, "error": "actions parameter must be a non-empty list of action objects"})
-
-    if cancel_token is not None and getattr(cancel_token, "is_set", lambda: False)():
-        return json.dumps({"success": False, "error": "Caller cancelled before batch", "cancelled": True})
 
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
@@ -43,6 +35,7 @@ def browser_batch(
                     "error": batch_res.get("error", "Batch execution failed"),
                     "step": batch_res.get("step"),
                     "completed_steps": batch_res.get("completed", []),
+                    **pending_dialog_fields(supervisor),
                 },
                 ensure_ascii=False,
             )
@@ -52,15 +45,8 @@ def browser_batch(
             "steps_executed": batch_res.get("steps_executed", len(actions)),
             "details": batch_res.get("details", []),
         }
-
         if return_snapshot:
-            try:
-                snap_res = supervisor.snapshot_axtree(interactive_only=True)
-                if snap_res.get("ok"):
-                    result["snapshot"] = snap_res.get("snapshot", "")
-            except Exception as exc:
-                logger.debug("Failed to get post-batch snapshot: %s", exc)
-
+            result.update(compact_snapshot(supervisor))
         return json.dumps(result, ensure_ascii=False)
 
 

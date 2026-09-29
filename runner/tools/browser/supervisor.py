@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import contextlib
+import enum
 import json
 import logging
 import random
@@ -10,8 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
-from urllib.parse import parse_qs, urlparse
+from typing import Any, Final
 
 import websockets
 from utils import safe_schedule_threadsafe
@@ -20,6 +20,7 @@ from .dialog_manager import (
     _VALID_POLICIES,
     DEFAULT_DIALOG_POLICY,
     DEFAULT_DIALOG_TIMEOUT_S,
+    DialogBlockedError,
     DialogManager,
     DialogRecord,
     PendingDialog,
@@ -32,61 +33,35 @@ from .engine import (
     parse_som_results,
     select_option_with_eval,
 )
+from .engine.launcher import NativeBrowserProcess
 from .input import InputDispatch, parse_numeric_unit
 from .refs import Refs, SessionIds
 
 logger = logging.getLogger(__name__)
 
 _CDP_BACKOFF_MAX = 10.0
+# 有待决弹窗时，浏览器侧命令仍会立即返回，依赖渲染进程的命令会一直挂到弹窗关闭：超过该宽限即判定被阻塞。
+_DIALOG_BLOCK_GRACE_S = 1.0
+# 导航会关闭页面上已有的弹窗并照常完成（首字节可能远超宽限），对调用前已存在的弹窗不做阻塞判定。
+_NAVIGATION_METHODS = frozenset({"Page.navigate", "Page.navigateToHistoryEntry", "Page.reload"})
 
-_UNSET: Any = object()
+
+class _Unset(enum.Enum):
+    UNSET = enum.auto()
+
+
+_UNSET: Final = _Unset.UNSET
 
 CONSOLE_HISTORY_MAX = 50
 
-DIALOG_BRIDGE_HOST = "spiritagent-dialog-bridge.invalid"
-DIALOG_BRIDGE_URL_PATTERN = f"http://{DIALOG_BRIDGE_HOST}/*"
-
-_DIALOG_BRIDGE_SCRIPT = r"""
-(() => {
-  if (window.__spiritagentDialogBridgeInstalled) return;
-  window.__spiritagentDialogBridgeInstalled = true;
-  const ENDPOINT = "http://spiritagent-dialog-bridge.invalid/";
-  function ask(kind, message, defaultPrompt) {
-    try {
-      const xhr = new XMLHttpRequest();
-      const params = new URLSearchParams({
-        kind: String(kind || ""),
-        message: String(message == null ? "" : message),
-        default_prompt: String(defaultPrompt == null ? "" : defaultPrompt),
-      });
-      xhr.open("GET", ENDPOINT + "?" + params.toString(), false);
-      xhr.send(null);
-      if (xhr.status !== 200) return null;
-      const body = xhr.responseText || "";
-      let parsed;
-      try { parsed = JSON.parse(body); } catch (e) { return null; }
-      if (kind === "alert") return undefined;
-      if (kind === "confirm") return Boolean(parsed && parsed.accept);
-      if (kind === "prompt") {
-        if (!parsed || !parsed.accept) return null;
-        return parsed.prompt_text == null ? "" : String(parsed.prompt_text);
-      }
-      return null;
-    } catch (e) {
-      return null;
-    }
-  }
-  window.alert   = function(message) { ask("alert",   message, ""); };
-  window.confirm = function(message) {
-    const r = ask("confirm", message, "");
-    return r === null ? false : Boolean(r);
-  };
-  window.prompt  = function(message, def) {
-    const r = ask("prompt", message, def == null ? "" : def);
-    return r === null ? null : String(r);
-  };
-})();
-"""
+# 每个 page 会话都要启用的事件域：导航 / lifecycle 等待、弹窗、console 与 AXTree 依赖它们。
+_PAGE_DOMAINS: tuple[tuple[str, dict[str, Any] | None], ...] = (
+    ("Page.enable", None),
+    ("Page.setLifecycleEventsEnabled", {"enabled": True}),
+    ("Runtime.enable", None),
+    ("Accessibility.enable", None),
+    ("DOM.enable", None),
+)
 
 
 class NavigationError(Exception):
@@ -100,7 +75,6 @@ class FrameInfo:
     origin: str
     parent_frame_id: str | None
     is_oopif: bool
-    cdp_session_id: str | None = None
     name: str = ""
 
     def to_dict(self) -> dict[str, Any]:
@@ -144,7 +118,7 @@ class CDPSupervisor:
         task_id: str,
         cdp_url: str,
         *,
-        launch_handle: Any = None,
+        launch_handle: NativeBrowserProcess | None = None,
         auto_owned: bool = False,
         dialog_policy: str = DEFAULT_DIALOG_POLICY,
         dialog_timeout_s: float = DEFAULT_DIALOG_TIMEOUT_S,
@@ -168,6 +142,7 @@ class CDPSupervisor:
         self._pending_downloads: dict[str, dict[str, Any]] = {}
 
         self._loop: asyncio.AbstractEventLoop | None = None
+        self._main_task: asyncio.Task[None] | None = None
         self._thread: threading.Thread | None = None
         self._ready_event = threading.Event()
         self._start_error: BaseException | None = None
@@ -175,27 +150,23 @@ class CDPSupervisor:
 
         self._ws: Any = None
         self._next_call_id = 1
-        self._pending_calls: dict[int, asyncio.Future] = {}
-        # 锁 #5：仅保护 _session_ids tuple 的原子替换。读路径走 _current_sids() 无锁。
+        self._pending_calls: dict[int, asyncio.Future[dict[str, Any]]] = {}
+        # 只保护 _session_ids 的原子替换；读路径走 _current_sids() 无锁。
         self._session_lock = threading.Lock()
         self._session_ids: SessionIds = SessionIds(active=None, page=None, root_frame="")
         self._attached_targets: dict[str, dict[str, str]] = {}
-        self._child_sessions: dict[str, str] = {}
 
-        # 事件回调钩子（供 navigate 等一次性等待使用）
-        # 一次性等待 future：dict 按 frame_id / (frame_id, name) 索引；
-        # 单 loop 线程访问（_await_* 在 loop 线程跑，_on_event 在 loop 线程触发）。
-        self._frame_navigated_waiters: dict[str, list[asyncio.Future]] = {}
-        self._lifecycle_waiters: dict[tuple[str, str], list[asyncio.Future]] = {}
+        # 等待「出现待决弹窗」的一次性 future；只在 loop 线程读写。
+        self._dialog_open_waiters: set[asyncio.Future[None]] = set()
+        # navigate 的一次性等待 future，按 frame_id / (loader_id, name) 索引；只在 loop 线程读写。
+        self._frame_navigated_waiters: dict[str, list[asyncio.Future[dict[str, Any]]]] = {}
+        self._lifecycle_waiters: dict[tuple[str, str], list[asyncio.Future[dict[str, Any]]]] = {}
 
-        # DialogManager 和 Refs 在 _cdp 绑定为 bound method 之后才能取，
-        # 故用 lambda 延迟到首次调用时取。
         self._dialog_manager = DialogManager(
             policy=dialog_policy,
             timeout_s=dialog_timeout_s,
             cdp_send=self._cdp,
             loop_provider=lambda: self._loop,
-            session_id_provider=lambda: (sids := self._current_sids()).active or sids.page,
         )
         self._refs = Refs(
             cdp_send_async=self._cdp,
@@ -207,7 +178,7 @@ class CDPSupervisor:
         self._input = InputDispatch(
             send_cdp=self.send_cdp,
             evaluate_runtime=self.evaluate_runtime,
-            resolve_ref=self._refs._resolve_ref_center,
+            resolve_ref=self._refs.resolve_ref_center,
             session_id_provider=lambda: (sids := self._current_sids()).active or sids.page,
             wait_for_page_stable=self.wait_for_page_stable,
         )
@@ -235,33 +206,31 @@ class CDPSupervisor:
             raise err
 
     def stop(self) -> None:
+        """取消 CDP 主任务并等待线程退出；自有浏览器随后终止。可重复调用。"""
         self._stop_requested = True
-        loop = self._loop
-        if self._dialog_manager is not None:
-            # 先取消所有看门狗、对未决 bridge dialog 发 dismiss，避免页面端 XHR 卡死。
-            self._dialog_manager.shutdown()
-            # 再 cancel-and-await 所有 DialogManager 后台任务（gather+return_exceptions），
-            # 然后才关闭 loop，避免协程在 Event loop is closed 状态下退出。
-            if loop is not None and loop.is_running():
-                self._dialog_manager.bg.drain(loop)
-        if loop is not None and loop.is_running():
-            with contextlib.suppress(Exception):
-                loop.call_soon_threadsafe(loop.stop)
+        loop, task = self._loop, self._main_task
+        if loop is not None and task is not None:
+            with contextlib.suppress(RuntimeError):  # loop 已关闭
+                loop.call_soon_threadsafe(task.cancel)
 
-        if self._thread is not None and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
+        if self._thread is not None and self._thread.is_alive() and self._thread is not threading.current_thread():
+            self._thread.join(timeout=5.0)
+            if self._thread.is_alive():
+                logger.warning("CDP supervisor %s thread did not exit within 5s", self.task_id)
 
         with self._state_lock:
             self._active = False
 
         if self.auto_owned and self.launch_handle is not None:
-            try:
-                self.launch_handle.terminate()
-            except Exception as e:
-                logger.debug("Error terminating launch_handle: %s", e)
+            self.launch_handle.terminate()
+
+    @property
+    def active(self) -> bool:
+        """CDP 连接已建立且初始页已附着；断线重连期间为 False。"""
+        return self._active
 
     def snapshot(self) -> SupervisorSnapshot:
-        # DialogManager.snapshot 单独加锁（锁 #2），不与 _state_lock 嵌套以避免锁序倒置。
+        # DialogManager 自带锁，不与 _state_lock 嵌套以避免锁序倒置。
         pending, recent = self._dialog_manager.snapshot()
         with self._state_lock:
             active = self._active
@@ -276,19 +245,13 @@ class CDPSupervisor:
 
     def _build_frame_tree_locked(self) -> dict[str, Any]:
         frames = list(self._frames.values())
-        root = next((f for f in frames if not f.parent_frame_id), None)
-        if root is None and frames:
-            root = frames[0]
+        root = self._frames.get(self._current_sids().root_frame) or next(
+            (f for f in frames if not f.parent_frame_id),
+            None,
+        )
         if root is None:
             return {"frames_count": 0}
         return {"root": root.to_dict(), "frames_count": len(frames)}
-
-    def get_frame_session(self, frame_id: str) -> tuple[FrameInfo | None, str | None]:
-        with self._state_lock:
-            frame = self._frames.get(frame_id)
-            if frame is None:
-                return None, None
-            return frame, frame.cdp_session_id
 
     def activate_tab_session(self, session_id: str) -> None:
         """切到新 page session: 启用事件域并跟随 root_frame。
@@ -297,13 +260,7 @@ class CDPSupervisor:
         navigate 的导航/lifecycle 等待器收不到事件, 且 waiter 还拿着旧 tab 的 frame 键 — 每次导航固定空等超时。
         """
         self._set_session(active=session_id)
-        for method, params in (
-            ("Page.enable", None),
-            ("Page.setLifecycleEventsEnabled", {"enabled": True}),
-            ("Runtime.enable", None),
-            ("Accessibility.enable", None),
-            ("DOM.enable", None),
-        ):
+        for method, params in _PAGE_DOMAINS:
             self.send_cdp(method, params, session_id=session_id)
         ft = self.send_cdp("Page.getFrameTree", session_id=session_id)
         root = ft.get("result", {}).get("frameTree", {}).get("frame", {}).get("id", "") if ft.get("ok") else ""
@@ -320,23 +277,23 @@ class CDPSupervisor:
     def _set_session(
         self,
         *,
-        active: str | None | object = _UNSET,
-        page: str | None | object = _UNSET,
-        root_frame: str | object = _UNSET,
+        active: str | None | _Unset = _UNSET,
+        page: str | None | _Unset = _UNSET,
+        root_frame: str | _Unset = _UNSET,
     ) -> None:
         """原子写入会话标识三元组（仅修改传入字段，未传字段保持原值）。"""
         with self._session_lock:
             cur = self._session_ids
             self._session_ids = SessionIds(
-                active=cur.active if active is _UNSET else active,  # type: ignore[arg-type]
-                page=cur.page if page is _UNSET else page,  # type: ignore[arg-type]
-                root_frame=cur.root_frame if root_frame is _UNSET else root_frame,  # type: ignore[arg-type]
+                active=cur.active if isinstance(active, _Unset) else active,
+                page=cur.page if isinstance(page, _Unset) else page,
+                root_frame=cur.root_frame if isinstance(root_frame, _Unset) else root_frame,
             )
 
     def list_tabs(self) -> dict[str, Any]:
         return self.send_cdp("Target.getTargets")
 
-    def _attach_target(self, target_id: str) -> dict[str, Any]:
+    def attach_target(self, target_id: str) -> dict[str, Any]:
         result = self.send_cdp("Target.attachToTarget", {"targetId": target_id, "flatten": True})
         if not result.get("ok"):
             return result
@@ -362,6 +319,7 @@ class CDPSupervisor:
             return {"ok": False, "error": "no tab to close (no active session)"}
 
         result = self.send_cdp("Target.closeTarget", {"targetId": tab_id})
+        fallback: str | None = None
         with self._state_lock:
             closed_session = self._attached_targets.pop(tab_id, {}).get("session_id")
             if closing_active:
@@ -375,6 +333,11 @@ class CDPSupervisor:
                     self._set_session(page=fallback, active=fallback)
                 else:
                     self._set_session(active=fallback)
+        if fallback is not None:
+            # root_frame 须跟随回退会话，否则导航等待的是已关闭标签页的主帧，每次空等到上限。
+            ft = self.send_cdp("Page.getFrameTree", session_id=fallback)
+            if ft.get("ok"):
+                self._set_session(root_frame=ft["result"].get("frameTree", {}).get("frame", {}).get("id", ""))
         return result if not result.get("ok") else {"ok": True, "tab_id": tab_id}
 
     def send_cdp(
@@ -400,6 +363,13 @@ class CDPSupervisor:
                 return {"ok": False, "error": "supervisor loop unavailable"}
             res = fut.result(timeout=timeout + 2)
             return {"ok": True, "result": res.get("result", res)}
+        except DialogBlockedError as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "dialog": exc.dialog.to_dict(),
+                "dialog_opened_by_call": exc.opened_by_call,
+            }
         except Exception as exc:
             return {"ok": False, "error": f"{type(exc).__name__}: {exc}"}
 
@@ -445,30 +415,40 @@ class CDPSupervisor:
 
         return {"ok": True, "result": value, "result_type": result_type}
 
-    def navigate(self, url: str, *, wait_until: str = "networkIdle", timeout: float = 30.0) -> dict[str, Any]:
-        """导航到 URL 并等待页面帧就绪。"""
+    def navigate(self, url: str, *, timeout: float = 30.0) -> dict[str, Any]:
+        """导航到 URL，等待提交并在预算内等待网络空闲；导航本身报错时抛 NavigationError。"""
         loop = self._loop
         if loop is None or not loop.is_running():
             raise RuntimeError("Supervisor loop is not running")
 
         async def _do_nav() -> dict[str, Any]:
-            sid = (sids := self._current_sids()).active or sids.page
+            deadline = loop.time() + timeout
+            sids = self._current_sids()
+            sid = sids.active or sids.page
             target_frame_id = sids.root_frame
 
             navigated_fut = self._await_frame_navigated(target_frame_id)
-            idle_fut = self._await_lifecycle(target_frame_id, "networkIdle")
-
-            nav_resp = await self._cdp("Page.navigate", {"url": url}, session_id=sid, timeout=timeout)
-            if "result" in nav_resp and nav_resp["result"].get("errorText"):
-                err_text = nav_resp["result"]["errorText"]
-                raise NavigationError(f"{err_text}: {url}")
-
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(navigated_fut, timeout=min(timeout, 20.0))
-
-            if wait_until == "networkIdle":
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(idle_fut, timeout=min(timeout, 5.0))
+            idle_fut: asyncio.Future[dict[str, Any]] | None = None
+            try:
+                nav = (await self._cdp("Page.navigate", {"url": url}, session_id=sid, timeout=timeout)).get(
+                    "result",
+                    {},
+                )
+                if nav.get("errorText"):
+                    raise NavigationError(f"{nav['errorText']}: {url}")
+                # 只改 hash 的同文档跳转没有 loaderId，也不会产生 frameNavigated / networkIdle。
+                if loader_id := nav.get("loaderId"):
+                    # 按 loaderId 等待，避免上一个文档迟到的 networkIdle 提前放行。
+                    idle_fut = self._await_lifecycle(loader_id, "networkIdle")
+                    if target_frame_id:
+                        with contextlib.suppress(TimeoutError):
+                            await asyncio.wait_for(navigated_fut, timeout=max(0.0, min(20.0, deadline - loop.time())))
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(idle_fut, timeout=max(0.0, min(5.0, deadline - loop.time())))
+            finally:
+                navigated_fut.cancel()
+                if idle_fut is not None:
+                    idle_fut.cancel()
 
             title = ""
             with contextlib.suppress(Exception):
@@ -495,7 +475,12 @@ class CDPSupervisor:
         fut = safe_schedule_threadsafe(_do_nav(), loop)
         if fut is None:
             raise RuntimeError("Supervisor loop unavailable")
-        return fut.result(timeout=timeout + 5)
+        try:
+            # 内部各步都有上限（导航 + 等待共 timeout，另加两次 5s 取值），这里只兜底。
+            return fut.result(timeout=timeout + 15)
+        except TimeoutError:
+            fut.cancel()
+            raise TimeoutError(f"Navigation to {url} did not finish within {timeout}s") from None
 
     def wait_for_page_stable(self, timeout_s: float = 2.0) -> bool:
         """等待 DOM 变动沉降与页面渲染稳定。"""
@@ -573,8 +558,9 @@ class CDPSupervisor:
         selector: str | None = None,
         text: str | None = None,
         timeout_s: float = 10.0,
+        cancel_token: threading.Event | None = None,
     ) -> dict[str, Any]:
-        return self._input.wait_for(selector=selector, text=text, timeout_s=timeout_s)
+        return self._input.wait_for(selector=selector, text=text, timeout_s=timeout_s, cancel_token=cancel_token)
 
     def back(self) -> dict[str, Any]:
         sid = (sids := self._current_sids()).active or sids.page
@@ -607,7 +593,7 @@ class CDPSupervisor:
         annotate: bool = False,
     ) -> dict[str, Any]:
         sid = (sids := self._current_sids()).active or sids.page
-        elements = []
+        elements: list[dict[str, Any]] = []
         annotation_context = ""
 
         with self._som_lock if annotate else contextlib.nullcontext():
@@ -620,8 +606,6 @@ class CDPSupervisor:
                     raw_som = inject_res.get("result", "")
                     elements = parse_som_results(raw_som)
                     annotation_context = format_som_annotation_context(elements)
-                    # 每个 ref 键（ref_raw / ref）写入独立 dict，避免下游对单一键的 mutation 误改其余两份。
-                    # 不写 str(index)：会与 AXTree 的 eN 命名空间冲突。
                     self._refs.record_som(elements)
 
                 params: dict[str, Any] = {"format": "png", "captureBeyondViewport": full_page}
@@ -646,19 +630,16 @@ class CDPSupervisor:
                     result["annotation_context"] = annotation_context
                 return result
             finally:
-                if annotate:
-                    try:
-                        self.evaluate_runtime(SOM_REMOVE_SCRIPT, timeout=3.0)
-                    except Exception as cleanup_exc:
-                        logger.debug("SoM cleanup exception: %s", cleanup_exc)
+                if annotate and not (cleanup := self.evaluate_runtime(SOM_REMOVE_SCRIPT, timeout=3.0)).get("ok"):
+                    logger.warning("SoM cleanup failed; badges may remain on the page: %s", cleanup.get("error"))
 
     def execute_batch(
         self,
         actions: list[dict[str, Any]],
         wait_between_ms: int = 100,
-        cancel_token: Any = None,
+        cancel_token: threading.Event | None = None,
     ) -> dict[str, Any]:
-        """按序连续执行一组浏览器操作，并在操作间执行沉降等待与错误拦截。"""
+        """按序执行一组浏览器操作；任一步失败即停止，全部成功后等待页面沉降。"""
         if not actions or not isinstance(actions, list):
             return {"ok": False, "error": "actions must be a non-empty list"}
 
@@ -671,11 +652,9 @@ class CDPSupervisor:
                 "ok": False,
                 "error": f"Invalid wait_between_ms '{wait_between_ms}' (must be a non-negative integer; milliseconds)",
             }
-        results = []
-        failed: dict[str, Any] | None = None
+        results: list[dict[str, Any]] = []
         for i, act in enumerate(actions):
-            # 取消令牌触发时立刻跳出整个 batch, 不再执行后续动作, 不浪费 IPC 帧。
-            if cancel_token is not None and getattr(cancel_token, "is_set", lambda: False)():
+            if cancel_token is not None and cancel_token.is_set():
                 return {
                     "ok": False,
                     "error": "Caller cancelled batch",
@@ -683,186 +662,103 @@ class CDPSupervisor:
                     "step": i,
                     "completed": results,
                 }
-            if not isinstance(act, dict):
-                failed = {"ok": False, "error": f"Action at index {i} must be a dict", "step": i, "completed": results}
-                break
-
-            raw_act = act.get("action") if "action" in act else act.get("type", "")
-            act_type = str(raw_act).strip().lower()
-
-            raw_ref = act.get("ref") if "ref" in act else act.get("selector", "")
-            ref = str(raw_ref).strip() if raw_ref is not None else ""
+            act_type = str(act.get("action", "")).strip().lower() if isinstance(act, dict) else ""
             res: dict[str, Any] = {"action": act_type, "step": i}
-
             try:
-                if act_type == "click":
-                    res.update(self.click_ref(ref, wait_stable=False))
-                elif act_type == "type":
-                    text = str(act.get("text", ""))
-                    res.update(self.type_ref(ref, text, wait_stable=False))
-                elif act_type == "press":
-                    key = act.get("key")
-                    if not isinstance(key, str) or not key.strip():
-                        res.update(
-                            {"ok": False, "error": f"'press' action at step {i} requires a non-empty 'key' field"},
-                        )
-                        results.append(res)
-                        failed = {
-                            "ok": False,
-                            "error": f"'press' action at step {i} requires a non-empty 'key' field",
-                            "step": i,
-                            "completed": results,
-                        }
-                        break
-                    res.update(self.press_key(key.strip()))
-                elif act_type == "hover":
-                    res.update(self.hover_ref(ref))
-                elif act_type == "scroll":
-                    direction = str(act.get("direction", "down"))
-                    try:
-                        pixels = int(round(parse_numeric_unit(act.get("pixels"), 500, valid_units=("px",))))
-                    except ValueError:
-                        res.update({"ok": False, "error": f"Invalid scroll pixels '{act.get('pixels')}' at step {i}"})
-                        results.append(res)
-                        failed = {
-                            "ok": False,
-                            "error": f"Invalid scroll pixels '{act.get('pixels')}' at step {i}",
-                            "step": i,
-                            "completed": results,
-                        }
-                        break
-                    res.update(self.scroll_page(direction, pixels))
-                elif act_type == "wait":
-                    raw_wait = act.get("seconds", act.get("time"))
-                    try:
-                        wait_s = parse_numeric_unit(raw_wait, 1.0, valid_units=("s", "ms"))
-                    except ValueError:
-                        res.update({"ok": False, "error": f"Invalid wait duration '{raw_wait}' at step {i}"})
-                        results.append(res)
-                        failed = {
-                            "ok": False,
-                            "error": f"Invalid wait duration '{raw_wait}' at step {i}",
-                            "step": i,
-                            "completed": results,
-                        }
-                        break
-                    clamped_s = max(0.0, min(wait_s, 10.0))
-                    if clamped_s > 0:
-                        time.sleep(clamped_s)
-                    res.update({"ok": True, "waited": clamped_s})
-                elif act_type == "select":
-                    raw_val = act.get("value")
-                    val = str(raw_val) if raw_val is not None and not isinstance(raw_val, bool) else None
-                    raw_label = act.get("label")
-                    label = raw_label if isinstance(raw_label, str) and raw_label.strip() else None
-                    raw_idx = act.get("index")
-                    try:
-                        idx = int(raw_idx) if raw_idx is not None else None
-                    except (TypeError, ValueError):
-                        results.append({**res, "ok": False, "error": f"Invalid select index '{raw_idx}' at step {i}"})
-                        failed = {
-                            "ok": False,
-                            "error": f"Invalid select index '{raw_idx}' at step {i}",
-                            "step": i,
-                            "completed": results,
-                        }
-                        break
-                    if val is None and label is None and idx is None:
-                        results.append(
-                            {
-                                **res,
-                                "ok": False,
-                                "error": f"'select' action at step {i} requires one of 'value', 'label', 'index'",
-                            },
-                        )
-                        failed = {
-                            "ok": False,
-                            "error": f"'select' action at step {i} requires one of 'value', 'label', 'index'",
-                            "step": i,
-                            "completed": results,
-                        }
-                        break
-                    try:
-                        open_delay = parse_numeric_unit(act.get("open_delay_s"), 0.5, valid_units=("s", "ms"))
-                    except ValueError:
-                        res.update(
-                            {"ok": False, "error": f"Invalid open_delay_s '{act.get('open_delay_s')}' at step {i}"},
-                        )
-                        results.append(res)
-                        failed = {
-                            "ok": False,
-                            "error": f"Invalid open_delay_s '{act.get('open_delay_s')}' at step {i}",
-                            "step": i,
-                            "completed": results,
-                        }
-                        break
-                    sel_res = select_option_with_eval(
-                        self.evaluate_runtime,
-                        ref,
-                        value=val,
-                        label=label,
-                        index=idx,
-                        open_delay_s=open_delay,
-                    )
-
-                    if sel_res.get("success"):
-                        res.update(
-                            {
-                                "ok": True,
-                                "selected": sel_res.get("selected")
-                                or sel_res.get("value")
-                                or sel_res.get("text")
-                                or ref,
-                            },
-                        )
-                    else:
-                        res.update({"ok": False, "error": sel_res.get("error", "Select failed")})
-
-                else:
-                    res.update({"ok": False, "error": f"Unknown action type '{act_type}' at step {i}"})
-                    results.append(res)
-                    failed = {
-                        "ok": False,
-                        "error": f"Unknown action type '{act_type}' at step {i}",
-                        "step": i,
-                        "completed": results,
-                    }
-                    break
-
-                if not res.get("ok"):
-                    results.append(res)
-                    failed = {
-                        "ok": False,
-                        "error": res.get("error", f"Action '{act_type}' failed"),
-                        "step": i,
-                        "completed": results,
-                    }
-                    break
-
-                results.append(res)
-                if clamped_wait_ms > 0 and i < len(actions) - 1:
-                    time.sleep(clamped_wait_ms / 1000.0)
-
+                res.update(self._run_batch_action(act, i, act_type, cancel_token))
             except Exception as exc:
-                res.update({"ok": False, "error": str(exc)})
-                results.append(res)
-                failed = {
+                res.update({"ok": False, "error": f"Exception at step {i} ({act_type}): {exc}"})
+            results.append(res)
+            if not res.get("ok"):
+                return {
                     "ok": False,
-                    "error": f"Exception at step {i} ({act_type}): {exc}",
+                    "error": res.get("error") or f"Action '{act_type}' failed",
                     "step": i,
                     "completed": results,
                 }
-                break
+            if dialog := res.get("dialog"):
+                # 弹窗阻塞页面，后续动作只会失败或被丢弃；本步已生效，须明确告知以免整批重试。
+                remaining = len(actions) - i - 1
+                if remaining == 0:
+                    return {"ok": True, "steps_executed": len(results), "details": results}
+                return {
+                    "ok": False,
+                    "error": (
+                        f"Step {i} ({act_type}) was performed and opened a JavaScript {dialog.get('type')} dialog, "
+                        f"so the remaining {remaining} action(s) were not run. Respond with browser_dialog, "
+                        "then run the remaining actions."
+                    ),
+                    "step": i,
+                    "completed": results,
+                }
+            if clamped_wait_ms > 0 and i < len(actions) - 1:
+                _pause(clamped_wait_ms / 1000.0, cancel_token)
 
-        if failed is None:
-            self.wait_for_page_stable(timeout_s=1.5)
-        if failed is not None:
-            return failed
+        self.wait_for_page_stable(timeout_s=1.5)
         return {"ok": True, "steps_executed": len(results), "details": results}
+
+    def _run_batch_action(
+        self,
+        act: object,
+        step: int,
+        act_type: str,
+        cancel_token: threading.Event | None,
+    ) -> dict[str, Any]:
+        if not isinstance(act, dict):
+            return {"ok": False, "error": f"Action at index {step} must be a dict"}
+        raw_ref = act.get("ref")
+        ref = "" if raw_ref is None else str(raw_ref).strip()
+
+        if act_type == "click":
+            return self.click_ref(ref, wait_stable=False)
+        if act_type == "type":
+            return self.type_ref(ref, str(act.get("text", "")), wait_stable=False)
+        if act_type == "press":
+            key = act.get("key")
+            if not isinstance(key, str) or not key.strip():
+                return {"ok": False, "error": f"'press' action at step {step} requires a non-empty 'key' field"}
+            return self.press_key(key.strip())
+        if act_type == "hover":
+            return self.hover_ref(ref)
+        if act_type == "scroll":
+            try:
+                pixels = int(round(parse_numeric_unit(act.get("pixels"), 500, valid_units=("px",))))
+            except ValueError:
+                return {"ok": False, "error": f"Invalid scroll pixels '{act.get('pixels')}' at step {step}"}
+            return self.scroll_page(str(act.get("direction", "down")), pixels)
+        if act_type == "wait":
+            try:
+                wait_s = parse_numeric_unit(act.get("seconds"), 1.0, valid_units=("s", "ms"))
+            except ValueError:
+                return {"ok": False, "error": f"Invalid wait duration '{act.get('seconds')}' at step {step}"}
+            clamped_s = max(0.0, min(wait_s, 10.0))
+            _pause(clamped_s, cancel_token)
+            return {"ok": True, "waited": clamped_s}
+        if act_type == "select":
+            return self._run_batch_select(act, step, ref)
+        return {"ok": False, "error": f"Unknown action type '{act_type}' at step {step}"}
+
+    def _run_batch_select(self, act: dict[str, Any], step: int, ref: str) -> dict[str, Any]:
+        raw_val = act.get("value")
+        val = str(raw_val) if raw_val is not None and not isinstance(raw_val, bool) else None
+        raw_label = act.get("label")
+        label = raw_label if isinstance(raw_label, str) and raw_label.strip() else None
+        raw_idx = act.get("index")
+        try:
+            idx = int(raw_idx) if raw_idx is not None else None
+        except (TypeError, ValueError):
+            return {"ok": False, "error": f"Invalid select index '{raw_idx}' at step {step}"}
+        if val is None and label is None and idx is None:
+            return {"ok": False, "error": f"'select' action at step {step} requires one of 'value', 'label', 'index'"}
+        sel_res = select_option_with_eval(self.evaluate_runtime, ref, value=val, label=label, index=idx)
+        if not sel_res.get("success"):
+            return {"ok": False, "error": sel_res.get("error", "Select failed")}
+        return {"ok": True, "selected": sel_res.get("selected") or sel_res.get("text") or ref}
 
     def screenshot_element(self, ref: str, path: str | Path | None = None) -> dict[str, Any]:
         try:
-            _, _, obj_id = self._refs._resolve_ref_center(ref, scroll_into_view=False)
+            # 视口外的内容不会被渲染，先把元素滚入视口再截取。
+            _, _, obj_id = self._refs.resolve_ref_center(ref, scroll_into_view=True)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -875,20 +771,35 @@ class CDPSupervisor:
         sid = (sids := self._current_sids()).active or sids.page
         box = self.send_cdp("DOM.getBoxModel", {"objectId": obj_id}, session_id=sid)
         if not box.get("ok"):
-            return {"ok": False, "error": f"Failed to get box model for {ref}"}
+            return {"ok": False, "error": f"Failed to get box model for {ref}: {box.get('error')}"}
 
-        content = box["result"].get("model", {}).get("content", [])
-        if len(content) < 8:
+        quad = box["result"].get("model", {}).get("border", [])
+        if len(quad) < 8:
             return {"ok": False, "error": f"Invalid box model dimensions for {ref}"}
+        # getBoxModel 给出视口坐标，captureScreenshot 的 clip 使用文档坐标，须加上当前滚动偏移。
+        metrics = self.send_cdp("Page.getLayoutMetrics", session_id=sid)
+        if not metrics.get("ok"):
+            return {"ok": False, "error": f"Failed to read page scroll offset: {metrics.get('error')}"}
+        viewport = metrics["result"].get("cssVisualViewport", {})
 
-        min_x = min(content[0], content[2], content[4], content[6])
-        min_y = min(content[1], content[3], content[5], content[7])
-        max_x = max(content[0], content[2], content[4], content[6])
-        max_y = max(content[1], content[3], content[5], content[7])
-
-        clip = {"x": min_x, "y": min_y, "width": max(1, max_x - min_x), "height": max(1, max_y - min_y), "scale": 1}
-        # clip is in CSS pixels relative to the layout viewport; captureBeyondViewport would reinterpret
-        # clip in document coords and yield the wrong region on any scrolled page.
+        xs, ys = quad[0::2], quad[1::2]
+        if (
+            max(xs) <= 0
+            or max(ys) <= 0
+            or min(xs) >= viewport.get("clientWidth", 0)
+            or min(ys) >= viewport.get("clientHeight", 0)
+        ):
+            return {
+                "ok": False,
+                "error": f"Element '{ref}' is not visible in the viewport (it may be hidden or clipped)",
+            }
+        clip = {
+            "x": min(xs) + viewport.get("pageX", 0),
+            "y": min(ys) + viewport.get("pageY", 0),
+            "width": max(1, max(xs) - min(xs)),
+            "height": max(1, max(ys) - min(ys)),
+            "scale": 1,
+        }
         res = self.send_cdp(
             "Page.captureScreenshot",
             {"format": "png", "clip": clip},
@@ -959,70 +870,65 @@ class CDPSupervisor:
 
     def _thread_main(self) -> None:
         loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        self._main_task = loop.create_task(self._run(), name=f"cdp-supervisor-{self.task_id}")
         self._loop = loop
         try:
-            asyncio.set_event_loop(loop)
-            loop.run_until_complete(self._run())
-        except BaseException as e:
+            loop.run_until_complete(self._main_task)
+        except asyncio.CancelledError:
+            pass  # stop() 取消主任务
+        except Exception as e:
             if not self._ready_event.is_set():
                 self._start_error = e
-                self._ready_event.set()
             else:
                 logger.warning("CDP supervisor %s crashed: %s", self.task_id, e)
         finally:
-            try:
-                pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
-                for t in pending:
-                    t.cancel()
-                if pending:
-                    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
-            except Exception:
-                pass
-            with contextlib.suppress(Exception):
-                loop.close()
+            pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+            for t in pending:
+                t.cancel()
+            if pending:
+                loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+            loop.close()
             with self._state_lock:
                 self._active = False
+            if not self._ready_event.is_set():
+                self._start_error = self._start_error or RuntimeError("CDP supervisor stopped before connecting")
+                self._ready_event.set()
 
     async def _run(self) -> None:
-        attempt = 0
         backoff = 0.5
         while not self._stop_requested:
             try:
-                self._ws = await asyncio.wait_for(
-                    websockets.connect(self.cdp_url, max_size=50 * 1024 * 1024),
+                ws = await asyncio.wait_for(
+                    websockets.connect(self.cdp_url, max_size=50 * 1024 * 1024, close_timeout=2.0),
                     timeout=10.0,
                 )
             except Exception as e:
-                attempt += 1
                 if not self._ready_event.is_set():
-                    self._start_error = e
-                    self._ready_event.set()
+                    raise
+                logger.warning("CDP supervisor %s reconnect failed: %s", self.task_id, e)
+                if self._launched_browser_exited():
                     return
-                logger.warning("CDP supervisor %s connect failed (attempt %s): %s", self.task_id, attempt, e)
-                jitter = random.uniform(0.0, min(backoff, _CDP_BACKOFF_MAX))
-                await asyncio.sleep(jitter)
+                await asyncio.sleep(random.uniform(0.0, backoff))
                 backoff = min(backoff * 2, _CDP_BACKOFF_MAX)
                 continue
 
-            reader_task = asyncio.create_task(self._read_loop(), name="cdp-reader")
+            self._ws = ws
+            reader_task = asyncio.create_task(self._read_loop(ws), name="cdp-reader")
             try:
                 with self._state_lock:
                     self._set_session(page=None, active=None)
                     self._attached_targets.clear()
-                    self._child_sessions.clear()
 
                 await self._attach_initial_page()
                 with self._state_lock:
                     self._active = True
                 backoff = 0.5
-                if not self._ready_event.is_set():
-                    self._ready_event.set()
+                self._ready_event.set()
 
                 await reader_task
-            except BaseException as e:
+            except Exception as e:
                 if not self._ready_event.is_set():
-                    self._start_error = e
-                    self._ready_event.set()
                     raise
                 logger.warning("CDP supervisor %s session dropped: %s", self.task_id, e)
             finally:
@@ -1030,33 +936,30 @@ class CDPSupervisor:
                     self._active = False
                 if not reader_task.done():
                     reader_task.cancel()
-                    with contextlib.suppress(asyncio.CancelledError, Exception):
-                        await reader_task
+                with contextlib.suppress(asyncio.CancelledError, Exception):
+                    await reader_task
                 for fut in list(self._pending_calls.values()):
                     if not fut.done():
                         fut.set_exception(RuntimeError("CDP connection lost"))
                 self._pending_calls.clear()
-                ws = self._ws
                 self._ws = None
-                if ws is not None:
-                    with contextlib.suppress(Exception):
-                        await ws.close()
+                with contextlib.suppress(Exception):
+                    await ws.close()
 
-            if self._stop_requested:
+            if self._launched_browser_exited():
                 return
-
-            jitter = random.uniform(0.0, min(backoff, _CDP_BACKOFF_MAX))
-            await asyncio.sleep(jitter)
+            await asyncio.sleep(random.uniform(0.0, backoff))
             backoff = min(backoff * 2, _CDP_BACKOFF_MAX)
 
+    def _launched_browser_exited(self) -> bool:
+        """自行启动的浏览器进程已退出（崩溃或用户关闭窗口）时不再重连，由下次导航重新启动。"""
+        if not self.auto_owned or self.launch_handle is None or (code := self.launch_handle.proc.poll()) is None:
+            return False
+        logger.warning("CDP supervisor %s: browser process exited with code %s; not reconnecting", self.task_id, code)
+        return True
+
     async def _enable_page_domains(self, session_id: str) -> None:
-        for method, params in (
-            ("Page.enable", None),
-            ("Page.setLifecycleEventsEnabled", {"enabled": True}),
-            ("Runtime.enable", None),
-            ("Accessibility.enable", None),
-            ("DOM.enable", None),
-        ):
+        for method, params in _PAGE_DOMAINS:
             await self._cdp(method, params, session_id=session_id)
 
     async def _attach_initial_page(self) -> None:
@@ -1091,30 +994,6 @@ class CDPSupervisor:
             {"autoAttach": True, "waitForDebuggerOnStart": False, "flatten": True},
             session_id=sid,
         )
-        await self._install_dialog_bridge(sid)
-
-    async def _install_dialog_bridge(self, session_id: str) -> None:
-        try:
-            await self._cdp(
-                "Page.addScriptToEvaluateOnNewDocument",
-                {"source": _DIALOG_BRIDGE_SCRIPT, "runImmediately": True},
-                session_id=session_id,
-                timeout=5.0,
-            )
-        except Exception as e:
-            logger.debug("dialog bridge script install failed: %s", e)
-        try:
-            await self._cdp(
-                "Fetch.enable",
-                {
-                    "patterns": [{"urlPattern": DIALOG_BRIDGE_URL_PATTERN, "requestStage": "Request"}],
-                    "handleAuthRequests": False,
-                },
-                session_id=session_id,
-                timeout=5.0,
-            )
-        except Exception as e:
-            logger.debug("dialog bridge fetch enable failed: %s", e)
 
     async def _cdp(
         self,
@@ -1134,55 +1013,106 @@ class CDPSupervisor:
         if session_id:
             payload["sessionId"] = session_id
 
-        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+        pre_existing = None
+        if method != "Page.handleJavaScriptDialog":
+            pre_existing = self._dialog_manager.pending_for(session_id)
+            # 弹窗未决时浏览器会立即确认但丢弃输入事件，发出去只会造成“成功但无效果”。
+            if pre_existing is not None and method.startswith("Input."):
+                raise DialogBlockedError(pre_existing, opened_by_call=False)
+
+        fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         self._pending_calls[call_id] = fut
-        await self._ws.send(json.dumps(payload))
         try:
-            return await asyncio.wait_for(fut, timeout=timeout)
+            await self._ws.send(json.dumps(payload))
+            if method == "Page.handleJavaScriptDialog":
+                return await asyncio.wait_for(fut, timeout=timeout)
+            tolerated = pre_existing.id if pre_existing is not None and method in _NAVIGATION_METHODS else None
+            return await self._await_response(
+                fut,
+                session_id,
+                timeout,
+                pre_existing_id=pre_existing.id if pre_existing is not None else None,
+                tolerated_id=tolerated,
+            )
         finally:
             self._pending_calls.pop(call_id, None)
 
-    async def _read_loop(self) -> None:
-        assert self._ws is not None
-        try:
-            async for raw in self._ws:
-                if self._stop_requested:
-                    break
+    async def _await_response(
+        self,
+        fut: asyncio.Future[dict[str, Any]],
+        session_id: str | None,
+        timeout: float,
+        *,
+        pre_existing_id: str | None,
+        tolerated_id: str | None,
+    ) -> dict[str, Any]:
+        """等待 CDP 响应；待决弹窗阻塞页面时抛 DialogBlockedError，而不是挂到超时。
+
+        ``tolerated_id`` 是不据以判阻塞的已有弹窗（导航会关闭它）；调用期间新开的弹窗仍按宽限判定。
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            remaining = deadline - loop.time()
+            if (dialog := self._dialog_manager.pending_for(session_id, exclude_id=tolerated_id)) is not None:
                 try:
-                    msg = json.loads(raw)
+                    return await asyncio.wait_for(asyncio.shield(fut), min(_DIALOG_BLOCK_GRACE_S, max(0.0, remaining)))
+                except TimeoutError:
+                    raise DialogBlockedError(dialog, opened_by_call=dialog.id != pre_existing_id) from None
+            opened: asyncio.Future[None] = loop.create_future()
+            self._dialog_open_waiters.add(opened)
+            try:
+                done, _ = await asyncio.wait(
+                    {fut, opened},
+                    timeout=max(0.0, remaining),
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+            finally:
+                self._dialog_open_waiters.discard(opened)
+                opened.cancel()
+            if fut in done:
+                return fut.result()
+            if not done:
+                raise TimeoutError(f"CDP response not received within {timeout}s")
+
+    async def _read_loop(self, ws: Any) -> None:
+        """分派 CDP 响应与事件；连接异常关闭时抛出，由 _run 记录并重连。单个事件处理失败只记录，不断开连接。"""
+        async for raw in ws:
+            try:
+                msg = json.loads(raw)
+            except ValueError:
+                logger.debug("CDP supervisor %s dropped non-JSON frame", self.task_id)
+                continue
+
+            if "id" in msg:
+                fut = self._pending_calls.pop(msg["id"], None)
+                if fut is not None and not fut.done():
+                    if "error" in msg:
+                        fut.set_exception(RuntimeError(f"CDP error on id={msg['id']}: {msg['error']}"))
+                    else:
+                        fut.set_result(msg)
+            elif "method" in msg:
+                try:
+                    self._on_event(msg["method"], msg.get("params", {}), msg.get("sessionId"))
                 except Exception:
-                    continue
+                    logger.exception("CDP supervisor %s failed to handle %s", self.task_id, msg["method"])
 
-                if "id" in msg:
-                    fut = self._pending_calls.pop(msg["id"], None)
-                    if fut is not None and not fut.done():
-                        if "error" in msg:
-                            fut.set_exception(RuntimeError(f"CDP error on id={msg['id']}: {msg['error']}"))
-                        else:
-                            fut.set_result(msg)
-                elif "method" in msg:
-                    await self._on_event(msg["method"], msg.get("params", {}), msg.get("sessionId"))
-        except Exception as e:
-            logger.debug("CDP read loop exited: %s", e)
-
-    async def _on_event(self, method: str, params: dict[str, Any], session_id: str | None) -> None:
+    def _on_event(self, method: str, params: dict[str, Any], session_id: str | None) -> None:
         if method == "Page.frameNavigated":
             self._on_frame_navigated(params, session_id)
-            self._dispatch_frame_navigated(params, session_id)
+            self._dispatch_frame_navigated(params)
         elif method == "Page.lifecycleEvent":
-            self._dispatch_lifecycle(params, session_id)
+            self._dispatch_lifecycle(params)
         elif method == "Page.javascriptDialogOpening":
-            await self._on_dialog_opening(params, session_id)
+            self._on_dialog_opening(params, session_id)
         elif method == "Page.javascriptDialogClosed":
-            await self._on_dialog_closed(params, session_id)
-        elif method == "Fetch.requestPaused":
-            await self._on_fetch_paused(params, session_id)
+            self._dialog_manager.on_remote_closed(session_id)
         elif method == "Page.frameAttached":
             self._on_frame_attached(params, session_id)
         elif method == "Page.frameDetached":
-            self._on_frame_detached(params, session_id)
+            self._on_frame_detached(params)
         elif method == "Target.attachedToTarget":
-            await self._on_target_attached(params)
+            self._on_target_attached(params)
         elif method == "Target.detachedFromTarget":
             self._on_target_detached(params)
         elif method == "Runtime.consoleAPICalled":
@@ -1194,22 +1124,27 @@ class CDPSupervisor:
         elif method == "Browser.downloadProgress":
             self._on_download_progress(params)
 
-    def _await_frame_navigated(self, frame_id: str) -> asyncio.Future:
-        fut: asyncio.Future = asyncio.get_running_loop().create_future()
+    def _await_frame_navigated(self, frame_id: str) -> asyncio.Future[dict[str, Any]]:
+        fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
         bucket = self._frame_navigated_waiters.setdefault(frame_id, [])
         bucket.append(fut)
         fut.add_done_callback(lambda f, fid=frame_id: self._pop_waiter(self._frame_navigated_waiters, fid, f))
         return fut
 
-    def _await_lifecycle(self, frame_id: str, name: str) -> asyncio.Future:
-        fut: asyncio.Future = asyncio.get_running_loop().create_future()
-        key = (frame_id, name)
+    def _await_lifecycle(self, loader_id: str, name: str) -> asyncio.Future[dict[str, Any]]:
+        fut: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        key = (loader_id, name)
         bucket = self._lifecycle_waiters.setdefault(key, [])
         bucket.append(fut)
         fut.add_done_callback(lambda f, k=key: self._pop_waiter(self._lifecycle_waiters, k, f))
         return fut
 
-    def _pop_waiter(self, store: dict[Any, list[asyncio.Future]], key: Any, fut: asyncio.Future) -> None:
+    def _pop_waiter(
+        self,
+        store: dict[Any, list[asyncio.Future[dict[str, Any]]]],
+        key: object,
+        fut: asyncio.Future[dict[str, Any]],
+    ) -> None:
         bucket = store.get(key)
         if bucket is None:
             return
@@ -1218,17 +1153,15 @@ class CDPSupervisor:
         if not bucket:
             store.pop(key, None)
 
-    def _dispatch_frame_navigated(self, params: dict[str, Any], session_id: str | None) -> None:
+    def _dispatch_frame_navigated(self, params: dict[str, Any]) -> None:
         fid = params.get("frame", {}).get("id", "")
         waiters = self._frame_navigated_waiters.pop(fid, ()) or ()
         for fut in waiters:
             if not fut.done():
                 fut.set_result(params)
 
-    def _dispatch_lifecycle(self, params: dict[str, Any], _session_id: str | None) -> None:
-        name = params.get("name", "")
-        fid = params.get("frameId", "")
-        waiters = self._lifecycle_waiters.pop((fid, name), ()) or ()
+    def _dispatch_lifecycle(self, params: dict[str, Any]) -> None:
+        waiters = self._lifecycle_waiters.pop((params.get("loaderId", ""), params.get("name", "")), ()) or ()
         for fut in waiters:
             if not fut.done():
                 fut.set_result(params)
@@ -1236,76 +1169,52 @@ class CDPSupervisor:
     def _on_frame_navigated(self, params: dict[str, Any], session_id: str | None) -> None:
         frame = params.get("frame", {})
         fid = frame.get("id", "")
-        url = frame.get("url", "") or ""
-        if fid:
-            parent_id = frame.get("parentId")
-            # 先原子取 sids 再进入 state_lock，避免跨锁读 sids 后又持 _state_lock。
-            sids = self._current_sids()
-            with self._state_lock:
-                # Only adopt as the main root if no root is set yet OR the existing root
-                # belongs to the same page session. Popup windows opened via window.open()
-                # also have parentId unset and would otherwise clobber the main root.
-                is_page_session = session_id == sids.page
-                if not parent_id and (not sids.root_frame or is_page_session):
-                    self._set_session(root_frame=fid)
-                sids = self._current_sids()
-                self._frames[fid] = FrameInfo(
-                    frame_id=fid,
-                    url=url,
-                    origin=frame.get("securityOrigin", ""),
-                    parent_frame_id=parent_id,
-                    is_oopif=session_id != sids.page and session_id is not None,
-                    cdp_session_id=session_id,
-                    name=frame.get("name", ""),
-                )
-        # Root frame 每次导航（包括同 URL reload）都使 _root_doc_generation 自增；
-        # 与 refs 缓存记录的 _refs_doc_generation 不一致即清空 ref。子/iframe 不影响主页面 ref。
-        # 必须在 _state_lock 释放前捕获 root_frame 快照：释放后任何 set_active_session_id /
-        # 其它 _on_frame_navigated 都可能改写 _session_ids.root_frame，造成 TOCTOU 误判。
-        is_root = not frame.get("parentId")
+        if not fid:
+            return
+        parent_id = frame.get("parentId")
         with self._state_lock:
-            current_root_frame = self._current_sids().root_frame
-        is_main_root = is_root and fid == current_root_frame
-        self._refs.note_navigation(url, is_main_root=is_main_root)
+            sids = self._current_sids()
+            # 尚无 root 或事件来自主 page 会话时才采纳为 root：window.open 弹窗的主帧同样没有 parentId。
+            if not parent_id and (not sids.root_frame or session_id == sids.page):
+                self._set_session(root_frame=fid)
+                sids = self._current_sids()
+            page_sessions = {info.get("session_id") for info in self._attached_targets.values()}
+            self._frames[fid] = FrameInfo(
+                frame_id=fid,
+                url=frame.get("url", "") or "",
+                origin=frame.get("securityOrigin", ""),
+                parent_frame_id=parent_id,
+                is_oopif=session_id is not None and session_id != sids.page and session_id not in page_sessions,
+                name=frame.get("name", ""),
+            )
+        if not parent_id and fid == sids.root_frame:
+            self._refs.note_root_navigation()
 
     def _on_frame_attached(self, params: dict[str, Any], session_id: str | None) -> None:
         fid = params.get("frameId", "")
         pid = params.get("parentFrameId")
         if fid:
             with self._state_lock:
-                self._frames[fid] = FrameInfo(
-                    frame_id=fid,
-                    url="",
-                    origin="",
-                    parent_frame_id=pid,
-                    is_oopif=False,
-                    cdp_session_id=session_id,
-                )
+                self._frames[fid] = FrameInfo(frame_id=fid, url="", origin="", parent_frame_id=pid, is_oopif=False)
 
-    def _on_frame_detached(self, params: dict[str, Any], session_id: str | None) -> None:
+    def _on_frame_detached(self, params: dict[str, Any]) -> None:
         fid = params.get("frameId", "")
         if fid:
             with self._state_lock:
                 self._frames.pop(fid, None)
 
-    async def _on_target_attached(self, params: dict[str, Any]) -> None:
+    def _on_target_attached(self, params: dict[str, Any]) -> None:
         target_info = params.get("targetInfo", {})
         session_id = params.get("sessionId", "")
         target_id = target_info.get("targetId", "")
-        target_type = target_info.get("type", "")
-
-        if target_type == "page" and target_id and session_id:
+        if target_info.get("type") == "page" and target_id and session_id:
             with self._state_lock:
                 self._attached_targets[target_id] = {"session_id": session_id, "title": target_info.get("title", "")}
-        elif target_type == "iframe" and session_id:
-            with self._state_lock:
-                self._child_sessions[target_id] = session_id
 
     def _on_target_detached(self, params: dict[str, Any]) -> None:
         target_id = params.get("targetId", "")
         with self._state_lock:
             self._attached_targets.pop(target_id, None)
-            self._child_sessions.pop(target_id, None)
 
     def _on_console(self, params: dict[str, Any], level_from: str) -> None:
         ts = time.time()
@@ -1339,7 +1248,6 @@ class CDPSupervisor:
             self._pending_downloads[guid] = {
                 "state": "in_progress",
                 "filename": params.get("suggestedFilename", ""),
-                "url": params.get("url", ""),
                 "event": threading.Event(),
             }
 
@@ -1355,7 +1263,7 @@ class CDPSupervisor:
                 if state in ("completed", "canceled"):
                     entry["event"].set()
 
-    async def _on_dialog_opening(self, params: dict[str, Any], session_id: str | None) -> None:
+    def _on_dialog_opening(self, params: dict[str, Any], session_id: str | None) -> None:
         dialog = PendingDialog(
             id=self._dialog_manager.next_id(),
             type=str(params.get("type") or ""),
@@ -1366,28 +1274,9 @@ class CDPSupervisor:
             frame_id=params.get("frameId"),
         )
         self._dialog_manager.open(dialog)
-
-    async def _on_dialog_closed(self, params: dict[str, Any], session_id: str | None) -> None:
-        self._dialog_manager.on_remote_closed(session_id)
-
-    async def _on_fetch_paused(self, params: dict[str, Any], session_id: str | None) -> None:
-        url = str(params.get("request", {}).get("url") or "")
-        request_id = params.get("requestId")
-        if not request_id:
-            return
-
-        parsed = urlparse(url)
-        qs = parse_qs(parsed.query)
-        dialog = PendingDialog(
-            id=self._dialog_manager.next_id(),
-            type=qs.get("kind", ["alert"])[0],
-            message=qs.get("message", [""])[0],
-            default_prompt=qs.get("default_prompt", [""])[0],
-            opened_at=time.time(),
-            cdp_session_id=session_id or self._current_sids().page or "",
-            bridge_request_id=request_id,
-        )
-        self._dialog_manager.open(dialog)
+        for waiter in self._dialog_open_waiters:
+            if not waiter.done():
+                waiter.set_result(None)
 
     def respond_to_dialog(
         self,
@@ -1401,6 +1290,14 @@ class CDPSupervisor:
             dialog_id,
             active_session_id=(sids := self._current_sids()).active or sids.page,
         )
+
+
+def _pause(seconds: float, cancel_token: threading.Event | None) -> None:
+    """可被取消令牌提前唤醒的等待。"""
+    if cancel_token is not None:
+        cancel_token.wait(seconds)
+    else:
+        time.sleep(seconds)
 
 
 class SupervisorRegistry:
@@ -1417,7 +1314,7 @@ class SupervisorRegistry:
         task_id: str,
         cdp_url: str,
         *,
-        launch_handle: Any = None,
+        launch_handle: NativeBrowserProcess | None = None,
         auto_owned: bool = False,
         dialog_policy: str = DEFAULT_DIALOG_POLICY,
         dialog_timeout_s: float = DEFAULT_DIALOG_TIMEOUT_S,
@@ -1426,7 +1323,7 @@ class SupervisorRegistry:
         # 先在锁外确认现有 supervisor 的活性, 避免对正在运行的实例误判为已死。
         # 锁内只做 dict 替换 + 必要时的 stop() 抢占, 不在锁内调阻塞 start().
         existing = self._supervisors.get(task_id)
-        if existing is not None and existing._active:
+        if existing is not None and existing.active:
             return existing
 
         stale = existing
@@ -1441,7 +1338,7 @@ class SupervisorRegistry:
         with self._lock:
             # 重新确认: 拿到锁前可能已有别的线程把活的塞回去。
             live = self._supervisors.get(task_id)
-            if live is not None and live._active:
+            if live is not None and live.active:
                 return live
             self._supervisors[task_id] = sup
 

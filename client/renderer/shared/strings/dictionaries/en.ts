@@ -273,9 +273,7 @@ export const dict: Dictionary = {
       security: 'Security',
       securityRedactSecrets: 'Redact sensitive output',
       browser: 'Browser settings',
-      browserAllowPrivateUrls: 'Allow intranet access',
-      debug: 'Debug toggles',
-      debugInterrupt: 'Interrupt mode'
+      browserAllowPrivateUrls: 'Allow intranet access'
     },
     skills: {
       title: 'Skills',

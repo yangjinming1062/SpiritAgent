@@ -1,34 +1,23 @@
 import json
 import logging
 from typing import Any
-from urllib.parse import unquote
 
-from utils import (
-    SECRET_PREFIX_RE,
-    check_website_access,
-    is_always_blocked_url,
-    is_safe_url,
-    normalize_url_for_request,
-)
+from utils import is_always_blocked_url, is_safe_url
 
 from ...registry import registry
 from ..camofox import camofox_back, camofox_navigate, is_camofox_mode
 from ..check import check_browser_native_requirements
-from ..engine import launch_chromium
-from ..helpers import SNAPSHOT_SUMMARIZE_THRESHOLD, _truncate_snapshot
-from ..profile_manager import resolve_profile_dir
 from ..schemas import BROWSER_BACK_SCHEMA, BROWSER_NAVIGATE_SCHEMA
-from ..session import (
-    _allow_private_urls,
-    _get_cdp_override,
-    _get_dialog_policy_config,
-    _last_active_session_key,
-    _navigation_session_key,
-    get_or_create_session,
-    touch_session,
+from ..session import _allow_private_urls, touch_session
+from ._common import (
+    browser_session,
+    compact_snapshot,
+    ensure_supervisor,
+    guard_browser_url,
+    no_supervisor,
+    unsafe_url_error,
+    website_policy_error,
 )
-from ..supervisor import SUPERVISOR_REGISTRY, CDPSupervisor
-from ._common import browser_session, no_supervisor
 
 logger = logging.getLogger(__name__)
 
@@ -49,55 +38,20 @@ BLOCKED_PATTERNS = [
 ]
 
 
-def _ensure_supervisor(session_key: str) -> CDPSupervisor:
-    supervisor = SUPERVISOR_REGISTRY.get(session_key)
-    if supervisor is not None and supervisor._active:
-        return supervisor
-
-    session_info = get_or_create_session(session_key)
-    cdp_url = _get_cdp_override()
-    auto_owned = False
-
-    if not cdp_url:
-        profile_dir = resolve_profile_dir(session_key)
-        launch_handle = launch_chromium(profile_dir=profile_dir)
-        session_info.launch_handle = launch_handle
-        cdp_url = launch_handle.cdp_url
-        auto_owned = True
-
-    policy, timeout_s = _get_dialog_policy_config()
-    return SUPERVISOR_REGISTRY.get_or_start(
-        session_key,
-        cdp_url,
-        launch_handle=session_info.launch_handle,
-        auto_owned=auto_owned,
-        dialog_policy=policy,
-        dialog_timeout_s=timeout_s,
-    )
-
-
-def _reject_redirect(final_url: str, original_url: str, allow_local: bool) -> str | None:
-    """重定向 SSRF + 站点策略二次校验；命中即返回错误 JSON，否则 None。"""
+def _reject_redirect(final_url: str, original_url: str, allow_private: bool) -> str | None:
+    """跳转落点的站点策略与 SSRF 复核；命中即返回错误 JSON。请求此时已发出，只能阻止继续读取落点页面。"""
     if not final_url or final_url == original_url:
         return None
-    blocked = check_website_access(final_url)
-    if blocked:
-        return json.dumps(
-            {
-                "success": False,
-                "error": blocked.message,
-                "blocked_by_policy": {"host": blocked.host, "rule": blocked.rule, "source": blocked.source},
-            },
-            ensure_ascii=False,
-        )
+    if (policy_error := website_policy_error(final_url)) is not None:
+        return policy_error
     if is_always_blocked_url(final_url):
         return json.dumps(
             {"success": False, "error": "Blocked: redirect landed on a cloud metadata endpoint"},
             ensure_ascii=False,
         )
-    if not allow_local and not _allow_private_urls() and not is_safe_url(final_url):
+    if not allow_private and not is_safe_url(final_url):
         return json.dumps(
-            {"success": False, "error": "Blocked: redirect landed on a private/internal address"},
+            {"success": False, "error": f"{unsafe_url_error(final_url)} after redirect"},
             ensure_ascii=False,
         )
     return None
@@ -105,99 +59,44 @@ def _reject_redirect(final_url: str, original_url: str, allow_local: bool) -> st
 
 def browser_navigate(url: str, task_id: str | None = None) -> str:
     """导航到指定 URL 并返回 JSON 结果（含首屏快照、跳转后 SSRF 校验、bot 检测提示）。"""
-    url_decoded = unquote(url)
-    if SECRET_PREFIX_RE.search(url) or SECRET_PREFIX_RE.search(url_decoded):
-        return json.dumps(
-            {
-                "success": False,
-                "error": "Blocked: URL contains what appears to be an API key or token. Secrets must not be sent in URLs.",
-            },
-            ensure_ascii=False,
-        )
-
-    url = normalize_url_for_request(url)
-    normalized_decoded = unquote(url)
-    if SECRET_PREFIX_RE.search(url) or SECRET_PREFIX_RE.search(normalized_decoded):
-        return json.dumps(
-            {
-                "success": False,
-                "error": "Blocked: URL contains what appears to be an API key or token. Secrets must not be sent in URLs.",
-            },
-            ensure_ascii=False,
-        )
-
-    effective_task_id = task_id or "default"
-    nav_session_key = _navigation_session_key(effective_task_id, url)
-    auto_local_this_nav = nav_session_key.endswith("::local")
-    allow_local = auto_local_this_nav or _allow_private_urls()
-
-    if is_always_blocked_url(url):
-        return json.dumps(
-            {"success": False, "error": "Blocked: URL targets a cloud metadata endpoint"},
-            ensure_ascii=False,
-        )
-
-    if not allow_local and not is_safe_url(url):
-        return json.dumps(
-            {"success": False, "error": "Blocked: URL targets a private or internal address"},
-            ensure_ascii=False,
-        )
-
-    blocked = check_website_access(url)
-    if blocked:
-        return json.dumps(
-            {
-                "success": False,
-                "error": blocked.message,
-                "blocked_by_policy": {"host": blocked.host, "rule": blocked.rule, "source": blocked.source},
-            },
-            ensure_ascii=False,
-        )
+    if not url.strip():
+        return json.dumps({"success": False, "error": "url is required"}, ensure_ascii=False)
+    allow_private = _allow_private_urls()
+    url, url_err = guard_browser_url(url.strip(), allow_private=allow_private)
+    if url_err is not None:
+        return url_err
 
     if is_camofox_mode():
         return camofox_navigate(url, task_id)
 
+    session_key = task_id or "default"
     try:
-        supervisor = _ensure_supervisor(nav_session_key)
-        _last_active_session_key[effective_task_id] = nav_session_key
-        touch_session(nav_session_key)
+        supervisor = ensure_supervisor(session_key)
+        touch_session(session_key)
 
         nav_res = supervisor.navigate(url)
         final_url = nav_res.get("url", url)
         title = nav_res.get("title", "")
 
-        reject = _reject_redirect(final_url, url, allow_local)
+        reject = _reject_redirect(final_url, url, allow_private)
         if reject is not None:
             supervisor.navigate("about:blank")
             return reject
 
         response: dict[str, Any] = {"success": True, "url": final_url, "title": title}
-
         title_lower = title.lower()
         if any(p in title_lower for p in BLOCKED_PATTERNS):
             response["bot_detection_warning"] = (
-                f"Page title '{title}' suggests bot detection. The site may have blocked this request. "
-                "Options: 1) Try adding delays between actions, 2) Access different pages first, "
-                "3) Switch to Camofox remote browser (set `browser.camofox.url` in Desktop settings), "
-                "4) Some sites have aggressive bot detection that may be unavoidable."
+                f"Page title '{title}' suggests bot detection; the site may have blocked this request. "
+                "Try slowing down between actions or reaching the page through another path; "
+                "some sites cannot be automated."
             )
-
-        try:
-            snap_res = supervisor.snapshot_axtree(interactive_only=True)
-            if snap_res.get("ok"):
-                snap_text = snap_res.get("snapshot", "")
-                if len(snap_text) > SNAPSHOT_SUMMARIZE_THRESHOLD:
-                    snap_text = _truncate_snapshot(snap_text)
-                response["snapshot"] = snap_text
-                response["element_count"] = snap_res.get("element_count", 0)
-        except Exception as e:
-            logger.debug("Auto-snapshot after navigate failed: %s", e)
-
+        response.update(compact_snapshot(supervisor))
         return json.dumps(response, ensure_ascii=False)
 
     except Exception as e:
-        logger.warning("browser_navigate failed: %s", e)
-        return json.dumps({"success": False, "error": str(e)}, ensure_ascii=False)
+        logger.warning("browser_navigate failed: %s: %s", type(e).__name__, e)
+        return json.dumps({"success": False, "error": f"{type(e).__name__}: {e}"}, ensure_ascii=False)
 
 
 def browser_back(task_id: str | None = None) -> str:

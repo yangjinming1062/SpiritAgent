@@ -12,11 +12,10 @@ import threading
 import time
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Protocol
+from typing import Protocol
 
 from websockets.client import ClientProtocol
 from websockets.frames import OP_BINARY, OP_CONT, OP_TEXT, Frame
-from websockets.http11 import Response
 from websockets.protocol import SEND_EOF, State
 from websockets.uri import parse_uri
 
@@ -25,12 +24,11 @@ from .pid import PidState, pid_state
 
 logger = logging.getLogger("spiritagent_runner.transport")
 
-PIPE_TRANSPORT = "pipe"
-UNIX_TRANSPORT = "unix"
+_EXPECTED_TRANSPORT = "pipe" if IS_WINDOWS else "unix"
 
 HANDSHAKE_AUTH_HEADER = "X-SpiritAgent-Auth"
 
-# 反向 RPC 的视觉负载上限 10 MiB（Desktop 端 reverse-rpc.cjs 的限制）；sans-I/O 默认 1 MiB 会截断，所以放宽到 16 MiB。
+# 入站消息上限；sans-I/O 默认 1 MiB 不足以容纳大参数的工具调用与模型响应。
 MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
 # Host 头不会出本机，用固定虚拟 URI 给协议构造器提供握手所需的元信息即可。
@@ -112,12 +110,10 @@ if IS_WINDOWS:
 
 @dataclass(frozen=True)
 class DesktopEndpoint:
-    """已解析的 Desktop 连接端点（来自命令行参数或端点文件）。"""
+    """已解析的 Desktop 连接端点（来自启动参数或端点文件）。"""
 
-    transport: str
     path: str
     token: str
-    pid: int | None = None
 
 
 def read_endpoint() -> DesktopEndpoint | None:
@@ -130,12 +126,10 @@ def read_endpoint() -> DesktopEndpoint | None:
         data = json.loads(raw)
         if not isinstance(data, dict):
             return None
-        expected = PIPE_TRANSPORT if IS_WINDOWS else UNIX_TRANSPORT
-        transport = data.get("transport")
         path = data.get("path")
         token = data.get("token")
         pid = data.get("pid")
-        if transport != expected:
+        if data.get("transport") != _EXPECTED_TRANSPORT:
             return None
         if not isinstance(path, str) or not path:
             return None
@@ -143,12 +137,7 @@ def read_endpoint() -> DesktopEndpoint | None:
             return None
         if isinstance(pid, int) and pid > 0 and pid_state(pid) is PidState.NOT_FOUND:
             return None
-        return DesktopEndpoint(
-            transport=transport,
-            path=path,
-            token=token,
-            pid=pid if isinstance(pid, int) else None,
-        )
+        return DesktopEndpoint(path=path, token=token)
     except (ValueError, OSError) as exc:
         logger.warning("read_endpoint encountered %s: %s", type(exc).__name__, exc)
         return None
@@ -402,54 +391,23 @@ class DesktopConnection:
         request.headers[HANDSHAKE_AUTH_HEADER] = self._token
         self._protocol.send_request(request)
         await self._drain()
-        while True:
-            chunk = await self._stream.read()
-            if not chunk:
-                # 升级被拒（如 HTTP 401 + 连接关闭且无 Content-Length）只有在流 EOF 时才能终止无 body 响应并解析完成；把 EOF 喂给协议，再尝试从事件里找 Response。
+        while self._protocol.state is State.CONNECTING:
+            if chunk := await self._stream.read():
+                self._protocol.receive_data(chunk)
+            else:
+                # 被拒的升级响应（如 401 且无 Content-Length）要到 EOF 才能解析完成。
                 self._protocol.receive_eof()
-                completed = self._consume_handshake_events(
-                    self._protocol.events_received(),
-                )
-                await self._drain()
-                if not completed:
-                    raise ConnectionError(
-                        "Desktop closed the IPC stream during handshake",
-                    )
-                self._recv_task = asyncio.create_task(
-                    self._pump(),
-                    name="desktop-ipc-recv",
-                )
-                return
-            self._protocol.receive_data(chunk)
+            if (exc := self._protocol.handshake_exc) is not None:
+                # 非 101 为 InvalidStatus：调用方据此丢弃缓存端点并重读端点文件，不带旧 token 重试。
+                raise exc
+            # 同一批数据可能在 101 之后管线化了帧，events_received() 会一次性排空，须全部处理。
+            for event in self._protocol.events_received():
+                if isinstance(event, Frame):
+                    self._handle_frame(event)
             await self._drain()
-            completed = self._consume_handshake_events(self._protocol.events_received())
-            await self._drain()
-            if completed:
-                self._recv_task = asyncio.create_task(
-                    self._pump(),
-                    name="desktop-ipc-recv",
-                )
-                return
-
-    def _consume_handshake_events(self, events: list[Any] | tuple[Any, ...]) -> bool:
-        """处理一批事件：先取 Response，再处理对端紧随其后管线化的帧。sans-I/O 解析器在 101 之后会继续解析同一批数据，而 ``events_received()`` 一次性排空队列——停在 Response 会静默丢弃后续帧。帧按协议不能在握手响应之前出现，先出现的视为协议违规。"""
-        response_seen = False
-        for event in events:
-            if not response_seen:
-                if not isinstance(event, Response):
-                    raise ConnectionError(
-                        f"unexpected event during handshake: {event!r}",
-                    )
-                self._process_handshake_response(event)
-                response_seen = True
-                continue
-            if isinstance(event, Frame):
-                self._handle_frame(event)
-        return response_seen
-
-    def _process_handshake_response(self, response: Response) -> None:
-        # 非 101 时抛 InvalidStatus——例如 Desktop 返回的 HTTP 401 鉴权拒绝。调用方此时应丢弃缓存端点、重读端点文件，而不是带着过期 token 重试。
-        self._protocol.process_response(response)
+            if not chunk and self._protocol.state is State.CONNECTING:
+                raise ConnectionError("Desktop closed the IPC stream during handshake")
+        self._recv_task = asyncio.create_task(self._pump(), name="desktop-ipc-recv")
 
     async def _pump(self) -> None:
         """把字节流喂给协议，再把组装完成的消息推到队列。"""
@@ -477,33 +435,18 @@ class DesktopConnection:
             self._messages.put_nowait(None)
 
     def _handle_frame(self, event: Frame) -> None:
-        opcode = event.opcode
-        if opcode is OP_TEXT or opcode is OP_BINARY:
-            if self._message_opcode is not None:
-                if self._protocol.state is State.OPEN:
-                    self._protocol.send_close(
-                        code=1002,
-                        reason="protocol error: interleaved message during fragmentation",
-                    )
-                self._fragments = []
-                self._message_opcode = None
-                return
-            if event.fin:
-                self._emit(opcode, event.data)
-            else:
-                self._fragments = [event.data]
-                self._message_opcode = opcode
-        elif opcode is OP_CONT:
-            if self._message_opcode is None:
-                if self._protocol.state is State.OPEN:
-                    self._protocol.send_close(code=1002, reason="protocol error: unexpected continuation frame")
-                return
+        # 分片顺序由协议对象校验，违规帧会使连接失败而不会作为事件交付；控制帧的回应已由 _drain() 发出。
+        if event.opcode is OP_TEXT or event.opcode is OP_BINARY:
+            self._message_opcode = event.opcode
+            self._fragments = [event.data]
+        elif event.opcode is OP_CONT and self._message_opcode is not None:
             self._fragments.append(event.data)
-            if event.fin:
-                self._emit(self._message_opcode, b"".join(self._fragments))
-                self._fragments = []
-                self._message_opcode = None
-        # 控制帧永远不会以消息形式出现：Pong/Close 已经在 _drain() 里入队。
+        else:
+            return
+        if event.fin and self._message_opcode is not None:
+            self._emit(self._message_opcode, b"".join(self._fragments))
+            self._fragments = []
+            self._message_opcode = None
 
     def _emit(self, opcode: int, data: bytes) -> None:
         if opcode is OP_TEXT:

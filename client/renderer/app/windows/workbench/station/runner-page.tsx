@@ -147,10 +147,6 @@ export function RunnerPage(): React.JSX.Element {
       {
         heading: r.security,
         rows: [{ kind: 'switch', path: ['security', 'redact_secrets'], title: r.securityRedactSecrets }]
-      },
-      {
-        heading: r.debug,
-        rows: [{ kind: 'switch', path: ['debug', 'interrupt'], title: r.debugInterrupt }]
       }
     )
 

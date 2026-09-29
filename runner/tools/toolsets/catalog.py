@@ -14,8 +14,6 @@ class ToolsetDef:
 # 工具集 id 的权威枚举见 client/main/shared/lib/toolset-index.ts；本目录只做 Runner 侧 id → 工具名/前缀的映射。
 # 不可控的"侧信道"系统感知能力（焦点窗口 / 工作区 / 屏幕坐标 / 全屏 / 屏幕锁 / 空闲时长）单独归档为
 # ``system_awareness``,  让隐私敏感场景可以一键关掉屏幕坐标与全屏探测而不影响别的 system.* 探测。
-# Backend 桶 id（memory / web_tools / image_generation / messaging /
-# scheduled_tasks / agent_delegation）由后端独立归档, 不在此 catalog。
 TOOLSET_CATALOG: tuple[ToolsetDef, ...] = (
     ToolsetDef(id="browser_automation", prefixes=("browser_",)),
     ToolsetDef(
@@ -46,26 +44,24 @@ TOOLSET_CATALOG: tuple[ToolsetDef, ...] = (
     ),
 )
 
-_VALID_TOOLSET_IDS: frozenset[str] = frozenset(d.id for d in TOOLSET_CATALOG)
+# Backend 桶 id 由后端过滤，不映射 Runner 工具；列出只为不把它们误报为未知 id。
+_BACKEND_TOOLSET_IDS = frozenset(
+    {"memory", "web_tools", "image_generation", "messaging", "scheduled_tasks", "agent_delegation"},
+)
+_KNOWN_TOOLSET_IDS: frozenset[str] = frozenset(d.id for d in TOOLSET_CATALOG) | _BACKEND_TOOLSET_IDS
 
 
 def excluded_tool_names(disabled_ids: set[str], available_tool_names: set[str]) -> set[str]:
-    """计算因所属 toolset 被禁用而要从 LLM-facing schema 中隐藏的具体工具名集合。
+    """计算 ``available_tool_names`` 中因所属工具集被禁用而须隐藏并拒绝派发的工具名（前缀须按具体名字展开）。
 
-    ``available_tool_names`` 一般来自 ``registry.get_all_tool_names()`` — 因为前缀展开需要用具体名字过滤,
-    所以我们拿实际名字来比对而不是伪造合成条目。
-
-    对不在 ``TOOLSET_CATALOG`` 里的 id 打 WARNING: 用户在 Desktop 设置里手抖拼错
-    (例如 ``browser_aut0mation``) 或旧版本残留 id 都不会命中 catalog, 默认 ``excluded`` 空集会让
-    用户以为关闭了但实际还在 — 这是最危险的静默失败模式。
+    未知 id（拼错或已移除）不会命中任何工具，用户会误以为已关闭，因此打 WARNING。
     """
-    unknown = disabled_ids - _VALID_TOOLSET_IDS
-    if unknown:
+    if unknown := disabled_ids - _KNOWN_TOOLSET_IDS:
         logger.warning(
             "toolsets.disabled contains %d unknown id(s) ignored by runner catalog: %s. Valid ids: %s. Users may think these toolsets are disabled while they remain enabled.",
             len(unknown),
             sorted(unknown),
-            sorted(_VALID_TOOLSET_IDS),
+            sorted(_KNOWN_TOOLSET_IDS),
         )
 
     disabled_prefixes: tuple[str, ...] = tuple(p for d in TOOLSET_CATALOG if d.id in disabled_ids for p in d.prefixes)

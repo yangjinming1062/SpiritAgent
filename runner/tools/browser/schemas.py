@@ -3,23 +3,22 @@ from typing import Any
 BROWSER_NAVIGATE_SCHEMA: dict[str, Any] = {
     "name": "browser_navigate",
     "description": (
-        "Navigate to a URL in the browser. Initializes the session and loads the page. "
-        "Must be called before other browser tools. For simple information retrieval, prefer "
-        "web_search or web_extract (faster, cheaper). For plain-text endpoints — URLs ending in "
-        ".md, .txt, .json, .yaml, .yml, .csv, .xml, raw.githubusercontent.com, or any documented API "
-        "endpoint — prefer curl via the terminal tool or web_extract; the browser stack is overkill and "
-        "much slower for these. Use browser tools when you need to interact with a page (click, fill forms, "
-        "dynamic content). Returns a compact page snapshot with interactive elements and ref IDs — no need "
-        "to call browser_snapshot separately after navigating. For advanced browser capabilities (file downloads, "
-        "multi-tab navigation, cookie injection, viewport / user-agent / geolocation configuration, element-level "
-        "screenshots), use `search_tools` to unlock them — those tools are not in the always-visible core set."
+        "Navigate the current tab to a URL, starting the browser if needed. Call this before other browser "
+        "tools. For simple information retrieval, prefer web_search or web_extract (faster, cheaper). For "
+        "plain-text resources — URLs ending in .md, .txt, .json, .yaml, .yml, .csv, .xml, "
+        "raw.githubusercontent.com, or documented API endpoints — prefer web_extract or curl in the terminal; "
+        "the browser is much slower for these. Use the browser when you need to interact with a page (click, "
+        "fill forms, dynamic content). Only http and https URLs are accepted. Returns the final URL, the title "
+        "and a compact snapshot of interactive elements with ref IDs, so no separate browser_snapshot is needed "
+        "right after navigating. If other browser tools you need (tabs, downloads, cookies, emulation, element "
+        "screenshots, PDF) are not available yet, find them with search_tools."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "url": {
                 "type": "string",
-                "description": "The URL to navigate to (e.g., 'https://example.com')",
+                "description": "The http or https URL to open (e.g. 'https://example.com').",
             },
         },
         "required": ["url"],
@@ -29,12 +28,12 @@ BROWSER_NAVIGATE_SCHEMA: dict[str, Any] = {
 BROWSER_SNAPSHOT_SCHEMA: dict[str, Any] = {
     "name": "browser_snapshot",
     "description": (
-        "Get a text-based snapshot of the current page's accessibility tree. Returns interactive "
-        "elements with ref IDs (like @e1, @e2) for browser_click and browser_type. full=false (default): "
-        "compact view with interactive elements. full=true: complete page content. Snapshots over 8000 "
-        "chars are truncated or LLM-summarized. Requires browser_navigate first. Note: browser_navigate "
-        "already returns a compact snapshot — use this to refresh after interactions that change the page, "
-        "or with full=true for complete content."
+        "Get a text snapshot of the current page's accessibility tree. Elements are tagged [ref=eN]; pass "
+        "them as '@eN' to browser_click, browser_type and other element tools. full=false (default) lists "
+        "interactive elements only; full=true includes the page text as well. Snapshots over 8000 characters "
+        "are truncated. browser_navigate already returns a compact snapshot — use this to refresh after the "
+        "page changes, or with full=true to read content. The result also includes pending_dialogs "
+        "(JavaScript dialogs waiting for browser_dialog) and a frame summary."
     ),
     "parameters": {
         "type": "object",
@@ -42,8 +41,7 @@ BROWSER_SNAPSHOT_SCHEMA: dict[str, Any] = {
             "full": {
                 "type": "boolean",
                 "description": (
-                    "If true, returns complete page content. If false (default), returns compact view "
-                    "with interactive elements only."
+                    "If true, include all page content. If false (default), list interactive elements only."
                 ),
                 "default": False,
             },
@@ -55,10 +53,9 @@ BROWSER_SNAPSHOT_SCHEMA: dict[str, Any] = {
 BROWSER_CLICK_SCHEMA: dict[str, Any] = {
     "name": "browser_click",
     "description": (
-        "Click on an element identified by its ref ID from the snapshot (e.g., '@e5'), "
-        "visual Set-of-Marks badge number, or directly by physical viewport coordinates 'x,y' "
-        "(e.g. '150,300'). Self-healing enabled. Requires browser_navigate and browser_snapshot "
-        "to be called first."
+        "Click an element by its ref ID from the latest snapshot (e.g. '@e5'), by an '@vN' ref from an "
+        "annotated browser_vision screenshot, or at viewport coordinates 'x,y' in CSS pixels "
+        "(e.g. '150,300'). Prefer refs; coordinates are best taken from annotated browser_vision output."
     ),
     "parameters": {
         "type": "object",
@@ -66,7 +63,8 @@ BROWSER_CLICK_SCHEMA: dict[str, Any] = {
             "ref": {
                 "type": "string",
                 "description": (
-                    "Element reference (e.g., '@e5', '@e12'), or physical coordinates 'x,y' (e.g. '240,480')"
+                    "Element ref ('@e5'), annotated screenshot ref ('@v3'), or viewport coordinates 'x,y' "
+                    "(e.g. '240,480')."
                 ),
             },
         },
@@ -77,8 +75,8 @@ BROWSER_CLICK_SCHEMA: dict[str, Any] = {
 BROWSER_TYPE_SCHEMA: dict[str, Any] = {
     "name": "browser_type",
     "description": (
-        "Type text into an input field identified by its ref ID. Clears the field first, then types the new text. "
-        "Requires browser_navigate and browser_snapshot to be called first."
+        "Type text into an input field identified by its ref ID (or 'x,y' coordinates). Clears the field "
+        "first, then inserts the new text."
     ),
     "parameters": {
         "type": "object",
@@ -95,10 +93,7 @@ BROWSER_TYPE_SCHEMA: dict[str, Any] = {
 
 BROWSER_SCROLL_SCHEMA: dict[str, Any] = {
     "name": "browser_scroll",
-    "description": (
-        "Scroll the page in a direction. Use this to reveal more content that may be below or "
-        "above the current viewport. Requires browser_navigate to be called first."
-    ),
+    "description": "Scroll the page up or down by about 500 pixels to reveal content outside the current viewport.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -114,24 +109,23 @@ BROWSER_SCROLL_SCHEMA: dict[str, Any] = {
 
 BROWSER_BACK_SCHEMA: dict[str, Any] = {
     "name": "browser_back",
-    "description": (
-        "Navigate back to the previous page in browser history. Requires browser_navigate to be called first."
-    ),
+    "description": "Go back to the previous page in the current tab's history.",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 BROWSER_PRESS_SCHEMA: dict[str, Any] = {
     "name": "browser_press",
     "description": (
-        "Press a keyboard key. Useful for submitting forms (Enter), navigating (Tab), or keyboard "
-        "shortcuts. Requires browser_navigate to be called first."
+        "Press a single named key in the page: Enter, Tab, Escape, Backspace, Delete, Space, ArrowUp, "
+        "ArrowDown, ArrowLeft, ArrowRight, PageUp, PageDown, Home, End or F1–F12. Key combinations and "
+        "character keys are not supported; use browser_type to enter text."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "key": {
                 "type": "string",
-                "description": "Key to press (e.g., 'Enter', 'Tab', 'Escape', 'ArrowDown')",
+                "description": "Key name, e.g. 'Enter', 'Tab', 'Escape', 'ArrowDown'.",
             },
         },
         "required": ["key"],
@@ -141,16 +135,15 @@ BROWSER_PRESS_SCHEMA: dict[str, Any] = {
 BROWSER_HOVER_SCHEMA: dict[str, Any] = {
     "name": "browser_hover",
     "description": (
-        "Hover an element (move mouse over it) — triggers CSS :hover rules, dropdown menus, "
-        "and tooltip previews without clicking. Ref IDs come from browser_snapshot output "
-        "(e.g. '@e5'). Requires browser_navigate and browser_snapshot first."
+        "Move the mouse over an element without clicking, triggering :hover styles, dropdown menus and "
+        "tooltips. Accepts a snapshot ref (e.g. '@e5') or 'x,y' coordinates."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "ref": {
                 "type": "string",
-                "description": "Element reference from the snapshot (e.g. '@e5', '@e12')",
+                "description": "Element ref from the snapshot (e.g. '@e5') or 'x,y' coordinates.",
             },
         },
         "required": ["ref"],
@@ -160,26 +153,20 @@ BROWSER_HOVER_SCHEMA: dict[str, Any] = {
 BROWSER_WAIT_FOR_SCHEMA: dict[str, Any] = {
     "name": "browser_wait_for",
     "description": (
-        "Wait until a CSS selector or visible text substring appears in the current page "
-        "(polls every 200ms via the live DOM). On a successful match the result includes a "
-        "compact snapshot so you can act without a follow-up browser_snapshot. "
-        "Set return_snapshot=false to disable the auto-snapshot. Requires browser_navigate first."
+        "Wait until a CSS selector matches or a text substring appears in the page's visible text "
+        "(checked every 200 ms). Provide selector, text, or both; either match succeeds. On success the "
+        "result includes a compact snapshot unless return_snapshot=false."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "selector": {
                 "type": "string",
-                "description": (
-                    "CSS selector to wait for, e.g. '.checkout-button'. Mutually exclusive gating "
-                    "with `text` — at least one must be provided."
-                ),
+                "description": "CSS selector to wait for, e.g. '.checkout-button'.",
             },
             "text": {
                 "type": "string",
-                "description": (
-                    "Case-insensitive substring of visible element text to wait for, e.g. 'Order confirmed'."
-                ),
+                "description": "Case-insensitive substring of the page's visible text, e.g. 'Order confirmed'.",
             },
             "timeout_s": {
                 "type": "number",
@@ -191,7 +178,7 @@ BROWSER_WAIT_FOR_SCHEMA: dict[str, Any] = {
                 "default": True,
                 "description": (
                     "If true (default), include a compact snapshot in the success result. If false, "
-                    "only return the matched element description."
+                    "only report which condition matched."
                 ),
             },
         },
@@ -202,10 +189,9 @@ BROWSER_WAIT_FOR_SCHEMA: dict[str, Any] = {
 BROWSER_FIND_SCHEMA: dict[str, Any] = {
     "name": "browser_find",
     "description": (
-        "Search the live DOM for elements whose visible text matches a substring. Use this when "
-        "you want a snapshot ref by text instead of grepping the previous browser_snapshot output "
-        "(which may be stale after dynamic re-rendering). Returns up to 200 matches. "
-        "Requires browser_navigate first."
+        "Search the live DOM for visible elements whose text contains a substring and return their refs "
+        "(up to 200 matches). Refs are the ones assigned by the most recent snapshot; elements rendered "
+        "after it have none, so take a new browser_snapshot if nothing matches."
     ),
     "parameters": {
         "type": "object",
@@ -218,7 +204,8 @@ BROWSER_FIND_SCHEMA: dict[str, Any] = {
                 "type": "boolean",
                 "default": True,
                 "description": (
-                    "If true (default), only return ref IDs. If false, also include tag and text for each match."
+                    "If true (default), return only elements that have refs, as ref IDs. If false, return "
+                    "every match with its ref (possibly empty), tag and text."
                 ),
             },
         },
@@ -229,20 +216,19 @@ BROWSER_FIND_SCHEMA: dict[str, Any] = {
 BROWSER_DRAG_SCHEMA: dict[str, Any] = {
     "name": "browser_drag",
     "description": (
-        "Drag an element from one snapshot position to another. Dispatches a CDP mouse event "
-        "sequence (press → move → release) between the two refs. Works with sortable lists, "
-        "sliders, and drag-and-drop UIs. Requires browser_navigate and browser_snapshot first."
+        "Drag from one element to another with a mouse press, move and release. Works with sortable "
+        "lists, sliders and drag-and-drop UIs. Accepts snapshot refs or 'x,y' coordinates."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "from_ref": {
                 "type": "string",
-                "description": "Source element ref from browser_snapshot (e.g. '@e3').",
+                "description": "Source element ref (e.g. '@e3') or 'x,y' coordinates.",
             },
             "to_ref": {
                 "type": "string",
-                "description": "Target element ref from browser_snapshot (e.g. '@e7').",
+                "description": "Target element ref (e.g. '@e7') or 'x,y' coordinates.",
             },
             "hold_key": {
                 "type": "string",
@@ -257,10 +243,9 @@ BROWSER_DRAG_SCHEMA: dict[str, Any] = {
 BROWSER_SELECT_SCHEMA: dict[str, Any] = {
     "name": "browser_select",
     "description": (
-        "Select an option in a <select> element or a common custom dropdown "
-        "(Ant Design, Element UI, Material UI, React Select, etc.). For native <select>, sets "
-        "the value directly. For custom dropdowns, clicks to open then matches by visible text. "
-        "Requires browser_navigate and browser_snapshot first."
+        "Select an option in a native <select> or a custom dropdown. A native <select> is set directly; "
+        "a custom dropdown is clicked open and the option is matched by its visible text. Give one of "
+        "value, label or index (value takes precedence, then label)."
     ),
     "parameters": {
         "type": "object",
@@ -269,20 +254,12 @@ BROWSER_SELECT_SCHEMA: dict[str, Any] = {
                 "type": "string",
                 "description": "Element ref of the <select> or custom dropdown trigger (e.g. '@e4').",
             },
-            "value": {"type": "string", "description": "Exact option value attribute to select."},
+            "value": {"type": "string", "description": "Exact option value, or exact option text."},
             "label": {
                 "type": "string",
                 "description": "Case-insensitive substring of the visible option text to select.",
             },
-            "index": {"type": "integer", "description": "0-based option index to select."},
-            "open_delay_s": {
-                "type": "number",
-                "default": 0.5,
-                "description": (
-                    "Seconds to wait after clicking a custom dropdown for its animation to finish "
-                    "before searching for options (default 0.5)."
-                ),
-            },
+            "index": {"type": "integer", "description": "0-based option index."},
         },
         "required": ["ref"],
     },
@@ -291,9 +268,9 @@ BROWSER_SELECT_SCHEMA: dict[str, Any] = {
 BROWSER_DOWNLOAD_SCHEMA: dict[str, Any] = {
     "name": "browser_download",
     "description": (
-        "Download a file by clicking a link (ref) or navigating to a URL. Blocks until the "
-        "download completes and returns the local file path. Requires a CDP-capable backend. "
-        "Files are saved to the downloads cache (24h auto-cleanup)."
+        "Download a file by clicking a link (ref) or opening a URL in the current tab. Waits until the "
+        "download completes and returns the local file path. Files are saved in the local downloads "
+        "folder; an existing file with the same name is replaced."
     ),
     "parameters": {
         "type": "object",
@@ -304,7 +281,7 @@ BROWSER_DOWNLOAD_SCHEMA: dict[str, Any] = {
             },
             "save_as": {
                 "type": "string",
-                "description": ("Optional filename override. If omitted, uses the browser's suggested filename."),
+                "description": "Optional file name (directory parts are ignored). Defaults to the browser's suggested name.",
             },
             "timeout_s": {
                 "type": "number",
@@ -318,16 +295,13 @@ BROWSER_DOWNLOAD_SCHEMA: dict[str, Any] = {
 
 BROWSER_PDF_SCHEMA: dict[str, Any] = {
     "name": "browser_pdf",
-    "description": (
-        "Save the current page as a PDF file. Requires a CDP-capable backend (local Chrome or "
-        "CDP override). Returns the file path, page count, and SHA-256 hash."
-    ),
+    "description": "Save the current page as a PDF file. Returns the local file path and its SHA-256 hash.",
     "parameters": {
         "type": "object",
         "properties": {
             "save_as": {
                 "type": "string",
-                "description": "Optional filename (without path). Defaults to page_<id>.pdf.",
+                "description": "Optional file name (directory parts are ignored). Defaults to page_<id>.pdf.",
             },
             "landscape": {
                 "type": "boolean",
@@ -357,9 +331,9 @@ BROWSER_PDF_SCHEMA: dict[str, Any] = {
 BROWSER_SCREENSHOT_ELEMENT_SCHEMA: dict[str, Any] = {
     "name": "browser_screenshot_element",
     "description": (
-        "Capture a screenshot of a single element identified by its snapshot ref. Returns the "
-        "image file path. Uses getBoundingClientRect for positioning — CSS transforms "
-        "(rotate/scale) are not accounted for. Requires a CDP-capable backend."
+        "Capture a screenshot of a single element identified by its snapshot ref and attach it for visual "
+        "inspection. The PNG is also saved locally and its path is included; attaching it does not deliver "
+        "the image to the user."
     ),
     "parameters": {
         "type": "object",
@@ -370,7 +344,7 @@ BROWSER_SCREENSHOT_ELEMENT_SCHEMA: dict[str, Any] = {
             },
             "save_as": {
                 "type": "string",
-                "description": "Optional filename (without path). Defaults to element_<id>.png.",
+                "description": "Optional file name (directory parts are ignored). Defaults to element_<id>.png.",
             },
         },
         "required": ["ref"],
@@ -379,10 +353,7 @@ BROWSER_SCREENSHOT_ELEMENT_SCHEMA: dict[str, Any] = {
 
 BROWSER_TAB_NEW_SCHEMA: dict[str, Any] = {
     "name": "browser_tab_new",
-    "description": (
-        "Open a new browser tab and switch to it. The new tab becomes the active target — "
-        "subsequent browser_* calls operate on it. Requires a CDP-capable backend (not Camofox)."
-    ),
+    "description": "Open a new browser tab and switch to it; subsequent browser tools operate on the new tab.",
     "parameters": {
         "type": "object",
         "properties": {
@@ -398,8 +369,8 @@ BROWSER_TAB_NEW_SCHEMA: dict[str, Any] = {
 BROWSER_TAB_SWITCH_SCHEMA: dict[str, Any] = {
     "name": "browser_tab_switch",
     "description": (
-        "Switch the active tab to tab_id. Subsequent CDP operations route there. tab_id values "
-        "come from browser_tab_list or browser_tab_new."
+        "Switch the active tab; subsequent browser tools operate on it. tab_id values come from "
+        "browser_tab_list or browser_tab_new."
     ),
     "parameters": {
         "type": "object",
@@ -413,8 +384,7 @@ BROWSER_TAB_SWITCH_SCHEMA: dict[str, Any] = {
 BROWSER_TAB_CLOSE_SCHEMA: dict[str, Any] = {
     "name": "browser_tab_close",
     "description": (
-        "Close a tab. Defaults to closing the currently active tab. After close, CDP routing "
-        "falls back to the initial page if the closed tab was active."
+        "Close a tab, by default the active one. If the active tab is closed, another open tab becomes active."
     ),
     "parameters": {
         "type": "object",
@@ -430,18 +400,15 @@ BROWSER_TAB_CLOSE_SCHEMA: dict[str, Any] = {
 
 BROWSER_TAB_LIST_SCHEMA: dict[str, Any] = {
     "name": "browser_tab_list",
-    "description": (
-        "List all browser tabs currently open. Read-only — does not mutate state. Returns "
-        "tab_id, url, title, and active_tab_id."
-    ),
+    "description": "List the open browser tabs with each tab's tab_id, url, title and is_active.",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 BROWSER_SET_VIEWPORT_SCHEMA: dict[str, Any] = {
     "name": "browser_set_viewport",
     "description": (
-        "Override the browser viewport size. Persists until next call or page reload. "
-        "Use to test mobile layouts without a real device. Requires a CDP-capable backend."
+        "Override the viewport size of the current tab until it is changed again. Use it to test "
+        "responsive or mobile layouts."
     ),
     "parameters": {
         "type": "object",
@@ -456,7 +423,10 @@ BROWSER_SET_VIEWPORT_SCHEMA: dict[str, Any] = {
             "mobile": {
                 "type": "boolean",
                 "default": False,
-                "description": "If true, the browser reports a mobile UA and viewport.",
+                "description": (
+                    "If true, emulate a mobile device (viewport meta tag, overlay scrollbars). "
+                    "The user agent is not changed; use browser_set_user_agent for that."
+                ),
             },
         },
         "required": ["width", "height"],
@@ -465,13 +435,19 @@ BROWSER_SET_VIEWPORT_SCHEMA: dict[str, Any] = {
 
 BROWSER_SET_USER_AGENT_SCHEMA: dict[str, Any] = {
     "name": "browser_set_user_agent",
-    "description": ("Override the user-agent string sent on subsequent navigations. Pass None to clear the override."),
+    "description": (
+        "Override the user agent (and optionally navigator.platform and Accept-Language) for the current "
+        "tab. Provide at least one field; an empty user_agent removes the user-agent override."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
             "user_agent": {
                 "type": "string",
-                "description": "Full UA override (e.g. 'Mozilla/5.0 ... Mobile/15E148 Safari/604.1').",
+                "description": (
+                    "Full user-agent string (e.g. 'Mozilla/5.0 ... Mobile/15E148 Safari/604.1'); an empty "
+                    "string or omission keeps the browser's default."
+                ),
             },
             "platform": {
                 "type": "string",
@@ -489,9 +465,8 @@ BROWSER_SET_USER_AGENT_SCHEMA: dict[str, Any] = {
 BROWSER_SET_EXTRA_HEADERS_SCHEMA: dict[str, Any] = {
     "name": "browser_set_extra_headers",
     "description": (
-        "Replace all extra HTTP headers sent on subsequent navigations. "
-        "Wholesale replacement — pass the complete desired "
-        "set. Empty dict clears all overrides."
+        "Set extra HTTP headers sent with every request from the current tab, replacing any set before. "
+        "Pass the complete set each time; {} clears them."
     ),
     "parameters": {
         "type": "object",
@@ -499,7 +474,7 @@ BROWSER_SET_EXTRA_HEADERS_SCHEMA: dict[str, Any] = {
             "headers": {
                 "type": "object",
                 "description": (
-                    'Header name → value map, e.g. {"Referer": "https://example.com", "X-API-Key": "secret"}.'
+                    'Header name → value map, e.g. {"Referer": "https://example.com", "Accept-Language": "fr-FR"}.'
                 ),
                 "additionalProperties": {"type": "string"},
             },
@@ -511,15 +486,15 @@ BROWSER_SET_EXTRA_HEADERS_SCHEMA: dict[str, Any] = {
 BROWSER_SET_GEOLOCATION_SCHEMA: dict[str, Any] = {
     "name": "browser_set_geolocation",
     "description": (
-        "Override browser-reported geolocation. "
-        "Subsequent pages see injected coords via navigator.geolocation. Pass lat=NaN to clear."
+        "Override the geolocation reported to pages in the current tab and allow sites to read it via "
+        "navigator.geolocation. Omit lat and lon to remove the override."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "lat": {
                 "type": "number",
-                "description": "Latitude in decimal degrees. NaN clears the override.",
+                "description": "Latitude in decimal degrees.",
             },
             "lon": {"type": "number", "description": "Longitude in decimal degrees."},
             "accuracy": {
@@ -528,31 +503,24 @@ BROWSER_SET_GEOLOCATION_SCHEMA: dict[str, Any] = {
                 "description": "Accuracy in meters (default 100).",
             },
         },
-        "required": ["lat", "lon"],
+        "required": [],
     },
 }
 
 BROWSER_GET_IMAGES_SCHEMA: dict[str, Any] = {
     "name": "browser_get_images",
-    "description": (
-        "Get a list of all images on the current page with their URLs and alt text. Useful "
-        "for finding images to analyze with the vision tool. Requires browser_navigate to be "
-        "called first."
-    ),
+    "description": "List the images on the current page with their URL, alt text, natural size and ref.",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 BROWSER_VISION_SCHEMA: dict[str, Any] = {
     "name": "browser_vision",
     "description": (
-        "Take a screenshot of the current page and attach it to your context so you can "
-        "inspect it visually on your next turn. Use this when you need to understand what "
-        "the page looks like - especially for CAPTCHAs, visual verification challenges, "
-        "Canvas/WebGL graphics, complex layouts, or cases where the text snapshot misses "
-        "important visual information. Set annotate=true to inject high-contrast Set-of-Marks "
-        "[N] visual badges on all interactive elements. Includes a local screenshot_path for later use; "
-        "the screenshot is supplied to the model for inspection, not automatically delivered to the user. "
-        "Requires browser_navigate to be called first."
+        "Take a screenshot of the current viewport and attach it for visual inspection. Use this when you "
+        "need to see the page — CAPTCHAs, visual challenges, Canvas/WebGL graphics, complex layouts, or "
+        "anything the text snapshot misses. Set annotate=true to overlay numbered badges on interactive "
+        "elements. The PNG is also saved locally and its path is included; attaching it does not deliver "
+        "the image to the user."
     ),
     "parameters": {
         "type": "object",
@@ -561,10 +529,10 @@ BROWSER_VISION_SCHEMA: dict[str, Any] = {
                 "type": "boolean",
                 "default": False,
                 "description": (
-                    "If true, overlay high-contrast numbered [N] badges on all interactive "
-                    "elements and return structured coordinate index table. Each [N] maps to "
-                    "ref @vN for subsequent click/type commands. AXTree-based refs (@eN) "
-                    "coexist separately and are produced by browser_snapshot."
+                    "If true, overlay numbered [N] badges on interactive elements and list each badge "
+                    "with its ref '@vN' and viewport coordinates, followed by a compact snapshot. Use "
+                    "'@vN' refs with click, type and other element tools; '@eN' refs from browser_snapshot "
+                    "stay valid alongside them."
                 ),
             },
         },
@@ -575,12 +543,10 @@ BROWSER_VISION_SCHEMA: dict[str, Any] = {
 BROWSER_CONSOLE_SCHEMA: dict[str, Any] = {
     "name": "browser_console",
     "description": (
-        "Get browser console output and JavaScript errors from the current page. Returns "
-        "console.log/warn/error/info messages and uncaught JS exceptions. Use this to detect "
-        "silent JavaScript errors, failed API calls, and application warnings. Requires "
-        "browser_navigate to be called first. When 'expression' is provided, evaluates "
-        "JavaScript in the page context and returns the result — use this for DOM inspection, "
-        "reading page state, or extracting data programmatically."
+        "Read recent console messages (console.log/warn/error/info, up to the last 50) and uncaught "
+        "JavaScript exceptions from the browser session. When 'expression' is provided, evaluate "
+        "JavaScript in the current page instead and return its result — use this for DOM inspection, "
+        "reading page state, or extracting data."
     ),
     "parameters": {
         "type": "object",
@@ -588,15 +554,14 @@ BROWSER_CONSOLE_SCHEMA: dict[str, Any] = {
             "clear": {
                 "type": "boolean",
                 "default": False,
-                "description": "If true, clear the message buffers after reading",
+                "description": "If true, clear the message buffer after reading. Ignored when expression is set.",
             },
             "expression": {
                 "type": "string",
                 "description": (
-                    "JavaScript expression to evaluate in the page context. Runs in the browser "
-                    "like DevTools console — full access to DOM, window, document. Return values "
-                    "are serialized to JSON. Example: 'document.title' or "
-                    "'document.querySelectorAll(\"a\").length'"
+                    "JavaScript expression to evaluate in the page, like the DevTools console. Promises "
+                    "are awaited and the value is returned as JSON. Example: 'document.title' or "
+                    "'document.querySelectorAll(\"a\").length'."
                 ),
             },
         },
@@ -606,18 +571,15 @@ BROWSER_CONSOLE_SCHEMA: dict[str, Any] = {
 
 BROWSER_COOKIES_GET_SCHEMA: dict[str, Any] = {
     "name": "browser_cookies_get",
-    "description": (
-        "Read all cookies visible to the current page, optionally filtered by URL. "
-        "Read-only — does not mutate state. Requires a CDP-capable backend."
-    ),
+    "description": "Read the cookies that apply to the current page and its frames, or to a given URL.",
     "parameters": {
         "type": "object",
         "properties": {
             "url": {
                 "type": "string",
                 "description": (
-                    "Optional URL whose cookies to retrieve (e.g. 'https://example.com'). If "
-                    "omitted, returns all cookies for the current browser context."
+                    "Optional URL whose cookies to read (e.g. 'https://example.com'). If omitted, uses the "
+                    "current page and its frames."
                 ),
             },
         },
@@ -628,8 +590,8 @@ BROWSER_COOKIES_GET_SCHEMA: dict[str, Any] = {
 BROWSER_COOKIES_SET_SCHEMA: dict[str, Any] = {
     "name": "browser_cookies_set",
     "description": (
-        "Set a cookie. Useful for re-establishing session state after restart, or injecting "
-        "auth tokens for testing. Requires a CDP-capable backend."
+        "Set a cookie in the browser, e.g. to restore a login session or inject a test token. The result "
+        "warns when the domain does not match the current page."
     ),
     "parameters": {
         "type": "object",
@@ -640,7 +602,7 @@ BROWSER_COOKIES_SET_SCHEMA: dict[str, Any] = {
             "path": {"type": "string", "default": "/", "description": "Cookie path (default '/')."},
             "expires": {
                 "type": "number",
-                "description": "Expiration as UNIX timestamp. Omit for a session cookie.",
+                "description": "Expiration as a UNIX timestamp in seconds. Omit for a session cookie.",
             },
             "httpOnly": {
                 "type": "boolean",
@@ -655,7 +617,7 @@ BROWSER_COOKIES_SET_SCHEMA: dict[str, Any] = {
             "sameSite": {
                 "type": "string",
                 "enum": ["Strict", "Lax", "None"],
-                "description": "SameSite policy. Defaults to None (browser default).",
+                "description": "SameSite policy; omit to use the browser default. 'None' requires secure=true.",
             },
         },
         "required": ["name", "value", "domain"],
@@ -665,24 +627,23 @@ BROWSER_COOKIES_SET_SCHEMA: dict[str, Any] = {
 BROWSER_COOKIES_CLEAR_SCHEMA: dict[str, Any] = {
     "name": "browser_cookies_clear",
     "description": (
-        "Clear browser cookies and/or storage. WARNING: scope is GLOBAL, not the current "
-        "origin — this affects every site the browser has visited. "
-        "By default clears both session cookies and all storage data. Pass session=False "
-        "and storage=False to no-op (useful for explicit intent signalling)."
+        "Clear browser cookies and/or site storage. WARNING: this is global, not limited to the current "
+        "site — it affects every site the browser has visited and logs the browser out everywhere. By "
+        "default clears both."
     ),
     "parameters": {
         "type": "object",
         "properties": {
-            "session": {
+            "cookies": {
                 "type": "boolean",
                 "default": True,
-                "description": "If true (default), clear all session cookies across all origins.",
+                "description": "If true (default), delete all cookies for all sites.",
             },
             "storage": {
                 "type": "boolean",
                 "default": True,
                 "description": (
-                    "If true (default), clear localStorage / sessionStorage / indexedDB across all origins."
+                    "If true (default), clear localStorage, IndexedDB, cache storage and other site data for all sites."
                 ),
             },
         },
@@ -693,8 +654,7 @@ BROWSER_COOKIES_CLEAR_SCHEMA: dict[str, Any] = {
 BROWSER_STORAGE_GET_SCHEMA: dict[str, Any] = {
     "name": "browser_storage_get",
     "description": (
-        "Read the value of a localStorage or sessionStorage entry from a specific origin. "
-        "Read-only. Requires a CDP-capable backend."
+        "Read a localStorage or sessionStorage entry of a site origin. sessionStorage is read from the current tab."
     ),
     "parameters": {
         "type": "object",
@@ -702,7 +662,7 @@ BROWSER_STORAGE_GET_SCHEMA: dict[str, Any] = {
             "key": {"type": "string", "description": "Storage entry name."},
             "origin": {
                 "type": "string",
-                "description": "Origin whose storage to read (e.g. 'https://example.com').",
+                "description": "Origin whose storage to read, e.g. 'https://example.com' (any path is ignored).",
             },
             "kind": {
                 "type": "string",
@@ -718,8 +678,7 @@ BROWSER_STORAGE_GET_SCHEMA: dict[str, Any] = {
 BROWSER_STORAGE_SET_SCHEMA: dict[str, Any] = {
     "name": "browser_storage_set",
     "description": (
-        "Set the value of a localStorage / sessionStorage entry for a specific origin. "
-        "Mutates page state. Requires a CDP-capable backend."
+        "Set a localStorage or sessionStorage entry for a site origin. sessionStorage is written in the current tab."
     ),
     "parameters": {
         "type": "object",
@@ -728,7 +687,7 @@ BROWSER_STORAGE_SET_SCHEMA: dict[str, Any] = {
             "value": {"type": "string", "description": "Value to store."},
             "origin": {
                 "type": "string",
-                "description": "Target origin (e.g. 'https://example.com').",
+                "description": "Target origin, e.g. 'https://example.com' (any path is ignored).",
             },
             "kind": {
                 "type": "string",
@@ -744,20 +703,10 @@ BROWSER_STORAGE_SET_SCHEMA: dict[str, Any] = {
 BROWSER_DIALOG_SCHEMA: dict[str, Any] = {
     "name": "browser_dialog",
     "description": (
-        "Respond to a native JavaScript dialog (alert / confirm / prompt / beforeunload) that "
-        "is currently blocking the page.\n\n"
-        "**Workflow:** call ``browser_snapshot`` first — if a dialog is open, it appears in "
-        "the ``pending_dialogs`` field with ``id``, ``type``, and ``message``. Then call this "
-        "tool with ``action='accept'`` or ``action='dismiss'``.\n\n"
-        "**Prompt dialogs:** pass ``prompt_text`` to supply the response string. Ignored for "
-        "alert/confirm/beforeunload.\n\n"
-        "**Multiple dialogs:** if more than one dialog is queued (rare — happens when a second "
-        "dialog fires while the first is still open), pass ``dialog_id`` from the snapshot "
-        "to disambiguate.\n\n"
-        "**Availability:** only present when a CDP-capable backend is attached — local "
-        "Chromium-family browser via ``/browser connect``, or ``browser.cdp_url`` in Desktop "
-        "settings. Not available on Camofox (REST-only) or the default Playwright local browser "
-        "(CDP port is hidden)."
+        "Respond to a JavaScript dialog (alert / confirm / prompt / beforeunload) that is blocking the "
+        "page. Open dialogs are reported with id, type and message by the click that opened them, in "
+        "browser_snapshot's pending_dialogs, and in results of page actions they blocked; answer with "
+        "action='accept' or 'dismiss'. If several are queued, pass dialog_id."
     ),
     "parameters": {
         "type": "object",
@@ -766,23 +715,21 @@ BROWSER_DIALOG_SCHEMA: dict[str, Any] = {
                 "type": "string",
                 "enum": ["accept", "dismiss"],
                 "description": (
-                    "'accept' clicks OK / returns the prompt text. 'dismiss' clicks Cancel / "
-                    "returns null from prompt(). For ``beforeunload`` dialogs: 'accept' allows "
-                    "the navigation, 'dismiss' keeps the page."
+                    "'accept' clicks OK (prompt() returns prompt_text); 'dismiss' clicks Cancel (prompt() "
+                    "returns null). For beforeunload, 'accept' leaves the page and 'dismiss' stays."
                 ),
             },
             "prompt_text": {
                 "type": "string",
                 "description": (
-                    "Response string for a ``prompt()`` dialog. Ignored for other dialog types. "
-                    "Defaults to empty string."
+                    "Text returned by a prompt() dialog when accepted. Ignored for other dialog types. "
+                    "Defaults to an empty string."
                 ),
             },
             "dialog_id": {
                 "type": "string",
                 "description": (
-                    "Specific dialog to respond to, from ``browser_snapshot.pending_dialogs[].id``. "
-                    "Required only when multiple dialogs are queued."
+                    "id from browser_snapshot pending_dialogs. Needed only when several dialogs are queued."
                 ),
             },
         },
@@ -793,22 +740,18 @@ BROWSER_DIALOG_SCHEMA: dict[str, Any] = {
 BROWSER_CDP_SCHEMA: dict[str, Any] = {
     "name": "browser_cdp",
     "description": (
-        "Send a raw Chrome DevTools Protocol (CDP) command. Escape hatch for browser "
-        "operations not covered by browser_navigate, browser_click, browser_console, etc.\n\n"
-        "**Requires a reachable CDP endpoint.** Available when the user has run "
-        "'/browser connect' to attach to a running Chrome, Brave, Chromium, or Edge "
-        "browser, or when 'browser.cdp_url' is set in Desktop settings. If the tool is "
-        "in your toolset at all, a CDP endpoint is already reachable.\n\n"
-        "**CDP method reference:** https://chromedevtools.github.io/devtools-protocol/"
+        "Send a raw Chrome DevTools Protocol (CDP) command to the browser session and return its response. "
+        "Use it only for operations the other browser tools do not cover. Events are not returned, and "
+        "methods that would close the browser, wipe all site data, change the download directory, "
+        "intercept requests (Fetch) or grant permissions are refused.\n\n"
+        "CDP method reference: https://chromedevtools.github.io/devtools-protocol/"
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "method": {
                 "type": "string",
-                "description": (
-                    "CDP method name, e.g. 'Target.getTargets', 'Runtime.evaluate', 'Page.handleJavaScriptDialog'."
-                ),
+                "description": "CDP method name, e.g. 'Target.getTargets', 'Runtime.evaluate', 'DOM.getDocument'.",
             },
             "params": {
                 "type": "object",
@@ -821,22 +764,13 @@ BROWSER_CDP_SCHEMA: dict[str, Any] = {
             "target_id": {
                 "type": "string",
                 "description": (
-                    "Optional. Target/tab ID from Target.getTargets result "
-                    "(each entry's 'targetId'). Use for page-level methods at the top-level tab "
-                    "scope. Mutually exclusive with frame_id."
-                ),
-            },
-            "frame_id": {
-                "type": "string",
-                "description": (
-                    "Optional. Out-of-process iframe (OOPIF) frame_id from "
-                    "browser_snapshot.frame_tree.children[] where is_oopif=true. When set, "
-                    "routes the call through the CDP supervisor's live session for that iframe."
+                    "Optional target to send the command to, from Target.getTargets (a tab, or an "
+                    "out-of-process iframe with type 'iframe'). Defaults to the active tab."
                 ),
             },
             "timeout": {
                 "type": "number",
-                "description": "Timeout in seconds (default 30, max 300).",
+                "description": "Timeout in seconds (default 30, clamped to 1–300).",
                 "default": 30,
             },
         },
@@ -847,12 +781,13 @@ BROWSER_CDP_SCHEMA: dict[str, Any] = {
 BROWSER_BATCH_SCHEMA: dict[str, Any] = {
     "name": "browser_batch",
     "description": (
-        "Execute a sequence of browser actions in a single round trip to minimize latency. "
-        "Supported actions: 'click' (by ref, badge [N], or 'x,y'), 'type' (text into input), "
-        "'press' (key like Enter/Tab), 'hover', 'scroll' (direction/pixels), 'wait' (seconds), "
-        "'select' (dropdown). Executes actions sequentially with configurable inter-action "
-        "pauses (wait_between_ms) and a final post-batch page settlement check. Returns "
-        "execution details and optional post-batch snapshot."
+        "Run a sequence of page actions in one call, in order. Each action object has an 'action' field "
+        "and its own fields: click {ref}, type {ref, text}, press {key}, hover {ref}, scroll {direction: "
+        "up|down|left|right, pixels (default 500)}, wait {seconds (max 10)}, select {ref, and one of value, "
+        "label or index}. A ref may be '@eN', '@vN' or 'x,y' (select needs an element ref). Execution stops "
+        "at the first failing action; the result then gives the error, the failing step index and the "
+        "results of the steps attempted. On success it returns per-step details and, by default, a compact "
+        "snapshot."
     ),
     "parameters": {
         "type": "object",
@@ -860,22 +795,20 @@ BROWSER_BATCH_SCHEMA: dict[str, Any] = {
             "actions": {
                 "type": "array",
                 "description": (
-                    "List of action objects to execute in order. "
-                    "Examples: [{'action': 'click', 'ref': '@e2'}, "
-                    "{'action': 'type', 'ref': '@e3', 'text': 'search'}, "
-                    "{'action': 'press', 'key': 'Enter'}]."
+                    "Action objects to execute in order, e.g. [{'action': 'click', 'ref': '@e2'}, "
+                    "{'action': 'type', 'ref': '@e3', 'text': 'search'}, {'action': 'press', 'key': 'Enter'}]."
                 ),
                 "items": {"type": "object"},
             },
             "return_snapshot": {
                 "type": "boolean",
                 "default": True,
-                "description": "If true (default), returns a fresh compact page snapshot after all actions complete.",
+                "description": "If true (default), include a compact snapshot after all actions succeed.",
             },
             "wait_between_ms": {
                 "type": "integer",
                 "default": 100,
-                "description": "Milliseconds to pause between consecutive actions (default 100).",
+                "description": "Milliseconds to pause between actions (default 100, max 5000).",
             },
         },
         "required": ["actions"],

@@ -13,7 +13,7 @@ from utils import redact_sensitive_text
 
 import tools
 
-from .toolsets import excluded_tool_names
+from .toolsets import excluded_tool_names, get_disabled_toolset_ids
 
 logger = logging.getLogger(__name__)
 
@@ -27,10 +27,10 @@ def tool_error(msg: str, **extra) -> str:
 
 
 class ToolError(Exception):
-    """``async_dispatch`` 在工具无法执行时抛出。
+    """工具无法执行。
 
-    沙箱 RPC 入口 ``dispatch`` 会吞掉该异常并转换为 JSON 错误信封; WS 入口
-    ``async_dispatch`` 则让它上抛, 以便调用方映射成 JSON-RPC 错误帧。
+    沙箱 RPC 入口 ``dispatch`` 把它转换为 JSON 错误信封；WS 入口 ``async_dispatch`` 让它上抛，
+    由调用方映射成 JSON-RPC 错误帧。
     """
 
 
@@ -39,7 +39,6 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, Callable] = {}
-        self._toolset: dict[str, str] = {}
         self._schemas: dict[str, dict] = {}
         self._check_fns: dict[str, Callable[[], bool]] = {}
         self._check_fn_cache: dict[str, tuple[bool, float, float]] = {}
@@ -62,25 +61,15 @@ class ToolRegistry:
     def register_tool(
         self,
         name: str,
-        toolset: str | None = None,
-        schema: dict | None = None,
+        *,
+        schema: dict,
         check_fn: Callable[[], bool] | None = None,
-        **kwargs: Any,
-    ) -> Callable:
-        """装饰器形式注册工具(``schema`` 必填, 表达 JSON Schema)。"""
-        if kwargs:
-            unknown = ", ".join(sorted(kwargs))
-            raise TypeError(f"registry.register_tool got unexpected keyword arguments: {unknown}")
-        if schema is None:
-            raise TypeError(
-                f"registry.register_tool({name!r}) requires a `schema=` argument (every tool must declare an explicit JSON Schema).",
-            )
+    ) -> Callable[[Callable], Callable]:
+        """装饰器形式注册工具；``schema`` 是提供给模型的完整工具定义。"""
 
         def decorator(func: Callable) -> Callable:
             with self._lock:
                 self._tools[name] = func
-                if toolset:
-                    self._toolset[name] = toolset
                 self._schemas[name] = schema
                 if check_fn is not None:
                     self._check_fns[name] = check_fn
@@ -142,13 +131,18 @@ class ToolRegistry:
         """返回工具结果的大小上限。"""
         return DEFAULT_MAX_RESULT_SIZE_CHARS
 
-    def dispatch(self, name: str, args: dict, **kwargs) -> str:
-        """同步入口, 供沙箱内 RPC(``code_execution_tool``)调用; 返回 JSON 字符串。注意: 不可在已运行的事件循环内调用异步工具。"""
+    def dispatch(self, name: str, args: dict, **kwargs: Any) -> str:
+        """同步入口，供沙箱内 RPC（``code_execution_tool``）调用，返回 JSON 字符串；与直接调用同样受 ``toolsets.disabled`` 约束。
+
+        不可在已运行的事件循环内调用异步工具。
+        """
         with self._lock:
             func = self._tools.get(name)
         if not func:
             logger.error(f"Tool {name} not found locally.")
             return json.dumps({"error": f"Tool '{name}' not found locally."})
+        if name in excluded_tool_names(get_disabled_toolset_ids(), {name}):
+            return json.dumps({"error": f"Tool '{name}' is disabled in the user's tool settings"})
 
         try:
             if inspect.iscoroutinefunction(func):
@@ -166,11 +160,17 @@ class ToolRegistry:
                 result = func(args, **kwargs)
         except Exception as e:
             logger.error(f"Error executing {name}: {e}")
-            return json.dumps({"error": self._sanitize_tool_error(f"Tool execution failed: {type(e).__name__}: {e}")})
+            return json.dumps({"error": redact_sensitive_text(f"Tool execution failed: {type(e).__name__}: {e}")})
 
         return result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
 
-    async def async_dispatch(self, name: str, args: dict, cancel_token: Any = None, **kwargs: Any) -> Any:
+    async def async_dispatch(
+        self,
+        name: str,
+        args: dict,
+        cancel_token: threading.Event | None = None,
+        **kwargs: Any,
+    ) -> Any:
         """异步入口，供 WebSocket 服务器调用；抛出 ``ToolError`` 让调用方映射 JSON-RPC 错误帧。"""
         with self._lock:
             func = self._tools.get(name)
@@ -189,7 +189,7 @@ class ToolRegistry:
             raise
         except Exception as e:
             logger.error(f"Error executing {name}: {e}")
-            raise ToolError(self._sanitize_tool_error(f"Tool execution failed: {type(e).__name__}: {e}")) from e
+            raise ToolError(redact_sensitive_text(f"Tool execution failed: {type(e).__name__}: {e}")) from e
 
         if isinstance(raw, str):
             try:
@@ -214,34 +214,22 @@ class ToolRegistry:
             self._supports_cancel_token[name] = result
         return result
 
-    @staticmethod
-    def _sanitize_tool_error(raw: str) -> str:
-        """剥离凭据片段; 此函数绝不能抛, 否则会掩盖真正的错误。"""
-        try:
-            return redact_sensitive_text(raw)
-        except Exception:
-            return raw
-
 
 registry = ToolRegistry()
 
 
-def discover_builtin_tools() -> list[str]:
-    imported = []
-    for _, name, _ in pkgutil.walk_packages(tools.__path__, tools.__name__ + "."):
-        if name == "tools.registry" or name.endswith(".registry"):
+def discover_builtin_tools() -> dict[str, str]:
+    """导入 ``tools`` 下全部模块以触发注册，返回导入失败的模块及原因。
+
+    依赖与平台条件由模块自身显式处理，导入失败（含 ImportError）一律记为失败，不视为可选模块。
+    """
+    # 包导入失败已在循环体内记录；onerror 防止 walk_packages 随后重试导入时抛出并中断其余模块的发现。
+    for info in pkgutil.walk_packages(tools.__path__, tools.__name__ + ".", onerror=lambda _name: None):
+        if info.name == __name__:
             continue
         try:
-            importlib.import_module(name)
-            imported.append(name)
-        except ImportError as exc:
-            logger.warning("Optional tool module %s not loaded: %s", name, exc)
+            importlib.import_module(info.name)
         except Exception as exc:
-            logger.error("Could not import tool module %s: %s", name, exc, exc_info=True)
-            registry.record_import_failure(name, f"{type(exc).__name__}: {exc}")
-    return imported
-
-
-def discover_builtin_tools_strict() -> tuple[list[str], dict[str, str]]:
-    imported = discover_builtin_tools()
-    return imported, registry.get_import_failures()
+            logger.error("Could not import tool module %s: %s", info.name, exc, exc_info=True)
+            registry.record_import_failure(info.name, f"{type(exc).__name__}: {exc}")
+    return registry.get_import_failures()

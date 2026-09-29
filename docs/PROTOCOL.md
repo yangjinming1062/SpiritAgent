@@ -324,7 +324,7 @@ Client 必须按 `call_id` 去重设备指令，并将 Backend 生成的同一�
 | unknown | 结果不确定，保留核对信息；不能当作失败自动重试 |
 | not_found | 没有记录；也可能已清理或未成功记日志，不能单独证明从未执行 |
 
-认领刷盘后执行，终态落盘后回复。取消、持有进程死亡或记录损坏且无可信终态时按 unknown 处理，迟到执行者不得覆盖终态。`spiritagent.call_result {call_id}` 查询结果；未知执行错误使用 `-32011`，其他拒绝按具体 disposition 处理。`spiritagent.cancel` 使用 RPC `req_id` 定位请求，省略时取消当前工具；请求取消不证明工作线程或外部副作用已经停止。
+认领刷盘后执行，终态落盘后回复。取消、持有进程死亡或记录损坏且无可信终态时按 unknown 处理，迟到执行者不得覆盖终态。`spiritagent.call_result {call_id}` 查询结果；未知执行错误使用 `-32011`，其他拒绝按具体 disposition 处理。`spiritagent.cancel` 使用 RPC `req_id` 定位请求，省略时取消全部带 `call_id` 的在途调用（Client 的窗口轮询等直调不受影响）；请求取消不证明工作线程或外部副作用已经停止。
 
 当前终态日志保留七天；无 `call_id` 的直调不记日志，日志不可写时现有实现仍可能继续执行。因此去重是有限保障，不是任意副作用恰好执行一次的承诺。恢复、取消或更换调用标识都不能被当作已撤销外部操作。
 
@@ -337,6 +337,10 @@ Client 必须按 `call_id` 去重设备指令，并将 Backend 生成的同一�
 ### 反向模型请求
 
 Runner 经 `request_llm` 请求 Client 代理模型，不获取 Backend JWT 或供应商密钥。Client 校验消息数量和载荷；累计预算按桥实例计算，WS 重连不清零，文字与带图请求使用不同大小边界。具体限制见 [reverse-rpc](../client/main/runner/reverse-rpc.ts)。
+
+### 图片工具结果
+
+截图等图片结果以 `{"_multimodal": true, "content": [...]}` 交付主回合，可附 `text_summary`。`content` 使用 Responses 部件：`{"type": "input_text", "text": ...}` 与 `{"type": "input_image", "image_url": "data:..."}`（`image_url` 为字符串）。Backend 的脱敏、循环提示、上下文压缩和供应商输入只识别这两种部件；识别入口见 [tool_dispatch_helpers](../backend/services/infrastructure/tool_runtime/tool_dispatch_helpers.py)。
 
 ### Skills 平台过滤
 

@@ -3,20 +3,24 @@ import logging
 import os
 import secrets
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
+from typing import Any
 
 from utils import (
     CREATE_NO_WINDOW,
     cfg_get,
     is_truthy_value,
     load_config,
+    pid_exists,
     terminate_tree,
 )
 
-from ..profile_manager import is_profile_locked
+from ..profile_manager import is_profile_locked, release_foreign_lock
 
 logger = logging.getLogger(__name__)
 
@@ -26,33 +30,49 @@ class BrowserLaunchError(Exception):
 
 
 class NativeBrowserProcess:
-    """包装原生启动的 Chromium 进程及其 CDP 端点信息。"""
+    """原生启动的 Chromium 进程及其 CDP 端点。"""
 
-    def __init__(self, proc: subprocess.Popen, pid: int, cdp_url: str, profile_dir: Path) -> None:
+    def __init__(self, proc: subprocess.Popen[Any], cdp_url: str) -> None:
         self.proc = proc
-        self.pid = pid
         self.cdp_url = cdp_url
-        self.profile_dir = profile_dir
+        self._terminated = False
+        self._lock = threading.Lock()
 
     def terminate(self) -> None:
+        """结束浏览器进程树；幂等。
+
+        主进程已退出并被回收后 PID 可能被复用，不能再按 PID 解析进程树。POSIX 下原进程组的 pgid 等于该 PID，
+        组内仍有残留成员时该 PID 不会被分配给新进程；因此只有当前不存在该 PID 的进程时，才向原进程组补发 SIGKILL。
+        """
+        with self._lock:
+            if self._terminated:
+                return
+            self._terminated = True
+        posix = sys.platform != "win32"
+        if self.proc.poll() is not None:
+            if posix and not pid_exists(self.proc.pid):
+                with contextlib.suppress(OSError):
+                    os.killpg(self.proc.pid, signal.SIGKILL)
+            return
         try:
-            terminate_tree(self.pid, graceful_timeout=1.0, force_timeout=2.0)
+            terminate_tree(
+                self.proc,
+                graceful_timeout=3.0,
+                force_timeout=2.0,
+                escalate=True,
+                pgid=self.proc.pid if posix else None,
+            )
         except Exception as e:
-            logger.debug("Error killing browser process tree %s: %s", self.pid, e)
+            logger.warning("Error killing browser process tree %s: %s", self.proc.pid, e)
 
 
 def find_browser_binary() -> Path | None:
     """按 Edge → Chrome → Brave → Chromium 顺序探测本地浏览器；配置文件可显式覆盖。"""
-    try:
-        browser_cfg = cfg_get(load_config(), "browser", default={})
-        if isinstance(browser_cfg, dict):
-            custom_path = browser_cfg.get("executable_path")
-            if custom_path:
-                p = Path(custom_path)
-                if p.is_file():
-                    return p
-    except Exception as e:
-        logger.debug("Could not read executable_path from config: %s", e)
+    if custom_path := cfg_get(load_config(), "browser", "executable_path"):
+        p = Path(str(custom_path))
+        if p.is_file():
+            return p
+        logger.debug("browser.executable_path %s is not a file; falling back to auto-detection", p)
 
     if sys.platform == "win32":
         return _find_browser_windows()
@@ -85,37 +105,34 @@ def _find_browser_windows() -> Path | None:
         (r"SOFTWARE\Google\Update\Clients\{8A69D345-D564-463c-AFF1-A69D9E530F96}", "location", r"chrome.exe"),
         (r"SOFTWARE\BraveSoftware\Update\Clients\{AFE6A462-C574-4B8A-AF43-4CC60DF4563B}", "location", r"brave.exe"),
     ]
-    try:
-        import winreg
+    import winreg
 
-        for subkey, val_name, exe_name in reg_keys:
-            for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
-                for view in (0, winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY):
-                    try:
-                        with winreg.OpenKey(root, subkey, 0, winreg.KEY_READ | view) as k:
-                            loc, _ = winreg.QueryValueEx(k, val_name)
-                            if loc:
-                                exe_path = Path(loc) / exe_name
-                                if exe_path.is_file():
-                                    return exe_path
-                    except OSError:
-                        pass
-    except Exception:
-        pass
+    for subkey, val_name, exe_name in reg_keys:
+        for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+            for view in (0, winreg.KEY_WOW64_32KEY, winreg.KEY_WOW64_64KEY):
+                try:
+                    with winreg.OpenKey(root, subkey, 0, winreg.KEY_READ | view) as k:
+                        loc, _ = winreg.QueryValueEx(k, val_name)
+                except OSError:
+                    continue
+                if isinstance(loc, str) and loc and (exe_path := Path(loc) / exe_name).is_file():
+                    return exe_path
 
     return None
 
 
 def _find_browser_macos() -> Path | None:
-    candidates = [
-        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-        "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    ]
-    for c in candidates:
-        if os.path.isfile(c):
-            return Path(c)
+    # 未用管理员权限安装时应用位于用户级 ~/Applications。
+    bundles = (
+        "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "Google Chrome.app/Contents/MacOS/Google Chrome",
+        "Brave Browser.app/Contents/MacOS/Brave Browser",
+        "Chromium.app/Contents/MacOS/Chromium",
+    )
+    for bundle in bundles:
+        for apps_dir in (Path("/Applications"), Path.home() / "Applications"):
+            if (candidate := apps_dir / bundle).is_file():
+                return candidate
     return None
 
 
@@ -141,13 +158,7 @@ def _find_browser_linux() -> Path | None:
 
 def _is_headless_configured() -> bool:
     """读取配置是否开启 headless（默认 False，即 headed）。"""
-    try:
-        browser_cfg = cfg_get(load_config(), "browser", default={})
-        if isinstance(browser_cfg, dict) and "headless" in browser_cfg:
-            return is_truthy_value(browser_cfg["headless"], default=False)
-    except Exception:
-        pass
-    return False
+    return is_truthy_value(cfg_get(load_config(), "browser", "headless"), default=False)
 
 
 def launch_chromium(
@@ -166,6 +177,7 @@ def launch_chromium(
         )
 
     profile_dir.mkdir(parents=True, exist_ok=True)
+    release_foreign_lock(profile_dir)
     if is_profile_locked(profile_dir):
         profile_dir = profile_dir.parent / f"{profile_dir.name}_{secrets.token_hex(4)}"
         profile_dir.mkdir(parents=True, exist_ok=True)
@@ -199,7 +211,7 @@ def launch_chromium(
     if extra_args:
         args.extend(extra_args)
 
-    popen_kwargs: dict = {
+    popen_kwargs: dict[str, Any] = {
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
@@ -242,14 +254,14 @@ def launch_chromium(
                     port = int(lines[0])
                     ws_path = lines[1]
                     break
-            except Exception:
-                pass
+            except (OSError, ValueError):
+                pass  # 浏览器可能正在写入，下一轮重读
 
         time.sleep(0.1)
 
     if port is None or not ws_path:
         try:
-            terminate_tree(proc, graceful_timeout=0.5, force_timeout=1.0)
+            terminate_tree(proc, graceful_timeout=0.5, force_timeout=1.0, escalate=True)
         except Exception as e:
             logger.debug("terminate_tree on launch timeout failed: %s", e)
         raise BrowserLaunchError(
@@ -257,4 +269,4 @@ def launch_chromium(
         )
 
     cdp_url = f"ws://127.0.0.1:{port}/{ws_path.lstrip('/')}"
-    return NativeBrowserProcess(proc=proc, pid=proc.pid, cdp_url=cdp_url, profile_dir=profile_dir)
+    return NativeBrowserProcess(proc=proc, cdp_url=cdp_url)

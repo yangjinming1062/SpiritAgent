@@ -1,78 +1,42 @@
 import asyncio
 import base64
 import contextlib
-import functools
+import importlib.util
 import json
 import logging
 import os
 import re
 import shutil
 import subprocess
-import sys
 import threading
-from contextlib import AsyncExitStack
+from collections.abc import Coroutine
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, TypedDict
 
-from mcp import ClientSession, StdioServerParameters
+from mcp import ClientSession, McpError, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from utils import cfg_get, get_spiritagent_home, is_env_passthrough, load_config, safe_schedule_threadsafe
+from mcp.types import CONNECTION_CLOSED
+from utils import IS_MACOS, cfg_get, get_spiritagent_home, is_env_passthrough, load_config, safe_schedule_threadsafe
 
 from .cu_backend import DESKTOP_SENTINELS, ActionResult, CaptureResult, ComputerUseBackend, UIElement
 
 logger = logging.getLogger(__name__)
 
-_CUA_DRIVER_CMD = cfg_get(load_config(), "computer_use", "cua_driver_cmd", default="cua-driver")
+_CUA_DRIVER_EXE = "cua-driver"
 _CUA_DRIVER_ARGS = ["mcp"]
+_START_TIMEOUT_S = 15.0
+_STOP_TIMEOUT_S = 5.0
+_CALL_TIMEOUT_S = 30.0
 
-# app= 的哨兵值集中定义在 cu_backend.DESKTOP_SENTINELS，防止 macOS 与 Windows 后端产生分歧
 _MACOS_SHELL_APP_NAMES = frozenset({"finder", "dock"})
+_MODIFIER_KEYS = frozenset({"cmd", "shift", "option", "ctrl", "fn"})
 
-# cua-driver（Rust 二进制）启动时需要的变量，用于查找本地依赖和呈现合理的进程身份。
-# 不在此列表的变量都会从子进程 env 中剔除，避免 Desktop JWT / Backend URL / safeStorage 密文泄漏到 cua-driver 进程树中。
-#
-# 拆分为精确匹配（单个变量名）和前缀匹配（变量族），让每条都明确是名还是命名空间
+# cua-driver 子进程只继承运行所需的变量，Desktop JWT、Backend URL 与 safeStorage 密文不进入其进程树。
 _CUA_DRIVER_SAFE_ENV_EXACT = frozenset(
-    {
-        # 路径 / 身份 / locale / shell
-        "PATH",
-        "HOME",
-        "USER",
-        "LOGNAME",
-        "SHELL",
-        "LANG",
-        "LANGUAGE",
-        "TERM",
-        "TMPDIR",
-        "TMP",
-        "TEMP",
-        # X11 / Wayland 显示服务提示
-        "DISPLAY",
-    },
+    {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TMPDIR"},
 )
-_CUA_DRIVER_SAFE_ENV_PREFIXES = (
-    # locale、XDG / freedesktop
-    "LC_",
-    "XDG_",
-    # GUI 平台环境（Qt / SDL / EGL / GL — capture 管线需要绑定到显示面）
-    "GTK_",
-    "QT_",
-    "SDL_",
-    "EGL_",
-    "GL_",
-    # macOS 共享库路径
-    "DYLD_",
-    "LD_",
-    "XKB_",
-    "XKB_DEFAULT_",
-    "KEYBOARD",
-    # 输入法（fcitx / ibus / scim）— 没有这些，非 ASCII 布局的字符会输入错误
-    "INPUT_",
-    "IM_",
-    "QT_IM_MODULE",
-    "GTK_IM_MODULE",
-    "XMODIFIERS",
-)
+_CUA_DRIVER_SAFE_ENV_PREFIXES = ("LC_", "XDG_", "DYLD_")
 _CUA_DRIVER_SECRET_SUBSTRINGS = (
     "TOKEN",
     "SECRET",
@@ -84,172 +48,102 @@ _CUA_DRIVER_SECRET_SUBSTRINGS = (
     "API_KEY",
     "PRIVATE_KEY",
     "ACCESS_KEY",
-    "SECRET_KEY",
 )
-# 弱密钥子串的判定已内联到 _is_cua_secret_var（仅 _KEY(?:_|$) 命中，去除原
-# (?:^|_)(?:KEY|AUTH)(?:_|$) 的误杀 OAUTH_CLIENT_ID / GIT_AUTHOR_NAME 等合法变量）。
-# 对已知公开标识符的显式非密钥覆盖，否则会被前缀白名单误杀。按变量名精确匹配
-_CUA_DRIVER_PUBLIC_OVERRIDES: frozenset[str] = frozenset(
-    {
-        "OAUTH_CLIENT_ID",
-        "OAUTH_ISSUER",
-        "OAUTH_AUTHORIZE_URL",
-        "OAUTH_TOKEN_URL",
-        "OAUTH_USER_INFO_URL",
-        "OAUTH_REDIRECT_URI",
-        "AUTHORITY",
-        "AUTHORITY_URL",
-    },
-)
+
+_driver_verified = False
+
+
+class _Window(TypedDict):
+    app_name: str
+    pid: int
+    window_id: int
+    title: str
 
 
 def _is_cua_secret_var(name: str) -> bool:
-    """判定环境变量是否包含不应传给 cua-driver 子进程的凭据。
-
-    强子串优先（TOKEN / SECRET / PASSWORD 等）。弱匹配只在末尾带 _KEY 时
-    触发（STRIPE_KEY / OPENAI_API_KEY 等）。原 (?:^|_)(?:KEY|AUTH)(?:_|$)
-    会误杀 OAUTH_CLIENT_ID、GIT_AUTHOR_NAME、KEYBOARD_LAYOUT 等。
-    """
+    """名字含强密钥特征，或以 ``_KEY`` 作词尾（STRIPE_KEY）的变量视为凭据；KEYBOARD_LAYOUT 等不受影响。"""
     upper = name.upper()
-    if any(s in upper for s in _CUA_DRIVER_SECRET_SUBSTRINGS):
-        return True
-    return bool(re.search(r"_KEY(?:_|$)", upper))
-
-
-_WINDOW_LINE_RE = re.compile(r"^-\s+(.+?)\s+\(pid\s+(\d+)\)\s+.*\[window_id:\s+(\d+)\]", re.MULTILINE)
-_ELEMENT_LINE_RE = re.compile(
-    r'^\s*(?:-\s+)?\[(\d+)\]\s+(\w+)(?:\s+"([^"]*)"|(?:\s+\(\d+\))?\s+id=([^\s\[\]]*))?',
-    re.MULTILINE,
-)
+    return any(s in upper for s in _CUA_DRIVER_SECRET_SUBSTRINGS) or bool(re.search(r"_KEY(?:_|$)", upper))
 
 
 def _cua_driver_command() -> str:
-    """解析 cua-driver 可执行命令：config 显式路径 > $SPIRITAGENT_HOME/bin > wheel 内置二进制 > PATH 裸名。
-
-    cua-driver 以 PyPI wheel（``cua-driver``，runner 的平台标记依赖）随 venv 安装，
-    二进制位于 ``site-packages/cua_driver/bin/``；``$SPIRITAGENT_HOME/bin/`` 是用户
-    手动安装的兜底位置。两者都返回绝对路径让 MCP stdio 子进程直接 spawn。
-    """
-    cmd = _CUA_DRIVER_CMD
-    if os.sep in cmd or (os.altsep and os.altsep in cmd):
-        return cmd
-    exe = f"{cmd}{'.exe' if sys.platform == 'win32' else ''}"
-    managed = get_spiritagent_home() / "bin" / exe
+    """``$SPIRITAGENT_HOME/bin`` 手动安装 > runner 依赖 wheel 内置二进制 > PATH 裸名。"""
+    managed = get_spiritagent_home() / "bin" / _CUA_DRIVER_EXE
     if managed.is_file():
         return str(managed)
-    try:
-        import cua_driver
-
-        wheel_bin = Path(cua_driver.__file__).parent / "bin" / exe
-        if wheel_bin.is_file():
-            return str(wheel_bin)
-    except ImportError:
-        pass
-    return cmd
+    if (spec := importlib.util.find_spec("cua_driver")) is not None:
+        for location in spec.submodule_search_locations or ():
+            if (wheel_bin := Path(location) / "bin" / _CUA_DRIVER_EXE).is_file():
+                return str(wheel_bin)
+    return _CUA_DRIVER_EXE
 
 
-@functools.lru_cache(maxsize=1)
 def cua_driver_binary_available() -> bool:
-    """当存在可用的 cua-driver 二进制且与宿主架构匹配时返回 True。
+    """实际运行 ``cua-driver --version`` 确认二进制能在本机执行。
 
-    查找顺序见 ``_cua_driver_command``（config 路径 > $SPIRITAGENT_HOME/bin > PATH）。
-    单纯的 shutil.which 会接受一份为不同 OS / arch 构建的副本（例如 macOS 二进制被 scp 到 Windows 主机），
-    仅在 exec 时以一个晦涩的加载器错误失败 — 一次 subprocess.run([cmd, '--version']) 可尽早暴露这种错配。
-    结果在进程生命周期内缓存（cu-driver 安装状态在运行时是静态的）；每次 handle_computer_use 调用可避免最多 3 次子进程派生。
+    只缓存成功结果：首次启动时 Gatekeeper 校验等瞬时失败不会让能力在进程生命周期内一直不可用。
     """
-    command = _cua_driver_command()
-    path = shutil.which(command)
-    if not path:
+    global _driver_verified
+    if _driver_verified:
+        return True
+    if not (path := shutil.which(_cua_driver_command())):
         return False
     try:
-        result = subprocess.run([command, "--version"], capture_output=True, timeout=3, check=False)
-    except (FileNotFoundError, PermissionError, OSError, subprocess.TimeoutExpired):
+        result = subprocess.run([path, "--version"], capture_output=True, timeout=3, check=False)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        logger.debug("cua-driver probe failed: %s", e)
         return False
-    return result.returncode == 0
-
-
-def cua_driver_install_hint() -> str:
-    return (
-        "cua-driver is not importable. It ships as the `cua-driver` PyPI dependency of the "
-        "runner wheel (platform marker win32/darwin) — a normal runner install already "
-        "bundles it. If you see this, the runner venv is broken: reinstall the runner. "
-        "Dev fallback: `uv pip install cua-driver==0.21.0` into the runner venv."
-    )
+    _driver_verified = result.returncode == 0
+    return _driver_verified
 
 
 def _build_cua_driver_env() -> dict[str, str]:
-    """返回 cua-driver 子进程的净化环境变量。
-
-    按前缀白名单（PATH / HOME / DYLD_* / LD_* / locale / tmp / GUI 显示）保留变量，
-    丢弃名字包含密钥子串（TOKEN / JWT / SECRET / ...）的变量，
-    另外尊重通过 register_env_passthrough(...) 注册的额外变量 — 这是调用方开启 cua-driver 运行时所需变量的入口。
-
-    本实现让 Desktop 的 JWT、Backend base URL 以及任何 safeStorage 密文
-    都不会泄漏到 cua-driver 进程树中 — macOS 上不会通过 ps -E 泄漏（Windows 上 cua-driver 也不支持 wmic process 查询）。
-
-    弱密钥子串（KEY、AUTH）只在词边界匹配，因此 KEYBOARD_LAYOUT / XKB_KEYMAP / OAUTH_CLIENT_ID 得以保留，
-    而 STRIPE_KEY / API_KEY / AUTH_HEADER 会被丢弃。
-
-    同时根据 computer_use.cua_telemetry 配置项注入 CUA_DRIVER_RS_TELEMETRY_ENABLED — 失败安全默认关闭。
-    """
-
-    safe: dict[str, str] = {}
-    for key, value in os.environ.items():
-        if key in _CUA_DRIVER_PUBLIC_OVERRIDES:
-            safe[key] = value
-            continue
-        if _is_cua_secret_var(key):
-            continue
-        upper = key.upper()
-        if upper in _CUA_DRIVER_SAFE_ENV_EXACT or any(upper.startswith(p) for p in _CUA_DRIVER_SAFE_ENV_PREFIXES):
-            safe[key] = value
-            continue
-        if is_env_passthrough(key):
-            safe[key] = value
-
+    """cua-driver 子进程环境：白名单变量加 terminal.env_passthrough 配置的变量，剔除名含凭据特征的变量。"""
+    safe = {
+        key: value
+        for key, value in os.environ.items()
+        if not _is_cua_secret_var(key)
+        and (
+            key.upper() in _CUA_DRIVER_SAFE_ENV_EXACT
+            or key.upper().startswith(_CUA_DRIVER_SAFE_ENV_PREFIXES)
+            or is_env_passthrough(key)
+        )
+    }
     telemetry_enabled = bool(cfg_get(load_config(), "computer_use", "cua_telemetry", default=False))
     safe["CUA_DRIVER_RS_TELEMETRY_ENABLED"] = "1" if telemetry_enabled else "0"
     return safe
 
 
-def _parse_windows_from_text(text: str) -> list[dict[str, Any]]:
-    return [
-        {"app_name": m[1].strip(), "pid": int(m[2]), "window_id": int(m[3]), "off_screen": "[off-screen]" in m[0]}
-        for m in _WINDOW_LINE_RE.finditer(text)
-    ]
+def _parse_elements(
+    raw_elements: list[Any],
+    snapshot_id: Any,
+    window_id: int,
+) -> tuple[list[UIElement], dict[int, dict[str, Any]]]:
+    """解析元素与按元素操作时的寻址参数。
 
-
-def _parse_elements_from_structured(raw_elements: list[dict[str, Any]]) -> list[UIElement]:
+    cua-driver 不接受裸 element_index：优先用元素自带的 element_token（它已携带窗口与快照，不能再附带
+    window_id / element_index），否则用 element_index + 同一快照的 snapshot_id + window_id。
+    """
     elements: list[UIElement] = []
+    refs: dict[int, dict[str, Any]] = {}
     for raw in raw_elements:
-        if not isinstance(raw, dict):
+        if not isinstance(raw, dict) or not isinstance(idx := raw.get("element_index"), int):
             continue
-        idx = raw.get("element_index")
-        if not isinstance(idx, int):
+        if isinstance(token := raw.get("element_token"), str) and token:
+            refs[idx] = {"element_token": token}
+        elif isinstance(snapshot_id, str) and snapshot_id:
+            refs[idx] = {"element_index": idx, "snapshot_id": snapshot_id, "window_id": window_id}
+        else:
             continue
-        role = str(raw.get("role", ""))
-        label = str(raw.get("label", ""))
         frame = raw.get("frame")
         bounds = (0, 0, 0, 0)
         if isinstance(frame, dict):
-            with contextlib.suppress(TypeError, ValueError):
-                bounds = (
-                    int(frame.get("x", 0)),
-                    int(frame.get("y", 0)),
-                    int(frame.get("w", 0)),
-                    int(frame.get("h", 0)),
-                )
-        raw_token = raw.get("element_token")
-        token = raw_token if isinstance(raw_token, str) and raw_token else None
-        elements.append(UIElement(index=idx, role=role, label=label, bounds=bounds, element_token=token))
-    return elements
-
-
-def _parse_elements_from_tree(markdown: str) -> list[UIElement]:
-    return [
-        UIElement(index=int(m[1]), role=m[2], label=m[3] or m[4] or "", bounds=(0, 0, 0, 0))
-        for m in _ELEMENT_LINE_RE.finditer(markdown)
-    ]
+            with contextlib.suppress(KeyError, TypeError, ValueError):
+                bounds = (int(frame["x"]), int(frame["y"]), int(frame["w"]), int(frame["h"]))
+        elements.append(
+            UIElement(index=idx, role=str(raw.get("role") or ""), label=str(raw.get("label") or ""), bounds=bounds),
+        )
+    return elements, refs
 
 
 def _image_dimensions_from_bytes(raw: bytes) -> tuple[int, int]:
@@ -280,178 +174,16 @@ def _image_dimensions_from_bytes(raw: bytes) -> tuple[int, int]:
     return 0, 0
 
 
-def _split_tree_text(full_text: str) -> tuple[str, str]:
-    parts = full_text.split("\n", 1)
-    return parts[0], parts[1] if len(parts) > 1 else ""
-
-
-def _parse_key_combo(keys: str) -> tuple[str | None, list[str]]:
-    MODIFIER_NAMES = {"cmd", "command", "shift", "option", "alt", "ctrl", "control", "fn"}
-    KEY_ALIASES = {"command": "cmd", "alt": "option", "control": "ctrl"}
-    parts = [p.strip().lower() for p in re.split(r"[+\-]", keys) if p.strip()]
-    modifiers = [KEY_ALIASES.get(p, p) for p in parts if KEY_ALIASES.get(p, p) in MODIFIER_NAMES]
-    key = next((p for p in reversed(parts) if KEY_ALIASES.get(p, p) not in MODIFIER_NAMES), None)
-    return key, modifiers
-
-
-class _AsyncBridge:
-    def __init__(self) -> None:
-        self._loop: asyncio.AbstractEventLoop | None = None
-        self._thread: threading.Thread | None = None
-        self._ready = threading.Event()
-
-    def start(self) -> None:
-        if self._thread and self._thread.is_alive():
-            return
-        self._ready.clear()
-
-        def _run() -> None:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-            self._ready.set()
-            try:
-                self._loop.run_forever()
-            finally:
-                with contextlib.suppress(Exception):
-                    self._loop.close()
-
-        self._thread = threading.Thread(target=_run, daemon=True, name="cua-driver-loop")
-        self._thread.start()
-        if not self._ready.wait(timeout=5.0):
-            raise RuntimeError("cua-driver asyncio bridge failed to start")
-
-    def run(self, coro: Any, timeout: float | None = 30.0) -> Any:
-        if not self._loop or not self._thread or not self._thread.is_alive():
-            if asyncio.iscoroutine(coro):
-                coro.close()
-            raise RuntimeError("cua-driver bridge not started")
-        if (fut := safe_schedule_threadsafe(coro, self._loop)) is None:
-            raise RuntimeError("cua-driver bridge not started")
-        return fut.result(timeout=timeout)
-
-    def stop(self) -> None:
-        if self._loop and self._loop.is_running():
-            self._loop.call_soon_threadsafe(self._loop.stop)
-        if self._thread:
-            self._thread.join(timeout=2.0)
-        self._thread = self._loop = None
-
-
-class _CuaDriverSession:
-    def __init__(self, bridge: _AsyncBridge) -> None:
-        self._bridge = bridge
-        self._session = None
-        self._exit_stack = None
-        self._lock = threading.Lock()
-        self._started = False
-
-    def _require_started(self) -> None:
-        if not self._started:
-            raise RuntimeError("cua-driver session not started")
-
-    async def _aenter(self) -> None:
-        if not cua_driver_binary_available():
-            raise RuntimeError(cua_driver_install_hint())
-        params = StdioServerParameters(
-            command=_cua_driver_command(),
-            args=_CUA_DRIVER_ARGS,
-            env=_build_cua_driver_env(),
-        )
-        stack = AsyncExitStack()
-        read, write = await stack.enter_async_context(stdio_client(params))
-        session = await stack.enter_async_context(ClientSession(read, write))
-        await session.initialize()
-        self._exit_stack, self._session = stack, session
-
-    async def _aexit(self) -> None:
-        if self._exit_stack is not None:
-            try:
-                await self._exit_stack.aclose()
-            except Exception as e:
-                logger.warning("cua-driver shutdown error: %s", e)
-        self._exit_stack = self._session = None
-
-    def start(self) -> None:
-        with self._lock:
-            if not self._started:
-                self._bridge.start()
-                self._bridge.run(self._aenter(), timeout=15.0)
-                self._started = True
-
-    def stop(self) -> None:
-        with self._lock:
-            if self._started:
-                try:
-                    self._bridge.run(self._aexit(), timeout=5.0)
-                finally:
-                    self._started = False
-
-    async def _call_tool_async(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
-        return _extract_tool_result(await self._session.call_tool(name, args))
-
-    @staticmethod
-    def _is_closed_session_error(exc: Exception) -> bool:
-        name = exc.__class__.__name__
-        return (
-            name in {"ClosedResourceError", "BrokenResourceError", "EndOfStream"}
-            or ("anyio" in getattr(exc.__class__, "__module__", "") and "Resource" in name)
-            or isinstance(exc, BrokenPipeError | EOFError)
-        )
-
-    def _restart_session_locked(self) -> None:
-        try:
-            if self._started:
-                self._bridge.run(self._aexit(), timeout=5.0)
-        except Exception as e:
-            logger.debug("cua-driver session cleanup before reconnect failed: %s", e)
-        self._started = False
-        self._bridge.run(self._aenter(), timeout=15.0)
-        self._started = True
-
-    def call_tool(self, name: str, args: dict[str, Any], timeout: float = 30.0) -> dict[str, Any]:
-        self._require_started()
-        try:
-            return self._bridge.run(self._call_tool_async(name, args), timeout=timeout)
-        except Exception as e:
-            if not self._is_closed_session_error(e):
-                raise
-            logger.warning("cua-driver MCP session closed during %s; reconnecting once", name)
-            with self._lock:
-                self._restart_session_locked()
-            return self._bridge.run(self._call_tool_async(name, args), timeout=timeout)
-
-
-def _extract_first_image(out: dict[str, Any]) -> tuple[str | None, str | None]:
-    """从 call_tool 结果 dict 中提取第一张图片及其 MIME。
-
-    vision / som / zoom capture 路径共用，保证"cua-driver 未返回 image_mime_types"的兜底逻辑只在一处。
-    响应中没有图片部分时返回 (None, None)。
-    """
-    images = out.get("images") or []
-    if not images:
-        return None, None
-    mimes = out.get("image_mime_types") or []
-    return images[0], mimes[0] if mimes else None
-
-
 def _extract_tool_result(mcp_result: Any) -> dict[str, Any]:
-    content = getattr(mcp_result, "content", []) or []
-    # cua-driver 在每个图片部分上都会带 mimeType; 保留线协议声明的 MIME,
-    # 让下游可以省去 base64 magic-byte sniff 兜底路径。
-    #
-    # 单遍：并行构建 (data, mime_type) 元组，保证当未来 cua-driver 在图片之间插入非图片部分时，
-    # 两个并行列表不会错位。
-    image_parts: list[tuple[str, str | None]] = []
+    images: list[tuple[str, str]] = []
     text_chunks: list[str] = []
-    for part in content:
+    for part in getattr(mcp_result, "content", None) or []:
         ptype = getattr(part, "type", None)
         if ptype == "image" and getattr(part, "data", None):
-            image_parts.append((part.data, getattr(part, "mimeType", None)))
+            images.append((part.data, getattr(part, "mimeType", None) or "image/png"))
         elif ptype == "text" and getattr(part, "text", ""):
             text_chunks.append(part.text)
-    images = [d for d, _ in image_parts]
-    image_mime_types = [m for _, m in image_parts]
-    data = None
+    data: Any = None
     if text_chunks:
         joined = "\n".join(text_chunks)
         try:
@@ -461,27 +193,204 @@ def _extract_tool_result(mcp_result: Any) -> dict[str, Any]:
     return {
         "data": data,
         "images": images,
-        "image_mime_types": image_mime_types,
-        "structuredContent": getattr(mcp_result, "structuredContent", None),
+        "structuredContent": getattr(mcp_result, "structuredContent", None) or {},
         "isError": bool(getattr(mcp_result, "isError", False)),
     }
 
 
+def _result_message(out: dict[str, Any]) -> str:
+    data = out["data"]
+    if isinstance(data, dict):
+        return str(data.get("message") or data.get("error") or "")
+    return data if isinstance(data, str) else ""
+
+
+def _is_closed_session_error(exc: BaseException) -> bool:
+    if isinstance(exc, McpError):
+        return exc.error.code == CONNECTION_CLOSED and exc.error.message == "Connection closed"
+    # anyio 的流关闭异常：mcp 的传输层依赖 anyio，这里按类名识别，不直接依赖该传递依赖。
+    return type(exc).__name__ in {"ClosedResourceError", "BrokenResourceError", "EndOfStream"} or isinstance(
+        exc,
+        BrokenPipeError | EOFError,
+    )
+
+
+class _AsyncBridge:
+    """在专属线程运行事件循环，供同步工具线程调用 MCP 协程。"""
+
+    def __init__(self) -> None:
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        loop = asyncio.new_event_loop()
+
+        def _run() -> None:
+            asyncio.set_event_loop(loop)
+            try:
+                loop.run_forever()
+            finally:
+                loop.close()
+
+        self._loop = loop
+        self._thread = threading.Thread(target=_run, daemon=True, name="cua-driver-loop")
+        self._thread.start()
+
+    def run[T](self, coro: Coroutine[Any, Any, T], timeout: float) -> T:
+        """超时即取消协程并抛 TimeoutError，避免请求或子进程在后台继续。"""
+        alive = self._thread is not None and self._thread.is_alive()
+        if not alive or (fut := safe_schedule_threadsafe(coro, self._loop)) is None:
+            coro.close()
+            raise RuntimeError("cua-driver event loop is not running")
+        try:
+            return fut.result(timeout=timeout)
+        except TimeoutError:
+            fut.cancel()
+            raise TimeoutError(f"cua-driver did not respond within {timeout:.0f}s") from None
+
+    def stop(self) -> None:
+        loop, thread = self._loop, self._thread
+        self._thread = self._loop = None
+        if loop is None or thread is None or not thread.is_alive():
+            return
+        # 先取消并等待残留任务（如超时后仍在清理的会话），让 stdio_client 终止子进程，再停止循环。
+        if (fut := safe_schedule_threadsafe(_cancel_pending_tasks(), loop)) is not None:
+            try:
+                fut.result(timeout=_STOP_TIMEOUT_S)
+            except Exception as e:
+                logger.warning("cua-driver pending tasks did not finish: %s", e)
+        loop.call_soon_threadsafe(loop.stop)
+        thread.join(timeout=2.0)
+
+
+async def _cancel_pending_tasks() -> None:
+    current = asyncio.current_task()
+    tasks = [task for task in asyncio.all_tasks() if task is not current]
+    for task in tasks:
+        task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@dataclass
+class _SessionHost:
+    session: ClientSession
+    stop: asyncio.Event
+    task: asyncio.Task[None]
+
+
+async def _hold_session(ready: asyncio.Future[ClientSession], stop: asyncio.Event) -> None:
+    # anyio 要求 stdio_client 与 ClientSession 在进入它们的同一任务内退出，因此整个会话由这一个任务持有；
+    # 退出时 stdio_client 关闭 stdin，子进程超时未退出再终止。
+    params = StdioServerParameters(command=_cua_driver_command(), args=_CUA_DRIVER_ARGS, env=_build_cua_driver_env())
+    try:
+        async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
+            await session.initialize()
+            if ready.done():
+                return
+            ready.set_result(session)
+            await stop.wait()
+    except Exception as e:
+        # anyio 任务组把失败包成 ExceptionGroup，取出根因以便给出可读的错误。
+        while isinstance(e, ExceptionGroup) and e.exceptions:
+            e = e.exceptions[0]
+        if not ready.done():
+            ready.set_exception(e)
+        else:
+            logger.warning("cua-driver session ended: %s", e)
+    finally:
+        if not ready.done():
+            ready.cancel()
+
+
+async def _open_session() -> _SessionHost:
+    ready: asyncio.Future[ClientSession] = asyncio.get_running_loop().create_future()
+    stop = asyncio.Event()
+    task = asyncio.create_task(_hold_session(ready, stop), name="cua-driver-session")
+    try:
+        session = await ready
+    except BaseException:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        raise
+    return _SessionHost(session=session, stop=stop, task=task)
+
+
+async def _close_session(host: _SessionHost) -> None:
+    host.stop.set()
+    await host.task
+
+
+async def _call_tool(session: ClientSession, name: str, args: dict[str, Any]) -> dict[str, Any]:
+    return _extract_tool_result(await session.call_tool(name, args))
+
+
+class _CuaDriverSession:
+    """cua-driver MCP 会话：按需启动；连接断开后下一次调用重建会话。"""
+
+    def __init__(self, bridge: _AsyncBridge) -> None:
+        self._bridge = bridge
+        self._lock = threading.Lock()
+        self._host: _SessionHost | None = None
+
+    def _current(self) -> _SessionHost:
+        with self._lock:
+            if self._host is not None and self._host.task.done():
+                self._host = None
+            if self._host is None:
+                self._bridge.start()
+                self._host = self._bridge.run(_open_session(), timeout=_START_TIMEOUT_S)
+            return self._host
+
+    def _discard(self, host: _SessionHost) -> None:
+        with self._lock:
+            if self._host is not host:
+                return
+            self._host = None
+        try:
+            self._bridge.run(_close_session(host), timeout=_STOP_TIMEOUT_S)
+        except Exception as e:
+            logger.warning("cua-driver session cleanup failed: %s", e)
+
+    def start(self) -> None:
+        self._current()
+
+    def stop(self) -> None:
+        with self._lock:
+            host, self._host = self._host, None
+        if host is not None:
+            self._bridge.run(_close_session(host), timeout=_STOP_TIMEOUT_S)
+
+    def call_tool(self, name: str, args: dict[str, Any], *, retry_on_disconnect: bool) -> dict[str, Any]:
+        """``retry_on_disconnect`` 只用于只读查询：输入动作可能已送达，断线后重发会重复执行。"""
+        host = self._current()
+        try:
+            return self._bridge.run(_call_tool(host.session, name, args), timeout=_CALL_TIMEOUT_S)
+        except Exception as e:
+            if not _is_closed_session_error(e):
+                raise
+            self._discard(host)
+            if not retry_on_disconnect:
+                raise RuntimeError(
+                    f"the connection to the desktop driver was lost during {name}; the action may or may not "
+                    "have taken effect, capture again before retrying",
+                ) from e
+            logger.warning("cua-driver MCP session closed during %s; reconnecting once", name)
+        return self._bridge.run(_call_tool(self._current().session, name, args), timeout=_CALL_TIMEOUT_S)
+
+
 class CuaDriverBackend(ComputerUseBackend):
+    """macOS 后端：经 cua-driver 按 pid / window_id 向目标窗口投递输入，坐标为窗口截图像素。"""
+
     def __init__(self) -> None:
         self._bridge = _AsyncBridge()
         self._session = _CuaDriverSession(self._bridge)
-        # ``_state_lock`` 守住 ``_active_pid`` / ``_active_window_id`` / ``_last_app`` 三个字段的并发读写;
-        # 无锁时并发 ``computer_use`` 会让 ``click`` 落到错的进程。
-        self._state_lock = threading.RLock()
-        self._active_pid = None
-        self._active_window_id = None
-        self._last_app = None
-
-    def _active_target(self) -> tuple[int | None, int | None]:
-        """锁内原子读取 ``_active_pid`` 与 ``_active_window_id``, 防 click/type 期间被 capture 改写。"""
-        with self._state_lock:
-            return self._active_pid, self._active_window_id
+        # 并发 computer_use 调用共享目标窗口；锁保证输入动作读到的 pid 与 window_id 来自同一次选择。
+        self._state_lock = threading.Lock()
+        self._target: _Window | None = None
+        # 最近一次 get_window_state 快照里各元素的寻址参数；新快照会让旧 token 失效。
+        self._element_refs: dict[int, dict[str, Any]] = {}
 
     def start(self) -> None:
         self._session.start()
@@ -493,113 +402,123 @@ class CuaDriverBackend(ComputerUseBackend):
             self._bridge.stop()
 
     def is_available(self) -> bool:
-        # cua-driver 仅发布 darwin 与 win32 版本。我们仅检查 cua-driver 在 PATH 上且未运行在不支持的宿主。
-        if not cua_driver_binary_available():
-            return False
-        return sys.platform in {"darwin", "win32"}
+        return IS_MACOS and cua_driver_binary_available()
+
+    def _query(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
+        out = self._session.call_tool(name, args, retry_on_disconnect=True)
+        if out["isError"]:
+            raise RuntimeError(f"cua-driver {name} failed: {_result_message(out) or 'no details'}")
+        return out
+
+    def _list_windows(self) -> list[_Window]:
+        """屏幕上的窗口，最前面的在前。"""
+        raw = self._query("list_windows", {"on_screen_only": True})["structuredContent"].get("windows")
+        if not isinstance(raw, list):
+            raise RuntimeError("cua-driver list_windows returned no window list")
+        # z_index 越大越靠前；null 表示没有堆叠信息，排在最后并保持原顺序。
+        ordered = sorted(
+            (w for w in raw if isinstance(w, dict)),
+            key=lambda w: w["z_index"] if isinstance(w.get("z_index"), int) else float("-inf"),
+            reverse=True,
+        )
+        return [
+            _Window(
+                app_name=str(w.get("app_name") or ""),
+                pid=int(w["pid"]),
+                window_id=int(w["window_id"]),
+                title=str(w.get("title") or ""),
+            )
+            for w in ordered
+        ]
+
+    def _match_windows(self, app: str) -> list[_Window]:
+        needle = app.lower()
+        return [w for w in self._list_windows() if needle in w["app_name"].lower()]
+
+    def _current_target(self) -> _Window | None:
+        with self._state_lock:
+            return self._target
+
+    def _set_target(self, target: _Window) -> None:
+        with self._state_lock:
+            if self._target != target:
+                self._element_refs = {}
+            self._target = target
+
+    def _element_ref(self, element: int) -> dict[str, Any] | None:
+        with self._state_lock:
+            return self._element_refs.get(element)
 
     def capture(self, mode: str = "som", app: str | None = None) -> CaptureResult:
-        lw_out = self._session.call_tool("list_windows", {"on_screen_only": True})
-        if raw_windows := (lw_out.get("structuredContent") or {}).get("windows"):
-            windows = sorted(
-                [
-                    {
-                        "app_name": w.get("app_name", ""),
-                        "pid": int(w["pid"]),
-                        "window_id": int(w["window_id"]),
-                        "off_screen": not w.get("is_on_screen", True),
-                        "title": w.get("title", ""),
-                        "z_index": w.get("z_index", 0),
-                    }
-                    for w in raw_windows
-                ],
-                key=lambda w: w["z_index"],
-            )
-        else:
-            windows = _parse_windows_from_text(lw_out["data"] if isinstance(lw_out["data"], str) else "")
-
-        if not windows:
-            return CaptureResult(mode=mode, width=0, height=0)
-
         if app and app.lower() in DESKTOP_SENTINELS:
-            shell = [w for w in windows if w["app_name"].lower() in _MACOS_SHELL_APP_NAMES]
-            if not shell:
-                return CaptureResult(
-                    mode=mode,
-                    width=0,
-                    height=0,
-                    window_title=f"<no shell window found; sentinel app={app!r} requires Finder/Dock to be visible on the active Space>",
+            windows = [w for w in self._list_windows() if w["app_name"].lower() in _MACOS_SHELL_APP_NAMES]
+            if not windows:
+                raise LookupError(f"no Finder or Dock window is visible for app={app!r}")
+        elif app:
+            if not (windows := self._match_windows(app)):
+                raise LookupError(
+                    f"no on-screen window matched app={app!r}; call list_apps to see app names "
+                    "(macOS may report localized names)",
                 )
-            # 哨兵命中 — 使用 shell 窗口列表并跳过下面的子串过滤。
-            # 否则后续 `if app:` 会丢弃 shell 窗口（因为 'desktop' 不是 'finder'/'dock' 的子串）。
-            windows = shell
-            app = None
+        elif not (windows := self._list_windows()):
+            raise LookupError("no on-screen window to capture")
+        self._set_target(windows[0])
+        return self._capture_window(windows[0], mode)
 
-        if app:
-            app_lower = app.lower()
-            if not (windows := [w for w in windows if app_lower in w["app_name"].lower()]):
-                return CaptureResult(
-                    mode=mode,
-                    width=0,
-                    height=0,
-                    window_title=f"<no on-screen window matched app={app!r}; call list_apps to see available app names (macOS reports localized names, e.g. '計算機' instead of 'Calculator')>",
-                )
+    def recapture(self, mode: str = "som") -> CaptureResult:
+        if (target := self._current_target()) is None:
+            raise LookupError("no window has been captured yet; call capture first")
+        return self._capture_window(target, mode)
 
-        target = next((w for w in windows if not w.get("off_screen", False)), windows[0])
+    def _capture_window(self, target: _Window, mode: str) -> CaptureResult:
+        # cua-driver 的 get_window_state 同时返回元素树与窗口截图（不绘制编号）；vision 不列出元素，ax 跳过截图。
+        # 每次调用都会生成新快照，因此 vision 截图后同样刷新元素寻址参数。
+        args: dict[str, Any] = {"pid": target["pid"], "window_id": target["window_id"]}
+        if mode == "ax":
+            args["include_screenshot"] = False
+        out = self._query("get_window_state", args)
+        structured = out["structuredContent"]
+        raw_elements = structured.get("elements")
+        elements, refs = (
+            _parse_elements(raw_elements, structured.get("snapshot_id"), target["window_id"])
+            if isinstance(raw_elements, list)
+            else ([], {})
+        )
         with self._state_lock:
-            self._active_pid, self._active_window_id, app_name = (
-                target["pid"],
-                target["window_id"],
-                target["app_name"],
-            )
-            if app or not self._last_app:
-                self._last_app = app_name
-
-        png_b64, elements, width, height, window_title, image_mime_type = (None, [], 0, 0, "", None)
-        if mode == "vision":
-            sc_out = self._session.call_tool(
-                "screenshot",
-                {"window_id": self._active_window_id, "format": "jpeg", "quality": 85},
-            )
-            png_b64, image_mime_type = _extract_first_image(sc_out)
-        else:
-            gws_out = self._session.call_tool(
-                "get_window_state",
-                {"pid": self._active_pid, "window_id": self._active_window_id},
-            )
-            gws_struct = gws_out.get("structuredContent") or {}
-            gws_data = gws_out["data"] if isinstance(gws_out.get("data"), str) else ""
-            if raw_elements := gws_struct.get("elements"):
-                elements = _parse_elements_from_structured(raw_elements)
-            else:
-                _, tree = _split_tree_text(gws_data)
-                if tree:
-                    elements = _parse_elements_from_tree(tree)
-            png_b64, image_mime_type = _extract_first_image(gws_out)
-            _, tree = _split_tree_text(gws_data)
-            if tree and (wt := re.search(r'AXWindow\s+"([^"]+)"', tree)):
-                window_title = wt.group(1)
-
-        png_bytes_len = 0
-        if png_b64:
-            try:
-                raw = base64.b64decode(png_b64, validate=False)
-                png_bytes_len = len(raw)
-                if (dims := _image_dimensions_from_bytes(raw)) != (0, 0):
-                    width, height = dims
-            except Exception:
-                png_bytes_len = len(png_b64) * 3 // 4
-
-        return CaptureResult(
+            if self._target == target:
+                self._element_refs = refs
+        capture = CaptureResult(
             mode=mode,
-            width=width,
-            height=height,
-            png_b64=png_b64,
-            elements=elements,
-            app=app_name,
-            window_title=window_title,
-            png_bytes_len=png_bytes_len,
-            image_mime_type=image_mime_type,
+            width=0,
+            height=0,
+            elements=elements if mode != "vision" else [],
+            app=target["app_name"],
+            window_title=target["title"],
+            note=str(structured.get("degraded_reason") or ""),
+        )
+        if mode != "ax" and out["images"]:
+            capture.png_b64, capture.image_mime_type = out["images"][0]
+            capture.width, capture.height = _image_dimensions_from_bytes(base64.b64decode(capture.png_b64))
+        return capture
+
+    def _action(self, name: str, args: dict[str, Any]) -> ActionResult:
+        try:
+            out = self._session.call_tool(name, args, retry_on_disconnect=False)
+        except TimeoutError as e:
+            return ActionResult(
+                ok=False,
+                action=name,
+                message=f"{e}; the action may still take effect, capture again before retrying.",
+            )
+        except Exception as e:
+            logger.warning("cua-driver %s call failed: %s", name, e)
+            return ActionResult(ok=False, action=name, message=f"cua-driver error: {e}")
+        data = out["data"]
+        return ActionResult(
+            ok=not out["isError"],
+            action=name,
+            message=_result_message(out),
+            meta=data if isinstance(data, dict) else {},
         )
 
     def click(
@@ -612,19 +531,26 @@ class CuaDriverBackend(ComputerUseBackend):
         click_count: int = 1,
         modifiers: list[str] | None = None,
     ) -> ActionResult:
-        pid, window_id = self._active_target()
-        if pid is None:
-            return ActionResult(ok=False, action="click", message="No active window — call capture() first.")
-        tool = "right_click" if button == "right" else "double_click" if click_count == 2 else "click"
-        args = {"pid": pid}
+        if (target := self._current_target()) is None:
+            return _no_target("click")
+        if click_count == 2 and button != "left":
+            return ActionResult(
+                ok=False,
+                action="click",
+                message="Double-click is only supported with the left button.",
+            )
+        tool = "double_click" if click_count == 2 else "right_click" if button == "right" else "click"
+        args: dict[str, Any] = {"pid": target["pid"]}
         if element is not None:
-            if window_id is None:
-                return ActionResult(ok=False, action=tool, message="No active window_id for element_index click.")
-            args |= {"element_index": element, "window_id": window_id}
+            if (ref := self._element_ref(element)) is None:
+                return _unknown_element(tool, element)
+            args |= ref
         elif x is not None and y is not None:
-            args |= {"x": x, "y": y}
+            args |= {"window_id": target["window_id"], "x": x, "y": y}
         else:
-            return ActionResult(ok=False, action=tool, message="click requires element= or x/y.")
+            return ActionResult(ok=False, action=tool, message="click requires element or coordinate.")
+        if button == "middle":
+            args["button"] = "middle"
         if modifiers:
             args["modifier"] = modifiers
         return self._action(tool, args)
@@ -639,23 +565,8 @@ class CuaDriverBackend(ComputerUseBackend):
         button: str = "left",
         modifiers: list[str] | None = None,
     ) -> ActionResult:
-        pid, window_id = self._active_target()
-        if pid is None:
-            return ActionResult(ok=False, action="drag", message="No active window — call capture() first.")
-        args = {"pid": pid}
-        if from_element is not None and to_element is not None:
-            if window_id is None:
-                return ActionResult(ok=False, action="drag", message="No active window_id for element-based drag.")
-            args |= {"from_element": from_element, "to_element": to_element, "window_id": window_id}
-        elif from_xy is not None and to_xy is not None:
-            args |= {"from_x": int(from_xy[0]), "from_y": int(from_xy[1]), "to_x": int(to_xy[0]), "to_y": int(to_xy[1])}
-        else:
-            return ActionResult(
-                ok=False,
-                action="drag",
-                message="drag requires from_element/to_element or from_coordinate/to_coordinate.",
-            )
-        return self._action("drag", args)
+        # cua-driver 在 macOS 上只支持前台拖拽（会移动用户的真实指针并前置窗口），本后端不启用前台投递。
+        return ActionResult(ok=False, action="drag", message="Dragging is not supported on macOS.")
 
     def scroll(
         self,
@@ -667,48 +578,59 @@ class CuaDriverBackend(ComputerUseBackend):
         y: int | None = None,
         modifiers: list[str] | None = None,
     ) -> ActionResult:
-        pid, window_id = self._active_target()
-        if pid is None:
-            return ActionResult(ok=False, action="scroll", message="No active window — call capture() first.")
-        args = {"pid": pid, "direction": direction, "amount": max(1, min(50, amount))}
-        if element is not None and window_id is not None:
-            args |= {"element_index": element, "window_id": window_id}
-        elif x is not None and y is not None:
-            args |= {"x": x, "y": y}
+        if (target := self._current_target()) is None:
+            return _no_target("scroll")
+        if modifiers:
+            return ActionResult(
+                ok=False,
+                action="scroll",
+                message="Modifier keys are not supported for scrolling on macOS.",
+            )
+        args: dict[str, Any] = {"pid": target["pid"], "direction": direction, "amount": max(1, min(50, amount))}
+        if element is not None:
+            if (ref := self._element_ref(element)) is None:
+                return _unknown_element("scroll", element)
+            args |= ref
+        else:
+            args["window_id"] = target["window_id"]
+            if x is not None and y is not None:
+                args |= {"x": x, "y": y}
         return self._action("scroll", args)
 
     def type_text(self, text: str) -> ActionResult:
-        pid, _ = self._active_target()
-        if pid is None:
-            return ActionResult(ok=False, action="type_text", message="No active window — call capture() first.")
-        return self._action("type_text", {"pid": pid, "text": text})
+        if (target := self._current_target()) is None:
+            return _no_target("type")
+        return self._action("type_text", {"pid": target["pid"], "text": text})
 
-    def key(self, keys: str) -> ActionResult:
-        pid, _ = self._active_target()
-        if pid is None:
-            return ActionResult(ok=False, action="key", message="No active window — call capture() first.")
-        key_name, modifiers = _parse_key_combo(keys)
-        if not key_name:
-            return ActionResult(ok=False, action="key", message=f"Could not parse key from '{keys}'.")
+    def key(self, keys: list[str]) -> ActionResult:
+        if (target := self._current_target()) is None:
+            return _no_target("key")
+        modifiers = [k for k in keys if k in _MODIFIER_KEYS]
+        if len(others := [k for k in keys if k not in _MODIFIER_KEYS]) != 1:
+            return ActionResult(
+                ok=False,
+                action="key",
+                message=f"A key combo needs exactly one non-modifier key: {keys}.",
+            )
         res = (
-            self._action("hotkey", {"pid": pid, "keys": [*modifiers, key_name]})
+            self._action("hotkey", {"pid": target["pid"], "keys": [*modifiers, others[0]]})
             if modifiers
-            else self._action("press_key", {"pid": pid, "key": key_name})
+            else self._action("press_key", {"pid": target["pid"], "key": others[0]})
         )
         res.action = "key"
         return res
 
     def set_value(self, value: str, element: int | None = None) -> ActionResult:
-        with self._state_lock:
-            pid, window_id = self._active_pid, self._active_window_id
-        if pid is None or window_id is None:
-            return ActionResult(ok=False, action="set_value", message="No active window — call capture() first.")
+        if (target := self._current_target()) is None:
+            return _no_target("set_value")
         if element is None:
-            return ActionResult(ok=False, action="set_value", message="set_value requires element= (element index).")
-        return self._action("set_value", {"pid": pid, "window_id": window_id, "element_index": element, "value": value})
+            return ActionResult(ok=False, action="set_value", message="set_value requires element.")
+        if (ref := self._element_ref(element)) is None:
+            return _unknown_element("set_value", element)
+        return self._action("set_value", {"pid": target["pid"], **ref, "value": value})
 
     def list_apps(self) -> list[dict[str, Any]]:
-        data = self._session.call_tool("list_apps", {}).get("data")
+        data = self._query("list_apps", {})["data"]
         if isinstance(data, list):
             return data
         if isinstance(data, dict):
@@ -722,56 +644,30 @@ class CuaDriverBackend(ComputerUseBackend):
         return []
 
     def focus_app(self, app: str, bring_to_front: bool = False) -> ActionResult:
-        lw_out = self._session.call_tool("list_windows", {"on_screen_only": True})
-        if raw_windows := (lw_out.get("structuredContent") or {}).get("windows"):
-            windows = sorted(
-                [
-                    {
-                        "app_name": w.get("app_name", ""),
-                        "pid": int(w["pid"]),
-                        "window_id": int(w["window_id"]),
-                        "z_index": w.get("z_index", 0),
-                    }
-                    for w in raw_windows
-                ],
-                key=lambda w: w["z_index"],
-            )
-        else:
-            windows = _parse_windows_from_text(lw_out["data"] if isinstance(lw_out["data"], str) else "")
-
-        app_lower = app.lower()
-        if matched := [w for w in windows if app_lower in w["app_name"].lower()]:
-            target = matched[0]
-            with self._state_lock:
-                self._active_pid, self._active_window_id, self._last_app = (
-                    target["pid"],
-                    target["window_id"],
-                    target["app_name"],
-                )
-            # cua-driver 没有窗口前置调用: bring_to_front=True 时如实说明被忽略, 不冒充已 raise。
-            suffix = (
-                "bring_to_front was requested but this backend cannot raise windows; input is routed by window id instead."
-                if bring_to_front
-                else "Input is routed by window id without raising the window."
-            )
-            return ActionResult(
-                ok=True,
-                action="focus_app",
-                message=f"Targeted {target['app_name']} (pid {self._active_pid}, window {self._active_window_id}). {suffix}",
-            )
-        return ActionResult(ok=False, action="focus_app", message=f"No on-screen window found for app '{app}'.")
-
-    def _action(self, name: str, args: dict[str, Any]) -> ActionResult:
-        try:
-            out = self._session.call_tool(name, args)
-        except Exception as e:
-            logger.exception("cua-driver %s call failed", name)
-            return ActionResult(ok=False, action=name, message=f"cua-driver error: {e}")
-        data = out["data"]
-        message = str(data.get("message", "")) if isinstance(data, dict) else str(data) if isinstance(data, str) else ""
-        return ActionResult(
-            ok=not out["isError"],
-            action=name,
-            message=message,
-            meta=data if isinstance(data, dict) else {},
+        if not (windows := self._match_windows(app)):
+            return ActionResult(ok=False, action="focus_app", message=f"No on-screen window found for app '{app}'.")
+        target = windows[0]
+        self._set_target(target)
+        # 本后端不调用 cua-driver 的前置窗口接口：输入按 window_id 投递，不打断用户当前的前台应用。
+        suffix = (
+            "Raising windows is not supported on macOS; input is sent to the window in the background."
+            if bring_to_front
+            else "Input is sent to the window in the background without raising it."
         )
+        return ActionResult(
+            ok=True,
+            action="focus_app",
+            message=f"Targeted {target['app_name']} (pid {target['pid']}, window {target['window_id']}). {suffix}",
+        )
+
+
+def _no_target(action: str) -> ActionResult:
+    return ActionResult(ok=False, action=action, message="No target window; call capture or focus_app first.")
+
+
+def _unknown_element(action: str, element: int) -> ActionResult:
+    return ActionResult(
+        ok=False,
+        action=action,
+        message=f"Element {element} is not in the latest capture of the target window; capture again.",
+    )

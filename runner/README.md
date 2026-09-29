@@ -11,7 +11,7 @@
 | 本地与 SSH 执行 | [环境工厂](envs/factory.py)、[终端工具](tools/terminal/terminal_tool.py)、[清理](envs/cleanup.py) |
 | 浏览器或桌面操作 | [浏览器 supervisor](tools/browser/supervisor.py)、[桌面工具](tools/multimodal/cu_tool.py)；真实应用状态验证 |
 | 桌面情境与窗口快照 | [activity.py](tools/system/activity.py) → [Client 窗口桥](../client/main/ipc/sprite.ts)；坐标与绑定见 [动作契约](../docs/PROTOCOL.md#动作目录与播放) |
-| 学习技能 | [skills_tool.py](tools/skills/skills_tool.py)、[skills_guard.py](tools/skills/skills_guard.py)；检查平台与作用域 |
+| 学习技能 | [skills_tool.py](tools/skills/skills_tool.py)、[skill_manager_tool.py](tools/skills/skill_manager_tool.py)；检查平台与作用域 |
 
 ## 设计意图
 
@@ -67,7 +67,7 @@ Windows 在启动阶段加入 Job Object 管理进程树，不在模块导入时
 
 `ContextVar` 固定调用作用域并在结束时恢复。学习技能保存在 `$SPIRITAGENT_HOME/learned-skills/<user_id>/<system_preset_id>`，读取合并本域与静态技能，本域优先。
 
-修改静态技能先复制到当前域，删除只影响本域副本；路径和符号链接不得跨域。社区技能执行威胁扫描和结构检查，技能自带忽略规则只对内置或可信来源生效。平台过滤与学习作用域分别校验，见 [PROTOCOL](../docs/PROTOCOL.md#skills-平台过滤)。
+修改静态技能在写入前一刻复制到当前域，写入失败时撤回副本，删除只影响本域副本；路径和符号链接不得跨域。学习技能写入只做名称、frontmatter、路径与大小校验，不做内容威胁扫描：高信任模式下终端与文件工具同样能写入技能目录，单一入口的扫描不构成边界。平台过滤与学习作用域分别校验，见 [PROTOCOL](../docs/PROTOCOL.md#skills-平台过滤)。
 
 ## 已知限制
 

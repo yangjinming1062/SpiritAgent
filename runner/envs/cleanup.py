@@ -5,6 +5,7 @@ import threading
 import time
 from collections.abc import Callable
 
+from ._env_base import BaseEnvironment
 from .state import active_environments, env_lock, get_env_config, last_activity
 
 logger = logging.getLogger(__name__)
@@ -29,16 +30,20 @@ def register_active_process_checker(fn: Callable[[str], bool]) -> None:
         _active_process_checkers.append(fn)
 
 
-def _is_already_gone(exc: BaseException) -> bool:
-    msg = str(exc)
-    return "404" in msg or "not found" in msg.lower()
-
-
-def _log_cleanup_error(task_id: str, exc: BaseException) -> None:
-    if _is_already_gone(exc):
-        logger.info("Environment for task %s already cleaned up", task_id)
-    else:
-        logger.warning("Error cleaning up environment for task %s: %s", task_id, exc)
+def _stop_env(task_id: str, env: BaseEnvironment | None) -> None:
+    """运行清理回调并关闭环境；单个回调或环境清理失败只记录，不影响其余清理。"""
+    for hook in _cleanup_hooks:
+        try:
+            hook(task_id)
+        except Exception as e:
+            logger.warning("Env cleanup hook %r failed for task %s: %s", hook, task_id, e)
+    if env is None:
+        return
+    try:
+        env.cleanup()
+        logger.info("Cleaned up environment for task: %s", task_id)
+    except Exception as e:
+        logger.warning("Error cleaning up environment for task %s: %s", task_id, e)
 
 
 def _cleanup_inactive_envs(lifetime_seconds: int = 300) -> None:
@@ -58,19 +63,12 @@ def _cleanup_inactive_envs(lifetime_seconds: int = 300) -> None:
                     envs_to_stop.append((task_id, env))
         # creation_locks 条目刻意不弹出：删除一个别的线程正在持有的锁对象（环境创建中途），会让第三个线程创建一把新锁进入同一临界区——一个任务两个环境。条目随进程生命周期驻留，由 task_id 空间限定上限。
     for task_id, env in envs_to_stop:
-        for hook in _cleanup_hooks:
-            with contextlib.suppress(Exception):
-                hook(task_id)
-        try:
-            env.cleanup()
-            logger.info("Cleaned up inactive environment for task: %s", task_id)
-        except Exception as e:
-            _log_cleanup_error(task_id, e)
+        _stop_env(task_id, env)
 
 
 def _env_busy(task_id: str) -> bool:
     env = active_environments.get(task_id)
-    return bool(getattr(env, "_executing", False))
+    return env is not None and env.executing
 
 
 def _cleanup_thread_worker() -> None:
@@ -104,45 +102,16 @@ def stop_cleanup_thread() -> None:
             _cleanup_thread.join(timeout=5)
 
 
-def cleanup_all_environments() -> int:
-    """批量清理所有活跃终端环境；返回已清理任务数。"""
-    task_ids = list(active_environments.keys())
-    cleaned = 0
-    for task_id in task_ids:
-        try:
-            cleanup_vm(task_id)
-            cleaned += 1
-        except Exception as e:
-            logger.error("Error cleaning %s: %s", task_id, e, exc_info=True)
-    if cleaned > 0:
-        logger.info("Cleaned %d environments", cleaned)
-    return cleaned
-
-
-def cleanup_vm(task_id: str) -> None:
-    """清理指定 task 的终端环境：从活跃表中摘除、清理文件缓存、关闭底层环境。"""
-    env = None
-    with env_lock:
-        env = active_environments.pop(task_id, None)
-        last_activity.pop(task_id, None)
-    for hook in _cleanup_hooks:
-        with contextlib.suppress(Exception):
-            hook(task_id)
-    if env is None:
-        return
-    try:
-        env.cleanup()
-        logger.info("Manually cleaned up environment for task: %s", task_id)
-    except Exception as e:
-        _log_cleanup_error(task_id, e)
-
-
 def _atexit_cleanup() -> None:
     stop_cleanup_thread()
-    if active_environments:
-        count = len(active_environments)
-        logger.info("Shutting down %d remaining sandbox(es)...", count)
-        cleanup_all_environments()
+    with env_lock:
+        envs = list(active_environments.items())
+        active_environments.clear()
+        last_activity.clear()
+    if envs:
+        logger.info("Shutting down %d remaining environment(s)...", len(envs))
+    for task_id, env in envs:
+        _stop_env(task_id, env)
 
 
 atexit.register(_atexit_cleanup)

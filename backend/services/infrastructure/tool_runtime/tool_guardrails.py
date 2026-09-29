@@ -80,7 +80,7 @@ class ToolCallGuardrailController:
     def after_call(self, tool_name: str, args: dict[str, Any], result: str) -> str:
         """记录本次调用结果，返回（必要时）追加了循环提示的工具结果。"""
         signature = (tool_name, _hash_json(args))
-        if _tool_failed(tool_name, result):
+        if _tool_failed(result):
             warning = self._record_failure(tool_name, signature)
         else:
             warning = self._record_success(tool_name, signature, result)
@@ -130,14 +130,16 @@ class ToolCallGuardrailController:
         return None
 
 
-def _tool_failed(tool_name: str, result: str) -> bool:
-    lower = result[:500].lower()
-    if "successfully written" in lower or "successfully patched" in lower:
-        return False
-    if tool_name == "terminal":
-        data = safe_json_loads(result)
-        return isinstance(data, dict) and data.get("exit_code") not in (None, 0)
-    return '"error"' in lower or '"failed"' in lower or result.startswith("Error")
+def _tool_failed(result: str) -> bool:
+    """按结果信封判定失败：顶层 ``error`` 非空，或 ``success`` / ``ok`` 为 False。
+
+    只看顶层字段：写入结果里的 lint 状态、读到的文件内容等嵌套数据不代表调用失败，非 JSON 文本结果视为成功。
+    终端非零退出码由 Runner 写入顶层 ``error``。
+    """
+    data = safe_json_loads(result)
+    return isinstance(data, dict) and (
+        bool(data.get("error")) or data.get("success") is False or data.get("ok") is False
+    )
 
 
 def _append_warning(result: str, warning: _LoopWarning) -> str:

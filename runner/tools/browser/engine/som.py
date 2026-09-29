@@ -182,12 +182,12 @@ SOM_INJECT_SCRIPT = r"""
 })();
 """
 
+# 只移除可见角标；元素上的 data-spiritagent-som 保留到下一次标注或导航，使 @vN 能像 @eN 一样解析为 DOM 元素。
 SOM_REMOVE_SCRIPT = r"""
 (() => {
   const c = document.getElementById('spiritagent-som-container');
   if (c) c.remove();
   document.querySelectorAll('.spiritagent-som-badge').forEach(b => b.remove());
-  document.querySelectorAll('[data-spiritagent-som]').forEach(el => el.removeAttribute('data-spiritagent-som'));
   return true;
 })();
 """

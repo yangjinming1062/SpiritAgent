@@ -1,69 +1,8 @@
-import logging
 import re
-import subprocess
-import threading
-from collections.abc import Callable
 
-from utils import cfg_get, get_env_type, is_truthy_value, load_config
-
-logger = logging.getLogger(__name__)
+from utils import cfg_get, load_config
 
 _ENV_ASSIGN_NAME_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-
-_sudo_password_cache: dict[str, str] = {}
-
-_sudo_password_cache_lock = threading.Lock()
-
-_callback_tls = threading.local()
-
-
-def get_sudo_password_callback() -> Callable[[], str | None] | None:
-    """读取当前线程注入的 sudo 密码回调（Desktop 进程设置）。"""
-    return getattr(_callback_tls, "sudo_password", None)
-
-
-def set_sudo_password_callback(cb: Callable[[], str | None] | None) -> None:
-    """注入当前线程的 sudo 密码回调。"""
-    _callback_tls.sudo_password = cb
-
-
-def _get_sudo_password_cache_scope() -> str:
-    callback = get_sudo_password_callback()
-    if callback is not None:
-        owner = getattr(callback, "__self__", None)
-        func = getattr(callback, "__func__", None)
-        if owner is not None and func is not None:
-            return f"callback-owner:{id(owner)}:{id(func)}"
-        return f"callback:{id(callback)}"
-    return f"thread:{threading.get_ident()}"
-
-
-def _get_cached_sudo_password() -> str:
-    scope = _get_sudo_password_cache_scope()
-    with _sudo_password_cache_lock:
-        return _sudo_password_cache.get(scope, "")
-
-
-def _set_cached_sudo_password(password: str) -> None:
-    scope = _get_sudo_password_cache_scope()
-    with _sudo_password_cache_lock:
-        if password:
-            _sudo_password_cache[scope] = password
-        else:
-            _sudo_password_cache.pop(scope, None)
-
-
-def _prompt_for_sudo_password() -> str:
-    """密码来源：优先回调（由 Desktop 注入，thread_context 透传），其次按 scope 缓存——runner 没有交互终端，TTY 提示永远不可达。"""
-    cached = _get_cached_sudo_password()
-    if cached:
-        return cached
-    if (_sudo_cb := get_sudo_password_callback()) is not None:
-        try:
-            return _sudo_cb() or ""
-        except Exception:
-            logger.debug("sudo password callback failed", exc_info=True)
-    return ""
 
 
 def _looks_like_env_assignment(token: str) -> bool:
@@ -152,24 +91,6 @@ def _rewrite_real_sudo_invocations(command: str) -> tuple[str, bool]:
         command_start = bool(command_start and _looks_like_env_assignment(token))
         i = next_i
     return "".join(out), found
-
-
-def _sudo_nopasswd_works() -> bool:
-    terminal_env = get_env_type()
-    if terminal_env != "local":
-        return False
-    try:
-        probe = subprocess.run(
-            ["sudo", "-n", "true"],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=3,
-            check=False,
-        )
-        return probe.returncode == 0
-    except Exception:
-        return False
 
 
 def _rewrite_compound_background(command: str) -> str:
@@ -265,18 +186,9 @@ def _rewrite_compound_background(command: str) -> str:
 
 
 def _transform_sudo_command(command: str) -> tuple[str, str | None]:
-    transformed, has_real_sudo = _rewrite_real_sudo_invocations(command)
-    if not has_real_sudo:
-        return command, None
-    terminal_cfg = cfg_get(load_config(), "terminal", default={})
-    sudo_password = cfg_get(terminal_cfg, "sudo_password", default="")
+    """配置了 terminal.sudo_password 且命令含真实 sudo 调用时改写为 `sudo -S -p ''`，返回需经 stdin 提供的密码。"""
+    sudo_password = cfg_get(load_config(), "terminal", "sudo_password", default="")
     if not sudo_password:
-        if _sudo_nopasswd_works():
-            return command, None
-        if is_truthy_value(cfg_get(terminal_cfg, "interactive_sudo_prompt", default=False)):
-            sudo_password = _prompt_for_sudo_password()
-            if sudo_password:
-                _set_cached_sudo_password(sudo_password)
-    if sudo_password:
-        return transformed, str(sudo_password) + "\n"
-    return command, None
+        return command, None
+    transformed, has_real_sudo = _rewrite_real_sudo_invocations(command)
+    return (transformed, f"{sudo_password}\n") if has_real_sudo else (command, None)

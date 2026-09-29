@@ -16,12 +16,9 @@ def browser_tab_new(url: str | None = None, task_id: str | None = None) -> str:
     if is_camofox_mode():
         return camofox_unsupported("browser_tab_new")
 
-    raw_url = (url or "").strip()
-    target_url, url_err = guard_browser_url(raw_url)
+    target_url, url_err = guard_browser_url((url or "").strip() or "about:blank")
     if url_err is not None:
         return url_err
-    if not target_url or target_url == "about:blank":
-        target_url = "about:blank"
 
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
@@ -35,14 +32,14 @@ def browser_tab_new(url: str | None = None, task_id: str | None = None) -> str:
         if not target_id:
             return json.dumps({"success": False, "error": "No targetId returned from Target.createTarget"})
 
-        attach_res = supervisor._attach_target(target_id)
+        attach_res = supervisor.attach_target(target_id)
         if not attach_res.get("ok"):
             return json.dumps({"success": False, "error": attach_res.get("error", "Failed to attach to new tab")})
 
         session_id = attach_res["result"].get("sessionId")
-        if session_id:
-            supervisor.activate_tab_session(session_id)
-
+        if not session_id:
+            return json.dumps({"success": False, "error": f"No session returned for new tab {target_id}"})
+        supervisor.activate_tab_session(session_id)
         return json.dumps({"success": True, "tab_id": target_id, "url": target_url})
 
 
@@ -58,12 +55,14 @@ def browser_tab_switch(tab_id: str, task_id: str | None = None) -> str:
         session_id = attached.get(tab_id, {}).get("session_id")
 
         if not session_id:
-            attach_res = supervisor._attach_target(tab_id)
+            attach_res = supervisor.attach_target(tab_id)
             if not attach_res.get("ok"):
                 return json.dumps(
                     {"success": False, "error": f"Failed to attach to tab {tab_id}: {attach_res.get('error')}"},
                 )
             session_id = attach_res["result"].get("sessionId")
+            if not session_id:
+                return json.dumps({"success": False, "error": f"No session returned for tab {tab_id}"})
 
         supervisor.activate_tab_session(session_id)
         return json.dumps({"success": True, "active_tab_id": tab_id})

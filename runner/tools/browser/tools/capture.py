@@ -3,6 +3,7 @@ import json
 import secrets
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -11,7 +12,7 @@ from utils import get_spiritagent_dir
 from ...registry import registry
 from ..camofox import is_camofox_mode
 from ..check import check_browser_native_requirements
-from ..helpers import _get_downloads_dir, _safe_save_name
+from ..helpers import _get_downloads_dir, _safe_save_name, screenshot_multimodal_result
 from ..schemas import (
     BROWSER_DOWNLOAD_SCHEMA,
     BROWSER_PDF_SCHEMA,
@@ -20,7 +21,12 @@ from ..schemas import (
 from ._common import browser_session, camofox_unsupported, guard_browser_url, no_supervisor
 
 
-def browser_screenshot_element(ref: str, save_as: str | None = None, task_id: str | None = None) -> str:
+def browser_screenshot_element(
+    ref: str,
+    save_as: str | None = None,
+    task_id: str | None = None,
+) -> dict[str, Any] | str:
+    """截取单个元素并把图片直接附到主对话上下文，同时保留本地文件。"""
     if is_camofox_mode():
         return camofox_unsupported("browser_screenshot_element")
 
@@ -30,13 +36,12 @@ def browser_screenshot_element(ref: str, save_as: str | None = None, task_id: st
 
         screenshots_dir = get_spiritagent_dir("cache/screenshots")
         screenshots_dir.mkdir(parents=True, exist_ok=True)
-        filename = _safe_save_name(save_as, f"element_{secrets.token_hex(4)}.png")
-        out_path = screenshots_dir / filename
+        out_path = screenshots_dir / _safe_save_name(save_as, f"element_{secrets.token_hex(4)}.png")
 
         res = supervisor.screenshot_element(ref, path=out_path)
-        if res.get("ok"):
-            return json.dumps({"success": True, "path": str(out_path), "ref": ref})
-        return json.dumps({"success": False, "error": res.get("error", "Failed to capture element screenshot")})
+        if not res.get("ok"):
+            return json.dumps({"success": False, "error": res.get("error", "Failed to capture element screenshot")})
+        return screenshot_multimodal_result(str(out_path))
 
 
 def browser_pdf(
@@ -78,13 +83,13 @@ def browser_download(
     save_as: str | None = None,
     timeout_s: float = 30.0,
     task_id: str | None = None,
-    cancel_token: Any = None,
+    cancel_token: threading.Event | None = None,
 ) -> str:
     """通过点击 ref 链接或导航至下载 URL 触发并等待文件下载。"""
     if is_camofox_mode():
         return camofox_unsupported("browser_download")
 
-    if cancel_token is not None and getattr(cancel_token, "is_set", lambda: False)():
+    if cancel_token is not None and cancel_token.is_set():
         return json.dumps(
             {"success": False, "error": "Caller cancelled before download", "cancelled": True},
             ensure_ascii=False,
@@ -94,6 +99,7 @@ def browser_download(
         if supervisor is None:
             return no_supervisor()
 
+        nav_error: str | None = None
         if ref_or_url.startswith(("http://", "https://")):
             safe_url, url_err = guard_browser_url(ref_or_url)
             if url_err is not None:
@@ -101,7 +107,8 @@ def browser_download(
             try:
                 supervisor.navigate(safe_url, timeout=5.0)
             except Exception as exc:
-                return json.dumps({"success": False, "error": f"Download navigate failed: {exc}"}, ensure_ascii=False)
+                # 响应为附件时导航以 net::ERR_ABORTED 结束而下载照常开始，是否失败以下载事件为准。
+                nav_error = str(exc)
         else:
             click_res = supervisor.click_ref(ref_or_url)
             if not click_res.get("ok"):
@@ -115,10 +122,10 @@ def browser_download(
 
         dl_res = supervisor.wait_for_download(timeout=timeout_s)
         if not dl_res.get("ok"):
-            return json.dumps(
-                {"success": False, "error": dl_res.get("error", "Download timed out")},
-                ensure_ascii=False,
-            )
+            error = dl_res.get("error", "Download timed out")
+            if nav_error is not None:
+                error = f"{error}; navigation error: {nav_error}"
+            return json.dumps({"success": False, "error": error}, ensure_ascii=False)
 
         orig_filename = dl_res.get("filename", "downloaded_file")
         target_name = _safe_save_name(save_as, orig_filename)

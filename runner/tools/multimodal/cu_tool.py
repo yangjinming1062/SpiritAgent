@@ -5,53 +5,22 @@ import sys
 import threading
 from typing import Any
 
-from utils import cfg_get, clean_output, is_interrupted, load_config
+from utils import IS_MACOS, IS_WINDOWS, clean_output, is_interrupted
 
-from ..registry import registry
+from ..registry import registry, tool_error
 from .cu_backend import ActionResult, CaptureResult, ComputerUseBackend, UIElement
 from .cu_cua_backend import CuaDriverBackend, cua_driver_binary_available
 from .cu_schema import COMPUTER_USE_SCHEMA
 from .cu_win_backend import WinBackend
-from .helpers import _MAX_BASE64_BYTES
+from .helpers import MAX_BASE64_BYTES
 
 logger = logging.getLogger(__name__)
 
-# 稳定前缀，LLM 与下游展示可作为取消标记模式匹配，表明本轮是干净通过 cancel 退出，而不是产生了 assistant 正文
-INTERRUPTED_PREFIX = "[INTERRUPTED]"
+_CAPTURE_MODES = frozenset({"som", "vision", "ax"})
+_BUTTONS = frozenset({"left", "right", "middle"})
+_SCROLL_DIRECTIONS = frozenset({"up", "down", "left", "right"})
 
-_BLOCKED_KEY_COMBOS = {
-    frozenset({"cmd", "shift", "backspace"}),
-    frozenset({"cmd", "option", "backspace"}),
-    frozenset({"cmd", "ctrl", "q"}),
-    frozenset({"cmd", "shift", "q"}),
-    frozenset({"cmd", "option", "shift", "q"}),
-    frozenset({"option", "f4"}),
-    frozenset({"ctrl", "option", "delete"}),
-    frozenset({"win", "l"}),
-    frozenset({"win", "d"}),
-    # 按关键词触发即可覆盖任意组合（带 cmd 的也算）：
-    # cmd+q (quit frontmost app)、cmd+w (close window)、cmd+m (minimize window)、
-    # cmd+option+esc (force-quit dialog)、cmd+shift+3/4/5 (截屏全屏/窗口/选区)
-    frozenset({"cmd", "q"}),
-    frozenset({"cmd", "w"}),
-    frozenset({"cmd", "m"}),
-    frozenset({"cmd", "option", "esc"}),
-    frozenset({"cmd", "shift", "3"}),
-    frozenset({"cmd", "shift", "4"}),
-    frozenset({"cmd", "shift", "5"}),
-    # ctrl+w (Windows close window)、alt+f4 (Windows quit via menu)、ctrl+alt+delete
-    frozenset({"ctrl", "w"}),
-    frozenset({"ctrl", "alt", "f4"}),
-    frozenset({"ctrl", "alt", "delete"}),
-    # win 系列：win+e (开资源管理器)、win+r (Run 对话框)、win+i (Settings)、win+l (锁屏)、
-    # win+d (显示桌面)、win+m (最小化全部)、win+x (高级菜单)
-    frozenset({"win", "e"}),
-    frozenset({"win", "r"}),
-    frozenset({"win", "i"}),
-    frozenset({"win", "m"}),
-    frozenset({"win", "x"}),
-}
-
+# 键名规范化后再交给后端与拦截表：cmd / ctrl / option / shift / win / fn 加普通键名。
 _KEY_ALIASES = {
     "command": "cmd",
     "control": "ctrl",
@@ -62,20 +31,52 @@ _KEY_ALIASES = {
     "⌘": "cmd",
     "⌥": "option",
 }
+# Windows 后端把 cmd 当作 Win 键：规范化时就归为 win，拦截表与后端看到同一个键。
+_PLATFORM_KEY_ALIASES = {"cmd": "win"} if IS_WINDOWS else {}
+# 仅用于拦截比对的同义键名；发给后端的键名不变。
+_BLOCK_SYNONYMS = {"escape": "esc", "del": "delete"}
+
+# 组合键包含任一集合即拒绝（cmd+shift+q 命中 cmd+q）；option 即 Windows 的 alt。
+_BLOCKED_KEY_COMBOS: tuple[frozenset[str], ...] = tuple(
+    frozenset(combo)
+    for combo in (
+        # macOS：退出、关闭、最小化、强制退出、截屏、清空废纸篓（delete 即退格键）
+        ("cmd", "q"),
+        ("cmd", "w"),
+        ("cmd", "m"),
+        ("cmd", "option", "esc"),
+        ("cmd", "shift", "3"),
+        ("cmd", "shift", "4"),
+        ("cmd", "shift", "5"),
+        ("cmd", "shift", "backspace"),
+        ("cmd", "shift", "delete"),
+        ("cmd", "option", "backspace"),
+        ("cmd", "option", "delete"),
+        # Windows：关闭窗口、安全桌面、锁屏、显示桌面、资源管理器、运行、设置、最小化全部、高级菜单
+        ("option", "f4"),
+        ("ctrl", "w"),
+        ("ctrl", "option", "delete"),
+        ("win", "l"),
+        ("win", "d"),
+        ("win", "e"),
+        ("win", "r"),
+        ("win", "i"),
+        ("win", "m"),
+        ("win", "x"),
+    )
+)
+
 _BLOCKED_TYPE_PATTERNS = [
-    # Pipe-to-shell: `curl ... | bash`、`wget ... | sh`，加上备选 shell 命令分隔符 `;`、`&&`、`||`
-    # （攻击者替换为这些字符本可绕过黑名单）。re.DOTALL 让 .*? 跨行匹配，因此 `curl http://x\n; bash` 也能命中
+    # 管道或命令分隔符接 shell（curl ... | bash、wget ...; sh）；DOTALL 让换行分隔也能命中。
     re.compile(r"curl\s+.*?(?:\|\||&&|[|;])\s*bash", re.IGNORECASE | re.DOTALL),
     re.compile(r"curl\s+.*?(?:\|\||&&|[|;])\s*sh\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"wget\s+.*?(?:\|\||&&|[|;])\s*bash", re.IGNORECASE | re.DOTALL),
     re.compile(r"wget\s+.*?(?:\|\||&&|[|;])\s*sh\b", re.IGNORECASE | re.DOTALL),
-    # 反向 shell 兜底：反引号命令替换（`cmd`），$(...) 与 ${...} 参数展开。
+    # 命令替换与参数展开：`cmd`、$(...)、${...}
     re.compile(r"`[^`]*`", re.DOTALL),
     re.compile(r"\$\([^)]*\)", re.DOTALL),
     re.compile(r"\$\{[^}]*\}", re.DOTALL),
-    # 通用 shell 分隔符兜底：任意位置跟 ; bash / && bash / || bash / | bash / | sh
-    # （不含 curl/wget 前缀的纯命令 + 分隔符 + shell，例如 `echo evil; bash`）。
-    # 误报代价是 model 重试 type；漏报代价是执行 shell — 选更严的。
+    # 任意命令后接分隔符与 shell（echo evil; bash）；误拦只需模型改写，漏拦会执行 shell。
     re.compile(r"(?:;|&&|\|\||\|)\s*(?:bash|sh|zsh|ksh)\b", re.IGNORECASE),
     re.compile(r"\bsudo\s+rm\s+-[rf]", re.IGNORECASE),
     re.compile(r"\brm\s+-rf\s+/\s*$", re.IGNORECASE),
@@ -85,352 +86,282 @@ _BLOCKED_TYPE_PATTERNS = [
 _backend_lock = threading.Lock()
 _backend: ComputerUseBackend | None = None
 
-# 复用 vision_analyze 的 20MB 上限，防止失控的桌面截图（例如带 alpha 通道的全屏 4K）耗尽上下文
-_MAX_CAPTURE_BYTES = _MAX_BASE64_BYTES
+
+def _canonical_key(name: str) -> str:
+    key = _KEY_ALIASES.get(name, name)
+    return _PLATFORM_KEY_ALIASES.get(key, key)
 
 
-def _canon_key_combo(keys: str) -> frozenset:
-    return frozenset(_KEY_ALIASES.get(p, p) for part in re.split(r"\s*\+\s*", keys) if (p := part.strip().lower()))
+def _parse_key_combo(keys: str) -> list[str]:
+    """按 '+' 拆分并规范化键名；'-' 是普通按键，不作分隔符。"""
+    return [_canonical_key(p) for part in keys.split("+") if (p := part.strip().lower())]
 
 
-def _is_blocked_type(text: str) -> str | None:
+def _canonical_modifiers(value: Any) -> list[str] | None:
+    if not value:
+        return None
+    if not isinstance(value, list):
+        raise ValueError("modifiers must be a list of key names")
+    return [_canonical_key(m) for item in value if (m := str(item).strip().lower())]
+
+
+def _blocked_key_combo(keys: list[str]) -> frozenset[str] | None:
+    combo = frozenset(_BLOCK_SYNONYMS.get(k, k) for k in keys)
+    return next((blocked for blocked in _BLOCKED_KEY_COMBOS if blocked <= combo), None)
+
+
+def _blocked_type_pattern(text: str) -> str | None:
     return next((pat.pattern for pat in _BLOCKED_TYPE_PATTERNS if pat.search(text)), None)
+
+
+def _optional_int(value: Any) -> int | None:
+    return None if value is None else int(value)
+
+
+def _point(value: Any) -> tuple[int, int] | None:
+    if not value:
+        return None
+    if not isinstance(value, list | tuple) or len(value) != 2:
+        raise ValueError("coordinates must be [x, y]")
+    return int(value[0]), int(value[1])
+
+
+def _new_backend() -> ComputerUseBackend:
+    if IS_MACOS:
+        if not cua_driver_binary_available():
+            raise RuntimeError("the desktop automation driver (cua-driver) is missing or cannot run on this computer")
+        return CuaDriverBackend()
+    if IS_WINDOWS:
+        return WinBackend()
+    raise RuntimeError(f"unsupported platform {sys.platform!r}")
 
 
 def _get_backend() -> ComputerUseBackend:
     global _backend
     with _backend_lock:
         if _backend is None:
-            name = cfg_get(load_config(), "computer_use", "backend", default="auto").lower()
-            if name in {"cua", "cua-driver"}:
-                _backend = CuaDriverBackend()
-            elif name == "win":
-                _backend = WinBackend()
-            elif name in {"auto", ""}:
-                if sys.platform == "darwin" and cua_driver_binary_available():
-                    _backend = CuaDriverBackend()
-                elif sys.platform == "win32":
-                    _backend = WinBackend()
-                else:
-                    raise RuntimeError(f"computer_use is not available on platform {sys.platform!r}")
-            else:
-                raise RuntimeError(f"Unknown computer_use backend={name!r}")
+            backend = _new_backend()
             try:
-                _backend.start()
+                backend.start()
             except Exception:
-                # 不缓存半初始化实例: start 失败后置空, 下次调用重新构造, 否则进程生命周期内无法自愈。
-                _backend = None
+                # 不缓存启动失败的实例，释放其资源后下次调用重新构造。
+                backend.stop()
                 raise
+            _backend = backend
         return _backend
 
 
-def handle_computer_use(args: dict[str, Any], **kwargs) -> Any:
-    # 廉价的 interrupt 提前返回：capture/click/scroll 经过 cua driver / Win 后端可能耗时数秒。
-    # 此处检查可避免在用户已转移注意力后产生半成品的桌面动作。
+def handle_computer_use(args: dict[str, Any], **kwargs: Any) -> str | dict[str, Any]:
+    # 桌面动作可能耗时数秒；请求已取消时不再开始新的动作。
     if is_interrupted():
-        return json.dumps(
-            {"error": "Interrupted", "interrupted": True, "prefix": INTERRUPTED_PREFIX, "returncode": 130},
+        return tool_error("Interrupted")
+    if not (action := str(args.get("action") or "").strip().lower()):
+        return tool_error("missing `action`")
+    if action == "type" and (pattern := _blocked_type_pattern(str(args.get("text", "")))):
+        return tool_error(
+            f"blocked pattern in type text: {pattern!r}",
+            hint="Dangerous shell patterns cannot be typed via computer_use.",
         )
-    if not (action := (args.get("action") or "").strip().lower()):
-        return json.dumps({"error": "missing `action`"})
-
-    if action == "type" and (pat := _is_blocked_type(args.get("text", ""))):
-        return json.dumps(
-            {
-                "error": f"blocked pattern in type text: {pat!r}",
-                "hint": "Dangerous shell patterns cannot be typed via computer_use.",
-            },
+    if action == "key" and (blocked := _blocked_key_combo(_parse_key_combo(str(args.get("keys") or "")))):
+        return tool_error(
+            f"blocked key combo: {'+'.join(sorted(blocked))}",
+            hint="Destructive system shortcuts are hard-blocked.",
         )
-
-    if action == "key":
-        combo = _canon_key_combo(args.get("keys", ""))
-        if blocked := next((b for b in _BLOCKED_KEY_COMBOS if b.issubset(combo) and len(b) <= len(combo)), None):
-            return json.dumps(
-                {
-                    "error": f"blocked key combo: {sorted(blocked)}",
-                    "hint": "Destructive system shortcuts are hard-blocked.",
-                },
-            )
-
     try:
         backend = _get_backend()
-        if not backend.is_available():
-            return json.dumps(
-                {"error": "computer_use backend unavailable on this platform; run `spiritagent tools` to enable"},
-            )
     except Exception as e:
-        return json.dumps(
-            {
-                "error": f"computer_use backend unavailable: {e}",
-                "hint": "Run `spiritagent tools` and enable Computer Use to install cua-driver.",
-            },
-        )
-
+        return tool_error(f"computer_use is unavailable: {e}")
     try:
         return _dispatch(backend, action, args)
     except Exception as e:
-        logger.exception("computer_use %s failed", action)
-        return json.dumps({"error": f"{action} failed: {e}"})
+        # 目标不存在、参数不合法属于预期失败，不记录堆栈。
+        logger.warning("computer_use %s failed: %s", action, e, exc_info=not isinstance(e, LookupError | ValueError))
+        return tool_error(f"{action} failed: {e}")
 
 
-def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) -> Any:
+def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) -> str | dict[str, Any]:
     capture_after = bool(args.get("capture_after"))
-    bring_to_front = bool(args.get("bring_to_front"))
-
     match action:
         case "capture":
-            if (mode := str(args.get("mode", "som"))) not in {"som", "vision", "ax"}:
-                return json.dumps({"error": f"bad mode {mode!r}; use som|vision|ax"})
+            if (mode := str(args.get("mode") or "som")) not in _CAPTURE_MODES:
+                return tool_error(f"bad mode {mode!r}; use som, vision or ax")
             return _capture_response(
-                backend.capture(mode=mode, app=args.get("app")),
+                backend.capture(mode=mode, app=args.get("app") or None),
                 _coerce_max_elements(args.get("max_elements")),
             )
         case "wait":
-            # 显式拒绝 > 30s：back-end 会静默 clamp 到 30s，模型却以为真等了 N 秒，
-            # 反复 set_value 后发现 UI 没准备好也不知道为什么。
+            # 超过 30 秒显式拒绝：后端会截断等待时长，模型却以为等满了。
             try:
                 seconds = float(args.get("seconds", 1.0))
             except (TypeError, ValueError):
-                return json.dumps({"error": "wait: 'seconds' must be a number"})
-            if seconds <= 0:
-                return json.dumps({"error": "wait: 'seconds' must be > 0"})
-            if seconds > 30:
-                return json.dumps(
-                    {"error": f"wait: 'seconds' {seconds} > max 30; loop with a shorter wait if you need longer"},
-                )
-            return _maybe_follow_capture(backend, backend.wait(seconds), capture_after)
+                return tool_error("wait: 'seconds' must be a number")
+            if not 0 < seconds <= 30:
+                return tool_error(f"wait: 'seconds' must be in (0, 30], got {seconds}; loop with shorter waits")
+            return _respond(backend, backend.wait(seconds), capture_after)
         case "list_apps":
             apps = backend.list_apps()
-            return json.dumps({"apps": apps, "count": len(apps)})
+            return json.dumps({"apps": apps, "count": len(apps)}, ensure_ascii=False)
         case "focus_app":
             if not (app := args.get("app")):
-                return json.dumps({"error": "focus_app requires `app`"})
-            return _maybe_follow_capture(backend, backend.focus_app(app, bring_to_front), capture_after)
+                return tool_error("focus_app requires `app`")
+            return _respond(backend, backend.focus_app(str(app), bool(args.get("bring_to_front"))), capture_after)
         case "click" | "double_click" | "right_click" | "middle_click":
-            button = (
-                "right"
-                if action == "right_click"
-                else "middle"
-                if action == "middle_click"
-                else args.get("button") or "left"
-            )
-            coord = args.get("coordinate") or (None, None)
+            button = {"right_click": "right", "middle_click": "middle"}.get(action) or str(args.get("button") or "left")
+            if button not in _BUTTONS:
+                return tool_error(f"bad button {button!r}; use left, right or middle")
+            x, y = _point(args.get("coordinate")) or (None, None)
             res = backend.click(
-                element=args.get("element"),
-                x=coord[0],
-                y=coord[1],
+                element=_optional_int(args.get("element")),
+                x=x,
+                y=y,
                 button=button,
                 click_count=2 if action == "double_click" else 1,
-                modifiers=args.get("modifiers"),
+                modifiers=_canonical_modifiers(args.get("modifiers")),
             )
-            return _maybe_follow_capture(backend, res, capture_after)
+            return _respond(backend, res, capture_after)
         case "drag":
             if args.get("from_element") is None and not args.get("from_coordinate"):
-                return json.dumps({"error": "drag requires from_coordinate/to_coordinate or from_element/to_element"})
+                return tool_error("drag requires from_coordinate/to_coordinate or from_element/to_element")
+            if (button := str(args.get("button") or "left")) not in _BUTTONS:
+                return tool_error(f"bad button {button!r}; use left, right or middle")
             res = backend.drag(
-                from_element=args.get("from_element"),
-                to_element=args.get("to_element"),
-                from_xy=tuple(args["from_coordinate"]) if args.get("from_coordinate") else None,
-                to_xy=tuple(args["to_coordinate"]) if args.get("to_coordinate") else None,
-                button=args.get("button", "left"),
-                modifiers=args.get("modifiers"),
+                from_element=_optional_int(args.get("from_element")),
+                to_element=_optional_int(args.get("to_element")),
+                from_xy=_point(args.get("from_coordinate")),
+                to_xy=_point(args.get("to_coordinate")),
+                button=button,
+                modifiers=_canonical_modifiers(args.get("modifiers")),
             )
-            return _maybe_follow_capture(backend, res, capture_after)
+            return _respond(backend, res, capture_after)
         case "scroll":
-            coord = args.get("coordinate") or (None, None)
+            if (direction := str(args.get("direction") or "down")) not in _SCROLL_DIRECTIONS:
+                return tool_error(f"bad direction {direction!r}; use up, down, left or right")
+            x, y = _point(args.get("coordinate")) or (None, None)
             res = backend.scroll(
-                direction=args.get("direction", "down"),
+                direction=direction,
                 amount=int(args.get("amount", 3)),
-                element=args.get("element"),
-                x=coord[0],
-                y=coord[1],
-                modifiers=args.get("modifiers"),
+                element=_optional_int(args.get("element")),
+                x=x,
+                y=y,
+                modifiers=_canonical_modifiers(args.get("modifiers")),
             )
-            return _maybe_follow_capture(backend, res, capture_after)
+            return _respond(backend, res, capture_after)
         case "type":
-            return _maybe_follow_capture(backend, backend.type_text(args.get("text", "")), capture_after)
+            return _respond(backend, backend.type_text(str(args.get("text", ""))), capture_after)
         case "key":
-            return _maybe_follow_capture(backend, backend.key(args.get("keys", "")), capture_after)
+            if not (keys := _parse_key_combo(str(args.get("keys") or ""))):
+                return tool_error("key requires `keys`")
+            return _respond(backend, backend.key(keys), capture_after)
         case "set_value":
-            if (val := args.get("value")) is None:
-                return json.dumps({"error": "set_value requires `value`"})
-            return _maybe_follow_capture(backend, backend.set_value(str(val), args.get("element")), capture_after)
-    return json.dumps({"error": f"unknown action {action!r}"})
-
-
-def _text_response(res: ActionResult) -> str:
-    return json.dumps(_action_result_payload(res))
-
-
-def _sniff_image_mime(b64: str) -> str:
-    """尽力通过 base64 magic bytes 猜测 MIME，覆盖 JPEG / PNG / WebP / GIF；无法识别时回退到 image/png，让 LLM 至少看到可渲染的图片标签。cua-driver 会在每个 image part 上设置 mimeType — 此兜底仅在该字段缺失或非 cua 后端（WinBackend）时触发。"""
-    if not b64:
-        return "image/png"
-    if b64[:4].startswith("/9j/"):
-        return "image/jpeg"
-    if b64[:8].startswith("iVBORw0"):
-        return "image/png"
-    # WebP: RIFF????WEBP
-    if b64.startswith("UklGR") and "V0VCUA" in b64[:20]:
-        return "image/webp"
-    if b64.startswith("R0lGOD"):
-        return "image/gif"
-    return "image/png"
+            if (value := args.get("value")) is None:
+                return tool_error("set_value requires `value`")
+            return _respond(backend, backend.set_value(str(value), _optional_int(args.get("element"))), capture_after)
+    return tool_error(f"unknown action {action!r}")
 
 
 def _coerce_max_elements(value: Any) -> int:
     try:
         n = int(value)
-        return n if 1 <= n <= 1000 else 100
     except (TypeError, ValueError):
         return 100
-
-
-def _capture_response(cap: CaptureResult, max_elements: int = 100) -> Any:
-    total = len(cap.elements)
-    visible = cap.elements[:max_elements]
-    truncated = max(0, total - len(visible))
-    element_index = _format_elements(visible, max_lines=max_elements)
-    summary_lines = [
-        f"capture mode={cap.mode} {cap.width}x{cap.height}"
-        + (f" app={cap.app}" if cap.app else "")
-        + (f" window={cap.window_title!r}" if cap.window_title else "")
-        + (f" dpi_scale={cap.dpi_scale:.2f}" if cap.dpi_scale != 1.0 else ""),
-        f"{total} interactable element(s):",
-    ]
-    if element_index:
-        summary_lines.extend(element_index)
-    if truncated:
-        summary_lines.append(
-            f"  (response truncated to {len(visible)} of {total} elements; raise max_elements or pass app= to narrow)",
-        )
-
-    # 一次性丢弃超尺寸 PNG 并提示调用方改为更窄的 app= 或纯文本的 mode='ax'
-    if cap.png_b64 and cap.mode != "ax" and (cap.png_bytes_len or 0) > _MAX_CAPTURE_BYTES:
-        cap = CaptureResult(
-            mode=cap.mode,
-            width=cap.width,
-            height=cap.height,
-            png_b64=None,
-            elements=cap.elements,
-            app=cap.app,
-            window_title=cap.window_title,
-            png_bytes_len=cap.png_bytes_len,
-        )
-        summary_lines.append(
-            f"  (PNG dropped — {cap.png_bytes_len:,} bytes exceeds {_MAX_CAPTURE_BYTES:,}-byte cap; pass app= or mode='ax' to narrow the capture)",
-        )
-
-    summary = clean_output("\n".join(summary_lines))
-
-    if cap.png_b64 and cap.mode != "ax":
-        # 优先采用 cua-driver 通过 image.mimeType 报告的 MIME；
-        # 非 cua 后端（WinBackend）回退到 base64 magic-byte 嗅探
-        mime = cap.image_mime_type or _sniff_image_mime(cap.png_b64)
-        return {
-            "_multimodal": True,
-            "content": [
-                {"type": "text", "text": summary},
-                {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{cap.png_b64}"}},
-            ],
-            "text_summary": summary,
-            "meta": {
-                "mode": cap.mode,
-                "width": cap.width,
-                "height": cap.height,
-                "elements": total,
-                "png_bytes": cap.png_bytes_len,
-            },
-        }
-
-    return json.dumps(
-        {
-            "mode": cap.mode,
-            "width": cap.width,
-            "height": cap.height,
-            "app": clean_output(cap.app) if cap.app else cap.app,
-            "window_title": clean_output(cap.window_title) if cap.window_title else cap.window_title,
-            "elements": [_element_to_dict(e) for e in visible],
-            "total_elements": total,
-            "summary": summary,
-        }
-        | ({"truncated_elements": truncated} if truncated else {})
-        | ({"dpi_scale": cap.dpi_scale} if cap.dpi_scale != 1.0 else {}),
-    )
+    return n if 1 <= n <= 1000 else 100
 
 
 def _action_result_payload(res: ActionResult) -> dict[str, Any]:
-    """ActionResult 的紧凑 envelope，包含 verdict 字段。在独立文本响应和 follow-up capture merge 上均作为 action header 使用；与 _text_response 对称 — 任何输出 ActionResult 的面都走这个 shape，下游消费者无论后续是否接 capture 都看到一致的字段集合。"""
-    payload: dict[str, Any] = {
-        "ok": res.ok,
-        "action": res.action,
-        "escalation": res.escalation or ("done" if res.ok else "verify_fresh_state"),
-    }
+    payload: dict[str, Any] = {"ok": res.ok, "action": res.action}
     if res.message:
         payload["message"] = clean_output(res.message)
     if res.meta:
         payload["meta"] = res.meta
-    if res.effect:
-        payload["effect"] = res.effect
-    if res.verified:
-        payload["verified"] = res.verified
-    if res.code:
-        payload["code"] = res.code
     return payload
 
 
-def _maybe_follow_capture(backend: ComputerUseBackend, res: ActionResult, do_capture: bool) -> Any:
-    if not do_capture or not res.ok:
-        return _text_response(res)
-    try:
-        cap = backend.capture(mode="som", app=getattr(backend, "_last_app", None))
-    except Exception as e:
-        logger.warning("follow-up capture failed: %s", e)
-        return _text_response(res)
-
-    resp = _capture_response(cap)
-    action_payload = _action_result_payload(res)
-    if isinstance(resp, dict) and resp.get("_multimodal"):
-        safe_message = clean_output(res.message) if res.message else ""
-        prefix_parts = [
-            f"[{res.action}]",
-            f"ok={res.ok}",
-            f"escalation={action_payload['escalation']}",
-        ]
-        if safe_message:
-            prefix_parts.append(f"message={safe_message!r}")
-        prefix = " ".join(prefix_parts)
-        resp["content"][0]["text"] = f"{prefix}\n\n{resp['content'][0]['text']}"
-        resp["text_summary"] = f"{prefix}\n\n{resp['text_summary']}"
-        # 在 envelope 层镜像 verdict 字段，调用方无需解析文本 payload 即可直接获取
-        resp.update(action_payload)
-        return resp
-    try:
-        data = json.loads(resp)
-    except (TypeError, json.JSONDecodeError):
-        data = {"capture": resp}
-    return json.dumps({**data, **action_payload})
+def _respond(backend: ComputerUseBackend, res: ActionResult, capture_after: bool) -> str | dict[str, Any]:
+    if capture_after and res.ok:
+        try:
+            return _capture_response(backend.recapture("som"), action=res)
+        except Exception as e:
+            logger.warning("follow-up capture failed: %s", e)
+            return json.dumps(
+                _action_result_payload(res) | {"capture_error": clean_output(str(e))},
+                ensure_ascii=False,
+            )
+    return json.dumps(_action_result_payload(res), ensure_ascii=False)
 
 
-def _format_elements(elements: list[UIElement], max_lines: int = 40) -> list[str]:
-    out = []
-    for e in elements[:max_lines]:
-        label = e.label.replace("\n", " ")[:60]
-        app_suffix = f" [{e.app}]" if e.app else ""
-        out.append(f"  #{e.index} {e.role} {label!r} @ {e.bounds}{app_suffix}")
-    if len(elements) > max_lines:
-        out.append(f"  ... +{len(elements) - max_lines} more (call capture with app= to narrow)")
-    return out
+def _capture_response(
+    cap: CaptureResult,
+    max_elements: int = 100,
+    action: ActionResult | None = None,
+) -> str | dict[str, Any]:
+    total = len(cap.elements)
+    visible = cap.elements[:max_elements]
+    lines = []
+    if action is not None:
+        lines.append(
+            f"[{action.action}] ok={action.ok}"
+            + (f" message={clean_output(action.message)!r}" if action.message else ""),
+        )
+    lines.append(
+        f"capture mode={cap.mode} {cap.width}x{cap.height}"
+        + (f" app={cap.app}" if cap.app else "")
+        + (f" window={cap.window_title!r}" if cap.window_title else ""),
+    )
+    if cap.mode != "vision":
+        lines.append(f"{total} interactable element(s):")
+        lines.extend(_format_elements(visible))
+        if total > len(visible):
+            lines.append(f"  ({total - len(visible)} more elements omitted; raise max_elements or pass app= to narrow)")
+    if cap.note:
+        lines.append(f"note: {cap.note}")
+
+    image = cap.png_b64 if cap.mode != "ax" else None
+    if image and len(image) > MAX_BASE64_BYTES:
+        lines.append(
+            f"(image omitted: {len(image):,} base64 bytes exceeds the {MAX_BASE64_BYTES:,}-byte limit; "
+            "pass app= to capture a smaller window or use mode='ax')",
+        )
+        image = None
+    summary = clean_output("\n".join(lines))
+
+    if image:
+        return {
+            "_multimodal": True,
+            "content": [
+                {"type": "input_text", "text": summary},
+                {"type": "input_image", "image_url": f"data:{cap.image_mime_type};base64,{image}"},
+            ],
+            "text_summary": summary,
+        }
+
+    payload: dict[str, Any] = {
+        "mode": cap.mode,
+        "width": cap.width,
+        "height": cap.height,
+        "app": clean_output(cap.app),
+        "window_title": clean_output(cap.window_title),
+        "elements": [_element_to_dict(e) for e in visible],
+        "total_elements": total,
+        "summary": summary,
+    }
+    if action is not None:
+        payload |= _action_result_payload(action)
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _format_elements(elements: list[UIElement]) -> list[str]:
+    return [f"  #{e.index} {e.role} {e.label.replace(chr(10), ' ')[:60]!r} @ {e.bounds}" for e in elements]
+
+
+def _element_to_dict(e: UIElement) -> dict[str, Any]:
+    return {"index": e.index, "role": e.role, "label": clean_output(e.label), "bounds": list(e.bounds)}
 
 
 def _computer_use_available() -> bool:
-    """computer_use 工具在宿主上的可用性。
-
-    macOS：需 cua-driver 二进制在 PATH；Windows：需 pywinauto / mss / pyautogui。
-    """
-    if sys.platform == "darwin":
+    """macOS 实际运行 cua-driver，Windows 实际打开截屏设备；只看依赖能否导入不算可用。"""
+    if IS_MACOS:
         return cua_driver_binary_available()
-    if sys.platform == "win32":
+    if IS_WINDOWS:
         return WinBackend().is_available()
     return False
 
@@ -438,7 +369,3 @@ def _computer_use_available() -> bool:
 registry.register_tool("computer_use", schema=COMPUTER_USE_SCHEMA, check_fn=_computer_use_available)(
     handle_computer_use,
 )
-
-
-def _element_to_dict(e: UIElement) -> dict[str, Any]:
-    return {"index": e.index, "role": e.role, "label": clean_output(e.label), "bounds": list(e.bounds), "app": e.app}

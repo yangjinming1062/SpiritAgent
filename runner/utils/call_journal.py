@@ -147,9 +147,10 @@ def claim(
         "claimed_at": time.time(),
     }
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        # 记录含工具参数与结果，目录与文件都仅本人可读；终态改写沿用文件权限。
+        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         try:
-            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         except FileExistsError:
             record = _read_record(path)
             if record is None:
@@ -285,8 +286,8 @@ def sweep_stale_claims(owner_pid: int) -> int:
             elif record["owner_pid"] == owner_pid or not pid_exists(record["owner_pid"]):
                 _mark_stale(record, entry)
                 updated += 1
-    except OSError:
-        pass
+    except OSError as e:
+        logger.warning("call journal sweep aborted: %s", e)
     return updated
 
 

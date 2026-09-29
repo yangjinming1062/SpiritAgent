@@ -1,7 +1,9 @@
 import json
 from typing import Any
+from urllib.parse import urlsplit
 
 from ...registry import registry
+from ..camofox import is_camofox_mode
 from ..check import check_browser_native_requirements
 from ..schemas import (
     BROWSER_COOKIES_CLEAR_SCHEMA,
@@ -10,10 +12,13 @@ from ..schemas import (
     BROWSER_STORAGE_GET_SCHEMA,
     BROWSER_STORAGE_SET_SCHEMA,
 )
-from ._common import browser_session, no_supervisor
+from ._common import browser_session, camofox_unsupported, no_supervisor
 
 
 def browser_cookies_get(url: str | None = None, task_id: str | None = None) -> str:
+    if is_camofox_mode():
+        return camofox_unsupported("browser_cookies_get")
+
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
             return no_supervisor()
@@ -39,6 +44,9 @@ def browser_cookies_set(
     same_site: str | None = None,
     task_id: str | None = None,
 ) -> str:
+    if is_camofox_mode():
+        return camofox_unsupported("browser_cookies_set")
+
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
             return no_supervisor()
@@ -64,9 +72,7 @@ def browser_cookies_set(
             frame = (frame_res.get("result") or {}).get("frameTree", {}).get("frame", {})
             current_url = str(frame.get("url") or "")
             if current_url:
-                from urllib.parse import urlparse
-
-                current_host = (urlparse(current_url).hostname or "").lower().lstrip(".")
+                current_host = (urlsplit(current_url).hostname or "").lower().lstrip(".")
                 requested_host = domain.lower().lstrip(".")
                 # 子域关系：requested=example.com 时 *.example.com 都算匹配
                 if (
@@ -84,62 +90,68 @@ def browser_cookies_set(
         res = supervisor.send_cdp("Network.setCookie", params)
         if not res.get("ok"):
             return json.dumps({"success": False, "error": res.get("error", "unknown error")}, ensure_ascii=False)
+        if res.get("result", {}).get("success") is False:
+            return json.dumps(
+                {
+                    "success": False,
+                    "error": "The browser rejected the cookie; check domain, path, secure and sameSite "
+                    "(sameSite 'None' requires secure=true).",
+                },
+                ensure_ascii=False,
+            )
         payload: dict[str, Any] = {"success": True, "name": name, "domain": domain}
         if warning:
             payload["warning"] = warning
         return json.dumps(payload, ensure_ascii=False)
 
 
-def browser_cookies_clear(session: bool = True, storage: bool = True, task_id: str | None = None) -> str:
-    """清空当前源的 cookie 和 storage。
+def browser_cookies_clear(cookies: bool = True, storage: bool = True, task_id: str | None = None) -> str:
+    """清空浏览器全部 cookie 和/或全部源的站点存储；两者都是全局操作，不限当前源。"""
+    if is_camofox_mode():
+        return camofox_unsupported("browser_cookies_clear")
 
-    Network.clearBrowserCookies 是全局操作（无 origin 限定），
-    Storage.clearDataForOrigin 当前实现传 ``"*"`` 也清空所有源。
-    如需精确按源清理，需后续补充按 origin 删除单条 cookie 的实现。
-    """
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
             return no_supervisor()
 
-        actions: list[str] = []
-        if session:
-            if not supervisor.send_cdp("Network.clearBrowserCookies", {}).get("ok"):
-                return json.dumps({"success": False, "error": "Network.clearBrowserCookies failed"}, ensure_ascii=False)
-            actions.append("session_cookies")
+        cleared: list[str] = []
+        if cookies:
+            res = supervisor.send_cdp("Network.clearBrowserCookies", {})
+            if not res.get("ok"):
+                return json.dumps({"success": False, "error": res.get("error"), "cleared": cleared}, ensure_ascii=False)
+            cleared.append("cookies")
         if storage:
-            if not supervisor.send_cdp("Storage.clearDataForOrigin", {"origin": "*", "storageTypes": "all"}).get("ok"):
-                return json.dumps({"success": False, "error": "Storage.clearDataForOrigin failed"}, ensure_ascii=False)
-            actions.append("storage")
-        return json.dumps({"success": True, "cleared": actions, "scope": "all_origins"}, ensure_ascii=False)
+            res = supervisor.send_cdp("Storage.clearDataForOrigin", {"origin": "*", "storageTypes": "all"})
+            if not res.get("ok"):
+                return json.dumps({"success": False, "error": res.get("error"), "cleared": cleared}, ensure_ascii=False)
+            cleared.append("storage")
+        return json.dumps({"success": True, "cleared": cleared, "scope": "all_origins"}, ensure_ascii=False)
+
+
+def _storage_id(origin: str, kind: str) -> dict[str, Any]:
+    """DOMStorage 按源精确匹配；把带路径或尾斜杠的 URL 收敛为 ``scheme://host[:port]``。"""
+    parts = urlsplit(origin.strip())
+    security_origin = f"{parts.scheme}://{parts.netloc}" if parts.scheme and parts.netloc else origin
+    return {"securityOrigin": security_origin, "isLocalStorage": kind == "localStorage"}
 
 
 def browser_storage_get(key: str, origin: str, kind: str = "localStorage", task_id: str | None = None) -> str:
+    if is_camofox_mode():
+        return camofox_unsupported("browser_storage_get")
+
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
             return no_supervisor()
 
-        res = supervisor.send_cdp(
-            "DOMStorage.getDOMStorageItems",
-            {"storageId": {"securityOrigin": origin, "isLocalStorage": kind == "localStorage"}},
-        )
+        storage_id = _storage_id(origin, kind)
+        res = supervisor.send_cdp("DOMStorage.getDOMStorageItems", {"storageId": storage_id})
         if not res.get("ok"):
             return json.dumps({"success": False, "error": res.get("error", "unknown error")}, ensure_ascii=False)
-        items = res.get("result", {}).get("entries", [])
-        for entry in items:
-            # CDP ``entries`` 是 list 数组而非强类型 ``[key, value]`` tuple; 长度为 0 或 1 的项(空 value)
-            # 必须跳过, 否则 ``entry[1]`` 直接抛 IndexError 拖垮整次调用。
-            if not isinstance(entry, list) or len(entry) < 1:
-                continue
-            if entry[0] == key:
-                value = entry[1] if len(entry) >= 2 else None
-                return json.dumps(
-                    {"success": True, "key": key, "value": value, "kind": kind, "found": True},
-                    ensure_ascii=False,
-                )
-        return json.dumps(
-            {"success": True, "key": key, "value": None, "kind": kind, "found": False},
-            ensure_ascii=False,
-        )
+        payload: dict[str, Any] = {"key": key, "kind": kind, "origin": storage_id["securityOrigin"]}
+        for entry_key, entry_value in res.get("result", {}).get("entries", []):
+            if entry_key == key:
+                return json.dumps({"success": True, **payload, "value": entry_value, "found": True}, ensure_ascii=False)
+        return json.dumps({"success": True, **payload, "value": None, "found": False}, ensure_ascii=False)
 
 
 def browser_storage_set(
@@ -149,21 +161,24 @@ def browser_storage_set(
     kind: str = "localStorage",
     task_id: str | None = None,
 ) -> str:
+    if is_camofox_mode():
+        return camofox_unsupported("browser_storage_set")
+
     with browser_session(task_id) as (supervisor, _):
         if supervisor is None:
             return no_supervisor()
 
+        storage_id = _storage_id(origin, kind)
         res = supervisor.send_cdp(
             "DOMStorage.setDOMStorageItem",
-            {
-                "storageId": {"securityOrigin": origin, "isLocalStorage": kind == "localStorage"},
-                "key": key,
-                "value": value,
-            },
+            {"storageId": storage_id, "key": key, "value": value},
         )
         if not res.get("ok"):
             return json.dumps({"success": False, "error": res.get("error", "unknown error")}, ensure_ascii=False)
-        return json.dumps({"success": True, "key": key, "kind": kind, "origin": origin}, ensure_ascii=False)
+        return json.dumps(
+            {"success": True, "key": key, "kind": kind, "origin": storage_id["securityOrigin"]},
+            ensure_ascii=False,
+        )
 
 
 registry.register_tool(
@@ -198,7 +213,7 @@ registry.register_tool(
     schema=BROWSER_COOKIES_CLEAR_SCHEMA,
 )(
     lambda args, **kw: browser_cookies_clear(
-        session=args.get("session", True),
+        cookies=args.get("cookies", True),
         storage=args.get("storage", True),
         task_id=kw.get("task_id"),
     ),

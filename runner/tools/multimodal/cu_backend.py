@@ -9,12 +9,8 @@ class UIElement:
     index: int
     role: str
     label: str = ""
+    # Windows 为截图像素（窗口左上角为原点）；macOS 原样取 cua-driver 报告的 frame。
     bounds: tuple[int, int, int, int] = (0, 0, 0, 0)
-    app: str = ""
-    pid: int = 0
-    window_id: int = 0
-    element_token: str | None = None
-    attributes: dict[str, Any] = field(default_factory=dict)
 
     def center(self) -> tuple[int, int]:
         x, y, w, h = self.bounds
@@ -30,11 +26,9 @@ class CaptureResult:
     elements: list[UIElement] = field(default_factory=list)
     app: str = ""
     window_title: str = ""
-    png_bytes_len: int = 0
-    image_mime_type: str | None = None
-    # Windows 上是窗口 DPI / 96。元素 bounds 与截图尺寸按物理像素返回 — 若模型要在
-    # pyautogui 期望的逻辑坐标里点击，需自行除以此值。
-    dpi_scale: float = 1.0
+    image_mime_type: str = "image/png"
+    # 截图或元素不完整的原因，随结果交给模型。
+    note: str = ""
 
 
 @dataclass
@@ -42,26 +36,17 @@ class ActionResult:
     ok: bool
     action: str
     message: str = ""
-    capture: CaptureResult | None = None
     meta: dict[str, Any] = field(default_factory=dict)
-    # 判定面：
-    #   verified   — capture 复核动作是否生效
-    #   effect     — 简短人类可读标签，如 "opened file"、"no-op"
-    #   escalation — "done" | "verify_fresh_state" | "escalate"
-    #   code       — 数值状态码，与 typed_error code 对应
-    verified: bool = False
-    effect: str = ""
-    escalation: str = ""
-    code: int = 0
 
 
 # app= 的哨兵值，目标是 OS 桌面壳层（桌面背景 / 任务栏）而非某个具体应用。
 # macOS 上解析为 Finder / Dock，Windows 上为 Progman / Shell_TrayWnd。
-# 在此集中定义，防止两个平台后端对"什么算哨兵"产生隐性分歧。
 DESKTOP_SENTINELS: frozenset[str] = frozenset({"screen", "desktop", "fullscreen", "all"})
 
 
 class ComputerUseBackend(ABC):
+    """坐标一律是最近一次截图内的像素（窗口左上角为原点）；key 与 modifiers 收到的是规范化后的键名。"""
+
     @abstractmethod
     def start(self) -> None: ...
 
@@ -72,7 +57,12 @@ class ComputerUseBackend(ABC):
     def is_available(self) -> bool: ...
 
     @abstractmethod
-    def capture(self, mode: str = "som", app: str | None = None) -> CaptureResult: ...
+    def capture(self, mode: str = "som", app: str | None = None) -> CaptureResult:
+        """app 为空时截取前台窗口；截取对象成为后续输入动作的目标。"""
+
+    @abstractmethod
+    def recapture(self, mode: str = "som") -> CaptureResult:
+        """重新截取当前目标窗口，不重新选择目标。"""
 
     @abstractmethod
     def click(
@@ -114,7 +104,7 @@ class ComputerUseBackend(ABC):
     def type_text(self, text: str) -> ActionResult: ...
 
     @abstractmethod
-    def key(self, keys: str) -> ActionResult: ...
+    def key(self, keys: list[str]) -> ActionResult: ...
 
     @abstractmethod
     def list_apps(self) -> list[dict[str, Any]]: ...

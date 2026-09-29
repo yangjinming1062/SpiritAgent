@@ -1,88 +1,107 @@
 from typing import Any
 
+from utils import IS_WINDOWS
+
+# 两个平台的投递方式不同：Windows 驱动真实鼠标键盘，macOS 经 cua-driver 向目标窗口后台投递且不绘制元素编号。
+if IS_WINDOWS:
+    _INPUT_BEHAVIOR = (
+        "Input uses the real mouse and keyboard: clicks land on whatever is visible at that screen position, and "
+        "type/key are refused unless the target window is in the foreground. Raise it first with focus_app and "
+        "bring_to_front=true when it is covered or typing is needed; this interrupts the user."
+    )
+    _SOM_IMAGE = "the screenshot has the element numbers drawn on it"
+    _BRING_TO_FRONT = (
+        "For focus_app: raise and focus the window so clicks and keystrokes reach it. This interrupts the user; "
+        "use only when needed."
+    )
+    _KEY_EXAMPLES = "'ctrl+s', 'ctrl+shift+t', 'alt+tab', 'enter', 'escape'"
+    _DRAG_SUMMARY = ", scroll and drag"
+    _POINTER_ACTIONS = "click, drag or scroll"
+else:
+    _INPUT_BEHAVIOR = (
+        "Input is delivered to the target window in the background when the application supports it; actions "
+        "that need the window in the foreground (such as clicks with modifier keys) may be refused."
+    )
+    _SOM_IMAGE = "the screenshot itself has no numbers drawn on it"
+    _BRING_TO_FRONT = "Raising windows is not supported on this computer; input is sent without raising the window."
+    _KEY_EXAMPLES = "'cmd+s', 'cmd+shift+t', 'return', 'escape', 'tab'"
+    _DRAG_SUMMARY = " and scroll (dragging is not available)"
+    _POINTER_ACTIONS = "click or scroll"
+
+_COORDINATE = {"type": "array", "items": {"type": "integer"}, "minItems": 2, "maxItems": 2}
+
+_ACTIONS = [
+    "capture",
+    "click",
+    "double_click",
+    "right_click",
+    "middle_click",
+    "drag",
+    "scroll",
+    "type",
+    "key",
+    "set_value",
+    "wait",
+    "list_apps",
+    "focus_app",
+]
+
+# macOS 上 cua-driver 只能前台拖拽（会移动用户指针），因此不提供 drag。
+_DRAG_PARAMS: dict[str, Any] = (
+    {
+        "from_element": {"type": "integer", "description": "Drag start element index."},
+        "to_element": {"type": "integer", "description": "Drag end element index."},
+        "from_coordinate": {**_COORDINATE, "description": "Drag start [x, y] in capture-image pixels."},
+        "to_coordinate": {**_COORDINATE, "description": "Drag end [x, y] in capture-image pixels."},
+    }
+    if IS_WINDOWS
+    else {}
+)
+
 COMPUTER_USE_SCHEMA: dict[str, Any] = {
     "name": "computer_use",
     "description": (
-        "Inspect and operate the desktop using screenshots, mouse, keyboard, scroll and drag. "
-        "Background support depends on the platform, target application and action; "
-        "keyboard or coordinate actions may affect the user's cursor and foreground app. Preferred workflow: call with "
-        "action='capture' (mode='som' gives numbered element overlays), "
-        "then click by `element` index for reliability. Pixel coordinates "
-        "are available when an element cannot be used. Inspect the actual capture and action result; "
-        "hidden or minimized windows may be inaccessible. "
-        "Verify effects with a fresh capture; ok confirms the input request, not the intended application effect. "
-        "macOS requires cua-driver; Windows uses built-in UIA automation."
+        f"Inspect and operate desktop applications with screenshots, mouse, keyboard{_DRAG_SUMMARY}. "
+        "Start with action='capture' (optionally with app) to choose the target window and list its elements, "
+        "then act by element index; use pixel coordinates from the capture image only when no element fits. "
+        "Input actions apply to the window chosen by the latest capture or focus_app. "
+        f"{_INPUT_BEHAVIOR} "
+        "ok=true means the input was sent, not that the application reacted as intended; verify with a fresh "
+        "capture. Hidden or minimized windows may be inaccessible."
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": [
-                    "capture",
-                    "click",
-                    "double_click",
-                    "right_click",
-                    "middle_click",
-                    "drag",
-                    "scroll",
-                    "type",
-                    "key",
-                    "set_value",
-                    "wait",
-                    "list_apps",
-                    "focus_app",
-                ],
+                "enum": _ACTIONS if IS_WINDOWS else [a for a in _ACTIONS if a != "drag"],
                 "description": (
-                    "Which action to perform. capture and list_apps inspect state; other actions "
-                    "operate within the user's authorized task. Use `set_value` for select/popup elements "
-                    "and sliders — it selects the matching option directly "
-                    "when the backend supports it."
+                    "Action to perform. capture and list_apps only inspect state. Use set_value for dropdowns, "
+                    "sliders and text fields when the element supports it."
                 ),
             },
             "mode": {
                 "type": "string",
                 "enum": ["som", "vision", "ax"],
                 "description": (
-                    "Capture mode. `som` (default) is a screenshot with "
-                    "numbered overlays on every interactable element plus "
-                    "the AX tree — best for vision models, lets you click "
-                    "by element index. `vision` is a plain screenshot. "
-                    "`ax` is the accessibility tree only (no image; useful "
-                    "for text-only models)."
+                    "Capture mode. som (default): screenshot plus the numbered list of interactable elements; "
+                    f"{_SOM_IMAGE}. vision: screenshot only. ax: element list only, no image."
                 ),
             },
             "app": {
                 "type": "string",
                 "description": (
-                    "For capture or focus_app, select a specific app "
-                    "(by name, e.g. 'Safari', or bundle ID, "
-                    "'com.apple.Safari'). If omitted, operates on the "
-                    "frontmost app's window or the whole screen. For later input actions, use a fresh "
-                    "capture or focus_app to establish the target; app alone does not retarget every action.\n"
-                    "Sentinel values: 'screen' / 'desktop' / 'fullscreen' / "
-                    "'all' resolve to the OS shell surface (Finder+Dock on "
-                    "macOS, Progman+Shell_TrayWnd on Windows) so the agent "
-                    "can capture the desktop background or taskbar."
+                    "For capture or focus_app: the application to target, matched against the names from list_apps "
+                    "(substring, case-insensitive; macOS may use localized names). Without app, capture targets the "
+                    "frontmost window. 'desktop' (or 'screen', 'fullscreen', 'all') targets the desktop and the "
+                    "taskbar or Dock. Other actions ignore this field."
                 ),
             },
             "max_elements": {
                 "type": "integer",
                 "description": (
-                    "Optional cap on the AX `elements` array returned by "
-                    "`action='capture'`. Default 100, hard maximum 1000. "
-                    "Dense UIs (Electron apps such as Obsidian or VS Code, "
-                    "JetBrains IDEs) can publish 500+ AX nodes — capping "
-                    "prevents a single capture from blowing session "
-                    "context. When the cap trims the response, "
-                    "`total_elements` and `truncated_elements` are "
-                    "surfaced in the result so you can re-call with "
-                    "`app=` to narrow scope or raise `max_elements` when "
-                    "the full tree is required. Has no effect on "
-                    "`mode='som'` / `mode='vision'` when a screenshot is "
-                    "included in the response; only the rare image-"
-                    "missing fallback returns an `elements` array and is "
-                    "subject to the cap."
+                    "Maximum number of elements listed by capture. When more exist, the result reports how many were "
+                    "omitted; narrow with app or raise this limit."
                 ),
                 "default": 100,
                 "minimum": 1,
@@ -90,18 +109,11 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
             },
             "element": {
                 "type": "integer",
-                "description": (
-                    "The 0-based SOM index returned by the last `capture(mode='som')` call. Strongly preferred over raw coordinates."
-                ),
+                "description": "Element index from the latest capture of the target window. Preferred over coordinates.",
             },
             "coordinate": {
-                "type": "array",
-                "items": {"type": "integer"},
-                "minItems": 2,
-                "maxItems": 2,
-                "description": (
-                    "Pixel coordinates [x, y] in logical screen space (as returned by capture width/height). Only use this if no element index is available."
-                ),
+                **_COORDINATE,
+                "description": "[x, y] pixel position in the latest capture image (top-left origin).",
             },
             "button": {
                 "type": "string",
@@ -112,77 +124,35 @@ COMPUTER_USE_SCHEMA: dict[str, Any] = {
                 "type": "array",
                 "items": {
                     "type": "string",
-                    "enum": [
-                        "cmd",
-                        "command",
-                        "shift",
-                        "option",
-                        "alt",
-                        "ctrl",
-                        "fn",
-                        "win",
-                        "super",
-                        "meta",
-                        "windows",
-                        "⌘",
-                        "⌥",
-                    ],
+                    "enum": ["cmd", "ctrl", "shift", "option", "alt", "win", "fn"],
                 },
-                "description": "Modifier keys held during the action.",
+                "description": f"Modifier keys held during a {_POINTER_ACTIONS}.",
             },
-            "from_element": {"type": "integer", "description": "Source element index (drag)."},
-            "to_element": {"type": "integer", "description": "Target element index (drag)."},
-            "from_coordinate": {
-                "type": "array",
-                "items": {"type": "integer"},
-                "minItems": 2,
-                "maxItems": 2,
-                "description": "Source [x,y] (drag; use when no element available).",
-            },
-            "to_coordinate": {
-                "type": "array",
-                "items": {"type": "integer"},
-                "minItems": 2,
-                "maxItems": 2,
-                "description": "Target [x,y] (drag; use when no element available).",
-            },
+            **_DRAG_PARAMS,
             "direction": {
                 "type": "string",
                 "enum": ["up", "down", "left", "right"],
                 "description": "Scroll direction.",
             },
-            "amount": {"type": "integer", "description": "Scroll wheel ticks. Default 3."},
+            "amount": {"type": "integer", "description": "Scroll wheel notches, 1-50. Default 3."},
             "value": {
                 "type": "string",
                 "description": (
-                    "For action='set_value': the value to set on the element. "
-                    "For AXPopUpButton / select dropdowns, pass the option's "
-                    "display label (e.g. 'Blue'). For sliders and other "
-                    "AXValue-settable elements, pass the numeric or string value."
+                    "For set_value: the value to set. For dropdowns pass the option's visible label; for sliders "
+                    "pass the number."
                 ),
             },
-            "text": {"type": "string", "description": "Text to type (respects the current layout)."},
+            "text": {"type": "string", "description": "Text to type into the target window."},
             "keys": {
                 "type": "string",
-                "description": (
-                    "Key combo, e.g. 'cmd+s', 'ctrl+alt+t', 'return', 'escape', 'tab'. Use '+' to combine."
-                ),
+                "description": f"Key combo joined with '+', e.g. {_KEY_EXAMPLES}.",
             },
-            "seconds": {"type": "number", "description": "Seconds to wait. Max 30."},
+            "seconds": {"type": "number", "description": "Seconds to wait, at most 30."},
             "capture_after": {
                 "type": "boolean",
-                "description": (
-                    "If true, take a follow-up capture after the action and include it in the response. Saves a round-trip when you need to verify an action's effect."
-                ),
+                "description": "If true and the action succeeds, capture the target window again and include it.",
             },
-            "bring_to_front": {
-                "type": "boolean",
-                "description": (
-                    "For focus_app only, request raising and focusing the window on Windows. "
-                    "This may interrupt the user. The macOS backend cannot raise windows and reports "
-                    "that limitation. Default false; other actions do not use this flag."
-                ),
-            },
+            "bring_to_front": {"type": "boolean", "description": _BRING_TO_FRONT},
         },
         "required": ["action"],
     },

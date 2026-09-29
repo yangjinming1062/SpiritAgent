@@ -1,348 +1,227 @@
-import contextlib
-import difflib
 import fnmatch
-import logging
 import os
 import re
 import shlex
 import shutil
+import stat
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
-from utils import IS_WINDOWS, atomic_replace, is_write_denied, strip_ansi
+from utils import CREATE_NO_WINDOW, IS_WINDOWS, atomic_replace, is_write_denied, msys_to_windows_path
 
-from .fuzzy_match import format_no_match_hint, fuzzy_find_and_replace
+from .binary_extensions import has_binary_extension
 from .helpers import (
-    _UTF8_BOM,
-    IMAGE_EXTENSIONS,
-    LINTERS,
+    BINARY_FILE_ERROR,
+    DEFAULT_READ_LIMIT,
+    DEFAULT_READ_OFFSET,
+    DEFAULT_SEARCH_LIMIT,
+    DEFAULT_SEARCH_OFFSET,
     LINTERS_INPROC,
-    MAX_FILE_SIZE,
+    MAX_EDIT_BYTES,
+    MAX_MATCH_CONTENT,
     ExecuteResult,
     FileOperations,
-    LintResult,
-    PatchResult,
+    ListResult,
     ReadResult,
     SearchMatch,
     SearchResult,
     WriteResult,
-    _detect_line_ending,
-    _has_bom,
-    _looks_like_linter_unusable,
-    _normalize_line_endings,
+    _not_utf8_error,
     _strip_bom,
-    get_max_line_length,
-    normalize_read_pagination,
+    build_read_result,
+    is_binary_content,
+    match_existing_format,
+    rank_similar_names,
+    too_large_to_edit_error,
 )
 
-logger = logging.getLogger(__name__)
+# 内容搜索最多读取的文件数，避免在大目录上长时间阻塞。
+_MAX_SEARCH_FILES = 1000
+
+
+def _glob_match(rel_posix: str, pattern: str) -> bool:
+    """模式不含 ``/`` 时只匹配文件名；含 ``/`` 时匹配相对路径，``**/`` 前缀也可匹配零层目录。"""
+    if "/" not in pattern:
+        return fnmatch.fnmatch(rel_posix.rsplit("/", 1)[-1], pattern)
+    return fnmatch.fnmatch(rel_posix, pattern) or (
+        pattern.startswith("**/") and fnmatch.fnmatch(rel_posix, pattern[3:])
+    )
+
+
+def _iter_files(root: Path) -> Iterator[tuple[Path, str]]:
+    """遍历 ``root`` 下的文件，返回 (路径, 相对 posix 路径)；与 rg 默认一致，跳过隐藏文件和隐藏目录。"""
+    if not root.is_dir():
+        yield root, root.name
+        return
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if not d.startswith("."))
+        for name in sorted(filenames):
+            if not name.startswith("."):
+                p = Path(dirpath) / name
+                yield p, p.relative_to(root).as_posix()
+
+
+def _match_content(lines: list[str], i: int, context: int) -> str:
+    if context <= 0:
+        return lines[i][:MAX_MATCH_CONTENT]
+    start, end = max(0, i - context), min(len(lines), i + context + 1)
+    return "\n".join(f"{j + 1}{':' if j == i else '-'}{lines[j][:MAX_MATCH_CONTENT]}" for j in range(start, end))
 
 
 class NativeFileOperations(FileOperations):
-    """基于原生 pathlib/os 的文件操作实现。
+    """本地环境：用 Python 原生 I/O 操作宿主机文件，相对路径按终端当前目录解析。"""
 
-    避免走 shell，在 Windows 本地环境下鲁棒性更好。
-    """
+    def resolve_path(self, path: str, *, follow_symlinks: bool = True) -> Path:
+        """解析为宿主机绝对路径：展开 ``~``，Windows 上转换 MSYS 风格路径。
 
-    def __init__(self, cwd: str | None = None) -> None:
-        self.cwd = cwd or os.getcwd()
-
-    def _expand_path(self, path: str) -> Path:
-        p = Path(os.path.expanduser(path))
+        ``follow_symlinks=False`` 时只解析父目录，删除或移动符号链接时作用于链接本身。
+        """
+        p = Path(msys_to_windows_path(path)).expanduser()
         if not p.is_absolute():
-            p = Path(self.cwd) / p
-        return p.resolve()
+            p = Path(self.env.cwd) / p
+        return p.resolve() if follow_symlinks else p.parent.resolve() / p.name
 
-    def _add_line_numbers(self, text: str, start_line: int) -> str:
-        if not text:
-            return text
-        max_len = get_max_line_length()
-        lines = text.split("\n")
-        numbered = []
-        for i, line in enumerate(lines, start=start_line):
-            if len(line) > max_len:
-                line = line[:max_len] + "... [truncated]"
-            numbered.append(f"{i}|{line}")
-        return "\n".join(numbered)
+    def _not_found(self, p: Path, path: str) -> ReadResult:
+        try:
+            names = os.listdir(p.parent)
+        except OSError:
+            names = []
+        similar = [str(p.parent / n) for n in rank_similar_names(names, p.name)]
+        return ReadResult(error=f"File not found: {path}", similar_files=similar)
 
-    def _is_image(self, path: Path) -> bool:
-        return path.suffix.lower() in IMAGE_EXTENSIONS
-
-    def _is_likely_binary(self, content_sample: bytes) -> bool:
-        if not content_sample:
-            return False
-        if b"\x00" in content_sample:
-            return True
-        non_printable = sum(1 for b in content_sample if b < 32 and b not in b"\n\r\t")
-        return non_printable / len(content_sample) > 0.30
-
-    def read_file(self, path: str, offset: int = 1, limit: int = 500) -> ReadResult:
-        p = self._expand_path(path)
-        offset, limit = normalize_read_pagination(offset, limit)
-
+    def read_file(self, path: str, offset: int = DEFAULT_READ_OFFSET, limit: int = DEFAULT_READ_LIMIT) -> ReadResult:
+        p = self.resolve_path(path)
         if not p.exists():
-            return ReadResult(error=f"File not found: '{path}'")
+            return self._not_found(p, path)
         if p.is_dir():
             return ReadResult(error=f"Path is a directory: '{path}'. Use list_directory instead.")
-
+        # FIFO、设备等非普通文件读取可能永久阻塞。
+        if not p.is_file():
+            return ReadResult(error=f"Not a regular file: '{path}'.")
+        end_line = offset + limit - 1
+        lines: list[str] = []
+        total_lines = 0
         try:
             file_size = p.stat().st_size
-        except OSError as e:
-            return ReadResult(error=f"Error accessing file: {e}")
-
-        if file_size > MAX_FILE_SIZE and limit >= 500:
-            return ReadResult(
-                file_size=file_size,
-                error=(
-                    f"File size {file_size:,} bytes exceeds safety cap of {MAX_FILE_SIZE:,} bytes. Read with offset/limit."
-                ),
-            )
-
-        if self._is_image(p):
-            return ReadResult(
-                is_image=True,
-                is_binary=True,
-                file_size=file_size,
-                hint="Image file detected. Automatically redirected to vision_analyze tool.",
-            )
-
-        try:
             with p.open("rb") as f:
                 sample = f.read(1000)
-            if self._is_likely_binary(sample):
-                return ReadResult(is_binary=True, file_size=file_size, error="Binary file - cannot display as text.")
+            if is_binary_content(str(p), sample.decode("utf-8", errors="replace")):
+                return ReadResult(is_binary=True, file_size=file_size, error=BINARY_FILE_ERROR)
+            with p.open(encoding="utf-8", errors="replace") as f:
+                for total_lines, line in enumerate(f, start=1):
+                    if offset <= total_lines <= end_line:
+                        lines.append(line)
         except OSError as e:
             return ReadResult(error=f"Error reading file: {e}")
-
-        total_lines = 0
-        content_lines = []
-        try:
-            with p.open("r", encoding="utf-8", errors="replace") as f:
-                for i, line in enumerate(f, start=1):
-                    total_lines += 1
-                    if offset <= i < offset + limit:
-                        content_lines.append(line)
-        except OSError as e:
-            return ReadResult(error=f"Error reading file: {e}")
-
-        end_line = offset + limit - 1
-        read_output = "".join(content_lines).rstrip("\r\n")
-
-        if offset == 1:
-            read_output, _ = _strip_bom(read_output)
-
-        truncated = total_lines > end_line
-        hint = None
-        if truncated:
-            hint = f"Use offset={end_line + 1} to continue reading (showing {offset}-{end_line} of {total_lines} lines)"
-
-        return ReadResult(
-            content=self._add_line_numbers(read_output, offset),
-            total_lines=total_lines,
-            file_size=file_size,
-            truncated=truncated,
-            hint=hint,
-        )
+        return build_read_result("".join(lines), offset, limit, total_lines, file_size)
 
     def read_file_raw(self, path: str) -> ReadResult:
-        p = self._expand_path(path)
-        if not p.exists():
-            return ReadResult(error=f"File not found: '{path}'")
+        p = self.resolve_path(path)
+        if not p.is_file():
+            return ReadResult(error=f"Not a regular file: '{path}'.") if p.exists() else self._not_found(p, path)
         try:
-            file_size = p.stat().st_size
-            if file_size > MAX_FILE_SIZE:
-                return ReadResult(
-                    file_size=file_size,
-                    error=f"File size {file_size:,} bytes exceeds safety cap of {MAX_FILE_SIZE:,} bytes. Use read_file with offset/limit instead.",
-                )
-            content = p.read_text(encoding="utf-8", errors="replace")
-            return ReadResult(content=content, total_lines=len(content.splitlines()), file_size=file_size)
-        except Exception as e:
+            if (size := p.stat().st_size) > MAX_EDIT_BYTES:
+                return ReadResult(file_size=size, error=too_large_to_edit_error(path, size))
+            data = p.read_bytes()
+        except OSError as e:
             return ReadResult(error=f"Failed to read file: {e}")
+        if is_binary_content(str(p), data[:1000].decode("utf-8", errors="replace")):
+            return ReadResult(is_binary=True, error=BINARY_FILE_ERROR)
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            return ReadResult(error=_not_utf8_error(path))
+        content, _ = _strip_bom(text)
+        return ReadResult(content=content, file_size=len(data))
 
     def write_file(self, path: str, content: str) -> WriteResult:
-        p = self._expand_path(path)
+        p = self.resolve_path(path)
         if is_write_denied(str(p)):
             return WriteResult(error=f"Write denied: '{path}' is a protected system/credential file.")
-        # 拒绝目录 — 不然 Path.write_text 会抛 PermissionError 而非清晰报错。
         if p.is_dir():
             return WriteResult(error=f"Path is a directory: '{path}'. Use a file path, not a directory.")
-
-        pre_content = None
-        if p.exists():
-            with contextlib.suppress(Exception):
-                pre_content = p.read_text(encoding="utf-8", errors="replace")
-
-        original_ending = _detect_line_ending(pre_content) if pre_content else None
-        if original_ending == "\r\n":
-            content = _normalize_line_endings(content, "\r\n")
-
-        if pre_content and _has_bom(pre_content) and not _has_bom(content):
-            content = _UTF8_BOM + content
-
-        dirs_created = False
+        pre_content: str | None = None
+        existing: str | None = None
+        if p.is_file():
+            # 进程内语法检查需要完整的写前内容做基线；其他类型或超大文件只取开头判断换行符与 BOM。
+            # 按原始字节解码以保留 CRLF。
+            try:
+                full = p.suffix.lower() in LINTERS_INPROC and p.stat().st_size <= MAX_EDIT_BYTES
+                with p.open("rb") as f:
+                    existing = (f.read() if full else f.read(4096)).decode("utf-8", errors="replace")
+                pre_content = existing if full else None
+            except OSError:
+                # 读不到原文件时无法沿用其格式；写入本身若同样无权限，会在下方报错。
+                existing = None
+        content = match_existing_format(content, existing)
+        dirs_created = not p.parent.exists()
         try:
-            if not p.parent.exists():
-                p.parent.mkdir(parents=True, exist_ok=True)
-                dirs_created = True
-
-            # 原子替换（tempfile + os.replace）: 崩溃/杀软拦截/磁盘满时不留半截文件, 与 shell 后端语义一致。
             atomic_replace(str(p), content)
-            bytes_written = len(content.encode("utf-8"))
-
-            lint_result = self._check_lint_delta(str(p), pre_content=pre_content, post_content=content)
-
-            return WriteResult(
-                bytes_written=bytes_written,
-                dirs_created=dirs_created,
-                lint=lint_result.to_dict() if lint_result else None,
-            )
-        except Exception as e:
-            return WriteResult(error=f"Failed to write file: {e}", dirs_created=dirs_created)
-
-    def patch_replace(self, path: str, old_string: str, new_string: str, replace_all: bool = False) -> PatchResult:
-        p = self._expand_path(path)
-        if is_write_denied(str(p)):
-            return PatchResult(success=False, error=f"Write denied: '{path}' is a protected system/credential file.")
-
-        if not p.exists():
-            return PatchResult(success=False, error=f"File not found: {path}")
-
-        try:
-            file_size = p.stat().st_size
-            if file_size > MAX_FILE_SIZE:
-                return PatchResult(
-                    success=False,
-                    error=f"File size {file_size:,} bytes exceeds safety cap of {MAX_FILE_SIZE:,} bytes. Cannot patch.",
-                )
-        except OSError:
-            pass
-
-        try:
-            content = p.read_text(encoding="utf-8")
-        except UnicodeDecodeError:
-            return PatchResult(success=False, error="Cannot patch binary file")
-        except Exception as e:
-            return PatchResult(success=False, error=f"Error reading file: {e}")
-
-        occurrences = content.count(old_string)
-        if occurrences == 0:
-            new_content, match_count, _strategy, error = fuzzy_find_and_replace(
-                content,
-                old_string,
-                new_string,
-                replace_all,
-            )
-            if error or match_count == 0:
-                err_msg = error or f"Could not find match for old_string in {path}"
-                with contextlib.suppress(Exception):
-                    err_msg += format_no_match_hint(err_msg, match_count, old_string, content)
-                return PatchResult(success=False, error=err_msg)
-            content_after = new_content
-        else:
-            if occurrences > 1 and not replace_all:
-                return PatchResult(
-                    success=False,
-                    error=f"Found {occurrences} occurrences. Use replace_all=True if intentional.",
-                )
-            content_after = content.replace(old_string, new_string, -1 if replace_all else 1)
-
-        file_ending = _detect_line_ending(content)
-        if file_ending:
-            content_after = _normalize_line_endings(content_after, file_ending)
-
-        try:
-            p.write_text(content_after, encoding="utf-8")
-        except Exception as e:
-            return PatchResult(success=False, error=f"Error writing file: {e}")
-
-        # 写后再读一次确认内容真的落地（防 Windows 杀软拦截、磁盘满、半写）。比对前
-        # 统一换行符（不同 Python 版本在 read_text 上对 \r\n 处理有差异）。
-        try:
-            verified = p.read_text(encoding="utf-8")
-            _v = verified.replace("\r\n", "\n").replace("\r", "\n")
-            _w = content_after.replace("\r\n", "\n").replace("\r", "\n")
-            if _v != _w:
-                return PatchResult(
-                    success=False,
-                    error=(
-                        f"Post-write verification failed for {path}: on-disk content "
-                        f"differs from intended write (wrote {len(_w)} chars, read back "
-                        f"{len(_v)} chars after normalizing line endings). "
-                        "The patch did not persist. Re-read the file and try again."
-                    ),
-                )
-        except Exception as e:
-            return PatchResult(success=False, error=f"Post-write verification read failed for {path}: {e}")
-
-        old_lines = content.splitlines(keepends=True)
-        new_lines = content_after.splitlines(keepends=True)
-        diff = "".join(difflib.unified_diff(old_lines, new_lines, fromfile=f"a/{path}", tofile=f"b/{path}"))
-
-        # 补丁后再跑一次 lint 检查
-        lint_result = self._check_lint_delta(str(p), pre_content=content, post_content=content_after)
-
-        return PatchResult(
-            success=True,
-            diff=diff,
-            files_modified=[path],
-            lint=lint_result.to_dict() if lint_result else None,
+        except (OSError, UnicodeEncodeError) as e:
+            return WriteResult(error=f"Failed to write file: {e}")
+        lint_result = self._check_lint_delta(str(p), pre_content, content)
+        return WriteResult(
+            bytes_written=len(content.encode("utf-8")),
+            dirs_created=dirs_created,
+            lint=lint_result.to_dict(),
         )
 
-    def patch_v4a(self, patch_content: str) -> PatchResult:
-        return PatchResult(
-            success=False,
-            error="Unified diff patch application is not supported in native Windows ops yet.",
-        )
+    def exists(self, path: str) -> bool:
+        return os.path.lexists(self.resolve_path(path, follow_symlinks=False))
 
     def delete_file(self, path: str) -> WriteResult:
-        p = self._expand_path(path)
+        p = self.resolve_path(path, follow_symlinks=False)
         if is_write_denied(str(p)):
             return WriteResult(error=f"Delete denied: {path} is a protected path")
-        if not p.exists():
+        if not os.path.lexists(p):
             return WriteResult(error=f"File not found: {path}")
         if p.is_dir() and not p.is_symlink():
             return WriteResult(error=f"Path is a directory: {path}")
         try:
             p.unlink()
-            return WriteResult(bytes_written=0)
-        except Exception as e:
+        except OSError as e:
             return WriteResult(error=f"Failed to delete file: {e}")
-
-    def delete_path(self, path: str, recursive: bool = False) -> WriteResult:
-        p = self._expand_path(path)
-        if is_write_denied(str(p)):
-            return WriteResult(error=f"Delete denied: {path} is a protected path")
-        if not p.exists():
-            return WriteResult(error=f"Path not found: {path}")
-        try:
-            if p.is_dir() and not p.is_symlink():
-                if recursive:
-                    shutil.rmtree(str(p))
-                else:
-                    p.rmdir()
-            else:
-                p.unlink()
-            return WriteResult(bytes_written=0)
-        except Exception as e:
-            return WriteResult(error=f"Failed to delete path: {e}")
+        return WriteResult()
 
     def move_file(self, src: str, dst: str) -> WriteResult:
-        p_src = self._expand_path(src)
-        p_dst = self._expand_path(dst)
+        p_src = self.resolve_path(src, follow_symlinks=False)
+        p_dst = self.resolve_path(dst, follow_symlinks=False)
         for p in (p_src, p_dst):
             if is_write_denied(str(p)):
                 return WriteResult(error=f"Move denied: {p} is a protected path")
-        if not p_src.exists():
+        if not os.path.lexists(p_src):
             return WriteResult(error=f"Source not found: {src}")
         try:
-            if not p_dst.parent.exists():
-                p_dst.parent.mkdir(parents=True, exist_ok=True)
-            p_src.rename(p_dst)
-            return WriteResult(bytes_written=0)
-        except Exception as e:
+            p_dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(p_src, p_dst)
+        except OSError as e:
             return WriteResult(error=f"Failed to move file: {e}")
+        return WriteResult()
+
+    def list_directory(self, path: str) -> ListResult:
+        p = self.resolve_path(path)
+        if not p.exists():
+            return ListResult(error=f"Directory '{path}' not found.")
+        if not p.is_dir():
+            return ListResult(error=f"Path '{path}' is not a directory.")
+        entries = []
+        for child in p.iterdir():
+            # 悬空符号链接或遍历期间被删除的条目跳过，不让整次列目录失败。
+            try:
+                st = child.stat()
+            except OSError:
+                continue
+            is_dir = stat.S_ISDIR(st.st_mode)
+            entries.append(
+                {
+                    "name": child.name + ("/" if is_dir else ""),
+                    "is_dir": is_dir,
+                    "size": st.st_size,
+                    "mtime": st.st_mtime,
+                },
+            )
+        return ListResult(entries=entries)
 
     def search(
         self,
@@ -350,191 +229,120 @@ class NativeFileOperations(FileOperations):
         path: str = ".",
         target: str = "content",
         file_glob: str | None = None,
-        limit: int = 50,
-        offset: int = 0,
+        limit: int = DEFAULT_SEARCH_LIMIT,
+        offset: int = DEFAULT_SEARCH_OFFSET,
         output_mode: str = "content",
         context: int = 0,
     ) -> SearchResult:
+        root = self.resolve_path(path)
+        if not root.exists():
+            return SearchResult(error=f"Path not found: {path}")
+
+        def shown(rel: str) -> str:
+            # 与 rg 一致：结果路径以调用方给出的路径为前缀，可直接用于 read_file。
+            return os.path.join(path, os.path.normpath(rel)) if root.is_dir() else path
+
         if target == "files":
-            return self._search_files_by_name(pattern, path, limit, offset)
+            hits: list[tuple[float, str]] = []
+            for p, rel in _iter_files(root):
+                if not _glob_match(rel, pattern):
+                    continue
+                try:
+                    hits.append((p.stat().st_mtime, shown(rel)))
+                except OSError:
+                    continue
+            hits.sort(reverse=True)
+            return SearchResult(
+                files=[f for _, f in hits[offset : offset + limit]],
+                total_count=len(hits),
+                truncated=len(hits) > offset + limit,
+            )
+
         try:
-            regex = re.compile(pattern, re.IGNORECASE)
+            regex = re.compile(pattern)
         except re.error as e:
             return SearchResult(error=f"Invalid regex: {e}")
-
-        search_root = self._expand_path(path)
-        if not search_root.exists():
-            return SearchResult(error=f"Search path not found: {path}")
-
-        matches = []
-        files = set()
-        counts = {}
-        total_count = 0
-        truncated = False
-
-        def get_files() -> "Iterator[Path]":
-            if not search_root.is_dir():
-                yield search_root
-                return
-            if file_glob:
-                yield from search_root.rglob(file_glob)
-            else:
-                yield from search_root.rglob("*")
-
-        def should_skip(p: Path) -> bool:
-            # 相对搜索根判定：若根本身位于某个点目录下，不应据此屏蔽根下所有文件。
-            return any(part.startswith(".") and len(part) > 1 for part in p.relative_to(search_root).parts[:-1])
-
-        scanned_count = 0
-        for p in get_files():
-            if not p.is_file() or should_skip(p):
-                continue
-
-            rel_path = str(p.relative_to(search_root)) if search_root.is_dir() else p.name
-
-            try:
-                content = p.read_text(encoding="utf-8", errors="replace")
-                lines = content.splitlines()
-                mtime = p.stat().st_mtime
-
-                file_match_count = 0
-                for i, line in enumerate(lines):
-                    if regex.search(line):
-                        if total_count >= offset and len(matches) < limit:
-                            start_ctx = max(0, i - context)
-                            end_ctx = min(len(lines), i + context + 1)
-                            match_content = "\n".join(
-                                f"{j + 1}{':' if j == i else '-'}{lines[j]}" for j in range(start_ctx, end_ctx)
-                            )
-                            matches.append(
-                                SearchMatch(path=rel_path, line_number=i + 1, content=match_content, mtime=mtime),
-                            )
-                            files.add(rel_path)
-                            file_match_count += 1
-
-                        total_count += 1
-                        if total_count > offset + limit:
-                            truncated = True
-                            break
-
-                if file_match_count > 0:
-                    counts[rel_path] = file_match_count
-
-            except (UnicodeDecodeError, OSError) as e:
-                logger.debug("search skipped unreadable file %s: %s", rel_path, e)
-                continue
-
-            scanned_count += 1
-            if truncated or scanned_count > 1000:
-                truncated = True
+        stop = offset + limit
+        matches: list[SearchMatch] = []
+        files: list[str] = []
+        counts: dict[str, int] = {}
+        seen = 0  # content 模式计匹配行，其他模式计命中文件
+        scanned = 0
+        skipped_large = 0
+        hint = None
+        for p, rel in _iter_files(root):
+            if seen > stop:
                 break
-
-        return SearchResult(
-            matches=matches,
-            files=list(files),
-            counts=counts,
-            total_count=total_count,
-            truncated=truncated,
-        )
-
-    def _search_files_by_name(self, pattern: str, path: str, limit: int, offset: int) -> SearchResult:
-        search_root = self._expand_path(path)
-        if not search_root.exists():
-            return SearchResult(error=f"Search path not found: {path}")
-
-        def should_skip(p: Path) -> bool:
-            return any(part.startswith(".") and len(part) > 1 for part in p.relative_to(search_root).parts[:-1])
-
-        candidates: Iterator[Path] = iter([search_root]) if not search_root.is_dir() else search_root.rglob("*")
-        hits: list[tuple[float, str]] = []
-        for p in candidates:
-            if not p.is_file() or should_skip(p):
+            if (file_glob and not _glob_match(rel, file_glob)) or has_binary_extension(p.name):
                 continue
-            rel_path = str(p.relative_to(search_root)) if search_root.is_dir() else p.name
-            if not fnmatch.fnmatch(rel_path, pattern):
-                continue
+            if scanned >= _MAX_SEARCH_FILES:
+                hint = (
+                    f"Stopped after scanning {_MAX_SEARCH_FILES} files, so results may be incomplete. "
+                    "Narrow the search with path or file_glob."
+                )
+                break
+            scanned += 1
             try:
-                mtime = p.stat().st_mtime
+                if p.stat().st_size > MAX_EDIT_BYTES:
+                    skipped_large += 1
+                    continue
+                data = p.read_bytes()
             except OSError:
-                logger.debug("search skipped unstatable file %s", rel_path)
                 continue
-            hits.append((mtime, rel_path))
-        hits.sort(reverse=True)
-        page = [rel for _, rel in hits[offset : offset + limit]]
-        return SearchResult(files=page, total_count=len(hits), truncated=len(hits) > offset + limit)
+            if b"\x00" in data[:8192]:
+                continue
+            lines = data.decode("utf-8", errors="replace").splitlines()
+            line_hits = [i for i, line in enumerate(lines) if regex.search(line)]
+            if not line_hits:
+                continue
+            if output_mode == "content":
+                for i in line_hits:
+                    if offset <= seen < stop:
+                        matches.append(
+                            SearchMatch(path=shown(rel), line_number=i + 1, content=_match_content(lines, i, context)),
+                        )
+                    seen += 1
+                    if seen > stop:
+                        break
+            else:
+                if offset <= seen < stop:
+                    files.append(shown(rel))
+                    counts[shown(rel)] = len(line_hits)
+                seen += 1
+        truncated = seen > stop
+        if skipped_large:
+            note = f"Skipped {skipped_large} file(s) larger than {MAX_EDIT_BYTES // (1024 * 1024)} MB."
+            hint = f"{hint} {note}" if hint else note
+        if output_mode == "files_only":
+            return SearchResult(files=files, total_count=seen, truncated=truncated, hint=hint)
+        if output_mode == "count":
+            return SearchResult(counts=counts, total_count=sum(counts.values()), truncated=truncated, hint=hint)
+        return SearchResult(matches=matches, total_count=seen, truncated=truncated, hint=hint)
 
-    def _exec(
-        self,
-        command: str,
-        cwd: str | None = None,
-        timeout: int = 60,
-        stdin_data: str | None = None,
-    ) -> ExecuteResult:
-        kwargs = {"shell": True, "text": True, "capture_output": True, "timeout": timeout}
-        if stdin_data is not None:
-            kwargs["input"] = stdin_data
+    def _exec(self, command: str, timeout: int | None = None) -> ExecuteResult:
         try:
-            result = subprocess.run(command, cwd=cwd or self.cwd, **kwargs)
-            return ExecuteResult(stdout=result.stdout, exit_code=result.returncode)
+            result = subprocess.run(
+                command,
+                shell=True,
+                cwd=self.env.cwd,
+                stdin=subprocess.DEVNULL,
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=timeout or 60,
+                creationflags=CREATE_NO_WINDOW,
+            )
         except subprocess.TimeoutExpired as e:
-            # POSIX 上 TimeoutExpired.stdout 是原始 bytes（decode 发生在 communicate 正常返回时, 超时路径不走）。
-            stdout = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode("utf-8", errors="replace")
-            return ExecuteResult(stdout=stdout, exit_code=124)
-        except Exception as e:
+            # POSIX 上超时异常携带的是未解码的 bytes。
+            out = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode("utf-8", errors="replace")
+            return ExecuteResult(stdout=out, exit_code=124)
+        except OSError as e:
             return ExecuteResult(stdout=str(e), exit_code=1)
+        return ExecuteResult(stdout=result.stdout, exit_code=result.returncode)
 
     def _has_command(self, cmd: str) -> bool:
         return shutil.which(cmd) is not None
 
     def _escape_shell_arg(self, arg: str) -> str:
-        # Windows 上 shell=True 走 cmd.exe, 单引号不是引用字符, 必须用双引号规则转义。
+        # Windows 上 shell=True 走 cmd.exe，单引号不是引用字符，必须用双引号规则转义。
         return subprocess.list2cmdline([arg]) if IS_WINDOWS else shlex.quote(arg)
-
-    def _check_lint(self, path: str, content: str | None = None) -> LintResult:
-        ext = os.path.splitext(path)[1].lower()
-        inproc = LINTERS_INPROC.get(ext)
-        if inproc is not None:
-            if content is None:
-                try:
-                    content = Path(path).read_text(encoding="utf-8", errors="replace")
-                except Exception as e:
-                    return LintResult(skipped=True, message=f"Failed to read {path} for lint: {e}")
-            ok, err = inproc(content)
-            return LintResult(success=ok, output="" if ok else err)
-        if ext not in LINTERS:
-            return LintResult(skipped=True, message=f"No linter for {ext} files")
-        linter_cmd = LINTERS[ext]
-        base_cmd = linter_cmd.split()[0]
-        if not self._has_command(base_cmd):
-            return LintResult(skipped=True, message=f"{base_cmd} not available")
-        cmd = linter_cmd.replace("{file}", self._escape_shell_arg(path))
-        result = self._exec(cmd, timeout=30)
-        if result.exit_code != 0 and _looks_like_linter_unusable(base_cmd, result.stdout):
-            cleaned = strip_ansi(result.stdout).strip()
-            first_line = next((ln.strip() for ln in cleaned.splitlines() if ln.strip()), cleaned[:120])
-            return LintResult(skipped=True, message=f"{base_cmd} not usable: {first_line[:200]}")
-        return LintResult(success=result.exit_code == 0, output=result.stdout.strip() if result.stdout.strip() else "")
-
-    def _check_lint_delta(self, path: str, pre_content: str | None, post_content: str | None = None) -> LintResult:
-        post = self._check_lint(path, content=post_content)
-        if post.success or post.skipped:
-            return post
-        if pre_content is None:
-            return post
-        pre = self._check_lint(path, content=pre_content)
-        if pre.success or pre.skipped or not pre.output:
-            return post
-        pre_lines = {ln.strip() for ln in pre.output.splitlines() if ln.strip()}
-        post_lines = [ln for ln in post.output.splitlines() if ln.strip() and ln.strip() not in pre_lines]
-        if not post_lines:
-            return LintResult(
-                success=False,
-                output=post.output,
-                message="Pre-existing lint errors — this edit didn't introduce new ones but the file is still broken.",
-            )
-        return LintResult(
-            success=False,
-            output=(
-                "New lint errors introduced by this edit (pre-existing errors filtered out):\n" + "\n".join(post_lines)
-            ),
-        )

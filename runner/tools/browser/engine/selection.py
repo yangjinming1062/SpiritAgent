@@ -4,17 +4,19 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+# 点开自定义下拉后等待展开动画的时长。
+_CUSTOM_DROPDOWN_OPEN_DELAY_S = 0.5
+
 
 def select_option_with_eval(
-    eval_fn: Callable[[str], str | dict[str, Any]],
+    eval_fn: Callable[[str], dict[str, Any]],
     ref: str,
     *,
     value: str | None = None,
     label: str | None = None,
     index: int | None = None,
-    open_delay_s: float = 0.5,
 ) -> dict[str, Any]:
-    """在 <select> 或自定义下拉菜单中选择目标项。"""
+    """在 <select> 或自定义下拉菜单中选择目标项；eval_fn 为 supervisor.evaluate_runtime。"""
     if value is None and label is None and index is None:
         return {"success": False, "error": "At least one of `value`, `label`, or `index` must be provided."}
 
@@ -49,21 +51,11 @@ def select_option_with_eval(
         "})()"
     )
 
-    raw_eval = eval_fn(select_js)
-    if isinstance(raw_eval, str):
-        try:
-            parsed = json.loads(raw_eval)
-        except Exception:
-            return {"success": False, "error": "browser_select: failed to parse JS evaluation output"}
-    elif isinstance(raw_eval, dict):
-        parsed = raw_eval
-    else:
-        return {"success": False, "error": "browser_select: unexpected evaluation result"}
-
-    if isinstance(parsed, dict) and parsed.get("ok") is False:
+    parsed = eval_fn(select_js)
+    if not parsed.get("ok"):
         return {"success": False, "error": f"browser_select: CDP eval failed: {parsed.get('error', 'unknown')}"}
 
-    result = parsed.get("result", parsed) if isinstance(parsed, dict) else {}
+    result = parsed.get("result")
     if not isinstance(result, dict):
         return {"success": False, "error": "browser_select: invalid result payload"}
 
@@ -83,7 +75,7 @@ def select_option_with_eval(
         return {"success": False, "error": f"browser_select: element {ref} not found. Run browser_snapshot first."}
 
     # 自定义下拉：等待动画展开并查找 option
-    time.sleep(min(0.5, max(0.1, open_delay_s)))
+    time.sleep(_CUSTOM_DROPDOWN_OPEN_DELAY_S)
     if index is not None and value is None and label is None:
         custom_match_js = f"if(i==={index}&&o.getBoundingClientRect().width>0){{o.click();return{{_:'custom',text:o.textContent.trim()}};}}"
     else:
@@ -106,21 +98,12 @@ def select_option_with_eval(
         "})()"
     )
 
-    kb_raw = eval_fn(kb_js)
-    # 所有出口（成功 / no_match / parse 失败 / 未匹配）都清掉 window 上的强引用，
-    # 防止被引用 DOM 节点驻留。每次 select 都重新设置，不依赖上一次的状态。
+    # 所有出口都清掉 window 上的触发元素引用，防止被引用 DOM 节点驻留。
     try:
-        if isinstance(kb_raw, str):
-            try:
-                kb_parsed = json.loads(kb_raw)
-            except Exception:
-                return {"success": False, "error": "browser_select: failed to parse custom dropdown result"}
-        elif isinstance(kb_raw, dict):
-            kb_parsed = kb_raw
-        else:
-            kb_parsed = {}
-
-        kb_result = kb_parsed.get("result", kb_parsed) if isinstance(kb_parsed, dict) else {}
+        kb_parsed = eval_fn(kb_js)
+        if not kb_parsed.get("ok"):
+            return {"success": False, "error": f"browser_select: CDP eval failed: {kb_parsed.get('error', 'unknown')}"}
+        kb_result = kb_parsed.get("result")
         if isinstance(kb_result, dict) and kb_result.get("_") == "custom":
             return {"success": True, "selected": kb_result.get("text"), "method": "custom_click"}
         if isinstance(kb_result, dict) and kb_result.get("_") == "no_trigger":

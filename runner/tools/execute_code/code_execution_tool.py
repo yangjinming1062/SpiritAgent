@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import secrets
+import select
 import shlex
 import shutil
 import socket
@@ -16,23 +17,15 @@ import time
 import uuid
 from collections import deque
 from collections.abc import Mapping
-from typing import Any
+from typing import IO, Any, Literal
 
-from envs import (
-    active_environments,
-    create_environment,
-    creation_locks,
-    creation_locks_lock,
-    env_lock,
-    get_env_config,
-    last_activity,
-    resolve_container_task_id,
-    start_cleanup_thread,
-)
+from envs import get_env_config, get_or_create_environment
 from utils import (
     CREATE_NO_WINDOW,
     IS_WINDOWS,
     cfg_get,
+    cfg_int,
+    cfg_str,
     clean_output,
     find_python,
     get_subprocess_home,
@@ -50,15 +43,18 @@ logger = logging.getLogger(__name__)
 EXECUTION_MODES = ("project", "strict")
 DEFAULT_EXECUTION_MODE = "project"
 
-SANDBOX_ALLOWED_TOOLS = frozenset(["read_file", "write_file", "search_files", "patch", "terminal"])
-
 DEFAULT_TIMEOUT = 300
 
 DEFAULT_MAX_TOOL_CALLS = 50
 
 MAX_STDOUT_BYTES = 50_000
+_STDOUT_HEAD_BYTES = int(MAX_STDOUT_BYTES * 0.4)
+_STDOUT_TAIL_BYTES = MAX_STDOUT_BYTES - _STDOUT_HEAD_BYTES
 
 MAX_STDERR_BYTES = 10_000
+
+# 本机 RPC 线程的轮询粒度：关闭监听 socket 不能可靠唤醒阻塞中的 accept，靠短超时检查停止信号。
+_RPC_POLL_SECONDS = 0.2
 
 _SAFE_ENV_PREFIXES = (
     "PATH",
@@ -80,9 +76,7 @@ _SAFE_ENV_PREFIXES = (
 
 _SECRET_SUBSTRINGS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "CREDENTIAL", "PASSWD", "AUTH", "DSN", "WEBHOOK")
 
-SPIRITAGENT_CHILD_ALLOWED = frozenset(
-    {"SPIRITAGENT_HOME", "SPIRITAGENT_PROFILE", "SPIRITAGENT_CONFIG", "SPIRITAGENT_ENV"},
-)
+SPIRITAGENT_CHILD_ALLOWED = frozenset({"SPIRITAGENT_HOME"})
 
 _WINDOWS_ESSENTIAL_ENV_VARS = frozenset(
     {
@@ -134,41 +128,34 @@ def _scrub_child_env(source_env: Mapping[str, str]) -> dict[str, str]:
             _dropped_spiritagent.append(k)
     if _dropped_spiritagent:
         logger.debug(
-            "execute_code: dropped %d non-allowlisted SPIRITAGENT_* var(s) from the "
-            "sandbox child env (%s). This is intentional hardening (#27303); if "
-            "a sandbox script legitimately needs one, declare it via "
-            "env_passthrough in the skill/config so it passes by explicit opt-in.",
+            "execute_code: dropped %d non-allowlisted SPIRITAGENT_* var(s) from the sandbox child env (%s); "
+            "declare them in env_passthrough to pass them through.",
             len(_dropped_spiritagent),
             ", ".join(sorted(_dropped_spiritagent)),
         )
     return scrubbed
 
 
-_TOOL_STUBS = {
+# 工具名 → (桩函数签名, docstring, 转发参数表达式)；桩函数名与工具名相同。
+_TOOL_STUBS: dict[str, tuple[str, str, str]] = {
     "read_file": (
-        "read_file",
         "path: str, offset: int = 1, limit: int = 500",
-        '"""Read a file (1-indexed lines). Returns dict with "content" and "total_lines"."""',
+        '"""Read a text file (1-indexed lines). Returns dict with "content" (lines prefixed "N|") and "total_lines"."""',
         '{"path": path, "offset": offset, "limit": limit}',
     ),
     "write_file": (
-        "write_file",
-        "path: str, content: str, cross_profile: bool = False",
-        (
-            '"""Write content to a file (always overwrites). Returns dict with status. '
-            'cross_profile=True opts out of the cross-SpiritAgent-profile soft guard."""'
-        ),
-        '{"path": path, "content": content, "cross_profile": cross_profile}',
+        "path: str, content: str",
+        '"""Write content to a file (always overwrites)."""',
+        '{"path": path, "content": content}',
     ),
     "search_files": (
-        "search_files",
         (
             'pattern: str, target: str = "content", path: str = ".", file_glob: str = None, '
             'limit: int = 50, offset: int = 0, output_mode: str = "content", context: int = 0'
         ),
         (
-            '"""Search file contents (target="content") or find files by name '
-            '(target=\'files\'). Returns dict with "matches"."""'
+            '"""Search file contents (target="content") or find files by name (target="files"). '
+            'Returns dict with "total_count" plus "matches" or "files" (omitted when empty)."""'
         ),
         (
             '{"pattern": pattern, "target": target, "path": path, "file_glob": file_glob, '
@@ -176,43 +163,32 @@ _TOOL_STUBS = {
         ),
     ),
     "patch": (
-        "patch",
         (
             "path: str = None, old_string: str = None, new_string: str = None, "
-            'replace_all: bool = False, mode: str = "replace", patch: str = None, '
-            "cross_profile: bool = False"
+            'replace_all: bool = False, mode: str = "replace", patch: str = None'
         ),
-        (
-            '"""Targeted find-and-replace (mode="replace") or V4A multi-file patches '
-            '(mode="patch"). Returns dict with status. cross_profile=True opts out of the '
-            'cross-SpiritAgent-profile soft guard."""'
-        ),
+        '"""Targeted find-and-replace (mode="replace") or V4A multi-file patches (mode="patch")."""',
         (
             '{"path": path, "old_string": old_string, "new_string": new_string, '
-            '"replace_all": replace_all, "mode": mode, "patch": patch, '
-            '"cross_profile": cross_profile}'
+            '"replace_all": replace_all, "mode": mode, "patch": patch}'
         ),
     ),
     "terminal": (
-        "terminal",
         "command: str, timeout: int = None, workdir: str = None",
         '"""Run a shell command (foreground only). Returns dict with "output" and "exit_code"."""',
         '{"command": command, "timeout": timeout, "workdir": workdir}',
     ),
 }
 
+SANDBOX_ALLOWED_TOOLS = frozenset(_TOOL_STUBS)
 
-def generate_spiritagent_tools_module(transport: str = "uds") -> str:
+
+def generate_spiritagent_tools_module(transport: Literal["uds", "file"]) -> str:
     """为 sandbox 子进程生成 ``spiritagent_tools`` 桩模块(选 UDS / file 传输头)。"""
-    tools_to_generate = sorted(SANDBOX_ALLOWED_TOOLS)
-    stub_functions = []
-    export_names = []
-    for tool_name in tools_to_generate:
-        if tool_name not in _TOOL_STUBS:
-            continue
-        func_name, sig, doc, args_expr = _TOOL_STUBS[tool_name]
-        stub_functions.append(f"def {func_name}({sig}):\n    {doc}\n    return _call({func_name!r}, {args_expr})\n")
-        export_names.append(func_name)
+    stub_functions = [
+        f"def {name}({sig}):\n    {doc}\n    return _call({name!r}, {args_expr})\n"
+        for name, (sig, doc, args_expr) in sorted(_TOOL_STUBS.items())
+    ]
     header = _FILE_TRANSPORT_HEADER if transport == "file" else _UDS_TRANSPORT_HEADER
     return header + "\n".join(stub_functions)
 
@@ -243,19 +219,17 @@ def shell_quote(s: str) -> str:
     return shlex.quote(s)
 
 def retry(fn, max_attempts=3, delay=2):
-    """Retry a function up to max_attempts times with exponential backoff.
-    Use for transient failures (network errors, API rate limits):
-        result = retry(lambda: terminal("gh issue list ..."))
+    """Call fn, retrying with exponential backoff only when it raises.
+    Tool helpers report failures as a dict with an "error" key instead of
+    raising, so check their results yourself. retry does not judge whether
+    repeating an operation is safe.
     """
-    last_err = None
-    for attempt in range(max_attempts):
+    for attempt in range(max_attempts - 1):
         try:
             return fn()
-        except Exception as e:
-            last_err = e
-            if attempt < max_attempts - 1:
-                time.sleep(delay * (2 ** attempt))
-    raise last_err
+        except Exception:
+            time.sleep(delay * (2 ** attempt))
+    return fn()
 
 '''
 
@@ -269,30 +243,19 @@ _sock = None
 _call_lock = threading.Lock()
 
 def _connect():
-    """Connect to the parent's RPC server via the transport it picked.
-
-    SPIRITAGENT_RPC_SOCKET can be either:
-      - a filesystem path (POSIX Unix domain socket — the default on
-        macOS)
-      - a string of the form ``tcp://127.0.0.1:<port>`` (Windows, where
-        AF_UNIX is unreliable — the parent falls back to loopback TCP)
-    """
+    """Connect to the parent's RPC endpoint: a Unix socket path, or tcp://127.0.0.1:<port> on Windows."""
     global _sock
     if _sock is None:
         endpoint = os.environ["SPIRITAGENT_RPC_SOCKET"]
         if endpoint.startswith("tcp://"):
-            # tcp://host:port  (host is always 127.0.0.1 in practice — we
-            # only bind loopback server-side)
-            _host_port = endpoint[len("tcp://"):]
-            _host, _, _port = _host_port.rpartition(":")
+            _host, _, _port = endpoint[len("tcp://"):].rpartition(":")
             _sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             _sock.connect((_host or "127.0.0.1", int(_port)))
         else:
             _sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             _sock.connect(endpoint)
         _sock.settimeout(300)
-        # First line on the wire authenticates this sandbox to the parent's RPC
-        # listener; unauthenticated local connections are dropped server-side.
+        # The first line authenticates this sandbox; the parent drops connections without it.
         _sock.sendall((json.dumps({"auth": _RPC_TOKEN}) + "\\n").encode())
     return _sock
 
@@ -340,9 +303,7 @@ def _call(tool_name, args):
     req_file = os.path.join(_RPC_DIR, f"req_{seq_str}")
     res_file = os.path.join(_RPC_DIR, f"res_{seq_str}")
 
-    # encoding="utf-8" is critical: on Windows-hosted remote backends
-    # (or any non-UTF-8 locale) the default open() mode would mangle
-    # non-ASCII chars in tool args when encoding them as JSON.
+    # encoding="utf-8": a non-UTF-8 locale would otherwise mangle non-ASCII tool args.
     tmp = req_file + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump({"tool": tool_name, "args": args, "seq": seq, "token": _RPC_TOKEN}, f)
@@ -375,7 +336,36 @@ def _call(tool_name, args):
 '''
 )
 
-_TERMINAL_BLOCKED_PARAMS = {"background", "pty", "notify_on_complete", "watch_patterns"}
+_TERMINAL_BLOCKED_PARAMS = {"background", "pty"}
+
+
+def _token_matches(candidate: object, expected_token: str) -> bool:
+    return isinstance(candidate, str) and secrets.compare_digest(candidate.encode(), expected_token.encode())
+
+
+def _dispatch_sandbox_call(
+    request: object,
+    task_id: str,
+    tool_call_counter: list[int],
+    max_tool_calls: int,
+) -> str:
+    """执行沙箱发来的一次工具调用，返回 JSON 字符串；工具集禁用由 ``registry.dispatch`` 与直接调用同样执行。"""
+    if not isinstance(request, dict):
+        return tool_error("Invalid RPC request: expected a JSON object.")
+    tool_name = request.get("tool")
+    if not isinstance(tool_name, str) or tool_name not in SANDBOX_ALLOWED_TOOLS:
+        available = ", ".join(sorted(SANDBOX_ALLOWED_TOOLS))
+        return tool_error(f"Tool '{tool_name}' is not available in execute_code. Available: {available}")
+    tool_args = request.get("args")
+    if not isinstance(tool_args, dict):
+        return tool_error("Tool 'args' must be an object.")
+    if tool_call_counter[0] >= max_tool_calls:
+        return tool_error(f"Tool call limit reached ({max_tool_calls}). No more tool calls allowed in this execution.")
+    if tool_name == "terminal":
+        for param in _TERMINAL_BLOCKED_PARAMS:
+            tool_args.pop(param, None)
+    tool_call_counter[0] += 1
+    return registry.dispatch(tool_name, tool_args, task_id=task_id)
 
 
 def _read_conn_line(conn: socket.socket, buf: bytes) -> tuple[bytes | None, bytes]:
@@ -392,178 +382,115 @@ def _read_conn_line(conn: socket.socket, buf: bytes) -> tuple[bytes | None, byte
     return line, rest
 
 
+def _is_auth_frame(line: bytes, expected_token: str) -> bool:
+    try:
+        frame = json.loads(line)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return False
+    return isinstance(frame, dict) and _token_matches(frame.get("auth"), expected_token)
+
+
 def _rpc_server_loop(
     server_sock: socket.socket,
     task_id: str,
     tool_call_counter: list[int],
     max_tool_calls: int,
-    allowed_tools: frozenset[str],
     expected_token: str,
-    accept_window: float,
+    stop_event: threading.Event,
 ) -> None:
-    """本机沙箱的父进程侧 RPC 监听循环: accept 一条已认证连接 + 串行派发工具调用。"""
-    conn = None
+    """本机沙箱的父进程侧 RPC：只接受首帧携带本次 token 的一条连接，串行派发其工具调用，直到脚本结束。"""
+    conn: socket.socket | None = None
+    buf = b""
     try:
-        # 子进程可能先做长时间初始化才发起第一次工具调用, accept 窗口跟随脚本超时而不是固定几秒;
-        # 脚本结束后 server_sock 被主流程关闭, 阻塞中的 accept 以 OSError 退出。
-        server_sock.settimeout(accept_window)
-        # Windows 上端点是 loopback TCP, 没有文件系统权限, 因此首行必须做沙箱认证;
-        # 拒绝的连接立即关闭、监听继续接收 — 否则任何本地进程都能抢这个独享 RPC 槽位。
-        while True:
-            try:
-                conn, _ = server_sock.accept()
-            except TimeoutError:
+        server_sock.settimeout(_RPC_POLL_SECONDS)
+        while conn is None:
+            if stop_event.is_set():
                 return
-            conn.settimeout(5)
-            line, buf = _read_conn_line(conn, b"")
             try:
-                authed = line is not None and json.loads(line.decode()).get("auth") == expected_token
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                authed = False
-            if authed:
-                break
-            logger.debug("execute_code RPC: rejected unauthenticated connection")
-            conn.close()
-            conn = None
-        conn.settimeout(300)
-        # 先把可能和 auth 行 pipeline 一同到达的请求行消费掉, 再开始等新数据。
+                candidate, _ = server_sock.accept()
+            except TimeoutError:
+                continue
+            # Windows 端点是没有文件权限保护的 loopback TCP；未通过首帧鉴权的连接立即关闭，监听继续。
+            candidate.settimeout(5)
+            line, buf = _read_conn_line(candidate, b"")
+            if line is not None and _is_auth_frame(line, expected_token):
+                conn = candidate
+            else:
+                logger.debug("execute_code RPC: rejected unauthenticated connection")
+                candidate.close()
+        # 连接保持阻塞以便大结果完整发送；等待请求时用 select 轮询停止信号。脚本退出或被终止时连接随之关闭。
+        conn.settimeout(None)
         while True:
+            # 先消费可能与鉴权行一同到达的请求行，再等新数据。
             while b"\n" in buf:
                 line, buf = buf.split(b"\n", 1)
-                line = line.strip()
-                if not line:
+                if not (line := line.strip()):
                     continue
                 try:
-                    request = json.loads(line.decode())
+                    request = json.loads(line)
                 except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-                    resp = tool_error(f"Invalid RPC request: {exc}")
-                    conn.sendall((resp + "\n").encode())
-                    continue
-                tool_name = request.get("tool", "")
-                tool_args = request.get("args", {})
-                if tool_name not in allowed_tools:
-                    available = ", ".join(sorted(allowed_tools))
-                    resp = json.dumps(
-                        {"error": (f"Tool '{tool_name}' is not available in execute_code. Available: {available}")},
-                    )
-                    conn.sendall((resp + "\n").encode())
-                    continue
-                if tool_call_counter[0] >= max_tool_calls:
-                    resp = json.dumps(
-                        {
-                            "error": (
-                                f"Tool call limit reached ({max_tool_calls}). "
-                                "No more tool calls allowed in this execution."
-                            ),
-                        },
-                    )
-                    conn.sendall((resp + "\n").encode())
-                    continue
-                if tool_name == "terminal" and isinstance(tool_args, dict):
-                    for param in _TERMINAL_BLOCKED_PARAMS:
-                        tool_args.pop(param, None)
-                try:
-                    _real_stdout, _real_stderr = sys.stdout, sys.stderr
-                    with open(os.devnull, "w", encoding="utf-8") as devnull:
-                        try:
-                            sys.stdout = devnull
-                            sys.stderr = devnull
-                            result = registry.dispatch(tool_name, tool_args, task_id=task_id)
-                        finally:
-                            sys.stdout, sys.stderr = _real_stdout, _real_stderr
-                except Exception as exc:
-                    logger.error("Tool call failed in sandbox: %s", exc, exc_info=True)
-                    result = tool_error(str(exc))
-                tool_call_counter[0] += 1
+                    result = tool_error(f"Invalid RPC request: {exc}")
+                else:
+                    result = _dispatch_sandbox_call(request, task_id, tool_call_counter, max_tool_calls)
                 conn.sendall((result + "\n").encode())
-            try:
-                chunk = conn.recv(65536)
-            except TimeoutError:
-                break
-            if not chunk:
-                break
+            if not select.select([conn], [], [], _RPC_POLL_SECONDS)[0]:
+                if stop_event.is_set():
+                    return
+                continue
+            if not (chunk := conn.recv(65536)):
+                return
             buf += chunk
-    except TimeoutError:
-        logger.debug("RPC listener socket timeout")
     except OSError as e:
-        logger.debug("RPC listener socket error: %s", e, exc_info=True)
+        logger.debug("execute_code RPC listener stopped: %s", e, exc_info=True)
     finally:
-        if conn:
-            try:
+        if conn is not None:
+            with contextlib.suppress(OSError):
                 conn.close()
-            except OSError as e:
-                logger.debug("RPC conn close error: %s", e)
 
 
-def _get_or_create_env(task_id: str) -> tuple[Any, str]:
-    """获取或按需创建 task_id 对应的沙箱 Environment(双检锁, 避免重复创建)。"""
-    effective_task_id = resolve_container_task_id(task_id)
-    with env_lock:
-        if effective_task_id in active_environments:
-            last_activity[effective_task_id] = time.time()
-            return active_environments[effective_task_id], get_env_config()["env_type"]
-    with creation_locks_lock:
-        if effective_task_id not in creation_locks:
-            creation_locks[effective_task_id] = threading.Lock()
-        task_lock = creation_locks[effective_task_id]
-    with task_lock:
-        with env_lock:
-            if effective_task_id in active_environments:
-                last_activity[effective_task_id] = time.time()
-                return active_environments[effective_task_id], get_env_config()["env_type"]
-        config = get_env_config()
-        env_type = config["env_type"]
-        cwd = config["cwd"]
-        ssh_config = None
-        if env_type == "ssh":
-            ssh_config = {
-                "host": config.get("ssh_host", ""),
-                "user": config.get("ssh_user", ""),
-                "port": config.get("ssh_port", 22),
-                "key": config.get("ssh_key", ""),
-                "password": config.get("ssh_password", ""),
-                "persistent": config.get("ssh_persistent", False),
-            }
-        local_config = None
-        if env_type == "local":
-            local_config = {"persistent": config.get("local_persistent", False)}
-        logger.info("Creating new %s environment for execute_code task %s...", env_type, effective_task_id[:8])
-        env = create_environment(
-            env_type=env_type,
-            cwd=cwd,
-            timeout=config["timeout"],
-            ssh_config=ssh_config,
-            local_config=local_config,
-        )
-        with env_lock:
-            active_environments[effective_task_id] = env
-            last_activity[effective_task_id] = time.time()
-        start_cleanup_thread()
-        logger.info("%s environment ready for execute_code task %s", env_type, effective_task_id[:8])
-        return env, env_type
+# 远程沙箱的辅助命令都不传 cwd：env.execute 会把命令结束时的目录记为终端会话目录，
+# 在会话目录里执行才不会把用户的终端目录改掉。内容经 stdin 传输，避开命令行长度上限。
 
 
 def _ship_file_to_remote(env: Any, remote_path: str, content: str) -> None:
-    """通过 base64 把一段文本内容投递到沙箱里的 remote_path, 避开 shell 转义的所有坑。"""
+    """把文本内容写到远程沙箱的 remote_path；经 base64 + stdin 传输，避开转义与命令行长度限制。"""
     encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
-    quoted_remote_path = shlex.quote(remote_path)
-    env.execute(f"echo '{encoded}' | base64 -d > {quoted_remote_path}", cwd="/", timeout=30)
+    result = env.execute(f"base64 -d > {shlex.quote(remote_path)}", stdin_data=encoded, timeout=30)
+    if result.get("returncode") != 0:
+        raise RuntimeError(f"Failed to write {remote_path}: {result.get('output', '').strip()}")
 
 
-def _env_temp_dir(env: Any) -> str:
-    """返回 env 后端可写的临时目录(优先 ``env.get_temp_dir()``, 回落到 ``tempfile.gettempdir()`` / ``/tmp``)。"""
-    get_temp_dir = getattr(env, "get_temp_dir", None)
-    if callable(get_temp_dir):
-        try:
-            temp_dir = get_temp_dir()
-            if isinstance(temp_dir, str) and temp_dir.startswith("/"):
-                return temp_dir.rstrip("/") or "/"
-        except Exception as exc:
-            logger.debug("Could not resolve execute_code env temp dir: %s", exc)
-    candidate = tempfile.gettempdir()
-    if isinstance(candidate, str) and candidate.startswith("/"):
-        return candidate.rstrip("/") or "/"
-    return "/tmp"
+def _serve_remote_request(
+    env: Any,
+    rpc_dir: str,
+    req_file: str,
+    task_id: str,
+    tool_call_counter: list[int],
+    max_tool_calls: int,
+    expected_token: str,
+) -> None:
+    quoted_req_file = shlex.quote(req_file)
+    raw = env.execute(f"cat {quoted_req_file}", timeout=10).get("output", "")
+    # 读到即删：后续任一步失败都不会让同一请求在下一轮轮询被重复执行。
+    env.execute(f"rm -f {quoted_req_file}", timeout=5)
+    try:
+        request = json.loads(raw)
+    except json.JSONDecodeError:
+        logger.debug("Malformed RPC request in %s", req_file)
+        return
+    if not isinstance(request, dict) or not _token_matches(request.get("token"), expected_token):
+        logger.debug("execute_code RPC: dropped unauthenticated request %s", req_file)
+        return
+    if type(seq := request.get("seq")) is not int or seq < 0:
+        logger.debug("execute_code RPC: dropped request %s without a valid seq", req_file)
+        return
+    tool_result = _dispatch_sandbox_call(request, task_id, tool_call_counter, max_tool_calls)
+    quoted_res_file = shlex.quote(f"{rpc_dir}/res_{seq:06d}")
+    env.execute(
+        f"base64 -d > {quoted_res_file}.tmp && mv {quoted_res_file}.tmp {quoted_res_file}",
+        stdin_data=base64.b64encode(tool_result.encode("utf-8")).decode("ascii"),
+        timeout=60,
+    )
 
 
 def _rpc_poll_loop(
@@ -572,163 +499,140 @@ def _rpc_poll_loop(
     task_id: str,
     tool_call_counter: list[int],
     max_tool_calls: int,
-    allowed_tools: frozenset[str],
     stop_event: threading.Event,
     expected_token: str,
 ) -> None:
     """远程沙箱的 RPC 轮询循环(基于文件 req/res), 触发父进程派发工具调用并写回响应文件。"""
     poll_interval = 0.1
     quoted_rpc_dir = shlex.quote(rpc_dir)
+    req_prefix = f"{rpc_dir}/req_"
     while not stop_event.is_set():
         try:
-            ls_result = env.execute(f"ls -1 {quoted_rpc_dir}/req_* 2>/dev/null || true", cwd="/", timeout=10)
-            output = ls_result.get("output", "").strip()
-            if not output:
-                stop_event.wait(poll_interval)
-                continue
+            listing = env.execute(f"ls -1 {quoted_rpc_dir}/req_* 2>/dev/null || true", timeout=10).get("output", "")
             req_files = sorted(
-                [
-                    f.strip()
-                    for f in output.split("\n")
-                    if f.strip() and not f.strip().endswith(".tmp") and "/req_" in f.strip()
-                ],
+                f
+                for raw in listing.splitlines()
+                if (f := raw.strip()).startswith(req_prefix) and not f.endswith(".tmp")
             )
             for req_file in req_files:
                 if stop_event.is_set():
                     break
-                quoted_req_file = shlex.quote(req_file)
-                read_result = env.execute(f"cat {quoted_req_file}", cwd="/", timeout=10)
-                try:
-                    request = json.loads(read_result.get("output", ""))
-                except (json.JSONDecodeError, ValueError):
-                    logger.debug("Malformed RPC request in %s", req_file)
-                    env.execute(f"rm -f {quoted_req_file}", cwd="/", timeout=5)
-                    continue
-                tool_name = request.get("tool", "")
-                tool_args = request.get("args", {})
-                seq = request.get("seq", 0)
-                seq_str = f"{seq:06d}"
-                res_file = f"{rpc_dir}/res_{seq_str}"
-                quoted_res_file = shlex.quote(res_file)
-                if request.get("token") != expected_token:
-                    # 沙箱侧认证: 与 TCP/UDS 路径同理, 不认证就拒, 防止沙箱内的恶意脚本冒充其他会话触发工具调用。
-                    logger.debug("execute_code RPC: dropped unauthenticated request %s", req_file)
-                    env.execute(f"rm -f {quoted_req_file}", cwd="/", timeout=5)
-                    continue
-                if tool_name not in allowed_tools:
-                    available = ", ".join(sorted(allowed_tools))
-                    tool_result = json.dumps(
-                        {"error": (f"Tool '{tool_name}' is not available in execute_code. Available: {available}")},
-                    )
-                elif tool_call_counter[0] >= max_tool_calls:
-                    tool_result = json.dumps(
-                        {
-                            "error": (
-                                f"Tool call limit reached ({max_tool_calls}). "
-                                "No more tool calls allowed in this execution."
-                            ),
-                        },
-                    )
-                else:
-                    if tool_name == "terminal" and isinstance(tool_args, dict):
-                        for param in _TERMINAL_BLOCKED_PARAMS:
-                            tool_args.pop(param, None)
-                    try:
-                        _real_stdout, _real_stderr = sys.stdout, sys.stderr
-                        with open(os.devnull, "w", encoding="utf-8") as devnull:
-                            try:
-                                sys.stdout = devnull
-                                sys.stderr = devnull
-                                tool_result = registry.dispatch(tool_name, tool_args, task_id=task_id)
-                            finally:
-                                sys.stdout, sys.stderr = _real_stdout, _real_stderr
-                    except Exception as exc:
-                        logger.error("Tool call failed in remote sandbox: %s", exc, exc_info=True)
-                        tool_result = tool_error(str(exc))
-                    tool_call_counter[0] += 1
-                encoded_result = base64.b64encode(tool_result.encode("utf-8")).decode("ascii")
-                env.execute(
-                    (
-                        f"echo '{encoded_result}' | base64 -d > {quoted_res_file}.tmp && "
-                        f"mv {quoted_res_file}.tmp {quoted_res_file}"
-                    ),
-                    cwd="/",
-                    timeout=60,
+                _serve_remote_request(
+                    env,
+                    rpc_dir,
+                    req_file,
+                    task_id,
+                    tool_call_counter,
+                    max_tool_calls,
+                    expected_token,
                 )
-                env.execute(f"rm -f {quoted_req_file}", cwd="/", timeout=5)
         except Exception as e:
             if not stop_event.is_set():
                 logger.debug("RPC poll error: %s", e, exc_info=True)
-        if not stop_event.is_set():
-            stop_event.wait(poll_interval)
+        stop_event.wait(poll_interval)
 
 
-def _execute_remote(code: str) -> str:
+def _truncation_notice(omitted: int, total: int) -> str:
+    return f"\n\n... [OUTPUT TRUNCATED - {omitted:,} chars omitted out of {total:,} total] ...\n\n"
+
+
+def _error_result(error: str, tool_calls: int, duration: float) -> str:
+    return json.dumps(
+        {"status": "error", "error": error, "tool_calls_made": tool_calls, "duration_seconds": duration},
+        ensure_ascii=False,
+    )
+
+
+def _build_result(
+    *,
+    status: str,
+    output: str,
+    stderr: str,
+    exit_code: int,
+    timeout: int,
+    tool_calls: int,
+    duration: float,
+) -> str:
+    output = clean_output(output)
+    stderr = clean_output(stderr)
+    result: dict[str, Any] = {
+        "status": status,
+        "output": output,
+        "tool_calls_made": tool_calls,
+        "duration_seconds": duration,
+    }
+    if status == "timeout":
+        timeout_msg = f"Script timed out after {timeout}s and was killed."
+        result["error"] = timeout_msg
+        result["output"] = f"{output}\n\n⏰ {timeout_msg}" if output else f"⏰ {timeout_msg}"
+        logger.warning(
+            "execute_code timed out after %ss (limit %ss) with %d tool calls",
+            duration,
+            timeout,
+            tool_calls,
+        )
+    elif status == "interrupted":
+        result["output"] = output + "\n[execution interrupted]"
+    elif exit_code != 0:
+        result["status"] = "error"
+        result["error"] = stderr or f"Script exited with code {exit_code}"
+        if stderr:
+            result["output"] = output + "\n--- stderr ---\n" + stderr
+    return json.dumps(result, ensure_ascii=False)
+
+
+def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> str:
     """在 SSH 沙箱后端里执行 ``code``; 通过文件 RPC 转发工具调用。"""
-    _cfg = _load_config()
-    timeout = _cfg.get("timeout", DEFAULT_TIMEOUT)
-    max_tool_calls = _cfg.get("max_tool_calls", DEFAULT_MAX_TOOL_CALLS)
-    effective_task_id = "default"
-    env, env_type = _get_or_create_env(effective_task_id)
-    rpc_token = secrets.token_hex(16)
-    sandbox_id = uuid.uuid4().hex[:12]
-    temp_dir = _env_temp_dir(env)
-    sandbox_dir = f"{temp_dir}/spiritagent_exec_{sandbox_id}"
-    quoted_sandbox_dir = shlex.quote(sandbox_dir)
-    quoted_rpc_dir = shlex.quote(f"{sandbox_dir}/rpc")
+    task_id = "default"
     tool_call_counter = [0]
     exec_start = time.monotonic()
     stop_event = threading.Event()
-    rpc_thread = None
+    rpc_thread: threading.Thread | None = None
+    env: Any = None
+    sandbox_dir: str | None = None
     try:
-        py_check = env.execute("command -v python3 >/dev/null 2>&1 && echo OK", cwd="/", timeout=15)
+        env = get_or_create_environment(task_id)
+        env_type = env.env_type
+        py_check = env.execute("command -v python3 >/dev/null 2>&1 && echo OK", timeout=15)
         if "OK" not in py_check.get("output", ""):
-            return json.dumps(
-                {
-                    "status": "error",
-                    "error": (
-                        f"Python 3 is not available in the {env_type} terminal environment. "
-                        "Install Python to use execute_code with remote backends."
-                    ),
-                    "tool_calls_made": 0,
-                    "duration_seconds": 0,
-                },
+            return _error_result(
+                (
+                    f"Python 3 is not available in the {env_type} terminal environment. "
+                    "Install Python to use execute_code with remote backends."
+                ),
+                0,
+                0,
             )
-        env.execute(f"mkdir -p {quoted_rpc_dir}", cwd="/", timeout=10)
-        tools_src = generate_spiritagent_tools_module(transport="file")
-        _ship_file_to_remote(env, f"{sandbox_dir}/spiritagent_tools.py", tools_src)
+        rpc_token = secrets.token_hex(16)
+        candidate_dir = f"{env.get_temp_dir().rstrip('/')}/spiritagent_exec_{uuid.uuid4().hex[:12]}"
+        rpc_dir = f"{candidate_dir}/rpc"
+        # 0700 且不带 -p：其他用户读不到脚本和 RPC 文件，也不能预先占用这个目录名。
+        mkdir_result = env.execute(
+            f"mkdir -m 700 {shlex.quote(candidate_dir)} && mkdir {shlex.quote(rpc_dir)}",
+            timeout=10,
+        )
+        if mkdir_result.get("returncode") != 0:
+            raise RuntimeError(f"Failed to create remote sandbox directory: {mkdir_result.get('output', '').strip()}")
+        sandbox_dir = candidate_dir
+        _ship_file_to_remote(env, f"{sandbox_dir}/spiritagent_tools.py", generate_spiritagent_tools_module("file"))
         _ship_file_to_remote(env, f"{sandbox_dir}/script.py", code)
         rpc_thread = threading.Thread(
             target=propagate_context_to_thread(_rpc_poll_loop),
-            args=(
-                env,
-                f"{sandbox_dir}/rpc",
-                effective_task_id,
-                tool_call_counter,
-                max_tool_calls,
-                SANDBOX_ALLOWED_TOOLS,
-                stop_event,
-                rpc_token,
-            ),
+            args=(env, rpc_dir, task_id, tool_call_counter, max_tool_calls, stop_event, rpc_token),
             daemon=True,
         )
         rpc_thread.start()
         env_prefix = (
-            f"SPIRITAGENT_RPC_DIR={shlex.quote(f'{sandbox_dir}/rpc')} "
-            f"SPIRITAGENT_RPC_TOKEN={rpc_token} PYTHONDONTWRITEBYTECODE=1"
+            f"SPIRITAGENT_RPC_DIR={shlex.quote(rpc_dir)} SPIRITAGENT_RPC_TOKEN={rpc_token} PYTHONDONTWRITEBYTECODE=1"
         )
-        tz = str(cfg_get(load_config(), "terminal", "timezone", default="")).strip()
-        if tz:
-            env_prefix += f" TZ={tz}"
-        logger.info("Executing code on %s backend (task %s)...", env_type, effective_task_id[:8])
-        script_result = env.execute(f"cd {quoted_sandbox_dir} && {env_prefix} python3 script.py", timeout=timeout)
-        stdout_text = script_result.get("output", "")
-        exit_code = script_result.get("returncode", -1)
-        status = "success"
-        if exit_code == 124:
-            status = "timeout"
-        elif exit_code == 130:
-            status = "interrupted"
+        if tz := str(cfg_get(load_config(), "terminal", "timezone", default="")).strip():
+            env_prefix += f" TZ={shlex.quote(tz)}"
+        logger.info("Executing code on %s backend (task %s)...", env_type, task_id)
+        # 脚本在终端会话目录运行，spiritagent_tools 随脚本目录进入 sys.path。
+        script_result = env.execute(
+            f"{env_prefix} python3 {shlex.quote(f'{sandbox_dir}/script.py')}",
+            timeout=timeout,
+        )
     except Exception as exc:
         duration = round(time.monotonic() - exec_start, 2)
         logger.error(
@@ -739,276 +643,180 @@ def _execute_remote(code: str) -> str:
             exc,
             exc_info=True,
         )
-        return json.dumps(
-            {
-                "status": "error",
-                "error": str(exc),
-                "tool_calls_made": tool_call_counter[0],
-                "duration_seconds": duration,
-            },
-            ensure_ascii=False,
-        )
+        return _error_result(str(exc), tool_call_counter[0], duration)
     finally:
         stop_event.set()
         if rpc_thread is not None:
             rpc_thread.join(timeout=5)
-        try:
-            env.execute(f"rm -rf {quoted_sandbox_dir}", cwd="/", timeout=15)
-        except Exception:
-            logger.debug("Failed to clean up remote sandbox %s", sandbox_dir)
+        if sandbox_dir is not None:
+            try:
+                env.execute(f"rm -rf {shlex.quote(sandbox_dir)}", timeout=15)
+            except Exception:
+                logger.warning("Failed to clean up remote sandbox %s", sandbox_dir, exc_info=True)
     duration = round(time.monotonic() - exec_start, 2)
+    stdout_text = script_result.get("output", "")
     if len(stdout_text) > MAX_STDOUT_BYTES:
-        head_bytes = int(MAX_STDOUT_BYTES * 0.4)
-        tail_bytes = MAX_STDOUT_BYTES - head_bytes
-        head = stdout_text[:head_bytes]
-        tail = stdout_text[-tail_bytes:]
-        omitted = len(stdout_text) - len(head) - len(tail)
+        omitted = len(stdout_text) - MAX_STDOUT_BYTES
         stdout_text = (
-            head
-            + f"\n\n... [OUTPUT TRUNCATED - {omitted:,} chars omitted out of {len(stdout_text):,} total] ...\n\n"
-            + tail
+            stdout_text[:_STDOUT_HEAD_BYTES]
+            + _truncation_notice(omitted, len(stdout_text))
+            + stdout_text[-_STDOUT_TAIL_BYTES:]
         )
-    stdout_text = clean_output(stdout_text)
-    result: dict[str, Any] = {
-        "status": status,
-        "output": stdout_text,
-        "tool_calls_made": tool_call_counter[0],
-        "duration_seconds": duration,
-    }
-    if status == "timeout":
-        timeout_msg = f"Script timed out after {timeout}s and was killed."
-        result["error"] = timeout_msg
-        if stdout_text:
-            result["output"] = stdout_text + f"\n\n⏰ {timeout_msg}"
-        else:
-            result["output"] = f"⏰ {timeout_msg}"
-        logger.warning(
-            "execute_code (remote) timed out after %ss (limit %ss) with %d tool calls",
-            duration,
-            timeout,
-            tool_call_counter[0],
-        )
-    elif status == "interrupted":
-        result["output"] = stdout_text + "\n[execution interrupted — user sent a new message]"
-    elif exit_code != 0:
-        result["status"] = "error"
-        result["error"] = f"Script exited with code {exit_code}"
-    return json.dumps(result, ensure_ascii=False)
+    exit_code = script_result.get("returncode", -1)
+    return _build_result(
+        status={124: "timeout", 130: "interrupted"}.get(exit_code, "success"),
+        output=stdout_text,
+        stderr="",
+        exit_code=exit_code,
+        timeout=timeout,
+        tool_calls=tool_call_counter[0],
+        duration=duration,
+    )
 
 
-def execute_code(code: str) -> str:
-    """执行 sandbox 子进程: 本机用 UDS/TCP RPC, SSH 后端委派 ``_execute_remote``。"""
-    if not code or not code.strip():
-        return tool_error("No code provided.")
-    env_type = get_env_config()["env_type"]
-    if env_type != "local":
-        return _execute_remote(code)
-    _cfg = _load_config()
-    timeout = _cfg.get("timeout", DEFAULT_TIMEOUT)
-    max_tool_calls = _cfg.get("max_tool_calls", DEFAULT_MAX_TOOL_CALLS)
+def _drain_capped(pipe: IO[bytes], chunks: list[bytes], max_bytes: int) -> None:
+    """读尽管道但只保留前 max_bytes 字节；持续读取避免子进程因管道写满而阻塞。"""
+    total = 0
+    try:
+        while data := pipe.read(4096):
+            if total < max_bytes:
+                chunks.append(data[: max_bytes - total])
+            total += len(data)
+    except (ValueError, OSError) as e:
+        logger.debug("Error reading process output: %s", e, exc_info=True)
+
+
+def _drain_head_tail(pipe: IO[bytes], head_chunks: list[bytes], tail_chunks: list[bytes], total: list[int]) -> None:
+    """读尽管道，保留开头与结尾各一段；结尾段在读完后一次性发布，避免与主线程读取竞争。"""
+    head_collected = 0
+    tail_buf: deque[bytes] = deque()
+    tail_collected = 0
+    try:
+        while data := pipe.read(4096):
+            total[0] += len(data)
+            if head_collected < _STDOUT_HEAD_BYTES:
+                keep = data[: _STDOUT_HEAD_BYTES - head_collected]
+                head_chunks.append(keep)
+                head_collected += len(keep)
+                if not (data := data[len(keep) :]):
+                    continue
+            tail_buf.append(data)
+            tail_collected += len(data)
+            while tail_collected > _STDOUT_TAIL_BYTES and tail_buf:
+                tail_collected -= len(tail_buf.popleft())
+    except (ValueError, OSError) as e:
+        logger.debug("Error reading process output: %s", e, exc_info=True)
+    tail_chunks.extend(tail_buf)
+
+
+def _build_child_env(staging_dir: str, rpc_endpoint: str, rpc_token: str) -> dict[str, str]:
+    child_env = _scrub_child_env(os.environ)
+    child_env["SPIRITAGENT_RPC_SOCKET"] = rpc_endpoint
+    child_env["SPIRITAGENT_RPC_TOKEN"] = rpc_token
+    child_env["PYTHONDONTWRITEBYTECODE"] = "1"
+    child_env["PYTHONIOENCODING"] = "utf-8"
+    child_env["PYTHONUTF8"] = "1"
+    child_env["PYTHONPATH"] = os.pathsep.join(p for p in (staging_dir, child_env.get("PYTHONPATH", "")) if p)
+    child_env["HOME"] = str(get_subprocess_home())
+    if tz := str(cfg_get(load_config(), "terminal", "timezone", default="")).strip():
+        child_env["TZ"] = tz
+    return child_env
+
+
+def _execute_local(code: str, timeout: int, max_tool_calls: int, mode: str) -> str:
+    """本机执行：子进程经 UDS（Windows 为 loopback TCP）RPC 回调父进程工具，首帧用一次性 token 鉴权。"""
     tmpdir = tempfile.mkdtemp(prefix="spiritagent_sandbox_")
-    _sock_tmpdir = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
-    _use_tcp_rpc = IS_WINDOWS
-    if _use_tcp_rpc:
-        sock_path = None
-        rpc_endpoint = None
-    else:
-        sock_path = os.path.join(_sock_tmpdir, f"spiritagent_rpc_{uuid.uuid4().hex}.sock")
-        rpc_endpoint = sock_path
+    rpc_token = secrets.token_hex(16)
     tool_call_counter = [0]
     exec_start = time.monotonic()
-    server_sock = None
-    rpc_token = secrets.token_hex(16)
+    stop_event = threading.Event()
+    sock_path: str | None = None
+    server_sock: socket.socket | None = None
+    rpc_thread: threading.Thread | None = None
+    proc: subprocess.Popen[bytes] | None = None
     try:
-        tools_src = generate_spiritagent_tools_module()
+        script_path = os.path.join(tmpdir, "script.py")
         with open(os.path.join(tmpdir, "spiritagent_tools.py"), "w", encoding="utf-8") as f:
-            f.write(tools_src)
-        with open(os.path.join(tmpdir, "script.py"), "w", encoding="utf-8") as f:
+            f.write(generate_spiritagent_tools_module("uds"))
+        with open(script_path, "w", encoding="utf-8") as f:
             f.write(code)
-        if _use_tcp_rpc:
+        if IS_WINDOWS:
+            # Windows 的 AF_UNIX 不可靠，改用 loopback TCP。
             server_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server_sock.bind(("127.0.0.1", 0))
-            _host, _port = server_sock.getsockname()[:2]
-            rpc_endpoint = f"tcp://{_host}:{_port}"
+            host, port = server_sock.getsockname()[:2]
+            rpc_endpoint = f"tcp://{host}:{port}"
         else:
+            # macOS 默认临时目录路径较长，AF_UNIX 路径上限 104 字节，固定放在 /tmp。
+            sock_dir = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
+            sock_path = rpc_endpoint = os.path.join(sock_dir, f"spiritagent_rpc_{uuid.uuid4().hex}.sock")
             server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             server_sock.bind(sock_path)
             os.chmod(sock_path, 0o600)
         server_sock.listen(1)
         rpc_thread = threading.Thread(
             target=propagate_context_to_thread(_rpc_server_loop),
-            args=(
-                server_sock,
-                "default",
-                tool_call_counter,
-                max_tool_calls,
-                SANDBOX_ALLOWED_TOOLS,
-                rpc_token,
-                timeout,
-            ),
+            args=(server_sock, "default", tool_call_counter, max_tool_calls, rpc_token, stop_event),
             daemon=True,
         )
         rpc_thread.start()
-        child_env = _scrub_child_env(os.environ)
-        child_env["SPIRITAGENT_RPC_SOCKET"] = rpc_endpoint
-        child_env["SPIRITAGENT_RPC_TOKEN"] = rpc_token
-        child_env["PYTHONDONTWRITEBYTECODE"] = "1"
-        child_env["PYTHONIOENCODING"] = "utf-8"
-        child_env["PYTHONUTF8"] = "1"
-        _spiritagent_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        _existing_pp = child_env.get("PYTHONPATH", "")
-        _pp_parts = [tmpdir, _spiritagent_root]
-        if _existing_pp:
-            _pp_parts.append(_existing_pp)
-        child_env["PYTHONPATH"] = os.pathsep.join(_pp_parts)
-        _tz_name = str(cfg_get(load_config(), "terminal", "timezone", default="")).strip()
-        if _tz_name:
-            child_env["TZ"] = _tz_name
-        child_env.pop("SPIRITAGENT_TIMEZONE", None)
-        _profile_home = get_subprocess_home()
-        if _profile_home:
-            child_env["HOME"] = str(_profile_home)
-        _mode = _get_execution_mode()
-        _child_python = _resolve_child_python(_mode)
-        _child_cwd = _resolve_child_cwd(_mode, tmpdir)
-        _script_path = os.path.join(tmpdir, "script.py")
         proc = subprocess.Popen(
-            [_child_python, _script_path],
-            cwd=_child_cwd,
-            env=child_env,
+            [_resolve_child_python(mode), script_path],
+            cwd=_resolve_child_cwd(mode, tmpdir),
+            env=_build_child_env(tmpdir, rpc_endpoint, rpc_token),
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
-            preexec_fn=None if IS_WINDOWS else os.setsid,
-            creationflags=CREATE_NO_WINDOW if IS_WINDOWS else 0,
+            start_new_session=not IS_WINDOWS,
+            creationflags=CREATE_NO_WINDOW,
         )
-        deadline = time.monotonic() + timeout
-        stderr_chunks: list = []
-        _STDOUT_HEAD_BYTES = int(MAX_STDOUT_BYTES * 0.4)
-        _STDOUT_TAIL_BYTES = MAX_STDOUT_BYTES - _STDOUT_HEAD_BYTES
-
-        def _drain(pipe, chunks, max_bytes) -> None:
-            total = 0
-            try:
-                while True:
-                    data = pipe.read(4096)
-                    if not data:
-                        break
-                    if total < max_bytes:
-                        keep = max_bytes - total
-                        chunks.append(data[:keep])
-                    total += len(data)
-            except (ValueError, OSError) as e:
-                logger.debug("Error reading process output: %s", e, exc_info=True)
-
+        stdout_head_chunks: list[bytes] = []
+        stdout_tail_chunks: list[bytes] = []
         stdout_total_bytes = [0]
-
-        def _drain_head_tail(pipe, head_chunks, tail_chunks, head_bytes, tail_bytes, total_ref) -> None:
-            head_collected = 0
-            tail_buf = deque()
-            tail_collected = 0
-            try:
-                while True:
-                    data = pipe.read(4096)
-                    if not data:
-                        break
-                    total_ref[0] += len(data)
-                    if head_collected < head_bytes:
-                        keep = min(len(data), head_bytes - head_collected)
-                        head_chunks.append(data[:keep])
-                        head_collected += keep
-                        data = data[keep:]
-                        if not data:
-                            continue
-                    tail_buf.append(data)
-                    tail_collected += len(data)
-                    while tail_collected > tail_bytes and tail_buf:
-                        oldest = tail_buf.popleft()
-                        tail_collected -= len(oldest)
-            except (ValueError, OSError):
-                pass
-            tail_chunks.extend(tail_buf)
-
-        stdout_head_chunks: list = []
-        stdout_tail_chunks: list = []
+        stderr_chunks: list[bytes] = []
         stdout_reader = threading.Thread(
             target=_drain_head_tail,
-            args=(
-                proc.stdout,
-                stdout_head_chunks,
-                stdout_tail_chunks,
-                _STDOUT_HEAD_BYTES,
-                _STDOUT_TAIL_BYTES,
-                stdout_total_bytes,
-            ),
+            args=(proc.stdout, stdout_head_chunks, stdout_tail_chunks, stdout_total_bytes),
             daemon=True,
         )
         stderr_reader = threading.Thread(
-            target=_drain,
+            target=_drain_capped,
             args=(proc.stderr, stderr_chunks, MAX_STDERR_BYTES),
             daemon=True,
         )
         stdout_reader.start()
         stderr_reader.start()
+        deadline = time.monotonic() + timeout
         status = "success"
         while proc.poll() is None:
             if is_interrupted():
-                _kill_process_group(proc)
                 status = "interrupted"
                 break
             if time.monotonic() > deadline:
-                _kill_process_group(proc, escalate=True)
                 status = "timeout"
                 break
             time.sleep(0.2)
+        if status != "success":
+            _kill_process_group(proc)
         stdout_reader.join(timeout=3)
         stderr_reader.join(timeout=3)
         stdout_head = b"".join(stdout_head_chunks).decode("utf-8", errors="replace")
         stdout_tail = b"".join(stdout_tail_chunks).decode("utf-8", errors="replace")
-        stderr_text = b"".join(stderr_chunks).decode("utf-8", errors="replace")
         total_stdout = stdout_total_bytes[0]
         if total_stdout > MAX_STDOUT_BYTES and stdout_tail:
             omitted = total_stdout - len(stdout_head) - len(stdout_tail)
-            truncated_notice = (
-                f"\n\n... [OUTPUT TRUNCATED - {omitted:,} chars omitted out of {total_stdout:,} total] ...\n\n"
-            )
-            stdout_text = stdout_head + truncated_notice + stdout_tail
+            stdout_text = stdout_head + _truncation_notice(omitted, total_stdout) + stdout_tail
         else:
             stdout_text = stdout_head + stdout_tail
-        exit_code = proc.returncode if proc.returncode is not None else -1
-        duration = round(time.monotonic() - exec_start, 2)
-        server_sock.close()
-        server_sock = None
-        rpc_thread.join(timeout=3)
-        stdout_text = clean_output(stdout_text)
-        stderr_text = clean_output(stderr_text)
-        result: dict[str, Any] = {
-            "status": status,
-            "output": stdout_text,
-            "tool_calls_made": tool_call_counter[0],
-            "duration_seconds": duration,
-        }
-        if status == "timeout":
-            timeout_msg = f"Script timed out after {timeout}s and was killed."
-            result["error"] = timeout_msg
-            if stdout_text:
-                result["output"] = stdout_text + f"\n\n⏰ {timeout_msg}"
-            else:
-                result["output"] = f"⏰ {timeout_msg}"
-            logger.warning(
-                "execute_code timed out after %ss (limit %ss) with %d tool calls",
-                duration,
-                timeout,
-                tool_call_counter[0],
-            )
-        elif status == "interrupted":
-            result["output"] = stdout_text + "\n[execution interrupted — user sent a new message]"
-        elif exit_code != 0:
-            result["status"] = "error"
-            result["error"] = stderr_text or f"Script exited with code {exit_code}"
-            if stderr_text:
-                result["output"] = stdout_text + "\n--- stderr ---\n" + stderr_text
-        return json.dumps(result, ensure_ascii=False)
+        return _build_result(
+            status=status,
+            output=stdout_text,
+            stderr=b"".join(stderr_chunks).decode("utf-8", errors="replace"),
+            exit_code=proc.returncode if proc.returncode is not None else -1,
+            timeout=timeout,
+            tool_calls=tool_call_counter[0],
+            duration=round(time.monotonic() - exec_start, 2),
+        )
     except Exception as exc:
         duration = round(time.monotonic() - exec_start, 2)
         logger.error(
@@ -1019,67 +827,61 @@ def execute_code(code: str) -> str:
             exc,
             exc_info=True,
         )
-        return json.dumps(
-            {
-                "status": "error",
-                "error": str(exc),
-                "tool_calls_made": tool_call_counter[0],
-                "duration_seconds": duration,
-            },
-            ensure_ascii=False,
-        )
+        return _error_result(str(exc), tool_call_counter[0], duration)
     finally:
+        stop_event.set()
+        if proc is not None and proc.poll() is None:
+            _kill_process_group(proc)
+        if rpc_thread is not None:
+            rpc_thread.join(timeout=3)
         if server_sock is not None:
             try:
                 server_sock.close()
             except OSError as e:
                 logger.debug("Server socket close error: %s", e)
-        shutil.rmtree(tmpdir, ignore_errors=True)
-        try:
-            if sock_path:
+        if sock_path is not None:
+            try:
                 os.unlink(sock_path)
-        except OSError:
-            pass
+            except OSError as e:
+                logger.debug("RPC socket unlink error: %s", e)
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-def _kill_process_group(proc: subprocess.Popen, escalate: bool = False) -> None:
-    """杀掉沙箱子进程及其整个进程组.
+def execute_code(code: str) -> str:
+    """执行 sandbox 子进程: 本机用 UDS/TCP RPC, SSH 后端委派 ``_execute_remote``。"""
+    if not code or not code.strip():
+        return tool_error("No code provided.")
+    cfg = _code_execution_config()
+    timeout = cfg_int(cfg, "timeout", DEFAULT_TIMEOUT)
+    max_tool_calls = cfg_int(cfg, "max_tool_calls", DEFAULT_MAX_TOOL_CALLS)
+    if get_env_config()["env_type"] != "local":
+        return _execute_remote(code, timeout, max_tool_calls)
+    return _execute_local(code, timeout, max_tool_calls, _get_execution_mode(cfg))
 
-    委派 ``utils.process_tree.terminate_tree``: POSIX 走 killpg(SIGTERM) → wait →
-    (escalate) killpg(SIGKILL) + psutil 兜底; Windows 走 taskkill /T → wait →
-    (escalate) taskkill /T /F。``escalate=False`` 走 interrupt 路径(只软杀, 不升级);
-    ``escalate=True`` 走 timeout 路径(TERM→KILL 升级)。
-    """
+
+def _kill_process_group(proc: subprocess.Popen[bytes]) -> None:
+    """终止沙箱子进程及其进程树；取消与超时都升级到强杀，返回时脚本不再运行。"""
     try:
-        terminate_tree(
-            proc,
-            graceful_timeout=1.0,
-            force_timeout=5.0,
-            escalate=escalate,
-        )
+        terminate_tree(proc, graceful_timeout=1.0, force_timeout=5.0, escalate=True)
     except Exception as e:
-        logger.debug("terminate_tree failed: %s", e, exc_info=True)
-        with contextlib.suppress(Exception):
+        logger.warning("execute_code: terminate_tree failed, killing the script process only: %s", e, exc_info=True)
+        with contextlib.suppress(OSError):
             proc.kill()
 
 
-def _load_config() -> dict:
-    """从内存 config 读 ``code_execution`` 段; 解析失败或缺失时返回空 dict。"""
-    try:
-        cfg = load_config().get("code_execution", {})
-        return cfg if isinstance(cfg, dict) else {}
-    except Exception:
-        return {}
+def _code_execution_config() -> dict[str, Any]:
+    cfg = load_config().get("code_execution")
+    return cfg if isinstance(cfg, dict) else {}
 
 
-def _get_execution_mode() -> str:
+def _get_execution_mode(cfg: dict[str, Any]) -> str:
     """读取合法的 ``code_execution.mode``, 非法值降级为默认。"""
-    cfg_value = str(_load_config().get("mode", DEFAULT_EXECUTION_MODE)).strip().lower()
-    if cfg_value in EXECUTION_MODES:
-        return cfg_value
+    mode = cfg_str(cfg, "mode", DEFAULT_EXECUTION_MODE).lower()
+    if mode in EXECUTION_MODES:
+        return mode
     logger.warning(
         "Ignoring code_execution.mode=%r (expected one of %s), falling back to %r",
-        cfg_value,
+        mode,
         EXECUTION_MODES,
         DEFAULT_EXECUTION_MODE,
     )
@@ -1087,22 +889,18 @@ def _get_execution_mode() -> str:
 
 
 @functools.lru_cache(maxsize=32)
-def _is_usable_python(python_path: str, venv: str, conda: str) -> bool:
-    """探测一个 Python 解释器是否 >= 3.8 可用; ``venv`` / ``conda`` 仅作为缓存键区分条目
-    (进程内 venv 切换会自动失效缓存)。
-    """
-    # 把 venv/conda 放进 cache key, 让切换 VIRTUAL_ENV / CONDA_PREFIX 的 worktree swap 不需要手动 cache_clear()。
-    del venv, conda
+def _is_usable_python(python_path: str) -> bool:
+    """探测解释器能否运行且版本 >= 3.8。"""
     try:
         result = subprocess.run(
             [python_path, "-c", "import sys; sys.exit(0 if sys.version_info >= (3, 8) else 1)"],
             timeout=5,
             capture_output=True,
-            creationflags=CREATE_NO_WINDOW if IS_WINDOWS else 0,
+            creationflags=CREATE_NO_WINDOW,
             stdin=subprocess.DEVNULL,
         )
         return result.returncode == 0
-    except (OSError, subprocess.TimeoutExpired, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError):
         return False
 
 
@@ -1110,49 +908,33 @@ def _resolve_child_python(mode: str) -> str:
     """解析沙箱子进程用的 Python 解释器(优先 installer 装的 uv-managed venv, 再看 VIRTUAL_ENV/CONDA_PREFIX)。"""
     if mode != "project":
         return sys.executable
-    # 用鉴别串作为 discriminator, 避免和 ``VIRTUAL_ENV``/``CONDA_PREFIX`` 探测条目撞 key(env 变量缺失时这两路用空串)。
-    managed = find_python()
-    if managed and _is_usable_python(managed, "managed-venv", ""):
+    if (managed := find_python()) and _is_usable_python(managed):
         return managed
-    if IS_WINDOWS:
-        exe_names = ("python.exe", "python3.exe")
-        subdirs = ("Scripts",)
-    else:
-        exe_names = ("python", "python3")
-        subdirs = ("bin",)
+    exe_names, subdir = (("python.exe", "python3.exe"), "Scripts") if IS_WINDOWS else (("python", "python3"), "bin")
     for var in ("VIRTUAL_ENV", "CONDA_PREFIX"):
-        root = os.environ.get(var, "").strip()
-        if not root:
+        if not (root := os.environ.get(var, "").strip()):
             continue
-        for subdir in subdirs:
-            for exe in exe_names:
-                candidate = os.path.join(root, subdir, exe)
-                if not (os.path.isfile(candidate) and os.access(candidate, os.X_OK)):
-                    continue
-                if _is_usable_python(candidate, os.environ.get("VIRTUAL_ENV", ""), os.environ.get("CONDA_PREFIX", "")):
-                    return candidate
-                logger.info(
-                    "execute_code: skipping %s=%s (Python version < 3.8 or broken). Using sys.executable instead.",
-                    var,
-                    candidate,
-                )
-                return sys.executable
+        for exe in exe_names:
+            candidate = os.path.join(root, subdir, exe)
+            if not (os.path.isfile(candidate) and os.access(candidate, os.X_OK)):
+                continue
+            if _is_usable_python(candidate):
+                return candidate
+            logger.info(
+                "execute_code: skipping %s=%s (Python version < 3.8 or broken). Using sys.executable instead.",
+                var,
+                candidate,
+            )
+            return sys.executable
     return sys.executable
 
 
 def _resolve_child_cwd(mode: str, staging_dir: str) -> str:
-    """解析沙箱子进程的 cwd: project 模式按 ``terminal.cwd`` / 当前目录回退, 非 project 模式直接用 staging。"""
+    """project 模式在终端当前工作目录运行（随终端 cd 变化，目录不存在时回落 staging），strict 模式直接用 staging。"""
     if mode != "project":
         return staging_dir
-    raw = str(cfg_get(load_config(), "terminal", "cwd", default="")).strip()
-    if raw:
-        expanded = os.path.expanduser(raw)
-        if os.path.isdir(expanded):
-            return expanded
-    here = os.getcwd()
-    if os.path.isdir(here):
-        return here
-    return staging_dir
+    cwd = get_or_create_environment("default").cwd
+    return cwd if os.path.isdir(cwd) else staging_dir
 
 
 EXECUTE_CODE_SCHEMA = {
@@ -1169,21 +951,24 @@ EXECUTE_CODE_SCHEMA = {
         "user input.\n\n"
         "Available via `from spiritagent_tools import ...`:\n\n"
         "  read_file(path: str, offset: int = 1, limit: int = 500) -> dict\n"
-        '    Lines are 1-indexed. Returns {"content": "...", "total_lines": N}\n'
+        '    Lines are 1-indexed. Returns {"content": "...", "total_lines": N}; '
+        'each content line is prefixed with "LINE_NUM|".\n'
         "  write_file(path: str, content: str) -> dict\n"
         "    Always overwrites the entire file.\n"
         '  search_files(pattern: str, target="content", path=".", file_glob=None, '
         "limit=50) -> dict\n"
         '    target: "content" (search inside files) or "files" (find files by name). '
-        'Returns {"matches": [...]}\n'
+        'Returns {"total_count": N} plus "matches" (content search, items with path/line/content) '
+        'or "files" (name search); the list key is omitted when nothing matches.\n'
         "  patch(path: str, old_string: str, new_string: str, replace_all: bool = False) -> dict\n"
         "    Replaces old_string with new_string in the file.\n"
         "  terminal(command: str, timeout=None, workdir=None) -> dict\n"
         '    Foreground only (no background/pty). Returns {"output": "...", "exit_code": N}\n\n'
-        "Limits: 5-minute timeout, 50KB stdout cap, max 50 tool calls per script. terminal() "
-        "is foreground-only (no background or pty).\n\n"
-        "Scripts run in the session's working directory with the active venv's python, so "
-        "project deps (pandas, etc.) and relative paths work like in terminal().\n\n"
+        'A failed tool call returns a dict with an "error" key instead of raising.\n\n'
+        "Limits: 5-minute timeout, 50KB stdout cap, max 50 tool calls per script.\n\n"
+        "Scripts start in the terminal working directory, so relative paths resolve as in terminal(). "
+        "Locally they run on a bundled Python interpreter: packages installed for other interpreters "
+        "may be missing, so use terminal() to run project tooling.\n\n"
         "Print your final result to stdout. Use Python stdlib (json, re, math, csv, "
         "datetime, collections, etc.) for processing between tool calls.\n\n"
         "Also available (no import needed — built into spiritagent_tools):\n"

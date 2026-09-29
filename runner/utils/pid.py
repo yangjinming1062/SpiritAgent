@@ -14,7 +14,7 @@ class PidState(enum.Enum):
 
 def pid_state(pid: int | None) -> PidState:
     """探测 PID 状态，区分存在、不存在与瞬时异常。"""
-    if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+    if pid is None or pid <= 0:
         return PidState.NOT_FOUND
     try:
         return PidState.EXISTS if psutil.pid_exists(pid) else PidState.NOT_FOUND

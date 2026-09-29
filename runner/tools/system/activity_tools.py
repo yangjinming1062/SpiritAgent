@@ -35,14 +35,18 @@ SYSTEM_IS_LOCKED_SCHEMA = {
 
 SYSTEM_FOCUS_SCHEMA = {
     "name": "system.get_focused_app",
-    "description": ("{name, pid, kind} for the foreground app; {} when unknown."),
+    "description": (
+        "The foreground app: {name, pid, title or bundle, window_id, x, y, w, h}; window fields are omitted when "
+        "unknown, and {} means the foreground app could not be determined."
+    ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 SYSTEM_IS_FULLSCREEN_SCHEMA = {
     "name": "system.is_fullscreen",
     "description": (
-        "True iff the foreground window covers ≥95% of its monitor's full area (not the work area). False when unknown."
+        "True when the foreground window covers its entire display, as fullscreen video, games and presentations "
+        "do; maximized windows that leave the taskbar or menu bar visible are not fullscreen. False when unknown."
     ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
@@ -58,20 +62,25 @@ SYSTEM_SNAPSHOT_SCHEMA = {
 
 SYSTEM_POWER_SCHEMA = {
     "name": "system.get_power_state",
-    "description": "{on_battery, screen_on, charging} — booleans default to False/True.",
+    "description": "{on_battery, charging}; both are false when there is no battery or the power state is unknown.",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 SYSTEM_GET_WINDOWS_SCHEMA = {
     "name": "system.get_windows",
-    "description": ("Visible top-level windows with geometry: {windows: [{title, name, x, y, w, h, focused}, ...]}."),
+    "description": (
+        "Visible top-level windows, front to back: {windows: [{title, name, x, y, w, h, focused, window_id, pid, "
+        "z_order}, ...]}. Minimized and hidden windows are excluded; x/y/w/h are global screen coordinates, the same "
+        "space as system.get_cursor_pos and system.click_at."
+    ),
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 SYSTEM_OPEN_APP_SCHEMA = {
     "name": "system.open_application",
     "description": (
-        "Open an application by name (e.g. 'chrome', 'notepad', 'Calculator'). Returns {opened: bool, name: str}."
+        "Open an application by name (e.g. 'chrome', 'notepad', 'Calculator') or executable path. Returns "
+        "{opened: true, name} or {opened: false, error}."
     ),
     "parameters": {
         "type": "object",
@@ -82,26 +91,29 @@ SYSTEM_OPEN_APP_SCHEMA = {
 
 SYSTEM_GET_WORK_AREA_SCHEMA = {
     "name": "system.get_work_area",
-    "description": "Returns primary display's working area bounds: {x, y, w, h} excluding taskbars/docks.",
+    "description": "Primary display's working area {x, y, w, h} excluding the taskbar or Dock, in global screen coordinates.",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 SYSTEM_GET_CURSOR_POS_SCHEMA = {
     "name": "system.get_cursor_pos",
-    "description": "Returns current global mouse cursor position: {x, y}.",
+    "description": "Current mouse pointer position {x, y} in global screen coordinates.",
     "parameters": {"type": "object", "properties": {}, "required": []},
 }
 
 SYSTEM_CLICK_AT_SCHEMA = {
     "name": "system.click_at",
-    "description": "Simulate a mouse click at specific global screen coordinates (x, y).",
+    "description": (
+        "Click the real mouse at global screen coordinates (x, y), the same space as system.get_windows. This moves "
+        "the user's pointer. Returns {clicked: true, ...} or {clicked: false, error}."
+    ),
     "parameters": {
         "type": "object",
         "properties": {
             "x": {"type": "integer", "description": "Screen X coordinate"},
             "y": {"type": "integer", "description": "Screen Y coordinate"},
             "button": {"type": "string", "enum": ["left", "right", "middle"], "default": "left"},
-            "clicks": {"type": "integer", "default": 1},
+            "clicks": {"type": "integer", "minimum": 1, "maximum": 3, "default": 1},
         },
         "required": ["x", "y"],
     },
@@ -125,8 +137,7 @@ def _fullscreen_handler(args: dict[str, Any], **kw: Any) -> str:
 
 
 def _snapshot_handler(args: dict[str, Any], **kw: Any) -> str:
-    # 串行聚合四条独立探测, 避免一次 IPC+WS 帧内多个 syscall 反而比单个 round-trip 更慢。
-    # 单个探测失败有各自的安全默认值, 互不影响, 因此串行不会因为一个失败而黑洞整次快照。
+    # 各探测失败时返回各自的默认值，单项失败不影响整次快照。
     return json.dumps(
         {
             "idle_seconds": get_idle_seconds(),
@@ -159,12 +170,13 @@ def _cursor_pos_handler(args: dict[str, Any], **kw: Any) -> str:
 
 def _click_at_handler(args: dict[str, Any], **kw: Any) -> str:
     try:
-        x = int(args.get("x", 0))
-        y = int(args.get("y", 0))
-        clicks = int(args.get("clicks", 1))
-    except (TypeError, ValueError) as e:
-        return json.dumps({"clicked": False, "error": f"x/y/clicks must be integers: {e}"}, ensure_ascii=False)
-    button = str(args.get("button", "left"))
+        x, y, clicks = int(args["x"]), int(args["y"]), int(args.get("clicks", 1))
+    except (KeyError, TypeError, ValueError) as e:
+        return json.dumps({"clicked": False, "error": f"x and y are required integers: {e}"}, ensure_ascii=False)
+    if (button := str(args.get("button") or "left")) not in {"left", "right", "middle"}:
+        return json.dumps({"clicked": False, "error": f"bad button {button!r}; use left, right or middle"})
+    if not 1 <= clicks <= 3:
+        return json.dumps({"clicked": False, "error": "clicks must be between 1 and 3"})
     return json.dumps(click_at(x, y, button, clicks))
 
 

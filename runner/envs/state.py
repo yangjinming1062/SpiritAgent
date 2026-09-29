@@ -2,9 +2,11 @@ import os
 import threading
 from typing import Any
 
-from utils import cfg_bool, cfg_int, cfg_str, load_config
+from utils import cfg_int, cfg_str, load_config
 
-active_environments: dict[str, Any] = {}
+from ._env_base import BaseEnvironment
+
+active_environments: dict[str, BaseEnvironment] = {}
 last_activity: dict[str, float] = {}
 env_lock = threading.Lock()
 
@@ -37,17 +39,19 @@ def get_env_config() -> dict[str, Any]:
     cwd = cfg_str(t, "cwd", _safe_getcwd() if env_type == "local" else "~")
     if cwd and env_type == "local":
         cwd = os.path.expanduser(cwd)
-    ssh_cfg = t.get("ssh") if isinstance(t.get("ssh"), dict) else {}
+    ssh_cfg = t.get("ssh")
+    if not isinstance(ssh_cfg, dict):
+        ssh_cfg = {}
     return {
         "env_type": env_type,
         "cwd": cwd,
         "timeout": cfg_int(t, "timeout", 180),
         "lifetime_seconds": cfg_int(t, "lifetime_seconds", 300),
-        "ssh_host": str(ssh_cfg.get("host", "")),
-        "ssh_user": str(ssh_cfg.get("user", "")),
-        "ssh_port": int(ssh_cfg.get("port", 22)),
-        "ssh_key": str(ssh_cfg.get("key", "")),
-        "ssh_password": str(ssh_cfg.get("password", "")),
-        "ssh_persistent": cfg_bool(t, "ssh_persistent", True),
-        "local_persistent": cfg_bool(t, "local_persistent", False),
+        "ssh_host": cfg_str(ssh_cfg, "host"),
+        "ssh_user": cfg_str(ssh_cfg, "user"),
+        # 设置页清空端口时为空串，cfg_int 回落默认端口；直接 int() 会让所有终端调用与清理线程抛错。
+        "ssh_port": cfg_int(ssh_cfg, "port", 22),
+        "ssh_key": cfg_str(ssh_cfg, "key"),
+        # 密码不去首尾空白：空白可能是密码的一部分。
+        "ssh_password": "" if (password := ssh_cfg.get("password")) is None else str(password),
     }

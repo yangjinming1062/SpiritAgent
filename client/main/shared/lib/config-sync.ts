@@ -13,7 +13,6 @@ const SYNCED_SECTIONS = [
   'toolsets',
   'browser',
   'security',
-  'debug',
   'tool_output',
   'computer_use',
   'file_state',

@@ -2,8 +2,8 @@ from typing import Any
 
 _TRUTHY_STRINGS = frozenset({"1", "true", "yes", "on"})
 
-# 初始为 ``None``；Desktop 通过 spiritagent.config.update 推送前，消费者请走 cfg_get(default=...)。
-_INMEMORY_CONFIG: dict[str, Any] | None = None
+# Desktop 经 spiritagent.config.update 推送完整配置前为空，消费者按 cfg_get(default=...) 读取。
+_INMEMORY_CONFIG: dict[str, Any] = {}
 
 
 def is_truthy_value(value: Any, default: bool = False) -> bool:
@@ -19,14 +19,12 @@ def is_truthy_value(value: Any, default: bool = False) -> bool:
 
 def load_config() -> dict[str, Any]:
     """返回内存配置字典（Desktop 首次推送前为 ``{}``）。"""
-    return _INMEMORY_CONFIG if _INMEMORY_CONFIG is not None else {}
+    return _INMEMORY_CONFIG
 
 
 def set_inmemory_config(config: dict[str, Any]) -> None:
     """覆盖内存配置；由 ``spiritagent.config.update`` RPC 处理函数调用。"""
     global _INMEMORY_CONFIG
-    if not isinstance(config, dict):
-        raise TypeError(f"config must be a dict, got {type(config).__name__}")
     _INMEMORY_CONFIG = config
 
 

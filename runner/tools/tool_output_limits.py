@@ -19,12 +19,7 @@ def get_tool_output_limits() -> dict[str, int]:
     global _cached_limits
     if _cached_limits is not None:
         return _cached_limits
-    try:
-        cfg = load_config() or {}
-        section = cfg.get("tool_output") if isinstance(cfg, dict) else {}
-        if not isinstance(section, dict):
-            section = {}
-    except Exception:
+    if not isinstance(section := load_config().get("tool_output"), dict):
         section = {}
 
     _cached_limits = {
@@ -43,6 +38,6 @@ def get_max_line_length() -> int:
 
 
 def reset_cache() -> None:
-    """清除缓存的限制值, 下次调用重新读 config(供 ``config.update`` / 测试使用)。"""
+    """清除缓存的限制值，下次调用重新读配置（``spiritagent.config.update`` 时调用）。"""
     global _cached_limits
     _cached_limits = None

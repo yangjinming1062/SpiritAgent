@@ -175,8 +175,6 @@ version = "0.21.0"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5f/1d/3730393f405f7d358da8f2155bf54f4266499e1aaded2dd8855ed2a32b02/cua_driver-0.21.0-py3-none-macosx_13_0_universal2.whl", hash = "sha256:7ea15a9be706b10bf8fa3286df4fa5f21aac17cc9e0c50e986b23bfc2e6243d3", size = 38817200, upload-time = "2026-08-19T21:39:06.842Z" },
-    { url = "https://files.pythonhosted.org/packages/9e/a4/238d65170a1804d772c9133749a57eb71d9ed69e728491de6a040ae45efd/cua_driver-0.21.0-py3-none-win_amd64.whl", hash = "sha256:8c3a7a0130c1a9588b9152faab31ec7db766d6ba2596802b4a8174bcaf578d49", size = 25324785, upload-time = "2026-08-19T21:39:17.678Z" },
-    { url = "https://files.pythonhosted.org/packages/64/b7/bf03008aa231f4861e64c216a6f0078b8f2268df95f78f14695bf520854f/cua_driver-0.21.0-py3-none-win_arm64.whl", hash = "sha256:a8f1992d3f67f6bae10412d1344ce27b2c8aea6dea27d7e21320610782cd0a4d", size = 23557292, upload-time = "2026-08-19T21:39:21.032Z" },
 ]
 
 [[package]]
@@ -912,7 +910,7 @@ name = "spirit-agent"
 version = "1.2.0"
 source = { editable = "." }
 dependencies = [
-    { name = "cua-driver", marker = "sys_platform == 'darwin' or sys_platform == 'win32'" },
+    { name = "cua-driver", marker = "sys_platform == 'darwin'" },
     { name = "httpx", extra = ["socks"] },
     { name = "mcp" },
     { name = "mss", marker = "sys_platform == 'win32'" },
@@ -939,7 +937,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cua-driver", marker = "sys_platform == 'darwin' or sys_platform == 'win32'", specifier = "==0.21.0" },
+    { name = "cua-driver", marker = "sys_platform == 'darwin'", specifier = "==0.21.0" },
     { name = "debugpy", marker = "extra == 'dev'", specifier = "==1.8.20" },
     { name = "httpx", extras = ["socks"], specifier = "==0.28.1" },
     { name = "mcp", specifier = "==1.27.0" },

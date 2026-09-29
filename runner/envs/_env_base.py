@@ -9,7 +9,6 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
-from pathlib import Path
 from typing import IO, Protocol
 
 from utils import CREATE_NO_WINDOW, cfg_get, is_interrupted, load_config
@@ -35,19 +34,10 @@ if os.name == "nt":
     _kernel32.PeekNamedPipe.restype = wintypes.BOOL
 
 
-def _file_mtime_key(host_path: str) -> tuple[float, int] | None:
-    try:
-        return ((st := Path(host_path).stat()).st_mtime, st.st_size)
-    except OSError:
-        return None
-
-
 def _pipe_stdin(proc: subprocess.Popen, data: str) -> None:
     def _write() -> None:
         try:
-            (target := getattr(proc.stdin, "buffer", proc.stdin)).write(
-                data.encode("utf-8") if isinstance(data, str) else data,
-            )
+            (target := getattr(proc.stdin, "buffer", proc.stdin)).write(data.encode("utf-8"))
             target.close()
         except (BrokenPipeError, OSError):
             pass
@@ -55,17 +45,15 @@ def _pipe_stdin(proc: subprocess.Popen, data: str) -> None:
     threading.Thread(target=_write, daemon=True).start()
 
 
-def _popen_bash(cmd: list[str], stdin_data: str | None = None, **kwargs) -> subprocess.Popen:
-    # Windows：抑制每次 bash 子进程闪现的控制台窗口。
-    if os.name == "nt":
-        kwargs.setdefault("creationflags", CREATE_NO_WINDOW)
+def _popen_bash(cmd: list[str], stdin_data: str | None, env: dict[str, str]) -> subprocess.Popen:
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
         stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
         text=True,
-        **kwargs,
+        env=env,
+        creationflags=CREATE_NO_WINDOW,
     )
     if stdin_data is not None:
         _pipe_stdin(proc, stdin_data)
@@ -91,7 +79,6 @@ def _cwd_marker(session_id: str) -> str:
 
 
 class BaseEnvironment(ABC):
-    _stdin_mode: str = "pipe"
     _snapshot_timeout: int = 30
     # 环境类型标签（local / ssh），由 factory 在实例化后赋值；file_tools 据此路由本地文件操作。
     env_type: str = ""
@@ -99,10 +86,9 @@ class BaseEnvironment(ABC):
     def get_temp_dir(self) -> str:
         return "/tmp"
 
-    def __init__(self, cwd: str, timeout: int, env: dict | None = None) -> None:
+    def __init__(self, cwd: str, timeout: int) -> None:
         self.cwd = cwd
         self.timeout = timeout
-        self.env = env or {}
         self._session_id = uuid.uuid4().hex[:12]
         temp_dir = self.get_temp_dir().rstrip("/") or "/"
         self._snapshot_path = f"{temp_dir}/spiritagent-snap-{self._session_id}.sh"
@@ -110,29 +96,33 @@ class BaseEnvironment(ABC):
         self._cwd_marker = _cwd_marker(self._session_id)
         self._snapshot_ready = False
         self._snapshot_created_at: float = 0.0
-        # 前台命令执行中标记: cleanup 线程据此续命, 避免长命令运行中途环境被回收。
-        self._executing = False
+        # 执行中的命令数：终端、execute_code 脚本与其远程 RPC 轮询可并发调用 execute，cleanup 线程据此续命。
+        self._executing_count = 0
+        self._executing_lock = threading.Lock()
 
+    @abstractmethod
     def _run_bash(
         self,
         cmd_string: str,
         *,
         login: bool = False,
         stdin_data: str | None = None,
-    ) -> ProcessHandle:
-        raise NotImplementedError(f"{type(self).__name__} must implement _run_bash()")
+    ) -> ProcessHandle: ...
 
     @abstractmethod
     def cleanup(self) -> None: ...
 
     def init_session(self) -> None:
+        snap = shlex.quote(self._snapshot_path)
+        # 按函数名过滤单下划线私有函数（多为补全辅助）；按行过滤会留下函数体，每次 source 快照时都被执行。
         bootstrap = (
-            f"export -p > {shlex.quote(self._snapshot_path)}\n"
-            f"declare -f | grep -vE '^_[^_]' >> {shlex.quote(self._snapshot_path)}\n"
-            f"alias -p >> {shlex.quote(self._snapshot_path)}\n"
-            f"echo 'shopt -s expand_aliases' >> {shlex.quote(self._snapshot_path)}\n"
-            f"echo 'set +e' >> {shlex.quote(self._snapshot_path)}\n"
-            f"echo 'set +u' >> {shlex.quote(self._snapshot_path)}\n"
+            f"export -p > {snap}\n"
+            "for __spiritagent_fn in $(compgen -A function); do "
+            f'[[ $__spiritagent_fn == _[!_]* ]] || declare -f "$__spiritagent_fn"; done >> {snap}\n'
+            f"alias -p >> {snap}\n"
+            f"echo 'shopt -s expand_aliases' >> {snap}\n"
+            f"echo 'set +e' >> {snap}\n"
+            f"echo 'set +u' >> {snap}\n"
             f"builtin cd {shlex.quote(self.cwd)} 2>/dev/null || true\n"
             f"pwd -P > {shlex.quote(self._cwd_file)} 2>/dev/null || true\n"
             f"printf '\\n{self._cwd_marker}%s{self._cwd_marker}\\n' \"$(pwd -P)\"\n"
@@ -182,11 +172,6 @@ class BaseEnvironment(ABC):
         parts.append("exit $__spiritagent_ec")
         return "\n".join(parts)
 
-    @staticmethod
-    def _embed_stdin_heredoc(command: str, stdin_data: str) -> str:
-        delimiter = f"SPIRITAGENT_STDIN_{uuid.uuid4().hex[:12]}"
-        return f"{command} << '{delimiter}'\n{stdin_data}\n{delimiter}"
-
     def _wait_for_process(self, proc: ProcessHandle, timeout: int = 120) -> dict:
         output_chunks: list[str] = []
         decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
@@ -212,7 +197,7 @@ class BaseEnvironment(ABC):
                     handle = msvcrt.get_osfhandle(fd)
                     avail = wintypes.DWORD(0)
                     idle_after_exit = 0
-                    while True:
+                    while not stop_drain.is_set():
                         peeked = _kernel32.PeekNamedPipe(handle, None, 0, None, ctypes.byref(avail), None)
                         if peeked and avail.value > 0:
                             if not (chunk := os.read(fd, min(4096, avail.value))):
@@ -231,7 +216,7 @@ class BaseEnvironment(ABC):
                             time.sleep(0.05)
                 else:
                     idle_after_exit = 0
-                    while True:
+                    while not stop_drain.is_set():
                         ready, _, _ = select.select([fd], [], [], 0.1)
                         if ready:
                             if not (chunk := os.read(fd, 4096)):
@@ -249,40 +234,40 @@ class BaseEnvironment(ABC):
                         output_chunks.append(tail)
                 except Exception:
                     pass
+                # 管道只由本线程关闭：调用方先停止读取再关闭，fd 号被复用后不会被误读；孤儿后代随后写入会收到 SIGPIPE。
+                with contextlib.suppress(OSError):
+                    stream.close()
 
+        stop_drain = threading.Event()
         drain_thread = threading.Thread(target=_drain, daemon=True, name="proc-output-drain")
         drain_thread.start()
         deadline = time.monotonic() + timeout
+        note, note_returncode = "", 0
         try:
-            _poll_sleep = 0.005
+            poll_sleep = 0.005
             while proc.poll() is None:
                 if is_interrupted():
                     self._kill_process(proc)
-                    drain_thread.join(timeout=2)
-                    return {"output": "".join(output_chunks) + "\n[Command interrupted]", "returncode": 130}
+                    note, note_returncode = "[Command interrupted]", 130
+                    break
                 if time.monotonic() > deadline:
                     self._kill_process(proc)
-                    drain_thread.join(timeout=2)
-                    partial = "".join(output_chunks)
-                    return {
-                        "output": f"{partial}\n[Command timed out after {timeout}s]"
-                        if partial
-                        else f"[Command timed out after {timeout}s]",
-                        "returncode": 124,
-                    }
-                time.sleep(_poll_sleep)
-                _poll_sleep = min(_poll_sleep * 1.5, 0.2)
-        except (KeyboardInterrupt, SystemExit):
-            try:
+                    note, note_returncode = f"[Command timed out after {timeout}s]", 124
+                    break
+                time.sleep(poll_sleep)
+                poll_sleep = min(poll_sleep * 1.5, 0.2)
+        except BaseException:
+            with contextlib.suppress(Exception):
                 self._kill_process(proc)
-                drain_thread.join(timeout=2)
-            except Exception:
-                pass
             raise
-        drain_thread.join(timeout=2)
-        with contextlib.suppress(Exception):
-            proc.stdout.close()
-        return {"output": "".join(output_chunks), "returncode": proc.returncode}
+        finally:
+            # 孤儿后代持有写端时管道一直不空，限时后通知排空线程停止并关闭管道，不让线程与缓冲随孤儿输出一直增长。
+            drain_thread.join(timeout=2)
+            stop_drain.set()
+        output = "".join(output_chunks)
+        if note:
+            return {"output": f"{output}\n{note}" if output else note, "returncode": note_returncode}
+        return {"output": output, "returncode": proc.returncode}
 
     def _kill_process(self, proc: ProcessHandle) -> None:
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
@@ -329,22 +314,23 @@ class BaseEnvironment(ABC):
         exec_command, sudo_stdin = _transform_sudo_command(command)
         if rewrite_compound_background:
             exec_command = _rewrite_compound_background(exec_command)
-        effective_stdin = (
-            sudo_stdin + stdin_data if sudo_stdin is not None and stdin_data is not None else (sudo_stdin or stdin_data)
-        )
-        if effective_stdin and self._stdin_mode == "heredoc":
-            exec_command = self._embed_stdin_heredoc(exec_command, effective_stdin)
-            effective_stdin = None
-        to = timeout or self.timeout
+        if sudo_stdin is not None:
+            stdin_data = sudo_stdin + (stdin_data or "")
         wrapped = self._wrap_command(exec_command, cwd or self.cwd)
-        self._executing = True
+        with self._executing_lock:
+            self._executing_count += 1
         try:
-            proc = self._run_bash(wrapped, login=not self._snapshot_ready, stdin_data=effective_stdin)
-            result = self._wait_for_process(proc, timeout=to)
+            proc = self._run_bash(wrapped, login=not self._snapshot_ready, stdin_data=stdin_data)
+            result = self._wait_for_process(proc, timeout=timeout or self.timeout)
         finally:
-            self._executing = False
+            with self._executing_lock:
+                self._executing_count -= 1
         self._update_cwd(result)
         return result
+
+    @property
+    def executing(self) -> bool:
+        return self._executing_count > 0
 
     def __del__(self) -> None:
         with contextlib.suppress(Exception):

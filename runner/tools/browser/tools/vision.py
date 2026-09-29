@@ -1,5 +1,4 @@
 import json
-import logging
 import uuid
 from typing import Any
 
@@ -10,9 +9,7 @@ from ..camofox import camofox_vision, is_camofox_mode
 from ..check import check_browser_native_requirements
 from ..helpers import screenshot_multimodal_result
 from ..schemas import BROWSER_VISION_SCHEMA
-from ._common import browser_session, no_supervisor
-
-logger = logging.getLogger(__name__)
+from ._common import browser_session, compact_snapshot, no_supervisor
 
 
 def browser_vision(annotate: bool = False, task_id: str | None = None) -> dict[str, Any] | str:
@@ -34,17 +31,9 @@ def browser_vision(annotate: bool = False, task_id: str | None = None) -> dict[s
 
         annotation_context = shot_res.get("annotation_context", "")
         if annotate:
-            try:
-                snap_res = supervisor.snapshot_axtree(interactive_only=True)
-                snapshot_text = snap_res.get("snapshot", "") if snap_res.get("ok") else ""
-                if not annotation_context:
-                    annotation_context = (
-                        f"\n\nAccessibility tree (element refs for interaction):\n{snapshot_text[:3000]}"
-                    )
-                else:
-                    annotation_context = f"{annotation_context}\n\nAccessibility tree (element refs for interaction):\n{snapshot_text[:3000]}"
-            except Exception as exc:
-                logger.debug("Failed to obtain snapshot for vision annotation: %s", exc)
+            snapshot = compact_snapshot(supervisor).get("snapshot")
+            if snapshot:
+                annotation_context += f"\n\nAccessibility tree (element refs for interaction):\n{snapshot[:3000]}"
 
         return screenshot_multimodal_result(screenshot_path, annotation_context)
 

@@ -24,7 +24,7 @@ dependencies = [
   "mss>=10.2.0; sys_platform == 'win32'",
   "pyautogui>=0.9.54; sys_platform == 'win32'",
   "pyperclip>=0.7.0",
-  "cua-driver==0.21.0; sys_platform == 'win32' or sys_platform == 'darwin'",
+  "cua-driver==0.21.0; sys_platform == 'darwin'",
   "pyobjc-framework-cocoa>=12.2.2 ; sys_platform == 'darwin'",
   "pyobjc-framework-quartz>=12.2.2 ; sys_platform == 'darwin'",
 ]

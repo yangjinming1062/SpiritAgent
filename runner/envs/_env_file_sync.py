@@ -16,8 +16,6 @@ from pathlib import Path
 
 from utils import get_credential_file_mounts, get_spiritagent_home, iter_cache_files, iter_skills_files
 
-from ._env_base import _file_mtime_key
-
 # 文件锁 stdlib 由解释器构建时决定，不应在 pyproject.toml 列出（stdlib 自动可用）。
 # POSIX 用 fcntl.flock，Windows 用 msvcrt.locking，语义一致，都是独占式建议锁。
 if sys.platform == "win32":
@@ -27,27 +25,29 @@ else:
 
 logger = logging.getLogger(__name__)
 
-_sleep = time.sleep
 _SYNC_INTERVAL_SECONDS = 5.0
-_FORCE_SYNC_ENV = "SPIRITAGENT_FORCE_FILE_SYNC"
 
-type UploadFn = Callable[[str, str], None]
 type BulkUploadFn = Callable[[list[tuple[str, str]]], None]
 type BulkDownloadFn = Callable[[Path], None]
 type DeleteFn = Callable[[list[str]], None]
 type GetFilesFn = Callable[[], list[tuple[str, str]]]
 
 
-def iter_sync_files(container_base: str = "/root/.spiritagent") -> list[tuple[str, str]]:
-    """枚举需要与容器同步的 (host_path, container_path) 列表：凭据、技能、缓存目录。"""
-    return (
-        [
-            (m["host_path"], m["container_path"].replace("/root/.spiritagent", container_base, 1))
-            for m in get_credential_file_mounts()
-        ]
-        + [(m["host_path"], m["container_path"]) for m in iter_skills_files(container_base=container_base)]
-        + [(m["host_path"], m["container_path"]) for m in iter_cache_files(container_base=container_base)]
+def _file_mtime_key(host_path: str) -> tuple[float, int] | None:
+    try:
+        return ((st := Path(host_path).stat()).st_mtime, st.st_size)
+    except OSError:
+        return None
+
+
+def iter_sync_files(container_base: str) -> list[tuple[str, str]]:
+    """枚举需要同步到远端 `container_base` 下的 (host_path, remote_path) 列表：凭据、技能、缓存目录。"""
+    mounts = (
+        get_credential_file_mounts(container_base)
+        + iter_skills_files(container_base)
+        + iter_cache_files(container_base)
     )
+    return [(m["host_path"], m["container_path"]) for m in mounts]
 
 
 def quoted_rm_command(remote_paths: list[str]) -> str:
@@ -84,28 +84,20 @@ class FileSyncManager:
     def __init__(
         self,
         get_files_fn: GetFilesFn,
-        upload_fn: UploadFn,
+        bulk_upload_fn: BulkUploadFn,
+        bulk_download_fn: BulkDownloadFn,
         delete_fn: DeleteFn,
-        sync_interval: float = _SYNC_INTERVAL_SECONDS,
-        bulk_upload_fn: BulkUploadFn | None = None,
-        bulk_download_fn: BulkDownloadFn | None = None,
-    ):
+    ) -> None:
         self._get_files_fn = get_files_fn
-        self._upload_fn = upload_fn
         self._bulk_upload_fn = bulk_upload_fn
         self._bulk_download_fn = bulk_download_fn
         self._delete_fn = delete_fn
         self._synced_files: dict[str, tuple[float, int]] = {}
         self._pushed_hashes: dict[str, str] = {}
         self._last_sync_time: float = 0.0
-        self._sync_interval = sync_interval
 
     def sync(self, *, force: bool = False) -> None:
-        if (
-            not force
-            and not os.environ.get(_FORCE_SYNC_ENV)
-            and time.monotonic() - self._last_sync_time < self._sync_interval
-        ):
+        if not force and time.monotonic() - self._last_sync_time < _SYNC_INTERVAL_SECONDS:
             return
         current_files = self._get_files_fn()
         current_remote_paths = {remote for _, remote in current_files}
@@ -121,11 +113,7 @@ class FileSyncManager:
         prev_files, prev_hashes = dict(self._synced_files), dict(self._pushed_hashes)
         try:
             if to_upload:
-                if self._bulk_upload_fn:
-                    self._bulk_upload_fn(to_upload)
-                else:
-                    for hp, rp in to_upload:
-                        self._upload_fn(hp, rp)
+                self._bulk_upload_fn(to_upload)
             if to_delete:
                 self._delete_fn(to_delete)
             new_files = {rp: fk for hp, rp in current_files if (fk := _file_mtime_key(hp)) is not None}
@@ -139,10 +127,10 @@ class FileSyncManager:
             logger.warning("file_sync: sync failed, rolled back state: %s", exc)
         self._last_sync_time = time.monotonic()
 
-    def sync_back(self, spiritagent_home: Path | None = None) -> None:
-        if not self._bulk_download_fn or (not self._pushed_hashes and not self._synced_files):
+    def sync_back(self) -> None:
+        if not self._pushed_hashes and not self._synced_files:
             return
-        lock_path = (spiritagent_home or get_spiritagent_home()) / ".sync.lock"
+        lock_path = get_spiritagent_home() / ".sync.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         for attempt in range(_SYNC_BACK_MAX_RETRIES):
             try:
@@ -153,7 +141,7 @@ class FileSyncManager:
                     logger.warning("sync_back: all attempts failed: %s", exc)
                 else:
                     logger.warning("sync_back: attempt %d failed, retrying...", attempt + 1)
-                    _sleep(_SYNC_BACK_BACKOFF[attempt])
+                    time.sleep(_SYNC_BACK_BACKOFF[attempt])
 
     def _sync_back_once(self, lock_path: Path) -> None:
         on_main = threading.current_thread() is threading.main_thread()
@@ -197,8 +185,6 @@ class FileSyncManager:
                     logger.debug("file_sync: unlock failed for %s: %s", lock_path, e)
 
     def _sync_back_impl(self) -> None:
-        if not self._bulk_download_fn:
-            raise RuntimeError("Missing bulk_download_fn")
         mapping = list(self._get_files_fn())
         # mkstemp + 显式关闭：下载子进程需以写入方式打开该路径，Windows 在我们的 fd 持有文件时拒绝（NamedTemporaryFile 的打开句柄）。
         fd, tar_name = tempfile.mkstemp(suffix=".tar")

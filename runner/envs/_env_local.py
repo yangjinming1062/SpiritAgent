@@ -3,19 +3,19 @@ import logging
 import os
 import subprocess
 import tempfile
-from pathlib import Path
 
 from utils import (
     CREATE_NO_WINDOW,
     IS_WINDOWS,
     append_sane_path_entries,
+    cfg_get,
     find_bash,
     get_spiritagent_home,
-    get_subprocess_home,
-    inject_context_spiritagent_home,
+    is_truthy_value,
     load_config,
     msys_to_windows_path,
     resolve_safe_cwd,
+    sanitize_subprocess_env,
     terminate_tree,
 )
 
@@ -24,34 +24,19 @@ from ._env_base import BaseEnvironment, _pipe_stdin
 logger = logging.getLogger(__name__)
 
 
-def _path_env_key(run_env: dict) -> str | None:
-    return next((k for k in run_env if k.upper() == "PATH"), None) if IS_WINDOWS else "PATH"
-
-
-def _make_run_env(env: dict) -> dict[str, str]:
-    """组装子进程环境：以 runner 自身环境为基底（调用方可控），叠加 `env` 覆盖。"""
-    run_env = {k: str(v) if v is not None else "" for k, v in (os.environ | env).items()}
-    if path_key := _path_env_key(run_env):
+def local_run_env() -> dict[str, str]:
+    """本机终端子进程环境（前台与后台共用）：继承 runner 环境，补齐常用 PATH 目录并设置 HOME / SPIRITAGENT_HOME。"""
+    run_env = sanitize_subprocess_env(dict(os.environ))
+    path_key = next((k for k in run_env if k.upper() == "PATH"), None) if IS_WINDOWS else "PATH"
+    if path_key:
         run_env[path_key] = append_sane_path_entries(run_env.get(path_key, ""))
-    inject_context_spiritagent_home(run_env)
-    if ph := get_subprocess_home():
-        run_env["HOME"] = str(ph)
     return run_env
 
 
-def _read_terminal_shell_init_config() -> tuple[list[str], bool]:
-    try:
-        cfg = load_config() or {}
-        terminal_cfg = cfg.get("terminal") or {}
-        return [str(f) for f in (terminal_cfg.get("shell_init_files") or []) if f], bool(
-            terminal_cfg.get("auto_source_bashrc", True),
-        )
-    except Exception:
-        return [], True
-
-
 def _resolve_shell_init_files() -> list[str]:
-    explicit, auto_bashrc = _read_terminal_shell_init_config()
+    terminal_cfg = cfg_get(load_config(), "terminal", default={})
+    explicit = [str(f) for f in (cfg_get(terminal_cfg, "shell_init_files", default=None) or []) if f]
+    auto_bashrc = is_truthy_value(cfg_get(terminal_cfg, "auto_source_bashrc"), default=True)
     return [
         p
         for raw in (
@@ -74,23 +59,19 @@ def _prepend_shell_init(cmd_string: str, files: list[str]) -> str:
 
 
 class LocalEnvironment(BaseEnvironment):
-    """在宿主机 shell 中直接执行命令的本地环境：复用宿主的 PATH/HOME，仅解析 cwd 与登录初始化文件。"""
+    """在宿主机 shell 中直接执行命令的本地环境：子进程环境见 `local_run_env`，登录时补充用户初始化文件。"""
 
-    def __init__(self, cwd: str = "", timeout: int = 60, env: dict | None = None, persistent: bool = False) -> None:
-        super().__init__(cwd=os.path.expanduser(cwd) if cwd else os.getcwd(), timeout=timeout, env=env)
-        self._persistent = persistent
+    def __init__(self, cwd: str = "", timeout: int = 60) -> None:
+        super().__init__(cwd=os.path.expanduser(cwd) if cwd else os.getcwd(), timeout=timeout)
         self.init_session()
 
     def get_temp_dir(self) -> str:
         if IS_WINDOWS:
-            try:
-                cache_dir = get_spiritagent_home() / "cache" / "terminal"
-            except Exception:
-                cache_dir = Path(tempfile.gettempdir()) / "spiritagent_terminal"
+            cache_dir = get_spiritagent_home() / "cache" / "terminal"
             cache_dir.mkdir(parents=True, exist_ok=True)
-            return str(cache_dir).replace("\\", "/")
+            return cache_dir.as_posix()
         for env_var in ("TMPDIR", "TMP", "TEMP"):
-            if (candidate := self.env.get(env_var) or os.environ.get(env_var)) and candidate.startswith("/"):
+            if (candidate := os.environ.get(env_var)) and candidate.startswith("/"):
                 return candidate.rstrip("/") or "/"
         return (
             "/tmp"
@@ -108,7 +89,6 @@ class LocalEnvironment(BaseEnvironment):
         if login and (init_files := _resolve_shell_init_files()):
             cmd_string = _prepend_shell_init(cmd_string, init_files)
         args = [find_bash(), "-l", "-c", cmd_string] if login else [find_bash(), "-c", cmd_string]
-        run_env = {str(k): str(v) for k, v in _make_run_env(self.env).items()}
         safe_cwd = resolve_safe_cwd(self.cwd)
         if safe_cwd != self.cwd:
             if safe_cwd != (msys_to_windows_path(self.cwd) if IS_WINDOWS else self.cwd):
@@ -117,50 +97,40 @@ class LocalEnvironment(BaseEnvironment):
         proc = subprocess.Popen(
             args,
             text=True,
-            env=run_env,
+            env=local_run_env(),
             encoding="utf-8",
             errors="replace",
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
-            preexec_fn=None if IS_WINDOWS else os.setsid,
+            # POSIX 下 setsid 使 pgid == pid，超时 / 取消时整组终止；Windows 忽略该参数。
+            start_new_session=True,
             cwd=self.cwd,
-            **({"creationflags": CREATE_NO_WINDOW} if IS_WINDOWS else {}),
+            creationflags=CREATE_NO_WINDOW,
         )
-        if not IS_WINDOWS:
-            with contextlib.suppress(ProcessLookupError):
-                proc._spiritagent_pgid = os.getpgid(proc.pid)
         if stdin_data is not None:
             _pipe_stdin(proc, stdin_data)
         return proc
 
     def _kill_process(self, proc: subprocess.Popen) -> None:
-        # 委派 helper: POSIX 走 killpg(SIGTERM) → wait → killpg(SIGKILL) → psutil 兜底,
-        # Windows 走 taskkill /T → wait → taskkill /T /F。
-        # ``escalate=True`` 与原内联 SIGKILL 升级语义对齐 —— 进程忽略 SIGTERM 时必须升级,
-        # 否则丢失行为。``_spiritagent_pgid`` shim 仍作为 pgid 二级回退源。
+        # POSIX killpg(SIGTERM) → 等待 → SIGKILL；Windows taskkill /T → /T /F。进程忽略 SIGTERM 时必须升级。
         try:
-            terminate_tree(
-                proc,
-                graceful_timeout=1.0,
-                force_timeout=2.0,
-                escalate=True,
-                pgid=getattr(proc, "_spiritagent_pgid", None),
-            )
-        except Exception:
-            with contextlib.suppress(Exception):
+            terminate_tree(proc, graceful_timeout=1.0, force_timeout=2.0, escalate=True)
+        except Exception as e:
+            logger.warning("terminate_tree failed for pid %s: %s; killing direct child only", proc.pid, e)
+            with contextlib.suppress(OSError):
                 proc.kill()
 
     def _update_cwd(self, result: dict) -> None:
         try:
             with open(self._cwd_file, encoding="utf-8") as f:
                 cwd_path = f.read().strip()
-            if IS_WINDOWS:
-                cwd_path = msys_to_windows_path(cwd_path)
-            if cwd_path and os.path.isdir(cwd_path):
-                self.cwd = cwd_path
-        except Exception:
-            pass
+        except OSError:
+            cwd_path = ""
+        if IS_WINDOWS:
+            cwd_path = msys_to_windows_path(cwd_path)
+        if cwd_path and os.path.isdir(cwd_path):
+            self.cwd = cwd_path
         self._extract_cwd_from_output(result)
 
     def _extract_cwd_from_output(self, result: dict) -> None:
@@ -175,5 +145,9 @@ class LocalEnvironment(BaseEnvironment):
 
     def cleanup(self) -> None:
         for f in (self._snapshot_path, self._cwd_file):
-            with contextlib.suppress(OSError):
+            try:
                 os.unlink(f)
+            except FileNotFoundError:
+                pass
+            except OSError as e:
+                logger.debug("LocalEnvironment cleanup could not remove %s: %s", f, e)

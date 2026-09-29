@@ -60,8 +60,6 @@ def _terminate_tree_posix(
     start = time.monotonic()
 
     resolved_pgid = hinted_pgid
-    if resolved_pgid is None and isinstance(target, subprocess.Popen):
-        resolved_pgid = getattr(target, "_spiritagent_pgid", None)
     if resolved_pgid is None:
         with contextlib.suppress(ProcessLookupError, PermissionError, OSError):
             resolved_pgid = os.getpgid(pid)
@@ -167,13 +165,13 @@ def _terminate_tree_windows(
     escalate: bool,
 ) -> TerminationResult:
     start = time.monotonic()
-    wait_fn = target.wait if isinstance(target, subprocess.Popen) else None
+    proc = target if isinstance(target, subprocess.Popen) else None
     escalated = False
 
     kill_tree(pid, force=False)
     try:
-        if wait_fn is not None:
-            wait_fn(timeout=graceful_timeout)
+        if proc is not None:
+            proc.wait(timeout=graceful_timeout)
         else:
             psutil.Process(pid).wait(timeout=graceful_timeout)
     # NoSuchProcess 与 TimeoutExpired 分开: 前者表示软杀已成功, 不应再触发 force。
@@ -183,10 +181,10 @@ def _terminate_tree_windows(
         kill_tree(pid, force=True)
         escalated = True
 
-    if escalate and not (wait_fn is not None and target.poll() is not None) and pid_exists(pid):
+    if escalate and not (proc is not None and proc.poll() is not None) and pid_exists(pid):
         try:
-            if wait_fn is not None:
-                wait_fn(timeout=force_timeout)
+            if proc is not None:
+                proc.wait(timeout=force_timeout)
             else:
                 psutil.Process(pid).wait(timeout=force_timeout)
         except (psutil.NoSuchProcess, psutil.AccessDenied):

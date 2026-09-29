@@ -21,6 +21,11 @@ def _unicode_normalize(text: str) -> str:
     return text
 
 
+def _unescape_controls(text: str) -> str:
+    """把字面 ``\\n``/``\\t``/``\\r`` 还原为真实控制字符。"""
+    return text.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
+
+
 def fuzzy_find_and_replace(
     content: str,
     old_string: str,
@@ -46,7 +51,6 @@ def fuzzy_find_and_replace(
         ("trimmed_boundary", _strategy_trimmed_boundary),
         ("unicode_normalized", _strategy_unicode_normalized),
         ("block_anchor", _strategy_block_anchor),
-        ("context_aware", _strategy_context_aware),
     ]
 
     for strategy_name, strategy_fn in strategies:
@@ -72,20 +76,11 @@ def fuzzy_find_and_replace(
                 if drift_err:
                     return content, 0, None, drift_err
 
-            # 执行替换。当匹配策略非 exact 时，文件实际缩进可能与 LLM 给的
-            # old_string/new_string 不同（如 LLM 用 2 空格而文件是 4 空格）。
-            # 需按缩进差平移 new_string，让结果贴合文件真实缩进。
-            #
-            # LLM 经常把 JSON 工具调用参数里的 tab/CR 序列化成两个字符 ``\t`` 和
-            # ``\r``（反斜杠+字母），而非真实的控制字节。若原样写入，文件里
-            # 就会出现字面反斜杠序列，破坏真实 tab 缩进。
-            #
-            # 策略：仅当匹配区域实际包含对应真实控制字符时才反转义。这与
-            # ``_detect_escape_drift`` 的区域启发式一致，能保留合法的字面
-            # ``"\t"`` 写入（如修补含 tab 字面量的 Python 源码）。
-            #
-            # ``\n`` 故意排除：JSON 中换行能正确序列化，反转义反而会破坏源
-            # 代码字符串常量里的转义序列。
+            # old_string 要还原转义才能命中时，new_string 带着同样的多余转义，须一并还原，
+            # 否则字面 ``\n`` 会被写进文件。
+            if strategy_name == "escape_normalized":
+                old_string, new_string = _unescape_controls(old_string), _unescape_controls(new_string)
+            # 非 exact 匹配时文件缩进可能与模型给的不同，替换时按 old_string 重新缩进 new_string。
             effective_new = _maybe_unescape_new_string(new_string, content, matches)
             new_content = _apply_replacements(
                 content,
@@ -266,7 +261,7 @@ def _strategy_whitespace_normalized(content: str, pattern: str) -> list[tuple[in
     if not matches_in_normalized:
         return []
 
-    return _map_normalized_positions(content, content_normalized, matches_in_normalized)
+    return _map_whitespace_positions(content, matches_in_normalized)
 
 
 def _strategy_indentation_flexible(content: str, pattern: str) -> list[tuple[int, int]]:
@@ -280,11 +275,7 @@ def _strategy_indentation_flexible(content: str, pattern: str) -> list[tuple[int
 
 def _strategy_escape_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
     """策略 5：将转义序列（``\\n``/``\\t``/``\\r``）还原为真实控制字符后再匹配。"""
-
-    def unescape(s):
-        return s.replace("\\n", "\n").replace("\\t", "\t").replace("\\r", "\r")
-
-    pattern_unescaped = unescape(pattern)
+    pattern_unescaped = _unescape_controls(pattern)
 
     if pattern_unescaped == pattern:
         # 无可还原的转义，跳过
@@ -438,34 +429,6 @@ def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
     return matches
 
 
-def _strategy_context_aware(content: str, pattern: str) -> list[tuple[int, int]]:
-    """策略 9：按行相似度匹配，至少 50% 的行需高相似。"""
-    pattern_lines = pattern.split("\n")
-    content_lines = content.split("\n")
-
-    if not pattern_lines:
-        return []
-
-    matches = []
-    pattern_line_count = len(pattern_lines)
-
-    for i in range(len(content_lines) - pattern_line_count + 1):
-        block_lines = content_lines[i : i + pattern_line_count]
-
-        high_similarity_count = 0
-        for p_line, c_line in zip(pattern_lines, block_lines, strict=True):
-            sim = SequenceMatcher(None, p_line.strip(), c_line.strip()).ratio()
-            if sim >= 0.80:
-                high_similarity_count += 1
-
-        # 至少 50% 的行高相似才视为命中
-        if high_similarity_count >= len(pattern_lines) * 0.5:
-            start_pos, end_pos = _calculate_line_positions(content_lines, i, i + pattern_line_count, len(content))
-            matches.append((start_pos, end_pos))
-
-    return matches
-
-
 def _calculate_line_positions(
     content_lines: list[str],
     start_line: int,
@@ -502,73 +465,23 @@ def _find_normalized_matches(
     return matches
 
 
-def _map_normalized_positions(
-    original: str,
-    normalized: str,
-    normalized_matches: list[tuple[int, int]],
-) -> list[tuple[int, int]]:
-    """将归一化坐标尽力映射回原坐标；适用于空白归一化场景。"""
-    if not normalized_matches:
-        return []
+def _map_whitespace_positions(original: str, normalized_matches: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """把 ``[ \t]+`` 压缩为单空格后的坐标映射回原字符串坐标。
 
-    orig_to_norm = []  # orig_to_norm[i] = position in normalized
-
-    orig_idx = 0
-    norm_idx = 0
-
-    while orig_idx < len(original) and norm_idx < len(normalized):
-        if original[orig_idx] == normalized[norm_idx]:
-            orig_to_norm.append(norm_idx)
-            orig_idx += 1
-            norm_idx += 1
-        elif original[orig_idx] in " \t" and normalized[norm_idx] == " ":
-            # 原始为空格/制表符，归一化为单空格
-            orig_to_norm.append(norm_idx)
-            orig_idx += 1
-            # 先不前进 norm_idx，等所有空白消化完
-            if orig_idx < len(original) and original[orig_idx] not in " \t":
-                norm_idx += 1
-        elif original[orig_idx] in " \t":
-            orig_to_norm.append(norm_idx)
-            orig_idx += 1
-        else:
-            # 理论上不会发生，归一化不会引入非空白差异
-            orig_to_norm.append(norm_idx)
-            orig_idx += 1
-
-    while orig_idx < len(original):
-        orig_to_norm.append(len(normalized))
-        orig_idx += 1
-
-    # 反向映射：每个归一化位置 → 对应的原字符区间
-    norm_to_orig_start = {}
-    norm_to_orig_end = {}
-
-    for orig_pos, norm_pos in enumerate(orig_to_norm):
-        if norm_pos not in norm_to_orig_start:
-            norm_to_orig_start[norm_pos] = orig_pos
-        norm_to_orig_end[norm_pos] = orig_pos
-
-    original_matches = []
-    for norm_start, norm_end in normalized_matches:
-        orig_start = (
-            norm_to_orig_start[norm_start]
-            if norm_start in norm_to_orig_start
-            else min(i for i, n in enumerate(orig_to_norm) if n >= norm_start)
-        )
-
-        orig_end = (
-            norm_to_orig_end[norm_end - 1] + 1
-            if norm_end - 1 in norm_to_orig_end
-            else orig_start + (norm_end - norm_start)
-        )
-
-        while orig_end < len(original) and original[orig_end] in " \t":
-            orig_end += 1
-
-        original_matches.append((orig_start, min(orig_end, len(original))))
-
-    return original_matches
+    原文每段连续空白对应归一化后的一个空格；匹配以空白结尾时覆盖整段原空白，否则止于最后一个非空白字符。
+    """
+    run_start: list[int] = []  # 归一化位置 → 对应原文区间起点
+    run_end: list[int] = []  # 归一化位置 → 对应原文区间终点（不含）
+    i = 0
+    while i < len(original):
+        j = i + 1
+        if original[i] in " \t":
+            while j < len(original) and original[j] in " \t":
+                j += 1
+        run_start.append(i)
+        run_end.append(j)
+        i = j
+    return [(run_start[start], run_end[end - 1]) for start, end in normalized_matches]
 
 
 def find_closest_lines(old_string: str, content: str, context_lines: int = 2, max_results: int = 3) -> str:

@@ -1,48 +1,47 @@
 """Input 事件分发：click/type/hover/drag/press/scroll/wait。
 
-共享 KEY_CODE_MAP 和 _parse_numeric_unit；session id 与 ref 解析通过构造时注入的可调用获取。
+session id 与 ref 解析通过构造时注入的可调用获取。
 """
 
 import contextlib
 import json
 import re
 import sys
+import threading
 import time
 from collections.abc import Callable
 from typing import Any
 
-KEY_CODE_MAP: dict[str, int] = {
-    "enter": 13,
-    "tab": 9,
-    "escape": 27,
-    "esc": 27,
-    "backspace": 8,
-    "delete": 46,
-    "space": 32,
-    "arrowup": 38,
-    "up": 38,
-    "arrowdown": 40,
-    "down": 40,
-    "arrowleft": 37,
-    "left": 37,
-    "arrowright": 39,
-    "right": 39,
-    "pageup": 33,
-    "pagedown": 34,
-    "home": 36,
-    "end": 35,
-    "f1": 112,
-    "f2": 113,
-    "f3": 114,
-    "f4": 115,
-    "f5": 116,
-    "f6": 117,
-    "f7": 118,
-    "f8": 119,
-    "f9": 120,
-    "f10": 121,
-    "f11": 122,
-    "f12": 123,
+# 模型可用的按键名（不区分大小写）→ (DOM key, DOM code, windowsVirtualKeyCode, text)。
+# 带 text 的按键须以 keyDown 发送才会产生字符输入，例如 Enter 提交表单、Space 激活控件。
+_KEYS: dict[str, tuple[str, str, int, str]] = {
+    "enter": ("Enter", "Enter", 13, "\r"),
+    "tab": ("Tab", "Tab", 9, ""),
+    "escape": ("Escape", "Escape", 27, ""),
+    "esc": ("Escape", "Escape", 27, ""),
+    "backspace": ("Backspace", "Backspace", 8, ""),
+    "delete": ("Delete", "Delete", 46, ""),
+    "space": (" ", "Space", 32, " "),
+    "arrowup": ("ArrowUp", "ArrowUp", 38, ""),
+    "up": ("ArrowUp", "ArrowUp", 38, ""),
+    "arrowdown": ("ArrowDown", "ArrowDown", 40, ""),
+    "down": ("ArrowDown", "ArrowDown", 40, ""),
+    "arrowleft": ("ArrowLeft", "ArrowLeft", 37, ""),
+    "left": ("ArrowLeft", "ArrowLeft", 37, ""),
+    "arrowright": ("ArrowRight", "ArrowRight", 39, ""),
+    "right": ("ArrowRight", "ArrowRight", 39, ""),
+    "pageup": ("PageUp", "PageUp", 33, ""),
+    "pagedown": ("PageDown", "PageDown", 34, ""),
+    "home": ("Home", "Home", 36, ""),
+    "end": ("End", "End", 35, ""),
+    **{f"f{n}": (f"F{n}", f"F{n}", 111 + n, "") for n in range(1, 13)},
+}
+
+# drag 的 hold_key → (CDP modifiers 位, DOM key, DOM code, windowsVirtualKeyCode)
+_DRAG_MODIFIERS: dict[str, tuple[int, str, str, int]] = {
+    "shift": (8, "Shift", "ShiftLeft", 16),
+    "ctrl": (2, "Control", "ControlLeft", 17),
+    "alt": (1, "Alt", "AltLeft", 18),
 }
 
 
@@ -73,6 +72,11 @@ def parse_numeric_unit(
     return default
 
 
+def _dialog_opened_by(res: dict[str, Any]) -> dict[str, Any] | None:
+    """send_cdp 结果表明本次调用触发了弹窗（动作已生效）时返回该弹窗。"""
+    return res.get("dialog") if res.get("dialog_opened_by_call") else None
+
+
 SendCdpFn = Callable[..., dict[str, Any]]
 EvaluateRuntimeFn = Callable[..., dict[str, Any]]
 ResolveRefFn = Callable[..., tuple[float, float, str | None]]
@@ -97,21 +101,25 @@ class InputDispatch:
         self._wait_for_page_stable = wait_for_page_stable
 
     def _dispatch_left_click(self, sid: str | None, x: float, y: float) -> dict[str, Any]:
-        """发送一次左键按下+释放：即便 release 失败也再补一次 release，
-        防止浏览器把按钮卡在按下状态导致后续 Input 事件失真。"""
+        """发送一次左键按下+释放。点击本身触发了弹窗时仍视为成功并带回 ``dialog``，避免调用方重复点击；
+        调用前已有弹窗时点击不会送达，按失败返回。release 失败时再补一次 release，防止按钮卡在按下状态。"""
         pressed = self._send_cdp(
             "Input.dispatchMouseEvent",
             {"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1},
             session_id=sid,
         )
+        if opened := _dialog_opened_by(pressed):
+            return {"ok": True, "dialog": opened}
         if not pressed.get("ok"):
             return {"ok": False, "error": pressed.get("error", "Input.dispatchMouseEvent mousePressed failed")}
         release_params = {"type": "mouseReleased", "x": x, "y": y, "button": "left", "clickCount": 1}
         released = self._send_cdp("Input.dispatchMouseEvent", release_params, session_id=sid)
+        if opened := _dialog_opened_by(released):
+            return {"ok": True, "dialog": opened}
         if released.get("ok"):
             return {"ok": True}
-        # release 响应失败但事件可能已到达；再补一次 release 防止按钮卡住。
-        # retry 成功则视为整体成功（释放事件确实发了），否则回报错误。
+        if released.get("dialog"):
+            return {"ok": False, "error": released.get("error", "Input.dispatchMouseEvent mouseReleased failed")}
         retry = self._send_cdp("Input.dispatchMouseEvent", release_params, session_id=sid, timeout=2.0)
         if retry.get("ok"):
             return {"ok": True, "warning": released.get("error", "mouseReleased response lost; retry succeeded")}
@@ -127,6 +135,8 @@ class InputDispatch:
         res = self._dispatch_left_click(sid, cx, cy)
         if not res.get("ok"):
             return res
+        if dialog := res.get("dialog"):
+            return {"ok": True, "clicked": ref, "dialog": dialog}
         if wait_stable:
             self._wait_for_page_stable(timeout_s=timeout_s)
         return {"ok": True, "clicked": ref}
@@ -195,12 +205,19 @@ class InputDispatch:
                 if not is_active_input:
                     return {"ok": False, "error": f"Target at '{ref}' did not focus an editable input field"}
 
-            # macOS 用 Meta (Command) = bit 8；其它平台用 Control = bit 2。
-            # 不得写成 4（Alt），否则 Mac 上 select-all 会变成 Alt+A。
-            modifiers = 8 if sys.platform == "darwin" else 2
+            # CDP modifiers 位：Alt=1、Ctrl=2、Meta=4、Shift=8。macOS 的编辑快捷键不经合成按键事件触发，
+            # 须随 keyDown 附带 selectAll 编辑命令。
+            modifiers = 4 if sys.platform == "darwin" else 2
             for evt in (
-                {"type": "rawKeyDown", "windowsVirtualKeyCode": 65, "modifiers": modifiers, "key": "a"},
-                {"type": "keyUp", "windowsVirtualKeyCode": 65, "modifiers": modifiers, "key": "a"},
+                {
+                    "type": "rawKeyDown",
+                    "windowsVirtualKeyCode": 65,
+                    "modifiers": modifiers,
+                    "key": "a",
+                    "code": "KeyA",
+                    "commands": ["selectAll"],
+                },
+                {"type": "keyUp", "windowsVirtualKeyCode": 65, "modifiers": modifiers, "key": "a", "code": "KeyA"},
                 {"type": "rawKeyDown", "windowsVirtualKeyCode": 8, "key": "Backspace"},
                 {"type": "keyUp", "windowsVirtualKeyCode": 8, "key": "Backspace"},
             ):
@@ -210,6 +227,8 @@ class InputDispatch:
 
         if text:
             ins = self._send_cdp("Input.insertText", {"text": text}, session_id=sid)
+            if opened := _dialog_opened_by(ins):
+                return {"ok": True, "typed": text, "ref": ref, "dialog": opened}
             if not ins.get("ok"):
                 return {"ok": False, "error": ins.get("error", "Input.insertText failed")}
 
@@ -236,7 +255,9 @@ class InputDispatch:
             {"type": "mouseWheel", "x": 100, "y": 100, "deltaX": delta_x, "deltaY": delta_y},
             session_id=sid,
         )
-        return {"ok": res.get("ok", False), "direction": d, "pixels": amount}
+        if not res.get("ok"):
+            return {"ok": False, "error": res.get("error", "Input.dispatchMouseEvent mouseWheel failed")}
+        return {"ok": True, "direction": d, "pixels": amount}
 
     def hover_ref(self, ref: str) -> dict[str, Any]:
         try:
@@ -246,7 +267,9 @@ class InputDispatch:
 
         sid = self._session_id_provider()
         res = self._send_cdp("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": cx, "y": cy}, session_id=sid)
-        return {"ok": res.get("ok", False), "hovered": ref}
+        if not res.get("ok"):
+            return {"ok": False, "error": res.get("error", "Input.dispatchMouseEvent mouseMoved failed")}
+        return {"ok": True, "hovered": ref}
 
     def drag_refs(self, from_ref: str, to_ref: str, *, hold_key: str | None = None, steps: int = 10) -> dict[str, Any]:
         try:
@@ -256,30 +279,30 @@ class InputDispatch:
             return {"ok": False, "error": str(exc)}
 
         sid = self._session_id_provider()
-        modifier_mask = {"shift": 1, "ctrl": 2, "alt": 4}.get((hold_key or "").lower(), 0)
+        modifier = _DRAG_MODIFIERS.get((hold_key or "").lower())
+        mask = modifier[0] if modifier else 0
         first_error: dict[str, Any] | None = None
         mouse_released = False
-        if modifier_mask:
+        if modifier:
+            _, key, code, vk = modifier
             res = self._send_cdp(
                 "Input.dispatchKeyEvent",
-                {
-                    "type": "keyDown",
-                    "modifiers": modifier_mask,
-                    "key": hold_key,
-                    "code": f"{hold_key.title()}Left",
-                    "windowsVirtualKeyCode": {"shift": 16, "ctrl": 17, "alt": 18}.get(hold_key.lower()),
-                },
+                {"type": "rawKeyDown", "modifiers": mask, "key": key, "code": code, "windowsVirtualKeyCode": vk},
+                session_id=sid,
+            )
+            if not res.get("ok"):
+                first_error = res
+        try:
+            res = self._send_cdp(
+                "Input.dispatchMouseEvent",
+                {"type": "mouseMoved", "x": fx, "y": fy, "modifiers": mask},
                 session_id=sid,
             )
             if not res.get("ok") and first_error is None:
                 first_error = res
-        try:
-            res = self._send_cdp("Input.dispatchMouseEvent", {"type": "mouseMoved", "x": fx, "y": fy}, session_id=sid)
-            if not res.get("ok") and first_error is None:
-                first_error = res
             res = self._send_cdp(
                 "Input.dispatchMouseEvent",
-                {"type": "mousePressed", "x": fx, "y": fy, "button": "left", "clickCount": 1},
+                {"type": "mousePressed", "x": fx, "y": fy, "button": "left", "clickCount": 1, "modifiers": mask},
                 session_id=sid,
             )
             if not res.get("ok") and first_error is None:
@@ -292,14 +315,14 @@ class InputDispatch:
                 curr_y = fy + (ty - fy) * (i / steps)
                 self._send_cdp(
                     "Input.dispatchMouseEvent",
-                    {"type": "mouseMoved", "x": curr_x, "y": curr_y, "button": "left"},
+                    {"type": "mouseMoved", "x": curr_x, "y": curr_y, "button": "left", "modifiers": mask},
                     session_id=sid,
                 )
                 time.sleep(0.02)
 
             res = self._send_cdp(
                 "Input.dispatchMouseEvent",
-                {"type": "mouseReleased", "x": tx, "y": ty, "button": "left", "clickCount": 1},
+                {"type": "mouseReleased", "x": tx, "y": ty, "button": "left", "clickCount": 1, "modifiers": mask},
                 session_id=sid,
             )
             mouse_released = True
@@ -309,9 +332,7 @@ class InputDispatch:
                 return {"ok": False, "error": first_error.get("error", "drag_refs: CDP dispatch failed")}
             return {"ok": True, "from": from_ref, "to": to_ref}
         finally:
-            # 鼠标释放 + 修饰键抬起 必须放在同一 finally 里，保证中途异常时
-            # 也确保按钮不会被卡在按下状态、修饰键不会被卡在按下状态。
-            # 注意: happy path 已经在主体里调用过一次 mouseReleased; 这里只在没释放过的情况下补发。
+            # 中途异常时也要补发鼠标释放与修饰键抬起，避免按键卡在按下状态；正常路径已释放过鼠标。
             if not mouse_released:
                 with contextlib.suppress(Exception):
                     self._send_cdp(
@@ -319,41 +340,44 @@ class InputDispatch:
                         {"type": "mouseReleased", "x": tx, "y": ty, "button": "left", "clickCount": 1},
                         session_id=sid,
                     )
-            if modifier_mask:
+            if modifier:
+                _, key, code, vk = modifier
                 with contextlib.suppress(Exception):
                     self._send_cdp(
                         "Input.dispatchKeyEvent",
-                        {
-                            "type": "keyUp",
-                            "modifiers": modifier_mask,
-                            "key": hold_key,
-                            "code": f"{hold_key.title()}Left",
-                            "windowsVirtualKeyCode": {"shift": 16, "ctrl": 17, "alt": 18}.get(hold_key.lower()),
-                        },
+                        {"type": "keyUp", "key": key, "code": code, "windowsVirtualKeyCode": vk},
                         session_id=sid,
                     )
 
     def press_key(self, key: str, modifiers: int = 0) -> dict[str, Any]:
         sid = self._session_id_provider()
-        # 未在 ``KEY_CODE_MAP`` 命中的 key 必须报错: 静默成功会让模型误以为表单已提交, 是 agent loop 里最糟的失败模式。
-        if key.lower() not in KEY_CODE_MAP:
-            return {
-                "ok": False,
-                "error": f"Unknown key {key!r}: not in KEY_CODE_MAP. Use a browser_press variant or check supported keys.",
-            }
-        vk = KEY_CODE_MAP[key.lower()]
-        down = self._send_cdp(
-            "Input.dispatchKeyEvent",
-            {"type": "rawKeyDown", "windowsVirtualKeyCode": vk, "modifiers": modifiers, "key": key},
-            session_id=sid,
-        )
+        # 未知按键必须报错：静默成功会让模型误以为表单已提交。
+        spec = _KEYS.get(key.strip().lower())
+        if spec is None:
+            supported = ", ".join(sorted({"Space" if k == " " else k for k, *_ in _KEYS.values()}))
+            return {"ok": False, "error": f"Unsupported key {key!r}. Supported keys: {supported}."}
+        dom_key, code, vk, text = spec
+        down_evt: dict[str, Any] = {
+            "type": "keyDown" if text else "rawKeyDown",
+            "windowsVirtualKeyCode": vk,
+            "modifiers": modifiers,
+            "key": dom_key,
+            "code": code,
+        }
+        if text:
+            down_evt |= {"text": text, "unmodifiedText": text}
+        down = self._send_cdp("Input.dispatchKeyEvent", down_evt, session_id=sid)
+        if opened := _dialog_opened_by(down):
+            return {"ok": True, "pressed": key, "dialog": opened}
         if not down.get("ok"):
-            return {"ok": False, "error": down.get("error", "Input.dispatchKeyEvent rawKeyDown failed")}
+            return {"ok": False, "error": down.get("error", f"Input.dispatchKeyEvent {down_evt['type']} failed")}
         up = self._send_cdp(
             "Input.dispatchKeyEvent",
-            {"type": "keyUp", "windowsVirtualKeyCode": vk, "modifiers": modifiers, "key": key},
+            {"type": "keyUp", "windowsVirtualKeyCode": vk, "modifiers": modifiers, "key": dom_key, "code": code},
             session_id=sid,
         )
+        if opened := _dialog_opened_by(up):
+            return {"ok": True, "pressed": key, "dialog": opened}
         if not up.get("ok"):
             return {"ok": False, "error": up.get("error", "Input.dispatchKeyEvent keyUp failed")}
         return {"ok": True, "pressed": key}
@@ -364,15 +388,14 @@ class InputDispatch:
         selector: str | None = None,
         text: str | None = None,
         timeout_s: float = 10.0,
-        cancel_token: Any = None,
+        cancel_token: threading.Event | None = None,
     ) -> dict[str, Any]:
         if not selector and not text:
             return {"ok": False, "error": "At least one of `selector` or `text` must be provided"}
 
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
-            # 取消令牌触发时立刻退出轮询, 不等下一次 sleep。
-            if cancel_token is not None and getattr(cancel_token, "is_set", lambda: False)():
+            if cancel_token is not None and cancel_token.is_set():
                 return {"ok": False, "error": "Caller cancelled wait_for", "cancelled": True}
             last_error: dict[str, Any] | None = None
             if selector:
@@ -395,6 +418,9 @@ class InputDispatch:
                 if last_error is not None:
                     return {"ok": False, "error": last_error.get("error", "wait_for eval failed")}
                 break
-            time.sleep(0.2)
+            if cancel_token is not None:
+                cancel_token.wait(0.2)
+            else:
+                time.sleep(0.2)
 
         return {"ok": False, "error": f"wait_for timed out after {timeout_s}s"}

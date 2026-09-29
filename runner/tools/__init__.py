@@ -1,11 +1,11 @@
 from .files import reset_max_read_chars_cache
-from .registry import ToolError, discover_builtin_tools_strict, registry
+from .registry import ToolError, discover_builtin_tools, registry
 from .tool_output_limits import reset_cache
 from .toolsets import get_disabled_toolset_ids
 
 __all__ = [
     "ToolError",
-    "discover_builtin_tools_strict",
+    "discover_builtin_tools",
     "get_disabled_toolset_ids",
     "registry",
     "reset_cache",
