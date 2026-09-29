@@ -42,12 +42,8 @@ export function ChatMessageForkButton({
     $chatForkInFlight.set(messageId)
 
     try {
-      // forkConversation 失败返回 null 时给用户一个具体提示——它内部只 log 不 toast
-      const newId = await forkConversation(sourceSessionId, sourceMessageId)
-
-      if (!newId) {
-        notifyError(new Error(dict.chat.fork.internalError), dict.chat.fork.failed)
-      }
+      // 返回 null 表示已换号或换网关，结果作废，不再提示。
+      await forkConversation(sourceSessionId, sourceMessageId)
     } catch (err) {
       notifyError(err, dict.chat.fork.failed)
     } finally {

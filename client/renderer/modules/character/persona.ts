@@ -89,7 +89,7 @@ export function assemblePersona(answers: OnboardingAnswers, previous?: Partial<P
   return payload
 }
 
-// assemblePersona 的「仅角色」子集——剥掉 user_*，让 enterHatching 在 q-user / voice
+// assemblePersona 的「仅角色」子集——剥掉 user_*，让 enterPortraitStage 在 q-user / voice
 // 还没收集时就能完成角色定型。
 export function assembleCharacterPersona(answers: OnboardingAnswers): PersonaPayload {
   const payload = assemblePersona(answers)

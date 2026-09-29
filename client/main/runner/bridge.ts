@@ -5,9 +5,9 @@ import os from 'node:os'
 import path from 'node:path'
 
 import type { BackendSessionLike } from '../shared/backend-port'
-import { atomicWriteFile, errorMessage } from '../shared/utils'
+import { atomicWriteFile, errorMessage, RunnerNotConnectedError } from '../shared/utils'
 
-import type { RunnerProcess, RunnerProcessStartArgs, RunnerProcessState } from './process'
+import type { RunnerProcess, RunnerProcessState } from './process'
 import type { ReverseRpcOptions } from './reverse-rpc'
 import type {
   CreateRunnerWsServerOptions,
@@ -39,7 +39,8 @@ function computeDesktopEndpoint(spiritagentHome?: null | string): { path: string
   return { path: path.join(os.tmpdir(), `spiritagent-${uid}-${digest}.sock`), transport: 'unix' }
 }
 
-export interface RunnerBridgeStartOptions extends RunnerProcessStartArgs {
+export interface RunnerBridgeStartOptions {
+  /** 缺失时 start 直接拒绝：反向 RPC 必须持有会话。 */
   backendSession?: BackendSessionLike | null
   readyTimeoutMs?: number
 }
@@ -47,10 +48,10 @@ export interface RunnerBridgeStartOptions extends RunnerProcessStartArgs {
 export interface RunnerBridgeOptions {
   spiritagentHome?: null | string
   log?: (chunk: string) => void
-  processFactory?: null | ((args?: RunnerBridgeStartOptions) => RunnerProcess)
-  pushConfig?: null | (() => Promise<unknown> | void)
-  reverseRpcFactory?: null | ((options: ReverseRpcOptions) => (method: string, params?: unknown) => Promise<unknown>)
-  wsServerFactory?: null | ((options: CreateRunnerWsServerOptions) => RunnerWsServer)
+  processFactory: () => RunnerProcess
+  pushConfig: () => Promise<unknown> | void
+  reverseRpcFactory: (options: ReverseRpcOptions) => (method: string, params?: unknown) => Promise<unknown>
+  wsServerFactory: (options: CreateRunnerWsServerOptions) => RunnerWsServer
 }
 
 interface RunnerBridgeState {
@@ -94,7 +95,7 @@ export interface RunnerBridge {
   stop: (options?: { reason?: string }) => Promise<{ errors?: string[]; noop?: boolean; ok: boolean }>
 }
 
-export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBridge {
+export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
   const log = typeof options.log === 'function' ? options.log : () => {}
   const emit = new EventEmitter()
 
@@ -104,10 +105,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     return () => emit.off('event', callback)
   }
 
-  const processFactory = options.processFactory || null
-  const wsServerFactory = options.wsServerFactory || null
-  const reverseRpcFactory = options.reverseRpcFactory || null
-  const pushConfig = typeof options.pushConfig === 'function' ? options.pushConfig : null
+  const { processFactory, pushConfig, reverseRpcFactory, wsServerFactory } = options
 
   let runnerProcess: null | RunnerProcess = null
   let wsServer: null | RunnerWsServer = null
@@ -137,8 +135,8 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
   function getStatus(): RunnerBridgeStatus {
     return {
       ...state,
-      runner: runnerProcess?.getStatus?.() ?? null,
-      wsServer: wsServer?.getStatus?.() ?? null
+      runner: runnerProcess?.getStatus() ?? null,
+      wsServer: wsServer?.getStatus() ?? null
     }
   }
 
@@ -244,10 +242,14 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
   }
 
   async function start(args: RunnerBridgeStartOptions = {}): Promise<RunnerBridgeStatus> {
-    detachSubs()
-
     if (state.phase === 'starting' || state.phase === 'running' || state.phase === 'stopping') {
       throw new Error('Runner bridge is already running.')
+    }
+
+    const backendSession = args.backendSession
+
+    if (!backendSession) {
+      throw new Error('Runner bridge start requires a backend session.')
     }
 
     const gen = ++opGeneration
@@ -259,15 +261,18 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
       stoppedAt: null
     })
 
-    const processInstance = processFactory ? processFactory(args) : null
+    // stopped / error 终态可能仍持有上一轮的 WS 服务、子进程与端点文件（断连后 Runner 会重连）；
+    // 重建前先收尾，避免新服务与旧服务争用同一管道路径。
+    await rollback('restart')
 
-    if (!processInstance) {
-      throw fail('error', new Error('No runner process factory wired.'))
+    if (gen !== opGeneration) {
+      throw new Error('Runner bridge start was superseded by stop.')
     }
 
+    const processInstance = processFactory()
     runnerProcess = processInstance
 
-    const offProcess = runnerProcess.onEvent?.(ev => {
+    const offProcess = processInstance.onEvent(ev => {
       if (ev.type === 'exit') {
         if (state.phase === 'running') {
           fail('stopped', new Error(`Runner exited (code=${ev.code}, signal=${ev.signal})`))
@@ -278,31 +283,20 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
       }
     })
 
-    if (typeof offProcess === 'function') {
-      subUnsubFns.push(offProcess)
-    }
+    subUnsubFns.push(offProcess)
 
     const authToken = crypto.randomBytes(32).toString('hex')
     const endpoint = computeDesktopEndpoint(options.spiritagentHome)
 
-    const wsInstance = wsServerFactory
-      ? wsServerFactory({
-          authToken,
-          log: options.log,
-          onReverseRpc: reverseRpcFactory
-            ? reverseRpcFactory({ backendSession: args.backendSession ?? null, log })
-            : null
-        })
-      : null
+    const wsInstance = wsServerFactory({
+      authToken,
+      log: options.log,
+      onReverseRpc: reverseRpcFactory({ backendSession, log })
+    })
 
     wsServer = wsInstance
 
-    if (!wsInstance) {
-      await rollback('ws-server-init')
-      throw fail('error', new Error('No WS server factory wired.'))
-    }
-
-    const offWs = wsInstance.onEvent?.((ev: RunnerWsEvent) => {
+    const offWs = wsInstance.onEvent((ev: RunnerWsEvent) => {
       if (ev.type === 'runner_ready') {
         void handleRunnerReady(ev)
       } else if (ev.type === 'disconnected') {
@@ -327,9 +321,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
       }
     })
 
-    if (typeof offWs === 'function') {
-      subUnsubFns.push(offWs)
-    }
+    subUnsubFns.push(offWs)
 
     try {
       const started = await wsInstance.start({ path: endpoint.path })
@@ -353,7 +345,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     }
 
     try {
-      await processInstance.start({ authToken, endpointPath: endpoint.path, executable: args.executable })
+      await processInstance.start({ authToken, endpointPath: endpoint.path })
     } catch (error) {
       await rollback('process-start')
 
@@ -405,9 +397,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     const reconnecting = state.phase !== 'starting'
     log('[runner-bridge] runner_ready received')
 
-    if (runnerProcess?.signalReady) {
-      runnerProcess.signalReady()
-    }
+    runnerProcess?.signalReady()
 
     if (payload && typeof payload === 'object') {
       setState({
@@ -418,13 +408,11 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
       })
     }
 
-    if (pushConfig) {
-      try {
-        await pushConfig()
-      } catch (err: unknown) {
-        const msg = errorMessage(err)
-        log(`[runner-bridge] config push failed: ${msg}`)
-      }
+    try {
+      await pushConfig()
+    } catch (err: unknown) {
+      const msg = errorMessage(err)
+      log(`[runner-bridge] config push failed: ${msg}`)
     }
 
     if (generation !== toolsGeneration || server !== wsServer || !server.getStatus().connected) {
@@ -511,10 +499,19 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     }
 
     if (runnerProcess) {
+      const pid = runnerProcess.getStatus().pid
+
       tasks.push(
-        runnerProcess.stop({ reason: reason || 'desktop-stop' }).catch(e => {
-          errors.push(e)
-        })
+        runnerProcess.stop({ reason: reason || 'desktop-stop' }).then(
+          result => {
+            if (!result.ok) {
+              errors.push(new Error(`Runner process pid=${pid} is still alive after SIGKILL.`))
+            }
+          },
+          e => {
+            errors.push(e)
+          }
+        )
       )
     }
 
@@ -538,7 +535,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions = {}): RunnerBri
     opts: { timeoutMs?: number } = {}
   ): Promise<T> {
     if (!wsServer || !wsServer.getStatus()?.connected) {
-      throw new Error('Runner is not connected.')
+      throw new RunnerNotConnectedError('Runner is not connected.')
     }
 
     return wsServer.call<T>(method, params || {}, opts)

@@ -6,18 +6,18 @@ import { writeStoredBackendUrl } from '../shared/config'
 import { errorMessage } from '../shared/utils'
 
 interface AuthIpcDeps {
-  autoStartBridge?: () => void
-  autoStopBridge?: () => Promise<void>
-  broadcastAuthChanged?: (session: null | SessionSnapshotPort, clearAccountCache?: boolean) => Promise<void>
-  buildClientContext?: () => { client_context?: unknown }
+  autoStartBridge: () => void
+  autoStopBridge: () => Promise<void>
+  broadcastAuthChanged: (session: null | SessionSnapshotPort, clearAccountCache?: boolean) => Promise<void>
+  buildClientContext: () => { client_context?: unknown }
   ensureBackendSession: () => BackendSessionPort
   getSessionAfterRestore: () => Promise<null | SessionSnapshotPort>
   log: (message: string) => void
-  onAccountIdentityChanged?: () => Promise<void>
-  rebuildTrayMenu?: () => void
-  resetBackendCache?: () => void
-  restartBridge?: () => Promise<void>
-  spiritagentHome?: null | string
+  onAccountIdentityChanged: () => Promise<void>
+  rebuildTrayMenu: () => void
+  resetBackendCache: () => void
+  restartBridge: () => Promise<void>
+  spiritagentHome: string
 }
 
 export function registerAuthIpc({
@@ -50,11 +50,11 @@ export function registerAuthIpc({
     const changed = previousAccountId !== next?.accountId
     const clearAccountCache = options.cacheAction === 'clear' || (changed && options.cacheAction !== 'retain')
 
-    if (next?.baseUrl) {
-      await writeStoredBackendUrl(deps.spiritagentHome, next.baseUrl)
+    if (next?.baseUrl && !(await writeStoredBackendUrl(deps.spiritagentHome, next.baseUrl))) {
+      deps.log('[auth] saving backend URL to desktop-config.json failed')
     }
 
-    deps.resetBackendCache?.()
+    deps.resetBackendCache()
 
     if (clearAccountCache) {
       try {
@@ -64,14 +64,14 @@ export function registerAuthIpc({
       }
     }
 
-    deps.rebuildTrayMenu?.()
+    deps.rebuildTrayMenu()
 
     try {
-      await deps.broadcastAuthChanged?.(next, clearAccountCache)
+      await deps.broadcastAuthChanged(next, clearAccountCache)
     } finally {
       if (changed) {
         try {
-          await deps.onAccountIdentityChanged?.()
+          await deps.onAccountIdentityChanged()
         } catch (error) {
           deps.log(`[auth] returning to sprite after account change failed: ${errorMessage(error)}`)
         }
@@ -79,11 +79,11 @@ export function registerAuthIpc({
     }
 
     if (!next) {
-      await deps.autoStopBridge?.()
+      await deps.autoStopBridge()
     } else if (changed && previous) {
-      await deps.restartBridge?.()
+      await deps.restartBridge()
     } else {
-      deps.autoStartBridge?.()
+      deps.autoStartBridge()
     }
   }
 
@@ -92,7 +92,7 @@ export function registerAuthIpc({
       const session = deps.ensureBackendSession()
       const previous = session.getSession()
       const selectedAccountId = session.getSelectedAccountId()
-      const built = deps.buildClientContext?.() ?? {}
+      const built = deps.buildClientContext()
       const next = await session.switchAccount(accountId, { clientContext: built.client_context || null })
 
       if (next && previous?.sessionId !== next.sessionId) {
@@ -115,7 +115,7 @@ export function registerAuthIpc({
       if (previous?.accountId !== next?.accountId || selectedAccountId !== selectedAccountAfter) {
         await publishChange(previous, next, { selectedAccountId })
       } else {
-        deps.rebuildTrayMenu?.()
+        deps.rebuildTrayMenu()
       }
     })
   }
@@ -125,7 +125,7 @@ export function registerAuthIpc({
       const session = deps.ensureBackendSession()
       const previous = session.getSession()
       const selectedAccountId = session.getSelectedAccountId()
-      const built = deps.buildClientContext?.() ?? {}
+      const built = deps.buildClientContext()
       const next = await session.activate({ ...(payload || {}), clientContext: built.client_context || null })
 
       if (next) {
@@ -140,13 +140,13 @@ export function registerAuthIpc({
     enqueueAction(async () => {
       const session = deps.ensureBackendSession()
       const previous = session.getSession()
-      const built = deps.buildClientContext?.() ?? {}
+      const built = deps.buildClientContext()
 
       try {
         const next = await session.refresh({ clientContext: built.client_context || null })
-        deps.resetBackendCache?.()
-        deps.rebuildTrayMenu?.()
-        await deps.broadcastAuthChanged?.(next)
+        deps.resetBackendCache()
+        deps.rebuildTrayMenu()
+        await deps.broadcastAuthChanged(next)
 
         return next
       } catch (error) {

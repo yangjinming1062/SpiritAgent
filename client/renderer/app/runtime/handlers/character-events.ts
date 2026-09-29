@@ -112,10 +112,10 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
 export function handleCharacterEvent(event: GatewayEvent): void {
   switch (event.type) {
     case 'companion.mood': {
-      const mood = decodePayload<{ mood?: string }>(event.payload)?.mood?.trim()
+      const mood = decodePayload<{ mood?: unknown }>(event.payload).mood
 
-      if (mood) {
-        $companionMood.set(mood)
+      if (typeof mood === 'string' && mood.trim()) {
+        $companionMood.set(mood.trim())
       }
 
       break

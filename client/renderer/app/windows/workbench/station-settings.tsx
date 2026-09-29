@@ -1,8 +1,7 @@
 // 工作台「工位环境」：顶部分区胶囊切换推理与对话/本机执行器/技能与工具。
 // 生活向设置由生活空间托管。
 //
-// 模块内 tab 状态，不读全局 appSettingsView；
-// 初始 tab 从 `#/inference|runner|skills` hash 解析，
+// tab 状态由本模块持有：初始 tab 从 `#/inference|runner|skills` hash 解析，
 // 设置打开期间再收到 hashchange 也会同步切到对应 tab。
 
 import type React from 'react'

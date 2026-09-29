@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 
 import { RefreshCw, Sparkles } from '@/shared/lib/icons'
 import { BTN_SUBTLE, HINT_TEXT, SettingCard, SettingsSectionIntro, ShortcutRecorder } from '@/shared/panel'
+import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
 const INITIAL_STATE: DesktopShortcutsState = {
@@ -68,8 +69,8 @@ export function ShortcutsPage(): React.JSX.Element {
       if (res) {
         setState(res)
       }
-    } catch {
-      // 保持当前状态；UI 会在下一次推送时对齐
+    } catch (err) {
+      notifyError(err, t.registerFailed)
     }
   }
 
@@ -82,8 +83,8 @@ export function ShortcutsPage(): React.JSX.Element {
       if (res) {
         setState(res)
       }
-    } catch {
-      // 保持当前状态
+    } catch (err) {
+      notifyError(err, t.registerFailed)
     }
   }
 

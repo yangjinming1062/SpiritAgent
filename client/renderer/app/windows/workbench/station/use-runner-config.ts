@@ -38,7 +38,7 @@ interface UseRunnerConfigResult {
   config: Config | null
   setConfig: React.Dispatch<React.SetStateAction<Config | null>>
   isLoading: boolean
-  write: (config: Config) => Promise<SaveResult>
+  patch: (path: readonly string[], value: unknown) => Promise<SaveResult>
 }
 
 export function useRunnerConfig(errorKey: string): UseRunnerConfigResult {
@@ -66,11 +66,11 @@ export function useRunnerConfig(errorKey: string): UseRunnerConfigResult {
     }
   }, [loader.data])
 
-  const toWriteResult = (res: Awaited<ReturnType<typeof window.spiritagent.runnerConfig.write>>): SaveResult =>
+  const toSaveResult = (res: Awaited<ReturnType<typeof window.spiritagent.runnerConfig.patch>>): SaveResult =>
     res.ok ? { ok: true } : { ok: false, error: res.error || 'unknown error' }
 
-  const write = async (next: Config): Promise<SaveResult> =>
-    toWriteResult(await window.spiritagent.runnerConfig.write(next))
+  const patch = async (path: readonly string[], value: unknown): Promise<SaveResult> =>
+    toSaveResult(await window.spiritagent.runnerConfig.patch({ path, value }))
 
-  return { config, setConfig, isLoading: loader.isLoading, write }
+  return { config, setConfig, isLoading: loader.isLoading, patch }
 }

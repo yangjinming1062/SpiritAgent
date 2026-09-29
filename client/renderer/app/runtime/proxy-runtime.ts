@@ -1,7 +1,6 @@
 import { useStore } from '@nanostores/react'
 import { useEffect } from 'react'
 
-import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
 import { $auth } from '@/shared/store/auth'
 import { reportPrimaryGatewayState, setPrimaryGateway } from '@/shared/store/gateway'
@@ -37,7 +36,7 @@ export function ProxyGatewayPump(): null {
 
     const offEvent = desktop.onGatewayEvent?.(payload => {
       if (payload?.event && payload.event.type !== 'tool.call') {
-        handleGatewayEvent(payload.event as unknown as GatewayEvent)
+        handleGatewayEvent(payload.event)
       }
     })
 

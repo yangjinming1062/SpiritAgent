@@ -147,23 +147,6 @@ export function initCompanionPrefsSync(): () => void {
     if (tier === 'still' || tier === 'normal' || tier === 'autonomous') {
       setDisturbanceTier(tier)
     }
-
-    // 设置面板几何（屏幕相关，取到即回写缓存；下次开面板时生效，渲染层仍做视口钳制）。
-    const panel = companion.settings_panel
-
-    if (panel != null && typeof panel === 'object') {
-      const { height, offsetX, offsetY, width } = panel as Record<string, unknown>
-
-      if (
-        typeof width === 'number' &&
-        typeof height === 'number' &&
-        typeof offsetX === 'number' &&
-        typeof offsetY === 'number'
-      ) {
-        localStorage.setItem('da.companion.settingsPanelSize', JSON.stringify({ height, width }))
-        localStorage.setItem('da.companion.settingsPanelOffset', JSON.stringify({ dx: offsetX, dy: offsetY }))
-      }
-    }
   })
 
   return () => {

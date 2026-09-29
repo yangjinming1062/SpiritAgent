@@ -24,7 +24,10 @@ import { useVideoPixelHitTest } from '@/modules/character/rendering/video'
 import { clearExternalAttachment, pushExternalAttachment } from '@/modules/conversation'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
 import { holdWindowMouseCapture, useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { log } from '@/shared/lib/log'
+import { notifyError } from '@/shared/store/notifications'
 import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
+import { getStrings } from '@/shared/strings'
 
 import { openWhisper } from '../whisper'
 
@@ -39,7 +42,7 @@ interface SpriteStageProps {
 // 12px 是为了避免触控板微抖动被误判为拖拽、把双击吞掉。
 const DRAG_THRESHOLD = 12
 const DOUBLE_TAP_MS = 320
-// 长按阈值（DESIGN「拖拽与直接交互」）：按住未移动 ≥ 500ms 触发 long_press 精灵动作与粒子；
+// 长按阈值：按住未移动 ≥ 500ms 触发 long_press 精灵动作与粒子；
 // 拖拽一旦启动即取消等待，两条交互通道互斥。
 const LONG_PRESS_MS = 500
 // 投喂分流：纯图片/视频走轻语快速回复；混有其它文件时整批进生活空间。
@@ -86,7 +89,6 @@ export function SpriteStage({
   const pos = useStore($spatialPos)
   const scale = useStore($spatialScale)
   const peek = useStore($spatialPeek)
-  // 命中按渲染路径精化：视频走 alpha 遮罩查表；缺席（桌面蛋 / 加载空挡）才回退整矩形。
   const stageHitTest = useVideoPixelHitTest()
 
   const pendingPosRef = useRef<{ x: number; y: number } | null>(null)
@@ -272,8 +274,8 @@ export function SpriteStage({
       })
   }, [])
 
-  // 文件投喂（DESIGN「拖拽与直接交互」）：解析真实文件路径并推到 chat-dock。
-  // 纯媒体进轻语（快速看图/视频）；含非媒体文件时整批进生活空间。
+  // 文件投喂（DESIGN「拖拽与直接交互」）：解析真实文件路径；
+  // 纯媒体进轻语（快速看图/视频），含非媒体文件时整批进生活空间。
   const handleDrop = (fileList: FileList | null | undefined): void => {
     const paths = resolveDroppedFiles(fileList)
 
@@ -281,7 +283,7 @@ export function SpriteStage({
       return
     }
 
-    // 接取动效（DESIGN「拖拽与直接交互」「触发接取动效与爱心/音符反馈」）：抬手接住 + 爱心/音符粒子
+    // 接取动效：抬手接住 + 爱心/音符粒子（本地机械反馈，不调用推理）。
     emitVfx('heart', { nx: 0.5, ny: 0.25, count: 3 })
     emitVfx('music_notes', { nx: 0.35, ny: 0.15, count: 3 })
     $spriteAction.set('present_right')
@@ -297,13 +299,15 @@ export function SpriteStage({
     }
 
     // 跨窗：生活空间是独立 BrowserWindow，内存 atom 互不可见——经主进程信箱转交。
+    // 转交失败时提示重新拖入，仍打开生活空间。
     void window.spiritagent.chat
       .setPendingFeed(paths)
-      .then(() => requestOpenSurface('living'))
-      .catch(() => {
-        // 信箱写入失败时仍打开表面，避免用户以为投喂被吞掉却无后续。
-        void requestOpenSurface('living')
+      .catch((error: unknown) => {
+        log.warn('sprite-stage', 'Dropped files handoff failed', error)
+        notifyError(error, getStrings().chat.filesHandoffFailed)
       })
+      .then(() => requestOpenSurface('living'))
+      .catch((error: unknown) => log.warn('sprite-stage', 'Could not open living space', error))
   }
 
   const onPointerDown = (e: PointerEvent<HTMLDivElement>): void => {
@@ -350,9 +354,7 @@ export function SpriteStage({
 
       if (d && !d.moved) {
         d.longPressed = true
-        // 触发时附带 VFX + sprite action：与拖拽的 drag_end 区分。
-        // DESIGN「拖拽与直接交互」 长按/拖拽与抛掷：「拖拽始终使用本地预制反馈」——长按是
-        // 用户主动且未移动，可触发专属 sprite action 让其他模块响应。
+        // 触发时附带 VFX + sprite action，与拖拽的 drag_end 区分；属本地机械反馈，不调用推理。
         emitVfx('heart', { nx: 0.5, ny: 0.25, count: 2 })
         $spriteAction.set('long_press')
         setSpriteState('interacting', { durationMs: 800 })

@@ -9,7 +9,7 @@ export type LivingView = 'chat' | 'appearance' | 'moments' | 'diary' | 'channels
 
 export type LivingSettingsSection = 'persona' | 'voice' | 'interaction' | 'theme' | 'shortcuts' | 'about'
 
-export const LIVING_VIEWS: ReadonlyArray<LivingView> = [
+const LIVING_VIEWS: ReadonlyArray<LivingView> = [
   'chat',
   'appearance',
   'moments',

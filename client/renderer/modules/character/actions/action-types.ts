@@ -67,6 +67,6 @@ export interface ActionPlayInstance {
   readonly clip: ActionClipEntry
   readonly repeatCount: number
   readonly expiresAtMs: number | null
-  /** 世代：外观切换递增；旧实例回调凭它失效。 */
+  /** 世代：每受理一条播放指令递增；旧实例回调凭它失效。 */
   readonly generation: number
 }

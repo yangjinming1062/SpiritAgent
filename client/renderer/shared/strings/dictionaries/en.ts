@@ -17,40 +17,25 @@ export const dict: Dictionary = {
       saveFailed: 'Could not save companion display settings. Please try again.',
       dragTitle: (name: string) => `Drag ${name} to move the whole window`
     },
-    apply: 'Apply',
-    back: 'Back',
     save: 'Save',
     saving: 'Saving…',
     cancel: 'Cancel',
-    choose: 'Choose',
     clear: 'Clear',
     close: 'Close',
-    confirm: 'Confirm',
-    connect: 'Connect',
-    connecting: 'Connecting',
-    continue: 'Continue',
     copied: 'Copied',
-    copy: 'Copy',
     copyFailed: 'Copy failed',
-    delete: 'Delete',
-    done: 'Done',
-    error: 'Error',
-    failed: 'Failed',
     loading: 'Loading…',
     maximize: 'Maximize',
     minimize: 'Minimize',
-    refresh: 'Refresh',
     remove: 'Remove',
-    replace: 'Replace',
     restore: 'Restore',
     retry: 'Retry',
-    run: 'Run',
-    send: 'Send',
-    set: 'Set',
-    update: 'Update',
-    on: 'On',
-    off: 'Off',
     pickDate: 'Pick a date',
+    datePicker: { year: 'Year', month: 'Month', day: 'Day', unset: 'Not set' },
+    imagePick: {
+      tooLarge: 'This image is too large. Choose a smaller one.',
+      readFailed: "Couldn't read the selected image. Try again."
+    },
     processing: 'Processing…'
   },
 
@@ -103,21 +88,13 @@ export const dict: Dictionary = {
   },
 
   boot: {
-    ready: (brandFullName: string) => `${brandFullName} is ready`,
     desktopBootFailedWithMessage: (message: string) => `Desktop failed to start: ${message}`,
-    steps: {
-      connectingGateway: 'Connecting to the desktop gateway',
-      startingDesktopConnection: 'Starting the desktop connection',
-      startingSpiritAgentDesktop: (brandFullName: string) => `Starting ${brandFullName}…`
-    },
     errors: {
       desktopBootFailed: 'Desktop failed to start',
+      bridgeUnavailable: 'Desktop components are unavailable. Restart the app.',
       desktopReconnectFailed: 'Lost connection to the backend. The app is retrying in the background.'
     },
     failure: {
-      title: (brandName: string) => `${brandName} cannot start`,
-      description:
-        'The backend gateway is not running. Try the recovery steps below — your conversations and settings will not be deleted.',
       retry: 'Retry'
     }
   },
@@ -132,20 +109,17 @@ export const dict: Dictionary = {
     details: 'Details',
     copyDetail: 'Copy details',
     errors: {
-      elevenLabsNeedsKey: 'ElevenLabs STT requires ELEVENLABS_API_KEY.',
-      elevenLabsRejectedKey: 'ElevenLabs rejected the API key (401).',
       methodNotAllowed: (brandFullName: string) =>
-        `The desktop backend rejected this request (405 Method Not Allowed). Please try restarting ${brandFullName}.`,
+        `The server rejected this request (405 Method Not Allowed). Check whether ${brandFullName} needs an update.`,
       microphonePermission: 'Microphone permission was denied.',
       openaiRejectedApiKey: 'OpenAI rejected the API key.',
       openaiRejectedApiKeyWithStatus: (status: number | string) =>
-        `OpenAI rejected the API key (${status} invalid_api_key).`,
-      openaiTtsNeedsKey: 'OpenAI TTS requires VOICE_TOOLS_OPENAI_KEY or OPENAI_API_KEY.'
+        `OpenAI rejected the API key (${status} invalid_api_key).`
     },
     voice: {
       invalidTitle: 'Voice no longer available',
       invalidMessage: (name: string) =>
-        `The voice "${name}" you previously selected is no longer in the catalogue. We've temporarily fallen back to the default — pick another one in Companion settings.`,
+        `The voice "${name}" you previously selected is no longer in the catalogue, so the default voice is being used for now. Choose another in Settings › Voice.`,
       invalidAction: 'Open settings'
     },
     system: {
@@ -158,7 +132,8 @@ export const dict: Dictionary = {
       channelConnected: (label: string) => `${label} connected`,
       channelLoginRequired: (label: string) => `${label} login expired — rescan in Settings`,
       channelError: (label: string, detail?: string) => `${label} channel error${detail ? `: ${detail}` : ''}`,
-      channelPeerRequest: (label: string, name: string) => `${label} new message${name ? `: ${name}` : ''}`
+      channelPeerRequest: (label: string, name: string) =>
+        `${name || 'A new contact'} on ${label} wants to chat with the companion — approve it in Chat channels`
     }
   },
 
@@ -171,22 +146,18 @@ export const dict: Dictionary = {
     placeholder: 'Paste the activation code here…',
     cancel: 'Cancel',
     submit: 'Activate',
-    submitBusy: 'Activating…'
+    submitBusy: 'Activating…',
+    failed: 'Activation failed. Check the code and try again.'
   },
 
   settings: {
-    title: 'App settings',
     nav: {
-      inference: 'Inference & chat',
       about: 'About',
       theme: 'Theme',
-      channels: 'Chat channels',
       interaction: 'Interaction',
       navAriaLabel: 'Settings section navigation',
       persona: 'Persona & memory',
-      runner: 'Local runner',
       shortcuts: 'Shortcuts',
-      skills: 'Skills & tools',
       voice: 'Voice'
     },
     shortcuts: {
@@ -243,12 +214,14 @@ export const dict: Dictionary = {
         qrPrompt: 'Open WeChat and scan',
         scanedPrompt: 'Scanned — please confirm on your phone',
         expiredPrompt: 'QR code expired, please refresh',
+        loginTimeout: 'Login timed out. Get a new QR code.',
+        qrAlt: 'WeChat login QR code',
         connectedAs: (name: string) => `Connected${name ? `: ${name}` : ''}`
       },
       peers: {
         title: 'Peer approvals',
         intro:
-          'Unknown peers will receive a pairing prompt the first time they message; only approved peers can chat with the companion. Blocked peers are silently ignored.',
+          'Unknown peers get a pairing prompt the first time they message. Once approved, they can chat with the companion and have it perform actions on this computer. Messages from blocked peers are silently ignored.',
         empty: 'No peer records yet',
         approve: 'Approve',
         block: 'Block',
@@ -256,7 +229,8 @@ export const dict: Dictionary = {
         pendingLabel: 'Pending',
         allowedLabel: 'Approved',
         blockedLabel: 'Blocked',
-        actionFailed: 'Action failed'
+        actionFailed: 'Action failed',
+        loadFailed: "Couldn't load peers"
       }
     },
     about: {
@@ -282,6 +256,7 @@ export const dict: Dictionary = {
       saveFailed: 'Failed to save configuration',
       terminal: 'Terminal settings',
       terminalEnvType: 'Environment type',
+      envLocal: 'Local',
       ssh: 'SSH connection',
       sshHost: 'Host',
       sshPort: 'Port',
@@ -298,12 +273,11 @@ export const dict: Dictionary = {
     skills: {
       title: 'Skills',
       intro:
-        'Each entry below maps to a category directory under $SPIRITAGENT_HOME/skills. Toggling is pushed to the runner immediately; the enabled set is sent to the backend every turn so the model only sees the local skills you can call.',
+        'Each entry is a group of installed local skills. Changes apply immediately; the model only sees skills that are enabled and available.',
       loading: 'Loading skills…',
       loadError: 'Could not read the skill list from disk.',
       saveError: 'Could not save the skill toggle.',
-      refreshError:
-        'Saved locally, but the backend session was not refreshed — the next turn may still see the old skill set, please toggle again.',
+      refreshError: "Saved, but the current conversation hasn't picked up the change yet — toggle again.",
       emptyTitle: 'No skills installed',
       emptyDesc: (brandName: string) => `Reinstall ${brandName} to restore the built-in skills.`,
       hiddenByPlatformTitle: 'No skills available for this OS',
@@ -313,19 +287,20 @@ export const dict: Dictionary = {
     inference: {
       heading: 'Inference & chat',
       intro:
-        'Configure defaults for ordinary conversations only. Each special session has scenario defaults and is configured within its own conversation window.',
+        'Configure defaults for ordinary conversations only. Each fixed conversation has scenario defaults and is configured within its own conversation window.',
       loading: 'Loading…',
       saveFailed: 'Could not save inference & chat settings.',
       saved: 'Inference & chat settings saved.',
+      loadFailed: "Couldn't load inference & chat settings",
       agentDefaults: {
         heading: 'Agent defaults',
-        intro: 'Applies to ordinary conversations without session overrides. Does not affect special sessions.',
+        intro: 'Applies to ordinary conversations without session overrides. Does not affect fixed conversations.',
         reasoningEffort: 'Reasoning depth',
         reasoningEffortDesc:
-          'How hard the model reasons each turn. none disables reasoning; minimal / low / medium / high / xhigh / max / ultra deepen progressively. Above the provider ceiling, the highest supported level is used.',
+          "How hard the model reasons each turn. Off disables reasoning; Minimal through Ultra go progressively deeper. Above the provider's ceiling, its highest supported level is used.",
         backgroundReview: 'Background memory consolidation',
         backgroundReviewDesc:
-          'Extracts memories from ordinary conversations without changing memory consolidation in special sessions.',
+          'Extracts memories from ordinary conversations without changing memory consolidation in fixed conversations.',
         reasoningOptions: {
           none: 'Off',
           minimal: 'Minimal',
@@ -359,7 +334,7 @@ export const dict: Dictionary = {
           'Temperature for auto-generating session titles from the first turn. Keep low for accurate summarisation.',
         compressionTemperature: 'Context compression temperature',
         compressionTemperatureDesc:
-          'Temperature for generating memory summaries of long histories. Recommended to keep at 0 for factual fidelity.'
+          'Temperature for summarising long conversation histories. Recommended to keep at 0 for factual fidelity.'
       }
     },
     interaction: {
@@ -375,9 +350,15 @@ export const dict: Dictionary = {
       recordingDesc: 'Maximum length of a single voice recording — auto-stops and sends at the limit.',
       recordingSecondsSuffix: 's',
       recordingSaveFailed: 'Failed to save recording duration',
+      recordingLoadFailed: "Couldn't load the recording limit. Try again later.",
       tierHeading: 'Disturbance tier',
       tierHint: "Only constrains the companion's proactive behaviour — your actions are never restricted.",
       tierAriaLabel: 'Disturbance tier',
+      tiers: {
+        still: { label: 'Still', hint: 'Never initiates anything; only responds to you' },
+        normal: { label: 'Normal', hint: 'Light in-place interactions such as text greetings' },
+        autonomous: { label: 'Autonomous', hint: 'Moves freely and speaks; all abilities enabled' }
+      },
       smartHeading: 'Smart reactions & autonomy',
       smartHint: 'Enables smarter reasoning and decision-making; disable to reduce LLM calls.',
       idleAffect: 'Idle situational expression',
@@ -391,7 +372,7 @@ export const dict: Dictionary = {
       autonomousMedia: 'Overnight surprise creations',
       autonomousMediaAria: 'Overnight surprise creations',
       autonomousMediaDesc:
-        'Let the companion create an image or short video during the rest window and save it to Living Space moments.',
+        'Let the companion create an image or short video overnight and save it to Living Space moments.',
       autonomousVoice: 'Overnight voice surprises',
       autonomousVoiceAria: 'Overnight voice surprises',
       autonomousVoiceDesc:
@@ -485,7 +466,6 @@ export const dict: Dictionary = {
         feedbackPlaceholder: 'Describe any changes to the body or pose, or leave blank to generate.',
         generate: 'Generate full-body image',
         regenerate: 'Regenerate full-body image',
-        edit: 'Refine',
         editDisabledByReference: 'Refine is unavailable while a reference image is attached — remove it first',
         reload: 'Reload',
         enlarge: 'Enlarge full-body image',
@@ -511,7 +491,7 @@ export const dict: Dictionary = {
       defaultName: 'Companion',
       noPersonality: 'No personality set yet',
       nameLabel: 'Name',
-      namePlaceholder: 'Give me a name',
+      namePlaceholder: 'Name your companion',
       relationshipLabel: 'Relationship',
       relationshipPlaceholder: 'Or describe freely…',
       personalityLabel: 'Personality',
@@ -519,7 +499,7 @@ export const dict: Dictionary = {
       detailSeparator: ':',
       speakingStyleLabel: 'Speaking style',
       speakingStylePlaceholder: 'Describe the tone and expression style you want',
-      hintEmptyName: "You'll need to give me a name first",
+      hintEmptyName: 'Please enter a name',
       hintEmptySpeakingStyle: 'Please enter a speaking style',
       hintSaveFailed: 'Save failed, please try again',
       hintHydrateFailed: 'Saved, but the local refresh failed — please try again'
@@ -529,6 +509,9 @@ export const dict: Dictionary = {
       intro: 'Pick a voice for the current system language, or design a custom one.',
       noTtsConfigured: 'No TTS provider is configured.',
       noVoicesForLanguage: 'The configured TTS providers have no voices for the current system language.',
+      loadFailed: "Couldn't load the voice list",
+      sampleLine: (name: string) =>
+        name ? `Hi, I'm ${name}. This is my voice.` : "Hi, I'm your companion. This is my voice.",
       genderFilterAria: 'Tone filter',
       genderFilters: {
         '': 'All',
@@ -619,6 +602,7 @@ export const dict: Dictionary = {
       saveFailedToast: 'Failed to save memory',
       deleteFailedHint: 'Delete failed, rolled back',
       deleteFailedToast: 'Failed to delete memory',
+      charCount: (count: number) => `${count} character${count === 1 ? '' : 's'}`,
       empty: 'No memories here. Ordinary conversation does not need to become long-term memory.',
       saved: 'Saved',
       saving: 'Saving…',
@@ -630,20 +614,20 @@ export const dict: Dictionary = {
     tabSkills: 'Skills',
     tabToolsets: 'Toolsets',
     all: 'All',
-    other: 'Other',
     searchSkills: 'Search skills…',
     searchToolsets: 'Search toolsets…',
     loading: 'Loading capabilities…',
     noSkillsTitle: 'No skills found',
     noSkillsDesc: 'Try a broader search or another category.',
     loadFailedTitle: 'Failed to load skill list',
-    loadFailedDesc: 'Please try again later, or check the $SPIRITAGENT_HOME/skills directory.',
+    loadFailedDesc: 'Try again later; if it keeps failing, reinstall the app to restore the built-in skills.',
     noToolsetsTitle: 'No toolsets found',
     noToolsetsDesc: 'Try a broader search term.',
     noDescription: 'No description available.',
     toolsetsEnabled: (enabled: number, total: number) => `${enabled}/${total} toolsets enabled`,
-    skillsLoadFailed: 'Failed to load skills',
-    toolsetsRefreshFailed: 'Failed to refresh toolsets'
+    toolsetsLoadFailed: "Couldn't load toolsets",
+    toolsetsLoadFailedDesc: 'Please try again later.',
+    toolsetsSaveFailed: "Couldn't save the toolset toggle"
   },
 
   toolsets: {
@@ -652,7 +636,7 @@ export const dict: Dictionary = {
       description: 'Multi-backend browser capabilities: navigation, clicks, snapshots, cookies/CDP.'
     },
     file_operations: { label: 'File operations', description: 'Read/write, patches, directory and file search.' },
-    terminal: { label: 'Terminal', description: 'Local / Docker / SSH-backed command execution.' },
+    terminal: { label: 'Terminal', description: 'Run shell commands locally or on an SSH host.' },
     code_execution: { label: 'Code execution', description: 'Sandboxed Python execution with restricted calls.' },
     process_management: { label: 'Process management', description: 'Background process startup and tracking.' },
     skills_system: { label: 'Skill system', description: 'List, view and manage Skill contents.' },
@@ -662,7 +646,10 @@ export const dict: Dictionary = {
     messaging: { label: 'Messaging', description: 'Send messages via Webhook.' },
     scheduled_tasks: { label: 'Scheduled tasks', description: 'Cron triggers and periodic scheduling.' },
     agent_delegation: { label: 'Sub-agent delegation', description: 'Spawn sub-sessions and sub-agents.' },
-    computer_use: { label: 'Desktop control', description: 'Take over the desktop via the Windows backend.' },
+    computer_use: {
+      label: 'Desktop control',
+      description: 'Operate desktop apps with screenshots, mouse and keyboard.'
+    },
     media_analysis: { label: 'Media analysis', description: 'Image analysis.' },
     system_awareness: {
       label: 'System awareness',
@@ -686,7 +673,6 @@ export const dict: Dictionary = {
       zoomPercent: (n: number) => `${n}%`,
       zoomHint: 'Scroll to zoom · drag to pan · double-click to zoom in/out'
     },
-    panelDragToMove: 'Drag to move panel',
     search: {
       clear: 'Clear search'
     }
@@ -701,6 +687,7 @@ export const dict: Dictionary = {
 
     filesReceived: (count: number) => `${count} file${count === 1 ? '' : 's'} received`,
     attachmentsAdded: (count: number) => `${count} attachment${count === 1 ? '' : 's'} added`,
+    filesHandoffFailed: "Couldn't hand over the files. Drop them again.",
     sendFailed: 'Send failed',
 
     media: {
@@ -708,6 +695,7 @@ export const dict: Dictionary = {
       generationFailed: 'Generation failed',
       resultUnknown: 'Generation result is not yet confirmed',
       imageLoading: 'Loading image…',
+      loadFailed: "Couldn't load media",
       reviewHint: 'Check the character’s appearance. This media is only a preview for now.',
       reviewAccept: 'Confirm and accept',
       reviewReject: 'Reject',
@@ -748,14 +736,6 @@ export const dict: Dictionary = {
       failed: 'Could not edit the message. Your changes have been kept.'
     },
 
-    play: {
-      label: 'Read aloud',
-      preparing: 'Preparing voice…',
-      stop: 'Stop reading',
-      channelBusy: 'Voice channel busy',
-      failed: 'Voice playback failed'
-    },
-
     attachment: {
       pendingImageAlt: 'Image pending to send',
       loading: 'Loading…',
@@ -792,7 +772,8 @@ export const dict: Dictionary = {
       imageFilterName: 'Image files',
       selectImage: 'Select image',
       selectFile: 'Select file',
-      selectFolder: 'Select folder'
+      selectFolder: 'Select folder',
+      openFailed: "Couldn't open the file picker"
     },
 
     voice: {
@@ -801,6 +782,12 @@ export const dict: Dictionary = {
       stop: 'Stop voice playback',
       collapse: 'Collapse',
       showTranscript: 'Show transcript'
+    },
+
+    voiceInput: {
+      busy: 'The voice service is busy. Try again shortly.',
+      notRecognized: "Couldn't recognise any speech. Try again or type instead.",
+      micUnavailable: "Couldn't record from the microphone"
     },
 
     input: {
@@ -820,7 +807,7 @@ export const dict: Dictionary = {
       sendMessageShortcut: 'Send message (Enter)'
     },
 
-    emptyHint: 'Say something, or send a file / image / video my way~',
+    emptyHint: 'Say something, or send a file, image or video',
 
     time: {
       weekdays: ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as readonly string[],
@@ -845,7 +832,8 @@ export const dict: Dictionary = {
 
     tools: {
       busy: (name: string) => `Working… (${name})`,
-      completed: (count: number) => `Completed ${count} step${count === 1 ? '' : 's'}`
+      completed: (count: number) => `Completed ${count} step${count === 1 ? '' : 's'}`,
+      genericName: 'Tool'
     },
 
     submit: {
@@ -903,7 +891,7 @@ export const dict: Dictionary = {
         ultra: 'Highest product level; falls back to the provider’s top supported level automatically.'
       },
 
-      contextCapsuleAria: 'View context memory and compression management',
+      contextCapsuleAria: 'View context usage and compression',
       contextCapsuleTitle: (used: string, total: string, pct: string, threshold: number) =>
         `Current context: ${used} / ${total} tokens (${pct}%) · auto-compress threshold: ${threshold}% · click to expand`,
       temperatureCapsuleAria: 'Configure current session sampling temperature',
@@ -927,7 +915,7 @@ export const dict: Dictionary = {
       thresholdSliderHint: 'Drag the handle left/right to adjust the threshold',
       thresholdSliderMax: '100% full capacity',
       thresholdSliderDescription:
-        'When context reaches the chosen ratio, older history is automatically summarised in the background to free up scene and keep memory coherent.',
+        'When context reaches the chosen ratio, older history is automatically summarised in the background to free up space and keep the conversation coherent.',
 
       saveFailed: 'Could not save session parameters. Please try again.',
       resetConfirm: 'Session parameters reset to defaults',
@@ -944,12 +932,12 @@ export const dict: Dictionary = {
       statsTokens: 'Tokens',
       statsNodeAt: (pct: number) => `Threshold ${pct}%`,
 
-      statusHealthy: 'Plenty of headroom — memory is comfortable for smooth conversation.',
+      statusHealthy: 'Plenty of context headroom for smooth conversation.',
       statusWarning: 'Context is filling up — nearing the auto-compress threshold; tidy anytime.',
-      statusCritical: 'Context is heavy — past the auto-compress line; compress now to keep memory coherent.',
+      statusCritical: 'Context is heavy — past the auto-compress line; compress now.',
 
-      compressing: 'Distilling and compressing memory…',
-      compressAction: 'Tidy history · compress context now',
+      compressing: 'Compressing earlier messages…',
+      compressAction: 'Compress context now',
 
       temperatureLabel: 'Sampling temperature',
       temperatureSliderAria: 'Sampling temperature',
@@ -982,7 +970,7 @@ export const dict: Dictionary = {
       inputLabel: 'Conversation name',
       placeholder: 'Enter a name',
       hint: 'Enter to save · Esc to cancel',
-      forbidden: 'System preset conversations cannot be renamed',
+      forbidden: 'Fixed conversations cannot be renamed',
       failed: 'Rename failed, restored previous name'
     }
   },
@@ -990,6 +978,13 @@ export const dict: Dictionary = {
   companion: {
     statusBusy: 'Busy',
     statusCompanion: 'With you',
+    menu: {
+      quietOff: 'Allow interruptions',
+      quietOn: 'Quiet for a while',
+      resetPosition: 'Reset position',
+      hide: 'Hide companion',
+      activate: 'Activate / sign in'
+    },
     egg: {
       wake: 'Tap me to wake up',
       preparing: 'Preparing your companion’s actions…',
@@ -997,7 +992,8 @@ export const dict: Dictionary = {
       failed: 'Action generation failed',
       unavailable: 'Actions are not ready yet',
       retry: 'Retry',
-      openWardrobe: 'Open wardrobe'
+      openWardrobe: 'Open wardrobe',
+      ariaLabel: 'Companion egg'
     }
   },
 
@@ -1018,19 +1014,19 @@ export const dict: Dictionary = {
     moments: {
       loading: 'Flipping through the album…',
       empty: 'No moments captured yet.',
+      loadFailed: "Couldn't load moments",
       noTitle: 'Untitled',
       commentPlaceholder: 'Write a comment…',
       commentSend: 'Send',
       commentSending: 'Sending…',
       commentDelete: 'Delete',
+      commentFailed: "Couldn't post the comment",
+      commentDeleteFailed: "Couldn't delete the comment",
       userLabel: 'Me',
       kindLabels: {
         emotion: 'Feeling',
-        greeting: 'Greeting',
-        milestone: 'Milestone',
         scene: 'Scene',
-        together: 'Together',
-        user: 'Note'
+        together: 'Together'
       } as Record<string, string>,
       kindFallback: 'Moment'
     },
@@ -1042,6 +1038,7 @@ export const dict: Dictionary = {
       emptyTitle: 'No diary entry for this day',
       emptyHintToday: "Today's entry is written overnight — check back a little later.",
       emptyHintOther: 'No diary entry recorded for this day.',
+      loadFailed: "Couldn't load the diary",
       weekHeader: ['M', 'T', 'W', 'T', 'F', 'S', 'S'] as ReadonlyArray<string>,
       weekDayNames: [
         'Sunday',
@@ -1064,6 +1061,9 @@ export const dict: Dictionary = {
       policyStatusLocked: 'Locked',
       policyStatusUnlocked: 'Allowed',
       policyToggleAria: 'Allow companion-driven outfit changes',
+      policyFailed: "Couldn't save the outfit setting",
+      deleteFailed: "Couldn't delete the outfit",
+      confirmFailed: "Couldn't confirm the outfit. Try again.",
       wearing: 'Wearing',
       statusLabels: {
         draft: 'Draft',
@@ -1096,7 +1096,22 @@ export const dict: Dictionary = {
       placeholderInitial: 'Describe an outfit… (Enter to send, Shift+Enter for newline)',
       attachImage: 'Attach reference image',
       attachImageTitle: 'Attach reference image (optional, first generation only)',
-      send: 'Send'
+      send: 'Send',
+      design: {
+        byReference: '(Designed from the reference image)',
+        pickReferenceTitle: 'Choose an outfit reference image',
+        drafted:
+          'Draft ready — see the preview above. Keep describing to refine it, or confirm to add it to the wardrobe.',
+        refined:
+          'Refined as requested — see the preview above. Keep describing to refine further, or confirm to add it to the wardrobe.',
+        previewFailed: 'The draft was created, but its preview failed to load. Reopen the draft from the wardrobe.',
+        timedOut:
+          'Timed out waiting for the result; generation may still be running. Check the draft in the wardrobe before retrying.',
+        generateFailed: "Couldn't generate the outfit. Try again later.",
+        resumeReady: 'Keep refining this draft, or confirm to add it to the wardrobe.',
+        resumePreviewMissing:
+          "The draft preview hasn't loaded yet. Keep describing to refine it, or reopen it from the wardrobe later."
+      }
     },
     appearance: {
       videoReady: (version: number, clips: number) => `Action pack ready (version ${version}, ${clips} actions)`,
@@ -1117,6 +1132,7 @@ export const dict: Dictionary = {
       videoActionCancel: 'Cancel',
       videoActionRetryWaitHint: 'Other actions are still generating. You can retry this action when the pack finishes.',
       videoOutfitNotReady: 'This outfit has no action pack yet. Generate one to preview and wear it.',
+      videoPacksLoadFailed: "Couldn't load action packs",
       videoSelectOutfit: 'Return to the wardrobe and choose an outfit to see its actions.',
       videoBackToOutfits: 'Back to wardrobe',
       videoLoading: 'Loading actions for this outfit…',
@@ -1179,8 +1195,6 @@ export const dict: Dictionary = {
       outfitHint:
         'Leave blank to keep the wardrobe’s active outfit; filling this in replaces the full look for this scene — include clothing, colors, hairstyle, footwear and accessories.',
       noScene: 'No active scene yet',
-      currentBadge: 'Current scene',
-      currentAltFallback: 'Current scene',
       pendingOverlay: 'Preparing scene…',
       pendingOverlayHint:
         'The image and description are saved to your library. Your current background stays in place.',
@@ -1190,7 +1204,6 @@ export const dict: Dictionary = {
       generateButton: 'Create scene',
       generatingButton: 'Creating…',
       historyTitle: 'Scene library',
-      historyEmpty: 'No matching scenes',
       emptyLibrary: 'Your scene library is empty. Create or upload a scene to set up your living space.',
       emptySearch: 'No scenes match this search.',
       loading: 'Loading scene library…',
@@ -1198,7 +1211,6 @@ export const dict: Dictionary = {
       detailLoadFailed: 'Scene details are unavailable. The scene may have been deleted.',
       openDetails: 'View scene details',
       backToLibrary: 'Back to scene library',
-      detailTitle: 'Scene details',
       newSceneTitle: 'New scene',
       searchButton: 'Search',
       imageRegenerate: 'Regenerate image',
@@ -1210,17 +1222,14 @@ export const dict: Dictionary = {
       historyRollbackLabel: 'Activate',
       viewOriginal: 'View full image',
       historyDeleteLabel: 'Delete',
-      historyDeleteTitle: 'Delete scene',
       historyDeleteConfirmTitle: 'Delete this scene?',
       historyDeleteConfirmDescription: 'The image and scene information will be permanently removed from your library.',
-      policyTitle: 'Autonomy policy',
       policyLabel: 'Autonomous scene changes',
       policyDesc:
         'Locking prevents autonomous creation and switching. You can still create and switch scenes manually on the scene page. Nightly activity also follows its own policy.',
       policyStatusLocked: 'Locked',
       policyStatusUnlocked: 'Allowed',
       policyToggleAria: 'Allow autonomous scene creation and switching',
-      createTitle: 'Create a scene',
       savedHint: 'Saved first. Activate manually when ready.',
       slow: 'Still processing. Check for an update.',
       refresh: 'Check status',
@@ -1236,7 +1245,6 @@ export const dict: Dictionary = {
       next: 'Next',
       untitled: 'Untitled scene',
       needsDescription: 'An image and description are required before activation.',
-      historyDeleteAria: (id: string) => `Delete scene ${id}`,
       statuses: {
         pending: 'Preparing',
         ready: 'Saved',
@@ -1246,23 +1254,18 @@ export const dict: Dictionary = {
       }
     },
     sceneBackdrop: {
-      failedText: 'Tidying the scene…',
       pendingText: 'Setting up the scene'
     },
     toasts: {
-      sceneSlow: 'Still processing. Check for an update.',
       sceneReady: 'Saved to scene library',
-      sceneReadyAlt: 'Saved to scene library',
       sceneImageRegenerated: 'Scene image updated',
       sceneRegenerateFailed: 'Scene operation failed. Check the details and retry.',
-      sceneRollbackFailed: 'Could not activate scene',
       sceneRollbackSuccess: 'Scene activated',
       sceneDeleteFailed: 'Delete failed — please retry shortly',
       sceneDeleteSuccess: 'Scene deleted',
       sceneLockFailed: "Couldn't update the lock setting",
       sceneLocked: 'Autonomous scene changes locked',
-      sceneUnlocked: 'Autonomous scene changes allowed',
-      sceneFailedFallback: 'Scene preparation failed. Check task status.'
+      sceneUnlocked: 'Autonomous scene changes allowed'
     }
   },
 
@@ -1334,9 +1337,9 @@ export const dict: Dictionary = {
       }
     },
     runRail: {
-      label: 'Run rail',
-      expandAria: 'Expand run rail',
-      collapseAria: 'Collapse run rail',
+      label: 'Run trace',
+      expandAria: 'Expand run trace',
+      collapseAria: 'Collapse run trace',
       collapseTitle: 'Collapse',
       subtitle: (steps: number) => `${steps} steps · this round`,
       idleSubtitle: 'Idle',

@@ -1,5 +1,4 @@
-// 工具芯片时间轴：当前实现走每条消息内的可折叠 ToolTimeline，
-// 供 ConversationSurface 与工作台 Run Rail 共用。
+// 工具芯片时间轴：工作台消息气泡内的可折叠工具调用列表。
 
 import type React from 'react'
 

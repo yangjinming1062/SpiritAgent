@@ -1,3 +1,5 @@
+import { app } from 'electron'
+
 import { resolveTimeoutMs } from '../security/hardening'
 import { errorMessage } from '../shared/utils'
 
@@ -31,11 +33,11 @@ export class BackendRequestError extends Error {
   }
 
   get isServerError(): boolean {
-    return Number.isInteger(this.status) && this.status! >= 500
+    return this.status !== null && this.status >= 500
   }
 }
 
-function normalizeBaseUrl(raw?: null | string): string {
+export function normalizeBaseUrl(raw?: null | string): string {
   const value = String(raw || '').trim()
 
   if (!value) {
@@ -125,27 +127,19 @@ export type FetchFunction = (url: string, init?: RequestInit) => Promise<Minimal
 interface BackendClientOptions {
   baseUrl?: string
   fetch?: FetchFunction
-  timeoutMs?: number
-  userAgent?: string
 }
 
 interface BackendRequestOptions {
   body?: unknown
-  headers?: Record<string, string>
-  query?: Record<string, unknown>
-  signal?: AbortSignal
   timeoutMs?: number
   token?: string
 }
 
 export interface BackendClient {
   baseUrl: string
-  delete: <T = unknown>(path: string, options?: BackendRequestOptions) => Promise<T>
   get: <T = unknown>(path: string, options?: BackendRequestOptions) => Promise<T>
-  patch: <T = unknown>(path: string, options?: BackendRequestOptions) => Promise<T>
   post: <T = unknown>(path: string, options?: BackendRequestOptions) => Promise<T>
   put: <T = unknown>(path: string, options?: BackendRequestOptions) => Promise<T>
-  request: <T = unknown>(method: string, path: string, options?: BackendRequestOptions) => Promise<T>
 }
 
 export function createBackendClient(options: BackendClientOptions = {}): BackendClient {
@@ -155,13 +149,12 @@ export function createBackendClient(options: BackendClientOptions = {}): Backend
 
   const fetchImpl = options.fetch
   const baseUrl = normalizeBaseUrl(options.baseUrl)
-  const defaultTimeoutMs = resolveTimeoutMs(options.timeoutMs)
-  const userAgent = options.userAgent || 'SpiritAgentDesktop/0.15 (Electron)'
+  const userAgent = `SpiritAgentDesktop/${app.getVersion()} (Electron)`
 
   async function request<T = unknown>(
     method: string,
     pathStr: string,
-    { body, headers, query, signal, timeoutMs, token }: BackendRequestOptions = {}
+    { body, timeoutMs, token }: BackendRequestOptions = {}
   ): Promise<T> {
     let url: URL
 
@@ -175,39 +168,21 @@ export function createBackendClient(options: BackendClientOptions = {}): Backend
       })
     }
 
-    if (query && typeof query === 'object') {
-      for (const [key, value] of Object.entries(query)) {
-        if (value === undefined || value === null) {
-          continue
-        }
-
-        url.searchParams.append(key, String(value))
-      }
-    }
-
     const { body: encodedBody, contentType } = encodeBody(body)
 
     const finalHeaders: Record<string, string> = {
       Accept: 'application/json',
       'User-Agent': userAgent,
       ...(contentType ? { 'Content-Type': contentType } : {}),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(headers || {})
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
     }
 
-    const effectiveTimeoutMs = resolveTimeoutMs(timeoutMs ?? defaultTimeoutMs)
+    const effectiveTimeoutMs = resolveTimeoutMs(timeoutMs)
     const controller = new AbortController()
     const timeoutHandle = setTimeout(() => controller.abort(), effectiveTimeoutMs)
 
-    if (signal) {
-      if (signal.aborted) {
-        controller.abort()
-      } else {
-        signal.addEventListener('abort', () => controller.abort(), { once: true })
-      }
-    }
-
     let res: MinimalFetchResponse
+    let payload: unknown
 
     try {
       res = await fetchImpl(url.toString(), {
@@ -216,8 +191,9 @@ export function createBackendClient(options: BackendClientOptions = {}): Backend
         method,
         signal: controller.signal
       })
+      // 超时同样覆盖响应体读取：响应头到达后连接仍可能停滞。
+      payload = await decodeResponseBody(res)
     } catch (error: unknown) {
-      clearTimeout(timeoutHandle)
       const errObj = error as { message?: string; name?: string } | undefined
       const isAbort = errObj?.name === 'AbortError'
       const errMessage = errObj?.message || String(error)
@@ -228,11 +204,9 @@ export function createBackendClient(options: BackendClientOptions = {}): Backend
           ? `Backend request timed out after ${effectiveTimeoutMs}ms: ${method} ${url.pathname}`
           : `Backend request failed: ${method} ${url.pathname} (${errMessage})`
       })
+    } finally {
+      clearTimeout(timeoutHandle)
     }
-
-    clearTimeout(timeoutHandle)
-
-    const payload = await decodeResponseBody(res)
 
     if (!res.ok) {
       const payloadObj = payload as { detail?: string } | null | undefined
@@ -257,11 +231,8 @@ export function createBackendClient(options: BackendClientOptions = {}): Backend
 
   return {
     baseUrl,
-    delete: (p, opt) => request('DELETE', p, opt),
     get: (p, opt) => request('GET', p, opt),
-    patch: (p, opt) => request('PATCH', p, opt),
     post: (p, opt) => request('POST', p, opt),
-    put: (p, opt) => request('PUT', p, opt),
-    request
+    put: (p, opt) => request('PUT', p, opt)
   }
 }

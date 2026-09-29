@@ -14,6 +14,9 @@ import { UserProfileSection } from './user-profile-section'
 
 type MemoryTab = 'active' | 'candidate' | 'invalidated' | 'expired'
 
+// 召回记忆的 context 形如 recall:<主题>（后端 memory_namespaces.py），界面只展示主题。
+const RECALL_CONTEXT_PREFIX = /^recall:/
+
 const $memoryBrowserTab = atom<MemoryTab>('active')
 
 interface MemoryRow {
@@ -298,7 +301,8 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
                   ))}
                 </div>
                 <p className={cn(HINT_TEXT, 'mt-1')}>
-                  {r.context ?? '—'} · {t.updated} {r.updated_at ?? '—'} · {draft.length} chars
+                  {r.context?.replace(RECALL_CONTEXT_PREFIX, '') || '—'} · {t.updated} {r.updated_at ?? '—'} ·{' '}
+                  {t.charCount(draft.length)}
                 </p>
                 <div className="mt-2 flex items-center gap-2">
                   <button

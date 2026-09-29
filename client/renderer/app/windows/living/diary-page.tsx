@@ -7,8 +7,10 @@ import type React from 'react'
 import { $persona } from '@/modules/character'
 import { $diaryByDate, $diaryLoading, hydrateDiary } from '@/modules/memory'
 import { BookOpen } from '@/shared/lib/icons'
+import { cn } from '@/shared/lib/utils'
+import { BTN_SUBTLE } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
-import { useStrings } from '@/shared/strings'
+import { type Dictionary, useStrings } from '@/shared/strings'
 
 import styles from './diary.module.css'
 
@@ -40,7 +42,7 @@ function cursorMonthStart(d: Date): Date {
   return new Date(d.getFullYear(), d.getMonth(), 1)
 }
 
-function formatSelectedDate(dateStr: string, weekDayNames: ReadonlyArray<string>): string {
+function formatSelectedDate(dateStr: string, t: Dictionary['living']['diary']): string {
   const parts = dateStr.split('-').map(Number)
 
   if (parts.length !== 3 || parts.some(isNaN)) {
@@ -49,9 +51,9 @@ function formatSelectedDate(dateStr: string, weekDayNames: ReadonlyArray<string>
 
   const [y, m, d] = parts
   const date = new Date(y, m - 1, d)
-  const weekDay = weekDayNames[date.getDay()]
+  const weekDay = t.weekDayNames[date.getDay()]
 
-  return weekDay ? `${dateStr} · ${weekDay}` : dateStr
+  return weekDay ? t.dateFormat(dateStr, weekDay) : dateStr
 }
 
 export function DiaryPage(): React.JSX.Element {
@@ -64,8 +66,10 @@ export function DiaryPage(): React.JSX.Element {
   const tRail = dict.living.rail
   const [selectedDate, setSelectedDate] = useState<string>(todayKey())
   const [cursor, setCursor] = useState<Date>(new Date())
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
 
-  const displayName = persona?.name ?? tRail.companionFallback
+  const displayName = persona?.name || tRail.companionFallback
   const isToday = selectedDate === todayKey()
 
   // 月份切换时若选中日期超出当月范围，则吸到该月首日；同时拉取当月数据。
@@ -79,10 +83,23 @@ export function DiaryPage(): React.JSX.Element {
 
     setSelectedDate(prev => (prev < startKey || prev > endKey ? startKey : prev))
 
-    if (authKind === 'authenticated') {
-      void hydrateDiary({ from: startKey, to: endKey })
+    if (authKind !== 'authenticated') {
+      return
     }
-  }, [cursor, authKind])
+
+    let cancelled = false
+    setLoadFailed(false)
+
+    void hydrateDiary({ from: startKey, to: endKey }).then(ok => {
+      if (!cancelled) {
+        setLoadFailed(!ok)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [cursor, authKind, reloadKey])
 
   const days = useMemo(() => daysInMonth(cursor), [cursor])
   const firstDayOffset = days[0] ? (days[0].getDay() + 6) % 7 : 0
@@ -141,7 +158,7 @@ export function DiaryPage(): React.JSX.Element {
 
       <main className={styles.entry}>
         <header className={styles.entryHeader}>
-          <h2 className={styles.entryDate}>{formatSelectedDate(selectedDate, t.weekDayNames)}</h2>
+          <h2 className={styles.entryDate}>{formatSelectedDate(selectedDate, t)}</h2>
           {isToday && <span className={styles.todayBadge}>{t.todayBadge}</span>}
           {entry?.mood && <span className={styles.mood}>{t.mood(entry.mood)}</span>}
         </header>
@@ -153,6 +170,13 @@ export function DiaryPage(): React.JSX.Element {
             {entry.title ? <h3 className={styles.entryTitle}>{entry.title}</h3> : null}
             <p className={styles.bodyText}>{entry.body}</p>
             <div className={styles.signature}>{t.signature(displayName)}</div>
+          </div>
+        ) : loadFailed ? (
+          <div className={styles.emptyContainer}>
+            <p className={styles.emptyTitle}>{t.loadFailed}</p>
+            <button className={cn(BTN_SUBTLE, 'mt-2')} onClick={() => setReloadKey(key => key + 1)} type="button">
+              {dict.common.retry}
+            </button>
           </div>
         ) : (
           <div className={styles.emptyContainer}>

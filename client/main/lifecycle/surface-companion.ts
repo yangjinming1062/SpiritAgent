@@ -10,7 +10,7 @@ export const PANEL_SIZES: Record<SurfaceId, { height: number; minHeight: number;
   workbench: { height: 800, minHeight: 640, minWidth: 1095, width: 1321 }
 }
 
-export const DEFAULT_COMPANIONS: Record<SurfaceId, SurfaceCompanionPreference> = {
+const DEFAULT_COMPANIONS: Record<SurfaceId, SurfaceCompanionPreference> = {
   living: { enabled: true, side: 'right' },
   workbench: { enabled: true, side: 'left' }
 }

@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url'
 import type { BrowserWindow, Net } from 'electron'
 import { clipboard, dialog, nativeImage } from 'electron'
 
+import { DEFAULT_FETCH_TIMEOUT_MS } from '../security/hardening'
 import { extensionForMimeType, mimeTypeForPath, parseDataUrl } from '../shared/mime'
 
 // 解析 `data:` / `file:` / http(s) URL 为字节流 + mime；右键菜单里复制/保存图片依赖这条公共路径。
@@ -26,10 +27,11 @@ async function resourceBufferFromUrl(rawUrl: string, electronNet: Net): Promise<
     return { buffer, mimeType: mimeTypeForPath(filePath) }
   }
 
-  const res = await electronNet.fetch(rawUrl)
+  const res = await electronNet.fetch(rawUrl, { signal: AbortSignal.timeout(DEFAULT_FETCH_TIMEOUT_MS) })
 
   if (!res.ok) {
-    throw new Error(`Failed to fetch ${rawUrl}: ${res.status}`)
+    // 只报路径：图片地址可能携带签名参数。
+    throw new Error(`Failed to fetch ${new URL(rawUrl).pathname}: ${res.status}`)
   }
 
   const arrayBuf = await res.arrayBuffer()

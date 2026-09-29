@@ -9,9 +9,9 @@ import { useStrings } from '@/shared/strings'
 import type { CompanionFallbackStatus } from '../../presentation'
 import { openContextMenu } from '../../sprite/context-menu-store'
 
-// 桌面常驻「蛋」：透明置顶窗口里呼吸 / 裂纹闪光 / hover 注视，等待用户点击启动 onboarding。
-// 设计来源：docs/DESIGN.md「引导与后台准备」——「蛋破碎后开始对话」意味着蛋必须作为独立桌面存在物，
-// 而非跳过的中间态。Installer 端的 Egg 组件是流程动画，桌面这个是常驻精灵。
+// 桌面常驻「蛋」：透明置顶窗口里呼吸 / 裂纹闪光 / hover 注视，等待用户点击启动 onboarding；
+// 形象未就绪时兼作兜底并显示真实状态（DESIGN「引导与后台准备」「呈现与降级」）。
+// Installer 端的 Egg 组件是流程动画，桌面这个是常驻精灵。
 const CRACK_PATHS = [
   'M 160 70 L 148 95 L 155 115 L 140 135',
   'M 230 140 L 205 148 L 195 135 L 180 155',
@@ -140,7 +140,7 @@ export function EggStage({
       }}
     >
       <svg
-        aria-label={`${dict.brand.name} Egg`}
+        aria-label={dict.companion.egg.ariaLabel}
         className="overflow-visible"
         height="100%"
         viewBox="0 0 320 320"

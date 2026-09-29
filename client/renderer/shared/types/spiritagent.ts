@@ -103,7 +103,7 @@ export interface UndoAnchor {
   media_json?: string | null
 }
 
-/** `session.undo_to_message` RPC 与对应 REST 端点的返回形态。 */
+/** `session.undo_to_message` RPC 的返回形态。 */
 export interface UndoResponse {
   session_id: string
   deleted_count: number
@@ -136,7 +136,7 @@ export interface SessionRuntimeInfo {
   context_window?: number
 }
 
-/** `GET /api/config` 的返回结构。*/
+/** `/api/config` 读写共用的 config 结构：GET 响应与 PUT 请求都以 `{ config }` 包裹，PUT 只需携带要改的字段。 */
 export interface SpiritAgentConfigResponse {
   agent?: {
     reasoning_effort?: string
@@ -154,27 +154,6 @@ export interface SpiritAgentConfigResponse {
   }
   voice?: {
     /** 单次语音录制的最长时长（秒）。聊天面板在该上限处自动停止 MediaRecorder。 */
-    max_recording_seconds?: number
-  }
-}
-
-/** `PUT /api/config` 接受的请求体。 */
-export interface SpiritAgentConfigPutRequest {
-  agent?: {
-    reasoning_effort?: string
-    enable_background_review?: boolean
-    temperature?: number
-  }
-  chat?: {
-    enable_context_compression?: boolean
-    context_compression_threshold?: number
-    title_generation_temperature?: number
-    compression_temperature?: number
-  }
-  stt?: {
-    enabled?: boolean
-  }
-  voice?: {
     max_recording_seconds?: number
   }
 }

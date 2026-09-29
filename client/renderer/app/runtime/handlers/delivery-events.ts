@@ -31,9 +31,8 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
         media?: ChatMediaItem[]
       }>(event.payload)
 
-      const text = payload?.bubbles
-        ? (payload.bubbles.filter(b => 'text' in b).at(-1)?.text ?? '')
-        : (payload?.text ?? '')
+      const bubbles = Array.isArray(payload.bubbles) ? payload.bubbles : undefined
+      const text = bubbles ? (bubbles.filter(b => 'text' in b).at(-1)?.text ?? '') : (payload?.text ?? '')
 
       const displayText = chatDisplayText(text)
 
@@ -42,8 +41,8 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       }
 
       if (payload?.session_id === $chatSessionId.get()) {
-        if (payload.bubbles && payload.message_id) {
-          finalizeCompanionReply(payload.bubbles, payload.message_id, undefined, true)
+        if (bubbles && payload.message_id) {
+          finalizeCompanionReply(bubbles, payload.message_id, undefined, true)
         } else {
           pushProactiveMessage(text, payload.media, payload.message_id)
         }

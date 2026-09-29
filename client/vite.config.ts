@@ -6,7 +6,7 @@ import path from 'path'
 export default defineConfig({
   base: './',
   plugins: [react(), tailwindcss()],
-  // icon.png 的唯一真相源——main.cjs、electron-builder 和渲染器共用同一文件
+  // icon.png 的唯一真相源——主进程、electron-builder 和渲染器共用同一文件
   publicDir: 'assets',
   css: {
     // 显式钉死空 PostCSS 配置：Tailwind 由 @tailwindcss/vite 处理，无需 PostCSS 插件。

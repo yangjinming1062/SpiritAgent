@@ -5,16 +5,8 @@ import type { BackendHttp } from './http'
 interface EnsureBackendDeps {
   appName: string
   backendHttp: Pick<BackendHttp, 'resolveRemoteBackend' | 'waitForSpiritAgent'>
-  bootProgress: {
-    advance: (phase: string, message: string, progress: number) => void
-    update: (payload: {
-      error: null | string
-      message: string
-      phase: string
-      progress: number
-      running: boolean
-    }) => void
-  }
+  /** 启动阶段写入桌面日志，供排查连接过程。 */
+  logBootStep: (message: string) => void
   getAuthToken: () => string | null
   getCurrentBaseUrl: () => string | null
 }
@@ -43,7 +35,7 @@ export function createEnsureBackend(deps: EnsureBackendDeps): {
   async function resolveBackend(startGeneration: number): Promise<string> {
     const token = deps.getAuthToken()
     const currentBaseUrl = deps.getCurrentBaseUrl()
-    deps.bootProgress.advance('backend.resolve', `Resolving ${deps.appName} backend`, 8)
+    deps.logBootStep(`Resolving ${deps.appName} backend`)
     const baseUrl = currentBaseUrl ?? (await deps.backendHttp.resolveRemoteBackend())?.baseUrl
     assertCurrent(startGeneration)
 
@@ -51,17 +43,11 @@ export function createEnsureBackend(deps: EnsureBackendDeps): {
       throw new Error(`No remote ${deps.appName} backend configured.`)
     }
 
-    deps.bootProgress.advance('backend.remote', `Connecting to remote ${deps.appName} backend at ${baseUrl}`, 24)
+    deps.logBootStep(`Connecting to remote ${deps.appName} backend at ${baseUrl}`)
     await deps.backendHttp.waitForSpiritAgent(baseUrl, token || undefined)
     assertCurrent(startGeneration)
 
-    deps.bootProgress.update({
-      error: null,
-      message: `Remote ${deps.appName} backend is ready`,
-      phase: 'backend.ready',
-      progress: 94,
-      running: true
-    })
+    deps.logBootStep(`Remote ${deps.appName} backend is ready`)
     cachedBaseUrl = baseUrl
 
     return baseUrl

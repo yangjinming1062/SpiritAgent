@@ -9,7 +9,14 @@ import { $surfaceOpen } from '@/shared/store/surfaces'
 import { $actionCatalog, $activePlayInstance, ensurePeekAction } from './actions'
 import type { PeekGeometry } from './actions'
 import { $focusContext, $lastIdleSeconds, $screenLocked } from './activity'
-import { $effectiveTier, $spriteAction, $spriteEmotion, $spriteState, setSpriteState } from './companion-store'
+import {
+  $effectiveTier,
+  $spriteAction,
+  $spriteEmotion,
+  $spriteState,
+  holdInteracting,
+  setSpriteState
+} from './companion-store'
 import { $llmAutonomy } from './prefs'
 import {
   computeScreenPeekLayout,
@@ -18,18 +25,27 @@ import {
   type WindowPeekLayout
 } from './spatial-peek'
 
+/** 未缩放舞台尺寸，只随视口高度变化；落位与视频画布共用。 */
+export function baseSpriteSize(viewportHeight: number): { width: number; height: number } {
+  const height = Math.round(clamp(viewportHeight / 3, 260, 960))
+
+  return { width: Math.round(height * 0.85), height }
+}
+
 export function getBaseSpriteHeight(): number {
-  return Math.round(clamp(window.innerHeight / 3, 260, 960))
+  return baseSpriteSize(window.innerHeight).height
 }
 
 export function getBaseSpriteWidth(): number {
-  return Math.round(getBaseSpriteHeight() * 0.85)
+  return baseSpriteSize(window.innerHeight).width
 }
 
 const REST_MARGIN = 24
 
 const WALK_SPEED = 80
 const FLY_SPEED = 400
+// 超过该距离飞行，近处步行。
+const WALK_RANGE_PX = 400
 const SCALE_TRANSITION_MS = 300
 // Runner 离线或空闲时间未知（-1）时不漫游。
 const ROAM_IDLE_THRESHOLD_SECONDS = 90
@@ -58,8 +74,8 @@ export type PeekPreparation = {
   | ({ mode: 'window' } & WindowPeekBinding)
 )
 
-// 空间层裁决运动方式；jump 为单次脉冲。
-export type Locomotion = 'still' | 'walk' | 'walk_fast' | 'fly' | 'drag' | 'jump'
+// 空间层裁决的运动方式。
+export type Locomotion = 'still' | 'walk' | 'fly' | 'drag'
 
 const $spatialLocale = atom<SpatialLocale>('home')
 
@@ -292,7 +308,11 @@ export function moveDurationMs(dist: number, locomotion: 'walk' | 'fly'): number
   return Math.max((dist / speed) * 1000, 200)
 }
 
-export function moveTo(target: { x: number; y: number }, locomotion: 'walk' | 'fly', onArrive?: () => void): void {
+export function locomotionForDistance(dist: number): 'walk' | 'fly' {
+  return dist > WALK_RANGE_PX ? 'fly' : 'walk'
+}
+
+function moveTo(target: { x: number; y: number }, locomotion: 'walk' | 'fly', onArrive?: () => void): void {
   cancelMovement()
 
   const current = $spatialPos.get()
@@ -1402,7 +1422,7 @@ export function startDrag(): void {
   stopRoam()
 
   $spatialLocomotion.set('drag')
-  $spriteState.set('interacting')
+  holdInteracting()
 }
 
 export function updateDragPosition(pos: { x: number; y: number }): void {
@@ -1487,7 +1507,7 @@ export function initSpatial(): () => void {
     userInteracted = false
   })
 
-  // 等待可见内容包围盒后恢复；旧版屏外位置统一收回可见区域。
+  // 等待可见内容包围盒后恢复；保存位置超出可见区域时收回并回写。
   const restoreSavedPosition = (saved: {
     x: number
     y: number
@@ -1566,7 +1586,8 @@ export function initSpatial(): () => void {
         }
       }, 3000)
     })
-    .catch(() => {
+    .catch(error => {
+      log.warn('spatial', 'Could not restore saved position', error)
       settleSavedRectWait()
     })
 

@@ -1,29 +1,12 @@
 import type { HapticInput, TriggerOptions } from 'web-haptics'
 
-import { $hapticsMuted } from '@/shared/store/haptics'
-
-type HapticIntent =
-  | 'cancel'
-  | 'close'
-  | 'crisp'
-  | 'error'
-  | 'open'
-  | 'selection'
-  | 'streamDone'
-  | 'streamStart'
-  | 'submit'
-  | 'success'
-  | 'tap'
-  | 'warning'
+type HapticIntent = 'error' | 'open' | 'selection' | 'success' | 'tap' | 'warning'
 
 interface HapticConfig {
-  options?: TriggerOptions
   pattern: HapticInput
 }
 
 const airyTap = [{ duration: 16, intensity: 0.52 }]
-
-const crispTap = [{ duration: 10, intensity: 0.92 }]
 
 const friendlySuccess = [
   { duration: 28, intensity: 0.5 },
@@ -36,20 +19,7 @@ const softArrive = [
   { delay: 36, duration: 22, intensity: 0.66 }
 ]
 
-const softLeave = [
-  { duration: 22, intensity: 0.58 },
-  { delay: 32, duration: 16, intensity: 0.34 }
-]
-
 const HAPTIC_INTENTS: Record<HapticIntent, HapticConfig> = {
-  cancel: {
-    pattern: [
-      { duration: 34, intensity: 0.72 },
-      { delay: 54, duration: 26, intensity: 0.38 }
-    ]
-  },
-  close: { pattern: softLeave },
-  crisp: { pattern: crispTap },
   error: {
     pattern: [
       { duration: 34, intensity: 0.82 },
@@ -59,14 +29,6 @@ const HAPTIC_INTENTS: Record<HapticIntent, HapticConfig> = {
   },
   open: { pattern: softArrive },
   selection: { pattern: airyTap },
-  streamDone: { pattern: friendlySuccess },
-  streamStart: { pattern: [{ duration: 10, intensity: 0.32 }] },
-  submit: {
-    pattern: [
-      { duration: 24, intensity: 0.58 },
-      { delay: 48, duration: 36, intensity: 0.82 }
-    ]
-  },
   success: { pattern: friendlySuccess },
   tap: {
     pattern: [
@@ -100,7 +62,7 @@ export function registerHapticTrigger(trigger: HapticTrigger | null): void {
 }
 
 export function triggerHaptic(intent: HapticIntent = 'selection'): void {
-  if ($hapticsMuted.get() || !registeredTrigger) {
+  if (!registeredTrigger) {
     return
   }
 
@@ -122,7 +84,5 @@ export function triggerHaptic(intent: HapticIntent = 'selection'): void {
 
   recentFires.push(now)
 
-  const config = HAPTIC_INTENTS[intent]
-
-  void registeredTrigger(config.pattern, config.options)?.catch(() => undefined)
+  void registeredTrigger(HAPTIC_INTENTS[intent].pattern)?.catch(() => undefined)
 }

@@ -23,7 +23,9 @@ declare global {
   interface Window {
     spiritagent: {
       getGatewayWsUrl: AsyncIpc<IpcInvokeContract['spiritagent:gateway:ws-url']>
-      gatewayRequest: <T = unknown>(payload: { method: string; params?: Record<string, unknown> }) => Promise<T>
+      gatewayRequest: <T = unknown>(
+        payload: Parameters<IpcInvokeContract['spiritagent:gateway:request']>[0]
+      ) => Promise<T>
       gatewayGetState: AsyncIpc<IpcInvokeContract['spiritagent:gateway:get-state']>
       gatewayBroadcastState: (state: DesktopGatewayState) => void
       gatewayBroadcastEvent: (event: DesktopGatewayEvent) => void
@@ -31,7 +33,6 @@ declare global {
       onGatewayStateChanged: EventSubscription<'spiritagent:gateway:state-changed'>
       onGatewayEvent: EventSubscription<'spiritagent:gateway:event'>
       onGatewayRpcDispatch: EventSubscription<'spiritagent:gateway:rpc-dispatch'>
-      getBootProgress: AsyncIpc<IpcInvokeContract['spiritagent:boot-progress:get']>
       activate: AsyncIpc<IpcInvokeContract['spiritagent:auth:activate']>
       refreshSession: AsyncIpc<IpcInvokeContract['spiritagent:auth:refresh']>
       logout: AsyncIpc<IpcInvokeContract['spiritagent:auth:logout']>
@@ -89,7 +90,6 @@ declare global {
       }
       runnerConfig: {
         read: AsyncIpc<IpcInvokeContract['spiritagent:runner-config:read']>
-        write: AsyncIpc<IpcInvokeContract['spiritagent:runner-config:write']>
         patch: AsyncIpc<IpcInvokeContract['spiritagent:runner-config:patch']>
       }
       skills: {
@@ -119,7 +119,6 @@ declare global {
         moveToCursorDisplay: AsyncIpc<IpcInvokeContract['spiritagent:sprite:move-to-cursor-display']>
       }
       onPowerResume: EventSubscription<'spiritagent:power-resume'>
-      onBootProgress: EventSubscription<'spiritagent:boot-progress'>
       onSessionExpired: EventSubscription<'spiritagent:auth:session-expired'>
       onAuthChanged: EventSubscription<'spiritagent:auth:changed'>
       onRunnerStatus: EventSubscription<'spiritagent:runner:status'>

@@ -1,21 +1,13 @@
 import { clamp } from '@runtime'
 
-import { getAudioContextCtor } from '@/shared/lib/audio-context-ctor'
-
 export async function convertBlobToWav(blob: Blob, targetSampleRate = 16000): Promise<Blob> {
-  const Ctor = getAudioContextCtor()
-
-  if (!Ctor) {
-    throw new Error('AudioContext is not supported in this environment')
-  }
-
   const arrayBuffer = await blob.arrayBuffer()
   let ctx: AudioContext
 
   try {
-    ctx = new Ctor({ sampleRate: targetSampleRate })
+    ctx = new AudioContext({ sampleRate: targetSampleRate })
   } catch {
-    ctx = new Ctor()
+    ctx = new AudioContext()
   }
 
   try {

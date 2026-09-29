@@ -4,12 +4,16 @@ import { type RefObject, useEffect, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 
 import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { registerStorageClearHandler } from '@/shared/lib/storage'
 import type { ChatMediaItem } from '@/shared/types/spiritagent'
 
 import { InlineMedia } from './inline-media'
 
 // 富媒体查看器：聊天窗媒体卡点击后全屏放大；图片查看与视频播放共用一个遮罩。
 const $mediaViewer = atom<ChatMediaItem | null>(null)
+
+// 换号或登出时关闭，旧账户媒体不留在界面上。
+registerStorageClearHandler(() => $mediaViewer.set(null))
 
 export function openMediaViewer(item: ChatMediaItem): void {
   $mediaViewer.set(item)

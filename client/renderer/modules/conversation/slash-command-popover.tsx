@@ -1,35 +1,34 @@
 import { Terminal } from '@/shared/lib/icons'
-import { fuzzyFilterCommands, type ScoredSlashCommand, type SlashCommandMeta } from '@/shared/lib/slash-commands'
+import type { ScoredSlashCommand, SlashCommandMeta } from '@/shared/lib/slash-commands'
 import { useStrings } from '@/shared/strings'
 
 export interface SlashCommandPopoverProps {
-  /** 当前输入框文本（已 trim，过滤掉空字符串）。 */
-  query: string
+  /** 父组件已筛选好的候选命令。 */
+  items: ScoredSlashCommand[]
   /** 当前高亮项索引。 */
   highlightedIndex: number
-  /** 选中某条命令时回调（参数：选中的命令 + 触发键 Enter 或 Tab）。 */
-  onSelect: (cmd: SlashCommandMeta, source: 'enter' | 'tab' | 'click') => void
+  /** 点击选中某条命令时回调。 */
+  onSelect: (cmd: SlashCommandMeta) => void
   /** 鼠标 hover 高亮项时回调。 */
   onHighlight: (index: number) => void
 }
 
 /**
  * 输入框下方浮起的命令自动补全弹层：
- * - 显示 fuzzyFilterCommands(query) 结果
- * - 键盘流：方向键改 highlight（父组件控制），Tab/Enter 选中（父组件决定 source）
+ * - 显示父组件传入的候选命令
+ * - 键盘流：方向键改 highlight、Tab/Enter 选中，均由父组件处理
  * - 鼠标 hover / click 同样回调
  *
  * 弹层不直接控制选中状态 —— ``highlightedIndex`` 与 ``onSelect`` 由父组件管理，便于在弹层外
  * 监听 Tab / Enter 等快捷键。
  */
 export function SlashCommandPopover({
-  query,
+  items,
   highlightedIndex,
   onSelect,
   onHighlight
 }: SlashCommandPopoverProps): React.JSX.Element | null {
   const dict = useStrings()
-  const items: ScoredSlashCommand[] = fuzzyFilterCommands(query, 8)
 
   if (items.length === 0) {
     return null
@@ -54,7 +53,7 @@ export function SlashCommandPopover({
               (isHighlighted ? 'bg-fill-hover text-strong' : 'text-body hover:bg-fill-hover')
             }
             key={item.cmd.name}
-            onClick={() => onSelect(item.cmd, 'click')}
+            onClick={() => onSelect(item.cmd)}
             onMouseEnter={() => onHighlight(idx)}
             role="option"
             type="button"

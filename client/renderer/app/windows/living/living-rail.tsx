@@ -41,7 +41,7 @@ export function LivingRail(): React.JSX.Element {
   const view = useStore($livingView)
   const spriteState = useStore($spriteState)
   const emotion = useStore($spriteEmotion)
-  const displayName = persona?.name ?? t.companionFallback
+  const displayName = persona?.name || t.companionFallback
   const moodText = companionMood?.trim()
 
   const navEntries: NavEntry[] = [

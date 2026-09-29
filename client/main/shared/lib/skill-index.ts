@@ -2,6 +2,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 import type { SkillItem } from '@ipc/contracts'
+import log from 'electron-log/main'
 import yaml from 'yaml'
 
 interface RawSkillItem {
@@ -51,6 +52,19 @@ function platformMatches(declared?: null | string | string[]): boolean {
   return mapped.includes(HOST_PLATFORM)
 }
 
+// 目录缺失（未安装技能、坏链接）是正常状态；其他读取失败记录后跳过，不中断其余分类。
+function readSubdirectories(dirPath: string): fs.Dirent[] {
+  try {
+    return fs.readdirSync(dirPath, { withFileTypes: true }).filter(e => e.isDirectory() || e.isSymbolicLink())
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+      log.warn(`[skills] cannot read ${dirPath}:`, error)
+    }
+
+    return []
+  }
+}
+
 function listSkillsFromDisk(skillsRoot?: null | string): RawSkillItem[] {
   if (!skillsRoot) {
     return []
@@ -58,63 +72,53 @@ function listSkillsFromDisk(skillsRoot?: null | string): RawSkillItem[] {
 
   const skills: RawSkillItem[] = []
 
-  try {
-    const categories = fs
-      .readdirSync(skillsRoot, { withFileTypes: true })
-      .filter(e => e.isDirectory() || e.isSymbolicLink())
+  for (const category of readSubdirectories(skillsRoot)) {
+    const categoryPath = path.join(skillsRoot, category.name)
 
-    for (const category of categories) {
-      const categoryPath = path.join(skillsRoot, category.name)
+    for (const skillDir of readSubdirectories(categoryPath)) {
+      const skillPath = path.join(categoryPath, skillDir.name)
+      const mdPath = path.join(skillPath, 'SKILL.md')
 
-      const skillDirs = fs
-        .readdirSync(categoryPath, { withFileTypes: true })
-        .filter(e => e.isDirectory() || e.isSymbolicLink())
+      if (fs.existsSync(mdPath)) {
+        let name = skillDir.name
+        let description = ''
+        let platforms: null | string[] = null
 
-      for (const skillDir of skillDirs) {
-        const skillPath = path.join(categoryPath, skillDir.name)
-        const mdPath = path.join(skillPath, 'SKILL.md')
+        try {
+          const content = fs.readFileSync(mdPath, 'utf8')
+          const match = content.match(/^---\s*[\r\n]+([\s\S]*?)[\r\n]+---/)
+          const frontmatter: unknown = match ? yaml.parse(match[1]) : null
 
-        if (fs.existsSync(mdPath)) {
-          let name = skillDir.name
-          let description = ''
-          let platforms: null | string[] = null
+          if (frontmatter && typeof frontmatter === 'object') {
+            // YAML 标量可能是数字等非字符串；只接受字符串，排序与渲染层都按字符串处理。
+            const fields = frontmatter as { description?: unknown; name?: unknown; platforms?: unknown }
 
-          try {
-            const content = fs.readFileSync(mdPath, 'utf8')
-            const match = content.match(/^---\s*[\r\n]+([\s\S]*?)[\r\n]+---/)
-
-            if (match) {
-              const frontmatter = yaml.parse(match[1])
-
-              if (frontmatter.name) {
-                name = frontmatter.name
-              }
-
-              if (frontmatter.description) {
-                description = frontmatter.description
-              }
-
-              if (frontmatter.platforms != null) {
-                const raw = frontmatter.platforms
-                platforms = (Array.isArray(raw) ? raw : [raw]).map(String)
-              }
+            if (typeof fields.name === 'string' && fields.name) {
+              name = fields.name
             }
-          } catch {
-            // 忽略解析错误
-          }
 
-          skills.push({
-            category: category.name,
-            compatible: platformMatches(platforms),
-            description,
-            name,
-            platforms
-          })
+            if (typeof fields.description === 'string' && fields.description) {
+              description = fields.description
+            }
+
+            if (fields.platforms != null) {
+              const raw = fields.platforms
+              platforms = (Array.isArray(raw) ? raw : [raw]).map(String)
+            }
+          }
+        } catch {
+          // 忽略解析错误
         }
+
+        skills.push({
+          category: category.name,
+          compatible: platformMatches(platforms),
+          description,
+          name,
+          platforms
+        })
       }
     }
-  } catch {
-    // 忽略
   }
 
   return skills.sort((a, b) => {

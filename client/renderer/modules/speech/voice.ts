@@ -1,4 +1,6 @@
+import { log } from '@/shared/lib/log'
 import { $locale } from '@/shared/store/locale'
+import { getStrings } from '@/shared/strings'
 import type { RequestGateway, VoiceOption } from '@/shared/voice-catalog'
 import { customVoiceSelectionId, voiceSelectionId } from '@/shared/voice-catalog'
 
@@ -13,10 +15,8 @@ export {
   voiceSelectionProvider
 } from '@/shared/voice-catalog'
 
-interface VoiceMatch {
-  voice: VoiceOption | null
-  alternatives: VoiceOption[]
-}
+// 请求失败与「没有匹配」分开报告，调用方不能把失败当作无匹配而改选默认音色。
+type VoiceMatch = { ok: true; voice: VoiceOption | null; alternatives: VoiceOption[] } | { ok: false; error: unknown }
 
 export interface VoiceCatalog {
   providers: string[]
@@ -82,9 +82,11 @@ export async function matchVoicePreference(
   try {
     const res = await requestGateway<MatchResponse>('tts.match_voice', { language, preference })
 
-    return { voice: res.voice, alternatives: res.alternatives }
-  } catch {
-    return { voice: null, alternatives: [] }
+    return { ok: true, voice: res.voice, alternatives: res.alternatives }
+  } catch (error) {
+    log.warn('voice', 'tts.match_voice failed', error)
+
+    return { ok: false, error }
   }
 }
 
@@ -111,8 +113,6 @@ export function nextVoice(currentId: string, catalog: readonly VoiceOption[]): V
   return catalog[(idx + 1) % catalog.length] ?? catalog[0]
 }
 
-export function sampleLine(name: string, language = $locale.get()): string {
-  return language === 'en'
-    ? `Hi, I'm ${name || 'your companion'}. This is my voice.`
-    : `你好呀，我是${name || ''}。这是我的声音～`
+export function sampleLine(name: string): string {
+  return getStrings().settings.voice.sampleLine(name.trim())
 }

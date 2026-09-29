@@ -2,6 +2,7 @@ import { sleep } from '@runtime'
 import { atom, computed, map } from 'nanostores'
 
 import {
+  currentClearEpoch,
   persistString,
   registerCompanionStorageKey,
   registerStorageClearHandler,
@@ -9,6 +10,7 @@ import {
 } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $gateway } from '@/shared/store/gateway'
+import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type {
   ChatAttachment,
@@ -98,7 +100,7 @@ export const $chatMessageBodies = map<Record<string, ChatMessageBody>>({})
 export const $lastAssistantStreaming = atom<boolean>(false)
 export const $chatStreamingTick = atom<number>(0)
 export const $chatSessionId = atom<string | null>(storedString(CHAT_SESSION_ID_KEY))
-// 与 $chatSessionId 同层，避免 session-list-store 反向依赖 chat-store 造成循环初始化。
+// 放在 chat-store：本模块要读它，而 session-list-store 已依赖 chat-store，反向导入会成环。
 export const $companionSessionId = atom<string | null>(null)
 // IM 守卫与语音入口的权威 kind 源：写值由 hydrate 把服务端 info.kind 注入。
 // 与 PROTOCOL「会话种类与历史修改」 对齐：special / standard / im。
@@ -184,8 +186,31 @@ interface SessionSettings {
 
 export const $sessionSettings = atom<SessionSettings>({})
 
+// 服务端 settings 是开放字典，只保留客户端消费且类型相符的键。
+function toSessionSettings(raw: Record<string, unknown> = {}): SessionSettings {
+  const settings: SessionSettings = {}
+
+  if (typeof raw.temperature === 'number') {
+    settings.temperature = raw.temperature
+  }
+
+  if (typeof raw.context_compression_threshold === 'number') {
+    settings.context_compression_threshold = raw.context_compression_threshold
+  }
+
+  if (typeof raw.enable_context_compression === 'boolean') {
+    settings.enable_context_compression = raw.enable_context_compression
+  }
+
+  if (typeof raw.reasoning_effort === 'string') {
+    settings.reasoning_effort = raw.reasoning_effort
+  }
+
+  return settings
+}
+
 export function hydrateSessionSettings(info: SessionRuntimeInfo): void {
-  $sessionSettings.set((info.settings ?? {}) as SessionSettings)
+  $sessionSettings.set(toSessionSettings(info.settings))
 }
 
 export function updateSessionSetting<K extends keyof SessionSettings>(key: K, value: SessionSettings[K]): void {
@@ -271,8 +296,8 @@ interface ProactiveBubbleState {
 
 export const $proactiveBubble = atom<ProactiveBubbleState | null>(null)
 
-// 外部投喂（DESIGN「拖拽与直接交互」「文件投喂」）——SpriteStage 拖拽文件到精灵本体时，
-// 把文件路径推到此处。对话组件订阅并把首个图像文件塞入附件占位。
+// 外部投喂（DESIGN「拖拽与直接交互」）：精灵拖入或经主进程信箱转交的文件路径推到此处，
+// 对话输入订阅后全部并入待发附件路径。
 interface PendingExternalAttachment {
   paths: string[]
   nonce: number
@@ -395,6 +420,8 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
 
     // 结构化助手回复逐泡呈现；陪伴用户行按空行拆分，与实时呈现对齐。
     const canSplit = !m.subtype && m.role === 'user' && splitUserBubblesEnabled()
+    // 后台视频送达的 system 行正文是给模型的任务记录，与实时送达一致只显示媒体卡。
+    const hideText = m.role === 'system' && m.subtype === 'status_media'
 
     const segments = companionBubbles
       ? companionBubbles.map(bubble => ('text' in bubble ? bubble.text : ''))
@@ -403,7 +430,7 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
             .split(/\r?\n(?:[ \t]*\r?\n)+/)
             .map(part => part.trim())
             .filter(Boolean)
-        : [textContent]
+        : [hideText ? '' : textContent]
 
     if (segments.length === 0) {
       segments.push('')
@@ -421,7 +448,7 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
       })
 
       // 拆分后附件只挂首个气泡：附件伴随连发的首条消息发出，合并行里已无法逐段归属，
-      // 每段都挂会重复渲染媒体卡。不拆分时首段即唯一段，行为不变。
+      // 每段都挂会重复渲染媒体卡。不拆分时首段即唯一段。
       bodies[id] = {
         text: segment,
         editableText: m.role === 'user' ? textContent : undefined,
@@ -454,12 +481,11 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
 
   // 估算 Token 占用（无精确 usage 时的兜底估算：~3 字符/Token）
   // 先清零分项，避免切换会话后残留上一会话的 prompt/completion。
+  // 无 info 的本会话重水合沿用当前上下文上限，不回落默认值。
   const approxTokens = Math.round(totalChars / 3)
-  resetSessionContextUsage(info?.context_window || DEFAULT_CONTEXT_LIMIT)
-  setSessionContextUsage({
-    totalTokens: approxTokens,
-    contextLimit: info?.context_window || DEFAULT_CONTEXT_LIMIT
-  })
+  const contextLimit = info ? info.context_window || DEFAULT_CONTEXT_LIMIT : $sessionContextUsage.get().contextLimit
+  resetSessionContextUsage(contextLimit)
+  setSessionContextUsage({ totalTokens: approxTokens })
 }
 
 function extractText(m: SessionMessage): string {
@@ -578,7 +604,7 @@ export function pushProactiveMessage(text: string, media?: ChatMediaItem[], mess
   ])
 }
 
-// 后台视频完成等异步送达的媒体行；与历史水合的 status_media 行同形状。
+// 后台视频完成的实时送达行，只带媒体；历史水合的同类 system 行同样不显示正文。
 export function pushMediaMessage(media: ChatMediaItem[]): string {
   const id = nextId()
   $chatMessageBodies.setKey(id, { text: '', media, streaming: false, toolName: null })
@@ -697,13 +723,8 @@ export function bindTrailingAssistantMessageId(messageId: number): void {
   }
 }
 
-/**
- * 把一行 status pill（如 `status_cleared` / `compress_summary` / 自定义 command_result）插入消息列表。
- *
- * Pill 在渲染层走 `status_*` / `compress_summary` 通用路径（与每日摘要、压缩摘要同形态）。
- * 文本为空时返回的 id 是新插入消息的本地 id（便于滚动定位等场景）。
- */
-export function pushStatusPill(subtype: string, text: string): string {
+/** 追加一行本地状态行（如 `status_command_result`、`compress_summary`），渲染层按 subtype 显示为居中 pill 或摘要卡片。 */
+export function pushStatusPill(subtype: string, text: string): void {
   const id = nextId()
   $chatMessageBodies.setKey(id, {
     text,
@@ -711,8 +732,6 @@ export function pushStatusPill(subtype: string, text: string): string {
     toolName: null
   })
   $chatMessageList.set([...$chatMessageList.get(), { id, role: 'assistant', subtype, timestamp: Date.now() }])
-
-  return id
 }
 
 export function pushPendingPrompt(item: PendingPromptItem): void {
@@ -865,12 +884,34 @@ export function submitPendingBatch(): void {
   }
 
   const submittedRevision = historyEditRevision
+  const epoch = currentClearEpoch()
+
+  // 本批未送达：不当作已发送。会话已切走时不写进新会话的列表与回合状态，改用通知。
+  const failSubmit = (err?: unknown): void => {
+    if (epoch !== currentClearEpoch()) {
+      return
+    }
+
+    const sendFailed = getStrings().chat.sendFailed
+
+    if ($chatSessionId.get() !== sessionId) {
+      notifyError(err, sendFailed)
+
+      return
+    }
+
+    markAssistantTerminal({ error: err instanceof Error ? err.message : sendFailed })
+    // thinking（50）> idle（10）：不带 force 会被优先级门控吞掉，精灵卡在思考态。
+    presentationPorts().setSpriteState('idle', { force: true })
+    $chatTurnInFlight.set(false)
+  }
 
   const submitWithRetry = async (attempt = 0): Promise<void> => {
     const g = $gateway.get()
 
+    // 首次提交前已确认连接；只有退避重试期间断连会走到这里。
     if (!g || g.connectionState !== 'open') {
-      $chatTurnInFlight.set(false)
+      failSubmit()
 
       return
     }
@@ -899,10 +940,7 @@ export function submitPendingBatch(): void {
         return submitWithRetry(attempt + 1)
       }
 
-      // thinking（50）> idle（10）：不带 force 会被优先级门控吞掉，精灵卡在思考态。
-      markAssistantTerminal({ error: err instanceof Error ? err.message : getStrings().chat.sendFailed })
-      presentationPorts().setSpriteState('idle', { force: true })
-      $chatTurnInFlight.set(false)
+      failSubmit(err)
     }
   }
 

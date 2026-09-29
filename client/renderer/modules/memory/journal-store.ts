@@ -1,6 +1,6 @@
 // 记忆 / 日记 store：片刻 + 日记页的水合与缓存。后端直连。
 //
-// - GET /api/companion/moments（带 cursor 分页）→ $moments
+// - GET /api/companion/moments（只取最新一页，不跟随 next_cursor）→ $moments
 // - GET /api/companion/diary（带 from/to 区间）→ $diaryByDate
 // - POST/DELETE /api/companion/moments/{id}/comments → 评论与删除本人评论
 // - WS `companion.moment.created` / `companion.moment.comment` / `companion.diary.upserted` 增量 upsert
@@ -146,7 +146,8 @@ function toDiary(w: DiaryWire): DiaryEntry {
 let momentsRevision = 0
 let diaryRevision = 0
 
-export async function hydrateMoments(): Promise<void> {
+// 返回本次结果是否已写入；被新请求取代或清空时同样为 false，调用方按自身代次忽略。
+export async function hydrateMoments(): Promise<boolean> {
   const version = ++momentsRevision
   const epoch = currentClearEpoch()
   $momentsLoading.set(true)
@@ -155,7 +156,7 @@ export async function hydrateMoments(): Promise<void> {
     const result = await authedApi<MomentListWire>({ path: '/api/companion/moments' })
 
     if (version !== momentsRevision || epoch !== currentClearEpoch()) {
-      return
+      return false
     }
 
     if (!result.ok) {
@@ -163,14 +164,16 @@ export async function hydrateMoments(): Promise<void> {
         log.warn('journal', 'hydrateMoments failed:', result.error)
       }
 
-      return
+      return false
     }
 
     if (!result.value) {
-      return
+      return false
     }
 
     $moments.set(result.value.moments.map(toMoment))
+
+    return true
   } finally {
     if (version === momentsRevision) {
       $momentsLoading.set(false)
@@ -178,7 +181,8 @@ export async function hydrateMoments(): Promise<void> {
   }
 }
 
-export async function hydrateDiary(opts: { from?: string; to?: string; reset?: boolean } = {}): Promise<void> {
+// 返回值语义同 hydrateMoments。
+export async function hydrateDiary(opts: { from?: string; to?: string } = {}): Promise<boolean> {
   const version = ++diaryRevision
   const epoch = currentClearEpoch()
   $diaryLoading.set(true)
@@ -201,7 +205,7 @@ export async function hydrateDiary(opts: { from?: string; to?: string; reset?: b
     })
 
     if (version !== diaryRevision || epoch !== currentClearEpoch()) {
-      return
+      return false
     }
 
     if (!result.ok) {
@@ -209,11 +213,11 @@ export async function hydrateDiary(opts: { from?: string; to?: string; reset?: b
         log.warn('journal', 'hydrateDiary failed:', result.error)
       }
 
-      return
+      return false
     }
 
     if (!result.value) {
-      return
+      return false
     }
 
     const incoming: Record<string, DiaryEntry> = {}
@@ -222,11 +226,13 @@ export async function hydrateDiary(opts: { from?: string; to?: string; reset?: b
       incoming[entry.entry_date] = toDiary(entry)
     }
 
-    if (opts.reset || (!opts.from && !opts.to)) {
+    if (!opts.from && !opts.to) {
       $diaryByDate.set(incoming)
     } else {
       $diaryByDate.set({ ...$diaryByDate.get(), ...incoming })
     }
+
+    return true
   } finally {
     if (version === diaryRevision) {
       $diaryLoading.set(false)
@@ -300,12 +306,41 @@ export async function deleteMomentComment(momentId: string, commentId: string): 
   return true
 }
 
+// WS 载荷未经类型校验：只接受去重、索引与映射依赖的字段形态正确的事件。
+function isMomentWire(value: unknown): value is MomentWire {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const w = value as Partial<MomentWire>
+
+  return typeof w.id === 'string' && (w.comments === undefined || Array.isArray(w.comments))
+}
+
+function isMomentCommentWire(value: unknown): value is MomentCommentWire {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  return typeof (value as Partial<MomentCommentWire>).id === 'string'
+}
+
+function isDiaryWire(value: unknown): value is DiaryWire {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const w = value as Partial<DiaryWire>
+
+  return typeof w.id === 'string' && typeof w.entry_date === 'string'
+}
+
 // WS 入口：由 app/runtime/gateway-event-router.ts 调用。
 export function onJournalEvent(event: { payload?: unknown; type: string }): void {
   if (event.type === 'companion.moment.created') {
-    const w = event.payload as MomentWire | undefined
+    const w = event.payload
 
-    if (!w) {
+    if (!isMomentWire(w)) {
       return
     }
 
@@ -320,9 +355,9 @@ export function onJournalEvent(event: { payload?: unknown; type: string }): void
   }
 
   if (event.type === 'companion.moment.comment') {
-    const w = event.payload as { comment?: MomentCommentWire; moment_id?: string } | undefined
+    const w = event.payload as { comment?: unknown; moment_id?: unknown } | undefined
 
-    if (!w || !w.comment || !w.moment_id) {
+    if (typeof w?.moment_id !== 'string' || !isMomentCommentWire(w.comment)) {
       return
     }
 
@@ -330,9 +365,9 @@ export function onJournalEvent(event: { payload?: unknown; type: string }): void
   }
 
   if (event.type === 'companion.diary.upserted') {
-    const w = event.payload as DiaryWire | undefined
+    const w = event.payload
 
-    if (!w) {
+    if (!isDiaryWire(w)) {
       return
     }
 
@@ -342,7 +377,7 @@ export function onJournalEvent(event: { payload?: unknown; type: string }): void
   }
 }
 
-export function clearJournal(): void {
+function clearJournal(): void {
   momentsRevision++
   diaryRevision++
   $moments.set([])

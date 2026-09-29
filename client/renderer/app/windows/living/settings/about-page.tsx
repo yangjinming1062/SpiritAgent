@@ -21,8 +21,7 @@ export function AboutPage(): React.JSX.Element {
   }, [])
 
   const onCheckClick = useCallback(() => {
-    // 触发手动检查。下方的状态栏徽标 + statusLine 都对 `$updateStatus` 做出响应，
-    // 用户无需打开独立对话框即可看到状态切换。
+    // 触发手动检查；下方 statusLine 随 `$updateStatus` 更新，无需独立对话框。
     void window.spiritagent?.update?.check?.()
   }, [])
 
@@ -50,8 +49,7 @@ export function AboutPage(): React.JSX.Element {
       <SettingCard className="px-6 py-8" divided={false}>
         <div className="flex flex-col items-center gap-3 text-center">
           <div className="relative grid place-items-center">
-            {/* Static warm halo — echoes the companion's amber glow (egg.tsx).
-              Settings is the admin surface, so no breathing; just identity warmth. */}
+            {/* 静态暖色光晕，呼应伙伴蛋的琥珀光（egg-stage.tsx）；设置页不做呼吸动画。 */}
             <span
               aria-hidden="true"
               className="pointer-events-none absolute z-0 size-32 rounded-full"

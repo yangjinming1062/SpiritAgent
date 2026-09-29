@@ -1,6 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { useRef } from 'react'
 
+import { openSessionSurface } from '@/app/workflows/session-delivery'
 import { $effectiveTier, $screenLocked } from '@/modules/character'
 import { $spatialPos, $spatialScale, $viewport, computeOverlayAnchorBesideSprite } from '@/modules/character'
 import { $proactiveBubble, setProactiveBubble } from '@/modules/conversation'
@@ -12,7 +13,7 @@ import { openWhisper } from '../whisper'
 
 // 伙伴主动消息的临时气泡：对话入口均未打开时显示在伙伴身边（DESIGN「主动陪伴」）。
 // 生活空间 / 工作台 / 轻语任一打开时消息已在对话流里，这里不再重复显示。
-// 富媒体不进气泡——媒体送达提示也只以文本出现，点击打开轻语陪伴对话。
+// 富媒体不进气泡——媒体送达提示也只以文本出现；点击按所属会话打开轻语或工作台。
 //
 // 锚定在精灵身边，跟随拖拽 / 行走 / 飞行 / 聊天场所重新定位；
 // 外层在「无消息」时短路掉，保证 spatial 订阅只在气泡显示期间才跑。
@@ -53,8 +54,14 @@ function ProactiveBubbleView({ text, sessionId }: { text: string; sessionId?: st
     verticalRatio: BUBBLE_VERTICAL_RATIO
   })
 
+  // 工作会话不能送进轻语：带会话的提示按会话归属选入口。
   const handleClick = (): void => {
-    openWhisper(sessionId)
+    if (sessionId) {
+      openSessionSurface(sessionId)
+    } else {
+      openWhisper()
+    }
+
     setProactiveBubble(null)
   }
 

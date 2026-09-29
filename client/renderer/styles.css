@@ -4,7 +4,6 @@
    主题切换覆写 html[data-theme] 以及同步的 data-palette（夜/日）与 data-effect（实底/清透）。默认日色透明写在 :root。
    inline 是必需的——裸 @theme 会在构建期解析变量值，把首个主题冻进产物。 */
 @theme inline {
-  --color-surface-chrome: var(--ui-surface-chrome);
   --color-surface-panel: var(--ui-surface-panel);
   --color-surface-card: var(--ui-surface-card);
   --color-overlay: var(--ui-overlay);
@@ -68,7 +67,6 @@
     --glass-tint: rgba(var(--glass-tint-rgb), var(--glass-tint-alpha));
     --ui-window-fill: var(--glass-tint);
     --ui-app-bg: #f4f6fa;
-    --ui-surface-chrome: rgba(var(--glass-tint-rgb), 0.16);
     --ui-surface-panel: rgba(var(--glass-tint-rgb), 0.12);
     --ui-surface-card: rgba(var(--glass-tint-rgb), 0.2);
     --ui-overlay: rgba(246, 248, 252, 0.88);
@@ -119,7 +117,7 @@
       'Segoe UI Emoji', 'Segoe UI Symbol', 'Noto Color Emoji', emoji;
 
     --radius-scalar: 0.7;
-    /* 顶部浮层（通知栈）的让位基准；工具窗按 data-role 覆写为面板头高度。 */
+    /* 顶部浮层（通知栈）的让位基准。 */
     --titlebar-height: 34px;
 
     /* 蛋/伙伴插画色（非 UI 控件 chrome，不随主题换肤；集中声明避免 TSX 硬编码）。 */
@@ -185,7 +183,6 @@
 
   /* 效果轴：日色实底 */
   html[data-effect='solid'][data-palette='day'] {
-    --ui-surface-chrome: rgba(246, 244, 240, 0.75);
     --ui-surface-panel: rgba(252, 250, 248, 0.62);
     --ui-surface-card: rgba(255, 255, 255, 0.6);
     --ui-glass-bg: rgba(252, 250, 248, 0.62);
@@ -201,7 +198,6 @@
 
   /* 效果轴：夜色实底 */
   html[data-effect='solid'][data-palette='night'] {
-    --ui-surface-chrome: rgba(16, 16, 20, 0.65);
     --ui-surface-panel: rgba(20, 20, 24, 0.55);
     --ui-surface-card: rgba(28, 28, 34, 0.5);
     --ui-glass-bg: rgba(20, 20, 24, 0.55);
@@ -220,7 +216,6 @@
     --glass-tint-rgb: 220, 228, 236;
     --glass-tint-alpha: 0.14;
     --ui-window-fill: var(--glass-tint);
-    --ui-surface-chrome: rgba(var(--glass-tint-rgb), 0.16);
     --ui-surface-panel: rgba(var(--glass-tint-rgb), 0.12);
     --ui-surface-card: rgba(var(--glass-tint-rgb), 0.2);
     --ui-glass-bg: var(--glass-tint);
@@ -238,7 +233,6 @@
     --glass-tint-rgb: 10, 12, 18;
     --glass-tint-alpha: 0.28;
     --ui-window-fill: var(--glass-tint);
-    --ui-surface-chrome: rgba(var(--glass-tint-rgb), 0.2);
     --ui-surface-panel: rgba(16, 18, 24, 0.36);
     --ui-surface-card: rgba(20, 22, 28, 0.32);
     --ui-glass-bg: var(--glass-tint);
@@ -256,7 +250,6 @@
   html[data-role='living'][data-effect='clear'][data-palette='day'] {
     --glass-tint-alpha: 0.03;
     --ui-window-fill: var(--glass-tint);
-    --ui-surface-chrome: rgba(var(--glass-tint-rgb), 0);
     --ui-surface-panel: rgba(var(--glass-tint-rgb), 0.04);
     --ui-surface-card: rgba(var(--glass-tint-rgb), 0.07);
     --ui-glass-bg: rgba(var(--glass-tint-rgb), 0.06);
@@ -277,7 +270,6 @@
   html[data-role='living'][data-effect='clear'][data-palette='night'] {
     --glass-tint-alpha: 0.14;
     --ui-window-fill: var(--glass-tint);
-    --ui-surface-chrome: rgba(var(--glass-tint-rgb), 0);
     --ui-surface-panel: rgba(12, 14, 20, 0.1);
     --ui-surface-card: rgba(16, 18, 24, 0.2);
     --ui-glass-bg: rgba(12, 14, 20, 0.14);
@@ -297,7 +289,6 @@
 
   html[data-role='living'][data-effect='solid'][data-palette='day'] {
     --ui-window-fill: rgba(248, 246, 242, 0.86);
-    --ui-surface-chrome: rgba(252, 250, 248, 0);
     --ui-surface-panel: rgba(252, 250, 248, 0.18);
     --ui-surface-card: rgba(255, 255, 255, 0.42);
     --ui-glass-bg: rgba(252, 250, 248, 0.22);
@@ -305,7 +296,6 @@
 
   html[data-role='living'][data-effect='solid'][data-palette='night'] {
     --ui-window-fill: rgba(12, 14, 20, 0.8);
-    --ui-surface-chrome: rgba(12, 14, 20, 0);
     --ui-surface-panel: rgba(14, 16, 22, 0.16);
     --ui-surface-card: rgba(16, 18, 24, 0.36);
     --ui-glass-bg: rgba(14, 16, 22, 0.2);
@@ -336,11 +326,6 @@
     --ui-window-fill: rgba(12, 14, 20, 0.92);
     --ui-surface-card: rgba(20, 20, 24, 0.88);
     --ui-bubble-user-bg: color-mix(in srgb, var(--ui-accent) 25%, var(--ui-app-bg));
-  }
-
-  /* 工具窗面板头（图标 + 标题 + 关闭钮）的高度——通知栈据此让位，不压在头部上。 */
-  html[data-role='tool'] {
-    --titlebar-height: 3rem;
   }
 
   * {
@@ -417,32 +402,28 @@
 }
 
 /* ── 液态玻璃表面层 ───────────────────────────────────────────────────────────
-   全部窗口共用一套类常量词汇表（表面阶梯 chrome→panel→card、瞬时浮层 overlay）。
+   全部窗口共用一套类常量词汇表（表面阶梯 panel→card、瞬时浮层 overlay）。
    夜色与日色采用纯净的毛玻璃、0.6px 细描边与大圆角，移除 HUD 角标与赛博噪点。 */
 
 .bg-surface-panel,
-.bg-surface-chrome,
 .bg-glass {
   -webkit-backdrop-filter: blur(var(--ui-glass-blur));
   backdrop-filter: blur(var(--ui-glass-blur));
 }
 
-html[data-palette='night'] .bg-surface-panel,
-html[data-palette='night'] .bg-surface-chrome {
+html[data-palette='night'] .bg-surface-panel {
   box-shadow:
     0 0 0 0.6px var(--ui-line-standard),
     0 12px 32px -8px rgba(0, 0, 0, 0.45);
 }
 
-html[data-theme='day'] .bg-surface-panel,
-html[data-theme='day'] .bg-surface-chrome {
+html[data-theme='day'] .bg-surface-panel {
   box-shadow:
     0 0 0 0.6px var(--ui-line-standard),
     0 12px 32px -8px rgba(0, 0, 0, 0.08);
 }
 
-html[data-effect='clear'] .bg-surface-panel,
-html[data-effect='clear'] .bg-surface-chrome {
+html[data-effect='clear'] .bg-surface-panel {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.55),
     0 0 0 0.6px rgba(255, 255, 255, 0.38),
@@ -451,7 +432,6 @@ html[data-effect='clear'] .bg-surface-chrome {
 
 /* 集成显卡/低功耗降级：当关闭 blur 或系统不支持时，提高不透明度并关闭 backdrop-filter */
 html.no-blur .bg-surface-panel,
-html.no-blur .bg-surface-chrome,
 html.no-blur .bg-glass,
 html.no-blur .liquid-glass-card,
 html.no-blur .liquid-glass-pill,
@@ -462,31 +442,26 @@ html.no-blur [class*='backdrop-blur'] {
 }
 
 html[data-palette='night'][data-effect='solid'].no-blur .bg-surface-panel,
-html[data-palette='night'][data-effect='solid'].no-blur .bg-surface-chrome,
 html[data-palette='night'][data-effect='solid'].no-blur .bg-glass {
   background-color: rgba(20, 20, 24, 0.94) !important;
 }
 
 html[data-theme='day'].no-blur .bg-surface-panel,
-html[data-theme='day'].no-blur .bg-surface-chrome,
 html[data-theme='day'].no-blur .bg-glass {
   background-color: rgba(252, 247, 240, 0.9) !important;
 }
 
 html:not([data-role='living'])[data-effect='clear'][data-palette='day'].no-blur .bg-surface-panel,
-html:not([data-role='living'])[data-effect='clear'][data-palette='day'].no-blur .bg-surface-chrome,
 html:not([data-role='living'])[data-effect='clear'][data-palette='day'].no-blur .bg-glass {
   background-color: rgba(252, 247, 240, 0.86) !important;
 }
 
 html:not([data-role='living'])[data-effect='clear'][data-palette='night'].no-blur .bg-surface-panel,
-html:not([data-role='living'])[data-effect='clear'][data-palette='night'].no-blur .bg-surface-chrome,
 html:not([data-role='living'])[data-effect='clear'][data-palette='night'].no-blur .bg-glass {
   background-color: rgba(16, 18, 24, 0.9) !important;
 }
 
 html[data-role='living'].no-blur .bg-surface-panel,
-html[data-role='living'].no-blur .bg-surface-chrome,
 html[data-role='living'].no-blur .bg-glass {
   background-color: var(--ui-surface-card) !important;
 }

@@ -1,5 +1,6 @@
 import { atom } from 'nanostores'
 
+import { log } from '@/shared/lib/log'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
 import { $runnerPhase } from '@/shared/store/runner-status'
@@ -14,7 +15,7 @@ import {
 import { $llmAffect } from './prefs'
 
 // 本地环境信号取自 Runner 的 system.* 工具——伙伴层直接基于这些信号做推理，
-// 绕过 LLM。Runner 离线时 poll 是空操作，atom 保持默认值。
+// 绕过 LLM。Runner 离线、探测失败或监视停止时空闲时长回到 -1，锁屏与焦点保留上次值。
 
 export const $screenLocked = atom<boolean>(false)
 // -1 表示本周期无信号（Runner 离线或探测失败），调用方按未知处理。
@@ -82,8 +83,9 @@ function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void 
       idle_seconds: idleSeconds,
       local_hour: hour
     })
-    .catch(() => {
-      /* 后端离线或 RPC 失败——静默，下次轮询冷却后重试 */
+    .catch(error => {
+      // 冷却期过后的轮询再重试。
+      log.warn('activity', 'companion.idle_expression failed', error)
     })
 }
 
@@ -226,8 +228,8 @@ function maybePushTierOverride(): void {
   const ctx = $focusContext.get()
   const desired = computeLocalEffectiveTier(preferred, ctx)
 
-  // 镜像后端 sidecar 的行为：写入 override atom 让 $effectiveTier 重算，
-  // 并把派生出的生效档位推给后端。值未变则跳过 set——订阅者会级联到所有订阅者。
+  // 写入 override atom 让 $effectiveTier 重算，并把派生出的生效档位推给后端。
+  // 值未变则跳过 set——订阅者会级联到所有订阅者。
   const nextOverride = desired === preferred ? null : desired
 
   if ($effectiveTierOverride.get() !== nextOverride) {
@@ -243,8 +245,8 @@ function maybePushTierOverride(): void {
   pushEffectiveDisturbanceTier(desired)
 }
 
-// Runner 的活动快照聚合。一次 ``system.snapshot`` 往返替代四次独立 ``system.*`` 探测，
-// 把 4 条 IPC 折叠成 1 条；探针失败时返回与各独立工具相同的默认值。
+// Runner 的活动快照聚合：一次 ``system.snapshot`` 往返取回四项信号；
+// 单项探针失败时返回与各独立工具相同的默认值。
 interface SystemSnapshot {
   idle_seconds?: number
   locked?: boolean
@@ -309,8 +311,7 @@ async function pollSnapshot(generation: number): Promise<void> {
     return
   }
 
-  // ``system.snapshot`` 聚合全部四个信号。任一拒绝会保留所有 atom
-  // 不动（探针失败时黏住上次值）。
+  // ``system.snapshot`` 聚合全部四个信号。
   const snapshotResult = await desktop.runnerInvoke('system.snapshot', {}).catch(() => null)
 
   if (generation !== monitorGeneration) {
@@ -318,9 +319,8 @@ async function pollSnapshot(generation: number): Promise<void> {
   }
 
   if (snapshotResult === null) {
-    // 探测失败——atom 保留上次已知值。基于当前 atom 状态重新计算
-    // 档位 override，避免探测中断后陈旧的 $focusContext 把档位
-    // 永久钉住。
+    // 探测失败：空闲时长置为未知，锁屏与焦点保留上次值；档位覆盖仍按当前偏好重算并上报。
+    $lastIdleSeconds.set(-1)
     maybePushTierOverride()
     await reportCompanionSignal(false)
 
@@ -350,6 +350,7 @@ async function pollSnapshot(generation: number): Promise<void> {
   // 没有显式守卫时下面的冷却网关会把 NaN 透传给后端的 LLM prompt。
   // 把任何非有限值当作缺失信号处理。
   if (!Number.isFinite(idleSeconds)) {
+    $lastIdleSeconds.set(-1)
     await reportCompanionSignal(false)
 
     return
@@ -484,6 +485,7 @@ export function startActivityMonitor(): () => void {
       runnerReady = false
       monitorGeneration += 1
       polling = false
+      $lastIdleSeconds.set(-1)
       void reportCompanionSignal(false)
     }
   })
@@ -503,6 +505,7 @@ function stopActivityMonitor(): void {
   monitorGeneration += 1
   void reportCompanionSignal(false)
   polling = false
+  $lastIdleSeconds.set(-1)
   lastSignalContext = null
   pendingSignalContextChange = false
 
@@ -524,12 +527,9 @@ function stopActivityMonitor(): void {
   runnerReady = false
 }
 
-// 客户端 stats RPC 节流。低于阈值（chat_turn < 10）时客户端发送每次事件，
-// 让后端的每日计数器及时累计；一旦越过阈值，行已经写入，
-// 后续事件只需刷新行内容。至多每 60 秒采样一次，
-// 在不损失有意义的聚合粒度的前提下限制越过阈值后的 DB 写入频率。
-// 后端的 ``record_interaction`` 仍会增加内存计数器，
-// 因此客户端短暂丢事件不会让 ``threshold_met`` 退回 false
+// 客户端 stats RPC 节流：前 10 次（对齐后端 ``STATS_THRESHOLD``）逐次发送，让后端当日计数
+// 尽快越过阈值并写入每日汇总；之后每 60 秒至多发送一次，其间事件丢弃，汇总行按采样刷新
+// （计数 / 高峰小时 / hour_buckets），限制越过阈值后的 DB 写入频率。
 export function reportInteractionStat(kind: 'chat_turn'): void {
   const gateway = $gateway.get()
 
@@ -539,11 +539,6 @@ export function reportInteractionStat(kind: 'chat_turn'): void {
 
   localChatTurnCount += 1
 
-  // 阈值与后端的 ``STATS_THRESHOLD = 10`` 对齐。低于阈值时
-  // 每次事件都发送，让每日计数器及时累加；越过阈值后，
-  // 每分钟最多合并成一次 RPC——每日行已落库，
-  // 后端的内存计数器才是 ``threshold_met`` 的真值。后续事件
-  // 在每次合并发送时仍会更新行内容（高峰小时 / hour_buckets）。
   const now = Date.now()
 
   if (localChatTurnCount > 10 && now - lastChatTurnSentAt < STATS_POST_THRESHROTTLE_MS) {

@@ -1,18 +1,16 @@
-// 对话输入胶囊：两个入口共用。空胶囊形态；聚焦或挂附件时由 caller 决定是否展开指挥台。
+// 对话输入胶囊：生活空间、工作台与轻语共用。默认单行胶囊；编辑消息，或工作台聚焦、挂附件、长文本时展开为多行指挥台。
 //
 // 此组件是受控组件：父组件持有 text/pending/sending/recording 等状态，
-// 这里只渲染 + 把事件转回父组件。这样 living / workbench 可以共用同一个
-// 视觉与交互壳，而父组件可以各自选择是否挂语音条、附件槽、slash popover。
+// 这里只渲染 + 把事件转回父组件。命令弹层的筛选与高亮由本组件维护。
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import {
   type ClipboardEvent,
   type Dispatch,
-  type KeyboardEvent,
   type PointerEvent,
-  type RefObject,
   type SetStateAction,
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -25,7 +23,6 @@ import {
   $slashCommandMeta,
   fetchSlashCommandMeta,
   fuzzyFilterCommands,
-  type ScoredSlashCommand,
   type SlashCommandMeta
 } from '@/shared/lib/slash-commands'
 import { cn } from '@/shared/lib/utils'
@@ -49,16 +46,6 @@ export interface ChatSubmitState {
   text: string
 }
 
-export interface SlashState {
-  highlightIndex?: number
-  items?: ScoredSlashCommand[]
-  onHighlight?: (index: number) => void
-  onKeyDown?: (e: KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => void
-  onSelect?: (cmd: SlashCommandMeta, args: string[]) => void
-  popoverOpen?: boolean
-  query?: string
-}
-
 export interface ConversationInputProps {
   attachMenuOpen?: boolean
   externalPaths: string[]
@@ -73,7 +60,6 @@ export interface ConversationInputProps {
   onSetPending: Dispatch<SetStateAction<PendingAttachment | null>>
   onSetText: (next: string) => void
   onStop: () => void
-  slash?: SlashState
   submit: ChatSubmitState
   variant?: ConversationVariant
 }
@@ -97,7 +83,6 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     onSetPending,
     onSetText,
     onStop,
-    slash,
     submit,
     variant = 'living'
   } = props
@@ -105,18 +90,8 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   const { editMessageId, gatewayState, isGenerating, isReadOnlySession, pending, recording, sending, text } = submit
   const isEditing = editMessageId !== undefined
 
-  const {
-    highlightIndex: slashHighlightIndex,
-    items: slashItems,
-    onHighlight: onSlashHighlight,
-    onKeyDown: onSlashKeyDown,
-    onSelect: onSlashSelect,
-    popoverOpen: slashPopoverOpen,
-    query: slashQuery
-  } = slash ?? {}
-
-  const [internalSlashDismissed, setInternalSlashDismissed] = useState(false)
-  const [internalHighlightIndex, setInternalHighlightIndex] = useState(0)
+  const [slashDismissed, setSlashDismissed] = useState(false)
+  const [highlightIdx, setHighlightIdx] = useState(0)
   const [focused, setFocused] = useState(false)
   const [slashPaletteForced, setSlashPaletteForced] = useState(false)
 
@@ -128,6 +103,11 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     isEditing || (variant === 'workbench' && (focused || Boolean(pending) || text.length >= COMMAND_LINE_THRESHOLD))
 
   const editorRef = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
+
+  // input 与 textarea 随展开切换，共用同一个 ref。
+  const setEditorRef = useCallback((node: HTMLInputElement | HTMLTextAreaElement | null): void => {
+    editorRef.current = node
+  }, [])
 
   // 升格后把焦点同步进 textarea，避免升格瞬间丢失焦点。
   useEffect(() => {
@@ -144,8 +124,8 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
       return { active: false, query: '' }
     }
 
-    if (slashQuery !== undefined || slashPaletteForced) {
-      return { active: true, query: slashQuery ?? '' }
+    if (slashPaletteForced) {
+      return { active: true, query: '' }
     }
 
     const trimmed = text.trim()
@@ -162,12 +142,10 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     }
 
     return { active: true, query: body }
-  }, [isEditing, slashPaletteForced, slashQuery, text])
+  }, [isEditing, slashPaletteForced, text])
 
-  const items = slashItems ?? (slashContext.active ? fuzzyFilterCommands(slashContext.query, 8) : [])
-
-  const isOpen =
-    !isEditing && (slashPopoverOpen ?? (slashContext.active && !internalSlashDismissed)) && items.length > 0
+  const items = slashContext.active ? fuzzyFilterCommands(slashContext.query, 8) : []
+  const isOpen = !isEditing && slashContext.active && !slashDismissed && items.length > 0
 
   useEffect(() => {
     if (!slashContext.active || slashMeta.length > 0) {
@@ -177,24 +155,11 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     void fetchSlashCommandMeta()
   }, [slashContext.active, slashMeta.length])
 
-  const highlightIdx = slashHighlightIndex ?? internalHighlightIndex
-
-  const setHighlight = (next: number): void => {
-    setInternalHighlightIndex(next)
-    onSlashHighlight?.(next)
-  }
-
   const handleSlashSelect = (cmd: SlashCommandMeta): void => {
     setSlashPaletteForced(false)
-
-    if (onSlashSelect) {
-      onSlashSelect(cmd, [])
-    } else {
-      onSetText(`/${cmd.name} `)
-      editorRef.current?.focus()
-    }
-
-    setInternalSlashDismissed(true)
+    onSetText(`/${cmd.name} `)
+    editorRef.current?.focus()
+    setSlashDismissed(true)
   }
 
   const showStop = !isEditing && isGenerating && !text.trim() && !pending && externalPaths.length === 0
@@ -211,8 +176,8 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
   const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>): void => {
     schedulePendingFlush()
     setSlashPaletteForced(false)
-    setInternalSlashDismissed(false)
-    setInternalHighlightIndex(0)
+    setSlashDismissed(false)
+    setHighlightIdx(0)
     onSetText(e.target.value)
   }
 
@@ -229,21 +194,17 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
       schedulePendingFlush()
     }
 
-    if (!isEditing) {
-      onSlashKeyDown?.(e)
-    }
-
     if (isOpen) {
       if (e.key === 'ArrowDown') {
         e.preventDefault()
-        setHighlight((highlightIdx + 1) % items.length)
+        setHighlightIdx((highlightIdx + 1) % items.length)
 
         return
       }
 
       if (e.key === 'ArrowUp') {
         e.preventDefault()
-        setHighlight((highlightIdx - 1 + items.length) % items.length)
+        setHighlightIdx((highlightIdx - 1 + items.length) % items.length)
 
         return
       }
@@ -261,7 +222,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
 
       if (e.key === 'Escape') {
         e.preventDefault()
-        setInternalSlashDismissed(true)
+        setSlashDismissed(true)
 
         return
       }
@@ -306,14 +267,14 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     <textarea
       {...commonEditorProps}
       className="w-full flex-1 resize-none bg-transparent border-0 outline-none text-xs text-strong placeholder:text-faint px-1.5 py-1.5 min-h-[2.4em] max-h-[7.2em] leading-snug"
-      ref={editorRef as unknown as RefObject<HTMLTextAreaElement>}
+      ref={setEditorRef}
       rows={Math.min(4, Math.max(2, Math.ceil((text.match(/\n/g)?.length ?? 0) + 1)))}
     />
   ) : (
     <input
       {...commonEditorProps}
       className="h-full flex-1 bg-transparent border-0 outline-none text-xs px-1.5 text-strong placeholder:text-faint"
-      ref={editorRef as unknown as RefObject<HTMLInputElement>}
+      ref={setEditorRef}
       type="text"
     />
   )
@@ -368,12 +329,9 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
         {isOpen && (
           <SlashCommandPopover
             highlightedIndex={highlightIdx}
-            onHighlight={idx => {
-              setInternalHighlightIndex(idx)
-              onSlashHighlight?.(idx)
-            }}
-            onSelect={cmd => handleSlashSelect(cmd)}
-            query={slashContext.query}
+            items={items}
+            onHighlight={setHighlightIdx}
+            onSelect={handleSlashSelect}
           />
         )}
 
@@ -453,13 +411,13 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
 
                 if (isOpen) {
                   setSlashPaletteForced(false)
-                  setInternalSlashDismissed(true)
+                  setSlashDismissed(true)
 
                   return
                 }
 
                 setSlashPaletteForced(true)
-                setInternalSlashDismissed(false)
+                setSlashDismissed(false)
 
                 if (!text.trim()) {
                   onSetText('/')

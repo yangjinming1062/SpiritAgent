@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { backendDetailMessage, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
+import { getStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 import { pickAvatarImage, type PickedImage, resolvePortraitUrl } from '../avatar-image'
@@ -20,25 +21,6 @@ interface DesignMessage {
 interface DesignDraft {
   id: number
   previewUrl: string
-}
-
-// 主进程错误包含状态码、请求路径和 JSON 错误体，
-// 取 detail 里的公开文案；解析不了就用兜底。
-function outfitErrMsg(err: unknown, fallback: string): string {
-  const raw = unwrapIpcErrorMessage(err).replace(/^\d{3}\s+(?:\/[^\s]*:\s*)?/, '')
-
-  try {
-    const parsed = JSON.parse(raw) as { detail?: { error?: unknown } }
-    const backendError = parsed?.detail?.error
-
-    if (typeof backendError === 'string' && backendError) {
-      return backendError
-    }
-  } catch {
-    /* 非预期形态，走兜底文案 */
-  }
-
-  return fallback
 }
 
 // 衣柜设计会话：描述/参考图 → 草稿 → 微调或重绘 → 确认入柜（参考图就绪，不触发生成）。
@@ -119,7 +101,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
       setBusy(true)
       setLastRequest(null)
 
-      push({ imageUrl: image?.previewUrl, role: 'user', text: text || '（按参考图设计）' })
+      push({ imageUrl: image?.previewUrl, role: 'user', text: text || getStrings().living.outfit.design.byReference })
 
       void (async () => {
         try {
@@ -146,7 +128,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
 
           if (!resolved) {
             setDraft({ id: res.id, previewUrl: '' })
-            push({ role: 'system', text: '草稿已生成，但预览加载失败，请到衣柜页重新打开草稿。', tone: 'info' })
+            push({ role: 'system', text: getStrings().living.outfit.design.previewFailed, tone: 'info' })
 
             return
           }
@@ -158,8 +140,8 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
             // 首次生成无「微调」可言（send 对无草稿请求强制 edit），按是否基于已有草稿区分文案。
             text:
               withDraft && mode === 'edit'
-                ? '已按反馈微调，见上方预览。继续描述可以再微调，满意就确认入柜。'
-                : '草稿已生成，见上方预览。继续描述可以微调重绘，满意就确认入柜。',
+                ? getStrings().living.outfit.design.refined
+                : getStrings().living.outfit.design.drafted,
             tone: 'info'
           })
         } catch (err) {
@@ -184,8 +166,8 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
           push({
             role: 'system',
             text: timedOut
-              ? '等待结果超时，生成可能仍在继续。请稍后在衣柜页查看草稿，确认结果后再重试。'
-              : outfitErrMsg(err, '着装生成失败，请稍后重试'),
+              ? getStrings().living.outfit.design.timedOut
+              : backendDetailMessage(err, getStrings().living.outfit.design.generateFailed),
             tone: timedOut ? 'info' : 'error'
           })
           log.warn('wardrobe-design', timedOut ? 'generation result timed out' : 'generation failed', err)
@@ -252,7 +234,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
         return
       }
 
-      push({ role: 'system', text: outfitErrMsg(err, '确认失败，请稍后重试'), tone: 'error' })
+      push({ role: 'system', text: backendDetailMessage(err, getStrings().living.outfit.confirmFailed), tone: 'error' })
       log.warn('wardrobe-design', 'confirm failed', err)
     } finally {
       if (isCurrent(revision, epoch)) {
@@ -265,7 +247,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   const attachRefImage = useCallback(async (): Promise<void> => {
     const revision = revisionRef.current
     const epoch = currentClearEpoch()
-    const picked = await pickAvatarImage('选择服装参考图')
+    const picked = await pickAvatarImage(getStrings().living.outfit.design.pickReferenceTitle)
 
     if (!picked || !isCurrent(revision, epoch)) {
       return
@@ -294,8 +276,8 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
           id: msgIdRef.current,
           role: 'system',
           text: previewUrl
-            ? '继续微调这套草稿，或直接确认入柜。'
-            : '草稿预览尚未加载，可继续描述微调，或稍后到衣柜页重新打开。',
+            ? getStrings().living.outfit.design.resumeReady
+            : getStrings().living.outfit.design.resumePreviewMissing,
           tone: 'info'
         }
       ])

@@ -16,7 +16,10 @@ interface RendererPathsDeps {
   rememberLog: (chunk: string) => void
 }
 
-/** 渲染层 HTML 定位：dev server → asar.unpacked dist → asar dist，失败仍返回候选路径。 */
+/**
+ * 渲染层 HTML 定位：dev server → appRoot/dist → SPIRITAGENT_DESKTOP_WEB_DIST → asar.unpacked/dist；
+ * 都缺失时记日志并返回首个候选。
+ */
 export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLog }: RendererPathsDeps) {
   function resolveWebDist(): string {
     const override = process.env.SPIRITAGENT_DESKTOP_WEB_DIST
@@ -35,8 +38,8 @@ export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLo
 
     if (isPackaged && /app\.asar(?=$|[\\/])/.test(fallback) && !directoryExists(fallback)) {
       rememberLog(
-        `[web-dist] dashboard frontend dir resolved to an asar-internal path that ` +
-          `is not a real directory: ${fallback}. Static routes will 404. ` +
+        `[web-dist] renderer dist resolved to an asar-internal path that ` +
+          `is not a real directory: ${fallback}. Renderer pages will fail to load. ` +
           'Ensure dist/** is unpacked (asarUnpack) or set SPIRITAGENT_DESKTOP_WEB_DIST.'
       )
     }

@@ -67,7 +67,7 @@ export const $sceneTaskSlow = atom(false)
 export const $sceneTotal = atom(0)
 export const $scenePage = atom(0)
 export const $sceneQuery = atom('')
-const PAGE_SIZE = 24
+export const PAGE_SIZE = 24
 const detailCache = new Map<string, SceneAsset>()
 let stateRequest = 0
 let listRequest = 0
@@ -77,14 +77,30 @@ let submitting = false
 let pollTimer: ReturnType<typeof setInterval> | null = null
 let pollCount = 0
 
-async function resolveScene(row: SceneWire): Promise<ActiveScene> {
-  let url = row.url || ''
+function toScene(row: SceneWire, url: string): ActiveScene {
+  return { ...row, id: String(row.id), url, thumbnailUrl: url, regeneration: row.regeneration ?? null }
+}
+
+/** 把场景图片解析为可用 src；失败抛出，由调用方决定保留旧图还是占位。 */
+async function resolveSceneUrl(row: SceneWire): Promise<string> {
+  const url = row.url || ''
 
   if (url && !url.startsWith('data:') && !url.startsWith('http:') && !url.startsWith('https:')) {
-    url = (await window.spiritagent?.apiAsset({ url })) || url
+    return (await window.spiritagent?.apiAsset({ url })) || url
   }
 
-  return { ...row, id: String(row.id), url, thumbnailUrl: url, regeneration: row.regeneration ?? null }
+  return url
+}
+
+/** 单张图片加载失败只影响该场景：沿用已缓存的旧图，没有则留空显示占位。 */
+async function resolveScene(row: SceneWire): Promise<ActiveScene> {
+  try {
+    return toScene(row, await resolveSceneUrl(row))
+  } catch (error) {
+    log.warn('scene', 'Scene image could not be loaded:', error)
+
+    return toScene(row, detailCache.get(String(row.id))?.url ?? '')
+  }
 }
 
 function cacheSceneDetails(entries: SceneAsset[]): void {
@@ -178,6 +194,10 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
   })
 
   if (!result.ok || !result.value) {
+    if (!result.ok && result.reason === 'err') {
+      log.warn('scene', 'Scene library could not be loaded:', result.error)
+    }
+
     if (request === listRequest && epoch === currentClearEpoch()) {
       $sceneLibraryStatus.set('error')
     }
@@ -186,19 +206,7 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
   }
 
   const value = result.value
-  let entries: SceneAsset[]
-
-  try {
-    entries = await Promise.all(value.scenes.map(resolveScene))
-  } catch (error) {
-    log.warn('scene', 'Scene library images could not be loaded:', error)
-
-    if (request === listRequest && epoch === currentClearEpoch()) {
-      $sceneLibraryStatus.set('error')
-    }
-
-    return
-  }
+  const entries = await Promise.all(value.scenes.map(resolveScene))
 
   if (request !== listRequest || epoch !== currentClearEpoch() || value.version < eventVersion) {
     return
@@ -219,24 +227,22 @@ export async function loadSceneDetail(sceneId: string): Promise<SceneAsset | nul
   const result = await authedApi<SceneWire>({ path: `/api/companion/scenes/${encodeURIComponent(sceneId)}` })
 
   if (epoch !== currentClearEpoch() || !result.ok || !result.value) {
-    return null
-  }
-
-  try {
-    const scene = await resolveScene(result.value)
-
-    if (epoch !== currentClearEpoch()) {
-      return null
+    if (!result.ok && result.reason === 'err') {
+      log.warn('scene', 'Scene detail could not be loaded:', result.error)
     }
 
-    cacheSceneDetails([scene])
-
-    return scene
-  } catch (error) {
-    log.warn('scene', 'Scene detail image could not be loaded:', error)
-
     return null
   }
+
+  const scene = await resolveScene(result.value)
+
+  if (epoch !== currentClearEpoch()) {
+    return null
+  }
+
+  cacheSceneDetails([scene])
+
+  return scene
 }
 
 export async function hydrateScene(): Promise<void> {
@@ -245,6 +251,10 @@ export async function hydrateScene(): Promise<void> {
   const result = await authedApi<SceneStateWire>({ path: '/api/companion/scenes/state' })
 
   if (!result.ok || !result.value) {
+    if (!result.ok && result.reason === 'err') {
+      log.warn('scene', 'Scene state could not be loaded:', result.error)
+    }
+
     return
   }
 
@@ -257,8 +267,9 @@ export async function hydrateScene(): Promise<void> {
   try {
     let active = $activeScene.get()
 
+    // 当前环境的替换图预加载成功后才切换；失败保留旧图，其余状态照常刷新。
     try {
-      const nextActive = state.active ? await resolveScene(state.active) : null
+      const nextActive = state.active ? toScene(state.active, await resolveSceneUrl(state.active)) : null
 
       if (nextActive?.url && nextActive.url !== active?.url) {
         await preload(nextActive.url)

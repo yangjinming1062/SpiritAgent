@@ -4,12 +4,12 @@
  * - 挂载于 SpriteStage 上层（pointer-events: none），零性能负担；
  * - 暴露全局 emitVfx(type, options) 方法，零耦合供手势、交互与状态机触发；
  * - 粒子生命周期由内部 requestAnimationFrame 调度更新，淡出自动销毁；
- * - 支持 heart(爱心)、sweat(冷汗/提空)、music_notes(音符律动)、sleep_zzz(打盹)。
+ * - 支持 heart(爱心)、music_notes(音符律动)、sleep_zzz(打盹)。
  */
 
 import { useEffect, useRef, useState } from 'react'
 
-type VfxType = 'heart' | 'petal' | 'sweat' | 'music_notes' | 'sleep_zzz'
+type VfxType = 'heart' | 'music_notes' | 'sleep_zzz'
 
 interface VfxEmitOptions {
   count?: number
@@ -22,8 +22,8 @@ interface VfxEmitOptions {
 interface Particle {
   id: number
   type: VfxType
-  x: number // px (相对 sprite stage)
-  y: number // px
+  x: number // % (相对 sprite stage)
+  y: number // %
   vx: number
   vy: number
   scale: number
@@ -60,7 +60,7 @@ export function emitVfx(type: VfxType, opts: VfxEmitOptions = {}): void {
       x: baseX + (Math.random() - 0.5) * 24,
       y: baseY + (Math.random() - 0.5) * 16,
       vx: (Math.random() - 0.5) * 20,
-      vy: type === 'sweat' ? 25 + Math.random() * 20 : -(20 + Math.random() * 25),
+      vy: -(20 + Math.random() * 25),
       scale: 0.8 + Math.random() * 0.4,
       opacity: 1,
       rotation: (Math.random() - 0.5) * 0.4,
@@ -84,16 +84,10 @@ export function clearVfx(type: VfxType): void {
   }
 }
 
-function renderParticleIcon(p: Particle, _elapsed: number): React.JSX.Element {
+function renderParticleIcon(p: Particle): React.JSX.Element {
   switch (p.type) {
     case 'heart':
       return <span style={{ fontSize: 24, filter: 'drop-shadow(0 2px 4px rgba(255,105,180,0.5))' }}>💖</span>
-
-    case 'petal':
-      return <span style={{ fontSize: 20, filter: 'drop-shadow(0 1px 3px rgba(255,192,203,0.6))' }}>🌸</span>
-
-    case 'sweat':
-      return <span style={{ fontSize: 22, filter: 'drop-shadow(0 2px 4px rgba(0,191,255,0.6))' }}>💦</span>
 
     case 'music_notes':
       return <span style={{ fontSize: 22, filter: 'drop-shadow(0 2px 4px rgba(147,112,219,0.6))' }}>🎵</span>
@@ -186,8 +180,6 @@ export function SpriteVfxOverlay(): React.JSX.Element | null {
     return null
   }
 
-  const now = performance.now()
-
   return (
     <div
       className="sprite-vfx-overlay"
@@ -199,27 +191,23 @@ export function SpriteVfxOverlay(): React.JSX.Element | null {
         zIndex: 50
       }}
     >
-      {activeParticles.map(p => {
-        const elapsed = now - p.createdAt
-
-        return (
-          <div
-            key={p.id}
-            style={{
-              position: 'absolute',
-              left: `${p.x}%`,
-              top: `${p.y}%`,
-              transform: `translate(-50%, -50%) scale(${p.scale}) rotate(${p.rotation}rad)`,
-              opacity: p.opacity,
-              pointerEvents: 'none',
-              userSelect: 'none',
-              willChange: 'transform, opacity'
-            }}
-          >
-            {renderParticleIcon(p, elapsed)}
-          </div>
-        )
-      })}
+      {activeParticles.map(p => (
+        <div
+          key={p.id}
+          style={{
+            position: 'absolute',
+            left: `${p.x}%`,
+            top: `${p.y}%`,
+            transform: `translate(-50%, -50%) scale(${p.scale}) rotate(${p.rotation}rad)`,
+            opacity: p.opacity,
+            pointerEvents: 'none',
+            userSelect: 'none',
+            willChange: 'transform, opacity'
+          }}
+        >
+          {renderParticleIcon(p)}
+        </div>
+      ))}
     </div>
   )
 }

@@ -1,4 +1,4 @@
-import { getAudioContextCtor } from '@/shared/lib/audio-context-ctor'
+import { log } from '@/shared/lib/log'
 
 export type AudioPlaybackResult = 'completed' | 'interrupted' | 'failed'
 
@@ -59,32 +59,24 @@ export function isLatestGen(gen: number): boolean {
   return gen === playGen
 }
 
-/** 把模块 AudioContext 拉到 running——q1 冷启动时调用，避免 MediaElementSource 重路由吃掉首帧。
+/** 把模块 AudioContext 拉到 running——精灵窗与引导挂载时预热，避免 MediaElementSource 重路由吃掉首帧。
  *
- * AudioContext 进入 running 后保持运行；不再主动 `suspend()`，否则每次切换语音条
+ * AudioContext 进入 running 后保持运行，不主动 `suspend()`：否则每次切换语音条
  * 都要 `await ctx.resume()`，与 MediaElementSource 重路由叠加会让首帧从 destination
- * 输出前被覆盖/丢弃。挂起改由系统/浏览器接管（`document.hidden` / 屏锁时 Chromium
+ * 输出前被覆盖/丢弃。挂起交由系统/浏览器处理（`document.hidden` / 屏锁时 Chromium
  * 会自动挂起空闲 ctx），释放 WASAPI 定时器。 */
 export function warmAudioContext(): void {
-  ensureAudioContext()
+  const ctx = ensureAudioContext()
 
-  if (audioCtx && audioCtx.state === 'suspended') {
-    void audioCtx.resume().catch(() => undefined)
+  if (ctx.state === 'suspended') {
+    void ctx.resume().catch(() => undefined)
   }
 }
 
-function ensureAudioContext(): void {
-  if (audioCtx) {
-    return
-  }
+function ensureAudioContext(): AudioContext {
+  audioCtx ??= new AudioContext()
 
-  const Ctor = getAudioContextCtor()
-
-  if (!Ctor) {
-    return
-  }
-
-  audioCtx = new Ctor()
+  return audioCtx
 }
 
 /** 先恢复并接好 Web Audio 输出链，再启动媒体时间轴；否则冷启动重路由期间
@@ -94,14 +86,7 @@ async function connectPlaybackGraph(audio: HTMLAudioElement, gen: number): Promi
     return
   }
 
-  ensureAudioContext()
-
-  const ctx = audioCtx
-
-  if (!ctx) {
-    // 不支持 Web Audio——直接走 HTMLAudioElement 输出，不要崩。
-    return
-  }
+  const ctx = ensureAudioContext()
 
   if (ctx.state === 'suspended') {
     await ctx.resume().catch(() => undefined)
@@ -117,8 +102,10 @@ async function connectPlaybackGraph(audio: HTMLAudioElement, gen: number): Promi
     disconnectPlaybackSource()
     playbackSource = ctx.createMediaElementSource(audio)
     playbackSource.connect(ctx.destination)
-  } catch {
-    // 该元素已经被连接（用全新的 Audio() 不应发生，但某些测试环境会复用节点）。
+  } catch (err) {
+    // 接图失败不阻断播放，记录原因便于排查无声。
+    log.warn('audio-track', 'Playback graph connection failed:', err)
+
     return
   }
 
@@ -133,8 +120,7 @@ export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise
   const audio = new Audio(dataUrl)
   current = audio
 
-  // 在任何 await 之前就挂好 'ended' / 'error' 监听器，避免测试里的快速
-  // `emit('ended')`（或真实的音频结束事件）抢在监听器挂好之前到达。
+  // 在任何 await 之前就挂好 'ended' / 'error' 监听器，避免结束或出错事件抢在监听器挂好之前到达。
   let resolvePlayback!: (result: AudioPlaybackResult) => void
 
   const playbackEnded = new Promise<AudioPlaybackResult>(resolve => {

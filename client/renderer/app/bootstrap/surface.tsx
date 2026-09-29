@@ -2,7 +2,7 @@ import '../../styles.css'
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { StrictMode, useEffect } from 'react'
+import { StrictMode, useEffect, useRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
 
@@ -11,8 +11,10 @@ import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
 import { hydratePersona, hydratePortrait, initCompanionPrefsSync } from '@/modules/character'
 import { ErrorBoundary } from '@/shared/components/error-boundary'
 import { HapticsProvider } from '@/shared/components/haptics-provider'
+import { NotificationStack } from '@/shared/components/notifications'
 import { applyNoBlurIfNeeded, initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
 import { installClipboardShim } from '@/shared/lib/clipboard'
+import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
 import { installUpdateBridge } from '@/shared/lib/update-bridge'
 import { $auth } from '@/shared/store/auth'
@@ -55,6 +57,14 @@ function SurfaceGlassBudgetGuard(): null {
   useEffect(() => initGlassBudgetGuard(), [])
 
   return null
+}
+
+// 完整入口的根组件以窗口 ID 1 捕获鼠标；toast 登记到同一 ID，落在外壳之外也能点击。
+function SurfaceNotificationStack(): React.JSX.Element {
+  const regionRef = useRef<HTMLDivElement>(null)
+  useInteractiveRegion('notification-stack', regionRef, undefined, undefined, 1)
+
+  return <NotificationStack regionRef={regionRef} />
 }
 
 function AccountScopedSurface({ RootComponent }: { RootComponent: React.ComponentType }): React.JSX.Element {
@@ -107,6 +117,7 @@ export function bootstrapSurface(label: string, RootComponent: React.ComponentTy
             <SurfaceAuthBootstrap />
             <ProxyGatewayPump />
             <AccountScopedSurface RootComponent={RootComponent} />
+            <SurfaceNotificationStack />
           </HashRouter>
         </HapticsProvider>
       </ErrorBoundary>

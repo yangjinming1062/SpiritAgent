@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 
 import type { IconComponent } from '@/shared/lib/icons'
 import { ChevronDown, Loader2, Search, X } from '@/shared/lib/icons'
+import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 
@@ -20,10 +21,6 @@ import {
   SETTINGS_ROW_TITLE,
   SURFACE_OVERLAY
 } from './palette'
-
-// 拖拽柄事件组的透传形状（usePanelDrag 的 bind）——shared 侧不依赖 companion hooks，
-// 只要求它是可展开到 DOM 上的对象。
-type DragBindProps = object
 
 export function SettingsSectionIntro({ title, hint }: { title: string; hint?: string }): React.JSX.Element {
   return (
@@ -275,55 +272,15 @@ export function Slider({
   )
 }
 
-export function PanelHeader({
-  title,
-  icon: Icon,
-  onClose,
-  dragBind,
-  dragRegion = false,
-  closeLabel
-}: {
-  title: ReactNode
-  icon?: IconComponent
-  onClose: () => void
-  // 伙伴窗浮层把拖拽柄事件铺在头部；工具窗不传。
-  dragBind?: DragBindProps
-  // OS 窗口壳（工具窗）没有指针拖拽柄，头部整体标记为系统拖拽区。
-  dragRegion?: boolean
-  closeLabel?: string
-}): React.JSX.Element {
+export function PanelHeader({ title, onClose }: { title: ReactNode; onClose: () => void }): React.JSX.Element {
   const t = useStrings()
 
   return (
-    <div
-      className={cn(
-        'relative flex items-center justify-between gap-2 border-b border-line-standard px-4 py-2.5 bg-fill-faint',
-        dragBind && 'cursor-grab active:cursor-grabbing',
-        dragRegion && '[-webkit-app-region:drag]'
-      )}
-      title={dragBind ? t.ui.panelDragToMove : undefined}
-      {...dragBind}
-    >
-      <div className="flex items-center gap-2.5">
-        {Icon && (
-          <div className="flex size-6 items-center justify-center rounded-md border border-line-standard bg-fill-hover">
-            <Icon className="size-3.5 text-accent drop-shadow-[0_0_6px_var(--ui-accent)]" />
-          </div>
-        )}
-        <div className="flex items-center gap-2">
-          <h2 className="text-sm font-semibold tracking-wide text-strong">{title}</h2>
-          <span className="hidden font-mono text-[9px] text-faint uppercase tracking-widest sm:inline-block">
-            [SYS.PANEL]
-          </span>
-        </div>
-      </div>
+    <div className="relative flex items-center justify-between gap-2 border-b border-line-standard px-4 py-2.5 bg-fill-faint">
+      <h2 className="text-sm font-semibold tracking-wide text-strong">{title}</h2>
       <button
-        aria-label={closeLabel ?? t.common.close}
-        className={cn(
-          BTN_ICON,
-          'hover:border hover:border-line-strong hover:bg-danger-bg hover:text-danger-fg',
-          dragRegion && '[-webkit-app-region:no-drag]'
-        )}
+        aria-label={t.common.close}
+        className={cn(BTN_ICON, 'hover:border hover:border-line-strong hover:bg-danger-bg hover:text-danger-fg')}
         onClick={onClose}
         type="button"
       >
@@ -616,19 +573,17 @@ interface ConfirmDialogProps {
   title: string
   description?: string
   confirmLabel: string
-  cancelLabel?: string
   variant?: 'default' | 'destructive'
   onConfirm: () => void | Promise<void>
 }
 
-// 警示性确认的小型弹窗（清空密钥、重置配置）。自包含浮层卡，不依赖 Radix。
+// 二次确认弹窗：onConfirm 完成后关闭；抛错时只记日志并保留弹窗，用户提示由调用方负责。
 export function ConfirmDialog({
   open,
   onOpenChange,
   title,
   description,
   confirmLabel,
-  cancelLabel,
   variant = 'default',
   onConfirm
 }: ConfirmDialogProps): React.JSX.Element {
@@ -655,7 +610,7 @@ export function ConfirmDialog({
         {description && <p className="mt-2 text-xs leading-relaxed text-muted">{description}</p>}
         <div className="mt-5 flex justify-end gap-2">
           <button className={BTN_SUBTLE} disabled={busy} onClick={() => onOpenChange(false)} type="button">
-            {cancelLabel ?? t.common.cancel}
+            {t.common.cancel}
           </button>
           <button
             className={variant === 'destructive' ? BTN_DANGER : BTN_PRIMARY}
@@ -665,9 +620,7 @@ export function ConfirmDialog({
 
               void Promise.resolve(onConfirm())
                 .then(() => onOpenChange(false))
-                .catch(() => {
-                  // 出错保留弹窗供重试；错误提示由调用方 notify 负责。
-                })
+                .catch(error => log.warn('confirm-dialog', 'onConfirm failed', error))
                 .finally(() => setBusy(false))
             }}
             type="button"

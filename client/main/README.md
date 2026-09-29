@@ -9,7 +9,7 @@
 | `entry.ts` | 唯一组合根，显式装配，不展开业务逻辑 |
 | `backend` | 会话与 HTTP |
 | `runner` | 进程与本地 RPC |
-| `lifecycle` | 窗口、托盘、媒体协议与更新 |
+| `lifecycle` | 窗口、托盘与更新 |
 | `ipc` | 按能力注册通道 |
 | `security` | sender、路径与能力准入 |
 | `shared` | 叶子层，经装配层注入结构端口，不导入 backend / runner 实现 |
@@ -36,11 +36,9 @@
 - 白名单仅进程内且有容量限制，重启须重新选择，历史附件路径不自动恢复权限。
 - `chat:set-pending-feed` 信箱不校验白名单，取用方仍须走受控读取。
 
-`spiritagent-media:` 只读取 Home 下允许的 cache / audio 资源并校验路径与扩展名，不能成为任意文件读取接口。
-
 ## 网关宿主与代理
 
-- 只有宿主可获取网关票 `ws-url`、上报网关状态、注入事件和答复代理 RPC，入口核对 sender。
+- 只有宿主可获取网关票 `ws-url`、上报网关状态、注入事件、答复代理 RPC 和派发 Runner 工具，入口核对 sender。
 - 其他表面只能请求代理能力；`tool.call` 不转发到其他窗口，TypeScript 类型不能代替运行时校验。
 
 [代理等待](ipc/gateway.ts)有超时，网关 closed / error 时统一 reject。[连接缓存](backend/ensure-backend.ts)只保存后端地址与就绪结果，凭据按请求读取；reset 使在途解析失效。票据签发前后核对鉴权会话，拒绝换号后的迟到结果。
@@ -55,7 +53,7 @@
 
 ## 配置镜像
 
-[runner-config.ts](ipc/runner-config.ts)只接受工作台 sender，IPC 直接传配置对象；[配置存储](shared/lib/runner-config-store.ts)串行落盘与推送 Runner，云同步防抖且水合期间抑制回环。字段白名单、账户隔离与冲突语义见 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
+[runner-config.ts](ipc/runner-config.ts)只接受工作台 sender，读取整份配置、按路径修改字段；[配置存储](shared/lib/runner-config-store.ts)拒绝触及原型链的路径与非 JSON 值，落盘失败回滚内存镜像，串行落盘与推送 Runner，云同步防抖且水合期间抑制回环。字段白名单、账户隔离与冲突语义见 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
 
 ## Runner 生命周期
 

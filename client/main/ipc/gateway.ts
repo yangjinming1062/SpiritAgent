@@ -37,10 +37,8 @@ export function registerGatewayIpc({ getMainWindow, ipcMain, rememberLog }: Gate
     return isSenderWindow(event.sender, getMainWindow())
   }
 
-  // 1. 获取当前网关状态
   ipcMain.handle(IPC.invoke.gatewayGetState, () => currentGatewayState)
 
-  // 2. 主窗口上报网关状态并广播给所有窗口
   ipcMain.on(IPC.send.gatewayBroadcastState, (event, payload?: { state: DesktopGatewayState }) => {
     if (!isGatewayHost(event)) {
       rememberLog?.(`[gateway-ipc] rejected state broadcast from non-host webContents=${event.sender.id}`)
@@ -59,7 +57,6 @@ export function registerGatewayIpc({ getMainWindow, ipcMain, rememberLog }: Gate
     broadcastToAllWindows(IPC.event.gatewayStateChanged, { state: next })
   })
 
-  // 3. 主窗口收到 WS 业务事件并广播给 Surface 窗口（排除发送方本身）
   ipcMain.on(IPC.send.gatewayBroadcastEvent, (event, payload?: { event: DesktopGatewayEvent }) => {
     if (!isGatewayHost(event) || !payload?.event) {
       return
@@ -72,7 +69,6 @@ export function registerGatewayIpc({ getMainWindow, ipcMain, rememberLog }: Gate
     }
   })
 
-  // 4. 任意 Surface 窗口发送 RPC 请求，经由主窗口的 WebSocket 发出并等待结果
   ipcMain.handle(
     IPC.invoke.gatewayRequest,
     async (_event: IpcMainInvokeEvent, payload?: { method: string; params?: Record<string, unknown> }) => {
@@ -107,7 +103,6 @@ export function registerGatewayIpc({ getMainWindow, ipcMain, rememberLog }: Gate
     }
   )
 
-  // 5. 主窗口处理完 RPC 请求后回复结果
   ipcMain.on(IPC.send.gatewayRpcReply, (event, payload?: DesktopGatewayRpcResponse) => {
     if (!isGatewayHost(event) || !payload || typeof payload.id !== 'number') {
       return

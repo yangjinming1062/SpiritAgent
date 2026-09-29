@@ -3,6 +3,8 @@ import crypto from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import path from 'node:path'
+import { Readable } from 'node:stream'
+import { pipeline } from 'node:stream/promises'
 import { promisify } from 'node:util'
 
 import { sleep } from '@runtime'
@@ -34,8 +36,16 @@ interface PendingRunnerSentinel {
 }
 
 export interface MinimalRunnerBridge {
+  getStatus: () => { phase: string }
   start: (options: { backendSession?: BackendSessionLike | null; readyTimeoutMs?: number }) => Promise<unknown>
   stop: (options: { reason: string }) => Promise<unknown>
+}
+
+// 其他入口已在启动、运行或收尾时 start 会拒绝；更新器不再拉起，避免把它记成安装失败。
+function bridgeBusy(bridge: MinimalRunnerBridge): boolean {
+  const phase = bridge.getStatus().phase
+
+  return phase === 'starting' || phase === 'running' || phase === 'stopping'
 }
 
 export interface RunnerUpdaterDeps {
@@ -242,7 +252,12 @@ export class RunnerUpdater {
 
       const bridge = this.runtime?.getRunnerBridge?.()
 
-      if (bridge) {
+      if (bridge && bridgeBusy(bridge)) {
+        this.log?.(
+          'warn',
+          '[updater] runner bridge is already starting, running or stopping; skipping post-install start'
+        )
+      } else if (bridge) {
         try {
           await bridge.start({
             backendSession: this.runtime.ensureBackendSession?.(),
@@ -264,7 +279,7 @@ export class RunnerUpdater {
     } finally {
       const bridge = this.runtime?.getRunnerBridge?.()
 
-      if (stopResult && !startedNew && bridge) {
+      if (stopResult && !startedNew && bridge && !bridgeBusy(bridge)) {
         try {
           await bridge.start({
             backendSession: this.runtime.ensureBackendSession?.(),
@@ -289,7 +304,9 @@ export class RunnerUpdater {
       )
 
       return true
-    } catch {
+    } catch (err: unknown) {
+      this.log?.('error', '[updater] venv integrity probe failed', err)
+
       return false
     }
   }
@@ -300,8 +317,8 @@ export class RunnerUpdater {
 
     try {
       await fsp.writeFile(sentinelPath, JSON.stringify(sentinel, null, 2), 'utf8')
-    } catch {
-      // 尽力而为
+    } catch (err: unknown) {
+      this.log?.('error', '[updater] failed to record install attempt', err)
     }
   }
 
@@ -341,33 +358,19 @@ export class RunnerUpdater {
   }
 
   private async fetchToFile(url: string, dest: string): Promise<void> {
-    const res = await this.fetchImpl(url, { redirect: 'follow', signal: AbortSignal.timeout(60_000) })
+    const signal = AbortSignal.timeout(60_000)
+    const res = await this.fetchImpl(url, { redirect: 'follow', signal })
 
     if (!res.ok) {
       throw new Error(`${res.status} ${res.statusText}`)
     }
 
-    const file = fs.createWriteStream(dest)
-
-    try {
-      const body = res.body
-
-      if (!body) {
-        throw new Error('Response body is empty')
-      }
-
-      for await (const chunk of body) {
-        const ok = file.write(chunk)
-
-        if (!ok) {
-          await new Promise<void>(r => file.once('drain', () => r()))
-        }
-      }
-    } finally {
-      await new Promise<void>((resolve, reject) => {
-        file.end((err?: unknown) => (err ? reject(new Error(String(err))) : resolve()))
-      })
+    if (!res.body) {
+      throw new Error('Response body is empty')
     }
+
+    // pipeline 传递写盘错误并在失败时销毁两端；同一超时覆盖响应体读取。
+    await pipeline(Readable.fromWeb(res.body), fs.createWriteStream(dest), { signal })
   }
 }
 

@@ -1,7 +1,10 @@
+import { clamp } from '@runtime'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
 
+import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { cn } from '@/shared/lib/utils'
+import { useStrings } from '@/shared/strings'
 
 import { INPUT_CLASS } from './palette'
 
@@ -17,10 +20,6 @@ const MAX_YEAR = 9999
 type Fields = { d: number; m: number; y: number }
 
 const toISODate = (y: number, m: number, d: number): string => `${y}-${pad2(m)}-${pad2(d)}`
-
-function clamp(n: number, min: number, max: number): number {
-  return Math.min(max, Math.max(min, n))
-}
 
 function wrapInto(n: number, min: number, max: number): number {
   const span = max - min + 1
@@ -93,8 +92,10 @@ function FieldWheel({
   onStep: (delta: number) => void
   value: number | null
 }): React.JSX.Element {
+  const t = useStrings()
   const ref = useRef<HTMLDivElement>(null)
   const accRef = useRef(0)
+  const onStepRef = useLatestRef(onStep)
 
   useEffect(() => {
     const el = ref.current
@@ -109,12 +110,12 @@ function FieldWheel({
       accRef.current += e.deltaY
 
       while (accRef.current >= WHEEL_NOTCH) {
-        onStep(1)
+        onStepRef.current(1)
         accRef.current -= WHEEL_NOTCH
       }
 
       while (accRef.current <= -WHEEL_NOTCH) {
-        onStep(-1)
+        onStepRef.current(-1)
         accRef.current += WHEEL_NOTCH
       }
     }
@@ -122,7 +123,7 @@ function FieldWheel({
     el.addEventListener('wheel', onWheel, { passive: false })
 
     return () => el.removeEventListener('wheel', onWheel)
-  }, [disabled, onStep])
+  }, [disabled, onStepRef])
 
   const prev = value === null ? null : wrapInto(value - 1, min, max)
   const next = value === null ? null : wrapInto(value + 1, min, max)
@@ -133,7 +134,7 @@ function FieldWheel({
       aria-valuemax={max}
       aria-valuemin={min}
       aria-valuenow={value ?? undefined}
-      aria-valuetext={value === null ? '未选择' : format(value)}
+      aria-valuetext={value === null ? t.common.datePicker.unset : format(value)}
       className={cn(
         'flex h-[52px] cursor-ns-resize select-none flex-col items-center justify-center rounded-md px-1 transition',
         'hover:bg-fill-hover focus-visible:outline focus-visible:outline-1 focus-visible:outline-focus-line',
@@ -214,6 +215,7 @@ export function DatePicker({
   placeholder,
   value
 }: DatePickerProps): React.JSX.Element {
+  const labels = useStrings().common.datePicker
   const parsed = parseISODate(value)
   const fields = parsed ?? todayFields()
 
@@ -237,7 +239,7 @@ export function DatePicker({
         <FieldWheel
           disabled={disabled}
           format={n => String(n)}
-          label="年"
+          label={labels.year}
           max={MAX_YEAR}
           min={MIN_YEAR}
           minW="min-w-[4ch]"
@@ -248,7 +250,7 @@ export function DatePicker({
         <FieldWheel
           disabled={disabled}
           format={pad2}
-          label="月"
+          label={labels.month}
           max={12}
           min={1}
           onStep={d => step('m', d)}
@@ -258,7 +260,7 @@ export function DatePicker({
         <FieldWheel
           disabled={disabled}
           format={pad2}
-          label="日"
+          label={labels.day}
           max={daysInMonth(fields.y, fields.m)}
           min={1}
           onStep={d => step('d', d)}

@@ -3,15 +3,9 @@ import { useEffect, useState } from 'react'
 
 import { X } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
-import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 
-export interface WindowControlsProps {
-  className?: string
-  onClose?: () => void
-}
-
-export function WindowControls({ className, onClose }: WindowControlsProps): React.JSX.Element {
+export function WindowControls(): React.JSX.Element {
   const { close, maximize, minimize, restore } = useStrings().common
   const [maximized, setMaximized] = useState(false)
 
@@ -62,12 +56,6 @@ export function WindowControls({ className, onClose }: WindowControlsProps): Rea
   }
 
   const handleClose = async (): Promise<void> => {
-    if (onClose) {
-      onClose()
-
-      return
-    }
-
     try {
       await window.spiritagent?.surface?.close?.()
     } catch (err) {
@@ -76,10 +64,7 @@ export function WindowControls({ className, onClose }: WindowControlsProps): Rea
   }
 
   return (
-    <div
-      className={cn('flex items-center gap-0.5', className)}
-      style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-    >
+    <div className="flex items-center gap-0.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
       <button
         aria-label={minimize}
         className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-fill-hover hover:text-strong active:scale-95"

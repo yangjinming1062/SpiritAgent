@@ -3,8 +3,6 @@
 // `client/renderer/shared/types/global.d.ts` 导入。
 // 在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
 
-import { clamp } from '../runtime'
-
 export interface MemoryToolScope {
   user_id: number
   system_preset_id: string
@@ -84,7 +82,7 @@ export function normalizeUiTheme(raw: unknown): SpiritAgentUiTheme {
 /** 入口 HTML 播种参数名：主进程 loadURL 前把镜像里的主题写进查询串，渲染层首帧前消费。 */
 export const UI_THEME_URL_PARAM = 'ui_theme'
 
-// 入口面：互斥的两个 BrowserWindow。"closed" 仅渲染层用作占位，不进主进程 IPC 边界。
+// 入口面：互斥的两个 BrowserWindow；都未打开时以 null 表示。
 export type SurfaceId = 'living' | 'workbench'
 
 export function normalizeSurfaceId(raw: unknown): SurfaceId {
@@ -202,24 +200,6 @@ export interface DesktopPrefsHydrated {
   language?: null | string
 }
 
-export interface DesktopBootProgress {
-  error: null | string
-  message: string
-  phase: string
-  progress: number
-  running: boolean
-}
-
-// 启动进度的 0–100 收口；非数与 NaN 一律视为 0，避免上游 NaN 透传把进度条钉死。
-// 与 DesktopBootProgress.progress 字段配套使用，跨主进程广播与渲染层水合复用。
-export function clampBootProgress(value: number): number {
-  if (!Number.isFinite(value)) {
-    return 0
-  }
-
-  return clamp(Math.round(value), 0, 100)
-}
-
 export interface DesktopAuthSnapshot {
   accountId: string
   baseUrl: null | string
@@ -333,7 +313,6 @@ export interface IpcInvokeContract {
     params?: Record<string, unknown>
   }) => Promise<unknown> | unknown
   'spiritagent:gateway:get-state': () => DesktopGatewayState | Promise<DesktopGatewayState>
-  'spiritagent:boot-progress:get': () => DesktopBootProgress | Promise<DesktopBootProgress>
 
   // 鉴权
   'spiritagent:auth:activate': (payload: DesktopActivatePayload) => DesktopAuthSnapshot | Promise<DesktopAuthSnapshot>
@@ -421,9 +400,6 @@ export interface IpcInvokeContract {
     | { config: Record<string, unknown>; ok: true }
     | { error: string; ok: false }
     | Promise<{ config: Record<string, unknown>; ok: true } | { error: string; ok: false }>
-  'spiritagent:runner-config:write': (
-    config: Record<string, unknown>
-  ) => { error?: string; ok: boolean } | Promise<{ error?: string; ok: boolean }>
   'spiritagent:runner-config:patch': (
     patch: RunnerConfigPatch
   ) => { error?: string; ok: boolean } | Promise<{ error?: string; ok: boolean }>
@@ -495,7 +471,6 @@ export interface IpcInvokeContract {
 export interface IpcEventContract {
   'spiritagent:auth:changed': [payload: DesktopAuthBroadcast]
   'spiritagent:auth:session-expired': [sessionId: string]
-  'spiritagent:boot-progress': [payload: DesktopBootProgress]
   'spiritagent:power-resume': []
   'spiritagent:prefs-hydrated': [payload: DesktopPrefsHydrated]
   'spiritagent:runner:status': [payload: DesktopRunnerStatusEvent]
@@ -539,7 +514,6 @@ export const IPC = {
     gatewayWsUrl: 'spiritagent:gateway:ws-url',
     gatewayRequest: 'spiritagent:gateway:request',
     gatewayGetState: 'spiritagent:gateway:get-state',
-    bootProgressGet: 'spiritagent:boot-progress:get',
     api: 'spiritagent:api',
     apiAsset: 'spiritagent:api:asset',
     apiAssetBuffer: 'spiritagent:api:asset-buffer',
@@ -562,7 +536,6 @@ export const IPC = {
     runnerGetState: 'spiritagent:runner:get-state',
     runnerGetTools: 'spiritagent:runner:get-tools',
     runnerConfigRead: 'spiritagent:runner-config:read',
-    runnerConfigWrite: 'spiritagent:runner-config:write',
     runnerConfigPatch: 'spiritagent:runner-config:patch',
     shortcutsGet: 'spiritagent:shortcuts:get',
     shortcutsSet: 'spiritagent:shortcuts:set',
@@ -596,7 +569,6 @@ export const IPC = {
   event: {
     authChanged: 'spiritagent:auth:changed',
     authSessionExpired: 'spiritagent:auth:session-expired',
-    bootProgress: 'spiritagent:boot-progress',
     powerResume: 'spiritagent:power-resume',
     prefsHydrated: 'spiritagent:prefs-hydrated',
     runnerStatus: 'spiritagent:runner:status',

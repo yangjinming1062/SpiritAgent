@@ -1,4 +1,4 @@
-export type { ActiveScene, SceneRegeneration, SceneStatus } from './scene-store'
+export type { ActiveScene } from './scene-store'
 export {
   $activeScene,
   $pendingScene,
@@ -23,10 +23,10 @@ export {
   loadSceneDetail,
   loadSceneLibrary,
   onSceneEvent,
+  PAGE_SIZE,
   prepareScenePrompt,
   regenerateScene,
   type SceneAsset,
-  type SceneGenerationInput,
   type ScenePolicy,
   setScenePolicy
 } from './scene-store'

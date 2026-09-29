@@ -1,5 +1,6 @@
 import type { DesktopUpdateEvent } from '@ipc/contracts'
 
+import { log } from '@/shared/lib/log'
 import { setUpdateStatus } from '@/shared/store/update'
 
 type UpdateHandlerMap = {
@@ -23,7 +24,7 @@ const UPDATE_HANDLERS: UpdateHandlerMap = {
       total: p.progress.total
     }),
   downloaded: p => setUpdateStatus({ status: 'downloaded', version: p.info?.version ?? '' }),
-  error: p => setUpdateStatus({ status: 'error', message: p.message ?? 'Unknown error' })
+  error: p => setUpdateStatus({ status: 'error', message: p.message })
 }
 
 export function installUpdateBridge(): () => void {
@@ -53,7 +54,7 @@ export function installUpdateBridge(): () => void {
         apply(payload)
       }
     })
-    .catch(() => {})
+    .catch(error => log.warn('update-bridge', 'getState failed', error))
 
   return () => {
     active = false

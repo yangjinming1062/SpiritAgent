@@ -1,7 +1,6 @@
 /** 双 video 保留旧画面直到新帧就绪；位置与播放实例分别由 spatial、actions 管理。 */
 
 import { useStore } from '@nanostores/react'
-import { clamp } from '@runtime'
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 
@@ -20,6 +19,7 @@ import {
   type ActionClipEntry,
   type ActionHitmask,
   type ActionPlayInstance,
+  baseSpriteSize,
   cancelPeekPreparation,
   commitPeekPreparation,
   getBaseSpriteHeight,
@@ -261,11 +261,10 @@ export function VideoStage(): React.JSX.Element {
       return null
     }
 
-    const stageH = Math.round(clamp(viewport.height / 3, 260, 960))
-    const stageW = Math.round(stageH * 0.85)
-    const contain = Math.min(stageW / canvas.width, stageH / canvas.height)
-    const drawW = (canvas.width * contain) / stageW
-    const drawH = (canvas.height * contain) / stageH
+    const stage = baseSpriteSize(viewport.height)
+    const contain = Math.min(stage.width / canvas.width, stage.height / canvas.height)
+    const drawW = (canvas.width * contain) / stage.width
+    const drawH = (canvas.height * contain) / stage.height
 
     return {
       left: (1 - drawW) / 2,
@@ -560,7 +559,7 @@ export function VideoStage(): React.JSX.Element {
       return
     }
 
-    // 将素材轮廓映射到舞台；旧目录按整画布兜底。
+    // 将素材轮廓映射到舞台；内容范围缺失或无效时按整画布处理。
     const drawW = canvasRect.right - canvasRect.left
     const drawH = canvasRect.bottom - canvasRect.top
     const bounds: readonly [number, number, number, number] = visibleClip?.content_rect ?? [0, 0, 1, 1]

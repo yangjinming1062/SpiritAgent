@@ -1,5 +1,7 @@
 import { type RefObject, useEffect, useRef } from 'react'
 
+import { log } from '@/shared/lib/log'
+
 export type InteractiveRegion = {
   getRect: () => DOMRect | null
   hitTest?: (x: number, y: number) => boolean
@@ -8,30 +10,23 @@ export type InteractiveRegion = {
 
 interface GlobalInteractiveState {
   captureHoldsByWindow: Map<number, Set<symbol>>
-  isIgnoringByWindow: Map<number, boolean>
   lastPointsByWindow: Map<number, { x: number; y: number }>
   probesByWindow: Map<number, () => void>
   regionsByWindow: Map<number, Map<string, InteractiveRegion>>
   releaseTimers: Map<number, ReturnType<typeof setTimeout>>
 }
 
-const g = globalThis as unknown as {
-  __spiritagent_interactive_state__?: GlobalInteractiveState
+declare global {
+  var __spiritagent_interactive_state__: GlobalInteractiveState | undefined
 }
 
-if (!g.__spiritagent_interactive_state__) {
-  g.__spiritagent_interactive_state__ = {
-    captureHoldsByWindow: new Map(),
-    isIgnoringByWindow: new Map(),
-    lastPointsByWindow: new Map(),
-    probesByWindow: new Map(),
-    regionsByWindow: new Map(),
-    releaseTimers: new Map()
-  }
-}
-
-const state = g.__spiritagent_interactive_state__
-state.captureHoldsByWindow ??= new Map()
+const state = (globalThis.__spiritagent_interactive_state__ ??= {
+  captureHoldsByWindow: new Map(),
+  lastPointsByWindow: new Map(),
+  probesByWindow: new Map(),
+  regionsByWindow: new Map(),
+  releaseTimers: new Map()
+})
 
 /** 手势期间保持窗口接收鼠标；返回的释放函数可重复调用。 */
 export function holdWindowMouseCapture(windowId = 0): () => void {
@@ -178,7 +173,7 @@ export function useInteractiveRegion(
 }
 
 export interface WindowMouseCaptureOptions {
-  setIgnoreMouseEvents?: (payload: { forward?: boolean; ignore: boolean }) => Promise<void> | void
+  setIgnoreMouseEvents?: (payload: { forward?: boolean; ignore: boolean }) => Promise<void>
 }
 
 // 状态与定时器挂在 globalThis 并在卸载时取消，避免 HMR 重载期间遗留定时器把窗口置为 ignore。
@@ -188,24 +183,15 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
 
   useEffect(() => {
     const setIgnoreMouseEvents = (ignore: boolean, forward?: boolean) => {
-      try {
-        state.isIgnoringByWindow.set(windowId, ignore)
-
-        const payload = {
-          forward: ignore && forward !== false,
-          ignore
-        }
-
-        const customFn = setIgnoreFnRef.current
-
-        if (customFn) {
-          void customFn(payload)
-        } else {
-          void window.spiritagent?.sprite?.setIgnoreMouseEvents?.(payload)
-        }
-      } catch {
-        // 忽略测试或非 Electron 环境
+      const payload = {
+        forward: ignore && forward !== false,
+        ignore
       }
+
+      const customFn = setIgnoreFnRef.current
+      const request = customFn ? customFn(payload) : window.spiritagent?.sprite?.setIgnoreMouseEvents?.(payload)
+
+      void request?.catch(error => log.warn('interactive-regions', 'setIgnoreMouseEvents failed', error))
     }
 
     const cancelPendingRelease = () => {
@@ -276,7 +262,6 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
       cancelPendingRelease()
       setCaptureProbe(null, windowId)
       state.lastPointsByWindow.delete(windowId)
-      state.isIgnoringByWindow.delete(windowId)
       setIgnoreMouseEvents(false)
     }
   }, [windowId])

@@ -64,6 +64,8 @@ let sessionsToken = 0
 let archivedToken = 0
 let searchToken = 0
 let presetsToken = 0
+// 会话跳转（切换、打开主对话、新建、派生）共用：只有最后发起的跳转可以改写当前会话视图。
+let navigationToken = 0
 
 function parseSessionSort(raw: null | string): SessionSort {
   return SESSION_SORTS.includes(raw as SessionSort) ? (raw as SessionSort) : 'recent'
@@ -130,8 +132,11 @@ export async function fetchSessions(): Promise<void> {
     })
 
     if (token === sessionsToken) {
-      $sessions.set(res.sessions || [])
-      const companion = (res.sessions || []).find(isCompanionSession)
+      const sessions = res.sessions || []
+      // 列表接口按 parent_id 隐藏派生会话（与子代理会话同一过滤），本地补入的派生会话刷新后保留。
+      const localForks = $sessions.get().filter(s => s._lineage_root_id && !sessions.some(r => r.id === s.id))
+      $sessions.set([...localForks, ...sessions])
+      const companion = sessions.find(isCompanionSession)
 
       if (companion) {
         $companionSessionId.set(companion.id)
@@ -277,6 +282,8 @@ export async function pinSession(sessionId: string, pinned: boolean): Promise<vo
     return
   }
 
+  // 本地补入的派生会话刷新时沿用本地条目，置顶状态需先写入本地。
+  $sessions.set($sessions.get().map(s => (s.id === sessionId ? { ...s, pinned } : s)))
   void fetchSessions()
 }
 
@@ -300,6 +307,11 @@ export async function archiveSession(sessionId: string, archived: boolean): Prom
     return
   }
 
+  // 本地补入的派生会话不会被刷新移出列表，归档时直接移除。
+  if (archived) {
+    $sessions.set($sessions.get().filter(s => s.id !== sessionId))
+  }
+
   void fetchSessions()
   void fetchArchived()
 }
@@ -311,6 +323,8 @@ export async function createNewSession(systemPresetId?: string | null): Promise<
   if (!gw) {
     return null
   }
+
+  const token = ++navigationToken
 
   try {
     const params: Record<string, unknown> = {}
@@ -325,14 +339,17 @@ export async function createNewSession(systemPresetId?: string | null): Promise<
       return null
     }
 
-    setChatSession(res.session_id)
-    resetChatMessages()
+    if (token === navigationToken) {
+      setChatSession(res.session_id)
+      resetChatMessages()
 
-    if (res.info) {
-      hydrateSessionSettings(res.info)
+      if (res.info) {
+        hydrateSessionSettings(res.info)
+      }
+
+      resetSessionContextUsage(res.info?.context_window)
     }
 
-    resetSessionContextUsage(res.info?.context_window)
     void fetchSessions()
 
     return res.session_id
@@ -343,15 +360,15 @@ export async function createNewSession(systemPresetId?: string | null): Promise<
   }
 }
 
-/** 拉取系统预设元数据；force=true 用于预设变更（需后端重启）后的强制重拉。 */
-export async function fetchSystemPresets(force = false): Promise<void> {
+/** 拉取系统预设元数据；已拉取过则跳过。 */
+export async function fetchSystemPresets(): Promise<void> {
   const gw = $gateway.get()
 
   if (!gw) {
     return
   }
 
-  if (!force && $systemPresetsFetched.get()) {
+  if ($systemPresetsFetched.get()) {
     return
   }
 
@@ -374,14 +391,47 @@ export async function fetchSystemPresets(force = false): Promise<void> {
   }
 }
 
-/** 从源会话的某条消息派生新会话：调用 session.fork RPC，命中后立即自动挂载新会话并 hydrate 历史。失败返回 null。 */
+// session.fork 不返回列表条目，按派生规则用源会话信息补齐；服务端标题另带副本后缀，本地沿用源标题。
+function forkSessionInfo(sourceSessionId: string, res: SessionResumeResponse): SessionInfo {
+  const source = findSessionInfo(sourceSessionId)
+  const now = Date.now()
+
+  return {
+    _lineage_root_id: sourceSessionId,
+    archived: false,
+    cwd: res.info?.cwd ?? source?.cwd ?? null,
+    ended_at: null,
+    id: res.session_id,
+    input_tokens: 0,
+    is_active: true,
+    kind: res.info?.kind ?? 'standard',
+    last_active: now,
+    message_count: res.message_count,
+    model: null,
+    output_tokens: 0,
+    pinned: false,
+    preview: null,
+    source: null,
+    started_at: now,
+    system_preset_icon_key: source?.system_preset_icon_key ?? null,
+    system_preset_id: source?.system_preset_id ?? null,
+    title: source?.title ?? null,
+    tool_call_count: 0
+  }
+}
+
+/** 从源会话的某条消息派生新会话：调用 session.fork RPC，成功后挂载新会话并 hydrate 历史。
+ *  发起后已换号或换网关时返回 null；请求失败向上抛出。 */
 export async function forkConversation(sourceSessionId: string, sourceMessageId: number): Promise<string | null> {
   const epoch = currentClearEpoch()
   const gw = $gateway.get()
 
   if (!gw) {
-    return null
+    throw new Error(getStrings().chat.fork.internalError)
   }
+
+  const token = ++navigationToken
+  const isCurrent = (): boolean => epoch === currentClearEpoch() && $gateway.get() === gw
 
   try {
     const res = await gw.request<SessionResumeResponse>('session.fork', {
@@ -389,40 +439,49 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
       source_message_id: sourceMessageId
     })
 
-    if (epoch !== currentClearEpoch() || $gateway.get() !== gw) {
+    if (!isCurrent()) {
       return null
     }
 
-    // 与 switchSession 同一形态：先 setChatSession 清残留状态 + 持久化新 id，再 hydrate 灌消息流
-    setChatSession(res.session_id)
-    hydrateChatMessages(res.messages || [], res.info)
     rememberFullHistory(res.session_id, res.messages || [], {
       currentSeq: res.current_seq,
       info: res.info,
       nextCursor: res.next_cursor,
       truncated: res.truncated
     })
+    // 列表接口按 parent_id 隐藏派生会话（与子代理会话同一过滤），直接补入列表；
+    // 否则工作台找不到当前会话，不挂对话面板并会切走。
+    $sessions.set([forkSessionInfo(sourceSessionId, res), ...$sessions.get()])
 
-    resetSessionContextUsage(res.info?.context_window)
-    // 刷新抽屉让新会话出现在列表（默认按 parent_id 隐藏，开 include_subagents 才能看到）
-    void fetchSessions()
+    if (token === navigationToken) {
+      // 与 switchSession 同一形态：先 setChatSession 清残留状态 + 持久化新 id，再 hydrate 灌消息流
+      setChatSession(res.session_id)
+      hydrateChatMessages(res.messages || [], res.info)
+    }
 
     return res.session_id
   } catch (err) {
+    if (!isCurrent()) {
+      return null
+    }
+
     log.error('session-list', 'Failed to fork session:', err)
 
-    return null
+    throw err
   }
 }
 
-/** 撤回消息：在同一会话内硬删除 ``Message.id >= source_message_id`` 的全部行（含锚点本身），并把锚点载荷落回输入框作为草稿。失败返回 null，错误已记录日志。 */
+/** 撤回消息：在同一会话内硬删除 ``Message.id >= source_message_id`` 的全部行（含锚点本身），并把锚点载荷落回输入框作为草稿。
+ *  发起后已换号或换网关时返回 null；请求失败向上抛出。 */
 export async function undoToMessage(sessionId: string, sourceMessageId: number): Promise<UndoResponse | null> {
   const epoch = currentClearEpoch()
   const gw = $gateway.get()
 
   if (!gw) {
-    return null
+    throw new Error(getStrings().chat.undo.internalError)
   }
+
+  const isCurrent = (): boolean => epoch === currentClearEpoch() && $gateway.get() === gw
 
   try {
     const res = await gw.request<UndoResponse>('session.undo_to_message', {
@@ -431,7 +490,7 @@ export async function undoToMessage(sessionId: string, sourceMessageId: number):
       confirmed: true
     })
 
-    if (epoch !== currentClearEpoch() || $gateway.get() !== gw) {
+    if (!isCurrent()) {
       return null
     }
 
@@ -445,19 +504,25 @@ export async function undoToMessage(sessionId: string, sourceMessageId: number):
     }
 
     if (Array.isArray(res.messages)) {
-      hydrateChatMessages(res.messages)
       rememberFullHistory(res.session_id, res.messages)
+
+      // 已切到其他会话时只更新缓存，不改写当前视图。
+      if ($chatSessionId.get() === sessionId) {
+        hydrateChatMessages(res.messages)
+      }
     }
 
     return res
   } catch (err) {
+    if (!isCurrent()) {
+      return null
+    }
+
     log.error('session-list', 'undoToMessage failed:', err)
 
-    return null
+    throw err
   }
 }
-
-let switchSessionToken = 0
 
 export async function switchSession(sessionId: string): Promise<void> {
   const gw = $gateway.get()
@@ -466,12 +531,12 @@ export async function switchSession(sessionId: string): Promise<void> {
     return
   }
 
-  const token = ++switchSessionToken
+  const token = ++navigationToken
 
   try {
     const local = await loadLocalSessionHistory(sessionId)
 
-    if (token !== switchSessionToken) {
+    if (token !== navigationToken) {
       return
     }
 
@@ -487,24 +552,30 @@ export async function switchSession(sessionId: string): Promise<void> {
 
     // 快速 A→B 切换时丢弃过期响应，避免旧会话写回覆盖新会话。
     // 未传活水位 last_seq，服务端只走增量或全量，merged/messages 恒为完整列表。
-    if (token !== switchSessionToken) {
+    if (token !== navigationToken) {
       return
     }
 
-    setChatSession(sessionId)
+    // 快照已挂上同一会话时不再重置，保留展示快照期间入列的待发消息。
+    if ($chatSessionId.get() !== sessionId) {
+      setChatSession(sessionId)
+    }
+
     hydrateChatMessages(synced.messages, synced.info)
   } catch (err) {
-    if (token === switchSessionToken) {
+    if (token === navigationToken) {
       log.error('session-list', 'Failed to switch session:', err)
     }
   }
 }
 
 let openMainPromise: Promise<string | null> | null = null
+let openMainToken = 0
 
-// 挂载主会话并加载其对话流。
+// 挂载主会话并加载其对话流。被更晚的会话跳转取代后仍完成挂载与缓存，但不再改写当前视图。
 export async function openMainSession(onMounted?: (res: SessionResumeResponse) => void): Promise<string | null> {
-  if (openMainPromise) {
+  // 已被取代的在途挂载不会切换视图，不能复用。
+  if (openMainPromise && openMainToken === navigationToken) {
     return openMainPromise
   }
 
@@ -515,7 +586,9 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
   }
 
   const epoch = currentClearEpoch()
+  const token = ++navigationToken
   const isCurrent = (): boolean => epoch === currentClearEpoch() && $gateway.get() === gw
+  const isLatest = (): boolean => token === navigationToken
 
   const load = (async () => {
     try {
@@ -532,8 +605,11 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
         if (local) {
           $companionSessionId.set(knownCompanionId)
           setPersistedCompanionSessionId(knownCompanionId)
-          setChatSession(knownCompanionId)
-          hydrateChatMessages(local.messages, local.info)
+
+          if (isLatest()) {
+            setChatSession(knownCompanionId)
+            hydrateChatMessages(local.messages, local.info)
+          }
 
           try {
             const synced = await syncSessionHistory({
@@ -546,7 +622,11 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
               return null
             }
 
-            hydrateChatMessages(synced.messages, synced.info)
+            // 同步期间已切到其他会话时不覆盖其视图。
+            if (isLatest() && $chatSessionId.get() === knownCompanionId) {
+              hydrateChatMessages(synced.messages, synced.info)
+            }
+
             onMounted?.({
               current_seq: synced.currentSeq,
               info: synced.info,
@@ -580,14 +660,22 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
       $companionSessionId.set(res.session_id)
       setPersistedCompanionSessionId(res.session_id)
-      setChatSession(res.session_id)
-      hydrateChatMessages(res.messages || [], res.info)
       rememberFullHistory(res.session_id, res.messages || [], {
         currentSeq: res.current_seq,
         info: res.info,
         nextCursor: res.next_cursor,
         truncated: res.truncated
       })
+
+      if (isLatest()) {
+        // 快照已挂上同一会话时不再重置，保留展示快照期间入列的待发消息。
+        if ($chatSessionId.get() !== res.session_id) {
+          setChatSession(res.session_id)
+        }
+
+        hydrateChatMessages(res.messages || [], res.info)
+      }
+
       onMounted?.(res)
 
       return res.session_id
@@ -601,6 +689,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
   })()
 
   openMainPromise = load
+  openMainToken = token
 
   try {
     return await load
@@ -616,7 +705,7 @@ registerStorageClearHandler(() => {
   archivedToken++
   searchToken++
   presetsToken++
-  switchSessionToken++
+  navigationToken++
   openMainPromise = null
   $companionSessionId.set(null)
   $sessions.set([])
@@ -658,6 +747,8 @@ export async function deleteSession(sessionId: string): Promise<void> {
     return
   }
 
+  // 本地补入的派生会话不会被刷新移出列表，删除时直接移除。
+  $sessions.set($sessions.get().filter(s => s.id !== sessionId))
   void fetchSessions()
   void fetchArchived()
 }

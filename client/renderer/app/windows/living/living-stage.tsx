@@ -3,7 +3,8 @@
 // - chat: ChatPanel（生活空间变体的对话 + 输入；与工作台共用）
 // - appearance: AppearancePage（衣柜：着装与动作管理）
 // - moments / diary: 后端直连两页
-// - channels / scene: 单文件页
+// - channels: ChannelsPage（单文件页）
+// - scene: ScenePage（场景库 / 详情 / 创建三个视图）
 // - settings: LivingSettings（分区胶囊：角色/音色/交互/主题/快捷键/关于）
 
 import { useStore } from '@nanostores/react'
@@ -19,6 +20,7 @@ import {
   useIsReadOnlySession
 } from '@/modules/conversation'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
+import { log } from '@/shared/lib/log'
 import { $gatewayState } from '@/shared/store/gateway'
 
 import { AppearancePage } from './appearance/appearance-page'
@@ -81,7 +83,7 @@ function LivingChatView({ gatewayState }: { gatewayState: ConnectionState }): Re
             pushExternalAttachment(paths)
           }
         })
-        .catch(() => {})
+        .catch(error => log.warn('living-stage', 'takePendingFeed failed', error))
     }
 
     const off = window.spiritagent.chat.onPendingFeed(() => {

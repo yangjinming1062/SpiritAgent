@@ -84,10 +84,8 @@ const STATE_PRIORITY: Record<SpriteStateName, number> = {
   working: 70
 }
 
-// 这些状态通过 ``$previousState`` 与下方计时器自动恢复。
-// 它们绕过优先级门控，避免进行中的 WORKING/SPEAKING 动画
-// 压制一个瞬时的情绪/互动提示——新增瞬时状态只需要在这里加一项，
-// 而不必改三个代码位置。
+// 瞬态经 ``$previousState`` 与下方计时器自动恢复，因此绕过优先级门控，
+// 避免进行中的 WORKING/SPEAKING 压制瞬时的情绪/互动提示。
 const TRANSIENT_STATES: ReadonlySet<SpriteStateName> = new Set(['emotional', 'interacting'])
 
 let transientTimer: ReturnType<typeof setTimeout> | null = null
@@ -112,7 +110,7 @@ export function setSpriteState(
   }
 
   if (TRANSIENT_STATES.has(name)) {
-    if (current !== 'emotional' && current !== 'interacting') {
+    if (!TRANSIENT_STATES.has(current)) {
       $previousState.set(current)
     }
 
@@ -136,12 +134,11 @@ export function setSpriteState(
       const currentAfter = $spriteState.get()
       const storedPrev = $previousState.get()
 
-      const target =
-        currentAfter !== 'emotional' && currentAfter !== 'interacting'
-          ? currentAfter
-          : storedPrev === 'emotional' || storedPrev === 'interacting'
-            ? 'idle'
-            : storedPrev
+      const target = !TRANSIENT_STATES.has(currentAfter)
+        ? currentAfter
+        : TRANSIENT_STATES.has(storedPrev)
+          ? 'idle'
+          : storedPrev
 
       $spriteState.set(target)
     }, ms)
@@ -158,6 +155,23 @@ export function setSpriteState(
   $spriteAction.set(options?.action ?? null)
 
   $spriteState.set(name)
+}
+
+// 拖拽期间持续保持 interacting：撤销在途瞬态计时器并以按下前的持续状态为恢复目标，
+// 松手时由带时长的 setSpriteState('interacting') 负责恢复。
+export function holdInteracting(): void {
+  const current = $spriteState.get()
+
+  if (transientTimer) {
+    clearTimeout(transientTimer)
+    transientTimer = null
+  }
+
+  if (!TRANSIENT_STATES.has(current)) {
+    $previousState.set(current)
+  }
+
+  $spriteState.set('interacting')
 }
 
 export function reportUserActivity(): void {

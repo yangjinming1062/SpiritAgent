@@ -1,7 +1,7 @@
 /**
  * 从拖拽或剪贴板 FileList/File[] 中解析真实文件系统路径（Electron 环境下通过 webUtils 获取）。
  * 仅保留存在有效文件路径的条目，避免将无法解析的 blob/dataURL 注入路径管道。
- * 白名单注册由 preload 的 getPathForFile 内部完成，渲染层不再自授。
+ * 白名单注册由 preload 的 getPathForFile 内部完成，渲染层无法自行登记路径。
  */
 export function resolveDroppedFiles(fileList: FileList | File[] | null | undefined): string[] {
   const files = Array.from(fileList ?? [])

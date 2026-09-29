@@ -1,5 +1,6 @@
 import { speechText } from '@client-shared/speech-text'
 
+import { log } from '@/shared/lib/log'
 import { presentationPorts } from '@/shared/presentation-ports'
 
 import { isLatestGen, nextGen, playDataUrl, stopAudio } from './audio-track'
@@ -11,7 +12,7 @@ export function stopSpeaking(): void {
   stopAudio()
 }
 
-export async function requestSynth(text: string, voice?: string, context?: string, persist = false): Promise<string> {
+async function requestSynth(text: string, voice?: string, context?: string, persist = false): Promise<string> {
   const spokenText = speechText(text)
 
   if (!spokenText) {
@@ -50,10 +51,13 @@ async function synth(
 
     return (await playDataUrl(dataUrl)) === 'completed'
   } catch (err) {
-    stopAudio()
+    // 已被更新的播放接管时不能停掉它。
+    if (isLatestGen(gen)) {
+      stopAudio()
+    }
 
     // 环境路径按 DESIGN「语音保存与恢复」 静默降级为纯文字，但留诊断日志定位供应商故障。
-    console.warn('[tts] synthesis failed', err)
+    log.warn('tts', 'synthesis failed', err)
 
     return false
   } finally {

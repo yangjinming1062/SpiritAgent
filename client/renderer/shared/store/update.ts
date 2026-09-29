@@ -1,8 +1,7 @@
 import { atom } from 'nanostores'
 
-// 可辨识联合类型——主进程将 electron-updater 事件以 `{ type, ... }` 载荷
-// 通过 `spiritagent:update-event` IPC 通道转发。
-// 每个变体对应一个 autoUpdater.on(...) 回调。
+// 设置页展示的更新状态：update-bridge 把主进程的 DesktopUpdateEvent 映射为按 status 区分的变体，
+// idle 表示尚未收到任何更新事件。
 export type UpdateStatus =
   | { status: 'idle' }
   | { status: 'checking' }

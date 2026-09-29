@@ -1,6 +1,6 @@
 import { atom } from 'nanostores'
 
-import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import {
@@ -161,23 +161,6 @@ function parsePreviewDataUrl(dataUrl: string): PickedImage | null {
   return { base64: match[2], contentType: match[1] || 'image/png', previewUrl: dataUrl }
 }
 
-function referenceErrorMessage(error: unknown, fallback: string): string {
-  const raw = unwrapIpcErrorMessage(error).replace(/^\d{3}\s+(?:\/[^\s]*:\s*)?/, '')
-
-  try {
-    const parsed = JSON.parse(raw) as { detail?: { error?: unknown } }
-    const backendError = parsed?.detail?.error
-
-    if (typeof backendError === 'string' && backendError) {
-      return backendError
-    }
-  } catch {
-    /* 非预期形态，走兜底文案 */
-  }
-
-  return fallback
-}
-
 function clearReference(): void {
   operationVersion += 1
   pending = null
@@ -266,7 +249,7 @@ function updateReference(
       const rawUrl = candidate?.image_url || response.seed_fullbody_url || null
 
       if (generate && !rawUrl) {
-        throw new Error('未收到完整的全身图结果，请重新加载查看后再决定是否重试')
+        throw new Error('The fullbody reference response has no image')
       }
 
       const previewUrl = await resolvePortraitUrl(rawUrl, { preferCache: true })
@@ -325,7 +308,8 @@ function updateReference(
           busy: false,
           history,
           error: generate ? 'generate' : 'load',
-          errorMessage: referenceErrorMessage(error, generate ? '全身参考图生成失败，请稍后重试' : '全身参考图加载失败')
+          // 无后端公开文案时由面板按 error 显示本地化提示。
+          errorMessage: backendDetailMessage(error, '') || null
         })
       }
 
@@ -522,7 +506,7 @@ export async function acceptFullbodyCandidate(avatarId: number): Promise<boolean
       $fullbodyReference.set({
         ...current,
         busy: false,
-        candidateError: referenceErrorMessage(
+        candidateError: backendDetailMessage(
           error,
           getStrings().settings.persona.fullbodyReference.acceptCandidateFailed
         )
@@ -564,7 +548,7 @@ export async function retryFullbodyCandidateAnalysis(avatarId: number): Promise<
       $fullbodyReference.set({
         ...current,
         busy: false,
-        candidateError: referenceErrorMessage(
+        candidateError: backendDetailMessage(
           error,
           getStrings().settings.persona.fullbodyReference.retryCandidateAnalysisFailed
         )

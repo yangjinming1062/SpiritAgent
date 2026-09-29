@@ -32,7 +32,7 @@ import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type { SessionResumeResponse } from '@/shared/types/spiritagent'
 
-import { applyDesktopBootProgress, completeDesktopBoot, failDesktopBoot, setDesktopBootStep } from './boot-store'
+import { clearDesktopBootFailure, failDesktopBoot } from './boot-store'
 
 // 1008 停止重连；会话过期由主进程的鉴权失败通知确认。
 const WS_CLOSE_POLICY_VIOLATION = 1008
@@ -56,7 +56,10 @@ function syncTimezone(gateway: SpiritAgentGateway): void {
     return
   }
 
-  void gateway.request('companion.set_timezone', { timezone }).catch(() => {})
+  // 上报失败时服务端沿用旧值或回落 UTC，只记录诊断。
+  void gateway
+    .request('companion.set_timezone', { timezone })
+    .catch(error => log.warn('gateway-boot', 'companion.set_timezone failed', error))
 }
 
 // 空工具表撤销新调用资格，已派发调用仍按原结果与超时规则收尾。
@@ -104,29 +107,19 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
     const desktop = window.spiritagent
 
     if (!desktop) {
-      failDesktopBoot('Desktop IPC bridge is unavailable.')
+      failDesktopBoot(getStrings().boot.errors.bridgeUnavailable)
 
       return () => void (cancelled = true)
     }
 
     // 初次启动后按退避重连，电源恢复、网络上线和窗口可见时立即重试。
     let bootCompleted = false
-    let bootOverlayDismissed = false
     let reconnecting = false
     let reconnectTimer: ReturnType<typeof setTimeout> | null = null
     let graceTimer: ReturnType<typeof setTimeout> | null = null
     let reconnectAttempt = 0
     let lastReconnectError: Error | null = null
     let reconnectErrorNotified = false
-
-    const dismissOverlayOnce = () => {
-      if (bootOverlayDismissed) {
-        return
-      }
-
-      bootOverlayDismissed = true
-      completeDesktopBoot()
-    }
 
     const gatewayOpen = () => gateway.connectionState === 'open'
 
@@ -228,18 +221,6 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
       }
     }
 
-    const offBootProgress = desktop.onBootProgress(payload => applyDesktopBootProgress(payload))
-    void desktop
-      .getBootProgress()
-      .then(snapshot => applyDesktopBootProgress(snapshot))
-      .catch(() => undefined)
-
-    setDesktopBootStep({
-      phase: 'renderer.boot',
-      message: getStrings().boot.steps.startingDesktopConnection,
-      progress: 6
-    })
-
     const gateway = new SpiritAgentGateway()
     setPrimaryGateway(gateway)
 
@@ -270,7 +251,6 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
         clearVfx('sleep_zzz')
 
         if (bootCompleted) {
-          dismissOverlayOnce()
           const cur = $spriteState.get()
 
           if (cur === 'disconnected') {
@@ -412,11 +392,6 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
           return
         }
 
-        setDesktopBootStep({
-          phase: 'renderer.gateway.connect',
-          message: getStrings().boot.steps.connectingGateway,
-          progress: 95
-        })
         await gateway.connect(wsUrl)
 
         if (cancelled) {
@@ -424,7 +399,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
         }
 
         void syncTools()
-        dismissOverlayOnce()
+        clearDesktopBootFailure()
         bootCompleted = true
       } catch (err) {
         if (!cancelled) {
@@ -449,7 +424,6 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
       offEvent()
       window.spiritagent?.gatewayBroadcastState?.('closed')
       offRunnerStatus?.()
-      offBootProgress()
       stopAutonomyProvision()
       tearDownPrimaryGateway()
     }

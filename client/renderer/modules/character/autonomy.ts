@@ -1,5 +1,6 @@
 import { clamp } from '@runtime'
 
+import { log } from '@/shared/lib/log'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
 import { $runnerPhase } from '@/shared/store/runner-status'
@@ -18,6 +19,7 @@ import {
   enterWindowPeek,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
+  locomotionForDistance,
   setSpatialLocale,
   startRoam,
   type WindowPeekIntent
@@ -69,13 +71,10 @@ function stateChanged(oldSnap: Snapshot, newSnap: Snapshot): boolean {
   )
 }
 
-// 走过去搭话的远近距离分界（DESIGN「仪式性行走」 同款语义：远飞近走）。
-const APPROACH_WALK_RANGE_PX = 400
-
 function approachLocomotion(target: { x: number; y: number }): 'walk' | 'fly' {
   const cur = $spatialPos.get()
 
-  return Math.hypot(target.x - cur.x, target.y - cur.y) > APPROACH_WALK_RANGE_PX ? 'fly' : 'walk'
+  return locomotionForDistance(Math.hypot(target.x - cur.x, target.y - cur.y))
 }
 
 // 走过去搭话（DESIGN「位置、移动与缩放」「自主动作与空间智能」）：开场白由后端经 companion.message 通道投递（边走边说），
@@ -88,11 +87,9 @@ function executeApproach(): void {
   }
 
   const ctx = $focusContext.get()
-  const geom = ctx?.windowGeom
-  const hasWindow = Boolean(geom && ctx!.category !== 'unknown' && !ctx!.fullscreen)
 
-  if (hasWindow && geom) {
-    const perch = computePerchPlacement(geom, $defaultScale.get())
+  if (ctx?.windowGeom && ctx.category !== 'unknown' && !ctx.fullscreen) {
+    const perch = computePerchPlacement(ctx.windowGeom, $defaultScale.get())
 
     if (perch) {
       setSpatialLocale('perch', {
@@ -199,8 +196,9 @@ async function consultAutonomyLLM(force = false): Promise<void> {
     return
   }
 
-  try {
-    const res = await gateway.request<ShouldActRpcResponse>('companion.should_act', {
+  // 请求失败时不做任何自主动作。
+  const res = await gateway
+    .request<ShouldActRpcResponse | null>('companion.should_act', {
       kind: 'periodic_provision',
       idle_seconds: idle,
       local_hour: hour,
@@ -209,13 +207,15 @@ async function consultAutonomyLLM(force = false): Promise<void> {
       screen_locked: locked,
       seconds_since_last_action: secondsSinceLastAction
     })
+    .catch(error => {
+      log.warn('autonomy', 'companion.should_act failed', error)
 
-    if (isCurrent() && res?.should_act && res.action) {
-      lastAutonomousActionAt = Date.now()
-      executeAutonomousAction(res.action, peekIntent)
-    }
-  } catch {
-    /* 静默捕获；LLM 错误时不做任何自主动作 */
+      return null
+    })
+
+  if (isCurrent() && res?.should_act && res.action) {
+    lastAutonomousActionAt = Date.now()
+    executeAutonomousAction(res.action, peekIntent)
   }
 }
 
@@ -232,6 +232,7 @@ export function startAutonomyProvision(): () => void {
     }
   }
 
+  // subscribe 立即回放当前值，首次咨询由此发起；其余回放受最小咨询间隔节流。
   unsubs.push($focusContext.subscribe(onStateOrEventChange))
   unsubs.push(
     $screenLocked.subscribe(locked => {
@@ -290,11 +291,6 @@ export function startAutonomyProvision(): () => void {
       void consultAutonomyLLM(true)
     }
   }, BACKGROUND_CONSULT_INTERVAL_MS)
-
-  // 显式触发首次咨询，而不是依赖任一 atom 的订阅回放语义。
-  if ($runnerPhase.get() === 'running') {
-    void consultAutonomyLLM(true)
-  }
 
   return stopAutonomyProvision
 }

@@ -1,5 +1,7 @@
 import { useRef } from 'react'
 
+import { useStrings } from '@/shared/strings'
+
 import { useResolvedMediaSrc } from './media-src'
 
 export function InlineMedia({
@@ -13,13 +15,28 @@ export function InlineMedia({
   mediaType: '' | 'image' | 'video' | 'audio'
   url: string
 }): React.JSX.Element | null {
-  const src = useResolvedMediaSrc({ type: mediaType || 'image', url })
-  const voiceSrc = useResolvedMediaSrc({ type: 'audio', url: audioUrl || '' })
+  const dict = useStrings()
+  const media = useResolvedMediaSrc({ type: mediaType || 'image', url })
+  const voice = useResolvedMediaSrc({ type: 'audio', url: audioUrl || '' })
+  const voiceSrc = voice.status === 'ready' ? voice.src : null
   const audioRef = useRef<HTMLAudioElement>(null)
 
-  if (!src) {
+  if (media.status === 'loading') {
     return null
   }
+
+  if (media.status === 'failed') {
+    return (
+      <div className="flex h-24 w-40 items-center justify-center rounded-lg border border-line-standard bg-fill-faint text-xs text-faint">
+        {dict.chat.media.loadFailed}
+      </div>
+    )
+  }
+
+  const src = media.src
+
+  const voiceFailed =
+    voice.status === 'failed' ? <p className="text-xs text-faint">{dict.chat.media.loadFailed}</p> : null
 
   if (mediaType === 'video') {
     return (
@@ -48,7 +65,7 @@ export function InlineMedia({
           }}
           src={src}
         />
-        {voiceSrc ? <audio className="w-full" controls ref={audioRef} src={voiceSrc} /> : null}
+        {voiceSrc ? <audio className="w-full" controls ref={audioRef} src={voiceSrc} /> : voiceFailed}
       </div>
     )
   }
@@ -64,7 +81,7 @@ export function InlineMedia({
   return (
     <div className="w-full">
       <img alt={alt} className="max-h-[70vh] max-w-full rounded-lg" src={src} />
-      {voiceSrc ? <audio className="w-full" controls src={voiceSrc} /> : null}
+      {voiceSrc ? <audio className="w-full" controls src={voiceSrc} /> : voiceFailed}
     </div>
   )
 }

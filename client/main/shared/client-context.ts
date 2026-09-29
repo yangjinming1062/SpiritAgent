@@ -1,10 +1,8 @@
 import os from 'node:os'
 
-import { spiritagentHome } from '../security/paths'
-
 interface BuildClientContextOptions {
-  spiritagentHome?: null | string
-  desktopVersion?: string
+  desktopVersion: string
+  spiritagentHome: string
 }
 
 interface ClientContextResult {
@@ -15,18 +13,19 @@ interface ClientContextResult {
   client_version: string
 }
 
-export function buildClientContext(options: BuildClientContextOptions = {}): ClientContextResult {
+export function buildClientContext({
+  desktopVersion,
+  spiritagentHome
+}: BuildClientContextOptions): ClientContextResult {
   const platform = process.platform
   const arch = process.arch
-  const desktopVersion = options.desktopVersion ?? 'unknown'
-  const home = options.spiritagentHome ?? spiritagentHome()
 
   const lines = [
     `${platform} ${os.release()}`,
     `arch=${arch}`,
-    desktopVersion !== 'unknown' ? `spiritagent-desktop=${desktopVersion}` : null,
+    `spiritagent-desktop=${desktopVersion}`,
     process.versions?.node ? `node=${process.versions.node}` : null,
-    home ? `spiritagent_home=${home}` : null
+    `spiritagent_home=${spiritagentHome}`
   ].filter(Boolean)
 
   return {

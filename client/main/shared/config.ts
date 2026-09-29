@@ -1,6 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
+import log from 'electron-log/main'
+
 import { atomicWriteFile, safeReadJson } from './utils'
 
 // $SPIRITAGENT_HOME/desktop-config.json 保存用户激活过的后端 URL
@@ -70,7 +72,9 @@ export async function writeStoredBackendUrl(
     }
 
     return true
-  } catch {
+  } catch (error) {
+    log.warn('[config] saving backend URL failed:', error)
+
     return false
   }
 }

@@ -1,3 +1,7 @@
+import { log } from '@/shared/lib/log'
+import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { getStrings } from '@/shared/strings'
+
 export interface PickedImage {
   base64: string
   contentType: string
@@ -29,10 +33,12 @@ export async function pickAvatarImage(title: string): Promise<{ image: PickedIma
     }
 
     return base64.length > MAX_IMAGE_BASE64
-      ? { error: '这张图太大了，换张小一点的吧' }
+      ? { error: getStrings().common.imagePick.tooLarge }
       : { image: { base64, contentType: dataUrl.slice(5, comma).split(';')[0], previewUrl: dataUrl } }
-  } catch {
-    return { error: '选择图片失败了，换个方式试试？' }
+  } catch (error) {
+    log.warn('avatar-image', 'Could not read picked image', error)
+
+    return { error: getStrings().common.imagePick.readFailed }
   }
 }
 
@@ -51,7 +57,9 @@ export async function resolvePortraitUrl(
       preferCache: options?.preferCache,
       url: assetUrl
     })
-  } catch {
+  } catch (error) {
+    log.warn('avatar-image', 'Could not resolve portrait URL', error)
+
     return null
   }
 }
@@ -73,44 +81,52 @@ function openDraftDB(): Promise<IDBDatabase> {
   })
 }
 
+// 每次操作独立连接：事务提交后才算完成，失败或中止即拒绝，结束后关闭连接。
+async function withDraftStore(mode: IDBTransactionMode, run: (store: IDBObjectStore) => IDBRequest): Promise<unknown> {
+  const db = await openDraftDB()
+
+  try {
+    return await new Promise<unknown>((resolve, reject) => {
+      const tx = db.transaction(STORE_NAME, mode)
+      const request = run(tx.objectStore(STORE_NAME))
+      const fail = (): void => reject(tx.error ?? request.error ?? new Error('Draft transaction aborted'))
+
+      tx.oncomplete = () => resolve(request.result)
+      tx.onerror = fail
+      tx.onabort = fail
+    })
+  } finally {
+    db.close()
+  }
+}
+
 export async function saveDraftRefImage(image: PickedImage | null): Promise<void> {
   try {
-    const db = await openDraftDB()
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-
-    if (image) {
-      tx.objectStore(STORE_NAME).put(image, REF_IMAGE_KEY)
-    } else {
-      tx.objectStore(STORE_NAME).delete(REF_IMAGE_KEY)
-    }
-  } catch {
-    /* 忽略存储错误 */
+    await withDraftStore('readwrite', store => (image ? store.put(image, REF_IMAGE_KEY) : store.delete(REF_IMAGE_KEY)))
+  } catch (error) {
+    log.warn('avatar-image', 'Could not save reference draft', error)
   }
 }
 
 export async function loadDraftRefImage(): Promise<PickedImage | null> {
   try {
-    const db = await openDraftDB()
+    const image = (await withDraftStore('readonly', store => store.get(REF_IMAGE_KEY))) as PickedImage | undefined
 
-    return await new Promise(resolve => {
-      const tx = db.transaction(STORE_NAME, 'readonly')
-      const req = tx.objectStore(STORE_NAME).get(REF_IMAGE_KEY)
+    return image ?? null
+  } catch (error) {
+    log.warn('avatar-image', 'Could not load reference draft', error)
 
-      req.onsuccess = () => resolve((req.result as PickedImage | undefined) ?? null)
-      req.onerror = () => resolve(null)
-    })
-  } catch {
     return null
   }
 }
 
 export async function clearDraftRefImage(): Promise<void> {
   try {
-    const db = await openDraftDB()
-    const tx = db.transaction(STORE_NAME, 'readwrite')
-
-    tx.objectStore(STORE_NAME).delete(REF_IMAGE_KEY)
-  } catch {
-    /* 忽略存储错误 */
+    await withDraftStore('readwrite', store => store.delete(REF_IMAGE_KEY))
+  } catch (error) {
+    log.warn('avatar-image', 'Could not clear reference draft', error)
   }
 }
+
+// 草稿不分账户，换号时清除。
+registerStorageClearHandler(clearDraftRefImage)

@@ -36,9 +36,9 @@ export function createBackendHttp({ app, electronNet, spiritagentHome }: Backend
       signal: AbortSignal.timeout(timeoutMs)
     })
 
-    const text = await res.text().catch(() => '')
-
     if (!res.ok) {
+      // 错误响应体只用于诊断文案，读取失败时回落状态文本。
+      const detail = await res.text().catch(() => '')
       let pathname = url
 
       try {
@@ -47,7 +47,17 @@ export function createBackendHttp({ app, electronNet, spiritagentHome }: Backend
         /* ignore invalid url formatting in error */
       }
 
-      throw new HttpError(res.status, `${res.status} ${pathname}: ${text || res.statusText}`)
+      throw new HttpError(res.status, `${res.status} ${pathname}: ${detail || res.statusText}`)
+    }
+
+    let text: string
+
+    try {
+      text = await res.text()
+    } catch (error) {
+      throw new Error(`Failed to read response from ${url} (status ${res.status}): ${errorMessage(error)}`, {
+        cause: error
+      })
     }
 
     if (!text) {

@@ -6,7 +6,7 @@ import type { Socket } from 'node:net'
 import type WebSocket from 'ws'
 import { WebSocketServer } from 'ws'
 
-import { errorMessage } from '../shared/utils'
+import { errorMessage, RunnerNotConnectedError } from '../shared/utils'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const JSON_RPC_VERSION = '2.0'
@@ -230,7 +230,7 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
     { timeoutMs }: { timeoutMs?: number } = {}
   ): Promise<T> {
     if (closed) {
-      return Promise.reject(new Error('Runner WS server is closed.'))
+      return Promise.reject(new RunnerNotConnectedError('Runner WS server is closed.'))
     }
 
     const id = `call_${nextId++}`
@@ -260,7 +260,7 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
       if (!sent) {
         pending.delete(id)
         clearTimeout(timer)
-        reject(new Error('Runner is not connected.'))
+        reject(new RunnerNotConnectedError('Runner is not connected.'))
       }
     })
   }
@@ -338,7 +338,8 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
     log(`[runner-ws] listening on ${ipcPath}`)
 
     try {
-      wss = new WebSocketServer({ noServer: true })
+      const server = new WebSocketServer({ noServer: true })
+      wss = server
 
       upgradeHandler = (req, socket, head) => {
         if (req.headers['x-spiritagent-auth'] !== authToken) {
@@ -348,12 +349,12 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
           return
         }
 
-        wss!.handleUpgrade(req, socket, head, (ws: WebSocket) => wss!.emit('connection', ws, req))
+        server.handleUpgrade(req, socket, head, (ws: WebSocket) => server.emit('connection', ws, req))
       }
 
       httpServer.on('upgrade', upgradeHandler)
 
-      wss.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
+      server.on('connection', (ws: WebSocket, req: http.IncomingMessage) => {
         log(`[runner-ws] runner connected over ${transport} (${req?.url || '/'})`)
 
         if (activeWs && activeWs.readyState === 1) {
@@ -395,8 +396,9 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
             return
           }
 
+          // WS 层 ping 由 Runner 的 sans-I/O 协议自动回 pong，空闲时也能续期；JSON-RPC 通知不被应答，不能用于探活。
           try {
-            ws.send(JSON.stringify({ jsonrpc: JSON_RPC_VERSION, method: 'runner.ping' }))
+            ws.ping()
           } catch (err: unknown) {
             const msg = errorMessage(err)
             log(`[runner-ws] heartbeat send failed: ${msg}`)
@@ -404,6 +406,10 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
         }, HEARTBEAT_INTERVAL_MS)
 
         ws.on('close', () => clearInterval(heartbeatTimer))
+
+        ws.on('pong', () => {
+          lastSeen = Date.now()
+        })
 
         ws.on('message', data => {
           // 被替换的旧 socket 可能在 close 前仍发数据；只认 active。
@@ -436,7 +442,7 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
         })
       })
 
-      wss.on('error', (error: unknown) => {
+      server.on('error', (error: unknown) => {
         const err = error as { message?: string }
         log(`[runner-ws] server error: ${err?.message || String(error)}`)
       })
@@ -458,11 +464,12 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
       upgradeHandler = null
     }
 
-    const serverAny = httpServer as unknown as { closeAllConnections?: () => void }
-
-    if (typeof serverAny.closeAllConnections === 'function') {
-      serverAny.closeAllConnections()
+    // wss.close 要等所有客户端关闭、httpServer.close 要等连接结束；先断开在连 socket，不依赖对端配合。
+    for (const client of wss?.clients ?? []) {
+      client.terminate()
     }
+
+    httpServer.closeAllConnections()
 
     return new Promise(resolve => {
       const finish = () => {

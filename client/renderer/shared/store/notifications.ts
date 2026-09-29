@@ -61,18 +61,6 @@ const ERROR_SUMMARIES: { test: (msg: string) => boolean; summarize: (msg: string
     }
   },
   {
-    test: msg => /neither voice_tools_openai_key nor openai_api_key is set/i.test(msg),
-    summarize: () => getStrings().notifications.errors.openaiTtsNeedsKey
-  },
-  {
-    test: msg => /ELEVENLABS_API_KEY not set/i.test(msg) || /ElevenLabs STT API error \(HTTP 401\)/i.test(msg),
-    summarize: msg => {
-      const errors = getStrings().notifications.errors
-
-      return /ELEVENLABS_API_KEY not set/i.test(msg) ? errors.elevenLabsNeedsKey : errors.elevenLabsRejectedKey
-    }
-  },
-  {
     test: msg => /method not allowed/i.test(msg),
     summarize: () => {
       const strings = getStrings()

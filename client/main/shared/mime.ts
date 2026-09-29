@@ -21,13 +21,6 @@ const MEDIA_MIME_TYPES: Record<string, string> = {
   '.webp': 'image/webp'
 }
 
-// 派生：MIME 以 audio/、video/ 或 model/ 开头的所有扩展名。
-export const STREAMABLE_MEDIA_EXTS: Set<string> = new Set(
-  Object.entries(MEDIA_MIME_TYPES)
-    .filter(([, mime]) => mime.startsWith('audio/') || mime.startsWith('video/') || mime.startsWith('model/'))
-    .map(([ext]) => ext)
-)
-
 export function mimeTypeForPath(filePath: string): string {
   const ext = path.extname(filePath || '').toLowerCase()
 

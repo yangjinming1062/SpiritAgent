@@ -217,6 +217,8 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
     }
 
     const targetUrl = resolveBackendAssetUrl(rawUrl, baseUrl)
+    // 错误与日志只带路径：签名参数（expires / sig）不得进入日志。
+    const assetPath = new URL(rawUrl, 'http://127.0.0.1').pathname
     const effectiveTimeout = timeoutMs ?? DEFAULT_TIMEOUT_MS
     const signal = AbortSignal.any([cancellation, AbortSignal.timeout(effectiveTimeout)])
 
@@ -265,7 +267,7 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
 
       if (localCached) {
         console.warn(
-          `[asset-disk-cache] Network fetch failed for ${rawUrl}; serving local stale cache fallback:`,
+          `[asset-disk-cache] Network fetch failed for ${assetPath}; serving local stale cache fallback:`,
           networkErr
         )
 
@@ -284,10 +286,12 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
     if (!res.ok) {
       if (isAuthFailureStatus(res.status) || !localCached) {
         const text = await res.text().catch(() => '')
-        throw new HttpError(res.status, `${res.status} ${rawUrl}: ${text || res.statusText}`)
+        throw new HttpError(res.status, `${res.status} ${assetPath}: ${text || res.statusText}`)
       }
 
-      console.warn(`[asset-disk-cache] Remote returned status ${res.status} for ${rawUrl}; using stale cache fallback`)
+      console.warn(
+        `[asset-disk-cache] Remote returned status ${res.status} for ${assetPath}; using stale cache fallback`
+      )
 
       return localCached
     }
@@ -317,7 +321,7 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
       cancellation.throwIfAborted()
 
       if (localCached) {
-        console.warn(`[asset-disk-cache] Stream error for ${rawUrl}; serving local stale cache fallback:`, streamErr)
+        console.warn(`[asset-disk-cache] Stream error for ${assetPath}; serving local stale cache fallback:`, streamErr)
 
         return localCached
       }
@@ -334,7 +338,7 @@ export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetD
         return localCached
       }
 
-      throw new Error(`empty asset body: ${rawUrl}`)
+      throw new Error(`empty asset body: ${assetPath}`)
     }
 
     cancellation.throwIfAborted()

@@ -1,5 +1,6 @@
 import { sleep } from '@runtime'
 
+import { log } from '@/shared/lib/log'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 
 import { $screenLocked } from './activity'
@@ -10,6 +11,7 @@ import {
   $spatialPos,
   computePerchPlacement,
   getBaseSpriteWidth,
+  locomotionForDistance,
   moveDurationMs,
   setSpatialLocale,
   updateSpatialDecision
@@ -17,19 +19,17 @@ import {
 
 const RETRY_MS = 300
 const RETRY_COUNT = 5
-// DESIGN「仪式性行走」：远距离飞、近距离走。低于该距离的目标走过去更有"走过去动手"的仪式感。
-const WALK_RANGE_PX = 400
 // 行走动画被中止（生活空间打开 / 开始拖拽会取消移动且不回调）时的宽限：
 // 到点即视为行走结束，就地继续执行原工具。
 const WALK_ABORT_GRACE_MS = 2000
 
 // 仪式行走失败的离线/机械降级台词（DESIGN「仪式性行走」 / RULES 原则七边界）——
 // 走 speakProactive 的档位门控：静止档静默、常规档仅气泡、自主档开口。
-const TARGET_LOST_LINES = ['咦…我没找到那个窗口，先直接试试吧。', '那个窗口在哪呀…我先直接试。']
-const PERCH_TIGHT_LINES = ['这边好挤，我够不着…先直接试试吧。']
+const TARGET_LOST_LINES = ['咦…我没找到那个窗口，先直接试试吧。', '那个窗口在哪呀…我先直接试。'] as const
+const PERCH_TIGHT_LINES = ['这边好挤，我够不着…先直接试试吧。'] as const
 
-function pickLine(pool: readonly string[]): string {
-  return pool[Math.floor(Math.random() * pool.length)] ?? pool[0]!
+function pickLine(pool: readonly [string, ...string[]]): string {
+  return pool[Math.floor(Math.random() * pool.length)] ?? pool[0]
 }
 
 interface WindowGeom {
@@ -41,6 +41,28 @@ interface WindowGeom {
 
 export type { WindowGeom }
 
+interface RunnerWindow extends WindowGeom {
+  name: string
+  title: string
+}
+
+function isRunnerWindow(value: unknown): value is RunnerWindow {
+  if (typeof value !== 'object' || value === null) {
+    return false
+  }
+
+  const w = value as Partial<Record<keyof RunnerWindow, unknown>>
+
+  return (
+    typeof w.name === 'string' &&
+    typeof w.title === 'string' &&
+    Number.isFinite(w.x) &&
+    Number.isFinite(w.y) &&
+    Number.isFinite(w.w) &&
+    Number.isFinite(w.h)
+  )
+}
+
 export async function findWindowByKeyword(keyword: string): Promise<WindowGeom | null> {
   // 空关键词会让 `name.includes('')` 恒真——匹配到枚举出的第一个窗口，
   // 精灵会对着一个无关窗口走过去并点它。关键词缺失 = 找不到目标。
@@ -48,22 +70,29 @@ export async function findWindowByKeyword(keyword: string): Promise<WindowGeom |
     return null
   }
 
+  let result: unknown
+
   try {
-    const result = await window.spiritagent.runnerInvoke('system.get_windows', {})
-    const windows = (result as { windows?: Array<{ name: string; title: string } & WindowGeom> }).windows ?? []
-    const kw = keyword.toLowerCase()
+    result = await window.spiritagent.runnerInvoke('system.get_windows', {})
+  } catch (error) {
+    log.warn('ritual-walk', 'system.get_windows failed', error)
 
-    const match = windows.find(
-      w =>
-        w.name.toLowerCase().includes(kw) ||
-        w.title.toLowerCase().includes(kw) ||
-        kw.includes(w.name.toLowerCase().split('.')[0])
-    )
-
-    return match ? { x: match.x, y: match.y, w: match.w, h: match.h } : null
-  } catch {
     return null
   }
+
+  const listed = typeof result === 'object' && result !== null && 'windows' in result ? result.windows : null
+  const windows = Array.isArray(listed) ? listed.filter(isRunnerWindow) : []
+  const kw = keyword.toLowerCase()
+
+  const match = windows.find(w => {
+    const name = w.name.toLowerCase()
+    // name 主干为空时不参与反向包含匹配，否则 `kw.includes('')` 恒真。
+    const stem = name.split('.')[0]
+
+    return name.includes(kw) || w.title.toLowerCase().includes(kw) || (stem !== '' && kw.includes(stem))
+  })
+
+  return match ? { x: match.x, y: match.y, w: match.w, h: match.h } : null
 }
 
 export async function performRitualWalk<T>(
@@ -101,7 +130,7 @@ export async function performRitualWalk<T>(
 
   try {
     const dist = Math.hypot(perch.x - $spatialPos.get().x, perch.y - $spatialPos.get().y)
-    const locomotion = dist > WALK_RANGE_PX ? ('fly' as const) : ('walk' as const)
+    const locomotion = locomotionForDistance(dist)
     // 到达回调在行走被取消时不会触发（spatial 的 surface/drag 中止路径直接丢弃它）；
     // 仪式行走只是装饰，限时等待后必须继续执行原工具，不能让行走挂起整条工具链。
     await Promise.race([
@@ -123,7 +152,9 @@ export async function performRitualWalk<T>(
     if (opts?.previewClick !== false && window.spiritagent?.runnerInvoke) {
       window.spiritagent
         .runnerInvoke('system.click_at', { x: Math.round(targetCenter.x), y: Math.round(targetCenter.y) })
-        .catch(() => {})
+        .catch(error => {
+          log.warn('ritual-walk', 'Preview click failed', error)
+        })
     }
 
     await sleep(400)

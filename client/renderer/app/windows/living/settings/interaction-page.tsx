@@ -22,6 +22,7 @@ import {
 } from '@/modules/character'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { Check } from '@/shared/lib/icons'
+import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import {
   HINT_TEXT,
@@ -37,23 +38,12 @@ import { getSpiritAgentConfig, saveSpiritAgentConfig } from '@/shared/spiritagen
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-interface DisturbanceTierOption {
-  hint: string
-  id: DisturbanceTier
-  label: string
-}
-
-const DISTURBANCE_TIERS: readonly DisturbanceTierOption[] = [
-  { id: 'still', label: '静止', hint: '不发起任何主动行为，只回应你' },
-  { id: 'normal', label: '常规', hint: '文字问候等原地轻互动' },
-  { id: 'autonomous', label: '自主', hint: '自由移动与语音，全能力开放' }
-] as const
+const DISTURBANCE_TIERS: readonly DisturbanceTier[] = ['still', 'normal', 'autonomous']
 
 const RECORDING_OPTIONS = [15, 30, 60, 120, 300] as const
 const DEFAULT_RECORDING_SECONDS = 60
 
-// 交互页：伙伴怎么回应（回应方式 / 打扰档位 / 智能反应与自主行为）。
-// 长页（living-settings）内嵌段，不使用 SettingsPage 外壳。
+// 交互页：伙伴怎么回应（回应方式 / 打扰档位 / 智能反应与自主行为）。长页（living-settings）内嵌段。
 export function InteractionPage(): React.ReactElement {
   const dict = useStrings()
   const t = dict.settings.interaction
@@ -67,6 +57,8 @@ export function InteractionPage(): React.ReactElement {
 
   const [maxRecordingSeconds, setMaxRecordingSeconds] = useState<number>(DEFAULT_RECORDING_SECONDS)
   const [isSavingRecordTime, setIsSavingRecordTime] = useState(false)
+  // 读取失败时选择框显示的是默认值而非实际设置，禁用以免误改。
+  const [recordingLoadFailed, setRecordingLoadFailed] = useState(false)
 
   useEffect(() => {
     let mounted = true
@@ -76,7 +68,13 @@ export function InteractionPage(): React.ReactElement {
           setMaxRecordingSeconds(cfg.voice.max_recording_seconds)
         }
       })
-      .catch(() => {})
+      .catch((err: unknown) => {
+        log.warn('interaction', 'load recording limit failed', err)
+
+        if (mounted) {
+          setRecordingLoadFailed(true)
+        }
+      })
 
     return () => {
       mounted = false
@@ -136,9 +134,14 @@ export function InteractionPage(): React.ReactElement {
               />
             </div>
           </SettingRow>
-          <SettingRow description={t.recordingDesc} label={t.recording}>
+          <SettingRow
+            description={
+              recordingLoadFailed ? <span className="text-danger-fg">{t.recordingLoadFailed}</span> : t.recordingDesc
+            }
+            label={t.recording}
+          >
             <PanelSelect
-              disabled={isSavingRecordTime}
+              disabled={isSavingRecordTime || recordingLoadFailed}
               onChange={v => void handleRecordingSecondsChange(v)}
               options={recordingOptions}
               value={String(maxRecordingSeconds)}
@@ -152,8 +155,8 @@ export function InteractionPage(): React.ReactElement {
         <p className={cn(SECTION_TITLE, 'mb-1')}>{t.tierHeading}</p>
         <p className={cn(HINT_TEXT, 'mb-2')}>{t.tierHint}</p>
         <SettingCard ariaLabel={t.tierAriaLabel} role="radiogroup">
-          {DISTURBANCE_TIERS.map(item => {
-            const isSelected = tier === item.id
+          {DISTURBANCE_TIERS.map(id => {
+            const isSelected = tier === id
 
             return (
               <button
@@ -162,16 +165,16 @@ export function InteractionPage(): React.ReactElement {
                   'flex w-full items-center gap-3 px-4 py-3 text-left transition hover:bg-fill-hover',
                   isSelected && 'bg-accent-soft/35'
                 )}
-                key={item.id}
-                onClick={() => selectTier(item.id)}
+                key={id}
+                onClick={() => selectTier(id)}
                 role="radio"
                 type="button"
               >
                 <div className="min-w-0 flex-1">
                   <div className={cn('text-[13px] font-medium', isSelected ? 'text-strong' : 'text-body')}>
-                    {item.label}
+                    {t.tiers[id].label}
                   </div>
-                  <div className="mt-0.5 text-[11px] leading-relaxed text-muted">{item.hint}</div>
+                  <div className="mt-0.5 text-[11px] leading-relaxed text-muted">{t.tiers[id].hint}</div>
                 </div>
                 {isSelected ? <Check className="size-4 shrink-0 text-accent" /> : null}
               </button>

@@ -14,7 +14,7 @@ import {
 } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-// toast 属于瞬时浮层——两个窗口共用同一套玻璃样式（--ui-* token，随主题换肤）。
+// toast 是各窗口共用的瞬时浮层，样式只取随主题换肤的 --ui-* token。
 const tone: Record<NotificationKind, { icon: IconComponent; iconClass: string }> = {
   error: { icon: AlertCircle, iconClass: 'text-danger-fg' },
   warning: { icon: AlertTriangle, iconClass: 'text-amber-400' },
@@ -25,8 +25,7 @@ const tone: Record<NotificationKind, { icon: IconComponent; iconClass: string }>
 const STACK_SURFACE =
   'pointer-events-auto rounded-xl border border-line-standard bg-glass text-strong shadow-xl backdrop-blur-glass'
 
-// regionRef 把 portal 容器的 DOM 引用交给调用方——精灵透明窗口需要借此把
-// toast 矩形注册进交互区域登记处（shared 不得反向依赖 companion，所以经 props 透传）。
+// regionRef 交给挂载方：透明窗口按各自的捕获窗口 ID 把 toast 矩形登记为交互区域，否则点击会穿透。
 export function NotificationStack({ regionRef }: { regionRef?: Ref<HTMLDivElement> }): React.JSX.Element | null {
   const notifications = useStore($notifications)
   const t = useStrings()
@@ -65,11 +64,7 @@ export function NotificationStack({ regionRef }: { regionRef?: Ref<HTMLDivElemen
   const [latest, ...olderNotifications] = notifications
   const overflowCount = olderNotifications.length
 
-  // 渲染到 <body>，z-index 高于 Radix 对话框层（overlay z-[120]、content z-[130]）。
-  // 不做 portal 时，堆叠上下文留在 React 根子树内，body 级对话框 / overlay 的 portal
-  // 会盖在上面——所以在对话框打开时（或任意设置面板上）触发的成功提示
-  // 会不可见。titlebar-height 变量只在 app shell 作用域内存在，
-  // 在 <body> 上挂载时退回到其常量值（34px）。
+  // portal 到 <body> 并取 z-[200]，盖过弹窗与媒体查看器；顶部让位取 :root 的 --titlebar-height。
   return createPortal(
     <div
       aria-label={copy.region}

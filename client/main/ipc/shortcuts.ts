@@ -10,7 +10,7 @@ import {
 import { type BrowserWindow, globalShortcut, type IpcMain } from 'electron'
 
 import * as store from '../shared/lib/runner-config-store'
-import { errorMessage, sendToWindow } from '../shared/utils'
+import { broadcastToAllWindows, errorMessage } from '../shared/utils'
 
 /** 窄接口：短cuts 只需要切表面，不依赖 lifecycle/surfaces 具体类型。 */
 interface SurfaceToggler {
@@ -35,12 +35,9 @@ const currentStatus: Record<keyof DesktopShortcutsConfig, ShortcutRegistrationSt
   toggleVisibility: { registered: false }
 }
 
+// 订阅方是生活空间设置页，不是精灵窗。
 function broadcastShortcutsChanged(state: DesktopShortcutsState): void {
-  if (!deps) {
-    return
-  }
-
-  sendToWindow(deps.getMainWindow(), IPC.event.shortcutsChanged, state)
+  broadcastToAllWindows(IPC.event.shortcutsChanged, state)
 }
 
 function readShortcutsConfig(): DesktopShortcutsConfig {
@@ -97,8 +94,8 @@ function registerSingleShortcut(action: keyof DesktopShortcutsConfig, accelerato
       if (globalShortcut.isRegistered(previous)) {
         globalShortcut.unregister(previous)
       }
-    } catch {
-      // 忽略注销时的异常
+    } catch (err) {
+      deps?.rememberLog?.(`[shortcuts] error unregistering "${previous}" for ${action}: ${errorMessage(err)}`)
     }
 
     currentRegistered.delete(action)
@@ -147,6 +144,7 @@ function applyShortcuts(config: DesktopShortcutsConfig): DesktopShortcutsState {
   }
 }
 
+// globalShortcut 须在 app ready 后使用；启动时由 entry 的 whenReady 调用。
 export function syncShortcutsFromConfig(): DesktopShortcutsState {
   const config = readShortcutsConfig()
   const state = applyShortcuts(config)
@@ -171,9 +169,6 @@ export function cleanupShortcuts(): void {
 export function registerShortcutsIpc(options: ShortcutsIpcDeps): void {
   deps = options
   const { ipcMain } = options
-
-  // 启动时应用当前配置
-  syncShortcutsFromConfig()
 
   ipcMain.handle(IPC.invoke.shortcutsGet, (): DesktopShortcutsState => {
     return {

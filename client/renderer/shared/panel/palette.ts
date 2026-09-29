@@ -1,6 +1,6 @@
-// 面板设计语言的类常量词汇表——两个窗口（精灵窗浮层 / 工具窗）共用的唯一视觉来源。
+// 面板设计语言的类常量词汇表——精灵窗、生活空间与工作台共用的唯一视觉来源。
 // 全部消费 styles.css 的语义 token（--ui-*），主题在 html[data-theme] 上换肤。
-// 分层：大面板实体表面（阶梯 chrome→panel→card），瞬时浮层走 overlay（可读、不跟窗壳玻璃同一透明度）。
+// 分层：大面板实体表面（阶梯 panel→card），瞬时浮层走 overlay（可读、不跟窗壳玻璃同一透明度）。
 
 // 独立浮层表面（右键菜单、模态卡、下拉列表）：跟色彩轴走，不继承清透档的低 alpha。
 // 模态只铺这张卡，不用全屏暗化遮罩——透明精灵窗上会压黑桌面，日色下还容易配深字看不清。
@@ -23,10 +23,9 @@ export const INPUT_CLASS =
   'w-full rounded-lg border border-line-standard bg-fill-faint px-3 py-2 text-xs text-strong outline-none placeholder:text-faint focus:border-focus-line'
 export const CHIP =
   'liquid-glass-pill inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] text-muted'
-export const CHIP_ACTIVE =
-  'liquid-glass-pill liquid-glass-pill-active inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-medium text-strong'
 export const CHIP_FILTER =
   'liquid-glass-pill inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] text-muted transition hover:text-strong'
+// 激活态 chip：过滤按钮与 Pill 高亮共用。
 export const CHIP_FILTER_ACTIVE =
   'liquid-glass-pill liquid-glass-pill-active inline-flex shrink-0 items-center whitespace-nowrap rounded-full px-2.5 py-0.5 text-[11px] font-medium text-strong'
 

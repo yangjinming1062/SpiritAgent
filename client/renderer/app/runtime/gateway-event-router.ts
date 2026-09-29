@@ -4,7 +4,6 @@ import { onSceneEvent } from '@/modules/scene'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
-import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
 
 import { $devMode, pushDevLog } from './dev-log'
@@ -48,11 +47,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
   const gw = $gateway.get()
   const isProxy = Boolean(gw && 'isProxy' in gw && gw.isProxy)
 
-  const ctx: EventRouteContext = {
-    isProxy,
-    // 宿主窗在聊天面板可见时静音；代理窗口（生活空间 / 工作台）始终允许。
-    shouldPlayAudio: isProxy || !$chatVisible.get()
-  }
+  const ctx: EventRouteContext = { isProxy }
 
   switch (event.type) {
     case 'message.start':

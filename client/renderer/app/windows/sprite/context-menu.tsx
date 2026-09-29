@@ -6,7 +6,9 @@ import { useCallback, useEffect, useRef } from 'react'
 import {
   $contextMenuPos,
   $effectiveTier,
+  $userPreferredTier,
   closeContextMenu,
+  type DisturbanceTier,
   resetToHomePosition,
   setDefaultScale,
   setDisturbanceTier,
@@ -17,6 +19,7 @@ import { isRegionHit, useInteractiveRegion } from '@/shared/lib/interactive-regi
 import { SURFACE_OVERLAY } from '@/shared/panel/palette'
 import { $auth } from '@/shared/store/auth'
 import { requestCloseSurface } from '@/shared/store/surfaces'
+import { useStrings } from '@/shared/strings'
 
 interface ContextMenuProps {
   onOpenActivation?: () => void
@@ -60,14 +63,24 @@ function MenuDivider(): React.JSX.Element {
 export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMenuProps): React.JSX.Element {
   const auth = useStore($auth)
   const pos = useStore($contextMenuPos)
-  const effectiveTier = useStore($effectiveTier)
+  // 按用户偏好判断安静：全屏 / 游戏的临时静止不算用户选择，不能被开关覆盖成常规。
+  const preferredTier = useStore($userPreferredTier)
+  const dict = useStrings()
   const visible = pos !== null
   const authed = auth.kind === 'authenticated'
-  const isStill = effectiveTier === 'still'
+  const isStill = preferredTier === 'still'
 
   const backdropRef = useRef<HTMLDivElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
   const quietTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // 退出安静时恢复进入前的档位。
+  const restoreTierRef = useRef<DisturbanceTier>('normal')
+
+  useEffect(() => {
+    if (preferredTier !== 'still') {
+      restoreTierRef.current = preferredTier
+    }
+  }, [preferredTier])
 
   useEffect(() => {
     return () => {
@@ -84,7 +97,7 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
     }
 
     if (isStill) {
-      setDisturbanceTier('normal')
+      setDisturbanceTier(restoreTierRef.current)
     } else {
       setDisturbanceTier('still')
       // 50 分钟后自动恢复
@@ -190,23 +203,23 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
       >
         {authed ? (
           <>
-            <MenuItem accent icon={Home} label="生活空间" onClick={() => onOpenSurface?.('living')} />
-            <MenuItem accent icon={Monitor} label="工作台" onClick={() => onOpenSurface?.('workbench')} />
+            <MenuItem accent icon={Home} label={dict.living.title} onClick={() => onOpenSurface?.('living')} />
+            <MenuItem accent icon={Monitor} label={dict.workbench.title} onClick={() => onOpenSurface?.('workbench')} />
             <MenuDivider />
             <MenuItem
               icon={isStill ? IconVolume : IconVolumeOff}
-              label={isStill ? '可以吵我了' : '安静一会儿'}
+              label={isStill ? dict.companion.menu.quietOff : dict.companion.menu.quietOn}
               onClick={toggleQuiet}
             />
-            <MenuItem icon={IconRotateClockwise} label="一键归位" onClick={handleRest} />
+            <MenuItem icon={IconRotateClockwise} label={dict.companion.menu.resetPosition} onClick={handleRest} />
             <MenuDivider />
-            <MenuItem icon={EyeOff} label="隐藏角色" onClick={handleHideSprite} />
+            <MenuItem icon={EyeOff} label={dict.companion.menu.hide} onClick={handleHideSprite} />
           </>
         ) : (
           <>
-            <MenuItem icon={KeyRound} label="激活 / 登录" onClick={() => onOpenActivation?.()} />
+            <MenuItem icon={KeyRound} label={dict.companion.menu.activate} onClick={() => onOpenActivation?.()} />
             <MenuDivider />
-            <MenuItem icon={EyeOff} label="隐藏角色" onClick={handleHideSprite} />
+            <MenuItem icon={EyeOff} label={dict.companion.menu.hide} onClick={handleHideSprite} />
           </>
         )}
       </div>

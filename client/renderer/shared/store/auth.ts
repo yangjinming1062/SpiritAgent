@@ -1,4 +1,4 @@
-import type { DesktopAuthBroadcast, DesktopAuthSnapshot } from '@ipc/contracts'
+import type { DesktopActivatePayload, DesktopAuthBroadcast, DesktopAuthSnapshot } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { clearCompanionStorage, persistString, storedString } from '@/shared/lib/storage'
@@ -86,7 +86,7 @@ export async function applyAuthBroadcast(payload: DesktopAuthBroadcast): Promise
   return next
 }
 
-export async function activate(payload: { code: string }): Promise<void> {
+export async function activate(payload: DesktopActivatePayload): Promise<void> {
   await window.spiritagent.activate(payload)
 }
 

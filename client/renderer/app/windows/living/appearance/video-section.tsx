@@ -12,7 +12,9 @@ import {
   activateVideoPack,
   generateVideoPack,
   hydrateVideoPack,
+  VIDEO_ACTION_KEYS,
   VIDEO_GEN_STAGE_TEXT_KEYS,
+  type VideoActionKey,
   type VideoActionWire,
   videoGenScopeMatches
 } from '@/modules/character'
@@ -36,6 +38,10 @@ interface ActionEntry {
 
 function isActionInProgress(status: string): boolean {
   return ACTION_IN_PROGRESS.has(status)
+}
+
+function isVideoActionKey(key: string): key is VideoActionKey {
+  return (VIDEO_ACTION_KEYS as readonly string[]).includes(key)
 }
 
 function ActionPreview({ url }: { url: string }): React.JSX.Element {
@@ -87,9 +93,11 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
   const genStage = useStore($videoGenStage)
   const genError = useStore($videoGenError)
   const genScope = useStore($videoGenScope)
-  const t = useStrings().living.appearance
+  const dict = useStrings()
+  const t = dict.living.appearance
   const [regenConfirmOpen, setRegenConfirmOpen] = useState(false)
-  const [packsLoaded, setPacksLoaded] = useState(false)
+  const [packsStatus, setPacksStatus] = useState<'loading' | 'loaded' | 'failed'>('loading')
+  const [packsReloadKey, setPacksReloadKey] = useState(0)
   const [selectedPackId, setSelectedPackId] = useState<number | null>(null)
   const [selectedActionKey, setSelectedActionKey] = useState<string | null>(null)
   const [actionFilter, setActionFilter] = useState('')
@@ -108,8 +116,10 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     genError && videoGenScopeMatches(genError, outfitId, selectedPack?.id ?? null) ? genError.message : null
 
   const initialVideoError = selectedOutfit?.initialVideoError ?? null
+  // 列表加载失败不能按“尚未生成”展示，避免网络错误引导用户重复发起付费生成。
+  const packsLoadFailed = packsStatus === 'failed' && !!selectedOutfit && !selectedPack
 
-  const actionNames: Record<string, string> = {
+  const actionNames: Record<VideoActionKey, string> = {
     idle: t.videoIdle,
     walk_left: t.videoWalkLeft,
     walk_right: t.videoWalkRight,
@@ -129,7 +139,10 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     seenKeys.add(entry.action)
     actions.push({
       key: entry.action,
-      label: actionNames[entry.action] || entry.name || entry.action.replace(/_/g, ' '),
+      label:
+        (isVideoActionKey(entry.action) ? actionNames[entry.action] : '') ||
+        entry.name ||
+        entry.action.replace(/_/g, ' '),
       status: entry.status,
       error: entry.error,
       clipUrl: entry.clip_url,
@@ -138,7 +151,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     })
   }
 
-  for (const slot of ['idle', 'drag', 'walk_left', 'walk_right', 'peek_left', 'peek_right'] as const) {
+  for (const slot of VIDEO_ACTION_KEYS) {
     if (!seenKeys.has(slot)) {
       seenKeys.add(slot)
       actions.push({
@@ -187,6 +200,10 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
       return initialVideoError
     }
 
+    if (packsLoadFailed) {
+      return t.videoPacksLoadFailed
+    }
+
     // 单动作重做时整包仍是 ready，只提示动作生成，不误报为整包状态。
     if (scopedBusy) {
       return t.videoActionGenerating
@@ -197,42 +214,53 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     }
 
     if (selectedOutfit) {
-      return packsLoaded ? t.videoOutfitNotReady : t.videoLoading
+      return packsStatus === 'loading' ? t.videoLoading : t.videoOutfitNotReady
     }
 
     return t.videoSelectOutfit
   })()
 
-  const statusIsError = !!requestError || selectedPack?.status === 'failed' || !!initialVideoError
+  const statusIsError = !!requestError || selectedPack?.status === 'failed' || !!initialVideoError || packsLoadFailed
 
   useEffect(() => {
     if (authKind !== 'authenticated') {
-      setPacksLoaded(true)
+      setPacksStatus('loaded')
 
       return
     }
 
     let cancelled = false
-    setPacksLoaded(false)
-    void hydrateVideoPack().finally(() => {
+    setPacksStatus('loading')
+    void hydrateVideoPack().then(ok => {
       if (!cancelled) {
-        setPacksLoaded(true)
+        setPacksStatus(ok ? 'loaded' : 'failed')
       }
     })
 
     return () => {
       cancelled = true
     }
-  }, [authKind])
+  }, [authKind, packsReloadKey])
 
   useEffect(() => {
     if (!globalBusy) {
       return
     }
 
-    const timer = window.setInterval(() => void hydrateVideoPack(true), 5000)
+    let cancelled = false
 
-    return () => window.clearInterval(timer)
+    const timer = window.setInterval(() => {
+      void hydrateVideoPack(true).then(ok => {
+        if (!cancelled) {
+          setPacksStatus(ok ? 'loaded' : 'failed')
+        }
+      })
+    }, 5000)
+
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
   }, [globalBusy])
 
   useEffect(() => {
@@ -281,11 +309,11 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     }
 
     if (action.clipUrl) {
-      return { label: t.videoActionReady, className: 'bg-emerald-400' }
+      return { label: t.videoActionReady, className: 'bg-success' }
     }
 
     if (action.status === 'failed' || action.error) {
-      return { label: t.videoActionFailed, className: 'bg-rose-400' }
+      return { label: t.videoActionFailed, className: 'bg-danger-fg' }
     }
 
     return { label: t.videoActionOnDemandShort, className: 'bg-line-strong' }
@@ -317,7 +345,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                 </h2>
                 {selectedOutfit ? <span className="truncate text-xs text-body">{selectedOutfit.name}</span> : null}
                 {selectedPack?.active ? (
-                  <span className="shrink-0 rounded-full bg-emerald-500/15 px-2 py-0.5 text-[10px] text-emerald-300">
+                  <span className="shrink-0 rounded-full bg-success/15 px-2 py-0.5 text-[10px] text-success">
                     {t.videoActive}
                   </span>
                 ) : null}
@@ -366,7 +394,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                 {t.videoResume}
               </button>
             ) : null}
-            {!selectedPack && packsLoaded && selectedOutfit?.status === 'ready' ? (
+            {!selectedPack && packsStatus === 'loaded' && selectedOutfit?.status === 'ready' ? (
               <button
                 className={BTN_PRIMARY}
                 disabled={globalBusy || authKind !== 'authenticated'}
@@ -559,9 +587,23 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
         <div className="m-4 grid min-h-0 flex-1 place-items-center rounded-xl border border-dashed border-line-strong bg-surface-card px-6 text-center">
           <div className="max-w-md">
             <p className="text-sm font-medium text-strong">
-              {selectedOutfit ? (packsLoaded ? t.videoOutfitNotReady : t.videoLoading) : t.videoSelectOutfit}
+              {!selectedOutfit
+                ? t.videoSelectOutfit
+                : packsLoadFailed
+                  ? t.videoPacksLoadFailed
+                  : packsStatus === 'loaded'
+                    ? t.videoOutfitNotReady
+                    : t.videoLoading}
             </p>
-            {selectedOutfit && packsLoaded ? (
+            {packsLoadFailed ? (
+              <button
+                className={cn(BTN_SUBTLE, 'mt-3')}
+                onClick={() => setPacksReloadKey(key => key + 1)}
+                type="button"
+              >
+                {dict.common.retry}
+              </button>
+            ) : selectedOutfit && packsStatus === 'loaded' ? (
               <p className="mt-1 text-xs leading-relaxed text-muted">{t.videoGenHint}</p>
             ) : null}
             {initialVideoError ? <p className="mt-2 text-xs text-danger-fg">{initialVideoError}</p> : null}

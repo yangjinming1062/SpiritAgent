@@ -1,3 +1,4 @@
+import type { SkillItem } from '@ipc/contracts'
 import { useEffect, useMemo, useState } from 'react'
 
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
@@ -19,23 +20,8 @@ import { refreshSession } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-import { UNCATEGORIZED_KEY } from './constants'
-
-type SkillSummary = {
-  category?: string
-  name: string
-  description?: string
-  platforms?: string[] | null
-  compatible: boolean
-  enabled: boolean
-}
-
-function categoryLabel(key: string, otherLabel: string): string {
-  return key === UNCATEGORIZED_KEY ? otherLabel : key.replace(/-/g, ' ')
-}
-
-function isUserCategory(key: string): boolean {
-  return key !== UNCATEGORIZED_KEY
+function categoryLabel(key: string): string {
+  return key.replace(/-/g, ' ')
 }
 
 export function SkillsPage(): React.JSX.Element {
@@ -46,7 +32,7 @@ export function SkillsPage(): React.JSX.Element {
   const loadErrorLabel = s.loadError
   const loadErrorLabelRef = useLatestRef(loadErrorLabel)
 
-  const loader = useAsyncLoader<SkillSummary[]>(async () => {
+  const loader = useAsyncLoader<SkillItem[]>(async () => {
     const res = await window.spiritagent.skills.list()
 
     if (!res.ok) {
@@ -58,7 +44,7 @@ export function SkillsPage(): React.JSX.Element {
     return res.skills ?? []
   })
 
-  const [skills, setSkills] = useState<SkillSummary[]>([])
+  const [skills, setSkills] = useState<SkillItem[]>([])
   const loading = loader.isLoading
   const loadFailed = loader.error !== null
 
@@ -72,20 +58,15 @@ export function SkillsPage(): React.JSX.Element {
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
 
-  const skillsRef = useLatestRef(skills)
   const saveErrorRef = useLatestRef(s.saveError)
   const refreshErrorRef = useLatestRef(s.refreshError)
 
-  // 通过 ref 读取最新的 skills，使切换回调不依赖数组长度；
-  // IPC 失败路径回滚到点击前的快照。
+  // 开关不做乐观更新，列表只取主进程返回的全量结果；失败时界面仍是点击前的状态，只需提示。
   const toggle = async (name: string, nextEnabled: boolean) => {
-    const prev = skillsRef.current
-
     try {
       const res = await window.spiritagent.skills.setEnabled({ name, enabled: nextEnabled })
 
       if (!res.ok || !res.skills) {
-        setSkills(prev)
         notifyError(res.error ?? 'save-failed', saveErrorRef.current)
 
         return
@@ -100,26 +81,24 @@ export function SkillsPage(): React.JSX.Element {
         notifyError(err, refreshErrorRef.current)
       }
     } catch (err) {
-      setSkills(prev)
       notifyError(err, saveErrorRef.current)
     }
   }
 
   const { counts, orderedCategories, groupedVisible, visibleCount } = useMemo(() => {
-    const counts = new Map<string, number>([[UNCATEGORIZED_KEY, 0]])
+    const counts = new Map<string, number>()
     const needle = searchTerm.trim().toLowerCase()
-    const groupedVisible = new Map<string, SkillSummary[]>()
+    const groupedVisible = new Map<string, SkillItem[]>()
     let visibleCount = 0
 
-    // 与平台不兼容的 skills 从菜单中完全隐藏；skills.cjs 中的 IPC 守卫
-    // 会拒绝旧调用方重新启用它们。
+    // 与平台不兼容的技能不显示；main/ipc/skills.ts 拒绝启用它们。
     for (const skill of skills) {
       if (!skill.compatible) {
         continue
       }
 
       visibleCount += 1
-      const key = skill.category ?? UNCATEGORIZED_KEY
+      const key = skill.category
       counts.set(key, (counts.get(key) ?? 0) + 1)
 
       if (selectedCategory !== null && key !== selectedCategory) {
@@ -130,7 +109,7 @@ export function SkillsPage(): React.JSX.Element {
         const matches =
           skill.name.toLowerCase().includes(needle) ||
           (skill.description ?? '').toLowerCase().includes(needle) ||
-          (skill.category ?? '').toLowerCase().includes(needle)
+          skill.category.toLowerCase().includes(needle)
 
         if (!matches) {
           continue
@@ -146,20 +125,7 @@ export function SkillsPage(): React.JSX.Element {
       }
     }
 
-    const orderedCategories = Array.from(counts.entries())
-      .filter(([, n]) => n > 0)
-      .sort(([a], [b]) => {
-        if (!isUserCategory(a)) {
-          return 1
-        }
-
-        if (!isUserCategory(b)) {
-          return -1
-        }
-
-        return a.localeCompare(b)
-      })
-      .map(([key]) => key)
+    const orderedCategories = Array.from(counts.keys()).sort((a, b) => a.localeCompare(b))
 
     return { counts, orderedCategories, groupedVisible, visibleCount }
   }, [skills, searchTerm, selectedCategory])
@@ -205,9 +171,7 @@ export function SkillsPage(): React.JSX.Element {
           return items
             ? [
                 <div className="flex flex-col gap-2" key={categoryKey}>
-                  <h3 className={cn(SECTION_TITLE, isUserCategory(categoryKey) && 'capitalize')}>
-                    {categoryLabel(categoryKey, sk.other)}
-                  </h3>
+                  <h3 className={cn(SECTION_TITLE, 'capitalize')}>{categoryLabel(categoryKey)}</h3>
                   <SettingCard>
                     {items.map(skill => (
                       <SettingRow
@@ -251,10 +215,7 @@ export function SkillsPage(): React.JSX.Element {
                 onClick={() => setSelectedCategory(categoryKey)}
                 type="button"
               >
-                <span className={isUserCategory(categoryKey) ? 'capitalize' : undefined}>
-                  {categoryLabel(categoryKey, sk.other)}
-                </span>{' '}
-                · {counts.get(categoryKey) ?? 0}
+                <span className="capitalize">{categoryLabel(categoryKey)}</span> · {counts.get(categoryKey) ?? 0}
               </button>
             ))}
           </div>

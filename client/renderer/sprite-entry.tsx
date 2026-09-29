@@ -33,7 +33,13 @@ function AccountScopedSpriteWindow(): React.JSX.Element {
   return <SpriteWindow key={key} />
 }
 
-createRoot(document.getElementById('root')!).render(
+const container = document.getElementById('root')
+
+if (!container) {
+  throw new Error('sprite-root: missing #root element')
+}
+
+createRoot(container).render(
   <StrictMode>
     <ErrorBoundary label="sprite-root">
       <HapticsProvider>

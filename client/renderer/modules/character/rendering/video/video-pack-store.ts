@@ -62,7 +62,7 @@ export const $videoGenScope = atom<VideoGenScope | null>(null)
 /** 按参考生成的任务阶段（对应后端 companion.video.progress 的 stage） */
 export type VideoGenStage = 'script' | 'pose' | 'submit' | 'generate' | 'download' | 'process' | 'publish'
 
-let inflight: Promise<void> | null = null
+let inflight: Promise<boolean> | null = null
 let generationRevision = 0
 let requestingGeneration = false
 
@@ -131,10 +131,10 @@ registerStorageClearHandler(() => {
   $videoGenScope.set(null)
 })
 
-/** 刷新包列表与生成状态；事件丢失或离线期间的兜底。 */
-export async function hydrateVideoPack(refresh = false): Promise<void> {
+/** 刷新包列表与生成状态；事件丢失或离线期间的兜底。返回是否取得当前列表，失败原因记日志。 */
+export async function hydrateVideoPack(refresh = false): Promise<boolean> {
   if ($auth.get().kind !== 'authenticated') {
-    return
+    return false
   }
 
   if (inflight) {
@@ -142,11 +142,7 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
       const epoch = currentClearEpoch()
       await inflight
 
-      if (epoch === currentClearEpoch()) {
-        await hydrateVideoPack()
-      }
-
-      return
+      return epoch === currentClearEpoch() ? hydrateVideoPack() : false
     }
 
     return inflight
@@ -155,16 +151,24 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
   const epoch = currentClearEpoch()
   const revision = generationRevision
 
-  const load = (async (): Promise<void> => {
+  const read = (async (): Promise<boolean> => {
     try {
       const res = await authedApi<{ packs?: VideoPackWire[] }>({ path: '/api/companion/video-packs' })
 
       if (epoch !== currentClearEpoch() || revision !== generationRevision) {
-        return
+        return false
       }
 
-      if (!res.ok || !res.value) {
-        return
+      if (!res.ok) {
+        if (res.reason === 'err') {
+          log.warn('video-pack-store', 'hydrateVideoPack failed', res.error)
+        }
+
+        return false
+      }
+
+      if (!res.value) {
+        return false
       }
 
       const packs = res.value.packs ?? []
@@ -198,18 +202,25 @@ export async function hydrateVideoPack(refresh = false): Promise<void> {
           clearGenIssue()
         }
       }
+
+      return true
     } catch (err) {
       log.warn('video-pack-store', 'hydrateVideoPack failed', err)
-    } finally {
-      if (epoch === currentClearEpoch()) {
-        inflight = null
 
-        if (revision !== generationRevision) {
-          void hydrateVideoPack()
-        }
-      }
+      return false
     }
   })()
+
+  // 事件先于响应到达时本次结果已丢弃，以重新读取的结果为准。
+  const load = read.then(loaded => {
+    if (epoch !== currentClearEpoch()) {
+      return false
+    }
+
+    inflight = null
+
+    return revision === generationRevision ? loaded : hydrateVideoPack()
+  })
 
   inflight = load
 

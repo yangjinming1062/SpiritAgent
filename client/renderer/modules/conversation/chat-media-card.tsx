@@ -124,12 +124,12 @@ function ReviewMediaCard({ item, onReviewed }: { item: ChatMediaItem; onReviewed
 
 function ImageCard({ item }: { item: ChatMediaItem }): React.JSX.Element {
   const dict = useStrings()
-  const src = useResolvedMediaSrc(item)
+  const media = useResolvedMediaSrc(item)
 
-  if (!src) {
+  if (media.status !== 'ready') {
     return (
       <div className="flex h-24 w-40 items-center justify-center rounded-lg border border-line-standard bg-fill-faint text-xs text-faint">
-        {dict.chat.media.imageLoading}
+        {media.status === 'failed' ? dict.chat.media.loadFailed : dict.chat.media.imageLoading}
       </div>
     )
   }
@@ -140,7 +140,7 @@ function ImageCard({ item }: { item: ChatMediaItem }): React.JSX.Element {
       onClick={() => presentationPorts().openMediaViewer(item)}
       type="button"
     >
-      <img alt="" className="block max-h-56 max-w-full object-contain" src={src} />
+      <img alt="" className="block max-h-56 max-w-full object-contain" src={media.src} />
     </button>
   )
 }

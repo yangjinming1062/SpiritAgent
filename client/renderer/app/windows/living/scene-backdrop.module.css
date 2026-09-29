@@ -95,14 +95,6 @@ html[data-effect] .backdropImage[data-baked='true'] {
   transform-origin: 70% center;
 }
 
-html[data-effect][data-palette] .backdropImage[data-baked='true'].status_pending {
-  filter: brightness(1.07);
-}
-
-html[data-effect='clear'][data-palette='day'] .backdropImage[data-baked='true'].status_pending {
-  filter: brightness(1.041237);
-}
-
 html[data-effect] .backdropImage[data-baked='true'].kenBurns {
   animation-name: ken-burns-baked;
 }

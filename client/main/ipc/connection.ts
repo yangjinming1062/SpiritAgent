@@ -1,4 +1,4 @@
-import { type DesktopBootProgress, IPC, type IpcInvokeContract, type SpiritAgentApiRequest } from '@ipc/contracts'
+import { IPC, type IpcInvokeContract, type SpiritAgentApiRequest } from '@ipc/contracts'
 import type { BrowserWindow, IpcMain, WebContents } from 'electron'
 
 import { assertApiRequestAllowed } from '../security/api-allowlist'
@@ -8,6 +8,21 @@ import { dataUrlFromBuffer } from '../shared/mime'
 import { HttpError, isUnauthorized, sendToSender } from '../shared/utils'
 
 import type { AssetDiskCache, CachedAsset } from './asset-disk-cache'
+
+export type GetCurrentAuth = () => null | { sessionId: string; token: string }
+
+/** 401 且失败请求所用 token 仍是当前 token 时，通知发起窗口进入会话过期流程；换号前的迟到 401 不影响新会话。 */
+export function createAuthExpiryNotifier(
+  getCurrentAuth: GetCurrentAuth
+): (error: unknown, requestToken: null | string | undefined, sender: WebContents) => void {
+  return (error, requestToken, sender) => {
+    const current = getCurrentAuth()
+
+    if (isUnauthorized(error) && requestToken && current?.token === requestToken) {
+      sendToSender(sender, IPC.event.authSessionExpired, current.sessionId)
+    }
+  }
+}
 
 interface ConnectionIpcDeps {
   assetDiskCache: AssetDiskCache
@@ -19,8 +34,7 @@ interface ConnectionIpcDeps {
     token?: string,
     options?: { body?: unknown; method?: string; timeoutMs?: number }
   ) => Promise<unknown>
-  getBootProgressState: () => DesktopBootProgress
-  getCurrentAuth: () => null | { sessionId: string; token: string }
+  getCurrentAuth: GetCurrentAuth
   getMainWindow: () => BrowserWindow | null | undefined
   ipcMain: IpcMain
   mintWsTicket: (baseUrl: string, token: string) => Promise<string>
@@ -51,20 +65,13 @@ export function registerConnectionIpc({
   ensureBackend,
   fetchImpl = globalThis.fetch,
   fetchJson,
-  getBootProgressState,
   getCurrentAuth,
   getMainWindow,
   ipcMain,
   mintWsTicket,
   resolvePathTimeoutMs
 }: ConnectionIpcDeps): void {
-  function notifyAuthExpiredOn401(error: unknown, connection: BackendConnection, sender: WebContents): void {
-    const current = getCurrentAuth()
-
-    if (isUnauthorized(error) && connection.token && current?.token === connection.token) {
-      sendToSender(sender, IPC.event.authSessionExpired, current.sessionId)
-    }
-  }
+  const notifyAuthExpiredOn401 = createAuthExpiryNotifier(getCurrentAuth)
 
   async function readAsset(sender: WebContents, request?: AssetRequest): Promise<CachedAsset> {
     const raw = assetUrl(request)
@@ -101,7 +108,7 @@ export function registerConnectionIpc({
         mime: res.headers.get('content-type') || 'application/octet-stream'
       }
     } catch (error) {
-      notifyAuthExpiredOn401(error, connection, sender)
+      notifyAuthExpiredOn401(error, connection.token, sender)
 
       throw error
     }
@@ -135,12 +142,11 @@ export function registerConnectionIpc({
 
       return `${connection.baseUrl.replace(/^http/, 'ws')}/api/chat/ws?ticket=${encodeURIComponent(ticket)}`
     } catch (error) {
-      notifyAuthExpiredOn401(error, connection, event.sender)
+      notifyAuthExpiredOn401(error, connection.token, event.sender)
 
       throw error
     }
   })
-  ipcMain.handle(IPC.invoke.bootProgressGet, () => getBootProgressState())
 
   ipcMain.handle(IPC.invoke.api, async (event, request: SpiritAgentApiRequest) => {
     assertApiRequestAllowed(request?.path, request?.method)
@@ -156,7 +162,7 @@ export function registerConnectionIpc({
         timeoutMs
       })
     } catch (error: unknown) {
-      notifyAuthExpiredOn401(error, connection, event.sender)
+      notifyAuthExpiredOn401(error, connection.token, event.sender)
 
       throw error
     }

@@ -4,6 +4,7 @@
 
 import { atom } from 'nanostores'
 
+import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 
 import { resolvePortraitUrl } from './avatar-image'
@@ -303,8 +304,10 @@ export function hydrateAvatarSeeds(): Promise<AvatarSeeds> {
         { assetUrl: mergedAssetUrl, fullbodySeedUrl: mergedFullbodyRaw },
         { merge: true }
       )
-    } catch {
+    } catch (error) {
       // 网络失败不清空本地展示：提示词已按参考图锚定，清空会导致自备图弹窗缺图。
+      log.warn('avatar-seeds', 'Hydration failed', error)
+
       return $avatarSeeds.get()
     } finally {
       if (gen === seedEpoch) {

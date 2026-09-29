@@ -100,7 +100,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
     personaFromWire({
       biological_type: parsed.biological_type,
       gender: parsed.gender,
-      name: parsed.name ?? '伙伴',
+      name: parsed.name ?? '',
       personality: parsed.personality ?? '',
       relationship: parsed.relationship,
       speaking_style: parsed.speaking_style

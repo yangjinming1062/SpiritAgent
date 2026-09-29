@@ -11,9 +11,7 @@ interface ErrorBoundaryFallbackProps {
 
 interface ErrorBoundaryProps {
   children: ReactNode
-  fallback?: (props: ErrorBoundaryFallbackProps) => ReactNode
   label?: string
-  onError?: (error: Error, info: ErrorInfo) => void
 }
 
 interface ErrorBoundaryState {
@@ -29,7 +27,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
     log.error(this.props.label ? `error-boundary:${this.props.label}` : 'error-boundary', error, info.componentStack)
-    this.props.onError?.(error, info)
   }
 
   reset = () => {
@@ -41,10 +38,6 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
     if (!error) {
       return this.props.children
-    }
-
-    if (this.props.fallback) {
-      return this.props.fallback({ error, reset: this.reset })
     }
 
     return <RootErrorFallback error={error} reset={this.reset} />

@@ -1,21 +1,21 @@
 import { type DesktopUpdateEvent, type DesktopUpdateInfo, IPC, type IpcEventContract } from '@ipc/contracts'
 import type { App, IpcMain } from 'electron'
 import log from 'electron-log/main'
-// 顶层静态 import：client/package.json 是 ESM (`"type": "module"`)，asar 模式下 dynamic require
-// （`require('electron-log/main')` / `require('electron-updater')`）会被 Node 拒绝并抛
-// "Dynamic require of 'electron-log/main' is not supported"。把这两条搬上来既消除错误，
-// 也让 esbuild 在打包期把 CJS 入口转成 ESM-friendly 的 default import。
-// 注意：electron-updater 是 CJS 模块没有 named export `autoUpdater`，必须 default import + 解构，
-// 顶层 named import 在 dev/prod 都会被 Node ESM loader 拒绝。
+// 产物为 ESM：electron-updater 是 CJS 包，只能静态 default import 后解构 autoUpdater。
 import electronUpdaterPkg from 'electron-updater'
 import type { ProgressInfo } from 'electron-updater'
 
+import * as store from '../shared/lib/runner-config-store'
 import { errorMessage } from '../shared/utils'
+
+// 更新源来自激活时保存的后端地址；设置页把该文案拼在「检查更新失败」之后。
+const FEED_UNAVAILABLE_MESSAGE = { en: 'activation required', zh: '请先激活' } as const
 
 interface UpdateIpcDeps {
   electron: { app: App }
   ipcMain: IpcMain
-  isFeedConfigured?: () => boolean
+  /** 按当前保存的后端地址配置更新源；尚无地址时返回 false。 */
+  ensureFeedConfigured: () => boolean
   broadcast: <C extends keyof IpcEventContract>(channel: C, ...payload: IpcEventContract[C]) => void
 }
 
@@ -30,7 +30,7 @@ function toDesktopUpdateInfo(info: unknown): DesktopUpdateInfo {
   }
 }
 
-export function registerUpdateIpc({ electron, ipcMain, isFeedConfigured, broadcast }: UpdateIpcDeps): void {
+export function registerUpdateIpc({ electron, ipcMain, ensureFeedConfigured, broadcast }: UpdateIpcDeps): void {
   const { app } = electron
   let latestEvent: DesktopUpdateEvent | null = null
 
@@ -44,21 +44,25 @@ export function registerUpdateIpc({ electron, ipcMain, isFeedConfigured, broadca
   // 自动检查可能早于生活空间开窗；新窗口订阅后读最新快照，补齐开窗前的状态。
   ipcMain.handle(IPC.invoke.updateGetState, () => latestEvent)
 
-  // 始终注册 updateCheck：开发模式无更新源，回 'none' 让渲染层落 "up to date" 文案，
-  // 避免 renderer 触发未注册 IPC handler 抛出 unhandled rejection。
+  // 始终注册 updateCheck，避免渲染层调用未注册的 handler 抛出 unhandled rejection。
   ipcMain.handle(IPC.invoke.updateCheck, async () => {
-    if (!app.isPackaged || (isFeedConfigured && !isFeedConfigured())) {
+    // 开发构建没有更新源，回 'none'。
+    if (!app.isPackaged) {
       broadcastUpdate({ type: 'none' })
 
       return
     }
 
-    try {
-      await autoUpdater.checkForUpdates()
-    } catch (e: unknown) {
-      const msg = errorMessage(e)
-      broadcastUpdate({ message: msg, type: 'error' })
+    if (!ensureFeedConfigured()) {
+      const language = store.read().language === 'en' ? 'en' : 'zh'
+
+      broadcastUpdate({ message: FEED_UNAVAILABLE_MESSAGE[language], type: 'error' })
+
+      return
     }
+
+    // checkForUpdates 失败时先发 'error' 事件再抛出；只由下方监听器上报，避免重复广播覆盖 404 映射。
+    await autoUpdater.checkForUpdates().catch(() => {})
   })
 
   if (!app.isPackaged) {

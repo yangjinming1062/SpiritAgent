@@ -1,8 +1,10 @@
-import { IPC } from '@ipc/contracts'
+import { IPC, type IpcInvokeContract } from '@ipc/contracts'
 import type { IpcMain } from 'electron'
 
-function formatRendererLog(payload?: { args?: unknown[]; level?: string; scope?: string }): string {
-  const { args, scope = 'general' } = payload ?? {}
+type RendererLogPayload = Parameters<IpcInvokeContract['spiritagent:log:emit']>[0]
+
+function formatRendererLog(payload?: RendererLogPayload): string {
+  const { args, level = 'info', scope = 'general' } = payload ?? {}
 
   const parts = (Array.isArray(args) ? args : [args]).map(a => {
     if (a == null) {
@@ -24,11 +26,11 @@ function formatRendererLog(payload?: { args?: unknown[]; level?: string; scope?:
     return String(a)
   })
 
-  return `[renderer:${scope}] ${parts.join(' ')}`
+  return `[renderer:${scope}] ${level}: ${parts.join(' ')}`
 }
 
 export function registerLogIpc({ ipcMain, log }: { ipcMain: IpcMain; log: (msg: string) => void }): void {
-  ipcMain.handle(IPC.invoke.logEmit, (_event, payload?: { args?: unknown[]; level?: string; scope?: string }) => {
+  ipcMain.handle(IPC.invoke.logEmit, (_event, payload?: RendererLogPayload) => {
     log(formatRendererLog(payload))
   })
 }

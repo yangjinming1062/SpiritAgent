@@ -561,16 +561,6 @@ html[data-effect='clear'] .chatInputWrapper {
   box-shadow: none;
 }
 
-.placeholder {
-  align-items: center;
-  color: var(--ui-text-muted);
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  justify-content: center;
-  padding: 32px;
-}
-
 html[class~='no-blur'] .shell,
 html[class~='no-blur'] .titlebar,
 html[class~='no-blur'] .rail,

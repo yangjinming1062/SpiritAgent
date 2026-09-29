@@ -1,6 +1,6 @@
 import path from 'node:path'
 
-import { IPC } from '@ipc/contracts'
+import { IPC, type IpcInvokeContract } from '@ipc/contracts'
 import type { IpcMain } from 'electron'
 
 import * as store from '../shared/lib/runner-config-store'
@@ -8,10 +8,13 @@ import { buildSkillSummaries } from '../shared/lib/skill-index'
 import { buildToolsetRoster } from '../shared/lib/toolset-index'
 
 interface SkillsIpcDeps {
-  spiritagentHome?: null | string
-  getRunnerBridge?: () => { getTools?: () => Record<string, unknown>[] } | null | undefined
+  spiritagentHome: string
+  getRunnerBridge: () => null | { getTools: () => Record<string, unknown>[] }
   ipcMain: IpcMain
 }
+
+type SkillSetEnabledPayload = Parameters<IpcInvokeContract['spiritagent:skill:set-enabled']>[0]
+type ToolsetSetEnabledPayload = Parameters<IpcInvokeContract['spiritagent:toolset:set-enabled']>[0]
 
 // 技能与工具集的启/禁用共用同一写入路径：校验字段、在 disabled 集合增删并写回。
 // 差异通过 section / idField 注入。
@@ -61,22 +64,15 @@ async function toggleDisabled({
 }
 
 export function registerSkillsIpc({ spiritagentHome, getRunnerBridge, ipcMain }: SkillsIpcDeps): void {
-  const skillsRoot = path.join(spiritagentHome || '', 'skills')
-
-  const loadToolsetSchemas = (): Record<string, unknown>[] => {
-    try {
-      return (getRunnerBridge?.()?.getTools?.() as Record<string, unknown>[]) ?? []
-    } catch {
-      return []
-    }
-  }
+  const skillsRoot = path.join(spiritagentHome, 'skills')
+  const loadToolsetSchemas = (): Record<string, unknown>[] => getRunnerBridge()?.getTools() ?? []
 
   ipcMain.handle(IPC.invoke.skillsList, () => ({
     ok: true,
     skills: buildSkillSummaries(skillsRoot, store.getDisabledSet())
   }))
 
-  ipcMain.handle(IPC.invoke.skillSetEnabled, async (_evt, payload) => {
+  ipcMain.handle(IPC.invoke.skillSetEnabled, async (_evt, payload?: SkillSetEnabledPayload) => {
     const { enabled, name } = payload ?? {}
 
     if (enabled === true) {
@@ -101,7 +97,7 @@ export function registerSkillsIpc({ spiritagentHome, getRunnerBridge, ipcMain }:
     toolsets: buildToolsetRoster(loadToolsetSchemas(), store.getDisabledSet('toolsets'))
   }))
 
-  ipcMain.handle(IPC.invoke.toolsetSetEnabled, async (_evt, payload) => {
+  ipcMain.handle(IPC.invoke.toolsetSetEnabled, async (_evt, payload?: ToolsetSetEnabledPayload) => {
     const schemas = loadToolsetSchemas()
 
     const result = await toggleDisabled({

@@ -1,16 +1,17 @@
 import { type App, BrowserWindow, screen } from 'electron'
 
 import { readRestPosition } from '../ipc/sprite'
+import { errorMessage } from '../shared/utils'
 
 import type { ZoomPersistence } from './zoom-persistence'
 
 export interface SpriteWindowDeps {
   app: Pick<App, 'dock' | 'getPath' | 'isPackaged'>
-  bootProgress: { broadcast: () => void }
   getAppIconPath: () => null | string
   getMainWindow: () => null | BrowserWindow
   isMac: boolean
   preloadPath: string
+  rememberLog: (chunk: string) => void
   rendererUrlFor: (id: 'sprite', theme?: string) => string
   seedTheme: () => string | undefined
   setMainWindow: (win: null | BrowserWindow) => void
@@ -90,10 +91,12 @@ export function createSpriteWindowFactory(deps: SpriteWindowDeps): {
     deps.windowHandlers.installStandardWindowHandlers(mainWindow)
     deps.installCloseInterceptor(mainWindow)
 
-    void mainWindow.loadURL(deps.rendererUrlFor('sprite', deps.seedTheme()))
+    mainWindow
+      .loadURL(deps.rendererUrlFor('sprite', deps.seedTheme()))
+      .catch(error => deps.rememberLog(`[sprite] loading renderer failed: ${errorMessage(error)}`))
+
     mainWindow.webContents.once('did-finish-load', () => {
       deps.zoomPersistence.restorePersistedZoomLevel(mainWindow)
-      deps.bootProgress.broadcast()
       mainWindow.showInactive()
     })
   }

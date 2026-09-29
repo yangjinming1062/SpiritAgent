@@ -8,7 +8,6 @@ export {
   type ActionHitmask,
   type ActionPlayCommand,
   type ActionPlayInstance,
-  ensurePeekAction,
   hydrateActionCatalog,
   isActionStageVisible,
   observeActionStageVisibility,
@@ -18,7 +17,7 @@ export {
   settlePlayInstance,
   shouldStartInstance
 } from './actions'
-export { $focusContext, $screenLocked, reportInteractionStat, startActivityMonitor } from './activity'
+export { $screenLocked, reportInteractionStat, startActivityMonitor } from './activity'
 export { startAutonomyProvision, stopAutonomyProvision } from './autonomy'
 export {
   clearDraftRefImage,
@@ -29,13 +28,7 @@ export {
   saveDraftRefImage
 } from './avatar-image'
 export { awaitAvatarRegeneration, resolveAvatarRegeneration } from './avatar-regen-store'
-export {
-  $avatarSeeds,
-  clearAvatarSeeds,
-  hydrateAvatarSeeds,
-  patchAvatarSeeds,
-  refreshAvatarSeeds
-} from './avatar-seeds-store'
+export { $avatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds, refreshAvatarSeeds } from './avatar-seeds-store'
 export {
   $characterCard,
   BODY_FEATURE_KEYS,
@@ -44,7 +37,7 @@ export {
   PORTRAIT_FEATURE_KEYS,
   saveCharacterCard
 } from './character-card-store'
-export type { CharacterCard, CharacterFeatureKey, CharacterFeatures, CharacterOverrides } from './character-card-store'
+export type { CharacterOverrides } from './character-card-store'
 export {
   $companionLifecycle,
   $effectiveTier,
@@ -58,18 +51,10 @@ export {
   reportUserActivity,
   setCompanionLifecycle,
   setDisturbanceTier,
-  setSpriteState,
-  type SpriteEmotion,
-  type SpriteStateName
+  setSpriteState
 } from './companion-store'
 export { FullbodyReferencePanel } from './fullbody-reference-panel'
-export {
-  $fullbodyReference,
-  clearFullbodyReferenceHistory,
-  hydrateFullbodyReference,
-  regenerateFullbodyReference,
-  restoreFullbodyReferenceVersion
-} from './fullbody-reference-store'
+export { hydrateFullbodyReference } from './fullbody-reference-store'
 export { GenerationActionsGroup } from './generation-actions'
 export {
   assembleCharacterPersona,
@@ -81,11 +66,8 @@ export {
 export {
   CHARACTER_GENDER_PRESETS,
   PERSONALITY_PRESETS,
-  type PersonalityPreset,
   RELATIONSHIP_PRESETS,
-  type RelationshipPreset,
   SPEAKING_STYLE_PRESETS,
-  type SpeakingStylePreset,
   SPECIES_PRESETS,
   USER_GENDER_PRESETS,
   VOICE_PRESETS
@@ -123,16 +105,13 @@ export {
   setResponsePreference
 } from './prefs'
 export {
-  type CompanionFallbackStatus,
-  type CompanionPresentation,
-  type CompanionRendererKind,
   resolveCompanionPresentation,
   resolveVideoAction,
   VIDEO_ACTION_KEYS,
   VIDEO_GEN_STAGE_TEXT_KEYS,
   type VideoActionKey
 } from './presentation'
-export { bindProactiveLineSpeaker, type ProactiveLineOptions } from './proactive-speak'
+export { bindProactiveLineSpeaker } from './proactive-speak'
 export { handleDragEndInteraction } from './reactions/reaction-audio'
 export { EggStage } from './rendering/fallback/egg-stage'
 export {
@@ -145,10 +124,8 @@ export {
   generateVideoPack,
   hydrateVideoPack,
   type VideoActionWire,
-  type VideoGenError,
-  type VideoGenScope,
   videoGenScopeMatches
-} from './rendering/video'
+} from './rendering/video/video-pack-store'
 export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritual-walk'
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {
@@ -162,17 +139,16 @@ export {
   $spriteCanvasRect,
   $spriteContentRect,
   $viewport,
+  baseSpriteSize,
   cancelMovement,
   cancelPeekPreparation,
   commitPeekPreparation,
   computeOverlayAnchorBesideSprite,
   endDragAt,
-  enterWindowPeek,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
   initSpatial,
   leavePeekForExpression,
-  type Locomotion,
   resetToHomePosition,
   restorePeekAfterExpression,
   setDefaultScale,
@@ -181,18 +157,11 @@ export {
   syncDefaultScale,
   updateDragPosition
 } from './spatial'
-export { peekMaskRects, type SpatialPeek } from './spatial-peek'
+export { peekMaskRects } from './spatial-peek'
 export { SpriteStatusBadge } from './sprite-status-badge'
-export { $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/context-menu-store'
+export { $contextMenuPos, closeContextMenu } from './sprite/context-menu-store'
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
 export { clearVfx, emitVfx, SpriteVfxOverlay } from './vfx'
 export { useOutfitDesignSession } from './wardrobe/design-session'
 
-export {
-  $outfitPolicy,
-  $outfits,
-  deleteOutfit,
-  hydrateWardrobe,
-  type OutfitPolicy,
-  setOutfitPolicy
-} from './wardrobe/wardrobe-store'
+export { $outfitPolicy, $outfits, deleteOutfit, hydrateWardrobe, setOutfitPolicy } from './wardrobe/wardrobe-store'

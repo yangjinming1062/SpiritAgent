@@ -15,40 +15,22 @@ export const dict = {
       saveFailed: '保存伙伴显示设置失败，请重试',
       dragTitle: (name: string) => `拖动${name}可移动整个窗口`
     },
-    apply: '应用',
-    back: '返回',
     save: '保存',
     saving: '保存中…',
     cancel: '取消',
-    choose: '选择',
     clear: '清除',
     close: '关闭',
-    confirm: '确认',
-    connect: '连接',
-    connecting: '连接中',
-    continue: '继续',
     copied: '已复制',
-    copy: '复制',
     copyFailed: '复制失败',
-    delete: '删除',
-    done: '完成',
-    error: '错误',
-    failed: '失败',
     loading: '加载中…',
     maximize: '最大化',
     minimize: '最小化',
-    refresh: '刷新',
     remove: '移除',
-    replace: '替换',
     restore: '还原',
     retry: '重试',
-    run: '运行',
-    send: '发送',
-    set: '设置',
-    update: '更新',
-    on: '开',
-    off: '关',
     pickDate: '选择日期',
+    datePicker: { year: '年', month: '月', day: '日', unset: '未选择' },
+    imagePick: { tooLarge: '图片太大，请换一张较小的图片', readFailed: '无法读取所选图片，请重试' },
     processing: '处理中…'
   },
 
@@ -99,20 +81,13 @@ export const dict = {
   },
 
   boot: {
-    ready: (brandFullName: string) => `${brandFullName} 已就绪`,
     desktopBootFailedWithMessage: (message: string) => `桌面启动失败：${message}`,
-    steps: {
-      connectingGateway: '正在连接桌面网关',
-      startingDesktopConnection: '正在启动桌面连接',
-      startingSpiritAgentDesktop: (brandFullName: string) => `正在启动 ${brandFullName}…`
-    },
     errors: {
       desktopBootFailed: '桌面启动失败',
+      bridgeUnavailable: '桌面组件不可用，请重启应用',
       desktopReconnectFailed: '与后端连接已中断，应用正在持续重试。'
     },
     failure: {
-      title: (brandName: string) => `${brandName} 无法启动`,
-      description: '后台网关没有启动。请尝试下面的恢复步骤；这里不会删除你的对话或设置。',
       retry: '重试'
     }
   },
@@ -127,20 +102,17 @@ export const dict = {
     details: '详情',
     copyDetail: '复制详情',
     errors: {
-      elevenLabsNeedsKey: 'ElevenLabs STT 需要 ELEVENLABS_API_KEY。',
-      elevenLabsRejectedKey: 'ElevenLabs 拒绝了该 API key (401)。',
       methodNotAllowed: (brandFullName: string) =>
-        `桌面后端拒绝了该请求 (405 Method Not Allowed)。请尝试重启 ${brandFullName}。`,
+        `服务器拒绝了该请求 (405 Method Not Allowed)。请检查 ${brandFullName} 是否需要更新。`,
       microphonePermission: '麦克风权限已被拒绝。',
       openaiRejectedApiKey: 'OpenAI 拒绝了该 API key。',
       openaiRejectedApiKeyWithStatus: (status: number | string) =>
-        `OpenAI 拒绝了该 API key (${status} invalid_api_key)。`,
-      openaiTtsNeedsKey: 'OpenAI TTS 需要 VOICE_TOOLS_OPENAI_KEY 或 OPENAI_API_KEY。'
+        `OpenAI 拒绝了该 API key (${status} invalid_api_key)。`
     },
     voice: {
       invalidTitle: '音色已失效',
       invalidMessage: (name: string) =>
-        `你之前选的音色「${name}」已不在当前目录，已临时用默认音色，去伙伴设置里重新挑一个吧～`,
+        `你之前选的音色「${name}」已不在当前目录，已临时改用默认音色，请在设置的「音色」中重新选择。`,
       invalidAction: '去设置'
     },
     system: {
@@ -153,7 +125,8 @@ export const dict = {
       channelConnected: (label: string) => `${label}已连接`,
       channelLoginRequired: (label: string) => `${label}登录已过期，请到设置重新扫码`,
       channelError: (label: string, detail?: string) => `${label}通道异常${detail ? `：${detail}` : ''}`,
-      channelPeerRequest: (label: string, name: string) => `${label}收到新消息${name ? `：${name}` : ''}`
+      channelPeerRequest: (label: string, name: string) =>
+        `${label}${name ? `联系人「${name}」` : '新联系人'}请求与伙伴对话，请到「聊天通道」审批`
     }
   },
 
@@ -166,28 +139,24 @@ export const dict = {
     placeholder: '在此粘贴激活码…',
     cancel: '取消',
     submit: '激活',
-    submitBusy: '激活中…'
+    submitBusy: '激活中…',
+    failed: '激活失败，请检查激活码后重试'
   },
 
   settings: {
-    title: '应用设置',
     nav: {
-      inference: '推理与对话',
       about: '关于',
       theme: '主题',
-      channels: '聊天通道',
       interaction: '交互',
       navAriaLabel: '设置分区导航',
       persona: '角色与记忆',
-      runner: '本机执行器',
       shortcuts: '快捷键',
-      skills: '技能与工具',
       voice: '音色'
     },
     shortcuts: {
       heading: '全局快捷键',
-      intro: '在系统任意界面通过全局快捷键唤起或隐藏伴侣。点击按键框即可录制新组合。',
-      toggleVisibility: '隐藏 / 显示伴侣',
+      intro: '在系统任意界面通过全局快捷键唤起或隐藏伙伴。点击按键框即可录制新组合。',
+      toggleVisibility: '隐藏 / 显示伙伴',
       toggleVisibilityDesc: '快速在桌面显示或隐藏伙伴窗口。',
       openLiving: '唤起 / 隐藏生活空间',
       openLivingDesc: '快速唤起或隐藏生活空间沉浸式陪伴窗口。',
@@ -234,11 +203,14 @@ export const dict = {
         qrPrompt: '打开微信扫一扫',
         scanedPrompt: '已扫码，请在手机上确认',
         expiredPrompt: '二维码已过期，请重新获取',
+        loginTimeout: '登录超时，请重新获取二维码',
+        qrAlt: '微信登录二维码',
         connectedAs: (name: string) => `已连接${name ? `：${name}` : ''}`
       },
       peers: {
         title: '对端审批',
-        intro: '陌生对端首次来信会收到配对提示，批准后才能与伙伴对话；被拉黑者静默。',
+        intro:
+          '陌生对端首次来信会收到配对提示。批准后，对方可以与伙伴对话，并能让伙伴在这台电脑上执行操作；被拉黑者的消息会被静默忽略。',
         empty: '暂无对端记录',
         approve: '批准',
         block: '拉黑',
@@ -246,7 +218,8 @@ export const dict = {
         pendingLabel: '待审批',
         allowedLabel: '已批准',
         blockedLabel: '已拉黑',
-        actionFailed: '操作失败'
+        actionFailed: '操作失败',
+        loadFailed: '对端列表加载失败'
       }
     },
     about: {
@@ -272,6 +245,7 @@ export const dict = {
       saveFailed: '配置保存失败',
       terminal: '终端设置',
       terminalEnvType: '环境类型',
+      envLocal: '本机',
       ssh: 'SSH 连接',
       sshHost: '主机地址',
       sshPort: '端口',
@@ -287,12 +261,11 @@ export const dict = {
     },
     skills: {
       title: '技能',
-      intro:
-        '下方每一项对应 $SPIRITAGENT_HOME/skills 下的一个 category 目录。开启或关闭会即时推送给执行器;启用集会在每个对话轮次发给后端,让模型只看到你能调用的本地技能。',
+      intro: '每一项对应一组已安装的本地技能。开关即时生效，模型只会看到已启用且可用的技能。',
       loading: '正在加载技能…',
       loadError: '无法从磁盘读取技能列表。',
       saveError: '无法保存技能开关。',
-      refreshError: '本地已保存,但后端会话未刷新 — 下一轮对话仍可能看到旧的技能集合,请再次切换。',
+      refreshError: '已保存，但当前对话尚未更新技能列表，请再切换一次。',
       emptyTitle: '未安装任何技能',
       emptyDesc: (brandName: string) => `请重新安装 ${brandName} 以恢复内置技能。`,
       hiddenByPlatformTitle: '当前操作系统没有可用技能',
@@ -302,18 +275,19 @@ export const dict = {
     inference: {
       heading: '推理与对话',
       intro:
-        '仅配置普通对话的默认参数、思考深度与上下文压缩策略。每个特殊会话使用独立场景默认值，并在其会话窗口内修改。',
+        '仅配置普通对话的默认参数、思考深度与上下文压缩策略。每个固定对话使用独立场景默认值，并在其会话窗口内修改。',
       loading: '加载中…',
       saveFailed: '无法保存推理与对话设置。',
       saved: '推理与对话设置已保存。',
+      loadFailed: '推理与对话设置加载失败',
       agentDefaults: {
         heading: '智能体默认',
-        intro: '适用于未单独设置参数的普通对话；不影响任何特殊会话。',
+        intro: '适用于未单独设置参数的普通对话；不影响任何固定对话。',
         reasoningEffort: '推理深度',
         reasoningEffortDesc:
-          '模型每轮推理的强度。none 关闭推理，minimal/low/medium/high/xhigh/max/ultra 逐级加深；超出供应商上限时自动使用其最高支持档。',
+          '模型每轮推理的强度。「关闭」不推理，从「极简」到「终极」逐级加深；超出供应商上限时自动使用其最高支持档。',
         backgroundReview: '后台记忆整理',
-        backgroundReviewDesc: '异步从普通对话历史中抽取记忆，不控制特殊会话的记忆整理。',
+        backgroundReviewDesc: '异步从普通对话历史中抽取记忆，不控制固定对话的记忆整理。',
         reasoningOptions: {
           none: '关闭',
           minimal: '极简',
@@ -342,7 +316,7 @@ export const dict = {
         titleTemperature: '标题生成温度',
         titleTemperatureDesc: '根据首轮对话自动生成会话标题的温度。建议保持较低以保证概括准确性。',
         compressionTemperature: '上下文压缩温度',
-        compressionTemperatureDesc: '对话历史超长时生成记忆摘要的温度。建议保持 0 以保证事实忠实度。'
+        compressionTemperatureDesc: '对话历史超长时生成对话摘要的温度。建议保持 0 以保证事实忠实度。'
       }
     },
     interaction: {
@@ -357,9 +331,15 @@ export const dict = {
       recordingDesc: '单条语音录音的最大时长，到达上限后自动停止录制并发送。',
       recordingSecondsSuffix: '秒',
       recordingSaveFailed: '保存录音时长失败',
+      recordingLoadFailed: '录音时长设置加载失败，请稍后重试',
       tierHeading: '打扰档位',
       tierHint: '只约束伙伴的主动行为，你发起的交互不受限。',
       tierAriaLabel: '打扰档位',
+      tiers: {
+        still: { label: '静止', hint: '不发起任何主动行为，只回应你' },
+        normal: { label: '常规', hint: '文字问候等原地轻互动' },
+        autonomous: { label: '自主', hint: '自由移动与语音，全能力开放' }
+      },
       smartHeading: '智能反应与自主行为',
       smartHint: '让伙伴具备更智能的思考与决策能力；关闭可降低 LLM 调用消耗。',
       idleAffect: '空闲情境表达',
@@ -370,10 +350,10 @@ export const dict = {
       autonomyDesc: '自主档且桌面精灵显示时由 LLM 决定漫游、栖身与靠近（关闭按本地规则）',
       autonomousMedia: '夜间自主心意创作',
       autonomousMediaAria: '夜间自主心意创作',
-      autonomousMediaDesc: '休息窗口内允许伙伴主动生成图片或短视频，并保存到生活空间片刻',
+      autonomousMediaDesc: '夜间允许伙伴主动生成图片或短视频，并保存到生活空间片刻',
       autonomousVoice: '夜间自主语音心意',
       autonomousVoiceAria: '夜间自主语音心意',
-      autonomousVoiceDesc: '休息窗口内允许伙伴使用当前音色录制语音，或为惊喜视频和图片添加配音'
+      autonomousVoiceDesc: '夜间允许伙伴使用当前音色录制语音，或为惊喜视频和图片添加配音'
     },
     persona: {
       characterCard: {
@@ -455,7 +435,6 @@ export const dict = {
         feedbackPlaceholder: '希望怎样展现体态或姿势？可留空直接生成。',
         generate: '生成全身形象',
         regenerate: '重新生成全身形象',
-        edit: '微调',
         editDisabledByReference: '附参考图时不可微调，请先移除参考图',
         reload: '重新加载',
         enlarge: '放大查看全身形象',
@@ -479,7 +458,7 @@ export const dict = {
       defaultName: '伙伴',
       noPersonality: '还没设定性格',
       nameLabel: '名字',
-      namePlaceholder: '给我起个名字',
+      namePlaceholder: '给伙伴起个名字',
       relationshipLabel: '角色定位',
       relationshipPlaceholder: '或者自由描述…',
       personalityLabel: '性格',
@@ -487,7 +466,7 @@ export const dict = {
       detailSeparator: '：',
       speakingStyleLabel: '说话风格',
       speakingStylePlaceholder: '描述想要的语气和表达习惯',
-      hintEmptyName: '得给我起个名字呀',
+      hintEmptyName: '请填写名字',
       hintEmptySpeakingStyle: '请填写说话风格',
       hintSaveFailed: '保存失败，稍后再试',
       hintHydrateFailed: '已保存，但本地刷新失败，稍后再试'
@@ -497,6 +476,8 @@ export const dict = {
       intro: '选择适合当前系统语言的说话音色，或设计一个专属音色。',
       noTtsConfigured: '尚未配置 TTS 供应商。',
       noVoicesForLanguage: '已配置的 TTS 供应商没有适配当前系统语言的音色。',
+      loadFailed: '音色列表加载失败',
+      sampleLine: (name: string) => (name ? `你好呀，我是${name}。这是我的声音～` : '你好呀，这是我的声音～'),
       genderFilterAria: '声线筛选',
       genderFilters: {
         '': '全部',
@@ -528,7 +509,7 @@ export const dict = {
       },
       materialHeading: '材质效果说明',
       materialTransparent: '清透模式（透明）',
-      materialTransparentDesc: '启用液态玻璃与磨砂透视，生活空间背景透出流动光影，桌面伴侣通透灵动。',
+      materialTransparentDesc: '启用液态玻璃与磨砂透视，生活空间背景透出流动光影，桌面精灵通透灵动。',
       materialTransparentDayNight: '日色透明 / 夜色透明',
       materialSolid: '实底模式（经典）',
       materialSolidDesc: '实体不透明表面，石墨与暖纸底板，具有极高对比度，适合复杂桌面背景环境。',
@@ -572,6 +553,7 @@ export const dict = {
       saveFailedToast: '保存记忆失败',
       deleteFailedHint: '删除失败，已回滚',
       deleteFailedToast: '删除记忆失败',
+      charCount: (count: number) => `${count} 字`,
       empty: '这里还没有记忆。没有值得长期保留的信息时，伙伴不会写入。',
       saved: '已保存',
       saving: '保存中…',
@@ -583,26 +565,26 @@ export const dict = {
     tabSkills: '技能',
     tabToolsets: '工具集',
     all: '全部',
-    other: '其他',
     searchSkills: '搜索技能…',
     searchToolsets: '搜索工具集…',
     loading: '正在加载能力…',
     noSkillsTitle: '未找到技能',
     noSkillsDesc: '尝试更宽泛的搜索或其他分类。',
     loadFailedTitle: '技能列表加载失败',
-    loadFailedDesc: '请稍后重试,或检查 $SPIRITAGENT_HOME/skills 目录。',
+    loadFailedDesc: '请稍后重试；如仍失败，请重新安装应用以恢复内置技能。',
     noToolsetsTitle: '未找到工具集',
     noToolsetsDesc: '尝试更宽泛的搜索词。',
     noDescription: '暂无描述。',
     toolsetsEnabled: (enabled: number, total: number) => `已启用 ${enabled}/${total} 个工具集`,
-    skillsLoadFailed: '技能加载失败',
-    toolsetsRefreshFailed: '工具集刷新失败'
+    toolsetsLoadFailed: '工具集加载失败',
+    toolsetsLoadFailedDesc: '请稍后重试。',
+    toolsetsSaveFailed: '无法保存工具集开关'
   },
 
   toolsets: {
     browser_automation: { label: '浏览器自动化', description: '导航、点击、快照、Cookie/CDP 等多后端浏览器能力。' },
     file_operations: { label: '文件操作', description: '读写、补丁、目录与文件搜索。' },
-    terminal: { label: '终端', description: '本地/Docker/SSH 后端的命令行执行。' },
+    terminal: { label: '终端', description: '在本机或 SSH 远程主机上执行命令行。' },
     code_execution: { label: '代码执行', description: '沙箱 Python 执行与受限调用。' },
     process_management: { label: '进程管理', description: '后台进程的启动与跟踪。' },
     skills_system: { label: '技能系统', description: '列出、查看与管理 Skill 内容。' },
@@ -612,7 +594,7 @@ export const dict = {
     messaging: { label: '消息', description: '通过 Webhook 发送消息。' },
     scheduled_tasks: { label: '定时任务', description: 'Cron 触发与周期调度。' },
     agent_delegation: { label: '子代理委托', description: '派生子会话与子代理。' },
-    computer_use: { label: '桌面操控', description: '通过 Windows 后端接管桌面。' },
+    computer_use: { label: '桌面操控', description: '截屏并用鼠标、键盘操作桌面应用。' },
     media_analysis: { label: '多媒体分析', description: '图片分析。' },
     system_awareness: { label: '系统感知', description: '空闲时长、锁屏、焦点窗口、全屏与屏幕坐标等系统状态探测。' }
   },
@@ -633,7 +615,6 @@ export const dict = {
       zoomPercent: (n: number) => `${n}%`,
       zoomHint: '滚轮缩放 · 拖动平移 · 双击放大/还原'
     },
-    panelDragToMove: '拖动以移动面板',
     search: {
       clear: '清除搜索'
     }
@@ -648,6 +629,7 @@ export const dict = {
 
     filesReceived: (count: number) => `收到 ${count} 个文件`,
     attachmentsAdded: (count: number) => `添加了 ${count} 个附件`,
+    filesHandoffFailed: '文件转交失败，请重新拖入',
     sendFailed: '发送失败',
 
     media: {
@@ -655,6 +637,7 @@ export const dict = {
       generationFailed: '生成失败',
       resultUnknown: '生成结果尚未确认',
       imageLoading: '图片加载中…',
+      loadFailed: '媒体加载失败',
       reviewHint: '角色外形需要你核对。此媒体目前仅供预览。',
       reviewAccept: '确认形象并采纳',
       reviewReject: '不采纳',
@@ -695,14 +678,6 @@ export const dict = {
       failed: '编辑消息失败，修改内容已保留'
     },
 
-    play: {
-      label: '朗读',
-      preparing: '正在准备语音…',
-      stop: '停止朗读',
-      channelBusy: '语音通道忙',
-      failed: '语音朗读失败'
-    },
-
     attachment: {
       pendingImageAlt: '待发送图片',
       loading: '加载中…',
@@ -739,7 +714,8 @@ export const dict = {
       imageFilterName: '图片文件',
       selectImage: '选择图片',
       selectFile: '选择文件',
-      selectFolder: '选择文件夹'
+      selectFolder: '选择文件夹',
+      openFailed: '无法打开文件选择'
     },
 
     voice: {
@@ -748,6 +724,12 @@ export const dict = {
       stop: '停止播放语音',
       collapse: '收起',
       showTranscript: '查看文本'
+    },
+
+    voiceInput: {
+      busy: '语音服务正忙，请稍后再试',
+      notRecognized: '没有识别到语音，请重试或改用文字输入',
+      micUnavailable: '无法使用麦克风录制语音'
     },
 
     input: {
@@ -767,7 +749,7 @@ export const dict = {
       sendMessageShortcut: '发送消息 (Enter)'
     },
 
-    emptyHint: '说点什么，或发送文件/图片/视频给我看看～',
+    emptyHint: '说点什么，或发送文件、图片、视频',
 
     time: {
       weekdays: ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'] as readonly string[],
@@ -792,7 +774,8 @@ export const dict = {
 
     tools: {
       busy: (name: string) => `它正在忙… (${name})`,
-      completed: (count: number) => `它做了 ${count} 步`
+      completed: (count: number) => `它做了 ${count} 步`,
+      genericName: '工具'
     },
 
     submit: {
@@ -850,7 +833,7 @@ export const dict = {
         ultra: '产品最高档；供应商不支持时自动降级到其最高支持档。'
       },
 
-      contextCapsuleAria: '查看上下文记忆与压缩管理',
+      contextCapsuleAria: '查看上下文用量与压缩管理',
       contextCapsuleTitle: (used: string, total: string, pct: string, threshold: number) =>
         `当前会话上下文：${used} / ${total} Tokens (${pct}%) · 自动压缩阈值: ${threshold}% · 点击展开管理`,
       temperatureCapsuleAria: '配置当前会话采样温度',
@@ -872,7 +855,7 @@ export const dict = {
       thresholdSliderMin: '30% 紧凑压缩',
       thresholdSliderHint: '左右拖动手柄调节阈值',
       thresholdSliderMax: '100% 满额触发',
-      thresholdSliderDescription: '当会话上下文达到设定比例时，后台自动总结提炼早期历史，释放空间保障记忆连贯。',
+      thresholdSliderDescription: '当会话上下文达到设定比例时，后台自动总结早期历史，释放空间并保持对话连贯。',
 
       saveFailed: '会话参数保存失败，请重试。',
       resetConfirm: '已恢复当前会话参数为默认配置',
@@ -889,12 +872,12 @@ export const dict = {
       statsTokens: 'Tokens',
       statsNodeAt: (pct: number) => `节点 ${pct}%`,
 
-      statusHealthy: '上下文状态充裕，拥有充沛的记忆空间保障顺畅交流。',
+      statusHealthy: '上下文空间充裕，对话可以顺畅进行。',
       statusWarning: '上下文逐渐累积，靠近自动压缩阈值，可随时整理。',
-      statusCritical: '上下文负荷较高，已达到自动压缩线，建议立即整理记忆。',
+      statusCritical: '上下文负荷较高，已达到自动压缩线，建议立即压缩。',
 
-      compressing: '正在提取提炼并压缩记忆…',
-      compressAction: '整理历史记忆 · 立即压缩上下文',
+      compressing: '正在压缩较早的对话…',
+      compressAction: '立即压缩上下文',
 
       temperatureLabel: '采样温度',
       temperatureSliderAria: '采样温度',
@@ -926,7 +909,7 @@ export const dict = {
       inputLabel: '对话名称',
       placeholder: '输入对话名称',
       hint: 'Enter 保存 · Esc 取消',
-      forbidden: '系统预设对话不能改名',
+      forbidden: '固定对话不能改名',
       failed: '改名失败，已恢复原名称'
     }
   },
@@ -934,6 +917,13 @@ export const dict = {
   companion: {
     statusBusy: '忙碌中',
     statusCompanion: '陪伴中',
+    menu: {
+      quietOff: '可以吵我了',
+      quietOn: '安静一会儿',
+      resetPosition: '一键归位',
+      hide: '隐藏角色',
+      activate: '激活 / 登录'
+    },
     egg: {
       wake: '点击我，让我醒来',
       preparing: '正在准备伙伴动作…',
@@ -941,7 +931,8 @@ export const dict = {
       failed: '动作生成失败',
       unavailable: '伙伴动作尚未就绪',
       retry: '重试',
-      openWardrobe: '打开衣柜'
+      openWardrobe: '打开衣柜',
+      ariaLabel: '伙伴的蛋'
     }
   },
 
@@ -962,19 +953,19 @@ export const dict = {
     moments: {
       loading: '正在翻看相册…',
       empty: '还没有留下什么片刻。',
+      loadFailed: '片刻加载失败',
       noTitle: '无题',
       commentPlaceholder: '写评论…',
       commentSend: '发送',
       commentSending: '发送中…',
       commentDelete: '删除',
+      commentFailed: '评论发送失败',
+      commentDeleteFailed: '评论删除失败',
       userLabel: '我',
       kindLabels: {
         emotion: '心情',
-        greeting: '问候',
-        milestone: '里程碑',
         scene: '场景',
-        together: '在一起',
-        user: '随笔'
+        together: '在一起'
       } as Record<string, string>,
       kindFallback: '片刻'
     },
@@ -986,6 +977,7 @@ export const dict = {
       emptyTitle: '这一天还没有日记',
       emptyHintToday: '今日日记将在夜间整理生成，晚点再来翻看吧～',
       emptyHintOther: '这一天没有日记记录哦～',
+      loadFailed: '日记加载失败',
       weekHeader: ['一', '二', '三', '四', '五', '六', '日'] as ReadonlyArray<string>,
       weekDayNames: ['星期日', '星期一', '星期二', '星期三', '星期四', '星期五', '星期六'] as ReadonlyArray<string>,
       dateFormat: (dateStr: string, weekDay: string) => `${dateStr} · ${weekDay}`
@@ -1000,6 +992,9 @@ export const dict = {
       policyStatusLocked: '已锁定',
       policyStatusUnlocked: '允许换装',
       policyToggleAria: '允许角色自主换装',
+      policyFailed: '换装设置保存失败',
+      deleteFailed: '删除着装失败',
+      confirmFailed: '确认着装失败，请重试',
       wearing: '穿着中',
       statusLabels: {
         draft: '草稿',
@@ -1032,7 +1027,18 @@ export const dict = {
       placeholderInitial: '描述想要的着装…（Enter 发送，Shift+Enter 换行）',
       attachImage: '附参考图',
       attachImageTitle: '附参考图（可选，仅首次生成）',
-      send: '发送'
+      send: '发送',
+      design: {
+        byReference: '（按参考图设计）',
+        pickReferenceTitle: '选择服装参考图',
+        drafted: '草稿已生成，见上方预览。继续描述可以微调重绘，满意就确认入柜。',
+        refined: '已按反馈微调，见上方预览。继续描述可以再微调，满意就确认入柜。',
+        previewFailed: '草稿已生成，但预览加载失败，请到衣柜页重新打开草稿。',
+        timedOut: '等待结果超时，生成可能仍在继续。请稍后在衣柜页查看草稿，确认结果后再重试。',
+        generateFailed: '着装生成失败，请稍后重试',
+        resumeReady: '继续微调这套草稿，或直接确认入柜。',
+        resumePreviewMissing: '草稿预览尚未加载，可继续描述微调，或稍后到衣柜页重新打开。'
+      }
     },
     appearance: {
       videoReady: (version: number, clips: number) => `动作包已就绪（版本 ${version}，包含 ${clips} 个动作）`,
@@ -1053,6 +1059,7 @@ export const dict = {
       videoActionCancel: '取消',
       videoActionRetryWaitHint: '其他动作仍在生成；动作包完成后即可重新生成此动作。',
       videoOutfitNotReady: '这套着装还没有动作包，生成后即可预览和穿上。',
+      videoPacksLoadFailed: '动作包加载失败',
       videoSelectOutfit: '返回衣柜并选择一套着装，查看它专属的动作。',
       videoBackToOutfits: '返回衣柜',
       videoLoading: '正在读取这套着装的动作…',
@@ -1111,8 +1118,6 @@ export const dict = {
       outfitHint:
         '留空沿用衣柜中当前启用的着装；填写时是本次场景的完整造型替换，请写全服装、配色、发型发色、鞋履与配饰。',
       noScene: '尚未启用场景',
-      currentBadge: '当前场景',
-      currentAltFallback: '当前场景',
       pendingOverlay: '场景正在准备…',
       pendingOverlayHint: '图片保存并完成描述后进入场景库，当前背景保持不变。',
       waitingUploadOverlay: '等待上传场景图片',
@@ -1121,7 +1126,6 @@ export const dict = {
       generateButton: '创建新场景',
       generatingButton: '创建中…',
       historyTitle: '场景库',
-      historyEmpty: '没有匹配的场景',
       emptyLibrary: '场景库还是空的，创建或上传一个场景开始布置生活空间。',
       emptySearch: '没有找到匹配的场景。',
       loading: '正在读取场景库…',
@@ -1129,7 +1133,6 @@ export const dict = {
       detailLoadFailed: '场景信息暂时无法读取，可能已被删除。',
       openDetails: '查看场景详情',
       backToLibrary: '返回场景库',
-      detailTitle: '场景详情',
       newSceneTitle: '新建场景',
       searchButton: '搜索',
       imageRegenerate: '重新生成图片',
@@ -1141,16 +1144,13 @@ export const dict = {
       historyRollbackLabel: '启用',
       viewOriginal: '放大查看',
       historyDeleteLabel: '删除',
-      historyDeleteTitle: '删除场景',
       historyDeleteConfirmTitle: '删除这个场景？',
       historyDeleteConfirmDescription: '图片及场景信息会从场景库中删除，此操作不可恢复。',
-      policyTitle: '自主政策',
       policyLabel: '伙伴自主切换场景',
       policyDesc: '锁定后禁止自主新增与切换；你仍可在场景页面手动创建与切换。夜间同时遵守夜间活动政策。',
       policyStatusLocked: '已锁定',
       policyStatusUnlocked: '允许',
       policyToggleAria: '允许伙伴自主新增与切换',
-      createTitle: '创建任务',
       savedHint: '创建完成后先保存，再手动启用。',
       slow: '仍在处理，可查询最新状态',
       refresh: '查询状态',
@@ -1166,7 +1166,6 @@ export const dict = {
       next: '下一页',
       untitled: '待命名场景',
       needsDescription: '图片与描述齐全后才能启用。',
-      historyDeleteAria: (id: string) => `删除场景 ${id}`,
       statuses: {
         pending: '准备中',
         ready: '已保存',
@@ -1176,23 +1175,18 @@ export const dict = {
       }
     },
     sceneBackdrop: {
-      failedText: '场景尚未就绪',
       pendingText: '场景准备中'
     },
     toasts: {
-      sceneSlow: '仍在处理，可查询最新状态',
       sceneReady: '已保存到场景库',
-      sceneReadyAlt: '已保存到场景库',
       sceneImageRegenerated: '场景图片已更新',
       sceneRegenerateFailed: '场景操作失败，请查看原因后重试',
-      sceneRollbackFailed: '场景切换失败',
       sceneRollbackSuccess: '已切换场景',
       sceneDeleteFailed: '删除失败…请稍后重试',
       sceneDeleteSuccess: '已删除场景',
       sceneLockFailed: '锁定设置没改成功',
       sceneLocked: '已锁定自主场景变化',
-      sceneUnlocked: '已允许自主场景变化',
-      sceneFailedFallback: '场景准备失败，请查看任务状态'
+      sceneUnlocked: '已允许自主场景变化'
     }
   },
 
@@ -1215,7 +1209,7 @@ export const dict = {
       }
     },
     sessionSidebar: {
-      title: 'Sessions',
+      title: '会话',
       new: '新建对话',
       searchAria: '搜索会话',
       searchPlaceholder: '搜索会话…',

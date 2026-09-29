@@ -36,9 +36,9 @@ const index: Map<ReactionBucket, ReactionEntry[]> = (() => {
   return byBucket
 })()
 
-/** 按性格标签交集匹配从指定 bucket 候选中选择反应条目。
- *  交集匹配 > 0 优先；通用条目/同 bucket 条目始终作为候选池的一部分。 */
-export function pickReaction(bucket: ReactionBucket, companionTags: string[]): ReactionEntry | null {
+/** 按性格标签交集从指定 bucket 选择反应条目：有交集时从最高分与无标签的通用条目中随机，
+ *  无交集或伙伴无标签时从整个 bucket 随机。 */
+function pickReaction(bucket: ReactionBucket, companionTags: string[]): ReactionEntry | null {
   const candidates = index.get(bucket)
 
   if (!candidates || candidates.length === 0) {
@@ -67,7 +67,7 @@ export function pickReaction(bucket: ReactionBucket, companionTags: string[]): R
 
 /** 本地反应池入口（DESIGN「拖拽与直接交互」 离线/机械降级）。首次播放合成一次并落盘，
  *  之后每次触发都是本地读盘。换音色或改台词会让缓存键失效，自动重新生成。 */
-export async function playReactionAudio(entry: ReactionEntry | null): Promise<boolean> {
+async function playReactionAudio(entry: ReactionEntry | null): Promise<boolean> {
   if (!entry) {
     return false
   }

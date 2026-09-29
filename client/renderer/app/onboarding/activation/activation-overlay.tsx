@@ -4,6 +4,8 @@ import { type FormEvent, useRef, useState } from 'react'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { Loader2, Sparkles, X } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, SURFACE_OVERLAY } from '@/shared/panel'
 import { $auth, activate } from '@/shared/store/auth'
@@ -44,7 +46,9 @@ export function ActivationOverlay({ onClose }: { onClose: () => void }): React.J
       await activate({ code: trimmed })
       onClose()
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : String(caught))
+      // 主进程 SessionError 经 IPC 只剩「名称: 文案」，错误码不可用；原始信封只进日志。
+      log.warn('activation', 'Activation failed', caught)
+      setError(backendDetailMessage(caught, t.failed))
     } finally {
       setBusy(false)
     }

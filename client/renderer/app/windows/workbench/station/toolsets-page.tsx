@@ -1,3 +1,4 @@
+import type { ToolsetItem } from '@ipc/contracts'
 import { useEffect, useMemo, useState } from 'react'
 
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
@@ -7,17 +8,11 @@ import { EmptyState, LoadingBlock, Pill, SearchField, SettingCard, Toggle } from
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
-type ToolsetRosterEntry = {
-  id: string
-  toolNames: string[]
-  enabled: boolean
-}
-
 type ToolsetView = {
   catalog: ToolsetCatalogEntry
   label: string
   description: string
-  roster: ToolsetRosterEntry | undefined
+  roster: ToolsetItem | undefined
 }
 
 export function ToolsetsPage(): React.JSX.Element {
@@ -25,10 +20,10 @@ export function ToolsetsPage(): React.JSX.Element {
   const sk = t.skills
   const toolsetText = t.toolsets
 
-  const loadErrorLabelRef = useLatestRef(sk.skillsLoadFailed)
-  const saveErrorLabelRef = useLatestRef(sk.toolsetsRefreshFailed)
+  const loadErrorLabelRef = useLatestRef(sk.toolsetsLoadFailed)
+  const saveErrorLabelRef = useLatestRef(sk.toolsetsSaveFailed)
 
-  const loader = useAsyncLoader<ToolsetRosterEntry[]>(async () => {
+  const loader = useAsyncLoader<ToolsetItem[]>(async () => {
     const res = await window.spiritagent.toolsets.list()
 
     if (!res.ok) {
@@ -40,7 +35,7 @@ export function ToolsetsPage(): React.JSX.Element {
     return res.toolsets ?? []
   })
 
-  const [toolsets, setToolsets] = useState<ToolsetRosterEntry[]>([])
+  const [toolsets, setToolsets] = useState<ToolsetItem[]>([])
   const loading = loader.isLoading
   const loadFailed = loader.error !== null
 
@@ -54,7 +49,7 @@ export function ToolsetsPage(): React.JSX.Element {
   const [savingId, setSavingId] = useState<string | null>(null)
 
   const rosterById = useMemo(() => {
-    const map = new Map<string, ToolsetRosterEntry>()
+    const map = new Map<string, ToolsetItem>()
 
     for (const t of toolsets) {
       map.set(t.id, t)
@@ -89,15 +84,14 @@ export function ToolsetsPage(): React.JSX.Element {
 
   const enabledCount = useMemo(() => toolsets.filter(t => t.enabled).length, [toolsets])
 
+  // 开关不做乐观更新，列表只取主进程返回的全量结果；失败时界面仍是点击前的状态，只需提示。
   const toggle = async (id: string, nextEnabled: boolean) => {
-    const prev = toolsets
     setSavingId(id)
 
     try {
       const res = await window.spiritagent.toolsets.setEnabled({ id, enabled: nextEnabled })
 
       if (!res.ok || !res.toolsets) {
-        setToolsets(prev)
         notifyError(res.error ?? 'save-failed', saveErrorLabelRef.current)
 
         return
@@ -105,7 +99,6 @@ export function ToolsetsPage(): React.JSX.Element {
 
       setToolsets(res.toolsets)
     } catch (err) {
-      setToolsets(prev)
       notifyError(err, saveErrorLabelRef.current)
     } finally {
       setSavingId(null)
@@ -117,7 +110,7 @@ export function ToolsetsPage(): React.JSX.Element {
   }
 
   if (loadFailed && toolsets.length === 0) {
-    return <EmptyState description={sk.loadFailedDesc} title={sk.loadFailedTitle} />
+    return <EmptyState description={sk.toolsetsLoadFailedDesc} title={sk.toolsetsLoadFailed} />
   }
 
   if (visibleEntries.length === 0) {

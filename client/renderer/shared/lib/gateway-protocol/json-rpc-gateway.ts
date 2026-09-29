@@ -1,3 +1,5 @@
+import type { DesktopGatewayEvent, DesktopGatewayState } from '@ipc/contracts'
+
 type GatewayEventName =
   | 'command.result'
   | 'compress.completed'
@@ -28,9 +30,6 @@ type GatewayEventName =
   | 'message.persisted'
   | 'message.reasoning.delta'
   | 'message.start'
-  | 'model.failed'
-  | 'model.gen.progress'
-  | 'model.ready'
   | 'system.notification'
   | 'tool.call'
   | 'tool.complete'
@@ -54,33 +53,15 @@ export interface SlashCommandResultPayload {
   }
 }
 
-export interface GatewayEvent<P = unknown> {
-  payload?: P
-  seq?: number
-  session_id?: string
-  type: GatewayEventName
-}
+export type GatewayEvent<P = unknown> = DesktopGatewayEvent<P>
 
-export type ConnectionState = 'closed' | 'connecting' | 'error' | 'idle' | 'open'
+export type ConnectionState = DesktopGatewayState
 
 type PendingCall = {
   reject: (error: Error) => void
   resolve: (value: unknown) => void
   timer?: ReturnType<typeof setTimeout>
 }
-
-interface GatewayClientOptions {
-  closedErrorMessage?: string
-  connectErrorMessage?: string
-  connectTimeoutMs?: number
-  createRequestId?: (nextId: number) => number | string
-  notConnectedErrorMessage?: string
-  requestIdPrefix?: string
-  requestTimeoutMs?: number
-  socketFactory?: (url: string) => WebSocketLike
-}
-
-type GatewayRequestId = number | string
 
 interface JsonRpcFrame {
   error?: { code?: number; data?: unknown; message?: string }
@@ -176,10 +157,8 @@ function parseJsonRpcFrame(raw: string): JsonRpcFrame | null {
   return v as unknown as JsonRpcFrame
 }
 
-type WebSocketLike = WebSocket
-
-// JSON-RPC 2.0 标准错误码 + SpiritAgent 扩展码——与后端 jsonrpc_dispatcher.py / components/constants.py
-// 保持同步，消费方可按 err.code 分支而无需解析 err.message
+// JSON-RPC 2.0 标准错误码 + SpiritAgent 扩展码——与后端 components/constants.py 的 JSONRPC_* 保持同步，
+// 消费方可按 err.code 分支而无需解析 err.message
 export enum SpiritAgentRpcErrorCode {
   ParseError = -32700,
   InvalidRequest = -32600,
@@ -209,7 +188,11 @@ const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 // A reconnect after sleep/wake must not hang forever in 'connecting' (which
 // keeps the composer disabled and stuck on "Starting SpiritAgent..."). If the open
 // handshake doesn't land in this window, fail to 'error' so callers can retry.
-const DEFAULT_CONNECT_TIMEOUT_MS = 15_000
+const CONNECT_TIMEOUT_MS = 15_000
+
+const CLOSED_ERROR_MESSAGE = 'SpiritAgent gateway connection closed'
+const CONNECT_ERROR_MESSAGE = 'Could not connect to SpiritAgent gateway'
+const NOT_CONNECTED_ERROR_MESSAGE = 'SpiritAgent gateway is not connected'
 
 // 空闲 15s 发 session.ping；30s 无任何帧则判定半开连接，close(4000) 触发重连
 const HEARTBEAT_INTERVAL_MS = 15_000
@@ -217,8 +200,8 @@ const HEARTBEAT_DEADLINE_MS = 30_000
 
 export class JsonRpcGatewayClient {
   private nextId = 0
-  private pending = new Map<GatewayRequestId, PendingCall>()
-  private socket: WebSocketLike | null = null
+  private pending = new Map<number, PendingCall>()
+  private socket: WebSocket | null = null
   private state: ConnectionState = 'idle'
   private _lastCloseCode: number | null = null
   private _lastReceivedSeq = 0
@@ -227,21 +210,6 @@ export class JsonRpcGatewayClient {
   private _heartbeatTimer: ReturnType<typeof setInterval> | null = null
   private readonly eventHandlers = new Map<string, Set<(event: GatewayEvent) => void>>()
   private readonly stateHandlers = new Set<(state: ConnectionState) => void>()
-  private readonly options: Required<Omit<GatewayClientOptions, 'socketFactory'>> &
-    Pick<GatewayClientOptions, 'socketFactory'>
-
-  constructor(options: GatewayClientOptions = {}) {
-    this.options = {
-      closedErrorMessage: options.closedErrorMessage ?? 'WebSocket closed',
-      connectErrorMessage: options.connectErrorMessage ?? 'WebSocket connection failed',
-      connectTimeoutMs: options.connectTimeoutMs ?? DEFAULT_CONNECT_TIMEOUT_MS,
-      createRequestId: options.createRequestId ?? ((nextId: number) => `${options.requestIdPrefix ?? 'r'}${nextId}`),
-      notConnectedErrorMessage: options.notConnectedErrorMessage ?? 'gateway not connected',
-      requestIdPrefix: options.requestIdPrefix ?? 'r',
-      requestTimeoutMs: options.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS,
-      socketFactory: options.socketFactory
-    }
-  }
 
   get connectionState(): ConnectionState {
     return this.state
@@ -285,7 +253,7 @@ export class JsonRpcGatewayClient {
 
     this.setState('connecting')
 
-    const socket = this.options.socketFactory?.(wsUrl) ?? new WebSocket(wsUrl)
+    const socket = new WebSocket(wsUrl)
     this.socket = socket
 
     socket.addEventListener('message', message => {
@@ -305,7 +273,7 @@ export class JsonRpcGatewayClient {
       this._lastCloseCode = event.code
       this.socket = null
       this.setState('closed')
-      this.rejectAllPending(new Error(this.options.closedErrorMessage))
+      this.rejectAllPending(new Error(CLOSED_ERROR_MESSAGE))
     })
 
     await new Promise<void>((resolve, reject) => {
@@ -342,34 +310,32 @@ export class JsonRpcGatewayClient {
         settled = true
         cleanup()
         this.setState('error')
-        reject(new Error(this.options.connectErrorMessage))
+        reject(new Error(CONNECT_ERROR_MESSAGE))
       }
 
       socket.addEventListener('open', onOpen, { once: true })
       socket.addEventListener('error', onError, { once: true })
 
-      if (this.options.connectTimeoutMs > 0) {
-        timer = setTimeout(() => {
-          if (settled) {
-            return
-          }
+      timer = setTimeout(() => {
+        if (settled) {
+          return
+        }
 
-          settled = true
-          cleanup()
+        settled = true
+        cleanup()
 
-          // 丢弃半开 socket，避免下次 connect() 在僵尸 'connecting' 状态上短路
-          if (this.socket === socket) {
-            try {
-              socket.close()
-            } catch {}
+        // 丢弃半开 socket，避免下次 connect() 在僵尸 'connecting' 状态上短路
+        if (this.socket === socket) {
+          try {
+            socket.close()
+          } catch {}
 
-            this.socket = null
-          }
+          this.socket = null
+        }
 
-          this.setState('error')
-          reject(new Error(this.options.connectErrorMessage))
-        }, this.options.connectTimeoutMs)
-      }
+        this.setState('error')
+        reject(new Error(CONNECT_ERROR_MESSAGE))
+      }, CONNECT_TIMEOUT_MS)
     })
   }
 
@@ -386,7 +352,7 @@ export class JsonRpcGatewayClient {
       this.socket = null
     }
 
-    this.rejectAllPending(new Error(this.options.closedErrorMessage))
+    this.rejectAllPending(new Error(CLOSED_ERROR_MESSAGE))
     this.setState('closed')
   }
 
@@ -414,18 +380,14 @@ export class JsonRpcGatewayClient {
     return () => this.stateHandlers.delete(handler)
   }
 
-  request<T>(
-    method: string,
-    params: Record<string, unknown> = {},
-    timeoutMs = this.options.requestTimeoutMs
-  ): Promise<T> {
+  request<T>(method: string, params: Record<string, unknown> = {}, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS): Promise<T> {
     const socket = this.socket
 
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error(this.options.notConnectedErrorMessage))
+      return Promise.reject(new Error(NOT_CONNECTED_ERROR_MESSAGE))
     }
 
-    const id = this.options.createRequestId(++this.nextId)
+    const id = ++this.nextId
 
     return new Promise<T>((resolve, reject) => {
       const pending: PendingCall = {
@@ -529,6 +491,11 @@ export class JsonRpcGatewayClient {
     }
 
     if (frame.id !== undefined && frame.id !== null) {
+      // 本端请求 ID 均为数字，其他 ID 的响应没有对应的在途请求。
+      if (typeof frame.id !== 'number') {
+        return
+      }
+
       const call = this.pending.get(frame.id)
 
       if (!call) {
@@ -552,7 +519,7 @@ export class JsonRpcGatewayClient {
     }
   }
 
-  private clearPending(id: GatewayRequestId): void {
+  private clearPending(id: number): void {
     const call = this.pending.get(id)
 
     if (call?.timer) {

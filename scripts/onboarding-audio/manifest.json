@@ -18,7 +18,6 @@
     { "tag": "onboarding.hatching",         "text": "让我想想我该是什么样子…" },
     { "tag": "onboarding.hatching.retry",  "text": "刚才的回答有些问题，咱们再来一次。" },
     { "tag": "onboarding.portrait.ok",         "text": "嗯…这就是我，您觉得怎么样？" },
-    { "tag": "onboarding.portrait.failed",     "text": "我大概长这样，您觉得呢？" },
     { "tag": "onboarding.portrait.regenerate", "text": "换一个样子，这样如何？" },
     { "tag": "onboarding.finishing.retry", "text": "还差一点点，咱们再确认一次。" },
     { "tag": "onboarding.greeting", "text": "您好，很高兴见到您！" }

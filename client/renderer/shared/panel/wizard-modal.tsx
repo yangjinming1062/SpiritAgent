@@ -19,11 +19,11 @@ interface WizardModalProps {
   widthClass?: string
 }
 
-// 全屏 rect 在挂载后不再变化，提到模块层避免每次 render 重建函数与对象。
+// 每次取当前视口尺寸；提到模块层让 getRect 引用保持稳定。
 const fullscreenRect = (): DOMRect => new DOMRect(0, 0, window.innerWidth, window.innerHeight)
 
-// 伙伴窗线性向导的模态外壳：居中浮层卡（不铺全屏暗化遮罩）。Esc 在捕获阶段拦截并阻断
-// 冒泡——外层 FloatingPanel 的 Esc 处理器不会连坐关闭整个设置面板。
+// 线性向导的模态外壳：居中浮层卡（不铺全屏暗化遮罩）。Esc 在捕获阶段拦截并阻断传播，
+// 所在页面的 Esc 处理不会同时触发。
 export function WizardModal({
   regionId,
   title,

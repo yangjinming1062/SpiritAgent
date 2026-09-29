@@ -7,14 +7,16 @@ import {
   setSpriteState,
   type WindowGeom
 } from '@/modules/character'
-import { $chatSessionId, setAssistantTool } from '@/modules/conversation'
+import { $chatSessionId, $chatTurnInFlight, setAssistantTool } from '@/modules/conversation'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
+import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { $gateway } from '@/shared/store/gateway'
+import { getStrings } from '@/shared/strings'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
-// 宿主专属的设备指令分发：tool.call 只在精灵窗宿主执行（代理窗口已在 bootstrap 过滤），
+// 宿主专属的设备指令分发：tool.call 只在精灵窗宿主执行（代理窗的事件泵 proxy-runtime 不转发它），
 // 按 call_id 去重重放帧，交互类工具先走仪式行走再 execute。
 
 // click_at 虚拟目标几何的边长（px）：只为 perch 落位与指向方位提供参照，
@@ -24,6 +26,20 @@ const CLICK_GEOM_HALF = CLICK_GEOM_SIZE / 2
 
 // 遥控回合可并发多个工具，一个先返回不能把仍在跑的复位掉。
 let remoteToolDepth = 0
+
+// 主进程在请求发出前发现 Runner 未连接时的错误（main/runner/bridge.ts、rpc-ws.ts）；
+// 只有这类失败能确定工具没有执行，超时、断连与 Runner 报错都可能已产生副作用。
+const RUNNER_NOT_CONNECTED_RE = /^Runner (?:is not connected|WS server is closed)\.$/
+
+// 回传模型的失败结果只陈述执行事实，不带原始错误（可能含本机路径等细节）。
+const NOT_EXECUTED_RESULT = { ok: false, error: 'Not executed: the local runner is not connected.' }
+
+const OUTCOME_UNKNOWN_RESULT = {
+  ok: false,
+  error:
+    'The local runner call ended without a result, so the outcome is unknown: the tool may or may not have run. ' +
+    'Do not rerun it automatically; check its effects or ask the user first.'
+}
 
 // 已受理过的设备指令 call_id。tool.call 进重放缓冲，WS 断开重连时会被重发——没有这道去重，
 // 一条「删文件」会在本机执行第二次（后端的 resolve_future 只是丢弃迟到结果，拦不住已发生的副作用）。
@@ -49,8 +65,9 @@ function releaseRemoteTool(): void {
   remoteToolDepth = Math.max(0, remoteToolDepth - 1)
 
   // force：IDLE（10）< WORKING（70），没有 force 会被优先级门控静默拒绝，精灵永久卡在工作姿态。
-  // 仅在状态仍是工作态（或仪式行走留下的 interacting 瞬态）且没有桌面回合接管时复位。
-  if (remoteToolDepth === 0) {
+  // 仅在状态仍是工作态（或仪式行走留下的 interacting 瞬态）时复位；可见会话的回合仍在进行时
+  // 由它自己的 tool.complete / message.complete 收尾。
+  if (remoteToolDepth === 0 && !$chatTurnInFlight.get()) {
     const current = $spriteState.get()
 
     if (current === 'working' || current === 'interacting') {
@@ -65,7 +82,7 @@ export function handleToolStart(event: GatewayEvent): void {
   // tool.call（下方）只针对 Runner 工具触发，并携带 IPC 分发所需的参数。
   const p = decodePayload<{ name?: string }>(event.payload)
 
-  setAssistantTool(p?.name ?? '工具')
+  setAssistantTool(p?.name ?? getStrings().chat.tools.genericName)
   setSpriteState('working')
 }
 
@@ -112,6 +129,7 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
   // fire-and-forget 调用 Runner 并把结果回传，让后端的
   // 等待解析完成；工具错误不得冒泡到本处理器。
   const gateway = $gateway.get()
+  const callId = p.call_id
 
   void (async () => {
     try {
@@ -148,25 +166,30 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
         }
       }
 
-      const result = findTarget
-        ? await performRitualWalk(findTarget, () => runnerInvoke(name, args, p.skill_scope, p.call_id), {
-            previewClick
-          })
-        : await runnerInvoke(name, args, p.skill_scope, p.call_id)
+      let result: unknown
 
-      await gateway?.request('tool.result', { call_id: p.call_id, result })
-    } catch (err) {
       try {
-        // DESIGN「故障体验」：原始错误不回传 LLM——
-        // message 可能含路径/系统调用细节，LLM 可能照念给用户。诚实（承认没做到）
-        // 但不暴露技术细节；原始错误只进本地日志留痕。
-        log.warn('events', `runner tool ${name} failed:`, err)
-        await gateway?.request('tool.result', {
-          call_id: p.call_id,
-          result: { ok: false, error: '（手没回应：本机执行器没有完成这次操作）' }
-        })
-      } catch {
-        /* 尽力而为——后端的 300 秒兜底会处理 */
+        result = findTarget
+          ? await performRitualWalk(findTarget, () => runnerInvoke(name, args, p.skill_scope, callId), {
+              previewClick
+            })
+          : await runnerInvoke(name, args, p.skill_scope, callId)
+      } catch (err) {
+        // 未执行与结果未知分别说明（DESIGN「故障体验」）；结果未知不能报成失败，
+        // 否则模型可能重做已发生的副作用（PROTOCOL「调用日志与未知结果」）。
+        log.warn('events', `runner tool ${name} (${callId}) failed:`, err)
+        result = RUNNER_NOT_CONNECTED_RE.test(unwrapIpcErrorMessage(err)) ? NOT_EXECUTED_RESULT : OUTCOME_UNKNOWN_RESULT
+      }
+
+      try {
+        if (!gateway) {
+          throw new Error('gateway unavailable')
+        }
+
+        await gateway.request('tool.result', { call_id: callId, result })
+      } catch (err) {
+        // 未送达时后端等待按超时收尾，同样视为结果未知。
+        log.warn('events', `tool.result for ${name} (${callId}) not delivered:`, err)
       }
     } finally {
       if (selfDriven) {

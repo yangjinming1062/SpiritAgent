@@ -52,7 +52,6 @@ const TRAY_STRINGS = {
     language: '语言 / Language',
     living: '生活空间',
     quit: (brandName: string) => `退出 ${brandName}`,
-    quitTooltip: '退出客户端',
     resetPosition: '一键归位',
     show: '显示',
     workbench: '工作台'
@@ -75,7 +74,6 @@ const TRAY_STRINGS = {
     language: 'Language / 语言',
     living: 'Living Space',
     quit: (brandName: string) => `Quit ${brandName}`,
-    quitTooltip: 'Quit',
     resetPosition: 'Reset Position',
     show: 'Show',
     workbench: 'Workbench'
@@ -266,8 +264,6 @@ function buildTrayMenu(): Menu | null {
   ]
 
   if (authed) {
-    // DESIGN「窗口与会话」：对话模式触发源之一是托盘——聊天面板是渲染层 React state，
-    // 拉起窗口外还要通知渲染器开面板（与 trayActivate 同一模式）。
     template.push(
       { type: 'separator' },
       {
@@ -421,7 +417,7 @@ export function showMainWindow(): void {
   rebuildTrayMenu()
 }
 
-export function resetMainWindowPosition(): void {
+function resetMainWindowPosition(): void {
   const win = trayDeps?.getMainWindow?.()
 
   if (!win || win.isDestroyed()) {

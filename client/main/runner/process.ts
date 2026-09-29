@@ -7,8 +7,7 @@ import { errorMessage } from '../shared/utils'
 
 import { resolveVenvPython } from './venv'
 
-const DEFAULT_GRACE_MS = 4_000
-const DEFAULT_STOP_TIMEOUT_MS = 8_000
+const STOP_GRACE_MS = 4_000
 const DEFAULT_HEALTH_TIMEOUT_MS = 8_000
 
 export interface RunnerProcessState {
@@ -33,21 +32,15 @@ type RunnerProcessEvent =
 export interface CreateRunnerProcessOptions {
   spiritagentHome?: null | string
   devPython?: null | string
-  env?: Record<string, string | undefined>
   executable?: null | string
   fileExists?: (p: string) => boolean
   log?: (chunk: string) => void
   repoRoot?: null | string
-  spawn?: typeof childProcess.spawn
-  stopGraceMs?: number
-  stopTimeoutMs?: number
 }
 
 export interface RunnerProcessStartArgs {
   authToken?: string
   endpointPath?: string
-  executable?: string
-  extraArgs?: string[]
 }
 
 export interface RunnerProcess {
@@ -55,6 +48,7 @@ export interface RunnerProcess {
   onEvent: (callback: (event: RunnerProcessEvent) => void) => () => void
   signalReady: () => void
   start: (args: RunnerProcessStartArgs) => Promise<RunnerProcessState>
+  /** `ok` 表示子进程已退出（与退出码无关）；SIGKILL 后仍存活时为 false。 */
   stop: (options?: {
     reason?: string
   }) => Promise<{ code?: null | number; noop?: boolean; ok: boolean; signal?: null | string }>
@@ -96,18 +90,7 @@ function resolveRunnerExecutable(options: {
 export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): RunnerProcess {
   const emitter = new EventEmitter()
   const log = options.log || (() => {})
-  const spawnFn = options.spawn || childProcess.spawn
   const fileExists = options.fileExists || (() => false)
-
-  const stopGraceMs =
-    typeof options.stopGraceMs === 'number' && Number.isFinite(options.stopGraceMs)
-      ? options.stopGraceMs
-      : DEFAULT_GRACE_MS
-
-  const stopTimeoutMs =
-    typeof options.stopTimeoutMs === 'number' && Number.isFinite(options.stopTimeoutMs)
-      ? options.stopTimeoutMs
-      : DEFAULT_STOP_TIMEOUT_MS
 
   let state: RunnerProcessState = {
     args: null,
@@ -166,15 +149,9 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
     }
   }
 
-  function buildArgs({ endpointPath, extraArgs }: RunnerProcessStartArgs): string[] {
+  function buildArgs({ endpointPath }: RunnerProcessStartArgs): string[] {
     // token 经环境变量下发，不进 argv——同机进程列表可读命令行。
-    const args = ['--desktop-endpoint', endpointPath || '']
-
-    if (Array.isArray(extraArgs)) {
-      args.push(...extraArgs)
-    }
-
-    return args
+    return ['--desktop-endpoint', endpointPath || '']
   }
 
   async function start(args: RunnerProcessStartArgs = {}): Promise<RunnerProcessState> {
@@ -193,14 +170,14 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
     const resolved = resolveRunnerExecutable({
       spiritagentHome: options.spiritagentHome,
       devPython: options.devPython,
-      executable: args.executable,
+      executable: options.executable,
       fileExists,
       repoRoot: options.repoRoot
     })
 
     if (!resolved) {
       const err = new Error(
-        'Could not resolve a Runner executable. Pass options.executable, install the Runner venv under $SPIRITAGENT_HOME, or set SPIRITAGENT_DESKTOP_PYTHON for dev mode.'
+        'Could not resolve a Runner executable. Install the Runner venv under $SPIRITAGENT_HOME, or set SPIRITAGENT_DESKTOP_RUNNER_EXECUTABLE (dev: SPIRITAGENT_DESKTOP_PYTHON with SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT).'
       )
 
       setState({ lastError: err.message })
@@ -212,8 +189,7 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       ...(options.spiritagentHome ? { SPIRITAGENT_HOME: options.spiritagentHome } : {}),
-      SPIRITAGENT_DESKTOP_TOKEN: args.authToken || '',
-      ...(options.env || {})
+      SPIRITAGENT_DESKTOP_TOKEN: args.authToken || ''
     }
 
     log(`[runner] spawn ${resolved.kind} ${resolved.command} ${argv.join(' ')}`)
@@ -221,7 +197,7 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
     let handle: ChildProcess
 
     try {
-      handle = spawnFn(resolved.command, argv, {
+      handle = childProcess.spawn(resolved.command, argv, {
         env,
         stdio: ['pipe', 'pipe', 'pipe'],
         windowsHide: true
@@ -281,18 +257,18 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
     ok: boolean
     signal?: null | string
   }> {
-    if (!state.running || !child) {
+    const target = child
+
+    if (!state.running || !target) {
       return Promise.resolve({ noop: true, ok: true })
     }
 
     log(`[runner] stop reason=${reason || 'unspecified'}`)
 
     return new Promise(resolve => {
-      const target = child!
       let settled = false
       let forceKillTimer: ReturnType<typeof setTimeout> | null = null
       let forceSettleTimer: ReturnType<typeof setTimeout> | null = null
-      let stopTimeoutTimer: ReturnType<typeof setTimeout> | null = null
 
       const finalize = (code: null | number, signal: null | string, fromExit: boolean) => {
         if (settled) {
@@ -311,11 +287,6 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
           forceSettleTimer = null
         }
 
-        if (stopTimeoutTimer) {
-          clearTimeout(stopTimeoutTimer)
-          stopTimeoutTimer = null
-        }
-
         // 超时兜底也允许再次 start：门闩与 stop 终态对齐，避免 restart 卡死。
         if (state.running && target.exitCode == null && target.signalCode == null) {
           setState({ running: false })
@@ -326,8 +297,8 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
         }
 
         target.removeListener('exit', onExit)
-        const ok = fromExit ? code === 0 || signal !== null : false
-        resolve({ code, ok, signal })
+        // Windows 的 taskkill /F 以退出码 1 结束进程，退出码不代表 stop 失败。
+        resolve({ code, ok: fromExit, signal })
       }
 
       const onExit = (code: null | number, signal: null | string) => finalize(code, signal, true)
@@ -342,7 +313,7 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
         }
       }
 
-      requestGracefulKill(target, stopGraceMs)
+      requestGracefulKill(target, STOP_GRACE_MS)
 
       forceKillTimer = setTimeout(() => {
         if (settled) {
@@ -369,13 +340,7 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
         if (typeof forceSettleTimer.unref === 'function') {
           forceSettleTimer.unref()
         }
-      }, stopGraceMs)
-
-      stopTimeoutTimer = setTimeout(() => settleIfExited(null), stopTimeoutMs)
-
-      if (typeof stopTimeoutTimer.unref === 'function') {
-        stopTimeoutTimer.unref()
-      }
+      }, STOP_GRACE_MS)
     })
   }
 

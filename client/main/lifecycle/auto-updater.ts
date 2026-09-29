@@ -1,8 +1,9 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-import type { App, Net } from 'electron'
+import type { App } from 'electron'
 import log from 'electron-log/main'
+// CJS 包没有 named export，使用处从 default import 解构 autoUpdater。
 import electronUpdaterPkg from 'electron-updater'
 import type { UpdateInfo } from 'electron-updater'
 
@@ -12,8 +13,10 @@ import { errorMessage } from '../shared/utils'
 
 const UPDATE_INITIAL_CHECK_DELAY_MS = 30_000
 
+type RunnerUpdaterLog = (level: string, message: string, ...args: unknown[]) => void
+
 interface RunnerUpdaterPort {
-  installPending: () => Promise<unknown>
+  installPending: () => Promise<{ error?: string; noop?: boolean; ok: boolean }>
   prefetchRunnerAssets: (options: {
     publicKeyPath: null | string
     updateBaseUrl: string
@@ -25,6 +28,7 @@ interface RunnerUpdaterPort {
 interface RuntimeForUpdater {
   ensureBackendSession?: () => BackendSessionLike | null | undefined
   getRunnerBridge?: () => null | {
+    getStatus: () => { phase: string }
     start: (options: { backendSession?: BackendSessionLike | null; readyTimeoutMs?: number }) => Promise<unknown>
     stop: (options: { reason: string }) => Promise<unknown>
   }
@@ -33,20 +37,33 @@ interface RuntimeForUpdater {
 
 interface AutoUpdaterOptions {
   app: Pick<App, 'getPath' | 'getVersion' | 'isPackaged'>
-  appRoot: string
   runtime: RuntimeForUpdater
   /** 由 entry 注入，切断 lifecycle→runner 实现导入。 */
-  createRunnerUpdater: (deps: { runtime: RuntimeForUpdater; fetchImpl: unknown }) => RunnerUpdaterPort
-  electronNet: Net
+  createRunnerUpdater: (deps: {
+    fetchImpl: typeof globalThis.fetch
+    log: RunnerUpdaterLog
+    runtime: RuntimeForUpdater
+  }) => RunnerUpdaterPort
+  fetchImpl: typeof globalThis.fetch
   spiritagentHome: null | string
+}
+
+// Runner 更新器的日志与桌面更新同落 electron-log。
+const logRunnerUpdater: RunnerUpdaterLog = (level, message, ...args) => {
+  if (level === 'error') {
+    log.error(message, ...args)
+  } else if (level === 'warn') {
+    log.warn(message, ...args)
+  } else {
+    log.info(message, ...args)
+  }
 }
 
 export function createAutoUpdater({
   app,
-  appRoot,
   runtime,
   createRunnerUpdater,
-  electronNet,
+  fetchImpl,
   spiritagentHome
 }: AutoUpdaterOptions) {
   let singleton: null | RunnerUpdaterPort = null
@@ -57,57 +74,35 @@ export function createAutoUpdater({
       return singleton
     }
 
-    singleton = createRunnerUpdater({
-      runtime,
-      fetchImpl: electronNet.fetch as unknown as typeof globalThis.fetch
-    })
+    singleton = createRunnerUpdater({ fetchImpl, log: logRunnerUpdater, runtime })
 
     return singleton
   }
 
-  function isFeedConfigured(): boolean {
-    return feedConfigured
-  }
-
+  // electron-builder 的 extraResources 把验签公钥放在 resources 根目录；更新器只在打包构建运行。
   function getBundledPublicKeyPath(): null | string {
-    try {
-      const candidates = [
-        path.join(process.resourcesPath || '', 'update.pub'),
-        path.join(appRoot, 'update.pub'),
-        path.join(import.meta.dirname, '..', 'update.pub'),
-        path.join(import.meta.dirname, 'update.pub'),
-        path.join(appRoot, '..', 'scripts', 'release-keys', 'update.pub'),
-        path.resolve(appRoot, '../../scripts/release-keys/update.pub')
-      ]
+    const candidate = path.join(process.resourcesPath, 'update.pub')
 
-      return candidates.find(candidate => fs.existsSync(candidate)) || null
-    } catch {
-      return null
-    }
+    return fs.existsSync(candidate) ? candidate : null
   }
 
-  function setup(): void {
-    feedConfigured = false
+  // 更新源来自激活时保存的后端地址；首次激活前没有地址，之后的检查再配置，无需重启。
+  function ensureFeedConfigured(): boolean {
+    if (feedConfigured) {
+      return true
+    }
 
     if (!app.isPackaged) {
-      return
+      return false
     }
-
-    // 从 default import 解构；不要用顶层 named import（见 electronUpdaterPkg 注释）。
-    const { autoUpdater } = electronUpdaterPkg
-
-    autoUpdater.autoDownload = false
-    autoUpdater.autoInstallOnAppQuit = false
-    autoUpdater.logger = log
 
     const baseUrl = resolveNormalizedBackendUrl(spiritagentHome)
 
     if (!baseUrl) {
-      log.info('no backend URL configured; auto-updater disabled until activation')
-
-      return
+      return false
     }
 
+    const { autoUpdater } = electronUpdaterPkg
     const updateBaseUrl = baseUrl + '/api/update'
     const publicKeyPath = getBundledPublicKeyPath()
 
@@ -134,6 +129,26 @@ export function createAutoUpdater({
         })
     })
 
+    return true
+  }
+
+  function setup(): void {
+    if (!app.isPackaged) {
+      return
+    }
+
+    const { autoUpdater } = electronUpdaterPkg
+
+    autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = false
+    autoUpdater.logger = log
+
+    if (!ensureFeedConfigured()) {
+      log.info('no backend URL configured; update feed is configured on the first check after activation')
+
+      return
+    }
+
     const timer = setTimeout(() => {
       autoUpdater.checkForUpdates().catch((error: unknown) => {
         const msg = errorMessage(error)
@@ -146,5 +161,5 @@ export function createAutoUpdater({
     }
   }
 
-  return { getRunnerUpdater, isFeedConfigured, setup }
+  return { ensureFeedConfigured, getRunnerUpdater, setup }
 }

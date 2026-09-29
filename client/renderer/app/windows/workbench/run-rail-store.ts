@@ -1,14 +1,11 @@
-// 工作台 Run Rail 派生 store：本轮工具列表 / 本会话工件，全部从现有会话投影。
-//
-// 不新开后端；事件流订阅 `companion.events`（`tool.start` / `tool.complete`），
-// 历史与媒体从 chat-store 派生。
+// 工作台 Run Rail 派生 store：本轮工具列表 / 本会话工件，全部从 chat-store 的会话投影派生，不新开后端；
+// tool.start / tool.complete 由 app/runtime/gateway-event-router.ts 写入该投影。
 
 import { atom, computed } from 'nanostores'
 
 import { $chatMessageBodies, $chatMessageList, type ChatMessageBody } from '@/modules/conversation'
 
 export interface ToolStep {
-  /** 工具名称（model_info 派生） */
   name: string
   /** 是否为当前正在跑的步骤（最后一条且 assistant 回合尚未 finalize） */
   active: boolean
@@ -26,18 +23,12 @@ export interface RailArtifact {
   kind: 'image' | 'video' | 'audio'
   audioUrl?: string
   url: string
-  /** 来自哪条消息；用于追溯 */
-  messageId: string
 }
 
 export const $isRailOpen = atom<boolean>(true)
 
 export function setRailOpen(open: boolean): void {
   $isRailOpen.set(open)
-}
-
-export function toggleRail(): void {
-  $isRailOpen.set(!$isRailOpen.get())
 }
 
 // 找到当前轮次：会话尾部第一条 assistant 消息即视为「本轮」入口；
@@ -102,7 +93,6 @@ export const $artifacts = computed([$chatMessageList, $chatMessageBodies], (list
         id: `${item.id}:${m.url}`,
         kind: m.type,
         audioUrl: m.audio_url,
-        messageId: item.id,
         url: m.url
       })
     }

@@ -1,3 +1,4 @@
+import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $whisperOpen } from '@/shared/store/chat-visibility'
@@ -108,7 +109,7 @@ export async function toggleVoiceBar(messageId: string): Promise<void> {
       proj.setPlaying(null)
     }
 
-    console.warn('[voice-bar] playback failed', err)
+    log.warn('voice-bar', 'playback failed', err)
   } finally {
     if (token === playToken) {
       proj.setLoading(null)

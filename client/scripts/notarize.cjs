@@ -32,14 +32,14 @@ function resolveApiKeyPath(rawValue) {
   }
 
   const tempPath = path.join(os.tmpdir(), `spiritagent-notary-${Date.now()}-${process.pid}.p8`)
-  fs.writeFileSync(tempPath, value, 'utf8')
+  fs.writeFileSync(tempPath, value, { encoding: 'utf8', mode: 0o600 })
   return {
     keyPath: tempPath,
     cleanup: () => {
       try {
         fs.rmSync(tempPath, { force: true })
-      } catch {
-        // Best-effort cleanup.
+      } catch (err) {
+        console.warn(`[notarize] could not remove temporary API key ${tempPath}: ${err.message}`)
       }
     }
   }

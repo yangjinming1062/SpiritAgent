@@ -40,15 +40,15 @@ interface MessageBubbleProps {
   variant?: ConversationVariant
 }
 
-// 后台视频完成的送达行：正文是给 LLM 的摘要，渲染端只显示媒体卡。
+// 异步送达的媒体行（片刻、后台视频）：有正文时显示在媒体卡上方；视频送达行不带正文。
 const MEDIA_STATUS_SUBTYPE = 'status_media'
 
-// 路径模式降级时的 @file: 指令只服务 LLM，不进用户可见正文；
+// 附件的 @file: / @folder: 指令只服务 LLM，不进用户可见正文；
 // 逐行剔除而非整段正则，避免误伤正文里的普通 @ 提及。
 function stripAttachmentDirectives(text: string): string {
   return text
     .split('\n')
-    .filter(line => !/^@file:/i.test(line.trim()))
+    .filter(line => !/^@(file|folder):/i.test(line.trim()))
     .join('\n')
 }
 
@@ -232,7 +232,7 @@ function MessageBubbleWithBody({
   const canEdit = isUser && canOperate && lastEditableMessage?.id === message.id
 
   // 用户附件渲染为可点击图片卡（data URL 或本地路径，媒体源通道负责取图）；
-  // 正文剔除 @file: 指令行，纯图片消息不渲染空气泡。
+  // 正文剔除附件指令行，纯图片消息不渲染空气泡。
   const visibleText = isUser ? stripAttachmentDirectives(body.text) : body.text
   // 规整展示文本：流式追加时去除前导空行防撑大气泡上方，非流式时去除首尾多余空白，保留内部段落与换行。
   const displayText = body.streaming ? visibleText.trimStart() : visibleText.trim()
@@ -472,5 +472,5 @@ function MessageActionCluster({
   )
 }
 
-// React.memo 保证历史气泡不会随 ChatDock 的内部状态变化重渲染。
+// React.memo 保证历史气泡不会随 ConversationSurface 的其他状态变化重渲染。
 export const MessageBubble = memo(MessageBubbleInner)

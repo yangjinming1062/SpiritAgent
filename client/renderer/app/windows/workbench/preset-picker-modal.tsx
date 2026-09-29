@@ -8,7 +8,7 @@ import { BTN_PRIMARY, BTN_SUBTLE, WizardModal } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 import type { SystemPresetSummary } from '@/shared/types/spiritagent'
 
-// icon_key → Tabler 图标映射。新增预设须同步：(1) BUILTIN_PRESETS icon_key，(2) 此映射表。
+// icon_key → Tabler 图标映射，预设选择与会话侧栏共用。新增预设须同步后端 BUILTIN_PRESETS 的 icon_key 与此表。
 const PRESET_ICONS: Record<string, IconComponent> = {
   preset_companion: Sparkles,
   preset_developer: Cpu,
@@ -17,8 +17,12 @@ const PRESET_ICONS: Record<string, IconComponent> = {
   preset_language_teacher: Globe
 }
 
+export function presetIcon(iconKey: string | null | undefined): IconComponent {
+  return (iconKey && PRESET_ICONS[iconKey]) || MessageCircle
+}
+
 function PresetIcon({ iconKey }: { iconKey: string }): React.JSX.Element {
-  const Icon: IconComponent = PRESET_ICONS[iconKey] ?? MessageCircle
+  const Icon = presetIcon(iconKey)
 
   return <Icon className="size-4" />
 }
@@ -115,10 +119,4 @@ export function PresetPickerModal({ presets, loading, onConfirm, onClose }: Pres
       </div>
     </WizardModal>
   )
-}
-
-export function PresetIconBadge({ iconKey }: { iconKey: string | null | undefined }): React.JSX.Element {
-  const Icon: IconComponent = (iconKey && PRESET_ICONS[iconKey]) || MessageCircle
-
-  return <Icon className="size-3.5 shrink-0 text-accent/70" />
 }

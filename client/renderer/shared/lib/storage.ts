@@ -1,5 +1,6 @@
 import { atom, type WritableAtom } from 'nanostores'
 
+import { log } from './log'
 import { safeJsonParse } from './safe-json'
 
 interface StorageKeyConfig {
@@ -218,13 +219,16 @@ export function definePersistedEnum<T extends string>(options: PersistedEnumOpti
 export async function clearCompanionStorage(): Promise<void> {
   clearEpoch += 1
 
-  try {
-    for (const [key, config] of REGISTERED_STORAGE_KEYS.entries()) {
-      if (!config.preserveOnLogout) {
+  // 逐键删除：单个键失败不阻止其余账户数据清理。
+  for (const [key, config] of REGISTERED_STORAGE_KEYS.entries()) {
+    if (!config.preserveOnLogout) {
+      try {
         window.localStorage.removeItem(key)
+      } catch (error) {
+        log.warn('storage', `removeItem failed: ${key}`, error)
       }
     }
-  } catch {}
+  }
 
   // 触发所有上层模块注册的清理处理器（含磁盘缓存清空与内存 Atom 状态重置）
   const tasks: Array<Promise<unknown> | void> = []
@@ -236,10 +240,16 @@ export async function clearCompanionStorage(): Promise<void> {
       if (r) {
         tasks.push(r)
       }
-    } catch {}
+    } catch (error) {
+      log.warn('storage', 'clear handler failed', error)
+    }
   }
 
   // 真等所有 handler（包括异步清理）落地——调用方需在 $auth.set 前 await 此函数，
   // 避免 React 在 clear 完成前用陈旧 localStorage 值重渲染。
-  await Promise.allSettled(tasks)
+  for (const result of await Promise.allSettled(tasks)) {
+    if (result.status === 'rejected') {
+      log.warn('storage', 'async clear handler failed', result.reason)
+    }
+  }
 }

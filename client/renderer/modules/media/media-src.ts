@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 
+import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import type { ChatMediaItem } from '@/shared/types/spiritagent'
 
@@ -47,15 +48,19 @@ function resolveImageSrc(url: string): string | Promise<string | null> {
   }
 
   if (LOCAL_PATH_RE.test(url) && !url.startsWith('/api/')) {
-    return window.spiritagent.readFileDataUrl(url).catch(() => null)
+    return window.spiritagent.readFileDataUrl(url)
   }
 
-  return window.spiritagent.apiAsset({ url, preferCache: true }).catch(() => null)
+  return window.spiritagent.apiAsset({ url, preferCache: true })
 }
 
+type MediaSrcState = { status: 'failed' } | { status: 'loading' } | { status: 'ready'; src: string }
+
+const LOADING: MediaSrcState = { status: 'loading' }
+
 /** 把后端媒体 URL 解析为渲染端可用 src：图片走 data URL 通道；视频取字节转 blob URL，组件卸载时回收。 */
-export function useResolvedMediaSrc(item: ChatMediaItem): string | null {
-  const [resolved, setResolved] = useState<{ url: string; type: ChatMediaItem['type']; src: string | null } | null>(
+export function useResolvedMediaSrc(item: ChatMediaItem): MediaSrcState {
+  const [resolved, setResolved] = useState<{ url: string; type: ChatMediaItem['type']; state: MediaSrcState } | null>(
     null
   )
 
@@ -75,34 +80,43 @@ export function useResolvedMediaSrc(item: ChatMediaItem): string | null {
           const direct = item.url.startsWith('data:') ? item.url : null
           const cached = imageSrcCache.get(item.url)
           const fetched = direct || cached ? null : await resolveImageSrc(item.url)
-          const dataUrl = direct || cached || fetched || null
+          const dataUrl = direct || cached || fetched
 
           if (!isCurrent()) {
             return
+          }
+
+          if (!dataUrl) {
+            throw new Error('Media asset returned no data')
           }
 
           if (fetched) {
             setImageSrc(item.url, fetched)
           }
 
-          setResolved({ url: item.url, type: item.type, src: dataUrl })
+          setResolved({ url: item.url, type: item.type, state: { status: 'ready', src: dataUrl } })
         } else {
           const buf = await window.spiritagent.apiAssetBuffer({ url: item.url, preferCache: true })
 
-          if (buf && isCurrent()) {
-            const clean = item.url.split(/[?#]/)[0]
-            const ext = clean.slice(clean.lastIndexOf('.')).toLowerCase()
-            // 拷贝进全新 ArrayBuffer——IPC 返回的 Uint8Array 类型上可能是 SharedArrayBuffer 视图，不满足 BlobPart。
-            objectUrl = URL.createObjectURL(
-              new Blob([new Uint8Array(buf)], {
-                type: MEDIA_MIME_BY_EXT[ext] || (item.type === 'audio' ? 'audio/mpeg' : 'video/mp4')
-              })
-            )
-            setResolved({ url: item.url, type: item.type, src: objectUrl })
+          if (!isCurrent()) {
+            return
           }
+
+          const clean = item.url.split(/[?#]/)[0]
+          const ext = clean.slice(clean.lastIndexOf('.')).toLowerCase()
+          // 拷贝进全新 ArrayBuffer——IPC 返回的 Uint8Array 类型上可能是 SharedArrayBuffer 视图，不满足 BlobPart。
+          objectUrl = URL.createObjectURL(
+            new Blob([new Uint8Array(buf)], {
+              type: MEDIA_MIME_BY_EXT[ext] || (item.type === 'audio' ? 'audio/mpeg' : 'video/mp4')
+            })
+          )
+          setResolved({ url: item.url, type: item.type, state: { status: 'ready', src: objectUrl } })
         }
-      } catch {
-        /* 解析失败保留占位态 */
+      } catch (err) {
+        if (isCurrent()) {
+          log.warn('media', 'Media source could not be loaded:', err)
+          setResolved({ url: item.url, type: item.type, state: { status: 'failed' } })
+        }
       }
     })()
 
@@ -115,5 +129,5 @@ export function useResolvedMediaSrc(item: ChatMediaItem): string | null {
     }
   }, [item.type, item.url])
 
-  return resolved?.url === item.url && resolved.type === item.type ? resolved.src : null
+  return resolved?.url === item.url && resolved.type === item.type ? resolved.state : LOADING
 }

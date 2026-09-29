@@ -1,15 +1,13 @@
-import type { SpiritAgentConfigPutRequest, SpiritAgentConfigResponse } from '@/shared/types/spiritagent'
+import type { SpiritAgentConfigResponse } from '@/shared/types/spiritagent'
 
 export async function getSpiritAgentConfig(): Promise<SpiritAgentConfigResponse> {
-  const response = await window.spiritagent.api<{ config?: SpiritAgentConfigResponse } | SpiritAgentConfigResponse>({
-    path: '/api/config'
-  })
+  const { config } = await window.spiritagent.api<{ config: SpiritAgentConfigResponse }>({ path: '/api/config' })
 
-  return (response as { config?: SpiritAgentConfigResponse }).config ?? (response as SpiritAgentConfigResponse)
+  return config
 }
 
 export async function saveSpiritAgentConfig(
-  config: SpiritAgentConfigPutRequest
+  config: SpiritAgentConfigResponse
 ): Promise<{ config: SpiritAgentConfigResponse }> {
   const response = await window.spiritagent.api<{ config: SpiritAgentConfigResponse }>({
     body: { config },

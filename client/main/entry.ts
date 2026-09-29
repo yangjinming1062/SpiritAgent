@@ -45,9 +45,7 @@ import { registerSystemIpc } from './ipc/system'
 import { registerUiThemeIpc } from './ipc/ui-theme'
 import { registerUpdateIpc } from './ipc/update'
 import { createAutoUpdater } from './lifecycle/auto-updater'
-import { createBootProgressMachine } from './lifecycle/boot-progress'
 import { createDesktopLogger } from './lifecycle/desktop-log'
-import { registerMediaProtocol, registerMediaProtocolScheme } from './lifecycle/media-protocol'
 import { createMenu } from './lifecycle/menu'
 import { createOpenExternalUrl } from './lifecycle/open-external-url'
 import { detectRemoteDisplay } from './lifecycle/platform'
@@ -156,21 +154,20 @@ runnerConfigStore.init({ spiritagentHome: SPIRITAGENT_HOME })
 
 const APP_NAME = '唤生'
 
+// net.fetch 走 Chromium 网络栈（系统代理与证书）；其签名不收 URL 对象，统一在此适配为标准 fetch。
+const electronFetch: typeof globalThis.fetch = (input, init) =>
+  electronNet.fetch(input instanceof URL ? input.href : input, init)
+
 const backendHttp = createBackendHttp({
   app,
   electronNet,
   spiritagentHome: SPIRITAGENT_HOME
 })
 
-const bootProgress = createBootProgressMachine({
-  getMainWindow: () => mainWindow,
-  rememberLog: (chunk: string) => rememberLog(chunk)
-})
-
 const { ensureBackend, resetBackendCache } = createEnsureBackend({
   appName: APP_NAME,
   backendHttp,
-  bootProgress,
+  logBootStep: message => rememberLog(`[boot] ${message}`),
   getAuthToken: () => getAuthToken(),
   getCurrentBaseUrl: () => sessionRuntime?.ensureBackendSession().getSession()?.baseUrl ?? null
 })
@@ -178,8 +175,7 @@ const { ensureBackend, resetBackendCache } = createEnsureBackend({
 // 云端配置同步协调器：backend user_settings 为真源，desktop-settings.json 是镜像
 // （terminal/spiritagent 等机密与设备相关节仅本机，见 shared/lib/config-sync.ts）。
 const configSync = createConfigSync({
-  createBackendClient: ({ baseUrl }) =>
-    createBackendClient({ baseUrl, fetch: (url, init) => electronNet.fetch(url, init) }),
+  createBackendClient: ({ baseUrl }) => createBackendClient({ baseUrl, fetch: electronFetch }),
   ensureBackend: () => ensureBackend(),
   isRetryableError: error => error instanceof BackendRequestError && (error.isNetwork || error.isServerError),
   log: chunk => rememberLog(chunk),
@@ -230,8 +226,6 @@ app.setAboutPanelOptions({
   copyright: `Copyright © 2026 ${APP_NAME}`
 })
 
-registerMediaProtocolScheme()
-
 const zoomPersistence = createZoomPersistence({ app, rememberLog })
 const surfaceCompanionPreferences = createSurfaceCompanionPreferences(app)
 
@@ -275,12 +269,12 @@ const PRELOAD_PATH = path.join(import.meta.dirname, 'preload.cjs')
 
 const { createSpriteWindow } = createSpriteWindowFactory({
   app,
-  bootProgress,
   getAppIconPath,
   getMainWindow: () => mainWindow,
   installCloseInterceptor,
   isMac: IS_MAC,
   preloadPath: PRELOAD_PATH,
+  rememberLog: (chunk: string) => rememberLog(chunk),
   rendererUrlFor,
   seedTheme: seedUiTheme,
   setMainWindow: win => {
@@ -329,7 +323,7 @@ async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort, clearA
     snapshot: authSnapshot
   }
 
-  // 用户身份变化触发配置水合（登录/换号；登出只停摆待写）。
+  // 身份变化时配置同步丢弃上个身份未上云的待写；登录或换号后水合新身份。
   const nextAccountId = authenticated ? (snapshot?.accountId ?? null) : null
 
   if (playbackClaimAccountId !== nextAccountId) {
@@ -350,10 +344,10 @@ registerSystemIpc({
   electron: { app },
   ipcMain
 })
-registerUiThemeIpc({ ipcMain })
+registerUiThemeIpc({ ipcMain, log: chunk => rememberLog(chunk) })
 registerPrefsIpc({
   ipcMain,
-  onLanguageChanged: () => rebuildTrayMenu(),
+  log: chunk => rememberLog(chunk),
   onReduceTransparencyChanged: value => {
     const { language } = buildPrefsHydratedFromConfig(runnerConfigStore.read())
     broadcastToAllWindows(IPC.event.prefsHydrated, { companion: { reduce_transparency: value }, language })
@@ -407,14 +401,12 @@ registerFilesIpc({
   mimeTypeForPath
 })
 registerOnboardingAudioIpc({
-  app,
   appRoot: APP_ROOT,
   spiritagentHome: SPIRITAGENT_HOME,
   hardening: { resolveReadableFileForIpc },
   ipcMain,
   mimeTypeForPath
 })
-const electronFetch = electronNet.fetch as unknown as typeof globalThis.fetch
 
 const assetDiskCache = createAssetDiskCache({
   defaultFetchFn: electronFetch,
@@ -425,20 +417,21 @@ const sessionHistoryDiskCache = createSessionHistoryDiskCache({
   spiritagentHome: SPIRITAGENT_HOME
 })
 
+const getCurrentAuth = (): null | { sessionId: string; token: string } => {
+  const current = sessionRuntime.ensureBackendSession()
+  const sessionId = current.getSession()?.sessionId
+  const token = current.getToken()
+
+  return sessionId && token ? { sessionId, token } : null
+}
+
 registerConnectionIpc({
   assetDiskCache,
   defaultFetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
   ensureBackend,
   fetchImpl: electronFetch,
   fetchJson: backendHttp.fetchJson,
-  getBootProgressState: () => bootProgress.getState(),
-  getCurrentAuth: () => {
-    const current = sessionRuntime.ensureBackendSession()
-    const sessionId = current.getSession()?.sessionId
-    const token = current.getToken()
-
-    return sessionId && token ? { sessionId, token } : null
-  },
+  getCurrentAuth,
   getMainWindow: () => mainWindow,
   ipcMain,
   mintWsTicket: backendHttp.mintWsTicket,
@@ -453,6 +446,7 @@ registerMediaIpc({
   spiritagentHome: SPIRITAGENT_HOME,
   ensureBackend,
   fetchImpl: electronFetch,
+  getCurrentAuth,
   ipcMain,
   log: chunk => rememberLog(chunk)
 })
@@ -468,7 +462,7 @@ const sessionRuntime = createSessionRuntime(
     createSession: createBackendSession,
     desktopVersion: () => backendHttp.resolveSpiritAgentVersion(),
     errorMessage,
-    fetchImpl: (url, init) => electronNet.fetch(url, init as Parameters<typeof electronNet.fetch>[1]),
+    fetchImpl: electronFetch,
     getTokenSetter: fn => {
       getAuthToken = fn
     },
@@ -509,18 +503,18 @@ runnerHost = createRunnerHost({
 
 const autoUpdater = createAutoUpdater({
   app,
-  appRoot: APP_ROOT,
   runtime: {
     ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
     getRunnerBridge: () => runnerHost.getBridge(),
     spiritagentHome: SPIRITAGENT_HOME
   },
-  createRunnerUpdater: ({ runtime: updaterRuntime, fetchImpl }) =>
+  createRunnerUpdater: ({ runtime: updaterRuntime, fetchImpl, log: updaterLog }) =>
     new RunnerUpdater({
       runtime: updaterRuntime,
-      fetchImpl: fetchImpl as typeof globalThis.fetch
+      fetchImpl,
+      log: updaterLog
     }),
-  electronNet,
+  fetchImpl: electronFetch,
   spiritagentHome: SPIRITAGENT_HOME
 })
 
@@ -573,8 +567,8 @@ registerSkillsIpc({
 registerUpdateIpc({
   broadcast: broadcastToAllWindows,
   electron: { app },
-  ipcMain,
-  isFeedConfigured: () => autoUpdater.isFeedConfigured()
+  ensureFeedConfigured: () => autoUpdater.ensureFeedConfigured(),
+  ipcMain
 })
 
 registerSpriteIpc({
@@ -590,6 +584,7 @@ registerSpriteIpc({
 
       return bridge.dispatch('execute_tool', { args: {}, name: 'system.get_windows' }, { timeoutMs: 1500 })
     },
+    log: chunk => rememberLog(chunk),
     screen
   },
   ipcMain
@@ -620,14 +615,19 @@ void app.whenReady().then(async () => {
 
   windowHandlers.installMediaPermissions()
   windowHandlers.installContentSecurityPolicy()
-  registerMediaProtocol(SPIRITAGENT_HOME)
   windowHandlers.configureSpellChecker(app)
   windowHandlers.registerPowerResumeListeners()
+  syncShortcutsFromConfig()
   autoUpdater.setup()
 
   await autoUpdater
     .getRunnerUpdater()
     .installPending()
+    .then(result => {
+      if (!result.ok) {
+        log.warn('runner installPending failed:', result.error)
+      }
+    })
     .catch(err => {
       log.warn('runner installPending failed:', errorMessage(err))
     })
@@ -688,7 +688,7 @@ app.on('before-quit', () => {
   destroyTray()
   cleanupShortcuts()
 
-  // 尽力而为的收尾上云；进程先退也不丢——下次启动水合的键级播种会把遗留编辑补传。
+  // 尽力上云，进程可能先退出：未上传的编辑只在云端缺少该键时由下次水合补传，云端已有的键以云端值为准。
   void configSync.flush()
 
   desktopLogger.flushSync()

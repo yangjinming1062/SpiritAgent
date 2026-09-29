@@ -20,8 +20,10 @@ import {
 import { PortraitLightbox } from '@/shared'
 import { ArrowBackUp, FileImage, ImageIcon, ImagePlus, Pencil, Plus, Send, Trash2 } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
+import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_ICON, BTN_PRIMARY, HINT_TEXT, INPUT_CLASS, Spinner, Toggle } from '@/shared/panel'
+import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
@@ -69,12 +71,26 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
 
   // 失败着装重新确认（草稿立绘仍在）：转正为参考图就绪，不触发动作生成。
   const retryConfirm = async (id: number): Promise<void> => {
+    const epoch = currentClearEpoch()
+
     try {
       // 与设计会话确认一致：始终带 JSON body（可空），避免无 body 的 POST 被 422。
       await window.spiritagent.api({ path: `/api/companion/outfits/${id}/confirm`, method: 'POST', body: {} })
       await hydrateWardrobe()
     } catch (err) {
       log.warn('outfit', 'retry confirm failed', err)
+
+      if (epoch === currentClearEpoch()) {
+        notifyError(err, t.confirmFailed)
+      }
+    }
+  }
+
+  const removeOutfit = async (id: number): Promise<void> => {
+    const epoch = currentClearEpoch()
+
+    if (!(await deleteOutfit(id)) && epoch === currentClearEpoch()) {
+      notify({ kind: 'error', message: t.deleteFailed })
     }
   }
 
@@ -90,9 +106,14 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
 
   const togglePolicy = async (): Promise<void> => {
     setPolicyBusy(true)
+    const epoch = currentClearEpoch()
     const next = outfitPolicy === 'locked' ? 'llm_may_replace' : 'locked'
-    await setOutfitPolicy(next)
+    const saved = await setOutfitPolicy(next)
     setPolicyBusy(false)
+
+    if (!saved && epoch === currentClearEpoch()) {
+      notify({ kind: 'error', message: t.policyFailed })
+    }
   }
 
   const previewUrl = session.draft?.previewUrl ?? null
@@ -287,7 +308,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
                       aria-label={t.actions.delete}
                       className={cn(CARD_ACTION_CLASS, 'hover:text-rose-300')}
                       disabled={busyId === outfit.id}
-                      onClick={() => withBusy(outfit.id, () => deleteOutfit(outfit.id))}
+                      onClick={() => withBusy(outfit.id, () => removeOutfit(outfit.id))}
                       title={t.actions.deleteTitle}
                       type="button"
                     >

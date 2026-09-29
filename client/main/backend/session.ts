@@ -4,7 +4,13 @@ import path from 'node:path'
 import type { SafeStorageApi } from '../security/hardening'
 import { atomicWriteFile, errorMessage, safeReadJson } from '../shared/utils'
 
-import { type BackendClient, BackendRequestError, createBackendClient, type FetchFunction } from './client'
+import {
+  type BackendClient,
+  BackendRequestError,
+  createBackendClient,
+  type FetchFunction,
+  normalizeBaseUrl
+} from './client'
 
 const SESSION_FILENAME = 'agent-session.json'
 const SESSION_SCHEMA_VERSION = 3
@@ -60,7 +66,8 @@ interface StoredAccount {
 }
 
 interface StoredAccountsPayload {
-  accounts: StoredAccount[]
+  // 含读取失败、原样保留的条目。
+  accounts: unknown[]
   activeAccountId: null | string
   schemaVersion: number
 }
@@ -130,22 +137,24 @@ function encryptToken(raw: string, safeStorage?: null | SafeStorageApi): Encrypt
   return { encoding: 'safeStorage', value: safeStorage.encryptString(raw).toString('base64') }
 }
 
-function decryptToken(blob: unknown, safeStorage?: null | SafeStorageApi): null | string {
-  if (!blob || typeof blob !== 'object') {
-    return null
+function decryptToken(blob: unknown, safeStorage?: null | SafeStorageApi): string {
+  const value = (blob && typeof blob === 'object' ? blob : {}) as { encoding?: unknown; value?: unknown }
+
+  if (value.encoding !== 'safeStorage' || typeof value.value !== 'string') {
+    throw new Error('activation code is not a safeStorage blob')
   }
 
-  const value = blob as { encoding?: unknown; value?: unknown }
-
-  if (value.encoding !== 'safeStorage' || typeof value.value !== 'string' || !safeStorage?.isEncryptionAvailable?.()) {
-    return null
+  if (!safeStorage?.isEncryptionAvailable?.() || !safeStorage.decryptString) {
+    throw new Error('safe storage is unavailable')
   }
 
-  try {
-    return safeStorage.decryptString?.(Buffer.from(value.value, 'base64')) || null
-  } catch {
-    return null
+  const code = safeStorage.decryptString(Buffer.from(value.value, 'base64'))
+
+  if (!code) {
+    throw new Error('decrypted activation code is empty')
   }
+
+  return code
 }
 
 function normalizeUser(raw: unknown): null | SessionUser {
@@ -166,16 +175,50 @@ function accountId(baseUrl: string, userId: number): string {
   return createHash('sha256').update(`${baseUrl}\0${userId}`).digest('hex')
 }
 
-function decodeActivationCode(code: string, fetchImpl: FetchFunction): string {
+function decodeActivationCode(code: string): string {
   const padding = '='.repeat((4 - (code.length % 4)) % 4)
   const raw = Buffer.from(code + padding, 'base64url').toString('utf8')
-  const data = JSON.parse(raw) as { b?: unknown; t?: unknown }
+  let data: { b?: unknown; t?: unknown }
+
+  try {
+    data = JSON.parse(raw) as { b?: unknown; t?: unknown }
+  } catch {
+    // JSON.parse 的错误文案会引用输入片段，激活码含令牌，原始错误不能进入日志或 cause。
+    throw new Error('activation code is not valid JSON')
+  }
 
   if (typeof data.b !== 'string' || !data.b || typeof data.t !== 'string' || !data.t) {
     throw new Error('activation code missing required fields')
   }
 
-  return createBackendClient({ baseUrl: data.b, fetch: fetchImpl }).baseUrl
+  return normalizeBaseUrl(data.b)
+}
+
+function readStoredAccount(item: unknown, safeStorage?: null | SafeStorageApi): SavedAccount {
+  if (!item || typeof item !== 'object') {
+    throw new Error('malformed entry')
+  }
+
+  const stored = item as { activationCode?: unknown; baseUrl?: unknown; user?: unknown }
+
+  if (typeof stored.baseUrl !== 'string') {
+    throw new Error('missing base URL')
+  }
+
+  const user = normalizeUser(stored.user)
+
+  if (!user) {
+    throw new Error('invalid user')
+  }
+
+  const code = decryptToken(stored.activationCode, safeStorage)
+  const baseUrl = decodeActivationCode(code)
+
+  if (baseUrl !== normalizeBaseUrl(stored.baseUrl)) {
+    throw new Error('base URL does not match the activation code')
+  }
+
+  return { activationCode: code, baseUrl, id: accountId(baseUrl, user.id), user }
 }
 
 export function createBackendSession(options: BackendSessionOptions): BackendSession {
@@ -196,6 +239,8 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   const log = options.log ?? (() => {})
   let loaded = false
   let accounts: SavedAccount[] = []
+  // 读取失败的条目原样写回：安全存储暂不可用等情况下，下次保存不能把账户永久删掉。
+  const unreadableAccounts: unknown[] = []
   let activeAccountId: null | string = null
   let cached: null | ActiveSession = null
   let backendClient: null | BackendClient = null
@@ -226,34 +271,22 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     const record = raw as Partial<StoredAccountsPayload>
 
     if (record.schemaVersion === SESSION_SCHEMA_VERSION && Array.isArray(record.accounts)) {
-      for (const item of record.accounts) {
-        if (!item || typeof item.baseUrl !== 'string') {
-          continue
-        }
-
-        const code = decryptToken(item.activationCode, safeStorage)
-        const user = normalizeUser(item.user)
-
-        if (!code || !user) {
-          continue
-        }
+      record.accounts.forEach((item, index) => {
+        let account: SavedAccount
 
         try {
-          const baseUrl = decodeActivationCode(code, fetchImpl)
+          account = readStoredAccount(item, safeStorage)
+        } catch (error) {
+          log(`[session] stored account #${index} not loaded: ${errorMessage(error)}`)
+          unreadableAccounts.push(item)
 
-          if (baseUrl !== createBackendClient({ baseUrl: item.baseUrl, fetch: fetchImpl }).baseUrl) {
-            continue
-          }
-
-          const id = accountId(baseUrl, user.id)
-
-          if (!accounts.some(account => account.id === id)) {
-            accounts.push({ activationCode: code, baseUrl, id, user })
-          }
-        } catch {
-          continue
+          return
         }
-      }
+
+        if (!accounts.some(existing => existing.id === account.id)) {
+          accounts.push(account)
+        }
+      })
 
       activeAccountId = typeof record.activeAccountId === 'string' ? record.activeAccountId : null
 
@@ -262,12 +295,14 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   }
 
   async function persist(nextAccounts: SavedAccount[], nextActiveAccountId: null | string): Promise<void> {
+    const stored: StoredAccount[] = nextAccounts.map(account => ({
+      activationCode: encryptToken(account.activationCode, safeStorage),
+      baseUrl: account.baseUrl,
+      user: account.user
+    }))
+
     const payload: StoredAccountsPayload = {
-      accounts: nextAccounts.map(account => ({
-        activationCode: encryptToken(account.activationCode, safeStorage),
-        baseUrl: account.baseUrl,
-        user: account.user
-      })),
+      accounts: [...stored, ...unreadableAccounts],
       activeAccountId: nextActiveAccountId,
       schemaVersion: SESSION_SCHEMA_VERSION
     }
@@ -412,9 +447,9 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     let baseUrl: string
 
     try {
-      baseUrl = decodeActivationCode(code, fetchImpl)
-    } catch {
-      throw new SessionError({ code: 'invalid-code', message: '激活码格式无效。' })
+      baseUrl = decodeActivationCode(code)
+    } catch (error) {
+      throw new SessionError({ cause: error, code: 'invalid-code', message: '激活码格式无效。' })
     }
 
     const backend = createBackendClient({ baseUrl, fetch: fetchImpl })
@@ -448,12 +483,15 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     return snapshot()
   }
 
-  function activate(payload: { clientContext?: unknown; code?: string } = {}): Promise<null | SessionSnapshot> {
-    if (!payload.code) {
+  function activate({
+    clientContext,
+    code
+  }: { clientContext?: unknown; code?: string } = {}): Promise<null | SessionSnapshot> {
+    if (!code) {
       return Promise.reject(new SessionError({ code: 'missing-code', message: 'Activation code is required.' }))
     }
 
-    return enqueue(() => activateCode(payload.code!, payload.clientContext))
+    return enqueue(() => activateCode(code, clientContext))
   }
 
   function switchAccount(id: string, payload: { clientContext?: unknown } = {}): Promise<null | SessionSnapshot> {

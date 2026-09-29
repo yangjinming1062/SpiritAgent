@@ -4,7 +4,7 @@ export const SUPPORTED_LOCALES = ['zh', 'en'] as const
 
 export type Locale = (typeof SUPPORTED_LOCALES)[number]
 
-export const DEFAULT_LOCALE: Locale = 'zh'
+const DEFAULT_LOCALE: Locale = 'zh'
 
 export function normalizeLocale(raw: unknown): Locale {
   if (typeof raw === 'string') {

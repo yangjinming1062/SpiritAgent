@@ -46,11 +46,8 @@ export function ChatMessageUndoButton({
     $chatUndoInFlight.set(messageId)
 
     try {
-      const ok = await undoToMessage(sourceSessionId, sourceMessageId)
-
-      if (!ok) {
-        notifyError(new Error(dict.chat.undo.internalError), dict.chat.undo.failed)
-      }
+      // 返回 null 表示已换号或换网关，结果作废，不再提示。
+      await undoToMessage(sourceSessionId, sourceMessageId)
     } catch (err) {
       notifyError(err, dict.chat.undo.failed)
     } finally {

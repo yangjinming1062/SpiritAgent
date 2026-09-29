@@ -6,7 +6,7 @@ const DEFAULT_TIMEOUT_MS = 120_000
 const METHOD_NOT_FOUND_CODE = -32601
 
 export interface ReverseRpcOptions {
-  backendSession?: BackendSessionLike | null
+  backendSession: BackendSessionLike
   log?: (chunk: string) => void
 }
 
@@ -43,15 +43,9 @@ interface LlmCompletionParams {
   temperature?: number
 }
 
-export function createReverseRpc(
-  options: ReverseRpcOptions = {}
-): (method: string, params?: unknown) => Promise<unknown> {
+export function createReverseRpc(options: ReverseRpcOptions): (method: string, params?: unknown) => Promise<unknown> {
   const log = typeof options.log === 'function' ? options.log : () => {}
   const backendSession = options.backendSession
-
-  if (!backendSession) {
-    throw new TypeError('createReverseRpc requires options.backendSession.')
-  }
 
   // 单会话累计限额；仅随 bridge.start 新建本实例时重置，WS 重连不清零。
   const MAX_MESSAGES_PER_SESSION = 200
@@ -188,7 +182,7 @@ export function createReverseRpc(
   }
 
   async function handleRequestLlm(params: unknown): Promise<unknown> {
-    const session = backendSession!.getSession()
+    const session = backendSession.getSession()
 
     if (!session?.hasToken) {
       throw new Error('No active session — cannot proxy LLM request.')
@@ -244,8 +238,8 @@ export function createReverseRpc(
       `[reverse-rpc] request_llm (${itemCount} input items, ${payloadBytes} bytes, session ${sessionMessagesSent}/${sessionBytesSent})`
     )
 
-    const token = backendSession!.getToken()
-    const client = backendSession!.client()
+    const token = backendSession.getToken()
+    const client = backendSession.client()
 
     return client.post('/api/llm/completion', {
       body: {

@@ -7,7 +7,7 @@ import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 import type { SessionMessage } from '@/shared/types/spiritagent'
 
-import { $chatSessionId, $sessionContextUsage, $sessionSettings } from './chat-store'
+import { $sessionContextUsage, $sessionSettings } from './chat-store'
 
 const DEFAULT_THRESHOLD = 0.7
 const DEFAULT_LIMIT = 1_000_000
@@ -75,12 +75,9 @@ export function useContextStatus(): {
   isInactive: boolean
   isWarning: boolean
   pct: number
-  sessionId: string | null
-  threshold: number
   thresholdPct: number
   totalTokens: number
 } {
-  const sessionId = useStore($chatSessionId)
   const usage = useStore($sessionContextUsage)
   const settings = useStore($sessionSettings)
 
@@ -114,8 +111,6 @@ export function useContextStatus(): {
     isInactive,
     isWarning,
     pct,
-    sessionId,
-    threshold,
     thresholdPct,
     totalTokens
   }

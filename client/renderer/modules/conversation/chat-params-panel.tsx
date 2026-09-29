@@ -384,15 +384,18 @@ export function ChatParamsPanel({
       })
 
       if (res.compressed) {
-        if (Array.isArray(res.messages)) {
-          hydrateChatMessages(res.messages)
+        // 已切到其他会话时只更新本会话缓存，不改写当前视图。
+        const isCurrentSession = $chatSessionId.get() === sessionId
 
-          if (sessionId) {
-            rememberFullHistory(sessionId, res.messages)
+        if (Array.isArray(res.messages)) {
+          rememberFullHistory(sessionId, res.messages)
+
+          if (isCurrentSession) {
+            hydrateChatMessages(res.messages)
           }
         }
 
-        if (res.usage?.total_tokens !== undefined) {
+        if (isCurrentSession && res.usage?.total_tokens !== undefined) {
           setSessionContextUsage({
             contextLimit: res.usage.context_window,
             totalTokens: res.usage.total_tokens

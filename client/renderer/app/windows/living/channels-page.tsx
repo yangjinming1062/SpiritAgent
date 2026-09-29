@@ -1,7 +1,9 @@
 import { IconBrandWechat } from '@tabler/icons-react'
 import { QRCodeSVG } from 'qrcode.react'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { log } from '@/shared/lib/log'
 import {
   BTN_GHOST,
   BTN_PRIMARY,
@@ -34,12 +36,19 @@ import type {
 
 const WEIXIN_CHANNEL = 'weixin_ilink'
 const LOGIN_POLL_INTERVAL_MS = 2000
+// 后端扫码登录最长 300 秒（weixin_ilink.py QR_LOGIN_TIMEOUT_SECONDS），另留取码与末次查询的余量。
+const LOGIN_POLL_DEADLINE_MS = (300 + 60) * 1000
+const LOGIN_POLL_MAX_FAILURES = 5
 
 const RAW_PREFIX_TO_MIME: ReadonlyArray<[RegExp, string]> = [
   [/^iVBORw0KGgo/, 'png'],
   [/^\/9j\//, 'jpeg'],
   [/^PHN2Zy/, 'svg+xml']
 ]
+
+function isNotFoundIpc(error: unknown): boolean {
+  return /^404 /.test(unwrapIpcErrorMessage(error))
+}
 
 function isDataImage(content: string): boolean {
   if (/^data:image\//i.test(content)) {
@@ -129,18 +138,30 @@ export function ChannelsPage(): React.JSX.Element {
   const [confirmLogout, setConfirmLogout] = useState(false)
   const [peers, setPeers] = useState<ChannelPeerInfo[]>([])
   const [peerBusy, setPeerBusy] = useState<string | null>(null)
+  const loginDeadlineRef = useRef(0)
 
   const reload = useCallback(async () => {
-    const [channels, peersResult] = await Promise.all([
+    const [channels, peerItems] = await Promise.all([
       listChannels(),
-      listChannelPeers(WEIXIN_CHANNEL).catch(() => ({ items: [] as ChannelPeerInfo[] }))
+      // 未建立绑定时 peers 端点返回 404，按无对端处理；其他错误须报告，加载失败时保留当前列表。
+      listChannelPeers(WEIXIN_CHANNEL).then(
+        result => result.items,
+        (error: unknown) => {
+          if (isNotFoundIpc(error)) {
+            return []
+          }
+
+          notifyError(error, t.peers.loadFailed)
+
+          return null
+        }
+      )
     ])
 
     const weixin = channels.items.find(item => item.channel === WEIXIN_CHANNEL)?.binding ?? null
     setWeixinBinding(weixin)
-    // 未登录成功时 peers 端点可能 404，catch 兜底。
-    setPeers(weixin ? peersResult.items : [])
-  }, [])
+    setPeers(prev => (weixin ? (peerItems ?? prev) : []))
+  }, [t.peers.loadFailed])
 
   useEffect(() => {
     void (async () => {
@@ -154,38 +175,77 @@ export function ChannelsPage(): React.JSX.Element {
     })()
   }, [reload, t.loadFailed])
 
+  // 超过登录时限或连续查询失败即停止轮询；刚发起时短暂的 login_required 属正常，继续等待。
   useEffect(() => {
     if (!loginPolling) {
       return
     }
 
-    const timer = window.setInterval(() => {
-      void (async () => {
-        try {
-          const state = await getWeixinLoginState()
-          setLogin(state)
+    let active = true
+    let failures = 0
 
-          if (state.state === 'confirmed') {
-            setLoginPolling(false)
-            notify({ kind: 'success', message: t.weixin.loginSuccess })
-            await reload()
-          } else if (state.state === 'expired' || state.state === 'error') {
-            setLoginPolling(false)
+    const stopWithTimeout = (): void => {
+      setLoginPolling(false)
+      setLogin({ state: 'error', error: t.weixin.loginTimeout })
+    }
+
+    const timer = window.setInterval(() => {
+      if (Date.now() > loginDeadlineRef.current) {
+        log.warn('channels', 'weixin login polling timed out')
+        stopWithTimeout()
+
+        return
+      }
+      void (async () => {
+        let state: ChannelLoginState
+
+        try {
+          state = await getWeixinLoginState()
+        } catch (error) {
+          failures += 1
+
+          if (active && failures >= LOGIN_POLL_MAX_FAILURES) {
+            log.warn('channels', 'weixin login polling failed', error)
+            stopWithTimeout()
           }
-        } catch {
-          // setInterval 下一拍重试。
+
+          return
+        }
+
+        if (!active) {
+          return
+        }
+
+        failures = 0
+        setLogin(state)
+
+        if (state.state === 'confirmed') {
+          setLoginPolling(false)
+          notify({ kind: 'success', message: t.weixin.loginSuccess })
+
+          try {
+            await reload()
+          } catch (error) {
+            notifyError(error, t.loadFailed)
+          }
+        } else if (state.state === 'expired' || state.state === 'error') {
+          setLoginPolling(false)
         }
       })()
     }, LOGIN_POLL_INTERVAL_MS)
 
-    return () => window.clearInterval(timer)
-  }, [loginPolling, reload, t.weixin.loginSuccess])
+    return () => {
+      active = false
+      window.clearInterval(timer)
+    }
+  }, [loginPolling, reload, t.loadFailed, t.weixin.loginSuccess, t.weixin.loginTimeout])
 
   const beginLogin = async (): Promise<void> => {
     setLoginBusy(true)
 
     try {
       const state = await startWeixinLogin()
+      loginDeadlineRef.current = Date.now() + LOGIN_POLL_DEADLINE_MS
       setLogin(state)
       setLoginPolling(true)
     } catch (error) {
@@ -273,7 +333,7 @@ export function ChannelsPage(): React.JSX.Element {
               {login.state === 'wait' && qrImage ? (
                 isDataImage(qrImage) ? (
                   <img
-                    alt="微信登录二维码"
+                    alt={t.weixin.qrAlt}
                     className="size-44 rounded-lg bg-white p-2 object-contain"
                     src={normalizeDataImage(qrImage)}
                   />

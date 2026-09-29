@@ -144,6 +144,9 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
         usage?: { completion_tokens?: number; prompt_tokens?: number; total_tokens?: number }
       }>(event.payload)
 
+      // 形状异常时按缺省处理：本分支抛错会跳过下方回合收尾，让 $chatTurnInFlight 卡住。
+      const bubbles = Array.isArray(payload.bubbles) ? payload.bubbles : undefined
+      const media = Array.isArray(payload.media) ? payload.media : undefined
       const text = chatDisplayText(payload?.text ?? '')
 
       if (payload?.usage) {
@@ -166,14 +169,10 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       // 这种情况下保留 last.text。媒体与正文正交，始终挂到最后一格。
       const hadBreak = $turnHadBubbleBreak.get()
 
-      if (payload?.bubbles && typeof payload.message_id === 'number') {
-        finalizeCompanionReply(payload.bubbles, payload.message_id, payload.reasoning)
+      if (bubbles && typeof payload.message_id === 'number') {
+        finalizeCompanionReply(bubbles, payload.message_id, payload.reasoning)
       } else {
-        finalizeAssistantMessage(
-          hadBreak ? undefined : payload?.text,
-          payload?.media,
-          hadBreak ? undefined : payload?.reasoning
-        )
+        finalizeAssistantMessage(hadBreak ? undefined : payload?.text, media, hadBreak ? undefined : payload?.reasoning)
 
         if (typeof payload?.message_id === 'number') {
           bindTrailingAssistantMessageId(payload.message_id)
@@ -182,17 +181,14 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
 
       // 媒体已送达但对话界面收起：气泡只做轻量系统提示，点击打开轻语/生活空间查看。
       if (
-        (payload?.media?.length ||
-          payload?.bubbles?.some(
-            bubble => (bubble.type === 'image' || bubble.type === 'video') && bubble.status === 'ready'
-          )) &&
+        (media?.length ||
+          bubbles?.some(bubble => (bubble.type === 'image' || bubble.type === 'video') && bubble.status === 'ready')) &&
         !$chatVisible.get() &&
         !screenLocked
       ) {
         const sys = getStrings().notifications.system
         showMediaHint(
-          payload?.media?.some(m => m.type === 'video') ||
-            payload?.bubbles?.some(b => b.type === 'video' && b.status === 'ready')
+          media?.some(m => m.type === 'video') || bubbles?.some(b => b.type === 'video' && b.status === 'ready')
             ? sys.videoReady
             : sys.imageReady
         )
@@ -203,7 +199,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       triggerFootGlowPulse('completed', 1200)
 
       // 每日互动统计——chat_turn 仅在确有文本可统计时计数
-      if (!ctx.isProxy && (payload?.bubbles?.some(bubble => 'text' in bubble && bubble.text.trim()) || text.trim())) {
+      if (!ctx.isProxy && (bubbles?.some(bubble => 'text' in bubble && bubble.text.trim()) || text.trim())) {
         reportInteractionStat('chat_turn')
       }
 

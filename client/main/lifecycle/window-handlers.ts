@@ -329,37 +329,13 @@ export function createWindowHandlers({
 
     win.webContents.on('unresponsive', () => rememberLog('[renderer] webContents became unresponsive'))
 
-    win.webContents.on(
-      'console-message',
-      (
-        _event: Electron.Event,
-        detailsOrLevel: number | Electron.WebContentsConsoleMessageEventParams,
-        message?: string,
-        line?: number,
-        sourceId?: string
-      ) => {
-        const details = detailsOrLevel && typeof detailsOrLevel === 'object' ? detailsOrLevel : null
-
-        const level: number = details
-          ? details.level === 'error'
-            ? 3
-            : details.level === 'warning'
-              ? 2
-              : details.level === 'info'
-                ? 1
-                : 0
-          : (detailsOrLevel as number)
-
-        if (level !== 3) {
-          return
-        }
-
-        const text = details ? details.message : (message ?? '')
-        const src = details ? details.sourceId : (sourceId ?? '')
-        const lineNo = details ? details.lineNumber : (line ?? 0)
-        rememberLog(`[renderer console] ${text} (${src}:${lineNo})`)
+    win.webContents.on('console-message', event => {
+      if (event.level !== 'error') {
+        return
       }
-    )
+
+      rememberLog(`[renderer console] ${event.message} (${event.sourceId}:${event.lineNumber})`)
+    })
   }
 
   let powerResumeRegistered = false
@@ -370,13 +346,8 @@ export function createWindowHandlers({
     }
 
     powerResumeRegistered = true
-
-    try {
-      powerMonitor.on('resume', sendPowerResume)
-      powerMonitor.on('unlock-screen', sendPowerResume)
-    } catch {
-      // 尽力而为
-    }
+    powerMonitor.on('resume', sendPowerResume)
+    powerMonitor.on('unlock-screen', sendPowerResume)
   }
 
   function configureSpellChecker(app: { getLocale?: () => string | null }): void {

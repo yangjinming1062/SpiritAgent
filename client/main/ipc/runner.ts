@@ -2,16 +2,11 @@ import type { MemoryToolScope } from '@ipc/contracts'
 import { type DesktopRunnerState, type DesktopRunnerStatusEvent, IPC } from '@ipc/contracts'
 import type { BrowserWindow, IpcMain } from 'electron'
 
-import type {
-  RunnerBridge,
-  RunnerBridgeEvent,
-  RunnerBridgeOptions,
-  RunnerBridgeStartOptions,
-  RunnerBridgeStatus
-} from '../runner/bridge'
+import type { RunnerBridge, RunnerBridgeEvent, RunnerBridgeOptions, RunnerBridgeStatus } from '../runner/bridge'
 import type { CreateRunnerProcessOptions, RunnerProcess } from '../runner/process'
 import type { ReverseRpcOptions } from '../runner/reverse-rpc'
 import type { CreateRunnerWsServerOptions, RunnerWsServer } from '../runner/rpc-ws'
+import { isSenderWindow } from '../security/ipc-trust'
 import type { BackendSessionPort } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
 import { errorMessage } from '../shared/utils'
@@ -23,7 +18,7 @@ export interface RunnerHostOptions {
   createRunnerWsServer: (options: CreateRunnerWsServerOptions) => RunnerWsServer
   ensureBackendSession: () => BackendSessionPort
   fileExists?: (p: string) => boolean
-  getMainWindow?: () => BrowserWindow | null | undefined
+  getMainWindow: () => BrowserWindow | null | undefined
   rememberLog: (chunk: string) => void
   spiritagentHome?: null | string
   taggedLogger: (tag: string) => (msg: string) => void
@@ -57,11 +52,11 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
     runnerBridge = options.createRunnerBridge({
       spiritagentHome: options.spiritagentHome,
       log: options.taggedLogger('[runner-bridge]'),
-      processFactory: (args?: RunnerBridgeStartOptions) =>
+      processFactory: () =>
         options.createRunnerProcess({
           spiritagentHome: options.spiritagentHome,
           devPython: process.env.SPIRITAGENT_DESKTOP_PYTHON || null,
-          executable: args?.executable || process.env.SPIRITAGENT_DESKTOP_RUNNER_EXECUTABLE || null,
+          executable: process.env.SPIRITAGENT_DESKTOP_RUNNER_EXECUTABLE || null,
           fileExists: options.fileExists,
           log: options.taggedLogger('[runner]'),
           repoRoot: process.env.SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT || null
@@ -82,8 +77,8 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
 
     store.setPushTarget(pushConfig)
 
-    runnerBridge.onEvent?.((ev: RunnerBridgeEvent) => {
-      const win = options.getMainWindow?.()
+    runnerBridge.onEvent((ev: RunnerBridgeEvent) => {
+      const win = options.getMainWindow()
 
       if (win && !win.isDestroyed()) {
         const payload: DesktopRunnerStatusEvent = { type: ev.type }
@@ -205,7 +200,12 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
 
     ipcMain.handle(
       IPC.invoke.runnerInvoke,
-      async (_event, name: string, args?: Record<string, unknown>, skillScope?: MemoryToolScope, callId?: string) => {
+      async (event, name: string, args?: Record<string, unknown>, skillScope?: MemoryToolScope, callId?: string) => {
+        // 本机工具只由持有网关的精灵宿主派发（Client「连接与设备就绪」）。
+        if (!isSenderWindow(event.sender, options.getMainWindow())) {
+          throw new Error('runner:invoke is restricted to the gateway host window')
+        }
+
         if (typeof name !== 'string' || !name) {
           throw new Error('runner:invoke requires a non-empty tool name')
         }
@@ -251,11 +251,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
         return { noop: true, ok: true }
       }
 
-      try {
-        return await bridge.dispatch('spiritagent.cancel', {})
-      } catch {
-        return { noop: true, ok: false }
-      }
+      return bridge.dispatch('spiritagent.cancel', {})
     })
   }
 

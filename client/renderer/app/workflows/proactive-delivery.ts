@@ -3,32 +3,28 @@ import { setProactiveBubble } from '@/modules/conversation'
 import { speak } from '@/modules/speech'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 
-export async function speakProactive(
-  text: string,
-  opts?: { userInitiated?: boolean; affect?: string; sessionId?: string }
-): Promise<void> {
+export async function speakProactive(text: string): Promise<void> {
   if (!text.trim()) {
     return
   }
 
-  // 静止档位会压掉主动外联，但用户主动触发的反应（如拖拽释放）始终出声。
-  // Affect 永远不受门控——调用方自己设情绪状态。
+  // 静止档位不出气泡也不出声。
   const tier = $effectiveTier.get()
 
-  if (!opts?.userInitiated && tier === 'still') {
+  if (tier === 'still') {
     return
   }
 
-  const bubble = { text: text.trim(), sessionId: opts?.sessionId }
+  const bubble = { text: text.trim() }
   const overlayVisible = !$chatVisible.get()
 
   if (overlayVisible) {
     setProactiveBubble(bubble)
   }
 
-  if (tier === 'autonomous' || opts?.userInitiated) {
+  if (tier === 'autonomous') {
     // 强制切到 speaking 状态——优先级 60 会被 'working'（pri 70）默默门控，
-    // 不强制切的话主动/触发的语音就不会体现出来。
+    // 不强制切的话主动语音就不会体现出来。
     setSpriteState('speaking', { force: true })
     const ok = await speak(text)
 

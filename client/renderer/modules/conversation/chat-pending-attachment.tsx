@@ -7,7 +7,7 @@ import type { PendingAttachment } from './chat-store'
 
 function PendingImageThumb({ path }: { path: string }): React.JSX.Element {
   const dict = useStrings()
-  const src = useResolvedMediaSrc({ type: 'image', url: path })
+  const media = useResolvedMediaSrc({ type: 'image', url: path })
 
   return (
     <button
@@ -15,11 +15,11 @@ function PendingImageThumb({ path }: { path: string }): React.JSX.Element {
       onClick={() => presentationPorts().openMediaViewer({ type: 'image', url: path })}
       type="button"
     >
-      {src ? (
-        <img alt={dict.chat.attachment.pendingImageAlt} className="block h-full w-full object-cover" src={src} />
+      {media.status === 'ready' ? (
+        <img alt={dict.chat.attachment.pendingImageAlt} className="block h-full w-full object-cover" src={media.src} />
       ) : (
-        <span className="flex h-full w-full items-center justify-center text-[10px] text-faint">
-          {dict.chat.attachment.loading}
+        <span className="flex h-full w-full items-center justify-center px-1 text-center text-[10px] text-faint">
+          {media.status === 'failed' ? dict.chat.media.loadFailed : dict.chat.attachment.loading}
         </span>
       )}
     </button>

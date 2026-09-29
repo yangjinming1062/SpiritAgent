@@ -410,7 +410,9 @@ export function forgetSessionHistory(sessionId: string): void {
   const authSessionId = currentAuthSessionId()
 
   if (authSessionId) {
-    void window.spiritagent.sessionHistory.remove(sessionId, authSessionId).catch(() => {})
+    void window.spiritagent.sessionHistory.remove(sessionId, authSessionId).catch(err => {
+      log.warn('session-history', 'remove deleted history failed:', err)
+    })
   }
 }
 

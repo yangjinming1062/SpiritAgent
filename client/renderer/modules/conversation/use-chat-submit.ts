@@ -1,7 +1,8 @@
 import { useStore } from '@nanostores/react'
-import { useCallback, useRef, useState } from 'react'
+import { type Dispatch, type SetStateAction, useCallback, useRef, useState } from 'react'
 
 import { requestGateway } from '@/shared'
+import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { parseSlashInput } from '@/shared/lib/slash-commands'
@@ -47,10 +48,15 @@ export interface ChatSubmit {
   pending: PendingAttachment | null
   sending: boolean
   send: () => Promise<void>
-  setPending: React.Dispatch<React.SetStateAction<PendingAttachment | null>>
-  setSending: React.Dispatch<React.SetStateAction<boolean>>
-  setText: React.Dispatch<React.SetStateAction<string>>
+  setPending: Dispatch<SetStateAction<PendingAttachment | null>>
+  setText: Dispatch<SetStateAction<string>>
   text: string
+}
+
+// 附件绑定加入时的会话；加入时尚无会话则绑定随后确定的会话（README 会话与草稿）。
+interface BoundAttachment {
+  attachment: PendingAttachment
+  sessionId: string | null
 }
 
 export function useChatSubmit({
@@ -61,9 +67,34 @@ export function useChatSubmit({
   onPreCheckFail
 }: UseChatSubmitOptions): ChatSubmit {
   const [text, setText] = useState('')
-  const [pending, setPending] = useState<PendingAttachment | null>(null)
+  const [bound, setBound] = useState<BoundAttachment | null>(null)
   const [sending, setSending] = useState(false)
   const editing = useStore($chatEditDraft)
+  const pending = bound?.attachment ?? null
+
+  const setPending: Dispatch<SetStateAction<PendingAttachment | null>> = useCallback(next => {
+    setBound(prev => {
+      const current = prev?.attachment ?? null
+      const attachment = typeof next === 'function' ? next(current) : next
+
+      if (attachment === current) {
+        return prev
+      }
+
+      return attachment ? { attachment, sessionId: $chatSessionId.get() } : null
+    })
+  }, [])
+
+  // 切到其他会话或清理账户后丢弃旧附件；未绑定的附件归入新会话。
+  useAtomListen($chatSessionId, sessionId => {
+    setBound(prev => {
+      if (!prev || prev.sessionId === sessionId) {
+        return prev
+      }
+
+      return prev.sessionId === null ? { ...prev, sessionId } : null
+    })
+  })
 
   // 通过 ref 转发最新值给 send（避免 useCallback 依赖列表频繁变更）。
   const textRef = useRef(text)
@@ -190,9 +221,11 @@ export function useChatSubmit({
     sendingRef.current = true
     conversationVoiceSink().cancel()
 
+    let id: string | null = null
+
     try {
       const submit = getStrings().chat.submit
-      const id = await ensureChatSession()
+      id = await ensureChatSession()
       let fullText = trimmed
       let promptText = trimmed
       const attachments: ChatAttachment[] = []
@@ -240,6 +273,11 @@ export function useChatSubmit({
         fullText = fullText ? `${fullText}\n${folderRef}` : folderRef
         const folderDirective = `@folder:${currentPending.path}`
         promptText = promptText ? `${promptText}\n${folderDirective}` : folderDirective
+      }
+
+      // 等待期间切走的会话不再接收这条消息；附件已随切换丢弃，正文留在输入框。
+      if ($chatSessionId.get() !== id) {
+        return
       }
 
       const extra = externalPathsRef.current
@@ -293,14 +331,16 @@ export function useChatSubmit({
       })
       schedulePendingFlush()
     } catch (err) {
-      markAssistantTerminal({ error: err instanceof Error ? err.message : getStrings().chat.sendFailed })
-      presentationPorts().setSpriteState('idle')
-      setPending(null)
+      if (id === null || $chatSessionId.get() === id) {
+        markAssistantTerminal({ error: err instanceof Error ? err.message : getStrings().chat.sendFailed })
+        presentationPorts().setSpriteState('idle')
+        setPending(null)
+      }
     } finally {
       sendingRef.current = false
       setSending(false)
     }
-  }, [externalPathsRef, gatewayState, isReadOnlySession, onClearExternalPaths, onPreCheckFail])
+  }, [externalPathsRef, gatewayState, isReadOnlySession, onClearExternalPaths, onPreCheckFail, setPending])
 
   const handleStop = useCallback(async () => {
     conversationVoiceSink().cancel()
@@ -308,17 +348,25 @@ export function useChatSubmit({
     $chatTurnInFlight.set(false)
     const sid = $chatSessionId.get()
 
+    // 停止对会话是尽力请求，失败仍在本地收尾。
     if (sid) {
       try {
         await requestGateway('session.interrupt', { session_id: sid })
-      } catch {
-        /* 尽力而为 */
+      } catch (err) {
+        log.warn('use-chat-submit', 'session.interrupt failed', err)
       }
     }
 
     void window.spiritagent?.runnerCancel?.().catch(err => {
       log.warn('use-chat-submit', 'runnerCancel failed', err)
     })
+
+    presentationPorts().setSpriteState('idle', { force: true })
+
+    // 等待中断期间已切到其他会话：收尾与排队提交不作用于新会话。
+    if ($chatSessionId.get() !== sid) {
+      return
+    }
 
     const lastItem = $chatMessageList.get().at(-1)
     const lastBody = lastItem ? $chatMessageBodies.get()[lastItem.id] : undefined
@@ -329,7 +377,6 @@ export function useChatSubmit({
       markAssistantTerminal({ cancelled: true })
     }
 
-    presentationPorts().setSpriteState('idle', { force: true })
     submitPendingBatch()
   }, [])
 
@@ -345,7 +392,6 @@ export function useChatSubmit({
     send,
     sending,
     setPending,
-    setSending,
     setText: next => {
       const edit = $chatEditDraft.get()
 

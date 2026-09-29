@@ -3,7 +3,8 @@ import { useEffect, useState } from 'react'
 import { $chatSessionId, $sessionSettings, hydrateSessionSettings } from '@/modules/conversation'
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
 import { triggerHaptic } from '@/shared/lib/haptics'
-import { BTN_PRIMARY, EmptyState, LoadingBlock, SettingsSectionIntro, Spinner } from '@/shared/panel'
+import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { BTN_PRIMARY, BTN_SUBTLE, EmptyState, LoadingBlock, SettingsSectionIntro, Spinner } from '@/shared/panel'
 import { getSpiritAgentConfig, saveSpiritAgentConfig } from '@/shared/spiritagent'
 import { $gateway } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
@@ -133,7 +134,12 @@ export function InferencePage(): React.JSX.Element {
   if (loader.error) {
     return (
       <EmptyState
-        description={loader.error instanceof Error ? loader.error.message : String(loader.error)}
+        action={
+          <button className={BTN_SUBTLE} onClick={loader.reload} type="button">
+            {t.common.retry}
+          </button>
+        }
+        description={backendDetailMessage(loader.error, a.loadFailed)}
         title={a.heading}
       />
     )

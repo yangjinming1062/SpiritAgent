@@ -6,8 +6,6 @@ import { dict as en } from './dictionaries/en'
 import { type Dictionary, dict as zh } from './dictionaries/zh'
 import { type Locale } from './locales'
 
-export type { Dictionary }
-
 const DICTS: Record<Locale, Dictionary> = { en, zh }
 
 export function useStrings(): Dictionary {

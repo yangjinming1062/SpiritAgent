@@ -45,11 +45,6 @@ type InputRow = {
 
 type Row = SelectRow | SwitchRow | InputRow
 
-const BACKEND_OPTIONS = [
-  { value: 'local', label: 'Local' },
-  { value: 'ssh', label: 'SSH' }
-]
-
 function readInputValue(row: InputRow, raw: string): string | number {
   if (row.type !== 'number') {
     return raw
@@ -70,9 +65,10 @@ export function RunnerPage(): React.JSX.Element {
   const dict = useStrings()
   const r = dict.settings.runner
 
-  const { config, setConfig, isLoading, write } = useRunnerConfig(r.failedLoad)
+  const { config, setConfig, isLoading, patch } = useRunnerConfig(r.failedLoad)
   const [isSaving, setIsSaving] = useState(false)
-  const [isDirty, setIsDirty] = useState(false)
+  // 按路径记录本页改过的字段；配置还会被偏好、托盘语言和云端水合写入，整份写回会覆盖这些改动。
+  const [dirtyPaths, setDirtyPaths] = useState<ReadonlyMap<string, readonly string[]>>(new Map())
 
   const handleSave = async () => {
     if (!config) {
@@ -82,16 +78,18 @@ export function RunnerPage(): React.JSX.Element {
     setIsSaving(true)
 
     try {
-      const result = await write(config)
+      for (const path of dirtyPaths.values()) {
+        const result = await patch(path, getIn(config, path))
 
-      if (!result.ok) {
-        throw new Error(result.error)
+        if (!result.ok) {
+          throw new Error(result.error)
+        }
       }
 
       triggerHaptic('success')
       notify({ kind: 'success', message: r.saveSuccess })
 
-      setIsDirty(false)
+      setDirtyPaths(new Map())
     } catch (err) {
       notifyError(err, r.saveFailed)
     } finally {
@@ -102,7 +100,7 @@ export function RunnerPage(): React.JSX.Element {
   const updateField = useCallback(
     (path: readonly string[], value: unknown) => {
       setConfig(prev => (prev ? setIn(prev, path, value) : prev))
-      setIsDirty(true)
+      setDirtyPaths(prev => new Map(prev).set(path.join('.'), path))
     },
     [setConfig]
   )
@@ -118,7 +116,10 @@ export function RunnerPage(): React.JSX.Element {
             kind: 'select',
             path: ['terminal', 'env_type'],
             title: r.terminalEnvType,
-            options: BACKEND_OPTIONS,
+            options: [
+              { value: 'local', label: r.envLocal },
+              { value: 'ssh', label: 'SSH' }
+            ],
             default: 'local'
           }
         ]
@@ -184,7 +185,12 @@ export function RunnerPage(): React.JSX.Element {
       </div>
 
       <div className="mt-8 flex justify-end">
-        <button className={BTN_PRIMARY} disabled={isSaving || !isDirty} onClick={() => void handleSave()} type="button">
+        <button
+          className={BTN_PRIMARY}
+          disabled={isSaving || dirtyPaths.size === 0}
+          onClick={() => void handleSave()}
+          type="button"
+        >
           {isSaving ? (
             <span className="flex items-center gap-1.5">
               <Spinner className="size-3.5" />

@@ -1,6 +1,6 @@
 import type React from 'react'
 
-import type { ActiveScene, SceneAsset, ScenePolicy } from '@/modules/scene'
+import { type ActiveScene, PAGE_SIZE, type SceneAsset, type ScenePolicy } from '@/modules/scene'
 import { AlertCircle, Loader2, Plus, RefreshCw, Search, Sparkles } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SettingCard, SettingRow, Toggle } from '@/shared/panel'
@@ -211,17 +211,17 @@ export function SceneLibraryView({
         </SettingCard>
       ) : null}
 
-      {total > 24 ? (
+      {total > PAGE_SIZE ? (
         <div className="flex items-center justify-between gap-3">
           <button className={BTN_SUBTLE} disabled={page === 0} onClick={() => onSetPage(page - 1)} type="button">
             {t.previous}
           </button>
           <span className={HINT_TEXT}>
-            {page + 1} / {Math.ceil(total / 24)}
+            {page + 1} / {Math.ceil(total / PAGE_SIZE)}
           </span>
           <button
             className={BTN_SUBTLE}
-            disabled={(page + 1) * 24 >= total}
+            disabled={(page + 1) * PAGE_SIZE >= total}
             onClick={() => onSetPage(page + 1)}
             type="button"
           >

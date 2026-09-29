@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import React, { lazy, Suspense, useEffect, useRef, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 
 import { ActivationOverlay, BootFailureOverlay, OnboardingFlow } from '@/app/onboarding'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
@@ -26,6 +26,7 @@ import {
   setCompanionVoiceId,
   startActivityMonitor
 } from '@/modules/character'
+import { VideoStage } from '@/modules/character/rendering/video'
 import { MediaViewerOverlay } from '@/modules/media'
 import { checkVoiceValidity, warmAudioContext } from '@/modules/speech'
 import { NotificationStack, requestGateway } from '@/shared'
@@ -46,8 +47,6 @@ import { toggleWhisper, WhisperOverlay } from './whisper'
 
 setSurfaceRole('sprite')
 
-const VideoStage = lazy(() => import('@/modules/character/rendering/video').then(m => ({ default: m.VideoStage })))
-
 export function SpriteWindow(): React.JSX.Element {
   useWindowMouseCapture()
   // toast 的关闭/展开按钮需要真实可点——透明窗口把它的矩形注册进交互区域。
@@ -63,7 +62,6 @@ export function SpriteWindow(): React.JSX.Element {
   const videoGenStage = useStore($videoGenStage)
   const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [activationOpen, setActivationOpen] = useState(false)
-  const hasHydratedRef = useRef(false)
 
   const validityCheckedRef = useRef(false)
 
@@ -108,9 +106,8 @@ export function SpriteWindow(): React.JSX.Element {
     }
   }, [auth.kind])
 
-  // 仅开发期：注入一条测试主动消息（Ctrl+Shift+P）来跑通
-  // companion.message 接收 + 气泡 + TTS 全链路，但不走 Backend 的 send_message 路径。
-  // 生产构建里会被剔除。
+  // 仅开发期：Ctrl+Shift+P 直接调用 speakProactive，验证主动气泡与朗读；
+  // 不经过网关 companion.message 的接收与入列。生产构建里会被剔除。
   useEffect(() => {
     if (import.meta.env.PROD) {
       return
@@ -150,8 +147,6 @@ export function SpriteWindow(): React.JSX.Element {
 
   useEffect(() => {
     if (auth.kind !== 'authenticated' || lifecycle !== 'ready') {
-      hasHydratedRef.current = false
-
       return
     }
 
@@ -160,23 +155,16 @@ export function SpriteWindow(): React.JSX.Element {
 
     const stopActivity = startActivityMonitor()
 
-    if (!hasHydratedRef.current) {
-      hasHydratedRef.current = true
-
-      void hydrateActionCatalog()
-      void hydrateVideoPack()
-      void ensureCompanionHydrated({
-        hydratePersona,
-        hydratePortrait
-      })
-    }
+    void hydrateActionCatalog()
+    void hydrateVideoPack()
+    void ensureCompanionHydrated({
+      hydratePersona,
+      hydratePortrait
+    })
 
     return () => {
       window.removeEventListener('keydown', onKey)
       stopActivity()
-      // StrictMode dev double-invoke：cleanup 把 ref 复位，让 re-mount 重新水合。
-      // 生产环境不会触发（无 cleanup → 无 re-mount），同 effect 不重复跑。
-      hasHydratedRef.current = false
     }
   }, [auth.kind, lifecycle])
 
@@ -273,28 +261,24 @@ export function SpriteWindow(): React.JSX.Element {
       >
         {eggVisible ? (
           <EggStage showPrompt />
-        ) : showOnboarding ? null : (
-          <Suspense fallback={null}>
-            {presentation.renderer === 'video' ? (
-              <VideoStage />
-            ) : (
-              <EggStage
-                hasRecoveryAction={presentation.fallbackActionAvailable}
-                message={presentation.fallbackMessage}
-                onStatusAction={() => {
-                  if (presentation.fallbackStatus === 'failed') {
-                    void requestOpenSurface('living', { view: 'appearance' })
+        ) : showOnboarding ? null : presentation.renderer === 'video' ? (
+          <VideoStage />
+        ) : (
+          <EggStage
+            hasRecoveryAction={presentation.fallbackActionAvailable}
+            message={presentation.fallbackMessage}
+            onStatusAction={() => {
+              if (presentation.fallbackStatus === 'failed') {
+                void requestOpenSurface('living', { view: 'appearance' })
 
-                    return
-                  }
+                return
+              }
 
-                  void hydrateActionCatalog(true)
-                  void hydrateVideoPack(true)
-                }}
-                status={presentation.fallbackStatus}
-              />
-            )}
-          </Suspense>
+              void hydrateActionCatalog(true)
+              void hydrateVideoPack(true)
+            }}
+            status={presentation.fallbackStatus}
+          />
         )}
       </SpriteStage>
       <SpriteContextMenu

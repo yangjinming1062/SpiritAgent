@@ -9,13 +9,13 @@ export const DATA_URL_READ_MAX_BYTES = 16 * 1024 * 1024
 
 export const DEFAULT_CSP_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'wasm-unsafe-eval'",
+  "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: spiritagent-media: https:",
-  "media-src 'self' data: blob: spiritagent-media: https:",
-  "connect-src 'self' data: blob: ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* http: https: ws: wss: spiritagent-media:",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' data: blob: https:",
+  "connect-src 'self' data: blob: ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* http: https: ws: wss:",
   "font-src 'self' data:",
-  "worker-src 'self' blob:",
+  "worker-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'none'"
@@ -28,13 +28,13 @@ export const DEFAULT_CSP_POLICY = [
 // 生产仍用 DEFAULT_CSP_POLICY 锁紧——dev 放开只影响受信任本地源。
 export const DEV_CSP_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
   "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: spiritagent-media: https:",
-  "media-src 'self' data: blob: spiritagent-media: https:",
-  "connect-src 'self' data: blob: ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* http: https: ws: wss: spiritagent-media:",
+  "img-src 'self' data: blob: https:",
+  "media-src 'self' data: blob: https:",
+  "connect-src 'self' data: blob: ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* http: https: ws: wss:",
   "font-src 'self' data:",
-  "worker-src 'self' blob:",
+  "worker-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
   "form-action 'none'"

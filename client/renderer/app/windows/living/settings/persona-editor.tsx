@@ -59,8 +59,6 @@ export function PersonaSection(): React.JSX.Element {
     // PUT 与 hydrate 的失败模式分开——PUT 成功后即便 GET 短暂失败，
     // 也不能当成保存失败（诱导用户重试会造成重复写入）。
     // 把当前 persona 作为 previous 传入，让锁定的视觉锚点字段原样带回。
-    let putOk = false
-
     try {
       await window.spiritagent.api({
         body: {
@@ -79,7 +77,6 @@ export function PersonaSection(): React.JSX.Element {
         method: 'PUT',
         path: '/api/companion/persona'
       })
-      putOk = true
     } catch {
       setHint(t.hintSaveFailed)
       setSaving(false)
@@ -87,14 +84,12 @@ export function PersonaSection(): React.JSX.Element {
       return
     }
 
-    if (putOk) {
-      const result = await hydratePersona({ silent: true })
+    const result = await hydratePersona({ silent: true })
 
-      if (!result.ok) {
-        // 后端已经有人设，本地副本没刷出来。给一条更温和的提示，
-        // 让用户知道下次 hydrate 之前（下一次保存、重启等）看到的是旧值。
-        setHint(t.hintHydrateFailed)
-      }
+    if (!result.ok) {
+      // 后端已经有人设，本地副本没刷出来。给一条更温和的提示，
+      // 让用户知道下次 hydrate 之前（下一次保存、重启等）看到的是旧值。
+      setHint(t.hintHydrateFailed)
     }
 
     setEditing(false)
@@ -118,9 +113,9 @@ export function PersonaSection(): React.JSX.Element {
                 <span className="size-2 shrink-0 rounded-full bg-accent shadow-[0_0_6px_var(--ui-accent)]" />
                 <p
                   className="truncate text-[15px] font-medium tracking-tight text-strong"
-                  title={persona?.name ?? t.defaultName}
+                  title={persona?.name || t.defaultName}
                 >
-                  {persona?.name ?? t.defaultName}
+                  {persona?.name || t.defaultName}
                 </p>
               </div>
               {details.length > 0 ? (

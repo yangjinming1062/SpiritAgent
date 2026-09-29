@@ -16,6 +16,7 @@ import {
 } from '@/modules/speech'
 import { requestGateway } from '@/shared'
 import { Check } from '@/shared/lib/icons'
+import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import {
   BTN_PRIMARY,
@@ -29,6 +30,7 @@ import {
   SETTINGS_ROW_TITLE,
   SettingsSectionIntro
 } from '@/shared/panel'
+import { $gatewayState } from '@/shared/store/gateway'
 import { $locale } from '@/shared/store/locale'
 import { useStrings } from '@/shared/strings'
 import { GENDER_FILTER_VALUES } from '@/shared/voice-catalog'
@@ -41,6 +43,7 @@ export function VoicePage(): React.ReactElement {
   const persona = useStore($persona)
   const currentVoice = useStore($companionVoiceId)
   const locale = useStore($locale)
+  const gatewayState = useStore($gatewayState)
 
   const [catalog, setCatalog] = useState<VoiceCatalog>({
     providers: [],
@@ -48,6 +51,9 @@ export function VoicePage(): React.ReactElement {
     supportsVoiceDesign: false,
     voiceDesignGuide: ''
   })
+
+  const [catalogStatus, setCatalogStatus] = useState<'loading' | 'error' | 'ready'>('loading')
+  const [catalogReloadKey, setCatalogReloadKey] = useState(0)
 
   const [genderFilter, setGenderFilter] = useState('')
 
@@ -61,13 +67,33 @@ export function VoicePage(): React.ReactElement {
     [catalog.voices, genderFilter]
   )
 
+  // 网关就绪后才拉取，重连时重新拉取；清理后到达的结果丢弃。
   useEffect(() => {
+    if (gatewayState !== 'open') {
+      return
+    }
+
+    let cancelled = false
+    setCatalogStatus('loading')
+
     void fetchVoiceCatalogRaw(requestGateway, locale).then(r => {
+      if (cancelled) {
+        return
+      }
+
       if (r.ok) {
         setCatalog(r.catalog)
+        setCatalogStatus('ready')
+      } else {
+        log.warn('voice-page', 'voice catalog load failed', r.reason)
+        setCatalogStatus('error')
       }
     })
-  }, [locale])
+
+    return () => {
+      cancelled = true
+    }
+  }, [locale, gatewayState, catalogReloadKey])
 
   const runDesign = async (): Promise<void> => {
     const prompt = designPrompt.trim()
@@ -90,13 +116,26 @@ export function VoicePage(): React.ReactElement {
     }
   }
 
-  if (catalog.voices.length === 0) {
+  if (catalogStatus !== 'ready' || catalog.voices.length === 0) {
     return (
       <div className="space-y-4">
         <SettingsSectionIntro hint={t.intro} title={t.title} />
-        <p className="text-[13px] text-muted">
-          {catalog.providers.length > 0 ? t.noVoicesForLanguage : t.noTtsConfigured}
-        </p>
+        {catalogStatus === 'error' ? (
+          <div className="flex items-center gap-3">
+            <p className="text-[13px] text-muted">{t.loadFailed}</p>
+            <button className={BTN_SUBTLE} onClick={() => setCatalogReloadKey(key => key + 1)} type="button">
+              {dict.common.retry}
+            </button>
+          </div>
+        ) : (
+          <p className="text-[13px] text-muted">
+            {catalogStatus === 'loading'
+              ? dict.common.loading
+              : catalog.providers.length > 0
+                ? t.noVoicesForLanguage
+                : t.noTtsConfigured}
+          </p>
+        )}
       </div>
     )
   }
@@ -190,7 +229,7 @@ export function VoicePage(): React.ReactElement {
                     className={cn(
                       BTN_SUBTLE,
                       'h-7 px-3',
-                      currentVoice === designPreview.voiceId && 'border-emerald-400/30 text-emerald-300'
+                      currentVoice === designPreview.voiceId && 'border-accent-line text-accent font-medium'
                     )}
                     disabled={currentVoice === designPreview.voiceId}
                     onClick={() => setCompanionVoiceId(designPreview.voiceId)}

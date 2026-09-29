@@ -5,7 +5,7 @@ import type {
   ChannelPeersResponse
 } from '@/shared/types/spiritagent'
 
-/** IM 通道桥 REST（PROTOCOL「IM 通道」）；Hub 无 WS，全部走 REST 轮询。 */
+/** IM 通道桥 REST（PROTOCOL「IM 通道」）：设置页以此为状态来源；网关 channel.* 事件只驱动桌面提醒。 */
 export function listChannels(): Promise<ChannelListResponse> {
   return window.spiritagent.api<ChannelListResponse>({ path: '/api/channels' })
 }

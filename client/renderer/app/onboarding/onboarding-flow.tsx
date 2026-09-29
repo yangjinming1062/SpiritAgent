@@ -57,8 +57,8 @@ import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { authedApi } from '@/shared/lib/authed-api'
 import { FolderOpen, Sparkles } from '@/shared/lib/icons'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
-import { isClientErrorIpc, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
-import { safeJsonParse } from '@/shared/lib/safe-json'
+import { backendDetailMessage, isClientErrorIpc } from '@/shared/lib/ipc-error'
+import { log } from '@/shared/lib/log'
 import { currentClearEpoch } from '@/shared/lib/storage'
 import { cn } from '@/shared/lib/utils'
 import { Chip, DatePicker, INPUT_CLASS, SURFACE_OVERLAY } from '@/shared/panel'
@@ -169,7 +169,7 @@ const QUESTIONS: readonly Question[] = [
     presets: PERSONALITY_PRESETS
   },
   // speaking_style 是后端 schema 的必填项——用专门一道题去问，
-  // 让用户的选择成为直接真相来源；它属于角色字段，跟其它字段一起进 enterHatching 的 PUT。
+  // 让用户的选择成为直接真相来源；它属于角色字段，跟其它字段一起进 enterPortraitStage 的 PUT。
   {
     key: 'speaking_style',
     text: '您希望我说话的风格是什么样的？',
@@ -333,6 +333,8 @@ async function savePersona(payload: ReturnType<typeof assemblePersona>): Promise
       throw error
     }
 
+    log.warn('onboarding', 'persona save failed', error)
+
     return false
   }
 }
@@ -448,6 +450,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   }
 
   const [voice, setVoice] = useState<VoiceOption | null>(null)
+  // 目录步骤的加载状态：失败时保留已选音色并提供重试，不能显示成「没有可用音色」。
+  const [voiceLoad, setVoiceLoad] = useState<'failed' | 'loading' | 'ready'>('loading')
+  const [voiceLoadAttempt, setVoiceLoadAttempt] = useState(0)
   const [voiceCatalog, setVoiceCatalog] = useState<VoiceOption[]>([])
   // 匹配器的候选项。跟完整目录分开，方便「推荐卡」的「换一个」按钮在候选项里循环，
   // 而不是遍历整个目录。
@@ -474,6 +479,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const inputRef = useRef<HTMLInputElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const resumedRef = useRef(false)
+  // 读不到服务端进度时暂停作答，避免新回答覆盖尚未读回的草稿。
+  const [resumeState, setResumeState] = useState<'failed' | 'ok' | 'retrying'>('ok')
+  const [resumeAttempt, setResumeAttempt] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // 居中的初始位置；用户可以从这里开始拖拽。
@@ -540,7 +548,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   // 题面文本，显示在输入框下方。
   const spokenText = question?.text ?? ''
 
-  // 每道题出现时朗读（DESIGN「引导与后台准备」 预制语音）。
+  // 保存失败退回题目时带回的提示：换题重置不能清掉它，此时由调用方播放提示音而不重读题面。
+  const carriedHintRef = useRef<string | null>(null)
+
+  // 每道题出现时播放随安装包交付的预录题面语音。
   useEffect(() => {
     if (phase !== 'q-character' && phase !== 'q-user' && phase !== 'voice') {
       return
@@ -554,23 +565,34 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
     const current = answersRef.current
     const initialVal = (current[q.key] as string) ?? ''
+    const carriedHint = carriedHintRef.current
+    carriedHintRef.current = null
     setInput(initialVal)
     setAnswerKind(null)
-    setHint(null)
+    setHint(carriedHint)
 
-    void playOnboardingAudio(q.audioTag)
+    if (!carriedHint) {
+      void playOnboardingAudio(q.audioTag)
+    }
 
     return () => stopSpeaking()
   }, [phase, qIndex, currentList, answersRef])
 
-  const submitOnboardingAnswer = useCallback((field: QKey, value: string | null) => {
-    const submission = onboardingSubmissionsRef.current
-      .then(async () => {
+  // 结果为是否已提交。单字段失败不阻断作答：角色与用户资料随整体保存提交，音色在完成前重新提交并核对。
+  const submitOnboardingAnswer = useCallback((field: QKey, value: string | null): Promise<boolean> => {
+    const submission = onboardingSubmissionsRef.current.then(async () => {
+      try {
         await requestGateway('onboarding.submit', { field, value })
-      })
-      .catch(() => undefined)
 
-    onboardingSubmissionsRef.current = submission
+        return true
+      } catch (error) {
+        log.warn('onboarding', `onboarding.submit ${field} failed`, error)
+
+        return false
+      }
+    })
+
+    onboardingSubmissionsRef.current = submission.then(() => undefined)
 
     return submission
   }, [])
@@ -628,20 +650,39 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   }
 
-  // 在 describe→catalog 切换（以及 resume 直接进入 catalog）时加载目录与试听 TTS。
+  // 进入目录步骤（describe→catalog 或从用户资料返回）时加载推荐与目录并试听。
+  // 离开目录步骤后迟到的结果作废：不改选音色、不上云、不在其他步骤出声。
   useEffect(() => {
     if (phase !== 'voice' || voiceStage !== 'catalog') {
       return
     }
-    void (async () => {
-      stopSpeaking()
 
+    let cancelled = false
+    stopSpeaking()
+    setVoiceLoad('loading')
+
+    void (async () => {
       const [matched, result] = await Promise.all([
         matchVoicePreference(requestGateway, answers.voice ?? ''),
         fetchVoiceCatalogRaw(requestGateway)
       ])
 
-      const catalog = result.ok ? result.catalog.voices : []
+      if (cancelled) {
+        return
+      }
+
+      // 请求失败不能当作「没有匹配」改选目录首项；保留已选音色，等待重试。
+      if (!matched.ok || !result.ok) {
+        if (!result.ok) {
+          log.warn('onboarding', 'voice catalog request failed')
+        }
+
+        setVoiceLoad('failed')
+
+        return
+      }
+
+      const catalog = result.catalog.voices
       const selected = matched.voice ?? catalog[0] ?? null
       setVoice(selected)
       setVoiceAlternatives(matched.alternatives)
@@ -653,6 +694,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       const priorityIds = new Set(priorityVoices.map(voiceSelectionId))
       const extra = catalog.filter(v => !priorityIds.has(voiceSelectionId(v)))
       setVoiceCatalog([...priorityVoices, ...extra])
+      setVoiceLoad('ready')
 
       if (!selected) {
         return
@@ -660,7 +702,11 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
       void speakScripted(sampleLine(answers.name || ''), voiceSelectionId(selected), 'onboarding.voice.preview')
     })()
-  }, [phase, voiceStage, answers.voice, answers.name])
+
+    return () => {
+      cancelled = true
+    }
+  }, [phase, voiceStage, answers.voice, answers.name, voiceLoadAttempt])
 
   const onSend = (): void => {
     const q = currentList[qIndex]
@@ -691,7 +737,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   }
 
   const onBack = (): void => {
-    // 形象确认后模型已启动,任何返回路径都禁用——纯函数 ``computeBackTransition`` 在 imageSealed 时直接返 null。
+    // 形象确认后不能再返回形象步骤：``computeBackTransition`` 在 imageSealed 时只允许音色与用户资料步骤之间回退。
     const intent = computeBackTransition(
       { phase, qIndex, voiceStage, imageSealed, portraitDirectAdopt },
       CHARACTER_QUESTIONS.length
@@ -730,8 +776,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     try {
       personaOk = (await retryTransient(() => savePersona(assembleCharacterPersona(ans)), 700)) === true
     } catch (err) {
+      log.warn('onboarding', 'character persona save rejected', err)
       setPhase('q-character')
-      setHint(err instanceof Error ? `记忆存不上：${err.message}` : '记忆存不上，请重试 onboarding')
+      setHint(backendDetailMessage(err, '角色资料保存失败，请检查填写内容后重试'))
       void playOnboardingAudio('onboarding.hatching.retry')
 
       return
@@ -764,12 +811,18 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
 
     setPhase('portrait-avatar')
-    void playOnboardingAudio(succeeded ? 'onboarding.portrait.ok' : 'onboarding.portrait.failed')
+
+    // 失败时面板显示原因，不播预录台词冒充伙伴评价画像。
+    if (succeeded) {
+      void playOnboardingAudio('onboarding.portrait.ok')
+    }
   }
 
   // 断点恢复（DESIGN「引导与后台准备」）：网关一旦连通，
   // 就把还没答完的草稿拉回来，让 onboarding 中途崩溃/退出后能从下一道未答的题继续。
-  // 只跑一次，绝不重复 resume。
+  // 成功后不再重复；读取失败时暂停作答，网关重连或点击重试时再读。
+  const onCompletedRef = useLatestRef(onCompleted)
+
   useEffect(() => {
     if (resumedRef.current || gatewayState !== 'open') {
       return
@@ -778,6 +831,11 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     resumedRef.current = true
 
     void (async () => {
+      const markResumeFailed = (): void => {
+        resumedRef.current = false
+        setResumeState('failed')
+      }
+
       try {
         const cachedRef = await loadDraftRefImage()
 
@@ -799,22 +857,36 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
           }>({
             path: '/api/companion/onboarding/state'
           })
-        } catch {
+        } catch (error) {
+          log.warn('onboarding', 'resume state REST failed', error)
           state = await requestGateway<{
             answers?: Record<string, string>
             next_field?: string | null
             complete?: boolean
-          }>('onboarding.get_state', {}).catch(() => null)
+          }>('onboarding.get_state', {}).catch((gatewayError: unknown) => {
+            log.warn('onboarding', 'resume state gateway failed', gatewayError)
+
+            return null
+          })
         }
 
-        if (state?.complete) {
-          void clearDraftRefImage()
-          onCompleted()
+        // 没读到服务端进度不能当作新引导，否则新回答会覆盖已保存的草稿。
+        if (!state) {
+          markResumeFailed()
 
           return
         }
 
-        if (state?.answers) {
+        setResumeState('ok')
+
+        if (state.complete) {
+          void clearDraftRefImage()
+          onCompletedRef.current()
+
+          return
+        }
+
+        if (state.answers) {
           // 把服务端草稿与当前会话里已经输入的答案合并；
           // 本地非空的编辑优先，保证用户最近的意图不会丢失。
           const a = state.answers
@@ -859,7 +931,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               } else {
                 setPhase('portrait-choose')
               }
-            } catch {
+            } catch (error) {
+              log.warn('onboarding', 'resume portrait failed', error)
               setPhase('portrait-choose')
             }
           } else if (nextField === 'fullbody-reference') {
@@ -870,7 +943,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
               await applyLocalPortrait(avatarRes)
               setPhase('fullbody-reference')
-            } catch {
+            } catch (error) {
+              log.warn('onboarding', 'resume fullbody failed', error)
               setPhase('portrait-avatar')
               setPortraitPanelHint('形象恢复失败，请重试')
             }
@@ -891,8 +965,11 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             setQIndex(Math.max(0, idx))
           }
         }
-      } catch {
-        /* no draft yet — start fresh */
+      } catch (error) {
+        log.warn('onboarding', 'resume failed', error)
+        markResumeFailed()
+
+        return
       }
 
       const r = await fetchVoiceCatalogRaw(requestGateway)
@@ -901,7 +978,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         setVoiceCatalog(r.catalog.voices)
       }
     })()
-  }, [gatewayState, onCompleted])
+  }, [gatewayState, onCompletedRef, resumeAttempt])
 
   useEffect(() => {
     if (gatewayState !== 'open' || voiceCatalog.length > 0) {
@@ -926,7 +1003,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   } = useRegeneratePortrait({
     refImage,
     presentationRef,
-    playAudioOnSuccess: true,
     onRegenerated: ({ avatar, id }) => {
       setPortraitPanelHint(null)
       // 重绘与微调产物按 AI 结果对待，需经确认步骤。
@@ -1070,26 +1146,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         throw result.error
       }
     } catch (error) {
-      // 409 表示 temp-media 已过期——头像文件已不在，绝不能继续推进。
-      // 退回 avatar 阶段，让用户重新生成。
-      if (isClientErrorIpc(error)) {
-        const unwrapped = unwrapIpcErrorMessage(error)
-        const jsonStart = unwrapped.indexOf('{')
-        const parsed = jsonStart >= 0 ? safeJsonParse(unwrapped.slice(jsonStart), null) : null
-        const backendError = (parsed as { detail?: { error?: string } } | null)?.detail?.error
-
-        if (backendError) {
-          setPortraitPanelHint(backendError)
-          setPhase('portrait-avatar')
-
-          return
-        }
-      }
-      // 非 IPC 失败（网络、JSON 解析、IPC envelope）：onClick 里的 `void` 会把异常吞掉——
-      // 这里显式提示并拒绝推进。
-
-      console.warn('sealPortrait failed unexpectedly', error)
-      setPortraitPanelHint('确认失败，请检查网络后重试')
+      // 确认失败（如 409 头像已更新或临时文件过期）绝不能推进：退回确认步骤说明原因，可重新加载或生成。
+      // onClick 里的 `void` 会吞掉异常，这里显式提示。
+      log.warn('onboarding', 'portrait confirm failed', error)
+      setPortraitPanelHint(backendDetailMessage(error, '确认失败，请检查网络后重试'))
       setPhase('portrait-avatar')
 
       return
@@ -1183,19 +1243,31 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       ans.voice = voice.label || voice.id
     }
 
-    // 兜底重试；失败时退回 'q-user'，避免 phase 卡在 'finishing'。
+    // 服务端以音色草稿与完整资料判定引导完成：暂时性失败有限重试，仍失败则回到最后一题
+    // 提示重试，不清草稿、不问候、不标记完成。
+    let failure: string | null = null
+
     try {
-      if (voice) {
-        await submitOnboardingAnswer('voice', voice.label || voice.id)
-      }
+      const voiceSaved =
+        !voice || (await retryTransient(() => submitOnboardingAnswer('voice', voice.label || voice.id), 700)) === true
 
       await onboardingSubmissionsRef.current
 
-      await savePersona(assemblePersona(ans))
+      const saved = voiceSaved && (await retryTransient(() => savePersona(assemblePersona(ans)), 700)) === true
+
+      if (!saved) {
+        failure = '资料保存失败，请检查网络后再点「完成」重试'
+      }
     } catch (err) {
+      log.warn('onboarding', 'final persona save rejected', err)
+      failure = backendDetailMessage(err, '资料保存失败，请检查填写内容后重试')
+    }
+
+    if (failure) {
+      // 从 finishing 退回题目会触发换题重置，提示经 carriedHintRef 带过去。
+      carriedHintRef.current = failure
       setPhase('q-user')
       setQIndex(USER_QUESTIONS.length - 1)
-      setHint(err instanceof Error ? `同步失败：${err.message}` : '同步失败，请稍后再试')
       void playOnboardingAudio('onboarding.finishing.retry')
 
       return
@@ -1205,8 +1277,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     updateRefImage(null)
     setPhase('greeting')
 
-    // DESIGN「引导与后台准备」：首句问候用确认后的音色说出——TTS（speakScripted 按
-    // (音色, 台词) 内容寻址缓存）优先，失败才回退预渲染音频片段。
+    // 首句问候用确认后的音色合成（speakScripted 按（音色，台词）内容寻址缓存），
+    // 失败才回退预渲染片段。
     const greetingName = ans.name?.trim() || ''
     const greetingText = greetingName ? `你好呀！我是${greetingName}，以后就由我陪你啦。` : '你好呀！以后就由我陪你啦。'
 
@@ -1252,12 +1324,29 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       >
         <div className={`w-full rounded-2xl p-5 text-strong ${SURFACE_OVERLAY}`} style={{ pointerEvents: 'auto' }}>
           {voicePreparing && <p className="mb-2 text-center text-[10px] text-muted">正在准备声音…</p>}
-          {phase === 'q-character' && question && LOCKED_FIELD_KEYS.has(question.key) && (
+          {resumeState !== 'ok' && (
+            <div className="py-2 text-center">
+              <p className="text-sm text-body">没能读取之前保存的进度，请检查网络后重试。</p>
+              <button
+                className="mt-3 inline-flex h-8 items-center justify-center rounded-lg bg-accent px-4 text-xs font-medium text-on-accent transition hover:bg-accent/85 disabled:pointer-events-none disabled:opacity-40"
+                disabled={resumeState === 'retrying'}
+                onClick={() => {
+                  setResumeState('retrying')
+                  setResumeAttempt(n => n + 1)
+                }}
+                type="button"
+              >
+                {resumeState === 'retrying' ? '正在重试…' : '重试'}
+              </button>
+            </div>
+          )}
+          {resumeState === 'ok' && phase === 'q-character' && question && LOCKED_FIELD_KEYS.has(question.key) && (
             <p className="mb-2 rounded-md border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-[10px] leading-relaxed text-strong">
               「{LOCKED_FIELD_LABELS[question.key] ?? '当前字段'}」是形象确认后无法再次更改的重点内容，请仔细选择。
             </p>
           )}
-          {(phase === 'q-character' || phase === 'q-user' || (phase === 'voice' && voiceStage === 'describe')) &&
+          {resumeState === 'ok' &&
+            (phase === 'q-character' || phase === 'q-user' || (phase === 'voice' && voiceStage === 'describe')) &&
             question && (
               <>
                 <p className="min-h-[3.5rem] text-[15px] leading-relaxed">{spokenText}</p>
@@ -1634,7 +1723,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             />
           )}
 
-          {phase === 'voice' && voiceStage === 'catalog' && voice && (
+          {phase === 'voice' && voiceStage === 'catalog' && voiceLoad === 'ready' && voice && (
             <div className="mt-1">
               <p className="mb-3 text-[13px] text-body">挑一个我说话的声音吧，随时可以试听。</p>
               <div className="rounded-xl border border-line-hairline bg-surface-card p-3">
@@ -1725,16 +1814,35 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             </div>
           )}
 
-          {phase === 'voice' && voiceStage === 'catalog' && !voice && (
+          {phase === 'voice' && voiceStage === 'catalog' && (voiceLoad !== 'ready' || !voice) && (
             <div className="mt-1">
-              <p className="text-[13px] text-body">当前系统语言没有可用音色，请先配置支持该语言的 TTS 供应商。</p>
-              <button
-                className="mt-3 text-xs text-body transition hover:text-strong"
-                onClick={() => setVoiceStage('describe')}
-                type="button"
-              >
-                上一步
-              </button>
+              {voiceLoad === 'loading' ? (
+                <SpinnerWithText text="正在加载音色…" />
+              ) : (
+                <p className="text-[13px] text-body">
+                  {voiceLoad === 'failed'
+                    ? '音色加载失败，请检查网络后重试。'
+                    : '当前系统语言没有可用音色，请先配置支持该语言的 TTS 供应商。'}
+                </p>
+              )}
+              <div className="mt-3 flex items-center gap-4 text-xs">
+                <button
+                  className="text-body transition hover:text-strong"
+                  onClick={() => setVoiceStage('describe')}
+                  type="button"
+                >
+                  上一步
+                </button>
+                {voiceLoad === 'failed' && (
+                  <button
+                    className="text-strong transition hover:text-accent"
+                    onClick={() => setVoiceLoadAttempt(n => n + 1)}
+                    type="button"
+                  >
+                    重试
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

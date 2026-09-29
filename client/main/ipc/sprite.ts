@@ -10,7 +10,7 @@ import {
 import type { BrowserWindow, IpcMain, Screen } from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
-import { atomicWriteFile, broadcastToAllWindows, hideAndSkipTaskbar, safeReadJson } from '../shared/utils'
+import { atomicWriteFile, broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, safeReadJson } from '../shared/utils'
 
 const POSITION_FILE = 'companion-position.json'
 
@@ -57,12 +57,13 @@ export function readRestPosition(userDataDir?: string): null | DesktopSpriteRest
 interface SpriteIpcDeps {
   getSpriteWindow: () => BrowserWindow | null | undefined
   getUserDataDir: () => string
+  log: (chunk: string) => void
   screen: Screen
   getWindowSnapshot?: () => Promise<unknown>
 }
 
 export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcMain: IpcMain }): void {
-  const { getSpriteWindow, getUserDataDir, getWindowSnapshot, screen } = deps
+  const { getSpriteWindow, getUserDataDir, getWindowSnapshot, log, screen } = deps
 
   const withWindow = (fn: (win: BrowserWindow) => void) => {
     const win = getSpriteWindow()
@@ -255,8 +256,8 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
         path.join(dir, POSITION_FILE),
         JSON.stringify({ x: payload.x, y: payload.y, origin, ...(screenEdge ? { screenEdge } : {}) })
       )
-    } catch {
-      // 尽力而为
+    } catch (error) {
+      log(`[sprite] saving rest position failed: ${errorMessage(error)}`)
     }
   })
 

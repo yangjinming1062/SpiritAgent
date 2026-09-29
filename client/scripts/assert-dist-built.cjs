@@ -3,8 +3,7 @@
 const fs = require('fs')
 const path = require('path')
 
-// Pure check — returns { ok: true } or { ok: false, error: "..." }.
-// Kept side-effect-free so it can be unit tested without spawning a process.
+// Returns { ok: true } or { ok: false, error: "..." }.
 function checkDistBuilt(distDir) {
   if (!fs.existsSync(distDir) || !fs.statSync(distDir).isDirectory()) {
     return { ok: false, error: `no dist directory at ${distDir}` }
@@ -53,8 +52,4 @@ function main() {
   console.log('✓ assert-dist-built: HTML entries (sprite, living, workbench) + assets present')
 }
 
-if (require.main === module) {
-  main()
-}
-
-module.exports = { checkDistBuilt }
+main()

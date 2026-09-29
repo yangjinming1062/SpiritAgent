@@ -12,6 +12,8 @@ import type {
 } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
+import { log } from '@/shared/lib/log'
+
 export const $surfaceOpen = atom<null | SurfaceId>(null)
 export const $surfaceScreenLocked = atom(false)
 let appliedRevision = -1
@@ -69,21 +71,10 @@ export async function setSurfaceCompanion(preference: SurfaceCompanionPreference
 }
 
 export function isLivingProxyWindow(): boolean {
-  if ($surfaceRole.get() === 'living') {
-    return true
-  }
-
-  if (typeof window !== 'undefined' && window.location.pathname.includes('living.html')) {
-    return true
-  }
-
-  return false
+  return $surfaceRole.get() === 'living'
 }
 
-export interface OpenSurfaceOptions {
-  sessionId?: string
-  view?: string
-}
+export type OpenSurfaceOptions = Omit<DesktopSurfaceOpenPayload, 'surface'>
 
 export async function requestOpenSurface(surface: SurfaceId, options: OpenSurfaceOptions = {}): Promise<void> {
   const payload: DesktopSurfaceOpenPayload = {
@@ -117,9 +108,7 @@ export function hydrateSurfaces(): () => void {
         applySurfaceState(state)
       }
     })
-    .catch(() => {
-      // 启动早期 main 端 IPC 尚未就绪：保留默认 store（null），等下一次 onChanged 跟上。
-    })
+    .catch(error => log.warn('surfaces', 'getState failed', error))
 
   return () => {
     disposed = true

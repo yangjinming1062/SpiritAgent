@@ -6,7 +6,6 @@ const DESKTOP_LOG_BUFFER_MAX_CHARS = 64 * 1024
 const DESKTOP_LOG_MAX_BYTES = 10 * 1024 * 1024
 const DESKTOP_LOG_BACKUP_COUNT = 3
 const DESKTOP_LOG_DISCARD_BYTES = DESKTOP_LOG_MAX_BYTES * 4
-const MAX_IN_MEMORY_LOGS = 300
 
 interface DesktopLoggerOptions {
   spiritagentHome: string
@@ -15,20 +14,20 @@ interface DesktopLoggerOptions {
 
 interface DesktopLogger {
   flushSync: () => void
-  logPath: string
   rememberLog: (chunk: unknown) => void
 }
+
+type RotationStep = { from: string; op: 'mv'; to: string } | { op: 'rm'; path: string }
 
 export function createDesktopLogger({ spiritagentHome, isPackaged = true }: DesktopLoggerOptions): DesktopLogger {
   const logPath = path.join(spiritagentHome, 'logs', 'desktop.log')
   const logBackupPath = (n: number) => `${logPath}.${n}`
 
-  const inMemoryLogs: string[] = []
   let buffer = ''
   let flushTimer: NodeJS.Timeout | null = null
   let flushPromise = Promise.resolve()
 
-  function planRotation(size: number): Array<[string, string, string?]> {
+  function planRotation(size: number): RotationStep[] {
     if (size < DESKTOP_LOG_MAX_BYTES) {
       return []
     }
@@ -36,16 +35,16 @@ export function createDesktopLogger({ spiritagentHome, isPackaged = true }: Desk
     const backups = (n: number) => Array.from({ length: n }, (_, i) => logBackupPath(i + 1))
 
     if (size > DESKTOP_LOG_DISCARD_BYTES) {
-      return [logPath, ...backups(DESKTOP_LOG_BACKUP_COUNT)].map(p => ['rm', p])
+      return [logPath, ...backups(DESKTOP_LOG_BACKUP_COUNT)].map(p => ({ op: 'rm', path: p }))
     }
 
-    const ops: Array<[string, string, string?]> = [['rm', logBackupPath(DESKTOP_LOG_BACKUP_COUNT)]]
+    const ops: RotationStep[] = [{ op: 'rm', path: logBackupPath(DESKTOP_LOG_BACKUP_COUNT) }]
 
     for (let i = DESKTOP_LOG_BACKUP_COUNT - 1; i >= 1; i--) {
-      ops.push(['mv', logBackupPath(i), logBackupPath(i + 1)])
+      ops.push({ from: logBackupPath(i), op: 'mv', to: logBackupPath(i + 1) })
     }
 
-    ops.push(['mv', logPath, logBackupPath(1)])
+    ops.push({ from: logPath, op: 'mv', to: logBackupPath(1) })
 
     return ops
   }
@@ -59,12 +58,12 @@ export function createDesktopLogger({ spiritagentHome, isPackaged = true }: Desk
       return
     }
 
-    for (const [op, src, dst] of planRotation(size)) {
+    for (const step of planRotation(size)) {
       try {
-        if (op === 'rm') {
-          fs.rmSync(src, { force: true })
+        if (step.op === 'rm') {
+          fs.rmSync(step.path, { force: true })
         } else {
-          fs.renameSync(src, dst!)
+          fs.renameSync(step.from, step.to)
         }
       } catch {
         // 尽力而为
@@ -81,12 +80,12 @@ export function createDesktopLogger({ spiritagentHome, isPackaged = true }: Desk
       return
     }
 
-    for (const [op, src, dst] of planRotation(size)) {
+    for (const step of planRotation(size)) {
       try {
-        if (op === 'rm') {
-          await fs.promises.rm(src, { force: true })
+        if (step.op === 'rm') {
+          await fs.promises.rm(step.path, { force: true })
         } else {
-          await fs.promises.rename(src, dst!)
+          await fs.promises.rename(step.from, step.to)
         }
       } catch {
         // 尽力而为
@@ -161,12 +160,6 @@ export function createDesktopLogger({ spiritagentHome, isPackaged = true }: Desk
     }
 
     const lines = text.split(/\r?\n/).map(line => `[spiritagent] ${line}`)
-    inMemoryLogs.push(...lines)
-
-    if (inMemoryLogs.length > MAX_IN_MEMORY_LOGS) {
-      inMemoryLogs.splice(0, inMemoryLogs.length - MAX_IN_MEMORY_LOGS)
-    }
-
     buffer += `${lines.join('\n')}\n`
 
     if (buffer.length >= DESKTOP_LOG_BUFFER_MAX_CHARS) {
@@ -185,7 +178,6 @@ export function createDesktopLogger({ spiritagentHome, isPackaged = true }: Desk
 
   return {
     flushSync,
-    logPath,
     rememberLog
   }
 }

@@ -37,10 +37,7 @@ import {
   ArrowRight,
   CalendarPlus,
   Clock,
-  Cpu,
-  Globe,
   type IconComponent,
-  List,
   Messages,
   Pencil,
   Pin,
@@ -53,7 +50,7 @@ import { INPUT_CLASS, SearchField } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 import type { SessionInfo } from '@/shared/types/spiritagent'
 
-import { PresetIconBadge, PresetPickerModal } from './preset-picker-modal'
+import { presetIcon, PresetPickerModal } from './preset-picker-modal'
 
 function buildSortOptions(
   t: ReturnType<typeof useStrings>['workbench']['sessionSidebar']
@@ -65,14 +62,14 @@ function buildSortOptions(
   ]
 }
 
-function buildPresetMeta(
+function buildPresetLabels(
   t: ReturnType<typeof useStrings>['workbench']['sessionSidebar']['presetMeta']
-): Record<string, { icon: IconComponent; label: string }> {
+): Record<string, string> {
   return {
-    copywriter: { icon: Pencil, label: t.copywriter },
-    developer: { icon: Cpu, label: t.developer },
-    language_teacher: { icon: Globe, label: t.language_teacher },
-    product_manager: { icon: List, label: t.product_manager }
+    copywriter: t.copywriter,
+    developer: t.developer,
+    language_teacher: t.language_teacher,
+    product_manager: t.product_manager
   }
 }
 
@@ -122,7 +119,7 @@ export function SessionSidebar(): React.JSX.Element {
   const tActions = t.actions
   const tPreset = t.presetMeta
   const sortOptions = buildSortOptions(t)
-  const workbenchPresetMeta = buildPresetMeta(tPreset)
+  const workbenchPresetLabels = buildPresetLabels(tPreset)
   const [pickerOpen, setPickerOpen] = useState(false)
 
   const searchActive = search.trim().length > 0
@@ -166,7 +163,7 @@ export function SessionSidebar(): React.JSX.Element {
   }
 
   const isSpecialSession = (s: SessionInfo): boolean =>
-    s.kind === 'special' || (typeof s.system_preset_id === 'string' && s.system_preset_id in workbenchPresetMeta)
+    s.kind === 'special' || (typeof s.system_preset_id === 'string' && s.system_preset_id in workbenchPresetLabels)
 
   const workbenchSessions = sessions.filter(s => !isCompanionSession(s))
 
@@ -276,22 +273,17 @@ export function SessionSidebar(): React.JSX.Element {
                 </div>
               ) : (
                 <div className="space-y-0.5">
-                  {specialSessions.map(s => {
-                    const meta = s.system_preset_id ? workbenchPresetMeta[s.system_preset_id] : undefined
-                    const Icon = meta?.icon ?? Cpu
-
-                    return (
-                      <SessionRow
-                        customIcon={Icon}
-                        customLabel={meta?.label}
-                        isActive={s.id === activeSessionId}
-                        isSpecial
-                        key={s.id}
-                        onSwitch={handleSwitch}
-                        session={s}
-                      />
-                    )
-                  })}
+                  {specialSessions.map(s => (
+                    <SessionRow
+                      customIcon={presetIcon(s.system_preset_icon_key)}
+                      customLabel={s.system_preset_id ? workbenchPresetLabels[s.system_preset_id] : undefined}
+                      isActive={s.id === activeSessionId}
+                      isSpecial
+                      key={s.id}
+                      onSwitch={handleSwitch}
+                      session={s}
+                    />
+                  ))}
                 </div>
               )}
             </div>
@@ -491,13 +483,9 @@ function SessionRow({
       <div className="flex items-center justify-between gap-1.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
           {isActive ? (
-            <span className="size-2 shrink-0 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.9)]" />
+            <span className="size-2 shrink-0 rounded-full bg-accent shadow-[0_0_8px_var(--ui-accent)]" />
           ) : CustomIcon ? (
             <CustomIcon className="size-3.5 shrink-0 text-faint" />
-          ) : isSpecial ? (
-            <span className="shrink-0" title={presetName ?? ''}>
-              <PresetIconBadge iconKey={session.system_preset_icon_key} />
-            </span>
           ) : (
             <span className="size-1.5 shrink-0 rounded-full bg-fill-hover" />
           )}
@@ -612,7 +600,7 @@ function RowAction({
       className={cn(
         'rounded-md p-1 transition-colors',
         danger
-          ? 'text-faint hover:bg-rose-500/20 hover:text-rose-300'
+          ? 'text-faint hover:bg-danger-bg hover:text-danger-fg'
           : 'text-faint hover:bg-fill-hover hover:text-strong'
       )}
       onClick={onClick}

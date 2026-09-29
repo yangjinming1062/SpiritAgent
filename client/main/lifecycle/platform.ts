@@ -1,20 +1,14 @@
 const GPU_OVERRIDE_ON: Set<string> = new Set(['1', 'true', 'yes', 'on'])
 const GPU_OVERRIDE_OFF: Set<string> = new Set(['0', 'false', 'no', 'off'])
 
-interface DetectRemoteDisplayOptions {
-  env?: NodeJS.ProcessEnv | Record<string, string | undefined>
-  platform?: string
-}
-
 /**
  * 判断应用是否在远程/转发的显示器上运行——这种场景下 Chromium 的 GPU 合成器
  * 会产生不稳定、闪烁的画面。
  * 需要禁用 GPU 时返回一个简短的 reason 字符串，否则返回 null。
  * `SPIRITAGENT_DESKTOP_DISABLE_GPU` 环境变量可以覆盖检测结果。
  */
-export function detectRemoteDisplay(options: DetectRemoteDisplayOptions = {}): null | string {
-  const env = options.env ?? process.env
-  const platform = options.platform ?? process.platform
+export function detectRemoteDisplay(): null | string {
+  const env = process.env
 
   const override = String(env.SPIRITAGENT_DESKTOP_DISABLE_GPU || '')
     .trim()
@@ -33,7 +27,7 @@ export function detectRemoteDisplay(options: DetectRemoteDisplayOptions = {}): n
     return 'ssh-session'
   }
 
-  if (platform === 'win32') {
+  if (process.platform === 'win32') {
     // RDP 会话上报的 SESSIONNAME 类似 "RDP-Tcp#7"；本地会话则是 "Console"。
     const sessionName = String(env.SESSIONNAME || '')
 

@@ -5,9 +5,8 @@ interface ContextMenuPos {
   y: number
 }
 
-// 持久化位置以便菜单一直挂着、只切换可见性。
-// 用 nanostore（而非 useState）让打开/关闭不会触发沉重的 CompanionRoot
-// （8 个 useStore + 7 个 useState）重新渲染。
+// 菜单打开位置，null 表示关闭；菜单组件常驻挂载，只按它切换可见性。
+// 触发方（精灵舞台、蛋形）与菜单经 atom 共享，开关只重渲染订阅的菜单组件。
 export const $contextMenuPos = atom<ContextMenuPos | null>(null)
 
 export function openContextMenu(pos: ContextMenuPos): void {

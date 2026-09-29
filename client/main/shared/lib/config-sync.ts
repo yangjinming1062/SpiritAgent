@@ -85,6 +85,8 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
   let hydratedAccountId: null | string = null
   let hydrating = false
   let flushing = false
+  // 在途上传期间又被请求的 flush：完成后补跑，本地新编辑不能因撞上在途请求而丢失。
+  let flushQueued = false
   let flushTimer: null | NodeJS.Timeout = null
   let retryTimer: null | NodeJS.Timeout = null
   let backoffMs = RETRY_BACKOFF_INITIAL_MS
@@ -189,7 +191,13 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
   }
 
   async function flush(): Promise<void> {
-    if (flushing || !dirty) {
+    if (flushing) {
+      flushQueued = true
+
+      return
+    }
+
+    if (!dirty) {
       return
     }
 
@@ -213,15 +221,22 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
         return
       }
 
+      const uploadedJson = JSON.stringify(payload)
       await backendClient(conn.baseUrl).put('/api/config', { body: { config: payload }, token: conn.token })
 
       if (epoch !== authEpoch) {
         return
       }
 
-      dirty = false
       backoffMs = RETRY_BACKOFF_INITIAL_MS
-      lastFlushedJson = JSON.stringify(payload)
+      lastFlushedJson = uploadedJson
+
+      // 上传期间的本地编辑不在本次载荷内：保留 dirty 并补跑，否则下次水合会用云端旧值覆盖它。
+      if (JSON.stringify(pickSyncedSections(store.read())) === uploadedJson) {
+        dirty = false
+      } else {
+        flushQueued = true
+      }
     } catch (error) {
       if (epoch !== authEpoch) {
         return
@@ -235,6 +250,11 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       }
     } finally {
       flushing = false
+
+      if (flushQueued) {
+        flushQueued = false
+        void flush()
+      }
     }
   }
 

@@ -2,8 +2,8 @@ import type { Atom } from 'nanostores'
 
 import type { ChatMediaItem } from './types/spiritagent'
 
-// chat 不依赖形象层：companion 加载时绑定实现，chat 只经本端口访问。
-// 详见 client/renderer/README.md「分层与目录」 与 eslint chat 边界规则。
+// 模块间的窄能力端口：各入口渲染前经 app/bootstrap/bind-presentation.ts 绑定角色、语音与媒体实现，
+// conversation、speech 等模块只经本端口访问。详见 client/renderer/README.md「装配与状态归属」。
 
 export type SpriteStateName =
   | 'idle'
@@ -42,7 +42,7 @@ export function bindPresentationPorts(next: PresentationPorts): void {
 
 export function presentationPorts(): PresentationPorts {
   if (!ports) {
-    throw new Error('presentation ports not bound — companion must initialize first')
+    throw new Error('presentation ports not bound — bindPresentation() must run before use')
   }
 
   return ports

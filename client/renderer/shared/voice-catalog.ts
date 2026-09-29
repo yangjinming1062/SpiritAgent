@@ -6,8 +6,6 @@ export interface VoiceOption {
   language: string
   tags: readonly string[]
   description: string
-  // 供应商提供的设计音色说明，展示在枢纽层的画廊中。
-  voice_design_guide?: string
 }
 
 // 声线筛选的合法 gender 值与目录数据（v.gender）对齐；展示文案由页面按 locale 取词。

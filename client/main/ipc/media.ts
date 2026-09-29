@@ -9,14 +9,17 @@ import {
   type MediaTtsPayload
 } from '@ipc/contracts'
 import { sleep } from '@runtime'
-import type { IpcMain } from 'electron'
+import type { IpcMain, WebContents } from 'electron'
 
 import { speechText } from '../../shared/speech-text'
 import { resolveReadableFileForIpc } from '../security/hardening'
 import { assertUserSelectedPath } from '../security/user-selected-paths'
+import type { BackendConnection } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
 import { dataUrlFromBuffer, dataUrlToBuffer, parseDataUrl } from '../shared/mime'
+import { errorMessage, HttpError } from '../shared/utils'
 
+import { createAuthExpiryNotifier, type GetCurrentAuth } from './connection'
 import { createTtsDiskCache } from './tts-disk-cache'
 
 const STT_TIMEOUT_MS = 60_000
@@ -194,7 +197,7 @@ async function postMultipart({
 
   if (!res.ok) {
     const text = await res.text().catch(() => '')
-    throw new Error(`${res.status} ${new URL(url).pathname}: ${text || res.statusText}`)
+    throw new HttpError(res.status, `${res.status} ${new URL(url).pathname}: ${text || res.statusText}`)
   }
 
   const buf = Buffer.from(await res.arrayBuffer())
@@ -226,21 +229,20 @@ function makeLog(
 }
 
 async function sttViaBackend({
+  connection,
   data,
-  ensureBackend,
   fetchImpl = globalThis.fetch,
   filename,
   language,
   mime
 }: {
+  connection: BackendConnection
   data: Buffer
-  ensureBackend: () => Promise<{ baseUrl: string; token?: null | string }>
   fetchImpl?: typeof globalThis.fetch
   filename?: string
   language?: string
   mime: string
 }): Promise<string> {
-  const connection = await ensureBackend()
   const form = new FormData()
   const blob = new Blob([data], { type: mime })
 
@@ -270,19 +272,18 @@ async function sttViaBackend({
 }
 
 async function ttsViaBackend({
-  ensureBackend,
+  connection,
   fetchImpl,
   language,
   text,
   voice
 }: {
-  ensureBackend: () => Promise<{ baseUrl: string; token?: null | string }>
+  connection: BackendConnection
   fetchImpl?: typeof globalThis.fetch
   language?: string
   text: string
   voice?: string
 }): Promise<{ dataUrl: string; mimeType: string; voiceOut?: string }> {
-  const connection = await ensureBackend()
   const url = `${connection.baseUrl}/api/media/tts`
 
   const payload: Record<string, unknown> = { text }
@@ -309,7 +310,7 @@ async function ttsViaBackend({
 
   if (!res.ok) {
     const errText = await res.text().catch(() => '')
-    throw new Error(`${res.status} /api/media/tts: ${errText || res.statusText}`)
+    throw new HttpError(res.status, `${res.status} /api/media/tts: ${errText || res.statusText}`)
   }
 
   const mime = res.headers.get('content-type') || 'audio/mpeg'
@@ -353,8 +354,9 @@ function setCachedTts(key: string, value: { dataUrl: string; mimeType: string })
 
 interface MediaIpcDeps {
   spiritagentHome: string
-  ensureBackend: () => Promise<{ baseUrl: string; token?: null | string }>
+  ensureBackend: () => Promise<BackendConnection>
   fetchImpl?: typeof globalThis.fetch
+  getCurrentAuth: GetCurrentAuth
   ipcMain: IpcMain
   log?: (msg: string) => void
 }
@@ -363,14 +365,29 @@ export function registerMediaIpc({
   spiritagentHome,
   ensureBackend,
   fetchImpl,
+  getCurrentAuth,
   ipcMain,
   log = () => {}
 }: MediaIpcDeps): void {
   const diskCache = createTtsDiskCache({ spiritagentHome })
   const sttLimiter = new SttLimiter()
   const ttsQueue = new BoundedTtsQueue()
+  const notifyAuthExpiredOn401 = createAuthExpiryNotifier(getCurrentAuth)
 
-  ipcMain.handle(IPC.invoke.mediaStt, async (_event, payload?: MediaSttPayload) => {
+  // 云端调用 401 时通知发起窗口进入会话过期流程，错误照常抛给调用方。
+  async function callBackend<T>(sender: WebContents, call: (connection: BackendConnection) => Promise<T>): Promise<T> {
+    const connection = await ensureBackend()
+
+    try {
+      return await call(connection)
+    } catch (error) {
+      notifyAuthExpiredOn401(error, connection.token, sender)
+
+      throw error
+    }
+  }
+
+  ipcMain.handle(IPC.invoke.mediaStt, async (event, payload?: MediaSttPayload) => {
     const sttId = ++sttSeq
     const { data, mime } = parseDataUrl(payload?.dataUrl || '')
 
@@ -394,14 +411,16 @@ export function registerMediaIpc({
 
       sttLog('start')
 
-      const text = await sttViaBackend({
-        data,
-        ensureBackend,
-        fetchImpl,
-        filename: payload?.filename,
-        language: lang,
-        mime
-      })
+      const text = await callBackend(event.sender, connection =>
+        sttViaBackend({
+          connection,
+          data,
+          fetchImpl,
+          filename: payload?.filename,
+          language: lang,
+          mime
+        })
+      )
 
       sttLog('done', {
         chars: text.length,
@@ -415,7 +434,7 @@ export function registerMediaIpc({
     }
   })
 
-  ipcMain.handle(IPC.invoke.mediaTts, async (_event, payload?: MediaTtsPayload) => {
+  ipcMain.handle(IPC.invoke.mediaTts, async (event, payload?: MediaTtsPayload) => {
     const ttsId = ++ttsSeq
     const text = speechText(String(payload?.text || ''))
 
@@ -438,7 +457,7 @@ export function registerMediaIpc({
       ctx: payload?.context || 'default',
       id: ttsId,
       lang: language,
-      persisted: persist,
+      persist,
       voice: voice || null
     })
 
@@ -479,24 +498,36 @@ export function registerMediaIpc({
       // 云端间隔只约束真实出网请求；磁盘命中不占云端额度。
       await throttleCloud()
 
-      const result = await ttsViaBackend({ ensureBackend, fetchImpl, language, text, voice })
+      const result = await callBackend(event.sender, connection =>
+        ttsViaBackend({ connection, fetchImpl, language, text, voice })
+      )
+
       const value = { dataUrl: result.dataUrl, mimeType: result.mimeType }
       setCachedTts(cacheKey, value)
+      let persisted = false
 
       if (persist) {
-        await diskCache.write({
-          buffer: dataUrlToBuffer(result.dataUrl),
-          language,
-          mimeType: result.mimeType,
-          text,
-          voice
-        })
+        try {
+          persisted = await diskCache.write({
+            buffer: dataUrlToBuffer(result.dataUrl),
+            language,
+            mimeType: result.mimeType,
+            text,
+            voice
+          })
+
+          if (!persisted) {
+            ttsLog('persist_skipped', { mime: result.mimeType })
+          }
+        } catch (error) {
+          ttsLog('persist_failed', { error: errorMessage(error) })
+        }
       }
 
       ttsLog('done', {
         mime: result.mimeType,
         ms: Date.now() - startedAt,
-        persisted: persist,
+        persisted,
         route: 'cloud',
         voice_out: result.voiceOut || null
       })
@@ -515,7 +546,7 @@ export function registerMediaIpc({
 
   ipcMain.handle(
     IPC.invoke.mediaVideoUpload,
-    async (_event, payload: AttachmentVideoUploadPayload): Promise<AttachmentVideoUploadResult> => {
+    async (event, payload: AttachmentVideoUploadPayload): Promise<AttachmentVideoUploadResult> => {
       assertUserSelectedPath(payload.path, 'Video attach')
 
       const { resolvedPath } = await resolveReadableFileForIpc(payload.path, {
@@ -524,20 +555,21 @@ export function registerMediaIpc({
       })
 
       const data = await fs.promises.readFile(resolvedPath)
-      const connection = await ensureBackend()
       const form = new FormData()
       const blob = new Blob([data], { type: 'application/octet-stream' })
 
       form.append('file', blob, path.basename(resolvedPath))
       form.append('session_id', payload.sessionId)
 
-      const { body } = await postMultipart({
-        fetchImpl,
-        form,
-        timeoutMs: ATTACH_VIDEO_TIMEOUT_MS,
-        token: connection.token || undefined,
-        url: `${connection.baseUrl}/api/media/videos`
-      })
+      const { body } = await callBackend(event.sender, connection =>
+        postMultipart({
+          fetchImpl,
+          form,
+          timeoutMs: ATTACH_VIDEO_TIMEOUT_MS,
+          token: connection.token || undefined,
+          url: `${connection.baseUrl}/api/media/videos`
+        })
+      )
 
       const parsed = JSON.parse(body.toString('utf8')) as {
         url?: string

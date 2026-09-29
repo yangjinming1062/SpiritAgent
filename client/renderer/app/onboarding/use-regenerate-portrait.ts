@@ -18,8 +18,6 @@ interface UseRegeneratePortraitOptions {
   refImage?: PickedImage | null
   /** 有身份参考时仅提供光线与构图；否则作为唯一参考图。 */
   presentationRef?: PickedImage | null
-  playAudioOnSuccess?: boolean
-  feedback?: string
   onRegenerated?: (urls: { avatar: string; id: number | null }) => void
   onError?: (message: string) => void
 }
@@ -34,9 +32,9 @@ interface PortraitResponse {
 
 interface UseRegeneratePortraitResult {
   /** null 表示请求已失效或已有请求在途；false 表示失败且保留输入。 */
-  generate: (feedback?: string, overrideRef?: PickedImage | null) => Promise<boolean | null>
-  regenerate: (feedback?: string, overrideRef?: PickedImage | null) => Promise<void>
-  edit: (feedback?: string) => Promise<void>
+  generate: () => Promise<boolean | null>
+  regenerate: () => Promise<void>
+  edit: () => Promise<void>
   reload: () => Promise<void>
   busy: boolean
 }
@@ -48,14 +46,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
   const runningRef = useRef(false)
   const operationRef = useRef(0)
 
-  const {
-    refImage,
-    presentationRef,
-    playAudioOnSuccess = false,
-    feedback: optionFeedback,
-    onRegenerated,
-    onError
-  } = options
+  const { refImage, presentationRef, onRegenerated, onError } = options
 
   useEffect(() => {
     mountedRef.current = true
@@ -68,11 +59,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
   }, [])
 
   const run = useCallback(
-    async (
-      mode: 'generate' | 'regenerate' | 'edit' | 'reload',
-      callFeedback?: string,
-      overrideRef?: PickedImage | null
-    ): Promise<boolean | null> => {
+    async (mode: 'generate' | 'regenerate' | 'edit' | 'reload'): Promise<boolean | null> => {
       const auth = $auth.get()
 
       if (!mountedRef.current || runningRef.current || auth.kind !== 'authenticated') {
@@ -80,8 +67,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
       }
 
       const draft = $regenFeedback.get()
-      // 显式空串表示本次不附描述，不回退到其他来源的旧输入。
-      const feedback = (callFeedback ?? optionFeedback ?? draft).trim() || undefined
+      const feedback = draft.trim() || undefined
 
       if (mode === 'edit' && !feedback) {
         return null
@@ -107,10 +93,9 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
       setBusy(true)
 
       try {
-        const identityRef = overrideRef !== undefined ? overrideRef : refImage
         const presentation = mode === 'generate' ? null : presentationRef
-        const primaryRef = identityRef ?? presentation
-        const secondaryRef = identityRef ? presentation : null
+        const primaryRef = refImage ?? presentation
+        const secondaryRef = refImage ? presentation : null
         let result: PortraitResponse | null
 
         if (mode === 'reload') {
@@ -177,7 +162,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
 
         onRegenerated?.({ avatar: applied.avatar, id: result.id ?? null })
 
-        if ((mode === 'regenerate' || mode === 'edit') && playAudioOnSuccess) {
+        if (mode === 'regenerate' || mode === 'edit') {
           void playOnboardingAudio('onboarding.portrait.regenerate')
         }
 
@@ -200,27 +185,18 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
         }
       }
     },
-    [refImage, presentationRef, optionFeedback, onRegenerated, onError, playAudioOnSuccess]
+    [refImage, presentationRef, onRegenerated, onError]
   )
 
-  const generate = useCallback(
-    (feedback?: string, overrideRef?: PickedImage | null) => run('generate', feedback, overrideRef),
-    [run]
-  )
+  const generate = useCallback(() => run('generate'), [run])
 
-  const regenerate = useCallback(
-    async (feedback?: string, overrideRef?: PickedImage | null): Promise<void> => {
-      await run('regenerate', feedback, overrideRef)
-    },
-    [run]
-  )
+  const regenerate = useCallback(async (): Promise<void> => {
+    await run('regenerate')
+  }, [run])
 
-  const edit = useCallback(
-    async (feedback?: string): Promise<void> => {
-      await run('edit', feedback)
-    },
-    [run]
-  )
+  const edit = useCallback(async (): Promise<void> => {
+    await run('edit')
+  }, [run])
 
   const reload = useCallback(async (): Promise<void> => {
     await run('reload')

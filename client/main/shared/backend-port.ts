@@ -10,21 +10,15 @@ export interface BackendConnection {
 
 export interface BackendRequestPortOptions {
   body?: unknown
-  headers?: Record<string, string>
-  query?: Record<string, unknown>
-  signal?: AbortSignal
   timeoutMs?: number
   token?: string
 }
 
 export interface BackendClientPort {
   baseUrl: string
-  delete: <T = unknown>(path: string, options?: BackendRequestPortOptions) => Promise<T>
   get: <T = unknown>(path: string, options?: BackendRequestPortOptions) => Promise<T>
-  patch: <T = unknown>(path: string, options?: BackendRequestPortOptions) => Promise<T>
   post: <T = unknown>(path: string, options?: BackendRequestPortOptions) => Promise<T>
   put: <T = unknown>(path: string, options?: BackendRequestPortOptions) => Promise<T>
-  request: <T = unknown>(method: string, path: string, options?: BackendRequestPortOptions) => Promise<T>
 }
 
 export interface SessionSnapshotPort {

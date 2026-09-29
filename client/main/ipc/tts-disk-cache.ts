@@ -10,7 +10,14 @@ function cacheKey(voice: string, text: string): string {
 
 export interface TtsDiskCache {
   read: (options: { language: string; text: string; voice: string }) => Promise<Buffer | null>
-  write: (options: { buffer: Buffer; language: string; mimeType: string; text: string; voice: string }) => Promise<void>
+  /** 只落盘 mp3，返回是否写入；写盘失败时抛出。 */
+  write: (options: {
+    buffer: Buffer
+    language: string
+    mimeType: string
+    text: string
+    voice: string
+  }) => Promise<boolean>
 }
 
 export function createTtsDiskCache({ spiritagentHome }: { spiritagentHome: string }): TtsDiskCache {
@@ -34,16 +41,14 @@ export function createTtsDiskCache({ spiritagentHome }: { spiritagentHome: strin
       }
     },
 
-    async write({ buffer, language, mimeType, text, voice }): Promise<void> {
+    async write({ buffer, language, mimeType, text, voice }): Promise<boolean> {
       if (mimeType !== 'audio/mpeg') {
-        return
+        return false
       }
 
-      try {
-        await atomicWriteFile(pathFor(voice, text, language), buffer)
-      } catch (err) {
-        console.warn('[tts-disk-cache] write failed', err)
-      }
+      await atomicWriteFile(pathFor(voice, text, language), buffer)
+
+      return true
     }
   }
 }

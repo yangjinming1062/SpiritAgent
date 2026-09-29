@@ -1,7 +1,7 @@
 import type { SurfaceId } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useRef } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 
 import {
   $actionCatalogStatus,
@@ -17,7 +17,7 @@ import {
   resolveCompanionPresentation,
   SpriteVfxOverlay
 } from '@/modules/character'
-import { useVideoPixelHitTest } from '@/modules/character/rendering/video'
+import { useVideoPixelHitTest, VideoStage } from '@/modules/character/rendering/video'
 import { useInteractiveRegion } from '@/shared'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { $auth } from '@/shared/store/auth'
@@ -25,8 +25,6 @@ import { $surfaceCompanions, requestOpenSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
 
 import styles from './surface-companion.module.css'
-
-const VideoStage = lazy(() => import('@/modules/character/rendering/video').then(m => ({ default: m.VideoStage })))
 
 export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX.Element | null {
   const state = useStore($surfaceCompanions)[surface]
@@ -91,31 +89,28 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
         title={strings.common.companionControl.dragTitle(strings.brand.name)}
       >
         <div className={styles.inner}>
-          {state.visible && (
-            <Suspense fallback={null}>
-              {presentation.renderer === 'fallback' ? (
-                <EggStage
-                  hasRecoveryAction={presentation.fallbackActionAvailable}
-                  message={presentation.fallbackMessage}
-                  onStatusAction={() => {
-                    if (presentation.fallbackStatus === 'failed') {
-                      void requestOpenSurface('living', { view: 'appearance' })
+          {state.visible &&
+            (presentation.renderer === 'fallback' ? (
+              <EggStage
+                hasRecoveryAction={presentation.fallbackActionAvailable}
+                message={presentation.fallbackMessage}
+                onStatusAction={() => {
+                  if (presentation.fallbackStatus === 'failed') {
+                    void requestOpenSurface('living', { view: 'appearance' })
 
-                      return
-                    }
+                    return
+                  }
 
-                    void hydrateActionCatalog(true)
-                    void hydrateVideoPack(true)
-                  }}
-                  size="min(280px, 92%)"
-                  status={presentation.fallbackStatus}
-                  windowId={1}
-                />
-              ) : (
-                <VideoStage />
-              )}
-            </Suspense>
-          )}
+                  void hydrateActionCatalog(true)
+                  void hydrateVideoPack(true)
+                }}
+                size="min(280px, 92%)"
+                status={presentation.fallbackStatus}
+                windowId={1}
+              />
+            ) : (
+              <VideoStage />
+            ))}
           {state.visible && <SpriteVfxOverlay />}
         </div>
       </div>

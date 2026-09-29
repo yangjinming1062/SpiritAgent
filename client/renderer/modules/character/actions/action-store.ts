@@ -449,13 +449,13 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
         return
       }
 
-      // localUrl 是 apiAsset 桥返回的本地资产 URL（spiritagent-media:// 或 blob），非后端相对路径。
+      // localUrl 是 apiAsset 桥返回的 data URL，非后端相对路径。
       // eslint-disable-next-line no-restricted-syntax
       const resp = await fetch(localUrl)
-      const manifest = (await resp.json()) as ActionCatalogManifest
+      const manifest: unknown = await resp.json()
 
-      if (manifest.schema_version !== 'spiritagent.action.pack' || !Array.isArray(manifest.clips)) {
-        log.warn('action-store', 'unsupported catalog schema')
+      if (!resp.ok || !isActionCatalogManifest(manifest)) {
+        log.warn('action-store', 'invalid catalog manifest')
 
         if (!$actionCatalog.get()) {
           $actionCatalog.set(null)

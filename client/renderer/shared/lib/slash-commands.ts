@@ -5,6 +5,7 @@
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
+import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $gateway } from '@/shared/store/gateway'
 
 export interface SlashCommandMeta {
@@ -26,8 +27,10 @@ interface ServerCommandEntry {
   requires_confirmation?: boolean
 }
 
-// 启动前为空；拉取失败也保持空，由下次连通或再次进入命令模式时重试。
+// 启动前与账户清理后为空；拉取失败也保持空，由下次连通或再次进入命令模式时重试。
 export const $slashCommandMeta = atom<readonly SlashCommandMeta[]>([])
+
+registerStorageClearHandler(() => $slashCommandMeta.set([]))
 
 let slashMetaInflight: Promise<void> | null = null
 
@@ -222,7 +225,10 @@ interface SlashCommandListResponse {
   commands: readonly ServerCommandEntry[]
 }
 
-/** 从网关拉取命令元数据写入本窗口 atom；已有数据则跳过，失败保持空以便重试。 */
+/**
+ * 从网关拉取命令元数据写入本窗口 atom；已有数据则跳过，失败保持空以便重试。
+ * 返回前网关已替换或账户已清理时丢弃结果，旧后端的命令列表不带入新会话。
+ */
 export async function fetchSlashCommandMeta(): Promise<void> {
   if ($slashCommandMeta.get().length > 0) {
     return
@@ -238,10 +244,15 @@ export async function fetchSlashCommandMeta(): Promise<void> {
     return
   }
 
+  const epoch = currentClearEpoch()
+
   slashMetaInflight = (async () => {
     try {
       const res = await gateway.request<SlashCommandListResponse>('command.list', {})
-      setSlashCommandMeta((res.commands ?? []).map(normalizeServerEntry))
+
+      if ($gateway.get() === gateway && currentClearEpoch() === epoch) {
+        setSlashCommandMeta((res.commands ?? []).map(normalizeServerEntry))
+      }
     } catch (error) {
       const msg = error instanceof Error ? error.message : String(error)
       log.error('slash-commands', `command.list failed: ${msg}`, error)

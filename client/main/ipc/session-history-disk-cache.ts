@@ -1,18 +1,9 @@
 import fsp from 'node:fs/promises'
 import path from 'node:path'
 
-// 会话历史本地快照：与后端 SessionResumeResult 的可持久化子集对齐。
-// messages 只保留展示所需的 SessionMessage 形状；主进程不做业务投影。
-export interface SessionHistorySnapshot {
-  currentSeq: number
-  info?: Record<string, unknown>
-  lastMessageId: null | number
-  messages: unknown[]
-  nextCursor: null | string
-  truncated: boolean
-  writtenAt: number
-}
+import type { SessionHistorySnapshot } from '@ipc/contracts'
 
+// 快照 messages 只保留展示所需的 SessionMessage 形状；主进程不做业务投影。
 export interface SessionHistoryDiskCache {
   clear: () => Promise<void>
   get: (accountId: string, sessionId: string) => Promise<null | SessionHistorySnapshot>
@@ -98,6 +89,20 @@ export function createSessionHistoryDiskCache({
     await fsp.mkdir(dir, { recursive: true })
   }
 
+  // 队列只保存吞掉失败的尾部，保证后续写入照常排队；调用方等待原任务并收到失败。
+  async function awaitQueued(key: string, task: Promise<void>): Promise<void> {
+    const tail = task.catch(() => {})
+    writeQueues.set(key, tail)
+
+    try {
+      await task
+    } finally {
+      if (writeQueues.get(key) === tail) {
+        writeQueues.delete(key)
+      }
+    }
+  }
+
   async function get(accountId: string, sessionId: string): Promise<null | SessionHistorySnapshot> {
     if (!isAccountIdSafe(accountId) || !isSessionIdSafe(sessionId)) {
       return null
@@ -128,40 +133,35 @@ export function createSessionHistoryDiskCache({
     const saveEpoch = epoch
     const prev = writeQueues.get(key) ?? Promise.resolve()
 
-    const next = prev
-      .then(async () => {
-        if (saveEpoch !== epoch) {
-          return
-        }
+    const next = prev.then(async () => {
+      if (saveEpoch !== epoch) {
+        return
+      }
 
-        await ensureDir(accountDir(accountId))
+      await ensureDir(accountDir(accountId))
 
-        if (saveEpoch !== epoch) {
-          return
-        }
+      if (saveEpoch !== epoch) {
+        return
+      }
 
-        const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
+      const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
 
-        try {
-          await fsp.writeFile(tmp, JSON.stringify(sanitized), 'utf8')
+      try {
+        await fsp.writeFile(tmp, JSON.stringify(sanitized), 'utf8')
 
-          if (saveEpoch === epoch) {
-            await fsp.rename(tmp, file)
-          } else {
-            await fsp.unlink(tmp).catch(() => {})
-          }
-        } catch {
+        if (saveEpoch === epoch) {
+          await fsp.rename(tmp, file)
+        } else {
           await fsp.unlink(tmp).catch(() => {})
         }
-      })
-      .catch(() => {})
+      } catch (error) {
+        await fsp.unlink(tmp).catch(() => {})
 
-    writeQueues.set(key, next)
-    await next
+        throw error
+      }
+    })
 
-    if (writeQueues.get(key) === next) {
-      writeQueues.delete(key)
-    }
+    await awaitQueued(key, next)
   }
 
   async function remove(accountId: string, sessionId: string): Promise<void> {
@@ -174,23 +174,18 @@ export function createSessionHistoryDiskCache({
     const removeEpoch = epoch
     const prev = writeQueues.get(key) ?? Promise.resolve()
 
-    const next = prev
-      .then(() => (removeEpoch === epoch ? fsp.rm(sessionPath(accountId, sessionId), { force: true }) : undefined))
-      .catch(() => {})
+    const next = prev.then(() =>
+      removeEpoch === epoch ? fsp.rm(sessionPath(accountId, sessionId), { force: true }) : undefined
+    )
 
-    writeQueues.set(key, next)
-    await next
-
-    if (writeQueues.get(key) === next) {
-      writeQueues.delete(key)
-    }
+    await awaitQueued(key, next)
   }
 
   async function clear(): Promise<void> {
     epoch += 1
     await Promise.allSettled([...writeQueues.values()])
     writeQueues.clear()
-    await fsp.rm(cacheRoot, { recursive: true, force: true }).catch(() => {})
+    await fsp.rm(cacheRoot, { recursive: true, force: true })
   }
 
   return {

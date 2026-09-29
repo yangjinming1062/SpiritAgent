@@ -42,7 +42,10 @@ function fromLocalGit() {
   // tracked-but-modified files because those mean the .exe content
   // differs from the commit being pinned.
   const status = tryExec('git status --porcelain -uno', { cwd: REPO_ROOT })
-  const dirty = status !== null && status.length > 0
+  if (status === null) {
+    console.warn('[write-build-stamp] WARNING: `git status` failed; marking the build dirty.')
+  }
+  const dirty = status === null || status.length > 0
   return {
     commit: sha,
     branch: branch === 'HEAD' ? null : branch, // detached HEAD -> null
@@ -60,7 +63,7 @@ function main() {
         '  - `git rev-parse HEAD` failed at ' +
         REPO_ROOT +
         '\n' +
-        'Packaged builds require a git ref to pin first-launch version.\n' +
+        'Packaged builds record the git commit they were built from.\n' +
         'Run from a git checkout or set $GITHUB_SHA explicitly.'
     )
     process.exit(1)
@@ -69,7 +72,7 @@ function main() {
   if (stamp.dirty) {
     console.warn(
       '[write-build-stamp] WARNING: working tree is dirty.\n' +
-        '  Pinning to ' +
+        '  Stamping ' +
         stamp.commit.slice(0, 12) +
         ' but the packaged code may differ from that commit.\n' +
         '  Commit your changes before publishing this build.'
