@@ -26,7 +26,7 @@
 
 全身重绘与自备图先写 `FullbodyCandidate`，分析可重试；用户采纳时校验原图和角色卡修订，同事务更新全身图与身体字段。被替换的未采纳候选清理图片，已采纳旧图保留给历史任务；完整身份语义见 [PIPELINE](../../../../docs/PIPELINE.md#全身候选采纳)。
 
-草稿转存失败可重试，只有全部图片均为过期草稿的头像行才能清理，不连带删除正式参考。服务内部与 ORM 始终使用裸路径（`temp-media/`、`companion-avatars/`、`companion-assets/`），[avatar_service.py](avatar_service.py) 的读取与删除入口只接受裸路径；访问 URL 仅在响应出口由 `re_sign_bare_path` 生成，客户端回传的地址只在全身确认入口还原比对。
+草稿转存失败可重试，只有全部图片均为过期草稿的头像行才能清理，不连带删除正式参考。服务内部与 ORM 始终使用裸路径：草稿为 `temp-media/`，确认后的立绘与其他用户资产一样落在 `companion-assets/{user_id}/`，[avatar_service.py](avatar_service.py) 的读取与删除入口只接受裸路径；访问 URL 仅在响应出口由 `re_sign_bare_path` 生成，客户端回传的地址只在全身确认入口还原比对。
 
 角色卡分析与全身候选分析共用 `extract_card_features`；头像、全身与换装生图共用 `generate_with_moderation_retry`，命中内容审核时改写提示词重试一次，结果未知不重试。
 

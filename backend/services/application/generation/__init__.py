@@ -25,7 +25,6 @@ from .avatar_service import (
     raise_if_image_sealed,
     regenerate_avatar,
     regenerate_avatar_from_image,
-    resolve_uploaded_avatar_path,
     retry_fullbody_candidate_analysis,
     select_avatar,
 )
@@ -226,7 +225,6 @@ __all__ = [
     "regenerate_avatar_from_image",
     "regenerate_outfit_draft",
     "resolve_image_gen_chain",
-    "resolve_uploaded_avatar_path",
     "resume_pending_video_jobs",
     "resume_video_generation_jobs",
     "select_avatar",

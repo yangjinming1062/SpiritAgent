@@ -81,12 +81,7 @@ def _asset_path(path: str, user_id: int, root: Path) -> Path:
     if not isinstance(path, str) or not path or "\\" in path or ".." in path:
         raise ValueError("Invalid action asset path")
     relative = Path(path)
-    allowed = (
-        len(relative.parts) == 2
-        and relative.parts[0] == "companion-avatars"
-        or len(relative.parts) == 3
-        and relative.parts[:2] == ("companion-assets", str(user_id))
-    )
+    allowed = len(relative.parts) == 3 and relative.parts[:2] == ("companion-assets", str(user_id))
     target = root / relative
     if not allowed or target.resolve() != target:
         raise ValueError("Action asset is outside its user scope")

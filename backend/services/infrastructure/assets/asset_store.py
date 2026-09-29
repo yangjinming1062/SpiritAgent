@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import os
 import secrets
+import shutil
 import time
 from pathlib import Path
 from urllib.parse import urlencode
@@ -56,27 +57,6 @@ def verify_signed_asset_request(user_id: int, filename: str, expires: int | None
     if int(expires) < int(time.time()):
         return False
     expected = _sign(user_id, filename, int(expires))
-    return hmac.compare_digest(expected, sig)
-
-
-def _sign_avatar(filename: str, expires_at: int) -> str:
-    msg = f"avatar:{filename}:{expires_at}".encode()
-    return hmac.new(_signing_key(), msg, hashlib.sha256).hexdigest()
-
-
-def build_signed_avatar_url(file_id: str, ext: str) -> str:
-    expires_at = int(time.time()) + _ASSET_URL_TTL_SECONDS
-    sig = _sign_avatar(f"{file_id}.{ext}", expires_at)
-    qs = urlencode({"expires": expires_at, "sig": sig})
-    return f"/api/companion/avatar/file/{file_id}.{ext}?{qs}"
-
-
-def verify_signed_avatar_request(filename: str, expires: int | None, sig: str | None) -> bool:
-    if expires is None or sig is None:
-        return False
-    if int(expires) < int(time.time()):
-        return False
-    expected = _sign_avatar(filename, int(expires))
     return hmac.compare_digest(expected, sig)
 
 
@@ -263,6 +243,14 @@ def client_asset_url(storage_path: str) -> str:
     if storage_path.startswith("companion-assets/"):
         return "/api/companion/asset/" + storage_path.removeprefix("companion-assets/")
     return storage_path
+
+
+def delete_user_assets(user_id: int) -> None:
+    """删除该用户的整个资产目录（被遗忘权）；文件系统错误向上抛出。"""
+    user_dir = _assets_root() / str(user_id)
+    if user_dir.exists():
+        shutil.rmtree(user_dir)
+        logger.info("Deleted user asset directory", extra={"user_id": user_id})
 
 
 def unlink_companion_asset(storage_path: str | None) -> Path | None:

@@ -229,7 +229,6 @@ CRONJOB_PARAM_DESCS = {
     "schedule": "For create/update: five-field UTC cron (minute hour day month weekday), e.g. '0 9 * * *' means 09:00 UTC daily. Convert an explicitly requested local time using its timezone; a fixed UTC cron does not follow daylight-saving changes. Updating the schedule also resumes a paused job.",
     "name": "Optional human-friendly name.",
     "kind": "special is available only in the companion preset and triggers a primary-conversation turn, gated by desktop availability and disturbance settings; it may remain silent. standard runs in a separate task conversation and posts a system notification; local tools still need the desktop online. Defaults to standard.",
-    "deliver": "Use 'local' (default). This field does not configure webhook delivery.",
 }
 
 WEB_SUMMARY_INSTRUCTIONS = (

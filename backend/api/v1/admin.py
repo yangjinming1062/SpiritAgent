@@ -10,7 +10,17 @@ from pathlib import Path
 from typing import Any
 
 from common import get_or_404, get_router
-from components import CAPABILITY_SERVICES, SETTINGS, AIConfig, DbSession, apply_partial, get_logger, utc_now
+from components import (
+    CAPABILITY_SERVICES,
+    SETTINGS,
+    AIConfig,
+    DbSession,
+    apply_partial,
+    attachments_gc_session,
+    get_logger,
+    purge_user_temp_files,
+    utc_now,
+)
 from fastapi import Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from modules.auth import (
@@ -33,7 +43,8 @@ from modules.auth import (
     get_current_admin_token,
     hash_activation_token,
 )
-from modules.companion import AvatarAsset, Persona
+from modules.companion import Persona
+from modules.conversation import Conversation
 from modules.scheduler import (
     NightlyActivityLog,
     NightlyActivityLogItem,
@@ -43,7 +54,6 @@ from modules.system import MessageResponse
 from services.adapters.desktop import terminate_user_gateway
 from services.adapters.maintenance import user_maintenance
 from services.application.configuration import get_system_settings_for_admin, save_system_settings
-from services.application.generation import delete_portrait_file
 from services.domains.backup import (
     CONVERSATION_TABLES,
     TABLES,
@@ -58,6 +68,7 @@ from services.domains.backup import (
 )
 from services.domains.configuration import prepare_ai_config, public_ai_config
 from services.domains.conversation import ensure_system_conversations_for_user
+from services.infrastructure.assets import delete_user_assets
 from services.infrastructure.llm import providers_supporting
 from sqlalchemy import select, update
 from starlette.background import BackgroundTask
@@ -109,32 +120,28 @@ async def update_user(user_id: int, payload: UserUpdate, db: DbSession) -> UserR
     return UserResponse.model_validate(user)
 
 
-def _rm_user_asset_dir(d: Path) -> None:
-    """尽力删除用户资产目录；文件系统错误不阻断被遗忘权流程。"""
-    try:
-        if d.is_dir():
-            shutil.rmtree(d, ignore_errors=True)
-        else:
-            d.unlink(missing_ok=True)
-    except OSError:
-        pass
+def _purge_user_files(user_id: int, session_ids: list[str]) -> None:
+    """删除与备份导出同范围的用户文件：资产目录、各会话附件与名下临时文件。"""
+    delete_user_assets(user_id)
+    for session_id in session_ids:
+        attachments_gc_session(session_id)
+    purge_user_temp_files(user_id)
 
 
 @router.delete("/users/{user_id}", response_model=MessageResponse)
 async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
+    """被遗忘权：在维护边界内停稳该用户的运行时，先删文件再删行（外键级联清理其余数据）。
+
+    文件先于行删除，任一步失败都保留用户行，管理员重试即可继续清理。
+    """
     user = await get_or_404(db, User, id=user_id, detail="用户不存在。")
-    await terminate_user_gateway(user_id)
-
-    # 清除用户范围内的 DB 行与磁盘资产（被遗忘权）；用户行删除经外键级联清理其余行。
-    for asset_url in (await db.execute(select(AvatarAsset.asset_url).where(AvatarAsset.user_id == user_id))).scalars():
-        await asyncio.to_thread(delete_portrait_file, asset_url)
-    await db.delete(user)
-    await db.commit()
-
-    # 用户资产可达 GB 级，删除移出事件循环
-    d = Path(SETTINGS.data_dir) / "companion-assets" / str(user_id)
-    if d.exists():
-        await asyncio.to_thread(_rm_user_asset_dir, d)
+    async with user_maintenance(user_id):
+        session_ids = [
+            str(conv_id) for conv_id in await db.scalars(select(Conversation.id).where(Conversation.user_id == user_id))
+        ]
+        await asyncio.to_thread(_purge_user_files, user_id, session_ids)
+        await db.delete(user)
+        await db.commit()
     return MessageResponse(message="用户已删除。")
 
 

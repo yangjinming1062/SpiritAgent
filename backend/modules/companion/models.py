@@ -31,7 +31,7 @@ class CompanionOutfit(ModelBase, TimestampMixin):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(64), default="新外观")
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 全身立绘裸路径（草稿期 temp-media/，确认后 companion-avatars/），读取时重签名
+    # 全身立绘裸路径（草稿期 temp-media/，确认后 companion-assets/{user_id}/），读取时重签名
     fullbody_url: Mapped[str] = mapped_column(String(2048), default="")
     # draft → ready | failed | expired
     status: Mapped[str] = mapped_column(String(16), default="draft", server_default=text("'draft'"), index=True)

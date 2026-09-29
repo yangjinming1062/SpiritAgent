@@ -37,7 +37,6 @@ async def _handle_cron_action(
     prompt: str | None,
     schedule: str | None,
     name: str | None,
-    deliver: str,
     kind: str | None,
 ) -> str:
     if action == "create":
@@ -49,7 +48,6 @@ async def _handle_cron_action(
                 prompt=prompt,
                 schedule=schedule,
                 name=name or "cron job",
-                deliver=deliver,
                 kind=kind or "standard",
             )
         except ValueError as e:
@@ -96,7 +94,6 @@ async def cronjob(
     prompt: str | None = None,
     schedule: str | None = None,
     name: str | None = None,
-    deliver: str = "local",
     kind: str | None = None,
     **_: object,
 ) -> str:
@@ -104,7 +101,7 @@ async def cronjob(
     try:
         async with session_scope() as db:
             scope = await resolve_memory_scope(db, user_id, parent_session_id)
-        return await _handle_cron_action(normalized, scope, job_id, prompt, schedule, name, deliver, kind)
+        return await _handle_cron_action(normalized, scope, job_id, prompt, schedule, name, kind)
     except Exception as e:
         logger.exception("cronjob tool error")
         return tool_error(str(e))
@@ -129,11 +126,6 @@ CRONJOB_SCHEMA = {
                 "enum": ["special", "standard"],
                 "description": CRONJOB_PARAM_DESCS["kind"],
                 "default": "standard",
-            },
-            "deliver": {
-                "type": "string",
-                "description": CRONJOB_PARAM_DESCS["deliver"],
-                "default": "local",
             },
         },
         "required": ["action"],

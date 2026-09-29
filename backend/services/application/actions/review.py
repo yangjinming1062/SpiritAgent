@@ -34,6 +34,9 @@ from services.infrastructure.llm import vision_chat
 
 from .design import action_key_from_name
 
+# 与 ACTION_REVIEW_INSTRUCTIONS 中 existing_actions 的条数上限保持一致。
+_EXISTING_ACTION_LIMIT = 10
+
 
 class ReviewVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -44,9 +47,9 @@ class ReviewVerdict(BaseModel):
 
 
 async def _review_payload(db: AsyncSession, proposal: ActionProposal, pack: CompanionActionPack) -> dict[str, Any]:
-    """评审资料：提案、冻结外形/着装与生成上下文中的人设，以及同包相似动作候选。"""
+    """评审资料：提案、冻结外形/着装与生成上下文中的人设，以及同包现有表达动作。"""
     design = json.loads(proposal.design_json or "{}")
-    candidates = await _similar_action_candidates(db, pack.id, design)
+    existing_actions = await _existing_actions(db, pack.id, design)
     character_data: dict[str, Any] = json.loads(pack.character_snapshot or "{}")
     context = json.loads(pack.context_json) if pack.context_json else {}
     # 合并版本的包未写角色快照，资料取自同包冻结的生成上下文。
@@ -69,7 +72,7 @@ async def _review_payload(db: AsyncSession, proposal: ActionProposal, pack: Comp
         "source": proposal.source,
         "character_snapshot": character_data,
         "outfit_snapshot": outfit_data,
-        "candidates": candidates,
+        "existing_actions": existing_actions,
     }
 
 
@@ -92,36 +95,35 @@ def _similarity_score(design: dict, action: CompanionAction) -> float:
     return hit / len(tokens)
 
 
-async def _similar_action_candidates(
+async def _existing_actions(
     db: AsyncSession,
     pack_id: int,
     design: dict,
 ) -> list[dict]:
-    """按提案内容检索相近的已就绪动作，避免固定顺序把近义动作挤出评审上下文。"""
+    """同包全部表达动作按与提案的词面相近度排序，超过上限只保留最相近的；不超过上限时即为完整清单。
+
+    词面相近度对中文近义表达不敏感，不能据此剔除零分动作，否则评审会漏看可复用的近义动作。
+    """
     scored = [
         (_similarity_score(design, action), action)
         for action in await list_pack_actions(db, pack_id, enabled_only=True)
         if is_expression_action(action)
     ]
     scored.sort(key=lambda item: (-item[0], item[1].id))
-    candidates = []
-    for score, action in scored[:10]:
-        if score <= 0 and len(candidates) >= 5:
-            continue
-        candidates.append(
-            {
-                "id": action.id,
-                "name": action.name,
-                "key": action.key,
-                "motion_description": action.motion_description,
-                "use_when": json.loads(action.use_when or "[]"),
-                "avoid_when": json.loads(action.avoid_when or "[]"),
-                "duration_seconds": (action.actual_duration_ms or 0) / 1000 or action.target_duration_seconds,
-                "kind": action.kind,
-                "similarity": round(score, 3),
-            },
-        )
-    return candidates
+    return [
+        {
+            "id": action.id,
+            "name": action.name,
+            "key": action.key,
+            "motion_description": action.motion_description,
+            "use_when": json.loads(action.use_when or "[]"),
+            "avoid_when": json.loads(action.avoid_when or "[]"),
+            "duration_seconds": (action.actual_duration_ms or 0) / 1000 or action.target_duration_seconds,
+            "kind": action.kind,
+            "similarity": round(score, 3),
+        }
+        for score, action in scored[:_EXISTING_ACTION_LIMIT]
+    ]
 
 
 async def review_proposal(db: AsyncSession, proposal: ActionProposal) -> str:
@@ -152,8 +154,8 @@ async def review_proposal(db: AsyncSession, proposal: ActionProposal) -> str:
             )
             verdict = ReviewVerdict.model_validate(parse_llm_json(raw))
             if verdict.decision == "reuse":
-                if verdict.reuse_action_id not in {candidate["id"] for candidate in payload["candidates"]}:
-                    raise ValueError("reuse_action_id 必须取自 candidates 的 id")
+                if verdict.reuse_action_id not in {action["id"] for action in payload["existing_actions"]}:
+                    raise ValueError("reuse_action_id 必须取自 existing_actions 的 id")
             elif verdict.reuse_action_id is not None:
                 raise ValueError("非 reuse 结论的 reuse_action_id 必须为 null")
             await _apply_verdict(db, proposal, verdict, payload["design"])

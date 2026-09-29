@@ -5,9 +5,9 @@ from .asset_store import (
     action_pose_asset_path,
     action_source_asset_path,
     build_data_uri,
-    build_signed_avatar_url,
     client_asset_url,
     compute_file_sha256,
+    delete_user_assets,
     image_chain_asset_path,
     parse_companion_asset_path,
     resolve_companion_asset_path,
@@ -21,7 +21,6 @@ from .asset_store import (
     sniff_media_ext,
     unlink_companion_asset,
     verify_signed_asset_request,
-    verify_signed_avatar_request,
     video_job_asset_path,
 )
 from .http_range import serve_ranged_file
@@ -33,9 +32,9 @@ __all__ = [
     "save_action_source_asset_async",
     "asset_store",
     "build_data_uri",
-    "build_signed_avatar_url",
     "client_asset_url",
     "compute_file_sha256",
+    "delete_user_assets",
     "parse_companion_asset_path",
     "resolve_companion_asset_path",
     "save_companion_asset",
@@ -49,5 +48,4 @@ __all__ = [
     "sniff_media_ext",
     "unlink_companion_asset",
     "verify_signed_asset_request",
-    "verify_signed_avatar_request",
 ]

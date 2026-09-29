@@ -879,6 +879,12 @@ TITLE_PROMPTS: dict[str, str] = {
     ),
 }
 
+# 压缩检查点首行标题：压缩当轮的上下文占位与持久化检查点共用同一正文，客户端把首行显示为摘要卡片标题。
+COMPRESSION_CHECKPOINT_TITLE_TEXTS: dict[str, str] = {
+    "zh": "[🗜️ 对话压缩 — {count} 条早期消息已压缩]",
+    "en": "[🗜️ Conversation compressed — {count} earlier messages summarized]",
+}
+
 CONTEXT_SUMMARY_PROMPTS: dict[str, str] = {
     "zh": (
         "你要压缩一段对话历史。摘要将替代原消息，成为后续回合唯一可见的这部分上下文。"

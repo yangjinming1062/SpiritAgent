@@ -10,7 +10,6 @@ from components import (
     DbSession,
     attachments_gc_session,
     get_logger,
-    temp_files_gc_session,
 )
 from fastapi import HTTPException, Query, Request
 from modules.auth import CurrentUser, User
@@ -319,8 +318,4 @@ async def delete_session(
         await asyncio.to_thread(attachments_gc_session, str(deleted_id))
     except Exception:
         logger.warning("attachments_gc_session failed for session %s", deleted_id, exc_info=True)
-    try:
-        await asyncio.to_thread(temp_files_gc_session, str(deleted_id))
-    except Exception:
-        logger.warning("temp_files_gc failed for session %s", deleted_id, exc_info=True)
     return DesktopSessionOperationResponse(ok=True)

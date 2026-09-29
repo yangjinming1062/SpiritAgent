@@ -13,7 +13,6 @@ from components import SETTINGS
 
 URL_PREFIXES: dict[str, str] = {
     "/api/companion/asset/": "companion-assets/",
-    "/api/companion/avatar/file/": "companion-avatars/",
     "/api/media/videos/": "desktop-attachments/",
 }
 
@@ -109,11 +108,11 @@ def collect_files_for_export(user_id: int, rows: dict[str, list[dict[str, Any]]]
             if not file_id or "/" in file_id or "\\" in file_id or ".." in file_id:
                 continue
             files.update(p for p in (root / "temp-media").glob(f"{file_id}.*") if p.is_file())
-        elif path.startswith(("companion-avatars/", "temp-media/")):
+        elif path.startswith("temp-media/"):
             target = (root / path).resolve()
-            if target.is_relative_to(root / path.split("/")[0]) and target.is_file():
+            if target.is_relative_to(root / "temp-media") and target.is_file():
                 files.add(target)
-                if path.startswith("temp-media/") and target.with_suffix(".json").is_file():
+                if target.with_suffix(".json").is_file():
                     files.add(target.with_suffix(".json"))
     return sorted(path for path in files if path.resolve().is_relative_to(root))
 
@@ -143,8 +142,6 @@ def restore_files(
                     skipped_conversation_files += 1
                     continue
                 target_relative = PurePosixPath(parts[0], str(conversations[parts[1]]), *parts[2:])
-            elif parts[0] == "companion-avatars" and len(parts) == 2:
-                target_relative = relative
             elif parts[0] == "temp-media" and len(parts) == 2:
                 token = temp_ids.setdefault(relative.stem, uuid4().hex)
                 target_relative = PurePosixPath("temp-media", token + relative.suffix)
@@ -182,10 +179,8 @@ def restore_files(
             if restored_path is None:
                 raise ValueError("Temporary media payload is missing")
             meta["path"] = str(root / restored_path)
-            meta["session_id"] = str(conversations.get(str(meta.get("session_id")), ""))
+            meta["user_id"] = target_uid
             meta["created_at"] = time.time()
-            if "marker" in meta:
-                meta["marker"] = f"preview:{target_uid}"
             meta_path.write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         return FileRestoreResult(
             rewriter=rewriter,

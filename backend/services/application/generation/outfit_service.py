@@ -304,11 +304,8 @@ async def create_outfit_draft(
     }
     garment_text: str | None = None
     if image is not None:
-        # 参考图立即转存 companion-avatars（temp-media 会过期，重新生成还要复用）
-        ref_path = await _persist_portrait_bytes(
-            image,
-            content_type or "image/png",
-        )
+        # 参考图立即转存为用户资产（temp-media 会过期，重新生成还要复用）
+        ref_path = await _persist_portrait_bytes(user_id, image, content_type or "image/png")
         source["reference_image_path"] = ref_path
         # 失败降级为纯描述生成，下次重新生成会重试整合（整合走独立短会话，不占请求连接）
         garment_text = await _describe_reference_garment(
@@ -479,7 +476,7 @@ async def confirm_outfit(
             draft = await asyncio.to_thread(read_portrait_bytes, outfit.fullbody_url)
             if draft is None:
                 raise OutfitDraftExpiredError("外观草稿已过期，请重新生成")
-            outfit.fullbody_url = await _persist_portrait_bytes(*draft)
+            outfit.fullbody_url = await _persist_portrait_bytes(user_id, *draft)
         outfit.source_json = json.dumps(source, ensure_ascii=False)
         outfit.status = "ready"
         await db.commit()

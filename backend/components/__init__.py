@@ -91,7 +91,7 @@ from .observability import (
 from .paid_calls import log_paid_call
 from .redact import redact_sensitive_text
 from .temp_files import cleanup_expired, get_file_path, save_file
-from .temp_files import gc_session as temp_files_gc_session
+from .temp_files import purge_user as purge_user_temp_files
 from .user_maintenance_runtime import (
     begin_user_request,
     cancel_user_tasks,
@@ -202,6 +202,7 @@ __all__ = [
     "redact_sensitive_text",
     "render_metrics_response",
     "resolve_language",
+    "purge_user_temp_files",
     "resolve_prompt_text",
     "safe_json_loads",
     "safe_outbound_async_client",
@@ -213,7 +214,6 @@ __all__ = [
     "setup_logging",
     "sha256_hex",
     "sha512_b64",
-    "temp_files_gc_session",
     "tool_error",
     "track_user_task",
     "user_maintenance_lock",

@@ -25,8 +25,6 @@ logger = get_logger(__name__)
 
 # 微信 CDN 媒体下载与上传的基址。
 CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
-# 渠道绑定的会话 ID（marker / session_id）用于 temp-media 所有权校验：每 (binding_id, peer_id) 一段稳定标识。
-_CHANNEL_MARKER_PREFIX = "weixin_ilink"
 
 _MEDIA_TYPE_IMAGE = 1
 _MEDIA_TYPE_VOICE = 3
@@ -178,7 +176,7 @@ def _mime_for_kind(kind: str) -> tuple[str, str]:
 
 async def _materialize_inbound_attachments(
     binding_id: int,
-    peer_id: str,
+    user_id: int,
     media_descs: list[_InboundMedia],
 ) -> tuple[InboundAttachment, ...]:
     """把 iLink 媒体项下载 + AES-ECB 解密 → temp-media 公网 URL → 转 InboundAttachment。"""
@@ -212,14 +210,7 @@ async def _materialize_inbound_attachments(
                 content_type, ext = "image/png", "png"
             elif plaintext[:4] == b"GIF8":
                 content_type, ext = "image/gif", "gif"
-            _, public_url = await asyncio.to_thread(
-                save_file,
-                plaintext,
-                session_id=f"weixin_{binding_id}",
-                content_type=content_type,
-                ext=ext,
-                meta_marker=f"{_CHANNEL_MARKER_PREFIX}:{binding_id}:{peer_id}",
-            )
+            _, public_url = await asyncio.to_thread(save_file, plaintext, content_type, ext, user_id=user_id)
             out.append(
                 InboundAttachment(type="image" if desc.kind in ("image", "video", "voice") else "file", url=public_url),
             )
@@ -465,7 +456,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
         if token:
             self._creds.setdefault("context_tokens", {})[peer_id] = token
 
-        attachments = await _materialize_inbound_attachments(self.snapshot.id, peer_id, media_descs)
+        attachments = await _materialize_inbound_attachments(self.snapshot.id, self.snapshot.user_id, media_descs)
         inbound = InboundMessage(
             peer_id=peer_id,
             peer_name=peer_id,

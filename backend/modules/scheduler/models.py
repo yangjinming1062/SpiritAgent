@@ -23,7 +23,6 @@ class CronJob(ModelBase):
         nullable=True,
         index=True,
     )
-    deliver: Mapped[str] = mapped_column(String(64), default="local")
     is_paused: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     one_shot: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
     next_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, index=True)
@@ -42,7 +41,6 @@ class CronJob(ModelBase):
             "prompt": self.prompt,
             "kind": self.kind,
             "conversation_id": self.conversation_id,
-            "deliver": self.deliver,
             "is_paused": self.is_paused,
             "one_shot": self.one_shot,
             "next_run_at": self.next_run_at.isoformat() if self.next_run_at else None,

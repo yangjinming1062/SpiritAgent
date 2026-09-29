@@ -5,10 +5,10 @@ import json
 import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from components import (
     SESSION_LOCAL,
-    SETTINGS,
     get_file_path,
     get_logger,
     parse_llm_json,
@@ -51,9 +51,10 @@ from services.domains.companion import (
 )
 from services.infrastructure.assets import (
     build_data_uri,
-    build_signed_avatar_url,
     parse_companion_asset_path,
     resolve_companion_asset_path,
+    save_companion_asset_async,
+    signed_companion_asset_url,
 )
 from services.infrastructure.llm import (
     SIZE_TO_ASPECT,
@@ -379,29 +380,10 @@ def get_avatar_job_lock(user_id: int) -> asyncio.Lock:
     return AVATAR_JOB_LOCKS.setdefault(user_id, asyncio.Lock())
 
 
-async def _persist_portrait_bytes(data: bytes, content_type: str) -> str:
-    """写入永久立绘并返回裸路径；取消或失败时清理未交付文件。"""
-    src_content_type = content_type.split(";", maxsplit=1)[0].strip().lower()
-    final_ext = _UPLOAD_EXTS.get(src_content_type, "jpg")
-    file_id = secrets.token_urlsafe(16)
-    avatars_dir = Path(SETTINGS.data_dir) / "companion-avatars"
-
-    def _write() -> None:
-        avatars_dir.mkdir(parents=True, exist_ok=True)
-        with open(avatars_dir / f"{file_id}.{final_ext}", "wb") as f:
-            f.write(data)
-
-    # 取消时等待线程收敛，删除尚未交给调用方的文件。
-    task = asyncio.create_task(asyncio.to_thread(_write))
-    try:
-        await asyncio.shield(task)
-    except BaseException:
-        await asyncio.gather(task, return_exceptions=True)
-        with contextlib.suppress(OSError):
-            (avatars_dir / f"{file_id}.{final_ext}").unlink(missing_ok=True)
-        raise
-
-    return f"companion-avatars/{file_id}.{final_ext}"
+async def _persist_portrait_bytes(user_id: int, data: bytes, content_type: str) -> str:
+    """写入用户资产目录的永久立绘并返回裸路径。"""
+    ext = _UPLOAD_EXTS.get(content_type.split(";", maxsplit=1)[0].strip().lower(), "jpg")
+    return await save_companion_asset_async(data, user_id=user_id, label="portrait", ext=ext)
 
 
 async def _persist_portrait_or_draft(
@@ -413,17 +395,10 @@ async def _persist_portrait_or_draft(
 ) -> str:
     """按确认状态保存永久立绘或临时草稿，返回裸路径。"""
     if persist:
-        return await _persist_portrait_bytes(data, content_type)
+        return await _persist_portrait_bytes(user_id, data, content_type)
     src_content_type = content_type.split(";", maxsplit=1)[0].strip().lower()
     final_ext = _UPLOAD_EXTS.get(src_content_type, "jpg")
-    file_id, _public_url = await asyncio.to_thread(
-        save_file,
-        data,
-        f"user:{user_id}",
-        src_content_type,
-        final_ext,
-        meta_marker=f"preview:{user_id}",
-    )
+    file_id, _public_url = await asyncio.to_thread(save_file, data, src_content_type, final_ext, user_id=user_id)
     return f"temp-media/{file_id}"
 
 
@@ -437,7 +412,7 @@ async def _generate_portrait(
     size: str = _AVATAR_SIZE,
     image_edit: bool = False,
 ) -> str:
-    """生成一张立绘并返回裸路径：persist=False 时留作 temp-media 草稿（引导流程），True 时落盘到 companion-avatars/。
+    """生成一张立绘并返回裸路径：persist=False 时留作 temp-media 草稿（引导流程），True 时落盘到用户资产目录。
 
     image_edit=True 时参考图是编辑底图，供应商链按图像编辑能力过滤，不接受 secondary。
     """
@@ -545,27 +520,12 @@ async def _generate_avatar_step(
     )
 
 
-def resolve_uploaded_avatar_path(filename: str) -> tuple[Path, str] | None:
-    """为文件下发路由定位磁盘上的头像文件。"""
-    name = Path(filename).name
-    if "/" in name or "\\" in name or ".." in name:
-        return None
-    filepath = Path(SETTINGS.data_dir) / "companion-avatars" / name
-    if not filepath.exists():
-        return None
-    ext = filepath.suffix.lstrip(".").lower()
-    content_type = next((ct for ct, e in _UPLOAD_EXTS.items() if e == ext), "image/png")
-    return filepath, content_type
-
-
 def _portrait_file(path: str | None) -> tuple[Path, str] | None:
-    """定位立绘裸路径：temp-media 草稿、companion-avatars 立绘或 companion-assets 用户资产；缺失或过期返回 None。"""
+    """定位立绘裸路径：temp-media 草稿或 companion-assets 用户资产；缺失或过期返回 None。"""
     if not path:
         return None
     if path.startswith("temp-media/"):
         return get_file_path(path.removeprefix("temp-media/"))
-    if path.startswith("companion-avatars/"):
-        return resolve_uploaded_avatar_path(path.removeprefix("companion-avatars/"))
     parsed = parse_companion_asset_path(path)
     return resolve_companion_asset_path(*parsed) if parsed is not None else None
 
@@ -588,9 +548,7 @@ def load_avatar_bytes_as_data_uri(path: str | None) -> str | None:
 
 
 def delete_portrait_file(path: str | None) -> None:
-    """尽力删除 companion-avatars/ 立绘或 temp-media/ 草稿；其他路径不归立绘管理。"""
-    if not path or not path.startswith(("companion-avatars/", "temp-media/")):
-        return
+    """尽力删除立绘文件：temp-media 草稿或 companion-assets 用户资产。"""
     resolved = _portrait_file(path)
     if resolved is not None:
         with contextlib.suppress(OSError):
@@ -603,29 +561,19 @@ def re_sign_bare_path(bare_path: str | None) -> str | None:
         return None
     if bare_path.startswith("temp-media/"):
         return f"/api/media/files/{bare_path.removeprefix('temp-media/')}"
-    if not bare_path.startswith("companion-avatars/"):
-        return None
-    filename = bare_path.removeprefix("companion-avatars/")
-    if "/" in filename or "\\" in filename or ".." in filename:
-        return None
-    file_id, _, ext = filename.partition(".")
-    return build_signed_avatar_url(file_id, ext) if file_id else None
+    return signed_companion_asset_url(bare_path)
 
 
 def normalize_avatar_url_to_bare(url: str | None) -> str:
     """客户端回传的立绘地址（签名 URL 或草稿地址）还原为裸路径，供与存储值比对。"""
     if not url:
         return ""
-    clean = url.strip().replace("\\", "/")
-    if clean.startswith(("companion-avatars/", "temp-media/")):
-        return clean
-    if "/api/media/files/" in clean:
-        fid = clean.split("/api/media/files/", 1)[1].split("?")[0].split("/")[0]
-        return f"temp-media/{fid}"
-    if "/api/companion/avatar/file/" in clean:
-        filename = clean.split("/api/companion/avatar/file/", 1)[1].split("?")[0].split("/")[0]
-        return f"companion-avatars/{filename}"
-    return clean
+    path = urlsplit(url.strip()).path
+    if path.startswith("/api/media/files/"):
+        return "temp-media/" + path.removeprefix("/api/media/files/")
+    if path.startswith("/api/companion/asset/"):
+        return "companion-assets/" + path.removeprefix("/api/companion/asset/")
+    return path
 
 
 async def _verified_persona(user_id: int, persona: Persona | None) -> Persona:
@@ -706,7 +654,7 @@ async def list_avatar_history(db: AsyncSession, user_id: int, limit: int = 20) -
 def _is_orphan_temp_media_asset(asset: AvatarAsset) -> bool:
     """头像草稿的所有图片字段都指向已过期的 temp-media 文件 → DB 行已无可用图片，按孤儿清理。
 
-    字段全空、或任一字段还有活着的 temp-media / 已是 companion-avatars，都不视作孤儿。
+    字段全空、或任一字段还有活着的 temp-media / 已转存为用户资产，都不视作孤儿。
     """
     paths = [path for path in (asset.asset_url, asset.seed_fullbody_url) if path]
     return bool(paths) and all(path.startswith("temp-media/") and _portrait_file(path) is None for path in paths)
@@ -782,7 +730,7 @@ async def finalize_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
         draft = await asyncio.to_thread(read_portrait_bytes, asset.asset_url)
         if draft is None:
             raise AvatarSourceUnreadableError("头像草稿已过期或无法读取，请重新生成")
-        new_path = await _persist_portrait_bytes(*draft)
+        new_path = await _persist_portrait_bytes(user_id, *draft)
         try:
             asset.asset_url = new_path
             await db.commit()
@@ -1005,9 +953,9 @@ async def confirm_fullbody_seed(user_id: int, *, avatar_id: int, expected_url: s
         outfit_path: str | None = None
         try:
             if asset.seed_fullbody_url.startswith("temp-media/"):
-                seed_path = await _persist_portrait_bytes(*seed)
+                seed_path = await _persist_portrait_bytes(user_id, *seed)
                 asset.seed_fullbody_url = seed_path
-            outfit_path = await _persist_portrait_bytes(*seed)
+            outfit_path = await _persist_portrait_bytes(user_id, *seed)
             asset.is_fullbody_confirmed = True
             register_character_card(db, asset)
             outfit = CompanionOutfit(

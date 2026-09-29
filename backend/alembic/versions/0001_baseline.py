@@ -375,7 +375,6 @@ def upgrade() -> None:
         sa.Column("name", sa.String(length=128), nullable=False),
         sa.Column("schedule", sa.String(length=128), nullable=False),
         sa.Column("prompt", sa.Text(), nullable=False),
-        sa.Column("deliver", sa.String(length=64), nullable=False),
         sa.Column("kind", sa.String(length=16), server_default=sa.text("'standard'"), nullable=False),
         sa.Column("is_paused", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("one_shot", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),

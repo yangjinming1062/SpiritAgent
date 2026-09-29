@@ -1299,7 +1299,6 @@ async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> A
             prompt=prompt,
             schedule=schedule,
             name=parsed_args.name or "主动问候",
-            deliver="local",
             one_shot=True,
             kind="special",
             expires_at=expires_at,

@@ -9,7 +9,7 @@ from components import (
     get_logger,
     resolve_prompt_text,
 )
-from prompts.chat import CONTEXT_SUMMARY_PROMPTS
+from prompts.chat import COMPRESSION_CHECKPOINT_TITLE_TEXTS, CONTEXT_SUMMARY_PROMPTS
 
 from services.infrastructure.llm import (
     approx_responses_tokens,
@@ -23,6 +23,8 @@ logger = get_logger(__name__)
 @dataclass(frozen=True)
 class CompressionInfo:
     summary: str
+    # 检查点正文（标题行 + 摘要）：压缩当轮的上下文占位与持久化行逐字相同，后续回合读到的即当轮所见。
+    checkpoint_text: str
     replaced_count: int
     prompt_tokens: int
     completion_tokens: int
@@ -185,15 +187,9 @@ async def compress_history(
         return context, None
 
     replaced_count = len(block)
-    placeholder = {
-        "role": "user",
-        "content": [
-            {
-                "type": "input_text",
-                "text": f"[Conversation summary — {replaced_count} earlier items compressed]\n\n{summary}",
-            },
-        ],
-    }
+    title = resolve_prompt_text(COMPRESSION_CHECKPOINT_TITLE_TEXTS, language).format(count=replaced_count)
+    checkpoint_text = f"{title}\n{summary}"
+    placeholder = {"role": "user", "content": [{"type": "input_text", "text": checkpoint_text}]}
     kept_ids = source_ids[replaced_count:]
     compressed: dict[str, Any] = {
         "instructions": context["instructions"],
@@ -212,6 +208,7 @@ async def compress_history(
     )
     return compressed, CompressionInfo(
         summary=summary,
+        checkpoint_text=checkpoint_text,
         replaced_count=replaced_count,
         prompt_tokens=prompt_tokens,
         completion_tokens=completion_tokens,

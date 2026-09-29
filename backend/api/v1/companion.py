@@ -101,7 +101,6 @@ from services.application.generation import (
     regenerate_avatar_from_image,
     regenerate_outfit_draft,
     reject_media_review,
-    resolve_uploaded_avatar_path,
     retry_fullbody_candidate_analysis,
     retry_video_pack,
     schedule_character_extraction,
@@ -128,7 +127,6 @@ from services.infrastructure.assets import (
     resolve_companion_asset_path,
     serve_ranged_file,
     verify_signed_asset_request,
-    verify_signed_avatar_request,
 )
 from services.infrastructure.llm import LLMRuntimeError, MissingLlmConfigError, VisualReasoningError
 
@@ -952,23 +950,6 @@ async def delete_video_pack_route(pack_id: int, user: CurrentUser, db: DbSession
 
 
 # 文件端点按会话或签名放行，不依赖 CurrentUser。
-@router.get("/avatar/file/{filename}")
-async def serve_avatar_file(
-    request: Request,
-    filename: str,
-    session: OptionalSession,
-    expires: int | None = None,
-    sig: str | None = None,
-) -> Response:
-    if session is None and not verify_signed_avatar_request(filename, expires, sig):
-        raise HTTPException(status_code=403, detail="Invalid or expired signature")
-    result = resolve_uploaded_avatar_path(filename)
-    if result is None:
-        raise HTTPException(status_code=404, detail="Avatar not found")
-    path, content_type = result
-    return await serve_ranged_file(request, path, content_type)
-
-
 @router.get("/asset/{user_id}/{filename:path}")
 async def serve_companion_asset(
     request: Request,

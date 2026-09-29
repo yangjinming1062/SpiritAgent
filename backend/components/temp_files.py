@@ -56,15 +56,11 @@ def _metadata_path(meta: dict) -> Path | None:
     return Path(value)
 
 
-def save_file(
-    data: bytes,
-    session_id: str,
-    content_type: str,
-    ext: str,
-    *,
-    meta_marker: str | None = None,
-) -> tuple[str, str]:
-    """保存字节到 temp 存储，返回 (file_id, public_url)；meta_marker 是写入元数据的归属标签（如 ``"preview:{user_id}"``），备份恢复时按目标用户改写；meta 写失败时 unlink 数据文件，避免无 TTL 跟踪的孤儿。"""
+def save_file(data: bytes, content_type: str, ext: str, *, user_id: int) -> tuple[str, str]:
+    """保存字节到 temp 存储，返回 (file_id, public_url)；``user_id`` 记录归属，供删除用户与备份恢复定位。
+
+    meta 写失败时 unlink 数据文件，避免无 TTL 跟踪的孤儿。
+    """
     file_id = secrets.token_urlsafe(16)
     filepath = _media_path(file_id, ext)
 
@@ -73,13 +69,11 @@ def save_file(
 
     meta = {
         "path": str(filepath),
-        "session_id": session_id,
+        "user_id": user_id,
         "created_at": time.time(),
         "content_type": content_type,
         "size": len(data),
     }
-    if meta_marker is not None:
-        meta["marker"] = meta_marker
     try:
         with open(_meta_path(file_id), "w") as f:
             json.dump(meta, f)
@@ -91,7 +85,7 @@ def save_file(
     public_url = _build_public_url(file_id)
     logger.info(
         "Temp file saved",
-        extra={"file_id": file_id, "size": len(data), "session_id": session_id, "marker": meta_marker},
+        extra={"file_id": file_id, "size": len(data), "user_id": user_id},
     )
     return file_id, public_url
 
@@ -147,17 +141,18 @@ def cleanup_expired() -> None:
         logger.info("Cleaned up expired temp files", extra={"count": count})
 
 
-def gc_session(session_id: str) -> None:
+def purge_user(user_id: int) -> None:
+    """删除该用户名下的全部临时文件（被遗忘权）。"""
     count = 0
     for mp, meta in _iter_meta_files():
-        if meta.get("session_id") == session_id:
+        if meta.get("user_id") == user_id:
             path = _metadata_path(meta)
             if path is not None:
                 _safe_unlink(path)
             _safe_unlink(mp)
             count += 1
     if count:
-        logger.info("Cleaned up session temp files", extra={"session_id": session_id, "count": count})
+        logger.info("Purged user temp files", extra={"user_id": user_id, "count": count})
 
 
 def _safe_unlink(path: Path) -> None:

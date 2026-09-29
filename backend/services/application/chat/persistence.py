@@ -142,7 +142,7 @@ async def persist_compression_checkpoint(db: AsyncSession, conv_id: int, info: C
     checkpoint = Message(
         conversation_id=conv_id,
         role="system",
-        content=f"[🗜️ 对话压缩 — {info.replaced_count} 条早期消息已压缩]\n{info.summary}",
+        content=info.checkpoint_text,
         subtype="compress_summary",
         summary_through_message_id=info.through_message_id,
         prompt_tokens=info.prompt_tokens,

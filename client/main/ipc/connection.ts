@@ -56,7 +56,7 @@ function assetUrl(request?: AssetRequest): string {
 function isCompanionIdentityAsset(rawUrl: string, baseUrl: string): boolean {
   const { pathname } = new URL(rawUrl, baseUrl)
 
-  return pathname.includes('/api/companion/avatar/') || pathname.includes('/api/companion/asset/')
+  return pathname.includes('/api/companion/asset/')
 }
 
 export function registerConnectionIpc({
