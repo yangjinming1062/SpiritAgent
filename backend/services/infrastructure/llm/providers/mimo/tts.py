@@ -1,27 +1,24 @@
 import base64
-import logging
 from typing import ClassVar
 
 from components import MAX_VOICE_DESIGN_PROMPT_CHARS
-from modules.media import SpeechStyle
-from openai import AsyncOpenAI
+from modules.media import MiMoSpeechStyle, SpeechStyle
 
 from ..base import ProviderConfig, TTSProvider, TTSResult, VoiceDesignResult, pick_catalog_voice
 from ..http import get_async_client
 from ..speech_style import speech_style_matches, styled_speech_text
 
-logger = logging.getLogger(__name__)
-
-_VOICEDESIGN_MODEL = "mimo-v2.5-tts-voicedesign"
-_VOICEDESIGN_PREFIX = "mimo_voicedesign:"
+# 声纹设计音色以前缀 + 设计描述作为 voice id，合成时须改用声纹设计模型。
+VOICEDESIGN_MODEL = "mimo-v2.5-tts-voicedesign"
+VOICEDESIGN_PREFIX = "mimo_voicedesign:"
 
 
 class MiMoTTSProvider(TTSProvider):
     """通过 MiMo 在 Chat Completions 上的 audio={...} 扩展提供 TTS；POST /v1/chat/completions，body 含 messages=[{user,""},{assistant,text}] 与 audio={format,voice}。"""
 
     provider_name = "mimo"
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"tts": "mimo-v2.5-tts"}
-    DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"tts": 8_000}
+    DEFAULT_BASE_URL: ClassVar[str] = "https://token-plan-cn.xiaomimimo.com/v1"
+    DEFAULT_MODEL: ClassVar[str] = "mimo-v2.5-tts"
     VOICE_DESIGN_GUIDE = """\
 关键维度（不需要面面俱到）：
 • 性别与年龄：如"二十多岁的年轻女性"、"五十岁的中年男性"
@@ -107,31 +104,22 @@ class MiMoTTSProvider(TTSProvider):
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
-        self._client: AsyncOpenAI = get_async_client(config.api_key, config.base_url)
-
-    def raw_client(self) -> AsyncOpenAI | None:
-        return self._client
+        self._client = get_async_client(config.api_key, config.base_url)
 
     def _request_parts(
         self,
         text: str,
         voice: str,
-        *,
-        fmt: str,
-        speech_style: SpeechStyle | None = None,
+        speech_style: SpeechStyle | None,
     ) -> tuple[str, list[dict], dict, str]:
-        model = _VOICEDESIGN_MODEL if voice.startswith(_VOICEDESIGN_PREFIX) else self.config.model
+        model = VOICEDESIGN_MODEL if voice.startswith(VOICEDESIGN_PREFIX) else self.config.model
         instruction = ""
-        if (
-            speech_style
-            and speech_style.provider == "mimo"
-            and speech_style_matches(speech_style, self.provider_name, model)
-        ):
+        if isinstance(speech_style, MiMoSpeechStyle) and speech_style_matches(speech_style, self.provider_name, model):
             direction = speech_style.direction
             instruction = f"角色：{direction.role}\n场景：{direction.scene}\n指导：{direction.guidance}"
-            text = styled_speech_text(text, speech_style, provider=self.provider_name, model=model)
-        if voice.startswith(_VOICEDESIGN_PREFIX):
-            design_prompt = voice[len(_VOICEDESIGN_PREFIX) :]
+            text = styled_speech_text(text, speech_style)
+        if voice.startswith(VOICEDESIGN_PREFIX):
+            design_prompt = voice[len(VOICEDESIGN_PREFIX) :]
             if not design_prompt.strip():
                 raise ValueError("voice design prompt is empty")
             # 与 JSON-RPC design 路径同长上限；REST /api/media/tts 的 voice 表单字段本无界，否则 voicedesign 模型会照单计费。
@@ -141,40 +129,24 @@ class MiMoTTSProvider(TTSProvider):
                 {"role": "user", "content": design_prompt + ("\n\n" + instruction if instruction else "")},
                 {"role": "assistant", "content": text},
             ]
-            return _VOICEDESIGN_MODEL, messages, {"format": fmt, "optimize_text_preview": False}, ""
-        chosen_voice = pick_catalog_voice(voice, self.VOICE_CATALOG)
-        if voice != chosen_voice:
-            logger.info("mimo tts: substituted voice", extra={"requested": voice, "used": chosen_voice})
+            return VOICEDESIGN_MODEL, messages, {"format": "mp3", "optimize_text_preview": False}, ""
+        chosen_voice = pick_catalog_voice(voice, self.VOICE_CATALOG, provider=self.provider_name)
         messages = [{"role": "user", "content": instruction}, {"role": "assistant", "content": text}]
-        return self.config.model, messages, {"format": fmt, "voice": chosen_voice}, chosen_voice
+        return self.config.model, messages, {"format": "mp3", "voice": chosen_voice}, chosen_voice
 
-    async def synthesize(
-        self,
-        text: str,
-        *,
-        voice: str = "",
-        fmt: str = "mp3",
-        speed: float | None = None,
-        speech_style: SpeechStyle | None = None,
-    ) -> TTSResult:
-        model, messages, audio_kwargs, chosen_voice = self._request_parts(
-            text,
-            voice,
-            fmt=fmt,
-            speech_style=speech_style,
-        )
+    async def synthesize(self, text: str, *, voice: str, speech_style: SpeechStyle | None) -> TTSResult:
+        model, messages, audio_kwargs, chosen_voice = self._request_parts(text, voice, speech_style)
         response = await self._client.chat.completions.create(model=model, messages=messages, audio=audio_kwargs)
         choice = response.choices[0] if response.choices else None
         if choice is not None and choice.finish_reason != "stop":
             raise RuntimeError(f"MiMo TTS response did not complete: {choice.finish_reason}")
         if not choice or not getattr(choice.message, "audio", None):
             raise RuntimeError("MiMo TTS returned no audio")
-        mime = "audio/mpeg" if fmt == "mp3" else f"audio/{fmt}"
-        return TTSResult(audio=base64.b64decode(choice.message.audio.data), mime=mime, voice=chosen_voice)
+        return TTSResult(audio=base64.b64decode(choice.message.audio.data), mime="audio/mpeg", voice=chosen_voice)
 
     async def design_voice(self, prompt: str, *, preview_text: str = "") -> VoiceDesignResult:
         response = await self._client.chat.completions.create(
-            model=_VOICEDESIGN_MODEL,
+            model=VOICEDESIGN_MODEL,
             messages=[
                 {"role": "user", "content": prompt},
                 {"role": "assistant", "content": preview_text or "你好，我是你的桌面伙伴。"},
@@ -187,7 +159,7 @@ class MiMoTTSProvider(TTSProvider):
         if not choice or not getattr(choice.message, "audio", None):
             raise RuntimeError("MiMo voice design returned no audio")
         return VoiceDesignResult(
-            voice_id=f"{_VOICEDESIGN_PREFIX}{prompt}",
+            voice_id=f"{VOICEDESIGN_PREFIX}{prompt}",
             trial_audio=base64.b64decode(choice.message.audio.data),
             trial_audio_mime="audio/mpeg",
             provider=self.provider_name,

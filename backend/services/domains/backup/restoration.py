@@ -2,35 +2,33 @@ import asyncio
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from components import get_logger
-from modules.auth import User
+from modules.auth import User, generate_activation_token, hash_activation_token
 from modules.companion import COMPANION_CRON_SOURCE_PREFIX, Persona
 from modules.scheduler import CronJob
 from modules.ws import emit_ws_event
-from sqlalchemy import String, cast, select
+from sqlalchemy import String, cast, delete, select
 from sqlalchemy.exc import IntegrityError, StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .action_assets import restore_action_catalogs, validate_action_files
-from .cascade import clear_user_scoped_rows
 from .file_packing import UrlRewriter, restore_files
 from .serializers import (
     ACTION_TABLES,
     CONVERSATION_TABLES,
     TABLE_MODELS,
     TABLES,
-    deserialize_rows,
+    BackupImportMode,
     insert_rows,
+    read_table_rows,
     restore_conversation_context,
     restore_memory_context,
-    split_legacy_fork_lineage,
 )
 
 logger = get_logger(__name__)
 
-BackupImportMode = Literal["overwrite", "merge"]
 BACKUP_RESTORE_ORDER: tuple[str, ...] = (
     "conversations",
     "messages",
@@ -119,7 +117,7 @@ def load_backup_rows(
         if table not in TABLES or incomplete_conversation_backup and table in incomplete_conversation_tables:
             continue
         try:
-            records = deserialize_rows(extract_root, [table])[table]
+            records = read_table_rows(extract_root, table)
             if len(records) != row_counts[table]:
                 raise ValueError("Backup row count does not match manifest")
             rows[table] = records
@@ -148,8 +146,6 @@ def load_backup_rows(
                     reason="配套的会话或消息数据无效，无法单独恢复。",
                 ),
             )
-    if CONVERSATION_TABLES.issubset(rows):
-        split_legacy_fork_lineage(rows["conversations"], rows["messages"])
     if set(manifest_tables) & ACTION_TABLES and not ACTION_TABLES.issubset(rows):
         for table in manifest_tables:
             if table in ACTION_TABLES and table in rows:
@@ -211,7 +207,13 @@ async def _preflight_tables(
     successful: set[str] = set()
     failures: list[BackupImportFailure] = []
     id_map: dict[str, dict[str, int | str]] = {}
-    validation_user = User(username=f"backup-validation-{uuid.uuid4().hex}", is_active=False)
+    # 未激活且 token 不外泄：该用户只承载预检行，结束即回滚。
+    validation_user = User(
+        username=f"backup-validation-{uuid.uuid4().hex}",
+        activation_code="",
+        activation_token_hash=hash_activation_token(generate_activation_token()),
+        is_active=False,
+    )
     try:
         db.add(validation_user)
         await db.flush()
@@ -308,6 +310,11 @@ async def _has_retained_dependent(
     return False
 
 
+async def _delete_user_rows(db: AsyncSession, table: str, user_id: int) -> None:
+    model = TABLE_MODELS[table]
+    await db.execute(delete(model).where(model.user_id == user_id))
+
+
 async def _clear_compatible_rows(
     db: AsyncSession,
     target_user_id: int,
@@ -326,7 +333,8 @@ async def _clear_compatible_rows(
         if action_failure is None:
             try:
                 async with db.begin_nested():
-                    await clear_user_scoped_rows(db, target_user_id, list(ACTION_TABLES))
+                    for table in ("companion_actions", "companion_action_packs"):
+                        await _delete_user_rows(db, table, target_user_id)
             except IntegrityError:
                 action_failure = "现有视频资产仍被其他内容引用，无法覆盖。"
         if action_failure is not None:
@@ -336,6 +344,7 @@ async def _clear_compatible_rows(
     for table in reversed(TABLES):
         if table in ACTION_TABLES:
             continue
+        # user_preferences 就地更新用户行；messages 随 conversations 级联删除。
         if table not in remaining or table in {"user_preferences", "messages"}:
             continue
         if await _has_retained_dependent(db, table, target_user_id, remaining):
@@ -350,7 +359,7 @@ async def _clear_compatible_rows(
             continue
         try:
             async with db.begin_nested():
-                await clear_user_scoped_rows(db, target_user_id, [table])
+                await _delete_user_rows(db, table, target_user_id)
         except IntegrityError:
             logger.warning(
                 "backup table could not be cleared without affecting retained data",

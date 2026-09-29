@@ -1,73 +1,11 @@
 from components import SETTINGS, get_logger
 
-from .base import BaseProvider, ServiceType
+from .base import BaseProvider, ChatProvider, ServiceType
 
-# (service_type, provider_name) → 具体类；供应商族通过 import 本模块并调用 register 完成自注册。
+logger = get_logger(__name__)
+
+# (service_type, provider_name) → 具体类；由 bootstrap 显式注册。
 _REGISTRY: dict[tuple[ServiceType, str], type[BaseProvider]] = {}
-
-# provider_name → service_type → 默认 MODEL_NAME；register() 时从各 provider 类的 DEFAULT_MODELS 镜像，default_model_for 查询；env 中 per-cap *_MODEL_NAME 覆盖优先。
-_PROVIDER_DEFAULT_MODELS: dict[str, dict[str, str]] = {}
-
-# provider_name → service_type → 默认 CONTEXT_TOKENS；register() 时从各 provider 类的 DEFAULT_CONTEXT_TOKENS 镜像；全局 SETTINGS.default_llm_context_tokens 兜底由 providers/__init__.py 的 resolve_context_tokens 包装应用，本表保持纯查找。
-_PROVIDER_DEFAULT_CONTEXT_TOKENS: dict[str, dict[str, int]] = {}
-
-# 接受图片输入的 chat 供应商集合；resolve_vision_provider 跳过其余。
-_PROVIDER_SUPPORTS_VISION: set[str] = set()
-# provider_name → 视觉 MODEL_NAME（空表示沿用文本默认）。
-_PROVIDER_VISION_MODELS: dict[str, str] = {}
-# 接受 Responses 形状 input_video 的 chat 供应商集合；resolve_video_chain 跳过其余。
-_PROVIDER_SUPPORTS_VIDEO: set[str] = set()
-# provider_name → 视频理解 MODEL_NAME（空表示沿用文本/视觉默认）。
-_PROVIDER_VIDEO_MODELS: dict[str, str] = {}
-
-# (provider, service) 的默认 base_url；空字符串表示该供应商不提供该能力（如 Gemini 未注册 STT）。MiMo 与 MiniMax llm 含 /v1（OpenAI SDK 需要完整 base_url）；MiniMax 其余能力的 httpx provider 自拼 /v1/<endpoint>，llm_client 链解析会剥掉其 base_url 尾部 /v1，故注册默认值统一含 /v1。
-PROVIDER_DEFAULT_URLS: dict[str, dict[str, str]] = {
-    "mimo": {
-        "llm": "https://token-plan-cn.xiaomimimo.com/v1",
-        "stt": "https://token-plan-cn.xiaomimimo.com/v1",
-        "tts": "https://token-plan-cn.xiaomimimo.com/v1",
-        "video_gen": "",
-        "embedding": "",
-    },
-    "minimax": {
-        "llm": "https://api.minimaxi.com/v1",
-        "stt": "https://api.minimaxi.com/v1",
-        "tts": "https://api.minimaxi.com/v1",
-        "image_gen": "https://api.minimaxi.com/v1",
-        "video_gen": "https://api.minimaxi.com/v1",
-        "embedding": "https://api.minimaxi.com/v1",
-    },
-    "gemini": {
-        "llm": "",
-        "image_gen": "https://generativelanguage.googleapis.com",
-        "embedding": "https://generativelanguage.googleapis.com",
-    },
-    "grok": {
-        "llm": "https://api.x.ai/v1",
-        "stt": "https://api.x.ai/v1",
-        "tts": "https://api.x.ai/v1",
-        "image_gen": "https://api.x.ai/v1",
-        "video_gen": "https://api.x.ai/v1",
-        "embedding": "",
-    },
-    "qwen": {
-        "llm": "https://maas.qianwenaiapi.com/compatible-mode/v1",
-        "stt": "https://maas.qianwenaiapi.com/compatible-mode/v1",
-        "tts": "https://maas.qianwenaiapi.com/api/v1",
-        "image_gen": "https://maas.qianwenaiapi.com/api/v1",
-        "video_gen": "https://maas.qianwenaiapi.com/api/v1",
-        "embedding": "https://maas.qianwenaiapi.com/compatible-mode/v1",
-    },
-    # 本地自托管：llm/embedding 默认 LM Studio，image_gen 默认 ComfyUI；远程部署在配置里改 base_url。
-    "local": {
-        "llm": "http://127.0.0.1:1234/v1",
-        "stt": "",
-        "tts": "",
-        "image_gen": "http://127.0.0.1:8188",
-        "video_gen": "",
-        "embedding": "http://127.0.0.1:1234/v1",
-    },
-}
 
 
 def register(
@@ -76,23 +14,6 @@ def register(
     cls: type[BaseProvider],
 ) -> None:
     _REGISTRY[(service_type, provider_name)] = cls
-    # 把 DEFAULT_MODELS 镜像到 registry 缓存，能力解析无需 import 各 provider 类。
-    for svc, model in getattr(cls, "DEFAULT_MODELS", {}).items():
-        _PROVIDER_DEFAULT_MODELS.setdefault(provider_name, {})[svc] = model
-    for svc, ctx in getattr(cls, "DEFAULT_CONTEXT_TOKENS", {}).items():
-        _PROVIDER_DEFAULT_CONTEXT_TOKENS.setdefault(provider_name, {})[svc] = ctx
-    # 镜像视觉能力与覆写，供 resolve_vision_provider 使用。
-    if getattr(cls, "supports_vision", False):
-        _PROVIDER_SUPPORTS_VISION.add(provider_name)
-        vm = getattr(cls, "DEFAULT_VISION_MODELS", {}).get("llm", "")
-        if vm:
-            _PROVIDER_VISION_MODELS[provider_name] = vm
-    # 镜像视频理解能力与覆写，供 resolve_video_chain 使用。
-    if getattr(cls, "supports_video", False):
-        _PROVIDER_SUPPORTS_VIDEO.add(provider_name)
-        dm = getattr(cls, "DEFAULT_VIDEO_MODELS", {}).get("llm", "")
-        if dm:
-            _PROVIDER_VIDEO_MODELS[provider_name] = dm
 
 
 def resolve(service_type: ServiceType, provider_name: str) -> type[BaseProvider]:
@@ -111,67 +32,41 @@ def try_resolve(
     return _REGISTRY.get((service_type, provider_name))
 
 
-def default_base_url(provider: str, service_type: str) -> str:
-    return PROVIDER_DEFAULT_URLS.get(provider, {}).get(service_type, "")
+def try_resolve_chat(provider_name: str) -> type[ChatProvider] | None:
+    cls = _REGISTRY.get((ServiceType.llm, provider_name))
+    return cls if cls is not None and issubclass(cls, ChatProvider) else None
 
 
-def default_model_for(provider: str, service_type: str) -> str:
+def default_base_url(provider: str, service_type: ServiceType) -> str:
+    cls = try_resolve(service_type, provider)
+    return cls.DEFAULT_BASE_URL if cls is not None else ""
+
+
+def default_model_for(provider: str, service_type: ServiceType) -> str:
     """返回供应商为该能力发布的默认模型名称；没有默认值时返回空字符串。"""
-    return _PROVIDER_DEFAULT_MODELS.get(provider, {}).get(service_type, "")
+    cls = try_resolve(service_type, provider)
+    return cls.DEFAULT_MODEL if cls is not None else ""
 
 
-def default_context_tokens_for(provider: str, service_type: str) -> int:
-    # 0 表示"未发布默认值"，由解析器回退到终端兜底；0 的具体含义由调用方决定。
-    return _PROVIDER_DEFAULT_CONTEXT_TOKENS.get(provider, {}).get(service_type, 0)
-
-
-def supports_vision(provider_name: str) -> bool:
-    """是否注册了具备视觉能力的 chat 类。"""
-    return provider_name in _PROVIDER_SUPPORTS_VISION
-
-
-def provider_requires_api_key(service_type: ServiceType | str, provider_name: str) -> bool:
-    cls = try_resolve(
-        service_type if isinstance(service_type, ServiceType) else ServiceType(service_type),
-        provider_name,
-    )
-    if cls is None:
-        return True
-    return bool(getattr(cls, "requires_api_key", True))
-
-
-def default_vision_model_for(provider_name: str) -> str:
-    """视觉 MODEL_NAME；空字符串表示沿用普通 llm 模型（视觉与文本共用一个）。"""
-    return _PROVIDER_VISION_MODELS.get(provider_name, "")
-
-
-def supports_video(provider_name: str) -> bool:
-    """是否注册了接受 Responses 形状 input_video 的 chat 类。"""
-    return provider_name in _PROVIDER_SUPPORTS_VIDEO
-
-
-def default_video_model_for(provider_name: str) -> str:
-    """视频理解 MODEL_NAME；空字符串表示沿用普通 llm 模型（视频与文本共用一个）。"""
-    return _PROVIDER_VIDEO_MODELS.get(provider_name, "")
+def provider_requires_api_key(service_type: ServiceType, provider_name: str) -> bool:
+    cls = try_resolve(service_type, provider_name)
+    return cls is None or cls.requires_api_key
 
 
 def providers_supporting(service_type: ServiceType | str) -> list[str]:
     """按注册顺序排列、已注册该能力类的供应商名列表，供回退链筛选可尝试的供应商。"""
-    svc = ServiceType(service_type) if not isinstance(service_type, ServiceType) else service_type
-    return list(
-        dict.fromkeys(name for registered_svc, name in _REGISTRY if registered_svc == svc),
-    )
+    svc = ServiceType(service_type)
+    return [name for registered_svc, name in _REGISTRY if registered_svc == svc]
 
 
-def resolve_context_tokens(provider: str, service_type: ServiceType | str) -> int:
-    svc = service_type.value if isinstance(service_type, ServiceType) else service_type
-    per_provider = default_context_tokens_for(provider, svc)
-    if per_provider > 0:
-        return per_provider
-    get_logger(__name__).warning(
-        "resolve_context_tokens: no default published for (provider=%r, service=%r); falling through to global default %d",
+def resolve_context_tokens(provider: str) -> int:
+    """chat 供应商声明的上下文窗口；未声明时回退到全局默认。"""
+    cls = try_resolve_chat(provider)
+    if cls is not None and cls.CONTEXT_TOKENS > 0:
+        return cls.CONTEXT_TOKENS
+    logger.warning(
+        "resolve_context_tokens: no default published for provider=%r; falling through to global default %d",
         provider,
-        service_type,
         SETTINGS.default_llm_context_tokens,
     )
     return SETTINGS.default_llm_context_tokens

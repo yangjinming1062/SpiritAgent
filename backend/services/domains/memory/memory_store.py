@@ -2,7 +2,7 @@ import hashlib
 from typing import Any
 
 from components import get_logger, session_scope, utc_now
-from modules.conversation import Conversation, Message
+from modules.conversation import Conversation
 from modules.memory import MEMORY_EMBEDDING_DIM, Memory
 from sqlalchemy import ColumnElement, and_, case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
@@ -29,38 +29,19 @@ def scope_filter(scope: MemoryScope) -> ColumnElement[bool]:
 
 async def _source_refs(db: AsyncSession, scope: MemoryScope, source: MemorySource) -> dict[str, Any]:
     validate_memory_scope(scope)
-    if source.kind not in {"tool", "manual", "onboarding", "reflection", "interaction", "diary"}:
-        raise ValueError("Invalid memory source kind")
     refs: dict[str, Any] = {}
     if source.session_id is not None:
-        conv = await db.scalar(
-            select(Conversation).where(
+        conv_id = await db.scalar(
+            select(Conversation.id).where(
                 Conversation.id == source.session_id,
                 Conversation.user_id == scope.user_id,
                 Conversation.system_preset_id == scope.system_preset_id,
                 Conversation.is_automation.is_(False),
             ),
         )
-        if conv is None:
+        if conv_id is None:
             raise ValueError("Memory source conversation not found")
-        refs["session_id"] = conv.id
-        if source.message_ids:
-            found = set(
-                (
-                    await db.scalars(
-                        select(Message.id).where(
-                            Message.conversation_id == conv.id,
-                            Message.id.in_(source.message_ids),
-                            Message.id > conv.context_after_message_id,
-                        ),
-                    )
-                ).all(),
-            )
-            if found != set(source.message_ids):
-                raise ValueError("Invalid memory source messages")
-            refs["message_ids"] = sorted(found)
-    elif source.message_ids:
-        raise ValueError("Source messages require a conversation")
+        refs["session_id"] = conv_id
     if source.batch_id is not None:
         if len(source.batch_id) > 128:
             raise ValueError("Memory source batch is too long")
@@ -156,26 +137,6 @@ async def upsert_slotted_memory(
         .returning(Memory)
     )
     return (await db.execute(stmt.execution_options(populate_existing=True))).scalar_one()
-
-
-async def update_memory_content(db: AsyncSession, scope: MemoryScope, memory_id: int, content: str) -> Memory | None:
-    await memory_write_lock(db, scope)
-    row = await get_memory(db, scope, memory_id)
-    if row is None or row.status == "forgotten":
-        return None
-    row.history = fingerprint_history(row)
-    row.evidence = []
-    if row.content != content:
-        row.embedding = None
-    row.content = content
-    row.content_version += 1
-    row.basis, row.status = "explicit", "active"
-    row.expires_at, row.reviewed_at = None, None
-    row.reason = "User edited this memory directly"
-    row.source_kind, row.source_refs = "manual", {}
-    row.updated_at = utc_now()
-    await db.flush()
-    return row
 
 
 def fingerprint_history(row: Memory) -> list[dict[str, Any]]:

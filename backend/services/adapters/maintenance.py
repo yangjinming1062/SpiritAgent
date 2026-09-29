@@ -28,28 +28,25 @@ from services.infrastructure.event_store import interrupt_user_event_tasks
 logger = get_logger(__name__)
 
 
-async def _await_quiescers(*coroutines) -> None:
-    results = await asyncio.gather(*coroutines, return_exceptions=True)
+async def _stop_user_runtime(user_id: int) -> None:
+    """并行停稳网关、渠道、主动回合与用户任务；全部收敛后再抛出首个失败。"""
+    results = await asyncio.gather(
+        terminate_user_gateway(user_id),
+        CHANNEL_MANAGER.pause_user_bindings(user_id),
+        interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT),
+        cancel_user_tasks(user_id),
+        return_exceptions=True,
+    )
     for result in results:
         if isinstance(result, BaseException):
             raise result
 
 
 async def _quiesce_runtime(user_id: int) -> None:
-    await _await_quiescers(
-        terminate_user_gateway(user_id),
-        CHANNEL_MANAGER.pause_user_bindings(user_id),
-        interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT),
-        cancel_user_tasks(user_id),
-    )
+    await _stop_user_runtime(user_id)
     # 已在边界建立期间结束的 REST 请求可能刚派生后台任务；再收一次保证清表前无遗漏。
     await wait_for_user_requests(user_id)
-    await _await_quiescers(
-        terminate_user_gateway(user_id),
-        CHANNEL_MANAGER.pause_user_bindings(user_id),
-        interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT),
-        cancel_user_tasks(user_id),
-    )
+    await _stop_user_runtime(user_id)
 
 
 def _invalidate_runtime_caches(user_id: int) -> None:

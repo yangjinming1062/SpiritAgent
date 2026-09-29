@@ -2,13 +2,10 @@
 
 from typing import Literal
 
-from modules.companion import CharacterCardSnapshot
+from modules.companion import CharacterCardSnapshot, PeekGeometry
 from pydantic import BaseModel, ConfigDict, Field
 
-from services.infrastructure.video_processing import FullClipWindow, LoopWindow
-
 from ..character_images import ImageChainState
-from .manifest import VideoClipSpec
 
 
 class GenerationContext(BaseModel):
@@ -28,12 +25,25 @@ class GenerationContext(BaseModel):
     must_actions: list[str]
 
 
+class VideoClipSpec(BaseModel):
+    """单个动作交付片段：不可变资源与计时；命中遮罩单独落盘。"""
+
+    model_config = ConfigDict(extra="forbid")
+
+    action: str
+    path: str
+    sha256: str
+    frames: int = Field(gt=0)
+    duration_ms: int = Field(gt=0)
+    peek_geometry: PeekGeometry | None = None
+    content_rect: tuple[float, float, float, float] | None = None
+
+
 class ActionResult(BaseModel):
-    """单动作处理结果；quality 为 loop 接点窗口或 once 完整窗口。"""
+    """单动作处理结果：交付片段与独立落盘的封面、命中遮罩。"""
 
     model_config = ConfigDict(extra="forbid")
 
     clip: VideoClipSpec
     cover_path: str
-    hitmask_path: str = ""
-    quality: LoopWindow | FullClipWindow | None = None
+    hitmask_path: str

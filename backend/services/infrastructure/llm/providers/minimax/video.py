@@ -1,6 +1,6 @@
 from typing import ClassVar
 
-from ..base import ProviderConfig, VideoAsset, VideoGenProvider, VideoGenRequest, VideoJobStatus
+from ..base import ProviderConfig, VideoAsset, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
 from ..http import get_http
 from ._errors import raise_for_minimax_response
 
@@ -21,10 +21,15 @@ _V2_DURATION_MIN, _V2_DURATION_MAX = 4, 15
 _V2_RESOLUTIONS = ("768P", "2K")
 
 # v1 任务状态枚举——大写，扁平响应体。
-_V1_STATUS_MAP = {"Queueing": "queued", "Processing": "processing", "Success": "succeeded", "Fail": "failed"}
+_V1_STATUS_MAP: dict[str, VideoJobState] = {
+    "Queueing": "queued",
+    "Processing": "processing",
+    "Success": "succeeded",
+    "Fail": "failed",
+}
 
 # MiniMax-H3 v2 task.status 枚举（文档：VideoTask.status）均为小写；把 "running" 并入内部 "processing" 但保留 "queued"，让调用方区分"未开始"与"进行中"；"cancelled" 归到 "failed"——后端生命周期无独立的 cancelled 状态，用户感知相同。
-_STATUS_MAP = {
+_STATUS_MAP: dict[str, VideoJobState] = {
     "queued": "queued",
     "running": "processing",
     "succeeded": "succeeded",
@@ -50,8 +55,8 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
     """通过 MiniMax 提供视频生成，按模型名自动选择 v1（Hailuo，默认，duration ∈ {6,10}、resolution ∈ {512P,768P,1080P}，三阶段 submit/poll/fetch）或 v2（MiniMax-H3*，duration ∈ [4,15] 整数秒、resolution ∈ {768P,2K}，两阶段且 URL 内联）；默认 v1 因 H3 需独立付费订阅、否则开箱即失败；能力卡片设 model_name=MiniMax-H3 可启用 v2；版本相关参数校验放在此处，调用层无法预知模型故仅做并集预检、精确失败留在 submit。"""
 
     provider_name = "minimax"
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"video_gen": "MiniMax-Hailuo-2.3"}
-    DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"video_gen": 8_000}
+    DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
+    DEFAULT_MODEL: ClassVar[str] = "MiniMax-Hailuo-2.3"
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
@@ -75,7 +80,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
             path, payload = "/v1/video_generation", self._payload_v1(req, model)
 
         resp = await self._client.post(path, json=payload)
-        body = raise_for_minimax_response(resp, provider="minimax", model=model)
+        body = raise_for_minimax_response(resp)
         task_id = body.get("task_id", "")
         if not task_id:
             raise RuntimeError(f"MiniMax video_generation returned no task_id: {body}")
@@ -125,7 +130,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
 
     async def _poll_v1(self, task_id: str) -> VideoJobStatus:
         resp = await self._client.get("/v1/query/video_generation", params={"task_id": task_id})
-        body = raise_for_minimax_response(resp, provider="minimax", model=self.config.model)
+        body = raise_for_minimax_response(resp)
         raw_status = body.get("status", "Processing")
         norm = _V1_STATUS_MAP.get(raw_status, "processing")
         file_id = body.get("file_id") if norm == "succeeded" else None
@@ -140,7 +145,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
 
     async def _poll_v2(self, task_id: str) -> VideoJobStatus:
         resp = await self._client.get(f"/v2/query/video_generation/{task_id}")
-        body = raise_for_minimax_response(resp, provider="minimax", model=self.config.model)
+        body = raise_for_minimax_response(resp)
         # 文档：GetVideoGenerationV2Resp = {task: VideoTask}（严格包装）；其他形态视为契约破坏，抛错让 worker 记 poll_failed 而非静默写半解析状态行。
         if not isinstance(body, dict) or not isinstance(body.get("task"), dict):
             raise RuntimeError(f"MiniMax poll returned unexpected body shape: {body!r}")
@@ -172,7 +177,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
             # H3 v2 下载 URL 由 poll 内联返回；fetch 不可达，仅为满足 ABC 保留。
             raise RuntimeError("MiniMax-H3 returns the download URL via poll(); fetch() is not used")
         resp = await self._client.get("/v1/files/retrieve", params={"file_id": file_id})
-        body = raise_for_minimax_response(resp, provider="minimax", model=self.config.model)
+        body = raise_for_minimax_response(resp)
         file_obj = body.get("file") or {}
         download_url = file_obj.get("download_url") or ""
         if not download_url:

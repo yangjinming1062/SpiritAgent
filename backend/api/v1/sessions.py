@@ -316,7 +316,7 @@ async def delete_session(
     await db.commit()
     # 级联清理远端模式附件，尽力而为——文件系统错误（权限、磁盘满）不能让已删除会话行残留，日志记录后吞掉；gc_session 校验 session_id 形态并拒绝路径穿越，rmtree 仅作用于 SETTINGS.data_dir/desktop-attachments/。
     try:
-        await asyncio.to_thread(attachments_gc_session, SETTINGS.data_dir, str(deleted_id))
+        await asyncio.to_thread(attachments_gc_session, str(deleted_id))
     except Exception:
         logger.warning("attachments_gc_session failed for session %s", deleted_id, exc_info=True)
     try:

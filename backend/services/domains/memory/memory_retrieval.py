@@ -1,5 +1,6 @@
 import math
 import re
+from datetime import datetime
 from typing import Any
 
 from components import get_logger, session_scope, utc_now
@@ -9,11 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
 from services.contracts import MemoryScope
-from services.infrastructure.llm import (
-    EmbeddingProvider,
-    generate_embedding,
-    resolve_embedding_provider,
-)
+from services.infrastructure.llm import generate_embedding, resolve_embedding_provider
 
 from .memory_namespaces import RESERVED_FROM_RECALL, context_not_in
 from .memory_store import active_memory_filter, scope_filter
@@ -36,9 +33,7 @@ _NON_CJK_RUN_PATTERN = re.compile(r"[^一-鿿㐀-䶿]+")
 _TOKEN_SPLIT_PATTERN = re.compile(r"[\s,，。！？!?；;、\-—_()\[\]【】()（）]+")
 
 
-def _compute_time_decay(updated_at: Any, now: Any) -> float:
-    if not updated_at or not now:
-        return 1.0
+def _compute_time_decay(updated_at: datetime, now: datetime) -> float:
     delta_days = max(0.0, (now - updated_at).total_seconds() / 86400.0)
     return TIME_DECAY_FLOOR + (1.0 - TIME_DECAY_FLOOR) * math.exp(-TIME_DECAY_LAMBDA * delta_days)
 
@@ -86,15 +81,15 @@ async def _dense_search(
     db: AsyncSession,
     scope: MemoryScope,
     query_embedding: list[float],
-    limit: int = 30,
-    excluded_namespaces: frozenset[str] = RESERVED_FROM_RECALL,
+    *,
+    limit: int,
 ) -> list[Memory]:
     """稠密语义检索：用 pgvector ``<=>`` 余弦距离算子在 DB 端排序与截断。"""
     stmt = select(Memory).where(
         scope_filter(scope),
         active_memory_filter(),
         Memory.embedding.isnot(None),
-        *[context_not_in(p) for p in excluded_namespaces],
+        *[context_not_in(p) for p in RESERVED_FROM_RECALL],
     )
     candidates = stmt.cte("scoped_memories").prefix_with("MATERIALIZED")
     scoped = aliased(Memory, candidates)
@@ -118,7 +113,6 @@ async def _sparse_search(
     keywords: list[str],
     *,
     limit: int,
-    excluded_namespaces: frozenset[str] = RESERVED_FROM_RECALL,
 ) -> list[Memory]:
     """稀疏关键词检索：跨 content/context 的 ILIKE OR 拉取候选（受益于 ``ix_memories_content_trgm`` / ``ix_memories_context_trgm`` GIN trigram 索引），按关键词命中率与 updated_at 在 Python 端排序截断。"""
     if not keywords:
@@ -130,7 +124,7 @@ async def _sparse_search(
             scope_filter(scope),
             active_memory_filter(),
             or_(*conditions),
-            *[context_not_in(p) for p in excluded_namespaces],
+            *[context_not_in(p) for p in RESERVED_FROM_RECALL],
         )
         .order_by(Memory.updated_at.desc())
         .limit(limit * 2)
@@ -152,14 +146,10 @@ async def embed_memory_text(user_id: int, text: str) -> list[float] | None:
     维度校验列宽；未配置、调用失败或维度不符时返回 None，检索降级为纯关键词路径。"""
     if not (text := (text or "").strip()):
         return None
-    provider = await _resolve_memory_embedding_provider(user_id)
+    async with session_scope() as db:
+        provider = await resolve_embedding_provider(db, user_id)
     vec = await generate_embedding(text, provider, user_id=user_id, purpose="query")
     return vec if vec and len(vec) == MEMORY_EMBEDDING_DIM else None
-
-
-async def _resolve_memory_embedding_provider(user_id: int) -> EmbeddingProvider | None:
-    async with session_scope() as db:
-        return await resolve_embedding_provider(db, user_id)
 
 
 async def retrieve_hybrid_memories(
@@ -169,7 +159,6 @@ async def retrieve_hybrid_memories(
     *,
     query_embedding: list[float] | None = None,
     limit: int = 10,
-    excluded_namespaces: frozenset[str] = RESERVED_FROM_RECALL,
 ) -> list[dict[str, Any]]:
     """稠密与稀疏检索的混合搜索，用 RRF 融合排名并叠加艾宾浩斯时间衰减。"""
     q_str = (query or "").strip()
@@ -180,23 +169,8 @@ async def retrieve_hybrid_memories(
 
     dense_candidates: list[Memory] = []
     if query_embedding:
-        dense_candidates = await _dense_search(
-            db,
-            scope,
-            query_embedding,
-            limit=limit * 2,
-            excluded_namespaces=excluded_namespaces,
-        )
-
-    sparse_candidates: list[Memory] = []
-    if q_str or keywords:
-        sparse_candidates = await _sparse_search(
-            db,
-            scope,
-            keywords,
-            limit=limit * 2,
-            excluded_namespaces=excluded_namespaces,
-        )
+        dense_candidates = await _dense_search(db, scope, query_embedding, limit=limit * 2)
+    sparse_candidates = await _sparse_search(db, scope, keywords, limit=limit * 2)
 
     if not dense_candidates and not sparse_candidates:
         return []
@@ -217,7 +191,7 @@ async def retrieve_hybrid_memories(
             rrf_score += 1.0 / (RRF_K + sparse_ranks[mem_id])
 
         decay = _compute_time_decay(mem.updated_at, now)
-        importance = max(0.1, float(getattr(mem, "importance", 1.0) or 1.0))
+        importance = max(0.1, mem.importance or 1.0)
         final_score = rrf_score * decay * importance
 
         results.append(
@@ -249,7 +223,7 @@ async def retrieve_proactive_memories(
 ) -> list[dict[str, Any]]:
     """检索与当前语境最相关的若干条记忆，用于主动注入对话。"""
     q_str = (query or "").strip()
-    if not q_str or len(q_str) <= 1:
+    if len(q_str) <= 1:
         return []
     candidates = await retrieve_hybrid_memories(db, scope, q_str, query_embedding=query_embedding, limit=limit)
     return [c for c in candidates if c["score"] >= min_score]

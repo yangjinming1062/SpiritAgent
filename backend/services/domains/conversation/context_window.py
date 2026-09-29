@@ -70,5 +70,4 @@ async def load_recent_context_window(db: AsyncSession, user_id: int, max_message
         .scalars()
         .all()
     )
-    msgs.reverse()
-    return format_messages_compact(msgs, char_cap=RECENT_CONTEXT_CHAR_CAP)
+    return format_messages_compact(list(reversed(msgs)), char_cap=RECENT_CONTEXT_CHAR_CAP)

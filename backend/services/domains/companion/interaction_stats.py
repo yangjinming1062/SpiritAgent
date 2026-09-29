@@ -1,6 +1,6 @@
 import contextlib
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import SESSION_LOCAL, get_logger, utc_now
@@ -48,10 +48,10 @@ def _local_today(tz: str | None) -> str:
     return now.strftime("%Y-%m-%d")
 
 
-async def _get_or_seed(user_id: int, tz: str | None) -> _DailyCounters:
+def _get_or_seed(user_id: int, tz: str | None) -> _DailyCounters:
     # 跨用户顺带清理过期条目使字典有界；合法本地日最多偏离 UTC 一天（时区偏移 ≤ ±14h），
     # 不与调用方本地日比对——那会把地球另一端用户的当日条目误清
-    utc_today = date.fromisoformat(utc_now().strftime("%Y-%m-%d"))
+    utc_today = utc_now().date()
     valid_dates = {(utc_today + timedelta(days=d)).isoformat() for d in (-1, 0, 1)}
     for stale_uid, stale in list(_counters.items()):
         if stale.date not in valid_dates:
@@ -114,7 +114,7 @@ async def record_interaction(user_id: int, kind: str, hour: int) -> dict:
     if not isinstance(hour, int) or not 0 <= hour <= 23:
         raise ValueError(f"hour must be int in [0, 23], got {hour!r}")
 
-    counters = await _get_or_seed(user_id, await _tz_for(user_id))
+    counters = _get_or_seed(user_id, await _tz_for(user_id))
     counters.hour_buckets[hour] = counters.hour_buckets.get(hour, 0) + 1
     counters.chat_turn += 1
 

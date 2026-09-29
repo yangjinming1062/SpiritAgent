@@ -1,7 +1,7 @@
 """Slash 命令注册表与契约。
 
 设计要点：
-- 与 BUILTIN_PRESETS 同源（静态 dict），但不混入 preset 体系（命令是回合外副作用，与 system prompt 模板正交）。
+- 静态注册表，不混入预设体系（命令是回合外副作用，与 system prompt 模板正交）。
 - 命令不走 LLM tool_call 路径（避免 LLM 越权触发 / 与 persona 渲染冲突）。
 - 客户端本地也有同名元数据镜像（client/renderer/shared/lib/slash-commands.ts），仅用于自动补全与
   confirm 弹窗等 UI 优化；服务端 ``command.dispatch`` 仍是唯一权威。

@@ -51,7 +51,7 @@ def message_to_response_items(message: dict[str, Any]) -> list[dict[str, Any]]:
     role = message.get("role")
     content = message.get("content")
     if role == "tool":
-        call_id = str(message.get("tool_call_id") or message.get("call_id") or "")
+        call_id = str(message.get("tool_call_id") or "")
         return [{"type": "function_call_output", "call_id": call_id, "output": content if content is not None else ""}]
 
     if content is None:

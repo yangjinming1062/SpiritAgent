@@ -5,11 +5,10 @@ from typing import Any
 from components import (
     CAPABILITY_SERVICES,
     SETTINGS,
-    AIConfig,
+    AIConfigUpdate,
     get_logger,
     setup_logging,
 )
-from fastapi import HTTPException
 from modules.settings import SystemSetting
 from pydantic import ValidationError
 from sqlalchemy import func, select
@@ -49,43 +48,30 @@ SENSITIVE_KEYS: frozenset[str] = frozenset(
 )
 
 
-def _parse_setting_value(raw: str) -> Any:
-    """尝试以 JSON 解析存储的配置值，失败则作为字符串原样返回。"""
-    try:
-        return json.loads(raw)
-    except (json.JSONDecodeError, TypeError):
-        return raw
-
-
-def _serialize_setting_value(val: Any) -> str:
-    """将配置值序列化为 JSON 字符串存储。"""
-    return json.dumps(val, ensure_ascii=False)
-
-
 def _validation_fields(exc: ValidationError) -> str:
     return ", ".join(sorted({".".join(str(part) for part in error["loc"]) for error in exc.errors()}))
 
 
-async def load_and_apply_system_settings(db: AsyncSession) -> dict[str, Any]:
+async def load_and_apply_system_settings(db: AsyncSession) -> None:
     """服务启动时调用：从 system_settings 表中批量加载已保存的动态配置并水合进内存单例 SETTINGS。"""
     async with _SETTINGS_UPDATE_LOCK:
         rows = (await db.execute(select(SystemSetting))).scalars().all()
-        overrides = {
-            row.setting_key: _parse_setting_value(row.setting_value)
-            for row in rows
-            if row.setting_key not in STARTUP_ONLY_KEYS and row.setting_key in type(SETTINGS).model_fields
-        }
         try:
+            overrides = {
+                row.setting_key: json.loads(row.setting_value)
+                for row in rows
+                if row.setting_key not in STARTUP_ONLY_KEYS and row.setting_key in type(SETTINGS).model_fields
+            }
             candidate = SETTINGS.validate_runtime_update(overrides)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"Invalid persisted system settings: {exc}") from None
         except ValidationError as exc:
             raise RuntimeError(f"Invalid persisted system settings: {_validation_fields(exc)}") from None
 
-        applied = {key: getattr(candidate, key) for key in overrides}
         SETTINGS.apply_runtime_candidate(candidate)
-        if applied:
-            logger.info("Loaded %d dynamic system settings from database", len(applied))
-            _apply_runtime_side_effects(set(applied))
-        return applied
+        if overrides:
+            logger.info("Loaded %d dynamic system settings from database", len(overrides))
+            _apply_runtime_side_effects(set(overrides))
 
 
 def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
@@ -119,7 +105,7 @@ def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
             logger.warning("Failed to rotate LLM HTTP client caches", exc_info=True)
 
 
-async def get_system_settings_for_admin() -> dict[str, Any]:
+def get_system_settings_for_admin() -> dict[str, Any]:
     """查询当前系统全部动态设置供管理后台编辑。敏感 key 不暴露原值，通过 key_set 标识是否已配置。"""
     result: dict[str, Any] = {}
     for key in type(SETTINGS).model_fields:
@@ -138,21 +124,9 @@ async def get_system_settings_for_admin() -> dict[str, Any]:
     return result
 
 
-async def save_system_settings(
-    db: AsyncSession,
-    updates: dict[str, Any],
-) -> dict[str, Any]:
-    """保存管理员提交的动态配置，落库并立即热更新内存 SETTINGS。"""
+async def save_system_settings(db: AsyncSession, updates: dict[str, Any]) -> None:
+    """合并候选值 → 整批校验 → 事务落库 → 原位更新 SETTINGS → 副作用；校验失败抛 ValueError，不修改运行时。"""
     async with _SETTINGS_UPDATE_LOCK:
-        updates = dict(updates)
-        if "ai_config" in updates:
-            try:
-                updates["ai_config"] = prepare_ai_config(
-                    updates["ai_config"],
-                    SETTINGS.ai_config,
-                )
-            except ValueError as exc:
-                raise HTTPException(422, str(exc)) from exc
         pending: dict[str, Any] = {}
         for key, val in updates.items():
             if key in STARTUP_ONLY_KEYS or key not in type(SETTINGS).model_fields:
@@ -165,28 +139,35 @@ async def save_system_settings(
             pending[key] = val
 
         try:
+            if "ai_config" in pending:
+                pending["ai_config"] = prepare_ai_config(
+                    AIConfigUpdate.model_validate(pending["ai_config"]),
+                    SETTINGS.ai_config,
+                )
             candidate = SETTINGS.validate_runtime_update(pending)
         except ValidationError as exc:
-            raise HTTPException(422, f"系统设置无效，请检查：{_validation_fields(exc)}") from None
+            raise ValueError(f"系统设置无效，请检查：{_validation_fields(exc)}") from None
 
-        normalized = {key: getattr(candidate, key) for key in pending}
         serialized = {
-            key: _serialize_setting_value(value.model_dump() if isinstance(value, AIConfig) else value)
-            for key, value in normalized.items()
+            key: json.dumps(value, ensure_ascii=False)
+            for key, value in candidate.model_dump(mode="json", include=set(pending)).items()
         }
-        changed_keys = {key for key, value in normalized.items() if getattr(SETTINGS, key) != value}
+        changed_keys = {key for key in pending if getattr(SETTINGS, key) != getattr(candidate, key)}
 
         try:
-            pending_rows: list[SystemSetting] = []
+            rows = {
+                row.setting_key: row
+                for row in (
+                    await db.execute(select(SystemSetting).where(SystemSetting.setting_key.in_(serialized)))
+                ).scalars()
+            }
+            new_rows: list[SystemSetting] = []
             for key, value in serialized.items():
-                row = (
-                    await db.execute(select(SystemSetting).where(SystemSetting.setting_key == key))
-                ).scalar_one_or_none()
-                if row is not None:
-                    row.setting_value = value
+                if key in rows:
+                    rows[key].setting_value = value
                 else:
-                    pending_rows.append(SystemSetting(setting_key=key, setting_value=value))
-            if pending_rows:
+                    new_rows.append(SystemSetting(setting_key=key, setting_value=value))
+            if new_rows:
                 max_id = await db.scalar(select(func.max(SystemSetting.id)))
                 if max_id is not None:
                     # 外部导入（如 CSV 带显式 id 写入）不会推进自增序列，先对齐再插入，避免 nextval 撞已有主键。
@@ -198,7 +179,7 @@ async def save_system_settings(
                             ),
                         ),
                     )
-                db.add_all(pending_rows)
+                db.add_all(new_rows)
             await db.commit()
         except Exception:
             await db.rollback()
@@ -208,4 +189,3 @@ async def save_system_settings(
         if changed_keys:
             logger.info("System settings updated: %s", ", ".join(sorted(changed_keys)))
             _apply_runtime_side_effects(changed_keys)
-        return await get_system_settings_for_admin()

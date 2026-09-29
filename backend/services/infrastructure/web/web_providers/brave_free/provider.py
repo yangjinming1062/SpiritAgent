@@ -31,17 +31,7 @@ class BraveFreeWebSearchProvider(WebSearchProvider):
     def is_available(self) -> bool:
         return bool(self._api_key)
 
-    def supports_search(self) -> bool:
-        return True
-
-    def supports_extract(self) -> bool:
-        return False
-
     async def search(self, query: str, limit: int = 5) -> dict[str, Any]:
-        api_key = self._api_key
-        if not api_key:
-            return {"success": False, "error": "Brave Search API key is not configured"}
-
         # Brave 的 `count` 上限为 20。
         count = max(1, min(int(limit), 20))
 
@@ -49,7 +39,7 @@ class BraveFreeWebSearchProvider(WebSearchProvider):
             resp = await _HTTP_CLIENT.get(
                 _BRAVE_ENDPOINT,
                 params={"q": query, "count": count},
-                headers={"X-Subscription-Token": api_key, "Accept": "application/json"},
+                headers={"X-Subscription-Token": self._api_key, "Accept": "application/json"},
             )
             resp.raise_for_status()
         except httpx.HTTPStatusError as exc:

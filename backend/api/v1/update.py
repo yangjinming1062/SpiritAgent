@@ -6,24 +6,48 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from common import get_or_404, get_router, list_response
+from common import get_or_404, get_router
 from components import DbSession, apply_partial, sha512_b64
 from fastapi import File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from modules.auth import CurrentAdmin
-from modules.system import MessageResponse, ReleaseManifestResponse
+from modules.system import MessageResponse, ReleaseManifestFileItem, ReleaseManifestResponse
 from modules.update import UpdateVersion, UpdateVersionItem, UpdateVersionListResponse, UpdateVersionUpdate
-from services.application.updates import (
-    ALLOWED_ARCHIVE_SUFFIXES,
-    CHUNK_SIZE,
-    DOWNLOAD_SUFFIXES,
-    VERSIONS_DIR,
-    build_manifest,
-)
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = get_router()
+
+# 相对工作目录；容器内挂载为 /app/updates。
+VERSIONS_DIR = Path("updates/versions")
+CHUNK_SIZE = 8192
+
+ALLOWED_ARCHIVE_SUFFIXES = (
+    ".exe",
+    "RELEASES",
+    "-full.nupkg",
+    ".blockmap",
+    ".zip",
+    ".dmg",
+    ".whl",
+    "server.py",
+    "manifest.json",
+    "latest-runner.yml",
+    "app-update.yml",
+)
+
+DOWNLOAD_SUFFIXES = (
+    ".exe",
+    "-full.nupkg",
+    "-full.nupkg.blockmap",
+    ".blockmap",
+    ".zip",
+    ".dmg",
+    ".dmg.blockmap",
+    ".whl",
+    "server.py",
+    "latest-runner.yml",
+)
 
 
 async def _get_latest(db: AsyncSession) -> UpdateVersion:
@@ -45,25 +69,41 @@ async def _get_latest(db: AsyncSession) -> UpdateVersion:
 
 def _pick_asset(versions_dir: Path, *patterns: str) -> Path | None:
     """按调用顺序拼接 pattern 后排序，取 versions_dir 中最后一条匹配文件；排除 ``.tmp.*`` 暂存名，避免返回不完整文件。"""
-    if not patterns:
-        return None
-    matches: list[Path] = []
-    for pattern in patterns:
-        matches.extend(versions_dir.glob(pattern))
-    candidates = [m for m in matches if not m.name.startswith(".tmp.")]
+    candidates = [
+        match for pattern in patterns for match in versions_dir.glob(pattern) if not match.name.startswith(".tmp.")
+    ]
     return sorted(candidates)[-1] if candidates else None
+
+
+def _release_manifest(
+    latest: UpdateVersion,
+    filename: str | None,
+    sha512: str | None,
+    size: int | None,
+) -> ReleaseManifestResponse:
+    """electron-updater 平台清单；文件名、摘要与大小在上传时一并落库。"""
+    if not filename or not sha512 or size is None:
+        raise HTTPException(status_code=404, detail="No active release for this platform")
+    return ReleaseManifestResponse(
+        version=latest.version,
+        releaseDate=latest.created_at.isoformat(),
+        releaseNotes=latest.release_notes,
+        path=filename,
+        sha512=sha512,
+        files=[ReleaseManifestFileItem(url=filename, sha512=sha512, size=size)],
+    )
 
 
 @router.get("/latest.yml", response_model=ReleaseManifestResponse)
 async def get_latest_yml(db: DbSession) -> ReleaseManifestResponse:
     latest = await _get_latest(db)
-    return ReleaseManifestResponse(**build_manifest(latest, latest.exe_filename, latest.exe_sha512, latest.exe_size))
+    return _release_manifest(latest, latest.exe_filename, latest.exe_sha512, latest.exe_size)
 
 
 @router.get("/latest-mac.yml", response_model=ReleaseManifestResponse)
 async def get_latest_mac_yml(db: DbSession) -> ReleaseManifestResponse:
     latest = await _get_latest(db)
-    return ReleaseManifestResponse(**build_manifest(latest, latest.mac_filename, latest.mac_sha512, latest.mac_size))
+    return _release_manifest(latest, latest.mac_filename, latest.mac_sha512, latest.mac_size)
 
 
 @router.get("/latest-runner.yml", response_class=FileResponse)
@@ -81,7 +121,7 @@ async def get_latest_runner_yml(db: DbSession) -> FileResponse:
 @router.get("/versions", response_model=UpdateVersionListResponse)
 async def list_versions(_admin: CurrentAdmin, db: DbSession) -> UpdateVersionListResponse:
     records = (await db.execute(select(UpdateVersion).order_by(UpdateVersion.created_at.desc()))).scalars().all()
-    return list_response(records, UpdateVersionItem, UpdateVersionListResponse)
+    return UpdateVersionListResponse(items=[UpdateVersionItem.model_validate(record) for record in records])
 
 
 def _extract_archive_entries(zip_path: Path, versions_dir: Path) -> None:
@@ -91,15 +131,32 @@ def _extract_archive_entries(zip_path: Path, versions_dir: Path) -> None:
         for name in zf.namelist():
             if not name.endswith(ALLOWED_ARCHIVE_SUFFIXES):
                 continue
-            rel_path = name
-            if not rel_path:
-                continue
-            target = (versions_dir / rel_path).resolve()
+            target = (versions_dir / name).resolve()
             if not target.is_relative_to(versions_dir_resolved):
                 continue
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(name) as src, open(target, "wb") as dst:
                 shutil.copyfileobj(src, dst)
+
+
+def _inspect_release(versions_dir: Path, version: str) -> tuple[Path, Path | None, Path | None]:
+    """校验解压结果并返回 (exe, mac 包, runner wheel)。构建脚本（Build-UpdateZip）总会写入 manifest.json，其 version 必须匹配文件名版本，否则视为不同发布。"""
+    manifest_path = versions_dir / "manifest.json"
+    if not manifest_path.exists():
+        raise ValueError("Zip must contain manifest.json")
+    try:
+        manifest_version = json.loads(manifest_path.read_text(encoding="utf-8")).get("version")
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Invalid manifest.json: {exc}") from exc
+    if not manifest_version:
+        raise ValueError("manifest.json missing required 'version' field")
+    if manifest_version != version:
+        raise ValueError(f"manifest.json version {manifest_version} does not match upload filename version {version}")
+    exe_file = _pick_asset(versions_dir, "*.exe")
+    if exe_file is None:
+        raise ValueError("Zip must contain a *.exe file")
+    # Runner 侧：wheel + server.py 解压到 runner/，latest-runner.yml 位于根。
+    return exe_file, _pick_asset(versions_dir, "*.zip", "*.dmg"), _pick_asset(versions_dir, "runner/spirit_agent-*.whl")
 
 
 @router.post("/versions", response_model=UpdateVersionItem, status_code=201)
@@ -136,36 +193,11 @@ async def create_version(
         except zipfile.BadZipFile:
             raise HTTPException(status_code=400, detail="Invalid zip file")
 
-    # 校验内嵌 manifest.json：构建脚本（Build-UpdateZip）总会写入，其 version 必须匹配从文件名解析出的版本，否则视为不同发布并拒绝。
-    manifest_path = versions_dir / "manifest.json"
-    if not manifest_path.exists():
-        await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
-        raise HTTPException(status_code=400, detail="Zip must contain manifest.json")
     try:
-        manifest_data = json.loads(await asyncio.to_thread(manifest_path.read_text, encoding="utf-8"))
-    except json.JSONDecodeError as exc:
+        exe_file, mac_file, wheel_file = await asyncio.to_thread(_inspect_release, versions_dir, version)
+    except ValueError as exc:
         await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
-        raise HTTPException(status_code=400, detail=f"Invalid manifest.json: {exc}")
-    manifest_version = manifest_data.get("version")
-    if not manifest_version:
-        await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
-        raise HTTPException(status_code=400, detail="manifest.json missing required 'version' field")
-    if manifest_version != version:
-        await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
-        raise HTTPException(
-            status_code=400,
-            detail=f"manifest.json version {manifest_version} does not match upload filename version {version}",
-        )
-
-    exe_file = _pick_asset(versions_dir, "*.exe")
-    if not exe_file:
-        await asyncio.to_thread(shutil.rmtree, versions_dir, ignore_errors=True)
-        raise HTTPException(status_code=400, detail="Zip must contain a *.exe file")
-
-    mac_file = _pick_asset(versions_dir, "*.zip", "*.dmg")
-
-    # Runner 侧：wheel + server.py 由 _extract_archive_entries 解压到 runner/，latest-runner.yml 位于根。
-    wheel_file = _pick_asset(versions_dir, "runner/spirit_agent-*.whl")
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     record = UpdateVersion(
         version=version,
@@ -177,9 +209,6 @@ async def create_version(
         mac_sha512=await asyncio.to_thread(sha512_b64, mac_file) if mac_file else None,
         mac_size=mac_file.stat().st_size if mac_file else None,
         runner_filename=f"runner/{wheel_file.name}" if wheel_file else None,
-        runner_sha512=await asyncio.to_thread(sha512_b64, wheel_file) if wheel_file else None,
-        runner_size=wheel_file.stat().st_size if wheel_file else None,
-        runner_version=version if wheel_file else None,
         is_active=True,
         created_by=admin,
     )

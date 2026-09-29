@@ -32,25 +32,20 @@ async def _result(user_id: int, **payload: Any) -> str:
 
 
 async def scene_list_tool(
+    user_id: int,
+    scene_turn: SceneTurnState,
     query: str = "",
     offset: int = 0,
     limit: int = 30,
-    user_id: int | None = None,
-    scene_turn: SceneTurnState | None = None,
     **_: Any,
 ) -> str:
-    if user_id is None:
-        return tool_error("缺少用户上下文")
     async with SESSION_LOCAL() as db:
         rows, total = await list_scenes(db, user_id, query=query, offset=offset, limit=limit, ready_only=True)
-    if scene_turn:
-        scene_turn.inspected = True
+    scene_turn.inspected = True
     return await _result(user_id, scenes=[_asset(row) for row in rows], total=total, offset=max(0, offset))
 
 
-async def scene_get_tool(scene_id: int, user_id: int | None = None, **_: Any) -> str:
-    if user_id is None:
-        return tool_error("缺少用户上下文")
+async def scene_get_tool(scene_id: int, user_id: int, **_: Any) -> str:
     async with SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
     if row is None:
@@ -60,14 +55,12 @@ async def scene_get_tool(scene_id: int, user_id: int | None = None, **_: Any) ->
 
 async def scene_create_tool(
     notes: str,
+    user_id: int,
+    scene_turn: SceneTurnState,
     outfit_description: str | None = None,
     auto_activate: bool = False,
-    user_id: int | None = None,
-    scene_turn: SceneTurnState | None = None,
     **_: Any,
 ) -> str:
-    if user_id is None or scene_turn is None:
-        return tool_error("场景创建需要有效回合上下文")
     async with scene_turn.lock:
         if not scene_turn.inspected:
             return tool_error("请先用 scene_list 检查已有场景，适合时直接启用")
@@ -108,12 +101,10 @@ async def scene_create_tool(
 
 async def scene_activate_tool(
     scene_id: int,
-    user_id: int | None = None,
-    scene_turn: SceneTurnState | None = None,
+    user_id: int,
+    scene_turn: SceneTurnState,
     **_: Any,
 ) -> str:
-    if user_id is None or scene_turn is None:
-        return tool_error("场景切换需要有效回合上下文")
     async with scene_turn.lock:
         if scene_turn.switch_claimed:
             return tool_error("本回合已提交一次环境切换，请查询结果，不要重复切换")
@@ -164,7 +155,6 @@ def register(registry: ToolsRegistry) -> None:
     ]
     for name, handler, properties, required in definitions:
         registry.register(
-            name,
             {
                 "name": name,
                 "description": SCENE_TOOL_DESCRIPTIONS[name],

@@ -1,7 +1,6 @@
 from datetime import datetime
-from typing import Any
 
-from components import DEFAULT_LANGUAGE, LLM_MAX_OUTPUT_TOKENS, get_logger, session_scope
+from components import LLM_MAX_OUTPUT_TOKENS, get_logger, session_scope
 from modules.conversation import Conversation, Message
 from prompts.nightly import CHECKPOINT_SUMMARY_INSTRUCTIONS
 from sqlalchemy import func, select
@@ -23,17 +22,13 @@ logger = get_logger(__name__)
 _NON_SUMMARISABLE_SUBTYPES = UI_ONLY_SUBTYPES | {"daily_summary", "compress_summary"}
 
 
-def _summarisable_filter() -> Any:
-    return Message.subtype.is_(None) | Message.subtype.notin_(tuple(_NON_SUMMARISABLE_SUBTYPES))
-
-
 async def run_daily_checkpoint(
     llm_cfg: UserLlmConfig,
     user_id: int,
     utc_start: datetime,
     utc_end: datetime,
     local_date_str: str,
-    language: str = DEFAULT_LANGUAGE,
+    language: str,
 ) -> None:
     """合并最新摘要与截至目标本地日末的原文；模型等待期间的新消息仍保留在读路径。"""
     # 读、写两阶段各自持有短 session——中间 LLM 调用不能 pin 连接池（backend/README.md「数据与运行可靠性」）。
@@ -98,7 +93,6 @@ async def _collect_inputs(
         return
 
     # 当天至少要有一次真交互。
-    real_turns = _summarisable_filter()
     today_msg_count = (
         await db.execute(
             select(func.count())
@@ -109,7 +103,7 @@ async def _collect_inputs(
                 Message.created_at >= utc_start,
                 Message.created_at < utc_end,
                 Message.role.in_(("user", "assistant")),
-                real_turns,
+                Message.subtype.is_(None) | Message.subtype.notin_(tuple(_NON_SUMMARISABLE_SUBTYPES)),
             ),
         )
     ).scalar_one()

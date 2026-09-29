@@ -1,6 +1,6 @@
 """进程级运行时设施：配置、数据库、日志、任务托管、附件与维护态；对外 re-export。"""
 
-from .ai_config import CAPABILITY_SERVICES, AIConfig, AIConfigPublic, AIConfigUpdate, ProviderCard, load_ai_config
+from .ai_config import CAPABILITY_SERVICES, AIConfig, AIConfigPublic, AIConfigUpdate, ProviderCard, ProviderCardUpdate
 from .attachments import attachment_root, path_attach_ref, session_dir
 from .attachments import gc_session as attachments_gc_session
 from .background import BackgroundTask, TaskBag
@@ -12,7 +12,6 @@ from .constants import (
     ATTACHMENT_TYPE_VIDEO,
     ATTACHMENT_VIDEO_EXTENSIONS,
     ATTACHMENT_VIDEO_MAX_BYTES,
-    BACKGROUND_REVIEW_DEFAULT,
     CHAT_TEMPERATURE_DEFAULT,
     CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
     CONTEXT_SUMMARY_HEADROOM_FACTOR,
@@ -60,16 +59,13 @@ from .correlation import (
     correlation_id_middleware,
     new_request_id,
 )
-from .database import ENGINE, SESSION_LOCAL, DbSession, get_db, session_scope
+from .database import ENGINE, SESSION_LOCAL, DbSession, database_url, get_db, session_scope
 from .functions import (
-    TIME_NOTE_EN_HEAD,
-    TIME_NOTE_ZH_HEAD,
     apply_partial,
     approx_text_tokens,
     coerce_hour_0_23,
     coerce_int,
     coerce_non_negative_float,
-    coerce_non_negative_int,
     ensure_utc,
     format_day_marker,
     format_local_date_str,
@@ -86,8 +82,6 @@ from .hashing import sha256_hex, sha512_b64
 from .logger import get_logger, set_request_user_id, setup_logging
 from .network import download_capped, is_safe_outbound, safe_outbound_async_client, safe_outbound_async_transport
 from .observability import (
-    RPC_REQUEST_DURATION_SECONDS,
-    RPC_REQUESTS_TOTAL,
     SCENE_FAILURES_TOTAL,
     SCENE_IMAGES_TOTAL,
     SCENE_LLM_TRIGGERS_TOTAL,
@@ -119,7 +113,6 @@ __all__ = [
     "ATTACHMENT_TYPE_VIDEO",
     "ATTACHMENT_VIDEO_EXTENSIONS",
     "ATTACHMENT_VIDEO_MAX_BYTES",
-    "BACKGROUND_REVIEW_DEFAULT",
     "CHAT_TEMPERATURE_DEFAULT",
     "CAPABILITY_SERVICES",
     "CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT",
@@ -145,12 +138,11 @@ __all__ = [
     "REMOTE_ASSET_DOWNLOAD_MAX_BYTES",
     "REQUEST_ID_HEADER",
     "ProviderCard",
+    "ProviderCardUpdate",
     "SCENE_DOWNLOAD_MAX_BYTES",
     "SCENE_FAILURES_TOTAL",
     "SCENE_IMAGES_TOTAL",
     "SCENE_LLM_TRIGGERS_TOTAL",
-    "RPC_REQUESTS_TOTAL",
-    "RPC_REQUEST_DURATION_SECONDS",
     "SEARCH_INPUT_MAX_LEN",
     "SESSION_LOCAL",
     "SESSION_PREVIEW_MAX_CHARS",
@@ -163,8 +155,6 @@ __all__ = [
     "SUPPORTED_LANGUAGES",
     "TEMPERATURE_MAX",
     "TEMPERATURE_MIN",
-    "TIME_NOTE_EN_HEAD",
-    "TIME_NOTE_ZH_HEAD",
     "TITLE_GENERATION_TEMPERATURE",
     "TITLE_MAX_CHARS",
     "TITLE_SNIPPET_MAX_CHARS",
@@ -189,9 +179,9 @@ __all__ = [
     "coerce_hour_0_23",
     "coerce_int",
     "coerce_non_negative_float",
-    "coerce_non_negative_int",
     "correlated_exception_response",
     "correlation_id_middleware",
+    "database_url",
     "download_capped",
     "end_user_request",
     "ensure_utc",
@@ -205,7 +195,6 @@ __all__ = [
     "is_time_context_text",
     "is_user_in_maintenance",
     "log_paid_call",
-    "load_ai_config",
     "mark_user_maintenance",
     "new_request_id",
     "parse_llm_json",

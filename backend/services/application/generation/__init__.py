@@ -20,12 +20,9 @@ from .avatar_service import (
     get_avatar_job_lock,
     latest_fullbody_candidate,
     list_avatar_history,
-    load_avatar_bytes_as_data_uri,
-    normalize_avatar_url_to_bare,
     prepare_avatar_prompt,
     prepare_fullbody_prompt,
     raise_if_image_sealed,
-    re_sign_bare_path,
     regenerate_avatar,
     regenerate_avatar_from_image,
     resolve_uploaded_avatar_path,
@@ -35,22 +32,15 @@ from .avatar_service import (
 from .character_card import drain_character_extractions, resume_character_extractions, schedule_character_extraction
 from .character_images import generate_character_images
 from .chat_images import ImageBatch, generate_chat_images, inspect_chat_image, regenerate_chat_image
-from .identity_review import (
-    review_character_frames,
-    score_character_frames,
-    score_character_image,
-)
 from .image_generation import (
     ImageGenerationError,
     generate_images,
     resolve_image_gen_chain,
 )
 from .initial_appearance import resume_initial_appearance
-from .media_chain import MEDIA_IDENTITY_ACCEPT_SCORE
 from .media_review import (
     MediaReviewStateError,
     accept_media_review,
-    create_media_review,
     get_media_review,
     list_pending_media_reviews,
     reject_media_review,
@@ -80,9 +70,7 @@ from .response_builders import (
 )
 from .scene_service import (
     SceneError,
-    SceneLockedError,
     SceneNotFoundError,
-    SceneQuotaExceededError,
     SceneStateError,
     activate_scene,
     adopt_scene,
@@ -95,7 +83,6 @@ from .scene_service import (
     resume_scene_jobs,
     retry_scene_description,
     scene_generation_wait_seconds,
-    schedule_initial_scene,
     schedule_scene_generation,
     schedule_scene_prompt,
     set_scene_policy,
@@ -122,7 +109,6 @@ from .video import (
 )
 from .video import drain_video_generation as drain_video_pack_generation
 from .video import ensure_system_action as ensure_video_system_action
-from .video import resume_processing_packs as resume_processing_video_packs
 from .video import (
     retry_pack as retry_video_pack,
 )
@@ -134,12 +120,10 @@ from .video_jobs import (
     video_generation_wait_seconds,
 )
 from .visual_identity import (
-    SelfVisualPlan,
     apply_outfit_override,
     build_self_image_prompt,
     load_self_visual_context,
     optional_outfit_image_reference,
-    plan_outfit_description,
     prepare_self_video_reference,
 )
 
@@ -150,9 +134,7 @@ __all__ = [
     "regenerate_chat_image",
     "build_self_image_prompt",
     "SceneError",
-    "SceneLockedError",
     "SceneNotFoundError",
-    "SceneQuotaExceededError",
     "SceneStateError",
     "activate_scene",
     "adopt_scene",
@@ -164,16 +146,13 @@ __all__ = [
     "retry_scene_description",
     "resume_scene_generation",
     "resume_scene_jobs",
-    "schedule_initial_scene",
     "schedule_scene_generation",
     "schedule_scene_prompt",
     "set_scene_policy",
     "load_self_visual_context",
     "optional_outfit_image_reference",
     "prepare_self_video_reference",
-    "SelfVisualPlan",
     "apply_outfit_override",
-    "plan_outfit_description",
     "drain_character_extractions",
     "resume_character_extractions",
     "schedule_character_extraction",
@@ -183,15 +162,10 @@ __all__ = [
     "AvatarGenerationError",
     "accept_fullbody_candidate",
     "accept_media_review",
-    "create_media_review",
     "get_media_review",
     "list_pending_media_reviews",
     "reject_media_review",
     "MediaReviewStateError",
-    "MEDIA_IDENTITY_ACCEPT_SCORE",
-    "review_character_frames",
-    "score_character_frames",
-    "score_character_image",
     "latest_fullbody_candidate",
     "retry_fullbody_candidate_analysis",
     "AvatarNotFoundError",
@@ -243,21 +217,17 @@ __all__ = [
     "get_outfit_policy",
     "list_avatar_history",
     "list_outfits",
-    "load_avatar_bytes_as_data_uri",
-    "normalize_avatar_url_to_bare",
     "outfit_response",
     "prepare_fullbody_prompt",
     "prepare_outfit_prompt",
     "prepare_outfit_regenerate_prompt",
     "raise_if_image_sealed",
-    "re_sign_bare_path",
     "regenerate_avatar",
     "regenerate_avatar_from_image",
     "regenerate_outfit_draft",
     "resolve_image_gen_chain",
     "resolve_uploaded_avatar_path",
     "resume_pending_video_jobs",
-    "resume_processing_video_packs",
     "resume_video_generation_jobs",
     "select_avatar",
     "set_outfit_policy",

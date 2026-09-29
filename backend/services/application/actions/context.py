@@ -9,24 +9,21 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from components import resolve_prompt_text
-from modules.companion import ActionProposal, CompanionActionPack
+from modules.companion import ActionProposal
 from prompts.actions import ACTION_CONTEXT_GUIDANCES
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.actions import action_to_dict, list_pack_actions
+from services.domains.actions import action_to_dict, get_active_pack, is_expression_action, list_pack_actions
 
 
 @dataclass
 class ActionContextSnapshot:
     pack_id: int | None = None
     catalog_version: int = 0
-    character_id: int | None = None
-    outfit_id: int | None = None
     ready_actions: list[dict[str, Any]] = field(default_factory=list)
     in_flight_proposals: list[dict[str, Any]] = field(default_factory=list)
     recent_rejections: list[dict[str, Any]] = field(default_factory=list)
-    device_visible: bool = True
 
     def to_prompt_block(self, *, language: str = "zh") -> str:
         """动作内容使用 JSON 保留资料边界与完整适用条件。"""
@@ -53,43 +50,19 @@ class ActionContextSnapshot:
             "in_flight_proposals_truncated": len(self.in_flight_proposals) > 6,
             "recent_rejections": self.recent_rejections[:3],
             "recent_rejections_truncated": len(self.recent_rejections) > 3,
-            **({"device_visible": False} if not self.device_visible else {}),
         }
         return resolve_prompt_text(ACTION_CONTEXT_GUIDANCES, language) + "\n" + json.dumps(payload, ensure_ascii=False)
 
 
-async def build_action_context(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    device_visible: bool = True,
-) -> ActionContextSnapshot:
-    pack_row = await db.execute(
-        select(CompanionActionPack).where(
-            CompanionActionPack.user_id == user_id,
-            CompanionActionPack.active.is_(True),
-        ),
-    )
-    pack = pack_row.scalar_one_or_none()
-    snapshot = ActionContextSnapshot(device_visible=device_visible)
-
+async def build_action_context(db: AsyncSession, user_id: int) -> ActionContextSnapshot:
+    pack = await get_active_pack(db, user_id)
     if pack is None:
-        return snapshot
-
-    snapshot.pack_id = pack.id
-    snapshot.catalog_version = pack.catalog_version
-    snapshot.character_id = pack.character_id
-    snapshot.outfit_id = pack.outfit_id
+        return ActionContextSnapshot()
+    snapshot = ActionContextSnapshot(pack_id=pack.id, catalog_version=pack.catalog_version)
 
     actions = await list_pack_actions(db, pack.id, enabled_only=False)
     actions_by_id = {action.id: action for action in actions}
-    for action in actions:
-        if not action.enabled or action.status != "succeeded" or not action.video_path:
-            continue
-        # 系统产品槽位不进 LLM 表达清单，与 prompt_runtime.available_actions 同一过滤。
-        if action.system_slot:
-            continue
-        snapshot.ready_actions.append(action_to_dict(action))
+    snapshot.ready_actions = [action_to_dict(action) for action in actions if is_expression_action(action)]
 
     proposals = (
         (
@@ -108,7 +81,7 @@ async def build_action_context(
     )
     # 未完成提案保留真实制作状态；已成功或已删除动作不再出现在 in_flight。
     for p in proposals:
-        action = actions_by_id.get(p.action_id)
+        action = actions_by_id.get(p.action_id) if p.action_id is not None else None
         if p.status == "approved" and (action is None or action.status == "succeeded"):
             continue
         snapshot.in_flight_proposals.append(

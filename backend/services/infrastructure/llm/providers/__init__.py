@@ -1,17 +1,7 @@
-from . import (
-    gemini,  # noqa: F401 — 供应商子包须可被 bootstrap 以 providers.<pkg> 引用；注册由 bootstrap/registrations.py 执行
-    grok,  # noqa: F401
-    local,  # noqa: F401
-    mimo,  # noqa: F401
-    minimax,  # noqa: F401
-    qwen,  # noqa: F401
-)
 from ._reference import resolve_reference_bytes
 from ._size_aspect import ASPECT_RATIOS, SIZE_TO_ASPECT
 from .base import (
     PRODUCT_REASONING_EFFORTS,
-    REASONING_EFFORT_ORDER,
-    REASONING_EFFORT_RANK,
     BaseProvider,
     ChatProvider,
     EmbeddingProvider,
@@ -21,7 +11,6 @@ from .base import (
     ImageGenResult,
     ProviderConfig,
     ProviderError,
-    ProviderResultUnknownError,
     ReasoningEffort,
     ServiceType,
     STTProvider,
@@ -35,36 +24,22 @@ from .base import (
     VoiceDesignResult,
     resolve_provider_reasoning_effort,
 )
-from .http import aclose_all, rotate_http_clients
-from .local import LocalChatProvider, LocalEmbeddingProvider, LocalImageGenProvider
-from .mimo import (
-    MiMoChatProvider,
-    MiMoSTTProvider,
-    MiMoTTSProvider,
-)
+from .http import ProviderResultUnknownError, aclose_all, rotate_http_clients
 from .registry import (
-    PROVIDER_DEFAULT_URLS,
     default_base_url,
-    default_context_tokens_for,
     default_model_for,
-    default_video_model_for,
-    default_vision_model_for,
     provider_requires_api_key,
     providers_supporting,
     register,
     resolve,
     resolve_context_tokens,
-    supports_video,
-    supports_vision,
     try_resolve,
+    try_resolve_chat,
 )
 
 __all__ = [
     "ASPECT_RATIOS",
     "PRODUCT_REASONING_EFFORTS",
-    "PROVIDER_DEFAULT_URLS",
-    "REASONING_EFFORT_ORDER",
-    "REASONING_EFFORT_RANK",
     "BaseProvider",
     "ChatProvider",
     "EmbeddingProvider",
@@ -72,12 +47,6 @@ __all__ = [
     "ImageGenProvider",
     "ImageGenRequest",
     "ImageGenResult",
-    "LocalChatProvider",
-    "LocalEmbeddingProvider",
-    "LocalImageGenProvider",
-    "MiMoChatProvider",
-    "MiMoSTTProvider",
-    "MiMoTTSProvider",
     "ProviderConfig",
     "ProviderError",
     "ProviderResultUnknownError",
@@ -95,10 +64,7 @@ __all__ = [
     "VoiceDesignResult",
     "aclose_all",
     "default_base_url",
-    "default_context_tokens_for",
     "default_model_for",
-    "default_video_model_for",
-    "default_vision_model_for",
     "provider_requires_api_key",
     "providers_supporting",
     "register",
@@ -107,7 +73,6 @@ __all__ = [
     "resolve_provider_reasoning_effort",
     "resolve_reference_bytes",
     "rotate_http_clients",
-    "supports_video",
-    "supports_vision",
     "try_resolve",
+    "try_resolve_chat",
 ]

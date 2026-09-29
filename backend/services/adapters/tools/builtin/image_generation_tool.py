@@ -1,4 +1,3 @@
-from components import tool_error
 from prompts.tools import IMAGE_GENERATION_DESC, IMAGE_REGENERATE_DESC, MEDIA_INSPECT_DESC
 
 from services.application.generation import (
@@ -8,17 +7,14 @@ from services.application.generation import (
     regenerate_chat_image,
 )
 from services.contracts import MediaTurnState
+from services.infrastructure.tool_runtime import ToolsRegistry
 
 
-async def image_generation_tool(requests: list[dict], media_turn: MediaTurnState | None = None, **kwargs) -> str:
-    if media_turn is None:
-        return tool_error("图片生成需要会话上下文")
+async def image_generation_tool(requests: list[dict], media_turn: MediaTurnState, **_: object) -> str:
     return await generate_chat_images(requests, media_turn)
 
 
-async def media_inspect_tool(media_id: str, media_turn: MediaTurnState | None = None, **kwargs) -> str:
-    if media_turn is None:
-        return tool_error("验图需要会话上下文")
+async def media_inspect_tool(media_id: str, media_turn: MediaTurnState, **_: object) -> str:
     return await inspect_chat_image(media_id, media_turn)
 
 
@@ -26,11 +22,9 @@ async def image_regenerate_tool(
     media_id: str,
     inspection_id: str,
     correction: str,
-    media_turn: MediaTurnState | None = None,
-    **kwargs,
+    media_turn: MediaTurnState,
+    **_: object,
 ) -> str:
-    if media_turn is None:
-        return tool_error("重做需要会话上下文")
     return await regenerate_chat_image(media_id, inspection_id, correction, media_turn)
 
 
@@ -70,7 +64,7 @@ IMAGE_REGENERATE_SCHEMA = {
 }
 
 
-def register(registry) -> None:
-    registry.register("image_generate", IMAGE_GENERATION_SCHEMA, image_generation_tool)
-    registry.register("media_inspect", MEDIA_INSPECT_SCHEMA, media_inspect_tool)
-    registry.register("image_regenerate", IMAGE_REGENERATE_SCHEMA, image_regenerate_tool)
+def register(registry: ToolsRegistry) -> None:
+    registry.register(IMAGE_GENERATION_SCHEMA, image_generation_tool)
+    registry.register(MEDIA_INSPECT_SCHEMA, media_inspect_tool)
+    registry.register(IMAGE_REGENERATE_SCHEMA, image_regenerate_tool)

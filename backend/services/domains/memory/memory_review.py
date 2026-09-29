@@ -94,15 +94,16 @@ async def review_memories(
                     new_only=True,
                     reviewed_before=started_at,
                 )
-                config = llm_config or await resolve_user_llm_config(db, scope.user_id)
+                if llm_config is None:
+                    llm_config = await resolve_user_llm_config(db, scope.user_id)
             if not context.messages and (session_id is not None or not context.memories):
                 return
-            if not config.is_configured:
+            if not llm_config.is_configured:
                 raise ValueError("Memory review requires an available LLM configuration")
             await assess_memory_changes(
                 scope,
                 MemorySource("reflection"),
                 context,
-                llm_config=config,
+                llm_config=llm_config,
                 advance_review=True,
             )

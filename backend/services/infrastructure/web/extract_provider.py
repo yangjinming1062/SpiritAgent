@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 from components import SETTINGS, get_logger
 
 from .web_providers import WebSearchProvider
@@ -7,43 +9,28 @@ from .web_providers.tavily import TavilyWebSearchProvider
 
 logger = get_logger(__name__)
 
-# 每个 dispatcher 种类的默认后端，是工具路径与 ``_get_provider`` 异常回退的「未配置」兜底来源。
+# 每个 dispatcher 种类的默认后端，也是配置了未知后端名时的回退目标。
 _DEFAULT_BY_KIND: dict[str, str] = {"search": "ddgs", "extract": "tavily"}
 
-_PROVIDERS: dict[str, type[WebSearchProvider]] = {
+# 凭据在调用时从 SETTINGS 读取，管理端热更新后下一次调用即生效。
+_PROVIDER_FACTORIES: dict[str, Callable[[], WebSearchProvider]] = {
     "ddgs": DDGSWebSearchProvider,
-    "brave-free": BraveFreeWebSearchProvider,
-    "tavily": TavilyWebSearchProvider,
-}
-
-# ``provider.__init__`` kwargs → ``SETTINGS`` 字段名；空字典表示该供应商无需凭据（``cls(**{})`` 退化为 ``cls()``）。
-_PROVIDER_SETTING_FIELDS: dict[str, dict[str, str]] = {
-    "brave-free": {"api_key": "brave_search_api_key"},
-    "tavily": {"api_key": "tavily_api_key", "base_url": "tavily_base_url"},
+    "brave-free": lambda: BraveFreeWebSearchProvider(api_key=SETTINGS.brave_search_api_key),
+    "tavily": lambda: TavilyWebSearchProvider(api_key=SETTINGS.tavily_api_key, base_url=SETTINGS.tavily_base_url),
 }
 
 
-def _resolve_provider_name(name: str | None, *, kind: str) -> str:
-    """将配置项中的供应商名解析到已知后端；未知名称会回退到该 kind 的默认后端，避免误配置静默失败。"""
-    if name in _PROVIDERS:
-        return name
-    fallback = _DEFAULT_BY_KIND[kind]
-    logger.error(
-        "Unknown web provider, falling back",
-        extra={"kind": kind, "provider_name": name, "fallback": fallback},
-    )
-    return fallback
-
-
-def _get_provider(provider_name: str | None, *, kind: str = "search") -> WebSearchProvider:
-    name = _resolve_provider_name(provider_name, kind=kind)
-    try:
-        cls = _PROVIDERS[name]
-        kwargs = {param: getattr(SETTINGS, field) for param, field in _PROVIDER_SETTING_FIELDS.get(name, {}).items()}
-        return cls(**kwargs)
-    except Exception as e:
-        logger.error("Error loading web provider", extra={"provider_name": name, "error": str(e)})
-        return _PROVIDERS[_DEFAULT_BY_KIND[kind]]()
+def _get_provider(name: str, *, kind: str) -> WebSearchProvider:
+    """构造配置项中的供应商；未知名称回退到该 kind 的默认后端并记录错误，避免误配置静默失败。"""
+    factory = _PROVIDER_FACTORIES.get(name)
+    if factory is None:
+        fallback = _DEFAULT_BY_KIND[kind]
+        logger.error(
+            "Unknown web provider, falling back",
+            extra={"kind": kind, "provider_name": name, "fallback": fallback},
+        )
+        factory = _PROVIDER_FACTORIES[fallback]
+    return factory()
 
 
 def resolve_search_provider() -> WebSearchProvider:

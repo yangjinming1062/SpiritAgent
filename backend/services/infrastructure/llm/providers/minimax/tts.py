@@ -1,22 +1,19 @@
-import logging
 from typing import ClassVar
 
-from modules.media import SpeechStyle
+from modules.media import MiniMaxSpeechStyle, SpeechStyle
 
-from ..base import ProviderConfig, TTSProvider, TTSResult, VoiceDesignResult, pick_catalog_voice
+from ..base import ProviderConfig, TTSProvider, TTSResult, VoiceDesignResult
 from ..http import get_http
 from ..speech_style import speech_style_matches, styled_speech_text
 from ._errors import extract_minimax_audio, raise_for_minimax_response
-
-logger = logging.getLogger(__name__)
 
 
 class MiniMaxTTSProvider(TTSProvider):
     """通过 MiniMax 同步 POST /v1/t2a_v2 提供 TTS（{model,text,voice_setting:{voice_id,speed,vol},audio_setting:{format,sample_rate}}，data.audio 为 hex 编码音频，本模块解码回字节）；异步长文本 /v1/t2a_async_v2 未封装，chat 回复足够短，落在 10000 字符同步上限内。"""
 
     provider_name = "minimax"
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"tts": "speech-2.8-hd"}
-    DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"tts": 8_000}
+    DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
+    DEFAULT_MODEL: ClassVar[str] = "speech-2.8-hd"
     VOICE_DESIGN_GUIDE = """\
 用一段文字描述你想要的音色，描述越具体效果越好。建议涵盖：
 • 性别与年龄：如"沉稳可靠的中年男性"、"专业播音腔的中年女性"
@@ -682,57 +679,37 @@ preview_text 为试听文本——设计完成后会用它合成一段示例音�
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
 
-    def _request_payload(
-        self,
-        text: str,
-        voice: str,
-        fmt: str,
-        speed: float | None,
-        speech_style: SpeechStyle | None,
-    ) -> dict:
-        speech_style = (
+    def _request_payload(self, text: str, voice: str, speech_style: SpeechStyle | None) -> dict:
+        style = (
             speech_style
-            if speech_style
-            and speech_style.provider == "minimax"
+            if isinstance(speech_style, MiniMaxSpeechStyle)
             and speech_style_matches(speech_style, self.provider_name, self.config.model)
             else None
         )
-        chosen_voice = voice or pick_catalog_voice(voice, self.VOICE_CATALOG)
-        if voice != chosen_voice:
-            logger.info("minimax tts: substituted voice", extra={"requested": voice, "used": chosen_voice})
         return {
             "model": self.config.model,
-            "text": styled_speech_text(text, speech_style, provider=self.provider_name, model=self.config.model),
+            "text": styled_speech_text(text, style) if style else text,
             "voice_setting": {
-                "voice_id": chosen_voice,
-                "speed": speed if speed is not None else speech_style.speed if speech_style else 1.0,
+                # 自定义与声纹设计音色不在目录内，原样透传。
+                "voice_id": voice or self.VOICE_CATALOG[0]["id"],
+                "speed": style.speed if style else 1.0,
                 "vol": 1.0,
                 "pitch": 0,
-                **({"emotion": speech_style.emotion} if speech_style and speech_style.emotion else {}),
+                **({"emotion": style.emotion} if style and style.emotion else {}),
             },
-            "audio_setting": {"sample_rate": 32000, "bitrate": 128000, "format": fmt, "channel": 1},
+            "audio_setting": {"sample_rate": 32000, "bitrate": 128000, "format": "mp3", "channel": 1},
         }
 
-    async def synthesize(
-        self,
-        text: str,
-        *,
-        voice: str = "",
-        fmt: str = "mp3",
-        speed: float | None = None,
-        speech_style: SpeechStyle | None = None,
-    ) -> TTSResult:
-        payload = self._request_payload(text, voice, fmt, speed, speech_style)
+    async def synthesize(self, text: str, *, voice: str, speech_style: SpeechStyle | None) -> TTSResult:
+        payload = self._request_payload(text, voice, speech_style)
         resp = await self._client.post("/v1/t2a_v2", json=payload)
-        body = raise_for_minimax_response(resp, provider="minimax", model=self.config.model)
-        audio = extract_minimax_audio(body)
-        mime = "audio/mpeg" if fmt == "mp3" else f"audio/{fmt}"
-        return TTSResult(audio=audio, mime=mime, voice=payload["voice_setting"]["voice_id"])
+        audio = extract_minimax_audio(raise_for_minimax_response(resp))
+        return TTSResult(audio=audio, mime="audio/mpeg", voice=payload["voice_setting"]["voice_id"])
 
     async def design_voice(self, prompt: str, *, preview_text: str = "") -> VoiceDesignResult:
         payload: dict = {"prompt": prompt, "preview_text": preview_text or "你好，我是你的桌面伙伴。"}
         resp = await self._client.post("/v1/voice_design", json=payload)
-        body = raise_for_minimax_response(resp, provider="minimax", model=self.config.model)
+        body = raise_for_minimax_response(resp)
         voice_id = body.get("voice_id", "")
         if not voice_id:
             raise RuntimeError("MiniMax voice design returned no voice_id")

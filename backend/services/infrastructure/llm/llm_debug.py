@@ -3,22 +3,12 @@ from typing import Any
 
 from components import SETTINGS, get_logger
 
-DEBUG_LOGGER_NAME = "llm.debug"
-_debug_logger = get_logger(DEBUG_LOGGER_NAME)
+_debug_logger = get_logger("llm.debug")
 
 
-def is_enabled() -> bool:
-    # 主开关：尊重显式开关。根日志级别独立 —— 仅调 ``log_level = DEBUG`` 而未开此开关时不会把用户 prompt 发到 stdout。
-    return bool(getattr(SETTINGS, "llm_debug_logging", False))
-
-
-def _max_chars() -> int:
-    return max(0, int(getattr(SETTINGS, "llm_debug_max_chars", 4000)))
-
-
-def truncate_for_log(text: Any, *, max_chars: int | None = None) -> tuple[str | None, int]:
+def truncate_for_log(text: Any) -> tuple[str | None, int]:
     """返回 ``(preview, original_len)``；非字符串输入被替换为简短类型标记，避免误导性的 repr。"""
-    cap = _max_chars() if max_chars is None else max(0, max_chars)
+    cap = max(0, SETTINGS.llm_debug_max_chars)
     if text is None:
         return None, 0
     if not isinstance(text, str):
@@ -115,9 +105,8 @@ def summarize_error(exc: BaseException) -> dict[str, Any]:
     """压缩错误到足够 grep 的粒度，但避免泄露供应商完整错误体（可能含 request ID / 内部 URL）。"""
     out: dict[str, Any] = {"type": type(exc).__name__, "message": str(exc)[:500]}
     if classified := getattr(exc, "classified", None):
-        out["reason"] = classified.reason.value if classified.reason else None
+        out["reason"] = classified.reason.value
         out["status_code"] = classified.status_code
-        out["retryable"] = classified.retryable
         out["should_fallback"] = classified.should_fallback
     if "status_code" not in out and (status := getattr(exc, "status_code", None)) is not None:
         out["status_code"] = status
@@ -140,7 +129,8 @@ def log_event(
     **extras: Any,
 ) -> None:
     """统一日志出口。``phase`` 用于还原时间线（request → response / error），``extras`` 直接透传层专属字段如 ``chain_index`` / ``next_provider``。"""
-    if not is_enabled():
+    # 独立于根日志级别：仅调 DEBUG 而未开此开关时不把用户 prompt 发到 stdout。
+    if not SETTINGS.llm_debug_logging:
         return
     fields: dict[str, Any] = {
         "call_id": call_id,

@@ -45,8 +45,6 @@ SESSION_TO_GLOBAL_KEY_ALIASES: dict[str, str] = {
     "temperature": "agent.temperature",
     "context_compression_threshold": "chat.context_compression_threshold",
 }
-# 用字符串 "true" 而不是 bool，以匹配 user_settings.get() 的比较模式。
-BACKGROUND_REVIEW_DEFAULT: str = "true"
 
 # 附件、语音与生成资产的协议判别与供应商硬限。
 # 协议层附件类型判别；聊天管道接受 image（视觉模型以 image_url 消费）与 video（上传后以 input_video 消费）。

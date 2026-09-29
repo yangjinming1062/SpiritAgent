@@ -16,7 +16,7 @@ WS 和本地 IPC 使用 JSON-RPC 2.0；REST、上传及下载不套 RPC 信封�
 
 ### 登录、握手与心跳
 
-ticket 关联登录记录；握手及入站处理核对用户与登录有效性。正常刷新不撤销登录，注销、另一端激活或管理员停用则清理连接、在途回合与工具等待。长效凭据不进公开 WS URL，`?token=` 仅供后端内部调用。
+ticket 关联登录记录；握手及入站处理核对用户与登录有效性。正常刷新不撤销登录，注销、另一端激活或管理员停用则清理连接、在途回合与工具等待。长效凭据不进 WS URL，握手只接受 `?ticket=`。
 
 关闭码 `1008` 停止自动重连，表示策略拒绝，维护状态也可能使用，不能据此断言令牌失效。心跳用 `session.ping`，无入站帧超时以 `4000/heartbeat` 重连；探测间隔和超时见 [JsonRpcGatewayClient](../client/renderer/shared/lib/gateway-protocol/json-rpc-gateway.ts)。
 
@@ -56,7 +56,7 @@ Client 决定完整入口互斥、精灵显隐及窗口位置。Backend 提供�
 
 模型记忆工具只能使用服务端验证的原始证据；更新携当前 ID 与版本，并发冲突整批拒绝。候选、失效、过期和已遗忘内容不得作为有效事实召回。模型不得指定身份、作用域或来源；具体决策结构见 [memory_policy](../backend/services/domains/memory/memory_policy.py)。
 
-`tools.sync` 声明 `skill_scope_version=1` 才开放学习技能工具。Backend 将 `skill_scope` 放在模型参数之外，Client 转发 `execute_scoped_tool`，Runner 在调用期间固定用户与预设目录。异步和委派继承该域，不读取界面当前选择。
+学习技能工具随 `tools.sync` 同步开放。Backend 派发时将 `skill_scope` 放在模型参数之外，Client 转发 `execute_scoped_tool`，Runner 在调用期间固定用户与预设目录。异步和委派继承该域，不读取界面当前选择。
 
 ### 事件路由
 
@@ -287,7 +287,7 @@ sequenceDiagram
     C->>R: 推送 full config
     C->>R: get_tools
     R-->>C: 实际工具清单
-    C->>B: tools.sync 与 skill_scope_version
+    C->>B: tools.sync
     Note over C,R: 断开、崩溃或开始停止时立即作废能力缓存
     opt 云端仍连接
         C->>B: 空 tools.sync，撤销新派发资格
@@ -447,7 +447,7 @@ flowchart TD
 
 对话摘要的覆盖消息引用须随消息 ID 重映射，缺少原消息或跨会话引用时拒绝相关类别恢复。IM 消费排序位置也须映射到新消息序列，保持接收与消费次序的区别；摘要读取见[对话上下文约束](../backend/services/application/chat/README.md#上下文与记忆)。
 
-覆盖只清理本次通过预检且准备写入的数据类，旧包未声明内容保留；会破坏未恢复关联数据的类别不得先清空。会话与消息成对恢复，特殊会话按预设去重，普通会话独立映射，无法映射的附件单独报告。派生来源无法映射时置空，子 Agent 会话则须映射到同域发起会话；缺少派生来源字段的旧备份按委派标题或首条委派消息识别子 Agent 会话，其余带父会话的记录恢复为派生会话。
+覆盖只清理本次通过预检且准备写入的数据类，旧包未声明内容保留；会破坏未恢复关联数据的类别不得先清空。会话与消息成对恢复，特殊会话按预设去重，普通会话独立映射，无法映射的附件单独报告。派生来源无法映射时置空，子 Agent 会话则须映射到同域发起会话。
 
 文件恢复按目标相对路径处理：目标文件已存在时跳过复制，并将备份中的引用映射到该文件；导入不会覆盖同名文件或另建冲突副本。
 

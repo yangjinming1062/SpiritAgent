@@ -11,6 +11,7 @@ from components import (
     TITLE_MAX_CHARS,
     TITLE_SNIPPET_MAX_CHARS,
     get_logger,
+    resolve_prompt_text,
 )
 from modules.conversation import Conversation
 from prompts.chat import TITLE_PROMPTS
@@ -28,11 +29,6 @@ from services.infrastructure.llm import (
 logger = get_logger(__name__)
 
 _TITLE_PREFIX = "title:"
-
-
-def _title_prompt(language: str) -> str:
-    lang = (language or "").strip().lower()
-    return TITLE_PROMPTS.get(lang, TITLE_PROMPTS[DEFAULT_LANGUAGE])
 
 
 def _clean_title(raw: str) -> str:
@@ -67,7 +63,7 @@ async def auto_generate_title(
         client = client_for_config(llm_config)
         request = build_responses_kwargs(
             model=llm_config.model_name,
-            instructions=_title_prompt(language),
+            instructions=resolve_prompt_text(TITLE_PROMPTS, language),
             input_items=[
                 {
                     "role": "user",

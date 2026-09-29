@@ -53,7 +53,7 @@ async def replace_last_user_message(
     directives = [line for line in message_text(source).splitlines() if _ATTACHMENT_DIRECTIVE.match(line.strip())]
     content = "\n".join([text.strip(), *directives])
     if source.content_type == "multimodal_v1":
-        parts = safe_json_loads(source.content, default=None)
+        parts = safe_json_loads(source.content or "", default=None)
         if not isinstance(parts, list) or any(not isinstance(part, dict) for part in parts):
             raise EditNotAllowedError("原消息附件格式无效，无法编辑")
         content = json.dumps(

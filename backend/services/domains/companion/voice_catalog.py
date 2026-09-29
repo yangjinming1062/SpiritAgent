@@ -2,6 +2,7 @@ from modules.companion import VoiceEntry, VoiceMatchResponse, VoicesListResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.infrastructure.llm import (
+    ProviderConfig,
     ServiceType,
     VoiceDesignResult,
     resolve,
@@ -37,14 +38,16 @@ def _sort_voices_by_language(voices: list[VoiceEntry]) -> list[VoiceEntry]:
     return sorted(voices, key=lambda v: _LANGUAGE_BUCKET.get(v.language or "", 4))
 
 
+def _chain_voices(chain: list[ProviderConfig], language: str | None) -> list[VoiceEntry]:
+    """按能力链顺序汇总音色；指定语言时保留该语言与多语言音色。"""
+    voices = [voice for config in chain for voice in voices_for_provider(config.provider_name)]
+    return [voice for voice in voices if voice.language in {language, "multi"}] if language else voices
+
+
 async def list_tts_voices(db: AsyncSession, user_id: int, language: str | None = None) -> VoicesListResponse:
     """返回全部已配置 TTS 供应商的音色目录，并按当前界面语言收敛。"""
     chain = await resolve_provider_chain(db, user_id, "tts")
-    voices = _sort_voices_by_language(
-        [voice for config in chain for voice in voices_for_provider(config.provider_name)],
-    )
-    if language:
-        voices = [v for v in voices if v.language in {language, "multi"}]
+    voices = _sort_voices_by_language(_chain_voices(chain, language))
     design_cls = try_resolve(ServiceType.tts, chain[0].provider_name) if chain else None
     guide = design_cls.VOICE_DESIGN_GUIDE if design_cls else None
     return VoicesListResponse(
@@ -105,10 +108,7 @@ async def match_user_voice(
     language: str | None = None,
 ) -> VoiceMatchResponse:
     """按用户偏好文本在全部已配置 TTS 供应商的当前语言音色中挑选。"""
-    chain = await resolve_provider_chain(db, user_id, "tts")
-    voices = [voice for config in chain for voice in voices_for_provider(config.provider_name)]
-    if language:
-        voices = [voice for voice in voices if voice.language in {language, "multi"}]
+    voices = _chain_voices(await resolve_provider_chain(db, user_id, "tts"), language)
     best, alternatives = match_voice(preference or "", voices)
     return VoiceMatchResponse(voice=best, alternatives=alternatives)
 

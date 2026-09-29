@@ -40,14 +40,21 @@ async def get_character_card(db: AsyncSession, user_id: int, *, lock: bool = Fal
     return await db.scalar(query)
 
 
-def character_card_response(card: CompanionCharacterCard) -> CharacterCardResponse:
+def _card_features(card: CompanionCharacterCard) -> tuple[CharacterFeatures, CharacterOverrides, CharacterFeatures]:
+    """返回自动特征、用户覆盖与两者合并后的生效特征。"""
     automatic = CharacterFeatures.model_validate_json(card.automatic_json)
     overrides = CharacterOverrides.model_validate_json(card.overrides_json)
+    features = CharacterFeatures.model_validate({**automatic.model_dump(), **overrides.model_dump(exclude_none=True)})
+    return automatic, overrides, features
+
+
+def character_card_response(card: CompanionCharacterCard) -> CharacterCardResponse:
+    automatic, overrides, features = _card_features(card)
     return CharacterCardResponse.model_validate(
         {
             "avatar_id": card.avatar_id,
             "revision": card.revision,
-            "features": {**automatic.model_dump(), **overrides.model_dump(exclude_none=True)},
+            "features": features,
             "overrides": overrides,
             "automatic": automatic,
             "status": card.status,
@@ -65,12 +72,12 @@ async def load_character_snapshot(
     card = await get_character_card(db, user_id)
     if card is None or card.revision == 0:
         return None
-    response = character_card_response(card)
+    _, overrides, features = _card_features(card)
     return CharacterCardSnapshot(
-        avatar_id=response.avatar_id,
-        revision=response.revision,
-        features=response.features,
-        overrides=response.overrides,
+        avatar_id=card.avatar_id,
+        revision=card.revision,
+        features=features,
+        overrides=overrides,
     )
 
 

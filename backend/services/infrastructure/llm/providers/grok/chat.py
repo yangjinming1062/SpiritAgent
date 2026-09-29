@@ -1,16 +1,13 @@
 from typing import ClassVar
 
-from ..base import ServiceType
-from ..openai_responses import OpenAIResponsesChatProvider
+from ..base import ChatProvider
 
 
-class GrokChatProvider(OpenAIResponsesChatProvider):
+class GrokChatProvider(ChatProvider):
     """通过 xAI /v1/responses 提供 chat；Bearer token 鉴权，上下文 500k。"""
 
     provider_name = "grok"
-    service_type = ServiceType.llm
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"llm": "grok-4.5"}
-    DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"llm": 500_000}
+    DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"
+    DEFAULT_MODEL: ClassVar[str] = "grok-4.5"
+    CONTEXT_TOKENS: ClassVar[int] = 500_000
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "medium", "high", "xhigh"})
-    # 按 OpenAI 兼容默认 [0.0, 2.0]
-    TEMPERATURE_MAX: ClassVar[float] = 2.0

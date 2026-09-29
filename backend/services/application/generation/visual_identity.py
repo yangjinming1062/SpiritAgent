@@ -50,10 +50,6 @@ class SelfVisualPlan:
     override_outfit_description: str = ""
 
 
-def _normalize_override(outfit_override: str | None) -> str:
-    return (outfit_override or "").strip()
-
-
 async def load_self_visual_context(user_id: int) -> SelfVisualContext:
     async with SESSION_LOCAL() as db:
         identity = await require_character_snapshot(db, user_id)
@@ -84,16 +80,11 @@ async def load_self_visual_context(user_id: int) -> SelfVisualContext:
 
 
 def apply_outfit_override(context: SelfVisualContext, outfit_override: str | None) -> SelfVisualPlan:
-    override = _normalize_override(outfit_override)
-    return SelfVisualPlan(context=context, override_outfit_description=override)
-
-
-def plan_outfit_description(plan: SelfVisualPlan) -> str:
-    return plan.override_outfit_description or plan.context.outfit_description
+    return SelfVisualPlan(context=context, override_outfit_description=(outfit_override or "").strip())
 
 
 def build_self_image_prompt(plan: SelfVisualPlan, prompt: str, *, has_outfit_reference: bool) -> str:
-    outfit = plan_outfit_description(plan)
+    outfit = plan.override_outfit_description or plan.context.outfit_description
     parts = [
         SELF_IMAGE_REFERENCE_TEMPLATE.format(
             reference="图 1" if has_outfit_reference else "参考图",
@@ -114,7 +105,7 @@ async def optional_outfit_image_reference(plan: SelfVisualPlan, user_id: int) ->
     if plan.override_outfit_description or not plan.context.outfit_reference:
         return None
     async with SESSION_LOCAL() as db:
-        chain, _ = await resolve_image_gen_chain(db, user_id, plan.context.reference_image, multiple_references=True)
+        chain, _ = await resolve_image_gen_chain(db, user_id, has_reference=True, multiple_references=True)
     return plan.context.outfit_reference if chain else None
 
 
@@ -164,21 +155,6 @@ async def align_character_reference(
         save_progress=save_progress,
     )
     return paths[0]
-
-
-def needs_identity_alignment(
-    identity: CharacterCardSnapshot,
-    applied_revision: int | None,
-    *,
-    identity_reference_path: str,
-    applied_identity_reference_path: str | None,
-) -> bool:
-    if applied_identity_reference_path:
-        return applied_identity_reference_path != identity_reference_path
-    # 旧外观缺少身份图来源，沿用修订校验；文字资料不能作为校准目标。
-    return applied_revision != identity.revision and (
-        identity.revision > 1 or bool(identity.overrides.model_dump(exclude_none=True))
-    )
 
 
 async def prepare_self_video_reference(

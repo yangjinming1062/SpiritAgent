@@ -11,7 +11,6 @@ from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, get_logger
 from PIL import Image
 
 from .._reference import resolve_reference_bytes
-from .._size_aspect import SIZE_TO_ASPECT
 from ..base import (
     ImageAsset,
     ImageGenProvider,
@@ -74,85 +73,34 @@ def _resolve_wh(req: ImageGenRequest) -> tuple[int, int]:
                 return (max(64, w // 32 * 32), max(64, h // 32 * 32))
         except ValueError:
             pass
-    aspect = req.aspect_ratio or SIZE_TO_ASPECT.get(req.size or "")
-    return _ASPECT_TO_WH.get(aspect or "", (1024, 1024))
+    return _ASPECT_TO_WH.get(req.aspect_ratio or "", (1024, 1024))
 
 
-def _t2i_graph(
+def _graph(
     *,
     prompt: str,
+    seed: int,
     width: int,
     height: int,
-    seed: int,
-    batch_size: int,
-    unet_name: str,
-    clip_name: str,
-    vae_name: str,
-) -> dict[str, Any]:
-    return {
-        "1": {
-            "class_type": "UNETLoader",
-            "inputs": {"unet_name": unet_name, "weight_dtype": "default"},
-        },
-        "2": {
-            "class_type": "CLIPLoader",
-            "inputs": {"clip_name": clip_name, "type": "qwen_image", "device": "default"},
-        },
-        "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae_name}},
-        "4": {
-            "class_type": "TextEncodeQwenImage21",
-            "inputs": {
-                "clip": ["2", 0],
-                "prompt": prompt,
-                "negative_prompt": "",
-                "resolution": min(width, height),
-            },
-        },
-        "5": {
-            "class_type": "EmptyLatentImage",
-            "inputs": {"width": width, "height": height, "batch_size": batch_size},
-        },
-        "6": {
-            "class_type": "KSampler",
-            "inputs": {
-                "model": ["1", 0],
-                "positive": ["4", 0],
-                "negative": ["4", 1],
-                "latent_image": ["5", 0],
-                "seed": seed,
-                "steps": _STEPS,
-                "cfg": 1,
-                "sampler_name": "euler",
-                "scheduler": "simple",
-                "denoise": 1,
-            },
-        },
-        "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 0]}},
-        "8": {
-            "class_type": "PreviewImage",
-            "inputs": {"images": ["7", 0]},
-        },
-    }
-
-
-def _edit_graph(
-    *,
-    prompt: str,
-    seed: int,
     image_names: list[str],
+    image_edit: bool,
     unet_name: str,
     clip_name: str,
     vae_name: str,
-    width: int,
-    height: int,
-    image_edit: bool = False,
 ) -> dict[str, Any]:
-    """带参考图工作流。
+    """ComfyUI 工作流；有参考图时由编码节点读取参考图。
 
-    ``image_edit=True`` 时采样 latent 取编码节点输出，画布随第一张参考图；
+    ``image_edit=True``（须带参考图）时采样 latent 取编码节点输出，画布随第一张参考图；
     否则用 width×height 的 EmptyLatentImage，输出尺寸服从请求 size/aspect。
     """
-    latent_image: list[Any] = ["4", 2] if image_edit else ["5", 0]
+    encode_inputs: dict[str, Any] = {"clip": ["2", 0]}
+    if image_names:
+        encode_inputs["vae"] = ["3", 0]
+    encode_inputs.update(
+        prompt=prompt,
+        negative_prompt="",
+        resolution=0 if image_names else min(width, height),
+    )
     nodes: dict[str, Any] = {
         "1": {
             "class_type": "UNETLoader",
@@ -163,46 +111,41 @@ def _edit_graph(
             "inputs": {"clip_name": clip_name, "type": "qwen_image", "device": "default"},
         },
         "3": {"class_type": "VAELoader", "inputs": {"vae_name": vae_name}},
-        "4": {
-            "class_type": "TextEncodeQwenImage21",
-            "inputs": {
-                "clip": ["2", 0],
-                "vae": ["3", 0],
-                "prompt": prompt,
-                "negative_prompt": "",
-                "resolution": 0,
-            },
-        },
-        "6": {
-            "class_type": "KSampler",
-            "inputs": {
-                "model": ["1", 0],
-                "positive": ["4", 0],
-                "negative": ["4", 1],
-                "latent_image": latent_image,
-                "seed": seed,
-                "steps": _STEPS,
-                "cfg": 1,
-                "sampler_name": "euler",
-                "scheduler": "simple",
-                "denoise": 1,
-            },
-        },
-        "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 0]}},
-        "8": {
-            "class_type": "PreviewImage",
-            "inputs": {"images": ["7", 0]},
-        },
+        "4": {"class_type": "TextEncodeQwenImage21", "inputs": encode_inputs},
     }
     if not image_edit:
         nodes["5"] = {
             "class_type": "EmptyLatentImage",
             "inputs": {"width": width, "height": height, "batch_size": 1},
         }
+    nodes.update(
+        {
+            "6": {
+                "class_type": "KSampler",
+                "inputs": {
+                    "model": ["1", 0],
+                    "positive": ["4", 0],
+                    "negative": ["4", 1],
+                    "latent_image": ["4", 2] if image_edit else ["5", 0],
+                    "seed": seed,
+                    "steps": _STEPS,
+                    "cfg": 1,
+                    "sampler_name": "euler",
+                    "scheduler": "simple",
+                    "denoise": 1,
+                },
+            },
+            "7": {"class_type": "VAEDecode", "inputs": {"samples": ["6", 0], "vae": ["3", 0]}},
+            "8": {
+                "class_type": "PreviewImage",
+                "inputs": {"images": ["7", 0]},
+            },
+        },
+    )
     for i, name in enumerate(image_names, start=1):
         load_id = f"1{i}"
         nodes[load_id] = {"class_type": "LoadImage", "inputs": {"image": name}}
-        nodes["4"]["inputs"][f"images.image_{i}"] = [load_id, 0]
+        encode_inputs[f"images.image_{i}"] = [load_id, 0]
     return nodes
 
 
@@ -213,8 +156,8 @@ class LocalImageGenProvider(ImageGenProvider):
     """
 
     provider_name = "local"
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"image_gen": "qwen"}
-    DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"image_gen": 8_000}
+    DEFAULT_BASE_URL: ClassVar[str] = "http://127.0.0.1:8188"
+    DEFAULT_MODEL: ClassVar[str] = "qwen"
     # 本地 ComfyUI 无鉴权；api_key 可为空，仅占位。
     requires_api_key: ClassVar[bool] = False
     supports_reference_image: ClassVar[bool] = True
@@ -263,8 +206,6 @@ class LocalImageGenProvider(ImageGenProvider):
                 return options[0]
             raise ProviderError(
                 f"local image_gen found no model for {prefixes}",
-                provider=self.provider_name,
-                model=self.config.model,
             )
 
         files = (
@@ -285,8 +226,6 @@ class LocalImageGenProvider(ImageGenProvider):
             raise ProviderError(
                 "local image_gen reference exceeds the configured image size limit",
                 status_code=413,
-                provider=self.provider_name,
-                model=self.config.model,
             )
         ext = "png" if mime == "image/png" else "jpg" if "jpeg" in mime else "webp" if "webp" in mime else "png"
         filename = f"ref_{hashlib.sha256(data).hexdigest()}.{ext}"
@@ -297,8 +236,6 @@ class LocalImageGenProvider(ImageGenProvider):
                 f"local image_gen upload failed: {resp.status_code} {resp.text[:300]}",
                 status_code=resp.status_code,
                 body={"text": resp.text[:500]},
-                provider=self.provider_name,
-                model=self.config.model,
             )
         body = resp.json()
         name = body.get("name") or filename
@@ -314,8 +251,6 @@ class LocalImageGenProvider(ImageGenProvider):
                 raise ProviderError(
                     f"local image_gen history failed: {resp.status_code}",
                     status_code=resp.status_code,
-                    provider=self.provider_name,
-                    model=self.config.model,
                 )
             payload = resp.json()
             entry = payload.get(prompt_id)
@@ -326,8 +261,6 @@ class LocalImageGenProvider(ImageGenProvider):
         if history is None:
             raise ProviderError(
                 f"local image_gen timed out waiting for {prompt_id}",
-                provider=self.provider_name,
-                model=self.config.model,
             )
 
         status = history.get("status") or {}
@@ -337,8 +270,6 @@ class LocalImageGenProvider(ImageGenProvider):
             raise ProviderError(
                 f"local image_gen execution error: {detail}",
                 body=status,
-                provider=self.provider_name,
-                model=self.config.model,
             )
 
         assets: list[ImageAsset] = []
@@ -354,16 +285,12 @@ class LocalImageGenProvider(ImageGenProvider):
                     raise ProviderError(
                         f"local image_gen view failed: {view.status_code}",
                         status_code=view.status_code,
-                        provider=self.provider_name,
-                        model=self.config.model,
                     )
                 b64 = base64.b64encode(view.content).decode("utf-8")
                 if require_transparency and not _has_transparency(b64):
                     raise ProviderError(
                         "local image_gen returned a PNG without transparent pixels",
                         status_code=400,
-                        provider=self.provider_name,
-                        model=self.config.model,
                     )
                 assets.append(ImageAsset(b64=b64, mime="image/png"))
         return assets
@@ -375,8 +302,6 @@ class LocalImageGenProvider(ImageGenProvider):
                 f"local image_gen submit failed: {resp.status_code} {resp.text[:400]}",
                 status_code=resp.status_code,
                 body={"text": resp.text[:500]},
-                provider=self.provider_name,
-                model=self.config.model,
             )
         body = resp.json()
         prompt_id = body.get("prompt_id")
@@ -384,64 +309,41 @@ class LocalImageGenProvider(ImageGenProvider):
             raise ProviderError(
                 f"local image_gen missing prompt_id: {body}",
                 body=body,
-                provider=self.provider_name,
-                model=self.config.model,
             )
         assets = await self._wait_and_fetch(prompt_id, require_transparency=require_transparency)
         if not assets:
             raise ProviderError(
                 f"local image_gen returned no images for {prompt_id}",
-                provider=self.provider_name,
-                model=self.config.model,
             )
         return assets
 
     async def generate(self, req: ImageGenRequest) -> ImageGenResult:
         unet_name, clip_name, vae_name = await self._resolve_model_files()
-        prompt = _wrap_rgba(req.prompt) if req.background == "transparent" else req.prompt
+        require_transparency = req.background == "transparent"
+        prompt = _wrap_rgba(req.prompt) if require_transparency else req.prompt
         count = int(req.n or 1)
         if not 1 <= count <= 4:
-            raise ProviderError(
-                "local image_gen accepts between 1 and 4 images per request",
-                status_code=400,
-                provider=self.provider_name,
-                model=self.config.model,
-            )
-        require_transparency = req.background == "transparent"
+            raise ProviderError("local image_gen accepts between 1 and 4 images per request", status_code=400)
 
         image_names: list[str] = []
         for ref in (req.reference_image, req.secondary_reference_image):
             if ref:
                 image_names.append(await self._upload_image(ref))
+        width, height = _resolve_wh(req)
 
         assets: list[ImageAsset] = []
         for i in range(count):
-            seed = (int(time.time() * 1000) + i) % (2**31)
-            if image_names:
-                width, height = _resolve_wh(req)
-                graph = _edit_graph(
-                    prompt=prompt,
-                    seed=seed,
-                    image_names=image_names,
-                    unet_name=unet_name,
-                    clip_name=clip_name,
-                    vae_name=vae_name,
-                    width=width,
-                    height=height,
-                    image_edit=bool(req.image_edit),
-                )
-            else:
-                width, height = _resolve_wh(req)
-                graph = _t2i_graph(
-                    prompt=prompt,
-                    width=width,
-                    height=height,
-                    seed=seed,
-                    batch_size=1,
-                    unet_name=unet_name,
-                    clip_name=clip_name,
-                    vae_name=vae_name,
-                )
+            graph = _graph(
+                prompt=prompt,
+                seed=(int(time.time() * 1000) + i) % (2**31),
+                width=width,
+                height=height,
+                image_names=image_names,
+                image_edit=bool(req.image_edit and image_names),
+                unet_name=unet_name,
+                clip_name=clip_name,
+                vae_name=vae_name,
+            )
             assets.extend((await self._run_job(graph, require_transparency=require_transparency))[:1])
 
         return ImageGenResult(images=assets, model=self.config.model, raw={"jobs": count})

@@ -1,9 +1,7 @@
 """动作库 REST 入口：目录、提案、播放回执、额度状态与管理操作。"""
 
-from pathlib import Path
-
 from common import get_router
-from components import SETTINGS, DbSession, safe_json_loads
+from components import DbSession
 from fastapi import HTTPException
 from modules.auth import CurrentUser
 from modules.companion import (
@@ -13,19 +11,16 @@ from modules.companion import (
     ActionDesignRequest,
     ActionDesignResult,
     ActionPlaybackReceipt,
-    ActionSummary,
     CompanionAction,
     CompanionOperationResponse,
 )
 from modules.ws import emit_ws_event
-from services.application.actions import accept_proposal
-from services.application.actions.pipeline import schedule_action_generation, schedule_proposal_review
+from services.application.actions import accept_proposal, schedule_accepted_proposal
 from services.domains.actions import (
     get_action,
     get_active_pack,
     get_daily_budget_status,
     get_playback,
-    list_pack_actions,
     publish_action_catalog,
     record_play_result,
 )
@@ -40,10 +35,8 @@ async def _republish_catalog(db: AsyncSession, user_id: int) -> None:
     pack = await get_active_pack(db, user_id)
     if pack is None:
         return
-    assets_dir = Path(SETTINGS.data_dir) / "companion-assets" / str(user_id)
-    assets_dir.mkdir(parents=True, exist_ok=True)
     try:
-        version = await publish_action_catalog(db, pack, assets_dir=assets_dir)
+        version = await publish_action_catalog(db, pack)
     except Exception:  # noqa: BLE001 — 目录不足以重发时保留数据库变更，不回滚管理操作
         await db.commit()
         return
@@ -58,49 +51,24 @@ async def _republish_catalog(db: AsyncSession, user_id: int) -> None:
 
 @router.get("/catalog", response_model=ActionCatalogResponse)
 async def get_catalog(user: CurrentUser, db: DbSession) -> ActionCatalogResponse:
+    """当前包的目录指针；动作明细由客户端从 manifest_url 拉取。"""
     pack = await get_active_pack(db, user.id)
     if pack is None:
-        return ActionCatalogResponse(pack_id=0, catalog_version=0, appearance_epoch=0, actions=[])
-
-    actions = await list_pack_actions(db, pack.id, enabled_only=False)
-    summaries = [
-        ActionSummary(
-            action_id=action.id,
-            key=action.key,
-            name=action.name,
-            system_slot=action.system_slot or "",
-            kind=action.kind,
-            motion_description=action.motion_description,
-            use_when=safe_json_loads(action.use_when or "[]", default=[]),
-            avoid_when=safe_json_loads(action.avoid_when or "[]", default=[]),
-            tags=safe_json_loads(action.tags or "[]", default=[]),
-            enabled=action.enabled,
-        )
-        for action in actions
-    ]
-    manifest_url = signed_companion_asset_url(pack.manifest_path) if pack.manifest_path else None
+        return ActionCatalogResponse(pack_id=0, catalog_version=0, appearance_epoch=0)
     return ActionCatalogResponse(
         pack_id=pack.id,
         catalog_version=pack.catalog_version,
         appearance_epoch=pack.appearance_epoch,
-        manifest_url=manifest_url,
-        actions=summaries,
+        manifest_url=signed_companion_asset_url(pack.manifest_path) if pack.manifest_path else None,
     )
 
 
 @router.post("/design", response_model=ActionDesignResult)
 async def design_action(body: ActionDesignRequest, user: CurrentUser, db: DbSession) -> ActionDesignResult:
-    result = await accept_proposal(db, user.id, body, source="user_requested")
+    acceptance = await accept_proposal(db, user.id, body, source="user_requested")
     await db.commit()
-    retry_pack_id = None
-    if result.outcome == "pending_review" and result.action_id is not None and result.proposal_id is None:
-        action = await get_action(db, result.action_id)
-        retry_pack_id = action.pack_id if action is not None else None
-    if result.outcome == "pending_review" and result.proposal_id is not None:
-        schedule_proposal_review(result.proposal_id, user.id)
-    elif result.outcome == "pending_review" and result.action_id is not None and retry_pack_id is not None:
-        schedule_action_generation(retry_pack_id, result.action_id, user.id)
-    return result
+    schedule_accepted_proposal(acceptance, user.id)
+    return acceptance.result
 
 
 @router.post("/playback/{play_id}/receipt")
@@ -116,7 +84,7 @@ async def submit_playback_receipt(
         raise HTTPException(status_code=404, detail="播放记录不存在")
     await record_play_result(
         db,
-        play_id,
+        entry,
         status=receipt.status,
         visible_duration_ms=receipt.visible_duration_ms,
         error=receipt.error,

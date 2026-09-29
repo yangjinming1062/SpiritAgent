@@ -91,4 +91,4 @@ async def companion_wait(
 
 
 def register(registry: ToolsRegistry) -> None:
-    registry.register("companion_wait", COMPANION_WAIT_SCHEMA, companion_wait)
+    registry.register(COMPANION_WAIT_SCHEMA, companion_wait)

@@ -4,7 +4,6 @@ from typing import Any
 
 from components import (
     CONTEXT_SUMMARY_HEADROOM_FACTOR,
-    DEFAULT_LANGUAGE,
     LLM_MAX_OUTPUT_TOKENS,
     SETTINGS,
     get_logger,
@@ -94,8 +93,8 @@ async def _summarize_block(
     client: Any,
     model: str,
     target_tokens: int,
-    temperature: float | None = None,
-    language: str = DEFAULT_LANGUAGE,
+    temperature: float,
+    language: str,
 ) -> tuple[str, bool, int, int]:
     """通过 Responses API 对输入项生成摘要；响应未完成时保留原上下文。"""
     request = build_responses_kwargs(
@@ -116,7 +115,7 @@ async def _summarize_block(
                 ],
             },
         ],
-        temperature=temperature if temperature is not None else 0.0,
+        temperature=temperature,
         max_output_tokens=max(LLM_MAX_OUTPUT_TOKENS, target_tokens * CONTEXT_SUMMARY_HEADROOM_FACTOR),
     )
     response = await call_with_retry(client, **request)
@@ -127,38 +126,32 @@ async def _summarize_block(
     return response.output_text.strip(), completed, prompt_tokens, completion_tokens
 
 
-async def compress_history_if_needed(
+def compression_due(
+    context: dict[str, Any],
+    *,
+    context_length: int,
+    threshold_ratio: float,
+    current_tokens: int | None,
+) -> bool:
+    """``current_tokens`` 为空时按当前上下文全量估算。"""
+    tokens = (
+        current_tokens
+        if current_tokens is not None
+        else approx_responses_tokens(context["instructions"], context["input"])
+    )
+    return context_length > 0 and tokens >= context_length * threshold_ratio
+
+
+async def compress_history(
     context: dict[str, Any],
     *,
     client: Any,
     model: str,
-    context_length: int,
-    enabled: bool | None = None,
-    threshold_ratio: float | None = None,
-    target_tokens: int | None = None,
-    temperature: float | None = None,
-    language: str = DEFAULT_LANGUAGE,
-    current_tokens: int | None = None,
-    force: bool = False,
+    temperature: float,
+    language: str,
 ) -> tuple[dict[str, Any], CompressionInfo | None]:
-    """按需或强制压缩历史；成功返回压缩后的 Responses 上下文，失败或无需压缩返回原上下文。"""
-    if not force:
-        if enabled is None:
-            enabled = SETTINGS.enable_context_compression
-        if not enabled:
-            return context, None
-
-        threshold = threshold_ratio if threshold_ratio is not None else SETTINGS.context_compression_threshold
-        tokens_to_check = (
-            current_tokens
-            if current_tokens is not None
-            else approx_responses_tokens(context["instructions"], context["input"])
-        )
-        if context_length <= 0 or tokens_to_check < context_length * threshold:
-            return context, None
-
-    target = target_tokens if target_tokens is not None else SETTINGS.context_summary_target_tokens
-
+    """压缩可总结的历史前缀；成功返回压缩后的 Responses 上下文，失败或无可压缩内容返回原上下文。"""
+    target = SETTINGS.context_summary_target_tokens
     source_ids: list[int | None] = context["source_message_ids"]
     block, keep = _pick_compressible_block(context["input"], source_message_ids=source_ids)
     if not block:

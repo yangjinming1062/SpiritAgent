@@ -2,7 +2,7 @@ import asyncio
 import json
 import time
 from collections.abc import Callable, Coroutine
-from datetime import UTC, date, datetime, timedelta
+from datetime import date, datetime, timedelta
 from functools import partial
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -24,7 +24,7 @@ from modules.auth import User
 from modules.companion import companion_cron_source_key
 from modules.conversation import Conversation
 from modules.scheduler import CronJob, NightlyActivityLog
-from modules.settings import UserSetting
+from modules.settings import UserSetting, decode_setting_value
 from sqlalchemy import DateTime, bindparam, delete, or_, select, text, tuple_
 from sqlalchemy.engine import Row
 
@@ -34,12 +34,13 @@ from services.application.nightly import run_nightly_pipeline
 from services.contracts import MemoryScope
 from services.domains.automation import STANDARD_CRON_KIND, compute_next_run_at
 from services.domains.companion import (
+    claim_companion_intent,
     enqueue_companion_intent,
     get_disturbance_tier,
     get_personality_tags,
     get_user_proactive_record,
+    has_pending_companion_intent,
     is_still,
-    list_companion_intents,
     note_outreach_throttle,
     queue_companion_intent,
 )
@@ -57,8 +58,8 @@ _SCANS: dict[str, asyncio.Task] = {}
 # per-user 最近一次记忆审核运行时间戳：进程本地——匹配 ARCHITECTURE「部署与运行时边界」（多 replica 会分裂状态）。
 _LAST_MEMORY_REVIEW: dict[MemoryScope, float] = {}
 
-# per-user 最近一次成功的 nightly pipeline 运行的本地日期字符串。
-_LAST_NIGHTLY_RUN: dict[MemoryScope, str] = {}
+# per-user 最近一次成功的 nightly pipeline 运行的目标本地日。
+_LAST_NIGHTLY_RUN: dict[MemoryScope, date] = {}
 
 # recall-pool 扫描本身的外层节流：扫描便宜（部分索引），但没用户符合时每分钟跑一次没意义。10 min 让发现延迟可控，由 per-user 6h 节流把重 LLM 调用频率压住。
 _LAST_MEMORY_REVIEW_SCAN: float = 0.0
@@ -131,7 +132,7 @@ async def _select_due_jobs() -> list[Row]:
     if online_user_ids:
         expiring_scope = or_(expiring_scope, CronJob.user_id.in_(online_user_ids))
     async with session_scope() as db:
-        return (
+        rows = (
             await db.execute(
                 select(
                     CronJob.id,
@@ -155,48 +156,15 @@ async def _select_due_jobs() -> list[Row]:
                 .limit(_MAX_DUE_PER_TICK + 1),
             )
         ).all()
+    return list(rows)
 
 
-async def _bulk_cas_advance(
-    due_jobs: list[Row],
-    now: datetime,
-) -> dict[int, dict[str, Any]]:
-    """批量 CAS 推进每个到期 job 的 next_run_at：CAS 谓词 (id, next_run_at, schedule) 防止 update_job 在 tick 中途推进 next_run_at（不匹配的行静默落败被丢弃）；用行值 IN 让 recurring UPDATE / one-shot DELETE 各一次语句搞定（PG 的 UPDATE/DELETE ... RETURNING），避免最多 200 次串行往返。返回 {job_id: {user_id, is_paused, payload}} 给 CAS 胜者，RETURNING 里没出现的视为落败丢弃。
-    db.commit() 必须显式：utils.session_scope 只 auto-close 不 commit；不显式 commit 时 db.close() 结束未提交事务，SQLAlchemy 在连接归还时丢弃 UPDATE。"""
-    if not due_jobs:
-        return {}
+async def _bulk_cas_advance(due_jobs: list[Row], now: datetime) -> list[Row]:
+    """批量 CAS 推进到期 job 的 next_run_at，返回需要触发的胜者；special 胜者的等待意图与推进同事务保存。
 
-    winners: dict[int, dict[str, Any]] = {}
-    new_runs: dict[int, datetime | None] = {}
-
-    for job in due_jobs:
-        if job.one_shot:
-            # 一次性 job 触发后删除——无需计算下次运行。
-            new_runs[job.id] = None
-            winners[job.id] = {
-                "user_id": job.user_id,
-                "is_paused": False,
-                "kind": job.kind,
-                "payload": {
-                    "prompt": job.prompt,
-                    "name": job.name,
-                    "conversation_id": job.conversation_id,
-                },
-            }
-        else:
-            next_run = compute_next_run_at(job.schedule, now)
-            new_runs[job.id] = next_run
-            winners[job.id] = {
-                "user_id": job.user_id,
-                "is_paused": next_run is None,
-                "kind": job.kind,
-                "payload": {
-                    "prompt": job.prompt,
-                    "name": job.name,
-                    "conversation_id": job.conversation_id,
-                },
-            }
-
+    CAS 谓词 (id, next_run_at, schedule) 防止 update_job 在 tick 中途推进 next_run_at（不匹配的行静默落败被丢弃）；用行值 IN 让 recurring UPDATE / one-shot DELETE 各一次语句搞定（PG 的 UPDATE/DELETE ... RETURNING），避免最多 200 次串行往返。
+    一次性 job 触发后删除；recurring job 的表达式失效时本次推进为暂停且不触发。"""
+    next_runs = {job.id: compute_next_run_at(job.schedule, now) for job in due_jobs if not job.one_shot}
     won: set[int] = set()
 
     async with session_scope() as db:
@@ -237,7 +205,7 @@ async def _bulk_cas_advance(
             }
             for i, j in enumerate(recurring):
                 params[f"id_{i}"] = j.id
-                params[f"next_{i}"] = new_runs[j.id]
+                params[f"next_{i}"] = next_runs[j.id]
             res = await db.execute(stmt, params)
             won.update(r[0] for r in res.all())
         if one_shots:
@@ -256,8 +224,9 @@ async def _bulk_cas_advance(
                 {"match": [(j.id, j.next_run_at) for j in one_shots]},
             )
             won.update(r[0] for r in res.all())
-        for job in sorted(due_jobs, key=lambda row: (row.user_id, row.id)):
-            if job.id in won and job.kind != STANDARD_CRON_KIND and not winners[job.id]["is_paused"]:
+        fired = [job for job in due_jobs if job.id in won and (job.one_shot or next_runs[job.id] is not None)]
+        for job in sorted(fired, key=lambda row: (row.user_id, row.id)):
+            if job.kind != STANDARD_CRON_KIND:
                 await enqueue_companion_intent(
                     db,
                     job.user_id,
@@ -266,13 +235,12 @@ async def _bulk_cas_advance(
                     expires_at=job.expires_at,
                 )
         await db.commit()
-
-    return {job.id: winners[job.id] for job in due_jobs if job.id in won}
+    return fired
 
 
 async def _advance_due_jobs(due_jobs: list[Row], now: datetime) -> None:
-    """批量推进调度游标，并按任务轨别启动伴侣无头回合或独立任务回合。"""
-    expired_ids = [job.id for job in due_jobs if job.expires_at is not None and job.expires_at <= now]
+    """批量推进调度游标：standard 启动独立任务回合，special 在保存等待意图后按用户认领。"""
+    expired_ids = {job.id for job in due_jobs if job.expires_at is not None and job.expires_at <= now}
     if expired_ids:
         async with session_scope() as db:
             await db.execute(delete(CronJob).where(CronJob.id.in_(expired_ids), CronJob.expires_at <= now))
@@ -280,12 +248,12 @@ async def _advance_due_jobs(due_jobs: list[Row], now: datetime) -> None:
 
     online_users = set(MANAGER.local_user_ids())
     deferred_users = {
-        int(job.user_id)
+        job.user_id
         for job in due_jobs
         if job.id not in expired_ids
         and job.kind != STANDARD_CRON_KIND
         and job.expires_at is not None
-        and int(job.user_id) in online_users
+        and job.user_id in online_users
     }
     still_results = await asyncio.gather(
         *(is_still(user_id) for user_id in deferred_users),
@@ -295,6 +263,7 @@ async def _advance_due_jobs(due_jobs: list[Row], now: datetime) -> None:
         user_id: (result if isinstance(result, bool) else True)
         for user_id, result in zip(deferred_users, still_results, strict=True)
     }
+    # 带 expires_at 的夜间主动问候在用户离线或静止档时保持 due；普通 special cron 仍按原周期语义推进。
     deliverable = [
         job
         for job in due_jobs
@@ -302,42 +271,43 @@ async def _advance_due_jobs(due_jobs: list[Row], now: datetime) -> None:
         and (
             job.kind == STANDARD_CRON_KIND
             or job.expires_at is None
-            or (int(job.user_id) in online_users and not still_by_user.get(int(job.user_id), True))
+            or (job.user_id in online_users and not still_by_user.get(job.user_id, True))
         )
     ]
-    # 带 expires_at 的夜间主动问候在用户离线或静止档时保持 due；普通 special cron 仍按原周期语义推进。
     if not deliverable:
         return
-    winners = await _bulk_cas_advance(deliverable, now)
-    for job_id, meta in winners.items():
-        if meta.get("is_paused"):
-            continue
-        if meta.get("kind") == STANDARD_CRON_KIND:
-            task = asyncio.create_task(execute_standard_turn(meta["user_id"], job_id, meta["payload"]))
-        else:
-            task = asyncio.create_task(queue_companion_intent(meta["user_id"]))
-        _BG.add(task, on_error=partial(_log_task_error, f"kick:{job_id}"))
-        track_user_task(int(meta["user_id"]), task)
-
-
-async def _queue_ignored_outreach(user_id: int, prompt: str) -> None:
-    async with session_scope() as db:
-        await enqueue_companion_intent(db, user_id, prompt, source_key="checkin:ignored")
-        await db.commit()
-    await queue_companion_intent(user_id)
+    fired = await _bulk_cas_advance(deliverable, now)
+    kicks: list[tuple[int, str, Coroutine[Any, Any, None]]] = [
+        (
+            job.user_id,
+            f"kick:{job.id}",
+            execute_standard_turn(
+                job.user_id,
+                job.id,
+                name=job.name,
+                prompt=job.prompt,
+                conversation_id=job.conversation_id,
+            ),
+        )
+        for job in fired
+        if job.kind == STANDARD_CRON_KIND
+    ]
+    kicks.extend(
+        (user_id, f"claim:{user_id}", claim_companion_intent(user_id))
+        for user_id in {job.user_id for job in fired if job.kind != STANDARD_CRON_KIND}
+    )
+    for user_id, name, coro in kicks:
+        task = asyncio.create_task(coro)
+        _BG.add(task, on_error=partial(_log_task_error, name))
+        track_user_task(user_id, task)
 
 
 async def _scan_companion_waits() -> None:
     for user_id in MANAGER.local_user_ids():
-        if not await begin_user_request(user_id):
-            continue
-        try:
-            await queue_companion_intent(user_id)
-        finally:
-            await end_user_request(user_id)
+        await claim_companion_intent(user_id)
 
 
-async def _maybe_run_ignored_outreach(now: datetime) -> None:
+async def _maybe_run_ignored_outreach() -> None:
     """常规档下用户持续不与伙伴互动（≥1h）且无进行中外联节奏时，为粘人性格注入轻量问候 turn。
 
     固定 1h 间距限制无新互动时的低频问候候选
@@ -345,11 +315,8 @@ async def _maybe_run_ignored_outreach(now: datetime) -> None:
     自主档不需要（完整主动能力已开放，由定时任务与等待意图承载）。
     """
     cur_time = time.monotonic()
-    online_uids = MANAGER.local_user_ids()
-    for uid in online_uids:
+    for uid in MANAGER.local_user_ids():
         if is_user_in_maintenance(uid):
-            continue
-        if await get_disturbance_tier(uid) != "normal":
             continue
         rec = get_user_proactive_record(uid)
         # 0 = 进程启动以来用户还没互动过——没有「被冷落」的基准，跳过。
@@ -360,15 +327,14 @@ async def _maybe_run_ignored_outreach(now: datetime) -> None:
             continue
         if cur_time - rec.last_outreach_ts < _IGNORED_OUTREACH_MIN_SPACING_SECONDS:
             continue
-        # 性格标签查询放在所有廉价条件之后——避免无意义地读取等待意图与性格。
+        # 档位、等待意图与性格标签的读库放在所有内存条件之后。
         async with session_scope() as db:
-            if any(
-                intent.status in {"waiting", "queued", "running"} for intent in await list_companion_intents(db, uid)
+            if (
+                await get_disturbance_tier(uid, db=db) != "normal"
+                or await has_pending_companion_intent(db, uid)
+                or "粘人" not in await get_personality_tags(db, uid)
             ):
                 continue
-            tags = await get_personality_tags(db, uid)
-        if "粘人" not in tags:
-            continue
 
         ignored_minutes = round(ignored / 60)
         prompt = json.dumps(
@@ -388,7 +354,10 @@ async def _maybe_run_ignored_outreach(now: datetime) -> None:
             continue
         try:
             note_outreach_throttle(uid)
-            await _queue_ignored_outreach(uid, prompt)
+            async with session_scope() as db:
+                await enqueue_companion_intent(db, uid, prompt, source_key="checkin:ignored")
+                await db.commit()
+            await queue_companion_intent(uid)
         finally:
             await end_user_request(uid)
         logger.info(
@@ -410,7 +379,7 @@ async def _tick() -> None:
     _spawn_scan("memory_review", lambda: _maybe_run_memory_review(now))
     _spawn_scan("nightly_activity", lambda: _maybe_run_autonomous_activity(now))
     _spawn_scan("outbox_gc", lambda: _maybe_run_outbox_gc(now))
-    _spawn_scan("ignored_outreach", lambda: _maybe_run_ignored_outreach(now))
+    _spawn_scan("ignored_outreach", _maybe_run_ignored_outreach)
     _spawn_scan("companion_waits", _scan_companion_waits)
     _spawn_scan("moment_impulse", _maybe_run_moment_impulse)
     due_jobs = await _select_due_jobs()
@@ -495,7 +464,7 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
     if now.timestamp() - _LAST_NIGHTLY_SCAN < SETTINGS.nightly_scan_interval_seconds:
         return
     _LAST_NIGHTLY_SCAN = now.timestamp()
-    eligible: list[tuple[MemoryScope, datetime, date]] = []
+    eligible: list[tuple[MemoryScope, date]] = []
     async with session_scope() as db:
         rows = (
             await db.execute(
@@ -510,28 +479,23 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
                 .distinct(),
             )
         ).all()
-        logs = list(
-            (
-                await db.scalars(
-                    select(NightlyActivityLog)
-                    .where(NightlyActivityLog.status.in_(("running", "failed")))
-                    .order_by(NightlyActivityLog.target_date.desc()),
-                )
-            ).all(),
-        )
+        unfinished: dict[MemoryScope, list[NightlyActivityLog]] = {}
+        for log in await db.scalars(
+            select(NightlyActivityLog)
+            .where(NightlyActivityLog.status.in_(("running", "failed")))
+            .order_by(NightlyActivityLog.target_date.desc()),
+        ):
+            unfinished.setdefault(MemoryScope(log.user_id, log.system_preset_id), []).append(log)
         for user_id, preset, timezone_name in rows:
             if is_user_in_maintenance(user_id):
                 continue
             scope = MemoryScope(user_id, preset)
             try:
-                timezone = ZoneInfo(timezone_name)
-                local_now = now.astimezone(timezone)
-            except (ZoneInfoNotFoundError, ValueError):
+                local_now = now.astimezone(ZoneInfo(decode_setting_value(timezone_name)))
+            except (ZoneInfoNotFoundError, ValueError, TypeError):
                 continue
             recover = None
-            for log in logs:
-                if log.user_id != user_id or log.system_preset_id != preset:
-                    continue
+            for log in unfinished.get(scope, ()):
                 if log.target_date < local_now.date() - timedelta(days=1) or recover is not None:
                     log.status = "completed_with_errors"
                     log.summary = "已超过恢复窗口或有更新日期优先恢复，未确认动作不再重放"
@@ -543,26 +507,22 @@ async def _maybe_run_autonomous_activity(now: datetime) -> None:
                 and not SETTINGS.nightly_window_start_hour <= local_now.hour < SETTINGS.nightly_window_end_hour
             ):
                 continue
-            if _LAST_NIGHTLY_RUN.get(scope) == target.isoformat():
+            if _LAST_NIGHTLY_RUN.get(scope) == target:
                 continue
-            reference = datetime.combine(target, datetime.min.time(), timezone).replace(hour=12).astimezone(UTC)
-            eligible.append((scope, reference, target))
+            eligible.append((scope, target))
         await db.commit()
     tasks = [
-        asyncio.create_task(
-            run_nightly_pipeline(scope, reference, target_date=target),
-            name=f"scheduler.nightly.{scope}.{target}",
-        )
-        for scope, reference, target in eligible
+        asyncio.create_task(run_nightly_pipeline(scope, target), name=f"scheduler.nightly.{scope}.{target}")
+        for scope, target in eligible
     ]
-    for (scope, _, _), task in zip(eligible, tasks, strict=True):
+    for (scope, _), task in zip(eligible, tasks, strict=True):
         track_user_task(scope.user_id, task)
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    for (scope, _, target), result in zip(eligible, results, strict=True):
+    for (scope, target), result in zip(eligible, results, strict=True):
         if isinstance(result, BaseException):
             logger.error("nightly_activity: tick failed", exc_info=result, extra={"scope": str(scope)})
         elif result is True:
-            _LAST_NIGHTLY_RUN[scope] = target.isoformat()
+            _LAST_NIGHTLY_RUN[scope] = target
 
 
 async def scheduler_loop() -> None:

@@ -1,27 +1,21 @@
 """双图角色分析的持久任务；只有完整发布后才派生初始资产。"""
 
 import asyncio
-import base64
-import hashlib
-import json
 from typing import Literal
 
-from components import SESSION_LOCAL, get_logger, parse_llm_json, track_user_task
+from components import SESSION_LOCAL, get_logger, track_user_task
 from modules.companion import AvatarAsset, BodyFeatures, CharacterFeatures, CompanionCharacterCard, PortraitFeatures
-from prompts.generation import CHARACTER_CARD_EXTRACTION
 from sqlalchemy import select
 
 from services.domains.companion import emit_character_card_updated, get_character_card
-from services.infrastructure.llm import vision_chat
 
-from .avatar_service import get_avatar_job_lock, load_avatar_bytes_as_data_uri
+from .avatar_service import extract_card_features, get_avatar_job_lock
 from .initial_appearance import start_initial_video
 from .scene_service import schedule_initial_scene
 
 logger = get_logger(__name__)
 _tasks: dict[int, asyncio.Task[None]] = {}
 _reschedule: set[int] = set()
-_ANALYSIS_TIMEOUT = 180
 
 
 def schedule_character_extraction(user_id: int) -> None:
@@ -78,25 +72,11 @@ async def _extract_part(user_id: int, extraction_id: str, part: Literal["portrai
     source_hash = ""
     error: str | None = None
     try:
-        uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, source_path)
-        if not uri:
-            raise ValueError("source image is unreadable")
-        source_hash = hashlib.sha256(base64.b64decode(uri.split(",", 1)[1], validate=True)).hexdigest()
-        model = PortraitFeatures if part == "portrait" else BodyFeatures
-        schema = model.model_json_schema()
-        schema["required"] = list(model.model_fields)
-        async with asyncio.timeout(_ANALYSIS_TIMEOUT):
-            raw = await vision_chat(
-                user_id,
-                CHARACTER_CARD_EXTRACTION,
-                json.dumps({"source": part, "schema": schema}, ensure_ascii=False),
-                reference_images=(uri,),
-            )
-        payload = parse_llm_json(raw)
-        # 空字段允许未知特征，缺字段仍属于提取失败。
-        if not isinstance(payload, dict) or set(payload) != set(model.model_fields):
-            raise ValueError("incomplete character extraction")
-        result = model.model_validate(payload)
+        result, source_hash = await extract_card_features(
+            user_id,
+            source_path,
+            PortraitFeatures if part == "portrait" else BodyFeatures,
+        )
     except Exception:
         logger.warning("character extraction failed", extra={"user_id": user_id, "part": part}, exc_info=True)
         error = "头像特征分析失败，请重试" if part == "portrait" else "身体特征分析失败，请重试"

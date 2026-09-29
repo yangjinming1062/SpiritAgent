@@ -1,7 +1,7 @@
 import base64
 from urllib.parse import urlparse
 
-from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, download_capped
+from .http import download_bytes
 
 
 def _parse_data_uri(reference: str) -> tuple[bytes, str] | None:
@@ -25,7 +25,7 @@ async def resolve_reference_bytes(reference_image: str) -> tuple[bytes, str]:
     if parsed.scheme not in ("http", "https"):
         raise ValueError(f"reference_image must be a data URI or http(s) URL: {reference_image[:64]!r}")
 
-    data = await download_capped(reference_image, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=360.0)
+    data = await download_bytes(reference_image)
     ct = "image/jpeg"
     if data.startswith(b"\x89PNG"):
         ct = "image/png"

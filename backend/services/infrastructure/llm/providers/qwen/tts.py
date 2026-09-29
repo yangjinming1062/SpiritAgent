@@ -1,22 +1,19 @@
 import base64
-import logging
 from typing import ClassVar
 
 from modules.media import SpeechStyle
 
 from ..base import ProviderConfig, TTSProvider, TTSResult, pick_catalog_voice
-from ..http import download_as_b64, get_http
+from ..http import download_bytes, get_http
 from ._errors import raise_for_qwen_response
-
-logger = logging.getLogger(__name__)
 
 
 class QwenTTSProvider(TTSProvider):
     """通过千问 DashScope 多模态生成接口提供非实时 TTS（默认 qwen3-tts-instruct-flash）。"""
 
     provider_name = "qwen"
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"tts": "qwen3-tts-instruct-flash"}
-    DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"tts": 8_000}
+    DEFAULT_BASE_URL: ClassVar[str] = "https://maas.qianwenaiapi.com/api/v1"
+    DEFAULT_MODEL: ClassVar[str] = "qwen3-tts-instruct-flash"
     VOICE_CATALOG: ClassVar[list[dict]] = [
         {
             "id": "Cherry",
@@ -104,36 +101,21 @@ class QwenTTSProvider(TTSProvider):
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
 
-    async def synthesize(
-        self,
-        text: str,
-        *,
-        voice: str = "",
-        fmt: str = "mp3",
-        speed: float | None = None,
-        speech_style: SpeechStyle | None = None,
-    ) -> TTSResult:
-        chosen_voice = pick_catalog_voice(voice, self.VOICE_CATALOG)
-        if voice and voice != chosen_voice:
-            logger.info("qwen tts: substituted voice", extra={"requested": voice, "used": chosen_voice})
-
+    async def synthesize(self, text: str, *, voice: str, speech_style: SpeechStyle | None) -> TTSResult:
+        chosen_voice = pick_catalog_voice(voice, self.VOICE_CATALOG, provider=self.provider_name)
         payload = {
             "model": self.config.model,
             "input": {"text": text, "voice": chosen_voice},
         }
         resp = await self._client.post("/services/aigc/multimodal-generation/generation", json=payload)
-        body = raise_for_qwen_response(resp, family=self.provider_name, model=self.config.model)
+        body = raise_for_qwen_response(resp)
 
         audio = (body.get("output") or {}).get("audio") or {}
-        url = audio.get("url") or ""
-        data_b64 = audio.get("data") or ""
-        if data_b64:
+        if data_b64 := audio.get("data"):
             raw = base64.b64decode(data_b64)
-        elif url:
+        elif url := audio.get("url"):
             # 临时 URL 24h 过期，下载后交付字节
-            raw = base64.b64decode(await download_as_b64(url))
+            raw = await download_bytes(url)
         else:
             raise RuntimeError(f"qwen tts returned no audio: {body}")
-
-        mime = "audio/mpeg" if (fmt or "mp3") not in ("wav", "wave") else "audio/wav"
-        return TTSResult(audio=raw, mime=mime, voice=chosen_voice)
+        return TTSResult(audio=raw, mime="audio/mpeg", voice=chosen_voice)

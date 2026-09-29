@@ -1,14 +1,11 @@
 """日记业务域：片刻与日记的数据操作、编辑规则与归集口径。"""
 
 from .journal_service import (
-    DiarySource,
-    JournalError,
+    MomentInteractions,
     MomentNotFoundError,
-    MomentSource,
     check_moment_autonomous_quota,
     check_moment_llm_quota,
     collect_moment_interactions,
-    create_generated_moment,
     create_moment_comment,
     create_user_moment,
     delete_moment_comment,
@@ -23,14 +20,11 @@ from .journal_service import (
 )
 
 __all__ = [
-    "DiarySource",
-    "JournalError",
+    "MomentInteractions",
     "MomentNotFoundError",
-    "MomentSource",
     "check_moment_autonomous_quota",
     "check_moment_llm_quota",
     "collect_moment_interactions",
-    "create_generated_moment",
     "create_moment_comment",
     "create_user_moment",
     "delete_moment_comment",

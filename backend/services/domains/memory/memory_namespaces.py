@@ -24,6 +24,6 @@ def participates_in_recall(context: str | None) -> bool:
     return context is None or not any(context.startswith(prefix) for prefix in RESERVED_FROM_RECALL)
 
 
-def normalize_recall_context(raw: str | None, *, default: str = "general") -> str:
-    label = (raw or "").strip() or default
+def normalize_recall_context(raw: str | None) -> str:
+    label = (raw or "").strip() or "general"
     return label if label.startswith("recall:") else f"recall:{label[:_RECALL_LABEL_MAX]}"

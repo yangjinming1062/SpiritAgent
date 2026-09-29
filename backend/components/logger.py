@@ -93,14 +93,8 @@ _FORMATTERS: dict[str, type[logging.Formatter]] = {"json": _JsonFormatter, "text
 
 def setup_logging() -> None:
     """lifespan 入口调一次接管 root logger；不用 dictConfig（会重新实例化 handler、丢弃我们挂的 formatter/filter）。"""
-    try:
-        formatter_cls = _FORMATTERS[SETTINGS.log_format]
-    except KeyError:
-        # pydantic Literal 已拦截，此处只对测试 monkey-patch 生效。
-        raise ValueError(f"invalid log_format: {SETTINGS.log_format!r}") from None
-
     handler = logging.StreamHandler(sys.stdout)
-    handler.setFormatter(formatter_cls())
+    handler.setFormatter(_FORMATTERS[SETTINGS.log_format]())
     handler.addFilter(_RequestContextFilter())
 
     root_logger = logging.getLogger()
@@ -116,6 +110,5 @@ def setup_logging() -> None:
     logging.getLogger("uvicorn.access").addFilter(_DropHealthAccessFilter())
 
 
-def get_logger(name: str | None = None) -> logging.Logger:
-    """统一 logger 入口；传 None 时拿真正的 root logger。"""
-    return logging.getLogger(name) if name is not None else logging.getLogger()
+def get_logger(name: str) -> logging.Logger:
+    return logging.getLogger(name)

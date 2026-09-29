@@ -2,7 +2,6 @@
 
 import tempfile
 import time
-from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -14,11 +13,6 @@ from PIL import Image
 from .ffmpeg import VideoProcessError, _binary, _run, alpha_input_args, probe_video, run_ffmpeg
 
 Array = NDArray[np.float32]
-
-
-@dataclass(frozen=True)
-class MatteResult:
-    method: str
 
 
 def require_matting_model() -> Path:
@@ -67,7 +61,8 @@ class ForegroundMatte:
         return Image.fromarray(np.round(rgba * 255).astype(np.uint8))
 
 
-def matte_video(src: Path, dst: Path) -> MatteResult:
+def matte_video(src: Path, dst: Path) -> None:
+    """保留有效原生 alpha，否则逐帧 ISNet 抠像；输出 FFV1/BGRA 中间片段。"""
     probe = probe_video(src)
     if probe.duration_seconds > 12 or probe.width * probe.height > 3840 * 2160:
         raise VideoProcessError("请提供不超过 12 秒的单动作视频")
@@ -80,7 +75,7 @@ def matte_video(src: Path, dst: Path) -> MatteResult:
                 _binary("ffmpeg"),
                 "-v",
                 "error",
-                *alpha_input_args(src),
+                *alpha_input_args(probe),
                 "-i",
                 str(src),
                 "-vf",
@@ -101,10 +96,10 @@ def matte_video(src: Path, dst: Path) -> MatteResult:
         native_alpha = min(minima) <= 8
     if native_alpha:
         run_ffmpeg(
-            [*alpha_input_args(src), "-i", str(src), "-an", "-c:v", "ffv1", "-pix_fmt", "bgra", str(dst)],
+            [*alpha_input_args(probe), "-i", str(src), "-an", "-c:v", "ffv1", "-pix_fmt", "bgra", str(dst)],
             label="透明解码",
         )
-        return MatteResult(method="native_alpha")
+        return
     matte = ForegroundMatte(require_matting_model())
     deadline = time.monotonic() + 600
     with tempfile.TemporaryDirectory(prefix="video-matte-") as tmp:
@@ -125,4 +120,3 @@ def matte_video(src: Path, dst: Path) -> MatteResult:
             ["-framerate", "24", "-i", str(frames / "f%05d.png"), "-an", "-c:v", "ffv1", "-pix_fmt", "bgra", str(dst)],
             label="透明化",
         )
-    return MatteResult(method="isnet")

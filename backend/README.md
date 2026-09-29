@@ -10,7 +10,7 @@
 | 记忆证据、召回与遗忘 | [记忆模块](services/domains/memory/README.md) |
 | 头像、角色卡、衣柜、场景与媒体 | [生成服务](services/application/generation/README.md#关键入口)；跨端场景改动见其任务链 |
 | 动作提案、生成与播放 | [动作编排](services/application/actions/README.md)、[动作领域](services/domains/actions/README.md) |
-| Cron 与在线陪伴 | [scheduler/cron.py](services/adapters/scheduler/cron.py) → [companion_turns.py](services/application/automation/companion_turns.py) / [standard_turns.py](services/application/automation/standard_turns.py)；等待状态归 [intents.py](services/domains/companion/intents.py) |
+| Cron 与在线陪伴 | [scheduler/cron.py](services/adapters/scheduler/cron.py) → [companion_turns.py](services/application/automation/companion_turns.py) / [standard_turns.py](services/application/automation/standard_turns.py)；任务与 standard 执行会话归 [cron_jobs.py](services/domains/automation/cron_jobs.py)，等待状态与后台认领归 [intents.py](services/domains/companion/intents.py) |
 | 夜间计划与执行 | [nightly_activity.py](services/application/nightly/nightly_activity.py) 的 `run_nightly_pipeline` → [nightly_planning.py](services/application/nightly/nightly_planning.py)；检查[阶段与恢复](#夜间批处理) |
 | 片刻与日记 | [journal_service.py](services/domains/journal/journal_service.py)、[autonomous.py](services/application/moments/autonomous.py)、[replies.py](services/application/moments/replies.py)；桌面端点 [companion_journal.py](api/v1/companion_journal.py) |
 | IM 生命周期与投递 | [channels/manager.py](services/adapters/channels/manager.py)；[IM 约束](#im-渠道) |
@@ -67,11 +67,13 @@
 
 `config.toml` 或环境变量提供启动依赖；可运营参数进入 `system_settings`，由 `Settings` 声明并在调用时读取。技术常量不承载可运营配置。
 
-热更新：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 SETTINGS → 刷新连接池等副作用。
+热更新入口为 [system_settings.py](services/application/configuration/system_settings.py)：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 SETTINGS → 刷新连接池等副作用。
 
-校验或提交失败不修改运行时，避免数据库与内存分叉。
+校验或提交失败不修改运行时，避免数据库与内存分叉。持久值统一 JSON 编码，启动水合时解析或校验失败即中止启动。
 
-启动执行 Alembic 升级。未部署时可调整 baseline，部署后追加迁移；迁移须可降级，回填须幂等，破坏性变更说明风险。类型与默认值需比对，视频任务模型的显式导入及迁移中维护的 PostgreSQL 部分、向量和全文索引不能误删。
+用户偏好 `user_settings` 同样按点键逐值 JSON 编码（桌面配置同步与服务端写入如时区共用同一格式），只经 [modules/settings](modules/settings/values.py) 读写，读取即得解码后的原值，消费方不自行解析。
+
+启动执行 Alembic 升级。未部署时可调整 baseline，部署后追加迁移；迁移须可降级，回填须幂等，破坏性变更说明风险。类型与默认值需比对，迁移中维护的 PostgreSQL 部分、向量和全文索引不能误删。
 
 ### 装配与启停
 
@@ -101,7 +103,7 @@
 
 ### 陪伴叙事
 
-检索记忆与片刻、日记分开维护。白天自主片刻只更新信息流，不写主对话或产生桌面打扰；互动统计按用户本地日聚合。证据和维护规则归 [记忆模块](services/domains/memory/README.md)。
+检索记忆与片刻、日记分开维护。白天自主片刻只更新信息流，不写主对话或产生桌面打扰；互动统计按用户本地日聚合。片刻媒体由生成方先存为正式资产，写入入口拒绝外部或临时地址。证据和维护规则归 [记忆模块](services/domains/memory/README.md)。
 
 ### 夜间批处理
 
@@ -133,6 +135,7 @@ iLink 轮询持续返回 `-14` 才按登录失效处理；发送时的同码仅�
 - 供应商身份由注册与配置决定，不从 URL 推断。
 - 幂等方法、显式幂等键或确认未发送的连接失败才可自动重试；请求体须可重放。
 - 非幂等请求在写入或读取响应阶段断线按结果未知处理，不能直接换供应商再提交。
+- 能力链换家只看 [错误分类](services/infrastructure/llm/error_classifier.py) 的 `should_fallback`：确定性失败，以及本家传输层重试耗尽后的超时 / 过载；结果未知或流已开始时不换家。
 
 - 出站 SSRF 守卫默认关闭（`SSRF_GUARD_ENABLED`，管理后台可热切换）：关闭时不做保留网段与黑名单校验，DNS 污染 / fake-ip 代理环境不再误拦正常出站，内网访问风险由部署者自担。
 - 开启后默认拒绝保留网段；显式 fake-IP 豁免（`SSRF_ALLOWED_CIDRS`）不取消域名、协议、HTTPS 降级、云元数据与 CGNAT 检查。
@@ -161,7 +164,7 @@ docker compose --profile monitoring up -d
 
 ### 本地供应商
 
-`local` 默认对接 LM Studio（LLM / embedding）和 ComfyUI（图像），地址见 [registry.py](services/infrastructure/llm/providers/registry.py)。各能力卡片可覆盖信息库中的地址与模型；无鉴权服务可留空 API Key。地址须从 Backend（含容器）可达；启用 SSRF 守卫时，私网地址须加入 `SSRF_ALLOWED_CIDRS`。
+`local` 默认对接 LM Studio（LLM / embedding）和 ComfyUI（图像），默认地址见各适配器的 `DEFAULT_BASE_URL`（[local](services/infrastructure/llm/providers/local/)）。各能力卡片可覆盖信息库中的地址与模型；无鉴权服务可留空 API Key。地址须从 Backend（含容器）可达；启用 SSRF 守卫时，私网地址须加入 `SSRF_ALLOWED_CIDRS`。
 
 - LLM 须支持 [Responses API](https://lmstudio.ai/docs/developer/openai-compat/responses)，显式填写已部署模型 ID，加载窗口须覆盖[适配器预算](services/infrastructure/llm/providers/local/chat.py)。
 - 用户未设 embedding 卡片时继承系统链；系统也未设卡片时，按系统信息库顺序选用支持向量的供应商及其默认模型。记忆只使用首个有效配置；显式链无效或调用失败时降级为[关键词召回](services/domains/memory/README.md#读取召回与恢复)，不自动切换模型。

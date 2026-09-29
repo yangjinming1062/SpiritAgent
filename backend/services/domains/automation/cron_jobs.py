@@ -7,7 +7,7 @@ from croniter import croniter
 from modules.auth import User
 from modules.conversation import Conversation
 from modules.scheduler import CronJob
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope
@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 SPECIAL_CRON_KIND = "special"
 STANDARD_CRON_KIND = "standard"
-CRON_KINDS = frozenset({SPECIAL_CRON_KIND, STANDARD_CRON_KIND})
+_CRON_KINDS = frozenset({SPECIAL_CRON_KIND, STANDARD_CRON_KIND})
 
 _JOB_IMMUTABLE_FIELDS = frozenset({"id", "user_id", "conversation_id", "system_preset_id"})
 _SCHEDULE_KEYS = ("schedule", "is_paused")
@@ -26,20 +26,24 @@ JobIntentInvalidator = Callable[[AsyncSession, int, int], Awaitable[None]]
 _invalidate_job_intents: JobIntentInvalidator | None = None
 
 
-def set_job_intent_invalidator(fn: JobIntentInvalidator | None) -> None:
+def set_job_intent_invalidator(fn: JobIntentInvalidator) -> None:
     global _invalidate_job_intents
     _invalidate_job_intents = fn
 
 
-def _validate_kind(kind: str) -> str:
+async def _invalidate_intents(db: AsyncSession, user_id: int, job_id: int) -> None:
+    if _invalidate_job_intents is None:
+        raise RuntimeError("Cron job intent invalidator is not registered")
+    await _invalidate_job_intents(db, user_id, job_id)
+
+
+def _validate_kind(kind: str, scope: MemoryScope) -> str:
     normalized = (kind or "").strip().lower()
-    if normalized not in CRON_KINDS:
+    if normalized not in _CRON_KINDS:
         raise ValueError("kind must be one of: special, standard")
+    if normalized == SPECIAL_CRON_KIND and scope.system_preset_id != "companion":
+        raise ValueError("Special jobs require the companion preset")
     return normalized
-
-
-def _conversation_title(name: str) -> str:
-    return f"定时任务 · {name}"
 
 
 def compute_next_run_at(schedule: str, base: datetime) -> datetime | None:
@@ -67,6 +71,30 @@ async def _lock_user_cron_jobs(db: AsyncSession, user_id: int) -> None:
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
 
 
+async def _get_scoped_job(db: AsyncSession, scope: MemoryScope, job_id: int) -> CronJob | None:
+    return await db.scalar(
+        select(CronJob).where(
+            CronJob.id == job_id,
+            CronJob.user_id == scope.user_id,
+            CronJob.system_preset_id == scope.system_preset_id,
+        ),
+    )
+
+
+async def _create_job_conversation(db: AsyncSession, user_id: int, name: str) -> int:
+    """standard 任务的独立 automation 会话；调用方负责提交。"""
+    conversation = Conversation(
+        user_id=user_id,
+        kind=STANDARD_KIND,
+        title=f"定时任务 · {name}",
+        is_automation=True,
+        system_preset_id="automation",
+    )
+    db.add(conversation)
+    await db.flush()
+    return conversation.id
+
+
 async def _ensure_active_job_capacity(db: AsyncSession, user_id: int, candidate_job_id: int | None = None) -> None:
     stmt = select(func.count()).select_from(CronJob).where(CronJob.user_id == user_id, CronJob.is_paused.is_(False))
     if candidate_job_id is not None:
@@ -87,9 +115,7 @@ async def create_job(
     kind: str = STANDARD_CRON_KIND,
     expires_at: datetime | None = None,
 ) -> dict[str, Any]:
-    normalized_kind = _validate_kind(kind)
-    if normalized_kind == SPECIAL_CRON_KIND and scope.system_preset_id != "companion":
-        raise ValueError("Special jobs require the companion preset")
+    normalized_kind = _validate_kind(kind, scope)
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:
@@ -109,19 +135,8 @@ async def create_job(
         _refresh_schedule(job)
         if not job.is_paused:
             await _ensure_active_job_capacity(db, user_id)
-        conversation_id: int | None = None
         if normalized_kind == STANDARD_CRON_KIND:
-            conversation = Conversation(
-                user_id=user_id,
-                kind=STANDARD_KIND,
-                title=_conversation_title(name),
-                is_automation=True,
-                system_preset_id="automation",
-            )
-            db.add(conversation)
-            await db.flush()
-            conversation_id = conversation.id
-        job.conversation_id = conversation_id
+            job.conversation_id = await _create_job_conversation(db, user_id, name)
         db.add(job)
         await db.commit()
         await db.refresh(job)
@@ -130,25 +145,18 @@ async def create_job(
 
 async def get_job(scope: MemoryScope, job_id: int) -> dict[str, Any] | None:
     validate_memory_scope(scope)
-    user_id = scope.user_id
     async with session_scope() as db:
-        job = (
-            await db.execute(
-                select(CronJob).where(
-                    CronJob.id == job_id,
-                    CronJob.user_id == user_id,
-                    CronJob.system_preset_id == scope.system_preset_id,
-                ),
-            )
-        ).scalar_one_or_none()
+        job = await _get_scoped_job(db, scope, job_id)
         return job.to_dict() if job else None
 
 
 async def list_jobs(scope: MemoryScope, include_paused: bool = False) -> list[dict[str, Any]]:
     validate_memory_scope(scope)
-    user_id = scope.user_id
     async with session_scope() as db:
-        stmt = select(CronJob).where(CronJob.user_id == user_id, CronJob.system_preset_id == scope.system_preset_id)
+        stmt = select(CronJob).where(
+            CronJob.user_id == scope.user_id,
+            CronJob.system_preset_id == scope.system_preset_id,
+        )
         if not include_paused:
             stmt = stmt.where(CronJob.is_paused.is_(False))
         jobs = (await db.execute(stmt)).scalars().all()
@@ -161,22 +169,12 @@ async def update_job(
     updates: dict[str, Any],
 ) -> dict[str, Any] | None:
     if "kind" in updates:
-        updates["kind"] = _validate_kind(updates["kind"])
-        if updates["kind"] == SPECIAL_CRON_KIND and scope.system_preset_id != "companion":
-            raise ValueError("Special jobs require the companion preset")
+        updates["kind"] = _validate_kind(updates["kind"], scope)
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:
         await _lock_user_cron_jobs(db, user_id)
-        job = (
-            await db.execute(
-                select(CronJob).where(
-                    CronJob.id == job_id,
-                    CronJob.user_id == user_id,
-                    CronJob.system_preset_id == scope.system_preset_id,
-                ),
-            )
-        ).scalar_one_or_none()
+        job = await _get_scoped_job(db, scope, job_id)
         if not job:
             return None
         previous_intent = tuple(getattr(job, field) for field in _INTENT_INVALIDATING_FIELDS)
@@ -189,22 +187,11 @@ async def update_job(
         if not job.is_paused:
             await _ensure_active_job_capacity(db, user_id, job.id)
         if job.kind == STANDARD_CRON_KIND and job.conversation_id is None:
-            conversation = Conversation(
-                user_id=user_id,
-                kind=STANDARD_KIND,
-                title=_conversation_title(job.name),
-                is_automation=True,
-                system_preset_id="automation",
-            )
-            db.add(conversation)
-            await db.flush()
-            job.conversation_id = conversation.id
+            job.conversation_id = await _create_job_conversation(db, user_id, job.name)
         elif job.kind == SPECIAL_CRON_KIND:
             job.conversation_id = None
-        if _invalidate_job_intents is not None and previous_intent != tuple(
-            getattr(job, field) for field in _INTENT_INVALIDATING_FIELDS
-        ):
-            await _invalidate_job_intents(db, user_id, job.id)
+        if previous_intent != tuple(getattr(job, field) for field in _INTENT_INVALIDATING_FIELDS):
+            await _invalidate_intents(db, user_id, job.id)
         await db.commit()
         return job.to_dict()
 
@@ -214,19 +201,32 @@ async def remove_job(scope: MemoryScope, job_id: int) -> bool:
     user_id = scope.user_id
     async with session_scope() as db:
         await _lock_user_cron_jobs(db, user_id)
-        job = (
-            await db.execute(
-                select(CronJob).where(
-                    CronJob.id == job_id,
-                    CronJob.user_id == user_id,
-                    CronJob.system_preset_id == scope.system_preset_id,
-                ),
-            )
-        ).scalar_one_or_none()
+        job = await _get_scoped_job(db, scope, job_id)
         if not job:
             return False
-        if _invalidate_job_intents is not None:
-            await _invalidate_job_intents(db, user_id, job.id)
+        await _invalidate_intents(db, user_id, job.id)
         await db.delete(job)
         await db.commit()
         return True
+
+
+async def resolve_job_conversation(user_id: int, job_id: int, conversation_id: int | None, name: str) -> int:
+    """返回 standard 任务的执行会话；会话已被删除时新建并回写仍存在的任务（一次性任务触发时已删除）。"""
+    async with session_scope() as db:
+        if conversation_id is not None:
+            existing = await db.scalar(
+                select(Conversation.id).where(
+                    Conversation.id == conversation_id,
+                    Conversation.user_id == user_id,
+                    Conversation.kind == STANDARD_KIND,
+                    Conversation.is_automation.is_(True),
+                ),
+            )
+            if existing is not None:
+                return existing
+        created_id = await _create_job_conversation(db, user_id, name)
+        await db.execute(
+            update(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id).values(conversation_id=created_id),
+        )
+        await db.commit()
+        return created_id

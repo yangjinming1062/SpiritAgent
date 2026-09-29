@@ -7,7 +7,7 @@ from typing import Any, Literal
 from components import DEFAULT_LANGUAGE, resolve_language, session_scope, utc_now
 from modules.conversation import Conversation, Message
 from modules.memory import Memory
-from modules.settings import UserSetting
+from modules.settings import get_user_setting
 from pydantic import BaseModel, field_serializer
 from sqlalchemy import ColumnElement, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -120,12 +120,15 @@ def learning_filter() -> ColumnElement[bool]:
     return or_(Memory.context.like("recall:%"), Memory.context.like("user_profile:%"))
 
 
+async def _forgotten_fingerprints(db: AsyncSession, scope: MemoryScope) -> set[str]:
+    """已遗忘记录保留的原始事件指纹；对应消息不得再作为证据。"""
+    evidence_lists = await db.scalars(select(Memory.evidence).where(scope_filter(scope), Memory.status == "forgotten"))
+    return {e["fingerprint"] for evidence in evidence_lists for e in evidence if "fingerprint" in e}
+
+
 async def memory_versions(db: AsyncSession, scope: MemoryScope) -> dict[int, int]:
-    return dict(
-        (
-            await db.execute(select(Memory.id, Memory.content_version).where(scope_filter(scope), learning_filter()))
-        ).all(),
-    )
+    rows = await db.execute(select(Memory.id, Memory.content_version).where(scope_filter(scope), learning_filter()))
+    return dict(rows.tuples().all())
 
 
 async def load_review_context(
@@ -162,8 +165,7 @@ async def load_review_context(
         stmt = stmt.where(message_contains_text(query))
     # 先取最新的 MESSAGE_LIMIT 条（即时检查优先保留最新消息），呈现时按 id 升序重排
     rows = list((await db.scalars(stmt.order_by(Message.id.desc()).limit(MESSAGE_LIMIT))).all())
-    forgotten = list((await db.scalars(select(Memory).where(scope_filter(scope), Memory.status == "forgotten"))).all())
-    blocked = {e["fingerprint"] for r in forgotten for e in r.evidence if "fingerprint" in e}
+    blocked = await _forgotten_fingerprints(db, scope)
     messages: list[ReviewMessage] = []
     message_chars = 0
     for row in rows:
@@ -230,12 +232,7 @@ async def load_review_context(
             break
         records.append(record)
         record_chars += size
-    language = await db.scalar(
-        select(UserSetting.setting_value).where(
-            UserSetting.user_id == scope.user_id,
-            UserSetting.setting_key == "language",
-        ),
-    )
+    language = await get_user_setting(db, scope.user_id, "language")
     return MemoryReviewContext(
         messages,
         records,
@@ -266,16 +263,39 @@ async def apply_memory_decisions(
     ids = [d.memory_id for d in decisions if d.memory_id is not None]
     if len(ids) != len(set(ids)):
         raise ValueError("Only one decision per memory is allowed in a batch")
+    inspected = {m.message_id: m for m in context.messages}
+    quoted_ids = {q.message_id for d in decisions for q in d.evidence if q.message_id in allowed_messages}
     embeddings: list[EmbeddingItem] = []
     results: list[MemoryRecord] = []
     async with session_scope() as db:
         await memory_write_lock(db, scope)
         if await memory_versions(db, scope) != context.versions:
             raise MemoryConflictError("Memory changed during review; inspect again before writing")
-        forgotten = list(
-            (await db.scalars(select(Memory).where(scope_filter(scope), Memory.status == "forgotten"))).all(),
-        )
-        blocked = {e["fingerprint"] for r in forgotten for e in r.evidence if "fingerprint" in e}
+        blocked = await _forgotten_fingerprints(db, scope)
+        # 提交前重读被引用的原文：只接受同域、上下文水位以上的原始用户消息。
+        originals: dict[int, Message] = {}
+        if quoted_ids:
+            originals = {
+                msg.id: msg
+                for msg in await db.scalars(
+                    select(Message)
+                    .join(Conversation)
+                    .where(
+                        Message.id.in_(quoted_ids),
+                        Message.role == "user",
+                        Message.subtype.is_(None),
+                        Conversation.user_id == scope.user_id,
+                        Conversation.system_preset_id == scope.system_preset_id,
+                        Conversation.is_automation.is_(False),
+                        Message.id > Conversation.context_after_message_id,
+                    ),
+                )
+            }
+        targets: dict[int, Memory] = {}
+        if ids:
+            targets = {
+                row.id: row for row in await db.scalars(select(Memory).where(scope_filter(scope), Memory.id.in_(ids)))
+            }
         for decision in decisions:
             if decision.memory_id is not None and (
                 decision.memory_id not in supplied
@@ -290,25 +310,14 @@ async def apply_memory_decisions(
             for quote in decision.evidence:
                 if quote.message_id not in allowed_messages:
                     raise ValueError("Evidence must come from inspected original messages")
-                msg = await db.scalar(
-                    select(Message)
-                    .join(Conversation)
-                    .where(
-                        Message.id == quote.message_id,
-                        Message.role == "user",
-                        Message.subtype.is_(None),
-                        Conversation.user_id == scope.user_id,
-                        Conversation.system_preset_id == scope.system_preset_id,
-                        Conversation.is_automation.is_(False),
-                        Message.id > Conversation.context_after_message_id,
-                    ),
-                )
-                expected_message = next((m for m in context.messages if m.message_id == quote.message_id), None)
-                if msg is not None and expected_message and message_text(msg) != expected_message.content:
+                msg = originals.get(quote.message_id)
+                original = message_text(msg) if msg is not None else ""
+                expected_message = inspected.get(quote.message_id)
+                if msg is not None and expected_message is not None and original != expected_message.content:
                     raise MemoryConflictError("Original message changed after inspection")
-                if msg is None or quote.quote not in message_text(msg):
+                if msg is None or quote.quote not in original:
                     raise ValueError("Evidence quote is missing, altered, hidden, or not an original user message")
-                fingerprint = evidence_fingerprint(message_text(msg), msg.created_at.isoformat())
+                fingerprint = evidence_fingerprint(original, msg.created_at.isoformat())
                 if fingerprint in blocked:
                     raise ValueError("This original event was forgotten; do not reconstruct it")
                 key = (fingerprint, quote.quote, quote.stance)
@@ -325,11 +334,7 @@ async def apply_memory_decisions(
                         created_at=msg.created_at.isoformat(),
                     ),
                 )
-            row = (
-                await db.scalar(select(Memory).where(scope_filter(scope), Memory.id == decision.memory_id))
-                if decision.memory_id
-                else None
-            )
+            row = targets.get(decision.memory_id) if decision.memory_id else None
             if row is not None and row.content_version != decision.expected_version:
                 raise MemoryConflictError("Memory changed after inspection; inspect again")
             evidence.sort(key=lambda e: (e.fingerprint, e.stance, e.quote))
@@ -402,25 +407,31 @@ async def apply_memory_decisions(
             results.append(memory_record(row))
         if advance_review:
             # 只有整个 LLM 决策批次成功才推进；空决策也代表已检查，失败保持可重试。
+            reviewed_through: dict[int, int] = {}
             for message in context.messages:
+                reviewed_through[message.session_id] = max(
+                    reviewed_through.get(message.session_id, 0),
+                    message.message_id,
+                )
+            for session_id, message_id in reviewed_through.items():
                 await db.execute(
                     Conversation.__table__.update()
                     .where(
-                        Conversation.id == message.session_id,
+                        Conversation.id == session_id,
                         Conversation.user_id == scope.user_id,
                         Conversation.system_preset_id == scope.system_preset_id,
                     )
                     .values(
                         memory_reviewed_message_id=func.greatest(
                             Conversation.memory_reviewed_message_id,
-                            message.message_id,
+                            message_id,
                         ),
                     ),
                 )
-            for mid in supplied:
+            if supplied:
                 await db.execute(
                     Memory.__table__.update()
-                    .where(scope_filter(scope), Memory.id == mid)
+                    .where(scope_filter(scope), Memory.id.in_(supplied))
                     .values(reviewed_at=now, updated_at=Memory.updated_at),
                 )
         await db.commit()

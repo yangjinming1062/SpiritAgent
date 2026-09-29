@@ -16,32 +16,6 @@ async def aclose_tavily() -> None:
     await _HTTP_CLIENT.aclose()
 
 
-def _build_tavily_request(
-    endpoint: str,
-    payload: dict[str, Any],
-    *,
-    api_key: str,
-    base_url: str,
-) -> tuple[str, dict[str, Any]]:
-    key = api_key.strip()
-    if not key:
-        raise ValueError("tavily_api_key not configured. Get your API key at https://app.tavily.com/home")
-    base = base_url.strip() or TAVILY_DEFAULT_BASE_URL
-    body = dict(payload)
-    body["api_key"] = key
-    url = f"{base}/{endpoint.lstrip('/')}"
-    return url, body
-
-
-async def _tavily_request(endpoint: str, payload: dict[str, Any], *, api_key: str, base_url: str) -> dict[str, Any]:
-    url, body = _build_tavily_request(endpoint, payload, api_key=api_key, base_url=base_url)
-    logger.info("Tavily request", extra={"endpoint": endpoint, "url": url})
-
-    response = await _HTTP_CLIENT.post(url, json=body)
-    response.raise_for_status()
-    return response.json()
-
-
 def _normalize_tavily_search_results(response: dict[str, Any]) -> dict[str, Any]:
     """将 Tavily ``/search`` 响应映射为 ``{success, data: {web: [...]}}`` 格式。"""
     web_results = [
@@ -99,9 +73,6 @@ class TavilyWebSearchProvider(WebSearchProvider):
     def is_available(self) -> bool:
         return bool(self._api_key)
 
-    def supports_search(self) -> bool:
-        return True
-
     def supports_extract(self) -> bool:
         return True
 
@@ -109,34 +80,31 @@ class TavilyWebSearchProvider(WebSearchProvider):
         # Tavily 是目前唯一支持 extract 的供应商，``web_extract`` 因缺凭据失败时展示的就是这条文案。
         return "Tavily API key is not configured. Set tavily_api_key in the backend config (or the TAVILY_API_KEY env var) to enable web_extract."
 
+    async def _request(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """调用方先经 is_available 确认密钥存在。"""
+        url = f"{self._base_url}/{endpoint}"
+        logger.info("Tavily request", extra={"endpoint": endpoint, "url": url})
+        response = await _HTTP_CLIENT.post(url, json={**payload, "api_key": self._api_key})
+        response.raise_for_status()
+        return response.json()
+
     async def search(self, query: str, limit: int = 5) -> dict[str, Any]:
         try:
             logger.info("Tavily search: '%s' (limit=%d)", query, limit)
-            raw = await _tavily_request(
+            raw = await self._request(
                 "search",
                 {"query": query, "max_results": min(limit, 20), "include_raw_content": False, "include_images": False},
-                api_key=self._api_key,
-                base_url=self._base_url,
             )
             return _normalize_tavily_search_results(raw)
-        except ValueError as exc:
-            return {"success": False, "error": str(exc)}
         except Exception as exc:
             logger.warning("Tavily search error", extra={"error": str(exc)})
             return {"success": False, "error": f"Tavily search failed: {exc}"}
 
-    async def extract(self, urls: list[str], **kwargs: Any) -> list[dict[str, Any]]:
+    async def extract(self, urls: list[str]) -> list[dict[str, Any]]:
         try:
             logger.info("Tavily extract", extra={"url_count": len(urls)})
-            raw = await _tavily_request(
-                "extract",
-                {"urls": urls, "include_images": False},
-                api_key=self._api_key,
-                base_url=self._base_url,
-            )
+            raw = await self._request("extract", {"urls": urls, "include_images": False})
             return _normalize_tavily_documents(raw, fallback_url=urls[0] if urls else "")
-        except ValueError as exc:
-            return [{"url": u, "title": "", "content": "", "error": str(exc)} for u in urls]
         except Exception as exc:
             logger.warning("Tavily extract error", extra={"error": str(exc)})
             return [{"url": u, "title": "", "content": "", "error": f"Tavily extract failed: {exc}"} for u in urls]

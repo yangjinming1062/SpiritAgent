@@ -3,9 +3,8 @@
 import asyncio
 import io
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 
-from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_file_path, get_logger
+from components import REMOTE_ASSET_DOWNLOAD_MAX_BYTES, SESSION_LOCAL, download_capped, get_logger
 from PIL import Image
 from prompts.generation import IMAGE_OPAQUE_BACKGROUND, IMAGE_TRANSPARENT_BACKGROUND
 from pydantic import BaseModel, ConfigDict, Field
@@ -34,6 +33,7 @@ logger = get_logger(__name__)
 
 # 2% 容差覆盖 local 1792x1024 与 16:9 的差异，并拒绝 5:3。
 _SIZE_ASPECT_TOLERANCE = 0.02
+_IMAGE_MIME_BY_EXT = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}
 
 
 class CharacterImageInput(BaseModel):
@@ -60,6 +60,10 @@ class ImageChainState(MediaChainState):
     pending_path: str | None = None
     remaining_slots: list[int] = Field(default_factory=list)
     size_rejected: int = 0
+
+    def stored_paths(self) -> set[str]:
+        """已落盘的候选与未登记完成的转存路径，供所有者清理。"""
+        return {self.pending_path or "", *(candidate.path for candidate in self.candidates)} - {""}
 
 
 ImageProgressWriter = Callable[[ImageChainState], Awaitable[None]]
@@ -124,42 +128,8 @@ def _validate_image(
     return ext
 
 
-async def drop_size_mismatched_candidates(state: ImageChainState) -> list[str]:
-    """从候选中移除画幅不合格项，返回其路径供调用方持久化状态后清理。"""
-    if state.inputs is None or not state.inputs.size_enforced or not state.candidates:
-        return []
-    inspected: list[tuple[MediaCandidate, bool]] = []
-    for candidate in state.candidates:
-        try:
-            data, _ = await image_asset_bytes(candidate.path, max_bytes=state.inputs.max_image_bytes)
-            with Image.open(io.BytesIO(data)) as image:
-                image.load()
-                matches = _size_matches_request(state.inputs.size, image.width, image.height)
-        except Exception as exc:
-            raise ImageGenerationError(
-                "已保存的图片无法读取，不能核验画幅",
-                internal=f"candidate={candidate.path}: {exc}",
-            ) from exc
-        inspected.append((candidate, matches))
-
-    kept: list[MediaCandidate] = []
-    rejected_paths: list[str] = []
-    for candidate, matches in inspected:
-        if matches:
-            kept.append(candidate)
-            continue
-        state.size_rejected += 1
-        rejected_paths.append(candidate.path)
-        logger.info(
-            "character image size gate dropped saved candidate",
-            extra={"path": candidate.path, "requested_size": state.inputs.size},
-        )
-    if len(kept) != len(state.candidates):
-        state.candidates = kept
-    return rejected_paths
-
-
 async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD_MAX_BYTES) -> tuple[bytes, str]:
+    """读取图片链地址：companion-assets 裸路径、供应商 data URI 或原生 URL。"""
     parsed = asset_store.parse_companion_asset_path(path)
     if parsed is not None:
         local = asset_store.resolve_companion_asset_path(*parsed)
@@ -168,14 +138,6 @@ async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD
         if local[0].stat().st_size > max_bytes:
             raise ImageGenerationError("生成图片超过大小限制", can_fallback=True)
         return await asyncio.to_thread(local[0].read_bytes), local[1]
-    if path.startswith("temp-media/") or "/api/media/files/" in path:
-        file_id = path.rsplit("/", 1)[-1].split("?", 1)[0]
-        local = get_file_path(file_id)
-        if local is None:
-            raise ImageGenerationError("生成图片已过期")
-        if Path(local[0]).stat().st_size > max_bytes:
-            raise ImageGenerationError("生成图片超过大小限制", can_fallback=True)
-        return await asyncio.to_thread(Path(local[0]).read_bytes), local[1]
     if path.startswith("data:"):
         try:
             data, mime = await resolve_reference_bytes(path)
@@ -183,11 +145,7 @@ async def image_asset_bytes(path: str, *, max_bytes: int = REMOTE_ASSET_DOWNLOAD
             raise ImageGenerationError("供应商返回的图片无法读取", can_fallback=True) from exc
     else:
         data = await download_capped(path, max_bytes=max_bytes, timeout=360.0)
-        ext = asset_store.sniff_media_ext(data)
-        mime = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp", "gif": "image/gif"}.get(
-            ext,
-            "image/jpeg",
-        )
+        mime = _IMAGE_MIME_BY_EXT.get(asset_store.sniff_media_ext(data) or "", "image/jpeg")
     if len(data) > max_bytes:
         raise ImageGenerationError("生成图片超过大小限制", can_fallback=True)
     return data, mime
@@ -216,11 +174,8 @@ async def _complete_images(
         raise ImageGenerationError("图片生成失败，未取得可用候选")
     state.finish(state.inputs.n)
     await _save_progress(state, writer)
-    for candidate in state.candidates:
-        if candidate.path not in selected:
-            await asyncio.to_thread(asset_store.unlink_companion_asset, candidate.path)
-    if state.pending_path and state.pending_path not in selected:
-        await asyncio.to_thread(asset_store.unlink_companion_asset, state.pending_path)
+    for path in state.stored_paths() - set(selected):
+        await asyncio.to_thread(asset_store.unlink_companion_asset, path)
     logger.info(
         "character image chain selected",
         extra={"selected": selected, "attempts": state.next_index, "stop_reason": state.stop_reason},
@@ -269,7 +224,7 @@ async def generate_character_images(
             chain, error = await resolve_image_gen_chain(
                 db,
                 user_id,
-                reference_image,
+                has_reference=bool(reference_image),
                 image_edit=image_edit,
                 multiple_references=bool(secondary_reference_image),
             )
@@ -290,16 +245,6 @@ async def generate_character_images(
                 provider.background = "transparent"
         configs = dict(enumerate(chain))
         await _save_progress(state, save_progress)
-    elif size_enforced and not state.inputs.size_enforced:
-        # 画幅门禁是调用方策略而非生成输入；恢复的旧状态仍按当前功能要求生效。
-        state.inputs.size_enforced = True
-        await _save_progress(state, save_progress)
-    if state.inputs.size_enforced:
-        rejected_paths = await drop_size_mismatched_candidates(state)
-        if rejected_paths:
-            await _save_progress(state, save_progress)
-            for path in rejected_paths:
-                await asyncio.to_thread(asset_store.unlink_companion_asset, path)
     inputs = state.inputs
     if state.phase == "submitting":
         state.stop_reason = "result_unknown"
@@ -315,12 +260,14 @@ async def generate_character_images(
                     path = None
                     for attempt in range(max(1, store_attempts)):
                         try:
+                            # 已落盘的转存文件优先续用，不再下载短时效供应商地址。
                             pending = asset_store.parse_companion_asset_path(state.pending_path)
-                            stored = asset_store.resolve_companion_asset_path(*pending) if pending else None
-                            data, _ = await image_asset_bytes(
-                                state.pending_path if stored else state.pending_urls[0],
-                                max_bytes=inputs.max_image_bytes,
+                            source = (
+                                state.pending_path
+                                if state.pending_path and pending and asset_store.resolve_companion_asset_path(*pending)
+                                else state.pending_urls[0]
                             )
+                            data, _ = await image_asset_bytes(source, max_bytes=inputs.max_image_bytes)
                             ext = await asyncio.to_thread(
                                 _validate_image,
                                 data,
@@ -437,7 +384,6 @@ async def generate_character_images(
                     secondary_reference_image=inputs.secondary_reference_image,
                     image_edit=inputs.image_edit,
                     provider_config=config,
-                    defer_storage=True,
                     background=background,
                 )
             except ImageGenerationError as exc:
@@ -459,8 +405,6 @@ async def generate_character_images(
     except BaseException:
         # 持久任务的候选由任务所有者保管；同步调用没有恢复者，必须回收。
         if save_progress is None:
-            for candidate in state.candidates:
-                await asyncio.to_thread(asset_store.unlink_companion_asset, candidate.path)
-            if state.pending_path:
-                await asyncio.to_thread(asset_store.unlink_companion_asset, state.pending_path)
+            for path in state.stored_paths():
+                await asyncio.to_thread(asset_store.unlink_companion_asset, path)
         raise

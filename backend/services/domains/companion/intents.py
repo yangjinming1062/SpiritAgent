@@ -5,7 +5,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from components import SETTINGS, session_scope, utc_now
+from components import SETTINGS, begin_user_request, end_user_request, session_scope, utc_now
 from modules.auth import User
 from modules.companion import (
     MAX_COMPANION_FAILURES,
@@ -52,6 +52,10 @@ def companion_turn_plan(user_id: int, intent_id: int, expires_at: datetime) -> I
 
 async def _lock_user(db: AsyncSession, user_id: int) -> None:
     await db.execute(select(User.id).where(User.id == user_id).with_for_update())
+
+
+async def _proactive_turn_allowed(db: AsyncSession, user_id: int) -> bool:
+    return can_start_companion_turn(user_id) and await get_disturbance_tier(user_id, db=db) != "still"
 
 
 async def latest_user_message_id(db: AsyncSession, user_id: int) -> int:
@@ -213,6 +217,21 @@ async def list_companion_intents(db: AsyncSession, user_id: int) -> list[Compani
     return [CompanionIntentView.model_validate(row) for row in rows]
 
 
+async def has_pending_companion_intent(db: AsyncSession, user_id: int) -> bool:
+    return (
+        await db.scalar(
+            select(CompanionIntent.id)
+            .where(
+                CompanionIntent.user_id == user_id,
+                CompanionIntent.status.in_(_ACTIVE_STATUSES),
+                CompanionIntent.expires_at > utc_now(),
+            )
+            .limit(1),
+        )
+        is not None
+    )
+
+
 async def invalidate_cron_companion_intents(db: AsyncSession, user_id: int, job_id: int) -> None:
     """源任务变更与待兑现意图失效共用事务；已开始的执行保留待核对事实。"""
     await _lock_user(db, user_id)
@@ -292,8 +311,7 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
         cooling = last_attempt is not None and now - last_attempt < timedelta(
             seconds=SETTINGS.companion_min_turn_interval_seconds,
         )
-        eligible = can_start_companion_turn(user_id) and await get_disturbance_tier(user_id, db=db) != "still"
-        if busy or cooling or not eligible:
+        if busy or cooling or not await _proactive_turn_allowed(db, user_id):
             await db.commit()
             return False
         row = (
@@ -313,23 +331,35 @@ async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None 
         if row is None:
             await db.commit()
             return False
+        lease_token = secrets.token_hex(16)
         row.status = "queued"
-        row.lease_token = secrets.token_hex(16)
+        row.lease_token = lease_token
         row.lease_until = now + timedelta(seconds=_QUEUE_LEASE_SECONDS)
         row.last_attempt_at = now
         emit_ws_event(
             db,
             user_id=user_id,
             event_type=COMPANION_TURN_EVENT,
-            payload=CompanionTurnRequest(intent_id=row.id, lease_token=row.lease_token).model_dump(),
+            payload=CompanionTurnRequest(intent_id=row.id, lease_token=lease_token).model_dump(),
         )
         await db.commit()
         return True
 
 
+async def claim_companion_intent(user_id: int) -> None:
+    """后台认领入口：登记用户请求后再认领，维护期间跳过。"""
+    if not await begin_user_request(user_id):
+        return
+    try:
+        await queue_companion_intent(user_id)
+    finally:
+        await end_user_request(user_id)
+
+
 async def begin_companion_intent(user_id: int, request: CompanionTurnRequest) -> CompanionIntentView | None:
     async with session_scope() as db:
         await _lock_user(db, user_id)
+        now = utc_now()
         row = (
             await db.execute(
                 select(CompanionIntent).where(
@@ -337,22 +367,22 @@ async def begin_companion_intent(user_id: int, request: CompanionTurnRequest) ->
                     CompanionIntent.id == request.intent_id,
                     CompanionIntent.status == "queued",
                     CompanionIntent.lease_token == request.lease_token,
-                    CompanionIntent.expires_at > utc_now(),
-                    CompanionIntent.lease_until > utc_now(),
+                    CompanionIntent.expires_at > now,
+                    CompanionIntent.lease_until > now,
                 ),
             )
         ).scalar_one_or_none()
         if row is None:
             return None
-        if not can_start_companion_turn(user_id) or await get_disturbance_tier(user_id, db=db) == "still":
+        if not await _proactive_turn_allowed(db, user_id):
             row.status = "waiting"
-            row.not_before_at = utc_now() + timedelta(seconds=60)
+            row.not_before_at = now + timedelta(seconds=60)
             row.lease_token = None
             row.lease_until = None
             await db.commit()
             return None
         row.status = "running"
-        row.lease_until = utc_now() + timedelta(seconds=SETTINGS.companion_turn_timeout_seconds + 30)
+        row.lease_until = now + timedelta(seconds=SETTINGS.companion_turn_timeout_seconds + 30)
         await db.commit()
         return CompanionIntentView.model_validate(row)
 
@@ -401,11 +431,12 @@ async def finish_companion_intent(
             if tools_started:
                 row.last_error = "Intent expired during execution; verify previous tool effects before rescheduling."
         elif error or interrupted or context_changed:
-            row.last_error = (error or "User activity or availability changed during the turn")[:1000]
+            last_error = (error or "User activity or availability changed during the turn")[:1000]
             if tools_started:
                 row.status = "failed"
-                row.last_error += "; verify previous tool effects before rescheduling."
+                row.last_error = last_error + "; verify previous tool effects before rescheduling."
             else:
+                row.last_error = last_error
                 if error and not interrupted:
                     row.failure_count = min(row.failure_count + 1, MAX_COMPANION_FAILURES)
                 row.status = "failed" if row.failure_count >= MAX_COMPANION_FAILURES else "waiting"

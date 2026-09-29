@@ -8,6 +8,7 @@ import json
 import re
 from pathlib import Path
 
+from components import SETTINGS
 from modules.companion import REQUIRED_SYSTEM_SLOTS, CompanionActionPack, PeekGeometry, parse_content_rect
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,8 +32,9 @@ class ActionClipSpec(BaseModel):
     duration_ms: int = Field(gt=0)
     frames: int = Field(gt=0)
     loopable: bool = False
-    enter_pose: str | None = None
-    exit_pose: str | None = None
+    # 目录契约字段，后端不产出进出姿态，恒为 null。
+    enter_pose: None = None
+    exit_pose: None = None
     hitmask_ref: str | None = None
     hitmask_grid: tuple[int, int] | None = None
     hitmask_fps: int = Field(gt=0, le=60)
@@ -53,7 +55,8 @@ class ActionCatalogManifest(BaseModel):
 
     schema_version: str = MANIFEST_SCHEMA
     pack_id: int
-    character_id: int | None = None
+    # 目录契约字段，包不绑定独立角色 ID，恒为 null。
+    character_id: None = None
     outfit_id: int | None = None
     catalog_version: int = Field(gt=0)
     canvas: ActionPackCanvas
@@ -66,29 +69,13 @@ class CatalogValidationError(ValueError):
     """manifest 未通过发布校验；str 为公开文案。"""
 
 
-def validate_catalog_manifest(manifest: ActionCatalogManifest) -> None:
-    if manifest.schema_version != MANIFEST_SCHEMA:
-        raise CatalogValidationError("manifest schema 版本不受支持")
-
-    seen_slots: set[str] = set()
-    for clip in manifest.clips:
-        if not _STORAGE_PATH_RE.match(clip.video_ref):
-            raise CatalogValidationError(f"资源路径不合法：{clip.video_ref}")
-        if clip.system_slot:
-            if clip.system_slot in seen_slots:
-                raise CatalogValidationError(f"系统槽位重复：{clip.system_slot}")
-            seen_slots.add(clip.system_slot)
-
-    missing = [slot for slot in REQUIRED_SYSTEM_SLOTS if slot not in seen_slots]
-    if missing:
-        raise CatalogValidationError("缺少必需系统动作：" + "、".join(missing))
-
-
 async def build_catalog_manifest(
     db: AsyncSession,
     pack: CompanionActionPack,
 ) -> ActionCatalogManifest | None:
-    """合并当前成功动作构建新 manifest；必需槽位不齐返回 None（不发布，不破坏现有目录）。"""
+    """合并当前成功动作构建新 manifest；必需槽位不齐返回 None（不发布，不破坏现有目录）。
+
+    系统槽位在包内由唯一索引保证不重复。"""
     canvas_data = json.loads(pack.canvas_spec or "{}")
     canvas = ActionPackCanvas(
         width=canvas_data.get("width", 512),
@@ -119,8 +106,6 @@ async def build_catalog_manifest(
                 duration_ms=max(duration_ms, 1),
                 frames=max(frames, 1),
                 loopable=action.loopable,
-                enter_pose=action.enter_pose,
-                exit_pose=action.exit_pose,
                 hitmask_ref=action.hitmask_path,
                 hitmask_grid=(
                     (action.hitmask_grid_w, action.hitmask_grid_h)
@@ -135,41 +120,24 @@ async def build_catalog_manifest(
         if action.system_slot:
             slots_present.add(action.system_slot)
 
-    if not clips:
+    if any(slot not in slots_present for slot in REQUIRED_SYSTEM_SLOTS):
         return None
+    for clip in clips:
+        if not _STORAGE_PATH_RE.match(clip.video_ref):
+            raise CatalogValidationError(f"资源路径不合法：{clip.video_ref}")
 
-    missing = [slot for slot in REQUIRED_SYSTEM_SLOTS if slot not in slots_present]
-    if missing:
-        return None
-
-    cover_path: str | None = None
-    raw_cover = (pack.manifest_json or "").strip()
-    if raw_cover and raw_cover != "{}":
-        try:
-            cover_path = str(json.loads(raw_cover).get("cover_path") or "") or None
-        except json.JSONDecodeError:
-            cover_path = None
-
-    manifest = ActionCatalogManifest(
+    return ActionCatalogManifest(
         pack_id=pack.id,
-        character_id=pack.character_id,
         outfit_id=pack.outfit_id,
         catalog_version=pack.catalog_version + 1,
         canvas=canvas,
         clips=clips,
-        cover_path=cover_path,
+        cover_path=pack.cover_path,
     )
-    validate_catalog_manifest(manifest)
-    return manifest
 
 
-async def publish_action_catalog(
-    db: AsyncSession,
-    pack: CompanionActionPack,
-    *,
-    assets_dir: Path,
-) -> int:
-    """发布新目录快照：构建 manifest → 写文件 → CAS 推进版本指针。
+async def publish_action_catalog(db: AsyncSession, pack: CompanionActionPack) -> int:
+    """发布新目录快照：构建 manifest → 写入用户资产目录 → CAS 推进版本指针。
 
     数据库发布失败只重试发布，不重新付费生成。
     """
@@ -179,9 +147,8 @@ async def publish_action_catalog(
 
     payload = manifest.model_dump_json()
     content_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    filename = f"action-catalog-{pack.id}-v{manifest.catalog_version}.json"
-    file_path = Path(assets_dir) / filename
+    manifest_path = f"companion-assets/{pack.user_id}/action-catalog-{pack.id}-v{manifest.catalog_version}.json"
+    file_path = Path(SETTINGS.data_dir) / manifest_path
+    file_path.parent.mkdir(parents=True, exist_ok=True)
     file_path.write_text(payload, encoding="utf-8")
-
-    bare_path = f"companion-assets/{pack.user_id}/{filename}"
-    return await publish_catalog(db, pack, manifest_path=bare_path, content_hash=content_hash)
+    return await publish_catalog(db, pack, manifest_path=manifest_path, content_hash=content_hash)

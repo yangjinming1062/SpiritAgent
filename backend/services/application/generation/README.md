@@ -13,7 +13,7 @@
 | [image_generation.py](image_generation.py) / [scene_prompt.py](scene_prompt.py) | 图像参考装配与场景提示词装配 |
 | [chat_images.py](chat_images.py) | 聊天图片批次登记、实际验图、版本与一次重做预算 |
 | [scene_service.py](scene_service.py) | 场景创建、描述分析、图片重生成与切换版本 |
-| [video/](video/) / [video_jobs.py](video_jobs.py) | 视频包（script、manifest、state、service）与聊天视频 |
+| [video/](video/) / [video_jobs.py](video_jobs.py) | 视频包（script、state、service）与聊天视频；供应商轮询 `poll_video_task` 两者共用 |
 | [media_chain.py](media_chain.py) / [character_images.py](character_images.py) / [identity_review.py](identity_review.py) | 供应商链择优、身份保持图片、评分与严格复核 |
 | [media_review.py](media_review.py) | 出镜媒体用户复核状态 |
 | [response_builders.py](response_builders.py) | 头像/外观响应装配 |
@@ -26,7 +26,9 @@
 
 全身重绘与自备图先写 `FullbodyCandidate`，分析可重试；用户采纳时校验原图和角色卡修订，同事务更新全身图与身体字段。被替换的未采纳候选清理图片，已采纳旧图保留给历史任务；完整身份语义见 [PIPELINE](../../../../docs/PIPELINE.md#全身候选采纳)。
 
-草稿转存失败可重试，只有全部图片均为过期草稿的头像行才能清理，不连带删除正式参考。服务内部与 ORM 始终使用裸路径，访问 URL 仅在响应出口生成。
+草稿转存失败可重试，只有全部图片均为过期草稿的头像行才能清理，不连带删除正式参考。服务内部与 ORM 始终使用裸路径（`temp-media/`、`companion-avatars/`、`companion-assets/`），[avatar_service.py](avatar_service.py) 的读取与删除入口只接受裸路径；访问 URL 仅在响应出口由 `re_sign_bare_path` 生成，客户端回传的地址只在全身确认入口还原比对。
+
+角色卡分析与全身候选分析共用 `extract_card_features`；头像、全身与换装生图共用 `generate_with_moderation_retry`，命中内容审核时改写提示词重试一次，结果未知不重试。
 
 ### 后台任务与初始资产
 
@@ -50,7 +52,7 @@
 
 ## 图像输入与装配
 
-[image_generation.py](image_generation.py)按供应商原生能力装配参考，生成与采纳共用资产落库和清理入口。提示词按点位选择，头像可改外貌的条款不能用于换装；参考优先级与编辑前置条件归 [PIPELINE](../../../../docs/PIPELINE.md#身份造型与参考输入)。
+[image_generation.py](image_generation.py)按供应商原生能力装配参考：`persist_user_assets=True` 时转存为用户资产，否则返回供应商原生 URL 或 data URI，由调用方（质量链、头像/全身立绘）自行落盘。提示词按点位选择，头像可改外貌的条款不能用于换装；参考优先级与编辑前置条件归 [PIPELINE](../../../../docs/PIPELINE.md#身份造型与参考输入)。
 
 聊天与夜间图片共用 [visual_identity.py](visual_identity.py) 的 `build_self_image_prompt`，`SelfVisualPlan` 冻结造型。视频首帧生成/校准也走图片质量链，恢复沿用已保存首帧，具体规则见 [出镜图片与视频](../../../../docs/PIPELINE.md#出镜图片与视频首帧)。
 

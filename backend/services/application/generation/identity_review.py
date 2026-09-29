@@ -43,12 +43,12 @@ async def _score_media(
 
 async def score_character_image(
     user_id: int,
-    identity_uri: str | None,
+    identity_uri: str,
     candidate_uri: str,
     *,
     identity_text: str = "",
 ) -> int | None:
-    return await _score_media(user_id, CHARACTER_MEDIA_IMAGE_SCORE, (identity_uri or "", candidate_uri), identity_text)
+    return await _score_media(user_id, CHARACTER_MEDIA_IMAGE_SCORE, (identity_uri, candidate_uri), identity_text)
 
 
 async def score_character_frames(

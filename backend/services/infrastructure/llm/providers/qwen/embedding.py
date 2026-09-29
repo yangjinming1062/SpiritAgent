@@ -9,5 +9,5 @@ class QwenEmbeddingProvider(OpenAIEmbeddingProvider):
 
     provider_name = "qwen"
     service_type = ServiceType.embedding
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"embedding": "text-embedding-v4"}
-    dimension: ClassVar[int] = 1024
+    DEFAULT_BASE_URL: ClassVar[str] = "https://maas.qianwenaiapi.com/compatible-mode/v1"
+    DEFAULT_MODEL: ClassVar[str] = "text-embedding-v4"

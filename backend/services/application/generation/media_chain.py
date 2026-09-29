@@ -138,14 +138,7 @@ async def resolve_frozen_media_provider(
 
 def media_failure_reason(exc: Exception) -> tuple[str, bool]:
     """返回失败原因及是否可安全尝试下一家；未知付费结果优先于其他错误。"""
-    classified = getattr(exc, "classified", None) or classify_api_error(exc)
+    classified = classify_api_error(exc)
     if getattr(exc, "result_unknown", False) or classified.reason == FailoverReason.result_unknown:
         return "result_unknown", False
-    return classified.reason.value, getattr(
-        exc,
-        "can_fallback",
-        False,
-    ) or classified.should_fallback or classified.reason in (
-        FailoverReason.timeout,
-        FailoverReason.overloaded,
-    )
+    return classified.reason.value, getattr(exc, "can_fallback", False) or classified.should_fallback

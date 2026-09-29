@@ -12,11 +12,11 @@
 |---|---|
 | [orchestrator.py](orchestrator.py) | 回合执行：轮数预算、无进展守卫、委派与供应商回退锁定 |
 | [turn_inputs.py](turn_inputs.py) | 回合装配：工具开关、推断设置、用户与会话设置合并 |
-| [prompt_presets.py](prompt_presets.py) / [prompt_blocks.py](prompt_blocks.py) | 预设装配与共享块渲染 |
+| [prompt_presets.py](prompt_presets.py) / [prompt_blocks.py](prompt_blocks.py) | 预设体与工具排除集合、共享块渲染 |
 | [system_prompt.py](system_prompt.py) / [title_generator.py](title_generator.py) / [context_compressor.py](context_compressor.py) | 系统提示词、标题、运行时压缩 |
 | [reply_delivery.py](reply_delivery.py) / [bubble.py](bubble.py) / [streaming.py](streaming.py) | 气泡校验、结构化回复与文本流式路径 |
 | [tool_dispatch.py](tool_dispatch.py) / [delegation.py](delegation.py) | 工具派发与 `DelegateAction` 执行层接管 |
-| [chat_emitter.py](chat_emitter.py) / [persistence.py](persistence.py) | 会话事件与消息落库 |
+| [chat_emitter.py](chat_emitter.py) / [persistence.py](persistence.py) | 会话事件、消息与压缩检查点落库 |
 | [slash_commands.py](slash_commands.py) / [native_memory.py](native_memory.py) / [background_review.py](background_review.py) | 斜杠命令、原生记忆与回合后整理 |
 
 提示词主体文本集中在 [prompts](../../../prompts/README.md)。
@@ -28,6 +28,8 @@
 专业预设只装配职业目标与本域资料；automation 使用独立任务边界，不带陪伴人格、记忆维护或实时用户答复假设。主动回合的沉默规则属于系统指令，意图和档位属于尾部运行资料；普通用户回合不注入沉默选项。
 
 陪伴回合每次调用模型前刷新环境，包括工具续轮；已有场景时使用成品描述，仅无当前场景时注入衣柜着装。环境资料与工具指令分别装配，关闭工具仍保留环境。
+
+渠道说明：客户端提供的自由文本原样作为资料；IM 适配器声明的渠道键（如 `weixin`）换成对应渠道说明；没有客户端资料时使用桌面说明。
 
 内部结构化推理通过 `instructions` 定义任务，JSON 输入承载资料，输出由代码校验。生活空间回复协议由服务端按实际音色与模型装配为文字或混合气泡格式，提示词只描述该格式与演绎字段；基础提示词预览不能代表最终请求。修改遵循 [RULES](../../../../RULES.md#提示词设计与修改规范)。
 
@@ -78,6 +80,8 @@ Token 估算以上轮实际用量加新增内容为基线；冷启动或裁掉�
 ### 派发、委派与资源关闭
 
 [orchestrator.py](orchestrator.py)同时受调用方轮数预算和无进展守卫约束。委派由执行层接管 `DelegateAction`，工具处理器不反向调用聊天入口；批内并发按幂等性决定，工具开关每回合重读。
+
+预设、工具排除、记忆域与回合后整理都由会话决定（数据库约束 `is_automation` 与 `system_preset_id='automation'` 等价），调用方只追加本轮排除的工具。`ephemeral` 只用于主动陪伴：请求作为尾部资料，不落库、允许沉默；它与自动化回合都不计用户接触。
 
 [delegation.py](delegation.py)为每次委派在发起会话下新建子会话（`parent_id`），继承预设与自动化归属并无头执行，最终结果作为工具结果返回；子会话的列表与删除语义见 [PROTOCOL](../../../../docs/PROTOCOL.md#会话种类与历史修改)。
 

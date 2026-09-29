@@ -6,10 +6,9 @@ router = get_router()
 
 
 @router.websocket("/ws")
-async def chat_websocket(websocket: WebSocket, ticket: str | None = None, token: str | None = None) -> None:
-    # renderer 用短期 ?ticket= JWT 鉴权；?token= 仅供后端内部调用。
-    credential = ticket or token
-    if not credential:
+async def chat_websocket(websocket: WebSocket, ticket: str | None = None) -> None:
+    # 握手凭据是 /api/user/ws-ticket 签发的短期 purpose=ws JWT。
+    if not ticket:
         await websocket.close(code=1008)
         return
-    await handle_chat_websocket(websocket, credential)
+    await handle_chat_websocket(websocket, ticket)

@@ -1,12 +1,11 @@
 import asyncio
-import contextlib
 
 from components import SETTINGS, get_logger, session_scope
 from modules.channels import ChannelBinding
 from sqlalchemy import select
 
-from .base import ChannelAdapter, ChannelBindingSnapshot, ChannelError, InboundMessage, OnInbound
-from .bridge import handle_inbound, stop_binding_turns
+from .base import ChannelAdapter, ChannelBindingSnapshot, ChannelError
+from .bridge import stop_binding_turns
 from .registry import resolve
 from .state import update_binding_status
 
@@ -29,16 +28,6 @@ class ChannelManager:
     def adapter(self, user_id: int, channel: str) -> ChannelAdapter | None:
         return self._adapters.get((user_id, channel))
 
-    async def wait_adapter(self, user_id: int, channel: str, timeout: float = 5.0) -> ChannelAdapter | None:
-        """等待守卫任务完成适配器构造（create_task 到首段执行有调度延迟）；超时返回 None 由调用方决定重启或报错。"""
-        deadline = asyncio.get_running_loop().time() + timeout
-        while asyncio.get_running_loop().time() < deadline:
-            adapter = self._adapters.get((user_id, channel))
-            if adapter is not None:
-                return adapter
-            await asyncio.sleep(0.05)
-        return None
-
     async def load_and_start(self) -> None:
         """启动路径：拉起所有未停用的绑定（lifespan 调用，幂等——restart 先停旧任务）。"""
         async with session_scope() as db:
@@ -58,6 +47,7 @@ class ChannelManager:
             await self._start_binding(user_id, channel)
 
     async def _start_binding(self, user_id: int, channel: str) -> None:
+        """适配器在返回前构造并登记，调用方随后即可通过 ``adapter()`` 取到实例。"""
         key = (user_id, channel)
         existing = self._tasks.get(key)
         if existing is not None and not existing.done():
@@ -65,8 +55,11 @@ class ChannelManager:
         snapshot = await self._snapshot(user_id, channel)
         if snapshot is None:
             return
+        adapter = await self._build_adapter(snapshot)
+        if adapter is None:
+            return
         self._tasks[key] = asyncio.create_task(
-            self._run_guarded(snapshot),
+            self._run_guarded(adapter),
             name=f"channels.binding.{channel}.{user_id}",
         )
 
@@ -75,21 +68,21 @@ class ChannelManager:
             await self._stop_binding(user_id, channel)
 
     async def _stop_binding(self, user_id: int, channel: str) -> ChannelAdapter | None:
+        """取消守卫任务并收尾适配器；守卫尚未开始执行时由这里补做 aclose 与回合清理。"""
         key = (user_id, channel)
         task = self._tasks.pop(key, None)
         adapter = self._adapters.pop(key, None)
-        if task is not None and not task.done():
+        if task is not None:
             task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            except Exception:
-                logger.exception("channel binding task exited with error while stopping", extra={"key": key})
-        elif task is not None:
-            with contextlib.suppress(asyncio.CancelledError, Exception):
-                task.result()
+            (result,) = await asyncio.gather(task, return_exceptions=True)
+            if isinstance(result, Exception):
+                logger.error(
+                    "channel binding task exited with error while stopping",
+                    extra={"key": key},
+                    exc_info=result,
+                )
         if adapter is not None:
+            await adapter.aclose()
             await stop_binding_turns(adapter.snapshot.id)
         return adapter
 
@@ -111,7 +104,7 @@ class ChannelManager:
     async def pause_user_bindings(self, user_id: int) -> None:
         """维护边界：停止并等待该用户当前注册的全部绑定。"""
         async with self._lifecycle_lock:
-            channels = {channel for uid, channel in (*self._tasks.keys(), *self._adapters.keys()) if uid == user_id}
+            channels = {channel for uid, channel in (*self._tasks, *self._adapters) if uid == user_id}
             for channel in channels:
                 await self._stop_binding(user_id, channel)
 
@@ -138,18 +131,11 @@ class ChannelManager:
     async def drain(self) -> None:
         """lifespan 关闭段：取消并等待全部绑定任务，避免持有连接池的协程逃过 shutdown。"""
         async with self._lifecycle_lock:
-            keys = list(self._tasks)
-            tasks = [self._tasks.pop(k) for k in keys]
-            adapters = list(self._adapters.values())
-            self._adapters.clear()
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+            keys = {*self._tasks, *self._adapters}
+            results = await asyncio.gather(*(self._stop_binding(*key) for key in keys), return_exceptions=True)
             for result in results:
-                if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
-                    logger.error("channel binding task exited with error during drain", exc_info=result)
-            await asyncio.gather(*(stop_binding_turns(adapter.snapshot.id) for adapter in adapters))
+                if isinstance(result, Exception):
+                    logger.error("channel binding cleanup failed during drain", exc_info=result)
 
     async def _snapshot(self, user_id: int, channel: str) -> ChannelBindingSnapshot | None:
         async with session_scope() as db:
@@ -164,26 +150,34 @@ class ChannelManager:
                 id=row.id,
                 user_id=row.user_id,
                 channel=row.channel,
-                config=ChannelAdapter.parse_config(row.config_json),
                 credentials=row.credentials,
             )
 
-    async def _set_status(self, snapshot: ChannelBindingSnapshot, status: str, *, error: str | None = None) -> None:
-        await update_binding_status(snapshot.id, status, error=error)
+    async def _build_adapter(self, snapshot: ChannelBindingSnapshot) -> ChannelAdapter | None:
+        """构造并登记适配器；构造失败（渠道未注册等确定性错误）标 error 并返回 None，不影响其他绑定。"""
+        try:
+            adapter = resolve(snapshot.channel)(snapshot)
+        except Exception as e:
+            logger.exception(
+                "channel adapter construction failed",
+                extra={"user_id": snapshot.user_id, "channel": snapshot.channel},
+            )
+            await update_binding_status(snapshot.id, "error", error=str(e))
+            return None
+        self._adapters[(snapshot.user_id, snapshot.channel)] = adapter
+        return adapter
 
-    async def _run_guarded(self, snapshot: ChannelBindingSnapshot) -> None:
+    async def _run_guarded(self, adapter: ChannelAdapter) -> None:
         """守卫循环：fatal ChannelError → 标 error 停止；其他异常/意外返回 → 退避后重建适配器重试。"""
+        snapshot = adapter.snapshot
         key = (snapshot.user_id, snapshot.channel)
         while True:
-            adapter: ChannelAdapter | None = None
             try:
-                adapter = resolve(snapshot.channel)(snapshot, self._make_on_inbound(snapshot))
-                self._adapters[key] = adapter
                 # 需要登录且尚无凭据的渠道停在 login_pending 等扫码；connected 由登录完成路径迁移。
                 if adapter.requires_login and not adapter.has_credentials():
-                    await self._set_status(snapshot, "login_pending")
+                    await update_binding_status(snapshot.id, "login_pending")
                 else:
-                    await self._set_status(snapshot, "connected")
+                    await update_binding_status(snapshot.id, "connected")
                 await adapter.run()
                 logger.warning("channel adapter run() returned unexpectedly; restarting", extra={"key": key})
             except asyncio.CancelledError:
@@ -191,43 +185,31 @@ class ChannelManager:
             except ChannelError as e:
                 if e.fatal:
                     logger.error("channel binding fatal error", extra={"key": key, "error": str(e)})
-                    await self._set_status(snapshot, "error", error=str(e))
-                    self._adapters.pop(key, None)
+                    await update_binding_status(snapshot.id, "error", error=str(e))
                     return
                 logger.warning("channel adapter transient error; backing off", extra={"key": key, "error": str(e)})
             except Exception:
                 logger.exception("channel adapter crashed; backing off", extra={"key": key})
             finally:
-                if adapter is not None:
-                    if self._adapters.get(key) is adapter:
-                        self._adapters.pop(key, None)
-                    try:
-                        await adapter.aclose()
-                    except Exception:
-                        logger.exception("channel adapter cleanup failed", extra={"key": key})
-                    finally:
-                        await stop_binding_turns(snapshot.id)
+                if self._adapters.get(key) is adapter:
+                    self._adapters.pop(key, None)
+                try:
+                    await adapter.aclose()
+                except Exception:
+                    logger.exception("channel adapter cleanup failed", extra={"key": key})
+                finally:
+                    await stop_binding_turns(snapshot.id)
             await asyncio.sleep(SETTINGS.channels_restart_backoff_seconds)
             # 重启前刷新快照（凭据/配置可能已被 REST 更新）。
             fresh = await self._snapshot(snapshot.user_id, snapshot.channel)
             if fresh is None:
                 # 绑定行已删除（DELETE 竞速）：静默退出，不必标状态。
-                self._adapters.pop(key, None)
                 return
             snapshot = fresh
-
-    def _make_on_inbound(self, snapshot: ChannelBindingSnapshot) -> OnInbound:
-        """入站回调经当前适配器实例转发：守卫循环重建适配器后旧闭包仍指向最新实例。"""
-
-        async def on_inbound(msg: InboundMessage) -> asyncio.Future[str | None]:
-            adapter = self.adapter(snapshot.user_id, snapshot.channel)
-            if adapter is None:
-                fut: asyncio.Future[str | None] = asyncio.get_running_loop().create_future()
-                fut.set_result(None)
-                return fut
-            return await handle_inbound(adapter, msg)
-
-        return on_inbound
+            rebuilt = await self._build_adapter(snapshot)
+            if rebuilt is None:
+                return
+            adapter = rebuilt
 
 
 MANAGER = ChannelManager()

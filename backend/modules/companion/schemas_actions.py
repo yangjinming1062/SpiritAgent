@@ -93,45 +93,6 @@ class ActionDesignResult(BaseModel):
     message: str = ""
 
 
-class ActionSearchHit(BaseModel):
-    """action_search 单条命中。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    action_id: int
-    key: str
-    name: str
-    system_slot: str = ""
-    kind: str = "once"
-    motion_description: str = ""
-    use_when: list[str] = Field(default_factory=list)
-    avoid_when: list[str] = Field(default_factory=list)
-    tags: list[str] = Field(default_factory=list)
-    duration_ms: int = 0
-    loopable: bool = False
-
-
-class ActionSearchResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    hits: list[ActionSearchHit] = Field(default_factory=list)
-    total: int = 0
-
-
-class ActionInspectResponse(BaseModel):
-    """action_inspect 状态视图。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    kind: str = Field(pattern="^(proposal|action)$")
-    id: int
-    status: str
-    stage: str = ""
-    action_id: int | None = None
-    message: str = ""
-    error: str | None = None
-
-
 class ActionPlayRequest(BaseModel):
     """LLM action_play 工具入参。"""
 
@@ -180,27 +141,8 @@ class ActionPlayCommand(BaseModel):
     source: str = "chat_expression"
 
 
-class ActionSummary(BaseModel):
-    """动作元信息摘要（catalog API / 提示词资料块共用）。"""
-
-    model_config = ConfigDict(extra="forbid")
-
-    action_id: int
-    key: str
-    name: str
-    system_slot: str = ""
-    kind: str = "once"
-    motion_description: str = ""
-    use_when: list[str] = Field(default_factory=list)
-    avoid_when: list[str] = Field(default_factory=list)
-    tags: list[str] = Field(default_factory=list)
-    duration_ms: int = 0
-    loopable: bool = False
-    enabled: bool = True
-
-
 class ActionCatalogResponse(BaseModel):
-    """动作目录列表（按包隔离）。appearance_epoch 为当前包的激活代次，客户端据此判断播放指令新旧。"""
+    """当前包的目录指针。appearance_epoch 为包的激活代次，客户端据此判断播放指令新旧。"""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -208,21 +150,6 @@ class ActionCatalogResponse(BaseModel):
     catalog_version: int
     appearance_epoch: int
     manifest_url: str | None = None
-    actions: list[ActionSummary] = Field(default_factory=list)
-
-
-class ActionProposalResponse(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    proposal_id: int
-    pack_id: int
-    source: str
-    name: str
-    status: str
-    review_decision: str | None = None
-    review_reason: str | None = None
-    action_id: int | None = None
-    created_at: str
 
 
 class ActionBudgetStatus(BaseModel):

@@ -1,11 +1,11 @@
 from typing import ClassVar
 
-from ..base import ProviderConfig, VideoAsset, VideoGenProvider, VideoGenRequest, VideoJobStatus
+from ..base import ProviderConfig, VideoAsset, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
 from ..http import get_http
 from ._errors import raise_for_grok_response
 
 # xAI 生命周期：queued / processing / done / failed / expired；expired 与 failed 均为终态失败（worker 可停止轮询），统一映射为内部 "failed"，避免 worker 多分支。
-_STATUS_MAP = {
+_STATUS_MAP: dict[str, VideoJobState] = {
     "queued": "queued",
     "processing": "processing",
     "pending": "processing",
@@ -28,8 +28,8 @@ class GrokVideoGenProvider(VideoGenProvider):
     """通过 xAI 的两阶段异步管道提供视频生成：submit→POST /videos/generations 返回 request_id；poll→GET /videos/{request_id} 返回状态与下载 URL（done 时 URL 内联）；fetch 不可达（URL 仅由 poll 返回）；默认模型 grok-imagine-video-1.5。"""
 
     provider_name = "grok"
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"video_gen": "grok-imagine-video-1.5"}
-    DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"video_gen": 8_000}
+    DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"
+    DEFAULT_MODEL: ClassVar[str] = "grok-imagine-video-1.5"
 
     # 能力声明（与 submit 校验一致）；分辨率按成本升序，键取规范小写。
     durations = _SUPPORTED_DURATIONS
@@ -69,7 +69,7 @@ class GrokVideoGenProvider(VideoGenProvider):
                 payload["reference_images"] = [{"url": image} for image in req.reference_images]
 
         resp = await self._client.post("/videos/generations", json=payload)
-        body = raise_for_grok_response(resp, provider=self.provider_name, model=model)
+        body = raise_for_grok_response(resp)
 
         request_id = body.get("request_id", "")
         if not request_id:
@@ -78,7 +78,7 @@ class GrokVideoGenProvider(VideoGenProvider):
 
     async def poll(self, task_id: str) -> VideoJobStatus:
         resp = await self._client.get(f"/videos/{task_id}")
-        body = raise_for_grok_response(resp, provider=self.provider_name, model=self.config.model)
+        body = raise_for_grok_response(resp)
 
         raw_status = str(body.get("status", "")).lower()
         norm = _STATUS_MAP.get(raw_status)

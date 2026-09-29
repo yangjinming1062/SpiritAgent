@@ -8,13 +8,14 @@ import asyncio
 import contextlib
 import random
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
 from datetime import timedelta
+from typing import Any
 
 import asyncpg
 from components import BackgroundTask, begin_local_scope, get_logger, safe_json_loads, session_scope, utc_now
 from modules.ws import WSEvent
-from sqlalchemy import select, update
+from sqlalchemy import Row, select, update
 
 from services.infrastructure.desktop import connection
 
@@ -32,10 +33,9 @@ STALE_LOCK_TIMEOUT_SECONDS = 60
 # 进程唯一 Worker ID（用于原子锁追踪）
 WORKER_ID = f"worker-{secrets.token_hex(4)}"
 
-InternalEventHandler = Callable[[int, dict], Awaitable[None]]
+InternalEventHandler = Callable[[int, dict], Coroutine[Any, Any, None]]
 
-# 需要进程内处理器的事件类型及其处理器；由装配层注册（bootstrap/registrations.py）。
-_internal_event_types: set[str] = set()
+# 需要进程内处理器的事件类型及其处理器；由装配层在应用导入期注册（bootstrap/registrations.py），先于事件回路启动。
 _handlers: dict[str, InternalEventHandler] = {}
 
 # 按 event_type → user 持有强引用，避免 spawn 的处理器任务运行到一半时被 GC（CPython bpo-46662）。
@@ -43,7 +43,6 @@ _event_tasks: dict[str, dict[int, set[asyncio.Task]]] = {}
 
 
 def register_internal_event_handler(event_type: str, handler: InternalEventHandler) -> None:
-    _internal_event_types.add(event_type)
     _handlers[event_type] = handler
 
 
@@ -63,11 +62,6 @@ _WAKEUP_STATE: _WakeupState = _WakeupState()
 _EVENT_LOOP = BackgroundTask("event_store.event_loop")
 
 
-def notify_ws_event_loop() -> None:
-    """唤醒事件派发循环立即执行一轮事件捞取与冲刷。"""
-    _WAKEUP_STATE.notify()
-
-
 def _discard_event_task(event_type: str, user_id: int, task: asyncio.Task) -> None:
     user_tasks = _event_tasks.get(event_type, {}).get(user_id)
     if user_tasks is not None:
@@ -84,18 +78,6 @@ def _log_event_task_failure(task: asyncio.Task) -> None:
         return
     if (exc := task.exception()) is not None:
         logger.exception("internal event handler raised", exc_info=exc)
-
-
-def cancel_user_event_tasks(user_id: int, event_type: str) -> int:
-    user_tasks = _event_tasks.get(event_type, {}).pop(user_id, None)
-    if not user_tasks:
-        return 0
-    cancelled = 0
-    for t in user_tasks:
-        if not t.done():
-            t.cancel()
-            cancelled += 1
-    return cancelled
 
 
 async def interrupt_user_event_tasks(user_id: int, event_type: str) -> int:
@@ -141,28 +123,19 @@ async def _recover_stale_locks() -> None:
         await db.commit()
 
 
-async def _claim_pending_events(
-    local_user_ids: list[int],
-    limit: int = WS_EVENT_CLAIM_BATCH_SIZE,
-) -> list[tuple[int, str, str, int, int]]:
-    """以原子锁认领待投递事件；尚无处理器的内部事件类型留在 PENDING 等待装配完成。"""
+async def _claim_pending_events(local_user_ids: list[int]) -> list[Row]:
+    """以原子锁认领待投递事件，按创建顺序返回（UPDATE ... RETURNING 不保证顺序）。"""
     now = utc_now()
-    claimed: list[tuple[int, str, str, int, int]] = []
-    conditions = [
-        WSEvent.user_id.in_(local_user_ids),
-        WSEvent.status == "PENDING",
-        WSEvent.next_retry_at <= now,
-    ]
-    unhandled = _internal_event_types - _handlers.keys()
-    if unhandled:
-        conditions.append(WSEvent.event_type.not_in(unhandled))
-
     async with session_scope() as db:
         subq = (
             select(WSEvent.id)
-            .where(*conditions)
+            .where(
+                WSEvent.user_id.in_(local_user_ids),
+                WSEvent.status == "PENDING",
+                WSEvent.next_retry_at <= now,
+            )
             .order_by(WSEvent.created_at, WSEvent.id)
-            .limit(limit)
+            .limit(WS_EVENT_CLAIM_BATCH_SIZE)
             .with_for_update(skip_locked=True)
             .scalar_subquery()
         )
@@ -181,11 +154,8 @@ async def _claim_pending_events(
                 ),
             )
         ).all()
-        rows.sort(key=lambda r: (r[4], r[0]))
-        for r in rows:
-            claimed.append((r[0], r[1], r[2], r[3], r[5]))
         await db.commit()
-    return claimed
+    return sorted(rows, key=lambda row: (row.created_at, row.id))
 
 
 async def _mark_events_delivered(event_ids: list[int]) -> None:
@@ -201,7 +171,7 @@ async def _mark_events_delivered(event_ids: list[int]) -> None:
         await db.commit()
 
 
-async def _mark_event_failure(event_id: int, current_retries: int, error: str | None = None) -> None:
+async def _mark_event_failure(event_id: int, current_retries: int, error: str) -> None:
     now = utc_now()
     new_retry_count = current_retries + 1
     if new_retry_count >= MAX_OUTBOX_RETRIES:
@@ -220,7 +190,7 @@ async def _mark_event_failure(event_id: int, current_retries: int, error: str | 
                 retry_count=new_retry_count,
                 next_retry_at=next_retry,
                 locked_by=None,
-                error_message=(error or "Unknown delivery error")[:500],
+                error_message=error[:500],
             ),
         )
         await db.commit()
@@ -255,7 +225,7 @@ async def ws_event_loop(dsn: str) -> None:
     seen_version = -1  # 初始传递 -1，使启动时第一轮立即执行排空已提交事件
 
     def _listener(_conn, _pid, _channel, _payload):
-        notify_ws_event_loop()
+        _WAKEUP_STATE.notify()
 
     flusher_task = asyncio.create_task(_periodic_flusher_loop())
     try:
@@ -285,7 +255,7 @@ async def ws_event_loop(dsn: str) -> None:
             await _flush_gateway_delivered()
 
 
-async def _process_events(seen: int = -1) -> int:
+async def _process_events(seen: int) -> int:
     try:
         begin_local_scope()
         if _WAKEUP_STATE.version <= seen:
@@ -309,15 +279,15 @@ async def _process_events(seen: int = -1) -> int:
             return current_version
 
         handled_delivered_ids: list[int] = []
-        for event_id, event_type, payload_str, user_id, retry_count in claimed:
+        for event_id, event_type, payload_str, user_id, _, retry_count in claimed:
             payload = safe_json_loads(payload_str)
             if payload is None:
                 logger.warning("Skipping and failing unparseable WSEvent", extra={"event_id": event_id})
                 await _mark_event_failure(event_id, retry_count, error="Unparseable JSON payload")
                 continue
 
-            if event_type in _handlers:
-                handler = _handlers[event_type]
+            handler = _handlers.get(event_type)
+            if handler is not None:
                 task = asyncio.create_task(handler(user_id, payload))
                 user_tasks = _event_tasks.setdefault(event_type, {}).setdefault(user_id, set())
                 user_tasks.add(task)
@@ -353,7 +323,7 @@ async def _process_events(seen: int = -1) -> int:
 
 def start_event_loop(dsn: str) -> None:
     """装配传输层事件回路钩子并启动派发循环。"""
-    connection.set_event_loop_hooks(notify=notify_ws_event_loop, deliver_ack=_mark_events_delivered)
+    connection.set_event_loop_hooks(notify=_WAKEUP_STATE.notify, deliver_ack=_mark_events_delivered)
     _EVENT_LOOP.start(ws_event_loop(dsn))
 
 

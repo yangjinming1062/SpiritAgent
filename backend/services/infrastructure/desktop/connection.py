@@ -24,17 +24,15 @@ def set_event_loop_hooks(*, notify: NotifyHook, deliver_ack: DeliverAckHook) -> 
 
 
 class ConnectionManager:
-    def __init__(self):
+    def __init__(self) -> None:
         self.active_connections: dict[int, WebSocket] = {}
-        self._login_record_ids: dict[int, int] = {}
         self._dispatchers: dict[int, JsonRpcDispatcher] = {}
 
-    async def connect(self, websocket: WebSocket, user_id: int, login_record_id: int) -> None:
+    async def connect(self, websocket: WebSocket, user_id: int) -> None:
         """accept 并注册；同一用户已存在的 socket 也在此处关闭，把单设备登录不变量集中在一处，不与调用方分散。"""
         prior = self.active_connections.get(user_id)
         await websocket.accept()
         self.active_connections[user_id] = websocket
-        self._login_record_ids[user_id] = login_record_id
         logger.info("User connected", extra={"user_id": user_id})
         if prior is not None:
             with contextlib.suppress(Exception):
@@ -43,11 +41,7 @@ class ConnectionManager:
     def disconnect(self, websocket: WebSocket, user_id: int) -> None:
         if self.active_connections.get(user_id) is websocket:
             del self.active_connections[user_id]
-            self._login_record_ids.pop(user_id, None)
             logger.info("User socket disconnected", extra={"user_id": user_id})
-
-    def get_login_record_id(self, user_id: int) -> int | None:
-        return self._login_record_ids.get(user_id)
 
     def register_dispatcher(self, user_id: int, dispatcher: JsonRpcDispatcher) -> None:
         self._dispatchers[user_id] = dispatcher

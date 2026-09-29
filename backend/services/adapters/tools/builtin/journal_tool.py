@@ -2,13 +2,12 @@
 
 门控：
 - 静止档禁止主动调用
-- moment_create 主动配额：每用户每天 3
+- moment_create 每日配额见 `moment_llm_per_day`
 - 工作预设会话不绑定这两个工具（回合装配层过滤，见 prompt_presets.LIFE_SPACE_TOOL_NAMES）
 """
 
+import datetime
 import json
-from datetime import date
-from typing import Any
 
 from components import SESSION_LOCAL, tool_error
 from modules.companion import DiarySource, MomentKind, MomentSource
@@ -19,9 +18,9 @@ from prompts.tools import (
     MOMENT_CREATE_PARAM_DESCS,
 )
 
-from services.domains.companion import get_disturbance_tier
+from services.domains.companion import is_still
 from services.domains.journal import check_moment_llm_quota, create_user_moment, resolve_user_local_today, upsert_diary
-from services.infrastructure.tool_runtime import REGISTRY
+from services.infrastructure.tool_runtime import ToolsRegistry
 
 _VALID_MOMENT_KINDS: frozenset[str] = frozenset(k.value for k in MomentKind)
 
@@ -29,35 +28,22 @@ _VALID_MOMENT_KINDS: frozenset[str] = frozenset(k.value for k in MomentKind)
 async def moment_create_tool(
     title: str,
     body: str,
+    user_id: int,
+    parent_session_id: str,
     emotion: str | None = None,
-    kind: str = "user",
-    user_id: int | None = None,
-    disturbance_tier: str | None = None,
-    parent_session_id: str | None = None,
-    **kwargs: Any,
+    kind: str = MomentKind.EMOTION.value,
+    **_: object,
 ) -> str:
-    if user_id is None:
-        return tool_error("写时刻需要用户上下文")
     clean_title = (title or "").strip()
     clean_body = (body or "").strip()
     if not clean_title or not clean_body:
         return tool_error("时刻标题和内容不能为空")
     if len(clean_title) > 24 or len(clean_body) > 500:
         return tool_error("片刻标题最多 24 字符，正文最多 500 字符；请精简后提交，内容尚未保存")
-    tier = disturbance_tier or (kwargs.get("user_settings") or {}).get("companion.disturbance_tier")
-    if tier is None and user_id is not None:
-        tier = await get_disturbance_tier(user_id)
-    tier = (tier or "normal").lower()
-    if tier in ("still", "silent"):
+    if await is_still(user_id):
         return tool_error("先把这事放下吧，等你想说的时候再说。")
     if kind not in _VALID_MOMENT_KINDS:
         kind = MomentKind.EMOTION.value
-    session_id_int: int | None = None
-    if parent_session_id is not None:
-        try:
-            session_id_int = int(parent_session_id)
-        except (ValueError, TypeError):
-            session_id_int = None
     async with SESSION_LOCAL() as db:
         if not await check_moment_llm_quota(db, user_id):
             return tool_error("今天记下的时刻已经够多了，明天再记录吧。")
@@ -69,40 +55,32 @@ async def moment_create_tool(
             emotion=emotion,
             kind=kind,
             source=MomentSource.LLM.value,
-            session_id=session_id_int,
+            session_id=int(parent_session_id),
         )
     return json.dumps({"success": True, "moment_id": row.id}, ensure_ascii=False)
 
 
 async def diary_write_tool(
     body: str,
+    user_id: int,
     mood: str | None = None,
-    date_str: str | None = None,
+    date: str | None = None,
     title: str | None = None,
-    user_id: int | None = None,
-    disturbance_tier: str | None = None,
-    **kwargs: Any,
+    **_: object,
 ) -> str:
-    if user_id is None:
-        return tool_error("写日记需要用户上下文")
     clean_body = (body or "").strip()
     if not clean_body:
         return tool_error("日记内容不能为空")
     if len(clean_body) > 1000:
         return tool_error("本次日记补记最多 1000 字符，请精简后提交；内容尚未保存")
-    tier = disturbance_tier or (kwargs.get("user_settings") or {}).get("companion.disturbance_tier")
-    if tier is None and user_id is not None:
-        tier = await get_disturbance_tier(user_id)
-    tier = (tier or "normal").lower()
-    if tier in ("still", "silent"):
+    if await is_still(user_id):
         return tool_error("现在不想动笔，等你想聊的时候再说。")
-    raw_date = date_str or kwargs.get("date")
-    target_date: date | None = None
-    if raw_date:
+    target_date: datetime.date | None = None
+    if date:
         try:
-            target_date = date.fromisoformat(raw_date)
+            target_date = datetime.date.fromisoformat(date)
         except ValueError:
-            return tool_error(f"无效的日期格式 '{raw_date}'，必须为 YYYY-MM-DD")
+            return tool_error(f"无效的日期格式 '{date}'，必须为 YYYY-MM-DD")
 
     async with SESSION_LOCAL() as db:
         entry_date = target_date or await resolve_user_local_today(db, user_id)
@@ -156,6 +134,6 @@ DIARY_WRITE_SCHEMA = {
 }
 
 
-def register(registry) -> None:
-    REGISTRY.register("moment_create", MOMENT_CREATE_SCHEMA, moment_create_tool)
-    REGISTRY.register("diary_write", DIARY_WRITE_SCHEMA, diary_write_tool)
+def register(registry: ToolsRegistry) -> None:
+    registry.register(MOMENT_CREATE_SCHEMA, moment_create_tool)
+    registry.register(DIARY_WRITE_SCHEMA, diary_write_tool)

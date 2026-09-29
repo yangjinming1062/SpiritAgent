@@ -2,19 +2,17 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from components import utc_now
+from modules.auth import User
 from modules.memory import MEMORY_EMBEDDING_DIM
-
-if TYPE_CHECKING:
-    from modules.auth import User
 
 MANIFEST_FORMAT = "spiritagent-user-backup"
 TABLE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
 
 
-def build_manifest(user: "User", rows_by_table: dict[str, list[dict[str, Any]]], exported_by: str) -> dict[str, Any]:
+def build_manifest(user: User, rows_by_table: dict[str, list[dict[str, Any]]], exported_by: str) -> dict[str, Any]:
     return {
         "format": MANIFEST_FORMAT,
         "exported_at": utc_now().isoformat(),

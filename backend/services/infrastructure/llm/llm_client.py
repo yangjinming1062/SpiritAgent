@@ -2,93 +2,39 @@ import asyncio
 import time
 from collections.abc import Iterable
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any
+from functools import partial
 
-from components import SETTINGS, AIConfig, ProviderCard, get_logger, load_ai_config
+from components import SETTINGS, AIConfig, ProviderCard, get_logger
 from modules.auth import UserModelConfig
-from openai import AsyncOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .llm_debug import log_event, new_call_id, truncate_for_log
 from .providers import (
     BaseProvider,
+    ChatProvider,
     EmbeddingProvider,
     ProviderConfig,
     ServiceType,
     default_base_url,
     default_model_for,
-    default_video_model_for,
-    default_vision_model_for,
     provider_requires_api_key,
     providers_supporting,
     resolve,
-    supports_video,
-    supports_vision,
-    try_resolve,
+    try_resolve_chat,
 )
-from .providers.openai_responses import OpenAIResponsesChatProvider
-
-if TYPE_CHECKING:
-    from .user_config import UserLlmConfig
 
 logger = get_logger(__name__)
 
 
-def _log_embedding(
-    *,
-    call_id: str,
-    phase: str,
-    provider: str,
-    model: str,
-    user_id: int | None,
-    status: str | None = None,
-    latency_ms: int | None = None,
-    **extras: Any,
-) -> None:
-    """Embedding 入口拥有稳定的调用方默认字段（service / call_site），在此处统一注入，使调用方只需关心每次事件的字段。"""
-    log_event(
-        call_id=call_id,
-        service="embedding",
-        provider=provider,
-        model=model,
-        call_site=__name__,
-        phase=phase,
-        status=status,
-        latency_ms=latency_ms,
-        user_id=user_id,
-        **extras,
-    )
-
-
-def client_for_config(llm_config: "UserLlmConfig") -> AsyncOpenAI:
-    """经供应商适配器取得共享客户端，保留其鉴权与协议处理。"""
-    provider = provider_from_config(
-        ProviderConfig(
-            base_url=llm_config.base_url,
-            api_key=llm_config.api_key,
-            model=llm_config.model_name,
-            service_type=ServiceType.llm,
-            provider_name=llm_config.provider_name,
-        ),
-    )
-    client = provider.raw_client()
-    if client is None:
-        raise MissingLlmConfigError(f"llm provider '{provider.provider_name}' does not expose the Responses API")
-    return client
-
-
 def scale_temperature(provider_name: str | None, normalized: float) -> float:
     """把 [0, 1] 归一化温度按供应商换算为其原生刻度；未知名或未传供应商时回退到基类默认区间。"""
-    if provider_name:
-        cls = try_resolve(ServiceType.llm, provider_name)
-        if cls is not None and hasattr(cls, "scale_temperature"):
-            return cls.scale_temperature(normalized)
-    return OpenAIResponsesChatProvider.scale_temperature(normalized)
+    cls = try_resolve_chat(provider_name) if provider_name else None
+    return (cls or ChatProvider).scale_temperature(normalized)
 
 
 class MissingLlmConfigError(Exception):
-    """用户级 LLM 配置缺失时抛出；调用方按端点协议映射为 400 响应包。"""
+    """能力链为空时抛出；调用方按端点协议映射为 400 响应包。"""
 
 
 async def _load_user_config(
@@ -104,73 +50,58 @@ async def _load_user_config(
     ).scalar_one_or_none()
 
 
+def _chain_entry(
+    service_type: ServiceType,
+    provider: str,
+    *,
+    api_key: str,
+    base_url: str,
+    model: str,
+) -> ProviderConfig | None:
+    """补齐供应商默认端点与模型；缺少必需密钥、端点或未注册该能力时返回 None。"""
+    resolved_model = model or default_model_for(provider, service_type)
+    if service_type == ServiceType.llm and not resolved_model:
+        return None
+    base_url = base_url or default_base_url(provider, service_type)
+    # 同一 MiniMax 卡片的端点含 /v1 供 chat SDK 使用；其余能力的请求路径自带版本前缀。
+    if provider == "minimax" and service_type != ServiceType.llm:
+        base_url = base_url.removesuffix("/v1")
+    if not base_url or provider not in providers_supporting(service_type):
+        return None
+    if not api_key and provider_requires_api_key(service_type, provider):
+        return None
+    return ProviderConfig(
+        base_url=base_url,
+        api_key=api_key,
+        model=resolved_model,
+        service_type=service_type,
+        provider_name=provider,
+        model_overridden=bool(model),
+    )
+
+
 def _chain_from_ai_config(
     config: AIConfig,
-    service_type: str,
+    service_type: ServiceType,
     inherited_sources: Iterable[ProviderCard] = (),
 ) -> list[ProviderConfig]:
+    """能力卡片按 卡片 → 本配置信息库 → 继承信息库 的顺序取密钥、端点与模型。"""
     inherited = {card.provider: card for card in inherited_sources}
     sources = {card.provider: card for card in config.providers}
-    cards = getattr(config.capabilities, service_type)
-    supporting = set(providers_supporting(service_type))
     result: list[ProviderConfig] = []
-    for card in cards:
-        source = sources.get(card.provider)
-        fallback = inherited.get(card.provider)
-        api_key = card.api_key or (source.api_key if source else "") or (fallback.api_key if fallback else "")
-        base_url = (
-            card.base_url
-            or (source.base_url if source else "")
-            or (fallback.base_url if fallback else "")
-            or default_base_url(card.provider, service_type)
+    for card in getattr(config.capabilities, service_type):
+        layers = [
+            layer for layer in (card, sources.get(card.provider), inherited.get(card.provider)) if layer is not None
+        ]
+        entry = _chain_entry(
+            service_type,
+            card.provider,
+            api_key=next((layer.api_key for layer in layers if layer.api_key), ""),
+            base_url=next((layer.base_url for layer in layers if layer.base_url), ""),
+            model=next((layer.model_name for layer in layers if layer.model_name), ""),
         )
-        model = (
-            card.model_name
-            or (source.model_name if source else "")
-            or (fallback.model_name if fallback else "")
-            or default_model_for(card.provider, service_type)
-        )
-        if service_type == ServiceType.llm and not model:
-            continue
-        if card.provider == "minimax" and service_type != "llm" and base_url.endswith("/v1"):
-            base_url = base_url[:-3]
-        key_ok = bool(api_key) or not provider_requires_api_key(service_type, card.provider)
-        if key_ok and base_url and card.provider in supporting:
-            result.append(
-                ProviderConfig(
-                    base_url=base_url,
-                    api_key=api_key,
-                    model=model,
-                    service_type=ServiceType(service_type),
-                    provider_name=card.provider,
-                    model_overridden=bool(
-                        card.model_name or (source and source.model_name) or (fallback and fallback.model_name),
-                    ),
-                ),
-            )
-    return result
-
-
-def _embedding_chain_from_provider_library(config: AIConfig) -> list[ProviderConfig]:
-    """未配置 embedding 能力链时，按信息库顺序选用支持 embedding 的供应商并使用默认模型。"""
-    supporting = set(providers_supporting(ServiceType.embedding))
-    result: list[ProviderConfig] = []
-    for card in config.providers:
-        api_key = card.api_key
-        base_url = card.base_url or default_base_url(card.provider, ServiceType.embedding)
-        if card.provider == "minimax" and base_url.endswith("/v1"):
-            base_url = base_url[:-3]
-        key_ok = bool(api_key) or not provider_requires_api_key(ServiceType.embedding, card.provider)
-        if key_ok and base_url and card.provider in supporting:
-            result.append(
-                ProviderConfig(
-                    base_url=base_url,
-                    api_key=api_key,
-                    model=default_model_for(card.provider, ServiceType.embedding),
-                    service_type=ServiceType.embedding,
-                    provider_name=card.provider,
-                ),
-            )
+        if entry is not None:
+            result.append(entry)
     return result
 
 
@@ -179,19 +110,20 @@ async def resolve_provider_chain(
     user_id: int | None,
     service_type: str,
 ) -> list[ProviderConfig]:
+    service = ServiceType(service_type)
     user_cfg = await _load_user_config(db, user_id)
     if user_cfg is not None:
-        user_ai_config = load_ai_config(user_cfg.ai_config)
-        user_cards = getattr(user_ai_config.capabilities, service_type)
-        if user_cards:
-            return _chain_from_ai_config(
-                user_ai_config,
-                service_type,
-                SETTINGS.ai_config.providers,
-            )
-    if service_type == ServiceType.embedding and not SETTINGS.ai_config.capabilities.embedding:
-        return _embedding_chain_from_provider_library(SETTINGS.ai_config)
-    return _chain_from_ai_config(SETTINGS.ai_config, service_type)
+        user_ai_config = AIConfig.model_validate(user_cfg.ai_config)
+        if getattr(user_ai_config.capabilities, service):
+            return _chain_from_ai_config(user_ai_config, service, SETTINGS.ai_config.providers)
+    if service == ServiceType.embedding and not SETTINGS.ai_config.capabilities.embedding:
+        # 未配置 embedding 能力链时，按信息库顺序选用支持 embedding 的供应商及其默认模型。
+        entries = (
+            _chain_entry(service, card.provider, api_key=card.api_key, base_url=card.base_url, model="")
+            for card in SETTINGS.ai_config.providers
+        )
+        return [entry for entry in entries if entry is not None]
+    return _chain_from_ai_config(SETTINGS.ai_config, service)
 
 
 async def resolve_provider_config(
@@ -208,70 +140,47 @@ async def resolve_provider_config(
     return chain[0]
 
 
-async def resolve_vision_chain(
-    db: AsyncSession | None,
-    user_id: int | None,
-    *,
-    service_type: str = "llm",
-) -> list[ProviderConfig]:
+async def resolve_vision_chain(db: AsyncSession | None, user_id: int | None) -> list[ProviderConfig]:
     """筛选视觉供应商；仅默认模型自动选择视觉变体，保留显式模型配置。"""
-    return [
-        replace(
-            cfg,
-            model=cfg.model if cfg.model_overridden else default_vision_model_for(cfg.provider_name) or cfg.model,
-        )
-        for cfg in await resolve_provider_chain(db, user_id, service_type)
-        if supports_vision(cfg.provider_name)
-    ]
+    chain: list[ProviderConfig] = []
+    for cfg in await resolve_provider_chain(db, user_id, ServiceType.llm):
+        cls = try_resolve_chat(cfg.provider_name)
+        if cls is not None and cls.supports_vision:
+            vision_model = "" if cfg.model_overridden else cls.DEFAULT_VISION_MODEL
+            chain.append(replace(cfg, model=vision_model) if vision_model else cfg)
+    return chain
 
 
-async def resolve_video_chain(
-    db: AsyncSession | None,
-    user_id: int | None,
-    *,
-    service_type: str = "llm",
-) -> list[ProviderConfig]:
-    """筛选视频理解供应商；仅默认模型自动选择视频变体，保留显式模型配置。"""
+async def resolve_video_chain(db: AsyncSession | None, user_id: int | None) -> list[ProviderConfig]:
+    """筛选接受 input_video 的 chat 供应商。"""
     return [
-        replace(
-            cfg,
-            model=cfg.model if cfg.model_overridden else default_video_model_for(cfg.provider_name) or cfg.model,
-        )
-        for cfg in await resolve_provider_chain(db, user_id, service_type)
-        if supports_video(cfg.provider_name)
+        cfg
+        for cfg in await resolve_provider_chain(db, user_id, ServiceType.llm)
+        if (cls := try_resolve_chat(cfg.provider_name)) is not None and cls.supports_video
     ]
 
 
 def provider_from_config(config: ProviderConfig) -> BaseProvider:
-    """从已解析的 config 直接构造供应商实例，跳过 ``provider_for_service`` 的 DB 查询。"""
     cls = resolve(config.service_type, config.provider_name)
     return cls(config)
 
 
-async def provider_for_service(
-    db: AsyncSession | None,
-    user_id: int | None,
-    service_type: str,
-) -> BaseProvider:
-    """解析 config 并实例化供应商，返回链首；多供应商回退请用 ``execute_with_fallback``。"""
-    return provider_from_config(
-        await resolve_provider_config(db, user_id, service_type),
-    )
+def build_provider[P: BaseProvider](config: ProviderConfig, provider_type: type[P]) -> P:
+    """构造供应商并核对其能力类型；注册表与能力类型不符时明确失败。"""
+    provider = provider_from_config(config)
+    if not isinstance(provider, provider_type):
+        raise LookupError(f"provider {config.provider_name!r} is not a {provider_type.__name__}")
+    return provider
 
 
 async def resolve_embedding_provider(
     db: AsyncSession,
     user_id: int,
 ) -> EmbeddingProvider | None:
+    """能力链首个 embedding 供应商；未配置或解析失败时返回 None，记忆降级为关键词召回。"""
     try:
-        chain = await resolve_provider_chain(db, user_id, "embedding")
-        if not chain:
-            return None
-        provider = provider_from_config(chain[0])
-        return provider if isinstance(provider, EmbeddingProvider) else None
-    except (MissingLlmConfigError, LookupError):
-        # 配置缺失/无匹配供应商是预期的「关停语义记忆」路径；其它异常继续记录再降级，避免误配完全隐形。
-        return None
+        chain = await resolve_provider_chain(db, user_id, ServiceType.embedding)
+        return build_provider(chain[0], EmbeddingProvider) if chain else None
     except Exception:
         logger.warning(
             "embedding provider resolution failed; falling back to keyword-only memory",
@@ -279,6 +188,50 @@ async def resolve_embedding_provider(
             exc_info=True,
         )
         return None
+
+
+async def _embed(
+    texts: list[str],
+    provider: EmbeddingProvider | None,
+    *,
+    user_id: int | None,
+    timeout_seconds: float,
+    purpose: str,
+) -> list[list[float]] | None:
+    """调用 embedding 并记调试日志；未配置或失败时返回 None。"""
+    started = time.monotonic()
+    log = partial(
+        log_event,
+        call_id=new_call_id(),
+        service="embedding",
+        provider=provider.provider_name if provider else "(none)",
+        model=provider.config.model if provider else "(none)",
+        call_site=__name__,
+        user_id=user_id,
+    )
+    log(phase="request", text_preview=truncate_for_log(texts[0])[0], num_texts=len(texts))
+    if provider is None:
+        log(phase="response", status="skipped", reason="no_provider", latency_ms=0)
+        return None
+    try:
+        vectors = await asyncio.wait_for(provider.embed(texts, purpose=purpose), timeout=timeout_seconds)
+    except Exception as exc:
+        logger.debug("embedding failed", extra={"error": str(exc)})
+        log(
+            phase="response",
+            status="error",
+            latency_ms=int((time.monotonic() - started) * 1000),
+            error={"type": type(exc).__name__, "message": str(exc)[:500]},
+        )
+        return None
+    log(
+        phase="response",
+        status="success",
+        latency_ms=int((time.monotonic() - started) * 1000),
+        vector_dim=len(vectors[0]) if vectors else 0,
+        num_vectors=len(vectors),
+    )
+    return vectors
 
 
 async def generate_embedding(
@@ -292,65 +245,8 @@ async def generate_embedding(
     """为单段文本生成 embedding 向量；未配置或失败时返回 None。purpose 见 EmbeddingProvider.embed。"""
     if not text or not text.strip():
         return None
-    call_id = new_call_id()
-    _log_embedding(
-        call_id=call_id,
-        phase="request",
-        provider="(resolving)",
-        model="(resolving)",
-        user_id=user_id,
-        text_preview=truncate_for_log(text)[0],
-        num_texts=1,
-    )
-    started = time.monotonic()
-    try:
-        if provider is None:
-            _log_embedding(
-                call_id=call_id,
-                phase="response",
-                provider="(none)",
-                model="(none)",
-                user_id=user_id,
-                status="skipped",
-                reason="no_provider",
-                latency_ms=int((time.monotonic() - started) * 1000),
-            )
-            return None
-        _log_embedding(
-            call_id=call_id,
-            phase="provider_resolved",
-            provider=provider.provider_name,
-            model=getattr(provider.config, "model", ""),
-            user_id=user_id,
-        )
-        result = await asyncio.wait_for(
-            provider.embed_one(text, purpose=purpose),
-            timeout=timeout_seconds,
-        )
-        _log_embedding(
-            call_id=call_id,
-            phase="response",
-            provider=provider.provider_name,
-            model=getattr(provider.config, "model", ""),
-            user_id=user_id,
-            status="success",
-            latency_ms=int((time.monotonic() - started) * 1000),
-            vector_dim=len(result) if result else 0,
-        )
-        return result
-    except Exception as exc:
-        logger.debug("generate_embedding failed", extra={"error": str(exc)})
-        _log_embedding(
-            call_id=call_id,
-            phase="response",
-            provider="(unknown)",
-            model="(unknown)",
-            user_id=user_id,
-            status="error",
-            latency_ms=int((time.monotonic() - started) * 1000),
-            error={"type": type(exc).__name__, "message": str(exc)[:500]},
-        )
-        return None
+    vectors = await _embed([text], provider, user_id=user_id, timeout_seconds=timeout_seconds, purpose=purpose)
+    return vectors[0] if vectors else None
 
 
 async def generate_embeddings(
@@ -363,60 +259,4 @@ async def generate_embeddings(
     """为多段文本生成 embedding 向量列表。"""
     if not texts:
         return []
-    call_id = new_call_id()
-    _log_embedding(
-        call_id=call_id,
-        phase="request",
-        provider="(resolving)",
-        model="(resolving)",
-        user_id=user_id,
-        text_preview=truncate_for_log(texts[0])[0],
-        num_texts=len(texts),
-    )
-    started = time.monotonic()
-    try:
-        if provider is None:
-            _log_embedding(
-                call_id=call_id,
-                phase="response",
-                provider="(none)",
-                model="(none)",
-                user_id=user_id,
-                status="skipped",
-                reason="no_provider",
-                latency_ms=int((time.monotonic() - started) * 1000),
-            )
-            return None
-        _log_embedding(
-            call_id=call_id,
-            phase="provider_resolved",
-            provider=provider.provider_name,
-            model=getattr(provider.config, "model", ""),
-            user_id=user_id,
-        )
-        result = await asyncio.wait_for(provider.embed(texts), timeout=timeout_seconds)
-        _log_embedding(
-            call_id=call_id,
-            phase="response",
-            provider=provider.provider_name,
-            model=getattr(provider.config, "model", ""),
-            user_id=user_id,
-            status="success",
-            latency_ms=int((time.monotonic() - started) * 1000),
-            vector_dim=len(result[0]) if result else 0,
-            num_vectors=len(result) if result else 0,
-        )
-        return result
-    except Exception as exc:
-        logger.debug("generate_embeddings failed", extra={"error": str(exc)})
-        _log_embedding(
-            call_id=call_id,
-            phase="response",
-            provider="(unknown)",
-            model="(unknown)",
-            user_id=user_id,
-            status="error",
-            latency_ms=int((time.monotonic() - started) * 1000),
-            error={"type": type(exc).__name__, "message": str(exc)[:500]},
-        )
-        return None
+    return await _embed(texts, provider, user_id=user_id, timeout_seconds=timeout_seconds, purpose="db")

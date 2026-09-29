@@ -18,8 +18,6 @@ from components import (
 )
 from openai import AsyncOpenAI, NotGiven
 
-from .base import ProviderResultUnknownError
-
 logger = get_logger(__name__)
 
 # 捕获传输错误后仅重试幂等请求或确认未发送的连接失败；非幂等请求的响应丢失会转为结果不确定。
@@ -36,8 +34,8 @@ _SAFE_BEFORE_SEND_EXC: tuple[type[BaseException], ...] = (
 )
 _IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
 
-# 请求校验失败模式：请求畸形，每次重试结果相同；某些 OpenAI 兼容网关（如 codex.nekos.me）会把它当作 5xx 返回，会让通用 "5xx → 可重试" 规则误触发重试风暴。命中后归为不可重试的 format_error，快速失败并回退。
-_REQUEST_VALIDATION_PATTERNS = (
+# 请求校验失败模式：请求畸形，每次重试结果相同；部分 OpenAI 兼容网关以 5xx 返回，需排除出 5xx 重试并归为格式错误。
+REQUEST_VALIDATION_PATTERNS = (
     "unknown parameter",
     "unsupported parameter",
     "unrecognized request argument",
@@ -47,10 +45,22 @@ _REQUEST_VALIDATION_PATTERNS = (
 )
 
 
+class ProviderResultUnknownError(Exception):
+    """非幂等请求可能已被供应商接受，但响应在确认前丢失。"""
+
+    def __init__(self, method: str, url: str) -> None:
+        super().__init__("Upstream result is unknown; automatic retry was suppressed to avoid duplicate charges.")
+        self.method = method
+        self.url = url
+
+
+async def download_bytes(url: str) -> bytes:
+    """下载供应商资产；走安全 transport（SSRF 守卫）并限制大小。"""
+    return await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=360.0)
+
+
 async def download_as_b64(url: str) -> str:
-    """下载供应商返回的 CDN 图并编码 base64；走安全 transport（SSRF 守卫）并限制大小。"""
-    data = await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=360.0)
-    return base64.b64encode(data).decode("utf-8")
+    return base64.b64encode(await download_bytes(url)).decode("utf-8")
 
 
 class _RetryAsyncTransport(httpx.AsyncBaseTransport):
@@ -75,7 +85,7 @@ class _RetryAsyncTransport(httpx.AsyncBaseTransport):
         for attempt in range(self._max_attempts):
             current = _clone_request(request, body) if attempt > 0 else request
             try:
-                return await self._inner.handle_async_request(current)
+                response = await self._inner.handle_async_request(current)
             except _RETRYABLE_TRANSPORT_EXC as exc:
                 last_exc = exc
                 if not _can_retry(request, exc):
@@ -108,6 +118,16 @@ class _RetryAsyncTransport(httpx.AsyncBaseTransport):
                     },
                 )
                 await asyncio.sleep(sleep_for)
+            else:
+                # 响应头已到但响应体尚未读完：非幂等请求此时断线同样可能已生效。SSE 由流式调用方按是否已出首包处理。
+                stream = response.stream
+                if (
+                    isinstance(stream, httpx.AsyncByteStream)
+                    and not _is_replayable(request)
+                    and not response.headers.get("content-type", "").startswith("text/event-stream")
+                ):
+                    response.stream = _ResultUnknownOnReadStream(stream, request)
+                return response
         assert last_exc is not None  # loop entered only via except branch
         raise last_exc
 
@@ -115,12 +135,34 @@ class _RetryAsyncTransport(httpx.AsyncBaseTransport):
         await self._inner.aclose()
 
 
+def _is_replayable(request: httpx.Request) -> bool:
+    return request.method.upper() in _IDEMPOTENT_METHODS or "Idempotency-Key" in request.headers
+
+
 def _can_retry(request: httpx.Request, exc: BaseException) -> bool:
-    return (
-        request.method.upper() in _IDEMPOTENT_METHODS
-        or "Idempotency-Key" in request.headers
-        or isinstance(exc, _SAFE_BEFORE_SEND_EXC)
-    )
+    return _is_replayable(request) or isinstance(exc, _SAFE_BEFORE_SEND_EXC)
+
+
+class _ResultUnknownOnReadStream(httpx.AsyncByteStream):
+    """读取响应体时的传输错误转为结果不确定，阻止上层按超时换供应商重提交。"""
+
+    def __init__(self, inner: httpx.AsyncByteStream, request: httpx.Request) -> None:
+        self._inner = inner
+        self._request = request
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        try:
+            async for chunk in self._inner:
+                yield chunk
+        except _RETRYABLE_TRANSPORT_EXC as exc:
+            logger.warning(
+                "provider http response lost while reading body; result unknown",
+                extra={"method": self._request.method, "url": str(self._request.url), "error": type(exc).__name__},
+            )
+            raise ProviderResultUnknownError(self._request.method, str(self._request.url)) from exc
+
+    async def aclose(self) -> None:
+        await self._inner.aclose()
 
 
 def _clone_request(request: httpx.Request, body: bytes) -> httpx.Request:
@@ -190,7 +232,7 @@ class _GenerationStream(httpx.AsyncByteStream):
 
 
 class _UnusedFrontendTransport(httpx.AsyncBaseTransport):
-    async def handle_async_request(self, _request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
         raise RuntimeError("rotating client frontend cannot send directly")
 
 
@@ -414,7 +456,7 @@ class _RetryAwareAsyncOpenAI(AsyncOpenAI):
     ) -> bool:  # type: ignore[override]
         if response.status_code in (500, 502):
             body = response.text or ""
-            if body and any(pattern in body for pattern in _REQUEST_VALIDATION_PATTERNS):
+            if body and any(pattern in body for pattern in REQUEST_VALIDATION_PATTERNS):
                 return False
         return super()._should_retry(response, *args, **kwargs)
 

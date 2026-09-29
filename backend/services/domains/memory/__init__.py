@@ -19,14 +19,7 @@ from .memory_format import (
     format_proactive_memory_block,
 )
 from .memory_learning import MemoryReviewContext, load_review_context
-from .memory_namespaces import (
-    KIND_TO_PREFIX,
-    RECALL_TAGS,
-    RESERVED_FROM_RECALL,
-    context_not_in,
-    normalize_recall_context,
-    participates_in_recall,
-)
+from .memory_namespaces import normalize_recall_context
 from .memory_policy import MemoryDecisions
 from .memory_retrieval import (
     embed_memory_text,
@@ -35,17 +28,13 @@ from .memory_retrieval import (
 )
 from .memory_review import assess_memory_changes, invalidate_memory_review_locks, review_memories
 from .memory_store import (
-    active_memory_filter,
     backfill_memory_embeddings,
     create_memory,
     delete_memory,
-    get_memory,
-    scope_filter,
     upsert_slotted_memory,
 )
 
 __all__ = [
-    "active_memory_filter",
     "MemoryReviewContext",
     "load_review_context",
     "MemoryDecisions",
@@ -53,14 +42,8 @@ __all__ = [
     "review_memories",
     "invalidate_memory_review_locks",
     "create_memory",
-    "get_memory",
-    "scope_filter",
-    "KIND_TO_PREFIX",
-    "RECALL_TAGS",
-    "RESERVED_FROM_RECALL",
     "backfill_memory_embeddings",
     "build_user_profile_extras",
-    "context_not_in",
     "delete_memory",
     "embed_memory_text",
     "extract_user_profile",
@@ -70,7 +53,6 @@ __all__ = [
     "list_memories",
     "memory_counts",
     "normalize_recall_context",
-    "participates_in_recall",
     "read_user_profile",
     "record_user_profile",
     "record_user_timezone",

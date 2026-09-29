@@ -1,19 +1,15 @@
-"""动作资产域：repository、policy、usage。"""
+"""动作资产域：repository、policy、usage、publishing。"""
 
 from .policy import (
     DEFERRED_PLAY_INTENT_TTL_SECONDS,
     PLAY_INTENT_TTL_SECONDS,
     ActionPolicyError,
     check_can_accept,
-    check_can_play,
-    check_suppression,
     consume_create_slot,
-    count_create_used,
-    daily_create_limit,
     get_action_accept_lock,
     get_daily_budget_status,
+    is_expression_action,
     max_duration_seconds,
-    resolve_action_budget_date,
 )
 from .publishing import CatalogValidationError, build_catalog_manifest, publish_action_catalog
 from .repository import (
@@ -24,11 +20,10 @@ from .repository import (
     get_playback,
     list_pack_actions,
     make_semantic_fingerprint,
-    publish_catalog,
     record_playback,
     upsert_action,
 )
-from .usage import action_to_dict, fulfill_deferred_play_intents, record_play_result
+from .usage import action_to_dict, emit_play_command, fulfill_deferred_play_intents, record_play_result
 
 __all__ = [
     "DEFERRED_PLAY_INTENT_TTL_SECONDS",
@@ -39,25 +34,21 @@ __all__ = [
     "action_to_dict",
     "build_catalog_manifest",
     "check_can_accept",
-    "check_can_play",
-    "check_suppression",
     "consume_create_slot",
-    "count_create_used",
-    "daily_create_limit",
+    "emit_play_command",
     "get_action",
     "get_action_accept_lock",
     "get_action_by_key",
     "get_active_pack",
     "get_daily_budget_status",
     "get_playback",
+    "is_expression_action",
     "list_pack_actions",
     "make_semantic_fingerprint",
     "max_duration_seconds",
     "publish_action_catalog",
-    "publish_catalog",
     "record_play_result",
     "fulfill_deferred_play_intents",
     "record_playback",
-    "resolve_action_budget_date",
     "upsert_action",
 ]

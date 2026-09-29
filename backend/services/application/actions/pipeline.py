@@ -12,30 +12,33 @@ from sqlalchemy import select
 from services.application.generation.video.service import kick_dynamic_action
 from services.domains.actions import get_action_accept_lock
 
+from .design import ProposalAcceptance
 from .review import review_proposal
 
 logger = get_logger(__name__)
-
-
-def schedule_action_generation(pack_id: int, action_id: int, user_id: int) -> None:
-    """制作失败重做：直接启动生成（无评审）。"""
-    kick_dynamic_action(pack_id, action_id, user_id)
-
 
 _REVIEW_TASKS: set[asyncio.Task[None]] = set()
 # 同一提案只允许一个在途评审；重复提交创意复用 proposal_id 时不重复排队。
 _INFLIGHT_REVIEWS: set[int] = set()
 
 
-def schedule_proposal_review(proposal_id: int, user_id: int, *, reference_image: str = "") -> None:
+def schedule_accepted_proposal(acceptance: ProposalAcceptance, user_id: int) -> None:
+    """提案事务提交后启动后台工作：提案进入独立评审，同 key 动作的重做直接启动生成。"""
+    result = acceptance.result
+    if result.outcome != "pending_review":
+        return
+    if result.proposal_id is not None:
+        schedule_proposal_review(result.proposal_id, user_id)
+    elif result.action_id is not None and acceptance.pack_id is not None:
+        kick_dynamic_action(acceptance.pack_id, result.action_id, user_id)
+
+
+def schedule_proposal_review(proposal_id: int, user_id: int) -> None:
     """安排一次后台评审；不阻塞调用方事务。同一 proposal_id 去重。"""
     if proposal_id in _INFLIGHT_REVIEWS:
         return
     _INFLIGHT_REVIEWS.add(proposal_id)
-    task = asyncio.create_task(
-        _run_proposal_review(proposal_id, user_id, reference_image=reference_image),
-        name=f"action.review.{proposal_id}",
-    )
+    task = asyncio.create_task(_run_proposal_review(proposal_id, user_id), name=f"action.review.{proposal_id}")
     _REVIEW_TASKS.add(task)
 
     def _done(_task: asyncio.Task[None]) -> None:
@@ -46,7 +49,7 @@ def schedule_proposal_review(proposal_id: int, user_id: int, *, reference_image:
     track_user_task(user_id, task, cancel_on_maintenance=False)
 
 
-async def _run_proposal_review(proposal_id: int, user_id: int, *, reference_image: str = "") -> None:
+async def _run_proposal_review(proposal_id: int, user_id: int) -> None:
     # 受理锁覆盖「评审判定 → 制作额度占用 → 落库提交」，锁在 commit 后释放，
     # 避免并发评审读到相同剩余额度后全部批准。
     decision = "defer"
@@ -57,7 +60,7 @@ async def _run_proposal_review(proposal_id: int, user_id: int, *, reference_imag
         if proposal is None or proposal.user_id != user_id or proposal.status not in ("pending", "deferred"):
             return
         try:
-            decision = await review_proposal(db, user_id, proposal, reference_image=reference_image)
+            decision = await review_proposal(db, proposal)
         except Exception:  # noqa: BLE001 — 评审失败必须落库为可重试状态，不静默
             logger.exception("action proposal review failed", extra={"proposal_id": proposal_id})
             proposal.status = "deferred"

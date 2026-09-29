@@ -18,6 +18,7 @@ from fastapi import File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 from modules.auth import CurrentUser
 from modules.conversation import Conversation
+from pydantic import BaseModel
 from services.adapters.http import limiter
 from services.domains.media import (
     attachment_video_url,
@@ -32,14 +33,13 @@ from ._http_errors import classified_http_exception, missing_config_http
 
 logger = get_logger(__name__)
 
-_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 router = get_router()
 
 
 def _llm_http_error(e: Exception, op: str) -> HTTPException:
     """分类上游 LLM/media 错误并返回非泄露错误信封。"""
-    classified = classify_api_error(e, model=op)
+    classified = classify_api_error(e)
     # exc_info 保留完整 traceback 在服务端日志（API 响应仍非泄露，仅分类 reason+message 触达 renderer），便于事后排查 TTS/STT/生图侧翻时的真实异常链。
     logger.warning(
         "media operation failed",
@@ -68,28 +68,14 @@ def _resolve_mime_type(content_type: str | None) -> str:
     return "audio/wav"
 
 
-def _upload_size_or_none(audio_file: UploadFile) -> int | None:
-    """尽力探测 UploadFile 的 Content-Length。"""
-    headers = getattr(audio_file, "headers", None)
-    if headers is not None:
-        raw = headers.get("content-length")
-        if raw is not None:
-            try:
-                return int(raw)
-            except (TypeError, ValueError):
-                pass
-    spool = getattr(audio_file, "file", None)
-    if spool is not None:
-        try:
-            pos = spool.tell()
-            spool.seek(0, 2)
-            size = spool.tell()
-            spool.seek(pos)
-            if size:
-                return size
-        except Exception:
-            return None
-    return None
+async def _read_capped(file: UploadFile, max_bytes: int, too_large: HTTPException) -> bytes:
+    """multipart 解析已把上传落到临时文件，``size`` 是实际字节数；读取仍按上限截断。"""
+    if file.size is not None and file.size > max_bytes:
+        raise too_large
+    data = await file.read(max_bytes + 1)
+    if len(data) > max_bytes:
+        raise too_large
+    return data
 
 
 @router.get("/files/{file_id}")
@@ -157,28 +143,19 @@ async def upload_chat_video(
     session_quota = SETTINGS.attachment_session_quota_bytes
     max_bytes = session_quota if SETTINGS.public_base_url.strip() else ATTACHMENT_VIDEO_MAX_BYTES
 
-    def _too_large() -> HTTPException:
-        hint = "" if max_bytes == session_quota else "；配置 server.public_base_url 后可经公网 URL 发送更大文件"
-        return HTTPException(
+    hint = "" if max_bytes == session_quota else "；配置 server.public_base_url 后可经公网 URL 发送更大文件"
+    data = await _read_capped(
+        file,
+        max_bytes,
+        HTTPException(
             status_code=413,
             detail={
                 "error": f"Video too large (max {max_bytes // (1024 * 1024)} MB){hint}",
                 "reason": "payload_too_large",
                 "status_code": 413,
             },
-        )
-
-    # 声明大小只拦明显超大上传；流式 cap 才是真限制（与 /stt 同构）。
-    declared_size = _upload_size_or_none(file)
-    if declared_size is not None and declared_size > max_bytes:
-        raise _too_large()
-
-    sink = bytearray()
-    while chunk := await file.read(_UPLOAD_CHUNK_BYTES):
-        sink.extend(chunk)
-        if len(sink) > max_bytes:
-            raise _too_large()
-    data = bytes(sink)
+        ),
+    )
 
     # 配额滚动剔除发生在写盘前：保证新文件落得下，且引用行同步改写不产生死链。
     await enforce_session_quota(db, session_id, len(data))
@@ -199,79 +176,50 @@ async def speech_to_text(
     request: Request,
     user: CurrentUser,
     audio_file: UploadFile | None = File(None),
-    file: UploadFile | None = File(None),
+    language: str = "",
 ) -> dict[str, Any]:
     """走供应商链路的语音转写。"""
-    target_file = audio_file or file
-    if target_file is None:
+    if audio_file is None:
         raise HTTPException(
             status_code=422,
             detail={"error": "Missing audio file", "reason": "missing_audio_file", "status": 422},
         )
-
-    # 客户端 multipart 头声明的 size 仅用于拦截明显超大的上传；下方流式 cap 才是真正限制——信任 header 会让攻击者把任意大小数据读进内存。
-    declared_size = _upload_size_or_none(target_file)
-    if declared_size is not None and declared_size > STT_MAX_AUDIO_BYTES:
-        raise HTTPException(
+    file_bytes = await _read_capped(
+        audio_file,
+        STT_MAX_AUDIO_BYTES,
+        HTTPException(
             status_code=413,
             detail={
                 "error": f"Audio file too large (max {STT_MAX_AUDIO_BYTES // (1024 * 1024)} MB)",
                 "reason": "payload_too_large",
                 "status": 413,
             },
-        )
-
-    sink = bytearray()
-    while chunk := await target_file.read(_UPLOAD_CHUNK_BYTES):
-        sink.extend(chunk)
-        if len(sink) > STT_MAX_AUDIO_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail={
-                    "error": f"Audio file too large (max {STT_MAX_AUDIO_BYTES // (1024 * 1024)} MB)",
-                    "reason": "payload_too_large",
-                    "status": 413,
-                },
-            )
-    file_bytes = bytes(sink)
-
-    mime_type = _resolve_mime_type(target_file.content_type)
-    language = (request.query_params.get("language") or "").strip() or "auto"
+        ),
+    )
+    mime_type = _resolve_mime_type(audio_file.content_type)
 
     try:
-        text = await transcribe_audio(user.id, file_bytes, mime_type, language=language)
-        return {"success": True, "text": text}
-    except HTTPException:
-        raise
+        text = await transcribe_audio(user.id, file_bytes, mime_type, language=language.strip() or "auto")
     except MissingLlmConfigError:
         raise missing_config_http("STT")
     except Exception as e:
         raise _llm_http_error(e, "stt") from e
+    return {"success": True, "text": text}
 
 
-async def _extract_request_data(request: Request) -> dict[str, Any]:
-    content_type = request.headers.get("content-type", "")
-    if "application/json" in content_type:
-        try:
-            body = await request.json()
-            return body if isinstance(body, dict) else {}
-        except Exception:
-            return {}
-    try:
-        form = await request.form()
-        return dict(form)
-    except Exception:
-        return {}
+class TtsRequest(BaseModel):
+    text: str = ""
+    voice: str = ""
+    language: str = ""
 
 
 @router.post("/tts")
 @limiter.limit(lambda: f"{SETTINGS.media_tts_rate_limit_per_minute}/minute")
-async def text_to_speech(request: Request, user: CurrentUser) -> StreamingResponse:
-    """走供应商链路的语音合成（MiMo TTS 或 MiniMax TTS），接受 JSON 或 Form body。"""
-    data = await _extract_request_data(request)
-    text = str(data.get("text") or "").strip()
-    voice = str(data.get("voice") or "").strip()
-    language = str(data.get("language") or "").strip().lower()
+async def text_to_speech(request: Request, body: TtsRequest, user: CurrentUser) -> StreamingResponse:
+    """走供应商链路的语音合成。"""
+    text = body.text.strip()
+    voice = body.voice.strip()
+    language = body.language.strip().lower()
     if not text:
         raise HTTPException(
             status_code=400,
@@ -285,8 +233,6 @@ async def text_to_speech(request: Request, user: CurrentUser) -> StreamingRespon
 
     try:
         result = await synthesize_speech(user.id, text, voice, language)
-    except HTTPException:
-        raise
     except MissingLlmConfigError:
         raise missing_config_http("TTS")
     except Exception as e:

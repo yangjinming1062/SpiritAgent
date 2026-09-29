@@ -41,7 +41,6 @@ class JsonRpcEmitter:
             }
         if raw_type in ("tool_start", "tool_end"):
             return {
-                "tool_id": data.get("call_id"),
                 "name": data.get("name"),
                 "call_id": data.get("call_id"),
                 "status": "complete" if raw_type == "tool_end" else "running",

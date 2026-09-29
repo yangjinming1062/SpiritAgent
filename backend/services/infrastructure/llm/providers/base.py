@@ -1,11 +1,16 @@
 from abc import ABC, abstractmethod
 from collections.abc import Collection
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import StrEnum
 from typing import Any, ClassVar, Literal
 
+from components import get_logger
 from modules.media import SpeechStyle
 from openai import AsyncOpenAI
+
+from .http import get_async_client
+
+logger = get_logger(__name__)
 
 # 产品对外暴露的推理强度档位（升序）。供应商实际支持集是其子集，由 ChatProvider.REASONING_EFFORTS 声明。
 ReasoningEffort = Literal["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
@@ -66,7 +71,6 @@ class ProviderConfig:
     service_type: ServiceType
     provider_name: str
     model_overridden: bool = False
-    extra: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseProvider(ABC):
@@ -74,71 +78,60 @@ class BaseProvider(ABC):
 
     service_type: ServiceType = ServiceType.llm
     provider_name: str = ""
-    # 提示词规约族，影响 system_prompt 中工具调用与执行纪律段落的选择；非 Google 模型保持 "openai"。
-    PROMPT_FAMILY: ClassVar[str] = "openai"
-    # 各能力默认模型；register() 时镜像到 registry，能力解析不需 import 各 provider 类。
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {}
-    DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {}
-    # 与 DEFAULT_MODELS["llm"] 不同时的视觉模型（如 mimo 用 mimo-v2.5、文生用 mimo-v2.5-pro）。
-    DEFAULT_VISION_MODELS: ClassVar[dict[str, str]] = {}
-    # 与 DEFAULT_MODELS["llm"] 不同时的视频理解模型；空表示沿用文本/视觉默认。
-    DEFAULT_VIDEO_MODELS: ClassVar[dict[str, str]] = {}
+    # 能力卡片未填写端点与模型时使用的默认值。
+    DEFAULT_BASE_URL: ClassVar[str] = ""
+    DEFAULT_MODEL: ClassVar[str] = ""
     # False 表示该能力可不带 api_key（如本机无鉴权服务）；能力链解析据此放宽空密钥。
     requires_api_key: ClassVar[bool] = True
 
     def __init__(self, config: ProviderConfig) -> None:
         self.config = config
 
-    def raw_client(self) -> "AsyncOpenAI | None":
-        """默认无 OpenAI 客户端；OpenAI 兼容子类覆写此方法。"""
+    def raw_client(self) -> AsyncOpenAI | None:
+        """仅 chat 供应商持有 OpenAI 客户端。"""
         return None
 
 
 class ProviderError(Exception):
-    """供应商级错误；字段对齐 error_classifier：status_code 给 _extract_status_code，body 给 _extract_error_body。
+    """供应商级错误；status_code 与 body 供错误分类读取。"""
 
-    ``provider`` 与 ``model`` 保留原始来源信息，供日志与调试定位，不参与错误分类。
-    """
-
-    def __init__(
-        self,
-        message: str,
-        *,
-        status_code: int | None = None,
-        body: dict | None = None,
-        provider: str = "",
-        model: str = "",
-    ) -> None:
+    def __init__(self, message: str, *, status_code: int | None = None, body: dict | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
         self.body = body or {}
-        self.provider = provider
-        self.model = model
-
-
-class ProviderResultUnknownError(Exception):
-    """非幂等请求可能已被供应商接受，但响应在确认前丢失。"""
-
-    def __init__(self, method: str, url: str) -> None:
-        super().__init__("Upstream result is unknown; automatic retry was suppressed to avoid duplicate charges.")
-        self.method = method
-        self.url = url
 
 
 class ChatProvider(BaseProvider):
+    """经 OpenAI Responses 协议提供 chat 的供应商。"""
+
     service_type: ServiceType = ServiceType.llm
 
+    # 0 表示未声明，由 resolve_context_tokens 回退到全局默认。
+    CONTEXT_TOKENS: ClassVar[int] = 0
+    # 与 DEFAULT_MODEL 不同的视觉模型；空表示文本与视觉共用。
+    DEFAULT_VISION_MODEL: ClassVar[str] = ""
+    REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "medium", "high"})
+    TEMPERATURE_MIN: ClassVar[float] = 0.0
+    TEMPERATURE_MAX: ClassVar[float] = 2.0
     # 是否已验证 json_object 模式也接受顶层数组；只支持对象的模式不能约束陪伴回复。
     supports_json_array: ClassVar[bool] = False
     supports_json_object: ClassVar[bool] = False
-    # True 表示接受 image_url 内容部件；文本模型仅文本时需配合视觉变体（见 DEFAULT_VISION_MODELS）。
+    # True 表示接受 input_image 内容部件；文本模型需配合 DEFAULT_VISION_MODEL。
     supports_vision: ClassVar[bool] = False
     # True 表示接受 Responses 形状的 input_video 内容部件；仅 chat.completions 支持视频的供应商（如 mimo）不能声明。
     supports_video: ClassVar[bool] = False
 
-    @abstractmethod
-    def raw_client(self) -> AsyncOpenAI | None:
-        """若该供应商走 OpenAI SDK 则返回缓存的 AsyncOpenAI，否则返回 None。"""
+    def __init__(self, config: ProviderConfig) -> None:
+        super().__init__(config)
+        self._client = get_async_client(config.api_key, config.base_url)
+
+    @classmethod
+    def scale_temperature(cls, normalized: float) -> float:
+        """把 [0, 1] 归一化温度映射到本供应商原生刻度：clamp(归一化值 × MAX, MIN, MAX)，保留两位小数。"""
+        return round(max(cls.TEMPERATURE_MIN, min(cls.TEMPERATURE_MAX, normalized * cls.TEMPERATURE_MAX)), 2)
+
+    def raw_client(self) -> AsyncOpenAI:
+        return self._client
 
 
 @dataclass(frozen=True)
@@ -207,10 +200,13 @@ class VideoGenRequest:
     model: str | None = None
 
 
+VideoJobState = Literal["queued", "processing", "succeeded", "failed"]
+
+
 @dataclass(frozen=True)
 class VideoJobStatus:
     task_id: str
-    status: Literal["queued", "processing", "succeeded", "failed"]
+    status: VideoJobState
     file_id: str | None = None
     # 成功路径直接返回下载 URL 的供应商（如 MiniMax H3 v2，无 files/retrieve）填这里，让 worker 跳过二次拉取；None 表示需走 fetch(file_id)。
     download_url: str | None = None
@@ -276,15 +272,8 @@ class TTSProvider(BaseProvider):
     VOICE_DESIGN_GUIDE: ClassVar[str | None] = None
 
     @abstractmethod
-    async def synthesize(
-        self,
-        text: str,
-        *,
-        voice: str = "",
-        fmt: str = "mp3",
-        speed: float | None = None,
-        speech_style: SpeechStyle | None = None,
-    ) -> TTSResult: ...
+    async def synthesize(self, text: str, *, voice: str, speech_style: SpeechStyle | None) -> TTSResult:
+        """合成 MP3 音频。"""
 
     async def design_voice(self, prompt: str, *, preview_text: str = "") -> VoiceDesignResult:
         raise NotImplementedError(f"{self.provider_name} does not support voice design")
@@ -305,17 +294,17 @@ class STTProvider(BaseProvider):
 
 class EmbeddingProvider(BaseProvider):
     service_type: ServiceType = ServiceType.embedding
-    dimension: ClassVar[int] = 1536
 
     @abstractmethod
     async def embed(self, texts: list[str], *, purpose: str = "db") -> list[list[float]]:
         """purpose 区分入库（"db"）与检索（"query"）；仅部分供应商（如 MiniMax embo-01）按用途优化向量。"""
 
-    async def embed_one(self, text: str, *, purpose: str = "db") -> list[float] | None:
-        results = await self.embed([text], purpose=purpose)
-        return results[0] if results else None
 
-
-def pick_catalog_voice(voice: str, catalog: list[dict]) -> str:
+def pick_catalog_voice(voice: str, catalog: list[dict], *, provider: str) -> str:
     """voice 不在 catalog 时回退到目录首位，避免向供应商传入陌生 id 触发 400。"""
-    return voice if voice and any(v.get("id") == voice for v in catalog) else catalog[0]["id"]
+    if voice and any(v.get("id") == voice for v in catalog):
+        return voice
+    chosen = catalog[0]["id"]
+    if voice:
+        logger.info("tts voice substituted", extra={"provider": provider, "requested": voice, "used": chosen})
+    return chosen

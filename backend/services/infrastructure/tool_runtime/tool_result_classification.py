@@ -1,13 +1,11 @@
-from typing import Any
-
 from components import safe_json_loads
 
-FILE_MUTATING_TOOL_NAMES = frozenset({"write_file", "patch"})
+_FILE_MUTATING_TOOL_NAMES = frozenset({"write_file", "patch"})
 
 
-def file_mutation_result_landed(tool_name: str, result: Any) -> bool:
+def file_mutation_result_landed(tool_name: str, result: str) -> bool:
     """文件写入结果能证明写入确实落到磁盘时返回 True。"""
-    if tool_name not in FILE_MUTATING_TOOL_NAMES or not isinstance(result, str):
+    if tool_name not in _FILE_MUTATING_TOOL_NAMES:
         return False
     data = safe_json_loads(result.strip())
     if not isinstance(data, dict) or data.get("error"):

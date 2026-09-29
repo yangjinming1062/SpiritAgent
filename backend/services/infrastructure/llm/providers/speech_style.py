@@ -141,14 +141,13 @@ def speech_style_matches(style: SpeechStyle, provider: str, model: str) -> bool:
     return True
 
 
-def styled_speech_text(text: str, style: SpeechStyle | None, *, provider: str, model: str) -> str:
-    if style is None or not speech_style_matches(style, provider, model):
-        return text
+def styled_speech_text(text: str, style: SpeechStyle) -> str:
+    """把已匹配当前供应商与模型的演绎标注嵌入朗读文本。"""
     insertions: dict[int, str] = {}
     for cue in style.cues:
         if text.count(cue.before) == 1:
             position = text.index(cue.before)
-            tag = f"[{cue.tag}]" if provider == "mimo" else f"({cue.tag})"
+            tag = f"[{cue.tag}]" if style.provider == "mimo" else f"({cue.tag})"
             insertions[position] = insertions.get(position, "") + tag
     if style.provider == "minimax":
         pause_positions: set[int] = set()

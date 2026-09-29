@@ -1,10 +1,9 @@
 import json
+from contextlib import ExitStack
 from functools import partial
 
 from components import (
-    CHAT_TEMPERATURE_DEFAULT,
     CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
-    DEFAULT_LANGUAGE,
     SETTINGS,
     get_logger,
     safe_json_loads,
@@ -12,10 +11,11 @@ from components import (
 )
 from modules.auth import ChatRequestClientContext
 from modules.conversation import Conversation, Message
-from modules.system import ChatRequest, PromptPreset
+from modules.settings import load_user_settings
+from modules.system import ChatRequest
 
 from services.contracts import SceneTurnState
-from services.domains.companion import is_work_preset, list_companion_intents, user_turn_activity
+from services.domains.companion import list_companion_intents, user_turn_activity
 from services.domains.conversation import (
     DEFAULT_PRESET_ID,
     IM_KIND,
@@ -24,32 +24,28 @@ from services.domains.conversation import (
     load_media_turn,
     refresh_video_media,
 )
-from services.domains.media import inline_video_parts, prune_videos_in_range
+from services.domains.media import inline_video_parts
 from services.domains.memory import embed_memory_text
 from services.infrastructure.llm import (
     ChatProvider,
     LLMRuntimeError,
     MissingLlmConfigError,
-    ServiceType,
+    UserLlmConfig,
     execute_with_fallback,
-    message_to_response_items,
     resolve_context_tokens,
     scale_temperature,
 )
 from services.infrastructure.tool_runtime import ToolCallGuardrailController, schema_name
 
 from .chat_emitter import Emitter
-from .context_compressor import compress_history_if_needed
+from .context_compressor import compress_history, compression_due
 from .delegation import run_delegated_turn
 from .message_sanitization import truncate_responses_context
 from .persistence import (
     _persist_assistant_no_tool_turn,
     _persist_assistant_with_tool_calls_and_results,
     _persist_user_message,
-)
-from .prompt_presets import (
-    AUTOMATION_EXCLUDED_TOOL_NAMES,
-    LIFE_SPACE_TOOL_NAMES,
+    persist_compression_checkpoint,
 )
 from .streaming import (
     _emit_llm_error,
@@ -60,45 +56,34 @@ from .streaming import (
     _LLMTurnResult,
 )
 from .system_prompt import build_companion_environment_prompt
-from .tool_dispatch import _ToolDispatchContext
+from .tool_dispatch import _ToolDispatchContext, matched_tool_names
 from .turn_inputs import (
-    _load_memory_query_text,
-    _parse_reasoning_effort,
-    _resolve_turn_preset,
     build_turn_inputs,
-    load_user_settings,
+    load_memory_query_text,
     merge_session_settings,
     parse_temperature,
+    resolve_inference_settings,
+    user_text_item,
 )
-from .types import IterationBudget, TrackTask
+from .types import TrackTask
 
 logger = get_logger(__name__)
 
 
-def _extract_unlocked_tool_names_from_context(input_items: list[dict]) -> set[str]:
+def _history_unlocked_tool_names(input_items: list[dict]) -> set[str]:
+    """历史里调用过或经 ``search_tools`` 解锁的工具。"""
     unlocked: set[str] = set()
     for item in input_items:
-        if not isinstance(item, dict):
-            continue
         if item.get("type") == "function_call" and (name := item.get("name")):
             unlocked.add(str(name))
-        elif isinstance(item.get("tool_calls"), list):
-            for tc in item["tool_calls"]:
-                if isinstance(tc, dict) and (t_name := tc.get("name")):
-                    unlocked.add(str(t_name))
-        if item.get("type") == "function_call_output":
-            raw_output = item.get("output", "")
-            parsed = safe_json_loads(raw_output) if isinstance(raw_output, str) else raw_output
-            if isinstance(parsed, dict) and isinstance(parsed.get("matched_tools"), list):
-                for t in parsed["matched_tools"]:
-                    if isinstance(t, dict) and (t_name := t.get("name")):
-                        unlocked.add(str(t_name))
+        elif item.get("type") == "function_call_output":
+            unlocked.update(matched_tool_names(item.get("output", "")))
     return unlocked
 
 
 async def run_chat_turn(
     req: ChatRequest,
-    llm_config: dict,
+    llm_config: UserLlmConfig,
     user_id: int,
     emitter: Emitter,
     session_client_context: ChatRequestClientContext | None = None,
@@ -110,425 +95,301 @@ async def run_chat_turn(
     ephemeral: bool = False,
     headless: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
-    preset_override: PromptPreset | None = None,
-    run_post_turn_tasks: bool = True,
     max_loop_turns: int | None = None,
 ) -> None:
-    with user_turn_activity(user_id, enabled=not ephemeral and preset_override is None):
-        await _run_chat_turn(
-            req,
-            llm_config,
-            user_id,
-            emitter,
-            session_client_context,
-            track_task,
-            session_settings=session_settings,
-            precursor_user_message_ids=precursor_user_message_ids,
-            persisted_message_id=persisted_message_id,
-            ephemeral=ephemeral,
-            headless=headless,
-            excluded_tool_names=excluded_tool_names,
-            preset_override=preset_override,
-            run_post_turn_tasks=run_post_turn_tasks,
-            max_loop_turns=max_loop_turns,
-        )
+    """执行一个对话回合；自动化与回合后整理由会话本身决定。
 
-
-async def _run_chat_turn(
-    req: ChatRequest,
-    llm_config: dict,
-    user_id: int,
-    emitter: Emitter,
-    session_client_context: ChatRequestClientContext | None = None,
-    track_task: TrackTask | None = None,
-    *,
-    session_settings: dict | None = None,
-    precursor_user_message_ids: list[int] | None = None,
-    persisted_message_id: int | None = None,
-    ephemeral: bool = False,
-    headless: bool = False,
-    excluded_tool_names: frozenset[str] = frozenset(),
-    preset_override: PromptPreset | None = None,
-    run_post_turn_tasks: bool = True,
-    max_loop_turns: int | None = None,
-) -> None:
+    ``ephemeral`` 只用于主动陪伴：请求是内部资料，不落库、可沉默，调用方同时以 ``headless`` 运行。
+    """
     # 默认值运行时解析：工具循环上限可在管理端热调，不能在函数定义期绑定常量。
     if max_loop_turns is None:
         max_loop_turns = SETTINGS.agent_max_loop_turns
-    # 轮次起点先提交用户输入并解析召回查询；会话退出后生成向量，再以新短会话装配上下文。
-    async with session_scope() as db:
-        conv = await Conversation.by_session_id(db, req.session_id, user_id=user_id)
-        if not conv:
-            await emitter.send_json({"type": "error", "message": "Conversation not found"})
-            return
-        try:
-            memory_scope = conversation_memory_scope(conv, user_id)
-            _resolve_turn_preset(conv, preset_override)
-        except ValueError as exc:
-            await emitter.send_json({"type": "error", "message": str(exc)})
-            return
-        sid = str(conv.id)
-        effective_excluded_tool_names = (
-            excluded_tool_names
-            | (AUTOMATION_EXCLUDED_TOOL_NAMES if conv.is_automation else frozenset())
-            | (LIFE_SPACE_TOOL_NAMES if is_work_preset(conv.system_preset_id) else frozenset())
-        )
-        if conv.is_automation:
-            run_post_turn_tasks = False
+    with ExitStack() as turn_scope:
+        # 轮次起点先提交用户输入并解析召回查询；会话退出后生成向量，再以新短会话装配上下文。
+        async with session_scope() as db:
+            conv = await Conversation.by_session_id(db, req.session_id, user_id=user_id)
+            if not conv:
+                await emitter.send_json({"type": "error", "message": "Conversation not found"})
+                return
+            try:
+                memory_scope = conversation_memory_scope(conv, user_id)
+            except ValueError as exc:
+                await emitter.send_json({"type": "error", "message": str(exc)})
+                return
+            # 主动回合与自动化任务不算用户接触。
+            turn_scope.enter_context(user_turn_activity(user_id, enabled=not ephemeral and not conv.is_automation))
 
-        if not ephemeral:
-            # 用户行先落库再跑 LLM：失败路径也要把 id 回给活路径，否则撤回/派生一直点不了。
-            if persisted_message_id is not None:
-                persisted = await db.get(Message, persisted_message_id)
-                if (
-                    persisted is None
-                    or persisted.conversation_id != conv.id
-                    or persisted.role != "user"
-                    or persisted.queued
-                ):
-                    raise ValueError("Persisted user message does not belong to this turn")
-                user_message_id = persisted_message_id
-            else:
-                user_message_id = await _persist_user_message(db, conv, req)
-            await emitter.send_json(
-                {
-                    "type": "message.persisted",
-                    "role": "user",
-                    "message_ids": [*(precursor_user_message_ids or []), user_message_id],
-                },
+            if not ephemeral:
+                # 用户行先落库再跑 LLM：失败路径也要把 id 回给活路径，否则撤回/派生一直点不了。
+                if persisted_message_id is not None:
+                    persisted = await db.get(Message, persisted_message_id)
+                    if (
+                        persisted is None
+                        or persisted.conversation_id != conv.id
+                        or persisted.role != "user"
+                        or persisted.queued
+                    ):
+                        raise ValueError("Persisted user message does not belong to this turn")
+                    user_message_id = persisted_message_id
+                else:
+                    user_message_id = await _persist_user_message(db, conv.id, req.message)
+                await emitter.send_json(
+                    {
+                        "type": "message.persisted",
+                        "role": "user",
+                        "message_ids": [*(precursor_user_message_ids or []), user_message_id],
+                    },
+                )
+
+            # 回合起点重读 user_settings：PUT /api/config（工具集开关、语言等）后无需重连 WS 下一回合即生效；
+            # 会话级覆写再覆盖其上，仅构建一次并被注册表门控和工具派发共用。
+            effective_settings = merge_session_settings(
+                await load_user_settings(db, user_id),
+                session_settings
+                if session_settings is not None
+                else safe_json_loads(conv.settings_json or "", default={}),
+                conv=conv,
+            )
+            memory_query = (
+                await load_memory_query_text(db, conv, req, use_request=not ephemeral)
+                if memory_scope is not None
+                else ""
             )
 
-        # 回合起点重读 user_settings：PUT /api/config（工具集开关、语言等）后无需重连 WS 下一回合即生效；
-        # 会话级覆写再覆盖其上，仍仅构建一次并被注册表门控和工具派发共用。
-        effective_settings = merge_session_settings(
-            await load_user_settings(db, user_id),
-            session_settings if session_settings is not None else safe_json_loads(conv.settings_json, default={}),
-            conv=conv,
-        )
-        resolved_preset = _resolve_turn_preset(conv, preset_override)
-        proactive_memory_query = (
-            await _load_memory_query_text(db, conv, req, use_request=not ephemeral)
-            if resolved_preset.id != "automation"
-            else ""
-        )
+        memory_embedding = await embed_memory_text(user_id, memory_query) if len(memory_query.strip()) > 1 else None
 
-    proactive_memory_embedding = (
-        await embed_memory_text(user_id, proactive_memory_query) if len(proactive_memory_query.strip()) > 1 else None
-    )
-
-    has_companion_intents = False
-    async with session_scope() as db:
-        inputs = await build_turn_inputs(
-            db,
-            conv,
-            user_id,
-            req,
-            session_client_context,
-            effective_settings,
-            memory_scope,
-            preset_override=preset_override,
-            use_request_for_memory_retrieval=not ephemeral,
-            proactive_memory_query=proactive_memory_query,
-            proactive_memory_embedding=proactive_memory_embedding,
-            companion_proactive_turn=ephemeral and headless and resolved_preset.id == "companion",
-            excluded_tool_names=effective_excluded_tool_names,
-        )
-        runtime_item_start = len(inputs.context["input"])
-        if resolved_preset.id == "companion":
-            waits = await list_companion_intents(db, user_id)
+        async with session_scope() as db:
+            inputs = await build_turn_inputs(
+                db,
+                conv,
+                user_id,
+                req,
+                session_client_context,
+                effective_settings,
+                memory_scope,
+                proactive_memory_query=memory_query,
+                proactive_memory_embedding=memory_embedding,
+                companion_proactive_turn=ephemeral,
+                excluded_tool_names=excluded_tool_names,
+            )
+            # 本轮尾部资料没有持久化来源，不进入持久摘要。
+            runtime_item_start = len(inputs.context["input"])
+            waits = await list_companion_intents(db, user_id) if conv.system_preset_id == DEFAULT_PRESET_ID else []
             if waits:
-                has_companion_intents = True
-                state = json.dumps([wait.model_dump(mode="json") for wait in waits], ensure_ascii=False)
-                inputs.context["input"].extend(
-                    message_to_response_items(
-                        {
-                            "role": "user",
-                            "content": "[INTERNAL PENDING COMPANION INTENTIONS — data, not user speech or completed actions]\n"
-                            + state,
-                        },
+                inputs.context["input"].append(
+                    user_text_item(
+                        "[INTERNAL PENDING COMPANION INTENTIONS — data, not user speech or completed actions]\n"
+                        + json.dumps([wait.model_dump(mode="json") for wait in waits], ensure_ascii=False),
                     ),
                 )
-        if ephemeral:
-            inputs.context["input"].extend(message_to_response_items(req.message.model_dump(exclude_none=True)))
-        inputs.context["source_message_ids"].extend([None] * (len(inputs.context["input"]) - runtime_item_start))
+            if ephemeral and req.message.content:
+                inputs.context["input"].append(user_text_item(req.message.content))
+            inputs.context["source_message_ids"].extend([None] * (len(inputs.context["input"]) - runtime_item_start))
 
-    compression_enabled = safe_json_loads(
-        effective_settings.get("chat.enable_context_compression", ""),
-        default=SETTINGS.enable_context_compression,
-    )
-    compression_threshold = safe_json_loads(
-        effective_settings.get("chat.context_compression_threshold", ""),
-        default=SETTINGS.context_compression_threshold,
-    )
-    compression_u = parse_temperature(
-        effective_settings.get("chat.compression_temperature"),
-        CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
-    )
-    reasoning_effort = _parse_reasoning_effort(effective_settings.get("agent.reasoning_effort"))
-    temperature = parse_temperature(effective_settings.get("agent.temperature"), CHAT_TEMPERATURE_DEFAULT)
-    compressed_context, compress_info = await compress_history_if_needed(
-        inputs.context,
-        client=inputs.client,
-        model=inputs.model_name,
-        context_length=inputs.ctx_length,
-        enabled=compression_enabled,
-        threshold_ratio=compression_threshold,
-        temperature=scale_temperature(inputs.provider_name, compression_u),
-        language=effective_settings.get("language", DEFAULT_LANGUAGE),
-        current_tokens=None if ephemeral or has_companion_intents else inputs.estimated_tokens,
-    )
-    # 持久化压缩检查点，使下一轮历史重建从此开始读取；被压缩的消息仍留在 DB，但不再进入 LLM 读路径。对所有会话类型均生效。
-    if compress_info is not None and not ephemeral:
-        async with session_scope() as db:
-            checkpoint = Message(
-                conversation_id=conv.id,
-                role="system",
-                content=f"[🗜️ 对话压缩 — {compress_info.replaced_count} 条早期消息已压缩]\n{compress_info.summary}",
-                subtype="compress_summary",
-                summary_through_message_id=compress_info.through_message_id,
-                prompt_tokens=compress_info.prompt_tokens,
-                completion_tokens=compress_info.completion_tokens,
+        inference = resolve_inference_settings(effective_settings, conv=conv)
+        compressed_context = inputs.context
+        if effective_settings.get(
+            "chat.enable_context_compression",
+            SETTINGS.enable_context_compression,
+        ) and compression_due(
+            inputs.context,
+            context_length=inputs.ctx_length,
+            threshold_ratio=inference.context_compression_threshold,
+            # 尾部资料不在持久基线内，此时按全量估算。
+            current_tokens=None if ephemeral or waits else inputs.estimated_tokens,
+        ):
+            compressed_context, compress_info = await compress_history(
+                inputs.context,
+                client=inputs.client,
+                model=inputs.model_name,
+                temperature=scale_temperature(
+                    inputs.provider_name,
+                    parse_temperature(
+                        effective_settings.get("chat.compression_temperature"),
+                        CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
+                    ),
+                ),
+                language=inputs.language,
             )
-            db.add(checkpoint)
-            await db.commit()
-            checkpoint_id = checkpoint.id
-            if prune_before := compress_info.prune_before_message_id:
-                await prune_videos_in_range(db, conv.id, hi=prune_before, preserve_queued=True)
-            await db.commit()
-        # 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补。
-        await emitter.send_json(
-            {
-                "type": "compress.completed",
-                "subtype": "compress_summary",
-                "text": checkpoint.content,
-                "message_id": checkpoint_id,
-            },
-        )
-    current_context = truncate_responses_context(compressed_context)
-    # 视频内联在截断之后：窗口外的老视频已被占位替换，内联只处理幸存者（每请求上限 2 个）。
-    # expected_session_id 防 stale DB 行 / 跨会话 URL 串到当前会话：跨会话或非法形态一律降级为 [video]。
-    current_context["input"] = await inline_video_parts(current_context["input"], expected_session_id=str(conv.id))
+            if compress_info is not None and not ephemeral:
+                async with session_scope() as db:
+                    checkpoint = await persist_compression_checkpoint(db, conv.id, compress_info)
+                # 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补。
+                await emitter.send_json(
+                    {
+                        "type": "compress.completed",
+                        "subtype": "compress_summary",
+                        "text": checkpoint.content,
+                        "message_id": checkpoint.id,
+                    },
+                )
+        current_context = truncate_responses_context(compressed_context)
+        # 视频内联在截断之后：窗口外的老视频已被占位替换，内联只处理幸存者（每请求上限 2 个）。
+        # expected_session_id 防 stale DB 行 / 跨会话 URL 串到当前会话：跨会话或非法形态一律降级为 [video]。
+        current_context["input"] = await inline_video_parts(current_context["input"], expected_session_id=str(conv.id))
 
-    guardrails = ToolCallGuardrailController()
-    budget = IterationBudget(max_total=max_loop_turns)
-    schemas_by_name: dict[str, dict] = {
-        schema_name(s): s for s in inputs.all_schemas if schema_name(s) not in effective_excluded_tool_names
-    }
-    # 继承看压缩/截断前的历史，避免摘要窗口丢掉已解锁工具。
-    raw_items = inputs.context.get("input") or []
-    history_unlocked = _extract_unlocked_tool_names_from_context(raw_items if isinstance(raw_items, list) else [])
-    active_tool_names: set[str] = ({"search_tools", "companion_wait"} & set(schemas_by_name)) | (
-        history_unlocked & set(schemas_by_name)
-    )
-    turn_reasoning_parts: list[str] = []
+        schemas_by_name: dict[str, dict] = {schema_name(s): s for s in inputs.all_schemas}
+        # 继承看压缩/截断前的历史，避免摘要窗口丢掉已解锁工具。
+        history_unlocked = _history_unlocked_tool_names(inputs.context["input"])
+        active_tool_names = ({"search_tools", "companion_wait"} | history_unlocked) & set(schemas_by_name)
+        turn_reasoning_parts: list[str] = []
 
-    companion_reply = (
-        conv.kind == SPECIAL_KIND and conv.system_preset_id == DEFAULT_PRESET_ID and not conv.is_automation
-    )
-    complete_response = companion_reply and preset_override is None
-    async with session_scope() as db:
-        media_turn = await load_media_turn(
-            db,
-            conv,
-            structured_reply=complete_response,
-            request=req.message.content or "",
-        )
-    dispatch_ctx = _ToolDispatchContext(
-        user_id=user_id,
-        llm_config=llm_config,
-        user_settings=effective_settings,
-        session_id=sid,
-        memory_scope=inputs.memory_scope,
-        native_memory=inputs.native_memory,
-        guardrails=guardrails,
-        emitter=emitter,
-        delegate_executor=partial(run_delegated_turn, run_turn=run_chat_turn),
-        headless=headless,
-        excluded_tool_names=effective_excluded_tool_names,
-        scene_turn=SceneTurnState(),
-        media_turn=media_turn,
-    )
-
-    buffer_text = companion_reply or headless or ephemeral or conv.kind == IM_KIND
-    if buffer_text:
-        await emitter.send_json({"type": "message.start"})
-    base_instructions = current_context["instructions"]
-    while True:
+        # 固定陪伴会话的终端回复是结构化气泡数组：非流式取得后整体校验再交付。
+        companion_reply = conv.kind == SPECIAL_KIND and conv.system_preset_id == DEFAULT_PRESET_ID
         async with session_scope() as db:
-            await refresh_video_media(db, media_turn)
-        if resolved_preset.id == DEFAULT_PRESET_ID and not conv.is_automation:
+            media_turn = await load_media_turn(db, conv, structured_reply=companion_reply, request=req.message.content)
+        dispatch_ctx = _ToolDispatchContext(
+            user_id=user_id,
+            llm_config=llm_config,
+            user_settings=effective_settings,
+            session_id=str(conv.id),
+            memory_scope=memory_scope,
+            native_memory=inputs.native_memory,
+            guardrails=ToolCallGuardrailController(),
+            emitter=emitter,
+            delegate_executor=partial(run_delegated_turn, run_turn=run_chat_turn),
+            headless=headless,
+            excluded_tool_names=inputs.excluded_tool_names,
+            scene_turn=SceneTurnState(),
+            media_turn=media_turn,
+        )
+
+        buffer_text = companion_reply or headless or conv.kind == IM_KIND
+        delivery = "complete" if companion_reply else "buffered" if buffer_text else "stream"
+        if buffer_text:
+            await emitter.send_json({"type": "message.start"})
+        base_instructions = current_context["instructions"]
+        for _ in range(max_loop_turns):
             async with session_scope() as db:
-                environment = await build_companion_environment_prompt(db, user_id, language=inputs.language)
-            current_context["instructions"] = base_instructions + "\n\n" + environment
-        if not budget.consume():
+                await refresh_video_media(db, media_turn)
+                if conv.system_preset_id == DEFAULT_PRESET_ID:
+                    environment = await build_companion_environment_prompt(db, user_id, language=inputs.language)
+                    current_context["instructions"] = base_instructions + "\n\n" + environment
+
+            if not buffer_text:
+                await emitter.send_json({"type": "message.start"})
+            active_schemas = [schemas_by_name[n] for n in active_tool_names if n in schemas_by_name]
+            # 供应商链按顺序尝试，仅在流式首事件或完整响应到达前允许回退；每个槽位使用自己的模型与窗口。
+            response_started = False
+
+            def set_response_started() -> None:
+                nonlocal response_started
+                response_started = True
+
+            async def _call(provider: ChatProvider) -> _LLMTurnResult:
+                input_length = len(current_context["input"])
+                retry_available = True
+                reply_format_error = None
+                while True:
+                    try:
+                        return await _generate_llm_response(
+                            emitter,
+                            provider.config.model,
+                            current_context,
+                            active_schemas,
+                            resolve_context_tokens(provider.provider_name),
+                            provider,
+                            delivery=delivery,
+                            on_response_started=set_response_started,
+                            reasoning_effort=inference.reasoning_effort,
+                            temperature=inference.temperature,
+                            user_local_tz=inputs.user_local_tz,
+                            lang=inputs.language,
+                            speech_config=inputs.speech_config if companion_reply else None,
+                            reply_preference=inputs.response_preference if companion_reply else None,
+                            voice_id=inputs.speech_voice,
+                            allow_silence=ephemeral and companion_reply,
+                            reply_format_error=reply_format_error,
+                            media_turn=media_turn,
+                        )
+                    except _IncompleteResponseError as exc:
+                        del current_context["input"][input_length:]
+                        if not retry_available or not exc.retryable:
+                            raise
+                        retry_available = False
+                        logger.warning("Retrying incomplete LLM response before text delivery: %s", exc)
+                    except _InvalidCompanionReplyError as exc:
+                        del current_context["input"][input_length:]
+                        if not retry_available:
+                            raise
+                        retry_available = False
+                        reply_format_error = exc
+                        logger.warning("Retrying final companion reply after format validation failed")
+
+            try:
+                llm_result = await execute_with_fallback(
+                    inputs.llm_chain,
+                    ChatProvider,
+                    _call,
+                    user_id=user_id,
+                    stream_started=lambda: response_started,
+                )
+            except LLMRuntimeError as exc:
+                # 链已耗尽或响应开始后失败：补发结尾 error 帧，让渲染端消息状态机干净收尾。
+                logger.warning(
+                    "LLM turn failed",
+                    extra={"user_id": user_id, "reason": exc.classified.reason.value, "error": str(exc)},
+                    exc_info=True,
+                )
+                await _emit_llm_error(emitter, exc)
+                break
+            except _InvalidCompanionReplyError:
+                await emitter.send_json(
+                    {
+                        "type": "error",
+                        "message": "本次回复的格式不正确，请重试。"
+                        if inputs.language == "zh"
+                        else "The reply could not be generated in the required format. Please try again.",
+                    },
+                )
+                break
+            except (MissingLlmConfigError, RuntimeError) as exc:
+                # 配置缺失或响应未正常完成：结束本轮；完整响应失败也可能发生在请求已开始之后。
+                logger.warning("LLM turn failed: %s", exc)
+                await emitter.send_json({"type": "error", "message": f"LLM unavailable: {exc}"})
+                break
+
+            if llm_result.reasoning:
+                turn_reasoning_parts.append(llm_result.reasoning)
+
+            if not llm_result.tool_calls_list:
+                await _persist_assistant_no_tool_turn(
+                    conv,
+                    user_id,
+                    llm_result,
+                    emitter=emitter,
+                    effective_settings=effective_settings,
+                    llm_config=llm_config,
+                    user_text=req.message.content,
+                    first_user_msg_content=inputs.first_user_msg_content,
+                    memory_scope=memory_scope,
+                    provider_name=inputs.provider_name,
+                    media=None if companion_reply else media_turn.text_reply_media(),
+                    turn_reasoning="\n\n".join(turn_reasoning_parts) or None,
+                    persist=not ephemeral,
+                    track_task=track_task,
+                )
+                break
+
+            for tc in llm_result.tool_calls_list:
+                name = tc.get("name")
+                if isinstance(name, str) and name:
+                    active_tool_names.add(name)
+            _ensure_tool_call_ids(llm_result.tool_calls_list)
+
+            await _persist_assistant_with_tool_calls_and_results(
+                conv,
+                llm_result,
+                dispatch_ctx,
+                current_context,
+                active_tool_names,
+                schemas_by_name,
+                persist=not ephemeral,
+            )
+        else:
             await emitter.send_json(
                 {
                     "type": "error",
                     "message": f"Max tool execution turns ({max_loop_turns}) reached. Terminating loop to prevent unbounded execution.",
                 },
             )
-            break
-
-        if not buffer_text:
-            await emitter.send_json({"type": "message.start"})
-        active_schemas = [schemas_by_name[n] for n in active_tool_names if n in schemas_by_name]
-        # 供应商链包装：按顺序尝试已配置供应商，仅在流式首事件或完整响应到达前允许回退；每次尝试使用对应槽位的 model，避免回退供应商收到不识别的模型名导致 model_not_found、链提前耗尽。
-        response_started = False
-
-        async def _call(provider: ChatProvider) -> _LLMTurnResult:
-            if provider.raw_client() is None:
-                raise RuntimeError(f"provider {provider.provider_name} does not expose the Responses API")
-            model_for_slot = inputs.model_override or provider.config.model
-            # 渲染端钉住的窗口优先；否则按供应商重新解析，使回退供应商更小的默认窗口生效。
-            slot_ctx_length = (
-                inputs.ctx_length
-                if inputs.context_tokens_override is not None
-                else resolve_context_tokens(provider.provider_name, ServiceType.llm)
-            )
-            input_length = len(current_context["input"])
-            retry_available = True
-            reply_format_error = None
-            while True:
-                try:
-                    return await _generate_llm_response(
-                        emitter,
-                        model_for_slot,
-                        current_context,
-                        active_schemas,
-                        slot_ctx_length,
-                        provider,
-                        delivery="complete" if complete_response else "buffered" if buffer_text else "stream",
-                        on_response_started=set_response_started,
-                        reasoning_effort=reasoning_effort,
-                        temperature=temperature,
-                        user_local_tz=inputs.user_local_tz,
-                        lang=inputs.language,
-                        speech_config=inputs.speech_config if complete_response else None,
-                        reply_preference=inputs.response_preference if complete_response else None,
-                        voice_id=inputs.speech_voice,
-                        allow_silence=ephemeral and headless and complete_response,
-                        reply_format_error=reply_format_error,
-                        media_turn=media_turn,
-                    )
-                except _IncompleteResponseError as exc:
-                    del current_context["input"][input_length:]
-                    if not retry_available or not exc.retryable:
-                        raise
-                    retry_available = False
-                    logger.warning("Retrying incomplete LLM response before text delivery: %s", exc)
-                except _InvalidCompanionReplyError as exc:
-                    del current_context["input"][input_length:]
-                    if not retry_available:
-                        raise
-                    retry_available = False
-                    reply_format_error = exc
-                    logger.warning("Retrying final companion reply after format validation failed")
-
-        def set_response_started() -> None:
-            nonlocal response_started
-            response_started = True
-
-        try:
-            # db=None：链已在上方预解析，模型调用与回退期间不持有 session。
-            llm_result = await execute_with_fallback(
-                None,
-                user_id,
-                "llm",
-                call_fn=_call,
-                stream_started=lambda: response_started,
-                _chain=inputs.llm_chain,
-            )
-        except LLMRuntimeError as exc:
-            # 链已耗尽或响应开始后失败：补发结尾 error 帧，让渲染端消息状态机干净收尾。
-            reason_val = exc.classified.reason.value if getattr(exc, "classified", None) else "unknown"
-            prov_val = getattr(getattr(exc, "classified", None), "provider", None)
-            model_val = getattr(getattr(exc, "classified", None), "model", None)
-            logger.warning(
-                "LLM turn failed",
-                extra={
-                    "user_id": user_id,
-                    "reason": reason_val,
-                    "provider": prov_val,
-                    "model": model_val,
-                    "error": str(exc),
-                },
-                exc_info=True,
-            )
-            await _emit_llm_error(emitter, exc)
-            break
-        except _InvalidCompanionReplyError:
-            await emitter.send_json(
-                {
-                    "type": "error",
-                    "message": "本次回复的格式不正确，请重试。"
-                    if inputs.language == "zh"
-                    else "The reply could not be generated in the required format. Please try again.",
-                },
-            )
-            break
-        except (MissingLlmConfigError, RuntimeError) as exc:
-            # 配置缺失或响应未正常完成：结束本轮；完整响应失败也可能发生在请求已开始之后。
-            logger.warning("LLM turn failed: %s", exc)
-            await emitter.send_json({"type": "error", "message": f"LLM unavailable: {exc}"})
-            break
-
-        if llm_result.reasoning:
-            turn_reasoning_parts.append(llm_result.reasoning)
-
-        if not llm_result.tool_calls_list:
-            await _persist_assistant_no_tool_turn(
-                conv,
-                user_id,
-                effective_settings,
-                emitter,
-                req,
-                llm_result.turn_content,
-                llm_result.final_prompt_tokens,
-                llm_result.final_completion_tokens,
-                llm_result.final_usage_payload,
-                llm_result.turn_duration_ms,
-                llm_config,
-                inputs.first_user_msg_content,
-                current_context,
-                track_task,
-                memory_scope=inputs.memory_scope,
-                provider_name=inputs.provider_name,
-                media=media_turn.text_reply_media() if not complete_response else None,
-                reasoning=llm_result.reasoning,
-                reply=llm_result.reply,
-                turn_reasoning="\n\n".join(turn_reasoning_parts) or None,
-                persist=not ephemeral,
-                run_post_turn_tasks=run_post_turn_tasks,
-            )
-            break
-
-        for tc in llm_result.tool_calls_list:
-            name = tc.get("name")
-            if isinstance(name, str) and name:
-                active_tool_names.add(name)
-        _ensure_tool_call_ids(llm_result.tool_calls_list)
-
-        await _persist_assistant_with_tool_calls_and_results(
-            conv,
-            llm_result.tool_calls_list,
-            llm_result.final_prompt_tokens,
-            llm_result.final_completion_tokens,
-            llm_result.turn_duration_ms,
-            dispatch_ctx,
-            current_context,
-            active_tool_names,
-            schemas_by_name,
-            reasoning=llm_result.reasoning,
-            persist=not ephemeral,
-        )
-        for name in effective_excluded_tool_names:
-            schemas_by_name.pop(name, None)
-
-        if guardrails.halt_decision:
-            await emitter.send_json(
-                {
-                    "type": "error",
-                    "message": f"Tool execution loop halted by guardrails: {guardrails.halt_decision.message}",
-                },
-            )
-            break

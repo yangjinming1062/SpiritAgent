@@ -3,9 +3,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from components import safe_json_loads
+from modules.conversation import Conversation
 from pydantic import BaseModel, ConfigDict, Field
 
-from services.infrastructure.llm import ReasoningEffort, ServiceType, UserLlmConfig, resolve_context_tokens
+from services.infrastructure.llm import ReasoningEffort, UserLlmConfig, resolve_context_tokens
 
 
 class SessionSettingsPatch(BaseModel):
@@ -66,31 +67,40 @@ class RuntimeSession:
         """renderer 侧 id（Conversation.id 的一次性字符串化）。"""
         return str(self.conversation_id)
 
-
-def new_runtime_session(
-    conversation_id: int,
-    cwd: str | None,
-    settings_json: str | None = None,
-    kind: str = "standard",
-) -> RuntimeSession:
-    """为已存在的 DB 会话创建 runtime wrapper；settings_json 是 Conversation.settings_json 的原始 JSON 字符串，解码到 settings 让 per-turn 逻辑不必每次回查 DB。"""
-    decoded = safe_json_loads(settings_json)
-    settings = decoded if isinstance(decoded, dict) else {}
-    return RuntimeSession(conversation_id=conversation_id, cwd=cwd, settings=settings, kind=kind)
+    @property
+    def busy(self) -> bool:
+        return self.chat_task is not None and not self.chat_task.done()
 
 
-def runtime_info_snapshot(llm_config: UserLlmConfig, runtime: RuntimeSession) -> dict[str, Any]:
-    """发给 renderer 的 SessionRuntimeInfo 负载。renderer 容忍缺失字段，未读的 settings 键不在契约内。"""
+def decode_session_settings(settings_json: str | None) -> dict[str, Any]:
+    decoded = safe_json_loads(settings_json or "")
+    return decoded if isinstance(decoded, dict) else {}
+
+
+def new_runtime_session(conv: Conversation) -> RuntimeSession:
+    """为已存在的 DB 会话创建 runtime；settings 解码自 Conversation.settings_json，让回合逻辑不必每次回查 DB。"""
+    return RuntimeSession(
+        conversation_id=conv.id,
+        cwd=conv.cwd,
+        settings=decode_session_settings(conv.settings_json),
+        kind=conv.kind,
+    )
+
+
+def build_runtime_info(
+    llm_config: UserLlmConfig,
+    runtime: RuntimeSession,
+    settings: dict[str, Any],
+) -> SessionRuntimeInfo:
+    """发给 renderer 的会话运行信息；settings 为会话覆盖叠加生效推理参数。"""
     provider = llm_config.provider_name or "openai"
-    context_window = resolve_context_tokens(provider, ServiceType.llm)
-
-    return {
-        "cwd": runtime.cwd,
-        "branch": None,
-        "model": llm_config.model_name,
-        "provider": provider,
-        "running": bool(runtime.chat_task and not runtime.chat_task.done()),
-        "settings": dict(runtime.settings),
-        "context_window": context_window,
-        "kind": runtime.kind,
-    }
+    return SessionRuntimeInfo(
+        cwd=runtime.cwd,
+        branch=None,
+        model=llm_config.model_name,
+        provider=provider,
+        running=runtime.busy,
+        settings=settings,
+        context_window=resolve_context_tokens(provider),
+        kind=runtime.kind,
+    )

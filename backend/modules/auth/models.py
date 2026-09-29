@@ -27,8 +27,8 @@ class User(ModelBase, TimestampMixin):
     __tablename__ = "users"
 
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
-    activation_code: Mapped[str | None] = mapped_column(Text, nullable=True)
-    activation_token_hash: Mapped[str | None] = mapped_column(String(128), unique=True, index=True, nullable=True)
+    activation_code: Mapped[str] = mapped_column(Text)
+    activation_token_hash: Mapped[str] = mapped_column(String(128), unique=True, index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
     nightly_activity_enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
 
@@ -70,12 +70,8 @@ class AdminSession(ModelBase):
 
     token_jti: Mapped[str] = mapped_column(String(64))
     username: Mapped[str] = mapped_column(String(64), index=True)
-    client_version: Mapped[str] = mapped_column(String(64), default="")
-    ip_address: Mapped[str] = mapped_column(String(64), default="")
-    user_agent: Mapped[str] = mapped_column(Text, default="")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
-    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class UserModelConfig(ModelBase, TimestampMixin):

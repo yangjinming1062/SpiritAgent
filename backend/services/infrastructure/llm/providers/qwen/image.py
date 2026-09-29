@@ -1,7 +1,6 @@
 import asyncio
 from typing import ClassVar
 
-from .._size_aspect import SIZE_TO_ASPECT
 from ..base import ImageAsset, ImageGenProvider, ImageGenRequest, ImageGenResult, ProviderConfig
 from ..http import download_as_b64, get_http
 from ._errors import raise_for_qwen_response
@@ -20,26 +19,18 @@ _ASPECT_TO_SIZE: dict[str, str] = {
 
 
 def _resolve_size(req: ImageGenRequest) -> str | None:
-    if req.aspect_ratio and req.aspect_ratio in _ASPECT_TO_SIZE:
-        return _ASPECT_TO_SIZE[req.aspect_ratio]
-    if req.size:
-        # OpenAI 像素串（1024x1792）或已是「宽*高」时直接规范化
-        if "x" in req.size.lower() or "*" in req.size:
-            return req.size.replace("x", "*").replace("X", "*")
-        mapped = _ASPECT_TO_SIZE.get(req.size) or _ASPECT_TO_SIZE.get(SIZE_TO_ASPECT.get(req.size, ""))
-        if mapped:
-            return mapped
-        return req.size.replace("x", "*").replace("X", "*")
-    aspect = req.aspect_ratio or SIZE_TO_ASPECT.get(req.size or "")
-    return _ASPECT_TO_SIZE.get(aspect or "")
+    if size := _ASPECT_TO_SIZE.get(req.aspect_ratio or ""):
+        return size
+    # 未登记画幅时按请求像素串（1024x1792 或 宽*高）规范化。
+    return req.size.replace("x", "*").replace("X", "*") if req.size else None
 
 
 class QwenImageGenProvider(ImageGenProvider):
     """通过千问 MultiModalConversation 文生图/图像编辑，默认 qwen-image-3.0-pro。"""
 
     provider_name = "qwen"
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"image_gen": "qwen-image-3.0-pro"}
-    DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"image_gen": 8_000}
+    DEFAULT_BASE_URL: ClassVar[str] = "https://maas.qianwenaiapi.com/api/v1"
+    DEFAULT_MODEL: ClassVar[str] = "qwen-image-3.0-pro"
     supports_reference_image: ClassVar[bool] = True
     supports_multiple_reference_images: ClassVar[bool] = True
     supports_image_edit: ClassVar[bool] = True
@@ -73,7 +64,7 @@ class QwenImageGenProvider(ImageGenProvider):
             "parameters": parameters,
         }
         resp = await self._client.post("/services/aigc/multimodal-generation/generation", json=payload)
-        body = raise_for_qwen_response(resp, family=self.provider_name, model=self.config.model)
+        body = raise_for_qwen_response(resp)
 
         urls: list[str] = []
         for choice in (body.get("output") or {}).get("choices") or []:
@@ -86,5 +77,8 @@ class QwenImageGenProvider(ImageGenProvider):
         if req.response_format == "url":
             return ImageGenResult(images=[ImageAsset(url=url) for url in urls], model=self.config.model, raw=body)
         b64s = await asyncio.gather(*(download_as_b64(u) for u in urls))
-        assets = [ImageAsset(b64=b, mime="image/png") for b in b64s]
-        return ImageGenResult(images=assets, model=self.config.model, raw=body)
+        return ImageGenResult(
+            images=[ImageAsset(b64=b, mime="image/png") for b in b64s],
+            model=self.config.model,
+            raw=body,
+        )

@@ -3,24 +3,23 @@
 仅服务端使用；参数由代码构造，不执行用户字符串，不向客户端分发 FFmpeg。
 """
 
-from .ffmpeg import VideoProbe, VideoProcessError, probe_video, run_ffmpeg
+from .ffmpeg import VideoProcessError, probe_video
 from .frames import ACTION_FRAME_MARGIN, action_frame_video_input, prepare_action_frame
-from .matting import MatteResult, matte_video, require_matting_model
+from .matting import matte_video, require_matting_model
 from .process import (
     HITMASK_FPS,
     HITMASK_GRID_H,
     HITMASK_GRID_W,
     MAX_CANVAS_HEIGHT,
     MAX_CANVAS_WIDTH,
-    MAX_CLIP_SECONDS,
     MAX_SOURCE_BYTES,
     TARGET_EXT,
-    ClipProcessResult,
     build_hitmask,
     extract_cover,
     prepare_action_clip,
+    sample_key_frames,
 )
-from .quality import FullClipWindow, LoopWindow, select_full_clip, select_loop
+from .quality import select_full_clip, select_loop
 
 __all__ = [
     "ACTION_FRAME_MARGIN",
@@ -29,14 +28,8 @@ __all__ = [
     "HITMASK_GRID_W",
     "MAX_CANVAS_HEIGHT",
     "MAX_CANVAS_WIDTH",
-    "MAX_CLIP_SECONDS",
     "MAX_SOURCE_BYTES",
     "TARGET_EXT",
-    "ClipProcessResult",
-    "FullClipWindow",
-    "LoopWindow",
-    "MatteResult",
-    "VideoProbe",
     "VideoProcessError",
     "action_frame_video_input",
     "build_hitmask",
@@ -46,7 +39,7 @@ __all__ = [
     "prepare_action_frame",
     "probe_video",
     "require_matting_model",
-    "run_ffmpeg",
+    "sample_key_frames",
     "select_full_clip",
     "select_loop",
 ]

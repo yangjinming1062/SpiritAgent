@@ -30,7 +30,7 @@ class WebSearchProvider(abc.ABC):
         """执行一次 Web 搜索；当 :meth:`supports_search` 为 True 时由子类重写。"""
         raise NotImplementedError(f"{self.name} does not support search (override supports_search)")
 
-    async def extract(self, urls: list[str], **kwargs: Any) -> Any:
+    async def extract(self, urls: list[str]) -> list[dict[str, Any]]:
         """从一个或多个 URL 抽取内容；返回 ``[{"url", "title", "content", "raw_content", "metadata": dict?, "error": str?}, ...]`` 形式，包装同步 HTTP 库的子类需在 ``search``/``extract`` 内部用 :func:`asyncio.to_thread` 避免阻塞事件循环。"""
         raise NotImplementedError(f"{self.name} does not support extract (override supports_extract)")
 

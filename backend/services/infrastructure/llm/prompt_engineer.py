@@ -24,20 +24,14 @@ from prompts.generation import (
 )
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .llm_client import (
-    MissingLlmConfigError,
-    client_for_config,
-    provider_for_service,
-    provider_from_config,
-    resolve_vision_chain,
-)
+from .llm_client import build_provider, resolve_provider_config, resolve_vision_chain
 from .llm_retry import call_with_retry
 from .providers import (
+    ChatProvider,
     ProviderConfig,
     ServiceType,
     resolve_context_tokens,
     resolve_provider_reasoning_effort,
-    try_resolve,
 )
 from .responses import build_responses_kwargs
 from .user_config import UserLlmConfig
@@ -121,22 +115,18 @@ async def chat(
     provider_config: ProviderConfig | None = None,
 ) -> str:
     """单次非流式 chat 往返；空内容视为错误，避免把空 prompt 透传给生图供应商。"""
-    if provider_config is not None:
-        provider = provider_from_config(provider_config)
-    elif db is None and user_id is not None:
-        async with SESSION_LOCAL() as config_db:
-            provider = await provider_for_service(config_db, user_id, "llm")
-    else:
-        provider = await provider_for_service(db, user_id, "llm")
-    client = provider.raw_client()
-    if client is None:
-        raise MissingLlmConfigError(f"llm provider '{provider.provider_name}' does not expose the Responses API")
+    if provider_config is None:
+        if db is None and user_id is not None:
+            async with SESSION_LOCAL() as config_db:
+                provider_config = await resolve_provider_config(config_db, user_id, ServiceType.llm)
+        else:
+            provider_config = await resolve_provider_config(db, user_id, ServiceType.llm)
     request = build_responses_kwargs(
-        model=provider.config.model,
+        model=provider_config.model,
         instructions=system_prompt,
         input_items=[{"role": "user", "content": [{"type": "input_text", "text": user_payload}]}],
     )
-    response = await call_with_retry(client, **request)
+    response = await call_with_retry(build_provider(provider_config, ChatProvider).raw_client(), **request)
     if response.status != "completed":
         raise RuntimeError(f"Prompt response not completed: {response.status}")
     text = response.output_text.strip()
@@ -155,12 +145,8 @@ async def call_llm_once(
     json_output: bool = False,
 ) -> str:
     """执行单次非流式调用；推理档位按供应商支持集映射，超出上限时自动降级到最高支持档。"""
-    client = client_for_config(llm_cfg)
-    provider_name = llm_cfg.provider_name
-    context_length = resolve_context_tokens(provider_name, ServiceType.llm)
-    provider_cls = try_resolve(ServiceType.llm, provider_name)
-    supported_efforts = getattr(provider_cls, "REASONING_EFFORTS", frozenset())
-    resolved_effort = resolve_provider_reasoning_effort(reasoning_effort, supported_efforts)
+    provider = llm_cfg.chat_provider()
+    resolved_effort = resolve_provider_reasoning_effort(reasoning_effort, provider.REASONING_EFFORTS)
     reasoning = {"effort": resolved_effort} if resolved_effort else None
     user_content = (
         json.dumps(user_payload, ensure_ascii=False) if isinstance(user_payload, dict | list) else str(user_payload)
@@ -171,11 +157,13 @@ async def call_llm_once(
         input_items=[{"role": "user", "content": [{"type": "input_text", "text": user_content}]}],
         max_output_tokens=max_output_tokens,
         reasoning=reasoning,
-        text={"format": {"type": "json_object"}}
-        if json_output and getattr(provider_cls, "supports_json_object", False)
-        else None,
+        text={"format": {"type": "json_object"}} if json_output and provider.supports_json_object else None,
     )
-    resp = await call_with_retry(client, context_length=context_length, **request)
+    resp = await call_with_retry(
+        provider.raw_client(),
+        context_length=resolve_context_tokens(provider.provider_name),
+        **request,
+    )
     if resp is None or resp.status != "completed":
         raise RuntimeError(f"LLM response not completed: {getattr(resp, 'status', None)}")
     return resp.output_text
@@ -304,12 +292,8 @@ async def vision_chat(
     errors: list[str] = []
     for config in chain:
         try:
-            client = provider_from_config(config).raw_client()
-            if client is None:
-                errors.append(f"{config.provider_name}: no responses client")
-                continue
             response = await call_with_retry(
-                client,
+                build_provider(config, ChatProvider).raw_client(),
                 **build_responses_kwargs(
                     model=config.model,
                     instructions=system_prompt,

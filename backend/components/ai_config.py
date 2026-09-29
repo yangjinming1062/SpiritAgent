@@ -1,4 +1,4 @@
-from typing import Any, Self
+from typing import Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -90,9 +90,3 @@ class AIConfigPublic(BaseModel):
 
     providers: list[ProviderCardPublic] = Field(default_factory=list)
     capabilities: CapabilityChainsPublic = Field(default_factory=CapabilityChainsPublic)
-
-
-def load_ai_config(raw: dict[str, Any] | AIConfig | None) -> AIConfig:
-    if isinstance(raw, AIConfig):
-        return raw
-    return AIConfig.model_validate(raw or {})

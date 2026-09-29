@@ -1,52 +1,15 @@
 import asyncio
 
 from components import get_logger, session_scope
-from modules.conversation import Conversation
-from modules.scheduler import CronJob
 from modules.system import ChatMessageRequest, ChatRequest
 from modules.ws import emit_ws_event
-from sqlalchemy import select
 
-from services.application.chat import AUTOMATION_EXCLUDED_TOOL_NAMES, AUTOMATION_PRESET, HeadlessEmitter, run_chat_turn
-from services.domains.conversation import STANDARD_KIND
+from services.application.chat import HeadlessEmitter, run_chat_turn
+from services.domains.automation import resolve_job_conversation
 from services.infrastructure.llm import resolve_user_llm_config
 
 logger = get_logger(__name__)
 _STANDARD_TURN_LOCKS: dict[int, asyncio.Lock] = {}
-
-
-async def _resolve_conversation(user_id: int, job_id: int, conversation_id: int | None, name: str) -> Conversation:
-    async with session_scope() as db:
-        conversation = None
-        if conversation_id is not None:
-            conversation = (
-                await db.execute(
-                    select(Conversation).where(
-                        Conversation.id == conversation_id,
-                        Conversation.user_id == user_id,
-                        Conversation.kind == STANDARD_KIND,
-                        Conversation.is_automation.is_(True),
-                    ),
-                )
-            ).scalar_one_or_none()
-        if conversation is None:
-            conversation = Conversation(
-                user_id=user_id,
-                kind=STANDARD_KIND,
-                title=f"定时任务 · {name}",
-                is_automation=True,
-                system_preset_id="automation",
-            )
-            db.add(conversation)
-            await db.flush()
-            job = (
-                await db.execute(select(CronJob).where(CronJob.id == job_id, CronJob.user_id == user_id))
-            ).scalar_one_or_none()
-            if job is not None:
-                job.conversation_id = conversation.id
-            await db.commit()
-            await db.refresh(conversation)
-        return conversation
 
 
 async def _emit_notification(user_id: int, *, name: str, text: str, conversation_id: int, error: bool = False) -> None:
@@ -68,44 +31,38 @@ async def _emit_notification(user_id: int, *, name: str, text: str, conversation
         await db.commit()
 
 
-async def _execute_standard_turn(user_id: int, job_id: int, payload: dict) -> None:
-    prompt = str(payload.get("prompt") or "").strip()
+async def _execute_standard_turn(
+    user_id: int,
+    job_id: int,
+    name: str,
+    prompt: str,
+    conversation_id: int | None,
+) -> None:
+    prompt = prompt.strip()
     if not prompt:
         return
-    name = str(payload.get("name") or "定时任务").strip() or "定时任务"
-    raw_conversation_id = payload.get("conversation_id")
-    conversation_id = raw_conversation_id if isinstance(raw_conversation_id, int) else None
+    name = name.strip() or "定时任务"
 
     try:
-        conversation = await _resolve_conversation(user_id, job_id, conversation_id, name)
-        conversation_id = conversation.id
+        conversation_id = await resolve_job_conversation(user_id, job_id, conversation_id, name)
         async with session_scope() as db:
             llm_config = await resolve_user_llm_config(db, user_id)
         emitter = HeadlessEmitter()
         request = ChatRequest(
-            session_id=str(conversation.id),
-            message=ChatMessageRequest(role="user", content=prompt),
+            session_id=str(conversation_id),
+            message=ChatMessageRequest(content=prompt),
         )
-        await run_chat_turn(
-            request,
-            llm_config,
-            user_id,
-            emitter,
-            headless=True,
-            excluded_tool_names=AUTOMATION_EXCLUDED_TOOL_NAMES,
-            preset_override=AUTOMATION_PRESET,
-            run_post_turn_tasks=False,
-        )
+        await run_chat_turn(request, llm_config, user_id, emitter, headless=True)
         if emitter.error:
             await _emit_notification(
                 user_id,
                 name=name,
                 text="任务执行失败，请稍后重试",
-                conversation_id=conversation.id,
+                conversation_id=conversation_id,
                 error=True,
             )
             return
-        await _emit_notification(user_id, name=name, text=emitter.final_text, conversation_id=conversation.id)
+        await _emit_notification(user_id, name=name, text=emitter.final_text, conversation_id=conversation_id)
     except Exception:
         logger.exception("standard cron turn failed", extra={"user_id": user_id, "job_id": job_id})
         if conversation_id is not None:
@@ -118,12 +75,19 @@ async def _execute_standard_turn(user_id: int, job_id: int, payload: dict) -> No
             )
 
 
-async def execute_standard_turn(user_id: int, job_id: int, payload: dict) -> None:
+async def execute_standard_turn(
+    user_id: int,
+    job_id: int,
+    *,
+    name: str,
+    prompt: str,
+    conversation_id: int | None,
+) -> None:
     """同一任务串行执行，避免短周期任务把同一历史交错写入。"""
     lock = _STANDARD_TURN_LOCKS.setdefault(job_id, asyncio.Lock())
     try:
         async with lock:
-            await _execute_standard_turn(user_id, job_id, payload)
+            await _execute_standard_turn(user_id, job_id, name, prompt, conversation_id)
     finally:
         # 任务删除后锁条目无人清理会随进程生命周期缓慢累积；无等待者时移除自身
         if not lock.locked() and _STANDARD_TURN_LOCKS.get(job_id) is lock:

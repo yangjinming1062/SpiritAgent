@@ -1,6 +1,6 @@
 from typing import ClassVar
 
-from ..base import ProviderConfig, VideoAsset, VideoGenProvider, VideoGenRequest, VideoJobStatus
+from ..base import ProviderConfig, VideoAsset, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
 from ..http import get_http
 from ._errors import raise_for_qwen_response
 
@@ -13,7 +13,8 @@ _RESOLUTION_TO_API: dict[str, str] = {
     "1080P": "1080P",
     "2K": "1080P",
 }
-_STATUS_MAP = {
+_DURATIONS = tuple(range(2, 31))
+_STATUS_MAP: dict[str, VideoJobState] = {
     "PENDING": "queued",
     "RUNNING": "processing",
     "SUCCEEDED": "succeeded",
@@ -26,10 +27,10 @@ class QwenVideoGenProvider(VideoGenProvider):
     """通过千问 wan3.0-video 异步 video-synthesis 提供视频生成。"""
 
     provider_name = "qwen"
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"video_gen": "wan3.0-video"}
-    DEFAULT_CONTEXT_TOKENS: ClassVar[dict[str, int]] = {"video_gen": 8_000}
-    durations: tuple[int, ...] = tuple(range(2, 31))
-    resolutions: tuple[str, ...] = ("480P", "720P", "1080P", "512P", "768P", "2K")
+    DEFAULT_BASE_URL: ClassVar[str] = "https://maas.qianwenaiapi.com/api/v1"
+    DEFAULT_MODEL: ClassVar[str] = "wan3.0-video"
+    durations = _DURATIONS
+    resolutions = ("480P", "720P", "1080P", "512P", "768P", "2K")
     supports_first_frame = True
     supports_loop_frames = True
 
@@ -40,7 +41,7 @@ class QwenVideoGenProvider(VideoGenProvider):
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
         if req.reference_images:
             raise ValueError("qwen video adapter does not support reference media combinations")
-        if req.duration not in self.durations:
+        if req.duration not in _DURATIONS:
             raise ValueError(f"qwen video_gen requires duration in 2..30, got {req.duration!r}")
         resolution = (req.resolution or "").upper()
         api_resolution = _RESOLUTION_TO_API.get(resolution)
@@ -70,7 +71,7 @@ class QwenVideoGenProvider(VideoGenProvider):
             json=payload,
             headers={"X-DashScope-Async": "enable"},
         )
-        body = raise_for_qwen_response(resp, family=self.provider_name, model=model)
+        body = raise_for_qwen_response(resp)
         output = body.get("output") or {}
         task_id = output.get("task_id") or ""
         if not task_id:
@@ -79,7 +80,7 @@ class QwenVideoGenProvider(VideoGenProvider):
 
     async def poll(self, task_id: str) -> VideoJobStatus:
         resp = await self._client.get(f"/tasks/{task_id}")
-        body = raise_for_qwen_response(resp, family=self.provider_name, model=self.config.model)
+        body = raise_for_qwen_response(resp)
         output = body.get("output") or {}
         raw_status = str(output.get("task_status") or "").upper()
         norm = _STATUS_MAP.get(raw_status, "processing")

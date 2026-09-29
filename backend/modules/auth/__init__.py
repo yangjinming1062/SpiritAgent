@@ -74,7 +74,5 @@ __all__ = [
     "generate_activation_token",
     "get_current_admin_token",
     "get_current_session",
-    "get_current_user",
-    "get_optional_current_session",
     "hash_activation_token",
 ]

@@ -12,7 +12,7 @@ from prompts.tools import (
 )
 
 from services.infrastructure.llm import UserLlmConfig, build_responses_kwargs, call_with_retry, client_for_config
-from services.infrastructure.tool_runtime import REGISTRY
+from services.infrastructure.tool_runtime import ToolsRegistry
 from services.infrastructure.web import resolve_extract_provider, resolve_search_provider
 
 logger = get_logger(__name__)
@@ -76,7 +76,7 @@ async def _summarize_documents(documents: list[dict], llm_config: UserLlmConfig)
     await asyncio.gather(*(_guarded(d) for d in documents))
 
 
-async def web_search_tool(query: str, limit: int | None = None, **_) -> str:
+async def web_search_tool(query: str, limit: int | None = None, **_: object) -> str:
     provider = resolve_search_provider()
     if not provider.is_available():
         return tool_error(f"{provider.display_name} is not configured or unavailable.")
@@ -94,9 +94,12 @@ async def web_search_tool(query: str, limit: int | None = None, **_) -> str:
     return json.dumps(result, ensure_ascii=False)
 
 
-async def web_extract_tool(urls: list[str] | str, llm_config: dict, use_llm_processing: bool = True, **_) -> str:
-    if isinstance(urls, str):
-        urls = [urls]
+async def web_extract_tool(
+    urls: list[str],
+    llm_config: UserLlmConfig,
+    use_llm_processing: bool = True,
+    **_: object,
+) -> str:
     provider = resolve_extract_provider()
     if not provider.is_available():
         msg = provider.missing_credential_message() or (f"{provider.display_name} is not configured or unavailable.")
@@ -110,11 +113,7 @@ async def web_extract_tool(urls: list[str] | str, llm_config: dict, use_llm_proc
     except Exception as e:
         return tool_error(f"Extraction error: {e!s}")
 
-    # 部分供应商返回旧式 {success, data: ...} 包裹结构，这里统一拆开。
-    if isinstance(documents, dict) and "data" in documents:
-        documents = documents["data"]
-
-    if use_llm_processing and isinstance(documents, list):
+    if use_llm_processing:
         # 并行展开摘要，10 URL 提取的耗时由最慢的那一份决定，而非 10 倍叠加。
         await _summarize_documents(documents, llm_config)
 
@@ -166,6 +165,6 @@ def _web_extract_available() -> bool:
     return provider.is_available() and provider.supports_extract()
 
 
-def register(registry) -> None:
-    REGISTRY.register("web_search", WEB_SEARCH_SCHEMA, web_search_tool)
-    REGISTRY.register("web_extract", WEB_EXTRACT_SCHEMA, web_extract_tool, _web_extract_available)
+def register(registry: ToolsRegistry) -> None:
+    registry.register(WEB_SEARCH_SCHEMA, web_search_tool)
+    registry.register(WEB_EXTRACT_SCHEMA, web_extract_tool, _web_extract_available)

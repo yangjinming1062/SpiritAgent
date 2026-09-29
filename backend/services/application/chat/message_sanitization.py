@@ -38,28 +38,36 @@ def _escape_invalid_chars_in_json_strings(raw: str) -> str:
     return "".join(out)
 
 
-def _repair_tool_call_arguments(raw_args: str, tool_name: str = "?") -> str:
-    """尽力修复 LLM tool-call 参数中的畸形 JSON；不可修复时返回 ``"{}"``，避免单个坏调用阻塞聊天循环。"""
-    raw_stripped = raw_args.strip() if isinstance(raw_args, str) else ""
+def parse_tool_call_arguments(raw_args: str, tool_name: str) -> dict[str, Any]:
+    """尽力解析 LLM tool-call 参数；空值、非对象或不可修复时返回空参数，避免单个坏调用阻塞聊天循环。"""
+    if not raw_args:
+        return {}
+    parsed = _repair_json(raw_args.strip(), tool_name)
+    return parsed if isinstance(parsed, dict) else {}
 
-    if not raw_stripped:
+
+def _repair_json(raw: str, tool_name: str) -> object:
+    if not raw:
         logger.warning("Sanitized empty tool_call arguments", extra={"tool_name": tool_name})
-        return "{}"
+        return {}
 
-    if raw_stripped == "None":
+    if raw == "None":
         logger.warning("Sanitized Python-None tool_call arguments", extra={"tool_name": tool_name})
-        return "{}"
+        return {}
 
     try:
-        parsed = json.loads(raw_stripped, strict=False)
-        reserialised = json.dumps(parsed, separators=(",", ":"))
-        if reserialised != raw_stripped:
-            logger.warning("Repaired unescaped control chars in tool_call arguments", extra={"tool_name": tool_name})
-        return reserialised
-    except (TypeError, ValueError):
+        return json.loads(raw)
+    except ValueError:
         pass
+    try:
+        parsed = json.loads(raw, strict=False)
+    except ValueError:
+        pass
+    else:
+        logger.warning("Repaired unescaped control chars in tool_call arguments", extra={"tool_name": tool_name})
+        return parsed
 
-    fixed = re.sub(r",\s*([}\]])", r"\1", raw_stripped)
+    fixed = re.sub(r",\s*([}\]])", r"\1", raw)
     open_curly = fixed.count("{") - fixed.count("}")
     open_bracket = fixed.count("[") - fixed.count("]")
     if open_curly > 0:
@@ -69,43 +77,38 @@ def _repair_tool_call_arguments(raw_args: str, tool_name: str = "?") -> str:
     # 终止条件：仅当末尾 }/] 多于开括号时继续剪枝，最多执行 len(fixed) 次。
     while True:
         try:
-            json.loads(fixed)
-            break
+            parsed = json.loads(fixed)
         except json.JSONDecodeError:
             trailing_curly = fixed.endswith("}") and fixed.count("}") > fixed.count("{")
             trailing_bracket = fixed.endswith("]") and fixed.count("]") > fixed.count("[")
-            if trailing_curly or trailing_bracket:
-                fixed = fixed[:-1]
-            else:
+            if not (trailing_curly or trailing_bracket):
                 break
+            fixed = fixed[:-1]
+        else:
+            logger.warning(
+                "Repaired malformed tool_call arguments",
+                extra={"tool_name": tool_name, "raw": raw[:80], "fixed": fixed[:80]},
+            )
+            return parsed
 
-    try:
-        json.loads(fixed)
-        logger.warning(
-            "Repaired malformed tool_call arguments",
-            extra={"tool_name": tool_name, "raw": raw_stripped[:80], "fixed": fixed[:80]},
-        )
-        return fixed
-    except json.JSONDecodeError:
-        pass
-
-    try:
-        escaped = _escape_invalid_chars_in_json_strings(fixed)
-        if escaped != fixed:
-            json.loads(escaped)
+    escaped = _escape_invalid_chars_in_json_strings(fixed)
+    if escaped != fixed:
+        try:
+            parsed = json.loads(escaped)
+        except ValueError:
+            pass
+        else:
             logger.warning(
                 "Repaired control-char-laced tool_call arguments",
-                extra={"tool_name": tool_name, "raw": raw_stripped[:80], "escaped": escaped[:80]},
+                extra={"tool_name": tool_name, "raw": raw[:80], "escaped": escaped[:80]},
             )
-            return escaped
-    except (TypeError, ValueError):
-        pass
+            return parsed
 
     logger.warning(
         "Unrepairable tool_call arguments, replaced with empty object",
-        extra={"tool_name": tool_name, "raw": raw_stripped[:80]},
+        extra={"tool_name": tool_name, "raw": raw[:80]},
     )
-    return "{}"
+    return {}
 
 
 def _truncate_response_text(value: Any, max_chars: int) -> Any:

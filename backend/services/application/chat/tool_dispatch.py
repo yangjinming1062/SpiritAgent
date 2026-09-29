@@ -1,50 +1,58 @@
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+from typing import Any
 
 from components import async_trace_span, redact_sensitive_text, safe_json_loads, tool_error
 
-from services.application.chat import NativeMemory
 from services.contracts import DelegateAction, MediaTurnState, MemoryScope, SceneTurnState
-from services.infrastructure.desktop import MANAGER, create_future, discard_call, wait_future
+from services.infrastructure.desktop import MANAGER, dispatch_device_call
+from services.infrastructure.llm import UserLlmConfig
 from services.infrastructure.tool_runtime import (
     REGISTRY,
     RESERVED_KEYS,
     ToolCallGuardrailController,
-    append_toolguard_guidance,
     check_file_safety,
     coerce_tool_args,
     file_mutation_result_landed,
     is_multimodal_tool_result,
     make_tool_result_message,
     should_parallelize_tool_batch,
-    toolguard_synthetic_result,
 )
 
 from .chat_emitter import Emitter
-from .message_sanitization import _repair_tool_call_arguments
+from .message_sanitization import parse_tool_call_arguments
+from .native_memory import NativeMemory
 
 # 委派执行器由 orchestrator 注入（run_delegated_turn 绑定回合入口），避免模块级循环导入。
-DelegateExecutor = Callable[[DelegateAction, int, dict], Awaitable[str]]
+DelegateExecutor = Callable[[DelegateAction, int, UserLlmConfig], Awaitable[str]]
 
 
 @dataclass(frozen=True)
 class _ToolDispatchContext:
-    """贯穿单轮工具派发的上下文参数包：新增字段只需在此一行扩展，避免改三处签名。"""
+    """贯穿单轮工具派发的上下文参数包。"""
 
     user_id: int
-    llm_config: dict
-    user_settings: dict
+    llm_config: UserLlmConfig
+    user_settings: dict[str, Any]
     session_id: str
     memory_scope: MemoryScope | None
     native_memory: NativeMemory | None
     guardrails: ToolCallGuardrailController
     emitter: Emitter
     delegate_executor: DelegateExecutor
-    media_turn: MediaTurnState | None = None
-    headless: bool = False
-    excluded_tool_names: frozenset[str] = frozenset()
-    scene_turn: SceneTurnState = field(default_factory=SceneTurnState)
+    media_turn: MediaTurnState
+    headless: bool
+    excluded_tool_names: frozenset[str]
+    scene_turn: SceneTurnState
+
+
+def matched_tool_names(output: object) -> list[str]:
+    """``search_tools`` 结果里解锁的工具名；历史续读与本轮派发共用。"""
+    parsed = safe_json_loads(output) if isinstance(output, str) else output
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("matched_tools"), list):
+        return []
+    return [str(tool["name"]) for tool in parsed["matched_tools"] if isinstance(tool, dict) and tool.get("name")]
 
 
 def _redact_tool_payload(result_str: str) -> str | list:
@@ -69,7 +77,7 @@ async def _dispatch_runner_tool(
     headless: bool = False,
     memory_scope: MemoryScope | None,
 ) -> str:
-    """把 runner 工具调用作为用户级设备指令推给桌面 WS，并等待其 ipc future。
+    """把 runner 工具调用作为用户级设备指令推给桌面 WS，并等待其结果。
 
     不经回合 emitter：设备派发不是聊天帧，它靠 call_id 关联、与用户在看哪个会话无关。载荷里的
     session_id 只描述来源，不参与路由；headless 要求客户端照常执行但不展示工作态或工具流。
@@ -84,39 +92,25 @@ async def _dispatch_runner_tool(
         return tool_error("Desktop is offline. Tool calls require an active desktop connection.")
     if not REGISTRY.has_runner_tools(user_id):
         return tool_error("Runner is not available. No runner tools registered for this session.")
-    dispatcher = MANAGER.get_dispatcher(user_id)
-    if dispatcher is None:
+    result = await dispatch_device_call(
+        user_id,
+        call_id,
+        {
+            "name": name,
+            "args": args,
+            "call_id": call_id,
+            "session_id": session_id,
+            "headless": headless,
+            "skill_scope": skill_scope,
+        },
+    )
+    if result is None:
         return tool_error("Desktop is offline. Tool calls require an active desktop connection.")
-
-    # 注册必须先于派发：轻量工具的 tool.result 可能早于派发返回就抵达，晚注册会被 resolve_future 当作未知 call_id 丢弃。
-    fut = create_future(user_id, call_id)
-    try:
-        # enqueue_event 而非 push_event：前者返回投递结果。派发在 writer 任务里异步完成、
-        # 底层吞掉所有发送异常，所以「WS 掉线」只体现为返回 False——不看返回值就会白等满 IPC 超时。
-        delivered = await dispatcher.enqueue_event(
-            "tool.call",
-            {
-                "name": name,
-                "args": args,
-                "call_id": call_id,
-                "session_id": session_id,
-                "headless": headless,
-                "skill_scope": skill_scope,
-            },
-        )
-    except BaseException:
-        # 注册已完成而派发未走到等待（含回合被取消）：不清理就会在 _PENDING 里留下永久句柄。
-        discard_call(user_id, call_id)
-        raise
-    if not delivered:
-        discard_call(user_id, call_id)
-        return tool_error("Desktop is offline. Tool calls require an active desktop connection.")
-    return await wait_future(user_id, call_id, fut)
+    return result
 
 
 async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
     name = tc["name"]
-    raw_args_str = tc["arguments"]
 
     await ctx.emitter.send_json({"type": "tool_start", "name": name, "call_id": tc["call_id"]})
 
@@ -127,26 +121,16 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
                 tool_error(f"Tool is unavailable in this execution mode: {name}"),
                 tc["call_id"],
             )
-        args = safe_json_loads(_repair_tool_call_arguments(raw_args_str, name), default={}) if raw_args_str else {}
-        # JSON ``null`` 解析为 Python ``None``，会绕过 ``safe_json_loads`` 的 default 分支；把 LLM 用 ``arguments: "null"`` 表示「无参数」统一视作 ``arguments: "{}"``，确保下游 ``coerce_tool_args`` 拿到 dict。
-        if not isinstance(args, dict):
-            args = {}
-
-        args = coerce_tool_args(name, args, REGISTRY.get_schema(ctx.user_id, name))
-
+        args = coerce_tool_args(
+            name,
+            parse_tool_call_arguments(tc["arguments"], name),
+            REGISTRY.get_schema(ctx.user_id, name),
+        )
         # 在入口处统一剥离保留键，使 backend / memory / runner 三类工具都受同一过滤。
-        if isinstance(args, dict):
-            args = {k: v for k, v in args.items() if k not in RESERVED_KEYS}
+        args = {k: v for k, v in args.items() if k not in RESERVED_KEYS}
 
-        safety_decision = check_file_safety(name, args)
-        if safety_decision is not None and safety_decision.should_halt:
-            result_str = toolguard_synthetic_result(safety_decision)
-            return make_tool_result_message(name, result_str, tc["call_id"])
-
-        pre_decision = ctx.guardrails.before_call(name, args)
-        if pre_decision.should_halt:
-            result_str = toolguard_synthetic_result(pre_decision)
-            return make_tool_result_message(name, result_str, tc["call_id"])
+        if (blocked := check_file_safety(name, args)) is not None:
+            return make_tool_result_message(name, blocked, tc["call_id"])
 
         tool_location = REGISTRY.get_location(ctx.user_id, name)
         async with async_trace_span(
@@ -163,7 +147,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
                         llm_config=ctx.llm_config,
                         user_settings=ctx.user_settings,
                         parent_session_id=ctx.session_id,
-                        emitter=ctx.emitter,
+                        excluded_tool_names=ctx.excluded_tool_names,
                         scene_turn=ctx.scene_turn,
                         media_turn=ctx.media_turn,
                     )
@@ -191,8 +175,7 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
                 case _:
                     result_str = tool_error(f"Unknown tool location for {name}")
 
-        post_decision = ctx.guardrails.after_call(name, args, result_str)
-        result_str = append_toolguard_guidance(result_str, post_decision)
+        result_str = ctx.guardrails.after_call(name, args, result_str)
 
         if file_mutation_result_landed(name, result_str):
             result_str += "\n[System: The file write/patch operation successfully landed.]"

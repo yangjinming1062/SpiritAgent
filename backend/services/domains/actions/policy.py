@@ -5,12 +5,12 @@ ActionProposal 聚合；评审不设日限额，仅 approve 后占用制作额�
 """
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import SETTINGS
 from modules.companion import ActionBudgetStatus, ActionProposal, CompanionAction
-from modules.settings import UserSetting
+from modules.settings import get_user_setting
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -45,64 +45,31 @@ def daily_create_limit(source: str) -> int:
 
 async def resolve_action_budget_zone(db: AsyncSession, user_id: int) -> ZoneInfo | None:
     """用户本地时区（IANA，桌面握手上报）；缺失或非法时回落 None（按 UTC 日切）。"""
-    tz = (
-        await db.execute(
-            select(UserSetting.setting_value).where(
-                UserSetting.user_id == user_id,
-                UserSetting.setting_key == "timezone",
-            ),
-        )
-    ).scalar()
-    tz = (tz or "").strip()
+    tz = await get_user_setting(db, user_id, "timezone")
     try:
         return ZoneInfo(tz) if tz else None
-    except (ZoneInfoNotFoundError, ValueError, KeyError):
+    except (ZoneInfoNotFoundError, ValueError, KeyError, TypeError):
         return None
 
 
-async def resolve_action_budget_date(db: AsyncSession, user_id: int) -> str:
-    """额度结算日按用户本地时区；缺失时回落 UTC。"""
-    zone = await resolve_action_budget_zone(db, user_id)
-    now = datetime.now(UTC)
-    if zone is not None:
-        now = now.astimezone(zone)
-    return now.strftime("%Y-%m-%d")
+async def _budget_day(db: AsyncSession, user_id: int) -> tuple[date, datetime, datetime]:
+    """额度结算日按用户本地时区（缺失时 UTC）；返回本地日及其 UTC 起止，与 approved_at 比较。"""
+    zone = await resolve_action_budget_zone(db, user_id) or UTC
+    today = datetime.now(zone).date()
+    start = datetime.combine(today, time.min, tzinfo=zone)
+    end = datetime.combine(today + timedelta(days=1), time.min, tzinfo=zone)
+    return today, start.astimezone(UTC), end.astimezone(UTC)
 
 
-def _budget_window(budget_date: str, zone: ZoneInfo | None) -> tuple[datetime, datetime]:
-    """本地日窗口：在用户时区解析当日/次日午夜再换算 UTC，与 created_at/approved_at 比较。
-
-    不能把本地日字符串当成 UTC 零点，否则本地凌晨会把「今天」的提案算进昨天窗口。
-    """
-    day = datetime.strptime(budget_date, "%Y-%m-%d")  # noqa: DTZ007 — 本地日字符串，仅作日历日
-    next_day = day + timedelta(days=1)
-    if zone is not None:
-        start = day.replace(tzinfo=zone)
-        end = next_day.replace(tzinfo=zone)
-    else:
-        start = day.replace(tzinfo=UTC)
-        end = next_day.replace(tzinfo=UTC)
-    return start.astimezone(UTC), end.astimezone(UTC)
-
-
-async def count_create_used(
-    db: AsyncSession,
-    user_id: int,
-    budget_date: str,
-    *,
-    source: str | None = None,
-) -> int:
-    """统计当日已获批（制作）量：按评审 approve 时刻（approved_at）计。"""
-    zone = await resolve_action_budget_zone(db, user_id)
-    start, end = _budget_window(budget_date, zone)
+async def _count_approved(db: AsyncSession, user_id: int, source: str, start: datetime, end: datetime) -> int:
+    """统计窗口内已获批（制作）量：按评审 approve 时刻（approved_at）计。"""
     stmt = select(func.count(ActionProposal.id)).where(
         ActionProposal.user_id == user_id,
+        ActionProposal.source == source,
         ActionProposal.approved_at >= start,
         ActionProposal.approved_at < end,
         ActionProposal.review_decision == "approve",
     )
-    if source is not None:
-        stmt = stmt.where(ActionProposal.source == source)
     return (await db.execute(stmt)).scalar_one() or 0
 
 
@@ -110,14 +77,12 @@ async def get_daily_budget_status(
     db: AsyncSession,
     user_id: int,
 ) -> ActionBudgetStatus:
-    budget_date = await resolve_action_budget_date(db, user_id)
-    auto_create = await count_create_used(db, user_id, budget_date, source="autonomous")
-    user_create = await count_create_used(db, user_id, budget_date, source="user_requested")
+    today, start, end = await _budget_day(db, user_id)
     return ActionBudgetStatus(
-        budget_date=budget_date,
-        autonomous_create_used=auto_create,
+        budget_date=today.isoformat(),
+        autonomous_create_used=await _count_approved(db, user_id, "autonomous", start, end),
         autonomous_create_limit=daily_create_limit("autonomous"),
-        user_requested_create_used=user_create,
+        user_requested_create_used=await _count_approved(db, user_id, "user_requested", start, end),
         user_requested_create_limit=daily_create_limit("user_requested"),
     )
 
@@ -128,8 +93,8 @@ async def check_can_accept(
     *,
     source: str,
     duration_seconds: float,
-    pack_id: int | None = None,
-    semantic_fingerprint: str = "",
+    pack_id: int,
+    semantic_fingerprint: str,
 ) -> None:
     """受理门禁；不满足时抛 ActionPolicyError。评审不设日限额。"""
     if duration_seconds > max_duration_seconds():
@@ -138,62 +103,31 @@ async def check_can_accept(
     if abs(duration_seconds - round(duration_seconds)) > 1e-6:
         raise ActionPolicyError("动作时长需为整秒")
 
-    if semantic_fingerprint and await check_suppression(
-        db,
-        user_id,
-        pack_id=pack_id,
-        semantic_fingerprint=semantic_fingerprint,
-    ):
+    # 同包近 7 天被拒绝的同一创意受抑制。
+    cutoff = datetime.now(UTC) - timedelta(days=REJECTED_PROPOSAL_COOLDOWN_DAYS)
+    rejected = await db.scalar(
+        select(func.count(ActionProposal.id)).where(
+            ActionProposal.user_id == user_id,
+            ActionProposal.pack_id == pack_id,
+            ActionProposal.semantic_fingerprint == semantic_fingerprint,
+            ActionProposal.status == "rejected",
+            ActionProposal.created_at >= cutoff,
+        ),
+    )
+    if rejected:
         raise ActionPolicyError("同类动作近期已被拒绝，请换一个明确不同的创意")
 
     if source == "autonomous" and not SETTINGS.action_autocreate_enabled:
         raise ActionPolicyError("自动创建新动作当前已关闭")
 
 
-async def consume_create_slot(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    source: str,
-    budget_date: str | None = None,
-) -> None:
+async def consume_create_slot(db: AsyncSession, user_id: int, *, source: str) -> None:
     """approve 后校验制作额度；超限抛 ActionPolicyError，调用方回退 defer。"""
-    budget_date = budget_date or await resolve_action_budget_date(db, user_id)
-    used = await count_create_used(db, user_id, budget_date, source=source)
-    if used >= daily_create_limit(source):
+    _, start, end = await _budget_day(db, user_id)
+    if await _count_approved(db, user_id, source, start, end) >= daily_create_limit(source):
         raise ActionPolicyError("今日动作制作额度已用完")
 
 
-async def check_suppression(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    pack_id: int | None,
-    semantic_fingerprint: str,
-) -> bool:
-    """返回 True 表示该创意在近 7 天内被拒绝过（抑制）。"""
-    if not semantic_fingerprint:
-        return False
-    cutoff = datetime.now(UTC) - timedelta(days=REJECTED_PROPOSAL_COOLDOWN_DAYS)
-    stmt = select(func.count(ActionProposal.id)).where(
-        ActionProposal.user_id == user_id,
-        ActionProposal.semantic_fingerprint == semantic_fingerprint,
-        ActionProposal.status == "rejected",
-        ActionProposal.created_at >= cutoff,
-    )
-    if pack_id is not None:
-        stmt = stmt.where(ActionProposal.pack_id == pack_id)
-    count = (await db.execute(stmt)).scalar_one() or 0
-    return count > 0
-
-
-async def check_can_play(
-    db: AsyncSession,
-    user_id: int,
-    action: CompanionAction,
-) -> None:
-    if not action.enabled:
-        raise ActionPolicyError("该动作已停用")
-
-    if action.status != "succeeded" or not action.video_path:
-        raise ActionPolicyError("该动作素材尚未就绪")
+def is_expression_action(action: CompanionAction) -> bool:
+    """模型可点播的表达动作：已启用、素材就绪且不占系统产品槽位。"""
+    return action.enabled and action.status == "succeeded" and bool(action.video_path) and not action.system_slot

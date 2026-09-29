@@ -1,14 +1,12 @@
 """场景资产生成、分析与启用；供应商等待不持有数据库会话。"""
 
 import asyncio
-import base64
 import io
 import json
 from datetime import timedelta
 from uuid import uuid4
 
 from components import (
-    DEFAULT_LANGUAGE,
     REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
     SCENE_DOWNLOAD_MAX_BYTES,
     SCENE_FAILURES_TOTAL,
@@ -17,6 +15,7 @@ from components import (
     SETTINGS,
     get_logger,
     parse_llm_json,
+    resolve_language,
     track_user_task,
     utc_now,
 )
@@ -34,7 +33,7 @@ from modules.companion import (
     SceneSource,
     SceneStatus,
 )
-from modules.settings import UserSetting
+from modules.settings import get_user_setting
 from modules.ws import emit_ws_event
 from PIL import Image
 from prompts.generation import SCENE_DESCRIBE_SYSTEM
@@ -46,20 +45,22 @@ from services.contracts import MemoryScope
 from services.domains.companion import (
     CharacterCardNotReadyError,
     character_snapshot_is_current,
+    get_disturbance_tier,
     get_pending_scene_task,
     get_scene,
     load_character_snapshot,
+    load_persona_definition,
     require_character_snapshot,
 )
 from services.domains.memory import read_user_profile
-from services.infrastructure.assets import asset_store
-from services.infrastructure.llm import resolve_reference_bytes, vision_chat
+from services.infrastructure.assets import asset_store, build_data_uri
+from services.infrastructure.llm import vision_chat
 
-from .avatar_service import load_character_reference_data_uri
-from .character_images import ImageChainState, drop_size_mismatched_candidates, generate_character_images
+from .avatar_service import get_active_avatar, load_avatar_bytes_as_data_uri, read_portrait_bytes
+from .character_images import ImageChainState, generate_character_images
 from .image_generation import ImageGenerationError
-from .media_chain import MEDIA_IDENTITY_ACCEPT_SCORE
-from .scene_prompt import ScenePromptContext, build_scene_prompt
+from .media_chain import MEDIA_IDENTITY_ACCEPT_SCORE, MediaCandidate
+from .scene_prompt import build_scene_prompt
 
 logger = get_logger(__name__)
 _SCENE_LOCKS: dict[int, asyncio.Lock] = {}
@@ -146,13 +147,7 @@ async def _check_policy(db: AsyncSession, persona: Persona, origin: str) -> None
         if user is None or not user.nightly_activity_enabled:
             raise SceneLockedError("夜间自主活动已关闭")
     else:
-        tier = await db.scalar(
-            select(UserSetting.setting_value).where(
-                UserSetting.user_id == persona.user_id,
-                UserSetting.setting_key == "companion.disturbance_tier",
-            ),
-        )
-        if tier in {"still", "silent"}:
+        if await get_disturbance_tier(persona.user_id, db=db) == "still":
             raise SceneLockedError("静止档不发起在线自主场景变化")
 
 
@@ -262,12 +257,10 @@ async def _new_scene(
             identity = await require_character_snapshot(db, user_id)
         except CharacterCardNotReadyError as exc:
             raise SceneStateError(str(exc)) from exc
-        avatar = await db.scalar(
-            select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)),
-        )
+        avatar = await get_active_avatar(db, user_id)
         if avatar is None or not avatar.seed_fullbody_url:
             raise SceneStateError("全身形象缺失，请重新生成全身参考图")
-        if await asyncio.to_thread(load_character_reference_data_uri, avatar) is None:
+        if await asyncio.to_thread(read_portrait_bytes, avatar.seed_fullbody_url) is None:
             raise SceneStateError("全身参考图无法读取，请重新生成")
         if not outfit_description:
             outfit_description = await db.scalar(
@@ -288,11 +281,9 @@ async def _new_scene(
             requirements=notes,
             outfit_description=outfit_description or "",
             prompt=build_scene_prompt(
-                ScenePromptContext(
-                    notes=notes,
-                    has_reference_image=bool(reference_image),
-                    outfit_description=outfit_description or "",
-                ),
+                notes=notes,
+                has_reference_image=bool(reference_image),
+                outfit_description=outfit_description or "",
             ),
             character_card_json=identity.model_dump_json(),
             secondary_reference_image=reference_image or "",
@@ -313,18 +304,16 @@ async def schedule_scene_generation(
     origin: str,
     notes: str | None = None,
     outfit_description: str | None = None,
-    reference_image: str | None = None,
+    reference_image: bytes | None = None,
     auto_activate: bool = False,
 ) -> CompanionScene:
-    if reference_image is not None:
-        reference_image = await _prepare_reference_image(reference_image)
     row = await _new_scene(
         user_id,
         origin=origin,
         notes=notes or "",
         source=SceneSource.GENERATED.value,
         auto_activate=auto_activate,
-        reference_image=reference_image,
+        reference_image=await _prepare_reference_image(reference_image) if reference_image is not None else None,
         outfit_description=outfit_description,
     )
     _launch_task(row.id, user_id)
@@ -363,19 +352,17 @@ async def regenerate_scene(user_id: int, scene_id: int) -> CompanionScene:
             snapshot = await require_character_snapshot(db, user_id)
         except CharacterCardNotReadyError as exc:
             raise SceneStateError(str(exc)) from exc
-        avatar = await db.scalar(
-            select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)),
-        )
+        avatar = await get_active_avatar(db, user_id)
         if avatar is None or not avatar.seed_fullbody_url:
             raise SceneStateError("全身形象缺失，请重新生成全身参考图")
-        identity_reference = await asyncio.to_thread(load_character_reference_data_uri, avatar)
+        identity_reference = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
         if not identity_reference:
             raise SceneStateError("全身参考图无法读取，请重新生成")
 
         task_id = str(uuid4())
         state = SceneRegenerationState(
             task_id=task_id,
-            prompt=build_scene_prompt(ScenePromptContext(notes=row.description)),
+            prompt=build_scene_prompt(notes=row.description),
             character_card_json=snapshot.model_dump_json(),
             seed_portrait_media_id=avatar.seed_fullbody_url,
             identity_reference=identity_reference,
@@ -410,16 +397,14 @@ async def adopt_scene(user_id: int, scene_id: int | None, *, data: bytes) -> Com
         _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
         await db.commit()
     try:
-        await _save_image(user_id, scene_id, data, mime)
+        saved = await _save_image(user_id, scene_id, data, mime)
     except Exception:
         await _mark_failed(user_id, scene_id, "图片保存失败，请重新上传")
         raise
     _launch_task(scene_id, user_id)
-    async with SESSION_LOCAL() as db:
-        saved = await get_scene(db, user_id, scene_id)
-        if saved is None:
-            raise SceneNotFoundError("找不到对应场景")
-        return saved
+    if saved is None:
+        raise SceneNotFoundError("找不到对应场景")
+    return saved
 
 
 async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
@@ -428,30 +413,23 @@ async def discard_scene(user_id: int, scene_id: int) -> CompanionScene:
         row = await get_scene(db, user_id, scene_id)
         if row is None:
             raise SceneNotFoundError("找不到对应场景")
+        persona = await _persona(db, user_id)
         if row.regeneration_status == "pending":
-            state = (
-                SceneRegenerationState.model_validate_json(row.regeneration_state_json)
-                if row.regeneration_state_json
-                else None
-            )
-            if state:
-                cleanup_paths = {
-                    state.image_chain.pending_path or "",
-                    *(candidate.path for candidate in state.image_chain.candidates),
-                } - {""}
+            if row.regeneration_state_json:
+                state = SceneRegenerationState.model_validate_json(row.regeneration_state_json)
+                cleanup_paths = state.image_chain.stored_paths()
             row.regeneration_status = "cancelled"
             row.regeneration_stage = "cancelled"
             row.regeneration_error = None
             row.regeneration_state_json = None
         elif row.status == "pending":
-            persona = await _persona(db, user_id)
             row.status = SceneStatus.CANCELLED.value
             row.auto_activate = False
             if row.switch_version == persona.scene_switch_version:
                 persona.scene_switch_version += 1
         else:
             raise SceneStateError("该场景没有待取消的任务")
-        _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        _event(db, persona, "companion.scene.updated", scene_id)
         await db.commit()
         task = _INFLIGHT_TASKS.get((user_id, scene_id))
         if task and not task.done():
@@ -474,34 +452,15 @@ async def delete_scene(user_id: int, scene_id: int) -> None:
             raise SceneStateError("请先取消场景任务")
         if row.regeneration_status == "pending":
             raise SceneStateError("请先取消图片重新生成任务")
-        media_path = row.media_path
-        state = (
-            ImageChainState.model_validate_json(row.generation_state_json)
-            if row.generation_state_json
-            else ImageChainState()
-        )
-        regeneration = (
-            SceneRegenerationState.model_validate_json(row.regeneration_state_json)
-            if row.regeneration_state_json
-            else None
-        )
+        paths = {row.media_path} - {""}
+        if row.generation_state_json:
+            paths |= ImageChainState.model_validate_json(row.generation_state_json).stored_paths()
+        if row.regeneration_state_json:
+            paths |= SceneRegenerationState.model_validate_json(row.regeneration_state_json).image_chain.stored_paths()
         await db.delete(row)
         _event(db, persona, "companion.scene.updated", scene_id)
         await db.commit()
-    regeneration_paths = (
-        {
-            regeneration.image_chain.pending_path or "",
-            *(candidate.path for candidate in regeneration.image_chain.candidates),
-        }
-        if regeneration
-        else set()
-    )
-    for path in {
-        media_path,
-        state.pending_path or "",
-        *(candidate.path for candidate in state.candidates),
-        *regeneration_paths,
-    } - {""}:
+    for path in paths:
         await asyncio.to_thread(asset_store.unlink_companion_asset, path)
 
 
@@ -545,7 +504,8 @@ async def retry_scene_description(user_id: int, scene_id: int) -> CompanionScene
     return row
 
 
-async def _save_image(user_id: int, scene_id: int, data: bytes, mime: str) -> None:
+async def _save_image(user_id: int, scene_id: int, data: bytes, mime: str) -> CompanionScene | None:
+    """保存上传图片并转入分析；场景已不在等待中时丢弃图片并返回现状。"""
     ext = {"image/gif": "gif", "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}.get(mime, "png")
     path = await asset_store.save_companion_asset_async(data, user_id=user_id, label="scene", ext=ext)
     committed = False
@@ -553,12 +513,13 @@ async def _save_image(user_id: int, scene_id: int, data: bytes, mime: str) -> No
         async with _scene_lock(user_id), SESSION_LOCAL() as db:
             row = await get_scene(db, user_id, scene_id)
             if row is None or row.status != "pending":
-                return
+                return row
             row.media_path = path
             row.stage = "analyze"
             _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
             await db.commit()
             committed = True
+            return row
     finally:
         if not committed:
             await asyncio.to_thread(asset_store.unlink_companion_asset, path)
@@ -572,8 +533,7 @@ async def _scene_image_uri(user_id: int, path: str) -> str:
     if local is None:
         raise SceneStateError("场景图片无法读取")
     data, mime = await asyncio.to_thread(_decode_reference_image, await asyncio.to_thread(local[0].read_bytes))
-    encoded = await asyncio.to_thread(base64.b64encode, data)
-    return f"data:{mime};base64,{encoded.decode('ascii')}"
+    return await asyncio.to_thread(build_data_uri, data, mime)
 
 
 async def _analyze(user_id: int, scene_id: int) -> None:
@@ -582,19 +542,12 @@ async def _analyze(user_id: int, scene_id: int) -> None:
         if row is None or row.status != "pending" or not row.media_path:
             return
         path = row.media_path
-        review_status = row.identity_review
-        review_reason = row.identity_review_reason
-        language = await db.scalar(
-            select(UserSetting.setting_value).where(
-                UserSetting.user_id == user_id,
-                UserSetting.setting_key == "language",
-            ),
-        )
+        language = resolve_language(await get_user_setting(db, user_id, "language"))
     data_uri = await _scene_image_uri(user_id, path)
     raw = await vision_chat(
         user_id,
         SCENE_DESCRIBE_SYSTEM,
-        json.dumps({"output_language": language or DEFAULT_LANGUAGE}),
+        json.dumps({"output_language": language}),
         reference_images=(data_uri,),
     )
     description = SceneDescriptionRequest.model_validate(parse_llm_json(raw))
@@ -604,8 +557,6 @@ async def _analyze(user_id: int, scene_id: int) -> None:
             return
         row.title = description.title
         row.description = description.description
-        row.identity_review = review_status
-        row.identity_review_reason = review_reason
         row.status = SceneStatus.READY.value
         row.stage = "complete"
         row.ready_at = utc_now()
@@ -625,7 +576,13 @@ async def _analyze(user_id: int, scene_id: int) -> None:
             _event(db, persona, "companion.scene.activated", scene_id)
         await db.commit()
         SCENE_IMAGES_TOTAL.labels(origin=row.origin, result="ready").inc()
-    return
+
+
+def _identity_review(best: MediaCandidate) -> tuple[str, str]:
+    """自动选中候选的身份复核状态与说明。"""
+    score = best.score if best.score is not None else "不可用"
+    status = "pass" if best.score is not None and best.score >= MEDIA_IDENTITY_ACCEPT_SCORE else "auto_selected"
+    return status, f"自动选择可用候选，身份一致性评分 {score}"
 
 
 async def _unlink_unreferenced_assets(user_id: int, paths: set[str]) -> None:
@@ -657,9 +614,6 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
         if frozen.task_id != task_id:
             raise SceneStateError("重新生成任务已失效")
         state = frozen.image_chain
-
-    def chain_paths() -> set[str]:
-        return {state.pending_path or "", *(candidate.path for candidate in state.candidates)} - {""}
 
     async def save_progress(progress: ImageChainState) -> None:
         async with _scene_lock(user_id), SESSION_LOCAL() as db:
@@ -698,8 +652,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             max_image_bytes=SCENE_DOWNLOAD_MAX_BYTES,
             size_enforced=True,
         )
-        best = state.best()
-        new_path = best.path if best else paths[0] if paths else ""
+        new_path = paths[0]
         parsed = asset_store.parse_companion_asset_path(new_path)
         if not parsed or parsed[0] != user_id or asset_store.resolve_companion_asset_path(*parsed) is None:
             raise SceneStateError("重新生成结果无法读取")
@@ -715,9 +668,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
                 return
             current = SceneRegenerationState.model_validate_json(row.regeneration_state_json)
             snapshot = CharacterCardSnapshot.model_validate_json(current.character_card_json)
-            avatar = await db.scalar(
-                select(AvatarAsset).where(AvatarAsset.user_id == user_id, AvatarAsset.active.is_(True)),
-            )
+            avatar = await get_active_avatar(db, user_id)
             if (
                 avatar is None
                 or avatar.seed_fullbody_url != current.seed_portrait_media_id
@@ -730,14 +681,9 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             row.seed_portrait_media_id = current.seed_portrait_media_id
             row.character_card_json = current.character_card_json
             row.generation_state_json = current.image_chain.model_dump_json()
-            row.identity_review = (
-                "pass"
-                if best and best.score is not None and best.score >= MEDIA_IDENTITY_ACCEPT_SCORE
-                else "auto_selected"
-            )
-            row.identity_review_reason = (
-                f"自动选择可用候选，身份一致性评分 {best.score if best and best.score is not None else '不可用'}"
-            )
+            best = state.best()
+            if best is not None:
+                row.identity_review, row.identity_review_reason = _identity_review(best)
             row.regeneration_status = "ready"
             row.regeneration_stage = "complete"
             row.regeneration_error = None
@@ -757,7 +703,7 @@ async def _run_scene_regeneration(user_id: int, scene_id: int, task_id: str) -> 
             )
         # 停机保留持久任务产物供恢复；失败由终态写入负责清理。
         if pending_task is None:
-            await _unlink_unreferenced_assets(user_id, chain_paths() | ({old_path} if old_path else set()))
+            await _unlink_unreferenced_assets(user_id, state.stored_paths() | ({old_path} if old_path else set()))
 
 
 async def _mark_regeneration_failed(user_id: int, scene_id: int, task_id: str, error: str) -> None:
@@ -768,10 +714,7 @@ async def _mark_regeneration_failed(user_id: int, scene_id: int, task_id: str, e
             return
         if row.regeneration_state_json:
             current = SceneRegenerationState.model_validate_json(row.regeneration_state_json)
-            cleanup_paths = {
-                current.image_chain.pending_path or "",
-                *(candidate.path for candidate in current.image_chain.candidates),
-            } - {""}
+            cleanup_paths = current.image_chain.stored_paths()
             if current.image_chain.phase == "submitting":
                 error = "生图提交结果未知，未自动重复付费请求；请核对供应商任务后再决定是否重新生成"
         row.regeneration_status = "failed"
@@ -800,15 +743,16 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
         needs_image = not row.media_path
         prompt = row.prompt
         reference_image = row.secondary_reference_image or None
-        identity_uri = state.inputs.identity_reference if state.inputs else None
-        if needs_image and identity_uri is None:
+        # 恢复沿用冻结的身份参考；首次生成才读取当前全身图并核对未被替换。
+        identity_uri = state.inputs.identity_reference if state.inputs else ""
+        if needs_image and not identity_uri:
             avatar = await db.get(
                 AvatarAsset,
                 CharacterCardSnapshot.model_validate_json(row.character_card_json).avatar_id,
             )
             if avatar is None or avatar.seed_fullbody_url != row.seed_portrait_media_id:
                 raise SceneStateError("身份参考已变化，请重新创建场景")
-            identity_uri = await asyncio.to_thread(load_character_reference_data_uri, avatar)
+            identity_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
             if not identity_uri:
                 raise SceneStateError("全身参考图无法读取，请重新生成")
 
@@ -838,12 +782,7 @@ async def _run_pipeline(scene_id: int, user_id: int) -> None:
             if progress.phase == "complete" and best is not None:
                 fresh.media_path = best.path
                 fresh.stage = "analyze"
-                fresh.identity_review = (
-                    "pass" if best.score is not None and best.score >= MEDIA_IDENTITY_ACCEPT_SCORE else "auto_selected"
-                )
-                fresh.identity_review_reason = (
-                    f"自动选择可用候选，身份一致性评分 {best.score if best.score is not None else '不可用'}"
-                )
+                fresh.identity_review, fresh.identity_review_reason = _identity_review(best)
                 if progress.stop_reason == "result_unknown":
                     fresh.identity_review_reason += "；后续提交结果未确认，已停止自动生成"
             _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
@@ -887,46 +826,31 @@ async def _restore_best_scene(user_id: int, scene_id: int) -> bool:
         original_state_json = row.generation_state_json
         state = ImageChainState.model_validate_json(original_state_json)
 
-    if state.inputs is not None:
-        state.inputs.size_enforced = True
-    try:
-        rejected_paths = await drop_size_mismatched_candidates(state)
-    except ImageGenerationError:
-        logger.warning(
-            "scene candidate could not be size-verified; preserving it without promotion",
-            extra={"scene_id": scene_id, "user_id": user_id},
-            exc_info=True,
-        )
-        return False
-
     best = state.best()
-    if best is not None:
-        parsed = asset_store.parse_companion_asset_path(best.path)
-        if parsed is None or asset_store.resolve_companion_asset_path(*parsed) is None:
-            return False
-        state.stop_reason = state.stop_reason or "generation_interrupted"
-        state.phase = "complete"
+    if best is None:
+        return False
+    parsed = asset_store.parse_companion_asset_path(best.path)
+    if parsed is None or asset_store.resolve_companion_asset_path(*parsed) is None:
+        return False
+    state.stop_reason = state.stop_reason or "generation_interrupted"
+    state.phase = "complete"
 
     async with _scene_lock(user_id), SESSION_LOCAL() as db:
         row = await get_scene(db, user_id, scene_id)
         if row is None or row.status != "pending" or row.media_path or row.generation_state_json != original_state_json:
             return False
         row.generation_state_json = state.model_dump_json()
-        if best is not None:
-            row.media_path = best.path
-            row.stage = "analyze"
-            row.identity_review = "auto_selected"
-            row.identity_review_reason = "后续生成未完成，已保留评分最高的场景图片"
-            _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
+        row.media_path = best.path
+        row.stage = "analyze"
+        row.identity_review = "auto_selected"
+        row.identity_review_reason = "后续生成未完成，已保留评分最高的场景图片"
+        _event(db, await _persona(db, user_id), "companion.scene.updated", scene_id)
         await db.commit()
 
-    for path in rejected_paths:
-        await asyncio.to_thread(asset_store.unlink_companion_asset, path)
-    if best is not None:
-        for candidate in state.candidates:
-            if candidate.path != best.path:
-                await asyncio.to_thread(asset_store.unlink_companion_asset, candidate.path)
-    return best is not None
+    for candidate in state.candidates:
+        if candidate.path != best.path:
+            await asyncio.to_thread(asset_store.unlink_companion_asset, candidate.path)
+    return True
 
 
 def _launch_task(scene_id: int, user_id: int, *, regeneration_task_id: str | None = None) -> None:
@@ -1032,18 +956,8 @@ _INITIAL_SCENE_SOURCE_FIELDS = ("personality", "speaking_style", "relationship")
 
 
 def _initial_scene_notes(persona: Persona, user_profile: dict[str, str]) -> str:
-    materials: list[str] = []
-    definition = persona.definition_json
-    if isinstance(definition, str):
-        try:
-            definition = json.loads(definition)
-        except ValueError:
-            definition = {}
-    if isinstance(definition, dict):
-        for field in _INITIAL_SCENE_SOURCE_FIELDS:
-            value = str(definition.get(field) or "").strip()
-            if value:
-                materials.append(value)
+    definition = load_persona_definition(persona)
+    materials = [value for field in _INITIAL_SCENE_SOURCE_FIELDS if (value := definition.get(field, "").strip())]
     hobbies = str(user_profile.get("user_hobbies") or "").strip()
     if hobbies:
         materials.append(f"用户兴趣：{hobbies}")
@@ -1098,17 +1012,10 @@ def _decode_reference_image(data: bytes) -> tuple[bytes, str]:
     return data, mime
 
 
-async def _prepare_reference_image(reference: str) -> str:
+async def _prepare_reference_image(data: bytes) -> str:
+    """校验用户参考图并按实际格式冻结为 data URI。"""
     try:
-        if reference.startswith("data:"):
-            header, separator, payload = reference.partition(",")
-            if not separator or not header.endswith(";base64"):
-                raise ValueError("invalid image data URI")
-            data = await asyncio.to_thread(base64.b64decode, payload, validate=True)
-        else:
-            data, _ = await resolve_reference_bytes(reference)
         data, mime = await asyncio.to_thread(_decode_reference_image, data)
     except Exception as exc:
         raise SceneError("参考图无法读取，请选择有效图片") from exc
-    encoded = await asyncio.to_thread(base64.b64encode, data)
-    return f"data:{mime};base64,{encoded.decode('ascii')}"
+    return await asyncio.to_thread(build_data_uri, data, mime)

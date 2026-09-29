@@ -4,10 +4,9 @@
 片刻完全由精灵发起（夜间规划、聊天工具、白天自主冲动），用户只能评论、隐藏。
 """
 
-import asyncio
 import json
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
-from pathlib import Path
 from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -15,9 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from components import (
     SESSION_LOCAL,
     SETTINGS,
-    download_capped,
     ensure_utc,
-    get_file_path,
     get_logger,
     utc_now,
 )
@@ -25,9 +22,11 @@ from modules.companion import (
     CompanionDiaryEntry,
     CompanionMoment,
     CompanionMomentComment,
+    DiaryEntryResponse,
     DiarySource,
+    MomentCommentResponse,
     MomentCommentRole,
-    MomentKind,
+    MomentResponse,
     MomentSource,
 )
 from modules.conversation import Message
@@ -38,14 +37,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.conversation import get_or_create_special_conversation
 from services.domains.memory import resolve_user_timezone
-from services.infrastructure.assets import (
-    save_companion_asset,
-    save_companion_asset_async,
-    signed_companion_asset_url,
-    sniff_media_ext,
-)
+from services.infrastructure.assets import signed_companion_asset_url
 
 logger = get_logger(__name__)
+
+# 当日发布的片刻只把最近这些交给夜间模型阅读；日记仍关联当日全部片刻。
+_INTERACTION_POSTED_LIMIT = 30
 
 
 class JournalError(RuntimeError):
@@ -56,90 +53,33 @@ class MomentNotFoundError(JournalError):
     pass
 
 
-async def persist_moment_media(user_id: int, media_identifier: str | None) -> str | None:
-    """把片刻媒体固化为正式资产（``companion-assets/{user_id}/``）后返回裸路径。
+@dataclass(frozen=True)
+class MomentInteractions:
+    """本地日片刻互动：threads 为交给夜间模型阅读的片刻与评论线程，posted_ids 为当日发布的全部片刻。"""
 
-    temp-media 来源转存接管；外部 http(s) 地址（供应商产物短时效）下载后转存，失败显式报错——
-    时刻历史永不引用会过期的外部或临时地址，否则展示与备份都会留下死链。``data:`` 与既有资产原样返回。
-    """
-    if not media_identifier:
-        return None
-    raw = media_identifier.strip()
-    if raw.startswith(("companion-assets/", "data:")):
-        return raw
-    if raw.startswith(("http://", "https://")) and "/api/media/files/" not in raw:
-        data = await download_capped(
-            raw,
-            max_bytes=SETTINGS.journal_media_download_max_bytes,
-            timeout=600.0,
-        )
-        ext = sniff_media_ext(data)
-        if ext is None:
-            raise JournalError("moment media is not a recognizable image, video or audio")
-        return await save_companion_asset_async(data, user_id=user_id, label="moment_media", ext=ext)
-    file_id = raw.split("/api/media/files/")[-1].split("?")[0].split("/")[0] if "/api/media/files/" in raw else raw
-    resolved = get_file_path(file_id)
-    if resolved is not None:
-        path, _ = resolved
-        try:
-            return await asyncio.to_thread(_copy_temp_media, user_id, path)
-        except OSError:
-            logger.warning(
-                "Failed to migrate temp media for moment",
-                extra={"user_id": user_id, "file_id": file_id},
-                exc_info=True,
-            )
-    raise JournalError(f"moment media unavailable: {file_id}")
+    threads: list[dict[str, Any]]
+    posted_ids: list[str]
 
 
-def _copy_temp_media(user_id: int, path: Path) -> str:
-    data = path.read_bytes()
-    ext = path.suffix.lstrip(".").lower() or "png"
-    return save_companion_asset(data, user_id=user_id, label="moment_media", ext=ext)
+def _require_asset_path(path: str | None) -> str | None:
+    """片刻只引用正式资产（``companion-assets/{user_id}/``），展示与备份不留过期的外部或临时地址。"""
+    if path is not None and not path.startswith("companion-assets/"):
+        raise JournalError("moment media must be a persisted companion asset")
+    return path
 
 
-def _moment_media_type(media_identifier: str | None) -> str:
-    if not media_identifier:
-        return ""
-    clean = media_identifier.split("?", 1)[0].lower()
-    if clean.endswith((".mp4", ".webm", ".mov")):
-        return "video"
-    if clean.endswith((".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac")):
-        return "audio"
-    return "image"
+def _client_url(path: str | None) -> str | None:
+    return (signed_companion_asset_url(path) or path) if path else path
 
 
-def response_for_comment(row: CompanionMomentComment) -> dict[str, Any]:
-    return {
-        "id": row.id,
-        "moment_id": row.moment_id,
-        "role": row.role,
-        "content": row.content,
-        "created_at": row.created_at,
-    }
+def response_for_comment(row: CompanionMomentComment) -> MomentCommentResponse:
+    return MomentCommentResponse.model_validate(row, from_attributes=True)
 
 
-def response_for_moment(row: CompanionMoment) -> dict[str, Any]:
-    url = row.media_url
-    if url and url.startswith("companion-assets/"):
-        url = signed_companion_asset_url(url) or url
-    audio_url = row.audio_url
-    if audio_url and audio_url.startswith("companion-assets/"):
-        audio_url = signed_companion_asset_url(audio_url) or audio_url
-    return {
-        "id": row.id,
-        "occurred_at": row.occurred_at,
-        "kind": row.kind,
-        "title": row.title,
-        "body": row.body,
-        "emotion": row.emotion,
-        "media_url": url,
-        "media_type": row.media_type or _moment_media_type(row.media_url),
-        "audio_url": audio_url,
-        "media_metadata": row.media_metadata,
-        "source": row.source,
-        "comments": [response_for_comment(c) for c in (row.comments or [])],
-    }
+def response_for_moment(row: CompanionMoment) -> MomentResponse:
+    return MomentResponse.model_validate(row, from_attributes=True).model_copy(
+        update={"media_url": _client_url(row.media_url), "audio_url": _client_url(row.audio_url)},
+    )
 
 
 async def list_moments(
@@ -179,20 +119,19 @@ async def create_user_moment(
     *,
     title: str,
     body: str,
+    kind: str,
+    source: str,
     emotion: str | None = None,
     media_url: str | None = None,
-    media_type: str | None = None,
+    media_type: str = "",
     audio_url: str | None = None,
     media_metadata: dict[str, Any] | None = None,
-    kind: str = MomentKind.EMOTION.value,
-    source: str = MomentSource.NIGHTLY.value,
     session_id: int | None = None,
-    memory_id: int | None = None,
 ) -> CompanionMoment:
     if not title.strip() or len(title.strip()) > 64 or len(body.strip()) > 500:
         raise ValueError("片刻标题须为 1–64 字符，正文最多 500 字符；内容尚未保存")
-    persisted_media = await persist_moment_media(user_id, media_url)
-    persisted_audio = await persist_moment_media(user_id, audio_url)
+    media_url = _require_asset_path(media_url)
+    audio_url = _require_asset_path(audio_url)
     row = CompanionMoment(
         id=str(uuid4()),
         user_id=user_id,
@@ -200,20 +139,19 @@ async def create_user_moment(
         title=title.strip(),
         body=body.strip(),
         emotion=(emotion or None),
-        media_url=persisted_media,
-        media_type=media_type or _moment_media_type(persisted_media),
-        audio_url=persisted_audio,
+        media_url=media_url,
+        media_type=media_type,
+        audio_url=audio_url,
         media_metadata=media_metadata,
         source=source,
         session_id=session_id,
-        memory_id=memory_id,
     )
     if source == MomentSource.NIGHTLY.value:
         conversation = await get_or_create_special_conversation(db, user_id, "companion")
         row.session_id = conversation.id
-        media = [{"type": row.media_type, "url": persisted_media}] if persisted_media else []
-        if persisted_audio and media:
-            media[0]["audio_url"] = persisted_audio
+        media = [{"type": media_type, "url": media_url}] if media_url else []
+        if audio_url and media:
+            media[0]["audio_url"] = audio_url
         message = Message(
             conversation_id=conversation.id,
             role="assistant",
@@ -223,17 +161,6 @@ async def create_user_moment(
         )
         db.add(message)
         await db.flush()
-        payload_media = [
-            {
-                **item,
-                **{
-                    key: signed_companion_asset_url(item[key]) or item[key]
-                    for key in ("url", "audio_url")
-                    if key in item
-                },
-            }
-            for item in media
-        ]
         emit_ws_event(
             db,
             user_id=user_id,
@@ -242,7 +169,10 @@ async def create_user_moment(
                 "text": message.content,
                 "session_id": str(conversation.id),
                 "message_id": message.id,
-                "media": payload_media,
+                "media": [
+                    {key: _client_url(value) if key != "type" else value for key, value in item.items()}
+                    for item in media
+                ],
             },
         )
     db.add(row)
@@ -250,91 +180,8 @@ async def create_user_moment(
     await db.refresh(row)
     # 新建行未经查询，refresh 不填充 selectin 关系；显式置空避免事件序列化触发异步惰性加载。
     row.comments = []
-    await _emit_moment_event(row)
+    await _emit_event(user_id, "companion.moment.created", response_for_moment(row).model_dump())
     return row
-
-
-async def create_generated_moment(
-    db: AsyncSession,
-    user_id: int,
-    *,
-    title: str,
-    body: str,
-    media_url: str,
-    media_type: str | None = None,
-    audio_url: str | None = None,
-    media_metadata: dict[str, Any] | None = None,
-    emotion: str | None = None,
-    kind: str = MomentKind.TOGETHER.value,
-    source: str = MomentSource.NIGHTLY.value,
-) -> CompanionMoment:
-    """把供应商临时 URL 转存为永久资产后写入可见时刻。"""
-    persisted, detected_type = await _persist_generated_media(
-        user_id,
-        media_url,
-        label="nightly_gift",
-    )
-    persisted_audio = None
-    if audio_url:
-        persisted_audio, _ = await _persist_generated_media(
-            user_id,
-            audio_url,
-            label="nightly_voice",
-        )
-    return await create_user_moment(
-        db,
-        user_id,
-        title=title,
-        body=body,
-        emotion=emotion,
-        media_url=persisted,
-        media_type=media_type or detected_type,
-        audio_url=persisted_audio,
-        media_metadata=media_metadata,
-        kind=kind,
-        source=source,
-    )
-
-
-async def _persist_generated_media(
-    user_id: int,
-    media_url: str,
-    *,
-    label: str,
-) -> tuple[str, str]:
-    if not media_url.startswith(("http://", "https://")):
-        persisted = await persist_moment_media(user_id, media_url) or media_url
-        return persisted, _moment_media_type(persisted)
-    data = await download_capped(
-        media_url,
-        max_bytes=SETTINGS.journal_media_download_max_bytes,
-        timeout=600.0,
-    )
-    ext = _generated_media_extension(data)
-    persisted = await asyncio.to_thread(save_companion_asset, data, user_id=user_id, label=label, ext=ext)
-    return persisted, _media_type_for_extension(ext)
-
-
-def _generated_media_extension(data: bytes) -> str:
-    if data.startswith(b"\x89PNG"):
-        return "png"
-    if data.startswith(b"\xff\xd8\xff"):
-        return "jpg"
-    if data.startswith(b"GIF8"):
-        return "gif"
-    if data.startswith(b"RIFF") and data[8:12] == b"WEBP":
-        return "webp"
-    if data[4:8] == b"ftyp":
-        return "mp4"
-    raise ValueError("generated media has an unsupported file signature")
-
-
-def _media_type_for_extension(ext: str) -> str:
-    if ext == "mp4":
-        return "video"
-    if ext in ("mp3", "wav", "ogg", "m4a", "aac", "flac"):
-        return "audio"
-    return "image"
 
 
 async def _count_recent_source_moments(db: AsyncSession, user_id: int, source: str) -> int:
@@ -402,7 +249,11 @@ async def create_moment_comment(
     db.add(row)
     await db.commit()
     await db.refresh(row)
-    await _emit_comment_event(row)
+    await _emit_event(
+        user_id,
+        "companion.moment.comment",
+        {"moment_id": row.moment_id, "comment": response_for_comment(row).model_dump()},
+    )
     return row
 
 
@@ -424,19 +275,8 @@ async def delete_moment_comment(db: AsyncSession, user_id: int, moment_id: str, 
     await db.commit()
 
 
-def response_for_diary(row: CompanionDiaryEntry) -> dict[str, Any]:
-    return {
-        "id": row.id,
-        "entry_date": row.entry_date,
-        "title": row.title,
-        "body": row.body,
-        "mood": row.mood,
-        "source": row.source,
-        "memory_ids": list(row.memory_ids or []),
-        "moment_ids": list(row.moment_ids or []),
-        "created_at": row.created_at,
-        "updated_at": row.updated_at,
-    }
+def response_for_diary(row: CompanionDiaryEntry) -> DiaryEntryResponse:
+    return DiaryEntryResponse.model_validate(row, from_attributes=True)
 
 
 async def list_diary(
@@ -481,7 +321,6 @@ async def upsert_diary(
     body: str,
     mood: str | None = None,
     source: str,
-    memory_ids: list[str] | None = None,
     moment_ids: list[str] | None = None,
     _retried: bool = False,
 ) -> CompanionDiaryEntry:
@@ -498,7 +337,6 @@ async def upsert_diary(
             body=body,
             mood=mood,
             source=source,
-            memory_ids=memory_ids or [],
             moment_ids=moment_ids or [],
         )
         db.add(row)
@@ -512,8 +350,6 @@ async def upsert_diary(
         if not row.title and title:
             row.title = title
         row.mood = mood or row.mood
-        if memory_ids:
-            row.memory_ids = list(dict.fromkeys((row.memory_ids or []) + memory_ids))
         if moment_ids:
             row.moment_ids = list(dict.fromkeys((row.moment_ids or []) + moment_ids))
     try:
@@ -530,12 +366,11 @@ async def upsert_diary(
             body=body,
             mood=mood,
             source=source,
-            memory_ids=memory_ids,
             moment_ids=moment_ids,
             _retried=True,
         )
     await db.refresh(row)
-    await _emit_diary_event(row)
+    await _emit_event(user_id, "companion.diary.upserted", response_for_diary(row).model_dump())
     return row
 
 
@@ -545,55 +380,44 @@ async def collect_moment_interactions(
     *,
     utc_start: datetime,
     utc_end: datetime,
-) -> list[dict[str, Any]]:
+) -> MomentInteractions:
     """汇总本地当日片刻互动：当日发布的片刻 + 当日有新评论的片刻，各带完整评论线程。
 
     供夜间规划、反思日记与日记投影共同消费，使片刻评论区成为伙伴反思上下文的一部分。
     """
-    today_ids = (
+    posted_ids = list(
         (
-            await db.execute(
+            await db.scalars(
                 select(CompanionMoment.id)
                 .where(
                     CompanionMoment.user_id == user_id,
                     CompanionMoment.occurred_at >= utc_start,
                     CompanionMoment.occurred_at < utc_end,
                 )
-                .order_by(CompanionMoment.occurred_at.desc())
-                .limit(30),
+                .order_by(CompanionMoment.occurred_at.desc()),
             )
-        )
-        .scalars()
-        .all()
+        ).all(),
     )
     commented_ids = (
-        (
-            await db.execute(
-                select(CompanionMomentComment.moment_id)
-                .where(
-                    CompanionMomentComment.user_id == user_id,
-                    CompanionMomentComment.created_at >= utc_start,
-                    CompanionMomentComment.created_at < utc_end,
-                )
-                .distinct(),
+        await db.scalars(
+            select(CompanionMomentComment.moment_id)
+            .where(
+                CompanionMomentComment.user_id == user_id,
+                CompanionMomentComment.created_at >= utc_start,
+                CompanionMomentComment.created_at < utc_end,
             )
+            .distinct(),
         )
-        .scalars()
-        .all()
-    )
-    ids = list(dict.fromkeys([*today_ids, *commented_ids]))
+    ).all()
+    ids = list(dict.fromkeys([*posted_ids[:_INTERACTION_POSTED_LIMIT], *commented_ids]))
     if not ids:
-        return []
+        return MomentInteractions(threads=[], posted_ids=posted_ids)
     rows = (
-        (
-            await db.execute(
-                select(CompanionMoment).where(CompanionMoment.id.in_(ids)).order_by(CompanionMoment.occurred_at.desc()),
-            )
+        await db.scalars(
+            select(CompanionMoment).where(CompanionMoment.id.in_(ids)).order_by(CompanionMoment.occurred_at.desc()),
         )
-        .scalars()
-        .all()
-    )
-    return [
+    ).all()
+    threads = [
         {
             "title": m.title,
             "body": m.body,
@@ -614,15 +438,12 @@ async def collect_moment_interactions(
         }
         for m in rows
     ]
+    return MomentInteractions(threads=threads, posted_ids=posted_ids)
 
 
-async def resolve_user_local_today(db: AsyncSession | None, user_id: int) -> date:
+async def resolve_user_local_today(db: AsyncSession, user_id: int) -> date:
     """按用户已绑定的 IANA 时区换算本地日历日；无时区或未知时回退为 UTC 当日。"""
-    if db is not None:
-        tz = await resolve_user_timezone(db, user_id)
-    else:
-        async with SESSION_LOCAL() as session:
-            tz = await resolve_user_timezone(session, user_id)
+    tz = await resolve_user_timezone(db, user_id)
     if not tz:
         return utc_now().date()
     try:
@@ -631,43 +452,11 @@ async def resolve_user_local_today(db: AsyncSession | None, user_id: int) -> dat
         return utc_now().date()
 
 
-async def _emit_moment_event(row: CompanionMoment) -> None:
+async def _emit_event(user_id: int, event_type: str, payload: dict[str, Any]) -> None:
+    """内容提交后另起事务投递刷新事件；投递失败只记日志，已保存的内容不回滚。"""
     try:
         async with SESSION_LOCAL() as db:
-            emit_ws_event(
-                db,
-                user_id=row.user_id,
-                event_type="companion.moment.created",
-                payload=response_for_moment(row),
-            )
+            emit_ws_event(db, user_id=user_id, event_type=event_type, payload=payload)
             await db.commit()
     except Exception:
-        logger.warning("Failed to emit companion.moment.created", exc_info=True)
-
-
-async def _emit_comment_event(row: CompanionMomentComment) -> None:
-    try:
-        async with SESSION_LOCAL() as db:
-            emit_ws_event(
-                db,
-                user_id=row.user_id,
-                event_type="companion.moment.comment",
-                payload={"moment_id": row.moment_id, "comment": response_for_comment(row)},
-            )
-            await db.commit()
-    except Exception:
-        logger.warning("Failed to emit companion.moment.comment", exc_info=True)
-
-
-async def _emit_diary_event(row: CompanionDiaryEntry) -> None:
-    try:
-        async with SESSION_LOCAL() as db:
-            emit_ws_event(
-                db,
-                user_id=row.user_id,
-                event_type="companion.diary.upserted",
-                payload=response_for_diary(row),
-            )
-            await db.commit()
-    except Exception:
-        logger.warning("Failed to emit companion.diary.upserted", exc_info=True)
+        logger.warning("Failed to emit journal event", extra={"event_type": event_type}, exc_info=True)

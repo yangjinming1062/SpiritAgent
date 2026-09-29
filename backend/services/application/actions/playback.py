@@ -6,15 +6,13 @@
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from modules.companion import ActionPlayCommand, ActionPlayRequest, ActionPlayResult
-from modules.ws import emit_ws_event
+from modules.companion import ActionPlayRequest, ActionPlayResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.actions import (
     DEFERRED_PLAY_INTENT_TTL_SECONDS,
     PLAY_INTENT_TTL_SECONDS,
-    ActionPolicyError,
-    check_can_play,
+    emit_play_command,
     get_action,
     get_active_pack,
     record_playback,
@@ -26,10 +24,7 @@ async def request_playback(
     user_id: int,
     request: ActionPlayRequest,
     *,
-    source: str = "chat_expression",
-    target_device: str = "",
-    target_surface: str = "",
-    repeat_count: int = 1,
+    source: str,
 ) -> ActionPlayResult:
     pack = await get_active_pack(db, user_id)
     if pack is None:
@@ -45,66 +40,22 @@ async def request_playback(
     if not action.enabled:
         return ActionPlayResult(outcome="rejected", message="该动作已停用")
 
+    ready = action.status == "succeeded" and bool(action.video_path)
     # 制作中：保存表达意图，完成后按有效期与外观代次决定是否补播。
-    if action.status != "succeeded" or not action.video_path:
-        if action.status in ("queued", "processing", "running", "result_unknown"):
-            play_id = uuid.uuid4().hex
-            expires_at = datetime.now(UTC) + timedelta(seconds=DEFERRED_PLAY_INTENT_TTL_SECONDS)
-            await record_playback(
-                db,
-                user_id=user_id,
-                play_id=play_id,
-                pack_id=pack.id,
-                action_id=action.id,
-                appearance_epoch=pack.appearance_epoch,
-                source=source,
-                expires_at=expires_at,
-                repeat_count=repeat_count,
-            )
-            return ActionPlayResult(
-                outcome="queued",
-                play_id=play_id,
-                message="动作制作完成后将视情况补播",
-            )
+    if not ready and action.status not in ("queued", "processing", "result_unknown"):
         return ActionPlayResult(outcome="rejected", message="该动作素材尚未就绪")
-
-    try:
-        await check_can_play(db, user_id, action)
-    except ActionPolicyError as exc:
-        return ActionPlayResult(outcome="rejected", message=str(exc))
-
-    play_id = uuid.uuid4().hex
-    expires_at = datetime.now(UTC) + timedelta(seconds=PLAY_INTENT_TTL_SECONDS)
-
-    await record_playback(
+    ttl = PLAY_INTENT_TTL_SECONDS if ready else DEFERRED_PLAY_INTENT_TTL_SECONDS
+    entry = await record_playback(
         db,
         user_id=user_id,
-        play_id=play_id,
+        play_id=uuid.uuid4().hex,
         pack_id=pack.id,
         action_id=action.id,
         appearance_epoch=pack.appearance_epoch,
         source=source,
-        expires_at=expires_at,
-        repeat_count=repeat_count,
+        expires_at=datetime.now(UTC) + timedelta(seconds=ttl),
     )
-
-    # 播放指令与账本同事务提交；客户端按 play_id 回执，queued 不等于 completed。
-    emit_ws_event(
-        db,
-        user_id=user_id,
-        event_type="companion.action.play_requested",
-        payload=ActionPlayCommand(
-            play_id=play_id,
-            target_device=target_device,
-            target_surface=target_surface,
-            pack_id=pack.id,
-            appearance_epoch=pack.appearance_epoch,
-            action_id=action.id,
-            asset_revision_id=action.metadata_revision,
-            repeat_count=repeat_count,
-            expires_at=expires_at.isoformat(),
-            source=source,
-        ).model_dump(),
-    )
-
-    return ActionPlayResult(outcome="queued", play_id=play_id, message="播放指令已排队")
+    if not ready:
+        return ActionPlayResult(outcome="queued", play_id=entry.play_id, message="动作制作完成后将视情况补播")
+    emit_play_command(db, entry, action)
+    return ActionPlayResult(outcome="queued", play_id=entry.play_id, message="播放指令已排队")

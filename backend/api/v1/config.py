@@ -1,33 +1,22 @@
 from common import get_router
 from components import DbSession
 from modules.auth import CurrentUser
-from modules.settings import UserSetting
+from modules.settings import load_user_settings, put_user_settings
 from modules.system import DesktopConfigPutRequest, DesktopConfigResponse
 from services.domains.configuration import flatten_config, settings_to_config
-from sqlalchemy import select
 
 router = get_router()
 
 
 @router.get("", response_model=DesktopConfigResponse)
 async def get_config(user: CurrentUser, db: DbSession) -> DesktopConfigResponse:
-    settings = (await db.execute(select(UserSetting).where(UserSetting.user_id == user.id))).scalars().all()
-    return DesktopConfigResponse(config=settings_to_config(settings))
+    return DesktopConfigResponse(config=settings_to_config(await load_user_settings(db, user.id)))
 
 
 @router.put("", response_model=DesktopConfigResponse)
 async def put_config(body: DesktopConfigPutRequest, user: CurrentUser, db: DbSession) -> DesktopConfigResponse:
-    pairs = flatten_config(body.config)
-    for key, value in pairs:
-        setting = (
-            await db.execute(select(UserSetting).where(UserSetting.user_id == user.id, UserSetting.setting_key == key))
-        ).scalar_one_or_none()
-        if setting:
-            setting.setting_value = value
-        else:
-            db.add(UserSetting(user_id=user.id, setting_key=key, setting_value=value))
-
+    values = await load_user_settings(db, user.id)
+    updates = flatten_config(body.config)
+    await put_user_settings(db, user.id, updates)
     await db.commit()
-
-    settings = (await db.execute(select(UserSetting).where(UserSetting.user_id == user.id))).scalars().all()
-    return DesktopConfigResponse(config=settings_to_config(settings))
+    return DesktopConfigResponse(config=settings_to_config(values | updates))

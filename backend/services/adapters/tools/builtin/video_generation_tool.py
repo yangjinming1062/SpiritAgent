@@ -4,6 +4,7 @@ from datetime import timedelta
 from uuid import uuid4
 
 from components import SESSION_LOCAL, SETTINGS, get_logger, tool_error, utc_now
+from modules.media import VideoGenJob
 from prompts.generation import (
     IMAGE_ANIMATION_TEMPLATE,
     SELF_VIDEO_KEEP_OUTFIT,
@@ -29,26 +30,27 @@ from services.contracts import MediaArtifact, MediaTurnState
 from services.domains.companion import render_character_identity
 from services.domains.conversation import apply_video_status
 from services.infrastructure.llm import MissingLlmConfigError, VisualReasoningError
-from services.infrastructure.tool_runtime import REGISTRY
+from services.infrastructure.tool_runtime import ToolsRegistry
 
 logger = get_logger(__name__)
 
 
 async def _submit_video(
     prompt: str,
-    duration: int = 6,
-    resolution: str = "768P",
-    first_frame_image: str | None = None,
-    aspect_ratio: str | None = None,
+    duration: int,
+    resolution: str,
+    first_frame_image: str | None,
+    aspect_ratio: str | None,
     *,
     user_id: int,
     parent_session_id: str,
     structured_reply: bool,
     media_id: str,
-    subject: str | None = None,
-    outfit_override: str | None = None,
-) -> str:
-    """提交已校验请求；结构化回复直接交付任务，文本渠道有界等待。"""
+    subject: str | None,
+    outfit_override: str | None,
+) -> tuple[dict[str, object], VideoGenJob | None]:
+    """提交已校验请求，返回 (工具结果, 最近读取的任务行)；结构化回复直接交付任务，文本渠道有界等待。"""
+    visual = None
     if subject == "self":
         try:
             visual = await load_self_visual_context(user_id)
@@ -61,7 +63,7 @@ async def _submit_video(
                 aspect_ratio=aspect_ratio,
             )
         except (AvatarGenerationError, VisualReasoningError, ImageGenerationError) as e:
-            return tool_error(str(e))
+            return {"success": False, "error": str(e)}, None
         prompt = (
             SELF_VIDEO_REFERENCE_TEMPLATE.format(
                 prompt=prompt,
@@ -84,38 +86,33 @@ async def _submit_video(
                 resolution=resolution,
                 first_frame_image=first_frame_image,
                 aspect_ratio=aspect_ratio,
-                identity_reference_path=visual.reference_path if subject == "self" else None,
-                identity=visual.identity if subject == "self" else None,
+                identity_reference_path=visual.reference_path if visual is not None else None,
+                identity=visual.identity if visual is not None else None,
                 structured_reply=structured_reply,
                 media_id=media_id,
             )
     except MissingLlmConfigError:
-        return tool_error("视频生成服务未配置")
+        return {"success": False, "error": "视频生成服务未配置"}, None
     except Exception as e:
         logger.exception("video_generation_tool submit failed")
-        return tool_error(str(e))
+        return {"success": False, "error": str(e)}, None
 
+    task_id = str(job.id)
     if job.status == "result_unknown":
-        return json.dumps(
-            {
-                "success": False,
-                "status": "result_unknown",
-                "task_id": str(job.id),
-                "error": job.error_message,
-                "retry_safe": False,
-            },
-            ensure_ascii=False,
-        )
+        return {
+            "success": False,
+            "status": "result_unknown",
+            "task_id": task_id,
+            "error": job.error_message,
+            "retry_safe": False,
+        }, job
 
     if structured_reply:
-        return json.dumps(
-            {
-                "success": True,
-                "pending": job.status not in {"succeeded", "failed", "result_unknown"},
-                "task_id": str(job.id),
-            },
-            ensure_ascii=False,
-        )
+        return {
+            "success": True,
+            "pending": job.status not in {"succeeded", "failed", "result_unknown"},
+            "task_id": task_id,
+        }, job
 
     # 限时等待：轮询 DB 行直到终态或截止。
     deadline = utc_now() + timedelta(seconds=SETTINGS.video_gen_tool_wait_seconds)
@@ -125,35 +122,27 @@ async def _submit_video(
         async with SESSION_LOCAL() as db:
             row = await get_job(db, job.id, user_id)
         if row is None:
-            return tool_error("video job disappeared")
+            return {"success": False, "error": "video job disappeared"}, None
+        job = row
         if row.status == "succeeded":
             logger.info("video_generation_tool succeeded", extra={"job_id": job.id})
-            return json.dumps(
-                {
-                    "success": True,
-                    "url": row.video_url,
-                    "task_id": str(job.id),
-                    **({"warning": row.error_message} if row.error_message else {}),
-                },
-                ensure_ascii=False,
-            )
+            return {
+                "success": True,
+                "url": row.video_url,
+                "task_id": task_id,
+                **({"warning": row.error_message} if row.error_message else {}),
+            }, job
         if row.status in ("failed", "result_unknown"):
-            return json.dumps(
-                {"success": False, "task_id": str(job.id), "error": row.error_message or "video generation failed"},
-                ensure_ascii=False,
-            )
+            return {"success": False, "task_id": task_id, "error": row.error_message or "video generation failed"}, job
 
     # 已超时——任务在后台继续，模型可后续查询。
     logger.info("video_generation_tool timed out, job continues", extra={"job_id": job.id})
-    return json.dumps(
-        {
-            "success": True,
-            "pending": True,
-            "task_id": str(job.id),
-            "hint": "视频仍在生成中，请稍后用 video_generate_status 查询结果",
-        },
-        ensure_ascii=False,
-    )
+    return {
+        "success": True,
+        "pending": True,
+        "task_id": task_id,
+        "hint": "视频仍在生成中，请稍后用 video_generate_status 查询结果",
+    }, job
 
 
 async def video_generation_tool(
@@ -193,34 +182,28 @@ async def video_generation_tool(
         media_turn.artifacts[media_id] = artifact
         media_turn.current_versions[media_id] = media_id
     try:
-        result = json.loads(
-            await _submit_video(
-                prompt,
-                duration,
-                resolution,
-                first_frame_image,
-                aspect_ratio,
-                user_id=media_turn.user_id,
-                parent_session_id=media_turn.session_id,
-                subject=subject,
-                outfit_override=outfit_override,
-                structured_reply=media_turn.structured_reply,
-                media_id=media_id,
-            ),
+        result, job = await _submit_video(
+            prompt,
+            duration,
+            resolution,
+            first_frame_image,
+            aspect_ratio,
+            user_id=media_turn.user_id,
+            parent_session_id=media_turn.session_id,
+            subject=subject,
+            outfit_override=outfit_override,
+            structured_reply=media_turn.structured_reply,
+            media_id=media_id,
         )
     except BaseException:
         artifact.status, artifact.error = "result_unknown", "视频提交结果未核实，请勿重复提交"
         raise
-    task_id = result.get("task_id")
-    if task_id is None:
+    if job is None:
         artifact.status, artifact.error = "failed", str(result.get("error") or "视频未受理")
     else:
-        artifact.job_id = int(task_id)
-        async with SESSION_LOCAL() as db:
-            job = await get_job(db, artifact.job_id, media_turn.user_id)
-            if job is not None:
-                apply_video_status(artifact, job)
-                media_turn.required_goals.add(media_id)
+        artifact.job_id = job.id
+        apply_video_status(artifact, job)
+        media_turn.required_goals.add(media_id)
     return json.dumps({**result, "media": [artifact.tool_view()]}, ensure_ascii=False)
 
 
@@ -241,7 +224,7 @@ async def video_generate_status_tool(
         row = await get_job(db, job_id, user_id)
     if row is None or media_turn is None or row.session_id != media_turn.session_id:
         return tool_error("video job not found")
-    payload = {"task_id": str(row.id), "status": row.status}
+    payload: dict[str, object] = {"task_id": str(row.id), "status": row.status}
     if row.status == "succeeded":
         payload["url"] = row.video_url
         if row.error_message:
@@ -318,6 +301,6 @@ VIDEO_STATUS_SCHEMA = {
 }
 
 
-def register(registry) -> None:
-    REGISTRY.register("video_generate", VIDEO_GENERATION_SCHEMA, video_generation_tool)
-    REGISTRY.register("video_generate_status", VIDEO_STATUS_SCHEMA, video_generate_status_tool)
+def register(registry: ToolsRegistry) -> None:
+    registry.register(VIDEO_GENERATION_SCHEMA, video_generation_tool)
+    registry.register(VIDEO_STATUS_SCHEMA, video_generate_status_tool)

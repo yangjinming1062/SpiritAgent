@@ -1,5 +1,4 @@
 import asyncio
-from importlib import util
 from typing import Any
 
 from components import get_logger
@@ -8,10 +7,6 @@ from ddgs import DDGS
 from .. import WebSearchProvider
 
 logger = get_logger(__name__)
-
-
-def _ddgs_importable() -> bool:
-    return util.find_spec("ddgs") is not None
 
 
 class DDGSWebSearchProvider(WebSearchProvider):
@@ -24,18 +19,10 @@ class DDGSWebSearchProvider(WebSearchProvider):
         return "DuckDuckGo (ddgs)"
 
     def is_available(self) -> bool:
-        return _ddgs_importable()
-
-    def supports_search(self) -> bool:
+        # ddgs 是声明依赖且在模块顶层导入，免密钥恒可用。
         return True
 
-    def supports_extract(self) -> bool:
-        return False
-
     def _sync_search(self, query: str, safe_limit: int) -> dict[str, Any]:
-        if not _ddgs_importable():
-            return {"success": False, "error": "ddgs package is not installed — run `pip install ddgs`"}
-
         web_results = []
         try:
             with DDGS() as client:

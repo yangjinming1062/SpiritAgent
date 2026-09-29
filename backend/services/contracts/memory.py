@@ -12,7 +12,6 @@ class MemoryScope:
 class MemorySource:
     kind: Literal["tool", "manual", "onboarding", "reflection", "interaction", "diary"]
     session_id: int | None = None
-    message_ids: tuple[int, ...] = ()
     batch_id: str | None = None
 
 

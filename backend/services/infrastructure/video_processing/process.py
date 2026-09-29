@@ -7,12 +7,22 @@
 import hashlib
 import math
 from dataclasses import dataclass
+from io import BytesIO
 from pathlib import Path
 
 from components import get_logger
 from PIL import Image
 
-from .ffmpeg import VideoProcessError, _binary, _run, alpha_input_args, probe_alpha_side_data, probe_video, run_ffmpeg
+from .ffmpeg import (
+    VideoProbe,
+    VideoProcessError,
+    _binary,
+    _run,
+    alpha_input_args,
+    probe_alpha_side_data,
+    probe_video,
+    run_ffmpeg,
+)
 
 logger = get_logger(__name__)
 
@@ -53,13 +63,9 @@ HITMASK_ALPHA_THRESHOLD = 24
 
 @dataclass(frozen=True)
 class ClipProcessResult:
-    path: Path
     sha256: str
-    bytes: int
     frames: int
     duration_ms: int
-    width: int
-    height: int
 
 
 def _sha256(path: Path) -> str:
@@ -70,16 +76,14 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _canvas_args(canvas_w: int, canvas_h: int, *, keep_source_alpha: bool) -> list[str]:
+def _canvas_filter(canvas_w: int, canvas_h: int) -> str:
     """统一画布：等比缩放放入画布、水平居中、脚底（底边）对齐 canvas 底部。
     脚底锚点即画布底边；不逐帧紧裁，避免角色抖动。"""
-    vf = (
+    return (
         f"format=rgba,scale={canvas_w}:{canvas_h}:force_original_aspect_ratio=decrease,"
         f"pad={canvas_w}:{canvas_h}:(ow-iw)/2:(oh-ih):color=black@0,"
-        "fps=24"
+        "fps=24,format=rgba"
     )
-    fmt = "rgba" if keep_source_alpha else "yuv420p"
-    return ["-vf", f"{vf},format={fmt}"]
 
 
 def prepare_action_clip(
@@ -90,17 +94,16 @@ def prepare_action_clip(
     canvas_h: int,
     start_seconds: float | None = None,
     end_seconds: float | None = None,
-    require_alpha: bool = True,
 ) -> ClipProcessResult:
     """切分（可选区间）、重置时间轴、统一画布与帧率并编码为透明 WebM。
     输出从 0 开始的新时间轴；帧数与时长以编码产物 ffprobe 复核为准。
-    require_alpha 同时守卫输入与输出：不透明源会被转成不透明矩形而非透明角色，必须拒绝。"""
+    输入与输出都须带透明通道：不透明源会被转成不透明矩形而非透明角色，必须拒绝。"""
     probe = probe_video(src)
     if probe.width * probe.height > 3840 * 2160 or probe.fps > 120:
         raise VideoProcessError("源片段分辨率或帧率超出处理上限")
     if probe.duration_seconds > MAX_CLIP_SECONDS * 4:
         raise VideoProcessError("源片段过长，请提供单个动作的短视频")
-    if require_alpha and not probe.has_alpha:
+    if not probe.has_alpha:
         raise VideoProcessError("源片段缺少透明通道，请提供透明背景的素材")
     for value in (start_seconds, end_seconds):
         if value is not None and not math.isfinite(value):
@@ -115,80 +118,66 @@ def prepare_action_clip(
     # 输入侧 seek 后时间轴归零，区间终点必须换算成输出时长（-to 会按归零后的时间轴解释）。
     if start is not None:
         args += ["-ss", f"{start:.3f}"]
-    args += [*alpha_input_args(src), "-i", str(src)]
+    args += [*alpha_input_args(probe), "-i", str(src)]
     if end is not None:
         args += ["-t", f"{end - (start or 0.0):.3f}"]
-    args += ["-an", "-sn", "-dn"]
-    args += _canvas_args(canvas_w, canvas_h, keep_source_alpha=require_alpha)
+    args += ["-an", "-sn", "-dn", "-vf", _canvas_filter(canvas_w, canvas_h)]
     args += [*VP9_ALPHA_ENCODE_ARGS, str(dst)]
 
     dst.parent.mkdir(parents=True, exist_ok=True)
     run_ffmpeg(args, label="处理")
-    return _verify_output(dst, require_alpha=require_alpha)
+    return _verify_output(dst)
 
 
-def _verify_output(dst: Path, *, require_alpha: bool) -> ClipProcessResult:
+def _verify_output(dst: Path) -> ClipProcessResult:
     out = probe_video(dst)
     if out.codec_name != "vp9":
         raise VideoProcessError("视频编码产物异常", internal=f"codec={out.codec_name}")
-    if require_alpha and (not out.has_alpha or not probe_alpha_side_data(dst)):
+    if not out.has_alpha or not probe_alpha_side_data(dst):
         # 容器声明单独不能证明真实 alpha。
         raise VideoProcessError("视频缺少透明通道，无法作为角色片段使用", internal=f"pix_fmt={out.pix_fmt}")
-    if require_alpha:
-        decoded = _run(
-            [
-                _binary("ffmpeg"),
-                "-v",
-                "error",
-                *alpha_input_args(dst),
-                "-i",
-                str(dst),
-                "-vf",
-                "fps=4,format=rgba,alphaextract,scale=32:32",
-                "-f",
-                "rawvideo",
-                "-pix_fmt",
-                "gray",
-                "-",
-            ],
-        )
-        if decoded.returncode or not decoded.stdout or min(decoded.stdout) > 8 or max(decoded.stdout) < 240:
-            raise VideoProcessError("透明片段缺少有效前景或透明背景")
-    frames = max(1, round(out.duration_seconds * out.fps))
+    decoded = _run(
+        [
+            _binary("ffmpeg"),
+            "-v",
+            "error",
+            *alpha_input_args(out),
+            "-i",
+            str(dst),
+            "-vf",
+            "fps=4,format=rgba,alphaextract,scale=32:32",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "gray",
+            "-",
+        ],
+    )
+    if decoded.returncode or not decoded.stdout or min(decoded.stdout) > 8 or max(decoded.stdout) < 240:
+        raise VideoProcessError("透明片段缺少有效前景或透明背景")
     return ClipProcessResult(
-        path=dst,
         sha256=_sha256(dst),
-        bytes=dst.stat().st_size,
-        frames=frames,
+        frames=max(1, round(out.duration_seconds * out.fps)),
         duration_ms=round(out.duration_seconds * 1000),
-        width=out.width,
-        height=out.height,
     )
 
 
-def extract_cover(
-    src: Path,
-    dst: Path,
-    *,
-    canvas_w: int,
-    canvas_h: int,
-    at_seconds: float = 0.0,
-) -> Path:
-    """从交付片段解码 RGBA 首帧，由 Pillow 编码无损透明 WebP。"""
+def _frame_webp(src: Path, probe: VideoProbe, *, canvas_w: int, canvas_h: int, at_seconds: float) -> bytes:
+    """解码指定时刻的 RGBA 帧，由 Pillow 编码为无损透明 WebP。"""
     args = [
         _binary("ffmpeg"),
         "-v",
         "error",
         "-ss",
         f"{max(0.0, at_seconds):.3f}",
-        *alpha_input_args(src),
+        *alpha_input_args(probe),
         "-i",
         str(src),
         "-frames:v",
         "1",
         "-an",
         "-vf",
-        _canvas_args(canvas_w, canvas_h, keep_source_alpha=True)[1],
+        _canvas_filter(canvas_w, canvas_h),
         "-f",
         "rawvideo",
         "-pix_fmt",
@@ -198,36 +187,43 @@ def extract_cover(
     proc = _run(args)
     if proc.returncode or len(proc.stdout) != canvas_w * canvas_h * 4:
         raise VideoProcessError("封面解码失败", internal=proc.stderr.decode(errors="replace")[:2000])
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    Image.frombytes("RGBA", (canvas_w, canvas_h), proc.stdout).save(dst, format="WEBP", lossless=True)
-    return dst
+    output = BytesIO()
+    Image.frombytes("RGBA", (canvas_w, canvas_h), proc.stdout).save(output, format="WEBP", lossless=True)
+    return output.getvalue()
 
 
-def build_hitmask(
-    src: Path,
-    *,
-    canvas_w: int,
-    canvas_h: int,
-    start_seconds: float = 0.0,
-    end_seconds: float | None = None,
-) -> list[list[int]]:
+def extract_cover(src: Path, *, canvas_w: int, canvas_h: int) -> bytes:
+    """交付片段首帧的透明 WebP 字节。"""
+    return _frame_webp(src, probe_video(src), canvas_w=canvas_w, canvas_h=canvas_h, at_seconds=0.0)
+
+
+def sample_key_frames(src: Path) -> list[bytes]:
+    """按原画幅（边长上限 1024、取偶数）抽取首、中、末三帧透明 WebP；末帧前移 0.15 秒避开编码尾帧。"""
+    probe = probe_video(src)
+    canvas_w = max(2, min(probe.width, 1024) // 2 * 2)
+    canvas_h = max(2, min(probe.height, 1024) // 2 * 2)
+    duration = probe.duration_seconds
+    return [
+        _frame_webp(src, probe, canvas_w=canvas_w, canvas_h=canvas_h, at_seconds=second)
+        for second in (0.0, duration / 2, max(0.0, duration - 0.15))
+    ]
+
+
+def build_hitmask(src: Path, *, canvas_w: int, canvas_h: int) -> list[list[int]]:
     """逐帧生成低分辨率 alpha 命中遮罩：返回 [frame][row] 的列位行。
     客户端按呈现时间取当前帧查表，经容器变换还原为屏幕坐标。
 
     WebM 通过 libvpx 解码，采样时间与最终交付片段一致。"""
     probe = probe_video(src)
-    end = probe.duration_seconds if end_seconds is None else min(end_seconds, probe.duration_seconds)
-    span = end - start_seconds
-    samples = max(1, math.ceil(max(0.0, span) * HITMASK_FPS))
+    span = probe.duration_seconds
+    samples = max(1, math.ceil(span * HITMASK_FPS))
     args = [
-        "-ss",
-        f"{max(0.0, start_seconds):.3f}",
-        *alpha_input_args(src),
+        *alpha_input_args(probe),
         "-i",
         str(src),
         "-vf",
-        f"{_canvas_args(canvas_w, canvas_h, keep_source_alpha=True)[1]},"
-        f"trim=duration={max(0.0, span):.3f},scale={HITMASK_GRID_W}:{HITMASK_GRID_H},format=rgba",
+        f"{_canvas_filter(canvas_w, canvas_h)},"
+        f"trim=duration={span:.3f},scale={HITMASK_GRID_W}:{HITMASK_GRID_H},format=rgba",
         "-frames:v",
         str(samples),
         "-f",

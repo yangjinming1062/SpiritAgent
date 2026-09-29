@@ -7,12 +7,10 @@ from components import DbSession
 from fastapi import HTTPException, Query
 from modules.auth import CurrentUser
 from modules.companion import (
-    DiaryEntryResponse,
     DiaryListResponse,
     MomentCommentCreateRequest,
     MomentCommentResponse,
     MomentListResponse,
-    MomentResponse,
 )
 from services.application.moments import schedule_companion_reply
 from services.domains.journal import (
@@ -39,7 +37,7 @@ async def get_moments(
 ) -> MomentListResponse:
     rows, next_cursor = await list_moments(db, user.id, cursor=cursor, limit=limit, kind=kind)
     return MomentListResponse(
-        moments=[MomentResponse(**response_for_moment(r)) for r in rows],
+        moments=[response_for_moment(r) for r in rows],
         next_cursor=next_cursor,
     )
 
@@ -61,7 +59,7 @@ async def post_moment_comment(
         raise HTTPException(status_code=404, detail={"error": "moment not found", "reason": str(exc)})
     # 精灵回复在请求返回后异步生成，经 companion.moment.comment 事件推送
     schedule_companion_reply(user.id, moment_id)
-    return MomentCommentResponse(**response_for_comment(row))
+    return response_for_comment(row)
 
 
 @router.delete("/moments/{moment_id}/comments/{comment_id}", status_code=204)
@@ -86,4 +84,4 @@ async def get_diary(
     limit: int = Query(default=100, ge=1, le=365),
 ) -> DiaryListResponse:
     rows = await list_diary(db, user.id, date_from=date_from, date_to=date_to, limit=limit)
-    return DiaryListResponse(entries=[DiaryEntryResponse(**response_for_diary(r)) for r in rows])
+    return DiaryListResponse(entries=[response_for_diary(r) for r in rows])

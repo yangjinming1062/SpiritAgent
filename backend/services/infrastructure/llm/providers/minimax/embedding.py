@@ -10,25 +10,20 @@ class MiniMaxEmbeddingProvider(EmbeddingProvider):
 
     provider_name = "minimax"
     service_type = ServiceType.embedding
-    DEFAULT_MODELS: ClassVar[dict[str, str]] = {"embedding": "embo-01"}
+    DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
+    DEFAULT_MODEL: ClassVar[str] = "embo-01"
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
-        self._http = get_http(config.base_url or "https://api.minimaxi.com", config.api_key)
+        self._http = get_http(config.base_url, config.api_key)
 
     async def embed(self, texts: list[str], *, purpose: str = "db") -> list[list[float]]:
         if not texts:
             return []
-        model = self.config.model or "embo-01"
-        payload = {"model": model, "texts": texts, "type": purpose}
+        payload = {"model": self.config.model, "texts": texts, "type": purpose}
         resp = await self._http.post("/v1/embeddings", json=payload)
-        body = raise_for_minimax_response(resp, provider=self.provider_name, model=model)
-        vectors = body.get("vectors") if isinstance(body, dict) else None
+        body = raise_for_minimax_response(resp)
+        vectors = body.get("vectors")
         if not vectors or not isinstance(vectors, list):
-            raise ProviderError(
-                "MiniMax embedding returned empty or invalid vectors",
-                provider=self.provider_name,
-                model=model,
-                status_code=502,
-            )
+            raise ProviderError("MiniMax embedding returned empty or invalid vectors", status_code=502)
         return vectors

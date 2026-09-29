@@ -1,29 +1,24 @@
 import json
 import re
 
-from components import format_local_date_str, resolve_language, resolve_prompt_text, utc_now
-from modules.system import AgentPromptConfig, PromptPreset
-from prompts.chat import OUTFIT_DEMEANOR_GUIDANCES, SCENE_CONTEXT_GUIDANCES
+from components import format_local_date_str, resolve_prompt_text, utc_now
+from prompts.chat import OUTFIT_DEMEANOR_GUIDANCES, SCENE_CONTEXT_GUIDANCES, VOLATILE_LABELS
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.actions.context import build_action_context
 from services.domains.companion import build_outfit_extras, get_scene_state, scene_environment
 
-from .prompt_blocks import BLOCK_RENDERERS, substitute
-from .prompt_presets import _build_body
+from .prompt_blocks import AgentPromptConfig, render_preset_body
+from .prompt_presets import preset_body
 
-# volatile header 行的发送前正则：保留 label 只换日期，避免 raw lang='fr' 解析后把英文 label 替换成中文。
-_VOLATILE_HEADER_RE = re.compile(r"(?m)^(?P<label>当前日期：|Current date: )(?P<date>.*)$")
+# volatile header 行：发送前只换日期，保留构建时按会话语言写入的标签。
+_VOLATILE_HEADER_RE = re.compile(
+    "(?m)^(?P<label>" + "|".join(re.escape(label) for label in VOLATILE_LABELS.values()) + ")(?P<date>.*)$",
+)
 
 
-def build_system_prompt(
-    config: AgentPromptConfig,
-    *,
-    preset: PromptPreset,
-) -> str:
-    """按 preset.body 顺序渲染提示词块。"""
-    render_results: dict[str, str | None] = {name: renderer(config) for name, renderer in BLOCK_RENDERERS.items()}
-    return substitute(_build_body(preset, config.language), render_results)
+def build_system_prompt(config: AgentPromptConfig, *, preset_id: str) -> str:
+    return render_preset_body(preset_body(preset_id, config.language), config)
 
 
 async def build_companion_environment_prompt(db: AsyncSession, user_id: int, *, language: str) -> str:
@@ -45,23 +40,10 @@ async def build_companion_environment_prompt(db: AsyncSession, user_id: int, *, 
     return "\n\n".join(parts)
 
 
-def refresh_volatile_header_in_prompt(
-    instructions: str,
-    *,
-    user_local_tz: str | None,
-    lang: str,
-) -> str:
-    """发送前最后一刻刷新 volatile header 行的日期部分，保留原 label。
-
-    设计取舍：只刷日期这一行；persona / native_memory 等由 per-turn
-    重建覆盖，build→send 排队窗口内被改的概率可忽略——全量重渲染会破坏
-    native_memory 注入且需多查 5 次库。保留 label 是为了防止 raw ``lang='fr'``
-    解析后被错换成成中文/英文标签。
-    """
+def refresh_volatile_header_in_prompt(instructions: str, *, user_local_tz: str | None, lang: str) -> str:
+    """发送前刷新 volatile header 行的日期，使长工具循环跨日后仍是当天日期；其余块由每回合重建覆盖。"""
     match = _VOLATILE_HEADER_RE.search(instructions)
     if match is None:
         return instructions
-    resolved_lang = resolve_language(lang)
-    date_str = format_local_date_str(utc_now(), user_local_tz, resolved_lang)
-    fresh = f"{match.group('label')}{date_str or ''}"
-    return _VOLATILE_HEADER_RE.sub(fresh, instructions, count=1)
+    date_str = format_local_date_str(utc_now(), user_local_tz, lang)
+    return _VOLATILE_HEADER_RE.sub(f"{match.group('label')}{date_str or ''}", instructions, count=1)

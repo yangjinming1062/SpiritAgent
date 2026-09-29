@@ -19,10 +19,10 @@ AGENT_DELEGATE_SCHEMA = {
 }
 
 
-def agent_delegate_tool(task_description: str, parent_session_id: str | None = None, **_) -> DelegateAction:
+def agent_delegate_tool(task_description: str, parent_session_id: str, **_: object) -> DelegateAction:
     """只校验参数并返回控制动作；子回合的创建与执行由对话执行层的 delegation 接管。"""
     return DelegateAction(task_description=task_description, parent_session_id=parent_session_id)
 
 
 def register_delegate_tool(registry: ToolsRegistry) -> None:
-    registry.register("agent_delegate_tool", AGENT_DELEGATE_SCHEMA, agent_delegate_tool)
+    registry.register(AGENT_DELEGATE_SCHEMA, agent_delegate_tool)

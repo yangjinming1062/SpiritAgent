@@ -8,8 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from .config import SETTINGS
 
+
+def database_url(drivername: str) -> str:
+    """按驱动改写配置里的数据库 URL（asyncpg 引擎、psycopg 迁移、纯 postgresql LISTEN 专线）。"""
+    return make_url(SETTINGS.database_url).set(drivername=drivername).render_as_string(hide_password=False)
+
+
 ENGINE: AsyncEngine = create_async_engine(
-    make_url(SETTINGS.database_url).set(drivername="postgresql+asyncpg").render_as_string(hide_password=False),
+    database_url("postgresql+asyncpg"),
     pool_size=20,
     max_overflow=10,
     pool_recycle=3600,

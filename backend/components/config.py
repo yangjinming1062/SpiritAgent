@@ -29,30 +29,16 @@ def _parse_toml_dict(content: dict) -> dict[str, Any]:
 
 
 class TomlConfigSource(PydanticBaseSettingsSource):
-    def __init__(self, settings_cls: type[BaseSettings]):
-        super().__init__(settings_cls)
-        self._settings_dict: dict[str, Any] = {}
-
     def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:
-        val = self._settings_dict.get(field_name)
-        return val, field_name, False
-
-    def prepare_field_value(self, field_name: str, field: Any, value: Any, value_is_complex: bool) -> Any:
-        return value
+        # __call__ 一次返回整份扁平字典，逐字段取值路径不会被调用。
+        return None, field_name, False
 
     def __call__(self) -> dict[str, Any]:
         merged: dict[str, Any] = {}
-        example_toml = BACKEND_DIR / "config.toml.example"
-        if example_toml.exists():
-            with open(example_toml, "rb") as f:
-                merged.update(_parse_toml_dict(tomllib.load(f)))
-
-        user_toml = BACKEND_DIR / "config.toml"
-        if user_toml.exists():
-            with open(user_toml, "rb") as f:
-                merged.update(_parse_toml_dict(tomllib.load(f)))
-
-        self._settings_dict = merged
+        for path in (BACKEND_DIR / "config.toml.example", BACKEND_DIR / "config.toml"):
+            if path.exists():
+                with open(path, "rb") as f:
+                    merged.update(_parse_toml_dict(tomllib.load(f)))
         return merged
 
 
@@ -219,17 +205,12 @@ class Settings(BaseSettings):
     diary_nightly_enabled: bool = Field(default=True, validation_alias="DIARY_NIGHTLY_ENABLED")
     rate_limit_storage_url: str = Field(default="", validation_alias="RATE_LIMIT_STORAGE_URL")
 
-    # 附件与生成媒体的体积/条数配额。
+    # 附件的体积/条数配额。
     max_attachments_per_turn: int = Field(default=16, gt=0, validation_alias="MAX_ATTACHMENTS_PER_TURN")
     attachment_session_quota_bytes: int = Field(
         default=512 * 1024 * 1024,
         gt=0,
         validation_alias="ATTACHMENT_SESSION_QUOTA_BYTES",
-    )
-    journal_media_download_max_bytes: int = Field(
-        default=100 * 1024 * 1024,
-        gt=0,
-        validation_alias="JOURNAL_MEDIA_DOWNLOAD_MAX_BYTES",
     )
 
     metrics_enabled: bool = Field(default=True, validation_alias="METRICS_ENABLED")

@@ -9,7 +9,7 @@ class ChannelBinding(ModelBase, TimestampMixin):
     """用户 ↔ 外部 IM 渠道的绑定行：每 (user, channel) 一条（uq 约束），持有该渠道专属 im 会话的锚点。
 
     conversation_id 唯一外键把「每渠道一条对话」钉在 DB 层——binding 的 (user_id, channel) 唯一性传递为
-    「每用户每渠道至多一条 im 会话」，UNIQUE 又阻止两条绑定共享同一会话。凭据/配置走 Text JSON，
+    「每用户每渠道至多一条 im 会话」，UNIQUE 又阻止两条绑定共享同一会话。凭据走 Text JSON，
     与 user_model_configs 同一落盘风格（明文，REST 永不回显）。
     """
 
@@ -25,8 +25,6 @@ class ChannelBinding(ModelBase, TimestampMixin):
         nullable=True,
         unique=True,
     )
-    # 渠道侧配置；适配器解析，schema 无约束以便加渠道不动迁移。
-    config_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     # 渠道凭据（微信: bot_token/baseurl/context_tokens/typing_ticket）；REST 永不回显。
     credentials: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     account_ref: Mapped[str] = mapped_column(String(128), default="", server_default=text("''"))

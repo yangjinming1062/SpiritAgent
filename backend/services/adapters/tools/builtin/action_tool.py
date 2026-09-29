@@ -11,7 +11,6 @@ from modules.companion import (
     ActionDesignRequest,
     ActionPlayRequest,
     ActionProposal,
-    CompanionAction,
 )
 from prompts.actions import (
     ACTION_DESIGN_TOOL_DESCRIPTION,
@@ -21,31 +20,23 @@ from prompts.actions import (
 )
 from sqlalchemy import select
 
-from services.application.actions.design import accept_proposal
-from services.application.actions.pipeline import schedule_action_generation, schedule_proposal_review
-from services.application.actions.playback import request_playback
+from services.application.actions import accept_proposal, request_playback, schedule_accepted_proposal
 from services.domains.actions import (
     action_to_dict,
     get_action,
     get_active_pack,
+    is_expression_action,
     list_pack_actions,
 )
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 
-def _action_snapshot(action: CompanionAction) -> dict[str, Any]:
-    """动作元信息快照；供检索共用。"""
-    return action_to_dict(action)
-
-
 async def action_search_tool(
+    user_id: int,
     query: str = "",
     limit: int = 10,
-    user_id: int | None = None,
     **_: Any,
 ) -> str:
-    if user_id is None:
-        return tool_error("缺少用户上下文")
     async with SESSION_LOCAL() as db:
         pack = await get_active_pack(db, user_id)
         if pack is None:
@@ -53,11 +44,9 @@ async def action_search_tool(
         actions = await list_pack_actions(db, pack.id, enabled_only=True)
         hits = []
         for action in actions:
-            if action.status != "succeeded" or not action.video_path:
+            if not is_expression_action(action):
                 continue
-            if action.system_slot:
-                continue
-            stats = _action_snapshot(action)
+            stats = action_to_dict(action)
             if query:
                 text = json.dumps(stats, ensure_ascii=False).lower()
                 if query.lower() not in text:
@@ -72,17 +61,15 @@ async def action_search_tool(
 async def action_design_tool(
     name: str,
     motion_description: str,
+    user_id: int,
     use_when: list[str] | None = None,
     avoid_when: list[str] | None = None,
     reason: str = "",
     duration_seconds: float = 4,
     clip_kind: str = "once",
     expected_pack_id: int | None = None,
-    user_id: int | None = None,
     **_: Any,
 ) -> str:
-    if user_id is None:
-        return tool_error("缺少用户上下文")
     try:
         request = ActionDesignRequest(
             name=name,
@@ -99,28 +86,19 @@ async def action_design_tool(
 
     async with SESSION_LOCAL() as db:
         # 对话工具入口视为用户表达驱动，计入手动额度；夜间自主提案走 nightly 的 autonomous。
-        result = await accept_proposal(db, user_id, request, source="user_requested")
+        acceptance = await accept_proposal(db, user_id, request, source="user_requested")
         await db.commit()
-        retry_pack_id = None
-        if result.outcome == "pending_review" and result.action_id is not None and result.proposal_id is None:
-            action = await get_action(db, result.action_id)
-            retry_pack_id = action.pack_id if action is not None else None
-    if result.outcome == "pending_review" and result.proposal_id is not None:
-        # 评审异步执行（提案事务已提交）；approve 后由流水线接手制作。
-        schedule_proposal_review(result.proposal_id, user_id)
-    elif result.outcome == "pending_review" and result.action_id is not None and retry_pack_id is not None:
-        schedule_action_generation(retry_pack_id, result.action_id, user_id)
-    return result.model_dump_json()
+    # 评审或重做在提案事务提交后异步执行；approve 后由流水线接手制作。
+    schedule_accepted_proposal(acceptance, user_id)
+    return acceptance.result.model_dump_json()
 
 
 async def action_inspect_tool(
+    user_id: int,
     proposal_id: int | None = None,
     action_id: int | None = None,
-    user_id: int | None = None,
     **_: Any,
 ) -> str:
-    if user_id is None:
-        return tool_error("缺少用户上下文")
     async with SESSION_LOCAL() as db:
         if proposal_id is not None:
             proposal = (
@@ -168,14 +146,12 @@ async def action_inspect_tool(
 
 async def action_play_tool(
     action_id: int,
+    user_id: int,
     reason: str = "",
     expected_pack_id: int | None = None,
-    user_id: int | None = None,
     **_: Any,
 ) -> str:
     """LLM 统一动作播放入口；对话与非对话均由此转入 request_playback。"""
-    if user_id is None:
-        return tool_error("缺少用户上下文")
     request = ActionPlayRequest(action_id=action_id, reason=reason, expected_pack_id=expected_pack_id)
     async with SESSION_LOCAL() as db:
         result = await request_playback(db, user_id, request, source="chat_expression")
@@ -276,7 +252,6 @@ def register(registry: ToolsRegistry) -> None:
     }
     for name, handler, properties, required in definitions:
         registry.register(
-            name,
             {
                 "name": name,
                 "description": descriptions[name],

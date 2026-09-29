@@ -15,7 +15,7 @@ from components import (
     get_logger,
 )
 
-from .buffer import ReplayBuffer
+from .buffer import BufferedFrame, ReplayBuffer
 
 logger = get_logger(__name__)
 
@@ -86,46 +86,28 @@ def _redact_data(data: Any) -> Any:
     return data
 
 
+# 发送单个 JSON 帧，返回是否确认写出；连接已断开时返回 False 而不抛出。
+Sender = Callable[[dict[str, Any]], Awaitable[bool]]
+
+_HOLD_TIMEOUT_SECONDS = 10.0
+
+
 class JsonRpcDispatcher:
-    def __init__(
-        self,
-        send_json: Callable[[dict], Awaitable[None]],
-        replay_buffer: ReplayBuffer | None = None,
-        send_strict: Callable[[dict], Awaitable[bool]] | None = None,
-    ):
-        self._send = send_json
-        self._send_strict_cb = send_strict
-        self._replay_buffer: ReplayBuffer | None = replay_buffer
+    def __init__(self, send: Sender) -> None:
+        self._send = send
+        self.replay_buffer = ReplayBuffer()
         self._handlers: dict[str, Handler] = {}
         self._send_lock = asyncio.Lock()
         self._hold_events: bool = False
         self._hold_timeout_task: asyncio.Task | None = None
-        self._outbox: asyncio.Queue[tuple[int | None, dict[str, Any], int | None]] = asyncio.Queue(
-            maxsize=OUTBOX_QUEUE_MAX,
-        )
+        self._outbox: asyncio.Queue[tuple[int, dict[str, Any]]] = asyncio.Queue(maxsize=OUTBOX_QUEUE_MAX)
         self._writer_task: asyncio.Task | None = None
         self._delivered_ids: list[int] = []
+        # seq → outbox 事件 ID：任一发送路径（writer / flush / replay）送达时回收为 delivered 记账。
         self._pending_outbox_events: dict[int, int] = {}
-        self._next_seq: int = 0
 
-    def set_sender(
-        self,
-        send_json: Callable[[dict], Awaitable[None]],
-        send_strict: Callable[[dict], Awaitable[bool]] | None = None,
-    ) -> None:
-        self._send = send_json
-        if send_strict is not None:
-            self._send_strict_cb = send_strict
-
-    async def _send_strict(self, frame: dict) -> bool:
-        if self._send_strict_cb is not None:
-            return await self._send_strict_cb(frame)
-        try:
-            await self._send(frame)
-            return True
-        except Exception:
-            logger.debug("strict send failed", exc_info=True)
-            return False
+    def set_sender(self, send: Sender) -> None:
+        self._send = send
 
     def start_writer(self) -> None:
         if self._writer_task is None or self._writer_task.done():
@@ -147,53 +129,55 @@ class JsonRpcDispatcher:
         self._delivered_ids.clear()
         return ids
 
+    def _record_delivered(self, seq: int) -> None:
+        if (event_id := self._pending_outbox_events.pop(seq, None)) is not None:
+            self._delivered_ids.append(event_id)
+
     async def _writer_loop(self) -> None:
         try:
             while True:
                 # 等 hold 释放再拉，避免和 flush_unsent / replay 抢同一帧的发送路径
                 while self._hold_events:
                     await asyncio.sleep(0.05)
-                seq, frame, event_id = await self._outbox.get()
+                seq, frame = await self._outbox.get()
                 try:
                     async with self._send_lock:
                         if self._hold_events:
-                            # 极小竞态：拉取瞬间又进 hold；该帧留给 flush_unsent 兜底，ReplayBuffer 仍为 sent=False
+                            # 极小竞态：拉取瞬间又进 hold；该帧仍为 sent=False，留给 flush_unsent 发送
                             continue
-                        if self._replay_buffer is not None and seq is not None:
-                            buf_entry = self._replay_buffer._buffer.get(seq)
-                            if buf_entry is not None and buf_entry.sent:
-                                # flush_unsent / replay 已发，跳过物理发送但仍需记账
-                                self._pending_outbox_events.pop(seq, None)
-                                if event_id is not None:
-                                    self._delivered_ids.append(event_id)
-                                continue
-                        success = await self._send_strict(frame)
-                        if success:
-                            if self._replay_buffer is not None and seq is not None:
-                                self._replay_buffer.mark_sent_through(seq)
-                            self._pending_outbox_events.pop(seq, None)
-                            if event_id is not None:
-                                self._delivered_ids.append(event_id)
+                        if self.replay_buffer.is_sent(seq):
+                            # flush_unsent / replay 已发，跳过物理发送但仍需记账
+                            self._record_delivered(seq)
+                            continue
+                        if await self._send(frame):
+                            self.replay_buffer.mark_sent_through(seq)
+                            self._record_delivered(seq)
                         else:
-                            # 不标记 sent，留给 flush_unsent 在重连后重试；_recover_stale_locks 兜底
+                            # 不标记 sent，留给重连后的 flush_unsent；outbox 事件由僵尸锁恢复重投
                             logger.warning(
                                 "outbox writer send failed, deferring to stale-lock recovery",
-                                extra={"seq": seq, "event_id": event_id},
+                                extra={"seq": seq, "event_id": self._pending_outbox_events.get(seq)},
                             )
                 finally:
                     self._outbox.task_done()
         except asyncio.CancelledError:
             pass
 
-    def enable_hold(self, timeout_seconds: float = 10.0) -> None:
-        """激活事件 hold 模式：push_event 只追加到缓冲，等到 mount（session.resume / session.get_main / session.create）时再 flush。"""
-        self._hold_events = True
-        if self._hold_timeout_task and not self._hold_timeout_task.done():
-            self._hold_timeout_task.cancel()
+    def _cancel_hold_timeout(self) -> None:
+        task = self._hold_timeout_task
+        self._hold_timeout_task = None
+        # 超时任务自身触发 flush 时不能自我取消，否则 flush 在首个挂起点中断、hold 永不释放。
+        if task is not None and task is not asyncio.current_task():
+            task.cancel()
 
-        async def _timeout_flush():
+    def enable_hold(self) -> None:
+        """激活事件 hold：push_event 只追加到缓冲，等到挂载（session.resume / session.get_main / session.create 等）时再 flush。"""
+        self._hold_events = True
+        self._cancel_hold_timeout()
+
+        async def _timeout_flush() -> None:
             try:
-                await asyncio.sleep(timeout_seconds)
+                await asyncio.sleep(_HOLD_TIMEOUT_SECONDS)
                 if self._hold_events:
                     logger.warning("Event hold timed out without mount request; forcing flush_unsent")
                     await self.flush_unsent()
@@ -258,24 +242,14 @@ class JsonRpcDispatcher:
         session_id: str | None = None,
         event_id: int | None = None,
     ) -> bool:
-        """入队事件：有 writer 时非阻塞入队；无 writer 时（测试）同步发送。返回 False 表示队列满或同步发送失败。"""
-        params: dict = {"type": event_type}
+        """事件帧入缓冲并交给 writer；返回 False 表示队列满或 writer 未运行时同步发送失败。"""
+        params: dict[str, Any] = {"type": event_type}
         if session_id is not None:
             params["session_id"] = session_id
         if payload is not None:
             params["payload"] = payload
-        frame: dict[str, Any] = {"jsonrpc": JSON_RPC_VERSION, "method": "event", "params": params}
-        seq: int | None = None
-        if self._replay_buffer is not None:
-            seq, frame = self._replay_buffer.append(frame)
-        else:
-            self._next_seq += 1
-            seq = self._next_seq
-            if isinstance(frame.get("params"), dict):
-                frame["params"]["seq"] = seq
-
-        # 对所有入队登记 seq→event_id，让 flush_unsent 在 writer 失败时仍能回收 delivered 记账
-        if event_id is not None and seq is not None:
+        seq, frame = self.replay_buffer.append({"jsonrpc": JSON_RPC_VERSION, "method": "event", "params": params})
+        if event_id is not None:
             self._pending_outbox_events[seq] = event_id
 
         if self._hold_events:
@@ -283,7 +257,7 @@ class JsonRpcDispatcher:
 
         if self._writer_task is not None and not self._writer_task.done():
             try:
-                self._outbox.put_nowait((seq, frame, event_id))
+                self._outbox.put_nowait((seq, frame))
                 return True
             except asyncio.QueueFull:
                 logger.warning(
@@ -293,16 +267,13 @@ class JsonRpcDispatcher:
                 self._pending_outbox_events.pop(seq, None)
                 return False
 
-        # 测试路径：无 writer，同步发送
+        # writer 未运行（注销后仍被在途任务引用）：同步发送
         async with self._send_lock:
-            success = await self._send_strict(frame)
-            if success:
-                if self._replay_buffer is not None and seq is not None:
-                    self._replay_buffer.mark_sent_through(seq)
-                self._pending_outbox_events.pop(seq, None)
-                if event_id is not None:
-                    self._delivered_ids.append(event_id)
-            return success
+            if not await self._send(frame):
+                return False
+            self.replay_buffer.mark_sent_through(seq)
+            self._record_delivered(seq)
+            return True
 
     async def push_event(self, event_type: str, payload: Any = None, session_id: str | None = None) -> None:
         await self.enqueue_event(event_type, payload, session_id=session_id)
@@ -311,86 +282,41 @@ class JsonRpcDispatcher:
         # push_event 绕开 _reply_error，原始异常文本必须在此处显式 redact（PROTOCOL「错误信封」）。
         await self.push_event("error", {"message": redact_message(message)}, session_id=session_id)
 
-    async def replay(self, last_seq: int) -> list[dict[str, Any]] | None:
-        """在 send lock 内执行快照+顺序 replay，然后释放 hold。"""
-        if self._hold_timeout_task and not self._hold_timeout_task.done():
-            self._hold_timeout_task.cancel()
-            self._hold_timeout_task = None
+    async def _send_frames(self, frames: list[BufferedFrame]) -> bool:
+        """按序发送缓冲帧并记账；发送失败即停，未发帧不得标记 sent，否则 writer 会误记 delivered、outbox 事件失去重投。"""
+        for f in frames:
+            if not await self._send(f.frame):
+                return False
+            f.sent = True
+            self._record_delivered(f.seq)
+        return True
 
-        if self._replay_buffer is None:
-            self._hold_events = False
-            return None
+    async def _flush_locked(self, after_seq: int) -> None:
+        # 外层循环覆盖发送挂起期间新入缓冲的帧。
+        while unsent := self.replay_buffer.get_unsent(after_seq):
+            if not await self._send_frames(unsent):
+                return
 
+    async def replay(self, last_seq: int) -> int | None:
+        """在 send lock 内重放 last_seq 之后的帧、补发新帧并释放 hold，返回重放帧数。
+
+        缓冲已不覆盖 last_seq 时返回 None 且保持 hold，由调用方改走历史同步后 flush_unsent 释放。
+        """
         async with self._send_lock:
-            if not self._replay_buffer.can_replay(last_seq):
-                self._hold_events = False
+            frames = self.replay_buffer.replay_since(last_seq)
+            if frames is None:
                 return None
-
-            replayed_frames = self._replay_buffer.replay_since(last_seq) or []
-            last_sent_seq: int | None = None
-            for frame in replayed_frames:
-                if not await self._send_strict(frame):
-                    # 客户端在 replay 中途断开：剩余帧留给下次 resume，未发帧不得标记 sent——
-                    # sent=True 会被 writer 的已发分支误记 delivered，令 outbox 事件失去重投。
-                    break
-                seq_num = (
-                    frame.get("params", {}).get("seq") if isinstance(frame.get("params"), dict) else frame.get("seq")
-                )
-                if seq_num is not None:
-                    last_sent_seq = seq_num
-                    outbox_event_id = self._pending_outbox_events.pop(seq_num, None)
-                    if outbox_event_id is not None:
-                        self._delivered_ids.append(outbox_event_id)
-            if last_sent_seq is not None:
-                self._replay_buffer.mark_sent_through(last_sent_seq)
-
-            while True:
-                unsent = [f for f in self._replay_buffer.get_unsent() if f.seq > last_seq]
-                if not unsent:
-                    break
-                failed = False
-                for f in unsent:
-                    if not await self._send_strict(f.frame):
-                        failed = True
-                        break
-                    f.sent = True
-                    outbox_event_id = self._pending_outbox_events.pop(f.seq, None)
-                    if outbox_event_id is not None:
-                        self._delivered_ids.append(outbox_event_id)
-                if failed:
-                    break
-
+            self._cancel_hold_timeout()
+            await self._send_frames(frames)
+            await self._flush_locked(last_seq)
             self._hold_events = False
-            return replayed_frames
+            return len(frames)
 
     async def flush_unsent(self) -> None:
-        """在 send lock 内按序 flush 所有未发缓冲帧，然后释放 hold。"""
-        if self._hold_timeout_task and not self._hold_timeout_task.done():
-            self._hold_timeout_task.cancel()
-            self._hold_timeout_task = None
-
-        if self._replay_buffer is None:
-            self._hold_events = False
-            return
-
+        """在 send lock 内按序补发所有未发缓冲帧，然后释放 hold。"""
+        self._cancel_hold_timeout()
         async with self._send_lock:
-            while True:
-                unsent = self._replay_buffer.get_unsent()
-                if not unsent:
-                    break
-                failed = False
-                for f in unsent:
-                    if not await self._send_strict(f.frame):
-                        # 发送失败不标记 sent（同 writer 失败路径的约定）：帧留给重连后的 replay/flush，
-                        # DB 事件由僵尸锁恢复重投；标记 sent 会让 writer 误记 delivered 且 pending 记账永不回收。
-                        failed = True
-                        break
-                    f.sent = True
-                    outbox_event_id = self._pending_outbox_events.pop(f.seq, None)
-                    if outbox_event_id is not None:
-                        self._delivered_ids.append(outbox_event_id)
-                if failed:
-                    break
+            await self._flush_locked(0)
             self._hold_events = False
 
     async def _reply_result(self, msg_id: Any, result: Any) -> None:
@@ -398,7 +324,7 @@ class JsonRpcDispatcher:
             await self._send({"jsonrpc": JSON_RPC_VERSION, "id": msg_id, "result": result})
 
     async def _reply_error(self, msg_id: Any, code: int, message: str, data: Any = None) -> None:
-        # 按规范 §5.1：错误回复的 id 为请求 id 或 null（请求不可解析时）。只接受清洗后的消息——合成消息的 raise 点（handler except、session.resume "not found" 等）负责保证对用户友好；此处仍跑 redact 作为兜底。
+        # 按规范 §5.1：错误回复的 id 为请求 id 或 null（请求不可解析时）。raise 点负责给出对用户友好的消息；此处仍跑 redact 作为兜底。
         error = {
             "code": code,
             "message": redact_message(message),

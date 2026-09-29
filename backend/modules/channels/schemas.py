@@ -24,7 +24,7 @@ class ChannelCapabilities(BaseModel):
 
 
 class BindingInfo(BaseModel):
-    """绑定状态视图；凭据与渠道 config 一律不回显（config 是 PUT 入参，读侧无出口）。"""
+    """绑定状态视图；凭据一律不回显。"""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -45,12 +45,6 @@ class ChannelInfo(BaseModel):
 
 class ChannelListResponse(BaseModel):
     items: list[ChannelInfo]
-
-
-class ChannelBindingPutRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    config: dict = Field(default_factory=dict)
 
 
 class PeerInfo(BaseModel):

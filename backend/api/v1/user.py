@@ -17,18 +17,18 @@ from modules.system import MessageResponse
 from services.adapters.desktop import terminate_user_gateway
 from services.adapters.http import limiter
 from slowapi.util import get_remote_address
-from sqlalchemy import select
-
-WS_TICKET_TTL_SECONDS = 60
+from sqlalchemy import select, update
 
 # 短期 ticket TTL：足以开 WS、重放前已过期。
+WS_TICKET_TTL_SECONDS = 60
+
 router = get_router()
 
 
 @router.post("/activate", response_model=TokenResponse)
 @limiter.limit(lambda: f"{SETTINGS.login_rate_limit_per_minute}/minute", key_func=get_remote_address)
 async def activate(payload: ActivateRequest, request: Request, db: DbSession) -> TokenResponse:
-    """用激活码换取会话 JWT：激活码是 base64url JSON {b, t}，t 字段经哈希后按 activation_token_hash 查用户；成功后流程同旧登录（停用旧会话、签发 JWT、写 LoginRecord）。"""
+    """用激活码换取会话 JWT：激活码是 base64url JSON {b, t}，t 字段经哈希后按 activation_token_hash 查用户；成功后停用旧会话、签发 JWT 并写 LoginRecord。"""
     try:
         _base_url, raw_token = decode_activation_code(payload.code)
     except Exception:
@@ -42,14 +42,11 @@ async def activate(payload: ActivateRequest, request: Request, db: DbSession) ->
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="激活码无效。")
 
     now = utc_now()
-    for record in (
-        (await db.execute(select(LoginRecord).where(LoginRecord.user_id == user.id, LoginRecord.is_active.is_(True))))
-        .scalars()
-        .all()
-    ):
-        record.is_active = False
-        record.logout_at = now
-        db.add(record)
+    await db.execute(
+        update(LoginRecord)
+        .where(LoginRecord.user_id == user.id, LoginRecord.is_active.is_(True))
+        .values(is_active=False, logout_at=now),
+    )
 
     client_ctx_dict = payload.client_context.model_dump(exclude_none=True) if payload.client_context else None
     token, expires_in, token_jti = create_access_token(

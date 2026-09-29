@@ -13,7 +13,6 @@ from .logger import get_logger
 logger = get_logger(__name__)
 
 _FILE_ID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-_MEDIA_EXTENSIONS = ("jpg", "png", "jpeg", "webp", "wav", "mp3")
 
 
 def _storage_dir() -> Path:
@@ -65,7 +64,7 @@ def save_file(
     *,
     meta_marker: str | None = None,
 ) -> tuple[str, str]:
-    """保存字节到 temp 存储，返回 (file_id, public_url)；meta_marker 是所有权/身份标签（如 ``"preview:{user_id}"``），写入 meta 后由删除路径校验以拒绝跨 owner 删除；meta 写失败时 unlink 数据文件，避免无 TTL 跟踪的孤儿。"""
+    """保存字节到 temp 存储，返回 (file_id, public_url)；meta_marker 是写入元数据的归属标签（如 ``"preview:{user_id}"``），备份恢复时按目标用户改写；meta 写失败时 unlink 数据文件，避免无 TTL 跟踪的孤儿。"""
     file_id = secrets.token_urlsafe(16)
     filepath = _media_path(file_id, ext)
 
@@ -105,46 +104,20 @@ def get_file_path(file_id: str) -> tuple[Path, str] | None:
     """按 ID 取文件路径与 content_type；未找到/已过期返 None。"""
     if not _valid_file_id(file_id):
         return None
-    mp = _meta_path(file_id)
-    if mp.exists():
-        meta = _read_metadata(mp)
-        if meta is None:
-            return None
-        created_at = _metadata_created_at(meta)
-        if created_at is None or time.time() - created_at > SETTINGS.temp_file_ttl_hours * 3600:
-            return None
-        raw_path = _metadata_path(meta)
-        if raw_path is None:
-            return None
-        path = raw_path if raw_path.is_absolute() else _storage_dir() / raw_path
-        resolved_path = path.resolve()
-        if resolved_path.is_relative_to(_storage_dir().resolve()) and resolved_path.is_file():
-            content_type = meta.get("content_type", "image/png")
-            return resolved_path, content_type if isinstance(content_type, str) else "image/png"
+    meta = _read_metadata(_meta_path(file_id))
+    if meta is None:
         return None
-
-    storage_dir = _storage_dir().resolve()
-    for ext in _MEDIA_EXTENSIONS:
-        candidate = _storage_dir() / f"{file_id}.{ext}"
-        try:
-            resolved_path = candidate.resolve()
-            stat_result = resolved_path.stat()
-        except OSError:
-            continue
-        if not resolved_path.is_relative_to(storage_dir):
-            continue
-        if time.time() - stat_result.st_mtime > SETTINGS.temp_file_ttl_hours * 3600:
-            _safe_unlink(resolved_path)
-            continue
-        if resolved_path.is_file():
-            content_type = (
-                "image/jpeg"
-                if ext in ("jpg", "jpeg")
-                else ("image/png" if ext == "png" else "application/octet-stream")
-            )
-            return resolved_path, content_type
-
-    return None
+    created_at = _metadata_created_at(meta)
+    if created_at is None or time.time() - created_at > SETTINGS.temp_file_ttl_hours * 3600:
+        return None
+    path = _metadata_path(meta)
+    if path is None:
+        return None
+    resolved_path = path.resolve()
+    if not resolved_path.is_relative_to(_storage_dir().resolve()) or not resolved_path.is_file():
+        return None
+    content_type = meta.get("content_type")
+    return resolved_path, content_type if isinstance(content_type, str) else "image/png"
 
 
 def _iter_meta_files() -> Iterator[tuple[Path, dict]]:

@@ -1,11 +1,12 @@
 from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, get_logger, resolve_prompt_text
+from modules.companion import Persona
 from modules.ws import emit_ws_event
 from prompts.companion import MOOD_INSTRUCTIONS
+from sqlalchemy import update
 
 from services.domains.conversation import load_recent_context_window
 from services.infrastructure.llm import UserLlmConfig
 
-from .persona_service import get_or_create_persona
 from .prompt_runtime import load_companion_prompt_context, run_prompt_json
 
 logger = get_logger(__name__)
@@ -20,16 +21,11 @@ def normalize_mood(raw: object) -> str | None:
     return text
 
 
-async def emit_companion_mood(user_id: int, mood: str) -> None:
+async def _save_mood(user_id: int, mood: str) -> None:
     """持久化角色当前心情，并通过独立状态事件刷新客户端身份轨。"""
-    mood_text = normalize_mood(mood)
-    if not mood_text:
-        return
-
     async with SESSION_LOCAL() as db:
-        persona = await get_or_create_persona(db, user_id)
-        persona.current_mood = mood_text
-        emit_ws_event(db, user_id=user_id, event_type="companion.mood", payload={"mood": mood_text})
+        await db.execute(update(Persona).where(Persona.user_id == user_id).values(current_mood=mood))
+        emit_ws_event(db, user_id=user_id, event_type="companion.mood", payload={"mood": mood})
         await db.commit()
 
 
@@ -83,6 +79,6 @@ async def update_mood_from_companion_turn(
         logger.info("mood_update: invalid mood", extra={"user_id": user_id})
         return None
 
-    await emit_companion_mood(user_id, mood)
+    await _save_mood(user_id, mood)
     logger.info("mood_update: emitted", extra={"user_id": user_id})
     return mood

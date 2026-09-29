@@ -70,12 +70,12 @@ def _binary(name: str) -> str:
     return resolved
 
 
-def _run(args: list[str], *, timeout: float = _FFMPEG_TIMEOUT_SECONDS) -> subprocess.CompletedProcess[bytes]:
+def _run(args: list[str]) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(  # noqa: S603 — 参数列表固定构造，不经 shell
             args,
             capture_output=True,
-            timeout=timeout,
+            timeout=_FFMPEG_TIMEOUT_SECONDS,
             check=False,
         )
     except subprocess.TimeoutExpired as exc:
@@ -127,9 +127,8 @@ def probe_video(path: Path) -> VideoProbe:
     )
 
 
-def alpha_input_args(path: Path) -> list[str]:
+def alpha_input_args(probe: VideoProbe) -> list[str]:
     """VP9 alpha 必须显式使用 libvpx 解码；原生 FFmpeg VP9 解码器会丢弃辅助 alpha。"""
-    probe = probe_video(path)
     if probe.codec_name == "vp9" and probe.has_alpha:
         return ["-c:v", "libvpx-vp9"]
     if probe.codec_name == "vp8" and probe.has_alpha:
@@ -171,10 +170,10 @@ def _alpha_mode(stream: dict) -> int:
     return 0
 
 
-def run_ffmpeg(args: list[str], *, timeout: float = _FFMPEG_TIMEOUT_SECONDS, label: str = "ffmpeg") -> None:
+def run_ffmpeg(args: list[str], *, label: str) -> None:
     """执行一次 ffmpeg；非零退出码统一转 VideoProcessError（stderr 摘要进 internal）。"""
     full = [_binary("ffmpeg"), "-v", "error", "-y", *args]
-    proc = _run(full, timeout=timeout)
+    proc = _run(full)
     if proc.returncode != 0:
         stderr = proc.stderr.decode("utf-8", "replace")
         logger.warning("ffmpeg %s failed", label, extra={"stderr": stderr[:2000]})

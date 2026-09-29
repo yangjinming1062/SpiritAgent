@@ -7,7 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from components import DEFAULT_LANGUAGE, TOOL_CALL_ID_HEX_PREFIX_LEN, get_logger, new_request_id, resolve_prompt_text
+from components import TOOL_CALL_ID_HEX_PREFIX_LEN, get_logger, new_request_id, resolve_prompt_text
 from modules.conversation import CompanionReply
 from prompts.chat import (
     COMPANION_MEDIA_REPLY_GUIDANCES,
@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from services.contracts import MediaTurnState
 from services.infrastructure.llm import (
+    ChatProvider,
     FailoverReason,
     LLMRuntimeError,
     ProviderConfig,
@@ -72,28 +73,14 @@ class _LLMTurnResult:
     reply: CompanionReply | None = None
 
 
-def _llm_error_user_message(exc: LLMRuntimeError) -> str:
-    """为 LLM 错误生成面向用户的提示语；attachment_fetch_failed 给出简短说明，避免暴露内部细节。"""
-    if exc.classified.reason == FailoverReason.attachment_fetch_failed:
-        return "The LLM provider couldn't fetch the media file attached to this turn. The file may have expired or the URL may not be publicly accessible. Try re-uploading the file."
-    return f"LLM call failed: {exc.classified.reason.value} — {exc.classified.message}"
-
-
 async def _emit_llm_error(emitter: Emitter, exc: LLMRuntimeError) -> None:
-    """把 LLM 错误转为面向用户的 error 帧；启动期与流中途失败共用，保证本轮始终能收尾。"""
-    await emitter.send_json({"type": "error", "message": _llm_error_user_message(exc)})
-
-
-def _function_call_to_dict(item: Any) -> dict:
-    """Responses API 的 ``function_call`` 输出项 → Responses shape dict（与 DB / 工具派发共用）。"""
-    if hasattr(item, "model_dump"):
-        return item.model_dump(exclude_none=True)
-    return {
-        "type": "function_call",
-        "call_id": getattr(item, "call_id", ""),
-        "name": getattr(item, "name", ""),
-        "arguments": getattr(item, "arguments", "{}") or "{}",
-    }
+    """把 LLM 错误转为面向用户的 error 帧；attachment_fetch_failed 给出简短说明，避免暴露内部细节。"""
+    message = (
+        "The LLM provider couldn't fetch the media file attached to this turn. The file may have expired or the URL may not be publicly accessible. Try re-uploading the file."
+        if exc.classified.reason == FailoverReason.attachment_fetch_failed
+        else f"LLM call failed: {exc.classified.reason.value} — {exc.classified.message}"
+    )
+    await emitter.send_json({"type": "error", "message": message})
 
 
 def _ensure_tool_call_ids(tool_calls_list: list[dict]) -> None:
@@ -150,29 +137,27 @@ async def _generate_llm_response(
     context: dict[str, Any],
     active_schemas: list[dict],
     ctx_length: int,
-    provider: Any,
+    provider: ChatProvider,
     *,
     delivery: Literal["stream", "buffered", "complete"],
-    on_response_started: Callable[[], None] | None = None,
-    reasoning_effort: str | None = None,
-    temperature: float | None = None,
-    user_local_tz: str | None = None,
-    lang: str = DEFAULT_LANGUAGE,
-    speech_config: ProviderConfig | None = None,
-    reply_preference: Literal["text", "voice"] | None = None,
-    voice_id: str = "",
-    allow_silence: bool = False,
-    reply_format_error: _InvalidCompanionReplyError | None = None,
-    media_turn: MediaTurnState | None = None,
+    on_response_started: Callable[[], None] | None,
+    reasoning_effort: str,
+    temperature: float,
+    user_local_tz: str | None,
+    lang: str,
+    speech_config: ProviderConfig | None,
+    reply_preference: Literal["text", "voice"] | None,
+    voice_id: str,
+    allow_silence: bool,
+    reply_format_error: _InvalidCompanionReplyError | None,
+    media_turn: MediaTurnState,
 ) -> _LLMTurnResult:
-    """单次 LLM 调用与正文交付；流式首事件或完整响应到达时触发回退哨兵，工具轮正文只在 stream 模式实时显示。"""
-    client = provider.raw_client()
-    resolved_effort = resolve_provider_reasoning_effort(
-        reasoning_effort,
-        getattr(provider, "REASONING_EFFORTS", frozenset()),
-    )
+    """单次 LLM 调用与正文交付；流式首事件或完整响应到达时触发回退哨兵，工具轮正文只在 stream 模式实时显示。
+
+    ``reply_preference`` 非空即陪伴终端回复：非流式取得完整数组并按气泡协议校验。
+    """
+    resolved_effort = resolve_provider_reasoning_effort(reasoning_effort, provider.REASONING_EFFORTS)
     reasoning = {"effort": resolved_effort} if resolved_effort else None
-    scaled_temperature = provider.scale_temperature(temperature) if temperature is not None else None
     instructions = refresh_volatile_header_in_prompt(
         context["instructions"],
         user_local_tz=user_local_tz,
@@ -188,24 +173,23 @@ async def _generate_llm_response(
             "{delivery}",
             delivery_guidance,
         )
-        if media_turn is not None:
-            reply_guidance += resolve_prompt_text(COMPANION_MEDIA_REPLY_GUIDANCES, lang)
-            reply_guidance += "\n" + json.dumps(
-                {
-                    "available_media": [
-                        {
-                            "media_id": a.media_id,
-                            "type": a.type,
-                            "goal_id": a.goal_id,
-                            "status": a.status,
-                            "already_delivered": a.bound_message_id is not None,
-                        }
-                        for a in media_turn.artifacts.values()
-                    ],
-                    "required_media_goals": sorted(media_turn.required_goals),
-                },
-                ensure_ascii=False,
-            )
+        reply_guidance += resolve_prompt_text(COMPANION_MEDIA_REPLY_GUIDANCES, lang)
+        reply_guidance += "\n" + json.dumps(
+            {
+                "available_media": [
+                    {
+                        "media_id": a.media_id,
+                        "type": a.type,
+                        "goal_id": a.goal_id,
+                        "status": a.status,
+                        "already_delivered": a.bound_message_id is not None,
+                    }
+                    for a in media_turn.artifacts.values()
+                ],
+                "required_media_goals": sorted(media_turn.required_goals),
+            },
+            ensure_ascii=False,
+        )
         if speech_config:
             reply_guidance += speech_style_guidance(speech_config.provider_name, speech_config.model)
         if reply_format_error is not None:
@@ -244,7 +228,7 @@ async def _generate_llm_response(
         tool_choice="none" if reply_format_error is not None else None,
         stream=delivery != "complete",
         reasoning=reasoning,
-        temperature=scaled_temperature,
+        temperature=provider.scale_temperature(temperature),
         text={"format": {"type": "json_object"}}
         if reply_preference is not None and provider.supports_json_array
         else None,
@@ -262,7 +246,7 @@ async def _generate_llm_response(
 
     turn_start_time = time.monotonic()
     # 请求失败交给编排层处理回退，避免先向客户端报错又交付下一供应商的正文。
-    response = await call_with_retry(client, context_length=ctx_length, **kwargs)
+    response = await call_with_retry(provider.raw_client(), context_length=ctx_length, **kwargs)
 
     turn_parts: list[str] = []
     bubble_parts: list[str] = []
@@ -327,7 +311,8 @@ async def _generate_llm_response(
 
     async def _collect_output_item(item: Any) -> None:
         if getattr(item, "type", None) == "function_call":
-            tool_calls_list.append(_function_call_to_dict(item))
+            # Responses shape dict 与 DB / 工具派发共用。
+            tool_calls_list.append(item.model_dump(exclude_none=True))
         elif getattr(item, "type", None) == "reasoning":
             if hasattr(item, "model_dump"):
                 context["input"].append(item.model_dump(exclude_none=True))

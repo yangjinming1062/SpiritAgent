@@ -17,9 +17,9 @@
 | 模块 | 职责 |
 |---|---|
 | [repository.py](repository.py) | pack、action、目录版本与播放意图读写 |
-| [policy.py](policy.py) | 权限、制作额度、近 7 天拒绝抑制与硬门禁 |
-| [usage.py](usage.py) | 播放事实：回执终态与延迟表达意图兑现 |
-| [publishing.py](publishing.py) | manifest 构建、校验与 CAS 版本推进 |
+| [policy.py](policy.py) | 权限、制作额度、近 7 天拒绝抑制、硬门禁与模型可点播判定 |
+| [usage.py](usage.py) | 播放事实：播放指令写出、回执终态与延迟表达意图兑现 |
+| [publishing.py](publishing.py) | manifest 构建、校验、写入用户资产目录与 CAS 版本推进 |
 
 ## 资产、发布与表演
 

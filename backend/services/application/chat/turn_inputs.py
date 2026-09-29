@@ -1,5 +1,4 @@
-import json
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Literal, cast
 
@@ -12,7 +11,6 @@ from components import (
     format_day_marker,
     format_local_date_str,
     format_time_anchor,
-    get_logger,
     resolve_language,
     safe_json_loads,
     utc_now,
@@ -20,29 +18,20 @@ from components import (
 from modules.auth import ChatRequestClientContext
 from modules.companion import Persona
 from modules.conversation import Conversation, Message
-from modules.settings import UserSetting
-from modules.system import AgentPromptConfig, ChatRequest, PromptPreset
+from modules.system import ChatRequest
 from openai import AsyncOpenAI
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.application.chat import NativeMemory
 from services.contracts import MemoryScope, MemorySource
-from services.domains.companion import (
-    build_system_prompt_extras,
-    get_disturbance_tier,
-    is_work_preset,
-    load_character_snapshot,
-)
+from services.domains.companion import build_system_prompt_extras, get_disturbance_tier, load_character_snapshot
 from services.domains.configuration import DEFAULT_CONFIG
 from services.domains.conversation import (
     DEFAULT_PRESET_ID,
     IM_KIND,
     SPECIAL_KIND,
-    UI_ONLY_SUBTYPES,
     InferenceDefaults,
     companion_context_content,
-    conversation_memory_scope,
     load_context_messages,
     resolve_preset_meta,
 )
@@ -55,13 +44,13 @@ from services.domains.memory import (
 )
 from services.infrastructure.llm import (
     PRODUCT_REASONING_EFFORTS,
+    ChatProvider,
     MissingLlmConfigError,
     ProviderConfig,
     ReasoningEffort,
-    ServiceType,
     approx_responses_tokens,
+    build_provider,
     message_to_response_items,
-    provider_from_config,
     resolve_context_tokens,
     resolve_provider_chain,
     resolve_reply_voice,
@@ -70,68 +59,44 @@ from services.infrastructure.llm import (
 )
 from services.infrastructure.tool_runtime import REGISTRY, schema_name
 
-from .prompt_presets import (
-    AUTOMATION_EXCLUDED_TOOL_NAMES,
-    AUTOMATION_PRESET,
-    LIFE_SPACE_TOOL_NAMES,
-    resolve_preset,
-)
+from .native_memory import NativeMemory
+from .prompt_blocks import AgentPromptConfig
+from .prompt_presets import preset_excluded_tool_names
 from .system_prompt import build_system_prompt
-
-logger = get_logger(__name__)
 
 
 @dataclass(frozen=True)
 class TurnInputs:
-    """``build_turn_inputs`` 的输出：orchestrator 与各轮辅助函数所需字段，避免重复查询 DB。"""
+    """``build_turn_inputs`` 的输出：回合编排与各轮辅助函数所需字段，避免重复查询 DB。"""
 
     context: dict[str, Any]
     client: AsyncOpenAI
-    memory_scope: MemoryScope | None
     native_memory: NativeMemory | None
     model_name: str
-    model_override: str | None
     ctx_length: int
-    context_tokens_override: int | None
     all_schemas: list[dict]
+    # 会话预设与调用方排除的工具；装配与执行层共用。
+    excluded_tool_names: frozenset[str]
     first_user_msg_content: str | None
-    llm_chain: list[ProviderConfig] | None
-    provider_name: str = ""
-    estimated_tokens: int = 0
-    user_local_tz: str | None = None
-    language: str = DEFAULT_LANGUAGE
-    speech_config: ProviderConfig | None = None
-    response_preference: Literal["text", "voice"] = "text"
-    speech_voice: str = ""
+    llm_chain: list[ProviderConfig]
+    provider_name: str
+    estimated_tokens: int
+    user_local_tz: str | None
+    language: str
+    speech_config: ProviderConfig | None
+    response_preference: Literal["text", "voice"]
+    speech_voice: str
 
 
-async def load_user_settings(db: AsyncSession, user_id: int) -> dict[str, str]:
-    rows = (await db.execute(select(UserSetting).where(UserSetting.user_id == user_id))).scalars().all()
-    return {s.setting_key: s.setting_value for s in rows}
-
-
-async def _load_memory_query_text(
-    db: AsyncSession,
-    conv: Conversation,
-    req: ChatRequest,
-    *,
-    use_request: bool,
-) -> str:
-    if use_request and req.message.role == "user":
+async def load_memory_query_text(db: AsyncSession, conv: Conversation, req: ChatRequest, *, use_request: bool) -> str:
+    """召回查询取本轮用户输入；主动回合的请求是内部资料，改取历史中最近的用户发言。"""
+    if use_request:
         return req.message.content or ""
     history = await load_context_messages(db, conv)
     return next((m.content or "" for m in reversed(history) if m.role == "user"), "")
 
 
-def _resolve_turn_preset(conv: Conversation, preset_override: PromptPreset | None) -> PromptPreset:
-    conversation_memory_scope(conv, conv.user_id)
-    resolved = preset_override or (AUTOMATION_PRESET if conv.is_automation else resolve_preset(conv.system_preset_id))
-    if resolved.id != conv.system_preset_id:
-        raise ValueError("Prompt preset does not match conversation memory scope")
-    return resolved
-
-
-def resolve_inference_settings(settings: dict[str, str], *, conv: Conversation) -> InferenceDefaults:
+def resolve_inference_settings(settings: dict[str, Any], *, conv: Conversation) -> InferenceDefaults:
     defaults = (
         resolve_preset_meta(conv.system_preset_id).inference_defaults
         if conv.kind in {SPECIAL_KIND, IM_KIND}
@@ -141,8 +106,7 @@ def resolve_inference_settings(settings: dict[str, str], *, conv: Conversation) 
             DEFAULT_CONFIG["agent"]["reasoning_effort"],
         )
     )
-    raw_reasoning = settings.get("agent.reasoning_effort", "")
-    reasoning = safe_json_loads(raw_reasoning, default=raw_reasoning)
+    reasoning = settings.get("agent.reasoning_effort")
     reasoning = _parse_reasoning_effort(reasoning) if isinstance(reasoning, str) else None
     threshold = parse_temperature(
         settings.get("chat.context_compression_threshold"),
@@ -156,12 +120,12 @@ def resolve_inference_settings(settings: dict[str, str], *, conv: Conversation) 
 
 
 def merge_session_settings(
-    user_settings: dict[str, str],
+    user_settings: dict[str, Any],
     session_settings: dict[str, Any] | None,
     *,
     conv: Conversation,
-) -> dict[str, str]:
-    """特殊会话使用场景默认值，普通会话继承工作台设置；最后合并会话覆盖。"""
+) -> dict[str, Any]:
+    """特殊会话使用场景默认值，普通会话继承工作台设置；最后合并会话覆盖。推理参数由 ``resolve_inference_settings`` 从结果解析。"""
     isolated = conv.kind in {SPECIAL_KIND, IM_KIND}
     merged = {
         key: value for key, value in user_settings.items() if not isolated or not key.startswith(("agent.", "chat."))
@@ -169,22 +133,14 @@ def merge_session_settings(
     if isolated:
         merged.update(
             {
-                f"chat.{key}": value if isinstance(value, str) else json.dumps(value)
+                f"chat.{key}": value
                 for key, value in DEFAULT_CONFIG["chat"].items()
                 if key != "context_compression_threshold"
             },
         )
     if session_settings:
         for k, v in session_settings.items():
-            target_key = SESSION_TO_GLOBAL_KEY_ALIASES[k]
-            merged[target_key] = v if isinstance(v, str) else json.dumps(v)
-    inference = resolve_inference_settings(merged, conv=conv)
-    merged.update(
-        {
-            SESSION_TO_GLOBAL_KEY_ALIASES[key]: value if isinstance(value, str) else json.dumps(value)
-            for key, value in asdict(inference).items()
-        },
-    )
+            merged[SESSION_TO_GLOBAL_KEY_ALIASES[k]] = v
     return merged
 
 
@@ -192,44 +148,38 @@ def _merge_client_context(
     session_ctx: ChatRequestClientContext | None,
     request_ctx: ChatRequestClientContext | None,
 ) -> ChatRequestClientContext | None:
-    """request 覆盖 session；任一可为 None。"""
-    if not session_ctx and not request_ctx:
-        return None
-    merged = (session_ctx.model_dump(exclude_none=True) if session_ctx else {}) | (
-        request_ctx.model_dump(exclude_none=True) if request_ctx else {}
-    )
-    return ChatRequestClientContext.model_validate(merged) if merged else None
+    """请求逐字段覆盖会话级客户端资料。"""
+    if session_ctx is None or request_ctx is None:
+        return request_ctx or session_ctx
+    return session_ctx.model_copy(update=request_ctx.model_dump(exclude_none=True))
 
 
 def db_message_to_response_items(msg: Message) -> list[dict[str, Any]]:
     """DB Message -> Responses API input items. 正文保持入库原文，不拼接时间标记。"""
-    if msg.subtype in UI_ONLY_SUBTYPES:
-        return []
-
     content_val: str | list = msg.content or ""
+    is_multimodal = msg.content_type == "multimodal_v1"
     if msg.content_type == "companion_reply":
         content_val = companion_context_content(msg)
-    is_multimodal = msg.content_type == "multimodal_v1"
-    if is_multimodal:
-        parsed = safe_json_loads(content_val if isinstance(content_val, str) else "")
-        content_val = parsed if isinstance(parsed, list) else content_val
+    elif is_multimodal and isinstance(parsed := safe_json_loads(content_val), list):
+        content_val = parsed
 
     if msg.role == "system":
-        return [{"role": "user", "content": [{"type": "input_text", "text": content_val or ""}]}]
+        return [{"role": "user", "content": [{"type": "input_text", "text": content_val}]}]
 
-    if msg.role == "assistant":
-        has_tool_calls = bool((msg.tool_calls or "").strip())
-        if not has_tool_calls and not is_multimodal and not (content_val or "").strip():
-            return []
+    if (
+        msg.role == "assistant"
+        and not (msg.tool_calls or "").strip()
+        and not is_multimodal
+        and not str(content_val).strip()
+    ):
+        return []
 
-    item: dict = {"role": msg.role, "content": content_val}
+    item: dict[str, Any] = {"role": msg.role, "content": content_val}
     if msg.tool_call_id:
         item["tool_call_id"] = msg.tool_call_id
-    items: list[dict[str, Any]] = message_to_response_items(item)
+    items = message_to_response_items(item)
     if msg.role == "assistant" and msg.tool_calls and (calls := safe_json_loads(msg.tool_calls)) is not None:
-        for call in calls:
-            if isinstance(call, dict):
-                items.append(call)
+        items.extend(call for call in calls if isinstance(call, dict))
     return items
 
 
@@ -237,11 +187,11 @@ def _user_row_has_video_part(msg: Message) -> bool:
     """多模态用户行是否含 ``input_video`` part；链选择据此优先走视频能力供应商。"""
     if msg.role != "user" or msg.content_type != "multimodal_v1":
         return False
-    parsed = safe_json_loads(msg.content if isinstance(msg.content, str) else "", default=[])
+    parsed = safe_json_loads(msg.content or "", default=[])
     return isinstance(parsed, list) and any(isinstance(p, dict) and p.get("type") == "input_video" for p in parsed)
 
 
-def _user_time_item(text: str) -> dict[str, Any]:
+def user_text_item(text: str) -> dict[str, Any]:
     return {"role": "user", "content": [{"type": "input_text", "text": text}]}
 
 
@@ -258,7 +208,7 @@ def _maybe_append_day_marker(
     if cur_date_key and cur_date_key != prev_date_key:
         marker_text = format_day_marker(dt, user_local_tz, lang)
         if marker_text:
-            items.append(_user_time_item(marker_text))
+            items.append(user_text_item(marker_text))
     return cur_date_key or prev_date_key
 
 
@@ -278,9 +228,7 @@ def _history_to_responses_context(
     prev_date_key: str | None = None
     last_user_at: datetime | None = None
 
-    valid_msgs = [m for m in db_msgs if getattr(m, "subtype", None) not in UI_ONLY_SUBTYPES]
-
-    for msg in valid_msgs:
+    for msg in db_msgs:
         item_start = len(context["input"])
         if inject_time_perception:
             prev_date_key = _maybe_append_day_marker(
@@ -294,20 +242,20 @@ def _history_to_responses_context(
         if inject_time_perception and msg.role == "user" and msg.created_at is not None:
             clock = format_time_anchor(msg.created_at, last_user_at, user_local_tz, lang)
             if clock:
-                context["input"].append(_user_time_item(clock))
+                context["input"].append(user_text_item(clock))
             last_user_at = msg.created_at
         source_id = msg.summary_through_message_id if msg.subtype in ("daily_summary", "compress_summary") else msg.id
         if source_id is None:
             raise ValueError("Conversation summary requires an original message boundary")
         context["source_message_ids"].extend([source_id] * (len(context["input"]) - item_start))
 
-    if inject_time_perception and (not valid_msgs or valid_msgs[-1].role != "user"):
+    if inject_time_perception and (not db_msgs or db_msgs[-1].role != "user"):
         item_start = len(context["input"])
         now = utc_now()
         prev_date_key = _maybe_append_day_marker(context["input"], now, prev_date_key, user_local_tz, lang)
         clock = format_time_anchor(now, None, user_local_tz, lang)
         if clock:
-            context["input"].append(_user_time_item(clock))
+            context["input"].append(user_text_item(clock))
         context["source_message_ids"].extend([None] * (len(context["input"]) - item_start))
 
     return context
@@ -328,19 +276,21 @@ async def build_turn_inputs(
     user_id: int,
     req: ChatRequest,
     session_client_context: ChatRequestClientContext | None,
-    user_settings: dict,
+    user_settings: dict[str, Any],
     memory_scope: MemoryScope | None,
-    preset_override: PromptPreset | None = None,
-    use_request_for_memory_retrieval: bool = True,
-    proactive_memory_query: str | None = None,
+    *,
+    proactive_memory_query: str = "",
     proactive_memory_embedding: list[float] | None = None,
     companion_proactive_turn: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
 ) -> TurnInputs:
-    """解析身份 prompt、schemas、agent_config、历史与 LLM client；native_memory 补充内容在此注入系统消息，使 orchestrator 保持线性。"""
-    if conversation_memory_scope(conv, user_id) != memory_scope:
-        raise ValueError("Turn memory scope mismatch")
-    resolved_preset = _resolve_turn_preset(conv, preset_override)
+    """解析身份 prompt、schemas、历史与 LLM client。
+
+    ``memory_scope`` 由调用方经 ``conversation_memory_scope`` 校验得出；预设即会话的 ``system_preset_id``，
+    自动化会话没有记忆域。
+    """
+    preset_id = conv.system_preset_id
+    is_companion = preset_id == DEFAULT_PRESET_ID
     history = await load_context_messages(db, conv)
     first_user_msg = next((m for m in history if m.role == "user"), None)
     first_user_msg_content = first_user_msg.content if first_user_msg else None
@@ -348,110 +298,53 @@ async def build_turn_inputs(
     # 历史含媒体时把 LLM 链筛选到对应能力供应商，确保压缩客户端与流式调用（接收同一 _chain）都能消费媒体 part。
     # 视频判定优先于图片（视频链通常也具备视觉，反之不然）；链为空时显式报错而非回落文本链——
     # 回落只会换来供应商网关拒收 input_video 的不可读 400。
-    turn_has_video = any(_user_row_has_video_part(m) for m in history)
-    turn_has_images = any(m.content_type == "multimodal_v1" for m in history if m.role == "user")
-    llm_chain = None
-    provider = None
-    if turn_has_video:
-        video_chain = await resolve_video_chain(db, user_id)
-        if not video_chain:
+    llm_chain: list[ProviderConfig] = []
+    if any(_user_row_has_video_part(m) for m in history):
+        llm_chain = await resolve_video_chain(db, user_id)
+        if not llm_chain:
             raise MissingLlmConfigError("当前供应商链中没有支持视频理解的模型，无法继续包含视频附件的对话")
-        llm_chain = video_chain
-        provider = provider_from_config(video_chain[0])
-    elif turn_has_images:
-        vision_chain = await resolve_vision_chain(db, user_id)
-        if vision_chain:
-            llm_chain = vision_chain
-            provider = provider_from_config(vision_chain[0])
-    if provider is None:
+    elif any(m.content_type == "multimodal_v1" for m in history if m.role == "user"):
+        llm_chain = await resolve_vision_chain(db, user_id)
+    if not llm_chain:
         llm_chain = await resolve_provider_chain(db, user_id, "llm")
         if not llm_chain:
             raise MissingLlmConfigError("no provider configured for service 'llm'")
-        provider = provider_from_config(llm_chain[0])
-    client = provider.raw_client()
-    if client is None:
-        raise MissingLlmConfigError(f"llm provider '{provider.provider_name}' does not expose the Responses API")
-    model_name = req.model or provider.config.model
-    if req.context_tokens is not None:
-        ctx_length = req.context_tokens
-    else:
-        if req.model and req.model != provider.config.model:
-            # 渲染端覆写模型但未钉住窗口：告警以便预算不匹配的问题能在日志中暴露。
-            logger.warning(
-                "request model override without context_tokens",
-                extra={"provider": provider.provider_name, "request_model": req.model},
-            )
-        ctx_length = resolve_context_tokens(provider.provider_name, ServiceType.llm)
+    provider = build_provider(llm_chain[0], ChatProvider)
 
-    include_memory_context = resolved_preset.id != "automation"
-    identity_prompt = None
-    if resolved_preset.id == "companion":
-        identity_prompt = (
-            await db.execute(
-                select(UserSetting.setting_value).where(
-                    UserSetting.user_id == user_id,
-                    UserSetting.setting_key == "identity_prompt",
-                ),
-            )
-        ).scalar()
+    excluded_tool_names = excluded_tool_names | preset_excluded_tool_names(preset_id)
     all_schemas = [
         schema
         for schema in REGISTRY.get_all_schemas(user_id, user_settings=user_settings)
         if schema_name(schema) not in excluded_tool_names
     ]
-    if not include_memory_context:
-        all_schemas = [schema for schema in all_schemas if schema_name(schema) not in AUTOMATION_EXCLUDED_TOOL_NAMES]
-    elif is_work_preset(conv.system_preset_id):
-        # 工作会话不绑定生活空间工具，执行层使用同一排除集合。
-        all_schemas = [schema for schema in all_schemas if schema_name(schema) not in LIFE_SPACE_TOOL_NAMES]
     persona = (
         (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
-        if resolved_preset.id == "companion"
+        if is_companion
         else None
     )
-    # 入口处一次性 normalize 语言：避免 lang="fr" 等未支持值在 volatile header 与 day marker 处分别走不同分支；
-    # user_profile_extras 使用相同的 language，而非默认值 zh。
-    session_lang = resolve_language(user_settings.get("language", DEFAULT_LANGUAGE))
-    user_profile_extras = (
-        await build_user_profile_extras(db, memory_scope, language=session_lang) if memory_scope is not None else ""
-    )
-    # 自动化任务不装配伙伴人格、用户画像或长期记忆；其它 preset 即使 persona 未完成也能承载背景上下文。
-    background_memory_extras = (
-        await format_background_memory_block(db, memory_scope, language=session_lang) if include_memory_context else ""
-    )
+    # 入口处一次性 normalize 语言：避免 lang="fr" 等未支持值在 volatile header 与 day marker 处分别走不同分支。
+    session_lang = resolve_language(user_settings.get("language"))
+    # 自动化任务没有记忆域，不装配用户画像或长期记忆；其它 preset 即使 persona 未完成也能承载背景上下文。
+    user_profile_extras = ""
+    background_memory_extras = ""
+    proactive_rows: list[dict] = []
+    if memory_scope is not None:
+        user_profile_extras = await build_user_profile_extras(db, memory_scope, language=session_lang)
+        background_memory_extras = await format_background_memory_block(db, memory_scope, language=session_lang)
+        if proactive_memory_query:
+            proactive_rows = await retrieve_proactive_memories(
+                db,
+                memory_scope,
+                proactive_memory_query,
+                query_embedding=proactive_memory_embedding,
+                limit=3,
+            )
     user_local_tz = await resolve_user_timezone(db, user_id)
-    last_history_user_content = next(
-        (m.content for m in reversed(history) if m.role == "user" and m.content),
-        first_user_msg_content,
-    )
-    query_text = proactive_memory_query
-    if query_text is None:
-        query_text = (
-            (req.message.content if req.message.role == "user" else first_user_msg_content)
-            if use_request_for_memory_retrieval
-            else last_history_user_content
-        ) or ""
-    proactive_rows = (
-        await retrieve_proactive_memories(
-            db,
-            memory_scope,
-            query_text,
-            query_embedding=proactive_memory_embedding,
-            limit=3,
-        )
-        if include_memory_context and query_text
-        else []
-    )
-    proactive_memory_extras = format_proactive_memory_block(proactive_rows, language=session_lang)
-    # 仅陪伴预设（生活空间 / special Cron）插入时间提示与跨日分界；
-    # 工作台预设只保留 volatile header 的日期。
-    inject_time_perception = resolved_preset.id == DEFAULT_PRESET_ID
     agent_config = AgentPromptConfig(
+        language=session_lang,
         valid_tool_names=[schema_name(s) for s in all_schemas],
         companion_proactive_turn=companion_proactive_turn,
-        model=model_name,
         client_context=_merge_client_context(session_client_context, req.client_context),
-        identity_prompt=identity_prompt,
         persona_extras=build_system_prompt_extras(
             persona,
             language=session_lang,
@@ -459,16 +352,16 @@ async def build_turn_inputs(
         ),
         user_profile_extras=user_profile_extras,
         background_memory_extras=background_memory_extras,
-        proactive_memory_extras=proactive_memory_extras,
-        language=session_lang,
+        proactive_memory_extras=format_proactive_memory_block(proactive_rows, language=session_lang),
         user_local_tz=user_local_tz,
     )
+    # 仅陪伴预设（生活空间 / special Cron）插入时间提示与跨日分界；工作台预设只保留 volatile header 的日期。
     context = _history_to_responses_context(
         history,
-        build_system_prompt(agent_config, preset=resolved_preset),
+        build_system_prompt(agent_config, preset_id=preset_id),
         user_local_tz=user_local_tz,
         lang=session_lang,
-        inject_time_perception=inject_time_perception,
+        inject_time_perception=is_companion,
     )
 
     # 不绑定 session：每次 memory 工具调用各自开 session，连接不跨 LLM 循环持续占用。
@@ -481,39 +374,37 @@ async def build_turn_inputs(
     baseline, subsequent_msgs = _find_authoritative_token_baseline(history)
     if baseline is not None:
         delta_items = [item for m in subsequent_msgs for item in db_message_to_response_items(m)]
-        delta_tokens = approx_responses_tokens("", delta_items)
-        baseline_tokens = baseline + delta_tokens
+        baseline_tokens = baseline + approx_responses_tokens("", delta_items)
         # 提示词与 Schema 漂移保护：若基线估算与当前全量装配的上下文差异过大（>20% 且 >200 tokens），采用全量估算
         drift = abs(baseline_tokens - full_context_tokens)
         estimated_tokens = full_context_tokens if drift > max(200, int(full_context_tokens * 0.2)) else baseline_tokens
     else:
         estimated_tokens = full_context_tokens
 
-    speech_config = None
-    selected_voice = ""
-    if conv.kind == SPECIAL_KIND and resolved_preset.id == DEFAULT_PRESET_ID:
-        raw_voice = user_settings.get("companion.voice_id", "")
-        selected_voice = safe_json_loads(raw_voice, default=raw_voice)
-        speech_config, selected_voice = await resolve_reply_voice(
+    # 语音只用于陪伴固定会话；主动回合仅在自主档位提供语音能力。
+    speech_config: ProviderConfig | None = None
+    speech_voice = ""
+    if (
+        conv.kind == SPECIAL_KIND
+        and is_companion
+        and (not companion_proactive_turn or await get_disturbance_tier(user_id, db=db) == "autonomous")
+    ):
+        selected_voice = user_settings.get("companion.voice_id")
+        speech_config, speech_voice = await resolve_reply_voice(
             db,
             user_id,
             selected_voice if isinstance(selected_voice, str) else "",
             session_lang,
         )
 
-    if companion_proactive_turn and await get_disturbance_tier(user_id, db=db) != "autonomous":
-        speech_config = None
-
     return TurnInputs(
         context=context,
-        client=client,
-        memory_scope=memory_scope,
+        client=provider.raw_client(),
         native_memory=native_memory,
-        model_name=model_name,
-        model_override=req.model,
-        ctx_length=ctx_length,
-        context_tokens_override=req.context_tokens,
+        model_name=provider.config.model,
+        ctx_length=resolve_context_tokens(provider.provider_name),
         all_schemas=all_schemas,
+        excluded_tool_names=excluded_tool_names,
         first_user_msg_content=first_user_msg_content,
         llm_chain=llm_chain,
         provider_name=provider.provider_name,
@@ -521,13 +412,9 @@ async def build_turn_inputs(
         user_local_tz=user_local_tz,
         language=session_lang,
         speech_config=speech_config,
-        speech_voice=selected_voice if isinstance(selected_voice, str) else "",
+        speech_voice=speech_voice,
         response_preference=req.response_preference
-        or (
-            "voice"
-            if safe_json_loads(user_settings.get("companion.response_preference", '"text"')) == "voice"
-            else "text"
-        ),
+        or ("voice" if user_settings.get("companion.response_preference") == "voice" else "text"),
     )
 
 

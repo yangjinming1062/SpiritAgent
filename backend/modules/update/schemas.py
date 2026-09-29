@@ -16,9 +16,6 @@ class UpdateVersionItem(BaseModel):
     mac_sha512: str | None = None
     mac_size: int | None = None
     runner_filename: str | None = None
-    runner_sha512: str | None = None
-    runner_size: int | None = None
-    runner_version: str | None = None
     is_active: bool
     created_at: datetime
     created_by: str | None

@@ -15,8 +15,6 @@ def conversation_memory_scope(conv: Conversation, user_id: int) -> MemoryScope |
     if conv.user_id != user_id:
         raise ValueError("Conversation not found")
     if conv.is_automation:
-        if conv.system_preset_id != "automation":
-            raise ValueError("Automation conversation has an invalid preset")
         return None
     scope = MemoryScope(user_id, conv.system_preset_id)
     validate_memory_scope(scope)

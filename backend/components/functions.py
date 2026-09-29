@@ -19,7 +19,8 @@ _CJK_CHARS = re.compile(
 )
 
 
-def apply_partial(obj: Any, payload: BaseModel, /, *, exclude: frozenset[str] = frozenset()) -> None:
+def apply_partial(obj: Any, payload: BaseModel, /, *, exclude: set[str] | None = None) -> None:
+    """把显式提交且非 None 的字段写到 ORM 对象。"""
     for field, value in payload.model_dump(exclude_unset=True, exclude=exclude).items():
         if value is None:
             continue
@@ -183,9 +184,9 @@ def format_time_anchor(
     return f"{TIME_NOTE_EN_HEAD} {time_str})"
 
 
-def resolve_language(language: str | None) -> str:
-    """规范化到受支持的语言代码；不支持时回退到默认。"""
-    lang = (language or "").strip().lower()
+def resolve_language(language: object) -> str:
+    """规范化到受支持的语言代码；非字符串或不支持时回退到默认（设置值来自客户端同步，类型不可信）。"""
+    lang = language.strip().lower() if isinstance(language, str) else ""
     return lang if lang in SUPPORTED_LANGUAGES else DEFAULT_LANGUAGE
 
 
@@ -208,18 +209,8 @@ def coerce_int(value: Any, default: int | None) -> int | None:
         return default
 
 
-def coerce_non_negative_int(value: Any, default: int = 0) -> int:
-    """``max(0, int(value))`` + fallback；用于 renderer 总发非负 int 的活动上下文字段（如 ``idle_seconds``），坏值静默回退。"""
-    if value is None:
-        return default
-    try:
-        return max(0, int(value))
-    except (TypeError, ValueError):
-        return default
-
-
 def coerce_non_negative_float(value: Any, default: float = 0.0) -> float:
-    """``max(0.0, float(value))`` + fallback；用于带亚秒精度的字段（如 ``seconds_since_last_action``），``coerce_non_negative_int`` 会截断。"""
+    """``max(0.0, float(value))`` + fallback；用于带亚秒精度的活动上下文字段（如 ``seconds_since_last_action``）。"""
     if value is None:
         return default
     try:

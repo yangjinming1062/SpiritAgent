@@ -1,27 +1,22 @@
-"""5 套内置系统提示词预设。预设体里的 ``{{BLOCK}}`` 由 ``prompt_blocks.substitute`` 严格解析。
-
-预设体变更需要 backend 重启（与现有静态常量节奏一致）；运行时不做热更新。
-"""
-
-import logging
+"""内置系统提示词预设体，按会话的 ``system_preset_id`` 选取；预设体里的 ``{{BLOCK}}`` 由 ``prompt_blocks`` 渲染。"""
 
 from components import resolve_prompt_text
-from modules.system import PromptPreset
 from prompts.chat import PRESET_BODY_AUTOMATION, PRESET_BODY_COMPANION, PRESET_BODY_WORK, PRESET_HEADER_TEXTS
 
-from services.domains.conversation import SYSTEM_PRESET_CATALOG
+from services.domains.companion import is_work_preset
 
-logger = logging.getLogger(__name__)
-
-AUTOMATION_PRESET = PromptPreset(
-    id="automation",
-    name="自动化任务",
-    description="",
-    icon_key="task",
-    body=PRESET_BODY_AUTOMATION,
-)
-# 生活空间工具只服务陪伴会话：工作预设与自动化任务在回合装配层（build_turn_inputs）与
-# search_tools 元工具同源过滤，压根不注入 schema，工具入口不再二次判定会话类型。
+# 数据库约束保证 ``is_automation`` 与 ``system_preset_id == "automation"`` 等价；陪伴与四个职业预设
+# 由 conversation 领域的预设目录校验。
+PRESET_BODIES: dict[str, str] = {
+    "companion": PRESET_BODY_COMPANION,
+    "developer": PRESET_BODY_WORK,
+    "product_manager": PRESET_BODY_WORK,
+    "copywriter": PRESET_BODY_WORK,
+    "language_teacher": PRESET_BODY_WORK,
+    "automation": PRESET_BODY_AUTOMATION,
+}
+# 生活空间工具只服务陪伴会话：工作预设与自动化任务在回合装配层与 search_tools 元工具同源过滤，
+# 不注入 schema，工具入口不再二次判定会话类型。
 LIFE_SPACE_TOOL_NAMES = frozenset(
     {
         "send_message_tool",
@@ -49,29 +44,15 @@ AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(
 )
 
 
-def _build_body(preset: PromptPreset, language: str) -> str:
-    header_dict = PRESET_HEADER_TEXTS.get(preset.id)
-    if header_dict is None:
-        return preset.body
-    header = resolve_prompt_text(header_dict, language)
-    return f"{header}\n\n{preset.body}"
+def preset_body(preset_id: str, language: str) -> str:
+    """职业预设在共享工作预设体前加各自的双语头部。"""
+    header = PRESET_HEADER_TEXTS.get(preset_id)
+    body = PRESET_BODIES[preset_id]
+    return f"{resolve_prompt_text(header, language)}\n\n{body}" if header else body
 
 
-def _preset_from_catalog(preset_id: str, body: str) -> PromptPreset:
-    meta = SYSTEM_PRESET_CATALOG[preset_id]
-    return PromptPreset(id=meta.id, name=meta.name, description=meta.description, icon_key=meta.icon_key, body=body)
-
-
-BUILTIN_PRESETS: dict[str, PromptPreset] = {
-    "companion": _preset_from_catalog("companion", PRESET_BODY_COMPANION),
-    "developer": _preset_from_catalog("developer", PRESET_BODY_WORK),
-    "product_manager": _preset_from_catalog("product_manager", PRESET_BODY_WORK),
-    "copywriter": _preset_from_catalog("copywriter", PRESET_BODY_WORK),
-    "language_teacher": _preset_from_catalog("language_teacher", PRESET_BODY_WORK),
-}
-
-
-def resolve_preset(preset_id: str | None) -> PromptPreset:
-    if preset_id not in BUILTIN_PRESETS:
-        raise ValueError("Unknown system preset")
-    return BUILTIN_PRESETS[preset_id]
+def preset_excluded_tool_names(preset_id: str) -> frozenset[str]:
+    """预设不绑定的工具；回合装配与执行层共用同一集合。"""
+    if preset_id == "automation":
+        return AUTOMATION_EXCLUDED_TOOL_NAMES
+    return LIFE_SPACE_TOOL_NAMES if is_work_preset(preset_id) else frozenset()

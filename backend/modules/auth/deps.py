@@ -27,10 +27,8 @@ async def get_current_admin_token(
     if not payload.get("is_admin"):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="非管理员令牌。")
     username = payload.get("username")
-    if not username:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌无效。")
     jti = payload.get("jti")
-    if not jti:
+    if not username or not jti:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="令牌无效。")
     session = (
         await db.execute(select(AdminSession).where(AdminSession.token_jti == jti, AdminSession.is_active.is_(True)))

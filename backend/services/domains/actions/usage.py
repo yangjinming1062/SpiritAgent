@@ -24,7 +24,6 @@ def action_to_dict(action: CompanionAction) -> dict[str, Any]:
         "motion_description": action.motion_description,
         "use_when": json.loads(action.use_when or "[]"),
         "avoid_when": json.loads(action.avoid_when or "[]"),
-        "tags": json.loads(action.tags or "[]"),
         "duration_ms": duration_ms,
         "duration_seconds": round(duration_ms / 1000, 3) if duration_ms else 0.0,
         "loopable": action.loopable,
@@ -32,27 +31,39 @@ def action_to_dict(action: CompanionAction) -> dict[str, Any]:
     }
 
 
+def emit_play_command(db: AsyncSession, entry: ActionPlayback, action: CompanionAction) -> None:
+    """播放指令与账本同事务写 outbox；客户端按 play_id 回执，queued 不等于 completed。"""
+    emit_ws_event(
+        db,
+        user_id=entry.user_id,
+        event_type="companion.action.play_requested",
+        payload=ActionPlayCommand(
+            play_id=entry.play_id,
+            pack_id=entry.pack_id,
+            appearance_epoch=entry.appearance_epoch,
+            action_id=entry.action_id,
+            asset_revision_id=action.metadata_revision,
+            expires_at=entry.expires_at.isoformat() if entry.expires_at else None,
+            source=entry.source,
+        ).model_dump(),
+    )
+
+
 async def record_play_result(
     db: AsyncSession,
-    play_id: str,
+    entry: ActionPlayback,
     *,
     status: str,
-    visible_duration_ms: int = 0,
-    error: str | None = None,
-) -> ActionPlayback | None:
-    """按 play_id 幂等更新播放终态。同状态不重复计；终态不再推进。"""
-    row = await db.execute(select(ActionPlayback).where(ActionPlayback.play_id == play_id))
-    entry = row.scalar_one_or_none()
-    if entry is None:
-        return None
+    visible_duration_ms: int,
+    error: str | None,
+) -> None:
+    """幂等更新播放终态。同状态不重复计；终态不再推进。"""
     if entry.status == status or entry.status in ("completed", "interrupted", "rejected"):
-        return entry
-
+        return
     entry.status = status
     entry.visible_duration_ms = visible_duration_ms
     entry.error = error
     await db.flush()
-    return entry
 
 
 async def fulfill_deferred_play_intents(db: AsyncSession, action_id: int) -> list[str]:
@@ -79,33 +90,14 @@ async def fulfill_deferred_play_intents(db: AsyncSession, action_id: int) -> lis
     )
     fulfilled: list[str] = []
     for entry in rows:
-        if entry.expires_at is not None:
-            expires = entry.expires_at if entry.expires_at.tzinfo else entry.expires_at.replace(tzinfo=UTC)
-            if expires < now:
-                continue
+        if entry.expires_at is not None and entry.expires_at < now:
+            continue
         if pack is None or not pack.active or entry.appearance_epoch != pack.appearance_epoch:
             entry.status = "rejected"
             entry.error = "形象已切换，播放请求已取消"
             continue
-        expires_at = now + timedelta(seconds=PLAY_INTENT_TTL_SECONDS)
-        entry.expires_at = expires_at
-        emit_ws_event(
-            db,
-            user_id=entry.user_id,
-            event_type="companion.action.play_requested",
-            payload=ActionPlayCommand(
-                play_id=entry.play_id,
-                target_device=entry.target_device,
-                target_surface=entry.target_surface,
-                pack_id=entry.pack_id,
-                appearance_epoch=entry.appearance_epoch,
-                action_id=entry.action_id,
-                asset_revision_id=action.metadata_revision,
-                repeat_count=entry.repeat_count,
-                expires_at=expires_at.isoformat(),
-                source=entry.source,
-            ).model_dump(),
-        )
+        entry.expires_at = now + timedelta(seconds=PLAY_INTENT_TTL_SECONDS)
+        emit_play_command(db, entry, action)
         fulfilled.append(entry.play_id)
     await db.flush()
     return fulfilled

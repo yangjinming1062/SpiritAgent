@@ -1,33 +1,36 @@
 import asyncio
 import contextlib
 import json
-from datetime import date, datetime, timedelta
+from collections.abc import Coroutine, Sequence
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any
-from zoneinfo import ZoneInfoNotFoundError
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import (
     DEFAULT_LANGUAGE,
     SETTINGS,
+    format_day_marker,
+    format_local_date_str,
+    format_time_anchor,
     get_logger,
     is_time_context_text,
     parse_llm_json,
     resolve_language,
     resolve_prompt_text,
     session_scope,
-    utc_now,
 )
 from modules.auth import User
 from modules.companion import Persona
 from modules.conversation import Conversation, Message
 from modules.scheduler import NightlyActivityLog
-from modules.settings import UserSetting
+from modules.settings import get_user_setting
 from prompts.nightly import NIGHTLY_REFLECTION_TEXTS, REFLECTION_REPAIR_INSTRUCTIONS
 from sqlalchemy import func, select
 from sqlalchemy.exc import SQLAlchemyError
 
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.companion import load_persona_definition
-from services.domains.conversation import SPECIAL_KIND, UI_ONLY_SUBTYPES, validate_memory_scope
+from services.domains.conversation import SPECIAL_KIND, UI_ONLY_SUBTYPES, message_text, validate_memory_scope
 from services.domains.journal import collect_moment_interactions
 from services.domains.memory import (
     backfill_memory_embeddings,
@@ -41,13 +44,51 @@ from services.infrastructure.llm import UserLlmConfig, call_llm_once, resolve_us
 
 from .daily_checkpoint import run_daily_checkpoint
 from .journal_nightly import project_today
-from .nightly_helpers import get_local_day_utc_bounds, prefilter_messages_for_nightly
-from .nightly_planning import ActionExecutionResult, DateContext, PlanningResult, run_nightly_planning
+from .nightly_planning import DateContext, PlanningResult, run_nightly_planning
 
 logger = get_logger(__name__)
 
 # 传给 planning 阶段的 recall 行数（用作高亮）。
 _PLANNING_RECALL_HIGHLIGHTS: int = 10
+# 规划动作以这些状态结束时，整晚记为部分失败。
+_FAILED_ACTION_STATUSES = frozenset(("failed", "interrupted", "partial"))
+
+
+def _local_day_utc_bounds(day: date, tz_str: str) -> tuple[datetime, datetime]:
+    zone = ZoneInfo(tz_str)
+    local_start = datetime.combine(day, time.min, zone)
+    return local_start.astimezone(UTC), (local_start + timedelta(days=1)).astimezone(UTC)
+
+
+def _clean_messages(messages: Sequence[Message], tz_str: str) -> list[dict[str, str]]:
+    """夜间批处理对话正文；日期分界与用户时刻作为独立项，不写入正文。"""
+    clean: list[dict[str, str]] = []
+    prev_date_key: str | None = None
+    last_user_at: datetime | None = None
+    for msg in messages:
+        text_content = message_text(msg)
+        if not text_content:
+            continue
+        cur_date_key = format_local_date_str(msg.created_at, tz_str, DEFAULT_LANGUAGE)
+        if cur_date_key and cur_date_key != prev_date_key:
+            marker_text = format_day_marker(msg.created_at, tz_str, DEFAULT_LANGUAGE)
+            if marker_text:
+                clean.append({"role": "user", "content": marker_text})
+            prev_date_key = cur_date_key
+        clean.append({"role": msg.role, "content": text_content})
+        if msg.role == "user":
+            clock = format_time_anchor(msg.created_at, last_user_at, tz_str, DEFAULT_LANGUAGE)
+            if clock:
+                clean.append({"role": "user", "content": clock})
+            last_user_at = msg.created_at
+    return clean
+
+
+def _persona_brief(persona: Persona | None) -> dict[str, str]:
+    definition = load_persona_definition(persona)
+    return {
+        key: definition[key] for key in ("name", "personality", "speaking_style", "relationship") if definition.get(key)
+    }
 
 
 async def _stage_4_self_diary(
@@ -58,12 +99,12 @@ async def _stage_4_self_diary(
     background_memories: dict[str, str],
     local_date_str: str,
     autonomous_actions: list[dict[str, Any]],
-    moment_interactions: list[dict[str, Any]] | None = None,
-    language: str = DEFAULT_LANGUAGE,
+    moment_interactions: list[dict[str, Any]],
+    persona: dict[str, str],
+    language: str,
 ) -> bool:
     """Stage 4：自我日记——伙伴写下当天的个人反思。"""
     user_id = scope.user_id
-    validate_memory_scope(scope)
     payload = {
         "today_conversations": clean_messages,
         "contextual_memories": contextual_memories,
@@ -73,15 +114,8 @@ async def _stage_4_self_diary(
         "local_date": local_date_str,
         "language": language,
         "max_content_chars": SETTINGS.diary_max_content_chars,
+        "persona": persona,
     }
-    async with session_scope() as db:
-        persona = await db.scalar(select(Persona).where(Persona.user_id == user_id))
-        definition = load_persona_definition(persona) if persona is not None else {}
-        payload["persona"] = {
-            key: definition[key]
-            for key in ("name", "personality", "speaking_style", "relationship")
-            if definition.get(key)
-        }
     instructions = resolve_prompt_text(NIGHTLY_REFLECTION_TEXTS, language)
     for attempt in range(2):
         raw = await call_llm_once(
@@ -125,53 +159,41 @@ async def _stage_4_self_diary(
     return True
 
 
-async def _update_log(log_id: int, **kwargs: Any) -> None:
-    """在独立事务中更新夜间活动日志行——主流水线的 session 在 Stage 0 之后已关闭，且各阶段在独立事务里跑，复用同一 session 会与 lifecycle 错位。"""
+async def _update_log(
+    log_id: int,
+    *,
+    status: str,
+    summary: str | None = None,
+    payload: dict[str, Any] | None = None,
+) -> None:
+    """在独立事务中更新夜间活动日志行；各阶段在各自事务里跑，不复用流水线开头的 session。payload 合并进已有内容（保留计划快照）。"""
     async with session_scope() as db:
         log = await db.get(NightlyActivityLog, log_id)
-        if log:
-            for k, v in kwargs.items():
-                if k == "payload" and isinstance(v, dict):
-                    current = dict(log.payload) if isinstance(log.payload, dict) else {}
-                    current.update(v)
-                    log.payload = current
-                else:
-                    setattr(log, k, v)
-            await db.commit()
+        if log is None:
+            return
+        log.status = status
+        if summary is not None:
+            log.summary = summary
+        if payload is not None:
+            log.payload = {**(log.payload or {}), **payload}
+        await db.commit()
 
 
-def _successful_action_facts(planning_result: PlanningResult | dict[str, Any]) -> list[dict[str, Any]]:
-    actions = planning_result.actions if isinstance(planning_result, PlanningResult) else planning_result.get("actions")
-    if not isinstance(actions, dict):
-        return []
+def _successful_action_facts(planning_result: PlanningResult) -> list[dict[str, Any]]:
     facts: list[dict[str, Any]] = []
-    for action_key, action in actions.items():
-        status = action.status if isinstance(action, ActionExecutionResult) else action.get("status")
-        if status not in (
-            "succeeded",
-            "partial",
-        ):
+    for action_key, action in planning_result.actions.items():
+        if action.status not in ("succeeded", "partial") or not (fact := (action.fact or "").strip()):
             continue
-        fact = str((action.fact if isinstance(action, ActionExecutionResult) else action.get("fact")) or "").strip()
-        if fact:
-            capability = str(
-                (action.capability if isinstance(action, ActionExecutionResult) else action.get("capability")) or "",
-            )
-            item: dict[str, Any] = {
-                "action_key": str(action_key),
-                "capability": capability,
-                "status": str(status),
-                "fact": fact,
-            }
-            for identifier in ("moment_id", "outfit_id", "scene_id"):
-                val = (
-                    getattr(action, identifier, None)
-                    if isinstance(action, ActionExecutionResult)
-                    else action.get(identifier)
-                )
-                if val is not None:
-                    item[identifier] = val
-            facts.append(item)
+        item: dict[str, Any] = {
+            "action_key": action_key,
+            "capability": action.capability,
+            "status": action.status,
+            "fact": fact,
+        }
+        for identifier in ("moment_id", "outfit_id", "scene_id"):
+            if (value := getattr(action, identifier)) is not None:
+                item[identifier] = value
+        facts.append(item)
     return facts
 
 
@@ -179,10 +201,9 @@ async def _write_action_memory(
     scope: MemoryScope,
     local_date_str: str,
     actions: list[dict[str, Any]],
-    language: str = DEFAULT_LANGUAGE,
+    language: str,
 ) -> None:
     """把精灵真正做过的事写入可检索自传记忆，供次日对话自然延续。"""
-    validate_memory_scope(scope)
     if not actions:
         return
     prefix = "Nightly autonomous activities: " if language == "en" else "夜间自主活动："
@@ -202,62 +223,39 @@ async def _write_action_memory(
     await backfill_memory_embeddings(scope, [embedding_item])
 
 
-async def run_nightly_pipeline(
-    scope: MemoryScope,
-    reference_utc: datetime | None = None,
-    *,
-    target_date: date | None = None,
-) -> bool:
-    """为单作用域执行夜间整理，陪伴域额外执行自主规划与日记；reference_utc 决定处理哪个本地日——cron 门控传刚结束的当天，边界与日期标签由同一 instant 派生，避免算两次发生漂移。每次执行（含跳过）写入一条 nightly_activity_logs 行供管理员查看。"""
+async def run_nightly_pipeline(scope: MemoryScope, target_date: date) -> bool:
+    """为单作用域整理 target_date（用户本地日）：陪伴域额外执行自主规划与日记。每次执行（含跳过）写入一条 nightly_activity_logs 行供管理员查看。"""
     user_id = scope.user_id
     validate_memory_scope(scope)
-    now_utc = reference_utc or utc_now()
-
-    resolved_target_date = target_date
-    if resolved_target_date is None:
-        async with session_scope() as db:
-            if tz_str := await resolve_user_timezone(db, user_id):
-                with contextlib.suppress(Exception):
-                    _, _, user_local_dt, _ = get_local_day_utc_bounds(now_utc, tz_str)
-                    resolved_target_date = user_local_dt.date()
-    if resolved_target_date is None:
-        resolved_target_date = now_utc.date()
-
-    log_id: int | None = None
     try:
         async with session_scope() as db:
-            existing = (
+            log = (
                 await db.execute(
                     select(NightlyActivityLog).where(
                         NightlyActivityLog.user_id == user_id,
                         NightlyActivityLog.system_preset_id == scope.system_preset_id,
-                        NightlyActivityLog.target_date == resolved_target_date,
+                        NightlyActivityLog.target_date == target_date,
                     ),
                 )
             ).scalar_one_or_none()
-            if existing is not None:
-                if existing.status in ("completed", "completed_with_errors"):
-                    logger.info(
-                        "nightly_activity: target date already completed",
-                        extra={
-                            "user_id": user_id,
-                            "target_date": resolved_target_date.isoformat(),
-                        },
-                    )
-                    return True
-                existing.status = "running"
-                existing.summary = ""
-                log = existing
-            else:
+            if log is None:
                 log = NightlyActivityLog(
                     user_id=user_id,
-                    target_date=resolved_target_date,
+                    target_date=target_date,
                     system_preset_id=scope.system_preset_id,
                     status="running",
                 )
                 db.add(log)
+            elif log.status in ("completed", "completed_with_errors"):
+                logger.info(
+                    "nightly_activity: target date already completed",
+                    extra={"user_id": user_id, "target_date": target_date.isoformat()},
+                )
+                return True
+            else:
+                log.status = "running"
+                log.summary = ""
             await db.commit()
-            await db.refresh(log)
             log_id = log.id
     except SQLAlchemyError as exc:
         logger.warning(
@@ -267,64 +265,62 @@ async def run_nightly_pipeline(
         return False
 
     try:
-        return await _run_nightly_pipeline_inner(scope, now_utc, log_id)
+        return await _run_nightly_pipeline_inner(scope, target_date, log_id)
     except Exception as exc:
         # DB 写失败不应掩盖原始异常——cron 的 logger 已有 exc_info，这里只尽力留个 failed 行供 admin 看。
-        if log_id is not None:
-            with contextlib.suppress(Exception):
-                await _update_log(log_id, status="failed", summary=f"未捕获异常: {exc}")
+        with contextlib.suppress(Exception):
+            await _update_log(log_id, status="failed", summary=f"未捕获异常: {exc}")
         raise
 
 
-async def _run_nightly_pipeline_inner(
-    scope: MemoryScope,
-    now_utc: datetime,
-    log_id: int | None,
-) -> bool:
+async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log_id: int) -> bool:
     user_id = scope.user_id
-    validate_memory_scope(scope)
     async with session_scope() as db:
         user = await db.get(User, user_id)
-        if user is None or not user.nightly_activity_enabled:
-            logger.info(
-                "nightly_activity: skipped, disabled by user policy",
-                extra={"user_id": user_id},
-            )
-            if log_id is not None:
-                await _update_log(
-                    log_id,
-                    status="skipped",
-                    summary="夜间活动总控已关闭",
-                )
-            return False
         tz_str = await resolve_user_timezone(db, user_id)
-        if not tz_str:
-            logger.info(
-                "nightly_activity: skipped, missing timezone",
-                extra={"user_id": user_id},
-            )
-            if log_id is not None:
-                await _update_log(log_id, status="skipped", summary="缺少时区设置")
-            return False
-        try:
-            utc_start, utc_end, user_local_dt, local_today_str = get_local_day_utc_bounds(now_utc, tz_str)
-        except (ZoneInfoNotFoundError, ValueError, SQLAlchemyError) as exc:
-            logger.warning(
-                "nightly_activity: timezone resolution error",
-                extra={"user_id": user_id, "error": str(exc)},
-            )
-            if log_id is not None:
-                await _update_log(
-                    log_id,
-                    status="skipped",
-                    summary=f"时区解析错误: {exc}",
-                )
-            return False
+    if user is None or not user.nightly_activity_enabled:
+        logger.info("nightly_activity: skipped, disabled by user policy", extra={"user_id": user_id})
+        await _update_log(log_id, status="skipped", summary="夜间活动总控已关闭")
+        return False
+    if not tz_str:
+        logger.info("nightly_activity: skipped, missing timezone", extra={"user_id": user_id})
+        await _update_log(log_id, status="skipped", summary="缺少时区设置")
+        return False
+    try:
+        utc_start, utc_end = _local_day_utc_bounds(target_date, tz_str)
+    except (ZoneInfoNotFoundError, ValueError) as exc:
+        logger.warning(
+            "nightly_activity: timezone resolution error",
+            extra={"user_id": user_id, "error": str(exc)},
+        )
+        await _update_log(log_id, status="skipped", summary=f"时区解析错误: {exc}")
+        return False
+    async with session_scope() as db:
+        llm_cfg = await resolve_user_llm_config(db, user_id)
+    if not llm_cfg.is_configured:
+        logger.info("nightly_activity: skipped, missing llm config", extra={"user_id": user_id})
+        await _update_log(log_id, status="skipped", summary="缺少 LLM 配置")
+        return False
 
-        # Stage 0：收集上下文
-        all_today_tuples = (
-            await db.execute(
-                select(Message, Conversation.system_preset_id)
+    # 各阶段顺序执行，失败域相互隔离；每个阶段的结果汇入 stages 给末尾日志。
+    stages: list[dict[str, Any]] = []
+    try:
+        await review_memories(scope, llm_config=llm_cfg)
+        stages.append({"stage": "memory_review", "status": "ok"})
+    except Exception as exc:
+        logger.exception("nightly memory review failed", extra={"user_id": user_id})
+        stages.append({"stage": "memory_review", "status": "error", "error": str(exc)})
+
+    if scope.system_preset_id != "companion":
+        has_errors = any(stage["status"] == "error" for stage in stages)
+        await _update_log(log_id, status="failed" if has_errors else "completed", payload={"stages": stages})
+        return not has_errors
+
+    local_date_str = target_date.isoformat()
+    async with session_scope() as db:
+        today_messages = (
+            await db.scalars(
+                select(Message)
                 .join(Conversation, Message.conversation_id == Conversation.id)
                 .where(
                     Conversation.user_id == user_id,
@@ -339,32 +335,10 @@ async def _run_nightly_pipeline_inner(
                 .order_by(Message.id.asc()),
             )
         ).all()
-        main_msgs = [m for m, _ in all_today_tuples]
-
-        clean_main_messages = prefilter_messages_for_nightly(main_msgs, user_tz=tz_str)
-        clean_messages = clean_main_messages
-        has_user_messages = any(m["role"] == "user" and not is_time_context_text(m["content"]) for m in clean_messages)
-
-        user_lang_row = (
-            await db.execute(
-                select(UserSetting.setting_value).where(
-                    UserSetting.user_id == user_id,
-                    UserSetting.setting_key == "language",
-                ),
-            )
-        ).scalar()
-        user_language = resolve_language(user_lang_row)
-
+        user_language = resolve_language(await get_user_setting(db, user_id, "language"))
         # 片刻互动（当日发布 + 当日评论）作为规划、反思日记与日记投影的共享输入。
-        moment_interactions = await collect_moment_interactions(
-            db,
-            user_id,
-            utc_start=utc_start,
-            utc_end=utc_end,
-        )
-
+        moments = await collect_moment_interactions(db, user_id, utc_start=utc_start, utc_end=utc_end)
         # 7 天基线活动统计（主会话，排除 UI-only 子类型）。
-        seven_days_ago_utc = utc_start - timedelta(days=7)
         past_7_count = (
             await db.execute(
                 select(func.count())
@@ -375,85 +349,51 @@ async def _run_nightly_pipeline_inner(
                     Conversation.system_preset_id == scope.system_preset_id,
                     Message.id > Conversation.context_after_message_id,
                     Conversation.kind == SPECIAL_KIND,
-                    Conversation.system_preset_id == "companion",
                     Message.role == "user",
                     Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),
-                    Message.created_at >= seven_days_ago_utc,
+                    Message.created_at >= utc_start - timedelta(days=7),
                     Message.created_at < utc_start,
                 ),
             )
         ).scalar_one()
-        today_msg_count = sum(
-            1 for m in clean_main_messages if m["role"] == "user" and not is_time_context_text(m["content"])
-        )
-        seven_day_avg = round(past_7_count / 7.0, 2)
-
-        # 日期推算
-        tomorrow_dt = user_local_dt + timedelta(days=1)
-        date_context = DateContext(
-            source_date=local_today_str,
-            tomorrow_date=tomorrow_dt.strftime("%Y-%m-%d"),
-            tomorrow_weekday=tomorrow_dt.strftime("%A"),
-            next_7_days=[(user_local_dt + timedelta(days=i)).strftime("%Y-%m-%d (%A)") for i in range(1, 8)],
-            user_timezone=tz_str,
-        )
-        anomaly_stats = {
-            "today_msg_count": today_msg_count,
-            "seven_day_avg": seven_day_avg,
-        }
-
-        llm_cfg = await resolve_user_llm_config(db, user_id)
-        if not llm_cfg.is_configured:
-            logger.info(
-                "nightly_activity: skipped, missing llm config",
-                extra={"user_id": user_id},
-            )
-            if log_id is not None:
-                await _update_log(log_id, status="skipped", summary="缺少 LLM 配置")
-            return False
-
-    # 确保 target_date 为用户本地日（与初始创建保持一致）。
-    if log_id is not None:
-        await _update_log(log_id, target_date=user_local_dt.date())
-
-    # 各阶段顺序执行，失败域相互隔离；每个阶段的结果汇入 stages 给末尾日志。
-    stages: list[dict[str, Any]] = []
-    try:
-        await review_memories(scope, llm_config=llm_cfg)
-        stages.append({"stage": "memory_review", "status": "ok"})
-    except Exception as exc:
-        logger.exception("nightly memory review failed", extra={"user_id": user_id})
-        stages.append({"stage": "memory_review", "status": "error", "error": str(exc)})
-
-    # 维护完成后重新读取有效事实，规划与日记不复用维护前的过期快照。
-    async with session_scope() as db:
+        # 维护完成后读取有效事实，规划与日记不使用维护前的过期快照。
         recall_rows = await list_memories(db, scope, kind="recall", limit=None)
         user_profile = await read_user_profile(db, scope)
-    updated_contextual = {
+        persona = _persona_brief(await db.scalar(select(Persona).where(Persona.user_id == user_id)))
+
+    clean_messages = _clean_messages(today_messages, tz_str)
+    today_msg_count = sum(1 for m in clean_messages if m["role"] == "user" and not is_time_context_text(m["content"]))
+    tomorrow = target_date + timedelta(days=1)
+    date_context = DateContext(
+        source_date=local_date_str,
+        tomorrow_date=tomorrow.isoformat(),
+        tomorrow_weekday=tomorrow.strftime("%A"),
+        next_7_days=[(target_date + timedelta(days=i)).strftime("%Y-%m-%d (%A)") for i in range(1, 8)],
+        user_timezone=tz_str,
+    )
+    anomaly_stats = {
+        "today_msg_count": today_msg_count,
+        "seven_day_avg": round(past_7_count / 7.0, 2),
+    }
+    contextual_memories = {
         str(r["id"]): f"[{r['basis']}] {r['content']}" for r in recall_rows if r["usage"] == "contextual"
     }
-    updated_background_memories = {str(r["id"]): r["content"] for r in recall_rows if r["usage"] == "background"}
+    background_memories = {str(r["id"]): r["content"] for r in recall_rows if r["usage"] == "background"}
 
-    if scope.system_preset_id != "companion":
-        has_errors = any(stage["status"] == "error" for stage in stages)
-        await _update_log(log_id, status="failed" if has_errors else "completed", payload={"stages": stages})
-        return not has_errors
-
-    planning_result = PlanningResult()
+    planning_result: PlanningResult | None = None
     action_facts: list[dict[str, Any]] = []
     try:
-        recall_highlights = recall_rows[:_PLANNING_RECALL_HIGHLIGHTS] if recall_rows else []
         planning_result = await run_nightly_planning(
             llm_cfg,
             user_id,
-            updated_contextual,
-            updated_background_memories,
+            contextual_memories,
+            background_memories,
             user_profile,
-            recall_highlights,
+            recall_rows[:_PLANNING_RECALL_HIGHLIGHTS],
             date_context,
             anomaly_stats,
-            clean_main_messages,
-            moment_interactions=moment_interactions,
+            clean_messages,
+            moments.threads,
             log_id=log_id,
         )
         stages.append({"stage": "planning", "status": "ok", "actions": planning_result.model_dump()})
@@ -466,36 +406,31 @@ async def _run_nightly_pipeline_inner(
         stages.append({"stage": "planning", "status": "error", "error": str(exc)})
     else:
         try:
-            await _write_action_memory(scope, local_today_str, action_facts, language=user_language)
+            await _write_action_memory(scope, local_date_str, action_facts, user_language)
         except Exception as exc:
             logger.exception(
                 "nightly_activity: autonomous action memory failed",
                 extra={"user_id": user_id, "error": str(exc)},
             )
-            stages.append(
-                {
-                    "stage": "action memory",
-                    "status": "error",
-                    "error": str(exc),
-                },
-            )
+            stages.append({"stage": "action memory", "status": "error", "error": str(exc)})
 
-    if has_user_messages or action_facts or moment_interactions:
+    # 没有新互动、成功行动或片刻互动时不虚构日记；反思与用户可见日记共用这一门控。
+    has_material = bool(today_msg_count or action_facts or moments.threads)
+    if has_material:
         try:
             diary_ok = await _stage_4_self_diary(
                 llm_cfg,
                 scope,
                 clean_messages,
-                updated_contextual,
-                updated_background_memories,
-                local_today_str,
+                contextual_memories,
+                background_memories,
+                local_date_str,
                 action_facts,
-                moment_interactions=moment_interactions,
-                language=user_language,
+                moments.threads,
+                persona,
+                user_language,
             )
-            stages.append(
-                {"stage": "diary", "status": "ok" if diary_ok else "error"},
-            )
+            stages.append({"stage": "diary", "status": "ok" if diary_ok else "error"})
         except Exception as exc:
             logger.exception(
                 "nightly_activity: stage 4 diary failed",
@@ -503,83 +438,54 @@ async def _run_nightly_pipeline_inner(
             )
             stages.append({"stage": "diary", "status": "error", "error": str(exc)})
     else:
-        stages.append(
-            {"stage": "diary", "status": "skipped", "reason": "当日无互动或自主行动"},
-        )
+        stages.append({"stage": "diary", "status": "skipped", "reason": "当日无互动或自主行动"})
 
     # Daily checkpoint 与生活空间日记投影相互独立，并发执行以缩短每用户的夜间墙钟时间。
-    async def _checkpoint() -> None:
-        await run_daily_checkpoint(
-            llm_cfg,
-            user_id,
-            utc_start,
-            utc_end,
-            local_today_str,
-            language=user_language,
+    labels = ["daily checkpoint"]
+    jobs: list[Coroutine[Any, Any, bool | None]] = [
+        run_daily_checkpoint(llm_cfg, user_id, utc_start, utc_end, local_date_str, user_language),
+    ]
+    if has_material:
+        labels.append("journal nightly")
+        jobs.append(
+            project_today(
+                user_id,
+                target_date,
+                messages=clean_messages,
+                llm_cfg=llm_cfg,
+                nightly_actions=action_facts,
+                moments=moments,
+                persona=persona,
+                language=user_language,
+            ),
         )
-
-    async def _journal_project() -> bool | None:
-        return await project_today(
-            user_id,
-            reference_utc=now_utc,
-            pre_messages=clean_main_messages,
-            llm_cfg=llm_cfg,
-            nightly_actions=action_facts,
-            moment_interactions=moment_interactions,
-            language=user_language,
-        )
-
-    results = await asyncio.gather(
-        _checkpoint(),
-        _journal_project(),
-        return_exceptions=True,
-    )
-    for label, result in zip(
-        ("daily checkpoint", "journal nightly"),
-        results,
-        strict=True,
-    ):
+    results = await asyncio.gather(*jobs, return_exceptions=True)
+    for label, result in zip(labels, results, strict=True):
         if isinstance(result, Exception):
             # 不在 except 块里——必须显式传异常，否则 exc_info 为空，traceback 丢失。
-            logger.error(
-                f"nightly_activity: {label} failed",
-                exc_info=result,
-                extra={"user_id": user_id},
-            )
+            logger.error(f"nightly_activity: {label} failed", exc_info=result, extra={"user_id": user_id})
             stages.append({"stage": label, "status": "error", "error": str(result)})
         elif label == "journal nightly" and result is None:
             logger.error(
                 "nightly_activity: journal nightly failed",
                 extra={"user_id": user_id, "error": "empty compose result"},
             )
-            stages.append(
-                {"stage": label, "status": "error", "error": "empty compose result"},
-            )
+            stages.append({"stage": label, "status": "error", "error": "empty compose result"})
         elif label == "journal nightly" and result is False:
             stages.append({"stage": label, "status": "skipped"})
         else:
             stages.append({"stage": label, "status": "ok"})
+    if not has_material:
+        stages.append({"stage": "journal nightly", "status": "skipped"})
 
-    has_errors = False
-    for stage in stages:
-        if stage.get("status") == "error":
-            has_errors = True
-            break
-        planning = stage.get("actions")
-        action_results = planning.get("actions") if isinstance(planning, dict) else None
-        if isinstance(action_results, dict) and any(
-            isinstance(action, dict) and action.get("status") in ("failed", "interrupted", "partial")
-            for action in action_results.values()
-        ):
-            has_errors = True
-            break
-    final_status = "completed_with_errors" if has_errors else "completed"
-    summary_parts = [f"{s['stage']}:{s['status']}" for s in stages]
-    if log_id is not None:
-        await _update_log(
-            log_id,
-            status=final_status,
-            summary="; ".join(summary_parts),
-            payload={"stages": stages, "target_date": local_today_str},
-        )
+    has_errors = any(stage["status"] == "error" for stage in stages) or (
+        planning_result is not None
+        and any(action.status in _FAILED_ACTION_STATUSES for action in planning_result.actions.values())
+    )
+    await _update_log(
+        log_id,
+        status="completed_with_errors" if has_errors else "completed",
+        summary="; ".join(f"{s['stage']}:{s['status']}" for s in stages),
+        payload={"stages": stages, "target_date": local_date_str},
+    )
     return True

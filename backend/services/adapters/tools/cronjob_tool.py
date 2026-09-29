@@ -7,6 +7,7 @@ from prompts.tools import CRONJOB_DESC, CRONJOB_PARAM_DESCS
 from services.contracts import MemoryScope
 from services.domains.automation import create_job, get_job, list_jobs, remove_job, update_job
 from services.domains.conversation import resolve_memory_scope
+from services.infrastructure.tool_runtime import ToolsRegistry
 
 logger = get_logger(__name__)
 
@@ -26,6 +27,9 @@ def _build_updates(prompt: str | None, name: str | None, schedule: str | None, k
     return updates
 
 
+_UPDATE_VERBS = {"update": "updated", "pause": "paused", "resume": "resumed"}
+
+
 async def _handle_cron_action(
     action: str,
     scope: MemoryScope,
@@ -36,100 +40,68 @@ async def _handle_cron_action(
     deliver: str,
     kind: str | None,
 ) -> str:
-    match action:
-        case "create":
-            if not schedule or not prompt:
-                return tool_error("schedule and prompt are required for create")
-            try:
-                job = await create_job(
-                    scope=scope,
-                    prompt=prompt,
-                    schedule=schedule,
-                    name=name or "cron job",
-                    deliver=deliver,
-                    kind=kind or "standard",
-                )
-            except ValueError as e:
-                return tool_error(str(e))
-            return json.dumps(
-                {"success": True, "message": f"Cron job '{job.get('name')}' created.", "job": job},
-                ensure_ascii=False,
+    if action == "create":
+        if not schedule or not prompt:
+            return tool_error("schedule and prompt are required for create")
+        try:
+            job = await create_job(
+                scope=scope,
+                prompt=prompt,
+                schedule=schedule,
+                name=name or "cron job",
+                deliver=deliver,
+                kind=kind or "standard",
             )
-        case "list":
-            jobs = await list_jobs(scope=scope)
-            return json.dumps({"success": True, "jobs": jobs}, ensure_ascii=False)
-        case "update":
-            job_id = coerce_int(job_id_raw, None)
-            if job_id is None:
-                return tool_error("job_id is required for update")
-            updates = _build_updates(prompt, name, schedule, kind)
-            job = await update_job(scope=scope, job_id=job_id, updates=updates)
-            if not job:
-                return tool_error(f"Cron job #{job_id_raw} not found.")
-            return json.dumps(
-                {"success": True, "message": f"Cron job #{job['id']} updated.", "job": job},
-                ensure_ascii=False,
-            )
-        case "remove":
-            job_id = coerce_int(job_id_raw, None)
-            if job_id is None:
-                return tool_error("job_id is required for remove")
-            ok = await remove_job(scope=scope, job_id=job_id)
-            if not ok:
-                return tool_error(f"Cron job #{job_id_raw} not found.")
-            return json.dumps({"success": True, "message": f"Cron job #{job_id_raw} removed."}, ensure_ascii=False)
-        case "pause":
-            job_id = coerce_int(job_id_raw, None)
-            if job_id is None:
-                return tool_error("job_id is required for pause")
-            job = await update_job(scope=scope, job_id=job_id, updates={"is_paused": True})
-            if not job:
-                return tool_error(f"Cron job #{job_id_raw} not found.")
-            return json.dumps(
-                {"success": True, "message": f"Cron job #{job['id']} paused.", "job": job},
-                ensure_ascii=False,
-            )
-        case "resume":
-            job_id = coerce_int(job_id_raw, None)
-            if job_id is None:
-                return tool_error("job_id is required for resume")
-            job = await update_job(scope=scope, job_id=job_id, updates={"is_paused": False})
-            if not job:
-                return tool_error(f"Cron job #{job_id_raw} not found.")
-            return json.dumps(
-                {"success": True, "message": f"Cron job #{job['id']} resumed.", "job": job},
-                ensure_ascii=False,
-            )
-        case "get":
-            job_id = coerce_int(job_id_raw, None)
-            if job_id is None:
-                return tool_error("job_id is required for get")
-            job = await get_job(scope=scope, job_id=job_id)
-            if not job:
-                return tool_error(f"Cron job #{job_id_raw} not found")
-            return json.dumps({"success": True, "job": job}, ensure_ascii=False)
-        case _:
-            return tool_error(
-                f"Unknown cronjob action: {action!r}. Allowed: create, list, update, remove, pause, resume, get.",
-            )
+        except ValueError as e:
+            return tool_error(str(e))
+        return json.dumps(
+            {"success": True, "message": f"Cron job '{job.get('name')}' created.", "job": job},
+            ensure_ascii=False,
+        )
+    if action == "list":
+        return json.dumps({"success": True, "jobs": await list_jobs(scope=scope)}, ensure_ascii=False)
+    if action not in {"remove", "get", *_UPDATE_VERBS}:
+        return tool_error(
+            f"Unknown cronjob action: {action!r}. Allowed: create, list, update, remove, pause, resume, get.",
+        )
+
+    job_id = coerce_int(job_id_raw, None)
+    if job_id is None:
+        return tool_error(f"job_id is required for {action}")
+    if action == "remove":
+        if not await remove_job(scope=scope, job_id=job_id):
+            return tool_error(f"Cron job #{job_id_raw} not found.")
+        return json.dumps({"success": True, "message": f"Cron job #{job_id_raw} removed."}, ensure_ascii=False)
+    if action == "get":
+        job = await get_job(scope=scope, job_id=job_id)
+        if not job:
+            return tool_error(f"Cron job #{job_id_raw} not found")
+        return json.dumps({"success": True, "job": job}, ensure_ascii=False)
+
+    updates = _build_updates(prompt, name, schedule, kind) if action == "update" else {"is_paused": action == "pause"}
+    job = await update_job(scope=scope, job_id=job_id, updates=updates)
+    if not job:
+        return tool_error(f"Cron job #{job_id_raw} not found.")
+    return json.dumps(
+        {"success": True, "message": f"Cron job #{job['id']} {_UPDATE_VERBS[action]}.", "job": job},
+        ensure_ascii=False,
+    )
 
 
 async def cronjob(
     action: str,
     user_id: int,
+    parent_session_id: str,
     job_id: int | None = None,
     prompt: str | None = None,
     schedule: str | None = None,
     name: str | None = None,
     deliver: str = "local",
     kind: str | None = None,
-    parent_session_id: str | None = None,
-    **_,
+    **_: object,
 ) -> str:
     normalized = (action or "").strip().lower()
     try:
-        if parent_session_id is None:
-            raise ValueError("Source conversation is required")
         async with session_scope() as db:
             scope = await resolve_memory_scope(db, user_id, parent_session_id)
         return await _handle_cron_action(normalized, scope, job_id, prompt, schedule, name, deliver, kind)
@@ -169,5 +141,5 @@ CRONJOB_SCHEMA = {
 }
 
 
-def register(registry) -> None:
-    registry.register("cronjob", CRONJOB_SCHEMA, cronjob)
+def register(registry: ToolsRegistry) -> None:
+    registry.register(CRONJOB_SCHEMA, cronjob)

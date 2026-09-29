@@ -3,10 +3,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import DEFAULT_LANGUAGE, resolve_prompt_text
 from modules.memory import Memory
-from modules.settings import UserSetting
+from modules.settings import get_user_setting, put_user_settings
 from prompts.memory import CONTEXT_LABELS, USER_PROFILE_LABELS_TEXTS
-from sqlalchemy import func, select
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope, MemorySource
@@ -23,23 +22,21 @@ def extract_user_profile(payload: dict[str, Any]) -> dict[str, str]:
     return {k: (payload.get(k) or "").strip() for k in payload if k.startswith("user_")}
 
 
+async def _active_profile_rows(db: AsyncSession, scope: MemoryScope) -> list[Memory]:
+    rows = await db.scalars(
+        select(Memory).where(
+            scope_filter(scope),
+            active_memory_filter(),
+            Memory.context.like("user_profile:%"),
+        ),
+    )
+    return list(rows.all())
+
+
 async def read_user_profile(db: AsyncSession, scope: MemoryScope) -> dict[str, str]:
     """record_user_profile 的逆操作：以 {raw_key: content} 返回用户当前的 user_* 回答。"""
-    rows = (
-        (
-            await db.execute(
-                select(Memory).where(
-                    scope_filter(scope),
-                    active_memory_filter(),
-                    Memory.context.like("user_profile:%"),
-                ),
-            )
-        )
-        .scalars()
-        .all()
-    )
     out: dict[str, str] = {}
-    for row in rows:
+    for row in await _active_profile_rows(db, scope):
         suffix = row.context.split(":", 1)[1]
         raw_key = _REVERSE_CONTEXT_LABELS.get(row.context, f"user_{suffix}")
         out[raw_key] = row.content or ""
@@ -47,19 +44,7 @@ async def read_user_profile(db: AsyncSession, scope: MemoryScope) -> dict[str, s
 
 
 async def build_user_profile_extras(db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE) -> str:
-    rows = (
-        (
-            await db.execute(
-                select(Memory).where(
-                    scope_filter(scope),
-                    active_memory_filter(),
-                    Memory.context.like("user_profile:%"),
-                ),
-            )
-        )
-        .scalars()
-        .all()
-    )
+    rows = await _active_profile_rows(db, scope)
     if not rows:
         return ""
     # 已知字段按声明顺序、其余按字典序渲染，保证给 LLM 的形状稳定
@@ -86,15 +71,8 @@ async def record_user_profile(db: AsyncSession, scope: MemoryScope, profile: dic
 
 async def resolve_user_timezone(db: AsyncSession, user_id: int) -> str | None:
     """读用户 IANA 时区；夜间批处理与互动统计按它做本地日聚合。"""
-    val = (
-        await db.execute(
-            select(UserSetting.setting_value).where(
-                UserSetting.user_id == user_id,
-                UserSetting.setting_key == "timezone",
-            ),
-        )
-    ).scalar()
-    return (val or "").strip() or None
+    tz = await get_user_setting(db, user_id, "timezone")
+    return tz if isinstance(tz, str) and tz else None
 
 
 async def record_user_timezone(db: AsyncSession, user_id: int, tz: str) -> bool:
@@ -103,12 +81,5 @@ async def record_user_timezone(db: AsyncSession, user_id: int, tz: str) -> bool:
         ZoneInfo(tz)
     except (ZoneInfoNotFoundError, ValueError, KeyError):
         return False
-    await db.execute(
-        insert(UserSetting)
-        .values(user_id=user_id, setting_key="timezone", setting_value=tz)
-        .on_conflict_do_update(
-            index_elements=["user_id", "setting_key"],
-            set_={"setting_value": tz, "updated_at": func.now()},
-        ),
-    )
+    await put_user_settings(db, user_id, {"timezone": tz})
     return True

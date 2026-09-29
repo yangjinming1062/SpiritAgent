@@ -4,6 +4,6 @@ from .extract_provider import (
     resolve_extract_provider,
     resolve_search_provider,
 )
-from .web_providers import WebSearchProvider, aclose
+from .web_providers import aclose
 
-__all__ = ["WebSearchProvider", "aclose", "resolve_extract_provider", "resolve_search_provider"]
+__all__ = ["aclose", "resolve_extract_provider", "resolve_search_provider"]

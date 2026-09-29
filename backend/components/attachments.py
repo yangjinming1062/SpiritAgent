@@ -2,6 +2,7 @@ import re
 import shutil
 from pathlib import Path
 
+from .config import SETTINGS
 from .logger import get_logger
 
 logger = get_logger(__name__)
@@ -16,13 +17,12 @@ def _validate_session_id(session_id: str) -> str:
     return session_id
 
 
-def attachment_root(data_dir: str) -> Path:
-    return Path(data_dir) / "desktop-attachments"
+def attachment_root() -> Path:
+    return Path(SETTINGS.data_dir) / "desktop-attachments"
 
 
-def session_dir(data_dir: str, session_id: str) -> Path:
-    safe_id = _validate_session_id(session_id)
-    return attachment_root(data_dir) / safe_id
+def session_dir(session_id: str) -> Path:
+    return attachment_root() / _validate_session_id(session_id)
 
 
 def path_attach_ref(path: str) -> dict:
@@ -31,10 +31,9 @@ def path_attach_ref(path: str) -> dict:
     return {"attached": True, "path": path, "ref_text": f"@file:{normalized_path}", "size": 0}
 
 
-def gc_session(data_dir: str, session_id: str) -> None:
-    safe_id = _validate_session_id(session_id)
-    root = attachment_root(data_dir).resolve()
-    target = session_dir(data_dir, safe_id).resolve()
+def gc_session(session_id: str) -> None:
+    root = attachment_root().resolve()
+    target = session_dir(session_id).resolve()
     if not target.is_relative_to(root):
         raise ValueError(f"gc_session path escapes root: {target}")
     if target.exists():

@@ -4,21 +4,12 @@ import asyncio
 import json
 from datetime import timedelta
 
-from components import (
-    TaskBag,
-    begin_user_request,
-    end_user_request,
-    get_logger,
-    resolve_prompt_text,
-    track_user_task,
-    utc_now,
-)
-from modules.settings import UserSetting
+from components import TaskBag, get_logger, resolve_prompt_text, track_user_task, utc_now
+from modules.settings import get_user_setting
 from prompts.companion import FIRST_MEETING_INTENT_TEXTS
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .intents import enqueue_companion_intent, queue_companion_intent
+from .intents import claim_companion_intent, enqueue_companion_intent
 
 logger = get_logger(__name__)
 
@@ -31,14 +22,7 @@ _BG = TaskBag("companion.first_greeting")
 
 async def enqueue_first_greeting(db: AsyncSession, user_id: int) -> None:
     """在完成引导的事务中保存意图；说明文本与该用户的界面语言一致，由调用方提交。"""
-    language = (
-        await db.execute(
-            select(UserSetting.setting_value).where(
-                UserSetting.user_id == user_id,
-                UserSetting.setting_key == "language",
-            ),
-        )
-    ).scalar()
+    language = await get_user_setting(db, user_id, "language")
     intent = json.dumps(
         {"kind": "first_meeting", "intent": resolve_prompt_text(FIRST_MEETING_INTENT_TEXTS, language)},
         ensure_ascii=False,
@@ -54,18 +38,9 @@ async def enqueue_first_greeting(db: AsyncSession, user_id: int) -> None:
 
 def schedule_first_greeting_claim(user_id: int) -> None:
     """提交后在后台尝试认领；桌面尚未上报可用时，由可用性信号与等待扫描稍后认领。"""
-    task = asyncio.create_task(_claim(user_id), name=f"companion.first_greeting.{user_id}")
+    task = asyncio.create_task(claim_companion_intent(user_id), name=f"companion.first_greeting.{user_id}")
     _BG.add(task, on_error=_log_claim_error)
     track_user_task(user_id, task)
-
-
-async def _claim(user_id: int) -> None:
-    if not await begin_user_request(user_id):
-        return
-    try:
-        await queue_companion_intent(user_id)
-    finally:
-        await end_user_request(user_id)
 
 
 def _log_claim_error(task: asyncio.Task) -> None:

@@ -38,20 +38,18 @@ def parse_companion_reply(
     speech_config: ProviderConfig | None,
     voice_id: str,
     language: str,
-    allow_silence: bool = False,
-    media_turn: MediaTurnState | None = None,
+    allow_silence: bool,
+    media_turn: MediaTurnState,
 ) -> CompanionReply | None:
     source = CompanionReplyInput.model_validate_json(raw)
     if not source.root:
-        if allow_silence and not (media_turn and media_turn.required_goals):
+        if allow_silence and not media_turn.required_goals:
             return None
         raise ValueError("A user reply requires at least one bubble")
     bubbles: list[TextBubble | VoiceBubble | MediaBubble] = []
     selected_goals: set[str] = set()
     for bubble in source.root:
         if isinstance(bubble, MediaBubbleInput):
-            if media_turn is None:
-                raise ValueError("Media reference has no conversation context")
             delivered = resolve_reply_media(media_turn, bubble.media_id, bubble.type)
             if delivered.goal_id in selected_goals:
                 raise ValueError("Select exactly one media version per goal")
@@ -94,6 +92,6 @@ def parse_companion_reply(
                 language=language,
             ),
         )
-    if media_turn and not media_turn.required_goals.issubset(selected_goals):
+    if not media_turn.required_goals.issubset(selected_goals):
         raise ValueError("Reply omits generated media or an accepted video task")
     return CompanionReply(bubbles=bubbles)

@@ -24,19 +24,20 @@ def message_contains_text(query: str) -> ColumnElement[bool]:
     )
 
 
-def companion_context_content(message: Message, *, dialogue_only: bool = False) -> str:
+def _companion_context_items(message: Message, *, dialogue_only: bool) -> list[dict[str, str]]:
     source = CompanionReplyInput.model_validate_json(message.content or "")
     delivery = CompanionReply.model_validate_json(message.reply_json or "")
     media = {b.media_id: b for b in delivery.bubbles if isinstance(b, MediaBubble)}
-    content = []
-    for bubble in source.root:
-        if isinstance(bubble, MediaBubbleInput):
-            item = bubble.model_dump()
-            item["status"] = media[bubble.media_id].status
-            content.append(item)
-        else:
-            content.append(bubble.model_dump(include={"type", "text"} if dialogue_only else None))
-    return json.dumps(content, ensure_ascii=False)
+    return [
+        {**bubble.model_dump(), "status": media[bubble.media_id].status}
+        if isinstance(bubble, MediaBubbleInput)
+        else bubble.model_dump(include={"type", "text"} if dialogue_only else None)
+        for bubble in source.root
+    ]
+
+
+def companion_context_content(message: Message, *, dialogue_only: bool = False) -> str:
+    return json.dumps(_companion_context_items(message, dialogue_only=dialogue_only), ensure_ascii=False)
 
 
 def message_text(m: Message) -> str:
@@ -68,7 +69,7 @@ def format_messages_compact(msgs: list[Message], *, char_cap: int | None = None)
         if msg.content_type == "companion_reply":
             if not (msg.content or "").strip() and not msg.tool_calls:
                 continue
-            source = json.loads(companion_context_content(msg, dialogue_only=True))
+            source = _companion_context_items(msg, dialogue_only=True)
             content = []
             remaining = char_cap
             truncated = False

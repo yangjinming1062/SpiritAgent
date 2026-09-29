@@ -127,7 +127,6 @@ async def fork_conversation_from_message(
             copies[row.id].summary_through_message_id = boundary.id
 
     await db.commit()
-    await db.refresh(new_conv)
 
     messages = await build_session_messages(new_conv.id, db, include_id=True)
 

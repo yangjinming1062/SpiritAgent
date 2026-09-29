@@ -59,13 +59,12 @@ def create_access_token(
     *,
     user_id: int,
     username: str,
-    jti: str | None = None,
     client_context: dict | None = None,
     expires_in_seconds: int | None = None,
     purpose: str | None = None,
     login_record_id: int | None = None,
 ) -> tuple[str, int, str]:
-    token_jti = jti or uuid4().hex
+    token_jti = uuid4().hex
     expires_delta = (
         timedelta(minutes=SETTINGS.access_token_expire_minutes)
         if expires_in_seconds is None
@@ -83,7 +82,7 @@ def create_access_token(
     return token, int(expires_delta.total_seconds()), token_jti
 
 
-async def create_admin_token(client_version: str = "", ip_address: str = "", user_agent: str = "") -> tuple[str, int]:
+async def create_admin_token() -> tuple[str, int]:
     jti = uuid4().hex
     expires_delta = timedelta(minutes=SETTINGS.access_token_expire_minutes)
     expires_at = datetime.now(UTC) + expires_delta
@@ -91,16 +90,7 @@ async def create_admin_token(client_version: str = "", ip_address: str = "", use
     token = jwt.encode(payload, SETTINGS.jwt_secret_key, algorithm=SETTINGS.jwt_algorithm)
     # deps.get_current_admin_token 要求 jti 行已存在，insert 失败必须抛出来而非 mint 一个首调就 401 的 token。
     async with SESSION_LOCAL() as db:
-        db.add(
-            AdminSession(
-                token_jti=jti,
-                username=SETTINGS.admin_username,
-                client_version=client_version[:64],
-                ip_address=ip_address[:64],
-                user_agent=user_agent[:1024],
-                is_active=True,
-            ),
-        )
+        db.add(AdminSession(token_jti=jti, username=SETTINGS.admin_username, is_active=True))
         await db.commit()
     return token, int(expires_delta.total_seconds())
 

@@ -1,51 +1,48 @@
+from dataclasses import dataclass
+
 import jwt
 from components import SESSION_LOCAL, get_logger
-from modules.auth import LoginRecord, User, decode_access_token
+from modules.auth import ChatRequestClientContext, LoginRecord, User, decode_access_token
+from pydantic import ValidationError
 from sqlalchemy import select
 
 logger = get_logger(__name__)
 
 
-async def authenticate_ws_token(token: str | None) -> tuple[User | None, dict | None]:
-    """验证 WS ticket，成功返回 (user, payload)，任何失败均返回 (None, None)。"""
-    if not isinstance(token, str) or not token:
-        return None, None
+@dataclass(frozen=True)
+class WsTicket:
+    user_id: int
+    login_record_id: int
+    client_context: ChatRequestClientContext | None
+
+
+def decode_ws_ticket(token: str) -> WsTicket | None:
+    """校验 WS ticket 签名、用途与身份声明；用户与登录记录的有效性由握手锁内的 ``is_ws_login_active`` 核对。"""
+    if not token:
+        return None
     try:
         payload = decode_access_token(token)
     except jwt.PyJWTError as exc:
         logger.info("WS token decode failed", extra={"error": str(exc)})
-        return None, None
+        return None
 
     if payload.get("purpose") != "ws":
         logger.info("WS token missing purpose=ws claim; renderer must use /api/user/ws-ticket")
-        return None, None
-
-    user_id = payload.get("sub")
-    login_record_id = payload.get("login_id")
-    if not user_id or not login_record_id:
-        return None, None
+        return None
 
     try:
-        uid = int(user_id)
-        login_id = int(login_record_id)
-    except (ValueError, TypeError):
-        return None, None
+        user_id = int(payload["sub"])
+        login_record_id = int(payload["login_id"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
-    async with SESSION_LOCAL() as db:
-        user = (
-            await db.execute(
-                select(User)
-                .join(LoginRecord, LoginRecord.user_id == User.id)
-                .where(
-                    User.id == uid,
-                    User.is_active.is_(True),
-                    LoginRecord.id == login_id,
-                    LoginRecord.is_active.is_(True),
-                ),
-            )
-        ).scalar_one_or_none()
-
-    return (user, payload) if user else (None, None)
+    client_context: ChatRequestClientContext | None = None
+    if (raw_ctx := payload.get("ctx")) is not None:
+        try:
+            client_context = ChatRequestClientContext.model_validate(raw_ctx)
+        except ValidationError:
+            logger.debug("client context parse failed; continuing without context", extra={"user_id": user_id})
+    return WsTicket(user_id, login_record_id, client_context)
 
 
 async def is_ws_login_active(user_id: int, login_record_id: int) -> bool:

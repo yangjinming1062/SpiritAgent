@@ -79,8 +79,7 @@ def load_persona_definition(persona: Persona | None) -> dict[str, str]:
     """从 Persona 实例读取当前支持的引导字段。"""
     if persona is None:
         return {}
-    raw = getattr(persona, "definition_json", None) or "{}"
-    draft = safe_json_loads(raw, default={})
+    draft = safe_json_loads(persona.definition_json or "{}", default={})
     if not isinstance(draft, dict):
         return {}
     return {key: value for key, value in draft.items() if key in ONBOARDING_FIELDS and isinstance(value, str)}
@@ -157,19 +156,16 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
         await db.rollback()
         persona = await _dual_write()
         await db.commit()
-    await db.refresh(persona)
     # onboarding 首次完成时一次性建出 5 套系统预设对话（companion/developer/pm/copywriter/language_teacher）；幂等。
     await ensure_system_conversations_for_user(db, persona.user_id)
     return persona
 
 
-async def confirm_portrait(db: AsyncSession, user_id: int) -> Persona:
+async def confirm_portrait(db: AsyncSession, user_id: int) -> None:
     persona = await get_or_create_persona(db, user_id)
     persona.is_portrait_confirmed = True
     persona.portrait_confirmed_at = func.now()
     await db.commit()
-    await db.refresh(persona)
-    return persona
 
 
 def build_system_prompt_extras(
@@ -255,7 +251,7 @@ async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, va
         # voice 不是人设字段，故此处只动草稿
         if field == "voice":
             draft = load_persona_definition(persona)
-            was_complete = await _next_onboarding_step(db, user_id, persona, draft) is None
+            pending_step = await _next_onboarding_step(db, user_id, persona, draft)
             if value and value.strip():
                 draft[field] = value.strip()[:_ONBOARDING_MAX_LEN]
             else:
@@ -263,7 +259,7 @@ async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, va
             persona.definition_json = json.dumps(draft, ensure_ascii=False)
             # 音色是最后一项必需资料：只在本次写入使引导由未完成变为完成时，与草稿同事务保存初次问候意图；
             # 已完成状态下的修改不会触发。
-            completed = not was_complete and await _next_onboarding_step(db, user_id, persona, draft) is None
+            completed = pending_step == "voice" and bool(draft.get("voice"))
             if completed:
                 await enqueue_first_greeting(db, user_id)
             await db.commit()

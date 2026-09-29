@@ -1,7 +1,4 @@
-import json
-
-from components import safe_json_loads
-from modules.settings import UserSetting
+from typing import Any
 
 DEFAULT_CONFIG = {
     "agent": {"reasoning_effort": "low", "temperature": 0.7},
@@ -16,23 +13,25 @@ DEFAULT_CONFIG = {
 }
 
 
-def settings_to_config(settings: list[UserSetting]) -> dict:
-    config: dict = {}
-    for s in settings:
-        parts = s.setting_key.split(".")
+def settings_to_config(values: dict[str, Any]) -> dict[str, Any]:
+    """点键设置展开为嵌套配置。"""
+    config: dict[str, Any] = {}
+    for key, value in values.items():
+        *parents, leaf = key.split(".")
         node = config
-        for part in parts[:-1]:
+        for part in parents:
             node = node.setdefault(part, {})
-        node[parts[-1]] = safe_json_loads(s.setting_value, default=s.setting_value)
+        node[leaf] = value
     return config
 
 
-def flatten_config(obj: dict, prefix: str = "") -> list[tuple[str, str]]:
-    items = []
+def flatten_config(obj: dict[str, Any], prefix: str = "") -> dict[str, Any]:
+    """嵌套配置压平为点键设置。"""
+    items: dict[str, Any] = {}
     for k, v in obj.items():
-        key = f"{prefix}{k}" if prefix else k
+        key = f"{prefix}{k}"
         if isinstance(v, dict):
-            items.extend(flatten_config(v, f"{key}."))
+            items.update(flatten_config(v, f"{key}."))
         else:
-            items.append((key, json.dumps(v) if v is not None else ""))
+            items[key] = v
     return items

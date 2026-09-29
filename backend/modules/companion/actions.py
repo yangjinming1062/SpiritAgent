@@ -56,11 +56,9 @@ class CompanionActionPack(ModelBase, TimestampMixin):
     __tablename__ = "companion_action_packs"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
-    character_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     avatar_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
     outfit_id: Mapped[int | None] = mapped_column(ForeignKey("companion_outfits.id"), nullable=True, default=None)
     pack_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
-    visual_revision: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     reference_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     reference_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     character_snapshot: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
@@ -69,7 +67,8 @@ class CompanionActionPack(ModelBase, TimestampMixin):
     canvas_spec: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     catalog_version: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     manifest_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
-    manifest_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # idle 动作封面，发布为目录 manifest 的 cover_path。
+    cover_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     content_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default="")
     identity_review: Mapped[str] = mapped_column(String(16), default="none", server_default=text("'none'"))
     identity_review_reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
@@ -115,7 +114,6 @@ class CompanionAction(ModelBase, TimestampMixin):
     motion_description: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     use_when: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     avoid_when: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
-    tags: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
     metadata_revision: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
 
@@ -133,14 +131,10 @@ class CompanionAction(ModelBase, TimestampMixin):
     model: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     provider_task_id: Mapped[str | None] = mapped_column(String(128), nullable=True, default=None)
     reference_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
-    input_hash: Mapped[str | None] = mapped_column(String(64), nullable=True, default=None)
     outfit_id: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
-    submitted: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
-    retry_safe: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     artifact_path: Mapped[str | None] = mapped_column(String(2048), nullable=True, default=None)
     pose_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
-    result_path: Mapped[str | None] = mapped_column(String(2048), nullable=True, default=None)
     script_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 动态动作的提案设计规格冻结；系统动作为空。
@@ -158,8 +152,6 @@ class CompanionAction(ModelBase, TimestampMixin):
     hitmask_grid_w: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hitmask_grid_h: Mapped[int | None] = mapped_column(Integer, nullable=True)
     hitmask_fps: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    enter_pose: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    exit_pose: Mapped[str | None] = mapped_column(String(64), nullable=True)
     peek_geometry_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     content_rect_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
@@ -181,11 +173,9 @@ class ActionProposal(ModelBase, TimestampMixin):
         index=True,
     )
     source: Mapped[str] = mapped_column(String(16), default="autonomous", server_default=text("'autonomous'"))
-    source_message_ids: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     reason: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))
     semantic_fingerprint: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"), index=True)
     design_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
-    candidate_action_ids: Mapped[str] = mapped_column(Text, default="[]", server_default=text("'[]'"))
     status: Mapped[str] = mapped_column(
         String(16),
         default="pending",
@@ -217,15 +207,12 @@ class ActionPlayback(ModelBase, TimestampMixin):
         index=True,
     )
     appearance_epoch: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
-    target_device: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
-    target_surface: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     source: Mapped[str] = mapped_column(
         String(16),
         default="chat_expression",
         server_default=text("'chat_expression'"),
     )
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    repeat_count: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     status: Mapped[str] = mapped_column(
         String(16),
         default="queued",

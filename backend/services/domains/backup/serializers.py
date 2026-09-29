@@ -1,9 +1,11 @@
 import asyncio
 import json
 from bisect import bisect_left
+from collections import defaultdict
 from datetime import date, datetime
+from functools import cache
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from common import ModelBase
 from components import ensure_utc, utc_now
@@ -86,16 +88,31 @@ UNIQUE_KEYS: dict[str, tuple[str, ...]] = {
     "user_settings": ("setting_key",),
     "companion_diary_entries": ("entry_date",),
 }
+# 运行期状态不导出；恢复时取模型默认值（必填列在 _build_payload 中显式置空）。
+_EXCLUDED_COLUMNS: dict[str, frozenset[str]] = {
+    "messages": frozenset({"dedup_key"}),
+    "companion_scenes": frozenset({"generation_state_json", "regeneration_state_json", "secondary_reference_image"}),
+    "companion_character_cards": frozenset(
+        {
+            "portrait_result_json",
+            "body_result_json",
+            "portrait_pending_hash",
+            "body_pending_hash",
+            "portrait_source_path",
+            "body_source_path",
+        },
+    ),
+}
 IdMap = dict[str, dict[str, int | str]]
+BackupImportMode = Literal["overwrite", "merge"]
 
 
-def _columns(table: str) -> list[str]:
+@cache
+def _columns(table: str) -> tuple[str, ...]:
     if table == "user_preferences":
-        return ["nightly_activity_enabled"]
-    excluded = {"user_id", "dedup_key"} if table == "messages" else {"user_id"}
-    if table == "companion_scenes":
-        excluded.update({"generation_state_json", "regeneration_state_json", "secondary_reference_image"})
-    return [column.name for column in TABLE_MODELS[table].__table__.columns if column.name not in excluded]
+        return ("nightly_activity_enabled",)
+    excluded = _EXCLUDED_COLUMNS.get(table, frozenset()) | {"user_id"}
+    return tuple(column.name for column in TABLE_MODELS[table].__table__.columns if column.name not in excluded)
 
 
 async def serialize_rows(
@@ -126,10 +143,6 @@ async def serialize_rows(
                     payload[col] = ensure_utc(value).isoformat()
                 elif isinstance(value, date):
                     payload[col] = value.isoformat()
-            if table == "companion_character_cards":
-                payload["portrait_result_json"] = payload["body_result_json"] = "{}"
-                payload["portrait_pending_hash"] = payload["body_pending_hash"] = ""
-                payload["portrait_source_path"] = payload["body_source_path"] = ""
             if table == "memories" and payload.get("embedding") is not None:
                 payload["embedding"] = list(map(float, payload["embedding"]))
             result.append(payload)
@@ -148,7 +161,7 @@ async def insert_rows(
     rewriter: UrlRewriter,
     id_map: IdMap,
     *,
-    mode: str,
+    mode: BackupImportMode,
     import_batch_id: str,
 ) -> tuple[dict[str, int | str], int]:
     model = TABLE_MODELS[table]
@@ -188,14 +201,14 @@ async def insert_rows(
                     raise ValueError("Invalid moment kind")
                 if payload.get("source") not in {source.value for source in MomentSource}:
                     raise ValueError("Invalid moment source")
-            if table == "companion_moment_comments" and payload.get("role") not in {
-                role.value for role in MomentCommentRole
-            }:
-                raise ValueError("Invalid moment comment role")
             if table == "companion_diary_entries" and payload.get("source") not in {
                 source.value for source in DiarySource
             }:
                 raise ValueError("Invalid diary source")
+        if table == "companion_moment_comments" and payload.get("role") not in {
+            role.value for role in MomentCommentRole
+        }:
+            raise ValueError("Invalid moment comment role")
         existing = None
         if mode == "merge" and table in UNIQUE_KEYS:
             existing = await db.scalar(
@@ -279,7 +292,8 @@ def _build_payload(
     id_map: IdMap,
 ) -> dict[str, Any]:
     model = TABLE_MODELS[table]
-    payload = {key: value for key, value in raw.items() if key in _columns(table) and key != "id"}
+    columns = _columns(table)
+    payload = {key: value for key, value in raw.items() if key in columns and key != "id"}
     for column in model.__table__.columns:
         value = payload.get(column.name)
         if value is None:
@@ -311,8 +325,6 @@ def _build_payload(
         payload["overrides_json"] = CharacterOverrides.model_validate_json(payload["overrides_json"]).model_dump_json(
             exclude_none=True,
         )
-        payload["portrait_result_json"] = payload["body_result_json"] = "{}"
-        payload["portrait_pending_hash"] = payload["body_pending_hash"] = ""
         payload["portrait_source_path"] = payload["body_source_path"] = ""
         payload["status"] = payload["portrait_status"] = payload["body_status"] = "ready" if revision else "failed"
         payload["error"] = None if revision else "恢复的角色资料尚未完成分析，请重试"
@@ -401,13 +413,10 @@ def _build_payload(
             raise ValueError("Scene character reference is missing from backup")
         payload["character_card_json"] = snapshot.model_copy(update={"avatar_id": int(avatar_id)}).model_dump_json()
         payload["auto_activate"] = False
-        payload["generation_state_json"] = None
         payload["regeneration_status"] = None
         payload["regeneration_stage"] = None
         payload["regeneration_error"] = None
         payload["regeneration_task_id"] = None
-        payload["regeneration_state_json"] = None
-        payload["secondary_reference_image"] = ""
         if payload.get("status") == "pending":
             payload["status"] = "description_failed" if payload.get("media_path") else "failed"
             payload["error"] = "恢复的场景任务需要手动重试"
@@ -426,7 +435,6 @@ async def restore_conversation_context(
     rows: dict[str, list[dict[str, Any]]],
     id_map: IdMap,
 ) -> None:
-    conversations = {str(row["id"]): row for row in rows.get("conversations", [])}
     messages = {str(row["id"]): row for row in rows.get("messages", [])}
     for original_id, raw in messages.items():
         if raw.get("subtype") not in ("daily_summary", "compress_summary"):
@@ -441,29 +449,32 @@ async def restore_conversation_context(
             raise ValueError("Conversation summary boundary is missing from backup")
         checkpoint = await db.get(Message, int(id_map["messages"][original_id]))
         checkpoint.summary_through_message_id = int(id_map["messages"][source_id])
-    for original_id, raw in conversations.items():
-        ordered_messages = sorted(
-            (message for message in messages.values() if str(message["conversation_id"]) == original_id),
-            key=lambda message: int(message["id"]),
-        )
+    by_conversation: defaultdict[str, list[dict[str, Any]]] = defaultdict(list)
+    for message in sorted(messages.values(), key=lambda message: int(message["id"])):
+        by_conversation[str(message["conversation_id"])].append(message)
+    for raw in rows.get("conversations", []):
+        original_id = str(raw["id"])
+        ordered_messages = by_conversation[original_id]
         original_ids = [int(message["id"]) for message in ordered_messages]
         mapped_ids = [int(id_map["messages"][str(mid)]) for mid in original_ids]
-        for message in ordered_messages:
+        for message, mapped_id in zip(ordered_messages, mapped_ids, strict=True):
             if (order := message.get("context_order")) is None:
                 continue
             # 消费位置可能落在两个接收 id 之间；保留其相对次序，不沿用导入前的数值。
             position = bisect_left(original_ids, order)
-            restored = await db.get(Message, int(id_map["messages"][str(message["id"])]))
+            restored = await db.get(Message, mapped_id)
             restored.context_order = mapped_ids[position] if position < len(mapped_ids) else mapped_ids[-1] + 1
         watermark = raw["context_after_message_id"]
         if watermark:
-            mapped = [
-                int(id_map["messages"][mid])
-                for mid, message in messages.items()
-                if str(message["conversation_id"]) == original_id and int(mid) <= watermark
-            ]
             conv = await db.get(Conversation, int(id_map["conversations"][original_id]))
-            conv.context_after_message_id = max(mapped, default=0)
+            conv.context_after_message_id = max(
+                (
+                    mapped_id
+                    for original, mapped_id in zip(original_ids, mapped_ids, strict=True)
+                    if original <= watermark
+                ),
+                default=0,
+            )
     await db.flush()
 
 
@@ -543,43 +554,17 @@ async def restore_memory_context(
     await db.flush()
 
 
-def deserialize_rows(extract_root: Path, tables: list[str]) -> dict[str, list[dict[str, Any]]]:
-    result: dict[str, list[dict[str, Any]]] = {}
-    for table in TABLES:
-        if table not in tables:
-            continue
-        payload = json.loads((extract_root / "db" / f"{table}.json").read_text(encoding="utf-8"))
-        rows = payload.get("rows") if isinstance(payload, dict) else None
-        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-            raise ValueError(f"Invalid rows in {table}.json")
-        if any("id" not in row for row in rows) and table != "user_preferences":
-            raise ValueError(f"Missing row id in {table}.json")
-        if table != "user_preferences" and len({str(row["id"]) for row in rows}) != len(rows):
-            raise ValueError(f"Duplicate row id in {table}.json")
-        if table == "user_preferences" and len(rows) > 1:
+def read_table_rows(extract_root: Path, table: str) -> list[dict[str, Any]]:
+    payload = json.loads((extract_root / "db" / f"{table}.json").read_text(encoding="utf-8"))
+    rows = payload.get("rows") if isinstance(payload, dict) else None
+    if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
+        raise ValueError(f"Invalid rows in {table}.json")
+    if table == "user_preferences":
+        if len(rows) > 1:
             raise ValueError("Backup contains multiple user preference rows")
-        result[table] = rows
-    return result
-
-
-# 缺少 forked_from_id 的旧备份把派生会话与子 Agent 会话都记在 parent_id。委派标题
-# 或首条用户消息（导出按 id 排序）带委派前缀的是子 Agent 会话，其余转为派生来源。不再恢复此类旧备份时移除。
-_LEGACY_DELEGATION_TITLE = "Subagent Task"
-_LEGACY_DELEGATION_PREFIXES = ("[INTERNAL DELEGATION", "You are a subagent delegated")
-
-
-def split_legacy_fork_lineage(conversations: list[dict[str, Any]], messages: list[dict[str, Any]]) -> None:
-    first_user_content: dict[str, Any] = {}
-    for message in messages:
-        if message.get("role") == "user":
-            first_user_content.setdefault(str(message.get("conversation_id")), message.get("content"))
-    for conversation in conversations:
-        parent_id = conversation.get("parent_id")
-        if "forked_from_id" in conversation or parent_id is None:
-            continue
-        content = first_user_content.get(str(conversation.get("id")))
-        delegated = conversation.get("title") == _LEGACY_DELEGATION_TITLE or (
-            isinstance(content, str) and content.startswith(_LEGACY_DELEGATION_PREFIXES)
-        )
-        if not delegated:
-            conversation["parent_id"], conversation["forked_from_id"] = None, parent_id
+        return rows
+    if any("id" not in row for row in rows):
+        raise ValueError(f"Missing row id in {table}.json")
+    if len({str(row["id"]) for row in rows}) != len(rows):
+        raise ValueError(f"Duplicate row id in {table}.json")
+    return rows

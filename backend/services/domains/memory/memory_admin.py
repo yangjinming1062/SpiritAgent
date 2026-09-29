@@ -1,4 +1,3 @@
-from datetime import datetime
 from typing import Any
 
 from components import SETTINGS, session_scope, utc_now
@@ -13,9 +12,10 @@ from .memory_namespaces import KIND_TO_PREFIX, RECALL_TAGS, participates_in_reca
 from .memory_store import (
     active_memory_filter,
     backfill_memory_embeddings,
+    fingerprint_history,
     get_memory,
+    memory_write_lock,
     scope_filter,
-    update_memory_content,
 )
 
 # 界限：列表分页上限与编辑时的长度上限
@@ -26,15 +26,9 @@ _LIST_MAX_LIMIT = 500
 def _row_to_dict(row: Memory) -> dict[str, Any]:
     return {
         **memory_record(row).model_dump(),
-        "id": row.id,
         "system_preset_id": row.system_preset_id,
-        "content_version": row.content_version,
-        "context": row.context,
-        "tags": row.tags,
-        "content": row.content,
-        "importance": float(getattr(row, "importance", 1.0) or 1.0),
-        "created_at": row.created_at.isoformat() if isinstance(row.created_at, datetime) else None,
-        "updated_at": row.updated_at.isoformat() if isinstance(row.updated_at, datetime) else None,
+        "importance": row.importance or 1.0,
+        "created_at": row.created_at.isoformat(),
     }
 
 
@@ -86,17 +80,27 @@ async def update_memory(scope: MemoryScope, memory_id: int, *, content: str) -> 
     if not content:
         raise ValueError("content must be non-empty")
     async with session_scope() as db:
+        await memory_write_lock(db, scope)
         row = await get_memory(db, scope, memory_id)
         if row is None:
             return None
         cap = SETTINGS.memory_recall_max_content_chars
         if len(content) > cap:
             raise ValueError(f"content exceeds {cap} chars for {row.context or 'recall'}")
-        row = await update_memory_content(db, scope, memory_id, content)
-        if row is None:
+        if row.status == "forgotten":
             return None
+        row.history = fingerprint_history(row)
+        row.evidence = []
+        if row.content != content:
+            row.embedding = None
+        row.content = content
+        row.content_version += 1
+        row.basis, row.status = "explicit", "active"
+        row.expires_at, row.reviewed_at = None, None
+        row.reason = "User edited this memory directly"
+        row.source_kind, row.source_refs = "manual", {}
+        row.updated_at = utc_now()
         await db.commit()
-        await db.refresh(row)
         result = _row_to_dict(row)
         embedding_item = (
             EmbeddingItem(row.id, row.content, row.content_version) if participates_in_recall(row.context) else None

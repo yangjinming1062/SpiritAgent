@@ -86,7 +86,7 @@ class UserResponse(BaseModel):
     nightly_activity_enabled: bool
     is_active: bool
     created_at: datetime
-    activation_code: str | None = None
+    activation_code: str
 
 
 class UserListResponse(BaseModel):

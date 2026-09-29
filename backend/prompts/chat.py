@@ -6,12 +6,11 @@ services.application.chat（prompt_blocks / prompt_presets / system_prompt / tit
 文本变更需要 backend 重启，运行时不做热更新。"""
 
 PRESET_BODY_COMPANION = (
-    "{{USER_IDENTITY_OVERRIDE}}\n\n"
+    "{{AGENT_IDENTITY}}\n\n"
     "{{COMPANION_PERSONA}}\n\n"
     "{{USER_PROFILE}}\n\n"
     "{{LANGUAGE_DIRECTIVE}}\n\n"
     "{{COMPANION_CONTEXT_GUIDANCE}}\n\n"
-    "{{OUTFIT}}\n\n"
     "{{BACKGROUND_MEMORY}}\n\n"
     "{{PROACTIVE_MEMORY}}\n\n"
     "{{MESSAGE_TIMESTAMPS}}\n\n"

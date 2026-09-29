@@ -20,9 +20,8 @@ class DesktopSessionInfo(BaseModel):
     is_active: bool = True
     cwd: str | None = None
     ended_at: int | None = None
-    # NULL = 用户普通对话，chat 时按 resolve_preset 降级到 companion。
     system_preset_id: str | None = None
-    # 已对 NULL 降级为 companion.icon_key，避免客户端再解析一次。枚举变更需同步 BUILTIN_PRESETS。
+    # 服务端按预设目录解析好的图标，自动化会话为 task，客户端不再解析。
     system_preset_icon_key: str | None = None
 
 

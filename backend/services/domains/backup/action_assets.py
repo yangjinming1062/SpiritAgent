@@ -42,11 +42,8 @@ def restore_action_payload(
             payload["error"] = "恢复的动作任务需要手动处理；请先核对已有生成结果"
         # 保留句柄、提交未知标记与已付费产物，手动重试仍遵循原任务的幂等守卫。
         return
-    if payload.get("character_id") is not None:
-        raise ValueError("Unsupported action character reference")
     context = _json_object(payload, "context_json")
-    for field in ("canvas_spec", "manifest_json"):
-        _json_object(payload, field)
+    _json_object(payload, "canvas_spec")
     if context:
         identity = CharacterCardSnapshot.model_validate(context["identity"])
         avatar_id = id_map.get("avatar_assets", {}).get(str(identity.avatar_id))
@@ -125,7 +122,6 @@ def _asset_references(value: Any) -> Iterator[str]:
             elif key in {
                 "context_json",
                 "reference_chain",
-                "manifest_json",
                 "generation_state_json",
                 "pose_generation_state_json",
                 "result_json",
@@ -172,10 +168,13 @@ def validate_action_files(
                     raise ValueError("Action video does not match its content hash")
                 if row.get("hitmask_path") and not effective_file(row["hitmask_path"]).is_file():
                     raise ValueError("Action hitmask is missing from backup and destination")
-            if table == "companion_action_packs" and row.get("status") == "ready":
-                manifest = _json_object(row, "manifest_json")
-                if manifest.get("cover_path") and not effective_file(manifest["cover_path"]).is_file():
-                    raise ValueError("Action cover is missing from backup and destination")
+            if (
+                table == "companion_action_packs"
+                and row.get("status") == "ready"
+                and row.get("cover_path")
+                and not effective_file(row["cover_path"]).is_file()
+            ):
+                raise ValueError("Action cover is missing from backup and destination")
 
 
 async def restore_action_catalogs(

@@ -10,8 +10,8 @@
 
 | 模块 | 职责 |
 |---|---|
-| [design.py](design.py) | 受理：门禁 → 语义去重 → 落库（reused / pending_review / rejected） |
-| [pipeline.py](pipeline.py) | 后台评审调度与重启恢复；approve 后 kick 生成 |
+| [design.py](design.py) | 受理：门禁 → 语义去重 → 落库（reused / pending_review / rejected），结论附所属包 |
+| [pipeline.py](pipeline.py) | 调用方提交受理事务后经 `schedule_accepted_proposal` 启动评审或同 key 动作重做；评审重启恢复；approve 后 kick 生成 |
 | [review.py](review.py) | 独立 LLM 评审；approve 才占制作额度并冻结设计规格 |
 | [playback.py](playback.py) | 播放指令、TTL、回执；queued ≠ completed |
 | [context.py](context.py) | 运行时动作快照（`{{ACTION_CONTEXT}}`）；含外观包 ID 与就绪动作时长 |
@@ -19,7 +19,7 @@
 ## 评审输入与额度
 
 - 制作额度只在 approve 时强制，不向模型展示，避免额度影响创建意图。
-- 评审使用提案所属形象的冻结参考与固定外形，不用当前角色卡补齐旧包；缺少人设时只补实时性格资料。
+- 评审只用提案所属包冻结的参考图、角色快照与生成上下文中的人设，不读取当前角色卡或实时人设。
 - 候选仅含同包可点播动作，保留内容、适用/避免条件、时长与播放方式；复用 ID 须属于本次候选。
 
 ## 运行时快照与播放意图

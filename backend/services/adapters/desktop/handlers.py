@@ -5,15 +5,15 @@ import json
 import re
 import secrets
 import time
+from collections.abc import Awaitable, Callable
 from dataclasses import asdict, dataclass, field
-from typing import Any
+from typing import Any, TypeGuard
 
 from components import (
     ATTACHMENT_DATA_URL_MAX_CHARS,
     ATTACHMENT_TYPE_IMAGE,
     ATTACHMENT_TYPE_VIDEO,
     CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
-    DEFAULT_LANGUAGE,
     JSONRPC_INVALID_PARAMS,
     JSONRPC_METHOD_NOT_FOUND,
     JSONRPC_SLASH_BUSY,
@@ -31,12 +31,12 @@ from components import (
     get_logger,
     is_user_in_maintenance,
     path_attach_ref,
-    safe_json_loads,
 )
 from fastapi import WebSocket, WebSocketDisconnect
 from modules.auth import ChatRequestClientContext
 from modules.companion import ActionPlayRequest, CompanionSignal
 from modules.conversation import Conversation, Message
+from modules.settings import load_user_settings
 from modules.system import ChatMessageRequest, ChatRequest, PromptPresetListResponse, PromptPresetSummary
 from modules.ws import COMPANION_TURN_EVENT
 from pydantic import ValidationError
@@ -48,11 +48,11 @@ from services.application.chat import (
     SlashCommandContext,
     SlashCommandResult,
     build_turn_inputs,
-    compress_history_if_needed,
+    compress_history,
     list_commands_for_user,
-    load_user_settings,
     merge_session_settings,
     parse_temperature,
+    persist_compression_checkpoint,
     persist_extra_user_messages,
     register_slash_command,
     resolve_inference_settings,
@@ -113,37 +113,31 @@ from services.domains.memory import (
     list_memories,
     memory_counts,
     normalize_recall_context,
-    read_user_profile,
     record_user_timezone,
     update_memory,
 )
-from services.infrastructure.desktop import (
-    DEFAULT_REPLAY_BUFFER_CAPACITY,
-    DEFAULT_REPLAY_BUFFER_TTL_SECONDS,
-    MANAGER,
-    JsonRpcDispatcher,
-    JsonRpcError,
-    ReplayBuffer,
-    discard_user,
-    resolve_future,
+from services.infrastructure.desktop import MANAGER, JsonRpcDispatcher, JsonRpcError, discard_user, resolve_future
+from services.infrastructure.event_store import interrupt_user_event_tasks
+from services.infrastructure.llm import (
+    MissingLlmConfigError,
+    UserLlmConfig,
+    resolve_user_llm_config,
+    scale_temperature,
 )
-from services.infrastructure.event_store import (
-    cancel_user_event_tasks,
-    interrupt_user_event_tasks,
-)
-from services.infrastructure.llm import MissingLlmConfigError, resolve_user_llm_config, scale_temperature
 from services.infrastructure.tool_runtime import REGISTRY
 
-from .auth import authenticate_ws_token, is_ws_login_active
+from .auth import decode_ws_ticket, is_ws_login_active
 from .emitter import JsonRpcEmitter
 from .runtime import (
     RuntimeSession,
     SessionCreateResult,
     SessionResumeResult,
+    SessionRuntimeInfo,
     SessionSettingsPatch,
     ToolsSyncResult,
+    build_runtime_info,
+    decode_session_settings,
     new_runtime_session,
-    runtime_info_snapshot,
 )
 
 logger = get_logger(__name__)
@@ -151,45 +145,47 @@ logger = get_logger(__name__)
 
 @dataclass
 class UserGatewaySession:
+    """用户级网关状态：跨同一登录的断线重连保留，宽限期结束或注销时整体销毁。"""
+
     user_id: int
     login_record_id: int
     dispatcher: JsonRpcDispatcher
-    replay_buffer: ReplayBuffer
+    llm_config: UserLlmConfig
+    session_client_context: ChatRequestClientContext | None
     runtime_sessions: dict[str, RuntimeSession] = field(default_factory=dict)
     background_tasks: set[asyncio.Task] = field(default_factory=set)
-    llm_config: dict = field(default_factory=dict)
-    user_settings: dict = field(default_factory=dict)
-    session_client_context: ChatRequestClientContext | None = None
     grace_timer_task: asyncio.Task | None = None
-    websocket: WebSocket | None = None
+
+    def track(self, task: asyncio.Task) -> None:
+        self.background_tasks.add(task)
+        task.add_done_callback(self.background_tasks.discard)
 
 
 _USER_SESSIONS: dict[int, UserGatewaySession] = {}
 _GRACE_TIMER_TASKS: set[asyncio.Task] = set()
+# 握手、入站鉴权与注销按用户串行，避免重连与销毁交错。
+_USER_LOCKS: dict[int, asyncio.Lock] = {}
 
 
-def discard_user_session(user_id: int) -> list[asyncio.Task]:
-    """注销某用户的 session 桶并触发 per-task 取消；返回被取消的 task 列表，调用方需在 DB 行删除前 ``asyncio.gather`` 它们。"""
+def _user_lock(user_id: int) -> asyncio.Lock:
+    return _USER_LOCKS.setdefault(user_id, asyncio.Lock())
+
+
+def _discard_user_session(user_id: int) -> list[asyncio.Task]:
+    """移除用户网关会话并取消其任务，返回待收尾的任务（不含当前任务）。"""
     sess = _USER_SESSIONS.pop(user_id, None)
     if sess is None:
         return []
-    pending: list[asyncio.Task] = []
+    candidates = [
+        sess.grace_timer_task,
+        *sess.background_tasks,
+        *(runtime.chat_task for runtime in sess.runtime_sessions.values()),
+        sess.dispatcher.writer_task,
+    ]
     current_task = asyncio.current_task()
-    if sess.grace_timer_task and not sess.grace_timer_task.done() and sess.grace_timer_task is not current_task:
-        sess.grace_timer_task.cancel()
-        pending.append(sess.grace_timer_task)
-    for t in list(sess.background_tasks):
-        if not t.done() and t is not current_task:
-            t.cancel()
-            pending.append(t)
-    for runtime in list(sess.runtime_sessions.values()):
-        if runtime.chat_task and not runtime.chat_task.done() and runtime.chat_task is not current_task:
-            runtime.chat_task.cancel()
-            pending.append(runtime.chat_task)
-    writer_task = sess.dispatcher.writer_task
-    if writer_task and not writer_task.done() and writer_task is not current_task:
-        writer_task.cancel()
-        pending.append(writer_task)
+    pending = [t for t in candidates if t is not None and not t.done() and t is not current_task]
+    for t in pending:
+        t.cancel()
     sess.runtime_sessions.clear()
     return pending
 
@@ -208,11 +204,7 @@ async def drain() -> None:
     await asyncio.gather(*pending, return_exceptions=True)
 
 
-async def _noop_send(data: dict[str, Any]) -> None:
-    pass
-
-
-async def _noop_send_strict(data: dict[str, Any]) -> bool:
+async def _noop_send(data: dict[str, Any]) -> bool:
     return False
 
 
@@ -222,29 +214,20 @@ _last_idle_expression_ts: dict[int, float] = {}
 SHOULD_ACT_ANTIDUP_SECONDS = 2.0
 _last_should_act_ts: dict[int, float] = {}
 
-# avatar.* RPC 创建的 task，关停时由 drain 收尾。
-_avatar_regen_tasks: set[asyncio.Task] = set()
-
 # avatar regen 的 advisory lock：防止并发 regen 互相覆盖；xact 版本在 commit/rollback 时自动释放，无需显式解锁；与 user_id 组合后每个用户独占一个槽。
 _AVATAR_REGEN_ADVISORY_NAMESPACE = 0x4156_4156
 
-# Slash 命令 per-conversation 锁：防止 /清理 + /压缩 双击 / 多窗口并发触发导致重复 marker。
-# 串行化副作用：DB 事务已是原子的，但 marker 是 INSERT，可能产生重复 status_cleared 行。
+# 会话级锁串行化修改历史的操作（提交、清空、压缩、撤回）：防止双击 / 多窗口并发写出重复状态行或与在途回合交错。
 _conversation_locks: dict[str, asyncio.Lock] = {}
 
 
-def _clear_user_gateway_state(user_id: int) -> None:
-    REGISTRY.clear_runner_tools(user_id)
-    discard_user(user_id)
-    _last_idle_expression_ts.pop(user_id, None)
-    _last_should_act_ts.pop(user_id, None)
-    AVATAR_JOB_LOCKS.pop(user_id, None)
+def _conversation_lock(session_id: str) -> asyncio.Lock:
+    return _conversation_locks.setdefault(session_id, asyncio.Lock())
 
 
 async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | None = None) -> bool:
     sess = _USER_SESSIONS.get(user_id)
-    active_login_id = sess.login_record_id if sess is not None else MANAGER.get_login_record_id(user_id)
-    if login_record_id is not None and active_login_id != login_record_id:
+    if login_record_id is not None and (sess is None or sess.login_record_id != login_record_id):
         return False
 
     websocket = MANAGER.active_connections.get(user_id)
@@ -254,19 +237,38 @@ async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | No
         MANAGER.disconnect(websocket, user_id)
 
     observe_companion_presence(user_id, False)
-    pending = discard_user_session(user_id)
+    pending = _discard_user_session(user_id)
     await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
     await MANAGER.aunregister_dispatcher(user_id)
-    _clear_user_gateway_state(user_id)
+    REGISTRY.clear_runner_tools(user_id)
+    discard_user(user_id)
+    _last_idle_expression_ts.pop(user_id, None)
+    _last_should_act_ts.pop(user_id, None)
+    AVATAR_JOB_LOCKS.pop(user_id, None)
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
     return sess is not None or websocket is not None
 
 
 async def terminate_user_gateway(user_id: int, *, login_record_id: int | None = None) -> bool:
-    lock = _HANDSHAKE_LOCKS.setdefault(user_id, asyncio.Lock())
-    async with lock:
+    async with _user_lock(user_id):
         return await _terminate_user_gateway_locked(user_id, login_record_id)
+
+
+async def _expire_disconnected_gateway(user_id: int) -> None:
+    """断线宽限期结束仍未重连时销毁网关会话；与握手同锁，重连抢先则放弃。"""
+    try:
+        await asyncio.sleep(SETTINGS.desktop_disconnect_grace_seconds)
+        async with _user_lock(user_id):
+            if MANAGER.is_connected(user_id):
+                return
+            logger.info(
+                "Grace period expired for disconnected user, performing full cleanup",
+                extra={"user_id": user_id},
+            )
+            await _terminate_user_gateway_locked(user_id)
+    except asyncio.CancelledError:
+        pass
 
 
 def _user_throttled(state: dict[int, float], user_id: int, min_interval: float, now: float) -> bool:
@@ -274,126 +276,76 @@ def _user_throttled(state: dict[int, float], user_id: int, min_interval: float, 
     return now - state.get(user_id, 0.0) < min_interval
 
 
-class WSEmitter:
-    def __init__(self, websocket: WebSocket) -> None:
-        self.websocket = websocket
-
-    async def send_json(self, data: dict[str, Any]) -> None:
-        await self.send_json_strict(data)
-
-    async def send_json_strict(self, data: dict[str, Any]) -> bool:
+def _ws_sender(websocket: WebSocket) -> Callable[[dict[str, Any]], Awaitable[bool]]:
+    async def send(data: dict[str, Any]) -> bool:
         try:
-            await self.websocket.send_json(data)
+            await websocket.send_json(data)
             return True
         except WebSocketDisconnect:
             return False
         except RuntimeError as e:
             if "close message" not in str(e):
-                logger.debug("WSEmitter.send_json_strict RuntimeError", extra={"error": str(e)})
+                logger.debug("websocket send RuntimeError", extra={"error": str(e)})
             return False
         except Exception as e:
-            logger.debug("WSEmitter.send_json_strict unexpected", extra={"error": str(e)}, exc_info=True)
+            logger.debug("websocket send unexpected", extra={"error": str(e)}, exc_info=True)
             return False
 
-
-_HANDSHAKE_LOCKS: dict[int, asyncio.Lock] = {}
+    return send
 
 
 async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
     # BaseHTTPMiddleware 跳过 WS upgrade——在 authenticate 前从 upgrade 的 X-Request-ID 重建 request_id，auth 失败行的日志才不会丢关联。
     adopt_inbound(websocket.headers.get(REQUEST_ID_HEADER))
 
-    # accept 前先 authenticate；被拒握手在传输层快速失败为 1008，不占 ConnectionManager 槽位。
-    user, payload = await authenticate_ws_token(token)
-    if user is None:
+    ticket = decode_ws_ticket(token)
+    if ticket is None:
         await websocket.close(code=1008)
         return
 
-    user_id = user.id
-    login_record_id = int(payload["login_id"])
-    lock = _HANDSHAKE_LOCKS.setdefault(user_id, asyncio.Lock())
+    user_id = ticket.user_id
+    login_record_id = ticket.login_record_id
+    lock = _user_lock(user_id)
     async with lock:
         try:
+            # accept 前核对登录有效性；被拒握手在传输层快速失败为 1008，不占 ConnectionManager 槽位。
             if is_user_in_maintenance(user_id) or not await is_ws_login_active(user_id, login_record_id):
                 await websocket.close(code=1008)
                 return
 
-            existing_session = _USER_SESSIONS.get(user_id)
-            if existing_session is not None and existing_session.login_record_id != login_record_id:
+            user_session = _USER_SESSIONS.get(user_id)
+            if user_session is not None and user_session.login_record_id != login_record_id:
                 await _terminate_user_gateway_locked(user_id)
+                user_session = None
 
-            await MANAGER.connect(websocket, user_id, login_record_id)
+            await MANAGER.connect(websocket, user_id)
 
-            # config 和 settings 只在连接时读一次；每次工具执行都开新的 SESSION_LOCAL()，让并发工具调用不共享 SQLAlchemy 状态。
+            # 模型配置只在连接时读一次；工具执行各自开新的 SESSION_LOCAL()，让并发工具调用不共享 SQLAlchemy 状态。
             async with SESSION_LOCAL() as boot_db:
                 llm_config = await resolve_user_llm_config(boot_db, user_id)
-                user_settings = await load_user_settings(boot_db, user_id)
                 await get_or_create_special_conversation(boot_db, user_id, "companion")
 
-            session_client_context: ChatRequestClientContext | None = None
-            if payload and "ctx" in payload:
-                try:
-                    session_client_context = ChatRequestClientContext(**payload["ctx"])
-                except Exception:
-                    logger.debug(
-                        "client context parse failed; continuing without context",
-                        extra={"user_id": user_id, "ctx_keys": list((payload.get("ctx") or {}).keys())},
-                    )
-
-            ws_emitter = WSEmitter(websocket)
-
-            existing_session = _USER_SESSIONS.get(user_id)
-            if existing_session is not None:
-                if existing_session.grace_timer_task and not existing_session.grace_timer_task.done():
-                    existing_session.grace_timer_task.cancel()
-                    existing_session.grace_timer_task = None
-                existing_session.websocket = websocket
-                existing_session.llm_config = llm_config
-                existing_session.user_settings = user_settings
-                existing_session.session_client_context = session_client_context
-                existing_session.dispatcher.set_sender(ws_emitter.send_json, send_strict=ws_emitter.send_json_strict)
-                existing_session.dispatcher.enable_hold()
-                user_session = existing_session
-                dispatcher = user_session.dispatcher
-                runtime_sessions = user_session.runtime_sessions
-                MANAGER.register_dispatcher(user_id, dispatcher)
+            send = _ws_sender(websocket)
+            if user_session is not None:
+                if user_session.grace_timer_task is not None:
+                    user_session.grace_timer_task.cancel()
+                    user_session.grace_timer_task = None
+                user_session.llm_config = llm_config
+                user_session.session_client_context = ticket.client_context
+                user_session.dispatcher.set_sender(send)
                 logger.info("Resumed active user gateway session across reconnect", extra={"user_id": user_id})
             else:
-                replay_buffer = ReplayBuffer(
-                    capacity=DEFAULT_REPLAY_BUFFER_CAPACITY,
-                    ttl_seconds=DEFAULT_REPLAY_BUFFER_TTL_SECONDS,
-                )
-                dispatcher = JsonRpcDispatcher(
-                    ws_emitter.send_json,
-                    replay_buffer=replay_buffer,
-                    send_strict=ws_emitter.send_json_strict,
-                )
-                dispatcher.enable_hold()
-                runtime_sessions: dict[str, RuntimeSession] = {}
-                background_tasks: set[asyncio.Task] = set()
                 user_session = UserGatewaySession(
                     user_id=user_id,
                     login_record_id=login_record_id,
-                    dispatcher=dispatcher,
-                    replay_buffer=replay_buffer,
-                    runtime_sessions=runtime_sessions,
-                    background_tasks=background_tasks,
+                    dispatcher=JsonRpcDispatcher(send),
                     llm_config=llm_config,
-                    user_settings=user_settings,
-                    session_client_context=session_client_context,
-                    websocket=websocket,
+                    session_client_context=ticket.client_context,
                 )
                 _USER_SESSIONS[user_id] = user_session
-                MANAGER.register_dispatcher(user_id, dispatcher)
-
-                _register_session_handlers(
-                    dispatcher,
-                    runtime_sessions,
-                    llm_config,
-                    user_id,
-                    replay_buffer=replay_buffer,
-                    user_session=user_session,
-                )
+                _register_session_handlers(user_session)
+            user_session.dispatcher.enable_hold()
+            MANAGER.register_dispatcher(user_id, user_session.dispatcher)
         except Exception:
             logger.exception("WebSocket boot initialization failed", extra={"user_id": user_id})
             MANAGER.disconnect(websocket, user_id)
@@ -415,7 +367,7 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
                     await _terminate_user_gateway_locked(user_id, login_record_id)
                     return
                 dispatch_task = asyncio.create_task(user_session.dispatcher.handle_raw(data))
-                user_session.background_tasks.add(dispatch_task)
+                user_session.track(dispatch_task)
             try:
                 await dispatch_task
             except asyncio.CancelledError:
@@ -424,61 +376,54 @@ async def handle_chat_websocket(websocket: WebSocket, token: str) -> None:
                 raise
             except Exception:
                 logger.exception("jsonrpc dispatch failed", extra={"user_id": user_id})
-            finally:
-                user_session.background_tasks.discard(dispatch_task)
     except WebSocketDisconnect:
         pass
     finally:
+        # 仍是该用户当前连接时才进入宽限期：已被新连接替换或已注销的旧连接不改动网关会话。
         is_active = MANAGER.active_connections.get(user_id) is websocket
         MANAGER.disconnect(websocket, user_id)
         if is_active:
             observe_companion_presence(user_id, False)
-            sess = _USER_SESSIONS.get(user_id)
-            if sess is not None and sess.websocket is websocket:
-                sess.websocket = None
-                sess.dispatcher.set_sender(_noop_send, send_strict=_noop_send_strict)
-
-                async def _grace_cleanup(uid: int) -> None:
-                    try:
-                        await asyncio.sleep(SETTINGS.desktop_disconnect_grace_seconds)
-                        if not MANAGER.is_connected(uid):
-                            logger.info(
-                                "Grace period expired for disconnected user, performing full cleanup",
-                                extra={"user_id": uid},
-                            )
-                            try:
-                                pending = discard_user_session(uid)
-                                if pending:
-                                    await asyncio.gather(*pending, return_exceptions=True)
-                            finally:
-                                cancel_user_event_tasks(uid, COMPANION_TURN_EVENT)
-                                await MANAGER.aunregister_dispatcher(uid)
-                                _clear_user_gateway_state(uid)
-                    except asyncio.CancelledError:
-                        pass
-
-                task = asyncio.create_task(_grace_cleanup(user_id))
+            if (sess := _USER_SESSIONS.get(user_id)) is not None:
+                sess.dispatcher.set_sender(_noop_send)
+                task = asyncio.create_task(_expire_disconnected_gateway(user_id))
                 _GRACE_TIMER_TASKS.add(task)
                 task.add_done_callback(_GRACE_TIMER_TASKS.discard)
                 sess.grace_timer_task = task
 
 
-async def _find_owned_conv(db: AsyncSession, user_id: int, session_id: str) -> Conversation | None:
-    """把 renderer 给的 session_id（DB 主键）解析为 Conversation；id 不是整数、不存在或不属于 user_id 时返回 None，调用方抛错。"""
-    return await Conversation.by_session_id(db, session_id, user_id=user_id)
+async def _require_owned_conv(db: AsyncSession, user_id: int, session_id: str) -> Conversation:
+    """把 renderer 给的 session_id（DB 主键）解析为该用户的 Conversation；不存在或不属于该用户时抛 METHOD_NOT_FOUND。"""
+    conv = await Conversation.by_session_id(db, session_id, user_id=user_id)
+    if conv is None:
+        raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"session not found: {session_id!r}")
+    return conv
 
 
 def _require_str(params: dict[str, Any], key: str) -> str:
-    """取必填字符串参数，否则抛 JSONRPC_INVALID_PARAMS。"""
     v = params.get(key)
     if not isinstance(v, str):
         raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"{key} must be a string")
     return v
 
 
-def _is_nonneg_int(v: Any) -> bool:
+def _optional_str(params: dict[str, Any], key: str) -> str | None:
+    v = params.get(key)
+    if v is not None and not isinstance(v, str):
+        raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"{key} must be a string")
+    return v
+
+
+def _is_nonneg_int(v: object) -> TypeGuard[int]:
     """type(v) is int 拒绝 bool（Python 把 bool 当 int 子类）。"""
     return type(v) is int and v >= 0
+
+
+def _require_nonneg_int(params: dict[str, Any], key: str) -> int:
+    v = params.get(key)
+    if not _is_nonneg_int(v):
+        raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"{key} must be a non-negative int")
+    return v
 
 
 def _is_session_video_url(file_url: str, session_id: str) -> bool:
@@ -534,34 +479,18 @@ def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[
                     JSONRPC_INVALID_PARAMS,
                     f"attachments[{idx}].file_url must be a video URL uploaded to this session (/api/media/videos/{session_id}/...)",
                 )
-            cleaned.append({"type": att_type, "file_url": file_url})
-            continue
-
-        # HTTP/HTTPS URL（长度与 URL 语义一致，维持紧上限）
-        if file_url.startswith("http"):
+        elif file_url.startswith("http"):
+            # HTTP/HTTPS URL（长度与 URL 语义一致，维持紧上限）
             if len(file_url) > 2048:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}].file_url too long")
-            cleaned.append({"type": att_type, "file_url": file_url})
-            continue
-
-        # 桌面端本地图片 data URL：字节在负载内，不落盘；字符上限覆盖 base64 膨胀。
-        if file_url.startswith("data:image/"):
+        elif file_url.startswith("data:image/"):
+            # 桌面端本地图片 data URL：字节在负载内，不落盘；字符上限覆盖 base64 膨胀。
             if len(file_url) > ATTACHMENT_DATA_URL_MAX_CHARS:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}].file_url too long")
-            cleaned.append({"type": att_type, "file_url": file_url})
-            continue
-
-        raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}] must have file_url")
+        else:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"attachments[{idx}] must have file_url")
+        cleaned.append({"type": att_type, "file_url": file_url})
     return cleaned
-
-
-def _get_runtime(runtime_sessions: dict[str, RuntimeSession], params: dict[str, Any]) -> RuntimeSession:
-    """按 session_id 参数查找 runtime，找不到抛 JSONRPC_METHOD_NOT_FOUND。"""
-    session_id = _require_str(params, "session_id")
-    runtime = runtime_sessions.get(session_id)
-    if runtime is None:
-        raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"session not found: {session_id!r}")
-    return runtime
 
 
 # 新消息类型注册常量（与 status_* 平级；不读 status_pill 路径，要走专门 subtype 渲染分支）。
@@ -579,15 +508,17 @@ async def _do_compress_history(
     调用前必须已校验 in-flight 守卫（chat_task.done）。返回 dict 形态与 session.compress_context 一致：
     compressed=False 时不含 messages / summary；True 时含 delivered messages 给前端 hydrate。
     """
+    gateway = _USER_SESSIONS.get(user_id)
+    client_context = gateway.session_client_context if gateway is not None else None
     user_settings = await load_user_settings(db, user_id)
     effective_settings = merge_session_settings(user_settings, runtime.settings, conv=conv)
-    req = ChatRequest(session_id=str(conv.id), message=ChatMessageRequest(role="user", content=""))
+    req = ChatRequest(session_id=str(conv.id), message=ChatMessageRequest(content=""))
     inputs = await build_turn_inputs(
         db,
         conv,
         user_id,
         req,
-        runtime.session_client_context,
+        client_context,
         effective_settings,
         conversation_memory_scope(conv, user_id),
     )
@@ -596,17 +527,12 @@ async def _do_compress_history(
         effective_settings.get("chat.compression_temperature"),
         CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
     )
-    compressed_context, compress_info = await compress_history_if_needed(
+    _, compress_info = await compress_history(
         inputs.context,
         client=inputs.client,
         model=inputs.model_name,
-        context_length=inputs.ctx_length,
-        enabled=True,
-        threshold_ratio=0.0,
         temperature=scale_temperature(inputs.provider_name, compression_u),
-        language=effective_settings.get("language", DEFAULT_LANGUAGE),
-        current_tokens=inputs.estimated_tokens,
-        force=True,
+        language=inputs.language,
     )
 
     if compress_info is None:
@@ -620,27 +546,14 @@ async def _do_compress_history(
             },
         }
 
-    checkpoint = Message(
-        conversation_id=conv.id,
-        role="system",
-        content=f"[🗜️ 对话压缩 — {compress_info.replaced_count} 条早期消息已压缩]\n{compress_info.summary}",
-        subtype="compress_summary",
-        summary_through_message_id=compress_info.through_message_id,
-        prompt_tokens=compress_info.prompt_tokens,
-        completion_tokens=compress_info.completion_tokens,
-    )
-    db.add(checkpoint)
-    await db.commit()
-    if prune_before := compress_info.prune_before_message_id:
-        await prune_videos_in_range(db, conv.id, hi=prune_before, preserve_queued=True)
-    await db.commit()
+    await persist_compression_checkpoint(db, conv.id, compress_info)
 
     new_inputs = await build_turn_inputs(
         db,
         conv,
         user_id,
         req,
-        runtime.session_client_context,
+        client_context,
         effective_settings,
         conversation_memory_scope(conv, user_id),
     )
@@ -659,7 +572,7 @@ async def _do_compress_history(
     }
 
 
-async def _do_clear_history(db: AsyncSession, conv: Conversation, runtime: RuntimeSession) -> dict[str, Any]:
+async def _do_clear_history(db: AsyncSession, conv: Conversation) -> dict[str, Any]:
     """清空会话所有消息（含 user / assistant / system / tool 各 role，保留会话行 + 写一条 status_cleared 标记）。
 
     返回 {"session_id", "cleared_count", "messages": [...]}。``cleared_count`` 是真正删除的行数。
@@ -686,59 +599,10 @@ async def _do_clear_history(db: AsyncSession, conv: Conversation, runtime: Runti
 
     delivered = await build_session_messages(conv.id, db)
     return {
-        "session_id": runtime.session_id,
+        "session_id": str(conv.id),
         "cleared_count": total,
         "messages": delivered,
     }
-
-
-async def do_session_undo(
-    user_id: int,
-    session_id: str,
-    source_message_id: int,
-    *,
-    runtime_sessions: dict[str, RuntimeSession] | None = None,
-    dispatcher: Any | None = None,
-) -> dict:
-    """session.undo_to_message 的共享实现：业务校验 + per-conversation lock + in-flight guard + 服务调用 + 多窗口广播。
-
-    透传 runtime_sessions / dispatcher 是为了 REST 与 WS 共用同一份安全网——调用方传入后即可复用锁、
-    in-flight 守卫与广播；不传时退化为「无 in-flight / 无广播」基础版（仅服务调用 + 锁）。
-    """
-    runtime = runtime_sessions.get(session_id) if runtime_sessions else None
-    lock = _conversation_locks.setdefault(str(session_id), asyncio.Lock())
-    async with lock, SESSION_LOCAL() as db:
-        if runtime is not None and runtime.chat_task and not runtime.chat_task.done():
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
-        try:
-            conv = await resolve_undo_target(db, user_id, session_id, source_message_id)
-            await prune_videos_in_range(db, conv.id, lo=source_message_id)
-            result = await undo_conversation_to_message(db, conv, source_message_id)
-        except (UndoNotAllowedError, SourceNotFoundError) as e:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(e))
-
-    if dispatcher is not None:
-        await dispatcher.push_event(
-            "message.deleted",
-            {
-                "session_id": session_id,
-                "deleted_count": result["deleted_count"],
-                "anchor": result["anchor"],
-                "messages": result["messages"],
-            },
-            session_id=session_id,
-        )
-
-    logger.info(
-        "session.undo_to_message",
-        extra={
-            "user_id": user_id,
-            "session_id": session_id,
-            "source_message_id": source_message_id,
-            "deleted_count": result["deleted_count"],
-        },
-    )
-    return result
 
 
 @register_slash_command(
@@ -749,14 +613,11 @@ async def do_session_undo(
 )
 async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
     """``/清理`` 命令 handler。``confirmed`` 由 ``command.dispatch`` 在调用前把关，未传则抛 SLASH_CONFIRM_REQUIRED。"""
-    lock = _conversation_locks.setdefault(str(ctx.runtime.conversation_id), asyncio.Lock())
-    async with lock, SESSION_LOCAL() as db:
-        if ctx.runtime.chat_task and not ctx.runtime.chat_task.done():
+    async with _conversation_lock(ctx.session_id), SESSION_LOCAL() as db:
+        if ctx.runtime.busy:
             raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再清理会话")
-        conv = await _find_owned_conv(db, ctx.user_id, ctx.session_id)
-        if conv is None:
-            raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"session not found: {ctx.session_id!r}")
-        result = await _do_clear_history(db, conv, ctx.runtime)
+        conv = await _require_owned_conv(db, ctx.user_id, ctx.session_id)
+        result = await _do_clear_history(db, conv)
     cleared = result["cleared_count"]
     if cleared == 0:
         return SlashCommandResult(
@@ -781,13 +642,10 @@ async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
 )
 async def _slash_compress(ctx: SlashCommandContext) -> SlashCommandResult:
     """``/压缩`` 命令 handler：复用 session.compress_context 的核心实现。"""
-    lock = _conversation_locks.setdefault(str(ctx.runtime.conversation_id), asyncio.Lock())
-    async with lock, SESSION_LOCAL() as db:
-        if ctx.runtime.chat_task and not ctx.runtime.chat_task.done():
+    async with _conversation_lock(ctx.session_id), SESSION_LOCAL() as db:
+        if ctx.runtime.busy:
             raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再压缩会话")
-        conv = await _find_owned_conv(db, ctx.user_id, ctx.session_id)
-        if conv is None:
-            raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"session not found: {ctx.session_id!r}")
+        conv = await _require_owned_conv(db, ctx.user_id, ctx.session_id)
         result = await _do_compress_history(db, conv, ctx.user_id, ctx.runtime)
     if not result["compressed"]:
         return SlashCommandResult(
@@ -849,48 +707,75 @@ async def _slash_remember(ctx: SlashCommandContext) -> SlashCommandResult:
     )
 
 
-def _register_session_handlers(
-    dispatcher: JsonRpcDispatcher,
-    runtime_sessions: dict[str, RuntimeSession],
-    llm_config: dict,
-    user_id: int,
-    replay_buffer: ReplayBuffer | None = None,
-    user_session: UserGatewaySession | None = None,
-) -> None:
-    effective_buffer = replay_buffer or (user_session.replay_buffer if user_session else ReplayBuffer())
+async def _fetch_truncated_history(conv_id: int, db: AsyncSession) -> tuple[list[dict[str, Any]], bool, str | None]:
+    head = await build_session_messages(
+        conv_id,
+        db,
+        limit=SESSION_HISTORY_TRUNCATE_THRESHOLD + SESSION_HISTORY_PRE_BUFFER,
+        desc=True,
+        include_id=True,
+    )
+    head.reverse()
+    truncated = len(head) > SESSION_HISTORY_TRUNCATE_THRESHOLD
+    delivered = head[-SESSION_HISTORY_TRUNCATE_THRESHOLD:] if truncated else head
+    next_cursor = str(delivered[0]["id"]) if truncated and delivered else None
+    return delivered, truncated, next_cursor
 
-    def _mount_runtime(conv: Conversation, cwd: str | None, *, cancel_existing: bool = False) -> RuntimeSession:
-        """取消同会话在内存中的 runtime，再挂载新的。"""
-        for existing in list(runtime_sessions.values()):
-            if existing.conversation_id == conv.id:
-                if cancel_existing and existing.chat_task and not existing.chat_task.done():
-                    existing.chat_task.cancel()
-                if not cancel_existing:
-                    return existing
-                runtime_sessions.pop(existing.session_id, None)
-        runtime = new_runtime_session(
-            conversation_id=conv.id,
-            cwd=cwd,
-            settings_json=conv.settings_json,
-            kind=conv.kind,
-        )
+
+def _register_session_handlers(session: UserGatewaySession) -> None:
+    user_id = session.user_id
+    dispatcher = session.dispatcher
+    runtime_sessions = session.runtime_sessions
+    replay_buffer = dispatcher.replay_buffer
+
+    def _mount_runtime(conv: Conversation, *, cancel_existing: bool = False) -> RuntimeSession:
+        """挂载会话 runtime：默认复用内存中已有的；cancel_existing 时取消其在途回合并按数据库状态重建。"""
+        existing = runtime_sessions.get(str(conv.id))
+        if existing is not None:
+            if not cancel_existing:
+                return existing
+            if existing.chat_task is not None:
+                existing.chat_task.cancel()
+        runtime = new_runtime_session(conv)
         runtime_sessions[runtime.session_id] = runtime
         return runtime
 
-    async def _runtime_info(cfg: dict[str, Any], runtime: RuntimeSession, conv: Conversation) -> dict[str, Any]:
+    def _require_runtime(params: dict[str, Any]) -> RuntimeSession:
+        session_id = _require_str(params, "session_id")
+        runtime = runtime_sessions.get(session_id)
+        if runtime is None:
+            raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"session not found: {session_id!r}")
+        return runtime
+
+    async def _runtime_info(runtime: RuntimeSession, conv: Conversation) -> SessionRuntimeInfo:
         async with SESSION_LOCAL() as db:
             user_settings = await load_user_settings(db, user_id)
         effective = merge_session_settings(user_settings, runtime.settings, conv=conv)
-        return runtime_info_snapshot(cfg, runtime) | {
-            "settings": runtime.settings | asdict(resolve_inference_settings(effective, conv=conv)),
-        }
+        settings = runtime.settings | asdict(resolve_inference_settings(effective, conv=conv))
+        return build_runtime_info(session.llm_config, runtime, settings)
+
+    async def _mounted_history(
+        conv: Conversation,
+        messages: list[dict[str, Any]],
+        *,
+        cancel_existing: bool,
+        **flags: Any,
+    ) -> dict[str, Any]:
+        """挂载 runtime、释放事件 hold 后返回历史同步结果；flags 为 SessionResumeResult 的截断 / 增量标记。"""
+        runtime = _mount_runtime(conv, cancel_existing=cancel_existing)
+        await dispatcher.flush_unsent()
+        return SessionResumeResult(
+            session_id=runtime.session_id,
+            message_count=len(messages),
+            messages=messages,
+            info=await _runtime_info(runtime, conv),
+            current_seq=replay_buffer.max_seq,
+            **flags,
+        ).model_dump()
 
     async def session_ack(params: dict) -> dict:
-        seq = params.get("seq")
-        if not _is_nonneg_int(seq):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "seq must be a non-negative int")
-        pruned = effective_buffer.ack(seq)
-        return {"acked": seq, "pruned": pruned}
+        seq = _require_nonneg_int(params, "seq")
+        return {"acked": seq, "pruned": replay_buffer.ack(seq)}
 
     dispatcher.register("session.ack", session_ack)
 
@@ -899,36 +784,17 @@ def _register_session_handlers(
 
     dispatcher.register("session.ping", session_ping)
 
-    async def _fetch_truncated_history(conv_id: int, db: AsyncSession) -> tuple[list[dict[str, Any]], bool, str | None]:
-        head = await build_session_messages(
-            conv_id,
-            db,
-            limit=SESSION_HISTORY_TRUNCATE_THRESHOLD + SESSION_HISTORY_PRE_BUFFER,
-            desc=True,
-            include_id=True,
-        )
-        head.reverse()
-        truncated = len(head) > SESSION_HISTORY_TRUNCATE_THRESHOLD
-        delivered = head[-SESSION_HISTORY_TRUNCATE_THRESHOLD:] if truncated else head
-        next_cursor = str(delivered[0]["id"]) if truncated and delivered else None
-        return delivered, truncated, next_cursor
-
     async def session_get_main(_params: dict) -> dict:
         async with SESSION_LOCAL() as db:
             conv = await get_or_create_special_conversation(db, user_id, "companion")
             delivered, truncated, next_cursor = await _fetch_truncated_history(conv.id, db)
-        runtime = _mount_runtime(conv, conv.cwd)
-        cfg = user_session.llm_config if user_session else llm_config
-        await dispatcher.flush_unsent()
-        return SessionResumeResult(
-            session_id=runtime.session_id,
-            message_count=len(delivered),
-            messages=delivered,
-            info=await _runtime_info(cfg, runtime, conv),
-            current_seq=effective_buffer.max_seq,
+        return await _mounted_history(
+            conv,
+            delivered,
+            cancel_existing=False,
             truncated=truncated,
             next_cursor=next_cursor,
-        ).model_dump()
+        )
 
     dispatcher.register("session.get_main", session_get_main)
 
@@ -948,16 +814,15 @@ def _register_session_handlers(
             db.add(conv)
             await db.commit()
             await db.refresh(conv)
-        runtime = _mount_runtime(conv, cwd)
+        runtime = _mount_runtime(conv)
         logger.info(
             "session.create",
             extra={"user_id": user_id, "session_id": runtime.session_id, "cwd": cwd, "system_preset_id": preset_id},
         )
-        cfg = user_session.llm_config if user_session else llm_config
         await dispatcher.flush_unsent()
         return SessionCreateResult(
             session_id=runtime.session_id,
-            info=await _runtime_info(cfg, runtime, conv),
+            info=await _runtime_info(runtime, conv),
         ).model_dump()
 
     dispatcher.register("session.create", session_create)
@@ -976,48 +841,27 @@ def _register_session_handlers(
     async def session_fork(params: dict) -> dict:
         """从用户拥有的源会话的某条消息派生新会话：复制 1..source_message_id 共 N 条消息到 kind='standard' 的新会话；新会话挂载 runtime 并返回 SessionResumeResult，客户端可直接 hydrate 并自动挂载。"""
         source_session_id = _require_str(params, "source_session_id")
-        raw_id = params.get("source_message_id")
-        if not _is_nonneg_int(raw_id):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "source_message_id must be a non-negative int")
-
+        source_message_id = _require_nonneg_int(params, "source_message_id")
         async with SESSION_LOCAL() as db:
             try:
-                result = await fork_conversation_from_message(db, user_id, source_session_id, int(raw_id))
+                result = await fork_conversation_from_message(db, user_id, source_session_id, source_message_id)
             except ForkNotAllowedError as e:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(e))
             except SourceNotFoundError as e:
                 raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, str(e))
-
-        # 服务函数只负责 DB 落库；runtime 挂载与 info 在这里补，与 session.resume 路径一致
-        conv_id = int(result["session_id"])
-        async with SESSION_LOCAL() as db:
-            conv = await _find_owned_conv(db, user_id, str(conv_id))
-            if conv is None:
-                raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"forked session not found: {conv_id!r}")
-        runtime = _mount_runtime(conv, conv.cwd)
-        cfg = user_session.llm_config if user_session else llm_config
-        await dispatcher.flush_unsent()
+            # 服务函数只负责落库；runtime 挂载与 info 在这里补，与 session.resume 路径一致
+            conv = await _require_owned_conv(db, user_id, result["session_id"])
         logger.info(
             "session.fork",
             extra={
                 "user_id": user_id,
                 "source_session_id": source_session_id,
-                "source_message_id": int(raw_id),
-                "new_session_id": runtime.session_id,
+                "source_message_id": source_message_id,
+                "new_session_id": result["session_id"],
                 "message_count": result["message_count"],
             },
         )
-        return SessionResumeResult(
-            session_id=runtime.session_id,
-            message_count=result["message_count"],
-            messages=result["messages"],
-            info=await _runtime_info(cfg, runtime, conv),
-            resumed=False,
-            replayed_count=0,
-            current_seq=effective_buffer.max_seq,
-            truncated=False,
-            next_cursor=None,
-        ).model_dump()
+        return await _mounted_history(conv, result["messages"], cancel_existing=False)
 
     dispatcher.register("session.fork", session_fork)
 
@@ -1028,101 +872,80 @@ def _register_session_handlers(
         if after_id is not None and not _is_nonneg_int(after_id):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "after_id must be a non-negative int")
         async with SESSION_LOCAL() as db:
-            conv = await _find_owned_conv(db, user_id, stored_id)
-            if conv is None:
-                raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"stored session not found: {stored_id!r}")
+            conv = await _require_owned_conv(db, user_id, stored_id)
 
-        cfg = user_session.llm_config if user_session else llm_config
-
-        if (
-            conv.kind != IM_KIND
-            and isinstance(last_seq, int)
-            and last_seq > 0
-            and effective_buffer.can_replay(last_seq)
-        ):
-            runtime = _mount_runtime(conv, conv.cwd, cancel_existing=False)
-            replayed_frames = await dispatcher.replay(last_seq) or []
-            logger.info(
-                "session.resume replayed frames",
-                extra={
-                    "user_id": user_id,
-                    "session_id": runtime.session_id,
-                    "replayed": len(replayed_frames),
-                    "last_seq": last_seq,
-                },
-            )
-            return SessionResumeResult(
-                session_id=runtime.session_id,
-                message_count=0,
-                messages=[],
-                info=await _runtime_info(cfg, runtime, conv),
-                resumed=True,
-                replayed_count=len(replayed_frames),
-                current_seq=effective_buffer.max_seq,
-            ).model_dump()
+        # IM 会话始终完整加载以更新 queued 状态；重放缓冲不再覆盖 last_seq 时改走历史同步。
+        if conv.kind != IM_KIND and isinstance(last_seq, int) and last_seq > 0:
+            replayed_count = await dispatcher.replay(last_seq)
+            if replayed_count is not None:
+                runtime = _mount_runtime(conv)
+                logger.info(
+                    "session.resume replayed frames",
+                    extra={
+                        "user_id": user_id,
+                        "session_id": runtime.session_id,
+                        "replayed": replayed_count,
+                        "last_seq": last_seq,
+                    },
+                )
+                return SessionResumeResult(
+                    session_id=runtime.session_id,
+                    message_count=0,
+                    info=await _runtime_info(runtime, conv),
+                    resumed=True,
+                    replayed_count=replayed_count,
+                    current_seq=replay_buffer.max_seq,
+                ).model_dump()
 
         # 本地已有历史：锚点仍存在时只回增量，避免冷启动全量重拉。
-        if conv.kind != IM_KIND and after_id is not None and after_id > 0:
+        if conv.kind != IM_KIND and after_id:
             async with SESSION_LOCAL() as db:
                 anchor_exists = (
                     await db.execute(
                         select(Message.id).where(Message.id == after_id, Message.conversation_id == conv.id),
                     )
                 ).scalar_one_or_none() is not None
-                if anchor_exists:
-                    delivered = await build_session_messages(conv.id, db, after_id=after_id, include_id=True)
-            if anchor_exists:
-                runtime = _mount_runtime(conv, conv.cwd, cancel_existing=True)
-                await dispatcher.flush_unsent()
+                delivered = (
+                    await build_session_messages(conv.id, db, after_id=after_id, include_id=True)
+                    if anchor_exists
+                    else None
+                )
+            if delivered is not None:
                 logger.info(
                     "session.resume incremental",
                     extra={
                         "user_id": user_id,
-                        "session_id": runtime.session_id,
+                        "session_id": stored_id,
                         "after_id": after_id,
                         "new_count": len(delivered),
                     },
                 )
-                return SessionResumeResult(
-                    session_id=runtime.session_id,
-                    message_count=len(delivered),
-                    messages=delivered,
-                    info=await _runtime_info(cfg, runtime, conv),
-                    resumed=False,
-                    replayed_count=0,
-                    current_seq=effective_buffer.max_seq,
-                    incremental=True,
-                ).model_dump()
+                return await _mounted_history(conv, delivered, cancel_existing=True, incremental=True)
 
         # 客户端序列号失同步或超时，回退到 DB 历史防御性截断重水化
         async with SESSION_LOCAL() as db:
             delivered, truncated, next_cursor = await _fetch_truncated_history(conv.id, db)
-        runtime = _mount_runtime(conv, conv.cwd, cancel_existing=True)
-        await dispatcher.flush_unsent()
-        logger.info("session.resume full reload", extra={"user_id": user_id, "session_id": runtime.session_id})
-        return SessionResumeResult(
-            session_id=runtime.session_id,
-            message_count=len(delivered),
-            messages=delivered,
-            info=await _runtime_info(cfg, runtime, conv),
-            resumed=False,
-            replayed_count=0,
-            current_seq=effective_buffer.max_seq,
+        logger.info("session.resume full reload", extra={"user_id": user_id, "session_id": stored_id})
+        return await _mounted_history(
+            conv,
+            delivered,
+            cancel_existing=True,
             truncated=truncated,
             next_cursor=next_cursor,
-        ).model_dump()
+        )
+
+    dispatcher.register("session.resume", session_resume)
 
     async def session_interrupt(params: dict) -> dict:
-        runtime = _get_runtime(runtime_sessions, params)
-        if runtime.chat_task and not runtime.chat_task.done():
+        runtime = _require_runtime(params)
+        if runtime.chat_task is not None:
             runtime.chat_task.cancel()
         return {}
 
     dispatcher.register("session.interrupt", session_interrupt)
 
     async def session_set_settings(params: dict) -> dict:
-        sess_runtime = user_session.runtime_sessions if user_session else runtime_sessions
-        runtime = _get_runtime(sess_runtime, params)
+        runtime = _require_runtime(params)
         try:
             settings_patch = SessionSettingsPatch.model_validate(params.get("settings")).model_dump(exclude_unset=True)
         except ValidationError as exc:
@@ -1137,8 +960,7 @@ def _register_session_handlers(
             ).scalar_one_or_none()
             if conv is None:
                 raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, "Session not found")
-            settings = safe_json_loads(conv.settings_json, default={})
-            settings = settings if isinstance(settings, dict) else {}
+            settings = decode_session_settings(conv.settings_json)
             for key, value in settings_patch.items():
                 if value is not None:
                     settings[key] = value
@@ -1148,25 +970,20 @@ def _register_session_handlers(
                 conv.settings_json = json.dumps(settings, ensure_ascii=False)
                 await db.commit()
             runtime.settings = settings
-        cfg = user_session.llm_config if user_session else llm_config
         return {
             "session_id": runtime.session_id,
             "settings": dict(runtime.settings),
-            "info": await _runtime_info(cfg, runtime, conv),
+            "info": (await _runtime_info(runtime, conv)).model_dump(),
         }
 
     dispatcher.register("session.set_settings", session_set_settings)
 
     async def session_compress_context(params: dict) -> dict:
-        sess_runtime = user_session.runtime_sessions if user_session else runtime_sessions
-        runtime = _get_runtime(sess_runtime, params)
-        lock = _conversation_locks.setdefault(runtime.session_id, asyncio.Lock())
-        async with lock, SESSION_LOCAL() as db:
-            if runtime.chat_task and not runtime.chat_task.done():
+        runtime = _require_runtime(params)
+        async with _conversation_lock(runtime.session_id), SESSION_LOCAL() as db:
+            if runtime.busy:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
-            conv = await _find_owned_conv(db, user_id, runtime.session_id)
-            if conv is None:
-                raise JsonRpcError(JSONRPC_METHOD_NOT_FOUND, f"session not found: {runtime.session_id!r}")
+            conv = await _require_owned_conv(db, user_id, runtime.session_id)
             return await _do_compress_history(db, conv, user_id, runtime)
 
     dispatcher.register("session.compress_context", session_compress_context)
@@ -1180,18 +997,38 @@ def _register_session_handlers(
                 "session.undo_to_message requires confirmed=true",
                 data={"requires_confirmation": True},
             )
-        raw_id = params.get("source_message_id")
-        if not _is_nonneg_int(raw_id):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "source_message_id must be a non-negative int")
+        source_message_id = _require_nonneg_int(params, "source_message_id")
+        runtime = runtime_sessions.get(session_id)
+        async with _conversation_lock(session_id), SESSION_LOCAL() as db:
+            if runtime is not None and runtime.busy:
+                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
+            try:
+                conv = await resolve_undo_target(db, user_id, session_id, source_message_id)
+                await prune_videos_in_range(db, conv.id, lo=source_message_id)
+                result = await undo_conversation_to_message(db, conv, source_message_id)
+            except (UndoNotAllowedError, SourceNotFoundError) as e:
+                raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(e))
 
-        sess_runtime = user_session.runtime_sessions if user_session else runtime_sessions
-        return await do_session_undo(
-            user_id,
-            session_id,
-            int(raw_id),
-            runtime_sessions=sess_runtime,
-            dispatcher=dispatcher,
+        await dispatcher.push_event(
+            "message.deleted",
+            {
+                "session_id": session_id,
+                "deleted_count": result["deleted_count"],
+                "anchor": result["anchor"],
+                "messages": result["messages"],
+            },
+            session_id=session_id,
         )
+        logger.info(
+            "session.undo_to_message",
+            extra={
+                "user_id": user_id,
+                "session_id": session_id,
+                "source_message_id": source_message_id,
+                "deleted_count": result["deleted_count"],
+            },
+        )
+        return result
 
     dispatcher.register("session.undo_to_message", session_undo_to_message)
 
@@ -1201,8 +1038,7 @@ def _register_session_handlers(
         返回 ``{command, result: SlashCommandResult.model_dump()}`` 形态；同步广播
         ``command.result`` 事件给所有订阅同 session 的窗口，便于多窗口场景同步渲染 pill。
         """
-        sess_runtime = user_session.runtime_sessions if user_session else runtime_sessions
-        runtime = _get_runtime(sess_runtime, params)
+        runtime = _require_runtime(params)
         raw_command = params.get("command")
         if not isinstance(raw_command, str) or not raw_command.strip():
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "command must be a non-empty string")
@@ -1253,15 +1089,7 @@ def _register_session_handlers(
             logger.exception("slash command handler failed", extra={"command": cmd.name, "user_id": user_id})
             raise JsonRpcError(JSONRPC_SLASH_GENERIC, f"command /{name} failed unexpectedly") from None
 
-        result_payload = {
-            "command": cmd.name,
-            "result": {
-                "status": result.status,
-                "message": result.message,
-                "payload": result.payload,
-                "hydrate": result.hydrate,
-            },
-        }
+        result_payload = {"command": cmd.name, "result": asdict(result)}
         await dispatcher.push_event("command.result", result_payload, session_id=runtime.session_id)
         return result_payload
 
@@ -1273,23 +1101,14 @@ def _register_session_handlers(
 
     dispatcher.register("command.list", command_list)
 
-    def _track(task: asyncio.Task) -> None:
-        if user_session is not None:
-            user_session.background_tasks.add(task)
-            task.add_done_callback(user_session.background_tasks.discard)
-
     async def _submit_prompt(params: dict, runtime: RuntimeSession) -> dict:
         # im 会话由通道桥独占写入（外部 IM 消息驱动回合），桌面端只读旁观历史。
         if runtime.kind == IM_KIND:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "IM 会话由通道桥接维护，仅只读")
-        if runtime.chat_task and not runtime.chat_task.done():
-            try:
-                await asyncio.wait_for(asyncio.shield(runtime.chat_task), timeout=0.3)
-            except asyncio.CancelledError:
-                raise
-            except TimeoutError:
-                logger.debug("chat_task shield wait timed out for session %s", runtime.session_id)
-            if runtime.chat_task and not runtime.chat_task.done():
+        if runtime.chat_task is not None and runtime.busy:
+            # 刚被中断的回合可能仍在收尾：短暂等待其结束；asyncio.wait 不把旧回合的取消或异常传播到本请求。
+            await asyncio.wait({runtime.chat_task}, timeout=0.3)
+            if runtime.busy:
                 raise JsonRpcError(
                     JSONRPC_INVALID_PARAMS,
                     f"session {runtime.session_id!r} already has an in-flight turn",
@@ -1339,12 +1158,11 @@ def _register_session_handlers(
 
         req = ChatRequest(
             session_id=runtime.session_id,
-            message=ChatMessageRequest(role="user", content=text, attachments=attachments),
+            message=ChatMessageRequest(content=text, attachments=attachments),
             response_preference=response_preference,
         )
 
-        disp = user_session.dispatcher if user_session else dispatcher
-        emitter = JsonRpcEmitter(dispatcher=disp, session_id=runtime.session_id)
+        emitter = JsonRpcEmitter(dispatcher=dispatcher, session_id=runtime.session_id)
 
         note_user_contact(user_id)
         await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
@@ -1366,24 +1184,24 @@ def _register_session_handlers(
                 persisted_message_id = replacement.id
                 edited_messages = await build_session_messages(runtime.conversation_id, db, include_id=True)
 
-        cur_cfg = user_session.llm_config if user_session else llm_config
-        cur_ctx = user_session.session_client_context if user_session else None
+        llm_config = session.llm_config
+        client_context = session.session_client_context
 
         async def _run_turn() -> None:
             try:
                 if edited_messages is not None:
-                    await disp.push_event(
+                    await dispatcher.push_event(
                         "message.edited",
                         {"session_id": runtime.session_id, "messages": edited_messages},
                         session_id=runtime.session_id,
                     )
                 await run_chat_turn(
                     req,
-                    cur_cfg,
+                    llm_config,
                     user_id,
                     emitter,
-                    session_client_context=cur_ctx,
-                    track_task=_track,
+                    session_client_context=client_context,
+                    track_task=session.track,
                     session_settings=runtime.settings,
                     precursor_user_message_ids=precursor_user_message_ids or None,
                     persisted_message_id=persisted_message_id,
@@ -1393,17 +1211,15 @@ def _register_session_handlers(
             except Exception as e:
                 logger.exception("prompt.submit chat_turn failed")
                 with contextlib.suppress(Exception):
-                    await disp.push_error_event(str(e), session_id=runtime.session_id)
+                    await dispatcher.push_error_event(str(e), session_id=runtime.session_id)
 
         runtime.chat_task = asyncio.create_task(_run_turn())
-        _track(runtime.chat_task)
+        session.track(runtime.chat_task)
         return {"queued": True}
 
     async def prompt_submit(params: dict) -> dict:
-        sess_runtime = user_session.runtime_sessions if user_session else runtime_sessions
-        runtime = _get_runtime(sess_runtime, params)
-        lock = _conversation_locks.setdefault(runtime.session_id, asyncio.Lock())
-        async with lock:
+        runtime = _require_runtime(params)
+        async with _conversation_lock(runtime.session_id):
             return await _submit_prompt(params, runtime)
 
     dispatcher.register("prompt.submit", prompt_submit)
@@ -1425,19 +1241,15 @@ def _register_session_handlers(
         tools = params.get("tools", [])
         if not isinstance(tools, list):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "tools must be a list")
-        REGISTRY.update_runner_tools(user_id, tools, skill_scope_version=params.get("skill_scope_version", 0))
+        REGISTRY.update_runner_tools(user_id, tools)
         return ToolsSyncResult(count=len(tools)).model_dump()
 
     dispatcher.register("tools.sync", tools_sync)
 
     async def image_attach(params: dict) -> dict:
         # 路径模式：后端不读字节，LLM 通过 Runner 文件工具读取。
-        path = _require_str(params, "path")
-        return path_attach_ref(path)
+        return path_attach_ref(_require_str(params, "path"))
 
-    dispatcher.register("session.create", session_create)
-    dispatcher.register("session.resume", session_resume)
-    dispatcher.register("session.interrupt", session_interrupt)
     dispatcher.register("image.attach", image_attach)
 
     async def companion_set_timezone(params: dict) -> dict:
@@ -1476,8 +1288,7 @@ def _register_session_handlers(
 
         idle_seconds = coerce_non_negative_float(params.get("idle_seconds"))
         local_hour = coerce_hour_0_23(params.get("local_hour"))
-        cfg = user_session.llm_config if user_session else llm_config
-        result = await check_idle_expression(user_id, idle_seconds, local_hour, cfg)
+        result = await check_idle_expression(user_id, idle_seconds, local_hour, session.llm_config)
         if result.expressed and result.action_id is not None:
             async with SESSION_LOCAL() as db:
                 play = await request_playback(
@@ -1551,37 +1362,24 @@ def _register_session_handlers(
         fullscreen = bool(params.get("fullscreen"))
         screen_locked = bool(params.get("screen_locked"))
         seconds_since_last_action = coerce_non_negative_float(params.get("seconds_since_last_action"))
-        cfg = user_session.llm_config if user_session else llm_config
 
         res = await should_act(
             user_id=user_id,
-            kind=kind,
             idle_seconds=idle_seconds,
             local_hour=local_hour,
             focused_category=focused_category,
             fullscreen=fullscreen,
             screen_locked=screen_locked,
             seconds_since_last_action=seconds_since_last_action,
-            llm_config=cfg,
+            llm_config=session.llm_config,
         )
         # 走过去搭话（DESIGN「位置、移动与缩放」「自主动作与空间智能」）：开场白经 companion.message 通道独立投递，
-        # 客户端边走边说；RPC 响应只承载走位动作。text 的规范化已在 should_act 内完成，
-        # 这里对空文本做防御性跳过（should_act 对无文本的 approach 已降级 stay）。
-        if res.action == "approach" and isinstance(res.params, dict) and str(res.params.get("text") or "").strip():
-            await emit_companion_message(
-                user_id,
-                str(res.params["text"]).strip(),
-            )
+        # 客户端边走边说；RPC 响应只承载走位动作。should_act 已把 approach 的 params 收敛为非空 text。
+        if res.action == "approach" and res.params is not None:
+            await emit_companion_message(user_id, res.params["text"])
         return res.model_dump()
 
     dispatcher.register("companion.should_act", companion_should_act)
-
-    async def companion_get_user_profile(_params: dict) -> dict:
-        # record_user_profile 的逆操作：retune 向导在打开前调用，预填它的 user_* 步骤。
-        async with SESSION_LOCAL() as db:
-            return await read_user_profile(db, MemoryScope(user_id, "companion"))
-
-    dispatcher.register("companion.get_user_profile", companion_get_user_profile)
 
     async def _memory_scope(params: dict, db: AsyncSession) -> MemoryScope:
         try:
@@ -1679,9 +1477,7 @@ def _register_session_handlers(
 
     async def avatar_regenerate(params: dict) -> dict:
         # 10-60s 同步生图以后台 task 跑，立即返回 queued: true 不阻塞 WS 接收循环；结果通过 avatar.regenerated 事件回。
-        feedback = params.get("feedback")
-        if feedback is not None and not isinstance(feedback, str):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "feedback must be a string")
+        feedback = _optional_str(params, "feedback")
         mode = params.get("mode")
         if mode not in ("edit", "regenerate"):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "mode must be 'edit' or 'regenerate'")
@@ -1735,36 +1531,21 @@ def _register_session_handlers(
             except Exception:
                 logger.debug("avatar.regenerated event push failed", extra={"user_id": user_id}, exc_info=True)
 
-        task = asyncio.create_task(_run())
-        if user_session is not None:
-            user_session.background_tasks.add(task)
-            task.add_done_callback(user_session.background_tasks.discard)
-        else:
-            # 双保险：尚未建立 per-user 会话时回落到模块级 set，确保 task 在完成前仍有强引用。
-            _avatar_regen_tasks.add(task)
-            task.add_done_callback(_avatar_regen_tasks.discard)
+        session.track(asyncio.create_task(_run()))
         return {"queued": True, "job_id": job_id}
 
     dispatcher.register("avatar.regenerate", avatar_regenerate)
 
     async def tts_list_voices(params: dict) -> dict:
         # 语音目录。可选 language 过滤——未知值直接返回完整目录，避免将来新增 tag 时 400。
-        language = params.get("language")
-        if language is not None and not isinstance(language, str):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "language must be a string")
-        language = normalize_voice_language(language)
+        language = normalize_voice_language(_optional_str(params, "language"))
         async with SESSION_LOCAL() as db:
             return (await list_tts_voices(db, user_id, language=language)).model_dump()
 
     async def tts_match_voice(params: dict) -> dict:
         # 把自由文本语音偏好映射到已配置供应商目录中的具体 voice id；onboarding 不为已有目录覆盖的窄标签任务付 LLM 延迟。
-        preference = params.get("preference")
-        if not isinstance(preference, str):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "preference must be a string")
-        language = params.get("language")
-        if language is not None and not isinstance(language, str):
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "language must be a string")
-        language = normalize_voice_language(language)
+        preference = _require_str(params, "preference")
+        language = normalize_voice_language(_optional_str(params, "language"))
         async with SESSION_LOCAL() as db:
             return (await match_user_voice(db, user_id, preference, language=language)).model_dump()
 

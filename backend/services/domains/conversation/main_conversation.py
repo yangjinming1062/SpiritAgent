@@ -7,7 +7,7 @@ from .presets import resolve_preset_meta
 
 # ``SPECIAL_KIND`` 对应系统预设对话：每用户固定 5 条（companion/developer/product_manager/copywriter/language_teacher），system_preset_id 标注具体预设；主陪伴会话即 ``system_preset_id='companion'``。
 SPECIAL_KIND = "special"
-# 外部 IM 渠道桥接的会话：统一一种 kind，每渠道一条专属对话由 channel_bindings.conversation_id 唯一外键锚定（services/channels/conversation.py 工厂）；prompt.submit 拒写，桌面端只读旁观。
+# 外部 IM 渠道桥接的会话：统一一种 kind，每渠道一条专属对话由 channel_bindings.conversation_id 唯一外键锚定（services/adapters/channels/conversation.py 工厂）；prompt.submit 拒写，桌面端只读旁观。
 IM_KIND = "im"
 # ``kind`` 列的 SQL server_default 值。
 STANDARD_KIND = "standard"

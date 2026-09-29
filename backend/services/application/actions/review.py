@@ -8,6 +8,7 @@ import asyncio
 import json
 import re
 from pathlib import Path
+from typing import Any
 
 from components import SETTINGS, parse_llm_json, utc_now
 from modules.companion import (
@@ -15,16 +16,15 @@ from modules.companion import (
     CharacterCardSnapshot,
     CompanionAction,
     CompanionActionPack,
-    Persona,
 )
 from prompts.actions import ACTION_REVIEW_INSTRUCTIONS
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.actions import (
     ActionPolicyError,
     consume_create_slot,
+    is_expression_action,
     list_pack_actions,
     upsert_action,
 )
@@ -43,35 +43,19 @@ class ReviewVerdict(BaseModel):
     reuse_action_id: int | None = None
 
 
-async def _review_payload(db: AsyncSession, user_id: int, proposal: ActionProposal, pack: CompanionActionPack) -> dict:
-    """评审资料：提案、性格与冻结外形/着装，以及同包相似动作候选。"""
+async def _review_payload(db: AsyncSession, proposal: ActionProposal, pack: CompanionActionPack) -> dict[str, Any]:
+    """评审资料：提案、冻结外形/着装与生成上下文中的人设，以及同包相似动作候选。"""
     design = json.loads(proposal.design_json or "{}")
     candidates = await _similar_action_candidates(db, pack.id, design)
-    character_data: dict = {}
-    raw_character = (pack.character_snapshot or "").strip()
-    if raw_character and raw_character != "{}":
-        character_data = json.loads(raw_character)
-    context = json.loads(pack.context_json or "{}") if pack.context_json else {}
+    character_data: dict[str, Any] = json.loads(pack.character_snapshot or "{}")
+    context = json.loads(pack.context_json) if pack.context_json else {}
+    # 合并版本的包未写角色快照，资料取自同包冻结的生成上下文。
     if not character_data.get("profile") and context.get("identity"):
         character_data["profile"] = render_character_profile(CharacterCardSnapshot.model_validate(context["identity"]))
-    # 固定外形只取本包快照；人设缺失时才补充实时性格资料。
     if "persona_definition" in context:
         character_data["persona_definition"] = context["persona_definition"]
     if "personality_tags" in context:
         character_data["personality_tags"] = context["personality_tags"]
-    if "persona_definition" not in character_data or "personality_tags" not in character_data:
-        persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
-        if persona is not None:
-            definition = json.loads(persona.definition_json or "{}")
-            character_data.setdefault(
-                "persona_definition",
-                {
-                    key: value
-                    for key, value in definition.items()
-                    if key in ("name", "personality", "speaking_style", "relationship")
-                },
-            )
-            character_data.setdefault("personality_tags", json.loads(persona.personality_tags_json or "[]"))
     outfit_data: dict = {}
     raw_outfit = (pack.outfit_snapshot or "").strip()
     if raw_outfit and raw_outfit != "{}":
@@ -85,30 +69,22 @@ async def _review_payload(db: AsyncSession, user_id: int, proposal: ActionPropos
         "source": proposal.source,
         "character_snapshot": character_data,
         "outfit_snapshot": outfit_data,
-        "candidates": candidates[:10],
+        "candidates": candidates,
     }
 
 
 def _similarity_score(design: dict, action: CompanionAction) -> float:
-    """粗粒度语义相近度：名称/描述/用途/标签的词面重叠，供候选排序。"""
+    """粗粒度语义相近度：名称/描述/用途的词面重叠，供候选排序。"""
     query = " ".join(
         [
             str(design.get("name", "")),
             str(design.get("motion_description", "")),
             " ".join(str(x) for x in design.get("use_when", []) or []),
-            " ".join(str(x) for x in design.get("tags", []) or []),
         ],
     ).lower()
     if not query.strip():
         return 0.0
-    doc = " ".join(
-        [
-            action.name or "",
-            action.motion_description or "",
-            action.use_when or "",
-            action.tags or "",
-        ],
-    ).lower()
+    doc = " ".join([action.name, action.motion_description, action.use_when]).lower()
     tokens = {t for t in re.split(r"[^\w]+", query) if len(t) >= 2}
     if not tokens:
         return 0.0
@@ -122,10 +98,11 @@ async def _similar_action_candidates(
     design: dict,
 ) -> list[dict]:
     """按提案内容检索相近的已就绪动作，避免固定顺序把近义动作挤出评审上下文。"""
-    scored: list[tuple[float, CompanionAction]] = []
-    for action in await list_pack_actions(db, pack_id, enabled_only=True):
-        if action.status == "succeeded" and action.video_path and not action.system_slot:
-            scored.append((_similarity_score(design, action), action))
+    scored = [
+        (_similarity_score(design, action), action)
+        for action in await list_pack_actions(db, pack_id, enabled_only=True)
+        if is_expression_action(action)
+    ]
     scored.sort(key=lambda item: (-item[0], item[1].id))
     candidates = []
     for score, action in scored[:10]:
@@ -147,45 +124,29 @@ async def _similar_action_candidates(
     return candidates
 
 
-async def review_proposal(
-    db: AsyncSession,
-    user_id: int,
-    proposal: ActionProposal,
-    *,
-    identity_prompt: str = "",
-    reference_image: str = "",
-) -> str:
+async def review_proposal(db: AsyncSession, proposal: ActionProposal) -> str:
     """独立 LLM 评审；格式失败最多修复一次，仍失败则 defer。"""
     pack = await db.get(CompanionActionPack, proposal.pack_id)
     if pack is None:
         return "reject"
 
-    if not reference_image:
-        if not pack.reference_path:
-            raise ValueError("动作评审缺少该形象的参考图")
-        reference_bytes = await asyncio.to_thread((Path(SETTINGS.data_dir) / pack.reference_path).read_bytes)
-        mime = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}.get(
-            sniff_media_ext(reference_bytes) or "",
-        )
-        if mime is None:
-            raise ValueError("动作评审参考图格式无效")
-        reference_image = build_data_uri(reference_bytes, mime)
+    if not pack.reference_path:
+        raise ValueError("动作评审缺少该形象的参考图")
+    reference_bytes = await asyncio.to_thread((Path(SETTINGS.data_dir) / pack.reference_path).read_bytes)
+    mime = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}.get(
+        sniff_media_ext(reference_bytes) or "",
+    )
+    if mime is None:
+        raise ValueError("动作评审参考图格式无效")
+    reference_image = build_data_uri(reference_bytes, mime)
 
-    payload = await _review_payload(db, user_id, proposal, pack)
-    if not proposal.candidate_action_ids:
-        # 首次评审时冻结候选快照（记录留档）；重试沿用最新目录重算候选。
-        proposal.candidate_action_ids = json.dumps(
-            [c["id"] for c in payload["candidates"]],
-            ensure_ascii=False,
-        )
-        await db.flush()
-
+    payload = await _review_payload(db, proposal, pack)
     last_error = "评审失败"
     for _attempt in range(2):
         try:
             raw = await vision_chat(
-                user_id,
-                ACTION_REVIEW_INSTRUCTIONS + ("\n" + identity_prompt if identity_prompt else ""),
+                proposal.user_id,
+                ACTION_REVIEW_INSTRUCTIONS,
                 json.dumps(payload, ensure_ascii=False),
                 reference_images=(reference_image,),
             )
@@ -195,7 +156,7 @@ async def review_proposal(
                     raise ValueError("reuse_action_id 必须取自 candidates 的 id")
             elif verdict.reuse_action_id is not None:
                 raise ValueError("非 reuse 结论的 reuse_action_id 必须为 null")
-            await _apply_verdict(db, user_id, proposal, verdict)
+            await _apply_verdict(db, proposal, verdict, payload["design"])
             return verdict.decision
         except (ValidationError, ValueError) as exc:
             last_error = str(exc)
@@ -210,20 +171,19 @@ async def review_proposal(
 
 async def _apply_verdict(
     db: AsyncSession,
-    user_id: int,
     proposal: ActionProposal,
     verdict: ReviewVerdict,
+    design: dict[str, Any],
 ) -> None:
     proposal.review_decision = verdict.decision
     proposal.review_reason = verdict.reason
 
     if verdict.decision == "approve":
-        design = json.loads(proposal.design_json or "{}")
         fingerprint = proposal.semantic_fingerprint or ""
         key = action_key_from_name(str(design.get("name", "action")), fingerprint)
         # 制作额度校验：approve 计数由聚合决定；超限回退 defer，不默认批准。
         try:
-            await consume_create_slot(db, user_id, source=proposal.source)
+            await consume_create_slot(db, proposal.user_id, source=proposal.source)
         except ActionPolicyError as exc:
             proposal.review_decision = "defer"
             proposal.review_reason = f"额度不足：{exc}"
@@ -234,6 +194,7 @@ async def _apply_verdict(
         proposal.approved_at = utc_now()
         action = await upsert_action(
             db,
+            user_id=proposal.user_id,
             pack_id=proposal.pack_id,
             key=key,
             name=str(design.get("name", "未命名动作")),
@@ -241,7 +202,6 @@ async def _apply_verdict(
             motion_description=str(design.get("motion_description", "")),
             use_when=list(design.get("use_when", []) or []),
             avoid_when=list(design.get("avoid_when", []) or []),
-            tags=list(design.get("tags", []) or []),
         )
         action.status = "queued"
         action.stage = "design"

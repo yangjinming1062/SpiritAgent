@@ -1,8 +1,6 @@
 """出镜媒体的用户复核状态；候选内容仍由原生成链保存。"""
 
-from pathlib import Path
-
-from components import SESSION_LOCAL, SETTINGS
+from components import SESSION_LOCAL
 from modules.companion import CompanionAction, CompanionActionPack, CompanionMediaReview
 from modules.ws import emit_ws_event
 from sqlalchemy import select
@@ -104,10 +102,8 @@ async def _accept_reviewed_action(
     job.status = "succeeded"
     await db.flush()
     if pack.active:
-        assets_dir = Path(SETTINGS.data_dir) / "companion-assets" / str(user_id)
-        assets_dir.mkdir(parents=True, exist_ok=True)
         try:
-            version = await publish_action_catalog(db, pack, assets_dir=assets_dir)
+            version = await publish_action_catalog(db, pack)
         except (CatalogValidationError, StaleCatalogError) as exc:
             raise MediaReviewStateError(str(exc) or "动作目录尚未就绪，请稍后重试") from exc
         emit_ws_event(

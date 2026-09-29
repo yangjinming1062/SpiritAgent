@@ -29,4 +29,4 @@ INSPECT_SCHEMA = {
 
 def register_memory_tools(registry: ToolsRegistry) -> None:
     for schema in (RETAIN_SCHEMA, RECALL_SCHEMA, INSPECT_SCHEMA):
-        registry.register_memory(schema["name"], schema)
+        registry.register_memory(schema)

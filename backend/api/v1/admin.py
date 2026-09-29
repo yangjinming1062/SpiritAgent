@@ -7,10 +7,10 @@ import tempfile
 import zipfile
 from datetime import UTC, date, datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-from common import get_or_404, get_router, list_response
-from components import CAPABILITY_SERVICES, SETTINGS, DbSession, apply_partial, get_logger, load_ai_config, utc_now
+from common import get_or_404, get_router
+from components import CAPABILITY_SERVICES, SETTINGS, AIConfig, DbSession, apply_partial, get_logger, utc_now
 from fastapi import Depends, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
 from modules.auth import (
@@ -59,7 +59,7 @@ from services.domains.backup import (
 from services.domains.configuration import prepare_ai_config, public_ai_config
 from services.domains.conversation import ensure_system_conversations_for_user
 from services.infrastructure.llm import providers_supporting
-from sqlalchemy import delete, select, update
+from sqlalchemy import select, update
 from starlette.background import BackgroundTask
 
 logger = get_logger(__name__)
@@ -72,11 +72,8 @@ ARCHIVE_UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 @router.get("/users", response_model=UserListResponse)
 async def list_users(db: DbSession) -> UserListResponse:
-    return list_response(
-        (await db.execute(select(User).order_by(User.id))).scalars().all(),
-        UserResponse,
-        UserListResponse,
-    )
+    users = (await db.execute(select(User).order_by(User.id))).scalars().all()
+    return UserListResponse(items=[UserResponse.model_validate(user) for user in users])
 
 
 @router.post("/users", response_model=UserResponse)
@@ -100,30 +97,15 @@ async def create_user(payload: UserCreate, db: DbSession) -> UserResponse:
 @router.patch("/users/{user_id}", response_model=UserResponse)
 async def update_user(user_id: int, payload: UserUpdate, db: DbSession) -> UserResponse:
     user = await get_or_404(db, User, id=user_id, detail="用户不存在。")
-    if payload.regenerate_token:
-        raw_token = generate_activation_token()
-        user.activation_token_hash = hash_activation_token(raw_token)
-        base_url = payload.base_url
-        if not base_url and user.activation_code:
-            try:
-                base_url = decode_activation_code(user.activation_code)[0]
-            except Exception:
-                base_url = "http://localhost:10620"
-        user.activation_code = encode_activation_code(base_url or "http://localhost:10620", raw_token)
-    elif payload.base_url:
-        if user.activation_code:
-            try:
-                _, token = decode_activation_code(user.activation_code)
-                user.activation_code = encode_activation_code(payload.base_url, token)
-            except Exception:
-                # activation_code 解码失败说明 token 已损坏：不能再以旧 code 当 fallback 让客户端连到老 host。
-                # 行为对齐 regenerate_token 分支：默认 base_url 重发一个 token，渲染端能拿到新激活链接。
-                raw_token = generate_activation_token()
-                user.activation_token_hash = hash_activation_token(raw_token)
-                user.activation_code = encode_activation_code(payload.base_url, raw_token)
+    if payload.regenerate_token or payload.base_url:
+        # 激活码只由 create_user 生成；改地址保留原 token，重发则换新 token。
+        base_url, raw_token = decode_activation_code(user.activation_code)
+        if payload.regenerate_token:
+            raw_token = generate_activation_token()
+            user.activation_token_hash = hash_activation_token(raw_token)
+        user.activation_code = encode_activation_code(payload.base_url or base_url, raw_token)
     apply_partial(user, payload, exclude={"regenerate_token", "base_url"})
     await db.commit()
-    await db.refresh(user)
     return UserResponse.model_validate(user)
 
 
@@ -140,16 +122,13 @@ def _rm_user_asset_dir(d: Path) -> None:
 
 @router.delete("/users/{user_id}", response_model=MessageResponse)
 async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
-    await get_or_404(db, User, id=user_id, detail="用户不存在。")
+    user = await get_or_404(db, User, id=user_id, detail="用户不存在。")
     await terminate_user_gateway(user_id)
 
-    # 清除用户范围内的 DB 行与磁盘资产（被遗忘权）。
-    avatar_rows = (await db.execute(select(AvatarAsset).where(AvatarAsset.user_id == user_id))).scalars().all()
-    for av in avatar_rows:
-        await asyncio.to_thread(delete_portrait_file, av.asset_url)
-
-    await db.execute(delete(AvatarAsset).where(AvatarAsset.user_id == user_id))
-    await db.delete(await db.get(User, user_id))
+    # 清除用户范围内的 DB 行与磁盘资产（被遗忘权）；用户行删除经外键级联清理其余行。
+    for asset_url in (await db.execute(select(AvatarAsset.asset_url).where(AvatarAsset.user_id == user_id))).scalars():
+        await asyncio.to_thread(delete_portrait_file, asset_url)
+    await db.delete(user)
     await db.commit()
 
     # 用户资产可达 GB 级，删除移出事件循环
@@ -176,7 +155,7 @@ async def toggle_user_active(user_id: int, db: DbSession) -> UserResponse:
 
 
 def _config_list_item(r: UserModelConfig) -> UserModelConfigListItem:
-    return UserModelConfigListItem(user_id=r.user_id, ai_config=public_ai_config(load_ai_config(r.ai_config)))
+    return UserModelConfigListItem(user_id=r.user_id, ai_config=public_ai_config(AIConfig.model_validate(r.ai_config)))
 
 
 @router.get("/model-configs", response_model=UserModelConfigListResponse)
@@ -192,45 +171,46 @@ async def list_model_configs(db: DbSession) -> UserModelConfigListResponse:
 @router.get("/runtime-info")
 async def runtime_info() -> dict[str, str]:
     """把 ``public_base_url`` 暴露给 admin 页：创建账号时自动填进激活码的 ``baseUrl``，留空时前端再降级到 ``http://localhost:10620``。"""
-    return {"public_base_url": SETTINGS.public_base_url or ""}
+    return {"public_base_url": SETTINGS.public_base_url}
 
 
 @router.get("/system-settings")
 async def get_system_settings() -> dict[str, Any]:
     """获取系统全部动态配置项（敏感 Key 自动脱敏）。"""
-    return await get_system_settings_for_admin()
+    return get_system_settings_for_admin()
 
 
 @router.put("/system-settings")
 async def update_system_settings(payload: dict[str, Any], db: DbSession) -> dict[str, Any]:
     """更新系统动态配置，实时持久化到数据库并热重载生效。"""
-    return await save_system_settings(db, payload)
+    try:
+        await save_system_settings(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return get_system_settings_for_admin()
 
 
 @router.get("/nightly-activity-logs", response_model=NightlyActivityLogListResponse)
 async def list_nightly_activity_logs(
     db: DbSession,
     user_id: int | None = None,
-    target_date: str | None = None,
+    target_date: date | None = None,
 ) -> NightlyActivityLogListResponse:
     """查询夜间自主活动日志。可选按 user_id 和 target_date 过滤。"""
     stmt = select(NightlyActivityLog).order_by(NightlyActivityLog.id.desc()).limit(300)
     if user_id is not None:
         stmt = stmt.where(NightlyActivityLog.user_id == user_id)
-    if target_date:
-        try:
-            stmt = stmt.where(NightlyActivityLog.target_date == date.fromisoformat(target_date))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid target_date format, use YYYY-MM-DD")
+    if target_date is not None:
+        stmt = stmt.where(NightlyActivityLog.target_date == target_date)
     rows = (await db.execute(stmt)).scalars().all()
-    return list_response(rows, NightlyActivityLogItem, NightlyActivityLogListResponse)
+    return NightlyActivityLogListResponse(items=[NightlyActivityLogItem.model_validate(row) for row in rows])
 
 
 @router.put("/{user_id}/model-config")
 async def upsert_model_config(user_id: int, payload: UserModelConfigRequest, db: DbSession) -> MessageResponse:
     await get_or_404(db, User, id=user_id, detail="用户不存在。")
     config = (await db.execute(select(UserModelConfig).where(UserModelConfig.user_id == user_id))).scalar_one_or_none()
-    previous = load_ai_config(config.ai_config) if config else None
+    previous = AIConfig.model_validate(config.ai_config) if config else None
     try:
         ai_config = prepare_ai_config(payload.ai_config, previous)
     except ValueError as exc:
@@ -340,11 +320,9 @@ async def import_user_backup(
     user_id: int,
     db: DbSession,
     file: UploadFile = File(...),
-    mode: str = "overwrite",
+    mode: BackupImportMode = "overwrite",
 ) -> UserBackupImportResponse:
     """尽力恢复备份；覆盖仅清理兼容且可安全替换的数据类。"""
-    if mode not in ("overwrite", "merge"):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="mode 必须是 overwrite 或 merge。")
     if not file.filename or not file.filename.endswith(".zip"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="上传文件必须是 .zip。")
     await get_or_404(db, User, id=user_id, detail="用户不存在。")
@@ -366,7 +344,6 @@ async def import_user_backup(
         except ValueError as exc:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"备份无效：{exc}") from exc
         source_uid = int(manifest["source_user_id"])
-        import_mode = cast(BackupImportMode, mode)
         read_result = await asyncio.to_thread(
             load_backup_rows,
             extract_root,
@@ -374,8 +351,7 @@ async def import_user_backup(
             dict(manifest["row_counts"]),
         )
         restore_result: BackupRestoreResult | None = None
-        boundary = user_maintenance(user_id)
-        async with boundary:
+        async with user_maintenance(user_id):
             try:
                 restore_result = await restore_backup_rows(
                     db,
@@ -383,7 +359,7 @@ async def import_user_backup(
                     source_uid,
                     user_id,
                     read_result.rows,
-                    mode=import_mode,
+                    mode=mode,
                 )
                 if await db.scalar(select(Persona.is_complete).where(Persona.user_id == user_id)):
                     await ensure_system_conversations_for_user(db, user_id)
@@ -406,7 +382,7 @@ async def import_user_backup(
         for item in (*read_result.failures, *restore_result.failures)
     ]
     return UserBackupImportResponse(
-        mode=import_mode,
+        mode=mode,
         imported=restore_result.imported,
         restored_files=restore_result.restored_files,
         failed=failed,

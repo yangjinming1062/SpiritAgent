@@ -12,7 +12,7 @@
 环境变量：
     MINIMAX_API_KEY   MiniMax API 密钥（缺失时走回退输出）
     MINIMAX_BASE_URL  默认 https://api.minimaxi.com/v1
-    MINIMAX_MODEL     默认 MiniMax-M3（与 backend MiniMaxChatProvider.DEFAULT_MODELS 一致）
+    MINIMAX_MODEL     默认 MiniMax-M3（与 backend MiniMaxChatProvider.DEFAULT_MODEL 一致）
 """
 
 import argparse

@@ -13,6 +13,7 @@ import contextlib
 import json
 import re
 import secrets
+from collections.abc import Sequence
 from pathlib import Path
 from urllib.parse import quote
 
@@ -25,7 +26,7 @@ from components import (
     session_dir,
 )
 from modules.conversation import Message
-from sqlalchemy import select
+from sqlalchemy import ColumnElement, Row, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = get_logger(__name__)
@@ -72,7 +73,7 @@ def _video_file_path(session_id: str, file_id: str) -> Path | None:
     """把 (session_id, file_id) 解析到会话目录内的文件路径；形态非法或越界返回 None。"""
     if not _FILE_NAME_RE.fullmatch(file_id):
         return None
-    root = session_dir(SETTINGS.data_dir, session_id).resolve()
+    root = session_dir(session_id).resolve()
     target = (root / file_id).resolve()
     if not target.is_relative_to(root):
         return None
@@ -91,7 +92,7 @@ def save_video_attachment(session_id: str, data: bytes, ext: str) -> tuple[str, 
     """落盘视频附件，返回 (file_id, size)。扩展名白名单在此兜底；配额剔除由调用方先行。"""
     if ext.lower() not in ATTACHMENT_VIDEO_EXTENSIONS:
         raise ValueError(f"unsupported video extension: {ext!r}")
-    target_dir = session_dir(SETTINGS.data_dir, session_id)
+    target_dir = session_dir(session_id)
     target_dir.mkdir(parents=True, exist_ok=True)
     file_id = f"{secrets.token_urlsafe(16)}{ext.lower()}"
     (target_dir / file_id).write_bytes(data)
@@ -120,30 +121,39 @@ def _rewrite_parts(parts: list, file_ids: set[str], *, session_id: str) -> tuple
     return out, changed
 
 
-async def _rewrite_rows_referencing(
-    db: AsyncSession,
-    session_id: str,
-    file_ids: set[str],
-    *,
-    lo: int = 0,
-    hi: int | None = None,
-) -> int:
-    """把引用了被删文件的多模态用户行改写为占位文本；返回改写行数（session_id 即会话数字 id）。不内部 commit。"""
-    if not file_ids:
-        return 0
-    conditions = [
-        Message.conversation_id == int(session_id),
-        Message.id >= lo,
+def _video_messages(conversation_id: int) -> list[ColumnElement[bool]]:
+    """会话内可能引用视频附件的多模态用户行。"""
+    return [
+        Message.conversation_id == conversation_id,
         Message.role == "user",
         Message.content_type == "multimodal_v1",
         Message.content.like('%"input_video"%'),
     ]
-    if hi is not None:
-        conditions.append(Message.id < hi)
-    rows = (await db.execute(select(Message.id, Message.content).where(*conditions))).all()
+
+
+def _referenced_file_ids(content: str | None, session_id: str) -> set[str]:
+    parts = safe_json_loads(content or "[]", default=[])
+    if not isinstance(parts, list):
+        return set()
+    return {
+        file_id
+        for part in parts
+        if isinstance(part, dict)
+        and part.get("type") == "input_video"
+        and (file_id := _file_id_from_url(str(part.get("video_url") or ""), session_id)) is not None
+    }
+
+
+async def _rewrite_rows(
+    db: AsyncSession,
+    rows: Sequence[Row[tuple[int, str | None]]],
+    file_ids: set[str],
+    session_id: str,
+) -> int:
+    """把引用了被删文件的行改写为占位文本；返回改写行数。不内部 commit。"""
     rewritten = 0
     for message_id, content in rows:
-        parts = safe_json_loads(content, default=[])
+        parts = safe_json_loads(content or "[]", default=[])
         if not isinstance(parts, list):
             continue
         new_parts, changed = _rewrite_parts(parts, file_ids, session_id=session_id)
@@ -157,7 +167,7 @@ async def _rewrite_rows_referencing(
 
 async def enforce_session_quota(db: AsyncSession, session_id: str, incoming_bytes: int) -> None:
     """写盘前保证会话目录余量：存量+本次超配额时从最旧文件开始剔除并改写引用行。"""
-    root = session_dir(SETTINGS.data_dir, session_id)
+    root = session_dir(session_id)
     if not root.exists():
         return
 
@@ -189,7 +199,8 @@ async def enforce_session_quota(db: AsyncSession, session_id: str, incoming_byte
     file_ids = await asyncio.to_thread(_evict_overflow)
     if not file_ids:
         return
-    rewritten = await _rewrite_rows_referencing(db, session_id, file_ids)
+    rows = (await db.execute(select(Message.id, Message.content).where(*_video_messages(int(session_id))))).all()
+    rewritten = await _rewrite_rows(db, rows, file_ids, session_id)
     if rewritten:
         await db.commit()
     logger.info(
@@ -216,53 +227,24 @@ async def prune_videos_in_range(
     摘要按实际覆盖范围清理并保留未消费的 IM 消息，历史撤回按删除范围清理；区间外仍有引用的文件保留。
     已删除文件的区间内引用改写为占位，不留下死链。
     """
-    conditions = [
-        Message.conversation_id == conversation_id,
-        Message.id >= lo,
-        Message.role == "user",
-        Message.content_type == "multimodal_v1",
-        Message.content.like('%"input_video"%'),
-    ]
+    session_id = str(conversation_id)
+    conditions = [*_video_messages(conversation_id), Message.id >= lo]
     if hi is not None:
         conditions.append(Message.id < hi)
     if preserve_queued:
         conditions.append(Message.queued.is_(False))
     rows = (await db.execute(select(Message.id, Message.content).where(*conditions))).all()
-    if not rows:
-        return
-    file_ids: set[str] = set()
-    for _message_id, content in rows:
-        parts = safe_json_loads(content, default=[])
-        if not isinstance(parts, list):
-            continue
-        for part in parts:
-            if isinstance(part, dict) and part.get("type") == "input_video":
-                file_id = _file_id_from_url(str(part.get("video_url") or ""), str(conversation_id))
-                if file_id is not None:
-                    file_ids.add(file_id)
+    file_ids = {file_id for _message_id, content in rows for file_id in _referenced_file_ids(content, session_id)}
     if not file_ids:
         return
     outside = (Message.id < lo) | (Message.id >= hi) if hi is not None else Message.id < lo
     if preserve_queued:
         outside = outside | Message.queued.is_(True)
-    retained = await db.scalars(
-        select(Message.content).where(
-            Message.conversation_id == conversation_id,
-            outside,
-            Message.role == "user",
-            Message.content_type == "multimodal_v1",
-            Message.content.like('%"input_video"%'),
-        ),
-    )
-    for content in retained:
-        parts = safe_json_loads(content, default=[])
-        if isinstance(parts, list):
-            for part in parts:
-                if isinstance(part, dict) and part.get("type") == "input_video":
-                    file_ids.discard(_file_id_from_url(str(part.get("video_url") or ""), str(conversation_id)))
+    for content in await db.scalars(select(Message.content).where(*_video_messages(conversation_id), outside)):
+        file_ids -= _referenced_file_ids(content, session_id)
     if not file_ids:
         return
-    root = session_dir(SETTINGS.data_dir, str(conversation_id)).resolve()
+    root = session_dir(session_id).resolve()
     removed = 0
     for file_id in file_ids:
         target = (root / file_id).resolve()
@@ -270,7 +252,8 @@ async def prune_videos_in_range(
             with contextlib.suppress(OSError):
                 target.unlink()
                 removed += 1
-    rewritten = await _rewrite_rows_referencing(db, str(conversation_id), file_ids, lo=lo, hi=hi)
+    # 保留的排队行引用的文件已从 file_ids 剔除，区间内待改写行即上面已查出的 rows。
+    rewritten = await _rewrite_rows(db, rows, file_ids, session_id)
     logger.info(
         "session video prune",
         extra={

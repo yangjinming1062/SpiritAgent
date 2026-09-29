@@ -21,15 +21,16 @@ from .disturbance import (
     get_disturbance_tier,
     is_still,
 )
-from .emotions import BUILTIN_EMOTIONS
 from .first_greeting import drain as drain_first_greeting
-from .idle_expression import IdleExpressionResult, check_idle_expression
+from .idle_expression import check_idle_expression
 from .intents import (
     begin_companion_intent,
     cancel_companion_wait,
+    claim_companion_intent,
     companion_turn_plan,
     enqueue_companion_intent,
     finish_companion_intent,
+    has_pending_companion_intent,
     invalidate_cron_companion_intents,
     latest_user_message_id,
     list_companion_intents,
@@ -37,15 +38,10 @@ from .intents import (
     set_companion_wait,
 )
 from .interaction_stats import invalidate_user_interaction_stats, record_interaction
-from .mood import (
-    emit_companion_mood,
-    normalize_mood,
-    update_mood_from_companion_turn,
-)
+from .mood import update_mood_from_companion_turn
 from .persona_background import drain as drain_persona_background
 from .persona_background import schedule_personality_tag_refresh
 from .persona_service import (
-    ONBOARDING_FIELDS,
     PersonaValidationError,
     build_system_prompt_extras,
     confirm_portrait,
@@ -56,9 +52,7 @@ from .persona_service import (
     submit_onboarding_field,
     update_persona,
 )
-from .personality_tagger import analyze_personality_tags
 from .proactive_runtime import (
-    can_start_companion_turn,
     clear_user_proactive_state,
     get_personality_tags,
     get_user_proactive_record,
@@ -69,18 +63,15 @@ from .proactive_runtime import (
 )
 from .prompt_runtime import load_companion_prompt_context, run_prompt_json
 from .scenes import (
-    SceneState,
-    get_pending_scene,
     get_pending_scene_task,
-    get_regenerating_scene,
     get_scene,
     get_scene_state,
     list_scenes,
     response_for_scene,
     scene_environment,
 )
-from .session_preset import is_work_preset, resolve_session_profile
-from .should_act import ALLOWED_ACTIONS, ShouldActResult, invalidate_user_should_act, should_act
+from .session_preset import is_work_preset
+from .should_act import invalidate_user_should_act, should_act
 from .voice_catalog import (
     design_voice,
     list_tts_voices,
@@ -89,12 +80,9 @@ from .voice_catalog import (
 )
 
 __all__ = [
-    "SceneState",
-    "get_pending_scene",
     "get_pending_scene_task",
     "get_scene",
     "get_scene_state",
-    "get_regenerating_scene",
     "list_scenes",
     "response_for_scene",
     "scene_environment",
@@ -111,7 +99,6 @@ __all__ = [
     "request_character_extraction",
     "require_character_snapshot",
     "update_character_card",
-    "can_start_companion_turn",
     "clear_user_proactive_state",
     "get_personality_tags",
     "get_user_proactive_record",
@@ -121,21 +108,17 @@ __all__ = [
     "user_turn_activity",
     "begin_companion_intent",
     "cancel_companion_wait",
+    "claim_companion_intent",
     "companion_turn_plan",
     "enqueue_companion_intent",
     "finish_companion_intent",
+    "has_pending_companion_intent",
     "invalidate_cron_companion_intents",
     "latest_user_message_id",
     "list_companion_intents",
     "queue_companion_intent",
     "set_companion_wait",
-    "ALLOWED_ACTIONS",
-    "IdleExpressionResult",
-    "BUILTIN_EMOTIONS",
-    "ONBOARDING_FIELDS",
     "PersonaValidationError",
-    "ShouldActResult",
-    "analyze_personality_tags",
     "build_outfit_extras",
     "build_system_prompt_extras",
     "check_idle_expression",
@@ -144,7 +127,6 @@ __all__ = [
     "drain_first_greeting",
     "drain_persona_background",
     "emit_companion_message",
-    "emit_companion_mood",
     "get_disturbance_tier",
     "get_onboarding_state",
     "get_or_create_persona",
@@ -155,11 +137,9 @@ __all__ = [
     "list_tts_voices",
     "load_persona_definition",
     "match_user_voice",
-    "normalize_mood",
     "normalize_voice_language",
     "record_interaction",
     "render_extras",
-    "resolve_session_profile",
     "load_companion_prompt_context",
     "run_prompt_json",
     "schedule_personality_tag_refresh",

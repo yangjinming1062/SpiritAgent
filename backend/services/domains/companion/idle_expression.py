@@ -6,8 +6,6 @@
 from components import (
     LLM_MAX_OUTPUT_TOKENS,
     SESSION_LOCAL,
-    coerce_hour_0_23,
-    coerce_non_negative_float,
     get_logger,
     resolve_prompt_text,
     utc_now,
@@ -35,7 +33,7 @@ async def check_idle_expression(
     local_hour: int,
     llm_config: UserLlmConfig,
 ) -> IdleExpressionResult:
-    """空闲触发的 LLM 推理；决定是否播一个当前形象已就绪动作。"""
+    """空闲触发的 LLM 推理；决定是否播一个当前形象已就绪动作。数值参数由调用方归一化（local_hour 为 -1 表示未知）。"""
     ctx = await load_companion_prompt_context(user_id)
     if ctx is None:
         return IdleExpressionResult(expressed=False, reason="persona not ready")
@@ -52,8 +50,8 @@ async def check_idle_expression(
         {
             "current_time": utc_now().isoformat(),
             "persona": ctx.persona_extras,
-            "idle_minutes": round(coerce_non_negative_float(idle_seconds) / 60, 2),
-            "local_hour": h if (h := coerce_hour_0_23(local_hour)) >= 0 else None,
+            "idle_minutes": round(idle_seconds / 60, 2),
+            "local_hour": local_hour if local_hour >= 0 else None,
             "available_actions": ctx.available_actions,
             **({"long_term_memories": ctx.memories_block} if ctx.memories_block else {}),
             **({"recent_context": recent_context} if recent_context else {}),

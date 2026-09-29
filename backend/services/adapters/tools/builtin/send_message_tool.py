@@ -6,7 +6,7 @@ from components import get_logger, is_safe_outbound, safe_outbound_async_client,
 from prompts.tools import SEND_MESSAGE_DESC, SEND_MESSAGE_PARAM_DESCS
 
 from services.domains.companion import emit_companion_message, is_still
-from services.infrastructure.tool_runtime import REGISTRY
+from services.infrastructure.tool_runtime import ToolsRegistry
 
 logger = get_logger(__name__)
 
@@ -15,22 +15,17 @@ WEBHOOK_TIMEOUT = 10.0
 
 async def send_message_tool(
     message: str,
+    user_id: int,
     target_webhook: str | None = None,
-    **kwargs,
+    **_: object,
 ) -> str:
     # 伙伴原生主动路径：未传 webhook 时直接以 companion.message 形式投递给客户端（docs/ARCHITECTURE.md「事件持久化」）。
     # 客户端是打扰档位的单一事实源，但后端在源头也做一次防御性拦截：非官方客户端走 /api/chat/ws 会绕过客户端侧过滤器，
     # 故静止档不写 WSEvent——静止档不做任何主动表达。
     if not target_webhook:
-        user_id = kwargs.get("user_id")
-        still = False
-        if isinstance(user_id, int):
-            still = await is_still(user_id)
-            if not still:
-                await emit_companion_message(
-                    user_id,
-                    message,
-                )
+        still = await is_still(user_id)
+        if not still:
+            await emit_companion_message(user_id, message)
         return json.dumps({"success": True, "channel": "companion", "still_suppressed": still}, ensure_ascii=False)
 
     parsed = urlparse(target_webhook)
@@ -75,5 +70,5 @@ SEND_MESSAGE_SCHEMA = {
 }
 
 
-def register(registry) -> None:
-    REGISTRY.register("send_message_tool", SEND_MESSAGE_SCHEMA, send_message_tool)
+def register(registry: ToolsRegistry) -> None:
+    registry.register(SEND_MESSAGE_SCHEMA, send_message_tool)

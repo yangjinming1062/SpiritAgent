@@ -102,7 +102,6 @@ def assemble_debug_prompt(
     language: str,
     platform: str,
     enable_tools: bool,
-    outfit_text: str = "",
     background_memory_text: str = "",
     db_data: dict[str, Any] | None = None,
     preset_id: str = "companion",
@@ -114,57 +113,52 @@ def assemble_debug_prompt(
 
     from components import ensure_utc, utc_now
     from modules.auth import ChatRequestClientContext
-    from modules.system import AgentPromptConfig
-    from services.application.chat.prompt_presets import BUILTIN_PRESETS, LIFE_SPACE_TOOL_NAMES, resolve_preset
+    from services.application.chat.prompt_blocks import AgentPromptConfig
+    from services.application.chat.prompt_presets import preset_excluded_tool_names
     from services.application.chat.system_prompt import build_system_prompt
     from services.application.chat.turn_inputs import _history_to_responses_context
     from services.domains.companion.persona_service import render_extras
+    from services.domains.conversation import SYSTEM_PRESET_CATALOG
     from services.infrastructure.llm import approx_responses_tokens
     from services.infrastructure.tool_runtime import REGISTRY, schema_name
 
     if db_data is not None:
         persona_extras = db_data["persona_extras"]
         user_profile_extras = db_data["user_profile_extras"]
-        outfit_extras = ""
         background_memory_extras = db_data["background_memory_extras"]
         proactive_memory_extras = db_data["proactive_memory_extras"]
         tools = db_data["tools"] if enable_tools else []
     else:
         persona_extras = render_extras(persona_dict, language=language)
         user_profile_extras = _build_mock_user_profile_extras(user_profile_dict, language=language)
-        outfit_extras = outfit_text
         background_memory_extras = background_memory_text
         proactive_memory_extras = ""
         tools = REGISTRY.get_all_schemas(user_id=1, user_settings={}) if enable_tools else []
 
     if preset_id != "companion":
         persona_extras = ""
-        outfit_extras = ""
-        tools = [tool for tool in tools if schema_name(tool) not in LIFE_SPACE_TOOL_NAMES]
+    excluded_tools = preset_excluded_tool_names(preset_id)
+    tools = [tool for tool in tools if schema_name(tool) not in excluded_tools]
     valid_tool_names = [schema_name(s) for s in tools]
 
+    # 桌面端不带渠道提示时使用桌面默认说明；IM 适配器以渠道键声明平台。
     client_ctx = ChatRequestClientContext(
         environment_hints=f"OS: {sys.platform}; Workspace: {REPO_ROOT.as_posix()}",
-        platform_hints=None,
+        platform_hints={"desktop": None, "wechat": "weixin"}[platform],
     )
 
     agent_config = AgentPromptConfig(
+        language=language,
         valid_tool_names=valid_tool_names,
-        model=model,
-        tools=tools,
         client_context=client_ctx,
-        identity_prompt=None,
         persona_extras=persona_extras,
         user_profile_extras=user_profile_extras,
-        outfit_extras=outfit_extras,
         background_memory_extras=background_memory_extras,
         proactive_memory_extras=proactive_memory_extras,
-        language=language,
-        platform=platform,
         user_local_tz=user_local_tz,
     )
 
-    instructions = build_system_prompt(agent_config, preset=resolve_preset(preset_id))
+    instructions = build_system_prompt(agent_config, preset_id=preset_id)
     if db_data is not None and db_data.get("environment_prompt"):
         instructions += "\n\n" + db_data["environment_prompt"]
 
@@ -175,6 +169,7 @@ def assemble_debug_prompt(
     else:
         sent_at = ensure_utc(utc_now())
     mock_msg = SimpleNamespace(
+        id=1,
         subtype=None,
         role="user",
         content=message_text,
@@ -184,13 +179,12 @@ def assemble_debug_prompt(
         tool_calls=None,
         tool_call_id=None,
     )
-    resolved = resolve_preset(preset_id)
     input_items = _history_to_responses_context(
         [mock_msg],
         instructions,
         user_local_tz=user_local_tz,
         lang=language,
-        inject_time_perception=resolved.id == "companion",
+        inject_time_perception=preset_id == "companion",
     )["input"]
 
     estimated_tokens = approx_responses_tokens(instructions, input_items)
@@ -210,7 +204,7 @@ def assemble_debug_prompt(
             "available_tool_names": valid_tool_names,
             "persona_name": persona_dict.get("name", ""),
             "preset_id": preset_id,
-            "preset_name": BUILTIN_PRESETS[resolve_preset(preset_id).id].name,
+            "preset_name": SYSTEM_PRESET_CATALOG[preset_id].name,
             "user_local_tz": user_local_tz or "",
             "message_sent_at": sent_at.isoformat() if sent_at else "",
         },

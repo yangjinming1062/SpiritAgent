@@ -37,7 +37,7 @@ def _assets_root() -> Path:
 
 
 def _signing_key() -> bytes:
-    secret = getattr(SETTINGS, "companion_asset_signing_key", None)
+    secret = SETTINGS.companion_asset_signing_key
     if secret:
         return secret.encode("utf-8")
     raise RuntimeError(
@@ -48,14 +48,6 @@ def _signing_key() -> bytes:
 def _sign(user_id: int, filename: str, expires_at: int) -> str:
     msg = f"{user_id}:{filename}:{expires_at}".encode()
     return hmac.new(_signing_key(), msg, hashlib.sha256).hexdigest()
-
-
-def build_signed_asset_url(user_id: int, filename: str, *, ttl_seconds: int = _ASSET_URL_TTL_SECONDS) -> str:
-    """签发资产 URL；调用方不要缓存——5 分钟即过期，每次列表刷新都应重新签名。"""
-    expires_at = int(time.time()) + ttl_seconds
-    sig = _sign(user_id, filename, expires_at)
-    qs = urlencode({"expires": expires_at, "sig": sig})
-    return f"/api/companion/asset/{user_id}/{filename}?{qs}"
 
 
 def verify_signed_asset_request(user_id: int, filename: str, expires: int | None, sig: str | None) -> bool:
@@ -72,8 +64,8 @@ def _sign_avatar(filename: str, expires_at: int) -> str:
     return hmac.new(_signing_key(), msg, hashlib.sha256).hexdigest()
 
 
-def build_signed_avatar_url(file_id: str, ext: str, *, ttl_seconds: int = _ASSET_URL_TTL_SECONDS) -> str:
-    expires_at = int(time.time()) + ttl_seconds
+def build_signed_avatar_url(file_id: str, ext: str) -> str:
+    expires_at = int(time.time()) + _ASSET_URL_TTL_SECONDS
     sig = _sign_avatar(f"{file_id}.{ext}", expires_at)
     qs = urlencode({"expires": expires_at, "sig": sig})
     return f"/api/companion/avatar/file/{file_id}.{ext}?{qs}"
@@ -121,11 +113,6 @@ def video_job_asset_path(user_id: int, job_id: int, attempt: int) -> str:
     return f"companion-assets/{user_id}/chat_video_job_{job_id}_a{attempt}.mp4"
 
 
-def _save_video_job_asset(data: bytes, user_id: int, job_id: int, attempt: int) -> str:
-    bare_path = video_job_asset_path(user_id, job_id, attempt)
-    return _save_generation_asset(data, user_id, bare_path)
-
-
 def _save_generation_asset(data: bytes, user_id: int, bare_path: str) -> str:
     user_dir = _assets_root() / str(user_id)
     user_dir.mkdir(parents=True, exist_ok=True)
@@ -144,9 +131,9 @@ def _save_generation_asset(data: bytes, user_id: int, bare_path: str) -> str:
     return bare_path
 
 
-async def save_video_job_asset_async(data: bytes, *, user_id: int, job_id: int, attempt: int) -> str:
-    """取消时等原子写盘完成；已落盘结果保留给恢复路径，不当作失败清理。"""
-    task = asyncio.create_task(asyncio.to_thread(_save_video_job_asset, data, user_id, job_id, attempt))
+async def _save_generation_asset_async(data: bytes, user_id: int, bare_path: str) -> str:
+    """固定路径由任务先行登记；取消时等原子写盘完成，已落盘结果保留给恢复路径，不当作失败清理。"""
+    task = asyncio.create_task(asyncio.to_thread(_save_generation_asset, data, user_id, bare_path))
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
@@ -154,14 +141,16 @@ async def save_video_job_asset_async(data: bytes, *, user_id: int, job_id: int, 
         raise
 
 
+async def save_video_job_asset_async(data: bytes, *, user_id: int, job_id: int, attempt: int) -> str:
+    return await _save_generation_asset_async(data, user_id, video_job_asset_path(user_id, job_id, attempt))
+
+
+def _is_generation_id(value: str) -> bool:
+    return len(value) == 32 and all(char in "0123456789abcdef" for char in value)
+
+
 def action_source_asset_path(user_id: int, generation_id: str, attempt: int, ext: str) -> str:
-    if (
-        user_id <= 0
-        or attempt < 0
-        or ext not in {"mp4", "webm", "mov", "mkv"}
-        or len(generation_id) != 32
-        or any(char not in "0123456789abcdef" for char in generation_id)
-    ):
+    if user_id <= 0 or attempt < 0 or ext not in {"mp4", "webm", "mov", "mkv"} or not _is_generation_id(generation_id):
         raise ValueError("invalid action source asset key")
     return f"companion-assets/{user_id}/action_{generation_id}_a{attempt}.{ext}"
 
@@ -174,29 +163,21 @@ async def save_action_source_asset_async(
     attempt: int,
     ext: str,
 ) -> str:
-    path = action_source_asset_path(user_id, generation_id, attempt, ext)
-    task = asyncio.create_task(asyncio.to_thread(_save_generation_asset, data, user_id, path))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await task
-        raise
+    return await _save_generation_asset_async(
+        data,
+        user_id,
+        action_source_asset_path(user_id, generation_id, attempt, ext),
+    )
 
 
 def action_pose_asset_path(user_id: int, generation_id: str) -> str:
-    if user_id <= 0 or len(generation_id) != 32 or any(char not in "0123456789abcdef" for char in generation_id):
+    if user_id <= 0 or not _is_generation_id(generation_id):
         raise ValueError("invalid action pose asset key")
     return f"companion-assets/{user_id}/action_pose_{generation_id}.png"
 
 
 async def save_action_pose_asset_async(data: bytes, *, user_id: int, generation_id: str) -> str:
-    path = action_pose_asset_path(user_id, generation_id)
-    task = asyncio.create_task(asyncio.to_thread(_save_generation_asset, data, user_id, path))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await task
-        raise
+    return await _save_generation_asset_async(data, user_id, action_pose_asset_path(user_id, generation_id))
 
 
 def image_chain_asset_path(user_id: int, generation_id: str, attempt: int, slot: int, ext: str) -> str:
@@ -205,8 +186,7 @@ def image_chain_asset_path(user_id: int, generation_id: str, attempt: int, slot:
         or attempt < 0
         or slot < 0
         or ext not in {"png", "jpg", "webp", "gif"}
-        or len(generation_id) != 32
-        or any(char not in "0123456789abcdef" for char in generation_id)
+        or not _is_generation_id(generation_id)
     ):
         raise ValueError("invalid image chain asset key")
     return f"companion-assets/{user_id}/image_{generation_id}_a{attempt}_s{slot}.{ext}"
@@ -221,14 +201,11 @@ async def save_image_chain_asset_async(
     slot: int,
     ext: str,
 ) -> str:
-    """固定候选路径先由任务登记；取消时保留原子写入结果供恢复。"""
-    path = image_chain_asset_path(user_id, generation_id, attempt, slot, ext)
-    task = asyncio.create_task(asyncio.to_thread(_save_generation_asset, data, user_id, path))
-    try:
-        return await asyncio.shield(task)
-    except asyncio.CancelledError:
-        await task
-        raise
+    return await _save_generation_asset_async(
+        data,
+        user_id,
+        image_chain_asset_path(user_id, generation_id, attempt, slot, ext),
+    )
 
 
 def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str] | None:
@@ -271,11 +248,14 @@ def parse_companion_asset_path(storage_path: str | None) -> tuple[int, str] | No
 
 
 def signed_companion_asset_url(storage_path: str) -> str | None:
-    """将裸存储路径签名为 /asset 路由 URL；路径非法时返回 None。"""
+    """将裸存储路径签名为 /asset 路由 URL；路径非法时返回 None。调用方不要缓存——签名短时过期，每次列表刷新都应重新签名。"""
     parsed = parse_companion_asset_path(storage_path)
     if parsed is None:
         return None
-    return build_signed_asset_url(*parsed)
+    user_id, filename = parsed
+    expires_at = int(time.time()) + _ASSET_URL_TTL_SECONDS
+    qs = urlencode({"expires": expires_at, "sig": _sign(user_id, filename, expires_at)})
+    return f"/api/companion/asset/{user_id}/{filename}?{qs}"
 
 
 def client_asset_url(storage_path: str) -> str:

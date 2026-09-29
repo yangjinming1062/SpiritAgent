@@ -66,45 +66,38 @@ async def get_action_by_key(
 async def upsert_action(
     db: AsyncSession,
     *,
-    user_id: int | None = None,
+    user_id: int,
     pack_id: int,
     key: str,
     name: str,
-    system_slot: str = "",
-    kind: str = "once",
-    motion_description: str = "",
-    use_when: list[str] | None = None,
-    avoid_when: list[str] | None = None,
-    tags: list[str] | None = None,
+    kind: str,
+    motion_description: str,
+    use_when: list[str],
+    avoid_when: list[str],
 ) -> CompanionAction:
     """创建或更新动作元信息；仅元信息变更递增 metadata_revision，不重新生成视频。"""
+    use_when_json = json.dumps(use_when, ensure_ascii=False)
+    avoid_when_json = json.dumps(avoid_when, ensure_ascii=False)
     existing = await get_action_by_key(db, pack_id, key)
     if existing:
         existing.name = name
         existing.kind = kind
         existing.motion_description = motion_description
-        existing.use_when = json.dumps(use_when or [], ensure_ascii=False)
-        existing.avoid_when = json.dumps(avoid_when or [], ensure_ascii=False)
-        existing.tags = json.dumps(tags or [], ensure_ascii=False)
+        existing.use_when = use_when_json
+        existing.avoid_when = avoid_when_json
         existing.metadata_revision += 1
         await db.flush()
         return existing
-
-    if user_id is None:
-        pack = await db.get(CompanionActionPack, pack_id)
-        user_id = pack.user_id if pack else 0
 
     action = CompanionAction(
         user_id=user_id,
         pack_id=pack_id,
         key=key,
         name=name,
-        system_slot=system_slot,
         kind=kind,
         motion_description=motion_description,
-        use_when=json.dumps(use_when or [], ensure_ascii=False),
-        avoid_when=json.dumps(avoid_when or [], ensure_ascii=False),
-        tags=json.dumps(tags or [], ensure_ascii=False),
+        use_when=use_when_json,
+        avoid_when=avoid_when_json,
     )
     db.add(action)
     await db.flush()
@@ -151,9 +144,8 @@ async def record_playback(
     action_id: int,
     appearance_epoch: int,
     source: str,
-    expires_at: datetime | None,
-    repeat_count: int = 1,
-) -> None:
+    expires_at: datetime,
+) -> ActionPlayback:
     """创建播放意图记录；终态由 usage.record_play_result 更新。"""
     entry = ActionPlayback(
         user_id=user_id,
@@ -163,8 +155,8 @@ async def record_playback(
         appearance_epoch=appearance_epoch,
         source=source,
         expires_at=expires_at,
-        repeat_count=repeat_count,
         status="queued",
     )
     db.add(entry)
     await db.flush()
+    return entry

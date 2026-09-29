@@ -205,15 +205,9 @@ class _SafeOutboundAsyncTransport(httpx.AsyncHTTPTransport):
 
 
 def safe_outbound_async_client(**kwargs: Any) -> httpx.AsyncClient:
-    """带建连期 SSRF 守卫的 AsyncClient 工厂。
-
-    不再用 request hook 预检：每个 socket.connect 都会在 DNS 解析完成
-    后立即校验所有目标 IP；默认 ``follow_redirects=False`` 以便上游
-    ``download_capped`` 自己做逐跳校验。
-    """
-    transport = kwargs.pop("transport", None) or safe_outbound_async_transport()
-    follow_redirects = kwargs.pop("follow_redirects", False)
-    return httpx.AsyncClient(follow_redirects=follow_redirects, transport=transport, **kwargs)
+    """带建连期 SSRF 守卫的 AsyncClient 工厂：每个 socket.connect 在 DNS 解析后校验全部目标 IP；
+    不跟随重定向，``download_capped`` 自行逐跳校验。"""
+    return httpx.AsyncClient(transport=safe_outbound_async_transport(), **kwargs)
 
 
 def safe_outbound_async_transport() -> httpx.AsyncBaseTransport:
@@ -221,7 +215,10 @@ def safe_outbound_async_transport() -> httpx.AsyncBaseTransport:
     return _SafeOutboundAsyncTransport()
 
 
-async def download_capped(url: str, *, max_bytes: int, timeout: float = 60.0, max_redirects: int = 5) -> bytes:
+_MAX_REDIRECTS = 5
+
+
+async def download_capped(url: str, *, max_bytes: int, timeout: float) -> bytes:
     """下载远程 URL，封装大小上限、逐跳 SSRF 校验、协议白名单（{http, https}）与 HTTPS→HTTP 降级防护。
 
     每跳的 SSRF 校验由 ``_SafeOutboundAsyncBackend.connect_tcp`` 在 socket
@@ -244,8 +241,8 @@ async def download_capped(url: str, *, max_bytes: int, timeout: float = 60.0, ma
         ):
             if resp.is_redirect or resp.status_code in (301, 302, 303, 307, 308):
                 redirect_count += 1
-                if redirect_count > max_redirects:
-                    raise RuntimeError(f"too many redirects ({redirect_count} > {max_redirects})")
+                if redirect_count > _MAX_REDIRECTS:
+                    raise RuntimeError(f"too many redirects ({redirect_count} > {_MAX_REDIRECTS})")
 
                 location = resp.headers.get("location")
                 if not location:

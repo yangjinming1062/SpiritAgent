@@ -14,6 +14,7 @@ from components import (
     SETTINGS,
     attachment_root,
     cleanup_expired,
+    database_url,
     get_logger,
     setup_logging,
 )
@@ -33,7 +34,6 @@ from services.application.generation import (
     resume_character_extractions,
     resume_initial_appearance,
     resume_pending_video_jobs,
-    resume_processing_video_packs,
     resume_scene_jobs,
     resume_video_generation_jobs,
 )
@@ -41,18 +41,8 @@ from services.domains.companion import drain_first_greeting, drain_persona_backg
 from services.infrastructure.event_store import drain_event_tasks, start_event_loop, stop_event_loop
 from services.infrastructure.llm import aclose_all
 from services.infrastructure.web import aclose as aclose_web_providers
-from sqlalchemy.engine import make_url
 
 logger = get_logger(__name__)
-
-
-def _sync_pg_url() -> str:
-    return make_url(SETTINGS.database_url).set(drivername="postgresql+psycopg").render_as_string(hide_password=False)
-
-
-def _raw_pg_dsn() -> str:
-    # asyncpg 只接受不带 SQLAlchemy 驱动后缀的纯 postgresql:// URL。
-    return make_url(SETTINGS.database_url).set(drivername="postgresql").render_as_string(hide_password=False)
 
 
 def _run_migrations() -> None:
@@ -60,7 +50,7 @@ def _run_migrations() -> None:
     cfg = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     # 标记给 env.py，让启动迁移跳过 fileConfig；否则 alembic.ini 的 WARNING root 会接管全局日志、禁用所有已建 logger。
     cfg.attributes["configure_logger"] = False
-    cfg.set_main_option("sqlalchemy.url", _sync_pg_url().replace("%", "%%"))
+    cfg.set_main_option("sqlalchemy.url", database_url("postgresql+psycopg").replace("%", "%%"))
     command.upgrade(cfg, "head")
 
 
@@ -73,18 +63,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     async with SESSION_LOCAL() as session:
         await load_and_apply_system_settings(session)
 
-    attachment_root(SETTINGS.data_dir).mkdir(parents=True, exist_ok=True)
+    attachment_root().mkdir(parents=True, exist_ok=True)
 
     start_scheduler()
     # LISTEN 专线：event_store 内部直连 + 断线 5s 重连；cron 回合处理器已由 bootstrap/registrations 显式绑定。
-    start_event_loop(_raw_pg_dsn())
+    # asyncpg 直连只接受不带 SQLAlchemy 驱动后缀的纯 postgresql:// URL。
+    start_event_loop(database_url("postgresql"))
     # IM 通道桥：拉起各用户已启用的渠道绑定，回合不依赖用户 WS。
     await start_channel_manager()
     await resume_pending_video_jobs()
-    # 视频包按参考生成：凭持久化句柄（任务 ID / 产物 / 脚本）续跑，不重复提交付费任务。
+    # 视频包：生成包凭持久化句柄（任务 ID / 产物 / 脚本）续跑，不重复提交付费任务；中断的上传导入包按失败落库并广播。
     await resume_video_generation_jobs()
-    # 视频包上传导入：无可续跑句柄的 processing 行按失败落库并广播。
-    await resume_processing_video_packs()
     # 动作提案：pending 评审重新调度（approve 后自动接生成编排）。
     await resume_proposal_reviews()
     await resume_character_extractions()

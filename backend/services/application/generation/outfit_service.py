@@ -1,12 +1,10 @@
 """衣柜草稿、确认、穿着与删除；共享事务约束见本模块 README。"""
 
 import asyncio
-import base64
 import json
 from datetime import timedelta
 
 from components import (
-    DEFAULT_LANGUAGE,
     SESSION_LOCAL,
     get_logger,
     parse_llm_json,
@@ -24,7 +22,7 @@ from modules.companion import (
     OutfitResponse,
     Persona,
 )
-from modules.settings import UserSetting
+from modules.settings import get_user_setting
 from modules.ws import emit_ws_event
 from prompts.generation import EDIT_PRESERVE_OUTFIT, OUTFIT_DESCRIBE_SYSTEM
 from sqlalchemy import select, update
@@ -39,13 +37,12 @@ from services.domains.companion import (
     render_character_identity,
     require_character_snapshot,
 )
-from services.infrastructure.assets import unlink_companion_asset
+from services.infrastructure.assets import build_data_uri, unlink_companion_asset
 from services.infrastructure.llm import (
     build_image_edit_prompt,
     build_outfit_prompt,
     chat,
     describe_garment_image,
-    is_content_policy_error_message,
 )
 
 from .avatar_service import (
@@ -54,12 +51,12 @@ from .avatar_service import (
     AvatarGenerationError,
     _persist_portrait_bytes,
     _persist_portrait_or_draft,
-    _read_temp_media_bytes,
-    _sanitize_prompt_for_moderation,
     delete_portrait_file,
+    generate_with_moderation_retry,
+    get_active_avatar,
     get_avatar_job_lock,
     load_avatar_bytes_as_data_uri,
-    resolve_uploaded_avatar_path,
+    read_portrait_bytes,
 )
 from .character_images import generate_character_images, image_asset_bytes
 from .image_generation import ImageGenerationError
@@ -131,17 +128,6 @@ async def _get_outfit(
     ).scalar_one_or_none()
 
 
-async def _active_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
-    return (
-        await db.execute(
-            select(AvatarAsset).where(
-                AvatarAsset.user_id == user_id,
-                AvatarAsset.active.is_(True),
-            ),
-        )
-    ).scalar_one_or_none()
-
-
 async def _sweep_stale(db: AsyncSession, user_id: int) -> None:
     """读取时顺带清扫：过期草稿置 expired（参考图上传文件一并清理）。"""
     now = utc_now()
@@ -195,7 +181,7 @@ async def _outfit_generation_context(
     db: AsyncSession,
     user_id: int,
 ) -> tuple[AvatarAsset, str, CharacterCardSnapshot, str]:
-    avatar = await _active_avatar(db, user_id)
+    avatar = await get_active_avatar(db, user_id)
     if avatar is None or not avatar.is_fullbody_confirmed:
         raise OutfitStateError("请先确认全身形象")
     persona = await get_or_create_persona(db, user_id)
@@ -228,19 +214,12 @@ async def _describe_reference_garment(
     重新生成时不再重复整合。整合走独立短会话，不占请求连接。"""
     if image is None:
         ref_path = source.get("reference_image_path")
-        if not isinstance(ref_path, str) or not ref_path:
+        loaded = await asyncio.to_thread(read_portrait_bytes, ref_path) if isinstance(ref_path, str) else None
+        if loaded is None:
             return None
-        resolved = resolve_uploaded_avatar_path(ref_path.rsplit("/", 1)[-1])
-        if resolved is None:
-            return None
-        path, content_type = resolved
-        try:
-            image = await asyncio.to_thread(path.read_bytes)
-        except OSError:
-            return None
+        image, content_type = loaded
     try:
-        garment_uri = await asyncio.to_thread(base64.b64encode, image)
-        garment_uri = f"data:{content_type or 'image/png'};base64,{garment_uri.decode('ascii')}"
+        garment_uri = await asyncio.to_thread(build_data_uri, image, content_type)
         text = await describe_garment_image(user_id, garment_uri, requirement)
     except Exception:
         logger.warning(
@@ -274,21 +253,12 @@ async def _generate_outfit_fullbody(
         )
 
     try:
-        try:
-            paths = await generate(prompt)
-        except ImageGenerationError as exc:
-            if exc.result_unknown or not is_content_policy_error_message(exc.internal):
-                raise
-            sanitized = await _sanitize_prompt_for_moderation(user_id, prompt)
-            if sanitized == prompt:
-                raise
-            paths = await generate(sanitized)
+        paths = await generate_with_moderation_retry(user_id, prompt, generate)
     except ImageGenerationError as exc:
         raise AvatarGenerationError(str(exc), internal=exc.internal) from exc
     try:
         data, mime = await image_asset_bytes(paths[0])
-        draft_url = await _persist_portrait_or_draft(data, user_id, mime, persist=False)
-        return draft_url
+        return await _persist_portrait_or_draft(data, user_id, mime, persist=False)
     finally:
         for path in paths:
             await asyncio.to_thread(unlink_companion_asset, path)
@@ -296,11 +266,18 @@ async def _generate_outfit_fullbody(
 
 def _outfit_feedback_history(source: dict) -> list[str]:
     history = source.get("feedback_history")
-    if isinstance(history, list):
-        return [item.strip() for item in history if isinstance(item, str) and item.strip()]
-    # 既有草稿只保存最近一次反馈，作为有据可查的历史接续。
-    previous = source.get("feedback")
-    return [previous.strip()] if isinstance(previous, str) and previous.strip() else []
+    if not isinstance(history, list):
+        return []
+    return [item.strip() for item in history if isinstance(item, str) and item.strip()]
+
+
+async def _outfit_requirement(user_id: int, source: dict) -> str:
+    """草稿重绘沿用的着装要求：优先参考图设计稿（创建时整合失败则补一次），缺失时退回用户原话。"""
+    description = str(source.get("description") or "").strip()
+    garment_text = str(source.get("reference_description") or "").strip()
+    if not garment_text and source.get("reference_image_path"):
+        garment_text = await _describe_reference_garment(user_id, source, requirement=description)
+    return garment_text or description
 
 
 async def create_outfit_draft(
@@ -418,18 +395,14 @@ async def regenerate_outfit_draft(
             effective_feedback,
             preserve=EDIT_PRESERVE_OUTFIT + "\n" + render_character_identity(identity),
         )
+        identity_uri = await _require_fullbody_seed_readable(avatar)
     else:
-        reference_uri = await _require_fullbody_seed_readable(avatar)
-        description = str(source.get("description") or "").strip()
-        garment_text = str(source.get("reference_description") or "").strip()
-        if not garment_text and source.get("reference_image_path"):
-            # 旧草稿或上次整合失败：重新生成时补一次整合，成功则随本次 source_json 持久化
-            garment_text = await _describe_reference_garment(user_id, source, requirement=description)
+        reference_uri = identity_uri = await _require_fullbody_seed_readable(avatar)
         prompt = await build_outfit_prompt(
             user_id=user_id,
             reference_image=reference_uri,
             species=species,
-            requirement=garment_text or description,
+            requirement=await _outfit_requirement(user_id, source),
             feedback=effective_feedback,
             previous_feedback=_outfit_feedback_history(source),
             identity=render_character_identity(identity),
@@ -440,7 +413,7 @@ async def regenerate_outfit_draft(
         user_id,
         prompt=prompt,
         reference_image=reference_uri,
-        identity_reference=await _require_fullbody_seed_readable(avatar),
+        identity_reference=identity_uri,
         identity=identity,
         image_edit=mode == "edit",
     )
@@ -462,7 +435,6 @@ async def regenerate_outfit_draft(
         outfit.status = "draft"
         if effective_feedback:
             source["feedback_history"] = [*_outfit_feedback_history(source), effective_feedback]
-            source.pop("feedback", None)
         outfit.source_json = json.dumps(source, ensure_ascii=False)
         emit_ws_event(
             db,
@@ -491,26 +463,23 @@ async def confirm_outfit(
         if outfit.status not in ("draft", "failed"):
             raise OutfitStateError("仅草稿或失败状态可以确认")
         source = safe_json_loads(outfit.source_json, default={})
-        revision = source.get("character_card_revision") if isinstance(source, dict) else None
+        if not isinstance(source, dict):
+            source = {}
+        revision = source.get("character_card_revision")
         if revision is not None:
             card = await get_character_card(db, user_id, lock=True)
             if card is None or card.revision != revision:
                 raise OutfitStateError("角色卡已更新，请重新生成外观后再确认")
-        if not isinstance(source, dict):
-            source = {}
         if not source.get("identity_reference_path"):
-            avatar = await _active_avatar(db, user_id)
+            avatar = await get_active_avatar(db, user_id)
             if avatar is None or not avatar.seed_fullbody_url:
                 raise OutfitStateError("全身形象缺失，请先确认角色形象")
             source["identity_reference_path"] = avatar.seed_fullbody_url
         if outfit.fullbody_url.startswith("temp-media/"):
-            moved = await _read_temp_media_bytes(outfit.fullbody_url)
-            if moved is None:
+            draft = await asyncio.to_thread(read_portrait_bytes, outfit.fullbody_url)
+            if draft is None:
                 raise OutfitDraftExpiredError("外观草稿已过期，请重新生成")
-            outfit.fullbody_url = await _persist_portrait_bytes(
-                moved[0],
-                moved[1],
-            )
+            outfit.fullbody_url = await _persist_portrait_bytes(*draft)
         outfit.source_json = json.dumps(source, ensure_ascii=False)
         outfit.status = "ready"
         await db.commit()
@@ -580,19 +549,17 @@ async def prepare_outfit_regenerate_prompt(
         source = {}
     await db.commit()
 
-    description = str(source.get("description") or "").strip()
-    garment_text = str(source.get("reference_description") or "").strip()
-    if not garment_text and source.get("reference_image_path"):
-        garment_text = await _describe_reference_garment(user_id, source, requirement=description)
-    if not (garment_text or description or effective_feedback or _outfit_feedback_history(source)):
+    requirement = await _outfit_requirement(user_id, source)
+    previous_feedback = _outfit_feedback_history(source)
+    if not (requirement or effective_feedback or previous_feedback):
         raise OutfitError("请先描述想要的着装或修改要求")
     return await build_outfit_prompt(
         user_id=user_id,
         reference_image=identity_uri,
         species=species,
-        requirement=garment_text or description,
+        requirement=requirement,
         feedback=effective_feedback,
-        previous_feedback=_outfit_feedback_history(source),
+        previous_feedback=previous_feedback,
         identity=render_character_identity(identity),
         personality=personality,
         canvas_aspect=_FULLBODY_ASPECT,
@@ -770,15 +737,7 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
             if outfit is None:
                 return
             fullbody_url = outfit.fullbody_url
-            language_value = await db.scalar(
-                select(UserSetting.setting_value).where(
-                    UserSetting.user_id == user_id,
-                    UserSetting.setting_key == "language",
-                ),
-            )
-            payload = {
-                "output_language": resolve_language(language_value or DEFAULT_LANGUAGE),
-            }
+            payload = {"output_language": resolve_language(await get_user_setting(db, user_id, "language"))}
         image_uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, fullbody_url)
         if not image_uri:
             return

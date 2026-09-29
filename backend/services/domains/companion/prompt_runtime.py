@@ -1,14 +1,14 @@
 import json
 from typing import Any, NamedTuple
 
-from components import DEFAULT_LANGUAGE, SESSION_LOCAL, get_logger, parse_llm_json, resolve_language, safe_json_loads
+from components import SESSION_LOCAL, get_logger, parse_llm_json, resolve_language, safe_json_loads
 from modules.companion import Persona
-from modules.settings import UserSetting
+from modules.settings import get_user_setting
 from pydantic import BaseModel
 from sqlalchemy import select
 
 from services.contracts import MemoryScope
-from services.domains.actions import get_active_pack, list_pack_actions
+from services.domains.actions import get_active_pack, is_expression_action, list_pack_actions
 from services.domains.memory import format_memories_block
 from services.infrastructure.llm import (
     LLMRuntimeError,
@@ -20,7 +20,7 @@ from services.infrastructure.llm import (
     try_resolve,
 )
 
-from .persona_service import render_extras
+from .persona_service import load_persona_definition, render_extras
 
 logger = get_logger(__name__)
 
@@ -52,24 +52,13 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
         if persona is None or not persona.is_complete:
             return None
-        language_setting = (
-            await db.execute(
-                select(UserSetting.setting_value).where(
-                    UserSetting.user_id == user_id,
-                    UserSetting.setting_key == "language",
-                ),
-            )
-        ).scalar()
-        language = resolve_language(language_setting or DEFAULT_LANGUAGE)
-        definition = safe_json_loads(persona.definition_json or "{}", default={})
+        language = resolve_language(await get_user_setting(db, user_id, "language"))
         # LLM 可点播的表达动作来自当前激活包；系统产品槽位不进清单，动态动作即表达能力。
         pack = await get_active_pack(db, user_id)
         available_actions: list[dict[str, Any]] = []
         if pack is not None:
             for row in await list_pack_actions(db, pack.id, enabled_only=True):
-                if row.status != "succeeded" or not row.video_path:
-                    continue
-                if row.system_slot:
+                if not is_expression_action(row):
                     continue
                 duration_ms = row.actual_duration_ms or int((row.target_duration_seconds or 0) * 1000)
                 available_actions.append(
@@ -86,7 +75,7 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         available_actions.sort(key=lambda item: item["action_id"])
         return CompanionPromptContext(
             language=language,
-            persona_extras=render_extras(definition, language=language),
+            persona_extras=render_extras(load_persona_definition(persona), language=language),
             current_mood=persona.current_mood or "",
             memories_block=await format_memories_block(db, MemoryScope(user_id, "companion")),
             available_actions=available_actions,

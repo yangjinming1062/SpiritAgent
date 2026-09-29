@@ -80,12 +80,10 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                 conversation = await get_or_create_special_conversation(db, user_id, "companion")
                 llm_config = await resolve_user_llm_config(db, user_id)
                 message_id = await latest_user_message_id(db, user_id)
+                disturbance_tier = await get_disturbance_tier(user_id, db=db)
             request = ChatRequest(
                 session_id=str(conversation.id),
-                message=ChatMessageRequest(
-                    role="user",
-                    content=_build_proactive_hint(intent, await get_disturbance_tier(user_id)),
-                ),
+                message=ChatMessageRequest(content=_build_proactive_hint(intent, disturbance_tier)),
             )
             with companion_turn_plan(user_id, intent.id, intent.expires_at) as plan:
                 await run_chat_turn(

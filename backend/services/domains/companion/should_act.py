@@ -4,8 +4,6 @@ from typing import Any
 from components import (
     LLM_MAX_OUTPUT_TOKENS,
     SETTINGS,
-    coerce_hour_0_23,
-    coerce_non_negative_float,
     get_logger,
     resolve_prompt_text,
 )
@@ -55,18 +53,16 @@ def _normalize_approach_params(params: dict[str, Any] | None) -> dict[str, str] 
 
 async def should_act(
     user_id: int,
-    kind: str = "periodic_provision",
-    idle_seconds: float = 0.0,
-    local_hour: int = 0,
-    focused_category: str | None = None,
-    fullscreen: bool = False,
-    screen_locked: bool = False,
-    seconds_since_last_action: float = 0.0,
-    llm_config: UserLlmConfig | None = None,
+    *,
+    idle_seconds: float,
+    local_hour: int,
+    focused_category: str | None,
+    fullscreen: bool,
+    screen_locked: bool,
+    seconds_since_last_action: float,
+    llm_config: UserLlmConfig,
 ) -> ShouldActResult:
-    """由 LLM 决策伙伴此刻是否要采取自主空间行为。"""
-    if kind != "periodic_provision":
-        return ShouldActResult(should_act=False, reason="invalid_kind")
+    """由 LLM 决策伙伴此刻是否要采取自主空间行为；数值参数由调用方归一化（local_hour 为 -1 表示未知）。"""
     if screen_locked or fullscreen:
         return ShouldActResult(should_act=False, action="stay", reason="screen_unavailable")
 
@@ -74,9 +70,6 @@ async def should_act(
     if ctx is None:
         return ShouldActResult(should_act=False, reason="persona not ready")
 
-    idle_minutes = round(coerce_non_negative_float(idle_seconds) / 60, 2)
-    last_action_sec = round(coerce_non_negative_float(seconds_since_last_action), 1)
-    local_hour = coerce_hour_0_23(local_hour)
     parsed, fail_reason = await run_prompt_json(
         user_id,
         llm_config,
@@ -84,9 +77,9 @@ async def should_act(
         {
             "output_language": ctx.language,
             "persona": ctx.persona_extras,
-            "idle_minutes": idle_minutes,
+            "idle_minutes": round(idle_seconds / 60, 2),
             "local_hour": local_hour if local_hour >= 0 else None,
-            "last_action_seconds": last_action_sec,
+            "last_action_seconds": round(seconds_since_last_action, 1),
             "fullscreen": fullscreen,
             "screen_locked": screen_locked,
             **({"focused_category": focused_category} if focused_category else {}),

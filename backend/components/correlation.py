@@ -57,7 +57,7 @@ async def correlated_exception_response(request: Request, exc: Exception) -> JSO
         exc_info=exc,
         extra={"request_id": rid},
     )
-    headers = {"X-Request-ID": rid} if rid else {}
+    headers = {REQUEST_ID_HEADER: rid} if rid else {}
     return JSONResponse(
         status_code=500,
         content={"error": "Internal Server Error", "reason": "internal_error", "status": 500},

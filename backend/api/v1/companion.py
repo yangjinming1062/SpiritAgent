@@ -14,6 +14,7 @@ from modules.companion import (
     CharacterCardExtract,
     CharacterCardResponse,
     CharacterCardUpdate,
+    CompanionActionPack,
     CompanionMediaReview,
     CompanionOperationResponse,
     FullbodyAdoptRequest,
@@ -35,6 +36,7 @@ from modules.companion import (
     OutfitRegeneratePromptRequest,
     OutfitRegenerateRequest,
     OutfitResponse,
+    Persona,
     PersonaResponse,
     PersonaUpdate,
     PortraitConfirmRequest,
@@ -229,16 +231,20 @@ async def extract_character_card_route(
     return result
 
 
-@router.get("/persona", response_model=PersonaResponse)
-async def get_persona(user: CurrentUser, db: DbSession) -> PersonaResponse:
-    persona = await get_or_create_persona(db, user.id)
+def _persona_response(persona: Persona, definition_json: str) -> PersonaResponse:
     tags = safe_json_loads(persona.personality_tags_json or "[]", default=[])
     return PersonaResponse(
         is_complete=persona.is_complete,
-        definition_json=json.dumps(load_persona_definition(persona), ensure_ascii=False),
+        definition_json=definition_json,
         personality_tags=tags if isinstance(tags, list) else [],
         current_mood=persona.current_mood,
     )
+
+
+@router.get("/persona", response_model=PersonaResponse)
+async def get_persona(user: CurrentUser, db: DbSession) -> PersonaResponse:
+    persona = await get_or_create_persona(db, user.id)
+    return _persona_response(persona, json.dumps(load_persona_definition(persona), ensure_ascii=False))
 
 
 @router.put("/persona", response_model=PersonaResponse)
@@ -250,13 +256,7 @@ async def put_persona(body: PersonaUpdate, user: CurrentUser, db: DbSession) -> 
         raise HTTPException(status_code=422, detail={"error": "Persona validation error", "reason": str(exc)})
     # 延迟调度标签 LLM 抽取；同步执行会阻塞 PUT 超过 renderer 的 15s socket 超时，导致 onboarding 阶段后续 POST /avatar 无法触发。
     schedule_personality_tag_refresh(persona.id, user.id)
-    tags = safe_json_loads(persona.personality_tags_json or "[]", default=[])
-    return PersonaResponse(
-        is_complete=persona.is_complete,
-        definition_json=persona.definition_json,
-        personality_tags=tags if isinstance(tags, list) else [],
-        current_mood=persona.current_mood,
-    )
+    return _persona_response(persona, persona.definition_json)
 
 
 @router.post("/portrait/confirm", response_model=CompanionOperationResponse)
@@ -309,8 +309,7 @@ async def post_avatar(
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except AvatarGenerationError as exc:
-        err_detail = getattr(exc, "internal", str(exc))
-        logger.warning("post_avatar generation failed", extra={"user_id": user.id, "error": err_detail})
+        logger.warning("post_avatar generation failed", extra={"user_id": user.id, "error": exc.internal})
         raise HTTPException(status_code=502, detail={"error": "伙伴形象生成失败，请稍后重试", "reason": str(exc)})
     except MissingLlmConfigError as exc:
         logger.warning("post_avatar missing config", extra={"user_id": user.id, "error": str(exc)})
@@ -321,10 +320,8 @@ async def post_avatar(
     return avatar_response(asset)
 
 
-def _decode_upload_image(image_b64: str | None, content_type: str | None) -> tuple[bytes | None, str | None]:
+def _decode_upload_image(image_b64: str, content_type: str | None) -> tuple[bytes, str]:
     """不支持的 MIME 抛 415；base64 损坏抛 400。"""
-    if not image_b64:
-        return None, None
     normalized = (content_type or "image/png").split(";")[0].strip().lower()
     if normalized not in ALLOWED_AVATAR_UPLOAD_MIME_TYPES:
         raise HTTPException(status_code=415, detail={"error": "仅支持 PNG / JPEG / WebP / GIF 图片"})
@@ -332,6 +329,10 @@ def _decode_upload_image(image_b64: str | None, content_type: str | None) -> tup
         return base64.b64decode(image_b64, validate=True), normalized
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid base64 image data")
+
+
+def _decode_optional_image(image_b64: str | None, content_type: str | None) -> tuple[bytes | None, str | None]:
+    return _decode_upload_image(image_b64, content_type) if image_b64 else (None, None)
 
 
 @router.post("/avatar/from-image", response_model=AvatarAssetResponse, status_code=status.HTTP_201_CREATED)
@@ -342,7 +343,7 @@ async def post_avatar_from_image(
     body: AvatarFromImageRequest,
 ) -> AvatarAssetResponse:
     raw, content_type = _decode_upload_image(body.image, body.content_type)
-    pres_raw, pres_content_type = _decode_upload_image(body.presentation_image, body.presentation_content_type)
+    pres_raw, pres_content_type = _decode_optional_image(body.presentation_image, body.presentation_content_type)
     async with SESSION_LOCAL() as pre_db:
         persona = await get_or_create_persona(pre_db, user.id)
         if not persona.is_complete:
@@ -364,8 +365,7 @@ async def post_avatar_from_image(
     except ImageSealedError as exc:
         raise HTTPException(status_code=409, detail={"error": "形象已确认锁定，无法重新生成", "reason": str(exc)})
     except AvatarGenerationError as exc:
-        err_detail = getattr(exc, "internal", str(exc))
-        logger.warning("post_avatar_from_image failed", extra={"user_id": user.id, "error": err_detail})
+        logger.warning("post_avatar_from_image failed", extra={"user_id": user.id, "error": exc.internal})
         raise HTTPException(status_code=502, detail={"error": "按参考重绘失败，请稍后重试", "reason": str(exc)})
     except MissingLlmConfigError as exc:
         logger.warning("post_avatar_from_image missing config", extra={"user_id": user.id, "error": str(exc)})
@@ -399,11 +399,9 @@ async def post_avatar_prompt(request: Request, body: AvatarPromptRequest, user: 
 @limiter.limit(lambda: f"{SETTINGS.companion_avatar_generate_rate_limit_per_minute}/minute")
 async def post_avatar_adopt(request: Request, body: FullbodyAdoptRequest, user: CurrentUser) -> AvatarAssetResponse:
     raw, content_type = _decode_upload_image(body.image, body.content_type)
-    if not raw:
-        raise HTTPException(status_code=400, detail={"error": "请选择有效的图片"})
     try:
         async with get_avatar_job_lock(user.id):
-            asset = await adopt_avatar_seed(user_id=user.id, data=raw, content_type=content_type or "image/png")
+            asset = await adopt_avatar_seed(user_id=user.id, data=raw, content_type=content_type)
     except AvatarGenerationError as exc:
         raise _avatar_http_error(exc)
     return avatar_response(asset)
@@ -435,13 +433,13 @@ async def post_fullbody_reference(
     body: FullbodyReferenceGenerateRequest,
     user: CurrentUser,
 ) -> AvatarAssetResponse | FullbodyCandidateResponse:
-    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    raw, content_type = _decode_optional_image(body.image, body.content_type)
     try:
         asset = await generate_fullbody_reference(
             user.id,
             avatar_id=avatar_id,
             feedback=body.feedback,
-            reference_image=base64.b64encode(raw).decode("utf-8") if raw else None,
+            reference_image=raw,
             reference_content_type=content_type,
             mode=body.mode,
             candidate_id=body.candidate_id,
@@ -571,14 +569,12 @@ async def post_fullbody_adopt(
 ) -> AvatarAssetResponse | FullbodyCandidateResponse:
     """自备图采纳：用户外部生成的图像按对应种子生成成功的语义落库。"""
     raw, content_type = _decode_upload_image(body.image, body.content_type)
-    if not raw:
-        raise HTTPException(status_code=400, detail="Invalid image data")
     try:
         asset = await adopt_fullbody_seed(
             user_id=user.id,
             avatar_id=avatar_id,
             data=raw,
-            content_type=content_type or "image/png",
+            content_type=content_type,
         )
     except AvatarGenerationError as exc:
         raise _avatar_http_error(exc)
@@ -623,7 +619,7 @@ async def post_outfit(
     user: CurrentUser,
     db: DbSession,
 ) -> OutfitResponse:
-    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    raw, content_type = _decode_optional_image(body.image, body.content_type)
     try:
         outfit = await create_outfit_draft(
             db,
@@ -637,7 +633,7 @@ async def post_outfit(
     except AvatarGenerationError as exc:
         logger.warning(
             "outfit draft generation failed",
-            extra={"user_id": user.id, "error": getattr(exc, "internal", str(exc))},
+            extra={"user_id": user.id, "error": exc.internal},
         )
         raise HTTPException(
             status_code=502,
@@ -656,7 +652,7 @@ async def post_outfit_prompt(
 ) -> ImagePromptResponse:
     """自备图提示词（创建语境）：整合链与创建草稿一致；服装参考整合失败只降级着装描述，
     身份仍由全身种子图锚定。"""
-    raw, content_type = _decode_upload_image(body.image, body.content_type)
+    raw, content_type = _decode_optional_image(body.image, body.content_type)
     try:
         prompt = await prepare_outfit_prompt(
             db,
@@ -670,7 +666,7 @@ async def post_outfit_prompt(
     except AvatarGenerationError as exc:
         logger.warning(
             "outfit prompt failed",
-            extra={"user_id": user.id, "error": getattr(exc, "internal", str(exc))},
+            extra={"user_id": user.id, "error": exc.internal},
         )
         raise HTTPException(status_code=502, detail={"error": str(exc), "reason": "generation_failed"})
     return ImagePromptResponse(prompt=prompt)
@@ -686,8 +682,6 @@ async def post_outfit_adopt(
 ) -> OutfitResponse:
     """自备图采纳（创建语境）：外部生成的立绘按创建草稿语义入库。"""
     raw, content_type = _decode_upload_image(body.image, body.content_type)
-    if not raw:
-        raise HTTPException(status_code=400, detail="Invalid image data")
     try:
         outfit = await adopt_outfit_draft_image(
             db,
@@ -718,7 +712,7 @@ async def post_outfit_regenerate(
         # AvatarGenerationError 的 str 按契约是公开文案（含编辑能力缺失等可行动指引），透传不替换。
         logger.warning(
             "outfit draft regenerate failed",
-            extra={"user_id": user.id, "outfit_id": outfit_id, "error": getattr(exc, "internal", str(exc))},
+            extra={"user_id": user.id, "outfit_id": outfit_id, "error": exc.internal},
         )
         raise HTTPException(status_code=502, detail={"error": str(exc), "reason": "generation_failed"})
     return outfit_response(outfit)
@@ -741,7 +735,7 @@ async def post_outfit_regenerate_prompt(
     except AvatarGenerationError as exc:
         logger.warning(
             "outfit regenerate prompt failed",
-            extra={"user_id": user.id, "outfit_id": outfit_id, "error": getattr(exc, "internal", str(exc))},
+            extra={"user_id": user.id, "outfit_id": outfit_id, "error": exc.internal},
         )
         raise HTTPException(status_code=502, detail={"error": str(exc), "reason": "generation_failed"})
     return ImagePromptResponse(prompt=prompt)
@@ -758,8 +752,6 @@ async def post_outfit_regenerate_adopt(
 ) -> OutfitResponse:
     """自备图采纳（草稿重绘语境）：替换草稿/失败外观的立绘，状态回到草稿。"""
     raw, content_type = _decode_upload_image(body.image, body.content_type)
-    if not raw:
-        raise HTTPException(status_code=400, detail="Invalid image data")
     try:
         outfit = await adopt_outfit_regenerate_image(
             db,
@@ -823,6 +815,17 @@ def _video_pack_http_error(exc: VideoPackError) -> HTTPException:
     return HTTPException(status_code=400, detail={"error": str(exc), "reason": "invalid_request"})
 
 
+def _pack_summary(pack: CompanionActionPack) -> VideoPackResponse:
+    """受理视频包请求时的即时摘要；处理结果经 companion.video 事件回流。"""
+    return VideoPackResponse(
+        id=pack.id,
+        outfit_id=pack.outfit_id,
+        pack_version=pack.pack_version,
+        status=pack.status,
+        active=pack.active,
+    )
+
+
 _ALLOWED_CLIP_MIME_TYPES = {"video/webm", "video/mp4", "video/quicktime", "video/x-matroska"}
 
 
@@ -872,13 +875,7 @@ async def post_video_pack(
         )
     except VideoPackError as exc:
         raise _video_pack_http_error(exc)
-    return VideoPackResponse(
-        id=pack.id,
-        outfit_id=pack.outfit_id,
-        pack_version=pack.pack_version,
-        status=pack.status,
-        active=pack.active,
-    )
+    return _pack_summary(pack)
 
 
 @router.post(
@@ -907,13 +904,7 @@ async def post_video_pack_generate(
         raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
     except VideoPackError as exc:
         raise _video_pack_http_error(exc)
-    return VideoPackResponse(
-        id=pack.id,
-        outfit_id=pack.outfit_id,
-        pack_version=pack.pack_version,
-        status=pack.status,
-        active=pack.active,
-    )
+    return _pack_summary(pack)
 
 
 @router.post("/video-packs/{pack_id}/ensure-system-action", response_model=VideoPackResponse)
@@ -930,13 +921,7 @@ async def post_video_pack_ensure_system_action(
         pack = await ensure_video_system_action(db, user.id, pack_id, body.action)
     except VideoPackError as exc:
         raise _video_pack_http_error(exc)
-    return VideoPackResponse(
-        id=pack.id,
-        outfit_id=pack.outfit_id,
-        pack_version=pack.pack_version,
-        status=pack.status,
-        active=pack.active,
-    )
+    return _pack_summary(pack)
 
 
 @router.post("/video-packs/{pack_id}/retry", response_model=VideoPackResponse)
@@ -945,13 +930,7 @@ async def post_video_pack_retry(pack_id: int, user: CurrentUser, db: DbSession) 
         pack = await retry_video_pack(db, user.id, pack_id)
     except VideoPackError as exc:
         raise _video_pack_http_error(exc)
-    return VideoPackResponse(
-        id=pack.id,
-        outfit_id=pack.outfit_id,
-        pack_version=pack.pack_version,
-        status=pack.status,
-        active=pack.active,
-    )
+    return _pack_summary(pack)
 
 
 @router.put("/video-packs/{pack_id}/activate", response_model=VideoPackResponse)
@@ -972,10 +951,8 @@ async def delete_video_pack_route(pack_id: int, user: CurrentUser, db: DbSession
     return CompanionOperationResponse(ok=True)
 
 
-public_router = get_router()
-
-
-@public_router.get("/avatar/file/{filename}")
+# 文件端点按会话或签名放行，不依赖 CurrentUser。
+@router.get("/avatar/file/{filename}")
 async def serve_avatar_file(
     request: Request,
     filename: str,
@@ -992,7 +969,7 @@ async def serve_avatar_file(
     return await serve_ranged_file(request, path, content_type)
 
 
-@public_router.get("/asset/{user_id}/{filename:path}")
+@router.get("/asset/{user_id}/{filename:path}")
 async def serve_companion_asset(
     request: Request,
     user_id: int,

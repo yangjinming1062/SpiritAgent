@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
-from modules.companion import CompanionScene, Persona, ScenePolicy, SceneStatus
+from modules.companion import CompanionScene, Persona, ScenePolicy, SceneResponse, SceneStatus
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -117,40 +117,42 @@ async def list_scenes(
     return rows, int(total or 0)
 
 
-def response_for_scene(row: CompanionScene) -> dict[str, Any]:
-    return {
-        "id": row.id,
-        "status": row.status,
-        "stage": row.stage,
-        "origin": row.origin,
-        "source": row.source,
-        "title": row.title,
-        "description": row.description,
-        "requirements": row.requirements,
-        "outfit_description": row.outfit_description,
-        "prompt": row.prompt,
-        "url": (asset_store.signed_companion_asset_url(row.media_path) or "") if row.media_path else "",
-        "seed_portrait_media_id": row.seed_portrait_media_id,
-        "identity_review": row.identity_review,
-        "identity_review_reason": row.identity_review_reason,
-        "error": row.error,
-        "auto_activate": row.auto_activate,
-        "switch_version": row.switch_version,
-        "attempt_count": row.attempt_count,
-        "requested_at": row.requested_at,
-        "ready_at": row.ready_at,
-        "activated_at": row.activated_at,
-        "regeneration": (
-            {
-                "task_id": row.regeneration_task_id,
-                "status": row.regeneration_status,
-                "stage": row.regeneration_stage or "",
-                "error": row.regeneration_error,
-            }
-            if row.regeneration_status and row.regeneration_task_id
-            else None
-        ),
-    }
+def response_for_scene(row: CompanionScene) -> SceneResponse:
+    return SceneResponse.model_validate(
+        {
+            "id": row.id,
+            "status": row.status,
+            "stage": row.stage,
+            "origin": row.origin,
+            "source": row.source,
+            "title": row.title,
+            "description": row.description,
+            "requirements": row.requirements,
+            "outfit_description": row.outfit_description,
+            "prompt": row.prompt,
+            "url": (asset_store.signed_companion_asset_url(row.media_path) or "") if row.media_path else "",
+            "seed_portrait_media_id": row.seed_portrait_media_id,
+            "identity_review": row.identity_review,
+            "identity_review_reason": row.identity_review_reason,
+            "error": row.error,
+            "auto_activate": row.auto_activate,
+            "switch_version": row.switch_version,
+            "attempt_count": row.attempt_count,
+            "requested_at": row.requested_at,
+            "ready_at": row.ready_at,
+            "activated_at": row.activated_at,
+            "regeneration": (
+                {
+                    "task_id": row.regeneration_task_id,
+                    "status": row.regeneration_status,
+                    "stage": row.regeneration_stage or "",
+                    "error": row.regeneration_error,
+                }
+                if row.regeneration_status and row.regeneration_task_id
+                else None
+            ),
+        },
+    )
 
 
 def scene_environment(state: SceneState) -> dict[str, Any]:

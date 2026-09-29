@@ -26,11 +26,8 @@ class VideoGenJob(ModelBase):
     status: Mapped[str] = mapped_column(String(16), default="queued", index=True)
     # 行插入与 submit 完成之间的短暂窗口必须可空；轮询任务首轮用 MiniMax 返回的 task_id 回填。
     provider_task_id: Mapped[str | None] = mapped_column(String(128), index=True)
-    provider_file_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    file_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     candidate_video_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    candidate_file_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     generation_state_json: Mapped[str] = mapped_column(Text)
     generation_attempt_index: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     error_reason: Mapped[str | None] = mapped_column(String(64), nullable=True)
