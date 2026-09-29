@@ -128,53 +128,21 @@ export function SpriteWindow(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // 鉴权后查询 onboarding 状态。
-  // 1) 先用 GET /api/companion/onboarding/state（REST）做权威即时检查。
-  // 2) 不可用时回退到 requestGateway('onboarding.get_state')。
-  // 3) 仅在 state?.complete === true 时把 lifecycle 设为 'ready'。
-  //    不要回退到 persona.is_complete（角色题保存后它会在 onboarding 中途变成 true）。
-  // 4) 仅 complete === true 视为已完成；未完成的账户自动进入向导。
+  // lifecycle 由 useAccountLifecycle 统一解析；本窗只据此决定向导与立绘水合。
   useEffect(() => {
     if (auth.kind !== 'authenticated') {
-      setCompanionLifecycle('unauthed')
       setOnboardingOpen(false)
 
       return
     }
 
-    let cancelled = false
+    setOnboardingOpen(lifecycle === 'onboarding')
 
-    const checkState = async () => {
-      let state: { complete?: boolean } | null = null
-
-      try {
-        state = await window.spiritagent.api<{ complete?: boolean }>({
-          path: '/api/companion/onboarding/state'
-        })
-      } catch {
-        state = await requestGateway<{ complete?: boolean }>('onboarding.get_state', {}).catch(() => null)
-      }
-
-      if (cancelled) {
-        return
-      }
-
-      const onboardingDone = state?.complete === true
-      setCompanionLifecycle(onboardingDone ? 'ready' : 'onboarding')
-      setOnboardingOpen(!onboardingDone)
-
-      if (onboardingDone) {
-        void hydratePortrait()
-        void hydratePortraitHistory()
-      }
+    if (lifecycle === 'ready') {
+      void hydratePortrait()
+      void hydratePortraitHistory()
     }
-
-    void checkState()
-
-    return () => {
-      cancelled = true
-    }
-  }, [accountId, auth.kind])
+  }, [accountId, auth.kind, lifecycle])
 
   const authed = auth.kind === 'authenticated'
   const showOnboarding = authed && lifecycle === 'onboarding' && onboardingOpen
