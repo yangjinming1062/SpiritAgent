@@ -268,6 +268,12 @@ button { cursor: pointer; }
 .table-scroll { overflow-x: auto; }
 table { width: 100%; border-collapse: collapse; min-width: 44rem; }
 th, td { text-align: left; padding: 0.68rem 1.05rem; vertical-align: middle; }
+#panel-users table { min-width: 36rem; }
+#panel-users th:nth-child(1), #panel-users td:nth-child(1) { width: 32%; }
+#panel-users th:nth-child(2), #panel-users td:nth-child(2) { width: 20%; }
+#panel-users th:nth-child(3), #panel-users td:nth-child(3) { width: 16%; }
+#panel-users th:nth-child(4), #panel-users td:nth-child(4) { width: 32%; }
+#panel-users tbody td { padding-top: 0.85rem; padding-bottom: 0.85rem; }
 thead th {
     font-size: 0.7rem; font-weight: 700; letter-spacing: 0.045em; text-transform: uppercase;
     color: var(--text-3);
@@ -281,12 +287,28 @@ tbody tr { transition: background 0.1s ease; }
 tbody tr:hover { background: var(--row-hover); }
 .td-id { font-family: var(--font-mono); font-size: 0.78rem; color: var(--text-3); white-space: nowrap; }
 .td-actions { white-space: nowrap; text-align: right; }
-.td-actions .btn + .btn { margin-left: 0.28rem; }
+.td-actions .btn + .btn, .td-actions .btn + .menu, .td-actions .menu + .btn { margin-left: 0.28rem; }
+.td-actions .menu { margin-left: 0.28rem; }
 .td-services, .td-platforms { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 .td-notes { max-width: 18rem; color: var(--text-2); }
 .cell-strong { font-weight: 600; color: var(--fg); }
 .cell-sub { color: var(--text-3); font-size: 0.74rem; margin-top: 0.1rem; word-break: break-all; }
 .cell-user { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
+.cell-stack { display: flex; flex-direction: column; gap: 0.28rem; align-items: flex-start; }
+.cell-meta { color: var(--text-2); font-size: 0.8rem; white-space: nowrap; }
+.cell-meta .muted { color: var(--text-3); }
+.status-line {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    font-size: 0.78rem; font-weight: 600; color: var(--text-2);
+    white-space: nowrap;
+}
+.status-line .dot {
+    width: 0.42rem; height: 0.42rem; border-radius: 50%;
+    background: currentColor; opacity: 0.9; flex: none;
+}
+.status-line.on { color: var(--green); }
+.status-line.off { color: var(--red); }
+.status-line.muted { color: var(--text-3); }
 .avatar {
     width: 1.85rem; height: 1.85rem; border-radius: 0.5rem;
     display: grid; place-items: center;
@@ -425,6 +447,30 @@ input[type="file"] { font-size: 0.78rem; }
     font-size: 0.75rem; font-weight: 600; color: var(--text-3);
 }
 .settings-bar .status.dirty { color: var(--amber); }
+.settings-dock {
+    position: sticky;
+    bottom: 0.85rem;
+    z-index: 45;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 0.75rem; flex-wrap: wrap;
+    padding: 0.78rem 1.05rem;
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+    backdrop-filter: blur(0.55rem) saturate(1.15);
+    -webkit-backdrop-filter: blur(0.55rem) saturate(1.15);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-md);
+}
+.settings-dock .status {
+    display: inline-flex; align-items: center; gap: 0.35rem;
+    font-size: 0.78rem; font-weight: 600; color: var(--text-3);
+}
+.settings-dock .status.dirty { color: var(--amber); }
+.settings-dock.is-dirty {
+    border-color: color-mix(in srgb, var(--amber) 35%, var(--border));
+    box-shadow: var(--shadow-lg);
+}
+.settings-dock-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
 .settings-section.is-hidden { display: none; }
 .settings-field.is-hidden { display: none; }
 .settings-empty {
@@ -498,17 +544,17 @@ input[type="file"] { font-size: 0.78rem; }
     background: var(--primary-softer);
 }
 
-.menu { position: relative; display: inline-block; }
+.menu { position: relative; display: inline-block; vertical-align: middle; }
 .menu-pop {
     display: none;
-    position: absolute; right: 0; top: calc(100% + 0.28rem);
+    position: fixed;
     min-width: 9.5rem;
     padding: 0.28rem;
     background: var(--surface);
     border: 1px solid var(--border);
     border-radius: var(--radius-sm);
     box-shadow: var(--shadow-md);
-    z-index: 40;
+    z-index: 150;
     text-align: left;
 }
 .menu.open .menu-pop { display: flex; flex-direction: column; gap: 0.1rem; }
@@ -693,9 +739,9 @@ input[type="file"] { font-size: 0.78rem; }
                             <div class="table-scroll">
                                 <table>
                                     <thead><tr>
-                                        <th>用户</th><th>夜间活动</th><th>状态</th><th>创建时间</th><th style="text-align:right">操作</th>
+                                        <th>用户</th><th>状态</th><th>创建时间</th><th style="text-align:right">操作</th>
                                     </tr></thead>
-                                    <tbody id="userList"><tr class="state-row"><td colspan="5"><div class="state-msg">加载中…</div></td></tr></tbody>
+                                    <tbody id="userList"><tr class="state-row"><td colspan="4"><div class="state-msg">加载中…</div></td></tr></tbody>
                                 </table>
                             </div>
                         </div>
@@ -737,18 +783,19 @@ input[type="file"] { font-size: 0.78rem; }
                                 <div class="settings-bar">
                                     <div>
                                         <div class="lead">系统参数设置</div>
-                                        <div class="status" id="settingsDirty">保存后即刻在内存与数据库中生效，无需重启服务</div>
+                                        <div class="status">保存后即刻在内存与数据库中生效，无需重启服务</div>
                                     </div>
-                                    <button class="btn btn--primary" id="settingsSaveBtn" onclick="saveSystemSettingsForm()">保存系统设置</button>
                                 </div>
 
                                 <div id="aiCardSettings"></div>
                                 <div id="systemSettingsForm"></div>
                                 <div class="settings-empty" id="settingsEmpty">没有匹配的设置项，试试其他关键词。</div>
 
-                                <div class="settings-bar">
-                                    <div class="status" id="settingsDirtyBottom">修改后点击保存生效</div>
-                                    <button class="btn btn--primary" onclick="saveSystemSettingsForm()">保存全部系统设置</button>
+                                <div class="settings-dock" id="settingsDock">
+                                    <div class="status" id="settingsDirty">保存后即刻生效，无需重启服务</div>
+                                    <div class="settings-dock-actions">
+                                        <button class="btn btn--primary" id="settingsSaveBtn" onclick="saveSystemSettingsForm()">保存系统设置</button>
+                                    </div>
                                 </div>
                             </div>
                         </div>
@@ -1042,7 +1089,15 @@ function renderTable(tbodyId, countId, data, { unit, cols, empty, emptyHint, row
 }
 
 function closeAllMenus() {
-    $$('.menu.open').forEach(m => m.classList.remove('open'));
+    $$('.menu.open').forEach(m => {
+        m.classList.remove('open');
+        const pop = m.querySelector('.menu-pop');
+        if (pop) {
+            pop.style.left = '';
+            pop.style.top = '';
+            pop.style.visibility = '';
+        }
+    });
 }
 
 function menuHtml(actions) {
@@ -1056,11 +1111,38 @@ function menuHtml(actions) {
     </div>`;
 }
 
+function placeMenuPop(btn, pop) {
+    const gap = 6;
+    const margin = 8;
+    pop.style.left = '0px';
+    pop.style.top = '0px';
+    pop.style.visibility = 'hidden';
+    const pw = pop.offsetWidth;
+    const ph = pop.offsetHeight;
+    const rect = btn.getBoundingClientRect();
+
+    let top = rect.bottom + gap;
+    if (top + ph > window.innerHeight - margin) {
+        const flipped = rect.top - gap - ph;
+        top = flipped >= margin ? flipped : Math.max(margin, window.innerHeight - margin - ph);
+    }
+    let left = rect.right - pw;
+    if (left < margin) left = margin;
+    if (left + pw > window.innerWidth - margin) left = Math.max(margin, window.innerWidth - margin - pw);
+
+    pop.style.left = `${Math.round(left)}px`;
+    pop.style.top = `${Math.round(top)}px`;
+    pop.style.visibility = '';
+}
+
 function toggleMenu(btn) {
     const menu = btn.closest('.menu');
+    const pop = menu.querySelector('.menu-pop');
     const wasOpen = menu.classList.contains('open');
     closeAllMenus();
-    if (!wasOpen) menu.classList.add('open');
+    if (wasOpen) return;
+    menu.classList.add('open');
+    placeMenuPop(btn, pop);
 }
 
 const TAB_LOADERS = { users: loadUsers, models: loadModelConfigs, settings: loadSystemSettings, versions: loadVersions, logs: loadLogs };
@@ -1125,7 +1207,7 @@ async function loadUsers() {
         const data = await (await apiFetch('/api/admin/users')).json();
         tabCache.users = data;
         renderUsers(data);
-    } catch (e) { $('#userList').innerHTML = stateRow(5, '加载失败：' + e.message, '', true); }
+    } catch (e) { $('#userList').innerHTML = stateRow(4, '加载失败：' + e.message, '', true); }
 }
 
 function filterUsers() {
@@ -1141,6 +1223,12 @@ function renderUsers(data) {
     $('#userCount').textContent = items.length ? (items.length === all.length ? `${items.length} 个用户` : `${items.length} / ${all.length} 个用户`) : '';
     $('#userList').innerHTML = items.length ? items.map(u => {
         const initial = esc((u.username || '?').slice(0, 1).toUpperCase());
+        const night = u.nightly_activity_enabled
+            ? `<span class="status-line on"><span class="dot"></span>夜间已开启</span>`
+            : `<span class="status-line muted"><span class="dot"></span>夜间已关闭</span>`;
+        const active = u.is_active
+            ? `<span class="status-line on"><span class="dot"></span>账户正常</span>`
+            : `<span class="status-line off"><span class="dot"></span>账户已停用</span>`;
         return `<tr>
             <td>
                 <div class="cell-user">
@@ -1151,9 +1239,13 @@ function renderUsers(data) {
                     </div>
                 </div>
             </td>
-            <td>${u.nightly_activity_enabled ? pill('启用', 'green') : pill('关闭', 'muted')}</td>
-            <td>${u.is_active ? pill('启用', 'green') : pill('停用', 'red')}</td>
-            <td><div>${fmtDate(u.created_at)}</div></td>
+            <td>
+                <div class="cell-stack">
+                    ${active}
+                    ${night}
+                </div>
+            </td>
+            <td><div class="cell-meta">${fmtDate(u.created_at)}</div></td>
             <td class="td-actions">
                 <button class="btn btn--ghost btn--sm" onclick="editUser(${u.id})">编辑</button>
                 <button class="btn btn--ghost btn--sm" onclick="manageActivation(${u.id})">激活码</button>
@@ -1166,7 +1258,7 @@ function renderUsers(data) {
                 ])}
             </td>
         </tr>`;
-    }).join('') : stateRow(5, q ? '没有匹配的用户' : '暂无用户', q ? '换个关键词试试' : '点击右上角“创建用户”添加');
+    }).join('') : stateRow(4, q ? '没有匹配的用户' : '暂无用户', q ? '换个关键词试试' : '点击右上角“创建用户”添加');
 }
 
 // baseUrl 回退顺序：激活码中的 b > public_base_url > localhost:10620
@@ -1934,19 +2026,24 @@ renderSettingsForm();
 function markSettingsDirty() {
     if (settingsDirty) return;
     settingsDirty = true;
-    const label = '有未保存的修改';
-    const top = $('#settingsDirty');
-    const bottom = $('#settingsDirtyBottom');
-    if (top) { top.textContent = label; top.classList.add('dirty'); }
-    if (bottom) { bottom.textContent = label; bottom.classList.add('dirty'); }
+    const status = $('#settingsDirty');
+    const dock = $('#settingsDock');
+    if (status) {
+        status.textContent = '有未保存的修改';
+        status.classList.add('dirty');
+    }
+    if (dock) dock.classList.add('is-dirty');
 }
 
 function clearSettingsDirty() {
     settingsDirty = false;
-    const top = $('#settingsDirty');
-    const bottom = $('#settingsDirtyBottom');
-    if (top) { top.textContent = '保存后即刻在内存与数据库中生效，无需重启服务'; top.classList.remove('dirty'); }
-    if (bottom) { bottom.textContent = '修改后点击保存生效'; bottom.classList.remove('dirty'); }
+    const status = $('#settingsDirty');
+    const dock = $('#settingsDock');
+    if (status) {
+        status.textContent = '保存后即刻生效，无需重启服务';
+        status.classList.remove('dirty');
+    }
+    if (dock) dock.classList.remove('is-dirty');
 }
 
 function filterSettingsFields() {
@@ -2203,6 +2300,11 @@ document.addEventListener('click', (e) => {
     const closer = target.closest('[data-close]');
     if (closer) closeModal(closer.closest('.modal').id);
 });
+window.addEventListener('resize', () => closeAllMenus());
+document.addEventListener('scroll', (e) => {
+    if (e.target instanceof Element && e.target.closest('.menu')) return;
+    closeAllMenus();
+}, true);
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeAllMenus();
