@@ -23,6 +23,7 @@ export type {
   ActionPlaybackStatus,
   ActionPlayCommand,
   ActionPlayInstance,
+  NormalizedRect,
   PeekGeometry
 } from './action-types'
 export { isActionStageVisible, observeActionStageVisibility } from './action-visibility'

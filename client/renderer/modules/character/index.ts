@@ -11,6 +11,7 @@ export {
   hydrateActionCatalog,
   isActionStageVisible,
   markPlayInstanceStarted,
+  type NormalizedRect,
   observeActionStageVisibility,
   reportReceipt,
   resolveActionClipUrl,

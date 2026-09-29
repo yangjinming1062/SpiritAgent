@@ -26,6 +26,12 @@
   cursor: grabbing;
 }
 
+.videoWrapper {
+  aspect-ratio: auto;
+  height: 100%;
+  overflow: hidden;
+}
+
 .inner {
   align-items: flex-end;
   display: flex;

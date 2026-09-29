@@ -83,7 +83,7 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
   return (
     <aside className={styles.slot} style={{ order: state.preference.side === 'left' ? -1 : 1, width: slotWidth }}>
       <div
-        className={styles.wrapper}
+        className={`${styles.wrapper} ${presentation.renderer === 'video' ? styles.videoWrapper : ''}`}
         onContextMenu={event => event.preventDefault()}
         ref={wrapperRef}
         title={strings.common.companionControl.dragTitle(strings.brand.name)}
@@ -109,7 +109,7 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
                 windowId={1}
               />
             ) : (
-              <VideoStage />
+              <VideoStage contentAlign={state.preference.side === 'right' ? 'left' : 'right'} />
             ))}
           {state.visible && <SpriteVfxOverlay />}
         </div>

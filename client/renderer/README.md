@@ -145,7 +145,8 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 ## 视频渲染
 
 - 视频层消费 manifest 与透明 WebM；字节走主进程资产桥和内容哈希缓存，双 video 待新帧就绪后替换旧画面。
-- 命中按实际播放时间查询逐帧 alpha 遮罩，并扣除等比显示留白。
+- 完整入口的侧边视频使用整段动作的 `content_rect` 适配侧栏宽高并贴近内容面板；旧素材缺少轮廓时从 alpha 遮罩推导，仍缺失则按完整画布适配。桌面精灵沿用自身的舞台比例。
+- 命中按实际播放时间查询逐帧 alpha 遮罩，并扣除等比显示留白；遮罩 JSON 为逐帧行位数组，侧边缺少遮罩时只在已知内容边界内命中。
 - 移动与拖拽由容器位移表达，播放不驱动嘴部或视线。
 - 包未就绪或加载失败由 render-resolver 落 [fallback](modules/character/rendering/fallback/)，不空挂视频元素；蛋上区分准备中、生成中、失败与尚未就绪。
 

@@ -589,7 +589,35 @@ registerStorageClearHandler(() => {
   hitmaskCache.clear()
 })
 
-/** 按需加载命中遮罩；无引用或失败返回 null（渲染层命中探测降级为容器矩形）。 */
+/** 遮罩 payload 为 `[frame][row]` 列位行；网格与帧率取自目录元数据，列数须能落入 32 位行。 */
+function parseHitmask(raw: unknown, clip: ActionClipEntry): ActionHitmask | null {
+  const grid = clip.hitmask_grid ?? [32, 32]
+  const frameRate = clip.hitmask_fps
+
+  if (
+    !Number.isInteger(grid[0]) ||
+    grid[0] < 1 ||
+    grid[0] > 32 ||
+    !Number.isInteger(grid[1]) ||
+    grid[1] < 1 ||
+    !Number.isFinite(frameRate) ||
+    frameRate <= 0 ||
+    !Array.isArray(raw) ||
+    raw.length === 0 ||
+    !raw.every(
+      frame =>
+        Array.isArray(frame) &&
+        frame.length === grid[1] &&
+        frame.every(row => Number.isInteger(row) && row >= 0 && row <= 0xffffffff)
+    )
+  ) {
+    return null
+  }
+
+  return { frames: raw as number[][], fps: frameRate, grid: [grid[0], grid[1]] }
+}
+
+/** 按需加载命中遮罩；非法或失败返回 null（命中降级为容器/内容边界）。 */
 export async function resolveHitmask(clip: ActionClipEntry): Promise<ActionHitmask | null> {
   if (!clip.hitmask_ref) {
     return null
@@ -611,18 +639,12 @@ export async function resolveHitmask(clip: ActionClipEntry): Promise<ActionHitma
     // 本地资产 URL（apiAsset 桥产物），非后端相对路径。
     // eslint-disable-next-line no-restricted-syntax
     const resp = await fetch(localUrl)
-    const data = (await resp.json()) as { grid?: [number, number]; fps?: number; frames?: number[][] }
+    const hitmask = parseHitmask(await resp.json(), clip)
 
-    if (!data.grid || !data.frames?.length) {
+    if (!hitmask) {
       hitmaskCache.set(clip.hitmask_ref, null)
 
       return null
-    }
-
-    const hitmask: ActionHitmask = {
-      grid: [data.grid[0], data.grid[1]],
-      fps: data.fps ?? clip.hitmask_fps,
-      frames: data.frames
     }
 
     hitmaskCache.set(clip.hitmask_ref, hitmask)

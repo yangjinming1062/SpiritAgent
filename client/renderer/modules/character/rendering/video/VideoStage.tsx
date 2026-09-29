@@ -1,7 +1,7 @@
 /** 双 video 保留旧画面直到新帧就绪；位置与播放实例分别由 spatial、actions 管理。 */
 
 import { useStore } from '@nanostores/react'
-import React, { useEffect, useMemo, useRef, useState } from 'react'
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { flushSync } from 'react-dom'
 
 import {
@@ -27,6 +27,7 @@ import {
   isActionStageVisible,
   leavePeekForExpression,
   markPlayInstanceStarted,
+  type NormalizedRect,
   observeActionStageVisibility,
   peekMaskRects,
   resolveActionClipUrl,
@@ -217,6 +218,68 @@ interface MountedClip {
   started: boolean
 }
 
+interface DisplayedClip {
+  bounds: NormalizedRect
+  height: number
+  width: number
+}
+
+const FULL_CONTENT_RECT: NormalizedRect = [0, 0, 1, 1]
+
+function hitmaskContentRect(hitmask: ActionHitmask | null): NormalizedRect | null {
+  if (!hitmask) {
+    return null
+  }
+
+  const [gridWidth, gridHeight] = hitmask.grid
+  let left = gridWidth
+  let top = gridHeight
+  let right = 0
+  let bottom = 0
+
+  for (const frame of hitmask.frames) {
+    for (let y = 0; y < gridHeight; y += 1) {
+      for (let x = 0; x < gridWidth; x += 1) {
+        if (((frame[y] ?? 0) & (1 << x)) !== 0) {
+          left = Math.min(left, x)
+          top = Math.min(top, y)
+          right = Math.max(right, x + 1)
+          bottom = Math.max(bottom, y + 1)
+        }
+      }
+    }
+  }
+
+  return right > left && bottom > top
+    ? [left / gridWidth, top / gridHeight, right / gridWidth, bottom / gridHeight]
+    : null
+}
+
+function surfaceVideoStyle(
+  displayed: DisplayedClip | null,
+  stage: { height: number; width: number },
+  align: 'left' | 'right'
+): React.CSSProperties | null {
+  if (!displayed || stage.width <= 0 || stage.height <= 0) {
+    return null
+  }
+
+  const [left, top, right, bottom] = displayed.bounds
+
+  const scale = Math.min(
+    stage.width / ((right - left) * displayed.width),
+    stage.height / ((bottom - top) * displayed.height)
+  )
+
+  return {
+    height: displayed.height * scale,
+    left: align === 'left' ? -left * displayed.width * scale : stage.width - right * displayed.width * scale,
+    maxWidth: 'none',
+    top: stage.height - bottom * displayed.height * scale,
+    width: displayed.width * scale
+  }
+}
+
 function canCompleteInstance(instance: ActionPlayInstance, mounted: MountedClip | null): boolean {
   return (
     !!mounted?.started &&
@@ -226,7 +289,7 @@ function canCompleteInstance(instance: ActionPlayInstance, mounted: MountedClip 
   )
 }
 
-export function VideoStage(): React.JSX.Element {
+export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' } = {}): React.JSX.Element {
   const catalog = useStore($actionCatalog)
   const playInstance = useStore($activePlayInstance)
   const viewport = useStore($viewport)
@@ -240,8 +303,32 @@ export function VideoStage(): React.JSX.Element {
   const mounted = useRef<MountedClip | null>(null)
   const peekExitGeneration = useRef<number | null>(null)
   const hitmaskRef = useRef<ActionHitmask | null>(null)
+  const displayedClips = useRef<[DisplayedClip | null, DisplayedClip | null]>([null, null])
+  const contentAlignRef = useRef(contentAlign)
+  contentAlignRef.current = contentAlign
+
   const rootRef = useRef<HTMLDivElement>(null)
+  const [stageSize, setStageSize] = useState({ height: 0, width: 0 })
   const canvas = catalog?.manifest.canvas
+
+  useLayoutEffect(() => {
+    if (!contentAlign || !rootRef.current) {
+      return
+    }
+
+    const element = rootRef.current
+
+    const measure = (): void => {
+      const { height, width } = element.getBoundingClientRect()
+      setStageSize(previous => (previous.width === width && previous.height === height ? previous : { height, width }))
+    }
+
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    measure()
+
+    return () => observer.disconnect()
+  }, [contentAlign])
 
   useEffect(() => {
     const stop = observeActionStageVisibility(visible => {
@@ -387,6 +474,11 @@ export function VideoStage(): React.JSX.Element {
         const showFirstFrame = (): void => {
           const previous = front.current
           front.current = slot
+          displayedClips.current[slot] = {
+            bounds: clip.content_rect ?? hitmaskContentRect(hitmask) ?? FULL_CONTENT_RECT,
+            height: el.videoHeight,
+            width: el.videoWidth
+          }
           mounted.current = {
             key: preparationForClip ? stableMountKey : mountKey,
             playId: instance?.playId ?? null,
@@ -465,9 +557,9 @@ export function VideoStage(): React.JSX.Element {
     }
   }, [catalog, clip, mountKey, preparationForClip, presentation, stableMountKey])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     probeInteractiveRegions()
-  }, [visible, spatialPeek])
+  }, [contentAlign, spatialPeek, stageSize, visible])
 
   // el.loop 不触发 ended，按 currentTime 回绕统计轮数。
   useEffect(() => {
@@ -586,7 +678,7 @@ export function VideoStage(): React.JSX.Element {
     $videoHitTest.set((px, py) => {
       const el = front.current === null ? null : videos.current[front.current]
       const hitmask = hitmaskRef.current
-      const rect = rootRef.current?.getBoundingClientRect()
+      const rect = el?.getBoundingClientRect()
 
       // 遮挡先于 alpha 缺失回退，隐藏区域始终穿透。
       const pos = $spatialPos.get()
@@ -603,8 +695,8 @@ export function VideoStage(): React.JSX.Element {
         return false
       }
 
-      if (!hitmask || !el || !rect || !el.videoWidth || !el.videoHeight || !hitmask.frames.length) {
-        return null
+      if (!el || !rect || !el.videoWidth || !el.videoHeight) {
+        return contentAlignRef.current ? false : null
       }
 
       const scale = Math.min(rect.width / el.videoWidth, rect.height / el.videoHeight)
@@ -615,6 +707,14 @@ export function VideoStage(): React.JSX.Element {
 
       if (nx < 0 || nx >= 1 || ny < 0 || ny >= 1) {
         return false
+      }
+
+      if (!hitmask || !hitmask.frames.length) {
+        const bounds = front.current === null ? null : displayedClips.current[front.current]?.bounds
+
+        return contentAlignRef.current && bounds
+          ? nx >= bounds[0] && nx < bounds[2] && ny >= bounds[1] && ny < bounds[3]
+          : null
       }
 
       const [gw, gh] = hitmask.grid
@@ -643,22 +743,27 @@ export function VideoStage(): React.JSX.Element {
 
   return (
     <div className="relative h-full w-full" ref={rootRef}>
-      {[0, 1].map(slot => (
-        <video
-          className="absolute inset-0 h-full w-full object-contain"
-          key={slot}
-          muted
-          playsInline
-          preload="auto"
-          ref={el => {
-            videos.current[slot] = el
-          }}
-          style={{
-            opacity: visible === slot ? 1 : 0,
-            transition: spatialPeek || peekPreparation ? 'none' : 'opacity 120ms linear'
-          }}
-        />
-      ))}
+      {[0, 1].map(slot => {
+        const layout = contentAlign ? surfaceVideoStyle(displayedClips.current[slot], stageSize, contentAlign) : null
+
+        return (
+          <video
+            className={contentAlign ? 'absolute object-contain' : 'absolute inset-0 h-full w-full object-contain'}
+            key={slot}
+            muted
+            playsInline
+            preload="auto"
+            ref={el => {
+              videos.current[slot] = el
+            }}
+            style={{
+              ...(contentAlign ? (layout ?? { height: '100%', inset: 0, width: '100%' }) : {}),
+              opacity: visible === slot ? 1 : 0,
+              transition: spatialPeek || peekPreparation ? 'none' : 'opacity 120ms linear'
+            }}
+          />
+        )
+      })}
     </div>
   )
 }
