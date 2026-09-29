@@ -262,7 +262,7 @@ class ActionExecutionResult(BaseModel):
     scene_id: int | None = None
     moment_id: str | None = None
     job_id: int | None = None
-    cron_job_id: str | None = None
+    cron_job_id: int | None = None
     expires_at: str | None = None
     audio_path: str | None = None
     voice_id: str | None = None
