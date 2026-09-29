@@ -148,7 +148,7 @@ async def _sparse_search(
 
 
 async def embed_memory_text(user_id: int, text: str) -> list[float] | None:
-    """记忆链路的向量生成入口：独立短会话解析用户级 embedding 供应商（含 OpenAI 兼容回退），
+    """记忆链路的向量生成入口：独立短会话解析用户级 embedding 供应商，
     维度校验列宽；未配置、调用失败或维度不符时返回 None，检索降级为纯关键词路径。"""
     if not (text := (text or "").strip()):
         return None

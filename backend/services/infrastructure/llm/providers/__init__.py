@@ -36,14 +36,13 @@ from .base import (
     resolve_provider_reasoning_effort,
 )
 from .http import aclose_all, rotate_http_clients
-from .local import LocalImageGenProvider
+from .local import LocalChatProvider, LocalEmbeddingProvider, LocalImageGenProvider
 from .mimo import (
     MiMoChatProvider,
     MiMoSTTProvider,
     MiMoTTSProvider,
 )
 from .registry import (
-    OPENAI_COMPATIBLE_PROVIDERS,
     PROVIDER_DEFAULT_URLS,
     default_base_url,
     default_context_tokens_for,
@@ -62,7 +61,6 @@ from .registry import (
 
 __all__ = [
     "ASPECT_RATIOS",
-    "OPENAI_COMPATIBLE_PROVIDERS",
     "PRODUCT_REASONING_EFFORTS",
     "PROVIDER_DEFAULT_URLS",
     "REASONING_EFFORT_ORDER",
@@ -74,6 +72,8 @@ __all__ = [
     "ImageGenProvider",
     "ImageGenRequest",
     "ImageGenResult",
+    "LocalChatProvider",
+    "LocalEmbeddingProvider",
     "LocalImageGenProvider",
     "MiMoChatProvider",
     "MiMoSTTProvider",

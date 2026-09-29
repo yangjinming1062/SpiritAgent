@@ -159,8 +159,8 @@ flowchart LR
 
 #### 本地 ComfyUI
 
-- `local` 为自托管图像供应商（ComfyUI），默认 `base_url` 指向 Backend 所在主机的本机地址，容器部署时须填写 Backend 可访问的 ComfyUI 地址；启用 `SSRF_GUARD_ENABLED` 时，ComfyUI 私网地址还须加入 `SSRF_ALLOWED_CIDRS`。
-- 支持文生图、多参考图与原生透明 PNG，透明请求须校验实际透明像素；批量上限见 [供应商实现](../backend/services/infrastructure/llm/providers/local/image.py)。
+- `local` 的部署与配置见 [Backend 本地供应商](../backend/README.md#本地供应商)。
+- 支持文生图、多参考图与原生透明 PNG；批量上限见 [供应商实现](../backend/services/infrastructure/llm/providers/local/image.py)。
 - 增量编辑（`image_edit`）采样画布随第一张参考图；身份/造型条件化生成按请求 size/aspect 出图。
 - 生成图使用 ComfyUI 临时预览目录，参考图上传到 ComfyUI 的 `input` 目录；部署方负责保护并管理参考图存留。
 

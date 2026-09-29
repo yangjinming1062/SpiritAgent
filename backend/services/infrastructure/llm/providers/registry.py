@@ -20,9 +20,6 @@ _PROVIDER_SUPPORTS_VIDEO: set[str] = set()
 # provider_name → 视频理解 MODEL_NAME（空表示沿用文本/视觉默认）。
 _PROVIDER_VIDEO_MODELS: dict[str, str] = {}
 
-# 提供 OpenAI 形态 /v1/embeddings 端点的供应商；原生端点（如 minimax /v1/embeddings 用 texts 而非 input）被排除，llm_client.resolve_embedding_provider 仅对集合内的供应商构造 OpenAI 兼容兜底。
-OPENAI_COMPATIBLE_PROVIDERS: frozenset[str] = frozenset({"mimo", "qwen"})
-
 # (provider, service) 的默认 base_url；空字符串表示该供应商不提供该能力（如 Gemini 未注册 STT）。MiMo 与 MiniMax llm 含 /v1（OpenAI SDK 需要完整 base_url）；MiniMax 其余能力的 httpx provider 自拼 /v1/<endpoint>，llm_client 链解析会剥掉其 base_url 尾部 /v1，故注册默认值统一含 /v1。
 PROVIDER_DEFAULT_URLS: dict[str, dict[str, str]] = {
     "mimo": {
@@ -61,14 +58,14 @@ PROVIDER_DEFAULT_URLS: dict[str, dict[str, str]] = {
         "video_gen": "https://maas.qianwenaiapi.com/api/v1",
         "embedding": "https://maas.qianwenaiapi.com/compatible-mode/v1",
     },
-    # 本地 qwen（ComfyUI）：默认本机；远程部署在配置里改 base_url。
+    # 本地自托管：llm/embedding 默认 LM Studio，image_gen 默认 ComfyUI；远程部署在配置里改 base_url。
     "local": {
-        "llm": "",
+        "llm": "http://127.0.0.1:1234/v1",
         "stt": "",
         "tts": "",
         "image_gen": "http://127.0.0.1:8188",
         "video_gen": "",
-        "embedding": "",
+        "embedding": "http://127.0.0.1:1234/v1",
     },
 }
 

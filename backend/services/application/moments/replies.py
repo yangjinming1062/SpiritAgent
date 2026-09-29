@@ -54,7 +54,7 @@ async def _generate_reply_inner(user_id: int, moment_id: str) -> None:
             "comments": [{"role": c.role, "content": c.content} for c in (moment.comments or [])],
         }
         llm_cfg = await resolve_user_llm_config(db, user_id)
-    if not llm_cfg.model_name:
+    if not llm_cfg.is_configured:
         return
     if ctx.memories_block:
         payload["long_term_memories"] = ctx.memories_block

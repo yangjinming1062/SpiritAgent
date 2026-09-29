@@ -1485,6 +1485,7 @@ function renderModels(data) {
                     ${svcDot('TTS', capabilities.tts.length > 0)}
                     ${svcDot('图像', capabilities.image_gen.length > 0)}
                     ${svcDot('视频', capabilities.video_gen.length > 0)}
+                    ${svcDot('向量', (capabilities.embedding || []).length > 0)}
                 </td>
                 <td class="td-actions">
                     <button class="btn btn--ghost btn--sm" onclick="showModelConfigForUser(${c.user_id})">编辑</button>
@@ -1512,7 +1513,7 @@ function showModelConfigForUser(userId) {
     const cached = tabCache.models?.items?.find(c => c.user_id == userId) ?? null;
     $('#modelUserId').value = userId;
     $('#modelModalTitle').textContent = cached ? `编辑凭证 · 用户 #${userId}` : `配置凭证 · 用户 #${userId}`;
-    aiEditors.user.config = structuredClone(cached?.ai_config ?? emptyAiConfig());
+    aiEditors.user.config = normalizeAiConfig(cached?.ai_config);
     aiEditors.user.support = tabCache.models?.ai_provider_support ?? {};
     aiEditors.user.inheritedProviders = tabCache.models?.system_ai_config?.providers ?? [];
     renderAiCards('user');
@@ -1539,9 +1540,16 @@ async function deleteModelConfig(userId) {
     } catch (e) { toast(e.message, 'err'); }
 }
 
-const AI_NAMES = { mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok', qwen: '千问' };
-const AI_SERVICES = { llm: '大语言模型 LLM', stt: '语音识别 STT', tts: '语音合成 TTS', image_gen: '图像生成', video_gen: '视频生成' };
-function emptyAiConfig() { return { providers: [], capabilities: { llm: [], stt: [], tts: [], image_gen: [], video_gen: [] } }; }
+const AI_NAMES = { mimo: '小米 MiMo', minimax: 'MiniMax', gemini: 'Google Gemini', grok: 'xAI Grok', qwen: '千问', local: '本地 Local' };
+const AI_SERVICES = { llm: '大语言模型 LLM', stt: '语音识别 STT', tts: '语音合成 TTS', image_gen: '图像生成', video_gen: '视频生成', embedding: '向量嵌入 Embedding' };
+function emptyAiConfig() { return { providers: [], capabilities: { llm: [], stt: [], tts: [], image_gen: [], video_gen: [], embedding: [] } }; }
+function normalizeAiConfig(raw) {
+    const config = structuredClone(raw ?? emptyAiConfig());
+    config.providers = config.providers || [];
+    config.capabilities = config.capabilities || {};
+    for (const key of Object.keys(AI_SERVICES)) config.capabilities[key] = config.capabilities[key] || [];
+    return config;
+}
 const aiEditors = {
     system: { root: '#aiCardSettings', config: emptyAiConfig(), support: {}, inheritedProviders: [] },
     user: { root: '#userAiCardSettings', config: emptyAiConfig(), support: {}, inheritedProviders: [] },
@@ -1585,10 +1593,23 @@ function renderAiCards(editorName) {
             const source = aiSource(editor, provider);
             return `<option value="${esc(provider)}">${library ? '' : source ? '引用：' : '独立配置：'}${esc(aiProviderLabel(provider))}</option>`;
         }).join('') + (library ? '<option value="__custom__">自定义 provider</option>' : '');
+        let hint;
+        if (library) {
+            hint = '供应商名称是唯一标识。自定义供应商需注册后端实现才可选用。系统未添加向量卡片时会从系统信息库选用向量服务；其他能力需单独添加卡片。';
+        } else {
+            hint = group === 'embedding'
+                ? '按顺序使用首个有效配置；调用失败时使用关键词检索，不自动切换模型。'
+                : '按卡片顺序调用，失败时按回退规则尝试下一张。';
+            hint += editorName === 'user'
+                ? '未添加卡片时继承系统能力链；留空字段先继承用户同名供应商，再继承系统同名供应商。'
+                : group === 'embedding'
+                    ? '未添加卡片时按系统信息库顺序选用向量供应商及其默认模型；留空字段继承同名供应商。'
+                    : '未添加卡片表示该能力未配置；留空字段继承同名供应商，可单独填写覆盖。';
+        }
         return `<section class="card settings-section" style="margin-bottom:1.15rem" data-ai-group="${group}" data-search-text="${esc(((library ? '供应商信息库 providers' : AI_SERVICES[group]) + ' ' + group).toLowerCase())}">
             <div class="card-head" style="flex-wrap:wrap;gap:0.75rem">
                 <h2>${library ? '供应商信息库' : AI_SERVICES[group]}</h2>
-                <span class="pill pill--${cards.length ? 'green' : 'muted'}">${cards.length ? cards.length + ' 张卡片' : editorName === 'user' && !library ? '继承系统' : '未配置'}</span>
+                <span class="pill pill--${cards.length ? 'green' : 'muted'}">${cards.length ? cards.length + ' 张卡片' : editorName === 'user' && !library ? '继承系统' : group === 'embedding' ? '按信息库选用' : '未配置'}</span>
                 <div style="display:flex;gap:0.5rem;margin-left:auto;flex-wrap:wrap">
                     <select aria-label="${library ? '选择供应商' : '选择能力配置来源'}" data-ai-add-source>${options || '<option value="">没有可添加的供应商</option>'}</select>
                     ${library ? '<input type="text" data-ai-custom-provider placeholder="自定义 provider 名称" maxlength="64" style="width:12rem">' : ''}
@@ -1596,7 +1617,7 @@ function renderAiCards(editorName) {
                 </div>
             </div>
             <div style="padding:1.05rem">
-                <p class="hint" style="margin:0 0 1rem">${library ? 'provider 名称是唯一标识。自定义名称对应的后端实现注册后会出现在能力候选中；保存信息不会自动启用任何能力。' : editorName === 'user' ? '按卡片顺序调用；未添加卡片表示继承系统能力链。留空字段先继承用户同名 provider，再继承系统同名 provider。' : '按卡片顺序调用，失败时按回退规则尝试下一张；未添加卡片表示该能力未配置。留空字段继承同名 provider 的信息，可单独填写覆盖。'}</p>
+                <p class="hint" style="margin:0 0 1rem">${hint}</p>
                 <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,310px),1fr));gap:1rem">
                     ${cards.map((card, index) => {
                         const source = library ? null : aiSource(editor, card.provider);
@@ -1617,9 +1638,9 @@ function renderAiCards(editorName) {
                                 <button class="btn btn--ghost" data-ai-action="clear-key">${source ? '清除覆盖，恢复继承' : '清除密钥'}</button>
                             </div>
                             <div class="field"><label>Base URL<input type="text" data-ai-field="base_url" value="${esc(card.base_url)}" placeholder="${esc(source?.base_url || '使用供应商官方地址')}"></label></div>
-                            <div class="field"><label>模型名称<input type="text" data-ai-field="model_name" value="${esc(card.model_name)}" placeholder="${esc(source?.model_name || '使用该能力的默认模型')}"></label></div>
+                            <div class="field"><label>模型名称<input type="text" data-ai-field="model_name" value="${esc(card.model_name)}" placeholder="${esc(source?.model_name || (card.provider === 'local' && group === 'llm' ? '填写已部署的对话模型 ID' : '使用该能力的默认模型'))}"></label></div>
                         </article>`;
-                    }).join('') || `<p class="hint" style="padding:1rem 0">${library ? '尚未添加供应商。可先建立共享信息卡片，再在能力中引用。' : editorName === 'user' ? '该用户继承系统的此项能力链。添加卡片后改为用户专属调用顺序。' : '该能力未配置。点击“添加卡片”选择共享供应商或填写独立配置。'}</p>`}
+                    }).join('') || `<p class="hint" style="padding:1rem 0">${library ? '尚未添加供应商。可先建立共享信息卡片，再在能力中引用。' : editorName === 'user' ? '该用户继承系统的此项能力链。添加卡片后改为用户专属调用顺序。' : group === 'embedding' ? '按系统信息库选用向量服务。添加卡片可指定供应商、地址和模型。' : '该能力未配置。点击“添加卡片”选择共享供应商或填写独立配置。'}</p>`}
                 </div>
             </div>
         </section>`;
@@ -1982,7 +2003,7 @@ async function loadSystemSettings() {
 
 function renderSystemSettings(data) {
     if (!data) return;
-    aiEditors.system.config = structuredClone(data.ai_config);
+    aiEditors.system.config = normalizeAiConfig(data.ai_config);
     aiEditors.system.support = data.ai_provider_support;
     aiSettingsLoaded = true;
     renderAiCards('system');

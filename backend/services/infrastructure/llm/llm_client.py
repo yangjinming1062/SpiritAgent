@@ -12,7 +12,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .llm_debug import log_event, new_call_id, truncate_for_log
 from .providers import (
-    OPENAI_COMPATIBLE_PROVIDERS,
     BaseProvider,
     EmbeddingProvider,
     ProviderConfig,
@@ -28,7 +27,6 @@ from .providers import (
     supports_vision,
     try_resolve,
 )
-from .providers.http import get_async_client
 from .providers.openai_responses import OpenAIResponsesChatProvider
 
 if TYPE_CHECKING:
@@ -64,8 +62,20 @@ def _log_embedding(
 
 
 def client_for_config(llm_config: "UserLlmConfig") -> AsyncOpenAI:
-    """按已解析配置取得共享客户端。"""
-    return get_async_client(llm_config.api_key, llm_config.base_url)
+    """经供应商适配器取得共享客户端，保留其鉴权与协议处理。"""
+    provider = provider_from_config(
+        ProviderConfig(
+            base_url=llm_config.base_url,
+            api_key=llm_config.api_key,
+            model=llm_config.model_name,
+            service_type=ServiceType.llm,
+            provider_name=llm_config.provider_name,
+        ),
+    )
+    client = provider.raw_client()
+    if client is None:
+        raise MissingLlmConfigError(f"llm provider '{provider.provider_name}' does not expose the Responses API")
+    return client
 
 
 def scale_temperature(provider_name: str | None, normalized: float) -> float:
@@ -120,6 +130,8 @@ def _chain_from_ai_config(
             or (fallback.model_name if fallback else "")
             or default_model_for(card.provider, service_type)
         )
+        if service_type == ServiceType.llm and not model:
+            continue
         if card.provider == "minimax" and service_type != "llm" and base_url.endswith("/v1"):
             base_url = base_url[:-3]
         key_ok = bool(api_key) or not provider_requires_api_key(service_type, card.provider)
@@ -139,21 +151,13 @@ def _chain_from_ai_config(
     return result
 
 
-def _embedding_chain_from_ai_config(
-    config: AIConfig,
-    inherited_sources: Iterable[ProviderCard] = (),
-) -> list[ProviderConfig]:
-    inherited = {card.provider: card for card in inherited_sources}
+def _embedding_chain_from_provider_library(config: AIConfig) -> list[ProviderConfig]:
+    """未配置 embedding 能力链时，按信息库顺序选用支持 embedding 的供应商并使用默认模型。"""
     supporting = set(providers_supporting(ServiceType.embedding))
     result: list[ProviderConfig] = []
     for card in config.providers:
-        fallback = inherited.get(card.provider)
-        api_key = card.api_key or (fallback.api_key if fallback else "")
-        base_url = (
-            card.base_url
-            or (fallback.base_url if fallback else "")
-            or default_base_url(card.provider, ServiceType.embedding)
-        )
+        api_key = card.api_key
+        base_url = card.base_url or default_base_url(card.provider, ServiceType.embedding)
         if card.provider == "minimax" and base_url.endswith("/v1"):
             base_url = base_url[:-3]
         key_ok = bool(api_key) or not provider_requires_api_key(ServiceType.embedding, card.provider)
@@ -176,16 +180,6 @@ async def resolve_provider_chain(
     service_type: str,
 ) -> list[ProviderConfig]:
     user_cfg = await _load_user_config(db, user_id)
-    if service_type == ServiceType.embedding:
-        system_chain = _embedding_chain_from_ai_config(SETTINGS.ai_config)
-        if user_cfg is None:
-            return system_chain
-        user_chain = _embedding_chain_from_ai_config(
-            load_ai_config(user_cfg.ai_config),
-            SETTINGS.ai_config.providers,
-        )
-        seen = {config.provider_name for config in user_chain}
-        return user_chain + [config for config in system_chain if config.provider_name not in seen]
     if user_cfg is not None:
         user_ai_config = load_ai_config(user_cfg.ai_config)
         user_cards = getattr(user_ai_config.capabilities, service_type)
@@ -195,6 +189,8 @@ async def resolve_provider_chain(
                 service_type,
                 SETTINGS.ai_config.providers,
             )
+    if service_type == ServiceType.embedding and not SETTINGS.ai_config.capabilities.embedding:
+        return _embedding_chain_from_provider_library(SETTINGS.ai_config)
     return _chain_from_ai_config(SETTINGS.ai_config, service_type)
 
 
@@ -270,19 +266,7 @@ async def resolve_embedding_provider(
     try:
         chain = await resolve_provider_chain(db, user_id, "embedding")
         if not chain:
-            # 回退到 chat 供应商并使用 OpenAI 兼容的默认 embedding 模型，但仅限真正暴露 OpenAI 形态 ``/v1/embeddings`` 端点的供应商；原生供应商（minimax 用 ``texts`` 而非 ``input``）会 404 / 返回畸形 body —— 会静默降级语义记忆而不暴露误配。
-            llm_cfg = await resolve_provider_config(db, user_id, "llm")
-            if llm_cfg.provider_name not in OPENAI_COMPATIBLE_PROVIDERS:
-                return None
-            chain = [
-                ProviderConfig(
-                    base_url=llm_cfg.base_url,
-                    api_key=llm_cfg.api_key,
-                    model="text-embedding-3-small",
-                    service_type=ServiceType.embedding,
-                    provider_name=llm_cfg.provider_name,
-                ),
-            ]
+            return None
         provider = provider_from_config(chain[0])
         return provider if isinstance(provider, EmbeddingProvider) else None
     except (MissingLlmConfigError, LookupError):

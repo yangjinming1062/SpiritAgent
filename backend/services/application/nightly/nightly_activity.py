@@ -403,7 +403,7 @@ async def _run_nightly_pipeline_inner(
         }
 
         llm_cfg = await resolve_user_llm_config(db, user_id)
-        if not (llm_cfg.api_key and llm_cfg.base_url and llm_cfg.model_name):
+        if not llm_cfg.is_configured:
             logger.info(
                 "nightly_activity: skipped, missing llm config",
                 extra={"user_id": user_id},

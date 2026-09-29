@@ -201,7 +201,7 @@ async def _compose_diary(
     moment_interactions: list[dict[str, Any]] | None = None,
     language: str = DEFAULT_LANGUAGE,
 ) -> tuple[str, str | None]:
-    if not (llm_cfg and llm_cfg.api_key and llm_cfg.base_url and llm_cfg.model_name):
+    if llm_cfg is None or not llm_cfg.is_configured:
         logger.warning(
             "journal_nightly: missing llm config",
             extra={"user_id": user_id},

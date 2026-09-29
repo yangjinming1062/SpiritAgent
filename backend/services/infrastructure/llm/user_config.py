@@ -2,6 +2,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .llm_client import resolve_provider_chain
+from .providers import ServiceType, provider_requires_api_key
 
 
 class UserLlmConfig(BaseModel):
@@ -11,6 +12,15 @@ class UserLlmConfig(BaseModel):
     base_url: str = ""
     model_name: str = ""
     provider_name: str = ""
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(
+            self.provider_name
+            and self.base_url
+            and self.model_name
+            and (self.api_key or not provider_requires_api_key(ServiceType.llm, self.provider_name)),
+        )
 
 
 async def resolve_user_llm_config(db: AsyncSession, user_id: int) -> UserLlmConfig:

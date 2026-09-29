@@ -104,9 +104,9 @@ async def run_prompt_json(
     temperature: float = 0.2,
 ) -> PromptOutcome:
     """执行一次结构化伙伴推理；静态规则放 instructions，运行时数据作为 JSON 输入。"""
-    model_name = llm_config.model_name
-    if not model_name:
+    if not llm_config.is_configured:
         return PromptOutcome(parsed=None, reason="llm_error")
+    model_name = llm_config.model_name
 
     try:
         client = client_for_config(llm_config)

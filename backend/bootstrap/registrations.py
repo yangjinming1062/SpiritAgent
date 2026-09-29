@@ -54,6 +54,8 @@ def register_providers() -> None:
     register_provider(ServiceType.image_gen, "qwen", qwen.QwenImageGenProvider)
     register_provider(ServiceType.video_gen, "qwen", qwen.QwenVideoGenProvider)
     register_provider(ServiceType.embedding, "qwen", qwen.QwenEmbeddingProvider)
+    register_provider(ServiceType.llm, "local", local.LocalChatProvider)
+    register_provider(ServiceType.embedding, "local", local.LocalEmbeddingProvider)
     register_provider(ServiceType.image_gen, "local", local.LocalImageGenProvider)
 
 

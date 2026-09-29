@@ -79,7 +79,7 @@ async def maybe_run_moment_impulse(user_id: int) -> None:
         ).all()
         recent_context = await load_recent_context_window(db, user_id) or ""
         llm_cfg = await resolve_user_llm_config(db, user_id)
-    if not llm_cfg.model_name:
+    if not llm_cfg.is_configured:
         return
 
     payload: dict[str, Any] = {

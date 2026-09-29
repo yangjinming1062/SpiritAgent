@@ -19,10 +19,13 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
     async def embed(self, texts: list[str], *, purpose: str = "db") -> list[list[float]]:
         if not texts:
             return []
-        model = self.config.model or "text-embedding-3-small"
+        model = self.config.model or self.DEFAULT_MODELS["embedding"]
         try:
             res = await self._client.embeddings.create(input=texts, model=model)
-            return [item.embedding for item in sorted(res.data, key=lambda x: x.index)]
+            items = sorted(res.data, key=lambda item: item.index)
+            if [item.index for item in items] != list(range(len(texts))):
+                raise ValueError("embedding response indices do not match the input batch")
+            return [item.embedding for item in items]
         except Exception as exc:
             # 保留 status_code + 结构化 body，供 error_classifier 的 Phase B（错误码 fallback）读取；只重抛消息会让其被迫走脆弱的文本匹配。
             body = getattr(exc, "body", None)

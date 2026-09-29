@@ -2,7 +2,7 @@ from typing import Any, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CAPABILITY_SERVICES = ("llm", "stt", "tts", "image_gen", "video_gen")
+CAPABILITY_SERVICES = ("llm", "stt", "tts", "image_gen", "video_gen", "embedding")
 
 
 class ProviderCard(BaseModel):
@@ -26,6 +26,7 @@ class CapabilityChains(BaseModel):
     tts: list[ProviderCard] = Field(default_factory=list)
     image_gen: list[ProviderCard] = Field(default_factory=list)
     video_gen: list[ProviderCard] = Field(default_factory=list)
+    embedding: list[ProviderCard] = Field(default_factory=list)
 
 
 class AIConfig(BaseModel):
@@ -59,6 +60,7 @@ class CapabilityChainsUpdate(BaseModel):
     tts: list[ProviderCardUpdate] = Field(default_factory=list)
     image_gen: list[ProviderCardUpdate] = Field(default_factory=list)
     video_gen: list[ProviderCardUpdate] = Field(default_factory=list)
+    embedding: list[ProviderCardUpdate] = Field(default_factory=list)
 
 
 class AIConfigUpdate(BaseModel):
@@ -80,6 +82,7 @@ class CapabilityChainsPublic(BaseModel):
     tts: list[ProviderCardPublic] = Field(default_factory=list)
     image_gen: list[ProviderCardPublic] = Field(default_factory=list)
     video_gen: list[ProviderCardPublic] = Field(default_factory=list)
+    embedding: list[ProviderCardPublic] = Field(default_factory=list)
 
 
 class AIConfigPublic(BaseModel):

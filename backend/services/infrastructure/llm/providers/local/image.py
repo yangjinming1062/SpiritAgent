@@ -1,4 +1,4 @@
-"""本地 qwen 图像生成供应商（ComfyUI HTTP API）。ComfyUI 须能从 Backend 访问。"""
+"""本地 ComfyUI 图像生成供应商。ComfyUI 须能从 Backend 访问。"""
 
 import asyncio
 import base64

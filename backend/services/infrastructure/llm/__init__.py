@@ -9,7 +9,6 @@ from .llm_client import (
     client_for_config,
     generate_embedding,
     generate_embeddings,
-    get_async_client,
     provider_for_service,
     provider_from_config,
     resolve_embedding_provider,
@@ -77,6 +76,7 @@ from .providers import (
     rotate_http_clients,
     try_resolve,
 )
+from .providers.http import get_async_client
 from .providers.speech_style import speech_performance_schema, speech_style_guidance, speech_style_matches
 from .responses import (
     approx_responses_tokens,
