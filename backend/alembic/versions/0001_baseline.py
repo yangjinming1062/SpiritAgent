@@ -214,6 +214,7 @@ def upgrade() -> None:
         sa.Column("identity_review_reason", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("status", sa.String(length=16), server_default=sa.text("'processing'"), nullable=False),
         sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("appearance_epoch", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -365,6 +366,7 @@ def upgrade() -> None:
         ),
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("parent_id", sa.Integer(), nullable=True),
+        sa.Column("forked_from_id", sa.Integer(), nullable=True),
         sa.Column("kind", sa.String(length=32), server_default=sa.text("'standard'"), nullable=False),
         sa.Column("system_preset_id", sa.String(length=32), nullable=False),
         sa.Column("title", sa.Text(), nullable=False),
@@ -379,10 +381,12 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["parent_id"], ["conversations.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["forked_from_id"], ["conversations.id"], ondelete="SET NULL"),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
     )
     op.create_index(op.f("ix_conversations_parent_id"), "conversations", ["parent_id"], unique=False)
+    op.create_index(op.f("ix_conversations_forked_from_id"), "conversations", ["forked_from_id"], unique=False)
     op.create_index(op.f("ix_conversations_system_preset_id"), "conversations", ["system_preset_id"], unique=False)
     op.create_index(op.f("ix_conversations_user_id"), "conversations", ["user_id"], unique=False)
     op.create_table(
@@ -739,6 +743,9 @@ def upgrade() -> None:
         "video_gen_jobs",
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("session_id", sa.String(length=64), nullable=True),
+        sa.Column("structured_reply", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
+        sa.Column("media_id", sa.String(length=128), nullable=True),
+        sa.Column("reply_message_id", sa.Integer(), nullable=True),
         sa.Column("provider", sa.String(length=64), nullable=False),
         sa.Column("model", sa.String(length=128), nullable=False),
         sa.Column("prompt", sa.Text(), nullable=False),
@@ -760,12 +767,14 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
+        sa.UniqueConstraint("media_id", name="uq_video_gen_jobs_media_id"),
     )
     op.create_index(op.f("ix_video_gen_jobs_created_at"), "video_gen_jobs", ["created_at"], unique=False)
     op.create_index(op.f("ix_video_gen_jobs_provider_task_id"), "video_gen_jobs", ["provider_task_id"], unique=False)
     op.create_index(op.f("ix_video_gen_jobs_status"), "video_gen_jobs", ["status"], unique=False)
     op.create_index(op.f("ix_video_gen_jobs_user_id"), "video_gen_jobs", ["user_id"], unique=False)
     op.create_index("ix_video_gen_jobs_user_status", "video_gen_jobs", ["user_id", "status"], unique=False)
+    op.create_index(op.f("ix_video_gen_jobs_reply_message_id"), "video_gen_jobs", ["reply_message_id"], unique=False)
     op.create_table(
         "ws_events",
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -831,6 +840,15 @@ def upgrade() -> None:
     op.create_index(op.f("ix_messages_conversation_id"), "messages", ["conversation_id"], unique=False)
     op.create_index(op.f("ix_messages_subtype"), "messages", ["subtype"], unique=False)
     op.create_index(op.f("ix_messages_summary_date"), "messages", ["summary_date"], unique=False)
+    # video_gen_jobs 建表早于 messages，回绑外键在此补齐。
+    op.create_foreign_key(
+        "video_gen_jobs_reply_message_id_fkey",
+        "video_gen_jobs",
+        "messages",
+        ["reply_message_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
     # IM 通道桥。conversation_id 唯一外键是「每用户每渠道一条专属 im 会话」的 DB 级锚点：
     # binding 的 (user_id, channel) 唯一性传递为渠道间不混流，UNIQUE 又阻止两条绑定共享同一会话。
     op.create_table(
@@ -1018,18 +1036,18 @@ FOR EACH STATEMENT EXECUTE FUNCTION notify_ws_event();
 def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS ws_event_notify_trigger ON ws_events")
     op.execute("DROP FUNCTION IF EXISTS notify_ws_event()")
-    # 先子表再父表（messages → conversations → users）。
+    # 先子表再父表（video_gen_jobs → messages → conversations → users）。
     # channel_deliveries / channel_peers 在 channel_bindings 之后 drop（binding_id FK）；
     # companion_actions / companion_action_packs 在 companion_outfits 之前 drop（pack_id / outfit_id FK）；
     # companion_fullbody_candidates 在 avatar_assets 之前 drop（avatar_id FK）；
     # nightly_activity_actions 在 nightly_activity_logs 之后 drop（log_id FK）；system_settings 无 FK 引用，置于最末。
     for table in (
+        "video_gen_jobs",
         "messages",
         "channel_deliveries",
         "channel_peers",
         "channel_bindings",
         "ws_events",
-        "video_gen_jobs",
         "user_settings",
         "user_model_configs",
         "nightly_activity_actions",

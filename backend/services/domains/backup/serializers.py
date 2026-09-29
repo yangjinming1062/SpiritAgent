@@ -562,7 +562,7 @@ def deserialize_rows(extract_root: Path, tables: list[str]) -> dict[str, list[di
     return result
 
 
-# 缺少 forked_from_id 的旧备份把派生会话与子 Agent 会话都记在 parent_id。与 fork_lineage 迁移同一规则：委派标题
+# 缺少 forked_from_id 的旧备份把派生会话与子 Agent 会话都记在 parent_id。委派标题
 # 或首条用户消息（导出按 id 排序）带委派前缀的是子 Agent 会话，其余转为派生来源。不再恢复此类旧备份时移除。
 _LEGACY_DELEGATION_TITLE = "Subagent Task"
 _LEGACY_DELEGATION_PREFIXES = ("[INTERNAL DELEGATION", "You are a subagent delegated")
