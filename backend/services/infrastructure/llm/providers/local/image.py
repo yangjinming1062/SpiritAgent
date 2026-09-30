@@ -50,6 +50,13 @@ def _wrap_rgba(prompt: str) -> str:
     return _RGBA_WRAP.format(desc=prompt.strip())
 
 
+def _unet_loader(unet_name: str) -> tuple[str, dict[str, Any]]:
+    """ComfyUI-GGUF 的 .gguf 权重只在 UnetLoaderGGUF 列出，原生 UNETLoader 不接受该扩展名。"""
+    if unet_name.lower().endswith(".gguf"):
+        return "UnetLoaderGGUF", {"unet_name": unet_name}
+    return "UNETLoader", {"unet_name": unet_name, "weight_dtype": "default"}
+
+
 def _has_transparency(image_b64: str) -> bool:
     try:
         data = base64.b64decode(image_b64, validate=True)
@@ -95,10 +102,11 @@ def _graph(
         negative_prompt="",
         resolution=0 if image_names else min(width, height),
     )
+    unet_class, unet_inputs = _unet_loader(unet_name)
     nodes: dict[str, Any] = {
         "1": {
-            "class_type": "UNETLoader",
-            "inputs": {"unet_name": unet_name, "weight_dtype": "default"},
+            "class_type": unet_class,
+            "inputs": unet_inputs,
         },
         "2": {
             "class_type": "CLIPLoader",
@@ -172,6 +180,13 @@ class LocalImageGenProvider(ImageGenProvider):
         unet_opts: list[str] = (
             resp.json().get("UNETLoader", {}).get("input", {}).get("required", {}).get("unet_name", [[]])[0]
         )
+        # .gguf 权重由 ComfyUI-GGUF 的 UnetLoaderGGUF 单独列出；节点未安装时跳过
+        gguf_opts: list[str] = []
+        resp = await self._client.get("/object_info/UnetLoaderGGUF")
+        if resp.status_code < 400:
+            gguf_opts = (
+                resp.json().get("UnetLoaderGGUF", {}).get("input", {}).get("required", {}).get("unet_name", [[]])[0]
+            )
         resp = await self._client.get("/object_info/CLIPLoader")
         resp.raise_for_status()
         clip_opts: list[str] = (
@@ -198,14 +213,15 @@ class LocalImageGenProvider(ImageGenProvider):
             )
 
         files = (
-            _pick(unet_opts, "qwen_dit", "qwen_image"),
+            _pick([*unet_opts, *gguf_opts], "qwen_dit", "qwen_image"),
             _pick(clip_opts, "qwen_te", "qwen3vl"),
             _pick(vae_opts, "qwen_vae", "qwen_image_2"),
         )
         self._model_files = files
+        unet_class, _ = _unet_loader(files[0])
         logger.info(
             "local image_gen resolved model files",
-            extra={"unet": files[0], "clip": files[1], "vae": files[2]},
+            extra={"unet": files[0], "unet_loader": unet_class, "clip": files[1], "vae": files[2]},
         )
         return files
 
