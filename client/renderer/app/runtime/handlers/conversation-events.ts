@@ -14,12 +14,14 @@ import {
   clearPendingPrompts,
   finalizeAssistantMessage,
   finalizeCompanionReply,
+  forgetDeletedVoiceMessages,
   hydrateChatMessages,
   hydrateEditedChatMessages,
   invalidateSessionHistory,
   markAssistantTerminal,
   pushStatusPill,
   rememberFullHistory,
+  removeVoicePlayback,
   setSessionContextUsage,
   setTurnHadBubbleBreak,
   showMediaHint,
@@ -235,6 +237,10 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
 
           if (sid) {
             rememberFullHistory(sid, messages as SessionMessage[])
+
+            if (typeof decodePayload<{ cleared_count?: number }>(r.payload).cleared_count === 'number') {
+              removeVoicePlayback(sid)
+            }
           }
         }
       }
@@ -280,6 +286,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
 
       if (Array.isArray(p?.messages)) {
         const sid = p.session_id || $chatSessionId.get()
+        forgetDeletedVoiceMessages(p.messages as SessionMessage[])
         hydrateChatMessages(p.messages as SessionMessage[])
 
         if (sid) {

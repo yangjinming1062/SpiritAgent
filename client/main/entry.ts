@@ -43,6 +43,8 @@ import { registerSpriteIpc } from './ipc/sprite'
 import { registerSystemIpc } from './ipc/system'
 import { registerUiThemeIpc } from './ipc/ui-theme'
 import { registerUpdateIpc } from './ipc/update'
+import { registerVoicePlaybackIpc } from './ipc/voice-playback'
+import { createVoicePlaybackStore } from './ipc/voice-playback-store'
 import { installAppQuit } from './lifecycle/app-quit'
 import { createAutoUpdater } from './lifecycle/auto-updater'
 import { syncBundledSkills } from './lifecycle/bundled-skills'
@@ -315,6 +317,8 @@ const sessionHistoryDiskCache = createSessionHistoryDiskCache({
   spiritagentHome: SPIRITAGENT_HOME
 })
 
+const voicePlaybackStore = createVoicePlaybackStore({ spiritagentHome: SPIRITAGENT_HOME })
+
 registerConnectionIpc({
   assetDiskCache,
   defaultFetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
@@ -395,7 +399,7 @@ const autoUpdater = createAutoUpdater({
 
 const authActions = registerAuthIpc({
   clearLocalAssetCaches: async () => {
-    await Promise.all([assetDiskCache.clear(), sessionHistoryDiskCache.clear()])
+    await Promise.all([assetDiskCache.clear(), sessionHistoryDiskCache.clear(), voicePlaybackStore.clear()])
   },
   deps: {
     autoStartBridge: () => runnerHost.autoStart(),
@@ -424,6 +428,11 @@ registerSessionHistoryIpc({
   ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
   ipcMain,
   sessionHistoryDiskCache
+})
+registerVoicePlaybackIpc({
+  ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
+  ipcMain,
+  store: voicePlaybackStore
 })
 runnerHost.registerIpc(ipcMain)
 registerRunnerConfigIpc({
@@ -515,6 +524,7 @@ const appQuit = installAppQuit({
   destroyTray,
   flushConfig: () => configSync.flush(),
   flushLog: () => desktopLogger.flushSync(),
+  flushPlayback: () => voicePlaybackStore.flush(),
   log: chunk => rememberLog(chunk),
   stopRunner: () => runnerHost.getBridge()?.stop({ reason: 'app-quit' }) ?? Promise.resolve()
 })

@@ -47,6 +47,12 @@ declare global {
         save: AsyncIpc<IpcInvokeContract['spiritagent:session-history:save']>
         remove: AsyncIpc<IpcInvokeContract['spiritagent:session-history:remove']>
       }
+      voicePlayback: {
+        get: AsyncIpc<IpcInvokeContract['spiritagent:voice-playback:get']>
+        update: AsyncIpc<IpcInvokeContract['spiritagent:voice-playback:update']>
+        remove: AsyncIpc<IpcInvokeContract['spiritagent:voice-playback:remove']>
+        onChanged: EventSubscription<'spiritagent:voice-playback:changed'>
+      }
       readFileDataUrl: AsyncIpc<IpcInvokeContract['spiritagent:readFileDataUrl']>
       /** 聊天图片附件读取：超限降采样重编码，产出可直接发送的 data URL。 */
       readImageForAttach: AsyncIpc<IpcInvokeContract['spiritagent:readImageForAttach']>

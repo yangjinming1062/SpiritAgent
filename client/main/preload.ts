@@ -84,6 +84,15 @@ contextBridge.exposeInMainWorld('spiritagent', {
     remove: (sessionId: string, authSessionId: string) =>
       invoke(IPC.invoke.sessionHistoryRemove, sessionId, authSessionId)
   },
+  voicePlayback: {
+    get: (scope: InvokePayload<typeof IPC.invoke.voicePlaybackGet>) => invoke(IPC.invoke.voicePlaybackGet, scope),
+    update: (update: InvokePayload<typeof IPC.invoke.voicePlaybackUpdate>) =>
+      invoke(IPC.invoke.voicePlaybackUpdate, update),
+    remove: (removal: InvokePayload<typeof IPC.invoke.voicePlaybackRemove>) =>
+      invoke(IPC.invoke.voicePlaybackRemove, removal),
+    onChanged: (callback: EventCallback<typeof IPC.event.voicePlaybackChanged>) =>
+      subscribe(IPC.event.voicePlaybackChanged, callback)
+  },
   getGatewayWsUrl: () => invoke(IPC.invoke.gatewayWsUrl),
   gatewayRequest: (payload: InvokePayload<typeof IPC.invoke.gatewayRequest>) =>
     invoke(IPC.invoke.gatewayRequest, payload),

@@ -143,9 +143,12 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   }
 
   function snapshot(): DesktopSurfaceChangedEvent {
+    const openWindow = openSurfaceId ? windows.get(openSurfaceId)?.win : null
+
     return {
       companions: { living: companionState('living'), workbench: companionState('workbench') },
       open: openSurfaceId,
+      openVisible: !!openWindow && !openWindow.isDestroyed() && openWindow.isVisible() && !openWindow.isMinimized(),
       revision: stateRevision,
       screenLocked,
       spriteVisible: spriteWindowVisible()

@@ -16,6 +16,7 @@ import {
 } from './chat-store'
 import { rememberFullHistory } from './session-history-cache'
 import { ensureChatSession } from './session-list-store'
+import { removeVoicePlayback } from './voice-playback'
 
 function slashErrorToMessage(err: unknown): string {
   const dict = getStrings().chat.slash
@@ -108,6 +109,10 @@ async function executeSlashCommand(
 
           if (isCurrentSession()) {
             hydrateChatMessages(raw as SessionMessage[])
+          }
+
+          if (typeof (r.payload as { cleared_count?: number }).cleared_count === 'number') {
+            removeVoicePlayback(sid)
           }
         }
       } else if (isCurrentSession()) {

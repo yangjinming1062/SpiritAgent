@@ -350,7 +350,8 @@ export const dict: Dictionary = {
       responsePreferenceText: 'Prefer text',
       responsePreferenceVoice: 'Prefer voice',
       responsePreferenceDesc:
-        'Tell your companion which format you usually prefer. They choose based on the situation. Tap voice messages to listen.',
+        'Tell your companion which format you usually prefer. They choose based on the situation.',
+      autoplayVoice: 'Automatically play voice messages',
       recording: 'Recording length cap',
       recordingDesc: 'Maximum length of a single voice recording — auto-stops and sends at the limit.',
       recordingSecondsSuffix: 's',
@@ -782,8 +783,18 @@ export const dict: Dictionary = {
 
     voice: {
       retry: 'Voice unavailable. Tap to retry',
+      retryShort: 'Retry',
       play: 'Play voice',
-      stop: 'Stop voice playback',
+      pause: 'Pause playback',
+      resume: 'Resume playback',
+      unheard: 'Unheard',
+      listened: 'Listened',
+      paused: 'Paused',
+      playing: 'Playing',
+      loading: 'Loading',
+      failed: 'Playback failed',
+      progress: 'Playback progress',
+      saveFailed: 'Could not save voice playback progress',
       collapse: 'Collapse',
       showTranscript: 'Show transcript'
     },

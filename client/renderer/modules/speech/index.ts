@@ -11,7 +11,16 @@ export {
   type VoiceOption,
   voiceSelectionId
 } from './voice'
-export { bindVoiceBarListeners, bindVoiceBarProjection, cancelVoiceBar, toggleVoiceBar } from './voice-bar'
+export {
+  bindVoiceBarListeners,
+  bindVoiceBarProjection,
+  cancelVoiceBar,
+  enqueueVoiceBars,
+  refreshVoiceAutoplay,
+  setVoiceRecording,
+  setVoiceSurfaceMounted,
+  toggleVoiceBar
+} from './voice-bar'
 export { VoiceProviderBadge } from './voice-provider-badge'
 export { $voicePreparing, beginVoicePreparing, endVoicePreparing } from './voice-state'
 export { checkVoiceValidity } from './voice-validity'

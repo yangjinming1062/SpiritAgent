@@ -1,0 +1,24 @@
+.playing path:nth-of-type(n + 3) {
+  animation: voice-wave 1s ease-in-out infinite;
+}
+
+.playing path:nth-of-type(n + 4) {
+  animation-delay: 160ms;
+}
+
+@keyframes voice-wave {
+  0%,
+  100% {
+    opacity: 0.25;
+  }
+
+  55% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .playing path {
+    animation: none;
+  }
+}

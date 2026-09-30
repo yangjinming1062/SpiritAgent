@@ -10,6 +10,7 @@ interface AppQuitDeps {
   destroyTray: () => void
   flushConfig: () => Promise<void>
   flushLog: () => void
+  flushPlayback: () => Promise<void>
   log: (chunk: string) => void
   /** 停止 Runner；没有 Runner 时立即完成。 */
   stopRunner: () => Promise<unknown>
@@ -46,9 +47,14 @@ export function installAppQuit(deps: AppQuitDeps): AppQuit {
     event.preventDefault()
 
     void Promise.race([
-      deps.stopRunner().catch(error => {
-        deps.log(`[runner-bridge] quit cleanup failed: ${errorMessage(error)}`)
-      }),
+      Promise.all([
+        deps.stopRunner().catch(error => {
+          deps.log(`[runner-bridge] quit cleanup failed: ${errorMessage(error)}`)
+        }),
+        deps.flushPlayback().catch(error => {
+          deps.log(`[voice-playback] quit flush failed: ${errorMessage(error)}`)
+        })
+      ]),
       new Promise(resolve => {
         const timer = setTimeout(resolve, RUNNER_STOP_TIMEOUT_MS)
 

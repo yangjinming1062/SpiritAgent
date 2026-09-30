@@ -1,3 +1,4 @@
+import { voicePlaybackKey } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { memo, useState } from 'react'
@@ -297,7 +298,16 @@ function MessageBubbleWithBody({
               </div>
             ) : (
               <>
-                <ChatVoiceBar duration={body.replyAudio?.duration} failed={!body.replyAudio} messageId={message.id} />
+                <ChatVoiceBar
+                  duration={body.replyAudio?.duration}
+                  failed={!body.replyAudio}
+                  messageId={message.id}
+                  playbackKey={
+                    message.backendMessageId !== undefined && body.replyIndex !== undefined
+                      ? voicePlaybackKey(message.backendMessageId, body.replyIndex)
+                      : undefined
+                  }
+                />
                 <TranscriptBlock text={displayText} />
               </>
             )

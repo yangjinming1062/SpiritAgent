@@ -9,6 +9,7 @@ import { IM_VOICE_BAR_AUDIO_CONSTRAINTS } from './audio-constraints'
 import { convertBlobToWav } from './audio-wav'
 import { markAssistantTerminal, pushPendingPrompt, pushUserMessage, schedulePendingFlush } from './chat-store'
 import { ensureChatSession } from './session-list-store'
+import { conversationVoiceSink } from './voice-link'
 
 // 语音消息用 MediaRecorder 整段录制（webm/opus）→ 客户端转 16kHz WAV → REST 转写。
 const PREFERRED_OPUS_MIME_TYPES = [
@@ -162,6 +163,10 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
     if (!recorder || recorder.state === 'inactive') {
       setRecording(false)
 
+      if (!unmountedRef.current) {
+        conversationVoiceSink().setRecording(false)
+      }
+
       return
     }
 
@@ -192,6 +197,10 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
     streamRef.current = null
 
     setRecording(false)
+
+    if (!unmountedRef.current) {
+      conversationVoiceSink().setRecording(false)
+    }
 
     if (!blob || blob.size === 0) {
       presentationPorts().setSpriteState('idle')
@@ -228,6 +237,11 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
   stopRef.current = stop
 
   const start = useCallback(() => {
+    if (startPendingRef.current || recorderRef.current?.state === 'recording') {
+      return
+    }
+
+    conversationVoiceSink().setRecording(true)
     let pending: Promise<void> | null = null
     pending = (async () => {
       let stream: MediaStream | null = null
@@ -278,6 +292,7 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
         setRecording(false)
 
         if (!unmountedRef.current) {
+          conversationVoiceSink().setRecording(false)
           markAssistantTerminal({ error: getStrings().chat.voiceInput.micUnavailable })
           presentationPorts().setSpriteState('idle')
         }
@@ -328,6 +343,7 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
       }
 
       setRecording(false)
+      conversationVoiceSink().setRecording(false)
     }
   }, [])
 

@@ -20,6 +20,7 @@ import {
   $chatSessionId,
   $chatTurnInFlight,
   $companionSessionId,
+  forgetDeletedVoiceMessages,
   hydrateChatMessages,
   hydrateSessionSettings,
   resetChatMessages,
@@ -36,6 +37,7 @@ import {
   setPersistedCompanionSessionId,
   syncSessionHistory
 } from './session-history-cache'
+import { removeVoicePlayback } from './voice-playback'
 
 export type SessionSort = 'created' | 'messages' | 'recent'
 
@@ -514,6 +516,7 @@ export async function undoToMessage(sessionId: string, sourceMessageId: number):
 
       // 已切到其他会话时只更新缓存，不改写当前视图。
       if ($chatSessionId.get() === sessionId) {
+        forgetDeletedVoiceMessages(res.messages)
         hydrateChatMessages(res.messages)
       }
     }
@@ -755,6 +758,7 @@ export async function deleteSession(sessionId: string): Promise<void> {
   }
 
   forgetSessionHistory(sessionId)
+  removeVoicePlayback(sessionId)
 
   if ($chatSessionId.get() === sessionId) {
     await openMainSession()

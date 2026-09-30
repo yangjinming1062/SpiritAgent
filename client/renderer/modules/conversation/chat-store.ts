@@ -24,6 +24,7 @@ import type {
 
 import { chatDisplayText } from './chat-display-text'
 import { conversationVoiceSink } from './voice-link'
+import { removeVoicePlayback } from './voice-playback'
 
 export interface ChatMessageListItem {
   id: string
@@ -330,6 +331,7 @@ export function setChatSession(id: string | null): void {
 
 // 用从后端加载的会话替换面板的聊天记录；其他窗口可能正在连发或等待提交确认，历史修订不能删掉未落库的输入。
 export function hydrateEditedChatMessages(messages: SessionMessage[]): void {
+  forgetDeletedVoiceMessages(messages)
   historyEditRevision++
   const pendingIds = new Set($pendingPromptBatch.get().map(item => item.messageId))
 
@@ -1090,6 +1092,7 @@ export function finalizeCompanionReply(
   const streaming = last?.role === 'assistant' && $chatMessageBodies.get()[last.id]?.streaming
   const placeholder = !proactive && streaming
   const next = streaming ? list.slice(0, -1) : [...list]
+  const voiceIds: string[] = []
 
   if (placeholder && last) {
     $chatMessageBodies.setKey(last.id, undefined)
@@ -1097,6 +1100,11 @@ export function finalizeCompanionReply(
 
   bubbles.forEach((bubble, index) => {
     const id = nextId()
+
+    if (bubble.type === 'voice') {
+      voiceIds.push(id)
+    }
+
     next.push({
       id,
       role: 'assistant',
@@ -1119,6 +1127,8 @@ export function finalizeCompanionReply(
   }
 
   $chatMessageList.set(next)
+
+  conversationVoiceSink().enqueue(voiceIds)
 
   if (!proactive) {
     $lastAssistantStreaming.set(false)
@@ -1167,6 +1177,21 @@ export function updateVoiceBubble(messageId: number, index: number, bubble: Comp
     if (item.backendMessageId === messageId && body?.replyIndex === index && body.replyType === 'voice') {
       $chatMessageBodies.setKey(item.id, { ...body, replyAudio: bubble.audio ?? body.replyAudio })
     }
+  }
+}
+
+// 仅历史编辑/撤回的完整结果调用；普通水合可能截断，不能据此删除播放记录。
+export function forgetDeletedVoiceMessages(messages: SessionMessage[]): void {
+  conversationVoiceSink().cancel()
+  const sessionId = $chatSessionId.get()
+  const remaining = new Set(messages.map(message => message.id))
+
+  const removed = $chatMessageList
+    .get()
+    .flatMap(item => (item.backendMessageId && !remaining.has(item.backendMessageId) ? [item.backendMessageId] : []))
+
+  if (sessionId) {
+    removeVoicePlayback(sessionId, [...new Set(removed)])
   }
 }
 

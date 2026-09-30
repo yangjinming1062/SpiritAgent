@@ -22,6 +22,7 @@ import {
 } from './chat-store'
 import { collectTimeDividerIds } from './conversation-time'
 import { consumePendingMessages, pendingMessages } from './pending-messages'
+import { conversationVoiceSink } from './voice-link'
 
 interface ConversationSurfaceProps {
   className?: string
@@ -37,6 +38,15 @@ export function ConversationSurface({
   variant = 'living'
 }: ConversationSurfaceProps): React.JSX.Element {
   const sessionId = useStore($chatSessionId)
+  useEffect(() => {
+    if (variant !== 'living') {
+      return
+    }
+
+    conversationVoiceSink().setVisible(true)
+
+    return () => conversationVoiceSink().setVisible(false)
+  }, [sessionId, variant])
   const pending = useStore(pendingMessages.$atom)
   const surfaceOpen = useStore($surfaceOpen)
   const surfaceRole = useStore($surfaceRole)

@@ -11,6 +11,7 @@ import { atom } from 'nanostores'
 import { log } from '@/shared/lib/log'
 
 export const $surfaceOpen = atom<null | SurfaceId>(null)
+export const $surfaceOpenVisible = atom(false)
 export const $surfaceScreenLocked = atom(false)
 // 桌面精灵窗的实际显隐（托盘、快捷键、右键隐藏或最小化）；收到主进程快照前按可见处理。
 export const $surfaceSpriteVisible = atom(true)
@@ -62,6 +63,7 @@ function applySurfaceState(state: DesktopSurfaceChangedEvent): void {
   $surfaceScreenLocked.set(state.screenLocked)
   $surfaceSpriteVisible.set(state.spriteVisible)
   $surfaceOpen.set(state.open)
+  $surfaceOpenVisible.set(state.openVisible)
   $surfaceCompanions.set(state.companions)
 }
 

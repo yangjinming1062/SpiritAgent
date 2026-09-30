@@ -28,6 +28,38 @@ export interface SessionHistorySnapshot {
   writtenAt: number
 }
 
+export interface VoicePlaybackRecord {
+  listened: boolean
+  positionSeconds: number
+}
+
+export interface VoicePlaybackSnapshot {
+  records: Record<string, VoicePlaybackRecord>
+  revision: number
+}
+
+export interface VoicePlaybackScope {
+  authSessionId: string
+  sessionId: string
+}
+
+export interface VoicePlaybackUpdate extends VoicePlaybackScope, VoicePlaybackRecord {
+  messageId: number
+  bubbleIndex: number
+}
+
+export interface VoicePlaybackRemoval extends VoicePlaybackScope {
+  messageIds?: number[]
+}
+
+export interface VoicePlaybackChanged extends VoicePlaybackScope {
+  snapshot: VoicePlaybackSnapshot
+}
+
+export function voicePlaybackKey(messageId: number, bubbleIndex: number): string {
+  return `${messageId}:${bubbleIndex}`
+}
+
 export interface DesktopUpdateProgress {
   percent: number
   total: number
@@ -134,6 +166,7 @@ export interface SurfacePlaybackClaim {
 export interface DesktopSurfaceChangedEvent {
   companions: Record<SurfaceId, SurfaceCompanionState>
   open: null | SurfaceId
+  openVisible: boolean
   revision: number
   screenLocked: boolean
   /** 桌面精灵窗实际可见：窗口存在、未隐藏且未最小化；完整入口收起舞台不改变此值。 */
@@ -390,6 +423,10 @@ export interface IpcInvokeContract {
   ) => Promise<void> | void
   'spiritagent:session-history:remove': (sessionId: string, authSessionId: string) => Promise<void> | void
 
+  'spiritagent:voice-playback:get': (scope: VoicePlaybackScope) => Promise<VoicePlaybackSnapshot | null>
+  'spiritagent:voice-playback:update': (update: VoicePlaybackUpdate) => Promise<VoicePlaybackSnapshot | null>
+  'spiritagent:voice-playback:remove': (removal: VoicePlaybackRemoval) => Promise<VoicePlaybackSnapshot | null>
+
   // 文件 / 剪贴板 / 日志
   'spiritagent:readFileDataUrl': (filePath: string) => Promise<string> | string
   'spiritagent:readImageForAttach': (filePath: string) => Promise<string> | string
@@ -495,6 +532,7 @@ export interface IpcInvokeContract {
 
 // 2. 主进程向渲染进程推送事件（通过 webContents.send / ipcRenderer.on）
 export interface IpcEventContract {
+  'spiritagent:voice-playback:changed': [payload: VoicePlaybackChanged]
   'spiritagent:auth:changed': [payload: DesktopAuthBroadcast]
   'spiritagent:auth:session-expired': [sessionId: string]
   'spiritagent:power-resume': []
@@ -543,6 +581,9 @@ export const IPC = {
     sessionHistoryGet: 'spiritagent:session-history:get',
     sessionHistorySave: 'spiritagent:session-history:save',
     sessionHistoryRemove: 'spiritagent:session-history:remove',
+    voicePlaybackGet: 'spiritagent:voice-playback:get',
+    voicePlaybackUpdate: 'spiritagent:voice-playback:update',
+    voicePlaybackRemove: 'spiritagent:voice-playback:remove',
     readFileDataUrl: 'spiritagent:readFileDataUrl',
     readImageForAttach: 'spiritagent:readImageForAttach',
     registerUserSelectedPaths: 'spiritagent:registerUserSelectedPaths',
@@ -594,6 +635,7 @@ export const IPC = {
     updateGetState: 'spiritagent:update:get-state'
   } as const satisfies Record<string, IpcChannel>,
   event: {
+    voicePlaybackChanged: 'spiritagent:voice-playback:changed',
     authChanged: 'spiritagent:auth:changed',
     authSessionExpired: 'spiritagent:auth:session-expired',
     powerResume: 'spiritagent:power-resume',

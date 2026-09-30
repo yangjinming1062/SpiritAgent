@@ -23,6 +23,7 @@ export {
   clearPendingPrompts,
   finalizeAssistantMessage,
   finalizeCompanionReply,
+  forgetDeletedVoiceMessages,
   hydrateChatMessages,
   hydrateEditedChatMessages,
   hydrateSessionSettings,
@@ -93,5 +94,14 @@ export {
   setVoiceBarControl,
   setVoiceBarFailed,
   setVoiceBarLoading,
+  setVoiceBarPaused,
   setVoiceBarPlaying
 } from './voice-link'
+export {
+  $voicePlaybackRecords,
+  bindVoicePlaybackUpdates,
+  captureVoiceProgress,
+  loadVoicePlayback,
+  removeVoicePlayback,
+  voicePlaybackReady
+} from './voice-playback'

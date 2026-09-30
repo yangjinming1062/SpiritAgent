@@ -17,6 +17,7 @@ export type ResponsePreference = 'text' | 'voice'
 
 const COMPANION_VOICE_ID_STORAGE_KEY = registerCompanionStorageKey('da.companion.voiceId')
 const RESPONSE_PREFERENCE_STORAGE_KEY = registerCompanionStorageKey('da.companion.responsePreference')
+const AUTOPLAY_VOICE_STORAGE_KEY = registerCompanionStorageKey('da.companion.autoplayVoice')
 
 // localStorage 仍是各窗口的即时缓存（同步读、离线可用）；每次写入额外经 prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL「配置所有权与云同步」）。水合广播（initCompanionPrefsSync）用云端值回写缓存与 atom，跨端收敛。
 function reportCloud(key: string, value: unknown): void {
@@ -56,6 +57,7 @@ export function setResponsePreference(mode: ResponsePreference): void {
 registerStorageClearHandler(() => {
   $companionVoiceId.set('')
   $responsePreference.set('text')
+  $autoplayVoice.set(true)
 })
 
 interface BooleanPref {
@@ -81,6 +83,8 @@ const llmAutonomyPref = makeBooleanPref('da.companion.llmAutonomy', true, 'compa
 
 const autonomousMediaPref = makeBooleanPref('da.companion.autonomousMedia', true, 'companion.autonomous_media')
 const autonomousVoicePref = makeBooleanPref('da.companion.autonomousVoice', true, 'companion.autonomous_voice')
+export const autoplayVoicePref = makeBooleanPref(AUTOPLAY_VOICE_STORAGE_KEY, true, 'companion.autoplay_voice')
+export const $autoplayVoice = autoplayVoicePref.$atom
 
 export const $autonomousMedia = autonomousMediaPref.$atom
 export const $autonomousVoice = autonomousVoicePref.$atom
@@ -97,6 +101,10 @@ export function initCompanionPrefsSync(): () => void {
   }
 
   const onStorage = (event: StorageEvent): void => {
+    if (event.key === AUTOPLAY_VOICE_STORAGE_KEY || event.key === null) {
+      $autoplayVoice.set(storedBoolean(AUTOPLAY_VOICE_STORAGE_KEY, true))
+    }
+
     if (event.key === RESPONSE_PREFERENCE_STORAGE_KEY || event.key === null) {
       refreshResponsePreference()
     }
@@ -108,6 +116,10 @@ export function initCompanionPrefsSync(): () => void {
   window.addEventListener('storage', onStorage)
 
   const unsubscribe = window.spiritagent?.onPrefsHydrated?.(({ companion }) => {
+    if (typeof companion.autoplay_voice === 'boolean') {
+      autoplayVoicePref.set(companion.autoplay_voice)
+    }
+
     if (typeof companion.voice_id === 'string') {
       setCompanionVoiceId(companion.voice_id)
     }
