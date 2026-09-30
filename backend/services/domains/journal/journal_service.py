@@ -143,33 +143,20 @@ async def create_user_moment(
         session_id=session_id,
     )
     if source == MomentSource.NIGHTLY.value:
+        # 夜间更新不弹实时通知：只写入主会话历史，不发 companion.message。
         conversation = await get_or_create_special_conversation(db, user_id, "companion")
         row.session_id = conversation.id
         media = [{"type": media_type, "url": media_url}] if media_url else []
         if audio_url and media:
             media[0]["audio_url"] = audio_url
-        message = Message(
-            conversation_id=conversation.id,
-            role="assistant",
-            content="\n\n".join(part for part in (row.title, row.body) if part),
-            subtype="status_media" if media else "status_proactive",
-            media_json=json.dumps(media, ensure_ascii=False) if media else None,
-        )
-        db.add(message)
-        await db.flush()
-        emit_ws_event(
-            db,
-            user_id=user_id,
-            event_type="companion.message",
-            payload={
-                "text": message.content,
-                "session_id": str(conversation.id),
-                "message_id": message.id,
-                "media": [
-                    {key: _client_url(value) if key != "type" else value for key, value in item.items()}
-                    for item in media
-                ],
-            },
+        db.add(
+            Message(
+                conversation_id=conversation.id,
+                role="assistant",
+                content="\n\n".join(part for part in (row.title, row.body) if part),
+                subtype="status_media" if media else "status_proactive",
+                media_json=json.dumps(media, ensure_ascii=False) if media else None,
+            ),
         )
     db.add(row)
     await db.commit()
@@ -393,7 +380,7 @@ async def collect_moment_interactions(
     utc_start: datetime,
     utc_end: datetime,
 ) -> MomentInteractions:
-    """汇总本地当日片刻互动：当日发布的片刻 + 当日有新评论的片刻，各带完整评论线程。供夜间规划、反思日记与日记投影共同消费，使片刻评论区成为伙伴反思上下文的一部分。"""
+    """汇总本地当日片刻互动：当日发布的片刻 + 当日有新评论的片刻，各带完整评论线程。供夜间规划、反思日记与日记投影共同消费，使片刻评论区成为伙伴反思上下文的一部分。夜间动作发布的片刻落在次日凌晨，已由产生它的那一夜的日记经 nightly_actions 记述，不再计为次日发布（次日的评论照常计入）。"""
     posted_ids = list(
         (
             await db.scalars(
@@ -402,6 +389,7 @@ async def collect_moment_interactions(
                     CompanionMoment.user_id == user_id,
                     CompanionMoment.occurred_at >= utc_start,
                     CompanionMoment.occurred_at < utc_end,
+                    CompanionMoment.source != MomentSource.NIGHTLY.value,
                 )
                 .order_by(CompanionMoment.occurred_at.desc()),
             )

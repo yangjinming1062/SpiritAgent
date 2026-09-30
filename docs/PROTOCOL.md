@@ -244,6 +244,8 @@ Slash 元动作走 `command.dispatch`，不交给 LLM。`command.list` 返回名
 
 片刻与日记均由伙伴创建：片刻用户只能评论或删除本人评论；日记后台只能追加已编辑内容。生活空间工具只向陪伴预设开放，装配与派发两层均校验，不能仅隐藏界面入口。
 
+夜间动作发布的片刻只写入片刻列表与陪伴主会话历史，不发 `companion.message`（夜间更新不弹实时通知）；其发布时间落在次日凌晨，仍归产生它的那一夜的日记，次日整理不把它计为当日发布，次日的评论照常计入。
+
 生成正文须完整保存，超出消费方容量时明确失败，不静默裁切后报告成功；日记补记容量不足不改变既有正文。具体字段上限见[日记与片刻服务](../backend/services/domains/journal/journal_service.py)及[聊天工具 schema](../backend/services/adapters/tools/builtin/journal_tool.py)，中英文均按字符计数。
 
 ### 资产访问与缓存
