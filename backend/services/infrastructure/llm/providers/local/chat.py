@@ -11,7 +11,7 @@ class LocalChatProvider(ChatProvider):
     # 默认 LM Studio；模型须显式填写已部署的模型 ID。
     DEFAULT_BASE_URL: ClassVar[str] = "http://127.0.0.1:1234/v1"
     # 保守预算；服务端加载窗口须至少覆盖此值。
-    CONTEXT_TOKENS: ClassVar[int] = 16_000
+    CONTEXT_TOKENS: ClassVar[int] = 49_152
     requires_api_key: ClassVar[bool] = False
     # 不同本地模型的格式与推理参数支持不一致，不统一声明。
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset()
