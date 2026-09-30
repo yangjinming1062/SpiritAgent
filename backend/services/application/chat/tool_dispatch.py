@@ -1,6 +1,6 @@
 import asyncio
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from components import async_trace_span, redact_sensitive_text, safe_json_loads, tool_error
@@ -47,6 +47,37 @@ class _ToolDispatchContext:
     scene_turn: SceneTurnState
 
 
+@dataclass
+class _BatchProgress:
+    """单批工具调用的进展；回合被中断时据此还原每个调用的真实状态，而不是一律记为取消。"""
+
+    settled: dict[str, dict] = field(default_factory=dict)  # call_id → 已产生的 tool 结果消息
+    started: set[str] = field(default_factory=set)
+
+
+_INTERRUPTED_RUNNING_ERROR = (
+    "The turn was interrupted while this tool was running, so the outcome is unknown: it may have completed, "
+    "partly run, or not run at all. Do not assume it failed or repeat it automatically; check its effects or ask "
+    "the user first."
+)
+_INTERRUPTED_PENDING_ERROR = "Not executed: the turn was interrupted before this tool call started."
+
+
+def interrupted_tool_results(tool_calls_list: list[dict], progress: _BatchProgress) -> list[tuple[str, Any]]:
+    """回合被中断时各工具调用应记录的结果：已产生的照实保留，运行中的记为结果未知，未开始的记为未执行。"""
+    results: list[tuple[str, Any]] = []
+    for tc in tool_calls_list:
+        call_id = tc.get("call_id", "")
+        if (settled := progress.settled.get(call_id)) is not None:
+            content: Any = settled.get("content", "")
+        elif call_id in progress.started:
+            content = tool_error(_INTERRUPTED_RUNNING_ERROR)
+        else:
+            content = tool_error(_INTERRUPTED_PENDING_ERROR)
+        results.append((call_id, content))
+    return results
+
+
 def matched_tool_names(output: object) -> list[str]:
     """``search_tools`` 结果里解锁的工具名；历史续读与本轮派发共用。"""
     parsed = safe_json_loads(output) if isinstance(output, str) else output
@@ -83,7 +114,7 @@ async def _dispatch_runner_tool(
         if memory_scope is None:
             return tool_error("Learning skills are unavailable in automation")
         skill_scope = {"user_id": memory_scope.user_id, "system_preset_id": memory_scope.system_preset_id}
-    # 客户端离线（未连接也无 grace session）或 Runner 未同步工具时快速失败；否则 IPC future 会挂 ipc_future_timeout_seconds（默认 300s）才返回合成超时错误。
+    # 客户端离线（未连接也无 grace session）或 Runner 未同步工具时快速失败；否则 IPC future 会挂满 ipc_future_timeout_seconds 才返回合成超时错误。
     if not MANAGER.is_available(user_id):
         return tool_error("Desktop is offline. Tool calls require an active desktop connection.")
     if not REGISTRY.has_runner_tools(user_id):
@@ -182,29 +213,33 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
         await ctx.emitter.send_json({"type": "tool_end", "name": name, "call_id": tc["call_id"]})
 
 
-async def _run_tool_batch(tool_calls_list: list[dict], ctx: _ToolDispatchContext) -> list[dict]:
-    coros = [_execute_single_tool(tc, ctx) for tc in tool_calls_list]
+async def _run_tracked_tool(tc: dict, ctx: _ToolDispatchContext, progress: _BatchProgress) -> dict:
+    progress.started.add(tc["call_id"])
+    try:
+        result = await _execute_single_tool(tc, ctx)
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        result = _crash_result(tc, exc)
+    progress.settled[tc["call_id"]] = result
+    return result
+
+
+async def _run_tool_batch(
+    tool_calls_list: list[dict],
+    ctx: _ToolDispatchContext,
+    progress: _BatchProgress,
+) -> list[dict]:
     if len(tool_calls_list) > 1 and should_parallelize_tool_batch(
         [(tc["name"], tc["arguments"]) for tc in tool_calls_list],
     ):
         # return_exceptions=True：单工具失败不取消兄弟协程，否则一个 IPC 超时会拖满 ipc_future_timeout_seconds 并丢失本轮其他结果。
-        results = await asyncio.gather(*coros, return_exceptions=True)
-        out: list[dict] = []
-        for tc, r in zip(tool_calls_list, results):
-            if isinstance(r, BaseException):
-                out.append(_crash_result(tc, r))
-            else:
-                out.append(r)
-        return out
-    out = []
-    for tc, coro in zip(tool_calls_list, coros):
-        try:
-            out.append(await coro)
-        except asyncio.CancelledError:
-            raise
-        except Exception as r:
-            out.append(_crash_result(tc, r))
-    return out
+        results = await asyncio.gather(
+            *(_run_tracked_tool(tc, ctx, progress) for tc in tool_calls_list),
+            return_exceptions=True,
+        )
+        return [_crash_result(tc, r) if isinstance(r, BaseException) else r for tc, r in zip(tool_calls_list, results)]
+    return [await _run_tracked_tool(tc, ctx, progress) for tc in tool_calls_list]
 
 
 def _crash_result(tc: dict, exc: BaseException) -> dict:

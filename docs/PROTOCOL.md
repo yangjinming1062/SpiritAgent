@@ -334,13 +334,15 @@ sequenceDiagram
 
 认领刷盘后执行，终态落盘后回复。取消、持有进程死亡或记录损坏且无可信终态时按 unknown 处理，迟到执行者不得覆盖终态。认领未获执行权时拒绝并在 `data.disposition` 标明：`unknown` 回复 `-32011`；`failed`、`claimed_elsewhere`、`conflict`（同标识不同工具、参数或学习域，即使原记录已 completed）与 `invalid_call_id` 回复 `-32000`。工具报错、参数校验失败或工具集已禁用同样回复 `-32000` 并标明 `failed`；本次执行被取消回复 `-32000 cancelled`，不带 `disposition`。Client 把 `failed`、`conflict`、`invalid_call_id` 连同 Runner 给出的原因作为明确失败回传，请求发出前 Runner 未连接回传未执行，其余（取消、超时、断连、`claimed_elsewhere`、`unknown`）回传结果未知，见 [ipc/runner.ts](../client/main/ipc/runner.ts)。`spiritagent.call_result {call_id}` 可查询日志，当前 Client 与 Backend 均未调用，结果核对依赖模型检查外部效果或询问用户。
 
-`spiritagent.cancel` 可用 RPC `req_id` 定位请求，省略时取消全部带 `call_id` 的在途调用（Client 的窗口轮询等直调不受影响）。回合被中断（对话停止、IM 回合中止、主动回合让位等）而仍在等待设备结果时，Backend 逐个下发 `tool.cancel`；宿主对尚未交给 Runner 的调用不予执行，对已在执行的按该调用的 `req_id` 取消，两种情况都不回传结果。超时与断连不下发取消，其他会话、IM 与定时任务的在途调用不受影响。请求取消不证明工作线程或外部副作用已经停止。
+`spiritagent.cancel` 可用 RPC `req_id` 定位请求，省略时取消全部带 `call_id` 的在途调用（Client 的窗口轮询等直调不受影响）。回合被中断（对话停止、IM 回合中止、主动回合让位等）而仍在等待设备结果时，Backend 逐个下发 `tool.cancel`；宿主对尚未交给 Runner 的调用不予执行，对已在执行的按该调用的 `req_id` 取消，两种情况都不回传结果。超时与断连不下发取消，其他会话、IM 与定时任务的在途调用不受影响。请求取消不证明工作线程或外部副作用已经停止。回合中断时 Backend 仍为同批每个调用保存结果行（见 [persistence](../backend/services/application/chat/persistence.py)）：已产生结果的照实保存，运行中的记为结果未知，未开始的记为未执行；一律记为取消会让后续“继续”重做已生效的副作用。
 
 当前终态日志保留七天；无 `call_id` 的直调不记日志，日志不可写时仍可能继续执行。因此去重是有限保障，不是任意副作用恰好执行一次的承诺。恢复、取消或更换调用标识都不能被当作已撤销外部操作。
 
 ### 后端等待与取消
 
 等待表按 `(user_id, call_id)` 寻址，身份来自认证。派发前检查桌面和工具，发送失败快速返回；结果只兑现同用户未完成的等待，重复或迟到结果不重新启动回合。等待随回合取消时下发 `tool.cancel`，超时按结果未知回传模型。
+
+设备调用的时限由内向外递增：Runner 工具自身时限（终端前台上限默认 600 秒）短于 Client 派发上限（[ipc/runner.ts](../client/main/ipc/runner.ts)，11 分钟），再短于 Backend 等待上限（`ipc_future_timeout_seconds`，默认 720 秒）。外层短于内层会把仍在正常执行的工具报成结果未知，调整任一层时保持次序。
 
 断连宽限结束后以可处理错误收尾未决等待，使 IM 等无头回合仍能说明失败。丢弃等待不等于撤销本机执行；等待登记、超时与释放见 [ipc](../backend/services/infrastructure/desktop/ipc.py)，派发前检查见 [tool_dispatch](../backend/services/application/chat/tool_dispatch.py)，恢复决策见[调用日志与未知结果](#调用日志与未知结果)。
 

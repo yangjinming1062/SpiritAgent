@@ -35,7 +35,13 @@ from .chat_emitter import Emitter
 from .context_compressor import CompressionInfo
 from .streaming import _LLMTurnResult
 from .title_generator import auto_generate_title
-from .tool_dispatch import _run_tool_batch, _ToolDispatchContext, matched_tool_names
+from .tool_dispatch import (
+    _BatchProgress,
+    _run_tool_batch,
+    _ToolDispatchContext,
+    interrupted_tool_results,
+    matched_tool_names,
+)
 from .turn_inputs import parse_temperature
 from .types import TrackTask
 
@@ -303,15 +309,13 @@ async def _persist_assistant_with_tool_calls_and_results(
             await db.commit()
 
     # 工具批处理必须在 DB 事务外执行，避免 runner / LLM 调用期间持有连接。
+    progress = _BatchProgress()
     try:
-        tool_results = await _run_tool_batch(tool_calls_list, dispatch_ctx)
+        tool_results = await _run_tool_batch(tool_calls_list, dispatch_ctx, progress)
     except asyncio.CancelledError:
-        # 为每个未完成的 tool_call 合成一条 tool 结果，避免 assistant 行出现孤立 tool_calls 导致下一轮 LLM 上下文畸形。
+        # 每个 tool_call 都要有对应结果行，否则下一轮上下文会出现孤立 tool_calls；已完成的照实保存，否则用户说“继续”时模型会重做已生效的副作用。
         if persist:
-            cancelled = json.dumps({"error": "cancelled"}, ensure_ascii=False)
-            await asyncio.shield(
-                _persist_tool_results(conv.id, [(tc.get("call_id", ""), cancelled) for tc in tool_calls_list]),
-            )
+            await asyncio.shield(_persist_tool_results(conv.id, interrupted_tool_results(tool_calls_list, progress)))
         raise
 
     for res in tool_results:

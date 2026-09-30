@@ -37,6 +37,9 @@ export interface RunnerHost {
   restartForCurrentSession: () => Promise<void>
 }
 
+// 模型派发的设备调用上限：须长于 Runner 工具自身的最长时限（终端前台上限 600 秒），并短于 Backend 的等待上限（`ipc_future_timeout_seconds`），工具自己的超时结果才能带着已有输出先到达模型。
+const TOOL_CALL_TIMEOUT_MS = 11 * 60_000
+
 // Runner 已给出确定结局的拒绝：工具报错或执行前被拒（failed）、同一 call_id 的参数冲突、非法标识；其余错误（取消、超时、断连、他处持有、日志判定未知）都不能证明工具没有产生副作用。
 const DEFINITE_FAILURE_DISPOSITIONS = new Set(['conflict', 'failed', 'invalid_call_id'])
 
@@ -260,13 +263,15 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
         inflightCalls.set(callId, requestId)
 
         try {
+          const dispatchOptions = { id: requestId, timeoutMs: TOOL_CALL_TIMEOUT_MS }
+
           const result = request.skillScope
             ? await bridge.dispatch(
                 'execute_scoped_tool',
                 { ...params, skill_scope: request.skillScope },
-                { id: requestId }
+                dispatchOptions
               )
-            : await bridge.dispatch('execute_tool', params, { id: requestId })
+            : await bridge.dispatch('execute_tool', params, dispatchOptions)
 
           return { result, status: 'completed' }
         } catch (error: unknown) {
