@@ -42,8 +42,12 @@ export function registerPrefsIpc({ ipcMain, log }: PrefsIpcDeps): void {
 
         // 降低透明度须所有窗口即时生效：沿用水合广播的形状，只带该字段与当前语言。
         if (key === 'companion.reduce_transparency' && typeof value === 'boolean') {
-          const { language } = buildPrefsHydratedFromConfig(store.read())
-          broadcastToAllWindows(IPC.event.prefsHydrated, { companion: { reduce_transparency: value }, language })
+          const { accountId, language } = buildPrefsHydratedFromConfig(store.read())
+          broadcastToAllWindows(IPC.event.prefsHydrated, {
+            accountId,
+            companion: { reduce_transparency: value },
+            language
+          })
         }
       })
       .catch(error => log(`[prefs] set ${key} failed: ${errorMessage(error)}`))

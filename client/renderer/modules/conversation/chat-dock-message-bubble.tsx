@@ -8,6 +8,7 @@ import { cn } from '@/shared/lib/utils'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { useStrings } from '@/shared/strings'
 
+import { stripAttachmentDirectives } from './chat-display-text'
 import { ChatMediaCard } from './chat-media-card'
 import { ChatMessageCopyButton } from './chat-message-copy-button'
 import { ChatMessageEditButton } from './chat-message-edit-button'
@@ -42,14 +43,6 @@ interface MessageBubbleProps {
 
 // 异步送达的媒体行（片刻、后台视频）：有正文时显示在媒体卡上方；视频送达行不带正文。
 const MEDIA_STATUS_SUBTYPE = 'status_media'
-
-// 附件的 @file:/@folder: 指令只服务 LLM，不进用户可见正文；逐行剔除而非整段正则，避免误伤正文里的普通 @ 提及。
-function stripAttachmentDirectives(text: string): string {
-  return text
-    .split('\n')
-    .filter(line => !/^@(file|folder):/i.test(line.trim()))
-    .join('\n')
-}
 
 function wrapWithTimeDivider(timeDivider: React.ReactNode, node: React.JSX.Element): React.JSX.Element {
   if (!timeDivider) {

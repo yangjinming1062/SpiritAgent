@@ -16,7 +16,7 @@ interface OnboardingState {
 // 上次查询没有得到结果时为 true，网关连通后据此重查。
 let lifecycleUnresolved = false
 
-/** 按当前会话重解伴生 lifecycle（unauthed/onboarding/ready）。各窗口是独立渲染进程，nanostores 不互通；换号 clearCompanionStorage 会把本窗 lifecycle 重置为 unauthed，必须各自重新解析。 */
+/** 各窗口独立重解 lifecycle（unauthed/onboarding/ready）；换号重置内存后重新解析。 */
 async function syncCompanionLifecycle(): Promise<void> {
   const auth = $auth.get()
 

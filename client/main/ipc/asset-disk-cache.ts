@@ -27,6 +27,7 @@ export interface CachedAsset {
 
 export interface AssetDiskCacheOptions {
   defaultFetchFn?: typeof globalThis.fetch
+  initialAccountId: string | null
   spiritagentHome: string
 }
 
@@ -41,9 +42,9 @@ export interface EnsureAssetOptions {
 }
 
 export interface AssetDiskCache {
-  clear: () => Promise<void>
-  ensureCached: (opts: EnsureAssetOptions) => Promise<CachedAsset>
-  get: (rawUrl: string, contentHash?: string) => Promise<CachedAsset | null>
+  clear: (accountId: string) => Promise<void>
+  ensureCached: (opts: EnsureAssetOptions & { accountId: string }) => Promise<CachedAsset>
+  get: (accountId: string, rawUrl: string, contentHash?: string) => Promise<CachedAsset | null>
 }
 
 function normalizeAssetKey(rawUrl: string, contentHash?: string): string {
@@ -92,8 +93,69 @@ function resolveBackendAssetUrl(rawUrl: string, baseUrl?: null | string): string
   return `${baseUrl}${pathname}${search}`
 }
 
-export function createAssetDiskCache({ defaultFetchFn, spiritagentHome }: AssetDiskCacheOptions): AssetDiskCache {
-  const cacheDir = path.resolve(spiritagentHome, 'cache', 'assets')
+export function createAssetDiskCache({
+  defaultFetchFn,
+  initialAccountId,
+  spiritagentHome
+}: AssetDiskCacheOptions): AssetDiskCache {
+  const root = path.resolve(spiritagentHome, 'cache', 'assets')
+  const accounts = new Map<string, ReturnType<typeof createAccountAssetCache>>()
+  let migration: Promise<void> | null = null
+
+  // 原平铺缓存只归属启动时已选账户；迁移后不再按旧目录回退，避免跨账户命中。
+  async function migrateLegacyCache(): Promise<void> {
+    if (!initialAccountId || !/^[a-f0-9]{64}$/.test(initialAccountId)) {
+      return
+    }
+
+    let entries
+
+    try {
+      entries = await fsp.readdir(root, { withFileTypes: true })
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        return
+      }
+
+      throw error
+    }
+
+    const files = entries.filter(entry => entry.isFile())
+
+    if (files.length > 0) {
+      const target = path.join(root, initialAccountId)
+      await fsp.mkdir(target, { recursive: true })
+
+      for (const file of files) {
+        await fsp.rename(path.join(root, file.name), path.join(target, file.name))
+      }
+    }
+  }
+
+  async function forAccount(accountId: string) {
+    if (!/^[a-f0-9]{64}$/.test(accountId)) {
+      throw new Error('Invalid asset cache account')
+    }
+
+    await (migration ??= migrateLegacyCache())
+    let cache = accounts.get(accountId)
+
+    if (!cache) {
+      cache = createAccountAssetCache(path.join(root, accountId), defaultFetchFn)
+      accounts.set(accountId, cache)
+    }
+
+    return cache
+  }
+
+  return {
+    clear: async accountId => (await forAccount(accountId)).clear(),
+    ensureCached: async opts => (await forAccount(opts.accountId)).ensureCached(opts),
+    get: async (accountId, rawUrl, contentHash) => (await forAccount(accountId)).get(rawUrl, contentHash)
+  }
+}
+
+function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globalThis.fetch) {
   const inFlightDownloads = new Map<string, { controller: AbortController; promise: Promise<CachedAsset> }>()
   let clearing: Promise<void> | null = null
   let epoch = 0

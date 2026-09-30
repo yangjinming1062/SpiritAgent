@@ -1,4 +1,4 @@
-/** 动作目录 store：水合激活包 catalog、解析展示 URL 与 clip 查找；本地快照先恢复再网络校准，失败保留已有目录，登出清空。 */
+/** 动作目录 store：水合激活包 catalog、解析展示 URL 与 clip 查找；账户快照先恢复再网络校准，失败保留已有目录。 */
 
 import { atom } from 'nanostores'
 
@@ -359,30 +359,26 @@ function restoreCachedActionCatalog(): void {
   }
 }
 
-async function resolveUrl(rawUrl: string, opts?: { cacheOnly?: boolean }): Promise<string | null> {
-  const url = rawUrl.startsWith('companion-assets/')
+function assetUrl(rawUrl: string): string {
+  return rawUrl.startsWith('companion-assets/')
     ? `/api/companion/asset/${rawUrl.slice('companion-assets/'.length)}`
     : rawUrl
+}
 
-  if (!opts?.cacheOnly) {
-    try {
-      const cached = await window.spiritagent.apiAsset({ cacheOnly: true, url })
-
-      if (cached) {
-        return cached
-      }
-    } catch {
-      // 落回 preferCache。
-    }
-  }
-
+async function resolveUrl(rawUrl: string, opts?: { cacheOnly?: boolean }): Promise<string | null> {
   try {
-    return await window.spiritagent.apiAsset({ cacheOnly: opts?.cacheOnly, preferCache: true, url })
+    return await window.spiritagent.apiAsset({ cacheOnly: opts?.cacheOnly, preferCache: true, url: assetUrl(rawUrl) })
   } catch (err) {
     log.warn('action-store', 'asset resolve failed', err)
 
     return null
   }
+}
+
+async function readJsonAsset(rawUrl: string): Promise<unknown> {
+  const buffer = await window.spiritagent.apiAssetBuffer({ preferCache: true, url: assetUrl(rawUrl) })
+
+  return JSON.parse(new TextDecoder().decode(buffer))
 }
 
 export async function hydrateActionCatalog(refresh = false): Promise<void> {
@@ -458,26 +454,13 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
         return
       }
 
-      const localUrl = await resolveUrl(manifestUrl)
+      const manifest = await readJsonAsset(manifestUrl)
 
       if (epoch !== currentClearEpoch() || revision !== hydrationRevision) {
         return
       }
 
-      if (!localUrl) {
-        if (!$actionCatalog.get()) {
-          $actionCatalogStatus.set('unavailable')
-        }
-
-        return
-      }
-
-      // localUrl 是 apiAsset 桥返回的 data URL，非后端相对路径。
-      // eslint-disable-next-line no-restricted-syntax
-      const resp = await fetch(localUrl)
-      const manifest: unknown = await resp.json()
-
-      if (!resp.ok || !isActionCatalogManifest(manifest)) {
+      if (!isActionCatalogManifest(manifest)) {
         log.warn('action-store', 'invalid catalog manifest')
 
         if (!$actionCatalog.get()) {
@@ -565,7 +548,12 @@ export async function resolveActionClipUrl(
     return cached
   }
 
+  const epoch = currentClearEpoch()
   const url = await resolveUrl(clip.video_ref)
+
+  if (epoch !== currentClearEpoch()) {
+    return null
+  }
 
   if (url) {
     catalog.clipUrls.set(key, url)
@@ -581,7 +569,7 @@ export interface ActionHitmask {
   readonly frames: readonly (readonly number[])[]
 }
 
-const hitmaskCache = new Map<string, ActionHitmask | null>()
+const hitmaskCache = new Map<string, Promise<ActionHitmask | null>>()
 
 registerStorageClearHandler(() => {
   hitmaskCache.clear()
@@ -621,39 +609,31 @@ export async function resolveHitmask(clip: ActionClipEntry): Promise<ActionHitma
     return null
   }
 
-  if (hitmaskCache.has(clip.hitmask_ref)) {
-    return hitmaskCache.get(clip.hitmask_ref) ?? null
+  const ref = clip.hitmask_ref
+  const cached = hitmaskCache.get(ref)
+
+  if (cached) {
+    return cached
   }
 
-  try {
-    const localUrl = await resolveUrl(clip.hitmask_ref)
+  const epoch = currentClearEpoch()
 
-    if (!localUrl) {
-      hitmaskCache.set(clip.hitmask_ref, null)
+  const load = (async () => {
+    try {
+      const raw = await readJsonAsset(ref)
+
+      return epoch === currentClearEpoch() ? parseHitmask(raw, clip) : null
+    } catch (err) {
+      log.warn('action-store', 'hitmask resolve failed', err)
 
       return null
     }
+  })()
 
-    // 本地资产 URL（apiAsset 桥产物），非后端相对路径。
-    // eslint-disable-next-line no-restricted-syntax
-    const resp = await fetch(localUrl)
-    const hitmask = parseHitmask(await resp.json(), clip)
+  // 在途请求与结果共用缓存；清理后旧请求不会重新写入。
+  hitmaskCache.set(ref, load)
 
-    if (!hitmask) {
-      hitmaskCache.set(clip.hitmask_ref, null)
-
-      return null
-    }
-
-    hitmaskCache.set(clip.hitmask_ref, hitmask)
-
-    return hitmask
-  } catch (err) {
-    log.warn('action-store', 'hitmask resolve failed', err)
-    hitmaskCache.set(clip.hitmask_ref, null)
-
-    return null
-  }
+  return load
 }
 
 // 模块加载即恢复快照，不等窗口水合。

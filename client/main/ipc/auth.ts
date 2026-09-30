@@ -23,7 +23,7 @@ interface AuthBroadcasterDeps {
 export interface AuthBroadcaster {
   /** 首次调用会懒建会话并触发凭据恢复；已有 token 时自动启动 Runner。 */
   autoStartBridgeIfSignedIn: () => void
-  broadcastAuthChanged: (snapshot: null | SessionSnapshotPort, clearAccountCache?: boolean) => Promise<void>
+  broadcastAuthChanged: (snapshot: null | SessionSnapshotPort, removedAccountId?: string) => Promise<void>
   /** 会话恢复回调：直接广播，不进鉴权操作队列；广播后仍是当前会话才自动启动 Runner。 */
   onSessionRestored: (snapshot: null | SessionSnapshotPort) => void
 }
@@ -35,7 +35,7 @@ export function createAuthBroadcaster(deps: AuthBroadcasterDeps): AuthBroadcaste
     return deps.ensureBackendSession().getSession()?.sessionId === snapshot.sessionId
   }
 
-  async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort, clearAccountCache = false): Promise<void> {
+  async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort, removedAccountId?: string): Promise<void> {
     deps.rebuildTrayMenu()
 
     const authenticated = Boolean(snapshot?.hasToken)
@@ -54,7 +54,7 @@ export function createAuthBroadcaster(deps: AuthBroadcasterDeps): AuthBroadcaste
 
     const payload: DesktopAuthBroadcast = {
       authenticated,
-      clearAccountCache,
+      removedAccountId,
       snapshot: authSnapshot
     }
 
@@ -103,7 +103,7 @@ export function createAuthBroadcaster(deps: AuthBroadcasterDeps): AuthBroadcaste
 interface AuthIpcDeps {
   autoStartBridge: () => void
   autoStopBridge: () => Promise<void>
-  broadcastAuthChanged: (session: null | SessionSnapshotPort, clearAccountCache?: boolean) => Promise<void>
+  broadcastAuthChanged: (session: null | SessionSnapshotPort, removedAccountId?: string) => Promise<void>
   buildClientContext: () => { client_context?: unknown }
   ensureBackendSession: () => BackendSessionPort
   getSessionAfterRestore: () => Promise<null | SessionSnapshotPort>
@@ -116,11 +116,11 @@ interface AuthIpcDeps {
 }
 
 export function registerAuthIpc({
-  clearLocalAssetCaches,
+  clearAccountCaches,
   deps,
   ipcMain
 }: {
-  clearLocalAssetCaches: () => Promise<void>
+  clearAccountCaches: (accountId: string) => Promise<void>
   deps: AuthIpcDeps
   ipcMain: IpcMain
 }): {
@@ -139,11 +139,10 @@ export function registerAuthIpc({
   async function publishChange(
     previous: null | SessionSnapshotPort,
     next: null | SessionSnapshotPort,
-    options: { cacheAction?: 'clear' | 'retain'; selectedAccountId?: null | string } = {}
+    options: { removedAccountId?: string; selectedAccountId?: null | string } = {}
   ): Promise<void> {
     const previousAccountId = previous?.accountId ?? options.selectedAccountId ?? null
-    const changed = previousAccountId !== next?.accountId
-    const clearAccountCache = options.cacheAction === 'clear' || (changed && options.cacheAction !== 'retain')
+    const changed = previousAccountId !== (next?.accountId ?? null)
 
     if (next?.baseUrl && !(await writeStoredBackendUrl(deps.spiritagentHome, next.baseUrl))) {
       deps.log('[auth] saving backend URL to desktop-config.json failed')
@@ -151,18 +150,10 @@ export function registerAuthIpc({
 
     deps.resetBackendCache()
 
-    if (clearAccountCache) {
-      try {
-        await clearLocalAssetCaches()
-      } catch (error) {
-        deps.log(`[auth] cache cleanup failed: ${errorMessage(error)}`)
-      }
-    }
-
     deps.rebuildTrayMenu()
 
     try {
-      await deps.broadcastAuthChanged(next, clearAccountCache)
+      await deps.broadcastAuthChanged(next, options.removedAccountId)
     } finally {
       if (changed) {
         try {
@@ -207,10 +198,15 @@ export function registerAuthIpc({
       const next = session.getSession()
       const selectedAccountAfter = session.getSelectedAccountId()
 
-      if (previous?.accountId !== next?.accountId || selectedAccountId !== selectedAccountAfter) {
-        await publishChange(previous, next, { selectedAccountId })
-      } else {
-        deps.rebuildTrayMenu()
+      try {
+        await clearAccountCaches(accountId)
+      } finally {
+        // 凭据已移除：即使缓存删除失败，窗口和 Runner 也必须离开旧账户。
+        if (previous?.accountId !== next?.accountId || selectedAccountId !== selectedAccountAfter) {
+          await publishChange(previous, next, { removedAccountId: accountId, selectedAccountId })
+        } else {
+          await deps.broadcastAuthChanged(next, accountId)
+        }
       }
     })
   }
@@ -246,7 +242,7 @@ export function registerAuthIpc({
         return next
       } catch (error) {
         if (previous && !session.getSession()) {
-          await publishChange(previous, null, { cacheAction: 'retain' })
+          await publishChange(previous, null)
         }
 
         throw error
@@ -272,7 +268,7 @@ export function registerAuthIpc({
       const result = await session.logout(expectedSessionId)
 
       if (!result.ignored || (reason === 'expired' && !session.getSession())) {
-        await publishChange(previous, null, { cacheAction: reason === 'expired' ? 'retain' : 'clear' })
+        await publishChange(previous, null)
       }
 
       return result

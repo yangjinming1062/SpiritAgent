@@ -252,6 +252,7 @@ export interface DesktopShortcutsSetPayload {
 
 // 云端配置水合广播：只携带渲染层需要回写的伙伴偏好与语言。主题与快捷键由主进程各自的专用同步通道处理。
 export interface DesktopPrefsHydrated {
+  accountId: string | null
   companion: Record<string, unknown>
   // 顶层原始值同步键（PROTOCOL「配置所有权与云同步」），从 user_settings.language 透传过来；null/undefined 表示云端未设置（回落 DEFAULT_LOCALE）。
   language?: null | string
@@ -277,8 +278,8 @@ export interface DesktopLogoutPayload {
 
 export interface DesktopAuthBroadcast {
   authenticated: boolean
-  /** 主进程确认主动登出或换号后清理旧账户缓存；会话过期为 false。 */
-  clearAccountCache: boolean
+  /** 仅明确移除账户时携带；各窗口删除该账户的持久缓存。 */
+  removedAccountId?: string
   snapshot: DesktopAuthSnapshot | null
 }
 

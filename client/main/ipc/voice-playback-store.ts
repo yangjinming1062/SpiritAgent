@@ -52,8 +52,8 @@ export function createVoicePlaybackStore({ spiritagentHome }: { spiritagentHome:
   const root = path.join(spiritagentHome, 'cache', 'voice-playback')
   const queues = new Map<string, Promise<unknown>>()
   const snapshots = new Map<string, VoicePlaybackSnapshot>()
-  let epoch = 0
-  let clearing: Promise<void> = Promise.resolve()
+  const epochs = new Map<string, number>()
+  const clearing = new Map<string, Promise<void>>()
 
   async function transact(
     access: PlaybackAccess,
@@ -66,9 +66,9 @@ export function createVoicePlaybackStore({ spiritagentHome }: { spiritagentHome:
     }
 
     const key = `${accountId}:${sessionId}`
-    const generation = epoch
-    const current = (): boolean => generation === epoch && isCurrent()
-    const previous = Promise.all([queues.get(key), clearing])
+    const generation = epochs.get(accountId)
+    const current = (): boolean => generation === epochs.get(accountId) && isCurrent()
+    const previous = Promise.all([queues.get(key), clearing.get(accountId)])
     const file = path.join(root, accountId, `${sessionId}.json`)
 
     const task = previous.then(async () => {
@@ -160,17 +160,30 @@ export function createVoicePlaybackStore({ spiritagentHome }: { spiritagentHome:
       }))
     },
     flush: async (): Promise<void> => {
-      await Promise.all([...queues.values(), clearing])
+      await Promise.all([...queues.values(), ...clearing.values()])
     },
-    clear: (): Promise<void> => {
-      epoch++
-      snapshots.clear()
-      const pending = [...queues.values(), clearing]
-      clearing = Promise.allSettled(pending).then(async () => {
-        await fsp.rm(root, { force: true, recursive: true })
-      })
+    clear: (accountId: string): Promise<void> => {
+      if (!/^[a-f0-9]{64}$/.test(accountId)) {
+        return Promise.reject(new Error('Invalid voice playback account'))
+      }
 
-      return clearing
+      epochs.set(accountId, (epochs.get(accountId) ?? 0) + 1)
+
+      for (const key of snapshots.keys()) {
+        if (key.startsWith(`${accountId}:`)) {
+          snapshots.delete(key)
+        }
+      }
+
+      const pending = [...queues].filter(([key]) => key.startsWith(`${accountId}:`)).map(([, task]) => task)
+
+      const task = Promise.allSettled([...pending, clearing.get(accountId)]).then(() =>
+        fsp.rm(path.join(root, accountId), { force: true, recursive: true })
+      )
+
+      clearing.set(accountId, task)
+
+      return task
     }
   }
 }

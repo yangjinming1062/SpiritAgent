@@ -195,12 +195,22 @@ function mergeIncrementalHistory(
     return null
   }
 
-  const seen = new Set(state.messages.map(m => m.id).filter((id): id is number => typeof id === 'number'))
-  const appended = incoming.filter(m => typeof m.id !== 'number' || !seen.has(m.id))
+  const seen = new Set(state.messages.map(m => m.id))
 
-  if (appended.length > 0) {
-    state.messages = [...state.messages, ...cloneMessages(appended)]
-    state.lastMessageId = lastIdFrom(state.messages)
+  for (const message of incoming) {
+    if (typeof message.id === 'number') {
+      if (seen.has(message.id)) {
+        continue
+      }
+
+      seen.add(message.id)
+
+      if (Number.isFinite(message.id) && (state.lastMessageId === null || message.id > state.lastMessageId)) {
+        state.lastMessageId = message.id
+      }
+    }
+
+    state.messages.push({ ...message })
   }
 
   if (typeof opts?.currentSeq === 'number') {
@@ -235,6 +245,8 @@ export async function syncSessionHistory(params: {
   kind: 'full' | 'incremental' | 'noop'
   messages: SessionMessage[]
 }> {
+  const epoch = currentClearEpoch()
+  const authSessionId = currentAuthSessionId()
   const local = memoryBySession.get(params.sessionId)
   let invalidation = invalidations.get(params.sessionId)
   const body: { after_id?: number; last_seq?: number } = {}
@@ -254,8 +266,16 @@ export async function syncSessionHistory(params: {
 
   let res = await params.request(body)
 
-  // 语音和媒体更新会修改旧行，after_id 无法取回；若更新撞上在途快照，重新获取全量。连续更新时保留当前界面并交由调用方重试，不把过期快照水合回去。
-  for (let retry = 0; invalidations.get(params.sessionId) !== invalidation; retry++) {
+  // 每次返回先核对账户；语音或媒体更新撞上在途快照时，有界重取全量。
+  for (let retry = 0; ; retry++) {
+    if (epoch !== currentClearEpoch() || currentAuthSessionId() !== authSessionId) {
+      throw new SessionHistoryChangedError()
+    }
+
+    if (invalidations.get(params.sessionId) === invalidation) {
+      break
+    }
+
     if (retry >= 2) {
       throw new SessionHistoryChangedError()
     }
@@ -398,6 +418,6 @@ export function forgetSessionHistory(sessionId: string): void {
 }
 
 registerStorageClearHandler(() => {
-  // 磁盘清理由主进程登出/换号的 clearLocalAssetCaches 统一负责，这里只清渲染层状态。
+  // 换号只释放渲染层状态；磁盘快照由主进程在移除账户时删除。
   clearSessionHistoryMemory()
 })

@@ -3,7 +3,12 @@
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
-import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
+import {
+  currentClearEpoch,
+  definePersistedAtom,
+  registerStorageClearHandler,
+  registerStorageRestoreHandler
+} from '@/shared/lib/storage'
 
 import { resolvePortraitUrl } from './avatar-image'
 
@@ -212,13 +217,17 @@ registerStorageClearHandler(() => {
   clearSeeds(null)
 })
 
-if (initialPersisted.assetUrl || initialPersisted.fullbodySeedUrl) {
-  void publishResolved(
-    initialPersisted.avatarId,
-    { assetUrl: initialPersisted.assetUrl, fullbodySeedUrl: initialPersisted.fullbodySeedUrl },
-    { cacheOnly: true, merge: true }
-  )
+function restoreCachedSeeds(): void {
+  const saved = seedsPersisted.get()
+  $avatarSeeds.set({ ...EMPTY_SEEDS, avatarId: saved.avatarId })
+
+  if (saved.assetUrl || saved.fullbodySeedUrl) {
+    void publishResolved(saved.avatarId, saved, { cacheOnly: true, merge: true })
+  }
 }
+
+registerStorageRestoreHandler(restoreCachedSeeds)
+restoreCachedSeeds()
 
 /** 形象切换时由 portrait-store 调用，清空上一形象的种子缓存。 */
 export function clearAvatarSeeds(avatarId: number | null = null): void {

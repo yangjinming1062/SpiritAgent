@@ -6,6 +6,7 @@ import {
   persistString,
   registerCompanionStorageKey,
   registerStorageClearHandler,
+  registerStorageRestoreHandler,
   storedString
 } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
@@ -22,7 +23,7 @@ import type {
   SessionRuntimeInfo
 } from '@/shared/types/spiritagent'
 
-import { chatDisplayText } from './chat-display-text'
+import { chatDisplayText, stripAttachmentDirectives } from './chat-display-text'
 import { conversationVoiceSink } from './voice-link'
 import { removeVoicePlayback } from './voice-playback'
 
@@ -161,11 +162,7 @@ export function startEditingMessage(messageId: string): void {
   $chatEditDraft.set({
     sessionId,
     sourceMessageId: message.backendMessageId,
-    text: (body.editableText ?? body.text)
-      .split('\n')
-      .filter(line => !/^@(file|folder):/i.test(line.trim()))
-      .join('\n')
-      .trim()
+    text: stripAttachmentDirectives(body.editableText ?? body.text).trim()
   })
 }
 
@@ -393,12 +390,8 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
 
     const companionBubbles = m.role === 'assistant' && m.content_type === 'companion_reply' ? m.bubbles : undefined
 
-    const textContent =
-      m.content_type === 'companion_reply'
-        ? ''
-        : m.role === 'assistant'
-          ? chatDisplayText(extractText(m))
-          : extractText(m)
+    const { text, attachments } = extractMessageContent(m)
+    const textContent = m.role === 'assistant' ? chatDisplayText(text) : text
 
     const reasoningContent = typeof m.reasoning === 'string' ? m.reasoning : ''
 
@@ -458,7 +451,7 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
         tools: m.tool_name ? [m.tool_name] : undefined,
         streaming: false,
         queued: m.role === 'user' && m.queued,
-        ...(m.role === 'user' && index === 0 ? omitUndefined(extractUserAttachments(m)) : {}),
+        attachments: index === 0 ? attachments : undefined,
         ...(!companionBubbles && index === segments.length - 1 && m.media?.length ? { media: m.media } : {})
       }
     }
@@ -483,13 +476,14 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
   setSessionContextUsage({ totalTokens: approxTokens })
 }
 
-function extractText(m: SessionMessage): string {
-  if (typeof m.content !== 'string') {
-    return ''
+// 多模态正文和用户附件共用一次解析；附件只交给该消息的首个气泡。
+function extractMessageContent(m: SessionMessage): Pick<ChatMessageBody, 'text' | 'attachments'> {
+  if (m.content_type === 'companion_reply' || typeof m.content !== 'string') {
+    return { text: '' }
   }
 
   if (m.content_type !== 'multimodal_v1') {
-    return m.content
+    return { text: m.content }
   }
 
   let parsed: unknown
@@ -497,60 +491,39 @@ function extractText(m: SessionMessage): string {
   try {
     parsed = JSON.parse(m.content)
   } catch {
-    return m.content
+    return { text: m.content }
   }
 
   if (!Array.isArray(parsed)) {
-    return m.content.trim()
+    return { text: m.content.trim() }
   }
 
-  return parsed
-    .filter(
-      (p): p is { type: 'input_text'; text: string } =>
-        typeof p === 'object' && p !== null && p.type === 'input_text' && typeof p.text === 'string'
-    )
-    .map(p => p.text)
-    .join('\n')
-    .trim()
-}
+  const parts: unknown[] = parsed
+  const texts: string[] = []
+  const attachments: ChatAttachment[] = []
 
-// 多模态用户行的 input_image/input_video parts 还原为类型化附件供气泡渲染；清理后的视频只剩文本 part，落不进附件列表。
-function extractUserAttachments(m: SessionMessage): ChatAttachment[] | undefined {
-  if (m.content_type !== 'multimodal_v1' || typeof m.content !== 'string') {
-    return undefined
+  for (const part of parts) {
+    if (!part || typeof part !== 'object' || !('type' in part)) {
+      continue
+    }
+
+    if (part.type === 'input_text' && 'text' in part && typeof part.text === 'string') {
+      texts.push(part.text)
+    } else if (m.role === 'user') {
+      if (part.type === 'input_image' && 'image_url' in part && typeof part.image_url === 'string' && part.image_url) {
+        attachments.push({ type: 'image', url: part.image_url })
+      } else if (
+        part.type === 'input_video' &&
+        'video_url' in part &&
+        typeof part.video_url === 'string' &&
+        part.video_url
+      ) {
+        attachments.push({ type: 'video', url: part.video_url })
+      }
+    }
   }
 
-  let parsed: unknown
-
-  try {
-    parsed = JSON.parse(m.content)
-  } catch {
-    return undefined
-  }
-
-  if (!Array.isArray(parsed)) {
-    return undefined
-  }
-
-  const attachments = parsed
-    .filter(
-      (p): p is { type?: string; image_url?: unknown; video_url?: unknown } =>
-        typeof p === 'object' &&
-        p !== null &&
-        ((p as { type?: unknown }).type === 'input_image' || (p as { type?: unknown }).type === 'input_video')
-    )
-    .map(p =>
-      p.type === 'input_video'
-        ? { type: 'video' as const, url: typeof p.video_url === 'string' ? p.video_url : '' }
-        : { type: 'image' as const, url: typeof p.image_url === 'string' ? p.image_url : '' }
-    )
-    .filter(a => a.url.length > 0)
-
-  return attachments.length ? attachments : undefined
-}
-
-function omitUndefined(attachments: ChatAttachment[] | undefined): { attachments?: ChatAttachment[] } {
-  return attachments ? { attachments } : {}
+  return { text: texts.join('\n').trim(), attachments: attachments.length ? attachments : undefined }
 }
 
 export function setProactiveBubble(state: ProactiveBubbleState | null, lingerMs?: number): void {
@@ -642,39 +615,32 @@ export function bindTrailingUserMessageIds(ids: number[]): void {
   }
 
   const list = $chatMessageList.get()
-
-  // 编辑事件已经水合了修订行；随后重放的落库通知不属于本窗口待确认的提交。
-  if (validIds.every(id => list.some(item => item.backendMessageId === id))) {
-    return
-  }
-
+  const missingIds = new Set(validIds)
   const unboundIndexes: number[] = []
 
-  for (let i = list.length - 1; i >= 0; i--) {
+  for (let i = 0; i < list.length; i++) {
     const item = list[i]
 
-    if (item?.role === 'user' && item.backendMessageId === undefined && submittedBubbleIds.has(item.id)) {
+    if (item.backendMessageId !== undefined) {
+      missingIds.delete(item.backendMessageId)
+    } else if (item.role === 'user' && submittedBubbleIds.has(item.id)) {
       unboundIndexes.push(i)
     }
   }
 
-  if (unboundIndexes.length === 0) {
+  // 编辑已水合的落库通知不属于本窗口待确认的提交。
+  if (missingIds.size === 0 || unboundIndexes.length === 0) {
     return
   }
 
-  unboundIndexes.reverse()
   const next = list.slice()
-  let changed = false
 
   for (const [index, idx] of unboundIndexes.entries()) {
     const messageId = validIds[index] ?? validIds[validIds.length - 1]
     next[idx] = { ...next[idx], backendMessageId: messageId }
-    changed = true
   }
 
-  if (changed) {
-    $chatMessageList.set(next)
-  }
+  $chatMessageList.set(next)
 }
 
 export function bindTrailingAssistantMessageId(messageId: number): void {
@@ -775,6 +741,11 @@ registerStorageClearHandler(() => {
     clearTimeout(bubbleTimer)
     bubbleTimer = null
   }
+})
+
+registerStorageRestoreHandler(() => {
+  $chatSessionId.set(storedString(CHAT_SESSION_ID_KEY))
+  $companionSessionId.set(storedString(COMPANION_SESSION_ID_KEY))
 })
 
 export function setTurnHadBubbleBreak(v: boolean): void {

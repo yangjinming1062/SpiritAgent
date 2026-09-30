@@ -308,43 +308,6 @@ registerOnboardingAudioIpc({
   mimeTypeForPath
 })
 
-const assetDiskCache = createAssetDiskCache({
-  defaultFetchFn: electronFetch,
-  spiritagentHome: SPIRITAGENT_HOME
-})
-
-const sessionHistoryDiskCache = createSessionHistoryDiskCache({
-  spiritagentHome: SPIRITAGENT_HOME
-})
-
-const voicePlaybackStore = createVoicePlaybackStore({ spiritagentHome: SPIRITAGENT_HOME })
-
-registerConnectionIpc({
-  assetDiskCache,
-  defaultFetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
-  ensureBackend,
-  fetchImpl: electronFetch,
-  fetchJson: backendHttp.fetchJson,
-  getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
-  getMainWindow: () => mainWindow,
-  ipcMain,
-  mintWsTicket: backendHttp.mintWsTicket,
-  resolvePathTimeoutMs
-})
-registerGatewayIpc({
-  getMainWindow: () => mainWindow,
-  ipcMain,
-  rememberLog: chunk => rememberLog(chunk)
-})
-registerMediaIpc({
-  spiritagentHome: SPIRITAGENT_HOME,
-  ensureBackend,
-  fetchImpl: electronFetch,
-  getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
-  ipcMain,
-  log: chunk => rememberLog(chunk)
-})
-
 // 会话懒创建与 token 重接在 session-runtime，Runner 桥的持有、自动启停与 IPC 在 runner host；登录恢复经 authBroadcaster 广播后接回 host.autoStart。onRestored 异步回调里才调用，先占位避免 session/runtime 互相前置。
 let runnerHost: ReturnType<typeof createRunnerHost>
 
@@ -366,6 +329,45 @@ const sessionRuntime = createSessionRuntime(
   },
   buildClientContext
 )
+
+const assetDiskCache = createAssetDiskCache({
+  defaultFetchFn: electronFetch,
+  initialAccountId: sessionRuntime.ensureBackendSession().getSelectedAccountId(),
+  spiritagentHome: SPIRITAGENT_HOME
+})
+
+const sessionHistoryDiskCache = createSessionHistoryDiskCache({
+  spiritagentHome: SPIRITAGENT_HOME
+})
+
+const voicePlaybackStore = createVoicePlaybackStore({ spiritagentHome: SPIRITAGENT_HOME })
+
+registerConnectionIpc({
+  assetDiskCache,
+  defaultFetchTimeoutMs: DEFAULT_FETCH_TIMEOUT_MS,
+  ensureBackend,
+  fetchImpl: electronFetch,
+  fetchJson: backendHttp.fetchJson,
+  getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
+  getSelectedAccountId: () => sessionRuntime.ensureBackendSession().getSelectedAccountId(),
+  getMainWindow: () => mainWindow,
+  ipcMain,
+  mintWsTicket: backendHttp.mintWsTicket,
+  resolvePathTimeoutMs
+})
+registerGatewayIpc({
+  getMainWindow: () => mainWindow,
+  ipcMain,
+  rememberLog: chunk => rememberLog(chunk)
+})
+registerMediaIpc({
+  spiritagentHome: SPIRITAGENT_HOME,
+  ensureBackend,
+  fetchImpl: electronFetch,
+  getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
+  ipcMain,
+  log: chunk => rememberLog(chunk)
+})
 
 runnerHost = createRunnerHost({
   createReverseRpc,
@@ -398,8 +400,12 @@ const autoUpdater = createAutoUpdater({
 })
 
 const authActions = registerAuthIpc({
-  clearLocalAssetCaches: async () => {
-    await Promise.all([assetDiskCache.clear(), sessionHistoryDiskCache.clear(), voicePlaybackStore.clear()])
+  clearAccountCaches: async accountId => {
+    await Promise.all([
+      assetDiskCache.clear(accountId),
+      sessionHistoryDiskCache.clear(accountId),
+      voicePlaybackStore.clear(accountId)
+    ])
   },
   deps: {
     autoStartBridge: () => runnerHost.autoStart(),

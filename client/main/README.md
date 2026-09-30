@@ -87,7 +87,7 @@
 资产入口共用下载与鉴权处理，缓存返回字节和 MIME；仅 `apiAsset` 在返回时编码 data URL，`apiAssetBuffer` 直接返回字节。
 
 收听记录由 [voice-playback.ts](ipc/voice-playback.ts) 校验鉴权会话与载荷，[voice-playback-store.ts](ipc/voice-playback-store.ts) 串行原子写盘并单向合并已听状态；跨窗口广播仅携带当前账户的记录，清理代次阻断旧写入。记录独立于历史快照，缓存生命周期见 [Client](../README.md#资产与历史缓存)。
-清理资产缓存先取消并等待旧下载与写入，再移除目录；新下载等待清理结束。下载超时覆盖响应体读取。
+移除账户时先取消并等待该账户的下载与写入，再删除其目录；同账户新请求等待清理结束，其他账户不受影响。下载超时覆盖响应体读取。
 
 `cacheOnly` 只查询本地缓存，不请求 Backend；资产未命中返回 `null`，由调用方按缺少本地副本处理。
 

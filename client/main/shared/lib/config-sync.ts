@@ -62,7 +62,10 @@ function objectSection(config: Record<string, unknown>, section: string): Record
 
 /** 从配置镜像构造渲染层实际消费的 prefs-hydrated 载荷。 */
 export function buildPrefsHydratedFromConfig(config: Record<string, unknown>): DesktopPrefsHydrated {
+  const accountId = objectSection(config, 'sync').account_id
+
   return {
+    accountId: typeof accountId === 'string' ? accountId : null,
     companion: objectSection(config, 'companion'),
     language: typeof config.language === 'string' && config.language.length > 0 ? config.language : null
   }

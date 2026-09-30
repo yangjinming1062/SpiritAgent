@@ -1,14 +1,18 @@
+import type { DesktopPrefsHydrated } from '@ipc/contracts'
 import { atom, onMount, type WritableAtom } from 'nanostores'
 
 import { hydrateManualReduceTransparency } from '@/shared/lib/apply-no-blur'
 import {
+  accountStorageKey,
   persistBoolean,
   persistString,
   registerCompanionStorageKey,
   registerStorageClearHandler,
+  registerStorageRestoreHandler,
   storedBoolean,
   storedString
 } from '@/shared/lib/storage'
+import { $auth } from '@/shared/store/auth'
 
 import { setDisturbanceTier, syncDisturbanceFromStorage } from './companion-store'
 
@@ -32,7 +36,7 @@ export const $responsePreference = atom<ResponsePreference>(
 // 音色与回应偏好在生活空间设置，轻语共用同一组云端偏好。各窗口内存独立，借 storage 事件把其他窗口的写入热同步进 atom。
 onMount($companionVoiceId, () => {
   const refresh = (event: StorageEvent): void => {
-    if (event.key === COMPANION_VOICE_ID_STORAGE_KEY) {
+    if (event.key === accountStorageKey(COMPANION_VOICE_ID_STORAGE_KEY)) {
       $companionVoiceId.set(event.newValue ?? '')
     }
   }
@@ -58,6 +62,12 @@ registerStorageClearHandler(() => {
   $companionVoiceId.set('')
   $responsePreference.set('text')
   $autoplayVoice.set(true)
+})
+
+registerStorageRestoreHandler(() => {
+  $companionVoiceId.set(storedString(COMPANION_VOICE_ID_STORAGE_KEY) ?? '')
+  $responsePreference.set(storedString(RESPONSE_PREFERENCE_STORAGE_KEY) === 'voice' ? 'voice' : 'text')
+  $autoplayVoice.set(storedBoolean(AUTOPLAY_VOICE_STORAGE_KEY, true))
 })
 
 interface BooleanPref {
@@ -101,11 +111,11 @@ export function initCompanionPrefsSync(): () => void {
   }
 
   const onStorage = (event: StorageEvent): void => {
-    if (event.key === AUTOPLAY_VOICE_STORAGE_KEY || event.key === null) {
+    if (event.key === accountStorageKey(AUTOPLAY_VOICE_STORAGE_KEY) || event.key === null) {
       $autoplayVoice.set(storedBoolean(AUTOPLAY_VOICE_STORAGE_KEY, true))
     }
 
-    if (event.key === RESPONSE_PREFERENCE_STORAGE_KEY || event.key === null) {
+    if (event.key === accountStorageKey(RESPONSE_PREFERENCE_STORAGE_KEY) || event.key === null) {
       refreshResponsePreference()
     }
 
@@ -115,7 +125,18 @@ export function initCompanionPrefsSync(): () => void {
   refreshResponsePreference()
   window.addEventListener('storage', onStorage)
 
-  const unsubscribe = window.spiritagent?.onPrefsHydrated?.(({ companion }) => {
+  let pending: DesktopPrefsHydrated | null = null
+
+  const applyHydrated = (): void => {
+    const auth = $auth.get()
+
+    if (!pending || auth.kind !== 'authenticated' || pending.accountId !== auth.snapshot.accountId) {
+      return
+    }
+
+    const { companion } = pending
+    pending = null
+
     if (typeof companion.autoplay_voice === 'boolean') {
       autoplayVoicePref.set(companion.autoplay_voice)
     }
@@ -155,9 +176,18 @@ export function initCompanionPrefsSync(): () => void {
     if (tier === 'still' || tier === 'normal' || tier === 'autonomous') {
       setDisturbanceTier(tier)
     }
+  }
+
+  // 配置广播可先于鉴权广播到达；等目标账户的本地存储切换完成再应用。
+  const unsubscribeAuth = $auth.listen(applyHydrated)
+
+  const unsubscribe = window.spiritagent?.onPrefsHydrated?.(payload => {
+    pending = payload
+    applyHydrated()
   })
 
   return () => {
+    unsubscribeAuth()
     unsubscribe?.()
     window.removeEventListener('storage', onStorage)
   }

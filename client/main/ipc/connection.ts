@@ -35,6 +35,7 @@ interface ConnectionIpcDeps {
     options?: { body?: unknown; method?: string; timeoutMs?: number }
   ) => Promise<unknown>
   getCurrentAuth: GetCurrentAuth
+  getSelectedAccountId: () => string | null
   getMainWindow: () => BrowserWindow | null | undefined
   ipcMain: IpcMain
   mintWsTicket: (baseUrl: string, token: string) => Promise<string>
@@ -66,6 +67,7 @@ export function registerConnectionIpc({
   fetchImpl = globalThis.fetch,
   fetchJson,
   getCurrentAuth,
+  getSelectedAccountId,
   getMainWindow,
   ipcMain,
   mintWsTicket,
@@ -75,11 +77,36 @@ export function registerConnectionIpc({
 
   async function readAsset(sender: WebContents, request?: AssetRequest): Promise<CachedAsset> {
     const raw = assetUrl(request)
+    const accountId = getSelectedAccountId()
+    const authSessionId = getCurrentAuth()?.sessionId
+
+    const assertCurrentAuth = (): void => {
+      if (getCurrentAuth()?.sessionId !== authSessionId || getSelectedAccountId() !== accountId) {
+        throw new Error('Asset authentication changed while loading')
+      }
+    }
+
+    if (request?.preferCache && accountId) {
+      // 缓存命中无需等待后端就绪，离线启动也能恢复本机资产。
+      const cached = await assetDiskCache.get(accountId, raw, request.contentHash)
+      assertCurrentAuth()
+
+      if (cached) {
+        return cached
+      }
+    }
+
     const connection = await ensureBackend()
+    assertCurrentAuth()
 
     try {
       if (request?.preferCache || isCompanionIdentityAsset(raw, connection.baseUrl)) {
-        return await assetDiskCache.ensureCached({
+        if (!accountId) {
+          throw new Error('An account is required to cache assets')
+        }
+
+        const asset = await assetDiskCache.ensureCached({
+          accountId,
           preferCache: request?.preferCache,
           baseUrl: connection.baseUrl,
           contentHash: request?.contentHash,
@@ -88,6 +115,10 @@ export function registerConnectionIpc({
           timeoutMs: defaultFetchTimeoutMs,
           token: connection.token || undefined
         })
+
+        assertCurrentAuth()
+
+        return asset
       }
 
       // 绝对 URL 只取路径，凭据始终发往当前后端。
@@ -103,8 +134,11 @@ export function registerConnectionIpc({
         throw new HttpError(res.status, `${res.status} ${pathname}: ${text || res.statusText}`)
       }
 
+      const buffer = Buffer.from(await res.arrayBuffer())
+      assertCurrentAuth()
+
       return {
-        buffer: Buffer.from(await res.arrayBuffer()),
+        buffer,
         mime: res.headers.get('content-type') || 'application/octet-stream'
       }
     } catch (error) {
@@ -171,11 +205,15 @@ export function registerConnectionIpc({
   ipcMain.handle(
     IPC.invoke.apiAsset,
     async (event, request?: Parameters<IpcInvokeContract['spiritagent:api:asset']>[0]) => {
+      const accountId = getSelectedAccountId()
+
       const asset = request?.cacheOnly
-        ? await assetDiskCache.get(assetUrl(request), request.contentHash)
+        ? accountId
+          ? await assetDiskCache.get(accountId, assetUrl(request), request.contentHash)
+          : null
         : await readAsset(event.sender, request)
 
-      return asset ? dataUrlFromBuffer(asset.buffer, asset.mime) : null
+      return asset && getSelectedAccountId() === accountId ? dataUrlFromBuffer(asset.buffer, asset.mime) : null
     }
   )
   ipcMain.handle(IPC.invoke.apiAssetBuffer, async (event, request?: AssetRequest) => {

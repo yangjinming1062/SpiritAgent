@@ -4,6 +4,7 @@ import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { safeJsonParse } from '@/shared/lib/safe-json'
 import {
+  accountStorageKey,
   currentClearEpoch,
   registerCompanionStorageKey,
   registerStorageClearHandler,
@@ -136,11 +137,16 @@ function saveHistory(avatarId: number, entries: FullbodyReferenceVersion[]): voi
 
   try {
     const raw = Object.keys(next).length > 0 ? JSON.stringify(next) : null
+    const storageKey = accountStorageKey(FULLBODY_HISTORY_STORAGE_KEY)
+
+    if (!storageKey) {
+      return
+    }
 
     if (raw === null) {
-      window.localStorage.removeItem(FULLBODY_HISTORY_STORAGE_KEY)
+      window.localStorage.removeItem(storageKey)
     } else {
-      window.localStorage.setItem(FULLBODY_HISTORY_STORAGE_KEY, raw)
+      window.localStorage.setItem(storageKey, raw)
     }
   } catch (error) {
     log.warn('fullbody-reference', 'Could not persist history index', error)

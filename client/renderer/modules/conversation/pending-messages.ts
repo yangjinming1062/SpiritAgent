@@ -1,6 +1,6 @@
 import { onMount } from 'nanostores'
 
-import { definePersistedAtom } from '@/shared/lib/storage'
+import { accountStorageKey, definePersistedAtom } from '@/shared/lib/storage'
 
 interface PendingMessage {
   sessionId: string
@@ -22,7 +22,7 @@ export function consumePendingMessages(sessionId: string): void {
 
 onMount(pendingMessages.$atom, () => {
   const refresh = (event: StorageEvent): void => {
-    if (event.key !== 'da.companion.pendingMessages') {
+    if (event.key !== accountStorageKey('da.companion.pendingMessages')) {
       return
     }
 

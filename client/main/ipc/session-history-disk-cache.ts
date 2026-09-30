@@ -5,7 +5,7 @@ import type { SessionHistorySnapshot } from '@ipc/contracts'
 
 // 快照 messages 只保留展示所需的 SessionMessage 形状；主进程不做业务投影。
 export interface SessionHistoryDiskCache {
-  clear: () => Promise<void>
+  clear: (accountId: string) => Promise<void>
   get: (accountId: string, sessionId: string) => Promise<null | SessionHistorySnapshot>
   remove: (accountId: string, sessionId: string) => Promise<void>
   save: (accountId: string, sessionId: string, snapshot: SessionHistorySnapshot) => Promise<void>
@@ -75,7 +75,8 @@ export function createSessionHistoryDiskCache({
 }: SessionHistoryDiskCacheOptions): SessionHistoryDiskCache {
   const cacheRoot = path.resolve(spiritagentHome, 'cache', 'sessions')
   const writeQueues = new Map<string, Promise<void>>()
-  let epoch = 0
+  const epochs = new Map<string, number>()
+  const clearing = new Map<string, Promise<void>>()
 
   function accountDir(accountId: string): string {
     return path.join(cacheRoot, accountId)
@@ -108,10 +109,15 @@ export function createSessionHistoryDiskCache({
       return null
     }
 
+    const epoch = epochs.get(accountId)
+
     try {
+      await clearing.get(accountId)
       const raw = await fsp.readFile(sessionPath(accountId, sessionId), 'utf8')
 
-      return sanitizeSnapshot(JSON.parse(raw) as Partial<SessionHistorySnapshot>)
+      return epoch === epochs.get(accountId)
+        ? sanitizeSnapshot(JSON.parse(raw) as Partial<SessionHistorySnapshot>)
+        : null
     } catch {
       return null
     }
@@ -130,17 +136,17 @@ export function createSessionHistoryDiskCache({
 
     const file = sessionPath(accountId, sessionId)
     const key = `${accountId}:${sessionId}`
-    const saveEpoch = epoch
-    const prev = writeQueues.get(key) ?? Promise.resolve()
+    const saveEpoch = epochs.get(accountId)
+    const prev = Promise.all([writeQueues.get(key), clearing.get(accountId)])
 
     const next = prev.then(async () => {
-      if (saveEpoch !== epoch) {
+      if (saveEpoch !== epochs.get(accountId)) {
         return
       }
 
       await ensureDir(accountDir(accountId))
 
-      if (saveEpoch !== epoch) {
+      if (saveEpoch !== epochs.get(accountId)) {
         return
       }
 
@@ -149,7 +155,7 @@ export function createSessionHistoryDiskCache({
       try {
         await fsp.writeFile(tmp, JSON.stringify(sanitized), 'utf8')
 
-        if (saveEpoch === epoch) {
+        if (saveEpoch === epochs.get(accountId)) {
           await fsp.rename(tmp, file)
         } else {
           await fsp.unlink(tmp).catch(() => {})
@@ -171,21 +177,31 @@ export function createSessionHistoryDiskCache({
 
     // 走同一写入队列：避免在途 save 在 rm 之后落盘，复活已删快照。
     const key = `${accountId}:${sessionId}`
-    const removeEpoch = epoch
-    const prev = writeQueues.get(key) ?? Promise.resolve()
+    const removeEpoch = epochs.get(accountId)
+    const prev = Promise.all([writeQueues.get(key), clearing.get(accountId)])
 
     const next = prev.then(() =>
-      removeEpoch === epoch ? fsp.rm(sessionPath(accountId, sessionId), { force: true }) : undefined
+      removeEpoch === epochs.get(accountId) ? fsp.rm(sessionPath(accountId, sessionId), { force: true }) : undefined
     )
 
     await awaitQueued(key, next)
   }
 
-  async function clear(): Promise<void> {
-    epoch += 1
-    await Promise.allSettled([...writeQueues.values()])
-    writeQueues.clear()
-    await fsp.rm(cacheRoot, { recursive: true, force: true })
+  function clear(accountId: string): Promise<void> {
+    if (!isAccountIdSafe(accountId)) {
+      return Promise.reject(new Error('Invalid history cache account'))
+    }
+
+    epochs.set(accountId, (epochs.get(accountId) ?? 0) + 1)
+    const pending = [...writeQueues].filter(([key]) => key.startsWith(`${accountId}:`)).map(([, task]) => task)
+
+    const task = Promise.allSettled([...pending, clearing.get(accountId)]).then(() =>
+      fsp.rm(accountDir(accountId), { recursive: true, force: true })
+    )
+
+    clearing.set(accountId, task)
+
+    return task
   }
 
   return {

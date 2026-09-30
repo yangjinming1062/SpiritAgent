@@ -36,17 +36,10 @@ async function toggleDisabled({
     return { error: 'invalid enabled', ok: false }
   }
 
-  const current = store.getDisabledSet(section)
-  const wasDisabled = current.has(idValue)
-
-  if (wasDisabled === enabled) {
-    return { ok: true }
-  }
-
+  // 读取与修改都在写锁内，不能按锁外快照跳过排队中的反向操作。
   const result = await store.mutate(config => {
     const slot = (config[section] as { disabled?: unknown } | undefined) ?? {}
-    const list = Array.isArray(slot.disabled) ? slot.disabled : []
-    const next = new Set(list.map(String))
+    const next = store.getDisabledSet(section)
 
     if (enabled) {
       next.delete(idValue)
@@ -55,11 +48,9 @@ async function toggleDisabled({
     }
 
     config[section] = { ...slot, disabled: [...next].sort() }
-
-    return next
   })
 
-  return result.ok ? { ok: true } : { error: (result as { error?: string }).error ?? 'mutate failed', ok: false }
+  return result.ok ? { ok: true } : { error: result.error ?? 'mutate failed', ok: false }
 }
 
 export function registerSkillsIpc({ spiritagentHome, getRunnerBridge, ipcMain }: SkillsIpcDeps): void {

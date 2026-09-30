@@ -1,7 +1,7 @@
 import type { DesktopActivatePayload, DesktopAuthBroadcast, DesktopAuthSnapshot } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
-import { clearCompanionStorage, persistString, storedString } from '@/shared/lib/storage'
+import { setStorageAccount } from '@/shared/lib/storage'
 
 import { tearDownPrimaryGateway } from './gateway'
 
@@ -13,7 +13,6 @@ type AuthState =
 
 export const $auth = atom<AuthState>({ kind: 'pending' })
 let broadcastQueue: Promise<void> = Promise.resolve()
-const ACCOUNT_CACHE_OWNER_KEY = 'da.auth.accountCacheOwner'
 
 function isExpiredSnapshot(snapshot: DesktopAuthSnapshot | null | undefined): boolean {
   const expiresAt = snapshot?.tokenExpiresAt
@@ -30,9 +29,9 @@ export async function hydrateAuth(): Promise<void> {
     }
 
     if (snapshot && snapshot.hasToken && !isExpiredSnapshot(snapshot)) {
-      await applyAuthBroadcast({ authenticated: true, clearAccountCache: false, snapshot })
+      await applyAuthBroadcast({ authenticated: true, snapshot })
     } else {
-      await applyAuthBroadcast({ authenticated: false, clearAccountCache: false, snapshot: null })
+      await applyAuthBroadcast({ authenticated: false, snapshot: null })
     }
   } catch (error) {
     if ($auth.get().kind !== 'pending') {
@@ -57,27 +56,16 @@ export async function applyAuthBroadcast(payload: DesktopAuthBroadcast): Promise
 
     const sessionChanged = previous.kind === 'authenticated' && previous.snapshot.sessionId !== next?.sessionId
 
-    const previousAccountId =
-      previous.kind === 'authenticated' ? previous.snapshot.accountId : storedString(ACCOUNT_CACHE_OWNER_KEY)
-
-    const identityChanged = previousAccountId !== null && next !== null && previousAccountId !== next.accountId
-    const shouldClearAccountCache = payload.clearAccountCache || identityChanged
-
     if (sessionChanged) {
       tearDownPrimaryGateway()
     }
 
-    if (shouldClearAccountCache) {
+    if (previous.kind !== 'authenticated' || previous.snapshot.accountId !== next?.accountId) {
       $auth.set({ kind: 'switching' })
-      await clearCompanionStorage()
-      persistString(ACCOUNT_CACHE_OWNER_KEY, null)
     }
 
+    await setStorageAccount(next?.accountId ?? null, payload.removedAccountId)
     $auth.set(next ? { kind: 'authenticated', snapshot: next } : { kind: 'unauthenticated' })
-
-    if (next) {
-      persistString(ACCOUNT_CACHE_OWNER_KEY, next.accountId)
-    }
   }
 
   const next = broadcastQueue.then(apply, apply)

@@ -9,11 +9,16 @@ interface StorageKeyConfig {
 
 const REGISTERED_STORAGE_KEYS = new Map<string, StorageKeyConfig>()
 const CLEAR_HANDLERS = new Set<() => void | Promise<void>>()
+const RESTORE_HANDLERS = new Set<() => void>()
+const ACCOUNT_CACHE_OWNER_KEY = 'da.auth.accountCacheOwner'
+let storageAccountId = storedString(ACCOUNT_CACHE_OWNER_KEY)
+let legacyAccountId = storageAccountId
+let switchingAccount = false
 
-// clearCompanionStorage 单调递增的 epoch；异步写路径落地前对照 epoch，不一致视为过期登出丢弃写入，避免上一位用户的 in-flight 写入写进刚清空的存储。
+// 切换账户时递增；异步回写必须核对，不能把旧账户结果写入当前命名空间。
 let clearEpoch = 0
 
-/** 当前 clearCompanionStorage epoch；异步写操作在 commit 前用它判活。 */
+/** 当前账户状态代次；异步写操作在 commit 前用它判活。 */
 export function currentClearEpoch(): number {
   return clearEpoch
 }
@@ -21,7 +26,35 @@ export function currentClearEpoch(): number {
 export function registerCompanionStorageKey(key: string, config: StorageKeyConfig = {}): string {
   REGISTERED_STORAGE_KEYS.set(key, config)
 
+  // 已有未分账户的索引归入其记录的账户；没有归属时不读取旧值。
+  if (legacyAccountId && !config.preserveOnLogout) {
+    try {
+      const legacy = window.localStorage.getItem(key)
+      const target = `da.accounts.${legacyAccountId}:${key}`
+
+      if (legacy !== null) {
+        if (window.localStorage.getItem(target) === null) {
+          window.localStorage.setItem(target, legacy)
+        }
+
+        window.localStorage.removeItem(key)
+      }
+    } catch (error) {
+      log.warn('storage', 'account cache migration failed', error)
+    }
+  }
+
   return key
+}
+
+export function accountStorageKey(key: string): string | null {
+  const config = REGISTERED_STORAGE_KEYS.get(key)
+
+  if (!config || config.preserveOnLogout) {
+    return key
+  }
+
+  return storageAccountId ? `da.accounts.${storageAccountId}:${key}` : null
 }
 
 export function registerStorageClearHandler(handler: () => void | Promise<void>): () => void {
@@ -32,38 +65,46 @@ export function registerStorageClearHandler(handler: () => void | Promise<void>)
   }
 }
 
-export function storedBoolean(key: string, fallback: boolean): boolean {
-  try {
-    const value = window.localStorage.getItem(key)
+export function registerStorageRestoreHandler(handler: () => void): () => void {
+  RESTORE_HANDLERS.add(handler)
 
-    return value === null ? fallback : value === 'true'
-  } catch {
-    return fallback
+  return () => {
+    RESTORE_HANDLERS.delete(handler)
   }
+}
+
+export function storedBoolean(key: string, fallback: boolean): boolean {
+  const value = storedString(key)
+
+  return value === null ? fallback : value === 'true'
 }
 
 export function persistBoolean(key: string, value: boolean): void {
-  try {
-    window.localStorage.setItem(key, String(value))
-  } catch {
-    // 尽力而为：受限上下文可能抛出异常。
-  }
+  persistString(key, String(value))
 }
 
 export function storedString(key: string): null | string {
+  const target = accountStorageKey(key)
+
   try {
-    return window.localStorage.getItem(key)
+    return target ? window.localStorage.getItem(target) : null
   } catch {
     return null
   }
 }
 
 export function persistString(key: string, value: null | string): void {
+  const target = accountStorageKey(key)
+
+  if (!target || (switchingAccount && REGISTERED_STORAGE_KEYS.has(key))) {
+    return
+  }
+
   try {
     if (value === null) {
-      window.localStorage.removeItem(key)
+      window.localStorage.removeItem(target)
     } else {
-      window.localStorage.setItem(key, value)
+      window.localStorage.setItem(target, value)
     }
   } catch {}
 }
@@ -116,7 +157,7 @@ interface PersistedEnumResult<T extends string> {
   get: () => T
 }
 
-/** preserveOnLogout=true 的 key 不挂 clear handler，跨登出保留偏好；想做「登出清缓存但保留偏好」另起 key，不要复用本 helper。 */
+/** preserveOnLogout 的本机偏好跨账户共享，其余按账户加载与重置内存。 */
 function createPersisted<T>(opts: {
   key: string
   fallback: T
@@ -146,7 +187,12 @@ function createPersisted<T>(opts: {
   }
 
   if (!preserveOnLogout) {
-    registerStorageClearHandler(reset)
+    registerStorageClearHandler(() => {
+      $atom.set(fallback)
+    })
+    registerStorageRestoreHandler(() => {
+      $atom.set(load())
+    })
   }
 
   return {
@@ -157,7 +203,7 @@ function createPersisted<T>(opts: {
   }
 }
 
-/** 统一定义持久化 Atom：自动加载本地缓存、瞬态不冲刷持久层、登出自动重置内存与持久化。 */
+/** 账户持久化 Atom：加载本地缓存，瞬态不冲刷持久层。 */
 export function definePersistedAtom<T extends object>(options: PersistedAtomOptions<T>): PersistedAtomResult<T> {
   const { fallback, isPersistable, key, preserveOnLogout = false } = options
 
@@ -210,21 +256,40 @@ export function definePersistedEnum<T extends string>(options: PersistedEnumOpti
   return base
 }
 
-export async function clearCompanionStorage(): Promise<void> {
-  clearEpoch += 1
+export async function setStorageAccount(accountId: string | null, removedAccountId?: string): Promise<void> {
+  if (removedAccountId) {
+    const prefix = `da.accounts.${removedAccountId}:`
+    const removeLegacy = legacyAccountId === removedAccountId
 
-  // 逐键删除：单个键失败不阻止其余账户数据清理。
-  for (const [key, config] of REGISTERED_STORAGE_KEYS.entries()) {
-    if (!config.preserveOnLogout) {
-      try {
-        window.localStorage.removeItem(key)
-      } catch (error) {
-        log.warn('storage', `removeItem failed: ${key}`, error)
+    if (removeLegacy) {
+      legacyAccountId = null
+    }
+
+    try {
+      for (const key of Object.keys(window.localStorage)) {
+        const config = REGISTERED_STORAGE_KEYS.get(key)
+
+        if (key.startsWith(prefix) || (removeLegacy && config && !config.preserveOnLogout)) {
+          try {
+            window.localStorage.removeItem(key)
+          } catch (error) {
+            log.warn('storage', `removeItem failed: ${key}`, error)
+          }
+        }
       }
+    } catch (error) {
+      log.warn('storage', 'account cache enumeration failed', error)
     }
   }
 
-  // 触发所有上层模块注册的清理处理器（含磁盘缓存清空与内存 Atom 状态重置）
+  if (storageAccountId === accountId && removedAccountId !== accountId) {
+    return
+  }
+
+  clearEpoch += 1
+  switchingAccount = true
+
+  // 只释放旧账户的内存、监听与在途工作；重置产生的写入不触及持久缓存。
   const tasks: Array<Promise<unknown> | void> = []
 
   for (const handler of CLEAR_HANDLERS) {
@@ -239,10 +304,22 @@ export async function clearCompanionStorage(): Promise<void> {
     }
   }
 
-  // 真等所有 handler（含异步清理）落地——调用方需在 $auth.set 前 await，避免 React 在 clear 完成前用陈旧 localStorage 值重渲染。
   for (const result of await Promise.allSettled(tasks)) {
     if (result.status === 'rejected') {
       log.warn('storage', 'async clear handler failed', result.reason)
     }
   }
+
+  storageAccountId = accountId
+  persistString(ACCOUNT_CACHE_OWNER_KEY, accountId)
+
+  for (const restore of RESTORE_HANDLERS) {
+    try {
+      restore()
+    } catch (error) {
+      log.warn('storage', 'restore handler failed', error)
+    }
+  }
+
+  switchingAccount = false
 }

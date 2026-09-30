@@ -2,7 +2,12 @@ import { atom } from 'nanostores'
 
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
-import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
+import {
+  currentClearEpoch,
+  definePersistedAtom,
+  registerStorageClearHandler,
+  registerStorageRestoreHandler
+} from '@/shared/lib/storage'
 
 import { resolvePortraitUrl } from './avatar-image'
 import { clearAvatarSeeds, hydrateAvatarSeeds, patchAvatarSeeds } from './avatar-seeds-store'
@@ -97,9 +102,17 @@ async function restorePortraitFromDisk(assetUrl: string, epoch: number): Promise
   $portraitUrl.set(restored)
 }
 
-if (initialPersisted.assetUrl) {
-  void restorePortraitFromDisk(initialPersisted.assetUrl, currentClearEpoch())
+function restoreCachedPortrait(): void {
+  const saved = portraitPersisted.get()
+  $activeAvatarId.set(saved.avatarId)
+
+  if (saved.assetUrl) {
+    void restorePortraitFromDisk(saved.assetUrl, currentClearEpoch())
+  }
 }
+
+registerStorageRestoreHandler(restoreCachedPortrait)
+restoreCachedPortrait()
 
 interface PortraitUrls {
   assetUrl?: string | null

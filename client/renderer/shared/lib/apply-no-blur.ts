@@ -4,9 +4,9 @@ import { atom } from 'nanostores'
 
 import {
   persistBoolean,
-  persistString,
   registerCompanionStorageKey,
   registerStorageClearHandler,
+  registerStorageRestoreHandler,
   storedBoolean
 } from '@/shared/lib/storage'
 
@@ -24,7 +24,9 @@ let isIntegratedGpuResult = false
 
 registerStorageClearHandler(() => {
   $manualReduceTransparency.set(false)
-  persistString(PREF_KEY, null)
+})
+registerStorageRestoreHandler(() => {
+  $manualReduceTransparency.set(storedBoolean(PREF_KEY, false))
 })
 
 function applyNoBlur(degraded: boolean): void {
