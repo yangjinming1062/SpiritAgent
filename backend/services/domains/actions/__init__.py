@@ -2,6 +2,7 @@
 
 from .policy import (
     DEFERRED_PLAY_INTENT_TTL_SECONDS,
+    DEFERRED_PROPOSAL_WINDOW,
     PLAY_INTENT_TTL_SECONDS,
     ActionPolicyError,
     check_can_accept,
@@ -28,6 +29,7 @@ from .usage import action_to_dict, emit_play_command, fulfill_deferred_play_inte
 
 __all__ = [
     "DEFERRED_PLAY_INTENT_TTL_SECONDS",
+    "DEFERRED_PROPOSAL_WINDOW",
     "PLAY_INTENT_TTL_SECONDS",
     "ActionPolicyError",
     "CatalogValidationError",

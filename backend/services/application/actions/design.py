@@ -6,7 +6,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import Literal
 
-from modules.companion import ActionDesignRequest, ActionDesignResult, ActionProposal, CompanionAction
+from modules.companion import SYSTEM_SLOTS, ActionDesignRequest, ActionDesignResult, ActionProposal, CompanionAction
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +25,7 @@ from services.domains.actions import (
     make_semantic_fingerprint,
 )
 
-# 非 ASCII 名称（如中文）无稳定 slug，按语义指纹派生 key，保证不同名动作不撞 key。
+# 名称含非 ASCII 字母数字（如中文）时 slug 会丢掉这些字符，不同名动作会撞 key，改按语义指纹派生；与系统槽位同名的也用指纹，避免动态动作与系统动作互相认成同一动作。
 _KEY_STRIP_RE = re.compile(r"[^a-z0-9]+")
 
 ExistingActionState = Literal["in_production", "awaiting_review", "redo_requested"]
@@ -44,7 +44,7 @@ class ProposalAcceptance:
 def action_key_from_name(name: str, fingerprint: str) -> str:
     normalized = unicodedata.normalize("NFKC", name.strip().lower())
     slug = _KEY_STRIP_RE.sub("_", normalized).strip("_")
-    if slug and any(ch.isascii() and ch.isalnum() for ch in slug.replace("_", "")):
+    if slug and slug not in SYSTEM_SLOTS and not any(ch.isalnum() and not ch.isascii() for ch in normalized):
         return slug[:32]
     return f"action_{fingerprint[:12]}"
 
@@ -210,7 +210,13 @@ async def _accept_same_key(
     existing.stage = "design"
     existing.error = None
     await db.flush()
-    return _pending_action(existing.id, f"将重新制作动作「{name}」"), "redo_requested"
+    return (
+        _pending_action(
+            existing.id,
+            f"将按原设计重新制作动作「{name}」；同名动作沿用已评审的设计，要改动作内容请换一个名称重新提案",
+        ),
+        "redo_requested",
+    )
 
 
 def _pending_action(action_id: int, message: str) -> ActionDesignResult:

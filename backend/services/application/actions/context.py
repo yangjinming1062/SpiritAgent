@@ -4,13 +4,19 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from components import resolve_prompt_text, safe_json_loads
+from components import resolve_prompt_text, safe_json_loads, utc_now
 from modules.companion import ActionProposal
 from prompts.actions import ACTION_CONTEXT_GUIDANCES
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.domains.actions import action_to_dict, get_active_pack, is_expression_action, list_pack_actions
+from services.domains.actions import (
+    DEFERRED_PROPOSAL_WINDOW,
+    action_to_dict,
+    get_active_pack,
+    is_expression_action,
+    list_pack_actions,
+)
 
 
 @dataclass
@@ -75,7 +81,13 @@ async def build_action_context(db: AsyncSession, user_id: int) -> ActionContextS
                 .where(
                     ActionProposal.user_id == user_id,
                     ActionProposal.pack_id == pack.id,
-                    ActionProposal.status.in_(("pending", "deferred", "approved")),
+                    or_(
+                        ActionProposal.status.in_(("pending", "approved")),
+                        and_(
+                            ActionProposal.status == "deferred",
+                            ActionProposal.created_at >= utc_now() - DEFERRED_PROPOSAL_WINDOW,
+                        ),
+                    ),
                 )
                 .order_by(ActionProposal.created_at.desc(), ActionProposal.id.desc()),
             )

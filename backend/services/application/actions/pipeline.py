@@ -2,12 +2,12 @@
 
 import asyncio
 
-from components import SESSION_LOCAL, get_logger, track_user_task
+from components import SESSION_LOCAL, get_logger, track_user_task, utc_now
 from modules.companion import ActionProposal
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 
 from services.application.generation.video.service import kick_dynamic_action
-from services.domains.actions import get_action_accept_lock
+from services.domains.actions import DEFERRED_PROPOSAL_WINDOW, get_action_accept_lock
 
 from .design import ProposalAcceptance
 from .review import review_proposal
@@ -82,12 +82,16 @@ async def drain_proposal_reviews() -> None:
 
 
 async def resume_proposal_reviews() -> None:
-    """进程重启恢复：pending/deferred 评审重新调度。"""
+    """进程重启恢复：中断的 pending 评审重新调度；deferred 只在创建期限内重试，超期不再随每次启动付费重审。"""
+    cutoff = utc_now() - DEFERRED_PROPOSAL_WINDOW
     async with SESSION_LOCAL() as db:
         pending = (
             await db.execute(
                 select(ActionProposal.id, ActionProposal.user_id).where(
-                    ActionProposal.status.in_(("pending", "deferred")),
+                    or_(
+                        ActionProposal.status == "pending",
+                        and_(ActionProposal.status == "deferred", ActionProposal.created_at >= cutoff),
+                    ),
                 ),
             )
         ).all()

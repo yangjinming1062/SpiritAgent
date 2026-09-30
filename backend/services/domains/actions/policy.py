@@ -11,6 +11,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 REJECTED_PROPOSAL_COOLDOWN_DAYS = 7
+# 暂缓提案的自动重试与展示期限（自创建起算）：评审失败、额度不足多为暂时原因；超期后不再随重启付费重审，也不再占用模型上下文，重提同一创意仍复用原行重新评审。
+DEFERRED_PROPOSAL_WINDOW = timedelta(days=1)
 PLAY_INTENT_TTL_SECONDS = 30
 # 制作完成前保存的表达意图有效期：过期只入库，不补播。
 DEFERRED_PLAY_INTENT_TTL_SECONDS = 15 * 60
