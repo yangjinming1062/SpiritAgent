@@ -48,7 +48,7 @@ from .memory_scope import CURRENT_SKILL_SCOPE, SkillScope, learned_skills_root, 
 from .path_helpers import append_sane_path_entries, find_bash, find_python, msys_to_windows_path, resolve_safe_cwd
 from .pid import pid_exists
 from .process_tree import terminate_tree
-from .redact import SECRET_PREFIX_RE, redact_sensitive_text
+from .redact import SECRET_PREFIX_RE, masked_lines, redact_sensitive_text
 from .reverse_rpc import call_llm_sync, set_handler, set_main_loop
 from .url_safety import (
     async_is_safe_url,
@@ -105,6 +105,7 @@ __all__ = [
     "iter_skills_files",
     "learned_skills_root",
     "load_config",
+    "masked_lines",
     "msys_to_windows_path",
     "network_reachable",
     "normalize_url_for_request",

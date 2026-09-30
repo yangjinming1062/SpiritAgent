@@ -17,6 +17,7 @@ from utils import (
     get_windows_sensitive_prefixes,
     has_traversal_component,
     load_config,
+    masked_lines,
     redact_sensitive_text,
 )
 
@@ -277,6 +278,20 @@ def read_file_tool(path: str, offset: int = 1, limit: int = DEFAULT_READ_LIMIT, 
         return tool_error(str(e))
 
 
+def _masked_overwrite_error(file_ops: FileOperations, target: str, content: str) -> str | None:
+    """整文件覆盖时拦下写回打码行：read_file 展示的是脱敏视图，原样写回会用占位符替换文件里的真实凭据。"""
+    existing = file_ops.read_file_raw(target)
+    if existing.error or not (masked := masked_lines(existing.content)):
+        return None
+    if masked.isdisjoint(line.strip() for line in content.splitlines()):
+        return None
+    return (
+        f"Refusing to overwrite '{target}': read_file shows credentials in this file as ***, and the new content "
+        "still contains those masked lines, so writing it would replace the real values with placeholders. "
+        "Change only the lines you need with the patch tool instead of rewriting the whole file."
+    )
+
+
 def write_file_tool(path: str, content: str, task_id: str = "default") -> str:
     """把内容写入文件。"""
     try:
@@ -287,6 +302,8 @@ def write_file_tool(path: str, content: str, task_id: str = "default") -> str:
                 return tool_error(sensitive_err)
             # 同路径读改写串行。
             with lock_path(target):
+                if masked_error := _masked_overwrite_error(file_ops, target, content):
+                    return tool_error(masked_error)
                 warning = check_stale(task_id, target, whole_file=True) if local else None
                 result = file_ops.write_file(target, content)
                 result_dict = result.to_dict()
@@ -447,7 +464,9 @@ READ_FILE_SCHEMA = {
         "Read a text file with line numbers and pagination. Use this instead of cat/head/tail "
         "in terminal. Output format: 'LINE_NUM|CONTENT'. Suggests similar filenames if not "
         "found. Reads exceeding ~100K characters are rejected; use offset and limit to read "
-        "specific sections of large files. Cannot read images or other binary files."
+        "specific sections of large files. Cannot read images or other binary files. "
+        "Credential-like values are shown as *** while the file keeps the real values, so edit "
+        "such files with patch rather than rewriting them."
     ),
     "parameters": {
         "type": "object",

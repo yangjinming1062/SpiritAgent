@@ -88,3 +88,12 @@ def _redact(text: str) -> str:
     out = _BEARER_RE.sub(lambda m: f"{m.group(1)}***", out)
     out = _JWT_RE.sub("***", out)
     return SECRET_PREFIX_RE.sub(lambda m: _mask_token(m.group(0)), out)
+
+
+def masked_lines(text: str) -> set[str]:
+    """脱敏改写过的行（去首尾空白）：模型读到的是这些行的打码形式，不是文件里的真实内容。"""
+    masked = redact_sensitive_text(text)
+    if masked == text:
+        return set()
+    original = {line.strip() for line in text.splitlines()}
+    return {stripped for line in masked.splitlines() if (stripped := line.strip()) and stripped not in original}
