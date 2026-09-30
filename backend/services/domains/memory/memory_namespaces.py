@@ -12,7 +12,10 @@ KIND_TO_PREFIX: dict[str, str] = {
     "interaction_stats": "interaction_stats:",
     "diary": "diary:",
 }
-RESERVED_FROM_RECALL: frozenset[str] = frozenset(prefix for kind, prefix in KIND_TO_PREFIX.items() if kind != "recall")
+# 不参与检索召回：用户资料由专门的块注入，统计不是记忆；夜间反思（diary:）写给后续回忆，参与召回。
+RESERVED_FROM_RECALL: frozenset[str] = frozenset(
+    {KIND_TO_PREFIX["user_profile"], KIND_TO_PREFIX["interaction_stats"]},
+)
 _RECALL_LABEL_MAX = 200
 
 

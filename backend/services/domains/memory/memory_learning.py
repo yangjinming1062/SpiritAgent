@@ -9,11 +9,11 @@ from modules.conversation import Conversation, Message
 from modules.memory import Memory
 from modules.settings import get_user_setting
 from pydantic import BaseModel, field_serializer
-from sqlalchemy import ColumnElement, func, or_, select
+from sqlalchemy import ColumnElement, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
-from services.domains.conversation import message_contains_text, message_text
+from services.domains.conversation import message_contains_text, message_text, user_authored_conversation
 
 from .memory_bootstrap import resolve_user_timezone
 from .memory_policy import MemoryDecision
@@ -122,7 +122,8 @@ def _recall_context(topic: str) -> str:
 
 
 def learning_filter() -> ColumnElement[bool]:
-    return or_(Memory.context.like("recall:%"), Memory.context.like("user_profile:%"))
+    """可被审阅维护的记录；系统写入的伙伴自身记录（basis system）不是关于用户的判断，不进入维护。"""
+    return and_(or_(Memory.context.like("recall:%"), Memory.context.like("user_profile:%")), Memory.basis != "system")
 
 
 async def _forgotten_fingerprints(db: AsyncSession, scope: MemoryScope) -> set[str]:
@@ -154,7 +155,7 @@ async def load_review_context(
         .where(
             Conversation.user_id == scope.user_id,
             Conversation.system_preset_id == scope.system_preset_id,
-            Conversation.is_automation.is_(False),
+            user_authored_conversation(),
             Message.id > Conversation.context_after_message_id,
             Message.role.in_(("user", "assistant")),
             Message.subtype.is_(None),
@@ -290,7 +291,7 @@ async def apply_memory_decisions(
                         Message.subtype.is_(None),
                         Conversation.user_id == scope.user_id,
                         Conversation.system_preset_id == scope.system_preset_id,
-                        Conversation.is_automation.is_(False),
+                        user_authored_conversation(),
                         Message.id > Conversation.context_after_message_id,
                     ),
                 )
@@ -362,6 +363,14 @@ async def apply_memory_decisions(
                     ),
                 )
                 continue
+            if (
+                row
+                and row.source_kind == "manual"
+                and not any(originals[quote.message_id].created_at > row.updated_at for quote in decision.evidence)
+            ):
+                raise ValueError(
+                    "A memory the user wrote directly changes only on a newer user message; cite that message as evidence",
+                )
             if row and row.context.startswith("user_profile:") and decision.status not in {"invalidated", "forgotten"}:
                 raise ValueError(
                     "Onboarding can only be invalidated or forgotten by maintenance; write the supported replacement separately",

@@ -416,7 +416,7 @@ async def _maybe_run_memory_review(now: datetime) -> None:
                 text(
                     "SELECT user_id, system_preset_id FROM memories WHERE context LIKE 'recall:%' AND status != 'forgotten' "
                     "UNION SELECT c.user_id, c.system_preset_id FROM conversations c JOIN messages m ON m.conversation_id = c.id "
-                    "WHERE NOT c.is_automation AND m.id > GREATEST(c.context_after_message_id, c.memory_reviewed_message_id) "
+                    "WHERE NOT c.is_automation AND c.parent_id IS NULL AND m.id > GREATEST(c.context_after_message_id, c.memory_reviewed_message_id) "
                     "AND m.role IN ('user', 'assistant') AND m.subtype IS NULL",
                 ),
             )

@@ -21,6 +21,8 @@ from modules.ws import COMPANION_TURN_EVENT, emit_ws_event
 from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.domains.conversation import user_authored_conversation
+
 from .affect_emit import append_companion_message
 from .disturbance import get_disturbance_tier
 from .proactive_runtime import can_start_companion_turn, get_user_proactive_record, note_outreach_throttle
@@ -63,7 +65,7 @@ async def latest_user_message_id(db: AsyncSession, user_id: int) -> int:
         await db.execute(
             select(func.max(Message.id))
             .join(Conversation, Conversation.id == Message.conversation_id)
-            .where(Conversation.user_id == user_id, Conversation.is_automation.is_(False), Message.role == "user"),
+            .where(Conversation.user_id == user_id, user_authored_conversation(), Message.role == "user"),
         )
     ).scalar_one() or 0
 

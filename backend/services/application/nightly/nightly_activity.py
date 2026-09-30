@@ -30,7 +30,13 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from services.contracts import EmbeddingItem, MemoryScope, MemorySource
 from services.domains.companion import load_persona_definition
-from services.domains.conversation import SPECIAL_KIND, UI_ONLY_SUBTYPES, message_text, validate_memory_scope
+from services.domains.conversation import (
+    SPECIAL_KIND,
+    UI_ONLY_SUBTYPES,
+    message_text,
+    user_authored_conversation,
+    validate_memory_scope,
+)
 from services.domains.journal import collect_moment_interactions
 from services.domains.memory import (
     backfill_memory_embeddings,
@@ -326,7 +332,7 @@ async def _run_nightly_pipeline_inner(scope: MemoryScope, target_date: date, log
                     Conversation.user_id == user_id,
                     Conversation.system_preset_id == scope.system_preset_id,
                     Message.id > Conversation.context_after_message_id,
-                    Conversation.is_automation.is_(False),
+                    user_authored_conversation(),
                     Message.created_at >= utc_start,
                     Message.created_at < utc_end,
                     Message.role.in_(("user", "assistant")),
