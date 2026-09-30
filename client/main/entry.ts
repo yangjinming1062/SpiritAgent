@@ -45,6 +45,7 @@ import { registerUiThemeIpc } from './ipc/ui-theme'
 import { registerUpdateIpc } from './ipc/update'
 import { installAppQuit } from './lifecycle/app-quit'
 import { createAutoUpdater } from './lifecycle/auto-updater'
+import { syncBundledSkills } from './lifecycle/bundled-skills'
 import { createDesktopLogger } from './lifecycle/desktop-log'
 import { applyAppIdentity, createMenu } from './lifecycle/menu'
 import { createOpenExternalUrl } from './lifecycle/open-external-url'
@@ -112,6 +113,14 @@ const desktopLogger = createDesktopLogger({
 })
 
 const rememberLog = (chunk: unknown): void => desktopLogger.rememberLog(chunk)
+
+// 同步执行，先于会话恢复与 Runner 自动启动，使 Runner 与技能索引读到当前版本的随包技能。
+syncBundledSkills({
+  app,
+  log: chunk => rememberLog(chunk),
+  resourcesPath: process.resourcesPath,
+  spiritagentHome: SPIRITAGENT_HOME
+})
 
 runnerConfigStore.init({ spiritagentHome: SPIRITAGENT_HOME })
 

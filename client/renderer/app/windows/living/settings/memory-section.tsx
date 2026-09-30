@@ -3,7 +3,7 @@ import { atom } from 'nanostores'
 import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { $systemPresets, fetchSystemPresets } from '@/modules/conversation'
+import { $systemPresets, fetchSystemPresets, presetDisplayName } from '@/modules/conversation'
 import { requestGateway } from '@/shared'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS, PanelSelect } from '@/shared/panel'
@@ -65,7 +65,7 @@ export function MemorySection(): React.ReactElement {
             $memoryBrowserTab.set('active')
             setPresetId(next)
           }}
-          options={presets.map(preset => ({ value: preset.id, label: preset.name }))}
+          options={presets.map(preset => ({ value: preset.id, label: presetDisplayName(dict, preset) }))}
           value={presetId}
           widthClass="w-full"
         />

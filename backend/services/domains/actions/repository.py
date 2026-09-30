@@ -67,7 +67,7 @@ async def get_action_by_key(
     return row.scalar_one_or_none()
 
 
-async def upsert_action(
+async def create_action(
     db: AsyncSession,
     *,
     user_id: int,
@@ -79,20 +79,7 @@ async def upsert_action(
     use_when: list[str],
     avoid_when: list[str],
 ) -> CompanionAction:
-    """创建或更新动作元信息；仅元信息变更递增 metadata_revision，不重新生成视频。"""
-    use_when_json = json.dumps(use_when, ensure_ascii=False)
-    avoid_when_json = json.dumps(avoid_when, ensure_ascii=False)
-    existing = await get_action_by_key(db, pack_id, key)
-    if existing:
-        existing.name = name
-        existing.kind = kind
-        existing.motion_description = motion_description
-        existing.use_when = use_when_json
-        existing.avoid_when = avoid_when_json
-        existing.metadata_revision += 1
-        await db.flush()
-        return existing
-
+    """新建动作行；同包同 key 已有动作时由唯一约束拒绝，不覆盖其他提案的动作。"""
     action = CompanionAction(
         user_id=user_id,
         pack_id=pack_id,
@@ -100,12 +87,29 @@ async def upsert_action(
         name=name,
         kind=kind,
         motion_description=motion_description,
-        use_when=use_when_json,
-        avoid_when=avoid_when_json,
+        use_when=json.dumps(use_when, ensure_ascii=False),
+        avoid_when=json.dumps(avoid_when, ensure_ascii=False),
     )
     db.add(action)
     await db.flush()
     return action
+
+
+def clear_action_attempt(action: CompanionAction) -> None:
+    """作废动作当前的生成尝试与成品，下一次制作从独立的新尝试开始；不改状态与元信息，也不删除文件。"""
+    action.provider_task_id = None
+    action.artifact_path = None
+    action.pose_path = None
+    action.generation_state_json = None
+    action.pose_generation_state_json = None
+    action.script_json = None
+    action.result_json = None
+    action.peek_geometry_json = None
+    action.content_rect_json = None
+    action.video_path = ""
+    action.video_hash = ""
+    action.cover_path = None
+    action.hitmask_path = None
 
 
 async def publish_catalog(

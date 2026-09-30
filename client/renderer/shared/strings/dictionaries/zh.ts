@@ -1194,6 +1194,24 @@ export const dict = {
     }
   },
 
+  // 系统预设的界面名称与说明。后端目录（backend/services/domains/conversation/presets.py）只有中文；
+  // 中文须与目录一致并同步修改，未知预设由调用方回落目录值。
+  presets: {
+    names: {
+      companion: '陪伴',
+      developer: '工程师',
+      product_manager: '产品经理',
+      copywriter: '文案秘书',
+      language_teacher: '语言老师'
+    },
+    descriptions: {
+      developer: '技术解释、方案设计、编码调试与代码审查，重视项目约束和验证。',
+      product_manager: '厘清用户问题与目标，权衡方案，形成可执行、可验收的产品需求。',
+      copywriter: '起草、润色与整理文案、邮件和会议记录，保留原意，贴合受众与场合。',
+      language_teacher: '按水平与目标讲解、纠错和练习，提供忠实自然的翻译。'
+    }
+  },
+
   workbench: {
     title: '工作台',
     stationBadge: '工作工位',
@@ -1234,12 +1252,6 @@ export const dict = {
         recent: '按最近活跃排序',
         created: '按创建时间排序',
         messages: '按消息数排序'
-      },
-      presetMeta: {
-        copywriter: '文案秘书',
-        developer: '工程师',
-        language_teacher: '语言老师',
-        product_manager: '产品经理'
       },
       actions: {
         pin: '置顶',

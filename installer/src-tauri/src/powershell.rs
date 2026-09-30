@@ -29,11 +29,9 @@ pub struct ScriptResult {
 pub type CancelRx = mpsc::Receiver<()>;
 
 /// 安装脚本可选上下文，由安装器 `bundle.resources` 布局派生；
-/// 作为 SPIRITAGENT_BUNDLE_* 环境变量下发给子脚本，避免用大量 CLI 参数。
+/// 作为 `SPIRITAGENT_BUNDLED_*` 等环境变量下发给子脚本，避免用大量 CLI 参数。
 #[derive(Debug, Clone, Default)]
 pub struct BundleContext {
-    /// Tauri bundle.resources 解压根路径。
-    pub bundle_dir: Option<std::path::PathBuf>,
     /// `<bundle>/payload/runner/`，承载 runner wheel 与 `server.py`。
     pub bundled_runner_dir: Option<std::path::PathBuf>,
     /// `<bundle>/payload/client/`，承载桌面安装器（dmg / nsis）。
@@ -48,7 +46,7 @@ pub struct BundleContext {
 
 /// 启动 install.ps1 / install.sh 并流式返回输出。
 ///
-/// `spiritagent_home_override` 作为 $SPIRITAGENT_HOME 传递给子脚本；`bundle` 作为 SPIRITAGENT_BUNDLE_* 环境变量。
+/// `spiritagent_home_override` 作为 $SPIRITAGENT_HOME 传递给子脚本；`bundle` 作为 `SPIRITAGENT_BUNDLED_*` 等环境变量。
 /// 取消时终止脚本及其全部后代进程；脚本退出后最多再读 `PIPE_DRAIN_TIMEOUT`，不等待仍持有管道的残留进程。
 /// 返回值第二项是未触发的取消通道，调用方须归还给 holder，否则后续阶段无法再响应取消。
 pub async fn run_script(
@@ -70,10 +68,7 @@ pub async fn run_script(
         cmd.env("SPIRITAGENT_HOME", home);
     }
 
-    // 下发 SPIRITAGENT_BUNDLE_* 变量，省去 CLI 长参数；各项独立（None 即省略），与 bootstrap 层的 CLI 覆盖不冲突。
-    if let Some(p) = &bundle.bundle_dir {
-        cmd.env("SPIRITAGENT_BUNDLE_DIR", p);
-    }
+    // 下发 SPIRITAGENT_BUNDLED_* 等变量，省去 CLI 长参数；各项独立（None 即省略），与 bootstrap 层的 CLI 覆盖不冲突。
     if let Some(p) = &bundle.bundled_runner_dir {
         cmd.env("SPIRITAGENT_BUNDLED_RUNNER_DIR", p);
     }

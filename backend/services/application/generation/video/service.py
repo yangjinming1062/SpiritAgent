@@ -46,7 +46,7 @@ from sqlalchemy import ColumnElement, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from services.domains.actions import fulfill_deferred_play_intents, publish_action_catalog
+from services.domains.actions import clear_action_attempt, fulfill_deferred_play_intents, publish_action_catalog
 from services.domains.companion import (
     character_snapshot_is_current,
     get_or_create_persona,
@@ -1209,9 +1209,12 @@ async def _generate_pack(pack_id: int) -> None:
         context = _load_generation_context(pack)
         if context is None:
             raise VideoPackError("视频包缺少生成上下文，请生成完整新包")
+        pending = [job for job in jobs if job.status != "succeeded" and job.status != "failed" and not job.script_json]
+        if context.reference_alignment != "ready" or pending:
+            # 参考校准与脚本撰写都是付费调用：抠像模型缺失时整包在付费前失败，已有进度留待续跑。
+            require_action_matting_model()
         context = await _prepare_pack_identity(pack, context)
         must_actions = _must_succeed_actions(context.must_actions)
-        pending = [job for job in jobs if job.status != "succeeded" and job.status != "failed" and not job.script_json]
         if pending:
             await _emit_pack_event(
                 pack.user_id,
@@ -1304,6 +1307,8 @@ async def _run_action_pipeline(
         and state.needs_next()
         and (not job.pose_path or not _artifact_abs_path(job.pose_path).is_file())
     ):
+        # 姿态图与之后的视频都依赖抠像：模型缺失时在付费生图前失败，已保存的姿态进度留待续跑。
+        require_action_matting_model()
         reference_uri = await _process_thread(_image_data_uri, _artifact_abs_path(pack.reference_path))
         pose_state = (
             ImageChainState.model_validate_json(job.pose_generation_state_json)
@@ -1340,6 +1345,15 @@ async def _run_action_pipeline(
     while state.phase != "complete" and not state.stop_reason:
         if state.phase == "ready":
             if not state.needs_next():
+                break
+            try:
+                require_action_matting_model()
+            except VideoPackStateError:
+                if state.best() is None:
+                    raise
+                # 抠像模型缺失时不再追加付费提交，按已有最佳候选收尾。
+                state.stop_reason = "matting_unavailable"
+                await _save_action_state(job, state)
                 break
             index = state.next_index
             config = await resolve_frozen_media_provider(pack.user_id, "video_gen", state.providers[index])
@@ -1666,19 +1680,7 @@ async def _queue_in_place_redo(
         job.status = "queued"
         job.stage = "design"
         job.error = None
-        job.provider_task_id = None
-        job.artifact_path = None
-        job.pose_path = None
-        job.generation_state_json = None
-        job.pose_generation_state_json = None
-        job.script_json = None
-        job.result_json = None
-        job.peek_geometry_json = None
-        job.content_rect_json = None
-        job.video_path = ""
-        job.video_hash = ""
-        job.cover_path = None
-        job.hitmask_path = None
+        clear_action_attempt(job)
         job.metadata_revision += 1
     context = _load_generation_context(pack) if feedback.strip() else None
     if context is not None:
@@ -1764,6 +1766,8 @@ async def _generate_one_dynamic(
     if job.script_json:
         entry = ActionScriptEntry.model_validate_json(job.script_json)
     else:
+        # 撰写脚本是本次制作的首个付费调用。
+        require_action_matting_model()
         await _emit_pack_event(pack.user_id, "companion.action.job_updated", {"packId": pack.id, "stage": "script"})
         (entry,) = await _compose_scripts(pack, context, [job])
         job.script_json = entry.model_dump_json()

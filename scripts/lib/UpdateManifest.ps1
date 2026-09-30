@@ -191,7 +191,7 @@ function New-RunnerManifest {
 }
 
 # 构造自更新 zip：同时装入桌面端产物 + runner wheel + server.py，一次更新覆盖客户端两侧；
-# 不含内置技能：技能只由安装器 install-skills 阶段释放（见 installer/README.md），客户端自更新不刷新内置技能。
+# 内置技能不单独打包：随桌面安装包（electron-builder extraResources）交付，新版本首次启动时由 Client 同步到 Home（client/main/lifecycle/bundled-skills.ts）。
 # 后端按 zip 内的 `runner/` 布局提取，便于后续一致性校验。
 function Build-UpdateZip {
     [CmdletBinding()]

@@ -4,7 +4,7 @@ import { atom, computed } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
 import { persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
-import { $surfaceOpen } from '@/shared/store/surfaces'
+import { $surfaceOpen, $surfaceSpriteVisible } from '@/shared/store/surfaces'
 
 import { $actionCatalog, $activePlayInstance, ensurePeekAction } from './actions'
 import type { PeekGeometry } from './actions'
@@ -126,6 +126,12 @@ interface PendingWindowPeek extends WindowPeekBinding {
 }
 
 let pendingWindowPeek: PendingWindowPeek | null = null
+
+// 桌面精灵舞台展示中：未被完整入口收起，精灵窗也未被托盘、快捷键或右键隐藏或最小化。
+// 不展示时暂停走位、漫游与探身，重新展示后由 initSpatial 恢复。
+function isDesktopStageShown(): boolean {
+  return $surfaceOpen.get() === null && $surfaceSpriteVisible.get()
+}
 
 function getHomePosition(): { x: number; y: number } {
   const c = contentBox($defaultScale.get())
@@ -512,7 +518,7 @@ function applyScreenPeek(
 }
 
 async function activateScreenPeek(target: { side: 'left' | 'right'; yRatio: number }, animate = false): Promise<void> {
-  if ($screenLocked.get() || $surfaceOpen.get() !== null) {
+  if ($screenLocked.get() || !isDesktopStageShown()) {
     return
   }
 
@@ -583,7 +589,7 @@ function isCurrentPeekPreparation(preparation: PeekPreparation): boolean {
     preparation.generation === peekIntentGeneration &&
     $actionCatalog.get()?.packId === preparation.packId &&
     !$screenLocked.get() &&
-    $surfaceOpen.get() === null &&
+    isDesktopStageShown() &&
     !$activePlayInstance.get() &&
     (preparation.mode === 'screen' || canEnterWindowPeek())
   )
@@ -603,7 +609,7 @@ export function cancelPeekPreparation(action: 'peek_left' | 'peek_right', genera
   $peekPreparation.set(null)
   peekIntentGeneration += 1
 
-  if (preparation.mode === 'window' && screenEdgeHome && !$screenLocked.get() && $surfaceOpen.get() === null) {
+  if (preparation.mode === 'window' && screenEdgeHome && !$screenLocked.get() && isDesktopStageShown()) {
     void activateScreenPeek(screenEdgeHome)
   }
 }
@@ -785,7 +791,7 @@ async function updateWindowPeek(): Promise<void> {
       return
     }
 
-    if ($screenLocked.get() || $surfaceOpen.get() !== null) {
+    if ($screenLocked.get() || !isDesktopStageShown()) {
       leaveWindowPeek()
 
       return
@@ -863,7 +869,7 @@ async function tryStartPendingWindowPeek(): Promise<boolean> {
     !intent ||
     intent.generation !== peekIntentGeneration ||
     $screenLocked.get() ||
-    $surfaceOpen.get() !== null
+    !isDesktopStageShown()
   ) {
     return false
   }
@@ -948,7 +954,7 @@ export interface WindowPeekIntent extends WindowPeekBinding {
 function canEnterWindowPeek(): boolean {
   return (
     !$screenLocked.get() &&
-    $surfaceOpen.get() === null &&
+    isDesktopStageShown() &&
     $effectiveTier.get() === 'autonomous' &&
     $spatialLocomotion.get() !== 'drag' &&
     !$activePlayInstance.get() &&
@@ -1101,7 +1107,7 @@ export async function restorePeekAfterExpression(): Promise<void> {
     !previous ||
     previous.packId !== $actionCatalog.get()?.packId ||
     $screenLocked.get() ||
-    $surfaceOpen.get() !== null ||
+    !isDesktopStageShown() ||
     $spatialLocomotion.get() === 'drag'
   ) {
     return
@@ -1247,7 +1253,7 @@ export function setSpatialLocale(
 }
 
 export function updateSpatialDecision(): void {
-  if ($spatialLocomotion.get() === 'drag' || $surfaceOpen.get() === 'living' || $surfaceOpen.get() === 'workbench') {
+  if ($spatialLocomotion.get() === 'drag' || !isDesktopStageShown()) {
     return
   }
 
@@ -1322,9 +1328,8 @@ export function updateSpatialDecision(): void {
   }
 
   if (state === 'idle' && $lastIdleSeconds.get() >= ROAM_IDLE_THRESHOLD_SECONDS) {
-    if ($spatialLocale.get() !== 'roam') {
-      startRoam()
-    }
+    // 暂停（收起、隐藏或降档）后 locale 可能仍是 roam 但漫游已停；startRoam 对进行中的漫游幂等。
+    startRoam()
 
     return
   }
@@ -1349,7 +1354,7 @@ function generateRoamWaypoint(): { x: number; y: number } {
 }
 
 export function startRoam(): void {
-  if (roaming || $surfaceOpen.get() === 'living' || $surfaceOpen.get() === 'workbench') {
+  if (roaming || !isDesktopStageShown()) {
     return
   }
 
@@ -1584,32 +1589,54 @@ export function initSpatial(): () => void {
       settleSavedRectWait()
     })
 
+  // 桌面舞台收起（完整入口打开）或精灵窗隐藏、最小化时暂停走位、漫游、探身与仪式提示；
+  // 重新展示后收回栖身、恢复贴边并重新裁决（DESIGN「窗口与会话」）。
+  const pauseDesktopStage = (): void => {
+    peekIntentGeneration += 1
+    clearSpriteGesture()
+
+    if ($spatialPeek.get() || pendingWindowPeek || $peekPreparation.get()) {
+      abandonPeekMode()
+    }
+
+    stopRoam()
+    cancelMovement()
+    $spatialLocomotion.set('still')
+  }
+
+  const resumeDesktopStage = (): void => {
+    if (!isDesktopStageShown()) {
+      return
+    }
+
+    if (screenEdgeHome) {
+      void activateScreenPeek(screenEdgeHome)
+    }
+
+    if ($spatialLocale.get() === 'perch' || $spatialLocale.get() === 'workbench') {
+      setSpatialLocale('home')
+    }
+
+    updateSpatialDecision()
+  }
+
   const unlistenSurface = $surfaceOpen.listen(open => {
     if (open === 'living' || open === 'workbench') {
-      peekIntentGeneration += 1
-      clearSpriteGesture()
-
-      if ($spatialPeek.get() || pendingWindowPeek || $peekPreparation.get()) {
-        abandonPeekMode()
-      }
-
-      stopRoam()
-      cancelMovement()
-      $spatialLocomotion.set('still')
+      pauseDesktopStage()
 
       if (open === 'workbench') {
         $spatialLocale.set('workbench')
       }
     } else {
-      if (screenEdgeHome) {
-        void activateScreenPeek(screenEdgeHome)
-      }
+      resumeDesktopStage()
+    }
+  })
 
-      if ($spatialLocale.get() === 'perch' || $spatialLocale.get() === 'workbench') {
-        setSpatialLocale('home')
-      }
-
-      updateSpatialDecision()
+  const unlistenSpriteVisible = $surfaceSpriteVisible.listen(visible => {
+    if (visible) {
+      resumeDesktopStage()
+    } else {
+      pauseDesktopStage()
     }
   })
 
@@ -1836,6 +1863,7 @@ export function initSpatial(): () => void {
     settleSavedRectWait()
     unlistenDefaultScale()
     unlistenSurface()
+    unlistenSpriteVisible()
     unlistenState()
     unlistenTier()
     unlistenFocus()

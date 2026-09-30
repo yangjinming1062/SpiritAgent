@@ -9,6 +9,7 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import IO, Protocol
 
 from utils import CREATE_NO_WINDOW, cfg_get, is_interrupted, load_config
@@ -78,10 +79,35 @@ def _cwd_marker(session_id: str) -> str:
     return f"SPIRITAGENT_CWD_{session_id}__"
 
 
+@dataclass(frozen=True, slots=True)
+class SSHTarget:
+    host: str
+    user: str
+    port: int
+    key: str
+    password: str = field(repr=False)
+
+
+@dataclass(frozen=True, slots=True)
+class EnvironmentSpec:
+    """环境的创建参数：类型与 SSH 目标决定命令在哪里执行，cwd 与 timeout 只是会话初始值。"""
+
+    env_type: str
+    cwd: str
+    timeout: int
+    ssh: SSHTarget | None
+
+    @property
+    def target(self) -> tuple[str, SSHTarget | None]:
+        return self.env_type, self.ssh
+
+
 class BaseEnvironment(ABC):
     _snapshot_timeout: int = 30
     # 环境类型标签（local / ssh），由 factory 在实例化后赋值；file_tools 据此路由本地文件操作。
     env_type: str = ""
+    # 创建参数，由 factory 在实例化后赋值；配置变化时据此决定沿用、替换或拒绝。
+    spec: EnvironmentSpec | None = None
 
     def get_temp_dir(self) -> str:
         return "/tmp"
@@ -99,6 +125,8 @@ class BaseEnvironment(ABC):
         # 执行中的命令数：终端、execute_code 脚本与其远程 RPC 轮询可并发调用 execute，cleanup 线程据此续命。
         self._executing_count = 0
         self._executing_lock = threading.Lock()
+        # 经 use_environment 持有本环境的调用数，由 factory 在 env_lock 下增减。
+        self.leases = 0
 
     @abstractmethod
     def _run_bash(
@@ -331,6 +359,11 @@ class BaseEnvironment(ABC):
     @property
     def executing(self) -> bool:
         return self._executing_count > 0
+
+    @property
+    def in_use(self) -> bool:
+        """有调用持有或命令执行中；后台进程另由已注册的进程检查判断。"""
+        return self.leases > 0 or self.executing
 
     def __del__(self) -> None:
         with contextlib.suppress(Exception):

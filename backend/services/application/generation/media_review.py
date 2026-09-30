@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.actions import (
     CatalogValidationError,
     StaleCatalogError,
+    clear_action_attempt,
     publish_action_catalog,
 )
 
@@ -25,13 +26,18 @@ async def create_media_review(
     *,
     publication: dict | None = None,
 ) -> int:
+    """登记待确认复核项；同一素材只复用仍待确认的记录，已结束的复核不再代表本次提交。"""
     async with SESSION_LOCAL() as db:
         existing = await db.scalar(
-            select(CompanionMediaReview).where(
+            select(CompanionMediaReview)
+            .where(
                 CompanionMediaReview.user_id == user_id,
                 CompanionMediaReview.media_type == media_type,
                 CompanionMediaReview.media_url == media_url,
-            ),
+                CompanionMediaReview.status == "pending",
+            )
+            .order_by(CompanionMediaReview.id.desc())
+            .limit(1),
         )
         if existing is not None and existing.publication == publication:
             return existing.id
@@ -114,11 +120,31 @@ async def _accept_reviewed_action(
         )
 
 
+async def has_pending_action_review(db: AsyncSession, action: CompanionAction) -> bool:
+    """动作当前成品是否仍有待用户确认的复核项。"""
+    if not action.video_path:
+        return False
+    review_id = await db.scalar(
+        select(CompanionMediaReview.id)
+        .where(
+            CompanionMediaReview.user_id == action.user_id,
+            CompanionMediaReview.media_type == "video",
+            CompanionMediaReview.media_url == action.video_path,
+            CompanionMediaReview.status == "pending",
+        )
+        .limit(1),
+    )
+    return review_id is not None
+
+
 async def _reject_reviewed_action(db: AsyncSession, user_id: int, action_id: int) -> None:
     job = await db.get(CompanionAction, action_id)
     if job is not None and job.user_id == user_id and job.status == "review":
         job.status = "failed"
         job.error = "用户未采纳该动作视频"
+        # 未采纳的成品连同生成进度一并作废：之后的重做是独立的新尝试，不会再复核同一素材。
+        # 复核链已收尾，没有待续的供应商句柄；文件保留供该复核记录查看。
+        clear_action_attempt(job)
         emit_ws_event(
             db,
             user_id=user_id,

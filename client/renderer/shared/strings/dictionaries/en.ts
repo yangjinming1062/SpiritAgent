@@ -1272,6 +1272,26 @@ export const dict: Dictionary = {
     }
   },
 
+  presets: {
+    names: {
+      companion: 'Companion',
+      developer: 'Engineer',
+      product_manager: 'Product manager',
+      copywriter: 'Copywriter',
+      language_teacher: 'Language teacher'
+    },
+    descriptions: {
+      developer:
+        'Technical explanations, design, coding, debugging and code review, with attention to project constraints and verification.',
+      product_manager:
+        'Clarifies user problems and goals, weighs options, and turns them into actionable, verifiable product requirements.',
+      copywriter:
+        'Drafts, polishes and organizes copy, emails and meeting notes, keeping the original meaning and fitting the audience and occasion.',
+      language_teacher:
+        'Explains, corrects and practices at your level and toward your goals, with faithful, natural translations.'
+    }
+  },
+
   workbench: {
     title: 'Workbench',
     stationBadge: 'Work station',
@@ -1312,12 +1332,6 @@ export const dict: Dictionary = {
         recent: 'Sort by recent activity',
         created: 'Sort by creation time',
         messages: 'Sort by message count'
-      },
-      presetMeta: {
-        copywriter: 'Copywriter',
-        developer: 'Engineer',
-        language_teacher: 'Language teacher',
-        product_manager: 'Product manager'
       },
       actions: {
         pin: 'Pin',

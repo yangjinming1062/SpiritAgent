@@ -4,7 +4,7 @@ from typing import Any
 
 from utils import cfg_int, cfg_str, load_config
 
-from ._env_base import BaseEnvironment
+from ._env_base import BaseEnvironment, EnvironmentSpec, SSHTarget
 
 active_environments: dict[str, BaseEnvironment] = {}
 last_activity: dict[str, float] = {}
@@ -55,3 +55,20 @@ def get_env_config() -> dict[str, Any]:
         # 密码不去首尾空白：空白可能是密码的一部分。
         "ssh_password": "" if (password := ssh_cfg.get("password")) is None else str(password),
     }
+
+
+def current_environment_spec() -> EnvironmentSpec:
+    """当前 terminal 配置对应的环境创建参数；本地环境不带 SSH 字段，修改它们不影响本地环境。"""
+    config = get_env_config()
+    ssh = (
+        SSHTarget(
+            host=config["ssh_host"],
+            user=config["ssh_user"],
+            port=config["ssh_port"],
+            key=config["ssh_key"],
+            password=config["ssh_password"],
+        )
+        if config["env_type"] == "ssh"
+        else None
+    )
+    return EnvironmentSpec(env_type=config["env_type"], cwd=config["cwd"], timeout=config["timeout"], ssh=ssh)

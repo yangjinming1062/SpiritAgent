@@ -2,7 +2,7 @@ import { log } from '@/shared/lib/log'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $whisperOpen } from '@/shared/store/chat-visibility'
-import { $surfaceOpen, isLivingProxyWindow } from '@/shared/store/surfaces'
+import { $surfaceOpen, $surfaceSpriteVisible, isLivingProxyWindow } from '@/shared/store/surfaces'
 import type { ReplyAudio } from '@/shared/types/spiritagent'
 
 import { playDataUrl, stopAudio } from './audio-track'
@@ -37,7 +37,10 @@ function isVoiceSurfaceVisible(): boolean {
     return false
   }
 
-  return isLivingProxyWindow() ? $surfaceOpen.get() === 'living' : $whisperOpen.get() && $surfaceOpen.get() === null
+  // 轻语在精灵窗内：精灵窗被隐藏或最小化时轻语一并不可见。
+  return isLivingProxyWindow()
+    ? $surfaceOpen.get() === 'living'
+    : $whisperOpen.get() && $surfaceOpen.get() === null && $surfaceSpriteVisible.get()
 }
 
 export function cancelVoiceBar(): void {
@@ -126,6 +129,7 @@ export function bindVoiceBarListeners(): void {
 
   presentationPorts().$screenLocked.listen(cancelIfHidden)
   $surfaceOpen.listen(cancelIfHidden)
+  $surfaceSpriteVisible.listen(cancelIfHidden)
   $whisperOpen.listen(cancelIfHidden)
 }
 

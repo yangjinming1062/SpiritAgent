@@ -19,9 +19,10 @@
 
 ## 启动与退出
 
-`entry.ts` 按顺序调用各模块入口。ready 前依次为：[单实例锁](lifecycle/single-instance.ts)、[Chromium 开关](lifecycle/platform.ts)、确定 Home 并 `setPath('userData')`（须早于日志器、配置镜像与会话创建）、[应用名与 AppUserModelID](lifecycle/menu.ts)；新增模块只导出函数，不在导入时产生副作用。
+`entry.ts` 按顺序调用各模块入口。ready 前依次为：[单实例锁](lifecycle/single-instance.ts)、[Chromium 开关](lifecycle/platform.ts)、确定 Home 并 `setPath('userData')`（须早于日志器、配置镜像与会话创建）、[随包技能同步](lifecycle/bundled-skills.ts)、[应用名与 AppUserModelID](lifecycle/menu.ts)；新增模块只导出函数，不在导入时产生副作用。
 
 - `SPIRITAGENT_DESKTOP_USER_DATA_DIR` 覆盖下取 `<override>/spiritagent-home` 为 Home（[paths.ts](security/paths.ts)）；配置、日志与缓存不另找目录。
+- 随包技能同步紧接日志器同步执行，早于会话恢复与 Runner 自动启动（含 200 ms 定时入口），使 Runner 与技能索引读到新文件。仅打包运行且桌面版本与 Home 下 `.bundled-skills-version` 不同时，把 resources 中的 `skills` 复制到 `$SPIRITAGENT_HOME/skills`：同名覆盖、不删其他内容，存在 `.no-bundled-skills` 时跳过；全部复制成功才写版本标记，失败只记日志、下次启动重试。
 - 默认单实例；`SPIRITAGENT_DESKTOP_DISABLE_SINGLE_INSTANCE_LOCK=1` 只用于并行验证，第二实例事件在转发器就绪前折叠保存，之后兑现一次。
 - 远程显示可禁用 GPU 并关闭精灵透明。
 - Chromium 后台节流全局关闭，渲染功耗由引擎管理。

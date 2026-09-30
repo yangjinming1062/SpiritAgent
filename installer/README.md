@@ -15,6 +15,7 @@
 - 安装脚本与 payload 随安装器共同发布，Runner 使用 uv 管理的 Python 与独立 venv。
 - 嵌入资源保证脚本和载荷随版本交付；安装仍需联网获取工具链、依赖及可选 OfficeCLI。
 - Skills 覆盖同名内置文件，但保留用户自装内容；存在 `$SPIRITAGENT_HOME/.no-bundled-skills` 时跳过内置技能释放及 OfficeCLI 安装。安装器不解析平台字段，过滤归 Client 与 Runner。
+- 桌面端自更新不经安装器：同一份技能随桌面安装包交付，新版本首次启动时由 Client 按相同规则同步（[bundled-skills.ts](../client/main/lifecycle/bundled-skills.ts)）。install-skills 阶段仍负责首装、修复时恢复内置技能与安装 OfficeCLI。
 
 ## 资源与路径
 
@@ -22,7 +23,7 @@
 
 安装脚本依次从开发目录（`SPIRITAGENT_SETUP_DEV_REPO_ROOT` 指向仓库根时取其 `installer/` 下脚本）、Tauri resources、build.rs 内嵌 ZIP 解析；payload 只取后两处，均不在线下载。嵌入资源解压到 `$SPIRITAGENT_HOME/bootstrap-payload/`，Windows 单 EXE 依赖此兜底。实现见 [install_script.rs](src-tauri/src/install_script.rs)。
 
-`skills` 是原始技能载荷，`payload` 是构建暂存区；其中 `payload/onboarding-audio/` 是入库的预制音频，不能当临时产物清理。
+`skills` 是原始技能载荷，构建时暂存进 `payload`，同时经 Client 的 electron-builder `extraResources` 打入桌面安装包；`payload` 是构建暂存区，其中 `payload/onboarding-audio/` 是入库的预制音频，不能当临时产物清理。
 
 | 内容 | 路径 |
 |---|---|

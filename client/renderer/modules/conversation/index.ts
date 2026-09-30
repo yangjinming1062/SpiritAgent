@@ -44,6 +44,7 @@ export {
 export { ConversationInput } from './conversation-input'
 export { ConversationSurface } from './conversation-surface'
 export { consumePendingMessages, pendingMessages, rememberPendingMessage } from './pending-messages'
+export { presetDisplayDescription, presetDisplayName, sessionDisplayTitle } from './preset-labels'
 export {
   invalidateSessionHistory,
   loadLocalSessionHistory,

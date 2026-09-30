@@ -4,6 +4,7 @@ import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
 import { $gateway } from '@/shared/store/gateway'
+import { $locale } from '@/shared/store/locale'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type {
@@ -24,6 +25,7 @@ import {
   resetSessionContextUsage,
   setChatSession
 } from './chat-store'
+import { sessionDisplayTitle } from './preset-labels'
 import {
   $persistedCompanionSessionId,
   forgetSessionHistory,
@@ -90,11 +92,16 @@ function findCurrentSession(): SessionInfo | undefined {
   return findSessionInfo(id)
 }
 
-export const $currentSessionTitle = computed([$chatSessionId, $sessions, $archivedSessions, $searchResults], () => {
-  const info = findCurrentSession()
+// 固定预设会话按当前界面语言显示预设名，界面语言变化时随之更新。
+export const $currentSessionTitle = computed(
+  [$chatSessionId, $sessions, $archivedSessions, $searchResults, $systemPresets, $locale],
+  () => {
+    const info = findCurrentSession()
+    const dict = getStrings()
 
-  return (info?.title && info.title.trim()) || getStrings().chat.defaultSessionTitle
-})
+    return (info && sessionDisplayTitle(dict, info, $systemPresets.get())) || dict.chat.defaultSessionTitle
+  }
+)
 
 export async function ensureChatSession(): Promise<string> {
   const existing = $chatSessionId.get()

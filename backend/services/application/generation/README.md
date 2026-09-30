@@ -16,7 +16,7 @@
 | [scene_service.py](scene_service.py) | 场景创建、描述分析、图片重生成与切换版本 |
 | [video/](video/) / [video_jobs.py](video_jobs.py) | 视频包（script、state、service）与聊天、夜间视频任务；供应商轮询 `poll_video_task` 两者共用，聊天工具入口见 [video_generation_tool.py](../../adapters/tools/builtin/video_generation_tool.py) |
 | [media_chain.py](media_chain.py) / [character_images.py](character_images.py) / [identity_review.py](identity_review.py) | 供应商链择优、身份保持图片、评分与严格复核 |
-| [media_review.py](media_review.py) | 用户复核项的创建、查询、采纳与拒绝；采纳动作且所属包仍激活时同事务发布目录 |
+| [media_review.py](media_review.py) | 用户复核项的创建、查询、采纳与拒绝；采纳动作且所属包仍激活时同事务发布目录，拒绝时作废该次生成尝试；同一素材只复用仍待确认的复核项 |
 | [response_builders.py](response_builders.py) | 头像/外观响应装配 |
 
 ## 事务与任务所有权
@@ -67,7 +67,7 @@
 
 探身补齐由 [video/service.py](video/service.py)编排，定位校准在 [video/script.py](video/script.py)，接口契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。生成任务收尾须兑现新排队动作的唤醒；空队列停止，不循环恢复未知结果任务。
 
-每个动作素材都要抠像，新增付费制作的入口须先调用 `require_action_matting_model`：整包生成、就绪包原位重做、失败包续跑（有可续跑动作时）与探身补齐在请求时检查，动态动作在提案受理时检查。已受理任务在后台续跑或重启恢复时不复查。
+每个动作素材都要抠像，`require_action_matting_model` 在两处把关：整包生成、就绪包原位重做、失败包续跑（有可续跑动作时）与探身补齐在请求时检查，动态动作在提案受理时检查；后台制作（含评审后启动与重启恢复）在每个新的付费步骤前再查一次，即参考校准、脚本撰写、姿态图与每次视频提交。缺失时任务在付费前失败并保留已有进度，模型恢复后经同名重做（动态动作）或失败包续跑沿用原进度；已有供应商句柄的任务照常续查与下载，抠像时失败并保留源视频；已有可用候选时不再追加提交、按最佳候选收尾；结果未知的提交不重发。
 
 姿态图的透明输出、留白准备与视频透明化边界见 [视频与交付](../../../../docs/PIPELINE.md#视频与交付)。
 

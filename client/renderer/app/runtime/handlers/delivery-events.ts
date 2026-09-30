@@ -1,3 +1,4 @@
+import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
 import { openSessionSurface } from '@/app/workflows/session-delivery'
 import { $effectiveTier, $screenLocked } from '@/modules/character'
 import {
@@ -18,7 +19,7 @@ import type { ChatMediaItem, CompanionBubble } from '@/shared/types/spiritagent'
 import { decodePayload } from '../gateway-event-util'
 
 // 主动消息与通知投递：companion.message / system.notification / 视频任务完成 / IM 通道提醒。
-// 提醒是否出现由打扰档位、锁屏与聊天可见性共同裁决。
+// 提醒是否出现由打扰档位、锁屏与聊天可见性共同裁决；精灵旁提示另需精灵实际可见，不可见时由未读承接。
 
 export function handleDeliveryEvent(event: GatewayEvent): void {
   switch (event.type) {
@@ -48,7 +49,7 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
         }
       }
 
-      if (displayText && $effectiveTier.get() !== 'still' && !$screenLocked.get() && !$chatVisible.get()) {
+      if (displayText && $effectiveTier.get() !== 'still' && isSpriteOverlayVisible()) {
         showMediaHint(displayText, payload?.session_id)
       }
 
@@ -108,7 +109,7 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       if (sessionId && sessionId === $chatSessionId.get()) {
         pushMediaMessage(media)
       } else if (!$screenLocked.get()) {
-        // 正在看别的会话或轻语时用通知承载跳转；对话界面收起时用精灵气泡提示。
+        // 正在看别的会话或轻语时用通知承载跳转；对话界面收起且精灵可见时用精灵气泡提示。
         if ($chatVisible.get() && sessionId) {
           notify({
             kind: 'success',
@@ -120,7 +121,7 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
               }
             }
           })
-        } else {
+        } else if (isSpriteOverlayVisible()) {
           showMediaHint(message, sessionId)
         }
       }

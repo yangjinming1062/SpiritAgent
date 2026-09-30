@@ -30,7 +30,12 @@ def register_active_process_checker(fn: Callable[[str], bool]) -> None:
         _active_process_checkers.append(fn)
 
 
-def _stop_env(task_id: str, env: BaseEnvironment | None) -> None:
+def task_has_active_processes(task_id: str) -> bool:
+    """任务下是否还有运行中的后台进程（按已注册的检查回调）。"""
+    return any(checker(task_id) for checker in _active_process_checkers)
+
+
+def stop_environment(task_id: str, env: BaseEnvironment | None) -> None:
     """运行清理回调并关闭环境；单个回调或环境清理失败只记录，不影响其余清理。"""
     for hook in _cleanup_hooks:
         try:
@@ -49,9 +54,9 @@ def _stop_env(task_id: str, env: BaseEnvironment | None) -> None:
 def _cleanup_inactive_envs(lifetime_seconds: int = 300) -> None:
     current_time = time.time()
     for task_id in list(last_activity.keys()):
-        # 前台命令执行中的环境与有活跃子进程的环境都要续命, 否则长命令运行中途环境会被回收
+        # 被调用持有、前台命令执行中或有活跃子进程的环境都要续命, 否则长命令运行中途环境会被回收
         # （SSH 场景下 cleanup 还会掐断 ControlMaster, 杀死在途命令）。
-        if _env_busy(task_id) or any(checker(task_id) for checker in _active_process_checkers):
+        if _env_busy(task_id) or task_has_active_processes(task_id):
             last_activity[task_id] = current_time
     envs_to_stop = []
     with env_lock:
@@ -63,12 +68,12 @@ def _cleanup_inactive_envs(lifetime_seconds: int = 300) -> None:
                     envs_to_stop.append((task_id, env))
         # creation_locks 条目刻意不弹出：删除一个别的线程正在持有的锁对象（环境创建中途），会让第三个线程创建一把新锁进入同一临界区——一个任务两个环境。条目随进程生命周期驻留，由 task_id 空间限定上限。
     for task_id, env in envs_to_stop:
-        _stop_env(task_id, env)
+        stop_environment(task_id, env)
 
 
 def _env_busy(task_id: str) -> bool:
     env = active_environments.get(task_id)
-    return env is not None and env.executing
+    return env is not None and env.in_use
 
 
 def _cleanup_thread_worker() -> None:
@@ -111,7 +116,7 @@ def _atexit_cleanup() -> None:
     if envs:
         logger.info("Shutting down %d remaining environment(s)...", len(envs))
     for task_id, env in envs:
-        _stop_env(task_id, env)
+        stop_environment(task_id, env)
 
 
 atexit.register(_atexit_cleanup)

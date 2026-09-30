@@ -29,8 +29,12 @@ def schedule_accepted_proposal(acceptance: ProposalAcceptance, user_id: int) -> 
         return
     if result.proposal_id is not None:
         schedule_proposal_review(result.proposal_id, user_id)
-    elif result.action_id is not None and acceptance.wake_pack_id is not None:
-        kick_dynamic_action(acceptance.wake_pack_id, result.action_id, user_id)
+    elif (
+        result.action_id is not None
+        and acceptance.pack_id is not None
+        and acceptance.existing_action in ("in_production", "redo_requested")
+    ):
+        kick_dynamic_action(acceptance.pack_id, result.action_id, user_id)
 
 
 def schedule_proposal_review(proposal_id: int, user_id: int) -> None:

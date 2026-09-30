@@ -37,6 +37,9 @@ async def _synthesize_one(client: AsyncOpenAI, voice: str, text: str) -> bytes:
         audio={"format": "mp3", "voice": voice},
     )
     choice = response.choices[0] if response.choices else None
+    # 与运行时 synthesize() 一致：未正常结束的响应可能是截断音频，不落盘。
+    if choice is not None and choice.finish_reason != "stop":
+        raise RuntimeError(f"MiMo TTS response did not complete: {choice.finish_reason}")
     if not choice or not getattr(choice.message, "audio", None):
         raise RuntimeError("MiMo TTS returned no audio")
     return base64.b64decode(choice.message.audio.data)

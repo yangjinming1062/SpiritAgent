@@ -74,7 +74,7 @@ uv run --no-project --python 3.13 python scripts/check_runner_facade.py
 
 单独检查默认选最新 wheel，不等同于正式构建的精确版本门禁。构建期间临时加入实际桌面资源，完成后恢复 Tauri 配置。
 
-Windows 产出单个 `SpiritAgent-Setup-<version>.exe`（内嵌桌面端 NSIS 包，由 `install.ps1` 静默安装）和 update ZIP；update ZIP 由 [UpdateManifest.ps1](lib/UpdateManifest.ps1) 的 `Build-UpdateZip` 打包（需要 openssl），包含当前版本 NSIS 包与 blockmap、`runner/` 下的 wheel 与 `server.py`、签名的 `latest-runner.yml`、`manifest.json`，以及缺签名时补签的 `latest*.yml`（Backend 上传时丢弃后者，按库存重新生成），仅 Windows 构建生成。macOS 产出 DMG。macOS 产物在 macOS 构建，Windows 在 Windows 构建，不支持跨宿主替代验证。`--sign-identity`（配合 `--notary-profile` 公证）与 `--cert-thumbprint` 就地签名 `client/release` 中的桌面端产物，再复制进 payload，Windows update ZIP 也取该文件；安装器本身不由 `build.py` 签名；electron-builder 另有经环境变量驱动的 [notarize.cjs](../client/scripts/notarize.cjs)。Windows 更新包始终要求更新签名密钥。
+Windows 产出单个 `SpiritAgent-Setup-<version>.exe`（内嵌桌面端 NSIS 包，由 `install.ps1` 静默安装）和 update ZIP；update ZIP 由 [UpdateManifest.ps1](lib/UpdateManifest.ps1) 的 `Build-UpdateZip` 打包（需要 openssl），包含当前版本 NSIS 包（内置技能在其 resources 内，不另行打包）与 blockmap、`runner/` 下的 wheel 与 `server.py`、签名的 `latest-runner.yml`、`manifest.json`，以及缺签名时补签的 `latest*.yml`（Backend 上传时丢弃后者，按库存重新生成），仅 Windows 构建生成。macOS 产出 DMG。macOS 产物在 macOS 构建，Windows 在 Windows 构建，不支持跨宿主替代验证。`--sign-identity`（配合 `--notary-profile` 公证）与 `--cert-thumbprint` 就地签名 `client/release` 中的桌面端产物，再复制进 payload，Windows update ZIP 也取该文件；安装器本身不由 `build.py` 签名；electron-builder 另有经环境变量驱动的 [notarize.cjs](../client/scripts/notarize.cjs)。Windows 更新包始终要求更新签名密钥。
 
 ## 发布
 

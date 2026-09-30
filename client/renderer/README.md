@@ -39,7 +39,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 鉴权请求仅接受发起会话仍有效的结果。
 - `tool.call` / `tool.cancel` 只由宿主执行，按 call_id 去重与撤回，不受可见会话过滤；其他会话过程受会话守卫。
 - headless 不显示工作态，非当前会话的可见调用自行以引用计数持有工作态，只释放自身仍拥有的状态。
-- 消息入列与提醒分开：已提交陪伴消息按 ID 合并，提醒受可见性等条件控制；自动化系统通知不套陪伴打扰闸门。
+- 消息入列与提醒分开：已提交陪伴消息按 ID 合并，提醒受可见性等条件控制；自动化系统通知不套陪伴打扰闸门。精灵旁的提示气泡与主动台词只在精灵舞台可见时出现（[proactive-delivery.ts](app/workflows/proactive-delivery.ts) 的 `isSpriteOverlayVisible`），不可见时主动消息仍记入未读，重新可见后由待读气泡承接。
 - 跳转按会话归属选择入口，工作会话不能送进轻语。
 - 未读只在所属对话可见时清除。
 
@@ -96,7 +96,8 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 探身位置、遮挡和命中随解码首帧一起生效，失败保留旧画面。表演移出遮挡后才上报 `started`，结束时重验返回目标。
 - stay 或推理失败不触发本地漫游；本地空间规则仅在智能关闭时生效。
 - 本地漫游需真实空闲信号，未知则不动；位置适配不足时放弃，不缩成不可辨识大小。
-- 仪式行走可跳过，失败仍执行原工具，`system.click_at` 不补第二次点击；目标经主进程换算到精灵视口，不在视口内不走动，未抵达或指向被打断时跳过指向与预点击。
+- 精灵窗隐藏或最小化与完整入口收起同样暂停走位、漫游与探身（含计时器与窗口跟踪），重新显示后收回栖身、恢复贴边并重新裁决。
+- 仪式行走可跳过，失败仍执行原工具，`system.click_at` 不补第二次点击；目标经主进程换算到精灵视口，不在视口内不走动，未抵达或指向被打断时跳过指向与预点击。仪式与表达播放共用舞台可见性判断，每一步行动前重验：不可见时不走动、不出声、不预点击，行走或指向中变为不可见立即执行原工具。
 
 ## 会话与媒体
 
@@ -107,6 +108,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 附件绑定加入时的会话，视频上传完成前不可发送；切换后丢弃旧附件及迟到结果。
 - 编辑与普通草稿分离，取消恢复普通草稿；编辑文本不解析 Slash，成功只消费修订事件。
 - 会话参数显示后端生效值，只接受当前会话最新保存结果；恢复默认删除覆盖。
+- 系统预设与固定预设会话（`kind=special`）的显示名、预设说明按界面语言取字典 `presets`，经 [preset-labels.ts](modules/conversation/preset-labels.ts) 显示；后端目录只有中文，中文字典须与其同步，未知预设回落目录值。
 - 会话只读状态直接消费历史水合的 `info.kind`；陪伴归属由 `system_preset_id` 判定。
 - 工作台确认目标不是陪伴后才挂载对话面板。
 - 快照、增量与重放按 [Client](../README.md#资产与历史缓存)处理。
@@ -122,7 +124,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 播放状态归 speech，会话气泡与音频视图归 conversation，由应用工作流装配。
 - 新播放、停止、换会话、表面隐藏或锁屏使旧下载和播放结果失效。
 - 播放结果区分完成、中断与失败；其他声音抢占属于中断，不把语音条标记为不可用。
-- 主动台词经 [proactive-delivery.ts](app/workflows/proactive-delivery.ts) 用 `speak`（不落盘，当前生产调用只有仪式行走失败提示）；拖拽反应、音色试听等预制台词用 `speakScripted`（落盘）；朗读文本清理不改写聊天原文。
+- 主动台词经 [proactive-delivery.ts](app/workflows/proactive-delivery.ts) 用 `speak`（不落盘，当前生产调用只有仪式行走失败提示），合成或朗读中精灵变为不可见即停声；拖拽反应、音色试听等预制台词用 `speakScripted`（落盘）；朗读文本清理不改写聊天原文。
 - 限额和字节缓存归主进程。
 
 ### 媒体查看

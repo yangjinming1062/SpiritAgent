@@ -5,10 +5,11 @@ import os
 import posixpath
 import sys
 import threading
-from contextlib import ExitStack
+from collections.abc import Iterator
+from contextlib import ExitStack, contextmanager
 from typing import Any
 
-from envs import get_or_create_environment, register_env_cleanup_hook, resolve_container_task_id
+from envs import register_env_cleanup_hook, resolve_container_task_id, use_environment
 from utils import (
     IS_WINDOWS,
     get_read_block_error,
@@ -177,18 +178,18 @@ _file_ops_lock = threading.Lock()
 _file_ops_cache: dict[str, FileOperations] = {}
 
 
-def _get_file_ops(task_id: str) -> FileOperations:
-    """返回任务终端环境对应的文件操作实例：local 环境用原生 I/O，其他环境经 shell 执行。"""
+@contextmanager
+def _file_ops(task_id: str) -> Iterator[FileOperations]:
+    """在 with 块内返回任务终端环境对应的文件操作实例并持有该环境：local 环境用原生 I/O，其他环境经 shell 执行。"""
     task_id = resolve_container_task_id(task_id)
-    env = get_or_create_environment(task_id)
-    with _file_ops_lock:
-        # 环境可能已被清理并重建，缓存只在绑定同一环境对象时复用。
-        cached = _file_ops_cache.get(task_id)
-        if cached is not None and cached.env is env:
-            return cached
-        file_ops = NativeFileOperations(env) if env.env_type == "local" else ShellFileOperations(env)
-        _file_ops_cache[task_id] = file_ops
-        return file_ops
+    with use_environment(task_id) as env:
+        with _file_ops_lock:
+            # 环境可能已被清理并重建，缓存只在绑定同一环境对象时复用。
+            file_ops = _file_ops_cache.get(task_id)
+            if file_ops is None or file_ops.env is not env:
+                file_ops = NativeFileOperations(env) if env.env_type == "local" else ShellFileOperations(env)
+                _file_ops_cache[task_id] = file_ops
+        yield file_ops
 
 
 def clear_file_ops_cache(task_id: str | None = None) -> None:
@@ -215,21 +216,21 @@ def list_directory_tool(path: str, task_id: str = "default") -> str:
     if not path:
         return tool_error("list_directory: missing 'path'.")
     try:
-        file_ops = _get_file_ops(task_id)
-        target = _target(file_ops, path)
-        if block_error := get_read_block_error(target):
-            return tool_error(block_error)
-        result = file_ops.list_directory(target)
-        if result.error:
-            return tool_error(result.error)
-        entries = sorted(result.entries, key=lambda x: (not x["is_dir"], x["name"]))
-        # 按单条约 120 字符估算结果上限，避免一次列出上万条撑满上下文。
-        max_entries = max(50, registry.get_max_result_size() // 120)
-        output: dict[str, Any] = {"path": target, "entries": entries[:max_entries]}
-        if len(entries) > max_entries:
-            output["truncated"] = True
-            output["hint"] = f"Directory has more than {max_entries} entries; use search_files to filter."
-        return json.dumps(output, ensure_ascii=False)
+        with _file_ops(task_id) as file_ops:
+            target = _target(file_ops, path)
+            if block_error := get_read_block_error(target):
+                return tool_error(block_error)
+            result = file_ops.list_directory(target)
+            if result.error:
+                return tool_error(result.error)
+            entries = sorted(result.entries, key=lambda x: (not x["is_dir"], x["name"]))
+            # 按单条约 120 字符估算结果上限，避免一次列出上万条撑满上下文。
+            max_entries = max(50, registry.get_max_result_size() // 120)
+            output: dict[str, Any] = {"path": target, "entries": entries[:max_entries]}
+            if len(entries) > max_entries:
+                output["truncated"] = True
+                output["hint"] = f"Directory has more than {max_entries} entries; use search_files to filter."
+            return json.dumps(output, ensure_ascii=False)
     except Exception as e:
         return tool_error(str(e))
 
@@ -240,41 +241,41 @@ def read_file_tool(path: str, offset: int = 1, limit: int = DEFAULT_READ_LIMIT, 
         return tool_error("read_file: missing 'path'.")
     try:
         offset, limit = normalize_read_pagination(offset, limit)
-        file_ops = _get_file_ops(task_id)
-        local = isinstance(file_ops, NativeFileOperations)
-        target = _target(file_ops, path)
-        # 字面路径与解析后路径都检查：前者拦住 /dev/stdin 这类别名，后者拦住指向设备的符号链接。
-        if _is_blocked_device_path(path) or _is_blocked_device_path(target):
-            return tool_error(
-                f"Cannot read '{path}': this is a device file that would block or produce infinite output.",
-            )
-        if has_binary_extension(target):
-            return tool_error(f"Cannot read binary file '{path}': read_file only returns text.")
-        if block_error := get_read_block_error(target):
-            return tool_error(block_error)
+        with _file_ops(task_id) as file_ops:
+            local = isinstance(file_ops, NativeFileOperations)
+            target = _target(file_ops, path)
+            # 字面路径与解析后路径都检查：前者拦住 /dev/stdin 这类别名，后者拦住指向设备的符号链接。
+            if _is_blocked_device_path(path) or _is_blocked_device_path(target):
+                return tool_error(
+                    f"Cannot read '{path}': this is a device file that would block or produce infinite output.",
+                )
+            if has_binary_extension(target):
+                return tool_error(f"Cannot read binary file '{path}': read_file only returns text.")
+            if block_error := get_read_block_error(target):
+                return tool_error(block_error)
 
-        result = file_ops.read_file(target, offset, limit)
-        result_dict = result.to_dict()
-        # 按实际进入上下文的带行号内容计字符数，而非文件大小。
-        max_chars = _get_max_read_chars()
-        if len(result.content) > max_chars:
-            return tool_error(
-                f"Read produced {len(result.content):,} characters which exceeds the safety limit ({max_chars:,} chars). "
-                f"Use offset and limit to read a smaller range. The file has {result.total_lines} lines total.",
-                path=path,
-                total_lines=result.total_lines,
-                file_size=result.file_size,
-            )
-        if result.content:
-            result_dict["content"] = redact_sensitive_text(result.content)
-        if result.file_size > _LARGE_FILE_HINT_BYTES and limit > 200 and result.truncated:
-            result_dict["_hint"] = (
-                f"This file is large ({result.file_size:,} bytes). Consider reading only the "
-                "section you need with offset and limit to keep context usage efficient."
-            )
-        if local and not result.error:
-            record_read(task_id, target, partial=offset > 1 or result.truncated)
-        return json.dumps(result_dict, ensure_ascii=False)
+            result = file_ops.read_file(target, offset, limit)
+            result_dict = result.to_dict()
+            # 按实际进入上下文的带行号内容计字符数，而非文件大小。
+            max_chars = _get_max_read_chars()
+            if len(result.content) > max_chars:
+                return tool_error(
+                    f"Read produced {len(result.content):,} characters which exceeds the safety limit ({max_chars:,} chars). "
+                    f"Use offset and limit to read a smaller range. The file has {result.total_lines} lines total.",
+                    path=path,
+                    total_lines=result.total_lines,
+                    file_size=result.file_size,
+                )
+            if result.content:
+                result_dict["content"] = redact_sensitive_text(result.content)
+            if result.file_size > _LARGE_FILE_HINT_BYTES and limit > 200 and result.truncated:
+                result_dict["_hint"] = (
+                    f"This file is large ({result.file_size:,} bytes). Consider reading only the "
+                    "section you need with offset and limit to keep context usage efficient."
+                )
+            if local and not result.error:
+                record_read(task_id, target, partial=offset > 1 or result.truncated)
+            return json.dumps(result_dict, ensure_ascii=False)
     except Exception as e:
         return tool_error(str(e))
 
@@ -282,25 +283,25 @@ def read_file_tool(path: str, offset: int = 1, limit: int = DEFAULT_READ_LIMIT, 
 def write_file_tool(path: str, content: str, task_id: str = "default") -> str:
     """把内容写入文件。"""
     try:
-        file_ops = _get_file_ops(task_id)
-        local = isinstance(file_ops, NativeFileOperations)
-        target = _target(file_ops, path)
-        if sensitive_err := _sensitive_write_error(target, local):
-            return tool_error(sensitive_err)
-        # 同一路径的读→改→写串行，避免并发调用交错。
-        with lock_path(target):
-            warning = check_stale(task_id, target, whole_file=True) if local else None
-            result = file_ops.write_file(target, content)
-            result_dict = result.to_dict()
-            if not result.error:
-                result_dict["files_modified"] = [target]
-                if local:
-                    note_write(task_id, target)
-        if local:
-            result_dict["resolved_path"] = target
-        if warning:
-            result_dict["_warning"] = warning
-        return json.dumps(result_dict, ensure_ascii=False)
+        with _file_ops(task_id) as file_ops:
+            local = isinstance(file_ops, NativeFileOperations)
+            target = _target(file_ops, path)
+            if sensitive_err := _sensitive_write_error(target, local):
+                return tool_error(sensitive_err)
+            # 同一路径的读→改→写串行，避免并发调用交错。
+            with lock_path(target):
+                warning = check_stale(task_id, target, whole_file=True) if local else None
+                result = file_ops.write_file(target, content)
+                result_dict = result.to_dict()
+                if not result.error:
+                    result_dict["files_modified"] = [target]
+                    if local:
+                        note_write(task_id, target)
+            if local:
+                result_dict["resolved_path"] = target
+            if warning:
+                result_dict["_warning"] = warning
+            return json.dumps(result_dict, ensure_ascii=False)
     except Exception as e:
         if _is_expected_write_exception(e):
             logger.debug("write_file expected denial: %s: %s", type(e).__name__, e)
@@ -320,70 +321,70 @@ def patch_tool(
 ) -> str:
     """以 replace 模式或 V4A 补丁格式修改文件。"""
     try:
-        file_ops = _get_file_ops(task_id)
-        local = isinstance(file_ops, NativeFileOperations)
-        targets: list[str] = []
-        operations: list[PatchOperation] = []
-        if mode == "replace":
-            if not path:
-                return tool_error("patch: 'path' is required when mode='replace'.")
-            if old_string is None or new_string is None:
-                return tool_error("patch: 'old_string' and 'new_string' are required when mode='replace'.")
-            targets.append(_target(file_ops, path))
-        elif mode == "patch":
-            if not patch:
-                return tool_error("patch: 'patch' content is required when mode='patch'.")
-            operations, parse_error = parse_v4a_patch(patch)
-            if parse_error:
-                return tool_error(f"Failed to parse patch: {parse_error}")
-            for op in operations:
-                # 补丁头部路径来自补丁正文，可能源于网页或技能内容，拒绝 ``..`` 穿越；显式 path 参数不受此限。
-                for raw in (op.file_path, op.new_path):
-                    if raw and has_traversal_component(raw):
-                        return tool_error(
-                            f"V4A patch header contains '..' traversal: {raw!r}. "
-                            "Use a path relative to the current directory without '..', or an absolute path.",
-                        )
-                # 删除与移动作用于符号链接本身，其余操作写到链接指向的文件。
-                follow = op.operation in (OperationType.ADD, OperationType.UPDATE)
-                op.file_path = _target(file_ops, op.file_path, follow_symlinks=follow)
-                targets.append(op.file_path)
-                if op.new_path:
-                    op.new_path = _target(file_ops, op.new_path, follow_symlinks=False)
-                    targets.append(op.new_path)
-        else:
-            return tool_error(f"Unknown mode: {mode!r}. Use 'replace' or 'patch'.")
-
-        for target in targets:
-            if sensitive_err := _sensitive_write_error(target, local):
-                return tool_error(sensitive_err)
-
-        unique_targets = sorted(set(targets))
-        # 固定加锁顺序，避免多文件补丁互相死锁。
-        with ExitStack() as locks:
-            for target in unique_targets:
-                locks.enter_context(lock_path(target))
-            warnings = [w for t in unique_targets if local and (w := check_stale(task_id, t, whole_file=False))]
-            result: PatchResult
+        with _file_ops(task_id) as file_ops:
+            local = isinstance(file_ops, NativeFileOperations)
+            targets: list[str] = []
+            operations: list[PatchOperation] = []
             if mode == "replace":
-                result = file_ops.patch_replace(targets[0], old_string or "", new_string or "", replace_all)
+                if not path:
+                    return tool_error("patch: 'path' is required when mode='replace'.")
+                if old_string is None or new_string is None:
+                    return tool_error("patch: 'old_string' and 'new_string' are required when mode='replace'.")
+                targets.append(_target(file_ops, path))
+            elif mode == "patch":
+                if not patch:
+                    return tool_error("patch: 'patch' content is required when mode='patch'.")
+                operations, parse_error = parse_v4a_patch(patch)
+                if parse_error:
+                    return tool_error(f"Failed to parse patch: {parse_error}")
+                for op in operations:
+                    # 补丁头部路径来自补丁正文，可能源于网页或技能内容，拒绝 ``..`` 穿越；显式 path 参数不受此限。
+                    for raw in (op.file_path, op.new_path):
+                        if raw and has_traversal_component(raw):
+                            return tool_error(
+                                f"V4A patch header contains '..' traversal: {raw!r}. "
+                                "Use a path relative to the current directory without '..', or an absolute path.",
+                            )
+                    # 删除与移动作用于符号链接本身，其余操作写到链接指向的文件。
+                    follow = op.operation in (OperationType.ADD, OperationType.UPDATE)
+                    op.file_path = _target(file_ops, op.file_path, follow_symlinks=follow)
+                    targets.append(op.file_path)
+                    if op.new_path:
+                        op.new_path = _target(file_ops, op.new_path, follow_symlinks=False)
+                        targets.append(op.new_path)
             else:
-                result = apply_v4a_operations(operations, file_ops)
-            if local and result.success:
-                for target in unique_targets:
-                    note_write(task_id, target)
+                return tool_error(f"Unknown mode: {mode!r}. Use 'replace' or 'patch'.")
 
-        result_dict = result.to_dict()
-        if mode == "replace" and local:
-            result_dict["resolved_path"] = targets[0]
-        if warnings:
-            result_dict["_warning"] = " | ".join(warnings)
-        error = result.error or ""
-        if "Could not find" in error and "Did you mean one of these sections?" not in error:
-            result_dict["_hint"] = (
-                "old_string not found. Use read_file to verify the current content, or search_files to locate the text."
-            )
-        return json.dumps(result_dict, ensure_ascii=False)
+            for target in targets:
+                if sensitive_err := _sensitive_write_error(target, local):
+                    return tool_error(sensitive_err)
+
+            unique_targets = sorted(set(targets))
+            # 固定加锁顺序，避免多文件补丁互相死锁。
+            with ExitStack() as locks:
+                for target in unique_targets:
+                    locks.enter_context(lock_path(target))
+                warnings = [w for t in unique_targets if local and (w := check_stale(task_id, t, whole_file=False))]
+                result: PatchResult
+                if mode == "replace":
+                    result = file_ops.patch_replace(targets[0], old_string or "", new_string or "", replace_all)
+                else:
+                    result = apply_v4a_operations(operations, file_ops)
+                if local and result.success:
+                    for target in unique_targets:
+                        note_write(task_id, target)
+
+            result_dict = result.to_dict()
+            if mode == "replace" and local:
+                result_dict["resolved_path"] = targets[0]
+            if warnings:
+                result_dict["_warning"] = " | ".join(warnings)
+            error = result.error or ""
+            if "Could not find" in error and "Did you mean one of these sections?" not in error:
+                result_dict["_hint"] = (
+                    "old_string not found. Use read_file to verify the current content, or search_files to locate the text."
+                )
+            return json.dumps(result_dict, ensure_ascii=False)
     except Exception as e:
         return tool_error(str(e))
 
@@ -402,28 +403,28 @@ def search_tool(
     """搜索内容或文件名。"""
     try:
         offset, limit = normalize_search_pagination(offset, limit)
-        file_ops = _get_file_ops(task_id)
-        if block_error := get_read_block_error(_target(file_ops, path)):
-            return tool_error(block_error)
-        result = file_ops.search(
-            pattern=pattern,
-            path=path,
-            target=target,
-            file_glob=file_glob,
-            limit=limit,
-            offset=offset,
-            output_mode=output_mode,
-            context=context,
-        )
-        for m in result.matches:
-            m.content = redact_sensitive_text(m.content)
-        result_dict = result.to_dict()
-        if result.truncated and not result.hint:
-            result_dict["hint"] = (
-                f"Results truncated. Use offset={offset + limit} to see more, "
-                "or narrow with a more specific pattern or file_glob."
+        with _file_ops(task_id) as file_ops:
+            if block_error := get_read_block_error(_target(file_ops, path)):
+                return tool_error(block_error)
+            result = file_ops.search(
+                pattern=pattern,
+                path=path,
+                target=target,
+                file_glob=file_glob,
+                limit=limit,
+                offset=offset,
+                output_mode=output_mode,
+                context=context,
             )
-        return json.dumps(result_dict, ensure_ascii=False)
+            for m in result.matches:
+                m.content = redact_sensitive_text(m.content)
+            result_dict = result.to_dict()
+            if result.truncated and not result.hint:
+                result_dict["hint"] = (
+                    f"Results truncated. Use offset={offset + limit} to see more, "
+                    "or narrow with a more specific pattern or file_glob."
+                )
+            return json.dumps(result_dict, ensure_ascii=False)
     except Exception as e:
         return tool_error(str(e))
 

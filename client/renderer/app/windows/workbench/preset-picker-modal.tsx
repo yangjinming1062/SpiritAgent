@@ -2,7 +2,12 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useState } from 'react'
 
-import { $systemPresetsFetched, fetchSystemPresets } from '@/modules/conversation'
+import {
+  $systemPresetsFetched,
+  fetchSystemPresets,
+  presetDisplayDescription,
+  presetDisplayName
+} from '@/modules/conversation'
 import { Cpu, Globe, type IconComponent, List, MessageCircle, Pencil, Sparkles } from '@/shared/lib/icons'
 import { BTN_PRIMARY, BTN_SUBTLE, WizardModal } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
@@ -107,9 +112,9 @@ export function PresetPickerModal({ presets, loading, onConfirm, onClose }: Pres
                   <PresetIcon iconKey={p.icon_key} />
                 </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block text-xs font-medium text-strong">{p.name}</span>
+                  <span className="block text-xs font-medium text-strong">{presetDisplayName(dict, p)}</span>
                   <span className="mt-0.5 block text-[11px] leading-relaxed text-muted line-clamp-2">
-                    {p.description}
+                    {presetDisplayDescription(dict, p)}
                   </span>
                 </span>
               </button>

@@ -16,7 +16,7 @@
 
 | 模块 | 职责 |
 |---|---|
-| [repository.py](repository.py) | pack、action、目录版本与播放意图读写 |
+| [repository.py](repository.py) | pack、action、目录版本与播放意图读写；`create_action` 只新建动作行（同包同 key 由唯一约束拒绝），`clear_action_attempt` 作废当前生成尝试，供原位重做与用户拒绝复核共用 |
 | [policy.py](policy.py) | 受理与评审共用的用户级受理锁，受理门禁（时长、整秒、拒绝后 7 天抑制、自主创建开关），approve 时的制作额度与模型可点播判定 |
 | [usage.py](usage.py) | 播放事实：播放指令写出、回执终态与延迟表达意图兑现 |
 | [publishing.py](publishing.py) | manifest 结构（`ActionClipSpec` / `ActionCatalogManifest`）、构建、校验、写入用户资产目录与 CAS 版本推进 |

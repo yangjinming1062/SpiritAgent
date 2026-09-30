@@ -41,6 +41,7 @@ from .media_review import (
     MediaReviewStateError,
     accept_media_review,
     get_media_review,
+    has_pending_action_review,
     list_pending_media_reviews,
     reject_media_review,
 )
@@ -162,6 +163,7 @@ __all__ = [
     "accept_fullbody_candidate",
     "accept_media_review",
     "get_media_review",
+    "has_pending_action_review",
     "list_pending_media_reviews",
     "reject_media_review",
     "MediaReviewStateError",

@@ -1,9 +1,8 @@
 import { sleep } from '@runtime'
 
 import { log } from '@/shared/lib/log'
-import { $chatVisible } from '@/shared/store/chat-visibility'
 
-import { $screenLocked } from './activity'
+import { isActionStageVisible, observeActionStageVisibility } from './actions'
 import { setSpriteState } from './companion-store'
 import { speakProactiveLine } from './proactive-speak'
 import {
@@ -30,6 +29,21 @@ const PERCH_TIGHT_LINES = ['这边好挤，我够不着…先直接试试吧。'
 
 function pickLine(pool: readonly [string, ...string[]]): string {
   return pool[Math.floor(Math.random() * pool.length)] ?? pool[0]
+}
+
+// 行走或指向期间舞台变为不可见时立刻结束等待（隐藏会取消移动且不触发到达回调）。
+function waitUntilHidden(): { hidden: Promise<false>; stop: () => void } {
+  let stop: () => void = () => {}
+
+  const hidden = new Promise<false>(resolve => {
+    stop = observeActionStageVisibility(visible => {
+      if (!visible) {
+        resolve(false)
+      }
+    })
+  })
+
+  return { hidden, stop }
 }
 
 interface WindowGeom {
@@ -106,23 +120,30 @@ async function toViewportRect(geom: WindowGeom): Promise<WindowGeom | null> {
   }
 }
 
+// 仪式只在精灵舞台实际可见时进行（与表达播放同一判断：精灵窗未隐藏或最小化、未被完整入口收起、
+// 未开轻语、未锁屏），每一步行动前重验；不可见时不走动、不出声、不预点击，直接执行原工具。
 export async function performRitualWalk<T>(
   findTarget: () => Promise<WindowGeom | null>,
   execute: () => Promise<T>,
   opts?: { previewClick?: boolean }
 ): Promise<T> {
-  if ($chatVisible.get() || $screenLocked.get()) {
+  if (!isActionStageVisible()) {
     return execute()
   }
 
   let geom = await findTarget()
 
-  for (let attempt = 0; !geom && attempt < RETRY_COUNT; attempt++) {
+  for (let attempt = 0; !geom && attempt < RETRY_COUNT && isActionStageVisible(); attempt++) {
     await sleep(RETRY_MS)
     geom = await findTarget()
   }
 
-  const view = geom ? await toViewportRect(geom) : null
+  const view = geom && isActionStageVisible() ? await toViewportRect(geom) : null
+
+  // 查找与换算期间舞台变为不可见：不再出声或走动，直接执行原工具。
+  if (!isActionStageVisible()) {
+    return execute()
+  }
 
   if (!geom || !view) {
     void speakProactiveLine(pickLine(TARGET_LOST_LINES))
@@ -149,31 +170,34 @@ export async function performRitualWalk<T>(
   }
 
   let cueSeq: number | null = null
+  const stage = waitUntilHidden()
 
   try {
     const dist = Math.hypot(perch.x - $spatialPos.get().x, perch.y - $spatialPos.get().y)
     const locomotion = locomotionForDistance(dist)
 
-    // 到达回调在行走被取消时不会触发（spatial 的 surface/drag 中止路径直接丢弃它）；
+    // 到达回调在行走被取消时不会触发（spatial 的收起、隐藏与拖拽中止路径直接丢弃它）；
     // 仪式行走只是装饰，限时等待后必须继续执行原工具，不能让行走挂起整条工具链。
     const arrived = await Promise.race([
       new Promise<boolean>(resolve =>
         setSpatialLocale('perch', { position: perch, locomotion, onArrive: () => resolve(true) })
       ),
-      sleep(moveDurationMs(dist, locomotion) + WALK_ABORT_GRACE_MS).then(() => false)
+      sleep(moveDurationMs(dist, locomotion) + WALK_ABORT_GRACE_MS).then(() => false),
+      stage.hidden
     ])
 
-    // 行走未抵达（被拖拽或打开完整入口打断）时不再指向或预点击，直接执行原工具。
+    // 行走未抵达（被拖拽、收起、隐藏或锁屏打断）时不再指向或预点击，直接执行原工具。
     if (!arrived) {
       return await execute()
     }
 
     // DESIGN「仪式性行走」：抵达后指向目标，再以点击提示标出实际操作位置。
     cueSeq = playSpriteGesture({ kind: 'point', target: targetCenter })
-    await sleep(800)
+    await Promise.race([sleep(800), stage.hidden])
 
-    // 指向期间被打断（拖拽开始或完整入口打开会撤下提示）时同样跳过后续仪式。
-    if ($spriteGesture.get()?.seq !== cueSeq) {
+    // 指向期间被打断（拖拽开始、收起或隐藏会撤下提示）或舞台已不可见时同样跳过后续仪式；
+    // 此后到预点击之间没有等待，预点击时舞台仍可见。
+    if ($spriteGesture.get()?.seq !== cueSeq || !isActionStageVisible()) {
       return await execute()
     }
 
@@ -194,11 +218,17 @@ export async function performRitualWalk<T>(
 
     return await execute()
   } finally {
+    stage.stop()
+
     if (cueSeq !== null) {
       clearSpriteGesture(cueSeq)
     }
 
-    await sleep(800)
+    // 可见时在目标旁稍作停留再交回空间决策；不可见时空间决策已暂停，不再等待。
+    if (isActionStageVisible()) {
+      await sleep(800)
+    }
+
     updateSpatialDecision()
   }
 }

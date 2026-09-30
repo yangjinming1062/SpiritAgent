@@ -14,6 +14,8 @@ from .policy import (
 from .publishing import CatalogValidationError, build_catalog_manifest, publish_action_catalog
 from .repository import (
     StaleCatalogError,
+    clear_action_attempt,
+    create_action,
     get_action,
     get_action_by_key,
     get_active_pack,
@@ -21,7 +23,6 @@ from .repository import (
     list_pack_actions,
     make_semantic_fingerprint,
     record_playback,
-    upsert_action,
 )
 from .usage import action_to_dict, emit_play_command, fulfill_deferred_play_intents, record_play_result
 
@@ -34,7 +35,9 @@ __all__ = [
     "action_to_dict",
     "build_catalog_manifest",
     "check_can_accept",
+    "clear_action_attempt",
     "consume_create_slot",
+    "create_action",
     "emit_play_command",
     "get_action",
     "get_action_accept_lock",
@@ -50,5 +53,4 @@ __all__ = [
     "record_play_result",
     "fulfill_deferred_play_intents",
     "record_playback",
-    "upsert_action",
 ]

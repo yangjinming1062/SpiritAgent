@@ -1,77 +1,119 @@
 import logging
 import threading
 import time
+from collections.abc import Iterator
+from contextlib import contextmanager
 
-from ._env_base import BaseEnvironment
+from ._env_base import BaseEnvironment, EnvironmentSpec
 from ._env_local import LocalEnvironment
 from ._env_ssh import SSHEnvironment
-from .cleanup import start_cleanup_thread
-from .state import active_environments, creation_locks, creation_locks_lock, env_lock, get_env_config, last_activity
+from .cleanup import start_cleanup_thread, stop_environment, task_has_active_processes
+from .state import (
+    active_environments,
+    creation_locks,
+    creation_locks_lock,
+    current_environment_spec,
+    env_lock,
+    last_activity,
+)
 
 logger = logging.getLogger(__name__)
 
 
-def create_environment(
-    env_type: str,
-    cwd: str,
-    timeout: int,
-    ssh_config: dict | None = None,
-) -> BaseEnvironment:
-    """按 env_type 实例化对应的终端环境（local / ssh），并打上 `env_type` 标签。"""
-    if env_type == "local":
-        env = LocalEnvironment(cwd=cwd, timeout=timeout)
-    elif env_type == "ssh":
-        if not ssh_config or not ssh_config.get("host") or not ssh_config.get("user"):
+class EnvironmentBusyError(RuntimeError):
+    """配置换了执行目标，而旧目标上仍有调用或后台进程在运行。"""
+
+
+_TARGET_BUSY_MESSAGE = (
+    "The terminal target was changed in settings while commands or background processes from the previous "
+    "target are still running. Wait for them to finish, or stop background processes with the process tool "
+    "(action='list', then action='kill'), then retry."
+)
+
+
+def create_environment(spec: EnvironmentSpec) -> BaseEnvironment:
+    """按创建参数实例化终端环境（local / ssh），并记录 `env_type` 与创建参数。"""
+    if spec.env_type == "local":
+        env = LocalEnvironment(cwd=spec.cwd, timeout=spec.timeout)
+    elif spec.env_type == "ssh":
+        if spec.ssh is None or not spec.ssh.host or not spec.ssh.user:
             raise ValueError("SSH environment requires ssh_host and ssh_user to be configured")
         env = SSHEnvironment(
-            host=ssh_config["host"],
-            user=ssh_config["user"],
-            port=ssh_config.get("port", 22),
-            key_path=ssh_config.get("key", ""),
-            password=ssh_config.get("password", ""),
-            cwd=cwd,
-            timeout=timeout,
+            host=spec.ssh.host,
+            user=spec.ssh.user,
+            port=spec.ssh.port,
+            key_path=spec.ssh.key,
+            password=spec.ssh.password,
+            cwd=spec.cwd,
+            timeout=spec.timeout,
         )
     else:
-        raise ValueError(f"Unknown environment type: {env_type}. Use 'local' or 'ssh'")
-    # file_tools._get_file_ops 通过该标签将 local 路由到 NativeFileOperations；环境类自身不会设置，不补就漏掉 local 分支。
-    env.env_type = env_type
+        raise ValueError(f"Unknown environment type: {spec.env_type}. Use 'local' or 'ssh'")
+    # file_tools._file_ops 通过该标签将 local 路由到 NativeFileOperations；环境类自身不会设置，不补就漏掉 local 分支。
+    env.env_type = spec.env_type
+    env.spec = spec
     return env
 
 
-def get_or_create_environment(task_id: str) -> BaseEnvironment:
-    """返回 task 的终端环境并刷新活跃时间；缺失时按当前 terminal 配置创建，同一 task 的并发创建经每任务锁串行。"""
+def _lease(task_id: str, env: BaseEnvironment) -> BaseEnvironment:
+    """登记一次持有并刷新活跃时间；调用方须持有 env_lock。"""
+    env.leases += 1
+    last_activity[task_id] = time.time()
+    return env
+
+
+def _acquire_environment(task_id: str) -> BaseEnvironment:
+    """返回并持有与当前配置一致的环境；同一 task 的检查、替换与创建经每任务锁串行。"""
     start_cleanup_thread()
+    spec = current_environment_spec()
     with env_lock:
-        if (env := active_environments.get(task_id)) is not None:
-            last_activity[task_id] = time.time()
-            return env
+        if (env := active_environments.get(task_id)) is not None and env.spec == spec:
+            return _lease(task_id, env)
     with creation_locks_lock:
         task_lock = creation_locks.setdefault(task_id, threading.Lock())
     with task_lock:
+        spec = current_environment_spec()
         with env_lock:
-            if (env := active_environments.get(task_id)) is not None:
-                last_activity[task_id] = time.time()
-                return env
-        config = get_env_config()
-        env_type = config["env_type"]
-        logger.info("Creating new %s environment for task %s...", env_type, task_id[:8])
-        env = create_environment(
-            env_type=env_type,
-            cwd=config["cwd"],
-            timeout=config["timeout"],
-            ssh_config={
-                "host": config["ssh_host"],
-                "user": config["ssh_user"],
-                "port": config["ssh_port"],
-                "key": config["ssh_key"],
-                "password": config["ssh_password"],
-            }
-            if env_type == "ssh"
-            else None,
-        )
+            if (env := active_environments.get(task_id)) is not None and env.spec == spec:
+                return _lease(task_id, env)
+        if env is not None:
+            # 进程检查回调会取进程表的锁，放在 env_lock 之外调用；租约与执行状态在 env_lock 内复核，
+            # 快路径只租出与当前配置一致的环境，因此这里判定空闲后不会再有调用拿到旧环境。
+            processes_active = task_has_active_processes(task_id)
+            with env_lock:
+                in_use = processes_active or env.in_use
+                if in_use and env.spec is not None and env.spec.target == spec.target:
+                    # 只改了初始目录或超时：沿用到空闲后再按新配置重建。
+                    return _lease(task_id, env)
+                if not in_use:
+                    active_environments.pop(task_id, None)
+                    last_activity.pop(task_id, None)
+            if in_use:
+                raise EnvironmentBusyError(_TARGET_BUSY_MESSAGE)
+            logger.info(
+                "Terminal settings changed; replacing idle %s environment for task %s",
+                env.env_type,
+                task_id[:8],
+            )
+            stop_environment(task_id, env)
+        logger.info("Creating new %s environment for task %s...", spec.env_type, task_id[:8])
+        env = create_environment(spec)
         with env_lock:
             active_environments[task_id] = env
-            last_activity[task_id] = time.time()
-        logger.info("%s environment ready for task %s", env_type, task_id[:8])
+            _lease(task_id, env)
+        logger.info("%s environment ready for task %s", spec.env_type, task_id[:8])
     return env
+
+
+@contextmanager
+def use_environment(task_id: str) -> Iterator[BaseEnvironment]:
+    """在 with 块内使用 task 的终端环境：缺失时按当前 terminal 配置创建，配置变化后替换空闲的旧环境。
+
+    块内持有期间，配置切换与空闲回收都不会停止该环境；执行目标已变而旧环境仍在使用时抛出 EnvironmentBusyError。
+    """
+    env = _acquire_environment(task_id)
+    try:
+        yield env
+    finally:
+        with env_lock:
+            env.leases -= 1

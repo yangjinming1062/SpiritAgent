@@ -5,7 +5,7 @@ import sys
 from copy import deepcopy
 from typing import Any
 
-from envs import BaseEnvironment, get_env_config, get_or_create_environment, resolve_container_task_id
+from envs import BaseEnvironment, EnvironmentBusyError, get_env_config, resolve_container_task_id, use_environment
 from utils import cfg_get, clean_output, is_interrupted, load_config
 
 from ..process import process_registry
@@ -346,11 +346,13 @@ def terminal_tool(
             if guidance := _foreground_background_guidance(command):
                 return _error_result(guidance)
         effective_task_id = resolve_container_task_id(task_id)
-        env = get_or_create_environment(effective_task_id)
-        cwd = workdir or env.cwd
-        if background:
-            return _start_background(env, command, cwd, effective_task_id, pty)
-        return _run_foreground(env, command, cwd, timeout or config["timeout"])
+        with use_environment(effective_task_id) as env:
+            cwd = workdir or env.cwd
+            if background:
+                return _start_background(env, command, cwd, effective_task_id, pty)
+            return _run_foreground(env, command, cwd, timeout or config["timeout"])
+    except EnvironmentBusyError as e:
+        return _error_result(str(e))
     except Exception as e:
         # 完整 traceback 只进日志：含 runner 内部路径与行号，不回给模型。
         logger.exception("terminal_tool failed")

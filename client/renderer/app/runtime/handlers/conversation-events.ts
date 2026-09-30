@@ -1,4 +1,5 @@
-import { $screenLocked, reportInteractionStat, setSpriteState, triggerFootGlowPulse } from '@/modules/character'
+import { isSpriteOverlayVisible } from '@/app/workflows/proactive-delivery'
+import { reportInteractionStat, setSpriteState, triggerFootGlowPulse } from '@/modules/character'
 import {
   $chatDraftFromUndo,
   $chatSessionId,
@@ -28,7 +29,6 @@ import {
 } from '@/modules/conversation'
 import { cancelVoiceBar } from '@/modules/speech'
 import { type GatewayEvent, type SlashCommandResultPayload } from '@/shared/lib/gateway-protocol'
-import { $chatVisible } from '@/shared/store/chat-visibility'
 import { getStrings } from '@/shared/strings'
 import type { ChatMediaItem, CompanionBubble, SessionMessage } from '@/shared/types/spiritagent'
 
@@ -161,9 +161,6 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
         })
       }
 
-      // 锁屏状态下，抑制渲染层的提示。
-      const screenLocked = $screenLocked.get()
-
       // 多气泡回合：每个气泡各自携带流式文本；
       // payload.text 是整轮（包含两个气泡）的全文，会覆盖最后一个气泡。
       // 这种情况下保留 last.text。媒体与正文正交，始终挂到最后一格。
@@ -179,12 +176,12 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
         }
       }
 
-      // 媒体已送达但对话界面收起：气泡只做轻量系统提示，点击打开轻语/生活空间查看。
+      // 媒体已送达但对话界面收起：精灵可见时气泡只做轻量系统提示，点击打开轻语/生活空间查看；
+      // 精灵不可见或锁屏时不弹出，媒体已在会话历史中。
       if (
         (media?.length ||
           bubbles?.some(bubble => (bubble.type === 'image' || bubble.type === 'video') && bubble.status === 'ready')) &&
-        !$chatVisible.get() &&
-        !screenLocked
+        isSpriteOverlayVisible()
       ) {
         const sys = getStrings().notifications.system
         showMediaHint(

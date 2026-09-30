@@ -26,6 +26,7 @@ import {
   pinSession,
   renameSession,
   runSessionSearch,
+  sessionDisplayTitle,
   type SessionSort,
   setSessionSort,
   switchSession,
@@ -60,17 +61,6 @@ function buildSortOptions(
     { icon: CalendarPlus, label: t.sortOptions.created, value: 'created' },
     { icon: Messages, label: t.sortOptions.messages, value: 'messages' }
   ]
-}
-
-function buildPresetLabels(
-  t: ReturnType<typeof useStrings>['workbench']['sessionSidebar']['presetMeta']
-): Record<string, string> {
-  return {
-    copywriter: t.copywriter,
-    developer: t.developer,
-    language_teacher: t.language_teacher,
-    product_manager: t.product_manager
-  }
 }
 
 function formatSessionTime(
@@ -117,9 +107,7 @@ export function SessionSidebar(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.workbench.sessionSidebar
   const tActions = t.actions
-  const tPreset = t.presetMeta
   const sortOptions = buildSortOptions(t)
-  const workbenchPresetLabels = buildPresetLabels(tPreset)
   const [pickerOpen, setPickerOpen] = useState(false)
 
   const searchActive = search.trim().length > 0
@@ -276,7 +264,6 @@ export function SessionSidebar(): React.JSX.Element {
                   {specialSessions.map(s => (
                     <SessionRow
                       customIcon={presetIcon(s.system_preset_icon_key)}
-                      customLabel={s.system_preset_id ? workbenchPresetLabels[s.system_preset_id] : undefined}
                       isActive={s.id === activeSessionId}
                       isSpecial
                       key={s.id}
@@ -435,7 +422,6 @@ function SessionRow({
   isActive,
   isSpecial,
   customIcon: CustomIcon,
-  customLabel,
   actions,
   badge,
   onSwitch
@@ -444,7 +430,6 @@ function SessionRow({
   isActive: boolean
   isSpecial?: boolean
   customIcon?: IconComponent
-  customLabel?: string
   actions?: React.ReactNode
   badge?: string
   onSwitch: (id: string) => Promise<void> | void
@@ -455,13 +440,10 @@ function SessionRow({
   const dict = useStrings()
   const tSidebar = dict.workbench.sessionSidebar
 
-  const presetName =
-    customLabel ?? (session.system_preset_id ? presets.find(p => p.id === session.system_preset_id)?.name : undefined)
-
+  // 固定预设会话在任何列表里都显示当前界面语言的预设名（含搜索结果）。
   const title =
-    customLabel ??
-    session.title ??
-    (isSpecial ? (presetName ?? tSidebar.specialStationFallback) : tSidebar.newSessionFallback)
+    sessionDisplayTitle(dict, session, presets) ??
+    (isSpecial ? tSidebar.specialStationFallback : tSidebar.newSessionFallback)
 
   const timeStr = formatSessionTime(session.last_active || session.started_at, tSidebar.time)
   const msgCount = session.message_count ?? 0

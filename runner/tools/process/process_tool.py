@@ -233,6 +233,9 @@ class ProcessRegistry:
         quoted_exit_path = shlex.quote(exit_path)
         while not session.exited:
             time.sleep(2)
+            # 被 kill 后环境可能随配置切换被回收，不再经它发命令（否则会对旧目标重开 SSH 主连接）。
+            if session.exited:
+                return
             try:
                 result = env.execute(f"cat {quoted_log_path} 2>/dev/null", timeout=10)
                 # 非 0（含 ssh 连接失败 255）时输出是错误信息而不是日志，不能覆盖缓冲。

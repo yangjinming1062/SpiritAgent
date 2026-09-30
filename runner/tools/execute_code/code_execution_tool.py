@@ -19,7 +19,7 @@ from collections import deque
 from collections.abc import Mapping
 from typing import IO, Any, Literal
 
-from envs import get_env_config, get_or_create_environment
+from envs import get_env_config, use_environment
 from utils import (
     CREATE_NO_WINDOW,
     IS_WINDOWS,
@@ -590,8 +590,10 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> str:
     rpc_thread: threading.Thread | None = None
     env: Any = None
     sandbox_dir: str | None = None
+    # 持有环境直到远端沙箱清理完：脚本运行期间配置切换不会停止这个环境。
+    held_env = contextlib.ExitStack()
     try:
-        env = get_or_create_environment(task_id)
+        env = held_env.enter_context(use_environment(task_id))
         env_type = env.env_type
         py_check = env.execute("command -v python3 >/dev/null 2>&1 && echo OK", timeout=15)
         if "OK" not in py_check.get("output", ""):
@@ -653,6 +655,7 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> str:
                 env.execute(f"rm -rf {shlex.quote(sandbox_dir)}", timeout=15)
             except Exception:
                 logger.warning("Failed to clean up remote sandbox %s", sandbox_dir, exc_info=True)
+        held_env.close()
     duration = round(time.monotonic() - exec_start, 2)
     stdout_text = script_result.get("output", "")
     if len(stdout_text) > MAX_STDOUT_BYTES:
@@ -933,7 +936,8 @@ def _resolve_child_cwd(mode: str, staging_dir: str) -> str:
     """project 模式在终端当前工作目录运行（随终端 cd 变化，目录不存在时回落 staging），strict 模式直接用 staging。"""
     if mode != "project":
         return staging_dir
-    cwd = get_or_create_environment("default").cwd
+    with use_environment("default") as env:
+        cwd = env.cwd
     return cwd if os.path.isdir(cwd) else staging_dir
 
 

@@ -24,9 +24,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from services.domains.actions import (
     ActionPolicyError,
     consume_create_slot,
+    create_action,
+    get_action_by_key,
     is_expression_action,
     list_pack_actions,
-    upsert_action,
 )
 from services.domains.companion import render_character_profile
 from services.infrastructure.assets import build_data_uri, sniff_media_ext
@@ -127,10 +128,15 @@ async def _existing_actions(
 
 
 async def review_proposal(db: AsyncSession, proposal: ActionProposal) -> str:
-    """独立 LLM 评审；格式失败最多修复一次，仍失败则 defer。"""
+    """独立 LLM 评审并返回最终落库的结论；格式失败最多修复一次，仍失败则 defer。
+
+    同包已有同 key 动作时不调用模型，按该动作状态直接复用或暂缓。"""
     pack = await db.get(CompanionActionPack, proposal.pack_id)
     if pack is None:
         return "reject"
+    design = json.loads(proposal.design_json or "{}")
+    if (resolved := await _same_key_verdict(db, proposal, design)) is not None:
+        return await _apply_verdict(db, proposal, resolved, design)
 
     if not pack.reference_path:
         raise ValueError("动作评审缺少该形象的参考图")
@@ -158,8 +164,7 @@ async def review_proposal(db: AsyncSession, proposal: ActionProposal) -> str:
                     raise ValueError("reuse_action_id 必须取自 existing_actions 的 id")
             elif verdict.reuse_action_id is not None:
                 raise ValueError("非 reuse 结论的 reuse_action_id 必须为 null")
-            await _apply_verdict(db, proposal, verdict, payload["design"])
-            return verdict.decision
+            return await _apply_verdict(db, proposal, verdict, payload["design"])
         except (ValidationError, ValueError) as exc:
             last_error = str(exc)
             payload["validation_error"] = last_error
@@ -171,18 +176,47 @@ async def review_proposal(db: AsyncSession, proposal: ActionProposal) -> str:
     return "defer"
 
 
+def _action_key(proposal: ActionProposal, design: dict[str, Any]) -> str:
+    return action_key_from_name(str(design.get("name", "action")), proposal.semantic_fingerprint or "")
+
+
+async def _same_key_verdict(
+    db: AsyncSession,
+    proposal: ActionProposal,
+    design: dict[str, Any],
+) -> ReviewVerdict | None:
+    """同包已有同 key 动作时的确定结论：就绪即复用，其余状态暂缓，不覆盖或重排该动作。
+
+    与受理一致，同名即同一动作身份；两个同名提案先后获批时，后者按先者动作的状态收敛。"""
+    existing = await get_action_by_key(db, proposal.pack_id, _action_key(proposal, design))
+    if existing is None:
+        return None
+    name = existing.name or existing.key
+    if existing.status == "succeeded" and existing.video_path:
+        return ReviewVerdict(
+            decision="reuse",
+            reason=f"同名动作「{name}」已就绪，按复用处理",
+            reuse_action_id=existing.id,
+        )
+    return ReviewVerdict(
+        decision="defer",
+        reason=f"同名动作「{name}」已有制作记录，暂缓以免覆盖；可换一个名称，或待该动作完成、重做或删除后再提",
+    )
+
+
 async def _apply_verdict(
     db: AsyncSession,
     proposal: ActionProposal,
     verdict: ReviewVerdict,
     design: dict[str, Any],
-) -> None:
+) -> str:
+    """落库评审结论并返回最终结论：批准前再核对同 key 动作，额度不足转暂缓。"""
+    if verdict.decision == "approve" and (resolved := await _same_key_verdict(db, proposal, design)) is not None:
+        verdict = resolved
     proposal.review_decision = verdict.decision
     proposal.review_reason = verdict.reason
 
     if verdict.decision == "approve":
-        fingerprint = proposal.semantic_fingerprint or ""
-        key = action_key_from_name(str(design.get("name", "action")), fingerprint)
         # 制作额度校验：approve 计数由聚合决定；超限回退 defer，不默认批准。
         try:
             await consume_create_slot(db, proposal.user_id, source=proposal.source)
@@ -191,14 +225,14 @@ async def _apply_verdict(
             proposal.review_reason = f"额度不足：{exc}"
             proposal.status = "deferred"
             await db.flush()
-            return
+            return "defer"
         proposal.status = "approved"
         proposal.approved_at = utc_now()
-        action = await upsert_action(
+        action = await create_action(
             db,
             user_id=proposal.user_id,
             pack_id=proposal.pack_id,
-            key=key,
+            key=_action_key(proposal, design),
             name=str(design.get("name", "未命名动作")),
             kind=str(design.get("clip_kind", "once")),
             motion_description=str(design.get("motion_description", "")),
@@ -222,3 +256,4 @@ async def _apply_verdict(
         proposal.status = "rejected"
 
     await db.flush()
+    return verdict.decision

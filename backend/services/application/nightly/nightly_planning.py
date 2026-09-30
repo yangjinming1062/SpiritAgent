@@ -1372,17 +1372,17 @@ async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> Actio
             )
         await db.commit()
 
-    # 评审或重做异步执行；结论经 proposal 状态回流，夜间事实只叙述已提交申请。
+    # 评审或重做异步执行；结论经 proposal 状态回流，夜间事实只叙述受理时的实际状态。
     schedule_accepted_proposal(acceptance, run.user_id)
     if result.proposal_id is not None:
-        return ActionExecutionResult(
-            status="succeeded",
-            fact=f"提交了新动作「{name}」的制作申请（等待独立评审与制作，尚未确认就绪）",
-        )
-    return ActionExecutionResult(
-        status="succeeded",
-        fact=f"已申请重新制作动作「{name}」，尚未确认就绪",
-    )
+        fact = f"提交了新动作「{name}」的制作申请（等待独立评审与制作，尚未确认就绪）"
+    elif acceptance.existing_action == "in_production":
+        fact = f"同名动作「{name}」已在制作中，尚未确认就绪"
+    elif acceptance.existing_action == "awaiting_review":
+        fact = f"同名动作「{name}」已制作完成，正等待用户确认，尚未可用"
+    else:
+        fact = f"已申请重新制作动作「{name}」，尚未确认就绪"
+    return ActionExecutionResult(status="succeeded", fact=fact)
 
 
 CapabilityExecutor = Callable[[_ActionRun, dict[str, Any]], Awaitable[ActionExecutionResult]]
