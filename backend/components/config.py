@@ -69,7 +69,7 @@ class Settings(BaseSettings):
     ssrf_guard_enabled: bool = Field(default=False, validation_alias="SSRF_GUARD_ENABLED")
     ssrf_allowed_cidrs: str = Field(default="", validation_alias="SSRF_ALLOWED_CIDRS")
 
-    llm_request_timeout_seconds: float = Field(default=300.0, validation_alias="LLM_REQUEST_TIMEOUT_SECONDS")
+    llm_request_timeout_seconds: float = Field(default=3000.0, validation_alias="LLM_REQUEST_TIMEOUT_SECONDS")
     llm_stream_idle_timeout_seconds: float = Field(default=60.0, validation_alias="LLM_STREAM_IDLE_TIMEOUT_SECONDS")
     llm_max_retry_attempts: int = Field(default=3, validation_alias="LLM_MAX_RETRY_ATTEMPTS")
     llm_base_retry_delay: float = Field(default=5.0, validation_alias="LLM_BASE_RETRY_DELAY")

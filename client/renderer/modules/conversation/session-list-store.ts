@@ -18,6 +18,7 @@ import type {
 import {
   $chatDraftFromUndo,
   $chatSessionId,
+  $chatTurnInFlight,
   $companionSessionId,
   hydrateChatMessages,
   hydrateSessionSettings,
@@ -570,6 +571,10 @@ export async function switchSession(sessionId: string): Promise<void> {
     }
 
     hydrateChatMessages(synced.messages, synced.info)
+
+    if (typeof synced.info?.running === 'boolean') {
+      $chatTurnInFlight.set(synced.info.running)
+    }
   } catch (err) {
     if (token === navigationToken) {
       log.error('session-list', 'Failed to switch session:', err)
@@ -633,6 +638,10 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
             // 同步期间已切到其他会话时不覆盖其视图。
             if (isLatest() && $chatSessionId.get() === knownCompanionId) {
               hydrateChatMessages(synced.messages, synced.info)
+
+              if (typeof synced.info?.running === 'boolean') {
+                $chatTurnInFlight.set(synced.info.running)
+              }
             }
 
             onMounted?.({
@@ -682,6 +691,10 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
         }
 
         hydrateChatMessages(res.messages || [], res.info)
+
+        if (typeof res.info?.running === 'boolean') {
+          $chatTurnInFlight.set(res.info.running)
+        }
       }
 
       onMounted?.(res)

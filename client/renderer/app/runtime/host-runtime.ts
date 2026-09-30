@@ -13,6 +13,7 @@ import {
 import {
   $chatMessageList,
   $chatSessionId,
+  $chatTurnInFlight,
   hydrateChatMessages,
   hydrateSessionSettings,
   loadLocalSessionHistory,
@@ -305,6 +306,11 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
 
               if (!liveHasMessages || synced.kind !== 'noop') {
                 hydrateChatMessages(synced.messages, synced.info)
+
+                // 历史水合会重置流式气泡，也要同步独立的服务端回合状态。
+                if (typeof synced.info?.running === 'boolean') {
+                  $chatTurnInFlight.set(synced.info.running)
+                }
               } else if (synced.info) {
                 hydrateSessionSettings(synced.info)
               }
