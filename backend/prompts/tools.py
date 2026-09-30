@@ -109,10 +109,10 @@ VIDEO_GENERATION_PARAM_DESCS = {
         "existing image unchanged, omit subject, even if it depicts this character. Describe the scene, pose and "
         "action without reconstructing appearance from memory."
     ),
-    "duration": "Clip length in seconds, default 6. This tool accepts 4-15; the configured provider may be stricter: MiniMax-Hailuo requires 6 or 10, MiniMax-H3 and Grok accept this tool's full range.",
-    "resolution": "Output resolution, default 768P. Choose only a value supported by the configured provider: MiniMax-Hailuo 768P/1080P; MiniMax-H3 768P/2K; Grok 1080P only; Qwen any listed value.",
+    "duration": "Clip length in seconds, default 6. This tool accepts integers from 4 to 15; MiniMax-H3 and Grok support this tool's full range.",
+    "resolution": "Output resolution, default 768P. Choose only a value supported by the configured provider: MiniMax-H3 768P/2K; Grok 1080P only; Qwen any listed value.",
     "first_frame_image": "An actual first-frame image (i2v mode): the url field of an image result from this conversation's media tools, a data URL, or a public http(s) image URL. Never invent a URL; images the user attached have no address this tool can use.",
-    "aspect_ratio": "Requested output aspect ratio; the provider may derive it from the first-frame image in i2v mode. Required for text-to-video on MiniMax-H3; optional on MiniMax-Hailuo and Grok.",
+    "aspect_ratio": "Requested output aspect ratio; the provider may derive it from the first-frame image in i2v mode. Required for text-to-video on MiniMax-H3; optional on Grok.",
     "outfit_override": (
         _SELF_MEDIA_OUTFIT_OVERRIDE_DESC
         + " The outfit is applied during first-frame preparation and kept throughout the clip. "
