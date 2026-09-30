@@ -8,12 +8,30 @@ import {
   IPC,
   SPRITE_SCALE_LIMITS
 } from '@ipc/contracts'
+import { clamp } from '@runtime'
 import type { BrowserWindow, IpcMain, Rectangle, Screen } from 'electron'
 
 import { isSenderWindow } from '../security/ipc-trust'
-import { atomicWriteFile, broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, safeReadJson } from '../shared/utils'
+import {
+  atomicWriteFile,
+  broadcastToAllWindows,
+  errorMessage,
+  hideAndSkipTaskbar,
+  isFiniteNumber,
+  safeReadJson,
+  setWindowIgnoreMouseEvents
+} from '../shared/utils'
 
 const POSITION_FILE = 'companion-position.json'
+
+// 落盘与读盘共用：贴边侧合法且纵向比例为有限数时保留，比例限制在 0 到 1。
+function normalizeScreenEdge(value: unknown): DesktopSpritePosition['screenEdge'] {
+  const edge = value as { side?: unknown; yRatio?: unknown } | null | undefined
+
+  return edge && (edge.side === 'left' || edge.side === 'right') && isFiniteNumber(edge.yRatio)
+    ? { side: edge.side, yRatio: clamp(edge.yRatio, 0, 1) }
+    : undefined
+}
 
 export function readRestPosition(userDataDir?: string): null | DesktopSpriteRestPosition {
   if (!userDataDir) {
@@ -24,39 +42,30 @@ export function readRestPosition(userDataDir?: string): null | DesktopSpriteRest
     path.join(userDataDir, POSITION_FILE)
   )
 
-  if (
-    parsed &&
-    typeof parsed.x === 'number' &&
-    Number.isFinite(parsed.x) &&
-    typeof parsed.y === 'number' &&
-    Number.isFinite(parsed.y)
-  ) {
-    const next: DesktopSpriteRestPosition = { x: parsed.x, y: parsed.y }
-    const o = parsed.origin as { x?: unknown; y?: unknown } | null
-
-    if (o && typeof o.x === 'number' && Number.isFinite(o.x) && typeof o.y === 'number' && Number.isFinite(o.y)) {
-      next.origin = { x: o.x, y: o.y }
-    }
-
-    const edge = parsed.screenEdge as { side?: unknown; yRatio?: unknown } | null
-
-    if (
-      edge &&
-      (edge.side === 'left' || edge.side === 'right') &&
-      typeof edge.yRatio === 'number' &&
-      Number.isFinite(edge.yRatio)
-    ) {
-      next.screenEdge = { side: edge.side, yRatio: Math.max(0, Math.min(1, edge.yRatio)) }
-    }
-
-    return next
+  if (!parsed || !isFiniteNumber(parsed.x) || !isFiniteNumber(parsed.y)) {
+    return null
   }
 
-  return null
+  const next: DesktopSpriteRestPosition = { x: parsed.x, y: parsed.y }
+  const origin = parsed.origin as { x?: unknown; y?: unknown } | null
+
+  if (origin && isFiniteNumber(origin.x) && isFiniteNumber(origin.y)) {
+    next.origin = { x: origin.x, y: origin.y }
+  }
+
+  const screenEdge = normalizeScreenEdge(parsed.screenEdge)
+
+  if (screenEdge) {
+    next.screenEdge = screenEdge
+  }
+
+  return next
 }
 
 // Runner 报告原生屏幕坐标：Windows 为物理像素，须换算到 DIP；其余平台已是 DIP。
-function toDipRect(screen: Screen, rect: Rectangle): Rectangle {
+function toDipRect(screen: Screen, { h, w, x, y }: DesktopScreenRect): Rectangle {
+  const rect = { height: h, width: w, x, y }
+
   return process.platform === 'win32' ? screen.screenToDipRect(null, rect) : rect
 }
 
@@ -67,15 +76,7 @@ function isScreenRect(value: unknown): value is DesktopScreenRect {
 
   const { h, w, x, y } = value as Partial<Record<keyof DesktopScreenRect, unknown>>
 
-  return (
-    typeof x === 'number' &&
-    typeof y === 'number' &&
-    typeof w === 'number' &&
-    typeof h === 'number' &&
-    [x, y, w, h].every(Number.isFinite) &&
-    w > 0 &&
-    h > 0
-  )
+  return isFiniteNumber(x) && isFiniteNumber(y) && isFiniteNumber(w) && isFiniteNumber(h) && w > 0 && h > 0
 }
 
 interface SpriteIpcDeps {
@@ -92,54 +93,23 @@ interface SpriteIpcDeps {
 export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcMain: IpcMain }): void {
   const { getRunnerBridge, getSpriteWindow, getUserDataDir, log, screen } = deps
 
-  const withWindow = (fn: (win: BrowserWindow) => void) => {
-    const win = getSpriteWindow()
-
-    if (win && !win.isDestroyed()) {
-      fn(win)
-    }
-  }
-
   ipcMain.on(IPC.send.spriteSetDefaultScale, (_event, payload: unknown) => {
-    if (!payload || typeof payload !== 'object' || !('scale' in payload)) {
-      return
-    }
+    const scale = (payload as { scale?: unknown } | null | undefined)?.scale
 
-    const { scale } = payload
-
-    if (
-      typeof scale !== 'number' ||
-      !Number.isFinite(scale) ||
-      scale < SPRITE_SCALE_LIMITS.min ||
-      scale > SPRITE_SCALE_LIMITS.max
-    ) {
+    if (!isFiniteNumber(scale) || scale < SPRITE_SCALE_LIMITS.min || scale > SPRITE_SCALE_LIMITS.max) {
       return
     }
 
     broadcastToAllWindows(IPC.event.spriteDefaultScaleChanged, { scale })
   })
 
-  ipcMain.handle(IPC.invoke.spriteHide, async () => {
-    withWindow(hideAndSkipTaskbar)
-  })
+  ipcMain.handle(IPC.invoke.spriteHide, () => hideAndSkipTaskbar(getSpriteWindow()))
 
-  ipcMain.handle(
-    IPC.invoke.spriteSetIgnoreMouseEvents,
-    async (_event, payload?: { forward?: boolean; ignore: boolean }) => {
-      const ignore = Boolean(payload?.ignore)
-      withWindow(win => win.setIgnoreMouseEvents(ignore, { forward: ignore && payload?.forward !== false }))
-    }
+  ipcMain.handle(IPC.invoke.spriteSetIgnoreMouseEvents, (_event, payload?: { forward?: boolean; ignore: boolean }) =>
+    setWindowIgnoreMouseEvents(getSpriteWindow(), payload)
   )
 
-  ipcMain.handle(IPC.invoke.spriteGetPosition, async () => {
-    const dir = getUserDataDir()
-
-    if (!dir) {
-      return null
-    }
-
-    return readRestPosition(dir)
-  })
+  ipcMain.handle(IPC.invoke.spriteGetPosition, () => readRestPosition(getUserDataDir()))
 
   ipcMain.handle(IPC.invoke.spriteGetWindowScene, async (event): Promise<DesktopWindowSceneSnapshot | null> => {
     const win = getSpriteWindow()
@@ -175,38 +145,18 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
     const display = screen.getDisplayMatching(bounds)
 
     const windows = data.windows.slice(0, 128).flatMap((item, index) => {
-      if (!item || typeof item !== 'object') {
+      if (!isScreenRect(item)) {
         return []
       }
 
-      const row = item as Record<string, unknown>
-      const id = row.window_id
-      const pid = row.pid
-      const x = row.x
-      const y = row.y
-      const w = row.w
-      const h = row.h
+      const row = item as DesktopScreenRect & Record<string, unknown>
+      const { pid, window_id: id } = row
 
-      if (
-        typeof id !== 'string' ||
-        !id ||
-        typeof pid !== 'number' ||
-        typeof x !== 'number' ||
-        typeof y !== 'number' ||
-        typeof w !== 'number' ||
-        typeof h !== 'number' ||
-        ![pid, x, y, w, h].every(Number.isFinite) ||
-        w <= 0 ||
-        h <= 0
-      ) {
+      if (typeof id !== 'string' || !id || !isFiniteNumber(pid) || pid === process.pid) {
         return []
       }
 
-      if (pid === process.pid) {
-        return []
-      }
-
-      const rect = toDipRect(screen, { height: h, width: w, x, y })
+      const rect = toDipRect(screen, row)
       const windowDisplay = screen.getDisplayMatching(rect)
 
       return [
@@ -220,7 +170,7 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
           w: rect.width,
           x: rect.x,
           y: rect.y,
-          zOrder: typeof row.z_order === 'number' && Number.isFinite(row.z_order) ? row.z_order : index
+          zOrder: isFiniteNumber(row.z_order) ? row.z_order : index
         }
       ]
     })
@@ -243,11 +193,11 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
   ipcMain.handle(IPC.invoke.spriteMapScreenRect, async (event, rect?: unknown): Promise<DesktopScreenRect | null> => {
     const win = getSpriteWindow()
 
-    if (!isSenderWindow(event.sender, win) || !win || win.isDestroyed() || !isScreenRect(rect)) {
+    if (!isSenderWindow(event.sender, win) || !win || !isScreenRect(rect)) {
       return null
     }
 
-    const dip = toDipRect(screen, { height: rect.h, width: rect.w, x: rect.x, y: rect.y })
+    const dip = toDipRect(screen, rect)
     const bounds = win.getContentBounds()
 
     return { h: dip.height, w: dip.width, x: dip.x - bounds.x, y: dip.y - bounds.y }
@@ -283,19 +233,14 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
     const b = win && !win.isDestroyed() ? win.getContentBounds() : null
     const origin = b ? { x: b.x, y: b.y } : undefined
 
-    const screenEdge =
-      payload.screenEdge &&
-      (payload.screenEdge.side === 'left' || payload.screenEdge.side === 'right') &&
-      typeof payload.screenEdge.yRatio === 'number' &&
-      Number.isFinite(payload.screenEdge.yRatio)
-        ? { side: payload.screenEdge.side, yRatio: Math.max(0, Math.min(1, payload.screenEdge.yRatio)) }
-        : undefined
+    const screenEdge = normalizeScreenEdge(payload.screenEdge)
 
     try {
       const dir = getUserDataDir()
+
       await atomicWriteFile(
         path.join(dir, POSITION_FILE),
-        JSON.stringify({ x: payload.x, y: payload.y, origin, ...(screenEdge ? { screenEdge } : {}) })
+        JSON.stringify({ x: payload.x, y: payload.y, origin, screenEdge })
       )
     } catch (error) {
       log(`[sprite] saving rest position failed: ${errorMessage(error)}`)

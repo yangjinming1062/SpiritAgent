@@ -33,7 +33,7 @@ function computeDesktopEndpoint(spiritagentHome?: null | string): { path: string
     return { path: primary, transport: 'unix' }
   }
 
-  const digest = crypto.createHash('sha256').update(`${home}|${process.pid}`).digest('hex').slice(0, 8)
+  const digest = crypto.hash('sha256', `${home}|${process.pid}`).slice(0, 8)
   const uid = typeof process.getuid === 'function' ? process.getuid() : 0
 
   return { path: path.join(os.tmpdir(), `spiritagent-${uid}-${digest}.sock`), transport: 'unix' }
@@ -98,12 +98,16 @@ export interface RunnerBridge {
 
 export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
   const log = typeof options.log === 'function' ? options.log : () => {}
-  const emit = new EventEmitter()
+  const emitter = new EventEmitter()
+
+  const publish = (event: RunnerBridgeEvent): void => {
+    emitter.emit('event', event)
+  }
 
   const onEvent = (callback: (event: RunnerBridgeEvent) => void) => {
-    emit.on('event', callback)
+    emitter.on('event', callback)
 
-    return () => emit.off('event', callback)
+    return () => emitter.off('event', callback)
   }
 
   const { processFactory, pushConfig, reverseRpcFactory, wsServerFactory } = options
@@ -147,13 +151,30 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     toolsGeneration++
     cachedTools = null
     setState({ lastError: err.message, phase })
-    emit.emit('event', { error: err, phase, type: 'error' })
+    publish({ error: err, phase, type: 'error' })
 
     if (phase === 'error') {
-      emit.emit('event', { errors: [err.message], reason: err.message, type: 'stopped' })
+      publish({ errors: [err.message], reason: err.message, type: 'stopped' })
     }
 
     return err
+  }
+
+  // 就绪事件：握手完成与运行中清单变化共用，宿主据此重新同步工具。
+  function publishReady(type: 'running' | 'runner_ready'): void {
+    publish({
+      capabilities: state.capabilities,
+      capabilitiesHealth: state.capabilitiesHealth,
+      probeFailed: state.probeFailed,
+      runnerVersion: state.runnerVersion,
+      tools: cachedTools,
+      type
+    })
+  }
+
+  // 断连、停止或下一次握手使旧查询失效，旧连接不能重新发布执行资格。
+  function isStale(server: RunnerWsServer, generation: number): boolean {
+    return generation !== toolsGeneration || server !== wsServer || !server.getStatus().connected
   }
 
   function detachSubs(): void {
@@ -217,7 +238,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
       const err = error as { code?: string; message?: string }
 
       if (err?.code !== 'ENOENT') {
-        log(`[runner-bridge] failed to cleanup endpoint file: ${err.message || String(error)}`)
+        log(`[runner-bridge] failed to cleanup endpoint file: ${errorMessage(error)}`)
       }
     }
 
@@ -226,17 +247,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
 
   async function rollback(reason: string): Promise<void> {
     detachSubs()
-    const tasks: Promise<unknown>[] = []
-
-    if (wsServer) {
-      tasks.push(wsServer.stop().catch(e => e))
-    }
-
-    if (runnerProcess) {
-      tasks.push(runnerProcess.stop({ reason }).catch(e => e))
-    }
-
-    await Promise.all(tasks)
+    await Promise.allSettled([wsServer?.stop(), runnerProcess?.stop({ reason })])
     cleanupEndpointFile()
     wsServer = null
     runnerProcess = null
@@ -319,17 +330,9 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
           fail('stopped', new Error('Runner disconnected from WS server.'))
         }
       } else if (ev.type === 'error') {
-        const errObj = ev.error as { message?: string }
-        log(`[runner-bridge] ws server error: ${errObj?.message || String(ev.error)}`)
-      } else if (ev.type === 'connected') {
-        // connected 事件，无需处理
-      } else {
-        const detail =
-          (ev as { type: string; method?: string }).type === 'notification'
-            ? `notification ${(ev as { method: string }).method}`
-            : 'unknown'
-
-        log(`[runner-bridge] unhandled ws server event: ${detail}`)
+        log(`[runner-bridge] ws server error: ${errorMessage(ev.error)}`)
+      } else if (ev.type === 'notification') {
+        log(`[runner-bridge] unhandled ws server event: notification ${ev.method}`)
       }
     })
 
@@ -345,10 +348,8 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     }
 
     try {
-      const started = await wsInstance.start({ path: endpoint.path })
-      log(
-        `[runner-bridge] WS server listening on ${started?.transport || endpoint.transport} ${started?.path || endpoint.path}`
-      )
+      await wsInstance.start({ path: endpoint.path })
+      log(`[runner-bridge] WS server listening on ${endpoint.transport} ${endpoint.path}`)
       await writeEndpointFile({ ...endpoint, token: authToken })
       assertCurrentStart()
 
@@ -357,7 +358,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
       assertCurrentStart()
 
       rollbackReason = 'ready-timeout'
-      await processInstance.waitForReady({ timeoutMs: args.readyTimeoutMs ?? 8_000 })
+      await processInstance.waitForReady({ timeoutMs: args.readyTimeoutMs })
       assertCurrentStart()
     } catch (error) {
       await rollback(rollbackReason)
@@ -390,14 +391,12 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
 
     runnerProcess?.signalReady()
 
-    if (payload && typeof payload === 'object') {
-      setState({
-        capabilities: payload.capabilities ?? null,
-        capabilitiesHealth: payload.capabilities_health ?? null,
-        probeFailed: payload.probe_failed ?? null,
-        runnerVersion: payload.version ?? null
-      })
-    }
+    setState({
+      capabilities: payload.capabilities ?? null,
+      capabilitiesHealth: payload.capabilities_health ?? null,
+      probeFailed: payload.probe_failed ?? null,
+      runnerVersion: payload.version ?? null
+    })
 
     try {
       await pushConfig()
@@ -406,27 +405,19 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
       log(`[runner-bridge] config push failed: ${msg}`)
     }
 
-    if (generation !== toolsGeneration || server !== wsServer || !server.getStatus().connected) {
+    if (isStale(server, generation)) {
       return
     }
 
     const tools = await _fetchTools(server)
 
-    // 断连、停止或下一次握手使旧查询失效，旧连接不能重新发布执行资格。
-    if (generation !== toolsGeneration || server !== wsServer || !server.getStatus().connected) {
+    if (isStale(server, generation)) {
       return
     }
 
     cachedTools = tools
     setState({ lastError: null, phase: 'running' })
-    emit.emit('event', {
-      capabilities: state.capabilities,
-      capabilitiesHealth: state.capabilitiesHealth,
-      probeFailed: state.probeFailed,
-      runnerVersion: state.runnerVersion,
-      tools: cachedTools,
-      type: reconnecting ? 'runner_ready' : 'running'
-    })
+    publishReady(reconnecting ? 'runner_ready' : 'running')
   }
 
   // 运行中配置变化后重新读取工具清单（终端等工具的说明随 Runner 当前配置生成）；有变化时按重连同样发布，由宿主重新同步。读取失败保留原清单，不能因一次查询失败撤销执行资格。
@@ -441,8 +432,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     let tools: Record<string, unknown>[]
 
     try {
-      const result = await server.call<{ tools?: Record<string, unknown>[] }>('get_tools', {}, { timeoutMs: 10_000 })
-      tools = result?.tools ?? []
+      tools = await requestTools(server)
     } catch (error: unknown) {
       log(`[runner-bridge] get_tools refresh failed: ${errorMessage(error)}`)
 
@@ -451,9 +441,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
 
     // 期间的断连、停止或新握手以它们自己的清单为准。
     if (
-      generation !== toolsGeneration ||
-      server !== wsServer ||
-      !server.getStatus().connected ||
+      isStale(server, generation) ||
       state.phase !== 'running' ||
       JSON.stringify(tools) === JSON.stringify(cachedTools)
     ) {
@@ -462,20 +450,18 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
 
     cachedTools = tools
     log(`[runner-bridge] tool list changed after config update (${tools.length} tools)`)
-    emit.emit('event', {
-      capabilities: state.capabilities,
-      capabilitiesHealth: state.capabilitiesHealth,
-      probeFailed: state.probeFailed,
-      runnerVersion: state.runnerVersion,
-      tools: cachedTools,
-      type: 'runner_ready'
-    })
+    publishReady('runner_ready')
+  }
+
+  async function requestTools(server: RunnerWsServer): Promise<Record<string, unknown>[]> {
+    const result = await server.call<{ tools?: Record<string, unknown>[] }>('get_tools', {}, { timeoutMs: 10_000 })
+
+    return result?.tools ?? []
   }
 
   async function _fetchTools(server: RunnerWsServer): Promise<Record<string, unknown>[]> {
     try {
-      const result = await server.call<{ tools?: Record<string, unknown>[] }>('get_tools', {}, { timeoutMs: 10_000 })
-      const tools = result?.tools ?? []
+      const tools = await requestTools(server)
       log(`[runner-bridge] got ${tools.length} tools from runner`)
 
       if (tools.length > 0) {
@@ -518,16 +504,16 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     toolsGeneration++
     cachedTools = null
     setState({ phase: 'stopping' })
-    emit.emit('event', { reason, type: 'stopping' })
+    publish({ reason, type: 'stopping' })
     log(`[runner-bridge] stop reason=${reason || 'unspecified'}`)
 
-    const errors: unknown[] = []
+    const errors: string[] = []
     const tasks: Promise<unknown>[] = []
 
     if (wsServer) {
       tasks.push(
         wsServer.stop().catch(e => {
-          errors.push(e)
+          errors.push(errorMessage(e))
         })
       )
     }
@@ -539,11 +525,11 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
         runnerProcess.stop({ reason: reason || 'desktop-stop' }).then(
           result => {
             if (!result.ok) {
-              errors.push(new Error(`Runner process pid=${pid} is still alive after SIGKILL.`))
+              errors.push(`Runner process pid=${pid} is still alive after SIGKILL.`)
             }
           },
           e => {
-            errors.push(e)
+            errors.push(errorMessage(e))
           }
         )
       )
@@ -558,10 +544,9 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     runnerProcess = null
     cachedTools = null
     setState({ phase: 'stopped', stoppedAt: Date.now() })
-    const errorStrings = errors.map(e => (e instanceof Error ? e.message : String(e)))
-    emit.emit('event', { errors: errorStrings, reason, type: 'stopped' })
+    publish({ errors, reason, type: 'stopped' })
 
-    return { errors: errorStrings, ok: errors.length === 0 }
+    return { errors, ok: errors.length === 0 }
   }
 
   async function dispatch<T = unknown>(

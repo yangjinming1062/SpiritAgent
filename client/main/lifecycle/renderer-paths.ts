@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-import { UI_THEME_URL_PARAM } from '@ipc/contracts'
+import { type SurfaceId, UI_THEME_URL_PARAM } from '@ipc/contracts'
 
 import { directoryExists, fileExists } from '../shared/utils'
 
@@ -57,19 +57,7 @@ export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLo
     return fallback
   }
 
-  function htmlFileNameForRole(role?: string): string {
-    if (role === 'sprite') {
-      return 'sprite.html'
-    }
-
-    if (role === 'workbench') {
-      return 'workbench.html'
-    }
-
-    return 'living.html'
-  }
-
-  function resolveRendererHtml(htmlFileName = 'living.html'): string {
+  function resolveRendererHtml(htmlFileName: string): string {
     const candidates = [path.join(appRoot, 'dist', htmlFileName), path.join(resolveWebDist(), htmlFileName)]
     const found = candidates.find(fileExists)
 
@@ -87,15 +75,10 @@ export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLo
     return candidates[0]
   }
 
-  function rendererUrlFor(role: string, theme?: string): string {
-    const htmlFile = htmlFileNameForRole(role)
-    let url: URL
-
-    if (devServer) {
-      url = new URL(`${devServer}/${htmlFile}`)
-    } else {
-      url = new URL(pathToFileURL(resolveRendererHtml(htmlFile)).toString())
-    }
+  /** 入口页文件名与角色同名（`living.html`、`workbench.html`、`sprite.html`）。 */
+  function rendererUrlFor(role: SurfaceId | 'sprite', theme?: string): string {
+    const htmlFile = `${role}.html`
+    const url = devServer ? new URL(`${devServer}/${htmlFile}`) : pathToFileURL(resolveRendererHtml(htmlFile))
 
     if (theme) {
       url.searchParams.set(UI_THEME_URL_PARAM, theme)

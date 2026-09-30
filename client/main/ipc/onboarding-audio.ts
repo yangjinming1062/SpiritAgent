@@ -4,7 +4,8 @@ import path from 'node:path'
 import { IPC } from '@ipc/contracts'
 import type { IpcMain } from 'electron'
 
-import { dataUrlFromBuffer } from '../shared/mime'
+import { resolveReadableFileForIpc } from '../security/hardening'
+import { dataUrlFromBuffer, mimeTypeForPath } from '../shared/mime'
 
 const TAG_RE = /^onboarding\.[a-z0-9.]+$/
 const MAX_BYTES = 256 * 1024
@@ -12,23 +13,10 @@ const MAX_BYTES = 256 * 1024
 interface OnboardingAudioIpcDeps {
   appRoot: string
   spiritagentHome: string
-  hardening: {
-    resolveReadableFileForIpc: (
-      filePath: string,
-      options?: { maxBytes?: number; purpose?: string }
-    ) => Promise<{ resolvedPath: string; stat: fs.Stats }>
-  }
   ipcMain: IpcMain
-  mimeTypeForPath: (filePath: string) => string
 }
 
-export function registerOnboardingAudioIpc({
-  appRoot,
-  spiritagentHome,
-  hardening,
-  ipcMain,
-  mimeTypeForPath
-}: OnboardingAudioIpcDeps): void {
+export function registerOnboardingAudioIpc({ appRoot, spiritagentHome, ipcMain }: OnboardingAudioIpcDeps): void {
   const audioRoot = path.resolve(spiritagentHome, 'audio', 'onboarding', 'zh')
 
   let repoRoot = appRoot
@@ -58,7 +46,7 @@ export function registerOnboardingAudioIpc({
       }
     }
 
-    const { resolvedPath } = await hardening.resolveReadableFileForIpc(targetPath, {
+    const { resolvedPath } = await resolveReadableFileForIpc(targetPath, {
       maxBytes: MAX_BYTES,
       purpose: 'Onboarding audio'
     })

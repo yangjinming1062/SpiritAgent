@@ -1,3 +1,5 @@
+import { setTimeout as delay } from 'node:timers/promises'
+
 import type { App } from 'electron'
 
 import { errorMessage } from '../shared/utils'
@@ -55,13 +57,7 @@ export function installAppQuit(deps: AppQuitDeps): AppQuit {
           deps.log(`[voice-playback] quit flush failed: ${errorMessage(error)}`)
         })
       ]),
-      new Promise(resolve => {
-        const timer = setTimeout(resolve, RUNNER_STOP_TIMEOUT_MS)
-
-        if (typeof timer.unref === 'function') {
-          timer.unref()
-        }
-      })
+      delay(RUNNER_STOP_TIMEOUT_MS, undefined, { ref: false })
     ]).then(() => {
       deps.flushLog()
       deps.app.exit(0)

@@ -10,6 +10,7 @@ import {
   type SurfaceId,
   type SurfacePlaybackClaim
 } from '@ipc/contracts'
+import { clamp } from '@runtime'
 import {
   BrowserWindow,
   type IpcMain,
@@ -22,7 +23,7 @@ import {
 
 import { isSenderWindow } from '../security/ipc-trust'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
-import { broadcastToAllWindows } from '../shared/utils'
+import { broadcastToAllWindows, createSerialQueue, isWindowShown, setWindowIgnoreMouseEvents } from '../shared/utils'
 
 import { companionSlot, outerBounds, PANEL_SIZES, panelBounds, parseCompanionPreference } from './surface-companion'
 import type { CreatedSurfaceWindow } from './surface-window'
@@ -84,7 +85,7 @@ async function persistLastSurface(id: SurfaceId): Promise<void> {
 export function createSurfacesManager(options: SurfacesManagerOptions): SurfacesManager {
   const windows = new Map<SurfaceId, SurfaceWindowState>()
   let openSurfaceId: null | SurfaceId = null
-  let pendingChain: Promise<unknown> = Promise.resolve()
+  const withMutex = createSerialQueue()
   let lastSurface: SurfaceId | null = null
   let unbindSurfaceDisplaySync: null | (() => void) = null
   let screenLocked = false
@@ -137,9 +138,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
   }
 
   function spriteWindowVisible(): boolean {
-    const sprite = options.getSpriteWindow()
-
-    return !!sprite && !sprite.isDestroyed() && sprite.isVisible() && !sprite.isMinimized()
+    return isWindowShown(options.getSpriteWindow())
   }
 
   function snapshot(): DesktopSurfaceChangedEvent {
@@ -148,7 +147,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     return {
       companions: { living: companionState('living'), workbench: companionState('workbench') },
       open: openSurfaceId,
-      openVisible: !!openWindow && !openWindow.isDestroyed() && openWindow.isVisible() && !openWindow.isMinimized(),
+      openVisible: isWindowShown(openWindow),
       revision: stateRevision,
       screenLocked,
       spriteVisible: spriteWindowVisible()
@@ -362,13 +361,6 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     }
   }
 
-  function withMutex<T>(task: () => T | Promise<T>): Promise<T> {
-    const next = pendingChain.then(task, task)
-    pendingChain = next.catch(() => {})
-
-    return next
-  }
-
   const onWindowClosed = (id: SurfaceId, win: BrowserWindow): void => {
     const layout = windows.get(id)
 
@@ -386,12 +378,9 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     }
   }
 
-  const internalClose = (): void => {
-    if (!openSurfaceId) {
-      return
-    }
-
-    const win = windows.get(openSurfaceId)?.win
+  // 隐藏已打开的入口窗并清除打开状态，不发布快照。
+  const hideOpenSurface = (current: SurfaceId): void => {
+    const win = windows.get(current)?.win
 
     if (win && !win.isDestroyed()) {
       win.hide()
@@ -399,22 +388,20 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
     clearSurfaceDisplaySync()
     openSurfaceId = null
-    publish()
+  }
+
+  const internalClose = (): void => {
+    if (openSurfaceId) {
+      hideOpenSurface(openSurfaceId)
+      publish()
+    }
   }
 
   const internalOpen = async (payload: DesktopSurfaceOpenPayload): Promise<void> => {
     const id = normalizeSurfaceId(payload.surface)
-    const previous = openSurfaceId
 
-    if (previous && previous !== id) {
-      const prevWin = windows.get(previous)?.win
-
-      if (prevWin && !prevWin.isDestroyed()) {
-        prevWin.hide()
-      }
-
-      clearSurfaceDisplaySync()
-      openSurfaceId = null
+    if (openSurfaceId && openSurfaceId !== id) {
+      hideOpenSurface(openSurfaceId)
     }
 
     let surface = windows.get(id)
@@ -466,14 +453,10 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     const id = normalizeSurfaceId(payload.surface)
 
     return withMutex(async () => {
-      if (openSurfaceId === id) {
-        const win = windows.get(id)?.win
+      if (openSurfaceId === id && isWindowShown(windows.get(id)?.win)) {
+        internalClose()
 
-        if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) {
-          internalClose()
-
-          return
-        }
+        return
       }
 
       await internalOpen(payload)
@@ -544,8 +527,8 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       const area = screen.getDisplayMatching(layout.panel).workArea
       layout.panel = {
         ...layout.panel,
-        x: Math.max(area.x, Math.min(layout.panel.x, area.x + area.width - layout.panel.width)),
-        y: Math.max(area.y, Math.min(layout.panel.y, area.y + area.height - layout.panel.height))
+        x: clamp(layout.panel.x, area.x, area.x + area.width - layout.panel.width),
+        y: clamp(layout.panel.y, area.y, area.y + area.height - layout.panel.height)
       }
 
       if (layout.preservedPanel) {
@@ -579,9 +562,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
 
   const registerIpcHandlers = ({ ipcMain }: { ipcMain: IpcMain }): void => {
     ipcMain.handle(IPC.invoke.surfaceOpen, (_event, payload: unknown) => {
-      const surface = (payload as { surface?: unknown } | null)?.surface
-      const view = (payload as { view?: unknown } | null)?.view
-      const sessionId = (payload as { sessionId?: unknown } | null)?.sessionId
+      const { sessionId, surface, view } = (payload ?? {}) as { sessionId?: unknown; surface?: unknown; view?: unknown }
 
       return openSurface({
         sessionId: typeof sessionId === 'string' ? sessionId : undefined,
@@ -626,16 +607,8 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     ipcMain.handle(IPC.invoke.surfaceIsMaximized, event => {
       return Boolean(resolveWindow(event)?.isMaximized())
     })
-    ipcMain.handle(
-      IPC.invoke.surfaceSetIgnoreMouseEvents,
-      (event, payload?: { forward?: boolean; ignore: boolean }) => {
-        const win = resolveWindow(event)
-
-        if (win && !win.isDestroyed()) {
-          const ignore = Boolean(payload?.ignore)
-          win.setIgnoreMouseEvents(ignore, { forward: ignore && payload?.forward !== false })
-        }
-      }
+    ipcMain.handle(IPC.invoke.surfaceSetIgnoreMouseEvents, (event, payload?: { forward?: boolean; ignore: boolean }) =>
+      setWindowIgnoreMouseEvents(resolveWindow(event), payload)
     )
     ipcMain.handle(IPC.invoke.surfaceGetState, () => snapshot())
     ipcMain.handle(IPC.invoke.surfaceSetCompanion, (event, raw: unknown) =>

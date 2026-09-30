@@ -10,30 +10,24 @@ interface RunnerConfigIpcDeps {
   isAuthorizedSender?: (event: { sender: WebContents }) => boolean
 }
 
+const ACCESS_DENIED = { error: 'runner config access is restricted to the workbench window', ok: false } as const
+
 export function registerRunnerConfigIpc({ ipcMain, isAuthorizedSender }: RunnerConfigIpcDeps): void {
-  const assertAuthorized = (event: { sender: WebContents }): void => {
-    if (!isAuthorizedSender?.(event)) {
-      throw new Error('runner config access is restricted to the workbench window')
-    }
-  }
-
   ipcMain.handle(IPC.invoke.runnerConfigRead, event => {
-    try {
-      assertAuthorized(event)
+    if (!isAuthorizedSender?.(event)) {
+      return ACCESS_DENIED
+    }
 
+    try {
       return { config: store.read(), ok: true }
     } catch (error: unknown) {
-      const msg = errorMessage(error)
-
-      return { error: msg, ok: false }
+      return { error: errorMessage(error), ok: false }
     }
   })
 
   ipcMain.handle(IPC.invoke.runnerConfigPatch, async (event, patch?: RunnerConfigPatch) => {
-    try {
-      assertAuthorized(event)
-    } catch (error: unknown) {
-      return { error: errorMessage(error), ok: false }
+    if (!isAuthorizedSender?.(event)) {
+      return ACCESS_DENIED
     }
 
     if (!patch || !Array.isArray(patch.path) || patch.path.length === 0) {

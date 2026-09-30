@@ -1,10 +1,4 @@
-import {
-  type DesktopUpdateEvent,
-  type DesktopUpdateInfo,
-  type DesktopUpdatePhase,
-  IPC,
-  type IpcEventContract
-} from '@ipc/contracts'
+import { type DesktopUpdateEvent, type DesktopUpdateInfo, type DesktopUpdatePhase, IPC } from '@ipc/contracts'
 import { type App, autoUpdater as electronAutoUpdater, type IpcMain, type WebContents } from 'electron'
 import log from 'electron-log/main'
 // 产物为 ESM：electron-updater 是 CJS 包，只能静态 default import 后解构 autoUpdater。
@@ -12,7 +6,7 @@ import electronUpdaterPkg from 'electron-updater'
 import type { ProgressInfo } from 'electron-updater'
 
 import * as store from '../shared/lib/runner-config-store'
-import { errorMessage } from '../shared/utils'
+import { broadcastToAllWindows, createSerialQueue, errorMessage } from '../shared/utils'
 
 // 更新源来自激活时保存的后端地址；设置页把该文案拼在对应阶段的失败提示之后。
 const FEED_UNAVAILABLE_MESSAGE = { en: 'activation required', zh: '请先激活' } as const
@@ -30,7 +24,6 @@ interface UpdateFeedPort {
 }
 
 interface UpdateIpcDeps {
-  broadcast: <C extends keyof IpcEventContract>(channel: C, ...payload: IpcEventContract[C]) => void
   electron: { app: App }
   feed: UpdateFeedPort
   ipcMain: IpcMain
@@ -56,24 +49,17 @@ function summarizeError(error: unknown): string {
   return firstLine.length > ERROR_MESSAGE_MAX_LENGTH ? `${firstLine.slice(0, ERROR_MESSAGE_MAX_LENGTH)}…` : firstLine
 }
 
-export function registerUpdateIpc({
-  broadcast,
-  electron,
-  feed,
-  ipcMain,
-  isInstallSender,
-  markQuitting
-}: UpdateIpcDeps): void {
+export function registerUpdateIpc({ electron, feed, ipcMain, isInstallSender, markQuitting }: UpdateIpcDeps): void {
   const { app } = electron
   let latestEvent: DesktopUpdateEvent | null = null
   let phase: DesktopUpdatePhase = 'check'
   // Runner 预取串行执行，避免重试时并发清理同一暂存目录。
-  let preparing: Promise<void> = Promise.resolve()
+  const enqueuePrepare = createSerialQueue()
 
   // 更新状态的唯一消费方是生活空间设置页；广播到所有窗口而非假定主窗口，消费方由渲染层装配决定（update-bridge 挂在哪个入口哪个窗口收得到）。
   function broadcastUpdate(event: DesktopUpdateEvent): void {
     latestEvent = event
-    broadcast(IPC.event.updateEvent, event)
+    broadcastToAllWindows(IPC.event.updateEvent, event)
   }
 
   function broadcastError(errorPhase: DesktopUpdatePhase, error: unknown): void {
@@ -181,7 +167,7 @@ export function registerUpdateIpc({
     const info = toDesktopUpdateInfo(downloaded)
 
     broadcastUpdate({ info, type: 'preparing' })
-    preparing = preparing.then(() =>
+    void enqueuePrepare(() =>
       feed.prefetchRunnerAssets(info.version).then(
         () => broadcastUpdate({ info, type: 'downloaded' }),
         (error: unknown) => {

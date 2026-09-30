@@ -31,13 +31,7 @@ export function sendToWindow<C extends IpcEventChannel>(
     return
   }
 
-  const { webContents } = mainWindow
-
-  if (!webContents || webContents.isDestroyed()) {
-    return
-  }
-
-  webContents.send(channel, ...payload)
+  sendToSender(mainWindow.webContents, channel, ...payload)
 }
 
 export function broadcastToAllWindows<C extends IpcEventChannel>(channel: C, ...payload: IpcEventContract[C]): void {
@@ -59,22 +53,44 @@ export function sendToSender<C extends IpcEventChannel>(
   sender.send(channel, ...payload)
 }
 
-// 先写 .tmp 再重命名，崩溃时旧文件保持完整；失败时清理残留 tmp。
-export async function atomicWriteFile(targetPath: string, content: Buffer | string | Uint8Array): Promise<void> {
+// 先写 .tmp 再重命名，崩溃时旧文件保持完整；失败或 shouldCommit 返回 false 时清理残留 tmp，返回是否已落盘。
+export async function atomicWriteFile(
+  targetPath: string,
+  content: Buffer | string | Uint8Array,
+  shouldCommit: () => boolean = () => true
+): Promise<boolean> {
   await fs.promises.mkdir(path.dirname(targetPath), { recursive: true })
   const tmpPath = `${targetPath}.${process.pid}.${crypto.randomUUID()}.tmp`
+  let committed = false
 
   try {
     await fs.promises.writeFile(tmpPath, content)
-    await fs.promises.rename(tmpPath, targetPath)
-  } catch (error) {
-    await fs.promises.unlink(tmpPath).catch(() => {})
-    throw error
+
+    if (shouldCommit()) {
+      await fs.promises.rename(tmpPath, targetPath)
+      committed = true
+    }
+  } finally {
+    if (!committed) {
+      await fs.promises.unlink(tmpPath).catch(() => {})
+    }
   }
+
+  return committed
+}
+
+/** 账户 ID 是 `backend/session.ts` 生成的 SHA-256 十六进制摘要，缓存目录名只接受这一形态。 */
+export function isAccountId(value: string): boolean {
+  return /^[a-f0-9]{64}$/.test(value)
 }
 
 export function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
+}
+
+/** `Number.isFinite` 不做类型转换，非 number 一律为 false；这里补上类型收窄。 */
+export function isFiniteNumber(value: unknown): value is number {
+  return Number.isFinite(value)
 }
 
 /** 后端 HTTP 失败的结构化错误：携带 status，禁止用文案前缀推断状态码。 */
@@ -86,6 +102,13 @@ export class HttpError extends Error {
     this.name = 'HttpError'
     this.status = status
   }
+}
+
+/** 非 2xx 响应转为 HttpError：正文只用于诊断文案，读取失败时回落状态文本；pathname 不得带签名参数。 */
+export async function httpErrorFromResponse(res: Response, pathname: string): Promise<HttpError> {
+  const detail = await res.text().catch(() => '')
+
+  return new HttpError(res.status, `${res.status} ${pathname}: ${detail || res.statusText}`)
 }
 
 /** Runner 未连接、请求未发出。 */
@@ -120,6 +143,18 @@ export function safeReadJson<T = unknown>(filePath: string): T | null {
   }
 }
 
+/** 串行队列：任务按入队顺序逐个执行，前一任务失败不阻断后续；结果与错误只交给各自的调用方。 */
+export function createSerialQueue(): <T>(task: () => Promise<T> | T) => Promise<T> {
+  let tail: Promise<unknown> = Promise.resolve()
+
+  return task => {
+    const next = tail.then(task)
+    tail = next.catch(() => {})
+
+    return next
+  }
+}
+
 // 精灵是无边框置顶浮层，hide 后必须从 Windows 任务栏摘掉，否则会多出一个按钮。
 export function hideAndSkipTaskbar(win: BrowserWindow | null | undefined): void {
   if (!win || win.isDestroyed()) {
@@ -131,4 +166,22 @@ export function hideAndSkipTaskbar(win: BrowserWindow | null | undefined): void 
   if (process.platform === 'win32') {
     win.setSkipTaskbar(true)
   }
+}
+
+/** 渲染层按命中检测切换鼠标穿透；ignore 为真时默认转发 mousemove，以便渲染层继续收到 mouseleave 等事件。 */
+export function setWindowIgnoreMouseEvents(
+  win: BrowserWindow | null | undefined,
+  payload?: { forward?: boolean; ignore: boolean }
+): void {
+  if (!win || win.isDestroyed()) {
+    return
+  }
+
+  const ignore = Boolean(payload?.ignore)
+  win.setIgnoreMouseEvents(ignore, { forward: ignore && payload?.forward !== false })
+}
+
+/** 窗口存活、可见且未最小化。 */
+export function isWindowShown(win: BrowserWindow | null | undefined): boolean {
+  return !!win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()
 }

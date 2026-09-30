@@ -1,4 +1,3 @@
-import fs from 'node:fs'
 import path from 'node:path'
 
 import {
@@ -9,17 +8,16 @@ import {
   type MediaTtsPayload
 } from '@ipc/contracts'
 import { sleep } from '@runtime'
-import type { IpcMain, WebContents } from 'electron'
+import type { IpcMain } from 'electron'
 
 import { speechText } from '../../shared/speech-text'
-import { resolveReadableFileForIpc } from '../security/hardening'
-import { assertUserSelectedPath } from '../security/user-selected-paths'
+import { readUserSelectedFile } from '../security/hardening'
 import type { BackendConnection } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
 import { dataUrlFromBuffer, parseDataUrl } from '../shared/mime'
-import { errorMessage, HttpError } from '../shared/utils'
+import { errorMessage, httpErrorFromResponse } from '../shared/utils'
 
-import { createAuthExpiryNotifier, type GetCurrentAuth } from './connection'
+import { createBackendCaller, type GetCurrentAuth } from './connection'
 import { createTtsDiskCache } from './tts-disk-cache'
 
 const STT_TIMEOUT_MS = 60_000
@@ -61,31 +59,20 @@ const inflightTts = new Map<string, Promise<{ dataUrl: string; mimeType: string 
 
 class SttLimiter {
   private activeCount = 0
-  private readonly burst: number
-  private lastRefill: number
-  private readonly maxConcurrency: number
-  private readonly refillRate: number
-  private tokens: number
-
-  constructor() {
-    this.maxConcurrency = STT_MAX_CONCURRENCY
-    this.burst = STT_BURST
-    this.refillRate = STT_REFILL_RATE
-    this.tokens = STT_BURST
-    this.lastRefill = Date.now()
-  }
+  private lastRefill = Date.now()
+  private tokens = STT_BURST
 
   acquire(): () => void {
     const now = Date.now()
     const elapsed = (now - this.lastRefill) / 1000
-    this.tokens = Math.min(this.burst, this.tokens + elapsed * this.refillRate)
+    this.tokens = Math.min(STT_BURST, this.tokens + elapsed * STT_REFILL_RATE)
     this.lastRefill = now
 
     if (this.tokens < 1) {
       throw new Error('STT is busy: rate limit exceeded')
     }
 
-    if (this.activeCount >= this.maxConcurrency) {
+    if (this.activeCount >= STT_MAX_CONCURRENCY) {
       throw new Error('STT is busy: maximum concurrency reached')
     }
 
@@ -153,36 +140,33 @@ class BoundedTtsQueue {
   }
 }
 
-async function postMultipart({
-  fetchImpl,
-  form,
+async function postBackend({
+  body,
+  fetchImpl = globalThis.fetch,
+  headers,
   timeoutMs,
   token,
   url
 }: {
+  body: FormData | string
   fetchImpl?: typeof globalThis.fetch
-  form: FormData
+  headers?: Record<string, string>
   timeoutMs: number
-  token?: string
+  token: null | string
   url: string
-}): Promise<{ body: Buffer; contentType: string; headers: Headers }> {
-  const caller = fetchImpl || globalThis.fetch
-
-  const res = await caller(url, {
-    body: form,
-    headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+}): Promise<{ body: Buffer; headers: Headers }> {
+  const res = await fetchImpl(url, {
+    body,
+    headers: { ...headers, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     method: 'POST',
     signal: AbortSignal.timeout(timeoutMs)
   })
 
   if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    throw new HttpError(res.status, `${res.status} ${new URL(url).pathname}: ${text || res.statusText}`)
+    throw await httpErrorFromResponse(res, new URL(url).pathname)
   }
 
-  const buf = Buffer.from(await res.arrayBuffer())
-
-  return { body: buf, contentType: res.headers.get('content-type') || '', headers: res.headers }
+  return { body: Buffer.from(await res.arrayBuffer()), headers: res.headers }
 }
 
 function formatKv(
@@ -211,7 +195,7 @@ function makeLog(
 async function sttViaBackend({
   connection,
   data,
-  fetchImpl = globalThis.fetch,
+  fetchImpl,
   filename,
   language,
   mime
@@ -234,11 +218,11 @@ async function sttViaBackend({
   const qs = language ? `?language=${encodeURIComponent(language)}` : ''
   const url = `${connection.baseUrl}/api/media/stt${qs}`
 
-  const { body } = await postMultipart({
+  const { body } = await postBackend({
+    body: form,
     fetchImpl,
-    form,
     timeoutMs: STT_TIMEOUT_MS,
-    token: connection.token || undefined,
+    token: connection.token,
     url
   })
 
@@ -264,8 +248,6 @@ async function ttsViaBackend({
   text: string
   voice?: string
 }): Promise<{ buffer: Buffer; mimeType: string; voiceOut?: string }> {
-  const url = `${connection.baseUrl}/api/media/tts`
-
   const payload: Record<string, unknown> = { text }
 
   if (voice) {
@@ -276,29 +258,21 @@ async function ttsViaBackend({
     payload.language = language
   }
 
-  const caller = fetchImpl || globalThis.fetch
-
-  const res = await caller(url, {
+  const { body, headers } = await postBackend({
     body: JSON.stringify(payload),
-    headers: {
-      'Content-Type': 'application/json',
-      ...(connection.token ? { Authorization: `Bearer ${connection.token}` } : {})
-    },
-    method: 'POST',
-    signal: AbortSignal.timeout(TTS_TIMEOUT_MS)
+    fetchImpl,
+    headers: { 'Content-Type': 'application/json' },
+    timeoutMs: TTS_TIMEOUT_MS,
+    token: connection.token,
+    url: `${connection.baseUrl}/api/media/tts`
   })
 
-  if (!res.ok) {
-    const errText = await res.text().catch(() => '')
-    throw new HttpError(res.status, `${res.status} /api/media/tts: ${errText || res.statusText}`)
+  return {
+    buffer: body,
+    mimeType: headers.get('content-type') || 'audio/mpeg',
+    // 后端实际返回的头名是 X-Voice-Used（api/v1/media.py TTS 端点）。
+    voiceOut: headers.get('x-voice-used') || undefined
   }
-
-  const mime = res.headers.get('content-type') || 'audio/mpeg'
-  const buf = Buffer.from(await res.arrayBuffer())
-  // 后端实际返回的头名是 X-Voice-Used（api/v1/media.py TTS 端点）。
-  const voiceOut = res.headers.get('x-voice-used') || undefined
-
-  return { buffer: buf, mimeType: mime, voiceOut }
 }
 
 function getCachedTts(key: string): null | { dataUrl: string; expiresAt: number; mimeType: string } {
@@ -352,20 +326,7 @@ export function registerMediaIpc({
   const diskCache = createTtsDiskCache({ spiritagentHome })
   const sttLimiter = new SttLimiter()
   const ttsQueue = new BoundedTtsQueue()
-  const notifyAuthExpiredOn401 = createAuthExpiryNotifier(getCurrentAuth)
-
-  // 云端调用 401 时通知发起窗口进入会话过期流程，错误照常抛给调用方。
-  async function callBackend<T>(sender: WebContents, call: (connection: BackendConnection) => Promise<T>): Promise<T> {
-    const connection = await ensureBackend()
-
-    try {
-      return await call(connection)
-    } catch (error) {
-      notifyAuthExpiredOn401(error, connection.token, sender)
-
-      throw error
-    }
-  }
+  const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
 
   ipcMain.handle(IPC.invoke.mediaStt, async (event, payload?: MediaSttPayload) => {
     const sttId = ++sttSeq
@@ -525,14 +486,11 @@ export function registerMediaIpc({
   ipcMain.handle(
     IPC.invoke.mediaVideoUpload,
     async (event, payload: AttachmentVideoUploadPayload): Promise<AttachmentVideoUploadResult> => {
-      assertUserSelectedPath(payload.path, 'Video attach')
-
-      const { resolvedPath } = await resolveReadableFileForIpc(payload.path, {
+      const { data, resolvedPath } = await readUserSelectedFile(payload.path, {
         maxBytes: ATTACH_VIDEO_MAX_BYTES,
         purpose: 'Video attach'
       })
 
-      const data = await fs.promises.readFile(resolvedPath)
       const form = new FormData()
       const blob = new Blob([data], { type: 'application/octet-stream' })
 
@@ -540,11 +498,11 @@ export function registerMediaIpc({
       form.append('session_id', payload.sessionId)
 
       const { body } = await callBackend(event.sender, connection =>
-        postMultipart({
+        postBackend({
+          body: form,
           fetchImpl,
-          form,
           timeoutMs: ATTACH_VIDEO_TIMEOUT_MS,
-          token: connection.token || undefined,
+          token: connection.token,
           url: `${connection.baseUrl}/api/media/videos`
         })
       )

@@ -6,10 +6,12 @@ import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream } from 'node:stream/web'
 
-import { mimeTypeForPath } from '../shared/mime'
-import { HttpError } from '../shared/utils'
+import { sleep } from '@runtime'
 
-const DEFAULT_TIMEOUT_MS = 15_000
+import { DEFAULT_FETCH_TIMEOUT_MS } from '../security/hardening'
+import { mimeTypeForPath } from '../shared/mime'
+import { atomicWriteFile, httpErrorFromResponse, isAccountId } from '../shared/utils'
+
 const SIGNED_QUERY_KEYS = new Set(['expires', 'sig', 'token', 't', 'timestamp'])
 
 interface AssetMeta {
@@ -48,9 +50,9 @@ export interface AssetDiskCache {
 }
 
 function normalizeAssetKey(rawUrl: string, contentHash?: string): string {
-  if (contentHash && contentHash.trim()) {
-    const hash = contentHash.trim().toLowerCase()
+  const hash = contentHash?.trim().toLowerCase()
 
+  if (hash) {
     if (!/^[a-f0-9]{64}$/.test(hash)) {
       throw new Error('asset contentHash must be a SHA-256 digest')
     }
@@ -60,7 +62,7 @@ function normalizeAssetKey(rawUrl: string, contentHash?: string): string {
 
   try {
     const parsed = new URL(rawUrl, 'http://127.0.0.1:8000')
-    const searchParams = new URLSearchParams(parsed.search)
+    const { searchParams } = parsed
 
     for (const key of [...searchParams.keys()]) {
       if (SIGNED_QUERY_KEYS.has(key.toLowerCase())) {
@@ -70,11 +72,10 @@ function normalizeAssetKey(rawUrl: string, contentHash?: string): string {
 
     searchParams.sort()
     const query = searchParams.toString()
-    const normalized = `${parsed.host}${parsed.pathname}${query ? `?${query}` : ''}`
 
-    return crypto.createHash('sha1').update(normalized).digest('hex')
+    return crypto.hash('sha1', `${parsed.host}${parsed.pathname}${query ? `?${query}` : ''}`)
   } catch {
-    return crypto.createHash('sha1').update(String(rawUrl)).digest('hex')
+    return crypto.hash('sha1', String(rawUrl))
   }
 }
 
@@ -83,7 +84,7 @@ function isAuthFailureStatus(status: number): boolean {
 }
 
 // 只取 pathname+search 拼回受信 baseUrl，丢弃绝对 URL 的 host，避免 Authorization 外泄。
-function resolveBackendAssetUrl(rawUrl: string, baseUrl?: null | string): string {
+export function resolveBackendAssetUrl(rawUrl: string, baseUrl?: null | string): string {
   if (!baseUrl) {
     return rawUrl
   }
@@ -106,21 +107,17 @@ export function createAssetDiskCache({
   async function migrateLegacyCache(): Promise<void> {
     const accountId = await initialAccountId
 
-    if (!accountId || !/^[a-f0-9]{64}$/.test(accountId)) {
+    if (!accountId || !isAccountId(accountId)) {
       return
     }
 
-    let entries
-
-    try {
-      entries = await fsp.readdir(root, { withFileTypes: true })
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
-        return
+    const entries = await fsp.readdir(root, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
+      if (error.code === 'ENOENT') {
+        return []
       }
 
       throw error
-    }
+    })
 
     const files = entries.filter(entry => entry.isFile())
 
@@ -135,7 +132,7 @@ export function createAssetDiskCache({
   }
 
   async function forAccount(accountId: string) {
-    if (!/^[a-f0-9]{64}$/.test(accountId)) {
+    if (!isAccountId(accountId)) {
       throw new Error('Invalid asset cache account')
     }
 
@@ -193,19 +190,6 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     }
   }
 
-  async function writeMeta(key: string, meta: AssetMeta): Promise<void> {
-    const tmp = `${getMetaPath(key)}.${process.pid}.${Date.now()}.tmp`
-
-    try {
-      await fsp.writeFile(tmp, JSON.stringify(meta), 'utf8')
-      await fsp.rename(tmp, getMetaPath(key))
-    } catch (error) {
-      await fsp.unlink(tmp).catch(() => {})
-
-      throw error
-    }
-  }
-
   async function readCached(rawUrl: string, contentHash?: string): Promise<CachedAsset | null> {
     const key = normalizeAssetKey(rawUrl, contentHash)
     const binPath = getBinPath(key)
@@ -217,12 +201,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
         return null
       }
 
-      const mime = meta?.mime || mimeTypeForPath(rawUrl) || 'application/octet-stream'
-
-      return {
-        buffer,
-        mime
-      }
+      return { buffer, mime: meta.mime || mimeTypeForPath(rawUrl) }
     } catch {
       return null
     }
@@ -283,10 +262,11 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
     const targetUrl = resolveBackendAssetUrl(rawUrl, baseUrl)
     // 错误与日志只带路径：签名参数（expires / sig）不得进入日志。
     const assetPath = new URL(rawUrl, 'http://127.0.0.1').pathname
-    const effectiveTimeout = timeoutMs ?? DEFAULT_TIMEOUT_MS
+    const effectiveTimeout = timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS
     const signal = AbortSignal.any([cancellation, AbortSignal.timeout(effectiveTimeout)])
 
-    async function executeFetch(retryCount = 0): Promise<Response> {
+    // 网络失败重试一次；请求头在重试间不变，只构造一次。
+    async function executeFetch(): Promise<Response> {
       const headers: Record<string, string> = {}
 
       if (token) {
@@ -297,28 +277,25 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
         headers.Authorization = `Bearer ${token}`
       }
 
-      if (localCached) {
-        const meta = await readMeta(key)
+      const cachedEtag = localCached && (await readMeta(key))?.etag
 
-        if (meta?.etag) {
-          headers['If-None-Match'] = meta.etag
-        }
+      if (cachedEtag) {
+        headers['If-None-Match'] = cachedEtag
       }
 
-      try {
-        return await fetchFn(targetUrl, {
-          headers,
-          signal
-        })
-      } catch (fetchErr) {
-        if (retryCount < 1 && !signal.aborted) {
-          await new Promise(resolve => setTimeout(resolve, 150))
-          signal.throwIfAborted()
+      const request = (): Promise<Response> => fetchFn(targetUrl, { headers, signal })
 
-          return executeFetch(retryCount + 1)
+      try {
+        return await request()
+      } catch (error) {
+        if (signal.aborted) {
+          throw error
         }
 
-        throw fetchErr
+        await sleep(150)
+        signal.throwIfAborted()
+
+        return request()
       }
     }
 
@@ -349,8 +326,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
 
     if (!res.ok) {
       if (isAuthFailureStatus(res.status) || !localCached) {
-        const text = await res.text().catch(() => '')
-        throw new HttpError(res.status, `${res.status} ${assetPath}: ${text || res.statusText}`)
+        throw await httpErrorFromResponse(res, assetPath)
       }
 
       console.warn(
@@ -360,7 +336,7 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
       return localCached
     }
 
-    const mime = res.headers.get('content-type') || mimeTypeForPath(rawUrl) || 'application/octet-stream'
+    const mime = res.headers.get('content-type') || mimeTypeForPath(rawUrl)
     const rawEtag = res.headers.get('etag')
     const rawSha = res.headers.get('x-content-sha256')
     const etag = rawSha || (rawEtag ? rawEtag.replace(/"/g, '') : undefined)
@@ -409,13 +385,10 @@ function createAccountAssetCache(cacheDir: string, defaultFetchFn?: typeof globa
 
     await fsp.rename(partialPath, binPath)
 
-    await writeMeta(key, {
-      contentHash,
-      etag,
-      key,
-      mime,
-      size: stat.size
-    })
+    await atomicWriteFile(
+      getMetaPath(key),
+      JSON.stringify({ contentHash, etag, key, mime, size: stat.size } satisfies AssetMeta)
+    )
 
     const buffer = await fsp.readFile(binPath)
     cancellation.throwIfAborted()

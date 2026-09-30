@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import path from 'node:path'
 
 import type { SafeStorageApi } from '../security/hardening'
-import { atomicWriteFile, errorMessage, safeReadJson } from '../shared/utils'
+import { atomicWriteFile, createSerialQueue, errorMessage, safeReadJson } from '../shared/utils'
 
 import {
   type BackendClient,
@@ -176,8 +176,7 @@ function accountId(baseUrl: string, userId: number): string {
 }
 
 function decodeActivationCode(code: string): string {
-  const padding = '='.repeat((4 - (code.length % 4)) % 4)
-  const raw = Buffer.from(code + padding, 'base64url').toString('utf8')
+  const raw = Buffer.from(code, 'base64url').toString('utf8')
   let data: { b?: unknown; t?: unknown }
 
   try {
@@ -247,14 +246,11 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
   let backendClientBaseUrl: null | string = null
   let refreshTimer: NodeJS.Timeout | null = null
   let sessionEpoch = 0
-  let operations: Promise<unknown> = Promise.resolve()
+  const enqueue = createSerialQueue()
+  const backendAt = (baseUrl: string): BackendClient => createBackendClient({ baseUrl, fetch: fetchImpl })
 
-  function enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    const next = operations.then(operation, operation)
-    operations = next.catch(() => {})
-
-    return next
-  }
+  const logoutBackend = (account: ActiveSession): Promise<unknown> =>
+    backendAt(account.baseUrl).post('/api/user/logout', { token: account.token })
 
   function loadAccounts(): void {
     if (loaded) {
@@ -262,36 +258,30 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     }
 
     loaded = true
-    const raw = safeReadJson(sessionPath)
+    const record = safeReadJson<Partial<StoredAccountsPayload>>(sessionPath)
 
-    if (!raw || typeof raw !== 'object') {
+    if (record?.schemaVersion !== SESSION_SCHEMA_VERSION || !Array.isArray(record.accounts)) {
       return
     }
 
-    const record = raw as Partial<StoredAccountsPayload>
+    record.accounts.forEach((item, index) => {
+      let account: SavedAccount
 
-    if (record.schemaVersion === SESSION_SCHEMA_VERSION && Array.isArray(record.accounts)) {
-      record.accounts.forEach((item, index) => {
-        let account: SavedAccount
+      try {
+        account = readStoredAccount(item, safeStorage)
+      } catch (error) {
+        log(`[session] stored account #${index} not loaded: ${errorMessage(error)}`)
+        unreadableAccounts.push(item)
 
-        try {
-          account = readStoredAccount(item, safeStorage)
-        } catch (error) {
-          log(`[session] stored account #${index} not loaded: ${errorMessage(error)}`)
-          unreadableAccounts.push(item)
+        return
+      }
 
-          return
-        }
+      if (!accounts.some(existing => existing.id === account.id)) {
+        accounts.push(account)
+      }
+    })
 
-        if (!accounts.some(existing => existing.id === account.id)) {
-          accounts.push(account)
-        }
-      })
-
-      activeAccountId = typeof record.activeAccountId === 'string' ? record.activeAccountId : null
-
-      return
-    }
+    activeAccountId = typeof record.activeAccountId === 'string' ? record.activeAccountId : null
   }
 
   async function persist(nextAccounts: SavedAccount[], nextActiveAccountId: null | string): Promise<void> {
@@ -363,7 +353,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       return backendClient
     }
 
-    backendClient = createBackendClient({ baseUrl, fetch: fetchImpl })
+    backendClient = backendAt(baseUrl)
     backendClientBaseUrl = baseUrl
 
     return backendClient
@@ -428,8 +418,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       return
     }
 
-    const backend = createBackendClient({ baseUrl: previous.baseUrl, fetch: fetchImpl })
-    void backend.post('/api/user/logout', { token: previous.token }).catch(error => {
+    void logoutBackend(previous).catch(error => {
       log(`[session] previous account logout failed: ${errorMessage(error)}`)
     })
   }
@@ -452,11 +441,10 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       throw new SessionError({ cause: error, code: 'invalid-code', message: '激活码格式无效。' })
     }
 
-    const backend = createBackendClient({ baseUrl, fetch: fetchImpl })
     let response: TokenAuthResponse
 
     try {
-      response = await backend.post<TokenAuthResponse>('/api/user/activate', {
+      response = await backendAt(baseUrl).post<TokenAuthResponse>('/api/user/activate', {
         body: { client_context: clientContext || undefined, client_version: appVersion, code }
       })
     } catch (error) {
@@ -470,12 +458,10 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
     await persist(nextAccounts, id)
 
     const previous = cached
+    clearActive()
     accounts = nextAccounts
     activeAccountId = id
     cached = { ...account, sessionId: randomUUID(), token: verified.token, tokenExpiresAt: verified.expiresAt }
-    sessionEpoch++
-    backendClient = null
-    backendClientBaseUrl = null
     scheduleRefresh()
     retirePrevious(previous, cached)
     log(`[session] activate ok base=${baseUrl} user=${verified.user.username}`)
@@ -518,10 +504,9 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
 
     const current = cached
     const epoch = sessionEpoch
-    const backend = createBackendClient({ baseUrl: current.baseUrl, fetch: fetchImpl })
 
     try {
-      const response = await backend.post<TokenAuthResponse>('/api/user/refresh', {
+      const response = await backendAt(current.baseUrl).post<TokenAuthResponse>('/api/user/refresh', {
         body: { client_context: payload.clientContext || undefined, client_version: appVersion },
         token: current.token
       })
@@ -573,8 +558,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       }
 
       try {
-        const backend = createBackendClient({ baseUrl: previous.baseUrl, fetch: fetchImpl })
-        await backend.post('/api/user/logout', { token: previous.token })
+        await logoutBackend(previous)
 
         return { ok: true }
       } catch (error) {
@@ -603,8 +587,7 @@ export function createBackendSession(options: BackendSessionOptions): BackendSes
       if (cached?.id === id) {
         const previous = cached
         clearActive()
-        const backend = createBackendClient({ baseUrl: previous.baseUrl, fetch: fetchImpl })
-        void backend.post('/api/user/logout', { token: previous.token }).catch(error => {
+        void logoutBackend(previous).catch(error => {
           log(`[session] removed account logout failed: ${errorMessage(error)}`)
         })
       }

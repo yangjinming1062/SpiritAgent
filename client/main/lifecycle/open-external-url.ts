@@ -13,11 +13,9 @@ export function createOpenExternalUrl(rememberLog: (chunk: string) => void): (ra
       return false
     }
 
-    let parsed: URL
+    const parsed = URL.parse(raw)
 
-    try {
-      parsed = new URL(raw)
-    } catch {
+    if (!parsed) {
       return false
     }
 
@@ -25,7 +23,7 @@ export function createOpenExternalUrl(rememberLog: (chunk: string) => void): (ra
       let localPath: string
 
       try {
-        localPath = fileURLToPath(parsed.toString())
+        localPath = fileURLToPath(parsed)
       } catch {
         return false
       }

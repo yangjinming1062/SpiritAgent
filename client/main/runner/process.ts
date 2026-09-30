@@ -118,6 +118,14 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
     return { ...state }
   }
 
+  function kill(target: ChildProcess, signal: NodeJS.Signals, label: string = signal): void {
+    try {
+      target.kill(signal)
+    } catch (error: unknown) {
+      log(`[runner] ${label} failed: ${errorMessage(error)}`)
+    }
+  }
+
   // Windows 走 taskkill /T /F 强杀进程树，失败回退 SIGTERM；POSIX 直接 SIGTERM，SIGKILL 兜底留给 stop() 的 grace 超时分支。
   function requestGracefulKill(target: ChildProcess, graceMs: number): void {
     if (process.platform === 'win32') {
@@ -128,29 +136,13 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
         err => {
           if (err) {
             log(`[runner] taskkill failed for pid=${target.pid}: ${err.message}; falling back to SIGTERM`)
-
-            try {
-              target.kill('SIGTERM')
-            } catch (error: unknown) {
-              const msg = errorMessage(error)
-              log(`[runner] SIGTERM fallback failed: ${msg}`)
-            }
+            kill(target, 'SIGTERM', 'SIGTERM fallback')
           }
         }
       )
     } else {
-      try {
-        target.kill('SIGTERM')
-      } catch (error: unknown) {
-        const msg = errorMessage(error)
-        log(`[runner] SIGTERM failed: ${msg}`)
-      }
+      kill(target, 'SIGTERM')
     }
-  }
-
-  function buildArgs({ endpointPath }: RunnerProcessStartArgs): string[] {
-    // token 经环境变量下发，不进 argv ——同机进程列表可读命令行。
-    return ['--desktop-endpoint', endpointPath || '']
   }
 
   async function start(args: RunnerProcessStartArgs = {}): Promise<RunnerProcessState> {
@@ -183,12 +175,13 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
       throw err
     }
 
-    const argv = [...resolved.args, ...buildArgs(args)]
+    // token 经环境变量下发，不进 argv ——同机进程列表可读命令行。
+    const argv = [...resolved.args, '--desktop-endpoint', args.endpointPath]
 
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       ...(options.spiritagentHome ? { SPIRITAGENT_HOME: options.spiritagentHome } : {}),
-      SPIRITAGENT_DESKTOP_TOKEN: args.authToken || ''
+      SPIRITAGENT_DESKTOP_TOKEN: args.authToken
     }
 
     log(`[runner] spawn ${resolved.kind} ${resolved.command} ${argv.join(' ')}`)
@@ -265,26 +258,14 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
     log(`[runner] stop reason=${reason || 'unspecified'}`)
 
     return new Promise(resolve => {
-      let settled = false
-      let forceKillTimer: ReturnType<typeof setTimeout> | null = null
-      let forceSettleTimer: ReturnType<typeof setTimeout> | null = null
+      let forceKillTimer: NodeJS.Timeout | undefined
+      let forceSettleTimer: NodeJS.Timeout | undefined
 
+      // exit 事件与兜底定时器互斥：任一方收尾时先撤销另一方，finalize 只会执行一次。
       const finalize = (code: null | number, signal: null | string, fromExit: boolean) => {
-        if (settled) {
-          return
-        }
-
-        settled = true
-
-        if (forceKillTimer) {
-          clearTimeout(forceKillTimer)
-          forceKillTimer = null
-        }
-
-        if (forceSettleTimer) {
-          clearTimeout(forceSettleTimer)
-          forceSettleTimer = null
-        }
+        clearTimeout(forceKillTimer)
+        clearTimeout(forceSettleTimer)
+        target.removeListener('exit', onExit)
 
         // 超时兜底也允许再次 start：门闩与 stop 终态对齐，避免 restart 卡死。
         if (state.running && target.exitCode == null && target.signalCode == null) {
@@ -295,7 +276,6 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
           }
         }
 
-        target.removeListener('exit', onExit)
         // Windows 的 taskkill /F 以退出码 1 结束进程，退出码不代表 stop 失败。
         resolve({ code, ok: fromExit, signal })
       }
@@ -303,42 +283,22 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
       const onExit = (code: null | number, signal: null | string) => finalize(code, signal, true)
 
       target.once('exit', onExit)
-
-      const settleIfExited = (fallbackSignal: null | string) => {
-        if (target.exitCode != null || target.signalCode != null) {
-          finalize(target.exitCode, target.signalCode, true)
-        } else {
-          finalize(null, fallbackSignal, false)
-        }
-      }
-
       requestGracefulKill(target, STOP_GRACE_MS)
 
       forceKillTimer = setTimeout(() => {
-        if (settled) {
-          return
-        }
-
         log(`[runner] grace expired; force-killing pid=${target.pid}`)
-
-        try {
-          target.kill('SIGKILL')
-        } catch (error: unknown) {
-          const msg = errorMessage(error)
-          log(`[runner] SIGKILL failed: ${msg}`)
-        }
+        kill(target, 'SIGKILL')
 
         forceSettleTimer = setTimeout(() => {
-          if (target.exitCode == null && target.signalCode == null) {
+          if (target.exitCode != null || target.signalCode != null) {
+            finalize(target.exitCode, target.signalCode, true)
+          } else {
             log(`[runner] pid=${target.pid} still alive after SIGKILL; reporting failure`)
+            finalize(null, 'SIGKILL', false)
           }
-
-          settleIfExited('SIGKILL')
         }, 500)
 
-        if (typeof forceSettleTimer.unref === 'function') {
-          forceSettleTimer.unref()
-        }
+        forceSettleTimer.unref()
       }, STOP_GRACE_MS)
     })
   }

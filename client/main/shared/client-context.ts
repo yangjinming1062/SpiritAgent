@@ -24,9 +24,9 @@ export function buildClientContext({
     `${platform} ${os.release()}`,
     `arch=${arch}`,
     `spiritagent-desktop=${desktopVersion}`,
-    process.versions?.node ? `node=${process.versions.node}` : null,
+    `node=${process.versions.node}`,
     `spiritagent_home=${spiritagentHome}`
-  ].filter(Boolean)
+  ]
 
   return {
     client_context: {

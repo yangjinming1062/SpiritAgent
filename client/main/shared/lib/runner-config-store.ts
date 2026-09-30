@@ -14,10 +14,9 @@ let loaded = false
 // 写锁：串行化各写入入口的内存修改、落盘与推送。
 let writeLock: null | Promise<unknown> = null
 
-// 同步协调：由 Runner host 设置的 pushTarget、config-sync.ts 的 cloudSync 委托，以及云端水合与账户隔离写入期间抑制本地变更通知的标志（防回环）。
+// 同步协调：由 Runner host 设置的 pushTarget，以及 config-sync.ts 的 cloudSync 委托。
 let pushTarget: null | ((config: Record<string, unknown>) => Promise<unknown> | void) = null
 let cloudSync: null | { onLocalChange: (config: Record<string, unknown>) => void } = null
-let suppressCloudSync = false
 
 export function init({ spiritagentHome }: { spiritagentHome: null | string }): void {
   storePath = spiritagentHome ? path.join(spiritagentHome, FILENAME) : null
@@ -73,14 +72,17 @@ async function runLocked<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
-async function persistAndPush(pushRunner = true): Promise<void> {
+// notifyCloud: false 用于云端水合与账户隔离写入，不通知云同步，防止回环。
+async function persistAndPush({
+  notifyCloud = true,
+  pushRunner = true
+}: { notifyCloud?: boolean; pushRunner?: boolean } = {}): Promise<void> {
   if (storePath) {
-    const content = JSON.stringify(config, null, 2)
-    await atomicWriteFile(storePath, content)
+    await atomicWriteFile(storePath, JSON.stringify(config, null, 2))
   }
 
   // Runner 未连接时跳过：连接后的 runner_ready 握手会推送完整配置；其他推送失败记录原因。
-  if (pushRunner && pushTarget && config) {
+  if (pushRunner && pushTarget) {
     try {
       await pushTarget(config)
     } catch (error) {
@@ -90,10 +92,28 @@ async function persistAndPush(pushRunner = true): Promise<void> {
     }
   }
 
-  // 本地写入后通知云同步（水合写入经 suppressCloudSync 抑制，防止回环）。
-  if (cloudSync && !suppressCloudSync) {
-    cloudSync.onLocalChange(config)
+  if (notifyCloud) {
+    cloudSync?.onLocalChange(config)
   }
+}
+
+/** 在写锁内修改并落盘；change 抛错或落盘失败时恢复原镜像并重新抛出：调用方已收到失败，未保存的修改不能随后续写入悄悄生效。 */
+function changeLocked<T>(change: (config: Record<string, unknown>) => T, pushRunner = true): Promise<T> {
+  return runLocked(async () => {
+    load()
+    const previous = structuredClone(config)
+
+    try {
+      const result = change(config)
+      await persistAndPush({ pushRunner })
+
+      return result
+    } catch (error) {
+      config = previous
+
+      throw error
+    }
+  })
 }
 
 /** 云端水合入口：sections 是按同步节白名单与本地合并后的整节（保留本机专属键）及归属戳，整节替换进镜像（其余节与本机机密原样保留），落盘并推 runner，不触发云同步委托。落盘失败时保留已写入内存的云端值并抛出：云端是真源，恢复本地旧值会让之后的上传用旧值覆盖云端较新的设置。 */
@@ -111,17 +131,8 @@ export async function applyCloudMirror(
     }
 
     load()
-    suppressCloudSync = true
-
-    try {
-      for (const [section, value] of Object.entries(sections)) {
-        config[section] = value
-      }
-
-      await persistAndPush()
-    } finally {
-      suppressCloudSync = false
-    }
+    Object.assign(config, sections)
+    await persistAndPush({ notifyCloud: false })
   })
 }
 
@@ -141,26 +152,9 @@ export async function patch(
     return { error: 'value must be JSON data', ok: false }
   }
 
-  return runLocked(async () => {
-    load()
-    const previous = structuredClone(config)
+  await changeLocked(target => (op === 'delete' ? deleteIn(target, keyPath) : setIn(target, keyPath, value)))
 
-    if (op === 'delete') {
-      deleteIn(config, keyPath)
-    } else {
-      setIn(config, keyPath, value)
-    }
-
-    // 落盘失败时恢复原镜像：调用方已收到失败，未保存的修改不能随后续写入悄悄生效。
-    try {
-      await persistAndPush()
-    } catch (error) {
-      config = previous
-      throw error
-    }
-
-    return { ok: true }
-  })
+  return { ok: true }
 }
 
 /** fn 在写锁内变更配置；fn 抛错或落盘失败时恢复原镜像并返回失败，与 `patch` 一致。`pushRunner: false` 时只落盘、不推送 Runner。 */
@@ -173,22 +167,7 @@ export async function mutate<T>(
   }
 
   try {
-    const mutated = await runLocked(async () => {
-      load()
-      const previous = structuredClone(config)
-
-      try {
-        const result = fn(config)
-        await persistAndPush(pushRunner)
-
-        return result
-      } catch (err) {
-        config = previous
-        throw err
-      }
-    })
-
-    return { mutated, ok: true }
+    return { mutated: await changeLocked(fn, pushRunner), ok: true }
   } catch (err: unknown) {
     return { error: errorMessage(err), ok: false }
   }
@@ -212,13 +191,7 @@ export async function clearSyncedMirror(
     }
 
     config.sync = stamp
-    suppressCloudSync = true
-
-    try {
-      await persistAndPush(false)
-    } finally {
-      suppressCloudSync = false
-    }
+    await persistAndPush({ notifyCloud: false, pushRunner: false })
   })
 }
 

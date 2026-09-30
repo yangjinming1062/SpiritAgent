@@ -6,6 +6,11 @@ export function venvPythonFor(spiritagentHome: string, platform: NodeJS.Platform
     : path.join(spiritagentHome, 'runner', '.venv', 'bin', 'python')
 }
 
+// 更新器的安装目标与 Runner 的启动入口共用这一路径。
+export function runnerServerPyFor(spiritagentHome: string): string {
+  return path.join(spiritagentHome, 'runner', 'server.py')
+}
+
 interface ResolveVenvPythonOptions {
   spiritagentHome?: null | string
   fileExists?: (p: string) => boolean
@@ -22,7 +27,7 @@ export function resolveVenvPython(
   }
 
   const venvPython = venvPythonFor(spiritagentHome, platform)
-  const serverPy = path.join(spiritagentHome, 'runner', 'server.py')
+  const serverPy = runnerServerPyFor(spiritagentHome)
 
   if (fileExists(venvPython) && fileExists(serverPy)) {
     return { args: [serverPy], command: venvPython, kind: 'venv-python' }

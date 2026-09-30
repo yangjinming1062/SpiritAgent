@@ -84,7 +84,3 @@ export function parseDataUrl(dataUrl: string): ParsedDataUrl {
 
   return { data, mime }
 }
-
-export function dataUrlToBuffer(dataUrl: string): Buffer {
-  return parseDataUrl(dataUrl).data
-}

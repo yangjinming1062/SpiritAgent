@@ -1,4 +1,5 @@
 import type { DesktopSurfaceOpenPayload, SurfaceCompanionPreference, SurfaceId } from '@ipc/contracts'
+import { clamp } from '@runtime'
 import { type App, BrowserWindow, screen } from 'electron'
 
 import { outerBounds, PANEL_SIZES, preferredCompanionWidth } from './surface-companion'
@@ -26,29 +27,24 @@ export interface SurfaceWindowDeps {
   zoomPersistence: Pick<ZoomPersistence, 'restorePersistedZoomLevel'>
 }
 
-function surfaceLoadUrl(
-  rendererUrlFor: (id: SurfaceId, theme?: string) => string,
-  id: SurfaceId,
-  payload?: DesktopSurfaceOpenPayload,
-  seedTheme?: string
-): string {
-  const url = new URL(rendererUrlFor(id, seedTheme))
-
-  if (payload?.view) {
-    url.hash = `#/${payload.view}`
-  }
-
-  if (payload?.sessionId) {
-    url.searchParams.set('sessionId', payload.sessionId)
-  }
-
-  return url.toString()
-}
-
 export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
   createSurfaceWindow: (id: SurfaceId, payload?: DesktopSurfaceOpenPayload) => Promise<CreatedSurfaceWindow>
   navigateSurfaceWindow: (win: BrowserWindow, id: SurfaceId, payload: DesktopSurfaceOpenPayload) => Promise<void>
 } {
+  function surfaceLoadUrl(id: SurfaceId, payload?: DesktopSurfaceOpenPayload): string {
+    const url = new URL(deps.rendererUrlFor(id, deps.seedTheme()))
+
+    if (payload?.view) {
+      url.hash = `#/${payload.view}`
+    }
+
+    if (payload?.sessionId) {
+      url.searchParams.set('sessionId', payload.sessionId)
+    }
+
+    return url.toString()
+  }
+
   async function createSurfaceWindow(
     id: SurfaceId,
     payload?: DesktopSurfaceOpenPayload
@@ -57,10 +53,10 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
     const icon = deps.getAppIconPath() || undefined
     const preference = deps.getCompanionPreference(id)
     const wa = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea
-    const initialHeight = Math.max(defaults.minHeight, Math.min(defaults.height, wa.height - 16))
+    const initialHeight = clamp(defaults.height, defaults.minHeight, wa.height - 16)
     const desiredSlot = preference.enabled ? preferredCompanionWidth(initialHeight) : 0
     const minSlot = Math.ceil(desiredSlot * 0.65)
-    const panelWidth = Math.max(defaults.minWidth, Math.min(defaults.width, wa.width - 16 - minSlot))
+    const panelWidth = clamp(defaults.width, defaults.minWidth, wa.width - 16 - minSlot)
     const availableSlot = Math.max(0, wa.width - 16 - panelWidth)
     const slotWidth = availableSlot >= minSlot ? Math.min(desiredSlot, availableSlot) : 0
     const outerWidth = panelWidth + slotWidth
@@ -118,7 +114,7 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
     win.on('hide', () => deps.rebuildTrayMenu())
 
     try {
-      await win.loadURL(surfaceLoadUrl(deps.rendererUrlFor, id, payload, deps.seedTheme()))
+      await win.loadURL(surfaceLoadUrl(id, payload))
     } catch (error) {
       // 构造与登记进 surfaces Map 之间的空窗：失败时回收，避免隐藏泄漏窗。
       if (!win.isDestroyed()) {
@@ -138,7 +134,7 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
     id: SurfaceId,
     payload: DesktopSurfaceOpenPayload
   ): Promise<void> {
-    await win.loadURL(surfaceLoadUrl(deps.rendererUrlFor, id, payload, deps.seedTheme()))
+    await win.loadURL(surfaceLoadUrl(id, payload))
     deps.zoomPersistence.restorePersistedZoomLevel(win)
   }
 

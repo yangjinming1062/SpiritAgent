@@ -42,19 +42,8 @@ export async function writeStoredBackendUrl(
     return false
   }
 
-  let existing: Record<string, unknown> = {}
-
-  try {
-    const raw = await fs.promises.readFile(target, 'utf8')
-    const parsed = JSON.parse(raw)
-
-    if (parsed && typeof parsed === 'object') {
-      existing = parsed as Record<string, unknown>
-    }
-  } catch {
-    existing = {}
-  }
-
+  const parsed = safeReadJson<Record<string, unknown>>(target)
+  const existing = parsed && typeof parsed === 'object' ? parsed : {}
   existing.backendUrl = backendUrl.trim()
   existing.savedAt = Date.now()
 
@@ -62,11 +51,8 @@ export async function writeStoredBackendUrl(
     await atomicWriteFile(target, JSON.stringify(existing, null, 2))
 
     if (process.platform !== 'win32') {
-      try {
-        await fs.promises.chmod(target, 0o600)
-      } catch {
-        // 尽力而为；某些文件系统不支持 chmod
-      }
+      // 尽力而为；某些文件系统不支持 chmod
+      await fs.promises.chmod(target, 0o600).catch(() => {})
     }
 
     return true
@@ -81,5 +67,5 @@ export async function writeStoredBackendUrl(
 export function resolveNormalizedBackendUrl(spiritagentHome: string | null | undefined): string | null {
   const url = readStoredBackendUrl(spiritagentHome)
 
-  return url ? String(url).replace(/\/+$/, '') : null
+  return url ? url.replace(/\/+$/, '') : null
 }

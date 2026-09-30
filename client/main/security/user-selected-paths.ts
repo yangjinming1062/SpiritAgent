@@ -10,13 +10,7 @@ function normalizeKey(filePath: string): string {
 
 export function registerUserSelectedPaths(paths: readonly string[]): void {
   for (const raw of paths) {
-    const key = normalizeKey(raw)
-
-    if (!key) {
-      continue
-    }
-
-    userSelectedPaths.add(key)
+    userSelectedPaths.add(normalizeKey(raw))
 
     if (userSelectedPaths.size > MAX_ENTRIES) {
       const oldest = userSelectedPaths.values().next().value

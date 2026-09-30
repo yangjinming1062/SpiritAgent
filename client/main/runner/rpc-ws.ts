@@ -3,10 +3,11 @@ import fs from 'node:fs'
 import http from 'node:http'
 import type { Socket } from 'node:net'
 
+import { sleep } from '@runtime'
 import type WebSocket from 'ws'
 import { WebSocketServer } from 'ws'
 
-import { errorMessage, RunnerNotConnectedError, RunnerRpcError } from '../shared/utils'
+import { errorMessage, isFiniteNumber, RunnerNotConnectedError, RunnerRpcError } from '../shared/utils'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const JSON_RPC_VERSION = '2.0'
@@ -80,6 +81,7 @@ interface JsonRpcMessage {
   method?: string
   params?: {
     capabilities?: RunnerCapabilities
+    capabilities_health?: RunnerCapabilitiesHealth
     probe_failed?: boolean
     version?: string
     [key: string]: unknown
@@ -193,7 +195,7 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
         log('[runner-ws] runner_ready received')
         emit({
           capabilities: message.params?.capabilities ?? null,
-          capabilities_health: (message.params?.capabilities_health as RunnerCapabilitiesHealth | undefined) ?? null,
+          capabilities_health: message.params?.capabilities_health ?? null,
           probe_failed: message.params?.probe_failed ?? null,
           type: 'runner_ready',
           version: message.params?.version ?? null
@@ -246,8 +248,7 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
       return Promise.reject(new Error(`Runner request id ${id} is already in flight.`))
     }
 
-    const effectiveTimeoutMs =
-      typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS
+    const effectiveTimeoutMs = isFiniteNumber(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS
 
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -292,17 +293,12 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
         }
       }
 
-      const onError = (error: Error) => {
-        httpServer.removeListener('error', onError)
-        reject(error)
-      }
-
-      httpServer.once('error', onError)
+      httpServer.once('error', reject)
       const previousUmask = process.platform === 'win32' ? null : process.umask(0o077)
 
       try {
         httpServer.listen(targetPath, () => {
-          httpServer.removeListener('error', onError)
+          httpServer.removeListener('error', reject)
           resolve()
         })
       } finally {
@@ -342,7 +338,7 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
       }
 
       log(`[runner-ws] ${ipcPath} busy; retrying once in 200ms`)
-      await new Promise(resolve => setTimeout(resolve, 200))
+      await sleep(200)
       await listenOnce(ipcPath)
     }
 
@@ -446,15 +442,13 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
         })
 
         ws.on('error', (error: unknown) => {
-          const err = error as { message?: string }
-          log(`[runner-ws] runner error: ${err?.message || String(error)}`)
+          log(`[runner-ws] runner error: ${errorMessage(error)}`)
           emit({ error, type: 'error' })
         })
       })
 
       server.on('error', (error: unknown) => {
-        const err = error as { message?: string }
-        log(`[runner-ws] server error: ${err?.message || String(error)}`)
+        log(`[runner-ws] server error: ${errorMessage(error)}`)
       })
 
       return { path: ipcPath, transport }

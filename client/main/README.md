@@ -36,13 +36,13 @@
 
 ### 文件与媒体
 
-- 文件读取仅接受选择器或拖拽登记的路径，渲染层不能自行授予白名单；敏感路径另行阻断。
+- 文件读取仅接受选择器或拖拽登记的路径，渲染层不能自行授予白名单；敏感路径另行阻断。读取统一经 [readUserSelectedFile](security/hardening.ts)，新增读文件通道不绕过它。
 - 白名单仅进程内且有容量限制，重启须重新选择，历史附件路径不自动恢复权限。
 - `chat:set-pending-feed` 信箱不校验白名单，取用方仍须走受控读取。
 
 ## 网关宿主与代理
 
-- 只有宿主可获取网关票 `ws-url`、上报网关状态、注入事件、答复代理 RPC 和派发 Runner 工具，入口核对 sender。
+- 只有宿主可获取网关票 `ws-url`、上报网关状态、注入事件、答复代理 RPC 和派发 Runner 工具，入口核对 sender；`ws-url` 与 Runner 派发、取消经 [assertGatewayHost](security/ipc-trust.ts)。
 - 其他表面只能请求代理能力；`tool.call` 不转发到其他窗口，TypeScript 类型不能代替运行时校验。
 
 [代理等待](ipc/gateway.ts)有超时，网关 closed / error 时统一 reject。[连接缓存](backend/ensure-backend.ts)只保存后端地址与就绪结果，凭据按请求读取；reset 使在途解析失效。票据签发前后核对鉴权会话，拒绝换号后的迟到结果。
@@ -88,7 +88,7 @@
 
 资产入口共用下载与鉴权处理，缓存返回字节和 MIME；仅 `apiAsset` 在返回时编码 data URL，`apiAssetBuffer` 直接返回字节。
 
-收听记录由 [voice-playback.ts](ipc/voice-playback.ts) 校验鉴权会话与载荷，[voice-playback-store.ts](ipc/voice-playback-store.ts) 串行原子写盘并单向合并已听状态；跨窗口广播仅携带当前账户的记录，清理代次阻断旧写入。记录独立于历史快照，缓存生命周期见 [Client](../README.md#资产与历史缓存)。
+收听记录由 [voice-playback.ts](ipc/voice-playback.ts) 校验鉴权会话与载荷，[voice-playback-store.ts](ipc/voice-playback-store.ts) 串行原子写盘并单向合并已听状态；跨窗口广播仅携带当前账户的记录，清理代次阻断旧写入。记录独立于历史快照，缓存生命周期见 [Client](../README.md#资产与历史缓存)；两者的账户代次与按会话串行写入由 [account-queue.ts](ipc/account-queue.ts) 共用。
 移除账户时先取消并等待该账户的下载与写入，再删除其目录；同账户新请求等待清理结束，其他账户不受影响。下载超时覆盖响应体读取。
 
 `cacheOnly` 只查询本地缓存，不请求 Backend；资产未命中返回 `null`，由调用方按缺少本地副本处理。

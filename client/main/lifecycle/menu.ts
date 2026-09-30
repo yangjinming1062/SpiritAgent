@@ -55,11 +55,10 @@ export function createMenu({
     return BrowserWindow.getFocusedWindow() || getMainWindow()
   }
 
+  // 仅在 macOS 安装（见 installApplicationMenu）。
   function buildApplicationMenu(): Menu {
-    const template: Electron.MenuItemConstructorOptions[] = []
-
-    if (isMac) {
-      template.push({
+    return menu.buildFromTemplate([
+      {
         label: appName,
         submenu: [
           { click: () => showAboutPanelFresh(), label: `About ${appName}` },
@@ -72,110 +71,92 @@ export function createMenu({
           { type: 'separator' },
           { role: 'quit' }
         ]
-      })
-    }
-
-    template.push({
-      label: 'File',
-      submenu: [
-        isMac
-          ? {
-              accelerator: 'CommandOrControl+W',
-              click: () => {
-                targetWindow()?.close()
-              },
-              label: 'Close'
-            }
-          : { role: 'quit' }
-      ]
-    })
-
-    template.push({
-      label: 'Edit',
-      submenu: [
-        { role: 'undo' },
-        { role: 'redo' },
-        { type: 'separator' },
-        { role: 'cut' },
-        { role: 'copy' },
-        { role: 'paste' },
-        { role: 'delete' },
-        { role: 'selectAll' }
-      ]
-    })
-
-    template.push({
-      label: 'View',
-      submenu: [
-        { role: 'reload' },
-        { role: 'forceReload' },
-        { role: 'toggleDevTools' },
-        { type: 'separator' },
-        {
-          accelerator: 'CommandOrControl+0',
-          click: () => {
-            zoomPersistence.setAndPersistZoomLevel(targetWindow(), 0)
-          },
-          label: 'Actual Size'
-        },
-        {
-          accelerator: 'CommandOrControl+Plus',
-          click: () => {
-            const win = targetWindow()
-
-            if (win && !win.isDestroyed()) {
-              zoomPersistence.setAndPersistZoomLevel(win, win.webContents.getZoomLevel() + 0.1)
-            }
-          },
-          label: 'Zoom In'
-        },
-        {
-          accelerator: 'CommandOrControl+-',
-          click: () => {
-            const win = targetWindow()
-
-            if (win && !win.isDestroyed()) {
-              zoomPersistence.setAndPersistZoomLevel(win, win.webContents.getZoomLevel() - 0.1)
-            }
-          },
-          label: 'Zoom Out'
-        },
-        { type: 'separator' },
-        { role: 'togglefullscreen' }
-      ]
-    })
-
-    template.push({
-      label: 'Window',
-      submenu: isMac
-        ? [
-            {
-              label: 'Minimize',
-              accelerator: 'CommandOrControl+M',
-              click: () => {
-                const win = targetWindow()
-
-                if (win) {
-                  minimizeWindow(win)
-                }
-              }
+      },
+      {
+        label: 'File',
+        submenu: [
+          {
+            accelerator: 'CommandOrControl+W',
+            click: () => {
+              targetWindow()?.close()
             },
-            {
-              label: 'Zoom',
-              click: () => {
-                const win = targetWindow()
-
-                if (win) {
-                  toggleMaximizeWindow(win)
-                }
-              }
+            label: 'Close'
+          }
+        ]
+      },
+      {
+        label: 'Edit',
+        submenu: [
+          { role: 'undo' },
+          { role: 'redo' },
+          { type: 'separator' },
+          { role: 'cut' },
+          { role: 'copy' },
+          { role: 'paste' },
+          { role: 'delete' },
+          { role: 'selectAll' }
+        ]
+      },
+      {
+        label: 'View',
+        submenu: [
+          { role: 'reload' },
+          { role: 'forceReload' },
+          { role: 'toggleDevTools' },
+          { type: 'separator' },
+          {
+            accelerator: 'CommandOrControl+0',
+            click: () => {
+              zoomPersistence.setAndPersistZoomLevel(targetWindow(), 0)
             },
-            { role: 'front' }
-          ]
-        : [{ role: 'minimize' }, { role: 'close' }]
-    })
+            label: 'Actual Size'
+          },
+          {
+            accelerator: 'CommandOrControl+Plus',
+            click: () => {
+              zoomPersistence.stepZoomLevel(targetWindow(), 1)
+            },
+            label: 'Zoom In'
+          },
+          {
+            accelerator: 'CommandOrControl+-',
+            click: () => {
+              zoomPersistence.stepZoomLevel(targetWindow(), -1)
+            },
+            label: 'Zoom Out'
+          },
+          { type: 'separator' },
+          { role: 'togglefullscreen' }
+        ]
+      },
+      {
+        label: 'Window',
+        submenu: [
+          {
+            label: 'Minimize',
+            accelerator: 'CommandOrControl+M',
+            click: () => {
+              const win = targetWindow()
 
-    return menu.buildFromTemplate(template)
+              if (win) {
+                minimizeWindow(win)
+              }
+            }
+          },
+          {
+            label: 'Zoom',
+            click: () => {
+              const win = targetWindow()
+
+              if (win) {
+                toggleMaximizeWindow(win)
+              }
+            }
+          },
+          { role: 'front' }
+        ]
+      }
+    ])
   }
 
   // 只有 macOS 保留应用菜单（系统菜单栏与编辑快捷键）；其他平台移除默认菜单。

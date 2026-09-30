@@ -2,31 +2,43 @@ import { IPC, type IpcInvokeContract, type SpiritAgentApiRequest } from '@ipc/co
 import type { BrowserWindow, IpcMain, WebContents } from 'electron'
 
 import { assertApiRequestAllowed } from '../security/api-allowlist'
-import { isSenderWindow } from '../security/ipc-trust'
+import { assertGatewayHost } from '../security/ipc-trust'
 import type { BackendConnection } from '../shared/backend-port'
 import { dataUrlFromBuffer } from '../shared/mime'
-import { HttpError, isUnauthorized, sendToSender } from '../shared/utils'
+import { httpErrorFromResponse, isUnauthorized, sendToSender } from '../shared/utils'
 
-import type { AssetDiskCache, CachedAsset } from './asset-disk-cache'
+import { type AssetDiskCache, type CachedAsset, resolveBackendAssetUrl } from './asset-disk-cache'
 
 export type GetCurrentAuth = () => null | { sessionId: string; token: string }
 
-/** 401 且失败请求所用 token 仍是当前 token 时，通知发起窗口进入会话过期流程；换号前的迟到 401 不影响新会话。 */
-export function createAuthExpiryNotifier(
+/** 取得后端连接并执行调用；401 且失败请求所用 token 仍是当前 token 时，通知发起窗口进入会话过期流程，错误照常抛出；换号前的迟到 401 不影响新会话。 */
+export function createBackendCaller({
+  ensureBackend,
+  getCurrentAuth
+}: {
+  ensureBackend: () => Promise<BackendConnection>
   getCurrentAuth: GetCurrentAuth
-): (error: unknown, requestToken: null | string | undefined, sender: WebContents) => void {
-  return (error, requestToken, sender) => {
-    const current = getCurrentAuth()
+}): <T>(sender: WebContents, call: (connection: BackendConnection) => Promise<T>) => Promise<T> {
+  return async (sender, call) => {
+    const connection = await ensureBackend()
 
-    if (isUnauthorized(error) && requestToken && current?.token === requestToken) {
-      sendToSender(sender, IPC.event.authSessionExpired, current.sessionId)
+    try {
+      return await call(connection)
+    } catch (error) {
+      const current = getCurrentAuth()
+
+      if (isUnauthorized(error) && connection.token && current?.token === connection.token) {
+        sendToSender(sender, IPC.event.authSessionExpired, current.sessionId)
+      }
+
+      throw error
     }
   }
 }
 
 interface ConnectionIpcDeps {
   assetDiskCache: AssetDiskCache
-  defaultFetchTimeoutMs?: number
+  defaultFetchTimeoutMs: number
   ensureBackend: () => Promise<BackendConnection>
   fetchImpl?: typeof globalThis.fetch
   fetchJson: (
@@ -62,7 +74,7 @@ function isCompanionIdentityAsset(rawUrl: string, baseUrl: string): boolean {
 
 export function registerConnectionIpc({
   assetDiskCache,
-  defaultFetchTimeoutMs = 15_000,
+  defaultFetchTimeoutMs,
   ensureBackend,
   fetchImpl = globalThis.fetch,
   fetchJson,
@@ -73,7 +85,7 @@ export function registerConnectionIpc({
   mintWsTicket,
   resolvePathTimeoutMs
 }: ConnectionIpcDeps): void {
-  const notifyAuthExpiredOn401 = createAuthExpiryNotifier(getCurrentAuth)
+  const callBackend = createBackendCaller({ ensureBackend, getCurrentAuth })
 
   async function readAsset(sender: WebContents, request?: AssetRequest): Promise<CachedAsset> {
     const raw = assetUrl(request)
@@ -96,10 +108,9 @@ export function registerConnectionIpc({
       }
     }
 
-    const connection = await ensureBackend()
-    assertCurrentAuth()
+    return callBackend(sender, async connection => {
+      assertCurrentAuth()
 
-    try {
       if (request?.preferCache || isCompanionIdentityAsset(raw, connection.baseUrl)) {
         if (!accountId) {
           throw new Error('An account is required to cache assets')
@@ -121,17 +132,13 @@ export function registerConnectionIpc({
         return asset
       }
 
-      // 绝对 URL 只取路径，凭据始终发往当前后端。
-      const { pathname, search } = new URL(raw, connection.baseUrl)
-
-      const res = await fetchImpl(`${connection.baseUrl}${pathname}${search}`, {
+      const res = await fetchImpl(resolveBackendAssetUrl(raw, connection.baseUrl), {
         headers: connection.token ? { Authorization: `Bearer ${connection.token}` } : {},
         signal: AbortSignal.timeout(defaultFetchTimeoutMs)
       })
 
       if (!res.ok) {
-        const text = await res.text().catch(() => '')
-        throw new HttpError(res.status, `${res.status} ${pathname}: ${text || res.statusText}`)
+        throw await httpErrorFromResponse(res, new URL(raw, connection.baseUrl).pathname)
       }
 
       const buffer = Buffer.from(await res.arrayBuffer())
@@ -141,17 +148,11 @@ export function registerConnectionIpc({
         buffer,
         mime: res.headers.get('content-type') || 'application/octet-stream'
       }
-    } catch (error) {
-      notifyAuthExpiredOn401(error, connection.token, sender)
-
-      throw error
-    }
+    })
   }
 
   ipcMain.handle(IPC.invoke.gatewayWsUrl, async event => {
-    if (!isSenderWindow(event.sender, getMainWindow())) {
-      throw new Error('gatewayWsUrl is restricted to the gateway host window')
-    }
+    assertGatewayHost(event.sender, getMainWindow(), 'gatewayWsUrl')
 
     const auth = getCurrentAuth()
 
@@ -159,47 +160,33 @@ export function registerConnectionIpc({
       throw new Error('An authenticated session is required for the gateway')
     }
 
-    const connection = await ensureBackend()
+    return callBackend(event.sender, async connection => {
+      const assertCurrentAuth = (): void => {
+        const current = getCurrentAuth()
 
-    const assertCurrentAuth = (): void => {
-      const current = getCurrentAuth()
-
-      if (current?.sessionId !== auth.sessionId || current.token !== auth.token || connection.token !== auth.token) {
-        throw new Error('Gateway authentication changed while issuing a ticket')
+        if (current?.sessionId !== auth.sessionId || current.token !== auth.token || connection.token !== auth.token) {
+          throw new Error('Gateway authentication changed while issuing a ticket')
+        }
       }
-    }
 
-    try {
       assertCurrentAuth()
       const ticket = await mintWsTicket(connection.baseUrl, auth.token)
       assertCurrentAuth()
 
       return `${connection.baseUrl.replace(/^http/, 'ws')}/api/chat/ws?ticket=${encodeURIComponent(ticket)}`
-    } catch (error) {
-      notifyAuthExpiredOn401(error, connection.token, event.sender)
-
-      throw error
-    }
+    })
   })
 
   ipcMain.handle(IPC.invoke.api, async (event, request: SpiritAgentApiRequest) => {
     assertApiRequestAllowed(request?.path, request?.method)
 
-    const connection = await ensureBackend()
-    const timeoutMs = resolvePathTimeoutMs(request?.path, request?.method, defaultFetchTimeoutMs)
-    const url = `${connection.baseUrl}${request.path}`
-
-    try {
-      return await fetchJson(url, connection.token || undefined, {
+    return callBackend(event.sender, connection =>
+      fetchJson(`${connection.baseUrl}${request.path}`, connection.token || undefined, {
         body: request?.body,
         method: request?.method,
-        timeoutMs
+        timeoutMs: resolvePathTimeoutMs(request?.path, request?.method, defaultFetchTimeoutMs)
       })
-    } catch (error: unknown) {
-      notifyAuthExpiredOn401(error, connection.token, event.sender)
-
-      throw error
-    }
+    )
   })
 
   ipcMain.handle(

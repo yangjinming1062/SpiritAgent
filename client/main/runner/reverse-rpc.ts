@@ -55,23 +55,13 @@ export function createReverseRpc(options: ReverseRpcOptions): (method: string, p
   let sessionBytesSent = 0
 
   function hasVisionContent(content: unknown): boolean {
-    if (!Array.isArray(content)) {
-      return false
-    }
-
-    for (const part of content) {
-      if (
-        typeof part === 'object' &&
-        part !== null &&
-        ((part as LlmMessageContentPart).type === 'input_image' ||
-          (part as LlmMessageContentPart).type === 'image_url' ||
-          (part as LlmMessageContentPart).image_url !== undefined)
-      ) {
-        return true
-      }
-    }
-
-    return false
+    return (
+      Array.isArray(content) &&
+      content.some(
+        (part: LlmMessageContentPart | null) =>
+          part?.type === 'input_image' || part?.type === 'image_url' || part?.image_url !== undefined
+      )
+    )
   }
 
   function contentToInputParts(content: unknown): Array<Record<string, unknown>> {
@@ -153,7 +143,7 @@ export function createReverseRpc(options: ReverseRpcOptions): (method: string, p
       }
 
       const sourceParts = Array.isArray(message.content)
-        ? message.content.map(part => part as Record<string, unknown>)
+        ? message.content
         : typeof message.content === 'string'
           ? [{ type: 'text', text: message.content }]
           : []
@@ -192,6 +182,8 @@ export function createReverseRpc(options: ReverseRpcOptions): (method: string, p
     const messages = payloadObj.messages || []
     const messageCount = messages.length
     const responsesPayload = toResponsesPayload(payloadObj)
+    const inputItems = Array.isArray(responsesPayload.input) ? responsesPayload.input : null
+    const itemCount = inputItems?.length ?? 1
 
     if (messageCount > MAX_MESSAGES_PER_SESSION) {
       throw new Error(
@@ -204,19 +196,14 @@ export function createReverseRpc(options: ReverseRpcOptions): (method: string, p
       'utf8'
     )
 
-    const isVision =
-      Array.isArray(responsesPayload.input) && responsesPayload.input.some(item => hasVisionContent(item.content))
-
+    const isVision = inputItems?.some(item => hasVisionContent(item.content)) ?? false
     const maxBytes = isVision ? MAX_VISION_BYTES_PER_SESSION : MAX_TEXT_BYTES_PER_SESSION
 
     if (payloadBytes > maxBytes) {
       throw new Error(`request_llm rejected: messages payload too large (${payloadBytes} bytes > ${maxBytes}).`)
     }
 
-    const nextMessages =
-      sessionMessagesSent +
-      (messageCount || (Array.isArray(responsesPayload.input) ? responsesPayload.input.length : 1))
-
+    const nextMessages = sessionMessagesSent + (messageCount || itemCount)
     const nextBytes = sessionBytesSent + payloadBytes
 
     // 先校验再提交：被拒绝的请求不消耗会话额度。
@@ -233,7 +220,6 @@ export function createReverseRpc(options: ReverseRpcOptions): (method: string, p
     sessionMessagesSent = nextMessages
     sessionBytesSent = nextBytes
 
-    const itemCount = Array.isArray(responsesPayload.input) ? responsesPayload.input.length : 1
     log(
       `[reverse-rpc] request_llm (${itemCount} input items, ${payloadBytes} bytes, session ${sessionMessagesSent}/${sessionBytesSent})`
     )

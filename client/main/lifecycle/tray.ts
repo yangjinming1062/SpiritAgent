@@ -13,7 +13,7 @@ import {
 import type { BackendSessionPort } from '../shared/backend-port'
 import { buildPrefsHydratedFromConfig } from '../shared/lib/config-sync'
 import * as runnerConfigStore from '../shared/lib/runner-config-store'
-import { broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, sendToWindow } from '../shared/utils'
+import { broadcastToAllWindows, errorMessage, hideAndSkipTaskbar, isWindowShown, sendToWindow } from '../shared/utils'
 
 import type { SurfacesManager } from './surfaces'
 
@@ -91,13 +91,7 @@ function isAuthenticated(): boolean {
 }
 
 function isSpriteVisible(): boolean {
-  const win = trayDeps?.getMainWindow?.()
-
-  if (!win || win.isDestroyed()) {
-    return false
-  }
-
-  return win.isVisible() && !win.isMinimized()
+  return isWindowShown(trayDeps?.getMainWindow?.())
 }
 
 function sendToMainWindow<C extends IpcEventChannel>(channel: C, ...payload: IpcEventContract[C]): void {
@@ -113,14 +107,6 @@ function showActivation(): void {
   } else {
     sendToMainWindow(IPC.event.trayActivate)
   }
-}
-
-function accountLabel(username: string, baseUrl: string, duplicate: boolean): string {
-  if (!duplicate) {
-    return username
-  }
-
-  return `${username} (${baseUrl})`
 }
 
 function resizeMacTrayIcon(
@@ -237,28 +223,16 @@ function buildTrayMenu(): Menu | null {
   const currentLang = getCurrentLanguage()
   const t = TRAY_STRINGS[currentLang]
 
-  let mainActionLabel: string
-  let mainActionClick: () => void
-
-  if (visible) {
-    mainActionLabel = t.hide
-    mainActionClick = () => hideMainWindow()
-  } else if (authed) {
-    mainActionLabel = t.show
-    mainActionClick = () => showMainWindow()
-  } else {
-    mainActionLabel = t.activate
-
-    mainActionClick = showActivation
-  }
+  const mainAction = visible
+    ? { click: hideMainWindow, label: t.hide }
+    : authed
+      ? { click: showMainWindow, label: t.show }
+      : { click: showActivation, label: t.activate }
 
   const template: MenuItemConstructorOptions[] = [
+    mainAction,
     {
-      click: mainActionClick,
-      label: mainActionLabel
-    },
-    {
-      click: () => resetMainWindowPosition(),
+      click: resetMainWindowPosition,
       label: t.resetPosition
     }
   ]
@@ -313,13 +287,17 @@ function buildTrayMenu(): Menu | null {
     counts.set(account.username, (counts.get(account.username) ?? 0) + 1)
   }
 
+  // 同名账户追加后端地址以区分。
+  const labelOf = (account: (typeof accounts)[number]): string =>
+    (counts.get(account.username) ?? 0) > 1 ? `${account.username} (${account.baseUrl})` : account.username
+
   const accountItems: MenuItemConstructorOptions[] = accounts.map(account => ({
     checked: account.active,
     click: () => {
       void switchFromTray(account.id)
     },
     enabled: !accountOperationBusy,
-    label: accountLabel(account.username, account.baseUrl, (counts.get(account.username) ?? 0) > 1),
+    label: labelOf(account),
     type: 'radio'
   }))
 
@@ -337,14 +315,17 @@ function buildTrayMenu(): Menu | null {
         click: () => {
           void removeFromTray(account.id, account.username, account.active)
         },
-        label: accountLabel(account.username, account.baseUrl, (counts.get(account.username) ?? 0) > 1)
+        label: labelOf(account)
       }))
     })
   }
 
-  template.push({ type: 'separator' }, { label: t.accountSwitch, submenu: accountItems })
-
-  template.push({ type: 'separator' }, { click: () => quitAppFully(), label: t.quit(t.brandName) })
+  template.push(
+    { type: 'separator' },
+    { label: t.accountSwitch, submenu: accountItems },
+    { type: 'separator' },
+    { click: quitAppFully, label: t.quit(t.brandName) }
+  )
 
   return trayDeps.Menu.buildFromTemplate(template)
 }
@@ -384,7 +365,7 @@ export function installCloseInterceptor(win: BrowserWindow): void {
   win.on('restore', onVisibilityChanged)
 }
 
-export function hideMainWindow(): void {
+function hideMainWindow(): void {
   const win = trayDeps?.getMainWindow?.()
 
   if (win && !win.isDestroyed()) {
@@ -460,7 +441,7 @@ function resetMainWindowPosition(): void {
   rebuildTrayMenu()
 }
 
-function toggleMainWindow(): void {
+export function toggleMainWindow(): void {
   if (isSpriteVisible()) {
     hideMainWindow()
   } else {
@@ -519,12 +500,7 @@ export function installTray(deps: TrayDeps): null | Tray {
     return null
   }
 
-  trayInstance.setToolTip(TRAY_STRINGS[getCurrentLanguage()].brandName)
-  const menu = buildTrayMenu()
-
-  if (menu) {
-    trayInstance.setContextMenu(menu)
-  }
+  rebuildTrayMenu()
 
   trayInstance.on('click', () => {
     toggleMainWindow()
@@ -549,15 +525,7 @@ export function destroyTray(): void {
 export function registerSingleInstanceForwarder(deps: TrayDeps): void {
   trayDeps = deps
   deps.app.on('second-instance', () => {
-    deps.rememberLog?.('[instance] second-instance forwarded')
-    const win = deps.getMainWindow()
-
-    if (!win || win.isDestroyed()) {
-      deps.createWindow()
-
-      return
-    }
-
+    deps.rememberLog('[instance] second-instance forwarded')
     showMainWindow()
   })
 }

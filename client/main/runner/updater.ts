@@ -13,9 +13,15 @@ import YAML from 'yaml'
 import type { BackendSessionLike } from '../shared/backend-port'
 import { errorMessage } from '../shared/utils'
 
-import { venvPythonFor } from './venv'
+import { runnerServerPyFor, venvPythonFor } from './venv'
 
 const execFileP = promisify(execFile)
+
+const MANIFEST_FETCH_ATTEMPTS = 3
+const MANIFEST_FETCH_BACKOFF_MS = 1500
+// 预取与安装两阶段经这两个 Home 下的名字交接。
+const SENTINEL_FILE = '.pending-runner-update.json'
+const STAGING_DIR = 'runner.staging'
 
 interface RunnerUpdateManifest {
   path: string
@@ -81,34 +87,15 @@ export class RunnerUpdater {
     version: string
   }): Promise<void> {
     const home = this.runtime.spiritagentHome
-    const stagingDir = path.join(home, 'runner.staging')
+    const stagingDir = path.join(home, STAGING_DIR)
 
     await fsp.rm(stagingDir, { force: true, recursive: true })
     await fsp.mkdir(stagingDir, { recursive: true })
 
-    const MANIFEST_FETCH_ATTEMPTS = 3
-    const MANIFEST_FETCH_BACKOFF_MS = 1500
-    let manifest: null | RunnerUpdateManifest = null
-    let primaryErr: unknown = null
-
-    for (let attempt = 1; attempt <= MANIFEST_FETCH_ATTEMPTS; attempt++) {
-      try {
-        const text = await this.fetchText(`${updateBaseUrl}/latest-runner.yml`)
-        manifest = YAML.parse(text)
-        primaryErr = null
-
-        break
-      } catch (err) {
-        primaryErr = err
-
-        if (attempt < MANIFEST_FETCH_ATTEMPTS) {
-          await sleep(MANIFEST_FETCH_BACKOFF_MS * attempt)
-        }
-      }
-    }
+    const manifest = await this.fetchManifest(`${updateBaseUrl}/latest-runner.yml`)
 
     if (!manifest) {
-      throw primaryErr ?? new Error('manifest fetch failed after retries')
+      throw new Error('manifest fetch failed after retries')
     }
 
     if (!manifest.path || !manifest.signature || !manifest.runner || !manifest.version) {
@@ -154,7 +141,7 @@ export class RunnerUpdater {
       throw new Error('server.py sha256 mismatch')
     }
 
-    const sentinel = {
+    const sentinel: PendingRunnerSentinel = {
       attempt_count: 0,
       max_attempts: 3,
       prepared_at: new Date().toISOString(),
@@ -163,14 +150,13 @@ export class RunnerUpdater {
       wheel_path: wheelStagingPath
     }
 
-    const sentinelPath = path.join(home, '.pending-runner-update.json')
-    await fsp.writeFile(sentinelPath, JSON.stringify(sentinel, null, 2), 'utf8')
+    await fsp.writeFile(path.join(home, SENTINEL_FILE), JSON.stringify(sentinel, null, 2), 'utf8')
   }
 
   // 阶段 2：在新版 Electron 进程内完成安装。
   async installPending(appVersion: string): Promise<{ error?: string; noop?: boolean; ok: boolean }> {
     const home = this.runtime.spiritagentHome
-    const sentinelPath = path.join(home, '.pending-runner-update.json')
+    const sentinelPath = path.join(home, SENTINEL_FILE)
 
     if (!fs.existsSync(sentinelPath)) {
       return { noop: true, ok: true }
@@ -243,7 +229,7 @@ export class RunnerUpdater {
       const uvName = process.platform === 'win32' ? 'uv.exe' : 'uv'
       const managedUv = path.join(home, 'bin', uvName)
       const uvBin = fs.existsSync(managedUv) ? managedUv : uvName
-      const serverPyDest = path.join(home, 'runner', 'server.py')
+      const serverPyDest = runnerServerPyFor(home)
 
       // 更新语义：装新 wheel + 覆盖 server.py，一次性切到新版本；兼容性由构建期 check_runner_facade.py 保证，不做安装期回滚，避免半更新状态。
       try {
@@ -282,7 +268,7 @@ export class RunnerUpdater {
       }
 
       await fsp.rm(sentinelPath, { force: true })
-      await fsp.rm(path.join(home, 'runner.staging'), { force: true, recursive: true })
+      await fsp.rm(path.join(home, STAGING_DIR), { force: true, recursive: true })
 
       return { ok: true }
     } catch (err) {
@@ -342,19 +328,34 @@ export class RunnerUpdater {
     publicKeyPath?: null | string
     signatureB64: string
   }): boolean {
-    if (!publicKeyPath || !fs.existsSync(publicKeyPath)) {
+    if (!publicKeyPath) {
       return false
     }
 
     try {
-      const pubKey = fs.readFileSync(publicKeyPath)
-      const verifier = crypto.createVerify('SHA512')
-      verifier.update(payload, 'utf8')
-      verifier.end()
-
-      return verifier.verify(pubKey, Buffer.from(signatureB64, 'base64'))
+      return crypto.verify(
+        'sha512',
+        Buffer.from(payload, 'utf8'),
+        fs.readFileSync(publicKeyPath),
+        Buffer.from(signatureB64, 'base64')
+      )
     } catch {
       return false
+    }
+  }
+
+  // 清单抓取（含 YAML 解析）失败时线性退避重试，末次失败原样抛出。
+  private async fetchManifest(url: string): Promise<null | RunnerUpdateManifest> {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return YAML.parse(await this.fetchText(url))
+      } catch (err) {
+        if (attempt >= MANIFEST_FETCH_ATTEMPTS) {
+          throw err
+        }
+
+        await sleep(MANIFEST_FETCH_BACKOFF_MS * attempt)
+      }
     }
   }
 
@@ -386,13 +387,11 @@ export class RunnerUpdater {
 }
 
 async function hashOfFile(p: string, algorithm: string): Promise<string> {
-  const h = crypto.createHash(algorithm)
-  await new Promise<void>((resolve, reject) => {
-    fs.createReadStream(p)
-      .on('data', c => h.update(c))
-      .on('end', () => resolve())
-      .on('error', reject)
-  })
+  const hash = crypto.createHash(algorithm)
 
-  return h.digest('hex')
+  for await (const chunk of fs.createReadStream(p)) {
+    hash.update(chunk)
+  }
+
+  return hash.digest('hex')
 }

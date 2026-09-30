@@ -70,8 +70,6 @@ export function createWindowHandlers({
   }
 
   function installZoomShortcuts(targetWin: BrowserWindow): void {
-    const ZOOM_STEP = 0.1
-
     targetWin.webContents.on('before-input-event', (event, input) => {
       const mod = isMac ? input.meta : input.control
 
@@ -86,126 +84,103 @@ export function createWindowHandlers({
         zoomPersistence.setAndPersistZoomLevel(targetWin, 0)
       } else if (key === '=' || key === '+') {
         event.preventDefault()
-        zoomPersistence.setAndPersistZoomLevel(targetWin, targetWin.webContents.getZoomLevel() + ZOOM_STEP)
+        zoomPersistence.stepZoomLevel(targetWin, 1)
       } else if (key === '-') {
         event.preventDefault()
-        zoomPersistence.setAndPersistZoomLevel(targetWin, targetWin.webContents.getZoomLevel() - ZOOM_STEP)
+        zoomPersistence.stepZoomLevel(targetWin, -1)
       }
     })
   }
 
   function installContextMenu(targetWin: BrowserWindow): void {
     targetWin.webContents.on('context-menu', (_event, params) => {
-      const template: Electron.MenuItemConstructorOptions[] = []
+      const { editFlags, isEditable, linkURL, misspelledWord, srcURL } = params
       const hasSelection = Boolean(params.selectionText?.trim())
 
       // data: 图部分环境下 mediaType 不为 image，仍应提供复制/另存；不用路径段启发式，任意含 /image/ 的 URL 会被误判。
-      const srcURL = params.srcURL || ''
-
       const hasImage =
         Boolean(srcURL) &&
         (params.mediaType === 'image' ||
           srcURL.startsWith('data:image/') ||
           /\.(png|jpe?g|webp|gif|bmp|svg)(\?|#|$)/i.test(srcURL))
 
-      const hasLink = Boolean(params.linkURL)
-      const isEditable = Boolean(params.isEditable)
+      const suggestions = Array.isArray(params.dictionarySuggestions) ? params.dictionarySuggestions.slice(0, 5) : []
+
+      // 各组之间以分隔线隔开，没有内容的组不占分隔线。
+      const groups: Electron.MenuItemConstructorOptions[][] = []
 
       if (hasImage) {
-        template.push(
+        groups.push([
           {
-            enabled: !params.srcURL.startsWith('data:'),
+            enabled: !srcURL.startsWith('data:'),
             label: 'Open Image',
-            click: () => {
-              if (params.srcURL && !params.srcURL.startsWith('data:')) {
-                openExternalUrl(params.srcURL)
-              }
-            }
+            click: () => openExternalUrl(srcURL)
           },
           {
             label: 'Copy Image',
             click: () => {
               void contextMenuHelpers
-                .copyImageFromUrl(params.srcURL)
+                .copyImageFromUrl(srcURL)
                 .catch(error => rememberLog(`Copy image failed: ${errorMessage(error)}`))
             }
           },
           {
             label: 'Copy Image Address',
-            click: () => clipboard.writeText(params.srcURL)
+            click: () => clipboard.writeText(srcURL)
           },
           {
             label: 'Save Image As...',
             click: () => {
               void contextMenuHelpers
-                .saveImageFromUrl(params.srcURL, targetWin)
+                .saveImageFromUrl(srcURL, targetWin)
                 .catch(error => rememberLog(`Save image failed: ${errorMessage(error)}`))
             }
           }
-        )
+        ])
       }
 
-      if (hasLink) {
-        if (template.length) {
-          template.push({ type: 'separator' })
-        }
-
-        template.push(
+      if (linkURL) {
+        groups.push([
           {
             label: 'Open Link',
-            click: () => openExternalUrl(params.linkURL)
+            click: () => openExternalUrl(linkURL)
           },
           {
             label: 'Copy Link',
-            click: () => clipboard.writeText(params.linkURL)
+            click: () => clipboard.writeText(linkURL)
           }
-        )
+        ])
       }
 
-      const suggestions = Array.isArray(params.dictionarySuggestions) ? params.dictionarySuggestions : []
-
-      if (isEditable && params.misspelledWord && suggestions.length > 0) {
-        if (template.length) {
-          template.push({ type: 'separator' })
-        }
-
-        for (const suggestion of suggestions.slice(0, 5)) {
-          template.push({
+      if (isEditable && misspelledWord && suggestions.length > 0) {
+        groups.push([
+          ...suggestions.map(suggestion => ({
             label: suggestion,
             click: () => targetWin.webContents.replaceMisspelling(suggestion)
-          })
-        }
-
-        template.push({ type: 'separator' })
-        template.push({
-          label: 'Add to dictionary',
-          click: () => targetWin.webContents.session.addWordToSpellCheckerDictionary(params.misspelledWord)
-        })
+          })),
+          { type: 'separator' },
+          {
+            label: 'Add to dictionary',
+            click: () => targetWin.webContents.session.addWordToSpellCheckerDictionary(misspelledWord)
+          }
+        ])
       }
 
-      if (hasSelection || isEditable) {
-        if (template.length) {
-          template.push({ type: 'separator' })
-        }
-
-        if (isEditable) {
-          template.push(
-            { enabled: params.editFlags.canCut, role: 'cut' },
-            { enabled: params.editFlags.canCopy, role: 'copy' },
-            { enabled: params.editFlags.canPaste, role: 'paste' },
-            { type: 'separator' },
-            { enabled: params.editFlags.canSelectAll, role: 'selectAll' }
-          )
-        } else {
-          template.push({ enabled: params.editFlags.canCopy, role: 'copy' })
-        }
+      if (isEditable) {
+        groups.push([
+          { enabled: editFlags.canCut, role: 'cut' },
+          { enabled: editFlags.canCopy, role: 'copy' },
+          { enabled: editFlags.canPaste, role: 'paste' },
+          { type: 'separator' },
+          { enabled: editFlags.canSelectAll, role: 'selectAll' }
+        ])
+      } else if (hasSelection) {
+        groups.push([{ enabled: editFlags.canCopy, role: 'copy' }])
       }
 
-      if (!template.length) {
-        template.push({ role: 'selectAll' })
-      }
+      const template = groups.flatMap((group, index) => (index ? [{ type: 'separator' as const }, ...group] : group))
 
-      menu.buildFromTemplate(template).popup({ window: targetWin })
+      menu.buildFromTemplate(template.length ? template : [{ role: 'selectAll' }]).popup({ window: targetWin })
     })
   }
 
@@ -231,8 +206,7 @@ export function createWindowHandlers({
       return false
     }
 
-    const mediaTypes =
-      'mediaTypes' in details ? (details as { mediaTypes?: ReadonlyArray<string> }).mediaTypes : undefined
+    const mediaTypes = 'mediaTypes' in details ? details.mediaTypes : undefined
 
     if (!Array.isArray(mediaTypes) || mediaTypes.length === 0) {
       return true
@@ -247,17 +221,7 @@ export function createWindowHandlers({
     })
 
     session.defaultSession.setPermissionCheckHandler((_webContents, permission, _origin, details) => {
-      if ((permission as string) === 'media' || (permission as string) === 'audioCapture') {
-        const mediaType = details?.mediaType
-
-        if (mediaType === 'video') {
-          return false
-        }
-
-        return true
-      }
-
-      return false
+      return ['media', 'audioCapture'].includes(permission) && details?.mediaType !== 'video'
     })
   }
 
@@ -284,7 +248,7 @@ export function createWindowHandlers({
     })
 
     win.webContents.on('will-navigate', (event, url) => {
-      if ((isDevServer && url.startsWith(isDevServer)) || (!isDevServer && url.startsWith('file:'))) {
+      if (url.startsWith(isDevServer || 'file:')) {
         return
       }
 
@@ -352,7 +316,7 @@ export function createWindowHandlers({
   function configureSpellChecker(app: { getLocale?: () => string | null }): void {
     try {
       const available = session.defaultSession.availableSpellCheckerLanguages || []
-      const locale = (app.getLocale && app.getLocale()) || 'en-US'
+      const locale = app.getLocale?.() || 'en-US'
       const candidates = [locale, locale.split('-')[0], 'en-US', 'en']
       const chosen = candidates.find(lang => available.includes(lang)) || 'en-US'
 

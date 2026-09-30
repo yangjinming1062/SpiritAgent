@@ -27,11 +27,6 @@ const LOCAL_ONLY_KEYS: Record<string, readonly string[]> = {
   browser: ['profile_dir']
 }
 
-// 镜像归属不匹配时清空同步节，避免跨账户上传。
-interface MirrorStamp {
-  account_id?: null | string
-}
-
 const FLUSH_DEBOUNCE_MS = 1500
 const RETRY_BACKOFF_INITIAL_MS = 5000
 const RETRY_BACKOFF_MAX_MS = 60000
@@ -60,12 +55,17 @@ function objectSection(config: Record<string, unknown>, section: string): Record
   return value != null && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 }
 
+/** 镜像归属戳中的账户 ID；缺失或非字符串为 null。 */
+function mirrorAccountId(config: Record<string, unknown>): null | string {
+  const id = objectSection(config, 'sync').account_id
+
+  return typeof id === 'string' ? id : null
+}
+
 /** 从配置镜像构造渲染层实际消费的 prefs-hydrated 载荷。 */
 export function buildPrefsHydratedFromConfig(config: Record<string, unknown>): DesktopPrefsHydrated {
-  const accountId = objectSection(config, 'sync').account_id
-
   return {
-    accountId: typeof accountId === 'string' ? accountId : null,
+    accountId: mirrorAccountId(config),
     companion: objectSection(config, 'companion'),
     language: typeof config.language === 'string' && config.language.length > 0 ? config.language : null
   }
@@ -148,13 +148,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
     const out: Record<string, unknown> = {}
 
     for (const section of SYNCED_SECTIONS) {
-      const value = objectSection(config, section)
-
-      if (Object.keys(value).length === 0) {
-        continue
-      }
-
-      const stripped = stripLocalOnly(section, value)
+      const stripped = stripLocalOnly(section, objectSection(config, section))
 
       if (Object.keys(stripped).length > 0) {
         out[section] = stripped
@@ -306,9 +300,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       }
 
       const cloud = pickSyncedSections(res.config ?? {})
-      const local = store.read()
-      const stamp = objectSection(local, 'sync') as MirrorStamp
-      const trusted = stamp.account_id === accountId
+      const trusted = mirrorAccountId(store.read()) === accountId
 
       if (!trusted) {
         await isolateMirror(accountId, epoch)
@@ -324,22 +316,10 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
 
       for (const section of SYNCED_SECTIONS) {
         const localSec = objectSection(fresh, section)
-        const cloudSecRaw = cloud[section]
-
-        if (cloudSecRaw == null) {
-          if (trusted && Object.keys(stripLocalOnly(section, localSec)).length > 0) {
-            seed = true
-          }
-
-          continue
-        }
-
         const cloudSec = objectSection(cloud, section)
 
-        for (const key of Object.keys(stripLocalOnly(section, localSec))) {
-          if (!(key in cloudSec) && trusted) {
-            seed = true
-          }
+        if (trusted && Object.keys(stripLocalOnly(section, localSec)).some(key => !(key in cloudSec))) {
+          seed = true
         }
 
         const merged = { ...localSec, ...cloudSec }
@@ -414,9 +394,8 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
 
     if (accountId !== null) {
       const epoch = authEpoch
-      const stamp = objectSection(store.read(), 'sync') as MirrorStamp
 
-      if (stamp.account_id !== accountId) {
+      if (mirrorAccountId(store.read()) !== accountId) {
         await isolateMirror(accountId, epoch)
       }
 

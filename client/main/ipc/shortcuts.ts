@@ -4,66 +4,65 @@ import {
   type DesktopShortcutsSetPayload,
   type DesktopShortcutsState,
   IPC,
-  type ShortcutRegistrationStatus,
   type SurfaceId
 } from '@ipc/contracts'
-import { type BrowserWindow, globalShortcut, type IpcMain } from 'electron'
+import { globalShortcut, type IpcMain } from 'electron'
 
 import * as store from '../shared/lib/runner-config-store'
 import { broadcastToAllWindows, errorMessage } from '../shared/utils'
 
-/** 窄接口：短cuts 只需要切表面，不依赖 lifecycle/surfaces 具体类型。 */
+/** 窄接口：快捷键只需要切表面，不依赖 lifecycle/surfaces 具体类型。 */
 interface SurfaceToggler {
   toggleSurface: (payload: { surface: SurfaceId }) => Promise<void>
 }
 
 interface ShortcutsIpcDeps {
-  getMainWindow: () => BrowserWindow | null | undefined
-  hideMainWindow: () => void
   ipcMain: IpcMain
   rememberLog?: (chunk: string) => void
-  showMainWindow: () => void
   surfaces?: SurfaceToggler
+  /** 精灵窗可见则隐藏，否则显示。 */
+  toggleMainWindow: () => void
 }
 
 let deps: ShortcutsIpcDeps | null = null
 const currentRegistered = new Map<keyof DesktopShortcutsConfig, string>()
 
-const currentStatus: Record<keyof DesktopShortcutsConfig, ShortcutRegistrationStatus> = {
+const idleStatus = (): DesktopShortcutsState['status'] => ({
   openLiving: { registered: false },
   openWorkbench: { registered: false },
   toggleVisibility: { registered: false }
-}
+})
+
+let currentStatus = idleStatus()
 
 // 订阅方是生活空间设置页，不是精灵窗。
 function broadcastShortcutsChanged(state: DesktopShortcutsState): void {
   broadcastToAllWindows(IPC.event.shortcutsChanged, state)
 }
 
-function readShortcutsConfig(): DesktopShortcutsConfig {
-  const root = store.read()
-  const raw = root.shortcuts as Record<string, unknown> | undefined
+// 逐键取 source 中的字符串值，缺失或类型不符时回落 fallback；source 来自配置镜像或渲染层，类型不可信。
+function overlayShortcuts(source: unknown, fallback: Readonly<DesktopShortcutsConfig>): DesktopShortcutsConfig {
+  const raw = (source ?? {}) as Partial<Record<keyof DesktopShortcutsConfig, unknown>>
+
+  const pick = (action: keyof DesktopShortcutsConfig): string => {
+    const value = raw[action]
+
+    return typeof value === 'string' ? value : fallback[action]
+  }
 
   return {
-    openLiving: typeof raw?.openLiving === 'string' ? raw.openLiving : DEFAULT_SHORTCUTS.openLiving,
-    openWorkbench: typeof raw?.openWorkbench === 'string' ? raw.openWorkbench : DEFAULT_SHORTCUTS.openWorkbench,
-    toggleVisibility:
-      typeof raw?.toggleVisibility === 'string' ? raw.toggleVisibility : DEFAULT_SHORTCUTS.toggleVisibility
+    openLiving: pick('openLiving'),
+    openWorkbench: pick('openWorkbench'),
+    toggleVisibility: pick('toggleVisibility')
   }
 }
 
+function readShortcutsConfig(): DesktopShortcutsConfig {
+  return overlayShortcuts(store.read().shortcuts, DEFAULT_SHORTCUTS)
+}
+
 function handleToggleVisibility(): void {
-  if (!deps) {
-    return
-  }
-
-  const win = deps.getMainWindow()
-
-  if (win && !win.isDestroyed() && win.isVisible() && !win.isMinimized()) {
-    deps.hideMainWindow()
-  } else {
-    deps.showMainWindow()
-  }
+  deps?.toggleMainWindow()
 }
 
 function handleToggleSurface(surface: SurfaceId): () => void {
@@ -161,9 +160,7 @@ export function cleanupShortcuts(): void {
   }
 
   currentRegistered.clear()
-  currentStatus.toggleVisibility = { registered: false }
-  currentStatus.openLiving = { registered: false }
-  currentStatus.openWorkbench = { registered: false }
+  currentStatus = idleStatus()
 }
 
 export function registerShortcutsIpc(options: ShortcutsIpcDeps): void {
@@ -180,20 +177,7 @@ export function registerShortcutsIpc(options: ShortcutsIpcDeps): void {
   ipcMain.handle(
     IPC.invoke.shortcutsSet,
     async (_event, payload: DesktopShortcutsSetPayload): Promise<DesktopShortcutsState> => {
-      const current = readShortcutsConfig()
-
-      const next: DesktopShortcutsConfig = {
-        openLiving:
-          typeof payload?.shortcuts?.openLiving === 'string' ? payload.shortcuts.openLiving : current.openLiving,
-        openWorkbench:
-          typeof payload?.shortcuts?.openWorkbench === 'string'
-            ? payload.shortcuts.openWorkbench
-            : current.openWorkbench,
-        toggleVisibility:
-          typeof payload?.shortcuts?.toggleVisibility === 'string'
-            ? payload.shortcuts.toggleVisibility
-            : current.toggleVisibility
-      }
+      const next = overlayShortcuts(payload?.shortcuts, readShortcutsConfig())
 
       await store.patch(['shortcuts'], { value: next })
       const state = applyShortcuts(next)

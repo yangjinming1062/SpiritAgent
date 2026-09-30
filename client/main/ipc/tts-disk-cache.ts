@@ -5,7 +5,7 @@ import path from 'node:path'
 import { atomicWriteFile } from '../shared/utils'
 
 function cacheKey(voice: string, text: string): string {
-  return crypto.createHash('sha1').update(`${voice}\n${text}`).digest('hex')
+  return crypto.hash('sha1', `${voice}\n${text}`)
 }
 
 export interface TtsDiskCache {

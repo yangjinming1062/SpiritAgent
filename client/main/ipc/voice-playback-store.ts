@@ -3,6 +3,10 @@ import path from 'node:path'
 
 import { voicePlaybackKey, type VoicePlaybackRecord, type VoicePlaybackSnapshot } from '@ipc/contracts'
 
+import { atomicWriteFile, isAccountId } from '../shared/utils'
+
+import { createAccountQueue } from './account-queue'
+
 interface PlaybackAccess {
   accountId: string
   sessionId: string
@@ -50,10 +54,8 @@ function parseSnapshot(value: unknown): VoicePlaybackSnapshot {
 
 export function createVoicePlaybackStore({ spiritagentHome }: { spiritagentHome: string }) {
   const root = path.join(spiritagentHome, 'cache', 'voice-playback')
-  const queues = new Map<string, Promise<unknown>>()
   const snapshots = new Map<string, VoicePlaybackSnapshot>()
-  const epochs = new Map<string, number>()
-  const clearing = new Map<string, Promise<void>>()
+  const queue = createAccountQueue()
 
   async function transact(
     access: PlaybackAccess,
@@ -61,17 +63,16 @@ export function createVoicePlaybackStore({ spiritagentHome }: { spiritagentHome:
   ): Promise<VoicePlaybackSnapshot | null> {
     const { accountId, sessionId, isCurrent } = access
 
-    if (!/^[a-f0-9]{64}$/.test(accountId) || !/^\d+$/.test(sessionId)) {
+    if (!isAccountId(accountId) || !/^\d+$/.test(sessionId)) {
       throw new Error('Invalid voice playback scope')
     }
 
     const key = `${accountId}:${sessionId}`
-    const generation = epochs.get(accountId)
-    const current = (): boolean => generation === epochs.get(accountId) && isCurrent()
-    const previous = Promise.all([queues.get(key), clearing.get(accountId)])
     const file = path.join(root, accountId, `${sessionId}.json`)
 
-    const task = previous.then(async () => {
+    return queue.enqueue(accountId, sessionId, async sameAccountGeneration => {
+      const current = (): boolean => sameAccountGeneration() && isCurrent()
+
       if (!current()) {
         return null
       }
@@ -96,19 +97,9 @@ export function createVoicePlaybackStore({ spiritagentHome }: { spiritagentHome:
 
       if (change) {
         snapshot = change(snapshot)
-        await fsp.mkdir(path.dirname(file), { recursive: true })
-        const temporary = `${file}.${process.pid}.tmp`
 
-        try {
-          await fsp.writeFile(temporary, JSON.stringify(snapshot), 'utf8')
-
-          if (!current()) {
-            return null
-          }
-
-          await fsp.rename(temporary, file)
-        } finally {
-          await fsp.rm(temporary, { force: true })
+        if (!(await atomicWriteFile(file, JSON.stringify(snapshot), current))) {
+          return null
         }
       }
 
@@ -120,17 +111,6 @@ export function createVoicePlaybackStore({ spiritagentHome }: { spiritagentHome:
 
       return snapshot
     })
-
-    const tail = task.catch(() => {})
-    queues.set(key, tail)
-
-    try {
-      return await task
-    } finally {
-      if (queues.get(key) === tail) {
-        queues.delete(key)
-      }
-    }
   }
 
   return {
@@ -159,15 +139,11 @@ export function createVoicePlaybackStore({ spiritagentHome }: { spiritagentHome:
         revision: snapshot.revision + 1
       }))
     },
-    flush: async (): Promise<void> => {
-      await Promise.all([...queues.values(), ...clearing.values()])
-    },
+    flush: queue.flush,
     clear: (accountId: string): Promise<void> => {
-      if (!/^[a-f0-9]{64}$/.test(accountId)) {
+      if (!isAccountId(accountId)) {
         return Promise.reject(new Error('Invalid voice playback account'))
       }
-
-      epochs.set(accountId, (epochs.get(accountId) ?? 0) + 1)
 
       for (const key of snapshots.keys()) {
         if (key.startsWith(`${accountId}:`)) {
@@ -175,15 +151,7 @@ export function createVoicePlaybackStore({ spiritagentHome }: { spiritagentHome:
         }
       }
 
-      const pending = [...queues].filter(([key]) => key.startsWith(`${accountId}:`)).map(([, task]) => task)
-
-      const task = Promise.allSettled([...pending, clearing.get(accountId)]).then(() =>
-        fsp.rm(path.join(root, accountId), { force: true, recursive: true })
-      )
-
-      clearing.set(accountId, task)
-
-      return task
+      return queue.clear(accountId, path.join(root, accountId))
     }
   }
 }

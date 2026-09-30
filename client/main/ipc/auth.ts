@@ -9,7 +9,7 @@ import type { IpcMain } from 'electron'
 
 import type { BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
 import { writeStoredBackendUrl } from '../shared/config'
-import { broadcastToAllWindows, errorMessage } from '../shared/utils'
+import { broadcastToAllWindows, createSerialQueue, errorMessage } from '../shared/utils'
 
 interface AuthBroadcasterDeps {
   autoStartBridge: () => void
@@ -23,6 +23,7 @@ interface AuthBroadcasterDeps {
 export interface AuthBroadcaster {
   /** 首次调用会懒建会话并触发凭据恢复；已有 token 时自动启动 Runner。 */
   autoStartBridgeIfSignedIn: () => void
+  /** 先重建托盘菜单（账户列表随之更新），再向全部窗口广播；已被其他会话取代时不广播。 */
   broadcastAuthChanged: (snapshot: null | SessionSnapshotPort, removedAccountId?: string) => Promise<void>
   /** 会话恢复回调：直接广播，不进鉴权操作队列；广播后仍是当前会话才自动启动 Runner。 */
   onSessionRestored: (snapshot: null | SessionSnapshotPort) => void
@@ -38,28 +39,25 @@ export function createAuthBroadcaster(deps: AuthBroadcasterDeps): AuthBroadcaste
   async function broadcastAuthChanged(snapshot: null | SessionSnapshotPort, removedAccountId?: string): Promise<void> {
     deps.rebuildTrayMenu()
 
-    const authenticated = Boolean(snapshot?.hasToken)
+    const live = snapshot?.hasToken ? snapshot : null
 
-    const authSnapshot: DesktopAuthSnapshot | null =
-      authenticated && snapshot
-        ? {
-            accountId: snapshot.accountId,
-            baseUrl: snapshot.baseUrl,
-            hasToken: snapshot.hasToken,
-            sessionId: snapshot.sessionId,
-            tokenExpiresAt: snapshot.tokenExpiresAt,
-            user: snapshot.user?.username ? { username: snapshot.user.username } : null
-          }
-        : null
+    const authSnapshot: DesktopAuthSnapshot | null = live && {
+      accountId: live.accountId,
+      baseUrl: live.baseUrl,
+      hasToken: live.hasToken,
+      sessionId: live.sessionId,
+      tokenExpiresAt: live.tokenExpiresAt,
+      user: live.user?.username ? { username: live.user.username } : null
+    }
 
     const payload: DesktopAuthBroadcast = {
-      authenticated,
+      authenticated: live !== null,
       removedAccountId,
       snapshot: authSnapshot
     }
 
     // 身份变化时配置同步丢弃上个身份未上云的待写；登录或换号后水合新身份。
-    const nextAccountId = authenticated ? (snapshot?.accountId ?? null) : null
+    const nextAccountId = live?.accountId ?? null
 
     if (playbackClaimAccountId !== nextAccountId) {
       deps.resetPlaybackClaims()
@@ -109,7 +107,6 @@ interface AuthIpcDeps {
   getSessionAfterRestore: () => Promise<null | SessionSnapshotPort>
   log: (message: string) => void
   onAccountIdentityChanged: () => Promise<void>
-  rebuildTrayMenu: () => void
   resetBackendCache: () => void
   restartBridge: () => Promise<void>
   spiritagentHome: string
@@ -127,14 +124,7 @@ export function registerAuthIpc({
   removeAccount: (accountId: string) => Promise<void>
   switchAccount: (accountId: string) => Promise<null | SessionSnapshotPort>
 } {
-  let actions: Promise<unknown> = Promise.resolve()
-
-  function enqueueAction<T>(operation: () => Promise<T>): Promise<T> {
-    const next = actions.then(operation, operation)
-    actions = next.catch(() => {})
-
-    return next
-  }
+  const enqueueAction = createSerialQueue()
 
   async function publishChange(
     previous: null | SessionSnapshotPort,
@@ -149,8 +139,6 @@ export function registerAuthIpc({
     }
 
     deps.resetBackendCache()
-
-    deps.rebuildTrayMenu()
 
     try {
       await deps.broadcastAuthChanged(next, options.removedAccountId)
@@ -236,7 +224,6 @@ export function registerAuthIpc({
       try {
         const next = await session.refresh({ clientContext: built.client_context || null })
         deps.resetBackendCache()
-        deps.rebuildTrayMenu()
         await deps.broadcastAuthChanged(next)
 
         return next

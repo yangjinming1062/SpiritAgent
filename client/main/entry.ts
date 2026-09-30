@@ -60,12 +60,12 @@ import { createSurfaceWindowFactory } from './lifecycle/surface-window'
 import { createSurfacesManager, type SurfacesManager } from './lifecycle/surfaces'
 import {
   destroyTray,
-  hideMainWindow,
   installCloseInterceptor,
   installTray,
   rebuildTrayMenu,
   registerSingleInstanceForwarder,
-  showMainWindow
+  showMainWindow,
+  toggleMainWindow
 } from './lifecycle/tray'
 import { createContextMenuHelpers } from './lifecycle/window-context-menu-helpers'
 import { createWindowHandlers } from './lifecycle/window-handlers'
@@ -76,20 +76,17 @@ import { createReverseRpc } from './runner/reverse-rpc'
 import { createRunnerWsServer } from './runner/rpc-ws'
 import { RunnerUpdater } from './runner/updater'
 import {
-  DATA_URL_READ_MAX_BYTES,
   DEFAULT_CSP_POLICY,
   DEFAULT_FETCH_TIMEOUT_MS,
   DEV_CSP_POLICY,
-  resolvePathTimeoutMs,
-  resolveReadableFileForIpc
+  resolvePathTimeoutMs
 } from './security/hardening'
 import { resolveDesktopHome } from './security/paths'
-import { buildClientContext } from './shared/client-context'
+import type { BackendSessionPort } from './shared/backend-port'
 import { readStoredBackendUrl } from './shared/config'
 import { createConfigSync, uiThemeFromConfig } from './shared/lib/config-sync'
 import * as runnerConfigStore from './shared/lib/runner-config-store'
-import { mimeTypeForPath } from './shared/mime'
-import { broadcastToAllWindows, errorMessage, fileExists, sendToWindow } from './shared/utils'
+import { broadcastToAllWindows, fileExists, sendToWindow } from './shared/utils'
 
 const DEV_SERVER = process.env.SPIRITAGENT_DESKTOP_DEV_SERVER
 const IS_PACKAGED = app.isPackaged
@@ -99,8 +96,11 @@ const APP_ROOT = app.getAppPath()
 const singleInstance = acquireSingleInstance(app)
 
 let mainWindow: BrowserWindow | null = null
+const getMainWindow = (): BrowserWindow | null => mainWindow
 let surfaces: null | SurfacesManager = null
 let getAuthToken = (): string | null => null
+// sessionRuntime 在下方创建；各端口晚绑定读取。
+const ensureBackendSession = (): BackendSessionPort => sessionRuntime.ensureBackendSession()
 
 const REMOTE_DISPLAY_REASON = applyChromiumSwitches(app)
 
@@ -113,12 +113,12 @@ const desktopLogger = createDesktopLogger({
   spiritagentHome: SPIRITAGENT_HOME
 })
 
-const rememberLog = (chunk: unknown): void => desktopLogger.rememberLog(chunk)
+const { rememberLog } = desktopLogger
 
 // 须先于会话恢复与 Runner 自动启动，使 Runner 与技能索引读到当前版本的随包技能。
 syncBundledSkills({
   app,
-  log: chunk => rememberLog(chunk),
+  log: rememberLog,
   resourcesPath: process.resourcesPath,
   spiritagentHome: SPIRITAGENT_HOME
 })
@@ -130,7 +130,6 @@ const APP_NAME = '唤生'
 const electronFetch = createElectronFetch(electronNet)
 
 const backendHttp = createBackendHttp({
-  app,
   electronNet,
   spiritagentHome: SPIRITAGENT_HOME
 })
@@ -140,7 +139,7 @@ const { ensureBackend, resetBackendCache } = createEnsureBackend({
   backendHttp,
   logBootStep: message => rememberLog(`[boot] ${message}`),
   getAuthToken: () => getAuthToken(),
-  getCurrentBaseUrl: () => sessionRuntime?.ensureBackendSession().getSession()?.baseUrl ?? null
+  getCurrentBaseUrl: () => ensureBackendSession().getSession()?.baseUrl ?? null
 })
 
 // 云端配置同步协调器：backend user_settings 为真源，desktop-settings.json 是镜像（机密与设备相关节仅本机，见 shared/lib/config-sync.ts）。
@@ -148,7 +147,7 @@ const configSync = createConfigSync({
   createBackendClient: ({ baseUrl }) => createBackendClient({ baseUrl, fetch: electronFetch }),
   ensureBackend: () => ensureBackend(),
   isRetryableError: isRetryableBackendError,
-  log: chunk => rememberLog(chunk),
+  log: rememberLog,
   onHydrated: payload => {
     const theme = uiThemeFromConfig(runnerConfigStore.read())
 
@@ -172,7 +171,7 @@ const { rendererUrlFor } = createRendererPaths({
   appRoot: APP_ROOT,
   devServer: DEV_SERVER,
   isPackaged: IS_PACKAGED,
-  rememberLog: (chunk: string) => rememberLog(chunk)
+  rememberLog
 })
 
 const getAppIconPath = createAppIconResolver(APP_ROOT)
@@ -184,12 +183,12 @@ const surfaceCompanionPreferences = createSurfaceCompanionPreferences(app)
 
 const contextMenuHelpers = createContextMenuHelpers({ electronNet })
 
-const openExternalUrl = createOpenExternalUrl(chunk => rememberLog(chunk))
+const openExternalUrl = createOpenExternalUrl(rememberLog)
 
 const menu = createMenu({
   app,
   appName: APP_NAME,
-  getMainWindow: () => mainWindow,
+  getMainWindow,
   isMac: IS_MAC,
   menu: Menu,
   minimizeWindow: win => surfaces?.minimizeWindow(win),
@@ -207,7 +206,7 @@ const windowHandlers = createWindowHandlers({
   menu: Menu,
   openExternalUrl,
   powerMonitor,
-  rememberLog: (chunk: string) => rememberLog(chunk),
+  rememberLog,
   sendPowerResume: () => sendToWindow(mainWindow, IPC.event.powerResume),
   session,
   zoomPersistence
@@ -219,11 +218,11 @@ const PRELOAD_PATH = path.join(import.meta.dirname, 'preload.cjs')
 const { createSpriteWindow, syncSpriteToDisplay } = createSpriteWindowFactory({
   app,
   getAppIconPath,
-  getMainWindow: () => mainWindow,
+  getMainWindow,
   installCloseInterceptor,
   isMac: IS_MAC,
   preloadPath: PRELOAD_PATH,
-  rememberLog: (chunk: string) => rememberLog(chunk),
+  rememberLog,
   rendererUrlFor,
   seedTheme: seedUiTheme,
   setMainWindow: win => {
@@ -252,8 +251,8 @@ const { createSurfaceWindow, navigateSurfaceWindow } = createSurfaceWindowFactor
 const authBroadcaster = createAuthBroadcaster({
   autoStartBridge: () => runnerHost.autoStart(),
   configSync,
-  ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
-  log: chunk => rememberLog(chunk),
+  ensureBackendSession,
+  log: rememberLog,
   rebuildTrayMenu,
   resetPlaybackClaims: () => surfaces?.resetPlaybackClaims()
 })
@@ -262,73 +261,58 @@ registerSystemIpc({
   electron: { app },
   ipcMain
 })
-registerUiThemeIpc({ ipcMain, log: chunk => rememberLog(chunk) })
-registerPrefsIpc({ ipcMain, log: chunk => rememberLog(chunk) })
+registerUiThemeIpc({ ipcMain, log: rememberLog })
+registerPrefsIpc({ ipcMain, log: rememberLog })
 
 surfaces = createSurfacesManager({
   createWindow: createSurfaceWindow,
   getCompanionPreference: id => surfaceCompanionPreferences.get(id),
-  getSpriteWindow: () => mainWindow,
+  getSpriteWindow: getMainWindow,
   navigateWindow: navigateSurfaceWindow,
-  rememberLog: (chunk: string) => rememberLog(chunk),
+  rememberLog,
   saveCompanionPreference: (id, preference) => surfaceCompanionPreferences.set(id, preference),
   syncSpriteToDisplay
 })
 surfaces.registerIpcHandlers({ ipcMain })
 surfaces.hydrateLastSurface()
-registerShortcutsIpc({
-  getMainWindow: () => mainWindow,
-  hideMainWindow,
-  ipcMain,
-  rememberLog: chunk => rememberLog(chunk),
-  showMainWindow: () => showMainWindow(),
-  surfaces: surfaces ?? undefined
-})
+registerShortcutsIpc({ ipcMain, rememberLog, surfaces, toggleMainWindow })
 registerClipboardIpc({
   electron: {
     clipboard,
     dialog,
-    getMainWindow: () => mainWindow,
+    getMainWindow,
     nativeImage
   },
   ipcMain
 })
-registerLogIpc({ ipcMain, log: chunk => rememberLog(chunk) })
+registerLogIpc({ ipcMain, log: rememberLog })
 registerFilesIpc({
-  electron: { dialog, getMainWindow: () => mainWindow },
-  hardening: { DATA_URL_READ_MAX_BYTES, resolveReadableFileForIpc },
-  ipcMain,
-  mimeTypeForPath
+  electron: { dialog, getMainWindow },
+  ipcMain
 })
 registerOnboardingAudioIpc({
   appRoot: APP_ROOT,
   spiritagentHome: SPIRITAGENT_HOME,
-  hardening: { resolveReadableFileForIpc },
-  ipcMain,
-  mimeTypeForPath
+  ipcMain
 })
 
 // 会话懒创建与 token 重接在 session-runtime，Runner 桥的持有、自动启停与 IPC 在 runner host；登录恢复经 authBroadcaster 广播后接回 host.autoStart。onRestored 异步回调里才调用，先占位避免 session/runtime 互相前置。
 let runnerHost: ReturnType<typeof createRunnerHost>
 
-const sessionRuntime = createSessionRuntime(
-  {
-    createSession: createBackendSession,
-    desktopVersion: () => backendHttp.resolveSpiritAgentVersion(),
-    errorMessage,
-    fetchImpl: electronFetch,
-    getTokenSetter: fn => {
-      getAuthToken = fn
-    },
-    log: chunk => rememberLog(chunk),
-    onRestored: snapshot => authBroadcaster.onSessionRestored(snapshot),
-    readStoredBackendUrl: () => readStoredBackendUrl(SPIRITAGENT_HOME),
-    safeStorage,
-    spiritagentHome: SPIRITAGENT_HOME,
-    userDataDir: app.getPath('userData')
+const sessionRuntime = createSessionRuntime({
+  createSession: createBackendSession,
+  desktopVersion: () => app.getVersion(),
+  fetchImpl: electronFetch,
+  getTokenSetter: fn => {
+    getAuthToken = fn
   },
-  buildClientContext
-)
+  log: rememberLog,
+  onRestored: snapshot => authBroadcaster.onSessionRestored(snapshot),
+  readStoredBackendUrl: () => readStoredBackendUrl(SPIRITAGENT_HOME),
+  safeStorage,
+  spiritagentHome: SPIRITAGENT_HOME,
+  userDataDir: app.getPath('userData')
+})
 
 const assetDiskCache = createAssetDiskCache({
   defaultFetchFn: electronFetch,
@@ -351,15 +335,15 @@ registerConnectionIpc({
   fetchJson: backendHttp.fetchJson,
   getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
   getSelectedAccountId: () => sessionRuntime.ensureBackendSession().getSelectedAccountId(),
-  getMainWindow: () => mainWindow,
+  getMainWindow,
   ipcMain,
   mintWsTicket: backendHttp.mintWsTicket,
   resolvePathTimeoutMs
 })
 registerGatewayIpc({
-  getMainWindow: () => mainWindow,
+  getMainWindow,
   ipcMain,
-  rememberLog: chunk => rememberLog(chunk)
+  rememberLog
 })
 registerMediaIpc({
   spiritagentHome: SPIRITAGENT_HOME,
@@ -367,7 +351,7 @@ registerMediaIpc({
   fetchImpl: electronFetch,
   getCurrentAuth: () => sessionRuntime.getCurrentAuth(),
   ipcMain,
-  log: chunk => rememberLog(chunk)
+  log: rememberLog
 })
 
 runnerHost = createRunnerHost({
@@ -375,10 +359,10 @@ runnerHost = createRunnerHost({
   createRunnerBridge,
   createRunnerProcess,
   createRunnerWsServer,
-  ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
+  ensureBackendSession,
   fileExists,
-  getMainWindow: () => mainWindow,
-  rememberLog: chunk => rememberLog(chunk),
+  getMainWindow,
+  rememberLog,
   spiritagentHome: SPIRITAGENT_HOME,
   taggedLogger: prefix => chunk => rememberLog(`${prefix} ${chunk}`)
 })
@@ -386,16 +370,11 @@ runnerHost = createRunnerHost({
 const autoUpdater = createAutoUpdater({
   app,
   runtime: {
-    ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
+    ensureBackendSession,
     getRunnerBridge: () => runnerHost.getBridge(),
     spiritagentHome: SPIRITAGENT_HOME
   },
-  createRunnerUpdater: ({ runtime: updaterRuntime, fetchImpl, log: updaterLog }) =>
-    new RunnerUpdater({
-      runtime: updaterRuntime,
-      fetchImpl,
-      log: updaterLog
-    }),
+  createRunnerUpdater: deps => new RunnerUpdater(deps),
   fetchImpl: electronFetch,
   spiritagentHome: SPIRITAGENT_HOME
 })
@@ -414,9 +393,9 @@ const authActions = registerAuthIpc({
     restartBridge: () => runnerHost.restartForCurrentSession(),
     broadcastAuthChanged: authBroadcaster.broadcastAuthChanged,
     buildClientContext: () => sessionRuntime.buildClientContext(),
-    ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
+    ensureBackendSession,
     getSessionAfterRestore: () => sessionRuntime.getSessionAfterRestore(),
-    log: chunk => rememberLog(chunk),
+    log: rememberLog,
     onAccountIdentityChanged: async () => {
       try {
         await surfaces?.closeSurface()
@@ -424,7 +403,6 @@ const authActions = registerAuthIpc({
         showMainWindow()
       }
     },
-    rebuildTrayMenu,
     resetBackendCache,
     spiritagentHome: SPIRITAGENT_HOME
   },
@@ -432,12 +410,12 @@ const authActions = registerAuthIpc({
 })
 
 registerSessionHistoryIpc({
-  ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
+  ensureBackendSession,
   ipcMain,
   sessionHistoryDiskCache
 })
 registerVoicePlaybackIpc({
-  ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
+  ensureBackendSession,
   ipcMain,
   store: voicePlaybackStore
 })
@@ -452,7 +430,6 @@ registerSkillsIpc({
   ipcMain
 })
 registerUpdateIpc({
-  broadcast: broadcastToAllWindows,
   electron: { app },
   feed: autoUpdater,
   ipcMain,
@@ -463,9 +440,9 @@ registerUpdateIpc({
 registerSpriteIpc({
   deps: {
     getRunnerBridge: () => runnerHost.getBridge(),
-    getSpriteWindow: () => mainWindow,
+    getSpriteWindow: getMainWindow,
     getUserDataDir: () => app.getPath('userData'),
-    log: chunk => rememberLog(chunk),
+    log: rememberLog,
     screen
   },
   ipcMain
@@ -474,7 +451,7 @@ registerSpriteIpc({
 sessionRuntime.rewireAuthToken()
 
 void app.whenReady().then(async () => {
-  setTimeout(() => authBroadcaster.autoStartBridgeIfSignedIn(), 200).unref?.()
+  setTimeout(() => authBroadcaster.autoStartBridgeIfSignedIn(), 200).unref()
 
   surfaces?.watchSystemEvents()
   menu.installApplicationMenu()
@@ -488,39 +465,26 @@ void app.whenReady().then(async () => {
   await autoUpdater.installPendingRunnerUpdate()
   createSpriteWindow()
 
-  registerSingleInstanceForwarder({
+  const trayDeps = {
     app,
     createWindow: createSpriteWindow,
     dialog,
-    ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
+    ensureBackendSession,
     getAppIconPath,
-    getMainWindow: () => mainWindow,
+    getMainWindow,
     Menu,
     nativeImage,
     rememberLog,
     removeAccount: authActions.removeAccount,
     switchAccount: authActions.switchAccount,
     Tray
-  })
+  }
+
+  registerSingleInstanceForwarder(trayDeps)
   // 早期第二实例事件须在转发器写入托盘依赖后兑现：showMainWindow 依赖它。
   singleInstance.replayEarlySecondInstance(showMainWindow)
 
-  installTray({
-    app,
-    createWindow: createSpriteWindow,
-    dialog,
-    ensureBackendSession: () => sessionRuntime.ensureBackendSession(),
-    getAppIconPath,
-    getIsQuitting: () => appQuit.isQuitting(),
-    getMainWindow: () => mainWindow,
-    Menu,
-    nativeImage,
-    rememberLog,
-    removeAccount: authActions.removeAccount,
-    switchAccount: authActions.switchAccount,
-    surfaces: surfaces ?? undefined,
-    Tray
-  })
+  installTray({ ...trayDeps, getIsQuitting: () => appQuit.isQuitting(), surfaces: surfaces ?? undefined })
 
   app.on('activate', () => showMainWindow())
 })
@@ -532,6 +496,6 @@ const appQuit = installAppQuit({
   flushConfig: () => configSync.flush(),
   flushLog: () => desktopLogger.flushSync(),
   flushPlayback: () => voicePlaybackStore.flush(),
-  log: chunk => rememberLog(chunk),
+  log: rememberLog,
   stopRunner: () => runnerHost.getBridge()?.stop({ reason: 'app-quit' }) ?? Promise.resolve()
 })

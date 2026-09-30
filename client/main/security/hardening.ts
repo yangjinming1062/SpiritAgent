@@ -4,37 +4,31 @@ import { fileURLToPath } from 'node:url'
 
 import { errorMessage } from '../shared/utils'
 
+import { assertUserSelectedPath } from './user-selected-paths'
+
 export const DEFAULT_FETCH_TIMEOUT_MS = 15_000
 export const DATA_URL_READ_MAX_BYTES = 16 * 1024 * 1024
 
-export const DEFAULT_CSP_POLICY = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https:",
-  "media-src 'self' data: blob: https:",
-  "connect-src 'self' data: blob: ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* http: https: ws: wss:",
-  "font-src 'self' data:",
-  "worker-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'none'"
-].join('; ')
+function buildCspPolicy(scriptSrc: string): string {
+  return [
+    "default-src 'self'",
+    `script-src ${scriptSrc}`,
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' data: blob: https:",
+    "connect-src 'self' data: blob: ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* http: https: ws: wss:",
+    "font-src 'self' data:",
+    "worker-src 'self'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'none'"
+  ].join('; ')
+}
+
+export const DEFAULT_CSP_POLICY = buildCspPolicy("'self'")
 
 // Dev-only：Vite 的 React Fast Refresh preamble 以内联脚本注入 HTML，DEFAULT_CSP_POLICY 不允许 inline 会导致白屏（HMR 重试还会烧 CPU）；HMR websocket 已被 connect-src 通配覆盖。生产仍用 DEFAULT_CSP_POLICY 锁紧。
-export const DEV_CSP_POLICY = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data: blob: https:",
-  "media-src 'self' data: blob: https:",
-  "connect-src 'self' data: blob: ws://127.0.0.1:* ws://localhost:* http://127.0.0.1:* http://localhost:* http: https: ws: wss:",
-  "font-src 'self' data:",
-  "worker-src 'self'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'none'"
-].join('; ')
+export const DEV_CSP_POLICY = buildCspPolicy("'self' 'unsafe-inline' 'unsafe-eval'")
 
 // 头像/精灵生成通常要 15–25 秒，默认 15 秒会在后端返回 201 之前超时，故放宽。
 const AVATAR_FETCH_TIMEOUT_MS = 120_000
@@ -51,18 +45,14 @@ const AVATAR_SLOW_PATH_PATTERN =
 const SAFE_ENV_SUFFIXES: Set<string> = new Set(['dist', 'example', 'sample', 'template'])
 const SENSITIVE_EXTENSIONS: Set<string> = new Set(['.kdbx', '.p12', '.pem', '.pfx'])
 
+function positiveRounded(value: unknown): null | number {
+  const parsed = Number(value)
+
+  return Number.isFinite(parsed) && parsed > 0 ? Math.round(parsed) : null
+}
+
 export function resolveTimeoutMs(timeoutMs?: null | number | string, fallbackMs = DEFAULT_FETCH_TIMEOUT_MS): number {
-  if (timeoutMs !== undefined && timeoutMs !== null) {
-    const parsed = Number(timeoutMs)
-
-    if (Number.isFinite(parsed) && parsed > 0) {
-      return Math.round(parsed)
-    }
-  }
-
-  const fallbackNum = Number(fallbackMs)
-
-  return Number.isFinite(fallbackNum) && fallbackNum > 0 ? Math.round(fallbackNum) : DEFAULT_FETCH_TIMEOUT_MS
+  return positiveRounded(timeoutMs) ?? positiveRounded(fallbackMs) ?? DEFAULT_FETCH_TIMEOUT_MS
 }
 
 // 仅 POST 路径——读路径只是数据库查询，不涉及供应商调用。
@@ -83,7 +73,7 @@ export function resolvePathTimeoutMs(
 
   const isSlowPost = isPost && AVATAR_SLOW_PATH_PATTERN.test(pathStr)
 
-  return isSlowPost ? AVATAR_FETCH_TIMEOUT_MS : resolveTimeoutMs(undefined, fallbackMs)
+  return isSlowPost ? AVATAR_FETCH_TIMEOUT_MS : resolveTimeoutMs(fallbackMs)
 }
 
 export interface SafeStorageApi {
@@ -162,7 +152,7 @@ function resolveRequestedFilePath(filePath: string, purpose = 'File read'): stri
     }
   }
 
-  return path.resolve(process.cwd(), raw)
+  return path.resolve(raw)
 }
 
 interface ResolveReadableFileOptions {
@@ -216,12 +206,9 @@ export async function resolveReadableFileForIpc(
     }
   }
 
-  const maxBytes =
-    typeof options.maxBytes === 'number' && Number.isFinite(options.maxBytes) && options.maxBytes > 0
-      ? options.maxBytes
-      : null
+  const { maxBytes } = options
 
-  if (maxBytes && stat.size > maxBytes) {
+  if (typeof maxBytes === 'number' && maxBytes > 0 && stat.size > maxBytes) {
     throw new Error(`${purpose} failed: file is too large (${stat.size} bytes; limit ${maxBytes} bytes).`)
   }
 
@@ -232,4 +219,16 @@ export async function resolveReadableFileForIpc(
   }
 
   return { resolvedPath, stat }
+}
+
+/** 读取渲染层经选择器或拖拽登记过的文件：先核对白名单，再做敏感路径、类型、大小与可读性校验。 */
+export async function readUserSelectedFile(
+  filePath: string,
+  options: { maxBytes: number; purpose: string }
+): Promise<{ data: Buffer; resolvedPath: string }> {
+  assertUserSelectedPath(filePath, options.purpose)
+
+  const { resolvedPath } = await resolveReadableFileForIpc(filePath, options)
+
+  return { data: await fs.promises.readFile(resolvedPath), resolvedPath }
 }

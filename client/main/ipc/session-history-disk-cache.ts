@@ -3,6 +3,10 @@ import path from 'node:path'
 
 import type { SessionHistorySnapshot } from '@ipc/contracts'
 
+import { atomicWriteFile, isAccountId, isFiniteNumber } from '../shared/utils'
+
+import { createAccountQueue } from './account-queue'
+
 // 快照 messages 只保留展示所需的 SessionMessage 形状；主进程不做业务投影。
 export interface SessionHistoryDiskCache {
   clear: (accountId: string) => Promise<void>
@@ -15,14 +19,6 @@ export interface SessionHistoryDiskCacheOptions {
   spiritagentHome: string
 }
 
-function isAccountIdSafe(accountId: string): boolean {
-  return /^[a-f0-9]{64}$/.test(accountId)
-}
-
-function isSessionIdSafe(sessionId: string): boolean {
-  return /^\d+$/.test(sessionId)
-}
-
 function lastIdFromMessages(messages: unknown[]): null | number {
   let last: null | number = null
 
@@ -33,7 +29,7 @@ function lastIdFromMessages(messages: unknown[]): null | number {
 
     const id = (raw as { id?: unknown }).id
 
-    if (typeof id === 'number' && Number.isFinite(id)) {
+    if (isFiniteNumber(id)) {
       last = last === null || id > last ? id : last
     }
   }
@@ -46,18 +42,13 @@ function sanitizeSnapshot(input: Partial<SessionHistorySnapshot> | null | undefi
     return null
   }
 
-  const currentSeq = typeof input.currentSeq === 'number' && Number.isFinite(input.currentSeq) ? input.currentSeq : 0
+  const currentSeq = isFiniteNumber(input.currentSeq) ? input.currentSeq : 0
   const truncated = input.truncated === true
   const nextCursor = typeof input.nextCursor === 'string' && input.nextCursor ? input.nextCursor : null
   const info = input.info && typeof input.info === 'object' ? (input.info as Record<string, unknown>) : undefined
 
-  const writtenAt =
-    typeof input.writtenAt === 'number' && Number.isFinite(input.writtenAt) ? input.writtenAt : Date.now()
-
-  const lastMessageId =
-    typeof input.lastMessageId === 'number' && Number.isFinite(input.lastMessageId)
-      ? input.lastMessageId
-      : lastIdFromMessages(input.messages)
+  const writtenAt = isFiniteNumber(input.writtenAt) ? input.writtenAt : Date.now()
+  const lastMessageId = isFiniteNumber(input.lastMessageId) ? input.lastMessageId : lastIdFromMessages(input.messages)
 
   return {
     currentSeq,
@@ -74,9 +65,7 @@ export function createSessionHistoryDiskCache({
   spiritagentHome
 }: SessionHistoryDiskCacheOptions): SessionHistoryDiskCache {
   const cacheRoot = path.resolve(spiritagentHome, 'cache', 'sessions')
-  const writeQueues = new Map<string, Promise<void>>()
-  const epochs = new Map<string, number>()
-  const clearing = new Map<string, Promise<void>>()
+  const queue = createAccountQueue()
 
   function accountDir(accountId: string): string {
     return path.join(cacheRoot, accountId)
@@ -86,45 +75,29 @@ export function createSessionHistoryDiskCache({
     return path.join(accountDir(accountId), `${sessionId}.json`)
   }
 
-  async function ensureDir(dir: string): Promise<void> {
-    await fsp.mkdir(dir, { recursive: true })
-  }
-
-  // 队列只保存吞掉失败的尾部，保证后续写入照常排队；调用方等待原任务并收到失败。
-  async function awaitQueued(key: string, task: Promise<void>): Promise<void> {
-    const tail = task.catch(() => {})
-    writeQueues.set(key, tail)
-
-    try {
-      await task
-    } finally {
-      if (writeQueues.get(key) === tail) {
-        writeQueues.delete(key)
-      }
-    }
+  function isSafe(accountId: string, sessionId: string): boolean {
+    return isAccountId(accountId) && /^\d+$/.test(sessionId)
   }
 
   async function get(accountId: string, sessionId: string): Promise<null | SessionHistorySnapshot> {
-    if (!isAccountIdSafe(accountId) || !isSessionIdSafe(sessionId)) {
+    if (!isSafe(accountId, sessionId)) {
       return null
     }
 
-    const epoch = epochs.get(accountId)
+    const isCurrent = queue.generation(accountId)
 
     try {
-      await clearing.get(accountId)
+      await queue.clearing(accountId)
       const raw = await fsp.readFile(sessionPath(accountId, sessionId), 'utf8')
 
-      return epoch === epochs.get(accountId)
-        ? sanitizeSnapshot(JSON.parse(raw) as Partial<SessionHistorySnapshot>)
-        : null
+      return isCurrent() ? sanitizeSnapshot(JSON.parse(raw) as Partial<SessionHistorySnapshot>) : null
     } catch {
       return null
     }
   }
 
   async function save(accountId: string, sessionId: string, snapshot: Partial<SessionHistorySnapshot>): Promise<void> {
-    if (!isAccountIdSafe(accountId) || !isSessionIdSafe(sessionId)) {
+    if (!isSafe(accountId, sessionId)) {
       return
     }
 
@@ -135,73 +108,31 @@ export function createSessionHistoryDiskCache({
     }
 
     const file = sessionPath(accountId, sessionId)
-    const key = `${accountId}:${sessionId}`
-    const saveEpoch = epochs.get(accountId)
-    const prev = Promise.all([writeQueues.get(key), clearing.get(accountId)])
 
-    const next = prev.then(async () => {
-      if (saveEpoch !== epochs.get(accountId)) {
-        return
-      }
-
-      await ensureDir(accountDir(accountId))
-
-      if (saveEpoch !== epochs.get(accountId)) {
-        return
-      }
-
-      const tmp = `${file}.${process.pid}.${Date.now()}.tmp`
-
-      try {
-        await fsp.writeFile(tmp, JSON.stringify(sanitized), 'utf8')
-
-        if (saveEpoch === epochs.get(accountId)) {
-          await fsp.rename(tmp, file)
-        } else {
-          await fsp.unlink(tmp).catch(() => {})
-        }
-      } catch (error) {
-        await fsp.unlink(tmp).catch(() => {})
-
-        throw error
+    await queue.enqueue(accountId, sessionId, async isCurrent => {
+      if (isCurrent()) {
+        await atomicWriteFile(file, JSON.stringify(sanitized), isCurrent)
       }
     })
-
-    await awaitQueued(key, next)
   }
 
   async function remove(accountId: string, sessionId: string): Promise<void> {
-    if (!isAccountIdSafe(accountId) || !isSessionIdSafe(sessionId)) {
+    if (!isSafe(accountId, sessionId)) {
       return
     }
 
     // 走同一写入队列：避免在途 save 在 rm 之后落盘，复活已删快照。
-    const key = `${accountId}:${sessionId}`
-    const removeEpoch = epochs.get(accountId)
-    const prev = Promise.all([writeQueues.get(key), clearing.get(accountId)])
-
-    const next = prev.then(() =>
-      removeEpoch === epochs.get(accountId) ? fsp.rm(sessionPath(accountId, sessionId), { force: true }) : undefined
-    )
-
-    await awaitQueued(key, next)
+    await queue.enqueue(accountId, sessionId, async isCurrent => {
+      if (isCurrent()) {
+        await fsp.rm(sessionPath(accountId, sessionId), { force: true })
+      }
+    })
   }
 
   function clear(accountId: string): Promise<void> {
-    if (!isAccountIdSafe(accountId)) {
-      return Promise.reject(new Error('Invalid history cache account'))
-    }
-
-    epochs.set(accountId, (epochs.get(accountId) ?? 0) + 1)
-    const pending = [...writeQueues].filter(([key]) => key.startsWith(`${accountId}:`)).map(([, task]) => task)
-
-    const task = Promise.allSettled([...pending, clearing.get(accountId)]).then(() =>
-      fsp.rm(accountDir(accountId), { recursive: true, force: true })
-    )
-
-    clearing.set(accountId, task)
-
-    return task
+    return isAccountId(accountId)
+      ? queue.clear(accountId, accountDir(accountId))
+      : Promise.reject(new Error('Invalid history cache account'))
   }
 
   return {

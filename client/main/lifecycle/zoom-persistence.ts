@@ -8,6 +8,7 @@ import { errorMessage, safeReadJson } from '../shared/utils'
 
 // 缩放级别本地持久化：BrowserWindow 的 setZoomLevel 不跨重启，落盘 desktop-zoom.json 以还原。
 const ZOOM_FILE = 'desktop-zoom.json'
+const ZOOM_STEP = 0.1
 
 // Electron 的合法范围是 -9 到 9；超出此区间会让 setZoomLevel 抛错。
 function clampZoomLevel(value: number): number {
@@ -43,6 +44,16 @@ export function createZoomPersistence({ app, rememberLog }: ZoomPersistenceOptio
     }
   }
 
+  function setAndPersistZoomLevel(targetWin: BrowserWindow | null, zoomLevel: number): void {
+    if (!targetWin || targetWin.isDestroyed()) {
+      return
+    }
+
+    const next = clampZoomLevel(zoomLevel)
+    targetWin.webContents.setZoomLevel(next)
+    writePersistedZoomLevel(next)
+  }
+
   return {
     restorePersistedZoomLevel(targetWin: BrowserWindow | null): void {
       if (!targetWin || targetWin.isDestroyed()) {
@@ -55,14 +66,12 @@ export function createZoomPersistence({ app, rememberLog }: ZoomPersistenceOptio
         targetWin.webContents.setZoomLevel(stored)
       }
     },
-    setAndPersistZoomLevel(targetWin: BrowserWindow | null, zoomLevel: number): void {
-      if (!targetWin || targetWin.isDestroyed()) {
-        return
+    setAndPersistZoomLevel,
+    /** 在当前缩放级别上放大（1）或缩小（-1）一档并持久化。 */
+    stepZoomLevel(targetWin: BrowserWindow | null, direction: -1 | 1): void {
+      if (targetWin && !targetWin.isDestroyed()) {
+        setAndPersistZoomLevel(targetWin, targetWin.webContents.getZoomLevel() + direction * ZOOM_STEP)
       }
-
-      const next = clampZoomLevel(zoomLevel)
-      targetWin.webContents.setZoomLevel(next)
-      writePersistedZoomLevel(next)
     }
   }
 }

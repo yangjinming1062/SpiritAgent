@@ -1,20 +1,15 @@
-import {
-  type DesktopRunnerState,
-  type DesktopRunnerStatusEvent,
-  IPC,
-  type RunnerCallOutcome,
-  type RunnerCallRequest
-} from '@ipc/contracts'
+import { type DesktopRunnerState, IPC, type RunnerCallOutcome, type RunnerCallRequest } from '@ipc/contracts'
+import { sleep } from '@runtime'
 import type { BrowserWindow, IpcMain } from 'electron'
 
 import type { RunnerBridge, RunnerBridgeEvent, RunnerBridgeOptions, RunnerBridgeStatus } from '../runner/bridge'
 import type { CreateRunnerProcessOptions, RunnerProcess } from '../runner/process'
 import type { ReverseRpcOptions } from '../runner/reverse-rpc'
 import type { CreateRunnerWsServerOptions, RunnerWsServer } from '../runner/rpc-ws'
-import { isSenderWindow } from '../security/ipc-trust'
+import { assertGatewayHost } from '../security/ipc-trust'
 import type { BackendSessionPort } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
-import { errorMessage, RunnerNotConnectedError, RunnerRpcError } from '../shared/utils'
+import { errorMessage, RunnerNotConnectedError, RunnerRpcError, sendToWindow } from '../shared/utils'
 
 export interface RunnerHostOptions {
   createReverseRpc: (options: ReverseRpcOptions) => (method: string, params?: unknown) => Promise<unknown>
@@ -88,17 +83,8 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
           repoRoot: process.env.SPIRITAGENT_DESKTOP_RUNNER_REPO_ROOT || null
         }),
       pushConfig,
-      reverseRpcFactory: ({ backendSession, log: rpcLog }: ReverseRpcOptions) =>
-        options.createReverseRpc({
-          backendSession,
-          log: rpcLog || options.taggedLogger('[runner-reverse]')
-        }),
-      wsServerFactory: ({ authToken, log: wsLog, onReverseRpc }: CreateRunnerWsServerOptions) =>
-        options.createRunnerWsServer({
-          authToken,
-          log: wsLog || options.taggedLogger('[runner-ws]'),
-          onReverseRpc
-        })
+      reverseRpcFactory: options.createReverseRpc,
+      wsServerFactory: options.createRunnerWsServer
     })
 
     // 运行中保存配置后重新读取工具清单；握手时的推送由桥在读取清单前完成。
@@ -108,12 +94,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
     })
 
     runnerBridge.onEvent((ev: RunnerBridgeEvent) => {
-      const win = options.getMainWindow()
-
-      if (win && !win.isDestroyed()) {
-        const payload: DesktopRunnerStatusEvent = { type: ev.type }
-        win.webContents.send(IPC.event.runnerStatus, payload)
-      }
+      sendToWindow(options.getMainWindow(), IPC.event.runnerStatus, { type: ev.type })
     })
 
     return runnerBridge
@@ -222,7 +203,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
           }
         }
 
-        await new Promise(resolve => setTimeout(resolve, 100))
+        await sleep(100)
       }
 
       return runnerBridge?.getTools() || []
@@ -230,10 +211,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
 
     // 渲染层直调（窗口查询、点击预演、情境快照），不带 call_id，不记调用日志。
     ipcMain.handle(IPC.invoke.runnerInvoke, async (event, name: string, args?: Record<string, unknown>) => {
-      // 本机工具只由持有网关的精灵宿主派发（Client「连接与设备就绪」）。
-      if (!isSenderWindow(event.sender, options.getMainWindow())) {
-        throw new Error('runner:invoke is restricted to the gateway host window')
-      }
+      assertGatewayHost(event.sender, options.getMainWindow(), 'runner:invoke')
 
       if (typeof name !== 'string' || !name) {
         throw new Error('runner:invoke requires a non-empty tool name')
@@ -246,9 +224,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
     ipcMain.handle(
       IPC.invoke.runnerDispatchCall,
       async (event, request: RunnerCallRequest): Promise<RunnerCallOutcome> => {
-        if (!isSenderWindow(event.sender, options.getMainWindow())) {
-          throw new Error('runner:dispatch-call is restricted to the gateway host window')
-        }
+        assertGatewayHost(event.sender, options.getMainWindow(), 'runner:dispatch-call')
 
         const name = request?.name
         const callId = request?.callId
@@ -284,21 +260,14 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
       }
     )
 
-    ipcMain.handle(IPC.invoke.runnerGetState, async (): Promise<DesktopRunnerState> => {
-      const bridge = runnerBridge
-
-      if (!bridge) {
-        return { phase: 'idle' }
-      }
-
-      return { phase: bridge.getStatus().phase }
-    })
+    ipcMain.handle(
+      IPC.invoke.runnerGetState,
+      async (): Promise<DesktopRunnerState> => ({ phase: runnerBridge?.getStatus().phase ?? 'idle' })
+    )
 
     // 只取消指定调用：后端中断回合时逐个下发 tool.cancel，其他会话、IM 与定时任务的在途调用不受影响。
     ipcMain.handle(IPC.invoke.runnerCancel, async (event, callId: string) => {
-      if (!isSenderWindow(event.sender, options.getMainWindow())) {
-        throw new Error('runner:cancel is restricted to the gateway host window')
-      }
+      assertGatewayHost(event.sender, options.getMainWindow(), 'runner:cancel')
 
       const requestId = typeof callId === 'string' ? inflightCalls.get(callId) : undefined
       const bridge = runnerBridge

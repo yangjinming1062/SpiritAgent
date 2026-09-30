@@ -71,13 +71,7 @@ export function createAutoUpdater({
   let availableFeedUrl: null | string = null
 
   function getRunnerUpdater(): RunnerUpdaterPort {
-    if (singleton) {
-      return singleton
-    }
-
-    singleton = createRunnerUpdater({ fetchImpl, log: logRunnerUpdater, runtime })
-
-    return singleton
+    return (singleton ??= createRunnerUpdater({ fetchImpl, log: logRunnerUpdater, runtime }))
   }
 
   // electron-builder 的 extraResources 把验签公钥放在 resources 根目录；更新器只在打包构建运行。
@@ -151,7 +145,6 @@ export function createAutoUpdater({
 
     autoUpdater.autoDownload = false
     autoUpdater.autoInstallOnAppQuit = false
-    autoUpdater.logger = log
     autoUpdater.on('update-available', () => {
       availableFeedUrl = feedUrl
     })
@@ -162,16 +155,12 @@ export function createAutoUpdater({
       return
     }
 
-    const timer = setTimeout(() => {
+    setTimeout(() => {
       autoUpdater.checkForUpdates().catch((error: unknown) => {
         const msg = errorMessage(error)
         log.warn('initial update check failed:', msg)
       })
-    }, UPDATE_INITIAL_CHECK_DELAY_MS)
-
-    if (typeof timer.unref === 'function') {
-      timer.unref()
-    }
+    }, UPDATE_INITIAL_CHECK_DELAY_MS).unref()
   }
 
   return { ensureFeedConfigured, installPendingRunnerUpdate, isAvailableUpdateCurrent, prefetchRunnerAssets, setup }

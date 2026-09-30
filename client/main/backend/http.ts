@@ -1,12 +1,11 @@
 import { sleep } from '@runtime'
-import type { App, Net } from 'electron'
+import type { Net } from 'electron'
 
-import { DEFAULT_FETCH_TIMEOUT_MS, resolveTimeoutMs } from '../security/hardening'
+import { resolveTimeoutMs } from '../security/hardening'
 import { resolveNormalizedBackendUrl } from '../shared/config'
-import { errorMessage, HttpError } from '../shared/utils'
+import { errorMessage, httpErrorFromResponse } from '../shared/utils'
 
 interface BackendHttpOptions {
-  app: Pick<App, 'getVersion'>
   electronNet: Net
   spiritagentHome: null | string
 }
@@ -16,17 +15,13 @@ export function createElectronFetch(electronNet: Pick<Net, 'fetch'>): typeof glo
   return (input, init) => electronNet.fetch(input instanceof URL ? input.href : input, init)
 }
 
-export function createBackendHttp({ app, electronNet, spiritagentHome }: BackendHttpOptions) {
-  function resolveSpiritAgentVersion(): string {
-    return app.getVersion()
-  }
-
+export function createBackendHttp({ electronNet, spiritagentHome }: BackendHttpOptions) {
   async function fetchJson(
     url: string,
     token?: string,
     options: { body?: unknown; method?: string; timeoutMs?: number } = {}
   ): Promise<unknown> {
-    const timeoutMs = resolveTimeoutMs(options.timeoutMs, DEFAULT_FETCH_TIMEOUT_MS)
+    const timeoutMs = resolveTimeoutMs(options.timeoutMs)
     const body = options.body !== undefined ? JSON.stringify(options.body) : undefined
 
     const headers: Record<string, string> = {
@@ -42,17 +37,7 @@ export function createBackendHttp({ app, electronNet, spiritagentHome }: Backend
     })
 
     if (!res.ok) {
-      // 错误响应体只用于诊断文案，读取失败时回落状态文本。
-      const detail = await res.text().catch(() => '')
-      let pathname = url
-
-      try {
-        pathname = new URL(url).pathname
-      } catch {
-        /* ignore invalid url formatting in error */
-      }
-
-      throw new HttpError(res.status, `${res.status} ${pathname}: ${detail || res.statusText}`)
+      throw await httpErrorFromResponse(res, new URL(url).pathname)
     }
 
     let text: string
@@ -124,7 +109,7 @@ export function createBackendHttp({ app, electronNet, spiritagentHome }: Backend
     return url ? { baseUrl: url } : null
   }
 
-  return { fetchJson, mintWsTicket, resolveRemoteBackend, resolveSpiritAgentVersion, waitForSpiritAgent }
+  return { fetchJson, mintWsTicket, resolveRemoteBackend, waitForSpiritAgent }
 }
 
 export type BackendHttp = ReturnType<typeof createBackendHttp>

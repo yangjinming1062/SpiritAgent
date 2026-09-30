@@ -13,42 +13,19 @@ interface RawSkillItem {
   platforms?: string[] | null
 }
 
-// 主进程为每个 skill 计算 compatible；渲染端没有 process.platform，用这个标志隐藏不匹配的行。
-const HOST_PLATFORM: string = (() => {
-  switch (process.platform) {
-    case 'darwin':
-      return 'macos'
+const PLATFORM_ALIASES: Record<string, string> = { darwin: 'macos', win32: 'windows' }
 
-    case 'win32':
-      return 'windows'
+function canonicalPlatform(name: string): string {
+  const lower = name.toLowerCase()
 
-    default:
-      return process.platform
-  }
-})()
-
-const PLATFORM_ALIASES: Record<string, string> = {
-  darwin: 'macos',
-  macos: 'macos',
-  win32: 'windows',
-  windows: 'windows'
+  return PLATFORM_ALIASES[lower] ?? lower
 }
 
-function platformMatches(declared?: null | string | string[]): boolean {
-  if (declared == null) {
-    return true
-  }
+// 主进程为每个 skill 计算 compatible；渲染端没有 process.platform，用这个标志隐藏不匹配的行。
+const HOST_PLATFORM = canonicalPlatform(process.platform)
 
-  // YAML 标量（`platforms: macos`）或单元素列表（`platforms: [macos]`）。
-  const list = Array.isArray(declared) ? declared : [declared]
-
-  if (list.length === 0) {
-    return true
-  }
-
-  const mapped = list.map(p => PLATFORM_ALIASES[String(p).toLowerCase()] || String(p).toLowerCase())
-
-  return mapped.includes(HOST_PLATFORM)
+function platformMatches(platforms: null | string[]): boolean {
+  return !platforms?.length || platforms.some(p => canonicalPlatform(p) === HOST_PLATFORM)
 }
 
 // 目录缺失（未安装技能、坏链接）是正常状态；其他读取失败记录后跳过，不中断其余分类。

@@ -73,23 +73,18 @@ export function normalizeBaseUrl(raw?: null | string): string {
 
   parsed.hash = ''
   parsed.search = ''
-  parsed.pathname = parsed.pathname.replace(/\/+$/, '')
 
   return parsed.toString().replace(/\/+$/, '')
 }
 
 // JSON → 序列化为 JSON 字符串；string → 原样；Buffer/Uint8Array → 字节。
-function encodeBody(body: unknown): { body: string | Buffer | Uint8Array | undefined; contentType: null | string } {
+function encodeBody(body: unknown): { body: string | Uint8Array | undefined; contentType: null | string } {
   if (body === undefined || body === null) {
     return { body: undefined, contentType: null }
   }
 
   if (typeof body === 'string') {
     return { body, contentType: 'text/plain' }
-  }
-
-  if (Buffer.isBuffer(body)) {
-    return { body, contentType: 'application/octet-stream' }
   }
 
   if (body instanceof Uint8Array) {
@@ -164,7 +159,7 @@ export function createBackendClient(options: BackendClientOptions = {}): Backend
     let url: URL
 
     try {
-      url = new URL(pathStr, baseUrl.endsWith('/') ? baseUrl : `${baseUrl}/`)
+      url = new URL(pathStr, `${baseUrl}/`)
     } catch (error: unknown) {
       const msg = errorMessage(error)
       throw new BackendRequestError({
@@ -183,8 +178,7 @@ export function createBackendClient(options: BackendClientOptions = {}): Backend
     }
 
     const effectiveTimeoutMs = resolveTimeoutMs(timeoutMs)
-    const controller = new AbortController()
-    const timeoutHandle = setTimeout(() => controller.abort(), effectiveTimeoutMs)
+    const signal = AbortSignal.timeout(effectiveTimeoutMs)
 
     let res: MinimalFetchResponse
     let payload: unknown
@@ -194,23 +188,20 @@ export function createBackendClient(options: BackendClientOptions = {}): Backend
         body: encodedBody,
         headers: finalHeaders,
         method,
-        signal: controller.signal
+        signal
       })
       // 超时同样覆盖响应体读取：响应头到达后连接仍可能停滞。
       payload = await decodeResponseBody(res)
     } catch (error: unknown) {
-      const errObj = error as { message?: string; name?: string } | undefined
-      const isAbort = errObj?.name === 'AbortError'
-      const errMessage = errObj?.message || String(error)
+      const timedOut = signal.aborted
+      const errMessage = (error as { message?: string } | undefined)?.message || String(error)
       throw new BackendRequestError({
         cause: error,
-        code: isAbort ? 'timeout' : 'network-error',
-        message: isAbort
+        code: timedOut ? 'timeout' : 'network-error',
+        message: timedOut
           ? `Backend request timed out after ${effectiveTimeoutMs}ms: ${method} ${url.pathname}`
           : `Backend request failed: ${method} ${url.pathname} (${errMessage})`
       })
-    } finally {
-      clearTimeout(timeoutHandle)
     }
 
     if (!res.ok) {

@@ -1,10 +1,11 @@
 import type { SafeStorage } from 'electron'
 
 import type { BackendSessionPort, SessionSnapshotPort } from '../shared/backend-port'
-import type { buildClientContext as BuildClientContextFn } from '../shared/client-context'
+import { buildClientContext } from '../shared/client-context'
+import { errorMessage } from '../shared/utils'
 
 export interface SessionRuntime {
-  buildClientContext: () => ReturnType<typeof BuildClientContextFn>
+  buildClientContext: () => ReturnType<typeof buildClientContext>
   ensureBackendSession: () => BackendSessionPort
   /** 当前会话 ID 与 token；任一缺失时为 null。 */
   getCurrentAuth: () => null | { sessionId: string; token: string }
@@ -22,7 +23,6 @@ export interface SessionRuntimeDeps {
     userDataDir: string
   }) => BackendSessionPort
   desktopVersion: () => string
-  errorMessage: (error: unknown) => string
   fetchImpl: (url: string, options?: RequestInit) => Promise<Response>
   getTokenSetter: (fn: () => string | null) => void
   log: (chunk: string) => void
@@ -34,10 +34,7 @@ export interface SessionRuntimeDeps {
 }
 
 /** 懒创建并缓存后端会话；首次 ensure 触发 restore，结果经 `onRestored` 交回装配层。`rewireAuthToken` 把主进程动态 token 读取接到当前会话实例。 */
-export function createSessionRuntime(
-  deps: SessionRuntimeDeps,
-  buildClientContextFn: typeof BuildClientContextFn
-): SessionRuntime {
+export function createSessionRuntime(deps: SessionRuntimeDeps): SessionRuntime {
   let session: null | BackendSessionPort = null
   let restorePromise: Promise<void> = Promise.resolve()
 
@@ -56,7 +53,7 @@ export function createSessionRuntime(
     })
 
     restorePromise = session.restoreSession().then(deps.onRestored, (error: unknown) => {
-      deps.log(`[session] restore failed: ${deps.errorMessage(error)}`)
+      deps.log(`[session] restore failed: ${errorMessage(error)}`)
       deps.onRestored(null)
     })
 
@@ -73,7 +70,7 @@ export function createSessionRuntime(
 
   return {
     buildClientContext: () =>
-      buildClientContextFn({
+      buildClientContext({
         desktopVersion: deps.desktopVersion(),
         spiritagentHome: deps.spiritagentHome
       }),
@@ -87,7 +84,7 @@ export function createSessionRuntime(
     },
     getSessionAfterRestore,
     rewireAuthToken: () => {
-      deps.getTokenSetter(() => ensureBackendSession().getToken() ?? null)
+      deps.getTokenSetter(() => ensureBackendSession().getToken())
     }
   }
 }

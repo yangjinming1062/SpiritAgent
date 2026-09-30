@@ -41,44 +41,25 @@ const TOOLSET_DEFS: ToolsetDef[] = [
   }
 ]
 
+// Set 保持首次加入的顺序并去重：静态工具无条件列出，前缀与额外工具只取 Runner 实际提供的。
 function toolNamesForToolset(def: ToolsetDef, availableNames: Set<string>): string[] {
-  const names: string[] = []
-  const seen = new Set<string>()
+  const names = new Set(def.staticTools)
 
-  if (def.staticTools) {
-    for (const name of def.staticTools) {
-      if (!seen.has(name)) {
-        names.push(name)
-        seen.add(name)
+  for (const prefix of def.prefixes ?? []) {
+    for (const name of availableNames) {
+      if (name.startsWith(prefix)) {
+        names.add(name)
       }
     }
   }
 
-  if (def.prefixes) {
-    for (const prefix of def.prefixes) {
-      for (const name of availableNames) {
-        if (name.startsWith(prefix) && !seen.has(name)) {
-          names.push(name)
-          seen.add(name)
-        }
-      }
+  for (const name of def.extraTools ?? []) {
+    if (availableNames.has(name)) {
+      names.add(name)
     }
   }
 
-  if (def.extraTools) {
-    for (const name of def.extraTools) {
-      if (seen.has(name)) {
-        continue
-      }
-
-      if (availableNames.has(name)) {
-        names.push(name)
-        seen.add(name)
-      }
-    }
-  }
-
-  return names
+  return [...names]
 }
 
 export function buildToolsetRoster(schemas: Array<{ name?: string }>, disabledToolsetIds: Set<string>): ToolsetItem[] {

@@ -1,12 +1,12 @@
-import fs from 'node:fs'
 import path from 'node:path'
 
 import { IPC, type SpiritAgentSelectPathsOptions } from '@ipc/contracts'
 import { nativeImage } from 'electron'
 import type { BrowserWindow, Dialog, IpcMain } from 'electron'
 
-import { assertUserSelectedPath, registerUserSelectedPaths } from '../security/user-selected-paths'
-import { dataUrlFromBuffer } from '../shared/mime'
+import { DATA_URL_READ_MAX_BYTES, readUserSelectedFile } from '../security/hardening'
+import { registerUserSelectedPaths } from '../security/user-selected-paths'
+import { dataUrlFromBuffer, mimeTypeForPath } from '../shared/mime'
 import { broadcastToAllWindows } from '../shared/utils'
 
 interface FilesIpcDeps {
@@ -14,15 +14,7 @@ interface FilesIpcDeps {
     dialog: Dialog
     getMainWindow: () => BrowserWindow | null | undefined
   }
-  hardening: {
-    DATA_URL_READ_MAX_BYTES: number
-    resolveReadableFileForIpc: (
-      filePath: string,
-      options?: { maxBytes?: number; purpose?: string }
-    ) => Promise<{ resolvedPath: string; stat: fs.Stats }>
-  }
   ipcMain: IpcMain
-  mimeTypeForPath: (filePath: string) => string
 }
 
 // 聊天图片附件体量护栏：data URL 走 WS 单帧 + 视觉模型请求体，超过边长/字节任一上限时降采样并重编码 JPEG。
@@ -33,31 +25,24 @@ const IMAGE_ATTACH_JPEG_QUALITY = 0.85
 // 跨窗口投喂信箱：精灵窗写入，生活空间窗口取走。取走即清空，避免下次打开残留旧附件。
 const pendingFeedPaths: string[] = []
 
-export function registerFilesIpc({ electron, hardening, ipcMain, mimeTypeForPath }: FilesIpcDeps): void {
+export function registerFilesIpc({ electron, ipcMain }: FilesIpcDeps): void {
   const { dialog, getMainWindow } = electron
 
   ipcMain.handle(IPC.invoke.readFileDataUrl, async (_event, filePath: string) => {
-    assertUserSelectedPath(filePath, 'File preview')
-
-    const { resolvedPath } = await hardening.resolveReadableFileForIpc(filePath, {
-      maxBytes: hardening.DATA_URL_READ_MAX_BYTES,
+    const { data, resolvedPath } = await readUserSelectedFile(filePath, {
+      maxBytes: DATA_URL_READ_MAX_BYTES,
       purpose: 'File preview'
     })
-
-    const data = await fs.promises.readFile(resolvedPath)
 
     return dataUrlFromBuffer(data, mimeTypeForPath(resolvedPath))
   })
 
   ipcMain.handle(IPC.invoke.readImageForAttach, async (_event, filePath: string) => {
-    assertUserSelectedPath(filePath, 'Image attach')
-
-    const { resolvedPath } = await hardening.resolveReadableFileForIpc(filePath, {
-      maxBytes: hardening.DATA_URL_READ_MAX_BYTES,
+    const { data, resolvedPath } = await readUserSelectedFile(filePath, {
+      maxBytes: DATA_URL_READ_MAX_BYTES,
       purpose: 'Image attach'
     })
 
-    const data = await fs.promises.readFile(resolvedPath)
     let buffer: Buffer = data
     let mime = mimeTypeForPath(resolvedPath)
 
@@ -93,20 +78,10 @@ export function registerFilesIpc({ electron, hardening, ipcMain, mimeTypeForPath
       properties.push('multiSelections')
     }
 
-    let resolvedDefaultPath: string | undefined
-
-    if (options?.defaultPath) {
-      try {
-        resolvedDefaultPath = path.resolve(String(options.defaultPath))
-      } catch {
-        resolvedDefaultPath = undefined
-      }
-    }
-
     const mainWin = getMainWindow()
 
     const openOptions = {
-      defaultPath: resolvedDefaultPath,
+      defaultPath: options?.defaultPath ? path.resolve(String(options.defaultPath)) : undefined,
       filters: Array.isArray(options?.filters) ? options.filters : undefined,
       properties,
       title: options?.title || 'Add context'
@@ -149,9 +124,6 @@ export function registerFilesIpc({ electron, hardening, ipcMain, mimeTypeForPath
   })
 
   ipcMain.handle(IPC.invoke.chatTakePendingFeed, async () => {
-    const paths = [...pendingFeedPaths]
-    pendingFeedPaths.length = 0
-
-    return paths
+    return pendingFeedPaths.splice(0)
   })
 }
