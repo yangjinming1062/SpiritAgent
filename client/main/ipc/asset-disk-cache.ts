@@ -27,7 +27,7 @@ export interface CachedAsset {
 
 export interface AssetDiskCacheOptions {
   defaultFetchFn?: typeof globalThis.fetch
-  initialAccountId: string | null
+  initialAccountId: Promise<string | null>
   spiritagentHome: string
 }
 
@@ -104,7 +104,9 @@ export function createAssetDiskCache({
 
   // 原平铺缓存只归属启动时已选账户；迁移后不再按旧目录回退，避免跨账户命中。
   async function migrateLegacyCache(): Promise<void> {
-    if (!initialAccountId || !/^[a-f0-9]{64}$/.test(initialAccountId)) {
+    const accountId = await initialAccountId
+
+    if (!accountId || !/^[a-f0-9]{64}$/.test(accountId)) {
       return
     }
 
@@ -123,7 +125,7 @@ export function createAssetDiskCache({
     const files = entries.filter(entry => entry.isFile())
 
     if (files.length > 0) {
-      const target = path.join(root, initialAccountId)
+      const target = path.join(root, accountId)
       await fsp.mkdir(target, { recursive: true })
 
       for (const file of files) {

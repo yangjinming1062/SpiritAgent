@@ -115,6 +115,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 会话只读状态直接消费历史水合的 `info.kind`；陪伴归属由 `system_preset_id` 判定。
 - 斜杠命令元数据权威在服务端注册表，本地副本只服务自动补全与确认弹窗，dispatch 仍以服务端为准。
 - `$companionSessionId` 在 chat-store 统一持有并按账户持久化，冷启动和切回账户时恢复；主会话加载、列表与 `companion.message` 校准同一份归属。
+- 生活空间打开对话或重连时加载陪伴历史；持久化会话 ID 不代表本窗口已水合消息列表。
 - 工作台确认目标不是陪伴后才挂载对话面板。
 - 快照、增量与重放按 [Client](../README.md#资产与历史缓存)处理；`syncSessionHistory` 的 `last_seq` 由调用方以活动聊天列表水位传入，不用缓存 `currentSeq`。
 

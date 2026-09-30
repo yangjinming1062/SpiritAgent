@@ -332,7 +332,8 @@ const sessionRuntime = createSessionRuntime(
 
 const assetDiskCache = createAssetDiskCache({
   defaultFetchFn: electronFetch,
-  initialAccountId: sessionRuntime.ensureBackendSession().getSelectedAccountId(),
+  // safeStorage 在 app ready 前不可用；快照须先于开窗和账户操作，但不能在模块装配时解密。
+  initialAccountId: app.whenReady().then(() => sessionRuntime.ensureBackendSession().getSelectedAccountId()),
   spiritagentHome: SPIRITAGENT_HOME
 })
 
@@ -472,9 +473,9 @@ registerSpriteIpc({
 
 sessionRuntime.rewireAuthToken()
 
-setTimeout(() => authBroadcaster.autoStartBridgeIfSignedIn(), 200).unref?.()
-
 void app.whenReady().then(async () => {
+  setTimeout(() => authBroadcaster.autoStartBridgeIfSignedIn(), 200).unref?.()
+
   surfaces?.watchSystemEvents()
   menu.installApplicationMenu()
   windowHandlers.installMediaPermissions()

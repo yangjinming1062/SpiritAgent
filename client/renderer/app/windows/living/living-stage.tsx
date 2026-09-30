@@ -4,14 +4,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { useEffect, useRef } from 'react'
 
-import {
-  $chatSessionId,
-  $companionSessionId,
-  ChatPanel,
-  openMainSession,
-  pushExternalAttachment,
-  useIsReadOnlySession
-} from '@/modules/conversation'
+import { ChatPanel, openMainSession, pushExternalAttachment, useIsReadOnlySession } from '@/modules/conversation'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $gatewayState } from '@/shared/store/gateway'
@@ -49,21 +42,17 @@ function ChatStage(): React.JSX.Element {
 }
 
 function LivingChatView({ gatewayState }: { gatewayState: ConnectionState }): React.JSX.Element {
-  const chatSessionId = useStore($chatSessionId)
-  const companionSessionId = useStore($companionSessionId)
   const isReadOnlySession = useIsReadOnlySession()
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // 生活空间全生命周期只使用唯一的「陪伴」对话；若尚未加载或当前处于工作会话，自动定位为主陪伴会话
+  // 会话 ID 可从持久缓存恢复，但各窗口的消息列表独立；打开对话或重连时仍须加载历史。
   useEffect(() => {
     if (gatewayState !== 'open') {
       return
     }
 
-    if (!companionSessionId || chatSessionId !== companionSessionId) {
-      void openMainSession()
-    }
-  }, [gatewayState, companionSessionId, chatSessionId])
+    void openMainSession()
+  }, [gatewayState])
 
   // 精灵窗投喂的混合文件：广播只作信号，统一经主进程 take 取走（取走即清，避免重复附件）。
   useEffect(() => {
