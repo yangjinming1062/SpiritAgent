@@ -185,12 +185,15 @@ async def _generate_llm_response(
         )
         if speech_config:
             reply_guidance += speech_style_guidance(speech_config.provider_name, speech_config.model)
+        # 部分供应商只允许首条系统消息，回复和修复指令都并入 instructions。
+        instructions += reply_guidance
         if reply_format_error is not None:
             schema = companion_reply_schema(speech_config, allow_silence=allow_silence)
             repair_guidance = resolve_prompt_text(COMPANION_REPLY_REPAIR_GUIDANCES, lang).replace(
                 "{schema}",
                 json.dumps(schema, ensure_ascii=False),
             )
+            instructions += repair_guidance
             # 修复资料和阶段指令仅属于本次请求，不进入持久历史或下一轮工具上下文。
             request_input = [
                 *_reply_repair_history(request_input),
@@ -209,10 +212,7 @@ async def _generate_llm_response(
                         },
                     ],
                 },
-                {"role": "developer", "content": reply_guidance + repair_guidance},
             ]
-        else:
-            instructions += reply_guidance
     kwargs = build_responses_kwargs(
         model=model_name,
         instructions=instructions,
