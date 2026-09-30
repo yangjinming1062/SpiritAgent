@@ -1,6 +1,6 @@
 # 更新签名密钥
 
-本目录只保存客户端验签公钥 [update.pub](update.pub)，经 `client/package.json` 的 extraResources 打包。签名与安装语义见 [PROTOCOL](../../docs/PROTOCOL.md#自更新签名)。
+本目录只保存客户端验签公钥 [update.pub](update.pub)，经 `client/package.json` 的 extraResources 打包，运行时由 [auto-updater.ts](../../client/main/lifecycle/auto-updater.ts) 定位，[updater.ts](../../client/main/runner/updater.ts) 读取并校验 `latest-runner.yml` 签名；桌面安装包不经此公钥校验。签名与安装语义见 [PROTOCOL](../../docs/PROTOCOL.md#自更新签名)。
 
 ## 公钥与私钥职责
 
@@ -8,6 +8,6 @@
 
 ## 本地与 CI 配置
 
-本地 [签名助手](../lib/UpdateManifest.ps1)读取 `SPIRITAGENT_UPDATE_SIGNING_KEY`，值是 PEM **文件路径**；未设置时读取用户目录 `.spiritagent/update.key`，文件缺失则签名失败。
+签名只在 Windows 构建生成 update ZIP 时执行，需要 openssl。本地 [签名助手](../lib/UpdateManifest.ps1)读取 `SPIRITAGENT_UPDATE_SIGNING_KEY`，值是 PEM **文件路径**；未设置时读取用户目录 `.spiritagent/update.key`，文件缺失则签名失败。
 
 CI 同名 Secret 存 PEM **内容**，工作流先写临时文件再传路径。两者不可混用，发布流程见 [Scripts](../README.md#发布)。

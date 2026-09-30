@@ -6,12 +6,13 @@
 
 | 要修改的功能 | 实现起点与联动 |
 |---|---|
-| 登录、换号与会话过期 | [session-runtime.ts](main/backend/session-runtime.ts)、[auth.ts](main/ipc/auth.ts) → [account-lifecycle.ts](renderer/app/workflows/account-lifecycle.ts)；[凭据契约](../docs/PROTOCOL.md#凭据落盘) |
-| 网关、Runner 派发与断连 | [gateway.ts](main/ipc/gateway.ts)、[runner.ts](main/ipc/runner.ts) → [host-runtime.ts](renderer/app/runtime/host-runtime.ts)；[本机工具契约](../docs/PROTOCOL.md#本机工具) |
-| 历史、语音与资产缓存 | [session-history.ts](main/ipc/session-history.ts)、[asset-disk-cache.ts](main/ipc/asset-disk-cache.ts)、[conversation-speech.ts](renderer/app/workflows/conversation-speech.ts)；[缓存规则](#资产与历史缓存) |
+| 登录、换号与会话过期 | [session.ts](main/backend/session.ts)（多账户凭据存储）、[session-runtime.ts](main/backend/session-runtime.ts)、[auth.ts](main/ipc/auth.ts) → [account-lifecycle.ts](renderer/app/workflows/account-lifecycle.ts)、[auth store](renderer/shared/store/auth.ts)；[凭据契约](../docs/PROTOCOL.md#凭据落盘) |
+| 网关、Runner 派发与断连 | [gateway.ts](main/ipc/gateway.ts)、[runner.ts](main/ipc/runner.ts) → [host-runtime.ts](renderer/app/runtime/host-runtime.ts)、[tool-dispatch.ts](renderer/app/runtime/handlers/tool-dispatch.ts)；[本机工具契约](../docs/PROTOCOL.md#本机工具) |
+| 历史、语音与资产缓存 | [session-history.ts](main/ipc/session-history.ts)、[asset-disk-cache.ts](main/ipc/asset-disk-cache.ts) → [session-history-cache.ts](renderer/modules/conversation/session-history-cache.ts)、[conversation-speech.ts](renderer/app/workflows/conversation-speech.ts)；[缓存规则](#资产与历史缓存) |
 | 场景与背景切换 | [生成服务任务链](../backend/services/application/generation/README.md#场景改动链)贯穿前后端 |
 | 窗口、拖拽、主题与动作播放 | [主进程窗口](main/README.md#窗口与几何)、[渲染层](renderer/README.md#角色呈现契约)；核对几何、命中与可见性 |
 | 设置同步与 Runner 更新 | [runner-config.ts](main/ipc/runner-config.ts)、[config-sync.ts](main/shared/lib/config-sync.ts)、[updater.ts](main/runner/updater.ts)；[同步](../docs/PROTOCOL.md#配置所有权与云同步)与[验签](../docs/PROTOCOL.md#自更新签名) |
+| 桌面应用更新 | [update.ts](main/ipc/update.ts)、[auto-updater.ts](main/lifecycle/auto-updater.ts) ↔ [update-bridge.ts](renderer/shared/lib/update-bridge.ts)（仅生活空间安装）、[about-page.tsx](renderer/app/windows/living/settings/about-page.tsx)；[更新契约](../docs/PROTOCOL.md#自更新签名) |
 
 ## 进程与代码边界
 
@@ -29,6 +30,7 @@ flowchart LR
 | `main` | 身份、窗口、Runner、缓存与更新 |
 | `renderer` | 交互与呈现，各窗口独立运行 |
 | `shared/ipc` | 跨进程通道与载荷 |
+| `shared/runtime.ts`（`@runtime`）、`shared/speech-text.ts` | 两个进程共用的运行时原语与朗读文本清理 |
 
 主进程不导入依赖窗口环境的 `renderer/shared`。main / preload 由 tsup 构建，renderer 由 Vite 构建；preload 格式、安全和产物路径见[主进程边界](main/README.md#包边界)。
 
@@ -38,7 +40,7 @@ flowchart LR
 - 宿主每次连接直接请求新票据，签发失败保留原错误，不回落无票连接；REST 与资产请求不签票。重连由宿主运行时管理，业务请求失败后不自动重放。
 - 相同模块不代表共享内存。角色默认显示比例经主进程 IPC 跨窗同步，消费见[渲染层](renderer/README.md#角色呈现契约)。
 
-设备就绪由主进程协调，顺序与撤销见 [握手与工具同步](../docs/PROTOCOL.md#握手与工具同步)。运行期能力通知和进程代次尚未完整接入，见[当前限制](../docs/PROTOCOL.md#能力与进程代次)；迟到查询不得恢复已撤销资格。
+Runner 握手、配置推送与工具清单读取由主进程完成；`tools.sync` 与撤销由宿主 [host-runtime.ts](renderer/app/runtime/host-runtime.ts) 按 Runner 状态发起，顺序见 [握手与工具同步](../docs/PROTOCOL.md#握手与工具同步)。运行期能力通知和进程代次尚未接入，见[当前限制](../docs/PROTOCOL.md#能力与进程代次)；迟到查询不得恢复已撤销资格。
 
 普通会话切换不重置实时事件水位；调用恢复使用原 `call_id`，不能因响应丢失生成新标识重做操作。
 
@@ -47,7 +49,7 @@ flowchart LR
 - 生活空间与工作台互斥，各自用一个透明物理窗口承载内容和侧边伙伴；本机偏好与几何权威见 [主进程](main/README.md#窗口与几何)，显示规则见 [DESIGN](../docs/DESIGN.md#窗口与会话)。
 - 开关窗口只改变呈现，不取消已执行工具。
 - 主题在 `loadURL` 前从配置镜像写入入口参数，渲染模块加载时优先消费并移除参数；localStorage 是即时缓存，云端水合负责收敛。
-- 镜像异常回退默认主题（`day-clear`），不阻塞开窗。
+- 镜像没有主题时不写入口参数，渲染层依次使用 localStorage 与默认主题 `day-clear`；非法值归一为 `day-clear`，不阻塞开窗。
 - 透明窗口和首帧 body 必须同时透明；圆角与阴影由 CSS 绘制，不用系统矩形底填满外侧透明区。
 - 鼠标穿透是窗口级能力，精灵与弹层共同登记命中区域，不能让弹层捕获整个桌面。
 - 精灵窗使用系统 `floating` 层置顶，使 macOS 输入法候选窗等系统浮层可以显示在其上；独占全屏应用可能覆盖精灵。
@@ -58,7 +60,7 @@ flowchart LR
 
 ### 资产字节与目录
 
-- 主进程缓存资产字节，按 `contentHash` 或剥离签名参数后的 URL 摘要复用；签名变化不代表内容变化。
+- 主进程只为 `preferCache` 请求与 `/api/companion/asset/` 路径下的伙伴资产（立绘、媒体、语音、动作片段与遮罩等）落盘缓存，其余资产直连获取。缓存键为调用方提供的 `contentHash`，否则为剥离签名参数后的 URL 摘要（当前调用方均未提供 `contentHash`）；该路径资产在非 `preferCache`、非 `cacheOnly` 请求时按 ETag 复验。签名变化不代表内容变化。
 - 动作目录另持久化最近成功 manifest 快照，启动先本地恢复再网络校准。
 - 外观页另缓存外观列表并预取。
 - 旧字节可先呈现，新资产就绪后替换；网络失败保留旧形象，鉴权失败进入会话过期流程。
@@ -69,11 +71,11 @@ flowchart LR
 |---|---|
 | 图片、语音、视频缓存增长 | 不按数量或字节淘汰 |
 | 会话过期，同账户等待重新激活 | 保留缓存 |
-| 主动登出、换号或显式清理 | 删除所属会话资产；迟到下载、装配和写盘不得恢复旧用户数据 |
+| 主动登出、换号或移除当前账户 | 清空整个资产缓存与全部历史快照；迟到下载、装配和写盘不得恢复旧用户数据 |
 | 文件损坏 | 可移除后重新获取 |
 | 空间不足 | 报告写入失败，不自动删除其他有效资产 |
-| 直接交互点播合成 | 只做内存与在途合并 |
-| 预制台词与反应池音频 | 按内容落盘，登出不清理 |
+| 主动台词合成（`speak`） | 只做内存与在途合并 |
+| 预制台词与反应池音频（`speakScripted`） | 按内容落盘，登出不清理 |
 
 ### 历史同步
 
@@ -94,4 +96,4 @@ flowchart LR
 
 ## 契约与验证
 
-字段与通道定义在 [shared/ipc](shared/ipc/)。IPC 修改同时核对类型、preload、主进程和调用方；异步修改覆盖切换、断连、登出与迟到结果。透明合成、多屏、快捷键和 GPU 恢复在对应平台验证，命令见 [Scripts](../scripts/README.md#按改动选择验证)。
+字段与通道定义在 [shared/ipc](shared/ipc/)。IPC 修改同时核对类型、preload、[渲染侧全局类型](renderer/shared/types/global.d.ts)、主进程和调用方；异步修改覆盖切换、断连、登出与迟到结果。透明合成、多屏、快捷键和 GPU 恢复在对应平台验证，命令见 [Scripts](../scripts/README.md#按改动选择验证)。

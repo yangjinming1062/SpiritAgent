@@ -13,8 +13,15 @@
 | Cron 与在线陪伴 | [scheduler/cron.py](services/adapters/scheduler/cron.py) → [companion_turns.py](services/application/automation/companion_turns.py) / [standard_turns.py](services/application/automation/standard_turns.py)；任务与 standard 执行会话归 [cron_jobs.py](services/domains/automation/cron_jobs.py)，等待状态与后台认领归 [intents.py](services/domains/companion/intents.py) |
 | 夜间计划与执行 | [nightly_activity.py](services/application/nightly/nightly_activity.py) 的 `run_nightly_pipeline` → [nightly_planning.py](services/application/nightly/nightly_planning.py)；检查[阶段与恢复](#夜间批处理) |
 | 片刻与日记 | [journal_service.py](services/domains/journal/journal_service.py)、[autonomous.py](services/application/moments/autonomous.py)、[replies.py](services/application/moments/replies.py)；桌面端点 [companion_journal.py](api/v1/companion_journal.py) |
-| IM 生命周期与投递 | [channels/manager.py](services/adapters/channels/manager.py)；[IM 约束](#im-渠道) |
-| 备份校验与覆盖恢复 | [manifest.py](services/domains/backup/manifest.py)、[restoration.py](services/domains/backup/restoration.py)；核对 [恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复)的维护态、引用映射与部分恢复 |
+| IM 生命周期与投递 | 启停 [channels/manager.py](services/adapters/channels/manager.py)；入站、回合与补发 [bridge.py](services/adapters/channels/bridge.py)；iLink 协议 [weixin_ilink.py](services/adapters/channels/adapters/weixin_ilink.py)；配对与绑定 REST [channels.py](api/v1/channels.py)；[IM 约束](#im-渠道) |
+| 激活、登录与 WS 票据 | [user.py](api/v1/user.py)（激活、ws-ticket、刷新、登出）、管理员登录 [page.py](api/v1/page.py)；令牌与鉴权依赖 [modules/auth](modules/auth/) |
+| 管理后台与用户管理 | 页面 [static/admin.html](static/admin.html)，API [admin.py](api/v1/admin.py)（用户、按用户模型配置、系统设置、夜间日志、备份导出导入、删除用户） |
+| 模型与媒体供应商 | 能力类型与能力位 [providers/base.py](services/infrastructure/llm/providers/base.py)，注册 [registrations.py](bootstrap/registrations.py)，能力链配置结构 [components/ai_config.py](components/ai_config.py)，保存时密钥沿用、清除与脱敏 [domains/configuration/ai_config.py](services/domains/configuration/ai_config.py)，运行时链解析与逐层继承见 [llm_client.py](services/infrastructure/llm/llm_client.py) 的 `resolve_provider_chain`；网络错误见[供应商与网络错误](#供应商与网络错误) |
+| 桌面配置同步 | [config.py](api/v1/config.py)（`user_settings` 点键读写，嵌套配置与点键互转见 [desktop_config.py](services/domains/configuration/desktop_config.py)）；契约见 [配置所有权与云同步](../docs/PROTOCOL.md#配置所有权与云同步) |
+| 附件、上传视频与语音 REST | [media.py](api/v1/media.py)（语音气泡重试在 [sessions.py](api/v1/sessions.py)）、[temp_files.py](components/temp_files.py)、[attachments.py](components/attachments.py)、[chat_videos.py](services/domains/media/chat_videos.py) |
+| 资产存储与签名 | [asset_store.py](services/infrastructure/assets/asset_store.py)；访问契约见 [资产访问与缓存](../docs/PROTOCOL.md#资产访问与缓存) |
+| 桌面与 Runner 更新分发 | [update.py](api/v1/update.py)：管理端“版本管理”上传更新 ZIP，按最新启用版本生成 `latest.yml` / `latest-mac.yml`，原样提供构建时已签名的 `latest-runner.yml`；客户端流程见 [自更新签名](../docs/PROTOCOL.md#自更新签名) |
+| 备份校验与覆盖恢复 | 导出导入端点在 [admin.py](api/v1/admin.py)；[manifest.py](services/domains/backup/manifest.py)、[serializers.py](services/domains/backup/serializers.py)（数据表清单）、[restoration.py](services/domains/backup/restoration.py)、维护边界 [maintenance.py](services/adapters/maintenance.py)；核对 [恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复)的维护态、引用映射与部分恢复 |
 | 提示词、启动与事件恢复 | [提示词索引](prompts/README.md)、[bootstrap/lifecycle.py](bootstrap/lifecycle.py)、[event_store/loop.py](services/infrastructure/event_store/loop.py) |
 
 ## 设计意图
@@ -30,8 +37,8 @@
 | `main.py` / `bootstrap` | 启动应用、显式注册和管理启停 |
 | `api` | 鉴权、限流、DTO 与服务入口 |
 | `services` | 协议适配、应用流程、领域、基础设施与契约 |
-| `modules` | ORM 与跨边界 schema |
-| `components` | 配置、数据库、任务与日志 |
+| `modules` | ORM、跨边界 schema，以及令牌与鉴权依赖、`user_settings` 读写、`emit_ws_event` 等贴近数据的入口 |
+| `components` | 配置、数据库、后台任务与日志，以及出站网络与 SSRF 守卫、临时媒体与附件存储、用户维护态等横切工具 |
 | `common` | 路由、模型基类等少量框架工具 |
 | `prompts` | 零项目内依赖的提示词文本常量；渲染与装配留在服务层 |
 | `alembic` | 独立于应用实现的迁移 |
@@ -82,24 +89,26 @@
 | 阶段 | 顺序与归属 |
 |---|---|
 | 启动 | 配置检查 → 迁移 → 配置水合与目录准备 → 调度器 → 事件回路 → 渠道桥 → 任务恢复 |
-| 恢复 | 聊天视频、视频包生成/导入、动作提案评审、角色卡提取、场景、初始外观 |
+| 恢复 | 聊天与夜间视频任务、视频包生成/导入、动作提案评审、角色卡提取、场景、初始外观 |
 | 停止 | 关闭清理任务与调度入口 → 收敛模块任务 → 停渠道桥与事件回路 → 释放数据库、Web 供应商及 LLM 连接池 |
 
 `MANAGER`、`REGISTRY`、`SETTINGS` 与用户锁遵守单进程边界。bootstrap 管装配，不另建通用依赖注入容器。
 
 ### 事件与交付
 
-`emit_ws_event` 随业务状态同事务写 outbox，经 NOTIFY 唤醒、原子认领后分派到内部处理器或用户 dispatcher；失败按预算退避，超限进入死信。发送记账与清理由所属回路管理。聊天流另走会话 emitter，存储层不认识业务处理器；后台任务纳入所有者的启停与恢复。
+`emit_ws_event` 随业务状态同事务写 outbox，经 NOTIFY 唤醒后只为本进程注册了桌面 dispatcher 的用户（含断线宽限期）原子认领。内部处理器（如主动陪伴回合请求）派生任务即记送达，处理失败由所属域负责重试；用户 dispatcher 不可用、写入队列已满或载荷无法解析时按预算退避，累计失败达到 `MAX_OUTBOX_RETRIES` 即转死信。调度器的 [outbox 清理](services/infrastructure/event_store/outbox_gc.py)回收已送达、死信与过期的陪伴回合请求行；离线用户的待投递行不过期。聊天流另走会话 emitter，存储层不认识业务处理器；后台任务纳入所有者的启停与恢复。
 
 ## 数据与运行可靠性
 
-数据库会话采用短读 → 无会话模型等待 → 短写，关系显式预加载，时间戳带时区。图片与视频等大字节处理与落盘卸载到工作线程；正式资产使用统一异步写入入口处理取消清理。
+数据库会话采用短读 → 无会话模型等待 → 短写，关系显式预加载，时间戳带时区。图片与视频等大字节处理与落盘卸载到工作线程。正式资产写入有两种取消语义：随机命名资产（`save_companion_asset_async`）取消时删除未交接文件；任务预登记固定路径的生成资产（视频任务、动作素材与图片链候选）取消时等待原子写完并保留，供恢复复用。
+
+资产引用列保存 `companion-assets/{user_id}/...` 裸路径；响应出口改写为 Bearer 鉴权的 `/api/companion/asset/...`（`client_asset_url`）或短时签名 URL（`signed_companion_asset_url`），签名 URL 不入库。
 
 本机派发先注册等待对象，再发送并检查入队结果；直接持对象等待，避免极速返回后查表丢失。桌面离线以业务错误结束等待，不能一律抛取消异常而使 IM 回合静默退出。
 
-备份不迁移登录、激活、IM 授权、事件队列和执行账本，也不恢复已清理媒体；供应商与本机配置另行准备。包级校验、部分恢复和维护态见 [PROTOCOL](../docs/PROTOCOL.md#备份校验与覆盖恢复)。
+备份不迁移登录、激活、IM 授权、事件队列和执行账本，也不恢复已清理媒体；用户级模型配置（`user_model_configs`，含供应商密钥明文）随包导出与恢复，系统信息库与本机配置另行准备。包级校验、部分恢复和维护态见 [PROTOCOL](../docs/PROTOCOL.md#备份校验与覆盖恢复)。
 
-用户文件只落三处：`companion-assets/{user_id}/`（立绘与全部正式资产）、各会话的 `desktop-attachments/{session_id}/`，以及元数据记录 `user_id` 的 `temp-media/`。删除用户（被遗忘权）复用覆盖恢复的维护边界停稳运行时，先删除这三处文件、再删除用户行由外键级联清理其余数据；任一步失败都保留用户行，可重试。新增用户文件存储须落在这三处之一，否则删除与备份都会遗漏。
+用户文件只落三处：`companion-assets/{user_id}/`（立绘与全部正式资产）、各会话的 `desktop-attachments/{session_id}/`，以及元数据记录 `user_id` 的 `temp-media/`。删除用户（被遗忘权，[admin.py](api/v1/admin.py) 的 `delete_user`）复用覆盖恢复的维护边界停稳运行时，先删除这三处文件、再删除用户行由外键级联清理其余数据；资产目录或会话附件删除失败时保留用户行，可重试，`temp-media/` 逐文件尽力删除、仍有元数据的残留由每小时的过期清理兜底。新增用户文件存储须落在这三处之一，否则删除与备份都会遗漏。
 
 ## 业务调度
 
@@ -111,8 +120,8 @@
 
 - 调度传入刚结束的本地日，缺时区跳过；同日完成不重跑，最近未完成日按恢复窗口接续。
 - 规划入口必须绑定夜间日志，计划与动作账本持久化后执行；每项先核对依赖与当前政策，终态统一落库，失败互相隔离。
-- 执行按外观、场景、片刻 / 媒体与联系的阶段推进，场景不依赖外观动作。
-- 无当日消息仍可依据长期记忆规划，但没有新互动时不虚构日记。
+- 执行按外观、场景、动作提案、片刻 / 媒体与联系的阶段推进，场景不依赖外观动作。
+- 无当日消息仍可依据长期记忆规划；当日没有用户消息、成功（含部分成功）的夜间动作或片刻互动时不写内部反思与日记。
 - 片刻发布和评论纳入当天经历；只有成功结果进入叙事。
 - 有任务句柄时核对原任务，结果未知的在途动作保留中断事实，不盲目重发。
 - 规划的动作 ID 保持原样并校验唯一性；能力或预算过滤掉前置动作后，后续依赖仍保留并按未完成跳过。
@@ -122,24 +131,24 @@
 
 ### 陪伴调度与恢复
 
-[等待域](services/domains/companion/intents.py)管理条件、有效期、认领和原子终态；[陪伴回合](services/application/automation/companion_turns.py)复用工具循环并限制轮数、时长和委派。取消或失败不提交暂存续等。
+[等待域](services/domains/companion/intents.py)管理条件、有效期、认领和原子终态；[陪伴回合](services/application/automation/companion_turns.py)复用工具循环并限制轮数、时长和委派，要求用户桌面在线。取消或失败不提交暂存续等。
 
-未开始的认领可以重试；已执行而结果不明时先查询 Runner 调用日志，不重跑副作用。有效期结束不抹去核对信息。创建、恢复及解除暂停统一在用户锁下检查活跃任务配额；重启不凭空补算未互动时长。
+未开始的认领可以重试；已执行而结果不明时保留待核对提示，不重跑副作用（Runner 虽有 `spiritagent.call_result`，但 Client 不转发、Backend 不调用，见[调用日志与未知结果](../docs/PROTOCOL.md#调用日志与未知结果)）。有效期结束不抹去核对信息。创建、恢复及解除暂停统一在用户锁下检查活跃任务配额；重启不凭空补算未互动时长。
 
 ### IM 渠道
 
 适配器由装配层注册。接收锁保证落库与入队顺序，投递锁避免并发补发；登录、入站、回合、typing 和补发均归绑定实例，退出或重建前取消并等待整棵任务树。
 
-iLink 轮询持续返回 `-14` 才按登录失效处理；发送时的同码仅代表回复上下文失效，等待下一次来信，不直接触发重新扫码。媒体经渠道加解密转换；配对、排队、只读与本机授权见 [PROTOCOL](../docs/PROTOCOL.md#im-通道)。
+iLink 长轮询 `getupdates` 返回 `-14` 即清除登录凭据并将绑定置为 `login_required`（用户重新发起扫码后为 `login_pending`）；发送或 typing 返回同码只代表回复上下文失效，等待下一次来信，不触发重新扫码。超出每分钟入站限流的消息在落库前丢弃且不通知对端。媒体经渠道加解密转换；配对、排队、只读与本机授权见 [PROTOCOL](../docs/PROTOCOL.md#im-通道)。
 
 ## 供应商与网络错误
 
 - 供应商身份由注册与配置决定，不从 URL 推断。
 - 幂等方法、显式幂等键或确认未发送的连接失败才可自动重试；请求体须可重放。
 - 非幂等请求在写入或读取响应阶段断线按结果未知处理，不能直接换供应商再提交。
-- 能力链换家只看 [错误分类](services/infrastructure/llm/error_classifier.py) 的 `should_fallback`：确定性失败，以及本家传输层重试耗尽后的超时 / 过载；结果未知或流已开始时不换家。
+- 通用链 [execute_with_fallback](services/infrastructure/llm/llm_fallback.py)（LLM、STT、TTS、立绘与非本人聊天图片）换家只看 [错误分类](services/infrastructure/llm/error_classifier.py) 的 `should_fallback`：确定性失败，以及本家传输层重试耗尽后的超时 / 过载；结果未知或流已开始时不换家。媒体质量链（视频任务、动作素材、角色 / 场景 / 衣柜图片）逐家单独调用，由 [media_failure_reason](services/application/generation/media_chain.py) 判定：结果未知优先且不换家，其余接受产物校验声明的可回退错误或 `should_fallback`。
 
-- 出站 SSRF 守卫默认关闭（`SSRF_GUARD_ENABLED`，管理后台可热切换）：关闭时不做保留网段与黑名单校验，DNS 污染 / fake-ip 代理环境不再误拦正常出站，内网访问风险由部署者自担。
+- 出站 SSRF 守卫默认关闭（`SSRF_GUARD_ENABLED`，管理后台可热切换）：关闭时不做保留网段与黑名单校验，避免 DNS 污染 / fake-ip 代理环境误拦正常出站，内网访问风险由部署者自担。实现见 [components/network.py](components/network.py)。
 - 开启后默认拒绝保留网段；显式 fake-IP 豁免（`SSRF_ALLOWED_CIDRS`）不取消域名、协议、HTTPS 降级、云元数据与 CGNAT 检查。
 - 下载层的大小、协议白名单与 HTTPS 降级检查不受开关影响。
 - 对外错误脱敏，内部诊断保留原因。
@@ -160,7 +169,7 @@ docker compose up -d
 docker compose --profile monitoring up -d
 ```
 
-容器与卷见 [docker-compose.yml](docker-compose.yml)，指标抓取见 [Prometheus 配置](monitoring/prometheus.yml)。Backend 不参与桌面安装包构建。
+容器与卷见 [docker-compose.yml](docker-compose.yml)，指标抓取见 [Prometheus 配置](monitoring/prometheus.yml)。`/metrics` 默认无需鉴权；设置 `metrics_auth_token` 后须令牌访问，随附的 Prometheus 配置不带凭据，需同步调整。Backend 不参与桌面安装包构建。
 
 后端镜像安装 FFmpeg（含 `ffprobe`），用于视频探测、抠像和转码；构建时检查两个命令可执行。更新 Dockerfile 后，在 `backend` 目录执行 `docker compose up -d --build backend` 重建并替换容器。
 

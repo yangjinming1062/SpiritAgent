@@ -7,13 +7,15 @@
 | 层 | 边界 |
 |---|---|
 | app | 窗口入口只初始化和挂载；runtime / workflows 不反向导入 windows，窗口间不互相导入 |
-| modules | 不依赖 app；conversation 可消费 media 展示原语，character 渲染域可消费 speech，其余跨模块协作由 app 装配 |
-| shared | 无业务依赖；其中窗口环境的 IPC 与网关实现不得被主进程导入 |
+| modules | 不依赖 app；conversation 可消费 media 展示原语，其余跨模块协作由 app 装配 |
+| shared | 无业务依赖 |
 | `@ipc` | 跨进程契约来源，渲染侧不重复定义 |
 
-character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fallback}`、`sprite`、`wardrobe`，偏好、人格与空间等保留根入口。跨模块只经公共 barrel，character 渲染域可经 `rendering/video`。
+character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fallback}`、`sprite`、`wardrobe`，偏好、人格与空间等保留根入口。跨模块只经公共 barrel；character 另以 `rendering/video` 作为渲染域公共入口。`modules/memory` 当前只含片刻与日记的 `journal-store`，记忆管理页面在 [memory-section.tsx](app/windows/living/settings/memory-section.tsx)。
 
-边界由 [ESLint](../eslint.config.mjs)检查，不绕过内部路径。生产数据与资产统一走主进程桥；直连例外须说明 URL 来源。
+边界规则写在 [ESLint](../eslint.config.mjs)，不绕过内部路径。flat config 对同一文件按序合并配置对象，后面的对象再次配置 `no-restricted-imports` 会整体替换前面的 patterns 而不合并；当前 `app/windows/*` 与各 modules 规则块未并入上层的深路径限制，lint 不拦截这些目录的深路径导入，边界靠约定维护。新增或修改规则块时须合并已有限制。生产数据与资产统一走主进程桥；直连例外须说明 URL 来源。
+
+窗口入口：精灵窗 [sprite-entry.tsx](sprite-entry.tsx) 初始化后并列挂载 [bootstrap/sprite.tsx](app/bootstrap/sprite.tsx)（宿主网关 WS）与按账户重挂载的 [sprite-window.tsx](app/windows/sprite/sprite-window.tsx)（单击、双击、拖拽与命中捕获在 [sprite-stage.tsx](app/windows/sprite/behaviors/sprite-stage.tsx)）；生活空间与工作台由 [living-entry.tsx](app/windows/living/living-entry.tsx) / [workbench-entry.tsx](app/windows/workbench/workbench-entry.tsx) 调用 [bootstrap/surface.tsx](app/bootstrap/surface.tsx) 挂载。激活、引导与启动失败浮层在 [onboarding](app/onboarding/)。界面文案在 [strings/dictionaries](shared/strings/dictionaries/)，`en` 按 `zh` 的字典类型校验；引导问答与人格预设仍在代码中硬编码中文。
 
 ## 装配与状态归属
 
@@ -31,8 +33,8 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ## 事件与异步生命周期
 
-- 网关路由先校验用户、会话和窗口角色，再分派事件。
-- 各窗口独立水合，任何异步回写须核对用户、会话、回合和清理代次；共享代码不代表共享内存。
+- [网关路由](app/runtime/gateway-event-router.ts)在鉴权 pending 时丢弃事件，按信封 `session_id` 过滤（无该字段放行）后分派：会话、工具、角色与投递事件进 [handlers](app/runtime/handlers/)（会话事件与 `tool.call` 另收宿主或代理角色 `isProxy`），场景与片刻日记事件直达 modules/scene、modules/memory。
+- 各窗口独立水合，任何异步回写须核对用户、会话、回合和清理代次；清理代次与账户存储键登记见 [storage.ts](shared/lib/storage.ts)。
 - 账户切换清理旧账户资料、会话与通知并按 `accountId` 重挂载；桌面精灵按目标账户状态自动进入未完成的 onboarding。完整入口开关状态由主进程维护。
 - 鉴权请求仅接受发起会话仍有效的结果。
 - `tool.call` 只由宿主执行，按 call_id 去重，不受可见会话过滤；其他会话过程受会话守卫。
@@ -48,10 +50,9 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 [companion-store.ts](modules/character/companion-store.ts)维护表现状态优先级，视频系统动作键定义于 [presentation/types.ts](modules/character/presentation/types.ts)，两者不混用。
 
 - 瞬态保存恢复目标，旧计时器不得覆盖持续状态，重复瞬态不嵌套目标；语音准备与播放分开，尾随点播不切 speaking，完成聊天不触发 emotional。
-- [actions](modules/character/actions/)按 play_id 去重，目录外观代次落后时先刷新再受理，已认领却不能播放的请求回执 rejected；换包或外观代次变化作废在播实例。动态动作不新增表现状态，表达真实可见（上报 started）期间以 emotional 瞬态呈现、收尾即恢复；判定与回执遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
+- [actions](modules/character/actions/)的 `acceptPlayCommand` 按 play_id 去重并校验包、外观代次、素材与有效期，不符即回执 rejected；换包或外观代次变化作废在播实例。强制刷新目录（同包旧代次除外）、主进程认领，以及认领后目录缺失或舞台不可用的 rejected 回执在 [character-events.ts](app/runtime/handlers/character-events.ts)；开播时过期与加载失败由播放器回执。动态动作不新增表现状态，表达真实可见（上报 started）期间以 emotional 瞬态呈现、收尾即恢复；判定与回执遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
 - 拖拽释放、接取与长按的整体形变，以及仪式指向与点击提示，经 [gesture](modules/character/sprite/gesture.ts) 由舞台容器呈现，不参与命中；情绪放大只作用于形象层，静止档、栖息与探身时不放大。
 - 两个完整入口共用 [侧边伙伴组件](app/components/surface-companion/surface-companion.tsx)；入口与播放器共用 [可见性判断](modules/character/actions/action-visibility.ts)，主进程快照按版本应用，锁屏不依赖 Runner 轮询。播放认领与取消遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
-- `presentation/render-resolver` 按动作目录和生成状态选择 video 或 fallback，并提供对应的本地化状态；未就绪不空挂视频元素。
 
 ### 打扰与自主行为
 
@@ -75,7 +76,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ### 偏好与形象水合
 
-水合只恢复偏好，不把设备生效值当偏好回写。未交互面板不上传默认几何，迟到水合不移动已打开面板。
+水合只恢复偏好，不把设备生效值当偏好回写。
 
 - 角色卡 store 管已保存资料，页面保留编辑草稿；事件、重聚焦和分析轮询不覆盖局部修改。
 - 冲突处理见 [PROTOCOL](../../docs/PROTOCOL.md#角色卡编辑)；换号、换形象和卸载使迟到回写失效。
@@ -116,12 +117,12 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ### 语音播放
 
-- speech 管音频播放与直接交互台词合成。
+- speech 管音频播放与台词合成。
 - 聊天文字没有合成入口；聊天语音只在点击时播放后端保存的音频，缺失音频经会话语音重试端点恢复。
 - 播放状态归 speech，会话气泡与音频视图归 conversation，由应用工作流装配。
 - 新播放、停止、换会话、表面隐藏或锁屏使旧下载和播放结果失效。
 - 播放结果区分完成、中断与失败；其他声音抢占属于中断，不把语音条标记为不可用。
-- 直接交互与仪式反馈用 `speak`（不落盘），预制/反应用 `speakScripted`（落盘）；朗读文本清理不改写聊天原文。
+- 主动台词经 [proactive-delivery.ts](app/workflows/proactive-delivery.ts) 用 `speak`（不落盘，当前生产调用只有仪式行走失败提示）；拖拽反应、音色试听等预制台词用 `speakScripted`（落盘）；朗读文本清理不改写聊天原文。
 - 限额和字节缓存归主进程。
 
 ### 媒体查看
@@ -144,11 +145,11 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ## 视频渲染
 
-- 视频层消费 manifest 与透明 WebM；字节走主进程资产桥和内容哈希缓存，双 video 待新帧就绪后替换旧画面。
-- 完整入口的侧边视频使用整段动作的 `content_rect` 适配侧栏宽高并贴近内容面板；旧素材缺少轮廓时从 alpha 遮罩推导，仍缺失则按完整画布适配。桌面精灵沿用自身的舞台比例。
-- 命中按实际播放时间查询逐帧 alpha 遮罩，并扣除等比显示留白；遮罩 JSON 为逐帧行位数组，侧边缺少遮罩时只在已知内容边界内命中。
+- 视频层消费 manifest 与透明 WebM；片段字节经 `apiAsset`（`preferCache`）走主进程磁盘缓存，双 video 待新帧就绪后替换旧画面。
+- 完整入口的侧边视频按整段动作的内容轮廓适配侧栏宽高并贴近内容面板，桌面精灵沿用自身的舞台比例；缺少 `content_rect` 时的回退与遮罩格式见[播放契约](../../docs/PROTOCOL.md#动作目录与播放)，实现见 [VideoStage.tsx](modules/character/rendering/video/VideoStage.tsx)。
+- 命中按实际播放时间查询逐帧 alpha 遮罩，并扣除等比显示留白；侧边缺少遮罩时只在已知内容边界内命中。
 - 移动与拖拽由容器位移表达，播放不驱动嘴部或视线。
-- 包未就绪或加载失败由 render-resolver 落 [fallback](modules/character/rendering/fallback/)，不空挂视频元素；蛋上区分准备中、生成中、失败与尚未就绪。
+- `presentation/render-resolver` 按动作目录和生成状态选择 video 或 [fallback](modules/character/rendering/fallback/)，并提供对应的本地化状态；包未就绪或加载失败不空挂视频元素，蛋上区分准备中、生成中、失败与尚未就绪。
 
 ## 主题与玻璃效果
 

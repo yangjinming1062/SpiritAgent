@@ -22,7 +22,7 @@ flowchart LR
 ```
 
 - Backend 运行于 Linux Docker；Client、Runner、Installer 支持 Windows 与 macOS 原生运行。底层库的跨平台能力不等于产品平台支持。
-- 主进程保管桌面身份并桥接本机执行；精灵宿主承载唯一聊天 WS，其他窗口经主进程代理。Runner 的模型请求也经 Client 转交 Backend，内部连接图见 [Client](../client/README.md#进程与代码边界)。
+- 主进程保管桌面身份并桥接本机执行；精灵宿主承载唯一聊天 WS，其他窗口经主进程代理。Runner 不持后端凭据，反向模型请求通道经 Client 转交 Backend（当前内置工具未使用），内部连接图见 [Client](../client/README.md#进程与代码边界)。
 - 进程拆分隔离职责与凭据，不构成完整安全沙箱。
 
 ## 模块职责
@@ -63,7 +63,7 @@ Backend 与 Client 通过 WebSocket 交付持续会话和事件，通过 REST �
 
 ### 工具与表达
 
-本机调用沿 `Backend → Client → Runner → Client → Backend` 返回；模型给出意图，各边界校验权限、能力和参数。结果未知按[调用日志](PROTOCOL.md#调用日志与未知结果)核对。Backend 产生语义，Client 决定可见表面、动画与位置；正文不是控制通道，表达归属见下文。
+本机调用沿 `Backend → Client → Runner → Client → Backend` 返回；模型给出意图，各边界校验权限、能力和参数。结果未知按[调用日志与未知结果](PROTOCOL.md#调用日志与未知结果)处理，不能当作失败重做。Backend 产生语义，Client 决定可见表面、动画与位置；正文不是控制通道，表达归属见下文。
 
 ## 调度与异步交付
 
@@ -75,6 +75,7 @@ Backend 与 Client 通过 WebSocket 交付持续会话和事件，通过 REST �
 
 - 需共同生效的业务状态与异步通知在同一事务写入 outbox。
 - 数据库通知只负责唤醒，持久化事件行负责恢复；聊天流另走会话 emitter。
+- 事件只由持有该用户桌面连接的进程认领；离线期间事件保留待投递、重连后补发，主动回合请求超过有效期即清理（见 [outbox_gc](../backend/services/infrastructure/event_store/outbox_gc.py)）。
 - 认领成功或发送成功都不证明端到端恰好执行一次。
 
 ### 打扰档位与情境
@@ -100,7 +101,7 @@ IM 桥运行于 web 进程；每用户每渠道绑定独立历史，复用云端
 
 ### 记忆与叙事
 
-长期记忆及模型可读派生事实归属 `(user_id, system_preset_id)`；同预设共享，跨预设不召回或空结果回退。异步任务与委派继承服务端捕获的域，切换界面不改变既有会话归属。
+长期记忆及模型可读派生事实按 `(user_id, system_preset_id)` 隔离：同预设跨会话共享，跨预设既不召回，也不在结果为空时回退到其他预设。异步任务与委派继承服务端捕获的域，切换界面不改变既有会话归属；访问规则见 [PROTOCOL](PROTOCOL.md#预设记忆与学习作用域)。
 
 检索事实与生活叙事分离：长期用户判断须有原始用户证据，助手台词、片刻与日记不能独立作为证据。automation 不装配长期记忆或学习技能；IM 使用陪伴域。时区、语言与渲染资产可按用户共享，陪伴人格、关系、情绪与日记仅用于陪伴。有效性与存储见[记忆模块](../backend/services/domains/memory/README.md)。
 

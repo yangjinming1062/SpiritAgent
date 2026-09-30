@@ -6,16 +6,20 @@
 
 | 入口 | 职责 |
 |---|---|
-| [memory_learning.py](memory_learning.py) | 执行学习决策 |
-| [memory_store.py](memory_store.py) | 存储 |
-| [memory_policy.py](memory_policy.py) | 统一策略 |
-| [memory_admin.py](memory_admin.py) | 人工列表与编辑 |
+| [memory_review.py](memory_review.py) | 审阅编排：同域串行的后台审阅循环（`review_memories`）、独立模型评估变更（`assess_memory_changes`） |
+| [memory_learning.py](memory_learning.py) | 审阅资料装配（原始消息、待维护记忆与批次上限），决策的证据校验与原子提交 |
+| [memory_policy.py](memory_policy.py) | 决策结构与硬校验；政策文本是 [prompts/memory.py](../../../prompts/memory.py) 的 `MEMORY_POLICY` |
+| [memory_retrieval.py](memory_retrieval.py) | 向量与关键词双路召回、融合排序 |
+| [memory_store.py](memory_store.py) | 存储、作用域过滤、写锁与遗忘清理 |
+| [memory_admin.py](memory_admin.py) | 人工列表、编辑与计数 |
+| [memory_bootstrap.py](memory_bootstrap.py) | 用户资料与时区读写 |
+| [memory_format.py](memory_format.py) / [memory_namespaces.py](memory_namespaces.py) | 提示词记忆块渲染、记录上下文命名空间 |
+
+审阅入口：回合后审阅（[persistence.py](../../application/chat/persistence.py)）、夜间整理（[nightly_activity.py](../../application/nightly/nightly_activity.py)）、调度器定期审阅（[cron.py](../../adapters/scheduler/cron.py)），模型记忆工具经 [native_memory.py](../../application/chat/native_memory.py) 提交即时提案。`/remember` 经 `create_memory` 写入无证据的显式记录，写入时不经审阅；该记录属于 `recall:` 命名空间，之后仍进入维护轮转，可被审阅判为失效。
 
 学习记录保存原子事实，长期背景是明确陈述的视图。onboarding、统计和系统已兑现事件各走所属入口；日记、统计和助手表达不能独立证明用户偏好。
 
 ## 审核与原子提交
-
-
 
 - 证据逐字来自同域、上下文水位以上的原始用户消息。发送时间与原文指纹识别分叉副本，重复处理不增加独立证据。
 - 后台同域审核串行，即时提案经独立模型审核；提交重核快照、版本和原文并整批原子生效。快照失效丢弃，格式或证据错误最多反馈重试一次。
@@ -23,7 +27,7 @@
 
 ### 完整审阅
 
-仅完整批次成功后推进水位，零变更也算成功检查。原始消息不截断后跳过；单条超预算单独审阅，超过供应商上下文能力则保留待处理状态。
+仅完整批次成功后推进水位，零变更也算成功检查。原始消息不截断后跳过；单条超预算单独审阅，超过供应商上下文能力则保留待处理状态。单批消息与记忆上限见 [memory_learning.py](memory_learning.py) 顶部常量，决策与证据条数上限见 [memory_policy.py](memory_policy.py) 的字段约束。
 
 即时检查优先保留最新消息并按时间呈现；后台排空待审消息、轮转维护记忆，补充与新发言相关的记录。
 

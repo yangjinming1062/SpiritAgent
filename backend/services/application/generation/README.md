@@ -6,25 +6,26 @@
 
 | 入口 | 职责 |
 |---|---|
+| [avatar_service.py](avatar_service.py) / [fullbody_reference_prompt.py](fullbody_reference_prompt.py) | 头像、全身草稿与候选、全身确认（锁定身份并建默认外观）、立绘裸路径读写与响应签名；全身参考提示词与自备图画幅 |
 | [character_card.py](character_card.py) | 角色卡分析任务 |
+| [initial_appearance.py](initial_appearance.py) | 首个视频包启动（含补排默认外观描述）；首个视频包与初始场景的重启恢复（初始场景由角色卡就绪后经 `scene_service.schedule_initial_scene` 启动） |
 | [visual_identity.py](visual_identity.py) | 出镜身份与本次造型（`SelfVisualPlan`），共用 `build_self_image_prompt` |
-| [initial_appearance.py](initial_appearance.py) / [avatar_service.py](avatar_service.py) | 初始外观与头像/全身候选 |
-| [outfit_service.py](outfit_service.py) / [fullbody_reference_prompt.py](fullbody_reference_prompt.py) | 换装命名与全身参考提示词/画幅 |
+| [outfit_service.py](outfit_service.py) | 衣柜外观草稿、重绘、自备图、确认、穿着、删除、替换策略与后台命名 |
 | [image_generation.py](image_generation.py) / [scene_prompt.py](scene_prompt.py) | 图像参考装配与场景提示词装配 |
-| [chat_images.py](chat_images.py) | 聊天图片批次登记、实际验图、版本与一次重做预算 |
+| [chat_images.py](chat_images.py) | 聊天图片批次登记、实际验图、版本与一次重做预算；工具入口见 [image_generation_tool.py](../../adapters/tools/builtin/image_generation_tool.py) |
 | [scene_service.py](scene_service.py) | 场景创建、描述分析、图片重生成与切换版本 |
-| [video/](video/) / [video_jobs.py](video_jobs.py) | 视频包（script、state、service）与聊天视频；供应商轮询 `poll_video_task` 两者共用 |
+| [video/](video/) / [video_jobs.py](video_jobs.py) | 视频包（script、state、service）与聊天、夜间视频任务；供应商轮询 `poll_video_task` 两者共用，聊天工具入口见 [video_generation_tool.py](../../adapters/tools/builtin/video_generation_tool.py) |
 | [media_chain.py](media_chain.py) / [character_images.py](character_images.py) / [identity_review.py](identity_review.py) | 供应商链择优、身份保持图片、评分与严格复核 |
-| [media_review.py](media_review.py) | 出镜媒体用户复核状态 |
+| [media_review.py](media_review.py) | 用户复核项的创建、查询、采纳与拒绝；采纳动作且所属包仍激活时同事务发布目录 |
 | [response_builders.py](response_builders.py) | 头像/外观响应装配 |
 
 ## 事务与任务所有权
 
-头像生成、全身生成、选择和确认共用用户级锁。短会话读配置与冻结资料 → 事务外等待供应商 → 校验身份、状态和源路径 → 状态与事件同事务提交。迟到结果不得覆盖新任务；候选与正式资产分别清理。
+头像（API / RPC 入口持锁）、全身、衣柜（含命名回写）、角色卡分析回写，以及视频包创建、重试、就绪发布、启用、删除与探身补齐共用 `avatar_service.get_avatar_job_lock` 用户级锁；角色卡编辑靠数据库行锁与预期修订，场景另用 `scene_service` 内的场景锁。短会话读配置与冻结资料 → 事务外等待供应商 → 校验身份、状态和源路径 → 状态与事件同事务提交。迟到结果不得覆盖新任务；候选与正式资产分别清理。
 
 ### 全身候选与草稿
 
-全身重绘与自备图先写 `FullbodyCandidate`，分析可重试；用户采纳时校验原图和角色卡修订，同事务更新全身图与身体字段。被替换的未采纳候选清理图片，已采纳旧图保留给历史任务；完整身份语义见 [PIPELINE](../../../../docs/PIPELINE.md#全身候选采纳)。
+身份确认前，全身生成与自备图直接替换全身草稿；`confirm_fullbody_seed` 锁定身份、登记角色卡并保存默认外观快照。确认后的全身重绘与自备图先写 `FullbodyCandidate`，分析可重试；用户采纳时校验原图和角色卡修订，同事务更新全身图与身体字段。被替换的未采纳候选清理图片，已采纳旧图保留给历史任务；完整身份语义见 [PIPELINE](../../../../docs/PIPELINE.md#全身候选采纳)。
 
 草稿转存失败可重试，只有全部图片均为过期草稿的头像行才能清理，不连带删除正式参考。服务内部与 ORM 始终使用裸路径：草稿为 `temp-media/`，确认后的立绘与其他用户资产一样落在 `companion-assets/{user_id}/`，[avatar_service.py](avatar_service.py) 的读取与删除入口只接受裸路径；访问 URL 仅在响应出口由 `re_sign_bare_path` 生成，客户端回传的地址只在全身确认入口还原比对。
 
@@ -52,13 +53,13 @@
 
 ## 图像输入与装配
 
-[image_generation.py](image_generation.py)按供应商原生能力装配参考：`persist_user_assets=True` 时转存为用户资产，否则返回供应商原生 URL 或 data URI，由调用方（质量链、头像/全身立绘）自行落盘。提示词按点位选择，头像可改外貌的条款不能用于换装；参考优先级与编辑前置条件归 [PIPELINE](../../../../docs/PIPELINE.md#身份造型与参考输入)。
+[image_generation.py](image_generation.py)的 `resolve_image_gen_chain` 按参考图、双参考、图像编辑与原生透明能力筛选 `image_gen` 链，能力位由[供应商基类](../../infrastructure/llm/providers/base.py)声明；`generate_images` 按供应商原生能力装配参考：`persist_user_assets=True` 时转存为用户资产，否则返回供应商原生 URL 或 data URI，由调用方（质量链、头像/全身立绘）自行落盘。提示词按点位选择，头像可改外貌的条款不能用于换装；参考优先级与编辑前置条件归 [PIPELINE](../../../../docs/PIPELINE.md#身份造型与参考输入)。
 
 聊天与夜间图片共用 [visual_identity.py](visual_identity.py) 的 `build_self_image_prompt`，`SelfVisualPlan` 冻结造型。视频首帧生成/校准也走图片质量链，恢复沿用已保存首帧，具体规则见 [出镜图片与视频](../../../../docs/PIPELINE.md#出镜图片与视频首帧)。
 
 ## 视频包与质量链
 
-聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。
+聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。结构化回复（生活空间）的聊天视频终态经 `domains/conversation` 的 `update_video_reply` 原位更新所属气泡；其他会话追加媒体状态系统消息，并发 `video_gen.*` 事件与渠道投递。
 
 上传导入与生成共用交付链，[video/state.py](video/state.py)保存上下文与单动作结果，上传包没有可重做的冻结参考。
 

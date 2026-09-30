@@ -7,10 +7,11 @@
 | 包或入口 | 职责 |
 |---|---|
 | `entry.ts` | 唯一组合根，显式装配，不展开业务逻辑 |
-| `backend` | 会话与 HTTP |
-| `runner` | 进程与本地 RPC |
-| `lifecycle` | 窗口、托盘与更新 |
-| `ipc` | 按能力注册通道 |
+| `preload.ts` | 沙盒 preload，向渲染层暴露 `window.spiritagent` |
+| `backend` | 多账户凭据、会话与 HTTP |
+| `runner` | 进程、端点与本地 RPC 桥、反向模型代理、Runner 更新 |
+| `lifecycle` | 窗口、托盘、退出与桌面更新 |
+| `ipc` | 按能力注册通道，也持有资产、历史快照与 TTS 合成音频三类磁盘缓存及 Runner 宿主 |
 | `security` | sender、路径与能力准入 |
 | `shared` | 叶子层，经装配层注入结构端口，不导入 backend / runner 实现 |
 
@@ -30,7 +31,7 @@
 
 ### 凭据与请求
 
-凭据存储与换号语义见 [PROTOCOL](../../docs/PROTOCOL.md#凭据落盘)。托盘账户操作留在主进程，preload 不暴露持久凭据读取。`api()` 仅访问受控相对路径，拒绝绝对 URL、协议相对地址与穿越；白名单见 [api-allowlist.ts](security/api-allowlist.ts)。
+凭据存储与换号语义见 [PROTOCOL](../../docs/PROTOCOL.md#凭据落盘)，多账户存储在 [session.ts](backend/session.ts)。托盘账户操作留在主进程，preload 不暴露持久凭据读取。`api()` 仅访问受控相对路径，拒绝绝对 URL、协议相对地址与穿越；白名单见 [api-allowlist.ts](security/api-allowlist.ts)。`api()`、资产读取、`ws-url` 签发与 401 通知集中在 [connection.ts](ipc/connection.ts)。
 
 ### 文件与媒体
 
@@ -49,21 +50,25 @@
 
 [surfaces.ts](lifecycle/surfaces.ts)串行裁决开关，生活空间与工作台最多一个可见；账户身份变化时收起完整入口并显示桌面精灵，避免沿用上个账户的窗口状态。每个窗口与其面板、侧边区域及定时器由同一记录持有。内容面板矩形是几何锚点，侧边区域只调整原生窗口边界；程序调整与最大化还原期间不把中间事件写回面板。显示器变更同时校正还原位置，窗口关闭时清理几何定时器。完整入口移动时桌面精灵窗跟随显示器，渲染状态不传递几何。
 
+[surfaces.ts](lifecycle/surfaces.ts) 另负责播放认领（`surface:claim-play`）与锁屏跟踪：同一 `play_id` 只由一个可见舞台认领，认领随账户变化清空，规则见[播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
+
 [伙伴偏好](lifecycle/surface-companion.ts)在创建窗口前读取，独立保存在本机，不经云同步；原子保存失败向调用方报告，内存继续保留原值。偏好与实际可见状态分别通过 [IPC 快照](../shared/ipc/contracts.ts)传递，渲染层不得用迟到快照覆盖较新版本。激活卡片限命中区域，未认证唤起须更新渲染状态，不只 raise 窗口。
+
+[sprite.ts](ipc/sprite.ts)管理精灵窗位置（保存为 Home 下的 `companion-position.json`）、窗口场景快照、目标换算与跨屏移动；场景快照、目标换算与跟随目标跨屏（`moveToDisplay`）只接受精灵窗 sender，拖拽跨屏（`moveToCursorDisplay`）与位置读写不校验 sender。默认显示比例经它广播到各窗口。
 
 [快捷键](ipc/shortcuts.ts)返回注册冲突与失败。Windows 关窗隐藏到托盘，macOS 保留 Dock；多屏、透明命中见 [Client](../README.md#窗口与主题)，用户行为见 [DESIGN](../../docs/DESIGN.md#窗口与会话)。
 
 ## 配置镜像
 
-[runner-config.ts](ipc/runner-config.ts)只接受工作台 sender，读取整份配置、按路径修改字段；[配置存储](shared/lib/runner-config-store.ts)拒绝触及原型链的路径与非 JSON 值，落盘失败回滚内存镜像，串行落盘与推送 Runner，云同步防抖且水合期间抑制回环。字段白名单、账户隔离与冲突语义见 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
+[runner-config.ts](ipc/runner-config.ts)只接受工作台 sender，读取整份配置、按路径修改字段；[配置存储](shared/lib/runner-config-store.ts)串行落盘与推送 Runner，云同步防抖、水合写入抑制回环；`patch` 另拒绝触及原型链的路径与非 JSON 值，落盘失败回滚内存镜像，`mutate` 与水合写入落盘失败不回滚。其他写入方各走带校验的通道：[prefs.ts](ipc/prefs.ts) 只接受 `companion.*` 点键；快捷键、托盘语言与上次完整入口经 `patch`，主题与技能、工具集开关经 `mutate`，云端水合经 `applyCloudMirror` 整节写入（账户隔离清理经 `mutate`）。字段白名单、账户隔离与冲突语义见 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
 
 ## Runner 生命周期
 
-[ipc/runner.ts](ipc/runner.ts)的 host 管端点、桥和自动启停；token 经环境变量传递，不进 argv。握手配置、工具同步与资格撤销遵循 [PROTOCOL](../../docs/PROTOCOL.md#握手与工具同步)，迟到查询不能恢复旧资格。
+[ipc/runner.ts](ipc/runner.ts)的 host 管端点、桥和自动启停；token 经环境变量传递，不进 argv。[bridge.ts](runner/bridge.ts) 完成握手、配置推送与 `get_tools`，按 `call_id` 派发经 `ipc/runner.ts`，取消（`spiritagent.cancel`）不带标识，一次取消本机全部在途的模型派发调用；`tools.sync` 与撤销由渲染层宿主发起，见 [Client](../README.md#连接与设备就绪)。
 
 [session-runtime.ts](backend/session-runtime.ts)负责懒创建、token 重接及登录恢复回调；首次 getSession 等待凭据恢复。恢复结果由 [auth.ts](ipc/auth.ts) 的广播器直接广播，不进鉴权操作队列，广播后仍是当前会话才自动启动 Runner；另有启动后 200 ms 的定时入口建立会话，已有 token 即自动启动。无 call_id 不记日志，限制见[调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
 
-[更新器](runner/updater.ts)优先用 Home 下的 uv，再回落 PATH，在原 venv 安装；不承诺原子切换或自动回滚，损坏环境由 Installer 修复。待装资产由 [auto-updater.ts](lifecycle/auto-updater.ts) 在创建精灵窗前安装。验签顺序见 [更新契约](../../docs/PROTOCOL.md#自更新签名)。
+[更新器](runner/updater.ts)优先用 Home 下的 uv，再回落 PATH，在原 venv 安装；不承诺原子切换或自动回滚，损坏环境由 Installer 修复。待装资产由 [auto-updater.ts](lifecycle/auto-updater.ts) 在创建精灵窗前安装。wheel 与 `server.py` 的导入面一致性由构建期 [check_runner_facade.py](../../scripts/check_runner_facade.py) 门禁，验签顺序见 [更新契约](../../docs/PROTOCOL.md#自更新签名)。
 
 ## 桌面更新
 
@@ -75,7 +80,7 @@
 
 ## 网络与缓存
 
-字节缓存键为内容哈希或规范化 URL；历史与账号清理见 [Client](../README.md#资产与历史缓存)。下载、写盘和回调均须遵守取消与用户代次。
+字节缓存键与落盘范围见 [Client](../README.md#资产与历史缓存)。下载、写盘和回调均须遵守取消与用户代次。
 
 资产入口共用下载与鉴权处理，缓存返回字节和 MIME；仅 `apiAsset` 在返回时编码 data URL，`apiAssetBuffer` 直接返回字节。
 清理资产缓存先取消并等待旧下载与写入，再移除目录；新下载等待清理结束。下载超时覆盖响应体读取。
@@ -92,7 +97,7 @@
 
 ## 构建产物
 
-tsup 构建 main / preload，共享 IPC 通过 alias 解析；开发监听只覆盖 main 与 shared。修改导出或路径须核对实际文件名与 `package.json` 的 main。导入面一致性在构建期检查。
+tsup 构建 main / preload，共享 IPC 通过 alias 解析；开发监听只覆盖 main 与 shared。修改导出或路径须核对实际文件名与 `package.json` 的 main。
 
 开发 CSP 允许 Vite 所需能力，生产保持严格策略，不能为修复开发白屏放宽生产 CSP。mac entitlements 开 JIT、关库校验，见 [security](security/)。
 

@@ -58,7 +58,7 @@ uv run --project backend python scripts/debug_prompt.py --db --user-id 1 --prese
 
 ## 构建安装器
 
-构建入口 [build.py](build.py)依次构建 Runner wheel、Client、暂存 payload 和 Tauri Installer；正式暂存执行精确版本与导入面门禁。
+构建入口 [build.py](build.py)依次构建 Runner wheel、Client、暂存 payload 和 Tauri Installer；正式暂存执行精确版本与导入面门禁。`--target` 指定 mac / win（默认按宿主推断），`--skip-runner` / `--skip-desktop` 跳过对应构建但仍要求已有同版本产物，`--output` 指定输出目录。共享步骤在 [build_helpers.py](lib/build_helpers.py)，其中 `set_version` 把版本写入 Client、Installer（含 Tauri 配置与 Cargo.toml）和 Runner 的清单。
 
 Backend Docker 独立部署。`build.py` 执行会同步修改版本清单，下面版本号仅为示例：
 
@@ -74,15 +74,15 @@ uv run --no-project --python 3.13 python scripts/check_runner_facade.py
 
 单独检查默认选最新 wheel，不等同于正式构建的精确版本门禁。构建期间临时加入实际桌面资源，完成后恢复 Tauri 配置。
 
-Windows 产出单个 setup EXE 和 update ZIP，不再套一层安装器；macOS 产物在 macOS 构建，Windows 在 Windows 构建，不支持跨宿主替代验证。签名参数见脚本，未提供平台证书时安装器可未签名，但 Windows 更新包仍要求更新签名密钥。
+Windows 产出单个 `SpiritAgent-Setup-<version>.exe`（内嵌桌面端 NSIS 包，由 `install.ps1` 静默安装）和 update ZIP；update ZIP 由 [UpdateManifest.ps1](lib/UpdateManifest.ps1) 的 `Build-UpdateZip` 打包（需要 openssl），包含当前版本 NSIS 包与 blockmap、`runner/` 下的 wheel 与 `server.py`、签名的 `latest-runner.yml`、`manifest.json`，以及缺签名时补签的 `latest*.yml`（Backend 上传时丢弃后者，按库存重新生成），仅 Windows 构建生成。macOS 产出 DMG。macOS 产物在 macOS 构建，Windows 在 Windows 构建，不支持跨宿主替代验证。`--sign-identity`（配合 `--notary-profile` 公证）与 `--cert-thumbprint` 就地签名 `client/release` 中的桌面端产物，再复制进 payload，Windows update ZIP 也取该文件；安装器本身不由 `build.py` 签名；electron-builder 另有经环境变量驱动的 [notarize.cjs](../client/scripts/notarize.cjs)。Windows 更新包始终要求更新签名密钥。
 
 ## 发布
 
+推送 `vX.Y.Z`（仅三段数字）tag 触发 [release.yml](../.github/workflows/release.yml)，tag 是发布版本来源；其他 `v*` tag 也会触发，但构建的版本校验会失败，不生成 release。双平台分别构建，汇总安装器、更新包和 notes 为草稿 release，核对后发布；已存在 release 时仅补产物和 notes，不改变发布状态。
 
+客户端自动更新经 Backend 分发：在管理端“版本管理”上传 update ZIP 后，客户端从当前后端获取更新清单，见 [update.py](../backend/api/v1/update.py) 与[自更新签名](../docs/PROTOCOL.md#自更新签名)。
 
-推送 `v<semver>` tag 触发 [release.yml](../.github/workflows/release.yml)，tag 是发布版本来源。双平台分别构建，汇总安装器、更新包和 notes 为草稿 release，核对后发布；已存在 release 时仅补产物和 notes，不改变发布状态。
-
-`SPIRITAGENT_UPDATE_SIGNING_KEY` 缺失会使更新包签名失败并中止构建，配置方式见 [密钥说明](release-keys/README.md)。notes 的 `MINIMAX_API_KEY` 缺失可降级，不是构建硬门槛。macOS 证书未配置时产物未签名，不能宣称完成公证。
+`SPIRITAGENT_UPDATE_SIGNING_KEY` 缺失会使更新包签名失败并中止构建，配置方式见 [密钥说明](release-keys/README.md)。notes 的 `MINIMAX_API_KEY` 缺失可降级，不是构建硬门槛。`release.yml` 不传平台签名参数，CI 产物未经平台证书签名，不能宣称完成公证。
 
 ## Release notes
 
