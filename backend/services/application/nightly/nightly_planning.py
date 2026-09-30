@@ -473,7 +473,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         "确有缺口才使用；无明确价值时选择不使用。"
         "name 是动作显示名称；motion_description 写单主体可见的姿态、节奏与神态，"
         "不含场景、镜头或产品概念；use_when / avoid_when 说明何时适用或避免；reason 说明为何需要新动作。"
-        "duration_seconds 为 1–10 的整秒数；clip_kind 为 loop（连续运动周期）或 once（完整动作自然收束）。"
+        "duration_seconds 为 1–15 的整秒数；clip_kind 为 loop（连续运动周期）或 once（完整动作自然收束）。"
         "once 制作后仍可重复使用。单主体原地运动、固定镜头、全身入画，保持身体结构与穿着，"
         "不新增人物、道具、场景、对话或音轨。动作素材属于当前使用的动作形象，今晚的换装不会改变它，因此不依赖换装动作。"
         "受理仅表示申请成功，评审和制作随后进行；"
@@ -484,7 +484,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
             "use_when": "list[string]（可选，最多 8 项，每项最多 120 字符）：适合使用该动作的交流情境，省略或空列表表示没有补充适用条件。",
             "avoid_when": "list[string]（可选，最多 8 项，每项最多 120 字符）：应避免使用该动作的情境，省略或空列表表示没有补充避免条件。",
             "reason": "string（1–400 字符）：现有动作无法满足的表达需要，以及本次新增动作的具体价值。",
-            "duration_seconds": "integer（1–10）：单个动作片段的时长，单位为秒；按该时长安排循环周期或完整的一次性动作。",
+            "duration_seconds": "integer（1–15）：单个动作片段的时长，单位为秒；按该时长安排循环周期或完整的一次性动作。",
             "clip_kind": "string：loop 表示首尾连续的循环，once 表示有自然收束的一次完整动作；选其中一项，once 制作后也可重复使用。",
         },
         paid=True,

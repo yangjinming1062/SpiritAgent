@@ -142,13 +142,7 @@ class Settings(BaseSettings):
     )
     memory_prompt_max_memories: int = Field(default=10, gt=0, validation_alias="MEMORY_PROMPT_MAX_MEMORIES")
 
-    # 动作库：时长上限与每日制作额度按用户本地日结算；评审不设日限额；创建/自动使用独立开关。
-    action_max_duration_seconds: float = Field(
-        default=10.0,
-        gt=0,
-        le=12.0,
-        validation_alias="ACTION_MAX_DURATION_SECONDS",
-    )
+    # 动作库：每日制作额度按用户本地日结算；评审不设日限额；创建/自动使用独立开关。
     action_autonomous_create_daily_limit: int = Field(
         default=2,
         gt=0,

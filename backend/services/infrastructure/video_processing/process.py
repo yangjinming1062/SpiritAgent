@@ -7,6 +7,7 @@ from io import BytesIO
 from pathlib import Path
 
 from components import get_logger
+from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS
 from PIL import Image
 
 from .ffmpeg import (
@@ -24,7 +25,6 @@ logger = get_logger(__name__)
 
 # 交付常量（PIPELINE「透明化与一致性」）：主格式与画布上限
 TARGET_EXT = "webm"
-MAX_CLIP_SECONDS = 12.0
 MAX_SOURCE_BYTES = 96 * 1024 * 1024
 MAX_CANVAS_WIDTH = 1024
 MAX_CANVAS_HEIGHT = 1024
@@ -96,7 +96,7 @@ def prepare_action_clip(
     probe = probe_video(src)
     if probe.width * probe.height > 3840 * 2160 or probe.fps > 120:
         raise VideoProcessError("源片段分辨率或帧率超出处理上限")
-    if probe.duration_seconds > MAX_CLIP_SECONDS * 4:
+    if probe.duration_seconds > ABSOLUTE_MAX_DURATION_SECONDS * 4:
         raise VideoProcessError("源片段过长，请提供单个动作的短视频")
     if not probe.has_alpha:
         raise VideoProcessError("源片段缺少透明通道，请提供透明背景的素材")
@@ -108,6 +108,8 @@ def prepare_action_clip(
     end = min(probe.duration_seconds, end_seconds) if end_seconds is not None else None
     if start is not None and end is not None and end - start < 0.2:
         raise VideoProcessError("动作区间过短，请校准起止时间")
+    if (end if end is not None else probe.duration_seconds) - (start or 0.0) > ABSOLUTE_MAX_DURATION_SECONDS:
+        raise VideoProcessError("单动作最长 15 秒，请校准起止时间")
 
     args: list[str] = []
     # 输入侧 seek 后时间轴归零，区间终点必须换算成输出时长（-to 会按归零后的时间轴解释）。
@@ -126,6 +128,8 @@ def prepare_action_clip(
 
 def _verify_output(dst: Path) -> ClipProcessResult:
     out = probe_video(dst)
+    if out.duration_seconds > ABSOLUTE_MAX_DURATION_SECONDS:
+        raise VideoProcessError("动作产物超过 15 秒")
     if out.codec_name != "vp9":
         raise VideoProcessError("视频编码产物异常", internal=f"codec={out.codec_name}")
     if not out.has_alpha or not probe_alpha_side_data(dst):

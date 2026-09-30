@@ -79,6 +79,7 @@ from .schemas import (
     VoicesListResponse,
 )
 from .schemas_actions import (
+    ABSOLUTE_MAX_DURATION_SECONDS,
     ActionBudgetStatus,
     ActionCatalogResponse,
     ActionDesignRequest,
@@ -127,6 +128,7 @@ from .schemas_video import (
 )
 
 __all__ = [
+    "ABSOLUTE_MAX_DURATION_SECONDS",
     "SceneGenerationAttempt",
     "BodyFeatures",
     "CharacterCardExtract",

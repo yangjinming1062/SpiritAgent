@@ -5,6 +5,7 @@ from typing import Any
 
 from components import SESSION_LOCAL, tool_error
 from modules.companion import (
+    ABSOLUTE_MAX_DURATION_SECONDS,
     ActionDesignRequest,
     ActionPlayRequest,
     ActionProposal,
@@ -202,9 +203,9 @@ def register(registry: ToolsRegistry) -> None:
                 "duration_seconds": {
                     "type": "integer",
                     "minimum": 1,
-                    "maximum": 10,
+                    "maximum": int(ABSOLUTE_MAX_DURATION_SECONDS),
                     "default": 4,
-                    "description": "预计时长（整秒），按动作特性填写 1–10，默认 4 秒。",
+                    "description": "预计时长（整秒），按动作特性填写 1–15，默认 4 秒。",
                 },
                 "clip_kind": {
                     "type": "string",

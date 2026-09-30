@@ -1,11 +1,11 @@
-"""动作库跨边界 schema：工具入参、REST 响应、播放指令与回执。source / user_id / 预算日 / 系统槽位由服务端绑定；schema 只守 12 秒绝对时长上限，实际策略上限在后台配置。"""
+"""动作库跨边界 schema：工具入参、REST 响应、播放指令与回执。source / user_id / 预算日 / 系统槽位由服务端绑定。"""
 
 import json
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator, model_validator
 
-ABSOLUTE_MAX_DURATION_SECONDS = 12.0
+ABSOLUTE_MAX_DURATION_SECONDS = 15.0
 
 
 class PeekGeometry(BaseModel):
@@ -73,9 +73,16 @@ class ActionDesignRequest(BaseModel):
     use_when: list[str] = Field(default_factory=list, max_length=8)
     avoid_when: list[str] = Field(default_factory=list, max_length=8)
     reason: str = Field(min_length=1, max_length=400)
-    duration_seconds: float = Field(gt=0, le=ABSOLUTE_MAX_DURATION_SECONDS)
+    duration_seconds: float = Field(ge=1, le=ABSOLUTE_MAX_DURATION_SECONDS)
     clip_kind: str = Field(pattern="^(loop|once)$")
     expected_pack_id: int | None = None
+
+    @field_validator("duration_seconds")
+    @classmethod
+    def validate_integer_duration(cls, value: float) -> float:
+        if abs(value - round(value)) > 1e-6:
+            raise ValueError("动作时长需为整秒")
+        return value
 
 
 class ActionDesignResult(BaseModel):

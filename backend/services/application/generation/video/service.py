@@ -18,6 +18,7 @@ from components import (
     track_user_task,
 )
 from modules.companion import (
+    ABSOLUTE_MAX_DURATION_SECONDS,
     REQUIRED_SYSTEM_SLOTS,
     SYSTEM_SLOTS,
     AvatarAsset,
@@ -449,7 +450,11 @@ async def create_pack_from_reference(
                 await db.commit()
                 _unlink_assets(retired)
                 return reusable
-        await _video_providers(user_id, needs_loop_frames=True, duration_seconds=_SYSTEM_ACTION_SECONDS)
+        system_seconds, system_providers = await _resolve_action_video_plan(
+            user_id,
+            needs_loop_frames=True,
+            duration_seconds=_SYSTEM_ACTION_SECONDS,
+        )
         if not await resolve_vision_chain(db, user_id):
             raise VideoPackStateError("未配置视觉模型，无法根据角色参考图撰写动作脚本")
         image_chain, image_error = await resolve_image_gen_chain(db, user_id, has_reference=True, image_edit=True)
@@ -536,11 +541,12 @@ async def create_pack_from_reference(
                     key=key,
                     system_slot=key if key in SYSTEM_SLOTS else "",
                     kind="loop" if key in SYSTEM_SLOTS else "once",
-                    target_duration_seconds=_SYSTEM_ACTION_SECONDS,
+                    target_duration_seconds=system_seconds,
                     status="queued",
                     stage="script",
                     reference_hash=reference_hash,
                 )
+                _freeze_action_video_plan(job, system_seconds, system_providers)
                 must_actions.add(key)
             else:
                 job = _copy_job_to_pack(old, pack)
@@ -1059,25 +1065,77 @@ def _provider_matches_action(
     return _action_resolution(provider) is not None
 
 
-async def _video_providers(
+async def _resolve_action_video_plan(
     user_id: int,
     *,
     needs_loop_frames: bool,
     duration_seconds: float,
-) -> list[tuple[ProviderConfig, VideoGenProvider]]:
-    """按本次动作需求筛选 `video_gen` 链，保持链序；不点名供应商。"""
+) -> tuple[float, list[tuple[ProviderConfig, VideoGenProvider]]]:
+    """按链序选择不短于设计的最小时长，再冻结支持该时长的后续供应商。"""
+    if (
+        not 1 <= duration_seconds <= ABSOLUTE_MAX_DURATION_SECONDS
+        or abs(duration_seconds - round(duration_seconds)) > 1e-6
+    ):
+        raise VideoPackStateError("动作时长须为 1–15 的整秒数")
+    requested = int(round(duration_seconds))
     async with SESSION_LOCAL() as db:
         chain = await resolve_provider_chain(db, user_id, "video_gen")
-    providers: list[tuple[ProviderConfig, VideoGenProvider]] = []
-    for cfg in chain:
-        provider = build_provider(cfg, VideoGenProvider)
-        if _provider_matches_action(provider, needs_loop_frames=needs_loop_frames, duration_seconds=duration_seconds):
-            providers.append((cfg, provider))
-    if not providers:
-        capability = "首尾帧" if needs_loop_frames else "首帧"
-        seconds = int(round(duration_seconds))
-        raise VideoPackStateError(f"请配置支持{capability}、时长可填 {seconds} 秒的视频供应商")
-    return providers
+    configured = [(config, build_provider(config, VideoGenProvider)) for config in chain]
+    for index, (_config, provider) in enumerate(configured):
+        available = provider.durations if provider.durations is not None else (requested,)
+        seconds = min(
+            (
+                value
+                for value in available
+                if requested <= value <= ABSOLUTE_MAX_DURATION_SECONDS
+                and _provider_matches_action(provider, needs_loop_frames=needs_loop_frames, duration_seconds=value)
+            ),
+            default=None,
+        )
+        if seconds is None:
+            continue
+        providers = [
+            (config, current)
+            for config, current in configured[index:]
+            if _provider_matches_action(current, needs_loop_frames=needs_loop_frames, duration_seconds=seconds)
+        ]
+        return float(seconds), providers
+    capability = "首尾帧" if needs_loop_frames else "首帧"
+    raise VideoPackStateError(f"请配置支持{capability}、720p 级分辨率及 {requested}–15 秒内可用时长的视频模型")
+
+
+def _freeze_action_video_plan(
+    job: CompanionAction,
+    duration_seconds: float,
+    providers: list[tuple[ProviderConfig, VideoGenProvider]],
+) -> None:
+    state = (
+        MediaChainState.model_validate_json(job.generation_state_json)
+        if job.generation_state_json
+        else MediaChainState()
+    )
+    state.providers = [FrozenMediaProvider.from_config(config) for config, _ in providers]
+    job.target_duration_seconds = duration_seconds
+    job.generation_state_json = state.model_dump_json()
+
+
+async def _prepare_action_video_plan(job: CompanionAction) -> None:
+    """脚本付费前固定本次规格，后续步骤沿用同一生成计划。"""
+    if job.generation_state_json and MediaChainState.model_validate_json(job.generation_state_json).providers:
+        return
+    spec = _action_spec(job)
+    seconds, providers = await _resolve_action_video_plan(
+        job.user_id,
+        needs_loop_frames=spec.clip_kind == "loop",
+        duration_seconds=spec.duration_seconds,
+    )
+    _freeze_action_video_plan(job, seconds, providers)
+    await _advance_job(
+        job.id,
+        stage=job.stage,
+        target_duration_seconds=job.target_duration_seconds,
+        generation_state_json=job.generation_state_json,
+    )
 
 
 async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationContext) -> GenerationContext:
@@ -1121,7 +1179,7 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
 
 
 def _action_spec(job: CompanionAction) -> ActionSpec:
-    """系统槽位用固定语义与时长；动态动作按评审时冻结的提案设计。"""
+    """读取原设计意图；实际制作时长由生成计划绑定。"""
     if job.system_slot:
         return ActionSpec(
             action=job.key,
@@ -1150,7 +1208,13 @@ async def _compose_scripts(
 ) -> list[ActionScriptEntry]:
     """按冻结参考与规格为一批动作撰写脚本；条目与 jobs 一一对应。"""
     specs = [
-        _action_spec(job).model_copy(update={"feedback": context.action_feedback.get(job.key, "")}) for job in jobs
+        _action_spec(job).model_copy(
+            update={
+                "duration_seconds": job.target_duration_seconds,
+                "feedback": context.action_feedback.get(job.key, ""),
+            },
+        )
+        for job in jobs
     ]
     script = await compose_action_script(
         pack.user_id,
@@ -1185,6 +1249,8 @@ async def _generate_pack(pack_id: int) -> None:
         if context is None:
             raise VideoPackError("视频包缺少生成上下文，请生成完整新包")
         pending = [job for job in jobs if job.status != "succeeded" and job.status != "failed" and not job.script_json]
+        for job in pending:
+            await _prepare_action_video_plan(job)
         if context.reference_alignment != "ready" or pending:
             # 参考校准与脚本撰写都是付费调用：抠像模型缺失时整包在付费前失败，已有进度留待续跑。
             require_action_matting_model()
@@ -1262,19 +1328,8 @@ async def _run_action_pipeline(
     context: GenerationContext,
 ) -> None:
     """姿态图 → 沿冻结供应商链逐家生成并评分 → 最佳素材定位与复核 → 回写任务行；整包与单动作共用。"""
-    state = (
-        MediaChainState.model_validate_json(job.generation_state_json)
-        if job.generation_state_json
-        else MediaChainState()
-    )
-    if not state.providers:
-        providers = await _video_providers(
-            pack.user_id,
-            needs_loop_frames=entry.clip_kind == "loop",
-            duration_seconds=entry.duration_seconds,
-        )
-        state.providers = [FrozenMediaProvider.from_config(config) for config, _ in providers]
-        await _save_action_state(job, state)
+    await _prepare_action_video_plan(job)
+    state = MediaChainState.model_validate_json(job.generation_state_json or "")
     identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
     if (
         state.phase == "ready"
@@ -1637,6 +1692,16 @@ async def _queue_in_place_redo(
             select(CompanionAction).where(CompanionAction.pack_id == pack.id, CompanionAction.key == action),
         )
     ).scalar_one_or_none()
+    requested_seconds = _SYSTEM_ACTION_SECONDS
+    needs_loop_frames = action in SYSTEM_SLOTS
+    if job is not None and action not in SYSTEM_SLOTS:
+        spec = _action_spec(job)
+        requested_seconds, needs_loop_frames = spec.duration_seconds, spec.clip_kind == "loop"
+    seconds, providers = await _resolve_action_video_plan(
+        pack.user_id,
+        needs_loop_frames=needs_loop_frames,
+        duration_seconds=requested_seconds,
+    )
     if job is None:
         job = CompanionAction(
             user_id=pack.user_id,
@@ -1657,6 +1722,7 @@ async def _queue_in_place_redo(
         job.error = None
         clear_action_attempt(job)
         job.metadata_revision += 1
+    _freeze_action_video_plan(job, seconds, providers)
     context = _load_generation_context(pack) if feedback.strip() else None
     if context is not None:
         context.action_feedback[action] = feedback.strip()[:1000]
@@ -1738,6 +1804,7 @@ async def _generate_one_dynamic(
     context: GenerationContext,
 ) -> None:
     """复用已保存脚本，缺失时按冻结规格撰写并落库，再交给素材管线。"""
+    await _prepare_action_video_plan(job)
     if job.script_json:
         entry = ActionScriptEntry.model_validate_json(job.script_json)
     else:
@@ -1881,6 +1948,11 @@ async def ensure_system_action(
         if job is None or job.status == "queued" or (job.status == "processing" and pack.id not in _GEN_INFLIGHT):
             require_action_matting_model()
             if job is None:
+                seconds, providers = await _resolve_action_video_plan(
+                    user_id,
+                    needs_loop_frames=True,
+                    duration_seconds=_SYSTEM_ACTION_SECONDS,
+                )
                 job = CompanionAction(
                     user_id=user_id,
                     pack_id=pack.id,
@@ -1891,9 +1963,10 @@ async def ensure_system_action(
                     kind="loop",
                     status="queued",
                     stage="design",
-                    target_duration_seconds=_SYSTEM_ACTION_SECONDS,
+                    target_duration_seconds=seconds,
                     reference_hash=pack.reference_hash,
                 )
+                _freeze_action_video_plan(job, seconds, providers)
                 db.add(job)
                 await db.flush()
             kick_action_id = job.id

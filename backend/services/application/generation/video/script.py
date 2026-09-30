@@ -3,7 +3,7 @@
 import json
 
 from components import get_logger, parse_llm_json
-from modules.companion import CharacterCardSnapshot, PeekGeometry
+from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS, CharacterCardSnapshot, PeekGeometry
 from prompts.generation import (
     VIDEO_ACTION_POSE_TEMPLATE,
     VIDEO_ACTION_SCRIPT_INSTRUCTIONS,
@@ -16,7 +16,6 @@ from prompts.generation import (
 )
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
-from services.domains.actions import max_duration_seconds
 from services.domains.companion import (
     render_character_identity,
     render_character_profile,
@@ -61,10 +60,8 @@ class VideoScriptError(RuntimeError):
 
 
 def _validate_duration(value: float) -> float:
-    """时长上限来自后台配置（热更新生效），不能固化为模块常量。"""
-    limit = max_duration_seconds()
-    if not 0 < value <= limit:
-        raise ValueError(f"时长须在 (0, {limit:g}] 秒内")
+    if not 0 < value <= ABSOLUTE_MAX_DURATION_SECONDS:
+        raise ValueError(f"时长须在 (0, {ABSOLUTE_MAX_DURATION_SECONDS:g}] 秒内")
     return value
 
 

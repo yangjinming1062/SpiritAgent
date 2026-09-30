@@ -11,6 +11,7 @@ from numpy.typing import NDArray
 from PIL import Image
 
 from .ffmpeg import VideoProcessError, _binary, _run, alpha_input_args, probe_video, run_ffmpeg
+from .limits import MAX_ACTION_SOURCE_SECONDS
 
 Array = NDArray[np.float32]
 
@@ -64,8 +65,10 @@ class ForegroundMatte:
 def matte_video(src: Path, dst: Path) -> None:
     """保留有效原生 alpha，否则逐帧 ISNet 抠像；输出 FFV1/BGRA 中间片段。"""
     probe = probe_video(src)
-    if probe.duration_seconds > 12 or probe.width * probe.height > 3840 * 2160:
-        raise VideoProcessError("请提供不超过 12 秒的单动作视频")
+    if probe.duration_seconds > MAX_ACTION_SOURCE_SECONDS:
+        raise VideoProcessError("动作素材超出 15 秒及允许的编码尾差")
+    if probe.width * probe.height > 3840 * 2160:
+        raise VideoProcessError("动作素材分辨率超出处理上限")
     dst.parent.mkdir(parents=True, exist_ok=True)
     native_alpha = False
     if probe.has_alpha:

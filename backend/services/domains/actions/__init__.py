@@ -10,7 +10,6 @@ from .policy import (
     get_action_accept_lock,
     get_daily_budget_status,
     is_expression_action,
-    max_duration_seconds,
 )
 from .publishing import CatalogValidationError, build_catalog_manifest, publish_action_catalog
 from .repository import (
@@ -50,7 +49,6 @@ __all__ = [
     "is_expression_action",
     "list_pack_actions",
     "make_semantic_fingerprint",
-    "max_duration_seconds",
     "publish_action_catalog",
     "record_play_result",
     "fulfill_deferred_play_intents",

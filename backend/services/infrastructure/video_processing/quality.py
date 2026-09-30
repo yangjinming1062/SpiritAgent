@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS
 
 from .ffmpeg import VideoProbe, VideoProcessError, _binary, _run, alpha_input_args, probe_video
+from .limits import SOURCE_DURATION_TOLERANCE_SECONDS
 
 
 @dataclass(frozen=True)
@@ -66,12 +68,12 @@ def select_loop(src: Path, *, max_seconds: float) -> ClipWindow:
 
     max_seconds 向上取整到帧边界，避免浮点时长（如 1.5s）截断合法候选区间。
     """
-    if not 1 <= max_seconds <= 12:
+    if not 1 <= max_seconds <= ABSOLUTE_MAX_DURATION_SECONDS:
         raise VideoProcessError("循环时长上限无效")
     max_frames = int(np.ceil(max_seconds * 24))
     probe = probe_video(src)
-    if probe.duration_seconds > 12:
-        raise VideoProcessError("动作素材过长")
+    if probe.duration_seconds > max_seconds + SOURCE_DURATION_TOLERANCE_SECONDS:
+        raise VideoProcessError("动作素材超出设计时长，不予发布")
     frames = _decode_alpha_frames(src, probe)
     alpha = frames[..., 3]
     _check_common_gates(alpha)
@@ -102,8 +104,10 @@ def select_full_clip(src: Path, *, max_seconds: float) -> ClipWindow:
 
     超过设计上限的素材截到上限（仅允许小范围编码尾差修正量）；实际时长供回写。
     """
+    if not 1 <= max_seconds <= ABSOLUTE_MAX_DURATION_SECONDS:
+        raise VideoProcessError("动作时长上限无效")
     probe = probe_video(src)
-    if probe.duration_seconds > max_seconds + 1.5:
+    if probe.duration_seconds > max_seconds + SOURCE_DURATION_TOLERANCE_SECONDS:
         raise VideoProcessError("动作素材超出设计时长，不予发布")
     frames = _decode_alpha_frames(src, probe)
     _check_common_gates(frames[..., 3])

@@ -5,7 +5,7 @@ from datetime import UTC, date, datetime, time, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import SETTINGS
-from modules.companion import ActionBudgetStatus, ActionProposal, CompanionAction
+from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS, ActionBudgetStatus, ActionProposal, CompanionAction
 from modules.settings import get_user_setting
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,10 +27,6 @@ class ActionPolicyError(RuntimeError):
 
 def get_action_accept_lock(user_id: int) -> asyncio.Lock:
     return _ACCEPT_LOCKS.setdefault(user_id, asyncio.Lock())
-
-
-def max_duration_seconds() -> float:
-    return float(SETTINGS.action_max_duration_seconds)
 
 
 def daily_create_limit(source: str) -> int:
@@ -94,8 +90,8 @@ async def check_can_accept(
     semantic_fingerprint: str,
 ) -> None:
     """受理门禁；不满足时抛 ActionPolicyError。"""
-    if duration_seconds > max_duration_seconds():
-        raise ActionPolicyError(f"单动作最长 {max_duration_seconds():g} 秒")
+    if not 1 <= duration_seconds <= ABSOLUTE_MAX_DURATION_SECONDS:
+        raise ActionPolicyError(f"动作时长须在 [1, {ABSOLUTE_MAX_DURATION_SECONDS:g}] 秒内")
     # 供应商只接受整秒时长；受理即拦，避免评审与姿态图费用打水漂。
     if abs(duration_seconds - round(duration_seconds)) > 1e-6:
         raise ActionPolicyError("动作时长需为整秒")
