@@ -164,7 +164,7 @@ def db_message_to_response_items(msg: Message) -> list[dict[str, Any]]:
         content_val = parsed
 
     if msg.role == "system":
-        return [{"role": "user", "content": [{"type": "input_text", "text": content_val}]}]
+        return [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": content_val}]}]
 
     if (
         msg.role == "assistant"

@@ -59,10 +59,11 @@ def message_to_response_items(message: dict[str, Any]) -> list[dict[str, Any]]:
     normalized = [normalized for part in parts if (normalized := _input_part(part)) is not None]
     if role == "assistant":
         # Earlier assistant text is still request input; output_text belongs to response items.
+        # type: message is required — llama.cpp /v1/responses rejects role-only assistant EasyInput.
         input_text = [part for part in normalized if part.get("type") == "input_text"]
-        return [{"role": "assistant", "content": input_text}] if input_text else []
+        return [{"type": "message", "role": "assistant", "content": input_text}] if input_text else []
     if role == "user":
-        return [{"role": "user", "content": normalized}] if normalized else []
+        return [{"type": "message", "role": "user", "content": normalized}] if normalized else []
     return []
 
 
