@@ -8,6 +8,7 @@ import {
   pushMediaMessage,
   pushProactiveMessage,
   rememberPendingMessage,
+  setCompanionSessionId,
   showMediaHint
 } from '@/modules/conversation'
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
@@ -35,6 +36,11 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       const text = bubbles ? (bubbles.filter(b => 'text' in b).at(-1)?.text ?? '') : (payload?.text ?? '')
 
       const displayText = chatDisplayText(text)
+
+      // 此事件由服务端写入唯一陪伴主会话；会话列表尚未加载时也能确定提醒归属。
+      if (payload?.session_id) {
+        setCompanionSessionId(payload.session_id)
+      }
 
       if (payload?.session_id && displayText) {
         rememberPendingMessage(payload.session_id, displayText)

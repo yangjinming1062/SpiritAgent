@@ -1,7 +1,14 @@
 import { useStore } from '@nanostores/react'
 import { useEffect, useRef } from 'react'
 
-import { $spatialPos, $spatialScale, $viewport, computeOverlayAnchorBesideSprite } from '@/modules/character'
+import {
+  $spatialPeek,
+  $spatialPos,
+  $spatialScale,
+  $spriteContentRect,
+  $viewport,
+  computeOverlayAnchorBesideSprite
+} from '@/modules/character'
 import {
   $chatSessionId,
   $companionSessionId,
@@ -47,6 +54,8 @@ function WhisperOverlayContent(): React.JSX.Element {
   const pos = useStore($spatialPos)
   const scale = useStore($spatialScale)
   const viewport = useStore($viewport)
+  const contentRect = useStore($spriteContentRect)
+  const peek = useStore($spatialPeek)
   const pending = useStore(pendingMessages.$atom)
   const baseOffset = useStore($whisperOffset) ?? { dx: 0, dy: 0 }
 
@@ -79,7 +88,9 @@ function WhisperOverlayContent(): React.JSX.Element {
   const anchor = computeOverlayAnchorBesideSprite({
     gap: WHISPER_GAP,
     overlayH: WHISPER_HEIGHT,
-    overlayMaxW: WHISPER_WIDTH,
+    overlayW: WHISPER_WIDTH,
+    anchorRect: contentRect,
+    peek,
     pos,
     scale,
     verticalRatio: 0.05,

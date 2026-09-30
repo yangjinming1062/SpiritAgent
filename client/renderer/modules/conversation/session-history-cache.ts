@@ -1,21 +1,11 @@
 import type { SessionHistorySnapshot } from '@ipc/contracts'
-import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
-import {
-  currentClearEpoch,
-  persistString,
-  registerCompanionStorageKey,
-  registerStorageClearHandler,
-  storedString
-} from '@/shared/lib/storage'
+import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 import type { SessionMessage, SessionRuntimeInfo } from '@/shared/types/spiritagent'
 
-const COMPANION_SESSION_ID_KEY = registerCompanionStorageKey('da.companion.companionSessionId')
 const PERSIST_DEBOUNCE_MS = 800
-
-export const $persistedCompanionSessionId = atom<null | string>(storedString(COMPANION_SESSION_ID_KEY))
 
 interface HistoryCacheState {
   currentSeq: number
@@ -73,11 +63,6 @@ function toSnapshot(state: HistoryCacheState): SessionHistorySnapshot {
 
 function cloneMessages(messages: unknown[]): SessionMessage[] {
   return messages.map(m => ({ ...(m as SessionMessage) }))
-}
-
-export function setPersistedCompanionSessionId(id: null | string): void {
-  $persistedCompanionSessionId.set(id)
-  persistString(COMPANION_SESSION_ID_KEY, id)
 }
 
 function getMemoryHistory(sessionId: string): null | HistoryCacheState {
@@ -370,7 +355,6 @@ function clearSessionHistoryMemory(): void {
   }
 
   persistTimers.clear()
-  setPersistedCompanionSessionId(null)
 }
 
 /** 旧消息发生原地更新：保留展示与增量基底，下次同步强制取回全量。 */

@@ -15,8 +15,8 @@ import {
   $spatialScale,
   $spriteCanvasRect,
   $spriteContentRect,
+  $spriteHeadRect,
   $viewport,
-  type ActionClipEntry,
   type ActionHitmask,
   type ActionPlayInstance,
   baseSpriteSize,
@@ -220,13 +220,15 @@ interface MountedClip {
 
 interface DisplayedClip {
   bounds: NormalizedRect
+  headBounds: NormalizedRect | null
   height: number
   width: number
 }
 
 const FULL_CONTENT_RECT: NormalizedRect = [0, 0, 1, 1]
+const HEAD_HEIGHT_RATIO = 0.15
 
-function hitmaskContentRect(hitmask: ActionHitmask | null): NormalizedRect | null {
+function hitmaskContentRect(hitmask: ActionHitmask | null, region = FULL_CONTENT_RECT): NormalizedRect | null {
   if (!hitmask) {
     return null
   }
@@ -238,8 +240,8 @@ function hitmaskContentRect(hitmask: ActionHitmask | null): NormalizedRect | nul
   let bottom = 0
 
   for (const frame of hitmask.frames) {
-    for (let y = 0; y < gridHeight; y += 1) {
-      for (let x = 0; x < gridWidth; x += 1) {
+    for (let y = Math.floor(region[1] * gridHeight); y < Math.ceil(region[3] * gridHeight); y += 1) {
+      for (let x = Math.floor(region[0] * gridWidth); x < Math.ceil(region[2] * gridWidth); x += 1) {
         if (((frame[y] ?? 0) & (1 << x)) !== 0) {
           left = Math.min(left, x)
           top = Math.min(top, y)
@@ -299,7 +301,7 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
   const videos = useRef<[HTMLVideoElement | null, HTMLVideoElement | null]>([null, null])
   const front = useRef<number | null>(null)
   const [visible, setVisible] = useState<number | null>(null)
-  const [visibleClip, setVisibleClip] = useState<ActionClipEntry | null>(null)
+  const [visibleGeometry, setVisibleGeometry] = useState<DisplayedClip | null>(null)
   const mounted = useRef<MountedClip | null>(null)
   const peekExitGeneration = useRef<number | null>(null)
   const hitmaskRef = useRef<ActionHitmask | null>(null)
@@ -474,11 +476,26 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
         const showFirstFrame = (): void => {
           const previous = front.current
           front.current = slot
-          displayedClips.current[slot] = {
-            bounds: clip.content_rect ?? hitmaskContentRect(hitmask) ?? FULL_CONTENT_RECT,
+          const silhouette = hitmaskContentRect(hitmask)
+          const bounds = clip.content_rect ?? silhouette ?? FULL_CONTENT_RECT
+          const headRegion = silhouette ?? bounds
+
+          // 取轮廓上部的 alpha 范围，避免裙摆和张开的手臂把头边气泡推远；整段共用以免逐帧抖动。
+          const headBounds = hitmaskContentRect(hitmask, [
+            headRegion[0],
+            headRegion[1],
+            headRegion[2],
+            headRegion[1] + (headRegion[3] - headRegion[1]) * HEAD_HEIGHT_RATIO
+          ])
+
+          const geometry = {
+            bounds,
+            headBounds,
             height: el.videoHeight,
             width: el.videoWidth
           }
+
+          displayedClips.current[slot] = geometry
           mounted.current = {
             key: preparationForClip ? stableMountKey : mountKey,
             playId: instance?.playId ?? null,
@@ -488,7 +505,7 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
           // 遮挡与播放器同一帧提交，不把淡出的完整身体套进探身蒙版。
           flushSync(() => {
             setVisible(slot)
-            setVisibleClip(clip)
+            setVisibleGeometry(geometry)
           })
 
           if (instance !== null) {
@@ -647,29 +664,31 @@ export function VideoStage({ contentAlign }: { contentAlign?: 'left' | 'right' }
   useEffect(() => {
     if (!canvas || !canvasRect) {
       $spriteContentRect.set(null)
+      $spriteHeadRect.set(null)
 
       return
     }
 
-    // 将素材轮廓映射到舞台；内容范围缺失或无效时按整画布处理。
+    // 轮廓与头部锚点共用视频等比适配后的舞台坐标。
     const drawW = canvasRect.right - canvasRect.left
     const drawH = canvasRect.bottom - canvasRect.top
-    const bounds: readonly [number, number, number, number] = visibleClip?.content_rect ?? [0, 0, 1, 1]
 
-    const contentRect = {
+    const toStageRect = (bounds: NormalizedRect) => ({
       left: canvasRect.left + bounds[0] * drawW,
       top: canvasRect.top + bounds[1] * drawH,
       right: canvasRect.left + bounds[2] * drawW,
       bottom: canvasRect.top + bounds[3] * drawH
-    }
+    })
 
-    $spriteContentRect.set(contentRect)
-  }, [canvas, canvasRect, visibleClip])
+    $spriteContentRect.set(toStageRect(visibleGeometry?.bounds ?? FULL_CONTENT_RECT))
+    $spriteHeadRect.set(visibleGeometry?.headBounds ? toStageRect(visibleGeometry.headBounds) : null)
+  }, [canvas, canvasRect, visibleGeometry])
 
   useEffect(
     () => () => {
       $spriteCanvasRect.set(null)
       $spriteContentRect.set(null)
+      $spriteHeadRect.set(null)
     },
     []
   )

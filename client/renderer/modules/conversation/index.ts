@@ -34,6 +34,7 @@ export {
   pushStatusPill,
   setAssistantTool,
   setChatSession,
+  setCompanionSessionId,
   setProactiveBubble,
   setSessionContextUsage,
   setTurnHadBubbleBreak,

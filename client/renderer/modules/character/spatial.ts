@@ -65,8 +65,16 @@ export type Locomotion = 'still' | 'walk' | 'fly' | 'drag'
 
 const $spatialLocale = atom<SpatialLocale>('home')
 
+export interface SpriteRect {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
 // 舞台内归一化内容范围；未上报时按整盒处理。初始 home 会读取它，须先声明。
-export const $spriteContentRect = atom<{ left: number; top: number; right: number; bottom: number } | null>(null)
+export const $spriteContentRect = atom<SpriteRect | null>(null)
+export const $spriteHeadRect = atom<SpriteRect | null>(null)
 
 export const $defaultScale = atom<number>(readDefaultScale())
 export const $spatialPos = atom<{ x: number; y: number }>(getHomePosition())
@@ -221,47 +229,62 @@ export function computePerchPlacement(
 export function computeOverlayAnchorBesideSprite(opts: {
   pos: { x: number; y: number }
   scale: number
+  anchorRect: SpriteRect | null
+  peek: SpatialPeek | null
   gap: number
-  overlayMaxW: number
+  overlayW: number
   overlayH?: number
   vw: number
   vh: number
   verticalRatio?: number
-}): { left: number; top: number } {
-  const { pos, scale, gap, overlayMaxW, overlayH = 0, vw, vh, verticalRatio = 0 } = opts
-  const content = contentBox(scale)
-  const peek = $spatialPeek.get()
-  let visibleLeft = pos.x + content.left
-  let visibleRight = pos.x + content.right
-  let visibleTop = pos.y + content.top
+}): { left: number; top: number; side: 'left' | 'right' } {
+  const { pos, scale, anchorRect, peek, gap, overlayW, overlayH = 0, vw, vh, verticalRatio = 0 } = opts
+  const base = baseSpriteSize(vh)
+  const width = base.width * scale
+  const height = base.height * scale
+  let visibleLeft = pos.x + (anchorRect?.left ?? 0) * width
+  let visibleRight = pos.x + (anchorRect?.right ?? 1) * width
+  let visibleTop = pos.y + (anchorRect?.top ?? 0) * height
+  let visibleBottom = pos.y + (anchorRect?.bottom ?? 1) * height
+
+  if (peek) {
+    const [left, top, right, bottom] = peek.focusRect
+    visibleLeft = Math.max(visibleLeft, pos.x + left * width)
+    visibleRight = Math.min(visibleRight, pos.x + right * width)
+    visibleTop = Math.max(visibleTop, pos.y + top * height)
+    visibleBottom = Math.min(visibleBottom, pos.y + bottom * height)
+
+    if (visibleLeft >= visibleRight || visibleTop >= visibleBottom) {
+      visibleLeft = pos.x + left * width
+      visibleRight = pos.x + right * width
+      visibleTop = pos.y + top * height
+      visibleBottom = pos.y + bottom * height
+    }
+  }
 
   if (peek?.mode === 'screen') {
-    const cut = pos.x + peek.cutX * getBaseSpriteWidth() * scale
-    visibleTop = pos.y + peek.focusRect[1] * getBaseSpriteHeight() * scale
+    const cut = pos.x + peek.cutX * width
 
     if (peek.side === 'left') {
       visibleRight = Math.min(visibleRight, cut)
     } else {
       visibleLeft = Math.max(visibleLeft, cut)
     }
-  } else if (peek?.mode === 'window') {
-    visibleLeft = pos.x + peek.focusRect[0] * getBaseSpriteWidth() * scale
-    visibleRight = pos.x + peek.focusRect[2] * getBaseSpriteWidth() * scale
-    visibleTop = pos.y + peek.focusRect[1] * getBaseSpriteHeight() * scale
   }
 
-  const fitsRight = visibleRight + gap + overlayMaxW <= vw
+  const rightSpace = vw - visibleRight - gap
+  const leftSpace = visibleLeft - gap
+  const side = rightSpace >= overlayW || rightSpace >= leftSpace ? 'right' : 'left'
 
-  const left = fitsRight ? visibleRight + gap : Math.max(0, visibleLeft - gap - overlayMaxW)
-
-  const top = Math.max(
+  const left = clamp(
+    side === 'right' ? visibleRight + gap : visibleLeft - gap - overlayW,
     0,
-    overlayH > 0
-      ? Math.min(vh - overlayH, visibleTop + getBaseSpriteHeight() * scale * verticalRatio)
-      : visibleTop + getBaseSpriteHeight() * scale * verticalRatio
+    Math.max(0, vw - overlayW)
   )
 
-  return { left, top }
+  const top = clamp(visibleTop + (visibleBottom - visibleTop) * verticalRatio, 0, Math.max(0, vh - overlayH))
+
+  return { left, top, side }
 }
 
 function easeInOut(t: number): number {

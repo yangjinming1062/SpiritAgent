@@ -25,16 +25,15 @@ import {
   hydrateSessionSettings,
   resetChatMessages,
   resetSessionContextUsage,
-  setChatSession
+  setChatSession,
+  setCompanionSessionId
 } from './chat-store'
 import { sessionDisplayTitle } from './preset-labels'
 import {
-  $persistedCompanionSessionId,
   forgetSessionHistory,
   loadLocalSessionHistory,
   rememberFullHistory,
   SessionHistoryChangedError,
-  setPersistedCompanionSessionId,
   syncSessionHistory
 } from './session-history-cache'
 import { removeVoicePlayback } from './voice-playback'
@@ -147,10 +146,10 @@ export async function fetchSessions(): Promise<void> {
       const activeId = $chatSessionId.get()
       const active = sessions.some(s => s.id === activeId) ? undefined : $sessions.get().find(s => s.id === activeId)
       $sessions.set(active ? [...sessions, active] : sessions)
-      const companion = sessions.find(isCompanionSession)
+      const companion = sessions.find(session => session.kind === 'special' && isCompanionSession(session))
 
       if (companion) {
-        $companionSessionId.set(companion.id)
+        setCompanionSessionId(companion.id)
       }
     }
   } catch (err) {
@@ -605,7 +604,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
   const load = (async () => {
     try {
       // 已知陪伴会话 id 时走本地秒开 + 增量；未知（首装/清缓存）才 get_main 全量。
-      const knownCompanionId = $companionSessionId.get() || $persistedCompanionSessionId.get()
+      const knownCompanionId = $companionSessionId.get()
 
       if (knownCompanionId) {
         const local = await loadLocalSessionHistory(knownCompanionId)
@@ -615,9 +614,6 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
         }
 
         if (local) {
-          $companionSessionId.set(knownCompanionId)
-          setPersistedCompanionSessionId(knownCompanionId)
-
           if (isLatest()) {
             setChatSession(knownCompanionId)
             hydrateChatMessages(local.messages, local.info)
@@ -674,8 +670,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
         return null
       }
 
-      $companionSessionId.set(res.session_id)
-      setPersistedCompanionSessionId(res.session_id)
+      setCompanionSessionId(res.session_id)
       rememberFullHistory(res.session_id, res.messages || [], {
         currentSeq: res.current_seq,
         info: res.info,
@@ -727,7 +722,6 @@ registerStorageClearHandler(() => {
   presetsToken++
   navigationToken++
   openMainPromise = null
-  $companionSessionId.set(null)
   $sessions.set([])
   $sessionsLoading.set(false)
   $sessionSort.set('recent')

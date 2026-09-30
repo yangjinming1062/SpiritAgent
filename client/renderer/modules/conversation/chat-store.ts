@@ -83,6 +83,7 @@ function companionBubbleBody(bubble: CompanionBubble, messageId?: number): Parti
 
 const DEFAULT_CONTEXT_LIMIT = 1_000_000
 const CHAT_SESSION_ID_KEY = registerCompanionStorageKey('da.companion.chatSessionId')
+const COMPANION_SESSION_ID_KEY = registerCompanionStorageKey('da.companion.companionSessionId')
 const FLUSH_DEBOUNCE_MS = 4000
 
 let idCounter = 0
@@ -101,7 +102,13 @@ export const $lastAssistantStreaming = atom<boolean>(false)
 export const $chatStreamingTick = atom<number>(0)
 export const $chatSessionId = atom<string | null>(storedString(CHAT_SESSION_ID_KEY))
 // 放在 chat-store：本模块要读它，而 session-list-store 已依赖 chat-store，反向导入会成环。
-export const $companionSessionId = atom<string | null>(null)
+export const $companionSessionId = atom<string | null>(storedString(COMPANION_SESSION_ID_KEY))
+
+export function setCompanionSessionId(id: string): void {
+  $companionSessionId.set(id)
+  persistString(COMPANION_SESSION_ID_KEY, id)
+}
+
 // IM 守卫与语音入口的权威 kind 源，由 hydrate 注入服务端 info.kind（special / standard / im）。
 export type ChatSessionKind = 'im' | 'special' | 'standard'
 
@@ -738,6 +745,7 @@ export function clearPendingPrompts(): void {
 registerStorageClearHandler(() => {
   conversationVoiceSink().cancel()
   $chatSessionId.set(null)
+  $companionSessionId.set(null)
   $chatMessageList.set([])
   $chatMessageBodies.set({})
   $lastAssistantStreaming.set(false)

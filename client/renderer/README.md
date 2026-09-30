@@ -113,7 +113,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 系统预设与固定预设会话（`kind=special`）的显示名、预设说明按界面语言取字典 `presets`，经 [preset-labels.ts](modules/conversation/preset-labels.ts) 显示；后端目录只有中文，中文字典须与其同步，未知预设回落目录值。
 - 会话只读状态直接消费历史水合的 `info.kind`；陪伴归属由 `system_preset_id` 判定。
 - 斜杠命令元数据权威在服务端注册表，本地副本只服务自动补全与确认弹窗，dispatch 仍以服务端为准。
-- `$companionSessionId` 放在 chat-store，避免 session-list-store 反向导入成环。
+- `$companionSessionId` 在 chat-store 统一持有和持久化，冷启动直接恢复；主会话加载、列表与 `companion.message` 校准同一份归属，换号时清空。
 - 工作台确认目标不是陪伴后才挂载对话面板。
 - 快照、增量与重放按 [Client](../README.md#资产与历史缓存)处理；`syncSessionHistory` 的 `last_seq` 由调用方以活动聊天列表水位传入，不用缓存 `currentSeq`。
 
@@ -158,6 +158,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 视频层消费 manifest 与透明 WebM；片段字节经 `apiAsset`（`preferCache`）走主进程磁盘缓存，双 video 待新帧就绪后替换旧画面。
 - 完整入口的侧边视频按整段动作的内容轮廓适配侧栏宽高并贴近内容面板，桌面精灵沿用自身的舞台比例；缺少 `content_rect` 时的回退与遮罩格式见[播放契约](../../docs/PROTOCOL.md#动作目录与播放)，实现见 [VideoStage.tsx](modules/character/rendering/video/VideoStage.tsx)。
 - 命中按实际播放时间查询逐帧 alpha 遮罩，并扣除等比显示留白；侧边缺少遮罩时只在已知内容边界内命中。
+- 桌面气泡用 alpha 遮罩上部轮廓作为头部锚点，缺少遮罩时回落内容边界；轮廓按整段素材合并以免逐帧抖动，气泡和轻语都订阅素材轮廓变化，按实际宽高避让屏幕边缘。
 - 移动与拖拽由容器位移表达，播放不驱动嘴部或视线。
 - `presentation/render-resolver` 按动作目录和生成状态选择 video 或 [fallback](modules/character/rendering/fallback/)，并提供对应的本地化状态；包未就绪或加载失败不空挂视频元素，蛋上区分准备中、生成中、失败与尚未就绪。
 - 渲染层不得经生成 store 触发付费；缺失动作由显式服务流程统一鉴权、去重、记账。

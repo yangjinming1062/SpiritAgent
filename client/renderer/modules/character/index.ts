@@ -145,6 +145,7 @@ export {
   $spatialScale,
   $spriteCanvasRect,
   $spriteContentRect,
+  $spriteHeadRect,
   $viewport,
   baseSpriteSize,
   cancelMovement,
