@@ -34,6 +34,8 @@ uv run --no-project --python 3.13 python scripts/check_imports.py --fix
 
 不带 `--strict-imports` 只输出诊断且退出码为 0；`--fix` 修改文件，不能作为完整门禁。检查后查看差异并重跑严格模式。
 
+默认扫描 Backend / Runner 源码，跳过模块根目录的 `build/`、`dist/` 及 `.venv`、`__pycache__`，避免旧构建副本与当前源码的导出表混用；显式传入文件仍逐个检查。wheel 的导入面使用下文[构建安装器](#构建安装器)中的 `check_runner_facade.py` 验证。
+
 ## Backend 分层检查
 
 ```bash

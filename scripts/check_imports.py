@@ -266,7 +266,14 @@ def main(argv: list[str]) -> int:
         for root in SCAN_ROOTS:
             if not root.is_dir():
                 continue
-            targets.extend(p for p in root.rglob("*.py") if ".venv" not in p.parts and "__pycache__" not in p.parts)
+            # 构建副本有自己的导出表，不能与当前源码的 facade 混用；产物导入面由 wheel 门禁检查。
+            for directory, subdirs, filenames in root.walk():
+                subdirs[:] = [
+                    name
+                    for name in subdirs
+                    if name not in {".venv", "__pycache__"} and not (directory == root and name in {"build", "dist"})
+                ]
+                targets.extend(directory / name for name in sorted(filenames) if name.endswith(".py"))
 
     if fix:
         fixed_count = 0
