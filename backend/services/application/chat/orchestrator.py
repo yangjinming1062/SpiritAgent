@@ -222,7 +222,8 @@ async def run_chat_turn(
                         "message_id": checkpoint.id,
                     },
                 )
-        current_context = truncate_responses_context(compressed_context)
+        # 本轮输入按窗口的四分之一（字符数取 token 数，对中文偏保守）放宽，避免超长粘贴被历史条目的上限截断。
+        current_context = truncate_responses_context(compressed_context, current_max_chars=inputs.ctx_length // 4)
         # 视频内联在截断之后，只处理幸存者（每请求上限 2 个）；expected_session_id 防 stale 行/跨会话 URL 串台，非法形态降级为 [video]。
         current_context["input"] = await inline_video_parts(current_context["input"], expected_session_id=str(conv.id))
 

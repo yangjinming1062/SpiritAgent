@@ -153,13 +153,22 @@ def _is_user_anchor(item: dict[str, Any]) -> bool:
     return True
 
 
+def _trailing_user_start(items: list[dict[str, Any]]) -> int:
+    """末尾连续用户消息（本轮用户输入与运行时资料）的起点；它们是本轮任务，不适用历史条目的字符上限。"""
+    start = len(items)
+    while start > 0 and items[start - 1].get("role") == "user":
+        start -= 1
+    return start
+
+
 def truncate_responses_context(
     context: dict[str, Any],
     max_recent_items: int = 40,
     normalize_older_than: int = 10,
     max_chars_per_item: int = 15000,
+    current_max_chars: int = 0,
 ) -> dict[str, Any]:
-    """deterministic Responses input-window fallback; instructions are never dropped."""
+    """deterministic Responses input-window fallback; instructions are never dropped。``current_max_chars`` 是本轮用户输入的字符上限（不低于历史条目上限），由调用方按上下文窗口给出。"""
     items = context["input"]
     keep_start = max(0, len(items) - max_recent_items)
     call_positions = {
@@ -176,11 +185,13 @@ def truncate_responses_context(
             keep_start = min(keep_start, call_positions.get(item.get("call_id"), index))
 
     tail = items[keep_start:]
+    current_start = _trailing_user_start(items)
+    current_chars = max(current_max_chars, max_chars_per_item)
     kept = [
         _normalize_older_response_item(
             item,
             replace_images=index < len(tail) - normalize_older_than,
-            max_chars=max_chars_per_item,
+            max_chars=current_chars if keep_start + index >= current_start else max_chars_per_item,
         )
         for index, item in enumerate(tail)
     ]
