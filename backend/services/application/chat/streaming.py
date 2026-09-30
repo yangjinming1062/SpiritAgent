@@ -16,9 +16,11 @@ from prompts.chat import (
     COMPANION_REPLY_CLOSING_GUIDANCES,
     COMPANION_REPLY_GUIDANCES,
     COMPANION_REPLY_REPAIR_GUIDANCES,
+    COMPANION_REPLY_SCHEMA_GUIDANCES,
     COMPANION_REPLY_TOOL_GUIDANCES,
     COMPANION_TEXT_REPLY_GUIDANCES,
     COMPANION_VOICE_REPLY_GUIDANCES,
+    FINAL_REPLY_RETRY_GUIDANCES,
 )
 from pydantic import ValidationError
 
@@ -36,7 +38,12 @@ from services.infrastructure.llm import (
 
 from .bubble import BubbleEvent, BubbleSplitter
 from .chat_emitter import Emitter
-from .reply_delivery import companion_reply_schema, parse_companion_reply
+from .reply_delivery import (
+    companion_reply_schema,
+    fallback_companion_voice_reply,
+    normalize_companion_reply_content,
+    parse_companion_reply,
+)
 from .system_prompt import refresh_volatile_header_in_prompt
 
 logger = get_logger(__name__)
@@ -77,14 +84,14 @@ class _LLMTurnResult:
     reply: CompanionReply | None = None
 
 
-async def _emit_llm_error(emitter: Emitter, exc: LLMRuntimeError) -> None:
+async def _emit_llm_error(emitter: Emitter, exc: LLMRuntimeError, *, retry_message_id: int | None = None) -> None:
     """把 LLM 错误转为面向用户的 error 帧；attachment_fetch_failed 给出简短说明，避免暴露内部细节。"""
     message = (
         "The LLM provider couldn't fetch the media file attached to this turn. The file may have expired or the URL may not be publicly accessible. Try re-uploading the file."
         if exc.classified.reason == FailoverReason.attachment_fetch_failed
         else f"LLM call failed: {exc.classified.reason.value} — {exc.classified.message}"
     )
-    await emitter.send_json({"type": "error", "message": message})
+    await emitter.send_json({"type": "error", "message": message, "retry_message_id": retry_message_id})
 
 
 def _assign_tool_call_ids(tool_calls_list: list[dict]) -> None:
@@ -151,6 +158,8 @@ async def _generate_llm_response(
     allow_silence: bool,
     reply_format_error: _InvalidCompanionReplyError | None,
     media_turn: MediaTurnState,
+    final_reply_only: bool = False,
+    allow_voice_fallback: bool = False,
 ) -> _LLMTurnResult:
     """单次 LLM 调用与正文交付；流式首事件或完整响应到达时触发回退哨兵，工具轮正文只在 stream 模式实时显示。``reply_preference`` 非空即陪伴终端回复：非流式取完整数组并按气泡协议校验。"""
     resolved_effort = resolve_provider_reasoning_effort(reasoning_effort, provider.REASONING_EFFORTS)
@@ -160,7 +169,10 @@ async def _generate_llm_response(
         user_local_tz=user_local_tz,
         lang=lang,
     )
-    request_input = context["input"]
+    final_only = final_reply_only or reply_format_error is not None
+    request_input = _reply_repair_history(context["input"]) if final_only else context["input"]
+    if final_reply_only and reply_format_error is None:
+        instructions += resolve_prompt_text(FINAL_REPLY_RETRY_GUIDANCES, lang)
     if reply_preference is not None:
         delivery_guidance = resolve_prompt_text(
             COMPANION_VOICE_REPLY_GUIDANCES if speech_config else COMPANION_TEXT_REPLY_GUIDANCES,
@@ -191,30 +203,33 @@ async def _generate_llm_response(
                 },
                 ensure_ascii=False,
             )
+        schema = companion_reply_schema(
+            speech_config,
+            allow_silence=allow_silence,
+            allow_media=bool(media_turn.artifacts),
+        )
+        reply_guidance += resolve_prompt_text(COMPANION_REPLY_SCHEMA_GUIDANCES, lang).replace(
+            "{schema}",
+            json.dumps(schema, ensure_ascii=False),
+        )
         # 部分供应商只允许首条系统消息，回复和修复指令都并入 instructions。
         instructions += reply_guidance
         if reply_format_error is None:
-            instructions += resolve_prompt_text(COMPANION_REPLY_TOOL_GUIDANCES, lang) + resolve_prompt_text(
-                COMPANION_REPLY_CLOSING_GUIDANCES,
-                lang,
-            )
+            if not final_only and active_schemas:
+                instructions += resolve_prompt_text(COMPANION_REPLY_TOOL_GUIDANCES, lang)
+            instructions += resolve_prompt_text(COMPANION_REPLY_CLOSING_GUIDANCES, lang)
         else:
-            schema = companion_reply_schema(speech_config, allow_silence=allow_silence)
             # 格式恢复不提供工具；主动回合的恢复仍允许沉默，不能把修复变成一次新的联系。
-            instructions += (
-                resolve_prompt_text(COMPANION_REPLY_REPAIR_GUIDANCES, lang)
-                .replace(
-                    "{no_dialogue}",
-                    resolve_prompt_text(
-                        COMPANION_REPAIR_SILENCE_GUIDANCES if allow_silence else COMPANION_REPAIR_COMPOSE_GUIDANCES,
-                        lang,
-                    ),
-                )
-                .replace("{schema}", json.dumps(schema, ensure_ascii=False))
+            instructions += resolve_prompt_text(COMPANION_REPLY_REPAIR_GUIDANCES, lang).replace(
+                "{no_dialogue}",
+                resolve_prompt_text(
+                    COMPANION_REPAIR_SILENCE_GUIDANCES if allow_silence else COMPANION_REPAIR_COMPOSE_GUIDANCES,
+                    lang,
+                ),
             )
             # 修复资料和阶段指令仅属于本次请求，不进入持久历史或下一轮工具上下文。
             request_input = [
-                *_reply_repair_history(request_input),
+                *request_input,
                 {
                     "role": "user",
                     "content": [
@@ -235,8 +250,8 @@ async def _generate_llm_response(
         model=model_name,
         instructions=instructions,
         input_items=request_input,
-        tools=[] if reply_format_error is not None else active_schemas,
-        tool_choice="none" if reply_format_error is not None else None,
+        tools=[] if final_only else active_schemas,
+        tool_choice="none" if final_only else None,
         stream=delivery != "complete",
         reasoning=reasoning,
         temperature=provider.scale_temperature(temperature),
@@ -405,7 +420,7 @@ async def _generate_llm_response(
                 with contextlib.suppress(Exception):
                     await _emit_bubble_events(bubbles.flush())
 
-    if reply_format_error is not None and tool_calls_list:
+    if final_only and tool_calls_list:
         raise invalid_reply(
             ValueError("Tool calls are not allowed during final reply repair"),
             getattr(completed_response, "output_text", "") or "".join(pending_text),
@@ -415,6 +430,8 @@ async def _generate_llm_response(
     if delivery != "stream" and not tool_calls_list:
         text = "".join(pending_text)
         if reply_preference is not None:
+            text = normalize_companion_reply_content(text)
+            pending_text = [text]
             try:
                 reply = parse_companion_reply(
                     text,
@@ -425,7 +442,36 @@ async def _generate_llm_response(
                     media_turn=media_turn,
                 )
             except ValueError as exc:
-                raise invalid_reply(exc, text) from exc
+                if not allow_voice_fallback:
+                    raise invalid_reply(exc, text) from exc
+                candidates = [text]
+                if reply_format_error is not None:
+                    # 恢复输出也可能损坏；原草稿中已成功生成的台词仍可完整校验后交付。
+                    candidates.append(normalize_companion_reply_content(reply_format_error.raw_reply))
+                for candidate in candidates:
+                    try:
+                        text, reply = fallback_companion_voice_reply(
+                            candidate,
+                            speech_config=speech_config,
+                            voice_id=voice_id,
+                            language=lang,
+                            allow_silence=allow_silence,
+                            media_turn=media_turn,
+                        )
+                        break
+                    except ValueError:
+                        continue
+                else:
+                    raise invalid_reply(exc, text) from exc
+                pending_text = [text]
+                logger.warning(
+                    "Companion voice performance unavailable; delivering dialogue as text",
+                    extra={
+                        "provider": provider.provider_name,
+                        "model": model_name,
+                        "response_id": getattr(completed_response, "id", None),
+                    },
+                )
         else:
             await _emit_bubble_events(bubbles.feed(text))
             await _emit_bubble_events(bubbles.flush())

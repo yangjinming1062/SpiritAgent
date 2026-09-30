@@ -214,7 +214,17 @@ async def _persist_assistant_no_tool_turn(
             await db.commit()
             assistant_message_id = row.id
     if reply and assistant_message_id is not None:
-        reply = await synthesize_reply_audio(user_id, assistant_message_id)
+        try:
+            reply = await synthesize_reply_audio(user_id, assistant_message_id)
+        except LookupError:
+            # 消息已被修改或删除时，不能交付旧正文。
+            raise
+        except Exception:
+            logger.warning(
+                "Reply audio unavailable; delivering saved dialogue",
+                extra={"message_id": assistant_message_id},
+                exc_info=True,
+            )
     reply_bubbles = (
         [
             json.dumps(bubble.model_dump(include={"type", "media_id", "status"}), ensure_ascii=False)

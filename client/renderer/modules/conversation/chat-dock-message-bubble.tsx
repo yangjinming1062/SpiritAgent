@@ -3,9 +3,10 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { memo, useState } from 'react'
 
-import { ChevronDown, Search } from '@/shared/lib/icons'
+import { ChevronDown, RefreshCw, Search } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { presentationPorts } from '@/shared/presentation-ports'
+import { $gatewayState } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'
 
 import { stripAttachmentDirectives } from './chat-display-text'
@@ -20,8 +21,10 @@ import {
   $chatSessionKind,
   $chatTurnInFlight,
   $lastEditableUserMessage,
+  $retryableAssistantMessage,
   type ChatMessageBody,
-  type ChatMessageListItem
+  type ChatMessageListItem,
+  retryAssistantReply
 } from './chat-store'
 import { ChatVoiceBar, TranscriptBlock } from './chat-voice-bar'
 import { formatConversationTime } from './conversation-time'
@@ -101,6 +104,8 @@ function MessageBubbleWithBody({
   const sessionKind = useStore($chatSessionKind)
   const editing = useStore($chatEditDraft)
   const lastEditableMessage = useStore($lastEditableUserMessage)
+  const retryableMessage = useStore($retryableAssistantMessage)
+  const gatewayState = useStore($gatewayState)
 
   // 摘要/压缩卡片折叠态：组件局部 useState，默认折叠，不持久化、不入 store；多窗口各自独立展开。
   const [summaryExpanded, setSummaryExpanded] = useState(false)
@@ -199,7 +204,7 @@ function MessageBubbleWithBody({
     )
   }
 
-  const isVoiceBarMode = variant === 'living' && !isUser && body.replyType === 'voice'
+  const isVoiceBarMode = variant === 'living' && !isUser && body.replyType === 'voice' && Boolean(body.replyAudio)
   const isVoicePendingOrStreaming = isVoiceBarMode && body.streaming
 
   // 必须有后端 Message.id 才能回传；回合进行中服务端会拒绝撤回，按钮一并藏掉。
@@ -293,7 +298,6 @@ function MessageBubbleWithBody({
               <>
                 <ChatVoiceBar
                   duration={body.replyAudio?.duration}
-                  failed={!body.replyAudio}
                   messageId={message.id}
                   playbackKey={
                     message.backendMessageId !== undefined && body.replyIndex !== undefined
@@ -321,7 +325,20 @@ function MessageBubbleWithBody({
               }
             >
               {body.error ? (
-                <span className="text-amber-500">{body.error}</span>
+                <span className="flex flex-wrap items-center gap-x-3 gap-y-2 text-amber-500">
+                  <span>{body.error}</span>
+                  {retryableMessage?.id === message.id && (
+                    <button
+                      className="inline-flex shrink-0 items-center gap-1 rounded-md border border-line-standard px-2 py-1 text-strong transition hover:bg-fill-hover disabled:cursor-not-allowed disabled:opacity-50"
+                      disabled={gatewayState !== 'open'}
+                      onClick={() => void retryAssistantReply(message.id)}
+                      type="button"
+                    >
+                      <RefreshCw className="size-3.5" />
+                      {dict.common.retry}
+                    </button>
+                  )}
+                </span>
               ) : body.cancelled ? (
                 <span className="text-muted">{dict.chat.summary.cancelled}</span>
               ) : displayText ? (

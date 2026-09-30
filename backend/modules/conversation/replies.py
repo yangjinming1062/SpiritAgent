@@ -15,6 +15,15 @@ class SpeechPerformance(BaseModel):
     cues: list[SpeechCue] | None = None
     pauses: list[SpeechPause] | None = None
 
+    def bind(self, provider: str, model: str) -> SpeechStyle:
+        performance = self.model_dump(exclude_unset=True)
+        inactive = {"direction", "styles"} if provider == "minimax" else {"emotion", "speed", "pauses"}
+        # 通用输入中的空占位不表达演绎；非空的跨供应商字段仍由严格模型拒绝。
+        for name in inactive:
+            if performance.get(name) in (None, []):
+                performance.pop(name, None)
+        return SPEECH_STYLE_ADAPTER.validate_python({**performance, "provider": provider, "model": model})
+
 
 class TextBubble(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
@@ -110,12 +119,6 @@ class CompanionReply(BaseModel):
             if raw.type != delivered.type or raw.text != delivered.text:
                 raise ValueError("Reply content and delivery dialogue differ")
             if isinstance(raw, VoiceBubbleInput) and isinstance(delivered, VoiceBubble):
-                style = SPEECH_STYLE_ADAPTER.validate_python(
-                    {
-                        **raw.speech.model_dump(exclude_unset=True),
-                        "provider": delivered.speech.provider,
-                        "model": delivered.speech.model,
-                    },
-                )
+                style = raw.speech.bind(delivered.speech.provider, delivered.speech.model)
                 if style != delivered.speech:
                     raise ValueError("Reply content and delivery performance differ")

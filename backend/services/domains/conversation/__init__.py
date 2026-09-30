@@ -29,9 +29,12 @@ from .reply_media import (
     resolve_reply_media,
     update_video_reply,
 )
+from .retry import ReplyRetryNotAllowedError, get_reply_retry_message
 from .undo import UndoNotAllowedError, resolve_undo_target, undo_conversation_to_message
 
 __all__ = [
+    "ReplyRetryNotAllowedError",
+    "get_reply_retry_message",
     "companion_context_content",
     "apply_video_status",
     "bind_reply_videos",

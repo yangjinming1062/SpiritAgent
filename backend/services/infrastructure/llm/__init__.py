@@ -60,7 +60,12 @@ from .providers import (
     rotate_http_clients,
     try_resolve,
 )
-from .providers.speech_style import speech_performance_schema, speech_style_guidance, speech_style_matches
+from .providers.speech_style import (
+    speech_performance_schema,
+    speech_style_guidance,
+    speech_style_matches,
+    validate_speech_style,
+)
 from .responses import (
     approx_responses_tokens,
     build_responses_kwargs,
@@ -137,6 +142,7 @@ __all__ = [
     "speech_performance_schema",
     "speech_style_guidance",
     "speech_style_matches",
+    "validate_speech_style",
     "synthesize_speech",
     "transcribe_audio",
     "try_resolve",

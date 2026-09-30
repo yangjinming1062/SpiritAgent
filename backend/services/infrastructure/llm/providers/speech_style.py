@@ -1,6 +1,8 @@
 import json
 
 from modules.media import MiMoSpeechStyle, MiniMaxSpeechStyle, SpeechStyle
+from pydantic import ValidationError
+from pydantic_core import InitErrorDetails
 
 _MINIMAX_CUES = {
     "laughs": "笑声",
@@ -138,9 +140,14 @@ def speech_performance_schema(provider: str, model: str) -> dict:
     return schema
 
 
-def speech_style_matches(style: SpeechStyle, provider: str, model: str) -> bool:
+def validate_speech_style(style: SpeechStyle, provider: str, model: str) -> None:
+    errors: list[InitErrorDetails] = []
+
+    def reject(path: tuple[str | int, ...], message: str) -> None:
+        errors.append({"type": "value_error", "loc": (provider, *path), "ctx": {"error": ValueError(message)}})
+
     if style.provider != provider or style.model != model:
-        return False
+        reject((), "Speech performance must use the configured provider and model")
     if (
         style.provider == "mimo"
         and model != "mimo-v2.5-tts"
@@ -149,12 +156,25 @@ def speech_style_matches(style: SpeechStyle, provider: str, model: str) -> bool:
             for tag in [*style.styles, *(cue.tag for cue in style.cues)]
         )
     ):
-        return False
+        reject(("styles",), "Singing is not supported by this speech model")
     if style.provider == "minimax":
         if style.emotion in {"fluent", "whisper"} and model not in _MINIMAX_EXTENDED_EMOTION_MODELS:
-            return False
-        if style.cues and (model not in _MINIMAX_CUE_MODELS or any(cue.tag not in _MINIMAX_CUES for cue in style.cues)):
-            return False
+            reject(("emotion",), f"Emotion must be null or one of: {', '.join(_MINIMAX_EMOTIONS)}")
+        if style.cues and model not in _MINIMAX_CUE_MODELS:
+            reject(("cues",), "This speech model requires an empty cues array")
+        elif model in _MINIMAX_CUE_MODELS:
+            for index, cue in enumerate(style.cues):
+                if cue.tag not in _MINIMAX_CUES:
+                    reject(("cues", index, "tag"), f"Cue tag must be one of: {', '.join(_MINIMAX_CUES)}")
+    if errors:
+        raise ValidationError.from_exception_data("SpeechStyle", errors)
+
+
+def speech_style_matches(style: SpeechStyle, provider: str, model: str) -> bool:
+    try:
+        validate_speech_style(style, provider, model)
+    except ValidationError:
+        return False
     return True
 
 

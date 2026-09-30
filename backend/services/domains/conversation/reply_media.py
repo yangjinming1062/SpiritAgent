@@ -43,6 +43,7 @@ async def load_media_turn(
     *,
     structured_reply: bool,
     request: str,
+    retry_after_message_id: int | None = None,
 ) -> MediaTurnState:
     state = MediaTurnState(conv.user_id, str(conv.id), structured_reply, request)
     producer_calls: set[str] = set()
@@ -71,6 +72,13 @@ async def load_media_turn(
             for entry in result.get("media", []):
                 if isinstance(entry, dict) and (artifact := _read_tool_artifact(entry)):
                     state.artifacts.setdefault(artifact.media_id, artifact)
+                    if (
+                        retry_after_message_id is not None
+                        and message.id > retry_after_message_id
+                        and (artifact.type == "video" or artifact.status == "ready")
+                    ):
+                        state.required_goals.add(artifact.goal_id)
+                        state.current_versions[artifact.goal_id] = artifact.media_id
     # 未完成任务不能因历史压缩而失去去重依据。
     pending_jobs = await db.scalars(
         select(VideoGenJob).where(

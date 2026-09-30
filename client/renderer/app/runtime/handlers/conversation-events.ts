@@ -209,8 +209,14 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       $chatTurnInFlight.set(false)
       clearPendingPrompts()
       // 强制重置为 idle：thinking/working 时优先级门控会静默拒绝普通状态转换。
-      const message = decodePayload<{ message?: string }>(event.payload)?.message ?? getStrings().chat.sendFailed
-      markAssistantTerminal({ error: message })
+      const payload = decodePayload<{ message?: string; retry_message_id?: number }>(event.payload)
+      markAssistantTerminal({
+        error: payload?.message ?? getStrings().chat.sendFailed,
+        retryMessageId:
+          Number.isSafeInteger(payload?.retry_message_id) && (payload?.retry_message_id ?? 0) > 0
+            ? payload?.retry_message_id
+            : undefined
+      })
       setSpriteState('idle', { force: true })
       triggerFootGlowPulse('failed', 2000)
 

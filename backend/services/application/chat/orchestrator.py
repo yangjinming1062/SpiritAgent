@@ -94,6 +94,7 @@ async def run_chat_turn(
     session_settings: dict | None = None,
     precursor_user_message_ids: list[int] | None = None,
     persisted_message_id: int | None = None,
+    final_reply_only: bool = False,
     ephemeral: bool = False,
     headless: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
@@ -103,6 +104,7 @@ async def run_chat_turn(
     # 默认值运行时解析：工具循环上限可在管理端热调，不能在函数定义期绑定常量。
     if max_loop_turns is None:
         max_loop_turns = SETTINGS.agent_max_loop_turns
+    user_message_id: int | None = None
     with ExitStack() as turn_scope:
         # 轮次起点先提交用户输入并解析召回查询；会话退出后生成向量，再以新短会话装配上下文。
         async with session_scope() as db:
@@ -187,15 +189,19 @@ async def run_chat_turn(
 
         inference = resolve_inference_settings(effective_settings, conv=conv)
         compressed_context = inputs.context
-        if effective_settings.get(
-            "chat.enable_context_compression",
-            SETTINGS.enable_context_compression,
-        ) and compression_due(
-            inputs.context,
-            context_length=inputs.ctx_length,
-            threshold_ratio=inference.context_compression_threshold,
-            # 尾部资料不在持久基线内，此时按全量估算。
-            current_tokens=None if ephemeral or waits else inputs.estimated_tokens,
+        if (
+            not final_reply_only
+            and effective_settings.get(
+                "chat.enable_context_compression",
+                SETTINGS.enable_context_compression,
+            )
+            and compression_due(
+                inputs.context,
+                context_length=inputs.ctx_length,
+                threshold_ratio=inference.context_compression_threshold,
+                # 尾部资料不在持久基线内，此时按全量估算。
+                current_tokens=None if ephemeral or waits else inputs.estimated_tokens,
+            )
         ):
             compressed_context, compress_info = await compress_history(
                 inputs.context,
@@ -223,7 +229,11 @@ async def run_chat_turn(
                     },
                 )
         # 本轮输入按窗口的四分之一（字符数取 token 数，对中文偏保守）放宽，避免超长粘贴被历史条目的上限截断。
-        current_context = truncate_responses_context(compressed_context, current_max_chars=inputs.ctx_length // 4)
+        current_context = truncate_responses_context(
+            compressed_context,
+            current_max_chars=inputs.ctx_length // 4,
+            current_message_id=persisted_message_id if final_reply_only else None,
+        )
         # 视频内联在截断之后，只处理幸存者（每请求上限 2 个）；expected_session_id 防 stale 行/跨会话 URL 串台，非法形态降级为 [video]。
         current_context["input"] = await inline_video_parts(current_context["input"], expected_session_id=str(conv.id))
 
@@ -236,7 +246,13 @@ async def run_chat_turn(
         # 固定陪伴会话的终端回复是结构化气泡数组：非流式取得后整体校验再交付。
         companion_reply = conv.kind == SPECIAL_KIND and conv.system_preset_id == DEFAULT_PRESET_ID
         async with session_scope() as db:
-            media_turn = await load_media_turn(db, conv, structured_reply=companion_reply, request=req.message.content)
+            media_turn = await load_media_turn(
+                db,
+                conv,
+                structured_reply=companion_reply,
+                request=req.message.content,
+                retry_after_message_id=persisted_message_id if final_reply_only else None,
+            )
         dispatch_ctx = _ToolDispatchContext(
             user_id=user_id,
             llm_config=llm_config,
@@ -254,7 +270,7 @@ async def run_chat_turn(
             media_turn=media_turn,
         )
 
-        buffer_text = companion_reply or headless or conv.kind == IM_KIND
+        buffer_text = companion_reply or headless or conv.kind == IM_KIND or final_reply_only
         delivery = "complete" if companion_reply else "buffered" if buffer_text else "stream"
         if buffer_text:
             await emitter.send_json({"type": "message.start"})
@@ -301,6 +317,8 @@ async def run_chat_turn(
                             allow_silence=ephemeral and companion_reply,
                             reply_format_error=reply_format_error,
                             media_turn=media_turn,
+                            final_reply_only=final_reply_only,
+                            allow_voice_fallback=not retry_available,
                         )
                     except _IncompleteResponseError as exc:
                         del current_context["input"][input_length:]
@@ -331,12 +349,13 @@ async def run_chat_turn(
                     extra={"user_id": user_id, "reason": exc.classified.reason.value, "error": str(exc)},
                     exc_info=True,
                 )
-                await _emit_llm_error(emitter, exc)
+                await _emit_llm_error(emitter, exc, retry_message_id=user_message_id)
                 break
             except _InvalidCompanionReplyError:
                 await emitter.send_json(
                     {
                         "type": "error",
+                        "retry_message_id": user_message_id,
                         "message": "本次回复的格式不正确，请重试。"
                         if inputs.language == "zh"
                         else "The reply could not be generated in the required format. Please try again.",
@@ -346,7 +365,13 @@ async def run_chat_turn(
             except (MissingLlmConfigError, RuntimeError) as exc:
                 # 配置缺失或响应未正常完成：结束本轮；完整响应失败也可能发生在请求已开始之后。
                 logger.warning("LLM turn failed: %s", exc)
-                await emitter.send_json({"type": "error", "message": f"LLM unavailable: {exc}"})
+                await emitter.send_json(
+                    {
+                        "type": "error",
+                        "message": f"LLM unavailable: {exc}",
+                        "retry_message_id": user_message_id,
+                    },
+                )
                 break
 
             if llm_result.reasoning:
@@ -391,5 +416,6 @@ async def run_chat_turn(
                 {
                     "type": "error",
                     "message": f"Max tool execution turns ({max_loop_turns}) reached. Terminating loop to prevent unbounded execution.",
+                    "retry_message_id": user_message_id,
                 },
             )

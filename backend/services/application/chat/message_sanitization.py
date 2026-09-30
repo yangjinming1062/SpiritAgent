@@ -167,6 +167,7 @@ def truncate_responses_context(
     normalize_older_than: int = 10,
     max_chars_per_item: int = 15000,
     current_max_chars: int = 0,
+    current_message_id: int | None = None,
 ) -> dict[str, Any]:
     """deterministic Responses input-window fallback; instructions are never dropped。``current_max_chars`` 是本轮用户输入的字符上限（不低于历史条目上限），由调用方按上下文窗口给出。"""
     items = context["input"]
@@ -186,17 +187,26 @@ def truncate_responses_context(
 
     tail = items[keep_start:]
     current_start = _trailing_user_start(items)
+    # 手动重试时工具结果排在原请求之后，按持久化来源保留原请求的长度预算和附件。
+    current_indices = {
+        index
+        for index, source_id in enumerate(context.get("source_message_ids", []))
+        if current_message_id is not None and source_id == current_message_id
+    }
     current_chars = max(current_max_chars, max_chars_per_item)
     kept = [
         _normalize_older_response_item(
             item,
-            replace_images=index < len(tail) - normalize_older_than,
-            max_chars=current_chars if keep_start + index >= current_start else max_chars_per_item,
+            replace_images=index < len(tail) - normalize_older_than and keep_start + index not in current_indices,
+            max_chars=current_chars
+            if keep_start + index >= current_start or keep_start + index in current_indices
+            else max_chars_per_item,
         )
         for index, item in enumerate(tail)
     ]
     if keep_start > 0:
-        anchor = next((item for item in reversed(items[:keep_start]) if _is_user_anchor(item)), None)
+        anchor_index = next((index for index in range(keep_start - 1, -1, -1) if _is_user_anchor(items[index])), None)
+        anchor = items[anchor_index] if anchor_index is not None else None
         removed = keep_start - (1 if anchor is not None else 0)
         marker = {
             "role": "user",
@@ -208,7 +218,14 @@ def truncate_responses_context(
             ],
         }
         prefix = (
-            [_normalize_older_response_item(anchor, replace_images=True, max_chars=max_chars_per_item), marker]
+            [
+                _normalize_older_response_item(
+                    anchor,
+                    replace_images=anchor_index not in current_indices,
+                    max_chars=current_chars if anchor_index in current_indices else max_chars_per_item,
+                ),
+                marker,
+            ]
             if anchor is not None
             else [marker]
         )

@@ -51,6 +51,7 @@ export interface ChatMessageBody {
   toolName?: string | null
   tools?: string[]
   error?: string
+  retryMessageId?: number
   cancelled?: boolean
   attachments?: ChatAttachment[]
   media?: ChatMediaItem[]
@@ -149,6 +150,64 @@ export const $lastEditableUserMessage = computed(
     return last?.backendMessageId && !last.subtype ? last : null
   }
 )
+
+export const $retryableAssistantMessage = computed(
+  [$chatMessageList, $chatMessageBodies, $chatSessionKind, $chatTurnInFlight, $pendingPromptBatch, $chatEditDraft],
+  (list, bodies, kind, inFlight, pending, editing): ChatMessageListItem | null => {
+    if (kind === 'im' || inFlight || pending.length > 0 || editing) {
+      return null
+    }
+
+    const last = list.at(-1)
+    const body = last ? bodies[last.id] : undefined
+    const user = list.findLast(item => item.role === 'user')
+
+    return last?.role === 'assistant' &&
+      body?.error &&
+      body.retryMessageId === user?.backendMessageId &&
+      body.retryMessageId
+      ? last
+      : null
+  }
+)
+
+export async function retryAssistantReply(messageId: string): Promise<void> {
+  const sessionId = $chatSessionId.get()
+  const gateway = $gateway.get()
+  const body = $chatMessageBodies.get()[messageId]
+
+  if (
+    !sessionId ||
+    !gateway ||
+    gateway.connectionState !== 'open' ||
+    $retryableAssistantMessage.get()?.id !== messageId ||
+    !body?.retryMessageId
+  ) {
+    return
+  }
+
+  const epoch = currentClearEpoch()
+  $chatTurnInFlight.set(true)
+  conversationVoiceSink().cancel()
+
+  try {
+    await gateway.request('prompt.submit', {
+      session_id: sessionId,
+      retry_message_id: body.retryMessageId,
+      response_preference: presentationPorts().getResponsePreference()
+    })
+  } catch (error) {
+    // 已收到开始/完成事件时请求已被接受，迟到的 RPC 失败不能覆盖新回复。
+    if (
+      epoch === currentClearEpoch() &&
+      $chatSessionId.get() === sessionId &&
+      $chatMessageBodies.get()[messageId] === body
+    ) {
+      $chatTurnInFlight.set(false)
+      notifyError(error, getStrings().chat.sendFailed)
+    }
+  }
+}
 
 export function startEditingMessage(messageId: string): void {
   const message = $lastEditableUserMessage.get()
@@ -922,6 +981,13 @@ function lastAssistantMessage(): {
 export function beginAssistantMessage(): void {
   const last = lastAssistantMessage()
 
+  if (last?.body.error && last.body.retryMessageId) {
+    $chatMessageBodies.setKey(last.item.id, { text: '', streaming: true, toolName: null })
+    $lastAssistantStreaming.set(true)
+
+    return
+  }
+
   if (last?.body.streaming) {
     const { body } = last
 
@@ -1166,11 +1232,24 @@ export function forgetDeletedVoiceMessages(messages: SessionMessage[]): void {
   }
 }
 
-export function markAssistantTerminal({ error, cancelled }: { error?: string; cancelled?: boolean } = {}): void {
+export function markAssistantTerminal({
+  error,
+  cancelled,
+  retryMessageId
+}: {
+  error?: string
+  cancelled?: boolean
+  retryMessageId?: number
+} = {}): void {
   conversationVoiceSink().cancel()
 
   const last = lastAssistantMessage()
-  const terminal = { ...(error !== undefined && { error }), ...(cancelled && { cancelled: true }) }
+
+  const terminal = {
+    ...(error !== undefined && { error }),
+    ...(cancelled && { cancelled: true }),
+    ...(retryMessageId !== undefined && { retryMessageId })
+  }
 
   if (last?.body.streaming) {
     const { body, item } = last

@@ -93,12 +93,15 @@ from services.domains.conversation import (
     SYSTEM_PRESET_CATALOG,
     EditNotAllowedError,
     ForkNotAllowedError,
+    ReplyRetryNotAllowedError,
     SourceNotFoundError,
     UndoNotAllowedError,
     build_session_messages,
     conversation_memory_scope,
     fork_conversation_from_message,
     get_or_create_special_conversation,
+    get_reply_retry_message,
+    message_text,
     replace_last_user_message,
     resolve_memory_scope,
     resolve_undo_target,
@@ -1109,6 +1112,12 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "response_preference must be text or voice")
 
         edit_message_id = params.get("edit_message_id")
+        retry_message_id = params.get("retry_message_id")
+        if retry_message_id is not None:
+            if not _is_nonneg_int(retry_message_id) or retry_message_id == 0:
+                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "retry_message_id must be a positive int")
+            if any(key in params for key in ("text", "batch", "attachments", "edit_message_id")):
+                raise JsonRpcError(JSONRPC_INVALID_PARAMS, "reply retries reuse the original message and attachments")
         if edit_message_id is not None:
             if not _is_nonneg_int(edit_message_id) or edit_message_id == 0:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, "edit_message_id must be a positive int")
@@ -1120,7 +1129,15 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
 
         precursor_user_message_ids: list[int] = []
         batch = params.get("batch")
-        if batch is not None:
+        if retry_message_id is not None:
+            async with SESSION_LOCAL() as db:
+                try:
+                    source = await get_reply_retry_message(db, user_id, runtime.session_id, retry_message_id)
+                except ReplyRetryNotAllowedError as exc:
+                    raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+                text = message_text(source)
+                attachments = []
+        elif batch is not None:
             if not isinstance(batch, list) or not batch:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, "batch must be a non-empty list")
             validated_batch = []
@@ -1157,7 +1174,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         note_user_contact(user_id)
         await interrupt_user_event_tasks(user_id, COMPANION_TURN_EVENT)
 
-        persisted_message_id: int | None = None
+        persisted_message_id: int | None = retry_message_id
         edited_messages: list[dict] | None = None
         if edit_message_id is not None:
             async with SESSION_LOCAL() as db:
@@ -1195,6 +1212,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                     session_settings=runtime.settings,
                     precursor_user_message_ids=precursor_user_message_ids or None,
                     persisted_message_id=persisted_message_id,
+                    final_reply_only=retry_message_id is not None,
                 )
             except (WebSocketDisconnect, asyncio.CancelledError):
                 raise

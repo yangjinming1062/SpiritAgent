@@ -46,7 +46,10 @@ class JsonRpcEmitter:
                 "status": "complete" if raw_type == "tool_end" else "running",
             }
         if raw_type == "error":
-            return {"message": data.get("message", "Unknown error")}
+            return {
+                "message": data.get("message", "Unknown error"),
+                **({"retry_message_id": data["retry_message_id"]} if type(data.get("retry_message_id")) is int else {}),
+            }
         if raw_type == "message.complete":
             usage = data.get("usage")
             return {

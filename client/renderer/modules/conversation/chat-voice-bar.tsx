@@ -21,11 +21,10 @@ import { $voicePlaybackRecords } from './voice-playback'
 interface ChatVoiceBarProps {
   duration?: number
   messageId: string
-  failed?: boolean
   playbackKey?: string
 }
 
-export function ChatVoiceBar({ duration, messageId, failed, playbackKey }: ChatVoiceBarProps): React.JSX.Element {
+export function ChatVoiceBar({ duration, messageId, playbackKey }: ChatVoiceBarProps): React.JSX.Element {
   const dict = useStrings()
   const t = dict.chat.voice
   const playingId = useStore($voiceBarPlayingId)
@@ -34,7 +33,7 @@ export function ChatVoiceBar({ duration, messageId, failed, playbackKey }: ChatV
   const failedIds = useStore($voiceBarFailedIds, { keys: [messageId] })
   const records = useStore($voicePlaybackRecords, { keys: playbackKey ? [playbackKey] : [] })
   const record = playbackKey ? records[playbackKey] : undefined
-  const unavailable = failed || failedIds[messageId]
+  const unavailable = failedIds[messageId]
 
   const isPlaying = playingId === messageId
   const isLoading = loadingId === messageId

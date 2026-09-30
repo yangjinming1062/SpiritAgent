@@ -416,6 +416,25 @@ COMPANION_MEDIA_REPLY_GUIDANCES: dict[str, str] = {
     ),
 }
 
+COMPANION_REPLY_SCHEMA_GUIDANCES: dict[str, str] = {
+    "zh": "\n以下 JSON Schema 定义本轮可用的气泡类型及字段；可选字段无内容时省略。\n{schema}\n",
+    "en": "\nThis JSON Schema defines the bubble types and fields available for this turn. Omit unused optional fields.\n{schema}\n",
+}
+
+FINAL_REPLY_RETRY_GUIDANCES: dict[str, str] = {
+    "zh": (
+        "\n# 本次任务：重新生成最终回复\n"
+        "根据用户最后一次请求和已有结果生成回复。工具执行阶段已结束，本次不调用工具、不重复操作。"
+        "tool_history 是历史调用与结果资料，调用记录本身不证明成功；没有完成或结果未知的步骤如实说明。\n"
+    ),
+    "en": (
+        "\n# Current task: regenerate the final reply\n"
+        "Answer the user's last request using existing results. Tool execution has ended; do not call tools or repeat operations. "
+        "tool_history contains past calls and results; a call alone does not establish success. "
+        "Report unfinished steps and unknown outcomes accurately.\n"
+    ),
+}
+
 COMPANION_REPLY_REPAIR_GUIDANCES: dict[str, str] = {
     "zh": (
         "\n# 本次任务：修复最终回复\n"
@@ -425,8 +444,7 @@ COMPANION_REPLY_REPAIR_GUIDANCES: dict[str, str] = {
         "tool_history 保留历史工具调用与结果，仅用于判断已知事实；调用记录本身不证明操作成功。"
         "以本轮请求和实际工具结果核对草稿，保留仍有效的台词原文，按上述气泡协议修正错误字段；工具标记和格式说明不是台词。"
         "{no_dialogue}"
-        "以下 JSON Schema 定义回复的输出结构，与上述气泡协议一并遵守。"
-        "只输出气泡数组，不输出解释或代码围栏。\n{schema}\n"
+        "只输出符合上述 JSON Schema 的气泡数组，不输出解释或代码围栏。\n"
     ),
     "en": (
         "\n# Current task: repair the final reply\n"
@@ -438,9 +456,7 @@ COMPANION_REPLY_REPAIR_GUIDANCES: dict[str, str] = {
         "Check the draft against this turn's request and actual tool results. Keep valid dialogue verbatim "
         "and correct invalid fields under the bubble protocol above; tool markers and format explanations are not dialogue. "
         "{no_dialogue}"
-        "This JSON Schema defines the reply's output structure; follow it together with the bubble protocol above. "
-        "Output only the bubble array, without explanations or "
-        "code fences.\n{schema}\n"
+        "Output only the bubble array matching the JSON Schema above, without explanations or code fences.\n"
     ),
 }
 
