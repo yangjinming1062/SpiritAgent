@@ -58,6 +58,7 @@ from services.infrastructure.assets import (
 )
 from services.infrastructure.llm import (
     SIZE_TO_ASPECT,
+    LLMRuntimeError,
     build_avatar_reference_prompt,
     build_image_edit_prompt,
     chat,
@@ -593,7 +594,7 @@ async def _avatar_description(
 ) -> str:
     try:
         return await enhance_avatar_prompt(None, user_id, persona, feedback=feedback, has_reference=has_reference)
-    except (ValidationError, RuntimeError) as exc:
+    except (ValidationError, RuntimeError, LLMRuntimeError) as exc:
         raise AvatarGenerationError("prompt enhancement failed", internal=str(exc)) from exc
 
 
