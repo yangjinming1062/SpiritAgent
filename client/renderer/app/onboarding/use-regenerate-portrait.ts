@@ -14,7 +14,7 @@ import { $auth } from '@/shared/store/auth'
 
 interface UseRegeneratePortraitOptions {
   refImage?: PickedImage | null
-  /** 有身份参考时仅提供光线与构图；否则作为唯一参考图。 */
+  /** 只在已有身份参考时随重绘提交，仅调整光线、色调与构图；没有身份参考时不使用。 */
   presentationRef?: PickedImage | null
   onRegenerated?: (urls: { avatar: string; id: number | null }) => void
   onError?: (message: string) => void
@@ -91,9 +91,8 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
       setBusy(true)
 
       try {
-        const presentation = mode === 'generate' ? null : presentationRef
-        const primaryRef = refImage ?? presentation
-        const secondaryRef = refImage ? presentation : null
+        const primaryRef = refImage
+        const secondaryRef = mode === 'generate' ? null : presentationRef
         let result: PortraitResponse | null
 
         if (mode === 'reload') {

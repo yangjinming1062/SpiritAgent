@@ -451,11 +451,16 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   // 身份参考图持久化为草稿，供引导重启恢复。
   const [refImage, setRefImage] = useState<PickedImage | null>(null)
 
-  // 光线与构图参考仅供本次重绘，保留在内存中。
+  // 光线与构图参考仅供本次重绘，保留在内存中；只在有身份参考图时使用。
   const [presentationRef, setPresentationRef] = useState<PickedImage | null>(null)
 
   const updateRefImage = (img: PickedImage | null): void => {
     setRefImage(img)
+
+    if (!img) {
+      setPresentationRef(null)
+    }
+
     void saveDraftRefImage(img)
   }
 
@@ -1576,10 +1581,10 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     <div className="flex items-center gap-2">
                       <button
                         className="rounded-full border border-dashed border-line-standard px-3 py-1 text-body transition hover:bg-fill-hover"
-                        onClick={() => void pickPresentationImage()}
+                        onClick={() => void (refImage ? pickPresentationImage() : pickReferenceImage())}
                         type="button"
                       >
-                        {presentationRef ? '更换构图参考' : '＋ 光线与构图参考'}
+                        {!refImage ? '＋ 形象参考图' : presentationRef ? '更换构图参考' : '＋ 光线与构图参考'}
                       </button>
                       {presentationRef && (
                         <>
