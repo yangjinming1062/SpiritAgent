@@ -36,25 +36,29 @@ def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int] | 
 
     raw_start, raw_end = match.groups()
 
-    if raw_start and raw_end:
-        start = int(raw_start)
-        end = int(raw_end)
-        if start > end or start >= file_size:
-            return None
-        return start, min(end, file_size - 1)
+    try:
+        if raw_start and raw_end:
+            start = int(raw_start)
+            end = int(raw_end)
+            if start > end or start >= file_size:
+                return None
+            return start, min(end, file_size - 1)
 
-    if raw_start and not raw_end:
-        start = int(raw_start)
-        if start >= file_size:
-            return None
-        return start, file_size - 1
+        if raw_start and not raw_end:
+            start = int(raw_start)
+            if start >= file_size:
+                return None
+            return start, file_size - 1
 
-    if not raw_start and raw_end:
-        suffix = int(raw_end)
-        if suffix <= 0:
-            return None
-        start = max(0, file_size - suffix)
-        return start, file_size - 1
+        if not raw_start and raw_end:
+            suffix = int(raw_end)
+            if suffix <= 0:
+                return None
+            start = max(0, file_size - suffix)
+            return start, file_size - 1
+    except ValueError:
+        # Python rejects excessively long decimal strings before ``int`` can produce a value.
+        return None
 
     return None
 

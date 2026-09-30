@@ -54,7 +54,7 @@ def _sign(user_id: int, filename: str, expires_at: int) -> str:
 def verify_signed_asset_request(user_id: int, filename: str, expires: int | None, sig: str | None) -> bool:
     if expires is None or sig is None:
         return False
-    if int(expires) < int(time.time()):
+    if expires < int(time.time()):
         return False
     expected = _sign(user_id, filename, int(expires))
     return hmac.compare_digest(expected, sig)
@@ -189,13 +189,19 @@ async def save_image_chain_asset_async(
 
 
 def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str] | None:
-    name = Path(filename).name
-    if "/" in name or "\\" in name or ".." in name:
+    # 路由参数允许 ``:path`` 以兼容历史链接，但资产文件名本身始终是单层路径。
+    # 先拒绝分隔符和点段，再解析并确认不会通过符号链接越出用户目录。
+    if not filename or "/" in filename or "\\" in filename or ".." in Path(filename).parts:
         return None
-    filepath = _assets_root() / str(user_id) / name
-    if not filepath.exists():
+    try:
+        user_root = (_assets_root() / str(user_id)).resolve()
+        filepath = user_root / filename
+        resolved = filepath.resolve()
+    except (OSError, RuntimeError):
         return None
-    ext = filepath.suffix.lstrip(".").lower()
+    if not resolved.is_relative_to(user_root) or not resolved.is_file():
+        return None
+    ext = resolved.suffix.lstrip(".").lower()
     content_type = {
         "png": "image/png",
         "jpg": "image/jpeg",
@@ -211,7 +217,7 @@ def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str
         "aac": "audio/aac",
         "flac": "audio/flac",
     }.get(ext, "application/octet-stream")
-    return filepath, content_type
+    return resolved, content_type
 
 
 def parse_companion_asset_path(storage_path: str | None) -> tuple[int, str] | None:

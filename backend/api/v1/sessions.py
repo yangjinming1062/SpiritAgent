@@ -115,9 +115,9 @@ async def _get_conversation_or_404(db: AsyncSession, user: User, session_id: str
 async def list_sessions(
     user: CurrentUser,
     db: DbSession,
-    limit: int = 40,
-    offset: int = 0,
-    min_messages: int = 0,
+    limit: int = Query(default=40, ge=1, le=100),
+    offset: int = Query(default=0, ge=0),
+    min_messages: int = Query(default=0, ge=0),
     archived: Literal["only", "exclude", "include"] = "exclude",
     order: Literal["recent", "created", "messages"] = "recent",
     include_subagents: bool = False,

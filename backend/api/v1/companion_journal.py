@@ -32,8 +32,8 @@ async def get_moments(
     user: CurrentUser,
     db: DbSession,
     cursor: str | None = None,
-    limit: int = 20,
-    kind: str | None = None,
+    limit: int = Query(default=20, ge=1, le=100),
+    kind: str | None = Query(default=None, max_length=64),
 ) -> MomentListResponse:
     rows, next_cursor = await list_moments(db, user.id, cursor=cursor, limit=limit, kind=kind)
     return MomentListResponse(

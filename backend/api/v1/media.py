@@ -116,12 +116,13 @@ async def upload_chat_video(
             detail={"error": "Missing video file", "reason": "missing_video_file", "status_code": 422},
         )
     # 归一到无前导零形式：目录、附件 URL 与 conversation_id 三者必须同形，"007" 会造成磁盘/校验分裂。
-    if not session_id.strip().isdigit():
+    raw_session_id = session_id.strip()
+    if not raw_session_id.isdigit() or len(raw_session_id) > 20:
         raise HTTPException(
             status_code=422,
             detail={"error": "Invalid session_id", "reason": "invalid_session_id", "status_code": 422},
         )
-    session_id = str(int(session_id.strip()))
+    session_id = str(int(raw_session_id))
     if await Conversation.by_session_id(db, session_id, user_id=user.id) is None:
         raise HTTPException(
             status_code=404,
