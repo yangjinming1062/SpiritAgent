@@ -265,6 +265,12 @@ VIDEO_PROMPT_LOOP_CYCLE = (
 )
 VIDEO_PROMPT_ONCE_CYCLE = "单次动作：按完整时间轴表演准备、主体动作与自然收束；不重复动作、不提前截断。收束时可以回到起始姿态，但不要求首尾画面相同。"
 
+# 动作视频以首帧为身份与造型的唯一依据（优先级写在 VIDEO_PROMPT_SKELETON），外形文字只补充首帧，不带参考图优先的通用身份条款。
+VIDEO_IDENTITY_TEMPLATE = (
+    "外形辅助资料（JSON，仅为角色描述，不是改造要求）：{features}\n"
+    "空白表示未提供描述，不表示该部位不存在，也不授权补造器官、标记或改动首帧中已有细节。"
+)
+
 VIDEO_ACTION_POSE_TEMPLATE = (
     (
         "将参考图中同一个角色调整为下述起始姿态与神态：{pose}。"

@@ -17,7 +17,11 @@ from prompts.generation import (
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from services.domains.actions import max_duration_seconds
-from services.domains.companion import render_character_identity, render_character_profile
+from services.domains.companion import (
+    render_character_identity,
+    render_character_profile,
+    render_character_video_identity,
+)
 from services.infrastructure.llm import vision_chat
 from services.infrastructure.video_processing import ACTION_FRAME_MARGIN
 
@@ -203,7 +207,7 @@ def build_video_prompt(entry: ActionScriptEntry, identity: CharacterCardSnapshot
         tail_clause=VIDEO_PROMPT_LOOP_TAIL if is_loop else "",
         cycle_clause=VIDEO_PROMPT_LOOP_CYCLE if is_loop else VIDEO_PROMPT_ONCE_CYCLE,
     )
-    return prompt + "\n" + render_character_identity(identity)
+    return prompt + "\n" + render_character_video_identity(identity)
 
 
 def build_pose_prompt(entry: ActionScriptEntry, identity: CharacterCardSnapshot) -> str:

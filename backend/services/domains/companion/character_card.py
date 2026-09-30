@@ -15,7 +15,7 @@ from modules.companion import (
 )
 from modules.ws import emit_ws_event
 from prompts.companion import CHARACTER_APPEARANCE_TEXTS
-from prompts.generation import CHARACTER_IDENTITY_TEMPLATE, CHARACTER_PROFILE_TEMPLATE
+from prompts.generation import CHARACTER_IDENTITY_TEMPLATE, CHARACTER_PROFILE_TEMPLATE, VIDEO_IDENTITY_TEMPLATE
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -114,6 +114,15 @@ def render_character_identity(snapshot: CharacterCardSnapshot | None) -> str:
     if snapshot is None:
         return ""
     return CHARACTER_IDENTITY_TEMPLATE.format(
+        features=json.dumps(snapshot.features.model_dump(), ensure_ascii=False),
+    )
+
+
+def render_character_video_identity(snapshot: CharacterCardSnapshot | None) -> str:
+    """首帧驱动的动作视频专用：外形文字只补充首帧，不使用以身份参考图为准的图像任务条款。"""
+    if snapshot is None:
+        return ""
+    return VIDEO_IDENTITY_TEMPLATE.format(
         features=json.dumps(snapshot.features.model_dump(), ensure_ascii=False),
     )
 
