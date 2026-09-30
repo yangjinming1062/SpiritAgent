@@ -2,6 +2,7 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { PortraitLightbox } from '@/shared'
+import { useClipboard } from '@/shared/hooks/use-clipboard'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { Check, Copy, Download } from '@/shared/lib/icons'
 import { imageUrlForNativeClipboard } from '@/shared/lib/image-clipboard'
@@ -377,35 +378,12 @@ export function SelfSourceImageFlow({
 
 function SelfSourceCopyButton({ text }: { text: string }): React.JSX.Element {
   const t = useStrings().selfSource
-  const [copied, setCopied] = useState(false)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const { status, copy } = useClipboard()
+  const copied = status === 'copied'
 
-  useEffect((): (() => void) => {
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current)
-      }
-    }
-  }, [])
-
-  const copy = async (): Promise<void> => {
+  const onCopy = async (): Promise<void> => {
     try {
-      if (window.spiritagent?.writeClipboard) {
-        await window.spiritagent.writeClipboard(text)
-      } else {
-        await navigator.clipboard.writeText(text)
-      }
-
-      setCopied(true)
-
-      if (timerRef.current) {
-        clearTimeout(timerRef.current)
-      }
-
-      timerRef.current = setTimeout(() => {
-        setCopied(false)
-        timerRef.current = null
-      }, 1500)
+      await copy(text)
     } catch {
       /* 复制失败保持原态，用户可重试 */
     }
@@ -415,7 +393,7 @@ function SelfSourceCopyButton({ text }: { text: string }): React.JSX.Element {
     <button
       aria-label={copied ? t.copied : t.copyPrompt}
       className="absolute top-2 right-2 inline-flex size-6 items-center justify-center rounded-md text-muted transition select-none hover:bg-fill-hover/80 hover:text-strong"
-      onClick={() => void copy()}
+      onClick={() => void onCopy()}
       title={copied ? t.copied : t.copyPrompt}
       type="button"
     >

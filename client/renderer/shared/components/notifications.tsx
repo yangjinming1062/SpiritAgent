@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import { type Ref, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
+import { useClipboard } from '@/shared/hooks/use-clipboard'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { AlertCircle, AlertTriangle, Check, CheckCircle2, Copy, type IconComponent, Info, X } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
@@ -164,36 +165,25 @@ function NotificationDetail({ detail }: { detail: string }): React.JSX.Element {
   )
 }
 
-const COPIED_RESET_MS = 1500
-
 function CopyDetailButton({ label, text }: { label: string; text: string }): React.JSX.Element {
-  const [copied, setCopied] = useState(false)
-  const [failed, setFailed] = useState(false)
+  const { status, copy } = useClipboard()
+  const copied = status === 'copied'
+  const failed = status === 'failed'
   const t = useStrings()
 
-  const onClick = () => {
-    void (async () => {
-      try {
-        if (window.spiritagent?.writeClipboard) {
-          await window.spiritagent.writeClipboard(text)
-        } else {
-          await navigator.clipboard.writeText(text)
-        }
-
-        triggerHaptic('selection')
-        setCopied(true)
-        window.setTimeout(() => setCopied(false), COPIED_RESET_MS)
-      } catch {
-        setFailed(true)
-        window.setTimeout(() => setFailed(false), COPIED_RESET_MS)
-      }
-    })()
+  const onClick = async (): Promise<void> => {
+    try {
+      await copy(text)
+      triggerHaptic('selection')
+    } catch {
+      // 失败状态由复制按钮就地显示。
+    }
   }
 
   return (
     <button
       className="mt-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[0.6875rem] text-muted transition hover:bg-fill-hover hover:text-strong"
-      onClick={onClick}
+      onClick={() => void onClick()}
       type="button"
     >
       {copied ? <Check className="size-3" /> : failed ? <X className="size-3" /> : <Copy className="size-3" />}

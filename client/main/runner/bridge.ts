@@ -114,6 +114,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
   let toolsGeneration = 0
   let subUnsubFns: Array<() => void> = []
   let endpointFilePath: null | string = null
+  let starting: Promise<RunnerBridgeStatus> | null = null
 
   let state: RunnerBridgeState = {
     capabilities: null,
@@ -242,11 +243,22 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     cachedTools = null
   }
 
-  async function start(args: RunnerBridgeStartOptions = {}): Promise<RunnerBridgeStatus> {
-    if (state.phase === 'starting' || state.phase === 'running' || state.phase === 'stopping') {
-      throw new Error('Runner bridge is already running.')
+  function start(args: RunnerBridgeStartOptions = {}): Promise<RunnerBridgeStatus> {
+    if (starting || state.phase === 'starting' || state.phase === 'running' || state.phase === 'stopping') {
+      return Promise.reject(new Error('Runner bridge is already running.'))
     }
 
+    const task = startRuntime(args)
+    starting = task
+
+    return task.finally(() => {
+      if (starting === task) {
+        starting = null
+      }
+    })
+  }
+
+  async function startRuntime(args: RunnerBridgeStartOptions): Promise<RunnerBridgeStatus> {
     const backendSession = args.backendSession
 
     if (!backendSession) {
@@ -323,59 +335,38 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
 
     subUnsubFns.push(offWs)
 
+    let rollbackReason = 'ws-server-start'
+
+    const assertCurrentStart = (): void => {
+      if (gen !== opGeneration) {
+        rollbackReason = 'start-superseded'
+        throw new Error('Runner bridge start was superseded by stop.')
+      }
+    }
+
     try {
       const started = await wsInstance.start({ path: endpoint.path })
       log(
         `[runner-bridge] WS server listening on ${started?.transport || endpoint.transport} ${started?.path || endpoint.path}`
       )
       await writeEndpointFile({ ...endpoint, token: authToken })
-    } catch (error) {
-      await rollback('ws-server-start')
+      assertCurrentStart()
 
-      if (gen === opGeneration) {
-        throw fail('error', error)
-      }
-
-      throw error
-    }
-
-    if (gen !== opGeneration) {
-      await rollback('start-superseded')
-      throw new Error('Runner bridge start was superseded by stop.')
-    }
-
-    try {
+      rollbackReason = 'process-start'
       await processInstance.start({ authToken, endpointPath: endpoint.path })
-    } catch (error) {
-      await rollback('process-start')
+      assertCurrentStart()
 
-      if (gen === opGeneration) {
-        throw fail('error', error)
-      }
-
-      throw error
-    }
-
-    if (gen !== opGeneration) {
-      await rollback('start-superseded')
-      throw new Error('Runner bridge start was superseded by stop.')
-    }
-
-    try {
+      rollbackReason = 'ready-timeout'
       await processInstance.waitForReady({ timeoutMs: args.readyTimeoutMs ?? 8_000 })
+      assertCurrentStart()
     } catch (error) {
-      await rollback('ready-timeout')
+      await rollback(rollbackReason)
 
       if (gen === opGeneration) {
         throw fail('error', error)
       }
 
       throw error
-    }
-
-    if (gen !== opGeneration) {
-      await rollback('start-superseded')
-      throw new Error('Runner bridge start was superseded by stop.')
     }
 
     return getStatus()
@@ -558,7 +549,8 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
       )
     }
 
-    await Promise.all(tasks)
+    // 旧启动可能仍在等待就绪或回滚；收尾前不得让新实例复用这些资源。
+    await Promise.all([...tasks, starting?.catch(() => {})])
 
     cleanupEndpointFile()
     detachSubs()
@@ -572,23 +564,17 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     return { errors: errorStrings, ok: errors.length === 0 }
   }
 
-  async function _rpc<T = unknown>(
+  async function dispatch<T = unknown>(
     method: string,
-    params: Record<string, unknown>,
+    params: Record<string, unknown> = {},
     opts: { id?: number | string; timeoutMs?: number } = {}
   ): Promise<T> {
     if (!wsServer || !wsServer.getStatus()?.connected) {
       throw new RunnerNotConnectedError('Runner is not connected.')
     }
 
-    return wsServer.call<T>(method, params || {}, opts)
+    return wsServer.call<T>(method, params, opts)
   }
-
-  const dispatch = <T = unknown>(
-    method: string,
-    params?: Record<string, unknown>,
-    opts?: { id?: number | string; timeoutMs?: number }
-  ): Promise<T> => _rpc<T>(method, params || {}, opts)
 
   function getTools(): Record<string, unknown>[] {
     return state.phase === 'running' && wsServer?.getStatus().connected ? (cachedTools ?? []) : []

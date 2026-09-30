@@ -907,13 +907,25 @@ export function submitPendingBatch(): void {
   void submitWithRetry()
 }
 
-export function beginAssistantMessage(): void {
+function lastAssistantMessage(): {
+  list: ChatMessageListItem[]
+  item: ChatMessageListItem
+  body: ChatMessageBody
+} | null {
   const list = $chatMessageList.get()
-  const lastItem = list[list.length - 1]
-  const lastBody = lastItem ? $chatMessageBodies.get()[lastItem.id] : undefined
+  const item = list.at(-1)
+  const body = item?.role === 'assistant' ? $chatMessageBodies.get()[item.id] : undefined
 
-  if (lastItem?.role === 'assistant' && lastBody?.streaming) {
-    if (!lastBody.text.trim() && !lastBody.toolName && !lastBody.error && !lastBody.cancelled) {
+  return item && body ? { list, item, body } : null
+}
+
+export function beginAssistantMessage(): void {
+  const last = lastAssistantMessage()
+
+  if (last?.body.streaming) {
+    const { body } = last
+
+    if (!body.text.trim() && !body.toolName && !body.error && !body.cancelled) {
       return
     }
 
@@ -926,34 +938,26 @@ export function beginAssistantMessage(): void {
   $lastAssistantStreaming.set(true)
 }
 
-function ensureAssistantMessage(): void {
-  const list = $chatMessageList.get()
-  const lastItem = list[list.length - 1]
-  const lastBody = lastItem ? $chatMessageBodies.get()[lastItem.id] : undefined
+function ensureAssistantMessage(): ReturnType<typeof lastAssistantMessage> {
+  const last = lastAssistantMessage()
 
-  if (lastItem && lastItem.role === 'assistant' && lastBody?.streaming) {
-    return
+  if (last?.body.streaming) {
+    return last
   }
 
   beginAssistantMessage()
+
+  return lastAssistantMessage()
 }
 
 function patchLastAssistant(patch: (body: ChatMessageBody) => ChatMessageBody): void {
-  ensureAssistantMessage()
-  const list = $chatMessageList.get()
-  const lastItem = list[list.length - 1]
+  const last = ensureAssistantMessage()
 
-  if (!lastItem || lastItem.role !== 'assistant') {
+  if (!last) {
     return
   }
 
-  const body = $chatMessageBodies.get()[lastItem.id]
-
-  if (!body) {
-    return
-  }
-
-  $chatMessageBodies.setKey(lastItem.id, patch(body))
+  $chatMessageBodies.setKey(last.item.id, patch(last.body))
   $chatStreamingTick.set($chatStreamingTick.get() + 1)
 }
 
@@ -978,38 +982,26 @@ export function appendAssistantReasoningDelta(text: string): void {
 }
 
 export function setAssistantTool(name: string | null): void {
-  ensureAssistantMessage()
-  const list = $chatMessageList.get()
-  const lastItem = list[list.length - 1]
+  const last = ensureAssistantMessage()
 
-  if (!lastItem || lastItem.role !== 'assistant') {
+  if (!last) {
     return
   }
 
-  const body = $chatMessageBodies.get()[lastItem.id]
+  const { body, item } = last
+  const tools = name && name !== body.tools?.at(-1) ? [...(body.tools ?? []), name] : body.tools
 
-  if (!body) {
-    return
-  }
-
-  const tools = name && name !== body.tools?.[body.tools.length - 1] ? [...(body.tools ?? []), name] : body.tools
-
-  $chatMessageBodies.setKey(lastItem.id, { ...body, toolName: name, tools })
+  $chatMessageBodies.setKey(item.id, { ...body, toolName: name, tools })
 }
 
 export function finalizeAssistantMessage(text?: string, media?: ChatMediaItem[], reasoning?: string): void {
-  const list = $chatMessageList.get()
-  const lastItem = list[list.length - 1]
+  const last = lastAssistantMessage()
 
-  if (!lastItem || lastItem.role !== 'assistant') {
+  if (!last) {
     return
   }
 
-  const body = $chatMessageBodies.get()[lastItem.id]
-
-  if (!body) {
-    return
-  }
+  const { list, item, body } = last
 
   const rawStr = typeof text === 'string' ? text : (body.streamingText ?? body.text)
   const finalStr = chatDisplayText(rawStr).trim()
@@ -1029,13 +1021,13 @@ export function finalizeAssistantMessage(text?: string, media?: ChatMediaItem[],
 
   if (isEmpty) {
     $chatMessageList.set(list.slice(0, -1))
-    $chatMessageBodies.setKey(lastItem.id, undefined)
+    $chatMessageBodies.setKey(item.id, undefined)
     $lastAssistantStreaming.set(false)
 
     return
   }
 
-  $chatMessageBodies.setKey(lastItem.id, {
+  $chatMessageBodies.setKey(item.id, {
     ...body,
     text: finalStr,
     streamingText: undefined,
@@ -1177,16 +1169,14 @@ export function forgetDeletedVoiceMessages(messages: SessionMessage[]): void {
 export function markAssistantTerminal({ error, cancelled }: { error?: string; cancelled?: boolean } = {}): void {
   conversationVoiceSink().cancel()
 
-  const list = $chatMessageList.get()
-  const lastItem = list[list.length - 1]
-  const lastBody = lastItem ? $chatMessageBodies.get()[lastItem.id] : undefined
-  const isStreaming = lastItem?.role === 'assistant' && lastBody?.streaming
+  const last = lastAssistantMessage()
   const terminal = { ...(error !== undefined && { error }), ...(cancelled && { cancelled: true }) }
 
-  if (isStreaming && lastItem && lastBody) {
-    $chatMessageBodies.setKey(lastItem.id, {
-      ...lastBody,
-      text: chatDisplayText(lastBody.streamingText ?? lastBody.text).trim(),
+  if (last?.body.streaming) {
+    const { body, item } = last
+    $chatMessageBodies.setKey(item.id, {
+      ...body,
+      text: chatDisplayText(body.streamingText ?? body.text).trim(),
       streamingText: undefined,
       streaming: false,
       ...terminal
@@ -1203,7 +1193,7 @@ export function markAssistantTerminal({ error, cancelled }: { error?: string; ca
     streaming: false,
     toolName: null
   })
-  $chatMessageList.set([...list, { id, role: 'assistant', timestamp: Date.now() }])
+  $chatMessageList.set([...$chatMessageList.get(), { id, role: 'assistant', timestamp: Date.now() }])
   $lastAssistantStreaming.set(false)
 }
 

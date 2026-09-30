@@ -1,6 +1,6 @@
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
 
+import { useClipboard } from '@/shared/hooks/use-clipboard'
 import { Check, Copy } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { notifyError } from '@/shared/store/notifications'
@@ -13,16 +13,8 @@ interface ChatMessageCopyButtonProps {
 
 export function ChatMessageCopyButton({ className = '', text }: ChatMessageCopyButtonProps): React.JSX.Element {
   const dict = useStrings()
-  const [copied, setCopied] = useState(false)
-  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current) {
-        clearTimeout(timerRef.current)
-      }
-    }
-  }, [])
+  const { status, copy } = useClipboard()
+  const copied = status === 'copied'
 
   const onClick = async (e: React.MouseEvent): Promise<void> => {
     e.stopPropagation()
@@ -32,22 +24,7 @@ export function ChatMessageCopyButton({ className = '', text }: ChatMessageCopyB
     }
 
     try {
-      if (window.spiritagent?.writeClipboard) {
-        await window.spiritagent.writeClipboard(text)
-      } else {
-        await navigator.clipboard.writeText(text)
-      }
-
-      setCopied(true)
-
-      if (timerRef.current) {
-        clearTimeout(timerRef.current)
-      }
-
-      timerRef.current = setTimeout(() => {
-        setCopied(false)
-        timerRef.current = null
-      }, 1500)
+      await copy(text)
     } catch (err) {
       notifyError(err, dict.chat.copy.failed)
     }

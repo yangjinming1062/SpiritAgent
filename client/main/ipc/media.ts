@@ -16,7 +16,7 @@ import { resolveReadableFileForIpc } from '../security/hardening'
 import { assertUserSelectedPath } from '../security/user-selected-paths'
 import type { BackendConnection } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
-import { dataUrlFromBuffer, dataUrlToBuffer, parseDataUrl } from '../shared/mime'
+import { dataUrlFromBuffer, parseDataUrl } from '../shared/mime'
 import { errorMessage, HttpError } from '../shared/utils'
 
 import { createAuthExpiryNotifier, type GetCurrentAuth } from './connection'
@@ -58,12 +58,6 @@ let ttsSeq = 0
 let sttSeq = 0
 const ttsAudioCache: Map<string, { dataUrl: string; expiresAt: number; mimeType: string }> = new Map()
 const inflightTts = new Map<string, Promise<{ dataUrl: string; mimeType: string }>>()
-
-interface TtsQueueItem<T> {
-  fn: () => Promise<T>
-  reject: (err: unknown) => void
-  resolve: (value: T) => void
-}
 
 class SttLimiter {
   private activeCount = 0
@@ -112,33 +106,28 @@ class SttLimiter {
 class BoundedTtsQueue {
   private isProcessing = false
   private lastCloudTtsTime = 0
-  private readonly maxQueueSize: number
-  private readonly minCloudIntervalMs: number
-  private readonly queue: Array<TtsQueueItem<unknown>> = []
-
-  constructor() {
-    this.maxQueueSize = TTS_MAX_QUEUE_SIZE
-    this.minCloudIntervalMs = MIN_TTS_INTERVAL_MS
-  }
+  private readonly queue: Array<() => Promise<void>> = []
 
   enqueue<T>(fn: () => Promise<T>): Promise<T> {
-    if (this.queue.length >= this.maxQueueSize) {
+    if (this.queue.length >= TTS_MAX_QUEUE_SIZE) {
       throw new Error('TTS is busy: queue is full')
     }
 
     return new Promise<T>((resolve, reject) => {
-      this.queue.push({
-        fn: fn as () => Promise<unknown>,
-        reject,
-        resolve: resolve as (value: unknown) => void
+      this.queue.push(async () => {
+        try {
+          resolve(await fn())
+        } catch (error) {
+          reject(error)
+        }
       })
-      void this.processNext()
+      void this.drain()
     })
   }
 
   async throttleCloud(): Promise<void> {
     const now = Date.now()
-    const waitMs = this.minCloudIntervalMs - (now - this.lastCloudTtsTime)
+    const waitMs = MIN_TTS_INTERVAL_MS - (now - this.lastCloudTtsTime)
 
     if (waitMs > 0) {
       await sleep(waitMs)
@@ -147,28 +136,19 @@ class BoundedTtsQueue {
     this.lastCloudTtsTime = Date.now()
   }
 
-  private async processNext(): Promise<void> {
-    if (this.isProcessing || this.queue.length === 0) {
+  private async drain(): Promise<void> {
+    if (this.isProcessing) {
       return
     }
 
     this.isProcessing = true
-    const item = this.queue.shift()
-
-    if (!item) {
-      this.isProcessing = false
-
-      return
-    }
 
     try {
-      const result = await item.fn()
-      item.resolve(result)
-    } catch (err) {
-      item.reject(err)
+      for (let task = this.queue.shift(); task; task = this.queue.shift()) {
+        await task()
+      }
     } finally {
       this.isProcessing = false
-      void this.processNext()
     }
   }
 }
@@ -283,7 +263,7 @@ async function ttsViaBackend({
   language?: string
   text: string
   voice?: string
-}): Promise<{ dataUrl: string; mimeType: string; voiceOut?: string }> {
+}): Promise<{ buffer: Buffer; mimeType: string; voiceOut?: string }> {
   const url = `${connection.baseUrl}/api/media/tts`
 
   const payload: Record<string, unknown> = { text }
@@ -318,7 +298,7 @@ async function ttsViaBackend({
   // 后端实际返回的头名是 X-Voice-Used（api/v1/media.py TTS 端点）。
   const voiceOut = res.headers.get('x-voice-used') || undefined
 
-  return { dataUrl: dataUrlFromBuffer(buf, mime), mimeType: mime, voiceOut }
+  return { buffer: buf, mimeType: mime, voiceOut }
 }
 
 function getCachedTts(key: string): null | { dataUrl: string; expiresAt: number; mimeType: string } {
@@ -480,8 +460,6 @@ export function registerMediaIpc({
       return await pending
     }
 
-    const throttleCloud = () => ttsQueue.throttleCloud()
-
     const task = ttsQueue.enqueue(async () => {
       if (persist) {
         const hit = await diskCache.read({ language, text, voice })
@@ -496,20 +474,20 @@ export function registerMediaIpc({
       }
 
       // 云端间隔只约束真实出网请求；磁盘命中不占云端额度。
-      await throttleCloud()
+      await ttsQueue.throttleCloud()
 
       const result = await callBackend(event.sender, connection =>
         ttsViaBackend({ connection, fetchImpl, language, text, voice })
       )
 
-      const value = { dataUrl: result.dataUrl, mimeType: result.mimeType }
+      const value = { dataUrl: dataUrlFromBuffer(result.buffer, result.mimeType), mimeType: result.mimeType }
       setCachedTts(cacheKey, value)
       let persisted = false
 
       if (persist) {
         try {
           persisted = await diskCache.write({
-            buffer: dataUrlToBuffer(result.dataUrl),
+            buffer: result.buffer,
             language,
             mimeType: result.mimeType,
             text,
