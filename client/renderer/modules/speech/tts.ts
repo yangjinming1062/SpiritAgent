@@ -12,30 +12,15 @@ export function stopSpeaking(): void {
   stopAudio()
 }
 
-async function requestSynth(text: string, voice?: string, context?: string, persist = false): Promise<string> {
-  const spokenText = speechText(text)
-
-  if (!spokenText) {
-    return ''
-  }
-
-  const res = await window.spiritagent.media.tts({
-    text: spokenText,
-    voice: voice ?? presentationPorts().$companionVoiceId.get(),
-    context: context ?? null,
-    persist
-  })
-
-  return res.dataUrl
-}
-
 async function synth(
   text: string,
   voice: string | undefined,
   context: string | undefined,
   persist: boolean
 ): Promise<boolean> {
-  if (!speechText(text)) {
+  const spokenText = speechText(text)
+
+  if (!spokenText) {
     return false
   }
 
@@ -43,7 +28,12 @@ async function synth(
   beginVoicePreparing()
 
   try {
-    const dataUrl = await requestSynth(text, voice, context, persist)
+    const { dataUrl } = await window.spiritagent.media.tts({
+      text: spokenText,
+      voice: voice ?? presentationPorts().$companionVoiceId.get(),
+      context: context ?? null,
+      persist
+    })
 
     if (!isLatestGen(gen)) {
       return false

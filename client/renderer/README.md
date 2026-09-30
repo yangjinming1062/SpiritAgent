@@ -71,6 +71,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 精灵舞台对接窗口捕获，手势识别产生语义。
 - 单击等待双击判定，双击成立取消待执行单击；就绪后按实际像素命中，光晕和透明留白不计入。
 - 捕获在 mousemove 阶段完成，不能等 mousedown；异步命中更新后即使指针静止也重判。
+- 相同鼠标捕获状态复用在途或已成功的 IPC 设置，失败后允许下次探测重试；穿透释放仍防抖，手势持有期间保持捕获。
 - 菜单只登记自身区域，关闭事件不穿透触发手势。
 - 命中区域按窗口捕获 ID 分组：精灵窗默认 0，完整入口在 [surface.tsx](app/bootstrap/surface.tsx) 经 `CaptureWindowIdContext` 提供 1，弹层（含 Portal）不传 ID 即随所在窗口；完整入口不挂载 ID 0 的捕获，否则会切换精灵窗穿透。
 - 有效按下即捕获指针并持有窗口鼠标捕获，手势结束前不因透明像素变化开启穿透；取消、失焦、隐藏和卸载统一释放，不触发点击或拖拽释放反馈。
@@ -137,7 +138,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ### 媒体查看
 
-每个窗口独立挂载查看器，经端口打开；完整入口的浮层与命中限定在内容面板，保留外侧伙伴。`MEDIA:` 标记在实时和历史投影中移除，结构化媒体才是展示来源；跨 chunk 保留待解析前缀。媒体字节经主进程读取，临时 URL 按 MIME 创建并在卸载回收。
+每个窗口独立挂载查看器，经端口打开；完整入口的浮层与命中限定在内容面板，保留外侧伙伴。`MEDIA:` 标记在实时和历史投影中移除，结构化媒体才是展示来源；跨 chunk 保留待解析前缀。媒体字节经主进程读取，图片卡片与查看器共享同 URL 的在途读取和成功结果，失败后可重新读取；临时 URL 按 MIME 创建并在卸载回收。
 
 ## 记忆与场景
 
@@ -155,8 +156,8 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ## 视频渲染
 
-- 视频层消费 manifest 与透明 WebM；片段字节经 `apiAsset`（`preferCache`）走主进程磁盘缓存，双 video 待新帧就绪后替换旧画面。
-- 目录与遮罩 JSON 经 `apiAssetBuffer` 直接解码；同一遮罩共用在途请求和解析结果，账户清理使旧请求失效。
+- 视频层消费 manifest 与透明 WebM；片段字节经 `apiAsset`（`preferCache`）走主进程磁盘缓存，同目录、同素材版本共用在途读取和成功结果，双 video 待新帧就绪后替换旧画面。
+- 目录与遮罩 JSON 经 `apiAssetBuffer` 直接解码；同一遮罩共用在途请求和解析结果，片段与遮罩加载失败不保留结果，账户清理使旧请求失效。
 - 完整入口的侧边视频按整段动作的内容轮廓适配侧栏宽高并贴近内容面板，桌面精灵沿用自身的舞台比例；缺少 `content_rect` 时的回退与遮罩格式见[播放契约](../../docs/PROTOCOL.md#动作目录与播放)，实现见 [VideoStage.tsx](modules/character/rendering/video/VideoStage.tsx)。
 - 命中按实际播放时间查询逐帧 alpha 遮罩，并扣除等比显示留白；侧边缺少遮罩时只在已知内容边界内命中。
 - 桌面气泡用 alpha 遮罩上部轮廓作为头部锚点，缺少遮罩时回落内容边界；轮廓按整段素材合并以免逐帧抖动，气泡和轻语都订阅素材轮廓变化，按实际宽高避让屏幕边缘。

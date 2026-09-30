@@ -16,8 +16,8 @@ export interface ActiveActionCatalog {
   /** 服务端外观激活代次；旧版快照未记录时为 null，网络校准前不受理播放指令。 */
   appearanceEpoch: number | null
   manifest: ActionCatalogManifest
-  /** clip 标识与素材版本 → 本地展示 URL。 */
-  clipUrls: Map<string, string>
+  /** clip 标识与素材版本 → 在途读取或已就绪的展示 URL；失败后移除。 */
+  clipUrls: Map<string, Promise<string | null>>
   clipsById: Map<number, ActionClipEntry>
   clipsBySlot: Map<string, ActionClipEntry>
 }
@@ -320,7 +320,7 @@ function safeClip(clip: ActionClipEntry): ActionClipEntry {
   return { ...clip, content_rect }
 }
 
-/** 本地快照先挂目录并标 ready；idle 预取磁盘缓存。 */
+/** 本地快照先挂目录并标 ready；播放器按需读取本机缓存。 */
 function restoreCachedActionCatalog(): void {
   if ($actionCatalog.get()) {
     return
@@ -347,16 +347,6 @@ function restoreCachedActionCatalog(): void {
 
   $actionCatalog.set(catalog)
   $actionCatalogStatus.set('ready')
-
-  const idleClip = pickIdleClip(manifest)
-
-  if (idleClip) {
-    void resolveUrl(idleClip.video_ref, { cacheOnly: true }).then(url => {
-      if (url && $actionCatalog.get() === catalog) {
-        catalog.clipUrls.set(clipKey(idleClip), url)
-      }
-    })
-  }
 }
 
 function assetUrl(rawUrl: string): string {
@@ -365,9 +355,9 @@ function assetUrl(rawUrl: string): string {
     : rawUrl
 }
 
-async function resolveUrl(rawUrl: string, opts?: { cacheOnly?: boolean }): Promise<string | null> {
+async function resolveUrl(rawUrl: string): Promise<string | null> {
   try {
-    return await window.spiritagent.apiAsset({ cacheOnly: opts?.cacheOnly, preferCache: true, url: assetUrl(rawUrl) })
+    return await window.spiritagent.apiAsset({ preferCache: true, url: assetUrl(rawUrl) })
   } catch (err) {
     log.warn('action-store', 'asset resolve failed', err)
 
@@ -488,10 +478,10 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
         return
       }
 
-      const clipUrls = new Map<string, string>()
+      const clipUrls: ActiveActionCatalog['clipUrls'] = new Map()
 
       if (idleClip) {
-        clipUrls.set(clipKey(idleClip), idleUrl)
+        clipUrls.set(clipKey(idleClip), Promise.resolve(idleUrl))
       }
 
       const { clipsById, clipsBySlot } = buildCatalogIndexes(manifest)
@@ -549,17 +539,22 @@ export async function resolveActionClipUrl(
   }
 
   const epoch = currentClearEpoch()
-  const url = await resolveUrl(clip.video_ref)
 
-  if (epoch !== currentClearEpoch()) {
-    return null
-  }
+  const load = resolveUrl(clip.video_ref).then(url => {
+    if (!url || epoch !== currentClearEpoch()) {
+      if (catalog.clipUrls.get(key) === load) {
+        catalog.clipUrls.delete(key)
+      }
 
-  if (url) {
-    catalog.clipUrls.set(key, url)
-  }
+      return null
+    }
 
-  return url
+    return url
+  })
+
+  catalog.clipUrls.set(key, load)
+
+  return load
 }
 
 /** 逐帧 alpha 命中遮罩：独立可缓存资源（hitmask_ref 指向 JSON）。 */
@@ -628,7 +623,13 @@ export async function resolveHitmask(clip: ActionClipEntry): Promise<ActionHitma
 
       return null
     }
-  })()
+  })().then(hitmask => {
+    if (!hitmask && hitmaskCache.get(ref) === load) {
+      hitmaskCache.delete(ref)
+    }
+
+    return hitmask
+  })
 
   // 在途请求与结果共用缓存；清理后旧请求不会重新写入。
   hitmaskCache.set(ref, load)

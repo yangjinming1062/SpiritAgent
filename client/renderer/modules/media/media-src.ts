@@ -4,9 +4,10 @@ import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import type { ChatMediaItem } from '@/shared/types/spiritagent'
 
-// 图片 data URL 进程内缓存：同一 URL 的媒体卡与查看器共享，避免重复 IPC 拉取。
+// 图片结果与在途读取分别缓存，淘汰旧图片不影响仍在等待的消费者。
 const MAX_IMAGE_SRC_ENTRIES = 80
 const imageSrcCache = new Map<string, string>()
+const imageSrcRequests = new Map<string, Promise<string | null>>()
 
 function setImageSrc(url: string, dataUrl: string): void {
   if (imageSrcCache.size >= MAX_IMAGE_SRC_ENTRIES) {
@@ -22,6 +23,7 @@ function setImageSrc(url: string, dataUrl: string): void {
 
 registerStorageClearHandler(() => {
   imageSrcCache.clear()
+  imageSrcRequests.clear()
 })
 
 // 本地绝对路径（Windows 盘符 / UNC / POSIX 根）：这些 URL 不经过后端资产通道，需要主进程直接读盘。后端媒体是 HTTP(S) URL 或相对路径，落不进这三个形态。
@@ -46,11 +48,37 @@ function resolveImageSrc(url: string): string | Promise<string | null> {
     return url
   }
 
-  if (LOCAL_PATH_RE.test(url) && !url.startsWith('/api/')) {
-    return window.spiritagent.readFileDataUrl(url)
+  const cached = imageSrcCache.get(url) ?? imageSrcRequests.get(url)
+
+  if (cached) {
+    return cached
   }
 
-  return window.spiritagent.apiAsset({ url, preferCache: true })
+  const epoch = currentClearEpoch()
+
+  const load = (async () => {
+    const dataUrl = await (LOCAL_PATH_RE.test(url) && !url.startsWith('/api/')
+      ? window.spiritagent.readFileDataUrl(url)
+      : window.spiritagent.apiAsset({ url, preferCache: true }))
+
+    if (epoch !== currentClearEpoch()) {
+      return null
+    }
+
+    if (dataUrl) {
+      setImageSrc(url, dataUrl)
+    }
+
+    return dataUrl
+  })().finally(() => {
+    if (imageSrcRequests.get(url) === load) {
+      imageSrcRequests.delete(url)
+    }
+  })
+
+  imageSrcRequests.set(url, load)
+
+  return load
 }
 
 type MediaSrcState = { status: 'failed' } | { status: 'loading' } | { status: 'ready'; src: string }
@@ -75,11 +103,7 @@ export function useResolvedMediaSrc(item: ChatMediaItem): MediaSrcState {
     void (async () => {
       try {
         if (item.type === 'image') {
-          // data URL 直用时值即键，缓存是纯内存复制——只对走了 IPC 的形态缓存。
-          const direct = item.url.startsWith('data:') ? item.url : null
-          const cached = imageSrcCache.get(item.url)
-          const fetched = direct || cached ? null : await resolveImageSrc(item.url)
-          const dataUrl = direct || cached || fetched
+          const dataUrl = await resolveImageSrc(item.url)
 
           if (!isCurrent()) {
             return
@@ -87,10 +111,6 @@ export function useResolvedMediaSrc(item: ChatMediaItem): MediaSrcState {
 
           if (!dataUrl) {
             throw new Error('Media asset returned no data')
-          }
-
-          if (fetched) {
-            setImageSrc(item.url, fetched)
           }
 
           setResolved({ url: item.url, type: item.type, state: { status: 'ready', src: dataUrl } })

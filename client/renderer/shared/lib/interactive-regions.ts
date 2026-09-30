@@ -97,21 +97,18 @@ export function probeInteractiveRegions(windowId?: number): void {
   }
 }
 
+function hitRegion(region: InteractiveRegion | undefined, x: number, y: number): boolean {
+  const rect = region?.getRect()
+
+  return Boolean(
+    rect && x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom && region?.hitTest?.(x, y) !== false
+  )
+}
+
 function isPointInteractive(x: number, y: number, windowId: number = 0): boolean {
-  const regions = bucket(windowId)
-
-  for (const region of regions.values()) {
-    const rect = region.getRect()
-
-    if (!rect) {
-      continue
-    }
-
-    if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-      // 用像素谓词细化矩形命中；缺失或非布尔值时保持纯矩形语义。
-      if (region.hitTest?.(x, y) !== false) {
-        return true
-      }
+  for (const region of bucket(windowId).values()) {
+    if (hitRegion(region, x, y)) {
+      return true
     }
   }
 
@@ -119,24 +116,7 @@ function isPointInteractive(x: number, y: number, windowId: number = 0): boolean
 }
 
 export function isRegionHit(id: string, x: number, y: number, windowId: number = 0): boolean {
-  const regions = bucket(windowId)
-  const region = regions.get(id)
-
-  if (!region) {
-    return false
-  }
-
-  const rect = region.getRect()
-
-  if (!rect) {
-    return false
-  }
-
-  if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
-    return region.hitTest?.(x, y) !== false
-  }
-
-  return false
+  return hitRegion(bucket(windowId).get(id), x, y)
 }
 
 const defaultGetRect = (el: HTMLElement): DOMRect | null => el.getBoundingClientRect()
@@ -186,16 +166,32 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
   setIgnoreFnRef.current = options?.setIgnoreMouseEvents
 
   useEffect(() => {
-    const setIgnoreMouseEvents = (ignore: boolean, forward?: boolean) => {
-      const payload = {
-        forward: ignore && forward !== false,
-        ignore
+    let requestedIgnore: boolean | undefined
+    let latestRequest: Promise<void> | undefined
+
+    const setIgnoreMouseEvents = (ignore: boolean) => {
+      if (requestedIgnore === ignore) {
+        return
       }
 
+      const payload = { forward: ignore, ignore }
       const customFn = setIgnoreFnRef.current
       const request = customFn ? customFn(payload) : window.spiritagent?.sprite?.setIgnoreMouseEvents?.(payload)
 
-      void request?.catch(error => log.warn('interactive-regions', 'setIgnoreMouseEvents failed', error))
+      if (request === undefined) {
+        return
+      }
+
+      requestedIgnore = ignore
+      latestRequest = request
+      void request.catch(error => {
+        // 失败后允许下次探测重试；旧请求失败不能作废较新的设置。
+        if (latestRequest === request) {
+          requestedIgnore = undefined
+        }
+
+        log.warn('interactive-regions', 'setIgnoreMouseEvents failed', error)
+      })
     }
 
     const cancelPendingRelease = () => {
@@ -215,11 +211,15 @@ export function useWindowMouseCapture(windowId: number = 0, options?: WindowMous
     const releaseDebounced = () => {
       cancelPendingRelease()
 
+      if (requestedIgnore === true) {
+        return
+      }
+
       const timer = setTimeout(() => {
         state.releaseTimers.delete(windowId)
 
         if (!state.captureHoldsByWindow.get(windowId)?.size) {
-          setIgnoreMouseEvents(true, true)
+          setIgnoreMouseEvents(true)
         }
       }, 100)
 
