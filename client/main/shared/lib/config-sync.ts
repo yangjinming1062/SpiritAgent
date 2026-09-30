@@ -171,6 +171,19 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
     return out
   }
 
+  // 归属不匹配时清空同步键并改写归属戳；落盘失败时内存仍保持清理结果，只记录原因。
+  async function isolateMirror(accountId: string, epoch: number): Promise<void> {
+    try {
+      await store.clearSyncedMirror(
+        [...SYNCED_SECTIONS, ...SYNCED_PRIMITIVES],
+        { account_id: accountId },
+        () => epoch === authEpoch
+      )
+    } catch (error) {
+      deps.log(`[config-sync] account isolation persistence failed: ${errorMessage(error)}`)
+    }
+  }
+
   function onLocalChange(config: Record<string, unknown>): void {
     const json = JSON.stringify(pickSyncedSections(config))
 
@@ -301,22 +314,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       const trusted = stamp.account_id === accountId
 
       if (!trusted) {
-        await store.mutate(
-          config => {
-            if (epoch !== authEpoch) {
-              return
-            }
-
-            for (const section of SYNCED_SECTIONS) {
-              delete config[section]
-            }
-
-            for (const key of SYNCED_PRIMITIVES) {
-              delete config[key]
-            }
-          },
-          { pushRunner: false }
-        )
+        await isolateMirror(accountId, epoch)
       }
 
       if (epoch !== authEpoch) {
@@ -422,28 +420,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
       const stamp = objectSection(store.read(), 'sync') as MirrorStamp
 
       if (stamp.account_id !== accountId) {
-        const result = await store.mutate(
-          config => {
-            if (epoch !== authEpoch) {
-              return
-            }
-
-            for (const section of SYNCED_SECTIONS) {
-              delete config[section]
-            }
-
-            for (const key of SYNCED_PRIMITIVES) {
-              delete config[key]
-            }
-
-            config.sync = { account_id: accountId }
-          },
-          { pushRunner: false }
-        )
-
-        if (!result.ok) {
-          deps.log(`[config-sync] account isolation persistence failed: ${result.error || 'unknown'}`)
-        }
+        await isolateMirror(accountId, epoch)
       }
 
       if (epoch === authEpoch) {

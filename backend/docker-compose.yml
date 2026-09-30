@@ -53,6 +53,9 @@ services:
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheus_data:/prometheus
+    configs:
+      - source: metrics_auth_token
+        target: /etc/prometheus/metrics_auth_token
     depends_on:
       backend:
         condition: service_healthy
@@ -60,3 +63,10 @@ services:
 volumes:
   postgres_data:
   prometheus_data:
+
+configs:
+  # Prometheus 抓取 /metrics 的令牌，与 backend 经 .env 读取的 METRICS_AUTH_TOKEN 同源；未设置时后端不校验。
+  # 保留块标量的末尾换行：内容为空时 compose 会改为绑定挂载项目目录。
+  metrics_auth_token:
+    content: |
+      ${METRICS_AUTH_TOKEN:-}

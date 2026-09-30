@@ -61,7 +61,7 @@ class _InvalidCompanionReplyError(RuntimeError):
 
 @dataclass
 class _LLMTurnResult:
-    """单次 LLM 调用的输出：正文、tool 调用与 usage；orchestrator 会就地补全 tool_call_id，故不冻结。"""
+    """单次 LLM 调用的输出：正文、tool 调用与 usage；orchestrator 会就地改写 call_id，故不冻结。"""
 
     turn_content: str
     tool_calls_list: list[dict]
@@ -83,14 +83,14 @@ async def _emit_llm_error(emitter: Emitter, exc: LLMRuntimeError) -> None:
     await emitter.send_json({"type": "error", "message": message})
 
 
-def _ensure_tool_call_ids(tool_calls_list: list[dict]) -> None:
-    """为每个 tool call 保证唯一非空的 call_id；流式供应商在仅参数增量时常省略 id，重复 id 会合并同一 ipc future 导致 gather 挂起。"""
-    seen: set[str] = set()
+def _assign_tool_call_ids(tool_calls_list: list[dict]) -> None:
+    """为每个 tool call 换上后端生成的 call_id。
+
+    供应商标识可能缺失、批内重复或跨回合重复（部分实现按序号生成）；设备等待表、桌面去重、Runner 调用日志
+    与历史截断的调用配对都按 call_id 识别一次调用，只能使用全局唯一的标识。
+    """
     for tc in tool_calls_list:
-        cid = tc.get("call_id")
-        if not isinstance(cid, str) or not cid or cid in seen:
-            tc["call_id"] = f"call_{new_request_id()[:TOOL_CALL_ID_HEX_PREFIX_LEN]}"
-        seen.add(tc["call_id"])
+        tc["call_id"] = f"call_{new_request_id()[:TOOL_CALL_ID_HEX_PREFIX_LEN]}"
 
 
 def _usage_payload(usage: Any) -> dict[str, Any]:

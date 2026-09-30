@@ -18,7 +18,6 @@ COPY backend/pyproject.toml backend/uv.lock ./
 RUN uv sync --frozen
 
 COPY backend/ .
-COPY runner/tools/ /runner/tools/
 
 EXPOSE 10620
 

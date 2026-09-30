@@ -1,11 +1,10 @@
 import { clamp } from '@runtime'
 
 import { log } from '@/shared/lib/log'
-import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
 import { $runnerPhase } from '@/shared/store/runner-status'
 
-import { $activePlayInstance } from './actions'
+import { $activePlayInstance, isActionStageVisible, observeActionStageVisibility } from './actions'
 import { $focusContext, $lastIdleSeconds, $screenLocked } from './activity'
 import { $effectiveTier } from './companion-store'
 import { $llmAutonomy } from './prefs'
@@ -50,14 +49,14 @@ let unsubs: Array<() => void> = []
 let active = false
 let provisionGeneration = 0
 
+// 精灵舞台须实际可见（精灵窗未隐藏或最小化、未被完整入口收起、未开轻语、未锁屏）；发请求前与结果返回后都按此重验。
 function canConsultAutonomy(): boolean {
   return (
     active &&
     $runnerPhase.get() === 'running' &&
     $llmAutonomy.get() &&
     $effectiveTier.get() === 'autonomous' &&
-    !$chatVisible.get() &&
-    !$screenLocked.get() &&
+    isActionStageVisible() &&
     $spatialLocomotion.get() !== 'drag' &&
     !$activePlayInstance.get()
   )
@@ -81,8 +80,7 @@ function approachLocomotion(target: { x: number; y: number }): 'walk' | 'fly' {
 // 客户端只负责走位——有焦点窗口落在窗口旁（复用 perch 落位与缩身，搭话后就地陪工）；
 // 用户在桌面（无窗口）时走到屏幕中下部站定，后续空间决策自然接管。
 function executeApproach(): void {
-  // 锁屏不搭话；聊天开着时空间决策本就冻结。
-  if ($screenLocked.get() || $chatVisible.get()) {
+  if (!isActionStageVisible()) {
     return
   }
 
@@ -234,9 +232,10 @@ export function startAutonomyProvision(): () => void {
 
   // subscribe 立即回放当前值，首次咨询由此发起；其余回放受最小咨询间隔节流。
   unsubs.push($focusContext.subscribe(onStateOrEventChange))
+  // 完整入口、轻语、锁屏或精灵窗隐藏使舞台不可见：作废在途咨询，恢复可见后重新判断。
   unsubs.push(
-    $screenLocked.subscribe(locked => {
-      if (locked) {
+    observeActionStageVisibility(visible => {
+      if (!visible) {
         provisionGeneration += 1
         lastSnapshot = null
 
@@ -247,18 +246,6 @@ export function startAutonomyProvision(): () => void {
     })
   )
   unsubs.push($lastIdleSeconds.subscribe(onStateOrEventChange))
-  unsubs.push(
-    $chatVisible.subscribe(visible => {
-      if (visible) {
-        provisionGeneration += 1
-        lastSnapshot = null
-
-        return
-      }
-
-      onStateOrEventChange()
-    })
-  )
   unsubs.push(
     $llmAutonomy.subscribe(enabled => {
       if (!enabled) {

@@ -1,6 +1,6 @@
 # ---------------------------------------------------------------------------
 # Build context root is the repo root (docker-compose context: ..).
-# The backend image only needs backend/ and runner/tools/.
+# The backend image only needs backend/.
 # ---------------------------------------------------------------------------
 
 # Python virtual envs & caches (the .venv\lib64 symlink breaks Docker on Windows)
@@ -35,14 +35,16 @@ dist/
 release/
 updates/
 
-# Secrets & config (mounted at runtime, not baked in)
-.env
-.env.*
-config.toml
-config.toml.local
+# Secrets & config (mounted at runtime, not baked in). The context is the repo root and
+# `COPY backend/ .` copies nested files, so match them at any depth; config.toml.example stays.
+**/.env
+**/.env.*
+**/config.toml
+**/config.toml.local
 
-# Desktop client & installer (not needed in the backend image)
+# Desktop client, runner & installer (not needed in the backend image)
 client/
+runner/
 installer/
 docs/
 scripts/
@@ -58,14 +60,15 @@ scripts/
 .vscode/
 .DS_Store
 
-# Runtime data & databases
+# Runtime data & databases (backend DATA_DIR defaults to backend/data)
 data/
-*.db
-*.sqlite
-*.sqlite3
+backend/data/
+**/*.db
+**/*.sqlite
+**/*.sqlite3
 
 # Logs & temp
-*.log
-logs/
+**/*.log
+**/logs/
 tmp/
 temp/

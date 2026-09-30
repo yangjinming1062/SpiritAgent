@@ -1,7 +1,9 @@
 """提案受理与语义去重：reused / pending_review / rejected。
 
-受理在用户级锁内完成「门禁 → 去重 → 落库」，防止并发绕过约束。
-幂等键限定 (user, source, pack, fingerprint)：换包或抑制期满后同创意可重提。
+受理锁内依次处理：同 key 动作（就绪复用、在制或待确认直接返回、失败或取消原位重做）→ 同创意在审提案去重
+→ 门禁与抠像模型检查 → 复用 deferred / rejected 原提案行或新建提案并 flush。
+调用方在锁外提交，并发新建的同创意提案由幂等唯一约束兜底；幂等键限定 (user, source, pack, fingerprint)，
+换包或抑制期满后同创意可重提。
 """
 
 import hashlib
@@ -13,6 +15,7 @@ from modules.companion import ActionDesignRequest, ActionDesignResult, ActionPro
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from services.application.generation.video import VideoPackStateError, require_action_matting_model
 from services.domains.actions import (
     ActionPolicyError,
     check_can_accept,
@@ -29,10 +32,11 @@ _KEY_STRIP_RE = re.compile(r"[^a-z0-9]+")
 
 @dataclass(frozen=True)
 class ProposalAcceptance:
-    """受理结论及其所属包；提案事务提交后交给 `schedule_accepted_proposal` 启动后台工作。"""
+    """受理结论；调用方提交受理事务后交给 `schedule_accepted_proposal` 启动后台工作。"""
 
     result: ActionDesignResult
-    pack_id: int | None = None
+    # 同 key 动作原位重做或仍在制作时需唤醒生成的所属包；其余结论为空。
+    wake_pack_id: int | None = None
 
 
 def action_key_from_name(name: str, fingerprint: str) -> str:
@@ -59,8 +63,7 @@ async def accept_proposal(
         return ProposalAcceptance(ActionDesignResult(outcome="rejected", message="形象已切换，请刷新动作列表"))
 
     async with get_action_accept_lock(user_id):
-        result = await _accept_in_pack(db, user_id, pack.id, request, source=source)
-    return ProposalAcceptance(result, pack.id)
+        return await _accept_in_pack(db, user_id, pack.id, request, source=source)
 
 
 async def _accept_in_pack(
@@ -70,32 +73,53 @@ async def _accept_in_pack(
     request: ActionDesignRequest,
     *,
     source: str,
-) -> ActionDesignResult:
-    """受理锁内：同 key 动作复用或重做 → 同创意提案去重或重审 → 门禁后新建提案。"""
+) -> ProposalAcceptance:
+    """受理锁内：同 key 动作复用、等待或重做 → 同创意提案去重或重审 → 门禁后新建提案。"""
     fingerprint = make_semantic_fingerprint(request.name, request.motion_description)
     existing = await get_action_by_key(db, pack_id, action_key_from_name(request.name, fingerprint))
     if existing and existing.status == "succeeded" and existing.video_path:
-        return ActionDesignResult(
-            outcome="reused",
-            action_id=existing.id,
-            message=f"已有动作「{existing.name}」，请核对其内容与启用状态后复用",
+        return ProposalAcceptance(
+            ActionDesignResult(
+                outcome="reused",
+                action_id=existing.id,
+                message=f"已有动作「{existing.name}」，请核对其内容与启用状态后复用",
+            ),
         )
     if existing and existing.status in ("queued", "processing", "result_unknown"):
-        return ActionDesignResult(
-            outcome="pending_review",
-            action_id=existing.id,
-            message=f"相似动作「{existing.name}」已在制作中",
+        return ProposalAcceptance(
+            ActionDesignResult(
+                outcome="pending_review",
+                action_id=existing.id,
+                message=f"相似动作「{existing.name}」已在制作中",
+            ),
+            wake_pack_id=pack_id,
+        )
+    if existing and existing.status == "review":
+        # 成品待用户复核：不重做也不新建提案，采纳后才进入可播目录。
+        return ProposalAcceptance(
+            ActionDesignResult(
+                outcome="pending_review",
+                action_id=existing.id,
+                message=f"相似动作「{existing.name}」已制作完成，等待用户确认后才能播放",
+            ),
         )
     if existing and existing.status in ("failed", "cancelled"):
+        try:
+            require_action_matting_model()
+        except VideoPackStateError as exc:
+            return ProposalAcceptance(ActionDesignResult(outcome="rejected", message=str(exc)))
         # 制作失败的同名动作：保留动作身份重做素材，不新建提案。
         existing.status = "queued"
         existing.stage = "design"
         existing.error = None
         await db.flush()
-        return ActionDesignResult(
-            outcome="pending_review",
-            action_id=existing.id,
-            message=f"将重新制作动作「{existing.name}」",
+        return ProposalAcceptance(
+            ActionDesignResult(
+                outcome="pending_review",
+                action_id=existing.id,
+                message=f"将重新制作动作「{existing.name}」",
+            ),
+            wake_pack_id=pack_id,
         )
 
     pending_id = await db.scalar(
@@ -107,10 +131,12 @@ async def _accept_in_pack(
         ),
     )
     if pending_id is not None:
-        return ActionDesignResult(
-            outcome="pending_review",
-            proposal_id=pending_id,
-            message="已有相同创意的提案在评审中",
+        return ProposalAcceptance(
+            ActionDesignResult(
+                outcome="pending_review",
+                proposal_id=pending_id,
+                message="已有相同创意的提案在评审中",
+            ),
         )
 
     prior = await db.scalar(
@@ -132,8 +158,9 @@ async def _accept_in_pack(
             pack_id=pack_id,
             semantic_fingerprint=fingerprint,
         )
-    except ActionPolicyError as exc:
-        return ActionDesignResult(outcome="rejected", message=str(exc))
+        require_action_matting_model()
+    except (ActionPolicyError, VideoPackStateError) as exc:
+        return ProposalAcceptance(ActionDesignResult(outcome="rejected", message=str(exc)))
 
     if prior is not None and prior.status in ("deferred", "rejected"):
         # deferred / 拒绝抑制期满后的原创意重提：复用原提案行再评审，不撞幂等唯一约束。
@@ -146,10 +173,12 @@ async def _accept_in_pack(
         prior.reason = request.reason
         prior.source = source
         await db.flush()
-        return ActionDesignResult(
-            outcome="pending_review",
-            proposal_id=prior.id,
-            message="原提案将重新评审",
+        return ProposalAcceptance(
+            ActionDesignResult(
+                outcome="pending_review",
+                proposal_id=prior.id,
+                message="原提案将重新评审",
+            ),
         )
 
     proposal = ActionProposal(
@@ -165,8 +194,10 @@ async def _accept_in_pack(
     )
     db.add(proposal)
     await db.flush()
-    return ActionDesignResult(
-        outcome="pending_review",
-        proposal_id=proposal.id,
-        message="提案已受理，将由独立评审决定是否制作",
+    return ProposalAcceptance(
+        ActionDesignResult(
+            outcome="pending_review",
+            proposal_id=proposal.id,
+            message="提案已受理，将由独立评审决定是否制作",
+        ),
     )

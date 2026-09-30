@@ -4,9 +4,13 @@
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Stdio;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
+use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader, Lines};
+use tokio::process::{Child, ChildStderr, ChildStdout, Command};
 use tokio::sync::mpsc;
+
+/// 脚本进程退出后继续读取残余输出的上限：仍存活的后代进程持有继承的管道写端时，管道不会 EOF。
+const PIPE_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
 
 pub struct StreamSink {
     pub on_stdout_line: Box<dyn Fn(&str) + Send + Sync>,
@@ -45,6 +49,7 @@ pub struct BundleContext {
 /// 启动 install.ps1 / install.sh 并流式返回输出。
 ///
 /// `spiritagent_home_override` 作为 $SPIRITAGENT_HOME 传递给子脚本；`bundle` 作为 SPIRITAGENT_BUNDLE_* 环境变量。
+/// 取消时终止脚本及其全部后代进程；脚本退出后最多再读 `PIPE_DRAIN_TIMEOUT`，不等待仍持有管道的残留进程。
 /// 返回值第二项是未触发的取消通道，调用方须归还给 holder，否则后续阶段无法再响应取消。
 pub async fn run_script(
     script_path: &Path,
@@ -95,87 +100,184 @@ pub async fn run_script(
         // CREATE_NO_WINDOW = 0x08000000
         cmd.creation_flags(0x0800_0000);
     }
+    // 脚本自成进程组（组号即其 PID），后代进程默认留在组内，取消时整组终止。
+    #[cfg(unix)]
+    cmd.process_group(0);
 
     let mut child: Child = cmd
         .spawn()
         .with_context(|| format!("spawning {} via {}", script_path.display(), interpreter_label()))?;
+    let process_tree = ProcessTree::attach(&child);
 
-    let stdout = child.stdout.take().expect("stdout was piped");
-    let stderr = child.stderr.take().expect("stderr was piped");
-
-    let mut stdout_reader = BufReader::new(stdout).lines();
-    let mut stderr_reader = BufReader::new(stderr).lines();
-
-    let mut combined_stdout = String::new();
-    let mut combined_stderr = String::new();
+    let mut output = ScriptOutput::new(
+        child.stdout.take().expect("stdout was piped"),
+        child.stderr.take().expect("stderr was piped"),
+    );
     let mut killed = false;
 
-    loop {
+    let status = loop {
         tokio::select! {
-            line = stdout_reader.next_line() => {
-                match line {
-                    Ok(Some(l)) => {
-                        (sink.on_stdout_line)(&l);
-                        combined_stdout.push_str(&l);
-                        combined_stdout.push('\n');
-                    }
-                    Ok(None) => break,
-                    Err(e) => {
-                        tracing::warn!("stdout read error: {e}");
-                        break;
-                    }
-                }
-            }
-            line = stderr_reader.next_line() => {
-                match line {
-                    Ok(Some(l)) => {
-                        (sink.on_stderr_line)(&l);
-                        combined_stderr.push_str(&l);
-                        combined_stderr.push('\n');
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        tracing::warn!("stderr read error: {e}");
-                    }
-                }
-            }
+            () = output.read_line(&sink) => {}
+            exit = child.wait() => break exit.context("waiting for install script to exit")?,
             _ = recv_cancel(&mut cancel_rx) => {
-                tracing::warn!("cancellation received — killing child");
+                tracing::warn!("cancellation received — terminating install script process tree");
                 killed = true;
-                // 尽力杀掉子进程，不向上传播错误；已触发的通道不再回收。
-                let _ = child.start_kill();
+                // 已触发的通道不再回收。
                 cancel_rx = None;
-                break;
+                process_tree.kill(&mut child);
             }
         }
-    }
+    };
 
-    // 主循环退出后继续把残余行抽干，避免上层遗漏末尾输出。
-    while let Ok(Some(l)) = stdout_reader.next_line().await {
-        (sink.on_stdout_line)(&l);
-        combined_stdout.push_str(&l);
-        combined_stdout.push('\n');
+    // 抽干脚本退出前写入的残余输出；后代进程仍持有管道写端时不等待 EOF，避免结果被其拖住。
+    let drain = async {
+        while output.is_open() {
+            output.read_line(&sink).await;
+        }
+    };
+    if tokio::time::timeout(PIPE_DRAIN_TIMEOUT, drain).await.is_err() {
+        tracing::warn!("install script exited but its output pipes are still held open; stopped reading");
     }
-    while let Ok(Some(l)) = stderr_reader.next_line().await {
-        (sink.on_stderr_line)(&l);
-        combined_stderr.push_str(&l);
-        combined_stderr.push('\n');
-    }
-
-    let status = child
-        .wait()
-        .await
-        .context("waiting for install script to exit")?;
 
     Ok((
         ScriptResult {
-            stdout: combined_stdout,
-            stderr: combined_stderr,
+            stdout: output.stdout_text,
+            stderr: output.stderr_text,
             exit_code: status.code(),
             killed,
         },
         cancel_rx,
     ))
+}
+
+/// 脚本 stdout / stderr 的逐行转发与累计。
+struct ScriptOutput {
+    stdout: Lines<BufReader<ChildStdout>>,
+    stderr: Lines<BufReader<ChildStderr>>,
+    stdout_open: bool,
+    stderr_open: bool,
+    stdout_text: String,
+    stderr_text: String,
+}
+
+impl ScriptOutput {
+    fn new(stdout: ChildStdout, stderr: ChildStderr) -> Self {
+        Self {
+            stdout: BufReader::new(stdout).lines(),
+            stderr: BufReader::new(stderr).lines(),
+            stdout_open: true,
+            stderr_open: true,
+            stdout_text: String::new(),
+            stderr_text: String::new(),
+        }
+    }
+
+    fn is_open(&self) -> bool {
+        self.stdout_open || self.stderr_open
+    }
+
+    /// 转发任一管道的下一行；EOF 或读错即关闭该管道，两端都关闭后不再完成。可安全用于 `select!` 分支。
+    async fn read_line(&mut self, sink: &StreamSink) {
+        tokio::select! {
+            line = self.stdout.next_line(), if self.stdout_open => {
+                self.stdout_open = accept_line(line, &*sink.on_stdout_line, &mut self.stdout_text, "stdout");
+            }
+            line = self.stderr.next_line(), if self.stderr_open => {
+                self.stderr_open = accept_line(line, &*sink.on_stderr_line, &mut self.stderr_text, "stderr");
+            }
+            else => std::future::pending::<()>().await,
+        }
+    }
+}
+
+/// 处理一次读取结果，返回该管道是否仍可继续读取。
+fn accept_line(
+    line: std::io::Result<Option<String>>,
+    forward: &(dyn Fn(&str) + Send + Sync),
+    text: &mut String,
+    stream: &str,
+) -> bool {
+    match line {
+        Ok(Some(l)) => {
+            forward(&l);
+            text.push_str(&l);
+            text.push('\n');
+            true
+        }
+        Ok(None) => false,
+        Err(e) => {
+            tracing::warn!("{stream} read error: {e}");
+            false
+        }
+    }
+}
+
+/// 脚本进程及其后代：Unix 为脚本自建的进程组，Windows 为容纳脚本进程的 Job Object。
+/// 取消只终止直接子进程时，uv、NSIS、curl 等后代会继续运行并占用继承的输出管道。
+struct ProcessTree {
+    #[cfg(unix)]
+    pgid: Option<libc::pid_t>,
+    #[cfg(windows)]
+    job: Option<std::os::windows::io::OwnedHandle>,
+}
+
+impl ProcessTree {
+    #[cfg(unix)]
+    fn attach(child: &Child) -> Self {
+        Self {
+            pgid: child.id().and_then(|pid| libc::pid_t::try_from(pid).ok()),
+        }
+    }
+
+    /// 脚本启动后立即入 Job，此后它创建的后代进程自动归属同一 Job。
+    #[cfg(windows)]
+    fn attach(child: &Child) -> Self {
+        let job = child.raw_handle().and_then(|process| match assign_to_new_job(process) {
+            Ok(job) => Some(job),
+            Err(e) => {
+                tracing::warn!(error = %e, "failed to put install script into a job object; cancel will only kill the script process");
+                None
+            }
+        });
+        Self { job }
+    }
+
+    /// 尽力终止整棵进程树，失败时退回只杀脚本进程；错误只记日志。
+    fn kill(&self, child: &mut Child) {
+        #[cfg(unix)]
+        if let Some(pgid) = self.pgid {
+            // SAFETY: killpg 只向进程组发送信号，不涉及内存访问。
+            if unsafe { libc::killpg(pgid, libc::SIGKILL) } == 0 {
+                return;
+            }
+            tracing::warn!(error = %std::io::Error::last_os_error(), "killpg failed; killing the script process only");
+        }
+        #[cfg(windows)]
+        if let Some(job) = &self.job {
+            use std::os::windows::io::AsRawHandle;
+            // SAFETY: job 是本结构持有的有效 Job Object 句柄。
+            if unsafe { windows_sys::Win32::System::JobObjects::TerminateJobObject(job.as_raw_handle(), 1) } != 0 {
+                return;
+            }
+            tracing::warn!(error = %std::io::Error::last_os_error(), "TerminateJobObject failed; killing the script process only");
+        }
+        let _ = child.start_kill();
+    }
+}
+
+#[cfg(windows)]
+fn assign_to_new_job(process: std::os::windows::io::RawHandle) -> std::io::Result<std::os::windows::io::OwnedHandle> {
+    use std::os::windows::io::{AsRawHandle, HandleOrNull, OwnedHandle};
+    use windows_sys::Win32::System::JobObjects::{AssignProcessToJobObject, CreateJobObjectW};
+
+    // SAFETY: 空指针表示默认安全属性的匿名 Job；失败返回 NULL，由 HandleOrNull 转为错误，成功时句柄归 OwnedHandle 关闭。
+    let job = unsafe { HandleOrNull::from_raw_handle(CreateJobObjectW(std::ptr::null(), std::ptr::null())) };
+    let job = OwnedHandle::try_from(job).map_err(|_| std::io::Error::last_os_error())?;
+    // SAFETY: job 有效；process 取自仍未回收的 Child，句柄在调用期间有效。
+    if unsafe { AssignProcessToJobObject(job.as_raw_handle(), process) } == 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(job)
 }
 
 fn stable_script_cwd<'a>(script_path: &'a Path, spiritagent_home_override: Option<&'a str>) -> Option<&'a Path> {

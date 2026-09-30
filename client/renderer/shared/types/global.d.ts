@@ -59,6 +59,7 @@ declare global {
       saveImage: AsyncIpc<IpcInvokeContract['spiritagent:saveImage']>
       log: AsyncIpc<IpcInvokeContract['spiritagent:log:emit']>
       runnerInvoke: AsyncIpc<IpcInvokeContract['spiritagent:runner:invoke']>
+      runnerDispatchCall: AsyncIpc<IpcInvokeContract['spiritagent:runner:dispatch-call']>
       runnerCancel: AsyncIpc<IpcInvokeContract['spiritagent:runner:cancel']>
       runnerGetState: AsyncIpc<IpcInvokeContract['spiritagent:runner:get-state']>
       runnerGetTools: AsyncIpc<IpcInvokeContract['spiritagent:runner:get-tools']>

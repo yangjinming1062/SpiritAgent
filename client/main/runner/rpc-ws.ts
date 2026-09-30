@@ -6,7 +6,7 @@ import type { Socket } from 'node:net'
 import type WebSocket from 'ws'
 import { WebSocketServer } from 'ws'
 
-import { errorMessage, RunnerNotConnectedError } from '../shared/utils'
+import { errorMessage, RunnerNotConnectedError, RunnerRpcError } from '../shared/utils'
 
 const DEFAULT_TIMEOUT_MS = 120_000
 const JSON_RPC_VERSION = '2.0'
@@ -74,7 +74,7 @@ interface PendingCall {
 }
 
 interface JsonRpcMessage {
-  error?: { code?: number; message?: string }
+  error?: { code?: number; data?: { disposition?: unknown }; message?: string }
   id?: number | string
   jsonrpc?: string
   method?: string
@@ -163,7 +163,13 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
 
         if (Object.prototype.hasOwnProperty.call(message, 'error')) {
           const err = message.error || {}
-          entry.reject(new Error(typeof err.message === 'string' ? err.message : `Runner error for ${entry.method}`))
+          entry.reject(
+            new RunnerRpcError(
+              typeof err.message === 'string' ? err.message : `Runner error for ${entry.method}`,
+              typeof err.code === 'number' ? err.code : null,
+              typeof err.data?.disposition === 'string' ? err.data.disposition : null
+            )
+          )
         } else {
           entry.resolve(message.result)
         }
@@ -227,13 +233,18 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
   function call<T = unknown>(
     method: string,
     params: Record<string, unknown> = {},
-    { timeoutMs }: { timeoutMs?: number } = {}
+    { id: requestedId, timeoutMs }: { id?: number | string; timeoutMs?: number } = {}
   ): Promise<T> {
     if (closed) {
       return Promise.reject(new RunnerNotConnectedError('Runner WS server is closed.'))
     }
 
-    const id = `call_${nextId++}`
+    // 调用方指定 id 以便之后按 `req_id` 取消该请求；不得与在途请求重复。
+    const id = requestedId === undefined ? `call_${nextId++}` : String(requestedId)
+
+    if (pending.has(id)) {
+      return Promise.reject(new Error(`Runner request id ${id} is already in flight.`))
+    }
 
     const effectiveTimeoutMs =
       typeof timeoutMs === 'number' && Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : DEFAULT_TIMEOUT_MS

@@ -12,6 +12,7 @@ from .service import (
     ensure_system_action,
     list_pack_responses,
     load_pack_response,
+    require_action_matting_model,
     resume_video_generation_jobs,
     retry_pack,
 )
@@ -28,6 +29,7 @@ __all__ = [
     "ensure_system_action",
     "list_pack_responses",
     "load_pack_response",
+    "require_action_matting_model",
     "retry_pack",
     "resume_video_generation_jobs",
 ]

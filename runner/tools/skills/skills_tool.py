@@ -39,19 +39,6 @@ def _skill_lookup_path_error(name: str) -> str | None:
     return "Skill name cannot contain '..' path traversal components." if has_traversal_component(candidate) else None
 
 
-_INJECTION_PATTERNS = [
-    "ignore previous instructions",
-    "ignore all previous",
-    "you are now",
-    "disregard your",
-    "forget your instructions",
-    "new instructions:",
-    "system prompt:",
-    "<system>",
-    "]]>",
-]
-
-
 def skill_matches_platform(frontmatter: dict[str, Any]) -> bool:
     """skill 的 ``platforms`` 是否允许当前宿主；语义与 Client 技能索引一致。
 
@@ -240,20 +227,6 @@ def skill_view(name: str, file_path: str | None = None) -> str:
         except (OSError, UnicodeDecodeError) as e:
             return json.dumps({"success": False, "error": f"Failed to read skill '{name}': {e}"}, ensure_ascii=False)
 
-        # 注入特征在 view 阶段硬阻断而不只是警告：安装或写入时的检查被绕过后，这里是内容进入模型上下文前的最后一道闸。
-        if any(p in content.lower() for p in _INJECTION_PATTERNS):
-            logger.warning("Skill security warning for '%s': content may indicate prompt injection", name)
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": (
-                        f"Skill '{name}' blocked by skill_view security gate: "
-                        "skill content contains patterns that may indicate prompt injection"
-                    ),
-                },
-                ensure_ascii=False,
-            )
-
         parsed_frontmatter, _ = parse_frontmatter(content)
 
         if not skill_matches_platform(parsed_frontmatter):
@@ -334,18 +307,6 @@ def skill_view(name: str, file_path: str | None = None) -> str:
                         ensure_ascii=False,
                     )
                 f_content = target_file.read_text(encoding="utf-8")
-                # 链接文件与 SKILL.md 同闸: SKILL.md 干净而 references 脏的技能不能借 view 绕过。
-                if any(p in f_content.lower() for p in _INJECTION_PATTERNS):
-                    return json.dumps(
-                        {
-                            "success": False,
-                            "error": (
-                                f"Linked file '{file_path}' blocked by skill_view security gate: "
-                                "content contains patterns that may indicate prompt injection"
-                            ),
-                        },
-                        ensure_ascii=False,
-                    )
                 return json.dumps(
                     {
                         "success": True,

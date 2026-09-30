@@ -191,7 +191,7 @@ function New-RunnerManifest {
 }
 
 # 构造自更新 zip：同时装入桌面端产物 + runner wheel + server.py，一次更新覆盖客户端两侧；
-# wheel 内已带 skills（runner/pyproject.toml 的 package_data），不需要单独的 skills tar。
+# 不含内置技能：技能只由安装器 install-skills 阶段释放（见 installer/README.md），客户端自更新不刷新内置技能。
 # 后端按 zip 内的 `runner/` 布局提取，便于后续一致性校验。
 function Build-UpdateZip {
     [CmdletBinding()]

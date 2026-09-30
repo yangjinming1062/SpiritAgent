@@ -276,6 +276,14 @@ def _clip_row_values(result: ActionResult) -> dict[str, object]:
     }
 
 
+def require_action_matting_model() -> None:
+    """动作素材都要经过抠像；模型缺失时在任何付费生成前拒绝。"""
+    try:
+        require_matting_model()
+    except VideoProcessError as exc:
+        raise VideoPackStateError(str(exc)) from exc
+
+
 async def _reject_concurrent_build(db: AsyncSession, user_id: int) -> None:
     """同一用户同时只允许一个构建中的视频包，避免发布与激活竞态。"""
     processing = (
@@ -384,6 +392,7 @@ async def create_pack_from_reference(
         # 同一外观快照：ready 包上单动作原地重做，不新建 pack。
         if source is not None and action is not None and source.status == "ready":
             await _reject_concurrent_build(db, user_id)
+            require_action_matting_model()
             job = await _queue_in_place_redo(db, source, action, feedback)
             await db.commit()
             kick_dynamic_action(source.id, job.id, user_id)
@@ -461,10 +470,7 @@ async def create_pack_from_reference(
         image_chain, image_error = await resolve_image_gen_chain(db, user_id, has_reference=True, image_edit=True)
         if not image_chain:
             raise VideoPackStateError(image_error or "请配置图像编辑供应商以生成动作姿态")
-        try:
-            require_matting_model()
-        except VideoProcessError as exc:
-            raise VideoPackStateError(str(exc)) from exc
+        require_action_matting_model()
         previous: dict[str, CompanionAction] = {}
         if source is not None:
             previous = {
@@ -659,6 +665,8 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionA
         recoverable = [job for job in jobs if _can_resume_job(job)]
         if not recoverable and not _can_publish_jobs(jobs, context.must_actions):
             raise VideoPackStateError("提交结果未知，请核对供应商任务后选择重做动作")
+        if recoverable:
+            require_action_matting_model()
         if newer is not None:
             # 旧包不能原地变成更旧的激活版本；合并结果通过新的不可变版本交付，沿用原包冻结参考、画布与评审快照。
             origin = pack
@@ -1894,24 +1902,24 @@ async def ensure_system_action(
                 ),
             )
         ).scalar_one_or_none()
-        if job is None:
-            job = CompanionAction(
-                user_id=user_id,
-                pack_id=pack.id,
-                outfit_id=pack.outfit_id,
-                key=action,
-                name="",
-                system_slot=action,
-                kind="loop",
-                status="queued",
-                stage="design",
-                target_duration_seconds=_SYSTEM_ACTION_SECONDS,
-                reference_hash=pack.reference_hash,
-            )
-            db.add(job)
-            await db.flush()
-            kick_action_id = job.id
-        elif job.status == "queued" or (job.status == "processing" and pack.id not in _GEN_INFLIGHT):
+        if job is None or job.status == "queued" or (job.status == "processing" and pack.id not in _GEN_INFLIGHT):
+            require_action_matting_model()
+            if job is None:
+                job = CompanionAction(
+                    user_id=user_id,
+                    pack_id=pack.id,
+                    outfit_id=pack.outfit_id,
+                    key=action,
+                    name="",
+                    system_slot=action,
+                    kind="loop",
+                    status="queued",
+                    stage="design",
+                    target_duration_seconds=_SYSTEM_ACTION_SECONDS,
+                    reference_hash=pack.reference_hash,
+                )
+                db.add(job)
+                await db.flush()
             kick_action_id = job.id
         elif job.status == "succeeded":
             # 素材成功但目录发布失败时，只重试发布，不重新生成。
@@ -1995,8 +2003,8 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> Compani
         if outfit is None or await _reference_hash(outfit, avatar) != pack.reference_hash:
             raise VideoPackStateError("该视频包对应的参考已变更")
         context = _load_generation_context(pack)
-        if context is not None and not await character_snapshot_is_current(db, user_id, context.identity):
-            raise VideoPackStateError("视频形象使用旧身体资料，请先制作新视频包")
+        if context is not None:
+            await _require_current_identity_image(context, avatar)
         if pack.identity_review == "review":
             pack.identity_review = "accepted"
         await _activate_locked(db, pack)
@@ -2070,6 +2078,18 @@ async def _remove_packs(db: AsyncSession, user_id: int, targets: list[CompanionA
 def _load_generation_context(pack: CompanionActionPack) -> GenerationContext | None:
     """生成包的冻结上下文；上传导入包没有上下文。"""
     return GenerationContext.model_validate_json(pack.context_json) if pack.context_json else None
+
+
+async def _require_current_identity_image(context: GenerationContext, avatar: AvatarAsset | None) -> None:
+    """已制作的包只在身份图变化后失效：冻结的全身身份图须与当前已采纳全身图一致，角色卡文字修订不影响。"""
+    if avatar is None or avatar.id != context.identity.avatar_id:
+        raise VideoPackStateError("该视频包对应的角色形象已切换，请生成完整新包")
+    frozen = await _process_thread(read_portrait_bytes, context.identity_reference_path)
+    current = await _process_thread(read_portrait_bytes, avatar.seed_fullbody_url)
+    if frozen is None or current is None:
+        raise VideoPackStateError("全身身份图无法读取，暂不能启用该视频包")
+    if frozen[0] != current[0]:
+        raise VideoPackStateError("视频形象使用旧身体资料，请先制作新视频包")
 
 
 def _same_generation_lineage(kept: CompanionActionPack, other: CompanionActionPack) -> bool:

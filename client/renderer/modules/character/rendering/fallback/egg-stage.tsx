@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import { clamp } from '@runtime'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 
 import { useInteractiveRegion } from '@/shared'
 import { $surfaceOpen } from '@/shared/store/surfaces'
@@ -9,22 +9,18 @@ import { useStrings } from '@/shared/strings'
 import type { CompanionFallbackStatus } from '../../presentation'
 import { openContextMenu } from '../../sprite/context-menu-store'
 
-// 桌面常驻「蛋」：透明置顶窗口里呼吸 / 裂纹闪光 / hover 注视，等待用户点击启动 onboarding；
-// 形象未就绪时兼作兜底并显示真实状态（DESIGN「引导与后台准备」「呈现与降级」）。
-// Installer 端的 Egg 组件是流程动画，桌面这个是常驻精灵。
+// 视频形象未就绪时的兜底「蛋」：呼吸 / 裂纹闪光 / 注视指针，并显示真实状态与对应恢复入口
+// （DESIGN「呈现与降级」）。桌面精灵与完整入口的侧边伙伴共用；Installer 端的 Egg 组件是安装流程动画，与此无关。
 const CRACK_PATHS = [
   'M 160 70 L 148 95 L 155 115 L 140 135',
   'M 230 140 L 205 148 L 195 135 L 180 155',
   'M 90 210 L 115 200 L 125 215 L 145 195'
 ]
 
-const CLICK_PROMPT_MS = 2000
 const IDLE_LOOK_BOB_MS = 3200
 
 interface EggStageProps {
   size?: number | string
-  /** 引导未完成的可点唤醒；与 status 互斥。 */
-  showPrompt?: boolean
   status?: CompanionFallbackStatus | null
   message?: string
   hasRecoveryAction?: boolean
@@ -34,7 +30,6 @@ interface EggStageProps {
 
 export function EggStage({
   size = 280,
-  showPrompt = false,
   status = null,
   message = '',
   hasRecoveryAction = false,
@@ -47,13 +42,6 @@ export function EggStage({
   const statusRef = useRef<HTMLDivElement>(null)
   const surfaceOpen = useStore($surfaceOpen)
   const dict = useStrings()
-  const [promptVisible, setPromptVisible] = useState(false)
-
-  useEffect(() => {
-    const t = setTimeout(() => setPromptVisible(true), CLICK_PROMPT_MS)
-
-    return () => clearTimeout(t)
-  }, [])
 
   // 透明窗口上状态条须注册可点区域，否则点不到重试。
   useInteractiveRegion('egg-status', statusRef, undefined, undefined, windowId)
@@ -208,12 +196,6 @@ export function EggStage({
           ))}
         </g>
       </svg>
-
-      {showPrompt && !status && promptVisible && (
-        <div className="pointer-events-none absolute -bottom-7 left-1/2 -translate-x-1/2 whitespace-nowrap text-xs text-body animate-pulse">
-          {dict.companion.egg.wake}
-        </div>
-      )}
 
       {status && (
         <div

@@ -11,7 +11,7 @@ import type { EventRouteContext } from './gateway-event-util'
 import { handleCharacterEvent } from './handlers/character-events'
 import { handleConversationEvent } from './handlers/conversation-events'
 import { handleDeliveryEvent } from './handlers/delivery-events'
-import { handleToolCall, handleToolComplete, handleToolStart } from './handlers/tool-dispatch'
+import { handleToolCall, handleToolCancel, handleToolComplete, handleToolStart } from './handlers/tool-dispatch'
 
 // 网关事件路由：只保留分派、窗口角色校验与公共守卫；各能力的状态更新在
 // handlers/ 按能力组织，跨模块的后续动作进 app/workflows。
@@ -86,6 +86,11 @@ export function handleGatewayEvent(event: GatewayEvent): void {
 
     case 'tool.call':
       handleToolCall(event, ctx)
+
+      break
+
+    case 'tool.cancel':
+      handleToolCancel(event, ctx)
 
       break
 

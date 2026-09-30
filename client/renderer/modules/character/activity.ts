@@ -4,6 +4,7 @@ import { log } from '@/shared/lib/log'
 import { $chatVisible } from '@/shared/store/chat-visibility'
 import { $gateway } from '@/shared/store/gateway'
 import { $runnerPhase } from '@/shared/store/runner-status'
+import { isCompanionStageVisible } from '@/shared/store/surfaces'
 
 import {
   $effectiveTier,
@@ -57,12 +58,14 @@ let localChatTurnCount = 0
 let lastChatTurnSentAt = 0
 
 function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void {
-  // 空闲自主表演只在精灵可见且用户选择自主档时推理；播放指令由后端统一派发。
+  // 空闲自主表演只在用户选择自主档且精灵舞台实际可见时推理（与播放同一组条件：精灵窗未隐藏或最小化、
+  // 未被完整入口收起、未开轻语、未锁屏），在发请求的时刻读取；播放指令由后端统一派发。
   if (
     !$llmAffect.get() ||
     $effectiveTier.get() !== 'autonomous' ||
-    $chatVisible.get() ||
     locked ||
+    $chatVisible.get() ||
+    !isCompanionStageVisible() ||
     idleSeconds < IDLE_THRESHOLD_SECONDS
   ) {
     return

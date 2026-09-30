@@ -348,7 +348,7 @@ export function useChatSubmit({
     $chatTurnInFlight.set(false)
     const sid = $chatSessionId.get()
 
-    // 停止对会话是尽力请求，失败仍在本地收尾。
+    // 停止对会话是尽力请求，失败仍在本地收尾；本回合在途的本机调用由后端中断回合时逐个下发 tool.cancel 取消。
     if (sid) {
       try {
         await requestGateway('session.interrupt', { session_id: sid })
@@ -356,10 +356,6 @@ export function useChatSubmit({
         log.warn('use-chat-submit', 'session.interrupt failed', err)
       }
     }
-
-    void window.spiritagent?.runnerCancel?.().catch(err => {
-      log.warn('use-chat-submit', 'runnerCancel failed', err)
-    })
 
     presentationPorts().setSpriteState('idle', { force: true })
 

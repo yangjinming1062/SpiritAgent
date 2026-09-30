@@ -17,13 +17,13 @@
 | 模块 | 职责 |
 |---|---|
 | [repository.py](repository.py) | pack、action、目录版本与播放意图读写 |
-| [policy.py](policy.py) | 受理与评审共用的用户级受理锁，受理门禁（时长、整秒、近 7 天拒绝抑制、自主创建开关），approve 时的制作额度与模型可点播判定 |
+| [policy.py](policy.py) | 受理与评审共用的用户级受理锁，受理门禁（时长、整秒、拒绝后 7 天抑制、自主创建开关），approve 时的制作额度与模型可点播判定 |
 | [usage.py](usage.py) | 播放事实：播放指令写出、回执终态与延迟表达意图兑现 |
 | [publishing.py](publishing.py) | manifest 结构（`ActionClipSpec` / `ActionCatalogManifest`）、构建、校验、写入用户资产目录与 CAS 版本推进 |
 
 ## 资产、发布与表演
 
-资产归属冻结 pack，生成完成不自动表演；目录由 publishing 用 CAS 发布，失败只重试发布，不重新付费。动作的 `metadata_revision` 同时作为 manifest 与播放指令中的素材版本。跨端执行、回执与未知结果见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)，历史包处理见 [PIPELINE](../../../../docs/PIPELINE.md#恢复与历史包)。
+资产归属冻结 pack，生成完成不自动表演；目录由 publishing 用 CAS 发布，失败只重试发布，不重新付费。每次发布尝试先写路径唯一的 manifest 文件再 CAS，落败方不会覆盖已发布版本；CAS 落败时删除本次文件，flush 本事务改动后按数据库最新版本与动作行（`populate_existing`）重建重试，有限次后仍冲突才抛 `StaleCatalogError`。动作的 `metadata_revision` 同时作为 manifest 与播放指令中的素材版本。跨端执行、回执与未知结果见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)，历史包处理见 [PIPELINE](../../../../docs/PIPELINE.md#恢复与历史包)。
 
 ## 策略约束
 

@@ -3,7 +3,7 @@
 # 协议：
 #   powershell -File install.ps1 -Manifest                 → 输出 manifest JSON
 #   powershell -File install.ps1 -Stage NAME -Json         → 执行单个阶段，输出结果帧
-# payload 位置通过 SPIRITAGENT_BUNDLE_* 环境变量或对应 --bundled-*-dir 参数传递；二者并存时环境变量优先。
+# payload 位置通过 SPIRITAGENT_BUNDLED_* 环境变量或对应 -Bundled*Dir 参数传递；二者并存时参数优先。
 
 [CmdletBinding()]
 param(
@@ -31,7 +31,7 @@ $DefaultDesktopFormat = "nsis"
 $PythonVersion = "3.13"
 $PythonFallbackVersions = @("3.14")
 
-# 路径优先级：环境变量 > 参数 > 默认值
+# 优先级：参数 > 环境变量 > 默认值（与 install.sh 一致）。安装器只经环境变量下发，参数供手动运行覆盖。
 if (-not $SpiritAgentHome) {
     if ($env:SPIRITAGENT_HOME) { $SpiritAgentHome = $env:SPIRITAGENT_HOME }
     else { $SpiritAgentHome = Join-Path $env:LOCALAPPDATA "SpiritAgent" }
@@ -222,7 +222,7 @@ function Stage-UnpackRunner {
     }
 
     if (-not $BundledRunnerDir) {
-        Emit-StageErr "unpack-runner" "--BundledRunnerDir (or SPIRITAGENT_BUNDLED_RUNNER_DIR) is required"
+        Emit-StageErr "unpack-runner" "-BundledRunnerDir (or SPIRITAGENT_BUNDLED_RUNNER_DIR) is required"
         return 1
     }
     if (-not (Test-Path $BundledRunnerDir -PathType Container)) {
@@ -288,7 +288,7 @@ function Stage-UnpackRunner {
 # 阶段 4：解包桌面端
 function Stage-UnpackDesktop {
     if (-not $BundledDesktopDir) {
-        Emit-StageErr "unpack-desktop" "--BundledDesktopDir (or SPIRITAGENT_BUNDLED_DESKTOP_DIR) is required"
+        Emit-StageErr "unpack-desktop" "-BundledDesktopDir (or SPIRITAGENT_BUNDLED_DESKTOP_DIR) is required"
         return 1
     }
     if (-not (Test-Path $BundledDesktopDir -PathType Container)) {
@@ -347,7 +347,7 @@ function Stage-UnpackDesktop {
 # 阶段 5：安装技能
 function Stage-InstallSkills {
     if (-not $BundledSkillsDir) {
-        Emit-StageErr "install-skills" "--BundledSkillsDir (or SPIRITAGENT_BUNDLED_SKILLS_DIR) is required"
+        Emit-StageErr "install-skills" "-BundledSkillsDir (or SPIRITAGENT_BUNDLED_SKILLS_DIR) is required"
         return 1
     }
     if (-not (Test-Path $BundledSkillsDir -PathType Container)) {

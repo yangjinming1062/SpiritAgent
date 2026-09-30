@@ -12,8 +12,8 @@ _PENDING: dict[tuple[int, str], asyncio.Future[str]] = {}
 _DESKTOP_GONE_ERROR = json.dumps(
     {
         "code": JSONRPC_INTERNAL_ERROR,
-        "message": "Desktop disconnected before the tool call completed. The outcome is uncertain: do not blindly retry; "
-        "verify via the runner call journal (call_id) or ask the user before re-running.",
+        "message": "Desktop disconnected before the tool call completed, so the outcome is unknown: the tool may or may "
+        "not have run. Do not rerun it automatically; check its effects or ask the user first.",
     },
 )
 
@@ -38,16 +38,20 @@ async def dispatch_device_call(user_id: int, call_id: str, payload: dict[str, An
         try:
             return await asyncio.wait_for(fut, timeout=timeout)
         except TimeoutError:
-            # 超时不代表未执行：Runner 调用日志（PROTOCOL「调用日志与未知结果」）按 call_id 记录实际结局，
-            # 重试前先核对，避免把可能已落地的副作用再执行一遍。
+            # 超时不代表未执行，工具可能仍在本机运行：按结果未知告知模型，由其核对实际效果或询问用户，不能直接重做。
             return json.dumps(
                 {
                     "code": JSONRPC_INTERNAL_ERROR,
-                    "message": f"Tool execution timeout for call {call_id} (no response within {timeout}s). "
-                    "The desktop runner may be offline; the call outcome is uncertain — verify via the runner call journal "
-                    "for this call_id (or ask the user) before retrying.",
+                    "message": f"Tool execution timeout for call {call_id} (no response within {timeout}s), so the "
+                    "outcome is unknown: the tool may or may not have run, or may still be running. Do not rerun it "
+                    "automatically; check its effects or ask the user first.",
                 },
             )
+    except asyncio.CancelledError:
+        # 回合被中断（停止对话、IM 回合中止等）时请桌面取消这次调用；取消只是请求，不撤销已发生的本机副作用。
+        if (current := MANAGER.get_dispatcher(user_id)) is not None:
+            await current.enqueue_event("tool.cancel", {"call_id": call_id})
+        raise
     finally:
         # 覆盖成功 / 未入队 / 超时 / 外部取消（如 IM 侧中止）：不清理会在 _PENDING 里留下永久句柄。
         if _PENDING.get(key) is fut:

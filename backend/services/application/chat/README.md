@@ -23,7 +23,7 @@
 | [slash_commands.py](slash_commands.py) | 斜杠命令注册与匹配；clear、compress、remember 的实现在 [desktop handlers](../../adapters/desktop/handlers.py) |
 | [native_memory.py](native_memory.py) / [background_review.py](background_review.py) | 模型记忆工具执行、回合后记忆审阅 |
 
-`run_chat_turn` 的调用方：桌面 `prompt.submit`（[handlers](../../adapters/desktop/handlers.py)）；IM（[bridge](../../adapters/channels/bridge.py)，复用已落库的入站消息）；定时任务（[standard_turns](../automation/standard_turns.py)，`headless`）；主动陪伴（[companion_turns](../automation/companion_turns.py)，`ephemeral` 与 `headless`，排除发消息与委派工具，轮数上限为 `companion_max_loop_turns`）；子 Agent 委派（[delegation](delegation.py)，传入 `HeadlessEmitter`，不带 `headless` 等标志）。
+`run_chat_turn` 的调用方：桌面 `prompt.submit`（[handlers](../../adapters/desktop/handlers.py)）；IM（[bridge](../../adapters/channels/bridge.py)，复用已落库的入站消息，`headless`）；定时任务（[standard_turns](../automation/standard_turns.py)，`headless`）；主动陪伴（[companion_turns](../automation/companion_turns.py)，`ephemeral` 与 `headless`，排除发消息与委派工具，轮数上限为 `companion_max_loop_turns`）；子 Agent 委派（[delegation](delegation.py)，传入 `HeadlessEmitter`，沿用父回合的 `headless`）。
 
 提示词主体文本集中在 [prompts](../../../prompts/README.md)。
 

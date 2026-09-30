@@ -8,6 +8,48 @@ import hooksPlugin from 'eslint-plugin-react-hooks'
 import unusedImports from 'eslint-plugin-unused-imports'
 import globals from 'globals'
 
+// —— 渲染层 import 边界的共用限制（client/renderer/README.md「分层与目录」）——
+// flat config 对同一文件按序合并配置对象，后面的对象再次配置 no-restricted-imports 会整体替换前面的 patterns，
+// 所以每个渲染层规则块都用 restrictImports 组合出该目录的完整限制，不能只写本目录新增的部分。
+const RENDERER_MODULES = ['character', 'conversation', 'media', 'memory', 'scene', 'speech']
+
+const MODULE_DEEP_IMPORT = {
+  group: ['@/modules/*/*'],
+  message: '跨模块只能经目标模块的公共 barrel（@/modules/*）；模块内部用相对路径。'
+}
+
+// 应用层另可经 character 渲染域公共入口 rendering/video。
+const APP_MODULE_DEEP_IMPORT = {
+  regex: '^@/modules/(?!character/rendering/video$)[^/]+/.+',
+  message:
+    '跨模块只能经目标模块的公共 barrel（@/modules/*）；character 渲染域另经 @/modules/character/rendering/video。'
+}
+
+const MODULE_APP_IMPORT = {
+  group: ['@/app', '@/app/*', '../app', '../app/*'],
+  message: '业务模块不得反向依赖应用层。'
+}
+
+// 只匹配 barrel 本身；深路径由 MODULE_DEEP_IMPORT 报告，避免同一导入重复报错。
+function moduleBarrelImport(allowed, message) {
+  const blocked = RENDERER_MODULES.filter(name => !allowed.includes(name))
+
+  return { regex: `^@/modules/(${blocked.join('|')})$`, message }
+}
+
+function otherWindowImport(self) {
+  return {
+    group: ['living', 'sprite', 'workbench']
+      .filter(name => name !== self)
+      .flatMap(name => [`@/app/windows/${name}`, `@/app/windows/${name}/*`]),
+    message: '窗口体验互不依赖；共享能力下沉 modules 或经 app/workflows。'
+  }
+}
+
+function restrictImports(...patterns) {
+  return { 'no-restricted-imports': ['error', { patterns }] }
+}
+
 export default [
   {
     ignores: [
@@ -221,292 +263,70 @@ export default [
     }
   },
   // —— 渲染层模块边界：跨模块只走公共 barrel，业务模块互不导入，shared 不反向依赖 ——
-
   {
     files: ['renderer/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: [
-                '@/modules/conversation/*',
-                '@/modules/character/*',
-                '@/modules/speech/*',
-                '@/modules/media/*',
-                '@/modules/memory/*',
-                '@/modules/scene/*',
-                '@/modules/character/rendering/*'
-              ],
-              message: '跨模块只能经目标模块的公共 barrel（@/modules/*；character 渲染域为 @/modules/character/rendering/video）；模块内部用相对路径。'
-            }
-          ]
-        }
-      ]
-    }
+    rules: restrictImports(MODULE_DEEP_IMPORT)
   },
   {
-    // app 组合层：character 深路径禁止，但渲染域公共入口（rendering/video）放行。
     files: ['renderer/app/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: [
-                '@/modules/conversation/*',
-                '@/modules/speech/*',
-                '@/modules/media/*',
-                '@/modules/memory/*',
-                '@/modules/scene/*'
-              ],
-              message: '跨模块只能经目标模块的公共 barrel（@/modules/*）。'
-            },
-            {
-              regex: '^@/modules/character/(?!rendering/video$).+',
-              message: 'character 只经公共 barrel（@/modules/character）与渲染域入口（rendering/video）访问。'
-            }
-          ]
-        }
-      ]
-    }
-  },
-  {
-    // 业务模块互不导入；需要两个模块一起完成的事情进 app/workflows（client/renderer/README.md「分层与目录」）。
-    files: ['renderer/modules/**/*.{ts,tsx}'],
-    ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@/app', '@/app/*', '../app', '../app/*'],
-              message: '业务模块不得反向依赖应用层。'
-            },
-            {
-              group: ['@/modules/conversation', '@/modules/character', '@/modules/speech', '@/modules/media'],
-              message: '业务模块互不导入；跨模块协作由 app 层装配。'
-            }
-          ]
-        }
-      ]
-    }
-  },
-  {
-    // 例外：气泡内媒体卡消费 media 的展示原语与媒体源解析（只读 UI 基元）。
-    files: ['renderer/modules/conversation/**/*.{ts,tsx}'],
-    ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@/app', '@/app/*', '../app', '../app/*'],
-              message: '业务模块不得反向依赖应用层。'
-            },
-            {
-              group: ['@/modules/character', '@/modules/speech'],
-              message: 'conversation 不导入形象/语音模块：形象与语音经呈现端口及 voice-link 接缝（client/renderer/README.md「分层与目录」）。'
-            }
-          ]
-        }
-      ]
-    }
-  },
-  {
-    files: ['renderer/modules/character/**/*.{ts,tsx}'],
-    ignores: ['**/node_modules/**', '**/character/rendering/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@/app', '@/app/*', '../app', '../app/*'],
-              message: '业务模块不得反向依赖应用层。'
-            },
-            {
-              group: ['@/modules/conversation', '@/modules/speech', '@/modules/media'],
-              message: '业务模块互不导入；跨模块协作由 app 层装配。'
-            }
-          ]
-        }
-      ]
-    }
-  },
-  {
-    files: ['renderer/modules/speech/**/*.{ts,tsx}'],
-    ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@/app', '@/app/*', '../app', '../app/*'],
-              message: '业务模块不得反向依赖应用层。'
-            },
-            {
-              group: ['@/modules/conversation', '@/modules/character', '@/modules/media'],
-              message: '业务模块互不导入；跨模块协作由 app 层装配。'
-            }
-          ]
-        }
-      ]
-    }
-  },
-  {
-    // character 渲染域：经 character 公共 barrel 访问角色能力，禁入应用层、会话与媒体模块。
-    files: ['renderer/modules/character/rendering/**/*.{ts,tsx}'],
-    ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@/app', '@/app/*', '../app', '../app/*'],
-              message: '渲染层不得依赖应用层。'
-            },
-            {
-              group: ['@/modules/conversation', '@/modules/media'],
-              message: '渲染域只消费 @/modules/character 与 @/modules/speech。'
-            },
-            {
-              group: ['@/modules/character/*'],
-              message: '渲染域访问 character 只经其公共 barrel。'
-            }
-          ]
-        }
-      ]
-    }
-  },
-  {
-    files: ['renderer/modules/media/**/*.{ts,tsx}'],
-    ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@/app', '@/app/*', '../app', '../app/*'],
-              message: '业务模块不得反向依赖应用层。'
-            },
-            {
-              group: ['@/modules/conversation', '@/modules/character', '@/modules/speech'],
-              message: '业务模块互不导入；跨模块协作由 app 层装配。'
-            }
-          ]
-        }
-      ]
-    }
+    rules: restrictImports(APP_MODULE_DEEP_IMPORT)
   },
   {
     // 运行时与工作流不得反向导入窗口组件；窗口只经入口与 app/bootstrap 装配。
     files: ['renderer/app/runtime/**/*.{ts,tsx}', 'renderer/app/workflows/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: [
-                '@/app/windows',
-                '@/app/windows/*',
-                '../windows',
-                '../windows/*',
-                '@/modules/conversation/*',
-                '@/modules/speech/*',
-                '@/modules/media/*',
-                '@/modules/memory/*',
-                '@/modules/scene/*'
-              ],
-              message: '运行时与工作流不得反向导入窗口组件。'
-            },
-            {
-              regex: '^@/modules/character/(?!rendering/video$).+',
-              message: 'character 只经公共 barrel 与渲染域入口访问。'
-            }
-          ]
-        }
-      ]
-    }
+    rules: restrictImports(APP_MODULE_DEEP_IMPORT, {
+      group: ['@/app/windows', '@/app/windows/*', '../windows', '../windows/*'],
+      message: '运行时与工作流不得反向导入窗口组件。'
+    })
+  },
+  ...['living', 'sprite', 'workbench'].map(name => ({
+    files: [`renderer/app/windows/${name}/**/*.{ts,tsx}`],
+    ignores: ['**/node_modules/**'],
+    rules: restrictImports(APP_MODULE_DEEP_IMPORT, otherWindowImport(name))
+  })),
+  {
+    // 业务模块互不导入；需要两个模块一起完成的事情进 app/workflows。
+    files: ['renderer/modules/**/*.{ts,tsx}'],
+    ignores: ['**/node_modules/**'],
+    rules: restrictImports(
+      MODULE_DEEP_IMPORT,
+      MODULE_APP_IMPORT,
+      moduleBarrelImport([], '业务模块互不导入，模块内部用相对路径；跨模块协作由 app 层装配。')
+    )
   },
   {
-    files: ['renderer/app/windows/living/**/*.{ts,tsx}'],
+    // 例外：气泡内媒体卡消费 media 的展示原语与媒体源解析（只读 UI 基元）。
+    files: ['renderer/modules/conversation/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@/app/windows/sprite', '@/app/windows/sprite/*', '@/app/windows/workbench', '@/app/windows/workbench/*'],
-              message: '窗口体验互不依赖；共享能力下沉 modules 或经 app/workflows。'
-            }
-          ]
-        }
-      ]
-    }
+    rules: restrictImports(
+      MODULE_DEEP_IMPORT,
+      MODULE_APP_IMPORT,
+      moduleBarrelImport(
+        ['media'],
+        'conversation 只导入 media 展示原语；形象与语音经呈现端口及 voice-link 接缝（client/renderer/README.md「分层与目录」）。'
+      )
+    )
   },
   {
-    files: ['renderer/app/windows/workbench/**/*.{ts,tsx}'],
+    // character 渲染域：只经 character 公共 barrel 访问角色能力。
+    files: ['renderer/modules/character/rendering/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@/app/windows/sprite', '@/app/windows/sprite/*', '@/app/windows/living', '@/app/windows/living/*'],
-              message: '窗口体验互不依赖；共享能力下沉 modules 或经 app/workflows。'
-            }
-          ]
-        }
-      ]
-    }
-  },
-  {
-    files: ['renderer/app/windows/sprite/**/*.{ts,tsx}'],
-    ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@/app/windows/living', '@/app/windows/living/*', '@/app/windows/workbench', '@/app/windows/workbench/*'],
-              message: '窗口体验互不依赖；共享能力下沉 modules 或经 app/workflows。'
-            }
-          ]
-        }
-      ]
-    }
+    rules: restrictImports(
+      MODULE_DEEP_IMPORT,
+      MODULE_APP_IMPORT,
+      moduleBarrelImport(['character'], '渲染域只经 @/modules/character 公共 barrel 访问角色能力，不导入其他业务模块。')
+    )
   },
   {
     files: ['renderer/shared/**/*.{ts,tsx}'],
     ignores: ['**/node_modules/**'],
-    rules: {
-      'no-restricted-imports': [
-        'error',
-        {
-          patterns: [
-            {
-              group: ['@/app', '@/app/*', '@/modules/*'],
-              message: 'shared 不得依赖应用层、业务模块与渲染实现。'
-            }
-          ]
-        }
-      ]
-    }
+    rules: restrictImports({
+      group: ['@/app', '@/app/*', '@/modules/*'],
+      message: 'shared 不得依赖应用层、业务模块与渲染实现。'
+    })
   },
   {
     // 生产渲染面（精灵窗 / 工具窗 / 共享层）禁止裸 fetch：后端签名 URL 是相对路径，

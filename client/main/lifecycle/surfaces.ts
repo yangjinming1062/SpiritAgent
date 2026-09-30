@@ -35,6 +35,8 @@ export interface SurfacesManager {
   minimizeWindow: (win: BrowserWindow) => void
   onWindowClosed: (id: SurfaceId, win: BrowserWindow) => void
   openSurface: (payload: DesktopSurfaceOpenPayload) => Promise<void>
+  /** 精灵窗显示、隐藏、最小化或还原后调用，向各窗口发布含 `spriteVisible` 的新快照。 */
+  publishSpriteVisibility: () => void
   registerIpcHandlers: (deps: { ipcMain: IpcMain }) => void
   resetPlaybackClaims: () => void
   toggleMaximizeWindow: (win: BrowserWindow) => void
@@ -134,12 +136,19 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     }
   }
 
+  function spriteWindowVisible(): boolean {
+    const sprite = options.getSpriteWindow()
+
+    return !!sprite && !sprite.isDestroyed() && sprite.isVisible() && !sprite.isMinimized()
+  }
+
   function snapshot(): DesktopSurfaceChangedEvent {
     return {
       companions: { living: companionState('living'), workbench: companionState('workbench') },
       open: openSurfaceId,
       revision: stateRevision,
-      screenLocked
+      screenLocked,
+      spriteVisible: spriteWindowVisible()
     }
   }
 
@@ -669,17 +678,11 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
       }
 
       const sender = BrowserWindow.fromWebContents(event.sender)
-      const sprite = options.getSpriteWindow()
       const surface = findSurfaceWindow(sender)
 
       const allowed = surface
         ? companionState(surface.id).visible
-        : sender === sprite &&
-          !!sprite &&
-          !sprite.isDestroyed() &&
-          sprite.isVisible() &&
-          !sprite.isMinimized() &&
-          openSurfaceId === null
+        : sender === options.getSpriteWindow() && spriteWindowVisible() && openSurfaceId === null
 
       if (!allowed) {
         return false
@@ -700,6 +703,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     minimizeWindow,
     onWindowClosed,
     openSurface,
+    publishSpriteVisibility: publish,
     registerIpcHandlers,
     resetPlaybackClaims,
     toggleMaximizeWindow,

@@ -39,7 +39,7 @@ class ToolRegistry:
 
     def __init__(self) -> None:
         self._tools: dict[str, Callable] = {}
-        self._schemas: dict[str, dict] = {}
+        self._schemas: dict[str, dict | Callable[[], dict]] = {}
         self._check_fns: dict[str, Callable[[], bool]] = {}
         self._check_fn_cache: dict[str, tuple[bool, float, float]] = {}
         self._check_fn_ttl_seconds: float = 30.0
@@ -62,10 +62,13 @@ class ToolRegistry:
         self,
         name: str,
         *,
-        schema: dict,
+        schema: dict | Callable[[], dict],
         check_fn: Callable[[], bool] | None = None,
     ) -> Callable[[Callable], Callable]:
-        """装饰器形式注册工具；``schema`` 是提供给模型的完整工具定义。"""
+        """装饰器形式注册工具；``schema`` 是提供给模型的完整工具定义。
+
+        说明依赖配置的工具传无参工厂：工具模块在 Client 推送配置之前导入，``get_schemas_for_llm`` 每次按当前配置调用工厂。
+        """
 
         def decorator(func: Callable) -> Callable:
             with self._lock:
@@ -125,7 +128,19 @@ class ToolRegistry:
             items = list(self._schemas.items())
 
         excluded = excluded_tool_names(disabled_toolset_ids, {n for n, _ in items})
-        return [schema for name, schema in items if name not in excluded and self.is_tool_available(name)]
+        schemas: list[dict] = []
+        for name, schema in items:
+            if name in excluded or not self.is_tool_available(name):
+                continue
+            if isinstance(schema, dict):
+                schemas.append(schema)
+                continue
+            try:
+                schemas.append(schema())
+            except Exception:
+                # 与模块导入失败一样只缺这一个工具，不让整份工具清单失败。
+                logger.exception("Could not build schema for tool %s; omitting it from the tool list", name)
+        return schemas
 
     def get_max_result_size(self) -> int:
         """返回工具结果的大小上限。"""

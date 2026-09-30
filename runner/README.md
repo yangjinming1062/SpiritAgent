@@ -31,6 +31,7 @@
 
 - Runner 主动连接 Client 的 OS IPC，重连前重读端点和 token。
 - 配置仅保存在内存，由 Client 在执行前推送完整快照；传输和调用语义见 [PROTOCOL](../docs/PROTOCOL.md#本机工具)。
+- 工具模块导入早于首次推送配置：依赖配置的工具说明以无参工厂注册，每次 `get_tools` 按当前配置生成。Client 在握手和运行中每次配置推送成功后读取清单，变化时重新同步，见[握手与工具同步](../docs/PROTOCOL.md#握手与工具同步)。
 - 能力须实际探测系统 API，不以依赖可导入代替可用性。当前屏幕捕获在 macOS 只检查 `screencapture` 存在，麦克风在各平台只枚举输入设备，均不代表已获系统授权。
 - 进程启动生成唯一 `run_generation`，重连不轮换；周期探测变化才通知，异常撤销相应能力。
 - Client 的消费限制见 [能力与进程代次](../docs/PROTOCOL.md#能力与进程代次)。
@@ -48,7 +49,7 @@ Windows 在启动阶段加入 Job Object 管理进程树，不在模块导入时
 
 ### 终端与子进程
 
-- 本地终端按 Git Bash / Darwin-BSD 提供环境约束并拦截不适用的 Linux 管理命令；SSH 不套本机命令拦截。
+- 终端说明随当前 `terminal.env_type`：本地按 Git Bash / Darwin-BSD 说明环境约束并拦截不适用的 Linux 管理命令；SSH 说明目标为远端主机，不套本机命令拦截。终端、文件与代码工具共用的执行环境创建后不随配置切换替换，空闲超过 `terminal.lifetime_seconds`（默认 300 秒）被回收或 Runner 重启后才按新配置重建，此前说明与实际执行目标可能不一致。
 - SSH 密码经临时 askpass 与 `SSH_ASKPASS_REQUIRE=force` 传递（需 OpenSSH ≥ 8.4，Windows 版 ≥ 8.9；代码不检测版本，也不处理版本不足，askpass 可能不被调用，表现为认证失败或连接超时），密钥优先，脚本随环境清理；密码和私钥路径作为本机机密处理。
 
 代码执行每次生成一次性能力 token：本机经 UDS（Windows 为回环 TCP）首帧鉴权，SSH 远端文件 RPC 在每个请求中携带并校验。依赖与平台 marker 显式声明，不在运行期补装，也不以可选导入掩盖漏依赖。
@@ -69,7 +70,7 @@ Windows 在启动阶段加入 Job Object 管理进程树，不在模块导入时
 
 `ContextVar` 固定调用作用域并在结束时恢复；作用域只接受 [memory_scope.py](utils/memory_scope.py) 中登记的预设 id，Backend 新增或改名预设须同步。学习技能保存在 `$SPIRITAGENT_HOME/learned-skills/<user_id>/<system_preset_id>`，读取按本域、静态技能、`skills.external_dirs` 的顺序合并，先匹配者优先。
 
-修改静态技能在写入前一刻复制到当前域，写入失败时撤回副本，删除只影响本域副本；路径和符号链接不得跨域。学习技能写入只做名称、frontmatter、路径与大小校验，不做内容威胁扫描：高信任模式下终端与文件工具同样能写入技能目录，单一入口的扫描不构成边界。`skill_view` 读取时拦截命中注入特征的内容，但文件与终端工具读取不经此闸，同样不构成边界。平台过滤与学习作用域分别校验，见 [PROTOCOL](../docs/PROTOCOL.md#skills-平台过滤)。
+修改静态技能在写入前一刻复制到当前域，写入失败时撤回副本，删除只影响本域副本；路径和符号链接不得跨域。学习技能写入只做名称、frontmatter、路径与大小校验；写入与 `skill_view` 读取均不做内容威胁扫描：高信任模式下终端与文件工具同样能读写技能目录，单一入口的扫描不构成边界。平台过滤与学习作用域分别校验，见 [PROTOCOL](../docs/PROTOCOL.md#skills-平台过滤)。
 
 ## 已知限制
 

@@ -33,6 +33,7 @@ import { getStrings } from '@/shared/strings'
 import type { SessionResumeResponse } from '@/shared/types/spiritagent'
 
 import { clearDesktopBootFailure, failDesktopBoot } from './boot-store'
+import { isDeviceCommandEvent } from './gateway-event-util'
 
 // 1008 停止重连；会话过期由主进程的鉴权失败通知确认。
 const WS_CLOSE_POLICY_VIOLATION = 1008
@@ -348,7 +349,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
     const offEvent = gateway.onEvent(event => {
       handleEventRef.current(event)
 
-      if (event.type !== 'tool.call') {
+      if (!isDeviceCommandEvent(event.type)) {
         window.spiritagent?.gatewayBroadcastEvent?.(event)
       }
     })

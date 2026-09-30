@@ -400,6 +400,15 @@ async def _require_owned_conv(db: AsyncSession, user_id: int, session_id: str) -
     return conv
 
 
+def _reject_im_session(runtime: RuntimeSession) -> None:
+    """IM 会话由通道桥独占写入（外部 IM 消息驱动回合），桌面端只读旁观历史。
+
+    桥接回合不经桌面运行时，``runtime.busy`` 拦不住与它并发的提交、清空或压缩。
+    """
+    if runtime.kind == IM_KIND:
+        raise JsonRpcError(JSONRPC_INVALID_PARAMS, "IM 会话由通道桥接维护，仅只读")
+
+
 def _require_str(params: dict[str, Any], key: str) -> str:
     v = params.get(key)
     if not isinstance(v, str):
@@ -597,7 +606,7 @@ async def _do_clear_history(db: AsyncSession, conv: Conversation) -> dict[str, A
     db.add(marker)
     await db.commit()
 
-    delivered = await build_session_messages(conv.id, db)
+    delivered = await build_session_messages(conv.id, db, include_id=True)
     return {
         "session_id": str(conv.id),
         "cleared_count": total,
@@ -613,6 +622,7 @@ async def _do_clear_history(db: AsyncSession, conv: Conversation) -> dict[str, A
 )
 async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
     """``/清理`` 命令 handler。``confirmed`` 由 ``command.dispatch`` 在调用前把关，未传则抛 SLASH_CONFIRM_REQUIRED。"""
+    _reject_im_session(ctx.runtime)
     async with _conversation_lock(ctx.session_id), SESSION_LOCAL() as db:
         if ctx.runtime.busy:
             raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再清理会话")
@@ -642,6 +652,7 @@ async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
 )
 async def _slash_compress(ctx: SlashCommandContext) -> SlashCommandResult:
     """``/压缩`` 命令 handler：复用 session.compress_context 的核心实现。"""
+    _reject_im_session(ctx.runtime)
     async with _conversation_lock(ctx.session_id), SESSION_LOCAL() as db:
         if ctx.runtime.busy:
             raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再压缩会话")
@@ -980,6 +991,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
 
     async def session_compress_context(params: dict) -> dict:
         runtime = _require_runtime(params)
+        _reject_im_session(runtime)
         async with _conversation_lock(runtime.session_id), SESSION_LOCAL() as db:
             if runtime.busy:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
@@ -1102,9 +1114,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("command.list", command_list)
 
     async def _submit_prompt(params: dict, runtime: RuntimeSession) -> dict:
-        # im 会话由通道桥独占写入（外部 IM 消息驱动回合），桌面端只读旁观历史。
-        if runtime.kind == IM_KIND:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "IM 会话由通道桥接维护，仅只读")
+        _reject_im_session(runtime)
         if runtime.chat_task is not None and runtime.busy:
             # 刚被中断的回合可能仍在收尾：短暂等待其结束；asyncio.wait 不把旧回合的取消或异常传播到本请求。
             await asyncio.wait({runtime.chat_task}, timeout=0.3)

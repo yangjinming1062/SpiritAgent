@@ -11,11 +11,11 @@ let storePath: null | string = null
 let config: Record<string, unknown> = {}
 let loaded = false
 
-// 写锁：串行化 write/patch/mutate 之间的落盘与推送。
+// 写锁：串行化各写入入口的内存修改、落盘与推送。
 let writeLock: null | Promise<unknown> = null
 
 // 同步协调：由 Runner host 设置的 pushTarget、config-sync.ts 的 cloudSync 委托，
-// 以及 applyCloudMirror 期间抑制本地变更通知的标志（防回环）。
+// 以及云端水合与账户隔离写入期间抑制本地变更通知的标志（防回环）。
 let pushTarget: null | ((config: Record<string, unknown>) => Promise<unknown> | void) = null
 let cloudSync: null | { onLocalChange: (config: Record<string, unknown>) => void } = null
 let suppressCloudSync = false
@@ -46,7 +46,7 @@ function load(): Record<string, unknown> {
   return config
 }
 
-/** 跨调用共享同一引用；变更必须经由 ``write`` / ``patch`` / ``mutate`` 进行。*/
+/** 跨调用共享同一引用；变更必须经由 `patch` / `mutate` / `applyCloudMirror` / `clearSyncedMirror` 进行。*/
 export function read(): Record<string, unknown> {
   return load()
 }
@@ -100,6 +100,7 @@ async function persistAndPush(pushRunner = true): Promise<void> {
 /**
  * 云端水合入口：sections 是按同步节白名单与本地合并后的整节（保留本机专属键）及归属戳，
  * 整节替换进镜像（其余节与本机机密原样保留），落盘并推 runner，不触发云同步委托。
+ * 落盘失败时保留已写入内存的云端值并抛出：云端是真源，恢复本地旧值会让之后的上传用旧值覆盖云端较新的设置。
  */
 export async function applyCloudMirror(
   sections: Record<string, unknown>,
@@ -167,7 +168,10 @@ export async function patch(
   })
 }
 
-/** fn 在写锁内变更配置；`pushRunner: false` 时只落盘、不推送 Runner。 */
+/**
+ * fn 在写锁内变更配置；fn 抛错或落盘失败时恢复原镜像并返回失败，与 `patch` 一致。
+ * `pushRunner: false` 时只落盘、不推送 Runner。
+ */
 export async function mutate<T>(
   fn: (config: Record<string, unknown>) => T,
   { pushRunner = true }: { pushRunner?: boolean } = {}
@@ -176,31 +180,58 @@ export async function mutate<T>(
     return { error: 'mutate requires a function', ok: false }
   }
 
-  let mutated: T | undefined
-
   try {
-    await runLocked(async () => {
+    const mutated = await runLocked(async () => {
       load()
-      const snapshot = JSON.parse(JSON.stringify(config ?? {}))
+      const previous = structuredClone(config)
 
       try {
-        if (config) {
-          mutated = fn(config)
-        }
+        const result = fn(config)
+        await persistAndPush(pushRunner)
+
+        return result
       } catch (err) {
-        config = snapshot
+        config = previous
         throw err
       }
-
-      await persistAndPush(pushRunner)
     })
 
     return { mutated, ok: true }
   } catch (err: unknown) {
-    const msg = errorMessage(err)
-
-    return { error: msg, ok: false }
+    return { error: errorMessage(err), ok: false }
   }
+}
+
+/**
+ * 账户隔离：删除 keys 对应的同步节与原始值键，并把归属戳写入 `sync` 节；不推 Runner，也不触发云同步委托。
+ * 先改内存再落盘，落盘失败时保留清理结果并抛出：镜像不能因写盘失败继续持有上个账户的设置或归属，
+ * 磁盘上残留的旧归属在下次启动或换号时按不匹配再次清理。
+ */
+export async function clearSyncedMirror(
+  keys: readonly string[],
+  stamp: Record<string, unknown>,
+  isCurrent: () => boolean = () => true
+): Promise<void> {
+  await runLocked(async () => {
+    if (!isCurrent()) {
+      return
+    }
+
+    load()
+
+    for (const key of keys) {
+      delete config[key]
+    }
+
+    config.sync = stamp
+    suppressCloudSync = true
+
+    try {
+      await persistAndPush(false)
+    } finally {
+      suppressCloudSync = false
+    }
+  })
 }
 
 export function getDisabledSet(section = 'skills'): Set<string> {

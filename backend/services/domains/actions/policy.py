@@ -19,8 +19,8 @@ PLAY_INTENT_TTL_SECONDS = 30
 # 制作完成前保存的表达意图有效期：过期只入库，不补播。
 DEFERRED_PLAY_INTENT_TTL_SECONDS = 15 * 60
 
-# 用户级受理/评审串行锁：受理到提案落库在同一进程内原子化，跨进程由
-# (user_id, source, idempotency_key) 唯一约束兜底。
+# 用户级受理/评审串行锁：受理的查重、门禁与 flush 在锁内串行，调用方在锁外提交；评审持锁至提交。
+# 并发新建的同创意提案由 (user_id, source, idempotency_key) 唯一约束兜底。
 _ACCEPT_LOCKS: dict[int, asyncio.Lock] = {}
 
 
@@ -103,7 +103,8 @@ async def check_can_accept(
     if abs(duration_seconds - round(duration_seconds)) > 1e-6:
         raise ActionPolicyError("动作时长需为整秒")
 
-    # 同包近 7 天被拒绝的同一创意受抑制。
+    # 同包同一创意被拒绝后 7 天内受抑制，从拒绝时刻起算。拒绝行不再被改写（重提复用会先改回 pending），
+    # updated_at 即拒绝时刻；复用行的 created_at 可能远早于本次拒绝。
     cutoff = datetime.now(UTC) - timedelta(days=REJECTED_PROPOSAL_COOLDOWN_DAYS)
     rejected = await db.scalar(
         select(func.count(ActionProposal.id)).where(
@@ -111,7 +112,7 @@ async def check_can_accept(
             ActionProposal.pack_id == pack_id,
             ActionProposal.semantic_fingerprint == semantic_fingerprint,
             ActionProposal.status == "rejected",
-            ActionProposal.created_at >= cutoff,
+            ActionProposal.updated_at >= cutoff,
         ),
     )
     if rejected:

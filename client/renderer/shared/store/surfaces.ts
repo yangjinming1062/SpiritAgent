@@ -16,6 +16,8 @@ import { log } from '@/shared/lib/log'
 
 export const $surfaceOpen = atom<null | SurfaceId>(null)
 export const $surfaceScreenLocked = atom(false)
+// 桌面精灵窗的实际显隐（托盘、快捷键、右键隐藏或最小化）；收到主进程快照前按可见处理。
+export const $surfaceSpriteVisible = atom(true)
 let appliedRevision = -1
 export const $surfaceCompanions = atom<Record<SurfaceId, SurfaceCompanionState>>({
   living: {
@@ -49,7 +51,7 @@ export function isCompanionStageVisible(): boolean {
   const role = $surfaceRole.get()
 
   if (role === 'sprite') {
-    return $surfaceOpen.get() === null
+    return $surfaceSpriteVisible.get() && $surfaceOpen.get() === null
   }
 
   return role !== null && $surfaceOpen.get() === role && $surfaceCompanions.get()[role].visible
@@ -62,6 +64,7 @@ function applySurfaceState(state: DesktopSurfaceChangedEvent): void {
 
   appliedRevision = state.revision
   $surfaceScreenLocked.set(state.screenLocked)
+  $surfaceSpriteVisible.set(state.spriteVisible)
   $surfaceOpen.set(state.open)
   $surfaceCompanions.set(state.companions)
 }

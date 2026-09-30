@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 
 class StaleCatalogError(RuntimeError):
-    """并发发布推进了目录版本；调用方重读目录后重试发布。"""
+    """目录版本已被并发发布推进；`publish_action_catalog` 重读后重试，仍冲突才抛给调用方。"""
 
 
 def make_semantic_fingerprint(name: str, motion: str) -> str:
@@ -33,10 +33,14 @@ async def list_pack_actions(
     pack_id: int,
     *,
     enabled_only: bool = True,
+    refresh: bool = False,
 ) -> list[CompanionAction]:
+    """refresh 以数据库行覆盖会话中已加载的动作，会丢弃其未 flush 的改动，调用方须先 flush。"""
     stmt = select(CompanionAction).where(CompanionAction.pack_id == pack_id)
     if enabled_only:
         stmt = stmt.where(CompanionAction.enabled.is_(True))
+    if refresh:
+        stmt = stmt.execution_options(populate_existing=True)
     rows = await db.execute(stmt.order_by(CompanionAction.system_slot.desc(), CompanionAction.key))
     return list(rows.scalars().all())
 

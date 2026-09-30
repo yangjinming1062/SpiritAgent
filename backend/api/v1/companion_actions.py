@@ -1,7 +1,7 @@
 """动作库 REST 入口：目录、提案、播放回执、额度状态与管理操作。"""
 
 from common import get_router
-from components import DbSession
+from components import DbSession, get_logger
 from fastapi import HTTPException
 from modules.auth import CurrentUser
 from modules.companion import (
@@ -28,6 +28,7 @@ from services.infrastructure.assets import signed_companion_asset_url
 from sqlalchemy.ext.asyncio import AsyncSession
 
 router = get_router(prefix="/api/companion/actions", tag="companion-actions")
+logger = get_logger(__name__)
 
 
 async def _republish_catalog(db: AsyncSession, user_id: int) -> None:
@@ -37,7 +38,8 @@ async def _republish_catalog(db: AsyncSession, user_id: int) -> None:
         return
     try:
         version = await publish_action_catalog(db, pack)
-    except Exception:  # noqa: BLE001 — 目录不足以重发时保留数据库变更，不回滚管理操作
+    except Exception:  # noqa: BLE001 — 目录无法重发时保留已提交的管理操作，记录原因待下次发布补齐
+        logger.warning("action catalog republish failed", extra={"pack_id": pack.id}, exc_info=True)
         await db.commit()
         return
     emit_ws_event(

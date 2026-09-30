@@ -7,7 +7,7 @@
 | 改动 | 入口与联动 |
 |---|---|
 | 启动、快路径与强制修复 | [lib.rs](src-tauri/src/lib.rs)、[bootstrap.rs](src-tauri/src/bootstrap.rs)；健康探针与 [Client 更新器](../client/main/runner/updater.ts)一致 |
-| 安装阶段、取消与界面状态 | [install.sh](install.sh) / [install.ps1](install.ps1) → [powershell.rs](src-tauri/src/powershell.rs)（以 CLI 参数选择 `-Manifest` 或 `-Stage`，payload 路径与格式经 `SPIRITAGENT_BUNDLE*` 等环境变量下发；执行脚本并解析哨兵结果行）→ [bootstrap.rs](src-tauri/src/bootstrap.rs) → [events.rs](src-tauri/src/events.rs)、[store.ts](src/store.ts) |
+| 安装阶段、取消与界面状态 | [install.sh](install.sh) / [install.ps1](install.ps1) → [powershell.rs](src-tauri/src/powershell.rs)（以 CLI 参数选择 `-Manifest` 或 `-Stage`，payload 路径与格式经 `SPIRITAGENT_BUNDLE*` 等环境变量下发，手动运行时同义参数优先于环境变量；执行脚本并解析哨兵结果行）→ [bootstrap.rs](src-tauri/src/bootstrap.rs) → [events.rs](src-tauri/src/events.rs)、[store.ts](src/store.ts) |
 | 路径、嵌入资源与载荷 | [paths.rs](src-tauri/src/paths.rs)、[install_script.rs](src-tauri/src/install_script.rs)、[embedded_payload.rs](src-tauri/src/embedded_payload.rs)、[build.rs](src-tauri/build.rs)；[构建门禁](../scripts/README.md#构建安装器) |
 
 ## 设计意图
@@ -39,7 +39,7 @@ Home 默认位于 Windows `%LOCALAPPDATA%\SpiritAgent` 或 macOS `~/Library/Appl
 
 安装阶段为 `welcome → install-python → unpack-runner → unpack-desktop → install-skills → finalize`，定义在两端安装脚本的 manifest。每阶段独立进程，不继承脚本变量，只有 finalize 写完成标记。
 
-脚本结果用带哨兵前缀的单行 NDJSON，普通日志不作为协议帧。取消只终止当前脚本进程并置失败；uv、NSIS 等子进程不随之终止，仍占用输出管道时失败事件要等其退出后才发出；修复使用 `uv venv --clear` 重建环境，不凭旧标记跳过。
+脚本结果用带哨兵前缀的单行 NDJSON，普通日志不作为协议帧。取消终止当前脚本及其后代进程（macOS 为脚本自建的进程组，Windows 为 Job Object）并置失败；脚本退出后只在 `PIPE_DRAIN_TIMEOUT` 内读取残余输出，脱离进程组或 Job 的残留进程不会拖住结果。被终止的阶段可能留下未完成的产物（如半装的桌面端、未卸载的 DMG），重试从头执行各阶段；修复使用 `uv venv --clear` 重建环境，不凭旧标记跳过。
 
 ## 平台与失败处理
 

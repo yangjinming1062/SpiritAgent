@@ -434,7 +434,14 @@ async def _execute_im_turn(adapter: ChannelAdapter, state: _ChannelState, batch:
         ),
     )
     try:
-        await run_chat_turn(req, llm_config, snapshot.user_id, emitter, persisted_message_id=last_item.message_id)
+        await run_chat_turn(
+            req,
+            llm_config,
+            snapshot.user_id,
+            emitter,
+            persisted_message_id=last_item.message_id,
+            headless=True,
+        )
     except Exception:
         logger.exception("im chat turn crashed", extra={"binding": snapshot.id, "channel": snapshot.channel})
         return

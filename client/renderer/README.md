@@ -13,7 +13,7 @@
 
 character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fallback}`、`sprite`、`wardrobe`，偏好、人格与空间等保留根入口。跨模块只经公共 barrel；character 另以 `rendering/video` 作为渲染域公共入口。`modules/memory` 当前只含片刻与日记的 `journal-store`，记忆管理页面在 [memory-section.tsx](app/windows/living/settings/memory-section.tsx)。
 
-边界规则写在 [ESLint](../eslint.config.mjs)，不绕过内部路径。flat config 对同一文件按序合并配置对象，后面的对象再次配置 `no-restricted-imports` 会整体替换前面的 patterns 而不合并；当前 `app/windows/*` 与各 modules 规则块未并入上层的深路径限制，lint 不拦截这些目录的深路径导入，边界靠约定维护。新增或修改规则块时须合并已有限制。生产数据与资产统一走主进程桥；直连例外须说明 URL 来源。
+边界规则写在 [ESLint](../eslint.config.mjs)，不绕过内部路径；模块内部用相对路径，character 渲染域只经 `@/modules/character` barrel 访问角色能力。flat config 对同一文件按序合并配置对象，后面的对象再次配置 `no-restricted-imports` 会整体替换前面的 patterns 而不合并，因此各目录规则块都用文件顶部的共用限制组合出完整集合；新增或修改规则块时同样组合，不能只写本目录新增的部分。生产数据与资产统一走主进程桥；直连例外须说明 URL 来源。
 
 窗口入口：精灵窗 [sprite-entry.tsx](sprite-entry.tsx) 初始化后并列挂载 [bootstrap/sprite.tsx](app/bootstrap/sprite.tsx)（宿主网关 WS）与按账户重挂载的 [sprite-window.tsx](app/windows/sprite/sprite-window.tsx)（单击、双击、拖拽与命中捕获在 [sprite-stage.tsx](app/windows/sprite/behaviors/sprite-stage.tsx)）；生活空间与工作台由 [living-entry.tsx](app/windows/living/living-entry.tsx) / [workbench-entry.tsx](app/windows/workbench/workbench-entry.tsx) 调用 [bootstrap/surface.tsx](app/bootstrap/surface.tsx) 挂载。激活、引导与启动失败浮层在 [onboarding](app/onboarding/)。界面文案在 [strings/dictionaries](shared/strings/dictionaries/)，`en` 按 `zh` 的字典类型校验；引导问答与人格预设仍在代码中硬编码中文。
 
@@ -33,11 +33,11 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ## 事件与异步生命周期
 
-- [网关路由](app/runtime/gateway-event-router.ts)在鉴权 pending 时丢弃事件，按信封 `session_id` 过滤（无该字段放行）后分派：会话、工具、角色与投递事件进 [handlers](app/runtime/handlers/)（会话事件与 `tool.call` 另收宿主或代理角色 `isProxy`），场景与片刻日记事件直达 modules/scene、modules/memory。
+- [网关路由](app/runtime/gateway-event-router.ts)在鉴权 pending 时丢弃事件，按信封 `session_id` 过滤（无该字段放行）后分派：会话、工具、角色与投递事件进 [handlers](app/runtime/handlers/)（会话事件与 `tool.call/cancel` 另收宿主或代理角色 `isProxy`），场景与片刻日记事件直达 modules/scene、modules/memory。
 - 各窗口独立水合，任何异步回写须核对用户、会话、回合和清理代次；清理代次与账户存储键登记见 [storage.ts](shared/lib/storage.ts)。
 - 账户切换清理旧账户资料、会话与通知并按 `accountId` 重挂载；桌面精灵按目标账户状态自动进入未完成的 onboarding。完整入口开关状态由主进程维护。
 - 鉴权请求仅接受发起会话仍有效的结果。
-- `tool.call` 只由宿主执行，按 call_id 去重，不受可见会话过滤；其他会话过程受会话守卫。
+- `tool.call` / `tool.cancel` 只由宿主执行，按 call_id 去重与撤回，不受可见会话过滤；其他会话过程受会话守卫。
 - headless 不显示工作态，非当前会话的可见调用自行以引用计数持有工作态，只释放自身仍拥有的状态。
 - 消息入列与提醒分开：已提交陪伴消息按 ID 合并，提醒受可见性等条件控制；自动化系统通知不套陪伴打扰闸门。
 - 跳转按会话归属选择入口，工作会话不能送进轻语。
@@ -52,13 +52,13 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 瞬态保存恢复目标，旧计时器不得覆盖持续状态，重复瞬态不嵌套目标；语音准备与播放分开，尾随点播不切 speaking，完成聊天不触发 emotional。
 - [actions](modules/character/actions/)的 `acceptPlayCommand` 按 play_id 去重并校验包、外观代次、素材与有效期，不符即回执 rejected；换包或外观代次变化作废在播实例。强制刷新目录（同包旧代次除外）、主进程认领，以及认领后目录缺失或舞台不可用的 rejected 回执在 [character-events.ts](app/runtime/handlers/character-events.ts)；开播时过期与加载失败由播放器回执。动态动作不新增表现状态，表达真实可见（上报 started）期间以 emotional 瞬态呈现、收尾即恢复；判定与回执遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
 - 拖拽释放、接取与长按的整体形变，以及仪式指向与点击提示，经 [gesture](modules/character/sprite/gesture.ts) 由舞台容器呈现，不参与命中；情绪放大只作用于形象层，静止档、栖息与探身时不放大。
-- 两个完整入口共用 [侧边伙伴组件](app/components/surface-companion/surface-companion.tsx)；入口与播放器共用 [可见性判断](modules/character/actions/action-visibility.ts)，主进程快照按版本应用，锁屏不依赖 Runner 轮询。播放认领与取消遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
+- 两个完整入口共用 [侧边伙伴组件](app/components/surface-companion/surface-companion.tsx)；入口与播放器共用 [可见性判断](modules/character/actions/action-visibility.ts)，主进程快照按版本应用，其中桌面精灵窗的实际显隐（托盘、快捷键、右键隐藏或最小化）取快照的 `spriteVisible`，锁屏不依赖 Runner 轮询。精灵窗关闭了后台节流，页面可见性 API 始终报告可见，不能据此判断隐藏。播放认领与取消遵循 [播放契约](../../docs/PROTOCOL.md#动作目录与播放)。
 
 ### 打扰与自主行为
 
 视觉表达只消费 `play_requested`，目录/任务事件只刷新资产，mood 只更新身份区，控制字段不进正文。
 
-[companion-store.ts](modules/character/companion-store.ts)裁决档位；请求和消费两侧检查[自主行为条件](../../docs/DESIGN.md#自主动作与空间智能)，收起或锁屏后丢弃迟到结果，重连不补话。
+[companion-store.ts](modules/character/companion-store.ts)裁决档位；请求和消费两侧检查[自主行为条件](../../docs/DESIGN.md#自主动作与空间智能)，其中精灵可见与播放共用[可见性判断](modules/character/actions/action-visibility.ts)的条件（精灵窗未隐藏或最小化、未被完整入口收起、未开轻语、未锁屏），在发出请求时与结果返回后重验；收起、隐藏或锁屏后丢弃迟到结果，重连不补话。
 
 生效档位只由精灵窗推送：其他窗口缺少活动覆盖，只改偏好或临时安静，经 storage 事件同步。
 

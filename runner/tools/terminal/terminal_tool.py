@@ -441,6 +441,9 @@ def _handle_terminal(args: dict[str, Any], **kw: Any) -> str:
     )
 
 
-registry.register_tool("terminal", schema=build_terminal_schema(env_type=get_env_config()["env_type"]))(
-    _handle_terminal,
-)
+def _current_terminal_schema() -> dict[str, Any]:
+    # 列出工具时读取：模块导入早于 Client 推送配置，说明须与执行时的 terminal.env_type 一致。
+    return build_terminal_schema(env_type=get_env_config()["env_type"])
+
+
+registry.register_tool("terminal", schema=_current_terminal_schema)(_handle_terminal)

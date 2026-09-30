@@ -9,7 +9,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-# 请求体结构对齐 backend/services/llm/providers/mimo/tts.py::synthesize()，保证同一音色下产出音频与 /api/media/tts 运行时字节一致。用法见 scripts/onboarding-audio/README.md。
+# 请求体对齐 backend/services/infrastructure/llm/providers/mimo/tts.py 中 MiMoTTSProvider.synthesize() 的目录音色、无语音风格路径，使预制音频与运行时同音色合成的参数一致（云端合成不保证字节相同）。用法见 scripts/onboarding-audio/README.md。
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MANIFEST_PATH = REPO_ROOT / "scripts" / "onboarding-audio" / "manifest.json"

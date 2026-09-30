@@ -123,6 +123,32 @@ async def _send(ws: Any, req_id: Any, **fields: Any) -> None:
     await ws.send(json.dumps({"jsonrpc": "2.0", "id": req_id, **fields}))
 
 
+def _failed_error(message: str) -> dict[str, Any]:
+    """工具报错或执行前被拒的确定结局；``disposition=failed`` 让 Client 与取消、超时等结果未知区分。"""
+    return {"code": -32000, "message": message, "data": {"disposition": "failed"}}
+
+
+def _parse_tool_request(
+    method: str,
+    params: dict[str, Any],
+) -> tuple[str, dict[str, Any], str | None, SkillScope | None]:
+    """校验工具调用参数与工具集开关；抛出即表示工具没有运行。"""
+    name = params.get("name")
+    if not isinstance(name, str) or not name:
+        raise ValueError("A non-empty 'name' string is required")
+    args = params.get("args", {})
+    if not isinstance(args, dict):
+        raise ValueError("Tool 'args' must be an object")
+    call_id = params.get("call_id")
+    if call_id is not None and (not isinstance(call_id, str) or not call_id):
+        raise ValueError("Tool 'call_id' must be a non-empty string")
+    skill_scope = SkillScope.parse(params.get("skill_scope")) if method == "execute_scoped_tool" else None
+    # 与 get_schemas_for_llm 同源：渲染层/直调不得绕过 toolsets.disabled。
+    if name in excluded_tool_names(get_disabled_toolset_ids(), {name}):
+        raise ToolError(f"Tool '{name}' is disabled in the user's tool settings")
+    return name, args, call_id, skill_scope
+
+
 async def _send_notification(ws: Any, method: str, params: dict[str, Any], id: Any = None) -> None:
     body: dict[str, Any] = {"jsonrpc": "2.0", "method": method, "params": params}
     if id is not None:
@@ -131,7 +157,7 @@ async def _send_notification(ws: Any, method: str, params: dict[str, Any], id: A
 
 
 async def request_llm_from_desktop(kwargs: dict[str, Any]) -> str:
-    """向 Client 发 ``request_llm`` 并返回模型文本（供 web_extract 等一次性补全；鉴权在 Client 侧完成，Runner 不持凭据）。
+    """向 Client 发 ``request_llm`` 并返回模型文本；当前内置工具不调用。鉴权在 Client 侧完成，Runner 不持凭据。
 
     Client 代理 Backend ``/api/llm/completion``：成功结果为 ``{"content": str, "usage": dict|null}``，失败走 JSON-RPC error。
     缺少文本字段按协议错误拒绝，不降级为空串掩盖失败。
@@ -237,19 +263,11 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
             return
 
         if method in {"execute_tool", "execute_scoped_tool"}:
-            name = params.get("name")
-            if not isinstance(name, str) or not name:
-                raise ValueError("A non-empty 'name' string is required")
-            journal_args = params.get("args", {})
-            if not isinstance(journal_args, dict):
-                raise ValueError("Tool 'args' must be an object")
-            journal_call_id = params.get("call_id")
-            if journal_call_id is not None and (not isinstance(journal_call_id, str) or not journal_call_id):
-                raise ValueError("Tool 'call_id' must be a non-empty string")
-            # 与 get_schemas_for_llm 同源：渲染层/直调不得绕过 toolsets.disabled。
-            skill_scope = SkillScope.parse(params.get("skill_scope")) if method == "execute_scoped_tool" else None
-            if name in excluded_tool_names(get_disabled_toolset_ids(), {name}):
-                raise ToolError(f"Tool '{name}' is disabled in the user's tool settings")
+            try:
+                name, journal_args, journal_call_id, skill_scope = _parse_tool_request(method, params)
+            except (ToolError, ValueError) as e:
+                await _send(ws, req_id, error=_failed_error(str(e)))
+                return
             inflight_key = str(req_id)
             cancel_event = threading.Event()
             cur_task = asyncio.current_task()
@@ -294,7 +312,7 @@ async def process_request(ws: Any, req: dict[str, Any]) -> None:
                 except ToolError as e:
                     if journal_call_id and journal_claim_token is not None:
                         await asyncio.to_thread(call_journal.mark_failed, journal_call_id, journal_claim_token, str(e))
-                    await _send(ws, req_id, error={"code": -32000, "message": str(e)})
+                    await _send(ws, req_id, error=_failed_error(str(e)))
                     return
                 if journal_call_id and journal_claim_token is not None:
                     await asyncio.to_thread(

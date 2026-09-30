@@ -1,5 +1,10 @@
-import type { MemoryToolScope } from '@ipc/contracts'
-import { type DesktopRunnerState, type DesktopRunnerStatusEvent, IPC } from '@ipc/contracts'
+import {
+  type DesktopRunnerState,
+  type DesktopRunnerStatusEvent,
+  IPC,
+  type RunnerCallOutcome,
+  type RunnerCallRequest
+} from '@ipc/contracts'
 import type { BrowserWindow, IpcMain } from 'electron'
 
 import type { RunnerBridge, RunnerBridgeEvent, RunnerBridgeOptions, RunnerBridgeStatus } from '../runner/bridge'
@@ -9,7 +14,7 @@ import type { CreateRunnerWsServerOptions, RunnerWsServer } from '../runner/rpc-
 import { isSenderWindow } from '../security/ipc-trust'
 import type { BackendSessionPort } from '../shared/backend-port'
 import * as store from '../shared/lib/runner-config-store'
-import { errorMessage } from '../shared/utils'
+import { errorMessage, RunnerNotConnectedError, RunnerRpcError } from '../shared/utils'
 
 export interface RunnerHostOptions {
   createReverseRpc: (options: ReverseRpcOptions) => (method: string, params?: unknown) => Promise<unknown>
@@ -32,9 +37,28 @@ export interface RunnerHost {
   restartForCurrentSession: () => Promise<void>
 }
 
+// Runner 已给出确定结局的拒绝：工具报错或执行前被拒（failed）、同一 call_id 的参数冲突、非法标识。
+// 其余错误（取消、超时、断连、他处持有、日志判定未知）都不能证明工具没有产生副作用。
+const DEFINITE_FAILURE_DISPOSITIONS = new Set(['conflict', 'failed', 'invalid_call_id'])
+
+function runnerCallOutcomeFromError(error: unknown): RunnerCallOutcome {
+  if (error instanceof RunnerNotConnectedError) {
+    return { status: 'not_executed' }
+  }
+
+  if (error instanceof RunnerRpcError && error.disposition && DEFINITE_FAILURE_DISPOSITIONS.has(error.disposition)) {
+    return { error: error.message, status: 'failed' }
+  }
+
+  return { status: 'unknown' }
+}
+
 /** Runner 桥的唯一持有者：懒创建、登录自动启停，并向 IPC 与外部读者暴露窄接口。 */
 export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
   let runnerBridge: null | RunnerBridge = null
+  // 在途的模型派发调用：call_id → 本次 Runner 请求 id，供按调用取消（spiritagent.cancel 的 req_id）。
+  const inflightCalls = new Map<string, string>()
+  let nextCallRequestId = 1
 
   function ensureRunnerBridge(): RunnerBridge {
     if (runnerBridge) {
@@ -75,7 +99,11 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
         })
     })
 
-    store.setPushTarget(pushConfig)
+    // 运行中保存配置后重新读取工具清单；握手时的推送由桥在读取清单前完成。
+    store.setPushTarget(async () => {
+      await pushConfig()
+      await runnerBridge?.refreshTools()
+    })
 
     runnerBridge.onEvent((ev: RunnerBridgeEvent) => {
       const win = options.getMainWindow()
@@ -198,33 +226,57 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
       return runnerBridge?.getTools() || []
     })
 
+    // 渲染层直调（窗口查询、点击预演、情境快照），不带 call_id，不记调用日志。
+    ipcMain.handle(IPC.invoke.runnerInvoke, async (event, name: string, args?: Record<string, unknown>) => {
+      // 本机工具只由持有网关的精灵宿主派发（Client「连接与设备就绪」）。
+      if (!isSenderWindow(event.sender, options.getMainWindow())) {
+        throw new Error('runner:invoke is restricted to the gateway host window')
+      }
+
+      if (typeof name !== 'string' || !name) {
+        throw new Error('runner:invoke requires a non-empty tool name')
+      }
+
+      return ensureRunnerBridge().dispatch('execute_tool', { args: args ?? {}, name })
+    })
+
+    // 模型派发的设备调用：call_id 透传给 Runner 调用日志（PROTOCOL「调用日志与未知结果」），失败按结局分类返回。
     ipcMain.handle(
-      IPC.invoke.runnerInvoke,
-      async (event, name: string, args?: Record<string, unknown>, skillScope?: MemoryToolScope, callId?: string) => {
-        // 本机工具只由持有网关的精灵宿主派发（Client「连接与设备就绪」）。
+      IPC.invoke.runnerDispatchCall,
+      async (event, request: RunnerCallRequest): Promise<RunnerCallOutcome> => {
         if (!isSenderWindow(event.sender, options.getMainWindow())) {
-          throw new Error('runner:invoke is restricted to the gateway host window')
+          throw new Error('runner:dispatch-call is restricted to the gateway host window')
         }
 
-        if (typeof name !== 'string' || !name) {
-          throw new Error('runner:invoke requires a non-empty tool name')
+        const name = request?.name
+        const callId = request?.callId
+
+        if (typeof name !== 'string' || !name || typeof callId !== 'string' || !callId) {
+          throw new Error('runner:dispatch-call requires a tool name and call_id')
         }
 
         const bridge = ensureRunnerBridge()
+        const requestId = `tool_${nextCallRequestId++}`
+        const params: Record<string, unknown> = { args: request.args ?? {}, call_id: callId, name }
+        inflightCalls.set(callId, requestId)
 
-        // call_id 透传给 runner 的调用日志（PROTOCOL「调用日志与未知结果」）：runner 据此查询/认领已有执行，
-        // 中断后凭记录区分「已执行」与「从未开始」，避免盲目重跑本机副作用。
-        const invokeParams: Record<string, unknown> = { name, args: args ?? {} }
+        try {
+          const result = request.skillScope
+            ? await bridge.dispatch(
+                'execute_scoped_tool',
+                { ...params, skill_scope: request.skillScope },
+                { id: requestId }
+              )
+            : await bridge.dispatch('execute_tool', params, { id: requestId })
 
-        if (callId) {
-          invokeParams.call_id = callId
+          return { result, status: 'completed' }
+        } catch (error: unknown) {
+          return runnerCallOutcomeFromError(error)
+        } finally {
+          if (inflightCalls.get(callId) === requestId) {
+            inflightCalls.delete(callId)
+          }
         }
-
-        if (skillScope) {
-          return bridge.dispatch('execute_scoped_tool', { ...invokeParams, skill_scope: skillScope })
-        }
-
-        return bridge.dispatch('execute_tool', invokeParams)
       }
     )
 
@@ -238,10 +290,16 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
       return { phase: bridge.getStatus().phase }
     })
 
-    ipcMain.handle(IPC.invoke.runnerCancel, async () => {
+    // 只取消指定调用：后端中断回合时逐个下发 tool.cancel，其他会话、IM 与定时任务的在途调用不受影响。
+    ipcMain.handle(IPC.invoke.runnerCancel, async (event, callId: string) => {
+      if (!isSenderWindow(event.sender, options.getMainWindow())) {
+        throw new Error('runner:cancel is restricted to the gateway host window')
+      }
+
+      const requestId = typeof callId === 'string' ? inflightCalls.get(callId) : undefined
       const bridge = runnerBridge
 
-      if (!bridge) {
+      if (!requestId || !bridge) {
         return { noop: true, ok: true }
       }
 
@@ -251,7 +309,7 @@ export function createRunnerHost(options: RunnerHostOptions): RunnerHost {
         return { noop: true, ok: true }
       }
 
-      return bridge.dispatch('spiritagent.cancel', {})
+      return bridge.dispatch('spiritagent.cancel', { req_id: requestId })
     })
   }
 

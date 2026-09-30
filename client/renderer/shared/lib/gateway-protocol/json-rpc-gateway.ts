@@ -32,6 +32,7 @@ type GatewayEventName =
   | 'message.start'
   | 'system.notification'
   | 'tool.call'
+  | 'tool.cancel'
   | 'tool.complete'
   | 'tool.start'
   | 'video_gen.completed'

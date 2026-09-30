@@ -48,8 +48,8 @@ from .persistence import (
     persist_compression_checkpoint,
 )
 from .streaming import (
+    _assign_tool_call_ids,
     _emit_llm_error,
-    _ensure_tool_call_ids,
     _generate_llm_response,
     _IncompleteResponseError,
     _InvalidCompanionReplyError,
@@ -247,7 +247,8 @@ async def run_chat_turn(
             native_memory=inputs.native_memory,
             guardrails=ToolCallGuardrailController(),
             emitter=emitter,
-            delegate_executor=partial(run_delegated_turn, run_turn=run_chat_turn),
+            # 子 Agent 回合沿用本回合的无头标志：IM、定时任务等无头回合委派出的本机调用同样不显示桌面工作态。
+            delegate_executor=partial(run_delegated_turn, run_turn=partial(run_chat_turn, headless=headless)),
             headless=headless,
             excluded_tool_names=inputs.excluded_tool_names,
             scene_turn=SceneTurnState(),
@@ -375,7 +376,7 @@ async def run_chat_turn(
                 name = tc.get("name")
                 if isinstance(name, str) and name:
                     active_tool_names.add(name)
-            _ensure_tool_call_ids(llm_result.tool_calls_list)
+            _assign_tool_call_ids(llm_result.tool_calls_list)
 
             await _persist_assistant_with_tool_calls_and_results(
                 conv,

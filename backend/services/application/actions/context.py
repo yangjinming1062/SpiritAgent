@@ -1,7 +1,7 @@
-"""动作上下文快照（{{ACTION_CONTEXT}}）：每次模型调用前刷新。
+"""动作上下文快照：陪伴会话每次模型调用前重建并追加到环境提示，夜间规划直接读取字段。
 
-只列可播放能力与未完成/拒绝创意；不展示制作额度，避免限额影响创建意图。
-生成中、失败、停用、已删除动作不进入可播放列表。
+可播放列表只含已启用且素材就绪的表达动作；未完成提案附真实制作状态与评审理由，另列最近拒绝的创意。
+不含额度数值，避免限额影响创建意图；额度不足转暂缓的理由随提案可见。
 """
 
 import json
@@ -105,7 +105,8 @@ async def build_action_context(db: AsyncSession, user_id: int) -> ActionContextS
                     ActionProposal.pack_id == pack.id,
                     ActionProposal.status == "rejected",
                 )
-                .order_by(ActionProposal.created_at.desc())
+                # 拒绝行的 updated_at 即拒绝时刻，复用重审的旧提案按最近一次拒绝排序。
+                .order_by(ActionProposal.updated_at.desc(), ActionProposal.id.desc())
                 .limit(5),
             )
         )

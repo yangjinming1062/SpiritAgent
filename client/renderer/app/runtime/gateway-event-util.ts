@@ -8,3 +8,8 @@ export interface EventRouteContext {
   /** 本窗口是否为主进程代理（生活空间 / 工作台）：代理不执行宿主专属副作用。 */
   isProxy: boolean
 }
+
+/** 宿主专属的设备指令：只在精灵窗宿主执行，不广播给代理窗口。 */
+export function isDeviceCommandEvent(type: string): boolean {
+  return type === 'tool.call' || type === 'tool.cancel'
+}

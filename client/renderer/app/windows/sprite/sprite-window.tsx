@@ -60,7 +60,6 @@ export function SpriteWindow(): React.JSX.Element {
   const videoStatus = useStore($actionCatalogStatus)
   const videoGenState = useStore($videoGenState)
   const videoGenStage = useStore($videoGenStage)
-  const [onboardingOpen, setOnboardingOpen] = useState(false)
   const [activationOpen, setActivationOpen] = useState(false)
 
   const validityCheckedRef = useRef(false)
@@ -127,23 +126,15 @@ export function SpriteWindow(): React.JSX.Element {
 
   // lifecycle 由 useAccountLifecycle 统一解析；本窗只据此决定向导与立绘水合。
   useEffect(() => {
-    if (auth.kind !== 'authenticated') {
-      setOnboardingOpen(false)
-
-      return
-    }
-
-    setOnboardingOpen(lifecycle === 'onboarding')
-
-    if (lifecycle === 'ready') {
+    if (auth.kind === 'authenticated' && lifecycle === 'ready') {
       void hydratePortrait()
       void hydratePortraitHistory()
     }
   }, [accountId, auth.kind, lifecycle])
 
   const authed = auth.kind === 'authenticated'
-  const showOnboarding = authed && lifecycle === 'onboarding' && onboardingOpen
-  const eggVisible = authed && lifecycle === 'onboarding' && !onboardingOpen && videoStatus !== 'ready'
+  // 引导没有关闭入口（DESIGN「引导与后台准备」）：已激活且未完成时始终显示，完成后由 lifecycle 收起。
+  const showOnboarding = authed && lifecycle === 'onboarding'
 
   useEffect(() => {
     if (auth.kind !== 'authenticated' || lifecycle !== 'ready') {
@@ -212,29 +203,17 @@ export function SpriteWindow(): React.JSX.Element {
     [videoStatus, videoGenState, videoGenStage]
   )
 
+  // 鉴权前：点击打开伙伴窗口内的激活浮层。
   const onTap = (): void => {
-    if (authed) {
-      if (lifecycle === 'onboarding') {
-        setOnboardingOpen(true)
-      }
-
-      return
+    if (!authed) {
+      setActivationOpen(true)
     }
-
-    // 鉴权前：点击打开伙伴窗口内的激活浮层。
-    setActivationOpen(true)
   }
 
-  // 双击精灵：切换轻语卡片；未登录时打开激活浮层；onboarding 期间进引导。
+  // 双击精灵：切换轻语卡片；未登录时打开激活浮层。引导期间舞台已收起，不响应手势。
   const onDoubleTap = (): void => {
     if (!authed) {
       setActivationOpen(true)
-
-      return
-    }
-
-    if (lifecycle === 'onboarding') {
-      setOnboardingOpen(true)
 
       return
     }
@@ -243,7 +222,6 @@ export function SpriteWindow(): React.JSX.Element {
   }
 
   const onOnboardingComplete = (): void => {
-    setOnboardingOpen(false)
     setCompanionLifecycle('ready')
   }
 
@@ -259,9 +237,7 @@ export function SpriteWindow(): React.JSX.Element {
         onDoubleTap={onDoubleTap}
         onTap={onTap}
       >
-        {eggVisible ? (
-          <EggStage showPrompt />
-        ) : showOnboarding ? null : presentation.renderer === 'video' ? (
+        {showOnboarding ? null : presentation.renderer === 'video' ? (
           <VideoStage />
         ) : (
           <EggStage

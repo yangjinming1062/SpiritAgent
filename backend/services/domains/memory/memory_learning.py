@@ -163,8 +163,9 @@ async def load_review_context(
         stmt = stmt.where(Message.id > Conversation.memory_reviewed_message_id)
     if query:
         stmt = stmt.where(message_contains_text(query))
-    # 先取最新的 MESSAGE_LIMIT 条（即时检查优先保留最新消息），呈现时按 id 升序重排
-    rows = list((await db.scalars(stmt.order_by(Message.id.desc()).limit(MESSAGE_LIMIT))).all())
+    # 后台审阅取水位后最早的连续前缀，推进水位不越过未审消息；即时检查优先保留最新消息。呈现统一按 id 升序。
+    order = Message.id.asc() if new_only else Message.id.desc()
+    rows = list((await db.scalars(stmt.order_by(order).limit(MESSAGE_LIMIT))).all())
     blocked = await _forgotten_fingerprints(db, scope)
     messages: list[ReviewMessage] = []
     message_chars = 0
@@ -406,7 +407,7 @@ async def apply_memory_decisions(
                 embeddings.append(EmbeddingItem(row.id, row.content, row.content_version))
             results.append(memory_record(row))
         if advance_review:
-            # 只有整个 LLM 决策批次成功才推进；空决策也代表已检查，失败保持可重试。
+            # 只有整个 LLM 决策批次成功才推进到各会话批内最大 id（批次是水位后的连续前缀）；空决策也代表已检查，失败保持可重试。
             reviewed_through: dict[int, int] = {}
             for message in context.messages:
                 reviewed_through[message.session_id] = max(

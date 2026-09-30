@@ -91,6 +91,7 @@ export interface RunnerBridge {
   getStatus: () => RunnerBridgeStatus
   getTools: () => Record<string, unknown>[]
   onEvent: (callback: (event: RunnerBridgeEvent) => void) => () => void
+  refreshTools: () => Promise<void>
   start: (args?: RunnerBridgeStartOptions) => Promise<RunnerBridgeStatus>
   stop: (options?: { reason?: string }) => Promise<{ errors?: string[]; noop?: boolean; ok: boolean }>
 }
@@ -438,6 +439,50 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     })
   }
 
+  // 运行中配置变化后重新读取工具清单（终端等工具的说明随 Runner 当前配置生成）；有变化时按重连同样发布，
+  // 由宿主重新同步。读取失败保留原清单，不能因一次查询失败撤销执行资格。
+  async function refreshTools(): Promise<void> {
+    const server = wsServer
+
+    if (state.phase !== 'running' || !server || !server.getStatus().connected) {
+      return
+    }
+
+    const generation = toolsGeneration
+    let tools: Record<string, unknown>[]
+
+    try {
+      const result = await server.call<{ tools?: Record<string, unknown>[] }>('get_tools', {}, { timeoutMs: 10_000 })
+      tools = result?.tools ?? []
+    } catch (error: unknown) {
+      log(`[runner-bridge] get_tools refresh failed: ${errorMessage(error)}`)
+
+      return
+    }
+
+    // 期间的断连、停止或新握手以它们自己的清单为准。
+    if (
+      generation !== toolsGeneration ||
+      server !== wsServer ||
+      !server.getStatus().connected ||
+      state.phase !== 'running' ||
+      JSON.stringify(tools) === JSON.stringify(cachedTools)
+    ) {
+      return
+    }
+
+    cachedTools = tools
+    log(`[runner-bridge] tool list changed after config update (${tools.length} tools)`)
+    emit.emit('event', {
+      capabilities: state.capabilities,
+      capabilitiesHealth: state.capabilitiesHealth,
+      probeFailed: state.probeFailed,
+      runnerVersion: state.runnerVersion,
+      tools: cachedTools,
+      type: 'runner_ready'
+    })
+  }
+
   async function _fetchTools(server: RunnerWsServer): Promise<Record<string, unknown>[]> {
     try {
       const result = await server.call<{ tools?: Record<string, unknown>[] }>('get_tools', {}, { timeoutMs: 10_000 })
@@ -532,7 +577,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
   async function _rpc<T = unknown>(
     method: string,
     params: Record<string, unknown>,
-    opts: { timeoutMs?: number } = {}
+    opts: { id?: number | string; timeoutMs?: number } = {}
   ): Promise<T> {
     if (!wsServer || !wsServer.getStatus()?.connected) {
       throw new RunnerNotConnectedError('Runner is not connected.')
@@ -544,7 +589,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
   const dispatch = <T = unknown>(
     method: string,
     params?: Record<string, unknown>,
-    opts?: { timeoutMs?: number }
+    opts?: { id?: number | string; timeoutMs?: number }
   ): Promise<T> => _rpc<T>(method, params || {}, opts)
 
   function getTools(): Record<string, unknown>[] {
@@ -556,6 +601,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     getStatus,
     getTools,
     onEvent,
+    refreshTools,
     start,
     stop
   }

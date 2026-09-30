@@ -402,8 +402,7 @@ export const dict: Dictionary = {
         retry: 'Retry analysis',
         extract: 'Extract again',
         reload: 'Reload',
-        saved:
-          'Descriptions saved. Future generation keeps the confirmed appearance. To change the body, redraw and accept a new full-body image.',
+        saved: 'Descriptions saved. Future generation keeps the confirmed appearance.',
         conflict: 'The character card was updated elsewhere. Your changes are preserved. Review before merging.',
         merge: 'Keep changes with latest version',
         loadFailed: 'Could not load character card. Please retry.',
@@ -991,7 +990,6 @@ export const dict: Dictionary = {
       activate: 'Activate / sign in'
     },
     egg: {
-      wake: 'Tap me to wake up',
       preparing: 'Preparing your companion’s actions…',
       generating: 'Generating your companion’s actions…',
       failed: 'Action generation failed',
@@ -1317,7 +1315,7 @@ export const dict: Dictionary = {
       },
       presetMeta: {
         copywriter: 'Copywriter',
-        developer: 'Developer',
+        developer: 'Engineer',
         language_teacher: 'Language teacher',
         product_manager: 'Product manager'
       },

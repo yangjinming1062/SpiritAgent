@@ -29,6 +29,7 @@ import {
   useContextStatus
 } from './context-progress-bar'
 import { rememberFullHistory } from './session-history-cache'
+import { useIsReadOnlySession } from './use-is-read-only-session'
 
 const DEFAULT_THRESHOLD = 0.7
 const THRESHOLD_MIN = 0.3
@@ -244,6 +245,8 @@ export function ChatParamsPanel({
   const gateway = useStore($gateway)
   const gatewayState = useStore($gatewayState)
   const canEdit = gatewayState === 'open' && sessionId !== null
+  // IM 会话由通道桥接维护，桌面端不能手动压缩（服务端同样拒绝）；参数覆盖仍作用于桥接回合。
+  const isReadOnlySession = useIsReadOnlySession()
   const contextStatus = useContextStatus()
   const [compressing, setCompressing] = useState(false)
 
@@ -372,7 +375,7 @@ export function ChatParamsPanel({
   }
 
   const handleManualCompress = async (): Promise<void> => {
-    if (compressing || !sessionId || !gateway || gateway.connectionState !== 'open') {
+    if (compressing || isReadOnlySession || !sessionId || !gateway || gateway.connectionState !== 'open') {
       return
     }
 
@@ -533,7 +536,7 @@ export function ChatParamsPanel({
                 ? 'bg-fill-hover text-muted cursor-wait border-line-standard'
                 : 'bg-accent/15 hover:bg-accent/25 text-accent border-accent/30 hover:border-accent/50 shadow-xs'
             )}
-            disabled={!canEdit || compressing || contextStatus.totalTokens <= 0}
+            disabled={!canEdit || isReadOnlySession || compressing || contextStatus.totalTokens <= 0}
             onClick={() => {
               void handleManualCompress()
             }}

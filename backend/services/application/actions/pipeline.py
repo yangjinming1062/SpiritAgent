@@ -23,14 +23,14 @@ _INFLIGHT_REVIEWS: set[int] = set()
 
 
 def schedule_accepted_proposal(acceptance: ProposalAcceptance, user_id: int) -> None:
-    """提案事务提交后启动后台工作：提案进入独立评审，同 key 动作的重做直接启动生成。"""
+    """提案事务提交后启动后台工作：提案进入独立评审，同 key 动作的重做或在制任务直接唤醒生成。"""
     result = acceptance.result
     if result.outcome != "pending_review":
         return
     if result.proposal_id is not None:
         schedule_proposal_review(result.proposal_id, user_id)
-    elif result.action_id is not None and acceptance.pack_id is not None:
-        kick_dynamic_action(acceptance.pack_id, result.action_id, user_id)
+    elif result.action_id is not None and acceptance.wake_pack_id is not None:
+        kick_dynamic_action(acceptance.wake_pack_id, result.action_id, user_id)
 
 
 def schedule_proposal_review(proposal_id: int, user_id: int) -> None:

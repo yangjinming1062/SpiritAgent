@@ -25,6 +25,7 @@ from modules.conversation import (
 )
 from services.adapters.http import limiter
 from services.domains.conversation import (
+    IM_KIND,
     SPECIAL_KIND,
     client_reply_bubbles,
     message_contains_text,
@@ -286,6 +287,9 @@ async def patch_session(
     if conv.kind == SPECIAL_KIND or not conv.is_renamable:
         raise HTTPException(status_code=403, detail="System preset conversations cannot be modified or deleted")
     if body.title is not None:
+        # IM 会话标题由渠道适配器生成，桌面端只读。
+        if conv.kind == IM_KIND:
+            raise HTTPException(status_code=403, detail="IM conversations cannot be renamed")
         conv.title = body.title
     if body.pinned is not None:
         if body.pinned and conv.archived_at is not None:

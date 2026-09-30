@@ -59,6 +59,24 @@ export interface DesktopRunnerState {
   phase: DesktopRunnerPhase
 }
 
+/** 模型派发的一次 Runner 工具调用，按 `callId` 查询、认领调用日志并可单独取消。 */
+export interface RunnerCallRequest {
+  args: Record<string, unknown>
+  callId: string
+  name: string
+  skillScope?: MemoryToolScope
+}
+
+/**
+ * Runner 调用结局（PROTOCOL「调用日志与未知结果」）：`failed` 是 Runner 明确报告的工具失败或执行前拒绝；
+ * `not_executed` 是请求发出前 Runner 未连接；超时、取消、断连、他处持有与日志判定未知都归 `unknown`。
+ */
+export type RunnerCallOutcome =
+  | { error: string; status: 'failed' }
+  | { result: unknown; status: 'completed' }
+  | { status: 'not_executed' }
+  | { status: 'unknown' }
+
 export type SpiritAgentUiPalette = 'night' | 'day'
 export type SpiritAgentUiEffect = 'solid' | 'clear'
 export type SpiritAgentUiTheme = 'night' | 'day' | 'night-clear' | 'day-clear'
@@ -124,6 +142,8 @@ export interface DesktopSurfaceChangedEvent {
   open: null | SurfaceId
   revision: number
   screenLocked: boolean
+  /** 桌面精灵窗实际可见：窗口存在、未隐藏且未最小化；完整入口收起舞台不改变此值。 */
+  spriteVisible: boolean
 }
 
 export interface DesktopUiThemeBroadcast {
@@ -399,13 +419,9 @@ export interface IpcInvokeContract {
   'spiritagent:version': () => DesktopVersionInfo | Promise<DesktopVersionInfo>
 
   // Runner
-  'spiritagent:runner:invoke': (
-    name: string,
-    args: Record<string, unknown>,
-    skillScope?: MemoryToolScope,
-    callId?: string
-  ) => Promise<unknown> | unknown
-  'spiritagent:runner:cancel': () => unknown | Promise<unknown>
+  'spiritagent:runner:invoke': (name: string, args: Record<string, unknown>) => Promise<unknown> | unknown
+  'spiritagent:runner:dispatch-call': (request: RunnerCallRequest) => Promise<RunnerCallOutcome> | RunnerCallOutcome
+  'spiritagent:runner:cancel': (callId: string) => unknown | Promise<unknown>
   'spiritagent:runner:get-state': () => DesktopRunnerState | Promise<DesktopRunnerState>
   'spiritagent:runner:get-tools': () => Array<Record<string, unknown>> | Promise<Array<Record<string, unknown>>>
   'spiritagent:runner-config:read': () =>
@@ -550,6 +566,7 @@ export const IPC = {
     logEmit: 'spiritagent:log:emit',
     version: 'spiritagent:version',
     runnerInvoke: 'spiritagent:runner:invoke',
+    runnerDispatchCall: 'spiritagent:runner:dispatch-call',
     runnerCancel: 'spiritagent:runner:cancel',
     runnerGetState: 'spiritagent:runner:get-state',
     runnerGetTools: 'spiritagent:runner:get-tools',

@@ -40,6 +40,13 @@ anyhow = "1"
 # 解压 build.rs 嵌入的 payload zip。
 zip = { version = "0.6", default-features = false, features = ["deflate"] }
 
+# 取消安装时终止脚本的整棵进程树（powershell.rs）：Unix 向进程组发信号，Windows 用 Job Object；两者已随 tokio 进入依赖图。
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_System_JobObjects"] }
+
 [profile.release]
 panic = "abort"
 codegen-units = 1

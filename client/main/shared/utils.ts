@@ -93,10 +93,20 @@ export class HttpError extends Error {
   }
 }
 
-/**
- * Runner 未连接、请求未发出。name 保持 Error：渲染层经 IPC 只能按 `Error: <文案>` 识别「未执行」。
- */
+/** Runner 未连接、请求未发出。 */
 export class RunnerNotConnectedError extends Error {}
+
+/** Runner 以 JSON-RPC error 回复的请求；`disposition` 取自 `error.data.disposition`（PROTOCOL「调用日志与未知结果」）。 */
+export class RunnerRpcError extends Error {
+  readonly code: null | number
+  readonly disposition: null | string
+
+  constructor(message: string, code: null | number, disposition: null | string) {
+    super(message)
+    this.code = code
+    this.disposition = disposition
+  }
+}
 
 function isHttpStatus(error: unknown, status: number): boolean {
   return error instanceof HttpError && error.status === status

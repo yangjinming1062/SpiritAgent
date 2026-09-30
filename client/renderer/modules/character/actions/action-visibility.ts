@@ -4,6 +4,7 @@ import {
   $surfaceOpen,
   $surfaceRole,
   $surfaceScreenLocked,
+  $surfaceSpriteVisible,
   isCompanionStageVisible
 } from '@/shared/store/surfaces'
 
@@ -23,7 +24,8 @@ export function observeActionStageVisibility(listener: (visible: boolean) => voi
     $surfaceOpen.listen(notify),
     $surfaceCompanions.listen(notify),
     $surfaceRole.listen(notify),
-    $surfaceScreenLocked.listen(notify)
+    $surfaceScreenLocked.listen(notify),
+    $surfaceSpriteVisible.listen(notify)
   ]
 
   document.addEventListener('visibilitychange', notify)

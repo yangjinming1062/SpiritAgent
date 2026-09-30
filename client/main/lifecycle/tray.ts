@@ -372,10 +372,16 @@ export function installCloseInterceptor(win: BrowserWindow): void {
     rebuildTrayMenu()
   })
 
-  win.on('show', () => rebuildTrayMenu())
-  win.on('hide', () => rebuildTrayMenu())
-  win.on('minimize', () => rebuildTrayMenu())
-  win.on('restore', () => rebuildTrayMenu())
+  // 每次创建精灵窗都经此挂载；首个窗口创建时托盘依赖尚未注入，因此在事件发生时再取 surfaces。
+  const onVisibilityChanged = (): void => {
+    rebuildTrayMenu()
+    trayDeps?.surfaces?.publishSpriteVisibility()
+  }
+
+  win.on('show', onVisibilityChanged)
+  win.on('hide', onVisibilityChanged)
+  win.on('minimize', onVisibilityChanged)
+  win.on('restore', onVisibilityChanged)
 }
 
 export function hideMainWindow(): void {

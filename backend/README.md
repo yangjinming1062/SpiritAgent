@@ -169,7 +169,7 @@ docker compose up -d
 docker compose --profile monitoring up -d
 ```
 
-容器与卷见 [docker-compose.yml](docker-compose.yml)，指标抓取见 [Prometheus 配置](monitoring/prometheus.yml)。`/metrics` 默认无需鉴权；设置 `metrics_auth_token` 后须令牌访问，随附的 Prometheus 配置不带凭据，需同步调整。Backend 不参与桌面安装包构建。
+容器与卷见 [docker-compose.yml](docker-compose.yml)，指标抓取见 [Prometheus 配置](monitoring/prometheus.yml)。`/metrics` 默认无需鉴权；配置 `metrics_auth_token` 后须以 `Authorization: Bearer <令牌>` 或 `X-Metrics-Token` 访问。使用随附 Prometheus 时在 `backend/.env` 设置 `METRICS_AUTH_TOKEN`：Backend 经 `env_file` 读取，Prometheus 读取 compose 按同一变量注入的令牌文件；未设置时注入空值，后端不校验。compose 不会因注入内容变化重建容器，修改令牌后执行 `docker compose --profile monitoring up -d --force-recreate backend prometheus`。管理后台保存或清除令牌会写入信息库并覆盖环境变量，保存值须与 `.env` 一致。Backend 不参与桌面安装包构建。
 
 后端镜像安装 FFmpeg（含 `ffprobe`），用于视频探测、抠像和转码；构建时检查两个命令可执行。更新 Dockerfile 后，在 `backend` 目录执行 `docker compose up -d --build backend` 重建并替换容器。
 

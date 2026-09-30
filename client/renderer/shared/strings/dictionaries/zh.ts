@@ -377,7 +377,7 @@ export const dict = {
         retry: '重试分析',
         extract: '重新提取',
         reload: '重新加载',
-        saved: '已保存辅助描述。后续生成仍以已确认图片保持外形；改变身材请重绘并采纳新的全身图。',
+        saved: '已保存辅助描述。后续生成仍以已确认图片保持外形。',
         conflict: '角色卡已在其他位置更新，你的修改已保留。请检查后合并保存。',
         merge: '保留修改并使用最新版本',
         loadFailed: '角色卡加载失败，请重试',
@@ -930,7 +930,6 @@ export const dict = {
       activate: '激活 / 登录'
     },
     egg: {
-      wake: '点击我，让我醒来',
       preparing: '正在准备伙伴动作…',
       generating: '伙伴动作生成中…',
       failed: '动作生成失败',
@@ -1238,7 +1237,7 @@ export const dict = {
       },
       presetMeta: {
         copywriter: '文案秘书',
-        developer: '开发工程师',
+        developer: '工程师',
         language_teacher: '语言老师',
         product_manager: '产品经理'
       },

@@ -26,7 +26,7 @@ async def run_delegated_turn(
     """执行子 Agent 回合并把结果转换为父回合的 ToolResult 内容。
 
     子回合继承父回合的 llm_config、用户作用域与会话类型（system_preset_id / is_automation）；
-    回合入口由调用方（orchestrator）注入，避免模块级循环导入。输出经 HeadlessEmitter 捕获，
+    回合入口由调用方（orchestrator）注入并绑定父回合的无头标志，避免模块级循环导入。输出经 HeadlessEmitter 捕获，
     以结构化的 final_text/error 取代对输出 chunk 的拼接解析。
     """
     try:

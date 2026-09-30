@@ -212,8 +212,13 @@ class JsonRpcDispatcher:
             await self._reply_error(msg_id, JSONRPC_INVALID_REQUEST, "method must be a string")
             return
 
+        # 通知（无 id）的成功与失败都不回复，失败只记日志。
+        is_notification = msg_id is None
         handler = self._handlers.get(method)
         if handler is None:
+            if is_notification:
+                logger.warning("jsonrpc notification for unknown method", extra={"method": method})
+                return
             await self._reply_error(msg_id, JSONRPC_METHOD_NOT_FOUND, f"Method not found: {method}")
             return
 
@@ -221,17 +226,21 @@ class JsonRpcDispatcher:
             async with async_trace_span(f"rpc.{method}", attributes={"rpc.id": msg_id}):
                 result = await handler(params)
         except JsonRpcError as e:
+            if is_notification:
+                logger.warning("jsonrpc notification rejected", extra={"method": method, "code": e.code})
+                return
             await self._reply_error(msg_id, e.code, e.message, e.data)
             return
         except Exception as e:
             # 不外泄内部细节：完整异常记在服务端日志，向 renderer 发清洗后的标签。PROTOCOL「错误信封」。
             logger.exception("jsonrpc method failed", extra={"method": method})
+            if is_notification:
+                return
             label = f"{type(e).__name__}: {e}"
             await self._reply_error(msg_id, JSONRPC_INTERNAL_ERROR, redact_message(label))
             return
 
-        if msg_id is None:
-            # 通知：无 id → 调用方不期待回复。
+        if is_notification:
             return
         await self._reply_result(msg_id, result)
 

@@ -1,4 +1,4 @@
-import type { MemoryToolScope } from '@ipc/contracts'
+import type { MemoryToolScope, RunnerCallOutcome } from '@ipc/contracts'
 
 import {
   $spriteState,
@@ -9,14 +9,13 @@ import {
 } from '@/modules/character'
 import { $chatSessionId, $chatTurnInFlight, setAssistantTool } from '@/modules/conversation'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
-import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { $gateway } from '@/shared/store/gateway'
 import { getStrings } from '@/shared/strings'
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
-// 宿主专属的设备指令分发：tool.call 只在精灵窗宿主执行（代理窗的事件泵 proxy-runtime 不转发它），
+// 宿主专属的设备指令分发：tool.call / tool.cancel 只在精灵窗宿主执行（代理窗的事件泵 proxy-runtime 不转发它们），
 // 按 call_id 去重重放帧，交互类工具先走仪式行走再 execute。
 
 // click_at 虚拟目标几何的边长（px）：只为 perch 落位与指向方位提供参照，
@@ -27,12 +26,7 @@ const CLICK_GEOM_HALF = CLICK_GEOM_SIZE / 2
 // 遥控回合可并发多个工具，一个先返回不能把仍在跑的复位掉。
 let remoteToolDepth = 0
 
-// 主进程在请求发出前发现 Runner 未连接时的错误（main/runner/bridge.ts、rpc-ws.ts）；
-// 只有这类失败能确定工具没有执行，超时、断连与 Runner 报错都可能已产生副作用。
-const RUNNER_NOT_CONNECTED_RE = /^Runner (?:is not connected|WS server is closed)\.$/
-
-// 回传模型的失败结果只陈述执行事实，不带原始错误（可能含本机路径等细节）。
-const NOT_EXECUTED_RESULT = { ok: false, error: 'Not executed: the local runner is not connected.' }
+const NOT_EXECUTED_RESULT = { ok: false, error: 'Not executed: the call did not reach the local runner.' }
 
 const OUTCOME_UNKNOWN_RESULT = {
   ok: false,
@@ -41,10 +35,32 @@ const OUTCOME_UNKNOWN_RESULT = {
     'Do not rerun it automatically; check its effects or ask the user first.'
 }
 
+// 未执行、明确失败与结果未知分别回传（DESIGN「故障体验」）；结果未知不能报成失败，
+// 否则模型可能重做已发生的副作用（PROTOCOL「调用日志与未知结果」）。明确失败带 Runner 的原因，供模型修正调用。
+function runnerCallResult(outcome: RunnerCallOutcome): unknown {
+  switch (outcome.status) {
+    case 'completed':
+      return outcome.result
+
+    case 'failed':
+      return { ok: false, error: outcome.error }
+
+    case 'not_executed':
+      return NOT_EXECUTED_RESULT
+
+    case 'unknown':
+      return OUTCOME_UNKNOWN_RESULT
+  }
+}
+
 // 已受理过的设备指令 call_id。tool.call 进重放缓冲，WS 断开重连时会被重发——没有这道去重，
 // 一条「删文件」会在本机执行第二次（后端的 resolve_future 只是丢弃迟到结果，拦不住已发生的副作用）。
 const seenToolCalls = new Set<string>()
 const SEEN_TOOL_CALL_CAP = 500
+
+// 已受理、尚未收尾的设备调用。后端中断回合时逐个下发 tool.cancel：尚未交给 Runner 的不再执行，
+// 已在执行的请 Runner 取消；两种情况都不回传结果（后端已撤销等待）。
+const activeToolCalls = new Map<string, { cancelled: boolean; running: boolean }>()
 
 function markToolCallSeen(callId: string): boolean {
   if (seenToolCalls.has(callId)) {
@@ -99,9 +115,9 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
     skill_scope?: MemoryToolScope
   }>(event.payload)
 
-  const runnerInvoke = window.spiritagent?.runnerInvoke
+  const runnerDispatchCall = window.spiritagent?.runnerDispatchCall
 
-  if (ctx.isProxy || !p.call_id || !runnerInvoke) {
+  if (ctx.isProxy || !p.call_id || !runnerDispatchCall) {
     return
   }
 
@@ -130,6 +146,9 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
   // 等待解析完成；工具错误不得冒泡到本处理器。
   const gateway = $gateway.get()
   const callId = p.call_id
+  const call = { cancelled: false, running: false }
+
+  activeToolCalls.set(callId, call)
 
   void (async () => {
     try {
@@ -166,19 +185,33 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
         }
       }
 
-      let result: unknown
+      // 仪式行走期间回合已被中断的调用不再交给 Runner。
+      const dispatch = (): Promise<null | RunnerCallOutcome> => {
+        if (call.cancelled) {
+          return Promise.resolve(null)
+        }
+
+        call.running = true
+
+        return runnerDispatchCall({ args, callId, name, skillScope: p.skill_scope })
+      }
+
+      let outcome: null | RunnerCallOutcome
 
       try {
-        result = findTarget
-          ? await performRitualWalk(findTarget, () => runnerInvoke(name, args, p.skill_scope, callId), {
-              previewClick
-            })
-          : await runnerInvoke(name, args, p.skill_scope, callId)
+        outcome = findTarget ? await performRitualWalk(findTarget, dispatch, { previewClick }) : await dispatch()
       } catch (err) {
-        // 未执行与结果未知分别说明（DESIGN「故障体验」）；结果未知不能报成失败，
-        // 否则模型可能重做已发生的副作用（PROTOCOL「调用日志与未知结果」）。
+        // 尚未交给 Runner 的调用确定没有执行；已交出后的 IPC 失败无法判断请求是否到达 Runner。
         log.warn('events', `runner tool ${name} (${callId}) failed:`, err)
-        result = RUNNER_NOT_CONNECTED_RE.test(unwrapIpcErrorMessage(err)) ? NOT_EXECUTED_RESULT : OUTCOME_UNKNOWN_RESULT
+        outcome = call.running ? { status: 'unknown' } : { status: 'not_executed' }
+      }
+
+      if (!outcome || call.cancelled) {
+        return
+      }
+
+      if (outcome.status !== 'completed') {
+        log.warn('events', `runner tool ${name} (${callId}) ended ${outcome.status}`)
       }
 
       try {
@@ -186,17 +219,37 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
           throw new Error('gateway unavailable')
         }
 
-        await gateway.request('tool.result', { call_id: callId, result })
+        await gateway.request('tool.result', { call_id: callId, result: runnerCallResult(outcome) })
       } catch (err) {
         // 未送达时后端等待按超时收尾，同样视为结果未知。
         log.warn('events', `tool.result for ${name} (${callId}) not delivered:`, err)
       }
     } finally {
+      activeToolCalls.delete(callId)
+
       if (selfDriven) {
         releaseRemoteTool()
       }
     }
   })()
+}
+
+export function handleToolCancel(event: GatewayEvent, ctx: EventRouteContext): void {
+  const p = decodePayload<{ call_id?: string }>(event.payload)
+  const callId = p.call_id
+  const call = callId ? activeToolCalls.get(callId) : undefined
+
+  if (ctx.isProxy || !callId || !call || call.cancelled) {
+    return
+  }
+
+  call.cancelled = true
+
+  if (call.running) {
+    void window.spiritagent?.runnerCancel?.(callId).catch(err => {
+      log.warn('events', `runner cancel for ${callId} failed:`, err)
+    })
+  }
 }
 
 export function handleToolComplete(): void {

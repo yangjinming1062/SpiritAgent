@@ -7,17 +7,19 @@ import hashlib
 import json
 import re
 from pathlib import Path
+from uuid import uuid4
 
 from components import SETTINGS
 from modules.companion import REQUIRED_SYSTEM_SLOTS, CompanionActionPack, PeekGeometry, parse_content_rect
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .repository import list_pack_actions, publish_catalog
+from .repository import StaleCatalogError, list_pack_actions, publish_catalog
 
 MANIFEST_SCHEMA = "spiritagent.action.pack"
 
 _STORAGE_PATH_RE = re.compile(r"^companion-assets/\d+/[A-Za-z0-9._-]+$")
+_PUBLISH_ATTEMPTS = 3
 
 
 class ActionClipSpec(BaseModel):
@@ -72,10 +74,12 @@ class CatalogValidationError(ValueError):
 async def build_catalog_manifest(
     db: AsyncSession,
     pack: CompanionActionPack,
+    *,
+    refresh_actions: bool = False,
 ) -> ActionCatalogManifest | None:
     """合并当前成功动作构建新 manifest；必需槽位不齐返回 None（不发布，不破坏现有目录）。
 
-    系统槽位在包内由唯一索引保证不重复。"""
+    系统槽位在包内由唯一索引保证不重复；refresh_actions 语义同 `list_pack_actions` 的 refresh。"""
     canvas_data = json.loads(pack.canvas_spec or "{}")
     canvas = ActionPackCanvas(
         width=canvas_data.get("width", 512),
@@ -83,7 +87,7 @@ async def build_catalog_manifest(
         fps=canvas_data.get("fps", 24),
     )
 
-    actions = await list_pack_actions(db, pack.id, enabled_only=True)
+    actions = await list_pack_actions(db, pack.id, enabled_only=True, refresh=refresh_actions)
     clips: list[ActionClipSpec] = []
     slots_present: set[str] = set()
 
@@ -137,18 +141,28 @@ async def build_catalog_manifest(
 
 
 async def publish_action_catalog(db: AsyncSession, pack: CompanionActionPack) -> int:
-    """发布新目录快照：构建 manifest → 写入用户资产目录 → CAS 推进版本指针。
+    """发布新目录快照：构建 manifest → 写入本次发布独有的文件 → CAS 推进版本指针。
 
+    文件先于 CAS 写出且每次尝试路径唯一，落败方不会覆盖已发布版本的文件。CAS 落败时删除本次文件，
+    写出本事务改动后按数据库最新版本与动作行重建重试，仍冲突则抛 StaleCatalogError。
     数据库发布失败只重试发布，不重新付费生成。
     """
-    manifest = await build_catalog_manifest(db, pack)
-    if manifest is None:
-        raise CatalogValidationError("当前成功动作不足以发布目录")
+    for attempt in range(_PUBLISH_ATTEMPTS):
+        manifest = await build_catalog_manifest(db, pack, refresh_actions=attempt > 0)
+        if manifest is None:
+            raise CatalogValidationError("当前成功动作不足以发布目录")
 
-    payload = manifest.model_dump_json()
-    content_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
-    manifest_path = f"companion-assets/{pack.user_id}/action-catalog-{pack.id}-v{manifest.catalog_version}.json"
-    file_path = Path(SETTINGS.data_dir) / manifest_path
-    file_path.parent.mkdir(parents=True, exist_ok=True)
-    file_path.write_text(payload, encoding="utf-8")
-    return await publish_catalog(db, pack, manifest_path=manifest_path, content_hash=content_hash)
+        payload = manifest.model_dump_json()
+        content_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        filename = f"action-catalog-{pack.id}-v{manifest.catalog_version}-{uuid4().hex}.json"
+        manifest_path = f"companion-assets/{pack.user_id}/{filename}"
+        file_path = Path(SETTINGS.data_dir) / manifest_path
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(payload, encoding="utf-8")
+        try:
+            return await publish_catalog(db, pack, manifest_path=manifest_path, content_hash=content_hash)
+        except StaleCatalogError:
+            file_path.unlink(missing_ok=True)
+            await db.flush()
+            await db.refresh(pack, attribute_names=["catalog_version", "manifest_path", "content_hash"])
+    raise StaleCatalogError(f"pack {pack.id} catalog version kept advancing concurrently")

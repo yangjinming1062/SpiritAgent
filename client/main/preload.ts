@@ -1,4 +1,3 @@
-import type { MemoryToolScope } from '@ipc/contracts'
 import {
   type AttachmentVideoUploadPayload,
   type DesktopActivatePayload,
@@ -24,6 +23,7 @@ import {
   type IpcInvokeContract,
   type MediaSttPayload,
   type MediaTtsPayload,
+  type RunnerCallRequest,
   type RunnerConfigPatch,
   type SessionHistorySnapshot,
   type SpiritAgentApiRequest,
@@ -122,15 +122,15 @@ contextBridge.exposeInMainWorld('spiritagent', {
   readImageForAttach: (filePath: string) => invoke(IPC.invoke.readImageForAttach, filePath),
   uploadVideoForAttach: (payload: AttachmentVideoUploadPayload) => invoke(IPC.invoke.mediaVideoUpload, payload),
   refreshSession: () => invoke(IPC.invoke.authRefresh),
-  runnerCancel: () => invoke(IPC.invoke.runnerCancel),
+  runnerCancel: (callId: string) => invoke(IPC.invoke.runnerCancel, callId),
   runnerConfig: {
     patch: (patch: RunnerConfigPatch) => invoke(IPC.invoke.runnerConfigPatch, patch),
     read: () => invoke(IPC.invoke.runnerConfigRead)
   },
   runnerGetState: () => invoke(IPC.invoke.runnerGetState),
   runnerGetTools: () => invoke(IPC.invoke.runnerGetTools),
-  runnerInvoke: (name: string, args: Record<string, unknown>, skillScope?: MemoryToolScope, callId?: string) =>
-    invoke(IPC.invoke.runnerInvoke, name, args, skillScope, callId),
+  runnerDispatchCall: (request: RunnerCallRequest) => invoke(IPC.invoke.runnerDispatchCall, request),
+  runnerInvoke: (name: string, args: Record<string, unknown>) => invoke(IPC.invoke.runnerInvoke, name, args),
   selectPaths: (options?: SpiritAgentSelectPathsOptions) => invoke(IPC.invoke.selectPaths, options),
   prefs: {
     set: (payload: SpiritAgentPrefsSet) => ipcRenderer.send(IPC.send.prefsSet, payload)

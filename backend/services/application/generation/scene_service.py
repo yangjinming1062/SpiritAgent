@@ -173,10 +173,12 @@ async def _validate_ready(db: AsyncSession, user_id: int, row: CompanionScene) -
     parsed_path = asset_store.parse_companion_asset_path(row.media_path)
     if not parsed_path or parsed_path[0] != user_id or asset_store.resolve_companion_asset_path(*parsed_path) is None:
         raise SceneStateError("场景图片缺失，请重新创建或上传")
-    if not await character_snapshot_is_current(
-        db,
-        user_id,
-        CharacterCardSnapshot.model_validate_json(row.character_card_json),
+    # 已保存的场景只在头像或已采纳全身图变化后失效；角色卡文字修订不影响启用。
+    avatar = await get_active_avatar(db, user_id)
+    if (
+        avatar is None
+        or avatar.id != CharacterCardSnapshot.model_validate_json(row.character_card_json).avatar_id
+        or avatar.seed_fullbody_url != row.seed_portrait_media_id
     ):
         raise SceneStateError("该场景的身份资料已过期，请创建符合当前身份的新场景")
 
@@ -570,6 +572,13 @@ async def _analyze(user_id: int, scene_id: int) -> None:
                 await _validate_ready(db, user_id, row)
             except SceneError:
                 can_activate = False
+        # 任务期间角色卡修订变化时成品只留在场景库，不自动启用。
+        if can_activate and not await character_snapshot_is_current(
+            db,
+            user_id,
+            CharacterCardSnapshot.model_validate_json(row.character_card_json),
+        ):
+            can_activate = False
         if can_activate:
             persona.active_scene_id = row.id
             row.activated_at = utc_now()
