@@ -16,6 +16,7 @@ from components import (
     SETTINGS,
     get_logger,
     parse_llm_json,
+    resolve_language,
     safe_json_loads,
     utc_now,
 )
@@ -36,8 +37,8 @@ from modules.media import VideoGenJob
 from modules.scheduler import NightlyActivityAction, NightlyActivityLog
 from modules.settings import load_user_settings
 from prompts.generation import NIGHTLY_SELF_VIDEO_REFERENCE_TEMPLATE
-from prompts.nightly import OUTREACH_CONTEXT_TEMPLATE, PLANNING_SYSTEM_PROMPT
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from prompts.nightly import NIGHTLY_FACT_TEXTS, OUTREACH_CONTEXT_TEMPLATES, PLANNING_SYSTEM_PROMPT
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -72,8 +73,8 @@ from services.domains.companion import (
     get_scene_state,
     load_character_snapshot,
     load_persona_definition,
+    render_character_appearance,
     render_character_identity,
-    render_character_profile,
     scene_environment,
 )
 from services.domains.journal import create_user_moment
@@ -188,8 +189,16 @@ class MediaVoiceArgs(_ActionArgs):
 
 class OutreachScheduleArgs(_ActionArgs):
     name: str = Field(default="主动问候", max_length=100)
-    schedule: str = Field(min_length=1, max_length=100)
+    # 规划给出用户本地时刻，时区换算由代码完成；schedule 仅供升级前已保存的计划恢复执行。
+    local_time: str | None = Field(default=None, pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    schedule: str | None = Field(default=None, min_length=1, max_length=100)
     prompt: str = Field(min_length=1, max_length=4000)
+
+    @model_validator(mode="after")
+    def require_time(self) -> "OutreachScheduleArgs":
+        if self.local_time is None and self.schedule is None:
+            raise ValueError("outreach requires local_time")
+        return self
 
 
 class PlannedAction(BaseModel):
@@ -343,7 +352,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="outfit.wear",
         phase=10,
-        description="穿上衣柜中一套已就绪（status=ready）的外观。outfit_id 取 wardrobe 中实际存在的 id；已经穿着的无需重复选择。",
+        description="换上 wardrobe 中一套已就绪（status=ready）的外观。outfit_id 取 wardrobe 中实际存在的 id；已经穿着的无需重复选择。",
         arguments={
             "outfit_id": "integer：wardrobe 中 status=ready 且尚未穿着的外观 id，不填名称或自造 id。",
             "reason": "string（可选）：选择这套已有外观的具体理由。",
@@ -353,10 +362,10 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="outfit.create",
         phase=10,
-        description="构思并生成一套新外观并穿上；只在现有衣柜不合适或特殊节点时使用。",
+        description="构思并生成一套新外观并换上；只在已有外观都不合适或有特殊节点时使用。",
         arguments={
             "description": "string（非空，最多 500 字符）：完整的新造型设计，包括服装、配色及需要改变的发型、妆容或配饰；保持角色固定身份，不写场景或动作。",
-            "reason": "string（可选）：现有衣柜不能满足的需要，以及本次新建外观的依据。",
+            "reason": "string（可选）：已有外观不能满足的需要，以及本次新建外观的依据。",
         },
         exclusive_group="outfit",
         paid=True,
@@ -364,8 +373,8 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="scene.activate",
         phase=20,
-        description="启用 scene.library 中适合的已有场景，不消耗生图额度。场景与衣柜相互独立：不通过依赖换装动作表达场景穿着，"
-        "需要特定造型时把完整设计写入所建场景的 outfit_description。",
+        description="启用 scene.library 中适合的已有场景，不消耗生图额度；已是当前场景的无需重复启用。"
+        "场景画面中的穿着保持该场景创建时的样子，换装动作不会改变它，因此不依赖换装动作。",
         arguments={
             "scene_id": "integer：scene.library 中实际存在且可启用的场景 id，不填名称或自造 id。",
             "reason": "string（可选）：该场景适合当前安排的具体理由。",
@@ -376,11 +385,11 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         name="scene.create",
         phase=20,
         description="已有场景不适合时创建并启用新场景。notes 描述地点、环境与活动，必须非空；"
-        "outfit_description 填写本次明确的完整着装设计，无着装要求时省略。"
-        "场景与衣柜相互独立，不通过依赖换装动作表达场景穿着。",
+        "场景穿着只由 outfit_description 决定：填写本次明确的完整着装设计，无着装要求时省略并沿用创建时的当前外观；"
+        "不通过依赖换装动作表达场景穿着。",
         arguments={
             "notes": "string（非空）：地点、环境和角色活动，描述一个可见瞬间及必要的接触、支撑关系；不重新设计角色外貌，着装写入 outfit_description。",
-            "outfit_description": "string（可选）：本次完整造型，涵盖服装、配色及所需发型、妆容、鞋履和配饰；局部修改先合并为完整描述，无着装要求时省略。",
+            "outfit_description": "string（可选）：本次完整造型，涵盖服装、配色及所需发型、妆容、鞋履和配饰；局部修改先合并为完整描述，无着装要求时省略，沿用创建时的当前外观。",
             "reason": "string（可选）：已有场景不合适、需要新建场景的依据。",
         },
         exclusive_group="scene",
@@ -400,7 +409,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="media.image",
         phase=30,
-        description="创作保存到片刻的图片；depicts_self=true 时使用角色身份与衣柜已启用外观描述。narration 是可选的独立语音，不会让图片中的人物活动。",
+        description="创作保存到片刻的图片；depicts_self=true 时使用角色身份与执行时的当前外观。narration 是可选的独立语音，不会让图片中的人物活动。",
         arguments={
             "prompt": "string（非空，最多 4000 字符）：独立完整的画面描述，包含主体、一个可见瞬间、构图、环境与光照；动作写清位置、接触和支撑。仅将需要画出的文字用引号标注并说明位置，不把限制语句写成画面文字。出镜时不复述固定外貌或改变当前造型。",
             "title": "string（非空，最多 64 字符）：图片片刻的展示标题，不是画面内文字。",
@@ -415,9 +424,10 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
     NightlyCapability(
         name="media.video",
         phase=30,
-        description="创作保存到片刻的短视频；depicts_self=true 时先按视频要求生成符合角色固定外形与衣柜已启用外观的起始画面，"
+        description="创作保存到片刻的短视频；depicts_self=true 时先按视频要求生成符合角色固定外形与执行时当前外观的起始画面，"
         "再保持其身份与穿着生成视频，需要 image_reference=true。"
-        "仅当确实要展示衣柜中新换的外观时才依赖对应换装动作，场景穿着不构成这种依赖。narration 是使用当前音色生成的独立音轨，不保证口型同步。",
+        "仅当确实要展示今晚新换的外观时才依赖对应换装动作，场景穿着不构成这种依赖。"
+        "narration 是使用当前音色生成的独立音轨，不保证口型同步，长度要能在所选时长内自然说完。",
         arguments={
             "prompt": "string（非空，最多 4000 字符）：独立完整的视频要求，写清主体、环境、起始姿态与物体位置、随后动作及镜头变化，动作量适合所选时长；出镜时保持固定身份与当前造型，独立旁白写入 narration。",
             "title": "string（非空，最多 64 字符）：视频片刻的展示标题，不是视频字幕。",
@@ -448,7 +458,7 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         description="安排次日主动联系；从计划时间起等待用户在线，最晚保留到用户本地次日结束。",
         arguments={
             "name": "string（可选，最多 100 字符）：主动联系任务的简短名称，省略时为主动问候。",
-            "schedule": "string（非空，最多 100 字符）：五字段 UTC cron；按 date_context 的用户时区换算，使下次触发落在用户本地次日的合适时间。",
+            "local_time": "string（非空，HH:MM，24 小时制）：用户本地时间，在 tomorrow_date 当天这一时刻开始等待用户在线；时区换算由系统完成。",
             "prompt": "string（非空，最多 4000 字符）：触发时交给角色的独立任务说明，写清联系缘由、交流目标和必要背景；不依赖本轮规划上下文，不把尚未完成的准备描述为既成事实。",
         },
         exclusive_group="outreach",
@@ -458,15 +468,15 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
         phase=25,
         description="为当前形象提交一个可反复使用的新动作提案（如张开双臂、打哈欠、一段舞蹈），不是一次性视频作品。"
         "先查看 autonomous_context.actions.library 的动作内容和适用条件，以及同处的 in_flight_proposals、recent_rejections；"
-        "提案的 design 是原设计，reason 是评审理由，status 与 action_status 分别说明评审和制作进展。"
+        "提案的 design 是原设计，review_reason 是评审理由，status 与 action_status 分别说明评审和制作进展；"
+        "action_outfit 是动作素材中的着装，新动作按它设计。"
         "确有缺口才使用；无明确价值时选择不使用。"
         "name 是动作显示名称；motion_description 写单主体可见的姿态、节奏与神态，"
         "不含场景、镜头或产品概念；use_when / avoid_when 说明何时适用或避免；reason 说明为何需要新动作。"
         "duration_seconds 为 1–10 的整秒数；clip_kind 为 loop（连续运动周期）或 once（完整动作自然收束）。"
         "once 制作后仍可重复使用。单主体原地运动、固定镜头、全身入画，保持身体结构与穿着，"
-        "不新增人物、道具、场景、对话或音轨。依赖换装时把 depends_on 填为对应换装动作，"
-        "列表只描述规划时的形象，不能据此断定换装后的动作缺口；素材属于执行时启用的形象，不能跨形象复用。"
-        "受理仅表示申请成功，独立评审和制作随后进行；"
+        "不新增人物、道具、场景、对话或音轨。动作素材属于当前使用的动作形象，今晚的换装不会改变它，因此不依赖换装动作。"
+        "受理仅表示申请成功，评审和制作随后进行；"
         "后续片刻或联系不能以依赖此项为依据宣称动作已做好或已表演。",
         arguments={
             "name": "string（1–64 字符）：动作的简短显示名称，不是动作标识或运动脚本。",
@@ -571,7 +581,7 @@ def _capability_availability(
         "outreach.schedule": (True, ""),
         "action.design": (
             bool(context.actions.get("pack_id")) and providers.video,
-            "没有就绪的外观动作包或视频供应商不可用",
+            "当前形象还没有可用的动作素材，或视频供应商不可用",
         ),
     }
     available: list[NightlyCapability] = []
@@ -635,9 +645,10 @@ async def _collect_context(user_id: int) -> PlanningContext:
         # 动作库摘要在会话生命周期内读取，避免 session 关闭后重开未托管事务。
         action_snapshot = await build_action_context(db, user_id)
 
+    language = resolve_language(settings.get("language"))
     definition = load_persona_definition(persona)
     if character is not None:
-        definition["fixed_features"] = render_character_profile(character)
+        definition["fixed_features"] = render_character_appearance(character, language=language)
     context = PlanningContext(
         policies=_policies(persona, settings),
         providers=PlanningProviders(
@@ -647,7 +658,7 @@ async def _collect_context(user_id: int) -> PlanningContext:
             tts=tts_available,
         ),
         selected_voice_id=str(settings.get("companion.voice_id") or ""),
-        language=str(settings.get("language") or ""),
+        language=language,
         persona=PersonaContext(
             complete=bool(persona and persona.is_complete),
             definition=definition,
@@ -671,6 +682,7 @@ async def _collect_context(user_id: int) -> PlanningContext:
         actions={
             "pack_id": action_snapshot.pack_id,
             "catalog_version": action_snapshot.catalog_version,
+            "action_outfit": action_snapshot.outfit_description,
             "library": action_snapshot.ready_actions,
             "in_flight_proposals": action_snapshot.in_flight_proposals,
             "recent_rejections": action_snapshot.recent_rejections,
@@ -727,9 +739,10 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
         if is_media and media_count >= _MAX_MEDIA_ACTIONS:
             continue
         # 能力或预算过滤不删除前置条件；执行端对未完成的依赖跳过后续动作。
-        dependencies = raw.get("depends_on", [])
+        # null 视为没有依赖；依赖写法无效只跳过该动作，依赖它的后续动作在执行端因前置未完成而跳过。
+        dependencies = raw.get("depends_on") or []
         if not isinstance(dependencies, list) or not all(_is_action_id(dep) for dep in dependencies):
-            raise ValueError("depends_on must contain exact action IDs")
+            continue
         args = raw.get("arguments") if isinstance(raw.get("arguments"), dict) else {}
         if (
             capability_name in ("media.image", "media.video")
@@ -883,8 +896,12 @@ async def _runtime_block_reason(user_id: int, capability: str, resume: dict[str,
     return None
 
 
-def _scene_fact(scene: CompanionScene) -> str:
-    return f"当前所在的场景变为「{scene.title}」：{scene.description}"
+def _fact(run: _ActionRun, key: str, **values: str) -> str:
+    return NIGHTLY_FACT_TEXTS[resolve_language(run.context.language)][key].format(**values)
+
+
+def _scene_fact(run: _ActionRun, scene: CompanionScene) -> str:
+    return _fact(run, "scene", title=scene.title, description=scene.description)
 
 
 async def _execute_outfit_wear(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
@@ -899,7 +916,11 @@ async def _execute_outfit_wear(run: _ActionRun, args: dict[str, Any]) -> ActionE
         return ActionExecutionResult(status="skipped", reason="outfit is already active")
     async with SESSION_LOCAL() as db:
         outfit = await activate_outfit(db, run.user_id, outfit_id)
-    return ActionExecutionResult(status="succeeded", outfit_id=outfit.id, fact=f"换上了已有外观「{outfit.name}」")
+    return ActionExecutionResult(
+        status="succeeded",
+        outfit_id=outfit.id,
+        fact=_fact(run, "outfit_wear", name=outfit.name),
+    )
 
 
 async def _execute_outfit_create(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
@@ -930,7 +951,7 @@ async def _execute_outfit_create(run: _ActionRun, args: dict[str, Any]) -> Actio
     return ActionExecutionResult(
         status="succeeded",
         outfit_id=outfit.id,
-        fact=f"设计并换上了新外观「{display_name}」",
+        fact=_fact(run, "outfit_create", name=display_name),
     )
 
 
@@ -962,9 +983,14 @@ async def _wait_for_scene(
 
 
 async def _execute_scene_activate(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
+    scene_id = int(args["scene_id"])
+    current = run.context.scene.environment.get("current")
+    # 启用已在使用的场景不会发生变化，不能记成一次场景切换。
+    if isinstance(current, dict) and current.get("id") == scene_id:
+        return ActionExecutionResult(status="skipped", scene_id=scene_id, reason="scene is already current")
     async with SESSION_LOCAL() as db:
-        row = await activate_scene(db, run.user_id, int(args["scene_id"]), origin=SceneOrigin.NIGHTLY.value)
-    return ActionExecutionResult(status="succeeded", scene_id=row.id, fact=_scene_fact(row))
+        row = await activate_scene(db, run.user_id, scene_id, origin=SceneOrigin.NIGHTLY.value)
+    return ActionExecutionResult(status="succeeded", scene_id=row.id, fact=_scene_fact(run, row))
 
 
 async def _execute_scene_create(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
@@ -993,7 +1019,7 @@ async def _execute_scene_create(run: _ActionRun, args: dict[str, Any]) -> Action
             scene_id=scene_id,
             reason="场景尚未确认启用，不能记录到达事实；可查询原任务",
         )
-    return ActionExecutionResult(status="succeeded", scene_id=ready.id, fact=_scene_fact(ready))
+    return ActionExecutionResult(status="succeeded", scene_id=ready.id, fact=_scene_fact(run, ready))
 
 
 async def _wait_for_video(user_id: int, job_id: int) -> VideoGenJob | None:
@@ -1121,13 +1147,13 @@ async def _execute_media_image(run: _ActionRun, args: dict[str, Any]) -> ActionE
             media_type="image",
             audio_url=audio_path,
             media_metadata={"voice_id": voice_id} if voice_id else None,
-            kind=MomentKind.TOGETHER.value,
+            kind=MomentKind.SCENE.value,
             source=MomentSource.NIGHTLY.value,
         )
     return ActionExecutionResult(
         status="succeeded" if narration_error is None else "partial",
         moment_id=moment.id,
-        fact=f"在片刻相册里准备了图片心意「{parsed_args.title}」",
+        fact=_fact(run, "media_image", title=parsed_args.title),
         warning=narration_error or None,
     )
 
@@ -1210,14 +1236,14 @@ async def _execute_media_video(run: _ActionRun, args: dict[str, Any]) -> ActionE
             media_type="video",
             audio_url=audio_path,
             media_metadata={"voice_id": voice_id, "narration": parsed_args.narration or ""} if voice_id else None,
-            kind=MomentKind.TOGETHER.value,
+            kind=MomentKind.SCENE.value,
             source=MomentSource.NIGHTLY.value,
         )
     return ActionExecutionResult(
         status="succeeded" if narration_error is None else "partial",
         job_id=job_id,
         moment_id=moment.id,
-        fact=f"在片刻相册里准备了视频心意「{parsed_args.title}」",
+        fact=_fact(run, "media_video", title=parsed_args.title),
         warning=narration_error or None,
     )
 
@@ -1237,13 +1263,13 @@ async def _execute_media_voice(run: _ActionRun, args: dict[str, Any]) -> ActionE
             media_url=audio_path,
             media_type="audio",
             media_metadata={"voice_id": voice_id, "transcript": parsed_args.text},
-            kind=MomentKind.TOGETHER.value,
+            kind=MomentKind.EMOTION.value,
             source=MomentSource.NIGHTLY.value,
         )
     return ActionExecutionResult(
         status="succeeded",
         moment_id=moment.id,
-        fact=f"在片刻相册里留下了语音心意「{parsed_args.title}」",
+        fact=_fact(run, "media_voice", title=parsed_args.title),
     )
 
 
@@ -1259,13 +1285,13 @@ async def _execute_moment_create(run: _ActionRun, args: dict[str, Any]) -> Actio
             title=parsed_args.title,
             body=parsed_args.body,
             emotion=(parsed_args.emotion or "")[:32] or None,
-            kind=MomentKind.TOGETHER.value,
+            kind=MomentKind.EMOTION.value,
             source=MomentSource.NIGHTLY.value,
         )
     return ActionExecutionResult(
         status="succeeded",
         moment_id=moment.id,
-        fact=f"在片刻里写下了「{parsed_args.title}」",
+        fact=_fact(run, "moment_text", title=parsed_args.title),
     )
 
 
@@ -1286,7 +1312,10 @@ async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> A
         },
         ensure_ascii=False,
     )
-    prompt = OUTREACH_CONTEXT_TEMPLATE.format(prompt=parsed_args.prompt, context=execution_context)
+    prompt = OUTREACH_CONTEXT_TEMPLATES[resolve_language(run.context.language)].format(
+        prompt=parsed_args.prompt,
+        context=execution_context,
+    )
     scope = MemoryScope(run.user_id, "companion")
     timezone = ZoneInfo(run.date_context.user_timezone)
     target = date.fromisoformat(run.date_context.tomorrow_date)
@@ -1313,22 +1342,27 @@ async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> A
         await remove_job(scope, job["id"])
         return None
 
-    job = await schedule_on_target_day(parsed_args.schedule)
+    now = utc_now()
+    if parsed_args.local_time is not None:
+        hour, minute = (int(part) for part in parsed_args.local_time.split(":"))
+        planned = datetime.combine(target, time(hour, minute), timezone).astimezone(UTC)
+        # 恢复执行时原定时刻可能已过，改为尽快开始等待；其余情况按规划时刻。
+        schedule = (
+            _near_term_cron(now)
+            if planned <= now
+            else f"{planned.minute} {planned.hour} {planned.day} {planned.month} *"
+        )
+        job = await schedule_on_target_day(schedule)
+    else:
+        job = await schedule_on_target_day(parsed_args.schedule or "")
+        if job is None and now.astimezone(timezone).date() == target and now < expires_at:
+            job = await schedule_on_target_day(_near_term_cron(now))
     if job is None:
-        now = utc_now()
-        if now.astimezone(timezone).date() != target or now >= expires_at:
-            return ActionExecutionResult(status="failed", reason="outreach does not run on target local date")
-        job = await schedule_on_target_day(_near_term_cron(now))
-        if job is None:
-            return ActionExecutionResult(
-                status="failed",
-                reason="outreach recovery could not find a remaining target-day slot",
-            )
+        return ActionExecutionResult(status="failed", reason="outreach does not run on target local date")
     return ActionExecutionResult(
         status="succeeded",
         cron_job_id=job["id"],
         expires_at=job.get("expires_at"),
-        fact="为次日安排了一次主动问候",
     )
 
 
@@ -1358,10 +1392,7 @@ async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> Actio
         result = acceptance.result
         if result.outcome == "reused":
             await db.commit()
-            return ActionExecutionResult(
-                status="succeeded",
-                fact=result.message or f"已有可复用动作「{name}」，无需新建",
-            )
+            return ActionExecutionResult(status="succeeded", fact=_fact(run, "action_reused", name=name))
         if result.outcome != "pending_review":
             return ActionExecutionResult(
                 status="failed",
@@ -1372,13 +1403,13 @@ async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> Actio
     # 评审或重做异步执行；结论经 proposal 状态回流，夜间事实只叙述受理时的实际状态。
     schedule_accepted_proposal(acceptance, run.user_id)
     if result.proposal_id is not None:
-        fact = f"提交了新动作「{name}」的制作申请（等待独立评审与制作，尚未确认就绪）"
+        fact = _fact(run, "action_proposed", name=name)
     elif acceptance.existing_action == "in_production":
-        fact = f"同名动作「{name}」已在制作中，尚未确认就绪"
+        fact = _fact(run, "action_in_production", name=name)
     elif acceptance.existing_action == "awaiting_review":
-        fact = f"同名动作「{name}」已制作完成，正等待用户确认，尚未可用"
+        fact = _fact(run, "action_awaiting_review", name=name)
     else:
-        fact = f"已申请重新制作动作「{name}」，尚未确认就绪"
+        fact = _fact(run, "action_redo", name=name)
     return ActionExecutionResult(status="succeeded", fact=fact)
 
 
@@ -1410,7 +1441,7 @@ async def _execute_persisted_action(
     if illegal_deps := arguments.get("illegal_outfit_deps"):
         return ActionExecutionResult(
             status="failed",
-            reason="场景与衣柜相互独立，不能依赖换装动作表达场景穿着；把完整造型写入 outfit_description",
+            reason="场景穿着不随换装改变，不能依赖换装动作表达场景穿着；把完整造型写入 outfit_description",
             dependencies=illegal_deps,
         )
     # 依赖要求前置动作整项成功；部分成功不解锁。

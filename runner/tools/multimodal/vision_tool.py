@@ -60,10 +60,9 @@ async def vision_analyze_tool(image_url: str) -> dict[str, Any] | str:
         local_path = Path(os.path.expanduser(resolved))
         if local_path.is_file():
             if not _is_path_in_safe_roots(local_path):
-                allowed = ", ".join(str(root) for root in _allowed_image_roots())
                 return tool_error(
-                    f"Local image path is outside the allowed directories ({allowed}). "
-                    "Copy the image into one of them first or use an http(s) URL.",
+                    "Local image path is outside the directories this tool may read. Ask the user to provide the "
+                    "image another way, such as an http(s) URL; do not copy files to work around this.",
                     success=False,
                 )
             temp_path, should_cleanup = local_path, False

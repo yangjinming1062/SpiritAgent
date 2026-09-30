@@ -308,6 +308,22 @@ async def get_diary_by_date(
     ).scalar_one_or_none()
 
 
+_DIARY_MAX_CHARS = 4000
+_NIGHTLY_APPEND_SEPARATOR = "\n\n——夜间补记——\n"
+
+
+def _append_separator(source: str) -> str:
+    return _NIGHTLY_APPEND_SEPARATOR if source == DiarySource.NIGHTLY.value else "\n\n"
+
+
+async def diary_append_capacity(db: AsyncSession, user_id: int, entry_date: date, *, source: str) -> tuple[str, int]:
+    """返回同日已有正文与本次最多可写入的字符数；没有日记时正文为空、可写满单次上限。"""
+    row = await get_diary_by_date(db, user_id, entry_date)
+    if row is None:
+        return "", 2000
+    return row.body, min(2000, max(0, _DIARY_MAX_CHARS - len(row.body) - len(_append_separator(source))))
+
+
 async def upsert_diary(
     db: AsyncSession,
     user_id: int,
@@ -338,8 +354,8 @@ async def upsert_diary(
         db.add(row)
     else:
         # 同日已有日记时只追加不覆盖：夜间补记带专属分隔语，LLM 补记合并正文与标题。
-        sep = "\n\n——夜间补记——\n" if source == DiarySource.NIGHTLY.value else "\n\n"
-        remaining = max(0, 4000 - len(row.body) - len(sep))
+        sep = _append_separator(source)
+        remaining = max(0, _DIARY_MAX_CHARS - len(row.body) - len(sep))
         if len(body) > remaining:
             raise ValueError(f"当日日记还可追加 {remaining} 字符；本次内容尚未保存，请精简补记，原日记保持不变")
         row.body = row.body + sep + body

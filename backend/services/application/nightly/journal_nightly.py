@@ -7,10 +7,13 @@ from components import LLM_MAX_OUTPUT_TOKENS, SESSION_LOCAL, SETTINGS, get_logge
 from modules.companion import DiarySource
 from prompts.nightly import JOURNAL_DIARY_TEXTS
 
-from services.domains.journal import MomentInteractions, upsert_diary
+from services.domains.journal import MomentInteractions, diary_append_capacity, upsert_diary
 from services.infrastructure.llm import UserLlmConfig, call_llm_once
 
 logger = get_logger(__name__)
+
+# 剩余容量太小写不出完整补记时不调用模型。
+_MIN_APPEND_CHARS = 80
 
 
 async def project_today(
@@ -24,9 +27,20 @@ async def project_today(
     persona: dict[str, str],
     language: str,
 ) -> bool | None:
-    """upsert target_date 的夜间日记。返回 ``True`` 成功落库 / ``False`` 配置关闭 / ``None`` 应生成但 LLM 或解析失败（不写伪造内容）。"""
+    """upsert target_date 的夜间日记。返回 ``True`` 成功落库 / ``False`` 配置关闭或同日日记已满 / ``None`` 应生成但 LLM 或解析失败（不写伪造内容）。"""
     if not SETTINGS.diary_nightly_enabled:
         logger.info("journal_nightly: disabled by config", extra={"user_id": user_id})
+        return False
+    async with SESSION_LOCAL() as db:
+        existing_entry, max_body_chars = await diary_append_capacity(
+            db,
+            user_id,
+            target_date,
+            source=DiarySource.NIGHTLY.value,
+        )
+    # 同日日记已写满时不再补记，避免模型写出注定无法保存的内容。
+    if max_body_chars < _MIN_APPEND_CHARS:
+        logger.info("journal_nightly: same-day diary is full", extra={"user_id": user_id})
         return False
     composed = await _compose_diary(
         user_id,
@@ -37,6 +51,8 @@ async def project_today(
         persona,
         moments.threads,
         language,
+        existing_entry=existing_entry,
+        max_body_chars=max_body_chars,
     )
     if composed is None:
         logger.warning(
@@ -69,12 +85,17 @@ async def _compose_diary(
     persona: dict[str, str],
     moment_interactions: list[dict[str, Any]],
     language: str,
+    *,
+    existing_entry: str,
+    max_body_chars: int,
 ) -> tuple[str, str] | None:
     payload = {
         "local_date": target_date.isoformat(),
         "today_conversations": clean_messages[-40:],
         "nightly_autonomous_actions": nightly_actions,
         **({"moment_interactions": moment_interactions} if moment_interactions else {}),
+        **({"existing_entry": existing_entry} if existing_entry else {}),
+        "max_body_chars": max_body_chars,
         "persona": persona,
         "language": language,
     }
@@ -96,7 +117,7 @@ async def _compose_diary(
         not isinstance(title, str)
         or not isinstance(body, str)
         or len(title) > 128
-        or len(body) > 2000
+        or len(body.strip()) > max_body_chars
         or not body.strip()
     ):
         logger.warning(

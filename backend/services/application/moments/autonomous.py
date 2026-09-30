@@ -1,4 +1,4 @@
-"""白天自主片刻冲动：调度器低频咨询 LLM，由精灵结合心境、记忆与近期互动决定是否发一条片刻。只写文本片刻（图片/视频仍归夜间），不发主对话消息、不做桌面打扰；静止档断源。"""
+"""白天自主片刻冲动：调度器低频咨询 LLM，由精灵结合心境、记忆与近期互动决定是否发一条片刻。只写文本片刻（图片/视频仍归夜间），不发主对话消息、不做桌面打扰，因此不受打扰档位限制。"""
 
 import random
 import time
@@ -10,14 +10,12 @@ from components import (
     get_logger,
     is_user_in_maintenance,
     resolve_prompt_text,
-    utc_now,
 )
 from modules.companion import CompanionMoment, MomentKind, MomentSource
 from prompts.nightly import MOMENT_IMPULSE_INSTRUCTIONS
 from sqlalchemy import select
 
 from services.domains.companion import (
-    get_disturbance_tier,
     load_companion_prompt_context,
     run_prompt_json,
 )
@@ -55,8 +53,6 @@ async def maybe_run_moment_impulse(user_id: int) -> None:
     )
     if is_user_in_maintenance(user_id):
         return
-    if await get_disturbance_tier(user_id) == "still":
-        return
 
     ctx = await load_companion_prompt_context(user_id)
     if ctx is None:
@@ -79,7 +75,7 @@ async def maybe_run_moment_impulse(user_id: int) -> None:
         return
 
     payload: dict[str, Any] = {
-        "current_time": utc_now().isoformat(),
+        "current_time": ctx.current_time,
         "output_language": ctx.language,
         "persona": ctx.persona_extras,
         "recent_moments": [{"title": t, "body": b} for t, b in recent],
@@ -111,10 +107,12 @@ async def maybe_run_moment_impulse(user_id: int) -> None:
         or not 1 <= len(title.strip()) <= 24
         or not isinstance(body, str)
         or not 1 <= len(body.strip()) <= 500
-        or emotion not in ("happy", "curious", "calm", "miss", "thoughtful", "proud", "soft")
     ):
         logger.info("moment_impulse: invalid post fields", extra={"user_id": user_id})
         return
+    # 情绪只是可选标注，取值不合约定时省略，不因此丢弃整条片刻。
+    if emotion not in ("happy", "curious", "calm", "miss", "thoughtful", "proud", "soft"):
+        emotion = None
 
     async with SESSION_LOCAL() as db:
         row = await create_user_moment(

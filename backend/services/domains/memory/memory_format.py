@@ -1,5 +1,6 @@
-from components import DEFAULT_LANGUAGE, SETTINGS
+from components import DEFAULT_LANGUAGE, SETTINGS, resolve_language, resolve_prompt_text
 from modules.memory import Memory
+from prompts.memory import BACKGROUND_MEMORY_LABELS_TEXTS, MEMORY_BASIS_LABELS, PROACTIVE_MEMORY_LABELS_TEXTS
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,11 +9,17 @@ from services.contracts import MemoryScope
 from .memory_store import active_memory_filter, scope_filter
 
 
-def _format_record(content: str, basis: str, context: str | None) -> str:
-    return f"- [{basis}; {context or 'general'}] {content}"
+def _format_record(content: str, basis: str, context: str | None, language: str) -> str:
+    """记忆行：依据标签与话题在前，内部命名空间前缀不进入提示词。"""
+    labels = MEMORY_BASIS_LABELS[resolve_language(language)]
+    parts = [labels.get(basis, basis)]
+    topic = (context or "").removeprefix("recall:")
+    if basis != "system" and topic:
+        parts.append(topic)
+    return f"- [{' · '.join(parts)}] {content}"
 
 
-async def format_memories_block(db: AsyncSession, scope: MemoryScope) -> str:
+async def format_memories_block(db: AsyncSession, scope: MemoryScope, *, language: str = DEFAULT_LANGUAGE) -> str:
     rows = list(
         (
             await db.scalars(
@@ -27,7 +34,7 @@ async def format_memories_block(db: AsyncSession, scope: MemoryScope) -> str:
             )
         ).all(),
     )
-    return "\n".join(_format_record(r.content, r.basis, r.context) for r in rows)
+    return "\n".join(_format_record(r.content, r.basis, r.context, language) for r in rows)
 
 
 async def format_background_memory_block(
@@ -54,24 +61,20 @@ async def format_background_memory_block(
     )
     if not rows:
         return ""
-    title = (
-        "# 用户明确表达的长期背景（按适用范围使用）"
-        if language != "en"
-        else "# Explicit enduring context (respect each claim's scope)"
+    return (
+        resolve_prompt_text(BACKGROUND_MEMORY_LABELS_TEXTS, language)
+        + "\n"
+        + "\n".join(_format_record(r.content, r.basis, r.context, language) for r in rows)
     )
-    return title + "\n" + "\n".join(_format_record(r.content, r.basis, r.context) for r in rows)
 
 
 def format_proactive_memory_block(memories: list[dict], *, language: str = DEFAULT_LANGUAGE) -> str:
     if not memories:
         return ""
-    title = (
-        "# 相关有效记忆（推断不等于用户确认；尊重时效和范围）"
-        if language != "en"
-        else "# Relevant valid memories (inference is not user confirmation; respect scope and expiry)"
-    )
     return (
-        title
+        resolve_prompt_text(PROACTIVE_MEMORY_LABELS_TEXTS, language)
         + "\n"
-        + "\n".join(_format_record(m["content"], m.get("basis", "system"), m.get("context")) for m in memories)
+        + "\n".join(
+            _format_record(m["content"], m.get("basis", "system"), m.get("context"), language) for m in memories
+        )
     )

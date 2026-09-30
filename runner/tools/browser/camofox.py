@@ -224,7 +224,7 @@ def camofox_navigate(url: str, task_id: str | None = None) -> str:
             result.update(
                 {
                     "vnc_url": vnc,
-                    "vnc_hint": "Browser is visible via VNC. Share this link with the user so they can watch the browser live.",
+                    "vnc_hint": "The user can watch or take over this browser through vnc_url; mention it only when that helps them.",
                 },
             )
         try:

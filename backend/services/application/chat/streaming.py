@@ -11,8 +11,12 @@ from components import TOOL_CALL_ID_HEX_PREFIX_LEN, get_logger, new_request_id, 
 from modules.conversation import CompanionReply
 from prompts.chat import (
     COMPANION_MEDIA_REPLY_GUIDANCES,
+    COMPANION_REPAIR_COMPOSE_GUIDANCES,
+    COMPANION_REPAIR_SILENCE_GUIDANCES,
+    COMPANION_REPLY_CLOSING_GUIDANCES,
     COMPANION_REPLY_GUIDANCES,
     COMPANION_REPLY_REPAIR_GUIDANCES,
+    COMPANION_REPLY_TOOL_GUIDANCES,
     COMPANION_TEXT_REPLY_GUIDANCES,
     COMPANION_VOICE_REPLY_GUIDANCES,
 )
@@ -166,34 +170,48 @@ async def _generate_llm_response(
             "{delivery}",
             delivery_guidance,
         )
-        reply_guidance += resolve_prompt_text(COMPANION_MEDIA_REPLY_GUIDANCES, lang)
-        reply_guidance += "\n" + json.dumps(
-            {
-                "available_media": [
-                    {
-                        "media_id": a.media_id,
-                        "type": a.type,
-                        "goal_id": a.goal_id,
-                        "status": a.status,
-                        "already_delivered": a.bound_message_id is not None,
-                    }
-                    for a in media_turn.artifacts.values()
-                ],
-                "required_media_goals": sorted(media_turn.required_goals),
-            },
-            ensure_ascii=False,
-        )
         if speech_config:
             reply_guidance += speech_style_guidance(speech_config.provider_name, speech_config.model)
+        # 没有可引用产物时任何媒体标识都无效，不说明媒体气泡；产物含历史回合中仍可引用的图片与视频。
+        if media_turn.artifacts:
+            reply_guidance += resolve_prompt_text(COMPANION_MEDIA_REPLY_GUIDANCES, lang)
+            reply_guidance += "\n" + json.dumps(
+                {
+                    "available_media": [
+                        {
+                            "media_id": a.media_id,
+                            "type": a.type,
+                            "goal_id": a.goal_id,
+                            "status": a.status,
+                            "already_delivered": a.bound_message_id is not None,
+                        }
+                        for a in media_turn.artifacts.values()
+                    ],
+                    "required_media_goals": sorted(media_turn.required_goals),
+                },
+                ensure_ascii=False,
+            )
         # 部分供应商只允许首条系统消息，回复和修复指令都并入 instructions。
         instructions += reply_guidance
-        if reply_format_error is not None:
-            schema = companion_reply_schema(speech_config, allow_silence=allow_silence)
-            repair_guidance = resolve_prompt_text(COMPANION_REPLY_REPAIR_GUIDANCES, lang).replace(
-                "{schema}",
-                json.dumps(schema, ensure_ascii=False),
+        if reply_format_error is None:
+            instructions += resolve_prompt_text(COMPANION_REPLY_TOOL_GUIDANCES, lang) + resolve_prompt_text(
+                COMPANION_REPLY_CLOSING_GUIDANCES,
+                lang,
             )
-            instructions += repair_guidance
+        else:
+            schema = companion_reply_schema(speech_config, allow_silence=allow_silence)
+            # 格式恢复不提供工具；主动回合的恢复仍允许沉默，不能把修复变成一次新的联系。
+            instructions += (
+                resolve_prompt_text(COMPANION_REPLY_REPAIR_GUIDANCES, lang)
+                .replace(
+                    "{no_dialogue}",
+                    resolve_prompt_text(
+                        COMPANION_REPAIR_SILENCE_GUIDANCES if allow_silence else COMPANION_REPAIR_COMPOSE_GUIDANCES,
+                        lang,
+                    ),
+                )
+                .replace("{schema}", json.dumps(schema, ensure_ascii=False))
+            )
             # 修复资料和阶段指令仅属于本次请求，不进入持久历史或下一轮工具上下文。
             request_input = [
                 *_reply_repair_history(request_input),

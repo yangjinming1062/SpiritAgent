@@ -97,9 +97,9 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
     ),
     ToolDomain(
         id="code",
-        description_zh="沙箱执行 Python",
-        description_en="Run Python in a sandbox",
-        aliases=("code", "code_execution", "python", "代码", "代码执行", "运行代码", "脚本计算", "沙箱"),
+        description_zh="在用户电脑上执行 Python 代码（不是隔离沙箱）",
+        description_en="Run Python code on the user's computer (not an isolated sandbox)",
+        aliases=("code", "code_execution", "python", "代码", "代码执行", "运行代码", "脚本计算"),
         extra_tools=("execute_code",),
     ),
     ToolDomain(
@@ -111,9 +111,9 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
     ),
     ToolDomain(
         id="process",
-        description_zh="查看或结束进程",
-        description_en="List or kill processes",
-        aliases=("process", "process_management", "进程", "任务管理器", "查进程", "杀进程", "系统进程"),
+        description_zh="查看或结束终端后台任务",
+        description_en="List or stop background terminal sessions",
+        aliases=("process", "process_management", "进程", "后台任务", "后台进程", "查进程"),
         extra_tools=("process",),
     ),
     ToolDomain(
@@ -132,9 +132,20 @@ DOMAIN_CATALOG: tuple[ToolDomain, ...] = (
     ),
     ToolDomain(
         id="computer_use",
-        description_zh="屏幕视觉与键鼠",
-        description_en="Screen vision and input",
-        aliases=("computer_use", "vision_analyze", "视觉自动化", "桌面控制", "屏幕点击", "自动操作", "视觉定位"),
+        description_zh="屏幕视觉、图片理解与键鼠",
+        description_en="Screen vision, image understanding and input",
+        aliases=(
+            "computer_use",
+            "vision_analyze",
+            "视觉自动化",
+            "桌面控制",
+            "屏幕点击",
+            "自动操作",
+            "视觉定位",
+            "看图",
+            "识别图片",
+            "图片理解",
+        ),
         extra_tools=("computer_use", "vision_analyze"),
     ),
     ToolDomain(

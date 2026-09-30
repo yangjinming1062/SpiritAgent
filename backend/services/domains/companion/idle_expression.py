@@ -5,7 +5,6 @@ from components import (
     SESSION_LOCAL,
     get_logger,
     resolve_prompt_text,
-    utc_now,
 )
 from prompts.companion import IDLE_EXPRESSION_INSTRUCTIONS
 from pydantic import BaseModel
@@ -45,7 +44,7 @@ async def check_idle_expression(
         llm_config,
         resolve_prompt_text(IDLE_EXPRESSION_INSTRUCTIONS, ctx.language),
         {
-            "current_time": utc_now().isoformat(),
+            "current_time": ctx.current_time,
             "persona": ctx.persona_extras,
             "idle_minutes": round(idle_seconds / 60, 2),
             "local_hour": local_hour if local_hour >= 0 else None,

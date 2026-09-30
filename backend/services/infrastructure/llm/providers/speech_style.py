@@ -50,52 +50,69 @@ MiMo accepts open-ended natural-language delivery controls.
 Preserve the selected voice and one-speaker persona. styles, cues, and direction must agree without repeating the same
 instruction in every field or escalating drama beyond the dialogue. Do not include brackets in style or cue values.
 """
+# 句内标记在 styled_speech_text 中插到 before 短语之前，校验只接受本气泡台词中唯一出现的短语。
+_CUE_RULE = (
+    "Each cue is an object {before, tag}: the tag is performed immediately before its before phrase, which must occur "
+    "exactly once in this bubble's text. Use at most eight cues, and never add dialogue merely to create an anchor.\n"
+)
+
+
+def _choices(mapping: dict[str, str]) -> str:
+    """列出可填写的键；括号内是含义，校验只接受键本身。"""
+    return ", ".join(f"{key} ({meaning})" for key, meaning in mapping.items())
 
 
 def speech_style_guidance(provider: str, model: str) -> str:
-    example: dict = {}
     if provider == "mimo":
-        example.update(
-            styles=[],
-            direction={
+        example: dict = {
+            "styles": [],
+            "direction": {
                 "role": "configured persona and voice",
                 "scene": "the current exchange",
                 "guidance": "natural delivery; add emphasis only where the words support it",
             },
-            cues=[],
-        )
-        capabilities = _MIMO_GUIDANCE
+            "cues": [{"before": "phrase from this bubble's text", "tag": "sound or delivery change"}],
+        }
+        capabilities = _MIMO_GUIDANCE + _CUE_RULE
         capabilities += (
             "Singing styles: 唱歌/sing/singing (put this FIRST in styles; Chinese lyrics work best).\n"
             if model == "mimo-v2.5-tts"
             else "This model does not support singing; do not request singing in styles, cues or director guidance.\n"
         )
     elif provider == "minimax":
-        example.update(emotion=None, speed=1, cues=[], pauses=[])
         emotions = dict(_MINIMAX_EMOTIONS)
         if model in _MINIMAX_EXTENDED_EMOTION_MODELS:
             emotions.update(fluent="生动", whisper="低语")
-        cues = _MINIMAX_CUES if model in _MINIMAX_CUE_MODELS else {}
+        cues_supported = model in _MINIMAX_CUE_MODELS
+        example = {
+            "emotion": None,
+            "speed": 1,
+            "cues": [{"before": "phrase from this bubble's text", "tag": "tag key"}] if cues_supported else [],
+            "pauses": [],
+        }
         capabilities = (
-            f"MiniMax emotion values for this model: {json.dumps(emotions, ensure_ascii=False)}. emotion may be null for automatic delivery.\n"
-            f"Full inline cue tag catalogue for this model: {json.dumps(cues, ensure_ascii=False)}. Use ONLY these exact tag values.\n"
-            "speed: 0.5 to 2, where 1 is normal. pauses: optional {before, seconds}, 0.01 to 99.99 seconds, at most two decimal places. "
-            "Each pause's before is an exact phrase occurring once AFTER some spoken text in this bubble; "
-            "never anchor it to the opening word. Omit pauses when punctuation provides enough separation. "
-            "Pauses must be between spoken words, never at the start/end or consecutive. This model has no free-form style or director field.\n"
+            f"emotion: null for automatic delivery, or exactly one of these keys: {_choices(emotions)}.\n"
+            + (
+                f"cues: optional inline sounds; tag must be exactly one of these keys: {_choices(_MINIMAX_CUES)}. "
+                + _CUE_RULE
+                if cues_supported
+                else "cues: this model has no inline sounds; keep cues empty.\n"
+            )
+            + "speed: 0.5 to 2, where 1 is normal. pauses: optional {before, seconds} objects, 0.01 to 99.99 seconds with "
+            "at most two decimal places; each pause is inserted immediately before its before phrase, which must occur "
+            "exactly once and follow some spoken words, never the opening word. Pauses cannot share a position; omit them "
+            "when punctuation already separates the words. This model has no free-form style or director field.\n"
         )
     else:
         return ""
     return (
-        "\n## Speech performance for each voice bubble\n"
-        "The speech object of each voice bubble uses this shape; text bubbles have no speech object. "
-        "Do not include provider or model identifiers. Choose delivery for this bubble's words and context:\n"
-        + json.dumps(example, ensure_ascii=False)
+        "\n## Speech performance for voice bubbles\n"
+        "Each voice bubble nests its speech object as shown; text bubbles have no speech. Do not include provider or "
+        "model identifiers. Choose delivery for this bubble's words and context.\n"
+        + json.dumps({"type": "voice", "text": "spoken words", "speech": example}, ensure_ascii=False)
         + "\n"
         + capabilities
-        + "Use natural delivery by default and at most eight cues. Each cue is {before, tag}; before must be an "
-        "exact substring occurring once in this bubble's text. Never add dialogue merely to create an anchor. "
-        "All direction stays in speech; text contains only actual spoken words.\n"
+        + "Use natural delivery by default. All direction stays in speech; text contains only the words actually spoken.\n"
     )
 
 

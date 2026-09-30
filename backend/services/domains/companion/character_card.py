@@ -3,6 +3,7 @@
 import json
 from uuid import uuid4
 
+from components import resolve_prompt_text
 from modules.companion import (
     AvatarAsset,
     CharacterCardResponse,
@@ -13,6 +14,7 @@ from modules.companion import (
     CompanionCharacterCard,
 )
 from modules.ws import emit_ws_event
+from prompts.companion import CHARACTER_APPEARANCE_TEXTS
 from prompts.generation import CHARACTER_IDENTITY_TEMPLATE, CHARACTER_PROFILE_TEMPLATE
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -97,6 +99,15 @@ def render_character_profile(snapshot: CharacterCardSnapshot | None) -> str:
     if snapshot is None:
         return ""
     return CHARACTER_PROFILE_TEMPLATE.format(features=json.dumps(snapshot.features.model_dump(), ensure_ascii=False))
+
+
+def render_character_appearance(snapshot: CharacterCardSnapshot | None, *, language: str) -> str:
+    """无参考图的文字任务读取的外形资料；图像任务用 ``render_character_profile``。"""
+    if snapshot is None:
+        return ""
+    return resolve_prompt_text(CHARACTER_APPEARANCE_TEXTS, language).format(
+        features=json.dumps(snapshot.features.model_dump(), ensure_ascii=False),
+    )
 
 
 def render_character_identity(snapshot: CharacterCardSnapshot | None) -> str:

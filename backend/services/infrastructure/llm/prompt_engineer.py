@@ -15,11 +15,14 @@ from prompts.generation import (
     CHARACTER_FORM_REDRAW_BODY,
     CHARACTER_FORM_SECONDARY_REFERENCE,
     CHARACTER_VISUAL_STYLE,
+    DEFAULT_VISUAL_STYLE,
     FULLBODY_FRAME,
     FULLBODY_PRESERVE_CHARACTER,
-    FULLBODY_REWRITE_LEAD,
     GARMENT_DESCRIBE_SYSTEM,
     IMAGE_EDIT_TEMPLATE,
+    OUTFIT_BACKGROUND,
+    OUTFIT_BODY_DIRECTION_TEMPLATE,
+    OUTFIT_CHANGE_LEAD,
     OUTFIT_CHANGE_TEMPLATE,
 )
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -188,7 +191,7 @@ async def enhance_avatar_prompt(
     description = _strip_markdown_fence(raw)
     if has_reference:
         return description
-    return "\n\n".join((description, AVATAR_IMAGE_RULES, CHARACTER_VISUAL_STYLE))
+    return "\n\n".join((description, AVATAR_IMAGE_RULES, DEFAULT_VISUAL_STYLE))
 
 
 async def describe_character_form(
@@ -252,12 +255,12 @@ async def build_outfit_prompt(
     )
     return "\n".join(
         (
-            FULLBODY_REWRITE_LEAD,
+            OUTFIT_CHANGE_LEAD,
             FULLBODY_PRESERVE_CHARACTER,
             identity,
             CHARACTER_VISUAL_STYLE,
             f"画幅比例 {canvas_aspect}；{FULLBODY_FRAME}" if canvas_aspect else FULLBODY_FRAME,
-            direction,
+            OUTFIT_BODY_DIRECTION_TEMPLATE.format(direction=direction),
             OUTFIT_CHANGE_TEMPLATE.format(
                 requirements=json.dumps(
                     {
@@ -268,7 +271,7 @@ async def build_outfit_prompt(
                     ensure_ascii=False,
                 ),
             ),
-            "纯白无缝平面背景，均匀柔和棚拍光；稳定待机姿态，无场景、投影、道具、文字或水印。",
+            OUTFIT_BACKGROUND,
         ),
     )
 

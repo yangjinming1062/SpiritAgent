@@ -116,6 +116,11 @@ def memory_record(row: Memory) -> MemoryRecord:
     )
 
 
+def _recall_context(topic: str) -> str:
+    """话题存为 recall 命名空间；模型照抄已有 context 时去掉重复前缀。"""
+    return "recall:" + topic.strip().removeprefix("recall:").strip()
+
+
 def learning_filter() -> ColumnElement[bool]:
     return or_(Memory.context.like("recall:%"), Memory.context.like("user_profile:%"))
 
@@ -340,7 +345,7 @@ async def apply_memory_decisions(
             evidence_rows = [e.model_dump(exclude_none=True) for e in evidence]
             if row and (
                 row.content == decision.content.strip()
-                and row.context == "recall:" + decision.topic.strip()
+                and row.context == _recall_context(decision.topic)
                 and row.tags == json.dumps([decision.category])
                 and row.basis == decision.basis
                 and row.status == decision.status
@@ -389,7 +394,7 @@ async def apply_memory_decisions(
                 row.content_version += 1
             row.content = decision.content.strip()
             if not row.context or not row.context.startswith("user_profile:"):
-                row.context = "recall:" + decision.topic.strip()
+                row.context = _recall_context(decision.topic)
             row.tags = json.dumps([decision.category])
             row.basis, row.status, row.usage = decision.basis, decision.status, decision.usage
             row.reason, row.expires_at = decision.reason.strip(), expiry

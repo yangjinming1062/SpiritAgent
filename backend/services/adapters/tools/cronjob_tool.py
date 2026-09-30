@@ -1,11 +1,11 @@
 import json
 from typing import Any
 
-from components import coerce_int, get_logger, session_scope, tool_error
+from components import coerce_int, get_logger, session_scope, tool_error, utc_now
 from prompts.tools import CRONJOB_DESC, CRONJOB_PARAM_DESCS
 
 from services.contracts import MemoryScope
-from services.domains.automation import create_job, get_job, list_jobs, remove_job, update_job
+from services.domains.automation import compute_next_run_at, create_job, get_job, list_jobs, remove_job, update_job
 from services.domains.conversation import resolve_memory_scope
 from services.infrastructure.tool_runtime import ToolsRegistry
 
@@ -28,6 +28,8 @@ def _build_updates(prompt: str | None, name: str | None, schedule: str | None, k
 
 
 _UPDATE_VERBS = {"update": "updated", "pause": "paused", "resume": "resumed"}
+# 无法解析的表达式会被保存为暂停状态；在工具入口拒绝，避免模型误以为任务已安排。
+_INVALID_SCHEDULE = "Invalid schedule {schedule!r}: use a five-field UTC cron expression such as '0 9 * * *'."
 
 
 async def _handle_cron_action(
@@ -39,6 +41,8 @@ async def _handle_cron_action(
     name: str | None,
     kind: str | None,
 ) -> str:
+    if schedule and compute_next_run_at(schedule, utc_now()) is None:
+        return tool_error(_INVALID_SCHEDULE.format(schedule=schedule))
     if action == "create":
         if not schedule or not prompt:
             return tool_error("schedule and prompt are required for create")
@@ -57,7 +61,10 @@ async def _handle_cron_action(
             ensure_ascii=False,
         )
     if action == "list":
-        return json.dumps({"success": True, "jobs": await list_jobs(scope=scope)}, ensure_ascii=False)
+        return json.dumps(
+            {"success": True, "jobs": await list_jobs(scope=scope, include_paused=True)},
+            ensure_ascii=False,
+        )
     if action not in {"remove", "get", *_UPDATE_VERBS}:
         return tool_error(
             f"Unknown cronjob action: {action!r}. Allowed: create, list, update, remove, pause, resume, get.",

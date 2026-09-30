@@ -17,22 +17,25 @@ from prompts.chat import (
     COMPANION_OUTPUT_GUIDANCES,
     COMPANION_PROACTIVE_GUIDANCES,
     COMPANION_PROACTIVE_WAIT_GUIDANCES,
-    COMPANION_RECALL_GUIDANCES,
     COMPANION_SELF_MEDIA_GUIDANCES,
     COMPANION_SKILL_GUIDANCES,
     COMPANION_TOOL_GUIDANCES,
     COMPANION_WAIT_GUIDANCES,
+    ENVIRONMENT_HINTS_LABELS,
     LANGUAGE_DIRECTIVES,
     MEDIA_GUIDANCES,
+    MEDIA_IMAGE_GUIDANCES,
     MEDIA_VIDEO_GUIDANCES,
     MEMORY_RECALL_GUIDANCES,
     MEMORY_TOOL_GUIDANCES,
+    MEMORY_TOOL_LABELS,
     NO_TOOL_GUIDANCES,
     PLATFORM_HINTS_TEXTS,
     SCENE_TOOL_GUIDANCES,
-    SESSION_SEARCH_GUIDANCES,
     TOOL_USE_ENFORCEMENTS,
     VOLATILE_LABELS,
+    VOLATILE_TIMEZONE_NOTES,
+    VOLATILE_UTC_NOTES,
     WORK_GUIDANCES,
     WORK_SKILLS_GUIDANCES,
     WORK_TOOL_GUIDANCES,
@@ -41,8 +44,9 @@ from prompts.chat import (
 logger = logging.getLogger(__name__)
 
 PLACEHOLDER_PATTERN = re.compile(r"\{\{([A-Z][A-Z0-9_]{2,40})\}\}")
-# IM 适配器以渠道键声明平台（见 channels.base.platform_hint），桌面客户端传入的是自由文本。
+# IM 适配器以渠道键声明平台（见 channels.base.platform_hint）；桌面客户端传入 ``SpiritAgentDesktop/<版本> (...)`` 标识，按桌面说明处理。
 _CHANNEL_HINT_KEYS = {"weixin": "wechat"}
+_DESKTOP_CLIENT_PREFIX = "spiritagentdesktop/"
 
 
 @dataclass(frozen=True)
@@ -61,10 +65,17 @@ class AgentPromptConfig:
     user_local_tz: str | None = None
 
 
+def volatile_header_value(user_local_tz: str | None, lang: str) -> str:
+    """日期行的值：本地日期与时区说明；发送前刷新时按同一格式整行替换。"""
+    date_str = format_local_date_str(utc_now(), user_local_tz, lang) or ""
+    if not user_local_tz:
+        return date_str + resolve_prompt_text(VOLATILE_UTC_NOTES, lang)
+    return date_str + resolve_prompt_text(VOLATILE_TIMEZONE_NOTES, lang).format(timezone=user_local_tz)
+
+
 def _volatile_header_block(config: AgentPromptConfig) -> str:
     lang = resolve_language(config.language)
-    date_str = format_local_date_str(utc_now(), config.user_local_tz, lang)
-    return f"{resolve_prompt_text(VOLATILE_LABELS, lang)}{date_str or ''}"
+    return f"{resolve_prompt_text(VOLATILE_LABELS, lang)}{volatile_header_value(config.user_local_tz, lang)}"
 
 
 def _persona_block(config: AgentPromptConfig) -> str | None:
@@ -89,8 +100,6 @@ def _companion_tool_guidance_block(config: AgentPromptConfig) -> str:
     parts = [resolve_prompt_text(COMPANION_TOOL_GUIDANCES, config.language)]
     if "companion_wait" in config.valid_tool_names:
         parts.append(resolve_prompt_text(COMPANION_WAIT_GUIDANCES, config.language))
-    if "session_search" in config.valid_tool_names:
-        parts.append(resolve_prompt_text(COMPANION_RECALL_GUIDANCES, config.language))
     if "skills_list" in config.valid_tool_names:
         parts.append(resolve_prompt_text(COMPANION_SKILL_GUIDANCES, config.language))
     if {"scene_list", "scene_create", "scene_activate"}.issubset(config.valid_tool_names):
@@ -117,15 +126,9 @@ def _memory_tool_guidance_block(config: AgentPromptConfig) -> str | None:
         parts.append(resolve_prompt_text(MEMORY_RECALL_GUIDANCES, config.language))
     if {"memory_inspect", "memory_retain"}.issubset(config.valid_tool_names):
         parts.append(resolve_prompt_text(MEMORY_TOOL_GUIDANCES, config.language))
-    return "\n".join(parts) or None
-
-
-def _session_search_guidance_block(config: AgentPromptConfig) -> str | None:
-    return (
-        resolve_prompt_text(SESSION_SEARCH_GUIDANCES, config.language)
-        if "session_search" in config.valid_tool_names
-        else None
-    )
+    if not parts:
+        return None
+    return "\n".join([resolve_prompt_text(MEMORY_TOOL_LABELS, config.language), *parts])
 
 
 def _automation_guidance_block(config: AgentPromptConfig) -> str:
@@ -144,6 +147,8 @@ def _media_guidance_block(config: AgentPromptConfig) -> str | None:
     if not _has_any_tool(config, ("image_generate", "video_generate")):
         return None
     parts = [resolve_prompt_text(MEDIA_GUIDANCES, config.language)]
+    if "image_generate" in config.valid_tool_names:
+        parts.append(resolve_prompt_text(MEDIA_IMAGE_GUIDANCES, config.language))
     if "video_generate" in config.valid_tool_names:
         parts.append(resolve_prompt_text(MEDIA_VIDEO_GUIDANCES, config.language))
     return "\n".join(parts)
@@ -175,15 +180,18 @@ def _work_tool_guidance_block(config: AgentPromptConfig) -> str:
 
 def _environment_hints_block(config: AgentPromptConfig) -> str | None:
     ctx = config.client_context
-    return ctx.environment_hints if ctx and ctx.environment_hints else None
+    if not ctx or not ctx.environment_hints:
+        return None
+    return f"{resolve_prompt_text(ENVIRONMENT_HINTS_LABELS, config.language)}\n{ctx.environment_hints}"
 
 
 def _channel_hints(config: AgentPromptConfig, desktop_hints: dict[str, str]) -> str:
     hints = config.client_context.platform_hints if config.client_context else None
-    if not hints:
+    normalized = (hints or "").strip().lower()
+    if not normalized or normalized.startswith(_DESKTOP_CLIENT_PREFIX):
         return resolve_prompt_text(desktop_hints, config.language)
-    key = _CHANNEL_HINT_KEYS.get(hints.strip().lower())
-    return resolve_prompt_text(PLATFORM_HINTS_TEXTS[key], config.language) if key else hints
+    key = _CHANNEL_HINT_KEYS.get(normalized)
+    return resolve_prompt_text(PLATFORM_HINTS_TEXTS[key], config.language) if key else hints or ""
 
 
 def _platform_hints_block(config: AgentPromptConfig) -> str:
@@ -256,7 +264,6 @@ BLOCK_RENDERERS: dict[str, Callable[[AgentPromptConfig], str | None]] = {
     "BACKGROUND_MEMORY": lambda config: config.background_memory_extras or None,
     "PROACTIVE_MEMORY": lambda config: config.proactive_memory_extras or None,
     "MEMORY_TOOL_GUIDANCE": _memory_tool_guidance_block,
-    "SESSION_SEARCH_GUIDANCE": _session_search_guidance_block,
     "MEDIA_GUIDANCE": _media_guidance_block,
     "ATTACHMENT_GUIDANCE": _attachment_guidance_block,
     "TOOL_USE_ENFORCEMENT": _tool_use_enforcement_block,

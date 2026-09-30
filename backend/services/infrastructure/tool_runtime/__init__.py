@@ -1,6 +1,6 @@
 """工具运行时基础设施：注册表、执行防护、参数矫正与工具结果处理。"""
 
-from .domains import search_domains_and_tools
+from .domains import apply_search_tools_catalog, search_domains_and_tools
 from .model_tools import coerce_tool_args
 from .registry import REGISTRY, RESERVED_KEYS, ToolsRegistry, schema_name
 from .tool_dispatch_helpers import (
@@ -16,6 +16,7 @@ __all__ = [
     "RESERVED_KEYS",
     "ToolCallGuardrailController",
     "ToolsRegistry",
+    "apply_search_tools_catalog",
     "check_file_safety",
     "coerce_tool_args",
     "file_mutation_result_landed",

@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 from datetime import timedelta
 from uuid import uuid4
@@ -29,10 +30,28 @@ from services.application.generation import (
 from services.contracts import MediaArtifact, MediaTurnState
 from services.domains.companion import render_character_identity
 from services.domains.conversation import apply_video_status
+from services.infrastructure.assets import asset_store
 from services.infrastructure.llm import MissingLlmConfigError, VisualReasoningError
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 logger = get_logger(__name__)
+
+
+def _first_frame_reference(reference: str, user_id: int) -> str | None:
+    """本人资产路径读为 data URI；data URI 与 http(s) 地址原样交给供应商链，其余值无效。"""
+    if reference.startswith(("data:image/", "http://", "https://")):
+        return reference
+    parsed = asset_store.parse_companion_asset_path(reference)
+    if parsed is None or parsed[0] != user_id:
+        return None
+    resolved = asset_store.resolve_companion_asset_path(*parsed)
+    if resolved is None or not resolved[1].startswith("image/"):
+        return None
+    try:
+        data = resolved[0].read_bytes()
+    except OSError:
+        return None
+    return f"data:{resolved[1]};base64,{base64.b64encode(data).decode('ascii')}"
 
 
 async def _submit_video(
@@ -162,6 +181,11 @@ async def video_generation_tool(
         return tool_error("请提供非空视频描述和 4 至 15 秒的时长")
     if resolution not in {"512P", "768P", "1080P", "2K"}:
         return tool_error("视频分辨率无效")
+    if first_frame_image:
+        # 模型只看得到产物的裸存储路径；在占用本轮视频名额前转为供应商可读的 data URI，无法读取时按参数错误返回。
+        first_frame_image = await asyncio.to_thread(_first_frame_reference, first_frame_image, media_turn.user_id)
+        if first_frame_image is None:
+            return tool_error("first_frame_image 须为本会话图片工具返回的地址，或可公开访问的 http(s) 图片地址")
     async with media_turn.lock:
         if media_turn.video_claimed:
             return json.dumps(

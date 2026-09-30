@@ -1,7 +1,7 @@
 import asyncio
 from typing import Any
 
-from components import parse_llm_json, session_scope, utc_now
+from components import LLM_MAX_OUTPUT_TOKENS, parse_llm_json, session_scope, utc_now
 from modules.conversation import Conversation, Message
 from prompts.memory import MEMORY_POLICY, MEMORY_REVIEW_INSTRUCTIONS
 from sqlalchemy import func, select
@@ -47,7 +47,7 @@ async def assess_memory_changes(
             llm_config,
             MEMORY_POLICY + "\n" + MEMORY_REVIEW_INSTRUCTIONS,
             payload,
-            max_output_tokens=6000,
+            max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
             json_output=True,
         )
         try:

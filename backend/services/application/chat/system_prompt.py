@@ -1,17 +1,17 @@
 import json
 import re
 
-from components import format_local_date_str, resolve_prompt_text, utc_now
-from prompts.chat import OUTFIT_DEMEANOR_GUIDANCES, SCENE_CONTEXT_GUIDANCES, VOLATILE_LABELS
+from components import resolve_language, resolve_prompt_text
+from prompts.chat import OUTFIT_DEMEANOR_GUIDANCES, OUTFIT_SOURCE_TEXTS, SCENE_CONTEXT_GUIDANCES, VOLATILE_LABELS
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.actions.context import build_action_context
 from services.domains.companion import build_outfit_extras, get_scene_state, scene_environment
 
-from .prompt_blocks import AgentPromptConfig, render_preset_body
+from .prompt_blocks import AgentPromptConfig, render_preset_body, volatile_header_value
 from .prompt_presets import preset_body
 
-# volatile header 行：发送前只换日期，保留构建时按会话语言写入的标签。
+# volatile header 行：发送前按同一格式整行刷新日期与时区，保留构建时按会话语言写入的标签。
 _VOLATILE_HEADER_RE = re.compile(
     "(?m)^(?P<label>" + "|".join(re.escape(label) for label in VOLATILE_LABELS.values()) + ")(?P<date>.*)$",
 )
@@ -24,10 +24,18 @@ def build_system_prompt(config: AgentPromptConfig, *, preset_id: str) -> str:
 async def build_companion_environment_prompt(db: AsyncSession, user_id: int, *, language: str) -> str:
     state = await get_scene_state(db, user_id)
     parts: list[str] = []
-    if state.active is None:
-        outfit = await build_outfit_extras(db, user_id, language=language)
-        if outfit:
-            parts.extend([outfit, resolve_prompt_text(OUTFIT_DEMEANOR_GUIDANCES, language)])
+    # 此刻着装：有场景时以场景成品描述中的可见造型为准，无场景才注入当前着装；两种来源都附着装与表现相称的说明。
+    source = "scene" if state.active is not None else None
+    if source is None and (outfit := await build_outfit_extras(db, user_id, language=language)):
+        parts.append(outfit)
+        source = "outfit"
+    if source is not None:
+        parts.append(
+            resolve_prompt_text(OUTFIT_DEMEANOR_GUIDANCES, language).replace(
+                "{source}",
+                OUTFIT_SOURCE_TEXTS[resolve_language(language)][source],
+            ),
+        )
     parts.extend(
         [
             resolve_prompt_text(SCENE_CONTEXT_GUIDANCES, language),
@@ -45,5 +53,5 @@ def refresh_volatile_header_in_prompt(instructions: str, *, user_local_tz: str |
     match = _VOLATILE_HEADER_RE.search(instructions)
     if match is None:
         return instructions
-    date_str = format_local_date_str(utc_now(), user_local_tz, lang)
-    return _VOLATILE_HEADER_RE.sub(f"{match.group('label')}{date_str or ''}", instructions, count=1)
+    line = f"{match.group('label')}{volatile_header_value(user_local_tz, lang)}"
+    return _VOLATILE_HEADER_RE.sub(lambda _: line, instructions, count=1)

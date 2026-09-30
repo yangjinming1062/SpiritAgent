@@ -85,11 +85,23 @@ def _similarity_score(design: dict, action: CompanionAction) -> float:
     if not query.strip():
         return 0.0
     doc = " ".join([action.name, action.motion_description, action.use_when]).lower()
-    tokens = {t for t in re.split(r"[^\w]+", query) if len(t) >= 2}
+    tokens = _match_terms(query)
     if not tokens:
         return 0.0
     hit = sum(1 for t in tokens if t in doc)
     return hit / len(tokens)
+
+
+def _match_terms(text: str) -> set[str]:
+    """词面匹配单元：ASCII 连续字母数字按词，中文等不分词的文字按相邻二字切分，否则整句成一个词而匹配不到近似描述。"""
+    terms: set[str] = set()
+    for chunk in re.split(r"[^\w]+", text):
+        if chunk.isascii():
+            if len(chunk) >= 2:
+                terms.add(chunk)
+        else:
+            terms.update(chunk[i : i + 2] for i in range(len(chunk) - 1))
+    return terms
 
 
 async def _existing_actions(

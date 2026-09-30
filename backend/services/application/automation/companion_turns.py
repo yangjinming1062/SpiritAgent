@@ -1,9 +1,20 @@
 import asyncio
 import json
 
-from components import SETTINGS, begin_user_request, end_user_request, get_logger, session_scope, utc_now
+from components import (
+    SETTINGS,
+    begin_user_request,
+    end_user_request,
+    get_logger,
+    resolve_language,
+    resolve_prompt_text,
+    session_scope,
+    utc_now,
+)
 from modules.companion import CompanionIntentView, CompanionTurnRequest
+from modules.settings import get_user_setting
 from modules.system import ChatMessageRequest, ChatRequest
+from prompts.companion import PROACTIVE_CONTEXT_LABELS
 
 from services.application.chat import HeadlessEmitter, run_chat_turn
 from services.domains.companion import (
@@ -36,10 +47,14 @@ _READ_ONLY_TOOLS: frozenset[str] = frozenset(
 )
 
 
-def _build_proactive_hint(intent: CompanionIntentView, disturbance_tier: str) -> str:
-    return "[Follow-up context — reference data, not a new user message]\n" + json.dumps(
-        {"intent": intent.model_dump(mode="json"), "effective_disturbance_tier": disturbance_tier},
-        ensure_ascii=False,
+def _build_proactive_hint(intent: CompanionIntentView, disturbance_tier: str, language: str) -> str:
+    return (
+        resolve_prompt_text(PROACTIVE_CONTEXT_LABELS, language)
+        + "\n"
+        + json.dumps(
+            {"intent": intent.model_dump(mode="json"), "disturbance_tier": disturbance_tier},
+            ensure_ascii=False,
+        )
     )
 
 
@@ -81,9 +96,10 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                 llm_config = await resolve_user_llm_config(db, user_id)
                 message_id = await latest_user_message_id(db, user_id)
                 disturbance_tier = await get_disturbance_tier(user_id, db=db)
+                language = resolve_language(await get_user_setting(db, user_id, "language"))
             request = ChatRequest(
                 session_id=str(conversation.id),
-                message=ChatMessageRequest(content=_build_proactive_hint(intent, disturbance_tier)),
+                message=ChatMessageRequest(content=_build_proactive_hint(intent, disturbance_tier, language)),
             )
             with companion_turn_plan(user_id, intent.id, intent.expires_at) as plan:
                 await run_chat_turn(
@@ -93,7 +109,9 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
                     emitter,
                     ephemeral=True,
                     headless=True,
-                    excluded_tool_names=frozenset({"send_message_tool", "agent_delegate_tool"}),
+                    # 常规档主动回合只提供文字能力：语音由回合装配按档位关闭，视觉表达在此排除。
+                    excluded_tool_names=frozenset({"send_message_tool", "agent_delegate_tool"})
+                    | (frozenset() if disturbance_tier == "autonomous" else frozenset({"action_play"})),
                     max_loop_turns=SETTINGS.companion_max_loop_turns,
                 )
             reply = emitter.final_reply

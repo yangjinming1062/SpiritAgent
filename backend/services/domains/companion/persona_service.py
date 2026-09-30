@@ -3,9 +3,9 @@ import re
 from datetime import date
 from typing import Any
 
-from components import DEFAULT_LANGUAGE, get_logger, resolve_prompt_text, safe_json_loads
+from components import DEFAULT_LANGUAGE, get_logger, resolve_language, resolve_prompt_text, safe_json_loads
 from modules.companion import AvatarAsset, CharacterCardSnapshot, Persona
-from prompts.companion import PERSONA_LABELS_TEXTS
+from prompts.companion import PERSONA_FIELD_LABELS, PERSONA_LABELS_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,7 +14,7 @@ from services.contracts import MemoryScope
 from services.domains.conversation import ensure_system_conversations_for_user
 from services.domains.memory import extract_user_profile, read_user_profile, record_user_profile
 
-from .character_card import render_character_profile
+from .character_card import render_character_appearance
 from .first_greeting import enqueue_first_greeting, schedule_first_greeting_claim
 
 logger = get_logger(__name__)
@@ -178,15 +178,17 @@ def build_system_prompt_extras(
     definition = load_persona_definition(persona)
     if not definition:
         return ""
-    return render_extras(definition, language=language) + "\n" + render_character_profile(character)
+    return (
+        render_extras(definition, language=language) + "\n" + render_character_appearance(character, language=language)
+    )
 
 
 def render_extras(definition: dict[str, str], *, language: str = DEFAULT_LANGUAGE) -> str:
     lines = [resolve_prompt_text(PERSONA_LABELS_TEXTS, language)]
+    labels = PERSONA_FIELD_LABELS[resolve_language(language)]
     for key in _REQUIRED_FIELDS + _OPTIONAL_FIELDS:
         if key in definition:
-            label = key.replace("_", " ").capitalize()
-            lines.append(f"- **{label}**: {definition[key]}")
+            lines.append(f"- **{labels[key]}**: {definition[key]}")
     return "\n".join(lines)
 
 

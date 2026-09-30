@@ -89,6 +89,12 @@ def _safe_localize(dt: datetime | None, tz_str: str | None) -> datetime | None:
     return dt.astimezone(zone)
 
 
+def format_local_iso(dt: datetime | None, tz_str: str | None) -> str | None:
+    """带时区偏移的本地 ISO 时间（秒精度）；时区缺失或无效时按 UTC。"""
+    localized = _safe_localize(dt, tz_str)
+    return localized.isoformat(timespec="seconds") if localized is not None else None
+
+
 def _zh_period(hour: int) -> str:
     if hour < 6:
         return "凌晨"

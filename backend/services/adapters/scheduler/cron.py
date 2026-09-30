@@ -16,6 +16,8 @@ from components import (
     end_user_request,
     get_logger,
     is_user_in_maintenance,
+    resolve_language,
+    resolve_prompt_text,
     session_scope,
     track_user_task,
     utc_now,
@@ -24,7 +26,8 @@ from modules.auth import User
 from modules.companion import companion_cron_source_key
 from modules.conversation import Conversation
 from modules.scheduler import CronJob, NightlyActivityLog
-from modules.settings import UserSetting, decode_setting_value
+from modules.settings import UserSetting, decode_setting_value, get_user_setting
+from prompts.companion import CHECK_IN_INTENT_TEXTS
 from sqlalchemy import DateTime, bindparam, delete, or_, select, text, tuple_
 from sqlalchemy.engine import Row
 
@@ -327,6 +330,7 @@ async def _maybe_run_ignored_outreach() -> None:
                 or "粘人" not in await get_personality_tags(db, uid)
             ):
                 continue
+            language = resolve_language(await get_user_setting(db, uid, "language"))
 
         ignored_minutes = round(ignored / 60)
         prompt = json.dumps(
@@ -334,11 +338,7 @@ async def _maybe_run_ignored_outreach() -> None:
                 "kind": "low_frequency_check_in",
                 "minutes_since_last_user_interaction": ignored_minutes,
                 "relevant_personality_tag": "粘人",
-                "intent": (
-                    "把性格标签只作为表达风格参考；空闲时长不代表忽视、情绪或关系变化。"
-                    "默认保持安静；只有此刻有自然且不打扰的理由时，才说一句 10–30 字的轻量关心。"
-                    "不要提等待时长、责怪用户、索取回应或施加关系压力。"
-                ),
+                "intent": resolve_prompt_text(CHECK_IN_INTENT_TEXTS, language),
             },
             ensure_ascii=False,
         )

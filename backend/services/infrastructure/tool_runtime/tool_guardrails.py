@@ -158,15 +158,21 @@ def _append_warning(result: str, warning: _LoopWarning) -> str:
 
 def _tool_failure_recovery_hint(tool_name: str, count: int) -> str:
     """针对反复工具失败给出可操作的恢复指引。"""
-    common = f"{tool_name} has failed {count} times this turn. This looks like a loop. Do not switch to text-only replies; keep using tools, but diagnose before retrying. First inspect the latest error/output and verify your assumptions. "
+    common = (
+        f"{tool_name} has failed {count} times this turn. Inspect the latest error or output and check your assumptions "
+        "before trying again; retry only with a changed approach, and do not repeat a call whose outcome is unknown until "
+        "its effect is verified. If the blocker is external, such as an offline desktop or an unavailable service, stop "
+        "retrying and tell the user what is blocked. "
+    )
     if tool_name == "terminal":
         return (
             common
-            + "For terminal failures, run a small diagnostic such as `pwd && ls -la` in the same tool, then try an absolute path, a simpler command, a different working directory, or a different tool such as read_file/write_file/patch."
+            + "For terminal failures, run a small diagnostic such as `pwd && ls -la`, then try an absolute path, a simpler "
+            "command, a different working directory, or a file tool such as read_file/write_file/patch."
         )
     return (
         common
-        + "Try different arguments, a narrower query/path, an absolute path when relevant, or a different tool that can make progress. If the blocker is external, report the blocker after one diagnostic attempt instead of repeating the same failing path."
+        + "Otherwise try different arguments, a narrower query or path, or a different tool that can make progress."
     )
 
 

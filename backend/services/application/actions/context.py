@@ -4,7 +4,7 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
-from components import resolve_prompt_text
+from components import resolve_prompt_text, safe_json_loads
 from modules.companion import ActionProposal
 from prompts.actions import ACTION_CONTEXT_GUIDANCES
 from sqlalchemy import select
@@ -17,6 +17,8 @@ from services.domains.actions import action_to_dict, get_active_pack, is_express
 class ActionContextSnapshot:
     pack_id: int | None = None
     catalog_version: int = 0
+    # 动作素材中的着装；有场景时它可能与场景里的穿着不同，设计新动作以它为准。
+    outfit_description: str = ""
     ready_actions: list[dict[str, Any]] = field(default_factory=list)
     in_flight_proposals: list[dict[str, Any]] = field(default_factory=list)
     recent_rejections: list[dict[str, Any]] = field(default_factory=list)
@@ -25,6 +27,7 @@ class ActionContextSnapshot:
         """动作内容使用 JSON 保留资料边界与完整适用条件。"""
         payload = {
             "expected_pack_id": self.pack_id,
+            **({"action_outfit": self.outfit_description} if self.outfit_description else {}),
             "ready_actions_total": len(self.ready_actions),
             "ready_actions": [
                 {
@@ -54,7 +57,12 @@ async def build_action_context(db: AsyncSession, user_id: int) -> ActionContextS
     pack = await get_active_pack(db, user_id)
     if pack is None:
         return ActionContextSnapshot()
-    snapshot = ActionContextSnapshot(pack_id=pack.id, catalog_version=pack.catalog_version)
+    outfit = safe_json_loads(pack.outfit_snapshot or "", default={})
+    snapshot = ActionContextSnapshot(
+        pack_id=pack.id,
+        catalog_version=pack.catalog_version,
+        outfit_description=str(outfit.get("description") or "") if isinstance(outfit, dict) else "",
+    )
 
     actions = await list_pack_actions(db, pack.id, enabled_only=False)
     actions_by_id = {action.id: action for action in actions}
@@ -86,7 +94,7 @@ async def build_action_context(db: AsyncSession, user_id: int) -> ActionContextS
                 "status": p.status,
                 "action_id": p.action_id,
                 "action_status": action.status if action is not None else None,
-                "reason": p.review_reason or "",
+                "review_reason": p.review_reason or "",
                 "error": action.error if action is not None else None,
                 "design": json.loads(p.design_json or "{}"),
             },
@@ -115,7 +123,7 @@ async def build_action_context(db: AsyncSession, user_id: int) -> ActionContextS
             {
                 "proposal_id": p.id,
                 "design": design,
-                "reason": p.review_reason or "",
+                "review_reason": p.review_reason or "",
             },
         )
 

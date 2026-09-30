@@ -116,6 +116,9 @@ async def web_extract_tool(
     if use_llm_processing:
         # 并行展开摘要，10 URL 提取的耗时由最慢的那一份决定，而非 10 倍叠加。
         await _summarize_documents(documents, llm_config)
+    # content 已是摘要或抽取原文；再附 raw_content 会把整页原文重复送入上下文。
+    for doc in documents:
+        doc.pop("raw_content", None)
 
     return json.dumps({"success": True, "data": {"web": documents}}, ensure_ascii=False)
 

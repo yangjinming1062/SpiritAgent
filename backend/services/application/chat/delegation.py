@@ -1,5 +1,6 @@
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
+from typing import Protocol
 
 from components import get_logger, session_scope, tool_error
 from modules.conversation import Conversation
@@ -10,8 +11,23 @@ from services.domains.conversation import conversation_memory_scope
 from services.infrastructure.llm import UserLlmConfig
 
 from .chat_emitter import Emitter, HeadlessEmitter
+from .prompt_presets import LIFE_SPACE_TOOL_NAMES
 
-TurnRunner = Callable[[ChatRequest, UserLlmConfig, int, Emitter], Awaitable[None]]
+
+class TurnRunner(Protocol):
+    def __call__(
+        self,
+        request: ChatRequest,
+        llm_config: UserLlmConfig,
+        user_id: int,
+        emitter: Emitter,
+        *,
+        excluded_tool_names: frozenset[str],
+    ) -> Awaitable[None]: ...
+
+
+# 子 Agent 只向父回合汇报：不直接联系用户、不改动生活空间，也不再委派。
+_DELEGATED_EXCLUDED_TOOLS = LIFE_SPACE_TOOL_NAMES | frozenset({"agent_delegate_tool"})
 
 logger = get_logger(__name__)
 
@@ -59,7 +75,7 @@ async def run_delegated_turn(
                 ),
             ),
         )
-        await run_turn(req, llm_config, user_id, headless)
+        await run_turn(req, llm_config, user_id, headless, excluded_tool_names=_DELEGATED_EXCLUDED_TOOLS)
 
         if headless.error:
             return tool_error(headless.error)

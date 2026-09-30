@@ -45,7 +45,9 @@ async def _generate_reply_inner(user_id: int, moment_id: str) -> None:
                 "title": moment.title,
                 "body": moment.body,
                 "kind": moment.kind,
+                "source": moment.source,
                 **({"emotion": moment.emotion} if moment.emotion else {}),
+                **({"media_type": moment.media_type} if moment.media_type else {}),
             },
             "comments": [{"role": c.role, "content": c.content} for c in (moment.comments or [])],
         }

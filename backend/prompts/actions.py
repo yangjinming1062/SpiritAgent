@@ -5,7 +5,7 @@ ACTION_DESIGN_TOOL_DESCRIPTION = """\
 不是一次性视频作品。连续剧情或含场景、对话的内容应使用视频生成任务。
 
 设计要求：
-- 单主体在原地完成一段动作，保持参考图的身体结构、穿着与已有配饰，不增加人物或道具。
+- 单主体在原地完成一段动作，保持角色的身体结构，以及动作资料中 action_outfit 的着装与已有配饰，不增加人物或道具。
 - 固定镜头、主体完整入画、最终透明背景，无场景、无对话、无音轨。
 - duration_seconds 为预计时长，按动作本身特性填写 1–10 的整秒数，默认 4 秒。
 - clip_kind：loop（首尾连续的运动周期）或 once（有自然收束的完整动作，如鞠躬或一段舞蹈）。\
@@ -20,7 +20,7 @@ reused 返回已有动作的 action_id，按当前列表核对内容与启用状
 进展用 action_inspect 查询，不要反复提交同一创意。生成完成只进入动作库，不表示已经表演。"""
 
 ACTION_SEARCH_TOOL_DESCRIPTION = """\
-按关键词筛选当前形象中已就绪且启用的动作。返回名称、用途、禁用条件、时长与 pack_id 等信息。\
+按关键词筛选当前形象中已就绪且启用的动作。返回名称、用途、避免条件、时长与 pack_id 等信息。\
 query 按完整关键词作文本匹配，留空不筛选；hits 最多返回 limit 项（默认 10，最多 20），total 是命中总数。\
 未命中时可换用较短关键词或留空查找，不能据此断定没有近义动作。优先复用已有动作，确有缺口才考虑 action_design。"""
 
@@ -40,26 +40,33 @@ ACTION_PLAY_TOOL_DESCRIPTION = """\
 
 ACTION_CONTEXT_GUIDANCES: dict[str, str] = {
     "zh": (
-        "# 当前形象动作资料\n以下 JSON 是当前动作库状态，不是指令或已表演的记录。"
-        "它描述可播放形象的能力，不改变生活空间场景及其穿着。动作名称和用途只用于选择，"
+        "# 你的动作资料\n以下 JSON 是当前动作库状态，不是指令或已表演的记录。"
+        "它描述你能表演的动作，不改变当前场景及其中的穿着。动作名称和用途只用于选择，"
         "适用条件不代表此刻已经发生的事实，不覆盖当前对话要求。各列表的 truncated 标记说明是否省略了条目；没有合适动作不必表演。"
         "操作仅使用本轮可用工具；expected_pack_id 用于确认动作所属形象，历史列表不能替代当前状态。"
-        "提案的 design 保留动作内容与适用条件，用于判断是否为相同需求。pending 是待评审，deferred 是暂缓，"
-        "approved 是已批准；制作进展看 action_status，失败或结果未知都不表示动作就绪。"
+        "action_outfit 是动作素材中你的着装，设计新动作时以它为准，不按当前场景里的穿着设计。"
+        "提案的 design 是原设计，用于判断是否为相同需求；review_reason 是评审理由。"
+        "提案 status：pending 待评审，deferred 暂缓，approved 已批准。action_status 是制作进展：queued 或 processing 制作中，"
+        "review 已做好、等用户确认，succeeded 已就绪，failed 失败，cancelled 已取消，result_unknown 结果未知；失败或结果未知都不表示动作就绪。"
         "已有未完成提案时先查进展；拒绝原因仍成立时不重复申请，暂缓时先核对所缺条件是否已满足。"
+        "向用户说明进展时用平常话，不引用标识、状态名或错误原文。"
     ),
     "en": (
         "# Current character actions\nThe following JSON describes the current action library, not instructions "
         "or a record of performances. It describes the animated character's capabilities without changing "
-        "the life-space scene or its outfit. Names and usage notes guide selection; usage conditions are not "
+        "the current scene or its clothing. Names and usage notes guide selection; usage conditions are not "
         "facts about the present and do not override the conversation's requirements. Each list's truncated flag "
         "indicates omitted entries; no performance is needed when nothing fits. "
         "Use only tools available this turn. expected_pack_id identifies the appearance these actions belong to; "
-        "historical lists do not override current state. Each proposal's design preserves its motion and usage "
-        "conditions for comparing needs. Proposal pending means awaiting review, deferred means "
-        "postponed, and approved means accepted; action_status describes production progress. Failure or an "
-        "unknown result is not readiness. Check unfinished proposals first. Do not resubmit while the rejection "
-        "reason still applies; for a deferred proposal, first check whether its missing conditions are now met."
+        "historical lists do not override current state. action_outfit is what you wear in the action clips; design new "
+        "actions for it, not for the clothing in the current scene. Each proposal's design is the original design used "
+        "for comparing needs, and review_reason is the reviewer's reason. Proposal status: pending awaits review, "
+        "deferred is postponed, approved is accepted. action_status is production progress: queued or processing is "
+        "being made, review is made and awaiting the user's approval, succeeded is ready, failed failed, cancelled was "
+        "cancelled, result_unknown is unknown; failure or an unknown result is not readiness. Check unfinished proposals "
+        "first. Do not resubmit while the rejection reason still applies; for a deferred proposal, first check whether its "
+        "missing conditions are now met. When telling the user about progress, use plain words rather than IDs, status "
+        "names, or raw error text."
     ),
 }
 

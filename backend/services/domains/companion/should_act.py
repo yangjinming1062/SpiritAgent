@@ -3,6 +3,7 @@ from typing import Any
 
 from components import (
     LLM_MAX_OUTPUT_TOKENS,
+    SESSION_LOCAL,
     SETTINGS,
     get_logger,
     resolve_prompt_text,
@@ -10,6 +11,7 @@ from components import (
 from prompts.companion import SHOULD_ACT_INSTRUCTIONS
 from pydantic import BaseModel, Field
 
+from services.domains.conversation import load_recent_context_window
 from services.infrastructure.llm import UserLlmConfig
 
 from .prompt_runtime import load_companion_prompt_context, run_prompt_json
@@ -65,6 +67,10 @@ async def should_act(
     if ctx is None:
         return ShouldActResult(should_act=False, reason="persona not ready")
 
+    # 搭话台词直接进入主会话；近期对话让开场白不重复、不违背用户刚表达的意愿。锁屏与全屏已在上方返回，不再作为资料。
+    async with SESSION_LOCAL() as db:
+        recent_context = await load_recent_context_window(db, user_id) or ""
+
     parsed, fail_reason = await run_prompt_json(
         user_id,
         llm_config,
@@ -75,10 +81,9 @@ async def should_act(
             "idle_minutes": round(idle_seconds / 60, 2),
             "local_hour": local_hour if local_hour >= 0 else None,
             "last_action_seconds": round(seconds_since_last_action, 1),
-            "fullscreen": fullscreen,
-            "screen_locked": screen_locked,
             **({"focused_category": focused_category} if focused_category else {}),
             **({"long_term_memories": ctx.memories_block} if ctx.memories_block else {}),
+            **({"recent_context": recent_context} if recent_context else {}),
         },
         max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
         log_prefix="should_act",

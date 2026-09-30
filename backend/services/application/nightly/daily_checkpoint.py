@@ -1,8 +1,8 @@
 from datetime import datetime
 
-from components import LLM_MAX_OUTPUT_TOKENS, get_logger, session_scope
+from components import LLM_MAX_OUTPUT_TOKENS, get_logger, resolve_prompt_text, session_scope
 from modules.conversation import Conversation, Message
-from prompts.nightly import CHECKPOINT_SUMMARY_INSTRUCTIONS
+from prompts.nightly import CHECKPOINT_SUMMARY_INSTRUCTIONS, CHECKPOINT_SUMMARY_TITLE_TEXTS
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,7 +70,8 @@ async def run_daily_checkpoint(
         checkpoint = Message(
             conversation_id=conv_id,
             role="system",
-            content=f"[📝 截至 {local_date_str} 的对话摘要]\n{summary_text}",
+            content=resolve_prompt_text(CHECKPOINT_SUMMARY_TITLE_TEXTS, language).format(date=local_date_str)
+            + f"\n{summary_text}",
             subtype="daily_summary",
             summary_date=local_date_str,
             summary_through_message_id=through_id,

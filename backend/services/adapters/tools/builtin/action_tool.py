@@ -174,7 +174,12 @@ def register(registry: ToolsRegistry) -> None:
             "action_design",
             action_design_tool,
             {
-                "name": {"type": "string", "minLength": 1, "maxLength": 64, "description": "动作显示名称。"},
+                "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 64,
+                    "description": "用户可见的简短动作名称，使用当前对话的语言。",
+                },
                 "motion_description": {
                     "type": "string",
                     "minLength": 10,

@@ -17,7 +17,7 @@ from prompts.generation import (
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from services.domains.actions import max_duration_seconds
-from services.domains.companion import render_character_identity
+from services.domains.companion import render_character_identity, render_character_profile
 from services.infrastructure.llm import vision_chat
 from services.infrastructure.video_processing import ACTION_FRAME_MARGIN
 
@@ -145,7 +145,7 @@ async def compose_action_script(
     for _attempt in range(2):
         raw = await vision_chat(
             user_id,
-            VIDEO_ACTION_SCRIPT_INSTRUCTIONS + "\n" + render_character_identity(identity),
+            VIDEO_ACTION_SCRIPT_INSTRUCTIONS + "\n" + render_character_profile(identity),
             json.dumps(payload, ensure_ascii=False),
             reference_images=(reference_image,),
         )

@@ -41,18 +41,15 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.contracts import MemoryScope
 from services.domains.companion import (
     CharacterCardNotReadyError,
     character_snapshot_is_current,
-    get_disturbance_tier,
     get_pending_scene_task,
     get_scene,
     load_character_snapshot,
     load_persona_definition,
     require_character_snapshot,
 )
-from services.domains.memory import read_user_profile
 from services.infrastructure.assets import asset_store, build_data_uri
 from services.infrastructure.llm import vision_chat
 
@@ -142,13 +139,11 @@ async def _check_policy(db: AsyncSession, persona: Persona, origin: str) -> None
         return
     if persona.scene_policy == ScenePolicy.LOCKED.value:
         raise SceneLockedError("场景已锁定，自主新增与切换已暂停")
+    # 打扰档位只限制打扰用户的主动行为；场景变化不直接打扰用户，对话中的自主变化只受锁定限制，夜间另按总控。
     if origin == SceneOrigin.NIGHTLY.value:
         user = await db.get(User, persona.user_id)
         if user is None or not user.nightly_activity_enabled:
             raise SceneLockedError("夜间自主活动已关闭")
-    else:
-        if await get_disturbance_tier(persona.user_id, db=db) == "still":
-            raise SceneLockedError("静止档不发起在线自主场景变化")
 
 
 async def set_scene_policy(db: AsyncSession, user_id: int, policy: str) -> ScenePolicy:
@@ -957,25 +952,17 @@ async def resume_scene_jobs() -> None:
 
 
 _INITIAL_SCENE_DEFAULT_NOTES = (
-    "伙伴在自己的房间里自然地生活：整洁的日常起居空间，光线柔和，桌椅、床铺与少量个人物品摆放合理，"
-    "伙伴正从事一项安静自然的日常活动。"
+    "角色在自己的房间里自然地生活：整洁的日常起居空间，光线柔和，桌椅、床铺与少量个人物品摆放合理，"
+    "角色正从事一项安静自然的日常活动。"
 )
-# 初始引导素材仅限这些字段；外貌与物种不用于推断兴趣、职业或经历。
-_INITIAL_SCENE_SOURCE_FIELDS = ("personality", "speaking_style", "relationship")
 
 
-def _initial_scene_notes(persona: Persona, user_profile: dict[str, str]) -> str:
-    definition = load_persona_definition(persona)
-    materials = [value for field in _INITIAL_SCENE_SOURCE_FIELDS if (value := definition.get(field, "").strip())]
-    hobbies = str(user_profile.get("user_hobbies") or "").strip()
-    if hobbies:
-        materials.append(f"用户兴趣：{hobbies}")
-    if not materials:
+def _initial_scene_notes(persona: Persona) -> str:
+    """初始房间只用性格影响氛围；说话风格、关系与用户资料不是画面信息，关系还可能引出第二个人物。"""
+    personality = load_persona_definition(persona).get("personality", "").strip()
+    if not personality:
         return _INITIAL_SCENE_DEFAULT_NOTES
-    return (
-        "伙伴在自己的房间中自然地生活。以下是已确认的角色资料，仅用于设计与其中环境或活动相关的部分，"
-        "不据此虚构兴趣、职业或经历：" + "；".join(materials)
-    )
+    return f"{_INITIAL_SCENE_DEFAULT_NOTES}房间的氛围、摆设与活动可以体现角色的性格：{personality[:200]}。"
 
 
 async def schedule_initial_scene(user_id: int) -> CompanionScene | None:
@@ -987,8 +974,7 @@ async def schedule_initial_scene(user_id: int) -> CompanionScene | None:
             return None
         if await db.scalar(select(CompanionScene.id).where(CompanionScene.user_id == user_id).limit(1)):
             return None
-        user_profile = await read_user_profile(db, MemoryScope(user_id, "companion"))
-        notes = _initial_scene_notes(persona, user_profile)
+        notes = _initial_scene_notes(persona)
     try:
         return await schedule_scene_generation(
             user_id,

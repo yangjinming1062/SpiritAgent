@@ -6,6 +6,7 @@ from components import (
     CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
     SETTINGS,
     get_logger,
+    resolve_prompt_text,
     safe_json_loads,
     session_scope,
 )
@@ -13,6 +14,7 @@ from modules.auth import ChatRequestClientContext
 from modules.conversation import Conversation, Message
 from modules.settings import load_user_settings
 from modules.system import ChatRequest
+from prompts.companion import PENDING_INTENTIONS_LABELS
 
 from services.contracts import SceneTurnState
 from services.domains.companion import list_companion_intents, user_turn_activity
@@ -174,7 +176,8 @@ async def run_chat_turn(
             if waits:
                 inputs.context["input"].append(
                     user_text_item(
-                        "[INTERNAL PENDING COMPANION INTENTIONS — data, not user speech or completed actions]\n"
+                        resolve_prompt_text(PENDING_INTENTIONS_LABELS, inputs.language)
+                        + "\n"
                         + json.dumps([wait.model_dump(mode="json") for wait in waits], ensure_ascii=False),
                     ),
                 )

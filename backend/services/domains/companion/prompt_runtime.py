@@ -1,7 +1,15 @@
 import json
 from typing import Any, NamedTuple
 
-from components import SESSION_LOCAL, get_logger, parse_llm_json, resolve_language, safe_json_loads
+from components import (
+    SESSION_LOCAL,
+    format_local_iso,
+    get_logger,
+    parse_llm_json,
+    resolve_language,
+    safe_json_loads,
+    utc_now,
+)
 from modules.companion import Persona
 from modules.settings import get_user_setting
 from pydantic import BaseModel
@@ -9,7 +17,7 @@ from sqlalchemy import select
 
 from services.contracts import MemoryScope
 from services.domains.actions import get_active_pack, is_expression_action, list_pack_actions
-from services.domains.memory import format_memories_block
+from services.domains.memory import format_memories_block, resolve_user_timezone
 from services.infrastructure.llm import (
     LLMRuntimeError,
     ServiceType,
@@ -29,6 +37,8 @@ class CompanionPromptContext(BaseModel):
     """供心情、表达和片刻使用的人设、心情、记忆与可用动作；不注入视觉生成资料。"""
 
     language: str
+    # 带时区偏移的用户本地时间；未设置时区时按 UTC。
+    current_time: str
     persona_extras: str
     current_mood: str
     memories_block: str
@@ -72,9 +82,10 @@ async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext 
         available_actions.sort(key=lambda item: item["action_id"])
         return CompanionPromptContext(
             language=language,
+            current_time=format_local_iso(utc_now(), await resolve_user_timezone(db, user_id)) or "",
             persona_extras=render_extras(load_persona_definition(persona), language=language),
             current_mood=persona.current_mood or "",
-            memories_block=await format_memories_block(db, MemoryScope(user_id, "companion")),
+            memories_block=await format_memories_block(db, MemoryScope(user_id, "companion"), language=language),
             available_actions=available_actions,
         )
 

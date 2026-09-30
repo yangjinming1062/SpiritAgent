@@ -153,7 +153,8 @@ def _sensitive_write_error(target: str, local: bool) -> str | None:
     ):
         return (
             f"Refusing to write to sensitive system path: {target}. "
-            "File tools cannot modify system locations; use the terminal tool if this change is required."
+            "File tools cannot modify system locations. If the user really needs this change, explain the risk and "
+            "ask them before changing it any other way."
         )
     # 设置含安全配置，禁止模型改写。
     if local and normalized == _compare_form(str((get_spiritagent_home() / "desktop-settings.json").resolve())):

@@ -12,7 +12,6 @@ from prompts.tools import (
     MOMENT_CREATE_PARAM_DESCS,
 )
 
-from services.domains.companion import is_still
 from services.domains.journal import check_moment_llm_quota, create_user_moment, resolve_user_local_today, upsert_diary
 from services.infrastructure.tool_runtime import ToolsRegistry
 
@@ -34,13 +33,11 @@ async def moment_create_tool(
         return tool_error("时刻标题和内容不能为空")
     if len(clean_title) > 24 or len(clean_body) > 500:
         return tool_error("片刻标题最多 24 字符，正文最多 500 字符；请精简后提交，内容尚未保存")
-    if await is_still(user_id):
-        return tool_error("先把这事放下吧，等你想说的时候再说。")
     if kind not in _VALID_MOMENT_KINDS:
         kind = MomentKind.EMOTION.value
     async with SESSION_LOCAL() as db:
         if not await check_moment_llm_quota(db, user_id):
-            return tool_error("今天记下的时刻已经够多了，明天再记录吧。")
+            return tool_error("最近 24 小时的片刻发布额度已用完；本次未发布")
         row = await create_user_moment(
             db,
             user_id,
@@ -67,8 +64,6 @@ async def diary_write_tool(
         return tool_error("日记内容不能为空")
     if len(clean_body) > 1000:
         return tool_error("本次日记补记最多 1000 字符，请精简后提交；内容尚未保存")
-    if await is_still(user_id):
-        return tool_error("现在不想动笔，等你想聊的时候再说。")
     target_date: datetime.date | None = None
     if date:
         try:
@@ -77,7 +72,10 @@ async def diary_write_tool(
             return tool_error(f"无效的日期格式 '{date}'，必须为 YYYY-MM-DD")
 
     async with SESSION_LOCAL() as db:
-        entry_date = target_date or await resolve_user_local_today(db, user_id)
+        today = await resolve_user_local_today(db, user_id)
+        if target_date is not None and target_date > today:
+            return tool_error("日记只记录已经发生的日子，不能写未来日期；本次未保存")
+        entry_date = target_date or today
         try:
             row = await upsert_diary(
                 db,

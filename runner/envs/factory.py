@@ -26,8 +26,8 @@ class EnvironmentBusyError(RuntimeError):
 
 _TARGET_BUSY_MESSAGE = (
     "The terminal target was changed in settings while commands or background processes from the previous "
-    "target are still running. Wait for them to finish, or stop background processes with the process tool "
-    "(action='list', then action='kill'), then retry."
+    "target are still running. Wait for them to finish before retrying; stopping them may interrupt the user's work, "
+    "so ask the user before stopping any with the process tool."
 )
 
 

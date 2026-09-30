@@ -57,7 +57,7 @@ from services.infrastructure.llm import (
     resolve_video_chain,
     resolve_vision_chain,
 )
-from services.infrastructure.tool_runtime import REGISTRY, schema_name
+from services.infrastructure.tool_runtime import REGISTRY, apply_search_tools_catalog, schema_name
 
 from .native_memory import NativeMemory
 from .prompt_blocks import AgentPromptConfig
@@ -303,11 +303,14 @@ async def build_turn_inputs(
     provider = build_provider(llm_chain[0], ChatProvider)
 
     excluded_tool_names = excluded_tool_names | preset_excluded_tool_names(preset_id)
-    all_schemas = [
-        schema
-        for schema in REGISTRY.get_all_schemas(user_id, user_settings=user_settings)
-        if schema_name(schema) not in excluded_tool_names
-    ]
+    # 排除后重算 search_tools 的业务域清单，只列出本回合实际可解锁的能力。
+    all_schemas = apply_search_tools_catalog(
+        [
+            schema
+            for schema in REGISTRY.get_all_schemas(user_id, user_settings=user_settings)
+            if schema_name(schema) not in excluded_tool_names
+        ],
+    )
     persona = (
         (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
         if is_companion
