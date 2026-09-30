@@ -23,6 +23,7 @@ from services.application.generation import (
     ImageGenerationError,
     apply_outfit_override,
     enqueue_video_job,
+    ensure_video_capability,
     get_job,
     load_self_visual_context,
     prepare_self_video_reference,
@@ -35,6 +36,9 @@ from services.infrastructure.llm import MissingLlmConfigError, VisualReasoningEr
 from services.infrastructure.tool_runtime import ToolsRegistry
 
 logger = get_logger(__name__)
+
+_DURATIONS = range(4, 16)
+_RESOLUTIONS = frozenset({"512P", "768P", "1080P", "2K"})
 
 
 def _first_frame_reference(reference: str, user_id: int) -> str | None:
@@ -177,15 +181,27 @@ async def video_generation_tool(
 ) -> str:
     if media_turn is None:
         return tool_error("视频生成需要会话上下文")
-    if not isinstance(prompt, str) or not prompt.strip() or type(duration) is not int or not 4 <= duration <= 15:
+    if not isinstance(prompt, str) or not prompt.strip() or type(duration) is not int or duration not in _DURATIONS:
         return tool_error("请提供非空视频描述和 4 至 15 秒的时长")
-    if resolution not in {"512P", "768P", "1080P", "2K"}:
+    if resolution not in _RESOLUTIONS:
         return tool_error("视频分辨率无效")
     if first_frame_image:
         # 模型只看得到产物的裸存储路径；在占用本轮视频名额前转为供应商可读的 data URI，无法读取时按参数错误返回。
         first_frame_image = await asyncio.to_thread(_first_frame_reference, first_frame_image, media_turn.user_id)
         if first_frame_image is None:
             return tool_error("first_frame_image 须为本会话图片工具返回的地址，或可公开访问的 http(s) 图片地址")
+    try:
+        # 出镜视频与带首帧的请求都会先付费生成首帧图：供应商链放不下本次时长或分辨率时，在花钱和占用本轮视频名额前就报错。
+        await ensure_video_capability(
+            media_turn.user_id,
+            first_frame=bool(first_frame_image) or subject == "self",
+            duration=duration,
+            resolution=resolution,
+            allowed_durations=_DURATIONS,
+            allowed_resolutions=_RESOLUTIONS,
+        )
+    except MissingLlmConfigError as e:
+        return tool_error(str(e))
     async with media_turn.lock:
         if media_turn.video_claimed:
             return json.dumps(

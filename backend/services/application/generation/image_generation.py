@@ -52,12 +52,19 @@ async def resolve_image_gen_chain(
     image_edit: bool = False,
     multiple_references: bool = False,
     background: str | None = None,
+    prompt_chars: int = 0,
 ) -> tuple[list[ProviderConfig], str | None]:
-    """按参考图/图像编辑能力过滤 image_gen 链；``background="transparent"`` 只保留声明原生透明输出的供应商。"""
+    """按参考图/图像编辑能力过滤 image_gen 链；``background="transparent"`` 只保留声明原生透明输出的供应商；给出 ``prompt_chars`` 时跳过提示词放不下的供应商。"""
     full = await resolve_provider_chain(db, user_id, "image_gen")
+
+    def _fits(cfg: ProviderConfig) -> bool:
+        limit = resolve(ServiceType.image_gen, cfg.provider_name).max_prompt_chars
+        return limit is None or prompt_chars <= limit
 
     def _supports(cfg: ProviderConfig) -> bool:
         cls = resolve(ServiceType.image_gen, cfg.provider_name)
+        if not _fits(cfg):
+            return False
         if background == "transparent" and not cls.supports_transparent_background:
             return False
         if not has_reference:
@@ -69,9 +76,15 @@ async def resolve_image_gen_chain(
         return not multiple_references or cls.supports_multiple_reference_images
 
     capable = [c for c in full if _supports(c)]
-    if not has_reference and background != "transparent":
+    if not full or (capable == full and not has_reference and background != "transparent"):
         return full, None
-    if full and not capable:
+    if not any(_fits(c) for c in full):
+        limit = max(resolve(ServiceType.image_gen, c.provider_name).max_prompt_chars or 0 for c in full)
+        return (
+            [],
+            f"提示词共 {prompt_chars} 字符，超过当前图片生成供应商的上限（{limit} 字符），请缩短描述或启用其他供应商",
+        )
+    if not capable:
         if background == "transparent" and not has_reference:
             error = "当前图片生成供应商均不支持原生透明背景，请启用 local"
         elif multiple_references:
@@ -130,6 +143,7 @@ async def generate_images(
                     image_edit=image_edit,
                     multiple_references=bool(secondary_reference_image),
                     background=background,
+                    prompt_chars=len(prompt),
                 )
         if err:
             logger.warning("image generation chain error", extra={"error": err, "user_id": user_id})

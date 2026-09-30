@@ -115,6 +115,7 @@ from .video import (
 from .video_jobs import drain as drain_video_jobs
 from .video_jobs import (
     enqueue_video_job,
+    ensure_video_capability,
     get_job,
     resume_pending_video_jobs,
     video_generation_wait_seconds,
@@ -205,6 +206,7 @@ __all__ = [
     "drain_video_jobs",
     "drain_video_pack_generation",
     "enqueue_video_job",
+    "ensure_video_capability",
     "finalize_avatar",
     "generate_avatar",
     "generate_fullbody_reference",

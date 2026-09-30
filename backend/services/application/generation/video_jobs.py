@@ -3,7 +3,7 @@
 import asyncio
 import contextlib
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from datetime import timedelta
 from pathlib import Path
 
@@ -39,6 +39,7 @@ from services.infrastructure.assets import (
 )
 from services.infrastructure.llm import (
     MissingLlmConfigError,
+    ProviderConfig,
     ProviderResultUnknownError,
     VideoGenProvider,
     VideoGenRequest,
@@ -257,6 +258,68 @@ async def get_job(db: AsyncSession, job_id: int, user_id: int) -> VideoGenJob | 
     return (await db.execute(stmt)).scalar_one_or_none()
 
 
+def _compatible_video_configs(
+    chain: list[ProviderConfig],
+    *,
+    first_frame: bool,
+    duration: int,
+    resolution: str,
+) -> list[ProviderConfig]:
+    compatible = []
+    for config in chain:
+        provider = build_provider(config, VideoGenProvider)
+        if first_frame and not provider.supports_first_frame:
+            continue
+        if provider.durations is not None and duration not in provider.durations:
+            continue
+        if provider.resolutions is not None and resolution.lower() not in {
+            value.lower() for value in provider.resolutions
+        }:
+            continue
+        compatible.append(config)
+    return compatible
+
+
+async def ensure_video_capability(
+    user_id: int,
+    *,
+    first_frame: bool,
+    duration: int,
+    resolution: str,
+    allowed_durations: Collection[int] | None = None,
+    allowed_resolutions: Collection[str] | None = None,
+) -> None:
+    """付费生成首帧之前确认视频供应商链里有能接单的：首帧、时长与分辨率提交前才核对，首帧图已经花了钱却发现没有供应商能用。不满足时抛 MissingLlmConfigError，并在调用方允许的取值内说明可选的时长与分辨率。"""
+    async with SESSION_LOCAL() as db:
+        chain = await resolve_provider_chain(db, user_id, "video_gen")
+    if not chain:
+        raise MissingLlmConfigError("视频生成服务未配置")
+    if _compatible_video_configs(chain, first_frame=first_frame, duration=duration, resolution=resolution):
+        return
+    providers = [build_provider(config, VideoGenProvider) for config in chain]
+    candidates = [p for p in providers if p.supports_first_frame or not first_frame]
+    if not candidates:
+        raise MissingLlmConfigError("已配置的视频供应商都不支持以首帧图生成视频")
+    hints = []
+    if not any(p.durations is None or duration in p.durations for p in candidates):
+        options = sorted({d for p in candidates for d in p.durations or () if d in (allowed_durations or (d,))})
+        hints.append("可选时长（秒）：" + "、".join(map(str, options)))
+    if not any(
+        p.resolutions is None or resolution.lower() in {value.lower() for value in p.resolutions} for p in candidates
+    ):
+        options = sorted(
+            {
+                v.upper()
+                for p in candidates
+                for v in p.resolutions or ()
+                if v.upper() in (allowed_resolutions or (v.upper(),))
+            },
+        )
+        hints.append("可选分辨率：" + "、".join(options))
+    detail = "；".join(hints) or "同一供应商不同时支持所选时长与分辨率，请调整其一"
+    raise MissingLlmConfigError(f"已配置的视频供应商不支持本次的时长或分辨率（{detail}）")
+
+
 async def enqueue_video_job(
     db: AsyncSession,
     *,
@@ -274,18 +337,12 @@ async def enqueue_video_job(
 ) -> "VideoGenJob":
     """冻结能力链并提交首个任务；轮询绑定实际接单供应商，低分才推进链尾。"""
     chain = await resolve_provider_chain(db, user_id, "video_gen")
-    compatible = []
-    for config in chain:
-        provider = build_provider(config, VideoGenProvider)
-        if first_frame_image and not provider.supports_first_frame:
-            continue
-        if provider.durations is not None and duration not in provider.durations:
-            continue
-        if provider.resolutions is not None and resolution.lower() not in {
-            value.lower() for value in provider.resolutions
-        }:
-            continue
-        compatible.append(config)
+    compatible = _compatible_video_configs(
+        chain,
+        first_frame=bool(first_frame_image),
+        duration=duration,
+        resolution=resolution,
+    )
     if not compatible:
         raise MissingLlmConfigError("未配置支持本次首帧、时长和分辨率的视频供应商")
     state = MediaChainState(providers=[FrozenMediaProvider.from_config(config) for config in compatible])

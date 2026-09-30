@@ -227,6 +227,7 @@ async def generate_character_images(
                 has_reference=bool(reference_image),
                 image_edit=image_edit,
                 multiple_references=bool(secondary_reference_image),
+                prompt_chars=len(prompt),
             )
         if error or not chain:
             raise ImageGenerationError(error or "图片生成服务未配置")
