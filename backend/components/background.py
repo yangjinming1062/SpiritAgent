@@ -33,11 +33,7 @@ class BackgroundTask:
 
 
 class TaskBag:
-    """管理一组并发运行的 asyncio.Task,自动 GC 已完成项,提供统一 drain 出口。
-
-    与 BackgroundTask 的区别:BackgroundTask 管单个长生命周期 loop(ws_event_loop、
-    scheduler_loop),TaskBag 管多份"提交后即返回"的后台任务(视频轮询、cron job spawn)。
-    """
+    """管理一组并发 asyncio.Task 并提供统一 drain；管「提交后即返回」的后台任务（视频轮询、cron spawn），单 loop 归 BackgroundTask。"""
 
     def __init__(self, name: str) -> None:
         self._name = name

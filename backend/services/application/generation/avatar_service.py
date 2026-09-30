@@ -412,10 +412,7 @@ async def _generate_portrait(
     size: str = _AVATAR_SIZE,
     image_edit: bool = False,
 ) -> str:
-    """生成一张立绘并返回裸路径：persist=False 时留作 temp-media 草稿（引导流程），True 时落盘到用户资产目录。
-
-    image_edit=True 时参考图是编辑底图，供应商链按图像编辑能力过滤，不接受 secondary。
-    """
+    """生成一张立绘并返回裸路径：persist=False 留作 temp-media 草稿，True 落盘用户资产目录。``image_edit`` 以参考图为底图并按编辑能力过滤，不接受 secondary。"""
 
     async def generate(text: str) -> list[str]:
         return await generate_images(
@@ -652,10 +649,7 @@ async def list_avatar_history(db: AsyncSession, user_id: int, limit: int = 20) -
 
 
 def _is_orphan_temp_media_asset(asset: AvatarAsset) -> bool:
-    """头像草稿的所有图片字段都指向已过期的 temp-media 文件 → DB 行已无可用图片，按孤儿清理。
-
-    字段全空、或任一字段还有活着的 temp-media / 已转存为用户资产，都不视作孤儿。
-    """
+    """头像草稿所有图片字段都指向已过期 temp-media → DB 行无可用图片，按孤儿清理。字段全空或任一字段仍有活图则不视作孤儿。"""
     paths = [path for path in (asset.asset_url, asset.seed_fullbody_url) if path]
     return bool(paths) and all(path.startswith("temp-media/") and _portrait_file(path) is None for path in paths)
 

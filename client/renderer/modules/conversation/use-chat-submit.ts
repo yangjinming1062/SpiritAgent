@@ -100,9 +100,7 @@ export function useChatSubmit({
   const textRef = useRef(text)
   const pendingRef = useRef(pending)
   const sendingRef = useRef(sending)
-  // externalPaths 已是值类型，但仍走 ref：send 是异步的，期间用户继续拖入文件
-  // 会改变 externalPaths 的引用。回调创建时闭包里的快照已过期，必须读 ref 才能
-  // 拿到发送瞬间的最新列表。
+  // externalPaths 已是值类型，但仍走 ref：send 是异步的，期间用户继续拖入文件会改变 externalPaths 的引用。回调创建时闭包里的快照已过期，必须读 ref 才能拿到发送瞬间的最新列表。
   const externalPathsRef = useRef(externalPaths)
   textRef.current = text
   pendingRef.current = pending
@@ -232,8 +230,7 @@ export function useChatSubmit({
       const displayAttachments: ChatAttachment[] = []
 
       if (currentPending?.type === 'image') {
-        // 本地图片优先以 data URL 附件直发多模态（后端转 input_image parts，视觉链路接手）；
-        // 读取失败（不可读/超体量）才降级路径模式：@file: 指令进正文，LLM 走文件工具读取。
+        // 本地图片优先以 data URL 附件直发多模态（后端转 input_image parts，视觉链路接手）；读取失败（不可读/超体量）才降级路径模式：@file: 指令进正文，LLM 走文件工具读取。
         let dataUrl: string | null = currentPending.value.startsWith('data:') ? currentPending.value : null
 
         if (!dataUrl) {

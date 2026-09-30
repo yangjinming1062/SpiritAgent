@@ -86,10 +86,7 @@ class OutfitDraftExpiredError(OutfitError):
 
 
 async def _require_fullbody_seed_readable(avatar: AvatarAsset) -> str:
-    """换装/自备图身份锚点：全身种子路径存在且字节可读，返回 data URI。
-
-    不可读是源资产状态冲突（与 avatar/scenes 自备图、AI 换装同语义），抛 OutfitStateError
-    由 API 映射为 409，不能降级纯文字。"""
+    """换装/自备图身份锚点：全身种子路径存在且字节可读时返回 data URI。不可读是源资产状态冲突（与 avatar/scenes 自备图同语义），抛 OutfitStateError 由 API 映射 409，不能降级纯文字。"""
     if not avatar.seed_fullbody_url:
         raise OutfitStateError("全身形象缺失或无法读取，请在设置的“角色与记忆”中重新生成")
     uri = await asyncio.to_thread(load_avatar_bytes_as_data_uri, avatar.seed_fullbody_url)
@@ -208,10 +205,7 @@ async def _describe_reference_garment(
     content_type: str | None = None,
     requirement: str = "",
 ) -> str | None:
-    """把服装参考图连同用户文字要求整合为一段着装设计稿；视觉链缺失或整合失败返回 None（降级为纯描述生成）。
-
-    image 缺省时从 source 指向的已转存参考图读取；成功时把设计稿写入 source（调用方持久化），
-    重新生成时不再重复整合。整合走独立短会话，不占请求连接。"""
+    """把服装参考图与用户文字整合为着装设计稿；视觉链缺失或失败返回 None（降级纯描述）。成功时写入 source 供调用方持久化，重生成不再重复整合；整合走独立短会话，不占请求连接。"""
     if image is None:
         ref_path = source.get("reference_image_path")
         loaded = await asyncio.to_thread(read_portrait_bytes, ref_path) if isinstance(ref_path, str) else None
@@ -451,8 +445,7 @@ async def confirm_outfit(
     user_id: int,
     outfit_id: int,
 ) -> CompanionOutfit:
-    """确认草稿（failed 可重试确认）：立绘转正为持久参考图，状态到 ready（参考图就绪）。
-    确认不触发任何生成，也不自动穿着；描述生成后台进行，穿着由 activate_outfit 显式完成。"""
+    """确认草稿（failed 可重试）：立绘转正为持久参考图到 ready。确认不触发生成、不自动穿着；描述生成后台进行，穿着由 activate_outfit 显式完成。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:
@@ -652,8 +645,7 @@ async def activate_outfit(
     *,
     require_current_identity: bool = False,
 ) -> CompanionOutfit:
-    """即时穿着就绪外观：翻转该用户的激活外观。`active` 是当前生效着装描述的唯一权威，
-    供出镜媒体生成消费；对渲染形象的影响由各形象链自行处理。"""
+    """即时穿着就绪外观：翻转该用户的激活外观。``active`` 是当前生效着装描述的唯一权威，供出镜媒体生成消费。"""
     async with get_avatar_job_lock(user_id):
         outfit = await _get_outfit(db, user_id, outfit_id)
         if outfit is None:

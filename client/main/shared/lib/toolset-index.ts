@@ -7,9 +7,7 @@ interface ToolsetDef {
   staticTools?: string[]
 }
 
-// 工具集 id 的权威枚举（覆盖 Runner 侧与 Backend 桶的全部 id）。Runner 侧工具集在此按 schema/前缀动态匹配，
-// Backend 侧工具集在此登记静态工具名；Runner / Backend 各自的 id → 工具名映射分别见
-// runner/tools/toolsets/catalog.py 与 backend/services/infrastructure/tool_runtime/toolsets.py。
+// 工具集 id 的权威枚举（覆盖 Runner 侧与 Backend 桶的全部 id）：Runner 侧按 schema/前缀动态匹配，Backend 侧登记静态工具名；id → 工具名映射见 runner/tools/toolsets/catalog.py 与 backend/services/infrastructure/tool_runtime/toolsets.py。
 const TOOLSET_DEFS: ToolsetDef[] = [
   { id: 'browser_automation', prefixes: ['browser_'] },
   { extraTools: ['read_file', 'write_file', 'patch', 'list_directory', 'search_files'], id: 'file_operations' },
@@ -83,7 +81,6 @@ function toolNamesForToolset(def: ToolsetDef, availableNames: Set<string>): stri
   return names
 }
 
-// 生成供渲染端使用的工具集清单。供 `spiritagent:toolsets:list` 调用。
 export function buildToolsetRoster(schemas: Array<{ name?: string }>, disabledToolsetIds: Set<string>): ToolsetItem[] {
   const availableNames = new Set(schemas.map(s => s?.name).filter(Boolean) as string[])
 

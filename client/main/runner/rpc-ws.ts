@@ -432,8 +432,7 @@ export function createRunnerWsServer(options: CreateRunnerWsServerOptions = {}):
           handleRunnerMessage(data)
         })
 
-        // 被新连接替换的旧 socket 关闭时不能清场——pending 调用与
-        // connected 状态属于新连接，误发 disconnected 会让 bridge 误判宕机。
+        // 被新连接替换的旧 socket 关闭时不能清场—— pending 调用与 connected 状态属于新连接，误发 disconnected 会让 bridge 误判宕机。
         ws.on('close', code => {
           log(`[runner-ws] runner disconnected code=${code}`)
 

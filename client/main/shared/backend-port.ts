@@ -1,7 +1,4 @@
-/**
- * Runner/托盘/配置同步对后端的最小端口。
- * 只描述结构契约，不 import backend 实现，保持 shared 为叶子、runner 与 backend 互不直连。
- */
+/** Runner/托盘/配置同步对后端的最小端口。只描述结构契约，不 import backend 实现，保持 shared 为叶子、runner 与 backend 互不直连。 */
 
 export interface BackendConnection {
   baseUrl: string

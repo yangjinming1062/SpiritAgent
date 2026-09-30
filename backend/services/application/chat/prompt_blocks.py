@@ -1,7 +1,4 @@
-"""系统提示词块渲染器注册表。
-
-``render_preset_body`` 严格替换预设体里的 ``{{BLOCK_NAME}}`` 占位符：未识别 → logger.warning + 原文保留；空值 → 替换成空串后收紧连续空行。
-"""
+"""系统提示词块渲染器注册表。``render_preset_body`` 严格替换 ``{{BLOCK_NAME}}``：未识别则 warning 并保留原文；空值替换为空串后收紧连续空行。"""
 
 import logging
 import re

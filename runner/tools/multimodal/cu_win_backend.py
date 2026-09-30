@@ -24,7 +24,7 @@ if IS_WINDOWS:
 
 logger = logging.getLogger(__name__)
 
-# COM/UIA 调用与 pyautogui 共用一套物理鼠标键盘，桌面自动化不能并发执行。
+# 桌面自动化不能并发执行。
 _serial_lock = threading.RLock()
 
 
@@ -37,7 +37,7 @@ def _serialized[**P, R](fn: Callable[P, R]) -> Callable[P, R]:
     return wrapper
 
 
-# 入参已是规范键名（option / ctrl / win ...，cmd 已归为 win），这里只映射到 pyautogui 的 Windows 键名。
+# 规范键名映射到 pyautogui。
 _WINDOWS_KEY_MAP = {"option": "alt", "return": "enter"}
 
 _PW_RENDERFULLCONTENT = 0x00000002
@@ -46,7 +46,7 @@ _MOUSEEVENTF_HWHEEL = 0x1000
 _WHEEL_DELTA = 120
 _MAX_UIA_ELEMENTS = 500
 
-# GetClassNameW 按规范大小写返回，比较时统一小写。
+# 类名比较统一小写。
 _WIN_SHELL_CLASSES = frozenset({"progman", "shell_traywnd"})
 
 
@@ -121,7 +121,7 @@ def _capture_window_printwindow(hwnd: int, width: int, height: int) -> bytes | N
             return None
         return _bitmap_to_png(hdc_mem, hbitmap, width, height)
     finally:
-        # 像素拷贝中途抛错也要释放 GDI 句柄，否则每次截图都会累积泄漏。
+        # 抛错也须释放 GDI 句柄。
         ctypes.windll.gdi32.DeleteObject(hbitmap)
         ctypes.windll.gdi32.DeleteDC(hdc_mem)
         ctypes.windll.user32.ReleaseDC(hwnd, hdc_window)
@@ -211,7 +211,7 @@ def _held_keys(modifiers: list[str] | None) -> Iterator[None]:
             pressed.append(key)
         yield
     finally:
-        # 动作中途抛错也要逐个抬键，否则修饰键停留在按下状态，影响用户的真实键盘输入。
+        # 抛错也须抬键，防修饰键卡住。
         with _failsafe_suspended():
             for key in reversed(pressed):
                 try:
@@ -231,16 +231,13 @@ def _failed(action: str, error: Exception) -> ActionResult:
 
 
 class WinBackend(ComputerUseBackend):
-    """Windows 后端：UIA 枚举元素、mss 截图，pyautogui 驱动真实鼠标与键盘。
-
-    点击落在屏幕上该位置当前可见的窗口，按键发给前台窗口；坐标为目标窗口截图内的像素，执行时按窗口当前位置换算成屏幕坐标。
-    """
+    """Windows 后端：UIA 枚举、mss 截图、pyautogui 键鼠；坐标为目标窗口截图像素。"""
 
     def __init__(self) -> None:
         self._hwnd: int | None = None
         self._app = ""
         self._elements: list[UIElement] = []
-        # 与 _elements 同序的 pywinauto 控件，供 set_value 直接操作。
+        # 与 _elements 同序，供 set_value。
         self._controls: list[Any] = []
         self._desktop: Any = None
 
@@ -332,7 +329,7 @@ class WinBackend(ComputerUseBackend):
             try:
                 r = ctrl.rectangle()
                 x, y, w, h = r.left - left, r.top - top, r.width(), r.height()
-                # 跳过零尺寸与完全在窗口外的元素（滚出视区的列表项等），它们无法按截图位置操作。
+                # 跳过零尺寸/窗外元素。
                 if w <= 0 or h <= 0 or x + w <= 0 or y + h <= 0 or x >= width or y >= height:
                     continue
                 label = ""
@@ -348,7 +345,7 @@ class WinBackend(ComputerUseBackend):
                 )
                 controls.append(ctrl)
             except Exception:
-                # 枚举期间控件可能消失，跳过即可。
+                # 枚举期间控件可能消失。
                 continue
         return elements, controls
 
@@ -424,7 +421,7 @@ class WinBackend(ComputerUseBackend):
                 try:
                     pyautogui.dragTo(*end, duration=0.5, button=button, mouseDownUp=False, _pause=False)
                 finally:
-                    # 拖动中途被用户以角点中止时也要松开按钮。
+                    # 中止拖动也须松开按钮。
                     with _failsafe_suspended():
                         pyautogui.mouseUp(button=button, _pause=False)
         except Exception as e:
@@ -453,7 +450,7 @@ class WinBackend(ComputerUseBackend):
             else:
                 sx, sy = pyautogui.position()
             with _held_keys(modifiers):
-                # pyautogui 的滚轮按 1/120 格发送且不移动到目标点、横向实为纵向，这里直接发送整格滚轮事件。
+                # 直接发整格滚轮，绕开 pyautogui 1/120 限制。
                 ctypes.windll.user32.mouse_event(flag, 0, 0, delta, 0)
         except Exception as e:
             return _failed("scroll", e)
@@ -467,7 +464,7 @@ class WinBackend(ComputerUseBackend):
             if text.isascii():
                 pyautogui.write(text, interval=0.02)
             else:
-                # 非 ASCII 经剪贴板粘贴；尽力在目标应用读取后恢复用户原剪贴板。
+                # 非 ASCII 走剪贴板，事后尽力恢复。
                 previous = None
                 with contextlib.suppress(Exception):
                     previous = pyperclip.paste()

@@ -13,7 +13,7 @@ _job_lock = threading.Lock()
 if IS_WINDOWS:
     from ctypes import wintypes
 
-    # use_last_error=True 配合 ctypes.get_last_error() 是可靠的错误通道；裸 windll + GetLastError() FFI 调用可能被中间 ctypes 逻辑重置 LastError。
+    # use_last_error=True 配合 get_last_error()。
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
     kernel32.CreateJobObjectW.restype = wintypes.HANDLE

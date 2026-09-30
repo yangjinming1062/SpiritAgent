@@ -5,9 +5,7 @@ import log from 'electron-log/main'
 
 import { atomicWriteFile, safeReadJson } from './utils'
 
-// $SPIRITAGENT_HOME/desktop-config.json 保存用户激活过的后端 URL
-//（与加密会话文件 `agent-session.json` 分离，便于在登出后仍然保留）。
-// 尽力处理：文件缺失或格式错乱时返回 null。
+// $SPIRITAGENT_HOME/desktop-config.json 保存用户激活过的后端 URL（与加密会话文件 `agent-session.json` 分离，登出后仍保留）；缺失或格式错乱时返回 null。
 const FILENAME = 'desktop-config.json'
 
 function configPath(spiritagentHome: string | null | undefined): string | null {
@@ -79,8 +77,7 @@ export async function writeStoredBackendUrl(
   }
 }
 
-// 为会在后面拼接路径后缀（如 /api/update）的调用方做归一化与去尾斜杠。
-// 没有配置后端 URL 时返回 null。
+// 为会在后面拼接路径后缀（如 /api/update）的调用方做归一化与去尾斜杠；没有配置后端 URL 时返回 null。
 export function resolveNormalizedBackendUrl(spiritagentHome: string | null | undefined): string | null {
   const url = readStoredBackendUrl(spiritagentHome)
 

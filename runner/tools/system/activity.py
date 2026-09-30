@@ -37,7 +37,7 @@ if IS_WINDOWS:
 
     _WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
 
-    # 私有 DLL 实例：在此声明的函数原型不影响其他模块经 ctypes.windll 的调用；HWND 按指针宽度传递。
+    # 私有 DLL 实例；HWND 按指针宽传递。
     _user32 = ctypes.WinDLL("user32")
     _kernel32 = ctypes.WinDLL("kernel32")
     _dwmapi = ctypes.WinDLL("dwmapi")
@@ -166,7 +166,7 @@ def get_windows() -> WindowScene:
     return {"windows": []}
 
 
-# cmd.exe 元字符；macOS 的 open 不经 shell。前导 '-' 会被当成 open 的选项，Windows 前导 '/' 会被当成 start 的开关。
+# 拦 cmd 元字符与前导 -/ 被当成选项。
 _APP_NAME_FORBIDDEN_CHARS = frozenset("&|<>^\"'%$();{}\n\r\t")
 
 
@@ -187,7 +187,7 @@ def open_application(name: str) -> dict[str, Any]:
         return {"opened": False, "error": "application name contains characters that are not allowed"}
     try:
         if IS_WINDOWS:
-            # start 找不到程序时会弹系统错误框并阻塞，这里不等待其结果。
+            # start 找不到程序会弹框阻塞，不等待。
             subprocess.Popen(["cmd", "/c", "start", "", safe_name])
         elif IS_MACOS:
             result = subprocess.run(["open", "-a", safe_name], capture_output=True, text=True, timeout=15, check=False)
@@ -290,7 +290,7 @@ def _work_area_macos() -> dict[str, int]:
         raise RuntimeError("no display found")
     primary = screens[0]
     full, visible = primary.frame(), primary.visibleFrame()
-    # AppKit 以主屏左下角为原点、y 向上；换算成与窗口快照和光标位置一致的左上角原点。
+    # AppKit 原点在左下，换算成左上。
     top = full.size.height - (visible.origin.y + visible.size.height)
     return {"x": int(visible.origin.x), "y": int(top), "w": int(visible.size.width), "h": int(visible.size.height)}
 
@@ -328,7 +328,7 @@ def _click_at_macos(x: int, y: int, button: str, clicks: int) -> None:
     for click_state in range(1, clicks + 1):
         for event_type in (down, up):
             event = Quartz.CGEventCreateMouseEvent(None, event_type, (x, y), mouse_button)
-            # 连击须递增 clickState，应用才会识别为双击而不是两次单击。
+            # 双击须递增 clickState。
             Quartz.CGEventSetIntegerValueField(event, Quartz.kCGMouseEventClickState, click_state)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
             time.sleep(0.01)
@@ -340,7 +340,7 @@ def _idle_windows() -> float:
         info = _LASTINPUTINFO(cbSize=ctypes.sizeof(_LASTINPUTINFO))
         if not _user32.GetLastInputInfo(ctypes.byref(info)):
             return -1.0
-        # dwTime 与 GetTickCount 同为 32 位毫秒计数，约 49.7 天回绕一次，差值按 32 位取模。
+        # dwTime 32 位毫秒，差值按模取。
         return ((_kernel32.GetTickCount() - info.dwTime) & 0xFFFFFFFF) / 1000.0
     except Exception as e:
         logger.debug("win idle probe failed: %s", e)
@@ -388,7 +388,7 @@ def _focus_windows() -> dict[str, Any]:
     try:
         if not (hwnd := _user32.GetForegroundWindow()):
             return {}
-        # 前台是桌面或任务栏等外壳窗口时，沿 Z 序找用户实际在用的可见顶层窗口。
+        # 前台是壳层时沿 Z 序找用户窗口。
         for _ in range(8):
             if _class_name(hwnd) not in _SHELL_WINDOW_CLASSES and _user32.IsWindowVisible(hwnd):
                 break
@@ -396,7 +396,7 @@ def _focus_windows() -> dict[str, Any]:
                 break
             hwnd = next_hwnd
 
-        # 读该线程真正持有焦点的窗口，再取其顶层窗口，避免停在外壳容器上。
+        # 取线程焦点窗口的顶层，避免停在壳层。
         info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
         _user32.GetGUIThreadInfo(_user32.GetWindowThreadProcessId(hwnd, None), ctypes.byref(info))
         real_hwnd = info.hwndFocus or info.hwndActive or hwnd
@@ -428,7 +428,7 @@ def _focus_macos() -> dict[str, Any]:
             "pid": pid,
             "bundle": app.bundleIdentifier() or "",
         }
-        # 窗口列表按从前到后排列，取该应用第一个普通层窗口。
+        # 列表从前到后，取首个普通层窗口。
         for win in Quartz.CGWindowListCopyWindowInfo(Quartz.kCGWindowListOptionOnScreenOnly, Quartz.kCGNullWindowID):
             if win.get("kCGWindowOwnerPID", -1) != pid or win.get("kCGWindowLayer", 0) != 0:
                 continue
@@ -564,7 +564,7 @@ def _windows_macos() -> WindowScene:
             owner = win.get("kCGWindowOwnerName", "") or ""
             if owner.casefold() in {"spiritagent", "唤生"}:
                 continue
-            # 列表按从前到后排列，前台应用的第一个窗口即焦点窗口。
+            # 前台应用首个窗口即焦点。
             focused = win.get("kCGWindowOwnerPID", -1) == focused_pid and not focused_window_seen
             focused_window_seen |= focused
             results.append(

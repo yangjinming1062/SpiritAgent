@@ -16,8 +16,7 @@ interface SkillsIpcDeps {
 type SkillSetEnabledPayload = Parameters<IpcInvokeContract['spiritagent:skill:set-enabled']>[0]
 type ToolsetSetEnabledPayload = Parameters<IpcInvokeContract['spiritagent:toolset:set-enabled']>[0]
 
-// 技能与工具集的启/禁用共用同一写入路径：校验字段、在 disabled 集合增删并写回。
-// 差异通过 section / idField 注入。
+// 技能与工具集的启/禁用共用同一写入路径（校验字段、在 disabled 集合增删并写回），差异通过 section / idField 注入。
 async function toggleDisabled({
   section,
   idField,

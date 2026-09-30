@@ -16,8 +16,7 @@ import {
 } from './companion-store'
 import { $llmAffect } from './prefs'
 
-// 本地环境信号取自 Runner 的 system.* 工具——伙伴层直接基于这些信号做推理，
-// 绕过 LLM。Runner 离线、探测失败或监视停止时空闲时长回到 -1，锁屏与焦点保留上次值。
+// 本地环境信号取自 Runner 的 system.* 工具，伙伴层直接据此推理（不经 LLM）；Runner 离线或探测失败时空闲时长回到 -1。
 
 export const $screenLocked = atom<boolean>(false)
 // -1 表示本周期无信号（Runner 离线或探测失败），调用方按未知处理。
@@ -58,8 +57,7 @@ let localChatTurnCount = 0
 let lastChatTurnSentAt = 0
 
 function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void {
-  // 空闲自主表演只在用户选择自主档且精灵舞台实际可见时推理（与播放同一组条件：精灵窗未隐藏或最小化、
-  // 未被完整入口收起、未开轻语、未锁屏），在发请求的时刻读取；播放指令由后端统一派发。
+  // 自主表演条件与播放共用可见性判断（见 renderer README），发请求时读取；播放指令由后端统一派发。
   if (
     !$llmAffect.get() ||
     $effectiveTier.get() !== 'autonomous' ||
@@ -77,8 +75,7 @@ function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void 
     return
   }
 
-  // 夜间政策权威在服务端（ARCHITECTURE「打扰档位与情境」 夜间与档位正交）；客户端只传 local_hour，
-  // 不在此硬编码跳过——避免与服务端时区/策略漂移。
+  // 夜间政策权威在服务端，客户端只传 local_hour，不在此硬编码跳过。
   const hour = new Date().getHours()
 
   lastIdleExpressionAt = now
@@ -89,7 +86,6 @@ function maybeTriggerIdleExpression(idleSeconds: number, locked: boolean): void 
       local_hour: hour
     })
     .catch(error => {
-      // 冷却期过后的轮询再重试。
       log.warn('activity', 'companion.idle_expression failed', error)
     })
 }
@@ -206,9 +202,7 @@ function classifyFocusedApp(info: FocusedAppInfo): FocusCategory {
   return isMac ? classifyMacos(info) : classifyWindows(info)
 }
 
-// 「沉浸式 → 静止」只覆盖真正浸没型上下文（游戏 / 全屏）：静止档切断一切主动表达与推理，
-// 适合不可打断的场景。IDE/阅读等专注工作不压档——专注≠不可打扰，用户自选档位继续生效
-// （常规下仍可气泡轻表达，自主下仍可 perch 陪工）。游戏即使窗口化也按沉浸处理。
+// 「沉浸式 → 静止」只覆盖真正浸没型上下文（游戏 / 全屏）；IDE/阅读等专注工作不压档（专注≠不可打扰），游戏窗口化也按沉浸处理。
 const IMMERSIVE_CATEGORIES: ReadonlySet<FocusCategory> = new Set(['gaming'])
 
 // 活动覆盖只表达沉浸情境；手动静止与临时安静由 $effectiveTier 统一裁决，不在此重复推导。
@@ -219,7 +213,7 @@ function computeImmersiveOverride(ctx: FocusContext | null): DisturbanceTier | n
 function maybePushTierOverride(): void {
   const nextOverride = computeImmersiveOverride($focusContext.get())
 
-  // 写入 override atom 让 $effectiveTier 重算；值未变则跳过 set——订阅者会级联到所有订阅者。
+  // 值未变则跳过 set，避免订阅者级联。
   if ($effectiveTierOverride.get() !== nextOverride) {
     $effectiveTierOverride.set(nextOverride)
   }
@@ -235,8 +229,7 @@ function maybePushTierOverride(): void {
   pushEffectiveDisturbanceTier(effective)
 }
 
-// Runner 的活动快照聚合：一次 ``system.snapshot`` 往返取回四项信号；
-// 单项探针失败时返回与各独立工具相同的默认值。
+// Runner 活动快照聚合：一次 system.snapshot 取回四项信号，单项探针失败时返回与各独立工具相同的默认值。
 interface SystemSnapshot {
   idle_seconds?: number
   locked?: boolean
@@ -301,7 +294,6 @@ async function pollSnapshot(generation: number): Promise<void> {
     return
   }
 
-  // ``system.snapshot`` 聚合全部四个信号。
   const snapshotResult = await desktop.runnerInvoke('system.snapshot', {}).catch(() => null)
 
   if (generation !== monitorGeneration) {
@@ -309,7 +301,7 @@ async function pollSnapshot(generation: number): Promise<void> {
   }
 
   if (snapshotResult === null) {
-    // 探测失败：空闲时长置为未知，锁屏与焦点保留上次值；档位覆盖仍重算并上报当前生效档位。
+    // 探测失败：空闲时长置未知，锁屏与焦点保留上次值；档位覆盖仍重算并上报当前生效档位。
     $lastIdleSeconds.set(-1)
     maybePushTierOverride()
     await reportCompanionSignal(false)
@@ -325,7 +317,6 @@ async function pollSnapshot(generation: number): Promise<void> {
     return
   }
 
-  // 锁屏场景：仅在快照包含该字段时才更新原子。
   if (snapshot.locked !== undefined) {
     const isLocked = Boolean(snapshot.locked)
 
@@ -336,9 +327,7 @@ async function pollSnapshot(generation: number): Promise<void> {
 
   const idleSeconds = Number(snapshot.idle_seconds ?? -1)
 
-  // ``Number('abc')`` 返回 NaN；而 ``NaN < N`` 永远为 false，
-  // 没有显式守卫时下面的冷却网关会把 NaN 透传给后端的 LLM prompt。
-  // 把任何非有限值当作缺失信号处理。
+  // 非有限空闲值按缺失信号处理（NaN 会透传进后端 LLM prompt）。
   if (!Number.isFinite(idleSeconds)) {
     $lastIdleSeconds.set(-1)
     await reportCompanionSignal(false)
@@ -346,13 +335,10 @@ async function pollSnapshot(generation: number): Promise<void> {
     return
   }
 
-  // 缓存最近一次有限空闲值，其他模块按需读取，不必再向 Runner 发起请求。
-  // 这里的 -1 表示"本周期无信号"——调用方按未知处理并跳过该字段。
+  // 缓存最近一次有限空闲值供其他模块读取，-1 表示本周期无信号。
   $lastIdleSeconds.set(idleSeconds)
 
-  // 全屏状态与聚焦应用独立：即使聚焦应用分类失败，也单独跟踪全屏位，
-  // 这样只要当前是全屏窗口，无论聚焦分类因何缺失，
-  // 主动出击始终被压制。
+  // 全屏位独立于聚焦分类跟踪，分类缺失时全屏仍压制主动表达。
   const fullscreenProbeOk = snapshot.fullscreen !== undefined
 
   const fullscreen = fullscreenProbeOk ? Boolean(snapshot.fullscreen) : ($focusContext.get()?.fullscreen ?? false)
@@ -398,9 +384,7 @@ async function pollSnapshot(generation: number): Promise<void> {
       })
     }
   } else if (fullscreenProbeOk) {
-    // focused-app 探测为空但 fullscreen 成功：保留分类
-    // （以及 override atom），但仍要更新 fullscreen 位，
-    // 这样新检测到的全屏窗口无需依赖一次成功的 focused-app 探测。
+    // focused-app 探测为空但 fullscreen 成功时保留分类，只更新 fullscreen 位。
     const cur = $focusContext.get()
 
     if (cur && cur.fullscreen !== fullscreen) {
@@ -468,19 +452,13 @@ export function startActivityMonitor(): () => void {
     void pollOnce()
   }
 
-  // 订阅共享的 phase atom（见 @/shared/store/runner-status）。
-  // nanostore 在订阅时会用当前值触发一次回调，
-  // 所以如果 bridge 已经是 `running`（atom 已通过 runnerGetState 水合），
-  // 首次轮询会被 kick。后续的 `running` 事件让 `runnerReady` 保持 true，
-  // 但一次性 latch 避免在恢复时爆发轮询（刻意如此：不爆发，
-  // 只是重新并入 30 秒节拍）。
+  // nanostore 订阅即触发一次回调，已 running 会立刻 kick 首次轮询；后续 running 只保持 runnerReady，一次性 latch 避免恢复时爆发轮询。
   offPhaseSub = $runnerPhase.subscribe(phase => {
     if (phase === 'running') {
       runnerReady = true
       kickFirstPoll()
     } else if (phase === 'stopped' || phase === 'error') {
-      // bridge 恢复后会再次发出 `running`；在此之前 setInterval tick
-      // 是空操作，避免在 IPC 错误日志里不断刷 "Runner is not connected"。
+      // bridge 恢复后会再发 running；在此之前 setInterval tick 空操作，避免 IPC 错误日志刷屏。
       runnerReady = false
       monitorGeneration += 1
       polling = false
@@ -531,9 +509,7 @@ function stopActivityMonitor(): void {
   runnerReady = false
 }
 
-// 客户端 stats RPC 节流：前 10 次（对齐后端 ``STATS_THRESHOLD``）逐次发送，让后端当日计数
-// 尽快越过阈值并写入每日汇总；之后每 60 秒至多发送一次，其间事件丢弃，汇总行按采样刷新
-// （计数 / 高峰小时 / hour_buckets），限制越过阈值后的 DB 写入频率。
+// 客户端 stats RPC 节流：前 10 次逐次发送让后端尽快越过当日阈值，之后每 60 秒至多一次，其间事件丢弃。
 export function reportInteractionStat(kind: 'chat_turn'): void {
   const gateway = $gateway.get()
 
@@ -552,6 +528,6 @@ export function reportInteractionStat(kind: 'chat_turn'): void {
   lastChatTurnSentAt = now
 
   void gateway.request('companion.record_interaction_stats', { kind, hour: new Date().getHours() }).catch(() => {
-    /* 即发即忘；失败静默吞掉 */
+    // 即发即忘
   })
 }

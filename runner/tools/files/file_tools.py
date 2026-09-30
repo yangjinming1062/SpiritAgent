@@ -45,7 +45,7 @@ logger = logging.getLogger(__name__)
 
 _EXPECTED_WRITE_ERRNOS = {errno.EACCES, errno.EPERM, errno.EROFS}
 
-# 与模型无关，无法计 token，以字符数近似：100K 字符约 25–35K token。可由配置 file_read_max_chars 覆盖。
+# 以字符近似 token（100K≈25–35K）；可由 file_read_max_chars 覆盖。
 _DEFAULT_MAX_READ_CHARS = 100_000
 _max_read_chars_cached: int | None = None
 
@@ -65,10 +65,10 @@ def reset_max_read_chars_cache() -> None:
     _max_read_chars_cached = None
 
 
-# 文件总大小超过该阈值且调用方未指定窄范围（limit <= 200）时，提示按区段读取。
+# 超阈值且未给窄范围时提示分段读。
 _LARGE_FILE_HINT_BYTES = 512_000
 
-# 读取会无限输出或阻塞等待输入的设备路径；远端 Linux 环境同样适用。
+# 拒绝无限输出/阻塞的设备路径。
 _BLOCKED_DEVICE_PATHS = frozenset(
     {
         "/dev/zero",
@@ -96,8 +96,7 @@ def _is_blocked_device_path(path: str) -> bool:
     return path.endswith(("/fd/0", "/fd/1", "/fd/2", "/environ", "/cmdline", "/maps"))
 
 
-# 文件工具拒绝写入的位置，按解析后路径的前缀匹配；保留尾部 ``/``，让 ``C:/Windows`` 不命中
-# 只针对 ``C:/Windows/System32`` 的前缀。Windows 与 macOS 文件系统默认大小写不敏感，比较前统一小写。
+# 写禁区按解析路径前缀匹配（尾部 / 防误伤）；比较前统一小写。
 _CASE_INSENSITIVE_PATHS = IS_WINDOWS or sys.platform == "darwin"
 _SENSITIVE_PATH_PREFIXES = (
     # Linux 系统与 systemd 状态（远端环境）
@@ -130,7 +129,7 @@ def _user_sensitive_paths() -> tuple[tuple[str, ...], tuple[str, ...]]:
         subdirs = ("appdata/roaming/microsoft/", "appdata/local/microsoft/")
         files = ("ntuser.dat", "ntuser.dat.log", "ntuser.ini")
     elif sys.platform == "darwin":
-        # 钥匙串（登录密码、证书）、TCC 隐私授权数据库与 cookie。
+        # 钥匙串、TCC 与 cookie。
         home_vars = ("HOME",)
         subdirs = ("library/keychains/", "library/application support/com.apple.tcc/", "library/cookies/")
         files = ()
@@ -144,10 +143,7 @@ _SENSITIVE_USER_PREFIXES, _SENSITIVE_USER_EXACTS = _user_sensitive_paths()
 
 
 def _sensitive_write_error(target: str, local: bool) -> str | None:
-    """写入目标落在系统目录、用户凭据区或应用设置文件时返回拒绝原因。
-
-    本地环境传入解析后的绝对路径；远端环境只能按字面路径比较。
-    """
+    """写入目标在系统/凭据/设置区时返回拒绝原因；远端只比字面路径。"""
     normalized = _compare_form(target if local else posixpath.normpath(target))
     if (
         normalized.startswith(_SENSITIVE_PATH_PREFIXES)
@@ -159,7 +155,7 @@ def _sensitive_write_error(target: str, local: bool) -> str | None:
             f"Refusing to write to sensitive system path: {target}. "
             "File tools cannot modify system locations; use the terminal tool if this change is required."
         )
-    # 设置文件里有安全相关配置，不允许模型直接改写。
+    # 设置含安全配置，禁止模型改写。
     if local and normalized == _compare_form(str((get_spiritagent_home() / "desktop-settings.json").resolve())):
         return (
             f"Refusing to write to the app settings file: {target}. Change settings in the app's settings page instead."
@@ -184,7 +180,7 @@ def _file_ops(task_id: str) -> Iterator[FileOperations]:
     task_id = resolve_container_task_id(task_id)
     with use_environment(task_id) as env:
         with _file_ops_lock:
-            # 环境可能已被清理并重建，缓存只在绑定同一环境对象时复用。
+            # 缓存仅绑定同一环境对象时复用。
             file_ops = _file_ops_cache.get(task_id)
             if file_ops is None or file_ops.env is not env:
                 file_ops = NativeFileOperations(env) if env.env_type == "local" else ShellFileOperations(env)
@@ -224,7 +220,7 @@ def list_directory_tool(path: str, task_id: str = "default") -> str:
             if result.error:
                 return tool_error(result.error)
             entries = sorted(result.entries, key=lambda x: (not x["is_dir"], x["name"]))
-            # 按单条约 120 字符估算结果上限，避免一次列出上万条撑满上下文。
+            # 按约 120 字符/条估算上限。
             max_entries = max(50, registry.get_max_result_size() // 120)
             output: dict[str, Any] = {"path": target, "entries": entries[:max_entries]}
             if len(entries) > max_entries:
@@ -244,7 +240,7 @@ def read_file_tool(path: str, offset: int = 1, limit: int = DEFAULT_READ_LIMIT, 
         with _file_ops(task_id) as file_ops:
             local = isinstance(file_ops, NativeFileOperations)
             target = _target(file_ops, path)
-            # 字面路径与解析后路径都检查：前者拦住 /dev/stdin 这类别名，后者拦住指向设备的符号链接。
+            # 字面与解析路径都查：拦别名与指向设备的链接。
             if _is_blocked_device_path(path) or _is_blocked_device_path(target):
                 return tool_error(
                     f"Cannot read '{path}': this is a device file that would block or produce infinite output.",
@@ -256,7 +252,7 @@ def read_file_tool(path: str, offset: int = 1, limit: int = DEFAULT_READ_LIMIT, 
 
             result = file_ops.read_file(target, offset, limit)
             result_dict = result.to_dict()
-            # 按实际进入上下文的带行号内容计字符数，而非文件大小。
+            # 按进入上下文的内容计字符。
             max_chars = _get_max_read_chars()
             if len(result.content) > max_chars:
                 return tool_error(
@@ -288,7 +284,7 @@ def write_file_tool(path: str, content: str, task_id: str = "default") -> str:
             target = _target(file_ops, path)
             if sensitive_err := _sensitive_write_error(target, local):
                 return tool_error(sensitive_err)
-            # 同一路径的读→改→写串行，避免并发调用交错。
+            # 同路径读改写串行。
             with lock_path(target):
                 warning = check_stale(task_id, target, whole_file=True) if local else None
                 result = file_ops.write_file(target, content)
@@ -338,14 +334,14 @@ def patch_tool(
                 if parse_error:
                     return tool_error(f"Failed to parse patch: {parse_error}")
                 for op in operations:
-                    # 补丁头部路径来自补丁正文，可能源于网页或技能内容，拒绝 ``..`` 穿越；显式 path 参数不受此限。
+                    # 补丁头部路径拒 .. 穿越；显式 path 不受此限。
                     for raw in (op.file_path, op.new_path):
                         if raw and has_traversal_component(raw):
                             return tool_error(
                                 f"V4A patch header contains '..' traversal: {raw!r}. "
                                 "Use a path relative to the current directory without '..', or an absolute path.",
                             )
-                    # 删除与移动作用于符号链接本身，其余操作写到链接指向的文件。
+                    # 删/移作用于链接本身，其余写目标文件。
                     follow = op.operation in (OperationType.ADD, OperationType.UPDATE)
                     op.file_path = _target(file_ops, op.file_path, follow_symlinks=follow)
                     targets.append(op.file_path)
@@ -360,7 +356,7 @@ def patch_tool(
                     return tool_error(sensitive_err)
 
             unique_targets = sorted(set(targets))
-            # 固定加锁顺序，避免多文件补丁互相死锁。
+            # 固定加锁顺序防死锁。
             with ExitStack() as locks:
                 for target in unique_targets:
                     locks.enter_context(lock_path(target))

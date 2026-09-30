@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
-"""scripts/build.py —— SpiritAgent 跨平台客户端构建总入口。
-
-单一入口，端到端编排：
-1. 版本同步 (client/package.json, installer/package.json, tauri.conf.json, Cargo.toml, runner/pyproject.toml)
-2. 构建 runner wheel (uv sync -> pytest -> uv build --wheel)
-3. 构建 desktop 产物 (electron-builder，build 链内含 tsc 双重 typecheck)
-4. 暂存 payload 到 installer/payload/
-5. 签名桌面产物 (macOS codesign/notarytool, Windows signtool)
-6. 临时 patch installer/src-tauri/tauri.conf.json 的 bundle.resources
-7. Tauri 构建安装器 (确保 finally 还原 tauri.conf.json)
-8. 拷贝最终安装器至 release/，并在 Windows 下构建自更新 zip
-"""
+"""SpiritAgent 跨平台客户端构建总入口（流程与产物说明见 scripts/README.md）。"""
 
 import argparse
 import os
@@ -20,7 +9,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-# 引入共享构建助手
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR / "lib"))
 
@@ -43,8 +31,7 @@ def run_cmd(
     display_cmd = cmd if isinstance(cmd, str) else " ".join(cmd)
     print(f"==> [exec] {display_cmd} (in {cwd or '.'})")
     if not shell and isinstance(cmd, list) and os.name == "nt":
-        # Windows CreateProcess 不按 PATHEXT 解析，pnpm 这类 .cmd shim 裸名启动会 WinError 2；
-        # 先经 which 落到完整路径再启动（which 找不到时保持原样，让报错来自 CreateProcess 本身）。
+        # Windows CreateProcess 不按 PATHEXT 解析；经 which 落到完整路径，否则 pnpm 等 .cmd shim 会 WinError 2。
         resolved = shutil.which(cmd[0])
         if resolved:
             cmd = [resolved, *cmd[1:]]
@@ -89,8 +76,7 @@ def build_desktop(repo_root: Path, target: str) -> None:
 
 
 def main() -> int:
-    # Windows 控制台默认 cp1252/GBK，print 里 → 等非 ASCII 字符会触发 UnicodeEncodeError；
-    # 统一为 UTF-8 并降级替换，保证任意语言环境的 host 与 CI runner 都能跑。
+    # Windows 控制台默认非 UTF-8，print 非 ASCII 会崩；统一 UTF-8 并降级替换。
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
@@ -109,7 +95,6 @@ def main() -> int:
     repo_root = get_repo_root()
     output_dir = Path(args.output).resolve() if args.output else repo_root / "release"
 
-    # 推断与校验 target
     host_system = platform.system()
     target = args.target
     if not target:
@@ -128,27 +113,22 @@ def main() -> int:
         print(f"error: --target win requires a Windows host (got '{host_system}')", file=sys.stderr)
         return 1
 
-    # 依赖检查
     check_required_tools(["uv", "pnpm", "node"])
     if target == "mac":
         check_required_tools(["hdiutil", "codesign"])
 
-    # 1. 统一写入版本
     set_version(args.version, repo_root)
 
-    # 2. 构建 runner
     if not args.skip_runner:
         build_runner(repo_root)
     else:
         print("==> Skipping runner build (--skip-runner)")
 
-    # 3. 构建 desktop
     if not args.skip_desktop:
         build_desktop(repo_root, target)
     else:
         print("==> Skipping desktop build (--skip-desktop)")
 
-    # 4. 定位桌面端产物
     desktop_artifact = find_desktop_artifact(target, args.version, repo_root)
     if not desktop_artifact or not desktop_artifact.is_file():
         print(
@@ -158,12 +138,10 @@ def main() -> int:
         return 1
     print(f"==> Desktop artifact: {desktop_artifact}")
 
-    # 5. 暂存 payload
     stage_payload(repo_root, target=target)
     dest_desktop_path = repo_root / "installer" / "payload" / "client" / desktop_artifact.name
     shutil.copy2(desktop_artifact, dest_desktop_path)
 
-    # 6. 桌面产物代码签名
     if target == "mac" and args.sign_identity:
         print(f"==> Code-signing {desktop_artifact.name}")
         run_cmd(
@@ -213,7 +191,6 @@ def main() -> int:
         )
         shutil.copy2(desktop_artifact, dest_desktop_path)
 
-    # 7. Tauri 构建安装器 (确保异常或退出时还原配置)
     installer_dir = repo_root / "installer"
     patch_tauri_config(repo_root)
     try:
@@ -227,7 +204,6 @@ def main() -> int:
     finally:
         restore_tauri_config(repo_root)
 
-    # 8. 收集最终安装器
     output_dir.mkdir(parents=True, exist_ok=True)
     if target == "mac":
         bundle_dir = repo_root / "installer" / "src-tauri" / "target" / "release" / "bundle" / "dmg"
@@ -255,8 +231,7 @@ def main() -> int:
         shutil.copy2(exe_file, output_dir / final_name)
         print(f"\n==> Final installer: {output_dir / final_name}")
 
-        # Windows 自更新 zip 制作：桌面端产物 + runner wheel + server.py 一次覆盖两侧。
-        # 签名私钥缺失或打包失败直接判构建失败——发布物必须携带有效签名的 update zip。
+        # Windows 自更新 zip：桌面产物 + runner wheel + server.py；签名缺失或失败即中止构建。
         update_lib = SCRIPT_DIR / "lib" / "UpdateManifest.ps1"
         runner_payload = repo_root / "installer" / "payload" / "runner"
         wheels = sorted(runner_payload.glob("*.whl"))

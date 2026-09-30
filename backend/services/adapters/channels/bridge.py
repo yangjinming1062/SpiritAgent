@@ -42,14 +42,12 @@ _DELIVERY_FAILED_FALLBACK = "（伙伴刚想说话，但消息没能送达到这
 # 队列容量不足时的明确拒收提示：消息不入队也不落库，对端知道这条没被接收、可重发。
 _QUEUE_FULL_NOTICE = "（正在处理的任务比较多，这条消息没有被接收；请稍后再发一次）"
 
-# 中止指令白名单。必须**全等**比较而非包含匹配——「请不要停下来」「去停车场」都含「停」，
-# 模糊匹配会把正常发言吞成中断。已审批对端等同本人、可驱动本机终端，中止是唯一的刹车。
+# 必须全等比较而非包含匹配——「请不要停下来」「去停车场」都含「停」，模糊匹配会把正常发言吞成中断。
 _STOP_COMMANDS = frozenset({"停", "停止", "停下", "stop", "/stop"})
 
 _STOP_ACK = "（已停止本轮回复）"
 
-# 桌面连接状态作为环境事实注入 IM 回合。离线时 runner 工具会被整体清出注册表；提示只报告可验证的
-# “当前未连接”，不猜测设备是否关机、网络是否中断等具体原因。
+# 桌面连接状态注入 IM 回合的环境事实；离线时提示只报告可验证的「当前未连接」，不猜测关机/断网等原因。
 _DESKTOP_ONLINE_TEXTS = {
     "zh": "【环境】用户的电脑当前在线，你可以使用本机工具（读写文件、终端、浏览器等）帮他做事。",
     "en": "[Environment] The user's desktop is online; you can use the local tools (files, terminal, browser, etc.) to act on it.",
@@ -73,11 +71,7 @@ class _QueuedMessage:
 
 @dataclass
 class _ChannelState:
-    """每绑定一个桥接状态：单飞行锁 + 排队队列（回合进行中到达的消息合并进后续回合的前导批）。
-
-    单飞行由 ``task is not None`` 单独表达——另设一个 in_flight 布尔会与它成为同一事实的两份副本，
-    任何一处漏改都会让绑定永久卡住（排队但无人消费）或让中止落空。
-    """
+    """每绑定一个桥接状态：单飞行由 task 句柄单独表达（不另设 in_flight 布尔，避免同一事实两份副本漏改导致卡住或中止落空）+ 排队队列。"""
 
     queue: deque[_QueuedMessage] = field(default_factory=deque)
     # peer_id → 时间戳 deque：进程内每分钟滑动窗，渠道侧无频控前的成本护栏。
@@ -112,11 +106,7 @@ def _rate_exceeded(state: _ChannelState, peer_id: str) -> bool:
 
 
 async def stop_binding_turns(binding_id: int) -> None:
-    """停止并等待一个绑定的当前回合并清空排队。
-
-    只取消当前 task 而不清队列，_run_turn 的收尾会立刻起下一批，与停止意图相反。被清出的消息已在
-    接收阶段落库（queued 行），会在下一轮回合被收编消费，不会静默丢失。
-    """
+    """停止并等待一个绑定的当前回合并清空排队：只取消不清队列会让收尾立刻起下一批；被清出的消息已落库为 queued 行，下一轮收编消费。"""
     async with _STATE_LOCK:
         state = _STATES.pop(binding_id, None)
         if state is None:
@@ -164,10 +154,7 @@ def _dedup_key(snapshot: ChannelBindingSnapshot, msg: InboundMessage) -> str | N
 
 
 async def handle_inbound(adapter: ChannelAdapter, msg: InboundMessage) -> None:
-    """入站闸门：白名单检查 → 主动状态联动 → 中止判定 → 频控 → 接收落库入队；回合在独立任务中执行。
-
-    适配器在接收落库完成后即可推进渠道游标；回复由回合任务经渠道投递。
-    """
+    """入站闸门：白名单 → 主动联动 → 中止判定 → 频控 → 接收落库入队；回合在独立任务执行。落库完成后适配器即可推进渠道游标，回复由回合任务投递。"""
     snapshot = adapter.snapshot
     dedup_key = _dedup_key(snapshot, msg)
     async with session_scope() as db:
@@ -210,14 +197,12 @@ async def handle_inbound(adapter: ChannelAdapter, msg: InboundMessage) -> None:
 
     state = _state_for(snapshot.id)
 
-    # 中止判定必须在频控之前：用户眼看伙伴在电脑上做错事时往往连发几条，正好把窗口打满，
-    # 此时若先频控就把唯一的刹车一起丢掉了。中止不消耗窗口配额。
+    # 中止判定必须在频控之前：用户眼看伙伴做错事时往往连发几条打满窗口，先频控会把唯一的刹车一起丢掉；中止不消耗窗口配额。
     if msg.text.strip().lower() in _STOP_COMMANDS:
         stopped = False
         consumed = False
         async with _STATE_LOCK:
-            # 只有发起该回合的对端能中止它——多对端绑定下，别人的回合不该被旁人叫停。
-            # 空闲态不误触：没有进行中的回合时「停」就是一句普通话，照常走回合。
+            # 只有发起该回合的对端能中止（多对端绑定下别人无权叫停）；空闲态「停」当普通话照常走回合。
             if (task := state.task) is not None and state.owner_peer_id == msg.peer_id:
                 consumed = True
                 if not state.cancelling:
@@ -227,8 +212,7 @@ async def handle_inbound(adapter: ChannelAdapter, msg: InboundMessage) -> None:
                     state.cancelling = True
                     task.cancel()
                     stopped = True
-        # 确认在锁外发：cancel 只是排程，被取消回合的 finally 还要抢同一把锁，
-        # 在锁内 await 网络投递会把它一直挡住。
+        # 确认在锁外发：cancel 只是排程，被取消回合的 finally 还要抢同一把锁，在锁内 await 投递会一直挡住它。
         if stopped:
             try:
                 await adapter.send_text(msg.peer_id, _STOP_ACK, msg.context_token)
@@ -256,11 +240,7 @@ async def _intake_message(
     msg: InboundMessage,
     dedup_key: str | None,
 ) -> bool:
-    """接收段：容量校验 → 先持久化（queued 行 + 去重）→ 单飞行入队；返回是否为本次新接收或明确拒收的消息。
-
-    intake 锁串行化同一绑定的接收段，保证落库序与入队序都等于渠道投递序。容量不足在落库
-    **之前**明确拒收——已确认接收（落库）的消息不静默丢弃；被拒收的消息不落库，对端可重发。
-    """
+    """接收段：容量校验 → 先持久化（queued 行 + 去重）→ 单飞行入队；intake 锁保证落库/入队序等于投递序。容量不足在落库前明确拒收（已落库的不静默丢弃，被拒收的不落库可重发）；返回是否为新接收或明确拒收。"""
     snapshot = adapter.snapshot
     async with state.intake_lock:
         async with _STATE_LOCK:
@@ -363,8 +343,7 @@ async def _run_turn(adapter: ChannelAdapter, state: _ChannelState, batch: list[_
         snapshot = adapter.snapshot
         logger.exception("channel turn failed", extra={"binding": snapshot.id, "channel": snapshot.channel})
     finally:
-        # shield：本函数常在被取消的路径上收尾，而 Lock.acquire 是取消点——不屏蔽的话
-        # CancelledError 会在这里二次抛出、跳过整个清理，绑定永久停在「有回合在跑」的假象里。
+        # shield：收尾常在被取消路径上，Lock.acquire 是取消点，不屏蔽会让 CancelledError 二次抛出并跳过清理，绑定永久假占用。
         task = asyncio.current_task()
         if task is not None:
             await asyncio.shield(_finish_turn(adapter, state, task))
@@ -389,11 +368,7 @@ async def _finish_turn(adapter: ChannelAdapter, state: _ChannelState, task: asyn
 
 
 async def _execute_im_turn(adapter: ChannelAdapter, state: _ChannelState, batch: list[_QueuedMessage]) -> None:
-    """跑一轮完整 chat turn（自带 emitter，不依赖用户 WS——桌面离线也能回），把回复格式化后经渠道送出。
-
-    IM 使用原渠道 emitter，不要求桌面在线；本机工具仍由桌面派发器兑现。批内消息已在接收阶段
-    落库（queued 行，附件已写入行内容），回合开始时整批收编消费并清除标记，ChatRequest 只携带末条的行 id。
-    """
+    """跑一轮 chat turn（自带渠道 emitter，桌面离线也能回），回复格式化后经渠道送出。批内消息已在接收阶段落库，回合开始整批收编并清 queued 标记；ChatRequest 只携带末条行 id。"""
     snapshot = adapter.snapshot
     last_item = batch[-1]
     last = last_item.msg
@@ -419,8 +394,7 @@ async def _execute_im_turn(adapter: ChannelAdapter, state: _ChannelState, batch:
     emitter = ChannelTurnEmitter(
         partial(adapter.send_typing, last.peer_id, last.context_token) if adapter.supports_typing else None,
     )
-    # 两个条件都要满足：WS 在线但 tools.sync 未完成（刚连上）或 Runner 崩溃时，注册表里没有 runner schema，
-    # 只看 is_available 会让提示词声称「工具可用」而上下文里根本没有对应工具，诱发幻觉。
+    # 两个条件都要满足：仅 is_available 时若 tools.sync 未完成或 Runner 崩溃，提示词会声称工具可用但上下文无对应工具，诱发幻觉。
     desktop_ready = MANAGER.is_available(snapshot.user_id) and REGISTRY.has_runner_tools(snapshot.user_id)
     req = ChatRequest(
         session_id=str(conversation_id),
@@ -518,8 +492,7 @@ async def _flush_pending_deliveries(
     peer_id: str,
     context_token: str | None,
 ) -> None:
-    """对端来消息即拿到新鲜回复上下文：逐条补发该对端（及对端未定）的待交付行，不重新执行任何任务；
-    一次失败即停止本轮，等下一次入站再试。"""
+    """对端来消息即拿到新鲜回复上下文：逐条补发该对端（及对端未定）的待交付行，不重新执行任务；一次失败即停，等下次入站再试。"""
     binding_id = adapter.snapshot.id
     async with state.delivery_lock:
         while True:

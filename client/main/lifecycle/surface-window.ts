@@ -74,8 +74,7 @@ export function createSurfaceWindowFactory(deps: SurfaceWindowDeps): {
 
     const initialBounds = outerBounds(panel, preference.side, slotWidth)
 
-    // 入口窗用 CSS 大圆角液态玻璃。Windows 亚克力与系统阴影按 HWND 矩形铺底，
-    // 会在圆角切出的四角漏出灰底；关掉原生材质/圆角/阴影，圆角外像素保持真透明。
+    // 入口窗用 CSS 大圆角液态玻璃；Windows 亚克力与系统阴影按 HWND 矩形铺底会在圆角四角漏灰，故关掉原生材质/圆角/阴影保持真透明。
     const win = new BrowserWindow({
       backgroundColor: '#00000000',
       frame: false,

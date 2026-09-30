@@ -87,8 +87,7 @@ def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
         except Exception:
             logger.warning("Failed to reload logging configuration", exc_info=True)
 
-    # DynamicLimiter.enabled 的 getter 直读 SETTINGS.rate_limit_enabled，无需进程内赋值。
-    # 如果 LLM 请求超时或重试参数发生变动，换代客户端连接池，让新连接应用新参数
+    # DynamicLimiter.enabled 直读 SETTINGS.rate_limit_enabled，无需进程内赋值；LLM 超时/重试参数变动时换代连接池让新连接生效。
     llm_http_keys = {
         "llm_request_timeout_seconds",
         "llm_max_retry_attempts",

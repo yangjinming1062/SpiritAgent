@@ -7,7 +7,6 @@ from alembic import op
 from pgvector.sqlalchemy import Vector
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 
-# Alembic 用的版本标识符。
 revision: str = "0001"
 down_revision: str | None = None
 branch_labels: str | Sequence[str] | None = None
@@ -15,7 +14,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    # 先建扩展：memories.embedding 是 vector(1536)，必须在 create_table 之前存在该类型。
+    # 先建扩展：memories.embedding 的 vector(1536) 须在 create_table 前存在。
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     op.execute("CREATE EXTENSION IF NOT EXISTS pg_trgm")
 
@@ -184,7 +183,7 @@ def upgrade() -> None:
     op.create_index(op.f("ix_companion_outfits_user_id"), "companion_outfits", ["user_id"], unique=False)
     op.create_index(op.f("ix_companion_outfits_status"), "companion_outfits", ["status"], unique=False)
     op.create_index(op.f("ix_companion_outfits_active"), "companion_outfits", ["active"], unique=False)
-    # 动作库：pack / action / proposal / playback。
+    # 动作库。
     op.create_table(
         "companion_action_packs",
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -244,8 +243,7 @@ def upgrade() -> None:
         sa.Column("pose_path", sa.String(length=2048), nullable=True),
         sa.Column("script_json", sa.Text(), nullable=True),
         sa.Column("result_json", sa.Text(), nullable=True),
-        # 动态动作：提案设计规格冻结（name/motion_description/duration_seconds/clip_kind）。
-        sa.Column("source_design_json", sa.Text(), nullable=True),
+        sa.Column("source_design_json", sa.Text(), nullable=True),  # 提案设计规格冻结。
         sa.Column("video_path", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("video_hash", sa.String(length=64), server_default=sa.text("''"), nullable=False),
         sa.Column("target_duration_seconds", sa.Float(), server_default=sa.text("2.0"), nullable=False),
@@ -257,9 +255,8 @@ def upgrade() -> None:
         sa.Column("hitmask_grid_w", sa.Integer(), nullable=True),
         sa.Column("hitmask_grid_h", sa.Integer(), nullable=True),
         sa.Column("hitmask_fps", sa.Integer(), nullable=True),
-        # 动作探身定位与内容轮廓，供发布与播放读取。
-        sa.Column("peek_geometry_json", sa.Text(), nullable=True),
-        sa.Column("content_rect_json", sa.Text(), nullable=True),
+        sa.Column("peek_geometry_json", sa.Text(), nullable=True),  # 探身定位，供发布与播放读取。
+        sa.Column("content_rect_json", sa.Text(), nullable=True),  # 内容轮廓。
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -289,7 +286,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
         sa.Column("review_decision", sa.String(length=16), nullable=True),
         sa.Column("review_reason", sa.Text(), nullable=True),
-        # 评审 approve 时刻：制作额度按批准日（用户本地日）结算，与受理日区分。
+        # 制作额度按批准日（用户本地日）结算，与受理日区分。
         sa.Column("approved_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("idempotency_key", sa.String(length=64), server_default=sa.text("''"), nullable=False),
         sa.Column("action_id", sa.Integer(), nullable=True),
@@ -447,7 +444,7 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(length=24), server_default=sa.text("'pending'"), nullable=False),
         sa.Column("origin", sa.String(length=16), server_default=sa.text("'user_request'"), nullable=False),
-        # generated = AI 生成；user_upload = 用户自备图（等待回传的 pending 行不参与生成恢复）。
+        # generated=AI 生成；user_upload=用户自备图（pending 回传行不参与生成恢复）。
         sa.Column("source", sa.String(length=16), server_default=sa.text("'generated'"), nullable=False),
         sa.Column("character_card_json", sa.Text(), nullable=False),
         sa.Column("stage", sa.String(length=24), server_default=sa.text("'prepare'"), nullable=False),
@@ -460,8 +457,7 @@ def upgrade() -> None:
         sa.Column("activated_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("generation_state_json", sa.Text(), nullable=True),
-        # 场景图片独立重生成：与首次生成任务状态分离。
-        sa.Column("regeneration_status", sa.String(length=24), nullable=True),
+        sa.Column("regeneration_status", sa.String(length=24), nullable=True),  # 独立重生成任务状态。
         sa.Column("regeneration_stage", sa.String(length=24), nullable=True),
         sa.Column("regeneration_error", sa.Text(), nullable=True),
         sa.Column("regeneration_task_id", sa.String(length=36), nullable=True),
@@ -654,7 +650,7 @@ def upgrade() -> None:
         ["target_date"],
         unique=False,
     )
-    # 夜间能力流水线账本：capability+phase 标识能力在多阶段内的位置；log_id+action_key 联合唯一防同 capability 重复入队。
+    # 夜间能力流水线账本：capability+phase 定位阶段；log_id+action_key 防同 capability 重复入队。
     op.create_table(
         "nightly_activity_actions",
         sa.Column("log_id", sa.Integer(), nullable=False),
@@ -788,8 +784,7 @@ def upgrade() -> None:
         sa.Column("media_json", sa.Text(), nullable=True),
         sa.Column("summary_date", sa.String(length=10), nullable=True),
         sa.Column("summary_through_message_id", sa.Integer(), nullable=True),
-        # IM 入站消息先落库再确认接收；queued 批的上下文排序位置由 context_order 表达，
-        # dedup_key 唯一约束做渠道重投去重。
+        # IM 入站先落库再确认；context_order 表达 queued 批排序，dedup_key 做渠道重投去重。
         sa.Column("queued", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("dedup_key", sa.String(length=64), nullable=True),
         sa.Column("context_order", sa.Integer(), nullable=True),
@@ -824,8 +819,7 @@ def upgrade() -> None:
         ["id"],
         ondelete="SET NULL",
     )
-    # IM 通道桥。conversation_id 唯一外键是「每用户每渠道一条专属 im 会话」的 DB 级锚点：
-    # binding 的 (user_id, channel) 唯一性传递为渠道间不混流，UNIQUE 又阻止两条绑定共享同一会话。
+    # IM 通道桥：conversation_id 唯一外键锚定「每用户每渠道一条专属 im 会话」，防渠道间混流与绑定共享会话。
     op.create_table(
         "channel_bindings",
         sa.Column("user_id", sa.Integer(), nullable=False),
@@ -893,8 +887,7 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_system_settings_setting_key"), "system_settings", ["setting_key"], unique=True)
 
-    # Partial unique 索引（声明式模型无法表达）。
-    # 并发 POST /model 否则会留下两条 active 行。
+    # Partial unique 索引（声明式模型无法表达）：并发 POST /model 不留下两条 active 行。
     op.create_index(
         "uq_avatar_assets_one_active",
         "avatar_assets",
@@ -902,7 +895,7 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("active"),
     )
-    # 每用户一个激活中外观（并发 confirm 的硬保证，服务层另有用户级锁）
+    # 每用户一个激活中外观（并发 confirm 的硬保证，服务层另有用户级锁）。
     op.create_index(
         "uq_companion_outfits_one_active",
         "companion_outfits",
@@ -918,7 +911,7 @@ def upgrade() -> None:
         unique=True,
         postgresql_where=sa.text("active"),
     )
-    # 每用户每预设最多一条系统预设对话：防止 ensure_system_conversations_for_user 重复插入或并发跑出多行。
+    # 每用户每预设最多一条系统预设对话：防 ensure_system_conversations_for_user 并发重复插入。
     op.create_index(
         "uq_conversations_user_preset",
         "conversations",
@@ -1010,11 +1003,7 @@ FOR EACH STATEMENT EXECUTE FUNCTION notify_ws_event();
 def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS ws_event_notify_trigger ON ws_events")
     op.execute("DROP FUNCTION IF EXISTS notify_ws_event()")
-    # 先子表再父表（video_gen_jobs → messages → conversations → users）。
-    # channel_deliveries / channel_peers 在 channel_bindings 之后 drop（binding_id FK）；
-    # companion_actions / companion_action_packs 在 companion_outfits 之前 drop（pack_id / outfit_id FK）；
-    # companion_fullbody_candidates 在 avatar_assets 之前 drop（avatar_id FK）；
-    # nightly_activity_actions 在 nightly_activity_logs 之后 drop（log_id FK）；system_settings 无 FK 引用，置于最末。
+    # drop 顺序按外键：子表先于父表；channel_peers/deliveries 后于 bindings；actions/packs 先于 outfits；fullbody 先于 avatar；actions 后于 logs；system_settings 最末。
     for table in (
         "video_gen_jobs",
         "messages",

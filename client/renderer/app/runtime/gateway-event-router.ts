@@ -13,15 +13,10 @@ import { handleConversationEvent } from './handlers/conversation-events'
 import { handleDeliveryEvent } from './handlers/delivery-events'
 import { handleToolCall, handleToolCancel, handleToolComplete, handleToolStart } from './handlers/tool-dispatch'
 
-// 网关事件路由：只保留分派、窗口角色校验与公共守卫；各能力的状态更新在
-// handlers/ 按能力组织，跨模块的后续动作进 app/workflows。
-// 精灵窗宿主与代理窗口共用本路由；宿主专属的 Runner 分发在 handlers/tool-dispatch。
+// 网关事件路由：只保留分派、窗口角色校验与公共守卫；各能力状态更新在 handlers/，跨模块后续动作进 app/workflows。精灵窗宿主与代理窗口共用；宿主专属 Runner 分发在 handlers/tool-dispatch。
 
 export function handleGatewayEvent(event: GatewayEvent): void {
-  // 仅在冷启动 hydrateAuth 尚未完成时（'pending'）丢弃 WSEvent：无用户态，事件无主。
-  // 'unauthenticated' 不丢弃：登出 race 里到达的 message.complete 还要落地，
-  // 否则流式 chat 卡 thinking。
-  // 跨会话污染由事件本身的 session_id 闸门（下方 session_id 过滤段）兜底。
+  // 仅在冷启动 hydrateAuth 尚未完成（'pending'）时丢弃 WSEvent：无用户态，事件无主。'unauthenticated' 不丢弃——登出 race 里到达的 message.complete 还要落地，否则流式 chat 卡 thinking；跨会话污染由下方 session_id 闸门兜底。
   if ($auth.get().kind === 'pending') {
     log.warn('events', 'Discarded event during pending auth:', event.type)
 
@@ -32,10 +27,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     pushDevLog(event.type, JSON.stringify(event.payload ?? {}))
   }
 
-  // 聊天回合事件（message.start/delta/complete/persisted、tool.*、error）携带发出该事件的会话 session_id。
-  // 来自渲染层当前未查看会话的事件不应作用于可见聊天——
-  // 例如后台任务会话的工具帧；没有这道门的话，用户会看到它们像主会话回复。
-  // WSEvent 驱动的事件（companion.message/mood、avatar.regenerated）没有 session_id，直接放行。
+  // 聊天回合事件（message.*/tool.*/error）携带 session_id：来自未查看会话的事件不应作用于可见聊天（如后台任务会话的工具帧），否则用户会看到它们像主会话回复。WSEvent 驱动的事件（companion.message/mood、avatar.regenerated）没有 session_id，直接放行。
   if (event.session_id !== undefined) {
     const current = $chatSessionId.get()
 

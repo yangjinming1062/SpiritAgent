@@ -28,7 +28,7 @@ _IDEMPOTENT_TOOL_NAMES = frozenset(
     },
 )
 
-# ``terminal`` 故意不在此列——其危险面是命令字符串里的 shell 重定向（``> ~/.ssh/authorized_keys``），不是显式路径参数。runner 侧对命令文本做独立扫描来堵住这种绕过；后端仅扫路径参数无法在不解析 shell 的前提下覆盖。
+# terminal 故意不在此列——其危险面是命令字符串里的 shell 重定向（> ~/.ssh/authorized_keys），不是显式路径参数。runner 侧对命令文本做独立扫描；后端仅扫路径参数无法在不解析 shell 的前提下覆盖
 _FILE_PATH_TOOLS = frozenset({"write_file", "patch", "read_file", "search_files"})
 _FILE_PATH_ARG_NAMES = ("path", "file_path", "filepath", "target", "filename")
 _WRITE_DENIED_TOOLS = frozenset({"write_file", "patch"})
@@ -131,11 +131,7 @@ class ToolCallGuardrailController:
 
 
 def _tool_failed(result: str) -> bool:
-    """按结果信封判定失败：顶层 ``error`` 非空，或 ``success`` / ``ok`` 为 False。
-
-    只看顶层字段：写入结果里的 lint 状态、读到的文件内容等嵌套数据不代表调用失败，非 JSON 文本结果视为成功。
-    终端非零退出码由 Runner 写入顶层 ``error``。
-    """
+    """按结果信封判定失败：顶层 error 非空，或 success/ok 为 False。只看顶层字段：嵌套数据不代表调用失败，非 JSON 文本结果视为成功；终端非零退出码由 Runner 写入顶层 error。"""
     data = safe_json_loads(result)
     return isinstance(data, dict) and (
         bool(data.get("error")) or data.get("success") is False or data.get("ok") is False

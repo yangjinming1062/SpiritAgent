@@ -1,8 +1,4 @@
-"""角色视频片段处理：切分重置时间轴 → 统一画布与脚底锚点 → 透明 VP9 编码 → 封面与命中遮罩。
-
-交付格式固定 WebM / VP9 + Alpha（yuva420p）、无音轨；验收辅助数据及 libvpx 解码像素。
-处理参数由代码构造，外部输入只提供路径与受校验的整数。
-"""
+"""角色视频片段处理：切分重置时间轴 → 统一画布与脚底锚点 → 透明 VP9 编码 → 封面与命中遮罩。交付格式固定 WebM/VP9+Alpha（yuva420p）、无音轨；处理参数由代码构造，外部输入只提供路径与受校验的整数。"""
 
 import hashlib
 import math
@@ -33,8 +29,7 @@ MAX_SOURCE_BYTES = 96 * 1024 * 1024
 MAX_CANVAS_WIDTH = 1024
 MAX_CANVAS_HEIGHT = 1024
 
-# VP9 + Alpha 编码参数：yuva420p；auto-alt-ref 关闭，否则透明帧会被不透明 alt-ref 帧破坏；
-# alpha_mode=1 写入容器元数据，WebM 解码器（含 Chromium）据此启用透明通道。
+# VP9 + Alpha 编码参数：yuva420p；auto-alt-ref 关闭否则透明帧被不透明 alt-ref 帧破坏；alpha_mode=1 写入容器元数据供 WebM 解码器启用透明通道
 VP9_ALPHA_ENCODE_ARGS: tuple[str, ...] = (
     "-c:v",
     "libvpx-vp9",

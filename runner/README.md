@@ -22,6 +22,9 @@
 - Windows 窗口快照使用 [DWM 可见边界](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getwindowrect)，避免 DPI 虚拟化和透明边框干扰；排除最小化和 cloaked 窗口。
 - 当前是高信任执行模式：对端准入和工具集开关构成执行授权，通用终端与文件工具保留本机访问能力。
 - 网络、路径检查降低风险；不提供逐次裁决或通用强隔离沙箱。
+- `system_awareness` 单列工具集：焦点窗口 / 工作区 / 屏幕坐标 / 全屏 / 屏幕锁 / 空闲时长等侧信道探测可整组关闭，不影响其余 `system.*`。
+- 能力探测（`registry.is_tool_available`）惰性执行并缓存 30s；最近一次成功后 60s 内的瞬时失败仍判可用，避免一次抖动把工具从会话中途摘掉。
+- 文件模糊匹配：非 exact 命中后按 old_string 把 new_string 缩进重锚到文件（保留相对嵌套）；序列化转义漂移（`\'`/`\"`）在写入前拦截。实现见 [fuzzy_match.py](tools/files/fuzzy_match.py)。
 
 ## 代码边界
 

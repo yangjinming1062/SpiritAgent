@@ -40,8 +40,7 @@ interface UpdateIpcDeps {
   markQuitting: () => void
 }
 
-/** electron-updater 的 info 携带渲染层不消费的字段；只挑契约承诺的两个字段下发，
- *  避免 releaseNotes（string | ReleaseNoteInfo[]）等原始结构跨入 IPC 边界。 */
+/** electron-updater 的 info 携带渲染层不消费的字段；只挑契约承诺的两个字段下发，避免 releaseNotes（string | ReleaseNoteInfo[]）等原始结构跨入 IPC 边界。 */
 function toDesktopUpdateInfo(info: unknown): DesktopUpdateInfo {
   const candidate = (info ?? {}) as Partial<DesktopUpdateInfo>
 
@@ -67,13 +66,11 @@ export function registerUpdateIpc({
 }: UpdateIpcDeps): void {
   const { app } = electron
   let latestEvent: DesktopUpdateEvent | null = null
-  // error 事件不带来源：按最近发起的操作归属阶段，设置页据此区分检查、下载与安装失败。
   let phase: DesktopUpdatePhase = 'check'
   // Runner 预取串行执行，避免重试时并发清理同一暂存目录。
   let preparing: Promise<void> = Promise.resolve()
 
-  // 更新状态的唯一消费方是生活空间设置页，广播到所有窗口而不是假定主窗口：
-  // 消费方窗口由渲染层装配决定（update-bridge 挂在哪个入口哪个窗口收得到）。
+  // 更新状态的唯一消费方是生活空间设置页；广播到所有窗口而非假定主窗口，消费方由渲染层装配决定（update-bridge 挂在哪个入口哪个窗口收得到）。
   function broadcastUpdate(event: DesktopUpdateEvent): void {
     latestEvent = event
     broadcast(IPC.event.updateEvent, event)
@@ -94,7 +91,6 @@ export function registerUpdateIpc({
 
   // 始终注册更新通道，避免渲染层调用未注册的 handler 抛出 unhandled rejection。
   ipcMain.handle(IPC.invoke.updateCheck, async () => {
-    // 开发构建没有更新源，回 'none'。
     if (!app.isPackaged) {
       broadcastUpdate({ type: 'none' })
 
@@ -133,8 +129,7 @@ export function registerUpdateIpc({
       }
     }
 
-    // 重复点击复用进行中的下载；已缓存且校验通过的安装包直接复用，并再次触发 update-downloaded。
-    // 失败先发 'error' 事件再抛出，同样只由监听器上报。
+    // 重复点击复用进行中的下载；已缓存且校验通过的安装包直接复用，并再次触发 update-downloaded。失败先发 'error' 事件再抛出，同样只由监听器上报。
     phase = 'download'
     await autoUpdater.downloadUpdate().catch(() => {})
   })
@@ -163,9 +158,7 @@ export function registerUpdateIpc({
   const { autoUpdater } = electronUpdaterPkg
   autoUpdater.logger = log
 
-  // 更新退出确实开始时置退出标志：原生 quitAndInstall 先关窗、后触发 before-quit，精灵窗的关闭拦截须提前放行；
-  // Windows 由 electron-updater 在退出前补发同名事件。安装器未能启动时不发出，托盘常驻不受影响。
-  // 随后沿用 will-quit 的有界 Runner 收尾。
+  // 更新退出确实开始时置退出标志：原生 quitAndInstall 先关窗、后触发 before-quit，精灵窗的关闭拦截须提前放行；Windows 由 electron-updater 在退出前补发同名事件，安装器未启动时不发出。
   electronAutoUpdater.on('before-quit-for-update', markQuitting)
 
   autoUpdater.on('checking-for-update', () => {
@@ -176,7 +169,7 @@ export function registerUpdateIpc({
   autoUpdater.on('update-not-available', info => broadcastUpdate({ info: toDesktopUpdateInfo(info), type: 'none' }))
   autoUpdater.on(
     'download-progress',
-    // 同 toDesktopUpdateInfo：契约只承诺三个字段，剔除 bytesPerSecond / delta 等原始结构。
+    // 契约只承诺三个字段，剔除 bytesPerSecond / delta 等原始结构。
     (raw: ProgressInfo) =>
       broadcastUpdate({
         progress: { percent: raw.percent, total: raw.total, transferred: raw.transferred },

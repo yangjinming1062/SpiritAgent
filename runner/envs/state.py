@@ -35,7 +35,7 @@ def get_env_config() -> dict[str, Any]:
     t = t if isinstance(t, dict) else {}
 
     env_type = cfg_str(t, "env_type", "local")
-    # expanduser 只对 local 生效: SSH 的 `~` 必须原样传给远端 shell, 本地展开会把宿主路径塞进远端 cd。
+    # SSH 的 ~ 须原样传远端，勿本地 expanduser。
     cwd = cfg_str(t, "cwd", _safe_getcwd() if env_type == "local" else "~")
     if cwd and env_type == "local":
         cwd = os.path.expanduser(cwd)
@@ -49,10 +49,10 @@ def get_env_config() -> dict[str, Any]:
         "lifetime_seconds": cfg_int(t, "lifetime_seconds", 300),
         "ssh_host": cfg_str(ssh_cfg, "host"),
         "ssh_user": cfg_str(ssh_cfg, "user"),
-        # 设置页清空端口时为空串，cfg_int 回落默认端口；直接 int() 会让所有终端调用与清理线程抛错。
+        # 空端口回落默认，勿直接 int()。
         "ssh_port": cfg_int(ssh_cfg, "port", 22),
         "ssh_key": cfg_str(ssh_cfg, "key"),
-        # 密码不去首尾空白：空白可能是密码的一部分。
+        # 密码不去空白。
         "ssh_password": "" if (password := ssh_cfg.get("password")) is None else str(password),
     }
 

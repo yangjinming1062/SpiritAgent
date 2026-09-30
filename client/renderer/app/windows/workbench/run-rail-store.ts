@@ -1,5 +1,4 @@
-// 工作台 Run Rail 派生 store：本轮工具列表 / 本会话工件，全部从 chat-store 的会话投影派生，不新开后端；
-// tool.start / tool.complete 由 app/runtime/gateway-event-router.ts 写入该投影。
+// 工作台 Run Rail 派生 store：本轮工具列表 / 本会话工件，全部从 chat-store 的会话投影派生，不新开后端；tool.start / tool.complete 由 app/runtime/gateway-event-router.ts 写入该投影。
 
 import { atom, computed } from 'nanostores'
 
@@ -31,8 +30,7 @@ export function setRailOpen(open: boolean): void {
   $isRailOpen.set(open)
 }
 
-// 找到当前轮次：会话尾部第一条 assistant 消息即视为「本轮」入口；
-// 遇到下一条 user 消息则停止向前扫描（不同回合的输出不在右栏展示）。
+// 找到当前轮次：会话尾部第一条 assistant 消息即视为「本轮」入口；遇到下一条 user 消息则停止向前扫描（不同回合的输出不在右栏展示）。
 export const $runRound = computed([$chatMessageList, $chatMessageBodies], (list, bodies) => {
   let active: ChatMessageBody | undefined
   let activeId: string | undefined
@@ -67,8 +65,7 @@ export const $runRound = computed([$chatMessageList, $chatMessageBodies], (list,
   } satisfies RunRound | null
 })
 
-// 本会话工件：所有 assistant 消息携带的媒体，按时间倒序去重；
-// 不区分当前轮次——右栏「本会话工件」按会话维度累积。
+// 本会话工件：所有 assistant 消息携带的媒体，按时间倒序去重；不区分当前轮次——右栏「本会话工件」按会话维度累积。
 export const $artifacts = computed([$chatMessageList, $chatMessageBodies], (list, bodies) => {
   const artifacts: RailArtifact[] = []
   const seen = new Set<string>()

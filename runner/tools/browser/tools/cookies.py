@@ -64,8 +64,7 @@ def browser_cookies_set(
         if same_site is not None:
             params["sameSite"] = same_site
 
-        # 软守卫：domain 与当前页 hostname 不一致时，cookie 不会随当前请求发出。
-        # 仍按调用方请求设置（可能用于跨站测试），但 result 附 warning 让模型看见。
+        # domain 不一致仍设置但附 warning。
         warning: str | None = None
         frame_res = supervisor.send_cdp("Page.getFrameTree")
         if frame_res.get("ok"):
@@ -74,7 +73,7 @@ def browser_cookies_set(
             if current_url:
                 current_host = (urlsplit(current_url).hostname or "").lower().lstrip(".")
                 requested_host = domain.lower().lstrip(".")
-                # 子域关系：requested=example.com 时 *.example.com 都算匹配
+                # 子域匹配：*.example.com 覆盖 example.com。
                 if (
                     current_host
                     and requested_host

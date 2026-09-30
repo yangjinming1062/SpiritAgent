@@ -7,8 +7,7 @@ interface ViewportPoint {
   readonly y: number
 }
 
-/** 容器反馈：落地、接取、长按的整体形变（DESIGN「拖拽与直接交互」），以及仪式行走对目标的指向与点击提示
- * （DESIGN「仪式性行走」）。姿态仍由动作素材呈现，这里不依赖素材。seq 区分同类反馈的每次触发。 */
+/** 容器反馈：落地、接取、长按的整体形变（DESIGN「拖拽与直接交互」），以及仪式行走对目标的指向与点击提示（DESIGN「仪式性行走」）。姿态仍由动作素材呈现，这里不依赖素材。seq 区分同类反馈的每次触发。 */
 export type SpriteGesture =
   | { readonly kind: 'land' | 'catch' | 'squeeze'; readonly seq: number }
   | { readonly kind: 'point' | 'tap'; readonly seq: number; readonly target: ViewportPoint }

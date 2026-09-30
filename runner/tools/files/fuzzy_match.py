@@ -32,10 +32,7 @@ def fuzzy_find_and_replace(
     new_string: str,
     replace_all: bool = False,
 ) -> tuple[str, int, str | None, str | None]:
-    """按逐渐放宽的策略链查找并替换文本。
-
-    返回 (new_content, match_count, strategy_name, error)。成功时前三项有意义，失败时仅最后一项。
-    """
+    """按策略链查找并替换；返回 (new_content, match_count, strategy_name, error)。"""
     if not old_string:
         return content, 0, None, "old_string cannot be empty"
 
@@ -67,20 +64,16 @@ def fuzzy_find_and_replace(
                     ),
                 )
 
-            # 转义漂移防护：当匹配策略非 exact 时，是靠归一化才匹配的。
-            # 若 new_string 含有 shell/JSON 风格的转义（\' 或 \"），而文件
-            # 匹配区域实际没有这些字符，几乎一定是工具调用序列化漂移——
-            # 模型输入了撇号/引号，传输层多加了一个反斜杠。原样写入会污染文件。
+            # 转义漂移防护：非 exact 命中时若 new 含 \'/\" 而匹配区没有，按序列化漂移拒绝写入。
             if strategy_name != "exact":
                 drift_err = _detect_escape_drift(content, matches, old_string, new_string)
                 if drift_err:
                     return content, 0, None, drift_err
 
-            # old_string 要还原转义才能命中时，new_string 带着同样的多余转义，须一并还原，
-            # 否则字面 ``\n`` 会被写进文件。
+            # escape_normalized 命中时 new 也须一并反转义，否则字面 \n 会写进文件。
             if strategy_name == "escape_normalized":
                 old_string, new_string = _unescape_controls(old_string), _unescape_controls(new_string)
-            # 非 exact 匹配时文件缩进可能与模型给的不同，替换时按 old_string 重新缩进 new_string。
+            # 非 exact 命中时按 old_string 把 new_string 缩进对齐文件。
             effective_new = _maybe_unescape_new_string(new_string, content, matches)
             new_content = _apply_replacements(
                 content,
@@ -94,18 +87,11 @@ def fuzzy_find_and_replace(
 
 
 def _detect_escape_drift(content: str, matches: list[tuple[int, int]], old_string: str, new_string: str) -> str | None:
-    """检测 new_string 中由工具调用序列化引入的转义漂移。
-
-    若 ``\'`` 或 ``\"`` 同时出现在 old_string 和 new_string（模型复制时带入的
-    上下文），但匹配区域实际没有这些字符，说明传输层在撇号/引号旁多加了
-    反斜杠——原样写入会把 ``\'`` 字面量写进源码。
-    """
-    # 廉价前置检查：new_string 中没有可疑转义时直接跳过，常规正确路径无开销。
+    """检测工具调用序列化引入的转义漂移（``\'``/``\"`` 出现在两侧但匹配区域没有）。"""
     if "\\'" not in new_string and '\\"' not in new_string:
         return None
 
-    # 汇总匹配区域——新内容将替换这里。若该区域已含可疑转义，说明模型是真
-    # 想保留它们（某些语言/转义字符串本就如此），按合法写入接受。
+    # 匹配区已含可疑转义视为有意保留，放行。
     matched_regions = "".join(content[start:end] for start, end in matches)
 
     for suspect in ("\\'", '\\"'):
@@ -140,14 +126,7 @@ def _first_meaningful_line(text: str) -> str | None:
 
 
 def _reindent_replacement(file_region: str, old_string: str, new_string: str) -> str:
-    """将 ``new_string`` 的缩进调整到与 ``file_region`` 一致。
-
-    非精确模糊匹配后调用：LLM 给的缩进可能与文件不同（如 2 空格 vs 4 空格），
-    模糊匹配仍能命中，但原样写入会破坏文件缩进。
-
-    算法：对 new_string 每个非空行，用相对偏移（line_indent - llm_base）
-    重新锚定到文件基础缩进。空行与比 llm 基础缩进更浅的行直接对齐到文件基础。
-    """
+    """把 ``new_string`` 的缩进重锚到 ``file_region``，保留相对嵌套（见 README 模糊匹配缩进）。"""
     if not new_string:
         return new_string
 
@@ -162,37 +141,23 @@ def _reindent_replacement(file_region: str, old_string: str, new_string: str) ->
     if old_indent == file_indent:
         return new_string
 
-    # 逐行重新缩放：把 LLM 的基础缩进前缀替换为文件的基础前缀，保留 LLM
-    # 额外加上的相对嵌套。这与 Roo Code (multi-search-replace.ts:466-500)
-    # 思路一致：在贴合文件实际缩进风格的同时保留 LLM 想要的相对层级。
+    # 把 LLM 基础缩进前缀换成文件前缀，保留相对嵌套。
     out_lines: list[str] = []
     for line in new_string.split("\n"):
         if not line.strip():
-            # Blank lines: leave whitespace untouched.
             out_lines.append(line)
             continue
         line_indent = _leading_whitespace(line)
         if line_indent.startswith(old_indent):
-            # 常规情形：行首包含 LLM 基础缩进（可能再多一些），把前缀换成文件的。
             remainder = line[len(old_indent) :]
             out_lines.append(file_indent + remainder)
         else:
-            # 缩进浅于 LLM 基础（如 new_string 起始处的去缩进行），对齐文件基础。
             out_lines.append(file_indent + line.lstrip(" \t"))
     return "\n".join(out_lines)
 
 
 def _maybe_unescape_new_string(new_string: str, content: str, matches: list[tuple[int, int]]) -> str:
-    """有条件地反转义 new_string 中的 ``\\t``/``\\r``。
-
-    LLM 经常在 JSON 工具调用参数里把 tab/CR 写成两个字符 ``\t``/``\r``，原样
-    写入会把字面反斜杠+字母对污染到 tab 缩进的文件中。
-
-    仅当匹配区域本身包含对应的真实控制字符时才反转义，避免误改合法字面
-    ``"\t"``（如 ``sep = "\t"`` 形式的 Python 源码）。``\n`` 故意排除：
-    JSON 能正确序列化换行，反转义反而会破坏字符串字面量。
-    """
-    # 廉价前置检查，常规正确路径无开销。
+    """匹配区域含真实 tab/CR 时才反转义 ``\\t``/``\\r``；``\\n`` 故意不反转义。"""
     if "\\t" not in new_string and "\\r" not in new_string:
         return new_string
 
@@ -278,7 +243,6 @@ def _strategy_escape_normalized(content: str, pattern: str) -> list[tuple[int, i
     pattern_unescaped = _unescape_controls(pattern)
 
     if pattern_unescaped == pattern:
-        # 无可还原的转义，跳过
         return []
 
     return _strategy_exact(content, pattern_unescaped)
@@ -317,11 +281,7 @@ def _strategy_trimmed_boundary(content: str, pattern: str) -> list[tuple[int, in
 
 
 def _build_orig_to_norm_map(original: str) -> list[int]:
-    """建立 原字符索引 → 归一化后字符索引 的映射表。
-
-    UNICODE_MAP 替换可能扩展字符（em-dash → '--'、省略号 → '...'），导致
-    归一化字符串比原串更长，因此需要该映射把归一化坐标转回原坐标。
-    """
+    """原字符索引 → 归一化后索引；UNICODE_MAP 替换会扩长字符，坐标须反向映射。"""
     result: list[int] = []
     norm_pos = 0
     for char in original:
@@ -347,7 +307,6 @@ def _map_positions_norm_to_orig(orig_to_norm: list[int], norm_matches: list[tupl
             continue
         orig_start = norm_to_orig_start[norm_start]
 
-        # 向前走到 orig_to_norm[orig_end] >= norm_end 为止
         orig_end = orig_start
         while orig_end < orig_len and orig_to_norm[orig_end] < norm_end:
             orig_end += 1
@@ -358,12 +317,7 @@ def _map_positions_norm_to_orig(orig_to_norm: list[int], norm_matches: list[tupl
 
 
 def _strategy_unicode_normalized(content: str, pattern: str) -> list[tuple[int, int]]:
-    """策略 7：Unicode 归一化（智能引号/长短破折号/不间断空格 → ASCII），再跑 exact + line_trimmed。
-
-    UNICODE_MAP 部分替换会扩长字符（如 em-dash → '--'），所以坐标需通过
-    ``_build_orig_to_norm_map`` 反向映射回原字符串，不能直接拷贝。
-    """
-    # 双侧归一化。任一侧含 Unicode 变体都需归一化；两侧都未变化才跳过。
+    """策略 7：Unicode 归一化后再 exact + line_trimmed；坐标经 ``_build_orig_to_norm_map`` 反查。"""
     norm_pattern = _unicode_normalize(pattern)
     norm_content = _unicode_normalize(content)
     if norm_content == content and norm_pattern == pattern:
@@ -382,7 +336,6 @@ def _strategy_unicode_normalized(content: str, pattern: str) -> list[tuple[int, 
 
 def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
     """策略 8：以首末行锚定 + Unicode 归一化的块匹配，阈值宽松。"""
-    # 比较前归一化，但保留原 content 用于计算字符偏移。
     norm_pattern = _unicode_normalize(pattern)
     norm_content = _unicode_normalize(content)
 
@@ -394,7 +347,6 @@ def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
     last_line = pattern_lines[-1].strip()
 
     norm_content_lines = norm_content.split("\n")
-    # 但偏移计算必须用原始行，避免归一化造成的索引漂移
     orig_content_lines = content.split("\n")
 
     pattern_line_count = len(pattern_lines)
@@ -410,7 +362,7 @@ def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
     matches = []
     candidate_count = len(potential_matches)
 
-    # 阈值策略：单一候选 0.50，多候选 0.70——避免宽松中段相似度误命中无关块。
+    # 单候选阈值 0.50，多候选 0.70，避免误命中无关块。
     threshold = 0.50 if candidate_count == 1 else 0.70
 
     for i in potential_matches:
@@ -422,7 +374,6 @@ def _strategy_block_anchor(content: str, pattern: str) -> list[tuple[int, int]]:
             similarity = SequenceMatcher(None, content_middle, pattern_middle).ratio()
 
         if similarity >= threshold:
-            # 用原始行计算偏移，确保文件中字符位置正确
             start_pos, end_pos = _calculate_line_positions(orig_content_lines, i, i + pattern_line_count, len(content))
             matches.append((start_pos, end_pos))
 
@@ -466,10 +417,7 @@ def _find_normalized_matches(
 
 
 def _map_whitespace_positions(original: str, normalized_matches: list[tuple[int, int]]) -> list[tuple[int, int]]:
-    """把 ``[ \t]+`` 压缩为单空格后的坐标映射回原字符串坐标。
-
-    原文每段连续空白对应归一化后的一个空格；匹配以空白结尾时覆盖整段原空白，否则止于最后一个非空白字符。
-    """
+    """把空白压缩后的坐标映射回原串；结尾空白按整段覆盖。"""
     run_start: list[int] = []  # 归一化位置 → 对应原文区间起点
     run_end: list[int] = []  # 归一化位置 → 对应原文区间终点（不含）
     i = 0
@@ -536,11 +484,7 @@ def find_closest_lines(old_string: str, content: str, context_lines: int = 2, ma
 
 
 def format_no_match_hint(error: str | None, match_count: int, old_string: str, content: str) -> str:
-    """仅在「找不到 old_string」场景下返回「是不是想找……」提示。
-
-    模糊匹配、多匹配、转义漂移等 ``match_count == 0`` 的错误原因各不相同，
-    强加「did you mean」反而误导，故仅对真正未命中场景触发。无内容时返回空串。
-    """
+    """仅对真正未命中返回「是不是想找……」；多匹配/漂移等 0 命中不误导。"""
     if match_count != 0:
         return ""
     if not error or not error.startswith("Could not find"):

@@ -80,7 +80,7 @@ async def vision_analyze_tool(image_url: str) -> dict[str, Any] | str:
 
         img_url = await asyncio.to_thread(_prepare_image)
         size = temp_path.stat().st_size
-        # 只回显文件名，不回显绝对路径。
+        # 只回显文件名。
         safe_source = temp_path.name
         text = f"Image loaded ({size:,} bytes) from {safe_source}. Inspect it and answer any pending question about it."
         return {

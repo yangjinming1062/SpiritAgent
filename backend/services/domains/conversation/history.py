@@ -1,8 +1,4 @@
-"""会话消息前向重建模块。
-
-按 Message.id 升序遍历，保证 assistant 的 tool_calls 早于同轮 tool 结果，
-从而预先填充 call_id -> name 映射供后续 tool 消息回填 tool_name。
-"""
+"""会话消息前向重建：按 Message.id 升序遍历，保证 assistant 的 tool_calls 早于同轮 tool 结果，从而预先填充 call_id -> name 映射供后续 tool 消息回填 tool_name。"""
 
 from components import safe_json_loads
 from modules.conversation import CompanionReply, Message

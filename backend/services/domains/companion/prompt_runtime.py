@@ -44,10 +44,7 @@ class PromptOutcome(NamedTuple):
 
 
 async def load_companion_prompt_context(user_id: int) -> CompanionPromptContext | None:
-    """返回用于提示词的人设与记忆快照；人设未就绪时返回 None。
-
-    从 user_settings 解析 language，驱动 persona_extras 的双语渲染。
-    """
+    """返回用于提示词的人设与记忆快照；人设未就绪时返回 None。从 user_settings 解析 language，驱动 persona_extras 的双语渲染。"""
     async with SESSION_LOCAL() as db:
         persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
         if persona is None or not persona.is_complete:

@@ -2,8 +2,7 @@ export interface OnboardingAnswers {
   name?: string
   biological_type?: string
   gender?: string
-  // relationship：用户与精灵的关系（知己好友 / 赛博管家等）。只进入对话系统提示词，
-  // 不参与性格标签分析与形象生成——关系是两者之间的，不是精灵自身的属性。
+  // relationship：用户与精灵的关系（知己好友 / 赛博管家等）。只进入对话系统提示词，不参与性格标签分析与形象生成——关系是两者之间的，不是精灵自身的属性。
   relationship?: string
   personality?: string
   speaking_style?: string
@@ -63,8 +62,7 @@ export function assemblePersona(answers: OnboardingAnswers, previous?: Partial<P
     speaking_style: speakingStyle
   }
 
-  // 锁定的视觉锚点字段在用户没填时回退到 `previous`——后端 PUT /persona
-  // 做整体替换，不带回就会把它们清掉。
+  // 锁定的视觉锚点字段在用户没填时回退到 `previous` ——后端 PUT /persona 做整体替换，不带回就会把它们清掉。
   const prev = previous ?? {}
 
   const optional: Array<[keyof PersonaPayload, string | undefined, number]> = [
@@ -89,8 +87,7 @@ export function assemblePersona(answers: OnboardingAnswers, previous?: Partial<P
   return payload
 }
 
-// assemblePersona 的「仅角色」子集——剥掉 user_*，让 enterPortraitStage 在 q-user / voice
-// 还没收集时就能完成角色定型。
+// assemblePersona 的「仅角色」子集——剥掉 user_*，让 enterPortraitStage 在 q-user / voice 还没收集时就能完成角色定型。
 export function assembleCharacterPersona(answers: OnboardingAnswers): PersonaPayload {
   const payload = assemblePersona(answers)
 

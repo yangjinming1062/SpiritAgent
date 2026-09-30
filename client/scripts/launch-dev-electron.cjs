@@ -7,8 +7,7 @@ const electronPath = require('electron')
 
 delete process.env.ELECTRON_RUN_AS_NODE
 
-// Auto-wire the local Runner so dev mode gets local tools without manually
-// setting SPIRITAGENT_DESKTOP_PYTHON every session.
+// Auto-wire the local Runner so dev mode gets local tools without manually setting SPIRITAGENT_DESKTOP_PYTHON every session.
 const repoRoot = path.resolve(__dirname, '..', '..')
 const venvRoot = path.join(repoRoot, 'runner', '.venv')
 const venvPython =

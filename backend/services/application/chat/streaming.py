@@ -84,11 +84,7 @@ async def _emit_llm_error(emitter: Emitter, exc: LLMRuntimeError) -> None:
 
 
 def _assign_tool_call_ids(tool_calls_list: list[dict]) -> None:
-    """为每个 tool call 换上后端生成的 call_id。
-
-    供应商标识可能缺失、批内重复或跨回合重复（部分实现按序号生成）；设备等待表、桌面去重、Runner 调用日志
-    与历史截断的调用配对都按 call_id 识别一次调用，只能使用全局唯一的标识。
-    """
+    """为每个 tool call 换上后端 call_id。供应商标识可能缺失/重复（按序号生成），而设备等待表、桌面去重、Runner 日志与截断配对都按 call_id 识别一次调用，必须全局唯一。"""
     for tc in tool_calls_list:
         tc["call_id"] = f"call_{new_request_id()[:TOOL_CALL_ID_HEX_PREFIX_LEN]}"
 
@@ -152,10 +148,7 @@ async def _generate_llm_response(
     reply_format_error: _InvalidCompanionReplyError | None,
     media_turn: MediaTurnState,
 ) -> _LLMTurnResult:
-    """单次 LLM 调用与正文交付；流式首事件或完整响应到达时触发回退哨兵，工具轮正文只在 stream 模式实时显示。
-
-    ``reply_preference`` 非空即陪伴终端回复：非流式取得完整数组并按气泡协议校验。
-    """
+    """单次 LLM 调用与正文交付；流式首事件或完整响应到达时触发回退哨兵，工具轮正文只在 stream 模式实时显示。``reply_preference`` 非空即陪伴终端回复：非流式取完整数组并按气泡协议校验。"""
     resolved_effort = resolve_provider_reasoning_effort(reasoning_effort, provider.REASONING_EFFORTS)
     reasoning = {"effort": resolved_effort} if resolved_effort else None
     instructions = refresh_volatile_header_in_prompt(
@@ -389,8 +382,7 @@ async def _generate_llm_response(
 
         finally:
             await response.aclose()
-            # 工作台已显示的增量在失败时也须收尾；缓冲的未确认正文始终丢弃。
-            # flush 失败（如 WS 已断开）不得替换掉正在传播的原始流异常。
+            # 工作台已显示的增量在失败时也须收尾；缓冲的未确认正文始终丢弃；flush 失败不得覆盖正在传播的原始流异常。
             if delivery == "stream" and (text_emitted or response_finished):
                 with contextlib.suppress(Exception):
                     await _emit_bubble_events(bubbles.flush())

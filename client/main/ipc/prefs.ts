@@ -10,9 +10,7 @@ interface PrefsIpcDeps {
   log: (chunk: string) => void
 }
 
-// 渲染层伙伴偏好写穿透终点：把点键合入配置镜像，乘既有管道
-// （镜像原子写 + runner 推送 + 云端防抖上云，见 shared/lib/config-sync.ts）。
-// 只放行 companion.*；主题、快捷键与语言走各自带校验的通道，terminal 等本机节不允许经此写入。
+// 伙伴偏好写穿透终点：点键合入配置镜像，乘既有管道（镜像原子写 + runner 推送 + 云端防抖上云，见 shared/lib/config-sync.ts）。只放行 companion.*；主题、快捷键与语言走各自带校验的通道，terminal 等本机节不允许经此写入。
 const ALLOWED_KEY_PREFIX = 'companion.'
 
 export function registerPrefsIpc({ ipcMain, log }: PrefsIpcDeps): void {

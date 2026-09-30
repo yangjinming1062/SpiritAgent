@@ -77,11 +77,7 @@ async def _dispatch_runner_tool(
     headless: bool = False,
     memory_scope: MemoryScope | None,
 ) -> str:
-    """把 runner 工具调用作为用户级设备指令推给桌面 WS，并等待其结果。
-
-    不经回合 emitter：设备派发不是聊天帧，它靠 call_id 关联、与用户在看哪个会话无关。载荷里的
-    session_id 只描述来源，不参与路由；headless 要求客户端照常执行但不展示工作态或工具流。
-    """
+    """把 runner 工具调用作为用户级设备指令推给桌面 WS 并等待结果。不经回合 emitter（设备派发不是聊天帧，靠 call_id 关联，与当前会话无关）；载荷 session_id 只描述来源不参与路由；headless 要求客户端照常执行但不展示工作态。"""
     skill_scope = None
     if name in {"skills_list", "skill_view", "skill_manage"}:
         if memory_scope is None:
@@ -191,7 +187,7 @@ async def _run_tool_batch(tool_calls_list: list[dict], ctx: _ToolDispatchContext
     if len(tool_calls_list) > 1 and should_parallelize_tool_batch(
         [(tc["name"], tc["arguments"]) for tc in tool_calls_list],
     ):
-        # ``return_exceptions=True``：单个工具抛出（如 IPC future 超时、工具 httpx 流漏出的 ``CancelledError`` 或工具体异常）不会取消兄弟协程；否则一个失败会拖住其余所有进行中的调用，挂满 ``ipc_future_timeout_seconds``（300s）才返回，本轮其他工具结果会丢失。
+        # return_exceptions=True：单工具失败不取消兄弟协程，否则一个 IPC 超时会拖满 ipc_future_timeout_seconds 并丢失本轮其他结果。
         results = await asyncio.gather(*coros, return_exceptions=True)
         out: list[dict] = []
         for tc, r in zip(tool_calls_list, results):

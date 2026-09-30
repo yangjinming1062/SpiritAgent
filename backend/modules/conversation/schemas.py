@@ -21,7 +21,7 @@ class DesktopSessionInfo(BaseModel):
     cwd: str | None = None
     ended_at: int | None = None
     system_preset_id: str | None = None
-    # 服务端按预设目录解析好的图标，自动化会话为 task，客户端不再解析。
+    # 服务端按预设目录解析好的图标；自动化会话为 task，客户端不再解析。
     system_preset_icon_key: str | None = None
 
 

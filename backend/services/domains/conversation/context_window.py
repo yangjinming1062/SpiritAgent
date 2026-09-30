@@ -44,10 +44,7 @@ async def load_context_messages(db: AsyncSession, conv: Conversation) -> list[Me
 
 
 async def load_recent_context_window(db: AsyncSession, user_id: int, max_messages: int = 10) -> str:
-    """主对话最近 N 条正常对话消息的紧凑文本，供空闲表达的一次性 prompt 使用。
-
-    ``status_proactive`` 保留（那是用户可以回应的真实轮次），只剔除 ``UI_ONLY_SUBTYPES``。
-    """
+    """主对话最近 N 条正常对话消息的紧凑文本，供空闲表达的一次性 prompt 使用。``status_proactive`` 保留（那是用户可以回应的真实轮次），只剔除 ``UI_ONLY_SUBTYPES``。"""
     main_conv = await get_special_conversation(db, user_id, "companion")
     if main_conv is None:
         return ""

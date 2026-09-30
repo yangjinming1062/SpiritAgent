@@ -30,9 +30,7 @@ async def _guarded_stream(
     model: str,
     call_started: float,
 ) -> AsyncGenerator[Any]:
-    """流式迭代：chunk 间静默期受 idle 超时约束、整流受 ``budget`` 总预算约束（httpx read 是按次读超时，不等价）；
-    流中异常分类后以 LLMRuntimeError 抛出；结束（成功 / 异常 / 取消）时关闭底层流，避免连接泄漏到 SDK 池，并统一记一条面包屑。
-    """
+    """流式迭代：chunk 间静默期受 idle 超时约束、整流受 budget 总预算约束（httpx read 是按次读超时，不等价）；流中异常分类后以 LLMRuntimeError 抛出；结束时关闭底层流避免连接泄漏到 SDK 池。"""
     loop = asyncio.get_running_loop()
     deadline = loop.time() + budget
     idle = float(SETTINGS.llm_stream_idle_timeout_seconds)
@@ -125,11 +123,7 @@ async def call_with_retry(
     context_length: int = 200000,
     **create_kwargs: Any,
 ) -> Any:
-    """``client.responses.create(**kwargs)`` 的统一入口：终端异常分类为 :class:`LLMRuntimeError`，流式响应受总预算约束。
-
-    重试由客户端的 ``max_retries`` 接管（SDK 遵循 ``Retry-After`` 并对 408/409/429/5xx 退避）；换供应商由
-    :func:`execute_with_fallback` 决定。
-    """
+    """client.responses.create(**kwargs) 的统一入口：终端异常分类为 LLMRuntimeError，流式响应受总预算约束。重试由客户端 max_retries 接管（SDK 遵循 Retry-After 并对 408/409/429/5xx 退避）；换供应商由 execute_with_fallback 决定。"""
     budget = max(float(SETTINGS.llm_request_timeout_seconds), LLM_RETRY_MIN_TIMEOUT)
     model = str(create_kwargs.get("model") or "")
     input_items = create_kwargs.get("input")

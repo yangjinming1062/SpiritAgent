@@ -137,7 +137,7 @@ def _fullscreen_handler(args: dict[str, Any], **kw: Any) -> str:
 
 
 def _snapshot_handler(args: dict[str, Any], **kw: Any) -> str:
-    # 各探测失败时返回各自的默认值，单项失败不影响整次快照。
+    # 单项失败回落默认值。
     return json.dumps(
         {
             "idle_seconds": get_idle_seconds(),

@@ -61,11 +61,11 @@
 
 ## 配置镜像
 
-[runner-config.ts](ipc/runner-config.ts)只接受工作台 sender，读取整份配置、按路径修改字段；[配置存储](shared/lib/runner-config-store.ts)串行落盘与推送 Runner，云同步防抖、水合写入抑制回环；`patch` 另拒绝触及原型链的路径与非 JSON 值；`patch` 与 `mutate` 修改抛错或落盘失败时回滚内存镜像，云端水合 `applyCloudMirror` 与账户隔离清理 `clearSyncedMirror` 落盘失败保留内存结果并抛出，理由见配置契约。其他写入方各走带校验的通道：[prefs.ts](ipc/prefs.ts) 只接受 `companion.*` 点键；快捷键、托盘语言与上次完整入口经 `patch`，主题与技能、工具集开关经 `mutate`，云端水合经 `applyCloudMirror` 整节写入，账户隔离清理经 `clearSyncedMirror`。字段白名单、账户隔离与冲突语义见 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
+[runner-config.ts](ipc/runner-config.ts)只接受工作台 sender，读取整份配置、按路径修改字段；[配置存储](shared/lib/runner-config-store.ts)串行落盘与推送 Runner，云同步防抖、水合写入抑制回环；在途 flush 以 `flushQueued` 补跑防丢编辑，换号以 `authEpoch` 丢弃旧账户上云；`patch` 另拒绝触及原型链的路径与非 JSON 值；`patch` 与 `mutate` 修改抛错或落盘失败时回滚内存镜像，云端水合 `applyCloudMirror` 与账户隔离清理 `clearSyncedMirror` 落盘失败保留内存结果并抛出，理由见配置契约。其他写入方各走带校验的通道：[prefs.ts](ipc/prefs.ts) 只接受 `companion.*` 点键；快捷键、托盘语言与上次完整入口经 `patch`，主题与技能、工具集开关经 `mutate`，云端水合经 `applyCloudMirror` 整节写入，账户隔离清理经 `clearSyncedMirror`。字段白名单、账户隔离与冲突语义见 [配置契约](../../docs/PROTOCOL.md#配置所有权与云同步)。
 
 ## Runner 生命周期
 
-[ipc/runner.ts](ipc/runner.ts)的 host 管端点、桥和自动启停；token 经环境变量传递，不进 argv。[bridge.ts](runner/bridge.ts) 完成握手、配置推送与 `get_tools`；运行中配置推送成功后重新读取清单，变化时按重连同样发布。模型派发调用经 `ipc/runner.ts` 带 `call_id` 发出，按 Runner 回复分类为完成、明确失败、未执行或结果未知后交回宿主；取消只按该调用记录的 RPC `req_id` 作用于指定调用，由宿主收到 `tool.cancel` 时发起。窗口查询等直调不带 `call_id`。`tools.sync` 与撤销由渲染层宿主发起，见 [Client](../README.md#连接与设备就绪)。
+[ipc/runner.ts](ipc/runner.ts)的 host 管端点、桥和自动启停；token 经环境变量传递，不进 argv。[bridge.ts](runner/bridge.ts) 完成握手、配置推送与 `get_tools`；连接探活用 WS 层 ping（Runner 协议自动 pong），不用 JSON-RPC 通知。运行中配置推送成功后重新读取清单，变化时按重连同样发布。模型派发调用经 `ipc/runner.ts` 带 `call_id` 发出，按 Runner 回复分类为完成、明确失败、未执行或结果未知后交回宿主；取消只按该调用记录的 RPC `req_id` 作用于指定调用，由宿主收到 `tool.cancel` 时发起。窗口查询等直调不带 `call_id`。`tools.sync` 与撤销由渲染层宿主发起，见 [Client](../README.md#连接与设备就绪)。
 
 [session-runtime.ts](backend/session-runtime.ts)负责懒创建、token 重接及登录恢复回调；首次 getSession 等待凭据恢复。恢复结果由 [auth.ts](ipc/auth.ts) 的广播器直接广播，不进鉴权操作队列，广播后仍是当前会话才自动启动 Runner；另有启动后 200 ms 的定时入口建立会话，已有 token 即自动启动。无 call_id 不记日志，限制见[调用契约](../../docs/PROTOCOL.md#调用日志与未知结果)。
 
@@ -78,6 +78,7 @@
 - electron-updater 的 error 事件不带来源，阶段按最近发起的检查、下载或安装归属；新增触发入口须同步设置阶段。
 - 更新源在每次检查和下载前按保存的后端地址核对，不锁定首个地址；Runner 预取使用发现该版本时的更新源。
 - 安装包下载完成只广播 `preparing`，预取校验通过才广播 `downloaded`；重启安装只认该状态与生活空间 sender。
+- 更新状态广播给全部窗口，不假定主窗口存在；实际消费方由渲染层 `update-bridge` 挂载位置决定。
 
 ## 网络与缓存
 

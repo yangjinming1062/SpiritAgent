@@ -10,9 +10,7 @@ interface StorageKeyConfig {
 const REGISTERED_STORAGE_KEYS = new Map<string, StorageKeyConfig>()
 const CLEAR_HANDLERS = new Set<() => void | Promise<void>>()
 
-// clearCompanionStorage 单调递增的 epoch 计数器。异步写路径在落地前对照 epoch：
-// 不一致就视为过期登出，丢弃写入——避免上一位用户的 in-flight 写入把数据
-// 写到刚清空的存储里（典型场景：登出与新登入间隔小于清理 I/O 时间）。
+// clearCompanionStorage 单调递增的 epoch；异步写路径落地前对照 epoch，不一致视为过期登出丢弃写入，避免上一位用户的 in-flight 写入写进刚清空的存储。
 let clearEpoch = 0
 
 /** 当前 clearCompanionStorage epoch；异步写操作在 commit 前用它判活。 */
@@ -67,9 +65,7 @@ export function persistString(key: string, value: null | string): void {
     } else {
       window.localStorage.setItem(key, value)
     }
-  } catch {
-    // 尽力而为。
-  }
+  } catch {}
 }
 
 function storedJson<T>(key: string, fallback: T, validate?: (val: unknown) => val is T): T {
@@ -120,8 +116,7 @@ interface PersistedEnumResult<T extends string> {
   get: () => T
 }
 
-/** preserveOnLogout=true 的 key 不挂 clear handler：跨登出保留偏好（窗口尺寸、面板偏移等）。
- * 想做「登出时清缓存但保留偏好」的复合语义：另起一个 key，不要复用本 helper。 */
+/** preserveOnLogout=true 的 key 不挂 clear handler，跨登出保留偏好；想做「登出清缓存但保留偏好」另起 key，不要复用本 helper。 */
 function createPersisted<T>(opts: {
   key: string
   fallback: T
@@ -167,8 +162,7 @@ export function definePersistedAtom<T extends object>(options: PersistedAtomOpti
   const { fallback, isPersistable, key, preserveOnLogout = false } = options
 
   const base = createPersisted<T>({
-    // T extends object 兼容 array / 类数组：!Array.isArray 守卫保证 next 是数组时走 replace
-    // 分支（数组被解构成 {0:'a',1:'b'} 对象是隐式 bug）。
+    // T extends object 兼容 array/类数组：!Array.isArray 守卫保证 next 是数组时走 replace 分支（数组被解构成对象是隐式 bug）。
     apply: (current, next) => (!Array.isArray(next) ? { ...current, ...next } : next),
     fallback,
     key,
@@ -245,8 +239,7 @@ export async function clearCompanionStorage(): Promise<void> {
     }
   }
 
-  // 真等所有 handler（包括异步清理）落地——调用方需在 $auth.set 前 await 此函数，
-  // 避免 React 在 clear 完成前用陈旧 localStorage 值重渲染。
+  // 真等所有 handler（含异步清理）落地——调用方需在 $auth.set 前 await，避免 React 在 clear 完成前用陈旧 localStorage 值重渲染。
   for (const result of await Promise.allSettled(tasks)) {
     if (result.status === 'rejected') {
       log.warn('storage', 'async clear handler failed', result.reason)

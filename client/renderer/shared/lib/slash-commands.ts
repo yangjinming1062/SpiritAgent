@@ -1,6 +1,4 @@
-// 客户端斜杠命令元数据：权威源在服务端注册表，经 RPC 拉到本窗口，避免两份数组手同步。
-// 每个渲染窗口一份状态；对话所在窗口必须自己拉，否则斜杠输入没有列表。
-// 服务端 dispatch 仍是唯一权威：本地元数据只用于自动补全与确认弹窗。
+// 斜杠命令元数据：权威源在服务端注册表，经 RPC 拉到本窗口；本地只用于自动补全与确认弹窗，dispatch 仍以服务端为准。
 
 import { atom } from 'nanostores'
 
@@ -68,13 +66,7 @@ interface ParsedSlashInput {
   args: string[]
 }
 
-/**
- * 解析用户输入文本：
- * - ``/foo`` / ``/foo a b`` → 命中命令 `foo`，args = ['a','b']
- * - ``/压缩``                → 别名命中 `compress`，args = []
- * - ``//注释``                → {command: undefined, ...}（以 `//` 开头的普通文本不视为命令）
- * - ``/path/to/file``        → {command: undefined, ...}（首 token 字符不是 ASCII 字母或中文）
- */
+/** 解析用户输入：`/foo a b` 命中命令；`//注释` 与 `/path/to/file` 不视为命令（首 token 须 ASCII 字母或中文开头）。 */
 export function parseSlashInput(rawText: string): ParsedSlashInput | null {
   const trimmed = rawText.trim()
 
@@ -82,14 +74,12 @@ export function parseSlashInput(rawText: string): ParsedSlashInput | null {
     return null
   }
 
-  // ``//`` 视为普通文本（注释 / 路径）。
   if (trimmed.startsWith('//')) {
     return null
   }
 
   const firstChar = trimmed.charAt(1)
 
-  // 第二字符必须是 ASCII 字母或中文（CJK 基本区 0x4E00-0x9FFF）。
   if (!isCommandNameStart(firstChar)) {
     return null
   }
@@ -118,7 +108,6 @@ function isCommandNameStart(ch: string): boolean {
     return false
   }
 
-  // ASCII 字母
   const code = ch.charCodeAt(0)
 
   if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) {
@@ -133,10 +122,7 @@ function isCommandNameStart(ch: string): boolean {
   return false
 }
 
-/**
- * 模糊匹配打分：完全等于 100；前缀匹配按命中长度递减；子序列匹配按距离顺序得分。
- * 返回 0 表示不匹配（过滤掉），正值越大匹配越好。
- */
+/** 模糊打分：完全等于 100，前缀按命中长度递减，子序列按距离得分；返回 0 表示不匹配。 */
 function fuzzyScore(query: string, target: string): number {
   if (!query) {
     return 100
@@ -153,7 +139,7 @@ function fuzzyScore(query: string, target: string): number {
     return 80 - (t.length - q.length) * 2
   }
 
-  // 子序列匹配：q 的所有字符按顺序出现在 t 中
+  // 子序列：q 的字符按顺序出现在 t 中
   let qi = 0
   let lastMatch = -1
   let score = 0
@@ -180,10 +166,7 @@ export interface ScoredSlashCommand {
   matchedKey: string
 }
 
-/**
- * 按 query 模糊过滤本地命令列表，按得分降序。
- * 同时匹配主名 + 别名 + description，取三者最高分。
- */
+/** 按 query 模糊过滤命令列表，按得分降序；主名+别名+description 取最高分。 */
 export function fuzzyFilterCommands(query: string, limit = 8): ScoredSlashCommand[] {
   const cmds = listLocalSlashCommands()
 
@@ -204,7 +187,6 @@ export function fuzzyFilterCommands(query: string, limit = 8): ScoredSlashComman
       }
     }
 
-    // description 也参与（弱权重）
     const descScore = fuzzyScore(query, cmd.description) * 0.5
 
     if (descScore > 0 && (!best || descScore > best.score)) {
@@ -225,10 +207,7 @@ interface SlashCommandListResponse {
   commands: readonly ServerCommandEntry[]
 }
 
-/**
- * 从网关拉取命令元数据写入本窗口 atom；已有数据则跳过，失败保持空以便重试。
- * 返回前网关已替换或账户已清理时丢弃结果，旧后端的命令列表不带入新会话。
- */
+/** 从网关拉取命令元数据写入本窗口 atom；已有数据则跳过，失败保持空以便重试；返回前网关已替换或账户已清理时丢弃结果。 */
 export async function fetchSlashCommandMeta(): Promise<void> {
   if ($slashCommandMeta.get().length > 0) {
     return

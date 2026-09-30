@@ -30,7 +30,7 @@ _PARALLEL_SAFE_TOOLS = frozenset(
 # 文件类工具在目标路径互不重叠时可并发。
 _PATH_SCOPED_TOOLS = frozenset({"read_file", "write_file", "patch"})
 
-# 输出包含攻击者可控制内容的工具，包裹在 <untrusted_tool_result> 边界里让模型将其视为数据而非指令（防御来自被投毒网页、GitHub issue、OCR 钓鱼文本的间接提示注入）。短输出（< 32 字符）跳过——开销大于收益。
+# 输出包含攻击者可控制内容的工具，包裹在 untrusted_tool_result 边界里让模型将其视为数据而非指令（防御间接提示注入）。短输出（< 32 字符）跳过——开销大于收益
 _UNTRUSTED_TOOL_NAMES = frozenset({"web_extract", "web_search", "cu_tool"})
 _UNTRUSTED_TOOL_PREFIXES = ("browser_",)
 _UNTRUSTED_WRAP_MIN_CHARS = 32

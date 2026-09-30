@@ -24,8 +24,7 @@ registerStorageClearHandler(() => {
   imageSrcCache.clear()
 })
 
-// 本地绝对路径（Windows 盘符 / UNC / POSIX 根）：这些 URL 不经过后端资产通道，
-// 需要主进程直接读盘。后端媒体是 HTTP(S) URL 或相对路径，落不进这三个形态。
+// 本地绝对路径（Windows 盘符 / UNC / POSIX 根）：这些 URL 不经过后端资产通道，需要主进程直接读盘。后端媒体是 HTTP(S) URL 或相对路径，落不进这三个形态。
 const LOCAL_PATH_RE = /^(?:[a-zA-Z]:[\\/]|\\\\|\/(?!\/))/
 
 // apiAssetBuffer 只回字节不回 Content-Type，视频 blob 的 mime 由 URL 扩展名推导。
@@ -104,7 +103,7 @@ export function useResolvedMediaSrc(item: ChatMediaItem): MediaSrcState {
 
           const clean = item.url.split(/[?#]/)[0]
           const ext = clean.slice(clean.lastIndexOf('.')).toLowerCase()
-          // 拷贝进全新 ArrayBuffer——IPC 返回的 Uint8Array 类型上可能是 SharedArrayBuffer 视图，不满足 BlobPart。
+          // 拷贝进全新 ArrayBuffer —— IPC 返回的 Uint8Array 类型上可能是 SharedArrayBuffer 视图，不满足 BlobPart。
           objectUrl = URL.createObjectURL(
             new Blob([new Uint8Array(buf)], {
               type: MEDIA_MIME_BY_EXT[ext] || (item.type === 'audio' ? 'audio/mpeg' : 'video/mp4')

@@ -18,8 +18,7 @@ import type { ChatMediaItem, CompanionBubble } from '@/shared/types/spiritagent'
 
 import { decodePayload } from '../gateway-event-util'
 
-// 主动消息与通知投递：companion.message / system.notification / 视频任务完成 / IM 通道提醒。
-// 提醒是否出现由打扰档位、锁屏与聊天可见性共同裁决；精灵旁提示另需精灵实际可见，不可见时由未读承接。
+// 主动消息与通知投递：companion.message / system.notification / 视频任务完成 / IM 通道提醒。提醒是否出现由打扰档位、锁屏与聊天可见性共同裁决；精灵旁提示另需精灵实际可见，不可见时由未读承接。
 
 export function handleDeliveryEvent(event: GatewayEvent): void {
   switch (event.type) {

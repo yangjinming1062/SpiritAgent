@@ -428,8 +428,7 @@ function forkSessionInfo(sourceSessionId: string, res: SessionResumeResponse): S
   }
 }
 
-/** 从源会话的某条消息派生新会话：调用 session.fork RPC，成功后挂载新会话并 hydrate 历史。
- *  发起后已换号或换网关时返回 null；请求失败向上抛出。 */
+/** 从源会话某条消息派生新会话（session.fork）并挂载 hydrate；发起后已换号或换网关返回 null，请求失败向上抛出。 */
 export async function forkConversation(sourceSessionId: string, sourceMessageId: number): Promise<string | null> {
   const epoch = currentClearEpoch()
   const gw = $gateway.get()
@@ -461,7 +460,6 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
     $sessions.set([forkSessionInfo(sourceSessionId, res), ...$sessions.get()])
 
     if (token === navigationToken) {
-      // 与 switchSession 同一形态：先 setChatSession 清残留状态 + 持久化新 id，再 hydrate 灌消息流
       setChatSession(res.session_id)
       hydrateChatMessages(res.messages || [], res.info)
     }
@@ -480,8 +478,7 @@ export async function forkConversation(sourceSessionId: string, sourceMessageId:
   }
 }
 
-/** 撤回消息：在同一会话内硬删除 ``Message.id >= source_message_id`` 的全部行（含锚点本身），并把锚点载荷落回输入框作为草稿。
- *  发起后已换号或换网关时返回 null；请求失败向上抛出。 */
+/** 撤回消息：同会话内硬删除 Message.id >= source_message_id 的全部行（含锚点），锚点载荷落回输入框作草稿；发起后已换号或换网关返回 null，请求失败向上抛出。 */
 export async function undoToMessage(sessionId: string, sourceMessageId: number): Promise<UndoResponse | null> {
   const epoch = currentClearEpoch()
   const gw = $gateway.get()
@@ -559,8 +556,7 @@ export async function switchSession(sessionId: string): Promise<void> {
       request: body => gw.request<SessionResumeResponse>('session.resume', { session_id: sessionId, ...body })
     })
 
-    // 快速 A→B 切换时丢弃过期响应，避免旧会话写回覆盖新会话。
-    // 未传活水位 last_seq，服务端只走增量或全量，merged/messages 恒为完整列表。
+    // 快速 A→B 切换时丢弃过期响应，避免旧会话写回覆盖新会话；未传活水位 last_seq，服务端只走增量或全量。
     if (token !== navigationToken) {
       return
     }

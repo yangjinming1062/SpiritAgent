@@ -36,10 +36,7 @@ DEFAULT_BASE_URL = "https://ilinkai.weixin.qq.com/"
 # 通用请求头与 base_info：channel_version 需跟随官方 iLink SDK 演进（omp-wechat 同源值 2.2.0）。
 CHANNEL_VERSION = "2.2.0"
 BOT_AGENT = "SpiritAgent/1.0.0"
-# 会话过期错误码（getupdates / sendmessage / getconfig 均可能返回）。
-# 语义区分：登录凭据失效要求重新扫码，但**只有轮询回路有权判定**——getupdates 是持续会话探针，
-# 它报 -14 才清凭据转 login_required。发送路径遇到 -14 只代表本条回复上下文失效
-# （context_token 过期），等待对端下一条消息刷新 token 即可，不动登录态。
+# 会话过期错误码（getupdates / sendmessage / getconfig 均可能返回）。只有轮询回路有权判定登录失效——getupdates 报 -14 才清凭据转 login_required；发送/typing 遇 -14 只代表回复上下文失效（context_token 过期），等下一条来信刷新即可。
 SESSION_EXPIRED = -14
 
 QR_POLL_INTERVAL_SECONDS = 3.0
@@ -64,8 +61,7 @@ def _random_wechat_uin() -> str:
 
 
 def _decode_aes_key(raw: str) -> bytes | None:
-    """iLink aes_key 支持三种编码（hex 32 字符 / base64-of-hex / base64-of-raw-bytes）；base64-of-hex 是
-    omp-wechat 验证可解密的唯一稳定形态（base64-of-raw 会导致 CDN 403/丢文件），hex 形式尝试兜底。"""
+    """iLink aes_key 三种编码（hex 32 / base64-of-hex / base64-of-raw）；base64-of-hex 是 omp-wechat 验证可解密的唯一稳定形态（base64-of-raw 会 CDN 403/丢文件），hex 形式尝试兜底。"""
     if not raw:
         return None
     candidates: list[bytes] = []
@@ -115,10 +111,7 @@ class _InboundMedia:
 
 
 def _parse_inbound_item(item: dict) -> _InboundMedia | None:
-    """提取可下载的媒体描述；无媒体段返回 None。
-
-    image 的 type 值在收发两侧代码中不一致（出站用 1、入站按 2），故按内层段名判别而非 type 数字。
-    """
+    """提取可下载的媒体描述；无媒体段返回 None。image 的 type 值收发两侧不一致（出站 1、入站 2），按内层段名判别而非 type 数字。"""
     for segment, kind in (
         ("image_item", "image"),
         ("voice_item", "voice"),
@@ -220,13 +213,7 @@ async def _materialize_inbound_attachments(
 
 
 class WeixinIlinkAdapter(ChannelAdapter):
-    """微信 iLink（ClawBot 个人号 Bot API）适配器：QR 扫码登录 + getupdates 长轮询 + reply-only 回复。
-
-    硬约束（协议决定）：回复必须回显入站消息的 context_token（每 peer 缓存最新值并持久化，
-    重启免重扫、断线不丢回复凭据）；不能主动发起会话（can_initiate=False）。
-    凭据 JSON 形如 {bot_token, baseurl, ilink_user_id, ilink_bot_id, context_tokens{peer→token},
-    get_updates_buf, typing_ticket, typing_ticket_ts}。
-    """
+    """微信 iLink（ClawBot 个人号 Bot API）适配器：QR 扫码登录 + getupdates 长轮询 + reply-only 回复。硬约束（协议决定）：回复必须回显入站消息的 context_token（每 peer 缓存最新值并持久化，重启免重扫）；不能主动发起会话。凭据 JSON 形如 {bot_token, baseurl, ilink_user_id, ilink_bot_id, context_tokens{peer→token}, get_updates_buf, typing_ticket, typing_ticket_ts}。"""
 
     channel_name = "weixin_ilink"
     conversation_title = "微信对话"
@@ -311,10 +298,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
         return dict(self._login_state)
 
     async def _login_flow(self) -> None:
-        """QR 登录状态机：取码 → 3s 轮询 wait→scaned→confirmed|expired（5 分钟总超时）。
-        confirmed 返回 bot_token/baseurl/ilink_user_id——凭据与游标清零重建（新会话旧 token/对端回复凭据全部失效），
-        登录账号本人自动加入白名单（微信侧自聊文传入站即本人 id，omp-wechat 同款语义）。
-        """
+        """QR 登录状态机：取码 → 3s 轮询 wait→scaned→confirmed|expired（5 分钟总超时）。confirmed 返回 bot_token/baseurl/ilink_user_id，凭据与游标清零重建（旧 token/对端回复凭据全部失效），登录账号本人自动加入白名单（omp-wechat 同款语义）。"""
         try:
             data = await self._request("GET", "ilink/bot/get_bot_qrcode", params={"bot_type": 3})
             qrcode = data.get("qrcode")
@@ -490,8 +474,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
         try:
             await self._request("POST", "ilink/bot/sendmessage", payload=payload)
         except IlinkSessionExpired:
-            # 回复上下文失效 ≠ 登录失效：不重扫码。桥接层把未送达内容保留为待补发，
-            # 登录态是否真失效由轮询回路的 -14 判定。
+            # 回复上下文失效 ≠ 登录失效：不重扫码；登录态是否真失效由轮询回路的 -14 判定。
             raise ChannelError("iLink reply context expired while sending", fatal=False) from None
 
     async def send_text(self, peer_id: str, text: str, context_token: str | None = None) -> None:
@@ -505,8 +488,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
         media: list[ChannelDeliveryMedia],
         context_token: str | None = None,
     ) -> None:
-        """出站媒体（turn 产出的图片/视频）：读本地媒体 → AES-128-ECB 加密 → CDN 上传 → sendmessage 携带
-        image_item / video_item 段。文本与媒体合并为单条消息（文本段在前）。"""
+        """出站媒体（turn 产出的图片/视频）：读本地媒体 → AES-128-ECB 加密 → CDN 上传 → sendmessage 携带 image_item/video_item 段；文本与媒体合并为单条消息（文本段在前）。"""
         token = self._reply_token(peer_id, context_token)
         item_list: list[dict] = []
         for m in media:
@@ -535,8 +517,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
         await self._send_items(peer_id, token, item_list)
 
     async def _upload_one(self, peer_id: str, media: ChannelDeliveryMedia) -> dict:
-        """上传单个媒体：拉本地媒体字节 → AES 加密 → getuploadurl 拿 upload_full_url → POST 字节 →
-        返回 iLink image_item / video_item 段。"""
+        """上传单个媒体：拉本地媒体字节 → AES 加密 → getuploadurl 拿 upload_full_url → POST 字节 → 返回 iLink image_item/video_item 段。"""
         url = media.url
         if url.startswith("/api/media/files/"):
             file_id = url.removeprefix("/api/media/files/")

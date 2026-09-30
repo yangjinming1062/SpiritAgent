@@ -20,8 +20,7 @@ function checkDistBuilt(distDir) {
     }
   }
 
-  // HTML 引用的 hashed JS 由 vite 发到 dist/assets；只有 HTML 没有脚本包
-  // 时窗口照样白屏。
+  // HTML 引用的 hashed JS 由 vite 发到 dist/assets；只有 HTML 没有脚本包时窗口照样白屏。
   const assetsDir = path.join(distDir, 'assets')
   const hasAssets =
     fs.existsSync(assetsDir) &&

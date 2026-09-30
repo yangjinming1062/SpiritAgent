@@ -50,8 +50,7 @@ function readInputValue(row: InputRow, raw: string): string | number {
     return raw
   }
 
-  // Number('') 是 0 而不是 NaN——把空输入视为无效，回退到默认值，
-  // 而不是悄悄写入 0。
+  // Number('') 是 0 而不是 NaN ——把空输入视为无效，回退到默认值，而不是悄悄写入 0。
   if (raw === '') {
     return row.default
   }

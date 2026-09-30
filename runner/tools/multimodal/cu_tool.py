@@ -20,7 +20,7 @@ _CAPTURE_MODES = frozenset({"som", "vision", "ax"})
 _BUTTONS = frozenset({"left", "right", "middle"})
 _SCROLL_DIRECTIONS = frozenset({"up", "down", "left", "right"})
 
-# 键名规范化后再交给后端与拦截表：cmd / ctrl / option / shift / win / fn 加普通键名。
+# 键名规范化后再交后端与拦截表。
 _KEY_ALIASES = {
     "command": "cmd",
     "control": "ctrl",
@@ -31,12 +31,12 @@ _KEY_ALIASES = {
     "⌘": "cmd",
     "⌥": "option",
 }
-# Windows 后端把 cmd 当作 Win 键：规范化时就归为 win，拦截表与后端看到同一个键。
+# cmd 归为 win，拦截表与后端同键。
 _PLATFORM_KEY_ALIASES = {"cmd": "win"} if IS_WINDOWS else {}
-# 仅用于拦截比对的同义键名；发给后端的键名不变。
+# 同义键名仅用于拦截比对。
 _BLOCK_SYNONYMS = {"escape": "esc", "del": "delete"}
 
-# 组合键包含任一集合即拒绝（cmd+shift+q 命中 cmd+q）；option 即 Windows 的 alt。
+# 组合键含任一集合即拒；option 即 alt。
 _BLOCKED_KEY_COMBOS: tuple[frozenset[str], ...] = tuple(
     frozenset(combo)
     for combo in (
@@ -67,16 +67,16 @@ _BLOCKED_KEY_COMBOS: tuple[frozenset[str], ...] = tuple(
 )
 
 _BLOCKED_TYPE_PATTERNS = [
-    # 管道或命令分隔符接 shell（curl ... | bash、wget ...; sh）；DOTALL 让换行分隔也能命中。
+    # 管道/分隔符接 shell；DOTALL 覆盖换行。
     re.compile(r"curl\s+.*?(?:\|\||&&|[|;])\s*bash", re.IGNORECASE | re.DOTALL),
     re.compile(r"curl\s+.*?(?:\|\||&&|[|;])\s*sh\b", re.IGNORECASE | re.DOTALL),
     re.compile(r"wget\s+.*?(?:\|\||&&|[|;])\s*bash", re.IGNORECASE | re.DOTALL),
     re.compile(r"wget\s+.*?(?:\|\||&&|[|;])\s*sh\b", re.IGNORECASE | re.DOTALL),
-    # 命令替换与参数展开：`cmd`、$(...)、${...}
+    # 命令替换与参数展开。
     re.compile(r"`[^`]*`", re.DOTALL),
     re.compile(r"\$\([^)]*\)", re.DOTALL),
     re.compile(r"\$\{[^}]*\}", re.DOTALL),
-    # 任意命令后接分隔符与 shell（echo evil; bash）；误拦只需模型改写，漏拦会执行 shell。
+    # 命令后接 shell 一律拦；误拦可改写，漏拦会执行。
     re.compile(r"(?:;|&&|\|\||\|)\s*(?:bash|sh|zsh|ksh)\b", re.IGNORECASE),
     re.compile(r"\bsudo\s+rm\s+-[rf]", re.IGNORECASE),
     re.compile(r"\brm\s+-rf\s+/\s*$", re.IGNORECASE),
@@ -144,7 +144,7 @@ def _get_backend() -> ComputerUseBackend:
             try:
                 backend.start()
             except Exception:
-                # 不缓存启动失败的实例，释放其资源后下次调用重新构造。
+                # 启动失败不缓存。
                 backend.stop()
                 raise
             _backend = backend
@@ -152,7 +152,7 @@ def _get_backend() -> ComputerUseBackend:
 
 
 def handle_computer_use(args: dict[str, Any], **kwargs: Any) -> str | dict[str, Any]:
-    # 桌面动作可能耗时数秒；请求已取消时不再开始新的动作。
+    # 已取消则不再开新动作。
     if is_interrupted():
         return tool_error("Interrupted")
     if not (action := str(args.get("action") or "").strip().lower()):
@@ -174,7 +174,7 @@ def handle_computer_use(args: dict[str, Any], **kwargs: Any) -> str | dict[str, 
     try:
         return _dispatch(backend, action, args)
     except Exception as e:
-        # 目标不存在、参数不合法属于预期失败，不记录堆栈。
+        # 预期失败不记堆栈。
         logger.warning("computer_use %s failed: %s", action, e, exc_info=not isinstance(e, LookupError | ValueError))
         return tool_error(f"{action} failed: {e}")
 
@@ -190,7 +190,7 @@ def _dispatch(backend: ComputerUseBackend, action: str, args: dict[str, Any]) ->
                 _coerce_max_elements(args.get("max_elements")),
             )
         case "wait":
-            # 超过 30 秒显式拒绝：后端会截断等待时长，模型却以为等满了。
+            # 超 30s 显式拒绝，防后端截断却看似等满。
             try:
                 seconds = float(args.get("seconds", 1.0))
             except (TypeError, ValueError):

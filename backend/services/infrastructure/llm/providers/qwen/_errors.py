@@ -5,11 +5,7 @@ from ..base import ProviderError
 
 
 def raise_for_qwen_response(resp: httpx.Response) -> dict:
-    """把千问 HTTP 响应翻译为 dict 或 ProviderError。
-
-    成功体用空 `code`/`message` + `output`；失败时顶层 `code`/`message` 非空。
-    与 OpenAI 的 `error` 信封不同，不能直接走 `raise_for_provider_response`。
-    """
+    """把千问 HTTP 响应翻译为 dict 或 ProviderError。成功体用空 code/message + output；失败时顶层 code/message 非空。与 OpenAI 的 error 信封不同，不能直接走 raise_for_provider_response。"""
     body = response_json(resp)
     code = body.get("code") or ""
     message = body.get("message") or body.get("detail") or ""

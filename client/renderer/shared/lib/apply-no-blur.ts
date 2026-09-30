@@ -1,8 +1,4 @@
-// no-blur 降级管理：OS 减透明偏好、集显探测、用户手动开关与帧预算自动降级
-// 四个来源汇成一个 html class。前两个在启动时一次性判定（探测成本高且不会变化）；
-// 手动开关经 companion 偏好管道跨窗口、跨端同步；帧预算由各表面窗口的
-// glass-budget 监视器在运行期驱动（见 initGlassBudgetGuard）。
-// 任一来源命中即降级；自动降级会在来源消失后恢复，手动开关则始终生效。
+// no-blur 降级管理：OS 减透明、集显探测、用户手动开关与帧预算自动降级汇成一个 html class，任一来源命中即降级。自动降级在来源消失后恢复，手动开关始终生效；前两个启动时一次性判定，帧预算由 glass-budget 监视器运行期驱动。
 
 import { atom } from 'nanostores'
 
@@ -99,14 +95,8 @@ function isIntegratedGpu(): boolean {
   return /intel|uhd|iris|hd graphics|radeon graphics|mali|adreno|swiftshader|llvmpipe|microsoft basic/.test(renderer)
 }
 
-// ── 帧预算自动降级 ──
-// 大面积 backdrop-filter 采样桌面时若合成持续超预算，撤销玻璃比
-// 让整个表面积互动掉帧更可取。观察窗为 2s：连续超时才降级（抖动不触发），
-// 恢复窗口放宽到 10s 连续达标（滞回，避免临界负载来回切换）。
-/**
- * 表面窗口（living/workbench）挂载后启动的 rAF 帧间隔监视。
- * 返回停止函数。
- */
+// 帧预算自动降级：大面积 backdrop-filter 合成持续超预算时撤销玻璃更可取；2s 连续超时才降级（抖动不触发），10s 连续达标才恢复（滞回避免临界负载来回切换）。
+/** 表面窗口（living/workbench）挂载后启动的 rAF 帧间隔监视，返回停止函数。 */
 export function initGlassBudgetGuard(): () => void {
   let last = 0
   let overAccum = 0

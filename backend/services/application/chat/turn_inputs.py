@@ -220,10 +220,7 @@ def _history_to_responses_context(
     lang: str = DEFAULT_LANGUAGE,
     inject_time_perception: bool = True,
 ) -> dict[str, Any]:
-    """DB 消息列表转为 Responses API 上下文。完整保留所有会话中的原始 call/result 工具帧。
-
-    陪伴预设把日期分界与用户时刻作为独立输入项插入，不写入消息正文；工作预设跳过。
-    """
+    """DB 消息转 Responses 上下文；所有会话保留原始 call/result 工具帧。陪伴预设插入日期分界与用户时刻为独立输入项，工作预设跳过。"""
     context: dict[str, Any] = {"instructions": system_prompt, "input": [], "source_message_ids": []}
     prev_date_key: str | None = None
     last_user_at: datetime | None = None
@@ -284,20 +281,14 @@ async def build_turn_inputs(
     companion_proactive_turn: bool = False,
     excluded_tool_names: frozenset[str] = frozenset(),
 ) -> TurnInputs:
-    """解析身份 prompt、schemas、历史与 LLM client。
-
-    ``memory_scope`` 由调用方经 ``conversation_memory_scope`` 校验得出；预设即会话的 ``system_preset_id``，
-    自动化会话没有记忆域。
-    """
+    """解析身份 prompt、schemas、历史与 LLM client。``memory_scope`` 由调用方经 ``conversation_memory_scope`` 校验；自动化会话没有记忆域。"""
     preset_id = conv.system_preset_id
     is_companion = preset_id == DEFAULT_PRESET_ID
     history = await load_context_messages(db, conv)
     first_user_msg = next((m for m in history if m.role == "user"), None)
     first_user_msg_content = first_user_msg.content if first_user_msg else None
 
-    # 历史含媒体时把 LLM 链筛选到对应能力供应商，确保压缩客户端与流式调用（接收同一 _chain）都能消费媒体 part。
-    # 视频判定优先于图片（视频链通常也具备视觉，反之不然）；链为空时显式报错而非回落文本链——
-    # 回落只会换来供应商网关拒收 input_video 的不可读 400。
+    # 历史含媒体时筛选到对应能力供应商（视频优先于图片），确保压缩与流式共用同一 _chain；链为空显式报错不回落文本链，否则换来网关拒收 input_video 的 400。
     llm_chain: list[ProviderConfig] = []
     if any(_user_row_has_video_part(m) for m in history):
         llm_chain = await resolve_video_chain(db, user_id)
@@ -369,7 +360,7 @@ async def build_turn_inputs(
         NativeMemory(memory_scope, source=MemorySource("tool", session_id=conv.id)) if memory_scope else None
     )
 
-    # 计算上下文 Token 估算值：结合 Responses 权威基线与 CJK 全量/增量估算
+    # Token 估算结合 Responses 权威基线与 CJK 全量/增量估算。
     full_context_tokens = approx_responses_tokens(context["instructions"], context["input"])
     baseline, subsequent_msgs = _find_authoritative_token_baseline(history)
     if baseline is not None:

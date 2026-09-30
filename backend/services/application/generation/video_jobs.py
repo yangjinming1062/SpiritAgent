@@ -582,7 +582,7 @@ async def _fail_or_keep_best(job_id: int, reason: str) -> None:
         await _record_failure(job_id, reason=reason)
 
 
-# In-flight 集合：进程中途重启时，多个协程可能竞争 finalize 同一任务。第一个进入的注册，后续提前退出，避免重复下载或重复 WSEvent；集合驻留在进程内存（重启即丢失——重启后由 resume_pending_video_jobs 走 DB 重建）。
+# 进程内 in-flight 集合：并发 finalize 同一任务时只有第一个进入，避免重复下载/发事件；重启后由 resume_pending_video_jobs 按 DB 重建。
 async def _poll_and_finalize(job_id: int) -> None:
     """后台主循环：供应商任务和本地候选均可恢复；仅未知提交禁止自动重发。"""
     if job_id in _INFLIGHT:
@@ -762,9 +762,7 @@ class _JobSettledError(Exception):
 
 
 async def _download_and_store(download_url: str | None, *, user_id: int, job_id: int, attempt: int) -> str:
-    """有界重试下载供应商成品并原子写入本次尝试的确定性路径，返回裸存储路径。
-
-    慢速大文件的读取超时放宽到 10 分钟，大小上限为 ``video_gen_download_max_bytes``。"""
+    """有界重试下载供应商成品并原子写入确定性路径，返回裸存储路径。慢速大文件读取超时放宽到 10 分钟，上限 ``video_gen_download_max_bytes``。"""
     if not download_url:
         raise RuntimeError("video result has no download url")
     failures = 0

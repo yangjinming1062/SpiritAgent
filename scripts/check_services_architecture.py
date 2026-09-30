@@ -1,14 +1,4 @@
-"""backend 服务分层架构检查。
-
-检查项（与 backend/README.md「代码与依赖」及 RULES 模块独立原则对应）：
-1. 站内导入必须可解析（不含 .venv / site-packages / 标准库）。
-2. 包级（模块级导入）不允许出现依赖环。
-3. 层间白名单：contracts 纯净；domains 不跨业务域、不依赖 application/adapters；
-   infrastructure 不认识业务（禁止导入 domains/application/adapters）；
-   application 不导入 adapters；除 bootstrap 外不得导入 bootstrap；
-   common/components/modules/prompts 不得反向导入服务实现。
-4. application 内只允许显式声明的单向流程依赖。
-"""
+"""backend 服务分层架构检查（规则与例外理由见 backend/README.md「services 依赖边界」）。"""
 
 import ast
 import os
@@ -20,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 BACKEND = REPO_ROOT / "backend"
 SKIP_DIRS = {".venv", "__pycache__", ".git", "node_modules", "alembic"}
 
-# rank 越小越底层；导入方向必须 rank(importer) >= rank(target)（向更底层导入）。
+# rank 越小越底层；导入方向必须 rank(importer) >= rank(target)。
 RANK = {
     "services.contracts": 0,
     "services.domains": 1,
@@ -31,31 +21,28 @@ RANK = {
     "bootstrap": 6,
     "main": 6,
 }
-# rank 规则之外的例外：允许向更高 rank 导入。
+# rank 例外：允许向更高 rank 导入。
 UPWARD_ALLOWED = {
     ("services.domains", "services.infrastructure"),
 }
-# application 内显式声明的单向流程依赖（包级）。
+# application 包级单向流程依赖（理由见 backend/README.md）。
 APPLICATION_FLOW_EDGES = {
     ("services.application.automation", "services.application.chat"),
     ("services.application.chat", "services.application.nightly"),
     ("services.application.nightly", "services.application.generation"),
     ("services.application.automation", "services.application.nightly"),
-    # actions 编排素材制作走 generation；夜间/对话读取动作上下文走 actions。
     ("services.application.actions", "services.application.generation"),
     ("services.application.chat", "services.application.actions"),
     ("services.application.nightly", "services.application.actions"),
 }
-# domains 内显式声明的跨域单向依赖（域级，与 backend/README.md「services 依赖边界」 例外表一致）。
+# domains 跨域单向依赖（理由见 backend/README.md「services 依赖边界」）。
 DOMAIN_FLOW_EDGES = {
-    # 备份按恢复后的动作行重建可播目录，复用发布校验。
     ("services.domains.backup", "services.domains.actions"),
     ("services.domains.companion", "services.domains.memory"),
     ("services.domains.journal", "services.domains.memory"),
-    # companion 读取动作目录快照（LLM 可点播清单随当前包目录变化）；actions 不反向依赖。
     ("services.domains.companion", "services.domains.actions"),
 }
-# 各域可单向导入的底座域（backend/README.md「services 依赖边界」）。
+# 各域可单向导入的底座域。
 DOMAIN_BASE = "services.domains.conversation"
 BOTTOM = ("common", "components", "modules", "prompts")
 
@@ -72,7 +59,7 @@ def pkg_of(module: str) -> str:
 
 
 def domain_of(module: str) -> str:
-    """services.domains.X / services.application.X 取到第三段域级包名，供域隔离与流程边检查使用。"""
+    """取 services.domains.X / services.application.X 的域级包名。"""
     parts = module.split(".")
     if len(parts) >= 3 and parts[0] == "services" and parts[1] in ("domains", "application"):
         return ".".join(parts[:3])
@@ -120,7 +107,7 @@ def main() -> int:
     unresolved: list[str] = []
 
     def rel_base(name: str, is_pkg: bool, level: int, module: str | None) -> str | None:
-        """把相对导入解析为绝对模块字符串（不查存在性）。相对导入相对“所在包 P”解析：level L → P 上溯 L-1 层。"""
+        """相对导入解析为绝对模块字符串（不查存在性）：level L → 所在包上溯 L-1 层。"""
         parts = name.split(".")
         if not is_pkg:
             parts = parts[:-1]
@@ -170,11 +157,11 @@ def main() -> int:
 
     errors: list[str] = []
 
-    # 1. 未解析导入
+    # 未解析导入
     for u in unresolved:
         errors.append(f"[unresolved] {u}")
 
-    # 2. 包级环（严格边）
+    # 包级环（严格边）
     pkg_edges = {(pkg_of(a), pkg_of(b)) for (a, b) in edges if pkg_of(a) != pkg_of(b)}
     sccs = _tarjan(pkg_edges)
     for scc in sccs:
@@ -186,7 +173,7 @@ def main() -> int:
                 if evs:
                     errors.append(f"          {a} -> {b}  [{evs[0]}]")
 
-    # 3/4. 层间白名单
+    # 层间白名单与域隔离
     for (a, b), evs in sorted(edges.items()):
         la, lb = layer_of(pkg_of(a)), layer_of(pkg_of(b))
         if la is None or lb is None or a == b:

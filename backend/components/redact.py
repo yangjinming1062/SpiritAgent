@@ -92,7 +92,7 @@ _DB_CONNSTR_RE = re.compile(
 _JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}(?:\.[A-Za-z0-9_=-]{4,}){0,2}")
 _SIGNAL_PHONE_RE = re.compile(r"(\+[1-9]\d{6,14})(?![A-Za-z0-9])")
 
-# 只匹配「整段就是 k=v&k=v 形式体」的文本；Web URL 的 query string 故意不处理——magic link / OAuth 回调常走不透明 token，盲脱敏会破坏这些流程；URL 内的已知凭据形态仍由 _PREFIX_RE / _JWT_RE 兜底。
+# 只匹配「整段就是 k=v&k=v 形式体」；Web URL query 故意不处理——magic link / OAuth 回调常走不透明 token，盲脱敏会破坏流程；URL 内已知凭据形态由 _PREFIX_RE / _JWT_RE 兜底。
 _FORM_BODY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_.-]*=[^&\s]*(?:&[A-Za-z_][A-Za-z0-9_.-]*=[^&\s]*)+$")
 _PREFIX_RE = re.compile(r"(?<![A-Za-z0-9_-])(" + "|".join(_PREFIX_PATTERNS) + r")(?![A-Za-z0-9_-])")
 
@@ -119,8 +119,7 @@ def _redact_form_body(text: str) -> str:
 
 
 def _mask_secret(match_value: str) -> str:
-    """短串（含空串）统一返占位——f-string 切头尾在短串上会撞索引并泄漏字符。
-    与 runner/utils/redact.py::_mask_token 共用的脱敏形状；别处需要时也走这里。"""
+    """短串统一返占位——f-string 切头尾在短串上会撞索引并泄漏；与 runner/utils/redact.py::_mask_token 共用脱敏形状。"""
     if len(match_value) < SECRET_MASK_MIN_LENGTH:
         return "***"
     return f"{match_value[:SECRET_MASK_HEAD_CHARS]}...{match_value[-SECRET_MASK_TAIL_CHARS:]}"
@@ -165,7 +164,7 @@ def _sub_private_key(_m: re.Match) -> str:
     return "[REDACTED PRIVATE KEY]"
 
 
-# 每条规则是 (substring gate, compiled pattern, substitution callback)；gate 在无凭据日志行上能省掉 95%+ 的 regex 执行，且每个 _PREFIX_PATTERNS 的 gated 子串都是字面前缀，不会漏报。
+# (substring gate, pattern, callback)；gate 在无凭据日志行省掉 95%+ regex，且 gated 子串都是字面前缀不会漏报。
 def _apply_gated_rules(text: str, rules: list[tuple[str, re.Pattern, Callable[[re.Match], str]]]) -> str:
     for gate, pattern, sub in rules:
         if gate in text:
@@ -194,7 +193,7 @@ def _extract_literal_prefix(pattern: str) -> str:
     return pattern
 
 
-# 每条 prefix regex 都以这些字面量打头——廉价预筛，只有命中已知前缀子串才跑昂贵的 _PREFIX_RE。
+# prefix regex 都以这些字面量打头——廉价预筛，命中后才跑昂贵的 _PREFIX_RE。
 _PREFIX_SUBSTRINGS = tuple(_extract_literal_prefix(p) for p in _PREFIX_PATTERNS)
 
 
@@ -203,7 +202,7 @@ def _has_known_prefix_substring(text: str) -> bool:
 
 
 def redact_sensitive_text(text: str | None) -> str | None:
-    """对文本应用所有脱敏 pattern；regex 都走 substring 预筛 gate，无凭据日志行全扫描降 ~68%。"""
+    """对文本应用所有脱敏 pattern；regex 走 substring 预筛 gate，无凭据日志行全扫描降 ~68%。"""
     if text is None:
         return None
     if not isinstance(text, str):

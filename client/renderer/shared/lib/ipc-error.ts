@@ -10,8 +10,7 @@ export function isClientErrorIpc(error: unknown): boolean {
   return /^4\d\d /.test(unwrapIpcErrorMessage(error))
 }
 
-// 主进程错误形如 `NNN /api/path: {"detail":{"error":"..."}}`：剥掉状态码与路径后取 detail
-// 里的公开文案；解析不了就用调用方兜底。各后端错误展示点共用，避免各自维护解析副本。
+// 主进程错误形如 `NNN /api/path: {"detail":{"error":"..."}}`：剥掉状态码与路径后取 detail 里的公开文案；解析不了就用调用方兜底。各后端错误展示点共用，避免各自维护解析副本。
 export function backendDetailMessage(error: unknown, fallback: string): string {
   const raw = unwrapIpcErrorMessage(error).replace(/^\d{3}\s+(?:\/[^\s]*:\s*)?/, '')
 

@@ -158,8 +158,7 @@ function parseJsonRpcFrame(raw: string): JsonRpcFrame | null {
   return v as unknown as JsonRpcFrame
 }
 
-// JSON-RPC 2.0 标准错误码 + SpiritAgent 扩展码——与后端 components/constants.py 的 JSONRPC_* 保持同步，
-// 消费方可按 err.code 分支而无需解析 err.message
+// JSON-RPC 2.0 标准错误码 + SpiritAgent 扩展码——与后端 components/constants.py 的 JSONRPC_* 保持同步，消费方可按 err.code 分支而无需解析 err.message。
 export enum SpiritAgentRpcErrorCode {
   ParseError = -32700,
   InvalidRequest = -32600,
@@ -186,9 +185,7 @@ export class SpiritAgentRpcError extends Error {
 
 const ANY = '*'
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
-// A reconnect after sleep/wake must not hang forever in 'connecting' (which
-// keeps the composer disabled and stuck on "Starting SpiritAgent..."). If the open
-// handshake doesn't land in this window, fail to 'error' so callers can retry.
+// 休眠唤醒后重连不得永久卡在 'connecting'（会禁用输入框并卡住 "Starting SpiritAgent..."）；握手超时应落到 'error' 让调用方重试。
 const CONNECT_TIMEOUT_MS = 15_000
 
 const CLOSED_ERROR_MESSAGE = 'SpiritAgent gateway connection closed'

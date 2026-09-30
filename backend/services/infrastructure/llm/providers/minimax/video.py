@@ -4,7 +4,7 @@ from ..base import ProviderConfig, VideoAsset, VideoGenProvider, VideoGenRequest
 from ..http import get_http
 from ._errors import raise_for_minimax_response
 
-# MiniMax 提供两套不兼容的视频 API；v1（Hailuo）由标准 token-plan 覆盖，v2（H3）需独立付费套餐，故 v1 保留为默认；按模型名前缀路由，未知名回落 v1（plan-covered 协议是安全侧）。
+# MiniMax 两套不兼容视频 API：v1（Hailuo）标准 token-plan 覆盖，v2（H3）需独立付费套餐故 v1 为默认；按模型名前缀路由，未知名回落 v1（plan-covered 是安全侧）
 _V2_MODEL_PREFIX = "MiniMax-H3"
 
 
@@ -12,23 +12,21 @@ def _api_version(model: str) -> str:
     return "v2" if (model or "").startswith(_V2_MODEL_PREFIX) else "v1"
 
 
-# v1（Hailuo）约束：离散时长、分辨率档位。Hailuo-2.3 现仅收 768P/1080P（2026-09 实测 API 拒 512P），按成本升序。
+# v1（Hailuo）约束：离散时长、分辨率档位。Hailuo-2.3 现仅收 768P/1080P（2026-09 实测 API 拒 512P），按成本升序
 _V1_DURATIONS = (6, 10)
 _V1_RESOLUTIONS = ("768P", "1080P")
 
-# v2（H3）约束：区间内整数秒、两档分辨率。
-_V2_DURATION_MIN, _V2_DURATION_MAX = 4, 15
+_V2_DURATION_MIN, _V2_DURATION_MAX = 4, 15  # v2（H3）约束：区间内整数秒、两档分辨率
 _V2_RESOLUTIONS = ("768P", "2K")
 
-# v1 任务状态枚举——大写，扁平响应体。
-_V1_STATUS_MAP: dict[str, VideoJobState] = {
+_V1_STATUS_MAP: dict[str, VideoJobState] = {  # v1 任务状态枚举——大写，扁平响应体
     "Queueing": "queued",
     "Processing": "processing",
     "Success": "succeeded",
     "Fail": "failed",
 }
 
-# MiniMax-H3 v2 task.status 枚举（文档：VideoTask.status）均为小写；把 "running" 并入内部 "processing" 但保留 "queued"，让调用方区分"未开始"与"进行中"；"cancelled" 归到 "failed"——后端生命周期无独立的 cancelled 状态，用户感知相同。
+# H3 v2 task.status 均为小写；running→processing 但保留 queued 区分「未开始」与「进行中」；cancelled→failed（后端生命周期无独立 cancelled）
 _STATUS_MAP: dict[str, VideoJobState] = {
     "queued": "queued",
     "running": "processing",
@@ -37,7 +35,7 @@ _STATUS_MAP: dict[str, VideoJobState] = {
     "cancelled": "failed",
 }
 
-# 文档对 ContentItem.text 的限制；API 以 bad_request_error 拒收更长提示词，客户端提前失败以避免往返。
+# 文档对 ContentItem.text 的限制；API 以 bad_request_error 拒收更长提示词，客户端提前失败
 _MAX_PROMPT_CHARS = 7000
 
 
@@ -52,7 +50,7 @@ def _build_content(req: VideoGenRequest) -> list[dict]:
 
 
 class MiniMaxVideoGenProvider(VideoGenProvider):
-    """通过 MiniMax 提供视频生成，按模型名自动选择 v1（Hailuo，默认，duration ∈ {6,10}、resolution ∈ {512P,768P,1080P}，三阶段 submit/poll/fetch）或 v2（MiniMax-H3*，duration ∈ [4,15] 整数秒、resolution ∈ {768P,2K}，两阶段且 URL 内联）；默认 v1 因 H3 需独立付费订阅、否则开箱即失败；能力卡片设 model_name=MiniMax-H3 可启用 v2；版本相关参数校验放在此处，调用层无法预知模型故仅做并集预检、精确失败留在 submit。"""
+    """按模型名自动选择 v1（Hailuo，默认）或 v2（MiniMax-H3*）；默认 v1 因 H3 需独立付费订阅。版本相关参数校验放在此处，调用层无法预知模型故仅做并集预检、精确失败留在 submit。"""
 
     provider_name = "minimax"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.minimaxi.com"
@@ -61,7 +59,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
         self._client = get_http(config.base_url, config.api_key)
-        # 能力声明按钉死的 config.model 选择协议档位（v1/v2 不兼容），与 submit 校验同源。
+        # 能力声明按钉死的 config.model 选择协议档位（v1/v2 不兼容），与 submit 校验同源
         if _api_version(config.model) == "v2":
             self.durations = tuple(range(_V2_DURATION_MIN, _V2_DURATION_MAX + 1))
             self.resolutions = _V2_RESOLUTIONS
@@ -113,7 +111,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
             "duration": req.duration,
             "resolution": req.resolution,
         }
-        # t2v 必传 ratio 且不能是 adaptive；i2v 由 H3 从首帧派生 ratio 故不能传。
+        # t2v 必传 ratio 且不能是 adaptive；i2v 由 H3 从首帧派生 ratio 故不能传
         if req.first_frame_image:
             payload["ratio"] = "adaptive"
         elif req.aspect_ratio:
@@ -123,7 +121,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         return payload
 
     async def poll(self, task_id: str) -> VideoJobStatus:
-        # 任务行在 submit 时把 config.model 钉死（见 video_jobs._poll_and_finalize_locked），此处版本永远对应该 task_id 所属协议。
+        # 任务行在 submit 时把 config.model 钉死，此处版本永远对应该 task_id 所属协议
         if _api_version(self.config.model) == "v2":
             return await self._poll_v2(task_id)
         return await self._poll_v1(task_id)
@@ -146,16 +144,16 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
     async def _poll_v2(self, task_id: str) -> VideoJobStatus:
         resp = await self._client.get(f"/v2/query/video_generation/{task_id}")
         body = raise_for_minimax_response(resp)
-        # 文档：GetVideoGenerationV2Resp = {task: VideoTask}（严格包装）；其他形态视为契约破坏，抛错让 worker 记 poll_failed 而非静默写半解析状态行。
+        # 文档 GetVideoGenerationV2Resp = {task: VideoTask}（严格包装）；其他形态视为契约破坏，抛错让 worker 记 poll_failed
         if not isinstance(body, dict) or not isinstance(body.get("task"), dict):
             raise RuntimeError(f"MiniMax poll returned unexpected body shape: {body!r}")
         task = body["task"]
         raw_status = str(task.get("status", "")).lower()
         norm = _STATUS_MAP.get(raw_status, "processing")
         content = task.get("content") or {}
-        # video_generation / video_regeneration 暴露 content.url；H3-Context-IR 暴露 content.prompt（无 URL）——_download_and_store 仅在 succeeded 且 URL 存在时触发。
+        # video_generation/video_regeneration 暴露 content.url；H3-Context-IR 暴露 content.prompt（无 URL）——_download_and_store 仅在 succeeded 且 URL 存在时触发
         download_url = content.get("url") if norm == "succeeded" else None
-        # VideoTaskError = {code, message}（见文档）；非 dict 形态属契约漂移，写 repr 而非原值，避免作为用户消息直接暴露。
+        # VideoTaskError = {code, message}；非 dict 属契约漂移，写 repr 避免作为用户消息直接暴露
         err = task.get("error")
         if isinstance(err, dict):
             error_message = err.get("message") or err.get("code")
@@ -174,7 +172,7 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
 
     async def fetch(self, file_id: str) -> VideoAsset:
         if _api_version(self.config.model) == "v2":
-            # H3 v2 下载 URL 由 poll 内联返回；fetch 不可达，仅为满足 ABC 保留。
+            # H3 v2 下载 URL 由 poll 内联返回；fetch 仅为满足 ABC 保留
             raise RuntimeError("MiniMax-H3 returns the download URL via poll(); fetch() is not used")
         resp = await self._client.get("/v1/files/retrieve", params={"file_id": file_id})
         body = raise_for_minimax_response(resp)

@@ -33,10 +33,7 @@ export interface SessionRuntimeDeps {
   userDataDir: string
 }
 
-/**
- * 懒创建并缓存后端会话；首次 ensure 触发 restore，结果经 `onRestored` 交回装配层。
- * `rewireAuthToken` 把主进程动态 token 读取接到当前会话实例。
- */
+/** 懒创建并缓存后端会话；首次 ensure 触发 restore，结果经 `onRestored` 交回装配层。`rewireAuthToken` 把主进程动态 token 读取接到当前会话实例。 */
 export function createSessionRuntime(
   deps: SessionRuntimeDeps,
   buildClientContextFn: typeof BuildClientContextFn

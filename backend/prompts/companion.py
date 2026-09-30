@@ -1,13 +1,5 @@
-"""陪伴域小推理提示词与标签文本：心情、空闲表达、自主空间行为、
-性格标签提炼、角色设定与着装块标题，以及初次见面主动意图。
-推理运行时（run_prompt_json）与消费逻辑在 services.domains.companion。
-
-双语提示词（mood/idle_expression/should_act）消费方按 ctx.language 经
-resolve_prompt_text 取文本；性格标签按开放角色资料提炼，保持中文单语。
-输出语言由 payload 的 output_language 字段约定。初次见面意图按用户语言在入队时取文本。
-
-防注入套语：标准句 JSON_PAYLOAD_DATA_CLAUSE_ZH 定义在包 __init__；
-承载任务语境的变体（tagger 的候选词）就地表述，不强行统一。"""
+"""陪伴域小推理提示词与标签文本；推理运行时在 services.domains.companion，索引见 [README](README.md)。
+双语提示词按 ctx.language 经 resolve_prompt_text 取文本，性格标签保持中文单语；防注入标准句在包 __init__，任务语境变体就地表述。"""
 
 from prompts import JSON_PAYLOAD_DATA_CLAUSE_ZH
 

@@ -11,9 +11,7 @@ class ToolsetDef:
     extra_tools: tuple[str, ...] = ()
 
 
-# 工具集 id 的权威枚举见 client/main/shared/lib/toolset-index.ts；本目录只做 Runner 侧 id → 工具名/前缀的映射。
-# 不可控的"侧信道"系统感知能力（焦点窗口 / 工作区 / 屏幕坐标 / 全屏 / 屏幕锁 / 空闲时长）单独归档为
-# ``system_awareness``,  让隐私敏感场景可以一键关掉屏幕坐标与全屏探测而不影响别的 system.* 探测。
+# id 权威枚举在 toolset-index.ts；本目录只做 id→工具映射。system_awareness 单列便于隐私场景整组关闭（见 README）。
 TOOLSET_CATALOG: tuple[ToolsetDef, ...] = (
     ToolsetDef(id="browser_automation", prefixes=("browser_",)),
     ToolsetDef(
@@ -52,10 +50,7 @@ _KNOWN_TOOLSET_IDS: frozenset[str] = frozenset(d.id for d in TOOLSET_CATALOG) | 
 
 
 def excluded_tool_names(disabled_ids: set[str], available_tool_names: set[str]) -> set[str]:
-    """计算 ``available_tool_names`` 中因所属工具集被禁用而须隐藏并拒绝派发的工具名（前缀须按具体名字展开）。
-
-    未知 id（拼错或已移除）不会命中任何工具，用户会误以为已关闭，因此打 WARNING。
-    """
+    """计算被禁用工具集须隐藏的工具名；未知 id 打 WARNING。"""
     if unknown := disabled_ids - _KNOWN_TOOLSET_IDS:
         logger.warning(
             "toolsets.disabled contains %d unknown id(s) ignored by runner catalog: %s. Valid ids: %s. Users may think these toolsets are disabled while they remain enabled.",

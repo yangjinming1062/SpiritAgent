@@ -117,8 +117,7 @@ async def set_action_enabled(
     user: CurrentUser,
     db: DbSession,
 ) -> dict[str, bool]:
-    """停用立即从自主选择与播放目录排除；系统槽位不可停用（产品必需能力）。
-    变更后同步发布目录，客户端不再保留已停用动作的播放资格。"""
+    """停用立即从自主选择与播放目录排除；系统槽位不可停用（产品必需能力）。变更后同步发布目录，客户端不再保留已停用动作的播放资格。"""
     action = await _owned_action(db, user.id, action_id)
     if action.system_slot and not enabled:
         raise HTTPException(status_code=400, detail="系统动作不可停用")
@@ -130,9 +129,7 @@ async def set_action_enabled(
 
 @router.delete("/{action_id}", response_model=CompanionOperationResponse)
 async def delete_action(action_id: int, user: CurrentUser, db: DbSession) -> CompanionOperationResponse:
-    """删除动作与素材版本行；必需系统槽位必须保有可用替代后才能移除。
-    素材文件在 manifest 与版本引用释放后按引用回收，不在本请求内同步删文件。
-    删除后同步发布目录，基础调度不再引用已移除动作。"""
+    """删除动作与素材版本行；必需系统槽位必须保有可用替代后才能移除。素材文件在 manifest 与版本引用释放后按引用回收，不在本请求内同步删文件；删除后同步发布目录。"""
     action = await _owned_action(db, user.id, action_id)
     if action.system_slot in REQUIRED_SYSTEM_SLOTS:
         raise HTTPException(status_code=400, detail=f"必需系统动作（{action.system_slot}）不可删除")

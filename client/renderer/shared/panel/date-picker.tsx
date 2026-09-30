@@ -8,9 +8,7 @@ import { useStrings } from '@/shared/strings'
 
 import { INPUT_CLASS } from './palette'
 
-// 自绘日期选择：YYYY / MM / DD 三组整段滚轮（1993 的邻位是 1992/1994）。
-// value 空串表示未选择（显示短横），首次拨动以今天为基准写入。
-// 年份钳在四位：0–99 会被 JS Date 重映射到 1900+，也写不出 YYYY-MM-DD。
+// 自绘日期选择：YYYY/MM/DD 三组整段滚轮（1993 的邻位是 1992/1994）。value 空串表示未选择（显示短横），首次拨动以今天为基准写入。年份钳在四位：0–99 会被 JS Date 重映射到 1900+，也写不出 YYYY-MM-DD。
 
 const pad2 = (n: number): string => String(n).padStart(2, '0')
 

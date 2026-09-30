@@ -141,7 +141,7 @@ def assemble_debug_prompt(
     tools = [tool for tool in tools if schema_name(tool) not in excluded_tools]
     valid_tool_names = [schema_name(s) for s in tools]
 
-    # 桌面端不带渠道提示时使用桌面默认说明；IM 适配器以渠道键声明平台。
+    # 桌面端不带渠道提示时用桌面默认说明；IM 适配器以渠道键声明平台。
     client_ctx = ChatRequestClientContext(
         environment_hints=f"OS: {sys.platform}; Workspace: {REPO_ROOT.as_posix()}",
         platform_hints={"desktop": None, "wechat": "weixin"}[platform],
@@ -162,7 +162,7 @@ def assemble_debug_prompt(
     if db_data is not None and db_data.get("environment_prompt"):
         instructions += "\n\n" + db_data["environment_prompt"]
 
-    # 走生产装配：构造 ORM-like mock Message，让陪伴预设带上日期分界与时刻提示。
+    # 走生产装配：mock Message 让陪伴预设带上日期分界与时刻提示。
     if message_sent_at is not None:
         parsed = datetime.fromisoformat(message_sent_at) if isinstance(message_sent_at, str) else message_sent_at
         sent_at = ensure_utc(parsed)
@@ -283,7 +283,7 @@ def main() -> int:
     )
     parser.add_argument("--without-tools", action="store_true", help="禁用工具注入")
 
-    # 时间感知（与生产路径一致）
+    # 时间感知参数（与生产路径一致）
     parser.add_argument(
         "--user-tz",
         default=None,
@@ -295,7 +295,6 @@ def main() -> int:
         help="模拟用户消息的发送时刻（ISO 8601，如 2026-08-29T02:30:00+08:00）；影响陪伴时间提示",
     )
 
-    # Onboarding 角色相关参数
     parser.add_argument("--persona-name", default=DEFAULT_MOCK_PERSONA["name"], help="角色姓名")
     parser.add_argument("--personality", default=DEFAULT_MOCK_PERSONA["personality"], help="角色性格")
     parser.add_argument(
@@ -316,7 +315,6 @@ def main() -> int:
     )
     parser.add_argument("--gender", default=DEFAULT_MOCK_PERSONA["gender"], help="角色性别")
 
-    # Onboarding 用户资料相关参数
     parser.add_argument(
         "--user-name",
         default=DEFAULT_MOCK_USER_PROFILE["preferred_name"],
@@ -339,11 +337,9 @@ def main() -> int:
         help="用户补充背景",
     )
 
-    # 数据库模式
     parser.add_argument("--db", action="store_true", help="连接 PostgreSQL 数据库读取真实用户数据")
     parser.add_argument("--user-id", type=int, default=1, help="数据库查询对应的 user_id")
 
-    # 输出模式
     parser.add_argument(
         "--raw",
         "--json",

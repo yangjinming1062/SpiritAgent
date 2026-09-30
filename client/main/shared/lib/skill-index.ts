@@ -13,8 +13,7 @@ interface RawSkillItem {
   platforms?: string[] | null
 }
 
-// 主进程为每个 skill 计算 `compatible`；渲染端没有
-// `process.platform`，用这个标志隐藏不匹配的行。
+// 主进程为每个 skill 计算 compatible；渲染端没有 process.platform，用这个标志隐藏不匹配的行。
 const HOST_PLATFORM: string = (() => {
   switch (process.platform) {
     case 'darwin':
@@ -130,8 +129,7 @@ function listSkillsFromDisk(skillsRoot?: null | string): RawSkillItem[] {
   })
 }
 
-// 显式列出字段（而不是 `...skill`），
-// 避免 listSkillsFromDisk 内部新增的字段泄漏到渲染端。
+// 显式列出字段（而不是 `...skill`），避免 listSkillsFromDisk 内部新增的字段泄漏到渲染端。
 function projectSummary(skill: RawSkillItem, disabledSet: Set<string>): SkillItem {
   return {
     category: skill.category,

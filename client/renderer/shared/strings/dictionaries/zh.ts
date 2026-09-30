@@ -1194,8 +1194,7 @@ export const dict = {
     }
   },
 
-  // 系统预设的界面名称与说明。后端目录（backend/services/domains/conversation/presets.py）只有中文；
-  // 中文须与目录一致并同步修改，未知预设由调用方回落目录值。
+  // 系统预设的界面名称与说明。后端目录（backend/services/domains/conversation/presets.py）只有中文；中文须与目录一致并同步修改，未知预设由调用方回落目录值。
   presets: {
     names: {
       companion: '陪伴',

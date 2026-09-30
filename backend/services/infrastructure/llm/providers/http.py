@@ -20,8 +20,7 @@ from openai import AsyncOpenAI, NotGiven
 
 logger = get_logger(__name__)
 
-# 捕获传输错误后仅重试幂等请求或确认未发送的连接失败；非幂等请求的响应丢失会转为结果不确定。
-# HTTPStatusError 不在内——已经收到底层 HTTP 响应，由供应商错误分类决定后续动作。
+# 捕获传输错误后仅重试幂等请求或确认未发送的连接失败；非幂等请求的响应丢失会转为结果不确定。HTTPStatusError 不在内——已收到响应，由供应商错误分类决定后续。
 _RETRYABLE_TRANSPORT_EXC: tuple[type[BaseException], ...] = (
     httpx.ConnectError,
     httpx.TimeoutException,
@@ -34,7 +33,7 @@ _SAFE_BEFORE_SEND_EXC: tuple[type[BaseException], ...] = (
 )
 _IDEMPOTENT_METHODS = frozenset({"GET", "HEAD", "OPTIONS", "PUT", "DELETE"})
 
-# 请求校验失败模式：请求畸形，每次重试结果相同；部分 OpenAI 兼容网关以 5xx 返回，需排除出 5xx 重试并归为格式错误。
+# 请求校验失败：请求畸形每次重试结果相同；部分网关以 5xx 返回，需排除出 5xx 重试并归为格式错误
 REQUEST_VALIDATION_PATTERNS = (
     "unknown parameter",
     "unsupported parameter",
@@ -64,7 +63,7 @@ async def download_as_b64(url: str) -> str:
 
 
 class _RetryAsyncTransport(httpx.AsyncBaseTransport):
-    """透明包装 ``inner``，只重放不会重复产生供应商副作用的请求。"""
+    """透明包装 inner，只重放不会重复产生供应商副作用的请求。"""
 
     def __init__(
         self,
@@ -104,7 +103,7 @@ class _RetryAsyncTransport(httpx.AsyncBaseTransport):
                 if attempt + 1 >= self._max_attempts:
                     break
                 delay = min(self._base_delay * (2**attempt), self._max_delay)
-                # ±25% 抖动缓解 thundering herd；非负后下界 0。
+                # ±25% 抖动缓解 thundering herd；非负后下界 0
                 sleep_for = max(0.0, delay + delay * random.uniform(-0.25, 0.25))
                 logger.warning(
                     "provider http transient error; retrying",
@@ -119,7 +118,7 @@ class _RetryAsyncTransport(httpx.AsyncBaseTransport):
                 )
                 await asyncio.sleep(sleep_for)
             else:
-                # 响应头已到但响应体尚未读完：非幂等请求此时断线同样可能已生效。SSE 由流式调用方按是否已出首包处理。
+                # 响应头已到但响应体尚未读完：非幂等请求此时断线同样可能已生效。SSE 由流式调用方按是否已出首包处理
                 stream = response.stream
                 if (
                     isinstance(stream, httpx.AsyncByteStream)
@@ -446,7 +445,7 @@ async def aclose_all() -> None:
 
 
 class _RetryAwareAsyncOpenAI(AsyncOpenAI):
-    """在 SDK 默认 ``_should_retry`` 之外拦截 500/502 中的请求校验错误（畸形请求每次重试都失败），其余决策完全继承父类。"""
+    """在 SDK 默认 _should_retry 之外拦截 500/502 中的请求校验错误（畸形请求每次重试都失败），其余决策完全继承父类。"""
 
     def _should_retry(
         self,

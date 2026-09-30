@@ -69,19 +69,13 @@ def normalize_url_for_request(url: str) -> str:
 
 
 def _global_allow_private_urls() -> bool:
-    """只读 ``security.allow_private_urls``（HTTP 工具的全局 SSRF 闸门）。
-
-    ``browser.allow_private_urls`` 只放行浏览器本地调试，由 ``browser/session.py`` 单独判读，不能并入此处。
-    """
+    """只读 security.allow_private_urls；browser 开关由 session.py 单独判读。"""
     security = load_config().get("security")
     return isinstance(security, dict) and is_truthy_value(security.get("allow_private_urls"))
 
 
 def _embedded_ipv4(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> ipaddress.IPv4Address | ipaddress.IPv6Address:
-    """IPv4-mapped、6to4 与 NAT64 地址按内嵌 IPv4 判定，避免经 IPv6 形式绕过拦截。
-
-    IPv4-compatible ``::a.b.c.d`` 属 ``::/8`` 保留段，由 ``is_reserved`` 拦截。
-    """
+    """IPv4-mapped/6to4/NAT64 按内嵌 IPv4 判定，防 IPv6 绕过。"""
     if isinstance(ip, ipaddress.IPv6Address):
         if (mapped := ip.ipv4_mapped) is not None:
             return mapped
@@ -203,10 +197,7 @@ async def async_is_safe_url(url: str) -> bool:
 
 
 def _resolve_and_validate(host: str, port: int, *, scheme: str) -> list[str]:
-    """同步解析并校验全部结果，任一地址违规即整体拒绝；返回已校验 IP。
-
-    建连只能使用返回的 IP，再次解析会重新打开 DNS rebinding 窗口。
-    """
+    """解析并校验全部 IP，任一违规整体拒绝；建连只用返回的 IP。"""
     try:
         addr_info = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror as exc:

@@ -47,7 +47,7 @@ def begin_local_scope() -> str:
 
 
 async def correlated_exception_response(request: Request, exc: Exception) -> JSONResponse:
-    """500 兜底 handler：把 ContextVar 里的 request_id 写进 response header（ServerErrorMiddleware 在最外层，user middleware 的 post-call_next 不会跑）。"""
+    """500 兜底 handler：把 ContextVar 里的 request_id 写进 response header（ServerErrorMiddleware 在最外层，post-call_next 不会跑）。"""
     rid = current_request_id()
     logger.exception(
         "Unhandled server exception on %s %s: %s",
@@ -66,7 +66,7 @@ async def correlated_exception_response(request: Request, exc: Exception) -> JSO
 
 
 async def correlation_id_middleware(request: Request, call_next: Callable[..., Any]) -> Response:
-    """覆盖所有 path（非仅 /api/*）；不 reset ContextVar（Starlette 每请求独立 task 自动隔离）；500 header 透传交给 main.py 的 ExceptionMiddleware 兜底。"""
+    """覆盖所有 path；不 reset ContextVar（Starlette 每请求独立 task 自动隔离）；500 header 透传交给 main.py 的 ExceptionMiddleware 兜底。"""
     inbound = request.headers.get(REQUEST_ID_HEADER)
     rid = adopt_inbound(inbound)
     response = await call_next(request)

@@ -1,7 +1,4 @@
-"""空闲表达：LLM 低频决定是否用当前形象动作做一次自主表演。
-
-只产出 action_id；统一播放由调用方经 request_playback 派发。
-"""
+"""空闲表达：LLM 低频决定是否用当前形象动作做一次自主表演。只产出 action_id；统一播放由调用方经 request_playback 派发。"""
 
 from components import (
     LLM_MAX_OUTPUT_TOKENS,

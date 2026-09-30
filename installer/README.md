@@ -16,6 +16,7 @@
 - 嵌入资源保证脚本和载荷随版本交付；安装仍需联网获取工具链、依赖及可选 OfficeCLI。
 - Skills 覆盖同名内置文件，但保留用户自装内容；存在 `$SPIRITAGENT_HOME/.no-bundled-skills` 时跳过内置技能释放及 OfficeCLI 安装。安装器不解析平台字段，过滤归 Client 与 Runner。
 - 桌面端自更新不经安装器：同一份技能随桌面安装包交付，新版本首次启动时由 Client 按相同规则同步（[bundled-skills.ts](../client/main/lifecycle/bundled-skills.ts)）。install-skills 阶段仍负责首装、修复时恢复内置技能与安装 OfficeCLI。
+- 安装 UI 常驻 cyber-glass 主题（token 与 [client/renderer/styles.css](../client/renderer/styles.css) 同步，不提供运行时换肤）；`decorations: false` 自绘标题栏，进度用蛋壳/Halo 隐喻：完成段 `--ui-accent`、失败段 destructive。失败页主操作为重试，错误文案次级展示。
 
 ## 资源与路径
 

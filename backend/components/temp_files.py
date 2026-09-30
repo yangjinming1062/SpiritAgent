@@ -57,10 +57,7 @@ def _metadata_path(meta: dict) -> Path | None:
 
 
 def save_file(data: bytes, content_type: str, ext: str, *, user_id: int) -> tuple[str, str]:
-    """保存字节到 temp 存储，返回 (file_id, public_url)；``user_id`` 记录归属，供删除用户与备份恢复定位。
-
-    meta 写失败时 unlink 数据文件，避免无 TTL 跟踪的孤儿。
-    """
+    """保存到 temp 存储，返回 (file_id, public_url)；``user_id`` 记录归属供删除用户与备份定位；meta 写失败时 unlink 数据文件避免无 TTL 孤儿。"""
     file_id = secrets.token_urlsafe(16)
     filepath = _media_path(file_id, ext)
 

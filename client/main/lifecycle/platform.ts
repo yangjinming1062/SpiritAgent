@@ -3,12 +3,7 @@ import type { App } from 'electron'
 const GPU_OVERRIDE_ON: Set<string> = new Set(['1', 'true', 'yes', 'on'])
 const GPU_OVERRIDE_OFF: Set<string> = new Set(['0', 'false', 'no', 'off'])
 
-/**
- * 判断应用是否在远程/转发的显示器上运行——这种场景下 Chromium 的 GPU 合成器
- * 会产生不稳定、闪烁的画面。
- * 需要禁用 GPU 时返回一个简短的 reason 字符串，否则返回 null。
- * `SPIRITAGENT_DESKTOP_DISABLE_GPU` 环境变量可以覆盖检测结果。
- */
+/** 判断是否在远程/转发显示器上运行（Chromium GPU 合成器会闪烁）；需要禁用 GPU 时返回 reason 字符串，否则 null。`SPIRITAGENT_DESKTOP_DISABLE_GPU` 可覆盖检测结果。 */
 function detectRemoteDisplay(): null | string {
   const env = process.env
 
@@ -24,7 +19,6 @@ function detectRemoteDisplay(): null | string {
     return null
   }
 
-  // SSH 会话 → 显示是 X11 转发或远程。
   if (env.SSH_CONNECTION || env.SSH_CLIENT || env.SSH_TTY) {
     return 'ssh-session'
   }
@@ -41,10 +35,7 @@ function detectRemoteDisplay(): null | string {
   return null
 }
 
-/**
- * 须在 app ready 前调用：远程显示时关闭 GPU 加速，并全局关闭 Chromium 后台节流（渲染功耗由引擎管理）。
- * 此时日志器尚未建立，检测结果直接写控制台。返回远程显示原因，非 null 时精灵窗也须关闭透明。
- */
+/** 须在 app ready 前调用：远程显示时关闭 GPU 加速并全局关闭 Chromium 后台节流（渲染功耗由引擎管理）。日志器尚未建立，检测结果直接写控制台；返回非 null 时精灵窗也须关闭透明。 */
 export function applyChromiumSwitches(app: Pick<App, 'commandLine' | 'disableHardwareAcceleration'>): null | string {
   const remoteDisplayReason = detectRemoteDisplay()
 

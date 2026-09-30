@@ -24,9 +24,9 @@ _SEARCH_LINE_RE = re.compile(r"^([A-Za-z]:)?(.*?):(\d+):(.*)$")
 _CONTEXT_DELIM_RE = re.compile(r"-(\d+)-")
 _HUNK_HINT_RE = re.compile(r"@@\s*(.+?)\s*@@")
 _UTF8_BOM = "﻿"
-# 搜索结果单行内容上限，避免压缩/生成文件中的超长行撑满结果。
+# 搜索单行上限，防超长行撑满结果。
 MAX_MATCH_CONTENT = 500
-# 整读进内存编辑（patch 与 V4A）的文件大小上限；分页读取不受此限。
+# 整读编辑大小上限；分页读不受限。
 MAX_EDIT_BYTES = 10 * 1024 * 1024
 BINARY_FILE_ERROR = "Binary file — read_file and patch only handle text."
 
@@ -40,9 +40,6 @@ def too_large_to_edit_error(path: str, size: int) -> str:
         f"{path} is {size:,} bytes; files over {MAX_EDIT_BYTES // (1024 * 1024)} MB cannot be edited with this tool. "
         "Use the terminal tool instead."
     )
-
-
-# ── 结果类型 ───────────────────────────────────────────────────────────────
 
 
 @dataclass
@@ -148,9 +145,6 @@ class ExecuteResult:
     exit_code: int = 0
 
 
-# ── 文本工具函数 ───────────────────────────────────────────────────────────
-
-
 def _detect_line_ending(sample: str) -> str | None:
     """返回 ``sample`` 中的主要换行符；无法判断时返回 None。"""
     if not sample:
@@ -186,11 +180,7 @@ def _has_bom(text: str | None) -> bool:
 
 
 def _to_lf(text: str) -> tuple[str, str | None]:
-    """返回 (换行统一为 LF 的文本, 原主要换行符)。
-
-    模糊匹配与 diff 在 LF 文本上进行，写回时再恢复原换行符：行尾残留的 ``\r`` 会让按行匹配失败或落到错误位置，
-    还会让 ``\r`` 反转义把源码里的字面转义改成真实回车。
-    """
+    """返回 (LF 文本, 原换行符)；匹配在 LF 上做，写回时恢复。"""
     return _normalize_line_endings(text, "\n"), _detect_line_ending(text)
 
 
@@ -288,12 +278,10 @@ def _unified_diff(old_content: str, new_content: str, filename: str) -> str:
     return "".join(diff)
 
 
-# ── 语法检查 ───────────────────────────────────────────────────────────────
-
-# 进程内检查器未覆盖的语言调用外部命令。
+# 未覆盖语言走外部命令。
 LINTERS = {
     ".js": "node --check {file} 2>&1",
-    # --no-install：未装 TypeScript 时直接失败，不让 npx 临时从网络下载同名包。
+    # --no-install：防 npx 临时下同名包。
     ".ts": "npx --no-install tsc --noEmit {file} 2>&1",
     ".go": "go vet {file} 2>&1",
     ".rs": "rustfmt --check {file} 2>&1",
@@ -371,8 +359,6 @@ LINTERS_INPROC: dict[str, Callable[[str], tuple[bool, str]]] = {
     ".toml": _lint_toml_inproc,
 }
 
-# ── 分页 ───────────────────────────────────────────────────────────────────
-
 DEFAULT_READ_OFFSET = 1
 DEFAULT_READ_LIMIT = 500
 DEFAULT_SEARCH_OFFSET = 0
@@ -404,9 +390,6 @@ def normalize_search_pagination(
     return normalized_offset, normalized_limit
 
 
-# ── 文件操作接口 ───────────────────────────────────────────────────────────
-
-
 class TerminalEnv(Protocol):
     """文件操作依赖的终端环境能力；``cwd`` 随终端命令实时更新。"""
 
@@ -424,10 +407,7 @@ class TerminalEnv(Protocol):
 
 
 class FileOperations(ABC):
-    """文件工具在终端环境上的操作接口。
-
-    子类提供读写、删除、移动、搜索与命令执行原语；替换补丁与语法检查在此统一实现，本地与远端行为一致。
-    """
+    """终端环境上的文件操作接口；补丁与语法检查在此统一实现。"""
 
     def __init__(self, env: TerminalEnv) -> None:
         self.env = env
@@ -542,9 +522,6 @@ class FileOperations(ABC):
         )
 
 
-# ── 远端（SSH）实现 ────────────────────────────────────────────────────────
-
-
 def _split_tool_diagnostics(output: str) -> tuple[str, str]:
     """把 rg/grep 自身的诊断行（stderr 合并进输出）与匹配结果分开。"""
     diagnostics: list[str] = []
@@ -653,15 +630,12 @@ class ShellFileOperations(FileOperations):
         return path
 
     def _atomic_write(self, path: str, content: str) -> ExecuteResult:
-        """同目录临时文件 + rename 原子写入；落盘字节数不符时不替换目标。
-
-        缺父目录时创建并输出 ``__SPIRITAGENT_DIRS_CREATED__``；已有文件保留权限位，新文件按 umask。
-        """
+        """同目录临时文件+rename 原子写；缺父目录则创建并标记。"""
         q_path = self._escape_shell_arg(path)
         q_parent = self._escape_shell_arg(posixpath.dirname(path) or ".")
         tmpl = self._escape_shell_arg(".spiritagent-tmp.XXXXXX")
         expected = len(content.encode("utf-8"))
-        # 第三兜底用 $RANDOM 不用 $$，避免并发写同目录的 PID 冲突。
+        # 用 $RANDOM 不用 $$，防 PID 冲突。
         script = (
             "set -e; "
             f"d={q_parent}; t={q_path}; "
@@ -696,7 +670,7 @@ class ShellFileOperations(FileOperations):
     def read_file(self, path: str, offset: int = DEFAULT_READ_OFFSET, limit: int = DEFAULT_READ_LIMIT) -> ReadResult:
         path = self._expand_path(path)
         q = self._escape_shell_arg(path)
-        # awk 的 NR 计入无结尾换行的最后一行（wc -l 不计）。
+        # awk NR 计入无结尾换行行。
         stat_result = self._exec(
             f"if [ -d {q} ]; then echo dir; elif [ -f {q} ]; then wc -c < {q}; awk 'END {{print NR}}' {q}; "
             "else exit 1; fi 2>/dev/null",
@@ -736,7 +710,7 @@ class ShellFileOperations(FileOperations):
         cat_result = self._exec(f"cat {q}")
         if cat_result.exit_code != 0:
             return ReadResult(error=f"Failed to read file: {cat_result.stdout}")
-        # 终端输出按 UTF-8 解码且以 U+FFFD 替换非法字节，原样写回会损坏非 UTF-8 文件。
+        # 终端输出 U+FFFD 会损坏非 UTF-8 文件。
         if "\ufffd" in cat_result.stdout:
             return ReadResult(error=_not_utf8_error(path))
         content, _ = _strip_bom(cat_result.stdout)
@@ -749,13 +723,13 @@ class ShellFileOperations(FileOperations):
         q = self._escape_shell_arg(path)
         probe = self._exec(f"if [ -d {q} ]; then echo dir; elif [ -f {q} ]; then wc -c < {q}; fi 2>/dev/null")
         kind = probe.stdout.strip()
-        # 拒绝目录：否则 mv 会把临时文件搬进目录里，模型误以为写入成功。
+        # 拒目录，防 mv 误搬临时文件。
         if kind == "dir":
             return WriteResult(error=f"Path is a directory: '{path}'. Use a file path, not a directory.")
         pre_content: str | None = None
         existing: str | None = None
         if kind.isdigit():
-            # 进程内语法检查需要完整的写前内容做基线；其他类型或超大文件只取开头判断换行符与 BOM。
+            # 语法检查需完整写前内容；其余只取开头判换行/BOM。
             full = os.path.splitext(path)[1].lower() in LINTERS_INPROC and int(kind) <= MAX_EDIT_BYTES
             head = self._exec(f"cat {q} 2>/dev/null" if full else f"head -c 4096 {q} 2>/dev/null")
             if head.exit_code == 0:
@@ -802,7 +776,7 @@ class ShellFileOperations(FileOperations):
     def list_directory(self, path: str) -> ListResult:
         path = self._expand_path(path)
         q = self._escape_shell_arg(path)
-        # GNU find 给出类型/大小/修改时间；BSD find 不支持 -printf 时只列名字。
+        # BSD find 无 -printf 时只列名字。
         result = self._exec(
             f"if [ ! -e {q} ]; then echo __missing__; elif [ ! -d {q} ]; then echo __notdir__; "
             f"elif find {q} -maxdepth 0 -printf '' >/dev/null 2>&1; then "
@@ -872,7 +846,7 @@ class ShellFileOperations(FileOperations):
     def _search_files(self, pattern: str, path: str, limit: int, offset: int) -> SearchResult:
         """按文件名 glob 搜索，按修改时间倒序；跳过搜索根下的隐藏路径。"""
         q_path = self._escape_shell_arg(path)
-        # 多取一条以区分「恰好 limit 条」与截断。
+        # 多取一条以判截断。
         fetch = limit + offset + 1
         if self._has_command("rg"):
             glob_pattern = pattern if "/" in pattern or pattern.startswith("*") else f"*{pattern}"
@@ -889,7 +863,7 @@ class ShellFileOperations(FileOperations):
             hidden = " ".join(
                 f"-not -path {self._escape_shell_arg(posixpath.join(root, sub))}" for sub in (".*", "*/.*")
             )
-            # find -name 只比较文件名，取模式最后一段。
+            # find -name 只比文件名。
             name_pattern = self._escape_shell_arg(pattern.rsplit("/", 1)[-1])
             find_cmd = f"find {q_path} {hidden} -type f -name {name_pattern}"
             result = self._exec(
@@ -897,7 +871,7 @@ class ShellFileOperations(FileOperations):
                 timeout=60,
             )
             if not result.stdout.strip():
-                # BSD find 无 -printf：退化为不按修改时间排序。
+                # BSD 退化为不按时间排序。
                 result = self._exec(f"{find_cmd} 2>/dev/null | head -n {fetch}", timeout=60)
             all_files = [f for f in result.stdout.strip().split("\n") if f]
         else:
@@ -936,7 +910,7 @@ class ShellFileOperations(FileOperations):
         output_mode: str,
         context: int,
     ) -> SearchResult:
-        # 跳过隐藏文件与隐藏目录；目录模式不能写成 '.*'，否则 GNU grep 会把命令行里的 "." 也排除。
+        # 跳过隐藏项；目录模式不用 '.*'（GNU grep 会误伤）。
         cmd_parts = ["grep", "-rnHE", "--exclude-dir='.[!.]*'", "--exclude-dir='..?*'", "--exclude='.*'"]
         if context > 0:
             cmd_parts.extend(["-C", str(context)])
@@ -958,9 +932,9 @@ class ShellFileOperations(FileOperations):
             cmd_parts.append("-l")
         elif output_mode == "count":
             cmd_parts.append("-c")
-        # 模式以 - 开头时不能被当作选项。
+        # 模式以 - 开头须防当成选项。
         cmd_parts.extend(["-e", self._escape_shell_arg(pattern), "--", self._escape_shell_arg(path)])
-        # 多取一行以判断截断；带上下文时每个匹配占多行，多留余量。
+        # 多取余量以判截断。
         fetch_limit = limit + offset + 1 + (200 if context > 0 else 0)
         result = self._exec(f"set -o pipefail; {' '.join(cmd_parts)} | head -n {fetch_limit}", timeout=60)
         diagnostics, payload = _split_tool_diagnostics(result.stdout)
@@ -970,8 +944,6 @@ class ShellFileOperations(FileOperations):
             )
         return _parse_search_output(payload, output_mode, limit, offset, context)
 
-
-# ── 读写状态登记 ───────────────────────────────────────────────────────────
 
 _MAX_PATHS_PER_TASK = 4096
 
@@ -988,10 +960,7 @@ def _safe_mtime(path: str) -> float | None:
 
 
 class FileStateRegistry:
-    """记录本机文件在各任务中最近一次读/写时的版本，写入前提示读后被外部修改或只读过局部。
-
-    同一路径的读→改→写经 ``lock_path`` 串行化。
-    """
+    """记录读/写版本，写入前提示外部修改；同路径读改写经 lock_path 串行。"""
 
     def __init__(self) -> None:
         self._reads: dict[str, dict[str, tuple[float, bool]]] = {}  # task_id → path → (mtime, 是否局部读取)
@@ -1060,9 +1029,6 @@ def check_stale(task_id: str, resolved: str, *, whole_file: bool) -> str | None:
 
 def lock_path(resolved: str) -> AbstractContextManager[None]:
     return _REGISTRY.lock_path(resolved)
-
-
-# ── V4A 补丁 ───────────────────────────────────────────────────────────────
 
 
 class OperationType(Enum):
@@ -1342,7 +1308,7 @@ def apply_v4a_operations(operations: list[PatchOperation], file_ops: FileOperati
     lint: dict[str, Any] = {}
     apply_errors: list[str] = []
     for op in operations:
-        # 后续操作仍继续执行，最后统一汇报已改动与失败的文件。
+        # 失败不中断，最后统一汇报。
         try:
             outcome = _APPLY[op.operation](op, file_ops)
         except Exception as e:

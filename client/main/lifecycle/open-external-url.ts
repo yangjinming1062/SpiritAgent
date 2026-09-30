@@ -4,10 +4,7 @@ import { shell } from 'electron'
 
 import { errorMessage } from '../shared/utils'
 
-/**
- * 打开外部链接/本地路径：仅放行 http/https/mailto 与 file:，
- * file: 走 openPath，失败则 reveal in folder。
- */
+/** 打开外部链接/本地路径：仅放行 http/https/mailto 与 file:；file: 走 openPath，失败则 reveal in folder。 */
 export function createOpenExternalUrl(rememberLog: (chunk: string) => void): (rawUrl: string) => boolean {
   return function openExternalUrl(rawUrl: string): boolean {
     const raw = String(rawUrl || '').trim()

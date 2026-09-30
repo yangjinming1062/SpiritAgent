@@ -38,8 +38,6 @@ class ReleaseManifestResponse(BaseModel):
 
 
 class ChatMessageRequest(BaseModel):
-    """本轮用户输入。"""
-
     content: str
     attachments: list[dict] | None = None
 
@@ -52,7 +50,7 @@ class ChatRequest(BaseModel):
 
 
 class PromptPresetSummary(BaseModel):
-    """``system.list_presets`` RPC 返回的精简元数据：不含 body（预设体永不下发到客户端）。"""
+    """``system.list_presets`` 返回的精简元数据；不含 body（预设体永不下发到客户端）。"""
 
     id: str
     name: str

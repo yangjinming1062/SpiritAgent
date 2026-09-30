@@ -5,7 +5,7 @@ import { Button } from '../components/button'
 import { launchSpiritAgentDesktop } from '../store'
 import { Rocket, AlertCircle } from 'lucide-react'
 
-// 成功页与欢迎页共享视觉锚点；启动失败时把 Tauri 错误就地展示，不静默吞掉。
+// 启动失败就地展示 Tauri 错误
 export default function Success(): React.JSX.Element {
   const [error, setError] = useState<string | null>(null)
   const [launching, setLaunching] = useState(false)
@@ -15,7 +15,6 @@ export default function Success(): React.JSX.Element {
     setLaunching(true)
     try {
       await launchSpiritAgentDesktop()
-      // 启动成功时安装器随之退出，流程不会回到这里。
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setError(msg)

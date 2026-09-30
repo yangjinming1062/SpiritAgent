@@ -54,8 +54,7 @@ def stop_environment(task_id: str, env: BaseEnvironment | None) -> None:
 def _cleanup_inactive_envs(lifetime_seconds: int = 300) -> None:
     current_time = time.time()
     for task_id in list(last_activity.keys()):
-        # 被调用持有、前台命令执行中或有活跃子进程的环境都要续命, 否则长命令运行中途环境会被回收
-        # （SSH 场景下 cleanup 还会掐断 ControlMaster, 杀死在途命令）。
+        # 使用中/有子进程的环境须续命，否则长命令中途被回收。
         if _env_busy(task_id) or task_has_active_processes(task_id):
             last_activity[task_id] = current_time
     envs_to_stop = []
@@ -66,7 +65,7 @@ def _cleanup_inactive_envs(lifetime_seconds: int = 300) -> None:
                 last_activity.pop(task_id, None)
                 if env is not None:
                     envs_to_stop.append((task_id, env))
-        # creation_locks 条目刻意不弹出：删除一个别的线程正在持有的锁对象（环境创建中途），会让第三个线程创建一把新锁进入同一临界区——一个任务两个环境。条目随进程生命周期驻留，由 task_id 空间限定上限。
+        # creation_locks 不弹出：删持有中的锁会让同任务进两个环境。
     for task_id, env in envs_to_stop:
         stop_environment(task_id, env)
 

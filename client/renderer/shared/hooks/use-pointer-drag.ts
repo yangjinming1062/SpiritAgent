@@ -12,13 +12,7 @@ export interface UsePointerDragOptions {
   threshold?: number
 }
 
-// 通用指针拖拽 hook：返回 { delta, onPointerDown }。调用方把 onPointerDown 挂到拖拽触发节点。
-// - delta 为越过阈值后的实时累计位移，松手时回到 0。
-// - onCommit 在松手时拿到最终累计位移，便于"在已有 base 上叠加"的模式：
-//   视觉上 base + live delta，提交时 base += final delta。
-//
-// 不适用：拖拽过程需要触发额外领域逻辑（locomotion、缩放、屏幕边缘吸附等）——那种情况
-// 直接挂 onPointerDown + 内部管理 listeners 更合适，参见 sprite-stage.tsx。
+// 通用指针拖拽 hook：返回 { delta, onPointerDown }。delta 为越过阈值后的实时累计位移（松手归 0），onCommit 松手时拿最终累计位移，便于「视觉 base+live delta、提交 base+=final」。不适用：拖拽过程需要额外领域逻辑（locomotion、缩放、屏幕边缘吸附等）——那种情况直接挂 onPointerDown + 内部管理 listeners，参见 sprite-stage.tsx。
 export function usePointerDrag(opts: UsePointerDragOptions = {}): {
   delta: PointerDragDelta
   onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void

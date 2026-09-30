@@ -21,7 +21,7 @@ from ._env_file_sync import (
 
 logger = logging.getLogger(__name__)
 
-# askpass 脚本只引用该变量：密码经 ssh 子进程环境传给 askpass，不落盘，进程被强杀也不残留。
+# 密码经环境传给 askpass，不落盘。
 _ASKPASS_SECRET_ENV = "SPIRITAGENT_SSH_ASKPASS_SECRET"
 
 
@@ -52,7 +52,7 @@ class SSHEnvironment(BaseEnvironment):
         self._closed = False
         control_dir = Path(tempfile.gettempdir()) / "spiritagent-ssh"
         control_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
-        # 控制套接字与 askpass 按实例区分：回收旧实例时的 `-O exit` 不会切断同一目标上新实例的连接。
+        # 控制套接字按实例区分，防误切新连接。
         self.control_socket = control_dir / f"{self._session_id}.sock"
         self._askpass: Path | None = None
         try:
@@ -80,7 +80,7 @@ class SSHEnvironment(BaseEnvironment):
             return None
         if IS_WINDOWS:
             path = control_dir / f"askpass-{self._session_id}.bat"
-            # 延迟扩展在命令解析之后替换，密码中的 & | < > ^ % ! 均原样输出；echo( 兼容空值与 on/off。
+            # 延迟扩展在解析后替换，密码特殊字符原样。
             path.write_text(
                 f"@echo off\r\nsetlocal EnableDelayedExpansion\r\necho(!{_ASKPASS_SECRET_ENV}!\r\n",
                 encoding="utf-8",
@@ -113,10 +113,10 @@ class SSHEnvironment(BaseEnvironment):
             "-o",
             "ControlPersist=300",
         ]
-        # BatchMode 禁掉一切交互提示——密码模式必须放开才能触发 askpass。
+        # 密码模式须关 BatchMode 才能走 askpass。
         if self._askpass is None:
             cmd.extend(["-o", "BatchMode=yes"])
-        # LogLevel=ERROR：客户端告警（如 accept-new 首连的 known_hosts 提示）不混进命令输出与读取的文件内容。
+        # LogLevel=ERROR：告警不混进命令输出。
         cmd.extend(["-o", "StrictHostKeyChecking=accept-new", "-o", "ConnectTimeout=10", "-o", "LogLevel=ERROR"])
         if self.port != 22:
             cmd.extend(["-p", str(self.port)])
@@ -172,7 +172,7 @@ class SSHEnvironment(BaseEnvironment):
             raise RuntimeError("remote mkdir failed")
         with tempfile.TemporaryDirectory(prefix="spiritagent-ssh-bulk-") as staging:
             for host_path, remote_path in files:
-                # 远端路径是 POSIX 风格；Windows 上 os.path.relpath 会改成反斜杠，使越界检查失效。
+                # 远端路径用 posixpath，防反斜杠。
                 rel_remote = posixpath.relpath(remote_path, base)
                 if rel_remote == "." or rel_remote == ".." or rel_remote.startswith("../"):
                     raise RuntimeError(f"remote path {remote_path!r} escapes sync base {base!r}")

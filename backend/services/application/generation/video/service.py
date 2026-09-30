@@ -1,15 +1,4 @@
-"""视频动作包编排：外观版本 → 动作片段处理 → 不可变包发布 → 激活。
-
-状态与阶段分离（status × stage）逐任务持久化；FFmpeg 等待走工作线程，
-不占数据库长事务。发布与激活共用头像用户级锁：生成包沿用冻结资料完成，
-自动激活核对参考和角色卡修订；新包构建失败不清空旧激活包。
-
-两条创建入口共用片段处理（`_prepare_clip`）、任务行素材列（`_clip_row_values`）与发布（`_publish_ready`）：
-- 上传导入：`create_pack_from_clips`，用户提供已制作片段（或长视频区间）；
-- 按参考生成：`create_pack_from_reference`，LLM 演绎脚本 → 独立动作姿态 →
-  视频供应商链首尾帧短片 → 语义抠像与循环验收 → 不可变包发布。
-  供应商任务句柄在提交后立即落库，重启后凭句柄续轮询，不重复提交付费任务。
-"""
+"""视频动作包编排：外观版本 → 动作片段处理 → 不可变包发布 → 激活；架构与入口见 generation/README.md。"""
 
 import asyncio
 import base64
@@ -307,10 +296,7 @@ async def create_pack_from_clips(
     canvas: tuple[int, int] = _DEFAULT_CANVAS,
     action_ranges: dict[str, tuple[float, float]] | None = None,
 ) -> CompanionActionPack:
-    """上传动作片段创建视频包：校验外观归属与片段后建 processing 包行，处理在后台进行。
-
-    clips 为「动作键 → (源片段字节, MIME)」；action_ranges 提供长视频的每动作起止秒（可选）。
-    源片段在处理开始时写入临时工作区；处理失败只影响本次包，不改变当前显示。"""
+    """上传动作片段创建视频包；处理在后台进行。clips 为「动作键 → (源字节, MIME)」，action_ranges 提供长视频起止秒。失败只影响本次包。"""
     if not set(REQUIRED_SYSTEM_SLOTS) <= set(clips) or not set(clips) <= set(SYSTEM_SLOTS):
         raise VideoPackError("片段须包含待机与拖拽，且只能是已知动作")
     canvas_w, canvas_h = canvas
@@ -376,8 +362,7 @@ async def create_pack_from_reference(
     action: str | None = None,
     feedback: str = "",
 ) -> CompanionActionPack:
-    """独立短动作视频；单动作请求在 ready 包上原地重做（保持 pack_id，只推进素材版本），
-    仅在包尚未 ready 时形成新版本并复用冻结参考。"""
+    """按参考生成：单动作在 ready 包原地重做（保 pack_id 只推进素材版本），包未 ready 时才形成新版本并复用冻结参考。"""
     if (source_pack_id is None) != (action is None):
         raise VideoPackStateError("单动作请求必须指定有效视频包与动作")
     async with get_avatar_job_lock(user_id), contextlib.AsyncExitStack() as pending_assets:
@@ -535,9 +520,7 @@ async def create_pack_from_reference(
             ensure_ascii=False,
         )
         pack.outfit_snapshot = json.dumps({"description": context.outfit_description}, ensure_ascii=False)
-        # 新整包只建必需动作；单动作请求继承源包全部已有动作并补齐或重做目标动作。
-        # 成功动作直接复用；可续跑的失败动作保留句柄重新排队；结果未知的非目标非必需动作
-        # 保留失败记录且不阻塞其他动作重做。must_actions 持久化本版本必须成功的集合。
+        # 新整包只建必需动作；单动作继承源包动作并补齐/重做目标。成功直接复用，可续跑失败重新排队，未知失败不阻塞。must_actions 为本版本必须成功的集合。
         if source is not None:
             action_keys = set(previous) | {action, *REQUIRED_SYSTEM_SLOTS}
         else:
@@ -668,7 +651,7 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionA
         if recoverable:
             require_action_matting_model()
         if newer is not None:
-            # 旧包不能原地变成更旧的激活版本；合并结果通过新的不可变版本交付，沿用原包冻结参考、画布与评审快照。
+            # 旧包不能原地变成更旧的激活版本；合并结果走新不可变版本，沿用原包冻结参考与快照。
             origin = pack
             pack = await _insert_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=origin.reference_hash)
             pack.reference_path = origin.reference_path
@@ -773,10 +756,7 @@ async def _prepare_clip(
     start: float | None = None,
     end: float | None = None,
 ) -> ActionResult:
-    """处理单个动作片段并转存片段、封面与命中遮罩资产。
-
-    封面与命中遮罩从最终交付片段读取，使用 libvpx 解码 VP9 alpha。
-    遮罩单独落盘供动作目录 hitmask_ref 引用，播放器可按帧查询命中。"""
+    """处理单动作片段并转存片段、封面与命中遮罩；封面/遮罩从最终交付片段读取（libvpx 解码 VP9 alpha），遮罩落盘供 hitmask_ref 按帧查询。"""
     dst = work / f"{action}.{TARGET_EXT}"
     processed = await _process_thread(
         prepare_action_clip,
@@ -938,10 +918,7 @@ async def _review_pack_identity(
 
 
 async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None:
-    """发布不可变资产；生成包先做整包身份复核，迟到结果保留为历史版本。
-
-    results 为本包已成功动作的处理结果（封面取 idle）；任务行素材列已在各动作处理时写入。
-    自动激活核对当前参考与角色卡，和 ready 发布在同一事务提交。"""
+    """发布不可变资产；生成包先做整包身份复核，迟到结果保留为历史版本。results 为已成功动作（封面取 idle）；自动激活核对参考与角色卡，与 ready 发布同事务。"""
     async with SESSION_LOCAL() as db:
         pack = await db.get(CompanionActionPack, pack_id)
         if pack is None:
@@ -1007,9 +984,7 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
 
 
 async def _publish_catalog(db: AsyncSession, pack: CompanionActionPack) -> int | None:
-    """从任务行聚合发布动作目录（spiritagent.action.pack），CAS 推进，返回新版本号。
-
-    必需系统槽位不齐或发布失败时返回 None：不回滚已成功素材与状态，可再次发布恢复。"""
+    """从任务行聚合发布动作目录（spiritagent.action.pack），CAS 推进。必需槽位不齐或失败返回 None：不回滚已成功素材，可再次发布恢复。"""
     try:
         return await publish_action_catalog(db, pack)
     except Exception:  # noqa: BLE001 — 目录发布失败不回滚素材；ready 状态与事件照常提交
@@ -1815,9 +1790,7 @@ async def _publish_dynamic_catalog(pack_id: int) -> None:
 
 
 async def _fulfill_pending_intents(action_ids: list[int]) -> None:
-    """本轮制作完成的动作补发制作期间保存、仍在有效期内的表达意图。
-
-    只兑现本轮目标动作：已就绪动作的即时请求在舞台隐藏等情况下未执行时留在 queued，不能借此补播。"""
+    """补发本轮动作制作期间保存、仍在有效期内的表达意图；只兑现本轮目标，已就绪动作的未执行即时请求不借此补播。"""
     async with SESSION_LOCAL() as db:
         for action_id in action_ids:
             await fulfill_deferred_play_intents(db, action_id)
@@ -1830,8 +1803,7 @@ async def drain_video_generation() -> None:
 
 
 async def resume_video_generation_jobs() -> None:
-    """进程重启恢复：生成包凭持久化句柄续跑；上传导入的源片段只在临时工作区、不可复用，
-    中断的导入包按失败落库并广播，由用户重交；ready 包上未完成的动态动作逐包续跑。"""
+    """进程重启恢复：生成包凭句柄续跑；上传源片段不可复用、中断包按失败落库由用户重交；ready 包上未完成动态动作逐包续跑。"""
     async with SESSION_LOCAL() as db:
         packs = (
             (await db.execute(select(CompanionActionPack).where(CompanionActionPack.status == "processing")))
@@ -2059,8 +2031,7 @@ async def _jobs_by_pack(db: AsyncSession, *conditions: ColumnElement[bool]) -> d
 
 
 async def _remove_packs(db: AsyncSession, user_id: int, targets: list[CompanionActionPack]) -> set[str]:
-    """删除目标包及其任务行（调用方负责提交）；返回不再被其余包引用、可回收的资产路径。
-    单动作版本间共享资源（冻结参考、复用片段），只有最后一个引用消失才回收。"""
+    """删除目标包及任务行（调用方提交）；返回可回收资产路径。共享资源（冻结参考、复用片段）只在最后一个引用消失才回收。"""
     packs = (
         (await db.execute(select(CompanionActionPack).where(CompanionActionPack.user_id == user_id))).scalars().all()
     )
@@ -2160,8 +2131,7 @@ async def _carry_incomplete_jobs(
     targets: list[CompanionActionPack],
     jobs_by_pack: dict[int, list[CompanionAction]],
 ) -> None:
-    """清理前把将删除包上的有效记录迁到 kept：不可续跑失败记录，以及 kept 缺失的成功结果。
-    可续跑任务不迁入（保留源包作续跑入口）；血缘不一致的任务不迁入。"""
+    """清理前把将删包上的有效记录迁到 kept：不可续跑失败记录与 kept 缺失的成功结果；可续跑任务与血缘不一致任务不迁入。"""
     rows = [job for pack in targets if _same_generation_lineage(kept, pack) for job in jobs_by_pack.get(pack.id, [])]
     if not rows:
         return
@@ -2192,9 +2162,7 @@ async def _carry_incomplete_jobs(
 
 
 async def _retire_superseded_locked(db: AsyncSession, kept: CompanionActionPack) -> set[str]:
-    """kept 激活后删除同外观其余历史包（含任务行），返回可回收路径（调用方持有用户锁）。
-    构建中的包不动；同血缘包上不可续跑的失败记录先迁到 kept。
-    仍有可续跑任务的包保留，作为续跑入口。完整版本不堆积。"""
+    """kept 激活后删除同外观其余历史包。构建中的不动；同血缘包上不可续跑失败记录先迁到 kept；仍有可续跑任务的包保留作续跑入口。"""
     targets = [
         pack
         for pack in (

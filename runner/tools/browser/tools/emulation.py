@@ -79,7 +79,7 @@ def browser_set_extra_headers(headers: dict[str, str], task_id: str | None = Non
         if supervisor is None:
             return no_supervisor()
 
-        # 未启用 Network 域时 setExtraHTTPHeaders 返回成功但请求不带这些头。
+        # 未开 Network 域时头不会生效。
         res = supervisor.send_cdp("Network.enable", {})
         if res.get("ok"):
             res = supervisor.send_cdp("Network.setExtraHTTPHeaders", {"headers": headers})
@@ -113,7 +113,7 @@ def browser_set_geolocation(
 
         params = {"latitude": float(lat), "longitude": float(lon), "accuracy": float(accuracy)}
         res = supervisor.send_cdp("Emulation.setGeolocationOverride", params)
-        # 覆盖坐标只替换位置来源；页面仍需地理位置权限，否则 getCurrentPosition 直接被拒。
+        # 覆盖坐标不代权限。
         if res.get("ok"):
             res = supervisor.send_cdp("Browser.grantPermissions", {"permissions": ["geolocation"]})
         if res.get("ok"):

@@ -17,9 +17,7 @@ interface ClipboardIpcDeps {
   ipcMain: IpcMain
 }
 
-// 渲染层 copyImage/saveImage 共用的解析路径。仅接受 data: 图片，或经对话框/拖拽
-// 注册过的 file: 路径（与 readFileDataUrl 同一白名单，防 XSS/IPC 任意读盘外传）。
-// 不接受任意 http(s)：参考图与立绘经 apiAsset 已是 data URL，右键菜单另有主进程路径。
+// copyImage/saveImage 共用解析路径：仅接受 data: 图片或经对话框/拖拽注册过的 file: 路径（与 readFileDataUrl 同一白名单，防 XSS/IPC 任意读盘外传）；不接受任意 http(s)。
 async function imageBufferFromUrl(rawUrl: string): Promise<{ buffer: Buffer; mimeType: string }> {
   if (!rawUrl) {
     throw new Error('Missing URL')

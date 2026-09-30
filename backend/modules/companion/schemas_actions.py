@@ -1,8 +1,4 @@
-"""动作库跨边界 schema：工具入参、REST 响应、播放指令与回执。
-
-source / user_id / 预算日 / 系统槽位由服务端绑定。时长上限由策略层按后台配置校验；
-schema 只守绝对上限 12 秒。
-"""
+"""动作库跨边界 schema：工具入参、REST 响应、播放指令与回执。source / user_id / 预算日 / 系统槽位由服务端绑定；schema 只守 12 秒绝对时长上限，实际策略上限在后台配置。"""
 
 import json
 from typing import Literal

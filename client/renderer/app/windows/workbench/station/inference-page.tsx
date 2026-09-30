@@ -69,7 +69,7 @@ export function InferencePage(): React.JSX.Element {
   const { reset: resetChat } = chat
   const { reset: resetTemperature } = temperature
 
-  // 把加载结果灌进三个独立 form section——loader.data 一旦变化即同步。
+  // 把加载结果灌进三个独立 form section —— loader.data 一旦变化即同步。
   useEffect(() => {
     if (!loader.data) {
       return

@@ -93,7 +93,7 @@ python scripts/gen_release_notes.py v1.3.0
 python scripts/gen_release_notes.py v1.3.0 --from-tag v1.2.0 --output notes.md
 ```
 
-需要模型生成时通过环境提供 `MINIMAX_API_KEY`，不把真实密钥写入命令文档或提交。
+需要模型生成时通过环境提供 `MINIMAX_API_KEY`（缺失可降级），可选 `MINIMAX_BASE_URL`（默认 `https://api.minimaxi.com/v1`）与 `MINIMAX_MODEL`（默认 `MiniMax-M3`），不把真实密钥写入命令文档或提交。
 
 ## 共享图标资源
 

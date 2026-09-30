@@ -6,12 +6,12 @@ from datetime import UTC, datetime
 
 from .config import SETTINGS
 
-# stdlib LogRecord 属性集合——导入时取，未来 Python 增加字段不会悄悄泄漏到 JSON；`color_message` 来自 uvicorn，`message`/`asctime` 由 Formatter.format() 填充，会与 `extra=` 冲突。
+# stdlib LogRecord 属性集合（导入时取，防未来 Python 字段泄漏到 JSON）；`color_message` 来自 uvicorn，`message`/`asctime` 由 Formatter 填充会与 extra= 冲突。
 _RESERVED_LOGRECORD_KEYS: frozenset[str] = frozenset(
     set(logging.LogRecord("", 0, "", 0, "", (), None).__dict__) | {"message", "asctime", "color_message"},
 )
 
-# HTTP 入口（correlation_id_middleware）与长生命周期 task tick 顶部（scheduler_loop / _process_events）显式 set_request_id() 注入；_RequestContextFilter 自动透传到每条 LogRecord。
+# HTTP 入口与长生命周期 task tick 显式 set_request_id()；_RequestContextFilter 透传到每条 LogRecord。
 _user_id_var: ContextVar[int | None] = ContextVar("logger_user_id", default=None)
 _request_id_var: ContextVar[str | None] = ContextVar("logger_request_id", default=None)
 
@@ -50,7 +50,7 @@ class _DropHealthAccessFilter(logging.Filter):
     """丢弃根路径 `/health` 的 access 日志；Docker HEALTHCHECK 每 10s 探一次会刷屏。"""
 
     def filter(self, record: logging.LogRecord) -> bool:
-        # uvicorn access 形如 `client - "METHOD /path HTTP/1.1" status`；只匹配根路径 /health。
+        # uvicorn access 形如 `client - "METHOD /path HTTP/1.1" status`。
         return " /health HTTP/" not in record.getMessage()
 
 
@@ -92,7 +92,7 @@ _FORMATTERS: dict[str, type[logging.Formatter]] = {"json": _JsonFormatter, "text
 
 
 def setup_logging() -> None:
-    """lifespan 入口调一次接管 root logger；不用 dictConfig（会重新实例化 handler、丢弃我们挂的 formatter/filter）。"""
+    """lifespan 入口调一次接管 root logger；不用 dictConfig（会重新实例化 handler、丢弃已挂 formatter/filter）。"""
     handler = logging.StreamHandler(sys.stdout)
     handler.setFormatter(_FORMATTERS[SETTINGS.log_format]())
     handler.addFilter(_RequestContextFilter())

@@ -96,7 +96,6 @@ const APP_ROOT = app.getAppPath()
 
 const singleInstance = acquireSingleInstance(app)
 
-// 模块级可变状态集中在此。
 let mainWindow: BrowserWindow | null = null
 let surfaces: null | SurfacesManager = null
 let getAuthToken = (): string | null => null
@@ -114,7 +113,7 @@ const desktopLogger = createDesktopLogger({
 
 const rememberLog = (chunk: unknown): void => desktopLogger.rememberLog(chunk)
 
-// 同步执行，先于会话恢复与 Runner 自动启动，使 Runner 与技能索引读到当前版本的随包技能。
+// 须先于会话恢复与 Runner 自动启动，使 Runner 与技能索引读到当前版本的随包技能。
 syncBundledSkills({
   app,
   log: chunk => rememberLog(chunk),
@@ -142,8 +141,7 @@ const { ensureBackend, resetBackendCache } = createEnsureBackend({
   getCurrentBaseUrl: () => sessionRuntime?.ensureBackendSession().getSession()?.baseUrl ?? null
 })
 
-// 云端配置同步协调器：backend user_settings 为真源，desktop-settings.json 是镜像
-// （terminal/spiritagent 等机密与设备相关节仅本机，见 shared/lib/config-sync.ts）。
+// 云端配置同步协调器：backend user_settings 为真源，desktop-settings.json 是镜像（机密与设备相关节仅本机，见 shared/lib/config-sync.ts）。
 const configSync = createConfigSync({
   createBackendClient: ({ baseUrl }) => createBackendClient({ baseUrl, fetch: electronFetch }),
   ensureBackend: () => ensureBackend(),
@@ -343,9 +341,7 @@ registerMediaIpc({
   log: chunk => rememberLog(chunk)
 })
 
-// 会话与 Runner 运行时分责：会话懒创建与 token 重接在 session-runtime；
-// Runner 桥的持有、自动启停与 IPC 在 runner host。登录恢复经 authBroadcaster 广播后接回 host.autoStart。
-// onRestored 异步回调里才调用；先占位避免 session/runtime 互相前置。
+// 会话懒创建与 token 重接在 session-runtime，Runner 桥的持有、自动启停与 IPC 在 runner host；登录恢复经 authBroadcaster 广播后接回 host.autoStart。onRestored 异步回调里才调用，先占位避免 session/runtime 互相前置。
 let runnerHost: ReturnType<typeof createRunnerHost>
 
 const sessionRuntime = createSessionRuntime(

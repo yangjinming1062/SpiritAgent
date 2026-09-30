@@ -18,12 +18,10 @@ import { $spriteGesture, clearSpriteGesture, playSpriteGesture } from './sprite/
 
 const RETRY_MS = 300
 const RETRY_COUNT = 5
-// 行走动画被中止（生活空间打开 / 开始拖拽会取消移动且不回调）时的宽限：
-// 到点即视为行走结束，就地继续执行原工具。
+// 行走动画被中止（生活空间打开/拖拽取消移动且不回调）时的宽限：到点即视为行走结束，就地继续执行原工具。
 const WALK_ABORT_GRACE_MS = 2000
 
-// 仪式行走失败的离线/机械降级台词（DESIGN「仪式性行走」 / RULES 原则七边界）——
-// 走 speakProactive 的档位门控：静止档静默、常规档仅气泡、自主档开口。
+// 仪式行走失败的离线/机械降级台词，走 speakProactive 档位门控（静止静默、常规仅气泡、自主开口）。
 const TARGET_LOST_LINES = ['咦…我没找到那个窗口，先直接试试吧。', '那个窗口在哪呀…我先直接试。'] as const
 const PERCH_TIGHT_LINES = ['这边好挤，我够不着…先直接试试吧。'] as const
 
@@ -78,8 +76,7 @@ function isRunnerWindow(value: unknown): value is RunnerWindow {
 }
 
 export async function findWindowByKeyword(keyword: string): Promise<WindowGeom | null> {
-  // 空关键词会让 `name.includes('')` 恒真——匹配到枚举出的第一个窗口，
-  // 精灵会对着一个无关窗口走过去并点它。关键词缺失 = 找不到目标。
+  // 空关键词会让 name.includes('') 恒真从而匹配到第一个窗口；关键词缺失 = 找不到目标。
   if (!keyword.trim() || !window.spiritagent?.runnerInvoke) {
     return null
   }
@@ -120,8 +117,7 @@ async function toViewportRect(geom: WindowGeom): Promise<WindowGeom | null> {
   }
 }
 
-// 仪式只在精灵舞台实际可见时进行（与表达播放同一判断：精灵窗未隐藏或最小化、未被完整入口收起、
-// 未开轻语、未锁屏），每一步行动前重验；不可见时不走动、不出声、不预点击，直接执行原工具。
+// 仪式只在精灵舞台实际可见时进行（与表达播放同一判断），每一步行动前重验；不可见时不走动、不出声、不预点击，直接执行原工具。
 export async function performRitualWalk<T>(
   findTarget: () => Promise<WindowGeom | null>,
   execute: () => Promise<T>,
@@ -176,8 +172,7 @@ export async function performRitualWalk<T>(
     const dist = Math.hypot(perch.x - $spatialPos.get().x, perch.y - $spatialPos.get().y)
     const locomotion = locomotionForDistance(dist)
 
-    // 到达回调在行走被取消时不会触发（spatial 的收起、隐藏与拖拽中止路径直接丢弃它）；
-    // 仪式行走只是装饰，限时等待后必须继续执行原工具，不能让行走挂起整条工具链。
+    // 到达回调在行走被取消时不触发；仪式行走只是装饰，限时等待后必须继续执行原工具。
     const arrived = await Promise.race([
       new Promise<boolean>(resolve =>
         setSpatialLocale('perch', { position: perch, locomotion, onArrive: () => resolve(true) })
@@ -191,12 +186,11 @@ export async function performRitualWalk<T>(
       return await execute()
     }
 
-    // DESIGN「仪式性行走」：抵达后指向目标，再以点击提示标出实际操作位置。
+    // 抵达后指向目标，再以点击提示标出实际操作位置。
     cueSeq = playSpriteGesture({ kind: 'point', target: targetCenter })
     await Promise.race([sleep(800), stage.hidden])
 
-    // 指向期间被打断（拖拽开始、收起或隐藏会撤下提示）或舞台已不可见时同样跳过后续仪式；
-    // 此后到预点击之间没有等待，预点击时舞台仍可见。
+    // 指向期间被打断（拖拽/收起/隐藏撤下提示）或舞台已不可见时跳过后续仪式；此后到预点击之间没有等待。
     if ($spriteGesture.get()?.seq !== cueSeq || !isActionStageVisible()) {
       return await execute()
     }
@@ -204,8 +198,7 @@ export async function performRitualWalk<T>(
     cueSeq = playSpriteGesture({ kind: 'tap', target: targetCenter })
     setSpriteState('interacting', { durationMs: 1500 })
 
-    // 预点击只对「点击不是工具本体」的仪式有意义（open_application 聚焦已开窗口）。
-    // click_at 工具本身就是要执行的那次点击——再补一次就是双击。
+    // 预点击只对「点击不是工具本体」的仪式有意义（open_application）；click_at 本身就是那次点击，再补一次就是双击。
     if (opts?.previewClick !== false && window.spiritagent?.runnerInvoke) {
       window.spiritagent
         .runnerInvoke('system.click_at', { x: Math.round(geom.x + geom.w / 2), y: Math.round(geom.y + geom.h / 2) })

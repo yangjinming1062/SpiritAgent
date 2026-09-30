@@ -16,11 +16,7 @@ interface OnboardingState {
 // 上次查询没有得到结果时为 true，网关连通后据此重查。
 let lifecycleUnresolved = false
 
-/**
- * 按当前会话重解伴生 lifecycle（unauthed / onboarding / ready）。
- * 各窗口是独立渲染进程，nanostores 不互通；换号 clearCompanionStorage 会把本窗
- * lifecycle 重置为 unauthed，必须各自重新解析，不能只依赖精灵窗写入的 localStorage。
- */
+/** 按当前会话重解伴生 lifecycle（unauthed/onboarding/ready）。各窗口是独立渲染进程，nanostores 不互通；换号 clearCompanionStorage 会把本窗 lifecycle 重置为 unauthed，必须各自重新解析。 */
 async function syncCompanionLifecycle(): Promise<void> {
   const auth = $auth.get()
 
@@ -68,8 +64,7 @@ async function syncCompanionLifecycle(): Promise<void> {
     }
   }
 
-  // 只按服务端明确的完成状态切换；查询失败保留当前值，网关连通后重查，
-  // 不把离线启动的已完成用户误送回 onboarding。
+  // 只按服务端明确的完成状态切换；查询失败保留当前值，网关连通后重查，不把离线启动的已完成用户误送回 onboarding。
   if (typeof complete !== 'boolean') {
     lifecycleUnresolved = true
 

@@ -1,5 +1,4 @@
-// ``onBack`` 转移决策的纯函数，与组件状态机隔离。
-// 输出是下一个状态意图或 null(表示"无变化")。
+// ``onBack`` 转移决策的纯函数，与组件状态机隔离。输出是下一个状态意图或 null(表示"无变化")。
 
 type BackPhase =
   | 'q-character'
@@ -18,7 +17,7 @@ interface BackState {
   qIndex: number
   voiceStage: BackVoiceStage
   imageSealed: boolean
-  // 头像未经确认步骤直接采用（自备图或「继续当前头像」）时为 true——全身阶段返回选择步骤而非确认步骤。
+  // 头像未经确认步骤直接采用（自备图或「继续当前头像」）时为 true ——全身阶段返回选择步骤而非确认步骤。
   portraitDirectAdopt: boolean
 }
 

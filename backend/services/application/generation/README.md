@@ -63,7 +63,7 @@
 
 聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。结构化回复（生活空间）的聊天视频终态经 `domains/conversation` 的 `update_video_reply` 原位更新所属气泡；其他会话追加媒体状态系统消息，并发 `video_gen.*` 事件与渠道投递。
 
-上传导入与生成共用交付链，[video/state.py](video/state.py)保存上下文与单动作结果，上传包没有可重做的冻结参考。
+上传导入（`create_pack_from_clips`）与按参考生成（`create_pack_from_reference`）共用片段处理、任务行素材列与发布；[video/state.py](video/state.py)保存上下文与单动作结果，上传包没有可重做的冻结参考。任务行 status × stage 逐任务持久化；FFmpeg 等待走工作线程，不占数据库长事务；新包构建失败不清空旧激活包。供应商任务句柄在提交后立即落库，重启凭句柄续轮询，不重复提交付费任务。
 
 探身补齐由 [video/service.py](video/service.py)编排，定位校准在 [video/script.py](video/script.py)，接口契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。生成任务收尾须兑现新排队动作的唤醒；空队列停止，不循环恢复未知结果任务。
 

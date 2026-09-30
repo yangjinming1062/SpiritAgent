@@ -14,7 +14,6 @@ interface FailureProps {
   bootstrap: BootstrapStateModel
 }
 
-// 失败页：保持品牌主视觉，错误文案置于次级文字，主操作是重试。
 export default function Failure({ bootstrap }: FailureProps): React.JSX.Element {
   const logPath = useStore($logPath)
 

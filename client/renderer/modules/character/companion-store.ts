@@ -38,10 +38,7 @@ const $previousState = atom<SpriteStateName>('idle')
 // 跨模块共享的水合去重缓存：同 key 的并发水合只跑一次。
 const inFlightHydrations = new Map<string, Promise<unknown>>()
 
-// 打扰档位门控伙伴的主动行为（DESIGN「主动陪伴」）。
-// 三档：still（静止，停止一切主动 LLM 调用与分析，仅响应交互）、
-// normal（常规，仅文字问候等原地轻互动）、autonomous（自主，开放桌面精灵视觉与空间表达）。
-// 用户主动行为永不被门控——只门控主动外发（companion.message）与主动推理发起。
+// 打扰档位门控主动外发与主动推理（用户主动行为不被门控）：still 停止主动 LLM、normal 轻互动、autonomous 开放视觉与空间表达。
 export type DisturbanceTier = 'still' | 'normal' | 'autonomous'
 
 const DISTURBANCE_TIERS = ['still', 'normal', 'autonomous'] as const satisfies readonly DisturbanceTier[]
@@ -66,12 +63,10 @@ export function setDisturbanceTier(tier: DisturbanceTier): void {
   }
 }
 
-// ``null`` 表示「当前无覆盖；生效档位回退到 user_preferred」。
-// 只有活动监视器（activity.ts）会写它。
+// null 表示无覆盖，生效档位回退 user_preferred；只有活动监视器（activity.ts）会写它。
 export const $effectiveTierOverride = atom<DisturbanceTier | null>(null)
 
-// 临时安静（DESIGN「主动陪伴」）：截止前生效档位为静止，到期只清除截止时间，不改写档位偏好。
-// 截止时间只存本机、不经 prefs 上云；与档位偏好一样登出不清除——只约束本机，且至多持续一个时长。
+// 临时安静：截止前生效档位为静止，到期只清截止时间不改偏好；截止时间只存本机不上云，登出不清除。
 export const QUIET_MINUTES = 50
 const QUIET_DURATION_MS = QUIET_MINUTES * 60_000
 // 系统休眠期间计时器可能停走，按墙钟分段复查是否到期。
@@ -141,8 +136,7 @@ export function syncDisturbanceFromStorage(key: string | null): void {
 // 加载时按保存的截止时间恢复临时安静，重启不中断。
 applyQuietUntil(readStoredQuietUntil())
 
-// 手动静止与临时安静都是硬锁定：即便活动监视器写入 override，生效档位也保持静止；
-// 覆盖只在两者都不成立时生效。
+// 手动静止与临时安静是硬锁定，override 只在两者都不成立时生效。
 export const $effectiveTier = computed(
   [$userPreferredTier, $effectiveTierOverride, $quietUntil],
   (preferred, override, quietUntil) =>
@@ -160,8 +154,7 @@ const STATE_PRIORITY: Record<SpriteStateName, number> = {
   working: 70
 }
 
-// 瞬态经 ``$previousState`` 与下方计时器自动恢复，因此绕过优先级门控，
-// 避免进行中的 WORKING/SPEAKING 压制瞬时的情绪/互动提示。
+// 瞬态经 $previousState 与计时器自动恢复，因此绕过优先级门控，避免 WORKING/SPEAKING 压制瞬时提示。
 const TRANSIENT_STATES: ReadonlySet<SpriteStateName> = new Set(['emotional', 'interacting'])
 
 let transientTimer: ReturnType<typeof setTimeout> | null = null
@@ -177,8 +170,7 @@ export function setSpriteState(name: SpriteStateName, options?: { durationMs?: n
     current !== 'idle' &&
     !TRANSIENT_STATES.has(name)
   ) {
-    // 低优先级状态无法打断高优先级状态——瞬时状态除外，
-    // 它们会通过下方计时器自动恢复。
+    // 低优先级不能打断高优先级，瞬时状态除外（经计时器自动恢复）。
     return
   }
 
@@ -234,8 +226,7 @@ export function endTransientState(name: SpriteStateName): void {
   restoreAfterTransient()
 }
 
-// 拖拽期间持续保持 interacting：撤销在途瞬态计时器并以按下前的持续状态为恢复目标，
-// 松手时由带时长的 setSpriteState('interacting') 负责恢复。
+// 拖拽期间持续保持 interacting（撤销在途瞬态计时器），松手时由带时长的 setSpriteState('interacting') 恢复。
 export function holdInteracting(): void {
   const current = $spriteState.get()
 
@@ -272,17 +263,13 @@ export function reportUserActivity(): void {
     activityCounter = 0
 
     if ($spriteState.get() === 'working') {
-      // ``working``（优先级 70）盖住 ``idle``（优先级 10）——不带 ``force: true`` 时
-      // 计时器到期，但状态仍会卡在 working。显式强制退出，
-      // 这样在用户停止活动达到配置窗口后精灵能回到 idle。
+      // working(70) 盖住 idle(10)，不带 force 会被优先级门控吞掉，必须强制退出。
       setSpriteState('idle', { force: true })
     }
   }, 10000)
 }
 
-// 生效档位（含活动覆盖与临时安静）经配置管道上云，是后端闸门（主动消息 / cron / 视觉与空间推理）
-// 的唯一档位来源；与用户偏好分键——生效值是设备派生的，不回写本地偏好。
-// 只由精灵窗（活动监视与重连补报）推送：其他窗口没有活动覆盖，推送值可能与实际生效档位不一致。
+// 生效档位（含活动覆盖与临时安静）经配置管道上云，是后端闸门的唯一档位来源；与用户偏好分键（设备派生不回写偏好），只由精灵窗推送。
 export function pushEffectiveDisturbanceTier(tier: DisturbanceTier): void {
   window.spiritagent?.prefs?.set({ key: 'companion.disturbance_tier', value: tier })
 }
@@ -319,9 +306,7 @@ export async function ensureCompanionHydrated(deps: {
   }
 }
 
-// 清掉所有瞬态/活动计时器与排队状态——登出后 orphan 计时器在新会话里会写 $spriteState。
-// 必须在文件末尾：闭包按引用捕获 transientTimer / activityResetTimer / activityCounter / $previousState /
-// $effectiveTierOverride，提前声明会在 HMR 同步调用时撞 TDZ。
+// 清掉瞬态/活动计时器（登出后 orphan 计时器会写 $spriteState）；必须在文件末尾，闭包按引用捕获上述变量，提前声明会在 HMR 时撞 TDZ。
 registerStorageClearHandler(() => {
   if (transientTimer) {
     clearTimeout(transientTimer)

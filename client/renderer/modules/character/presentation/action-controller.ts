@@ -1,5 +1,4 @@
-/** 视频动作选择（presentation 语义，视频渲染器执行）：
- * 业务状态、空间运动与拖拽归并为当前动作键；缺素材的动作回退 idle。 */
+/** 视频动作选择（presentation 语义，视频渲染器执行）：业务状态、空间运动与拖拽归并为当前动作键；缺素材的动作回退 idle。 */
 
 import type { Locomotion } from '../spatial'
 

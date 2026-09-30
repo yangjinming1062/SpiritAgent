@@ -64,11 +64,7 @@ function clampView(view: LightboxView, viewport: { height: number; width: number
   }
 }
 
-// 灯箱支持自由缩放：滚轮以指针为中心缩放，拖拽平移，双击在适应视口与放大之间切换。
-// 图片本身即窗口；半透明背景只在点击背景（非图片/工具条）时关闭。
-// 通过 createPortal 挂到 document.body，避免 onboarding 容器的 backdrop-filter
-// 把 position: fixed 锁死在对话框里。窗口拖拽区不受 DOM 叠放遮挡，遮罩须设 no-drag，
-// 否则在标题栏或侧边伙伴上方点背景会拖动窗口而不是关闭。
+// 灯箱支持自由缩放（滚轮以指针为中心、拖拽平移、双击切换适应/放大）；图片本身即窗口，半透明背景仅在点击背景时关闭。经 createPortal 挂到 document.body 避免 onboarding 容器的 backdrop-filter 锁死 position:fixed；遮罩须设 no-drag，否则在标题栏或侧边伙伴上方点背景会拖动窗口而不是关闭。
 export function PortraitLightbox({
   name,
   onClose,
@@ -132,18 +128,14 @@ export function PortraitLightbox({
     commitView({ scale: nextScale, x: cx - ix * nextScale, y: cy - iy * nextScale })
   }
 
-  // 换图时回到适应视口，避免沿用上一张的缩放和平移；同时清理拖拽 ref，
-  // 否则下次 pointerdown 拿到与上次同号的 pointerId 时会复用残留 drag 数据。
+  // 换图时回到适应视口并清理拖拽 ref，否则下次 pointerdown 拿到同号 pointerId 时会复用残留 drag 数据。
   useEffect(() => {
     viewRef.current = { scale: 1, x: 0, y: 0 }
     setView({ scale: 1, x: 0, y: 0 })
     dragRef.current = null
   }, [url])
 
-  // 打开后把键盘焦点落到关闭钮：全局去掉了 focus ring，灯箱若不主动聚焦，
-  // Tab 仍会先走到底层设置页，键盘用户看不到对话框已打开。
-  // 卸载时把焦点还给打开前的元素，避免键盘用户掉回 body。
-  // portal 异步挂载场景下 ref 可能仍为 null；聚焦失败不影响后续 Esc / 点击关闭。
+  // 打开后把键盘焦点落到关闭钮（全局去掉了 focus ring，否则 Tab 会先走到底层设置页）；卸载时把焦点还给打开前的元素。portal 异步挂载时 ref 可能仍为 null，聚焦失败不影响后续 Esc/点击关闭。
   useEffect(() => {
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
     closeButtonRef.current?.focus()
@@ -156,11 +148,7 @@ export function PortraitLightbox({
   const zoomAtRef = useRef(zoomAt)
   zoomAtRef.current = zoomAt
 
-  // React 合成 wheel 在部分环境是 passive，无法 preventDefault。监听挂在整层遮罩上：
-  // 灯箱打开时滚轮不得滚动底层页面；仅指针落在取景框内时才缩放。
-  // overlay 在 portal 内部挂载，与 effect 同步执行；若未来改为延迟挂载需改用 ref callback。
-  // 触控板两指捏合在不同浏览器派发 wheel+ctrlKey 或 GestureEvent；手机双指捏合不派发
-  // wheel，pinch-to-zoom 暂未支持，见 docs/DESIGN.md「主题与图片查看」。
+  // React 合成 wheel 在部分环境是 passive，无法 preventDefault；监听挂整层遮罩，灯箱打开时滚轮不得滚动底层页面，仅指针落在取景框内时才缩放。overlay 在 portal 内部挂载故与 effect 同步；若未来改为延迟挂载需改用 ref callback。触控板捏合在不同浏览器派发 wheel+ctrlKey 或 GestureEvent；手机双指捏合不派发 wheel，pinch-to-zoom 暂未支持（docs/DESIGN.md「主题与图片查看」）。
   useEffect(() => {
     const el = overlayRef.current
 

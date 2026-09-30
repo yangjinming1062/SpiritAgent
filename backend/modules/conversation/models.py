@@ -30,7 +30,7 @@ class Conversation(ModelBase, TimestampMixin):
         nullable=True,
         index=True,
     )
-    # 值集合 {special, standard, im}：special = 系统预设对话（由 system_preset_id 区分具体预设），standard = 用户创建或任务型 Cron 使用的普通对话，im = 外部 IM 对话。
+    # special=系统预设（system_preset_id 区分）/ standard=用户创建或任务型 Cron / im=外部 IM。
     kind: Mapped[str] = mapped_column(String(32), default="standard", server_default=text("'standard'"))
     system_preset_id: Mapped[str] = mapped_column(String(32), index=True)
     memory_reviewed_message_id: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
@@ -39,9 +39,9 @@ class Conversation(ModelBase, TimestampMixin):
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     cwd: Mapped[str | None] = mapped_column(String(1024), nullable=True)
-    # 每会话 key-value 覆盖（reasoning/language）；会话挂载时从该列填入，会话删除时随 conversation 级联清除；跨 WS 重连存活（不像内存中的 RuntimeSession.settings）。
+    # reasoning/language 的 key-value 覆盖；随 conversation 级联清除，跨 WS 重连存活（不像 RuntimeSession.settings）。
     settings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 自动化任务会话仍属于 standard kind，但不参与陪伴夜间记忆、活跃度或主动触达判断。
+    # 自动化任务会话仍属 standard kind，但不参与陪伴夜间记忆、活跃度或主动触达判断。
     is_automation: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), nullable=False)
     is_deletable: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"), nullable=False)
     is_renamable: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"), nullable=False)
@@ -66,7 +66,7 @@ class Conversation(ModelBase, TimestampMixin):
         session_id: str,
         user_id: int | None = None,
     ) -> "Conversation | None":
-        """把 renderer 给的 session_id（Conversation.id 的 str 形式）解析为 Conversation；session_id 非数字、记录缺失、或传了 user_id 但记录不属于该用户时返 None，调用方自行决定如何提示。"""
+        """session_id 为 Conversation.id 的 str 形式；非法、缺失或不属于该 user_id 时返 None。"""
         try:
             conv_id = int(session_id)
         except (ValueError, TypeError):
@@ -112,16 +112,15 @@ class Message(ModelBase):
     media_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 助手推理过程原文；只给工作台展示与历史水合，装配 Responses 输入时不回灌。
     reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # content 保存模型气泡数组；reply_json 保存语音绑定、音频及媒体交付态。
+    # content=模型气泡数组；reply_json=语音绑定、音频及媒体交付态。
     reply_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 在 subtype="daily_summary" 的 system 消息上设置，让每日 checkpoint 不用解析 content 文本就能读到截止日期；content 仍是人类可读版本，本列才是结构化源。
+    # daily_summary 的结构化截止日期（content 是人类可读版本，本列才是结构化源）。
     summary_date: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     # 摘要实际覆盖到的原消息 id，与摘要插入位置及 IM 消费排序分开。
     summary_through_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    # IM 入站消息先落库再确认接收：queued=True 表示已被接收但尚未被任何回合消费；
-    # 消费时整批清除。接收顺序即 id 序，回合顺序由消费动作表达。
+    # IM 入站先落库再确认；queued=True 表示已接收未被回合消费，消费时整批清除；接收顺序即 id 序。
     queued: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), nullable=False)
-    # IM 消费批的上下文排序位置；接收 id 保持不变，排队输入在上一轮工具与回复之后进入上下文。
+    # IM 消费批的上下文排序位置；排队输入在上一轮工具与回复之后进入上下文。
     context_order: Mapped[int | None] = mapped_column(nullable=True)
     # 渠道重投去重标识（绑定 + 对端 + 消息标识的 sha256）。
     dedup_key: Mapped[str | None] = mapped_column(String(64), nullable=True, unique=True)

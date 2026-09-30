@@ -1,8 +1,4 @@
-// 对话表面（消息流）：生活空间、工作台与轻语共用。
-//
-// 仅负责把消息列表、typing 占位、流式滚动跟随三件事渲染出来；
-// 头部拖拽、参数面板、会话侧栏、输入胶囊都归各自的宿主容器管理——
-// 各宿主布局形态差异大，共用部分只此一处。
+// 对话表面（消息流）：生活空间、工作台与轻语共用。仅负责把消息列表、typing 占位、流式滚动跟随三件事渲染出来；头部拖拽、参数面板、会话侧栏、输入胶囊都归各自的宿主容器管理——各宿主布局形态差异大，共用部分只此一处。
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
@@ -66,8 +62,7 @@ export function ConversationSurface({
   const isTurnPendingOrInFlight = pendingPromptBatch.length > 0 || chatTurnInFlight
   const showTyping = isTurnPendingOrInFlight && !lastAssistantStreaming && gatewayState === 'open'
 
-  // 流式 tick 仅驱动跟滚，不进入渲染路径——listen 回调直接动 DOM，
-  // 避免每个 token 把整个消息流（list.map + 多个 MessageBubble）重新走一遍。
+  // 流式 tick 仅驱动跟滚，不进入渲染路径—— listen 回调直接动 DOM，避免每个 token 把整个消息流（list.map + 多个 MessageBubble）重新走一遍。
   useEffect(() => {
     const el = scrollRef.current
 

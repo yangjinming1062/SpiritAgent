@@ -1,8 +1,7 @@
 import threading
 from contextvars import ContextVar, Token
 
-# 当前工具调用的取消事件；asyncio.to_thread 与 tools.thread_context 会把它复制到工作线程，
-# 同步工具内部可经 is_interrupted() 感知取消。
+# 取消事件复制到工作线程，同步工具用 is_interrupted()。
 _current_cancel_event: ContextVar[threading.Event | None] = ContextVar("spiritagent_cancel_event", default=None)
 
 

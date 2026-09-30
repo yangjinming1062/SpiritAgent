@@ -49,8 +49,7 @@ def _local_today(tz: str | None) -> str:
 
 
 def _get_or_seed(user_id: int, tz: str | None) -> _DailyCounters:
-    # 跨用户顺带清理过期条目使字典有界；合法本地日最多偏离 UTC 一天（时区偏移 ≤ ±14h），
-    # 不与调用方本地日比对——那会把地球另一端用户的当日条目误清
+    # 跨用户顺带清理过期条目使字典有界；合法本地日最多偏离 UTC 一天（时区偏移 ≤ ±14h），不与调用方本地日比对——那会把地球另一端用户的当日条目误清
     utc_today = utc_now().date()
     valid_dates = {(utc_today + timedelta(days=d)).isoformat() for d in (-1, 0, 1)}
     for stale_uid, stale in list(_counters.items()):
@@ -105,10 +104,7 @@ async def _upsert_memory(user_id: int, counters: _DailyCounters) -> None:
 
 
 async def record_interaction(user_id: int, kind: str, hour: int) -> dict:
-    """累加当日 kind 计数并在越过阈值时写回 Memory。
-
-    hour 是用户本地小时（客户端上报 getHours()），日期键同为用户本地日——
-    夜间反思按本地日读取，两侧口径一致；无时区行时退化为 UTC。"""
+    """累加当日 kind 计数并在越过阈值时写回 Memory；hour 是用户本地小时（客户端上报 getHours()），日期键同为本地日——夜间反思按本地日读取，两侧口径一致，无时区行时退化为 UTC。"""
     if kind != "chat_turn":
         raise ValueError(f"unknown interaction kind: {kind!r}")
     if not isinstance(hour, int) or not 0 <= hour <= 23:

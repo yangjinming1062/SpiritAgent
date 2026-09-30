@@ -67,9 +67,7 @@ class PeerActionRequest(BaseModel):
 
 
 class ChannelLoginStateResponse(BaseModel):
-    """扫码登录轮询视图：state ∈ idle|wait|scaned|confirmed|expired|error|login_required|connected；
-    qr_image 为渠道下发的二维码图内容（图片 URL 或 data URL），confirmed 后不再返回。
-    """
+    """扫码登录轮询视图：state ∈ idle|wait|scaned|confirmed|expired|error|login_required|connected；qr_image 为渠道下发的二维码内容，confirmed 后不再返回。"""
 
     state: str
     qr_image: str | None = None

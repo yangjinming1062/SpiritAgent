@@ -76,9 +76,7 @@ function approachLocomotion(target: { x: number; y: number }): 'walk' | 'fly' {
   return locomotionForDistance(Math.hypot(target.x - cur.x, target.y - cur.y))
 }
 
-// 走过去搭话（DESIGN「位置、移动与缩放」「自主动作与空间智能」）：开场白由后端经 companion.message 通道投递（边走边说），
-// 客户端只负责走位——有焦点窗口落在窗口旁（复用 perch 落位与缩身，搭话后就地陪工）；
-// 用户在桌面（无窗口）时走到屏幕中下部站定，后续空间决策自然接管。
+// 走过去搭话（DESIGN「位置、移动与缩放」「自主动作与空间智能」）：开场白由后端经 companion.message 通道投递（边走边说），客户端只负责走位——有焦点窗口落在窗口旁（复用 perch 落位与缩身，搭话后就地陪工）；用户在桌面（无窗口）时走到屏幕中下部站定，后续空间决策自然接管。
 function executeApproach(): void {
   if (!isActionStageVisible()) {
     return

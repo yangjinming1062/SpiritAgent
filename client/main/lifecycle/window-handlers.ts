@@ -99,8 +99,7 @@ export function createWindowHandlers({
       const template: Electron.MenuItemConstructorOptions[] = []
       const hasSelection = Boolean(params.selectionText?.trim())
 
-      // data: 图部分环境下 mediaType 不为 image，仍应提供复制/另存。
-      // 不用路径段启发式：任意含 /image/ 的 URL 会被误判成图片资源。
+      // data: 图部分环境下 mediaType 不为 image，仍应提供复制/另存；不用路径段启发式，任意含 /image/ 的 URL 会被误判。
       const srcURL = params.srcURL || ''
 
       const hasImage =

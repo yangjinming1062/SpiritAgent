@@ -1,7 +1,4 @@
-"""Input 事件分发：click/type/hover/drag/press/scroll/wait。
-
-session id 与 ref 解析通过构造时注入的可调用获取。
-"""
+"""Input 事件分发；session/ref 解析经构造注入。"""
 
 import contextlib
 import json
@@ -12,8 +9,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-# 模型可用的按键名（不区分大小写）→ (DOM key, DOM code, windowsVirtualKeyCode, text)。
-# 带 text 的按键须以 keyDown 发送才会产生字符输入，例如 Enter 提交表单、Space 激活控件。
+# 按键名→(DOM key, code, VK, text)；带 text 须 keyDown 才产生字符。
 _KEYS: dict[str, tuple[str, str, int, str]] = {
     "enter": ("Enter", "Enter", 13, "\r"),
     "tab": ("Tab", "Tab", 9, ""),
@@ -37,7 +33,7 @@ _KEYS: dict[str, tuple[str, str, int, str]] = {
     **{f"f{n}": (f"F{n}", f"F{n}", 111 + n, "") for n in range(1, 13)},
 }
 
-# drag 的 hold_key → (CDP modifiers 位, DOM key, DOM code, windowsVirtualKeyCode)
+# drag hold_key → (CDP modifiers, key, code, VK)。
 _DRAG_MODIFIERS: dict[str, tuple[int, str, str, int]] = {
     "shift": (8, "Shift", "ShiftLeft", 16),
     "ctrl": (2, "Control", "ControlLeft", 17),
@@ -101,8 +97,7 @@ class InputDispatch:
         self._wait_for_page_stable = wait_for_page_stable
 
     def _dispatch_left_click(self, sid: str | None, x: float, y: float) -> dict[str, Any]:
-        """发送一次左键按下+释放。点击本身触发了弹窗时仍视为成功并带回 ``dialog``，避免调用方重复点击；
-        调用前已有弹窗时点击不会送达，按失败返回。release 失败时再补一次 release，防止按钮卡在按下状态。"""
+        """左键按下+释放；触发弹窗算成功并带回 dialog，已有弹窗则失败。"""
         pressed = self._send_cdp(
             "Input.dispatchMouseEvent",
             {"type": "mousePressed", "x": x, "y": y, "button": "left", "clickCount": 1},
@@ -205,8 +200,7 @@ class InputDispatch:
                 if not is_active_input:
                     return {"ok": False, "error": f"Target at '{ref}' did not focus an editable input field"}
 
-            # CDP modifiers 位：Alt=1、Ctrl=2、Meta=4、Shift=8。macOS 的编辑快捷键不经合成按键事件触发，
-            # 须随 keyDown 附带 selectAll 编辑命令。
+            # CDP modifiers: Alt=1/Ctrl=2/Meta=4/Shift=8；mac 编辑键须附 selectAll。
             modifiers = 4 if sys.platform == "darwin" else 2
             for evt in (
                 {
@@ -332,7 +326,7 @@ class InputDispatch:
                 return {"ok": False, "error": first_error.get("error", "drag_refs: CDP dispatch failed")}
             return {"ok": True, "from": from_ref, "to": to_ref}
         finally:
-            # 中途异常时也要补发鼠标释放与修饰键抬起，避免按键卡在按下状态；正常路径已释放过鼠标。
+            # 异常路径也补抬键，防卡住。
             if not mouse_released:
                 with contextlib.suppress(Exception):
                     self._send_cdp(
@@ -351,7 +345,7 @@ class InputDispatch:
 
     def press_key(self, key: str, modifiers: int = 0) -> dict[str, Any]:
         sid = self._session_id_provider()
-        # 未知按键必须报错：静默成功会让模型误以为表单已提交。
+        # 未知键必须报错，防假成功。
         spec = _KEYS.get(key.strip().lower())
         if spec is None:
             supported = ", ".join(sorted({"Space" if k == " " else k for k, *_ in _KEYS.values()}))
@@ -412,8 +406,7 @@ class InputDispatch:
                     return {"ok": True, "matched": "text", "value": text}
                 if res.get("ok") is False:
                     last_error = res
-            # 单次 eval 失败不应立即放弃：若同时给了 selector+text，下一轮重试即可绕过瞬时 CDP 抖动。
-            # 仅当 deadline 用尽且从未匹配时才回报 last_error。
+            # eval 瞬时失败可重试；仅 deadline 用尽且从未匹配才报 last_error。
             if time.monotonic() >= deadline:
                 if last_error is not None:
                     return {"ok": False, "error": last_error.get("error", "wait_for eval failed")}

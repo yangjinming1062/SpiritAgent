@@ -13,8 +13,7 @@ export interface UseEscapeKeyOptions {
   stopPropagation?: boolean
 }
 
-// 统一的"挂 window 键盘事件、命中 Esc、调用 handler"原语。
-// handler 走 useLatestRef 镜像最新引用，调用方无需 useCallback。
+// 统一的"挂 window 键盘事件、命中 Esc、调用 handler"原语。handler 走 useLatestRef 镜像最新引用，调用方无需 useCallback。
 export function useEscapeKey(
   handler: () => void,
   {

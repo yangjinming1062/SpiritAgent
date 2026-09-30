@@ -5,10 +5,7 @@ from .engine import find_browser_binary
 
 
 def check_browser_native_requirements() -> bool:
-    """Camofox > cdp_url override > 本地已装 Edge/Chrome/Brave/Chromium 任一可用即可。
-
-    只看 ``cdp_url`` 是否配置，不做端点发现：每个浏览器工具都会调用本探测，连接失败由实际调用报告。
-    """
+    """Camofox > cdp_url > 本地浏览器任一可用；只查配置不做端点发现。"""
     if is_camofox_mode():
         return True
     if str(cfg_get(load_config(), "browser", "cdp_url", default="")).strip():

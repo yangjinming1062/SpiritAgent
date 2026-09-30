@@ -1,7 +1,4 @@
-"""Runner 与 Desktop 之间的 OS 原生 IPC 传输层（命名管道 / Unix 域套接字）。
-
-底层走字节流，上层复用 sans-I/O 的 ``websockets.client.ClientProtocol``：库负责握手、掩码、控制帧、关闭语义，本模块只负责字节流与协议对象之间的搬运。
-"""
+"""Runner↔Desktop 的 OS IPC 传输层；字节流搬运 sans-I/O websockets.ClientProtocol。"""
 
 import asyncio
 import contextlib
@@ -28,10 +25,10 @@ _EXPECTED_TRANSPORT = "pipe" if IS_WINDOWS else "unix"
 
 HANDSHAKE_AUTH_HEADER = "X-SpiritAgent-Auth"
 
-# 入站消息上限；sans-I/O 默认 1 MiB 不足以容纳大参数的工具调用与模型响应。
+# 入站上限，默认 1 MiB 不够大参数。
 MAX_MESSAGE_BYTES = 16 * 1024 * 1024
 
-# Host 头不会出本机，用固定虚拟 URI 给协议构造器提供握手所需的元信息即可。
+# 本机用固定虚拟 URI 即可。
 _DUMMY_URI = "ws://spiritagent/rpc"
 
 _READ_CHUNK = 65536
@@ -250,7 +247,7 @@ if IS_WINDOWS:
                         break
                     loop.call_soon_threadsafe(reader.feed_data, chunk)
             finally:
-                # feed_eof 唤醒 read() 中阻塞的 pump，避免半关闭管道上永久挂起。
+                # feed_eof 唤醒阻塞 pump。
                 with contextlib.suppress(RuntimeError):
                     loop.call_soon_threadsafe(reader.feed_eof)
 
@@ -259,7 +256,7 @@ if IS_WINDOWS:
 
         async def write(self, data: bytes) -> None:
             async with self._write_lock:
-                # 句柄可能在本协程取锁过程中被关闭——若不显式检查，executor 线程里写入失败时报错会很迷惑。
+                # 取锁期间句柄可能已关，须显式检查。
                 if self._closed:
                     raise ConnectionError("desktop pipe is closed")
                 await self._loop.run_in_executor(None, self._write_all, data)
@@ -300,11 +297,11 @@ if IS_WINDOWS:
             if self._closed:
                 return
             self._closed = True  # 先置位：让排队等锁的写协程快速失败
-            # 取消所有进行中的重叠操作（阻塞中的读 + in-flight 写），对应 GetOverlappedResult 返回 ERROR_OPERATION_ABORTED 而退出。
+            # 取消重叠操作，GetOverlappedResult 报 ABORTED。
             _kernel32.CancelIoEx(self._handle, None)
             thread = self._thread
             if thread is not None and thread is not threading.current_thread():
-                # 把 join 放到 executor 中避免卡死事件循环；daemon 标志是 join 超时后的兜底。
+                # join 放 executor；daemon 兜底。
                 with contextlib.suppress(asyncio.TimeoutError):
                     await asyncio.wait_for(
                         self._loop.run_in_executor(None, thread.join, 2.0),
@@ -348,7 +345,7 @@ else:
 
 async def _open_stream(path: str) -> _Stream:
     if IS_WINDOWS:
-        # 连接循环最长会睡到 deadline（BUSY / 重启窗口），所以放到线程里执行，避免阻塞事件循环。
+        # 连接循环放线程，避免阻塞事件循环。
         handle = await asyncio.to_thread(_connect_pipe_handle, path)
         stream = _PipeStream(handle)
         await stream.start()
@@ -358,13 +355,7 @@ async def _open_stream(path: str) -> _Stream:
 
 
 class DesktopConnection:
-    """基于 OS 原生 IPC 字节流的 WebSocket 客户端。
-
-    两条必须遵守的驱动规则（违反任一条都会让协议僵死）：
-
-    - 每次 ``receive_data()`` 及发送操作后必须 drain 一次 ``data_to_send()`` —— Pong 回复与 Close ACK 都从这里排队发出。
-    - 流到达 EOF 时必须调用 ``receive_eof()``。
-    """
+    """OS IPC 上的 WebSocket 客户端。每次 receive_data/发送后必须 drain data_to_send()；EOF 必须 receive_eof()。"""
 
     def __init__(self, stream: _Stream, token: str) -> None:
         self._stream = stream
@@ -382,7 +373,7 @@ class DesktopConnection:
         """把协议排队中需要发出的数据（帧、Pong、Close ACK）全部写出。"""
         for data in self._protocol.data_to_send():
             if data == SEND_EOF:
-                # 写入端 EOF 哨兵；管道/UDS 不能半关闭，统一由外层 stream.close() 兜底。
+                # 管道/UDS 不能半关闭，外层 close 兜底。
                 continue
             await self._stream.write(data)
 
@@ -395,12 +386,12 @@ class DesktopConnection:
             if chunk := await self._stream.read():
                 self._protocol.receive_data(chunk)
             else:
-                # 被拒的升级响应（如 401 且无 Content-Length）要到 EOF 才能解析完成。
+                # 被拒升级响应要到 EOF 才完整。
                 self._protocol.receive_eof()
             if (exc := self._protocol.handshake_exc) is not None:
-                # 非 101 为 InvalidStatus：调用方据此丢弃缓存端点并重读端点文件，不带旧 token 重试。
+                # 非 101：丢缓存端点重读文件。
                 raise exc
-            # 同一批数据可能在 101 之后管线化了帧，events_received() 会一次性排空，须全部处理。
+            # 101 后管线化帧须全部处理。
             for event in self._protocol.events_received():
                 if isinstance(event, Frame):
                     self._handle_frame(event)
@@ -429,13 +420,13 @@ class DesktopConnection:
         except (ConnectionError, OSError):
             pass
         except Exception as exc:
-            # 协议级错误（坏 UTF-8、帧错误）按传输失败处理；finally 中的哨兵负责唤醒所有等待者。
+            # 协议错误按传输失败；哨兵唤醒等待者。
             logger.warning("desktop IPC pump terminated: %s", exc)
         finally:
             self._messages.put_nowait(None)
 
     def _handle_frame(self, event: Frame) -> None:
-        # 分片顺序由协议对象校验，违规帧会使连接失败而不会作为事件交付；控制帧的回应已由 _drain() 发出。
+        # 分片顺序由协议校验；控制帧已 drain。
         if event.opcode is OP_TEXT or event.opcode is OP_BINARY:
             self._message_opcode = event.opcode
             self._fragments = [event.data]
@@ -452,7 +443,7 @@ class DesktopConnection:
         if opcode is OP_TEXT:
             self._messages.put_nowait(data.decode("utf-8"))
         else:
-            # JSON-RPC 走文本帧；但二进制也尝试解码，避免对端 bug 被静默丢弃而表现成 JSON 解析错误。
+            # 二进制也尝试解码，避免静默丢弃。
             self._messages.put_nowait(data.decode("utf-8", errors="replace"))
 
     async def send(self, message: str) -> None:
@@ -472,7 +463,7 @@ class DesktopConnection:
                 await self._drain()
         task = self._recv_task
         if task is not None and not task.done():
-            # 给对端一个回送 Close 帧的窗口期——对端在同机，2 秒已偏宽松；下方 stream.close() 兜底强制解套。
+            # 留 2s 等 Close ACK；stream.close 兜底。
             with contextlib.suppress(asyncio.TimeoutError):
                 await asyncio.wait_for(asyncio.shield(task), 2.0)
         await self._stream.close()
@@ -481,14 +472,14 @@ class DesktopConnection:
             with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
                 await asyncio.wait_for(task, 1.0)
         elif task is None:
-            # 握手未完成，仍要放一个哨兵让任何等待者退出。
+            # 握手未完成也放哨兵。
             self._messages.put_nowait(None)
 
     def __aiter__(self) -> "DesktopConnection":
         return self
 
     async def __anext__(self) -> str:
-        # 连接关闭后仍要排空队列，避免 in-flight JSON-RPC 帧因拆解竞争丢失。
+        # 关闭后仍排空，防丢帧。
         if self._protocol.state is State.CLOSED and self._messages.empty():
             raise StopAsyncIteration
         item = await self._messages.get()

@@ -1,5 +1,4 @@
-//! Bootstrap 编排：驱动 install.ps1 / install.sh 按阶段执行，并通过 Tauri `bootstrap` 通道推送进度事件；
-//! 日志写入 SPIRITAGENT_HOME/logs/bootstrap-installer.log。
+//! Bootstrap 编排：按阶段驱动 install 脚本，经 Tauri `bootstrap` 通道推送进度；日志见 bootstrap-installer.log。
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -18,11 +17,11 @@ use crate::AppState;
 
 #[derive(Debug, Deserialize)]
 pub struct StartBootstrapArgs {
-    /// SPIRITAGENT_HOME 覆盖，仅测试使用；生产路径走 OS 默认。
+    /// SPIRITAGENT_HOME 覆盖，仅测试使用。
     pub spiritagent_home: Option<String>,
 }
 
-/// bootstrap 运行期间的句柄，挂在 AppState 上，供取消与防重入。
+/// bootstrap 运行句柄；供取消与防重入。
 pub struct BootstrapHandle {
     pub cancel_tx: mpsc::Sender<()>,
     pub running: bool,
@@ -74,8 +73,7 @@ pub async fn cancel_bootstrap(state: State<'_, Arc<AppState>>) -> Result<(), Str
     Ok(())
 }
 
-/// 启动已安装的 SpiritAgent 桌面端后关闭安装器窗口；路径由各平台规范安装位置解析。
-/// 若二进制不存在（如跳过了 Stage-UnpackDesktop）返回可读错误，便于前端给出可操作的失败提示。
+/// 启动已安装桌面端后退出安装器；二进制缺失时返回可读错误供前端提示。
 #[tauri::command]
 pub async fn launch_spiritagent_desktop(app: AppHandle) -> Result<(), String> {
     let exe_path = resolve_spiritagent_desktop_exe().ok_or_else(|| {
@@ -87,7 +85,7 @@ pub async fn launch_spiritagent_desktop(app: AppHandle) -> Result<(), String> {
 
     tracing::info!(?exe_path, "launching SpiritAgent desktop");
 
-    // 启动器需要脱离安装器独立存在；macOS 走 LaunchServices，以匹配双击/open 行为并规避自更新重建后的 cwd/quarantine 异常。
+    // 脱离安装器独立运行；macOS 走 LaunchServices 以规避 cwd/quarantine 异常。
     let mut cmd = desktop_launch_command(&exe_path);
     #[cfg(target_os = "windows")]
     {
@@ -99,14 +97,14 @@ pub async fn launch_spiritagent_desktop(app: AppHandle) -> Result<(), String> {
         format!("failed to launch {}: {e}", exe_path.display())
     })?;
 
-    // 给 Windows ~150ms 让子进程真正起来再退出。
+    // 留 ~150ms 让子进程真正起来再退出
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
 
     app.exit(0);
     Ok(())
 }
 
-/// 仅供测试覆写 `desktop_install_root()`：生产路径为平台规范路径，测试需要在 CI 环境下重定向到临时目录。
+/// 测试覆写 `desktop_install_root()` 用；生产走平台规范路径。
 #[cfg(test)]
 static DESKTOP_ROOT_OVERRIDE: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
 
@@ -116,7 +114,7 @@ pub(crate) fn set_desktop_root_override_for_test(p: Option<PathBuf>) {
     *guard = p;
 }
 
-/// 桌面端安装的规范路径；与 install.{sh,ps1} 的 Stage-UnpackDesktop 保持一致。
+/// 桌面端规范安装路径；与 install 脚本 Stage-UnpackDesktop 一致。
 pub(crate) fn desktop_install_root() -> PathBuf {
     #[cfg(test)]
     {
@@ -130,19 +128,19 @@ pub(crate) fn desktop_install_root() -> PathBuf {
     }
     #[cfg(target_os = "windows")]
     {
-        // %LOCALAPPDATA%\Programs\SpiritAgent，与 install.ps1 Stage-UnpackDesktop 中的 NSIS /D= 路径一致。
+        // 与 install.ps1 NSIS /D= 路径一致
         dirs::data_local_dir()
             .map(|p| p.join("Programs").join("SpiritAgent"))
             .unwrap_or_else(|| PathBuf::from("C:/Program Files/SpiritAgent"))
     }
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     {
-        // 不可达：安装器仅打包至 macOS / Windows；留空 PathBuf 让函数保持 total，但不假装路径存在。
+        // 安装器仅打包 macOS/Windows；空 Path 保持函数 total
         PathBuf::new()
     }
 }
 
-/// 解析各平台规范路径上的桌面端二进制；macOS 返回 .app bundle，Windows 返回 .exe。
+/// 解析规范路径上的桌面端二进制；macOS 返回 .app 内 exe，Windows 返回 .exe。
 pub(crate) fn resolve_spiritagent_desktop_exe() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
     {
@@ -157,7 +155,7 @@ pub(crate) fn resolve_spiritagent_desktop_exe() -> Option<PathBuf> {
         if exe.exists() {
             return Some(exe);
         }
-        // 兜底：解包到 $SPIRITAGENT_HOME/apps/SpiritAgent/SpiritAgent.exe 的 ZIP 布局。
+        // 兜底 ZIP 布局：$SPIRITAGENT_HOME/apps/SpiritAgent/SpiritAgent.exe
         let zip_exe = crate::paths::spiritagent_home()
             .join("apps")
             .join("SpiritAgent")
@@ -169,8 +167,7 @@ pub(crate) fn resolve_spiritagent_desktop_exe() -> Option<PathBuf> {
     None
 }
 
-/// 给 `spiritagent_is_installed` 上一道闸，避免 venv 损坏时被 macOS 启动快路径误判为已安装。
-/// 导入链必须与 `client/main/runner/updater.ts::probeVenvIntegrity` 保持一致，确保两边对"健康 venv"的判定一致。
+/// venv 健康探针；导入链须与 `client/main/runner/updater.ts::probeVenvIntegrity` 一致。
 fn runner_venv_is_healthy() -> bool {
     use std::process::{Command, Stdio};
 
@@ -189,8 +186,7 @@ fn runner_venv_is_healthy() -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// 仅当同时具备（bootstrap-complete 标记 + 可启动桌面端 + Runner venv 健康 `runner_venv_is_healthy`）时返回 true。
-/// 给安装器启动快路径使用；也防止陈旧标记 + 损坏 venv 静默跳过安装。
+/// 须同时具备完成标记、可启动桌面端与健康 venv，防止陈旧标记误判已安装。
 pub(crate) fn spiritagent_is_installed() -> bool {
     crate::paths::spiritagent_home()
         .join(".spiritagent-bootstrap-complete")
@@ -199,7 +195,7 @@ pub(crate) fn spiritagent_is_installed() -> bool {
         && runner_venv_is_healthy()
 }
 
-/// 后台启动已安装的桌面端；无可用二进制或 spawn 失败时返回 Err，由调用方回退到安装器 UI。
+/// 后台启动桌面端；失败由调用方回退安装 UI。
 pub(crate) fn spawn_installed_desktop() -> std::io::Result<()> {
     let exe = resolve_spiritagent_desktop_exe().ok_or_else(|| {
         std::io::Error::new(std::io::ErrorKind::NotFound, "no installed SpiritAgent desktop app")
@@ -208,7 +204,7 @@ pub(crate) fn spawn_installed_desktop() -> std::io::Result<()> {
     #[cfg(target_os = "windows")]
     {
         use std::os::windows::process::CommandExt;
-        // DETACHED_PROCESS = 0x00000008，保证桌面端在安装器退出后继续运行，与 launch_spiritagent_desktop 一致。
+        // DETACHED_PROCESS，与 launch_spiritagent_desktop 一致
         cmd.creation_flags(0x0000_0008);
     }
     cmd.spawn().map(|_child| ())
@@ -276,11 +272,11 @@ async fn run_bootstrap(
                 stream: LogStream::Stdout,
             },
         );
-        // info! 级别保证默认过滤下能落到 bootstrap-installer.log。
+        // info! 保证默认过滤下写入 bootstrap-installer.log
         tracing::info!(target: "bootstrap.log", "{line}");
     };
 
-    // 1) 解析 install.{ps1,sh}：dev 入口 → Tauri bundle.resources → 嵌入 zip；安装器不自联网。
+    // 1) 解析 install 脚本：dev → bundle.resources → 嵌入 zip
     let script = install_script::resolve(&app, kind, &emit_log)
         .await
         .map_err(|e| {
@@ -306,7 +302,7 @@ async fn run_bootstrap(
         source_note
     ));
 
-    // 2) 拉取 manifest。
+    // 2) 拉取 manifest，解析后广播阶段列表
     let manifest_args = vec!["-Manifest".to_string()];
 
     let bundle_ctx = build_bundle_context(&app);
@@ -350,7 +346,7 @@ async fn run_bootstrap(
         },
     );
 
-    // 3) 顺序执行各阶段。
+    // 3) 顺序执行各阶段
     for stage in &manifest.stages {
         if cancellation_signalled(&cancel_rx_holder).await {
             let err = "bootstrap cancelled by user".to_string();
@@ -383,8 +379,7 @@ async fn run_bootstrap(
             "-Json".to_string(),
         ];
 
-        // 每个阶段独占 cancel 接收者：run_script 内的 tokio::select! 会消费它，结束后把未触发的通道归还 holder，
-        // 否则后续阶段（如耗时最长的 unpack-runner）无法再被取消。
+        // 每阶段独占 cancel 接收者；结束后把未触发通道归还 holder，否则后续阶段无法取消。
         let local_cancel_rx = cancel_rx_holder.lock().await.take();
 
         let (stage_result, unused_cancel_rx) = run_install_script(
@@ -517,14 +512,14 @@ async fn run_bootstrap(
         }
     }
 
-    // 4) install_root 即 spiritagent_home：负载直接落 $SPIRITAGENT_HOME。
+    // install_root 即 spiritagent_home，负载直接落 $SPIRITAGENT_HOME
     let spiritagent_home = args
         .spiritagent_home
         .clone()
         .unwrap_or_else(|| crate::paths::spiritagent_home().to_string_lossy().into_owned());
     let install_root = PathBuf::from(&spiritagent_home);
 
-    // 自拷贝到 SPIRITAGENT_HOME/spiritagent-setup.exe，为快捷方式提供稳定目标；已在目标位置则跳过。最佳努力，失败不中断安装。
+    // 自拷贝到稳定路径供快捷方式指向；最佳努力，失败不中断安装
     if let Err(err) = crate::paths::copy_self_to_spiritagent_home() {
         tracing::warn!(?err, "failed to copy installer into SPIRITAGENT_HOME (non-fatal)");
         emit_log(&format!(
@@ -577,7 +572,7 @@ async fn run_install_script(
                     stream: LogStream::Stdout,
                 },
             );
-            // 同时落到滚动日志，便于排查失败：Tauri 事件流在失败页挂载后即被丢弃，缺乏持久记录。
+            // Tauri 事件流在失败页挂载后即丢弃，需同时落滚动日志
             match &stage_for_stdout_log {
                 Some(name) => {
                     tracing::info!(target: "bootstrap.log", stage = %name, "{line}")
@@ -594,7 +589,7 @@ async fn run_install_script(
                     stream: LogStream::Stderr,
                 },
             );
-            // stderr 走 warn!，便于在日志里和 stdout 区分。
+            // stderr 用 warn! 以便与 stdout 区分
             match &stage_for_stderr_log {
                 Some(name) => {
                     tracing::warn!(target: "bootstrap.log", stage = %name, "stderr: {line}")
@@ -612,7 +607,7 @@ async fn run_install_script(
         })
 }
 
-/// 把失败同时送达前端事件流与返回值；缺少 Failed 事件时前端会停留在 running 态，无法进入重试。
+/// 失败同时送达前端事件流与返回值；缺 Failed 事件会让前端卡在 running。
 fn fail_bootstrap(
     on_event: &Channel<BootstrapEvent>,
     stage: Option<String>,
@@ -628,8 +623,7 @@ fn fail_bootstrap(
     anyhow!(err)
 }
 
-/// 由当前安装器的 Tauri 资源目录构建 `BundleContext`；路径以 `<bundle.resources>/payload/` 为锚点（见 `tauri.conf.json#bundle.resources`）。
-/// 单 exe 自包含场景下 Tauri `resource_dir` 不带 payload/，回退到 `embedded_payload` 解压目录。
+/// 以 `<bundle.resources>/payload/` 为锚点构建 BundleContext；单 exe 时回退 embedded 解压目录。
 fn build_bundle_context(app: &AppHandle) -> BundleContext {
     let mut payload = app.path().resource_dir().ok().map(|d| d.join("payload"));
 
@@ -656,7 +650,7 @@ fn build_bundle_context(app: &AppHandle) -> BundleContext {
 }
 
 fn emit_event(on_event: &Channel<BootstrapEvent>, event: BootstrapEvent) {
-    // 生命周期帧落到滚动日志；脚本日志行由 sink 回调处理。
+    // 生命周期帧落滚动日志；脚本日志行由 sink 回调处理
     match &event {
         BootstrapEvent::Manifest { stages, .. } => {
             tracing::info!(
@@ -686,16 +680,14 @@ fn emit_event(on_event: &Channel<BootstrapEvent>, event: BootstrapEvent) {
         BootstrapEvent::Failed { stage, error } => {
             tracing::error!(stage = ?stage, error = %error, "bootstrap FAILED");
         }
-        BootstrapEvent::Log { .. } => {
-            // 日志行已由 sink 回调落盘。
-        }
+        BootstrapEvent::Log { .. } => {}
     }
     if let Err(e) = on_event.send(event) {
         tracing::warn!(?e, "failed to send bootstrap event via ipc channel");
     }
 }
 
-// 各阶段输出的截断上限：阶段通常输出数十行，manifest 是单个（可能多行）JSON，给更大窗口。
+// 截断上限：manifest 可能多行 JSON，给更大窗口
 const STAGE_PREVIEW_CHARS: usize = 2000;
 const MANIFEST_PREVIEW_CHARS: usize = 4000;
 
@@ -725,7 +717,7 @@ mod tests {
         base
     }
 
-    /// 在平台规范位置（测试通过 `set_desktop_root_override_for_test` 重定向到 `install_root`）构造一个伪"已安装桌面端"；布局对齐 install 脚本 Stage-UnpackDesktop 的产物。
+    /// 构造伪已安装桌面端；布局对齐 Stage-UnpackDesktop 产物。
     fn make_installed_desktop(install_root: &Path) -> PathBuf {
         if cfg!(target_os = "macos") {
             let macos_dir = install_root
@@ -741,7 +733,7 @@ mod tests {
 
     static TEST_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
-    /// 启动快路径与 launch 命令都以 `resolve_spiritagent_desktop_exe` 为准；这里加锁防止 override 互相干扰。
+    /// 快路径与 launch 共用 resolve；加锁防 override 干扰。
     #[test]
     fn resolve_spiritagent_desktop_exe_finds_installed_desktop() {
         let _lock = TEST_MUTEX.lock().unwrap();
@@ -766,7 +758,6 @@ mod tests {
         let _lock = TEST_MUTEX.lock().unwrap();
         let root = unique_tmp_dir("app-none");
         set_desktop_root_override_for_test(Some(root.clone()));
-        // 不构造已安装桌面：未安装时应返回 None。
         assert!(
             resolve_spiritagent_desktop_exe().is_none(),
             "no resolved desktop when nothing has been installed"

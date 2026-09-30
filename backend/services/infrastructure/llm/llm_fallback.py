@@ -20,12 +20,7 @@ async def execute_with_fallback[P: BaseProvider, T](
     user_id: int | None,
     stream_started: Callable[[], bool] | None = None,
 ) -> T:
-    """按已解析的供应商链依次调用 ``call_fn``；链为空时抛 ``MissingLlmConfigError``。
-
-    分类结果 ``should_fallback`` 时切到下一家（确定性失败，或本家传输层重试已耗尽的超时 / 过载）；
-    结果未知、流已开始或已到末槽时抛出。链内出现过内容策略拦截时优先抛它，便于调用方清洗提示词重试，
-    而不被后续供应商的级联失败掩盖。
-    """
+    """按已解析的供应商链依次调用 call_fn；链为空时抛 MissingLlmConfigError。should_fallback 时切下一家；结果未知、流已开始或已到末槽时抛出。链内出现过内容策略拦截时优先抛它，便于调用方清洗提示词重试。"""
     if not chain:
         raise MissingLlmConfigError("no provider configured")
 

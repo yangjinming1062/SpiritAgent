@@ -1,9 +1,8 @@
-/* 安装器为顶层独立模块，token 与桌面端赛博玻璃主题对齐：玻璃拟态 + 低饱和蓝紫渐变 + 像素噪点 + 发光描边。
-   与 client/renderer/styles.css 的 cyber-glass 块严格同步，只是去掉 desktop 独有的精灵窗/工具窗维度。 */
+/* token 与 client/renderer/styles.css 的 cyber-glass 块同步（去掉精灵窗/工具窗维度）。 */
 
 @import 'tailwindcss';
 
-/* Collapse Bold —— SpiritAgent 品牌字体；通过 @nous-research/ui 依赖提供。 */
+/* Collapse Bold 品牌字体，来自 @nous-research/ui */
 @font-face {
   font-family: 'Collapse';
   font-style: normal;
@@ -13,8 +12,7 @@
 }
 
 @theme inline {
-  /* —— 与 client 一致的语义 token 层 ——————————————————————————————————————————
-     工具类（bg-surface-card / text-text-strong 等）发出 var(--ui-*) 引用，避免编译期定值固化主题。 */
+  /* 语义 token：工具类发 var(--ui-*)，避免编译期固化主题。 */
   --color-surface-chrome: var(--ui-surface-chrome);
   --color-surface-panel: var(--ui-surface-panel);
   --color-surface-card: var(--ui-surface-card);
@@ -57,8 +55,7 @@
 }
 
 @layer base {
-  /* 桌面端"赛博玻璃"主题：玻璃拟态半透 + 低饱和蓝紫渐变 + 像素噪点 + 发光描边。
-     安装器不走主题切换，常驻此主题——与 client 默认入口保持一致视觉锚点。 */
+  /* 常驻 cyber-glass 主题，不提供运行时换肤 */
   :root {
     color-scheme: dark;
 
@@ -106,7 +103,7 @@
 
   body {
     margin: 0;
-    /* app bg 下沉到独立层，让 body::before 的噪点纹理能正确合成在渐变之上。 */
+    /* app bg 独立层，body::before 噪点才能叠在渐变之上 */
     background: var(--ui-app-bg);
     color: var(--ui-text-strong);
     font-family: var(--ui-font-sans);
@@ -118,7 +115,7 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  /* 整页噪点：低不透明 PNG turbulence，5% 不透明度叠加在 app bg 之上给玻璃感打底。 */
+  /* 整页噪点叠在 app bg 上，给玻璃感打底 */
   body::before {
     content: '';
     position: fixed;
@@ -142,7 +139,7 @@
 }
 
 @layer utilities {
-  /* fit-text —— 按容器宽度自动缩放字体；与桌面端 .fit-text 保持一致。 */
+  /* 按容器宽度缩放字体，与桌面端 .fit-text 一致 */
   .fit-text {
     --fit-captured-length: initial;
     --fit-support-sentinel: var(--fit-captured-length, 9999px);
@@ -186,8 +183,7 @@
   }
 }
 
-/* ──────────────────────────────────────────────────────────────────────────
-   安装器关键帧：发光晕、蛋脉动、破壳闪光。色值使用 cyber-glass 的 --ui-accent。 */
+/* 关键帧：发光晕、蛋脉动、破壳闪光 */
 
 @keyframes spiritagent-fade-in {
   from {
@@ -204,7 +200,7 @@
   animation: spiritagent-fade-in 0.45s ease-out both;
 }
 
-/* 氛围光：cyber-glass 蓝紫，用 --ui-accent-soft 让玻璃发光。 */
+/* 氛围光，用 --ui-accent-soft */
 .spiritagent-glow {
   position: absolute;
   left: 50%;

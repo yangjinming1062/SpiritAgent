@@ -1333,10 +1333,7 @@ async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> A
 
 
 async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
-    """夜间动作设计：受理提案 → 独立评审 → approve 后入队生成。
-
-    事实只叙述受理或重试，不将异步制作写成完成。
-    """
+    """夜间动作设计：受理提案 → 独立评审 → approve 后入队生成。事实只叙述受理或重试，不将异步制作写成完成。"""
     name = _text(args.get("name"), 64)
     motion = _text(args.get("motion_description"), 600)
     reason = _text(args.get("reason"), 400)

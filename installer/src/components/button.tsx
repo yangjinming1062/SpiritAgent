@@ -3,7 +3,6 @@ import * as React from 'react'
 
 import { cn } from '../lib/utils'
 
-// 安装器 Button：cyber-glass 主题（var(--ui-accent)）。
 const buttonVariants = cva(
   "inline-flex shrink-0 items-center justify-center gap-2 rounded-md text-sm font-medium whitespace-nowrap transition-all outline-none focus-visible:ring-[0.1875rem] focus-visible:ring-focus-line disabled:pointer-events-none disabled:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
   {

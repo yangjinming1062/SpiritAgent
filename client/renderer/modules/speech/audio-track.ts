@@ -35,8 +35,7 @@ export function stopAudio(): void {
 
   if (current) {
     current.pause()
-    // 释放 dataURL-backed src，让编码后的字节（最差约 256KB）即使在 ended/error
-    // 没有触发的情况下也变得不可达。
+    // 释放 dataURL-backed src，让编码字节即使 ended/error 未触发也变得不可达。
     current.removeAttribute('src')
     current.load()
     detachListeners(current)
@@ -59,12 +58,7 @@ export function isLatestGen(gen: number): boolean {
   return gen === playGen
 }
 
-/** 把模块 AudioContext 拉到 running——精灵窗与引导挂载时预热，避免 MediaElementSource 重路由吃掉首帧。
- *
- * AudioContext 进入 running 后保持运行，不主动 `suspend()`：否则每次切换语音条
- * 都要 `await ctx.resume()`，与 MediaElementSource 重路由叠加会让首帧从 destination
- * 输出前被覆盖/丢弃。挂起交由系统/浏览器处理（`document.hidden` / 屏锁时 Chromium
- * 会自动挂起空闲 ctx），释放 WASAPI 定时器。 */
+/** 预热 AudioContext 至 running 并保持不 suspend（否则切换语音条的 resume 与 MediaElementSource 重路由叠加会丢首帧）；挂起交由系统/浏览器处理。 */
 export function warmAudioContext(): void {
   const ctx = ensureAudioContext()
 
@@ -79,8 +73,7 @@ function ensureAudioContext(): AudioContext {
   return audioCtx
 }
 
-/** 先恢复并接好 Web Audio 输出链，再启动媒体时间轴；否则冷启动重路由期间
- *  时间轴仍会前进，实际出声时已跳过开头。 */
+/** 先恢复并接好 Web Audio 输出链，再启动媒体时间轴；否则冷启动重路由期间时间轴仍会前进，实际出声时已跳过开头。 */
 async function connectPlaybackGraph(audio: HTMLAudioElement, gen: number): Promise<void> {
   if (!isLatestGen(gen) || current !== audio) {
     return
@@ -96,8 +89,7 @@ async function connectPlaybackGraph(audio: HTMLAudioElement, gen: number): Promi
     return
   }
 
-  // 每个 audio 元素创建一个 MediaElementSource。跨多次切换复用会泄漏图节点，
-  // 并触发 "HTMLMediaElement already connected" 的 DOMException。
+  // 每个 audio 元素创建一个 MediaElementSource。跨多次切换复用会泄漏图节点，并触发 "HTMLMediaElement already connected" 的 DOMException。
   try {
     disconnectPlaybackSource()
     playbackSource = ctx.createMediaElementSource(audio)
@@ -127,8 +119,7 @@ export async function playDataUrl(dataUrl: string, onDone?: () => void): Promise
     resolvePlayback = resolve
   })
 
-  // `fired` 让 `fireDone` 幂等：即使有多个来源（监听器、stopAudio、
-  // play-failure 分支）都试图结算这个 promise，只有第一次调用生效。
+  // `fired` 让 `fireDone` 幂等：即使有多个来源（监听器、stopAudio、play-failure 分支）都试图结算这个 promise，只有第一次调用生效。
   let fired = false
 
   const fireDone = (result: AudioPlaybackResult): void => {

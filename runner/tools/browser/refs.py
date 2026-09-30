@@ -1,7 +1,4 @@
-"""refs/ref-cache 管理：AXTree snapshot、SoM 记录、ref 解析、主帧导航时清空。
-
-Refs._lock 保护 _last_refs 与 _generation，**禁止跨越 CDP I/O**：每个方法遵循「锁内快照 → 释放 → I/O → 锁内写回」。
-"""
+"""refs/ref-cache；_lock 保护 _last_refs/_generation，禁止跨越 CDP I/O（锁内快照→释放→I/O→写回）。"""
 
 import asyncio
 import copy
@@ -23,7 +20,7 @@ logger = logging.getLogger(__name__)
 AX_REF_PATTERN = re.compile(r"^@?e\d+$")
 COORD_REF_PATTERN = re.compile(r"^@?(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)$")
 _SCROLL_OFFSET_EXPR = "({x: window.pageXOffset||0, y: window.pageYOffset||0})"
-# 快照里的 StaticText 解析为文本节点，文本节点没有 scrollIntoView，须滚动其父元素。
+# StaticText 无 scrollIntoView，滚其父元素。
 _SCROLL_INTO_VIEW_FN = (
     "function() { const el = this.nodeType === 1 ? this : this.parentElement;"
     " if (el) el.scrollIntoView({block: 'center', inline: 'center'}); }"
@@ -62,25 +59,17 @@ class Refs:
 
         self._lock = threading.Lock()
         self._last_refs: dict[str, dict[str, Any]] = {}
-        # 每次主帧导航自增；快照在 I/O 前记下代次，写回时代次已变说明结果属于旧文档，丢弃。
+        # 导航自增代次；写回时代次已变则丢弃。
         self._generation = 0
 
     def note_root_navigation(self) -> None:
-        """主帧每次导航（含同 URL reload）都清空 ref 缓存。
-
-        旧 ref 指向已销毁的 DOM；注入的 ``aria-ref`` / SoM 属性随 reload 消失，缓存坐标也可能错位，
-        继续用坐标兜底会点中新文档里的其他元素，必须重新快照。
-        """
+        """主帧导航（含 reload）清空 ref 缓存；旧 DOM 已销毁，须重新快照。"""
         with self._lock:
             self._generation += 1
             self._last_refs.clear()
 
     def record_som(self, elements: list[dict[str, Any]]) -> None:
-        """screenshot(annotate=True) 路径写入 SoM ref 条目（覆盖现有 is_visual 条目）。
-
-        不写裸数字键 `str(index)`：会与 AXTree 的 eN / @eN 命名空间冲突，
-        导致 AXTree 清空后裸数字 ref 仍解析到旧的 SoM 视觉 ref。
-        """
+        """写入 SoM ref（覆盖 is_visual）；不用裸数字键，避免与 eN/@eN 命名空间冲突。"""
         with self._lock:
             self._last_refs = {
                 k: v for k, v in self._last_refs.items() if not (isinstance(v, dict) and v.get("is_visual"))
@@ -105,7 +94,7 @@ class Refs:
         async def _do_snapshot() -> dict[str, Any]:
             sids = self._session_ids_provider()
             sid = sids.active or sids.page
-            # 抓取期间发生主帧导航时结果可能属于旧文档：重抓一次，仍冲突则报错而不是写入过期 ref。
+            # 导航冲突重抓一次，仍冲突则报错。
             for _ in range(2):
                 with self._lock:
                     generation = self._generation
@@ -187,7 +176,7 @@ class Refs:
                 content = box.get("result", {}).get("model", {}).get("content", [])
                 if len(content) < 8:
                     return
-                # cx 与 page_cx 取整方式须一致，否则坐标兜底 (page_cx - 当前滚动) 会与 cx 差 1px。
+                # cx 与 page_cx 取整须一致。
                 cx = round((content[0] + content[2]) / 2.0)
                 cy = round((content[1] + content[5]) / 2.0)
                 with self._lock:
@@ -239,10 +228,7 @@ class Refs:
         return (content[0] + content[2]) / 2.0, (content[1] + content[5]) / 2.0
 
     def resolve_ref_center(self, ref: str, *, scroll_into_view: bool = True) -> tuple[float, float, str | None]:
-        """把 ref（``eN`` / ``@vN`` / ``x,y``）解析为视口坐标与可选的 DOM objectId；无法解析时抛 ValueError。
-
-        依次尝试快照记录的 backendNodeId、页面上的 ``aria-ref`` / SoM 属性，最后用缓存坐标按当前滚动量校正兜底。
-        """
+        """解析 ref 为视口坐标（backendNodeId → aria-ref/SoM → 坐标兜底）；失败抛 ValueError。"""
         ref_str = str(ref).strip()
         if not ref_str:
             raise ValueError("Empty ref string")
@@ -339,10 +325,7 @@ class Refs:
 
     def find_by_text(self, query: str, *, ref_only: bool = True, cap: int = 200) -> dict[str, Any]:
         safe_q = json.dumps(query.lower())
-        # 用 getBoundingClientRect 替代 offsetParent：
-        # offsetParent 对 position: fixed / display:none 的元素返回 null，
-        # 会把 tooltips / 浮层按钮等可见 fixed 元素错误排除。
-        # getBoundingClientRect() 同时覆盖 fixed 与 in-flow，display:none 时返回零尺寸。
+        # getBoundingClientRect 覆盖 fixed/in-flow；offsetParent 对 fixed/hidden 返回 null。
         js = (
             "(function(){"
             f"const q = {safe_q};"

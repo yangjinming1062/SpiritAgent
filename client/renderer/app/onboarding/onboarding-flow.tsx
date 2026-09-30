@@ -84,7 +84,7 @@ type VoiceStage = 'describe' | 'catalog'
 
 type QKey = keyof OnboardingAnswers
 
-// 这个 chip 用来挑「用户接下来要填的是哪一类答案」，本身不是答案——见 CALL_NAME_KINDS。
+// chip 选的是答案类别而非答案本身——见 CALL_NAME_KINDS。
 interface AnswerKind {
   chip: string
   label: string
@@ -98,7 +98,7 @@ interface Question {
   placeholder: string
   required: boolean
   multiline: boolean
-  // Manifest tag 与录到的语音行绑定，而不是与位置绑定——重排 QUESTIONS 也不能让音频错位。
+  // Manifest tag 与录到的语音行绑定而非位置绑定——重排 QUESTIONS 也不会让音频错位。
   audioTag: OnboardingAudioTag
   presets?: readonly string[]
   max?: number
@@ -107,9 +107,7 @@ interface Question {
   date?: boolean
 }
 
-// "名字 / 昵称" 是称呼的类别，不是称呼本身——把 chip 的字面文本写进输入框会
-// 把「昵称」存成怎么称呼用户。点 chip 只是给输入框换个标签，再去问具体的值；
-// 「称号」再额外给几个现成选项，因为它本身就是答案。
+// 「名字/昵称」是称呼类别不是称呼值，点 chip 只换标签再问具体值；「称号」额外给现成选项。
 const CALL_NAME_KINDS: readonly AnswerKind[] = [
   { chip: '名字', label: '那，您的名字是？', placeholder: '比如：张三' },
   { chip: '昵称', label: '那，您的昵称是？', placeholder: '比如：小明、阿棠' },
@@ -167,8 +165,7 @@ const QUESTIONS: readonly Question[] = [
     audioTag: 'onboarding.q5',
     presets: PERSONALITY_PRESETS
   },
-  // speaking_style 是后端 schema 的必填项——用专门一道题去问，
-  // 让用户的选择成为直接真相来源；它属于角色字段，跟其它字段一起进 enterPortraitStage 的 PUT。
+  // speaking_style 是后端 schema 必填项，用专门一道题收集，与其它角色字段一起进 enterPortraitStage 的 PUT。
   {
     key: 'speaking_style',
     text: '您希望我说话的风格是什么样的？',
@@ -246,8 +243,7 @@ const LOCKED_FIELD_LABELS: Partial<Record<QKey, string>> = {
   gender: '性别'
 }
 
-// 分段边界由 ``voice`` 这道题的位置决定——之前全是角色子阶段，
-// 它本身是声音子阶段，之后都是用户子阶段。对应后端 ONBOARDING_FIELDS 的顺序。
+// 分段边界由 voice 题位置决定：之前是角色子阶段，它是声音子阶段，之后是用户子阶段（对应后端 ONBOARDING_FIELDS 顺序）。
 const VOICE_Q_INDEX = QUESTIONS.findIndex(q => q.key === 'voice')
 const CHARACTER_QUESTIONS: readonly Question[] = QUESTIONS.slice(0, VOICE_Q_INDEX)
 const VOICE_QUESTIONS: readonly Question[] = QUESTIONS.slice(VOICE_Q_INDEX, VOICE_Q_INDEX + 1)
@@ -265,8 +261,7 @@ const PHASE_QUESTIONS: Record<Phase, readonly Question[]> = {
   finishing: []
 }
 
-// 把 resume 的 next_field 路由到 q-user；`voice` 有自己的分支。
-// 从 USER_QUESTIONS 推导，题目增删时自动保持同步。
+// resume 的 next_field 路由到 q-user（voice 另有分支）；从 USER_QUESTIONS 推导，题目增删自动同步。
 const POST_CHARACTER_FIELDS: ReadonlySet<string> = new Set(USER_QUESTIONS.map(q => q.key))
 
 // 提到顶层：否则 useInteractiveRegion 的 effect 会在每次渲染时重新注册。
@@ -299,8 +294,7 @@ const retryTransient = async <T,>(
 
 const DRAG_THRESHOLD = 6
 
-// 可经 onboarding.submit 提交的 question key——与后端 ONBOARDING_FIELDS 对齐。
-// 映射都是恒等的（question key === 后端字段名），所以用 Set 就够了。
+// 可经 onboarding.submit 提交的 key，与后端 ONBOARDING_FIELDS 对齐（恒等映射，故用 Set）。
 const ONBOARDING_FIELD_KEYS: ReadonlySet<QKey> = new Set<QKey>([
   'name',
   'biological_type',
@@ -415,16 +409,12 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [portraitUrl, setPortraitUrl] = useState<string | null>(null)
   const [portraitPreviewId, setPortraitPreviewId] = useState<number | null>(null)
   const mountedRef = useRef(false)
-  // 订阅 applyPortrait 写入的头像，保持重绘结果同步。
   const activeAvatarId = useStore($activeAvatarId)
-  // 历史画廊——头像面板下方的缩略图。
   const portraitHistory = useStore($portraitHistory)
   const portraitSelectedIdx = useStore($portraitSelectedIdx)
-  // voice 阶段先描述音色，再进入目录选择器。
   const [voiceStage, setVoiceStage] = useState<VoiceStage>('describe')
 
-  // 失败时保留当前头像：它已经持有解析好的字节。
-  // 共用的 `applyPortrait` 负责写入全局 $portraitUrl 与 $activeAvatarId atom。
+  // 失败时保留当前头像：它已持有解析好的字节。
   const applyLocalPortrait = async (
     response:
       | {
@@ -452,8 +442,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [voiceLoad, setVoiceLoad] = useState<'failed' | 'loading' | 'ready'>('loading')
   const [voiceLoadAttempt, setVoiceLoadAttempt] = useState(0)
   const [voiceCatalog, setVoiceCatalog] = useState<VoiceOption[]>([])
-  // 匹配器的候选项。跟完整目录分开，方便「推荐卡」的「换一个」按钮在候选项里循环，
-  // 而不是遍历整个目录。
+  // 匹配器候选项，与完整目录分开，让「换一个」在候选项内循环而非遍历全目录。
   const [voiceAlternatives, setVoiceAlternatives] = useState<VoiceOption[]>([])
   // 失败提示挂在头像面板上——表单区被它压在下面。
   const [portraitPanelHint, setPortraitPanelHint] = useState<string | null>(null)
@@ -482,7 +471,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [resumeAttempt, setResumeAttempt] = useState(0)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // 居中的初始位置；用户可以从这里开始拖拽。
   const [dialogPos, setDialogPos] = useState<{ x: number; y: number }>(() => {
     const width = 448
     const height = 600
@@ -493,8 +481,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   })
 
-  // Onboarding 对话框完全可交互——把它的实际可见矩形注册到全局 interactive-regions 注册表，
-  // SpriteStage 的命中测试就只在光标停在对话框表单卡片上时才捕获。卸载时 SpriteStage 会恢复穿透。
+  // 注册对话框可见矩形到 interactive-regions，SpriteStage 命中测试只在表单卡片上捕获；卸载时恢复穿透。
   useInteractiveRegion('onboarding', containerRef, interactiveRegionRect)
 
   useEffect(() => {
@@ -511,10 +498,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     warmAudioContext()
   }, [])
 
-  // 拖拽用 document 级监听器（而不是容器上的 React onPointerMove），
-  // 这样光标离开对话框矩形后拖拽仍能继续。阈值过滤点击；表单控件由下面的 wrapper 屏蔽。
-  // 基准位与实时位移分离：dialogPos 只在松手时提交，拖拽中用 hook 内部 delta 做视觉偏移，
-  // 避免把「相对 pointerdown 的累计位移」叠到不断被重设的 origin 上导致加速漂移。
+  // document 级监听让指针离开对话框后仍可拖拽；基准位与实时位移分离，dialogPos 仅松手时提交，避免位移叠到不断重设的 origin 上加速漂移。
   const { delta: dialogDragDelta, onPointerDown: onRawDialogPointerDown } = usePointerDrag({
     threshold: DRAG_THRESHOLD,
     onCommit: ({ dx, dy }) => {
@@ -539,17 +523,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const currentList = PHASE_QUESTIONS[phase]
 
   const question = currentList[qIndex]
-  // 用 ref 持有最新 answers，让 speak/focus effect 只在 phase/qIndex 变化时重跑，
-  // 而不是每次按键都跑（exhaustive-deps lint 看不到这个意图）。
+  // 用 ref 持有最新 answers，使 effect 只在 phase/qIndex 变化时重跑而非每次按键（exhaustive-deps 看不到该意图）。
   const answersRef = useLatestRef(answers)
 
-  // 题面文本，显示在输入框下方。
   const spokenText = question?.text ?? ''
 
   // 保存失败退回题目时带回的提示：换题重置不能清掉它，此时不重读题面。
   const carriedHintRef = useRef<string | null>(null)
 
-  // 每道题出现时播放随安装包交付的预录题面语音。
   useEffect(() => {
     if (phase !== 'q-character' && phase !== 'q-user' && phase !== 'voice') {
       return
@@ -615,8 +596,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     const nextAnswers: OnboardingAnswers = { ...answers, [q.key]: cleaned }
     setAnswers(nextAnswers)
 
-    // 逐字段增量持久化（DESIGN「引导与后台准备」 断点恢复）；fire-and-forget——绝不阻塞 UI 等草稿保存。
-    // 网关未打开前是空操作。
+    // 逐字段增量持久化（DESIGN 断点恢复），fire-and-forget 不阻塞 UI；网关未打开前是空操作。
     if (gatewayState === 'open' && ONBOARDING_FIELD_KEYS.has(q.key)) {
       void submitOnboardingAnswer(q.key, cleaned ?? null)
     }
@@ -648,8 +628,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   }
 
-  // 进入目录步骤（describe→catalog 或从用户资料返回）时加载推荐与目录并试听。
-  // 离开目录步骤后迟到的结果作废：不改选音色、不上云、不在其他步骤出声。
+  // 进入目录步骤时加载推荐与目录并试听；离开后迟到结果作废：不改选音色、不上云、不在其他步骤出声。
   useEffect(() => {
     if (phase !== 'voice' || voiceStage !== 'catalog') {
       return
@@ -685,9 +664,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       setVoice(selected)
       setVoiceAlternatives(matched.alternatives)
       setCompanionVoiceId(selected ? voiceSelectionId(selected) : '')
-      // 同时把 matched voice 与它的 alternatives 都剔除——它们已经被前置了。
-      // 不剔除的话，同时也在目录里的 alternative（如「茉莉」）会重复出现，
-      // 每次切换声音时列表都能看出重了。
+      // matched voice 与 alternatives 已前置，需从目录剔除，否则同音色（如「茉莉」）会在列表重复。
       const priorityVoices = selected ? [selected, ...matched.alternatives] : []
       const priorityIds = new Set(priorityVoices.map(voiceSelectionId))
       const extra = catalog.filter(v => !priorityIds.has(voiceSelectionId(v)))
@@ -810,9 +787,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setPhase('portrait-avatar')
   }
 
-  // 断点恢复（DESIGN「引导与后台准备」）：网关一旦连通，
-  // 就把还没答完的草稿拉回来，让 onboarding 中途崩溃/退出后能从下一道未答的题继续。
-  // 成功后不再重复；读取失败时暂停作答，网关重连或点击重试时再读。
+  // 网关连通后拉回未答草稿，支持中断后从下一未答题继续；成功后不重复，读取失败暂停作答待重试。
   const onCompletedRef = useLatestRef(onCompleted)
 
   useEffect(() => {
@@ -879,8 +854,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         }
 
         if (state.answers) {
-          // 把服务端草稿与当前会话里已经输入的答案合并；
-          // 本地非空的编辑优先，保证用户最近的意图不会丢失。
+          // 合并服务端草稿与本地答案，本地非空编辑优先，避免丢失用户最近意图。
           const a = state.answers
           setAnswers(prev => {
             const next: OnboardingAnswers = { ...prev }
@@ -984,8 +958,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     })
   }, [gatewayState, voiceCatalog.length])
 
-  // 第一步——头像重生：新建一行 avatar，新 id 通过 hook 内 applyPortrait 自动发布到 ``$activeAvatarId``。
-  // 微调（edit）编辑上一版头像；重新生成保持种子全量重绘。附参考图时微调不可用（参考图属重新生成意图）。
+  // 新建一行 avatar 并经 hook 发布到 $activeAvatarId；微调编辑上一版，重新生成保持种子全量重绘；附参考图时微调不可用。
   const {
     generate: generateAvatarPortrait,
     regenerate: regenerateAvatarPortrait,
@@ -1029,8 +1002,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         $portraitUrl.set(entry.portraitUrl)
       }
 
-      // 用户在画廊里点选时：当前 avatar 行必须跟显示的脸保持一致，
-      // 否则选中会悄悄回退到最后一行，画面跳回用户已经拒绝过的那张脸。
+      // 点选画廊时须同步当前 avatar 行，否则选中会悄悄回退到最后一行，画面跳回已拒绝的脸。
       if (entry.avatarId != null) {
         $activeAvatarId.set(entry.avatarId)
         void selectAvatar(entry.avatarId)
@@ -1138,8 +1110,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         throw result.error
       }
     } catch (error) {
-      // 确认失败（如 409 头像已更新或临时文件过期）绝不能推进：退回确认步骤说明原因，可重新加载或生成。
-      // onClick 里的 `void` 会吞掉异常，这里显式提示。
+      // 确认失败（如 409 头像已更新或临时文件过期）绝不能推进：退回确认步骤说明原因；onClick 的 void 会吞异常，故这里显式提示。
       log.warn('onboarding', 'portrait confirm failed', error)
       setPortraitPanelHint(backendDetailMessage(error, '确认失败，请检查网络后重试'))
       setPhase('portrait-avatar')
@@ -1235,8 +1206,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       ans.voice = voice.label || voice.id
     }
 
-    // 服务端以音色草稿与完整资料判定引导完成：暂时性失败有限重试，仍失败则回到最后一题
-    // 提示重试，不清草稿、不标记完成。
+    // 服务端以音色草稿与完整资料判定完成：暂时性失败有限重试，仍失败退回最后一题提示，不清草稿不标记完成。
     let failure: string | null = null
 
     try {
@@ -1272,7 +1242,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   const presetValues = question?.presets ?? []
   const otherVoices = voice ? voiceCatalog.filter(v => voiceSelectionId(v) !== voiceSelectionId(voice)) : []
-  // 只要还有候选项，「换一个」就在候选项里循环。
   const voiceCandidates = voice ? [voice, ...(voiceAlternatives.length ? voiceAlternatives : otherVoices)] : []
 
   const canGoBack =

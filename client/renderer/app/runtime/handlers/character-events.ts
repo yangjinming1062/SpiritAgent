@@ -34,8 +34,7 @@ import { getStrings } from '@/shared/strings'
 
 import { decodePayload } from '../gateway-event-util'
 
-// 角色 / 形象事件处理器：心情、衣柜、头像重生与视频动作播放。
-// 全部只更新 character 域的状态，不接触会话。
+// 角色/形象事件处理：心情、衣柜、头像重生与视频动作播放；只更新 character 域状态，不接触会话。
 
 function authed(): boolean {
   return $auth.get().kind === 'authenticated'
@@ -94,8 +93,7 @@ async function acceptRequestedAction(command: ActionPlayCommand, accountId: stri
   try {
     const local = $actionCatalog.get()
 
-    // 同包旧代次说明该包已重新激活，在所有舞台都已失效，直接认领并回执。其他不能直接播放的情况先强制刷新：
-    // 覆盖恢复保留备份中的代次，新包代次可能低于本地旧包。
+    // 同包旧代次说明该包已重新激活且在所有舞台失效，直接认领并回执；其他不能直接播放的情况先强制刷新（覆盖恢复保留备份中的代次，新包代次可能低于本地旧包）。
     const reactivated =
       local?.packId === command.pack_id &&
       local.appearanceEpoch !== null &&
@@ -191,9 +189,7 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     }
 
     case 'companion.action.play_requested': {
-      // 播放指令：经统一调度器裁决（安全控制/拖拽优先，表达仅在基础状态为 idle 时生效——
-      // 由 VideoStage 的 resolvePresentation 完成）；此处只校验目录、包与外观代次后受理。
-      // 可见舞台由主进程最终认领；代理窗的完整对话不遮挡侧边伙伴。
+      // 播放指令：经统一调度器裁决（安全控制/拖拽优先，表达仅在 idle 时生效——由 VideoStage 的 resolvePresentation 完成）；此处只校验目录、包与外观代次后受理。可见舞台由主进程最终认领。
       const identity = $auth.get()
 
       if (identity.kind !== 'authenticated' || !isActionStageVisible()) {
@@ -304,8 +300,7 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     }
 
     case 'avatar.regenerated': {
-      // 后台重新生成的结果——通过 job_id 解析等待者，
-      // 让肖像能直接替换而不阻塞处理器。
+      // 后台重新生成的结果：通过 job_id 解析等待者，让肖像能直接替换而不阻塞处理器。
       const p = decodePayload<{
         job_id?: string
         asset_url?: string | null

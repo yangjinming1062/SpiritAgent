@@ -9,8 +9,7 @@ from .jsonrpc import JsonRpcDispatcher
 
 logger = get_logger(__name__)
 
-# 事件回路钩子由 event_store 在启动时装配（set_event_loop_hooks），
-# 让传输层不反向依赖事件存储：新 dispatcher 注册时唤醒认领循环，writer 送达确认批量落库。
+# 事件回路钩子由 event_store 启动时装配（set_event_loop_hooks），传输层不反向依赖事件存储：注册唤醒认领，writer 送达确认批量落库。
 NotifyHook = Callable[[], None]
 DeliverAckHook = Callable[[list[int]], Any]
 _notify_hook: NotifyHook | None = None

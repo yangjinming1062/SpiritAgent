@@ -22,7 +22,7 @@ from .helpers import _truncate_snapshot, screenshot_multimodal_result
 logger = logging.getLogger(__name__)
 
 _DEFAULT_TIMEOUT = 30
-# 按 Camofox base URL 缓存健康探测得到的 VNC 地址；探测失败不缓存，下次重试。
+# 按 base URL 缓存 VNC；失败不缓存。
 _vnc_urls: dict[str, str | None] = {}
 
 

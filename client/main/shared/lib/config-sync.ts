@@ -5,9 +5,7 @@ import { errorMessage } from '../utils'
 
 import * as store from './runner-config-store'
 
-// 云端 ⇄ 本地镜像的同步节白名单（desktop-settings.json 顶层节）。
-// 不在名单内的节（terminal、spiritagent 等机密/设备相关节与未知节）永不离开本机（PROTOCOL「配置所有权与云同步」「凭据落盘」）。
-// "language" 是顶层原始值键（与后端 user_settings.setting_key 对齐），由 hydrate/pick 单独按原始值处理。
+// 云端 ⇄ 本地镜像的同步节白名单（desktop-settings.json 顶层节）；名单外的节（terminal、spiritagent 等机密/设备相关节与未知节）永不离开本机（PROTOCOL「配置所有权与云同步」「凭据落盘」）。"language" 是顶层原始值键（对齐后端 user_settings.setting_key），由 hydrate/pick 单独按原始值处理。
 const SYNCED_SECTIONS = [
   'skills',
   'toolsets',
@@ -270,11 +268,7 @@ export function createConfigSync(deps: ConfigSyncDeps): ConfigSync {
     }
   }
 
-  /**
-   * 云端 → 本地镜像水合：GET /api/config 后按同步节白名单逐键 upsert 合并
-   * （云端值覆盖同名键；云端缺失的键保留本地，本机专属键因此存活）。
-   * 本地存在而云端缺失的键（首跑播种、退出时未及上云的编辑）会后置一次 flush 上传。
-   */
+  /** 云端 → 本地镜像水合：GET /api/config 后按同步节白名单逐键 upsert 合并（云端值覆盖同名键；云端缺失的键保留本地，本机专属键因此存活）。本地存在而云端缺失的键（首跑播种、退出时未及上云的编辑）会后置一次 flush 上传。 */
   async function hydrate(): Promise<void> {
     if (hydrating) {
       return

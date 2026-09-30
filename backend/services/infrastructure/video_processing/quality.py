@@ -77,8 +77,7 @@ def select_loop(src: Path, *, max_seconds: float) -> ClipWindow:
     _check_common_gates(alpha)
     frames[..., :3] *= alpha[..., None]
     best: tuple[float, int, int] | None = None
-    # 区间为 [i,j)。存在下一帧时比较该端点；到素材末尾时比较最后实帧，
-    # 不要求额外端点帧，否则标准的一秒 24 帧视频会被误判为不足一秒。
+    # 区间 [i,j)：有下一帧比较该端点，到素材末尾比较最后实帧；不要求额外端点帧，否则一秒 24 帧会被误判为不足一秒。
     for i in range(len(frames) - 24 + 1):
         for j in range(i + 24, min(len(frames), i + max_frames) + 1):
             endpoint = min(j, len(frames) - 1)

@@ -5,8 +5,7 @@ from prompts.chat import PRESET_BODY_AUTOMATION, PRESET_BODY_COMPANION, PRESET_B
 
 from services.domains.companion import is_work_preset
 
-# 数据库约束保证 ``is_automation`` 与 ``system_preset_id == "automation"`` 等价；陪伴与四个职业预设
-# 由 conversation 领域的预设目录校验。
+# is_automation 与 system_preset_id == "automation" 由数据库约束保证等价；陪伴与职业预设由 conversation 领域的预设目录校验。
 PRESET_BODIES: dict[str, str] = {
     "companion": PRESET_BODY_COMPANION,
     "developer": PRESET_BODY_WORK,
@@ -15,8 +14,7 @@ PRESET_BODIES: dict[str, str] = {
     "language_teacher": PRESET_BODY_WORK,
     "automation": PRESET_BODY_AUTOMATION,
 }
-# 生活空间工具只服务陪伴会话：工作预设与自动化任务在回合装配层与 search_tools 元工具同源过滤，
-# 不注入 schema，工具入口不再二次判定会话类型。
+# 生活空间工具只服务陪伴会话：工作预设与自动化任务在回合装配层与 search_tools 同源过滤，不注入 schema，工具入口不再二次判定。
 LIFE_SPACE_TOOL_NAMES = frozenset(
     {
         "send_message_tool",

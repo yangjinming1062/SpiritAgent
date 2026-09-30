@@ -37,8 +37,7 @@ export interface RunnerHost {
   restartForCurrentSession: () => Promise<void>
 }
 
-// Runner 已给出确定结局的拒绝：工具报错或执行前被拒（failed）、同一 call_id 的参数冲突、非法标识。
-// 其余错误（取消、超时、断连、他处持有、日志判定未知）都不能证明工具没有产生副作用。
+// Runner 已给出确定结局的拒绝：工具报错或执行前被拒（failed）、同一 call_id 的参数冲突、非法标识；其余错误（取消、超时、断连、他处持有、日志判定未知）都不能证明工具没有产生副作用。
 const DEFINITE_FAILURE_DISPOSITIONS = new Set(['conflict', 'failed', 'invalid_call_id'])
 
 function runnerCallOutcomeFromError(error: unknown): RunnerCallOutcome {

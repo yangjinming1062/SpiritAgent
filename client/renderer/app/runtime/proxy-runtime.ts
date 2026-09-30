@@ -8,9 +8,7 @@ import { reportPrimaryGatewayState, setPrimaryGateway } from '@/shared/store/gat
 import { handleGatewayEvent } from './gateway-event-router'
 import { isDeviceCommandEvent } from './gateway-event-util'
 
-// 代理窗运行时：生活空间 / 工作台经主进程代理共享宿主 WS，本组件只做
-// 代理事件泵与连接状态上报。tool.call / tool.cancel 是宿主专属设备指令，代理窗口不接收——
-// 宿主分发与重放去重在 handlers/tool-dispatch。
+// 代理窗运行时：生活空间/工作台经主进程代理共享宿主 WS，本组件只做代理事件泵与连接状态上报；tool.call/cancel 是宿主专属设备指令，代理窗口不接收（分发与重放去重在 handlers/tool-dispatch）。
 export function ProxyGatewayPump(): null {
   const auth = useStore($auth)
   const sessionId = auth.kind === 'authenticated' ? auth.snapshot.sessionId : null

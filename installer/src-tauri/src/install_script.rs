@@ -1,5 +1,4 @@
-//! 解析安装脚本路径：dev checkout → Tauri bundle.resources → build.rs 嵌入的 payload zip。
-//! 安装器不联网，脚本版本即安装器构建版本。
+//! 解析安装脚本路径：dev checkout → bundle.resources → 嵌入 payload zip；不自联网。
 
 use std::path::{Path, PathBuf};
 
@@ -16,11 +15,11 @@ pub struct ResolvedScript {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScriptSource {
-    /// 来自 $SPIRITAGENT_SETUP_DEV_REPO_ROOT 指向的本地 checkout。
+    /// `$SPIRITAGENT_SETUP_DEV_REPO_ROOT` 指向的本地 checkout。
     DevCheckout,
-    /// 来自 Tauri bundle.resources（payload/ 与 exe 同级，常见于 `--no-bundle` 的 _up_/payload/ 旁路）。
+    /// Tauri bundle.resources（payload/ 与 exe 同级）。
     Bundled,
-    /// 来自 build.rs 嵌入的 payload zip（单 exe 分发场景）。
+    /// build.rs 嵌入的 payload zip（单 exe）。
     Embedded,
 }
 
@@ -47,13 +46,13 @@ impl ScriptKind {
     }
 }
 
-/// 解析安装脚本：dev 入口 → Tauri bundle.resources → 嵌入 zip；不自联网。
+/// 解析安装脚本：dev 入口 → bundle.resources → 嵌入 zip。
 pub async fn resolve(
     app: &AppHandle,
     kind: ScriptKind,
     emit_log: &impl Fn(&str),
 ) -> Result<ResolvedScript> {
-    // 1) 开发入口：通过环境变量指向 checkout，避免每次脚本改动都要重打包。
+    // 1) 开发入口：环境变量指向 checkout，免重打包
     if let Ok(repo_root) = std::env::var("SPIRITAGENT_SETUP_DEV_REPO_ROOT") {
         let candidate = PathBuf::from(repo_root).join("installer").join(kind.filename());
         if candidate.exists() {
@@ -69,7 +68,7 @@ pub async fn resolve(
         }
     }
 
-    // 2) 生产路径：Tauri bundle.resources（payload/ 与 exe 同级）。
+    // 2) 生产路径：Tauri bundle.resources
     if let Ok(resource_dir) = app.path().resource_dir() {
         if let Ok(bundled) = resolve_bundled(&resource_dir, kind) {
             emit_log(&format!(
@@ -84,7 +83,7 @@ pub async fn resolve(
         }
     }
 
-    // 3) 单 exe 自包含：解压嵌入的 payload zip 到 SPIRITAGENT_HOME/bootstrap-payload/payload/。
+    // 3) 单 exe：解压嵌入 zip 到 bootstrap-payload/payload/
     let payload_dir = embedded_payload::payload_dir()
         .with_context(|| "extracting embedded payload zip".to_string())?;
     let script_path = payload_dir.join(kind.filename());
@@ -105,7 +104,7 @@ pub async fn resolve(
     })
 }
 
-/// 从 Tauri bundle.resources 读取安装脚本；纯函数，便于用临时目录直接单测。
+/// 从 bundle.resources 读取安装脚本；纯函数便于临时目录单测。
 fn resolve_bundled(resource_dir: &Path, kind: ScriptKind) -> Result<PathBuf> {
     let script_path = resource_dir.join("payload").join(kind.filename());
     if script_path.is_file() {
@@ -141,7 +140,6 @@ mod tests {
         fs::write(payload.join(kind.filename()), b"#!/bin/sh\necho fake\n").unwrap();
     }
 
-    /// bundle.resources 中的脚本是生产首选路径。
     #[test]
     fn resolve_bundled_returns_script_in_payload() {
         let tmp = unique_tmp_dir("bundled-ok");
@@ -157,7 +155,7 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
-    /// resource_dir 下没有 payload/ 时 resolve_bundled 应返回 Err，使上层 fallback 到 embedded_payload。
+    /// 缺 payload/ 时返回 Err，使上层 fallback 到 embedded_payload。
     #[test]
     fn resolve_bundled_errors_when_payload_missing() {
         let tmp = unique_tmp_dir("bundled-missing");
@@ -171,7 +169,6 @@ mod tests {
         let _ = fs::remove_dir_all(&tmp);
     }
 
-    /// 防止 .ps1 / .sh 映射被写错，从而在错误的平台加载到错误的脚本。
     #[test]
     fn script_kind_filename_round_trip() {
         assert_eq!(ScriptKind::Ps1.filename(), "install.ps1");

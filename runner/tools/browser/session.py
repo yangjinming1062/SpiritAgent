@@ -194,7 +194,6 @@ def _emergency_cleanup_all_sessions() -> None:
     cleanup_all_browsers()
 
 
-# atexit LIFO：先注册的 last 执行。先注册 stop 再注册 emergency，
-# 这样进程退出时 emergency 先清理完会话，再让清理线程收尾。
+# atexit LIFO：先注册 stop，exit 时 emergency 先清会话。
 atexit.register(_stop_browser_cleanup_thread)
 atexit.register(_emergency_cleanup_all_sessions)

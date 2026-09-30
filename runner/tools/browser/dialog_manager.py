@@ -1,7 +1,4 @@
-"""JS 弹窗（alert / confirm / prompt / beforeunload）的策略调度与生命周期管理。
-
-DialogManager._lock 保护 pending / recent / watchdogs / seq；open、看门狗与后台应答任务都在 supervisor loop 线程上运行。
-"""
+"""JS 弹窗策略调度与生命周期；_lock 保护 pending/recent/watchdogs/seq，工作在 supervisor loop 线程。"""
 
 import asyncio
 import logging
@@ -75,10 +72,7 @@ class DialogRecord:
 
 
 class DialogBlockedError(Exception):
-    """待决弹窗阻塞了页面：依赖渲染进程的 CDP 调用在弹窗关闭前不会返回，输入事件会被丢弃。
-
-    ``opened_by_call`` 区分弹窗是本次调用触发的（调用本身已生效）还是调用前就存在（调用未执行）。
-    """
+    """待决弹窗阻塞页面；opened_by_call 区分调用内触发（已生效）与调用前已有（未执行）。"""
 
     def __init__(self, dialog: PendingDialog, *, opened_by_call: bool) -> None:
         self.dialog = dialog
@@ -116,7 +110,7 @@ class DialogManager:
         self._recent: list[DialogRecord] = []
         self._watchdogs: dict[str, asyncio.TimerHandle] = {}
         self._seq = 0
-        # asyncio 只弱引用任务；持有引用直到完成。supervisor 停止时 loop 统一取消剩余任务，看门狗随 loop 关闭失效。
+        # 持有任务引用到完成；看门狗随 loop 失效。
         self._tasks: set[asyncio.Task[bool]] = set()
 
     def next_id(self) -> str:
@@ -144,10 +138,7 @@ class DialogManager:
                 )
 
     def on_remote_closed(self, session_id: str | None) -> None:
-        """处理 Page.javascriptDialogClosed：关闭同 session 的待决弹窗。
-
-        session_id 为 None 时（顶层 CDP 事件）回退为匹配任意待决弹窗。
-        """
+        """关闭同 session 待决弹窗；session_id 为 None 时匹配任意待决。"""
         dialog = self.pending_for(session_id)
         if dialog is None:
             return
@@ -185,7 +176,7 @@ class DialogManager:
         pt = prompt_text or ""
 
         async def _do_respond() -> dict[str, Any]:
-            # 在 loop 线程内重新校验并弹出，避免与看门狗竞争导致双方各发一次应答。
+            # loop 线程内校验，避免与看门狗双应答。
             with self._lock:
                 if self._pending.pop(dialog.id, None) is None:
                     return {"ok": False, "error": "Dialog already handled (expired or removed)"}
@@ -193,7 +184,7 @@ class DialogManager:
                 handle = self._watchdogs.pop(dialog.id, None)
             if handle is not None:
                 handle.cancel()
-            # 投递失败时 dialog 已归档无法重试，但页面可能仍被弹窗阻塞，须如实上报。
+            # 投递失败须如实上报。
             if not await self._fulfill(dialog, accept=accept, prompt_text=pt):
                 return {
                     "ok": False,

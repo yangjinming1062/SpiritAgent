@@ -63,7 +63,7 @@ class LoginRecord(ModelBase):
     user: Mapped[User] = relationship(back_populates="login_records")
 
 
-# Admin token 携带 DB 后端的 jti，便于疑似密钥泄露时设 is_active=False 强制吊销。
+# Admin token 携带 jti，疑似泄露时设 is_active=False 强制吊销。
 class AdminSession(ModelBase):
     __tablename__ = "admin_sessions"
     __table_args__ = (UniqueConstraint("token_jti", name="uq_admin_sessions_token_jti"),)

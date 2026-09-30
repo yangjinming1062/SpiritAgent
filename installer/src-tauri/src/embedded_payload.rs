@@ -1,10 +1,4 @@
-//! 把 build.rs 嵌入的 payload zip 视为单一可信源：保证 `SpiritAgent-Setup.exe` 单文件可分发。
-//!
-//! 分发形态：
-//!   - 资源就绪态：`resource_dir/payload/install.ps1` 已存在（开发模式或 `_up_/payload/` 旁路）→ 直接使用
-//!   - 单 exe 形态：仅 `SpiritAgent-Setup.exe`，无 `payload/` 邻居 → 首次访问时把嵌入的 zip 解压到 SPIRITAGENT_HOME/bootstrap-payload/
-//!
-//! 解压目录内容由 build.rs 打包时的相对路径决定，根目录即为 `payload/`（与 Tauri `bundle.resources` 布局对齐）。
+//! 嵌入 payload zip 作为单 exe 分发源；资源就绪时直接用 `resource_dir/payload/`，否则解压到 `SPIRITAGENT_HOME/bootstrap-payload/`。
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
@@ -12,16 +6,16 @@ use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 
-/// build.rs 把 `../payload/` 打包成 `OUT_DIR/payload.zip` 后用 `include_bytes!` 嵌入。
+/// build.rs 打包 `../payload/` 为 `OUT_DIR/payload.zip` 后 `include_bytes!` 嵌入。
 const PAYLOAD_ZIP: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/payload.zip"));
 
-/// 全局缓存：避免每次 stage 调用都重新解压 100MB+ zip。
+/// 全局缓存，避免每阶段重复解压。
 static EXTRACT_ROOT: OnceLock<PathBuf> = OnceLock::new();
 
-/// 把嵌入的 zip 解压到 `dest`。覆盖式写入（先清空 dest 内旧文件）。
+/// 覆盖式解压嵌入 zip 到 `dest`。
 fn extract_to(dest: &Path) -> Result<()> {
     if dest.exists() {
-        // 只清空 build.rs 关注的 payload/ 子目录内容，保留同级其它 SPIRITAGENT_HOME 数据
+        // 只清空 payload/ 子目录，保留同级其它 SPIRITAGENT_HOME 数据
         let payload_dir = dest.join("payload");
         if payload_dir.is_dir() {
             for entry in std::fs::read_dir(&payload_dir)? {
@@ -49,7 +43,7 @@ fn extract_to(dest: &Path) -> Result<()> {
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i)?;
         let raw_name = entry.name().to_string();
-        // 防御：拒绝绝对路径或 `..` 跳出 dest 的条目（zip slip）
+        // 拒绝绝对路径或 `..`（zip slip）
         if raw_name.contains("..") || Path::new(&raw_name).is_absolute() {
             anyhow::bail!("refusing unsafe zip entry path: {raw_name}");
         }
@@ -63,7 +57,7 @@ fn extract_to(dest: &Path) -> Result<()> {
         }
         let mut buf = Vec::with_capacity(entry.size() as usize);
         entry.read_to_end(&mut buf)?;
-        // 写临时文件再 rename，规避解压中途 exe 被部分写入导致 Stage-Unpack 失败
+        // 临时文件再 rename，避免半写入产物。
         let tmp = out_path.with_extension(format!(
             "{}.part",
             out_path
@@ -73,9 +67,8 @@ fn extract_to(dest: &Path) -> Result<()> {
         ));
         std::fs::write(&tmp, &buf)
             .with_context(|| format!("write {}", tmp.display()))?;
-        // 已有同名文件时 std::fs::rename 在 Windows 上会失败，先 remove
+        // Windows rename 不覆盖已存在文件，先 remove；锁定的 exe 直接失败。
         if out_path.exists() {
-            // Windows 上 exe 正在被运行会让 remove 失败；这里覆盖式打开替代
             if out_path
                 .extension()
                 .and_then(|e| e.to_str())
@@ -97,13 +90,13 @@ fn extract_to(dest: &Path) -> Result<()> {
     Ok(())
 }
 
-/// Windows 上 `*.exe` 被持有时的探测；非 Windows 永远返回 false。
+/// Windows 上 `*.exe` 是否被其它进程持有；非 Windows 恒 false。
 #[cfg(target_os = "windows")]
 fn is_file_locked(path: &Path) -> bool {
     use std::os::windows::fs::OpenOptionsExt;
     std::fs::OpenOptions::new()
         .read(true)
-        .share_mode(0) // 不允许其它进程共享
+        .share_mode(0)
         .open(path)
         .is_err()
 }
@@ -113,7 +106,7 @@ fn is_file_locked(_path: &Path) -> bool {
     false
 }
 
-/// 返回 payload 解压根目录（首次访问时解压嵌入 zip），路径为 `<SPIRITAGENT_HOME>/bootstrap-payload/`。
+/// 首次访问时解压嵌入 zip，返回 `<SPIRITAGENT_HOME>/bootstrap-payload/`。
 pub fn ensure_extracted() -> Result<&'static Path> {
     if let Some(p) = EXTRACT_ROOT.get() {
         return Ok(p.as_path());
@@ -125,7 +118,7 @@ pub fn ensure_extracted() -> Result<&'static Path> {
     Ok(EXTRACT_ROOT.get().unwrap().as_path())
 }
 
-/// payload 的实际目录，等价于 `<ensure_extracted()>/payload/`。
+/// payload 实际目录 `<ensure_extracted()>/payload/`。
 pub fn payload_dir() -> Result<PathBuf> {
     Ok(ensure_extracted()?.join("payload"))
 }

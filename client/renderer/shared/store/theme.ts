@@ -11,10 +11,7 @@ import { persistString, storedString } from '@/shared/lib/storage'
 
 const THEME_STORAGE_KEY = 'da.ui.theme'
 
-// 启动主题的优先级：主进程播种的 URL 参数（配置镜像当前值，窗口创建前写入）>
-// localStorage（本窗口上次使用的即时缓存）> 「日色透明」默认。
-// URL 参数在模块加载时消费并清除——它只在首帧前有效，之后主题变化一律走
-// IPC 广播（initUiThemeSync）与本窗 setUiTheme。
+// 启动主题优先级：主进程播种的 URL 参数（窗口创建前写入）> localStorage（本窗即时缓存）>「日色透明」默认。URL 参数在模块加载时消费并清除（只在首帧前有效），之后主题变化一律走 IPC 广播（initUiThemeSync）与本窗 setUiTheme。
 function resolveInitialTheme(): SpiritAgentUiTheme {
   const params = new URLSearchParams(window.location.search)
   const seeded = params.get(UI_THEME_URL_PARAM)
@@ -42,8 +39,7 @@ const initialTheme = resolveInitialTheme()
 
 export const $theme = atom<SpiritAgentUiTheme>(initialTheme)
 
-// 模块加载即应用：两个 entry 都先 import styles.css 再 import 本模块，
-// 首帧渲染前 data-theme 已就位，无错误主题闪烁。
+// 模块加载即应用：两个 entry 都先 import styles.css 再 import 本模块，首帧前 data-theme 已就位，无错误主题闪烁。
 apply($theme.get())
 
 function apply(theme: SpiritAgentUiTheme): void {

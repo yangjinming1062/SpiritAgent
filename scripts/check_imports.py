@@ -14,7 +14,7 @@ def _parse(path: Path) -> ast.Module | None:
         return None
 
 
-# A. 禁止 future annotations (Python 3.13 原生支持 PEP 585/604)
+# A. 禁止 future annotations（Python 3.13 原生支持 PEP 585/604）
 
 
 def check_future_annotations(path: Path) -> list[str]:
@@ -35,7 +35,7 @@ def check_future_annotations(path: Path) -> list[str]:
 
 
 def clean_future_annotations(path: Path) -> bool:
-    """清理文件中的 ``from __future__ import annotations``。"""
+    """删除 ``from __future__ import annotations``。"""
     try:
         content = path.read_text(encoding="utf-8")
     except OSError:
@@ -145,10 +145,7 @@ def check_type_checking_leak(path: Path) -> list[str]:
 
 
 def _facade_exports(init_path: Path) -> set[str] | None:
-    """解析 facade 的 ``__init__.py`` 中的对外导出名。
-
-    无任何 re-export 时返回 ``None``，调用方应跳过；否则返回 ``__all__`` 与模块级 ``from .X import Y`` 引入名两者的并集。
-    """
+    """解析 facade ``__init__.py`` 的导出名；无 re-export 时返回 None（调用方跳过）。"""
     tree = _parse(init_path)
     if tree is None:
         return None
@@ -176,7 +173,7 @@ def _facade_exports(init_path: Path) -> set[str] | None:
 
 
 def _importer_scan_root(path: Path) -> Path | None:
-    """判断文件所属扫描根（backend/ 或 runner/）。"""
+    """文件所属扫描根（backend/ 或 runner/）。"""
     resolved = path.resolve()
     for root in SCAN_ROOTS:
         try:
@@ -188,10 +185,7 @@ def _importer_scan_root(path: Path) -> Path | None:
 
 
 def _resolve_facade_init(importer: Path, level: int, module: str | None) -> Path | None:
-    """把 ``ast.ImportFrom`` 解析到 facade 的 ``__init__.py`` 路径。
-
-    支持：绝对导入 ``from X import Y``（在 importer 所属扫描根内解析）、单段相对 ``from .X import Y`` / ``from ..X import Y``（沿 importer 的父目录链解析）。多段模块（如 ``from utils.constants import X``）直接跳过——那些指向普通模块，无法静态内省其 facade 状态。
-    """
+    """把 ``ImportFrom`` 解析到 facade 的 ``__init__.py``；多段模块与包外导入返回 None。"""
     if level == 0:
         if not module or "." in module:
             return None
@@ -201,7 +195,7 @@ def _resolve_facade_init(importer: Path, level: int, module: str | None) -> Path
         candidate = (scan_root / module / "__init__.py").resolve()
         return candidate if candidate.is_file() else None
 
-    # Handle relative imports (level >= 1)
+    # 相对导入（level >= 1）
     if module and "." in module:
         return None
     parent_parts = importer.parent.resolve().parts
@@ -215,10 +209,7 @@ def _resolve_facade_init(importer: Path, level: int, module: str | None) -> Path
 
 
 def check_facade_consistency(path: Path) -> list[str]:
-    """对每个解析到带 re-export 的 facade 的本地导入，要求被引入的名字必须出现在 re-export 列表里。
-
-    跳过：facade 自身的 ``__init__.py``、目标无 ``__init__.py``（普通模块）、无 re-export 的 facade。
-    """
+    """要求经 facade 引入的名字出现在其 re-export 列表；跳过 facade 自身与普通模块。"""
     if path.name == "__init__.py":
         return []
 
@@ -254,9 +245,6 @@ def check_facade_consistency(path: Path) -> list[str]:
                     "either add the re-export or import from the underlying module",
                 )
     return errors
-
-
-# main
 
 
 def main(argv: list[str]) -> int:

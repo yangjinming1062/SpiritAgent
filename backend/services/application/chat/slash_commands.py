@@ -1,11 +1,4 @@
-"""Slash 命令注册表与契约。
-
-设计要点：
-- 静态注册表，不混入预设体系（命令是回合外副作用，与 system prompt 模板正交）。
-- 命令不走 LLM tool_call 路径（避免 LLM 越权触发 / 与 persona 渲染冲突）。
-- 客户端本地也有同名元数据镜像（client/renderer/shared/lib/slash-commands.ts），仅用于自动补全与
-  confirm 弹窗等 UI 优化；服务端 ``command.dispatch`` 仍是唯一权威。
-"""
+"""Slash 命令注册表与匹配；设计取舍见 chat/README.md。"""
 
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -21,11 +14,7 @@ SlashCommandStatus = Literal["ok", "error"]
 
 @dataclass(slots=True)
 class SlashCommandContext:
-    """命令 handler 收到的执行上下文。
-
-    ``runtime`` 与 ``dispatcher`` 字段类型用 ``Any`` 避免应用层导入适配层；实际是
-    ``adapters/desktop/runtime.RuntimeSession`` 与 ``infrastructure/desktop/jsonrpc.JsonRpcDispatcher``。
-    """
+    """命令 handler 的执行上下文。``runtime`` / ``dispatcher`` 用 ``Any`` 避免导入适配层（实为 RuntimeSession / JsonRpcDispatcher）。"""
 
     session_id: str
     user_id: int
@@ -43,7 +32,7 @@ class SlashCommandResult:
     status: SlashCommandStatus
     message: str
     payload: dict | None = None
-    # 当结果改变历史（如 /清理 /压缩），客户端用 payload.messages 替换本地消息列表；与 hydrate 同源。
+    # 结果改变历史（如 /清理 /压缩）时客户端用 payload.messages 替换本地消息列表；与 hydrate 同源。
     hydrate: bool = False
 
 
@@ -59,7 +48,7 @@ class SlashCommand:
     handler: SlashCommandHandler | None = None
 
 
-# ``name``（小写，剥离前缀 /）作为主键；aliases 镜像到同一 SlashCommand。
+# name 为主键（小写、去 / 前缀）；aliases 镜像到同一 SlashCommand 实例。
 SLASH_COMMANDS: dict[str, SlashCommand] = {}
 
 
@@ -70,11 +59,7 @@ def register(
     description: str = "",
     requires_confirmation: bool = False,
 ) -> Callable[[SlashCommandHandler], SlashCommandHandler]:
-    """装饰器：把协程包装成 SlashCommand 并塞进 ``SLASH_COMMANDS``。
-
-    主名与所有别名共享同一个 SlashCommand 实例（别名只是 key 镜像，调用 resolve() 时无差别）。
-    重复注册同 key 时后者覆盖前者并 warning（与 builtin tool 注册语义保持一致）。
-    """
+    """装饰器：注册协程为 SlashCommand。主名与别名共享同一实例；重复注册同 key 时后者覆盖并 warning。"""
 
     def deco(fn: SlashCommandHandler) -> SlashCommandHandler:
         cmd = SlashCommand(
@@ -128,11 +113,7 @@ def list_commands_for_user() -> list[dict]:
 
 
 def suggest_commands(name: str, *, limit: int = 3, cutoff: float = 0.5) -> list[str]:
-    """未识别命令的回执：返回与 ``name`` 最相近的命令主名列表（不含 aliases）。
-
-    同时扫描主名与所有 aliases（CJK 别名也能命中）；用 stdlib ``difflib.SequenceMatcher``
-    计算相似度，按 ratio 降序去重返回。``cutoff=0.5`` 过滤掉一半以上的差异。
-    """
+    """未识别命令的相似推荐（主名 + aliases，CJK 别名可命中）；SequenceMatcher 降序去重，``cutoff=0.5`` 过滤弱匹配。"""
     name_l = name.lower()
     scored: dict[str, float] = {}
 

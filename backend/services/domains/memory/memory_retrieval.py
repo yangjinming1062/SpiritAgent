@@ -57,18 +57,16 @@ def extract_search_terms(query: str) -> list[str]:
         seen.add(term)
         tokens.append(term)
 
-    # 1. 优先提取拉丁/英文/数字 token（如 postgresql, python, v2 等高信息量词汇）
     for raw in _TOKEN_SPLIT_PATTERN.split(q):
         for latin in _NON_CJK_RUN_PATTERN.findall(raw):
             _add(latin)
 
-    # 2. 遍历所有分句，提取 2-gram 滑动窗口（每个分句均能获得关键词代表，避免首句独占配额）
+    # 分句级 2-gram 滑动窗口：每个分句均能获得关键词代表，避免首句独占配额
     for raw in _TOKEN_SPLIT_PATTERN.split(q):
         for run in _CJK_RUN_PATTERN.findall(raw):
             for i in range(len(run) - 1):
                 _add(run[i : i + 2])
 
-    # 3. 补充 3-gram 滑动窗口
     for raw in _TOKEN_SPLIT_PATTERN.split(q):
         for run in _CJK_RUN_PATTERN.findall(raw):
             for i in range(len(run) - 2):
@@ -142,8 +140,7 @@ async def _sparse_search(
 
 
 async def embed_memory_text(user_id: int, text: str) -> list[float] | None:
-    """记忆链路的向量生成入口：独立短会话解析用户级 embedding 供应商，
-    维度校验列宽；未配置、调用失败或维度不符时返回 None，检索降级为纯关键词路径。"""
+    """记忆链路的向量生成入口：独立短会话解析用户级 embedding 供应商，维度校验列宽；未配置、调用失败或维度不符时返回 None，检索降级为纯关键词路径。"""
     if not (text := (text or "").strip()):
         return None
     async with session_scope() as db:

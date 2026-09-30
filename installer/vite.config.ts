@@ -3,14 +3,7 @@ import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 import path from 'node:path'
 
-// SpiritAgent Setup — Tauri-targeted Vite config.
-//
-// Port 5175 keeps us out of the way of:
-//   web       (vite default 5173)
-//   desktop dev     (5174 per its package.json)
-//
-// `clearScreen: false` is the Tauri convention — they spawn vite as a child
-// process and want our errors to stay visible.
+// Tauri Vite 配置。端口 5175 避开 web 5173 / desktop 5174；clearScreen:false 为 Tauri 惯例，保留子进程报错。
 
 const host = process.env.TAURI_DEV_HOST
 
@@ -34,7 +27,7 @@ export default defineConfig({
         }
       : undefined,
     watch: {
-      // Don't watch the Rust side — tauri-cli handles it.
+      // Rust 侧由 tauri-cli 自行监听
       ignored: ['**/src-tauri/**']
     }
   },

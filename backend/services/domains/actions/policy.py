@@ -1,8 +1,4 @@
-"""动作域策略：权限、配额、抑制与硬门禁。
-
-模型负责提案，本模块做服务端确定性校验。制作额度与近 7 天拒绝抑制从
-ActionProposal 聚合；评审不设日限额，仅 approve 后占用制作额度。
-"""
+"""动作域策略：受理门禁、制作额度与模型可点播判定。"""
 
 import asyncio
 from datetime import UTC, date, datetime, time, timedelta
@@ -19,8 +15,7 @@ PLAY_INTENT_TTL_SECONDS = 30
 # 制作完成前保存的表达意图有效期：过期只入库，不补播。
 DEFERRED_PLAY_INTENT_TTL_SECONDS = 15 * 60
 
-# 用户级受理/评审串行锁：受理的查重、门禁与 flush 在锁内串行，调用方在锁外提交；评审持锁至提交。
-# 并发新建的同创意提案由 (user_id, source, idempotency_key) 唯一约束兜底。
+# 用户级受理/评审串行锁：查重、门禁与 flush 锁内串行，调用方锁外提交，评审持锁至提交；并发同创意提案由 (user_id, source, idempotency_key) 唯一约束兜底。
 _ACCEPT_LOCKS: dict[int, asyncio.Lock] = {}
 
 
@@ -96,15 +91,14 @@ async def check_can_accept(
     pack_id: int,
     semantic_fingerprint: str,
 ) -> None:
-    """受理门禁；不满足时抛 ActionPolicyError。评审不设日限额。"""
+    """受理门禁；不满足时抛 ActionPolicyError。"""
     if duration_seconds > max_duration_seconds():
         raise ActionPolicyError(f"单动作最长 {max_duration_seconds():g} 秒")
     # 供应商只接受整秒时长；受理即拦，避免评审与姿态图费用打水漂。
     if abs(duration_seconds - round(duration_seconds)) > 1e-6:
         raise ActionPolicyError("动作时长需为整秒")
 
-    # 同包同一创意被拒绝后 7 天内受抑制，从拒绝时刻起算。拒绝行不再被改写（重提复用会先改回 pending），
-    # updated_at 即拒绝时刻；复用行的 created_at 可能远早于本次拒绝。
+    # 同包同创意拒绝后 7 天抑制，从拒绝时刻起算；拒绝行不再改写（重提复用先回 pending），故用 updated_at 而非 created_at（复用行 created_at 可能远早于本次拒绝）。
     cutoff = datetime.now(UTC) - timedelta(days=REJECTED_PROPOSAL_COOLDOWN_DAYS)
     rejected = await db.scalar(
         select(func.count(ActionProposal.id)).where(

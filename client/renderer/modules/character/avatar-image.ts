@@ -8,8 +8,7 @@ export interface PickedImage {
   previewUrl: string
 }
 
-// 与后端 AvatarFromImageRequest 上限对齐——更大的请求会被拒为 422，
-// 用户无从操作，所以这里先给提示直接拒收。
+// 与后端 AvatarFromImageRequest 上限对齐——更大的请求会被拒为 422，用户无从操作，所以这里先给提示直接拒收。
 const MAX_IMAGE_BASE64 = 8 * 1024 * 1024
 
 /** `null` when the user cancels or the file is unreadable; `error` is user-facing copy. */

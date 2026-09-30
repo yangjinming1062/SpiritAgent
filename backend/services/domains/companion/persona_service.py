@@ -25,7 +25,7 @@ _OPTIONAL_FIELDS: tuple[str, ...] = ("relationship", "biological_type", "gender"
 _KNOWN_FIELDS: frozenset[str] = frozenset(_REQUIRED_FIELDS + _OPTIONAL_FIELDS)
 _MAX_FIELD_LEN: int = 500
 
-# 引导问答的原始字段，按提问顺序排列；未完成时以草稿形式存在 definition_json 中，user_* 由 update_persona 路由进 Memory。
+# 引导问答的原始字段，按提问顺序排列；未完成时以草稿存 definition_json，user_* 由 update_persona 路由进 Memory。
 ONBOARDING_FIELDS: tuple[str, ...] = (
     "name",
     "biological_type",
@@ -76,7 +76,6 @@ def _validate_birthday(value: str | None) -> None:
 
 
 def load_persona_definition(persona: Persona | None) -> dict[str, str]:
-    """从 Persona 实例读取当前支持的引导字段。"""
     if persona is None:
         return {}
     draft = safe_json_loads(persona.definition_json or "{}", default={})
@@ -143,8 +142,7 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
                 else:
                     cleaned.pop(locked, None)
         persona.definition_json = json.dumps(cleaned, ensure_ascii=False)
-        # persona_extras 不缓存：build_system_prompt_extras 在运行期按 session language 从
-        # definition_json 实时渲染，避免英语会话拿到 onboarding 时烤进去的中文头部。
+        # persona_extras 不缓存：build_system_prompt_extras 运行期按 session language 从 definition_json 实时渲染，避免英语会话拿到 onboarding 烤进去的中文头部。
         persona.is_complete = True
         return persona
 
@@ -156,7 +154,7 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
         await db.rollback()
         persona = await _dual_write()
         await db.commit()
-    # onboarding 首次完成时一次性建出 5 套系统预设对话（companion/developer/pm/copywriter/language_teacher）；幂等。
+    # onboarding 首次完成时一次性建出 5 套系统预设对话；幂等。
     await ensure_system_conversations_for_user(db, persona.user_id)
     return persona
 
@@ -220,7 +218,6 @@ async def get_onboarding_state(db: AsyncSession, user_id: int) -> dict[str, Any]
     draft = load_persona_definition(persona)
     next_step = await _next_onboarding_step(db, user_id, persona, draft)
     if next_step is None:
-        # 用户资料均可跳过，且完成后可单独遗忘；缺失资料不能重启 onboarding。
         return _state({}, None, True)
     if not persona.is_complete:
         return _state(draft, next_step, False)
@@ -237,7 +234,6 @@ async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, va
         _validate_birthday(value)
     persona = await get_or_create_persona(db, user_id)
     if persona.is_complete:
-        # 后置阶段字段仍允许在此提交，详见单 PUT 双写契约
         if field.startswith("user_"):
             if value and value.strip():
                 await record_user_profile(
@@ -257,8 +253,7 @@ async def submit_onboarding_field(db: AsyncSession, user_id: int, field: str, va
             else:
                 draft.pop(field, None)
             persona.definition_json = json.dumps(draft, ensure_ascii=False)
-            # 音色是最后一项必需资料：只在本次写入使引导由未完成变为完成时，与草稿同事务保存初次问候意图；
-            # 已完成状态下的修改不会触发。
+            # 音色是最后一项必需资料：只在本次写入使引导由未完成变为完成时才同事务保存初次问候意图，已完成后的修改不触发。
             completed = pending_step == "voice" and bool(draft.get("voice"))
             if completed:
                 await enqueue_first_greeting(db, user_id)

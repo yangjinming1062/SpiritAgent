@@ -32,7 +32,7 @@ _CALL_TIMEOUT_S = 30.0
 _MACOS_SHELL_APP_NAMES = frozenset({"finder", "dock"})
 _MODIFIER_KEYS = frozenset({"cmd", "shift", "option", "ctrl", "fn"})
 
-# cua-driver 子进程只继承运行所需的变量，Desktop JWT、Backend URL 与 safeStorage 密文不进入其进程树。
+# 子进程不继承 JWT/Backend URL/safeStorage 密文。
 _CUA_DRIVER_SAFE_ENV_EXACT = frozenset(
     {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TMPDIR"},
 )
@@ -79,10 +79,7 @@ def _cua_driver_command() -> str:
 
 
 def cua_driver_binary_available() -> bool:
-    """实际运行 ``cua-driver --version`` 确认二进制能在本机执行。
-
-    只缓存成功结果：首次启动时 Gatekeeper 校验等瞬时失败不会让能力在进程生命周期内一直不可用。
-    """
+    """实际跑 --version 确认可执行；只缓存成功结果。"""
     global _driver_verified
     if _driver_verified:
         return True
@@ -119,11 +116,7 @@ def _parse_elements(
     snapshot_id: Any,
     window_id: int,
 ) -> tuple[list[UIElement], dict[int, dict[str, Any]]]:
-    """解析元素与按元素操作时的寻址参数。
-
-    cua-driver 不接受裸 element_index：优先用元素自带的 element_token（它已携带窗口与快照，不能再附带
-    window_id / element_index），否则用 element_index + 同一快照的 snapshot_id + window_id。
-    """
+    """寻址优先 element_token，否则 element_index+snapshot_id+window_id。"""
     elements: list[UIElement] = []
     refs: dict[int, dict[str, Any]] = {}
     for raw in raw_elements:
@@ -208,7 +201,7 @@ def _result_message(out: dict[str, Any]) -> str:
 def _is_closed_session_error(exc: BaseException) -> bool:
     if isinstance(exc, McpError):
         return exc.error.code == CONNECTION_CLOSED and exc.error.message == "Connection closed"
-    # anyio 的流关闭异常：mcp 的传输层依赖 anyio，这里按类名识别，不直接依赖该传递依赖。
+    # 按类名识别 anyio 流关闭异常，不直接依赖传递依赖。
     return type(exc).__name__ in {"ClosedResourceError", "BrokenResourceError", "EndOfStream"} or isinstance(
         exc,
         BrokenPipeError | EOFError,
@@ -255,7 +248,7 @@ class _AsyncBridge:
         self._thread = self._loop = None
         if loop is None or thread is None or not thread.is_alive():
             return
-        # 先取消并等待残留任务（如超时后仍在清理的会话），让 stdio_client 终止子进程，再停止循环。
+        # 先取消残留任务再停循环。
         if (fut := safe_schedule_threadsafe(_cancel_pending_tasks(), loop)) is not None:
             try:
                 fut.result(timeout=_STOP_TIMEOUT_S)
@@ -281,8 +274,7 @@ class _SessionHost:
 
 
 async def _hold_session(ready: asyncio.Future[ClientSession], stop: asyncio.Event) -> None:
-    # anyio 要求 stdio_client 与 ClientSession 在进入它们的同一任务内退出，因此整个会话由这一个任务持有；
-    # 退出时 stdio_client 关闭 stdin，子进程超时未退出再终止。
+    # anyio 要求同一任务内退出；stdio_client 关 stdin 后再终止子进程。
     params = StdioServerParameters(command=_cua_driver_command(), args=_CUA_DRIVER_ARGS, env=_build_cua_driver_env())
     try:
         async with stdio_client(params) as (read, write), ClientSession(read, write) as session:
@@ -292,7 +284,7 @@ async def _hold_session(ready: asyncio.Future[ClientSession], stop: asyncio.Even
             ready.set_result(session)
             await stop.wait()
     except Exception as e:
-        # anyio 任务组把失败包成 ExceptionGroup，取出根因以便给出可读的错误。
+        # ExceptionGroup 取根因。
         while isinstance(e, ExceptionGroup) and e.exceptions:
             e = e.exceptions[0]
         if not ready.done():
@@ -386,10 +378,10 @@ class CuaDriverBackend(ComputerUseBackend):
     def __init__(self) -> None:
         self._bridge = _AsyncBridge()
         self._session = _CuaDriverSession(self._bridge)
-        # 并发 computer_use 调用共享目标窗口；锁保证输入动作读到的 pid 与 window_id 来自同一次选择。
+        # 锁保证 pid/window_id 同次选择。
         self._state_lock = threading.Lock()
         self._target: _Window | None = None
-        # 最近一次 get_window_state 快照里各元素的寻址参数；新快照会让旧 token 失效。
+        # 新快照使旧 token 失效。
         self._element_refs: dict[int, dict[str, Any]] = {}
 
     def start(self) -> None:
@@ -415,7 +407,7 @@ class CuaDriverBackend(ComputerUseBackend):
         raw = self._query("list_windows", {"on_screen_only": True})["structuredContent"].get("windows")
         if not isinstance(raw, list):
             raise RuntimeError("cua-driver list_windows returned no window list")
-        # z_index 越大越靠前；null 表示没有堆叠信息，排在最后并保持原顺序。
+        # z_index 大者靠前；null 排最后。
         ordered = sorted(
             (w for w in raw if isinstance(w, dict)),
             key=lambda w: w["z_index"] if isinstance(w.get("z_index"), int) else float("-inf"),
@@ -471,8 +463,7 @@ class CuaDriverBackend(ComputerUseBackend):
         return self._capture_window(target, mode)
 
     def _capture_window(self, target: _Window, mode: str) -> CaptureResult:
-        # cua-driver 的 get_window_state 同时返回元素树与窗口截图（不绘制编号）；vision 不列出元素，ax 跳过截图。
-        # 每次调用都会生成新快照，因此 vision 截图后同样刷新元素寻址参数。
+        # get_window_state 返回元素树+截图；每次调用刷新寻址参数。
         args: dict[str, Any] = {"pid": target["pid"], "window_id": target["window_id"]}
         if mode == "ax":
             args["include_screenshot"] = False
@@ -565,7 +556,7 @@ class CuaDriverBackend(ComputerUseBackend):
         button: str = "left",
         modifiers: list[str] | None = None,
     ) -> ActionResult:
-        # cua-driver 在 macOS 上只支持前台拖拽（会移动用户的真实指针并前置窗口），本后端不启用前台投递。
+        # macOS 仅前台拖拽，本后端不启用。
         return ActionResult(ok=False, action="drag", message="Dragging is not supported on macOS.")
 
     def scroll(
@@ -648,7 +639,7 @@ class CuaDriverBackend(ComputerUseBackend):
             return ActionResult(ok=False, action="focus_app", message=f"No on-screen window found for app '{app}'.")
         target = windows[0]
         self._set_target(target)
-        # 本后端不调用 cua-driver 的前置窗口接口：输入按 window_id 投递，不打断用户当前的前台应用。
+        # 按 window_id 投递，不抢前台。
         suffix = (
             "Raising windows is not supported on macOS; input is sent to the window in the background."
             if bring_to_front

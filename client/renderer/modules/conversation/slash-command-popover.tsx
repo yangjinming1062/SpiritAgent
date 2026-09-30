@@ -13,15 +13,7 @@ export interface SlashCommandPopoverProps {
   onHighlight: (index: number) => void
 }
 
-/**
- * 输入框下方浮起的命令自动补全弹层：
- * - 显示父组件传入的候选命令
- * - 键盘流：方向键改 highlight、Tab/Enter 选中，均由父组件处理
- * - 鼠标 hover / click 同样回调
- *
- * 弹层不直接控制选中状态 —— ``highlightedIndex`` 与 ``onSelect`` 由父组件管理，便于在弹层外
- * 监听 Tab / Enter 等快捷键。
- */
+/** 输入框下方的命令自动补全弹层：展示父组件候选；键盘（方向键/Tab/Enter）与鼠标 hover/click 均回调父组件。弹层不持有选中状态——``highlightedIndex`` 与 ``onSelect`` 由父组件管理，便于在弹层外监听快捷键。 */
 export function SlashCommandPopover({
   items,
   highlightedIndex,

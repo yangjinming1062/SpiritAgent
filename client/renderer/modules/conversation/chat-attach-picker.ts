@@ -6,8 +6,7 @@ import { basename } from './chat-path'
 import type { PendingAttachment } from './chat-store'
 import { ensureChatSession } from './session-list-store'
 
-// 附件扩展名分拣：视频容器与后端白名单一致（mp4/mov，供应商实测 webb 被拒）；
-// 图片同步支持 HEIC/HEIF（iPhone 截图）/TIFF/AVIF/JXL（next-gen）。
+// 附件扩展名分拣：视频容器与后端白名单一致（mp4/mov，供应商实测 webb 被拒）；图片同步支持 HEIC/HEIF（iPhone 截图）/TIFF/AVIF/JXL（next-gen）。
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?|avif|jxl)$/i
 const VIDEO_EXT = /\.(mp4|mov)$/i
 
@@ -110,8 +109,7 @@ export async function pickVideo(setPending: SetPending): Promise<void> {
   }
 }
 
-// 视频附加即上传（本地后端 <1s）：本地模式下超 50MB 会被后端 413 拒绝并在 error 里给出指引。
-// 结果只回填本次加入的附件对象：切换会话、移除或重新选择后，迟到结果作废。
+// 视频附加即上传（本地后端 <1s）：本地模式下超 50MB 会被后端 413 拒绝并在 error 里给出指引。结果只回填本次加入的附件对象：切换会话、移除或重新选择后，迟到结果作废。
 export async function attachVideoFile(path: string, setPending: SetPending): Promise<void> {
   const fileName = basename(path)
   const uploading: PendingAttachment = { type: 'video', fileName, path, status: 'uploading' }

@@ -1,5 +1,4 @@
-//! SpiritAgent Setup 的 Tauri 入口；安装期工作集中于 `bootstrap.rs`，通过 `run()` 注册的命令调用。
-//! windows_subsystem 必须写在二进制 crate 的 main.rs，写在 lib 不会作用到链接期。
+//! SpiritAgent Setup 的 Tauri 入口；安装期工作集中于 `bootstrap.rs`。
 
 mod bootstrap;
 mod embedded_payload;
@@ -21,7 +20,7 @@ where
         .any(|a| a.as_ref() == "--reinstall" || a.as_ref() == "--repair")
 }
 
-/// 进程级安装状态。bootstrap 为单次流程；`Arc` 便于命令处理器克隆持有。
+/// 进程级安装状态；`Arc` 便于命令处理器克隆持有。
 pub struct AppState {
     pub bootstrap: Mutex<Option<bootstrap::BootstrapHandle>>,
 }
@@ -47,8 +46,7 @@ pub fn run() {
         .setup(move |app| {
             use tauri::Manager;
 
-            // macOS 已安装时直接拉起桌面端并退出。窗口 `"visible": false` 推迟显形，避免闪烁。
-            // Windows 由快捷方式启动桌面端，此分支仅限 macOS。`--reinstall` / `--repair` 强制进入修复安装。
+            // 仅 macOS 走已安装快路径；`--reinstall`/`--repair` 强制进入安装 UI。
             if cfg!(target_os = "macos") && !force_setup {
                 if bootstrap::spiritagent_is_installed() {
                     match bootstrap::spawn_installed_desktop() {

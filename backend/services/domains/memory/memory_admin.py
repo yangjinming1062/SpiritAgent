@@ -18,7 +18,6 @@ from .memory_store import (
     scope_filter,
 )
 
-# 界限：列表分页上限与编辑时的长度上限
 _LIST_DEFAULT_LIMIT = 100
 _LIST_MAX_LIMIT = 500
 

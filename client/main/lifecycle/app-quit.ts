@@ -21,10 +21,7 @@ export interface AppQuit {
   markQuitting: () => void
 }
 
-/**
- * 退出链：before-quit 置退出标志、释放托盘与快捷键、尽力上云并落盘日志；
- * will-quit 有界等待 Runner 收尾后 app.exit(0)，避免 fire-and-forget 留下孤儿子进程，超时仍可能残留。
- */
+/** 退出链：before-quit 置退出标志、释放托盘与快捷键、尽力上云并落盘日志；will-quit 有界等待 Runner 收尾后 app.exit(0)，避免孤儿子进程，超时仍可能残留。 */
 export function installAppQuit(deps: AppQuitDeps): AppQuit {
   let quitting = false
   let willQuitCleanupDone = false
@@ -66,8 +63,7 @@ export function installAppQuit(deps: AppQuitDeps): AppQuit {
   })
 
   deps.app.on('window-all-closed', () => {
-    // 常驻托盘：关窗不退出。真正退出由托盘/菜单的 app.quit → before-quit/will-quit 驱动；
-    // 这里不能再调 app.quit，否则会重入清理并双跑 runner stop。
+    // 常驻托盘：关窗不退出；真正退出由托盘/菜单的 app.quit 驱动，这里不能再调 app.quit，否则重入清理并双跑 runner stop。
   })
 
   return {

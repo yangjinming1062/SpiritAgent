@@ -302,9 +302,7 @@ export function registerSpriteIpc({ deps, ipcMain }: { deps: SpriteIpcDeps; ipcM
     }
   })
 
-  // 拖拽过程中，当光标越过视口跨到另一块显示器时，渲染层会上报超出视口的指针坐标——
-  // 此处把窗口贴到光标所在的显示器上，并返回两个窗口坐标与光标点，
-  // 让渲染层重映射精灵位置、并判断最新指针坐标是窗口跳转前还是跳转后采样。
+  // 拖拽跨屏：光标越过视口到另一显示器时窗口贴到光标所在显示器，返回两个窗口坐标与光标点，供渲染层重映射位置并判断指针采样时序。
   ipcMain.handle(IPC.invoke.spriteMoveToCursorDisplay, async () => {
     const win = getSpriteWindow()
 

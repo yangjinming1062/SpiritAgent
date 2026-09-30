@@ -1,11 +1,4 @@
-// 生活空间右栏：根据 living-view 切换内容。
-//
-// - chat: ChatPanel（生活空间变体的对话 + 输入；与工作台共用）
-// - appearance: AppearancePage（衣柜：着装与动作管理）
-// - moments / diary: 后端直连两页
-// - channels: ChannelsPage（单文件页）
-// - scene: ScenePage（场景库 / 详情 / 创建三个视图）
-// - settings: LivingSettings（分区胶囊：角色/音色/交互/主题/快捷键/关于）
+// 生活空间右栏：根据 living-view 切换内容（chat 共用 ChatPanel；appearance 衣柜；moments/diary 后端直连；channels 单文件页；scene 库/详情/创建；settings 分区胶囊）。
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
@@ -32,8 +25,7 @@ import { MomentsPage } from './moments-page'
 import { ScenePage } from './scene-page'
 import { LivingSettings } from './settings/living-settings'
 
-// 视图 → 渲染组件的闭包表（`chat` 走 ChatStage 局部组件，其他直接挂页）。
-// Record<LivingView, …> 强制 LivingView 出现新成员时报缺 key 错。
+// 视图 → 渲染组件闭包表（`chat` 走 ChatStage 局部组件）；Record<LivingView,…> 强制新成员时报缺 key 错。
 const VIEW_RENDERERS: Record<LivingView, () => React.JSX.Element> = {
   appearance: () => <AppearancePage />,
   channels: () => <ChannelsPage />,

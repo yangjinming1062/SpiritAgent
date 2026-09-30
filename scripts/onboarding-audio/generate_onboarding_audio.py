@@ -9,7 +9,7 @@ from pathlib import Path
 
 from openai import AsyncOpenAI
 
-# 请求体对齐 backend/services/infrastructure/llm/providers/mimo/tts.py 中 MiMoTTSProvider.synthesize() 的目录音色、无语音风格路径，使预制音频与运行时同音色合成的参数一致（云端合成不保证字节相同）。用法见 scripts/onboarding-audio/README.md。
+# 请求体对齐 backend MiMoTTSProvider.synthesize() 的目录音色路径；用法见 scripts/onboarding-audio/README.md。
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 MANIFEST_PATH = REPO_ROOT / "scripts" / "onboarding-audio" / "manifest.json"
@@ -22,7 +22,7 @@ SYNC_CONCURRENCY = 10
 
 
 def _validate_mp3_sync(path: Path) -> bool:
-    # MPEG 音频帧同步字：0xFF 后跟 0xFB / 0xFA / 0xF3 / 0xF2。
+    # MPEG 帧同步字：0xFF 后跟 0xFB/0xFA/0xF3/0xF2。
     head = path.read_bytes()[:4]
     return len(head) >= 2 and head[0] == 0xFF and head[1] in (0xFB, 0xFA, 0xF3, 0xF2)
 
@@ -93,7 +93,7 @@ def _check(manifest: dict, output_dir: Path) -> int:
 
     missing = expected_tags - actual_tags
     extras = actual_tags - expected_tags
-    # 同步字检查只在文件齐全时有意义；缺失文件已经独立判失败。
+    # 同步字检查仅在文件齐全时有意义；缺失已独立判失败。
     if missing:
         bad = []
 

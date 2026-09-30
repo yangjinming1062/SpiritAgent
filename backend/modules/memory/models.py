@@ -10,7 +10,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 if TYPE_CHECKING:
     from modules.auth import User
 
-# memories.embedding 列宽的唯一事实源；更换嵌入维度时须同步迁移
+# memories.embedding 列宽的唯一事实源；更换维度须同步迁移
 MEMORY_EMBEDDING_DIM = 1536
 
 

@@ -90,8 +90,7 @@ const nextId = (): string => `m${++idCounter}`
 let bubbleTimer: ReturnType<typeof setTimeout> | null = null
 let bubbleGeneration = 0
 let flushTimer: ReturnType<typeof setTimeout> | null = null
-// 最近一次已提交批对应的用户气泡 id（工作台合并后只剩首条，陪伴会话为全部连发气泡）。
-// message.persisted 的 message_ids 只按本集合绑定，失败回合遗留的孤儿气泡不会被下一轮错绑。
+// 最近一次已提交批对应的用户气泡 id（工作台合并后只剩首条）；message.persisted 只按本集合绑定，失败回合孤儿气泡不会被下一轮错绑。
 let submittedBubbleIds: Set<string> = new Set()
 let historyEditRevision = 0
 
@@ -102,8 +101,7 @@ export const $chatStreamingTick = atom<number>(0)
 export const $chatSessionId = atom<string | null>(storedString(CHAT_SESSION_ID_KEY))
 // 放在 chat-store：本模块要读它，而 session-list-store 已依赖 chat-store，反向导入会成环。
 export const $companionSessionId = atom<string | null>(null)
-// IM 守卫与语音入口的权威 kind 源：写值由 hydrate 把服务端 info.kind 注入。
-// 与 PROTOCOL「会话种类与历史修改」 对齐：special / standard / im。
+// IM 守卫与语音入口的权威 kind 源，由 hydrate 注入服务端 info.kind（special / standard / im）。
 export type ChatSessionKind = 'im' | 'special' | 'standard'
 
 function normalizeChatSessionKind(raw: unknown): ChatSessionKind {
@@ -176,7 +174,6 @@ interface ChatUndoDraft {
 // 撤回落草稿总线：undo 成功后由 session-list-store 写入；多窗口订阅需按 session_id 过滤，避免 A 撤回落到 B 的输入框。
 export const $chatDraftFromUndo = atom<ChatUndoDraft | null>(null)
 
-// 当前会话独立参数配置（温度、压缩阈值、思考程度等）
 interface SessionSettings {
   temperature?: number
   context_compression_threshold?: number
@@ -220,7 +217,6 @@ export function updateSessionSetting<K extends keyof SessionSettings>(key: K, va
   })
 }
 
-// 上下文使用量状态跟踪（已用 token、总容量、压缩阈值节点等）
 export interface SessionContextUsage {
   promptTokens: number
   completionTokens: number
@@ -265,7 +261,6 @@ export function resetSessionContextUsage(contextLimit?: number): void {
   })
 }
 
-// 待发送附件（图片 / 视频 / 文件 / 文件夹四种）
 export type PendingAttachment =
   | { type: 'image'; value: string; fileName?: string }
   | {
@@ -287,8 +282,7 @@ export type PendingAttachment =
       path: string
     }
 
-// 伙伴主动说出的瞬时消息，在聊天面板收起时以气泡形式浮出。说完后清空。
-// sessionId 存在时点击气泡会切到该会话（媒体送达提示跳转用）。
+// 伙伴主动说出的瞬时消息，聊天面板收起时以气泡浮出，说完清空；sessionId 存在时点击切到该会话（媒体送达跳转用）。
 interface ProactiveBubbleState {
   text: string
   sessionId?: string
@@ -296,8 +290,7 @@ interface ProactiveBubbleState {
 
 export const $proactiveBubble = atom<ProactiveBubbleState | null>(null)
 
-// 外部投喂（DESIGN「拖拽与直接交互」）：精灵拖入或经主进程信箱转交的文件路径推到此处，
-// 对话输入订阅后全部并入待发附件路径。
+// 外部投喂（DESIGN「拖拽与直接交互」）：精灵拖入或经主进程信箱转交的文件路径，对话输入订阅后并入待发附件。
 interface PendingExternalAttachment {
   paths: string[]
   nonce: number
@@ -335,9 +328,8 @@ export function setChatSession(id: string | null): void {
   $chatSessionKind.set('standard')
 }
 
-// 用从后端加载的会话替换面板的聊天记录。
+// 用从后端加载的会话替换面板的聊天记录；其他窗口可能正在连发或等待提交确认，历史修订不能删掉未落库的输入。
 export function hydrateEditedChatMessages(messages: SessionMessage[]): void {
-  // 其他窗口可能正在连发或等待提交确认；历史修订不能删掉未落库的输入。
   historyEditRevision++
   const pendingIds = new Set($pendingPromptBatch.get().map(item => item.messageId))
 
@@ -386,7 +378,6 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
   }
 
   for (const m of messages) {
-    // 过滤底层工具执行结果（role === 'tool'），避免将 raw JSON 结果作为气泡显示
     if (m.role === 'tool') {
       continue
     }
@@ -402,7 +393,7 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
 
     const reasoningContent = typeof m.reasoning === 'string' ? m.reasoning : ''
 
-    // 无正文无媒体的助手行（工具中间帧）不单独占气泡；其推理过程并到下一可见助手行。
+    // 无正文无媒体的助手行（工具中间帧）不单独占气泡，推理并到下一可见助手行。
     if (m.role === 'assistant' && !companionBubbles?.length && !textContent.trim() && !m.media?.length) {
       if (reasoningContent.trim()) {
         pendingReasoning.push(reasoningContent)
@@ -418,7 +409,7 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
     totalChars +=
       m.content_type === 'companion_reply' && typeof m.content === 'string' ? m.content.length : textContent.length
 
-    // 结构化助手回复逐泡呈现；陪伴用户行按空行拆分，与实时呈现对齐。
+    // 陪伴用户行按空行拆分（与实时呈现对齐），工作台整段阅读不拆。
     const canSplit = !m.subtype && m.role === 'user' && splitUserBubblesEnabled()
     // 后台视频送达的 system 行正文是给模型的任务记录，与实时送达一致只显示媒体卡。
     const hideText = m.role === 'system' && m.subtype === 'status_media'
@@ -447,8 +438,7 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
         timestamp: m.timestamp
       })
 
-      // 拆分后附件只挂首个气泡：附件伴随连发的首条消息发出，合并行里已无法逐段归属，
-      // 每段都挂会重复渲染媒体卡。不拆分时首段即唯一段。
+      // 拆分后附件只挂首个气泡（附件伴随连发首条发出，每段都挂会重复渲染媒体卡）。
       bodies[id] = {
         text: segment,
         editableText: m.role === 'user' ? textContent : undefined,
@@ -473,15 +463,11 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
 
   if (info) {
     hydrateSessionSettings(info)
-    // 缺字段/未知值回落 standard，与 setChatSession 兜底一致——避免 IM 守卫在
-    // hydrate 完成前的瞬间误判。无 info 的调用（撤回 / 清空 / 压缩后重水合）
-    // 沿用当前 kind：这些都是本会话内操作，服务端 kind 未变，重置会解除 IM 只读。
+    // 缺字段/未知值回落 standard 以免 IM 守卫误判；无 info 的本会话内操作（撤回/清空/压缩重水合）沿用当前 kind，重置会解除 IM 只读。
     $chatSessionKind.set(normalizeChatSessionKind(info.kind))
   }
 
-  // 估算 Token 占用（无精确 usage 时的兜底估算：~3 字符/Token）
-  // 先清零分项，避免切换会话后残留上一会话的 prompt/completion。
-  // 无 info 的本会话重水合沿用当前上下文上限，不回落默认值。
+  // 估算 Token 占用（~3 字符/Token）；先清零分项避免切换会话残留，无 info 的本会话重水合沿用当前上下文上限。
   const approxTokens = Math.round(totalChars / 3)
   const contextLimit = info ? info.context_window || DEFAULT_CONTEXT_LIMIT : $sessionContextUsage.get().contextLimit
   resetSessionContextUsage(contextLimit)
@@ -519,9 +505,7 @@ function extractText(m: SessionMessage): string {
     .trim()
 }
 
-// 多模态用户行里的 input_image/input_video parts 还原为类型化附件列表，
-// 供气泡渲染媒体卡；纯文本行与无附件行返回 undefined。被清理的视频行只剩
-// [视频已清理] 文本 part，天然落不进附件列表。
+// 多模态用户行的 input_image/input_video parts 还原为类型化附件供气泡渲染；清理后的视频只剩文本 part，落不进附件列表。
 function extractUserAttachments(m: SessionMessage): ChatAttachment[] | undefined {
   if (m.content_type !== 'multimodal_v1' || typeof m.content !== 'string') {
     return undefined
@@ -633,8 +617,7 @@ function isPositiveInt(value: unknown): value is number {
   return typeof value === 'number' && Number.isInteger(value) && value > 0
 }
 
-// 陪伴会话与后端 bubble.break 的助手拆分对称：连发用户消息保留独立气泡、
-// 持久化行里的空行段落拆回多个气泡。工作台整段阅读不拆，避免误拆用户粘贴的多段内容。
+// 陪伴会话连发用户消息保留独立气泡（与 bubble.break 助手拆分对称），工作台整段阅读不拆，避免误拆粘贴的多段内容。
 function splitUserBubblesEnabled(): boolean {
   const id = $chatSessionId.get()
 
@@ -642,10 +625,7 @@ function splitUserBubblesEnabled(): boolean {
 }
 
 export function bindTrailingUserMessageIds(ids: number[]): void {
-  // 活路径 push 时没有后端 id；只绑本次提交的气泡（submittedBubbleIds），
-  // 避免把失败回合遗留的孤儿气泡错绑到新行——错绑会让撤回按钮截断别人的消息。
-  // 陪伴会话连发不合并时，同一 DB 行拆成多个气泡：超出 id 数的气泡挂最后一个 id，
-  // 与 hydrate 后同行的每个气泡都带同一 id、undo 从该行截断的语义一致。
+  // 只绑本次提交的气泡，失败回合孤儿气泡不被下一轮错绑（错绑会让撤回截断别人的消息）；连发拆泡时超出 id 数的气泡挂最后一个 id，与 hydrate 同行同 id 语义一致。
   const validIds = ids.filter(isPositiveInt)
 
   if (validIds.length === 0) {
@@ -838,8 +818,7 @@ export function submitPendingBatch(): void {
   const pendingRows = list.filter(item => pendingIds.has(item.id))
   const first = pendingRows[0]
 
-  // 工作台：连发的气泡合回首条再提交（整段阅读）。
-  // 陪伴会话：每条连发保留独立气泡，与伙伴的多气泡节奏对称（DB 仍合并为一行）。
+  // 工作台连发合回首条再提交；陪伴会话每条连发保留独立气泡（DB 仍合并为一行）。
   if (first && !splitUserBubblesEnabled()) {
     const bodies = $chatMessageBodies.get()
     const displayAttachments = pendingRows.flatMap(item => bodies[item.id]?.attachments ?? [])
@@ -952,7 +931,6 @@ export function beginAssistantMessage(): void {
   const lastItem = list[list.length - 1]
   const lastBody = lastItem ? $chatMessageBodies.get()[lastItem.id] : undefined
 
-  // 复用无内容的流式气泡，避免出现空白占位。
   if (lastItem?.role === 'assistant' && lastBody?.streaming) {
     if (!lastBody.text.trim() && !lastBody.toolName && !lastBody.error && !lastBody.cancelled) {
       return
@@ -999,7 +977,7 @@ function patchLastAssistant(patch: (body: ChatMessageBody) => ChatMessageBody): 
 }
 
 export function appendAssistantDelta(text: string): void {
-  // 仅更新当前流式消息 body，不改动 list 引用；首个 delta 过滤前导空行，避免撑大气泡上方
+  // 仅更新流式 body 不动 list 引用；首个 delta 过滤前导空行，避免撑大气泡上方。
   patchLastAssistant(body => {
     const streamingText = (body.streamingText ?? body.text) + text
 
@@ -1059,7 +1037,6 @@ export function finalizeAssistantMessage(text?: string, media?: ChatMediaItem[],
   const finalReasoning =
     (typeof reasoning === 'string' && reasoning.trim() ? reasoning : body.reasoning)?.trim() || undefined
 
-  // 助手消息为空且无推理/工具/错误/取消/媒体时剪掉，避免空白气泡。
   const isEmpty =
     !finalStr.trim() &&
     !finalReasoning?.trim() &&

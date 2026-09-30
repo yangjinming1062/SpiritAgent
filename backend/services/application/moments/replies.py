@@ -1,8 +1,4 @@
-"""片刻评论的精灵回复：用户评论一条片刻后，后台生成一句第一人称回应并写回评论区。
-
-回复属用户发起交互的响应，不受打扰档位拦截；它不进主对话、不发 companion.message，
-只写 role=companion 评论行并经 ``companion.moment.comment`` 事件刷新信息流。
-"""
+"""片刻评论的精灵回复：用户评论后后台生成一句第一人称回应写回评论区。属用户发起交互的响应，不受打扰档位拦截；不进主对话、不发 companion.message，经 ``companion.moment.comment`` 事件刷新信息流。"""
 
 import asyncio
 

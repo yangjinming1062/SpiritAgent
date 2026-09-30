@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""构建期门禁：刚打出的 runner wheel 必须满足 `server.py` 的本地包导入。
-
-质量门放在发布前，而不是安装/更新时回滚。wheel 与 server.py 不一致（例如
-`from utils import CURRENT_SKILL_SCOPE` 而 wheel 里没有 `utils/memory_scope`）
-应在 `uv build` 之后、staging/安装器打包之前直接失败。
-
-用法：
-    python scripts/check_runner_facade.py
-    python scripts/check_runner_facade.py --wheel runner/dist/spirit_agent-1.1.0-py3-none-any.whl
-"""
+"""构建期门禁：runner wheel 必须满足 server.py 的本地包导入（失败应在打包前暴露，不在安装期回滚）。"""
 
 import argparse
 import shutil
@@ -17,7 +8,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-# 在隔离 venv 中执行：把 wheel 装进去，再对 staged/仓库 server.py 做导入面校验。
+# 隔离 venv 装入 wheel 后校验 staged/仓库 server.py 的导入面。
 _FACADE_CHECK = r"""
 import ast, importlib, importlib.util, sys
 from pathlib import Path

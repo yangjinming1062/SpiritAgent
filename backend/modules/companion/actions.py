@@ -1,8 +1,4 @@
-"""动作资产 ORM：pack、action、提案与播放事实。
-
-三层身份：outfit_id → pack_id（冻结外观包）→ action_id。
-系统槽位是产品语义（idle/drag/walk_left/walk_right），动态动作不可占用。
-"""
+"""动作资产 ORM：pack、action、提案与播放事实。三层身份 outfit_id → pack_id（冻结外观包）→ action_id；系统槽位见 SYSTEM_SLOTS，动态动作不可占用。"""
 
 import hashlib
 from datetime import datetime
@@ -24,7 +20,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 # 系统动作槽位：产品语义占位，动态动作不可占用或覆盖。
 SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag", "walk_left", "walk_right", "peek_left", "peek_right")
-# 发布与激活的必需槽位：首包生成集合；缺失时不得 ready。
+# 发布与激活的必需槽位；缺失时不得 ready。
 REQUIRED_SYSTEM_SLOTS: tuple[str, ...] = ("idle", "drag")
 
 
@@ -46,12 +42,7 @@ def make_action_reference_hash(
 
 
 class CompanionActionPack(ModelBase, TimestampMixin):
-    """单外观冻结动作包。
-
-    动作按外观快照隔离；生成任务只向当前 pack 追加动作。
-    catalog_version CAS 推进，提供目录不可变快照。
-    appearance_epoch 为最近一次激活的用户级外观代次，重新穿回同一包也会推进。
-    """
+    """单外观冻结动作包；动作按外观快照隔离，生成任务只向当前 pack 追加。catalog_version CAS 推进提供不可变目录快照；appearance_epoch 为激活代次（重穿同一包也推进）。"""
 
     __tablename__ = "companion_action_packs"
 
@@ -84,11 +75,7 @@ class CompanionActionPack(ModelBase, TimestampMixin):
 
 
 class CompanionAction(ModelBase, TimestampMixin):
-    """单个动作条目：系统槽位或动态动作。
-
-    内聚元数据、生成状态与生效视频素材参数。
-    metadata_revision 在名称/用途等元信息变更时递增，不重新生成视频。
-    """
+    """单个动作条目（系统槽位或动态动作）；metadata_revision 仅元信息变更递增，不重生成视频。"""
 
     __tablename__ = "companion_actions"
     __table_args__ = (
@@ -117,7 +104,6 @@ class CompanionAction(ModelBase, TimestampMixin):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"))
     metadata_revision: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
 
-    # 生成状态与阶段（制作中或就绪）
     status: Mapped[str] = mapped_column(
         String(16),
         default="queued",
@@ -137,10 +123,9 @@ class CompanionAction(ModelBase, TimestampMixin):
     pose_path: Mapped[str | None] = mapped_column(String(2048), nullable=True)
     script_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     result_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 动态动作的提案设计规格冻结；系统动作为空。
+    # 动态动作的设计规格冻结；系统动作为空。
     source_design_json: Mapped[str | None] = mapped_column(Text, nullable=True)
 
-    # 生效素材参数
     video_path: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     video_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     target_duration_seconds: Mapped[float] = mapped_column(Float, default=2.0, server_default=text("2.0"))
@@ -157,10 +142,7 @@ class CompanionAction(ModelBase, TimestampMixin):
 
 
 class ActionProposal(ModelBase, TimestampMixin):
-    """动作设计提案：语义指纹去重，评审结论与理由独立保存。
-
-    同时作为每日设计额度与近 7 天拒绝创意抑制的权威记录源，无需独立账本表。
-    """
+    """动作设计提案：语义指纹去重；同时是每日设计额度与近 7 天拒绝创意抑制的权威记录源。"""
 
     __tablename__ = "action_proposals"
     __table_args__ = (
@@ -184,7 +166,7 @@ class ActionProposal(ModelBase, TimestampMixin):
     )
     review_decision: Mapped[str | None] = mapped_column(String(16), nullable=True)
     review_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # 评审 approve 时刻：制作额度按批准日（用户本地日）结算，与受理日区分。
+    # approve 时刻：制作额度按批准日（用户本地日）结算，与受理日区分。
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, default=None)
     idempotency_key: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     action_id: Mapped[int | None] = mapped_column(Integer, nullable=True)

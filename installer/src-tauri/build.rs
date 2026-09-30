@@ -1,9 +1,7 @@
 use std::path::{Path, PathBuf};
 
 fn main() {
-    // 自包含安装器：把 ../payload/ 打包成单 zip 写入 OUT_DIR，
-    // 由 embedded_payload.rs 通过 include_bytes! 嵌入 SpiritAgent-Setup.exe。
-    // 运行时若 resource_dir/ 下找不到 payload/（单 exe 分发场景），解压这里嵌入的 zip。
+    // 打包 ../payload 为 OUT_DIR/payload.zip，由 embedded_payload.rs 嵌入单 exe
     let payload_src = PathBuf::from("../payload");
     let out_dir = std::env::var("OUT_DIR").expect("OUT_DIR set by cargo");
     let zip_path = PathBuf::from(&out_dir).join("payload.zip");
@@ -15,12 +13,12 @@ fn main() {
             "cargo:warning=spiritagent-bootstrap: ../payload not found; \
              embedded payload will be empty — single-exe distribution will fail"
         );
-        // 仍写入空 zip：include_bytes! 需要该文件存在；空负载由 `payload_zip_is_non_empty` 测试与运行时报错。
+        // 空 zip 也要写：include_bytes! 要求文件存在
         std::fs::File::create(&zip_path)
             .unwrap_or_else(|e| panic!("create empty payload.zip at {}: {e}", zip_path.display()));
     }
 
-    // Windows manifest：level="asInvoker"，避免安装器启发式要求 UAC 提权。
+    // asInvoker，避免启发式要求 UAC 提权
     #[cfg(target_os = "windows")]
     let attrs = {
         let manifest = include_str!("spiritagent-setup.manifest");
@@ -34,7 +32,7 @@ fn main() {
     tauri_build::try_build(attrs).expect("failed to run tauri-build");
 }
 
-/// 把 src 目录递归打包为 zip 写入 dst；arcname 用相对路径、POSIX 风格。
+/// 递归打包 src 为 zip；arcname 用相对 POSIX 路径。
 fn build_payload_zip(src: &Path, dst: &Path) {
     use std::fs::File;
     use std::io::Write;
@@ -43,7 +41,7 @@ fn build_payload_zip(src: &Path, dst: &Path) {
         std::io::Error::new(std::io::ErrorKind::Other, e)
     }
 
-    // 递归遍历：options 显式作为参数传入以避免 fn 捕获环境（E0434）。
+    // options 作参数传入，避免嵌套 fn 捕获环境（E0434）
     fn visit(
         dir: &Path,
         base: &Path,
@@ -66,7 +64,7 @@ fn build_payload_zip(src: &Path, dst: &Path) {
                 let bytes = std::fs::read(&path)?;
                 zip.write_all(&bytes).map_err(io_other)?;
             }
-            // 符号链接/特殊文件一律跳过，避免运行时 Windows 解压歧义
+            // 跳过符号链接/特殊文件，避免 Windows 解压歧义
         }
         Ok(())
     }

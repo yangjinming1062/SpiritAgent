@@ -1,6 +1,4 @@
-// 激活形象的种子图本地缓存：自备图参考图（头像种子 / 全身种子）由客户端在
-// 生成、确认与水合时写入并持久化，弹窗直接读本地缓存展示。
-// 原始 asset 路径入库，展示 URL 经 resolvePortraitUrl 解析。
+// 激活形象的种子图本地缓存（头像 / 全身种子）：生成、确认与水合时写入并持久化，弹窗直接读本地缓存；原始 asset 路径入库，展示 URL 经 resolvePortraitUrl 解析。
 
 import { atom } from 'nanostores'
 
@@ -97,10 +95,7 @@ function isStale(gen: number, epoch: number): boolean {
   return gen !== seedEpoch || epoch !== currentClearEpoch()
 }
 
-/**
- * 展示 URL 取值：显式 display 优先；raw 已清空则必须清空展示；
- * raw 仍在但解析失败时保留旧展示，避免闪断后自备图弹窗突然缺参考图。
- */
+/** 展示 URL 取值：显式 display 优先；raw 已清空则必须清空展示；raw 仍在但解析失败时保留旧展示，避免闪断后弹窗缺参考图。 */
 function resolveDisplayUrl(
   resolved: string | null,
   raw: string | null,
@@ -230,10 +225,7 @@ export function clearAvatarSeeds(avatarId: number | null = null): void {
   clearSeeds(avatarId)
 }
 
-/**
- * 确保本地缓存可用：已有展示 URL 时直接返回；有持久化原始路径时优先本地解析；
- * 仍缺失才向 avatar 接口补拉（状态水合，不是自备图参考图下发）。
- */
+/** 确保本地缓存可用：已有展示 URL 直接返回；有持久化原始路径优先本地解析；仍缺失才向 avatar 接口补拉（状态水合，不是参考图下发）。 */
 export function hydrateAvatarSeeds(): Promise<AvatarSeeds> {
   if (inflight) {
     return inflight
@@ -287,8 +279,7 @@ export function hydrateAvatarSeeds(): Promise<AvatarSeeds> {
         return memory
       }
 
-      // 无论飞行期间是否写入，服务端返回的种子路径在本地缺失时都必须补齐并持久化；
-      // 本地有更新的 raw/展示时优先保留本地，服务端明确返回空时亦不冲掉已有展示。
+      // 服务端种子路径在本地缺失时补齐并持久化；本地有更新的 raw/展示时优先保留，服务端明确返回空亦不冲掉已有展示。
       const mergedAssetUrl =
         currentPersisted.assetUrl || assetUrl || (memory.avatarUrl ? currentPersisted.assetUrl : null)
 

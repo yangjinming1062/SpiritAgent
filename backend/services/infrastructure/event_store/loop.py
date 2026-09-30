@@ -1,8 +1,4 @@
-"""WS 事件 outbox 存储回路：认领、重试、死信、LISTEN/NOTIFY 专线与投递确认。
-
-本模块不认识具体业务处理器：内部事件（如 companion.turn.request）的处理器由装配层显式注册，
-交付语义（原子认领、指数退避、超限死信）与事件表结构只在这里。
-"""
+"""WS 事件 outbox 存储回路：认领、重试、死信、LISTEN/NOTIFY 专线与投递确认。本模块不认识具体业务处理器；交付语义（原子认领、指数退避、超限死信）与事件表结构只在这里。"""
 
 import asyncio
 import contextlib
@@ -21,24 +17,17 @@ from services.infrastructure.desktop import connection
 
 logger = get_logger(__name__)
 
-# 每次批量认领的上限
 WS_EVENT_CLAIM_BATCH_SIZE = 100
-
-# 最大重试次数（超过即转入 FAILED 死信状态）
-MAX_OUTBOX_RETRIES = 5
-
-# 僵尸锁恢复超时（秒）
+MAX_OUTBOX_RETRIES = 5  # 超过即转入 FAILED 死信状态
 STALE_LOCK_TIMEOUT_SECONDS = 60
-
-# 进程唯一 Worker ID（用于原子锁追踪）
-WORKER_ID = f"worker-{secrets.token_hex(4)}"
+WORKER_ID = f"worker-{secrets.token_hex(4)}"  # 进程唯一，用于原子锁追踪
 
 InternalEventHandler = Callable[[int, dict], Coroutine[Any, Any, None]]
 
-# 需要进程内处理器的事件类型及其处理器；由装配层在应用导入期注册（bootstrap/registrations.py），先于事件回路启动。
+# 需要进程内处理器的事件类型及其处理器；由装配层在应用导入期注册（bootstrap/registrations.py），先于事件回路启动
 _handlers: dict[str, InternalEventHandler] = {}
 
-# 按 event_type → user 持有强引用，避免 spawn 的处理器任务运行到一半时被 GC（CPython bpo-46662）。
+# 按 event_type → user 持有强引用，避免 spawn 的处理器任务运行到一半时被 GC（CPython bpo-46662）
 _event_tasks: dict[str, dict[int, set[asyncio.Task]]] = {}
 
 

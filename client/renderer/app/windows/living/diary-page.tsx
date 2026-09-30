@@ -72,9 +72,7 @@ export function DiaryPage(): React.JSX.Element {
   const displayName = persona?.name || tRail.companionFallback
   const isToday = selectedDate === todayKey()
 
-  // 月份切换时若选中日期超出当月范围，则吸到该月首日；同时拉取当月数据。
-  // 冷启动默认视图可能是日记（hash/localStorage 持久化），hydrateAuth 的 IPC 往返
-  // 尚未完成时 authedApi 会以 unauth 静默跳过——等 auth 就绪再水合（authKind 变化重跑）。
+  // 月份切换时若选中日期超出当月范围则吸到该月首日，同时拉取当月数据。冷启动默认视图可能是日记（hash/localStorage 持久化），hydrateAuth 的 IPC 往返未完成时 authedApi 会以 unauth 静默跳过——等 auth 就绪再水合（authKind 变化重跑）。
   useEffect(() => {
     const cursorStart = cursorMonthStart(cursor)
     const cursorEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0)

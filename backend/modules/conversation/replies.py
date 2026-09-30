@@ -42,7 +42,7 @@ class MediaBubble(MediaBubbleInput):
     status: Literal["pending", "ready", "failed", "result_unknown"]
     url: str | None = Field(default=None, pattern=r"^companion-assets/\d+/[A-Za-z0-9._-]+$")
     error: str | None = None
-    # 服务端绑定信息不下发模型，也不由客户端决定归属。
+    # 服务端绑定，不下发模型也不由客户端决定归属。
     goal_id: str = Field(min_length=1, max_length=128)
     job_id: int | None = Field(default=None, gt=0)
 
@@ -93,7 +93,7 @@ class CompanionReply(BaseModel):
     )
 
     def validate_content(self, content: str) -> None:
-        """原文与交付态必须对应同一组气泡和演绎；供应商绑定与音频仅存在于交付态。"""
+        """原文与交付态须对应同一组气泡；供应商绑定与音频仅存在于交付态。"""
         source = CompanionReplyInput.model_validate_json(content)
         if len(source.root) != len(self.bubbles):
             raise ValueError("Reply content and delivery bubbles differ")

@@ -33,7 +33,6 @@ async def fork_conversation_from_message(
     if src.kind in (SPECIAL_KIND, IM_KIND):
         raise ForkNotAllowedError(f"该类型会话不可派生 (kind={src.kind!r})")
 
-    # 源消息必须属于该会话
     src_msg = (
         await db.execute(
             select(Message.id, Message.subtype).where(

@@ -13,11 +13,7 @@ export function BootFailureOverlay(): React.JSX.Element | null {
   const dict = useStrings()
   const overlayRef = useRef<HTMLDivElement>(null)
 
-  // 把全出血浮层注册为可交互区域，让 Retry 按钮在默认鼠标穿透的精灵窗口里
-  // 仍可点击——不注册的话，窗口的 setIgnoreMouseEvents(true, ...) 会在
-  // 失败态下吞掉所有点击。rect 是编译期常量（position: fixed; inset: 0），
-  // 因此跳过 getBoundingClientRect，直接返回视口——interactive-regions
-  // 在失败态期间会针对屏幕上的每个 mousemove 调用此函数。
+  // 把全出血浮层注册为可交互区域，让 Retry 按钮在默认鼠标穿透的精灵窗口里仍可点击（不注册则 setIgnoreMouseEvents 会吞掉所有点击）。rect 是编译期常量（fixed inset:0），直接返回视口——失败态期间每个 mousemove 都会调此函数。
   useInteractiveRegion('boot-failure', overlayRef, () => new DOMRect(0, 0, window.innerWidth, window.innerHeight))
 
   if (!error) {

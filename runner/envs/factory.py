@@ -49,7 +49,7 @@ def create_environment(spec: EnvironmentSpec) -> BaseEnvironment:
         )
     else:
         raise ValueError(f"Unknown environment type: {spec.env_type}. Use 'local' or 'ssh'")
-    # file_tools._file_ops 通过该标签将 local 路由到 NativeFileOperations；环境类自身不会设置，不补就漏掉 local 分支。
+    # local 标签供 file_ops 路由，缺则漏 local 分支。
     env.env_type = spec.env_type
     env.spec = spec
     return env
@@ -77,13 +77,12 @@ def _acquire_environment(task_id: str) -> BaseEnvironment:
             if (env := active_environments.get(task_id)) is not None and env.spec == spec:
                 return _lease(task_id, env)
         if env is not None:
-            # 进程检查回调会取进程表的锁，放在 env_lock 之外调用；租约与执行状态在 env_lock 内复核，
-            # 快路径只租出与当前配置一致的环境，因此这里判定空闲后不会再有调用拿到旧环境。
+            # 进程检查在 env_lock 外；锁内复核租约，空闲判定后不会再租出旧环境。
             processes_active = task_has_active_processes(task_id)
             with env_lock:
                 in_use = processes_active or env.in_use
                 if in_use and env.spec is not None and env.spec.target == spec.target:
-                    # 只改了初始目录或超时：沿用到空闲后再按新配置重建。
+                    # 仅 cwd/超时变化则沿用到空闲。
                     return _lease(task_id, env)
                 if not in_use:
                     active_environments.pop(task_id, None)
@@ -107,10 +106,7 @@ def _acquire_environment(task_id: str) -> BaseEnvironment:
 
 @contextmanager
 def use_environment(task_id: str) -> Iterator[BaseEnvironment]:
-    """在 with 块内使用 task 的终端环境：缺失时按当前 terminal 配置创建，配置变化后替换空闲的旧环境。
-
-    块内持有期间，配置切换与空闲回收都不会停止该环境；执行目标已变而旧环境仍在使用时抛出 EnvironmentBusyError。
-    """
+    """with 内使用 task 终端环境；持有中不回收。执行目标已变且仍占用则抛 EnvironmentBusyError。"""
     env = _acquire_environment(task_id)
     try:
         yield env

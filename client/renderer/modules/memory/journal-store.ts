@@ -1,9 +1,4 @@
-// 记忆 / 日记 store：片刻 + 日记页的水合与缓存。后端直连。
-//
-// - GET /api/companion/moments（只取最新一页，不跟随 next_cursor）→ $moments
-// - GET /api/companion/diary（带 from/to 区间）→ $diaryByDate
-// - POST/DELETE /api/companion/moments/{id}/comments → 评论与删除本人评论
-// - WS `companion.moment.created` / `companion.moment.comment` / `companion.diary.upserted` 增量 upsert
+// 记忆 / 日记 store：片刻 + 日记页的水合与缓存。后端直连。GET /api/companion/moments（只取最新一页，不跟随 next_cursor）→ $moments；GET /api/companion/diary（带 from/to 区间）→ $diaryByDate；POST/DELETE /api/companion/moments/{id}/comments → 评论与删除本人评论；WS `companion.moment.created` / `companion.moment.comment` / `companion.diary.upserted` 增量 upsert
 
 import { atom } from 'nanostores'
 
@@ -141,8 +136,7 @@ function toDiary(w: DiaryWire): DiaryEntry {
   }
 }
 
-// 水合序号：请求期间页面可能切月 / 重挂，或发生登出清空；
-// 迟到的旧响应不得覆盖新数据（与 wardrobe-store 同一套 revision + clearEpoch 防护）。
+// 水合序号：请求期间页面可能切月 / 重挂，或发生登出清空；迟到的旧响应不得覆盖新数据（与 wardrobe-store 同一套 revision + clearEpoch 防护）。
 let momentsRevision = 0
 let diaryRevision = 0
 

@@ -115,10 +115,7 @@ def _in_scope(skill_dir: Path) -> bool:
 
 
 def _writable_skill_dir(root: Path, skill_dir: Path) -> tuple[Path, bool]:
-    """返回当前学习域中可写的技能目录；共享技能按原相对路径复制到本域，第二项表示本次新建了副本。
-
-    调用方在全部校验通过、即将写入时才调用，失败的修改不会留下遮蔽共享技能的副本。
-    """
+    """返回可写技能目录；共享技能先复制到本域。调用方校验通过后才调用。"""
     if _in_scope(skill_dir):
         return skill_dir, False
     if any(path.is_symlink() or not visible_skill_path(path, skill_dir) for path in skill_dir.rglob("*")):
@@ -432,10 +429,8 @@ SKILL_MANAGE_SCHEMA = {
 }
 
 
-# --- 注册表 ---
 def _skill_manage_handler(args: dict[str, Any], **kw: Any) -> str:
-    # 廉价的 interrupt 提前返回：skill_manage 在 "create" 动作下写磁盘。
-    # 没有这个兜底，过期调用可能覆盖刚编辑完的文件。
+    # interrupt 提前返回：create 会写盘，避免过期调用覆盖刚编辑的文件。
     if is_interrupted():
         return json.dumps({"error": "Interrupted", "interrupted": True})
     return skill_manage(

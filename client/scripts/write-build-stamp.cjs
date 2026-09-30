@@ -35,12 +35,7 @@ function fromLocalGit() {
   const sha = tryExec('git rev-parse HEAD', { cwd: REPO_ROOT })
   if (!sha) return null
   const branch = tryExec('git rev-parse --abbrev-ref HEAD', { cwd: REPO_ROOT })
-  // `git status --porcelain -uno` is empty iff tracked files match HEAD.
-  // We exclude untracked files (-uno) intentionally: a developer who's
-  // checked out an installer scratch dir alongside the repo shouldn't
-  // poison every local build with a [DIRTY] stamp.  We DO care about
-  // tracked-but-modified files because those mean the .exe content
-  // differs from the commit being pinned.
+  // `git status --porcelain -uno` is empty iff tracked files match HEAD. We exclude untracked files (-uno) intentionally: a developer who's checked out an installer scratch dir alongside the repo shouldn't poison every local build with a [DIRTY] stamp. We DO care about tracked-but-modified files because those mean the .exe content differs from the commit being pinned.
   const status = tryExec('git status --porcelain -uno', { cwd: REPO_ROOT })
   if (status === null) {
     console.warn('[write-build-stamp] WARNING: `git status` failed; marking the build dirty.')

@@ -130,10 +130,7 @@ def _purge_user_files(user_id: int, session_ids: list[str]) -> None:
 
 @router.delete("/users/{user_id}", response_model=MessageResponse)
 async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
-    """被遗忘权：在维护边界内停稳该用户的运行时，先删文件再删行（外键级联清理其余数据）。
-
-    文件先于行删除，任一步失败都保留用户行，管理员重试即可继续清理。
-    """
+    """被遗忘权：在维护边界内停稳该用户的运行时，先删文件再删行（外键级联清理其余数据）；文件先于行删除，任一步失败都保留用户行，管理员重试即可继续清理。"""
     user = await get_or_404(db, User, id=user_id, detail="用户不存在。")
     async with user_maintenance(user_id):
         session_ids = [

@@ -76,7 +76,6 @@ def _score(preference: str, voice: VoiceEntry) -> int:
         kws = _LANG_KEYWORDS.get(voice.language, [])
         if any(kw.lower() in p for kw in kws):
             score += 2
-    # 性别偏好按 token 匹配，避免子串误判（"male" 命中 "female voice"）
     if voice.gender in _GENDER_KEYWORDS:
         for kw in _GENDER_KEYWORDS[voice.gender]:
             if kw.lower() in p_tokens:

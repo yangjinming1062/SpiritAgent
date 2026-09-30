@@ -67,10 +67,7 @@ async def record_play_result(
 
 
 async def fulfill_deferred_play_intents(db: AsyncSession, action_id: int) -> list[str]:
-    """动作就绪后兑现未过期的表达意图；返回已补发的 play_id。
-
-    过期意图只保留账本，不补播；已终态的回执不重复指令。所属包已不是当前激活或激活代次已推进
-    （换装后再穿回同一包）的意图记为 rejected。"""
+    """动作就绪后兑现未过期的表达意图；返回已补发的 play_id。过期意图只保留账本不补播，已终态回执不重复指令；所属包已不是当前激活或激活代次已推进（换装后再穿回同一包）的意图记为 rejected。"""
     action = await db.get(CompanionAction, action_id)
     if action is None or action.status != "succeeded" or not action.video_path or not action.enabled:
         return []

@@ -69,8 +69,7 @@ function WhisperOverlayContent(): React.JSX.Element {
     }
   }, [gatewayState, companionSessionId, sessionId])
 
-  // ConversationSurface 的 pending 消费依赖 surfaceOpen === surfaceRole，轻语不是 surface，
-  // 必须自己在打开期间持续消费，否则已读消息关掉后气泡会再弹。
+  // ConversationSurface 的 pending 消费依赖 surfaceOpen === surfaceRole，轻语不是 surface，必须自己在打开期间持续消费，否则已读消息关掉后气泡会再弹。
   useEffect(() => {
     if (sessionId && pending.some(item => item.sessionId === sessionId)) {
       consumePendingMessages(sessionId)

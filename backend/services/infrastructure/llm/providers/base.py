@@ -29,13 +29,7 @@ PRODUCT_REASONING_EFFORTS: frozenset[str] = frozenset(REASONING_EFFORT_ORDER)
 
 
 def resolve_provider_reasoning_effort(requested: str | None, supported: Collection[str]) -> str | None:
-    """把产品推理档位映射到供应商实际支持的档位。
-
-    - 空值或集合外值：不下发 reasoning。
-    - 请求档恰好被支持：原样透传。
-    - 请求档不在支持集：取不高于请求强度的最高支持档（含 ``none``）；例如选 ultra 但只支持到 xhigh → xhigh，选 minimal 但不支持 → none。
-    - 没有不高于请求强度的支持档（例如选 minimal 但供应商只有 low 起）：不下发 reasoning。
-    """
+    """把产品推理档位映射到供应商支持档位：空值/集合外不下发；恰好支持则透传；否则取不高于请求强度的最高支持档（含 none），无候选则不下发。"""
     if not requested:
         return None
     raw = requested.strip().lower()
@@ -81,7 +75,7 @@ class BaseProvider(ABC):
     # 能力卡片未填写端点与模型时使用的默认值。
     DEFAULT_BASE_URL: ClassVar[str] = ""
     DEFAULT_MODEL: ClassVar[str] = ""
-    # False 表示该能力可不带 api_key（如本机无鉴权服务）；能力链解析据此放宽空密钥。
+    # False 表示该能力可不带 api_key（如本机无鉴权服务）；能力链解析据此放宽空密钥
     requires_api_key: ClassVar[bool] = True
 
     def __init__(self, config: ProviderConfig) -> None:
@@ -106,19 +100,17 @@ class ChatProvider(BaseProvider):
 
     service_type: ServiceType = ServiceType.llm
 
-    # 0 表示未声明，由 resolve_context_tokens 回退到全局默认。
+    # 0 表示未声明，由 resolve_context_tokens 回退到全局默认
     CONTEXT_TOKENS: ClassVar[int] = 0
-    # 与 DEFAULT_MODEL 不同的视觉模型；空表示文本与视觉共用。
-    DEFAULT_VISION_MODEL: ClassVar[str] = ""
+    DEFAULT_VISION_MODEL: ClassVar[str] = ""  # 与 DEFAULT_MODEL 不同的视觉模型；空表示文本与视觉共用
     REASONING_EFFORTS: ClassVar[frozenset[str]] = frozenset({"none", "low", "medium", "high"})
     TEMPERATURE_MIN: ClassVar[float] = 0.0
     TEMPERATURE_MAX: ClassVar[float] = 2.0
-    # 是否已验证 json_object 模式也接受顶层数组；只支持对象的模式不能约束陪伴回复。
+    # 是否已验证 json_object 模式也接受顶层数组；只支持对象的模式不能约束陪伴回复
     supports_json_array: ClassVar[bool] = False
     supports_json_object: ClassVar[bool] = False
-    # True 表示接受 input_image 内容部件；文本模型需配合 DEFAULT_VISION_MODEL。
-    supports_vision: ClassVar[bool] = False
-    # True 表示接受 Responses 形状的 input_video 内容部件；仅 chat.completions 支持视频的供应商（如 mimo）不能声明。
+    supports_vision: ClassVar[bool] = False  # 接受 input_image 部件；文本模型需配合 DEFAULT_VISION_MODEL
+    # 接受 Responses 形状的 input_video 部件；仅 chat.completions 支持视频的供应商（如 mimo）不能声明
     supports_video: ClassVar[bool] = False
 
     def __init__(self, config: ProviderConfig) -> None:
@@ -142,15 +134,12 @@ class ImageGenRequest:
     aspect_ratio: str | None = None
     quality: str | None = None
     reference_image: str | None = None
-    # 第二参考图（如风格/演示参考）；只有 supports_multiple_reference_images 的供应商会消费。
-    secondary_reference_image: str | None = None
-    # True 表示以 reference_image 为底图的增量编辑，输出画布应贴近参考图；
-    # False 表示参考图仅作身份/造型条件，输出画布服从 size / aspect_ratio。
-    image_edit: bool = False
+    secondary_reference_image: str | None = None  # 仅 supports_multiple_reference_images 的供应商消费
+    image_edit: bool = False  # True 以 reference_image 为底图增量编辑（画布贴近参考图）；False 参考图仅作身份条件，画布服从 size/aspect_ratio
     response_format: Literal["b64", "url"] = "b64"
-    # 背景输出策略：transparent 请求原生透明输出（透明 PNG），只允许发给声明
-    # supports_transparent_background 的供应商链；None 不向请求添加字段，保持默认行为。
-    background: Literal["transparent"] | None = None
+    background: Literal["transparent"] | None = (
+        None  # transparent 请求原生透明 PNG，仅发给 supports_transparent_background 链；None 不加字段
+    )
 
 
 @dataclass(frozen=True)
@@ -170,18 +159,18 @@ class ImageGenResult:
 class ImageGenProvider(BaseProvider):
     service_type: ServiceType = ServiceType.image_gen
 
-    # 单次原生请求的输出数量上限；None 表示适配器完整透传 n。
-    max_images_per_request: ClassVar[int | None] = None
+    max_images_per_request: ClassVar[int | None] = None  # 单次原生请求输出上限；None 表示适配器完整透传 n
 
-    # True 表示供应商原生消费 reference_image（图生图）；False 则对参考图请求跳过，避免图→文→图。
-    supports_reference_image: ClassVar[bool] = False
-    # True 表示同时消费 secondary_reference_image（双参考图生图）；False 时调用链会过滤掉，退而求其次选单参考图供应商。
-    supports_multiple_reference_images: ClassVar[bool] = False
-    # True 表示以 reference_image 为编辑底图的真图像编辑（保留未提及区域、按增量重绘）；
-    # 角色条件化等弱参考（如 minimax subject_reference）不算编辑，置 False。
-    supports_image_edit: ClassVar[bool] = False
-    # True 表示已把 background="transparent" 映射为供应商请求参数，且配置的模型经真实调用
-    # 验证返回带 Alpha 的图像；仅声明能力而未完成参数映射与真实验证不得置 True。
+    supports_reference_image: ClassVar[bool] = (
+        False  # 原生消费 reference_image（图生图）；False 则对参考图请求跳过，避免图→文→图
+    )
+    supports_multiple_reference_images: ClassVar[bool] = (
+        False  # 同时消费 secondary_reference_image；False 时调用链会过滤掉
+    )
+    supports_image_edit: ClassVar[bool] = (
+        False  # 以 reference_image 为编辑底图的真图像编辑（保留未提及区域）；弱参考条件化不算
+    )
+    # True 须已完成 background="transparent" 参数映射且配置模型经真实调用验证返回带 Alpha 的图像
     supports_transparent_background: ClassVar[bool] = False
 
     @abstractmethod
@@ -208,8 +197,9 @@ class VideoJobStatus:
     task_id: str
     status: VideoJobState
     file_id: str | None = None
-    # 成功路径直接返回下载 URL 的供应商（如 MiniMax H3 v2，无 files/retrieve）填这里，让 worker 跳过二次拉取；None 表示需走 fetch(file_id)。
-    download_url: str | None = None
+    download_url: str | None = (
+        None  # 成功路径直接返回下载 URL 的供应商（如 MiniMax H3 v2）填这里，让 worker 跳过二次拉取；None 表示需走 fetch(file_id)
+    )
     error: str | None = None
     raw: Any = None
 
@@ -225,17 +215,12 @@ class VideoAsset:
 class VideoGenProvider(BaseProvider):
     service_type: ServiceType = ServiceType.video_gen
 
-    # 能力声明（与各适配器 submit 校验保持一致）：编排层据此取链上最保守时长并按供应商选档；
-    # None 表示未声明，按适配器自身校验兜底。
-    # 可用时长档（整数秒，升序）。
-    durations: tuple[int, ...] | None = None
-    # 可用分辨率档（按成本升序）。
-    resolutions: tuple[str, ...] | None = None
-    # 支持 first_frame_image 图生视频；False 时带首帧的请求跳过该供应商。
-    supports_first_frame: bool = False
+    # 能力声明（与各适配器 submit 校验保持一致）：编排层据此取链上最保守时长并按供应商选档；None 按适配器自身校验兜底
+    durations: tuple[int, ...] | None = None  # 可用时长档（整数秒，升序）
+    resolutions: tuple[str, ...] | None = None  # 可用分辨率档（按成本升序）
+    supports_first_frame: bool = False  # 支持 first_frame_image 图生视频；False 时带首帧的请求跳过该供应商
     supports_loop_frames: bool = False
-    # 消费 reference_images 身份参考；False 时编排层省略该字段，不排除该供应商。
-    supports_reference_images: bool = False
+    supports_reference_images: bool = False  # 消费 reference_images 身份参考；False 时编排层省略该字段，不排除该供应商
 
     @abstractmethod
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus: ...
@@ -251,8 +236,7 @@ class VideoGenProvider(BaseProvider):
 class TTSResult:
     audio: bytes
     mime: str
-    # 供应商回退后的音色 id，透出到 X-Voice-Used。
-    voice: str = ""
+    voice: str = ""  # 供应商回退后的音色 id，透出到 X-Voice-Used
 
 
 @dataclass(frozen=True)
@@ -268,8 +252,7 @@ class TTSProvider(BaseProvider):
 
     VOICE_CATALOG: ClassVar[list[dict]] = []
 
-    # None 表示不支持声纹设计；非空字符串表示支持并作为面向用户的撰写指引。
-    VOICE_DESIGN_GUIDE: ClassVar[str | None] = None
+    VOICE_DESIGN_GUIDE: ClassVar[str | None] = None  # None 不支持声纹设计；非空字符串表示支持并作为面向用户的撰写指引
 
     @abstractmethod
     async def synthesize(self, text: str, *, voice: str, speech_style: SpeechStyle | None) -> TTSResult:

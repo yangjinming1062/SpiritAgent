@@ -17,7 +17,7 @@ from .toolsets import excluded_tool_names, get_disabled_toolset_ids
 
 logger = logging.getLogger(__name__)
 
-# 工具结果大小的唯一真源; ``get_max_result_size`` 是唯一的公共读取入口。
+# 结果大小唯一真源，公共读取入口为 get_max_result_size。
 DEFAULT_MAX_RESULT_SIZE_CHARS: int = 100_000
 
 
@@ -27,11 +27,7 @@ def tool_error(msg: str, **extra) -> str:
 
 
 class ToolError(Exception):
-    """工具无法执行。
-
-    沙箱 RPC 入口 ``dispatch`` 把它转换为 JSON 错误信封；WS 入口 ``async_dispatch`` 让它上抛，
-    由调用方映射成 JSON-RPC 错误帧。
-    """
+    """工具无法执行；dispatch 转 JSON 信封，async_dispatch 上抛由调用方映射错误帧。"""
 
 
 class ToolRegistry:
@@ -44,8 +40,7 @@ class ToolRegistry:
         self._check_fn_cache: dict[str, tuple[bool, float, float]] = {}
         self._check_fn_ttl_seconds: float = 30.0
         self._check_fn_suppression_seconds: float = 60.0
-        # 签名探测缓存: tool name -> 是否接受 cancel_token= 关键字参数。
-        # 探测一次后缓存 — 工具函数签名在进程内不会变。
+        # 签名探测缓存：tool name -> 是否接受 cancel_token=；进程内不变，探测一次即可。
         self._supports_cancel_token: dict[str, bool] = {}
         self._import_failures: dict[str, str] = {}
         self._lock = threading.RLock()
@@ -65,10 +60,7 @@ class ToolRegistry:
         schema: dict | Callable[[], dict],
         check_fn: Callable[[], bool] | None = None,
     ) -> Callable[[Callable], Callable]:
-        """装饰器形式注册工具；``schema`` 是提供给模型的完整工具定义。
-
-        说明依赖配置的工具传无参工厂：工具模块在 Client 推送配置之前导入，``get_schemas_for_llm`` 每次按当前配置调用工厂。
-        """
+        """注册工具；依赖配置的说明用无参工厂，每次 get_schemas 按当前配置生成。"""
 
         def decorator(func: Callable) -> Callable:
             with self._lock:
@@ -81,13 +73,7 @@ class ToolRegistry:
         return decorator
 
     def is_tool_available(self, name: str) -> bool:
-        """能力探测的惰性检查 + TTL 缓存 + 瞬时失败抑制。
-
-        没有 ``check_fn`` 的工具始终视为可用; 有 ``check_fn`` 的在第一次探测后缓存 ``_check_fn_ttl_seconds``(30s)。
-        在最近一次 *成功* 探测 ``_check_fn_suppression_seconds``(60s)窗口内的失败保留上一次"可用"的判定,
-        这样一次瞬时抖动不会把工具从会话中途悄悄摘掉。抑制截止时刻只锚定成功: 持续失败的探测
-        在窗口过期后才翻为不可用 — 失败不会延长窗口。缓存行是 ``(last_ok, probed_at, suppress_until)``。
-        """
+        """能力探测：TTL 缓存 30s，成功后 60s 内的瞬时失败保留上次可用判定（见 README）。"""
         with self._lock:
             check = self._check_fns.get(name)
             if check is None:
@@ -120,10 +106,7 @@ class ToolRegistry:
             return list(self._tools.keys())
 
     def get_schemas_for_llm(self, disabled_toolset_ids: set[str]) -> list[dict]:
-        """根据 ``toolsets.disabled`` 过滤后的 schema 列表 — 由 ``server.py`` 的 ``get_tools`` RPC 用, 防止 Desktop 把禁用 toolset 喂给后端 LLM。
-
-        一次性持锁获取 schema 快照, 避免与并发的 ``register_tool`` 互相越界。
-        """
+        """按 ``toolsets.disabled`` 过滤后的 schema；一次性持锁取快照。"""
         with self._lock:
             items = list(self._schemas.items())
 
@@ -138,7 +121,6 @@ class ToolRegistry:
             try:
                 schemas.append(schema())
             except Exception:
-                # 与模块导入失败一样只缺这一个工具，不让整份工具清单失败。
                 logger.exception("Could not build schema for tool %s; omitting it from the tool list", name)
         return schemas
 
@@ -147,10 +129,7 @@ class ToolRegistry:
         return DEFAULT_MAX_RESULT_SIZE_CHARS
 
     def dispatch(self, name: str, args: dict, **kwargs: Any) -> str:
-        """同步入口，供沙箱内 RPC（``code_execution_tool``）调用，返回 JSON 字符串；与直接调用同样受 ``toolsets.disabled`` 约束。
-
-        不可在已运行的事件循环内调用异步工具。
-        """
+        """沙箱 RPC 同步入口，返回 JSON；同受 toolsets.disabled 约束，不可在事件循环内调用。"""
         with self._lock:
             func = self._tools.get(name)
         if not func:
@@ -234,10 +213,7 @@ registry = ToolRegistry()
 
 
 def discover_builtin_tools() -> dict[str, str]:
-    """导入 ``tools`` 下全部模块以触发注册，返回导入失败的模块及原因。
-
-    依赖与平台条件由模块自身显式处理，导入失败（含 ImportError）一律记为失败，不视为可选模块。
-    """
+    """导入 ``tools`` 下全部模块触发注册；任何导入失败都记为失败，不视为可选。"""
     # 包导入失败已在循环体内记录；onerror 防止 walk_packages 随后重试导入时抛出并中断其余模块的发现。
     for info in pkgutil.walk_packages(tools.__path__, tools.__name__ + ".", onerror=lambda _name: None):
         if info.name == __name__:

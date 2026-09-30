@@ -339,8 +339,7 @@ export function PanelSelect<T extends string>({
 
   const selected = options.find(o => o.value === value)
 
-  // 打开时把活动项定位到当前选中值，焦点交给列表框承接方向键；
-  // 贴近窗口下缘时向上展开，避免弹层被窗口底边截断。
+  // 打开时把活动项定位到当前选中值，焦点交给列表框承接方向键；贴近窗口下缘时向上展开，避免弹层被窗口底边截断。
   useLayoutEffect(() => {
     if (!open) {
       return

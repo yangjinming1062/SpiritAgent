@@ -1,7 +1,4 @@
-"""动作目录发布：manifest 构建、校验与 CAS 版本推进。
-
-位于 domains 层供 generation 收尾与 application/actions 共用；只依赖任务行与 pack 字段。
-"""
+"""动作目录发布：manifest 构建、校验与 CAS 版本推进。位于 domains 层供 generation 收尾与 application/actions 共用；只依赖任务行与 pack 字段。"""
 
 import hashlib
 import json
@@ -77,9 +74,7 @@ async def build_catalog_manifest(
     *,
     refresh_actions: bool = False,
 ) -> ActionCatalogManifest | None:
-    """合并当前成功动作构建新 manifest；必需槽位不齐返回 None（不发布，不破坏现有目录）。
-
-    系统槽位在包内由唯一索引保证不重复；refresh_actions 语义同 `list_pack_actions` 的 refresh。"""
+    """合并当前成功动作构建新 manifest；必需槽位不齐返回 None（不发布，不破坏现有目录）。系统槽位在包内由唯一索引保证不重复；refresh_actions 语义同 `list_pack_actions` 的 refresh。"""
     canvas_data = json.loads(pack.canvas_spec or "{}")
     canvas = ActionPackCanvas(
         width=canvas_data.get("width", 512),
@@ -141,12 +136,7 @@ async def build_catalog_manifest(
 
 
 async def publish_action_catalog(db: AsyncSession, pack: CompanionActionPack) -> int:
-    """发布新目录快照：构建 manifest → 写入本次发布独有的文件 → CAS 推进版本指针。
-
-    文件先于 CAS 写出且每次尝试路径唯一，落败方不会覆盖已发布版本的文件。CAS 落败时删除本次文件，
-    写出本事务改动后按数据库最新版本与动作行重建重试，仍冲突则抛 StaleCatalogError。
-    数据库发布失败只重试发布，不重新付费生成。
-    """
+    """发布新目录快照：构建 manifest → 写入本次发布独有的文件 → CAS 推进版本指针。文件先于 CAS 写出且每次尝试路径唯一，落败方不会覆盖已发布版本的文件；CAS 落败时删除本次文件，flush 本事务改动后按数据库最新版本与动作行重建重试，仍冲突则抛 StaleCatalogError。失败只重试发布，不重新付费生成。"""
     for attempt in range(_PUBLISH_ATTEMPTS):
         manifest = await build_catalog_manifest(db, pack, refresh_actions=attempt > 0)
         if manifest is None:

@@ -40,10 +40,7 @@ def _skill_lookup_path_error(name: str) -> str | None:
 
 
 def skill_matches_platform(frontmatter: dict[str, Any]) -> bool:
-    """skill 的 ``platforms`` 是否允许当前宿主；语义与 Client 技能索引一致。
-
-    未声明（null）或空列表不限制平台；标量视为单元素列表；darwin / win32 是 macos / windows 的别名。
-    """
+    """platforms 是否允许当前宿主；空/未声明不限制，darwin/win32 为别名。"""
     declared = frontmatter.get("platforms")
     if declared is None:
         return True
@@ -76,10 +73,7 @@ def _parse_tags(tags_value: Any) -> list[str]:
 
 
 def _is_disabled(name: str, category: str | None, disabled: set[str]) -> bool:
-    """纯成员检查：若 name 或 category 在 disabled 集合中则视为 disabled。
-    顶层 skill（category=None）仅按 name 匹配；嵌套 skill 按 name 或 category 匹配，
-    使单条 entry 覆盖该文件夹下每个 SKILL.md。
-    """
+    """name 或 category 命中 disabled 即禁用；嵌套 skill 单条 entry 覆盖整夹。"""
     if name in disabled:
         return True
     return bool(category is not None and category in disabled)
@@ -291,8 +285,7 @@ def skill_view(name: str, file_path: str | None = None) -> str:
                     ensure_ascii=False,
                 )
             try:
-                # 读端也要套同一道闸: 写端 1 MiB 上限不能让 view 端绕过,
-                # 否则攻击者可以塞超过模型上下文上限的链接文件撑爆对话。
+                # 读端同闸：写端 1 MiB 不能让 view 绕过，防链接文件撑爆上下文。
                 file_size = target_file.stat().st_size
                 if file_size > MAX_SKILL_FILE_BYTES:
                     return json.dumps(
@@ -436,8 +429,7 @@ registry.register_tool("skills_list", schema=SKILLS_LIST_SCHEMA)(
 
 
 def _skill_view_handler(args: dict[str, Any], **kw: Any) -> str:
-    # 廉价的 interrupt 提前返回：skill_view 从磁盘读取。
-    # 没有这个兜底，过期 "please list skills" 调用会在用户已转移注意力后继续运行。
+    # interrupt 提前返回：避免过期列表调用在用户已转移注意力后继续读盘。
     if is_interrupted():
         return json.dumps({"error": "Interrupted", "interrupted": True})
     return skill_view(name=args.get("name", ""), file_path=args.get("file_path"))

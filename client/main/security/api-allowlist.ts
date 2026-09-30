@@ -1,5 +1,4 @@
-// 渲染层 api() 代理的 path/method 白名单：只放行自家后端产品 API 面。
-// 不在名单内的路径（含绝对 URL、协议相对、路径穿越）一律拒绝，防止凭据被拿去打任意 endpoint。
+// 渲染层 api() 代理的 path/method 白名单：只放行自家后端产品 API 面；名单外（含绝对 URL、协议相对、路径穿越）一律拒绝，防止凭据被打任意 endpoint。
 const ALLOWED_API_PREFIXES = ['/api/channels', '/api/companion', '/api/config', '/api/sessions'] as const
 
 const ALLOWED_METHODS = new Set(['DELETE', 'GET', 'PATCH', 'POST', 'PUT'])

@@ -11,10 +11,7 @@ import { BTN_ICON, BTN_PRIMARY, BTN_SUBTLE, INPUT_CLASS, SURFACE_OVERLAY } from 
 import { $auth, activate } from '@/shared/store/auth'
 import { useStrings } from '@/shared/strings'
 
-/**
- * 激活码输入浮层：在伙伴（精灵）窗口中未鉴权时显示。
- * 用户粘贴 base64 激活码，主进程通过 ``/api/user/activate`` 换取会话 JWT。
- */
+/** 激活码输入浮层：伙伴（精灵）窗口未鉴权时显示；用户粘贴 base64 激活码，主进程经 `/api/user/activate` 换取会话 JWT。 */
 export function ActivationOverlay({ onClose }: { onClose: () => void }): React.JSX.Element {
   const auth = useStore($auth)
   const dict = useStrings()

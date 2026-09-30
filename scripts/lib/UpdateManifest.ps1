@@ -1,12 +1,10 @@
-﻿# scripts/lib/UpdateManifest.ps1 —— SpiritAgent 自更新管线的共享签名、manifest 与 update zip 助手。
-# 纯函数库，没有模块级可变状态；scripts/build.py 在 Windows 收尾阶段 dot-source 调用 Build-UpdateZip。
+# scripts/lib/UpdateManifest.ps1 —— 自更新签名、manifest 与 update zip 助手；build.py 在 Windows 收尾阶段调用 Build-UpdateZip。
 
-# 定位 openssl.exe：Git for Windows 把 openssl 放在 mingw64/bin 下，非 git 环境下不在 PATH 中，故多走几步常见安装位置查找。
+# Git for Windows 的 openssl 不在 PATH，故额外查找常见安装位置。
 function Resolve-OpenSsl {
     $cmd = Get-Command openssl -ErrorAction SilentlyContinue
     if ($cmd) { return $cmd.Source }
 
-    # 兜底：常见 Git 安装位置
     $candidates = @(
         Join-Path $env:ProgramFiles 'Git\mingw64\bin\openssl.exe'
         Join-Path ${env:ProgramFiles(x86)} 'Git\mingw64\bin\openssl.exe'
@@ -19,8 +17,7 @@ function Resolve-OpenSsl {
     throw "openssl not found. Install Git for Windows (includes openssl) or add openssl to PATH."
 }
 
-# 签名私钥必须保存在仓库外；环境变量传 PEM 文件路径，缺省读取用户目录。
-# 本地与 CI 的配置区别见 scripts/release-keys/README.md。
+# 签名私钥放仓库外；环境变量传 PEM 路径，缺省读 ~/.spiritagent/update.key（配置见 scripts/release-keys/README.md）。
 function Resolve-UpdateSigningKey {
     [CmdletBinding()]
     param()
@@ -43,14 +40,13 @@ function Resolve-UpdateSigningKey {
           "or place the key at $default."
 }
 
-# 就地签署 Squirrel 风格 manifest：根据顶层 `path` 字段计算 SHA-512（大写），用 openssl 对 "<path>|<sha512>" 签出 `signature`，并同步回写 `sha512` 与 `files[]`。
-# 缺少 `path` 字段、引用的文件不存在、或 openssl 不在 PATH 时抛错。
+# 就地签署 Squirrel manifest：对 "<path>|<sha512>" 签名并回写 sha512/files/signature；缺 path、缺文件或无 openssl 时抛错。
 function Sign-Manifest {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][string]$ManifestPath,
         [Parameter(Mandatory)][string]$KeyPath,
-        # 调用方已算好的 SHA-512/大小（如构建新 manifest 时），传入可避免对几百 MB 的 wheel 重复哈希。
+        # 调用方已算好 SHA-512/大小时传入，避免对大 wheel 重复哈希。
         [string]$Sha512 = '',
         [long]$Size = -1
     )
@@ -63,7 +59,7 @@ function Sign-Manifest {
     $manifestDir = Split-Path -Parent $ManifestPath
     $raw = Get-Content $ManifestPath -Raw
 
-    # 用正则提取 `path`，同时支持 JSON 与 YAML，避免引入 YAML 解析器。
+    # 正则提取 path，JSON 与 YAML 共用，避免引入 YAML 解析器。
     $pathMatch = [regex]::Match($raw, '(?m)^\s*"?\s*path\s*"?\s*[:=]\s*"?\s*(.+?)\s*"?\s*,?\s*$')
     if (-not $pathMatch.Success) {
         Write-Warning "Manifest $ManifestPath has no 'path' field; skipping"
@@ -84,7 +80,7 @@ function Sign-Manifest {
         $size = (Get-Item $binaryPath).Length
     }
 
-    # 用临时文件落地签名输出：PowerShell `&` 操作符把二进制 stdout 当数组收，无法直接成字节流。
+    # 临时文件落地签名：PowerShell `&` 把二进制 stdout 当数组收，无法直接成字节流。
     $openssl = Resolve-OpenSsl
     $payload = "$pathValue|$sha512"
     $tmpPayload = Join-Path ([IO.Path]::GetTempPath()) "spiritagent-sign-payload-$PID.tmp"
@@ -101,13 +97,13 @@ function Sign-Manifest {
     }
     $signatureB64 = [Convert]::ToBase64String($signatureBytes)
 
-    # 同样用正则就地改字段，兼容 YAML 与 JSON 两种 manifest。
+    # 正则就地改字段，兼容 YAML 与 JSON。
     $updated = $raw
 
     # sha512:  sha512: <value>  or  "sha512": "<value>"
     $updated = $updated -replace '(?m)(\s*"?\s*sha512\s*"?\s*[:=]\s*"?\s*)[^\r\n"]*', "`${1}$sha512"
 
-    # files 数组：整段替换为单元素数组（同时覆盖 YAML 与 JSON 形态）。
+    # files 数组整段替换为单元素数组。
     $filesBlockYaml = "  - url: $pathValue`n    sha512: $sha512`n    size: $size"
     $filesBlockJson = "`"files`": [{`"url`": `"$pathValue`", `"sha512`": `"$sha512`", `"size`": $size}]"
     if ($updated -match '(?m)^\s*"?\s*files\s*"?\s*:\s*\[') {
@@ -116,7 +112,6 @@ function Sign-Manifest {
         $updated = $updated -replace '(?s)(files:\s*\n)(\s+-[\s\S]*?)(?=\n\S|\n\n|\z)', "`${1}$filesBlockYaml"
     }
 
-    # signature: add or replace
     if ($updated -match '(?m)^\s*"?\s*signature\s*"?\s*[:=]') {
         $updated = $updated -replace '(?m)(\s*"?\s*signature\s*"?\s*[:=]\s*"?\s*)[^\r\n"]*', "`${1}$signatureB64"
     } else {
@@ -127,7 +122,7 @@ function Sign-Manifest {
     [System.IO.File]::WriteAllText($ManifestPath, $updated, $utf8NoBom)
 }
 
-# 为 runner wheel + server.py 构造并签出 `latest-runner.yml`：顶层 Squirrel 字段指向 wheel，`runner` 块记录 wheel/server.py 哈希，`signature` 用桌面端同一密钥对签出。返回签名后 YAML 的绝对路径。
+# 为 runner wheel + server.py 构造并签出 latest-runner.yml（path 相对 manifest 目录）。
 function New-RunnerManifest {
     [CmdletBinding()]
     param(
@@ -148,7 +143,7 @@ function New-RunnerManifest {
     $wheelName = Split-Path -Leaf $WheelPath
     $serverPyName = Split-Path -Leaf $ServerPyPath
 
-    # Squirrel 约定 `path` 相对 manifest 所在目录；构建布局把 wheel 暂存至 <staging>/runner/，故 manifest 写在 staging 根，path 为 runner/<wheel>。
+    # Squirrel 的 path 相对 manifest 所在目录；manifest 写在 staging 根，path 为 runner/<wheel>。
     $wheelRel = "runner/$wheelName"
     $serverPyRel = "runner/$serverPyName"
 
@@ -184,15 +179,13 @@ function New-RunnerManifest {
     $manifestPath = Join-Path $OutDir 'latest-runner.yml'
     ($manifest | ConvertTo-Json -Depth 8) | Set-Content -Path $manifestPath -NoNewline
 
-    # 把上面已算好的 SHA-512/大小直接传下去，避免 Sign-Manifest 对几百 MB 的 wheel 重哈希。
+    # 复用已算好的哈希，避免 Sign-Manifest 对大 wheel 重哈希。
     Sign-Manifest -ManifestPath $manifestPath -KeyPath $KeyPath -Sha512 $wheelSha -Size $wheelSize
 
     return $manifestPath
 }
 
-# 构造自更新 zip：同时装入桌面端产物 + runner wheel + server.py，一次更新覆盖客户端两侧；
-# 内置技能不单独打包：随桌面安装包（electron-builder extraResources）交付，新版本首次启动时由 Client 同步到 Home（client/main/lifecycle/bundled-skills.ts）。
-# 后端按 zip 内的 `runner/` 布局提取，便于后续一致性校验。
+# 构造自更新 zip：桌面产物 + runner wheel + server.py 一次覆盖两侧；技能随桌面包交付、由 Client 同步到 Home。
 function Build-UpdateZip {
     [CmdletBinding()]
     param(
@@ -220,7 +213,7 @@ function Build-UpdateZip {
     New-Item -ItemType Directory -Path $stageDir | Out-Null
 
     try {
-        # 仅拷贝当前版本产物与 manifest（剔除 win-unpacked/、构建调试文件、旧构建残留）。
+        # 仅拷贝当前版本产物与 manifest，剔除 win-unpacked/ 与旧构建残留。
         $versionPrefix = "SpiritAgent-$Version"
         Get-ChildItem -Path $DesktopReleaseDir -File | Where-Object {
             $_.Name -like "$versionPrefix*" -or
@@ -230,16 +223,14 @@ function Build-UpdateZip {
             Copy-Item -Path $_.FullName -Destination $stageDir -Force
         }
 
-        # 暂存 runner wheel 与 server.py。
         $runnerStage = Join-Path $stageDir 'runner'
         New-Item -ItemType Directory -Path $runnerStage -Force | Out-Null
         Copy-Item -Force $RunnerWheelPath (Join-Path $runnerStage (Split-Path -Leaf $RunnerWheelPath))
         Copy-Item -Force $ServerPyPath (Join-Path $runnerStage 'server.py')
 
-        # 一次性解析私钥（后续各平台重签与 New-RunnerManifest 共用）。
         $keyPath = Resolve-UpdateSigningKey
 
-        # 兜底重签：Build-UpdateZip 是规范的签名点（见 Sign-Manifest），此分支处理跨主机构建时 electron-builder 输出未签名 manifest 的情况。
+        # 兜底重签 electron-builder 跨主机构建可能缺失的 manifest 签名。
         foreach ($name in @('latest.yml', 'latest-mac.yml')) {
             $manifestPath = Join-Path $stageDir $name
             if (-not (Test-Path $manifestPath)) { continue }
@@ -249,7 +240,7 @@ function Build-UpdateZip {
             Sign-Manifest -ManifestPath $manifestPath -KeyPath $keyPath
         }
 
-        # 构造并签名 latest-runner.yml：桌面端主进程在重启前读取，先把 wheel + server.py 拉到本地、校验完成才提示用户 "Restart now"。
+        # latest-runner.yml：桌面端重启前拉取并校验 wheel + server.py。
         New-RunnerManifest `
             -Version $Version `
             -WheelPath (Join-Path $runnerStage (Split-Path -Leaf $RunnerWheelPath)) `
@@ -257,7 +248,7 @@ function Build-UpdateZip {
             -OutDir $stageDir `
             -KeyPath $keyPath | Out-Null
 
-        # 选定规范的 Windows NSIS exe 写入 manifest.json，便于后端 _extract_archive_entries 无歧义定位。
+        # manifest.json 指定规范 Windows NSIS exe，便于后端无歧义定位。
         $desktopExe = Get-ChildItem $stageDir -Filter 'SpiritAgent-*-win-*.exe' -File | Select-Object -First 1
         $manifest = [ordered]@{
             version        = $Version
@@ -268,7 +259,6 @@ function Build-UpdateZip {
         }
         ($manifest | ConvertTo-Json -Depth 5) | Set-Content -Path (Join-Path $stageDir 'manifest.json') -NoNewline
 
-        # 打包 zip。
         $zipPath = Join-Path $OutputDir "SpiritAgent-${Version}-update.zip"
         if (Test-Path $zipPath) { Remove-Item -Force $zipPath }
         Add-Type -AssemblyName 'System.IO.Compression.FileSystem'

@@ -43,11 +43,7 @@ def _raise_for_base_resp(base: dict) -> None:
 
 
 def raise_for_minimax_response(resp: httpx.Response) -> dict:
-    """把 MiniMax HTTP 响应翻译为 dict 体或抛 ProviderError。
-
-    MiniMax 把错误裹在 ``{"base_resp":{"status_code":N,"status_msg":"..."}}``，HTTP 状态常为 200；
-    HTTP 4xx/5xx 另有 JSON 形态，两种都处理。非零 base_resp 码（含非数值码）一律抛错，不静默成功。
-    """
+    """把 MiniMax HTTP 响应翻译为 dict 体或抛 ProviderError。错误裹在 base_resp（HTTP 常为 200）；HTTP 4xx/5xx 另有 JSON 形态，两种都处理。非零 base_resp 码一律抛错。"""
     body = response_json(resp)
     if "base_resp" in body:
         _raise_for_base_resp(body.get("base_resp") or {})

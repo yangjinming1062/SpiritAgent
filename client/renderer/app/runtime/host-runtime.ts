@@ -280,14 +280,12 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
 
               const hasMessages = $chatMessageList.get().length > 0
 
-              // 本地秒开：先渲染缓存，再后台增量追上。网关 seq 不重置到缓存值——
-              // 后端重启后 seq 从低值重新增长，陈旧高水位会把实时帧当重复丢弃。
+              // 本地秒开：先渲染缓存再后台增量追上。网关 seq 不重置到缓存值——后端重启后 seq 从低值重新增长，陈旧高水位会把实时帧当重复丢弃。
               if (local && !hasMessages) {
                 hydrateChatMessages(local.messages, local.info)
               }
 
-              // last_seq 只在聊天列表是活数据（重连）时发；缓存不追踪实时回合，
-              // 冷启动一律走 after_id 增量，否则服务端按陈旧水位重放会重复追加。
+              // last_seq 只在聊天列表是活数据（重连）时发；缓存不追踪实时回合，冷启动一律走 after_id 增量，否则服务端按陈旧水位重放会重复追加。
               const synced = await syncSessionHistory({
                 lastSeq: hasMessages && gateway.lastReceivedSeq > 0 ? gateway.lastReceivedSeq : undefined,
                 sessionId: sid,
@@ -333,7 +331,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
           void openMainSession(syncMountSeq)
         }
       } else if (bootCompleted && (st === 'closed' || st === 'error')) {
-        // 断连的回合不会再收到 complete/error——正在合成/播放的语音条在此中止并释放。
+        // 断连的回合不会再收到 complete/error ——正在合成/播放的语音条在此中止并释放。
         cancelVoiceBar()
         stopSpeaking()
 

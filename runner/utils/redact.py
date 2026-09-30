@@ -38,7 +38,7 @@ _PREFIX_PATTERNS: tuple[str, ...] = (
     r"gsk_[A-Za-z0-9]{10,}",
     r"xai-[A-Za-z0-9]{30,}",
 )
-# \b 锚定 token 两端，让位于字符串首尾或紧跟在 `=` / `"` / 空格后的凭据也能匹配（lookbehind/lookahead 无法锚字符串边界）。代价：前导为 `_` 的 token 会被跳过。
+# \b 锚 token 两端；代价是 _ 开头的 token 会漏。
 SECRET_PREFIX_RE = re.compile(r"\b(" + "|".join(_PREFIX_PATTERNS) + r")\b")
 
 _SECRET_ENV_NAMES = r"(?:API_?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTH|BEARER)"

@@ -9,7 +9,7 @@ class UIElement:
     index: int
     role: str
     label: str = ""
-    # Windows 为截图像素（窗口左上角为原点）；macOS 原样取 cua-driver 报告的 frame。
+    # Win 为截图坐标；mac 取 driver frame。
     bounds: tuple[int, int, int, int] = (0, 0, 0, 0)
 
     def center(self) -> tuple[int, int]:
@@ -27,7 +27,7 @@ class CaptureResult:
     app: str = ""
     window_title: str = ""
     image_mime_type: str = "image/png"
-    # 截图或元素不完整的原因，随结果交给模型。
+    # 不完整原因随结果交给模型。
     note: str = ""
 
 
@@ -39,8 +39,7 @@ class ActionResult:
     meta: dict[str, Any] = field(default_factory=dict)
 
 
-# app= 的哨兵值，目标是 OS 桌面壳层（桌面背景 / 任务栏）而非某个具体应用。
-# macOS 上解析为 Finder / Dock，Windows 上为 Progman / Shell_TrayWnd。
+# app= 哨兵指向桌面壳层（mac: Finder/Dock；Win: Progman/Shell_TrayWnd）。
 DESKTOP_SENTINELS: frozenset[str] = frozenset({"screen", "desktop", "fullscreen", "all"})
 
 

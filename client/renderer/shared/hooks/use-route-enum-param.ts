@@ -1,8 +1,7 @@
 import { useCallback, useMemo } from 'react'
 import { useLocation, useNavigate } from 'react-router-dom'
 
-// 读取 / 写入枚举形态的 URL search 参数（如 ?tab=foo）。让带标签页的视图
-// 在刷新后能保留状态。导航统一使用 replace，避免点切换 tab 在 history 中堆积。
+// 读取 / 写入枚举形态的 URL search 参数（如 ?tab=foo）。让带标签页的视图在刷新后能保留状态。导航统一使用 replace，避免点切换 tab 在 history 中堆积。
 export function useRouteEnumParam<T extends string>(
   key: string,
   values: readonly T[],

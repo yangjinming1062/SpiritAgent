@@ -1,19 +1,5 @@
 #!/usr/bin/env python3
-"""scripts/gen_release_notes.py —— 依据两个 tag 之间的提交生成中文 release notes。
-
-优先调用 MiniMax（与 backend MiniMaxChatProvider 同一 OpenAI Responses 契约）总结提交记录；
-未配置 MINIMAX_API_KEY 或调用失败时，回退为按 conventional commit 类型分组的提交列表，
-保证发布流程不因 LLM 不可用而中断。仅用标准库，便于 CI 直接运行。
-
-用法：
-    python scripts/gen_release_notes.py v1.3.0                          # 自动定位上一个 tag
-    python scripts/gen_release_notes.py v1.3.0 --from-tag v1.2.0 --output notes.md
-
-环境变量：
-    MINIMAX_API_KEY   MiniMax API 密钥（缺失时走回退输出）
-    MINIMAX_BASE_URL  默认 https://api.minimaxi.com/v1
-    MINIMAX_MODEL     默认 MiniMax-M3（与 backend MiniMaxChatProvider.DEFAULT_MODEL 一致）
-"""
+"""依据两个 tag 之间的提交生成中文 release notes；LLM 不可用时回退为分组提交列表（用法见 scripts/README.md）。"""
 
 import argparse
 import json
@@ -41,7 +27,7 @@ MAX_COMMITS = 400
 MAX_PROMPT_CHARS = 80_000
 MAX_BODY_CHARS = 400
 
-# 回退分组的节顺序；type → 节的映射未命中的归入 other。
+# 回退分组节序；type 未命中映射时归入 other。
 FALLBACK_SECTIONS: list[tuple[str, str]] = [
     ("feat", "## ✨ 新功能"),
     ("fix", "## 🐛 问题修复"),
@@ -81,7 +67,7 @@ def run_git(args: list[str], repo: Path) -> str:
 
 
 def resolve_previous_tag(tag: str, repo: Path) -> str | None:
-    """按版本倒序取 tag 列表，返回 tag 的前一个 v-tag；无则 None（调用方回退到根提交）。"""
+    """按版本倒序取 tag 列表，返回前一个 v-tag；无则 None。"""
     out = run_git(
         ["for-each-ref", "refs/tags", "--sort=-v:refname", "--format=%(refname:short)"],
         repo,
@@ -115,7 +101,7 @@ def collect_commits(from_ref: str, to_ref: str, repo: Path) -> list[Commit]:
 
 
 def fallback_notes(commits: list[Commit]) -> str:
-    """按 conventional commit 类型分组的确定性输出，作为 LLM 不可用时的回退。"""
+    """按 conventional commit 类型分组的确定性输出，LLM 不可用时的回退。"""
     grouped: dict[str, list[str]] = {}
     for commit in commits:
         match = SUBJECT_RE.match(commit.subject)
@@ -163,7 +149,7 @@ def build_prompt_input(from_ref: str, to_ref: str, commits: list[Commit]) -> str
 
 
 def extract_response_text(data: dict) -> str | None:
-    """OpenAI Responses 协议的输出提取；取不到正文返回 None。"""
+    """OpenAI Responses 输出提取；无正文返回 None。"""
     if data.get("status") != "completed":
         return None
     output_text = data.get("output_text")
@@ -181,7 +167,7 @@ def extract_response_text(data: dict) -> str | None:
 
 
 def minimax_notes(from_ref: str, to_ref: str, commits: list[Commit]) -> str | None:
-    """调用 MiniMax 生成 notes；任何外部失败（网络、HTTP、解析为空）都返回 None 走回退。"""
+    """调用 MiniMax 生成 notes；外部失败返回 None 走回退。"""
     base_url = os.environ.get("MINIMAX_BASE_URL", DEFAULT_BASE_URL).rstrip("/")
     model = os.environ.get("MINIMAX_MODEL", DEFAULT_MODEL)
     api_key = os.environ["MINIMAX_API_KEY"]

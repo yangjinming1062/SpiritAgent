@@ -44,8 +44,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
     return current.kind === 'authenticated' && current.snapshot.sessionId === sessionId && epoch === currentClearEpoch()
   }
 
-  // 全部结构化 persona 字段都在 definition_json（JSON 字符串 blob）里面，
-  // 而不是作为顶层扁平 key 出现在线协议里。
+  // 全部结构化 persona 字段都在 definition_json（JSON 字符串 blob）里面，而不是作为顶层扁平 key 出现在线协议里。
   const result = await authedApi<{
     definition_json?: string
     is_complete?: boolean
@@ -64,9 +63,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
       return { ok: false }
     }
 
-    // 调用方刚刚成功 PUT 了新 persona 时，这里的 GET 短暂失败不代表保存失败——
-    // 后端是有数据的。传 `silent: true` 保持 $persona 不动，避免同时弹出「保存失败」提示
-    // 又让设置页因为 $persona 变 null 而隐藏「编辑」按钮。GET 失败由调用方作为软提示暴露。
+    // 调用方刚刚成功 PUT 了新 persona 时，这里的 GET 短暂失败不代表保存失败——后端是有数据的。传 `silent: true` 保持 $persona 不动，避免同时弹出「保存失败」提示又让设置页因为 $persona 变 null 而隐藏「编辑」按钮。GET 失败由调用方作为软提示暴露。
     if (!opts.silent) {
       $persona.set(null)
       $personalityTags.set([])
@@ -84,9 +81,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
 
   // 早返回：先看一眼 p.is_complete，避开未设置 persona 的合法空态。
   if (!p.is_complete) {
-    // 「还没设置 persona」是合法状态，不是错误：保持 $persona 不动（不要置空），
-    // 这样「保存刚刚成功，hydrate 落地却读到陈旧 is_complete」的竞态，
-    // 不会让那些依赖 $persona 的消费者把它当成清空。
+    // 「还没设置 persona」是合法状态，不是错误：保持 $persona 不动（不要置空），这样「保存刚刚成功，hydrate 落地却读到陈旧 is_complete」的竞态，不会让那些依赖 $persona 的消费者把它当成清空。
     return { ok: true }
   }
 

@@ -22,8 +22,7 @@ import type { ChatSubmitState, ConversationInputProps } from './conversation-inp
 import { useChatSubmit } from './use-chat-submit'
 import { useVoiceRecorder } from './use-voice-recorder'
 
-// 生活空间 / 工作台 / 轻语共享的聊天输入态：附件、提交、录音、拖拽、粘贴与撤销草稿。
-// 返回的 inputProps 直接喂给 ConversationInput；handleDrop 供外层容器接收整层拖入。
+// 生活空间 / 工作台 / 轻语共享的聊天输入态：附件、提交、录音、拖拽、粘贴与撤销草稿。返回的 inputProps 直接喂给 ConversationInput；handleDrop 供外层容器接收整层拖入。
 export interface UseChatInputOptions {
   gatewayState: ConnectionState
   isReadOnlySession: boolean
@@ -35,8 +34,7 @@ export interface UseChatInputResult {
   inputProps: Omit<ConversationInputProps, 'variant'>
 }
 
-// 已消费过的投喂 nonce + 跨挂载暂存的附件路径（模块级 atom，StrictMode 卸载重挂不丢）。
-// nonce 防止 listen 对同一份投喂重复 append。监听器内不 clear，由投喂方在下次 push 前清。
+// 已消费过的投喂 nonce + 跨挂载暂存的附件路径（模块级 atom，StrictMode 卸载重挂不丢）。nonce 防止 listen 对同一份投喂重复 append。监听器内不 clear，由投喂方在下次 push 前清。
 let consumedExternalFeedNonce = 0
 
 // 暂存路径绑定加入时的会话；sessionId 为 null 时归入本窗口随后确定的会话。
@@ -98,8 +96,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
     $chatDraftFromUndo.set(null)
   })
 
-  // 精灵窗文件投喂（sprite-stage drag/drop）合并到附件；来源窗口不知道目标会话，由本窗口随后确定。
-  // 投喂可能先于输入挂载（精灵窗先推附件再打开轻语），订阅时先消费当前值，nonce 防止重复并入。
+  // 精灵窗文件投喂（sprite-stage drag/drop）合并到附件；来源窗口不知道目标会话，由本窗口随后确定。投喂可能先于输入挂载（精灵窗先推附件再打开轻语），订阅时先消费当前值，nonce 防止重复并入。
   useEffect(
     () =>
       $pendingExternalAttachment.subscribe(state => {

@@ -1,9 +1,4 @@
-"""聊天链系统提示词文本：内置预设体（``{{BLOCK}}`` 骨架）、职业预设双语头部、
-系统提示词块、标题生成与上下文压缩指令。渲染器与装配逻辑在
-services.application.chat（prompt_blocks / prompt_presets / system_prompt / title_generator / context_compressor）。
-
-约定：双语 dict 的键是 SUPPORTED_LANGUAGES 内的 lang code（默认 zh/en）；
-文本变更需要 backend 重启，运行时不做热更新。"""
+"""聊天链系统提示词文本；装配在 services.application.chat，索引见 [README](README.md)。"""
 
 PRESET_BODY_COMPANION = (
     "{{AGENT_IDENTITY}}\n\n"

@@ -70,12 +70,7 @@ def website_policy_error(url: str) -> str | None:
 
 
 def guard_browser_url(url: str, *, allow_private: bool | None = None) -> tuple[str, str | None]:
-    """对即将送往浏览器的 URL 做凭据、协议、SSRF 与站点策略预检。
-
-    返回 ``(normalized_url, None)``；被阻断时返回 ``(url, error_json)``，调用方原样回给模型，不再做网络动作。
-    ``allow_private`` 缺省跟随 ``browser.allow_private_urls``。预检只覆盖工具直接给出的 URL，
-    页面内跳转、脚本与原始 CDP 命令不经过这里。
-    """
+    """浏览器 URL 预检（凭据/协议/SSRF/站点策略）；返回 (url, error_json|None)。页面内跳转不经此。"""
     if url == "about:blank":
         return url, None
     if SECRET_PREFIX_RE.search(url) or SECRET_PREFIX_RE.search(unquote(url)):
@@ -102,8 +97,7 @@ def ensure_supervisor(session_key: str) -> CDPSupervisor:
         return supervisor
 
     session_info = get_or_create_session(session_key)
-    # 旧主管已失联：先结束会话里的旧本机浏览器，释放 profile 锁以便新浏览器复用同一持久 profile；
-    # 覆盖模式连接用户自己的浏览器，新主管不拥有任何本机进程。
+    # 失联时先清旧本机浏览器放 profile 锁；覆盖模式不拥有进程。
     if session_info.launch_handle is not None:
         session_info.launch_handle.terminate()
         session_info.launch_handle = None

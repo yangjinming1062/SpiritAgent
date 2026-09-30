@@ -4,8 +4,7 @@ import { fetchVoiceCatalogRaw, isCustomVoiceSelectionId, voiceSelectionId, voice
 
 type VoiceValidityResult = { valid: true } | { valid: false; name: string; reason: 'catalog_miss' }
 
-/** 校验音色 id 是否仍在云端目录中（供应商裁剪 / 改名 / 换源）。
- *  纯检查：过期 id 的清除由调用方写回偏好，语音模块不持有音色偏好状态。 */
+/** 校验音色 id 是否仍在云端目录中（供应商裁剪 / 改名 / 换源）。纯检查：过期 id 的清除由调用方写回偏好，语音模块不持有音色偏好状态。 */
 export async function checkVoiceValidity(
   voiceId: string,
   requestGateway: RequestGateway

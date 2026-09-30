@@ -11,7 +11,7 @@ from utils import cfg_get, get_spiritagent_home, load_config, pid_exists
 
 logger = logging.getLogger(__name__)
 
-# 72h 对齐自动录屏保留策略；更老的 profile 在下一次 GC tick 回收。
+# 72h 对齐录屏保留；更老 profile 下次 GC 回收。
 DEFAULT_RETENTION_HOURS = 72
 
 _SINGLETON_FILES = ("SingletonLock", "SingletonCookie", "SingletonSocket")
@@ -40,10 +40,7 @@ def _singleton_owner(profile_dir: Path) -> tuple[str, int] | None:
 
 
 def is_profile_locked(profile_dir: Path) -> bool:
-    """profile 正被存活的浏览器进程持有时返回 True；崩溃残留的锁视为未占用，以便复用持久 profile。
-
-    Windows 的 ``lockfile`` 由运行中的浏览器独占打开，进程结束时由系统删除。
-    """
+    """存活浏览器持有则 True；崩溃残留锁视为未占用以便复用。"""
     if sys.platform == "win32":
         return (profile_dir / "lockfile").exists()
     owner = _singleton_owner(profile_dir)
@@ -51,11 +48,7 @@ def is_profile_locked(profile_dir: Path) -> bool:
 
 
 def release_foreign_lock(profile_dir: Path) -> None:
-    """清除记录着其他主机名且进程已不存在的残留锁。
-
-    macOS 换网络后主机名会变化；Chromium 遇到其他主机名的锁会拒绝启动，而托管 profile 只在本机使用，
-    这种锁只能是崩溃残留，不清除则该 profile 永远无法再启动。同主机的残留锁由 Chromium 自行接管。
-    """
+    """清除其他主机名且进程已死的残留锁；否则换网后该 profile 永远起不来。"""
     if sys.platform == "win32":
         return
     owner = _singleton_owner(profile_dir)

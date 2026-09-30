@@ -61,7 +61,6 @@ export type PeekPreparation = {
   | ({ mode: 'window' } & WindowPeekBinding)
 )
 
-// 空间层裁决的运动方式。
 export type Locomotion = 'still' | 'walk' | 'fly' | 'drag'
 
 const $spatialLocale = atom<SpatialLocale>('home')
@@ -127,8 +126,7 @@ interface PendingWindowPeek extends WindowPeekBinding {
 
 let pendingWindowPeek: PendingWindowPeek | null = null
 
-// 桌面精灵舞台展示中：未被完整入口收起，精灵窗也未被托盘、快捷键或右键隐藏或最小化。
-// 不展示时暂停走位、漫游与探身，重新展示后由 initSpatial 恢复。
+// 桌面精灵舞台展示中（未被完整入口收起、精灵窗未隐藏或最小化）；不展示时暂停走位、漫游与探身，重新展示后由 initSpatial 恢复。
 function isDesktopStageShown(): boolean {
   return $surfaceOpen.get() === null && $surfaceSpriteVisible.get()
 }
@@ -1589,8 +1587,7 @@ export function initSpatial(): () => void {
       settleSavedRectWait()
     })
 
-  // 桌面舞台收起（完整入口打开）或精灵窗隐藏、最小化时暂停走位、漫游、探身与仪式提示；
-  // 重新展示后收回栖身、恢复贴边并重新裁决（DESIGN「窗口与会话」）。
+  // 桌面舞台收起、精灵窗隐藏或最小化时暂停走位、漫游、探身与仪式提示；重新展示后收回栖身、恢复贴边并重新裁决。
   const pauseDesktopStage = (): void => {
     peekIntentGeneration += 1
     clearSpriteGesture()

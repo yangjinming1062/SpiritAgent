@@ -19,11 +19,7 @@ _DESKTOP_GONE_ERROR = json.dumps(
 
 
 async def dispatch_device_call(user_id: int, call_id: str, payload: dict[str, Any]) -> str | None:
-    """向用户桌面派发 ``tool.call`` 设备指令并等待对应 ``tool.result``；桌面无 dispatcher 或入队失败时返回 None。
-
-    等待对象先于派发登记：毫秒级工具的结果可能早于入队返回就抵达，晚登记会被 ``resolve_future`` 当作未知
-    call_id 丢弃；之后直接持对象等待，不按键重查（``resolve_future`` 已把条目摘走）。
-    """
+    """向用户桌面派发 tool.call 并等待 tool.result；桌面无 dispatcher 或入队失败时返回 None。等待对象先于派发登记（毫秒级工具结果可能早于入队返回），之后直接持对象等待。"""
     dispatcher = MANAGER.get_dispatcher(user_id)
     if dispatcher is None:
         return None
@@ -67,16 +63,10 @@ def resolve_future(user_id: int, call_id: str, result: str) -> bool:
 
 
 def discard_user(user_id: int) -> None:
-    """以「桌面离线」错误兑现该用户所有未决等待。
-
-    刻意不用 ``cancel()``：``CancelledError`` 继承 ``BaseException``，会穿透 chat 回合各层的
-    ``except Exception`` 导致回合静默死亡（IM 侧表现为对端永远等不到任何回复）。桌面掉线在语义上
-    就是「在飞的设备调用全部以离线失败告终」，用错误兑现能让回合正常收尾并如实告知。
-    """
+    """以「桌面离线」错误兑现该用户所有未决等待。刻意不用 cancel()：CancelledError 继承 BaseException，会穿透 chat 回合各层的 except Exception 导致回合静默死亡；用错误兑现能让回合正常收尾并如实告知。"""
     for key in [k for k in _PENDING if k[0] == user_id]:
         fut = _PENDING.pop(key)
-        # 与 wait_for 的取消存在竞态：done() 与 set_result 之间 future 可能已被取消；
-        # 单条失败不能中断整轮清理，否则其余 future 全部留在挂起态。
+        # 与 wait_for 的取消存在竞态：done() 与 set_result 之间 future 可能已被取消；单条失败不能中断整轮清理
         if not fut.done():
             with contextlib.suppress(asyncio.InvalidStateError):
                 fut.set_result(_DESKTOP_GONE_ERROR)

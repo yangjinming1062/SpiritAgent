@@ -13,8 +13,7 @@ import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, Chip, FIELD_LABEL, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
-// 可编辑的 persona 字段：name / relationship / personality / speaking_style。
-// 锁定的视觉锚点字段（biological_type / gender）刻意不可编辑——见 docs/DESIGN.md「身份锁定与角色卡」。
+// 可编辑的 persona 字段：name/relationship/personality/speaking_style；锁定的视觉锚点字段（biological_type/gender）刻意不可编辑——见 docs/DESIGN.md「身份锁定与角色卡」。
 export function PersonaSection(): React.JSX.Element {
   const dict = useStrings()
   const t = dict.settings.persona
@@ -56,9 +55,7 @@ export function PersonaSection(): React.JSX.Element {
     setSaving(true)
     setHint(null)
 
-    // PUT 与 hydrate 的失败模式分开——PUT 成功后即便 GET 短暂失败，
-    // 也不能当成保存失败（诱导用户重试会造成重复写入）。
-    // 把当前 persona 作为 previous 传入，让锁定的视觉锚点字段原样带回。
+    // PUT 与 hydrate 的失败模式分开—— PUT 成功后即便 GET 短暂失败也不能当成保存失败（诱导用户重试会造成重复写入）；把当前 persona 作为 previous 传入，让锁定字段原样带回。
     try {
       await window.spiritagent.api({
         body: {
@@ -87,8 +84,7 @@ export function PersonaSection(): React.JSX.Element {
     const result = await hydratePersona({ silent: true })
 
     if (!result.ok) {
-      // 后端已经有人设，本地副本没刷出来。给一条更温和的提示，
-      // 让用户知道下次 hydrate 之前（下一次保存、重启等）看到的是旧值。
+      // 后端已经有人设但本地副本没刷出来：给一条更温和的提示，让用户知道下次 hydrate 之前（下一次保存、重启等）看到的是旧值。
       setHint(t.hintHydrateFailed)
     }
 

@@ -1,8 +1,4 @@
-"""独立评审：提案与评审调用分离，不自我批准。
-
-评审在提案事务提交后的后台执行；失败落 deferred 可重试，不默认批准。
-approve 才占用制作额度，并把设计规格冻结到动作行供生成编排读取。
-"""
+"""独立评审：提案与评审分离，不自我批准。评审在提案事务提交后后台执行；失败落 deferred 可重试，不默认批准。approve 才占用制作额度并冻结设计规格到动作行。"""
 
 import asyncio
 import json
@@ -101,10 +97,7 @@ async def _existing_actions(
     pack_id: int,
     design: dict,
 ) -> list[dict]:
-    """同包全部表达动作按与提案的词面相近度排序，超过上限只保留最相近的；不超过上限时即为完整清单。
-
-    词面相近度对中文近义表达不敏感，不能据此剔除零分动作，否则评审会漏看可复用的近义动作。
-    """
+    """同包表达动作按与提案的词面相近度排序，超上限只留最相近的。词面相近度对中文近义不敏感，不能据此剔除零分动作，否则漏看可复用近义动作。"""
     scored = [
         (_similarity_score(design, action), action)
         for action in await list_pack_actions(db, pack_id, enabled_only=True)
@@ -128,9 +121,7 @@ async def _existing_actions(
 
 
 async def review_proposal(db: AsyncSession, proposal: ActionProposal) -> str:
-    """独立 LLM 评审并返回最终落库的结论；格式失败最多修复一次，仍失败则 defer。
-
-    同包已有同 key 动作时不调用模型，按该动作状态直接复用或暂缓。"""
+    """独立 LLM 评审并返回落库结论；格式失败最多修复一次，仍失败则 defer。同包已有同 key 动作时不调用模型，按其状态复用或暂缓。"""
     pack = await db.get(CompanionActionPack, proposal.pack_id)
     if pack is None:
         return "reject"
@@ -185,9 +176,7 @@ async def _same_key_verdict(
     proposal: ActionProposal,
     design: dict[str, Any],
 ) -> ReviewVerdict | None:
-    """同包已有同 key 动作时的确定结论：就绪即复用，其余状态暂缓，不覆盖或重排该动作。
-
-    与受理一致，同名即同一动作身份；两个同名提案先后获批时，后者按先者动作的状态收敛。"""
+    """同包已有同 key 动作时的确定结论：就绪即复用，其余暂缓，不覆盖或重排。同名即同一动作身份；两个同名提案先后获批时后者按先者状态收敛。"""
     existing = await get_action_by_key(db, proposal.pack_id, _action_key(proposal, design))
     if existing is None:
         return None

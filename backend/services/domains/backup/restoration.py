@@ -34,8 +34,7 @@ BACKUP_RESTORE_ORDER: tuple[str, ...] = (
     "messages",
     *(table for table in TABLES if table not in CONVERSATION_TABLES),
 )
-# 父类覆盖会改变仍被保留的子类引用；子类没有随本次恢复清理时须保留父类。
-# None 表示引用嵌在 JSON / 数组等非关系列中，只要存在保留行就按可能有关联处理。
+# 父类覆盖会改变仍被保留的子类引用，子类未随本次恢复清理时须保留父类；None 表示引用嵌在 JSON / 数组等非关系列中，只要存在保留行就按可能有关联处理。
 OVERWRITE_DEPENDENT_REFERENCES: dict[str, tuple[tuple[str, str | None], ...]] = {
     "avatar_assets": (
         ("companion_character_cards", "avatar_id"),

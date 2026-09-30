@@ -1,6 +1,4 @@
-/** 视频包生成流程 store：衣柜页发起生成、进度状态与包列表。
- * 可播清单与播放实例由 actions 模块维护；本 store 只管理生成任务状态机。
- * 渲染层不得经本 store 触发付费：缺失动作由显式服务流程统一鉴权、去重、记账。 */
+/** 视频包生成流程 store：衣柜页发起生成、进度状态与包列表；可播清单与播放实例由 actions 维护；渲染层不得经本 store 触发付费（缺失动作由显式服务流程统一鉴权、去重、记账）。 */
 
 import { atom } from 'nanostores'
 
@@ -51,8 +49,7 @@ export interface VideoGenError extends VideoGenScope {
   message: string
 }
 
-// 生成状态机：事件驱动（progress/failed）优先，hydrate 用包列表兜底识别 processing 包；
-// 登出清空。failed 携带后端公开文案，可从生成入口重试。
+// 生成状态机：事件驱动（progress/failed）优先，hydrate 用包列表兜底识别 processing 包；failed 携带后端公开文案可重试。
 export const $videoGenState = atom<'idle' | 'generating' | 'failed'>('idle')
 export const $videoGenStage = atom<VideoGenStage | null>(null)
 export const $videoGenError = atom<VideoGenError | null>(null)
@@ -186,8 +183,7 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
         $videoGenScope.set({ outfitId: processing.outfit_id, packId: processing.id })
         clearGenIssue()
       } else if ($videoGenState.get() === 'generating') {
-        // 服务端已无进行中的任务（如处理进程重启按失败落库），本地生成态收敛；
-        // 具体失败文案以 companion.video.failed 事件为准。
+        // 服务端已无进行中任务（进程重启按失败落库）时本地生成态收敛；失败文案以 companion.video.failed 事件为准。
         const failed =
           packs.find(p => p.status === 'failed' && matchesScope(p)) ?? packs.find(p => p.status === 'failed') ?? null
 
@@ -227,8 +223,7 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
   return load
 }
 
-/** 发起按参考生成（LLM 演绎脚本 → i2v → 服务端处理）；进度与结果经 companion.video 事件回流。
- * 请求被拒绝（守卫 / 供应商未配置）时把后端公开文案写入失败态，不进入 generating。 */
+/** 发起按参考生成（LLM 演绎脚本 → i2v → 服务端处理），进度与结果经 companion.video 事件回流；请求被拒绝时把后端公开文案写入失败态，不进入 generating。 */
 export async function generateVideoPack(
   opts: {
     force?: boolean

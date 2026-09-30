@@ -1,7 +1,4 @@
-"""会话撤回：硬删除 ``id >= source_message_id`` 的全部行（含锚点本身），把锚点载荷推回客户端作为输入框草稿。与 ``fork`` 互为对偶——fork 在新会话复制 1..N，本服务在原会话硬删 N..end。
-
-调用方必须先 ``resolve_undo_target`` 再 prune 视频，最后才调用 ``undo_conversation_to_message``。
-"""
+"""会话撤回：硬删除 ``id >= source_message_id`` 的全部行（含锚点本身），把锚点载荷推回客户端作为输入框草稿。与 ``fork`` 互为对偶——fork 在新会话复制 1..N，本服务在原会话硬删 N..end。调用方必须先 ``resolve_undo_target`` 再 prune 视频，最后才调用 ``undo_conversation_to_message``。"""
 
 from modules.conversation import Conversation, Message
 from sqlalchemy import delete, func, select

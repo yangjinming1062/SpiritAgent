@@ -1,11 +1,4 @@
-/** 精灵视觉特效与情绪粒子系统。
- *
- * 设计要点：
- * - 挂载于 SpriteStage 上层（pointer-events: none），零性能负担；
- * - 暴露全局 emitVfx(type, options) 方法，零耦合供手势、交互与状态机触发；
- * - 粒子生命周期由内部 requestAnimationFrame 调度更新，淡出自动销毁；
- * - 支持 heart(爱心)、music_notes(音符律动)、sleep_zzz(打盹)。
- */
+/** 精灵视觉特效与情绪粒子系统。 */
 
 import { useEffect, useRef, useState } from 'react'
 
@@ -37,8 +30,7 @@ interface Particle {
 let nextParticleId = 1
 const activeParticles: Particle[] = []
 
-// 唤醒回调：SpriteVfxOverlay 在 mount 时注册，emitVfx 在粒子清空后
-// 再次添加时调用——用于把已停止的 RAF 循环重新拉起。
+// 唤醒回调：SpriteVfxOverlay 在 mount 时注册，emitVfx 在粒子清空后再次添加时调用——用于把已停止的 RAF 循环重新拉起。
 let wakeTick: (() => void) | null = null
 
 function registerVfxWake(fn: (() => void) | null): void {

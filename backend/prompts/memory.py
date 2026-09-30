@@ -1,6 +1,4 @@
-"""记忆域提示词与标签文本：长期记忆维护政策（MEMORY_POLICY）、审查指令、
-用户资料上下文标签与双语块标题。决策 schema 与消费逻辑在
-services.domains.memory（memory_policy / memory_review / memory_bootstrap）。"""
+"""记忆域提示词与标签文本；消费逻辑在 services.domains.memory，索引见 [README](README.md)。"""
 
 MEMORY_POLICY = """Maintain evidence-grounded long-term memory for this conversation scope without replacing the conversational task. Maintenance is autonomous: never ask the user to approve a memory or validate a profile. Default to no change. Ordinary chat already remains in history; retain only an atomic claim with concrete future use. A current explicit user correction overrides older memory.
 

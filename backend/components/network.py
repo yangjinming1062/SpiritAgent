@@ -34,7 +34,7 @@ def _ip_in_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
 
 
 def _ssrf_allowed_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
-    """运维声明的 IP 段豁免保留段拒绝——给 fake-ip TUN 代理（Clash 等，把所有域名解析到 198.18.0.0/15 或 IPv6 fdfe:dcba:9876::/64 等）的逃生口；云元数据 / CGNAT 块与 hostname 黑名单不受此豁免影响。"""
+    """运维声明的 IP 段豁免保留段拒绝——给 fake-ip TUN 代理（Clash 等）的逃生口；云元数据 / CGNAT 块与 hostname 黑名单不受此豁免影响。"""
     networks: list[ipaddress.IPv4Network | ipaddress.IPv6Network] = []
     for part in (SETTINGS.ssrf_allowed_cidrs or "").split(","):
         part = part.strip()
@@ -76,14 +76,7 @@ def _evaluate_hostname(host: str) -> tuple[bool, str]:
 
 
 def is_safe_outbound(host: str) -> tuple[bool, str]:
-    """对出站目标做完整的 SSRF 校验：hostname 黑名单 + (若是 IP 字面量)保留段检查 + DNS 解析 + 全部解析结果的策略评估。
-
-    守卫关闭（``SETTINGS.ssrf_guard_enabled``）时直接放行。
-
-    同步函数：会执行 ``socket.getaddrinfo``。在事件循环里调用方请走
-    ``anyio.to_thread.run_sync`` / ``asyncio.to_thread``，或直接使用
-    ``_SafeOutboundAsyncBackend``（``safe_outbound_async_client`` / ``download_capped``）。
-    """
+    """完整 SSRF 校验：hostname 黑名单 + 保留段检查 + DNS 解析后评估全部结果；守卫关闭时放行。同步函数，事件循环里请走 asyncio.to_thread 或 `_SafeOutboundAsyncBackend`。"""
     if not SETTINGS.ssrf_guard_enabled:
         return True, ""
     ok, reason = _evaluate_hostname(host)
@@ -102,11 +95,7 @@ def is_safe_outbound(host: str) -> tuple[bool, str]:
 
 
 def _resolve_and_validate(host: str, port: int) -> list[tuple[str, int]]:
-    """同步执行 DNS 解析并对所有解析结果做 SSRF 校验；返回通过校验的 (ip, port) 列表。
-
-    DNS 与校验都在调用方线程里跑；对 async 路径而言，调用方负责用
-    ``anyio.to_thread.run_sync`` 或 ``asyncio.to_thread`` 把它移出事件循环。
-    """
+    """同步 DNS 解析并校验全部结果；返回通过的 (ip, port)。async 路径由调用方移出事件循环。"""
     try:
         infos = socket.getaddrinfo(host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
     except socket.gaierror as exc:
@@ -127,16 +116,7 @@ def _resolve_and_validate(host: str, port: int) -> list[tuple[str, int]]:
 
 
 class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
-    """出站 AsyncClient 专用的 httpcore 后端：
-
-    * DNS 解析在工作线程内完成，事件循环不会被慢解析阻塞；
-    * 每个目标 IP 在 socket.connect 之前都过一次当前 SSRF 策略；
-    * 实际 connect 使用已校验 IP 直连，原始 host 仍由 httpcore 用于
-      HTTP Host、TLS SNI 与证书主机名校验；
-    * 重定向由 httpx 自动跟随，每一跳都会重新走 ``connect_tcp``。
-
-    守卫关闭时跳过策略层，建连行为与 httpcore 默认后端一致。
-    """
+    """出站 SSRF 守卫后端：DNS 在工作线程解析，每个目标 IP 在 socket.connect 前过策略，以已校验 IP 直连（Host/SNI/证书仍用原 host）；重定向每跳重走 connect_tcp。守卫关闭时行为与默认后端一致。"""
 
     async def connect_tcp(  # type: ignore[override]
         self,
@@ -155,7 +135,7 @@ class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
                 socket_options=socket_options,
             )
 
-        # hostname 黑名单在进 DNS 之前先判一次，省一次解析也省一次工作线程。
+        # hostname 黑名单在进 DNS 之前先判，省一次解析与工作线程。
         ok, reason = _evaluate_hostname(host)
         if not ok:
             logger.warning("SSRF guard refused %s: %s", host, reason)
@@ -192,11 +172,7 @@ class _SafeOutboundAsyncBackend(httpcore._backends.auto.AutoBackend):
 
 
 class _SafeOutboundAsyncTransport(httpx.AsyncHTTPTransport):
-    """挂载了 ``_SafeOutboundAsyncBackend`` 的异步 httpx 传输层。
-
-    实际建连时的目标 IP 校验由后端完成；这里保持 ``follow_redirects=False``
-    与默认行为一致，避免与上层 ``download_capped`` 的逐跳校验重复发请求。
-    """
+    """挂载 ``_SafeOutboundAsyncBackend`` 的 httpx 传输层；``follow_redirects=False`` 与默认一致，逐跳校验交给 ``download_capped``。"""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -205,8 +181,7 @@ class _SafeOutboundAsyncTransport(httpx.AsyncHTTPTransport):
 
 
 def safe_outbound_async_client(**kwargs: Any) -> httpx.AsyncClient:
-    """带建连期 SSRF 守卫的 AsyncClient 工厂：每个 socket.connect 在 DNS 解析后校验全部目标 IP；
-    不跟随重定向，``download_capped`` 自行逐跳校验。"""
+    """带建连期 SSRF 守卫的 AsyncClient 工厂；不跟随重定向，``download_capped`` 自行逐跳校验。"""
     return httpx.AsyncClient(transport=safe_outbound_async_transport(), **kwargs)
 
 
@@ -219,12 +194,7 @@ _MAX_REDIRECTS = 5
 
 
 async def download_capped(url: str, *, max_bytes: int, timeout: float) -> bytes:
-    """下载远程 URL，封装大小上限、逐跳 SSRF 校验、协议白名单（{http, https}）与 HTTPS→HTTP 降级防护。
-
-    每跳的 SSRF 校验由 ``_SafeOutboundAsyncBackend.connect_tcp`` 在 socket
-    connect 之前完成（DNS 解析在工作线程里跑，不阻塞事件循环）；这里只做
-    协议 / 重定向层面的额外检查。
-    """
+    """下载远程 URL：大小上限、逐跳 SSRF（由建连后端完成）、协议白名单 {http, https} 与 HTTPS→HTTP 降级防护。"""
     current_url = url
     redirect_count = 0
 
@@ -254,7 +224,6 @@ async def download_capped(url: str, *, max_bytes: int, timeout: float) -> bytes:
                 if target_parsed.scheme not in ("http", "https"):
                     raise ValueError(f"redirect to unsupported scheme: {target_parsed.scheme!r}")
 
-                # 拒绝 HTTPS → HTTP 降级
                 if parsed.scheme == "https" and target_parsed.scheme == "http":
                     raise ValueError("refusing redirect downgrade from HTTPS to HTTP")
 

@@ -14,7 +14,7 @@ import { UserProfileSection } from './user-profile-section'
 
 type MemoryTab = 'active' | 'candidate' | 'invalidated' | 'expired'
 
-// 召回记忆的 context 形如 recall:<主题>（后端 memory_namespaces.py），界面只展示主题。
+// 召回记忆的 context 形如 recall:< 主题 >（后端 memory_namespaces.py），界面只展示主题。
 const RECALL_CONTEXT_PREFIX = /^recall:/
 
 const $memoryBrowserTab = atom<MemoryTab>('active')
@@ -88,8 +88,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
   const [hint, setHint] = useState<string | null>(null)
   const [draftById, setDraftById] = useState<Record<number, string>>({})
   const [savingById, setSavingById] = useState<Record<number, boolean>>({})
-  // 每次调用 ``load`` 时递增；``load`` 发起更新版本之后才返回的旧响应被丢弃，
-  // 防止慢响应覆盖已切换到新 tab 的快响应。
+  // 每次调用 ``load`` 时递增；``load`` 发起更新版本之后才返回的旧响应被丢弃，防止慢响应覆盖已切换到新 tab 的快响应。
   const loadIdRef = useRef(0)
 
   const load = useCallback(
@@ -146,8 +145,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
     }
   }, [tab, load])
 
-  // 函数式 setState 无需镜像 ref 也能拿到上一次的 rows；
-  // 回滚分支从点击时闭包捕获的 `rows` 快照里同时还原 rows[i].content 与 draftById[i]。
+  // 函数式 setState 无需镜像 ref 也能拿到上一次的 rows；回滚分支从点击时闭包捕获的 `rows` 快照里同时还原 rows[i].content 与 draftById[i]。
   const saveRecall = useCallback(
     async (id: number) => {
       const requestId = loadIdRef.current

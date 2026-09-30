@@ -1,5 +1,4 @@
-// 片刻页：精灵主导的朋友圈式时间线，新在上；用户可就单条片刻评论与精灵互动。
-// 后端直连；精灵回复经 WS `companion.moment.comment` 增量推送。
+// 片刻页：精灵主导的朋友圈式时间线，新在上；用户可就单条片刻评论与精灵互动。后端直连；精灵回复经 WS `companion.moment.comment` 增量推送。
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
@@ -45,8 +44,7 @@ export function MomentsPage(): React.JSX.Element {
   const [loadFailed, setLoadFailed] = useState(false)
   const [reloadKey, setReloadKey] = useState(0)
 
-  // 冷启动默认视图可能是片刻（hash/localStorage 持久化），hydrateAuth 的 IPC 往返
-  // 尚未完成时 authedApi 会以 unauth 静默跳过——等 auth 就绪再水合。
+  // 冷启动默认视图可能是片刻（hash/localStorage 持久化），hydrateAuth 的 IPC 往返尚未完成时 authedApi 会以 unauth 静默跳过——等 auth 就绪再水合。
   useEffect(() => {
     if (authKind !== 'authenticated') {
       return

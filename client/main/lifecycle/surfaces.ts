@@ -302,8 +302,7 @@ export function createSurfacesManager(options: SurfacesManagerOptions): Surfaces
     return layout
   }
 
-  // 完整入口开启时桌面精灵窗虽隐藏，仍须跟随到同屏，确保关闭后原地恢复。
-  // 这是主进程窗口副作用，不属于渲染层表面状态。
+  // 完整入口开启时桌面精灵窗虽隐藏，仍须跟随到同屏，确保关闭后原地恢复；这是主进程窗口副作用，不属于渲染层表面状态。
   function syncSpriteToSurfaceDisplay(win: BrowserWindow): void {
     const sync = options.syncSpriteToDisplay
 

@@ -18,9 +18,7 @@ export type ResponsePreference = 'text' | 'voice'
 const COMPANION_VOICE_ID_STORAGE_KEY = registerCompanionStorageKey('da.companion.voiceId')
 const RESPONSE_PREFERENCE_STORAGE_KEY = registerCompanionStorageKey('da.companion.responsePreference')
 
-// localStorage 仍是各窗口的即时缓存（同步读、离线可用）；每次写入额外经
-// prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL「配置所有权与云同步」）。
-// 水合广播（initCompanionPrefsSync）用云端值回写缓存与 atom，跨端收敛。
+// localStorage 仍是各窗口的即时缓存（同步读、离线可用）；每次写入额外经 prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL「配置所有权与云同步」）。水合广播（initCompanionPrefsSync）用云端值回写缓存与 atom，跨端收敛。
 function reportCloud(key: string, value: unknown): void {
   window.spiritagent?.prefs?.set({ key, value })
 }
@@ -30,8 +28,7 @@ export const $responsePreference = atom<ResponsePreference>(
   storedString(RESPONSE_PREFERENCE_STORAGE_KEY) === 'voice' ? 'voice' : 'text'
 )
 
-// 音色与回应偏好在生活空间设置，轻语共用同一组云端偏好。
-// 各窗口内存独立，借 storage 事件把其他窗口的写入热同步进 atom。
+// 音色与回应偏好在生活空间设置，轻语共用同一组云端偏好。各窗口内存独立，借 storage 事件把其他窗口的写入热同步进 atom。
 onMount($companionVoiceId, () => {
   const refresh = (event: StorageEvent): void => {
     if (event.key === COMPANION_VOICE_ID_STORAGE_KEY) {
@@ -92,9 +89,7 @@ export const $llmAutonomy = llmAutonomyPref.$atom
 
 export { autonomousMediaPref, autonomousVoicePref, llmAffectPref, llmAutonomyPref }
 
-// 云端水合应用：只接受类型匹配的键，坏值静默跳过（fail-open）。
-// 借道既有 setter 落 localStorage + atom；回写的 prefs:set 上报在主进程侧
-// 与最近一次成功上云内容比对后消解，不会形成回环。
+// 云端水合应用：只接受类型匹配的键，坏值静默跳过（fail-open）。借道既有 setter 落 localStorage + atom；回写的 prefs:set 上报在主进程侧与最近一次成功上云内容比对后消解，不会形成回环。
 export function initCompanionPrefsSync(): () => void {
   // 发送消息直接读取偏好；监听生命周期不能依赖设置面板是否订阅 atom。
   const refreshResponsePreference = (): void => {
@@ -142,8 +137,7 @@ export function initCompanionPrefsSync(): () => void {
       hydrateManualReduceTransparency(companion.reduce_transparency)
     }
 
-    // 打扰档位：只回写用户偏好（跨端恢复，不结束本机临时安静）；生效档位（companion.disturbance_tier）
-    // 是设备派生值，供后端闸门消费，不回写本地——活动循环本地重算。
+    // 打扰档位：只回写用户偏好（跨端恢复，不结束本机临时安静）；生效档位（companion.disturbance_tier）是设备派生值，供后端闸门消费，不回写本地——活动循环本地重算。
     const tier = companion.disturbance_preference
 
     if (tier === 'still' || tier === 'normal' || tier === 'autonomous') {

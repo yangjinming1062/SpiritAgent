@@ -2,7 +2,7 @@ from typing import Any
 
 from utils import IS_WINDOWS
 
-# 两个平台的投递方式不同：Windows 驱动真实鼠标键盘，macOS 经 cua-driver 向目标窗口后台投递且不绘制元素编号。
+# Win 真实键鼠；mac 后台投递且不画编号。
 if IS_WINDOWS:
     _INPUT_BEHAVIOR = (
         "Input uses the real mouse and keyboard: clicks land on whatever is visible at that screen position, and "
@@ -46,7 +46,7 @@ _ACTIONS = [
     "focus_app",
 ]
 
-# macOS 上 cua-driver 只能前台拖拽（会移动用户指针），因此不提供 drag。
+# mac 仅前台拖拽，故不提供 drag。
 _DRAG_PARAMS: dict[str, Any] = (
     {
         "from_element": {"type": "integer", "description": "Drag start element index."},

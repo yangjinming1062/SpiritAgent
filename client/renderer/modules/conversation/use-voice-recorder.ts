@@ -290,8 +290,7 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
     startPendingRef.current = pending
   }, [])
 
-  // `recording` 切换驱动一个全局 mouseup 监听器，
-  // 用户可在屏幕任意位置松开按钮即可停止录音。
+  // `recording` 切换驱动一个全局 mouseup 监听器，用户可在屏幕任意位置松开按钮即可停止录音。
   useEffect(() => {
     if (!recording) {
       return

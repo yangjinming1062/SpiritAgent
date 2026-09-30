@@ -1,7 +1,4 @@
-// SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。
-// 通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和
-// `client/renderer/shared/types/global.d.ts` 导入。
-// 在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
+// SpiritAgent Electron IPC 契约 —— 主进程与渲染进程的唯一真理源。通过 `@ipc/contracts` 别名同时被 `client/main/preload.ts` 和 `client/renderer/shared/types/global.d.ts` 导入。在此处新增或重命名通道/载荷字段，会在两侧类型检查时立即报错。
 
 export interface MemoryToolScope {
   user_id: number
@@ -67,10 +64,7 @@ export interface RunnerCallRequest {
   skillScope?: MemoryToolScope
 }
 
-/**
- * Runner 调用结局（PROTOCOL「调用日志与未知结果」）：`failed` 是 Runner 明确报告的工具失败或执行前拒绝；
- * `not_executed` 是请求发出前 Runner 未连接；超时、取消、断连、他处持有与日志判定未知都归 `unknown`。
- */
+/** Runner 调用结局（PROTOCOL「调用日志与未知结果」）：`failed` 是 Runner 明确报告的工具失败或执行前拒绝；`not_executed` 是请求发出前 Runner 未连接；超时、取消、断连、他处持有与日志判定未知都归 `unknown`。 */
 export type RunnerCallOutcome =
   | { error: string; status: 'failed' }
   | { result: unknown; status: 'completed' }
@@ -223,12 +217,10 @@ export interface DesktopShortcutsSetPayload {
   shortcuts: Partial<DesktopShortcutsConfig>
 }
 
-// 云端配置水合广播：只携带渲染层需要回写的伙伴偏好与语言。
-// 主题与快捷键由主进程各自的专用同步通道处理。
+// 云端配置水合广播：只携带渲染层需要回写的伙伴偏好与语言。主题与快捷键由主进程各自的专用同步通道处理。
 export interface DesktopPrefsHydrated {
   companion: Record<string, unknown>
-  // 顶层原始值同步键（PROTOCOL「配置所有权与云同步」），从 user_settings.language 透传过来；
-  // null/undefined 表示云端未设置（回落 DEFAULT_LOCALE）。
+  // 顶层原始值同步键（PROTOCOL「配置所有权与云同步」），从 user_settings.language 透传过来；null/undefined 表示云端未设置（回落 DEFAULT_LOCALE）。
   language?: null | string
 }
 
@@ -535,10 +527,7 @@ type IpcChannel = keyof IpcInvokeContract
 export type IpcEventChannel = keyof IpcEventContract
 type IpcSendChannel = keyof IpcSendContract
 
-// 运行时 channel 常量。用扁平键(camelCase)避免 `Record<string, Record<string, ...>>`
-// 守卫无法适配混合扁平/嵌套 channel 名的结构问题。每个叶子字符串都必须
-// 是对应契约接口的合法 key,任何拼写错误立即在 `satisfies` 检查处报错。
-// 在 main + preload 中以 `IPC.invoke.authActivate` 等方式使用,完全消除字面量字符串。
+// 运行时 channel 常量。用扁平键(camelCase)避免 `Record<string, Record<string, ...>>` 守卫无法适配混合扁平/嵌套 channel 名的结构问题。每个叶子字符串都必须是对应契约接口的合法 key,任何拼写错误立即在 `satisfies` 检查处报错。在 main + preload 中以 `IPC.invoke.authActivate` 等方式使用,完全消除字面量字符串。
 export const IPC = {
   invoke: {
     authActivate: 'spiritagent:auth:activate',

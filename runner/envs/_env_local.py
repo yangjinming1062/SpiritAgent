@@ -103,7 +103,7 @@ class LocalEnvironment(BaseEnvironment):
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE if stdin_data is not None else subprocess.DEVNULL,
-            # POSIX 下 setsid 使 pgid == pid，超时 / 取消时整组终止；Windows 忽略该参数。
+            # setsid 使 pgid==pid，超时整组终止。
             start_new_session=True,
             cwd=self.cwd,
             creationflags=CREATE_NO_WINDOW,
@@ -113,7 +113,7 @@ class LocalEnvironment(BaseEnvironment):
         return proc
 
     def _kill_process(self, proc: subprocess.Popen) -> None:
-        # POSIX killpg(SIGTERM) → 等待 → SIGKILL；Windows taskkill /T → /T /F。进程忽略 SIGTERM 时必须升级。
+        # TERM→等待→KILL；忽略 TERM 必须升级。
         try:
             terminate_tree(proc, graceful_timeout=1.0, force_timeout=2.0, escalate=True)
         except Exception as e:

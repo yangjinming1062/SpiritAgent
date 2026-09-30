@@ -1,9 +1,4 @@
-﻿# 唤生 安装脚本（Windows / PowerShell 5.1+）。由 Tauri SpiritAgent-Setup.exe 调用；
-# 6 阶段负载释放：安装 Python（如需）、拷贝 runner wheel / 桌面安装器 / skills 至 $SPIRITAGENT_HOME 及平台规范位置。
-# 协议：
-#   powershell -File install.ps1 -Manifest                 → 输出 manifest JSON
-#   powershell -File install.ps1 -Stage NAME -Json         → 执行单个阶段，输出结果帧
-# payload 位置通过 SPIRITAGENT_BUNDLED_* 环境变量或对应 -Bundled*Dir 参数传递；二者并存时参数优先。
+﻿# 唤生 安装脚本（Windows/PowerShell 5.1+）。协议：-Manifest 输出阶段列表；-Stage NAME -Json 执行单阶段。payload 经 SPIRITAGENT_BUNDLED_* 或 -Bundled*Dir 传入（参数优先）。
 
 [CmdletBinding()]
 param(
@@ -31,7 +26,7 @@ $DefaultDesktopFormat = "nsis"
 $PythonVersion = "3.13"
 $PythonFallbackVersions = @("3.14")
 
-# 优先级：参数 > 环境变量 > 默认值（与 install.sh 一致）。安装器只经环境变量下发，参数供手动运行覆盖。
+# 参数 > 环境变量 > 默认值（与 install.sh 一致）
 if (-not $SpiritAgentHome) {
     if ($env:SPIRITAGENT_HOME) { $SpiritAgentHome = $env:SPIRITAGENT_HOME }
     else { $SpiritAgentHome = Join-Path $env:LOCALAPPDATA "SpiritAgent" }
@@ -107,7 +102,7 @@ function Install-OfficeCli {
         try {
             & $psHostExe -ExecutionPolicy ByPass -c "irm https://d.officecli.ai/install.ps1 | iex" 2>&1 | Out-Null
         } finally {
-            # 下载失败也必须恢复 EAP=Stop，否则后续阶段失败被静默吞掉。
+            # 下载失败也须恢复 EAP=Stop，否则后续阶段失败被静默吞掉
             $ErrorActionPreference = $prevEAP
         }
 
@@ -157,7 +152,7 @@ function Test-Python {
         } catch { }
     }
 
-    # 冷缓存：安装首选版本后再次只查该版本。
+    # 冷缓存：安装首选版本后只再查该版本
     try {
         $prevEAP = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
@@ -239,22 +234,22 @@ function Stage-UnpackRunner {
     $runnerDir = Join-Path $SpiritAgentHome "runner"
     if (-not (Test-Path $runnerDir)) { New-Item -ItemType Directory -Force -Path $runnerDir | Out-Null }
 
-    # 拷贝 server.py 与 wheel 同级（不进入 wheel）
+    # server.py 与 wheel 同级（不进入 wheel）
     $serverSrc = Join-Path $BundledRunnerDir "server.py"
     if (Test-Path $serverSrc) { Copy-Item -Force $serverSrc (Join-Path $runnerDir "server.py") }
 
-    # 创建 venv（依赖 install-python 阶段完成）
+    # 创建 venv（依赖 install-python 完成）
     $venvDir = Join-Path $runnerDir ".venv"
     $prevEAP = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     $venvOutput = & $script:UvCmd venv $venvDir --python $script:PythonVersion --clear 2>&1
     if ($LASTEXITCODE) { $ErrorActionPreference = $prevEAP; Emit-StageErr "unpack-runner" "uv venv failed: $($venvOutput -join ' | ')"; return 1 }
 
-    # 安装 wheel 至 venv（含依赖一次性安装）
+    # 安装 wheel（含依赖一次性装入 venv）
     $pythonExe = Join-Path $venvDir "Scripts\python.exe"
     $pipOutput = & $script:UvCmd pip install --python $pythonExe $wheel.FullName 2>&1
     if ($LASTEXITCODE) {
-        # 网络不稳时回退至国内镜像
+        # 网络不稳时回退国内镜像
         $pypiIndex = $env:SPIRITAGENT_PYPI_INDEX_URL
         if (-not $pypiIndex) { $pypiIndex = $env:PIP_INDEX_URL }
         if (-not $pypiIndex) { $pypiIndex = "https://mirrors.aliyun.com/pypi/simple/" }
@@ -264,9 +259,9 @@ function Stage-UnpackRunner {
         }
     }
 
-    # 构建链在打包前跑 scripts/check_runner_facade.py，安装后不做烟测。
+    # 构建链已跑 check_runner_facade.py，安装后不做烟测
 
-    # 拷贝 onboarding 引导音频：语言子目录（zh\、en\、…）1:1 映射至 $SpiritAgentHome\audio\onboarding\<lang>\。
+    # onboarding 音频：语言子目录 1:1 映射至 audio/onboarding/<lang>/
     $audioCount = 0
     if ($BundledOnboardingAudioDir -and (Test-Path $BundledOnboardingAudioDir -PathType Container)) {
         Get-ChildItem -Path $BundledOnboardingAudioDir -Directory | ForEach-Object {
@@ -296,7 +291,6 @@ function Stage-UnpackDesktop {
         return 1
     }
 
-    # 按格式定位产物
     $artifact = $null
     switch ($InstallerFormat) {
         "nsis" { $artifact = Get-ChildItem -Path $BundledDesktopDir -Filter "*.exe" -File -ErrorAction SilentlyContinue | Select-Object -First 1 }
@@ -315,7 +309,7 @@ function Stage-UnpackDesktop {
 
     switch ($InstallerFormat) {
         "nsis" {
-            # NSIS /S 静默安装，/D 指定安装目录；Tauri 安装器已持有可见窗口，子进程无需再开控制台。
+            # NSIS /S 静默安装，/D 指定目录；已有可见窗口，子进程不再开控制台
             $localPrograms = Join-Path $env:LOCALAPPDATA "Programs"
             $installDir = Join-Path $localPrograms "SpiritAgent"
             if (-not (Test-Path $installDir)) { New-Item -ItemType Directory -Force -Path $installDir | Out-Null }
@@ -331,8 +325,7 @@ function Stage-UnpackDesktop {
             return 0
         }
         "zip" {
-            # 解压 ZIP 至 $SPIRITAGENT_HOME\apps\SpiritAgent（与 NSIS 布局一致），后续可从内部的 SpiritAgent.exe 启动；
-            # 与 bootstrap.rs::resolve_spiritagent_desktop_exe 在 Windows 上期望的 install_root 路径对齐。
+            # ZIP 解压到 apps/SpiritAgent（与 NSIS 布局一致），对齐 bootstrap.rs 期望路径
             $dest = Join-Path $SpiritAgentHome "apps\SpiritAgent"
             if (Test-Path $dest) { Remove-Item -Recurse -Force $dest }
             Expand-Archive -Path $artifactPath -DestinationPath $dest -Force
@@ -365,14 +358,14 @@ function Stage-InstallSkills {
     $skillsDir = Join-Path $SpiritAgentHome "skills"
     if (-not (Test-Path $skillsDir)) { New-Item -ItemType Directory -Force -Path $skillsDir | Out-Null }
 
-    # /E 只增不删（无 /PURGE）：保留用户自装技能，与 install.sh 的 rsync 语义一致。退出码 0-7 视为成功，>=8 视为失败。
+    # /E 只增不删，保留用户自装技能；退出码 0-7 成功，>=8 失败
     & robocopy $BundledSkillsDir $skillsDir /E /NFL /NDL /NJH /NJS /NP /R:0 /W:0 | Out-Null
     if ($LASTEXITCODE -ge 8) {
         Emit-StageErr "install-skills" "robocopy skills failed: exit $LASTEXITCODE"
         return 1
     }
 
-    # 动态安装 OfficeCLI（若网络可用）
+    # OfficeCLI 尽力安装
     Install-OfficeCli | Out-Null
 
     $bundledCount = (Get-ChildItem -Path $skillsDir -Directory -ErrorAction SilentlyContinue | Measure-Object).Count
@@ -400,7 +393,7 @@ if (-not $Stage) {
     exit 2
 }
 
-# 运行阶段脚本块：通过 Write-Output 输出的 JSON 帧进入 stdout；阶段 `return` 值（结果数组最后一个元素）作为退出码。
+# 阶段 JSON 帧走 stdout；阶段 return 值作退出码。
 function Run-Stage([scriptblock]$fn) {
     $result = @(& $fn)
     $code = if ($result.Count -gt 0) { $result[-1] } else { 0 }

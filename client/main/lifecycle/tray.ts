@@ -409,9 +409,7 @@ export function showMainWindow(): void {
   }
 
   if (!win.isVisible()) {
-    // 精灵是无边框置顶浮层，任何路径都不该进任务栏——show 前把 skipTaskbar
-    // 钉回 true（而非像工具窗口那样翻 false），否则 Windows 任务栏会多出
-    // 一个按钮，dev 下还顶着 electron.exe 的默认图标。
+    // 精灵是无边框置顶浮层，任何路径都不该进任务栏—— show 前把 skipTaskbar 钉回 true，否则 Windows 任务栏会多出按钮（dev 下还顶着 electron.exe 图标）。
     if (process.platform === 'win32') {
       win.setSkipTaskbar(true)
     }

@@ -19,9 +19,7 @@ export async function convertBlobToWav(blob: Blob, targetSampleRate = 16000): Pr
   }
 }
 
-/**
- * 将 AudioBuffer 转换为 16-bit PCM 单声道 WAV Blob。
- */
+/** 将 AudioBuffer 转换为 16-bit PCM 单声道 WAV Blob。 */
 function encodeAudioBufferToWav(audioBuffer: AudioBuffer, targetSampleRate = 16000): Blob {
   const numChannels = 1
   const sourceSampleRate = audioBuffer.sampleRate

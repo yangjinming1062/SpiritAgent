@@ -1,9 +1,4 @@
-/** 动作播放运行时：播放实例、抢占、回执。
- *
- * 不把每个新动作加入基础状态机；基础状态（idle/drag/walk）仍是表现优先级真源，
- * 本模块只管理数据化表达请求（play_id + epoch + TTL），由 VideoStage 消费。
- * 相同素材路径不跳过切换：同一动作再次播放使用新 play_id 从头播放。
- */
+/** 动作播放运行时：播放实例、抢占、回执。基础状态仍是表现优先级真源，本模块只管理数据化表达请求（play_id + epoch + TTL），由 VideoStage 消费；同一动作再次播放用新 play_id 从头播放。 */
 
 import { atom } from 'nanostores'
 
@@ -59,9 +54,7 @@ export function resetActionPlayback(): void {
   acceptedPlayIds.clear()
 }
 
-/** 受理已由主进程认领的播放指令：校验包与外观代次 / 素材 / TTL / play_id 去重，生成播放实例。
- * 认领后请求不再交给其他舞台，不能受理时上报 rejected，避免账本停留在 queued。
- * 拖拽等更高优先级交互由调度器在调用前裁决，本函数不做交互判断。 */
+/** 受理已由主进程认领的播放指令：校验包与外观代次/素材/TTL/play_id 去重，生成播放实例；不能受理时上报 rejected（避免账本停留在 queued）；拖拽等更高优先级交互由调度器在调用前裁决。 */
 export function acceptPlayCommand(
   command: ActionPlayCommand,
   clip: ActionPlayInstance['clip'] | null,

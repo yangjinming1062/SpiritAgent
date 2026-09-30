@@ -9,8 +9,7 @@ import { useStrings } from '@/shared/strings'
 import type { CompanionFallbackStatus } from '../../presentation'
 import { openContextMenu } from '../../sprite/context-menu-store'
 
-// 视频形象未就绪时的兜底「蛋」：呼吸 / 裂纹闪光 / 注视指针，并显示真实状态与对应恢复入口
-// （DESIGN「呈现与降级」）。桌面精灵与完整入口的侧边伙伴共用；Installer 端的 Egg 组件是安装流程动画，与此无关。
+// 视频形象未就绪时的兜底「蛋」：呼吸 / 裂纹闪光 / 注视指针，并显示真实状态与对应恢复入口（DESIGN「呈现与降级」）。桌面精灵与完整入口的侧边伙伴共用；Installer 端的 Egg 组件是安装流程动画，与此无关。
 const CRACK_PATHS = [
   'M 160 70 L 148 95 L 155 115 L 140 135',
   'M 230 140 L 205 148 L 195 135 L 180 155',

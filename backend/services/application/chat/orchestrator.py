@@ -97,10 +97,7 @@ async def run_chat_turn(
     excluded_tool_names: frozenset[str] = frozenset(),
     max_loop_turns: int | None = None,
 ) -> None:
-    """执行一个对话回合；自动化与回合后整理由会话本身决定。
-
-    ``ephemeral`` 只用于主动陪伴：请求是内部资料，不落库、可沉默，调用方同时以 ``headless`` 运行。
-    """
+    """执行一个对话回合；自动化与回合后整理由会话决定。``ephemeral`` 只用于主动陪伴：内部资料、不落库、可沉默，调用方同时 ``headless``。"""
     # 默认值运行时解析：工具循环上限可在管理端热调，不能在函数定义期绑定常量。
     if max_loop_turns is None:
         max_loop_turns = SETTINGS.agent_max_loop_turns
@@ -141,8 +138,7 @@ async def run_chat_turn(
                     },
                 )
 
-            # 回合起点重读 user_settings：PUT /api/config（工具集开关、语言等）后无需重连 WS 下一回合即生效；
-            # 会话级覆写再覆盖其上，仅构建一次并被注册表门控和工具派发共用。
+            # 回合起点重读 user_settings（PUT /api/config 后下一回合即生效）；会话级覆写再覆盖其上，只构建一次供门控与派发共用。
             effective_settings = merge_session_settings(
                 await load_user_settings(db, user_id),
                 session_settings
@@ -224,8 +220,7 @@ async def run_chat_turn(
                     },
                 )
         current_context = truncate_responses_context(compressed_context)
-        # 视频内联在截断之后：窗口外的老视频已被占位替换，内联只处理幸存者（每请求上限 2 个）。
-        # expected_session_id 防 stale DB 行 / 跨会话 URL 串到当前会话：跨会话或非法形态一律降级为 [video]。
+        # 视频内联在截断之后，只处理幸存者（每请求上限 2 个）；expected_session_id 防 stale 行/跨会话 URL 串台，非法形态降级为 [video]。
         current_context["input"] = await inline_video_parts(current_context["input"], expected_session_id=str(conv.id))
 
         schemas_by_name: dict[str, dict] = {schema_name(s): s for s in inputs.all_schemas}

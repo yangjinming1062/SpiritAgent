@@ -142,8 +142,7 @@ async def _reject_reviewed_action(db: AsyncSession, user_id: int, action_id: int
     if job is not None and job.user_id == user_id and job.status == "review":
         job.status = "failed"
         job.error = "用户未采纳该动作视频"
-        # 未采纳的成品连同生成进度一并作废：之后的重做是独立的新尝试，不会再复核同一素材。
-        # 复核链已收尾，没有待续的供应商句柄；文件保留供该复核记录查看。
+        # 未采纳成品连同生成进度一并作废，之后的重做是独立新尝试；复核链已收尾无待续句柄，文件保留供该记录查看。
         clear_action_attempt(job)
         emit_ws_event(
             db,

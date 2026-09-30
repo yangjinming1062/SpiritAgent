@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import UserSetting
 
-# user_settings.setting_value 一律 JSON 编码：桌面配置同步与服务端写入共用同一格式，读取入口统一解码为原值。
+# user_settings.setting_value 一律 JSON 编码，读取入口统一解码为原值；见 backend/README 的 user_settings 段。
 
 
 def decode_setting_value(raw: str) -> Any:

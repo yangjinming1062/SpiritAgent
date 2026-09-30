@@ -23,12 +23,7 @@ async def _find_im_conversation_id(db: AsyncSession, binding: ChannelBinding) ->
 
 
 async def get_or_create_channel_conversation_id(db: AsyncSession, binding: ChannelBinding, title: str) -> int:
-    """获取/创建绑定专属 im 会话并返回其 id：conversation_id 唯一外键是「每渠道一条对话」的 DB 级锚点。
-
-    并发调用方读-插非原子：两条路径同时为同一绑定建会话时，败者的 binding 回填撞 conversation_id
-    UNIQUE、整个事务（含会话 INSERT）回滚，重读锚点收敛到胜者会话（沿 get_or_create_special_conversation
-    的 IntegrityError 收敛模式，唯一性锚点从 (user_id, system_preset_id) 部分索引换成 binding 列）。
-    """
+    """获取/创建绑定专属 im 会话并返回其 id：conversation_id 唯一外键是「每渠道一条对话」的 DB 级锚点。并发读-插非原子——两条路径同时建会话时，败者 binding 回填撞 conversation_id UNIQUE、整个事务回滚，重读锚点收敛到胜者会话（沿 get_or_create_special_conversation 的 IntegrityError 收敛模式）。"""
     conv_id = await _find_im_conversation_id(db, binding)
     if conv_id is not None:
         return conv_id

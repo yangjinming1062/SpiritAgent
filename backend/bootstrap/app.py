@@ -32,14 +32,14 @@ app.add_middleware(
 )
 app.state.limiter = limiter
 app.middleware("http")(stash_user_id_middleware)
-# 后注册 = Starlette 外层 wrapper：inbound 它先跑、response header 它最后写；覆盖所有 path（不只 /api/*），health/static 也带 ID。
+# 后注册 = Starlette 外层 wrapper：inbound 先跑、response header 最后写；覆盖所有 path，health/static 也带 ID。
 app.middleware("http")(correlation_id_middleware)
-# 兜底：ServerErrorMiddleware 在最外层，BaseHTTPMiddleware 抛 raise 时 user middleware 的 post-call_next 不跑；此处从 ContextVar 读 ID 写 header，让 500 / 404 路径也带 X-Request-ID。
+# 兜底：ServerErrorMiddleware 在最外层，BaseHTTPMiddleware 抛 raise 时 post-call_next 不跑；从 ContextVar 写 header，让 500/404 也带 X-Request-ID。
 app.add_exception_handler(Exception, correlated_exception_response)
 app.add_exception_handler(RateLimitExceeded, rate_limit_exception_handler)
 
 
-# 挂在根路径，避免外部 Docker HEALTHCHECK / k8s livenessProbe / uptime probe（默认请求 /health）返回 404。
+# 挂根路径，避免 Docker HEALTHCHECK / k8s livenessProbe（默认 /health）返回 404。
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}

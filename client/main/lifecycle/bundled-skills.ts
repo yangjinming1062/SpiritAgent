@@ -19,11 +19,7 @@ interface BundledSkillsSyncOptions {
   spiritagentHome: string
 }
 
-/**
- * 桌面版本与上次同步不同时，把随包技能复制到 `$SPIRITAGENT_HOME/skills`：同名文件覆盖、其余内容保留，
- * 存在退出标记时整体跳过，语义与安装器 install-skills 阶段一致。未打包运行不同步。
- * 同步执行，调用方须在 Runner 自动启动与技能索引读取前调用；失败只记日志，不阻断启动。
- */
+/** 桌面版本与上次同步不同时把随包技能复制到 `$SPIRITAGENT_HOME/skills`：同名覆盖、其余保留，存在退出标记时跳过；未打包运行不同步。同步执行，须在 Runner 自动启动与技能索引读取前调用；失败只记日志，不阻断启动。 */
 export function syncBundledSkills({ app, log, resourcesPath, spiritagentHome }: BundledSkillsSyncOptions): void {
   if (!app.isPackaged) {
     return

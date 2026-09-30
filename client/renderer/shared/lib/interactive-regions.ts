@@ -86,8 +86,7 @@ function setCaptureProbe(fn: (() => void) | null, windowId: number = 0): void {
   }
 }
 
-/** Re-run the window's capture probe outside the mousemove path — e.g. an
- * async hit refinement just landed for a stationary cursor. */
+/** Re-run the window's capture probe outside the mousemove path — e.g. an async hit refinement just landed for a stationary cursor. */
 export function probeInteractiveRegions(windowId?: number): void {
   if (windowId !== undefined) {
     state.probesByWindow.get(windowId)?.()
@@ -142,8 +141,7 @@ export function isRegionHit(id: string, x: number, y: number, windowId: number =
 
 const defaultGetRect = (el: HTMLElement): DOMRect | null => el.getBoundingClientRect()
 
-// 通过 ref 获取可见矩形注册交互区域；返回 null 表示该帧退出交互。
-// 未传 windowId 时登记到 CaptureWindowIdContext 给出的当前窗口捕获 ID。
+// 通过 ref 获取可见矩形注册交互区域；返回 null 表示该帧退出交互。未传 windowId 时登记到 CaptureWindowIdContext 给出的当前窗口捕获 ID。
 export function useInteractiveRegion(
   id: string,
   ref: RefObject<HTMLElement | null>,

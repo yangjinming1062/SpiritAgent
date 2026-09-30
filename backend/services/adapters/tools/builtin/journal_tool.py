@@ -1,10 +1,4 @@
-"""moment_create / diary_write 工具：角色主动记录生活空间时刻与日记。
-
-门控：
-- 静止档禁止主动调用
-- moment_create 每日配额见 `moment_llm_per_day`
-- 工作预设会话不绑定这两个工具（回合装配层过滤，见 prompt_presets.LIFE_SPACE_TOOL_NAMES）
-"""
+"""moment_create / diary_write 工具：角色主动记录生活空间时刻与日记。门控：静止档禁止主动调用；moment_create 每日配额见 moment_llm_per_day；工作预设会话不绑定这两个工具（回合装配层过滤，见 prompt_presets.LIFE_SPACE_TOOL_NAMES）。"""
 
 import datetime
 import json

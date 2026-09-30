@@ -1,13 +1,4 @@
-"""提案受理与语义去重：reused / pending_review / rejected。
-
-受理锁内依次处理：同 key 动作（就绪复用；在制或待用户确认直接返回；失败、取消或复核已结束时原位重做）
-→ 同创意在审提案去重 → 最近一次复用结论所指动作仍可播放时直接复用 → 门禁与抠像模型检查
-→ 复用 deferred / rejected 原提案行，或新建提案行。已批准与已复用的提案作为历史保留，
-同一创意再次制作时新建提案行，每次批准都计入额度。
-
-幂等键在 (user, source, pack, fingerprint) 下取首个未占用的序号；调用方在锁外提交，
-并发受理同一创意时由唯一约束去重，落败方返回已受理的提案。
-"""
+"""提案受理与语义去重（reused / pending_review / rejected）；受理顺序与幂等规则见 actions/README.md。"""
 
 import hashlib
 import re
@@ -34,8 +25,7 @@ from services.domains.actions import (
     make_semantic_fingerprint,
 )
 
-# 动作 key：小写 ASCII slug；非 ASCII（如中文名）按语义指纹派生，保证
-# 「拥抱」「打哈欠」「跳舞」映射到不同稳定 key。
+# 非 ASCII 名称（如中文）无稳定 slug，按语义指纹派生 key，保证不同名动作不撞 key。
 _KEY_STRIP_RE = re.compile(r"[^a-z0-9]+")
 
 ExistingActionState = Literal["in_production", "awaiting_review", "redo_requested"]
@@ -47,7 +37,7 @@ class ProposalAcceptance:
 
     result: ActionDesignResult
     pack_id: int | None = None
-    # 结论落在同 key 已有动作上时的动作状态：在制与重做由调度唤醒生成，待确认只等用户复核。
+    # 同 key 已有动作时的状态：在制/重做由调度唤醒生成，待确认只等复核。
     existing_action: ExistingActionState | None = None
 
 
@@ -139,8 +129,7 @@ async def _accept_in_pack(
     except (ActionPolicyError, VideoPackStateError) as exc:
         return ActionDesignResult(outcome="rejected", message=str(exc)), None
 
-    # deferred / 拒绝抑制期满后的原创意重提复用原提案行再评审；已批准或已复用而动作已不可用时
-    # 保留历史行，新建提案重新评审与制作，批准照常计入额度。
+    # deferred / rejected 原创意重提复用原行再评审；已批准/复用而动作不可用时新建行，批准照常计额度。
     reopen = prior if prior is not None and prior.status in ("deferred", "rejected") else None
     if reopen is not None and reopen.source == source:
         key = reopen.idempotency_key
@@ -214,9 +203,9 @@ async def _accept_same_key(
     except VideoPackStateError as exc:
         return ActionDesignResult(outcome="rejected", message=str(exc)), None
     if existing.status == "review":
-        # 复核项已结束的成品视同未采纳，作废后独立重做；用户拒绝的成品在拒绝时已作废。
+        # 复核已结束的成品视同未采纳，作废后独立重做；用户拒绝的成品在拒绝时已作废。
         clear_action_attempt(existing)
-    # 失败、取消或未被采纳的同名动作：保留动作身份原位重做，不新建提案。
+    # 失败/取消/未采纳的同名动作原位重做，不新建提案。
     existing.status = "queued"
     existing.stage = "design"
     existing.error = None

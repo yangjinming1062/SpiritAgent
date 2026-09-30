@@ -104,9 +104,9 @@ class EnvironmentSpec:
 
 class BaseEnvironment(ABC):
     _snapshot_timeout: int = 30
-    # 环境类型标签（local / ssh），由 factory 在实例化后赋值；file_tools 据此路由本地文件操作。
+    # env_type：local/ssh，file_ops 据此路由。
     env_type: str = ""
-    # 创建参数，由 factory 在实例化后赋值；配置变化时据此决定沿用、替换或拒绝。
+    # 创建参数；配置变化时据此处置。
     spec: EnvironmentSpec | None = None
 
     def get_temp_dir(self) -> str:
@@ -122,10 +122,10 @@ class BaseEnvironment(ABC):
         self._cwd_marker = _cwd_marker(self._session_id)
         self._snapshot_ready = False
         self._snapshot_created_at: float = 0.0
-        # 执行中的命令数：终端、execute_code 脚本与其远程 RPC 轮询可并发调用 execute，cleanup 线程据此续命。
+        # 执行中命令数，cleanup 据此续命。
         self._executing_count = 0
         self._executing_lock = threading.Lock()
-        # 经 use_environment 持有本环境的调用数，由 factory 在 env_lock 下增减。
+        # use_environment 持有数。
         self.leases = 0
 
     @abstractmethod
@@ -142,7 +142,7 @@ class BaseEnvironment(ABC):
 
     def init_session(self) -> None:
         snap = shlex.quote(self._snapshot_path)
-        # 按函数名过滤单下划线私有函数（多为补全辅助）；按行过滤会留下函数体，每次 source 快照时都被执行。
+        # 只留单下划线函数定义，避免 source 快照执行函数体。
         bootstrap = (
             f"export -p > {snap}\n"
             "for __spiritagent_fn in $(compgen -A function); do "
@@ -221,7 +221,7 @@ class BaseEnvironment(ABC):
                 if not isinstance(fd, int) or fd < 0:
                     _drain_iterable(stream)
                 elif os.name == "nt":
-                    # 当有孤儿后代仍持有管道的写端时，裸阻塞 os.read 永远不会返回；用 PeekNamedPipe 轮询，在直接子进程退出且管道持续空时退出（与 POSIX 的 select 分支对称）。
+                    # 孤儿持写端时 read 不返回；PeekNamedPipe 轮询退出。
                     handle = msvcrt.get_osfhandle(fd)
                     avail = wintypes.DWORD(0)
                     idle_after_exit = 0
@@ -233,7 +233,7 @@ class BaseEnvironment(ABC):
                             output_chunks.append(decoder.decode(chunk))
                             idle_after_exit = 0
                         elif not peeked:
-                            # 写端关闭（broken pipe）：先排空剩余缓冲数据，再让 read 返回 b"" 退出。
+                            # broken pipe 先排空再退出。
                             if not (chunk := os.read(fd, 4096)):
                                 break
                             output_chunks.append(decoder.decode(chunk))
@@ -262,7 +262,7 @@ class BaseEnvironment(ABC):
                         output_chunks.append(tail)
                 except Exception:
                     pass
-                # 管道只由本线程关闭：调用方先停止读取再关闭，fd 号被复用后不会被误读；孤儿后代随后写入会收到 SIGPIPE。
+                # 管道仅本线程关，防 fd 复用误读。
                 with contextlib.suppress(OSError):
                     stream.close()
 
@@ -289,7 +289,7 @@ class BaseEnvironment(ABC):
                 self._kill_process(proc)
             raise
         finally:
-            # 孤儿后代持有写端时管道一直不空，限时后通知排空线程停止并关闭管道，不让线程与缓冲随孤儿输出一直增长。
+            # 孤儿持续输出时限时关管道。
             drain_thread.join(timeout=2)
             stop_drain.set()
         output = "".join(output_chunks)

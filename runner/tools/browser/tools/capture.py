@@ -107,7 +107,7 @@ def browser_download(
             try:
                 supervisor.navigate(safe_url, timeout=5.0)
             except Exception as exc:
-                # 响应为附件时导航以 net::ERR_ABORTED 结束而下载照常开始，是否失败以下载事件为准。
+                # 附件下载以下载事件判成败。
                 nav_error = str(exc)
         else:
             click_res = supervisor.click_ref(ref_or_url)
@@ -132,7 +132,7 @@ def browser_download(
         dest_dir = _get_downloads_dir()
         dest_path = dest_dir / target_name
 
-        # CDP setDownloadBehavior 把文件下载到临时目录, downloads 缓存只存最终交付位置: 下载完成后搬过来。
+        # 下载到临时目录，完成后搬到交付位。
         src_path = Path(dl_res["path"]) if dl_res.get("path") else Path(tempfile.gettempdir()) / orig_filename
         if src_path.is_file():
             try:

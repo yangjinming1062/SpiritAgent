@@ -18,9 +18,7 @@ logger = get_logger(__name__)
 
 ALLOWED_ACTIONS: frozenset[str] = frozenset({"roam", "perch", "approach", "stay"})
 
-# approach（走过去搭话）专属低频闸：一次搭话 = 一次走位 + 一条主动消息 + 一次 TTS，
-# 频繁搭话会把"主动陪伴"变成骚扰。冷却内的 approach 决策整体降级为 stay——
-# 不发消息也不返回 approach，避免"说了话却没走过来"的割裂（客户端只认 action 走位）。
+# approach 专属低频闸：一次搭话=走位+主动消息+TTS，频繁会变骚扰；冷却内 approach 整体降级为 stay（不发消息也不返回 approach），避免「说了话却没走位」的割裂——客户端只认 action 走位。
 _last_approach_at: dict[int, float] = {}
 
 
@@ -40,10 +38,7 @@ class ShouldActResult(BaseModel):
 
 
 def _normalize_approach_params(params: dict[str, Any] | None) -> dict[str, str] | None:
-    """approach 的 params 收敛为必填的短文本。
-
-    返回 None = 没有可用的开场白，调用方降级 stay——没有话可说的搭话只剩走位，失去意义。
-    """
+    """approach 的 params 收敛为必填短文本；返回 None = 没有可用开场白，调用方降级 stay——没话可说的搭话只剩走位，失去意义。"""
     raw_text = params.get("text") if isinstance(params, dict) else None
     text = raw_text.strip() if isinstance(raw_text, str) else ""
     if not text or len(text) > _MAX_APPROACH_TEXT_CHARS:

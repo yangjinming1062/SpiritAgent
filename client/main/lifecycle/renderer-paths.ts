@@ -29,10 +29,7 @@ interface RendererPathsDeps {
   rememberLog: (chunk: string) => void
 }
 
-/**
- * 渲染层 HTML 定位：dev server → appRoot/dist → SPIRITAGENT_DESKTOP_WEB_DIST → asar.unpacked/dist；
- * 都缺失时记日志并返回首个候选。
- */
+/** 渲染层 HTML 定位：dev server → appRoot/dist → SPIRITAGENT_DESKTOP_WEB_DIST → asar.unpacked/dist；都缺失时记日志并返回首个候选。 */
 export function createRendererPaths({ appRoot, devServer, isPackaged, rememberLog }: RendererPathsDeps) {
   function resolveWebDist(): string {
     const override = process.env.SPIRITAGENT_DESKTOP_WEB_DIST

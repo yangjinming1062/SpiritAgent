@@ -160,10 +160,7 @@ async def _select_due_jobs() -> list[Row]:
 
 
 async def _bulk_cas_advance(due_jobs: list[Row], now: datetime) -> list[Row]:
-    """批量 CAS 推进到期 job 的 next_run_at，返回需要触发的胜者；special 胜者的等待意图与推进同事务保存。
-
-    CAS 谓词 (id, next_run_at, schedule) 防止 update_job 在 tick 中途推进 next_run_at（不匹配的行静默落败被丢弃）；用行值 IN 让 recurring UPDATE / one-shot DELETE 各一次语句搞定（PG 的 UPDATE/DELETE ... RETURNING），避免最多 200 次串行往返。
-    一次性 job 触发后删除；recurring job 的表达式失效时本次推进为暂停且不触发。"""
+    """批量 CAS 推进到期 job 的 next_run_at，返回需要触发的胜者；special 胜者的等待意图与推进同事务保存。CAS 谓词 (id, next_run_at, schedule) 防止 update_job 在 tick 中途推进 next_run_at（不匹配行静默落败被丢弃）；行值 IN 让 recurring UPDATE / one-shot DELETE 各一次语句搞定，避免最多 200 次串行往返。一次性 job 触发后删除；recurring 表达式失效时本次推进为暂停且不触发。"""
     next_runs = {job.id: compute_next_run_at(job.schedule, now) for job in due_jobs if not job.one_shot}
     won: set[int] = set()
 
@@ -308,12 +305,7 @@ async def _scan_companion_waits() -> None:
 
 
 async def _maybe_run_ignored_outreach() -> None:
-    """常规档下用户持续不与伙伴互动（≥1h）且无进行中外联节奏时，为粘人性格注入轻量问候 turn。
-
-    固定 1h 间距限制无新互动时的低频问候候选
-    （否则 LLM 每次都跳过时每 tick 都满足触发条件）。静止档不触发（一切主动推理断源），
-    自主档不需要（完整主动能力已开放，由定时任务与等待意图承载）。
-    """
+    """常规档下用户持续不与伙伴互动（≥1h）且无进行中外联节奏时，为粘人性格注入轻量问候 turn。固定 1h 间距限制无新互动时的低频问候候选（否则 LLM 每次都跳过时每 tick 都满足触发条件）；静止档不触发，自主档不需要（完整主动能力由定时任务与等待意图承载）。"""
     cur_time = time.monotonic()
     for uid in MANAGER.local_user_ids():
         if is_user_in_maintenance(uid):

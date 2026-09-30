@@ -36,7 +36,7 @@ from .helpers import (
     too_large_to_edit_error,
 )
 
-# 内容搜索最多读取的文件数，避免在大目录上长时间阻塞。
+# 搜索读文件数上限，防大目录阻塞。
 _MAX_SEARCH_FILES = 1000
 
 
@@ -73,10 +73,7 @@ class NativeFileOperations(FileOperations):
     """本地环境：用 Python 原生 I/O 操作宿主机文件，相对路径按终端当前目录解析。"""
 
     def resolve_path(self, path: str, *, follow_symlinks: bool = True) -> Path:
-        """解析为宿主机绝对路径：展开 ``~``，Windows 上转换 MSYS 风格路径。
-
-        ``follow_symlinks=False`` 时只解析父目录，删除或移动符号链接时作用于链接本身。
-        """
+        """解析为宿主绝对路径；follow_symlinks=False 时只解析父目录。"""
         p = Path(msys_to_windows_path(path)).expanduser()
         if not p.is_absolute():
             p = Path(self.env.cwd) / p
@@ -96,7 +93,7 @@ class NativeFileOperations(FileOperations):
             return self._not_found(p, path)
         if p.is_dir():
             return ReadResult(error=f"Path is a directory: '{path}'. Use list_directory instead.")
-        # FIFO、设备等非普通文件读取可能永久阻塞。
+        # 非普通文件可能永久阻塞。
         if not p.is_file():
             return ReadResult(error=f"Not a regular file: '{path}'.")
         end_line = offset + limit - 1
@@ -144,15 +141,14 @@ class NativeFileOperations(FileOperations):
         pre_content: str | None = None
         existing: str | None = None
         if p.is_file():
-            # 进程内语法检查需要完整的写前内容做基线；其他类型或超大文件只取开头判断换行符与 BOM。
-            # 按原始字节解码以保留 CRLF。
+            # 语法检查需完整写前内容；其余只取开头判换行/BOM，按字节解码保留 CRLF。
             try:
                 full = p.suffix.lower() in LINTERS_INPROC and p.stat().st_size <= MAX_EDIT_BYTES
                 with p.open("rb") as f:
                     existing = (f.read() if full else f.read(4096)).decode("utf-8", errors="replace")
                 pre_content = existing if full else None
             except OSError:
-                # 读不到原文件时无法沿用其格式；写入本身若同样无权限，会在下方报错。
+                # 读不到原文件则无法沿用格式。
                 existing = None
         content = match_existing_format(content, existing)
         dirs_created = not p.parent.exists()
@@ -207,7 +203,7 @@ class NativeFileOperations(FileOperations):
             return ListResult(error=f"Path '{path}' is not a directory.")
         entries = []
         for child in p.iterdir():
-            # 悬空符号链接或遍历期间被删除的条目跳过，不让整次列目录失败。
+            # 悬空链接/已删条目跳过。
             try:
                 st = child.stat()
             except OSError:
@@ -239,7 +235,7 @@ class NativeFileOperations(FileOperations):
             return SearchResult(error=f"Path not found: {path}")
 
         def shown(rel: str) -> str:
-            # 与 rg 一致：结果路径以调用方给出的路径为前缀，可直接用于 read_file。
+            # 路径前缀与 rg 一致，可直接 read_file。
             return os.path.join(path, os.path.normpath(rel)) if root.is_dir() else path
 
         if target == "files":
@@ -333,7 +329,7 @@ class NativeFileOperations(FileOperations):
                 creationflags=CREATE_NO_WINDOW,
             )
         except subprocess.TimeoutExpired as e:
-            # POSIX 上超时异常携带的是未解码的 bytes。
+            # POSIX 超时异常载荷是 bytes。
             out = e.stdout if isinstance(e.stdout, str) else (e.stdout or b"").decode("utf-8", errors="replace")
             return ExecuteResult(stdout=out, exit_code=124)
         except OSError as e:
@@ -344,5 +340,5 @@ class NativeFileOperations(FileOperations):
         return shutil.which(cmd) is not None
 
     def _escape_shell_arg(self, arg: str) -> str:
-        # Windows 上 shell=True 走 cmd.exe，单引号不是引用字符，必须用双引号规则转义。
+        # Windows cmd.exe 必须双引号转义。
         return subprocess.list2cmdline([arg]) if IS_WINDOWS else shlex.quote(arg)

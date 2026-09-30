@@ -24,7 +24,7 @@ _WORKDIR_SAFE_RE = re.compile(r"^[A-Za-z0-9/\\:_\-.~ +@=,]+$")
 
 
 def _foreground_max_timeout() -> int:
-    # 调用时读取：工具模块在 Client 推送配置之前导入。
+    # 调用时读取：导入早于配置推送。
     try:
         return int(cfg_get(load_config(), "terminal", "max_foreground_timeout", default=DEFAULT_FOREGROUND_MAX_TIMEOUT))
     except (TypeError, ValueError):
@@ -297,7 +297,7 @@ def _run_foreground(env: BaseEnvironment, command: str, cwd: str, timeout: int) 
     result = env.execute(command, cwd=cwd, timeout=timeout)
     output = result["output"]
     returncode = result["returncode"]
-    # 字符预算（registry 的结果大小上限）：混用字节上限会让 CJK 输出突破 LLM 载荷上限。
+    # 按字符预算，混用字节会撑破 CJK 载荷。
     max_output_chars = registry.get_max_result_size()
     if len(output) > max_output_chars:
         head_chars = int(max_output_chars * 0.4)
@@ -305,7 +305,7 @@ def _run_foreground(env: BaseEnvironment, command: str, cwd: str, timeout: int) 
         omitted = len(output) - head_chars - tail_chars
         truncated_notice = f"\n\n... [OUTPUT TRUNCATED - {omitted} chars omitted out of {len(output)} total] ...\n\n"
         output = output[:head_chars] + truncated_notice + output[-tail_chars:]
-    # clean_output 同时去 ANSI 与脱敏：终端输出常含 Authorization 头、env、凭据文件内容。
+    # clean_output 同时去 ANSI 与脱敏。
     output = clean_output(output.strip()) if output else ""
     result_dict: dict[str, Any] = {
         "output": output,
@@ -354,7 +354,7 @@ def terminal_tool(
     except EnvironmentBusyError as e:
         return _error_result(str(e))
     except Exception as e:
-        # 完整 traceback 只进日志：含 runner 内部路径与行号，不回给模型。
+        # traceback 只进日志，不回给模型。
         logger.exception("terminal_tool failed")
         return _error_result(f"Failed to execute command: {type(e).__name__}: {e}")
 
@@ -444,7 +444,7 @@ def _handle_terminal(args: dict[str, Any], **kw: Any) -> str:
 
 
 def _current_terminal_schema() -> dict[str, Any]:
-    # 列出工具时读取：模块导入早于 Client 推送配置，说明须与执行时的 terminal.env_type 一致。
+    # 列表时读取，与执行时 env_type 一致。
     return build_terminal_schema(env_type=get_env_config()["env_type"])
 
 

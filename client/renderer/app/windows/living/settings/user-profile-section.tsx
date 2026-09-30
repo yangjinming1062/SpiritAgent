@@ -48,7 +48,7 @@ interface ProfileEntryEditorProps {
 }
 
 const PROFILE_PRESET_ID = 'companion'
-// 资料 context 形如 user_profile:<键>（后端 memory_namespaces.py）；自定义条目只展示键名。
+// 资料 context 形如 user_profile:< 键 >（后端 memory_namespaces.py）；自定义条目只展示键名。
 const USER_PROFILE_CONTEXT_PREFIX = /^user_profile:/
 
 // 标签与后端资料槽位一一对应；未知标签保留为可编辑的自定义条目。

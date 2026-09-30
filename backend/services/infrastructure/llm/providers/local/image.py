@@ -23,8 +23,7 @@ from ..http import get_http
 
 logger = get_logger(__name__)
 
-# 画幅短边不低于 1024（与 SIZE_TO_ASPECT 体系一致）。
-_ASPECT_TO_WH: dict[str, tuple[int, int]] = {
+_ASPECT_TO_WH: dict[str, tuple[int, int]] = {  # 画幅短边不低于 1024（与 SIZE_TO_ASPECT 体系一致）
     "1:1": (1024, 1024),
     "16:9": (1792, 1024),
     "9:16": (1024, 1792),
@@ -42,8 +41,7 @@ _RGBA_WRAP = (
 )
 
 _POLL_INTERVAL_S = 2.0
-# Mac MPS 单张约 10–12 分钟（25 步）；多参考编辑与 2K 更慢。任务总等待按最坏 1 小时预算，
-# 单次 HTTP（提交/轮询/取图）由 llm_request_timeout_seconds 约束，不在此重复包一层。
+# Mac MPS 单张约 10–12 分钟（25 步）；多参考编辑与 2K 更慢。任务总等待按最坏 1 小时预算；单次 HTTP 由 llm_request_timeout_seconds 约束
 _JOB_TIMEOUT_S = 3600.0
 _STEPS = 25
 
@@ -88,11 +86,7 @@ def _graph(
     clip_name: str,
     vae_name: str,
 ) -> dict[str, Any]:
-    """ComfyUI 工作流；有参考图时由编码节点读取参考图。
-
-    ``image_edit=True``（须带参考图）时采样 latent 取编码节点输出，画布随第一张参考图；
-    否则用 width×height 的 EmptyLatentImage，输出尺寸服从请求 size/aspect。
-    """
+    """ComfyUI 工作流；有参考图时由编码节点读取参考图。image_edit=True（须带参考图）采样 latent 取编码节点输出、画布随第一张参考图，否则用 width×height 的 EmptyLatentImage。"""
     encode_inputs: dict[str, Any] = {"clip": ["2", 0]}
     if image_names:
         encode_inputs["vae"] = ["3", 0]
@@ -150,34 +144,29 @@ def _graph(
 
 
 class LocalImageGenProvider(ImageGenProvider):
-    """ComfyUI 生图；默认 base_url 指向 localhost，部署后可改为远程地址。
-
-    透明请求会包装提示词，并在返回前核验 PNG 含可见透明像素。
-    """
+    """ComfyUI 生图；默认 base_url 指向 localhost。透明请求包装提示词，返回前核验 PNG 含可见透明像素。"""
 
     provider_name = "local"
     DEFAULT_BASE_URL: ClassVar[str] = "http://127.0.0.1:8188"
     DEFAULT_MODEL: ClassVar[str] = "qwen"
-    # 本地 ComfyUI 无鉴权；api_key 可为空，仅占位。
-    requires_api_key: ClassVar[bool] = False
+    requires_api_key: ClassVar[bool] = False  # 本地 ComfyUI 无鉴权；api_key 可为空，仅占位
     supports_reference_image: ClassVar[bool] = True
     supports_multiple_reference_images: ClassVar[bool] = True
     supports_image_edit: ClassVar[bool] = True
     supports_transparent_background: ClassVar[bool] = True
-    # Mac 16GB 统一内存不宜并行 batch；单次原生请求只出 1 张，多张由调用方或本层顺序重试。
+    # Mac 16GB 统一内存不宜并行 batch；单次原生请求只出 1 张，多张由调用方或本层顺序重试
     max_images_per_request: ClassVar[int | None] = 1
 
     def __init__(self, config: ProviderConfig) -> None:
         super().__init__(config)
-        # ComfyUI 不校验 Authorization；空 auth_header 避免带 Bearer 占位。
-        # 本地上传参考图 / 拉取出图可能接近 llm_request_timeout；单次请求超时仍远小于任务总预算。
+        # ComfyUI 不校验 Authorization；空 auth_header 避免带 Bearer 占位。单次请求超时仍远小于任务总预算
         self._client = get_http(config.base_url, config.api_key or "local", auth_header={})
         self._model_files: tuple[str, str, str] | None = None
 
     async def _resolve_model_files(self) -> tuple[str, str, str]:
         if self._model_files is not None:
             return self._model_files
-        # 保留原始传输和 HTTP 异常，供上层判定供应商回退。
+        # 保留原始传输和 HTTP 异常，供上层判定供应商回退
         resp = await self._client.get("/object_info/UNETLoader")
         resp.raise_for_status()
         unet_opts: list[str] = (

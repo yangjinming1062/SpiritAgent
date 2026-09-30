@@ -1,6 +1,4 @@
-// 预模糊的生活空间背景位图：把 CSS blur 烘焙进一次性的离屏 canvas，
-// Ken Burns 动画只变换已烘焙的静态层——否则合成器要对被模糊的层做逐帧重采样。
-// 烘焙分辨率取窗口 CSS 尺寸的 1/2（模糊后无需全分辨率），缓存当前 URL、尺寸与主题的结果。
+// 预模糊的生活空间背景位图：把 CSS blur 烘焙进一次性离屏 canvas，Ken Burns 只变换已烘焙的静态层——否则合成器要对被模糊的层逐帧重采样。烘焙分辨率取窗口 CSS 尺寸的 1/2，缓存当前 URL、尺寸与主题的结果。
 
 import { getUiEffect, getUiPalette, type SpiritAgentUiTheme } from '@ipc/contracts'
 import { useEffect, useState } from 'react'

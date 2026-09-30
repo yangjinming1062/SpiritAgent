@@ -68,22 +68,17 @@ export function SpriteWindow(): React.JSX.Element {
 
   useEffect(() => initSpatial(), [])
 
-  // 挂载时预热 AudioContext：已 onboarded 用户首次播音也会走冷启动 resume
-  //（100–200ms），期间 MediaElementSource 重路由会丢掉首帧。预热把这段时间
-  // 提前到用户抵达前。onboarding-flow 自己也调一次覆盖新用户路径。
+  // 挂载时预热 AudioContext：冷启动 resume 100–200ms 期间 MediaElementSource 重路由会丢首帧，预热把这段时间提前到用户抵达前；onboarding-flow 自己也调一次覆盖新用户路径。
   useEffect(() => {
     warmAudioContext()
   }, [])
 
-  // 挂载时一次性水合 runner-status atom——与 hydrateAuth 同款模式，
-  // 让伙伴侧消费者（activity.ts 等）能直接读 $runnerPhase，
-  // 不必各自再实现 subscribe + 同步 getter 的组合。
+  // 挂载时一次性水合 runner-status atom（与 hydrateAuth 同款），让伙伴侧消费者直接读 $runnerPhase，不必各自实现 subscribe+同步 getter。
   useEffect(() => {
     void hydrateRunnerStatus()
   }, [])
 
-  // 托盘「激活...」入口的对偶：主进程只调 showMainWindow() 不够——
-  // 激活浮层是 React state，关掉之后必须显式翻回来，否则就是死锁。
+  // 托盘「激活...」对偶：主进程只调 showMainWindow() 不够，激活浮层是 React state，关掉后必须显式翻回来否则死锁。
   useMainProcessListener('onTrayActivate', () => setActivationOpen(true), [])
 
   // 托盘「一键归位」：将精灵落位与状态重置回默认 Home 位置
@@ -95,8 +90,7 @@ export function SpriteWindow(): React.JSX.Element {
     []
   )
 
-  // 未鉴权时自动开激活浮层：首次 hydrateAuth 完成（pending → unauthenticated）
-  // 以及移除当前账户或会话失效之后，保障未激活用户的激活入口可用。
+  // 未鉴权时自动开激活浮层：首次 hydrateAuth 完成（pending→unauthenticated）以及移除账户或会话失效后，保障未激活用户的激活入口可用。
   useEffect(() => {
     if (auth.kind === 'unauthenticated') {
       setActivationOpen(true)
@@ -105,8 +99,7 @@ export function SpriteWindow(): React.JSX.Element {
     }
   }, [auth.kind])
 
-  // 仅开发期：Ctrl+Shift+P 直接调用 speakProactive，验证主动气泡与朗读；
-  // 不经过网关 companion.message 的接收与入列。生产构建里会被剔除。
+  // 仅开发期：Ctrl+Shift+P 直接调 speakProactive 验证主动气泡与朗读，不经网关 companion.message；生产构建剔除。
   useEffect(() => {
     if (import.meta.env.PROD) {
       return
@@ -159,8 +152,7 @@ export function SpriteWindow(): React.JSX.Element {
     }
   }, [auth.kind, lifecycle])
 
-  // 检测云端目录里已经下架的伙伴 voice id（供应商裁剪 / 改名，或换了供应商）。
-  // 后端对未知 id 是宽容的，这里只是一次性提示，不是硬错误。
+  // 检测云端目录里已下架的伙伴 voice id（供应商裁剪/改名或换供应商）；后端对未知 id 宽容，这里只是一次性提示不是硬错误。
   useEffect(() => {
     if (lifecycle !== 'ready' || gatewayState !== 'open' || validityCheckedRef.current) {
       return

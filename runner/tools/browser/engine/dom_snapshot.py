@@ -81,7 +81,7 @@ def build_snapshot_text(
         name = str(_get_ax_value(node.get("name")) or "").strip()
         backend_id = node.get("backendDOMNodeId")
 
-        # ignored 节点本身不出现在快照中，但继续递归其子节点
+        # ignored 节点不入快照但继续递归子节点。
         if is_ignored:
             for child_id in node.get("childIds", []):
                 _traverse(str(child_id), depth)

@@ -1,12 +1,5 @@
-"""工具 schema 描述文本。
-
-进入 LLM 工具目录的指令文本：每个工具的主 description 与参数 description。
-schema 结构（name/enum/类型/required）留在各工具文件
-（services/adapters/tools/builtin 与同目录 *.py），本模块只承载措辞。
-与 prompts.chat 的媒体/工具教学块语义耦合（如 subject='self' 在两处表述），
-调整时两边核对。工具 schema 变更需同步检查 prompt_blocks 的教学块与
-docs/PROTOCOL.md 的工具契约。
-"""
+"""工具 schema 描述文本；结构（name/enum/类型/required）留在各工具文件，本模块只承载措辞。
+与 prompts.chat 的媒体/工具教学块语义耦合（如 subject='self' 在两处表述），调整时两边核对。"""
 
 COMPANION_WAIT_DESC = (
     "Save a one-time companion follow-up for a later time or meaningful desktop event, or inspect, update "

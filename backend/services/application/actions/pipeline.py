@@ -1,7 +1,4 @@
-"""提案后台流水线：评审调度与重启恢复。
-
-对话/夜间只受理提案；评审在后台执行。approve 后由 generation 编排制作。
-"""
+"""提案后台流水线：评审调度与重启恢复。对话/夜间只受理，评审在后台执行；approve 后由 generation 制作。"""
 
 import asyncio
 
@@ -54,8 +51,7 @@ def schedule_proposal_review(proposal_id: int, user_id: int) -> None:
 
 
 async def _run_proposal_review(proposal_id: int, user_id: int) -> None:
-    # 受理锁覆盖「评审判定 → 制作额度占用 → 落库提交」，锁在 commit 后释放，
-    # 避免并发评审读到相同剩余额度后全部批准。
+    # 受理锁覆盖「评审判定 → 额度占用 → 落库提交」，commit 后释放，避免并发评审读到相同剩余额度后全部批准。
     decision = "defer"
     action_id: int | None = None
     proposal_pack = 0

@@ -231,9 +231,7 @@ function mergeIncrementalHistory(
   return [...state.messages]
 }
 
-/** 本地秒开后用服务端增量/全量追上：锚点走 after_id；last_seq 只能由调用方以
- * 活动聊天列表的水位（gateway.lastReceivedSeq）传入——缓存不追踪实时回合，
- * 拿缓存 currentSeq 当 last_seq 会让服务端对陈旧水位重放帧，活列表上重复追加。 */
+/** 本地秒开后用服务端增量/全量追上：锚点走 after_id；last_seq 只能由调用方以活动聊天列表的水位（gateway.lastReceivedSeq）传入——缓存不追踪实时回合，拿缓存 currentSeq 当 last_seq 会让服务端对陈旧水位重放帧，活列表上重复追加。 */
 export async function syncSessionHistory(params: {
   lastSeq?: number
   sessionId: string
@@ -271,8 +269,7 @@ export async function syncSessionHistory(params: {
 
   let res = await params.request(body)
 
-  // 语音和媒体更新会修改旧行，after_id 无法取回；若更新撞上在途快照，重新获取全量。
-  // 连续更新时保留当前界面并交由调用方重试，不把过期快照水合回去。
+  // 语音和媒体更新会修改旧行，after_id 无法取回；若更新撞上在途快照，重新获取全量。连续更新时保留当前界面并交由调用方重试，不把过期快照水合回去。
   for (let retry = 0; invalidations.get(params.sessionId) !== invalidation; retry++) {
     if (retry >= 2) {
       throw new SessionHistoryChangedError()

@@ -6,8 +6,7 @@ import type { App, BrowserWindow } from 'electron'
 
 import { errorMessage, safeReadJson } from '../shared/utils'
 
-// 缩放级别的本地持久化——Electron BrowserWindow 内置 setZoomLevel，但需要把当前值
-// 落盘才能在重启后还原。文件位于 userData/desktop-zoom.json。
+// 缩放级别本地持久化：BrowserWindow 的 setZoomLevel 不跨重启，落盘 desktop-zoom.json 以还原。
 const ZOOM_FILE = 'desktop-zoom.json'
 
 // Electron 的合法范围是 -9 到 9；超出此区间会让 setZoomLevel 抛错。

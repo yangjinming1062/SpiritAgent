@@ -1,6 +1,4 @@
-/** 动作目录 store：水合当前激活包的 action catalog（spiritagent.action.pack），
- * 解析展示 URL、维护 clip 查找；登出清空，迟到水合丢弃。
- * 启动从本地快照先恢复再网络校准；失败保留已有目录。 */
+/** 动作目录 store：水合激活包 catalog、解析展示 URL 与 clip 查找；本地快照先恢复再网络校准，失败保留已有目录，登出清空。 */
 
 import { atom } from 'nanostores'
 

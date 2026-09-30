@@ -49,8 +49,7 @@ const initialPersisted = portraitPersisted.get()
 
 export const $portraitUrl = atom<string | null>(null)
 
-// 当前 avatar 行 id——由 hydrate 与每次创建新行的重生写入。
-// 服务端读取当前 avatar 行，这里只是为画廊选择做镜像。
+// 当前 avatar 行 id ——由 hydrate 与每次创建新行的重生写入。服务端读取当前 avatar 行，这里只是为画廊选择做镜像。
 export const $activeAvatarId = atom<number | null>(initialPersisted.avatarId)
 
 // 头像首次生成、重生与微调共用的本次描述；不持久化，成功加载预览后清空。

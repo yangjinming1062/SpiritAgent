@@ -81,8 +81,7 @@ async def auto_generate_title(
                     ],
                 },
             ],
-            # 供应商身份优先取 llm_config 自带的链头 provider_name（正是本次实际调用的 client）；
-            # 入参 provider_name 仅在 llm_config 无身份字段时兜底，避免图片回合视觉链头 ≠ 聊天链头时按错误比例换算。
+            # 供应商身份优先取 llm_config 链头 provider_name（本次实际调用的 client）；入参仅作兜底，避免图片回合视觉链头 ≠ 聊天链头时按错误比例换算。
             temperature=scale_temperature(
                 llm_config.provider_name or provider_name,
                 temperature if temperature is not None else TITLE_GENERATION_TEMPERATURE,

@@ -9,7 +9,6 @@ from .presets import resolve_preset_meta
 SPECIAL_KIND = "special"
 # 外部 IM 渠道桥接的会话：统一一种 kind，每渠道一条专属对话由 channel_bindings.conversation_id 唯一外键锚定（services/adapters/channels/conversation.py 工厂）；prompt.submit 拒写，桌面端只读旁观。
 IM_KIND = "im"
-# ``kind`` 列的 SQL server_default 值。
 STANDARD_KIND = "standard"
 
 # UI-only 子类型：渲染端展示但排除出 LLM 上下文；与 SPECIAL_KIND 同处一处保证所有会话读取者一致。status_proactive 故意不在此集合——它是用户可回应的真实轮次。

@@ -3,8 +3,7 @@ import re
 # 行内代码 / 围栏代码块：去壳保内容（IM 是纯文本场，代码内容原样保留）。
 _FENCE_RE = re.compile(r"^\s*(```|~~~)[^\n]*$", re.MULTILINE)
 _INLINE_CODE_RE = re.compile(r"`([^`\n]+)`")
-# 加粗 / 斜体标记（保留内部文本；重复拆两层以覆盖 ***粗斜体***）。星号允许词内成对；
-# 下划线按 CommonMark 只在词边界成对——词内成对会把 snake_case 标识符误剥成 snakecase。
+# 加粗/斜体标记（保留内部文本；拆两层覆盖 ***粗斜体***）。星号允许词内成对；下划线按 CommonMark 只在词边界成对——词内成对会把 snake_case 误剥成 snakecase。
 _BOLD_ASTERISK_RE = re.compile(r"(\*{1,3})(?=\S)(.+?)(?<=\S)\1", re.DOTALL)
 _BOLD_UNDERSCORE_RE = re.compile(r"(?<!\w)(_{1,3})(?=\S)(.+?)(?<=\S)\1(?!\w)", re.DOTALL)
 _STRIKE_RE = re.compile(r"~~(?=\S)(.+?)(?<=\S)~~", re.DOTALL)
@@ -71,10 +70,7 @@ def _assemble(atoms: list[str], sep: str, limit: int) -> list[str]:
 
 
 def chunk_text(text: str, limit: int) -> list[str]:
-    """按 段落 → 行 → 空格 边界把长回复切为 ≤limit 的分片；原子级仍超限才硬切。
-
-    分片间以 ``\\n`` 连接原子（段落空行不逐段复原——IM 分片场景下段落已各自成原子，结构足够可读）。
-    """
+    """按 段落 → 行 → 空格 边界把长回复切为 ≤limit 的分片；原子级仍超限才硬切。分片间以 \\n 连接原子（段落空行不逐段复原——IM 分片场景下段落已各自成原子，结构足够可读）。"""
     if limit <= 0 or len(text) <= limit:
         return [text]
     atoms = _atomize(text, ("\n\n", "\n", " "), limit)

@@ -47,9 +47,7 @@ function invoke<C extends InvokeChannel>(
   return ipcRenderer.invoke(channel, ...args)
 }
 
-// Electron 32+ 移除了 File.path——桌面文件拖拽的真实路径只能经 webUtils.getPathForFile 拿到。
-// 解析成功即写入主进程可读白名单；不向渲染层暴露 registerUserSelectedPaths，
-// 防止 XSS 用任意路径自授后 readFileDataUrl 外传。
+// Electron 32+ 移除了 File.path，真实路径只能经 webUtils.getPathForFile 拿到；解析成功即写入主进程可读白名单，不向渲染层暴露 registerUserSelectedPaths，防止 XSS 自授后外传。
 contextBridge.exposeInMainWorld('spiritagentWebUtils', {
   getPathForFile: (file: File): string => {
     const filePath = webUtils.getPathForFile(file)
@@ -62,8 +60,7 @@ contextBridge.exposeInMainWorld('spiritagentWebUtils', {
   }
 })
 
-// 订阅主进程单方向事件：listener 解构 payload，丢弃 IpcRendererEvent；
-// 返回卸载函数，调用方可在 useEffect 清理时调它取消订阅。
+// 订阅主进程单方向事件：listener 解构 payload 丢弃 IpcRendererEvent，返回卸载函数供 useEffect 清理。
 function subscribe<C extends IpcEventChannel>(channel: C, callback: EventCallback<C>): () => void {
   const listener = (_event: IpcRendererEvent, ...payload: IpcEventContract[C]): void => {
     ;(callback as (...args: unknown[]) => void)(...payload)

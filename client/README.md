@@ -96,4 +96,4 @@ Runner 握手、配置推送与工具清单读取由主进程完成；`tools.syn
 
 ## 契约与验证
 
-字段与通道定义在 [shared/ipc](shared/ipc/)。IPC 修改同时核对类型、preload、[渲染侧全局类型](renderer/shared/types/global.d.ts)、主进程和调用方；异步修改覆盖切换、断连、登出与迟到结果。透明合成、多屏、快捷键和 GPU 恢复在对应平台验证，命令见 [Scripts](../scripts/README.md#按改动选择验证)。
+字段与通道定义在 [shared/ipc](shared/ipc/)。`IPC` 常量用扁平 camelCase 键，使 `satisfies` 能约束叶子通道名；嵌套结构会绕过该校验。IPC 修改同时核对类型、preload、[渲染侧全局类型](renderer/shared/types/global.d.ts)、主进程和调用方；异步修改覆盖切换、断连、登出与迟到结果。透明合成、多屏、快捷键和 GPU 恢复在对应平台验证，命令见 [Scripts](../scripts/README.md#按改动选择验证)。

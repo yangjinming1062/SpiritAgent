@@ -23,8 +23,7 @@ interface DesignDraft {
   previewUrl: string
 }
 
-// 衣柜设计会话：描述/参考图 → 草稿 → 微调或重绘 → 确认入柜（参考图就绪，不触发生成）。
-// 服装/发型可换、五官锁定；失败请求保留在 lastRequest 供一键重试。
+// 衣柜设计会话：描述/参考图 → 草稿 → 微调或重绘 → 确认入柜（参考图就绪，不触发生成）。服装/发型可换、五官锁定；失败请求保留在 lastRequest 供一键重试。
 export function useOutfitDesignSession(onConfirmed: () => void): {
   messages: DesignMessage[]
   draft: DesignDraft | null

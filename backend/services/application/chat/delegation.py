@@ -23,12 +23,7 @@ async def run_delegated_turn(
     *,
     run_turn: TurnRunner,
 ) -> str:
-    """执行子 Agent 回合并把结果转换为父回合的 ToolResult 内容。
-
-    子回合继承父回合的 llm_config、用户作用域与会话类型（system_preset_id / is_automation）；
-    回合入口由调用方（orchestrator）注入并绑定父回合的无头标志，避免模块级循环导入。输出经 HeadlessEmitter 捕获，
-    以结构化的 final_text/error 取代对输出 chunk 的拼接解析。
-    """
+    """执行子 Agent 回合并转成父回合 ToolResult。子回合继承父回合 llm_config、用户作用域与会话类型；回合入口由 orchestrator 注入（绑定父回合无头标志），避免循环导入。输出经 HeadlessEmitter 捕获，以 final_text/error 结构化返回。"""
     try:
         # 显式 commit 以便 run_chat_turn 能读到新会话。
         async with session_scope() as db:

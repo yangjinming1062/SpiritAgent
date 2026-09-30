@@ -262,8 +262,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
       stoppedAt: null
     })
 
-    // stopped / error 终态可能仍持有上一轮的 WS 服务、子进程与端点文件（断连后 Runner 会重连）；
-    // 重建前先收尾，避免新服务与旧服务争用同一管道路径。
+    // stopped / error 终态可能仍持有上一轮的 WS 服务、子进程与端点文件（断连后 Runner 会重连）；重建前先收尾，避免新旧服务争用同一管道路径。
     await rollback('restart')
 
     if (gen !== opGeneration) {
@@ -439,8 +438,7 @@ export function createRunnerBridge(options: RunnerBridgeOptions): RunnerBridge {
     })
   }
 
-  // 运行中配置变化后重新读取工具清单（终端等工具的说明随 Runner 当前配置生成）；有变化时按重连同样发布，
-  // 由宿主重新同步。读取失败保留原清单，不能因一次查询失败撤销执行资格。
+  // 运行中配置变化后重新读取工具清单（终端等工具的说明随 Runner 当前配置生成）；有变化时按重连同样发布，由宿主重新同步。读取失败保留原清单，不能因一次查询失败撤销执行资格。
   async function refreshTools(): Promise<void> {
     const server = wsServer
 

@@ -6,12 +6,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 
 class ChannelBinding(ModelBase, TimestampMixin):
-    """用户 ↔ 外部 IM 渠道的绑定行：每 (user, channel) 一条（uq 约束），持有该渠道专属 im 会话的锚点。
-
-    conversation_id 唯一外键把「每渠道一条对话」钉在 DB 层——binding 的 (user_id, channel) 唯一性传递为
-    「每用户每渠道至多一条 im 会话」，UNIQUE 又阻止两条绑定共享同一会话。凭据走 Text JSON，
-    与 user_model_configs 同一落盘风格（明文，REST 永不回显）。
-    """
+    """用户 ↔ 外部 IM 渠道绑定，每 (user, channel) 一条；conversation_id 唯一外键钉住「每用户每渠道至多一条 im 会话」。凭据 Text JSON，REST 永不回显。"""
 
     __tablename__ = "channel_bindings"
     __table_args__ = (UniqueConstraint("user_id", "channel", name="uq_channel_bindings_user_channel"),)
@@ -19,7 +14,7 @@ class ChannelBinding(ModelBase, TimestampMixin):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     channel: Mapped[str] = mapped_column(String(32))
     status: Mapped[str] = mapped_column(String(16), default="disabled", server_default=text("'disabled'"), index=True)
-    # 渠道专属 im 会话锚点；会话被删除时置 NULL（绑定存活，下次消息重新开会话）。
+    # 渠道专属 im 会话锚点；会话删除时置 NULL（绑定存活，下次消息重开）。
     conversation_id: Mapped[int | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"),
         nullable=True,
@@ -51,7 +46,7 @@ class ChannelDelivery(ModelBase, TimestampMixin):
     __tablename__ = "channel_deliveries"
 
     binding_id: Mapped[int] = mapped_column(ForeignKey("channel_bindings.id", ondelete="CASCADE"), index=True)
-    # 空串表示对端未定（后台任务产物），补发时跟随触发补发的对端。
+    # 空串=对端未定（后台任务产物），补发时跟随触发补发的对端。
     peer_id: Mapped[str] = mapped_column(String(128), default="", server_default=text("''"))
     # ChannelDeliveryPayload 的 JSON；media URL 为裸资产路径。
     payload_json: Mapped[str] = mapped_column(Text)

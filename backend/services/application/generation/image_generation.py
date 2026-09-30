@@ -53,10 +53,7 @@ async def resolve_image_gen_chain(
     multiple_references: bool = False,
     background: str | None = None,
 ) -> tuple[list[ProviderConfig], str | None]:
-    """有参考图时按图生图能力过滤 image_gen 供应商链；image_edit 时改按图像编辑能力过滤。
-
-    ``background="transparent"`` 时只保留声明原生透明输出的供应商。
-    """
+    """按参考图/图像编辑能力过滤 image_gen 链；``background="transparent"`` 只保留声明原生透明输出的供应商。"""
     full = await resolve_provider_chain(db, user_id, "image_gen")
 
     def _supports(cfg: ProviderConfig) -> bool:
@@ -107,14 +104,7 @@ async def generate_images(
     provider_config: ProviderConfig | None = None,
     background: str | None = None,
 ) -> list[str]:
-    """走 image_gen 供应商链生成图片；成功返回地址列表，失败抛 ImageGenerationError。
-
-    ``persist_user_assets=True`` 时结果转存为 ``companion-assets/{user_id}/`` 永久资产并返回裸路径；
-    否则返回供应商原生 URL 或 data URI，由调用方先落库进度或自行转存。
-    ``image_edit=True`` 时 reference_image 是编辑底图，供应商链按图像编辑能力过滤；编辑不接受双参考拼图，
-    secondary 与 image_edit 同给视为调用方违约，立即报错而非静默丢弃。
-    ``background="transparent"`` 请求原生透明 PNG，链上只保留已验证 alpha 输出的供应商（如 local）。
-    """
+    """走 image_gen 链生成图片，成功返回地址列表。``persist_user_assets=True`` 转存为用户资产返回裸路径，否则返回供应商 URL/data URI；``image_edit`` 以 reference_image 为底图且不接受双参考（同给即报错）；``background="transparent"`` 只保留已验证 alpha 的供应商。"""
     if image_edit and secondary_reference_image:
         raise ImageGenerationError(
             "图像编辑不支持附加参考图，请改用重新生成",

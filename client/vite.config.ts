@@ -9,9 +9,7 @@ export default defineConfig({
   // icon.png 的唯一真相源——主进程、electron-builder 和渲染器共用同一文件
   publicDir: 'assets',
   css: {
-    // 显式钉死空 PostCSS 配置：Tailwind 由 @tailwindcss/vite 处理，无需 PostCSS 插件。
-    // 不钉的话 Vite 会向上查找 postcss.config.*，用户目录里可能有 Tailwind v3 配置
-    // 导致 v4 样式表构建失败（"@layer base is used but no matching @tailwind base"）。
+    // 显式钉死空 PostCSS 配置：Tailwind 由 @tailwindcss/vite 处理，无需 PostCSS 插件。不钉的话 Vite 会向上查找 postcss.config.*，用户目录里可能有 Tailwind v3 配置导致 v4 样式表构建失败（"@layer base is used but no matching @tailwind base"）。
     postcss: { plugins: [] }
   },
   build: {

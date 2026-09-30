@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-// 规范的"挂载时拉取、持有结果、暴露错误"循环。
-// 调用方传入一个 resolve 出数据（或抛出）的 `load` 函数；hook 负责挂载、
-// 卸载时取消、错误状态以及手动 `reload` 触发。
+// 规范的「挂载时拉取、持有结果、暴露错误」循环：调用方传入 resolve 出数据（或抛出）的 load，hook 负责挂载、卸载时取消、错误状态以及手动 reload。
 
 export type AsyncLoader<T> = {
   data: T | null
@@ -18,8 +16,7 @@ export function useAsyncLoader<T>(load: () => Promise<T>): AsyncLoader<T> {
   const [version, setVersion] = useState(0)
   const loadRef = useRef(load)
 
-  // 镜像最新的 `load` 闭包，让 effect 体始终读取最新状态，
-  // 又不必依赖函数引用稳定性。
+  // 镜像最新的 load 闭包，让 effect 体始终读取最新状态，又不必依赖函数引用稳定性。
   loadRef.current = load
 
   useEffect(() => {

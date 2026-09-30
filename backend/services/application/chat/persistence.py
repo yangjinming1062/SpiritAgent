@@ -107,11 +107,7 @@ async def persist_queued_inbound_message(
     attachments: list[dict] | None = None,
     dedup_key: str | None = None,
 ) -> Message | None:
-    """IM 入站消息先持久化再确认接收：以 queued 标记落为会话行并返回。
-
-    接收顺序即行 id 序；回合消费时整批清除标记。dedup_key 命中已有行（渠道重投）
-    时返回 None，调用方不再入队。
-    """
+    """IM 入站消息先持久化再确认接收：queued 落为会话行。接收顺序即行 id 序，回合消费时整批清标记；dedup_key 命中已有行时返回 None，调用方不再入队。"""
     db_content, db_content_type = _build_persisted_content(text, attachments)
     stmt = insert(Message).values(
         conversation_id=conv_id,
@@ -187,10 +183,7 @@ async def _persist_assistant_no_tool_turn(
     persist: bool,
     track_task: TrackTask | None,
 ) -> None:
-    """保存终端答复与媒体，交付气泡，并调度回合后任务。
-
-    结构化回复只出现在固定陪伴会话；文本渠道的媒体附件与结构化回复互斥。
-    """
+    """保存终端答复与媒体，交付气泡，并调度回合后任务。结构化回复只出现在固定陪伴会话；文本渠道的媒体附件与结构化回复互斥。"""
     reply = result.reply
     turn_content = result.turn_content
     assistant_message_id: int | None = None

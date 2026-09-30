@@ -27,7 +27,7 @@
 
 ## 策略约束
 
-模型提案与点播，服务端强制权限、额度和版本。制作额度按来源（user_requested / autonomous）分别计数，以用户本地日（缺时区按 UTC）内的 `approved_at` 结算；额度及无手动播放入口见[动作契约](../../../../docs/PROTOCOL.md#动作目录与播放)。本领域不设使用冷却，策略值与拒绝抑制由 [policy.py](policy.py)维护。
+模型提案与点播，服务端强制权限、额度和版本。评审不设日限额，仅 approve 后占用制作额度；制作额度按来源（user_requested / autonomous）分别计数，以用户本地日（缺时区按 UTC）内的 `approved_at` 结算；额度及无手动播放入口见[动作契约](../../../../docs/PROTOCOL.md#动作目录与播放)。本领域不设使用冷却，策略值与拒绝抑制由 [policy.py](policy.py)维护。
 
 ## 验证入口
 

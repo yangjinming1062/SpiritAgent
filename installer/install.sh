@@ -1,10 +1,5 @@
 #!/usr/bin/env bash
-# SpiritAgent 安装脚本（POSIX / macOS）。由 Tauri SpiritAgent-Setup.app 调用；
-# 6 阶段负载释放：安装 Python（如需）、拷贝 runner wheel / 桌面应用 / skills 至 $SPIRITAGENT_HOME 及平台规范位置。
-# 协议：
-#   install.sh -Manifest                 → 输出 manifest JSON
-#   install.sh -Stage NAME -Json         → 执行单个阶段，输出结果帧
-# payload 位置通过 SPIRITAGENT_BUNDLED_* 环境变量或对应 --bundled-*-dir 参数传递；二者并存时参数优先。
+# SpiritAgent 安装脚本（macOS/bash）。协议：-Manifest 输出阶段列表；-Stage NAME -Json 执行单阶段。payload 经 SPIRITAGENT_BUNDLED_* 或 --bundled-*-dir 传入（参数优先）。
 
 set -euo pipefail
 shopt -s nullglob
@@ -21,7 +16,7 @@ fi
 
 RUNNER_WHEEL_GLOB="spirit_agent-*.whl"
 
-# 桌面端格式默认 dmg，可由 $SPIRITAGENT_INSTALLER_FORMAT 覆盖。
+# 桌面端格式默认 dmg，可由 SPIRITAGENT_INSTALLER_FORMAT 覆盖
 DEFAULT_DESKTOP_FORMAT="dmg"
 
 SPIRITAGENT_HOME_ARG=""
@@ -68,7 +63,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# 优先级：参数 > 环境变量 > 默认值（与 install.ps1 一致）。安装器只经环境变量下发，参数供手动运行覆盖。
+# 参数 > 环境变量 > 默认值（与 install.ps1 一致）
 SPIRITAGENT_HOME_RESOLVED="${SPIRITAGENT_HOME_ARG:-${SPIRITAGENT_HOME:-$DEFAULT_SPIRITAGENT_HOME_UNIX}}"
 BUNDLED_RUNNER_DIR="${BUNDLED_RUNNER_DIR_ARG:-${SPIRITAGENT_BUNDLED_RUNNER_DIR:-}}"
 BUNDLED_DESKTOP_DIR="${BUNDLED_DESKTOP_DIR_ARG:-${SPIRITAGENT_BUNDLED_DESKTOP_DIR:-}}"
@@ -80,11 +75,10 @@ emit_manifest() {
   printf '__SPIRITAGENT_MANIFEST__:{"protocol_version": %s, "stages": [{"name": "welcome", "title": "准备安装", "category": "setup", "needs_user_input": false}, {"name": "install-python", "title": "安装 Python 运行时", "category": "prereqs", "needs_user_input": false}, {"name": "unpack-runner", "title": "安装 唤生 运行器", "category": "payload", "needs_user_input": false}, {"name": "unpack-desktop", "title": "安装 唤生 桌面应用", "category": "payload", "needs_user_input": false}, {"name": "install-skills", "title": "安装内置技能", "category": "payload", "needs_user_input": false}, {"name": "finalize", "title": "完成安装", "category": "finalize", "needs_user_input": false}]}\n' "$PROTOCOL_VERSION"
 }
 
-# emit_stage_ok <stage> [skipped=0|1] [reason]
 emit_stage_ok() {
   local stage="$1" skipped="${2:-0}" reason="${3:-}"
   if [[ "$skipped" == "1" && -n "$reason" ]]; then
-    # reason 中的双引号转义后嵌入 JSON，保证结果帧合法。
+    # reason 双引号转义后嵌入 JSON
     local esc="${reason//\\/\\\\}"
     esc="${esc//\"/\\\"}"
     printf '__SPIRITAGENT_STAGE_RESULT__:{"ok": true, "stage": "%s", "skipped": true, "reason": "%s"}\n' "$stage" "$esc"
@@ -93,7 +87,6 @@ emit_stage_ok() {
   fi
 }
 
-# emit_stage_err <stage> <reason>
 emit_stage_err() {
   local stage="$1" reason="$2"
   local esc="${reason//\\/\\\\}"
@@ -169,7 +162,7 @@ test_python() {
     missing+=("$ver")
   done
 
-  # 冷缓存：安装首选版本后再次只查该版本。
+  # 冷缓存：安装首选版本后只再查该版本
   "$UV_CMD" python install "$PYTHON_VERSION" 2>/dev/null || true
   local found
   found=$("$UV_CMD" python find "$PYTHON_VERSION" 2>/dev/null || true)
@@ -182,7 +175,7 @@ test_python() {
 
 # 阶段 1：welcome
 stage_welcome() {
-  # mkdir失败不中断：由下方 -d 检查统一发错误帧，避免 set -e 静默退出无结果帧。
+  # mkdir 失败不中断，由下方 -d 检查统一发错误帧，避免 set -e 无结果帧退出
   mkdir -p "$SPIRITAGENT_HOME_RESOLVED/bin" \
            "$SPIRITAGENT_HOME_RESOLVED/skills" \
            "$SPIRITAGENT_HOME_RESOLVED/logs" || true
@@ -217,7 +210,7 @@ stage_install_python() {
 
 # 阶段 3：解包运行器
 stage_unpack_runner() {
-  # 每个阶段是独立进程：先重新推导 uv 与 Python 版本（install-python 阶段可能落在 3.14 回退版本），与 install.ps1 保持一致。
+  # 每阶段独立进程，须重新推导 uv 与 Python 版本（可能落在 3.14 回退）
   if [[ -z "${UV_CMD:-}" ]] && ! test_python; then
     emit_stage_err unpack-runner "Python runtime not available (uv or Python missing)"
     return 1
@@ -243,18 +236,18 @@ stage_unpack_runner() {
   local runner_dir="$SPIRITAGENT_HOME_RESOLVED/runner"
   mkdir -p "$runner_dir"
 
-  # 拷贝 server.py 至与 wheel 同级
+  # 拷贝 server.py 与 wheel 同级
   if [[ -f "$BUNDLED_RUNNER_DIR/server.py" ]]; then
     cp -f "$BUNDLED_RUNNER_DIR/server.py" "$runner_dir/server.py"
   fi
 
-  # `--clear` 在重装时至关重要：缺省情况下 `uv venv` 遇到目标目录已存在会报错，留下陈旧/损坏 venv，正是本阶段要修复的故障态。install.ps1 同步使用该 flag。
+  # --clear 重建 venv，缺省遇已存在目录会报错并留下损坏环境
   "$UV_CMD" venv "$runner_dir/.venv" --python "$PYTHON_VERSION" --clear 2>/dev/null || {
     emit_stage_err unpack-runner "uv venv failed"
     return 1
   }
 
-  # 安装 wheel 至 venv。从国内访问 PyPI 不稳，首次失败回退至镜像（与 install.ps1 一致：优先 SPIRITAGENT_PYPI_INDEX_URL / PIP_INDEX_URL，缺省阿里云）；再次失败把同一错误透出给上层。
+  # 安装 wheel；PyPI 不稳时回退镜像（SPIRITAGENT_PYPI_INDEX_URL / PIP_INDEX_URL，缺省阿里云）
   if ! "$UV_CMD" pip install --python "$runner_dir/.venv/bin/python" "$wheel" 2>/dev/null; then
     local index_url="${SPIRITAGENT_PYPI_INDEX_URL:-${PIP_INDEX_URL:-https://mirrors.aliyun.com/pypi/simple/}}"
     if ! "$UV_CMD" pip install --python "$runner_dir/.venv/bin/python" \
@@ -265,9 +258,7 @@ stage_unpack_runner() {
     fi
   fi
 
-  # 构建链在打包前跑 scripts/check_runner_facade.py，安装后不做烟测。
-
-  # 拷贝 onboarding 引导音频：语言子目录（zh/、en/、…）1:1 映射至 $SPIRITAGENT_HOME/audio/onboarding/<lang>/。
+  # 构建链已跑 check_runner_facade.py，安装后不做烟测；onboarding 音频按语言子目录映射至 audio/onboarding/<lang>/
   local audio_count=0
   if [[ -n "$BUNDLED_ONBOARDING_AUDIO_DIR" && -d "$BUNDLED_ONBOARDING_AUDIO_DIR" ]]; then
     for lang_dir in "$BUNDLED_ONBOARDING_AUDIO_DIR"/*/; do
@@ -298,7 +289,7 @@ stage_unpack_desktop() {
     return 1
   fi
 
-  # 按格式定位产物：macOS 仅支持 dmg。
+  # macOS 仅支持 dmg
   local artifact=""
   case "$DESKTOP_FORMAT" in
     dmg)
@@ -315,7 +306,7 @@ stage_unpack_desktop() {
     return 1
   fi
 
-  # macOS：挂载 DMG，把 SpiritAgent.app 拷到 /Applications，卸载并清空 xattr。
+  # 挂载 DMG，拷 SpiritAgent.app 到 /Applications，卸载并清 xattr
   if [[ "$(uname -s)" != "Darwin" ]]; then
     emit_stage_err unpack-desktop "dmg format requires macOS host"
     return 1
@@ -332,7 +323,7 @@ stage_unpack_desktop() {
     return 1
   fi
   rm -rf /Applications/SpiritAgent.app
-  # 拷贝失败须先卸载 DMG 再报错，避免 set -e 退出时挂载点泄漏。
+  # 拷贝失败须先卸载 DMG，避免 set -e 退出时挂载点泄漏
   if ! cp -R "$mount_point/SpiritAgent.app" /Applications/SpiritAgent.app; then
     hdiutil detach "$mount_point" 2>/dev/null || true
     emit_stage_err unpack-desktop "failed to copy SpiritAgent.app from $artifact"
@@ -354,13 +345,13 @@ stage_install_skills() {
     return 1
   fi
 
-  # 尊重 .no-bundled-skills 标记（由 --no-skills / spiritagent profile 设置）。
+  # 尊重 .no-bundled-skills 标记
   if [[ -f "$SPIRITAGENT_HOME_RESOLVED/.no-bundled-skills" ]]; then
     emit_stage_ok install-skills 1 "user opted out via .no-bundled-skills"
     return 0
   fi
 
-  # 用 rsync 不加 --delete 以保留用户本地添加的 skills。
+  # rsync 不加 --delete，保留用户自装 skills
   mkdir -p "$SPIRITAGENT_HOME_RESOLVED/skills"
   if command -v rsync >/dev/null 2>&1; then
     rsync -a "$BUNDLED_SKILLS_DIR/" "$SPIRITAGENT_HOME_RESOLVED/skills/"
@@ -368,7 +359,7 @@ stage_install_skills() {
     cp -R "$BUNDLED_SKILLS_DIR/." "$SPIRITAGENT_HOME_RESOLVED/skills/"
   fi
 
-  # 动态安装 OfficeCLI（若网络可用）
+  # OfficeCLI 尽力安装
   install_officecli || true
 
   local bundled_count

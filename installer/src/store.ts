@@ -1,8 +1,6 @@
 import { atom, computed } from 'nanostores'
 import { Channel, invoke } from '@tauri-apps/api/core'
 
-// bootstrap 状态的单一数据源；按 payload.type 处理 Channel 传递的事件。
-
 export interface StageInfo {
   name: string
   title: string
@@ -160,7 +158,7 @@ function handleBootstrapEvent(payload: BootstrapEvent): void {
     }
     case 'log': {
       const logs = [...cur.logs, { stage: payload.stage, line: payload.line, stream: payload.stream }]
-      // 长流程日志可上万行，限制滚动缓冲以避免前端 OOM。
+      // 限制滚动缓冲，避免长流程日志导致前端 OOM。
       const trimmed = logs.length > 2000 ? logs.slice(-2000) : logs
       $bootstrap.set({ ...cur, logs: trimmed })
       break
@@ -203,7 +201,6 @@ export async function initialize(): Promise<void> {
     window.addEventListener('beforeunload', cleanup)
   }
 
-  // 启动时拉取诊断信息（日志路径、SPIRITAGENT_HOME）。
   try {
     const [logPath, spiritAgentHome] = await Promise.all([
       invoke<string>('get_log_path'),
@@ -218,7 +215,6 @@ export async function initialize(): Promise<void> {
 
 export async function startInstall(): Promise<void> {
   clearRouteTimer()
-  // 重试前重置状态。
   $bootstrap.set(INITIAL)
   $route.set('progress')
 
@@ -242,7 +238,6 @@ export async function cancelInstall(): Promise<void> {
 
 export async function launchSpiritAgentDesktop(): Promise<void> {
   if (!$bootstrap.get().installRoot) throw new Error('no install root')
-  // 桌面端路径由 Rust 侧从 $SPIRITAGENT_HOME 解析（见 src-tauri/src/bootstrap.rs）。
   await invoke('launch_spiritagent_desktop')
 }
 

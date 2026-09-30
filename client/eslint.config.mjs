@@ -8,9 +8,7 @@ import hooksPlugin from 'eslint-plugin-react-hooks'
 import unusedImports from 'eslint-plugin-unused-imports'
 import globals from 'globals'
 
-// —— 渲染层 import 边界的共用限制（client/renderer/README.md「分层与目录」）——
-// flat config 对同一文件按序合并配置对象，后面的对象再次配置 no-restricted-imports 会整体替换前面的 patterns，
-// 所以每个渲染层规则块都用 restrictImports 组合出该目录的完整限制，不能只写本目录新增的部分。
+// —— 渲染层 import 边界的共用限制（client/renderer/README.md「分层与目录」）—— flat config 对同一文件按序合并配置对象，后面的对象再次配置 no-restricted-imports 会整体替换前面的 patterns，所以每个渲染层规则块都用 restrictImports 组合出该目录的完整限制，不能只写本目录新增的部分。
 const RENDERER_MODULES = ['character', 'conversation', 'media', 'memory', 'scene', 'speech']
 
 const MODULE_DEEP_IMPORT = {
@@ -329,10 +327,7 @@ export default [
     })
   },
   {
-    // 生产渲染面（精灵窗 / 工具窗 / 共享层）禁止裸 fetch：后端签名 URL 是相对路径，
-    // 渲染进程 origin（dev 的 vite / 打包后的 file://）解析不到，请求会打到 vite 拿回
-    // Vite 的 HTML 入口回退。后端数据与字节一律走主进程桥（api / apiAsset /
-    // apiAssetBuffer）。确需直连处逐行 eslint-disable 写明 URL 来源。
+    // 生产渲染面（精灵窗 / 工具窗 / 共享层）禁止裸 fetch：后端签名 URL 是相对路径，渲染进程 origin（dev 的 vite / 打包后的 file://）解析不到，请求会打到 vite 拿回 Vite 的 HTML 入口回退。后端数据与字节一律走主进程桥（api / apiAsset / apiAssetBuffer）。确需直连处逐行 eslint-disable 写明 URL 来源。
     files: [
       'renderer/app/**/*.{ts,tsx}',
       'renderer/modules/**/*.{ts,tsx}',

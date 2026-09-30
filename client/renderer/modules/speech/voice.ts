@@ -4,8 +4,7 @@ import { getStrings } from '@/shared/strings'
 import type { RequestGateway, VoiceOption } from '@/shared/voice-catalog'
 import { customVoiceSelectionId, voiceSelectionId } from '@/shared/voice-catalog'
 
-// 音色目录、匹配与设计由后端 `tts.*` JSON-RPC 方法支撑。目录项携带供应商，
-// 持久化与合成使用 voiceSelectionId 生成的唯一引用，避免供应商私有 id 冲突。
+// 音色目录、匹配与设计由后端 `tts.*` JSON-RPC 方法支撑。目录项携带供应商，持久化与合成使用 voiceSelectionId 生成的唯一引用，避免供应商私有 id 冲突。
 
 export type { VoiceOption } from '@/shared/voice-catalog'
 export {

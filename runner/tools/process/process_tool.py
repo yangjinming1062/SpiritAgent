@@ -65,7 +65,7 @@ class ProcessSession:
             self.output_buffer = (self.output_buffer + text)[-MAX_OUTPUT_CHARS:]
 
     def output_tail(self, limit: int) -> str:
-        # 多取一段再清洗脱敏、最后截取：直接在凭据中间截断时，残片不再能被识别。
+        # 先脱敏再截断，避免凭据残片漏网。
         with self._lock:
             window = self.output_buffer[-(limit + 8192) :]
         return clean_output(window)[-limit:] if window else ""
@@ -102,7 +102,6 @@ class ProcessRegistry:
             lines.pop(0)
         return "\n".join(lines)
 
-    # ----- Spawn -----
     def _track(self, session: ProcessSession, reader: Callable[[ProcessSession], None], name: str) -> None:
         """先登记再启动读线程：读线程可能立即结束并把 session 移入 finished。"""
         with self._lock:
@@ -113,7 +112,7 @@ class ProcessRegistry:
         try:
             thread.start()
         except BaseException:
-            # 读线程起不来就无人回收：终止进程后上抛，避免遗留不可见的进程。
+            # 读线程失败须终止进程再上抛，避免遗留进程。
             try:
                 self._terminate(session)
             except Exception as e:
@@ -131,7 +130,7 @@ class ProcessRegistry:
             started_at=time.time(),
         )
         argv = [find_bash(), "-lic", f"set +m; {command}"]
-        # 强制无缓冲：tqdm / datasets 等库在非 TTY stdout 上会缓冲，poll 看不到进度。
+        # 强制无缓冲，否则非 TTY 上 poll 看不到进度。
         run_env = local_run_env() | {"PYTHONUNBUFFERED": "1"}
         if use_pty:
             pty_proc = PtyProcess.spawn(argv, cwd=session.cwd, env=run_env, dimensions=(30, 120))
@@ -149,7 +148,7 @@ class ProcessRegistry:
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             stdin=subprocess.PIPE,
-            # POSIX 下独立进程组，kill 时整组终止；Windows 忽略该参数。
+            # 独立进程组，kill 整组终止。
             start_new_session=True,
             creationflags=CREATE_NO_WINDOW,
         )
@@ -159,10 +158,7 @@ class ProcessRegistry:
         return session
 
     def spawn_via_env(self, env: BaseEnvironment, command: str, cwd: str, task_id: str) -> ProcessSession:
-        """经 SSH 环境派生后台进程：远端 nohup 运行，PID、输出与退出码写入远端临时文件，读线程轮询。
-
-        不支持实时 stdout 管道与 stdin 输入；启动失败时抛 RuntimeError。
-        """
+        """SSH 派生后台进程（nohup+临时文件轮询）；不支持实时管道与 stdin。"""
         session = ProcessSession(
             id=f"proc_{uuid.uuid4().hex[:12]}",
             command=command,
@@ -187,7 +183,7 @@ class ProcessRegistry:
         output = result.get("output", "").strip()
         session.pid = next((int(line) for line in map(str.strip, output.splitlines()) if line.isdigit()), None)
         if session.pid is None:
-            # 包裹命令没产出 PID（语法错误 / 重定向失败）：按启动失败处理，不伪装成运行中的 session。
+            # 无 PID 按启动失败处理，不伪装成运行中。
             raise RuntimeError(f"remote start failed (exit code {result.get('returncode')}): {output[-500:]}")
         self._track(
             session,
@@ -196,7 +192,6 @@ class ProcessRegistry:
         )
         return session
 
-    # ----- Reader / Poller Threads -----
     def _reader_loop(self, session: ProcessSession) -> None:
         """读线程：直接读管道 fd，有数据即追加（文本流的 read(n) 要攒满 n 个字符或遇到 EOF 才返回）。"""
         proc = session.process
@@ -216,7 +211,7 @@ class ProcessRegistry:
         except (OSError, ValueError) as e:
             logger.debug("Process stdout reader for %s ended: %s", session.id, e)
         finally:
-            # EOF 之后回收子进程；直接子进程可能关闭 stdout 后继续运行，退出前 session 仍算运行中。
+            # EOF 后回收；子进程关 stdout 仍算运行中。
             self._mark_exited(session, proc.wait())
 
     def _env_poller_loop(
@@ -233,17 +228,17 @@ class ProcessRegistry:
         quoted_exit_path = shlex.quote(exit_path)
         while not session.exited:
             time.sleep(2)
-            # 被 kill 后环境可能随配置切换被回收，不再经它发命令（否则会对旧目标重开 SSH 主连接）。
+            # kill 后环境可能已回收，不再经它发命令。
             if session.exited:
                 return
             try:
                 result = env.execute(f"cat {quoted_log_path} 2>/dev/null", timeout=10)
-                # 非 0（含 ssh 连接失败 255）时输出是错误信息而不是日志，不能覆盖缓冲。
+                # 非 0 退出时输出是错误信息，不能覆盖缓冲。
                 if result["returncode"] == 0 and result["output"]:
                     with session._lock:
                         session.output_buffer = result["output"][-MAX_OUTPUT_CHARS:]
                 check = env.execute(f'kill -0 "$(cat {quoted_pid_path} 2>/dev/null)" 2>/dev/null', timeout=5)
-                # kill -0：0 存活，1 已退出；其他（ssh 失败、超时、取消）状态未知，下一轮重试。
+                # kill -0：0 存活，1 已退出，其他下一轮重试。
                 if check["returncode"] != 1:
                     continue
                 exit_result = env.execute(f"cat {quoted_exit_path} 2>/dev/null", timeout=5)
@@ -293,17 +288,13 @@ class ProcessRegistry:
                 session.finished_at = time.time()
             self._finished[session.id] = session
 
-    # ----- Query Methods -----
     def get(self, session_id: str) -> ProcessSession | None:
         """根据 ID 取 session（运行中 / 已结束均可）。"""
         with self._lock:
             return self._running.get(session_id) or self._finished.get(session_id)
 
     def _reconcile_local_exit(self, session: ProcessSession) -> None:
-        """直接子进程已退出但读线程仍未见 EOF 时（后代进程持有 stdout 写端），按子进程退出码标记结束。
-
-        读线程直接读 fd，已写入管道的输出会被及时读走；这里只短暂等待它收尾，不从管道抢读。
-        """
+        """子进程已退出但读线程未 EOF 时按退出码结束；短暂等读线程收尾。"""
         if session.exited or (proc := session.process) is None or (rc := proc.poll()) is None:
             return
         if session._reader_thread is not None:
@@ -345,7 +336,7 @@ class ProcessRegistry:
         lines = clean_output(buffer).splitlines()
         selected = lines[-limit:] if offset == 0 and limit > 0 else lines[offset : offset + limit]
         joined = "\n".join(selected)
-        # 按结果大小上限兜底截断：单行很长的日志乘以默认行数可能超限。
+        # 结果大小兜底截断。
         max_chars = registry.get_max_result_size()
         result = {
             "session_id": session.id,
@@ -404,7 +395,7 @@ class ProcessRegistry:
         elif session.process is not None:
             terminate_tree(session.process, graceful_timeout=0.5, force_timeout=1.0, escalate=True)
         elif session.env_ref is not None and session.pid is not None:
-            # 记录的 pid 是包裹子 shell（$!），实际命令是其子进程：先 TERM，仍存活再 KILL。
+            # pid 是包裹 shell，先 TERM 再 KILL 其子树。
             env = session.env_ref
             qpid = shlex.quote(str(session.pid))
             env.execute(f"pkill -TERM -P {qpid} 2>/dev/null; kill {qpid} 2>/dev/null", timeout=5)
@@ -423,7 +414,7 @@ class ProcessRegistry:
             self._terminate(session)
         except Exception as e:
             return {"status": "error", "error": str(e)}
-        # 只记录真实观察到的退出码：taskkill /F 与远端 kill 都没有可映射的信号退出码。
+        # 只记真实退出码，强杀无信号码可映射。
         self._mark_exited(session, session.process.poll() if session.process is not None else None)
         return {"status": "killed", "session_id": session.id}
 
@@ -545,11 +536,10 @@ class ProcessRegistry:
             targets = [s for s in self._running.values() if not s.exited]
         return sum(self.kill_process(s.id).get("status") in {"killed", "already_exited"} for s in targets)
 
-    # ----- Cleanup / Pruning -----
     def _prune_if_needed(self) -> None:
         """淘汰过期的已结束 session，总数超限时再淘汰最早结束的（调用方需持 ``_lock``）。"""
         now = time.time()
-        # TTL 从 finished_at 起算：从 started_at 起算会让长时间运行后才退出的进程结果立刻被淘汰。
+        # TTL 从 finished_at 起算，避免长跑结果立刻过期。
         for sid in [sid for sid, s in self._finished.items() if (now - s.finished_at) > FINISHED_TTL_SECONDS]:
             del self._finished[sid]
         if len(self._running) + len(self._finished) >= MAX_PROCESSES and self._finished:
@@ -558,9 +548,8 @@ class ProcessRegistry:
 
 process_registry = ProcessRegistry()
 register_active_process_checker(process_registry.has_active_processes)
-# Runner 退出时回收后台进程树（Windows 另由 Job Object 兜底）；退出后已无法再管理这些进程。
+# 退出时回收后台进程树；此后不再管理。
 atexit.register(process_registry.kill_all)
-
 
 PROCESS_SCHEMA = {
     "name": "process",
@@ -615,7 +604,7 @@ def _coerce_int(value: Any, field_name: str) -> int | None:
 
 def _handle_process(args: dict[str, Any], **kw: Any) -> str:
     action = args.get("action", "")
-    # 部分模型把 session_id 发成整数。
+    # 兼容模型把 session_id 发成整数。
     session_id = str(args["session_id"]) if args.get("session_id") is not None else ""
     try:
         offset = _coerce_int(args.get("offset"), "offset")

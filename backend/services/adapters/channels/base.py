@@ -30,8 +30,7 @@ class InboundMessage:
 
 @dataclass(frozen=True)
 class ChannelBindingSnapshot:
-    """绑定的标量快照：适配器长任务不得持有 ORM 行（session 关闭后访问属性会 DetachedInstanceError），
-    manager 在每次（重）启动时从新鲜 DB 行拍照传入。"""
+    """绑定的标量快照：适配器长任务不得持有 ORM 行（session 关闭后访问属性会 DetachedInstanceError）；manager 每次（重）启动时从新鲜 DB 行拍照传入。"""
 
     id: int
     user_id: int
@@ -48,12 +47,7 @@ class ChannelError(Exception):
 
 
 class ChannelAdapter:
-    """外部 IM 渠道适配器基类：run() 是常驻循环（轮询/WS 重连/空转），入站消息交给 bridge.handle_inbound，
-    send_text 承担出站投递。
-
-    生命周期由 ChannelManager 的守卫任务驱动：run() 抛 fatal ChannelError → 绑定标 error 停止；
-    非 fatal 异常 → 记日志、退避 channels_restart_backoff_seconds 后重建适配器重试。
-    """
+    """外部 IM 渠道适配器基类：run() 常驻循环（轮询/WS 重连/空转），入站交给 bridge.handle_inbound，send_text 出站投递。生命周期由 ChannelManager 守卫任务驱动：fatal ChannelError → 标 error 停止；非 fatal → 退避 channels_restart_backoff_seconds 后重建适配器重试。"""
 
     channel_name: str = ""
     # 桌面端 im 会话标题（如 "微信对话"）。
@@ -70,8 +64,7 @@ class ChannelAdapter:
 
     def __init__(self, snapshot: ChannelBindingSnapshot) -> None:
         self.snapshot = snapshot
-        # 适配器派生出的登录、入站分发等任务都归当前绑定实例所有。守卫重建或绑定停止时由
-        # aclose 统一取消并等待，避免旧实例越过生命周期边界继续驱动本机工具。
+        # 登录、入站分发等派生任务都归当前绑定实例；守卫重建或绑定停止时由 aclose 统一取消并等待，避免旧实例越过生命周期边界继续驱动本机工具。
         self._owned_tasks: set[asyncio.Task] = set()
 
     def create_task(self, coro: Coroutine[Any, Any, None], *, name: str | None = None) -> asyncio.Task:

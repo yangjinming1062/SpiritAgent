@@ -64,11 +64,7 @@ function slashPreCheck(pending: PendingAttachment | null, sending: boolean): str
   return null
 }
 
-/**
- * 单条 slash 命令的执行入口（由 send() 调用）：confirm → RPC → hydrate/pill → 错误映射。
- *
- * 需确认的命令每次调用都会弹 window.confirm，以取得 PROTOCOL「Slash 命令」要求的确认。
- */
+/** 单条 slash 命令的执行入口（由 send() 调用）：confirm → RPC → hydrate/pill → 错误映射。需确认的命令每次调用都会弹 window.confirm，以取得 PROTOCOL「Slash 命令」要求的确认。 */
 async function executeSlashCommand(
   cmd: SlashCommandMeta,
   args: string[],
@@ -103,9 +99,7 @@ async function executeSlashCommand(
     const r = result.result
 
     if (r.status === 'ok') {
-      // hydrate=true 时，payload.messages 已包含服务端写入的 status_cleared / compress_summary
-      // marker 行——前端 hydrateChatMessages 后再 pushStatusPill 会产生重复 pill，
-      // 所以 hydrate 路径只更新消息列表，不再追加 status_command_result。
+      // hydrate=true 时，payload.messages 已包含服务端写入的 status_cleared / compress_summary marker 行——前端 hydrateChatMessages 后再 pushStatusPill 会产生重复 pill，所以 hydrate 路径只更新消息列表，不再追加 status_command_result。
       if (r.hydrate && r.payload) {
         const raw = (r.payload as { messages?: unknown }).messages
 

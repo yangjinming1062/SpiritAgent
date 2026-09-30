@@ -46,14 +46,12 @@ interface SpriteStageProps {
 // 12px 是为了避免触控板微抖动被误判为拖拽、把双击吞掉。
 const DRAG_THRESHOLD = 12
 const DOUBLE_TAP_MS = 320
-// 长按阈值：按住未移动 ≥ 500ms 触发长按形变与粒子；
-// 拖拽一旦启动即取消等待，两条交互通道互斥。
+// 长按 ≥500ms 触发形变与粒子；拖拽一旦启动即取消等待，两条交互通道互斥。
 const LONG_PRESS_MS = 500
 // 投喂分流：纯图片/视频走轻语快速回复；混有其它文件时整批进生活空间。
 const MEDIA_DROP_PATH_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif|mp4|mov|webm|m4v|avi|mkv)$/i
 
-// 一旦光标跨到另一块显示器，pointer capture 会持续投递跨视口坐标；
-// 探测主进程的频率最多为此间隔。
+// 跨显示器后 pointer capture 会投递跨视口坐标，按此间隔探测主进程。
 const DISPLAY_SWITCH_PROBE_MS = 200
 
 const SPRITE_REGION_ID = 'sprite-stage'
@@ -117,8 +115,7 @@ export function SpriteStage({
     [hidden]
   )
 
-  // 命中按渲染路径精化：视频走 alpha 遮罩查表；缺席（桌面蛋 / 加载空挡）才回退整矩形
-  // ——否则矩形空白区会挡住底下应用的点击。
+  // 命中按渲染路径精化：视频走 alpha 遮罩查表，缺席才回退整矩形——否则空白区会挡住底下应用的点击。
   useInteractiveRegion(SPRITE_REGION_ID, mountRef, stageRect, stageHitTest)
   useSpriteBodyGesture(bodyRef)
 
@@ -203,12 +200,7 @@ export function SpriteStage({
     }
   }, [hidden, finishGesture])
 
-  // 精灵窗口只占一块显示器；要把精灵搬到另一块显示器上就要移动窗口。
-  // 主进程会把窗口对齐到光标所在显示器并返回两个窗口原点。
-  // 只有精灵的 POSITION 需要按原点 delta 平移——拖拽参考点不能动：
-  // 切换后到达的 pointer 事件在 NEW 视口空间里（client 本身就跳过了同样的 delta），
-  // 所以 origin + (client - start) 会自然产出平移后的值；再平移 start 反而
-  // 会把精灵钉在旧视口坐标上、甩到新显示器边缘。
+  // 精灵窗只占一块显示器，搬精灵须移动窗口并对齐光标所在显示器；只有 POSITION 按原点 delta 平移，拖拽参考点不能动—— pointer 事件已在新视口空间，再平移 start 会把精灵钉在旧坐标上。
   const probeDisplaySwitch = useCallback((): void => {
     const now = performance.now()
 
@@ -232,10 +224,7 @@ export function SpriteStage({
         const dy = from.y - to.y
         const d = dragRef.current
 
-        // 窗口跳转前抓到的坐标是旧空间，跳转后是新空间；两者相差原点 delta
-        // （几百像素），但主进程读取光标之后光标只动了几个像素。
-        // 如果最新的拖拽点已经在新空间，拖拽公式自己就能算出平移后的位置——
-        // 再平移一次会让 delta 在一帧内被双重应用。
+        // 窗口跳转前后坐标分属旧/新空间（相差原点 delta）；最新拖拽点已在新空间时拖拽公式自会算出平移位置，再平移一次会在一帧内双重应用 delta。
         const point = d?.moved ? { x: d.lastX, y: d.lastY } : lastDragPointRef.current
 
         if (
@@ -248,8 +237,7 @@ export function SpriteStage({
 
         const dragging = d?.moved === true
 
-        // 拖拽释放比显示器切换早到——也要重映射静止位置，否则精灵会停在旧视口
-        // 坐标上（新显示器上看不见）。自主移动已经算出新空间位置时跳过。
+        // 拖拽释放比显示器切换早到时也要重映射静止位置，否则精灵停在旧视口坐标上；自主移动已算出新空间位置时跳过。
         if (!dragging && ($spatialLocomotion.get() !== 'still' || $surfaceOpen.get() !== null)) {
           return
         }
@@ -282,8 +270,7 @@ export function SpriteStage({
       })
   }, [])
 
-  // 文件投喂（DESIGN「拖拽与直接交互」）：解析真实文件路径；
-  // 纯媒体进轻语（快速看图/视频），含非媒体文件时整批进生活空间。
+  // 文件投喂（DESIGN「拖拽与直接交互」）：纯媒体进轻语，含非媒体文件时整批进生活空间。
   const handleDrop = (fileList: FileList | null | undefined): void => {
     const paths = resolveDroppedFiles(fileList)
 
@@ -306,8 +293,7 @@ export function SpriteStage({
       return
     }
 
-    // 跨窗：生活空间是独立 BrowserWindow，内存 atom 互不可见——经主进程信箱转交。
-    // 转交失败时提示重新拖入，仍打开生活空间。
+    // 跨窗：生活空间是独立 BrowserWindow，atom 互不可见，经主进程信箱转交；失败时提示重新拖入仍打开生活空间。
     void window.spiritagent.chat
       .setPendingFeed(paths)
       .catch((error: unknown) => {
@@ -323,7 +309,6 @@ export function SpriteStage({
       return
     }
 
-    // 只在按下左键时捕获
     if (e.button !== 0) {
       return
     }
@@ -470,7 +455,6 @@ export function SpriteStage({
     }
 
     lastTapRef.current = now
-    // 计算归一化坐标 (nx, ny) 透传给 onTap
     const rect = mountRef.current?.getBoundingClientRect()
     const nx = rect && rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5
     const ny = rect && rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5

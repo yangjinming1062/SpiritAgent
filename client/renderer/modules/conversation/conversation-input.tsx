@@ -1,7 +1,4 @@
-// 对话输入胶囊：生活空间、工作台与轻语共用。默认单行胶囊；编辑消息，或工作台聚焦、挂附件、长文本时展开为多行指挥台。
-//
-// 此组件是受控组件：父组件持有 text/pending/sending/recording 等状态，
-// 这里只渲染 + 把事件转回父组件。命令弹层的筛选与高亮由本组件维护。
+// 对话输入胶囊：生活空间、工作台与轻语共用。默认单行胶囊；编辑消息，或工作台聚焦、挂附件、长文本时展开为多行指挥台。此组件是受控组件：父组件持有 text/pending/sending/recording 等状态，这里只渲染 + 把事件转回父组件。命令弹层的筛选与高亮由本组件维护。
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
@@ -64,8 +61,7 @@ export interface ConversationInputProps {
   variant?: ConversationVariant
 }
 
-// 工作台指挥台的展开阈值：超过这个长度、存在附件或聚焦时，长成 2–4 行 textarea。
-// 生活空间始终走单行胶囊。
+// 工作台指挥台的展开阈值：超过这个长度、存在附件或聚焦时，长成 2–4 行 textarea。生活空间始终走单行胶囊。
 const COMMAND_LINE_THRESHOLD = 80
 
 export function ConversationInput(props: ConversationInputProps): React.JSX.Element {
@@ -291,8 +287,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
       onDrop={
         onDrop
           ? e => {
-              // 阻止冒泡：whisper-overlay 等父容器同时挂着 onDrop 接收整层浮层的拖入，
-              // 这里消费后不必再交给外层，否则文件路径会重复入附件。
+              // 阻止冒泡：whisper-overlay 等父容器同时挂着 onDrop 接收整层浮层的拖入，这里消费后不必再交给外层，否则文件路径会重复入附件。
               e.stopPropagation()
               onDrop(e)
             }

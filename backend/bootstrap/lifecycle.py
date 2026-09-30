@@ -48,7 +48,7 @@ logger = get_logger(__name__)
 def _run_migrations() -> None:
     """升级到最新 Alembic 版本；唯一一份 0001 baseline 已构建完整 schema。"""
     cfg = Config(str(Path(__file__).parents[1] / "alembic.ini"))
-    # 标记给 env.py，让启动迁移跳过 fileConfig；否则 alembic.ini 的 WARNING root 会接管全局日志、禁用所有已建 logger。
+    # 跳过 fileConfig，否则 alembic.ini 的 WARNING root 会接管全局日志、禁用已建 logger。
     cfg.attributes["configure_logger"] = False
     cfg.set_main_option("sqlalchemy.url", database_url("postgresql+psycopg").replace("%", "%%"))
     command.upgrade(cfg, "head")
@@ -66,16 +66,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     attachment_root().mkdir(parents=True, exist_ok=True)
 
     start_scheduler()
-    # LISTEN 专线：event_store 内部直连 + 断线 5s 重连；cron 回合处理器已由 bootstrap/registrations 显式绑定。
-    # asyncpg 直连只接受不带 SQLAlchemy 驱动后缀的纯 postgresql:// URL。
+    # LISTEN 专线：event_store 内部直连 + 断线 5s 重连；asyncpg 只接受纯 postgresql:// URL。
     start_event_loop(database_url("postgresql"))
-    # IM 通道桥：拉起各用户已启用的渠道绑定，回合不依赖用户 WS。
-    await start_channel_manager()
+    await start_channel_manager()  # IM 通道桥：拉起各用户已启用的渠道绑定，回合不依赖用户 WS。
     await resume_pending_video_jobs()
-    # 视频包：生成包凭持久化句柄（任务 ID / 产物 / 脚本）续跑，不重复提交付费任务；中断的上传导入包按失败落库并广播。
+    # 视频包凭持久化句柄续跑，不重复提交付费任务；中断的上传导入包按失败落库并广播。
     await resume_video_generation_jobs()
-    # 动作提案：pending 评审重新调度（approve 后自动接生成编排）。
-    await resume_proposal_reviews()
+    await resume_proposal_reviews()  # pending 评审重新调度（approve 后自动接生成编排）。
     await resume_character_extractions()
     await resume_scene_jobs()
     await resume_initial_appearance()
@@ -97,10 +94,10 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         with contextlib.suppress(asyncio.CancelledError):
             await cleanup_task
 
-        # 先停调度器再 drain：tick 会往 cron 的模块级任务集合里 spawn 新 task，反过来的顺序留下一个能逃过 drain 的窗口。
+        # 先停调度器再 drain：tick 会 spawn 新 task，反过来会留下逃过 drain 的窗口。
         await stop_scheduler()
 
-        # 释放引擎前先 drain 模块级任务集合；避免 SIGTERM 把持有连接池的协程留在 commit 中途。
+        # 释放引擎前先 drain 模块级任务集合，避免 SIGTERM 把持有连接池的协程留在 commit 中途。
         await asyncio.gather(
             drain_cron(),
             drain_first_greeting(),

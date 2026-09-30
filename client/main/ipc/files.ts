@@ -25,8 +25,7 @@ interface FilesIpcDeps {
   mimeTypeForPath: (filePath: string) => string
 }
 
-// 聊天图片附件的体量护栏：data URL 附件要走 WS 单帧 + 视觉模型请求体，
-// 超过边长/字节任一上限时降采样并重编码 JPEG，保证发送不被体量截断。
+// 聊天图片附件体量护栏：data URL 走 WS 单帧 + 视觉模型请求体，超过边长/字节任一上限时降采样并重编码 JPEG。
 const IMAGE_ATTACH_MAX_EDGE = 2048
 const IMAGE_ATTACH_TARGET_BYTES = 6 * 1024 * 1024
 const IMAGE_ATTACH_JPEG_QUALITY = 0.85

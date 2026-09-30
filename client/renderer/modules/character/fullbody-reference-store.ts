@@ -287,9 +287,7 @@ function updateReference(
         history
       })
 
-      // 全身种子图写入本地缓存，自备图流程直接读取该缓存。
-      // preview 解析失败时不要显式传 null：store 的显式 display 分支会冲掉旧展示 URL，
-      // 导致自备图弹窗突然缺参考图；缺省 undefined 交给 resolveDisplayUrl 保留 previous。
+      // 全身种子图写入本地缓存，自备图流程直接读取该缓存。preview 解析失败时不要显式传 null：store 的显式 display 分支会冲掉旧展示 URL，导致自备图弹窗突然缺参考图；缺省 undefined 交给 resolveDisplayUrl 保留 previous。
       if (!candidate) {
         await patchAvatarSeeds({
           avatarId,

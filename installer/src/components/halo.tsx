@@ -49,7 +49,6 @@ function describeArc(
   ].join(' ')
 }
 
-// Halo 走 cyber-glass 主题：完成段 --ui-accent，失败段 destructive，未完成段低饱和描边。
 export function Halo({
   total = 6,
   done,
@@ -64,9 +63,7 @@ export function Halo({
 
   return (
     <div
-      // 注意：根 div 不写 `position`——让外部传入的 className（`absolute inset-0` 或其它）独占控制定位。
-      // Tailwind v4 utility 按字母序输出 CSS，`relative` 会后于 `absolute` 定义并覆盖，导致 absolute 失效、容器左对齐。
-      // SVG 自身 width/height = size 已填满根 div，所以也不需要 `flex items-center justify-center`。
+      // 不写 position：Tailwind v4 下 relative 会覆盖外部 className 的 absolute
       className={clsx('select-none', className)}
       style={{ width: size, height: size }}
     >
@@ -78,7 +75,6 @@ export function Halo({
         aria-label="Installer Stage Halo"
       >
         <defs>
-          {/* 段落发光滤镜 */}
           <filter id="halo-glow-filter" x="-20%" y="-20%" width="140%" height="140%">
             <feGaussianBlur stdDeviation="3" result="blur" />
             <feMerge>

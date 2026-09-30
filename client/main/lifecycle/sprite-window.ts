@@ -35,9 +35,7 @@ export function createSpriteWindowFactory(deps: SpriteWindowDeps): {
       return
     }
 
-    // 贴住窗口当前覆盖的那块显示器（或启动时包含 preferredOrigin 的那块），
-    // 而不是每次都弹回主显示器——精灵必须停留在用户拖到的那块显示器上。
-    // 当原显示器被拔掉时，getDisplayMatching 会回退到最近的那块。
+    // 贴住窗口当前覆盖的那块显示器（或启动时包含 preferredOrigin 的那块），不弹回主显示器；原显示器拔掉时 getDisplayMatching 回退到最近的那块。
     const base = preferredOrigin
       ? { height: 1, width: 1, x: preferredOrigin.x, y: preferredOrigin.y }
       : mainWindow.getBounds()

@@ -118,8 +118,7 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
     return { ...state }
   }
 
-  // 平台分支：Windows 走 taskkill /T /F 强杀进程树，失败回退到 SIGTERM；
-  // POSIX 直接 SIGTERM。SIGKILL 兜底留给 stop() 的 grace 超时分支。
+  // Windows 走 taskkill /T /F 强杀进程树，失败回退 SIGTERM；POSIX 直接 SIGTERM，SIGKILL 兜底留给 stop() 的 grace 超时分支。
   function requestGracefulKill(target: ChildProcess, graceMs: number): void {
     if (process.platform === 'win32') {
       childProcess.execFile(
@@ -150,7 +149,7 @@ export function createRunnerProcess(options: CreateRunnerProcessOptions = {}): R
   }
 
   function buildArgs({ endpointPath }: RunnerProcessStartArgs): string[] {
-    // token 经环境变量下发，不进 argv——同机进程列表可读命令行。
+    // token 经环境变量下发，不进 argv ——同机进程列表可读命令行。
     return ['--desktop-endpoint', endpointPath || '']
   }
 

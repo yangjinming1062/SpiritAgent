@@ -1,8 +1,6 @@
 @import 'tailwindcss';
 
-/* 语义设计 token 层：@theme inline 让工具类发出 var(--ui-*) 引用而非编译期定值，
-   主题切换覆写 html[data-theme] 以及同步的 data-palette（夜/日）与 data-effect（实底/清透）。默认日色透明写在 :root。
-   inline 是必需的——裸 @theme 会在构建期解析变量值，把首个主题冻进产物。 */
+/* 语义 token：@theme inline 发出 var(--ui-*) 而非编译期定值；主题经 html[data-theme]/data-palette/data-effect 覆写。inline 必需——裸 @theme 会把首个主题冻进产物。 */
 @theme inline {
   --color-surface-panel: var(--ui-surface-panel);
   --color-surface-card: var(--ui-surface-card);
@@ -353,9 +351,7 @@
     -webkit-font-smoothing: antialiased;
   }
 
-  /* 精灵窗口、生活空间与工作台：BrowserWindow 为无边框真透明窗体。
-     html 也必须透明——color-scheme 会给 :root 铺一层画布底，
-     正好填进 CSS 圆角切出的四角楔形。 */
+  /* 精灵窗/生活空间/工作台为无边框真透明窗体；html 也须透明——color-scheme 会铺画布底填进圆角楔形。 */
   html[data-role='sprite'],
   html[data-role='sprite'] body,
   html[data-role='sprite'] #root,
@@ -401,9 +397,8 @@
   }
 }
 
-/* ── 液态玻璃表面层 ───────────────────────────────────────────────────────────
-   全部窗口共用一套类常量词汇表（表面阶梯 panel→card、瞬时浮层 overlay）。
-   夜色与日色采用纯净的毛玻璃、0.6px 细描边与大圆角，移除 HUD 角标与赛博噪点。 */
+/* ── 液态玻璃表面层 ─────────────────────────────────────────────────────────── */
+/* 全窗口共用类词汇表：表面阶梯 panel→card，瞬时浮层 overlay。 */
 
 .bg-surface-panel,
 .bg-glass {
@@ -700,7 +695,7 @@ html[data-role='living'][data-effect='clear'][data-palette='day'] .bg-surface-ca
   -webkit-mask-image: linear-gradient(180deg, black 0%, black 72%, transparent 100%);
 }
 
-/* ── 超高质感液态玻璃（Liquid Glass）增强层 ── */
+/* ── liquid-glass 类 ── */
 .liquid-glass-card {
   background: var(--ui-surface-card);
   -webkit-backdrop-filter: blur(20px) saturate(180%);
@@ -761,7 +756,7 @@ html[data-effect='clear'] .liquid-glass-pill:hover {
 }
 
 
-/* ── 生活空间清透模式（Liquid Clear）高质感液态玻璃 ── */
+/* ── 生活空间清透模式 ── */
 
 html[data-role='living'][data-effect='clear'] .liquid-glass-card {
   background: var(--ui-surface-card);
@@ -791,7 +786,7 @@ html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glas
     0 10px 28px -12px rgba(0, 0, 0, 0.45);
 }
 
-/* 清透模式胶囊容器（日色与夜色）：高折射通透液态玻璃 */
+/* 清透模式胶囊容器 */
 html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-pill {
   background: rgba(255, 255, 255, 0.3);
   -webkit-backdrop-filter: blur(24px) saturate(200%) contrast(105%);
@@ -858,7 +853,7 @@ html[data-palette='day'][data-effect='solid'] .liquid-glass-tab-active {
   font-weight: 600;
 }
 
-/* 清透模式胶囊激活项：晶莹光泽透镜，文字对比度极高 */
+/* 清透模式胶囊激活项 */
 html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-pill-active,
 html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-tab-active {
   background: rgba(255, 255, 255, 0.88);
@@ -883,7 +878,7 @@ html[data-role='living'][data-effect='clear'][data-palette='night'] .liquid-glas
   text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 
-/* 清透模式胶囊未激活项文字清晰度增强：高对比度、防背景杂色 */
+/* 清透模式未激活项文字清晰度 */
 html[data-role='living'][data-effect='clear'][data-palette='day'] .liquid-glass-pill button:not([aria-selected='true']):not(.liquid-glass-tab-active):not(.liquid-glass-pill-active) {
   color: #2b3240;
   font-weight: 500;
@@ -919,10 +914,7 @@ html.no-blur .theme-tile {
 }
 
 
-/* 为每个交互控件在原语层加上 pointer 光标（按钮、select、菜单项、
-   switch、tab、summary 等）。各组件不必再硬编码 `cursor-pointer`；
-   显式的光标工具类（cursor-grab、cursor-default、disabled:cursor-*）
-   仍优先，因为它们处于 utilities 层。 */
+/* 原语层给交互控件加 pointer；组件不必再硬编码 cursor-pointer。显式 cursor 工具类仍在 utilities 层优先。 */
 @layer base {
   button:not(:disabled):not([aria-disabled='true']),
   summary,
@@ -944,9 +936,7 @@ html.no-blur .theme-tile {
   }
 }
 
-/* 全局禁用聚焦环。同时去掉原生 outline 与 Tailwind 的
-   `focus-visible:ring-*`（由 --tw-ring-* 驱动的 box-shadow）。
-   不放在 layer 内，所以无需 !important 就能压过 utilities 层。 */
+/* 全局禁用聚焦环（原生 outline 与 focus-visible:ring-*）。不放在 layer 内，无需 !important 即可压过 utilities。 */
 *:focus,
 *:focus-visible {
   outline: none;
@@ -1153,7 +1143,7 @@ html[data-palette='day'] .sa-slider::-moz-range-thumb {
   background: rgb(26 28 32);
 }
 
-/* ── 现代科技感与全息控制台增强动效 ─────────────────────────────────────── */
+/* ── 动效 ─────────────────────────────────────── */
 
 /* 离子微光标（流式文本打字机） */
 @keyframes caret-pulse {
@@ -1290,9 +1280,7 @@ html[data-palette='day'] .sa-slider::-moz-range-thumb {
   }
 }
 
-/* 生活空间打开期间：精灵在场景里画里，不应出现在桌面上。
-   SpriteStage 自身 opacity 由 inline style 控制；这里用 CSS 把整 stage 退到 0，
-   命中区一并失效，避免误触。 */
+/* 生活空间打开时精灵退到场景里：整 stage opacity 归 0，命中区一并失效，避免误触。 */
 html[data-sprite-hidden='true'] [data-sprite-stage] {
   opacity: 0 !important;
   pointer-events: none !important;

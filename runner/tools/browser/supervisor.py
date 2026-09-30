@@ -40,9 +40,9 @@ from .refs import Refs, SessionIds
 logger = logging.getLogger(__name__)
 
 _CDP_BACKOFF_MAX = 10.0
-# 有待决弹窗时，浏览器侧命令仍会立即返回，依赖渲染进程的命令会一直挂到弹窗关闭：超过该宽限即判定被阻塞。
+# 弹窗阻塞渲染进程命令，超宽限判 blocked。
 _DIALOG_BLOCK_GRACE_S = 1.0
-# 导航会关闭页面上已有的弹窗并照常完成（首字节可能远超宽限），对调用前已存在的弹窗不做阻塞判定。
+# 导航会关旧弹窗，不判阻塞。
 _NAVIGATION_METHODS = frozenset({"Page.navigate", "Page.navigateToHistoryEntry", "Page.reload"})
 
 
@@ -54,7 +54,7 @@ _UNSET: Final = _Unset.UNSET
 
 CONSOLE_HISTORY_MAX = 50
 
-# 每个 page 会话都要启用的事件域：导航 / lifecycle 等待、弹窗、console 与 AXTree 依赖它们。
+# page 会话须启用的事件域。
 _PAGE_DOMAINS: tuple[tuple[str, dict[str, Any] | None], ...] = (
     ("Page.enable", None),
     ("Page.setLifecycleEventsEnabled", {"enabled": True}),
@@ -151,14 +151,14 @@ class CDPSupervisor:
         self._ws: Any = None
         self._next_call_id = 1
         self._pending_calls: dict[int, asyncio.Future[dict[str, Any]]] = {}
-        # 只保护 _session_ids 的原子替换；读路径走 _current_sids() 无锁。
+        # 只保护替换；读走 _current_sids()。
         self._session_lock = threading.Lock()
         self._session_ids: SessionIds = SessionIds(active=None, page=None, root_frame="")
         self._attached_targets: dict[str, dict[str, str]] = {}
 
-        # 等待「出现待决弹窗」的一次性 future；只在 loop 线程读写。
+        # 弹窗 future 只在 loop 线程读写。
         self._dialog_open_waiters: set[asyncio.Future[None]] = set()
-        # navigate 的一次性等待 future，按 frame_id / (loader_id, name) 索引；只在 loop 线程读写。
+        # 导航 future 只在 loop 线程读写。
         self._frame_navigated_waiters: dict[str, list[asyncio.Future[dict[str, Any]]]] = {}
         self._lifecycle_waiters: dict[tuple[str, str], list[asyncio.Future[dict[str, Any]]]] = {}
 
@@ -230,7 +230,7 @@ class CDPSupervisor:
         return self._active
 
     def snapshot(self) -> SupervisorSnapshot:
-        # DialogManager 自带锁，不与 _state_lock 嵌套以避免锁序倒置。
+        # DialogManager 锁不与 _state_lock 嵌套。
         pending, recent = self._dialog_manager.snapshot()
         with self._state_lock:
             active = self._active
@@ -254,11 +254,7 @@ class CDPSupervisor:
         return {"root": root.to_dict(), "frames_count": len(frames)}
 
     def activate_tab_session(self, session_id: str) -> None:
-        """切到新 page session: 启用事件域并跟随 root_frame。
-
-        Page/Runtime 等域只在初始页启用过; 新 tab 的 session 不启用的话,
-        navigate 的导航/lifecycle 等待器收不到事件, 且 waiter 还拿着旧 tab 的 frame 键 — 每次导航固定空等超时。
-        """
+        """切到新 page session：启用事件域并跟 root_frame，否则导航等待器空等超时。"""
         self._set_session(active=session_id)
         for method, params in _PAGE_DOMAINS:
             self.send_cdp(method, params, session_id=session_id)
@@ -323,8 +319,7 @@ class CDPSupervisor:
         with self._state_lock:
             closed_session = self._attached_targets.pop(tab_id, {}).get("session_id")
             if closing_active:
-                # 改选任一存活会话; 被关的若是 page 会话本身, page 也要跟着换,
-                # 否则后续 send_cdp 默认路由进死会话, root_frame 采纳逻辑对新导航永久失效。
+                # page 会话被关时一并换选，否则 send_cdp 路由进死会话。
                 fallback = next(
                     (info.get("session_id") for info in self._attached_targets.values() if info.get("session_id")),
                     None,
@@ -334,7 +329,7 @@ class CDPSupervisor:
                 else:
                     self._set_session(active=fallback)
         if fallback is not None:
-            # root_frame 须跟随回退会话，否则导航等待的是已关闭标签页的主帧，每次空等到上限。
+            # root_frame 须跟回退会话。
             ft = self.send_cdp("Page.getFrameTree", session_id=fallback)
             if ft.get("ok"):
                 self._set_session(root_frame=ft["result"].get("frameTree", {}).get("frame", {}).get("id", ""))
@@ -436,9 +431,9 @@ class CDPSupervisor:
                 )
                 if nav.get("errorText"):
                     raise NavigationError(f"{nav['errorText']}: {url}")
-                # 只改 hash 的同文档跳转没有 loaderId，也不会产生 frameNavigated / networkIdle。
+                # 同文档 hash 跳转无 loaderId/事件。
                 if loader_id := nav.get("loaderId"):
-                    # 按 loaderId 等待，避免上一个文档迟到的 networkIdle 提前放行。
+                    # 按 loaderId 等，防旧 networkIdle 放行。
                     idle_fut = self._await_lifecycle(loader_id, "networkIdle")
                     if target_frame_id:
                         with contextlib.suppress(TimeoutError):
@@ -476,7 +471,7 @@ class CDPSupervisor:
         if fut is None:
             raise RuntimeError("Supervisor loop unavailable")
         try:
-            # 内部各步都有上限（导航 + 等待共 timeout，另加两次 5s 取值），这里只兜底。
+            # 这里只是兜底。
             return fut.result(timeout=timeout + 15)
         except TimeoutError:
             fut.cancel()
@@ -677,7 +672,7 @@ class CDPSupervisor:
                     "completed": results,
                 }
             if dialog := res.get("dialog"):
-                # 弹窗阻塞页面，后续动作只会失败或被丢弃；本步已生效，须明确告知以免整批重试。
+                # 弹窗后整批勿重试。
                 remaining = len(actions) - i - 1
                 if remaining == 0:
                     return {"ok": True, "steps_executed": len(results), "details": results}
@@ -757,7 +752,7 @@ class CDPSupervisor:
 
     def screenshot_element(self, ref: str, path: str | Path | None = None) -> dict[str, Any]:
         try:
-            # 视口外的内容不会被渲染，先把元素滚入视口再截取。
+            # 先滚入视口再截。
             _, _, obj_id = self._refs.resolve_ref_center(ref, scroll_into_view=True)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -776,7 +771,7 @@ class CDPSupervisor:
         quad = box["result"].get("model", {}).get("border", [])
         if len(quad) < 8:
             return {"ok": False, "error": f"Invalid box model dimensions for {ref}"}
-        # getBoxModel 给出视口坐标，captureScreenshot 的 clip 使用文档坐标，须加上当前滚动偏移。
+        # clip 是文档坐标，须加滚动偏移。
         metrics = self.send_cdp("Page.getLayoutMetrics", session_id=sid)
         if not metrics.get("ok"):
             return {"ok": False, "error": f"Failed to read page scroll offset: {metrics.get('error')}"}
@@ -1016,7 +1011,7 @@ class CDPSupervisor:
         pre_existing = None
         if method != "Page.handleJavaScriptDialog":
             pre_existing = self._dialog_manager.pending_for(session_id)
-            # 弹窗未决时浏览器会立即确认但丢弃输入事件，发出去只会造成“成功但无效果”。
+            # 弹窗未决时输入会被丢弃。
             if pre_existing is not None and method.startswith("Input."):
                 raise DialogBlockedError(pre_existing, opened_by_call=False)
 
@@ -1046,10 +1041,7 @@ class CDPSupervisor:
         pre_existing_id: str | None,
         tolerated_id: str | None,
     ) -> dict[str, Any]:
-        """等待 CDP 响应；待决弹窗阻塞页面时抛 DialogBlockedError，而不是挂到超时。
-
-        ``tolerated_id`` 是不据以判阻塞的已有弹窗（导航会关闭它）；调用期间新开的弹窗仍按宽限判定。
-        """
+        """等 CDP 响应；弹窗阻塞抛 DialogBlockedError。tolerated_id 为不判阻塞的已有弹窗。"""
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
@@ -1174,7 +1166,7 @@ class CDPSupervisor:
         parent_id = frame.get("parentId")
         with self._state_lock:
             sids = self._current_sids()
-            # 尚无 root 或事件来自主 page 会话时才采纳为 root：window.open 弹窗的主帧同样没有 parentId。
+            # 尚无 root 或主 page 事件才采纳 root。
             if not parent_id and (not sids.root_frame or session_id == sids.page):
                 self._set_session(root_frame=fid)
                 sids = self._current_sids()
@@ -1320,8 +1312,7 @@ class SupervisorRegistry:
         dialog_timeout_s: float = DEFAULT_DIALOG_TIMEOUT_S,
         timeout: float = 15.0,
     ) -> CDPSupervisor:
-        # 先在锁外确认现有 supervisor 的活性, 避免对正在运行的实例误判为已死。
-        # 锁内只做 dict 替换 + 必要时的 stop() 抢占, 不在锁内调阻塞 start().
+        # 锁外探活；锁内只替换/stop，不调阻塞 start()。
         existing = self._supervisors.get(task_id)
         if existing is not None and existing.active:
             return existing
@@ -1336,13 +1327,13 @@ class SupervisorRegistry:
             dialog_timeout_s=dialog_timeout_s,
         )
         with self._lock:
-            # 重新确认: 拿到锁前可能已有别的线程把活的塞回去。
+            # 拿锁后重新探活。
             live = self._supervisors.get(task_id)
             if live is not None and live.active:
                 return live
             self._supervisors[task_id] = sup
 
-        # 锁外先回收 stale 实例, 再启动新的 — 防止旧 WS / Chromium 进程泄漏。
+        # 锁外回收 stale 再启动，防泄漏。
         if stale is not None:
             try:
                 stale.stop()

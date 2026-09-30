@@ -16,9 +16,7 @@ _CDP_TIMEOUT_MIN = 1.0
 _CDP_TIMEOUT_MAX = 300.0
 _CDP_TIMEOUT_DEFAULT = 30.0
 
-# 拒绝的方法：关闭浏览器或主管自身会话、一次性清空全部站点数据、绕过权限提示或弹窗管理、
-# 改写下载目录（会破坏 browser_download，也可把下载写到任意目录），以及 Fetch 拦截
-# （本工具不回传事件，主管也不处理 requestPaused，被拦截的请求会一直挂起）。
+# 拒：关浏览器/会话、清空站点数据、绕过权限/弹窗、改下载目录、Fetch 拦截。
 _BLOCKED_CDP_METHODS = frozenset(
     {
         "Browser.close",

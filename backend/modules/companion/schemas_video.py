@@ -4,8 +4,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .schemas_actions import PeekGeometry
 
-# 视频片段较大（透明 WebM 数秒），经同一 base64 JSON 通道放宽到 32 MiB；
-# 真正的分片上传通道接入后在此收紧。
+# 视频片段较大（透明 WebM 数秒），经同一 base64 JSON 通道放宽到 32 MiB；真正的分片上传接入后在此收紧。
 _VIDEO_CLIP_MAX_BYTES: int = 32 * 1024 * 1024
 
 

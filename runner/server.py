@@ -62,8 +62,7 @@ _STARTED_AT = time.time()
 _RECONNECT_COUNT = 0
 _current_reconnect_streak = 0
 
-# 运行代次：每次进程启动生成一次，重连不换（进程没重启）；
-# runner_ready / capabilities 变化通知 / info 三处同源携带。
+# 运行代次：进程启动生成、重连不换；runner_ready/capabilities/info 同源携带。
 _RUN_GENERATION = uuid.uuid4().hex
 
 # 重连退避 + 端点文件轮询间隔。无硬上限；Runner 在 Desktop 进程级拆除前无限退避。
@@ -157,11 +156,7 @@ async def _send_notification(ws: Any, method: str, params: dict[str, Any], id: A
 
 
 async def request_llm_from_desktop(kwargs: dict[str, Any]) -> str:
-    """向 Client 发 ``request_llm`` 并返回模型文本；当前内置工具不调用。鉴权在 Client 侧完成，Runner 不持凭据。
-
-    Client 代理 Backend ``/api/llm/completion``：成功结果为 ``{"content": str, "usage": dict|null}``，失败走 JSON-RPC error。
-    缺少文本字段按协议错误拒绝，不降级为空串掩盖失败。
-    """
+    """经 Client 反向 request_llm 取模型文本；Runner 不持凭据。缺文本字段按协议错误拒绝。"""
     global _llm_requests_count, _llm_bytes_count
 
     if (ws := _ACTIVE_WS) is None:
@@ -358,10 +353,7 @@ def _resolve_pending_rpc(data: dict[str, Any]) -> None:
 
 
 def _fail_pending_rpcs(reason: str) -> None:
-    """对所有 in-flight 的 ``request_llm`` future 抛失败, 让调用方的 ``wait_for`` 迅速返回。
-
-    用 ``set_exception`` 而不是 cancel 是为了把断连原因透给 LLM；已 done 的 future（响应已取走或 ``wait_for`` 已取消）跳过。
-    """
+    """对 in-flight request_llm future set_exception（透传断连原因），已 done 的跳过。"""
     for fut in list(_PENDING_RPC.values()):
         if not fut.done():
             fut.set_exception(ConnectionError(reason))
@@ -415,8 +407,7 @@ async def runner_loop(endpoint: DesktopEndpoint) -> None:
             except websockets.exceptions.ConnectionClosed:
                 logger.warning("WebSocket connection closed by Desktop.")
             except websockets.exceptions.InvalidStatus as e:
-                # Desktop 升级前 token 校验返回 HTTP 401: 本进程仍持有上一个会话的 token(Desktop 重启过)。
-                # 丢弃缓存 endpoint, 下一次从 endpoint 文件重读新的路径+token — 重试旧的一定 401 白白烧掉重试预算。
+                # 401 说明 Desktop 重启过、token 已轮换：丢缓存 endpoint，下次从文件重读。
                 logger.warning(f"Desktop rejected handshake ({e.response.status_code}); refreshing endpoint")
                 current_endpoint = None
             except Exception as e:
@@ -464,10 +455,7 @@ async def _runner_ready_payload() -> dict[str, Any]:
 
 
 async def _watch_capabilities(interval_s: float = 120.0) -> None:
-    """周期重探测能力，快照或探测状态变化时向客户端发 ``runner_capabilities_changed``。
-
-    探测失败发 ``probe_failed=True`` 的降级通知，撤销可选能力而不是让客户端保留陈旧的可用认知。
-    """
+    """周期重探测能力；失败发 probe_failed 降级通知并撤销可选能力。"""
     last: tuple[dict[str, Any], bool] | None = None
     while True:
         await asyncio.sleep(interval_s)

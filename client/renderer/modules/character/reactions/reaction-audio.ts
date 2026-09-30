@@ -36,8 +36,7 @@ const index: Map<ReactionBucket, ReactionEntry[]> = (() => {
   return byBucket
 })()
 
-/** 按性格标签交集从指定 bucket 选择反应条目：有交集时从最高分与无标签的通用条目中随机，
- *  无交集或伙伴无标签时从整个 bucket 随机。 */
+/** 按性格标签交集从指定 bucket 选择反应条目：有交集时从最高分与无标签的通用条目中随机，无交集或伙伴无标签时从整个 bucket 随机。 */
 function pickReaction(bucket: ReactionBucket, companionTags: string[]): ReactionEntry | null {
   const candidates = index.get(bucket)
 
@@ -65,8 +64,7 @@ function pickReaction(bucket: ReactionBucket, companionTags: string[]): Reaction
   return candidates[Math.floor(Math.random() * candidates.length)]
 }
 
-/** 本地反应池入口（DESIGN「拖拽与直接交互」 离线/机械降级）。首次播放合成一次并落盘，
- *  之后每次触发都是本地读盘。换音色或改台词会让缓存键失效，自动重新生成。 */
+/** 本地反应池入口（DESIGN「拖拽与直接交互」 离线/机械降级）。首次播放合成一次并落盘，之后每次触发都是本地读盘。换音色或改台词会让缓存键失效，自动重新生成。 */
 async function playReactionAudio(entry: ReactionEntry | null): Promise<boolean> {
   if (!entry) {
     return false

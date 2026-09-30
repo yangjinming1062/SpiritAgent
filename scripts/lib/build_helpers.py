@@ -1,12 +1,5 @@
 #!/usr/bin/env python3
-"""scripts/lib/build_helpers.py —— 客户端构建管线的跨平台共享助手。
-
-统一处理：
-- Set-Version：同步 5 个包管理与配置文件版本号
-- Stage-Payload：暂存 runner wheel、server.py、skills 与 install 脚本
-- Patch-TauriConfig / Restore-TauriConfig：安全补丁与恢复 installer/src-tauri/tauri.conf.json 中的 bundle.resources
-- Find-DesktopArtifact：定位 electron-builder 产物
-"""
+"""客户端构建管线跨平台共享助手：版本同步、payload 暂存、Tauri 配置补丁与桌面产物定位。"""
 
 import json
 import os
@@ -24,9 +17,7 @@ def get_repo_root() -> Path:
 
 
 def set_version(version: str, repo_root: Path | None = None) -> None:
-    """写入版本号至 client/package.json, installer/package.json,
-    installer/src-tauri/tauri.conf.json, installer/src-tauri/Cargo.toml, runner/pyproject.toml。
-    """
+    """写入版本号至 client/installer package.json、tauri.conf.json、Cargo.toml 与 runner/pyproject.toml。"""
     root = repo_root or get_repo_root()
     print(f"==> [build_helpers] Writing version {version} to package.json/pyproject.toml")
 
@@ -98,11 +89,7 @@ def _read_runner_pyproject_version(root: Path) -> str:
 
 
 def _select_runner_wheel(dist_dir: Path, version: str) -> Path:
-    """只接受与 pyproject 版本精确匹配的 wheel。
-
-    dist/ 里常堆积历史 wheel；按名字 sorted()[0] 会选中最旧的 0.1.0，
-    再配上当前 server.py 就打出「新 server + 旧包」的坏安装包。
-    """
+    """只接受与 pyproject 版本精确匹配的 wheel，避免 dist/ 历史 wheel 混入安装包。"""
     exact = sorted(dist_dir.glob(f"spirit_agent-{version}-*.whl"))
     if not exact:
         available = sorted(p.name for p in dist_dir.glob("*.whl"))
@@ -142,7 +129,7 @@ def stage_payload(repo_root: Path | None = None, target: str | None = None) -> N
         raise FileNotFoundError(f"runner/server.py not found: {server_py}")
     shutil.copy2(server_py, payload_runner / "server.py")
 
-    # 发布门禁：即将进入安装包的 wheel 必须满足同包 server.py 的本地导入。
+    # 发布门禁：入包 wheel 必须满足同包 server.py 的本地导入。
     subprocess.run(
         [
             sys.executable,
@@ -180,7 +167,7 @@ def get_tauri_conf_path(repo_root: Path | None = None) -> Path:
 
 
 def patch_tauri_config(repo_root: Path | None = None) -> None:
-    """备份并修改 installer/src-tauri/tauri.conf.json，将 payload/client 中的桌面产物追加至 bundle.resources。"""
+    """备份并 patch tauri.conf.json，把 payload/client 桌面产物追加至 bundle.resources。"""
     root = repo_root or get_repo_root()
     conf_path = get_tauri_conf_path(root)
     bak_path = conf_path.with_name(conf_path.name + ".tauri-build.bak")
@@ -188,7 +175,6 @@ def patch_tauri_config(repo_root: Path | None = None) -> None:
     if not conf_path.is_file():
         raise FileNotFoundError(f"tauri.conf.json not found: {conf_path}")
 
-    # 制作备份
     shutil.copy2(conf_path, bak_path)
 
     client_payload_dir = root / "installer" / "payload" / "client"
@@ -211,7 +197,7 @@ def patch_tauri_config(repo_root: Path | None = None) -> None:
 
 
 def restore_tauri_config(repo_root: Path | None = None) -> None:
-    """恢复 installer/src-tauri/tauri.conf.json 备份并删除备份文件。"""
+    """恢复 tauri.conf.json 备份并删除备份文件。"""
     root = repo_root or get_repo_root()
     conf_path = get_tauri_conf_path(root)
     bak_path = conf_path.with_name(conf_path.name + ".tauri-build.bak")
@@ -222,7 +208,7 @@ def restore_tauri_config(repo_root: Path | None = None) -> None:
 
 
 def find_desktop_artifact(target: str, version: str, repo_root: Path | None = None) -> Path | None:
-    """在 client/release/ 中定位 desktop artifact。"""
+    """在 client/release/ 中定位桌面产物。"""
     root = repo_root or get_repo_root()
     release_dir = root / "client" / "release"
     if not release_dir.is_dir():

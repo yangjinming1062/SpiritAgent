@@ -16,8 +16,7 @@ from pathlib import Path
 
 from utils import get_credential_file_mounts, get_spiritagent_home, iter_cache_files, iter_skills_files
 
-# 文件锁 stdlib 由解释器构建时决定，不应在 pyproject.toml 列出（stdlib 自动可用）。
-# POSIX 用 fcntl.flock，Windows 用 msvcrt.locking，语义一致，都是独占式建议锁。
+# 文件锁用 stdlib（POSIX flock / Windows msvcrt），不进 pyproject。
 if sys.platform == "win32":
     import msvcrt
 else:
@@ -158,12 +157,11 @@ class FileSyncManager:
                     if os.name == "posix":
                         os.kill(os.getpid(), signal.SIGINT)
                     else:
-                        # Windows 下 os.kill(PID, SIGINT) 实际是 TerminateProcess，不会触发 KeyboardInterrupt——直接抛出延迟的中断。
+                        # Windows kill(SIGINT) 实为 TerminateProcess，须直接抛中断。
                         raise KeyboardInterrupt
 
     def _sync_back_locked(self, lock_path: Path) -> None:
-        # Windows 的 ``msvcrt.locking`` 锁区段必须已存在 — 在 0 字节文件上 ``LK_LOCK, 1`` 会抛 ``Errno 22``。
-        # 显式写入 1 字节占位, 锁解锁后再清理; 已有占位时不能再写 — 另一进程可能正锁着该字节, 写入会得到 Lock Violation。
+        # Windows msvcrt.locking 须已有字节；0 字节会 Errno 22。写 1 字节占位，已有占位勿再写。
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with open(lock_path, "w+b") as f:
             if f.read(1) != b"\x00":
@@ -186,7 +184,7 @@ class FileSyncManager:
 
     def _sync_back_impl(self) -> None:
         mapping = list(self._get_files_fn())
-        # mkstemp + 显式关闭：下载子进程需以写入方式打开该路径，Windows 在我们的 fd 持有文件时拒绝（NamedTemporaryFile 的打开句柄）。
+        # mkstemp 后显式关闭：Windows 下子进程写不了我们仍持有的文件。
         fd, tar_name = tempfile.mkstemp(suffix=".tar")
         os.close(fd)
         try:
@@ -201,7 +199,7 @@ class FileSyncManager:
                 for dp, _, fnames in os.walk(staging):
                     for fn in fnames:
                         staged = os.path.join(dp, fn)
-                        # 远端/容器路径是 POSIX 风格；Windows 的 os.path.relpath 会输出反斜杠，永远匹配不上映射表。
+                        # 远端路径用 posixpath，Windows relpath 会出反斜杠。
                         remote = "/" + os.path.relpath(staged, staging).replace(os.sep, "/")
                         if (pushed := self._pushed_hashes.get(remote)) is not None and _sha256_file(staged) == pushed:
                             continue
@@ -228,7 +226,7 @@ class FileSyncManager:
         return next((h for h, r in mapping if r == remote_path), None)
 
     def _infer_host_path(self, remote_path: str, mapping: list[tuple[str, str]]) -> str | None:
-        # posixpath.dirname 在所有平台都保留 POSIX 风格前缀；Windows 下 str(Path(...)) 会输出无盘符的反斜杠路径。
+        # 用 posixpath.dirname 保留 POSIX 前缀。
         return next(
             (
                 str(Path(host).parent) + remote_path[len(r_dir) :]

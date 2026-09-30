@@ -1,10 +1,10 @@
 # 提示词索引
 
-集中登记面向模型的指令文本与无副作用纯常量；渲染器、装配器、ORM 实例与调用逻辑归各服务层。包边界和导入约定见 [`__init__.py`](__init__.py)。
+全仓 LLM 提示词文本集中登记处：只放面向模型的指令文本与无副作用纯常量（双语 dict、模板骨架、种子词表）。渲染器、装配器、ORM 实例与调用逻辑归各服务层；零项目内依赖（至多标准库），与 `common`/`components`/`modules` 同属最底层。
 
 ## 修改路径
 
-从下表定位文本及装配方，再沿完整请求、原始返回、解析与实际呈现核对；要求归 [RULES](../../RULES.md#提示词设计与修改规范)。文本变更须重启 Backend，调试见 [Scripts](../../scripts/README.md#提示词调试)。
+从下表定位文本及装配方，再沿完整请求、原始返回、解析与实际呈现核对；要求归 [RULES](../../RULES.md#提示词设计与修改规范)。文本变更须重启 Backend，运行时不做热更新；调试见 [Scripts](../../scripts/README.md#提示词调试)。
 
 ## 模块索引
 
@@ -44,7 +44,8 @@
 
 - 双语 dict 键为 `zh`/`en`，消费方用 `components.resolve_prompt_text` 取文本。
 - `JOURNAL_DIARY_TEXTS`（用户可见日记）与 `NIGHTLY_REFLECTION_TEXTS`（内部夜间反思）是内容不同的两套文本，不可混用。
-- 本包不设转发别名：消费方直接从 `prompts.chat`、`prompts.memory` 等模块导入常量；重命名时用常量名全仓搜索同步所有导入点。
+- 本包不设转发别名：消费方按模块文件直接导入常量（如 `from prompts.chat import COMPANION_CHAT_GUIDANCES`）；重命名时用常量名全仓搜索同步所有导入点。
+- Runner 是独立物理模块（独立 pyproject、物理解耦），其提示词不在本包；例外见下文 Runner 一节。
 
 ## 服务层动态提示词
 

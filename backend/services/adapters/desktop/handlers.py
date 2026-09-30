@@ -401,10 +401,7 @@ async def _require_owned_conv(db: AsyncSession, user_id: int, session_id: str) -
 
 
 def _reject_im_session(runtime: RuntimeSession) -> None:
-    """IM 会话由通道桥独占写入（外部 IM 消息驱动回合），桌面端只读旁观历史。
-
-    桥接回合不经桌面运行时，``runtime.busy`` 拦不住与它并发的提交、清空或压缩。
-    """
+    """IM 会话由通道桥独占写入，桌面端只读；桥接回合不经桌面运行时，runtime.busy 拦不住与它并发的提交/清空/压缩。"""
     if runtime.kind == IM_KIND:
         raise JsonRpcError(JSONRPC_INVALID_PARAMS, "IM 会话由通道桥接维护，仅只读")
 
@@ -436,8 +433,7 @@ def _require_nonneg_int(params: dict[str, Any], key: str) -> int:
 
 
 def _is_session_video_url(file_url: str, session_id: str) -> bool:
-    """视频附件只认本会话的后端上传 URL：相对路径（本地模式请求时内联）或 ``public_base_url`` 前缀的
-    绝对形态（公网模式供应商自拉）。任意第三方绝对 URL 会让供应商替我们发任意请求，必须绑死前缀。"""
+    """视频附件只认本会话的后端上传 URL（相对路径或 public_base_url 前缀）；任意第三方绝对 URL 会让供应商替我们发任意请求，必须绑死前缀。"""
     if len(file_url) > 2048:
         return False
     if file_url.startswith(("http://", "https://")):
@@ -453,11 +449,7 @@ def _is_session_video_url(file_url: str, session_id: str) -> bool:
 
 
 def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[str, Any]] | None:
-    """校验并规范化 attachments 负载：返回清洗后的列表（每项重塑为 {type, file_url}），调用方未传时返回 None。
-
-    image 的 file_url 接受 HTTP(S) URL 与桌面端本地图片直发的 ``data:image/*;base64,`` data URL；
-    video 只接受本会话的后端上传 URL——base64 视频远超 WS 单帧上限，客户端须先经 ``POST /api/media/videos`` 换取 URL。
-    """
+    """校验并规范化 attachments（每项重塑为 {type, file_url}），未传时返回 None。image 接受 HTTP(S) 与 data:image URL；video 只认本会话后端上传 URL（base64 视频超 WS 单帧上限，须先 POST /api/media/videos）。"""
     raw = params.get("attachments")
     if raw is None:
         return None
@@ -502,7 +494,7 @@ def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[
     return cleaned
 
 
-# 新消息类型注册常量（与 status_* 平级；不读 status_pill 路径，要走专门 subtype 渲染分支）。
+# 与 status_* 平级的新 subtype 常量：不走 status_pill 路径，客户端须走专门 subtype 渲染分支。
 MESSAGE_SUBTYPE_STATUS_CLEARED: str = "status_cleared"
 
 
@@ -512,11 +504,7 @@ async def _do_compress_history(
     user_id: int,
     runtime: RuntimeSession,
 ) -> dict[str, Any]:
-    """session.compress_context 与 /压缩 命令的共用实现。
-
-    调用前必须已校验 in-flight 守卫（chat_task.done）。返回 dict 形态与 session.compress_context 一致：
-    compressed=False 时不含 messages / summary；True 时含 delivered messages 给前端 hydrate。
-    """
+    """session.compress_context 与 /压缩 命令的共用实现；调用前必须已校验 in-flight 守卫。compressed=False 时返回体不含 messages/summary，True 时含 delivered messages 给前端 hydrate。"""
     gateway = _USER_SESSIONS.get(user_id)
     client_context = gateway.session_client_context if gateway is not None else None
     user_settings = await load_user_settings(db, user_id)
@@ -582,18 +570,14 @@ async def _do_compress_history(
 
 
 async def _do_clear_history(db: AsyncSession, conv: Conversation) -> dict[str, Any]:
-    """清空会话所有消息（含 user / assistant / system / tool 各 role，保留会话行 + 写一条 status_cleared 标记）。
-
-    返回 {"session_id", "cleared_count", "messages": [...]}。``cleared_count`` 是真正删除的行数。
-    """
+    """清空会话所有消息（含各 role，保留会话行 + 写一条 status_cleared 标记）；返回 {"session_id", "cleared_count", "messages"}，cleared_count 为真实删除行数。"""
     total = (
         await db.execute(
             select(func.count(Message.id)).where(Message.conversation_id == conv.id),
         )
     ).scalar_one()
 
-    # 全量清掉本会话所有消息 + 视频附件，
-    # 让 cleared 之后客户端只看到 status_cleared marker 一条历史行。
+    # 连同视频附件一并清掉，cleared 之后客户端只看到 status_cleared marker 一条历史行。
     await prune_videos_in_range(db, conv.id)
     await db.execute(delete(Message).where(Message.conversation_id == conv.id))
 
@@ -1045,11 +1029,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("session.undo_to_message", session_undo_to_message)
 
     async def command_dispatch(params: dict) -> dict:
-        """Slash 命令分发入口：按 ``command`` 字段查 SLASH_COMMANDS 注册表并执行对应 handler。
-
-        返回 ``{command, result: SlashCommandResult.model_dump()}`` 形态；同步广播
-        ``command.result`` 事件给所有订阅同 session 的窗口，便于多窗口场景同步渲染 pill。
-        """
+        """Slash 命令分发：按 command 查 SLASH_COMMANDS 并执行 handler，返回 {command, result} 并同步广播 command.result 事件给同 session 各窗口。"""
         runtime = _require_runtime(params)
         raw_command = params.get("command")
         if not isinstance(raw_command, str) or not raw_command.strip():
@@ -1263,8 +1243,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("image.attach", image_attach)
 
     async def companion_set_timezone(params: dict) -> dict:
-        # Desktop 每次连接上报本地 IANA 时区：夜间批处理与互动统计都按用户本地日聚合，
-        # 缺这一行时整个夜间流水线（画像/整理/规划/日记）会静默跳过。
+        # Desktop 每次连接上报本地 IANA 时区：夜间批处理与互动统计按用户本地日聚合，缺这一行时整个夜间流水线会静默跳过。
         tz = params.get("timezone")
         if not isinstance(tz, str) or not tz.strip():
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "timezone must be a non-empty string")
@@ -1338,8 +1317,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("companion.signal", companion_signal)
 
     async def companion_record_interaction_stats(params: dict) -> dict:
-        # chat_turn 每事件统计供每日 Memory 汇总用，无 LLM 开销；desktop 侧合并到 STATS_THRESHOLD 后切分钟级节流。
-        # hour 是用户本地小时（客户端上报 getHours()），与本地日期键同口径，夜间反思按本地日读取。
+        # chat_turn 每事件统计供每日 Memory 汇总（无 LLM 开销），desktop 侧合并到 STATS_THRESHOLD 后切分钟级节流；hour 是用户本地小时，与本地日期键同口径。
         kind = params.get("kind")
         hour = params.get("hour")
         if not isinstance(hour, int) or not 0 <= hour <= 23:
@@ -1383,8 +1361,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
             seconds_since_last_action=seconds_since_last_action,
             llm_config=session.llm_config,
         )
-        # 走过去搭话（DESIGN「位置、移动与缩放」「自主动作与空间智能」）：开场白经 companion.message 通道独立投递，
-        # 客户端边走边说；RPC 响应只承载走位动作。should_act 已把 approach 的 params 收敛为非空 text。
+        # 走过去搭话（DESIGN「位置、移动与缩放」）：开场白经 companion.message 独立投递、客户端边走边说，RPC 响应只承载走位动作；should_act 已把 approach 的 params 收敛为非空 text。
         if res.action == "approach" and res.params is not None:
             await emit_companion_message(user_id, res.params["text"])
         return res.model_dump()
@@ -1464,7 +1441,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("memory.delete", memory_delete)
 
     async def onboarding_get_state(_params: dict) -> dict:
-        # desktop 启动时拉取 onboarding 进度；persona 定稿后 complete: true，desktop 跳过 onboarding。
+        # persona 定稿后 complete: true，desktop 跳过 onboarding。
         async with SESSION_LOCAL() as db:
             return await get_onboarding_state(db, user_id)
 
@@ -1547,13 +1524,13 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("avatar.regenerate", avatar_regenerate)
 
     async def tts_list_voices(params: dict) -> dict:
-        # 语音目录。可选 language 过滤——未知值直接返回完整目录，避免将来新增 tag 时 400。
+        # 可选 language 过滤——未知值直接返回完整目录，避免将来新增 tag 时 400。
         language = normalize_voice_language(_optional_str(params, "language"))
         async with SESSION_LOCAL() as db:
             return (await list_tts_voices(db, user_id, language=language)).model_dump()
 
     async def tts_match_voice(params: dict) -> dict:
-        # 把自由文本语音偏好映射到已配置供应商目录中的具体 voice id；onboarding 不为已有目录覆盖的窄标签任务付 LLM 延迟。
+        # onboarding 不为已有目录覆盖的窄标签任务付 LLM 延迟，直接映射到已配置供应商目录中的 voice id。
         preference = _require_str(params, "preference")
         language = normalize_voice_language(_optional_str(params, "language"))
         async with SESSION_LOCAL() as db:

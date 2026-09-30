@@ -648,8 +648,7 @@ async def post_outfit_prompt(
     user: CurrentUser,
     db: DbSession,
 ) -> ImagePromptResponse:
-    """自备图提示词（创建语境）：整合链与创建草稿一致；服装参考整合失败只降级着装描述，
-    身份仍由全身种子图锚定。"""
+    """自备图提示词（创建语境）：整合链与创建草稿一致；服装参考整合失败只降级着装描述，身份仍由全身种子图锚定。"""
     raw, content_type = _decode_optional_image(body.image, body.content_type)
     try:
         prompt = await prepare_outfit_prompt(
@@ -770,8 +769,7 @@ async def post_outfit_confirm(
     db: DbSession,
     body: OutfitConfirmRequest = Body(default_factory=OutfitConfirmRequest),
 ) -> OutfitResponse:
-    """确认入柜：外观立绘转正为持久参考图（ready）。与同模块其他 POST 一致：
-    以可缺省的空模型收 body，空对象不触发 422。"""
+    """确认入柜：外观立绘转正为持久参考图（ready）。与同模块其他 POST 一致：以可缺省的空模型收 body，空对象不触发 422。"""
     try:
         outfit = await confirm_outfit(db, user.id, outfit_id)
     except OutfitError as exc:
@@ -886,8 +884,7 @@ async def post_video_pack_generate(
     user: CurrentUser,
     db: DbSession,
 ) -> VideoPackResponse:
-    """按参考生成视频包：逐动作脚本与关键帧 → 视频供应商链首尾帧短片 → 语义抠像与循环验收。
-    生成与处理在后台进行，进度与结果经 companion.video.progress / ready / failed 事件回流。"""
+    """按参考生成视频包：逐动作脚本与关键帧 → 视频供应商链首尾帧短片 → 语义抠像与循环验收；后台执行，进度与结果经 companion.video.progress/ready/failed 事件回流。"""
     try:
         pack = await create_video_pack_from_reference(
             db,

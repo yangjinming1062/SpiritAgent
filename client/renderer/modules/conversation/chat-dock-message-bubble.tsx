@@ -28,8 +28,7 @@ import { ToolChipTimeline } from './tool-chip-timeline'
 // 居中的元信息行，而非聊天气泡。Slash 命令结果与历史清空标记（详见 PROTOCOL「Slash 命令」）走同一形态。
 const SYSTEM_PILL_SUBTYPES = new Set(['status_cleared', 'status_command_result'])
 
-// 对话摘要与上下文压缩检查点：居中的分界线式可折叠卡片，默认折叠、点击展开摘要全文。
-// 走独立分支而不是 pill —— 视觉权重要让用户意识到这是个有信息量的节点。
+// 对话摘要与上下文压缩检查点：居中分界线式可折叠卡片；走独立分支而非 pill，视觉上要突出为有信息量的节点。
 const SUMMARY_CARD_SUBTYPES = new Set(['compress_summary', 'daily_summary'])
 
 export type ConversationVariant = 'living' | 'workbench'
@@ -43,8 +42,7 @@ interface MessageBubbleProps {
 // 异步送达的媒体行（片刻、后台视频）：有正文时显示在媒体卡上方；视频送达行不带正文。
 const MEDIA_STATUS_SUBTYPE = 'status_media'
 
-// 附件的 @file: / @folder: 指令只服务 LLM，不进用户可见正文；
-// 逐行剔除而非整段正则，避免误伤正文里的普通 @ 提及。
+// 附件的 @file:/@folder: 指令只服务 LLM，不进用户可见正文；逐行剔除而非整段正则，避免误伤正文里的普通 @ 提及。
 function stripAttachmentDirectives(text: string): string {
   return text
     .split('\n')
@@ -123,7 +121,7 @@ function MessageBubbleWithBody({
 
   // 摘要卡只凭 subtype 识别；正文格式不是识别契约，用户或模型写出相同文字仍是普通消息。
   if (SUMMARY_CARD_SUBTYPES.has(subtype)) {
-    // 解析 content：第一行（如 "[📝 截至 ...]" 或 "[🗜️ 对话压缩 — ...]"）是胶囊标题，剩余为摘要 body。
+    // 解析 content：第一行（如"[📝 截至 ...]"或"[🗜️ 对话压缩 — ...]"）是胶囊标题，剩余为摘要 body。
     const rawText = body.text
     const newlineIdx = rawText.indexOf('\n')
     let title = ''
@@ -228,10 +226,9 @@ function MessageBubbleWithBody({
   const canUndo = isUser && sessionKind === 'standard' && canOperate
   const canEdit = isUser && canOperate && lastEditableMessage?.id === message.id
 
-  // 用户附件渲染为可点击图片卡（data URL 或本地路径，媒体源通道负责取图）；
-  // 正文剔除附件指令行，纯图片消息不渲染空气泡。
+  // 用户附件渲染为可点击图片卡；正文剔除附件指令行，纯图片消息不渲染空气泡。
   const visibleText = isUser ? stripAttachmentDirectives(body.text) : body.text
-  // 规整展示文本：流式追加时去除前导空行防撑大气泡上方，非流式时去除首尾多余空白，保留内部段落与换行。
+  // 流式追加时去除前导空行防撑大气泡上方，非流式时去除首尾空白、保留内部段落。
   const displayText = body.streaming ? visibleText.trimStart() : visibleText.trim()
   const hideTextBubble = Boolean(body.replyMedia) || (isUser && !displayText && Boolean(body.attachments?.length))
   const tools = body.tools?.length ? body.tools : body.toolName ? [body.toolName] : []
@@ -246,7 +243,6 @@ function MessageBubbleWithBody({
 
   const hasVisibleReasoning = variant === 'workbench' && Boolean(body.reasoning?.trim())
 
-  // 非流式、非错误且无任何可见文本与媒体及推理的空消息不渲染
   if (
     !isUser &&
     !displayText &&

@@ -70,7 +70,7 @@ export class RunnerUpdater {
     this.log = log
   }
 
-  // 阶段 1：在旧版 Electron 进程内预下载。updateBaseUrl 即桌面更新源（`<后端>/api/update`），资产路径直接相对它。
+  // 阶段 1：在旧版 Electron 进程内预下载。updateBaseUrl 即桌面更新源（`< 后端 >/api/update`），资产路径直接相对它。
   async prefetchRunnerAssets({
     publicKeyPath,
     updateBaseUrl,
@@ -245,9 +245,7 @@ export class RunnerUpdater {
       const uvBin = fs.existsSync(managedUv) ? managedUv : uvName
       const serverPyDest = path.join(home, 'runner', 'server.py')
 
-      // 更新语义：装新 wheel + 覆盖 server.py，一次性切到新版本。
-      // 兼容性由构建期 scripts/check_runner_facade.py 保证；这里不做安装期回滚，
-      // 避免「新 server + 旧包」或「回滚了包却留下新 server」的半更新状态。
+      // 更新语义：装新 wheel + 覆盖 server.py，一次性切到新版本；兼容性由构建期 check_runner_facade.py 保证，不做安装期回滚，避免半更新状态。
       try {
         await execFileP(uvBin, ['pip', 'install', '--python', venvPython, '--upgrade', sentinel.wheel_path], {
           maxBuffer: 16 * 1024 * 1024,

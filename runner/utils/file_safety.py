@@ -18,8 +18,7 @@ _BLOCKED_PROJECT_ENV_BASENAMES: set[str] = {
     ".env.staging",
     ".envrc",
 }
-# $SPIRITAGENT_HOME 下由 Client 维护的文件：desktop-endpoint 含本次启动的 IPC 准入 token，desktop-settings 含终端 SSH 密码，
-# desktop-config 决定 Backend 地址。
+# Client 维护：desktop-endpoint / desktop-settings / desktop-config。
 _HOME_READ_BLOCKED = ("desktop-endpoint.json", "desktop-settings.json")
 _HOME_WRITE_DENIED = (*_HOME_READ_BLOCKED, "desktop-config.json")
 
@@ -38,10 +37,7 @@ def has_traversal_component(path_str: str) -> bool:
 
 
 def _resolve_with_timeout(p: Path) -> str:
-    """``Path.resolve()`` 在受限 Windows shell 下可能挂死，用 daemon 线程限时，超时退回 normpath。
-
-    不用 ``ThreadPoolExecutor``：其 ``__exit__`` 默认等待工作线程，会一起挂死。
-    """
+    """resolve 可能挂死，daemon 线程限时后退回 normpath；不用 ThreadPoolExecutor。"""
     holder: dict[str, str] = {}
 
     def _runner() -> None:
@@ -86,7 +82,7 @@ def build_write_denied_paths(home: str) -> frozenset[str]:
                 p_home / ".npmrc",
                 p_home / ".pypirc",
                 p_home / ".git-credentials",
-                # macOS 的 /etc 是 /private/etc 的链接，须与目标路径一样经解析后比较。
+                # /etc 是 /private/etc 链接，须解析后比。
                 Path("/etc/sudoers"),
                 Path("/etc/passwd"),
                 Path("/etc/shadow"),
@@ -123,7 +119,7 @@ def build_write_denied_prefixes(home: str) -> tuple[str, ...]:
             Path("C:/Windows/WinSxS"),
             Path("C:/Windows/Boot"),
             Path("C:/Windows/Recovery"),
-            # WinSxS 体量巨大且结构敏感——禁止在线编辑；Boot/Recovery 存放引导/恢复二进制；System32/SysWOW64 是系统 DLL 主目录。
+            # WinSxS/Boot/Recovery/System32 等系统目录禁写。
             Path(os.environ.get("SYSTEMROOT", "C:/Windows")),
             Path(os.environ.get("PROGRAMDATA", "C:/ProgramData")),
             Path(os.environ.get("PROGRAMFILES", "C:/Program Files")),
@@ -245,12 +241,7 @@ def _split_ads_stream(path_str: str) -> tuple[str, str]:
 
 
 def _get_final_path_by_handle(path_str: str) -> str | None:
-    """通过 Win32 GetFinalPathNameByHandleW（动态缓冲）解析权威规范化路径。
-
-    受限 shell / 沙箱下 ``CreateFileW`` 可能挂死(对网络挂载点 / junction 等),
-    整路径以工作线程 ``join(timeout=...)`` 兜底: 超时后直接返回 ``None`` 走 ``Path.resolve()`` 退化路径,
-    不让单点卡住让上层调用方也跟着死锁。
-    """
+    """GetFinalPathNameByHandleW 权威规范化；CreateFileW 挂死时超时退回 Path.resolve()。"""
     if not IS_WINDOWS:
         return None
 
@@ -288,7 +279,7 @@ def _get_final_path_by_handle(path_str: str) -> str | None:
             return None
 
     try:
-        # 与 ``_resolve_with_timeout`` 同理用裸 daemon 线程限时，避免挂死在 ``CreateFileW`` 上。
+        # daemon 线程限时，防 CreateFileW 挂死。
         holder: dict[str, str] = {}
 
         def _runner() -> None:
@@ -355,7 +346,7 @@ def is_write_denied(path: str) -> bool:
     prefixes = [_cmp_key(p) for p in build_write_denied_prefixes(home)]
     if any(key.startswith(prefix) for key in keys for prefix in prefixes):
         return True
-    # 同时阻断受保护目录自身的流元数据写入（如 ::$INDEX_ALLOCATION）。
+    # 同时拦受保护目录的流元数据写。
     if stream_suffix and any(_cmp_key(base_resolved) == prefix.rstrip("/") for prefix in prefixes):
         return True
     if not (safe_root := _get_safe_write_root()):

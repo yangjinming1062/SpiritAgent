@@ -1,11 +1,4 @@
-"""聊天视频附件的后端生命周期：URL 构建、落盘、滚动配额、检查点清理与请求时内联。
-
-上传走 HTTP（WS 单帧装不下 base64），文件落 ``desktop-attachments/{session_id}/``，
-``prompt.submit`` 引用后端 URL；本地模式在构造供应商请求时把最近的 URL 内联为 data URL，
-公网模式（``public_base_url`` 非空）直接把绝对 URL 交给供应商自行拉取。
-配额超限与检查点清理都会把被删文件所属消息行的 ``input_video`` part 改写为
-``[视频已清理]`` 文本，保证 DB、渲染与 LLM 上下文三方一致，不残留死链 URL。
-"""
+"""聊天视频附件的后端生命周期：URL 构建、落盘、滚动配额、检查点清理与请求时内联。上传与 URL 形态见 PROTOCOL「prompt.submit」；配额超限与检查点清理都会把引用改写为占位文本，保证 DB、渲染与 LLM 上下文一致，不残留死链。"""
 
 import asyncio
 import base64
@@ -100,10 +93,7 @@ def save_video_attachment(session_id: str, data: bytes, ext: str) -> tuple[str, 
 
 
 def _rewrite_parts(parts: list, file_ids: set[str], *, session_id: str) -> tuple[list, bool]:
-    """把引用了 ``file_ids`` 的 input_video part 替换为清理占位文本；返回 (新 parts, 是否有改动)。
-
-    拒掉跨会话 / 形态非法的 URL，防止 stale DB 行把任意路径污染到 victim 集合比对中。
-    """
+    """把引用了 ``file_ids`` 的 input_video part 替换为清理占位文本；返回 (新 parts, 是否有改动)。拒掉跨会话 / 形态非法的 URL，防止 stale DB 行把任意路径污染到 victim 集合比对中。"""
     changed = False
     out: list = []
     for part in parts:
@@ -222,11 +212,7 @@ async def prune_videos_in_range(
     hi: int | None = None,
     preserve_queued: bool = False,
 ) -> None:
-    """清理 ``[lo, hi)`` 区间用户行引用的视频文件并改写 part。
-
-    摘要按实际覆盖范围清理并保留未消费的 IM 消息，历史撤回按删除范围清理；区间外仍有引用的文件保留。
-    已删除文件的区间内引用改写为占位，不留下死链。
-    """
+    """清理 ``[lo, hi)`` 区间用户行引用的视频文件并改写 part。摘要按实际覆盖范围清理并保留未消费的 IM 消息，历史撤回按删除范围清理；区间外仍有引用的文件保留，已删除文件的区间内引用改写为占位，不留下死链。"""
     session_id = str(conversation_id)
     conditions = [*_video_messages(conversation_id), Message.id >= lo]
     if hi is not None:
@@ -267,12 +253,7 @@ async def prune_videos_in_range(
 
 
 async def inline_video_parts(items: list, *, expected_session_id: str | None = None) -> list:
-    """构造供应商请求前的最后一步：把最近的相对 URL ``input_video`` 内联为 data URL。
-
-    从新到旧分配 ``VIDEO_INLINE_MAX_PER_REQUEST`` 个内联名额；超出、文件缺失或 URL 指向
-    非 ``expected_session_id`` 会话的降级为 ``[video]`` 文本占位（与旧图 [screenshot] 同构）。
-    公网绝对 URL 原样直通（供应商自行拉取）。仅修改 dict 项的 list content，其他 item 形状原样保留。
-    """
+    """构造供应商请求前的最后一步：把最近的相对 URL ``input_video`` 内联为 data URL。从新到旧分配 ``VIDEO_INLINE_MAX_PER_REQUEST`` 个名额；超出、文件缺失或 URL 指向非 ``expected_session_id`` 会话的降级为 ``[video]`` 占位。公网绝对 URL 原样直通。仅修改 dict 项的 list content，其他 item 形状原样保留。"""
     budget = VIDEO_INLINE_MAX_PER_REQUEST
     out_items: list = []
     for item in reversed(items):

@@ -1,7 +1,4 @@
-"""伙伴日记产品化资源：moments（精灵主导的生活时间线 + 评论）+ diary_entries（每日第一人称日记）。
-
-``memories`` 仍服务检索与注入对话上下文，不替代。moments / diary 是给用户看的展示面。
-"""
+"""伙伴日记产品化资源：moments（生活时间线 + 评论）+ diary_entries（每日日记）。``memories`` 服务检索与上下文注入，不替代；moments / diary 是用户可见展示面。"""
 
 from datetime import date, datetime
 from enum import StrEnum

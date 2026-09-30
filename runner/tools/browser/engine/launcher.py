@@ -39,11 +39,7 @@ class NativeBrowserProcess:
         self._lock = threading.Lock()
 
     def terminate(self) -> None:
-        """结束浏览器进程树；幂等。
-
-        主进程已退出并被回收后 PID 可能被复用，不能再按 PID 解析进程树。POSIX 下原进程组的 pgid 等于该 PID，
-        组内仍有残留成员时该 PID 不会被分配给新进程；因此只有当前不存在该 PID 的进程时，才向原进程组补发 SIGKILL。
-        """
+        """结束浏览器进程树（幂等）；仅当 PID 已不存在时向原 pgid 补 SIGKILL，避免 PID 复用误杀。"""
         with self._lock:
             if self._terminated:
                 return
@@ -122,7 +118,7 @@ def _find_browser_windows() -> Path | None:
 
 
 def _find_browser_macos() -> Path | None:
-    # 未用管理员权限安装时应用位于用户级 ~/Applications。
+    # 用户级安装位于 ~/Applications。
     bundles = (
         "Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
         "Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -227,7 +223,7 @@ def launch_chromium(
     else:
         popen_kwargs["start_new_session"] = True
 
-    # 删除旧的 DevToolsActivePort 文件，避免读到上次进程残留的端口
+    # 删旧 DevToolsActivePort 防读残留端口。
     active_port_file = profile_dir / "DevToolsActivePort"
     if active_port_file.is_file():
         with contextlib.suppress(OSError):

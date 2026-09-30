@@ -1,7 +1,4 @@
-"""播放请求与回执协调。queued 不等于 completed。
-
-素材未就绪时保存带 TTL 与外观代次的表达意图；就绪时未过期且代次仍是当前激活才补播。
-"""
+"""播放请求与回执协调。queued 不等于 completed；素材未就绪时保存带 TTL 与外观代次的表达意图，就绪且未过期、代次仍为当前激活才补播。"""
 
 import uuid
 from datetime import UTC, datetime, timedelta

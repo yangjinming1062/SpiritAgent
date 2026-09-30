@@ -56,8 +56,7 @@ interface ParsedDataUrl {
   mime: string
 }
 
-// 解析 RFC 2397 `data:[<mediatype>][;base64],<payload>` 形式的 URL。
-// 支持参数化媒体类型（如 audio/webm;codecs=opus）。
+// 解析 RFC 2397 `data:[<mediatype>][;base64],<payload>` 形式的 URL，支持参数化媒体类型（如 audio/webm;codecs=opus）。
 export function parseDataUrl(dataUrl: string): ParsedDataUrl {
   const raw = String(dataUrl || '').trim()
   const commaIdx = raw.indexOf(',')
@@ -86,7 +85,6 @@ export function parseDataUrl(dataUrl: string): ParsedDataUrl {
   return { data, mime }
 }
 
-// 将 `data:<mime>[;base64],<payload>` 形式的 URL 解码回原始字节。
 export function dataUrlToBuffer(dataUrl: string): Buffer {
   return parseDataUrl(dataUrl).data
 }

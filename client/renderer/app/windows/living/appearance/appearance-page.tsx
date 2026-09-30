@@ -26,8 +26,7 @@ export function AppearancePage(): React.JSX.Element {
   const t = useStrings().living.appearance
   const [selectedOutfitId, setSelectedOutfitId] = useState<number | null>(null)
 
-  // 衣柜列表在 auth 就绪后再水合——冷启动直接进入本页时 hydrateAuth 的 IPC 往返
-  // 尚未完成，提前调用会因 pending 静默跳过。种子图走本地缓存，缺失时补拉。
+  // 衣柜列表在 auth 就绪后再水合——冷启动直接进入本页时 hydrateAuth 的 IPC 往返尚未完成，提前调用会因 pending 静默跳过。种子图走本地缓存，缺失时补拉。
   useEffect(() => {
     if (authKind === 'authenticated') {
       void hydrateWardrobe()

@@ -6,8 +6,7 @@ export interface ChipProps {
   onClick: () => void
 }
 
-// 设置页反复出现的"过滤/选项"小圆角按钮——
-// active 时切换到 CHIP_FILTER_ACTIVE 着色，否则保持 CHIP_FILTER。
+// 设置页反复出现的"过滤/选项"小圆角按钮—— active 时切换到 CHIP_FILTER_ACTIVE 着色，否则保持 CHIP_FILTER。
 export function Chip({ active, label, onClick }: ChipProps): React.JSX.Element {
   return (
     <button className={active ? CHIP_FILTER_ACTIVE : CHIP_FILTER} onClick={onClick} type="button">

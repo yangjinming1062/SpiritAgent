@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 _VISION_MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024
 MAX_BASE64_BYTES = 20 * 1024 * 1024
-# 超限图片一次缩到远低于上限的目标，避免多轮缩放。
+# 一次缩到远低于上限。
 RESIZE_TARGET_BYTES = 5 * 1024 * 1024
 _MIN_RESIZE_SIDE = 64
 _VISION_DOWNLOAD_TIMEOUT_S = 30.0
@@ -58,7 +58,7 @@ def _is_retryable_download_error(error: Exception) -> bool:
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
         return status == 429 or status >= 500
-    # httpx 传输层错误（ConnectError、RemoteProtocolError、ReadTimeout 等）视为瞬时错误
+    # 传输层错误视为瞬时。
     return isinstance(error, httpx.TransportError | ConnectionError | OSError)
 
 
@@ -148,7 +148,7 @@ def resize_image_for_vision(image_path: Path, mime_type: str | None = None) -> s
         img = img.convert("RGB")
     quality_steps: tuple[int | None, ...] = (85, 70, 50) if pil_format == "JPEG" else (None,)
 
-    # 两边各自减半，短边不低于 _MIN_RESIZE_SIDE（原图更小时保持原值），直到进入目标或无法再缩小。
+    # 两边减半直到进目标，短边有下限。
     candidates: list[str] = []
     while True:
         for q in quality_steps:
@@ -165,7 +165,7 @@ def resize_image_for_vision(image_path: Path, mime_type: str | None = None) -> s
         if new_size == img.size:
             break
         img = img.resize(new_size, Image.Resampling.LANCZOS)
-    # 缩到下限仍未进入目标时，不超过硬上限的最小结果仍可交付，否则明确失败。
+    # 下限内最小结果可交付，否则失败。
     if len(best := min(candidates, key=len)) <= MAX_BASE64_BYTES:
         return best
     raise ValueError("image is still larger than the size limit after resizing")

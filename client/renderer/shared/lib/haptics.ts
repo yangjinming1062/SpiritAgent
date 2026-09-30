@@ -49,10 +49,7 @@ type HapticTrigger = (input?: HapticInput, options?: TriggerOptions) => Promise<
 let registeredTrigger: HapticTrigger | null = null
 let lastSelectionAt = 0
 
-// 全局滚动速率限制。上游失控循环（鉴权过期错误 toast 风暴、重连抖动）可能
-// 一秒内请求几十次触感，触控板执行器会发出令人焦虑的"咔哒"震动。把触发频率
-// 限制在 RATE_WINDOW 内最多 RATE_LIMIT 次，防止任何源头对执行器扫射；
-// 正常 UI 触感由人手控制，远低于该上限。
+// 全局滚动速率限制：上游失控循环（鉴权过期 toast 风暴、重连抖动）可能一秒内请求几十次触感，触控板执行器会发出焦虑的"咔哒"震动；限制 RATE_WINDOW 内最多 RATE_LIMIT 次防止任何源头扫射执行器。
 const RATE_WINDOW = 1000
 const RATE_LIMIT = 5
 let recentFires: number[] = []

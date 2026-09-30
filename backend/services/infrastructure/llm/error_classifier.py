@@ -36,8 +36,7 @@ class FailoverReason(enum.Enum):
     unknown = "unknown"
 
 
-# 可切换到链中下一家的原因：确定性失败换家可能成功；超时/过载在本家传输层重试耗尽后才到这里。
-# server_error 通常是供应商特定行为、unknown 无信号，均不级联。
+# 可切换到链中下一家的原因：确定性失败换家可能成功；超时/过载在本家传输层重试耗尽后才到这里。server_error 通常是供应商特定行为、unknown 无信号，均不级联。
 _FALLBACK_REASONS = frozenset(
     {
         FailoverReason.auth,
@@ -89,7 +88,7 @@ _RATE_LIMIT_MESSAGE_PATTERNS = (
     "please retry after",
 )
 
-# 供应商无法拉取 image_url 中的图像 URL：须早于 format_error 匹配，以免用户看到被 400 文案误导。
+# 供应商拉取 image_url 失败：须早于 format_error 匹配，以免用户被 400 文案误导
 _ATTACHMENT_FETCH_PATTERNS = (
     "unable to fetch image from url",
     "unable to fetch the image",
@@ -98,14 +97,17 @@ _ATTACHMENT_FETCH_PATTERNS = (
     "failed to download image from url",
 )
 
-# 用量上限需消歧：带瞬时信号的是周期配额（限流），否则是计费耗尽。
+# 用量上限消歧：带瞬时信号的是周期配额（限流），否则是计费耗尽
 _USAGE_LIMIT_PATTERNS = ("usage limit", "quota", "limit exceeded")
 _USAGE_LIMIT_TRANSIENT_SIGNALS = ("try again", "resets at", "reset in", "requests remaining", "periodic")
 
-# 代理或后端把 HTTP 状态码嵌入错误信息的 payload 过大。
-_PAYLOAD_TOO_LARGE_PATTERNS = ("request entity too large", "payload too large", "error code: 413")
+_PAYLOAD_TOO_LARGE_PATTERNS = (
+    "request entity too large",
+    "payload too large",
+    "error code: 413",
+)  # 代理/后端把状态码嵌入错误信息
 
-# 多数供应商在整请求超 413 前先以 400 + 单图过大提示返回。
+# 多数供应商在整请求超 413 前先以 400 + 单图过大提示返回
 _IMAGE_TOO_LARGE_PATTERNS = (
     "image exceeds",
     "image too large",
@@ -117,7 +119,7 @@ _IMAGE_TOO_LARGE_PATTERNS = (
 
 _EMPTY_IMAGE_RESULT_PATTERNS = ("returned no images",)
 
-# 模型存在但拒绝图像/视频输入 —— 换到具备该能力的供应商。
+# 模型存在但拒绝图像/视频输入——换到具备该能力的供应商
 _VISION_UNSUPPORTED_PATTERNS = (
     "no endpoints found that support image input",
     "does not support image input",
@@ -130,7 +132,7 @@ _VISION_UNSUPPORTED_PATTERNS = (
     "does not support video",
 )
 
-# SDK 不区分上下文溢出子类，跨供应商（含 vLLM / Ollama / llama.cpp 等本地服务）只能靠消息消歧。
+# SDK 不区分上下文溢出子类，跨供应商（含本地服务）只能靠消息消歧
 _CONTEXT_OVERFLOW_PATTERNS = (
     "context length",
     "context size",
@@ -158,14 +160,14 @@ _CONTEXT_OVERFLOW_PATTERNS = (
 
 _MODEL_NOT_FOUND_PATTERNS = ("is not a valid model", "invalid model", "model not found", "model_not_found")
 
-# 聚合商（OpenRouter）账号隐私设置排除唯一端点：模型存在，换家也被同一账号设置拦截。
+# 聚合商（OpenRouter）账号隐私设置排除唯一端点：模型存在，换家也被同一账号设置拦截
 _PROVIDER_POLICY_BLOCKED_PATTERNS = (
     "no endpoints available matching your guardrail",
     "no endpoints available matching your data policy",
     "no endpoints found matching your data policy",
 )
 
-# 供应商对单条 prompt 的安全判断，对同一请求确定；模式收窄以免误撞计费 / 鉴权 / 格式错误。
+# 供应商对单条 prompt 的安全判断，对同一请求确定；模式收窄以免误撞计费/鉴权/格式错误
 _CONTENT_POLICY_BLOCKED_PATTERNS = (
     "flagged for possible cybersecurity risk",
     "trusted access for cyber",
@@ -174,25 +176,23 @@ _CONTENT_POLICY_BLOCKED_PATTERNS = (
     "your request was flagged by",
     "prompt was flagged by our safety",
     "responses cannot be generated due to safety",
-    # MiniMax base_resp 1027 安全拒绝原文
-    "violated safety policy",
-    # MiniMax base_resp 1026 敏感输入审核原文
-    "new_sensitive",
-    # ``content_filter`` 是 OpenAI 标准 token；不匹配带空格的 "content filter"，后者出现在良性配置描述中
-    "content_filter",
+    "violated safety policy",  # MiniMax base_resp 1027
+    "new_sensitive",  # MiniMax base_resp 1026
+    "content_filter",  # OpenAI 标准 token；不匹配带空格的 "content filter"（良性配置描述）
     "responsibleaipolicyviolation",
-    # Gemini 生图 IMAGE_SAFETY
-    "image_safety",
+    "image_safety",  # Gemini 生图 IMAGE_SAFETY
     "generative ai prohibited use policy",
 )
 
-# xAI 订阅 entitlement：SSE ``type=error`` 不带状态码，须先于通用分类拦截。
+# xAI 订阅 entitlement：SSE type=error 不带状态码，须先于通用分类拦截
 _GROK_ENTITLEMENT_PATTERN = "do not have an active grok subscription"
 
-# 无异常类型信号时的超时文案（如本地 shim 用 RuntimeError 包装子进程超时）。
-_TIMEOUT_MESSAGE_PATTERNS = ("timed out", "deadline exceeded")
+_TIMEOUT_MESSAGE_PATTERNS = (
+    "timed out",
+    "deadline exceeded",
+)  # 无异常类型信号时的超时文案（如本地 shim 的 RuntimeError）
 
-# 无状态码的服务端断开：大会话按上下文溢出处理，否则视为传输超时。
+# 无状态码的服务端断开：大会话按上下文溢出处理，否则视为传输超时
 _SERVER_DISCONNECT_PATTERNS = (
     "server disconnected",
     "peer closed connection",
@@ -202,7 +202,7 @@ _SERVER_DISCONNECT_PATTERNS = (
     "unexpected eof",
 )
 
-# SSL/TLS 瞬时失败的消息兜底（ssl.SSLError 已按 OSError 归为超时）。
+# SSL/TLS 瞬时失败的消息兜底（ssl.SSLError 已按 OSError 归为超时）
 _SSL_TRANSIENT_PATTERNS = ("bad record mac", "ssl handshake failure", "tlsv1 alert", "[ssl:")
 
 _REQUEST_VALIDATION_ERROR_CODES = frozenset({"invalid_request_error", "unknown_parameter", "unsupported_parameter"})
@@ -221,7 +221,7 @@ _RATE_LIMIT_ERROR_CODES = frozenset({"resource_exhausted", "throttled", "rate_li
 _MODEL_NOT_FOUND_ERROR_CODES = frozenset({"model_not_found", "model_not_available", "invalid_model"})
 _CONTEXT_OVERFLOW_ERROR_CODES = frozenset({"context_length_exceeded", "max_tokens_exceeded"})
 
-# 已收到 HTTP 响应的异常类型：状态码优先于结构化错误码。
+# 已收到 HTTP 响应的异常类型：状态码优先于结构化错误码
 _HTTP_STATUS_ERRORS = (openai.APIStatusError, httpx.HTTPStatusError, ProviderError)
 _TRANSPORT_ERRORS = (openai.APIConnectionError, httpx.RequestError, OSError)
 
@@ -280,14 +280,14 @@ def classify_api_error(
 
 
 def _classify(error: BaseException, s: _Signals) -> FailoverReason:
-    # 内容策略须早于状态码：避免 400 安全拦截降级为 format_error、无状态码拦截落入 unknown。
+    # 内容策略须早于状态码：避免 400 安全拦截降级为 format_error、无状态码拦截落入 unknown
     if s.has(_CONTENT_POLICY_BLOCKED_PATTERNS):
         return FailoverReason.content_policy_blocked
     if _GROK_ENTITLEMENT_PATTERN in s.text or ("out of available resources" in s.text and "grok" in s.text):
         return FailoverReason.auth
     if isinstance(error, ProviderResultUnknownError):
         return FailoverReason.result_unknown
-    # 响应体校验失败（APIError 子类，非 APIStatusError）：状态码取自 .response。
+    # 响应体校验失败（APIError 子类，非 APIStatusError）：状态码取自 .response
     if isinstance(error, openai.APIResponseValidationError):
         if s.status_code is not None and s.has(_CONTEXT_OVERFLOW_PATTERNS):
             return FailoverReason.context_overflow
@@ -302,7 +302,7 @@ def _classify(error: BaseException, s: _Signals) -> FailoverReason:
     if (reason := _by_message(s)) is not None:
         return reason
 
-    # 断连须早于 SSL 兜底：大会话按上下文溢出处理。
+    # 断连须早于 SSL 兜底：大会话按上下文溢出处理
     if s.has(_SERVER_DISCONNECT_PATTERNS):
         if s.is_large(ratio=0.6, tokens=120000, messages=200):
             return FailoverReason.context_overflow
@@ -337,7 +337,7 @@ def _by_status(s: _Signals) -> FailoverReason | None:
         case 400:
             return _by_400(s)
         case 500 | 502:
-            # 部分 OpenAI 兼容网关以 5xx 返回请求校验错误，按确定性格式错误处理以免重试风暴。
+            # 部分网关以 5xx 返回请求校验错误，按确定性格式错误处理以免重试风暴
             if s.has(REQUEST_VALIDATION_PATTERNS) or s.error_code in _REQUEST_VALIDATION_ERROR_CODES:
                 return FailoverReason.format_error
             return FailoverReason.server_error
@@ -352,22 +352,22 @@ def _by_status(s: _Signals) -> FailoverReason | None:
 
 
 def _by_404(s: _Signals) -> FailoverReason:
-    # 部分供应商以 404 返回免费档付费模型失效，按计费处理以展示充值指引。
+    # 部分供应商以 404 返回免费档付费模型失效，按计费处理以展示充值指引
     if s.has(_BILLING_PATTERNS):
         return FailoverReason.billing
     if s.has(_PROVIDER_POLICY_BLOCKED_PATTERNS):
         return FailoverReason.provider_policy_blocked
     if s.has(_MODEL_NOT_FOUND_PATTERNS) or s.has(_VISION_UNSUPPORTED_PATTERNS):
         return FailoverReason.model_not_found
-    # 无模型缺失信号的 404 可能是端点路径错配（本地服务）或代理抖动。
+    # 无模型缺失信号的 404 可能是端点路径错配（本地服务）或代理抖动
     return FailoverReason.unknown
 
 
 def _by_400(s: _Signals) -> FailoverReason:
-    # 不支持视觉早于单图过大：恢复路径不同。
+    # 不支持视觉早于单图过大：恢复路径不同
     if s.has(_VISION_UNSUPPORTED_PATTERNS):
         return FailoverReason.model_not_found
-    # 单图过大早于上下文溢出：消息可能同时命中两类模式。
+    # 单图过大早于上下文溢出：消息可能同时命中两类模式
     if s.has(_IMAGE_TOO_LARGE_PATTERNS):
         return FailoverReason.image_too_large
     if s.error_code in _CONTEXT_OVERFLOW_ERROR_CODES or s.has(_CONTEXT_OVERFLOW_PATTERNS):
@@ -382,7 +382,7 @@ def _by_400(s: _Signals) -> FailoverReason:
         return FailoverReason.billing
     if s.has(_ATTACHMENT_FETCH_PATTERNS):
         return FailoverReason.attachment_fetch_failed
-    # 大会话上消息极短（如裸 "error"）的 400 多为上下文过大。
+    # 大会话上消息极短（如裸 "error"）的 400 多为上下文过大
     if len(s.body_message) < 30 and s.is_large(ratio=0.4, tokens=80000, messages=80):
         return FailoverReason.context_overflow
     return FailoverReason.format_error
@@ -434,9 +434,7 @@ def _body_message(body: dict) -> str:
 
 
 def _build_error_message(error: BaseException, body: dict) -> str:
-    """供模式匹配的小写全文：str(error) 不一定含响应体消息；OpenRouter 把上游真实错误包在
-    ``error.metadata.raw`` 的 JSON 字符串里，一并展开。
-    """
+    """供模式匹配的小写全文：str(error) 不一定含响应体消息；OpenRouter 把上游真实错误包在 error.metadata.raw 的 JSON 字符串里，一并展开。"""
     text = str(error).lower()
     parts = [text]
     body_msg = _body_message(body).lower()
@@ -454,7 +452,7 @@ def _build_error_message(error: BaseException, body: dict) -> str:
 
 
 def _extract_status_code(error: BaseException) -> int | None:
-    """沿异常链查找 HTTP 状态码：``.status_code`` / ``.status`` / ``.response.status_code``。"""
+    """沿异常链查找 HTTP 状态码：.status_code / .status / .response.status_code。"""
     current: BaseException = error
     for _ in range(_CAUSE_CHAIN_MAX_DEPTH):
         code = getattr(current, "status_code", None)
@@ -474,7 +472,7 @@ def _extract_status_code(error: BaseException) -> int | None:
 
 
 def _extract_error_body(error: BaseException) -> dict:
-    """结构化错误体：``.body`` 为 dict 时直接用，否则解析 ``.response.json()``。"""
+    """结构化错误体：.body 为 dict 时直接用，否则解析 .response.json()。"""
     body = getattr(error, "body", None)
     if isinstance(body, dict):
         return body
@@ -501,7 +499,7 @@ def _payload_code(payload: dict, *, unwrap_message: bool) -> str:
         code = err.get("code") or err.get("type")
         if isinstance(code, str) and (text := _code_text(code)):
             return text
-        # 部分供应商把真实 JSON 错误体以字符串塞进 error.message。
+        # 部分供应商把真实 JSON 错误体以字符串塞进 error.message
         message = err.get("message")
         if unwrap_message and isinstance(message, str) and message.strip().startswith("{"):
             inner = safe_json_loads(message)
@@ -511,7 +509,7 @@ def _payload_code(payload: dict, *, unwrap_message: bool) -> str:
 
 
 def _extract_error_code(error: BaseException, body: dict) -> str:
-    """结构化错误码：异常自身 ``.code`` / ``.type``（OpenAI SDK）优先，其次响应体。"""
+    """结构化错误码：异常自身 .code / .type（OpenAI SDK）优先，其次响应体。"""
     for attr in ("code", "type"):
         value = getattr(error, attr, None)
         if isinstance(value, str) and (text := _code_text(value)):

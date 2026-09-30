@@ -2,7 +2,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-# Persona blob 整体作为 JSON 字符串传输；32 KiB 在 HTTP 边界把 DoS 封顶，同时给最大 persona 字段（2000 字符）+ user_* 字段 + JSON 开销留余量。
+# Persona blob 整体 JSON 传输；32 KiB 在 HTTP 边界封顶 DoS，覆盖最大 persona 字段（2000 字符）+ user_* 字段余量。
 _PERSONA_JSON_MAX_LEN: int = 32 * 1024
 
 
@@ -19,10 +19,10 @@ class PersonaResponse(BaseModel):
     current_mood: str | None = None
 
 
-# 生成是同步的——所有持久化资产都是 succeeded；钉死字面量以便未来若改为异步时契约仍清楚。
+# 生成同步，持久化资产均为 succeeded；钉死字面量以便未来改异步时契约仍清楚。
 SucceededStatus = Literal["succeeded"]
 
-# 迭代修改意图：edit=微调（编辑上一版产物，未提及区域保留）；regenerate=重新生成（种子锚定全量重绘）。必传。
+# edit=微调（未提及区域保留）；regenerate=种子锚定全量重绘。必传。
 ImageReviseMode = Literal["edit", "regenerate"]
 
 
@@ -114,7 +114,7 @@ class AvatarPromptRequest(BaseModel):
 class AvatarFromImageRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    # 与上传相同的 8 MiB 上限：图同时是供应商 seed（经签名 URL）和供应商重新渲染的真相源。
+    # 与上传同为 8 MiB：图同时是供应商 seed（经签名 URL）和重新渲染的真相源。
     image: str = Field(min_length=1, max_length=8 * 1024 * 1024)
     content_type: str | None = Field(default=None, max_length=64)
     description: str | None = Field(default=None, max_length=500)
@@ -131,7 +131,7 @@ class OutfitCreateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     description: str | None = Field(default=None, max_length=500)
-    # 服装参考图（可选）：先与文字要求整合为着装描述，不直传生图
+    # 服装参考图（可选）：整合为着装描述后进入提示词，不直传生图
     image: str | None = Field(default=None, max_length=8 * 1024 * 1024)
     content_type: str | None = Field(default=None, max_length=64)
 
@@ -161,8 +161,6 @@ class OutfitAdoptRequest(BaseModel):
 
 
 class OutfitConfirmRequest(BaseModel):
-    """确认不接受图片或其他字段。"""
-
     model_config = ConfigDict(extra="forbid")
 
 
@@ -178,7 +176,7 @@ class OutfitResponse(BaseModel):
     name: str
     description: str | None = None
     fullbody_url: str = ""
-    # draft → ready | failed | expired；ready 表示参考图就绪
+    # draft → ready | failed | expired
     status: str = "draft"
     active: bool = False
 

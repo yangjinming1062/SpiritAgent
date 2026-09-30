@@ -30,8 +30,7 @@ def _parse_toml_dict(content: dict) -> dict[str, Any]:
 
 class TomlConfigSource(PydanticBaseSettingsSource):
     def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:
-        # __call__ 一次返回整份扁平字典，逐字段取值路径不会被调用。
-        return None, field_name, False
+        return None, field_name, False  # 值由 __call__ 整份扁平字典返回。
 
     def __call__(self) -> dict[str, Any]:
         merged: dict[str, Any] = {}
@@ -46,8 +45,7 @@ class Settings(BaseSettings):
     ai_config: AIConfig = Field(default_factory=AIConfig)
     app_name: str = Field(default="SpiritAgent Backend", validation_alias="APP_NAME")
     api_prefix: str = Field(default="/api", validation_alias="API_PREFIX")
-    # 后端可被供应商公网访问的基础地址（如 https://example.com）；非空时聊天视频附件以绝对 URL
-    # 直发供应商（供应商自行拉取，单文件上限=会话配额），留空走 base64 内联（单文件 50MB 上限）。
+    # 非空时视频附件以绝对 URL 直发供应商（单文件上限=会话配额）；留空走 base64 内联（50MB）。
     public_base_url: str = Field(default="", validation_alias="PUBLIC_BASE_URL")
 
     database_url: str
@@ -64,8 +62,7 @@ class Settings(BaseSettings):
     matting_model: str = Field(default="isnet-general-use", validation_alias="MATTING_MODEL")
 
     companion_asset_signing_key: str
-    # 出站 SSRF 守卫总开关，默认关闭：DNS 污染 / fake-ip 代理等环境易误拦正常出站，
-    # 由部署者权衡内网访问风险后自行开启。
+    # 默认关闭：DNS 污染 / fake-ip 代理易误拦正常出站，部署者权衡内网风险后自行开启。
     ssrf_guard_enabled: bool = Field(default=False, validation_alias="SSRF_GUARD_ENABLED")
     ssrf_allowed_cidrs: str = Field(default="", validation_alias="SSRF_ALLOWED_CIDRS")
 
@@ -145,8 +142,7 @@ class Settings(BaseSettings):
     )
     memory_prompt_max_memories: int = Field(default=10, gt=0, validation_alias="MEMORY_PROMPT_MAX_MEMORIES")
 
-    # 动作库运营配置：单动作时长上限与每日制作额度按用户本地日结算；
-    # 评审不设日限额；创建/自动使用独立开关。
+    # 动作库：时长上限与每日制作额度按用户本地日结算；评审不设日限额；创建/自动使用独立开关。
     action_max_duration_seconds: float = Field(
         default=10.0,
         gt=0,

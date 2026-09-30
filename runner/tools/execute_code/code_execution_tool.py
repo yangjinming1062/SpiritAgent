@@ -410,7 +410,7 @@ def _rpc_server_loop(
                 candidate, _ = server_sock.accept()
             except TimeoutError:
                 continue
-            # Windows 端点是没有文件权限保护的 loopback TCP；未通过首帧鉴权的连接立即关闭，监听继续。
+            # Windows 用 loopback TCP；首帧鉴权失败立即断开。
             candidate.settimeout(5)
             line, buf = _read_conn_line(candidate, b"")
             if line is not None and _is_auth_frame(line, expected_token):
@@ -418,7 +418,7 @@ def _rpc_server_loop(
             else:
                 logger.debug("execute_code RPC: rejected unauthenticated connection")
                 candidate.close()
-        # 连接保持阻塞以便大结果完整发送；等待请求时用 select 轮询停止信号。脚本退出或被终止时连接随之关闭。
+        # 连接保持打开以便大结果；select 轮询停止信号。
         conn.settimeout(None)
         while True:
             # 先消费可能与鉴权行一同到达的请求行，再等新数据。
@@ -448,8 +448,7 @@ def _rpc_server_loop(
                 conn.close()
 
 
-# 远程沙箱的辅助命令都不传 cwd：env.execute 会把命令结束时的目录记为终端会话目录，
-# 在会话目录里执行才不会把用户的终端目录改掉。内容经 stdin 传输，避开命令行长度上限。
+# 辅助命令不传 cwd：避免改掉用户终端目录；内容经 stdin 避开命令行长度上限。
 
 
 def _ship_file_to_remote(env: Any, remote_path: str, content: str) -> None:
@@ -590,7 +589,7 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> str:
     rpc_thread: threading.Thread | None = None
     env: Any = None
     sandbox_dir: str | None = None
-    # 持有环境直到远端沙箱清理完：脚本运行期间配置切换不会停止这个环境。
+    # 持有环境直到远端沙箱清理完。
     held_env = contextlib.ExitStack()
     try:
         env = held_env.enter_context(use_environment(task_id))
@@ -608,7 +607,7 @@ def _execute_remote(code: str, timeout: int, max_tool_calls: int) -> str:
         rpc_token = secrets.token_hex(16)
         candidate_dir = f"{env.get_temp_dir().rstrip('/')}/spiritagent_exec_{uuid.uuid4().hex[:12]}"
         rpc_dir = f"{candidate_dir}/rpc"
-        # 0700 且不带 -p：其他用户读不到脚本和 RPC 文件，也不能预先占用这个目录名。
+        # 0700 且不带 -p：防其他用户读写或抢占目录名。
         mkdir_result = env.execute(
             f"mkdir -m 700 {shlex.quote(candidate_dir)} && mkdir {shlex.quote(rpc_dir)}",
             timeout=10,
@@ -750,7 +749,7 @@ def _execute_local(code: str, timeout: int, max_tool_calls: int, mode: str) -> s
             host, port = server_sock.getsockname()[:2]
             rpc_endpoint = f"tcp://{host}:{port}"
         else:
-            # macOS 默认临时目录路径较长，AF_UNIX 路径上限 104 字节，固定放在 /tmp。
+            # AF_UNIX 上限 104 字节，macOS 固定用 /tmp。
             sock_dir = "/tmp" if sys.platform == "darwin" else tempfile.gettempdir()
             sock_path = rpc_endpoint = os.path.join(sock_dir, f"spiritagent_rpc_{uuid.uuid4().hex}.sock")
             server_sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

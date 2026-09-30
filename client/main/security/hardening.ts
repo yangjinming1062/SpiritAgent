@@ -21,11 +21,7 @@ export const DEFAULT_CSP_POLICY = [
   "form-action 'none'"
 ].join('; ')
 
-// Dev-only：Vite 的 @vitejs/plugin-react 会把 React Fast Refresh preamble 作为
-// 内联脚本注入 HTML；DEFAULT_CSP_POLICY 不允许 inline，会被拦下导致
-// "can't detect preamble" 白屏（同时 HMR 反复重试烧 CPU）。HMR websocket
-// 走 127.0.0.1:5174，已被 connect-src 的 ws/http 通配覆盖，无需扩白名单。
-// 生产仍用 DEFAULT_CSP_POLICY 锁紧——dev 放开只影响受信任本地源。
+// Dev-only：Vite 的 React Fast Refresh preamble 以内联脚本注入 HTML，DEFAULT_CSP_POLICY 不允许 inline 会导致白屏（HMR 重试还会烧 CPU）；HMR websocket 已被 connect-src 通配覆盖。生产仍用 DEFAULT_CSP_POLICY 锁紧。
 export const DEV_CSP_POLICY = [
   "default-src 'self'",
   "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
@@ -40,8 +36,7 @@ export const DEV_CSP_POLICY = [
   "form-action 'none'"
 ].join('; ')
 
-// 头像 / 精灵生成：供应商调用 + Pillow 重编码 + 关键帧写入通常要 15–25 秒，
-// 默认 15 秒会在后端返回 201 之前就超时，所以这里放宽。
+// 头像/精灵生成通常要 15–25 秒，默认 15 秒会在后端返回 201 之前超时，故放宽。
 const AVATAR_FETCH_TIMEOUT_MS = 120_000
 // 外观列表同步请求包含供应商回退；单个供应商默认可等待 300 秒，另需下载与落盘。
 const OUTFIT_FETCH_TIMEOUT_MS = 15 * 60_000

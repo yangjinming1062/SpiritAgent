@@ -2,7 +2,7 @@ import functools
 import os
 import re
 
-# SpiritAgent 控制面文件：供应商凭据、OAuth token、HMAC 密钥、网关配置。按 basename 列入，~/.spiritagent/<name> 与 ~/.spiritagent/profiles/<profile>/<name> 都被拦截。
+# SpiritAgent 控制面文件：供应商凭据、OAuth token、HMAC 密钥、网关配置。按 basename 列入，~/.spiritagent/<name> 与 ~/.spiritagent/profiles/<profile>/<name> 都被拦截
 SPIRITAGENT_CONTROL_FILE_BASENAMES: tuple[str, ...] = (
     "auth.json",
     "auth.lock",
@@ -11,7 +11,7 @@ SPIRITAGENT_CONTROL_FILE_BASENAMES: tuple[str, ...] = (
     ".env",
 )
 
-# .env.example 故意不在此列——它是带文档结构的占位文件。
+# .env.example 故意不在此列——它是带文档结构的占位文件
 BLOCKED_PROJECT_ENV_BASENAMES: frozenset[str] = frozenset(
     {".env", ".env.local", ".env.development", ".env.production", ".env.test", ".env.staging", ".envrc"},
 )
@@ -49,8 +49,7 @@ _WRITE_DENIED_PREFIXES_RELATIVE: tuple[tuple[str, ...], ...] = (
 _WRITE_DENIED_PREFIXES_ABSOLUTE: tuple[str, ...] = ("/etc/sudoers.d", "/etc/systemd")
 _WRITE_DENIED_SPIRITAGENT_PREFIXES: tuple[str, ...] = ("pairing", "skills/.hub")
 
-# 本进程跑在 Linux，而文件操作发生在 runner 机器（Windows 为主）：Windows 绝对路径在
-# 本机 realpath 解析不出敏感段，需按盘符 + 用户目录切出尾部路径段，与同一套敏感清单比对。
+# 本进程跑在 Linux，而文件操作发生在 runner 机器（Windows 为主）：Windows 绝对路径在本机 realpath 解析不出敏感段，需按盘符+用户目录切出尾部路径段比对
 _WINDOWS_PATH = re.compile(r"^[A-Za-z]:[\\/]")
 _WINDOWS_PROFILE_PATH = re.compile(r"^[A-Za-z]:[\\/](?:users|documents and settings)[\\/][^\\/]+[\\/]", re.IGNORECASE)
 
@@ -130,7 +129,7 @@ def is_write_denied(path: str) -> bool:
     try:
         resolved = os.path.realpath(os.path.expanduser(text))
     except (ValueError, OSError):
-        # 嵌入 null 字节或非法路径字符永远无法合法写入，直接拒绝而非放行
+        # 嵌入 null 字节或非法路径字符永远无法合法写入，直接拒绝
         return True
     if resolved in _write_denied_paths(os.path.expanduser("~")):
         return True
@@ -158,7 +157,7 @@ def _read_block_prefixes() -> tuple[tuple[str, str], ...]:
 
 
 def get_read_block_error(path: str) -> str | None:
-    """拒绝读取目标时返回错误消息，路径可用时返回 None——仅为纵深防御，终端工具同用户运行 shell，决心攻击者仍可 `cat auth.json`；黑名单旨在让守规矩的模型止步于错误消息。"""
+    """拒绝读取目标时返回错误消息，路径可用时返回 None——仅为纵深防御，终端工具同用户运行 shell，决心攻击者仍可 cat auth.json；黑名单旨在让守规矩的模型止步于错误消息。"""
     text = str(path)
     if _WINDOWS_PATH.match(text):
         tail = _windows_profile_tail(text)

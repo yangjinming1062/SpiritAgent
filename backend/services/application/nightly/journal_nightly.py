@@ -1,7 +1,4 @@
-"""夜间日记投影：把刚结束的本地日写成用户可见日记，并关联当日片刻。
-
-``run_nightly_pipeline`` 已完成时区、素材门控与上下文收集，这里只负责撰写与落库。
-"""
+"""夜间日记投影：把刚结束的本地日写成用户可见日记并关联当日片刻。时区、素材门控与上下文收集由 ``run_nightly_pipeline`` 完成。"""
 
 from datetime import date
 from typing import Any
@@ -27,13 +24,7 @@ async def project_today(
     persona: dict[str, str],
     language: str,
 ) -> bool | None:
-    """upsert target_date 的夜间日记。
-
-    返回值语义：
-    - ``True``：成功生成并落库夜间日记；
-    - ``False``：夜间日记已由配置关闭；
-    - ``None``：应生成日记，但 LLM/解析失败，且按原则七不写入伪造内容。
-    """
+    """upsert target_date 的夜间日记。返回 ``True`` 成功落库 / ``False`` 配置关闭 / ``None`` 应生成但 LLM 或解析失败（不写伪造内容）。"""
     if not SETTINGS.diary_nightly_enabled:
         logger.info("journal_nightly: disabled by config", extra={"user_id": user_id})
         return False

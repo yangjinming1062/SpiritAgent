@@ -31,7 +31,6 @@ export function registerOnboardingAudioIpc({
 }: OnboardingAudioIpcDeps): void {
   const audioRoot = path.resolve(spiritagentHome, 'audio', 'onboarding', 'zh')
 
-  // 如果 appRoot 是 client/ 或 client/dist-electron，则解析到仓库根目录
   let repoRoot = appRoot
 
   if (path.basename(repoRoot) === 'dist-electron') {

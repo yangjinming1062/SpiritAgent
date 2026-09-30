@@ -22,8 +22,7 @@ class MiniMaxTTSProvider(TTSProvider):
 • 语速节奏：如"语速时快时慢"、"缓慢沉稳"
 preview_text 为试听文本——设计完成后会用它合成一段示例音频供你试听。\
 """
-    # id/label 与 MiniMax 官方系统音色一致（POST /v1/get_voice voice_type=all 返回 303 条；本目录 81 条均经 t2a_v2 "你" 实测通过 base_resp.status_code=0）。
-    # 多语种 (pt/es/ru/it/ar/tr/de/fr/uk/vi/ja/ko/id) 共 222 条未收录（项目侧仅支持 zh/en 系统语言；如需扩展，按同样规则追加 + 探活）。
+    # id/label 与官方系统音色一致（303 条中本目录 81 条经 t2a_v2 实测通过）；多语种 222 条未收录（项目侧仅 zh/en，扩展需同样实测探活）。
     VOICE_CATALOG: ClassVar[list[dict]] = [
         {
             "id": "female-chengshu",

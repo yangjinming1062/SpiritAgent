@@ -1,8 +1,4 @@
-"""显式装配注册。
-
-供应商、LLM 工具、memory 工具、渠道适配器与内部事件处理器全部在此集中登记；
-业务包导入不再触发任何注册副作用。注册表为覆盖式幂等，重复调用安全。
-"""
+"""显式装配注册：供应商、工具、渠道、事件与域钩子在此集中登记；导入业务包无注册副作用，注册表覆盖式幂等。"""
 
 from modules.ws import COMPANION_TURN_EVENT
 from services.adapters.channels import register as register_channel

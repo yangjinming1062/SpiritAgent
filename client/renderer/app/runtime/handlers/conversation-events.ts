@@ -34,8 +34,7 @@ import type { ChatMediaItem, CompanionBubble, SessionMessage } from '@/shared/ty
 
 import { decodePayload, type EventRouteContext } from '../gateway-event-util'
 
-// 会话回合事件处理器：message.* 与 slash / 压缩 / 撤回的会话状态更新。
-// 精灵表现命令（thinking / idle）经呈现端口下达。
+// 会话回合事件处理：message.* 与 slash/压缩/撤回的状态更新；精灵表现命令（thinking/idle）经呈现端口下达。
 
 export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteContext): void {
   switch (event.type) {
@@ -68,8 +67,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
     }
 
     case 'message.break': {
-      // 后端把回合切成了连续的气泡——收尾当前气泡；
-      // 下一条 message.delta 会开一个新气泡（后端已在它们之间插入 0.5–1.5 秒停顿）。
+      // 后端把回合切成连续气泡——收尾当前气泡，下一条 message.delta 开新气泡（后端已插入 0.5–1.5 秒停顿）。
       setTurnHadBubbleBreak(true)
       finalizeAssistantMessage()
 
@@ -161,9 +159,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
         })
       }
 
-      // 多气泡回合：每个气泡各自携带流式文本；
-      // payload.text 是整轮（包含两个气泡）的全文，会覆盖最后一个气泡。
-      // 这种情况下保留 last.text。媒体与正文正交，始终挂到最后一格。
+      // 多气泡回合：payload.text 是整轮全文会覆盖最后一个气泡，故保留 last.text；媒体与正文正交，始终挂到最后一格。
       const hadBreak = $turnHadBubbleBreak.get()
 
       if (bubbles && typeof payload.message_id === 'number') {
@@ -176,8 +172,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
         }
       }
 
-      // 媒体已送达但对话界面收起：精灵可见时气泡只做轻量系统提示，点击打开轻语/生活空间查看；
-      // 精灵不可见或锁屏时不弹出，媒体已在会话历史中。
+      // 媒体已送达但对话界面收起：精灵可见时气泡只做轻量系统提示，点击打开轻语/生活空间；不可见或锁屏时不弹出，媒体已在会话历史中。
       if (
         (media?.length ||
           bubbles?.some(bubble => (bubble.type === 'image' || bubble.type === 'video') && bubble.status === 'ready')) &&
@@ -195,13 +190,12 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
 
       triggerFootGlowPulse('completed', 1200)
 
-      // 每日互动统计——chat_turn 仅在确有文本可统计时计数
+      // 每日互动统计—— chat_turn 仅在确有文本可统计时计数
       if (!ctx.isProxy && (bubbles?.some(bubble => 'text' in bubble && bubble.text.trim()) || text.trim())) {
         reportInteractionStat('chat_turn')
       }
 
-      // in-flight 回合结束——清掉标记并冲刷用户在回合运行期间排队的消息
-      // （合并为单次批量提交）。
+      // in-flight 回合结束——清标记并冲刷回合期间排队的消息（合并为单次批量提交）。
       $chatTurnInFlight.set(false)
       submitPendingBatch()
 
@@ -212,8 +206,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       cancelVoiceBar()
       $chatTurnInFlight.set(false)
       clearPendingPrompts()
-      // 强制重置为 idle——精灵在 'thinking' / 'working' 时，
-      // 优先级门控会静默拒绝普通的状态转换。
+      // 强制重置为 idle：thinking/working 时优先级门控会静默拒绝普通状态转换。
       const message = decodePayload<{ message?: string }>(event.payload)?.message ?? getStrings().chat.sendFailed
       markAssistantTerminal({ error: message })
       setSpriteState('idle', { force: true })
@@ -223,9 +216,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
     }
 
     case 'command.result': {
-      // 服务端在 command.dispatch RPC response 之外另行广播此事件（PROTOCOL「事件路由」）；
-      // 触发它的窗口已通过 RPC 路径自己渲染过 pill，本路径只服务其他窗口的同步渲染。
-      // RPC 路径的 pushStatusPill 已在 slash command 执行中幂等执行。
+      // 服务端在 command.dispatch RPC response 之外另行广播此事件（PROTOCOL「事件路由」）；触发窗口已通过 RPC 渲染过 pill，本路径只服务其他窗口，RPC 路径的 pushStatusPill 已幂等执行。
       const payload = decodePayload<SlashCommandResultPayload>(event.payload)
 
       const r = payload?.result
@@ -234,8 +225,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
         break
       }
 
-      // 仅同步 status_cleared / compress_summary 等历史变化（hydrate=true）：
-      // 其他窗口需要本地 hydrateChatMessages，否则会显示陈旧消息列表。
+      // 仅同步 status_cleared/compress_summary 等历史变化（hydrate=true）：其他窗口需本地 hydrateChatMessages，否则显示陈旧列表。
       if (r.status === 'ok' && r.hydrate) {
         const messages = decodePayload<{ messages?: unknown }>(r.payload).messages
 
@@ -280,8 +270,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
     }
 
     case 'message.deleted': {
-      // 多窗口同步：session.undo_to_message RPC 之外，服务端另发此事件给同 user 的其他窗口。
-      // 发起窗口已通过 RPC 路径 hydrate，其它窗口借本事件追上。session-id 过滤已在路由统一完成。
+      // 多窗口同步：session.undo_to_message RPC 之外服务端另发此事件给同 user 其他窗口；发起窗口已通过 RPC hydrate，本事件供其它窗口追上（session-id 过滤已在路由统一完成）。
       const p = decodePayload<{
         session_id?: string
         deleted_count?: number

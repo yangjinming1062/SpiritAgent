@@ -35,7 +35,9 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 - [网关路由](app/runtime/gateway-event-router.ts)在鉴权 pending 时丢弃事件，按信封 `session_id` 过滤（无该字段放行）后分派：会话、工具、角色与投递事件进 [handlers](app/runtime/handlers/)（会话事件与 `tool.call/cancel` 另收宿主或代理角色 `isProxy`），场景与片刻日记事件直达 modules/scene、modules/memory。
 - 各窗口独立水合，任何异步回写须核对用户、会话、回合和清理代次；清理代次与账户存储键登记见 [storage.ts](shared/lib/storage.ts)。
+- 网关休眠唤醒重连的握手超时须落到 `error`，不能永久停在 `connecting`，否则调用方无法重试。
 - 账户切换清理旧账户资料、会话与通知并按 `accountId` 重挂载；桌面精灵按目标账户状态自动进入未完成的 onboarding。完整入口开关状态由主进程维护。
+- 引导答题逐字段增量持久化（[onboarding-flow.tsx](app/onboarding/onboarding-flow.tsx) fire-and-forget，网关未打开前空操作）；网关连通后拉回服务端草稿按 `next_field` 续答，本地非空编辑优先，读取失败暂停待重试且不得当作新引导覆盖草稿，成功后不重复。
 - 鉴权请求仅接受发起会话仍有效的结果。
 - `tool.call` / `tool.cancel` 只由宿主执行，按 call_id 去重与撤回，不受可见会话过滤；其他会话过程受会话守卫。
 - headless 不显示工作态，非当前会话的可见调用自行以引用计数持有工作态，只释放自身仍拥有的状态。
@@ -56,7 +58,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ### 打扰与自主行为
 
-视觉表达只消费 `play_requested`，目录/任务事件只刷新资产，mood 只更新身份区，控制字段不进正文。
+视觉表达只消费 `play_requested`，目录/任务事件只刷新资产，mood 只更新身份区，控制字段不进正文。打扰档位只门控主动外发与主动推理，用户主动行为永不被门控。活动「沉浸式→静止」只覆盖游戏与全屏应用，IDE/阅读专注不压档（专注≠不可打扰）。
 
 [companion-store.ts](modules/character/companion-store.ts)裁决档位；请求和消费两侧检查[自主行为条件](../../docs/DESIGN.md#自主动作与空间智能)，其中精灵可见与播放共用[可见性判断](modules/character/actions/action-visibility.ts)的条件（精灵窗未隐藏或最小化、未被完整入口收起、未开轻语、未锁屏），在发出请求时与结果返回后重验；收起、隐藏或锁屏后丢弃迟到结果，重连不补话。
 
@@ -110,8 +112,10 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 会话参数显示后端生效值，只接受当前会话最新保存结果；恢复默认删除覆盖。
 - 系统预设与固定预设会话（`kind=special`）的显示名、预设说明按界面语言取字典 `presets`，经 [preset-labels.ts](modules/conversation/preset-labels.ts) 显示；后端目录只有中文，中文字典须与其同步，未知预设回落目录值。
 - 会话只读状态直接消费历史水合的 `info.kind`；陪伴归属由 `system_preset_id` 判定。
+- 斜杠命令元数据权威在服务端注册表，本地副本只服务自动补全与确认弹窗，dispatch 仍以服务端为准。
+- `$companionSessionId` 放在 chat-store，避免 session-list-store 反向导入成环。
 - 工作台确认目标不是陪伴后才挂载对话面板。
-- 快照、增量与重放按 [Client](../README.md#资产与历史缓存)处理。
+- 快照、增量与重放按 [Client](../README.md#资产与历史缓存)处理；`syncSessionHistory` 的 `last_seq` 由调用方以活动聊天列表水位传入，不用缓存 `currentSeq`。
 
 ### 轻语与入口
 
@@ -124,6 +128,8 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 播放状态归 speech，会话气泡与音频视图归 conversation，由应用工作流装配。
 - 新播放、停止、换会话、表面隐藏或锁屏使旧下载和播放结果失效。
 - 播放结果区分完成、中断与失败；其他声音抢占属于中断，不把语音条标记为不可用。
+- AudioContext 预热后保持 running，不主动 suspend（resume 与 MediaElementSource 重路由叠加会丢首帧）。
+- 语音准备态在 companion renderer 间引用计数（begin/end 成对），不能直接 `set(true)`。
 - 主动台词经 [proactive-delivery.ts](app/workflows/proactive-delivery.ts) 用 `speak`（不落盘，当前生产调用只有仪式行走失败提示），合成或朗读中精灵变为不可见即停声；拖拽反应、音色试听等预制台词用 `speakScripted`（落盘）；朗读文本清理不改写聊天原文。
 - 限额和字节缓存归主进程。
 
@@ -152,6 +158,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 - 命中按实际播放时间查询逐帧 alpha 遮罩，并扣除等比显示留白；侧边缺少遮罩时只在已知内容边界内命中。
 - 移动与拖拽由容器位移表达，播放不驱动嘴部或视线。
 - `presentation/render-resolver` 按动作目录和生成状态选择 video 或 [fallback](modules/character/rendering/fallback/)，并提供对应的本地化状态；包未就绪或加载失败不空挂视频元素，蛋上区分准备中、生成中、失败与尚未就绪。
+- 渲染层不得经生成 store 触发付费；缺失动作由显式服务流程统一鉴权、去重、记账。
 
 ## 主题与玻璃效果
 

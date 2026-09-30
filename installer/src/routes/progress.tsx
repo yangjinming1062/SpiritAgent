@@ -28,7 +28,6 @@ export default function ProgressScreen({ bootstrap }: ProgressProps): React.JSX.
 
   const currentStageObj = currentStageName ? bootstrap.stages[currentStageName] : null
 
-  // 根据状态决定蛋的阶段
   let phase: EggPhase = 'idle'
   if (bootstrap.status === 'completed') {
     phase = 'hatching'

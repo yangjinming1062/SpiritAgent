@@ -107,8 +107,7 @@ export function InteractionPage(): React.ReactElement {
     }
   }
 
-  // 明确选择档位即结束临时安静；先写偏好，精灵窗同步时不会短暂按旧偏好生效。
-  // 生效档位由精灵窗经 storage 同步后立即重算并推送（含活动覆盖），本窗不推送。
+  // 明确选择档位即结束临时安静；先写偏好，精灵窗同步时不会短暂按旧偏好生效。生效档位由精灵窗经 storage 同步后立即重算并推送（含活动覆盖），本窗不推送。
   const selectTier = (id: DisturbanceTier): void => {
     setDisturbanceTier(id)
     endQuiet()

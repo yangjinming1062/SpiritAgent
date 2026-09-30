@@ -20,7 +20,7 @@
 | [persistence.py](persistence.py) | 工具调用行与结果落库、同步本回合输入并按 `search_tools` 结果解锁工具（批执行在 tool_dispatch）；终端回复落库、语音合成与 `message.complete` 交付；回合后任务调度；压缩检查点落库 |
 | [message_sanitization.py](message_sanitization.py) | 工具参数 JSON 修复、确定性窗口截断 |
 | [chat_emitter.py](chat_emitter.py) | 事件发射接口与捕获全部帧的 `HeadlessEmitter` |
-| [slash_commands.py](slash_commands.py) | 斜杠命令注册与匹配；clear、compress、remember 的实现在 [desktop handlers](../../adapters/desktop/handlers.py) |
+| [slash_commands.py](slash_commands.py) | 斜杠命令静态注册表（与预设正交，不走 LLM tool_call）；clear、compress、remember 的实现在 [desktop handlers](../../adapters/desktop/handlers.py)；客户端 [slash-commands.ts](../../../../client/renderer/shared/lib/slash-commands.ts) 仅有自动补全/确认弹窗用的元数据镜像，`command.dispatch` 是唯一权威 |
 | [native_memory.py](native_memory.py) / [background_review.py](background_review.py) | 模型记忆工具执行、回合后记忆审阅 |
 
 `run_chat_turn` 的调用方：桌面 `prompt.submit`（[handlers](../../adapters/desktop/handlers.py)）；IM（[bridge](../../adapters/channels/bridge.py)，复用已落库的入站消息，`headless`）；定时任务（[standard_turns](../automation/standard_turns.py)，`headless`）；主动陪伴（[companion_turns](../automation/companion_turns.py)，`ephemeral` 与 `headless`，排除发消息与委派工具，轮数上限为 `companion_max_loop_turns`）；子 Agent 委派（[delegation](delegation.py)，传入 `HeadlessEmitter`，沿用父回合的 `headless`）。

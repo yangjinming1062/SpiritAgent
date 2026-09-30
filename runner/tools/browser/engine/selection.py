@@ -4,7 +4,6 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-# 点开自定义下拉后等待展开动画的时长。
 _CUSTOM_DROPDOWN_OPEN_DELAY_S = 0.5
 
 
@@ -62,8 +61,7 @@ def select_option_with_eval(
     if result.get("_") == "native":
         return {"success": True, "selected": result.get("value"), "text": result.get("text"), "method": "native"}
     if result.get("_") == "native_no_match":
-        # 用真实传入参数构造错误信息：index= 与 value/label 区分开，
-        # 模型能区分「index=3 不存在」与「value=foo 没匹配」。
+        # 错误信息区分 index= 与 value/label。
         if value is not None:
             ident = f"value={value!r}"
         elif label is not None:
@@ -74,7 +72,6 @@ def select_option_with_eval(
     if result.get("_") == "not_found":
         return {"success": False, "error": f"browser_select: element {ref} not found. Run browser_snapshot first."}
 
-    # 自定义下拉：等待动画展开并查找 option
     time.sleep(_CUSTOM_DROPDOWN_OPEN_DELAY_S)
     if index is not None and value is None and label is None:
         custom_match_js = f"if(i==={index}&&o.getBoundingClientRect().width>0){{o.click();return{{_:'custom',text:o.textContent.trim()}};}}"
@@ -98,7 +95,7 @@ def select_option_with_eval(
         "})()"
     )
 
-    # 所有出口都清掉 window 上的触发元素引用，防止被引用 DOM 节点驻留。
+    # 出口清触发元素引用，防 DOM 驻留。
     try:
         kb_parsed = eval_fn(kb_js)
         if not kb_parsed.get("ok"):
