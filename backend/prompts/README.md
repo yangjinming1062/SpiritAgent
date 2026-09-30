@@ -1,6 +1,6 @@
 # 提示词索引
 
-全仓 LLM 提示词文本集中登记处：只放面向模型的指令文本与无副作用纯常量（双语 dict、模板骨架、种子词表）。渲染器、装配器、ORM 实例与调用逻辑归各服务层；零项目内依赖（至多标准库），与 `common`/`components`/`modules` 同属最底层。
+全仓 LLM 提示词文本集中登记处：只放面向模型的指令文本与无副作用纯常量（双语 dict、模板骨架、种子词表）。渲染器、装配器、ORM 实例与调用逻辑归各服务层；本包只依赖标准库，处于最底层。
 
 ## 修改路径
 
@@ -20,21 +20,17 @@
 
 ## 场景与动作装配
 
-**场景**
+**场景与出镜媒体**
 
-- `chat.py::SCENE_TOOL_GUIDANCES` / `tools.py::SCENE_TOOL_DESCRIPTIONS`：自主创建与启用的决策、输入及结果语义，由 `scene_tool.py` 执行；客户端手动操作与工具路径独立，契约见 [场景启用与授权](../../docs/PROTOCOL.md#场景启用与授权)。
-- `generation.py::SELF_IMAGE_*` / `SELF_VIDEO_*`：只表达本次造型；图片由 `visual_identity.py::build_self_image_prompt` 共用于聊天与夜间。
-- `generation.py::SCENE_TEMPLATE` / `SCENE_REFERENCE` / `SCENE_IMAGE_RULES`：创建与图片重绘共用 `scene_prompt.py`，按实际参考数量与可选造型装配；输入选择见 [身份、造型与参考输入](../../docs/PIPELINE.md#身份造型与参考输入)。
-- `generation.py::SCENE_DESCRIBE_SYSTEM`：成品描述双用途，JSON 契约与 `modules/companion` 的 `SceneDescriptionRequest` 对齐。
-- 初始场景默认文案在 `scene_service.py::_INITIAL_SCENE_DEFAULT_NOTES`。
+- `chat.py::SCENE_TOOL_GUIDANCES` / `tools.py::SCENE_TOOL_DESCRIPTIONS` 负责自主创建与启用的决策和结果语义，由 `scene_tool.py` 执行；手动操作走独立客户端路径，契约见 [场景启用与授权](../../docs/PROTOCOL.md#场景启用与授权)。
+- `generation.py::SELF_IMAGE_*` / `SELF_VIDEO_*` 只描述本次造型，图片由 `visual_identity.py::build_self_image_prompt` 共用于聊天和夜间。
+- `generation.py` 的场景模板、参考规则和 `SCENE_DESCRIBE_SYSTEM` 由 `scene_prompt.py` 装配；创建、重绘和 JSON 结构分别遵循 [参考输入](../../docs/PIPELINE.md#身份造型与参考输入) 与 `SceneDescriptionRequest`。初始场景默认文案在 `scene_service.py::_INITIAL_SCENE_DEFAULT_NOTES`。
 
 **动作**
 
-- 对话：`actions.py` 工具说明与字段 schema → `application/actions/context.py` 动态资料 → 工具结果续轮；气泡正文与语音格式只约束台词交付，工具关闭时资料仍可保留，不能据此假设有操作能力。
-- 夜间：`nightly.py::PLANNING_SYSTEM_PROMPT` 与夜间能力目录 → 提案受理 → 后台独立评审；受理成功只证明已申请，后续叙事不能据此推断已制作或已表演。
-- 制作：`actions.py::ACTION_REVIEW_INSTRUCTIONS` 与冻结参考图、候选动作 → `generation.py::VIDEO_ACTION_SCRIPT_INSTRUCTIONS` → 起始姿态图与运动描述 → 视频。内置和动态动作共用描述字段；loop 连续循环，once 自然收束。反馈与交付见 [评审与制作](../../docs/PIPELINE.md#评审与制作)。
-- 探身：`generation.py` 的 `VIDEO_PEEK_ACTION_DESCRIPTION` 与 `VIDEO_PEEK_GEOMETRY_INSTRUCTIONS` 分别供[动作脚本与定位校准](../services/application/generation/video/script.py)消费；产物要求见 [PIPELINE](../../docs/PIPELINE.md#系统动作与动态动作)。
-- 空闲：`companion.py::IDLE_EXPRESSION_INSTRUCTIONS` 与当前可用动作的内容、适用/避免条件 → 单个 `action_id` → 统一播放。中英文保持相同的选择与空值语义。
+- 对话工具说明 → `application/actions/context.py` 动态资料 → 工具结果续轮；工具关闭不等于没有动作资料或能力。
+- 夜间规划先受理提案，再由后台独立评审；受理成功只表示申请，不表示已制作或已表演。
+- 独立评审使用冻结参考图，批准后由 `VIDEO_ACTION_SCRIPT_INSTRUCTIONS` 生成姿态和运动描述；探身脚本与定位由 [video/script.py](../services/application/generation/video/script.py) 消费。内置、动态、探身和空闲动作分别按 [PIPELINE](../../docs/PIPELINE.md#评审与制作) 的制作与播放契约消费。
 
 完整外观链路及各分支的审查导航见 [完整提示词链检查入口](../../docs/PIPELINE.md#完整提示词链检查入口)。
 

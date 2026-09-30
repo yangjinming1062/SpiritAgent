@@ -15,9 +15,9 @@
 | [memory_bootstrap.py](memory_bootstrap.py) | 用户资料与时区读写 |
 | [memory_format.py](memory_format.py) / [memory_namespaces.py](memory_namespaces.py) | 提示词记忆块渲染、记录上下文命名空间 |
 
-审阅入口：回合后审阅（[persistence.py](../../application/chat/persistence.py)）、夜间整理（[nightly_activity.py](../../application/nightly/nightly_activity.py)）、调度器定期审阅（[cron.py](../../adapters/scheduler/cron.py)），模型记忆工具经 [native_memory.py](../../application/chat/native_memory.py) 提交即时提案。`/remember` 经 `create_memory` 写入无证据的显式记录，写入时不经审阅；该记录属于 `recall:` 命名空间，之后仍进入维护轮转，可被审阅判为失效。
+审阅入口包括回合后审阅（[persistence.py](../../application/chat/persistence.py)）、夜间整理（[nightly_activity.py](../../application/nightly/nightly_activity.py)）和调度器定期审阅（[cron.py](../../adapters/scheduler/cron.py)）；模型记忆工具经 [native_memory.py](../../application/chat/native_memory.py) 提交即时提案。
 
-学习记录保存原子事实，长期背景是明确陈述的视图。onboarding、统计和系统已兑现事件各走所属入口；日记、统计和助手表达不能独立证明用户偏好。
+`/remember` 经 `create_memory` 写入无证据的显式记录，属于 `recall:` 命名空间，写入时不经审阅但会进入后续维护轮转。学习记录保存原子事实，长期背景只是明确陈述的视图；onboarding、统计、系统事件、日记和助手表达各自不能单独证明用户偏好。
 
 ## 审核与原子提交
 
@@ -27,7 +27,9 @@
 
 ### 完整审阅
 
-后台审阅按消息 ID 升序从各会话审阅水位后取连续批次，逐批排空到触发时的截止消息（回合后审阅为本轮助手消息，调度与夜间为开始时的最新消息）。仅完整批次成功后把各会话水位推进到其批内最大 ID，零变更也算成功检查；失败即结束本次审阅，该批及其后消息保留待处理，由下次触发从同一位置续审，因此持续失败的批次会阻塞其后审阅。原始消息不截断后跳过；单条超预算单独审阅，超过供应商上下文能力则保留待处理状态。单批消息与记忆上限见 [memory_learning.py](memory_learning.py) 顶部常量，决策与证据条数上限见 [memory_policy.py](memory_policy.py) 的字段约束。
+- 后台审阅按消息 ID 升序从各会话水位取连续批次，排空到本次触发的截止消息；只有完整批次成功后才推进水位，零变更也算成功检查。
+- 任一批次失败即停止本次审阅，该批及后续消息从原位置续审；持续失败会阻塞后续批次。原始消息不截断后跳过，单条超预算时单独审阅，超过供应商上下文能力则保留待处理。
+- 单批消息和记忆上限见 [memory_learning.py](memory_learning.py) 顶部常量，决策与证据条数上限见 [memory_policy.py](memory_policy.py) 字段约束。
 
 即时检查优先保留最新消息并按时间呈现；后台批次同时轮转维护记忆，补充与新发言相关的记录。
 
@@ -42,11 +44,9 @@
 
 ## 读取、召回与恢复
 
-聊天、伙伴状态与夜间规划只读有效、未到期记录，推断标明依据类型。恢复重映射证据及修订引用、重置审核水位、保留遗忘指纹；缺少原始消息的导入判断须失效。包级恢复见 [PROTOCOL](../../../../docs/PROTOCOL.md#备份校验与覆盖恢复)。
+聊天、伙伴状态与夜间规划只读有效且未到期记录，推断标明依据类型。恢复时重映射证据和修订引用、重置审核水位并保留遗忘指纹；缺少原始消息的导入判断须失效，包级规则见 [PROTOCOL](../../../../docs/PROTOCOL.md#备份校验与覆盖恢复)。
 
-夜间规划读取同域全部有效记忆，不套用管理列表的分页上限；外部列表仍使用有界查询。
-
-向量与关键词 / CJK N-gram 双路召回，经 RRF 融合及重要性、时间衰减排序。写入召回池补向量；嵌入不可用或维度不匹配时只降级到同域关键词，不跨域回退。
+夜间规划读取同域全部有效记忆，不套用管理列表分页上限；外部列表仍使用有界查询。写入时补向量，召回同时走向量和关键词 / CJK N-gram，经 RRF、重要性和时间衰减融合；嵌入不可用或维度不匹配时只降级到同域关键词，不跨域回退。
 
 ## 验证入口
 

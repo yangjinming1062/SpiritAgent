@@ -23,11 +23,11 @@
 
 ## 资产、发布与表演
 
-资产归属冻结 pack，生成完成不自动表演；目录由 publishing 用 CAS 发布，失败只重试发布，不重新付费。每次发布尝试先写路径唯一的 manifest 文件再 CAS，落败方不会覆盖已发布版本；CAS 落败时删除本次文件，flush 本事务改动后按数据库最新版本与动作行（`populate_existing`）重建重试，有限次后仍冲突才抛 `StaleCatalogError`。动作的 `metadata_revision` 同时作为 manifest 与播放指令中的素材版本。跨端执行、回执与未知结果见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)，历史包处理见 [PIPELINE](../../../../docs/PIPELINE.md#恢复与历史包)。
+资产归属冻结 pack，生成完成不自动表演；目录由 `publishing` 以 CAS 发布，冲突只重试发布，不重新付费。每次尝试使用独立 manifest，失败文件清理且不会覆盖已发布版本；冲突时刷新数据库状态并有限次重试，仍冲突才抛 `StaleCatalogError`。动作的 `metadata_revision` 同时作为 manifest 和播放指令中的素材版本。跨端执行、回执与未知结果见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)，历史包处理见 [PIPELINE](../../../../docs/PIPELINE.md#恢复与历史包)。
 
 ## 策略约束
 
-模型提案与点播，服务端强制权限、额度和版本。评审不设日限额，仅 approve 后占用制作额度；制作额度按来源（user_requested / autonomous）分别计数，以用户本地日（缺时区按 UTC）内的 `approved_at` 结算；额度及无手动播放入口见[动作契约](../../../../docs/PROTOCOL.md#动作目录与播放)。本领域不设使用冷却，策略值与拒绝抑制由 [policy.py](policy.py)维护。
+模型提案与点播由服务端强制权限、额度和版本。评审不设日限额，仅 approve 后占用制作额度；额度按来源（`user_requested` / `autonomous`）和用户本地日（缺时区按 UTC）的 `approved_at` 结算。额度及无手动播放入口见 [动作契约](../../../../docs/PROTOCOL.md#动作目录与播放)；本领域不设使用冷却，策略值与拒绝抑制由 [policy.py](policy.py)维护。
 
 ## 验证入口
 

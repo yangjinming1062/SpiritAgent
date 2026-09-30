@@ -21,17 +21,15 @@
 
 ## 事务与任务所有权
 
-头像（API / RPC 入口持锁）、全身、衣柜（含命名回写）、角色卡分析回写，以及视频包创建、重试、就绪发布、启用、删除与探身补齐共用 `avatar_service.get_avatar_job_lock` 用户级锁；角色卡编辑靠数据库行锁与预期修订，场景另用 `scene_service` 内的场景锁。短会话读配置与冻结资料 → 事务外等待供应商 → 校验身份、状态和源路径 → 状态与事件同事务提交。迟到结果不得覆盖新任务；候选与正式资产分别清理。
+所有形象、衣柜、角色卡和视频包任务共用 `avatar_service.get_avatar_job_lock` 用户级锁；角色卡编辑使用数据库行锁与预期修订，场景另用 `scene_service` 的场景锁。任务按“冻结资料 → 事务外等待供应商 → 校验身份、状态和源路径 → 状态和事件同事务提交”执行，迟到结果不得覆盖新任务，候选与正式资产分开清理。
 
-已保存场景与已就绪视频包的启用只核对身份图：场景比对头像与记录的全身图路径（`seed_portrait_media_id`），视频包比对冻结全身身份图与当前全身图的字节（`video/service.py` 的 `_require_current_identity_image`），角色卡文字修订与重新提取不阻止启用。在途场景与视频任务的自动启用仍核对角色卡修订，语义见 [PIPELINE](../../../../docs/PIPELINE.md#角色卡与并发写入)。
+已保存场景和已就绪视频包启用时只核对身份图：场景比对头像记录的全身图路径，视频包比对冻结全身身份图与当前全身图字节；在途任务的自动启用还要核对角色卡修订。角色卡文字修订不阻止已保存资产启用，完整规则见 [PIPELINE](../../../../docs/PIPELINE.md#角色卡与并发写入)。
 
 ### 全身候选与草稿
 
-身份确认前，全身生成与自备图直接替换全身草稿；`confirm_fullbody_seed` 锁定身份、登记角色卡并保存默认外观快照。确认后的全身重绘与自备图先写 `FullbodyCandidate`，分析可重试；用户采纳时校验原图和角色卡修订，同事务更新全身图与身体字段。被替换的未采纳候选清理图片，已采纳旧图保留给历史任务；完整身份语义见 [PIPELINE](../../../../docs/PIPELINE.md#全身候选采纳)。
-
-草稿转存失败可重试，只有全部图片均为过期草稿的头像行才能清理，不连带删除正式参考。服务内部与 ORM 始终使用裸路径：草稿为 `temp-media/`，确认后的立绘与其他用户资产一样落在 `companion-assets/{user_id}/`，[avatar_service.py](avatar_service.py) 的读取与删除入口只接受裸路径；访问 URL 仅在响应出口由 `re_sign_bare_path` 生成，客户端回传的地址只在全身确认入口还原比对。
-
-角色卡分析与全身候选分析共用 `extract_card_features`；头像、全身与换装生图共用 `generate_with_moderation_retry`，命中内容审核时改写提示词重试一次，结果未知不重试。
+- 身份确认前，全身生成和自备图直接替换草稿；`confirm_fullbody_seed` 锁定身份、登记角色卡并保存默认外观快照。确认后先写 `FullbodyCandidate`，分析可重试，采纳时校验原图与角色卡修订并同事务更新；未采纳候选可清理，已采纳旧图留给历史任务。完整身份语义见 [PIPELINE](../../../../docs/PIPELINE.md#全身候选采纳)。
+- 草稿转存失败可重试，只有全部图片过期的头像行才清理，不连带正式参考。服务内部和 ORM 使用裸路径（草稿为 `temp-media/`，正式资产为 `companion-assets/{user_id}/`），URL 只在响应出口签名，客户端地址只在确认入口还原比对。
+- 角色卡和全身候选共用 `extract_card_features`；头像、全身和换装共用 `generate_with_moderation_retry`，审核命中只改写提示词重试一次，结果未知不重试。
 
 ### 后台任务与初始资产
 
@@ -55,7 +53,7 @@
 
 ## 图像输入与装配
 
-[image_generation.py](image_generation.py)的 `resolve_image_gen_chain` 按参考图、双参考、图像编辑与原生透明能力筛选 `image_gen` 链，能力位由[供应商基类](../../infrastructure/llm/providers/base.py)声明；`generate_images` 按供应商原生能力装配参考：`persist_user_assets=True` 时转存为用户资产，否则返回供应商原生 URL 或 data URI，由调用方（质量链、头像/全身立绘）自行落盘。提示词按点位选择，头像可改外貌的条款不能用于换装；参考优先级与编辑前置条件归 [PIPELINE](../../../../docs/PIPELINE.md#身份造型与参考输入)。
+[image_generation.py](image_generation.py)的 `resolve_image_gen_chain` 按参考图、编辑和透明能力筛选供应商链，`generate_images` 按 `persist_user_assets` 决定返回用户资产、原生 URL 或 data URI；能力位由[供应商基类](../../infrastructure/llm/providers/base.py)声明。提示词按点位选择，头像条款不能直接用于换装；参考优先级与编辑前置条件归 [PIPELINE](../../../../docs/PIPELINE.md#身份造型与参考输入)。
 
 聊天与夜间图片共用 [visual_identity.py](visual_identity.py) 的 `build_self_image_prompt`，`SelfVisualPlan` 冻结造型。视频首帧生成/校准也走图片质量链，恢复沿用已保存首帧，具体规则见 [出镜图片与视频](../../../../docs/PIPELINE.md#出镜图片与视频首帧)。
 
@@ -63,15 +61,15 @@
 
 聊天媒体预算由 `MediaTurnState` 跨工具调用共享；验图重做与交付语义见 [媒体协议](../../../../docs/PROTOCOL.md#媒体引用验图与原位交付)。结构化回复（生活空间）的聊天视频终态经 `domains/conversation` 的 `update_video_reply` 原位更新所属气泡；其他会话追加媒体状态系统消息，并发 `video_gen.*` 事件与渠道投递。
 
-上传导入（`create_pack_from_clips`）与按参考生成（`create_pack_from_reference`）共用片段处理、任务行素材列与发布；[video/state.py](video/state.py)保存上下文与单动作结果，上传包没有可重做的冻结参考。任务行 status × stage 逐任务持久化；FFmpeg 等待走工作线程，不占数据库长事务；新包构建失败不清空旧激活包。供应商任务句柄在提交后立即落库，重启凭句柄续轮询，不重复提交付费任务。
+上传导入（`create_pack_from_clips`）与按参考生成（`create_pack_from_reference`）共用片段处理和发布；[video/state.py](video/state.py)保存上下文与单动作结果，上传包没有可重做的冻结参考。任务按 `status × stage` 持久化，FFmpeg 在工作线程执行，新包失败不清空旧激活包；供应商句柄提交后立即落库，重启只续轮询，不重复付费提交。
 
 探身补齐由 [video/service.py](video/service.py)编排，定位校准在 [video/script.py](video/script.py)，接口契约见 [PROTOCOL](../../../../docs/PROTOCOL.md#动作目录与播放)。生成任务收尾须兑现新排队动作的唤醒；空队列停止，不循环恢复未知结果任务。
 
-每个动作素材都要抠像，`require_action_matting_model` 在两处把关：整包生成、就绪包原位重做、失败包续跑（有可续跑动作时）与探身补齐在请求时检查，动态动作在提案受理时检查；后台制作（含评审后启动与重启恢复）在每个新的付费步骤前再查一次，即参考校准、脚本撰写、姿态图与每次视频提交。缺失时任务在付费前失败并保留已有进度，模型恢复后经同名重做（动态动作）或失败包续跑沿用原进度；已有供应商句柄的任务照常续查与下载，抠像时失败并保留源视频；已有可用候选时不再追加提交、按最佳候选收尾；结果未知的提交不重发。
+- 每个动作素材都要抠像。整包、就绪包重做、失败包续跑和探身补齐在请求时检查，动态动作在提案受理时检查；后台制作在每个新的付费步骤前再查 `require_action_matting_model`。缺失时在付费前失败并保留进度，模型恢复后沿用同名重做或失败包续跑；已有可用候选时不再追加提交，按最佳候选收尾。已有供应商句柄只续查与下载，抠像失败保留源视频，结果未知不重发。
 
 姿态图的透明输出、留白准备与视频透明化边界见 [视频与交付](../../../../docs/PIPELINE.md#视频与交付)。
 
-[media_chain.py](media_chain.py)持有无凭据的供应商快照、游标与候选；[character_images.py](character_images.py)执行身份图片链与可选画幅门禁；[identity_review.py](identity_review.py)评分复核，[media_review.py](media_review.py)维护人工复核。任务分别持久化图片、视频进度，复用原始参考、已选首帧与成功动作；动作包独立冻结全身身份图。保底和清理见 [恢复规则](../../../../docs/PIPELINE.md#持久化与恢复)。
+[media_chain.py](media_chain.py)保存无凭据供应商快照、游标和候选；`character_images.py`、`identity_review.py`、`media_review.py`分别负责身份图链、评分和人工复核。图片、视频进度分别持久化并可复用原始参考、已选首帧和成功动作；动作包独立冻结全身身份图。恢复与清理见 [恢复规则](../../../../docs/PIPELINE.md#持久化与恢复)。
 
 ## 验证入口
 

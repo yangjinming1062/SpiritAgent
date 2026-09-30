@@ -10,18 +10,18 @@
 | 记忆证据、召回与遗忘 | [记忆模块](services/domains/memory/README.md) |
 | 头像、角色卡、衣柜、场景与媒体 | [生成服务](services/application/generation/README.md#关键入口)；跨端场景改动见其任务链 |
 | 动作提案、生成与播放 | [动作编排](services/application/actions/README.md)、[动作领域](services/domains/actions/README.md) |
-| Cron 与在线陪伴 | [scheduler/cron.py](services/adapters/scheduler/cron.py) → [companion_turns.py](services/application/automation/companion_turns.py) / [standard_turns.py](services/application/automation/standard_turns.py)；任务与 standard 执行会话归 [cron_jobs.py](services/domains/automation/cron_jobs.py)，等待状态与后台认领归 [intents.py](services/domains/companion/intents.py) |
-| 夜间计划与执行 | [nightly_activity.py](services/application/nightly/nightly_activity.py) 的 `run_nightly_pipeline` → [nightly_planning.py](services/application/nightly/nightly_planning.py)；检查[阶段与恢复](#夜间批处理) |
-| 片刻与日记 | [journal_service.py](services/domains/journal/journal_service.py)、[autonomous.py](services/application/moments/autonomous.py)、[replies.py](services/application/moments/replies.py)；桌面端点 [companion_journal.py](api/v1/companion_journal.py) |
-| IM 生命周期与投递 | 启停 [channels/manager.py](services/adapters/channels/manager.py)；入站、回合与补发 [bridge.py](services/adapters/channels/bridge.py)；iLink 协议 [weixin_ilink.py](services/adapters/channels/adapters/weixin_ilink.py)；配对与绑定 REST [channels.py](api/v1/channels.py)；[IM 约束](#im-渠道) |
+| Cron 与在线陪伴 | 调度 [cron.py](services/adapters/scheduler/cron.py)；回合 [companion_turns.py](services/application/automation/companion_turns.py) / [standard_turns.py](services/application/automation/standard_turns.py)；任务与等待分别见 [cron_jobs.py](services/domains/automation/cron_jobs.py) / [intents.py](services/domains/companion/intents.py) |
+| 夜间计划与执行 | [nightly_activity.py](services/application/nightly/nightly_activity.py) 的 `run_nightly_pipeline` → [nightly_planning.py](services/application/nightly/nightly_planning.py)；检查 [阶段与恢复](#夜间批处理) |
+| 片刻与日记 | 领域 [journal_service.py](services/domains/journal/journal_service.py)；自主与回复 [autonomous.py](services/application/moments/autonomous.py) / [replies.py](services/application/moments/replies.py)；REST [companion_journal.py](api/v1/companion_journal.py) |
+| IM 生命周期与投递 | 生命周期 [channels/manager.py](services/adapters/channels/manager.py)；入站、回合与补发 [bridge.py](services/adapters/channels/bridge.py)；iLink [weixin_ilink.py](services/adapters/channels/adapters/weixin_ilink.py)；REST [channels.py](api/v1/channels.py)；[IM 约束](#im-渠道) |
 | 激活、登录与 WS 票据 | [user.py](api/v1/user.py)（激活、ws-ticket、刷新、登出）、管理员登录 [page.py](api/v1/page.py)；令牌与鉴权依赖 [modules/auth](modules/auth/) |
 | 管理后台与用户管理 | 页面 [static/admin.html](static/admin.html)，API [admin.py](api/v1/admin.py)（用户、按用户模型配置、系统设置、夜间日志、备份导出导入、删除用户） |
-| 模型与媒体供应商 | 能力类型与能力位 [providers/base.py](services/infrastructure/llm/providers/base.py)，注册 [registrations.py](bootstrap/registrations.py)，能力链配置结构 [components/ai_config.py](components/ai_config.py)，保存时密钥沿用、清除与脱敏 [domains/configuration/ai_config.py](services/domains/configuration/ai_config.py)，运行时链解析与逐层继承见 [llm_client.py](services/infrastructure/llm/llm_client.py) 的 `resolve_provider_chain`；网络错误见[供应商与网络错误](#供应商与网络错误) |
+| 模型与媒体供应商 | 类型与注册 [providers/base.py](services/infrastructure/llm/providers/base.py) / [registrations.py](bootstrap/registrations.py)；配置 [ai_config.py](components/ai_config.py) / [ai_config.py](services/domains/configuration/ai_config.py)；链解析 [llm_client.py](services/infrastructure/llm/llm_client.py)；回退见[供应商与网络错误](#供应商与网络错误) |
 | 桌面配置同步 | [config.py](api/v1/config.py)（`user_settings` 点键读写，嵌套配置与点键互转见 [desktop_config.py](services/domains/configuration/desktop_config.py)）；契约见 [配置所有权与云同步](../docs/PROTOCOL.md#配置所有权与云同步) |
-| 附件、上传视频与语音 REST | [media.py](api/v1/media.py)（语音气泡重试在 [sessions.py](api/v1/sessions.py)）、[temp_files.py](components/temp_files.py)、[attachments.py](components/attachments.py)、[chat_videos.py](services/domains/media/chat_videos.py) |
+| 附件、上传视频与语音 REST | REST [media.py](api/v1/media.py) / [sessions.py](api/v1/sessions.py)；临时与附件存储 [temp_files.py](components/temp_files.py) / [attachments.py](components/attachments.py)；视频 [chat_videos.py](services/domains/media/chat_videos.py) |
 | 资产存储与签名 | [asset_store.py](services/infrastructure/assets/asset_store.py)；访问契约见 [资产访问与缓存](../docs/PROTOCOL.md#资产访问与缓存) |
 | 桌面与 Runner 更新分发 | [update.py](api/v1/update.py)：管理端“版本管理”上传更新 ZIP，按最新启用版本生成 `latest.yml` / `latest-mac.yml`，原样提供构建时已签名的 `latest-runner.yml`；客户端流程见 [自更新签名](../docs/PROTOCOL.md#自更新签名) |
-| 备份校验与覆盖恢复 | 导出导入端点在 [admin.py](api/v1/admin.py)；[manifest.py](services/domains/backup/manifest.py)、[serializers.py](services/domains/backup/serializers.py)（数据表清单）、[restoration.py](services/domains/backup/restoration.py)、维护边界 [maintenance.py](services/adapters/maintenance.py)；核对 [恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复)的维护态、引用映射与部分恢复 |
+| 备份校验与覆盖恢复 | API [admin.py](api/v1/admin.py)；清单、序列化与恢复 [manifest.py](services/domains/backup/manifest.py) / [serializers.py](services/domains/backup/serializers.py) / [restoration.py](services/domains/backup/restoration.py)；维护边界 [maintenance.py](services/adapters/maintenance.py)；核对 [恢复契约](../docs/PROTOCOL.md#备份校验与覆盖恢复) |
 | 提示词、启动与事件恢复 | [提示词索引](prompts/README.md)、[bootstrap/lifecycle.py](bootstrap/lifecycle.py)、[event_store/loop.py](services/infrastructure/event_store/loop.py) |
 
 ## 设计意图
@@ -72,9 +72,9 @@
 
 ### 配置与迁移
 
-`config.toml` 或环境变量提供启动依赖；可运营参数进入 `system_settings`，由 `Settings` 声明并在调用时读取。技术常量不承载可运营配置。
+复制 [config.toml.example](config.toml.example) 为 `config.toml` 后填写数据库、JWT、资产签名密钥和初始管理员等冷启动依赖。配置来源优先级为环境变量 → `.env` → `config.toml` → `config.toml.example`；业务型参数进入 `system_settings`，由 [Settings](components/config.py) 声明，技术常量不承载可运营配置。
 
-热更新入口为 [system_settings.py](services/application/configuration/system_settings.py)：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 SETTINGS → 刷新连接池等副作用。
+热更新入口为 [system_settings.py](services/application/configuration/system_settings.py)：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 `SETTINGS` → 刷新连接池等副作用。管理后台的系统设置写入数据库并立即更新当前进程；重启时数据库中的动态值会在环境变量和 TOML 水合后再次覆盖它们。启动专用参数不能从管理后台修改。
 
 校验或提交失败不修改运行时，避免数据库与内存分叉。持久值统一 JSON 编码，启动水合时解析或校验失败即中止启动。
 
@@ -96,7 +96,9 @@
 
 ### 事件与交付
 
-`emit_ws_event` 随业务状态同事务写 outbox，经 NOTIFY 唤醒后只为本进程注册了桌面 dispatcher 的用户（含断线宽限期）原子认领。内部处理器（如主动陪伴回合请求）派生任务即记送达，处理失败由所属域负责重试；用户 dispatcher 不可用、写入队列已满或载荷无法解析时按预算退避，累计失败达到 `MAX_OUTBOX_RETRIES` 即转死信。调度器的 [outbox 清理](services/infrastructure/event_store/outbox_gc.py)回收已送达、死信与过期的陪伴回合请求行；离线用户的待投递行不过期。聊天流另走会话 emitter，存储层不认识业务处理器；后台任务纳入所有者的启停与恢复。
+- `emit_ws_event` 与业务状态在同一事务写入 outbox；数据库 `NOTIFY` 只负责唤醒，事件行负责恢复。
+- 事件回路只认领本进程有桌面 dispatcher 的用户（含断线宽限期）。内部处理器派生任务即记送达；用户投递失败按预算退避，达到 `MAX_OUTBOX_RETRIES` 后转死信。具体清理由 [outbox_gc.py](services/infrastructure/event_store/outbox_gc.py) 负责，普通离线待投递行不过期，过期的主动回合请求例外清理。
+- 聊天流走会话 emitter，后台任务由各自所有者启停和恢复；事件存储不直接调用业务处理器。
 
 ## 数据与运行可靠性
 
@@ -108,7 +110,7 @@
 
 备份不迁移登录、激活、IM 授权、事件队列和执行账本，也不恢复已清理媒体；用户级模型配置（`user_model_configs`，含供应商密钥明文）随包导出与恢复，系统信息库与本机配置另行准备。包级校验、部分恢复和维护态见 [PROTOCOL](../docs/PROTOCOL.md#备份校验与覆盖恢复)。
 
-用户文件只落三处：`companion-assets/{user_id}/`（立绘与全部正式资产）、各会话的 `desktop-attachments/{session_id}/`，以及元数据记录 `user_id` 的 `temp-media/`。删除用户（被遗忘权，[admin.py](api/v1/admin.py) 的 `delete_user`）复用覆盖恢复的维护边界停稳运行时，先删除这三处文件、再删除用户行由外键级联清理其余数据；资产目录或会话附件删除失败时保留用户行，可重试，`temp-media/` 逐文件尽力删除、仍有元数据的残留由每小时的过期清理兜底。新增用户文件存储须落在这三处之一，否则删除与备份都会遗漏。
+用户文件只落三处：`companion-assets/{user_id}/`（正式资产）、各会话的 `desktop-attachments/{session_id}/`，以及带 `user_id` 元数据的 `temp-media/`。删除用户（被遗忘权，[admin.py](api/v1/admin.py) 的 `delete_user`）先进入维护态并停稳运行时，再删除这三处文件和用户行；资产目录或会话附件删除失败时保留用户行，可重试，临时文件由逐文件清理和定期过期清理兜底。新增用户文件必须落在这三处之一，否则删除与备份都会遗漏。
 
 ## 业务调度
 
@@ -118,22 +120,17 @@
 
 ### 夜间批处理
 
-- 调度传入刚结束的本地日，缺时区跳过；同日完成不重跑，最近未完成日按恢复窗口接续。
-- 规划入口必须绑定夜间日志，计划与动作账本持久化后执行；每项先核对依赖与当前政策，终态统一落库，失败互相隔离。
-- 执行按外观、场景、动作提案、片刻 / 媒体与联系的阶段推进，场景不依赖外观动作。
-- 无当日消息仍可依据长期记忆规划；当日没有用户消息、成功（含部分成功）的夜间动作或片刻互动时不写内部反思与日记。
-- 片刻发布和评论纳入当天经历；只有成功结果进入叙事。
-- 有任务句柄时核对原任务，结果未知的在途动作保留中断事实，不盲目重发。
-- 规划的动作 ID 保持原样并校验唯一性；能力或预算过滤掉前置动作后，后续依赖仍保留并按未完成跳过。
-- 依赖要求前置整项成功，部分成功只提供已完成事实，不解锁依赖整项完成的后续动作。
-- 文本与媒体参数在执行前校验长度，不以截断改变已规划的表达。
-- 内部反思按实际存储字符预算生成，结构或长度不符时有一次修复机会，仍不符则不保存；用户可见日记与内部反思的用途、正文和存储入口保持分离。
+- 调度传入刚结束的本地日，缺时区跳过；同日完成不重跑，未完成日按恢复窗口接续，并为每次执行保留夜间日志。
+- 计划与动作账本先持久化再执行；每项执行前重读政策并核对依赖，终态统一落库，失败互相隔离。场景阶段不依赖外观或动作阶段。
+- 规划动作 ID 保持原样并校验唯一性；过滤前置能力后依赖仍保留，只有前置整项成功才解锁后续，部分成功只提供已完成事实。
+- 有任务句柄时先核对原任务；结果未知的在途动作保留中断事实，不重发副作用。文本与媒体参数在执行前校验长度，不以截断改变计划。
+- 片刻发布与评论纳入当天经历，只有成功结果进入叙事；没有用户消息、成功（含部分成功）的夜间动作或片刻互动时不写内部反思和日记。反思按存储预算生成，结构不符时只修复一次，仍失败则不保存。
 
 ### 陪伴调度与恢复
 
 [等待域](services/domains/companion/intents.py)管理条件、有效期、认领和原子终态；[陪伴回合](services/application/automation/companion_turns.py)复用工具循环并限制轮数、时长和委派，要求用户桌面在线。取消或失败不提交暂存续等。
 
-未开始的认领可以重试；已执行而结果不明时保留待核对提示，不重跑副作用（Runner 虽有 `spiritagent.call_result`，但 Client 不转发、Backend 不调用，见[调用日志与未知结果](../docs/PROTOCOL.md#调用日志与未知结果)）。有效期结束不抹去核对信息。创建、恢复及解除暂停统一在用户锁下检查活跃任务配额；重启不凭空补算未互动时长。
+未开始的认领可以重试；已执行而结果不明时保留待核对提示，不重跑副作用。有效期结束不抹去核对信息；创建、恢复及解除暂停统一在用户锁下检查活跃任务配额，重启不补算未互动时长。未知结果语义见[调用日志与未知结果](../docs/PROTOCOL.md#调用日志与未知结果)。
 
 ### IM 渠道
 
@@ -169,7 +166,9 @@ docker compose up -d
 docker compose --profile monitoring up -d
 ```
 
-容器与卷见 [docker-compose.yml](docker-compose.yml)，指标抓取见 [Prometheus 配置](monitoring/prometheus.yml)。`/metrics` 默认无需鉴权；配置 `metrics_auth_token` 后须以 `Authorization: Bearer <令牌>` 或 `X-Metrics-Token` 访问。使用随附 Prometheus 时在 `backend/.env` 设置 `METRICS_AUTH_TOKEN`：Backend 经 `env_file` 读取，Prometheus 读取 compose 按同一变量注入的令牌文件；未设置时注入空值，后端不校验。compose 不会因注入内容变化重建容器，修改令牌后执行 `docker compose --profile monitoring up -d --force-recreate backend prometheus`。管理后台保存或清除令牌会写入信息库并覆盖环境变量，保存值须与 `.env` 一致。Backend 不参与桌面安装包构建。
+容器与卷见 [docker-compose.yml](docker-compose.yml)，指标抓取见 [Prometheus 配置](monitoring/prometheus.yml)。`/metrics` 默认无需鉴权；配置 `metrics_auth_token` 后须以 `Authorization: Bearer <令牌>` 或 `X-Metrics-Token` 访问。
+
+使用随附 Prometheus 时在 `backend/.env` 设置 `METRICS_AUTH_TOKEN`，Backend 经 `env_file` 读取，Prometheus 经 compose 注入同一令牌文件；未设置时后端不校验。compose 不会因令牌变化自动重建容器，修改后执行 `docker compose --profile monitoring up -d --force-recreate backend prometheus`。管理后台保存或清除令牌会即时更新 Backend 的 `system_settings`；启用 Prometheus 时仍须同步 `.env`。Backend 不参与桌面安装包构建。
 
 后端镜像安装 FFmpeg（含 `ffprobe`），用于视频探测、抠像和转码；构建时检查两个命令可执行。更新 Dockerfile 后，在 `backend` 目录执行 `docker compose up -d --build backend` 重建并替换容器。
 
@@ -192,4 +191,11 @@ docker compose --profile monitoring up -d
 
 ## 契约与验证
 
-跨端契约见 [PROTOCOL](../docs/PROTOCOL.md)，命令见 [Scripts](../scripts/README.md#按改动选择验证)。依赖变化检查分层；数据库变化做迁移比对；对话、记忆与生成按专项 README 验证。
+跨端契约见 [PROTOCOL](../docs/PROTOCOL.md)，仓库命令见 [Scripts](../scripts/README.md#按改动选择验证)。修改后按影响范围同步：
+
+- API、WS、IM、资产或备份：核对生产方、消费方、持久化和恢复语义，并更新 [PROTOCOL](../docs/PROTOCOL.md) 的归属章节。
+- `services` 依赖：更新本页[依赖理由](#services-依赖边界)，运行[分层检查器](../scripts/check_services_architecture.py)。
+- 配置或迁移：核对 [Settings](components/config.py)、`system_settings` 的启动专用键和 Alembic 迁移；动态参数要验证提交失败时运行时不变。
+- 提示词：沿 [提示词索引](prompts/README.md) 检查完整请求、解析和实际消费，按 [调试入口](../scripts/README.md#提示词调试) 验证。
+
+文档改动至少核对事实、相对路径和锚点，并运行 `git diff --check`；代码改动按 [Scripts](../scripts/README.md) 选择导入、分层、构建或专项验证。
