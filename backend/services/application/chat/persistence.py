@@ -1,7 +1,7 @@
 import asyncio
 import json
 from collections.abc import Coroutine
-from typing import Any
+from typing import Any, Literal
 
 from components import (
     ATTACHMENT_TYPE_VIDEO,
@@ -52,25 +52,28 @@ _BG = TaskBag("chat.persistence")
 
 
 def _on_bg_error(task: asyncio.Task) -> None:
-    if (exc := task.exception()) is not None:
+    if not task.cancelled() and (exc := task.exception()) is not None:
         logger.warning("background task raised after completion", exc_info=exc)
 
 
 def _spawn_post_turn_task(user_id: int, coro: Coroutine[Any, Any, object], track_task: TrackTask | None) -> None:
-    """回合后任务交给调用方跟踪；无跟踪方时纳入模块级强引用集合并登记到用户任务。"""
+    """回合后任务交给调用方跟踪；无跟踪方时纳入模块级强引用集合并登记到用户任务。失败统一记录日志。"""
     task = asyncio.create_task(coro)
     if track_task:
         track_task(task)
+        task.add_done_callback(_on_bg_error)
     else:
         _BG.add(task, on_error=_on_bg_error)
         track_user_task(user_id, task)
 
 
-def _coerce_tool_result_content(content: Any) -> str:
-    """Message.content 是 Text 列，非字符串负载 JSON 编码后提交，避免类型错误。"""
+def _tool_result_row(content: Any) -> tuple[str, Literal["text", "multimodal_v1"]]:
+    """工具结果行的正文与类型；非字符串负载 JSON 编码后保存。"""
     if isinstance(content, str):
-        return content
-    return json.dumps(content, ensure_ascii=False, default=str)
+        return content, "text"
+    text = json.dumps(content, ensure_ascii=False, default=str)
+    # 多模态结果（截图等）是 part 数组，按 multimodal_v1 保存才能读回为输出数组，否则整段 base64 会变成文本。
+    return text, "multimodal_v1" if isinstance(content, list) else "text"
 
 
 def _build_persisted_content(text: str, attachments: list[dict] | None) -> tuple[str, str]:
@@ -78,7 +81,6 @@ def _build_persisted_content(text: str, attachments: list[dict] | None) -> tuple
     if not attachments:
         return text, "text"
     parts = [{"type": "input_text", "text": text}]
-    media_uris: list[str] = []
     for att in attachments:
         url = att.get("file_url")
         if not url:
@@ -87,9 +89,12 @@ def _build_persisted_content(text: str, attachments: list[dict] | None) -> tuple
             parts.append({"type": "input_video", "video_url": url})
         else:
             parts.append({"type": "input_image", "image_url": url})
-        media_uris.append(url)
-    if media_uris:
-        logger.info("multimodal parts sent to LLM", extra={"media_count": len(media_uris), "media_uris": media_uris})
+    if media_types := [part["type"] for part in parts[1:]]:
+        # 地址可能是整段 data URL，只记数量与类型。
+        logger.info(
+            "Persisting multimodal user message",
+            extra={"media_count": len(media_types), "media_types": media_types},
+        )
     return json.dumps(parts, ensure_ascii=False), "multimodal_v1"
 
 
@@ -161,15 +166,52 @@ async def persist_compression_checkpoint(db: AsyncSession, conv_id: int, info: C
 async def _persist_tool_results(conv_id: int, results: list[tuple[str, Any]]) -> None:
     async with session_scope() as db:
         for call_id, content in results:
+            text, content_type = _tool_result_row(content)
             db.add(
                 Message(
                     conversation_id=conv_id,
                     role="tool",
                     tool_call_id=call_id,
-                    content=_coerce_tool_result_content(content),
+                    content=text,
+                    content_type=content_type,
                 ),
             )
         await db.commit()
+
+
+async def _persist_tool_call_row(conv_id: int, result: _LLMTurnResult) -> None:
+    async with session_scope() as db:
+        db.add(
+            Message(
+                conversation_id=conv_id,
+                role="assistant",
+                content=None,
+                tool_calls=json.dumps(result.tool_calls_list),
+                reasoning_content=result.reasoning or None,
+                prompt_tokens=result.final_prompt_tokens,
+                completion_tokens=result.final_completion_tokens,
+                turn_duration_ms=result.turn_duration_ms,
+            ),
+        )
+        await db.commit()
+
+
+async def _persist_interrupted_tool_results(
+    call_row: asyncio.Task[None],
+    conv_id: int,
+    results: list[tuple[str, Any]],
+) -> None:
+    """等调用行提交结束再写中断结果：结果行 id 须排在调用行之后，调用行未落库时不写孤立结果。"""
+    try:
+        await call_row
+    except Exception:
+        logger.warning(
+            "Tool call row was not saved; interrupted tool results skipped",
+            extra={"conversation_id": conv_id},
+            exc_info=True,
+        )
+        return
+    await _persist_tool_results(conv_id, results)
 
 
 async def _persist_assistant_no_tool_turn(
@@ -183,7 +225,6 @@ async def _persist_assistant_no_tool_turn(
     user_text: str,
     first_user_msg_content: str | None,
     memory_scope: MemoryScope | None,
-    provider_name: str,
     media: list[dict[str, str]] | None,
     turn_reasoning: str | None,
     persist: bool,
@@ -248,7 +289,6 @@ async def _persist_assistant_no_tool_turn(
                     effective_settings.get("chat.title_generation_temperature"),
                     TITLE_GENERATION_TEMPERATURE,
                 ),
-                provider_name=provider_name or None,
             ),
             track_task,
         )
@@ -302,30 +342,24 @@ async def _persist_assistant_with_tool_calls_and_results(
     """持久化工具调用与结果、同步 Responses 输入并解锁 ``search_tools`` 命中的工具；媒体产物由回合状态统一管理。"""
     tool_calls_list = result.tool_calls_list
     context["input"].extend(tool_calls_list)
-    if persist:
-        async with session_scope() as db:
-            db.add(
-                Message(
-                    conversation_id=conv.id,
-                    role="assistant",
-                    content=None,
-                    tool_calls=json.dumps(tool_calls_list),
-                    reasoning_content=result.reasoning or None,
-                    prompt_tokens=result.final_prompt_tokens,
-                    completion_tokens=result.final_completion_tokens,
-                    turn_duration_ms=result.turn_duration_ms,
-                ),
-            )
-            await db.commit()
-
-    # 工具批处理必须在 DB 事务外执行，避免 runner / LLM 调用期间持有连接。
     progress = _BatchProgress()
+    # 调用行提交不随取消中断：取消落在提交或关闭会话的窗口时，仍等它落库后补记结果。
+    call_row = asyncio.create_task(_persist_tool_call_row(conv.id, result)) if persist else None
     try:
+        if call_row is not None:
+            await asyncio.shield(call_row)
+        # 工具批处理必须在 DB 事务外执行，避免 runner / LLM 调用期间持有连接。
         tool_results = await _run_tool_batch(tool_calls_list, dispatch_ctx, progress)
     except asyncio.CancelledError:
         # 每个 tool_call 都要有对应结果行，否则下一轮上下文会出现孤立 tool_calls；已完成的照实保存，否则用户说“继续”时模型会重做已生效的副作用。
-        if persist:
-            await asyncio.shield(_persist_tool_results(conv.id, interrupted_tool_results(tool_calls_list, progress)))
+        if call_row is not None:
+            await asyncio.shield(
+                _persist_interrupted_tool_results(
+                    call_row,
+                    conv.id,
+                    interrupted_tool_results(tool_calls_list, progress),
+                ),
+            )
         raise
 
     for res in tool_results:
@@ -339,4 +373,7 @@ async def _persist_assistant_with_tool_calls_and_results(
                 if schema is not None:
                     schemas_by_name[name] = schema
     if persist:
-        await _persist_tool_results(conv.id, [(res["tool_call_id"], res.get("content", "")) for res in tool_results])
+        # 工具已经执行，结果保存同样不随取消中断。
+        await asyncio.shield(
+            _persist_tool_results(conv.id, [(res["tool_call_id"], res.get("content", "")) for res in tool_results]),
+        )

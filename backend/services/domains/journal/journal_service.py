@@ -8,10 +8,8 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from components import (
-    SESSION_LOCAL,
     SETTINGS,
     ensure_utc,
-    get_logger,
     utc_now,
 )
 from modules.companion import (
@@ -30,15 +28,16 @@ from modules.ws import emit_ws_event
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from services.domains.conversation import get_or_create_special_conversation
 from services.domains.memory import resolve_user_timezone
-from services.infrastructure.assets import signed_companion_asset_url
-
-logger = get_logger(__name__)
+from services.infrastructure.assets import parse_companion_asset_path, signed_companion_asset_url
 
 # 当日发布的片刻只把最近这些交给夜间模型阅读；日记仍关联当日全部片刻。
 _INTERACTION_POSTED_LIMIT = 30
+# 片刻情绪与日记心情的列宽。
+_MOOD_MAX_CHARS = 32
 
 
 class JournalError(RuntimeError):
@@ -57,10 +56,13 @@ class MomentInteractions:
     posted_ids: list[str]
 
 
-def _require_asset_path(path: str | None) -> str | None:
-    """片刻只引用正式资产（``companion-assets/{user_id}/``），展示与备份不留过期的外部或临时地址。"""
-    if path is not None and not path.startswith("companion-assets/"):
-        raise JournalError("moment media must be a persisted companion asset")
+def _require_asset_path(path: str | None, user_id: int) -> str | None:
+    """片刻只引用本用户的正式资产（``companion-assets/{user_id}/``），展示与备份不留过期的外部或临时地址。"""
+    if path is None:
+        return None
+    parsed = parse_companion_asset_path(path)
+    if parsed is None or parsed[0] != user_id or not parsed[1]:
+        raise JournalError("moment media must be a persisted companion asset of this user")
     return path
 
 
@@ -126,8 +128,10 @@ async def create_user_moment(
 ) -> CompanionMoment:
     if not title.strip() or len(title.strip()) > 64 or len(body.strip()) > 500:
         raise ValueError("片刻标题须为 1–64 字符，正文最多 500 字符；内容尚未保存")
-    media_url = _require_asset_path(media_url)
-    audio_url = _require_asset_path(audio_url)
+    if emotion is not None and len(emotion) > _MOOD_MAX_CHARS:
+        raise ValueError(f"片刻情绪最多 {_MOOD_MAX_CHARS} 字符；内容尚未保存")
+    media_url = _require_asset_path(media_url, user_id)
+    audio_url = _require_asset_path(audio_url, user_id)
     row = CompanionMoment(
         id=str(uuid4()),
         user_id=user_id,
@@ -144,7 +148,7 @@ async def create_user_moment(
     )
     if source == MomentSource.NIGHTLY.value:
         # 夜间更新不弹实时通知：只写入主会话历史，不发 companion.message。
-        conversation = await get_or_create_special_conversation(db, user_id, "companion")
+        conversation = await get_or_create_special_conversation(db, user_id, "companion", commit=False)
         row.session_id = conversation.id
         media = [{"type": media_type, "url": media_url}] if media_url else []
         if audio_url and media:
@@ -159,11 +163,18 @@ async def create_user_moment(
             ),
         )
     db.add(row)
-    await db.commit()
+    await db.flush()
     await db.refresh(row)
-    # 新建行未经查询，refresh 不填充 selectin 关系；显式置空避免事件序列化触发异步惰性加载。
-    row.comments = []
-    await _emit_event(user_id, "companion.moment.created", response_for_moment(row).model_dump())
+    # 新建行没有评论；按已加载的空集合登记，事件序列化不会触发异步惰性加载。
+    set_committed_value(row, "comments", [])
+    # 刷新事件与内容同一事务写入 outbox，提交后才可见、失败时一起回滚。
+    emit_ws_event(
+        db,
+        user_id=user_id,
+        event_type="companion.moment.created",
+        payload=response_for_moment(row).model_dump(),
+    )
+    await db.commit()
     return row
 
 
@@ -230,13 +241,15 @@ async def create_moment_comment(
         content=content.strip(),
     )
     db.add(row)
-    await db.commit()
+    await db.flush()
     await db.refresh(row)
-    await _emit_event(
-        user_id,
-        "companion.moment.comment",
-        {"moment_id": row.moment_id, "comment": response_for_comment(row).model_dump()},
+    emit_ws_event(
+        db,
+        user_id=user_id,
+        event_type="companion.moment.comment",
+        payload={"moment_id": row.moment_id, "comment": response_for_comment(row).model_dump()},
     )
+    await db.commit()
     return row
 
 
@@ -326,6 +339,8 @@ async def upsert_diary(
     title, body = title.strip(), body.strip()
     if len(title) > 128 or not body or len(body) > 2000:
         raise ValueError("日记标题最多 128 字符，本次正文须为 1–2000 字符；内容尚未保存")
+    if mood is not None and len(mood) > _MOOD_MAX_CHARS:
+        raise ValueError(f"日记心情最多 {_MOOD_MAX_CHARS} 字符；内容尚未保存")
     row = await get_diary_by_date(db, user_id, entry_date)
     if row is None:
         row = CompanionDiaryEntry(
@@ -352,8 +367,9 @@ async def upsert_diary(
         if moment_ids:
             row.moment_ids = list(dict.fromkeys((row.moment_ids or []) + moment_ids))
     try:
-        await db.commit()
+        await db.flush()
     except IntegrityError:
+        # 同日并发首写撞唯一约束：回滚后按已存在的日记重走追加路径。
         await db.rollback()
         if _retried:
             raise
@@ -369,7 +385,13 @@ async def upsert_diary(
             _retried=True,
         )
     await db.refresh(row)
-    await _emit_event(user_id, "companion.diary.upserted", response_for_diary(row).model_dump())
+    emit_ws_event(
+        db,
+        user_id=user_id,
+        event_type="companion.diary.upserted",
+        payload=response_for_diary(row).model_dump(),
+    )
+    await db.commit()
     return row
 
 
@@ -447,13 +469,3 @@ async def resolve_user_local_today(db: AsyncSession, user_id: int) -> date:
         return utc_now().astimezone(ZoneInfo(tz)).date()
     except (ZoneInfoNotFoundError, ValueError):
         return utc_now().date()
-
-
-async def _emit_event(user_id: int, event_type: str, payload: dict[str, Any]) -> None:
-    """内容提交后另起事务投递刷新事件；投递失败只记日志，已保存的内容不回滚。"""
-    try:
-        async with SESSION_LOCAL() as db:
-            emit_ws_event(db, user_id=user_id, event_type=event_type, payload=payload)
-            await db.commit()
-    except Exception:
-        logger.warning("Failed to emit journal event", extra={"event_type": event_type}, exc_info=True)

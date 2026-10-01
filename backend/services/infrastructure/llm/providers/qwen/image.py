@@ -75,10 +75,8 @@ class QwenImageGenProvider(ImageGenProvider):
             raise RuntimeError(f"qwen image_gen returned no images: {body}")
 
         if req.response_format == "url":
-            return ImageGenResult(images=[ImageAsset(url=url) for url in urls], model=self.config.model, raw=body)
+            return ImageGenResult(images=[ImageAsset(url=url) for url in urls])
         b64s = await asyncio.gather(*(download_as_b64(u) for u in urls))
         return ImageGenResult(
             images=[ImageAsset(b64=b, mime="image/png") for b in b64s],
-            model=self.config.model,
-            raw=body,
         )

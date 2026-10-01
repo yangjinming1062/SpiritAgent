@@ -3,18 +3,21 @@ import contextlib
 import json
 from typing import Any
 
-from components import JSONRPC_INTERNAL_ERROR, SETTINGS
+from components import SETTINGS
 
 from .connection import MANAGER
 
 _PENDING: dict[tuple[int, str], asyncio.Future[str]] = {}
 
-_DESKTOP_GONE_ERROR = json.dumps(
-    {
-        "code": JSONRPC_INTERNAL_ERROR,
-        "message": "Desktop disconnected before the tool call completed, so the outcome is unknown: the tool may or may "
-        "not have run. Do not rerun it automatically; check its effects or ask the user first.",
-    },
+
+def _outcome_unknown_result(message: str) -> str:
+    """与客户端回传的结果未知同一信封（ok=false + error），循环守卫按失败计数，模型按正文核对而不是重做。"""
+    return json.dumps({"ok": False, "error": message})
+
+
+_DESKTOP_GONE_ERROR = _outcome_unknown_result(
+    "Desktop disconnected before the tool call completed, so the outcome is unknown: the tool may or may "
+    "not have run. Do not rerun it automatically; check its effects or ask the user first.",
 )
 
 
@@ -35,13 +38,10 @@ async def dispatch_device_call(user_id: int, call_id: str, payload: dict[str, An
             return await asyncio.wait_for(fut, timeout=timeout)
         except TimeoutError:
             # 超时不代表未执行，工具可能仍在本机运行：按结果未知告知模型，由其核对实际效果或询问用户，不能直接重做。
-            return json.dumps(
-                {
-                    "code": JSONRPC_INTERNAL_ERROR,
-                    "message": f"Tool execution timeout for call {call_id} (no response within {timeout}s), so the "
-                    "outcome is unknown: the tool may or may not have run, or may still be running. Do not rerun it "
-                    "automatically; check its effects or ask the user first.",
-                },
+            return _outcome_unknown_result(
+                f"Tool execution timeout for call {call_id} (no response within {timeout}s), so the outcome is "
+                "unknown: the tool may or may not have run, or may still be running. Do not rerun it "
+                "automatically; check its effects or ask the user first.",
             )
     except asyncio.CancelledError:
         # 回合被中断（停止对话、IM 回合中止等）时请桌面取消这次调用；取消只是请求，不撤销已发生的本机副作用。

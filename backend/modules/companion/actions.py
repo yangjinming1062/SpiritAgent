@@ -95,7 +95,7 @@ class CompanionAction(ModelBase, TimestampMixin):
         index=True,
     )
     key: Mapped[str] = mapped_column(String(32))
-    name: Mapped[str] = mapped_column(String(64), default="")
+    name: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     system_slot: Mapped[str] = mapped_column(String(16), default="", server_default=text("''"))
     kind: Mapped[str] = mapped_column(String(8), default="once", server_default=text("'once'"))
     motion_description: Mapped[str] = mapped_column(Text, default="", server_default=text("''"))

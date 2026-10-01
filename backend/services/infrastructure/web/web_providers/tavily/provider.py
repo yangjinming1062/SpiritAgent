@@ -77,8 +77,8 @@ class TavilyWebSearchProvider(WebSearchProvider):
         return True
 
     def missing_credential_message(self) -> str:
-        # Tavily 是目前唯一支持 extract 的供应商，``web_extract`` 因缺凭据失败时展示的就是这条文案。
-        return "Tavily API key is not configured. Set tavily_api_key in the backend config (or the TAVILY_API_KEY env var) to enable web_extract."
+        # Tavily 是目前唯一支持 extract 的供应商，``web_extract`` 因缺凭据失败时模型看到的就是这条文案；配置由运维在管理后台完成。
+        return "Web page extraction is not configured on this server, so web_extract is unavailable."
 
     async def _request(self, endpoint: str, payload: dict[str, Any]) -> dict[str, Any]:
         """调用方先经 is_available 确认密钥存在。"""
@@ -90,7 +90,7 @@ class TavilyWebSearchProvider(WebSearchProvider):
 
     async def search(self, query: str, limit: int = 5) -> dict[str, Any]:
         try:
-            logger.info("Tavily search: '%s' (limit=%d)", query, limit)
+            logger.debug("Tavily search", extra={"limit": limit})
             raw = await self._request(
                 "search",
                 {"query": query, "max_results": min(limit, 20), "include_raw_content": False, "include_images": False},
@@ -107,4 +107,4 @@ class TavilyWebSearchProvider(WebSearchProvider):
             return _normalize_tavily_documents(raw, fallback_url=urls[0] if urls else "")
         except Exception as exc:
             logger.warning("Tavily extract error", extra={"error": str(exc)})
-            return [{"url": u, "title": "", "content": "", "error": f"Tavily extract failed: {exc}"} for u in urls]
+            return [_failed_document(u, f"Tavily extract failed: {exc}") for u in urls]

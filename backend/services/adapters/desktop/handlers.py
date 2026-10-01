@@ -2,7 +2,6 @@ import asyncio
 import base64
 import contextlib
 import json
-import re
 import secrets
 import time
 from collections.abc import Awaitable, Callable
@@ -13,7 +12,7 @@ from components import (
     ATTACHMENT_DATA_URL_MAX_CHARS,
     ATTACHMENT_TYPE_IMAGE,
     ATTACHMENT_TYPE_VIDEO,
-    CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
+    JSONRPC_INTERNAL_ERROR,
     JSONRPC_INVALID_PARAMS,
     JSONRPC_METHOD_NOT_FOUND,
     JSONRPC_SLASH_BUSY,
@@ -40,19 +39,17 @@ from modules.settings import load_user_settings
 from modules.system import ChatMessageRequest, ChatRequest, PromptPresetListResponse, PromptPresetSummary
 from modules.ws import COMPANION_TURN_EVENT
 from pydantic import ValidationError
-from sqlalchemy import delete, func, select, text
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.application.actions import request_playback
 from services.application.chat import (
+    CompressionFailedError,
     SlashCommandContext,
     SlashCommandResult,
-    build_turn_inputs,
-    compress_history,
+    compress_session_history,
     list_commands_for_user,
     merge_session_settings,
-    parse_temperature,
-    persist_compression_checkpoint,
     persist_extra_user_messages,
     register_slash_command,
     resolve_inference_settings,
@@ -61,7 +58,6 @@ from services.application.chat import (
     suggest_commands,
 )
 from services.application.generation import (
-    AVATAR_JOB_LOCKS,
     AvatarGenerationError,
     avatar_response,
     get_avatar_job_lock,
@@ -89,6 +85,7 @@ from services.domains.companion import (
     submit_onboarding_field,
 )
 from services.domains.conversation import (
+    CLEARED_STATUS_SUBTYPE,
     IM_KIND,
     SYSTEM_PRESET_CATALOG,
     EditNotAllowedError,
@@ -108,7 +105,7 @@ from services.domains.conversation import (
     undo_conversation_to_message,
     validate_memory_scope,
 )
-from services.domains.media import prune_videos_in_range
+from services.domains.media import prune_videos_in_range, video_file_id_from_url
 from services.domains.memory import (
     backfill_memory_embeddings,
     create_memory,
@@ -125,7 +122,6 @@ from services.infrastructure.llm import (
     MissingLlmConfigError,
     UserLlmConfig,
     resolve_user_llm_config,
-    scale_temperature,
 )
 from services.infrastructure.tool_runtime import REGISTRY
 
@@ -217,8 +213,10 @@ _last_idle_expression_ts: dict[int, float] = {}
 SHOULD_ACT_ANTIDUP_SECONDS = 2.0
 _last_should_act_ts: dict[int, float] = {}
 
-# avatar regen 的 advisory lock：防止并发 regen 互相覆盖；xact 版本在 commit/rollback 时自动释放，无需显式解锁；与 user_id 组合后每个用户独占一个槽。
-_AVATAR_REGEN_ADVISORY_NAMESPACE = 0x4156_4156
+# 与 Conversation.cwd 列宽一致。
+_SESSION_CWD_MAX_CHARS = 1024
+# 试听文本交给付费语音合成，只需一句示例台词；与音色描述同上限。
+_VOICE_PREVIEW_TEXT_MAX_CHARS = MAX_VOICE_DESIGN_PROMPT_CHARS
 
 # 会话级锁串行化修改历史的操作（提交、清空、压缩、撤回）：防止双击 / 多窗口并发写出重复状态行或与在途回合交错。
 _conversation_locks: dict[str, asyncio.Lock] = {}
@@ -247,7 +245,6 @@ async def _terminate_user_gateway_locked(user_id: int, login_record_id: int | No
     discard_user(user_id)
     _last_idle_expression_ts.pop(user_id, None)
     _last_should_act_ts.pop(user_id, None)
-    AVATAR_JOB_LOCKS.pop(user_id, None)
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
     return sess is not None or websocket is not None
@@ -437,18 +434,7 @@ def _require_nonneg_int(params: dict[str, Any], key: str) -> int:
 
 def _is_session_video_url(file_url: str, session_id: str) -> bool:
     """视频附件只认本会话的后端上传 URL（相对路径或 public_base_url 前缀）；任意第三方绝对 URL 会让供应商替我们发任意请求，必须绑死前缀。"""
-    if len(file_url) > 2048:
-        return False
-    if file_url.startswith(("http://", "https://")):
-        base = SETTINGS.public_base_url.strip().rstrip("/")
-        if not base or not file_url.startswith(f"{base}/"):
-            return False
-    marker = f"/api/media/videos/{session_id}/"
-    pos = file_url.find(marker)
-    if pos == -1:
-        return False
-    file_id = file_url[pos + len(marker) :]
-    return bool(re.fullmatch(r"[A-Za-z0-9_-]{10,64}\.(mp4|mov)", file_id))
+    return len(file_url) <= 2048 and video_file_id_from_url(file_url, session_id) is not None
 
 
 def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[str, Any]] | None:
@@ -497,78 +483,33 @@ def _validate_attachments(params: dict[str, Any], session_id: str) -> list[dict[
     return cleaned
 
 
-# 与 status_* 平级的新 subtype 常量：不走 status_pill 路径，客户端须走专门 subtype 渲染分支。
-MESSAGE_SUBTYPE_STATUS_CLEARED: str = "status_cleared"
-
-
-async def _do_compress_history(
-    db: AsyncSession,
-    conv: Conversation,
-    user_id: int,
-    runtime: RuntimeSession,
-) -> dict[str, Any]:
-    """session.compress_context 与 /压缩 命令的共用实现；调用前必须已校验 in-flight 守卫。compressed=False 时返回体不含 messages/summary，True 时含 delivered messages 给前端 hydrate。"""
+async def _do_compress_history(conv: Conversation, user_id: int, runtime: RuntimeSession) -> dict[str, Any]:
+    """session.compress_context 与 /压缩 命令的共用实现；调用方持会话锁并已校验在途回合。compressed=False 时返回体不含 messages/summary，True 时含 delivered messages 给前端 hydrate；摘要失败抛 JSON-RPC 错误，不当作无需压缩。"""
     gateway = _USER_SESSIONS.get(user_id)
     client_context = gateway.session_client_context if gateway is not None else None
-    user_settings = await load_user_settings(db, user_id)
-    effective_settings = merge_session_settings(user_settings, runtime.settings, conv=conv)
-    req = ChatRequest(session_id=str(conv.id), message=ChatMessageRequest(content=""))
-    inputs = await build_turn_inputs(
-        db,
-        conv,
-        user_id,
-        req,
-        client_context,
-        effective_settings,
-        conversation_memory_scope(conv, user_id),
-    )
-
-    compression_u = parse_temperature(
-        effective_settings.get("chat.compression_temperature"),
-        CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
-    )
-    _, compress_info = await compress_history(
-        inputs.context,
-        client=inputs.client,
-        model=inputs.model_name,
-        temperature=scale_temperature(inputs.provider_name, compression_u),
-        language=inputs.language,
-    )
-
-    if compress_info is None:
+    try:
+        result = await compress_session_history(conv, user_id, runtime.settings, client_context)
+    except MissingLlmConfigError as exc:
+        raise JsonRpcError(JSONRPC_INTERNAL_ERROR, "模型服务暂未配置，请联系管理员") from exc
+    except CompressionFailedError as exc:
+        raise JsonRpcError(JSONRPC_INTERNAL_ERROR, "上下文压缩失败，请稍后重试") from exc
+    usage = {"total_tokens": result.total_tokens, "context_window": result.context_window}
+    if result.info is None:
         return {
             "session_id": runtime.session_id,
             "compressed": False,
             "reason": "历史消息较少，无需压缩（至少需要保留最近对话）",
-            "usage": {
-                "total_tokens": inputs.estimated_tokens,
-                "context_window": inputs.ctx_length,
-            },
+            "usage": usage,
         }
-
-    await persist_compression_checkpoint(db, conv.id, compress_info)
-
-    new_inputs = await build_turn_inputs(
-        db,
-        conv,
-        user_id,
-        req,
-        client_context,
-        effective_settings,
-        conversation_memory_scope(conv, user_id),
-    )
-    delivered = await build_session_messages(conv.id, db, include_id=True)
-
+    async with SESSION_LOCAL() as db:
+        delivered = await build_session_messages(conv.id, db)
     return {
         "session_id": runtime.session_id,
         "compressed": True,
-        "replaced_count": compress_info.replaced_count,
-        "summary": compress_info.summary,
+        "replaced_count": result.info.replaced_count,
+        "summary": result.info.summary,
         "messages": delivered,
-        "usage": {
-            "total_tokens": new_inputs.estimated_tokens,
-            "context_window": new_inputs.ctx_length,
-        },
+        "usage": usage,
     }
 
 
@@ -588,12 +529,12 @@ async def _do_clear_history(db: AsyncSession, conv: Conversation) -> dict[str, A
         conversation_id=conv.id,
         role="system",
         content=f"[🧹 会话已清空 — {total} 条消息]",
-        subtype=MESSAGE_SUBTYPE_STATUS_CLEARED,
+        subtype=CLEARED_STATUS_SUBTYPE,
     )
     db.add(marker)
     await db.commit()
 
-    delivered = await build_session_messages(conv.id, db, include_id=True)
+    delivered = await build_session_messages(conv.id, db)
     return {
         "session_id": str(conv.id),
         "cleared_count": total,
@@ -640,11 +581,15 @@ async def _slash_clear(ctx: SlashCommandContext) -> SlashCommandResult:
 async def _slash_compress(ctx: SlashCommandContext) -> SlashCommandResult:
     """``/压缩`` 命令 handler：复用 session.compress_context 的核心实现。"""
     _reject_im_session(ctx.runtime)
-    async with _conversation_lock(ctx.session_id), SESSION_LOCAL() as db:
+    async with _conversation_lock(ctx.session_id):
         if ctx.runtime.busy:
             raise JsonRpcError(JSONRPC_SLASH_BUSY, "请先停止当前生成再压缩会话")
-        conv = await _require_owned_conv(db, ctx.user_id, ctx.session_id)
-        result = await _do_compress_history(db, conv, ctx.user_id, ctx.runtime)
+        async with SESSION_LOCAL() as db:
+            conv = await _require_owned_conv(db, ctx.user_id, ctx.session_id)
+        try:
+            result = await _do_compress_history(conv, ctx.user_id, ctx.runtime)
+        except JsonRpcError as exc:
+            return SlashCommandResult(status="error", message=exc.message, hydrate=False)
     if not result["compressed"]:
         return SlashCommandResult(
             status="ok",
@@ -676,18 +621,23 @@ async def _slash_remember(ctx: SlashCommandContext) -> SlashCommandResult:
             hydrate=False,
         )
 
-    norm_content = content[: SETTINGS.memory_recall_max_content_chars]
+    max_chars = SETTINGS.memory_recall_max_content_chars
+    if len(content) > max_chars:
+        return SlashCommandResult(status="error", message=f"要记住的内容最多 {max_chars} 个字符，请精简后再试")
     context = normalize_recall_context("manual")
     tags = json.dumps(["user_preference"])
     importance = 1.5
 
     async with SESSION_LOCAL() as db:
-        scope = await resolve_memory_scope(db, ctx.user_id, ctx.session_id)
+        conv = await _require_owned_conv(db, ctx.user_id, ctx.session_id)
+        scope = conversation_memory_scope(conv, ctx.user_id)
+        if scope is None:
+            return SlashCommandResult(status="error", message="定时任务会话不保存长期记忆，无法记住内容")
         mem = await create_memory(
             db,
             scope,
             source=MemorySource("manual", session_id=int(ctx.session_id)),
-            content=norm_content,
+            content=content,
             context=context,
             tags=tags,
             importance=importance,
@@ -696,12 +646,12 @@ async def _slash_remember(ctx: SlashCommandContext) -> SlashCommandResult:
 
     await backfill_memory_embeddings(scope, [EmbeddingItem(mem.id, mem.content, mem.content_version)])
 
-    display_content = norm_content if len(norm_content) <= 60 else f"{norm_content[:57]}..."
+    display_content = content if len(content) <= 60 else f"{content[:57]}..."
     return SlashCommandResult(
         status="ok",
         message=f"已记住：{display_content}",
         hydrate=False,
-        payload={"memory_id": mem.id, "content": norm_content},
+        payload={"memory_id": mem.id, "content": content},
     )
 
 
@@ -709,11 +659,8 @@ async def _fetch_truncated_history(conv_id: int, db: AsyncSession) -> tuple[list
     head = await build_session_messages(
         conv_id,
         db,
-        limit=SESSION_HISTORY_TRUNCATE_THRESHOLD + SESSION_HISTORY_PRE_BUFFER,
-        desc=True,
-        include_id=True,
+        latest=SESSION_HISTORY_TRUNCATE_THRESHOLD + SESSION_HISTORY_PRE_BUFFER,
     )
-    head.reverse()
     truncated = len(head) > SESSION_HISTORY_TRUNCATE_THRESHOLD
     delivered = head[-SESSION_HISTORY_TRUNCATE_THRESHOLD:] if truncated else head
     next_cursor = str(delivered[0]["id"]) if truncated and delivered else None
@@ -797,7 +744,9 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("session.get_main", session_get_main)
 
     async def session_create(params: dict) -> dict:
-        cwd = params.get("cwd") or None
+        cwd = _optional_str(params, "cwd") or None
+        if cwd is not None and len(cwd) > _SESSION_CWD_MAX_CHARS:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"cwd must be at most {_SESSION_CWD_MAX_CHARS} chars")
         raw_preset = params.get("system_preset_id")
         preset_id: str = "developer"
         if raw_preset is not None and raw_preset != "":
@@ -903,11 +852,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                         select(Message.id).where(Message.id == after_id, Message.conversation_id == conv.id),
                     )
                 ).scalar_one_or_none() is not None
-                delivered = (
-                    await build_session_messages(conv.id, db, after_id=after_id, include_id=True)
-                    if anchor_exists
-                    else None
-                )
+                delivered = await build_session_messages(conv.id, db, after_id=after_id) if anchor_exists else None
             if delivered is not None:
                 logger.info(
                     "session.resume incremental",
@@ -979,11 +924,12 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     async def session_compress_context(params: dict) -> dict:
         runtime = _require_runtime(params)
         _reject_im_session(runtime)
-        async with _conversation_lock(runtime.session_id), SESSION_LOCAL() as db:
+        async with _conversation_lock(runtime.session_id):
             if runtime.busy:
                 raise JsonRpcError(JSONRPC_INVALID_PARAMS, "当前会话有正在生成的回复，请稍后再试")
-            conv = await _require_owned_conv(db, user_id, runtime.session_id)
-            return await _do_compress_history(db, conv, user_id, runtime)
+            async with SESSION_LOCAL() as db:
+                conv = await _require_owned_conv(db, user_id, runtime.session_id)
+            return await _do_compress_history(conv, user_id, runtime)
 
     dispatcher.register("session.compress_context", session_compress_context)
 
@@ -997,6 +943,11 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 data={"requires_confirmation": True},
             )
         source_message_id = _require_nonneg_int(params, "source_message_id")
+        # 锁与在途检查按会话主键的规范形式取键："0123" 等别名与 "123" 指向同一会话。
+        async with SESSION_LOCAL() as db:
+            owned = await Conversation.by_session_id(db, session_id, user_id=user_id)
+        if owned is not None:
+            session_id = str(owned.id)
         runtime = runtime_sessions.get(session_id)
         async with _conversation_lock(session_id), SESSION_LOCAL() as db:
             if runtime is not None and runtime.busy:
@@ -1147,6 +1098,12 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 t = _require_str(item, "text")
                 att = _validate_attachments(item, runtime.session_id)
                 validated_batch.append({"text": t, "attachments": att})
+            # 整批合为一个回合，附件上限按全批合计。
+            if sum(len(item["attachments"] or ()) for item in validated_batch) > SETTINGS.max_attachments_per_turn:
+                raise JsonRpcError(
+                    JSONRPC_INVALID_PARAMS,
+                    f"too many attachments (max {SETTINGS.max_attachments_per_turn})",
+                )
 
             last_item = validated_batch[-1]
             text = last_item["text"]
@@ -1189,7 +1146,7 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 except EditNotAllowedError as exc:
                     raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
                 persisted_message_id = replacement.id
-                edited_messages = await build_session_messages(runtime.conversation_id, db, include_id=True)
+                edited_messages = await build_session_messages(runtime.conversation_id, db)
 
         llm_config = session.llm_config
         client_context = session.session_client_context
@@ -1249,8 +1206,20 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         tools = params.get("tools", [])
         if not isinstance(tools, list):
             raise JsonRpcError(JSONRPC_INVALID_PARAMS, "tools must be a list")
-        REGISTRY.update_runner_tools(user_id, tools)
-        return ToolsSyncResult(count=len(tools)).model_dump()
+        if not all(isinstance(tool, dict) and isinstance(tool.get("name"), str) and tool["name"] for tool in tools):
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, "each tool must be an object with a non-empty name")
+        accepted: list[dict[str, Any]] = []
+        for tool in tools:
+            # 与服务端工具同名的本机工具永远派发不到（服务端优先），一并下发还会让模型看到重名工具。
+            if REGISTRY.get_location(user_id, tool["name"]) in ("backend", "memory"):
+                logger.warning(
+                    "runner tool shadows a backend tool; skipped",
+                    extra={"user_id": user_id, "tool_name": tool["name"]},
+                )
+                continue
+            accepted.append(tool)
+        REGISTRY.update_runner_tools(user_id, accepted)
+        return ToolsSyncResult(count=len(accepted)).model_dump()
 
     dispatcher.register("tools.sync", tools_sync)
 
@@ -1501,30 +1470,8 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         async def _run() -> None:
             async with lock:
                 try:
-                    regen_busy = False
-                    async with SESSION_LOCAL() as probe_db:
-                        try:
-                            got = (
-                                await probe_db.execute(
-                                    text("SELECT pg_try_advisory_xact_lock(:k)"),
-                                    {"k": _AVATAR_REGEN_ADVISORY_NAMESPACE + int(user_id)},
-                                )
-                            ).scalar()
-                            regen_busy = not bool(got)
-                        except Exception:
-                            # 探测失败不能当成未占用放行，否则并发生成会互相覆盖。
-                            logger.warning(
-                                "avatar regen advisory lock probe failed",
-                                extra={"user_id": user_id},
-                                exc_info=True,
-                            )
-                            regen_busy = True
-
-                    if regen_busy:
-                        payload = {"job_id": job_id, "error": "伙伴正在生成形象，请稍候"}
-                    else:
-                        asset = await regenerate_avatar(user_id=user_id, feedback=feedback, mode=mode)
-                        payload = {"job_id": job_id, "asset_url": avatar_response(asset).asset_url, "id": asset.id}
+                    asset = await regenerate_avatar(user_id=user_id, feedback=feedback, mode=mode)
+                    payload = {"job_id": job_id, "asset_url": avatar_response(asset).asset_url, "id": asset.id}
                 except AvatarGenerationError as exc:
                     logger.warning("avatar regenerate failed", extra={"user_id": user_id, "error": exc.internal})
                     payload = {"job_id": job_id, "error": str(exc)}
@@ -1564,11 +1511,15 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
         preview_text = params.get("preview_text")
         if not isinstance(preview_text, str):
             preview_text = ""
-        async with SESSION_LOCAL() as db:
-            try:
-                result = await design_voice(db, user_id, prompt, preview_text=preview_text)
-            except (ValueError, MissingLlmConfigError) as exc:
-                raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
+        if len(preview_text) > _VOICE_PREVIEW_TEXT_MAX_CHARS:
+            raise JsonRpcError(
+                JSONRPC_INVALID_PARAMS,
+                f"preview_text must be at most {_VOICE_PREVIEW_TEXT_MAX_CHARS} chars",
+            )
+        try:
+            result = await design_voice(user_id, prompt, preview_text=preview_text)
+        except (ValueError, MissingLlmConfigError) as exc:
+            raise JsonRpcError(JSONRPC_INVALID_PARAMS, str(exc)) from exc
         return {
             "provider": result.provider,
             "voice_id": result.voice_id,

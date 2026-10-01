@@ -57,9 +57,8 @@ def _unet_loader(unet_name: str) -> tuple[str, dict[str, Any]]:
     return "UNETLoader", {"unet_name": unet_name, "weight_dtype": "default"}
 
 
-def _has_transparency(image_b64: str) -> bool:
+def _has_transparency(data: bytes) -> bool:
     try:
-        data = base64.b64decode(image_b64, validate=True)
         with Image.open(BytesIO(data)) as image:
             if image.format != "PNG" or ("A" not in image.getbands() and "transparency" not in image.info):
                 return False
@@ -67,6 +66,10 @@ def _has_transparency(image_b64: str) -> bool:
             return low < 255 and high > 0
     except Exception:
         return False
+
+
+def _b64encode(data: bytes) -> str:
+    return base64.b64encode(data).decode("ascii")
 
 
 def _resolve_wh(req: ImageGenRequest) -> tuple[int, int]:
@@ -291,12 +294,13 @@ class LocalImageGenProvider(ImageGenProvider):
                         f"local image_gen view failed: {view.status_code}",
                         status_code=view.status_code,
                     )
-                b64 = base64.b64encode(view.content).decode("utf-8")
-                if require_transparency and not _has_transparency(b64):
+                # 解码检查与编码都是整图字节运算，放到工作线程避免阻塞事件循环
+                if require_transparency and not await asyncio.to_thread(_has_transparency, view.content):
                     raise ProviderError(
                         "local image_gen returned a PNG without transparent pixels",
                         status_code=400,
                     )
+                b64 = await asyncio.to_thread(_b64encode, view.content)
                 assets.append(ImageAsset(b64=b64, mime="image/png"))
         return assets
 
@@ -351,4 +355,4 @@ class LocalImageGenProvider(ImageGenProvider):
             )
             assets.extend((await self._run_job(graph, require_transparency=require_transparency))[:1])
 
-        return ImageGenResult(images=assets, model=self.config.model, raw={"jobs": count})
+        return ImageGenResult(images=assets)

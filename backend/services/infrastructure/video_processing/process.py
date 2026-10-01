@@ -1,6 +1,5 @@
 """角色视频片段处理：切分重置时间轴 → 统一画布与脚底锚点 → 透明 VP9 编码 → 封面与命中遮罩。交付格式固定 WebM/VP9+Alpha（yuva420p）、无音轨；处理参数由代码构造，外部输入只提供路径与受校验的整数。"""
 
-import hashlib
 import math
 from dataclasses import dataclass
 from io import BytesIO
@@ -10,12 +9,13 @@ from components import get_logger
 from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS
 from PIL import Image
 
+from services.infrastructure.assets import compute_file_sha256
+
 from .ffmpeg import (
     VideoProbe,
     VideoProcessError,
-    _binary,
-    _run,
     alpha_input_args,
+    ffmpeg_stdout,
     probe_alpha_side_data,
     probe_video,
     run_ffmpeg,
@@ -63,14 +63,6 @@ class ClipProcessResult:
     duration_ms: int
     width: int
     height: int
-
-
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
 
 
 def _native_canvas_size(width: int, height: int, canvas_w: int, canvas_h: int) -> tuple[int, int]:
@@ -123,7 +115,7 @@ def prepare_action_clip(
     if start is not None and end is not None and end - start < 0.2:
         raise VideoProcessError("动作区间过短，请校准起止时间")
     if (end if end is not None else probe.duration_seconds) - (start or 0.0) > ABSOLUTE_MAX_DURATION_SECONDS:
-        raise VideoProcessError("单动作最长 15 秒，请校准起止时间")
+        raise VideoProcessError(f"单动作最长 {ABSOLUTE_MAX_DURATION_SECONDS:g} 秒，请校准起止时间")
 
     args: list[str] = []
     # 输入侧 seek 后时间轴归零，区间终点必须换算成输出时长（-to 会按归零后的时间轴解释）。
@@ -143,17 +135,15 @@ def prepare_action_clip(
 def _verify_output(dst: Path) -> ClipProcessResult:
     out = probe_video(dst)
     if out.duration_seconds > ABSOLUTE_MAX_DURATION_SECONDS:
-        raise VideoProcessError("动作产物超过 15 秒")
+        raise VideoProcessError(f"动作产物超过 {ABSOLUTE_MAX_DURATION_SECONDS:g} 秒")
     if out.codec_name != "vp9":
         raise VideoProcessError("视频编码产物异常", internal=f"codec={out.codec_name}")
     if not out.has_alpha or not probe_alpha_side_data(dst):
         # 容器声明单独不能证明真实 alpha。
         raise VideoProcessError("视频缺少透明通道，无法作为角色片段使用", internal=f"pix_fmt={out.pix_fmt}")
-    decoded = _run(
+    invalid_alpha = "透明片段缺少有效前景或透明背景"
+    alpha = ffmpeg_stdout(
         [
-            _binary("ffmpeg"),
-            "-v",
-            "error",
             *alpha_input_args(out),
             "-i",
             str(dst),
@@ -165,11 +155,12 @@ def _verify_output(dst: Path) -> ClipProcessResult:
             "gray",
             "-",
         ],
+        failure_message=invalid_alpha,
     )
-    if decoded.returncode or not decoded.stdout or min(decoded.stdout) > 8 or max(decoded.stdout) < 240:
-        raise VideoProcessError("透明片段缺少有效前景或透明背景")
+    if not alpha or min(alpha) > 8 or max(alpha) < 240:
+        raise VideoProcessError(invalid_alpha)
     return ClipProcessResult(
-        sha256=_sha256(dst),
+        sha256=compute_file_sha256(dst),
         frames=max(1, round(out.duration_seconds * out.fps)),
         duration_ms=round(out.duration_seconds * 1000),
         width=out.width,
@@ -180,9 +171,6 @@ def _verify_output(dst: Path) -> ClipProcessResult:
 def _frame_webp(src: Path, probe: VideoProbe, *, canvas_w: int, canvas_h: int, at_seconds: float) -> bytes:
     """解码指定时刻的 RGBA 帧，由 Pillow 编码为无损透明 WebP。"""
     args = [
-        _binary("ffmpeg"),
-        "-v",
-        "error",
         "-ss",
         f"{max(0.0, at_seconds):.3f}",
         *alpha_input_args(probe),
@@ -199,11 +187,11 @@ def _frame_webp(src: Path, probe: VideoProbe, *, canvas_w: int, canvas_h: int, a
         "rgba",
         "-",
     ]
-    proc = _run(args)
-    if proc.returncode or len(proc.stdout) != canvas_w * canvas_h * 4:
-        raise VideoProcessError("封面解码失败", internal=proc.stderr.decode(errors="replace")[:2000])
+    frame = ffmpeg_stdout(args, failure_message="封面解码失败")
+    if len(frame) != canvas_w * canvas_h * 4:
+        raise VideoProcessError("封面解码失败", internal=f"unexpected frame size {len(frame)}")
     output = BytesIO()
-    Image.frombytes("RGBA", (canvas_w, canvas_h), proc.stdout).save(output, format="WEBP", lossless=True)
+    Image.frombytes("RGBA", (canvas_w, canvas_h), frame).save(output, format="WEBP", lossless=True)
     return output.getvalue()
 
 
@@ -248,10 +236,7 @@ def build_hitmask(src: Path, *, canvas_w: int, canvas_h: int) -> list[list[int]]
         "rgba",
         "-",
     ]
-    proc = _run([_binary("ffmpeg"), "-v", "error", *args])
-    if proc.returncode != 0:
-        raise VideoProcessError("命中遮罩生成失败", internal=proc.stderr.decode("utf-8", "replace")[:2000])
-    raw = proc.stdout
+    raw = ffmpeg_stdout(args, failure_message="命中遮罩生成失败")
     frame_bytes = HITMASK_GRID_W * HITMASK_GRID_H * 4
     if len(raw) < frame_bytes:
         raise VideoProcessError("命中遮罩生成失败", internal=f"short output {len(raw)}")

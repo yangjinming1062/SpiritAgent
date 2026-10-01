@@ -4,7 +4,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from components import get_logger, tool_error
+from components import get_logger, redact_sensitive_text, tool_error
+from sqlalchemy.exc import SQLAlchemyError
 
 from services.contracts import DelegateAction
 
@@ -121,9 +122,13 @@ class ToolsRegistry:
             result = tool.func(**{**args, **context})
             if inspect.isawaitable(result):
                 result = await result
+        except SQLAlchemyError:
+            # 语句与参数只进服务端日志，不作为工具结果交给模型
+            logger.exception("Database error executing backend tool", extra={"tool_name": name})
+            return tool_error(f"Tool {name} failed because of a temporary storage error.")
         except Exception as e:
-            logger.error("Error executing backend tool", extra={"tool_name": name, "error": str(e)})
-            return tool_error(str(e))
+            logger.exception("Error executing backend tool", extra={"tool_name": name})
+            return tool_error(redact_sensitive_text(str(e)))
 
         # DelegateAction 是控制动作不是结果，原样交回调用方（对话执行层）接管
         return result if isinstance(result, (str, DelegateAction)) else json.dumps(result, ensure_ascii=False)

@@ -54,4 +54,4 @@ class GeminiImageGenProvider(ImageGenProvider):
         if not assets:
             raise RuntimeError(f"Gemini image_gen returned no images: {body}")
 
-        return ImageGenResult(images=assets, model=self.config.model, raw=body)
+        return ImageGenResult(images=assets)

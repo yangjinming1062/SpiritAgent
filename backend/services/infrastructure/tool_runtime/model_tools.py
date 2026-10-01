@@ -6,8 +6,8 @@ from components import get_logger, safe_json_loads
 logger = get_logger(__name__)
 
 
-def coerce_tool_args(tool_name: str, args: dict[str, Any], schema: dict | None) -> dict[str, Any]:
-    if not args or not isinstance(args, dict) or not schema:
+def coerce_tool_args(tool_name: str, args: dict[str, Any], schema: dict[str, Any] | None) -> dict[str, Any]:
+    if not args or not schema:
         return args
 
     properties = (schema.get("parameters") or {}).get("properties")
@@ -45,7 +45,8 @@ def coerce_tool_args(tool_name: str, args: dict[str, Any], schema: dict | None) 
     return args
 
 
-def _coerce_value(value: str, expected_type, schema: dict | None = None) -> Any:
+def _coerce_value(value: str, expected_type: str | list[str] | None, *, schema: dict[str, Any]) -> Any:
+    # 允许 null 的字段在此统一处理字面量 "null"，下方类型分支不必再判断
     if _schema_allows_null(schema) and value.strip().lower() == "null":
         return None
 
@@ -65,15 +66,11 @@ def _coerce_value(value: str, expected_type, schema: dict | None = None) -> Any:
             return _coerce_json(value, list)
         case "object":
             return _coerce_json(value, dict)
-        case "null" if value.strip().lower() == "null":
-            return None
         case _:
             return value
 
 
-def _schema_allows_null(schema: dict | None) -> bool:
-    if not isinstance(schema, dict):
-        return False
+def _schema_allows_null(schema: dict[str, Any]) -> bool:
     schema_type = schema.get("type")
     if schema_type == "null":
         return True

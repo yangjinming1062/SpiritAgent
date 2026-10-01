@@ -28,17 +28,24 @@ def _parse_toml_dict(content: dict) -> dict[str, Any]:
     return flat
 
 
+_EXAMPLE_CONFIG_PATH = BACKEND_DIR / "config.toml.example"
+# 示例文件随仓库公开：这些项仍为空或示例值时等于公开密钥，web 进程拒绝启动。
+_SECRET_SETTING_KEYS = ("jwt_secret_key", "companion_asset_signing_key", "admin_password")
+
+
+def _load_toml_file(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    with open(path, "rb") as f:
+        return _parse_toml_dict(tomllib.load(f))
+
+
 class TomlConfigSource(PydanticBaseSettingsSource):
     def get_field_value(self, field: Any, field_name: str) -> tuple[Any, str, bool]:
         return None, field_name, False  # 值由 __call__ 整份扁平字典返回。
 
     def __call__(self) -> dict[str, Any]:
-        merged: dict[str, Any] = {}
-        for path in (BACKEND_DIR / "config.toml.example", BACKEND_DIR / "config.toml"):
-            if path.exists():
-                with open(path, "rb") as f:
-                    merged.update(_parse_toml_dict(tomllib.load(f)))
-        return merged
+        return _load_toml_file(_EXAMPLE_CONFIG_PATH) | _load_toml_file(BACKEND_DIR / "config.toml")
 
 
 class Settings(BaseSettings):
@@ -253,3 +260,15 @@ class Settings(BaseSettings):
 
 
 SETTINGS = Settings()
+
+
+def insecure_secret_settings() -> list[str]:
+    """返回仍为空或仍是示例值的密钥配置项（环境变量名）。"""
+    example = _load_toml_file(_EXAMPLE_CONFIG_PATH)
+    return [
+        key.upper()
+        for key in _SECRET_SETTING_KEYS
+        if not (value := getattr(SETTINGS, key))
+        or value == example.get(key)
+        or value == Settings.model_fields[key].default
+    ]

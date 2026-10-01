@@ -60,8 +60,8 @@ class SceneStateResponse(BaseModel):
 class SceneGenerateRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    notes: str | None = None
-    outfit_description: str | None = None
+    notes: str | None = Field(default=None, max_length=500)
+    outfit_description: str | None = Field(default=None, max_length=500)
     image: str | None = Field(default=None, min_length=1, max_length=8 * 1024 * 1024)
     # 客户端声明的类型只做入口约束；场景服务按图片实际格式编码。
     content_type: Literal["image/png", "image/jpeg", "image/webp", "image/gif"] = "image/png"
@@ -70,8 +70,8 @@ class SceneGenerateRequest(BaseModel):
 class ScenePromptRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    notes: str | None = None
-    outfit_description: str | None = None
+    notes: str | None = Field(default=None, max_length=500)
+    outfit_description: str | None = Field(default=None, max_length=500)
 
 
 class SceneActivateRequest(BaseModel):

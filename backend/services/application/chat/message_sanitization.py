@@ -6,8 +6,12 @@ from components import get_logger, is_time_context_text
 
 logger = get_logger(__name__)
 
-# Responses API 输入媒体 part 类型 → 老轮次占位文本；``truncate_responses_context`` 窗口外替换使用。
+# Responses API 输入媒体 part 类型 → 占位文本；较早的历史条目与格式恢复请求不携带媒体。
 _MEDIA_PART_PLACEHOLDERS = {"input_image": "[screenshot]", "input_video": "[video]"}
+# 确定性窗口：保留的最近输入项数、其中仍携带媒体的最近项数、历史条目字符上限。
+_MAX_RECENT_ITEMS = 40
+_MEDIA_RECENT_ITEMS = 10
+_MAX_CHARS_PER_ITEM = 15000
 
 
 def _escape_invalid_chars_in_json_strings(raw: str) -> str:
@@ -128,15 +132,22 @@ def _truncate_response_text(value: Any, max_chars: int) -> Any:
     return value
 
 
+def replace_media_parts(parts: list) -> list:
+    return [
+        {"type": "input_text", "text": _MEDIA_PART_PLACEHOLDERS[part["type"]]}
+        if isinstance(part, dict) and part.get("type") in _MEDIA_PART_PLACEHOLDERS
+        else part
+        for part in parts
+    ]
+
+
 def _normalize_older_response_item(item: dict, *, replace_images: bool, max_chars: int) -> dict:
     normalized = dict(item)
-    if replace_images and isinstance(normalized.get("content"), list):
-        normalized["content"] = [
-            {"type": "input_text", "text": _MEDIA_PART_PLACEHOLDERS[part["type"]]}
-            if isinstance(part, dict) and part.get("type") in _MEDIA_PART_PLACEHOLDERS
-            else part
-            for part in normalized["content"]
-        ]
+    if replace_images:
+        # 消息的媒体在 content，多模态工具结果的媒体在 function_call_output 的 output。
+        for key in ("content", "output"):
+            if isinstance(normalized.get(key), list):
+                normalized[key] = replace_media_parts(normalized[key])
     return _truncate_response_text(normalized, max_chars)
 
 
@@ -163,15 +174,12 @@ def _trailing_user_start(items: list[dict[str, Any]]) -> int:
 
 def truncate_responses_context(
     context: dict[str, Any],
-    max_recent_items: int = 40,
-    normalize_older_than: int = 10,
-    max_chars_per_item: int = 15000,
     current_max_chars: int = 0,
     current_message_id: int | None = None,
 ) -> dict[str, Any]:
     """deterministic Responses input-window fallback; instructions are never dropped。``current_max_chars`` 是本轮用户输入的字符上限（不低于历史条目上限），由调用方按上下文窗口给出。"""
     items = context["input"]
-    keep_start = max(0, len(items) - max_recent_items)
+    keep_start = max(0, len(items) - _MAX_RECENT_ITEMS)
     call_positions = {
         item["call_id"]: index
         for index, item in enumerate(items)
@@ -193,14 +201,14 @@ def truncate_responses_context(
         for index, source_id in enumerate(context.get("source_message_ids", []))
         if current_message_id is not None and source_id == current_message_id
     }
-    current_chars = max(current_max_chars, max_chars_per_item)
+    current_chars = max(current_max_chars, _MAX_CHARS_PER_ITEM)
     kept = [
         _normalize_older_response_item(
             item,
-            replace_images=index < len(tail) - normalize_older_than and keep_start + index not in current_indices,
+            replace_images=index < len(tail) - _MEDIA_RECENT_ITEMS and keep_start + index not in current_indices,
             max_chars=current_chars
             if keep_start + index >= current_start or keep_start + index in current_indices
-            else max_chars_per_item,
+            else _MAX_CHARS_PER_ITEM,
         )
         for index, item in enumerate(tail)
     ]
@@ -222,7 +230,7 @@ def truncate_responses_context(
                 _normalize_older_response_item(
                     anchor,
                     replace_images=anchor_index not in current_indices,
-                    max_chars=current_chars if anchor_index in current_indices else max_chars_per_item,
+                    max_chars=current_chars if anchor_index in current_indices else _MAX_CHARS_PER_ITEM,
                 ),
                 marker,
             ]

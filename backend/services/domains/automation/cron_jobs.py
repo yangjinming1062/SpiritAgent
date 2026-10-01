@@ -4,7 +4,7 @@ from typing import Any
 
 from components import SETTINGS, get_logger, session_scope, utc_now
 from croniter import croniter
-from modules.auth import User
+from modules.auth import lock_user_row
 from modules.conversation import Conversation
 from modules.scheduler import CronJob
 from sqlalchemy import func, select, update
@@ -67,10 +67,6 @@ def _refresh_schedule(job: CronJob) -> None:
         job.next_run_at = next_run
 
 
-async def _lock_user_cron_jobs(db: AsyncSession, user_id: int) -> None:
-    await db.execute(select(User.id).where(User.id == user_id).with_for_update())
-
-
 async def _get_scoped_job(db: AsyncSession, scope: MemoryScope, job_id: int) -> CronJob | None:
     return await db.scalar(
         select(CronJob).where(
@@ -118,7 +114,7 @@ async def create_job(
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:
-        await _lock_user_cron_jobs(db, user_id)
+        await lock_user_row(db, user_id)
         job = CronJob(
             user_id=user_id,
             system_preset_id=scope.system_preset_id,
@@ -171,7 +167,7 @@ async def update_job(
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:
-        await _lock_user_cron_jobs(db, user_id)
+        await lock_user_row(db, user_id)
         job = await _get_scoped_job(db, scope, job_id)
         if not job:
             return None
@@ -198,7 +194,7 @@ async def remove_job(scope: MemoryScope, job_id: int) -> bool:
     validate_memory_scope(scope)
     user_id = scope.user_id
     async with session_scope() as db:
-        await _lock_user_cron_jobs(db, user_id)
+        await lock_user_row(db, user_id)
         job = await _get_scoped_job(db, scope, job_id)
         if not job:
             return False

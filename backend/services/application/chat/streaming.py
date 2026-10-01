@@ -38,6 +38,7 @@ from services.infrastructure.llm import (
 
 from .bubble import BubbleEvent, BubbleSplitter
 from .chat_emitter import Emitter
+from .message_sanitization import replace_media_parts
 from .reply_delivery import (
     companion_reply_schema,
     fallback_companion_voice_reply,
@@ -124,12 +125,23 @@ def _reasoning_item_text(item: Any) -> str:
     return "\n\n".join(texts)
 
 
+def _tool_history_entry(item: dict[str, Any]) -> dict[str, Any]:
+    # 工具帧改写为文字资料，多模态结果的媒体只留占位，不把 data URL 当文字写入。
+    output = item.get("output")
+    return {**item, "output": replace_media_parts(output)} if isinstance(output, list) else item
+
+
 def _reply_repair_history(input_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """保留历史顺序与工具结果事实，恢复请求不再携带原生工具续轮帧或中间推理。"""
     return [
         {
             "role": "user",
-            "content": [{"type": "input_text", "text": json.dumps({"tool_history": item}, ensure_ascii=False)}],
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": json.dumps({"tool_history": _tool_history_entry(item)}, ensure_ascii=False),
+                },
+            ],
         }
         if item.get("type") in {"function_call", "function_call_output"}
         else item
@@ -158,6 +170,7 @@ async def _generate_llm_response(
     allow_silence: bool,
     reply_format_error: _InvalidCompanionReplyError | None,
     media_turn: MediaTurnState,
+    pace_bubbles: bool,
     final_reply_only: bool = False,
     allow_voice_fallback: bool = False,
 ) -> _LLMTurnResult:
@@ -260,7 +273,7 @@ async def _generate_llm_response(
         else None,
     )
 
-    # 仅记录送往 LLM 的多模态 part 形状：Vertex beta API 400 ``INVALID_ARGUMENT`` 多为代理未能转译 ``inline_data``，通过日志中的实际 part 列表可定位问题而无需抓包。
+    # 只记录含图片的输入项数量：Vertex beta API 400 ``INVALID_ARGUMENT`` 多为代理未能转译 ``inline_data``，据此可确认请求是否带图而无需抓包。
     image_items = [
         item
         for item in context["input"]
@@ -329,8 +342,9 @@ async def _generate_llm_response(
                 turn_parts.append(segment)
                 bubble_parts.clear()
                 await emitter.send_json({"type": "bubble.break"})
-                # 连续气泡间留出停顿，完整响应也沿用同一交付节奏。
-                await asyncio.sleep(random.uniform(BUBBLE_BREAK_MIN_SECONDS, BUBBLE_BREAK_MAX_SECONDS))
+                # 连续气泡间留出停顿，完整响应也沿用同一交付节奏；无头回合无人观看，不停顿。
+                if pace_bubbles:
+                    await asyncio.sleep(random.uniform(BUBBLE_BREAK_MIN_SECONDS, BUBBLE_BREAK_MAX_SECONDS))
             elif event.text:
                 bubble_parts.append(event.text)
                 await _send_text(event.text)

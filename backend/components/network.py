@@ -25,12 +25,17 @@ BLOCKED_HOSTNAMES = frozenset(
     },
 )
 _BLOCKED_CGNAT = ipaddress.ip_network("100.64.0.0/10")
-_BLOCKED_ALIBABA_META = ipaddress.ip_address("100.100.100.200")
-_BLOCKED_AWS_META_IPV6 = ipaddress.ip_address("fd00:ec2::254")
+_BLOCKED_CLOUD_META = frozenset(
+    {
+        ipaddress.ip_address("169.254.169.254"),
+        ipaddress.ip_address("100.100.100.200"),  # 阿里云
+        ipaddress.ip_address("fd00:ec2::254"),  # AWS IPv6
+    },
+)
 
 
 def _ip_in_blocked(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
-    return ip in (_BLOCKED_ALIBABA_META, _BLOCKED_AWS_META_IPV6) or ip in _BLOCKED_CGNAT
+    return ip in _BLOCKED_CLOUD_META or ip in _BLOCKED_CGNAT
 
 
 def _ssrf_allowed_networks() -> list[ipaddress.IPv4Network | ipaddress.IPv6Network]:
@@ -53,6 +58,9 @@ def _evaluate_ip(ip_str: str) -> tuple[bool, str]:
         ip = ipaddress.ip_address(ip_str)
     except ValueError:
         return False, f"unparseable address {ip_str!r}"
+    # IPv4 映射的 IPv6（::ffff:a.b.c.d）实际连到对应 IPv4，按 IPv4 规则判定
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
 
     if _ip_in_blocked(ip):
         return False, f"refusing to connect to {ip_str} (cloud-metadata / CGNAT)"

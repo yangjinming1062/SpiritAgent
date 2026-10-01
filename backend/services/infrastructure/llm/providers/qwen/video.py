@@ -1,8 +1,12 @@
 from typing import ClassVar
 
-from ..base import ProviderConfig, VideoAsset, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
+from components import get_logger
+
+from ..base import ProviderConfig, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
 from ..http import get_http
 from ._errors import raise_for_qwen_response
+
+logger = get_logger(__name__)
 
 # 工具层枚举（512P/768P/1080P/2K）与 wan3.0 原生档位（480P/720P/1080P）对齐；大小写不敏感。
 _RESOLUTION_TO_API: dict[str, str] = {
@@ -66,7 +70,7 @@ class QwenVideoGenProvider(VideoGenProvider):
         if req.last_frame_image:
             media.append({"type": "last_frame", "url": req.last_frame_image})
 
-        model = req.model or self.config.model
+        model = self.config.model
         payload = {
             "model": model,
             "input": {"prompt": req.prompt, **({"media": media} if media else {})},
@@ -88,23 +92,25 @@ class QwenVideoGenProvider(VideoGenProvider):
         task_id = output.get("task_id") or ""
         if not task_id:
             raise RuntimeError(f"qwen video_gen returned no task_id: {body}")
-        return VideoJobStatus(task_id=task_id, status="queued", raw=body)
+        return VideoJobStatus(task_id=task_id, status="queued")
 
     async def poll(self, task_id: str) -> VideoJobStatus:
         resp = await self._client.get(f"/tasks/{task_id}")
         body = raise_for_qwen_response(resp)
         output = body.get("output") or {}
         raw_status = str(output.get("task_status") or "").upper()
-        norm = _STATUS_MAP.get(raw_status, "processing")
+        norm = _STATUS_MAP.get(raw_status)
+        if norm is None:
+            # 未知状态继续轮询，原值写入日志便于运维排查。
+            logger.warning(
+                "unknown video task status",
+                extra={"provider": "qwen", "task_id": task_id, "status": raw_status},
+            )
+            norm = "processing"
         download_url = output.get("video_url") if norm == "succeeded" else None
         return VideoJobStatus(
             task_id=task_id,
             status=norm,
-            file_id=None,
             download_url=download_url,
             error=output.get("message") or (body.get("message") or None),
-            raw=body,
         )
-
-    async def fetch(self, file_id: str) -> VideoAsset:
-        raise RuntimeError("qwen video_gen returns the download URL via poll(); fetch() is not used")

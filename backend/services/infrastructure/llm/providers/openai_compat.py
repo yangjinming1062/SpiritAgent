@@ -1,7 +1,5 @@
 import base64
 
-import httpx
-
 from .base import EmbeddingProvider, ProviderConfig, ProviderError, STTResult
 from .http import get_async_client
 
@@ -13,31 +11,23 @@ class OpenAIEmbeddingProvider(EmbeddingProvider):
         super().__init__(config)
         self._client = get_async_client(config.api_key, config.base_url)
 
+    def _request_dimensions(self) -> int | None:
+        """需要供应商按指定宽度输出时返回维度；默认使用模型原生宽度。"""
+        return None
+
     async def embed(self, texts: list[str], *, purpose: str = "db") -> list[list[float]]:
         if not texts:
             return []
-        try:
-            res = await self._client.embeddings.create(input=texts, model=self.config.model)
-            items = sorted(res.data, key=lambda item: item.index)
-            if [item.index for item in items] != list(range(len(texts))):
-                raise ValueError("embedding response indices do not match the input batch")
-            return [item.embedding for item in items]
-        except Exception as exc:
-            # 保留 status_code + 结构化 body，供错误分类读取错误码；只重抛消息会退化为文本匹配。
-            body = getattr(exc, "body", None)
-            if body is None:
-                response = getattr(exc, "response", None)
-                if isinstance(response, httpx.Response):
-                    try:
-                        json_body = response.json()
-                        body = json_body if isinstance(json_body, dict) else None
-                    except Exception:
-                        body = None
-            raise ProviderError(
-                f"{self.provider_name} embedding error: {exc}",
-                status_code=getattr(exc, "status_code", None),
-                body=body,
-            ) from exc
+        dimensions = self._request_dimensions()
+        res = await self._client.embeddings.create(
+            input=texts,
+            model=self.config.model,
+            **({"dimensions": dimensions} if dimensions is not None else {}),
+        )
+        items = sorted(res.data, key=lambda item: item.index)
+        if [item.index for item in items] != list(range(len(texts))):
+            raise ProviderError("embedding response indices do not match the input batch")
+        return [item.embedding for item in items]
 
 
 async def transcribe_input_audio(
@@ -65,4 +55,4 @@ async def transcribe_input_audio(
     if choice is not None and choice.finish_reason != "stop":
         raise RuntimeError(f"{config.provider_name} transcription did not complete: {choice.finish_reason}")
     text = (choice.message.content or "") if choice and choice.message else ""
-    return STTResult(text=text.strip(), raw=response)
+    return STTResult(text=text.strip())

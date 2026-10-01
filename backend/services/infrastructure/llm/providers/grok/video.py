@@ -1,8 +1,12 @@
 from typing import ClassVar
 
-from ..base import ProviderConfig, VideoAsset, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
+from components import get_logger
+
+from ..base import ProviderConfig, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
 from ..http import get_http
 from ._errors import raise_for_grok_response
+
+logger = get_logger(__name__)
 
 # xAI 生命周期：queued / processing / done / failed / expired；expired 与 failed 均为终态失败（worker 可停止轮询），统一映射为内部 "failed"，避免 worker 多分支。
 _STATUS_MAP: dict[str, VideoJobState] = {
@@ -57,7 +61,7 @@ class GrokVideoGenProvider(VideoGenProvider):
         return "1080p" if (self.config.model or self.DEFAULT_MODEL) == "grok-imagine-video-1.5" else "720p"
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
-        model = req.model or self.config.model
+        model = self.config.model
 
         if len(req.prompt) > _MAX_PROMPT_CHARS:
             raise ValueError(f"prompt exceeds xAI limit ({_MAX_PROMPT_CHARS} chars)")
@@ -88,7 +92,7 @@ class GrokVideoGenProvider(VideoGenProvider):
         request_id = body.get("request_id", "")
         if not request_id:
             raise RuntimeError(f"grok video_generation returned no request_id: {body}")
-        return VideoJobStatus(task_id=request_id, status="queued", raw=body)
+        return VideoJobStatus(task_id=request_id, status="queued")
 
     async def poll(self, task_id: str) -> VideoJobStatus:
         resp = await self._client.get(f"/videos/{task_id}")
@@ -97,13 +101,12 @@ class GrokVideoGenProvider(VideoGenProvider):
         raw_status = str(body.get("status", "")).lower()
         norm = _STATUS_MAP.get(raw_status)
         if norm is None:
-            # 未知状态继续轮询，但把原值写入日志便于运维排查。
-            return VideoJobStatus(
-                task_id=task_id,
-                status="processing",
-                error=f"unknown grok video status: {raw_status!r}",
-                raw=body,
+            # 未知状态继续轮询，原值写入日志便于运维排查。
+            logger.warning(
+                "unknown video task status",
+                extra={"provider": "grok", "task_id": task_id, "status": raw_status},
             )
+            return VideoJobStatus(task_id=task_id, status="processing")
 
         video = body.get("video") or {}
         download_url = video.get("url") if norm == "succeeded" else None
@@ -118,8 +121,4 @@ class GrokVideoGenProvider(VideoGenProvider):
         else:
             error = f"provider returned non-standard error: {error_raw!r}"
 
-        return VideoJobStatus(task_id=task_id, status=norm, download_url=download_url, error=error, raw=body)
-
-    async def fetch(self, file_id: str) -> VideoAsset:
-        # xAI 下载 URL 由 poll 内联返回；fetch 不可达，仅为满足 ABC 保留。
-        raise RuntimeError("grok video returns the download URL via poll(); fetch() is not used")
+        return VideoJobStatus(task_id=task_id, status=norm, download_url=download_url, error=error)

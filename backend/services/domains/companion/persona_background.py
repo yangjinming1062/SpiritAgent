@@ -16,7 +16,7 @@ logger = get_logger(__name__)
 
 _BG = TaskBag("companion.persona_background")
 
-# 单次尝试超时刻意远小于 call_with_retry 的 300s 默认值：后台任务卡住不能长期占住 worker
+# 单次尝试超时刻意远小于 call_with_retry 的总预算（llm_request_timeout_seconds，默认 3000s）：后台任务卡住不能长期占住 worker
 _BG_TASK_PER_ATTEMPT_TIMEOUT = 30.0
 _BG_TASK_MAX_ATTEMPTS = 3
 _BG_TASK_BASE_DELAY = 5.0
@@ -51,11 +51,11 @@ async def _refresh_personality_tags(persona_id: int, user_id: int) -> None:
                 min(_BG_TASK_MAX_DELAY, _BG_TASK_BASE_DELAY * 2 ** (attempt - 1)) * (0.5 + 0.5 * random.random()),
             )
     logger.warning(
-        "personality tag refresh failed after %d attempts for persona_id=%s user_id=%s: %s",
+        "personality tag refresh failed after %d attempts for persona_id=%s user_id=%s",
         _BG_TASK_MAX_ATTEMPTS,
         persona_id,
         user_id,
-        last_exc,
+        exc_info=last_exc,
     )
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 import numpy as np
 from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS
 
-from .ffmpeg import VideoProbe, VideoProcessError, _binary, _run, alpha_input_args, probe_video
+from .ffmpeg import VideoProbe, VideoProcessError, alpha_input_args, ffmpeg_stdout, probe_video
 from .limits import SOURCE_DURATION_TOLERANCE_SECONDS
 
 
@@ -19,11 +19,8 @@ class ClipWindow:
 def _decode_alpha_frames(src: Path, probe: VideoProbe, width: int = 96) -> np.ndarray:
     """解码为 24fps 小尺寸 RGBA 帧数组；不足一秒时拒绝。"""
     height = max(2, round(probe.height * width / probe.width))
-    proc = _run(
+    frames = ffmpeg_stdout(
         [
-            _binary("ffmpeg"),
-            "-v",
-            "error",
             *alpha_input_args(probe),
             "-i",
             str(src),
@@ -33,10 +30,9 @@ def _decode_alpha_frames(src: Path, probe: VideoProbe, width: int = 96) -> np.nd
             "rawvideo",
             "-",
         ],
+        failure_message="透明片段验收解码失败",
     )
-    if proc.returncode:
-        raise VideoProcessError("透明片段验收解码失败", internal=proc.stderr.decode(errors="replace")[:1000])
-    raw = np.frombuffer(proc.stdout, dtype=np.uint8)
+    raw = np.frombuffer(frames, dtype=np.uint8)
     size = width * height * 4
     if len(raw) % size or len(raw) // size < 24:
         raise VideoProcessError("可用动作不足一秒，请重新生成此动作")

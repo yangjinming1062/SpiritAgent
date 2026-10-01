@@ -2,7 +2,7 @@ import json
 from datetime import datetime
 from typing import Any
 
-from components import session_scope, tool_error, utc_now
+from components import get_logger, session_scope, tool_error, utc_now
 
 from services.contracts import MemoryScope, MemorySource
 from services.domains.memory import (
@@ -14,6 +14,8 @@ from services.domains.memory import (
     retrieve_hybrid_memories,
 )
 from services.infrastructure.llm import resolve_user_llm_config
+
+logger = get_logger(__name__)
 
 
 class NativeMemory:
@@ -77,4 +79,5 @@ class NativeMemory:
                 return json.dumps({"memories": rows}, default=str, ensure_ascii=False)
             return tool_error(f"Unknown memory tool: {tool_name}")
         except Exception as exc:
+            logger.warning("Memory tool failed", extra={"tool_name": tool_name}, exc_info=True)
             return tool_error(f"Memory operation did not complete: {exc}")

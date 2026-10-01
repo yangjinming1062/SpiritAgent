@@ -192,7 +192,14 @@ MEMORY_RECALL_DESC = "Search active, unexpired memories for conversational use. 
 
 MEMORY_INSPECT_DESC = "Inspect original conversation evidence and memory versions before maintenance. Candidates and invalidated claims are NOT user facts and must not inform conversation. Optional query limits both records and quotable messages to those containing the text, so omit it when the evidence may be worded differently; before_memory_id pages through older records."
 
-SEARCH_TOOLS_DESC = "Search by domain or intent and unlock matching tools for immediate use."
+# 元工具描述随当前可检索业务域装配；没有业务域时使用 SEARCH_TOOLS_DESC。
+SEARCH_TOOLS_DESC = "按业务域或意图检索并解锁工具。当前没有可检索的业务域。 Search by domain or intent to unlock tools. No domains are currently available."
+
+SEARCH_TOOLS_CATALOG_DESC = (
+    "按业务域或意图检索并解锁工具；匹配项会立即加入活动列表。"
+    " Search by domain or intent to unlock tools for immediate use.\n"
+    "可用业务域 / available domains:\n{catalog}"
+)
 
 SEARCH_TOOLS_PARAM_DESCS = {
     "query": "Domain id (e.g. files, browser) or intent (e.g. 读文件, run python).",

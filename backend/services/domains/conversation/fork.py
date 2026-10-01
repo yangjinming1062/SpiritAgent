@@ -4,8 +4,9 @@ from modules.conversation import CompanionReply, Conversation, MediaBubble, Mess
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .context_window import CHECKPOINT_SUBTYPES
 from .history import build_session_messages
-from .main_conversation import IM_KIND, SPECIAL_KIND, STANDARD_KIND
+from .main_conversation import IM_KIND, SPECIAL_KIND, STANDARD_KIND, UI_ONLY_SUBTYPES
 from .memory_scope import conversation_memory_scope
 
 
@@ -23,7 +24,7 @@ async def fork_conversation_from_message(
     source_session_id: str,
     source_message_id: int,
 ) -> dict:
-    """派生新会话：复制源会话中 ``id <= source_message_id`` 且非 ``status_*`` 的全部消息及历史元数据，复制行按已发送历史对待。返回精简版 ``SessionResumeResult``（不含 info）；runtime 挂载与 info 由 handler 补。"""
+    """派生新会话：复制源会话中 ``id <= source_message_id`` 且不属于 ``UI_ONLY_SUBTYPES`` 的全部消息及历史元数据，复制行按已发送历史对待。返回精简版 ``SessionResumeResult``（不含 info）；runtime 挂载与 info 由 handler 补。"""
     src = await Conversation.by_session_id(db, source_session_id, user_id=user_id)
     if src is None:
         raise SourceNotFoundError(f"源会话不存在或不属于当前用户: {source_session_id!r}")
@@ -46,7 +47,7 @@ async def fork_conversation_from_message(
             f"源消息不在会话内: message_id={source_message_id} session_id={source_session_id!r}",
         )
 
-    # 排除 status_* 行（UI 痕迹，不入 LLM 上下文）；保留 compress_summary / daily_summary
+    # 只排除界面专用行；媒体送达、主动消息与摘要行属于模型上下文，照常复制。
     rows = (
         (
             await db.execute(
@@ -55,7 +56,7 @@ async def fork_conversation_from_message(
                     Message.conversation_id == src.id,
                     Message.id <= source_message_id,
                     Message.id > src.context_after_message_id,
-                    Message.subtype.is_(None) | ~Message.subtype.like("status_%"),
+                    Message.subtype.is_(None) | Message.subtype.notin_(tuple(UI_ONLY_SUBTYPES)),
                 )
                 .order_by(Message.id),
             )
@@ -65,7 +66,7 @@ async def fork_conversation_from_message(
     )
 
     if not rows:
-        # 源消息自身就是 status_* 时防御性兜底，正常路径不会到这里
+        # 源消息自身是界面专用行时防御性兜底，正常路径不会到这里
         raise SourceNotFoundError(
             f"无可派生的消息：会话 {source_session_id!r} 在 message_id={source_message_id} 之前没有可复制行",
         )
@@ -119,7 +120,7 @@ async def fork_conversation_from_message(
         copies[row.id] = copy
     await db.flush()
     for row in rows:
-        if row.subtype in ("daily_summary", "compress_summary"):
+        if row.subtype in CHECKPOINT_SUBTYPES:
             boundary = copies.get(row.summary_through_message_id)
             if boundary is None:
                 raise SourceNotFoundError("摘要覆盖边界不在可派生历史中")
@@ -127,7 +128,7 @@ async def fork_conversation_from_message(
 
     await db.commit()
 
-    messages = await build_session_messages(new_conv.id, db, include_id=True)
+    messages = await build_session_messages(new_conv.id, db)
 
     return {
         "session_id": str(new_conv.id),

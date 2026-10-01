@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, get_args
 
 from components import (
     DEFAULT_LANGUAGE,
@@ -13,6 +13,7 @@ from components import (
     format_time_anchor,
     resolve_language,
     safe_json_loads,
+    tool_error,
     utc_now,
 )
 from modules.auth import ChatRequestClientContext
@@ -27,12 +28,14 @@ from services.contracts import MemoryScope, MemorySource
 from services.domains.companion import build_system_prompt_extras, get_disturbance_tier, load_character_snapshot
 from services.domains.configuration import DEFAULT_CONFIG
 from services.domains.conversation import (
+    CHECKPOINT_SUBTYPES,
     DEFAULT_PRESET_ID,
     IM_KIND,
     SPECIAL_KIND,
     InferenceDefaults,
     companion_context_content,
     load_context_messages,
+    message_text,
     resolve_preset_meta,
 )
 from services.domains.memory import (
@@ -43,7 +46,6 @@ from services.domains.memory import (
     retrieve_proactive_memories,
 )
 from services.infrastructure.llm import (
-    PRODUCT_REASONING_EFFORTS,
     ChatProvider,
     MissingLlmConfigError,
     ProviderConfig,
@@ -63,6 +65,7 @@ from .native_memory import NativeMemory
 from .prompt_blocks import AgentPromptConfig
 from .prompt_presets import preset_excluded_tool_names
 from .system_prompt import build_system_prompt
+from .tool_dispatch import INTERRUPTED_RUNNING_ERROR
 
 
 @dataclass(frozen=True)
@@ -93,7 +96,8 @@ async def load_memory_query_text(db: AsyncSession, conv: Conversation, req: Chat
     if use_request:
         return req.message.content or ""
     history = await load_context_messages(db, conv)
-    return next((m.content or "" for m in reversed(history) if m.role == "user"), "")
+    # 多模态行的正文是 part 数组 JSON，只取文字部分，不把附件地址送去向量化。
+    return next((message_text(m) for m in reversed(history) if m.role == "user"), "")
 
 
 def resolve_inference_settings(settings: dict[str, Any], *, conv: Conversation) -> InferenceDefaults:
@@ -115,7 +119,7 @@ def resolve_inference_settings(settings: dict[str, Any], *, conv: Conversation) 
     return InferenceDefaults(
         temperature=parse_temperature(settings.get("agent.temperature"), defaults.temperature),
         context_compression_threshold=threshold if threshold >= 0.3 else defaults.context_compression_threshold,
-        reasoning_effort=cast(ReasoningEffort, reasoning or defaults.reasoning_effort),
+        reasoning_effort=reasoning or defaults.reasoning_effort,
     )
 
 
@@ -131,13 +135,7 @@ def merge_session_settings(
         key: value for key, value in user_settings.items() if not isolated or not key.startswith(("agent.", "chat."))
     }
     if isolated:
-        merged.update(
-            {
-                f"chat.{key}": value
-                for key, value in DEFAULT_CONFIG["chat"].items()
-                if key != "context_compression_threshold"
-            },
-        )
+        merged.update({f"chat.{key}": value for key, value in DEFAULT_CONFIG["chat"].items()})
     if session_settings:
         for k, v in session_settings.items():
             merged[SESSION_TO_GLOBAL_KEY_ALIASES[k]] = v
@@ -154,6 +152,32 @@ def _merge_client_context(
     return session_ctx.model_copy(update=request_ctx.model_dump(exclude_none=True))
 
 
+# 已有的 text 型工具结果行可能保存着多模态 part 数组 JSON（json.dumps 默认分隔符）；这些行改写为 multimodal_v1 后可删除此识别。
+_LEGACY_TOOL_PARTS_PREFIX = '[{"type": "input_'
+
+
+def _legacy_multimodal_tool_output(content: str) -> list[dict[str, str]] | None:
+    """只识别由 input_text 与内联 data:image 的 input_image 组成且含图片的 part 数组，其余文本结果原样保留。"""
+    if not content.startswith(_LEGACY_TOOL_PARTS_PREFIX):
+        return None
+    parts = safe_json_loads(content)
+    if not isinstance(parts, list):
+        return None
+    for part in parts:
+        if not isinstance(part, dict):
+            return None
+        is_text = part.keys() == {"type", "text"} and part["type"] == "input_text" and isinstance(part["text"], str)
+        is_image = (
+            part.keys() == {"type", "image_url"}
+            and part["type"] == "input_image"
+            and isinstance(part["image_url"], str)
+            and part["image_url"].startswith("data:image/")
+        )
+        if not (is_text or is_image):
+            return None
+    return parts if any(part["type"] == "input_image" for part in parts) else None
+
+
 def db_message_to_response_items(msg: Message) -> list[dict[str, Any]]:
     """DB Message -> Responses API input items. 正文保持入库原文，不拼接时间标记。"""
     content_val: str | list = msg.content or ""
@@ -162,6 +186,8 @@ def db_message_to_response_items(msg: Message) -> list[dict[str, Any]]:
         content_val = companion_context_content(msg)
     elif is_multimodal and isinstance(parsed := safe_json_loads(content_val), list):
         content_val = parsed
+    elif msg.role == "tool" and (legacy := _legacy_multimodal_tool_output(msg.content or "")) is not None:
+        content_val = legacy
 
     if msg.role == "system":
         return [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": content_val}]}]
@@ -224,6 +250,7 @@ def _history_to_responses_context(
     context: dict[str, Any] = {"instructions": system_prompt, "input": [], "source_message_ids": []}
     prev_date_key: str | None = None
     last_user_at: datetime | None = None
+    answered_call_ids = {msg.tool_call_id for msg in db_msgs if msg.role == "tool" and msg.tool_call_id}
 
     for msg in db_msgs:
         item_start = len(context["input"])
@@ -235,13 +262,25 @@ def _history_to_responses_context(
                 user_local_tz,
                 lang,
             )
-        context["input"].extend(db_message_to_response_items(msg))
+        items = db_message_to_response_items(msg)
+        context["input"].extend(items)
+        # 调用行已落库而缺结果行（如进程在保存结果前退出）时补记结果未知，孤立调用会让供应商拒绝整个上下文。
+        for item in items:
+            call_id = item.get("call_id") if item.get("type") == "function_call" else None
+            if call_id and call_id not in answered_call_ids:
+                context["input"].append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": tool_error(INTERRUPTED_RUNNING_ERROR),
+                    },
+                )
         if inject_time_perception and msg.role == "user" and msg.created_at is not None:
             clock = format_time_anchor(msg.created_at, last_user_at, user_local_tz, lang)
             if clock:
                 context["input"].append(user_text_item(clock))
             last_user_at = msg.created_at
-        source_id = msg.summary_through_message_id if msg.subtype in ("daily_summary", "compress_summary") else msg.id
+        source_id = msg.summary_through_message_id if msg.subtype in CHECKPOINT_SUBTYPES else msg.id
         if source_id is None:
             raise ValueError("Conversation summary requires an original message boundary")
         context["source_message_ids"].extend([source_id] * (len(context["input"]) - item_start))
@@ -288,7 +327,7 @@ async def build_turn_inputs(
     first_user_msg = next((m for m in history if m.role == "user"), None)
     first_user_msg_content = first_user_msg.content if first_user_msg else None
 
-    # 历史含媒体时筛选到对应能力供应商（视频优先于图片），确保压缩与流式共用同一 _chain；链为空显式报错不回落文本链，否则换来网关拒收 input_video 的 400。
+    # 历史含媒体时筛选到对应能力供应商（视频优先于图片），确保压缩与流式共用同一 llm_chain；链为空显式报错不回落文本链，否则换来网关拒收 input_video 的 400。
     llm_chain: list[ProviderConfig] = []
     if any(_user_row_has_video_part(m) for m in history):
         llm_chain = await resolve_video_chain(db, user_id)
@@ -412,12 +451,12 @@ async def build_turn_inputs(
     )
 
 
-def _parse_reasoning_effort(raw: str | None) -> str | None:
+def _parse_reasoning_effort(raw: str | None) -> ReasoningEffort | None:
     """规范化持久化的 reasoning_effort：``None`` 或集合外的值表示「不传参」，API 拒绝未知值，仅透传枚举成员。"""
     if not raw:
         return None
     raw = raw.strip().lower()
-    return raw if raw in PRODUCT_REASONING_EFFORTS else None
+    return next((effort for effort in get_args(ReasoningEffort) if effort == raw), None)
 
 
 def parse_temperature(raw: Any, default: float) -> float:

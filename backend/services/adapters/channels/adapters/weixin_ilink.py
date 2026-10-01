@@ -8,9 +8,18 @@ import secrets
 import struct
 import time
 from dataclasses import dataclass
+from functools import partial
 
 import httpx
-from components import SETTINGS, get_file_path, get_logger, save_file, session_scope
+from components import (
+    REMOTE_ASSET_DOWNLOAD_MAX_BYTES,
+    SETTINGS,
+    download_capped,
+    get_file_path,
+    get_logger,
+    save_file,
+    session_scope,
+)
 from Crypto.Cipher import AES
 from modules.channels import ChannelBinding, ChannelDeliveryMedia, ChannelPeer
 from sqlalchemy import select
@@ -23,7 +32,7 @@ from ..state import update_binding_status
 
 logger = get_logger(__name__)
 
-# 微信 CDN 媒体下载与上传的基址。
+# 微信 CDN 上传基址：getuploadurl 未返回 upload_full_url 时据 upload_param 拼出上传地址；入站下载直接用消息内地址。
 CDN_BASE_URL = "https://novac2c.cdn.weixin.qq.com/c2c"
 
 _MEDIA_TYPE_IMAGE = 1
@@ -172,43 +181,36 @@ async def _materialize_inbound_attachments(
     user_id: int,
     media_descs: list[_InboundMedia],
 ) -> tuple[InboundAttachment, ...]:
-    """把 iLink 媒体项下载 + AES-ECB 解密 → temp-media 公网 URL → 转 InboundAttachment。"""
-    if not media_descs:
-        return ()
+    """把 iLink 媒体项下载 + AES-ECB 解密 → temp-media 公网 URL → 转 InboundAttachment；单项失败跳过。"""
     out: list[InboundAttachment] = []
-    client = httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=10.0))
-    try:
-        for desc in media_descs:
-            key = _decode_aes_key(desc.aes_key)
-            if key is None:
-                logger.warning("iLink media missing aes_key", extra={"binding": binding_id, "kind": desc.kind})
-                continue
-            try:
-                resp = await client.get(desc.cdn_url)
-                resp.raise_for_status()
-            except httpx.HTTPError as e:
-                logger.warning("iLink media download failed", extra={"binding": binding_id, "error": str(e)})
-                continue
-            ciphertext = resp.content
-            try:
-                plaintext = _aes_ecb_decrypt(ciphertext, key)
-            except Exception as e:
-                logger.warning("iLink media decrypt failed", extra={"binding": binding_id, "error": str(e)})
-                continue
-            content_type, ext = _mime_for_kind(desc.kind)
-            # 微信图片为 JPEG，ISO 媒体魔数识别；其他按 kind 推 MIME。
-            if plaintext[:3] == b"\xff\xd8\xff":
-                content_type = "image/jpeg"
-            elif plaintext[:8] == b"\x89PNG\r\n\x1a\n":
-                content_type, ext = "image/png", "png"
-            elif plaintext[:4] == b"GIF8":
-                content_type, ext = "image/gif", "gif"
-            _, public_url = await asyncio.to_thread(save_file, plaintext, content_type, ext, user_id=user_id)
-            out.append(
-                InboundAttachment(type="image" if desc.kind in ("image", "video", "voice") else "file", url=public_url),
-            )
-    finally:
-        await client.aclose()
+    for desc in media_descs:
+        key = _decode_aes_key(desc.aes_key)
+        if key is None:
+            logger.warning("iLink media missing aes_key", extra={"binding": binding_id, "kind": desc.kind})
+            continue
+        try:
+            ciphertext = await download_capped(desc.cdn_url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=30.0)
+        except (httpx.HTTPError, ValueError, RuntimeError) as e:
+            logger.warning("iLink media download failed", extra={"binding": binding_id, "error": str(e)})
+            continue
+        try:
+            # 整文件解密是 CPU 密集操作，移出事件循环
+            plaintext = await asyncio.to_thread(_aes_ecb_decrypt, ciphertext, key)
+        except Exception as e:
+            logger.warning("iLink media decrypt failed", extra={"binding": binding_id, "error": str(e)})
+            continue
+        content_type, ext = _mime_for_kind(desc.kind)
+        # 微信图片为 JPEG，ISO 媒体魔数识别；其他按 kind 推 MIME。
+        if plaintext[:3] == b"\xff\xd8\xff":
+            content_type = "image/jpeg"
+        elif plaintext[:8] == b"\x89PNG\r\n\x1a\n":
+            content_type, ext = "image/png", "png"
+        elif plaintext[:4] == b"GIF8":
+            content_type, ext = "image/gif", "gif"
+        _, public_url = await asyncio.to_thread(save_file, plaintext, content_type, ext, user_id=user_id)
+        out.append(
+            InboundAttachment(type="image" if desc.kind in ("image", "video", "voice") else "file", url=public_url),
+        )
     return tuple(out)
 
 
@@ -260,7 +262,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
         *,
         params: dict | None = None,
         payload: dict | None = None,
-        timeout: float | None = None,
+        timeout: float = REQUEST_TIMEOUT_SECONDS,
     ) -> dict:
         url = path if path.startswith("http") else self._base_url().rstrip("/") + "/" + path
         try:
@@ -351,7 +353,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
             self._login_state = {"state": "error", "error": "登录会话已过期，请重试"}
         except Exception as e:
             self._login_state = {"state": "error", "error": str(e)}
-            logger.warning("weixin login flow failed", extra={"binding": self.snapshot.id, "error": str(e)})
+            logger.warning("weixin login flow failed", extra={"binding": self.snapshot.id}, exc_info=True)
 
     async def _auto_allow_owner(self) -> None:
         owner_id = self._creds.get("ilink_user_id")
@@ -440,14 +442,18 @@ class WeixinIlinkAdapter(ChannelAdapter):
         if token:
             self._creds.setdefault("context_tokens", {})[peer_id] = token
 
-        attachments = await _materialize_inbound_attachments(self.snapshot.id, self.snapshot.user_id, media_descs)
         inbound = InboundMessage(
             peer_id=peer_id,
-            peer_name=peer_id,
+            # 入站消息不带昵称：留空让对端沿用已有备注（如登录者本人的「微信本人」），界面回退显示 peer_id。
+            peer_name="",
             text=text,
             msg_id=str(msg.get("new_msg_id") or msg.get("msg_id") or ""),
             context_token=token,
-            attachments=attachments,
+            fetch_attachments=(
+                partial(_materialize_inbound_attachments, self.snapshot.id, self.snapshot.user_id, media_descs)
+                if media_descs
+                else None
+            ),
         )
         await handle_inbound(self, inbound)
 
@@ -462,7 +468,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
             "msg": {
                 "from_user_id": "",
                 "to_user_id": peer_id,
-                # client_id 供服务端去重（超时重试时复用同一 id 才不会被当成两条）。
+                # client_id 每次发送新生成：失败后的补发不沿用它，若原请求其实已送达，对端会收到重复消息。
                 "client_id": f"spiritagent-{int(time.time() * 1000)}-{secrets.token_hex(4)}",
                 "message_type": 2,
                 "message_state": 2,
@@ -508,7 +514,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
 
         if not item_list and not text:
             logger.info(
-                "all media uploads failed; nothing to send",
+                "media reply has no media URL or text; nothing to send",
                 extra={"binding": self.snapshot.id, "peer": peer_id},
             )
             raise ChannelError("iLink media reply contains no uploadable media", fatal=False)
@@ -535,10 +541,7 @@ class WeixinIlinkAdapter(ChannelAdapter):
             if resolved is not None:
                 plain = await asyncio.to_thread(resolved[0].read_bytes)
             else:
-                async with httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0)) as c:
-                    resp = await c.get(url)
-                    resp.raise_for_status()
-                    plain = resp.content
+                plain = await download_capped(url, max_bytes=REMOTE_ASSET_DOWNLOAD_MAX_BYTES, timeout=60.0)
 
         # iLink 上传媒体类型编码：1=image 2=voice 3=video 4=file。
         ilink_kind = 1 if media.type == "image" else 3

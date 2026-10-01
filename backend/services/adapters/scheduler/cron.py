@@ -259,10 +259,14 @@ async def _advance_due_jobs(due_jobs: list[Row], now: datetime) -> None:
         *(is_still(user_id) for user_id in deferred_users),
         return_exceptions=True,
     )
-    still_by_user = {
-        user_id: (result if isinstance(result, bool) else True)
-        for user_id, result in zip(deferred_users, still_results, strict=True)
-    }
+    still_by_user: dict[int, bool] = {}
+    for user_id, result in zip(deferred_users, still_results, strict=True):
+        if isinstance(result, BaseException):
+            # 档位读不到时按静止处理：问候保持到期，下个 tick 重试。
+            logger.warning("cron: disturbance tier lookup failed", exc_info=result, extra={"user_id": user_id})
+            still_by_user[user_id] = True
+        else:
+            still_by_user[user_id] = result
     # 带 expires_at 的夜间主动问候在用户离线或静止档时保持 due；普通 special cron 仍按原周期语义推进。
     deliverable = [
         job
@@ -440,7 +444,7 @@ async def _maybe_run_memory_review(now: datetime) -> None:
     results = await asyncio.gather(*tasks, return_exceptions=True)
     for scope, result in zip(eligible, results, strict=True):
         uid = scope.user_id
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             # 不在 except 块里——必须显式传异常，否则 exc_info 为空，traceback 丢失。
             logger.error(
                 "memory_review: tick failed",

@@ -56,6 +56,19 @@ def _metadata_path(meta: dict) -> Path | None:
     return Path(value)
 
 
+def owned_temp_files(file_id: str, user_id: int) -> list[Path]:
+    """返回该用户名下临时文件的元数据与数据文件路径（备份导出用）；ID 非法、元数据缺失或归属其他用户时为空。"""
+    if not _valid_file_id(file_id):
+        return []
+    meta_path = _meta_path(file_id)
+    meta = _read_metadata(meta_path)
+    if meta is None or meta.get("user_id") != user_id or (recorded := _metadata_path(meta)) is None:
+        return []
+    # 元数据记录写入时的绝对路径；按文件名在当前目录定位，数据目录迁移后仍可用。
+    media = meta_path.with_name(recorded.name)
+    return [meta_path, media] if media.is_file() and media != meta_path else [meta_path]
+
+
 def save_file(data: bytes, content_type: str, ext: str, *, user_id: int) -> tuple[str, str]:
     """保存到 temp 存储，返回 (file_id, public_url)；``user_id`` 记录归属供删除用户与备份定位；meta 写失败时 unlink 数据文件避免无 TTL 孤儿。"""
     file_id = secrets.token_urlsafe(16)

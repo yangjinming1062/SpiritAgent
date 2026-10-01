@@ -10,7 +10,6 @@ from .llm_client import (
     build_provider,
     generate_embedding,
     generate_embeddings,
-    provider_from_config,
     resolve_embedding_provider,
     resolve_provider_chain,
     resolve_provider_config,
@@ -63,7 +62,6 @@ from .providers import (
 from .providers.speech_style import (
     speech_performance_schema,
     speech_style_guidance,
-    speech_style_matches,
     validate_speech_style,
 )
 from .responses import (
@@ -123,7 +121,6 @@ __all__ = [
     "generate_embeddings",
     "is_content_policy_error_message",
     "message_to_response_items",
-    "provider_from_config",
     "providers_supporting",
     "register",
     "resolve",
@@ -141,7 +138,6 @@ __all__ = [
     "scale_temperature",
     "speech_performance_schema",
     "speech_style_guidance",
-    "speech_style_matches",
     "validate_speech_style",
     "synthesize_speech",
     "transcribe_audio",

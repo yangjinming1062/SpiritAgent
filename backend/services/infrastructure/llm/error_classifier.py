@@ -275,7 +275,8 @@ def classify_api_error(
     return ClassifiedError(
         reason=_classify(error, signals),
         status_code=signals.status_code,
-        message=(_body_message(body) or redact_sensitive_text(str(error)) or "")[:2000],
+        # 消息会进入对外错误与日志，供应商响应体同样可能回显密钥
+        message=redact_sensitive_text(_body_message(body) or str(error) or "")[:2000],
     )
 
 

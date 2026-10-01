@@ -5,7 +5,7 @@ from components import resolve_language, resolve_prompt_text
 from prompts.chat import OUTFIT_DEMEANOR_GUIDANCES, OUTFIT_SOURCE_TEXTS, SCENE_CONTEXT_GUIDANCES, VOLATILE_LABELS
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from services.application.actions.context import build_action_context
+from services.application.actions import build_action_context
 from services.domains.companion import build_outfit_extras, get_scene_state, scene_environment
 
 from .prompt_blocks import AgentPromptConfig, render_preset_body, volatile_header_value

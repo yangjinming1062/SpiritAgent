@@ -39,6 +39,7 @@ logger = get_logger(__name__)
 
 _DURATIONS = range(4, 16)
 _RESOLUTIONS = frozenset({"512P", "768P", "1080P", "2K"})
+_SUBMIT_UNKNOWN_ERROR = "视频提交结果未核实，请勿重复提交"
 
 
 def _first_frame_reference(reference: str, user_id: int) -> str | None:
@@ -115,10 +116,8 @@ async def _submit_video(
                 media_id=media_id,
             )
     except MissingLlmConfigError:
+        # 任务行写入前抛出，确定未提交；其余异常可能发生在任务行提交、供应商受理之后，交给调用方按结果未知处理。
         return {"success": False, "error": "视频生成服务未配置"}, None
-    except Exception as e:
-        logger.exception("video_generation_tool submit failed")
-        return {"success": False, "error": str(e)}, None
 
     task_id = str(job.id)
     if job.status == "result_unknown":
@@ -176,11 +175,10 @@ async def video_generation_tool(
     aspect_ratio: str | None = None,
     subject: str | None = None,
     outfit_override: str | None = None,
-    media_turn: MediaTurnState | None = None,
-    **kwargs,
+    *,
+    media_turn: MediaTurnState,
+    **_: object,
 ) -> str:
-    if media_turn is None:
-        return tool_error("视频生成需要会话上下文")
     if not isinstance(prompt, str) or not prompt.strip() or type(duration) is not int or duration not in _DURATIONS:
         return tool_error("请提供非空视频描述和 4 至 15 秒的时长")
     if resolution not in _RESOLUTIONS:
@@ -235,8 +233,14 @@ async def video_generation_tool(
             structured_reply=media_turn.structured_reply,
             media_id=media_id,
         )
+    except Exception:
+        # 任务行可能已提交、供应商可能已受理：按结果未知告知模型，不能当作失败重试。
+        logger.exception("video_generation_tool submit outcome unknown")
+        artifact.status, artifact.error = "result_unknown", _SUBMIT_UNKNOWN_ERROR
+        result = {"success": False, "status": "result_unknown", "error": artifact.error, "retry_safe": False}
+        return json.dumps({**result, "media": [artifact.tool_view()]}, ensure_ascii=False)
     except BaseException:
-        artifact.status, artifact.error = "result_unknown", "视频提交结果未核实，请勿重复提交"
+        artifact.status, artifact.error = "result_unknown", _SUBMIT_UNKNOWN_ERROR
         raise
     if job is None:
         artifact.status, artifact.error = "failed", str(result.get("error") or "视频未受理")
@@ -249,20 +253,19 @@ async def video_generation_tool(
 
 async def video_generate_status_tool(
     task_id: int,
-    user_id: int | None = None,
-    media_turn: MediaTurnState | None = None,
-    **_,
+    *,
+    user_id: int,
+    media_turn: MediaTurnState,
+    **_: object,
 ) -> str:
     """查询之前提交的 video 生成任务状态。"""
-    if user_id is None:
-        return tool_error("需要用户上下文")
     try:
         job_id = int(task_id)
     except (TypeError, ValueError):
         return tool_error("task_id must be an integer")
     async with SESSION_LOCAL() as db:
         row = await get_job(db, job_id, user_id)
-    if row is None or media_turn is None or row.session_id != media_turn.session_id:
+    if row is None or row.session_id != media_turn.session_id:
         return tool_error("video job not found")
     payload: dict[str, object] = {"task_id": str(row.id), "status": row.status}
     if row.status == "succeeded":

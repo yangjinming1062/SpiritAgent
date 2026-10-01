@@ -3,11 +3,11 @@ import re
 from datetime import date
 from typing import Any
 
-from components import DEFAULT_LANGUAGE, get_logger, resolve_language, resolve_prompt_text, safe_json_loads
+from components import DEFAULT_LANGUAGE, resolve_language, resolve_prompt_text, safe_json_loads
 from modules.companion import AvatarAsset, CharacterCardSnapshot, Persona
 from prompts.companion import PERSONA_FIELD_LABELS, PERSONA_LABELS_TEXTS
 from sqlalchemy import func, select
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope
@@ -16,8 +16,6 @@ from services.domains.memory import extract_user_profile, read_user_profile, rec
 
 from .character_card import render_character_appearance
 from .first_greeting import enqueue_first_greeting, schedule_first_greeting_claim
-
-logger = get_logger(__name__)
 
 # 人设字段顺序属于对外契约的一部分，它决定渲染出的系统提示词片段形状
 _REQUIRED_FIELDS: tuple[str, ...] = ("name", "personality", "speaking_style")
@@ -104,12 +102,15 @@ def _validate_definition(definition: dict[str, Any]) -> dict[str, str]:
 
 
 async def get_or_create_persona(db: AsyncSession, user_id: int) -> Persona:
-    """查询人设，不存在则暂存一条待插入行。刻意不 commit，以便调用方把 user_profile + persona 放在同一事务里写（backend/README.md「数据与运行可靠性」）。"""
-    persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one_or_none()
+    """查询人设，不存在则插入一行；并发首次创建由唯一约束收敛到同一行。刻意不 commit，以便调用方把 user_profile + persona 放在同一事务里写（backend/README.md「数据与运行可靠性」）。"""
+    persona = await db.scalar(select(Persona).where(Persona.user_id == user_id))
     if persona is None:
-        persona = Persona(user_id=user_id, definition_json="{}")
-        db.add(persona)
-        await db.flush()
+        await db.execute(
+            insert(Persona)
+            .values(user_id=user_id, definition_json="{}")
+            .on_conflict_do_nothing(index_elements=[Persona.user_id]),
+        )
+        persona = (await db.execute(select(Persona).where(Persona.user_id == user_id))).scalar_one()
     return persona
 
 
@@ -121,39 +122,29 @@ async def update_persona(db: AsyncSession, user_id: int, definition: dict[str, A
     persona_def = {k: v for k, v in definition.items() if not k.startswith("user_")}
     cleaned = _validate_definition(persona_def)
 
-    async def _dual_write() -> Persona:
-        await record_user_profile(db, MemoryScope(user_id, "companion"), user_profile)
-        persona = await get_or_create_persona(db, user_id)
-        await db.refresh(persona, with_for_update=True)
-        current_draft = load_persona_definition(persona)
-        if current_draft.get("voice"):
-            cleaned["voice"] = current_draft["voice"]
-        # 锁定字段只保留已有值；原本缺失的字段也不能通过 PUT 补入。
-        sealed = await db.scalar(
-            select(AvatarAsset.is_fullbody_confirmed).where(
-                AvatarAsset.user_id == user_id,
-                AvatarAsset.active.is_(True),
-            ),
-        )
-        if sealed:
-            for locked in ("biological_type", "gender"):
-                if locked in current_draft:
-                    cleaned[locked] = current_draft[locked]
-                else:
-                    cleaned.pop(locked, None)
-        persona.definition_json = json.dumps(cleaned, ensure_ascii=False)
-        # persona_extras 不缓存：build_system_prompt_extras 运行期按 session language 从 definition_json 实时渲染，避免英语会话拿到 onboarding 烤进去的中文头部。
-        persona.is_complete = True
-        return persona
-
-    persona = await _dual_write()
-    # 部分唯一索引冲突时重试：回滚会连带丢弃待提交的 persona 赋值，故整个双写重放（record_user_profile 幂等）
-    try:
-        await db.commit()
-    except IntegrityError:
-        await db.rollback()
-        persona = await _dual_write()
-        await db.commit()
+    await record_user_profile(db, MemoryScope(user_id, "companion"), user_profile)
+    persona = await get_or_create_persona(db, user_id)
+    await db.refresh(persona, with_for_update=True)
+    current_draft = load_persona_definition(persona)
+    if current_draft.get("voice"):
+        cleaned["voice"] = current_draft["voice"]
+    # 锁定字段只保留已有值；原本缺失的字段也不能通过 PUT 补入。
+    sealed = await db.scalar(
+        select(AvatarAsset.is_fullbody_confirmed).where(
+            AvatarAsset.user_id == user_id,
+            AvatarAsset.active.is_(True),
+        ),
+    )
+    if sealed:
+        for locked in ("biological_type", "gender"):
+            if locked in current_draft:
+                cleaned[locked] = current_draft[locked]
+            else:
+                cleaned.pop(locked, None)
+    persona.definition_json = json.dumps(cleaned, ensure_ascii=False)
+    # persona_extras 不缓存：build_system_prompt_extras 运行期按 session language 从 definition_json 实时渲染，避免英语会话拿到 onboarding 烤进去的中文头部。
+    persona.is_complete = True
+    await db.commit()
     # onboarding 首次完成时一次性建出 5 套系统预设对话；幂等。
     await ensure_system_conversations_for_user(db, persona.user_id)
     return persona

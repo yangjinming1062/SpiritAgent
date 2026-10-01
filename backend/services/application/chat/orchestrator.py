@@ -1,6 +1,8 @@
 import json
 from contextlib import ExitStack
+from dataclasses import dataclass
 from functools import partial
+from typing import Any
 
 from components import (
     CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
@@ -13,7 +15,7 @@ from components import (
 from modules.auth import ChatRequestClientContext
 from modules.conversation import Conversation, Message
 from modules.settings import load_user_settings
-from modules.system import ChatRequest
+from modules.system import ChatMessageRequest, ChatRequest
 from prompts.companion import PENDING_INTENTIONS_LABELS
 
 from services.contracts import SceneTurnState
@@ -40,7 +42,7 @@ from services.infrastructure.llm import (
 from services.infrastructure.tool_runtime import ToolCallGuardrailController, schema_name
 
 from .chat_emitter import Emitter
-from .context_compressor import compress_history, compression_due
+from .context_compressor import CompressionFailedError, CompressionInfo, compress_history, compression_due
 from .delegation import run_delegated_turn
 from .message_sanitization import truncate_responses_context
 from .persistence import (
@@ -70,6 +72,58 @@ from .turn_inputs import (
 from .types import TrackTask
 
 logger = get_logger(__name__)
+
+
+def _compression_temperature(provider_name: str, settings: dict[str, Any]) -> float:
+    normalized = parse_temperature(
+        settings.get("chat.compression_temperature"),
+        CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
+    )
+    return scale_temperature(provider_name, normalized)
+
+
+@dataclass(frozen=True)
+class ManualCompressionResult:
+    """手动压缩结果：info 为 None 表示没有可压缩的历史；用量为压缩后的估算。"""
+
+    info: CompressionInfo | None
+    total_tokens: int
+    context_window: int
+
+
+async def compress_session_history(
+    conv: Conversation,
+    user_id: int,
+    session_settings: dict[str, Any],
+    client_context: ChatRequestClientContext | None,
+) -> ManualCompressionResult:
+    """手动压缩会话历史：短会话装配上下文 → 不占会话调用摘要模型 → 短会话写入检查点并重新估算用量；摘要失败抛 CompressionFailedError。调用方负责会话互斥与在途回合校验。"""
+    req = ChatRequest(session_id=str(conv.id), message=ChatMessageRequest(content=""))
+    memory_scope = conversation_memory_scope(conv, user_id)
+    async with session_scope() as db:
+        effective_settings = merge_session_settings(await load_user_settings(db, user_id), session_settings, conv=conv)
+        inputs = await build_turn_inputs(db, conv, user_id, req, client_context, effective_settings, memory_scope)
+    _, info = await compress_history(
+        inputs.context,
+        client=inputs.client,
+        model=inputs.model_name,
+        temperature=_compression_temperature(inputs.provider_name, effective_settings),
+        language=inputs.language,
+    )
+    if info is None:
+        return ManualCompressionResult(
+            info=None,
+            total_tokens=inputs.estimated_tokens,
+            context_window=inputs.ctx_length,
+        )
+    async with session_scope() as db:
+        await persist_compression_checkpoint(db, conv.id, info)
+        compressed = await build_turn_inputs(db, conv, user_id, req, client_context, effective_settings, memory_scope)
+    return ManualCompressionResult(
+        info=info,
+        total_tokens=compressed.estimated_tokens,
+        context_window=compressed.ctx_length,
+    )
 
 
 def _history_unlocked_tool_names(input_items: list[dict]) -> set[str]:
@@ -203,19 +257,17 @@ async def run_chat_turn(
                 current_tokens=None if ephemeral or waits else inputs.estimated_tokens,
             )
         ):
-            compressed_context, compress_info = await compress_history(
-                inputs.context,
-                client=inputs.client,
-                model=inputs.model_name,
-                temperature=scale_temperature(
-                    inputs.provider_name,
-                    parse_temperature(
-                        effective_settings.get("chat.compression_temperature"),
-                        CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
-                    ),
-                ),
-                language=inputs.language,
-            )
+            try:
+                compressed_context, compress_info = await compress_history(
+                    inputs.context,
+                    client=inputs.client,
+                    model=inputs.model_name,
+                    temperature=_compression_temperature(inputs.provider_name, effective_settings),
+                    language=inputs.language,
+                )
+            except CompressionFailedError:
+                # 自动压缩失败不阻断本轮，按原上下文继续。
+                compress_info = None
             if compress_info is not None and not ephemeral:
                 async with session_scope() as db:
                     checkpoint = await persist_compression_checkpoint(db, conv.id, compress_info)
@@ -317,6 +369,7 @@ async def run_chat_turn(
                             allow_silence=ephemeral and companion_reply,
                             reply_format_error=reply_format_error,
                             media_turn=media_turn,
+                            pace_bubbles=not headless,
                             final_reply_only=final_reply_only,
                             allow_voice_fallback=not retry_available,
                         )
@@ -388,7 +441,6 @@ async def run_chat_turn(
                     user_text=req.message.content,
                     first_user_msg_content=inputs.first_user_msg_content,
                     memory_scope=memory_scope,
-                    provider_name=inputs.provider_name,
                     media=None if companion_reply else media_turn.text_reply_media(),
                     turn_reasoning="\n\n".join(turn_reasoning_parts) or None,
                     persist=not ephemeral,

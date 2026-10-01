@@ -97,10 +97,12 @@ async def list_scenes(
                 CompanionScene.media_path != "",
             ],
         )
-    if query.strip():
-        needle = "%" + query.strip().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+    if needle := query.strip():
         conditions.append(
-            or_(CompanionScene.title.ilike(needle, escape="\\"), CompanionScene.description.ilike(needle, escape="\\")),
+            or_(
+                CompanionScene.title.icontains(needle, autoescape=True),
+                CompanionScene.description.icontains(needle, autoescape=True),
+            ),
         )
     total = await db.scalar(select(func.count()).select_from(CompanionScene).where(*conditions))
     rows = list(

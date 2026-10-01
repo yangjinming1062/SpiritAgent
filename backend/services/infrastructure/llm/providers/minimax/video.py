@@ -1,8 +1,12 @@
 from typing import ClassVar
 
-from ..base import ProviderConfig, VideoAsset, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
+from components import get_logger
+
+from ..base import ProviderConfig, VideoGenProvider, VideoGenRequest, VideoJobState, VideoJobStatus
 from ..http import get_http
 from ._errors import raise_for_minimax_response
+
+logger = get_logger(__name__)
 
 _MODEL_CAPABILITIES: dict[str, tuple[tuple[int, ...], tuple[str, ...]]] = {
     "MiniMax-H3": (tuple(range(4, 16)), ("768P", "2K")),
@@ -73,13 +77,13 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         return resolutions[-1]
 
     async def submit(self, req: VideoGenRequest) -> VideoJobStatus:
-        model = req.model or self.config.model or self.DEFAULT_MODEL
+        model = self.config.model or self.DEFAULT_MODEL
         resp = await self._client.post("/v2/video_generation", json=self._payload(req, model))
         body = raise_for_minimax_response(resp)
         task_id = body.get("task_id", "")
         if not task_id:
             raise RuntimeError(f"MiniMax video_generation returned no task_id: {body}")
-        return VideoJobStatus(task_id=task_id, status="queued", raw=body)
+        return VideoJobStatus(task_id=task_id, status="queued")
 
     @staticmethod
     def _payload(req: VideoGenRequest, model: str) -> dict:
@@ -108,12 +112,19 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
     async def poll(self, task_id: str) -> VideoJobStatus:
         resp = await self._client.get(f"/v2/query/video_generation/{task_id}")
         body = raise_for_minimax_response(resp)
-        # 文档 GetVideoGenerationV2Resp = {task: VideoTask}（严格包装）；其他形态视为契约破坏，抛错让 worker 记 poll_failed
+        # 文档 GetVideoGenerationV2Resp = {task: VideoTask}（严格包装）；其他形态视为契约破坏，抛错由轮询方在时限内退避重试
         if not isinstance(body, dict) or not isinstance(body.get("task"), dict):
             raise RuntimeError(f"MiniMax poll returned unexpected body shape: {body!r}")
         task = body["task"]
         raw_status = str(task.get("status", "")).lower()
-        norm = _STATUS_MAP.get(raw_status, "processing")
+        norm = _STATUS_MAP.get(raw_status)
+        if norm is None:
+            # 未知状态继续轮询，原值写入日志便于运维排查。
+            logger.warning(
+                "unknown video task status",
+                extra={"provider": "minimax", "task_id": task_id, "status": raw_status},
+            )
+            norm = "processing"
         content = task.get("content") or {}
         download_url = content.get("url") if norm == "succeeded" else None
         # VideoTaskError = {code, message}；非 dict 属契约漂移，写 repr 避免作为用户消息直接暴露
@@ -127,11 +138,6 @@ class MiniMaxVideoGenProvider(VideoGenProvider):
         return VideoJobStatus(
             task_id=task_id,
             status=norm,
-            file_id=None,
             download_url=download_url,
             error=error_message,
-            raw=body,
         )
-
-    async def fetch(self, file_id: str) -> VideoAsset:
-        raise RuntimeError("MiniMax-H3 returns the download URL via poll(); fetch() is not used")

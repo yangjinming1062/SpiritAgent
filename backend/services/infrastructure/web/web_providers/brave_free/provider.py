@@ -68,12 +68,10 @@ class BraveFreeWebSearchProvider(WebSearchProvider):
             for i, r in enumerate(truncated)
         ]
 
-        logger.info(
-            "Brave Search '%s': %d results (from %d raw, limit %d)",
-            query,
-            len(web_results),
-            len(raw_results),
-            limit,
+        # 查询词来自对话内容，不写入日志
+        logger.debug(
+            "Brave Search complete",
+            extra={"result_count": len(web_results), "raw_count": len(raw_results), "limit": limit},
         )
 
         return {"success": True, "data": {"web": web_results}}

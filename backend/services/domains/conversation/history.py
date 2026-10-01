@@ -30,28 +30,19 @@ async def build_session_messages(
     db: AsyncSession,
     *,
     after_id: int | None = None,
-    before_id: int | None = None,
-    limit: int | None = None,
-    desc: bool = False,
-    include_id: bool = False,
+    latest: int | None = None,
 ) -> list[dict]:
-    """前向重建会话消息列表。desc 与 after_id/before_id 互斥约束保证分页单向性。"""
-    if desc and after_id is not None:
-        raise ValueError("desc=True and after_id are mutually exclusive")
-    if after_id is not None and before_id is not None:
-        raise ValueError("after_id and before_id are mutually exclusive")
-    stmt = select(Message).where(Message.conversation_id == conv_id).order_by(Message.id.desc() if desc else Message.id)
+    """按时间正序重建会话消息列表；``after_id`` 只取其后的消息，``latest`` 只取最近的若干条，二者互斥。"""
+    if after_id is not None and latest is not None:
+        raise ValueError("after_id and latest are mutually exclusive")
+    stmt = select(Message).where(Message.conversation_id == conv_id)
     if after_id is not None:
         stmt = stmt.where(Message.id > after_id)
-    if before_id is not None:
-        stmt = stmt.where(Message.id < before_id)
-    if limit is not None:
-        stmt = stmt.limit(limit)
-    messages = (await db.execute(stmt)).scalars().all()
-
-    # 若按降序拉取最新消息，先翻转为升序执行前向重建，确保 tool_calls 早于 tool 结果被处理
-    if desc:
-        messages = list(reversed(messages))
+    stmt = stmt.order_by(Message.id.desc()).limit(latest) if latest is not None else stmt.order_by(Message.id)
+    messages = list((await db.execute(stmt)).scalars().all())
+    # 降序取最近若干条后翻回正序：前向重建要求工具调用先于其结果处理
+    if latest is not None:
+        messages.reverse()
 
     tool_name_by_call_id: dict[str, str] = {}
     result: list[dict] = []
@@ -72,8 +63,7 @@ async def build_session_messages(
             item["bubbles"] = client_reply_bubbles(reply)
         if msg.reasoning_content:
             item["reasoning"] = msg.reasoning_content
-        if include_id:
-            item["id"] = msg.id
+        item["id"] = msg.id
         if msg.created_at is not None:
             item["timestamp"] = int(msg.created_at.timestamp() * 1000)
 
@@ -98,7 +88,4 @@ async def build_session_messages(
             item["tool_name"] = tool_name_by_call_id.get(msg.tool_call_id, "")
 
         result.append(item)
-
-    if desc:
-        result.reverse()
     return result

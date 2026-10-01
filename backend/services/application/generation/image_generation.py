@@ -17,6 +17,7 @@ from services.infrastructure.llm import (
     ServiceType,
     classify_api_error,
     execute_with_fallback,
+    providers_supporting,
     resolve,
     resolve_provider_chain,
 )
@@ -51,22 +52,17 @@ async def resolve_image_gen_chain(
     has_reference: bool,
     image_edit: bool = False,
     multiple_references: bool = False,
-    background: str | None = None,
     prompt_chars: int = 0,
 ) -> tuple[list[ProviderConfig], str | None]:
-    """按参考图/图像编辑能力过滤 image_gen 链；``background="transparent"`` 只保留声明原生透明输出的供应商；给出 ``prompt_chars`` 时跳过提示词放不下的供应商。"""
+    """按参考图/图像编辑能力过滤 image_gen 链；给出 ``prompt_chars`` 时跳过提示词放不下的供应商。"""
     full = await resolve_provider_chain(db, user_id, "image_gen")
 
     def _fits(cfg: ProviderConfig) -> bool:
         limit = resolve(ServiceType.image_gen, cfg.provider_name).max_prompt_chars
         return limit is None or prompt_chars <= limit
 
-    def _supports(cfg: ProviderConfig) -> bool:
-        cls = resolve(ServiceType.image_gen, cfg.provider_name)
-        if not _fits(cfg):
-            return False
-        if background == "transparent" and not cls.supports_transparent_background:
-            return False
+    def _capable(name: str) -> bool:
+        cls = resolve(ServiceType.image_gen, name)
         if not has_reference:
             return True
         if image_edit and not cls.supports_image_edit:
@@ -75,8 +71,8 @@ async def resolve_image_gen_chain(
             return False
         return not multiple_references or cls.supports_multiple_reference_images
 
-    capable = [c for c in full if _supports(c)]
-    if not full or (capable == full and not has_reference and background != "transparent"):
+    capable = [c for c in full if _fits(c) and _capable(c.provider_name)]
+    if not full or (capable == full and not has_reference):
         return full, None
     if not any(_fits(c) for c in full):
         limit = max(resolve(ServiceType.image_gen, c.provider_name).max_prompt_chars or 0 for c in full)
@@ -85,15 +81,11 @@ async def resolve_image_gen_chain(
             f"提示词共 {prompt_chars} 字符，超过当前图片生成供应商的上限（{limit} 字符），请缩短描述或启用其他供应商",
         )
     if not capable:
-        if background == "transparent" and not has_reference:
-            error = "当前图片生成供应商均不支持原生透明背景，请启用 local"
-        elif multiple_references:
-            error = "当前图片生成供应商不支持分别输入两张参考图，请配置支持双图的供应商"
-        elif image_edit:
-            error = "当前图片生成供应商均不支持图像编辑，请启用 gemini / grok / local 其中之一"
-        else:
-            error = "当前图片生成供应商均不支持以图生图，请启用 minimax / gemini / grok / qwen / local 其中之一"
-        return capable, error
+        # 可选供应商按能力声明列出，随注册与能力位变化，不手写名单。
+        names = " / ".join(name for name in providers_supporting(ServiceType.image_gen) if _capable(name))
+        action = "分别输入两张参考图" if multiple_references else "图像编辑" if image_edit else "以图生图"
+        hint = f"请启用 {names} 其中之一" if names else "请配置具备该能力的供应商"
+        return capable, f"当前图片生成供应商均不支持{action}，{hint}"
     return capable, None
 
 
@@ -117,7 +109,7 @@ async def generate_images(
     provider_config: ProviderConfig | None = None,
     background: str | None = None,
 ) -> list[str]:
-    """走 image_gen 链生成图片，成功返回地址列表。``persist_user_assets=True`` 转存为用户资产返回裸路径，否则返回供应商 URL/data URI；``image_edit`` 以 reference_image 为底图且不接受双参考（同给即报错）；``background="transparent"`` 只保留已验证 alpha 的供应商。"""
+    """走 image_gen 链生成图片，成功返回地址列表。``persist_user_assets=True`` 转存为用户资产返回裸路径，否则返回供应商 URL/data URI；``image_edit`` 以 reference_image 为底图且不接受双参考（同给即报错）；``background="transparent"`` 只随 ``provider_config`` 使用，该家须已验证 alpha 输出。"""
     if image_edit and secondary_reference_image:
         raise ImageGenerationError(
             "图像编辑不支持附加参考图，请改用重新生成",
@@ -133,6 +125,14 @@ async def generate_images(
                     "当前图片生成供应商不支持原生透明背景",
                     internal=f"{provider_config.provider_name} does not support transparent output",
                 )
+            # 冻结链在调用前才补全提示词（如背景说明），按实际发送的长度核对该家上限，超出时可换下一家。
+            limit = provider_cls.max_prompt_chars
+            if limit is not None and len(prompt) > limit:
+                raise ImageGenerationError(
+                    "提示词超过当前图片生成供应商的长度上限",
+                    internal=f"{provider_config.provider_name} prompt {len(prompt)} chars > {limit}",
+                    can_fallback=True,
+                )
             chain, err = [provider_config], None
         else:
             async with SESSION_LOCAL() as db:
@@ -142,7 +142,6 @@ async def generate_images(
                     has_reference=bool(reference_image),
                     image_edit=image_edit,
                     multiple_references=bool(secondary_reference_image),
-                    background=background,
                     prompt_chars=len(prompt),
                 )
         if err:
@@ -216,6 +215,6 @@ async def generate_images(
     used_provider = active_provider[-1] if active_provider else None
     logger.info(
         "Generated images",
-        extra={"image_count": len(urls), "prompt": prompt, "provider": used_provider, "user_id": user_id},
+        extra={"image_count": len(urls), "prompt_chars": len(prompt), "provider": used_provider, "user_id": user_id},
     )
     return urls

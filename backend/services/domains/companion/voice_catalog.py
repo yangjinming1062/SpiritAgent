@@ -1,3 +1,4 @@
+from components import session_scope
 from modules.companion import VoiceEntry, VoiceMatchResponse, VoicesListResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -112,9 +113,10 @@ async def match_user_voice(
     return VoiceMatchResponse(voice=best, alternatives=alternatives)
 
 
-async def design_voice(db: AsyncSession, user_id: int, prompt: str, *, preview_text: str = "") -> VoiceDesignResult:
-    """调用当前 TTS 供应商的音色设计能力生成自定义音色。"""
-    chain = await resolve_provider_chain(db, user_id, "tts")
+async def design_voice(user_id: int, prompt: str, *, preview_text: str = "") -> VoiceDesignResult:
+    """调用当前 TTS 供应商的音色设计能力生成自定义音色；短会话解析供应商链，付费设计调用期间不占数据库连接。"""
+    async with session_scope() as db:
+        chain = await resolve_provider_chain(db, user_id, "tts")
     if not chain:
         raise ValueError("no TTS provider configured")
     config = chain[0]

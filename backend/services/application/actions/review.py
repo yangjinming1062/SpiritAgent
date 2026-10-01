@@ -3,10 +3,11 @@
 import asyncio
 import json
 import re
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from components import SETTINGS, parse_llm_json, utc_now
+from components import SESSION_LOCAL, SETTINGS, parse_llm_json, utc_now
 from modules.companion import (
     ActionProposal,
     CharacterCardSnapshot,
@@ -33,14 +34,24 @@ from .design import action_key_from_name
 
 # 与 ACTION_REVIEW_INSTRUCTIONS 中 existing_actions 的条数上限保持一致。
 _EXISTING_ACTION_LIMIT = 10
+_REVIEWABLE_STATUSES = ("pending", "deferred")
 
 
 class ReviewVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    decision: str = Field(pattern="^(approve|reuse|defer|reject)$")
+    decision: Literal["approve", "reuse", "defer", "reject"]
     reason: str = Field(max_length=400)
     reuse_action_id: int | None = None
+
+
+@dataclass(frozen=True)
+class ReviewOutcome:
+    """已落库的评审结论；approve 时由调用方释放受理锁后启动制作。"""
+
+    decision: str
+    pack_id: int
+    action_id: int | None
 
 
 async def _review_payload(db: AsyncSession, proposal: ActionProposal, pack: CompanionActionPack) -> dict[str, Any]:
@@ -132,31 +143,65 @@ async def _existing_actions(
     ]
 
 
-async def review_proposal(db: AsyncSession, proposal: ActionProposal) -> str:
-    """独立 LLM 评审并返回落库结论；格式失败最多修复一次，仍失败则 defer。同包已有同 key 动作时不调用模型，按其状态复用或暂缓。"""
-    pack = await db.get(CompanionActionPack, proposal.pack_id)
-    if pack is None:
-        return "reject"
-    design = json.loads(proposal.design_json or "{}")
-    if (resolved := await _same_key_verdict(db, proposal, design)) is not None:
-        return await _apply_verdict(db, proposal, resolved, design)
+async def _reviewable_proposal(db: AsyncSession, proposal_id: int, user_id: int) -> ActionProposal | None:
+    proposal = await db.get(ActionProposal, proposal_id)
+    if proposal is None or proposal.user_id != user_id or proposal.status not in _REVIEWABLE_STATUSES:
+        return None
+    return proposal
 
-    if not pack.reference_path:
-        raise ValueError("动作评审缺少该形象的参考图")
-    reference_bytes = await asyncio.to_thread((Path(SETTINGS.data_dir) / pack.reference_path).read_bytes)
+
+async def review_proposal(proposal_id: int, user_id: int) -> ReviewOutcome | None:
+    """独立 LLM 评审并提交结论；提案或其形象已不存在、或已不在待评审状态时返回 None。短会话读取资料 → 不占会话调用模型 → 短会话复核状态后写入；格式失败最多修复一次，仍失败则 defer。同包已有同 key 动作时不调用模型，按其状态复用或暂缓。"""
+    async with SESSION_LOCAL() as db:
+        proposal = await _reviewable_proposal(db, proposal_id, user_id)
+        pack = await db.get(CompanionActionPack, proposal.pack_id) if proposal is not None else None
+        if proposal is None or pack is None:
+            return None
+        design = json.loads(proposal.design_json or "{}")
+        if (resolved := await _same_key_verdict(db, proposal, design)) is not None:
+            return await _commit_verdict(db, proposal, resolved, design)
+        if not pack.reference_path:
+            raise ValueError("动作评审缺少该形象的参考图")
+        reference_path = Path(SETTINGS.data_dir) / pack.reference_path
+        payload = await _review_payload(db, proposal, pack)
+
+    reference_bytes = await asyncio.to_thread(reference_path.read_bytes)
     mime = {"png": "image/png", "jpg": "image/jpeg", "webp": "image/webp"}.get(
         sniff_media_ext(reference_bytes) or "",
     )
     if mime is None:
         raise ValueError("动作评审参考图格式无效")
-    reference_image = build_data_uri(reference_bytes, mime)
+    verdict = await _request_verdict(user_id, payload, build_data_uri(reference_bytes, mime))
 
-    payload = await _review_payload(db, proposal, pack)
-    last_error = "评审失败"
+    async with SESSION_LOCAL() as db:
+        if (proposal := await _reviewable_proposal(db, proposal_id, user_id)) is None:
+            return None
+        if isinstance(verdict, ReviewVerdict):
+            return await _commit_verdict(db, proposal, verdict, payload["design"])
+        proposal.review_decision = "defer"
+        proposal.review_reason = f"评审格式失败：{verdict}"
+        proposal.status = "deferred"
+        await db.commit()
+        return ReviewOutcome("defer", proposal.pack_id, None)
+
+
+async def defer_failed_review(proposal_id: int, user_id: int) -> None:
+    """评审执行失败时落为可重试的暂缓；新开会话写入，不受失败会话待回滚状态影响。"""
+    async with SESSION_LOCAL() as db:
+        if (proposal := await _reviewable_proposal(db, proposal_id, user_id)) is None:
+            return
+        proposal.status = "deferred"
+        proposal.review_reason = "评审执行失败，可重试"
+        await db.commit()
+
+
+async def _request_verdict(user_id: int, payload: dict[str, Any], reference_image: str) -> ReviewVerdict | str:
+    """调用评审模型；结论不合规时附校验错误重试一次，仍失败返回写入评审理由的简短原因。"""
+    failure = "评审失败"
     for _attempt in range(2):
         try:
             raw = await vision_chat(
-                proposal.user_id,
+                user_id,
                 ACTION_REVIEW_INSTRUCTIONS,
                 json.dumps(payload, ensure_ascii=False),
                 reference_images=(reference_image,),
@@ -167,16 +212,36 @@ async def review_proposal(db: AsyncSession, proposal: ActionProposal) -> str:
                     raise ValueError("reuse_action_id 必须取自 existing_actions 的 id")
             elif verdict.reuse_action_id is not None:
                 raise ValueError("非 reuse 结论的 reuse_action_id 必须为 null")
-            return await _apply_verdict(db, proposal, verdict, payload["design"])
-        except (ValidationError, ValueError) as exc:
-            last_error = str(exc)
-            payload["validation_error"] = last_error
+            return verdict
+        except ValidationError as exc:
+            # 校验详情含模型原始输出，只交给本次修复；评审理由会展示给后续模型，只记字段。
+            payload["validation_error"] = str(exc)
+            failure = _validation_summary(exc)
+        except ValueError as exc:
+            payload["validation_error"] = failure = str(exc)
+    return failure
 
-    proposal.review_decision = "defer"
-    proposal.review_reason = f"评审格式失败：{last_error}"
-    proposal.status = "deferred"
-    await db.flush()
-    return "defer"
+
+def _validation_summary(exc: ValidationError) -> str:
+    """只列结论字段名；模型输出的原值与其自造的多余字段名不进入评审理由。"""
+    fields: set[str] = set()
+    for error in exc.errors(include_input=False, include_url=False, include_context=False):
+        if error["type"] == "extra_forbidden":
+            fields.add("多余字段")
+        else:
+            fields.add(str(error["loc"][0]) if error["loc"] else "整体结构")
+    return f"未通过结构校验（{'、'.join(sorted(fields))}）"
+
+
+async def _commit_verdict(
+    db: AsyncSession,
+    proposal: ActionProposal,
+    verdict: ReviewVerdict,
+    design: dict[str, Any],
+) -> ReviewOutcome:
+    decision = await _apply_verdict(db, proposal, verdict, design)
+    await db.commit()
+    return ReviewOutcome(decision, proposal.pack_id, proposal.action_id)
 
 
 def _action_key(proposal: ActionProposal, design: dict[str, Any]) -> str:

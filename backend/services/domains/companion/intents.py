@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from components import SETTINGS, begin_user_request, end_user_request, session_scope, utc_now
-from modules.auth import User
+from modules.auth import lock_user_row
 from modules.companion import (
     MAX_COMPANION_FAILURES,
     CompanionIntent,
@@ -52,10 +52,6 @@ def companion_turn_plan(user_id: int, intent_id: int, expires_at: datetime) -> I
         _TURN_PLAN.reset(token)
 
 
-async def _lock_user(db: AsyncSession, user_id: int) -> None:
-    await db.execute(select(User.id).where(User.id == user_id).with_for_update())
-
-
 async def _proactive_turn_allowed(db: AsyncSession, user_id: int) -> bool:
     return can_start_companion_turn(user_id) and await get_disturbance_tier(user_id, db=db) != "still"
 
@@ -81,7 +77,7 @@ async def enqueue_companion_intent(
     """在生产者事务中保存触发意图；同来源尚未完成时合并，不重复堆积。"""
     if not intent.strip():
         return
-    await _lock_user(db, user_id)
+    await lock_user_row(db, user_id)
     now = utc_now()
     if expires_at is not None and expires_at <= now:
         return
@@ -139,7 +135,7 @@ async def set_companion_wait(
         plan.followup = request
         return plan.intent_id
     async with session_scope() as db:
-        await _lock_user(db, user_id)
+        await lock_user_row(db, user_id)
         row = (
             (
                 await db.execute(
@@ -151,6 +147,9 @@ async def set_companion_wait(
         )
         if intent_id is not None and row is None:
             raise ValueError("Companion intent not found")
+        # 已认领或执行中的意图由其回合负责收尾；改写会丢失“工具已执行、需核对”的终态。
+        if row is not None and row.status in ("queued", "running"):
+            raise ValueError("Companion intent is queued or running in a proactive turn and cannot be rescheduled now")
         now = utc_now()
         if row is None or row.status not in _ACTIVE_STATUSES or row.expires_at <= now:
             count = (
@@ -184,7 +183,7 @@ async def cancel_companion_wait(user_id: int, intent_id: int) -> bool:
         plan.followup = None
         return True
     async with session_scope() as db:
-        await _lock_user(db, user_id)
+        await lock_user_row(db, user_id)
         result = await db.execute(
             update(CompanionIntent)
             .where(
@@ -236,7 +235,7 @@ async def has_pending_companion_intent(db: AsyncSession, user_id: int) -> bool:
 
 async def invalidate_cron_companion_intents(db: AsyncSession, user_id: int, job_id: int) -> None:
     """源任务变更与待兑现意图失效共用事务；已开始的执行保留待核对事实。"""
-    await _lock_user(db, user_id)
+    await lock_user_row(db, user_id)
     scope = (CompanionIntent.user_id == user_id) & (CompanionIntent.source_key == companion_cron_source_key(job_id))
     await db.execute(
         update(CompanionIntent)
@@ -258,7 +257,7 @@ async def invalidate_cron_companion_intents(db: AsyncSession, user_id: int, job_
 async def queue_companion_intent(user_id: int, event: CompanionWakeEvent | None = None) -> bool:
     """轻量事件合并与到期认领；等待状态持久化，不依赖常驻 LLM 或长 sleep。"""
     async with session_scope() as db:
-        await _lock_user(db, user_id)
+        await lock_user_row(db, user_id)
         now = utc_now()
         scope = CompanionIntent.user_id == user_id
         await db.execute(
@@ -360,7 +359,7 @@ async def claim_companion_intent(user_id: int) -> None:
 
 async def begin_companion_intent(user_id: int, request: CompanionTurnRequest) -> CompanionIntentView | None:
     async with session_scope() as db:
-        await _lock_user(db, user_id)
+        await lock_user_row(db, user_id)
         now = utc_now()
         row = (
             await db.execute(
@@ -403,7 +402,7 @@ async def finish_companion_intent(
     tools_started: bool = False,
 ) -> bool:
     async with session_scope() as db:
-        await _lock_user(db, user_id)
+        await lock_user_row(db, user_id)
         row = (
             await db.execute(
                 select(CompanionIntent).where(

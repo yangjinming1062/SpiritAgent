@@ -66,6 +66,7 @@ class MediaChainState(BaseModel):
     candidates: list[MediaCandidate] = Field(default_factory=list)
     stop_reason: str = ""
     result_url: str | None = None
+    # 视频供应商都在轮询结果中直接给出下载地址，此字段无人写入；仅为解析已保存的任务状态保留，已保存状态都不含非空值后删除。
     result_file_id: str | None = None
     source_path: str | None = None
 
@@ -74,7 +75,6 @@ class MediaChainState(BaseModel):
         self.next_index = index + 1
         self.phase = "submitting"
         self.result_url = None
-        self.result_file_id = None
         self.source_path = None
 
     def best(self, slot: int = 0) -> MediaCandidate | None:

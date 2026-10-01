@@ -5,14 +5,13 @@ from .attachments import attachment_root, path_attach_ref, session_dir
 from .attachments import gc_session as attachments_gc_session
 from .background import BackgroundTask, TaskBag
 from .backoff import backoff_for_poll
-from .config import SETTINGS
+from .config import SETTINGS, insecure_secret_settings
 from .constants import (
     ATTACHMENT_DATA_URL_MAX_CHARS,
     ATTACHMENT_TYPE_IMAGE,
     ATTACHMENT_TYPE_VIDEO,
     ATTACHMENT_VIDEO_EXTENSIONS,
     ATTACHMENT_VIDEO_MAX_BYTES,
-    CHAT_TEMPERATURE_DEFAULT,
     CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT,
     CONTEXT_SUMMARY_HEADROOM_FACTOR,
     DEFAULT_LANGUAGE,
@@ -47,7 +46,6 @@ from .constants import (
     TITLE_MAX_CHARS,
     TITLE_SNIPPET_MAX_CHARS,
     TOOL_CALL_ID_HEX_PREFIX_LEN,
-    TOOL_ENFORCE_OFF_VALUES,
     TTS_MAX_TEXT_CHARS,
     VIDEO_INLINE_MAX_PER_REQUEST,
 )
@@ -86,17 +84,18 @@ from .observability import (
     SCENE_FAILURES_TOTAL,
     SCENE_IMAGES_TOTAL,
     SCENE_LLM_TRIGGERS_TOTAL,
-    async_trace_span,
     render_metrics_response,
+    rpc_metrics,
 )
 from .paid_calls import log_paid_call
 from .redact import redact_sensitive_text
-from .temp_files import cleanup_expired, get_file_path, save_file
+from .temp_files import cleanup_expired, get_file_path, owned_temp_files, save_file
 from .temp_files import purge_user as purge_user_temp_files
 from .user_maintenance_runtime import (
     begin_user_request,
     cancel_user_tasks,
     clear_user_maintenance,
+    drain_user_tasks,
     end_user_request,
     is_user_in_maintenance,
     mark_user_maintenance,
@@ -114,7 +113,6 @@ __all__ = [
     "ATTACHMENT_TYPE_VIDEO",
     "ATTACHMENT_VIDEO_EXTENSIONS",
     "ATTACHMENT_VIDEO_MAX_BYTES",
-    "CHAT_TEMPERATURE_DEFAULT",
     "CAPABILITY_SERVICES",
     "CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT",
     "CONTEXT_SUMMARY_HEADROOM_FACTOR",
@@ -160,7 +158,6 @@ __all__ = [
     "TITLE_MAX_CHARS",
     "TITLE_SNIPPET_MAX_CHARS",
     "TOOL_CALL_ID_HEX_PREFIX_LEN",
-    "TOOL_ENFORCE_OFF_VALUES",
     "TTS_MAX_TEXT_CHARS",
     "VIDEO_INLINE_MAX_PER_REQUEST",
     "BackgroundTask",
@@ -168,7 +165,6 @@ __all__ = [
     "adopt_inbound",
     "apply_partial",
     "approx_text_tokens",
-    "async_trace_span",
     "attachment_root",
     "attachments_gc_session",
     "backoff_for_poll",
@@ -184,6 +180,7 @@ __all__ = [
     "correlation_id_middleware",
     "database_url",
     "download_capped",
+    "drain_user_tasks",
     "end_user_request",
     "ensure_utc",
     "format_day_marker",
@@ -193,12 +190,14 @@ __all__ = [
     "get_db",
     "get_file_path",
     "get_logger",
+    "insecure_secret_settings",
     "is_safe_outbound",
     "is_time_context_text",
     "is_user_in_maintenance",
     "log_paid_call",
     "mark_user_maintenance",
     "new_request_id",
+    "owned_temp_files",
     "parse_llm_json",
     "path_attach_ref",
     "redact_sensitive_text",
@@ -206,6 +205,7 @@ __all__ = [
     "resolve_language",
     "purge_user_temp_files",
     "resolve_prompt_text",
+    "rpc_metrics",
     "safe_json_loads",
     "safe_outbound_async_client",
     "safe_outbound_async_transport",

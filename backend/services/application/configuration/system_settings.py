@@ -75,7 +75,7 @@ async def load_and_apply_system_settings(db: AsyncSession) -> None:
 
 
 def _apply_runtime_side_effects(changed_keys: set[str]) -> None:
-    """当某些特殊配置（日志等级、限流开关等）发生变更时触发即时副作用。"""
+    """日志配置或 LLM 超时/重试参数变更时触发即时副作用。"""
     if "log_level" in changed_keys or "log_format" in changed_keys:
         try:
             setup_logging()

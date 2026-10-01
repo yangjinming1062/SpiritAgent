@@ -13,7 +13,6 @@ JSONRPC_SLASH_GENERIC: int = -32003  # handler 未映射异常兜底。
 LLM_MAX_OUTPUT_TOKENS: int = 8192  # 含推理与正文。
 TEMPERATURE_MIN: float = 0.0
 TEMPERATURE_MAX: float = 1.0
-CHAT_TEMPERATURE_DEFAULT: float = 0.7
 TITLE_GENERATION_TEMPERATURE: float = 0.3
 CONTEXT_COMPRESSION_TEMPERATURE_DEFAULT: float = 0.0
 TITLE_SNIPPET_MAX_CHARS: int = 500
@@ -21,7 +20,6 @@ TITLE_MAX_CHARS: int = 80  # 超出截断加 "..."。
 DEFAULT_SESSION_TITLE: str = "New Conversation"  # 标题生成失败/跳过时的回退。
 LLM_RETRY_MIN_TIMEOUT: float = 1.0
 CONTEXT_SUMMARY_HEADROOM_FACTOR: int = 2  # 留余量避免中途截断。
-TOOL_ENFORCE_OFF_VALUES: frozenset[str] = frozenset({"false", "never", "no", "off"})
 TOOL_CALL_ID_HEX_PREFIX_LEN: int = 24  # 前 24 个 hex，96 bit 熵。
 NIGHTLY_PLANNING_REASONING_EFFORT: str = "high"
 

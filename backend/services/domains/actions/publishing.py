@@ -6,10 +6,12 @@ import re
 from pathlib import Path
 from uuid import uuid4
 
-from components import SETTINGS
+from components import SETTINGS, safe_json_loads
 from modules.companion import REQUIRED_SYSTEM_SLOTS, CompanionActionPack, PeekGeometry, parse_content_rect
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from services.infrastructure.assets import parse_companion_asset_path
 
 from .repository import StaleCatalogError, list_pack_actions, publish_catalog
 
@@ -70,6 +72,23 @@ class CatalogValidationError(ValueError):
     """manifest 未通过发布校验；str 为公开文案。"""
 
 
+def _clip_size(result_json: str | None) -> tuple[int, int]:
+    """处理结果中的片段像素尺寸；缺失或非法时拒绝发布。"""
+    result = safe_json_loads(result_json or "", default=None)
+    clip = result.get("clip") if isinstance(result, dict) else None
+    width, height = (clip.get("width"), clip.get("height")) if isinstance(clip, dict) else (None, None)
+    if type(width) is not int or type(height) is not int or width <= 0 or height <= 0:
+        raise CatalogValidationError("动作素材缺少有效的片段尺寸，请重新制作该动作")
+    return width, height
+
+
+def _require_pack_asset(path: str, user_id: int) -> None:
+    """目录只引用该包所属用户的正式资产，客户端按此路径拉取素材。"""
+    parsed = parse_companion_asset_path(path)
+    if not _STORAGE_PATH_RE.fullmatch(path) or parsed is None or parsed[0] != user_id:
+        raise CatalogValidationError(f"资源路径不合法：{path}")
+
+
 async def build_catalog_manifest(
     db: AsyncSession,
     pack: CompanionActionPack,
@@ -99,18 +118,18 @@ async def build_catalog_manifest(
         frames = action.frames or int(action.target_duration_seconds * 24) or 48
         if not action.result_json:
             raise CatalogValidationError("动作素材缺少处理结果")
-        clip_data = json.loads(action.result_json)["clip"]
+        width, height = _clip_size(action.result_json)
 
-        clips.append(
-            ActionClipSpec(
+        try:
+            clip = ActionClipSpec(
                 action_id=action.id,
                 asset_revision=action.metadata_revision,
                 system_slot=action.system_slot or "",
                 video_ref=action.video_path,
                 duration_ms=max(duration_ms, 1),
                 frames=max(frames, 1),
-                width=clip_data["width"],
-                height=clip_data["height"],
+                width=width,
+                height=height,
                 loopable=action.loopable,
                 hitmask_ref=action.hitmask_path,
                 hitmask_grid=(
@@ -121,16 +140,21 @@ async def build_catalog_manifest(
                 hitmask_fps=action.hitmask_fps or 24,
                 peek_geometry=peek_geometry,
                 content_rect=content_rect,
-            ),
-        )
+            )
+        except ValidationError as exc:
+            raise CatalogValidationError("动作素材参数不合法，请重新制作该动作") from exc
+        clips.append(clip)
         if action.system_slot:
             slots_present.add(action.system_slot)
 
     if any(slot not in slots_present for slot in REQUIRED_SYSTEM_SLOTS):
         return None
     for clip in clips:
-        if not _STORAGE_PATH_RE.match(clip.video_ref):
-            raise CatalogValidationError(f"资源路径不合法：{clip.video_ref}")
+        _require_pack_asset(clip.video_ref, pack.user_id)
+        if clip.hitmask_ref is not None:
+            _require_pack_asset(clip.hitmask_ref, pack.user_id)
+    if pack.cover_path is not None:
+        _require_pack_asset(pack.cover_path, pack.user_id)
 
     return ActionCatalogManifest(
         pack_id=pack.id,
@@ -143,7 +167,7 @@ async def build_catalog_manifest(
 
 
 async def publish_action_catalog(db: AsyncSession, pack: CompanionActionPack) -> int:
-    """发布新目录快照：构建 manifest → 写入本次发布独有的文件 → CAS 推进版本指针。文件先于 CAS 写出且每次尝试路径唯一，落败方不会覆盖已发布版本的文件；CAS 落败时删除本次文件，flush 本事务改动后按数据库最新版本与动作行重建重试，仍冲突则抛 StaleCatalogError。失败只重试发布，不重新付费生成。"""
+    """发布新目录快照：构建 manifest → 写入本次发布独有的文件 → CAS 推进版本指针。文件先于 CAS 写出且每次尝试路径唯一，落败方不会覆盖已发布版本的文件；本次文件只在 CAS 成功后交给目录，冲突、其他错误或取消时删除。CAS 落败时 flush 本事务改动后按数据库最新版本与动作行重建重试，仍冲突则抛 StaleCatalogError。失败只重试发布，不重新付费生成。"""
     for attempt in range(_PUBLISH_ATTEMPTS):
         manifest = await build_catalog_manifest(db, pack, refresh_actions=attempt > 0)
         if manifest is None:
@@ -155,11 +179,14 @@ async def publish_action_catalog(db: AsyncSession, pack: CompanionActionPack) ->
         manifest_path = f"companion-assets/{pack.user_id}/{filename}"
         file_path = Path(SETTINGS.data_dir) / manifest_path
         file_path.parent.mkdir(parents=True, exist_ok=True)
-        file_path.write_text(payload, encoding="utf-8")
         try:
+            file_path.write_text(payload, encoding="utf-8")
             return await publish_catalog(db, pack, manifest_path=manifest_path, content_hash=content_hash)
         except StaleCatalogError:
             file_path.unlink(missing_ok=True)
-            await db.flush()
-            await db.refresh(pack, attribute_names=["catalog_version", "manifest_path", "content_hash"])
+        except BaseException:
+            file_path.unlink(missing_ok=True)
+            raise
+        await db.flush()
+        await db.refresh(pack, attribute_names=["catalog_version", "manifest_path", "content_hash"])
     raise StaleCatalogError(f"pack {pack.id} catalog version kept advancing concurrently")

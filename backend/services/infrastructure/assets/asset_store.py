@@ -57,7 +57,21 @@ def verify_signed_asset_request(user_id: int, filename: str, expires: int | None
     if expires < int(time.time()):
         return False
     expected = _sign(user_id, filename, int(expires))
-    return hmac.compare_digest(expected, sig)
+    # compare_digest 只接受 ASCII str；按字节比较，非 ASCII 签名返回不匹配而不是抛 TypeError
+    return hmac.compare_digest(expected.encode(), sig.encode("utf-8", "surrogatepass"))
+
+
+def _write_atomic(target: Path, data: bytes) -> None:
+    """先写同目录临时文件再原子替换，写入失败或中断都不会在目标路径留下半截文件。"""
+    temporary = target.with_name(f".{target.name}.{secrets.token_urlsafe(8)}.tmp")
+    try:
+        with open(temporary, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def save_companion_asset(data: bytes, *, user_id: int, label: str, ext: str) -> str:
@@ -67,9 +81,7 @@ def save_companion_asset(data: bytes, *, user_id: int, label: str, ext: str) -> 
     user_dir.mkdir(parents=True, exist_ok=True)
     token = secrets.token_urlsafe(8)
     filename = f"{safe_label}_{token}.{ext}"
-    filepath = user_dir / filename
-    with open(filepath, "wb") as f:
-        f.write(data)
+    _write_atomic(user_dir / filename, data)
     logger.info("Saved companion asset", extra={"user_id": user_id, "label": label, "size": len(data)})
     return f"companion-assets/{user_id}/{filename}"
 
@@ -99,15 +111,7 @@ def _save_generation_asset(data: bytes, user_id: int, bare_path: str) -> str:
     target = user_dir / bare_path.rsplit("/", 1)[-1]
     if target.exists():
         return bare_path
-    temporary = user_dir / f".{target.name}.{secrets.token_urlsafe(8)}.tmp"
-    try:
-        with open(temporary, "wb") as stream:
-            stream.write(data)
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.replace(temporary, target)
-    finally:
-        temporary.unlink(missing_ok=True)
+    _write_atomic(target, data)
     return bare_path
 
 
@@ -117,7 +121,8 @@ async def _save_generation_asset_async(data: bytes, user_id: int, bare_path: str
     try:
         return await asyncio.shield(task)
     except asyncio.CancelledError:
-        await task
+        # 写盘自身的失败不能顶替取消向上传播
+        await asyncio.gather(task, return_exceptions=True)
         raise
 
 
@@ -189,15 +194,14 @@ async def save_image_chain_asset_async(
 
 
 def resolve_companion_asset_path(user_id: int, filename: str) -> tuple[Path, str] | None:
-    # 路由参数允许 ``:path`` 以兼容历史链接，但资产文件名本身始终是单层路径。
-    # 先拒绝分隔符和点段，再解析并确认不会通过符号链接越出用户目录。
-    if not filename or "/" in filename or "\\" in filename or ".." in Path(filename).parts:
+    # 资产文件名始终是单层路径：先拒绝分隔符、点段和 NUL，再解析并确认不会通过符号链接越出用户目录。
+    if not filename or "/" in filename or "\\" in filename or "\x00" in filename or ".." in Path(filename).parts:
         return None
     try:
         user_root = (_assets_root() / str(user_id)).resolve()
         filepath = user_root / filename
         resolved = filepath.resolve()
-    except (OSError, RuntimeError):
+    except (OSError, RuntimeError, ValueError):
         return None
     if not resolved.is_relative_to(user_root) or not resolved.is_file():
         return None
@@ -259,19 +263,18 @@ def delete_user_assets(user_id: int) -> None:
         logger.info("Deleted user asset directory", extra={"user_id": user_id})
 
 
-def unlink_companion_asset(storage_path: str | None) -> Path | None:
-    """尽力删除裸存储路径对应文件，返回被删路径；路径非法或文件缺失时返回 None。"""
+def unlink_companion_asset(storage_path: str | None) -> None:
+    """尽力删除裸存储路径对应文件；路径非法或文件缺失时忽略，删除失败只记日志。"""
     parsed = parse_companion_asset_path(storage_path)
     if parsed is None:
-        return None
+        return
     resolved = resolve_companion_asset_path(*parsed)
     if resolved is None:
-        return None
+        return
     try:
         resolved[0].unlink(missing_ok=True)
-        return resolved[0]
     except OSError:
-        return None
+        logger.warning("Failed to delete companion asset", extra={"path": storage_path}, exc_info=True)
 
 
 def sniff_media_ext(data: bytes) -> str | None:

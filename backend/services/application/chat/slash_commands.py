@@ -42,10 +42,10 @@ SlashCommandHandler = Callable[[SlashCommandContext], Awaitable[SlashCommandResu
 @dataclass(slots=True)
 class SlashCommand:
     name: str  # 主名（无 /，小写）
+    handler: SlashCommandHandler
     aliases: list[str] = field(default_factory=list)
     description: str = ""
     requires_confirmation: bool = False
-    handler: SlashCommandHandler | None = None
 
 
 # name 为主键（小写、去 / 前缀）；aliases 镜像到同一 SlashCommand 实例。

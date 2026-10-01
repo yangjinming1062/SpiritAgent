@@ -22,15 +22,16 @@ api_prefix = "/api"
 database_url = "postgresql+psycopg://postgres:postgres@postgres:5432/spiritagent"
 
 [auth]
-# JWT 签名私钥（生产环境必须修改为随机强密钥，长度需 ≥ 16 个字符）
+# 以下三项密钥为空或仍为本示例值时后端拒绝启动（示例值随仓库公开）。
+# JWT 签名私钥（随机强密钥，长度需 ≥ 16 个字符）
 jwt_secret_key = "replace-this-with-a-strong-secret"
 # JWT 签名算法
 jwt_algorithm = "HS256"
-# 伴侣头像与模型资产 URL 的 HMAC 签名密钥（生产环境必须配置，防止未授权访问）
+# 伙伴资产 URL 的 HMAC 签名密钥（防止未授权访问）
 companion_asset_signing_key = "replace-this-with-a-companion-asset-signing-key"
-# 初始超级管理员用户名（首次冷启动时自动创建）
+# 管理后台登录用户名
 admin_username = "spiritagent"
-# 初始超级管理员密码（首次冷启动时自动创建）
+# 管理后台登录密码
 admin_password = "spiritagent@admin123"
 
 [storage]

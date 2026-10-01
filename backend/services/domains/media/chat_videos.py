@@ -44,7 +44,7 @@ def attachment_video_url(session_id: str, file_id: str) -> str:
     return f"{base}{path}" if base else path
 
 
-def _file_id_from_url(video_url: str, session_id: str) -> str | None:
+def video_file_id_from_url(video_url: str, session_id: str) -> str | None:
     """解析本服务的相对或公网附件 URL；跨会话、第三方或形态非法时返回 None。"""
     relative_prefix = f"{VIDEO_URL_PREFIX}/{session_id}/"
     if video_url.startswith(relative_prefix):
@@ -99,7 +99,7 @@ def _rewrite_parts(parts: list, file_ids: set[str], *, session_id: str) -> tuple
     for part in parts:
         if isinstance(part, dict) and part.get("type") == "input_video":
             url = str(part.get("video_url") or "")
-            file_id = _file_id_from_url(url, session_id)
+            file_id = video_file_id_from_url(url, session_id)
             if file_id is None:
                 out.append(part)
                 continue
@@ -130,7 +130,7 @@ def _referenced_file_ids(content: str | None, session_id: str) -> set[str]:
         for part in parts
         if isinstance(part, dict)
         and part.get("type") == "input_video"
-        and (file_id := _file_id_from_url(str(part.get("video_url") or ""), session_id)) is not None
+        and (file_id := video_file_id_from_url(str(part.get("video_url") or ""), session_id)) is not None
     }
 
 
@@ -155,13 +155,22 @@ async def _rewrite_rows(
     return rewritten
 
 
+def _unlink_files(paths: list[Path]) -> int:
+    removed = 0
+    for path in paths:
+        with contextlib.suppress(OSError):
+            path.unlink()
+            removed += 1
+    return removed
+
+
 async def enforce_session_quota(db: AsyncSession, session_id: str, incoming_bytes: int) -> None:
-    """写盘前保证会话目录余量：存量+本次超配额时从最旧文件开始剔除并改写引用行。"""
+    """写盘前保证会话目录余量：存量+本次超配额时从最旧文件开始剔除；引用行先改写并提交，再删除文件。"""
     root = session_dir(session_id)
     if not root.exists():
         return
 
-    def _evict_overflow() -> set[str]:
+    def _overflow_victims() -> list[Path]:
         entries: list[tuple[float, int, Path]] = []
         total = incoming_bytes
         for p in root.iterdir():
@@ -174,25 +183,24 @@ async def enforce_session_quota(db: AsyncSession, session_id: str, incoming_byte
             entries.append((stat.st_mtime, stat.st_size, p))
             total += stat.st_size
         if total <= SETTINGS.attachment_session_quota_bytes:
-            return set()
+            return []
         victims: list[Path] = []
         for _mtime, size, p in sorted(entries):  # 最旧在前
             if total <= SETTINGS.attachment_session_quota_bytes:
                 break
             total -= size
             victims.append(p)
-        for p in victims:
-            with contextlib.suppress(OSError):
-                p.unlink()
-        return {p.name for p in victims}
+        return victims
 
-    file_ids = await asyncio.to_thread(_evict_overflow)
-    if not file_ids:
+    victims = await asyncio.to_thread(_overflow_victims)
+    if not victims:
         return
+    file_ids = {p.name for p in victims}
     rows = (await db.execute(select(Message.id, Message.content).where(*_video_messages(int(session_id))))).all()
     rewritten = await _rewrite_rows(db, rows, file_ids, session_id)
     if rewritten:
         await db.commit()
+    await asyncio.to_thread(_unlink_files, victims)
     logger.info(
         "session video quota eviction",
         extra={
@@ -212,7 +220,7 @@ async def prune_videos_in_range(
     hi: int | None = None,
     preserve_queued: bool = False,
 ) -> None:
-    """清理 ``[lo, hi)`` 区间用户行引用的视频文件并改写 part。摘要按实际覆盖范围清理并保留未消费的 IM 消息，历史撤回按删除范围清理；区间外仍有引用的文件保留，已删除文件的区间内引用改写为占位，不留下死链。"""
+    """清理 ``[lo, hi)`` 区间用户行引用的视频文件并改写 part。摘要按实际覆盖范围清理并保留未消费的 IM 消息，历史撤回按删除范围清理；区间外仍有引用的文件保留，区间内引用改写为占位。有文件要删时先提交当前事务中的改写再删除文件，提交失败不会留下死链。"""
     session_id = str(conversation_id)
     conditions = [*_video_messages(conversation_id), Message.id >= lo]
     if hi is not None:
@@ -230,16 +238,12 @@ async def prune_videos_in_range(
         file_ids -= _referenced_file_ids(content, session_id)
     if not file_ids:
         return
-    root = session_dir(session_id).resolve()
-    removed = 0
-    for file_id in file_ids:
-        target = (root / file_id).resolve()
-        if target.is_relative_to(root):
-            with contextlib.suppress(OSError):
-                target.unlink()
-                removed += 1
     # 保留的排队行引用的文件已从 file_ids 剔除，区间内待改写行即上面已查出的 rows。
     rewritten = await _rewrite_rows(db, rows, file_ids, session_id)
+    await db.commit()
+    root = session_dir(session_id).resolve()
+    targets = [target for file_id in file_ids if (target := (root / file_id).resolve()).is_relative_to(root)]
+    removed = await asyncio.to_thread(_unlink_files, targets)
     logger.info(
         "session video prune",
         extra={
@@ -269,13 +273,13 @@ async def inline_video_parts(items: list, *, expected_session_id: str | None = N
             if url.startswith(("http://", "https://")):
                 new_parts.append(
                     part
-                    if expected_session_id is None or _file_id_from_url(url, expected_session_id) is not None
+                    if expected_session_id is None or video_file_id_from_url(url, expected_session_id) is not None
                     else {"type": "input_text", "text": VIDEO_DEGRADED_TEXT},
                 )
                 continue
             inlined = None
             if budget > 0 and expected_session_id:
-                file_id = _file_id_from_url(url, expected_session_id)
+                file_id = video_file_id_from_url(url, expected_session_id)
                 path = _video_file_path(expected_session_id, file_id) if file_id else None
                 if path is not None and path.is_file():
                     try:

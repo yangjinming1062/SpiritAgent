@@ -1,5 +1,7 @@
 from typing import ClassVar
 
+from modules.memory import MEMORY_EMBEDDING_DIM
+
 from ..base import EmbeddingProvider, ProviderConfig, ProviderError, ServiceType
 from ..http import get_http
 
@@ -20,7 +22,17 @@ class GeminiEmbeddingProvider(EmbeddingProvider):
         if not texts:
             return []
         model = self.config.model
-        payload = {"requests": [{"model": f"models/{model}", "content": {"parts": [{"text": t}]}} for t in texts]}
+        # 默认输出宽度与记忆库列宽不同，按列宽请求截断后的向量
+        payload = {
+            "requests": [
+                {
+                    "model": f"models/{model}",
+                    "content": {"parts": [{"text": t}]},
+                    "outputDimensionality": MEMORY_EMBEDDING_DIM,
+                }
+                for t in texts
+            ],
+        }
         resp = await self._http.post(f"/v1beta/models/{model}:batchEmbedContents", json=payload)
         if resp.status_code != 200:
             raise ProviderError(

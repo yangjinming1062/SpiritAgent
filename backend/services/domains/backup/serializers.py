@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from common import ModelBase
-from components import ensure_utc, utc_now
+from components import AIConfig, ensure_utc, utc_now
 from modules.auth import User, UserModelConfig
 from modules.companion import (
     COMPANION_CRON_SOURCE_PREFIX,
@@ -35,14 +35,15 @@ from modules.companion import (
     companion_cron_source_key,
 )
 from modules.conversation import CompanionReply, Conversation, MediaBubble, Message
-from modules.memory import MEMORY_EMBEDDING_DIM, Memory
+from modules.memory import MEMORY_EMBEDDING_DIM, MEMORY_SLOT_CONTEXT_PREFIXES, Memory
 from modules.scheduler import CronJob
 from modules.settings import UserSetting
+from pydantic import ValidationError
 from sqlalchemy import Date, DateTime, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.contracts import MemoryScope
-from services.domains.conversation import validate_memory_scope
+from services.domains.conversation import CHECKPOINT_SUBTYPES, validate_memory_scope
 
 from .action_assets import restore_action_payload
 from .file_packing import UrlRewriter
@@ -220,14 +221,7 @@ async def insert_rows(
         if (
             mode == "merge"
             and table == "memories"
-            and (payload.get("context") or "").startswith(
-                (
-                    "user_profile:",
-                    "diary:",
-                    "interaction_stats:",
-                    "recall:nightly_actions:",
-                ),
-            )
+            and (payload.get("context") or "").startswith(MEMORY_SLOT_CONTEXT_PREFIXES)
         ):
             existing = await db.scalar(
                 select(Memory).where(
@@ -284,6 +278,23 @@ async def insert_rows(
     return new_map, inserted
 
 
+def _validated_ai_config(value: Any) -> dict[str, Any]:
+    """按运行期读取方式整体校验模型配置；配置含供应商密钥，错误只报告字段位置与类型，不回显取值。"""
+    try:
+        return AIConfig.model_validate(value).model_dump()
+    except ValidationError as exc:
+        fields = ", ".join(
+            f"{'.'.join(str(part) for part in error['loc']) or 'ai_config'} ({error['type']})"
+            for error in exc.errors(include_input=False, include_url=False)
+        )
+        raise ValueError(f"Invalid AI config: {fields}") from None
+
+
+def _original_source(refs: dict[str, Any]) -> Any:
+    """再次导入的记录沿用最初的来源，反复导出导入时来源不逐层嵌套。"""
+    return refs.get("original_source", refs)
+
+
 def _build_payload(
     table: str,
     raw: dict[str, Any],
@@ -309,7 +320,7 @@ def _build_payload(
         if (
             value is not None
             and mapped is None
-            and (table in ACTION_TABLES or ref_table in id_map and key not in {"avatar_id", "source_portrait_id"})
+            and (table in ACTION_TABLES or ref_table in id_map and key != "avatar_id")
         ):
             raise ValueError(f"Missing {ref_table} reference in {table}.{key}")
         payload[key] = mapped
@@ -332,7 +343,7 @@ def _build_payload(
         raise ValueError("Message conversation is missing from backup")
     if table == "messages":
         through_id = payload.get("summary_through_message_id")
-        if payload.get("subtype") in ("daily_summary", "compress_summary"):
+        if payload.get("subtype") in CHECKPOINT_SUBTYPES:
             if type(through_id) is not int or through_id <= 0:
                 raise ValueError("Conversation summary requires an original message boundary")
         elif through_id is not None:
@@ -388,7 +399,18 @@ def _build_payload(
             if len(embedding) != MEMORY_EMBEDDING_DIM:
                 raise ValueError(f"Memory embedding dim {len(embedding)} != {MEMORY_EMBEDDING_DIM}")
         payload["source_kind"] = "import"
-        payload["source_refs"] = {"imported_memory_id": raw["id"], "original_source": payload["source_refs"]}
+        payload["source_refs"] = {
+            "imported_memory_id": raw["id"],
+            "original_source": _original_source(payload["source_refs"]),
+        }
+    if table == "user_model_configs":
+        payload["ai_config"] = _validated_ai_config(payload.get("ai_config"))
+    if table == "user_settings":
+        # 读取方逐值 json.loads；无法解析的值不能写入，否则每次读取设置都会失败。
+        try:
+            json.loads(payload.get("setting_value"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError(f"Invalid user setting value: {payload.get('setting_key')!r}") from exc
     if table == "messages" and payload.get("reply_json"):
         if payload.get("media_json"):
             raise ValueError("Structured replies cannot contain separate media attachments")
@@ -437,14 +459,14 @@ async def restore_conversation_context(
 ) -> None:
     messages = {str(row["id"]): row for row in rows.get("messages", [])}
     for original_id, raw in messages.items():
-        if raw.get("subtype") not in ("daily_summary", "compress_summary"):
+        if raw.get("subtype") not in CHECKPOINT_SUBTYPES:
             continue
         source_id = str(raw["summary_through_message_id"])
         source = messages.get(source_id)
         if (
             source is None
             or str(source["conversation_id"]) != str(raw["conversation_id"])
-            or source.get("subtype") in ("daily_summary", "compress_summary")
+            or source.get("subtype") in CHECKPOINT_SUBTYPES
         ):
             raise ValueError("Conversation summary boundary is missing from backup")
         checkpoint = await db.get(Message, int(id_map["messages"][original_id]))
@@ -496,7 +518,7 @@ async def restore_memory_context(
         restored: dict[str, Any] = {
             "imported_memory_id": raw["id"],
             "import_batch_id": import_batch_id,
-            "original_source": refs,
+            "original_source": _original_source(refs),
         }
         session_id = refs.get("session_id")
         if session_id is not None and str(session_id) in conversations:
@@ -513,8 +535,6 @@ async def restore_memory_context(
                     raise ValueError("Invalid memory source message")
                 mapped_messages.append(int(id_map["messages"][str(mid)]))
             restored["message_ids"] = mapped_messages
-        else:
-            restored["external_source"] = {key: value for key, value in refs.items() if key != "external_source"}
 
         def remap_evidence(evidence: list[dict[str, Any]]) -> list[dict[str, Any]]:
             result = []

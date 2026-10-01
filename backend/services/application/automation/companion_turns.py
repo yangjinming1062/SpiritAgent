@@ -6,6 +6,7 @@ from components import (
     begin_user_request,
     end_user_request,
     get_logger,
+    redact_sensitive_text,
     resolve_language,
     resolve_prompt_text,
     session_scope,
@@ -31,13 +32,14 @@ from services.infrastructure.llm import resolve_user_llm_config
 
 logger = get_logger(__name__)
 
+_FAILURE_REASON_MAX_CHARS = 200
+
 _READ_ONLY_TOOLS: frozenset[str] = frozenset(
     {
         "search_tools",
         "companion_wait",
         "memory_inspect",
         "memory_recall",
-        "session_search",
         "system.snapshot",
         "system.get_idle_seconds",
         "system.is_screen_locked",
@@ -56,6 +58,12 @@ def _build_proactive_hint(intent: CompanionIntentView, disturbance_tier: str, la
             ensure_ascii=False,
         )
     )
+
+
+def _failure_reason(exc: Exception) -> str:
+    """等待意图记下的失败原因会进入后续回合的模型资料：只留异常类型与脱敏、限长的首行说明，完整诊断写日志。"""
+    detail = redact_sensitive_text(next(iter(str(exc).strip().splitlines()), ""))
+    return (f"{type(exc).__name__}: {detail}" if detail else type(exc).__name__)[:_FAILURE_REASON_MAX_CHARS]
 
 
 def _tools_may_have_effects(emitter: HeadlessEmitter) -> bool:
@@ -152,7 +160,7 @@ async def _execute_claimed_turn(user_id: int, trigger: CompanionTurnRequest) -> 
             trigger,
             contact_revision=revision,
             user_message_id=message_id,
-            error=str(exc) or type(exc).__name__,
+            error=_failure_reason(exc),
             tools_started=_tools_may_have_effects(emitter),
         )
     finally:

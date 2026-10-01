@@ -36,7 +36,6 @@ AUTOMATION_EXCLUDED_TOOL_NAMES = LIFE_SPACE_TOOL_NAMES | frozenset(
         "memory_inspect",
         "memory_recall",
         "memory_retain",
-        "session_search",
         "cronjob",
         "skills_list",
         "skill_view",

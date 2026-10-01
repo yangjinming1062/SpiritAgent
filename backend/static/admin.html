@@ -115,6 +115,7 @@ button { cursor: pointer; }
 .pill::before { content: ''; width: 0.4rem; height: 0.4rem; border-radius: 50%; background: currentColor; opacity: 0.85; }
 .pill--green { color: var(--green); background: var(--green-soft); }
 .pill--red { color: var(--red); background: var(--red-soft); }
+.pill--amber { color: var(--amber); background: var(--amber-soft); }
 .pill--muted { color: var(--text-2); background: color-mix(in srgb, var(--fg) 5%, transparent); }
 
 .svc-dot {
@@ -234,7 +235,6 @@ button { cursor: pointer; }
 .topbar-text { flex: 1; min-width: 0; }
 .topbar h1 { margin: 0; font-size: 1.12rem; font-weight: 700; letter-spacing: -0.02em; }
 .topbar .desc { margin: 0.12rem 0 0; color: var(--text-3); font-size: 0.8rem; }
-.topbar-actions { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; justify-content: flex-end; }
 
 .content { padding: 1.35rem 1.65rem 4rem; }
 .wrap { max-width: 78rem; margin: 0 auto; display: flex; flex-direction: column; gap: 1.15rem; }
@@ -296,7 +296,6 @@ tbody tr:hover { background: var(--row-hover); }
 .cell-user { display: flex; align-items: center; gap: 0.65rem; min-width: 0; }
 .cell-stack { display: flex; flex-direction: column; gap: 0.28rem; align-items: flex-start; }
 .cell-meta { color: var(--text-2); font-size: 0.8rem; white-space: nowrap; }
-.cell-meta .muted { color: var(--text-3); }
 .status-line {
     display: inline-flex; align-items: center; gap: 0.35rem;
     font-size: 0.78rem; font-weight: 600; color: var(--text-2);
@@ -334,7 +333,6 @@ tbody tr:hover { background: var(--row-hover); }
     border: 1px solid color-mix(in srgb, var(--amber) 25%, transparent);
     font-size: 0.8rem; line-height: 1.5; color: var(--text-2);
 }
-.callout strong { font-weight: 700; color: var(--fg); }
 .field .label-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.3rem; }
 .field .label-row > label { margin: 0; }
 input[type="text"], input[type="password"], input[type="date"], input[type="search"], input[type="number"], select, textarea {
@@ -352,6 +350,8 @@ input:focus, select:focus, textarea:focus {
 }
 .checkbox-row { display: flex; align-items: center; gap: 0.5rem; font-weight: 600; cursor: pointer; }
 .checkbox-row input { width: 1rem; height: 1rem; accent-color: var(--primary); }
+.secret-clear { margin-top: 0.35rem; font-size: 0.76rem; font-weight: 500; color: var(--text-2); }
+.secret-clear input { width: 0.9rem; height: 0.9rem; }
 select { cursor: pointer; }
 
 .inline-form { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; }
@@ -446,7 +446,6 @@ input[type="file"] { font-size: 0.78rem; }
     display: inline-flex; align-items: center; gap: 0.35rem;
     font-size: 0.75rem; font-weight: 600; color: var(--text-3);
 }
-.settings-bar .status.dirty { color: var(--amber); }
 .settings-dock {
     position: sticky;
     bottom: 0.85rem;
@@ -618,7 +617,6 @@ input[type="file"] { font-size: 0.78rem; }
     .nav-item.active::before { display: none; }
     .topbar-inner, .content { padding-left: 1rem; padding-right: 1rem; }
     .topbar-inner { flex-direction: column; align-items: stretch; }
-    .topbar-actions { justify-content: flex-start; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -794,7 +792,7 @@ input[type="file"] { font-size: 0.78rem; }
                                 <div class="settings-dock" id="settingsDock">
                                     <div class="status" id="settingsDirty">保存后即刻生效，无需重启服务</div>
                                     <div class="settings-dock-actions">
-                                        <button class="btn btn--primary" id="settingsSaveBtn" onclick="saveSystemSettingsForm()">保存系统设置</button>
+                                        <button class="btn btn--primary" onclick="saveSystemSettingsForm()">保存系统设置</button>
                                     </div>
                                 </div>
                             </div>
@@ -878,14 +876,14 @@ input[type="file"] { font-size: 0.78rem; }
             </div>
             <div class="field">
                 <label for="baseUrl">后端地址</label>
-                <input type="text" id="baseUrl" placeholder="http://localhost:10620" value="http://localhost:10620" autocomplete="off" required>
+                <input type="text" id="baseUrl" placeholder="例如 https://example.com" autocomplete="off" required>
                 <div class="hint">嵌入激活码的后端地址，用户激活时客户端将连接此地址。</div>
             </div>
             <label class="checkbox-row"><input type="checkbox" id="nightlyEnabled" checked> 启用夜间活动</label>
             <div class="field" id="regenField" style="display:none; margin-top:0.95rem; padding-top:0.95rem; border-top:1px solid var(--border);">
                 <label>激活码</label>
                 <button type="button" class="btn btn--ghost btn--sm" onclick="regenerateToken()">重新生成激活码</button>
-                <div class="hint">激活令牌仅以哈希存储，无法再次查看原码。重新生成将创建新激活码（旧码立即失效）并在此展示。</div>
+                <div class="hint">重新生成会创建新激活码并在此展示，旧码立即失效；当前激活码可随时在用户列表的「激活码」中查看。</div>
             </div>
         </div>
         <div class="modal-foot">
@@ -902,7 +900,7 @@ input[type="file"] { font-size: 0.78rem; }
             <button class="modal-close" data-close aria-label="关闭">✕</button>
         </div>
         <div class="modal-body">
-            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">包含角色与形象、衣柜、生活空间背景、用户画像与设置、音色、长期记忆、片刻、日记和定时任务。</p>
+            <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">包含角色与形象、角色卡、衣柜与动作、场景、用户画像与设置、音色、长期记忆、片刻、日记和定时任务。</p>
             <label class="checkbox-row"><input type="checkbox" id="exportConversations"> 包含会话记录（消息、上下文与现存附件）</label>
             <p class="hint">默认不包含会话记录。备份包含用户 API 凭据，请妥善保存。导入后请重新启动客户端以刷新数据。</p>
         </div>
@@ -921,7 +919,7 @@ input[type="file"] { font-size: 0.78rem; }
         </div>
         <div class="modal-body">
             <p style="margin:0 0 0.6rem; color:var(--text-2); font-size:0.82rem;">
-                导入目标用户 #<span id="backupUserId"></span>。恢复备份中包含的角色、形象与衣柜、场景、设置与凭据、长期记忆、片刻、日记和定时任务；仅当备份包含会话记录时才恢复会话。各类数据会尽力恢复，不兼容的内容将在完成后列出。导入后请重新启动客户端。
+                导入目标用户 #<span id="backupUserId"></span>。恢复备份中包含的角色、形象与角色卡、衣柜与动作、场景、设置与凭据、长期记忆、片刻、日记和定时任务；仅当备份包含会话记录时才恢复会话。各类数据会尽力恢复，不兼容的内容将在完成后列出。导入后请重新启动客户端。
             </p>
             <div class="field">
                 <label>导入模式</label>
@@ -972,20 +970,20 @@ input[type="file"] { font-size: 0.78rem; }
             <div class="callout">
                 激活码携带后端服务地址与用户认证令牌。您可以在此随时查看当前激活码并复制发放。后端地址变动时输入新地址点击「更新后端地址」即可，无需重置令牌；如需强制作废旧激活码可点击「重新生成激活码」。
             </div>
-            <div id="activationManageResult" style="margin-top:0.5rem;">
+            <div style="margin-top:0.5rem;">
                 <label style="display:block; font-size:0.78rem; font-weight:600; margin-bottom:0.3rem;">当前激活码</label>
                 <textarea id="activationManageCode" class="mono" readonly rows="4" style="width:100%; resize:vertical; word-break:break-all;"></textarea>
             </div>
             <div class="field" style="margin-top:1rem;">
                 <label for="activationManageBaseUrl">后端地址</label>
-                <input type="text" id="activationManageBaseUrl" value="http://localhost:10620" autocomplete="off">
+                <input type="text" id="activationManageBaseUrl" placeholder="例如 https://example.com" autocomplete="off">
                 <div class="hint">更新后端地址会自动重打激活码，不影响用户已有数据与授权。</div>
             </div>
         </div>
         <div class="modal-foot">
             <button class="btn btn--ghost" onclick="closeModal('activationManageModal')">关闭</button>
-            <button class="btn btn--ghost" id="activationManageCopyBtn" style="display:none" onclick="copyActivationManageCode()">复制激活码</button>
-            <button class="btn btn--ghost" id="activationManageUpdateUrlBtn" style="display:none" onclick="updateBaseUrlFromManage()">更新后端地址</button>
+            <button class="btn btn--ghost" onclick="copyActivationManageCode()">复制激活码</button>
+            <button class="btn btn--ghost" id="activationManageUpdateUrlBtn" onclick="updateBaseUrlFromManage()">更新后端地址</button>
             <button class="btn btn--primary" id="activationManageGenBtn" onclick="regenerateFromManage()">重新生成激活码</button>
         </div>
     </div>
@@ -1159,6 +1157,15 @@ function showTab(name) {
 
 function getToken() { return sessionStorage.getItem(TOKEN_KEY); }
 
+// detail 可为文本、校验错误列表或 {error, reason, status}；限流与未处理异常在顶层返回 {error, reason, status}。
+async function errorText(resp) {
+    const body = await resp.json().catch(() => null);
+    const detail = body?.detail;
+    if (Array.isArray(detail)) return detail.map(item => `${item?.loc?.at(-1) ?? ''}: ${item?.msg ?? ''}`).join('；');
+    if (detail && typeof detail === 'object') return detail.error || `HTTP ${resp.status}`;
+    return detail || body?.error || `HTTP ${resp.status}`;
+}
+
 async function apiFetch(path, options = {}) {
     const headers = { ...(getToken() ? { Authorization: 'Bearer ' + getToken() } : {}) };
     if (!(options.body instanceof FormData)) headers['Content-Type'] = 'application/json';
@@ -1168,10 +1175,7 @@ async function apiFetch(path, options = {}) {
         location.reload();
         throw new Error('会话已过期，请重新登录');
     }
-    if (!resp.ok) {
-        const detail = (await resp.json().catch(() => ({}))).detail;
-        throw new Error(detail || `HTTP ${resp.status}`);
-    }
+    if (!resp.ok) throw new Error(await errorText(resp));
     return resp;
 }
 
@@ -1182,22 +1186,36 @@ function enterApp() {
 }
 
 function logout() {
+    if (settingsDirty && !confirm('系统设置有未保存的修改，确定退出登录？')) return;
+    clearSettingsDirty();
     sessionStorage.removeItem(TOKEN_KEY);
     location.reload();
 }
 
-$('#loginForm').addEventListener('submit', (e) => {
+$('#loginForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     const u = $('#loginUser').value.trim(), p = $('#loginPass').value;
     if (!u || !p) return;
-    fetch(API_BASE + '/admin/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: u, password: p }),
-    })
-    .then(r => r.ok ? r.json() : Promise.reject(new Error('用户名或密码错误')))
-    .then(data => { sessionStorage.setItem(TOKEN_KEY, data.access_token); enterApp(); })
-    .catch(e => { const err = $('#loginError'); err.textContent = e.message; err.style.display = 'block'; });
+    const err = $('#loginError');
+    try {
+        const resp = await fetch(API_BASE + '/admin/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username: u, password: p }),
+        });
+        if (!resp.ok) {
+            throw new Error(resp.status === 401 ? '用户名或密码错误'
+                : resp.status === 429 ? '登录尝试过于频繁，请稍后再试'
+                : await errorText(resp));
+        }
+        const data = await resp.json();
+        sessionStorage.setItem(TOKEN_KEY, data.access_token);
+        err.style.display = 'none';
+        enterApp();
+    } catch (e) {
+        err.textContent = e.message || String(e);
+        err.style.display = 'block';
+    }
 });
 
 if (getToken()) enterApp();
@@ -1235,7 +1253,7 @@ function renderUsers(data) {
                     <div class="avatar ${u.is_active ? '' : 'off'}">${initial}</div>
                     <div style="min-width:0">
                         <div class="cell-strong">${esc(u.username)}</div>
-                        <div class="cell-sub">#${u.id}${u.activation_code ? ' · 已生成激活码' : ' · 未生成激活码'}</div>
+                        <div class="cell-sub">#${u.id}</div>
                     </div>
                 </div>
             </td>
@@ -1261,20 +1279,17 @@ function renderUsers(data) {
     }).join('') : stateRow(4, q ? '没有匹配的用户' : '暂无用户', q ? '换个关键词试试' : '点击右上角“创建用户”添加');
 }
 
-// baseUrl 回退顺序：激活码中的 b > public_base_url > localhost:10620
-let runtimeInfoCache = null;
+const DEFAULT_BASE_URL = 'http://localhost:10620';
 
-async function fetchRuntimeInfo() {
-    if (runtimeInfoCache !== null) {
-        return runtimeInfoCache;
-    }
+// 每次打开弹窗时读取，系统设置中修改 public_base_url 后立即生效。
+async function fetchPublicBaseUrl() {
     try {
         const data = await (await apiFetch('/api/admin/runtime-info')).json();
-        runtimeInfoCache = typeof data?.public_base_url === 'string' ? data.public_base_url : '';
-    } catch {
-        runtimeInfoCache = '';
+        return typeof data?.public_base_url === 'string' ? data.public_base_url : '';
+    } catch (e) {
+        toast('读取公网访问地址失败，请核对后端地址：' + e.message, 'warn');
+        return '';
     }
-    return runtimeInfoCache;
 }
 
 function decodeActivationBaseUrl(code) {
@@ -1288,8 +1303,16 @@ function decodeActivationBaseUrl(code) {
     }
 }
 
+// baseUrl 回退顺序：激活码中的 b > public_base_url > DEFAULT_BASE_URL
 async function resolveDefaultBaseUrl(existingCode) {
-    return decodeActivationBaseUrl(existingCode) || (await fetchRuntimeInfo()) || 'http://localhost:10620';
+    return decodeActivationBaseUrl(existingCode) || (await fetchPublicBaseUrl()) || DEFAULT_BASE_URL;
+}
+
+// 所有写入激活码的操作共用：空地址提示并聚焦，返回空串表示中止。
+function requireBaseUrl(input) {
+    const value = input.value.trim();
+    if (!value) { toast('请填写后端地址', 'err'); input.focus(); }
+    return value;
 }
 
 async function showCreateUser() {
@@ -1297,7 +1320,6 @@ async function showCreateUser() {
     $('#editUserId').value = '';
     $('#username').value = ''; $('#username').disabled = false;
     $('#baseUrl').value = await resolveDefaultBaseUrl(null);
-    $('#baseUrl').disabled = false;
     $('#nightlyEnabled').checked = true;
     $('#regenField').style.display = 'none';
     openModal('userModal');
@@ -1315,7 +1337,6 @@ async function editUser(id) {
     $('#editUserId').value = u.id;
     $('#username').value = u.username; $('#username').disabled = true;
     $('#baseUrl').value = await resolveDefaultBaseUrl(u.activation_code);
-    $('#baseUrl').disabled = false;
     $('#nightlyEnabled').checked = u.nightly_activity_enabled;
     $('#regenField').style.display = '';
     openModal('userModal');
@@ -1323,8 +1344,8 @@ async function editUser(id) {
 
 async function saveUser() {
     const id = $('#editUserId').value;
-    const baseUrl = $('#baseUrl').value.trim();
-    if (!baseUrl) { toast('请填写后端地址', 'err'); $('#baseUrl').focus(); return; }
+    const baseUrl = requireBaseUrl($('#baseUrl'));
+    if (!baseUrl) return;
     const payload = { nightly_activity_enabled: $('#nightlyEnabled').checked };
     if (!id) {
         const username = $('#username').value.trim();
@@ -1332,6 +1353,8 @@ async function saveUser() {
         payload.username = username;
     }
     payload.base_url = baseUrl;
+    // 编辑时激活码只随后端地址变化；未变化时不弹出激活码。
+    const previousCode = id ? findCachedUser(id)?.activation_code : null;
     try {
         const method = id ? 'PATCH' : 'POST';
         const url = id ? `/api/admin/users/${id}` : '/api/admin/users';
@@ -1340,7 +1363,7 @@ async function saveUser() {
         closeModal('userModal');
         toast(id ? '用户已更新' : '用户已创建');
         loadUsers();
-        if (data.activation_code) showActivationCode(data.activation_code);
+        if (data.activation_code !== previousCode) showActivationCode(data.activation_code);
     } catch (e) { toast(e.message, 'err'); }
 }
 
@@ -1359,7 +1382,9 @@ async function patchActivationUser(id, payload, { btn, busy, done, onCode } = {}
 function regenerateToken() {
     const id = $('#editUserId').value;
     if (!id) return;
-    patchActivationUser(id, { regenerate_token: true, base_url: $('#baseUrl').value.trim() || 'http://localhost:10620' }, {
+    const baseUrl = requireBaseUrl($('#baseUrl'));
+    if (!baseUrl) return;
+    patchActivationUser(id, { regenerate_token: true, base_url: baseUrl }, {
         done: '激活码已重新生成',
         onCode: showActivationCode,
     });
@@ -1372,13 +1397,16 @@ function showActivationCode(code) {
 
 async function copyText(value, fallbackInput) {
     if (!value) return;
+    let copied;
     try {
         await navigator.clipboard.writeText(value);
+        copied = true;
     } catch {
         fallbackInput.select();
-        document.execCommand('copy');
+        copied = document.execCommand('copy');
     }
-    toast('已复制到剪贴板');
+    if (copied) toast('已复制到剪贴板');
+    else toast('复制失败，请手动选中后复制', 'err');
 }
 
 async function copyActivationCode() {
@@ -1387,20 +1415,11 @@ async function copyActivationCode() {
 
 async function manageActivation(id) {
     const user = findCachedUser(id);
+    if (!user) { toast('用户数据未加载，请稍后重试', 'err'); return; }
     $('#activationManageUserId').value = id;
-    $('#activationManageTitle').textContent = '激活码管理' + (user ? ' · ' + user.username : '');
-    const code = user?.activation_code || '';
-    $('#activationManageCode').value = code;
-    if (code) {
-        $('#activationManageResult').style.display = '';
-        $('#activationManageCopyBtn').style.display = '';
-        $('#activationManageUpdateUrlBtn').style.display = '';
-    } else {
-        $('#activationManageResult').style.display = 'none';
-        $('#activationManageCopyBtn').style.display = 'none';
-        $('#activationManageUpdateUrlBtn').style.display = 'none';
-    }
-    $('#activationManageBaseUrl').value = await resolveDefaultBaseUrl(code);
+    $('#activationManageTitle').textContent = '激活码管理 · ' + user.username;
+    $('#activationManageCode').value = user.activation_code;
+    $('#activationManageBaseUrl').value = await resolveDefaultBaseUrl(user.activation_code);
     openModal('activationManageModal');
 }
 
@@ -1409,15 +1428,14 @@ function setManageCode(id, code) {
     if (user) user.activation_code = code;
     if ($('#activationManageUserId').value !== String(id)) return;
     $('#activationManageCode').value = code;
-    $('#activationManageResult').style.display = '';
-    $('#activationManageCopyBtn').style.display = '';
-    $('#activationManageUpdateUrlBtn').style.display = '';
 }
 
 function updateBaseUrlFromManage() {
     const id = $('#activationManageUserId').value;
     if (!id) return;
-    patchActivationUser(id, { base_url: $('#activationManageBaseUrl').value.trim() || 'http://localhost:10620' }, {
+    const baseUrl = requireBaseUrl($('#activationManageBaseUrl'));
+    if (!baseUrl) return;
+    patchActivationUser(id, { base_url: baseUrl }, {
         btn: $('#activationManageUpdateUrlBtn'), busy: '更新中…', done: '后端地址已更新，激活码已刷新',
         onCode: code => setManageCode(id, code),
     });
@@ -1426,7 +1444,9 @@ function updateBaseUrlFromManage() {
 function regenerateFromManage() {
     const id = $('#activationManageUserId').value;
     if (!id) return;
-    patchActivationUser(id, { regenerate_token: true, base_url: $('#activationManageBaseUrl').value.trim() || 'http://localhost:10620' }, {
+    const baseUrl = requireBaseUrl($('#activationManageBaseUrl'));
+    if (!baseUrl) return;
+    patchActivationUser(id, { regenerate_token: true, base_url: baseUrl }, {
         btn: $('#activationManageGenBtn'), busy: '生成中…', done: '激活码已重新生成',
         onCode: code => setManageCode(id, code),
     });
@@ -1453,14 +1473,18 @@ async function deleteUser(id) {
     } catch (e) { toast(e.message, 'err'); }
 }
 
+// 键与 services/domains/backup/serializers.py 的 TABLES 及恢复失败分区 asset_files 对应。
 const BACKUP_SECTION_LABELS = Object.freeze({
     user_preferences: '用户偏好', conversations: '会话', messages: '消息',
-    user_model_configs: '模型配置与凭据', avatar_assets: '角色形象',
-    companion_outfits: '衣柜', companion_scenes: '场景', personas: '角色定义',
-    user_settings: '用户设置',
-    cron_jobs: '定时任务', memories: '长期记忆', companion_moments: '片刻',
+    user_model_configs: '模型配置与凭据', avatar_assets: '角色形象', companion_character_cards: '角色卡',
+    companion_outfits: '衣柜', companion_action_packs: '动作包', companion_actions: '动作',
+    companion_scenes: '场景', personas: '角色定义', user_settings: '用户设置',
+    cron_jobs: '定时任务', companion_intents: '主动陪伴意图', memories: '长期记忆',
+    companion_moments: '片刻', companion_moment_comments: '片刻评论',
     companion_diary_entries: '日记', asset_files: '资产文件',
 });
+const BACKUP_MODE_LABELS = Object.freeze({ overwrite: '覆盖', merge: '合并' });
+let backupImportRunning = false;
 
 function exportUserPrompt(id) {
     $('#userExportModal').dataset.userId = String(id);
@@ -1477,10 +1501,6 @@ async function exportUser(id) {
     btn.disabled = true;
     try {
         const resp = await apiFetch(`/api/admin/users/${id}/export?include_conversations=${includeConversations}`);
-        if (!resp.ok) {
-            const txt = await resp.text();
-            throw new Error(txt || `HTTP ${resp.status}`);
-        }
         const blob = await resp.blob();
         let filename = `spiritagent-user-${id}-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, '')}.zip`;
         const cd = resp.headers.get('Content-Disposition') || '';
@@ -1498,7 +1518,15 @@ async function exportUser(id) {
 }
 
 function importUserPrompt(id) {
+    const modal = $('#userBackupModal');
+    // 导入进行中只重新打开弹窗查看进度，不重置状态。
+    if (backupImportRunning) {
+        if (modal.dataset.userId !== String(id)) toast(`用户 #${modal.dataset.userId} 的备份仍在导入，请完成后再试`, 'warn');
+        openModal('userBackupModal');
+        return;
+    }
     const user = findCachedUser(id);
+    modal.dataset.userId = String(id);
     $('#backupUserId').textContent = `${id}${user ? ' (' + user.username + ')' : ''}`;
     $('#backupFile').value = '';
     $('#backupStatus').textContent = '';
@@ -1507,19 +1535,22 @@ function importUserPrompt(id) {
 }
 
 async function submitUserBackup() {
-    const idText = $('#backupUserId').textContent.split(' ')[0].replace(/[()#]/g, '');
+    if (backupImportRunning) return;
+    const userId = $('#userBackupModal').dataset.userId;
     const file = $('#backupFile').files[0];
     const mode = ($$('input[name="bk_mode"]').find(r => r.checked) || {}).value || 'overwrite';
+    const modeLabel = (value) => BACKUP_MODE_LABELS[value] ?? value;
     const status = $('#backupStatus');
     const btn = $('#backupSubmitBtn');
     if (!file) { status.textContent = '请选择 .zip 文件'; status.style.color = 'var(--red)'; return; }
+    backupImportRunning = true;
     btn.disabled = true;
-    status.textContent = `上传并导入中（模式：${mode}），请稍候…`;
+    status.textContent = `上传并导入中（模式：${modeLabel(mode)}），请稍候…`;
     status.style.color = 'var(--primary)';
     try {
         const fd = new FormData();
         fd.append('file', file);
-        const resp = await apiFetch(`/api/admin/users/${idText}/import?mode=${encodeURIComponent(mode)}`, {
+        const resp = await apiFetch(`/api/admin/users/${userId}/import?mode=${encodeURIComponent(mode)}`, {
             method: 'POST', body: fd, headers: {},
         });
         const data = await resp.json();
@@ -1535,17 +1566,20 @@ async function submitUserBackup() {
             });
             status.textContent = `导入完成（尽力恢复）：${summary}\n未能导入：\n${details.join('\n')}`;
             status.style.color = 'var(--amber)';
-            toast(`用户 #${idText} 已部分导入，请查看失败内容`, 'warn');
+            toast(`用户 #${userId} 已部分导入，请查看失败内容`, 'warn');
             loadUsers();
         } else {
-            status.textContent = `导入完成（${data.mode}）：${summary}`;
+            status.textContent = `导入完成（${modeLabel(data.mode)}）：${summary}`;
             status.style.color = 'var(--green)';
-            toast(`已导入用户 #${idText} · ${data.mode}`);
+            toast(`已导入用户 #${userId} · ${modeLabel(data.mode)}`);
             setTimeout(() => { closeModal('userBackupModal'); loadUsers(); }, 600);
         }
     } catch (err) {
-        status.textContent = '导入失败：' + (err.message || err); status.style.color = 'var(--red)';
+        const message = err.message || String(err);
+        status.textContent = '导入失败：' + message; status.style.color = 'var(--red)';
+        toast(`用户 #${userId} 导入失败：${message}`, 'err');
     } finally {
+        backupImportRunning = false;
         btn.disabled = false;
     }
 }
@@ -1821,7 +1855,7 @@ const num = (key, label, step, extra = {}) => ({ key, label, type: 'number', ste
 const text = (key, label, placeholder) => ({ key, label, type: 'text', placeholder });
 const bool = (key, label) => ({ key, label, type: 'bool' });
 const sel = (key, label, options) => ({ key, label, type: 'select', options });
-const secret = (key, label, placeholder) => ({ key, label, type: 'secret', placeholder });
+const secret = (key, label) => ({ key, label, type: 'secret' });
 
 const SETTINGS_SECTIONS = [
     {
@@ -1844,8 +1878,6 @@ const SETTINGS_SECTIONS = [
                 num('video_gen_tool_wait_seconds', '工具等待超时 (秒)', 10),
                 num('video_gen_download_max_bytes', '产物下载上限 (字节)', 1048576),
             ]],
-            ['sub', '出镜媒体身份重生成'],
-            ['grid', []],
         ],
     },
     {
@@ -1854,14 +1886,14 @@ const SETTINGS_SECTIONS = [
             ['field', bool('enable_context_compression', '启用长会话自动上下文压缩摘要')],
             ['grid', [
                 num('agent_max_loop_turns', '工具循环轮数上限', 1),
-                num('context_compression_threshold', '压缩触发阈值 (比例 0.1~0.9)', 0.05),
+                num('context_compression_threshold', '压缩触发阈值 (占上下文比例)', 0.05),
                 num('context_summary_target_tokens', '摘要压缩目标 Token 数', 100),
                 num('ipc_future_timeout_seconds', 'IPC 异步调用等待超时 (秒)', 10),
             ], true],
         ],
     },
     {
-        title: '陪伴交互与主动行为', hint: '桌面互动节流、LLM 成本冷却与主动回合预算',
+        title: '陪伴交互与主动行为', hint: '桌面互动节流、LLM 成本冷却、主动回合预算与动作制作额度',
         blocks: [
             ['sub', '互动节流与成本冷却'],
             ['grid', [
@@ -1876,6 +1908,12 @@ const SETTINGS_SECTIONS = [
                 num('companion_min_turn_interval_seconds', '主动回合最小间隔 (秒)', 5),
                 num('companion_turn_timeout_seconds', '主动回合超时 (秒)', 10),
                 num('companion_max_loop_turns', '主动回合工具循环上限 (轮)', 1),
+            ]],
+            ['sub', '动作制作'],
+            ['field', bool('action_autocreate_enabled', '允许伙伴自主创建新动作')],
+            ['grid', [
+                num('action_autonomous_create_daily_limit', '伙伴自主制作动作上限 (/天)', 1, { min: 1 }),
+                num('action_user_requested_create_daily_limit', '用户请求制作动作上限 (/天)', 1, { min: 1 }),
             ]],
         ],
     },
@@ -1910,8 +1948,8 @@ const SETTINGS_SECTIONS = [
             ['grid', [
                 sel('web_search_backend', '搜索后端', [['ddgs', 'ddgs (DuckDuckGo 免密钥)'], ['brave-free', 'brave-free (Brave Search)'], ['tavily', 'tavily (Tavily AI 搜索)']]),
                 sel('web_extract_backend', '抓取提取后端', [['tavily', 'tavily (Tavily AI 抓取)'], ['ddgs', 'ddgs']]),
-                secret('brave_search_api_key', 'Brave Search API Key', '留空保持原有配置'),
-                secret('tavily_api_key', 'Tavily API Key', '留空保持原有配置'),
+                secret('brave_search_api_key', 'Brave Search API Key'),
+                secret('tavily_api_key', 'Tavily API Key'),
                 text('tavily_base_url', 'Tavily Base URL (可选覆盖)', '留空使用官方默认地址'),
                 num('web_search_default_results', '默认搜索结果条数', 1, { min: 1 }),
             ], true],
@@ -1928,14 +1966,15 @@ const SETTINGS_SECTIONS = [
                 num('media_stt_rate_limit_per_minute', '语音识别 STT (/分钟)'),
                 num('media_tts_rate_limit_per_minute', '语音合成 TTS (/分钟)'),
                 num('media_video_rate_limit_per_minute', '视频附件上传 (/分钟)'),
-                num('companion_avatar_generate_rate_limit_per_minute', '伴侣头像生成 (/分钟)'),
-                num('companion_outfit_generate_rate_limit_per_hour', '伴侣换装外观生成 (/小时)'),
+                num('companion_avatar_generate_rate_limit_per_minute', '伙伴头像生成 (/分钟)'),
+                num('companion_outfit_generate_rate_limit_per_hour', '伙伴换装外观生成 (/小时)'),
             ]],
-            ['sub', '生活空间背景、叙事时刻与安全配额'],
+            ['sub', '场景、片刻与安全配额'],
             ['grid', [
                 num('scene_llm_create_per_24h', '角色自主新增场景上限 (/24小时)'),
                 num('scene_store_max_attempts', '场景图片转存最大重试次数'),
-                num('moment_llm_per_day', '角色主动记时刻配额 (/天)'),
+                num('moment_llm_per_day', '对话中角色记录片刻配额 (/24小时)'),
+                num('moment_autonomous_per_day', '白天角色自主发布片刻配额 (/24小时)'),
                 num('max_attachments_per_turn', '单回合附件数量上限', 1),
                 num('attachment_session_quota_bytes', '会话附件目录配额 (字节)', 1048576),
             ]],
@@ -1954,6 +1993,7 @@ const SETTINGS_SECTIONS = [
                 num('channels_restart_backoff_seconds', '守卫重试退避时间 (秒)'),
                 num('weixin_reply_max_chars', '微信回复单条分片上限 (字)'),
                 num('weixin_ilink_poll_timeout_seconds', '长轮询客户端超时 (秒)'),
+                num('channels_delivery_max_attempts', '回复投递最大尝试次数', 1, { min: 1 }),
             ]],
             ['sub', '运行时与日志调优'],
             ['grid', [
@@ -1962,7 +2002,7 @@ const SETTINGS_SECTIONS = [
                 num('access_token_expire_minutes', '用户登录 Token 有效期 (分钟)'),
                 sel('log_level', '日志输出级别', ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'].map(v => [v, v])),
                 sel('log_format', '日志格式', [['json', 'json'], ['text', 'text']]),
-                secret('metrics_auth_token', '指标采集鉴权 Token', '留空不设鉴权'),
+                secret('metrics_auth_token', '指标采集鉴权 Token'),
             ]],
             ['field', bool('llm_debug_logging', '开启 LLM Debug 面包屑追踪日志')],
             ['field', { ...num('llm_debug_max_chars', 'LLM Debug 单字段截断字符数'), narrow: true }],
@@ -1988,7 +2028,9 @@ function settingsFieldHtml(f) {
         return `${wrapOpen}<label>${f.label}</label><select id="${id}">${options}</select></div>`;
     }
     if (f.type === 'secret') {
-        return `${wrapOpen}<div class="label-row"><label>${f.label}</label><span class="keybadge off" id="${id}_badge">未设置</span></div><input type="password" id="${id}" placeholder="${f.placeholder}"></div>`;
+        return `${wrapOpen}<div class="label-row"><label for="${id}">${f.label}</label><span class="keybadge off" id="${id}_badge">未设置</span></div>`
+            + `<input type="password" id="${id}" autocomplete="new-password" placeholder="留空保持原值">`
+            + `<label class="checkbox-row secret-clear"><input type="checkbox" id="${id}_clear" data-secret-input="${id}" disabled> 保存时清除已保存的值</label></div>`;
     }
     const attrs = ` type="${f.type}"${f.step ? ` step="${f.step}"` : ''}${f.min !== undefined ? ` min="${f.min}"` : ''}${f.max !== undefined ? ` max="${f.max}"` : ''}${f.placeholder ? ` placeholder="${f.placeholder}"` : ''}`;
     return `${wrapOpen}<label>${f.label}</label><input${attrs} id="${id}"></div>`;
@@ -2018,7 +2060,15 @@ function renderSettingsForm() {
     };
 
     $('#systemSettingsForm').addEventListener('input', markSettingsDirty);
-    $('#systemSettingsForm').addEventListener('change', markSettingsDirty);
+    $('#systemSettingsForm').addEventListener('change', (e) => {
+        // 勾选清除时禁用输入框，避免同时提交新值。
+        const input = e.target.dataset.secretInput && $('#' + e.target.dataset.secretInput);
+        if (input) {
+            input.value = '';
+            input.disabled = e.target.checked;
+        }
+        markSettingsDirty();
+    });
 }
 renderSettingsForm();
 
@@ -2087,6 +2137,8 @@ function filterSettingsFields() {
 }
 
 async function loadSystemSettings() {
+    // 切回本页时保留尚未保存的修改；放弃修改需刷新页面。
+    if (settingsDirty && aiSettingsLoaded) return;
     aiSettingsLoaded = false;
     clearSettingsDirty();
     try {
@@ -2121,9 +2173,12 @@ function renderSystemSettings(data) {
         el.checked = !!data[k];
     }
     for (const item of SETTING_KEY_BADGES) {
+        const isSet = !!data[item.key + '_set'];
         const inputEl = $('#sys_' + item.key);
-        if (inputEl) inputEl.value = '';
-        setKeyBadge(item.badge, !!data[item.key + '_set']);
+        const clearEl = $('#sys_' + item.key + '_clear');
+        if (inputEl) { inputEl.value = ''; inputEl.disabled = false; }
+        if (clearEl) { clearEl.checked = false; clearEl.disabled = !isSet; }
+        setKeyBadge(item.badge, isSet);
     }
     clearSettingsDirty();
 }
@@ -2147,9 +2202,13 @@ async function saveSystemSettingsForm() {
         const el = $('#sys_' + k);
         if (el) payload[k] = el.checked;
     }
+    // 密钥留空保持原值；清除须同时提交空值与 clear_<key>。
     for (const item of SETTING_KEY_BADGES) {
         const el = $('#sys_' + item.key);
-        if (el && el.value) {
+        if ($('#sys_' + item.key + '_clear')?.checked) {
+            payload[item.key] = '';
+            payload['clear_' + item.key] = true;
+        } else if (el && el.value) {
             payload[item.key] = el.value.trim();
         }
     }
@@ -2179,22 +2238,27 @@ async function loadLogs() {
     } catch (e) { $('#logList').innerHTML = stateRow(6, '加载失败：' + e.message, '', true); }
 }
 
+// 未列出的状态原样显示。
+const LOG_STATUS = Object.freeze({
+    completed: ['已完成', 'green'],
+    completed_with_errors: ['部分失败', 'red'],
+    failed: ['失败', 'red'],
+    running: ['运行中', 'amber'],
+    skipped: ['跳过', 'muted'],
+});
+
+function logPresetLabel(r) { return r.system_preset_name || r.system_preset_id; }
+
 function renderLogs(data) {
     renderTable('#logList', 'logCount', data, {
         unit: '条记录', cols: 6, empty: '暂无夜间活动记录', emptyHint: '当夜间流水线运行后会在此展示',
         row: r => {
-            const statusPill = pill(
-                r.status === 'completed' ? '已完成' :
-                r.status === 'completed_with_errors' ? '部分失败' :
-                r.status === 'skipped' ? '跳过' : '失败',
-                r.status === 'completed' ? 'green' :
-                r.status === 'skipped' ? 'muted' : 'red'
-            );
+            const [statusLabel, statusTone] = Object.hasOwn(LOG_STATUS, r.status) ? LOG_STATUS[r.status] : [r.status, 'muted'];
             return `<tr style="cursor:pointer" onclick="openLogDetail(${r.id})">
                 <td class="td-id">${r.id}</td>
-                <td><div class="cell-strong">${esc(String(r.user_id))}</div><div class="cell-sub">${esc(r.summary || '')}</div></td>
+                <td><div class="cell-strong">${esc(String(r.user_id))} · ${esc(logPresetLabel(r))}</div><div class="cell-sub">${esc(r.summary || '')}</div></td>
                 <td>${esc(r.target_date)}</td>
-                <td>${statusPill}</td>
+                <td>${pill(statusLabel, statusTone)}</td>
                 <td>${fmtDate(r.updated_at || r.created_at)}</td>
                 <td class="td-actions"><button class="btn btn--ghost btn--sm" onclick="event.stopPropagation(); openLogDetail(${r.id})">查看</button></td>
             </tr>`;
@@ -2206,7 +2270,7 @@ async function openLogDetail(id) {
     const items = tabCache.logs?.items ?? [];
     const item = items.find(r => r.id === id);
     if (!item) return;
-    $('#logDetailTitle').textContent = `日志 #${item.id} · 用户 ${item.user_id} · ${item.target_date}`;
+    $('#logDetailTitle').textContent = `日志 #${item.id} · 用户 ${item.user_id} · ${logPresetLabel(item)} · ${item.target_date}`;
     $('#logDetailBody').textContent = JSON.stringify(item, null, 2);
     openModal('logDetailModal');
 }
@@ -2304,11 +2368,15 @@ document.addEventListener('scroll', (e) => {
     if (e.target instanceof Element && e.target.closest('.menu')) return;
     closeAllMenus();
 }, true);
+window.addEventListener('beforeunload', (e) => {
+    if (!settingsDirty) return;
+    e.preventDefault();
+    e.returnValue = '';
+});
 document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') {
         closeAllMenus();
-        $$('.modal.open').forEach(m => m.classList.remove('open'));
-        document.body.style.overflow = '';
+        $$('.modal.open').forEach(m => closeModal(m.id));
         return;
     }
     if ((e.ctrlKey || e.metaKey) && (e.key === 's' || e.key === 'S') && $('#panel-settings')?.classList.contains('active')) {

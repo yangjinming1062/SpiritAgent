@@ -11,11 +11,12 @@ from alembic.config import Config
 from components import (
     ENGINE,
     SESSION_LOCAL,
-    SETTINGS,
     attachment_root,
     cleanup_expired,
     database_url,
+    drain_user_tasks,
     get_logger,
+    insecure_secret_settings,
     setup_logging,
 )
 from fastapi import FastAPI
@@ -44,6 +45,9 @@ from services.infrastructure.web import aclose as aclose_web_providers
 
 logger = get_logger(__name__)
 
+# 连接池关闭要等在途请求释放；停机不能因个别泄漏的请求无限等待。
+_LLM_CLIENT_CLOSE_TIMEOUT_SECONDS = 10.0
+
 
 async def _best_effort_shutdown(step: str, operation: Awaitable[object]) -> None:
     """记录单个停机步骤的失败并继续释放后续资源。"""
@@ -69,6 +73,7 @@ async def _drain_runtime_tasks() -> None:
         ("proposal_reviews", drain_proposal_reviews()),
         ("event_tasks", drain_event_tasks()),
         ("user_sessions", drain_user_sessions()),
+        ("user_tasks", drain_user_tasks()),
     )
     results = await asyncio.gather(*(operation for _, operation in steps), return_exceptions=True)
     for (step, _), result in zip(steps, results, strict=True):
@@ -77,7 +82,7 @@ async def _drain_runtime_tasks() -> None:
 
 
 def _run_migrations() -> None:
-    """升级到最新 Alembic 版本；唯一一份 0001 baseline 已构建完整 schema。"""
+    """升级到最新 Alembic 版本。"""
     cfg = Config(str(Path(__file__).parents[1] / "alembic.ini"))
     # 跳过 fileConfig，否则 alembic.ini 的 WARNING root 会接管全局日志、禁用已建 logger。
     cfg.attributes["configure_logger"] = False
@@ -90,8 +95,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     cleanup_task: asyncio.Task[None] | None = None
     try:
         setup_logging()
-        if not SETTINGS.companion_asset_signing_key:
-            raise RuntimeError("COMPANION_ASSET_SIGNING_KEY must be set.")
+        if insecure := insecure_secret_settings():
+            raise RuntimeError(f"Set non-empty, non-example values for: {', '.join(insecure)}.")
         await asyncio.to_thread(_run_migrations)
         async with SESSION_LOCAL() as session:
             await load_and_apply_system_settings(session)
@@ -126,16 +131,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             with contextlib.suppress(asyncio.CancelledError):
                 await cleanup_task
 
-        # 先停调度器再 drain：tick 会 spawn 新 task，反过来会留下逃过 drain 的窗口。
+        # 先停调度器与 IM 通道桥再 drain：tick 与 IM 回合都会派生新任务，反过来会留下逃过 drain 的窗口。
         await _best_effort_shutdown("scheduler", stop_scheduler())
+        await _best_effort_shutdown("channel manager", stop_channel_manager())
 
         # 释放引擎前先 drain 模块级任务集合，避免 SIGTERM 把持有连接池的协程留在 commit 中途。
         await _best_effort_shutdown("runtime tasks", _drain_runtime_tasks())
-
-        # IM 通道桥在 outbox 专线关闭前停稳：适配器任务可能还在写 WSEvent / 开 DB session。
-        await _best_effort_shutdown("channel manager", stop_channel_manager())
         await _best_effort_shutdown("event loop", stop_event_loop())
 
         await _best_effort_shutdown("database engine", ENGINE.dispose())
         await _best_effort_shutdown("web providers", aclose_web_providers())
-        await _best_effort_shutdown("LLM clients", aclose_all())
+        await _best_effort_shutdown(
+            "LLM clients",
+            asyncio.wait_for(aclose_all(), timeout=_LLM_CLIENT_CLOSE_TIMEOUT_SECONDS),
+        )

@@ -40,10 +40,8 @@ class DDGSWebSearchProvider(WebSearchProvider):
             logger.warning("DDGS search error", extra={"error": str(exc)})
             return {"success": False, "error": f"DuckDuckGo search failed: {exc}"}
 
-        logger.info(
-            "DDGS search complete",
-            extra={"query": query, "result_count": len(web_results), "limit": safe_limit},
-        )
+        # 查询词来自对话内容，不写入日志
+        logger.debug("DDGS search complete", extra={"result_count": len(web_results), "limit": safe_limit})
         return {"success": True, "data": {"web": web_results}}
 
     async def search(self, query: str, limit: int = 5) -> dict[str, Any]:

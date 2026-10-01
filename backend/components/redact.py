@@ -164,7 +164,7 @@ def _sub_private_key(_m: re.Match) -> str:
     return "[REDACTED PRIVATE KEY]"
 
 
-# (substring gate, pattern, callback)；gate 在无凭据日志行省掉 95%+ regex，且 gated 子串都是字面前缀不会漏报。
+# (substring gate, pattern, callback)；gate 在无凭据日志行省掉多数 regex，且必须是每个匹配都包含的子串，否则会漏报。
 def _apply_gated_rules(text: str, rules: list[tuple[str, re.Pattern, Callable[[re.Match], str]]]) -> str:
     for gate, pattern, sub in rules:
         if gate in text:
@@ -174,10 +174,10 @@ def _apply_gated_rules(text: str, rules: list[tuple[str, re.Pattern, Callable[[r
 
 _GATED_RULES_DEFAULT: list[tuple[str, re.Pattern, Callable[[re.Match], str]]] = [
     ("=", _ENV_ASSIGN_RE, _sub_env),
-    (':"', _JSON_FIELD_RE, _sub_json),
+    ('"', _JSON_FIELD_RE, _sub_json),
     ("uthorization", _AUTH_HEADER_RE, _sub_auth),
     (":", _TELEGRAM_RE, _sub_telegram),
-    ("BEGIN-----", _PRIVATE_KEY_RE, _sub_private_key),
+    ("PRIVATE KEY-----", _PRIVATE_KEY_RE, _sub_private_key),
     ("://", _DB_CONNSTR_RE, _sub_db_connstr),
     ("eyJ", _JWT_RE, _sub_jwt),
     ("+", _SIGNAL_PHONE_RE, _sub_phone),

@@ -165,6 +165,14 @@ def _alpha_mode(stream: dict) -> int:
     return 0
 
 
+def ffmpeg_stdout(args: list[str], *, failure_message: str) -> bytes:
+    """执行输出到标准输出的 ffmpeg 并返回 stdout；非零退出码转 VideoProcessError（stderr 摘要进 internal）。"""
+    proc = _run([_binary("ffmpeg"), "-v", "error", *args])
+    if proc.returncode != 0:
+        raise VideoProcessError(failure_message, internal=proc.stderr.decode("utf-8", "replace")[:2000])
+    return proc.stdout
+
+
 def run_ffmpeg(args: list[str], *, label: str) -> None:
     """执行一次 ffmpeg；非零退出码统一转 VideoProcessError（stderr 摘要进 internal）。"""
     full = [_binary("ffmpeg"), "-v", "error", "-y", *args]

@@ -29,7 +29,7 @@ class BackgroundTask:
     def _log_exception(self, task: asyncio.Task) -> None:
         if task.cancelled() or task.exception() is None:
             return
-        self._logger.error("Task exited with error", extra={"task_name": self._name, "error": repr(task.exception())})
+        self._logger.error("Task exited with error", extra={"task_name": self._name}, exc_info=task.exception())
 
 
 class TaskBag:

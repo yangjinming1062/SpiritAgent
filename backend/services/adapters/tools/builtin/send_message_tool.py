@@ -2,6 +2,7 @@ import asyncio
 import json
 from urllib.parse import urlparse
 
+import httpx
 from components import get_logger, is_safe_outbound, safe_outbound_async_client, tool_error
 from prompts.tools import SEND_MESSAGE_DESC, SEND_MESSAGE_PARAM_DESCS
 
@@ -35,6 +36,8 @@ async def send_message_tool(
     if not safe:
         return tool_error(f"Refusing to POST to {parsed.hostname}: {reason}")
 
+    # webhook 令牌常在路径或查询串里，而 httpx 异常文本带完整地址：日志与结果只保留主机、状态码或异常类型。
+    host = parsed.hostname
     try:
         async with safe_outbound_async_client() as client:
             # 各 webhook 平台载荷字段不一，同时发送 text 与 content 两个常见键。
@@ -44,11 +47,15 @@ async def send_message_tool(
                 timeout=WEBHOOK_TIMEOUT,
             )
             response.raise_for_status()
-        logger.info("Message sent to webhook", extra={"webhook_prefix": target_webhook[:32]})
-        return json.dumps({"success": True, "status": response.status_code}, ensure_ascii=False)
-    except Exception as e:
-        logger.exception("send_message_tool failed")
-        return tool_error(str(e))
+    except httpx.HTTPStatusError as e:
+        status = e.response.status_code
+        logger.warning("Webhook rejected message", extra={"webhook_host": host, "status": status})
+        return tool_error(f"Webhook returned HTTP {status}")
+    except httpx.HTTPError as e:
+        logger.warning("Webhook delivery failed", extra={"webhook_host": host, "error_type": type(e).__name__})
+        return tool_error(f"Webhook delivery failed ({type(e).__name__})")
+    logger.info("Message sent to webhook", extra={"webhook_host": host})
+    return json.dumps({"success": True, "status": response.status_code}, ensure_ascii=False)
 
 
 SEND_MESSAGE_SCHEMA = {

@@ -8,7 +8,7 @@ class Emitter(Protocol):
 
 
 class HeadlessEmitter:
-    """子代理发射器：捕获全部 ``send_json`` 帧，供工具把一轮事件抽取为最终结果。"""
+    """无头发射器：捕获全部 ``send_json`` 帧，供子 Agent 委派、定时任务与主动陪伴回合从中取得最终结果。"""
 
     def __init__(self) -> None:
         self.messages: list[dict] = []

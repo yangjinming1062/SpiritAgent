@@ -14,7 +14,6 @@ _IDEMPOTENT_TOOL_NAMES = frozenset(
         "search_files",
         "web_search",
         "web_extract",
-        "session_search",
         "browser_snapshot",
         "browser_console",
         "browser_get_images",

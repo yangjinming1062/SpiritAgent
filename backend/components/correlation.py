@@ -66,7 +66,7 @@ async def correlated_exception_response(request: Request, exc: Exception) -> JSO
 
 
 async def correlation_id_middleware(request: Request, call_next: Callable[..., Any]) -> Response:
-    """覆盖所有 path；不 reset ContextVar（Starlette 每请求独立 task 自动隔离）；500 header 透传交给 main.py 的 ExceptionMiddleware 兜底。"""
+    """覆盖所有 path；不 reset ContextVar（Starlette 每请求独立 task 自动隔离）；未捕获异常的 500 响应由 correlated_exception_response 补写 header。"""
     inbound = request.headers.get(REQUEST_ID_HEADER)
     rid = adopt_inbound(inbound)
     response = await call_next(request)

@@ -27,31 +27,14 @@ from services.domains.media import (
     save_video_attachment,
     video_mime_for_ext,
 )
-from services.infrastructure.llm import MissingLlmConfigError, classify_api_error, synthesize_speech, transcribe_audio
+from services.infrastructure.llm import MissingLlmConfigError, synthesize_speech, transcribe_audio
 
-from ._http_errors import classified_http_exception, missing_config_http
+from ._http_errors import llm_http_error, missing_config_http
 
 logger = get_logger(__name__)
 
 
 router = get_router()
-
-
-def _llm_http_error(e: Exception, op: str) -> HTTPException:
-    """分类上游 LLM/media 错误并返回非泄露错误信封。"""
-    classified = classify_api_error(e)
-    # exc_info 保留完整 traceback 在服务端日志（API 响应仍非泄露，仅分类 reason+message 触达 renderer），便于事后排查 TTS/STT/生图侧翻时的真实异常链。
-    logger.warning(
-        "media operation failed",
-        extra={
-            "operation": op,
-            "reason": classified.reason.value,
-            "status_code": classified.status_code,
-            "error": str(e),
-        },
-        exc_info=True,
-    )
-    return classified_http_exception(classified)
 
 
 def _resolve_mime_type(content_type: str | None) -> str:
@@ -202,9 +185,9 @@ async def speech_to_text(
     try:
         text = await transcribe_audio(user.id, file_bytes, mime_type, language=language.strip() or "auto")
     except MissingLlmConfigError:
-        raise missing_config_http("STT")
+        raise missing_config_http("语音识别服务")
     except Exception as e:
-        raise _llm_http_error(e, "stt") from e
+        raise llm_http_error(e, "stt") from e
     return {"success": True, "text": text}
 
 
@@ -235,9 +218,9 @@ async def text_to_speech(request: Request, body: TtsRequest, user: CurrentUser) 
     try:
         result = await synthesize_speech(user.id, text, voice, language)
     except MissingLlmConfigError:
-        raise missing_config_http("TTS")
+        raise missing_config_http("语音合成服务")
     except Exception as e:
-        raise _llm_http_error(e, "tts") from e
+        raise llm_http_error(e, "tts") from e
 
     # 回传实际使用的音色，让 desktop 在供应商切换后保持同步。
     return StreamingResponse(

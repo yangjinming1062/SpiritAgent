@@ -65,6 +65,7 @@ from services.infrastructure.llm import (
     VisualReasoningError,
     build_provider,
     execute_with_fallback,
+    is_content_policy_error_message,
     resolve_provider_chain,
     resolve_vision_chain,
 )
@@ -145,11 +146,7 @@ async def _process_thread[T](fn: Callable[..., T], *args: object, **kwargs: obje
 
 
 class VideoPackError(RuntimeError):
-    """视频包流程错误；str 为公开文案，internal 保留定位线索。"""
-
-    def __init__(self, message: str, *, internal: str | None = None) -> None:
-        super().__init__(message)
-        self.internal = internal
+    """视频包流程错误；str 为公开文案。"""
 
 
 class VideoPackNotFoundError(VideoPackError):
@@ -158,6 +155,10 @@ class VideoPackNotFoundError(VideoPackError):
 
 class VideoPackStateError(VideoPackError):
     """状态守卫拒绝（未就绪 / 状态冲突 / 参考版本过期）。"""
+
+
+class _GenerationRowGoneError(Exception):
+    """生成中的动作行已删除，或包已离开生成流程；只跳过受影响的目标。"""
 
 
 async def _active_avatar(db: AsyncSession, user_id: int) -> AvatarAsset | None:
@@ -307,7 +308,7 @@ async def create_pack_from_clips(
     async with get_avatar_job_lock(user_id):
         persona = await get_or_create_persona(db, user_id)
         if not persona.is_complete:
-            raise VideoPackStateError("请先完成 onboarding 再创建视频形象")
+            raise VideoPackStateError("请先完成角色设定再创建视频形象")
         await _reject_concurrent_build(db, user_id)
         outfit = (
             await db.execute(
@@ -323,7 +324,7 @@ async def create_pack_from_clips(
 
         for action, (data, _content_type) in clips.items():
             if len(data) > MAX_SOURCE_BYTES:
-                raise VideoPackError(f"{action} 片段超过大小上限")
+                raise VideoPackError("动作片段超过大小上限")
 
         pack = await _insert_pack(db, user_id, avatar=avatar, outfit=outfit, reference_hash=reference_hash)
         for action in clips:
@@ -345,6 +346,7 @@ async def create_pack_from_clips(
 
     _kick_build(
         pack.id,
+        user_id,
         clips=clips,
         canvas=(canvas_w, canvas_h),
         action_ranges=action_ranges or {},
@@ -363,18 +365,18 @@ async def create_pack_from_reference(
     action: str | None = None,
     feedback: str = "",
 ) -> CompanionActionPack:
-    """按参考生成：单动作在 ready 包原地重做（保 pack_id 只推进素材版本），包未 ready 时才形成新版本并复用冻结参考。"""
-    if (source_pack_id is None) != (action is None):
-        raise VideoPackStateError("单动作请求必须指定有效视频包与动作")
+    """按参考生成：单个系统动作在 ready 包原地重做（保 pack_id 只推进素材版本），包未 ready 时才形成新版本并复用冻结参考。"""
+    if (source_pack_id is None) != (action is None) or (action is not None and action not in SYSTEM_SLOTS):
+        raise VideoPackStateError("单动作请求必须指定有效动作包与动作")
     async with get_avatar_job_lock(user_id), contextlib.AsyncExitStack() as pending_assets:
         persona = await get_or_create_persona(db, user_id)
         if not persona.is_complete:
-            raise VideoPackStateError("请先完成 onboarding")
+            raise VideoPackStateError("请先完成角色设定")
         source = await _get_pack(db, user_id, source_pack_id) if source_pack_id is not None else None
         if source_pack_id is not None and (
             source is None or source.status not in ("ready", "failed") or not source.reference_path
         ):
-            raise VideoPackStateError("该视频包不能生成该动作")
+            raise VideoPackStateError("该动作包不能生成该动作")
         # 同一外观快照：ready 包上单动作原地重做，不新建 pack。
         if source is not None and action is not None and source.status == "ready":
             await _reject_concurrent_build(db, user_id)
@@ -412,16 +414,16 @@ async def create_pack_from_reference(
         await _reject_concurrent_build(db, user_id)
         avatar = await _active_avatar(db, user_id)
         if source is not None and (avatar is None or source.avatar_id != avatar.id):
-            raise VideoPackStateError("角色形象已切换，请生成完整新包")
+            raise VideoPackStateError("角色形象已切换，请重新生成动作包")
         reference_hash = source.reference_hash if source is not None else await _reference_hash(outfit, avatar)
         source_context = _load_generation_context(source) if source is not None else None
         if source is not None and source_context is None:
-            raise VideoPackStateError("该视频包缺少有效生成上下文，请生成完整新包")
+            raise VideoPackStateError("该动作包的制作资料不完整，请重新生成动作包")
         identity = (
             source_context.identity if source_context is not None else await require_character_snapshot(db, user_id)
         )
         if source_context is not None and source_context.reference_alignment != "ready":
-            raise VideoPackStateError("参考图尚未准备完成，请生成完整新包")
+            raise VideoPackStateError("参考图尚未准备完成，请重新生成动作包")
         if not force and source is None:
             reusable = (
                 await db.execute(
@@ -478,7 +480,7 @@ async def create_pack_from_reference(
                     raise VideoPackStateError("请先重做失败的必需动作，再补齐其他动作")
             reference_path = source.reference_path
             if not _artifact_abs_path(reference_path).is_file():
-                raise VideoPackStateError("该视频包的冻结参考图不可读")
+                raise VideoPackStateError("该动作包的参考图无法读取")
         else:
             copied = await _copy_portrait_asset(outfit.fullbody_url, user_id=user_id, label="video_reference")
             if copied is None:
@@ -497,7 +499,7 @@ async def create_pack_from_reference(
             seed_path = avatar.seed_fullbody_url if avatar else ""
             identity_reference_path = await _copy_portrait_asset(seed_path, user_id=user_id, label="video_identity")
             if identity_reference_path is None:
-                raise VideoPackStateError("全身身份参考无法读取")
+                raise VideoPackStateError("全身形象无法读取")
             pending_assets.callback(unlink_companion_asset, identity_reference_path)
             outfit_source = safe_json_loads(outfit.source_json, default={})
             applied_identity_path = (
@@ -620,18 +622,18 @@ async def retry_pack(db: AsyncSession, user_id: int, pack_id: int) -> CompanionA
         await _reject_concurrent_build(db, user_id)
         pack = await _get_pack(db, user_id, pack_id)
         if pack is None or pack.status != "failed" or not pack.reference_path:
-            raise VideoPackStateError("该视频包没有可恢复任务")
+            raise VideoPackStateError("该动作包没有可继续的任务")
         outfit = await db.get(CompanionOutfit, pack.outfit_id)
         avatar = await _active_avatar(db, user_id)
         if outfit is None or avatar is None or pack.avatar_id != avatar.id:
-            raise VideoPackStateError("该视频包对应的角色形象已切换，请生成完整新包")
+            raise VideoPackStateError("该动作包对应的角色形象已切换，请重新生成动作包")
         if not _artifact_abs_path(pack.reference_path).is_file():
-            raise VideoPackStateError("该视频包的冻结参考图不可读")
+            raise VideoPackStateError("该动作包的参考图无法读取")
         context = _load_generation_context(pack)
         if context is None:
-            raise VideoPackStateError("该视频包缺少有效生成上下文，请生成完整新包")
+            raise VideoPackStateError("该动作包的制作资料不完整，请重新生成动作包")
         if context.reference_chain.phase == "submitting" and context.reference_chain.best() is None:
-            raise VideoPackStateError("参考图生成结果未知，请核对后生成完整新包")
+            raise VideoPackStateError("参考图生成结果未知，请核对后重新生成动作包")
         jobs = list(
             (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == pack_id))).scalars(),
         )
@@ -738,17 +740,19 @@ async def _insert_pack(
 
 def _kick_build(
     pack_id: int,
+    user_id: int,
     *,
     clips: dict[str, tuple[bytes, str]],
     canvas: tuple[int, int],
     action_ranges: dict[str, tuple[float, float]],
 ) -> None:
-    _TASKS.add(
-        asyncio.create_task(
-            _build_pack(pack_id, clips=clips, canvas=canvas, action_ranges=action_ranges),
-            name=f"companion.video.build.{pack_id}",
-        ),
+    task = asyncio.create_task(
+        _build_pack(pack_id, clips=clips, canvas=canvas, action_ranges=action_ranges),
+        name=f"companion.video.build.{pack_id}",
     )
+    _TASKS.add(task)
+    # 导入不涉及付费调用：用户维护时直接取消，中断的包按失败落库。
+    track_user_task(user_id, task)
 
 
 async def _prepare_clip(
@@ -827,11 +831,11 @@ async def _emit_pack_event(user_id: int, event_type: str, payload: dict[str, obj
 
 
 async def _advance_job(job_id: int, *, stage: str, status: str = "processing", **fields: object) -> None:
-    """推进生成任务行阶段；终态行不再被覆写。"""
+    """推进生成任务行阶段；终态行不再被覆写，行已删除时中止该动作。"""
     async with SESSION_LOCAL() as db:
         job = await db.get(CompanionAction, job_id)
-        if job is None or job.status == "cancelled":
-            raise asyncio.CancelledError
+        if job is None:
+            raise _GenerationRowGoneError
         if job.status in ("succeeded", "review", "failed"):
             return
         job.status = status
@@ -867,14 +871,12 @@ async def _mark_pack_failed(
     pack: CompanionActionPack,
     message: str,
     *,
-    reason: str | None = None,
     stage: str | None = None,
 ) -> None:
-    """包与未终态任务置失败并写失败事件（调用方提交）；reason 为任务与事件原因，缺省同 message。"""
-    reason = reason or message
+    """包与未终态任务置失败并写失败事件（调用方提交）；message 为公开文案，同时作为任务与事件原因。"""
     pack.status = "failed"
     pack.error = message
-    values: dict[str, object] = {"status": "failed", "error": reason}
+    values: dict[str, object] = {"status": "failed", "error": message}
     if stage is not None:
         values["stage"] = stage
     await db.execute(
@@ -890,16 +892,17 @@ async def _mark_pack_failed(
         db,
         user_id=pack.user_id,
         event_type="companion.video.failed",
-        payload={"packId": pack.id, "outfitId": pack.outfit_id, "reason": reason[:300]},
+        payload={"packId": pack.id, "outfitId": pack.outfit_id, "reason": message[:300]},
     )
 
 
-async def _fail_pack(pack_id: int, exc: Exception) -> None:
+async def _fail_pack(pack_id: int, message: str) -> None:
+    """构建中的包置失败；message 为公开文案。"""
     async with SESSION_LOCAL() as db:
         pack = await db.get(CompanionActionPack, pack_id)
         if pack is None or pack.status != "processing":
             return
-        await _mark_pack_failed(db, pack, str(exc)[:500] or exc.__class__.__name__)
+        await _mark_pack_failed(db, pack, message[:500])
         await db.commit()
 
 
@@ -962,26 +965,28 @@ async def _publish_ready(pack_id: int, results: dict[str, ActionResult]) -> None
         pack.identity_review_reason = review_reason
         if cover_path:
             pack.cover_path = cover_path
-        # 动作目录 = 当前视频包可播清单：从任务行聚合发布。
-        await _publish_catalog(db, pack)
+        # 动作目录 = 当前视频包可播清单：从任务行聚合发布；发布失败时不广播目录也不自动启用，保留当前激活包。
+        published = await _publish_catalog(db, pack) is not None
         emit_ws_event(
             db,
             user_id=pack.user_id,
             event_type="companion.video.ready",
             payload={"packId": pack.id, "outfitId": pack.outfit_id, "packVersion": pack.pack_version},
         )
-        emit_ws_event(
-            db,
-            user_id=pack.user_id,
-            event_type="companion.action.catalog_changed",
-            payload={
-                "packId": pack.id,
-                "catalogVersion": pack.catalog_version,
-                "appearanceEpoch": pack.appearance_epoch,
-            },
-        )
+        if published:
+            emit_ws_event(
+                db,
+                user_id=pack.user_id,
+                event_type="companion.action.catalog_changed",
+                payload={
+                    "packId": pack.id,
+                    "catalogVersion": pack.catalog_version,
+                    "appearanceEpoch": pack.appearance_epoch,
+                },
+            )
         if (
-            context is not None
+            published
+            and context is not None
             and review_status in ("pass", "accepted")
             and reference_is_current
             and await _newer_ready_pack(db, pack) is None
@@ -998,7 +1003,7 @@ async def _publish_catalog(db: AsyncSession, pack: CompanionActionPack) -> int |
     """从任务行聚合发布动作目录（spiritagent.action.pack），CAS 推进。必需槽位不齐或失败返回 None：不回滚已成功素材，可再次发布恢复。"""
     try:
         return await publish_action_catalog(db, pack)
-    except Exception:  # noqa: BLE001 — 目录发布失败不回滚素材；ready 状态与事件照常提交
+    except Exception:  # noqa: BLE001 — 目录发布失败不回滚素材；调用方据 None 跳过目录广播与自动启用
         logger.exception("action catalog publish failed", extra={"pack_id": pack.id})
         return None
 
@@ -1037,11 +1042,15 @@ async def _build_pack(
                     await db.commit()
 
         await _publish_ready(pack_id, results)
-    except (VideoProcessError, VideoPackError, OSError) as exc:
-        await _fail_pack(pack_id, exc)
+    except asyncio.CancelledError:
+        # 用户维护或停机中断导入：上传源片段不可复用，与重启恢复一致按失败落库，避免包一直占着构建位。
+        await _fail_pack(pack_id, "处理已中断，请重新提交")
+        raise
     except Exception as exc:  # noqa: BLE001 — 后台任务兜底：失败必须落库可见
-        logger.exception("video pack build crashed")
-        await _fail_pack(pack_id, exc)
+        logger.exception("video pack build failed", extra={"pack_id": pack_id})
+        # 只有处理错误自带公开文案；其余异常（含路径等内部信息）只进日志。
+        public = str(exc) if isinstance(exc, (VideoProcessError, VideoPackError)) else "动作片段处理失败，请重新提交"
+        await _fail_pack(pack_id, public)
 
 
 def _action_resolution(
@@ -1153,7 +1162,7 @@ async def _prepare_pack_identity(pack: CompanionActionPack, context: GenerationC
         async with SESSION_LOCAL() as db:
             row = await db.get(CompanionActionPack, pack.id)
             if row is None or row.status != "processing":
-                raise asyncio.CancelledError
+                raise _GenerationRowGoneError
             row.context_json = context.model_dump_json()
             await db.commit()
 
@@ -1250,7 +1259,7 @@ async def _generate_pack(pack_id: int) -> None:
             )
         context = _load_generation_context(pack)
         if context is None:
-            raise VideoPackError("视频包缺少生成上下文，请生成完整新包")
+            raise VideoPackError("动作包的制作资料不完整，请重新生成动作包")
         pending = [job for job in jobs if job.status != "succeeded" and job.status != "failed" and not job.script_json]
         for job in pending:
             await _prepare_action_video_plan(job)
@@ -1280,9 +1289,7 @@ async def _generate_pack(pack_id: int) -> None:
                 entry = ActionScriptEntry.model_validate_json(job.script_json or "")
                 await _run_action_pipeline(pack, job, entry, context)
             except Exception as exc:  # noqa: BLE001 — 动作失败隔离，其他已请求动作仍可交付并独立重做
-                logger.exception("video action failed", extra={"pack_id": pack_id, "action": job.key})
-                status = "result_unknown" if isinstance(exc, ProviderResultUnknownError) else "failed"
-                await _advance_job(job.id, stage=job.stage, status=status, error=_generation_error(exc))
+                await _record_action_failure(pack_id, job, exc)
         async with SESSION_LOCAL() as db:
             rows = (await db.execute(select(CompanionAction).where(CompanionAction.pack_id == pack_id))).scalars().all()
         # 阻塞发布：must_actions（必需 + 本版本必须成功）未完成。继承的其他未知失败不阻塞。
@@ -1290,10 +1297,8 @@ async def _generate_pack(pack_id: int) -> None:
             job for job in rows if (job.status != "succeeded" or not job.result_json) and job.key in must_actions
         ]
         if blocking:
-            await _fail_pack(
-                pack_id,
-                VideoPackError("；".join(f"{job.key}: {job.error or '动作未完成'}" for job in blocking)),
-            )
+            # 各动作原因已写入动作行；包级文案只汇总不重复的原因，不暴露内部动作键。
+            await _fail_pack(pack_id, "；".join(dict.fromkeys(job.error or "动作未完成" for job in blocking)))
             return
         results = {
             job.key: ActionResult.model_validate_json(job.result_json)
@@ -1306,9 +1311,25 @@ async def _generate_pack(pack_id: int) -> None:
             {"packId": pack_id, "outfitId": pack.outfit_id, "stage": "publish"},
         )
         await _publish_ready(pack_id, results)
+    except _GenerationRowGoneError:
+        logger.info("video pack left generation", extra={"pack_id": pack_id})
     except Exception as exc:  # noqa: BLE001 — 后台异常必须转为持久可见失败
         logger.exception("video pack generation failed", extra={"pack_id": pack_id})
-        await _fail_pack(pack_id, VideoPackError(_generation_error(exc)))
+        await _fail_pack(pack_id, _generation_error(exc))
+
+
+async def _record_action_failure(pack_id: int, job: CompanionAction, exc: Exception) -> None:
+    """单动作失败落库，不影响同批其他动作；任务行已删除时只记录并跳过。"""
+    extra = {"pack_id": pack_id, "action_id": job.id, "action": job.key}
+    if isinstance(exc, _GenerationRowGoneError):
+        logger.info("video action row removed during generation", extra=extra)
+        return
+    logger.error("video action failed", extra=extra, exc_info=exc)
+    status = "result_unknown" if isinstance(exc, ProviderResultUnknownError) else "failed"
+    try:
+        await _advance_job(job.id, stage=job.stage, status=status, error=_generation_error(exc))
+    except _GenerationRowGoneError:
+        logger.info("video action row removed before its failure was recorded", extra=extra)
 
 
 def _generation_error(exc: Exception) -> str:
@@ -1329,8 +1350,8 @@ async def _run_action_pipeline(
     job: CompanionAction,
     entry: ActionScriptEntry,
     context: GenerationContext,
-) -> None:
-    """姿态图 → 沿冻结供应商链逐家生成并评分 → 最佳素材定位与复核 → 回写任务行；整包与单动作共用。"""
+) -> bool:
+    """姿态图 → 沿冻结供应商链逐家生成并评分 → 最佳素材定位与复核 → 回写任务行；整包与单动作共用。返回素材是否无需复核、直接成功。"""
     await _prepare_action_video_plan(job)
     state = MediaChainState.model_validate_json(job.generation_state_json or "")
     identity_uri = await _process_thread(_image_data_uri, _artifact_abs_path(context.identity_reference_path))
@@ -1454,7 +1475,7 @@ async def _run_action_pipeline(
     if best is None:
         if state.stop_reason == "result_unknown":
             raise ProviderResultUnknownError("POST", "video_gen")
-        raise VideoPackError("视频供应商链未返回可用素材")
+        raise VideoPackError("视频生成服务未返回可用素材")
     unused_source = job.artifact_path
     result = ActionResult.model_validate_json(best.result_json or "")
     spec = result.clip
@@ -1519,6 +1540,7 @@ async def _run_action_pipeline(
         for path in candidate.artifacts:
             if path not in keep:
                 await asyncio.to_thread(unlink_companion_asset, path)
+    return review_id is None
 
 
 async def _run_action_attempt(
@@ -1531,7 +1553,7 @@ async def _run_action_attempt(
     """单家供应商尝试：提交或续轮询 → 下载源视频 → 抠像与接点验收；返回 (源视频路径, 处理结果)。"""
     attempt = state.active_index
     if attempt is None:
-        raise VideoPackError("视频供应商链进度无效")
+        raise VideoPackError("动作制作进度无效，请重新生成")
 
     async def progress(stage: str) -> None:
         job.stage = stage
@@ -1556,7 +1578,7 @@ async def _run_action_attempt(
             if not task_id:
                 resolution = state.providers[attempt].video_resolution
                 if not resolution:
-                    raise VideoPackStateError("动作视频缺少冻结的分辨率，请核对任务后重做")
+                    raise VideoPackStateError("动作制作资料缺少分辨率，请重新生成该动作")
                 if not job.pose_path or not _artifact_abs_path(job.pose_path).is_file():
                     raise VideoPackError("动作起始姿态图不可读，请恢复原素材")
                 pose_uri = await _process_thread(_action_video_frame_uri, _artifact_abs_path(job.pose_path))
@@ -1590,11 +1612,7 @@ async def _run_action_attempt(
                 if status.status != "succeeded":
                     raise MediaProviderFailedError(_provider_failure_copy(status.error))
                 state.result_url = status.download_url
-                state.result_file_id = status.file_id
                 state.phase = "storing"
-                await _save_action_state(job, state, stage="download")
-            if not state.result_url and state.result_file_id:
-                state.result_url = (await provider.fetch(state.result_file_id)).download_url
                 await _save_action_state(job, state, stage="download")
         await progress("download")
         if not state.result_url:
@@ -1640,12 +1658,13 @@ async def _run_action_attempt(
     return source_path, result
 
 
-_POLICY_KEYWORDS = ("policy", "unsafe", "content_filter", "敏感", "违规", "moderation")
+# 视频供应商的中文审核提示；共享审核模式只覆盖英文文案与错误码，这里不扩大到其他能力的错误分类。
+_POLICY_KEYWORDS_ZH = ("敏感", "违规")
 
 
 def _provider_failure_copy(error: str | None) -> str:
-    """供应商失败的用户文案：策略审核仅关键词嗅探，原始错误文本不外泄。"""
-    if error and any(keyword in error.lower() for keyword in _POLICY_KEYWORDS):
+    """供应商失败的用户文案：按共享审核模式识别策略拦截，原始错误文本不外泄。"""
+    if error and (is_content_policy_error_message(error) or any(keyword in error for keyword in _POLICY_KEYWORDS_ZH)):
         return "内容审核未通过，请调整角色形象后重试"
     return "视频生成失败，请稍后重试"
 
@@ -1668,7 +1687,10 @@ def _start_pack_task(
         _GEN_INFLIGHT.discard(pack_id)
         pending = pack_id in _GEN_PENDING
         _GEN_PENDING.discard(pack_id)
-        if done.cancelled() or done.exception() is not None:
+        if done.cancelled():
+            return
+        if (exc := done.exception()) is not None:
+            logger.error("video pack task crashed", extra={"pack_id": pack_id, "task": name}, exc_info=exc)
             return
         # 单动作失败不阻塞其他排队项；整批无进展时停止，避免空转或反复恢复未知结果。
         if pending or drain_queue_after or done.result():
@@ -1695,21 +1717,19 @@ async def _queue_in_place_redo(
     action: str,
     feedback: str,
 ) -> CompanionAction:
-    """ready 包上单动作原地重做：保留动作身份与元数据，只重置素材生成状态。"""
+    """ready 包上系统动作原地重做：保留动作身份与元数据，只重置素材生成状态。"""
     job = (
         await db.execute(
             select(CompanionAction).where(CompanionAction.pack_id == pack.id, CompanionAction.key == action),
         )
     ).scalar_one_or_none()
-    requested_seconds = _SYSTEM_ACTION_SECONDS
-    needs_loop_frames = action in SYSTEM_SLOTS
-    if job is not None and action not in SYSTEM_SLOTS:
-        spec = _action_spec(job)
-        requested_seconds, needs_loop_frames = spec.duration_seconds, spec.clip_kind == "loop"
+    # 在途制作持有该行或正在消费同包队列：此时重置会被覆盖或丢失，并丢弃已付费的任务句柄。
+    if pack.id in _GEN_INFLIGHT or (job is not None and job.status in ("queued", "processing")):
+        raise VideoPackStateError("动作仍在制作中，请等待完成后再重新生成")
     seconds, providers = await _resolve_action_video_plan(
         pack.user_id,
-        needs_loop_frames=needs_loop_frames,
-        duration_seconds=requested_seconds,
+        needs_loop_frames=True,
+        duration_seconds=_SYSTEM_ACTION_SECONDS,
     )
     if job is None:
         job = CompanionAction(
@@ -1717,9 +1737,9 @@ async def _queue_in_place_redo(
             pack_id=pack.id,
             outfit_id=pack.outfit_id,
             key=action,
-            system_slot=action if action in SYSTEM_SLOTS else "",
-            name="" if action in SYSTEM_SLOTS else action,
-            kind="loop" if action in SYSTEM_SLOTS else "once",
+            system_slot=action,
+            name="",
+            kind="loop",
             status="queued",
             stage="design",
             reference_hash=pack.reference_hash,
@@ -1777,9 +1797,10 @@ async def _generate_dynamic_actions(
             pack = await db.get(CompanionActionPack, pack_id)
             if pack is None or pack.status != "ready":
                 return False
+            # 结果未知的动作不再自动推进，只能由用户明确重做，避免每次唤醒或重启都翻转状态并空推目录。
             stmt = select(CompanionAction).where(
                 CompanionAction.pack_id == pack_id,
-                CompanionAction.status.in_(("queued",) if queued_only else ("queued", "processing", "result_unknown")),
+                CompanionAction.status.in_(("queued",) if queued_only else ("queued", "processing")),
             )
             if action_ids is not None:
                 stmt = stmt.where(CompanionAction.id.in_(action_ids))
@@ -1788,18 +1809,19 @@ async def _generate_dynamic_actions(
                 return False
         context = _load_generation_context(pack)
         if context is None:
-            await _fail_dynamic_jobs(pack_id, "生成上下文缺失，请重做该动作", action_ids=action_ids)
+            await _fail_dynamic_jobs(pack_id, "该动作包的制作资料不完整，请重新生成动作包", action_ids=action_ids)
             return False
+        succeeded = False
         for job in jobs:
             try:
-                await _generate_one_dynamic(pack, job, context)
+                if await _generate_one_dynamic(pack, job, context):
+                    succeeded = True
             except Exception as exc:  # noqa: BLE001 — 单动作失败隔离，不影响已就绪目录
-                logger.exception("dynamic action failed", extra={"pack_id": pack_id, "action_id": job.id})
-                status = "result_unknown" if isinstance(exc, ProviderResultUnknownError) else "failed"
-                await _advance_job(job.id, stage=job.stage, status=status, error=_generation_error(exc))
-        # 全部目标动作处理后发布新目录快照（失败动作不并入），并兑现这些动作制作期间的表达意图。
-        await _publish_dynamic_catalog(pack_id)
-        await _fulfill_pending_intents([job.id for job in jobs])
+                await _record_action_failure(pack_id, job, exc)
+        # 只有新成功的动作改变目录：发布新目录快照（失败与待复核动作不并入），并兑现这些动作制作期间的表达意图。
+        if succeeded:
+            await _publish_dynamic_catalog(pack_id)
+            await _fulfill_pending_intents([job.id for job in jobs])
         return True
     except Exception as exc:  # noqa: BLE001 — 后台任务兜底：失败必须落库可见
         logger.exception("dynamic action generation crashed", extra={"pack_id": pack_id})
@@ -1811,8 +1833,8 @@ async def _generate_one_dynamic(
     pack: CompanionActionPack,
     job: CompanionAction,
     context: GenerationContext,
-) -> None:
-    """复用已保存脚本，缺失时按冻结规格撰写并落库，再交给素材管线。"""
+) -> bool:
+    """复用已保存脚本，缺失时按冻结规格撰写并落库，再交给素材管线；返回素材是否直接成功。"""
     await _prepare_action_video_plan(job)
     if job.script_json:
         entry = ActionScriptEntry.model_validate_json(job.script_json)
@@ -1827,7 +1849,7 @@ async def _generate_one_dynamic(
                 update(CompanionAction).where(CompanionAction.id == job.id).values(script_json=job.script_json),
             )
             await db.commit()
-    await _run_action_pipeline(pack, job, entry, context)
+    return await _run_action_pipeline(pack, job, entry, context)
 
 
 async def _fail_dynamic_jobs(pack_id: int, message: str, *, action_ids: list[int] | None = None) -> None:
@@ -1888,18 +1910,18 @@ async def resume_video_generation_jobs() -> None:
         )
         interrupted = [pack for pack in packs if not pack.reference_path]
         for pack in interrupted:
-            await _mark_pack_failed(db, pack, "处理进程重启，请重新提交", reason="process restarted")
+            await _mark_pack_failed(db, pack, "处理进程重启，请重新提交")
         if interrupted:
             await db.commit()
             logger.info("resumed video packs marked failed", extra={"count": len(interrupted)})
-        # ready 包上仍有 queued/processing 动态动作（含已取得供应商句柄的）：逐包恢复生成。
+        # ready 包上仍有 queued/processing 动态动作（含已取得供应商句柄的）：逐包恢复生成；结果未知的不自动恢复。
         dynamic_rows = (
             await db.execute(
                 select(CompanionActionPack.id, CompanionActionPack.user_id)
                 .join(CompanionAction, CompanionAction.pack_id == CompanionActionPack.id)
                 .where(
                     CompanionActionPack.status == "ready",
-                    CompanionAction.status.in_(("queued", "processing", "result_unknown")),
+                    CompanionAction.status.in_(("queued", "processing")),
                 )
                 .group_by(CompanionActionPack.id, CompanionActionPack.user_id),
             )
@@ -1940,11 +1962,11 @@ async def ensure_system_action(
             raise VideoPackNotFoundError("当前动作包已变化，请重新读取")
         context = _load_generation_context(pack)
         if context is None or not pack.reference_path or context.reference_alignment != "ready":
-            raise VideoPackStateError("该动作包没有可用的冻结参考图，无法自动补齐探身动作")
+            raise VideoPackStateError("该动作包没有可用的参考图，无法自动补齐探身动作")
         if not all(
             _artifact_abs_path(path).is_file() for path in (pack.reference_path, context.identity_reference_path)
         ):
-            raise VideoPackStateError("该动作包的冻结参考图不可读，请重新生成视频形象")
+            raise VideoPackStateError("该动作包的参考图无法读取，请重新生成动作包")
 
         job = (
             await db.execute(
@@ -2051,15 +2073,15 @@ async def activate_pack(db: AsyncSession, user_id: int, pack_id: int) -> Compani
     async with get_avatar_job_lock(user_id):
         pack = await _get_pack(db, user_id, pack_id)
         if pack is None:
-            raise VideoPackNotFoundError("找不到视频包")
+            raise VideoPackNotFoundError("找不到动作包")
         if pack.status != "ready":
-            raise VideoPackStateError("视频包尚未就绪")
+            raise VideoPackStateError("动作包尚未就绪")
         if await _newer_ready_pack(db, pack) is not None:
-            raise VideoPackStateError("该外观已有更新的视频包，请启用最新版本")
+            raise VideoPackStateError("该外观已有更新的动作包，请启用最新版本")
         outfit = await db.get(CompanionOutfit, pack.outfit_id)
         avatar = await _active_avatar(db, user_id)
         if outfit is None or await _reference_hash(outfit, avatar) != pack.reference_hash:
-            raise VideoPackStateError("该视频包对应的参考已变更")
+            raise VideoPackStateError("该动作包对应的参考已变更")
         context = _load_generation_context(pack)
         if context is not None:
             await _require_current_identity_image(context, avatar)
@@ -2140,13 +2162,13 @@ def _load_generation_context(pack: CompanionActionPack) -> GenerationContext | N
 async def _require_current_identity_image(context: GenerationContext, avatar: AvatarAsset | None) -> None:
     """已制作的包只在身份图变化后失效：冻结的全身身份图须与当前已采纳全身图一致，角色卡文字修订不影响。"""
     if avatar is None or avatar.id != context.identity.avatar_id:
-        raise VideoPackStateError("该视频包对应的角色形象已切换，请生成完整新包")
+        raise VideoPackStateError("该动作包对应的角色形象已切换，请重新生成动作包")
     frozen = await _process_thread(read_portrait_bytes, context.identity_reference_path)
     current = await _process_thread(read_portrait_bytes, avatar.seed_fullbody_url)
     if frozen is None or current is None:
-        raise VideoPackStateError("全身身份图无法读取，暂不能启用该视频包")
+        raise VideoPackStateError("全身形象无法读取，暂不能启用该动作包")
     if frozen[0] != current[0]:
-        raise VideoPackStateError("视频形象使用旧身体资料，请先制作新视频包")
+        raise VideoPackStateError("视频形象使用旧身体资料，请先制作新的动作包")
 
 
 def _same_generation_lineage(kept: CompanionActionPack, other: CompanionActionPack) -> bool:
@@ -2285,9 +2307,9 @@ async def delete_pack(db: AsyncSession, user_id: int, pack_id: int) -> None:
     async with get_avatar_job_lock(user_id):
         pack = await _get_pack(db, user_id, pack_id)
         if pack is None:
-            raise VideoPackNotFoundError("找不到视频包")
+            raise VideoPackNotFoundError("找不到动作包")
         if pack.active or pack.status == "processing":
-            raise VideoPackStateError("使用中或构建中的视频包不能删除")
+            raise VideoPackStateError("使用中或制作中的动作包不能删除")
         candidates = await _remove_packs(db, user_id, [pack])
         await db.commit()
     _unlink_assets(candidates)

@@ -13,10 +13,10 @@ logger = get_logger(__name__)
 
 
 class ChannelManager:
-    """绑定任务的进程内生命周期管理：启动加载 + REST 触发启停 + 每绑定守卫重试。无周期对账循环——REST 变更直接调 start/stop_binding，任务死亡由守卫自愈（非 fatal 退避重建）；单 web 进程语义（backend/README.md「设计意图」）下不需要 omp-wechat 那套端口单例锁/failover。"""
+    """绑定任务的进程内生命周期管理：启动加载 + REST 触发启停 + 每绑定守卫重试。无周期对账循环——REST 变更直接调 restart/stop_binding，任务死亡由守卫自愈（非 fatal 退避重建）；单 web 进程语义（backend/README.md「设计意图」）下不需要 omp-wechat 那套端口单例锁/failover。"""
 
     def __init__(self) -> None:
-        # 强引用防 GC（沿 connection.py 的任务持有注释）；键 (user_id, channel) 与绑定唯一约束对齐。
+        # 强引用防 GC（事件循环只弱引用任务）；键 (user_id, channel) 与绑定唯一约束对齐。
         self._tasks: dict[tuple[int, str], asyncio.Task] = {}
         self._adapters: dict[tuple[int, str], ChannelAdapter] = {}
         self._lifecycle_lock = asyncio.Lock()
@@ -37,10 +37,6 @@ class ChannelManager:
                     "failed to start channel binding at boot",
                     extra={"user_id": user_id, "channel": channel},
                 )
-
-    async def start_binding(self, user_id: int, channel: str) -> None:
-        async with self._lifecycle_lock:
-            await self._start_binding(user_id, channel)
 
     async def _start_binding(self, user_id: int, channel: str) -> None:
         """适配器在返回前构造并登记，调用方随后即可通过 ``adapter()`` 取到实例。"""
@@ -78,8 +74,11 @@ class ChannelManager:
                     exc_info=result,
                 )
         if adapter is not None:
-            await adapter.aclose()
-            await stop_binding_turns(adapter.snapshot.id)
+            # 先停回合再关适配器：回合收尾与投递仍要使用适配器连接。
+            try:
+                await stop_binding_turns(adapter.snapshot.id)
+            finally:
+                await adapter.aclose()
         return adapter
 
     async def restart_binding(self, user_id: int, channel: str) -> None:
@@ -189,22 +188,30 @@ class ChannelManager:
             finally:
                 if self._adapters.get(key) is adapter:
                     self._adapters.pop(key, None)
+                # 先停回合再关适配器：回合收尾与投递仍要使用适配器连接。
                 try:
-                    await adapter.aclose()
-                except Exception:
-                    logger.exception("channel adapter cleanup failed", extra={"key": key})
-                finally:
                     await stop_binding_turns(snapshot.id)
-            await asyncio.sleep(SETTINGS.channels_restart_backoff_seconds)
-            # 重启前刷新快照（凭据/配置可能已被 REST 更新）。
-            fresh = await self._snapshot(snapshot.user_id, snapshot.channel)
-            if fresh is None:
-                # 绑定行已删除（DELETE 竞速）：静默退出，不必标状态。
-                return
-            snapshot = fresh
-            rebuilt = await self._build_adapter(snapshot)
+                finally:
+                    try:
+                        await adapter.aclose()
+                    except Exception:
+                        logger.exception("channel adapter cleanup failed", extra={"key": key})
+            # 重启前刷新快照（凭据/配置可能已被 REST 更新）；读库等瞬时失败同样退避重试，不让守卫退出。
+            while True:
+                await asyncio.sleep(SETTINGS.channels_restart_backoff_seconds)
+                try:
+                    fresh = await self._snapshot(snapshot.user_id, snapshot.channel)
+                    if fresh is None:
+                        # 绑定行已删除（DELETE 竞速）：静默退出，不必标状态。
+                        return
+                    rebuilt = await self._build_adapter(fresh)
+                except Exception:
+                    logger.exception("channel adapter rebuild failed; backing off", extra={"key": key})
+                    continue
+                break
             if rebuilt is None:
                 return
+            snapshot = fresh
             adapter = rebuilt
 
 

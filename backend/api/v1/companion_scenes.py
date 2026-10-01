@@ -45,7 +45,7 @@ def _decode_image(image_b64: str) -> bytes:
     try:
         return base64.b64decode(image_b64, validate=True)
     except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid base64 image data") from None
+        raise _scene_http_error(SceneError("图片数据无效")) from None
 
 
 def _scene_http_error(exc: SceneError) -> HTTPException:
@@ -179,7 +179,7 @@ async def patch_scene_policy(
     try:
         policy = await set_scene_policy(db, user.id, body.policy)
     except SceneError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise _scene_http_error(exc) from exc
     return ScenePolicyResponse(policy=policy)
 
 
@@ -206,7 +206,7 @@ async def scene_list_route(
 async def scene_detail_route(user: CurrentUser, db: DbSession, scene_id: int) -> SceneResponse:
     row = await get_scene(db, user.id, scene_id)
     if row is None:
-        raise HTTPException(status_code=404, detail="找不到对应场景")
+        raise _scene_http_error(SceneNotFoundError("找不到对应场景"))
     return response_for_scene(row)
 
 
@@ -214,10 +214,8 @@ async def scene_detail_route(user: CurrentUser, db: DbSession, scene_id: int) ->
 async def scene_edit_route(user: CurrentUser, scene_id: int, body: SceneDescriptionRequest) -> SceneResponse:
     try:
         row = await edit_scene_description(user.id, scene_id, body)
-    except SceneNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
     except SceneError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise _scene_http_error(exc) from exc
     return response_for_scene(row)
 
 
@@ -225,8 +223,6 @@ async def scene_edit_route(user: CurrentUser, scene_id: int, body: SceneDescript
 async def scene_analyze_route(user: CurrentUser, scene_id: int) -> SceneResponse:
     try:
         row = await retry_scene_description(user.id, scene_id)
-    except SceneNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc))
     except SceneError as exc:
-        raise HTTPException(status_code=409, detail=str(exc))
+        raise _scene_http_error(exc) from exc
     return response_for_scene(row)

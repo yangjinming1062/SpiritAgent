@@ -8,7 +8,7 @@ from .deps import (
     get_current_user,
     get_optional_current_session,
 )
-from .models import LoginRecord, User, UserModelConfig
+from .models import LoginRecord, User, UserModelConfig, lock_user_row
 from .schemas import (
     ActivateRequest,
     AdminLoginRequest,
@@ -75,4 +75,5 @@ __all__ = [
     "get_current_admin_token",
     "get_current_session",
     "hash_activation_token",
+    "lock_user_row",
 ]

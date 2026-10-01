@@ -202,6 +202,7 @@ export function SceneCreateView({
                 aria-label={t.notesLabel}
                 className={INPUT_CLASS}
                 disabled={formBusy}
+                maxLength={500}
                 onChange={event => onChange({ notes: event.target.value })}
                 placeholder={t.notesPlaceholder}
                 rows={4}
@@ -214,6 +215,7 @@ export function SceneCreateView({
             <textarea
               className={INPUT_CLASS}
               disabled={formBusy}
+              maxLength={500}
               onChange={event => onChange({ outfitDescription: event.target.value })}
               placeholder={t.outfitPlaceholder}
               rows={3}

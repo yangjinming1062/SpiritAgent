@@ -94,7 +94,7 @@
 
 准备 Docker Compose、Node.js 与 pnpm；Node.js / pnpm 版本要求见 [client/package.json](client/package.json)。本机工具需要安装器建立的 Runner 环境，仅启动前端不等于完成本机环境安装。
 
-1. 在 `backend/` 下复制 `config.toml.example` 为 `config.toml`，按模板设置数据库、签名密钥和初始管理员凭据。
+1. 在 `backend/` 下复制 `config.toml.example` 为 `config.toml`，按模板设置数据库、签名密钥和管理员凭据；签名密钥与管理员密码不能沿用示例值，否则后端拒绝启动。
 2. 在该目录启动后端与数据库：
 
    ```bash

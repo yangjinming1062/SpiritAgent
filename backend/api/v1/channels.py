@@ -155,7 +155,7 @@ async def start_weixin_login(
 
 @router.get("/weixin/login", response_model=ChannelLoginStateResponse)
 async def weixin_login_state(user: CurrentUser) -> ChannelLoginStateResponse:
-    """轮询登录状态（Hub 2s 一拉）：state ∈ wait|scaned|confirmed|expired|error；适配器未运行时按绑定态回放。"""
+    """轮询登录状态（Hub 2s 一拉），取值见 ChannelLoginStateResponse；适配器未运行时一律返回 login_required。"""
     adapter = MANAGER.adapter(user.id, WEIXIN_CHANNEL)
     if adapter is not None:
         return ChannelLoginStateResponse(**(await adapter.login_state()))

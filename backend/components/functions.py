@@ -226,7 +226,7 @@ def coerce_non_negative_float(value: Any, default: float = 0.0) -> float:
 
 
 def coerce_hour_0_23(value: Any) -> int:
-    """``int(value)`` 落入 [0, 23]，否则返 -1 表示「未知 / 越界」（用于 ``local_hour`` 等时段字段的「未知」语义）。"""
+    """值为 [0, 23] 内的整数时原样返回，否则返 -1 表示「未知 / 越界」（用于 ``local_hour`` 等时段字段的「未知」语义）；不做类型转换。"""
     if not isinstance(value, int) or isinstance(value, bool) or not 0 <= value <= 23:
         return -1
     return value

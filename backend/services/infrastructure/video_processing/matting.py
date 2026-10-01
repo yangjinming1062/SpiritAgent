@@ -7,10 +7,11 @@ from pathlib import Path
 import numpy as np
 import onnxruntime as ort
 from components import SETTINGS
+from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS
 from numpy.typing import NDArray
 from PIL import Image
 
-from .ffmpeg import VideoProcessError, _binary, _run, alpha_input_args, probe_video, run_ffmpeg
+from .ffmpeg import VideoProcessError, alpha_input_args, ffmpeg_stdout, probe_video, run_ffmpeg
 from .limits import MAX_ACTION_SOURCE_SECONDS
 
 Array = NDArray[np.float32]
@@ -66,18 +67,15 @@ def matte_video(src: Path, dst: Path) -> None:
     """保留有效原生 alpha，否则逐帧 ISNet 抠像；输出 FFV1/BGRA 中间片段。"""
     probe = probe_video(src)
     if probe.duration_seconds > MAX_ACTION_SOURCE_SECONDS:
-        raise VideoProcessError("动作素材超出 15 秒及允许的编码尾差")
+        raise VideoProcessError(f"动作素材超出 {ABSOLUTE_MAX_DURATION_SECONDS:g} 秒及允许的编码尾差")
     if probe.width * probe.height > 3840 * 2160:
         raise VideoProcessError("动作素材分辨率超出处理上限")
     dst.parent.mkdir(parents=True, exist_ok=True)
     native_alpha = False
     if probe.has_alpha:
         # 在原分辨率上取最小 alpha；缩小后再判断会抹掉细窄的透明边缘。
-        decoded = _run(
+        stats = ffmpeg_stdout(
             [
-                _binary("ffmpeg"),
-                "-v",
-                "error",
                 *alpha_input_args(probe),
                 "-i",
                 str(src),
@@ -88,14 +86,15 @@ def matte_video(src: Path, dst: Path) -> None:
                 "null",
                 "-",
             ],
+            failure_message="视频透明通道解码失败",
         )
         minima = [
             int(line.split("=", 1)[1])
-            for line in decoded.stdout.decode().splitlines()
+            for line in stats.decode().splitlines()
             if line.startswith("lavfi.signalstats.YMIN=")
         ]
-        if decoded.returncode or not minima:
-            raise VideoProcessError("视频透明通道解码失败", internal=decoded.stderr.decode(errors="replace")[:1000])
+        if not minima:
+            raise VideoProcessError("视频透明通道解码失败")
         native_alpha = min(minima) <= 8
     if native_alpha:
         run_ffmpeg(

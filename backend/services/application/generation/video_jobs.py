@@ -7,6 +7,7 @@ from collections.abc import Awaitable, Callable, Collection
 from datetime import timedelta
 from pathlib import Path
 
+import httpx
 from components import (
     SESSION_LOCAL,
     SETTINGS,
@@ -14,6 +15,7 @@ from components import (
     backoff_for_poll,
     download_capped,
     get_logger,
+    redact_sensitive_text,
     track_user_task,
     utc_now,
 )
@@ -38,6 +40,7 @@ from services.infrastructure.assets import (
     video_job_asset_path,
 )
 from services.infrastructure.llm import (
+    FailoverReason,
     MissingLlmConfigError,
     ProviderConfig,
     ProviderResultUnknownError,
@@ -45,6 +48,7 @@ from services.infrastructure.llm import (
     VideoGenRequest,
     VideoJobStatus,
     build_provider,
+    classify_api_error,
     execute_with_fallback,
     resolve_provider_chain,
 )
@@ -88,30 +92,50 @@ class VideoPollTimeoutError(RuntimeError):
     """供应商任务在轮询预算内未到终态。"""
 
 
+class _JobSettledError(Exception):
+    """轮询期间任务行已删除或已由其他路径终结。"""
+
+
 async def poll_video_task(
     provider: VideoGenProvider,
     task_id: str,
     *,
     before_poll: Callable[[], Awaitable[None]] | None = None,
 ) -> VideoJobStatus:
-    """有界退避轮询到 succeeded / failed；状态变化时重置退避。before_poll 可抛错中止轮询。"""
+    """有界退避轮询到 succeeded / failed；状态变化时重置退避。查询异常不终结已付费任务，退避后在同一时限内续查；鉴权与计费失败在时限内不会自愈（供应商实例已固定）直接上抛；before_poll 抛 _JobSettledError 中止轮询。"""
     deadline = utc_now() + timedelta(seconds=SETTINGS.video_gen_max_poll_seconds)
     attempt = 0
     last_status: str | None = None
+    log_extra = {"provider": provider.config.provider_name, "model": provider.config.model, "task_id": task_id}
     while True:
         remaining = max(0.0, (deadline - utc_now()).total_seconds())
         if remaining <= 0:
             raise VideoPollTimeoutError
-        if before_poll is not None:
-            await before_poll()
-        status = await provider.poll(task_id)
-        if status.status in ("succeeded", "failed"):
-            return status
-        if last_status is not None and status.status != last_status:
+        try:
+            if before_poll is not None:
+                await before_poll()
+            status = await provider.poll(task_id)
+        except _JobSettledError:
+            raise
+        except Exception as exc:
+            if classify_api_error(exc).reason in (FailoverReason.auth, FailoverReason.billing):
+                raise
+            logger.warning("video task poll failed; retrying", extra=log_extra, exc_info=True)
+            current = "poll_error"
+        else:
+            if status.status == "failed":
+                logger.warning(
+                    "video task failed at provider",
+                    extra={**log_extra, "error": redact_sensitive_text(status.error)},
+                )
+            if status.status in ("succeeded", "failed"):
+                return status
+            current = status.status
+        if last_status is not None and current != last_status:
             attempt = 0
         elif last_status is not None:
             attempt += 1
-        last_status = status.status
+        last_status = current
         sleep_for = backoff_for_poll(
             attempt,
             base_interval=SETTINGS.video_gen_poll_interval_seconds,
@@ -373,10 +397,15 @@ async def enqueue_video_job(
     )
     db.add(job)
     await db.commit()
-    submitted = await _submit_next_video(job.id, user_id)
-    await db.refresh(job)
+    try:
+        submitted = await _submit_next_video(job.id, user_id)
+    except BaseException:
+        # 行已提交：提交被打断（含调用方取消）时仍由后台任务按落库状态收尾；submitting 按结果未知处理，不重发。
+        _spawn_poll(job.id, user_id)
+        raise
     if submitted:
         _spawn_poll(job.id, user_id)
+    await db.refresh(job)
     return job
 
 
@@ -389,12 +418,10 @@ def _spawn_poll(job_id: int, user_id: int) -> None:
 _FAILURE_COPY: dict[str, str] = {
     "submit_result_unknown": _RESULT_UNKNOWN_MESSAGE,
     "submit_failed": "视频提交失败，请稍后重试",
-    "missing_task_id": "视频服务暂不可用，请稍后重试",
-    "provider_unavailable": "视频 provider 配置变更，请稍后重试",
+    "provider_unavailable": "视频生成服务配置已变更，请稍后重试",
     "provider_failed": "视频生成失败，请稍后重试",
     "download_failed": "视频下载失败，请稍后重试",
     "timeout": "视频生成超时，请稍后重试",
-    "poll_failed": "视频生成失败，请稍后重试",
     "worker_failed": "视频生成服务异常，请稍后重试",
     "identity_changed": "角色外形已更新，旧参考生成的视频未交付",
     "quality_failed": "视频文件无法完成质量核查，请稍后重试",
@@ -699,14 +726,8 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                 if await _submit_next_video(job_id, user_id):
                     await _poll_and_finalize_locked(job_id)
                 return
-        if job.status == "downloading" and (state.result_url or state.result_file_id):
+        if job.status == "downloading" and state.result_url:
             try:
-                if not state.result_url and state.result_file_id:
-                    provider = await _pinned_video_provider(user_id, state)
-                    if provider is None:
-                        raise RuntimeError("video provider for the known result is unavailable")
-                    state.result_url = (await provider.fetch(state.result_file_id)).download_url
-                    await _update_job(job_id, generation_state_json=state.model_dump_json())
                 storage_url = await _download_and_store(
                     state.result_url,
                     user_id=user_id,
@@ -736,10 +757,6 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
         if job.status == "evaluating" and job.video_url:
             await _finalize_best_video(job_id)
             return
-        if not provider_task_id:
-            # 提交完成但 task_id 未持久化（极小概率，但保持防御），快速失败并给出明确原因，避免行一直处于 limbo。
-            await _record_failure(job_id, reason="missing_task_id")
-            return
 
         provider = await _pinned_video_provider(user_id, state)
         if provider is None:
@@ -760,16 +777,11 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
         except VideoPollTimeoutError:
             await _fail_or_keep_best(job_id, "timeout")
             return
-        except Exception:
-            logger.exception("video poll failed", extra={"job_id": job_id})
-            await _fail_or_keep_best(job_id, "poll_failed")
-            return
 
         if status.status == "succeeded":
             state.phase = "storing"
             state.result_url = status.download_url
-            state.result_file_id = status.file_id
-            if not state.result_url and not state.result_file_id:
+            if not state.result_url:
                 await _fail_or_keep_best(job_id, "download_failed")
                 return
             if job.status != "downloading":
@@ -777,7 +789,7 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
                     claimed = (
                         await db.execute(
                             update(VideoGenJob)
-                            .where(VideoGenJob.id == job_id, VideoGenJob.status.in_(("queued", "processing")))
+                            .where(VideoGenJob.id == job_id, VideoGenJob.status == "processing")
                             .values(status="downloading", generation_state_json=state.model_dump_json()),
                         )
                     ).rowcount
@@ -814,12 +826,8 @@ async def _poll_and_finalize_locked(job_id: int) -> None:
             logger.exception("could not update video job after worker error", extra={"job_id": job_id})
 
 
-class _JobSettledError(Exception):
-    """轮询期间任务行已删除或已由其他路径终结。"""
-
-
 async def _download_and_store(download_url: str | None, *, user_id: int, job_id: int, attempt: int) -> str:
-    """有界重试下载供应商成品并原子写入确定性路径，返回裸存储路径。慢速大文件读取超时放宽到 10 分钟，上限 ``video_gen_download_max_bytes``。"""
+    """有界重试下载供应商成品并原子写入确定性路径，返回裸存储路径。只对传输错误与服务端 5xx 退避重试，超限、4xx 与过期地址等确定性失败直接上抛。慢速大文件读取超时放宽到 10 分钟，上限 ``video_gen_download_max_bytes``。"""
     if not download_url:
         raise RuntimeError("video result has no download url")
     failures = 0
@@ -827,10 +835,18 @@ async def _download_and_store(download_url: str | None, *, user_id: int, job_id:
         try:
             data = await download_capped(download_url, max_bytes=SETTINGS.video_gen_download_max_bytes, timeout=600.0)
             break
-        except Exception:
+        except (httpx.TransportError, httpx.HTTPStatusError) as exc:
+            if isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code < 500:
+                raise
             failures += 1
             if failures == _DOWNLOAD_ATTEMPTS:
                 raise
+            logger.warning(
+                "video download failed; retrying",
+                extra={"job_id": job_id, "failures": failures},
+                exc_info=True,
+            )
+            await asyncio.sleep(SETTINGS.video_gen_poll_interval_seconds * 2 ** (failures - 1))
     if sniff_media_ext(data) != "mp4":
         raise RuntimeError("provider returned a payload that is not an mp4 stream")
     return await save_video_job_asset_async(data, user_id=user_id, job_id=job_id, attempt=attempt)
@@ -844,7 +860,7 @@ async def resume_pending_video_jobs() -> None:
             await db.execute(
                 select(VideoGenJob.id, VideoGenJob.user_id).where(
                     VideoGenJob.status.in_(
-                        ("queued", "processing", "downloading", "evaluating", "retry_pending", "submitting"),
+                        ("processing", "downloading", "evaluating", "retry_pending", "submitting"),
                     ),
                 ),
             )

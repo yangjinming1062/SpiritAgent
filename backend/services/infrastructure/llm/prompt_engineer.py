@@ -25,9 +25,10 @@ from prompts.generation import (
     OUTFIT_CHANGE_LEAD,
     OUTFIT_CHANGE_TEMPLATE,
 )
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from .error_classifier import ClassifiedError, FailoverReason, LLMRuntimeError
 from .llm_client import build_provider, resolve_provider_config, resolve_vision_chain
+from .llm_fallback import execute_with_fallback
 from .llm_retry import call_with_retry
 from .providers import (
     ChatProvider,
@@ -110,20 +111,16 @@ def build_avatar_reference_prompt(
 
 
 async def chat(
-    db: AsyncSession | None,
     user_id: int | None,
     system_prompt: str,
     user_payload: str,
     *,
     provider_config: ProviderConfig | None = None,
 ) -> str:
-    """单次非流式 chat 往返；空内容视为错误，避免把空 prompt 透传给生图供应商。"""
+    """单次非流式 chat 往返；未指定供应商时在独立短会话中解析配置，模型调用期间不占数据库连接。空内容视为错误，避免把空 prompt 透传给生图供应商。"""
     if provider_config is None:
-        if db is None and user_id is not None:
-            async with SESSION_LOCAL() as config_db:
-                provider_config = await resolve_provider_config(config_db, user_id, ServiceType.llm)
-        else:
-            provider_config = await resolve_provider_config(db, user_id, ServiceType.llm)
+        async with SESSION_LOCAL() as config_db:
+            provider_config = await resolve_provider_config(config_db, user_id, ServiceType.llm)
     request = build_responses_kwargs(
         model=provider_config.model,
         instructions=system_prompt,
@@ -167,19 +164,17 @@ async def call_llm_once(
         context_length=resolve_context_tokens(provider.provider_name),
         **request,
     )
-    if resp is None or resp.status != "completed":
-        raise RuntimeError(f"LLM response not completed: {getattr(resp, 'status', None)}")
+    if resp.status != "completed":
+        raise RuntimeError(f"LLM response not completed: {resp.status}")
     return resp.output_text
 
 
 async def enhance_avatar_prompt(
-    db: AsyncSession | None,
     user_id: int | None,
     persona: Persona,
     *,
     feedback: str | None = None,
     has_reference: bool = False,
-    provider_config: ProviderConfig | None = None,
 ) -> str:
     """整理角色资料；无图时返回完整提示词，有图时返回供参考图装配器使用的画面建议。"""
     visual = _persona_visual_payload(persona, feedback)
@@ -187,7 +182,7 @@ async def enhance_avatar_prompt(
         visual = {key: visual[key] for key in ("personality", "feedback")}
     payload = {**visual, "has_reference": has_reference}
     user_payload = json.dumps(payload, ensure_ascii=False)
-    raw = await chat(db, user_id, AVATAR_SYSTEM_PROMPT, user_payload, provider_config=provider_config)
+    raw = await chat(user_id, AVATAR_SYSTEM_PROMPT, user_payload)
     description = _strip_markdown_fence(raw)
     if has_reference:
         return description
@@ -292,29 +287,30 @@ async def vision_chat(
         raise VisualReasoningError("未配置视觉模型，请先配置支持图片的模型")
     content = [{"type": "input_image", "image_url": uri} for uri in reference_images]
     content.append({"type": "input_text", "text": user_payload})
-    errors: list[str] = []
-    for config in chain:
-        try:
-            response = await call_with_retry(
-                build_provider(config, ChatProvider).raw_client(),
-                **build_responses_kwargs(
-                    model=config.model,
-                    instructions=system_prompt,
-                    input_items=[{"role": "user", "content": content}],
-                    max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
-                ),
+
+    async def _describe(provider: ChatProvider) -> str:
+        response = await call_with_retry(
+            provider.raw_client(),
+            **build_responses_kwargs(
+                model=provider.config.model,
+                instructions=system_prompt,
+                input_items=[{"role": "user", "content": content}],
+                max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
+            ),
+        )
+        result = _strip_markdown_fence(response.output_text) if response.status == "completed" else ""
+        if not result:
+            # 未完成或空结果可换下一家视觉模型
+            raise LLMRuntimeError(
+                ClassifiedError(FailoverReason.empty_result, None, f"vision response unusable ({response.status})"),
             )
-            if response.status != "completed":
-                errors.append(f"{config.provider_name}: incomplete response ({response.status})")
-                continue
-            result = _strip_markdown_fence(response.output_text)
-            if result:
-                return result
-            errors.append(f"{config.provider_name}: empty response")
-        except Exception as exc:
-            errors.append(f"{config.provider_name}: {exc}")
-    logger.warning("visual reasoning failed", extra={"user_id": user_id, "errors": errors})
-    raise VisualReasoningError("视觉分析失败，请稍后重试")
+        return result
+
+    try:
+        return await execute_with_fallback(chain, ChatProvider, _describe, user_id=user_id)
+    except Exception as exc:
+        logger.warning("visual reasoning failed", extra={"user_id": user_id}, exc_info=True)
+        raise VisualReasoningError("视觉分析失败，请稍后重试") from exc
 
 
 async def describe_garment_image(

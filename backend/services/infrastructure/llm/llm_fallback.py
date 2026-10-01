@@ -20,7 +20,7 @@ async def execute_with_fallback[P: BaseProvider, T](
     user_id: int | None,
     stream_started: Callable[[], bool] | None = None,
 ) -> T:
-    """按已解析的供应商链依次调用 call_fn；链为空时抛 MissingLlmConfigError。should_fallback 时切下一家；结果未知、流已开始或已到末槽时抛出。链内出现过内容策略拦截时优先抛它，便于调用方清洗提示词重试。"""
+    """按已解析的供应商链依次调用 call_fn；链为空时抛 MissingLlmConfigError。should_fallback 时切下一家；结果未知、流已开始或已到末槽时抛出。链内出现过内容策略拦截时优先抛它，便于调用方清洗提示词重试；末家结果未知或流已开始时如实抛出，不能被改写成可重发的拦截。"""
     if not chain:
         raise MissingLlmConfigError("no provider configured")
 
@@ -58,11 +58,8 @@ async def execute_with_fallback[P: BaseProvider, T](
                 error_message=classified.message,
             )
             next_config = chain[idx + 1] if idx + 1 < chain_size else None
-            if (
-                next_config is not None
-                and classified.should_fallback
-                and not (stream_started is not None and stream_started())
-            ):
+            started_streaming = stream_started is not None and stream_started()
+            if next_config is not None and classified.should_fallback and not started_streaming:
                 logger.warning(
                     "provider failed; falling back",
                     extra={
@@ -79,9 +76,15 @@ async def execute_with_fallback[P: BaseProvider, T](
                 log_failure(phase="chain_fallback", next_provider=next_config.provider_name)
                 continue
             log_failure(phase="chain_result", total_chain_latency_ms=int((time.monotonic() - chain_started) * 1000))
-            raise content_policy_error or exc
+            if (
+                content_policy_error is not None
+                and classified.reason != FailoverReason.result_unknown
+                and not started_streaming
+            ):
+                raise content_policy_error
+            raise
         duration_ms = round((time.monotonic() - started) * 1000)
-        # 所有计费能力都从此经过；同步调用无任务 id，按供应商、模型与耗时记账。
+        # 经本链完成的计费调用在此记账；同步调用无任务 id，按供应商、模型与耗时记账。
         log_paid_call(config.provider_name, service, user_id=user_id, model=config.model, duration_ms=duration_ms)
         log(
             phase="chain_result",

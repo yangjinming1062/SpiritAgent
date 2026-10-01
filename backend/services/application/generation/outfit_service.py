@@ -6,6 +6,7 @@ from datetime import timedelta
 
 from components import (
     SESSION_LOCAL,
+    SETTINGS,
     get_logger,
     parse_llm_json,
     resolve_language,
@@ -64,8 +65,8 @@ from .response_builders import outfit_response
 
 logger = get_logger(__name__)
 
-# temp-media 草稿 24h TTL，留 1h 余量在读取时清扫过期草稿
-_DRAFT_TTL = timedelta(hours=23)
+# 草稿立绘存于 temp-media：按其存活时长预留余量，读取时先于文件过期把草稿置为过期。
+_DRAFT_TTL_MARGIN = timedelta(hours=1)
 _DESCRIBE_TASKS: dict[tuple[int, int], asyncio.Task[None]] = {}
 
 
@@ -125,29 +126,35 @@ async def _get_outfit(
     ).scalar_one_or_none()
 
 
+def _draft_ttl() -> timedelta:
+    """临时文件存活时长可热更新，每次清扫时按当前设置计算。"""
+    ttl = timedelta(hours=SETTINGS.temp_file_ttl_hours)
+    return max(ttl - _DRAFT_TTL_MARGIN, ttl / 2)
+
+
 async def _sweep_stale(db: AsyncSession, user_id: int) -> None:
-    """读取时顺带清扫：过期草稿置 expired（参考图上传文件一并清理）。"""
-    now = utc_now()
-    rows = (
+    """读取时顺带清扫：过期草稿置 expired 并清理其参考图上传文件。条件更新只认领仍为草稿的行，并发清扫不会重复处理。"""
+    expired = (
         (
             await db.execute(
-                select(CompanionOutfit).where(
+                update(CompanionOutfit)
+                .where(
                     CompanionOutfit.user_id == user_id,
                     CompanionOutfit.status == "draft",
-                ),
+                    CompanionOutfit.updated_at < utc_now() - _draft_ttl(),
+                )
+                .values(status="expired")
+                .returning(CompanionOutfit),
             )
         )
         .scalars()
         .all()
     )
-    changed = False
-    for outfit in rows:
-        if now - outfit.updated_at > _DRAFT_TTL:
-            outfit.status = "expired"
-            _delete_reference_file(outfit)
-            changed = True
-    if changed:
-        await db.commit()
+    if not expired:
+        return
+    await db.commit()
+    for outfit in expired:
+        _delete_reference_file(outfit)
 
 
 def _delete_reference_file(outfit: CompanionOutfit) -> None:
@@ -158,20 +165,20 @@ def _delete_reference_file(outfit: CompanionOutfit) -> None:
 
 
 async def list_outfits(db: AsyncSession, user_id: int) -> list[OutfitResponse]:
-    async with get_avatar_job_lock(user_id):
-        await _sweep_stale(db, user_id)
-        outfits = (
-            (
-                await db.execute(
-                    select(CompanionOutfit)
-                    .where(CompanionOutfit.user_id == user_id)
-                    .order_by(CompanionOutfit.created_at.asc()),
-                )
+    """不取用户任务锁：生成可能长时间持锁，列表与过期清扫都不必等它。"""
+    await _sweep_stale(db, user_id)
+    outfits = (
+        (
+            await db.execute(
+                select(CompanionOutfit)
+                .where(CompanionOutfit.user_id == user_id)
+                .order_by(CompanionOutfit.created_at.asc()),
             )
-            .scalars()
-            .all()
         )
-        return [outfit_response(outfit) for outfit in outfits]
+        .scalars()
+        .all()
+    )
+    return [outfit_response(outfit) for outfit in outfits]
 
 
 async def _outfit_generation_context(
@@ -183,7 +190,7 @@ async def _outfit_generation_context(
         raise OutfitStateError("请先确认全身形象")
     persona = await get_or_create_persona(db, user_id)
     if not persona.is_complete:
-        raise OutfitStateError("请先完成 onboarding 再设计外观")
+        raise OutfitStateError("请先完成引导再设计外观")
     definition = load_persona_definition(persona)
     species = str(definition.get("biological_type") or "").strip()
     try:
@@ -298,9 +305,6 @@ async def create_outfit_draft(
     }
     garment_text: str | None = None
     if image is not None:
-        # 参考图立即转存为用户资产（temp-media 会过期，重新生成还要复用）
-        ref_path = await _persist_portrait_bytes(user_id, image, content_type or "image/png")
-        source["reference_image_path"] = ref_path
         # 失败降级为纯描述生成，下次重新生成会重试整合（整合走独立短会话，不占请求连接）
         garment_text = await _describe_reference_garment(
             user_id,
@@ -333,6 +337,11 @@ async def create_outfit_draft(
         if not await character_snapshot_is_current(db, user_id, identity):
             delete_portrait_file(draft_url)
             raise OutfitStateError("角色卡已更新，请重新生成外观")
+        ref_path: str | None = None
+        if image is not None:
+            # 参考图转存为用户资产（temp-media 会过期，重新生成还要复用）；外观行未提交时随即删除。
+            ref_path = await _persist_portrait_bytes(user_id, image, content_type or "image/png")
+            source["reference_image_path"] = ref_path
         outfit = CompanionOutfit(
             user_id=user_id,
             name="新外观",
@@ -341,7 +350,13 @@ async def create_outfit_draft(
             source_json=json.dumps(source, ensure_ascii=False),
         )
         db.add(outfit)
-        await db.commit()
+        try:
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            for path in (ref_path, draft_url):
+                delete_portrait_file(path)
+            raise
         await db.refresh(outfit)
     return outfit
 
@@ -465,14 +480,21 @@ async def confirm_outfit(
             if avatar is None or not avatar.seed_fullbody_url:
                 raise OutfitStateError("全身形象缺失，请先确认角色形象")
             source["identity_reference_path"] = avatar.seed_fullbody_url
+        persisted: str | None = None
         if outfit.fullbody_url.startswith("temp-media/"):
             draft = await asyncio.to_thread(read_portrait_bytes, outfit.fullbody_url)
             if draft is None:
                 raise OutfitDraftExpiredError("外观草稿已过期，请重新生成")
-            outfit.fullbody_url = await _persist_portrait_bytes(user_id, *draft)
+            persisted = await _persist_portrait_bytes(user_id, *draft)
+            outfit.fullbody_url = persisted
         outfit.source_json = json.dumps(source, ensure_ascii=False)
         outfit.status = "ready"
-        await db.commit()
+        try:
+            await db.commit()
+        except BaseException:
+            await db.rollback()
+            delete_portrait_file(persisted)
+            raise
         await db.refresh(outfit)
 
     schedule_outfit_description(user_id, outfit.id)
@@ -685,8 +707,6 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
         if outfit.active:
             raise OutfitStateError("穿着中的外观不能删除，请先切换到其他外观")
 
-        _delete_reference_file(outfit)
-        delete_portrait_file(outfit.fullbody_url)
         emit_ws_event(
             db,
             user_id=user_id,
@@ -695,6 +715,9 @@ async def delete_outfit(db: AsyncSession, user_id: int, outfit_id: int) -> None:
         )
         await db.delete(outfit)
         await db.commit()
+        # 删除提交后再清理文件；提交失败时外观仍完整可用。
+        _delete_reference_file(outfit)
+        delete_portrait_file(outfit.fullbody_url)
 
 
 def schedule_outfit_description(user_id: int, outfit_id: int) -> None:
@@ -733,7 +756,6 @@ async def _describe_outfit(user_id: int, outfit_id: int) -> None:
         # 命名依据实际采纳的立绘，覆盖无文字的自备图与后续重绘。
         payload["outfit_visual_description"] = await describe_garment_image(user_id, image_uri)
         raw = await chat(
-            None,
             user_id,
             OUTFIT_DESCRIBE_SYSTEM,
             json.dumps(payload, ensure_ascii=False),

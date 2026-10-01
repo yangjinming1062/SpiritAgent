@@ -2,7 +2,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Collection
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, ClassVar, Literal
+from typing import ClassVar, Literal
 
 from components import get_logger
 from modules.media import SpeechStyle
@@ -81,10 +81,6 @@ class BaseProvider(ABC):
     def __init__(self, config: ProviderConfig) -> None:
         self.config = config
 
-    def raw_client(self) -> AsyncOpenAI | None:
-        """仅 chat 供应商持有 OpenAI 客户端。"""
-        return None
-
 
 class ProviderError(Exception):
     """供应商级错误；status_code 与 body 供错误分类读取。"""
@@ -132,7 +128,6 @@ class ImageGenRequest:
     n: int = 1
     size: str | None = None
     aspect_ratio: str | None = None
-    quality: str | None = None
     reference_image: str | None = None
     secondary_reference_image: str | None = None  # 仅 supports_multiple_reference_images 的供应商消费
     image_edit: bool = False  # True 以 reference_image 为底图增量编辑（画布贴近参考图）；False 参考图仅作身份条件，画布服从 size/aspect_ratio
@@ -152,8 +147,6 @@ class ImageAsset:
 @dataclass(frozen=True)
 class ImageGenResult:
     images: list[ImageAsset]
-    model: str
-    raw: Any = None
 
 
 class ImageGenProvider(BaseProvider):
@@ -187,7 +180,6 @@ class VideoGenRequest:
     last_frame_image: str | None = None
     reference_images: tuple[str, ...] = ()
     aspect_ratio: str | None = None
-    model: str | None = None
 
 
 VideoJobState = Literal["queued", "processing", "succeeded", "failed"]
@@ -197,20 +189,8 @@ VideoJobState = Literal["queued", "processing", "succeeded", "failed"]
 class VideoJobStatus:
     task_id: str
     status: VideoJobState
-    file_id: str | None = None
-    download_url: str | None = (
-        None  # 成功路径直接返回下载 URL 的供应商（如 MiniMax H3 v2）填这里，让 worker 跳过二次拉取；None 表示需走 fetch(file_id)
-    )
+    download_url: str | None = None  # succeeded 时供应商给出的成品下载地址
     error: str | None = None
-    raw: Any = None
-
-
-@dataclass(frozen=True)
-class VideoAsset:
-    download_url: str
-    content_type: str
-    size: int | None = None
-    expires_at: float | None = None
 
 
 class VideoGenProvider(BaseProvider):
@@ -239,9 +219,6 @@ class VideoGenProvider(BaseProvider):
 
     @abstractmethod
     async def poll(self, task_id: str) -> VideoJobStatus: ...
-
-    @abstractmethod
-    async def fetch(self, file_id: str) -> VideoAsset: ...
 
 
 @dataclass(frozen=True)
@@ -277,7 +254,6 @@ class TTSProvider(BaseProvider):
 @dataclass(frozen=True)
 class STTResult:
     text: str
-    raw: Any = None
 
 
 class STTProvider(BaseProvider):

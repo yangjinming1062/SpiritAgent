@@ -64,16 +64,14 @@ class Conversation(ModelBase, TimestampMixin):
         cls,
         db: AsyncSession,
         session_id: str,
-        user_id: int | None = None,
+        user_id: int,
     ) -> "Conversation | None":
         """session_id 为 Conversation.id 的 str 形式；非法、缺失或不属于该 user_id 时返 None。"""
         try:
             conv_id = int(session_id)
         except (ValueError, TypeError):
             return None
-        stmt = select(cls).where(cls.id == conv_id)
-        if user_id is not None:
-            stmt = stmt.where(cls.user_id == user_id)
+        stmt = select(cls).where(cls.id == conv_id, cls.user_id == user_id)
         return (await db.execute(stmt)).scalar_one_or_none()
 
 

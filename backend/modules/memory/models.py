@@ -12,6 +12,13 @@ if TYPE_CHECKING:
 
 # memories.embedding 列宽的唯一事实源；更换维度须同步迁移
 MEMORY_EMBEDDING_DIM = 1536
+# 每个作用域内同一 context 只有一行的槽位记忆前缀，与迁移中 memories 的部分唯一索引一一对应；增减须同步迁移。
+MEMORY_SLOT_CONTEXT_PREFIXES: tuple[str, ...] = (
+    "user_profile:",
+    "diary:",
+    "interaction_stats:",
+    "recall:nightly_actions:",
+)
 
 
 class Memory(ModelBase, TimestampMixin):

@@ -41,43 +41,38 @@ def strip_markdown(text: str) -> str:
     return out.strip()
 
 
-def _atomize(source: str, seps: tuple[str, ...], limit: int) -> list[str]:
-    """按分隔层级（段落 → 行 → 空格）递归拆出 ≤limit 的原子片段。"""
+_CHUNK_SEPARATORS = ("\n\n", "\n", " ")
+
+
+def _split_level(text: str, seps: tuple[str, ...], limit: int) -> list[str]:
+    """按本层分隔符切开并贪心合并，合并处还原本层分隔符；超限片段交给下一层，各层都切不开才硬切。"""
+    if len(text) <= limit:
+        return [text]
+    if not seps:
+        return [text[i : i + limit] for i in range(0, len(text), limit)]
     sep, rest = seps[0], seps[1:]
-    atoms: list[str] = []
-    for part in source.split(sep):
-        if rest and len(part) > limit:
-            atoms.extend(_atomize(part, rest, limit))
-        else:
-            atoms.append(part)
-    return atoms
-
-
-def _assemble(atoms: list[str], sep: str, limit: int) -> list[str]:
     chunks: list[str] = []
-    current = ""
-    for atom in atoms:
-        candidate = f"{current}{sep}{atom}" if current else atom
-        if len(candidate) <= limit:
-            current = candidate
+    current: str | None = None
+    for part in text.split(sep):
+        first, *others = _split_level(part, rest, limit)
+        if current is not None and len(current) + len(sep) + len(first) <= limit:
+            current = f"{current}{sep}{first}"
         else:
-            if current:
+            if current is not None:
                 chunks.append(current)
-            current = atom
-    if current:
+            current = first
+        # 下一层切出的相邻片段已无法合并，各自成片；末片仍可与本层后续片段合并。
+        if others:
+            chunks.append(current)
+            chunks.extend(others[:-1])
+            current = others[-1]
+    if current is not None:
         chunks.append(current)
     return chunks
 
 
 def chunk_text(text: str, limit: int) -> list[str]:
-    """按 段落 → 行 → 空格 边界把长回复切为 ≤limit 的分片；原子级仍超限才硬切。分片间以 \\n 连接原子（段落空行不逐段复原——IM 分片场景下段落已各自成原子，结构足够可读）。"""
+    """按 段落 → 行 → 空格 边界把长回复切为 ≤limit 的分片，片内保留原分隔符，切点处的分隔符丢弃。"""
     if limit <= 0 or len(text) <= limit:
         return [text]
-    atoms = _atomize(text, ("\n\n", "\n", " "), limit)
-    out: list[str] = []
-    for chunk in _assemble(atoms, "\n", limit):
-        while len(chunk) > limit:
-            out.append(chunk[:limit])
-            chunk = chunk[limit:]
-        out.append(chunk)
-    return out
+    return [chunk for chunk in _split_level(text, _CHUNK_SEPARATORS, limit) if chunk.strip()]

@@ -7,7 +7,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, time, timedelta
 from time import monotonic
-from typing import Any, Literal, TypeGuard
+from typing import Annotated, Any, Literal, TypeGuard, get_args
 from zoneinfo import ZoneInfo
 
 from components import (
@@ -85,22 +85,10 @@ logger = get_logger(__name__)
 
 _SCENE_WAIT_SECONDS = 15 * 60
 _POLL_SECONDS = 3.0
-_IMAGE_SIZES = frozenset(
-    (
-        "1024x1024",
-        "1024x1792",
-        "1792x1024",
-        "1:1",
-        "16:9",
-        "4:3",
-        "3:2",
-        "2:3",
-        "3:4",
-        "9:16",
-        "21:9",
-    ),
-)
-_VIDEO_ASPECT_RATIOS = frozenset(("16:9", "9:16", "1:1", "4:3", "3:4", "21:9"))
+_ImageSize = Literal["1024x1024", "1024x1792", "1792x1024", "1:1", "16:9", "4:3", "3:2", "2:3", "3:4", "9:16", "21:9"]
+_VideoAspectRatio = Literal["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"]
+_IMAGE_SIZES: tuple[str, ...] = get_args(_ImageSize)
+_VIDEO_ASPECT_RATIOS: tuple[str, ...] = get_args(_VideoAspectRatio)
 ActionStatus = Literal["succeeded", "partial", "skipped", "blocked", "failed", "interrupted"]
 _TERMINAL_ACTION_STATUSES = frozenset(
     ("succeeded", "partial", "skipped", "blocked", "failed", "interrupted"),
@@ -138,7 +126,7 @@ class DateContext(BaseModel):
 
 
 class _ActionArgs(BaseModel):
-    """执行前校验规划参数：去除首尾空白后再核对长度。"""
+    """执行前校验规划参数：去除首尾空白后再核对长度与取值；不合规时整项失败，不截断或替换为默认值。"""
 
     model_config = ConfigDict(extra="ignore", str_strip_whitespace=True)
 
@@ -148,7 +136,11 @@ class OutfitWearArgs(_ActionArgs):
 
 
 class OutfitCreateArgs(_ActionArgs):
-    description: str = Field(min_length=1)
+    description: str = Field(min_length=1, max_length=500)
+
+
+class SceneActivateArgs(_ActionArgs):
+    scene_id: int
 
 
 class SceneCreateArgs(_ActionArgs):
@@ -159,14 +151,14 @@ class SceneCreateArgs(_ActionArgs):
 class MomentCreateArgs(_ActionArgs):
     title: str = Field(min_length=1, max_length=64)
     body: str = Field(min_length=1, max_length=500)
-    emotion: str | None = None
+    emotion: str | None = Field(default=None, max_length=32)
 
 
 class MediaImageArgs(_ActionArgs):
     prompt: str = Field(min_length=1, max_length=4000)
     title: str = Field(min_length=1, max_length=64)
     body: str = Field(default="", max_length=500)
-    size: str = "1024x1024"
+    size: _ImageSize = "1024x1024"
     depicts_self: bool = Field(default=False, strict=True)
     narration: str | None = Field(default=None, max_length=800)
 
@@ -175,8 +167,8 @@ class MediaVideoArgs(_ActionArgs):
     prompt: str = Field(min_length=1, max_length=4000)
     title: str = Field(min_length=1, max_length=64)
     body: str = Field(default="", max_length=500)
-    duration: int | str = 6
-    aspect_ratio: str = "16:9"
+    duration: Literal[6, 10] = 6
+    aspect_ratio: _VideoAspectRatio = "16:9"
     depicts_self: bool = Field(default=False, strict=True)
     narration: str | None = Field(default=None, max_length=800)
 
@@ -201,6 +193,13 @@ class OutreachScheduleArgs(_ActionArgs):
         return self
 
 
+class ActionDesignArgs(ActionDesignRequest):
+    """夜间动作提案沿用动作设计契约，并按能力说明限制每条使用条件的长度。"""
+
+    use_when: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=8)
+    avoid_when: list[Annotated[str, Field(max_length=120)]] = Field(default_factory=list, max_length=8)
+
+
 class PlannedAction(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -218,7 +217,6 @@ class NormalizedPlan(BaseModel):
 
     theme: str = ""
     rationale: str = ""
-    reveal: str = ""
     actions: list[PlannedAction] = Field(default_factory=list)
 
 
@@ -242,7 +240,6 @@ class PlanningResult(BaseModel):
 
     theme: str = ""
     rationale: str = ""
-    reveal: str = ""
     actions: dict[str, ActionExecutionResult] = Field(default_factory=dict)
 
 
@@ -493,8 +490,16 @@ _CAPABILITIES: tuple[NightlyCapability, ...] = (
 _CAPABILITY_BY_NAME = {cap.name: cap for cap in _CAPABILITIES}
 
 
-def _text(value: Any, limit: int) -> str:
-    return value.strip()[:limit] if isinstance(value, str) else ""
+def _text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def _invalid_arguments(exc: ValidationError) -> ActionExecutionResult:
+    details = "; ".join(
+        f"{'.'.join(str(part) for part in error['loc']) or 'arguments'}: {error['msg']}"
+        for error in exc.errors(include_url=False)
+    )
+    return ActionExecutionResult(status="failed", reason=f"invalid arguments: {details}")
 
 
 def _is_action_id(value: Any) -> TypeGuard[str]:
@@ -595,7 +600,7 @@ def _capability_availability(
     return available, blocked
 
 
-async def _collect_context(user_id: int) -> PlanningContext:
+async def _collect_context(user_id: int, timezone: ZoneInfo) -> PlanningContext:
     async with SESSION_LOCAL() as db:
         persona = await db.scalar(select(Persona).where(Persona.user_id == user_id))
         outfits = (
@@ -696,8 +701,14 @@ async def _collect_context(user_id: int) -> PlanningContext:
             )
             for row in recent_actions
         ],
+        # 与动作的 target_date 一样按用户本地日标注。
         recent_moments=[
-            RecentMomentSummary(date=occurred_at.date().isoformat(), kind=kind, title=title, source=source)
+            RecentMomentSummary(
+                date=occurred_at.astimezone(timezone).date().isoformat(),
+                kind=kind,
+                title=title,
+                source=source,
+            )
             for occurred_at, kind, title, source in recent_moments
         ],
     )
@@ -727,7 +738,7 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
     for raw in raw_actions:
         if len(actions) >= _MAX_ACTIONS:
             break
-        capability_name = _text(raw.get("capability"), 64)
+        capability_name = _text(raw.get("capability"))
         spec = _CAPABILITY_BY_NAME.get(capability_name)
         if spec is None or capability_name not in available_names:
             continue
@@ -772,9 +783,8 @@ def _normalize_plan(parsed: Any, context: PlanningContext) -> NormalizedPlan:
     # 稳定排序：同阶段保持规划顺序。
     actions.sort(key=lambda action: action.phase)
     return NormalizedPlan(
-        theme=_text(parsed.get("theme"), 200),
-        rationale=_text(parsed.get("rationale"), 1000),
-        reveal=_text(parsed.get("reveal"), 500),
+        theme=_text(parsed.get("theme")),
+        rationale=_text(parsed.get("rationale")),
         actions=actions,
     )
 
@@ -925,9 +935,9 @@ async def _execute_outfit_wear(run: _ActionRun, args: dict[str, Any]) -> ActionE
 
 async def _execute_outfit_create(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
     try:
-        description = OutfitCreateArgs.model_validate(args).description[:500]
-    except ValidationError:
-        return ActionExecutionResult(status="failed", reason="missing outfit description")
+        description = OutfitCreateArgs.model_validate(args).description
+    except ValidationError as exc:
+        return _invalid_arguments(exc)
     resume_outfit_id = run.resume.get("outfit_id")
     if resume_outfit_id is None:
         async with SESSION_LOCAL() as db:
@@ -983,7 +993,10 @@ async def _wait_for_scene(
 
 
 async def _execute_scene_activate(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
-    scene_id = int(args["scene_id"])
+    try:
+        scene_id = SceneActivateArgs.model_validate(args).scene_id
+    except ValidationError as exc:
+        return _invalid_arguments(exc)
     current = run.context.scene.environment.get("current")
     # 启用已在使用的场景不会发生变化，不能记成一次场景切换。
     if isinstance(current, dict) and current.get("id") == scene_id:
@@ -996,8 +1009,8 @@ async def _execute_scene_activate(run: _ActionRun, args: dict[str, Any]) -> Acti
 async def _execute_scene_create(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
     try:
         parsed_args = SceneCreateArgs.model_validate(args)
-    except ValidationError:
-        return ActionExecutionResult(status="failed", reason="scene.create 需要非空的 notes 文本")
+    except ValidationError as exc:
+        return _invalid_arguments(exc)
     scene_id = run.resume.get("scene_id")
     if scene_id is None:
         row = await schedule_scene_generation(
@@ -1099,12 +1112,19 @@ async def _identity_current(user_id: int, identity: CharacterCardSnapshot) -> bo
         return await character_snapshot_is_current(db, user_id, identity)
 
 
+async def _discard_assets(*paths: str | None) -> None:
+    """删除未发布的生成资产：它们只在片刻保存成功后才被引用，否则会成为无人引用的文件。"""
+    for path in paths:
+        if path:
+            await asyncio.to_thread(unlink_companion_asset, path)
+
+
 async def _execute_media_image(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
     try:
         parsed_args = MediaImageArgs.model_validate(args)
-    except ValidationError:
-        return ActionExecutionResult(status="failed", reason="missing image prompt or title")
-    size = parsed_args.size if parsed_args.size in _IMAGE_SIZES else "1024x1024"
+    except ValidationError as exc:
+        return _invalid_arguments(exc)
+    size = parsed_args.size
     identity: CharacterCardSnapshot | None = None
     if parsed_args.depicts_self:
         visual = await load_self_visual_context(run.user_id)
@@ -1123,33 +1143,36 @@ async def _execute_media_image(run: _ActionRun, args: dict[str, Any]) -> ActionE
     else:
         urls = await generate_images(parsed_args.prompt, size=size, user_id=run.user_id, persist_user_assets=True)
 
-    async def discard_if_stale() -> bool:
+    async def discard_if_stale(audio_path: str | None = None) -> bool:
         # 出镜图片在生成与旁白期间角色外形可能已更新，旧参考的结果不发布。
         if identity is None or await _identity_current(run.user_id, identity):
             return False
-        for url in urls:
-            await asyncio.to_thread(unlink_companion_asset, url)
+        await _discard_assets(*urls, audio_path)
         return True
 
     stale = ActionExecutionResult(status="blocked", reason="角色外形已更新，旧参考生成的图片未发布")
     if await discard_if_stale():
         return stale
     audio_path, voice_id, narration_error = await _optional_narration(run, parsed_args.narration)
-    if await discard_if_stale():
+    if await discard_if_stale(audio_path):
         return stale
     async with SESSION_LOCAL() as db:
-        moment = await create_user_moment(
-            db,
-            run.user_id,
-            title=parsed_args.title,
-            body=parsed_args.body,
-            media_url=urls[0],
-            media_type="image",
-            audio_url=audio_path,
-            media_metadata={"voice_id": voice_id} if voice_id else None,
-            kind=MomentKind.SCENE.value,
-            source=MomentSource.NIGHTLY.value,
-        )
+        try:
+            moment = await create_user_moment(
+                db,
+                run.user_id,
+                title=parsed_args.title,
+                body=parsed_args.body,
+                media_url=urls[0],
+                media_type="image",
+                audio_url=audio_path,
+                media_metadata={"voice_id": voice_id} if voice_id else None,
+                kind=MomentKind.SCENE.value,
+                source=MomentSource.NIGHTLY.value,
+            )
+        except Exception:
+            await _discard_assets(*urls, audio_path)
+            raise
     return ActionExecutionResult(
         status="succeeded" if narration_error is None else "partial",
         moment_id=moment.id,
@@ -1161,14 +1184,10 @@ async def _execute_media_image(run: _ActionRun, args: dict[str, Any]) -> ActionE
 async def _execute_media_video(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
     try:
         parsed_args = MediaVideoArgs.model_validate(args)
-    except ValidationError:
-        return ActionExecutionResult(status="failed", reason="missing video prompt or title")
-    try:
-        duration = int(parsed_args.duration)
-    except (TypeError, ValueError):
-        duration = 6
-    duration = duration if duration in (6, 10) else 6
-    aspect_ratio = parsed_args.aspect_ratio if parsed_args.aspect_ratio in _VIDEO_ASPECT_RATIOS else "16:9"
+    except ValidationError as exc:
+        return _invalid_arguments(exc)
+    duration = parsed_args.duration
+    aspect_ratio = parsed_args.aspect_ratio
     resume_job_id = run.resume.get("job_id")
     if resume_job_id is None:
         prompt = parsed_args.prompt
@@ -1221,24 +1240,30 @@ async def _execute_media_video(run: _ActionRun, args: dict[str, Any]) -> ActionE
         params = safe_json_loads(completed.params_json or "{}", default={})
         snapshot = params.get("identity_snapshot") if isinstance(params, dict) else None
         if not snapshot or not await _identity_current(run.user_id, CharacterCardSnapshot.model_validate(snapshot)):
+            # 视频文件归视频任务所有，只清理本动作合成的旁白。
+            await _discard_assets(audio_path)
             return ActionExecutionResult(
                 status="blocked",
                 job_id=job_id,
                 reason="角色外形已更新，旧参考生成的视频未发布",
             )
     async with SESSION_LOCAL() as db:
-        moment = await create_user_moment(
-            db,
-            run.user_id,
-            title=parsed_args.title,
-            body=parsed_args.body,
-            media_url=completed.video_url,
-            media_type="video",
-            audio_url=audio_path,
-            media_metadata={"voice_id": voice_id, "narration": parsed_args.narration or ""} if voice_id else None,
-            kind=MomentKind.SCENE.value,
-            source=MomentSource.NIGHTLY.value,
-        )
+        try:
+            moment = await create_user_moment(
+                db,
+                run.user_id,
+                title=parsed_args.title,
+                body=parsed_args.body,
+                media_url=completed.video_url,
+                media_type="video",
+                audio_url=audio_path,
+                media_metadata={"voice_id": voice_id, "narration": parsed_args.narration or ""} if voice_id else None,
+                kind=MomentKind.SCENE.value,
+                source=MomentSource.NIGHTLY.value,
+            )
+        except Exception:
+            await _discard_assets(audio_path)
+            raise
     return ActionExecutionResult(
         status="succeeded" if narration_error is None else "partial",
         job_id=job_id,
@@ -1251,21 +1276,25 @@ async def _execute_media_video(run: _ActionRun, args: dict[str, Any]) -> ActionE
 async def _execute_media_voice(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
     try:
         parsed_args = MediaVoiceArgs.model_validate(args)
-    except ValidationError:
-        return ActionExecutionResult(status="failed", reason="missing voice text or title")
+    except ValidationError as exc:
+        return _invalid_arguments(exc)
     audio_path, voice_id = await _voice_asset(run, parsed_args.text)
     async with SESSION_LOCAL() as db:
-        moment = await create_user_moment(
-            db,
-            run.user_id,
-            title=parsed_args.title,
-            body=parsed_args.body,
-            media_url=audio_path,
-            media_type="audio",
-            media_metadata={"voice_id": voice_id, "transcript": parsed_args.text},
-            kind=MomentKind.EMOTION.value,
-            source=MomentSource.NIGHTLY.value,
-        )
+        try:
+            moment = await create_user_moment(
+                db,
+                run.user_id,
+                title=parsed_args.title,
+                body=parsed_args.body,
+                media_url=audio_path,
+                media_type="audio",
+                media_metadata={"voice_id": voice_id, "transcript": parsed_args.text},
+                kind=MomentKind.EMOTION.value,
+                source=MomentSource.NIGHTLY.value,
+            )
+        except Exception:
+            await _discard_assets(audio_path)
+            raise
     return ActionExecutionResult(
         status="succeeded",
         moment_id=moment.id,
@@ -1276,15 +1305,15 @@ async def _execute_media_voice(run: _ActionRun, args: dict[str, Any]) -> ActionE
 async def _execute_moment_create(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
     try:
         parsed_args = MomentCreateArgs.model_validate(args)
-    except ValidationError:
-        return ActionExecutionResult(status="failed", reason="missing moment title or body")
+    except ValidationError as exc:
+        return _invalid_arguments(exc)
     async with SESSION_LOCAL() as db:
         moment = await create_user_moment(
             db,
             run.user_id,
             title=parsed_args.title,
             body=parsed_args.body,
-            emotion=(parsed_args.emotion or "")[:32] or None,
+            emotion=parsed_args.emotion or None,
             kind=MomentKind.EMOTION.value,
             source=MomentSource.NIGHTLY.value,
         )
@@ -1303,8 +1332,8 @@ def _near_term_cron(now: datetime) -> str:
 async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
     try:
         parsed_args = OutreachScheduleArgs.model_validate(args)
-    except ValidationError:
-        return ActionExecutionResult(status="failed", reason="missing outreach schedule or prompt")
+    except ValidationError as exc:
+        return _invalid_arguments(exc)
     execution_context = json.dumps(
         {
             "completed_nightly_action_facts": run.facts,
@@ -1368,23 +1397,13 @@ async def _execute_outreach_schedule(run: _ActionRun, args: dict[str, Any]) -> A
 
 async def _execute_action_design(run: _ActionRun, args: dict[str, Any]) -> ActionExecutionResult:
     """夜间动作设计：受理提案 → 独立评审 → approve 后入队生成。事实只叙述受理或重试，不将异步制作写成完成。"""
-    name = _text(args.get("name"), 64)
-    motion = _text(args.get("motion_description"), 600)
-    reason = _text(args.get("reason"), 400)
-    if not name or len(motion) < 10:
-        return ActionExecutionResult(status="failed", reason="动作设计缺少名称或有效运动描述")
+    documented = _CAPABILITY_BY_NAME["action.design"].arguments
     try:
-        request = ActionDesignRequest(
-            name=name,
-            motion_description=motion,
-            use_when=[_text(v, 120) for v in (args.get("use_when") or []) if isinstance(v, str)][:8],
-            avoid_when=[_text(v, 120) for v in (args.get("avoid_when") or []) if isinstance(v, str)][:8],
-            reason=reason or "夜间能力评估：存在表达缺口",
-            duration_seconds=float(args.get("duration_seconds") or 4),
-            clip_kind=str(args.get("clip_kind") or "once"),
-        )
-    except (ValidationError, TypeError, ValueError):
-        return ActionExecutionResult(status="failed", reason="动作设计参数不合法")
+        # 只取能力说明列出的参数，其余字段与其他能力一样忽略。
+        request = ActionDesignArgs.model_validate({key: value for key, value in args.items() if key in documented})
+    except ValidationError as exc:
+        return _invalid_arguments(exc)
+    name = request.name
 
     # 提案绑定执行时启用的动作包；没有可用包时 accept_proposal 拒绝受理。
     async with SESSION_LOCAL() as db:
@@ -1451,9 +1470,6 @@ async def _execute_persisted_action(
     if unsatisfied:
         return ActionExecutionResult(status="skipped", reason="dependency not completed", dependencies=unsatisfied)
     resume = row.result or {}
-    if blocked_reason := await _runtime_block_reason(user_id, row.capability, resume):
-        return ActionExecutionResult(status="blocked", reason=blocked_reason)
-    await _set_action_state(row.id, "running")
     run = _ActionRun(
         user_id=user_id,
         row_id=row.id,
@@ -1462,7 +1478,11 @@ async def _execute_persisted_action(
         date_context=date_context,
         facts=facts,
     )
+    # 执行前复核与状态写入同样逐项隔离：一项失败只记入该项，不中断后续动作。
     try:
+        if blocked_reason := await _runtime_block_reason(user_id, row.capability, resume):
+            return ActionExecutionResult(status="blocked", reason=blocked_reason)
+        await _set_action_state(row.id, "running")
         return await _EXECUTORS[row.capability](run, arguments.get("values", {}))
     except Exception as exc:
         logger.warning(
@@ -1471,6 +1491,28 @@ async def _execute_persisted_action(
             exc_info=True,
         )
         return ActionExecutionResult(status="failed", reason=str(exc))
+
+
+def _terminal_result(row: NightlyActivityAction) -> ActionExecutionResult:
+    return ActionExecutionResult.model_validate(
+        {"capability": row.capability, **(row.result or {"status": row.status})},
+    )
+
+
+async def load_terminal_action_results(log_id: int) -> dict[str, ActionExecutionResult]:
+    """读取账本中已落终态的动作结果；规划阶段中途失败时，已完成动作的事实仍可进入当晚叙事。"""
+    async with SESSION_LOCAL() as db:
+        rows = (
+            await db.scalars(
+                select(NightlyActivityAction)
+                .where(
+                    NightlyActivityAction.log_id == log_id,
+                    NightlyActivityAction.status.in_(_TERMINAL_ACTION_STATUSES),
+                )
+                .order_by(NightlyActivityAction.phase, NightlyActivityAction.id),
+            )
+        ).all()
+    return {row.action_key: _terminal_result(row) for row in rows}
 
 
 async def _execute_persisted_actions(
@@ -1489,16 +1531,21 @@ async def _execute_persisted_actions(
     results: dict[str, ActionExecutionResult] = {}
     for row in rows:
         if row.status in _TERMINAL_ACTION_STATUSES:
-            result = ActionExecutionResult.model_validate(
-                {"capability": row.capability, **(row.result or {"status": row.status})},
-            )
+            result = _terminal_result(row)
         else:
             result = await _execute_persisted_action(row, by_key, user_id, context, facts, date_context)
             result.capability = row.capability
             # 终态统一在此落账；执行器只在付费子任务提交后写进度。
             row.status = result.status
             row.result = result.model_dump(exclude_none=True)
-            await _set_action_state(row.id, row.status, row.result)
+            try:
+                await _set_action_state(row.id, row.status, row.result)
+            except Exception:
+                # 动作已经执行，结果仍计入本次执行；该行保留执行前状态，恢复时按进程中断的规则收敛。
+                logger.exception(
+                    "nightly action state write failed",
+                    extra={"user_id": user_id, "action": row.action_key, "status": row.status},
+                )
             if result.status in _SUCCESS_ACTION_STATUSES and result.fact:
                 facts.append(result.fact)
         results[row.action_key] = result
@@ -1519,7 +1566,7 @@ async def run_nightly_planning(
     *,
     log_id: int,
 ) -> PlanningResult:
-    context = await _collect_context(user_id)
+    context = await _collect_context(user_id, ZoneInfo(date_context.user_timezone))
     plan = await _stored_plan(log_id)
     if plan is None:
         payload = {
@@ -1553,6 +1600,5 @@ async def run_nightly_planning(
     return PlanningResult(
         theme=plan.theme,
         rationale=plan.rationale,
-        reveal=plan.reveal,
         actions=actions,
     )

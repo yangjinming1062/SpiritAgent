@@ -1,5 +1,5 @@
 import asyncio
-from collections.abc import Coroutine
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass
 from typing import Any
 
@@ -26,6 +26,8 @@ class InboundMessage:
     # 微信 iLink 的回复凭据（reply-only：send 必须回显入站消息携带的 token）；其它渠道为 None。
     context_token: str | None = None
     attachments: tuple[InboundAttachment, ...] = ()
+    # 需从渠道下载的媒体：桥接层在白名单、去重、中止、频控与容量闸门都放行后才调用，结果并入 attachments 落库。
+    fetch_attachments: Callable[[], Awaitable[tuple[InboundAttachment, ...]]] | None = None
 
 
 @dataclass(frozen=True)
@@ -64,7 +66,7 @@ class ChannelAdapter:
 
     def __init__(self, snapshot: ChannelBindingSnapshot) -> None:
         self.snapshot = snapshot
-        # 登录、入站分发等派生任务都归当前绑定实例；守卫重建或绑定停止时由 aclose 统一取消并等待，避免旧实例越过生命周期边界继续驱动本机工具。
+        # 登录、回合与补发等派生任务都归当前绑定实例；守卫重建或绑定停止时由 aclose 统一取消并等待，避免旧实例越过生命周期边界继续驱动本机工具。
         self._owned_tasks: set[asyncio.Task] = set()
 
     def create_task(self, coro: Coroutine[Any, Any, None], *, name: str | None = None) -> asyncio.Task:

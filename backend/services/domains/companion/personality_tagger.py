@@ -17,7 +17,7 @@ async def analyze_personality_tags(definition: dict[str, str], provider_config: 
         },
         ensure_ascii=False,
     )
-    raw = await chat(None, None, PERSONALITY_TAGGER_PROMPT, user_payload, provider_config=provider_config)
+    raw = await chat(None, PERSONALITY_TAGGER_PROMPT, user_payload, provider_config=provider_config)
     parsed = parse_llm_json(raw)
     if not isinstance(parsed, list):
         raise ValueError("Personality tagger response is not a JSON array")

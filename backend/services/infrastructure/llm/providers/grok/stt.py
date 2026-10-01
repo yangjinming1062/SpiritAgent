@@ -39,4 +39,4 @@ class GrokSTTProvider(STTProvider):
         resp = await self._client.post("/stt", files=files)
         body = raise_for_provider_response(resp, family=self.provider_name)
         text = body.get("text", "")
-        return STTResult(text=text.strip(), raw=body)
+        return STTResult(text=text.strip())

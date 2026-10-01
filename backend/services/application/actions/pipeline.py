@@ -6,11 +6,11 @@ from components import SESSION_LOCAL, get_logger, track_user_task, utc_now
 from modules.companion import ActionProposal
 from sqlalchemy import and_, or_, select
 
-from services.application.generation.video.service import kick_dynamic_action
+from services.application.generation import kick_dynamic_action
 from services.domains.actions import DEFERRED_PROPOSAL_WINDOW, get_action_accept_lock
 
 from .design import ProposalAcceptance
-from .review import review_proposal
+from .review import defer_failed_review, review_proposal
 
 logger = get_logger(__name__)
 
@@ -51,26 +51,16 @@ def schedule_proposal_review(proposal_id: int, user_id: int) -> None:
 
 
 async def _run_proposal_review(proposal_id: int, user_id: int) -> None:
-    # 受理锁覆盖「评审判定 → 额度占用 → 落库提交」，commit 后释放，避免并发评审读到相同剩余额度后全部批准。
-    decision = "defer"
-    action_id: int | None = None
-    proposal_pack = 0
-    async with get_action_accept_lock(user_id), SESSION_LOCAL() as db:
-        proposal = await db.get(ActionProposal, proposal_id)
-        if proposal is None or proposal.user_id != user_id or proposal.status not in ("pending", "deferred"):
-            return
+    # 受理锁覆盖「读取资料 → 评审判定 → 额度占用与落库提交」，commit 后释放，避免并发评审读到相同剩余额度后全部批准；评审内部用短会话读写，模型调用期间不占连接。
+    async with get_action_accept_lock(user_id):
         try:
-            decision = await review_proposal(db, proposal)
+            outcome = await review_proposal(proposal_id, user_id)
         except Exception:  # noqa: BLE001 — 评审失败必须落库为可重试状态，不静默
             logger.exception("action proposal review failed", extra={"proposal_id": proposal_id})
-            proposal.status = "deferred"
-            proposal.review_reason = "评审执行失败，可重试"
-            decision = "defer"
-        await db.commit()
-        proposal_pack = proposal.pack_id
-        action_id = proposal.action_id
-    if decision == "approve" and action_id is not None:
-        kick_dynamic_action(proposal_pack, action_id, user_id)
+            await defer_failed_review(proposal_id, user_id)
+            return
+    if outcome is not None and outcome.decision == "approve" and outcome.action_id is not None:
+        kick_dynamic_action(outcome.pack_id, outcome.action_id, user_id)
 
 
 async def drain_proposal_reviews() -> None:

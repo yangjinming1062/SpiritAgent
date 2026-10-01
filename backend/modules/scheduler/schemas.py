@@ -9,6 +9,9 @@ class NightlyActivityLogItem(BaseModel):
 
     id: int
     user_id: int
+    system_preset_id: str
+    # 预设显示名由管理 API 按预设目录填入；未知预设为 None。
+    system_preset_name: str | None = None
     target_date: date
     status: str
     summary: str | None = None

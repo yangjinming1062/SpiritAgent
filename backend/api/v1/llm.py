@@ -18,7 +18,7 @@ from services.infrastructure.llm import (
 )
 from slowapi.util import get_remote_address
 
-from ._http_errors import classified_http_exception, missing_config_http
+from ._http_errors import classified_http_exception, llm_http_error, missing_config_http
 
 logger = get_logger(__name__)
 
@@ -59,16 +59,9 @@ async def create_completion(req: CompletionRequest, request: Request, user: Curr
         # 空链由 execute_with_fallback 抛 MissingLlmConfigError。
         response = await execute_with_fallback(chain, ChatProvider, _call, user_id=user.id)
     except MissingLlmConfigError:
-        raise missing_config_http("LLM")
+        raise missing_config_http("模型服务")
     except Exception as e:
-        classified = classify_api_error(e)
-        logger.warning(
-            "LLM completion failed user=%s reason=%s status=%s",
-            user.id,
-            classified.reason.value,
-            classified.status_code,
-        )
-        raise classified_http_exception(classified) from e
+        raise llm_http_error(e, "llm_completion") from e
 
     if response.status != "completed":
         logger.warning("LLM completion incomplete user=%s status=%s", user.id, response.status)

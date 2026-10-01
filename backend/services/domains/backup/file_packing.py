@@ -9,7 +9,7 @@ from typing import Any
 from urllib.parse import unquote, urlsplit
 from uuid import uuid4
 
-from components import SETTINGS
+from components import SETTINGS, owned_temp_files
 
 URL_PREFIXES: dict[str, str] = {
     "/api/companion/asset/": "companion-assets/",
@@ -104,16 +104,12 @@ def collect_files_for_export(user_id: int, rows: dict[str, list[dict[str, Any]]]
     for value in _strings(rows):
         path = _storage_path(value)
         if path.startswith("/api/media/files/"):
-            file_id = path.removeprefix("/api/media/files/")
-            if not file_id or "/" in file_id or "\\" in file_id or ".." in file_id:
-                continue
-            files.update(p for p in (root / "temp-media").glob(f"{file_id}.*") if p.is_file())
+            # 临时媒体目录为所有用户共用，只导出元数据归属本用户的文件。
+            files.update(owned_temp_files(path.removeprefix("/api/media/files/"), user_id))
         elif path.startswith("temp-media/"):
-            target = (root / path).resolve()
-            if target.is_relative_to(root / "temp-media") and target.is_file():
-                files.add(target)
-                if target.with_suffix(".json").is_file():
-                    files.add(target.with_suffix(".json"))
+            name = path.removeprefix("temp-media/")
+            if "/" not in name and "\\" not in name:
+                files.update(owned_temp_files(PurePosixPath(name).stem, user_id))
     return sorted(path for path in files if path.resolve().is_relative_to(root))
 
 

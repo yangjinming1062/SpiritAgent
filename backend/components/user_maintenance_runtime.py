@@ -84,3 +84,11 @@ async def cancel_user_tasks(user_id: int) -> int:
                 cancelled += 1
         await asyncio.gather(*pending, return_exceptions=True)
     return cancelled
+
+
+async def drain_user_tasks() -> None:
+    """进程停止时取消并等待全部用户后台任务，覆盖只登记在这里、不属于任何模块任务集合的任务。"""
+    pending = [task for owned in _USER_TASKS.values() for task in owned if task is not asyncio.current_task()]
+    for task in pending:
+        task.cancel()
+    await asyncio.gather(*pending, return_exceptions=True)

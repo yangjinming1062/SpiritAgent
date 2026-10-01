@@ -85,7 +85,7 @@ async def undo_conversation_to_message(
     )
     await db.commit()
 
-    delivered = await build_session_messages(conv.id, db, include_id=True)
+    delivered = await build_session_messages(conv.id, db)
 
     return {
         "session_id": str(conv.id),

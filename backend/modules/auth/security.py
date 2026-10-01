@@ -48,7 +48,7 @@ def decode_activation_code(code: str) -> tuple[str, str]:
         raise ValueError("activation code payload must be a JSON object")
     base_url = data.get("b")
     token = data.get("t")
-    if not base_url or not token:
+    if not isinstance(base_url, str) or not isinstance(token, str) or not base_url or not token:
         raise ValueError("activation code missing required fields")
     return base_url, token
 

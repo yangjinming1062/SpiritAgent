@@ -13,7 +13,7 @@ from components import BackgroundTask, begin_local_scope, get_logger, safe_json_
 from modules.ws import WSEvent
 from sqlalchemy import Row, select, update
 
-from services.infrastructure.desktop import connection
+from services.infrastructure.desktop import MANAGER, set_event_loop_hooks
 
 logger = get_logger(__name__)
 
@@ -22,7 +22,7 @@ MAX_OUTBOX_RETRIES = 5  # 超过即转入 FAILED 死信状态
 STALE_LOCK_TIMEOUT_SECONDS = 60
 WORKER_ID = f"worker-{secrets.token_hex(4)}"  # 进程唯一，用于原子锁追踪
 
-InternalEventHandler = Callable[[int, dict], Coroutine[Any, Any, None]]
+InternalEventHandler = Callable[[int, dict[str, Any]], Coroutine[Any, Any, None]]
 
 # 需要进程内处理器的事件类型及其处理器；由装配层在应用导入期注册（bootstrap/registrations.py），先于事件回路启动
 _handlers: dict[str, InternalEventHandler] = {}
@@ -188,32 +188,32 @@ async def _mark_event_failure(event_id: int, current_retries: int, error: str) -
 async def _flush_gateway_delivered() -> None:
     """将所有已由 writer 成功送达客户端的 Outbox 事件批量标记为 DELIVERED。"""
     all_delivered: list[int] = []
-    for user_id in connection.MANAGER.local_user_ids():
-        d = connection.MANAGER.get_dispatcher(user_id)
+    for user_id in MANAGER.local_user_ids():
+        d = MANAGER.get_dispatcher(user_id)
         if d is not None:
             all_delivered.extend(d.drain_delivered_ids())
     if all_delivered:
         await _mark_events_delivered(all_delivered)
 
 
-async def _periodic_flusher_loop():
-    try:
-        while True:
-            await asyncio.sleep(1.0)
-            try:
-                await _flush_gateway_delivered()
-            except Exception:
-                logger.warning("flush gateway delivered markers failed", exc_info=True)
-    except asyncio.CancelledError:
-        pass
+async def _periodic_flusher_loop() -> None:
+    while True:
+        await asyncio.sleep(1.0)
+        try:
+            await _flush_gateway_delivered()
+        except Exception:
+            logger.warning("flush gateway delivered markers failed", exc_info=True)
 
 
 async def ws_event_loop(dsn: str) -> None:
-    """基于 PostgreSQL LISTEN/NOTIFY 的 outbox 派发：进程持有专用 asyncpg 连接（被 LISTEN pin 住），出错后 5s 重连以避免 PG 重启/网络抖动让派发器永久失聪。"""
+    """基于 PostgreSQL LISTEN/NOTIFY 的 outbox 派发：进程持有专用 asyncpg 连接（被 LISTEN pin 住）；连接出错或被服务端断开后 5s 重连，避免 PG 重启/网络抖动让派发器失聪。"""
     logger.info("Starting background WS event loop with PG LISTEN/NOTIFY.")
-    seen_version = -1  # 初始传递 -1，使启动时第一轮立即执行排空已提交事件
 
-    def _listener(_conn, _pid, _channel, _payload):
+    def _listener(_conn: asyncpg.Connection, _pid: int, _channel: str, _payload: str) -> None:
+        _WAKEUP_STATE.notify()
+
+    def _on_terminated(_conn: asyncpg.Connection) -> None:
+        # 唤醒等待中的派发轮次，让循环立即发现断线并重连
         _WAKEUP_STATE.notify()
 
     flusher_task = asyncio.create_task(_periodic_flusher_loop())
@@ -222,9 +222,12 @@ async def ws_event_loop(dsn: str) -> None:
             try:
                 conn = await asyncpg.connect(dsn)
                 try:
+                    conn.add_termination_listener(_on_terminated)
                     await conn.add_listener("ws_events_channel", _listener)
+                    # 首轮不等唤醒：启动前或断线期间提交的事件没有送达本连接的通知
+                    seen_version = -1
                     try:
-                        while True:
+                        while not conn.is_closed():
                             seen_version = await _process_events(seen_version)
                     finally:
                         with contextlib.suppress(Exception):
@@ -233,13 +236,14 @@ async def ws_event_loop(dsn: str) -> None:
                     await conn.close()
             except asyncio.CancelledError:
                 raise
-            except Exception as e:
-                logger.error("Error in WS event loop connection, reconnecting in 5s", extra={"error": str(e)})
-                await asyncio.sleep(5)
+            except Exception:
+                logger.warning("WS event loop connection failed, reconnecting in 5s", exc_info=True)
+            else:
+                logger.warning("WS event loop LISTEN connection closed, reconnecting in 5s")
+            await asyncio.sleep(5)
     finally:
         flusher_task.cancel()
-        with contextlib.suppress(Exception):
-            await flusher_task
+        await asyncio.gather(flusher_task, return_exceptions=True)
         with contextlib.suppress(Exception):
             await _flush_gateway_delivered()
 
@@ -258,61 +262,72 @@ async def _process_events(seen: int) -> int:
 
         await _recover_stale_locks()
         await _flush_gateway_delivered()
-
-        local_user_ids = connection.MANAGER.local_user_ids()
-        if not local_user_ids:
-            return current_version
-
-        claimed = await _claim_pending_events(local_user_ids)
-        if not claimed:
-            return current_version
-
-        handled_delivered_ids: list[int] = []
-        for event_id, event_type, payload_str, user_id, _, retry_count in claimed:
-            payload = safe_json_loads(payload_str)
-            if payload is None:
-                logger.warning("Skipping and failing unparseable WSEvent", extra={"event_id": event_id})
-                await _mark_event_failure(event_id, retry_count, error="Unparseable JSON payload")
-                continue
-
-            handler = _handlers.get(event_type)
-            if handler is not None:
-                task = asyncio.create_task(handler(user_id, payload))
-                user_tasks = _event_tasks.setdefault(event_type, {}).setdefault(user_id, set())
-                user_tasks.add(task)
-                task.add_done_callback(lambda t, et=event_type, uid=user_id: _discard_event_task(et, uid, t))
-                task.add_done_callback(_log_event_task_failure)
-                handled_delivered_ids.append(event_id)
-                continue
-
-            try:
-                dispatcher = connection.MANAGER.get_dispatcher(user_id)
-                if dispatcher is None:
-                    raise RuntimeError(f"User {user_id} dispatcher not available")
-                enqueued = await dispatcher.enqueue_event(event_type, payload, event_id=event_id)
-                if not enqueued:
-                    await _mark_event_failure(event_id, retry_count, error="Outbox writer queue full")
-            except Exception as e:
-                logger.error(
-                    "Failed to dispatch event to user",
-                    extra={"event_id": event_id, "event_type": event_type, "user_id": user_id, "error": str(e)},
-                )
-                await _mark_event_failure(event_id, retry_count, error=str(e))
-
-        if handled_delivered_ids:
-            await _mark_events_delivered(handled_delivered_ids)
-
+        # 满批且都已交给派发器时可能还有积压，继续认领而不等下一次唤醒；出现投递背压则留给退避重试
+        while True:
+            claimed_count, backpressure = await _dispatch_claimed_batch()
+            if claimed_count < WS_EVENT_CLAIM_BATCH_SIZE or backpressure:
+                break
         await _flush_gateway_delivered()
         return current_version
 
-    except Exception as e:
-        logger.error("Error processing events", extra={"error": str(e)})
+    except Exception:
+        logger.exception("Error processing events")
         return _WAKEUP_STATE.version
+
+
+async def _dispatch_claimed_batch() -> tuple[int, bool]:
+    """认领并派发一批待投递事件，返回认领数量与是否有事件未能交给用户派发器。"""
+    local_user_ids = MANAGER.local_user_ids()
+    if not local_user_ids:
+        return 0, False
+    claimed = await _claim_pending_events(local_user_ids)
+
+    backpressure = False
+    handled_delivered_ids: list[int] = []
+    for event_id, event_type, payload_str, user_id, _, retry_count in claimed:
+        payload = safe_json_loads(payload_str)
+        if payload is None:
+            logger.warning("Skipping and failing unparseable WSEvent", extra={"event_id": event_id})
+            await _mark_event_failure(event_id, retry_count, error="Unparseable JSON payload")
+            continue
+
+        handler = _handlers.get(event_type)
+        if handler is not None:
+            task = asyncio.create_task(handler(user_id, payload))
+            user_tasks = _event_tasks.setdefault(event_type, {}).setdefault(user_id, set())
+            user_tasks.add(task)
+            task.add_done_callback(lambda t, et=event_type, uid=user_id: _discard_event_task(et, uid, t))
+            task.add_done_callback(_log_event_task_failure)
+            handled_delivered_ids.append(event_id)
+            continue
+
+        dispatcher = MANAGER.get_dispatcher(user_id)
+        if dispatcher is None:
+            backpressure = True
+            await _mark_event_failure(event_id, retry_count, error=f"User {user_id} dispatcher not available")
+            continue
+        try:
+            enqueued = await dispatcher.enqueue_event(event_type, payload, event_id=event_id)
+        except Exception as e:
+            logger.exception(
+                "Failed to dispatch event to user",
+                extra={"event_id": event_id, "event_type": event_type, "user_id": user_id},
+            )
+            backpressure = True
+            await _mark_event_failure(event_id, retry_count, error=str(e))
+            continue
+        if not enqueued:
+            backpressure = True
+            await _mark_event_failure(event_id, retry_count, error="Outbox writer queue full")
+
+    if handled_delivered_ids:
+        await _mark_events_delivered(handled_delivered_ids)
+    return len(claimed), backpressure
 
 
 def start_event_loop(dsn: str) -> None:
     """装配传输层事件回路钩子并启动派发循环。"""
-    connection.set_event_loop_hooks(notify=_WAKEUP_STATE.notify, deliver_ack=_mark_events_delivered)
+    set_event_loop_hooks(notify=_WAKEUP_STATE.notify, deliver_ack=_mark_events_delivered)
     _EVENT_LOOP.start(ws_event_loop(dsn))
 
 

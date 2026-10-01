@@ -3,7 +3,7 @@ from typing import Any
 
 
 class WebSearchProvider(abc.ABC):
-    """Web 搜索/抽取后端的抽象基类。子类必须实现 :meth:`is_available` 与至少一个 :meth:`search` / :meth:`extract`；凭据按调用由 dispatcher 从 ``user_settings`` 注入。"""
+    """Web 搜索/抽取后端的抽象基类。子类必须实现 :meth:`is_available` 与至少一个 :meth:`search` / :meth:`extract`；凭据在构造时由 dispatcher 从系统设置传入。"""
 
     @property
     @abc.abstractmethod
@@ -12,7 +12,7 @@ class WebSearchProvider(abc.ABC):
 
     @property
     def display_name(self) -> str:
-        """在 ``spiritagent tools`` 界面展示的易读标签。"""
+        """工具错误信息中使用的易读名称。"""
         return self.name
 
     @abc.abstractmethod

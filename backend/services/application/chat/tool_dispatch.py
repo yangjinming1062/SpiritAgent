@@ -3,7 +3,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from components import async_trace_span, redact_sensitive_text, safe_json_loads, tool_error
+from components import get_logger, redact_sensitive_text, safe_json_loads, tool_error
 
 from services.contracts import DelegateAction, MediaTurnState, MemoryScope, SceneTurnState
 from services.infrastructure.desktop import MANAGER, dispatch_device_call
@@ -23,6 +23,8 @@ from services.infrastructure.tool_runtime import (
 from .chat_emitter import Emitter
 from .message_sanitization import parse_tool_call_arguments
 from .native_memory import NativeMemory
+
+logger = get_logger(__name__)
 
 # 委派执行器由 orchestrator 注入（run_delegated_turn 绑定回合入口），避免模块级循环导入。
 DelegateExecutor = Callable[[DelegateAction, int, UserLlmConfig], Awaitable[str]]
@@ -55,7 +57,8 @@ class _BatchProgress:
     started: set[str] = field(default_factory=set)
 
 
-_INTERRUPTED_RUNNING_ERROR = (
+# 结果未知：回合中断时仍在运行的调用，以及历史里缺结果行的调用。
+INTERRUPTED_RUNNING_ERROR = (
     "The turn was interrupted while this tool was running, so the outcome is unknown: it may have completed, "
     "partly run, or not run at all. Do not assume it failed or repeat it automatically; check its effects or ask "
     "the user first."
@@ -71,7 +74,7 @@ def interrupted_tool_results(tool_calls_list: list[dict], progress: _BatchProgre
         if (settled := progress.settled.get(call_id)) is not None:
             content: Any = settled.get("content", "")
         elif call_id in progress.started:
-            content = tool_error(_INTERRUPTED_RUNNING_ERROR)
+            content = tool_error(INTERRUPTED_RUNNING_ERROR)
         else:
             content = tool_error(_INTERRUPTED_PENDING_ERROR)
         results.append((call_id, content))
@@ -160,47 +163,43 @@ async def _execute_single_tool(tc: dict, ctx: _ToolDispatchContext) -> dict:
             return make_tool_result_message(name, blocked, tc["call_id"])
 
         tool_location = REGISTRY.get_location(ctx.user_id, name)
-        async with async_trace_span(
-            f"tool.{name}",
-            attributes={"tool.location": tool_location, "tool.call_id": tc["call_id"]},
-        ):
-            match tool_location:
-                case "backend":
-                    # 委派工具只返回控制动作；子回合由对话执行层接管，避免工具处理器反向重入对话入口。
-                    result = await REGISTRY.execute_backend_tool(
-                        name,
-                        args,
-                        user_id=ctx.user_id,
-                        llm_config=ctx.llm_config,
-                        user_settings=ctx.user_settings,
-                        parent_session_id=ctx.session_id,
-                        excluded_tool_names=ctx.excluded_tool_names,
-                        scene_turn=ctx.scene_turn,
-                        media_turn=ctx.media_turn,
-                    )
-                    result_str = (
-                        await ctx.delegate_executor(result, ctx.user_id, ctx.llm_config)
-                        if isinstance(result, DelegateAction)
-                        else result
-                    )
-                case "memory":
-                    result_str = (
-                        await ctx.native_memory.execute_tool(name, args)
-                        if ctx.native_memory
-                        else tool_error("Memory is unavailable")
-                    )
-                case "runner":
-                    result_str = await _dispatch_runner_tool(
-                        ctx.user_id,
-                        name,
-                        args,
-                        tc["call_id"],
-                        ctx.session_id,
-                        headless=ctx.headless,
-                        memory_scope=ctx.memory_scope,
-                    )
-                case _:
-                    result_str = tool_error(f"Unknown tool location for {name}")
+        match tool_location:
+            case "backend":
+                # 委派工具只返回控制动作；子回合由对话执行层接管，避免工具处理器反向重入对话入口。
+                result = await REGISTRY.execute_backend_tool(
+                    name,
+                    args,
+                    user_id=ctx.user_id,
+                    llm_config=ctx.llm_config,
+                    user_settings=ctx.user_settings,
+                    parent_session_id=ctx.session_id,
+                    excluded_tool_names=ctx.excluded_tool_names,
+                    scene_turn=ctx.scene_turn,
+                    media_turn=ctx.media_turn,
+                )
+                result_str = (
+                    await ctx.delegate_executor(result, ctx.user_id, ctx.llm_config)
+                    if isinstance(result, DelegateAction)
+                    else result
+                )
+            case "memory":
+                result_str = (
+                    await ctx.native_memory.execute_tool(name, args)
+                    if ctx.native_memory
+                    else tool_error("Memory is unavailable")
+                )
+            case "runner":
+                result_str = await _dispatch_runner_tool(
+                    ctx.user_id,
+                    name,
+                    args,
+                    tc["call_id"],
+                    ctx.session_id,
+                    headless=ctx.headless,
+                    memory_scope=ctx.memory_scope,
+                )
+            case _:
+                result_str = tool_error(f"Unknown tool location for {name}")
 
         result_str = ctx.guardrails.after_call(name, args, result_str)
 
@@ -243,5 +242,7 @@ async def _run_tool_batch(
 
 
 def _crash_result(tc: dict, exc: BaseException) -> dict:
-    """为崩溃工具合成 tool_result：assistant 行已带 tool_calls 落库，缺对应结果行会让下一轮上下文出现孤立 function_call 而被供应商整体拒绝。"""
-    return make_tool_result_message(tc.get("name", "<unknown>"), tool_error(f"Tool crashed: {exc!r}"), tc["call_id"])
+    """为崩溃工具合成 tool_result：assistant 行已带 tool_calls 落库，须记下确定的失败而不是留下缺结果的调用；异常文本同普通结果一样脱敏。"""
+    name = tc.get("name", "<unknown>")
+    logger.error("Tool call crashed", extra={"tool_name": name, "call_id": tc["call_id"]}, exc_info=exc)
+    return make_tool_result_message(name, _redact_tool_payload(tool_error(f"Tool crashed: {exc!r}")), tc["call_id"])

@@ -216,7 +216,16 @@ async def _embed(
     try:
         vectors = await asyncio.wait_for(provider.embed(texts, purpose=purpose), timeout=timeout_seconds)
     except Exception as exc:
-        logger.debug("embedding failed", extra={"error": str(exc)})
+        # 记忆随即降级为关键词召回；只记供应商与错误类别，不记输入文本
+        logger.warning(
+            "embedding failed; memory falls back to keyword recall",
+            extra={
+                "provider": provider.provider_name,
+                "model": provider.config.model,
+                "error_type": type(exc).__name__,
+                "status_code": getattr(exc, "status_code", None),
+            },
+        )
         log(
             phase="response",
             status="error",

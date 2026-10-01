@@ -1,6 +1,5 @@
 import contextlib
-from collections.abc import Callable
-from typing import Any
+from collections.abc import Awaitable, Callable
 
 from components import get_logger
 from fastapi import WebSocket
@@ -11,7 +10,7 @@ logger = get_logger(__name__)
 
 # 事件回路钩子由 event_store 启动时装配（set_event_loop_hooks），传输层不反向依赖事件存储：注册唤醒认领，writer 送达确认批量落库。
 NotifyHook = Callable[[], None]
-DeliverAckHook = Callable[[list[int]], Any]
+DeliverAckHook = Callable[[list[int]], Awaitable[None]]
 _notify_hook: NotifyHook | None = None
 _deliver_ack_hook: DeliverAckHook | None = None
 
@@ -55,8 +54,11 @@ class ConnectionManager:
             await dispatcher.stop_writer()
             delivered = dispatcher.drain_delivered_ids()
             if delivered and _deliver_ack_hook is not None:
-                with contextlib.suppress(Exception):
+                try:
                     await _deliver_ack_hook(delivered)
+                except Exception:
+                    # 未落库的送达事件在僵尸锁超时后重新投递
+                    logger.warning("mark delivered outbox events failed", extra={"user_id": user_id}, exc_info=True)
         logger.info("User dispatcher async unregistered", extra={"user_id": user_id})
 
     def get_dispatcher(self, user_id: int) -> JsonRpcDispatcher | None:

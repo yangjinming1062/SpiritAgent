@@ -32,4 +32,4 @@ class MiniMaxSTTProvider(STTProvider):
 
         resp = await self._client.post("/v1/speech_to_text", files=files, data=data, headers=headers)
         body = raise_for_minimax_response(resp)
-        return STTResult(text=body.get("text", "").strip(), raw=body)
+        return STTResult(text=body.get("text", "").strip())

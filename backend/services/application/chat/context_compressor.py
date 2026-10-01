@@ -20,6 +20,10 @@ from services.infrastructure.llm import (
 logger = get_logger(__name__)
 
 
+class CompressionFailedError(RuntimeError):
+    """摘要调用失败、未完成或返回空摘要；历史保持不变。"""
+
+
 @dataclass(frozen=True)
 class CompressionInfo:
     summary: str
@@ -36,7 +40,9 @@ def _summary_items(block: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """摘要仅接收文字与媒体引用，不把未提供视觉内容的 base64 当作文字资料。"""
     items = []
     for item in block:
-        content = item.get("content")
+        # 多模态工具结果的媒体在 function_call_output 的 output。
+        key = "output" if item.get("type") == "function_call_output" else "content"
+        content = item.get(key)
         if not isinstance(content, list):
             items.append(item)
             continue
@@ -53,7 +59,7 @@ def _summary_items(block: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 )
             else:
                 parts.append(part)
-        items.append({**item, "content": parts})
+        items.append({**item, key: parts})
     return items
 
 
@@ -68,7 +74,7 @@ def _pick_compressible_block(
         raise ValueError("Every context item requires a source message ID or an explicit runtime marker")
     if len(rest) <= preserve_recent + 1:
         return [], rest
-    keep_start = len(rest) - preserve_recent if preserve_recent else len(rest)
+    keep_start = len(rest) - preserve_recent
     keep_start = min(keep_start, next((i for i, mid in enumerate(source_message_ids) if mid is None), len(rest)))
     call_positions = {
         item["call_id"]: index
@@ -152,15 +158,13 @@ async def compress_history(
     temperature: float,
     language: str,
 ) -> tuple[dict[str, Any], CompressionInfo | None]:
-    """压缩可总结的历史前缀；成功返回压缩后的 Responses 上下文，失败或无可压缩内容返回原上下文。"""
+    """压缩可总结的历史前缀；成功返回压缩后的 Responses 上下文，无可压缩内容返回原上下文；摘要调用失败、未完成或为空时抛 CompressionFailedError，历史不变。"""
     target = SETTINGS.context_summary_target_tokens
     source_ids: list[int | None] = context["source_message_ids"]
     block, keep = _pick_compressible_block(context["input"], source_message_ids=source_ids)
     if not block:
         return context, None
     through_id = source_ids[len(block) - 1]
-    if through_id is None:
-        raise ValueError("Compression requires an original message boundary")
 
     try:
         summary, completed, prompt_tokens, completion_tokens = await _summarize_block(
@@ -172,19 +176,19 @@ async def compress_history(
             language=language,
         )
     except Exception as exc:
-        logger.warning("context_compressor: summary call failed, leaving history unchanged", extra={"error": str(exc)})
-        return context, None
+        logger.warning("context_compressor: summary call failed, leaving history unchanged", exc_info=True)
+        raise CompressionFailedError("summary call failed") from exc
 
     if not completed:
         logger.warning(
             "context_compressor: summary response did not complete, leaving history unchanged",
             extra={"message_count": len(block)},
         )
-        return context, None
+        raise CompressionFailedError("summary response did not complete")
 
     if not summary:
-        logger.info("context_compressor: LLM returned empty summary; leaving history unchanged")
-        return context, None
+        logger.warning("context_compressor: LLM returned empty summary; leaving history unchanged")
+        raise CompressionFailedError("summary response was empty")
 
     replaced_count = len(block)
     title = resolve_prompt_text(COMPRESSION_CHECKPOINT_TITLE_TEXTS, language).format(count=replaced_count)

@@ -4,6 +4,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from prompts.tools import SEARCH_TOOLS_CATALOG_DESC, SEARCH_TOOLS_DESC
+
 _CJK_RE = re.compile(r"[\u4e00-\u9fff]")
 _META_TOOL_NAME = "search_tools"
 
@@ -207,16 +209,7 @@ def apply_search_tools_catalog(schemas: list[dict[str, Any]]) -> list[dict[str, 
             decorated.append(schema)
             continue
         updated = dict(schema)
-        if catalog:
-            updated["description"] = (
-                "按业务域或意图检索并解锁工具；匹配项会立即加入活动列表。"
-                " Search by domain or intent to unlock tools for immediate use.\n"
-                f"可用业务域 / available domains:\n{catalog}"
-            )
-        else:
-            updated["description"] = (
-                "按业务域或意图检索并解锁工具。当前没有可检索的业务域。 Search by domain or intent to unlock tools. No domains are currently available."
-            )
+        updated["description"] = SEARCH_TOOLS_CATALOG_DESC.format(catalog=catalog) if catalog else SEARCH_TOOLS_DESC
         decorated.append(updated)
     return decorated
 

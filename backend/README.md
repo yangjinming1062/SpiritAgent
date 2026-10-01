@@ -72,7 +72,7 @@
 
 ### 配置与迁移
 
-复制 [config.toml.example](config.toml.example) 为 `config.toml` 后填写数据库、JWT、资产签名密钥和初始管理员等冷启动依赖。配置来源优先级为环境变量 → `.env` → `config.toml` → `config.toml.example`；业务型参数进入 `system_settings`，由 [Settings](components/config.py) 声明，技术常量不承载可运营配置。
+复制 [config.toml.example](config.toml.example) 为 `config.toml` 后填写数据库、JWT、资产签名密钥和管理员凭据等冷启动依赖；JWT、资产签名密钥或管理员密码为空或仍是示例值时，web 进程拒绝启动。配置来源优先级为环境变量 → `.env` → `config.toml` → `config.toml.example`；业务型参数进入 `system_settings`，由 [Settings](components/config.py) 声明，技术常量不承载可运营配置。
 
 热更新入口为 [system_settings.py](services/application/configuration/system_settings.py)：串行合并候选值 → 整批校验 → 事务提交 → 原位更新 `SETTINGS` → 刷新连接池等副作用。管理后台的系统设置写入数据库并立即更新当前进程；重启时数据库中的动态值会在环境变量和 TOML 水合后再次覆盖它们。启动专用参数不能从管理后台修改。
 
@@ -179,7 +179,7 @@ docker compose --profile monitoring up -d
 - LLM 须支持 [Responses API](https://lmstudio.ai/docs/developer/openai-compat/responses)，显式填写已部署模型 ID，加载窗口须覆盖[适配器预算](services/infrastructure/llm/providers/local/chat.py)。
 - 用户未设 embedding 卡片时继承系统链；系统也未设卡片时，按系统信息库顺序选用支持向量的供应商及其默认模型。记忆只使用首个有效配置；显式链无效或调用失败时降级为[关键词召回](services/domains/memory/README.md#读取召回与恢复)，不自动切换模型。
 
-本地向量校验与维度适配见 [embedding.py](services/infrastructure/llm/providers/local/embedding.py)：仅默认模型允许 [MRL 截断](https://huggingface.co/Qwen/Qwen3-Embedding-4B-GGUF)，短向量归一化后补零，其他超宽向量拒绝。当前记忆未记录模型标识，更换模型不能复用旧向量。
+本地向量校验与维度适配见 [embedding.py](services/infrastructure/llm/providers/local/embedding.py)：仅默认模型允许 [MRL 截断](https://huggingface.co/Qwen/Qwen3-Embedding-4B-GGUF)，短向量归一化后补零，其他超宽向量拒绝。千问默认模型与 Gemini 按记忆库列宽请求输出；宽度不符的向量不入库，记忆按关键词召回，调用失败记录告警。当前记忆未记录模型标识，更换模型不能复用旧向量。
 
 ### 运营参数
 

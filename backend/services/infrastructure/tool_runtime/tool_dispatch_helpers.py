@@ -8,18 +8,11 @@ from components import get_logger
 
 logger = get_logger(__name__)
 
-# 绝不能并发执行的工具（交互性 / 面向用户）。
-_NEVER_PARALLEL_TOOLS = frozenset({"clarify"})
-
 # 无共享可变会话状态的只读工具。
 _PARALLEL_SAFE_TOOLS = frozenset(
     {
-        "ha_get_state",
-        "ha_list_entities",
-        "ha_list_services",
         "read_file",
         "search_files",
-        "session_search",
         "skill_view",
         "skills_list",
         "web_extract",
@@ -41,8 +34,6 @@ def should_parallelize_tool_batch(tool_calls: Iterable[tuple[str, str]]) -> bool
     """一批工具调用可安全并发时返回 True。"""
     tool_calls = list(tool_calls)
     if len(tool_calls) <= 1:
-        return False
-    if any(name in _NEVER_PARALLEL_TOOLS for name, _ in tool_calls):
         return False
 
     reserved_paths: list[Path] = []
@@ -88,10 +79,8 @@ def _extract_parallel_scope_path(function_args: dict) -> Path | None:
 
 def _paths_overlap(left: Path, right: Path) -> bool:
     """两条路径可能指向同一子树时返回 True（前缀匹配，非严格相等）。"""
-    left_parts, right_parts = left.parts, right.parts
-    if not left_parts or not right_parts:
-        return bool(left_parts) and bool(right_parts)
-    return left_parts[: min(len(left_parts), len(right_parts))] == right_parts[: min(len(left_parts), len(right_parts))]
+    common = min(len(left.parts), len(right.parts))
+    return left.parts[:common] == right.parts[:common]
 
 
 def is_multimodal_tool_result(value: object) -> TypeGuard[dict[str, Any]]:

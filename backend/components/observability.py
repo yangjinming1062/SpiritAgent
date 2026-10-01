@@ -1,9 +1,7 @@
-import contextvars
 import secrets
 import time
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any
 
 from fastapi import HTTPException, Response
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
@@ -40,42 +38,20 @@ SCENE_FAILURES_TOTAL = Counter(
     ["stage"],
 )
 
-_CURRENT_TRACE_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_trace_id", default=None)
-_CURRENT_SPAN_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar("current_span_id", default=None)
-
-
-def _mint_trace_id() -> str:
-    """mint 但不 bind：把 set+reset 留给 span 上下文管理器，避免在 stray 调用上泄露到后续请求。"""
-    return secrets.token_hex(16)
-
 
 @asynccontextmanager
-async def async_trace_span(name: str, attributes: dict[str, Any] | None = None) -> AsyncIterator[dict[str, Any]]:
-    """async 上下文管理器：记录 trace span 并上报 JSON-RPC 指标。"""
-    trace_token: contextvars.Token | None = None
-    trace_id = _CURRENT_TRACE_ID.get()
-    if not trace_id:
-        trace_id = _mint_trace_id()
-        trace_token = _CURRENT_TRACE_ID.set(trace_id)
-    span_id = secrets.token_hex(8)
-    token_span = _CURRENT_SPAN_ID.set(span_id)
+async def rpc_metrics(method: str) -> AsyncIterator[None]:
+    """记录一次 JSON-RPC 方法执行的次数（按成功/失败）与耗时。"""
     start_time = time.monotonic()
-    span_context = {"name": name, "trace_id": trace_id, "span_id": span_id, "attributes": attributes or {}}
     status = "ok"
     try:
-        yield span_context
+        yield
     except Exception:
         status = "error"
         raise
     finally:
-        duration = time.monotonic() - start_time
-        _CURRENT_SPAN_ID.reset(token_span)
-        if trace_token is not None:
-            _CURRENT_TRACE_ID.reset(trace_token)
-        if name.startswith("rpc."):
-            method = name.removeprefix("rpc.")
-            RPC_REQUESTS_TOTAL.labels(method=method, status=status).inc()
-            RPC_REQUEST_DURATION_SECONDS.labels(method=method).observe(duration)
+        RPC_REQUESTS_TOTAL.labels(method=method, status=status).inc()
+        RPC_REQUEST_DURATION_SECONDS.labels(method=method).observe(time.monotonic() - start_time)
 
 
 def check_metrics_auth(auth_header: str | None, token_header: str | None) -> None:

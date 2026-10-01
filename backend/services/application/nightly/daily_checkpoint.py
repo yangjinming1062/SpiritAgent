@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from services.domains.companion import run_prompt_json
 from services.domains.conversation import (
+    CHECKPOINT_SUBTYPES,
     UI_ONLY_SUBTYPES,
     format_messages_compact,
     get_special_conversation,
@@ -19,7 +20,7 @@ from services.infrastructure.llm import UserLlmConfig
 logger = get_logger(__name__)
 
 # 摘要通过 previous_summary 单独提供，不把多个检查点重复混入原始对话。
-_NON_SUMMARISABLE_SUBTYPES = UI_ONLY_SUBTYPES | {"daily_summary", "compress_summary"}
+_NON_SUMMARISABLE_SUBTYPES = UI_ONLY_SUBTYPES | frozenset(CHECKPOINT_SUBTYPES)
 
 
 async def run_daily_checkpoint(
@@ -29,13 +30,13 @@ async def run_daily_checkpoint(
     utc_end: datetime,
     local_date_str: str,
     language: str,
-) -> None:
-    """合并最新摘要与截至目标本地日末的原文；模型等待期间的新消息仍保留在读路径。"""
+) -> bool | None:
+    """合并最新摘要与截至目标本地日末的原文；模型等待期间的新消息仍保留在读路径。返回 ``True`` 已写入 / ``False`` 无可总结内容或历史已变化 / ``None`` 应生成却没有得到有效摘要。"""
     # 读、写两阶段各自持有短 session——中间 LLM 调用不能 pin 连接池（backend/README.md「数据与运行可靠性」）。
     async with session_scope() as db:
         inputs = await _collect_inputs(db, user_id, utc_start, utc_end)
     if inputs is None:
-        return
+        return False
     conv_id, chat_content, prev_summary_text, through_id, clear_watermark = inputs
 
     parsed, _ = await run_prompt_json(
@@ -53,11 +54,13 @@ async def run_daily_checkpoint(
         temperature=0.0,
     )
     if not parsed:
-        return
+        # 调用或解析失败的原因已由 run_prompt_json 记录。
+        return None
     raw_summary = parsed.get("summary")
     summary_text = raw_summary.strip() if isinstance(raw_summary, str) else ""
     if not summary_text:
-        return
+        logger.warning("daily_checkpoint: summary missing from model output", extra={"user_id": user_id})
+        return None
 
     async with session_scope() as wdb:
         conv = await wdb.get(Conversation, conv_id)
@@ -66,7 +69,8 @@ async def run_daily_checkpoint(
             or conv.context_after_message_id != clear_watermark
             or await wdb.get(Message, through_id) is None
         ):
-            return
+            logger.info("daily_checkpoint: history changed during summary", extra={"user_id": user_id})
+            return False
         checkpoint = Message(
             conversation_id=conv_id,
             role="system",
@@ -79,8 +83,8 @@ async def run_daily_checkpoint(
         wdb.add(checkpoint)
         await wdb.commit()
         await prune_videos_in_range(wdb, conv_id, hi=through_id + 1, preserve_queued=True)
-        await wdb.commit()
     logger.info("daily_checkpoint: created summary", extra={"user_id": user_id, "date": local_date_str})
+    return True
 
 
 async def _collect_inputs(
@@ -112,7 +116,7 @@ async def _collect_inputs(
         return
 
     history = await load_context_messages(db, main_conv)
-    prev_checkpoint = next((m for m in history if m.subtype in ("daily_summary", "compress_summary")), None)
+    prev_checkpoint = next((m for m in history if m.subtype in CHECKPOINT_SUBTYPES), None)
     rows = [m for m in history if m.subtype not in _NON_SUMMARISABLE_SUBTYPES and m.created_at < utc_end]
     # 未交付终端回复的回合继续保留原文，避免跨日工具结果与调用被摘要拆开。
     terminal_end = next(

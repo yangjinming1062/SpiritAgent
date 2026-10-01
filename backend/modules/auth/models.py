@@ -11,8 +11,10 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    select,
     text,
 )
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 if TYPE_CHECKING:
@@ -81,3 +83,8 @@ class UserModelConfig(ModelBase, TimestampMixin):
     ai_config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
     user: Mapped[User] = relationship(back_populates="model_config")
+
+
+async def lock_user_row(db: AsyncSession, user_id: int) -> None:
+    """锁定用户行直到所在事务结束；Cron 任务变更与陪伴意图状态转换共用这把锁，任务改动与意图失效才不会交错。"""
+    await db.execute(select(User.id).where(User.id == user_id).with_for_update())

@@ -192,11 +192,14 @@ async def _accept_same_key(
             ),
             None,
         )
-    if existing.status in ("queued", "processing", "result_unknown"):
+    if existing.status in ("queued", "processing"):
         return _pending_action(existing.id, f"相似动作「{name}」已在制作中"), "in_production"
+    if existing.status == "result_unknown":
+        # 结果未知的素材不自动重做，避免重复付费提交。
+        return _pending_action(existing.id, f"相似动作「{name}」上次制作结果未知，不会自动重做"), "in_production"
     if existing.status == "review" and await has_pending_action_review(db, existing):
         return _pending_action(existing.id, f"相似动作「{name}」已制作完成，等待用户确认后才能播放"), "awaiting_review"
-    if existing.status not in ("failed", "cancelled", "review"):
+    if existing.status not in ("failed", "review"):
         return None
     try:
         require_action_matting_model()
@@ -205,7 +208,7 @@ async def _accept_same_key(
     if existing.status == "review":
         # 复核已结束的成品视同未采纳，作废后独立重做；用户拒绝的成品在拒绝时已作废。
         clear_action_attempt(existing)
-    # 失败/取消/未采纳的同名动作原位重做，不新建提案。
+    # 失败或未采纳的同名动作原位重做，不新建提案。
     existing.status = "queued"
     existing.stage = "design"
     existing.error = None

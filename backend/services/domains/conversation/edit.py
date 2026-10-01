@@ -4,12 +4,12 @@ import json
 import re
 
 from components import safe_json_loads
-from modules.conversation import Conversation, Message
-from sqlalchemy import delete, select
+from modules.conversation import Message
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .formatting import message_text
-from .main_conversation import SPECIAL_KIND, STANDARD_KIND
+from .last_user_message import find_last_user_message
 
 _ATTACHMENT_DIRECTIVE = re.compile(r"^@(file|folder):", re.IGNORECASE)
 
@@ -28,25 +28,10 @@ async def replace_last_user_message(
     """调用方持有会话锁且确认没有在途回合；本函数提交替换并返回新用户行。"""
     if not text.strip():
         raise EditNotAllowedError("编辑后的消息不能为空")
-    conv = await Conversation.by_session_id(db, session_id, user_id=user_id)
-    if conv is None or conv.kind not in (STANDARD_KIND, SPECIAL_KIND):
+    conv, source = await find_last_user_message(db, user_id, session_id, source_message_id)
+    if conv is None:
         raise EditNotAllowedError("会话不存在或不支持编辑消息")
-
-    source = (
-        await db.execute(
-            select(Message)
-            .where(Message.conversation_id == conv.id, Message.role == "user")
-            .order_by(Message.id.desc())
-            .limit(1),
-        )
-    ).scalar_one_or_none()
-    if (
-        source is None
-        or source.id != source_message_id
-        or source.subtype
-        or source.queued
-        or source.id <= conv.context_after_message_id
-    ):
+    if source is None:
         raise EditNotAllowedError("只能编辑当前对话最后一条用户消息，请刷新后重试")
 
     # 文件 / 文件夹引用仍存于正文末尾；编辑器只修改可见文本，不丢失原引用。

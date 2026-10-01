@@ -3,7 +3,7 @@ import re
 from datetime import datetime
 from typing import Any
 
-from components import get_logger, session_scope, utc_now
+from components import session_scope, utc_now
 from modules.memory import MEMORY_EMBEDDING_DIM, Memory
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -14,8 +14,6 @@ from services.infrastructure.llm import generate_embedding, resolve_embedding_pr
 
 from .memory_namespaces import RESERVED_FROM_RECALL, context_not_in
 from .memory_store import active_memory_filter, scope_filter
-
-logger = get_logger(__name__)
 
 # RRF 平滑常数（TREC/IR 标准取值）
 RRF_K: int = 60
@@ -115,7 +113,11 @@ async def _sparse_search(
     """稀疏关键词检索：跨 content/context 的 ILIKE OR 拉取候选（受益于 ``ix_memories_content_trgm`` / ``ix_memories_context_trgm`` GIN trigram 索引），按关键词命中率与 updated_at 在 Python 端排序截断。"""
     if not keywords:
         return []
-    conditions = [c for kw in keywords for c in (Memory.content.ilike(f"%{kw}%"), Memory.context.ilike(f"%{kw}%"))]
+    conditions = [
+        c
+        for kw in keywords
+        for c in (Memory.content.icontains(kw, autoescape=True), Memory.context.icontains(kw, autoescape=True))
+    ]
     stmt = (
         select(Memory)
         .where(

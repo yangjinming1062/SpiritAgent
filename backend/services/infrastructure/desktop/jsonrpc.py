@@ -11,8 +11,9 @@ from components import (
     JSONRPC_INVALID_REQUEST,
     JSONRPC_METHOD_NOT_FOUND,
     JSONRPC_PARSE_ERROR,
-    async_trace_span,
     get_logger,
+    redact_sensitive_text,
+    rpc_metrics,
 )
 
 from .buffer import BufferedFrame, ReplayBuffer
@@ -23,7 +24,7 @@ OUTBOX_QUEUE_MAX = 1024
 
 
 class JsonRpcError(Exception):
-    def __init__(self, code: int, message: str, data: Any = None):
+    def __init__(self, code: int, message: str, data: Any = None) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
@@ -31,7 +32,7 @@ class JsonRpcError(Exception):
 
 
 # Handler 返回 JSON-RPC result。raise JsonRpcError 会以结构化错误回复；其他异常统一变 -32603。
-Handler = Callable[[dict], Awaitable[Any]]
+Handler = Callable[[dict[str, Any]], Awaitable[Any]]
 
 # 必须从给 renderer 的错误里抹掉的服务端内部痕迹（PROTOCOL「错误信封」）。精选而非宽泛：文件系统路径、DSN/URL 凭据、OpenAI/httpx 异常格式、Python traceback 行。
 _REDACT_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -73,8 +74,8 @@ _REDACT_PATTERNS: tuple[re.Pattern[str], ...] = (
 
 
 def redact_message(message: str) -> str:
-    """在 -32603 消息离开网关前清掉服务端内部痕迹；完整原文通过 logger.exception 留在服务端日志。"""
-    out = message
+    """在 -32603 消息离开网关前清掉密钥与服务端内部痕迹；完整原文通过 logger.exception 留在服务端日志。"""
+    out = redact_sensitive_text(message) or ""
     for pat in _REDACT_PATTERNS:
         out = pat.sub("[redacted]", out)
     return out[:512]
@@ -230,7 +231,7 @@ class JsonRpcDispatcher:
             return
 
         try:
-            async with async_trace_span(f"rpc.{method}", attributes={"rpc.id": msg_id}):
+            async with rpc_metrics(method):
                 result = await handler(params)
         except JsonRpcError as e:
             if is_notification:

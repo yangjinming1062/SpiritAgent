@@ -6,7 +6,7 @@ from .formatting import format_messages_compact
 from .main_conversation import UI_ONLY_SUBTYPES, get_special_conversation
 
 RECENT_CONTEXT_CHAR_CAP = 200
-CHECKPOINT_SUBTYPES = ("daily_summary", "compress_summary")
+CHECKPOINT_SUBTYPES: tuple[str, ...] = ("daily_summary", "compress_summary")
 
 
 async def load_context_messages(db: AsyncSession, conv: Conversation) -> list[Message]:

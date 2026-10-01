@@ -67,7 +67,7 @@ from services.domains.backup import (
     serialize_rows,
 )
 from services.domains.configuration import prepare_ai_config, public_ai_config
-from services.domains.conversation import ensure_system_conversations_for_user
+from services.domains.conversation import SYSTEM_PRESET_CATALOG, ensure_system_conversations_for_user
 from services.infrastructure.assets import delete_user_assets
 from services.infrastructure.llm import providers_supporting
 from sqlalchemy import select, update
@@ -131,11 +131,15 @@ def _purge_user_files(user_id: int, session_ids: list[str]) -> None:
 @router.delete("/users/{user_id}", response_model=MessageResponse)
 async def delete_user(user_id: int, db: DbSession) -> MessageResponse:
     """被遗忘权：在维护边界内停稳该用户的运行时，先删文件再删行（外键级联清理其余数据）；文件先于行删除，任一步失败都保留用户行，管理员重试即可继续清理。"""
-    user = await get_or_404(db, User, id=user_id, detail="用户不存在。")
+    await get_or_404(db, User, id=user_id, detail="用户不存在。")
+    # 维护边界可能等待在途付费任务数分钟，文件删除也可能较慢；等待期间不持有数据库事务，进入边界后重新加载用户。
+    await db.rollback()
     async with user_maintenance(user_id):
+        user = await get_or_404(db, User, id=user_id, detail="用户不存在。")
         session_ids = [
             str(conv_id) for conv_id in await db.scalars(select(Conversation.id).where(Conversation.user_id == user_id))
         ]
+        await db.rollback()
         await asyncio.to_thread(_purge_user_files, user_id, session_ids)
         await db.delete(user)
         await db.commit()
@@ -194,6 +198,13 @@ async def update_system_settings(payload: dict[str, Any], db: DbSession) -> dict
     return get_system_settings_for_admin()
 
 
+def _nightly_log_item(row: NightlyActivityLog) -> NightlyActivityLogItem:
+    item = NightlyActivityLogItem.model_validate(row)
+    preset = SYSTEM_PRESET_CATALOG.get(row.system_preset_id)
+    item.system_preset_name = preset.name if preset else None
+    return item
+
+
 @router.get("/nightly-activity-logs", response_model=NightlyActivityLogListResponse)
 async def list_nightly_activity_logs(
     db: DbSession,
@@ -207,7 +218,7 @@ async def list_nightly_activity_logs(
     if target_date is not None:
         stmt = stmt.where(NightlyActivityLog.target_date == target_date)
     rows = (await db.execute(stmt)).scalars().all()
-    return NightlyActivityLogListResponse(items=[NightlyActivityLogItem.model_validate(row) for row in rows])
+    return NightlyActivityLogListResponse(items=[_nightly_log_item(row) for row in rows])
 
 
 @router.put("/{user_id}/model-config")
@@ -330,6 +341,8 @@ async def import_user_backup(
     if not file.filename or not file.filename.endswith(".zip"):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="上传文件必须是 .zip。")
     await get_or_404(db, User, id=user_id, detail="用户不存在。")
+    # 上传落盘、解压与维护等待都可能持续数分钟，期间不持有数据库事务。
+    await db.rollback()
 
     with tempfile.TemporaryDirectory(prefix="spiritagent-import-") as tmp_dir:
         zip_path = Path(tmp_dir) / "upload.zip"
@@ -356,6 +369,7 @@ async def import_user_backup(
         )
         restore_result: BackupRestoreResult | None = None
         async with user_maintenance(user_id):
+            await get_or_404(db, User, id=user_id, detail="用户不存在。")
             try:
                 restore_result = await restore_backup_rows(
                     db,

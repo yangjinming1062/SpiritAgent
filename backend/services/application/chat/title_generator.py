@@ -19,6 +19,7 @@ from sqlalchemy import select
 
 from services.infrastructure.llm import (
     LLMRuntimeError,
+    MissingLlmConfigError,
     UserLlmConfig,
     build_responses_kwargs,
     call_with_retry,
@@ -45,7 +46,6 @@ async def auto_generate_title(
     llm_config: UserLlmConfig,
     language: str = DEFAULT_LANGUAGE,
     temperature: float | None = None,
-    provider_name: str | None = None,
 ) -> None:
     """用 LLM 生成会话标题并持久化（仅在仍是默认标题时覆盖）。"""
     try:
@@ -81,9 +81,8 @@ async def auto_generate_title(
                     ],
                 },
             ],
-            # 供应商身份优先取 llm_config 链头 provider_name（本次实际调用的 client）；入参仅作兜底，避免图片回合视觉链头 ≠ 聊天链头时按错误比例换算。
             temperature=scale_temperature(
-                llm_config.provider_name or provider_name,
+                llm_config.provider_name,
                 temperature if temperature is not None else TITLE_GENERATION_TEMPERATURE,
             ),
             max_output_tokens=LLM_MAX_OUTPUT_TOKENS,
@@ -103,5 +102,5 @@ async def auto_generate_title(
                 await db.commit()
                 logger.info("Auto-generated session title", extra={"conversation_id": conversation_id, "title": title})
 
-    except (TimeoutError, httpx.HTTPError, sqlalchemy.exc.SQLAlchemyError, LLMRuntimeError) as e:
+    except (TimeoutError, httpx.HTTPError, sqlalchemy.exc.SQLAlchemyError, LLMRuntimeError, MissingLlmConfigError) as e:
         logger.warning("Title generation failed", extra={"conversation_id": conversation_id, "error": str(e)})

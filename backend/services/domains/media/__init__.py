@@ -7,6 +7,7 @@ from .chat_videos import (
     prune_videos_in_range,
     resolve_video_file,
     save_video_attachment,
+    video_file_id_from_url,
     video_mime_for_ext,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "prune_videos_in_range",
     "resolve_video_file",
     "save_video_attachment",
+    "video_file_id_from_url",
     "video_mime_for_ext",
 ]

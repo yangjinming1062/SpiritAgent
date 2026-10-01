@@ -29,6 +29,8 @@ from .serializers import (
 
 logger = get_logger(__name__)
 
+# 这些表的 SQL 参数含供应商密钥，数据库错误的堆栈不写入日志。
+_SECRET_TABLES = frozenset({"user_model_configs"})
 BACKUP_RESTORE_ORDER: tuple[str, ...] = (
     "conversations",
     "messages",
@@ -253,7 +255,12 @@ async def _preflight_tables(
                             write_files=False,
                         )
             except (KeyError, StatementError, TypeError, ValueError) as exc:
-                logger.warning("backup table failed compatibility preflight", extra={"table": table})
+                # 对外原因不含数据库细节，诊断保留在日志里。
+                logger.warning(
+                    "backup table failed compatibility preflight",
+                    extra={"table": table, "error_type": type(exc).__name__},
+                    exc_info=not (table in _SECRET_TABLES and isinstance(exc, StatementError)),
+                )
                 failures.extend(
                     BackupImportFailure(member, len(rows[member]), _failure_reason(exc))
                     for member in group
@@ -335,6 +342,11 @@ async def _clear_compatible_rows(
                     for table in ("companion_actions", "companion_action_packs"):
                         await _delete_user_rows(db, table, target_user_id)
             except IntegrityError:
+                logger.warning(
+                    "backup action tables could not be cleared without affecting retained data",
+                    extra={"target_user_id": target_user_id},
+                    exc_info=True,
+                )
                 action_failure = "现有视频资产仍被其他内容引用，无法覆盖。"
         if action_failure is not None:
             for table in TABLES:
@@ -363,6 +375,7 @@ async def _clear_compatible_rows(
             logger.warning(
                 "backup table could not be cleared without affecting retained data",
                 extra={"table": table, "target_user_id": target_user_id},
+                exc_info=True,
             )
             remaining.pop(table)
             failures.append(

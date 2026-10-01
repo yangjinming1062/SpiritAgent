@@ -20,11 +20,12 @@ from openai import AsyncOpenAI, NotGiven
 
 logger = get_logger(__name__)
 
-# 捕获传输错误后仅重试幂等请求或确认未发送的连接失败；非幂等请求的响应丢失会转为结果不确定。HTTPStatusError 不在内——已收到响应，由供应商错误分类决定后续。
+# 捕获传输错误后仅重试幂等请求或确认未发送的连接失败；非幂等请求的响应丢失会转为结果不确定。服务端未完整响应就断开（RemoteProtocolError）同样不能证明请求未生效。HTTPStatusError 不在内——已收到响应，由供应商错误分类决定后续。
 _RETRYABLE_TRANSPORT_EXC: tuple[type[BaseException], ...] = (
     httpx.ConnectError,
     httpx.TimeoutException,
     httpx.NetworkError,
+    httpx.RemoteProtocolError,
 )
 _SAFE_BEFORE_SEND_EXC: tuple[type[BaseException], ...] = (
     httpx.ConnectError,
@@ -454,7 +455,11 @@ class _RetryAwareAsyncOpenAI(AsyncOpenAI):
         **kwargs: Any,
     ) -> bool:  # type: ignore[override]
         if response.status_code in (500, 502):
-            body = response.text or ""
+            # 流式请求在读取响应体之前就询问是否重试，此时无法检查正文，按 SDK 默认规则决定
+            try:
+                body = response.text or ""
+            except httpx.ResponseNotRead:
+                body = ""
             if body and any(pattern in body for pattern in REQUEST_VALIDATION_PATTERNS):
                 return False
         return super()._should_retry(response, *args, **kwargs)

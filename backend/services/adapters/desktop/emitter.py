@@ -18,7 +18,7 @@ _TRANSLATED: dict[str, str] = {
 
 
 class JsonRpcEmitter:
-    """把原始 chat_service 帧翻译成 JSON-RPC 事件信封：renderer（events.ts）按 params.type 分发并读 params.payload，由 JsonRpcDispatcher.push_event 构造信封；已知类型必翻译，未知类型静默丢弃。"""
+    """把对话回合（run_chat_turn）发出的原始帧翻译成 JSON-RPC 事件信封：客户端按 params.type 分发并读 params.payload，由 JsonRpcDispatcher.push_event 构造信封；已知类型必翻译，未知类型静默丢弃。"""
 
     def __init__(self, *, dispatcher: JsonRpcDispatcher, session_id: str) -> None:
         self._dispatcher = dispatcher

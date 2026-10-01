@@ -1,4 +1,5 @@
 import asyncio
+import functools
 import re
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -11,21 +12,17 @@ from .asset_store import compute_file_sha256
 
 _RANGE_PATTERN = re.compile(r"^bytes=(\d*)-(\d*)$")
 _CHUNK_SIZE = 256 * 1024  # 256 KB
-_SHA256_CACHE: dict[tuple[str, float, int], str] = {}
-_MAX_SHA_CACHE = 1000
+
+
+@functools.lru_cache(maxsize=1000)
+def _cached_sha256(path: str, _mtime: float, _size: int) -> str:
+    return compute_file_sha256(path)
 
 
 def _get_file_sha256(file_path: Path) -> str:
-    """按 (路径, mtime, 大小) 缓存内容哈希，文件被替换后自然失效。"""
+    """按 (路径, mtime, 大小) 缓存内容哈希，文件被替换后自然失效；在工作线程并发调用，缓存须线程安全。"""
     st = file_path.stat()
-    key = (str(file_path.resolve()), st.st_mtime, st.st_size)
-    if key in _SHA256_CACHE:
-        return _SHA256_CACHE[key]
-    sha = compute_file_sha256(file_path)
-    if len(_SHA256_CACHE) >= _MAX_SHA_CACHE:
-        _SHA256_CACHE.pop(next(iter(_SHA256_CACHE)))
-    _SHA256_CACHE[key] = sha
-    return sha
+    return _cached_sha256(str(file_path.resolve()), st.st_mtime, st.st_size)
 
 
 def _parse_range_header(range_header: str, file_size: int) -> tuple[int, int] | None:
@@ -94,7 +91,8 @@ async def serve_ranged_file(request: Request, file_path: Path, media_type: str) 
     base_headers = {
         "Accept-Ranges": "bytes",
         "ETag": etag,
-        "Cache-Control": "public, max-age=31536000, immutable",
+        # 响应需鉴权或短时签名，只允许客户端私有缓存，禁止共享缓存跨用户或越过签名有效期复用
+        "Cache-Control": "private, max-age=31536000, immutable",
         "X-Content-Sha256": sha256,
     }
 

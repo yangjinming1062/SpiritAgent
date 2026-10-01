@@ -143,18 +143,18 @@ def _inspect_release(versions_dir: Path, version: str) -> tuple[Path, Path | Non
     """校验解压结果并返回 (exe, mac 包, runner wheel)。构建脚本（Build-UpdateZip）总会写入 manifest.json，其 version 必须匹配文件名版本，否则视为不同发布。"""
     manifest_path = versions_dir / "manifest.json"
     if not manifest_path.exists():
-        raise ValueError("Zip must contain manifest.json")
+        raise ValueError("更新包缺少 manifest.json。")
     try:
         manifest_version = json.loads(manifest_path.read_text(encoding="utf-8")).get("version")
     except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid manifest.json: {exc}") from exc
+        raise ValueError(f"manifest.json 无法解析：{exc}") from exc
     if not manifest_version:
-        raise ValueError("manifest.json missing required 'version' field")
+        raise ValueError("manifest.json 缺少 version 字段。")
     if manifest_version != version:
-        raise ValueError(f"manifest.json version {manifest_version} does not match upload filename version {version}")
+        raise ValueError(f"manifest.json 的版本 {manifest_version} 与文件名中的版本 {version} 不一致。")
     exe_file = _pick_asset(versions_dir, "*.exe")
     if exe_file is None:
-        raise ValueError("Zip must contain a *.exe file")
+        raise ValueError("更新包缺少 Windows 安装程序（*.exe）。")
     # Runner 侧：wheel + server.py 解压到 runner/，latest-runner.yml 位于根。
     return exe_file, _pick_asset(versions_dir, "*.zip", "*.dmg"), _pick_asset(versions_dir, "runner/spirit_agent-*.whl")
 
@@ -168,15 +168,15 @@ async def create_version(
 ) -> UpdateVersionItem:
     # Squirrel 构建产物 zip，必须含 *.exe。
     if not file.filename or not file.filename.endswith(".zip"):
-        raise HTTPException(status_code=400, detail="File must be a .zip file")
+        raise HTTPException(status_code=400, detail="上传文件必须是 .zip。")
 
     # 限定为纯 semver——该值会成为 VERSIONS_DIR 下的路径片段，否则文件名可逃出目录。
     if not (match := re.search(r"\d+\.\d+\.\d+", file.filename)):
-        raise HTTPException(status_code=400, detail="Filename must contain a version like 1.2.3")
+        raise HTTPException(status_code=400, detail="文件名须包含 1.2.3 形式的版本号。")
     version = match.group(0)
 
     if (await db.execute(select(UpdateVersion).where(UpdateVersion.version == version))).scalar_one_or_none():
-        raise HTTPException(status_code=400, detail=f"Version {version} already exists")
+        raise HTTPException(status_code=400, detail=f"版本 {version} 已存在。")
 
     versions_dir = VERSIONS_DIR / version
     versions_dir.mkdir(parents=True, exist_ok=True)
@@ -191,7 +191,7 @@ async def create_version(
         try:
             await asyncio.to_thread(_extract_archive_entries, zip_path, versions_dir)
         except zipfile.BadZipFile:
-            raise HTTPException(status_code=400, detail="Invalid zip file")
+            raise HTTPException(status_code=400, detail="无效 zip 文件。")
 
     try:
         exe_file, mac_file, wheel_file = await asyncio.to_thread(_inspect_release, versions_dir, version)
@@ -225,7 +225,7 @@ async def update_version(
     _admin: CurrentAdmin,
     db: DbSession,
 ) -> UpdateVersionItem:
-    record = await get_or_404(db, UpdateVersion, id=id, detail="Version not found")
+    record = await get_or_404(db, UpdateVersion, id=id, detail="版本不存在。")
     apply_partial(record, payload)
     await db.commit()
     return UpdateVersionItem.model_validate(record)
@@ -233,7 +233,7 @@ async def update_version(
 
 @router.delete("/versions/{id}", response_model=MessageResponse)
 async def delete_version(id: int, _admin: CurrentAdmin, db: DbSession) -> MessageResponse:
-    record = await get_or_404(db, UpdateVersion, id=id, detail="Version not found")
+    record = await get_or_404(db, UpdateVersion, id=id, detail="版本不存在。")
     versions_dir = VERSIONS_DIR / record.version
     if versions_dir.exists():
         await asyncio.to_thread(shutil.rmtree, versions_dir)

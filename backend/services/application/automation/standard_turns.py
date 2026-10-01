@@ -1,4 +1,5 @@
 import asyncio
+from weakref import WeakValueDictionary
 
 from components import get_logger, session_scope
 from modules.system import ChatMessageRequest, ChatRequest
@@ -9,7 +10,8 @@ from services.domains.automation import resolve_job_conversation
 from services.infrastructure.llm import resolve_user_llm_config
 
 logger = get_logger(__name__)
-_STANDARD_TURN_LOCKS: dict[int, asyncio.Lock] = {}
+# 锁在仍有触发持有或等待时存活，全部结束后随引用释放移除，任务删除后不会累积。
+_STANDARD_TURN_LOCKS: WeakValueDictionary[int, asyncio.Lock] = WeakValueDictionary()
 
 
 async def _emit_notification(user_id: int, *, name: str, text: str, conversation_id: int, error: bool = False) -> None:
@@ -85,10 +87,5 @@ async def execute_standard_turn(
 ) -> None:
     """同一任务串行执行，避免短周期任务把同一历史交错写入。"""
     lock = _STANDARD_TURN_LOCKS.setdefault(job_id, asyncio.Lock())
-    try:
-        async with lock:
-            await _execute_standard_turn(user_id, job_id, name, prompt, conversation_id)
-    finally:
-        # 任务删除后锁条目无人清理会随进程生命周期缓慢累积；无等待者时移除自身
-        if not lock.locked() and _STANDARD_TURN_LOCKS.get(job_id) is lock:
-            del _STANDARD_TURN_LOCKS[job_id]
+    async with lock:
+        await _execute_standard_turn(user_id, job_id, name, prompt, conversation_id)

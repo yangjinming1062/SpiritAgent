@@ -20,7 +20,7 @@ _GROK_VOICES: tuple[tuple[str, str, str], ...] = (
 
 
 class GrokTTSProvider(TTSProvider):
-    """通过 xAI 的单次 POST /v1/tts 提供 TTS（请求 {text, voice_id, language, output_format{codec,sample_rate,bit_rate}}）；不支持 model 字段；language 必填（BCP-47 或 "auto"），内置目录仅英文故默认 en，中文音色依赖用户自定义 ID；200 直接返回音频字节（默认 MP3）。"""
+    """通过 xAI 的单次 POST /v1/tts 提供 TTS（请求 {text, voice_id, language, output_format{codec,sample_rate,bit_rate}}）；不支持 model 字段；language 必填（BCP-47 或 "auto"），内置目录仅英文音色，language 固定 en，不在目录内的音色回退到目录首位；200 直接返回音频字节（默认 MP3）。"""
 
     provider_name = "grok"
     DEFAULT_BASE_URL: ClassVar[str] = "https://api.x.ai/v1"

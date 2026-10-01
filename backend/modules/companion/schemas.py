@@ -19,7 +19,7 @@ class PersonaResponse(BaseModel):
     current_mood: str | None = None
 
 
-# 生成同步，持久化资产均为 succeeded；钉死字面量以便未来改异步时契约仍清楚。
+# 生成同步完成，返回的持久化资产恒为 succeeded。
 SucceededStatus = Literal["succeeded"]
 
 # edit=微调（未提及区域保留）；regenerate=种子锚定全量重绘。必传。

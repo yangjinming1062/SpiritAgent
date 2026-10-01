@@ -3,7 +3,7 @@ from typing import Any
 
 from components import get_logger, session_scope, utc_now
 from modules.conversation import Conversation
-from modules.memory import MEMORY_EMBEDDING_DIM, Memory
+from modules.memory import MEMORY_EMBEDDING_DIM, MEMORY_SLOT_CONTEXT_PREFIXES, Memory
 from sqlalchemy import ColumnElement, and_, case, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,13 +13,6 @@ from services.domains.conversation import validate_memory_scope
 from services.infrastructure.llm import generate_embeddings, resolve_embedding_provider
 
 logger = get_logger(__name__)
-
-_SLOTTED_PREFIXES = (
-    "user_profile:",
-    "diary:",
-    "interaction_stats:",
-    "recall:nightly_actions:",
-)
 
 
 def scope_filter(scope: MemoryScope) -> ColumnElement[bool]:
@@ -94,7 +87,7 @@ async def upsert_slotted_memory(
 ) -> Memory:
     refs = await _source_refs(db, scope, source)
     await memory_write_lock(db, scope)
-    prefix = next((prefix for prefix in _SLOTTED_PREFIXES if context.startswith(prefix)), None)
+    prefix = next((prefix for prefix in MEMORY_SLOT_CONTEXT_PREFIXES if context.startswith(prefix)), None)
     if prefix is None:
         raise ValueError("Context is not a unique memory slot")
     previous = await db.scalar(

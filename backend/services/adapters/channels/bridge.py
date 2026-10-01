@@ -240,7 +240,7 @@ async def _intake_message(
     msg: InboundMessage,
     dedup_key: str | None,
 ) -> bool:
-    """接收段：容量校验 → 先持久化（queued 行 + 去重）→ 单飞行入队；intake 锁保证落库/入队序等于投递序。容量不足在落库前明确拒收（已落库的不静默丢弃，被拒收的不落库可重发）；返回是否为新接收或明确拒收。"""
+    """接收段：容量校验 → 下载渠道媒体 → 先持久化（queued 行 + 去重）→ 单飞行入队；intake 锁保证落库/入队序等于投递序。容量不足在落库前明确拒收（已落库的不静默丢弃，被拒收的不落库可重发）；返回是否为新接收或明确拒收。"""
     snapshot = adapter.snapshot
     async with state.intake_lock:
         async with _STATE_LOCK:
@@ -257,13 +257,14 @@ async def _intake_message(
                 logger.exception("queue-full notice delivery failed", extra={"binding": snapshot.id})
             return True
 
+        fetched = await msg.fetch_attachments() if msg.fetch_attachments is not None else ()
         base = SETTINGS.public_base_url.strip().rstrip("/")
         attachments = [
             {
                 "type": a.type,
                 "file_url": f"{base}{a.url}" if base and a.url.startswith("/api/media/files/") else a.url,
             }
-            for a in msg.attachments
+            for a in (*msg.attachments, *fetched)
         ]
         async with session_scope() as db:
             binding = await db.get(ChannelBinding, snapshot.id)
@@ -290,7 +291,7 @@ async def _intake_message(
                 state.queue.append(item)
             else:
                 state.owner_peer_id = msg.peer_id
-                state.task = asyncio.create_task(_run_turn(adapter, state, [item]), name=f"channels.turn.{snapshot.id}")
+                state.task = adapter.create_task(_run_turn(adapter, state, [item]), name=f"channels.turn.{snapshot.id}")
     return True
 
 
@@ -361,7 +362,7 @@ async def _finish_turn(adapter: ChannelAdapter, state: _ChannelState, task: asyn
             next_batch = list(state.queue)
             state.queue.clear()
             state.owner_peer_id = next_batch[0].msg.peer_id
-            state.task = asyncio.create_task(
+            state.task = adapter.create_task(
                 _run_turn(adapter, state, next_batch),
                 name=f"channels.turn.{adapter.snapshot.id}",
             )

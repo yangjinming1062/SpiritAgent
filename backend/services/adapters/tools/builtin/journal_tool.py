@@ -1,4 +1,4 @@
-"""moment_create / diary_write 工具：角色主动记录生活空间时刻与日记。门控：静止档禁止主动调用；moment_create 每日配额见 moment_llm_per_day；工作预设会话不绑定这两个工具（回合装配层过滤，见 prompt_presets.LIFE_SPACE_TOOL_NAMES）。"""
+"""moment_create / diary_write 工具：角色主动记录生活空间片刻与日记。不受打扰档位限制（档位只拦截主动打扰）；moment_create 受 moment_llm_per_day 的 24 小时配额约束；工作预设会话不绑定这两个工具（回合装配层过滤，见 prompt_presets.LIFE_SPACE_TOOL_NAMES）。"""
 
 import datetime
 import json
@@ -30,7 +30,7 @@ async def moment_create_tool(
     clean_title = (title or "").strip()
     clean_body = (body or "").strip()
     if not clean_title or not clean_body:
-        return tool_error("时刻标题和内容不能为空")
+        return tool_error("片刻标题和内容不能为空")
     if len(clean_title) > 24 or len(clean_body) > 500:
         return tool_error("片刻标题最多 24 字符，正文最多 500 字符；请精简后提交，内容尚未保存")
     if kind not in _VALID_MOMENT_KINDS:

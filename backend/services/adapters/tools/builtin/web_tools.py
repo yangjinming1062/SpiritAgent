@@ -85,7 +85,8 @@ async def web_search_tool(query: str, limit: int | None = None, **_: object) -> 
 
     default_limit = SETTINGS.web_search_default_results
     safe_limit = max(1, coerce_int(limit, default_limit))
-    logger.info("Web search", extra={"provider_name": provider.name, "query": query, "limit": safe_limit})
+    # 查询词是对话内容，INFO 日志只记供应商与条数。
+    logger.info("Web search", extra={"provider_name": provider.name, "limit": safe_limit})
     try:
         result = await provider.search(query, safe_limit)
     except Exception as e:

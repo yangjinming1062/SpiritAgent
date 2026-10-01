@@ -66,8 +66,9 @@ async def list_memories(
         # tags 是 JSON 字符串；每行只有寥寥数个短 token，子串匹配足够 UI 使用
         stmt = stmt.where(Memory.tags.ilike(f'%"{tag}"%'))
     if q:
-        like = f"%{q}%"
-        stmt = stmt.where(or_(Memory.content.ilike(like), Memory.context.ilike(like)))
+        stmt = stmt.where(
+            or_(Memory.content.icontains(q, autoescape=True), Memory.context.icontains(q, autoescape=True)),
+        )
 
     rows = (await db.execute(stmt.order_by(Memory.updated_at.desc(), Memory.id.desc()).limit(limit))).scalars().all()
     return [_row_to_dict(r) for r in rows]

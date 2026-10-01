@@ -130,6 +130,8 @@ from services.infrastructure.assets import (
 )
 from services.infrastructure.llm import LLMRuntimeError, MissingLlmConfigError, VisualReasoningError
 
+from ._http_errors import missing_config_http
+
 router = get_router()
 logger = get_logger(__name__)
 
@@ -275,7 +277,10 @@ async def post_portrait_confirm(
                 raise HTTPException(status_code=404, detail={"error": "请先生成或上传头像"})
             await confirm_portrait(db, user.id)
     except AvatarSourceUnreadableError as exc:
-        raise HTTPException(status_code=409, detail={"error": "形象草稿已过期，请重新生成头像", "reason": str(exc)})
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "头像文件已过期或缺失，请重新生成头像", "reason": str(exc)},
+        )
     return CompanionOperationResponse(ok=True)
 
 
@@ -299,7 +304,7 @@ async def post_avatar(
         if not persona.is_complete:
             raise HTTPException(
                 status_code=409,
-                detail={"error": "请先完成 onboarding 再生成形象", "reason": "persona is incomplete"},
+                detail={"error": "请先完成引导再生成形象", "reason": "persona is incomplete"},
             )
     try:
         async with get_avatar_job_lock(user.id):
@@ -311,10 +316,7 @@ async def post_avatar(
         raise HTTPException(status_code=502, detail={"error": "伙伴形象生成失败，请稍后重试", "reason": str(exc)})
     except MissingLlmConfigError as exc:
         logger.warning("post_avatar missing config", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "LLM provider 未配置，请先在设置中配置 chat provider", "reason": str(exc)},
-        )
+        raise missing_config_http() from exc
     return avatar_response(asset)
 
 
@@ -347,7 +349,7 @@ async def post_avatar_from_image(
         if not persona.is_complete:
             raise HTTPException(
                 status_code=409,
-                detail={"error": "请先完成 onboarding 再基于图片生成形象", "reason": "persona is incomplete"},
+                detail={"error": "请先完成引导再基于图片生成形象", "reason": "persona is incomplete"},
             )
     try:
         async with get_avatar_job_lock(user.id):
@@ -367,10 +369,7 @@ async def post_avatar_from_image(
         raise HTTPException(status_code=502, detail={"error": "按参考重绘失败，请稍后重试", "reason": str(exc)})
     except MissingLlmConfigError as exc:
         logger.warning("post_avatar_from_image missing config", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "LLM provider 未配置，请先在设置中配置 chat provider", "reason": str(exc)},
-        )
+        raise missing_config_http() from exc
 
     return avatar_response(asset)
 
@@ -382,8 +381,8 @@ async def post_avatar_prompt(request: Request, body: AvatarPromptRequest, user: 
         prompt = await prepare_avatar_prompt(user.id, feedback=body.feedback, has_reference=body.has_reference)
     except AvatarGenerationError as exc:
         raise _avatar_http_error(exc)
-    except MissingLlmConfigError:
-        raise HTTPException(status_code=502, detail={"error": "提示词服务未配置，仍可直接上传准备好的图片"})
+    except MissingLlmConfigError as exc:
+        raise missing_config_http("描述生成服务", action="仍可直接上传准备好的图片") from exc
     except (LLMRuntimeError, RuntimeError, ValidationError):
         logger.warning("avatar prompt failed", extra={"user_id": user.id}, exc_info=True)
         raise HTTPException(
@@ -442,14 +441,8 @@ async def post_fullbody_reference(
             mode=body.mode,
             candidate_id=body.candidate_id,
         )
-    except AvatarNotFoundError as exc:
-        raise HTTPException(status_code=404, detail={"error": str(exc)})
-    except AvatarSourceUnreadableError as exc:
-        raise HTTPException(status_code=409, detail={"error": str(exc)})
-    except CharacterCardNotReadyError as exc:
-        raise HTTPException(status_code=409, detail={"error": str(exc)}) from exc
-    except VisualReasoningError as exc:
-        raise HTTPException(status_code=502, detail={"error": str(exc)})
+    except (AvatarNotFoundError, AvatarSourceUnreadableError, VisualReasoningError) as exc:
+        raise _avatar_http_error(exc) from exc
     except FullbodyGenerationError as exc:
         # 供应商链失败包装层：str 已透传公开文案（如编辑能力缺失指引），502 语义是可重试失败。
         logger.warning("fullbody reference generation failed", extra={"user_id": user.id, "error": exc.internal})
@@ -458,8 +451,8 @@ async def post_fullbody_reference(
         # edit 守卫（反馈缺失、参考图同给等）是确定性的请求错误，公开文案直达用户。
         logger.warning("fullbody reference guard rejected", extra={"user_id": user.id, "error": exc.internal})
         raise HTTPException(status_code=400, detail={"error": str(exc)})
-    except MissingLlmConfigError:
-        raise HTTPException(status_code=502, detail={"error": "生成服务未配置，请先在设置中配置供应商"})
+    except MissingLlmConfigError as exc:
+        raise missing_config_http() from exc
     return asset if isinstance(asset, FullbodyCandidateResponse) else avatar_response(asset)
 
 
@@ -546,10 +539,7 @@ async def post_fullbody_prompt(
         raise _avatar_http_error(exc)
     except MissingLlmConfigError as exc:
         logger.warning("fullbody prompt missing config", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "生成服务未配置，请先在设置中配置供应商", "reason": str(exc)},
-        )
+        raise missing_config_http() from exc
     return ImagePromptResponse(prompt=prompt)
 
 
@@ -578,10 +568,7 @@ async def post_fullbody_adopt(
         raise _avatar_http_error(exc)
     except MissingLlmConfigError as exc:
         logger.warning("fullbody adopt missing config", extra={"user_id": user.id, "error": str(exc)})
-        raise HTTPException(
-            status_code=502,
-            detail={"error": "生成服务未配置，请先在设置中配置供应商", "reason": str(exc)},
-        )
+        raise missing_config_http() from exc
     return asset if isinstance(asset, FullbodyCandidateResponse) else avatar_response(asset)
 
 
@@ -947,7 +934,7 @@ async def delete_video_pack_route(pack_id: int, user: CurrentUser, db: DbSession
 
 
 # 文件端点按会话或签名放行，不依赖 CurrentUser。
-@router.get("/asset/{user_id}/{filename:path}")
+@router.get("/asset/{user_id}/{filename}")
 async def serve_companion_asset(
     request: Request,
     user_id: int,
