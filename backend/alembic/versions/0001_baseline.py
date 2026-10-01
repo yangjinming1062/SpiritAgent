@@ -69,10 +69,8 @@ def upgrade() -> None:
         sa.Column("user_id", sa.Integer(), nullable=False),
         sa.Column("prompt_json", sa.Text(), nullable=False),
         sa.Column("asset_url", sa.String(length=2048), nullable=False),
-        sa.Column("style", sa.String(length=64), nullable=False),
         sa.Column("seed_fullbody_url", sa.String(length=2048), server_default=sa.text("''"), nullable=False),
         sa.Column("is_fullbody_confirmed", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
-        sa.Column("seed", sa.Integer(), nullable=True),
         sa.Column("active", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -89,7 +87,6 @@ def upgrade() -> None:
         sa.Column("base_revision", sa.Integer(), nullable=False),
         sa.Column("image_url", sa.String(length=2048), nullable=False),
         sa.Column("body_features_json", sa.Text(), server_default=sa.text("'{}'"), nullable=False),
-        sa.Column("body_source_hash", sa.String(length=64), server_default=sa.text("''"), nullable=False),
         sa.Column("status", sa.String(length=16), server_default=sa.text("'pending'"), nullable=False),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
@@ -148,10 +145,6 @@ def upgrade() -> None:
         sa.Column("body_status", sa.String(16), server_default=sa.text("'pending'"), nullable=False),
         sa.Column("portrait_source_path", sa.String(2048), nullable=False),
         sa.Column("body_source_path", sa.String(2048), nullable=False),
-        sa.Column("portrait_source_hash", sa.String(64), server_default=sa.text("''"), nullable=False),
-        sa.Column("body_source_hash", sa.String(64), server_default=sa.text("''"), nullable=False),
-        sa.Column("portrait_pending_hash", sa.String(64), server_default=sa.text("''"), nullable=False),
-        sa.Column("body_pending_hash", sa.String(64), server_default=sa.text("''"), nullable=False),
         sa.Column("error", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -329,6 +322,7 @@ def upgrade() -> None:
         sa.UniqueConstraint("play_id", name="uq_action_playbacks_play_id"),
     )
     op.create_index(op.f("ix_action_playbacks_user_id"), "action_playbacks", ["user_id"], unique=False)
+    op.create_index(op.f("ix_action_playbacks_pack_id"), "action_playbacks", ["pack_id"], unique=False)
     op.create_index(op.f("ix_action_playbacks_action_id"), "action_playbacks", ["action_id"], unique=False)
     op.create_index(op.f("ix_action_playbacks_status"), "action_playbacks", ["status"], unique=False)
     op.create_table(
@@ -348,7 +342,6 @@ def upgrade() -> None:
         sa.Column("title", sa.Text(), nullable=False),
         sa.Column("pinned_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("cwd", sa.String(length=1024), nullable=True),
         sa.Column("settings_json", sa.Text(), nullable=True),
         sa.Column("is_deletable", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
         sa.Column("is_renamable", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
@@ -399,7 +392,6 @@ def upgrade() -> None:
         sa.Column("is_active", sa.Boolean(), server_default=sa.text("TRUE"), nullable=False),
         sa.Column("login_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("logout_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("last_seen_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id"),
@@ -586,7 +578,6 @@ def upgrade() -> None:
         sa.Column("body", sa.Text(), server_default=sa.text("''"), nullable=False),
         sa.Column("mood", sa.String(length=32), nullable=True),
         sa.Column("source", sa.String(length=16), server_default=sa.text("'nightly'"), nullable=False),
-        sa.Column("memory_ids", ARRAY(sa.String()), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("moment_ids", ARRAY(sa.String()), server_default=sa.text("'{}'"), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -662,8 +653,6 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=32), server_default=sa.text("'pending'"), nullable=False),
         sa.Column("arguments", sa.JSON(), server_default=sa.text("'{}'::json"), nullable=False),
         sa.Column("result", sa.JSON(), nullable=True),
-        sa.Column("started_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("finished_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.ForeignKeyConstraint(["log_id"], ["nightly_activity_logs.id"], ondelete="CASCADE"),
@@ -782,7 +771,6 @@ def upgrade() -> None:
         sa.Column("turn_duration_ms", sa.Integer(), server_default=sa.text("0"), nullable=False),
         sa.Column("content_type", sa.String(length=32), server_default=sa.text("'text'"), nullable=False),
         sa.Column("media_json", sa.Text(), nullable=True),
-        sa.Column("summary_date", sa.String(length=10), nullable=True),
         sa.Column("summary_through_message_id", sa.Integer(), nullable=True),
         # IM 入站先落库再确认；context_order 表达 queued 批排序，dedup_key 做渠道重投去重。
         sa.Column("queued", sa.Boolean(), server_default=sa.text("FALSE"), nullable=False),
@@ -809,7 +797,6 @@ def upgrade() -> None:
     )
     op.create_index(op.f("ix_messages_conversation_id"), "messages", ["conversation_id"], unique=False)
     op.create_index(op.f("ix_messages_subtype"), "messages", ["subtype"], unique=False)
-    op.create_index(op.f("ix_messages_summary_date"), "messages", ["summary_date"], unique=False)
     # video_gen_jobs 建表早于 messages，回绑外键在此补齐。
     op.create_foreign_key(
         "video_gen_jobs_reply_message_id_fkey",
