@@ -16,7 +16,7 @@ from .process import (
     prepare_action_clip,
     sample_key_frames,
 )
-from .quality import select_full_clip, select_loop
+from .quality import validate_action_clip
 
 __all__ = [
     "ACTION_FRAME_MARGIN",
@@ -37,6 +37,5 @@ __all__ = [
     "probe_video",
     "require_matting_model",
     "sample_key_frames",
-    "select_full_clip",
-    "select_loop",
+    "validate_action_clip",
 ]

@@ -6,7 +6,6 @@ from io import BytesIO
 from pathlib import Path
 
 from components import get_logger
-from modules.companion import ABSOLUTE_MAX_DURATION_SECONDS
 from PIL import Image
 
 from services.infrastructure.assets import compute_file_sha256
@@ -93,13 +92,11 @@ def prepare_action_clip(
     preserve_resolution: bool = False,
 ) -> ClipProcessResult:
     """切分（可选区间）、重置时间轴、统一画布与帧率并编码为透明 WebM。
-    输出从 0 开始的新时间轴；帧数与时长以编码产物 ffprobe 复核为准。
+    输出从 0 开始的新时间轴；时长读取编码产物，帧数按实际解码计数。
     输入与输出都须带透明通道：不透明源会被转成不透明矩形而非透明角色，必须拒绝。"""
     probe = probe_video(src)
     if probe.width * probe.height > 3840 * 2160 or probe.fps > 120:
         raise VideoProcessError("源片段分辨率或帧率超出处理上限")
-    if probe.duration_seconds > ABSOLUTE_MAX_DURATION_SECONDS * 4:
-        raise VideoProcessError("源片段过长，请提供单个动作的短视频")
     if not probe.has_alpha:
         raise VideoProcessError("源片段缺少透明通道，请提供透明背景的素材")
     if canvas_w <= 0 or canvas_h <= 0 or canvas_w % 2 or canvas_h % 2:
@@ -112,10 +109,8 @@ def prepare_action_clip(
 
     start = max(0.0, start_seconds) if start_seconds is not None else None
     end = min(probe.duration_seconds, end_seconds) if end_seconds is not None else None
-    if start is not None and end is not None and end - start < 0.2:
-        raise VideoProcessError("动作区间过短，请校准起止时间")
-    if (end if end is not None else probe.duration_seconds) - (start or 0.0) > ABSOLUTE_MAX_DURATION_SECONDS:
-        raise VideoProcessError(f"单动作最长 {ABSOLUTE_MAX_DURATION_SECONDS:g} 秒，请校准起止时间")
+    if (end if end is not None else probe.duration_seconds) <= (start or 0.0):
+        raise VideoProcessError("动作区间终点必须晚于起点")
 
     args: list[str] = []
     # 输入侧 seek 后时间轴归零，区间终点必须换算成输出时长（-to 会按归零后的时间轴解释）。
@@ -134,8 +129,6 @@ def prepare_action_clip(
 
 def _verify_output(dst: Path) -> ClipProcessResult:
     out = probe_video(dst)
-    if out.duration_seconds > ABSOLUTE_MAX_DURATION_SECONDS:
-        raise VideoProcessError(f"动作产物超过 {ABSOLUTE_MAX_DURATION_SECONDS:g} 秒")
     if out.codec_name != "vp9":
         raise VideoProcessError("视频编码产物异常", internal=f"codec={out.codec_name}")
     if not out.has_alpha or not probe_alpha_side_data(dst):
@@ -148,7 +141,7 @@ def _verify_output(dst: Path) -> ClipProcessResult:
             "-i",
             str(dst),
             "-vf",
-            "fps=4,format=rgba,alphaextract,scale=32:32",
+            "format=rgba,alphaextract,scale=32:32",
             "-f",
             "rawvideo",
             "-pix_fmt",
@@ -157,11 +150,12 @@ def _verify_output(dst: Path) -> ClipProcessResult:
         ],
         failure_message=invalid_alpha,
     )
-    if not alpha or min(alpha) > 8 or max(alpha) < 240:
+    frame_size = 32 * 32
+    if not alpha or len(alpha) % frame_size or min(alpha) > 8 or max(alpha) < 240:
         raise VideoProcessError(invalid_alpha)
     return ClipProcessResult(
         sha256=compute_file_sha256(dst),
-        frames=max(1, round(out.duration_seconds * out.fps)),
+        frames=len(alpha) // frame_size,
         duration_ms=round(out.duration_seconds * 1000),
         width=out.width,
         height=out.height,
@@ -219,17 +213,12 @@ def build_hitmask(src: Path, *, canvas_w: int, canvas_h: int) -> list[list[int]]
 
     WebM 通过 libvpx 解码，采样时间与最终交付片段一致。"""
     probe = probe_video(src)
-    span = probe.duration_seconds
-    samples = max(1, math.ceil(span * HITMASK_FPS))
     args = [
         *alpha_input_args(probe),
         "-i",
         str(src),
         "-vf",
-        f"{_canvas_filter(canvas_w, canvas_h)},"
-        f"trim=duration={span:.3f},scale={HITMASK_GRID_W}:{HITMASK_GRID_H},format=rgba",
-        "-frames:v",
-        str(samples),
+        f"{_canvas_filter(canvas_w, canvas_h)},scale={HITMASK_GRID_W}:{HITMASK_GRID_H},format=rgba",
         "-f",
         "rawvideo",
         "-pix_fmt",

@@ -86,8 +86,7 @@ from services.infrastructure.video_processing import (
     prepare_action_frame,
     require_matting_model,
     sample_key_frames,
-    select_full_clip,
-    select_loop,
+    validate_action_clip,
 )
 
 from ..avatar_service import get_avatar_job_lock, load_avatar_bytes_as_data_uri, read_portrait_bytes
@@ -1638,11 +1637,7 @@ async def _run_action_attempt(
         work = Path(tmp)
         matte = work / "matte.mkv"
         await _process_thread(matte_video, _artifact_abs_path(source_path), matte)
-        if entry.clip_kind == "loop":
-            window = await _process_thread(select_loop, matte, max_seconds=entry.duration_seconds)
-        else:
-            # once 动作保留完整时间轴（准备、主体、结束），不裁成短循环。
-            window = await _process_thread(select_full_clip, matte, max_seconds=entry.duration_seconds)
+        await _process_thread(validate_action_clip, matte)
         canvas = json.loads(pack.canvas_spec)
         result = await _prepare_clip(
             work,
@@ -1651,8 +1646,6 @@ async def _run_action_attempt(
             pack.user_id,
             canvas["width"],
             canvas["height"],
-            start=window.start,
-            end=window.end,
             preserve_resolution=True,
         )
     return source_path, result
