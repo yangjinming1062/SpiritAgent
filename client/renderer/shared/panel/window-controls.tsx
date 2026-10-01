@@ -3,7 +3,47 @@ import { useEffect, useState } from 'react'
 
 import { X } from '@/shared/lib/icons'
 import { log } from '@/shared/lib/log'
+import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
+
+async function invokeSurface(action: 'close' | 'maximize' | 'minimize'): Promise<boolean> {
+  try {
+    await window.spiritagent?.surface?.[action]?.()
+
+    return true
+  } catch (err) {
+    log.warn('window-controls', `${action} failed`, err)
+
+    return false
+  }
+}
+
+function ControlButton({
+  children,
+  danger = false,
+  label,
+  onClick
+}: {
+  children: React.ReactNode
+  danger?: boolean
+  label: string
+  onClick: () => void
+}): React.JSX.Element {
+  return (
+    <button
+      aria-label={label}
+      className={cn(
+        'flex size-7 items-center justify-center rounded-lg text-muted transition-colors active:scale-95',
+        danger ? 'hover:bg-rose-500/80 hover:text-white' : 'hover:bg-fill-hover hover:text-strong'
+      )}
+      onClick={onClick}
+      title={label}
+      type="button"
+    >
+      {children}
+    </button>
+  )
+}
 
 export function WindowControls(): React.JSX.Element {
   const { close, maximize, minimize, restore } = useStrings().common
@@ -14,10 +54,7 @@ export function WindowControls(): React.JSX.Element {
       const isMax = await window.spiritagent?.surface?.isMaximized?.()
       const flag = Boolean(isMax)
       setMaximized(flag)
-
-      if (typeof document !== 'undefined') {
-        document.documentElement.dataset.maximized = flag ? 'true' : 'false'
-      }
+      document.documentElement.dataset.maximized = flag ? 'true' : 'false'
     } catch (err) {
       log.warn('window-controls', 'checkMaximized failed', err)
     }
@@ -35,53 +72,24 @@ export function WindowControls(): React.JSX.Element {
     return () => window.removeEventListener('resize', onResize)
   }, [])
 
-  const handleMinimize = async (): Promise<void> => {
-    try {
-      await window.spiritagent?.surface?.minimize?.()
-    } catch (err) {
-      log.warn('window-controls', 'minimize failed', err)
-    }
-  }
-
   const handleMaximize = async (): Promise<void> => {
-    try {
-      await window.spiritagent?.surface?.maximize?.()
-      void checkMaximized()
-      setTimeout(() => {
-        void checkMaximized()
-      }, 60)
-    } catch (err) {
-      log.warn('window-controls', 'maximize failed', err)
+    if (!(await invokeSurface('maximize'))) {
+      return
     }
-  }
 
-  const handleClose = async (): Promise<void> => {
-    try {
-      await window.spiritagent?.surface?.close?.()
-    } catch (err) {
-      log.warn('window-controls', 'close failed', err)
-    }
+    void checkMaximized()
+    setTimeout(() => {
+      void checkMaximized()
+    }, 60)
   }
 
   return (
-    <div className="flex items-center gap-0.5" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
-      <button
-        aria-label={minimize}
-        className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-fill-hover hover:text-strong active:scale-95"
-        onClick={() => void handleMinimize()}
-        title={minimize}
-        type="button"
-      >
+    <div className="flex items-center gap-0.5 [-webkit-app-region:no-drag]">
+      <ControlButton label={minimize} onClick={() => void invokeSurface('minimize')}>
         <span className="h-[1.5px] w-2.5 rounded-full bg-current" />
-      </button>
+      </ControlButton>
 
-      <button
-        aria-label={maximized ? restore : maximize}
-        className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-fill-hover hover:text-strong active:scale-95"
-        onClick={() => void handleMaximize()}
-        title={maximized ? restore : maximize}
-        type="button"
-      >
+      <ControlButton label={maximized ? restore : maximize} onClick={() => void handleMaximize()}>
         {maximized ? (
           <div className="relative size-2.5">
             <span className="absolute -top-0.5 -right-0.5 size-2 rounded-[1.5px] border border-current opacity-70" />
@@ -90,17 +98,11 @@ export function WindowControls(): React.JSX.Element {
         ) : (
           <span className="size-2.5 rounded-[1.5px] border border-current" />
         )}
-      </button>
+      </ControlButton>
 
-      <button
-        aria-label={close}
-        className="flex size-7 items-center justify-center rounded-lg text-muted transition-colors hover:bg-rose-500/80 hover:text-white active:scale-95"
-        onClick={() => void handleClose()}
-        title={close}
-        type="button"
-      >
+      <ControlButton danger label={close} onClick={() => void invokeSurface('close')}>
         <X className="size-3.5" />
-      </button>
+      </ControlButton>
     </div>
   )
 }

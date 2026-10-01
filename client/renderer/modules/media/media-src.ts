@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
+import { trimOldest } from '@/shared/lib/trim-oldest'
 import type { ChatMediaItem } from '@/shared/types/spiritagent'
 
 // 图片结果与在途读取分别缓存，淘汰旧图片不影响仍在等待的消费者。
@@ -10,15 +11,8 @@ const imageSrcCache = new Map<string, string>()
 const imageSrcRequests = new Map<string, Promise<string | null>>()
 
 function setImageSrc(url: string, dataUrl: string): void {
-  if (imageSrcCache.size >= MAX_IMAGE_SRC_ENTRIES) {
-    const oldestKey = imageSrcCache.keys().next().value
-
-    if (oldestKey !== undefined) {
-      imageSrcCache.delete(oldestKey)
-    }
-  }
-
   imageSrcCache.set(url, dataUrl)
+  trimOldest(imageSrcCache, MAX_IMAGE_SRC_ENTRIES)
 }
 
 registerStorageClearHandler(() => {
@@ -26,7 +20,7 @@ registerStorageClearHandler(() => {
   imageSrcRequests.clear()
 })
 
-// 本地绝对路径（Windows 盘符 / UNC / POSIX 根）：这些 URL 不经过后端资产通道，需要主进程直接读盘。后端媒体是 HTTP(S) URL 或相对路径，落不进这三个形态。
+// 本地绝对路径（Windows 盘符 / UNC / POSIX 根）：不经过后端资产通道，需要主进程直接读盘。后端的 `/api/…` 相对路径同样以 `/` 开头，使用处另行排除。
 const LOCAL_PATH_RE = /^(?:[a-zA-Z]:[\\/]|\\\\|\/(?!\/))/
 
 // apiAssetBuffer 只回字节不回 Content-Type，视频 blob 的 mime 由 URL 扩展名推导。

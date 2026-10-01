@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { getSpiritAgentConfig } from '@/shared/spiritagent'
@@ -7,6 +8,7 @@ import { getStrings } from '@/shared/strings'
 
 import { IM_VOICE_BAR_AUDIO_CONSTRAINTS } from './audio-constraints'
 import { convertBlobToWav } from './audio-wav'
+import { blobToDataUrl } from './blob-data-url'
 import { markAssistantTerminal, pushPendingPrompt, pushUserMessage, schedulePendingFlush } from './chat-store'
 import { ensureChatSession } from './session-list-store'
 import { conversationVoiceSink } from './voice-link'
@@ -53,9 +55,11 @@ function getAudioExtensionForMime(mime: string): string {
 const BUSY_ERROR_PATTERN = /busy|backpressure|rate limit/i
 
 function isMediaBusyError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err)
+  return BUSY_ERROR_PATTERN.test(errorMessage(err))
+}
 
-  return BUSY_ERROR_PATTERN.test(msg)
+function stopTracks(stream: MediaStream | null): void {
+  stream?.getTracks().forEach(track => track.stop())
 }
 
 type Options = {
@@ -98,23 +102,16 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
     }
   }
 
-  const stopTracks = (recorder: MediaRecorder | null) => {
-    if (!recorder) {
-      return
-    }
+  // 结束录音态；卸载后不再回写语音链路。
+  const endRecording = () => {
+    setRecording(false)
 
-    try {
-      recorder.stream.getTracks().forEach(t => t.stop())
-    } catch {
-      /* 已关闭 */
+    if (!unmountedRef.current) {
+      conversationVoiceSink().setRecording(false)
     }
   }
 
   const transcribe = async (blob: Blob): Promise<string | null> => {
-    if (!blob || blob.size === 0) {
-      return null
-    }
-
     try {
       let finalBlob = blob
 
@@ -124,13 +121,7 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
         log.warn('voice-recorder', 'Failed to convert audio to wav, fallback to raw blob:', convErr)
       }
 
-      const dataUrl = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader()
-
-        reader.onload = () => resolve(reader.result as string)
-        reader.onerror = () => reject(new Error('read failed'))
-        reader.readAsDataURL(finalBlob)
-      })
+      const dataUrl = await blobToDataUrl(finalBlob)
 
       const ext = getAudioExtensionForMime(finalBlob.type)
       // 不指定语言：主进程按当前用户语言设置转写。
@@ -161,11 +152,7 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
     const recorder = recorderRef.current
 
     if (!recorder || recorder.state === 'inactive') {
-      setRecording(false)
-
-      if (!unmountedRef.current) {
-        conversationVoiceSink().setRecording(false)
-      }
+      endRecording()
 
       return
     }
@@ -193,14 +180,9 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
       }
     })
 
-    stopTracks(recorder)
+    stopTracks(recorder.stream)
     streamRef.current = null
-
-    setRecording(false)
-
-    if (!unmountedRef.current) {
-      conversationVoiceSink().setRecording(false)
-    }
+    endRecording()
 
     if (!blob || blob.size === 0) {
       presentationPorts().setSpriteState('idle')
@@ -227,7 +209,7 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
       } catch (err) {
         log.warn('voice-recorder', 'Voice message send failed:', err)
         presentationPorts().setSpriteState('idle', { force: true })
-        markAssistantTerminal({ error: err instanceof Error ? err.message : getStrings().chat.sendFailed })
+        markAssistantTerminal({ error: errorMessage(err, getStrings().chat.sendFailed) })
       }
     } else {
       presentationPorts().setSpriteState('idle', { force: true })
@@ -251,7 +233,7 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
 
         // 等待麦克风期间已卸载：不再开录，也就不会自动发送。
         if (unmountedRef.current) {
-          stream.getTracks().forEach(t => t.stop())
+          stopTracks(stream)
 
           return
         }
@@ -285,7 +267,7 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
       } catch (err) {
         log.warn('voice-recorder', 'Recording failed to start:', err)
         // 构造或启动录音失败都要就地停轨并复位，否则麦克风指示灯常亮、按钮停在录音态。
-        stream?.getTracks().forEach(t => t.stop())
+        stopTracks(stream)
         streamRef.current = null
         recorderRef.current = null
         chunksRef.current = []
@@ -333,13 +315,8 @@ export function useVoiceRecorder({ isReadOnlySession }: Options): {
 
       if (recorder && recorder.state !== 'inactive') {
         recorder.onstop = null
-        stopTracks(recorder)
-
-        try {
-          recorder.stop()
-        } catch {
-          /* 已停止 */
-        }
+        stopTracks(recorder.stream)
+        recorder.stop()
       }
 
       setRecording(false)

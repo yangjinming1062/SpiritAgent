@@ -8,9 +8,8 @@ import {
   pushPortraitEntry
 } from '@/modules/character'
 import { requestGateway } from '@/shared'
+import { captureAuthScope } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import { currentClearEpoch } from '@/shared/lib/storage'
-import { $auth } from '@/shared/store/auth'
 
 interface UseRegeneratePortraitOptions {
   refImage?: PickedImage | null
@@ -58,9 +57,9 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
 
   const run = useCallback(
     async (mode: 'generate' | 'regenerate' | 'edit' | 'reload'): Promise<boolean | null> => {
-      const auth = $auth.get()
+      const scope = captureAuthScope()
 
-      if (!mountedRef.current || runningRef.current || auth.kind !== 'authenticated') {
+      if (!mountedRef.current || runningRef.current || !scope) {
         return null
       }
 
@@ -71,21 +70,9 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
         return null
       }
 
-      const epoch = currentClearEpoch()
-      const sessionId = auth.snapshot.sessionId
       const operation = ++operationRef.current
-
-      const isCurrent = (): boolean => {
-        const current = $auth.get()
-
-        return (
-          mountedRef.current &&
-          operationRef.current === operation &&
-          currentClearEpoch() === epoch &&
-          current.kind === 'authenticated' &&
-          current.snapshot.sessionId === sessionId
-        )
-      }
+      // 卸载会递增 operationRef，isCurrent 因此同时覆盖卸载。
+      const isCurrent = (): boolean => operationRef.current === operation && scope()
 
       runningRef.current = true
       setBusy(true)
@@ -171,10 +158,7 @@ export function useRegeneratePortrait(options: UseRegeneratePortraitOptions = {}
       } finally {
         if (operationRef.current === operation) {
           runningRef.current = false
-
-          if (mountedRef.current) {
-            setBusy(false)
-          }
+          setBusy(false)
         }
       }
     },

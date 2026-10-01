@@ -1,9 +1,10 @@
 import { atom } from 'nanostores'
 
-import { authedApi } from '@/shared/lib/authed-api'
+import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
+import { trimOldest } from '@/shared/lib/trim-oldest'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
@@ -109,16 +110,7 @@ function cacheSceneDetails(entries: SceneAsset[]): void {
     detailCache.set(entry.id, entry)
   }
 
-  while (detailCache.size > 48) {
-    const oldest = detailCache.keys().next().value
-
-    if (oldest === undefined) {
-      break
-    }
-
-    detailCache.delete(oldest)
-  }
-
+  trimOldest(detailCache, 48)
   $sceneDetails.set(Object.fromEntries(detailCache))
 }
 
@@ -185,6 +177,7 @@ registerStorageClearHandler(() => {
 export async function loadSceneLibrary(query = $sceneQuery.get(), page = $scenePage.get()): Promise<void> {
   const request = ++listRequest
   const epoch = currentClearEpoch()
+  const isCurrent = (): boolean => request === listRequest && epoch === currentClearEpoch()
   $sceneQuery.set(query)
   $scenePage.set(page)
   $sceneLibraryStatus.set('loading')
@@ -193,12 +186,8 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
     path: `/api/companion/scenes?q=${encodeURIComponent(query)}&offset=${page * PAGE_SIZE}&limit=${PAGE_SIZE}`
   })
 
-  if (!result.ok || !result.value) {
-    if (!result.ok && result.reason === 'err') {
-      log.warn('scene', 'Scene library could not be loaded:', result.error)
-    }
-
-    if (request === listRequest && epoch === currentClearEpoch()) {
+  if (!apiSucceeded(result, 'scene', 'Scene library could not be loaded:') || !result.value) {
+    if (isCurrent()) {
       $sceneLibraryStatus.set('error')
     }
 
@@ -208,7 +197,7 @@ export async function loadSceneLibrary(query = $sceneQuery.get(), page = $sceneP
   const value = result.value
   const entries = await Promise.all(value.scenes.map(resolveScene))
 
-  if (request !== listRequest || epoch !== currentClearEpoch() || value.version < eventVersion) {
+  if (!isCurrent() || value.version < eventVersion) {
     return
   }
 
@@ -226,11 +215,11 @@ export async function loadSceneDetail(sceneId: string): Promise<SceneAsset | nul
   const epoch = currentClearEpoch()
   const result = await authedApi<SceneWire>({ path: `/api/companion/scenes/${encodeURIComponent(sceneId)}` })
 
-  if (epoch !== currentClearEpoch() || !result.ok || !result.value) {
-    if (!result.ok && result.reason === 'err') {
-      log.warn('scene', 'Scene detail could not be loaded:', result.error)
-    }
-
+  if (
+    !apiSucceeded(result, 'scene', 'Scene detail could not be loaded:') ||
+    epoch !== currentClearEpoch() ||
+    !result.value
+  ) {
     return null
   }
 
@@ -248,13 +237,10 @@ export async function loadSceneDetail(sceneId: string): Promise<SceneAsset | nul
 export async function hydrateScene(): Promise<void> {
   const request = ++stateRequest
   const epoch = currentClearEpoch()
+  const isCurrent = (): boolean => request === stateRequest && epoch === currentClearEpoch()
   const result = await authedApi<SceneStateWire>({ path: '/api/companion/scenes/state' })
 
-  if (!result.ok || !result.value) {
-    if (!result.ok && result.reason === 'err') {
-      log.warn('scene', 'Scene state could not be loaded:', result.error)
-    }
-
+  if (!apiSucceeded(result, 'scene', 'Scene state could not be loaded:') || !result.value) {
     return
   }
 
@@ -283,7 +269,7 @@ export async function hydrateScene(): Promise<void> {
     const pending = state.pending ? await resolveScene(state.pending) : null
     const regenerating = state.regenerating ? await resolveScene(state.regenerating) : null
 
-    if (request !== stateRequest || epoch !== currentClearEpoch() || state.version < Math.max(version, eventVersion)) {
+    if (!isCurrent() || state.version < Math.max(version, eventVersion)) {
       return
     }
 
@@ -312,7 +298,7 @@ export async function hydrateScene(): Promise<void> {
     if (oldPending && !pending) {
       const detail = await loadSceneDetail(oldPending.id)
 
-      if (request === stateRequest && epoch === currentClearEpoch() && detail?.status === 'ready') {
+      if (isCurrent() && detail?.status === 'ready') {
         notify({ kind: 'success', message: getStrings().living.toasts.sceneReady })
       }
     }
@@ -320,7 +306,7 @@ export async function hydrateScene(): Promise<void> {
     if (oldRegenerating && (!regenerating || oldRegenerating.id !== regenerating.id)) {
       const finished = await loadSceneDetail(oldRegenerating.id)
 
-      if (request === stateRequest && epoch === currentClearEpoch()) {
+      if (isCurrent()) {
         if (finished?.regeneration?.status === 'ready') {
           notify({ kind: 'success', message: getStrings().living.toasts.sceneImageRegenerated })
         } else if (finished?.regeneration?.status === 'failed') {
@@ -332,7 +318,7 @@ export async function hydrateScene(): Promise<void> {
       }
     }
 
-    if (request === stateRequest && epoch === currentClearEpoch()) {
+    if (isCurrent()) {
       await loadSceneLibrary()
     }
   } catch (error) {
@@ -343,7 +329,8 @@ export async function hydrateScene(): Promise<void> {
 const sceneError = (error: unknown): string =>
   backendDetailMessage(error, getStrings().living.toasts.sceneRegenerateFailed)
 
-async function mutate<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body?: object): Promise<T> {
+// 写请求使在途的状态读取失效；返回非空 body，失败或请求期间账户被清理则抛出可直接展示的文案。
+async function sceneRequest<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body?: object): Promise<T> {
   const epoch = currentClearEpoch()
   stateRequest++
   const result = await authedApi<T>({ path: `/api/companion/scenes${path}`, method, ...(body ? { body } : {}) })
@@ -362,13 +349,20 @@ async function mutate<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body
     throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
   }
 
+  return result.value
+}
+
+async function mutate<T>(path: string, method: 'POST' | 'PATCH' | 'DELETE', body?: object): Promise<T> {
+  const epoch = currentClearEpoch()
+  const value = await sceneRequest<T>(path, method, body)
+
   await hydrateScene()
 
   if (epoch !== currentClearEpoch()) {
     throw new Error(getStrings().living.toasts.sceneRegenerateFailed)
   }
 
-  return result.value
+  return value
 }
 
 export async function createScene(input: SceneGenerationInput = {}): Promise<ActiveScene | null> {
@@ -379,27 +373,12 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Act
   const epoch = currentClearEpoch()
   const startVersion = version
   submitting = true
-  stateRequest++
 
   try {
-    const result = await authedApi<SceneWire>({ path: '/api/companion/scenes/generate', method: 'POST', body: input })
-
-    if (epoch !== currentClearEpoch()) {
-      return null
-    }
-
-    if (!result.ok || !result.value) {
-      throw new Error(
-        result.ok
-          ? getStrings().living.toasts.sceneRegenerateFailed
-          : result.reason === 'err'
-            ? sceneError(result.error)
-            : getStrings().living.toasts.sceneRegenerateFailed
-      )
-    }
+    const row = await sceneRequest<SceneWire>('/generate', 'POST', input)
 
     if (version === startVersion) {
-      $pendingScene.set({ ...result.value, id: String(result.value.id), thumbnailUrl: result.value.url || '' })
+      $pendingScene.set(toScene(row, row.url || ''))
       $sceneTaskStatus.set('pending')
     }
 
@@ -411,7 +390,7 @@ export async function createScene(input: SceneGenerationInput = {}): Promise<Act
       return null
     }
 
-    const created = await resolveScene(result.value)
+    const created = await resolveScene(row)
 
     return epoch === currentClearEpoch() ? created : null
   } catch (error) {

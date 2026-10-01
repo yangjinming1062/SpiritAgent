@@ -1,5 +1,6 @@
 import { useResolvedMediaSrc } from '@/modules/media'
 import { FileText, FolderOpen, Video, X } from '@/shared/lib/icons'
+import { cn } from '@/shared/lib/utils'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { useStrings } from '@/shared/strings'
 
@@ -26,6 +27,31 @@ function PendingImageThumb({ path }: { path: string }): React.JSX.Element {
   )
 }
 
+interface AttachmentChipProps {
+  children: React.ReactNode
+  onRemove: () => void
+  removeLabel: string
+  sending: boolean
+}
+
+function AttachmentChip({ children, onRemove, removeLabel, sending }: AttachmentChipProps): React.JSX.Element {
+  return (
+    <div className="flex items-center gap-2 rounded-lg bg-fill-faint border border-line-hairline px-2.5 py-1 text-xs text-body">
+      {children}
+      {!sending && (
+        <button
+          aria-label={removeLabel}
+          className="shrink-0 rounded-md p-1 text-faint transition hover:bg-fill-hover hover:text-strong"
+          onClick={onRemove}
+          type="button"
+        >
+          <X className="size-3" />
+        </button>
+      )}
+    </div>
+  )
+}
+
 interface PendingAttachmentViewProps {
   onRemove: () => void
   onRetry?: () => void
@@ -43,28 +69,18 @@ export function PendingAttachmentView({
 
   if (pending.type === 'image') {
     return (
-      <div className="flex items-center gap-2 rounded-lg bg-fill-faint border border-line-hairline px-2.5 py-1 text-xs text-body">
+      <AttachmentChip onRemove={onRemove} removeLabel={dict.chat.attachment.removeImage} sending={sending}>
         <PendingImageThumb path={pending.value} />
         <span className="truncate flex-1 text-[11px] text-body">
           {sending ? dict.chat.attachment.sendingImage : pending.fileName || dict.chat.attachment.addedImage}
         </span>
-        {!sending && (
-          <button
-            aria-label={dict.chat.attachment.removeImage}
-            className="rounded-md p-1 text-faint transition hover:bg-fill-hover hover:text-strong"
-            onClick={onRemove}
-            type="button"
-          >
-            <X className="size-3" />
-          </button>
-        )}
-      </div>
+      </AttachmentChip>
     )
   }
 
   if (pending.type === 'video') {
     return (
-      <div className="flex items-center gap-2 rounded-lg bg-fill-faint border border-line-hairline px-2.5 py-1 text-xs text-body">
+      <AttachmentChip onRemove={onRemove} removeLabel={dict.chat.attachment.removeVideo} sending={sending}>
         <Video className="size-3.5 shrink-0 text-rose-400" />
         <span className="max-w-40 shrink truncate text-[11px] text-body">{pending.fileName}</span>
         {pending.status === 'uploading' && (
@@ -89,67 +105,28 @@ export function PendingAttachmentView({
             )}
           </>
         )}
-        {!sending && (
-          <button
-            aria-label={dict.chat.attachment.removeVideo}
-            className="shrink-0 rounded-md p-1 text-faint transition hover:bg-fill-hover hover:text-strong"
-            onClick={onRemove}
-            type="button"
-          >
-            <X className="size-3" />
-          </button>
-        )}
-      </div>
+      </AttachmentChip>
     )
   }
 
-  if (pending.type === 'file') {
-    return (
-      <div className="flex items-center gap-2 rounded-lg bg-fill-faint border border-line-hairline px-2.5 py-1 text-xs text-body">
-        <FileText className="size-3.5 shrink-0 text-accent" />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <span className="truncate text-[11px] font-medium text-strong" title={pending.path}>
-            {pending.fileName}
-          </span>
-        </div>
-        <span className="rounded bg-fill-hover px-1 py-0.2 text-[9px] text-faint">
-          {dict.chat.attachment.fileBadge}
-        </span>
-        {!sending && (
-          <button
-            aria-label={dict.chat.attachment.removeFile}
-            className="shrink-0 rounded-md p-1 text-faint transition hover:bg-fill-hover hover:text-strong"
-            onClick={onRemove}
-            type="button"
-          >
-            <X className="size-3" />
-          </button>
-        )}
-      </div>
-    )
-  }
+  const folder = pending.type === 'folder'
+  const Icon = folder ? FolderOpen : FileText
 
   return (
-    <div className="flex items-center gap-2 rounded-lg bg-fill-faint border border-line-hairline px-2.5 py-1 text-xs text-body">
-      <FolderOpen className="size-3.5 shrink-0 text-amber-400" />
+    <AttachmentChip
+      onRemove={onRemove}
+      removeLabel={folder ? dict.chat.attachment.removeFolder : dict.chat.attachment.removeFile}
+      sending={sending}
+    >
+      <Icon className={cn('size-3.5 shrink-0', folder ? 'text-amber-400' : 'text-accent')} />
       <div className="flex min-w-0 flex-1 flex-col">
         <span className="truncate text-[11px] font-medium text-strong" title={pending.path}>
-          {pending.folderName}
+          {pending.type === 'file' ? pending.fileName : pending.folderName}
         </span>
       </div>
       <span className="rounded bg-fill-hover px-1 py-0.2 text-[9px] text-faint">
-        {dict.chat.attachment.folderBadge}
+        {folder ? dict.chat.attachment.folderBadge : dict.chat.attachment.fileBadge}
       </span>
-      {!sending && (
-        <button
-          aria-label={dict.chat.attachment.removeFolder}
-          className="shrink-0 rounded-md p-1 text-faint transition hover:bg-fill-hover hover:text-strong"
-          onClick={onRemove}
-          type="button"
-        >
-          <X className="size-3" />
-        </button>
-      )}
-    </div>
+    </AttachmentChip>
   )
 }

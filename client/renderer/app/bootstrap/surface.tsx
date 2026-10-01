@@ -8,22 +8,20 @@ import { HashRouter } from 'react-router-dom'
 
 import { ProxyGatewayPump } from '@/app/runtime/proxy-runtime'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
-import { hydratePersona, hydratePortrait, initCompanionPrefsSync } from '@/modules/character'
+import { hydratePersona, hydratePortrait } from '@/modules/character'
 import { ErrorBoundary } from '@/shared/components/error-boundary'
 import { HapticsProvider } from '@/shared/components/haptics-provider'
 import { NotificationStack } from '@/shared/components/notifications'
-import { applyNoBlurIfNeeded, initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
-import { installClipboardShim } from '@/shared/lib/clipboard'
+import { initGlassBudgetGuard } from '@/shared/lib/apply-no-blur'
 import { CaptureWindowIdContext, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { IpcGatewayProxy } from '@/shared/lib/ipc-gateway-proxy'
 import { installUpdateBridge } from '@/shared/lib/update-bridge'
 import { $auth } from '@/shared/store/auth'
 import { setPrimaryGateway } from '@/shared/store/gateway'
-import { initLocaleSync } from '@/shared/store/locale'
-import { hydrateSurfaces, setSurfaceRole } from '@/shared/store/surfaces'
-import { initUiThemeSync } from '@/shared/store/theme'
+import { setSurfaceRole } from '@/shared/store/surfaces'
 
-import { bindPresentation } from './bind-presentation'
+import { AccountScopedRoot } from './account-scoped'
+import { initRenderer } from './init-renderer'
 
 function SurfaceAuthBootstrap(): null {
   useAccountLifecycle()
@@ -67,13 +65,6 @@ function SurfaceNotificationStack(): React.JSX.Element {
   return <NotificationStack regionRef={regionRef} />
 }
 
-function AccountScopedSurface({ RootComponent }: { RootComponent: React.ComponentType }): React.JSX.Element {
-  const auth = useStore($auth)
-  const key = auth.kind === 'authenticated' ? auth.snapshot.accountId : auth.kind
-
-  return <RootComponent key={key} />
-}
-
 export function bootstrapSurface(label: string, RootComponent: React.ComponentType): void {
   const isLiving = label.includes('living')
 
@@ -83,13 +74,7 @@ export function bootstrapSurface(label: string, RootComponent: React.ComponentTy
     setSurfaceRole('workbench')
   }
 
-  installClipboardShim()
-  applyNoBlurIfNeeded()
-  bindPresentation()
-  initUiThemeSync()
-  initLocaleSync()
-  initCompanionPrefsSync()
-  hydrateSurfaces()
+  initRenderer()
 
   if (isLiving) {
     // 更新状态唯一消费方（设置页 about）在生活空间。
@@ -118,7 +103,7 @@ export function bootstrapSurface(label: string, RootComponent: React.ComponentTy
               <SurfaceGlassBudgetGuard />
               <SurfaceAuthBootstrap />
               <ProxyGatewayPump />
-              <AccountScopedSurface RootComponent={RootComponent} />
+              <AccountScopedRoot RootComponent={RootComponent} />
               <SurfaceNotificationStack />
             </HashRouter>
           </HapticsProvider>

@@ -27,10 +27,6 @@ export class SessionHistoryChangedError extends Error {
   }
 }
 
-function canPersist(): boolean {
-  return $auth.get().kind === 'authenticated'
-}
-
 function currentAuthSessionId(): null | string {
   const auth = $auth.get()
 
@@ -65,21 +61,14 @@ function cloneMessages(messages: unknown[]): SessionMessage[] {
   return messages.map(m => ({ ...(m as SessionMessage) }))
 }
 
+function copyState(state: HistoryCacheState): HistoryCacheState {
+  return { ...state, messages: [...state.messages] }
+}
+
 function getMemoryHistory(sessionId: string): null | HistoryCacheState {
   const state = memoryBySession.get(sessionId)
 
-  if (!state) {
-    return null
-  }
-
-  return {
-    currentSeq: state.currentSeq,
-    info: state.info,
-    lastMessageId: state.lastMessageId,
-    messages: [...state.messages],
-    nextCursor: state.nextCursor,
-    truncated: state.truncated
-  }
+  return state ? copyState(state) : null
 }
 
 export async function loadLocalSessionHistory(sessionId: string): Promise<null | HistoryCacheState> {
@@ -96,7 +85,7 @@ export async function loadLocalSessionHistory(sessionId: string): Promise<null |
     return memory
   }
 
-  if (!canPersist() || invalidations.has(sessionId)) {
+  if (invalidations.has(sessionId)) {
     return null
   }
 
@@ -128,10 +117,7 @@ export async function loadLocalSessionHistory(sessionId: string): Promise<null |
 
     memoryBySession.set(sessionId, state)
 
-    return {
-      ...state,
-      messages: [...state.messages]
-    }
+    return copyState(state)
   } catch (err) {
     log.warn('session-history', 'load local history failed:', err)
 
@@ -286,14 +272,18 @@ export async function syncSessionHistory(params: {
 
   invalidations.delete(params.sessionId)
 
+  // noop 与增量以本地缓存兜底，全量只认服务端返回。
+  const currentSeq = typeof res.current_seq === 'number' ? res.current_seq : (local?.currentSeq ?? 0)
+  const info = res.info ?? local?.info
+
   if (res.resumed) {
     if (typeof res.current_seq === 'number') {
       updateHistorySeq(params.sessionId, res.current_seq, res.info)
     }
 
     return {
-      currentSeq: typeof res.current_seq === 'number' ? res.current_seq : (local?.currentSeq ?? 0),
-      info: res.info ?? local?.info,
+      currentSeq,
+      info,
       kind: 'noop',
       messages: local ? [...local.messages] : []
     }
@@ -309,8 +299,8 @@ export async function syncSessionHistory(params: {
       }) ?? incoming
 
     return {
-      currentSeq: typeof res.current_seq === 'number' ? res.current_seq : (local?.currentSeq ?? 0),
-      info: res.info ?? local?.info,
+      currentSeq,
+      info,
       kind: 'incremental',
       messages: merged
     }
@@ -331,17 +321,21 @@ export async function syncSessionHistory(params: {
   }
 }
 
+function cancelPersist(sessionId: string): void {
+  const timer = persistTimers.get(sessionId)
+
+  if (timer) {
+    clearTimeout(timer)
+    persistTimers.delete(sessionId)
+  }
+}
+
 function schedulePersist(sessionId: string): void {
-  if (!canPersist() || invalidations.has(sessionId)) {
+  if (!currentAuthSessionId() || invalidations.has(sessionId)) {
     return
   }
 
-  const existing = persistTimers.get(sessionId)
-
-  if (existing) {
-    clearTimeout(existing)
-  }
-
+  cancelPersist(sessionId)
   persistTimers.set(
     sessionId,
     setTimeout(() => {
@@ -370,51 +364,33 @@ function clearSessionHistoryMemory(): void {
   memoryBySession.clear()
   invalidations.clear()
 
-  for (const timer of persistTimers.values()) {
-    clearTimeout(timer)
+  for (const sessionId of persistTimers.keys()) {
+    cancelPersist(sessionId)
   }
+}
 
-  persistTimers.clear()
+function removeSnapshot(sessionId: string, reason: string): void {
+  const authSessionId = currentAuthSessionId()
+
+  if (authSessionId) {
+    void window.spiritagent.sessionHistory.remove(sessionId, authSessionId).catch(err => {
+      log.warn('session-history', `remove ${reason} history failed:`, err)
+    })
+  }
 }
 
 /** 旧消息发生原地更新：保留展示与增量基底，下次同步强制取回全量。 */
 export function invalidateSessionHistory(sessionId: string): void {
   invalidations.set(sessionId, Symbol())
-
-  const timer = persistTimers.get(sessionId)
-
-  if (timer) {
-    clearTimeout(timer)
-    persistTimers.delete(sessionId)
-  }
-
-  const authSessionId = currentAuthSessionId()
-
-  if (authSessionId) {
-    void window.spiritagent.sessionHistory.remove(sessionId, authSessionId).catch(err => {
-      log.warn('session-history', 'remove stale history failed:', err)
-    })
-  }
+  cancelPersist(sessionId)
+  removeSnapshot(sessionId, 'stale')
 }
 
 /** 会话被删除后清掉内存与磁盘快照，避免已删对话内容留盘。 */
 export function forgetSessionHistory(sessionId: string): void {
   memoryBySession.delete(sessionId)
-
-  const timer = persistTimers.get(sessionId)
-
-  if (timer) {
-    clearTimeout(timer)
-    persistTimers.delete(sessionId)
-  }
-
-  const authSessionId = currentAuthSessionId()
-
-  if (authSessionId) {
-    void window.spiritagent.sessionHistory.remove(sessionId, authSessionId).catch(err => {
-      log.warn('session-history', 'remove deleted history failed:', err)
-    })
-  }
+  cancelPersist(sessionId)
+  removeSnapshot(sessionId, 'deleted')
 }
 
 registerStorageClearHandler(() => {

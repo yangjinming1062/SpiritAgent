@@ -14,10 +14,6 @@
   width: 100vw;
 }
 
-html[data-maximized='true'] .windowContainer {
-  padding: 0;
-}
-
 .shell {
   backdrop-filter: blur(48px) saturate(200%);
   -webkit-backdrop-filter: blur(48px) saturate(200%);
@@ -415,7 +411,6 @@ html[data-effect='clear'] .runRail {
   flex: 1;
   font-size: 11px;
   letter-spacing: 0.04em;
-  margin: 0 0 0 0;
   padding: 12px 4px;
   writing-mode: vertical-rl;
 }

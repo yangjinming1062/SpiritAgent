@@ -8,19 +8,18 @@ import { useStrings } from '@/shared/strings'
 
 interface ToolChipTimelineProps {
   active: boolean
-  className?: string
   tools: string[]
 }
 
-export function ToolChipTimeline({ active, className, tools }: ToolChipTimelineProps): React.JSX.Element {
+export function ToolChipTimeline({ active, tools }: ToolChipTimelineProps): React.JSX.Element {
   const dict = useStrings()
   const current = tools[tools.length - 1]
   const count = tools.length
 
   return (
-    <details className={cn('mx-auto my-1.5 w-fit', className)}>
+    <details className="mx-auto my-1.5 w-fit">
       <summary className="inline-flex cursor-pointer list-none items-center gap-2 rounded-full border border-line-standard bg-surface-card/70 px-3 py-1 text-xs text-muted shadow-xs backdrop-blur-glass transition hover:bg-fill-hover">
-        <span className={`size-1.5 rounded-full bg-accent ${active ? 'animate-pulse' : ''}`} />
+        <span className={cn('size-1.5 rounded-full bg-accent', active && 'animate-pulse')} />
         <span className="text-muted">{active ? dict.chat.tools.busy(current) : dict.chat.tools.completed(count)}</span>
         <ChevronDown className="size-3 text-faint transition-transform duration-200" />
       </summary>

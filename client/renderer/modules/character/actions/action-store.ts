@@ -1,14 +1,22 @@
 /** 动作目录 store：水合激活包 catalog、解析展示 URL 与 clip 查找；账户快照先恢复再网络校准，失败保留已有目录。 */
 
+import { sleep } from '@runtime'
 import { atom } from 'nanostores'
 
-import { authedApi } from '@/shared/lib/authed-api'
+import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
+import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 
 import { resetActionPlayback } from './action-runtime'
-import type { ActionCatalogManifest, ActionClipEntry, NormalizedRect } from './action-types'
+import type {
+  ActionCatalogManifest,
+  ActionClipEntry,
+  NormalizedRect,
+  PeekGeometry,
+  VideoPackWire
+} from './action-types'
 
 export interface ActiveActionCatalog {
   packId: number
@@ -46,27 +54,21 @@ const EMPTY_PERSISTED_CATALOG: PersistedActionCatalog = {
 }
 
 function isActionCatalogManifest(val: unknown): val is ActionCatalogManifest {
-  if (typeof val !== 'object' || val === null) {
-    return false
-  }
-
-  const m = val as Partial<ActionCatalogManifest>
-
-  return m.schema_version === 'spiritagent.action.pack' && Array.isArray(m.clips) && typeof m.pack_id === 'number'
+  return (
+    isRecord(val) &&
+    val.schema_version === 'spiritagent.action.pack' &&
+    Array.isArray(val.clips) &&
+    typeof val.pack_id === 'number'
+  )
 }
 
 function isPersistableCatalog(val: unknown): val is PersistedActionCatalog {
-  if (typeof val !== 'object' || val === null) {
-    return false
-  }
-
-  const v = val as Partial<PersistedActionCatalog>
-
   return (
-    typeof v.packId === 'number' &&
-    typeof v.catalogVersion === 'number' &&
-    (v.appearanceEpoch === undefined || typeof v.appearanceEpoch === 'number') &&
-    isActionCatalogManifest(v.manifest)
+    isRecord(val) &&
+    typeof val.packId === 'number' &&
+    typeof val.catalogVersion === 'number' &&
+    (val.appearanceEpoch === undefined || typeof val.appearanceEpoch === 'number') &&
+    isActionCatalogManifest(val.manifest)
   )
 }
 
@@ -96,14 +98,15 @@ export async function ensurePeekAction(action: 'peek_left' | 'peek_right'): Prom
   }
 
   const initial = $actionCatalog.get()
-  const existing = initial?.clipsBySlot.get(action)
-
-  if (existing) {
-    return Boolean(existing.peek_geometry)
-  }
 
   if (!initial) {
     return false
+  }
+
+  const existing = initial.clipsBySlot.get(action)
+
+  if (existing) {
+    return Boolean(existing.peek_geometry)
   }
 
   const key = `${initial.packId}:${action}`
@@ -134,14 +137,14 @@ export async function ensurePeekAction(action: 'peek_left' | 'peek_right'): Prom
       path: `/api/companion/video-packs/${initial.packId}/ensure-system-action`
     })
 
-    if (!accepted.ok || !isCurrent()) {
+    if (!isCurrent() || !apiSucceeded(accepted, 'action-store', 'ensure-system-action request failed')) {
       return false
     }
 
     const deadline = Date.now() + 15 * 60_000
 
     while (Date.now() < deadline && isCurrent()) {
-      await new Promise<void>(resolve => window.setTimeout(resolve, 5000))
+      await sleep(5000)
 
       if (!isCurrent()) {
         return false
@@ -156,21 +159,13 @@ export async function ensurePeekAction(action: 'peek_left' | 'peek_right'): Prom
         return !terminal
       }
 
-      const listed = await authedApi<{
-        packs?: Array<{
-          actions?: Array<{
-            action: string
-            peek_geometry?: ActionClipEntry['peek_geometry']
-            status: string
-          }>
-          id: number
-        }>
-      }>({ path: '/api/companion/video-packs' })
+      const listed = await authedApi<{ packs?: VideoPackWire[] }>({ path: '/api/companion/video-packs' })
 
       if (!isCurrent()) {
         return false
       }
 
+      // 轮询在预算内重试，单次失败不记日志。
       if (!listed.ok || !listed.value) {
         continue
       }
@@ -237,10 +232,10 @@ registerStorageClearHandler(() => {
   $actionCatalogStatus.set('idle')
 })
 
-function buildCatalogIndexes(manifest: ActionCatalogManifest): {
-  clipsById: Map<number, ActionClipEntry>
-  clipsBySlot: Map<string, ActionClipEntry>
-} {
+function createCatalog(
+  manifest: ActionCatalogManifest,
+  meta: Pick<ActiveActionCatalog, 'appearanceEpoch' | 'catalogVersion' | 'packId'>
+): ActiveActionCatalog {
   const clipsById = new Map<number, ActionClipEntry>()
   const clipsBySlot = new Map<string, ActionClipEntry>()
 
@@ -253,7 +248,7 @@ function buildCatalogIndexes(manifest: ActionCatalogManifest): {
     }
   }
 
-  return { clipsById, clipsBySlot }
+  return { ...meta, clipUrls: new Map(), clipsById, clipsBySlot, manifest }
 }
 
 function persistCatalogSnapshot(
@@ -285,13 +280,11 @@ function isNormalizedRect(value: unknown): value is NormalizedRect {
   )
 }
 
-function isValidPeekGeometry(clip: ActionClipEntry): boolean {
+function isValidPeekGeometry(clip: ActionClipEntry, expectedSide: PeekGeometry['side']): boolean {
   const geometry = clip.peek_geometry
-  const expectedSide = clip.system_slot === 'peek_left' ? 'left' : clip.system_slot === 'peek_right' ? 'right' : null
 
   if (
     !geometry ||
-    !expectedSide ||
     geometry.side !== expectedSide ||
     !Number.isFinite(geometry.cut_x) ||
     geometry.cut_x <= 0.1 ||
@@ -310,10 +303,12 @@ function safeClip(clip: ActionClipEntry): ActionClipEntry {
   const content_rect = isNormalizedRect(clip.content_rect) ? clip.content_rect : null
 
   if (clip.system_slot === 'peek_left' || clip.system_slot === 'peek_right') {
+    const side = clip.system_slot === 'peek_left' ? 'left' : 'right'
+
     return {
       ...clip,
       content_rect,
-      peek_geometry: isValidPeekGeometry(clip) ? clip.peek_geometry : null
+      peek_geometry: isValidPeekGeometry(clip, side) ? clip.peek_geometry : null
     }
   }
 
@@ -332,20 +327,13 @@ function restoreCachedActionCatalog(): void {
     return
   }
 
-  const manifest = snap.manifest
-  const { clipsById, clipsBySlot } = buildCatalogIndexes(manifest)
-
-  const catalog: ActiveActionCatalog = {
-    appearanceEpoch: snap.appearanceEpoch ?? null,
-    catalogVersion: snap.catalogVersion,
-    clipUrls: new Map(),
-    clipsById,
-    clipsBySlot,
-    manifest,
-    packId: snap.packId
-  }
-
-  $actionCatalog.set(catalog)
+  $actionCatalog.set(
+    createCatalog(snap.manifest, {
+      appearanceEpoch: snap.appearanceEpoch ?? null,
+      catalogVersion: snap.catalogVersion,
+      packId: snap.packId
+    })
+  )
   $actionCatalogStatus.set('ready')
 }
 
@@ -394,6 +382,13 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
 
   const epoch = currentClearEpoch()
   const revision = hydrationRevision
+  const stale = (): boolean => epoch !== currentClearEpoch() || revision !== hydrationRevision
+
+  const markUnavailableIfEmpty = (): void => {
+    if (!$actionCatalog.get()) {
+      $actionCatalogStatus.set('unavailable')
+    }
+  }
 
   const load = (async (): Promise<void> => {
     if (!$actionCatalog.get()) {
@@ -403,11 +398,11 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
     try {
       const res = await authedApi<CatalogWireResponse>({ path: '/api/companion/actions/catalog' })
 
-      if (epoch !== currentClearEpoch() || revision !== hydrationRevision) {
+      if (stale()) {
         return
       }
 
-      if (!res.ok) {
+      if (!apiSucceeded(res, 'action-store', 'catalog request failed')) {
         // 失败保留已有目录；无本地时才标 unavailable。
         if (!$actionCatalog.get()) {
           $actionCatalogStatus.set(res.reason === 'unauth' ? 'idle' : 'unavailable')
@@ -446,69 +441,47 @@ export async function hydrateActionCatalog(refresh = false): Promise<void> {
 
       const manifest = await readJsonAsset(manifestUrl)
 
-      if (epoch !== currentClearEpoch() || revision !== hydrationRevision) {
+      if (stale()) {
         return
       }
 
       if (!isActionCatalogManifest(manifest)) {
         log.warn('action-store', 'invalid catalog manifest')
-
-        if (!$actionCatalog.get()) {
-          $actionCatalog.set(null)
-          $actionCatalogStatus.set('unavailable')
-        }
+        markUnavailableIfEmpty()
 
         return
       }
 
+      const catalogVersion = res.value.catalog_version ?? manifest.catalog_version
+      const catalog = createCatalog(manifest, { appearanceEpoch, catalogVersion, packId: res.value.pack_id })
+
       // 预取默认动作（idle）片段；其余按需解析。
       const idleClip = pickIdleClip(manifest)
-      const idleUrl = idleClip ? await resolveUrl(idleClip.video_ref) : null
+      const idleUrl = idleClip ? await resolveActionClipUrl(catalog, idleClip) : null
 
-      if (epoch !== currentClearEpoch() || revision !== hydrationRevision) {
+      if (stale()) {
         return
       }
 
       if (!idleUrl) {
-        if (!$actionCatalog.get()) {
-          $actionCatalog.set(null)
-          $actionCatalogStatus.set('unavailable')
-        }
+        markUnavailableIfEmpty()
 
         return
       }
-
-      const clipUrls: ActiveActionCatalog['clipUrls'] = new Map()
-
-      if (idleClip) {
-        clipUrls.set(clipKey(idleClip), Promise.resolve(idleUrl))
-      }
-
-      const { clipsById, clipsBySlot } = buildCatalogIndexes(manifest)
 
       // 换包或外观代次变化时清理旧播放实例；同代次目录刷新保留在播实例。
       if (!samePack || samePack.packId !== res.value.pack_id || samePack.appearanceEpoch !== appearanceEpoch) {
         resetActionPlayback()
       }
 
-      const catalogVersion = res.value.catalog_version ?? manifest.catalog_version
-
-      $actionCatalog.set({
-        appearanceEpoch,
-        catalogVersion,
-        clipUrls,
-        clipsById,
-        clipsBySlot,
-        manifest,
-        packId: res.value.pack_id
-      })
+      $actionCatalog.set(catalog)
       $actionCatalogStatus.set('ready')
       persistCatalogSnapshot(res.value.pack_id, catalogVersion, appearanceEpoch, manifest)
     } catch (err) {
       log.warn('action-store', 'hydrateActionCatalog failed', err)
 
-      if (epoch === currentClearEpoch() && !$actionCatalog.get()) {
-        $actionCatalogStatus.set('unavailable')
+      if (epoch === currentClearEpoch()) {
+        markUnavailableIfEmpty()
       }
     } finally {
       if (epoch === currentClearEpoch()) {

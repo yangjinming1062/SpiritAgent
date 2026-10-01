@@ -1,11 +1,8 @@
 import { atom } from 'nanostores'
 
-import { authedApi } from '@/shared/lib/authed-api'
+import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
 import { safeJsonParse } from '@/shared/lib/safe-json'
-import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
-import { $auth } from '@/shared/store/auth'
-
-import { personaFromWire } from './persona-mappers'
+import { registerStorageClearHandler } from '@/shared/lib/storage'
 
 export interface PersonaDefinition {
   name: string
@@ -29,19 +26,10 @@ function resetPersona(): void {
 registerStorageClearHandler(resetPersona)
 
 export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{ ok: boolean; error?: unknown }> {
-  const auth = $auth.get()
+  const isCurrent = captureAuthScope()
 
-  if (auth.kind !== 'authenticated') {
+  if (!isCurrent) {
     return { ok: false }
-  }
-
-  const sessionId = auth.snapshot.sessionId
-  const epoch = currentClearEpoch()
-
-  const isCurrent = (): boolean => {
-    const current = $auth.get()
-
-    return current.kind === 'authenticated' && current.snapshot.sessionId === sessionId && epoch === currentClearEpoch()
   }
 
   // 全部结构化 persona 字段都在 definition_json（JSON 字符串 blob）里面，而不是作为顶层扁平 key 出现在线协议里。
@@ -65,9 +53,7 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
 
     // 调用方刚刚成功 PUT 了新 persona 时，这里的 GET 短暂失败不代表保存失败——后端是有数据的。传 `silent: true` 保持 $persona 不动，避免同时弹出「保存失败」提示又让设置页因为 $persona 变 null 而隐藏「编辑」按钮。GET 失败由调用方作为软提示暴露。
     if (!opts.silent) {
-      $persona.set(null)
-      $personalityTags.set([])
-      $companionMood.set(null)
+      resetPersona()
     }
 
     return { error: result.error, ok: false }
@@ -87,20 +73,14 @@ export async function hydratePersona(opts: { silent?: boolean } = {}): Promise<{
 
   const parsed = safeJsonParse<Record<string, string>>(p.definition_json, {})
 
-  if (!isCurrent()) {
-    return { ok: false }
-  }
-
-  $persona.set(
-    personaFromWire({
-      biological_type: parsed.biological_type,
-      gender: parsed.gender,
-      name: parsed.name ?? '',
-      personality: parsed.personality ?? '',
-      relationship: parsed.relationship,
-      speaking_style: parsed.speaking_style
-    })
-  )
+  $persona.set({
+    biological_type: parsed.biological_type,
+    gender: parsed.gender,
+    name: parsed.name ?? '',
+    personality: parsed.personality ?? '',
+    relationship: parsed.relationship,
+    speakingStyle: parsed.speaking_style ?? ''
+  })
 
   $personalityTags.set(p.personality_tags ?? [])
 

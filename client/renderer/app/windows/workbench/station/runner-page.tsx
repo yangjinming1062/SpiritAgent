@@ -78,11 +78,7 @@ export function RunnerPage(): React.JSX.Element {
 
     try {
       for (const path of dirtyPaths.values()) {
-        const result = await patch(path, getIn(config, path))
-
-        if (!result.ok) {
-          throw new Error(result.error)
-        }
+        await patch(path, getIn(config, path))
       }
 
       triggerHaptic('success')

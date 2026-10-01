@@ -32,8 +32,10 @@ import {
   setScenePolicy
 } from '@/modules/scene'
 import { PortraitLightbox } from '@/shared'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { triggerHaptic } from '@/shared/lib/haptics'
-import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
+import { errorMessage } from '@/shared/lib/ipc-error'
+import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { ConfirmDialog, SettingsContent } from '@/shared/panel'
 import { notify } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
@@ -74,16 +76,15 @@ export function ScenePage(): React.JSX.Element {
   const [deleteTarget, setDeleteTarget] = useState<SceneAsset | null>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const returnScrollTop = useRef(0)
-  const mounted = useRef(true)
+  const begin = useAsyncGuard()
   const detail = view.kind === 'detail' ? (details[view.sceneId] ?? null) : null
 
   useEffect(() => {
-    mounted.current = true
     void hydrateAvatarSeeds()
     void hydrateScene()
     void loadSceneLibrary()
 
-    const unregister = registerStorageClearHandler(() => {
+    return registerStorageClearHandler(() => {
       setQueryDraft('')
       setCreateDraft(INITIAL_CREATE_DRAFT)
       setEditDrafts({})
@@ -92,11 +93,6 @@ export function ScenePage(): React.JSX.Element {
       setView({ kind: 'library' })
       returnScrollTop.current = 0
     })
-
-    return () => {
-      mounted.current = false
-      unregister()
-    }
   }, [])
 
   useLayoutEffect(() => {
@@ -127,44 +123,28 @@ export function ScenePage(): React.JSX.Element {
     }
   }, [view])
 
-  useEffect(() => {
-    if (view.kind !== 'detail' || !detail) {
-      return
-    }
-
-    setEditDrafts(current => {
-      const existing = current[view.sceneId]
-
-      if (existing?.editing || (existing?.title === detail.title && existing.description === detail.description)) {
-        return current
-      }
-
-      return {
-        ...current,
-        [view.sceneId]: { editing: false, title: detail.title, description: detail.description }
-      }
-    })
-  }, [detail, editDrafts, view])
-
-  const openDetail = (sceneId: string): void => {
+  const openView = (next: ScenePageView): void => {
     if (view.kind === 'library' && scrollRef.current) {
       returnScrollTop.current = scrollRef.current.scrollTop
     }
 
-    setView({ kind: 'detail', sceneId })
+    setView(next)
   }
 
-  const openCreate = (): void => {
-    if (view.kind === 'library' && scrollRef.current) {
-      returnScrollTop.current = scrollRef.current.scrollTop
-    }
+  const openDetail = (sceneId: string): void => openView({ kind: 'detail', sceneId })
 
-    setView({ kind: 'create' })
-  }
+  const openCreate = (): void => openView({ kind: 'create' })
 
   const returnToLibrary = (): void => setView({ kind: 'library' })
 
-  const updateDetail = async (sceneId: string): Promise<SceneAsset | null> => await loadSceneDetail(sceneId)
+  const dropEditDraft = (sceneId: string): void => {
+    setEditDrafts(current => {
+      const next = { ...current }
+      delete next[sceneId]
+
+      return next
+    })
+  }
 
   const saveInfo = async (sceneId: string): Promise<void> => {
     const draft = editDrafts[sceneId]
@@ -173,24 +153,22 @@ export function ScenePage(): React.JSX.Element {
       return
     }
 
+    const isLive = begin()
     await editScene(sceneId, draft.title.trim(), draft.description.trim())
-    const updated = await updateDetail(sceneId)
+    const updated = await loadSceneDetail(sceneId)
 
-    if (updated && mounted.current) {
-      setEditDrafts(current => ({
-        ...current,
-        [sceneId]: { editing: false, title: updated.title, description: updated.description }
-      }))
+    if (updated && isLive()) {
+      dropEditDraft(sceneId)
     }
   }
 
   const regenerate = async (sceneId: string): Promise<void> => {
     await regenerateScene(sceneId)
-    await updateDetail(sceneId)
+    await loadSceneDetail(sceneId)
   }
 
   const saveAndRegenerate = async (sceneId: string): Promise<void> => {
-    const epoch = currentClearEpoch()
+    const isLive = begin()
     const draft = editDrafts[sceneId]
 
     if (!draft) {
@@ -199,7 +177,7 @@ export function ScenePage(): React.JSX.Element {
 
     await saveInfo(sceneId)
 
-    if (!mounted.current || epoch !== currentClearEpoch()) {
+    if (!isLive()) {
       return
     }
 
@@ -207,6 +185,7 @@ export function ScenePage(): React.JSX.Element {
   }
 
   const startCreation = async (): Promise<void> => {
+    const isLive = begin()
     triggerHaptic('open')
 
     const created = await createScene({
@@ -217,23 +196,24 @@ export function ScenePage(): React.JSX.Element {
         : {})
     })
 
-    if (created && mounted.current) {
+    if (created && isLive()) {
       setCreateDraft(INITIAL_CREATE_DRAFT)
       openDetail(created.id)
     }
   }
 
   const adoptCreatedImage = async (image: PickedImage): Promise<void> => {
+    const isLive = begin()
     await adoptSceneImage(image)
     const created = $pendingScene.get()
 
-    if (created && mounted.current) {
+    if (created && isLive()) {
       openDetail(created.id)
     }
   }
 
   const startAiForNewScene = async (): Promise<void> => {
-    const epoch = currentClearEpoch()
+    const isLive = begin()
     const waitingUpload = $pendingScene.get()
 
     try {
@@ -241,17 +221,14 @@ export function ScenePage(): React.JSX.Element {
         await cancelSceneTask(waitingUpload.id)
       }
 
-      if (!mounted.current || currentClearEpoch() !== epoch) {
+      if (!isLive()) {
         return
       }
 
       await startCreation()
     } catch (error) {
-      if (mounted.current && epoch === currentClearEpoch()) {
-        notify({
-          kind: 'warning',
-          message: error instanceof Error ? error.message : tToasts.sceneRegenerateFailed
-        })
+      if (isLive()) {
+        notify({ kind: 'warning', message: errorMessage(error, tToasts.sceneRegenerateFailed) })
       }
     }
   }
@@ -267,65 +244,52 @@ export function ScenePage(): React.JSX.Element {
     }
 
     const target = deleteTarget
-    const epoch = currentClearEpoch()
+    const isLive = begin()
     triggerHaptic('tap')
 
     try {
       await deleteScene(target.id)
 
-      if (mounted.current && currentClearEpoch() === epoch) {
-        setEditDrafts(current => {
-          const next = { ...current }
-          delete next[target.id]
-
-          return next
-        })
+      if (isLive()) {
+        dropEditDraft(target.id)
         setDeleteTarget(null)
         returnToLibrary()
         notify({ kind: 'success', message: tToasts.sceneDeleteSuccess })
       }
     } catch (error) {
-      if (mounted.current && currentClearEpoch() === epoch) {
-        notify({ kind: 'warning', message: error instanceof Error ? error.message : tToasts.sceneDeleteFailed })
+      if (isLive()) {
+        notify({ kind: 'warning', message: errorMessage(error, tToasts.sceneDeleteFailed) })
         throw error
       }
     }
   }
 
   const handlePolicy = async (): Promise<void> => {
-    const epoch = currentClearEpoch()
+    const isLive = begin()
     const next = policy === 'locked' ? 'llm_may_replace' : 'locked'
     triggerHaptic('selection')
 
     try {
       await setScenePolicy(next)
 
-      if (mounted.current && epoch === currentClearEpoch()) {
+      if (isLive()) {
         notify({ kind: 'info', message: next === 'locked' ? tToasts.sceneLocked : tToasts.sceneUnlocked })
       }
     } catch (error) {
-      if (mounted.current && epoch === currentClearEpoch()) {
-        notify({ kind: 'warning', message: error instanceof Error ? error.message : tToasts.sceneLockFailed })
+      if (isLive()) {
+        notify({ kind: 'warning', message: errorMessage(error, tToasts.sceneLockFailed) })
       }
     }
   }
 
-  const handleCreatePrompt = async (): Promise<string> =>
-    await prepareScenePrompt({
+  const handleCreatePrompt = (): Promise<string> =>
+    prepareScenePrompt({
       notes: createDraft.notes.trim() || undefined,
       outfit_description: createDraft.outfitDescription.trim() || undefined
     })
 
   const changeEditDraft = (sceneId: string, next: Partial<SceneEditDraft>): void => {
-    setEditDrafts(current => {
-      const draft = current[sceneId] ?? {
-        editing: true,
-        title: detail?.title ?? '',
-        description: detail?.description ?? ''
-      }
-
-      return { ...current, [sceneId]: { ...draft, ...next } }
-    })
+    setEditDrafts(current => ({ ...current, [sceneId]: { ...current[sceneId], ...next } }))
   }
 
   const busy = status !== 'none' || regenerating !== null
@@ -366,25 +330,26 @@ export function ScenePage(): React.JSX.Element {
               loading={detailLoading}
               onActivate={sceneId => void handleActivate(sceneId)}
               onBack={returnToLibrary}
+              onCancelEdit={() => dropEditDraft(view.sceneId)}
               onCancelTask={async sceneId => {
                 await cancelSceneTask(sceneId)
-                await updateDetail(sceneId)
+                await loadSceneDetail(sceneId)
               }}
               onChangeDraft={next => changeEditDraft(view.sceneId, next)}
               onDelete={scene => setDeleteTarget(scene)}
               onEdit={() => {
                 if (detail) {
-                  changeEditDraft(detail.id, { editing: true, title: detail.title, description: detail.description })
+                  changeEditDraft(detail.id, { title: detail.title, description: detail.description })
                 }
               }}
               onLoad={async () => {
                 await hydrateScene()
-                await updateDetail(view.sceneId)
+                await loadSceneDetail(view.sceneId)
               }}
               onRegenerate={regenerate}
               onRetryAnalysis={async sceneId => {
                 await analyzeScene(sceneId)
-                await updateDetail(sceneId)
+                await loadSceneDetail(sceneId)
               }}
               onSave={saveInfo}
               onSaveAndRegenerate={saveAndRegenerate}
@@ -396,9 +361,7 @@ export function ScenePage(): React.JSX.Element {
               draft={createDraft}
               onAdopt={adoptCreatedImage}
               onBack={returnToLibrary}
-              onCancelTask={async sceneId => {
-                await cancelSceneTask(sceneId)
-              }}
+              onCancelTask={cancelSceneTask}
               onChange={next => setCreateDraft(current => ({ ...current, ...next }))}
               onCreate={() => void startCreation()}
               onFetchPrompt={handleCreatePrompt}

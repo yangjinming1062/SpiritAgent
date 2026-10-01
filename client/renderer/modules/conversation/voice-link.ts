@@ -1,5 +1,6 @@
 import { atom, map } from 'nanostores'
 
+import { createPort } from '@/shared/lib/port'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
 
 export const $voiceBarPlayingId = atom<string | null>(null)
@@ -36,33 +37,17 @@ export interface ConversationVoiceSink {
   setVisible(visible: boolean): void
   setRecording(recording: boolean): void
 }
-let voiceSink: ConversationVoiceSink | null = null
 
-export function setConversationVoiceSink(sink: ConversationVoiceSink): void {
-  voiceSink = sink
-}
+const voiceSinkPort = createPort<ConversationVoiceSink>('conversation voice sink')
 
-export function conversationVoiceSink(): ConversationVoiceSink {
-  if (!voiceSink) {
-    throw new Error('conversation voice sink not bound')
-  }
-
-  return voiceSink
-}
+export const setConversationVoiceSink = voiceSinkPort.bind
+export const conversationVoiceSink = voiceSinkPort.get
 
 export interface VoiceBarControl {
   toggle(messageId: string): void
 }
-let voiceControl: VoiceBarControl | null = null
 
-export function setVoiceBarControl(control: VoiceBarControl): void {
-  voiceControl = control
-}
+const voiceBarControlPort = createPort<VoiceBarControl>('voice bar control')
 
-export function voiceBarControl(): VoiceBarControl {
-  if (!voiceControl) {
-    throw new Error('voice bar control not bound')
-  }
-
-  return voiceControl
-}
+export const setVoiceBarControl = voiceBarControlPort.bind
+export const voiceBarControl = voiceBarControlPort.get

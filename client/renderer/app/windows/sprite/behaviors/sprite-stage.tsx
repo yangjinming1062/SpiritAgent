@@ -1,7 +1,7 @@
 import { useStore } from '@nanostores/react'
 import { type PointerEvent, type ReactNode, useCallback, useEffect, useRef } from 'react'
 
-import { handleDragEndInteraction } from '@/modules/character'
+import { openWhisper } from '@/app/workflows/session-delivery'
 import {
   $expressionBoost,
   $homePosition,
@@ -11,19 +11,21 @@ import {
   $spatialScale,
   $spriteContentRect,
   cancelMovement,
+  emitVfx,
   endDragAt,
+  FootGlow,
   getBaseSpriteHeight,
   getBaseSpriteWidth,
+  handleDragEndInteraction,
   peekMaskRects,
   playSpriteGesture,
   setSpriteState,
   SpriteTargetCue,
+  SpriteVfxOverlay,
   startDrag,
   updateDragPosition,
   useSpriteBodyGesture
 } from '@/modules/character'
-import { emitVfx, SpriteVfxOverlay } from '@/modules/character'
-import { FootGlow } from '@/modules/character'
 import { useVideoPixelHitTest } from '@/modules/character/rendering/video'
 import { clearExternalAttachment, pushExternalAttachment } from '@/modules/conversation'
 import { resolveDroppedFiles } from '@/shared/lib/file-drop'
@@ -33,11 +35,9 @@ import { notifyError } from '@/shared/store/notifications'
 import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
 import { getStrings } from '@/shared/strings'
 
-import { openWhisper } from '../whisper'
-
 interface SpriteStageProps {
   children: ReactNode
-  onTap?: (nx: number, ny: number) => void
+  onTap?: () => void
   onDoubleTap?: () => void
   onContextMenu?: (e: React.MouseEvent) => void
   hidden?: boolean
@@ -54,7 +54,7 @@ const MEDIA_DROP_PATH_RE = /\.(png|jpe?g|gif|webp|bmp|svg|avif|mp4|mov|webm|m4v|
 // 跨显示器后 pointer capture 会投递跨视口坐标，按此间隔探测主进程。
 const DISPLAY_SWITCH_PROBE_MS = 200
 
-const SPRITE_REGION_ID = 'sprite-stage'
+export const SPRITE_REGION_ID = 'sprite-stage'
 
 export function SpriteStage({
   children,
@@ -455,9 +455,6 @@ export function SpriteStage({
     }
 
     lastTapRef.current = now
-    const rect = mountRef.current?.getBoundingClientRect()
-    const nx = rect && rect.width > 0 ? (e.clientX - rect.left) / rect.width : 0.5
-    const ny = rect && rect.height > 0 ? (e.clientY - rect.top) / rect.height : 0.5
 
     // 存在双击回调时，单击延迟一拍再触发；在窗口内到达的第二次抬起会取消本计时器。
     if (onDoubleTap) {
@@ -467,13 +464,20 @@ export function SpriteStage({
 
       tapTimerRef.current = setTimeout(() => {
         tapTimerRef.current = null
-        onTap?.(nx, ny)
+        onTap?.()
       }, DOUBLE_TAP_MS)
 
       return
     }
 
-    onTap?.(nx, ny)
+    onTap?.()
+  }
+
+  // 指针被系统取消或捕获丢失时，按取消收尾当前手势。
+  const onPointerInterrupted = (e: PointerEvent<HTMLDivElement>): void => {
+    if (dragRef.current?.pointerId === e.pointerId) {
+      finishGesture(true)
+    }
   }
 
   const spriteW = getBaseSpriteWidth()
@@ -505,7 +509,7 @@ export function SpriteStage({
       ) : null}
       <SpriteTargetCue hidden={hidden} />
       <div
-        className={`absolute transition-opacity duration-200 ${hidden ? 'pointer-events-none opacity-0 invisible' : 'opacity-100'}`}
+        className="absolute transition-opacity duration-200"
         onContextMenu={e => {
           if (hidden) {
             return
@@ -519,18 +523,10 @@ export function SpriteStage({
         }}
         onDrop={e => {
           e.preventDefault()
-          void handleDrop(e.dataTransfer?.files)
+          handleDrop(e.dataTransfer?.files)
         }}
-        onLostPointerCapture={e => {
-          if (dragRef.current?.pointerId === e.pointerId) {
-            finishGesture(true)
-          }
-        }}
-        onPointerCancel={e => {
-          if (dragRef.current?.pointerId === e.pointerId) {
-            finishGesture(true)
-          }
-        }}
+        onLostPointerCapture={onPointerInterrupted}
+        onPointerCancel={onPointerInterrupted}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}

@@ -1,11 +1,13 @@
+import { clamp } from '@runtime'
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
 import { Copy, Download } from '@/shared/lib/icons'
-import { imageUrlForNativeClipboard } from '@/shared/lib/image-clipboard'
 import { useStrings } from '@/shared/strings'
 
 import { useEscapeKey } from '../hooks/use-escape-key'
+import { useImageActions } from '../hooks/use-image-actions'
+import { useLatestRef } from '../hooks/use-latest-ref'
 import { useInteractiveRegion } from '../lib/interactive-regions'
 
 export interface HistoryGalleryItem {
@@ -53,14 +55,14 @@ const DOUBLE_CLICK_SCALE = 2.5
 type LightboxView = { scale: number; x: number; y: number }
 
 function clampView(view: LightboxView, viewport: { height: number; width: number }): LightboxView {
-  const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, view.scale))
+  const scale = clamp(view.scale, MIN_SCALE, MAX_SCALE)
   const maxX = Math.max(0, ((scale - 1) * viewport.width) / 2)
   const maxY = Math.max(0, ((scale - 1) * viewport.height) / 2)
 
   return {
     scale,
-    x: Math.min(maxX, Math.max(-maxX, view.x)),
-    y: Math.min(maxY, Math.max(-maxY, view.y))
+    x: clamp(view.x, -maxX, maxX),
+    y: clamp(view.y, -maxY, maxY)
   }
 }
 
@@ -89,8 +91,7 @@ export function PortraitLightbox({
   }>(null)
 
   const [view, setView] = useState<LightboxView>({ scale: 1, x: 0, y: 0 })
-  const [actionError, setActionError] = useState<null | 'copy' | 'save'>(null)
-  const [copied, setCopied] = useState(false)
+  const { copied, copy, error, save } = useImageActions()
 
   const commitView = (next: LightboxView): void => {
     const el = viewportRef.current
@@ -107,7 +108,7 @@ export function PortraitLightbox({
   const zoomAt = (factor: number, clientX?: number, clientY?: number): void => {
     const el = viewportRef.current
     const current = viewRef.current
-    const nextScale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, current.scale * factor))
+    const nextScale = clamp(current.scale * factor, MIN_SCALE, MAX_SCALE)
 
     if (nextScale === current.scale) {
       return
@@ -145,10 +146,9 @@ export function PortraitLightbox({
     }
   }, [])
 
-  const zoomAtRef = useRef(zoomAt)
-  zoomAtRef.current = zoomAt
+  const zoomAtRef = useLatestRef(zoomAt)
 
-  // React 合成 wheel 在部分环境是 passive，无法 preventDefault；监听挂整层遮罩，灯箱打开时滚轮不得滚动底层页面，仅指针落在取景框内时才缩放。overlay 在 portal 内部挂载故与 effect 同步；若未来改为延迟挂载需改用 ref callback。触控板捏合在不同浏览器派发 wheel+ctrlKey 或 GestureEvent；手机双指捏合不派发 wheel，pinch-to-zoom 暂未支持（docs/DESIGN.md「主题与图片查看」）。
+  // 用原生非 passive 监听：React 合成 wheel 可能是 passive，无法 preventDefault。监听挂在整层遮罩上，灯箱打开时滚轮不滚动底层页面，仅指针在取景框内才缩放；遮罩随组件同步挂载，effect 内可直接取到。
   useEffect(() => {
     const el = overlayRef.current
 
@@ -183,7 +183,7 @@ export function PortraitLightbox({
     el.addEventListener('wheel', onWheel, { passive: false })
 
     return () => el.removeEventListener('wheel', onWheel)
-  }, [])
+  }, [zoomAtRef])
 
   const getLightboxRect = (): DOMRect => new DOMRect(0, 0, window.innerWidth, window.innerHeight)
 
@@ -331,25 +331,7 @@ export function PortraitLightbox({
           className="inline-flex h-7 items-center gap-1 rounded-lg bg-black/70 px-2 text-[11px] text-white/90 transition hover:bg-black/90 hover:text-white"
           onClick={e => {
             e.stopPropagation()
-
-            setActionError(prev => (prev === 'copy' ? null : prev))
-
-            void (async (): Promise<void> => {
-              try {
-                setCopied(false)
-
-                const copyImage = window.spiritagent?.copyImage
-
-                if (!copyImage) {
-                  throw new Error('copyImage IPC unavailable')
-                }
-
-                await copyImage({ url: await imageUrlForNativeClipboard(url) })
-                setCopied(true)
-              } catch {
-                setActionError('copy')
-              }
-            })()
+            void copy(url)
           }}
           type="button"
         >
@@ -360,22 +342,7 @@ export function PortraitLightbox({
           className="inline-flex h-7 items-center gap-1 rounded-lg bg-black/70 px-2 text-[11px] text-white/90 transition hover:bg-black/90 hover:text-white"
           onClick={e => {
             e.stopPropagation()
-            setActionError(prev => (prev === 'save' ? null : prev))
-            setCopied(false)
-
-            void (async (): Promise<void> => {
-              try {
-                const saveImage = window.spiritagent?.saveImage
-
-                if (!saveImage) {
-                  throw new Error('saveImage IPC unavailable')
-                }
-
-                await saveImage({ defaultName: name || undefined, url })
-              } catch {
-                setActionError('save')
-              }
-            })()
+            void save(url, name)
           }}
           type="button"
         >
@@ -389,9 +356,9 @@ export function PortraitLightbox({
           {t.selfSource.copiedRefImage}
         </p>
       )}
-      {actionError ? (
+      {error ? (
         <p className="text-xs text-rose-300" role="alert">
-          {actionError === 'copy' ? t.selfSource.copyRefImageFailed : t.selfSource.saveRefImageFailed}
+          {error === 'copy' ? t.selfSource.copyRefImageFailed : t.selfSource.saveRefImageFailed}
         </p>
       ) : null}
     </div>,

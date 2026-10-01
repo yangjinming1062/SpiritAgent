@@ -4,9 +4,6 @@
 export const VIDEO_ACTION_KEYS = ['idle', 'walk_left', 'walk_right', 'drag', 'peek_left', 'peek_right'] as const
 export type VideoActionKey = (typeof VIDEO_ACTION_KEYS)[number]
 
-/** 桌面实际挂载的渲染层：视频链或通用兜底（程序化蛋）。 */
-export type CompanionRendererKind = 'video' | 'fallback'
-
 /** 蛋形兜底状态：区分尚未就绪与生成失败。 */
 export type CompanionFallbackStatus = 'preparing' | 'generating' | 'failed' | 'unavailable'
 

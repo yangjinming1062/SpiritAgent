@@ -5,7 +5,6 @@ import { memo, useState } from 'react'
 
 import { ChevronDown, RefreshCw, Search } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
-import { presentationPorts } from '@/shared/presentation-ports'
 import { $gatewayState } from '@/shared/store/gateway'
 import { useStrings } from '@/shared/strings'
 
@@ -13,8 +12,7 @@ import { stripAttachmentDirectives } from './chat-display-text'
 import { ChatMediaCard } from './chat-media-card'
 import { ChatMessageCopyButton } from './chat-message-copy-button'
 import { ChatMessageEditButton } from './chat-message-edit-button'
-import { ChatMessageForkButton } from './chat-message-fork-button'
-import { ChatMessageUndoButton } from './chat-message-undo-button'
+import { ChatMessageForkButton, ChatMessageUndoButton } from './chat-message-session-buttons'
 import {
   $chatEditDraft,
   $chatMessageBodies,
@@ -27,6 +25,7 @@ import {
   retryAssistantReply
 } from './chat-store'
 import { ChatVoiceBar, TranscriptBlock } from './chat-voice-bar'
+import { CompanionAvatar } from './companion-avatar'
 import { formatConversationTime } from './conversation-time'
 import { ToolChipTimeline } from './tool-chip-timeline'
 
@@ -98,9 +97,6 @@ function MessageBubbleWithBody({
   const dict = useStrings()
   const subtype = message.subtype || ''
   const isUser = message.role === 'user'
-  const ports = presentationPorts()
-  const portraitUrl = useStore(ports.$portraitUrl)
-  const activeAvatarId = useStore(ports.$activeAvatarId)
   const sessionKind = useStore($chatSessionKind)
   const editing = useStore($chatEditDraft)
   const lastEditableMessage = useStore($lastEditableUserMessage)
@@ -263,17 +259,7 @@ function MessageBubbleWithBody({
   return wrapWithTimeDivider(
     timeDivider,
     <div className={cn('relative flex shrink-0 gap-2.5 overflow-visible', isUser ? 'justify-end' : 'justify-start')}>
-      {!isUser && variant === 'workbench' && (
-        <div className="size-8 shrink-0 overflow-hidden rounded-full border border-white/15 bg-white/10 shadow-sm mt-0.5">
-          {portraitUrl ? (
-            <img alt="Companion" className="size-full object-cover" src={portraitUrl} />
-          ) : activeAvatarId == null ? (
-            <div className="flex size-full items-center justify-center bg-gradient-to-tr from-blue-600 to-indigo-500 text-[11px] font-bold text-white">
-              S
-            </div>
-          ) : null}
-        </div>
-      )}
+      {!isUser && variant === 'workbench' && <CompanionAvatar />}
       <div
         className={cn(
           'group/message relative flex max-w-[80%] items-center gap-1.5 overflow-visible',

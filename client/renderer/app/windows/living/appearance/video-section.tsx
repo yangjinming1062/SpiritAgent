@@ -18,6 +18,7 @@ import {
   type VideoActionWire,
   videoGenScopeMatches
 } from '@/modules/character'
+import { useResolvedMediaSrc } from '@/modules/media'
 import { ArrowLeft } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, ConfirmDialog, HINT_TEXT, INPUT_CLASS } from '@/shared/panel'
@@ -45,27 +46,7 @@ function isVideoActionKey(key: string): key is VideoActionKey {
 }
 
 function ActionPreview({ url }: { url: string }): React.JSX.Element {
-  const [local, setLocal] = useState<string | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    setLocal(null)
-    void window.spiritagent
-      .apiAsset({ url, preferCache: true })
-      .then(value => {
-        if (!cancelled) {
-          setLocal(value)
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setLocal(null)
-        }
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [url])
+  const media = useResolvedMediaSrc({ type: 'video', url })
 
   return (
     <video
@@ -75,7 +56,7 @@ function ActionPreview({ url }: { url: string }): React.JSX.Element {
       muted
       playsInline
       preload="metadata"
-      src={local ?? undefined}
+      src={media.status === 'ready' ? media.src : undefined}
     />
   )
 }
@@ -101,8 +82,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
   const [selectedPackId, setSelectedPackId] = useState<number | null>(null)
   const [selectedActionKey, setSelectedActionKey] = useState<string | null>(null)
   const [actionFilter, setActionFilter] = useState('')
-  const [editingAction, setEditingAction] = useState<string | null>(null)
-  const [feedback, setFeedback] = useState('')
+  const [editing, setEditing] = useState<{ key: string; feedback: string } | null>(null)
 
   const selectedOutfit = outfits.find(outfit => outfit.id === outfitId) ?? null
   const outfitPacks = selectedOutfit ? packs.filter(pack => pack.outfit_id === selectedOutfit.id) : []
@@ -153,7 +133,6 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
 
   for (const slot of VIDEO_ACTION_KEYS) {
     if (!seenKeys.has(slot)) {
-      seenKeys.add(slot)
       actions.push({
         key: slot,
         label: actionNames[slot],
@@ -179,17 +158,15 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
   const stageText =
     scopedBusy && selectedPack?.status === 'processing' && genStage ? t[VIDEO_GEN_STAGE_TEXT_KEYS[genStage]] : null
 
-  // 请求级错误（生成/穿着失败、并发拒绝）：已有动作包时也必须露出，不能落到「已就绪」。
-  const requestError = scopedError
-
   const statusLine = ((): string => {
     // 包自身 processing 时优先展示进度；阶段文案仅在归属命中时展开。
     if (selectedPack?.status === 'processing') {
       return stageText ?? t.videoGenStageDefault
     }
 
-    if (requestError) {
-      return requestError
+    // 请求级错误（生成/穿着失败、并发拒绝）：已有动作包时也必须露出，不能落到「已就绪」。
+    if (scopedError) {
+      return scopedError
     }
 
     if (selectedPack?.status === 'failed') {
@@ -220,7 +197,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     return t.videoSelectOutfit
   })()
 
-  const statusIsError = !!requestError || selectedPack?.status === 'failed' || !!initialVideoError || packsLoadFailed
+  const statusIsError = !!scopedError || selectedPack?.status === 'failed' || !!initialVideoError || packsLoadFailed
 
   useEffect(() => {
     if (authKind !== 'authenticated') {
@@ -263,15 +240,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     }
   }, [globalBusy])
 
-  useEffect(() => {
-    setSelectedPackId(null)
-    setSelectedActionKey(null)
-    setActionFilter('')
-    setEditingAction(null)
-    setFeedback('')
-  }, [outfitId])
-
-  const requestActionGeneration = (): void => {
+  const requestActionGeneration = (feedback: string): void => {
     if (!selectedPack || !selectedAction || !selectedPack.can_regenerate || globalBusy) {
       return
     }
@@ -286,8 +255,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
       }
 
       setSelectedPackId(null)
-      setEditingAction(null)
-      setFeedback('')
+      setEditing(null)
     })
   }
 
@@ -319,6 +287,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
     return { label: t.videoActionOnDemandShort, className: 'bg-line-strong' }
   }
 
+  const selectedStatus = selectedAction ? actionStatus(selectedAction) : null
   const canGenerateAction = !!selectedPack?.can_regenerate && !globalBusy && !actionIsGenerating
 
   return (
@@ -364,8 +333,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                 onChange={event => {
                   setSelectedPackId(Number(event.target.value))
                   setSelectedActionKey(null)
-                  setEditingAction(null)
-                  setFeedback('')
+                  setEditing(null)
                 }}
                 value={selectedPack?.id ?? ''}
               >
@@ -465,8 +433,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                     key={action.key}
                     onClick={() => {
                       setSelectedActionKey(action.key)
-                      setEditingAction(null)
-                      setFeedback('')
+                      setEditing(null)
                     }}
                     title={status.hint ?? status.label}
                     type="button"
@@ -484,14 +451,12 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
           </div>
 
           <div className="flex min-h-0 flex-col overflow-hidden rounded-xl border border-line-hairline bg-surface-card p-3">
-            {selectedAction ? (
+            {selectedAction && selectedStatus ? (
               <>
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <p className="truncate text-sm font-medium text-strong">{selectedAction.label}</p>
-                    <p className="mt-0.5 text-[11px] text-muted">
-                      {actionStatus(selectedAction).hint ?? actionStatus(selectedAction).label}
-                    </p>
+                    <p className="mt-0.5 text-[11px] text-muted">{selectedStatus.hint ?? selectedStatus.label}</p>
                   </div>
                 </div>
 
@@ -501,9 +466,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                   ) : (
                     <div className="max-w-md px-5 text-center">
                       <p className="text-xs text-body">
-                        {selectedAction.status === 'missing'
-                          ? t.videoActionOnDemand
-                          : actionStatus(selectedAction).label}
+                        {selectedAction.status === 'missing' ? t.videoActionOnDemand : selectedStatus.label}
                       </p>
                       {selectedAction.error ? (
                         <p className="mt-1 text-[11px] text-danger-fg">{selectedAction.error}</p>
@@ -521,7 +484,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                   </p>
                 ) : null}
 
-                {editingAction === selectedAction.key ? (
+                {editing?.key === selectedAction.key ? (
                   <div className="mt-3 space-y-2">
                     <label className={HINT_TEXT} htmlFor="video-action-feedback">
                       {t.videoFeedback}
@@ -530,17 +493,17 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                       className={cn(INPUT_CLASS, 'min-h-16 resize-y text-xs')}
                       id="video-action-feedback"
                       maxLength={1000}
-                      onChange={event => setFeedback(event.target.value)}
-                      value={feedback}
+                      onChange={event => setEditing({ ...editing, feedback: event.target.value })}
+                      value={editing.feedback}
                     />
                     <div className="flex justify-end gap-2">
-                      <button className={BTN_SUBTLE} onClick={() => setEditingAction(null)} type="button">
+                      <button className={BTN_SUBTLE} onClick={() => setEditing(null)} type="button">
                         {t.videoActionCancel}
                       </button>
                       <button
                         className={BTN_PRIMARY}
                         disabled={!canGenerateAction}
-                        onClick={requestActionGeneration}
+                        onClick={() => requestActionGeneration(editing.feedback)}
                         type="button"
                       >
                         {selectedAction.clipUrl ? t.videoRedoAction : t.videoGenMissingAction}
@@ -565,10 +528,7 @@ export function VideoSection({ onBack, outfitId }: VideoSectionProps): React.JSX
                   <div className="mt-3 flex justify-end">
                     <button
                       className={BTN_SUBTLE}
-                      onClick={() => {
-                        setEditingAction(selectedAction.key)
-                        setFeedback('')
-                      }}
+                      onClick={() => setEditing({ key: selectedAction.key, feedback: '' })}
                       type="button"
                     >
                       {selectedAction.clipUrl ? t.videoRedoAction : t.videoGenMissingAction}

@@ -21,6 +21,12 @@ import { decodePayload } from '../gateway-event-util'
 
 // 主动消息与通知投递：companion.message / system.notification / 视频任务完成 / IM 通道提醒。提醒是否出现由打扰档位、锁屏与聊天可见性共同裁决；精灵旁提示另需精灵实际可见，不可见时由未读承接。
 
+function channelLabel(channel: string | undefined): string {
+  const sys = getStrings().notifications.system
+
+  return channel === 'weixin_ilink' ? sys.channelWeixin : sys.channelLabel
+}
+
 export function handleDeliveryEvent(event: GatewayEvent): void {
   switch (event.type) {
     case 'companion.message': {
@@ -33,20 +39,20 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       }>(event.payload)
 
       const bubbles = Array.isArray(payload.bubbles) ? payload.bubbles : undefined
-      const text = bubbles ? (bubbles.filter(b => 'text' in b).at(-1)?.text ?? '') : (payload?.text ?? '')
+      const text = bubbles ? (bubbles.findLast(b => 'text' in b)?.text ?? '') : (payload.text ?? '')
 
       const displayText = chatDisplayText(text)
 
       // 此事件由服务端写入唯一陪伴主会话；会话列表尚未加载时也能确定提醒归属。
-      if (payload?.session_id) {
+      if (payload.session_id) {
         setCompanionSessionId(payload.session_id)
       }
 
-      if (payload?.session_id && displayText) {
+      if (payload.session_id && displayText) {
         rememberPendingMessage(payload.session_id, displayText)
       }
 
-      if (payload?.session_id === $chatSessionId.get()) {
+      if (payload.session_id === $chatSessionId.get()) {
         if (bubbles && payload.message_id) {
           finalizeCompanionReply(bubbles, payload.message_id, undefined, true)
         } else {
@@ -55,7 +61,7 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       }
 
       if (displayText && $effectiveTier.get() !== 'still' && isSpriteOverlayVisible()) {
-        showMediaHint(displayText, payload?.session_id)
+        showMediaHint(displayText, payload.session_id)
       }
 
       break
@@ -63,16 +69,16 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
 
     case 'system.notification': {
       const p = decodePayload<{ kind?: string; title?: string; message?: string; session_id?: string }>(event.payload)
-      const message = p?.message?.trim()
+      const message = p.message?.trim()
 
       if (message) {
-        const sessionId = p?.session_id
+        const sessionId = p.session_id
         const sys = getStrings().notifications.system
         notify({
-          kind: p?.kind === 'error' || p?.kind === 'warning' || p?.kind === 'success' ? p.kind : 'info',
-          title: p?.title || sys.scheduledTask,
+          kind: p.kind === 'error' || p.kind === 'warning' || p.kind === 'success' ? p.kind : 'info',
+          title: p.title || sys.scheduledTask,
           message,
-          durationMs: p?.kind === 'error' ? 0 : undefined,
+          durationMs: p.kind === 'error' ? 0 : undefined,
           action: sessionId
             ? {
                 label: sys.view,
@@ -96,9 +102,9 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
         media?: ChatMediaItem[]
       }>(event.payload)
 
-      const sessionId = p?.session_id
+      const sessionId = p.session_id
 
-      const media: ChatMediaItem[] = p?.media?.length ? p.media : p?.url ? [{ type: 'video', url: p.url }] : []
+      const media: ChatMediaItem[] = p.media?.length ? p.media : p.url ? [{ type: 'video', url: p.url }] : []
 
       if (!media.length) {
         break
@@ -137,7 +143,7 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
     case 'video_gen.failed': {
       const p = decodePayload<{ error?: string }>(event.payload)
 
-      if (p?.error && !$screenLocked.get()) {
+      if (p.error && !$screenLocked.get()) {
         notify({ kind: 'warning', message: p.error })
       }
 
@@ -148,19 +154,19 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       // IM 通道绑定状态变化（outbox；Hub 设置页以 REST 为真相源，这里只做桌面提醒）。
       const p = decodePayload<{ channel?: string; status?: string; error?: string }>(event.payload)
       const sys = getStrings().notifications.system
-      const label = p?.channel === 'weixin_ilink' ? sys.channelWeixin : sys.channelLabel
+      const label = channelLabel(p.channel)
 
       const text =
-        p?.status === 'connected'
+        p.status === 'connected'
           ? sys.channelConnected(label)
-          : p?.status === 'login_required'
+          : p.status === 'login_required'
             ? sys.channelLoginRequired(label)
-            : p?.status === 'error'
-              ? sys.channelError(label, p?.error)
+            : p.status === 'error'
+              ? sys.channelError(label, p.error)
               : null
 
       if (text && !$screenLocked.get()) {
-        notify({ kind: p?.status === 'error' ? 'error' : 'info', message: text })
+        notify({ kind: p.status === 'error' ? 'error' : 'info', message: text })
       }
 
       break
@@ -173,14 +179,14 @@ export function handleDeliveryEvent(event: GatewayEvent): void {
       )
 
       const sys = getStrings().notifications.system
-      const label = p?.channel === 'weixin_ilink' ? sys.channelWeixin : sys.channelLabel
-      const name = p?.peer_name || p?.peer_id || ''
+      const label = channelLabel(p.channel)
+      const name = p.peer_name || p.peer_id || ''
 
       if (!$screenLocked.get()) {
         notify({
           kind: 'info',
           message: sys.channelPeerRequest(label, name),
-          detail: p?.preview
+          detail: p.preview
         })
       }
 

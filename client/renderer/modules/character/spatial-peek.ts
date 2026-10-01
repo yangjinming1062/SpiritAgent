@@ -1,4 +1,4 @@
-import type { DesktopWindowSceneSnapshot } from '@ipc/contracts'
+import type { DesktopScreenRect, DesktopWindowSceneSnapshot } from '@ipc/contracts'
 import { clamp } from '@runtime'
 
 import type { ActionClipEntry, PeekGeometry } from './actions'
@@ -17,8 +17,8 @@ export type SpatialPeek =
       windowId: string
       windowPid: number
       runnerInstanceId: string
-      targetRect: { x: number; y: number; w: number; h: number }
-      occluders: Array<{ x: number; y: number; w: number; h: number }>
+      targetRect: DesktopScreenRect
+      occluders: DesktopScreenRect[]
     })
 
 export interface WindowPeekLayout {

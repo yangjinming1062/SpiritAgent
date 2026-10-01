@@ -1,3 +1,6 @@
+import type { SpiritAgentSelectPathsOptions } from '@ipc/contracts'
+
+import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { notifyError } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
@@ -7,8 +10,12 @@ import type { PendingAttachment } from './chat-store'
 import { ensureChatSession } from './session-list-store'
 
 // 附件扩展名分拣：视频容器与后端白名单一致（mp4/mov，供应商实测 webb 被拒）；图片同步支持 HEIC/HEIF（iPhone 截图）/TIFF/AVIF/JXL（next-gen）。
-const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|heif|tiff?|avif|jxl)$/i
-const VIDEO_EXT = /\.(mp4|mov)$/i
+const IMAGE_EXTENSIONS = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic', 'heif', 'tiff', 'tif', 'avif', 'jxl']
+const VIDEO_EXTENSIONS = ['mp4', 'mov']
+
+const extensionPattern = (extensions: string[]): RegExp => new RegExp(`\\.(${extensions.join('|')})$`, 'i')
+const IMAGE_EXT = extensionPattern(IMAGE_EXTENSIONS)
+const VIDEO_EXT = extensionPattern(VIDEO_EXTENSIONS)
 
 type SetPending = React.Dispatch<React.SetStateAction<PendingAttachment | null>>
 
@@ -22,7 +29,7 @@ function getVideoUploadOptions() {
   const picker = getStrings().chat.picker
 
   return {
-    filters: [{ extensions: ['mp4', 'mov'], name: picker.videoFilterName }],
+    filters: [{ extensions: VIDEO_EXTENSIONS, name: picker.videoFilterName }],
     multiple: false,
     title: picker.selectVideo
   }
@@ -32,25 +39,31 @@ function getImagePickOptions() {
   const picker = getStrings().chat.picker
 
   return {
-    filters: [
-      {
-        extensions: ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'heic', 'heif', 'tiff', 'tif', 'avif', 'jxl'],
-        name: picker.imageFilterName
-      }
-    ],
+    filters: [{ extensions: IMAGE_EXTENSIONS, name: picker.imageFilterName }],
     multiple: false,
     title: picker.selectImage
   }
 }
 
-export async function pickFile(setPending: SetPending): Promise<void> {
+async function pickPath(
+  options: SpiritAgentSelectPathsOptions,
+  apply: (path: string) => Promise<void> | void
+): Promise<void> {
   try {
-    const [path] = await window.spiritagent.selectPaths({ multiple: false, title: getStrings().chat.picker.selectFile })
+    const [path] = await window.spiritagent.selectPaths(options)
 
     if (!path) {
       return
     }
 
+    await apply(path)
+  } catch (err) {
+    reportPickerError(err)
+  }
+}
+
+export function pickFile(setPending: SetPending): Promise<void> {
+  return pickPath({ multiple: false, title: getStrings().chat.picker.selectFile }, async path => {
     if (VIDEO_EXT.test(path)) {
       await attachVideoFile(path, setPending)
     } else if (IMAGE_EXT.test(path)) {
@@ -58,55 +71,21 @@ export async function pickFile(setPending: SetPending): Promise<void> {
     } else {
       setPending({ type: 'file', fileName: basename(path), path })
     }
-  } catch (err) {
-    reportPickerError(err)
-  }
+  })
 }
 
-export async function pickFolder(setPending: SetPending): Promise<void> {
-  try {
-    const [path] = await window.spiritagent.selectPaths({
-      directories: true,
-      multiple: false,
-      title: getStrings().chat.picker.selectFolder
-    })
-
-    if (!path) {
-      return
-    }
-
+export function pickFolder(setPending: SetPending): Promise<void> {
+  return pickPath({ directories: true, multiple: false, title: getStrings().chat.picker.selectFolder }, path =>
     setPending({ type: 'folder', folderName: basename(path), path })
-  } catch (err) {
-    reportPickerError(err)
-  }
+  )
 }
 
-export async function pickImage(setPending: SetPending): Promise<void> {
-  try {
-    const [path] = await window.spiritagent.selectPaths(getImagePickOptions())
-
-    if (!path) {
-      return
-    }
-
-    setPending({ type: 'image', value: path, fileName: basename(path) })
-  } catch (err) {
-    reportPickerError(err)
-  }
+export function pickImage(setPending: SetPending): Promise<void> {
+  return pickPath(getImagePickOptions(), path => setPending({ type: 'image', value: path, fileName: basename(path) }))
 }
 
-export async function pickVideo(setPending: SetPending): Promise<void> {
-  try {
-    const [path] = await window.spiritagent.selectPaths(getVideoUploadOptions())
-
-    if (!path) {
-      return
-    }
-
-    await attachVideoFile(path, setPending)
-  } catch (err) {
-    reportPickerError(err)
-  }
+export function pickVideo(setPending: SetPending): Promise<void> {
+  return pickPath(getVideoUploadOptions(), path => attachVideoFile(path, setPending))
 }
 
 // 视频附加即上传（本地后端 <1s）：本地模式下超 50MB 会被后端 413 拒绝并在 error 里给出指引。结果只回填本次加入的附件对象：切换会话、移除或重新选择后，迟到结果作废。
@@ -125,9 +104,7 @@ export async function attachVideoFile(path: string, setPending: SetPending): Pro
     )
   } catch (err) {
     setPending(prev =>
-      prev === uploading
-        ? { type: 'video', fileName, path, status: 'error', error: err instanceof Error ? err.message : String(err) }
-        : prev
+      prev === uploading ? { type: 'video', fileName, path, status: 'error', error: errorMessage(err) } : prev
     )
   }
 }

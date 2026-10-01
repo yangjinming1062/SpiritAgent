@@ -17,7 +17,8 @@ export {
   resolveActionClipUrl,
   resolveHitmask,
   settlePlayInstance,
-  shouldStartInstance
+  shouldStartInstance,
+  type VideoActionWire
 } from './actions'
 export { $screenLocked, reportInteractionStat, startActivityMonitor } from './activity'
 export { startAutonomyProvision, stopAutonomyProvision } from './autonomy'
@@ -129,10 +130,13 @@ export {
   activateVideoPack,
   generateVideoPack,
   hydrateVideoPack,
-  type VideoActionWire,
-  videoGenScopeMatches
+  videoGenFailed,
+  videoGenProgress,
+  videoGenReady,
+  videoGenScopeMatches,
+  videoPackEventReceived
 } from './rendering/video/video-pack-store'
-export { findWindowByKeyword, performRitualWalk, type WindowGeom } from './ritual-walk'
+export { findWindowByKeyword, performRitualWalk } from './ritual-walk'
 export { SelfSourceImageFlow, type SelfSourceReferenceImage } from './self-source-image'
 export {
   $defaultScale,
@@ -167,7 +171,7 @@ export {
 } from './spatial'
 export { peekMaskRects } from './spatial-peek'
 export { SpriteStatusBadge } from './sprite-status-badge'
-export { $contextMenuPos, closeContextMenu } from './sprite/context-menu-store'
+export { $contextMenuPos, closeContextMenu, openContextMenu } from './sprite/context-menu-store'
 export { FootGlow, triggerFootGlowPulse } from './sprite/foot-glow'
 export { playSpriteGesture } from './sprite/gesture'
 export { SpriteTargetCue, useSpriteBodyGesture } from './sprite/gesture-layer'

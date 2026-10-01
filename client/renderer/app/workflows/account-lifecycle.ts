@@ -2,11 +2,10 @@ import { useEffect } from 'react'
 
 import { setCompanionLifecycle } from '@/modules/character'
 import { useMainProcessListener } from '@/shared/hooks/use-main-process-listener'
-import { authedApi } from '@/shared/lib/authed-api'
+import { authedApi, captureAuthScope } from '@/shared/lib/authed-api'
 import { requestGateway } from '@/shared/lib/gateway-request'
 import { log } from '@/shared/lib/log'
-import { currentClearEpoch } from '@/shared/lib/storage'
-import { $auth, applyAuthBroadcast, expireSession, hydrateAuth } from '@/shared/store/auth'
+import { applyAuthBroadcast, expireSession, hydrateAuth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 
 interface OnboardingState {
@@ -18,22 +17,13 @@ let lifecycleUnresolved = false
 
 /** 各窗口独立重解 lifecycle（unauthed/onboarding/ready）；换号重置内存后重新解析。 */
 async function syncCompanionLifecycle(): Promise<void> {
-  const auth = $auth.get()
+  const isCurrent = captureAuthScope()
 
-  if (auth.kind !== 'authenticated') {
+  if (!isCurrent) {
     lifecycleUnresolved = false
     setCompanionLifecycle('unauthed')
 
     return
-  }
-
-  const sessionId = auth.snapshot.sessionId
-  const epoch = currentClearEpoch()
-
-  const isCurrent = (): boolean => {
-    const current = $auth.get()
-
-    return current.kind === 'authenticated' && current.snapshot.sessionId === sessionId && currentClearEpoch() === epoch
   }
 
   let complete: boolean | undefined

@@ -1,19 +1,19 @@
 import { atom } from 'nanostores'
 
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
-import { safeJsonParse } from '@/shared/lib/safe-json'
 import {
-  accountStorageKey,
   currentClearEpoch,
+  persistString,
   registerCompanionStorageKey,
   registerStorageClearHandler,
-  storedString
+  storedJson
 } from '@/shared/lib/storage'
 import { getStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
-import { type PickedImage, resolvePortraitUrl } from './avatar-image'
+import { parseImageDataUrl, type PickedImage, resolvePortraitUrl } from './avatar-image'
 import { patchAvatarSeeds } from './avatar-seeds-store'
 import { $activeAvatarId } from './portrait-store'
 
@@ -65,7 +65,7 @@ const EMPTY_STATE: FullbodyReferenceState = {
 }
 
 function isFullbodyReferenceIndex(value: unknown): value is FullbodyReferenceIndex {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+  if (!isRecord(value)) {
     return false
   }
 
@@ -73,13 +73,7 @@ function isFullbodyReferenceIndex(value: unknown): value is FullbodyReferenceInd
     ([avatarId, entries]) =>
       /^\d+$/.test(avatarId) &&
       Array.isArray(entries) &&
-      entries.every(entry => {
-        if (typeof entry !== 'object' || entry === null) {
-          return false
-        }
-
-        return 'id' in entry && typeof entry.id === 'string' && 'rawUrl' in entry && typeof entry.rawUrl === 'string'
-      })
+      entries.every(entry => isRecord(entry) && typeof entry.id === 'string' && typeof entry.rawUrl === 'string')
   )
 }
 
@@ -105,10 +99,7 @@ function historyRecord(entry: FullbodyReferenceVersion): FullbodyReferenceRecord
 }
 
 function loadHistoryIndex(): FullbodyReferenceIndex {
-  const stored = storedString(FULLBODY_HISTORY_STORAGE_KEY)
-  const parsed = safeJsonParse<unknown>(stored ?? '', {})
-
-  return isFullbodyReferenceIndex(parsed) ? parsed : {}
+  return storedJson<FullbodyReferenceIndex>(FULLBODY_HISTORY_STORAGE_KEY, {}, isFullbodyReferenceIndex)
 }
 
 async function resolveHistory(avatarId: number): Promise<FullbodyReferenceVersion[]> {
@@ -122,7 +113,7 @@ async function resolveHistory(avatarId: number): Promise<FullbodyReferenceVersio
     })
   )
 
-  return resolved.filter((entry): entry is FullbodyReferenceVersion => entry !== null).slice(-MAX_HISTORY)
+  return resolved.filter((entry): entry is FullbodyReferenceVersion => entry !== null)
 }
 
 function saveHistory(avatarId: number, entries: FullbodyReferenceVersion[]): void {
@@ -135,36 +126,11 @@ function saveHistory(avatarId: number, entries: FullbodyReferenceVersion[]): voi
     delete next[key]
   }
 
-  try {
-    const raw = Object.keys(next).length > 0 ? JSON.stringify(next) : null
-    const storageKey = accountStorageKey(FULLBODY_HISTORY_STORAGE_KEY)
-
-    if (!storageKey) {
-      return
-    }
-
-    if (raw === null) {
-      window.localStorage.removeItem(storageKey)
-    } else {
-      window.localStorage.setItem(storageKey, raw)
-    }
-  } catch (error) {
-    log.warn('fullbody-reference', 'Could not persist history index', error)
-  }
+  persistString(FULLBODY_HISTORY_STORAGE_KEY, Object.keys(next).length > 0 ? JSON.stringify(next) : null)
 }
 
 function nextHistoryId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-function parsePreviewDataUrl(dataUrl: string): PickedImage | null {
-  const match = /^data:([^;,]+)?;base64,([\s\S]+)$/.exec(dataUrl)
-
-  if (!match?.[2]) {
-    return null
-  }
-
-  return { base64: match[2], contentType: match[1] || 'image/png', previewUrl: dataUrl }
 }
 
 function clearReference(): void {
@@ -175,6 +141,29 @@ function clearReference(): void {
 
 registerStorageClearHandler(clearReference)
 $activeAvatarId.listen(clearReference)
+
+// 开始一次改写参考图状态的操作并使更早的操作作废；返回的判活函数在换号、换头像、重置或被更新的操作取代后为 false。
+function beginOperation(avatarId: number): () => boolean {
+  const version = ++operationVersion
+  const epoch = currentClearEpoch()
+
+  return () => version === operationVersion && epoch === currentClearEpoch() && $activeAvatarId.get() === avatarId
+}
+
+// 全身种子图写入本地缓存，自备图流程直接读取该缓存。preview 解析失败时不要显式传 null：store 的显式 display 分支会冲掉旧展示 URL，导致自备图弹窗突然缺参考图；缺省 undefined 交给 resolveDisplayUrl 保留 previous。
+function syncSeeds(
+  avatarId: number,
+  response: ReferenceResponse,
+  rawUrl: string | null,
+  previewUrl: string | null
+): Promise<void> {
+  return patchAvatarSeeds({
+    avatarId,
+    assetUrl: response.asset_url ?? undefined,
+    fullbodySeedUrl: rawUrl,
+    ...(previewUrl ? { fullbodyDisplayUrl: previewUrl } : {})
+  })
+}
 
 function updateReference(
   avatarId: number,
@@ -191,15 +180,11 @@ function updateReference(
     return pending.promise
   }
 
-  const version = ++operationVersion
-  const epoch = currentClearEpoch()
+  const isCurrent = beginOperation(avatarId)
   const previous = $fullbodyReference.get()
   const base = previous.avatarId === avatarId ? previous : { ...EMPTY_STATE, avatarId }
   $fullbodyReference.set({ ...base, busy: true, error: null, errorMessage: null })
   let history = base.history
-
-  const isCurrent = (): boolean =>
-    version === operationVersion && epoch === currentClearEpoch() && $activeAvatarId.get() === avatarId
 
   const run = async (): Promise<boolean> => {
     try {
@@ -293,14 +278,8 @@ function updateReference(
         history
       })
 
-      // 全身种子图写入本地缓存，自备图流程直接读取该缓存。preview 解析失败时不要显式传 null：store 的显式 display 分支会冲掉旧展示 URL，导致自备图弹窗突然缺参考图；缺省 undefined 交给 resolveDisplayUrl 保留 previous。
       if (!candidate) {
-        await patchAvatarSeeds({
-          avatarId,
-          assetUrl: response.asset_url ?? undefined,
-          fullbodySeedUrl: rawUrl,
-          ...(previewUrl ? { fullbodyDisplayUrl: previewUrl } : {})
-        })
+        await syncSeeds(avatarId, response, rawUrl, previewUrl)
       }
 
       return isCurrent() && (!rawUrl || Boolean(previewUrl))
@@ -341,18 +320,14 @@ export async function restoreFullbodyReferenceVersion(avatarId: number, versionI
     return false
   }
 
-  const image = parsePreviewDataUrl(versionToRestore.previewUrl)
+  const image = parseImageDataUrl(versionToRestore.previewUrl)
 
   if (!image) {
     return false
   }
 
-  const version = ++operationVersion
-  const epoch = currentClearEpoch()
+  const isCurrent = beginOperation(avatarId)
   $fullbodyReference.set({ ...current, busy: true, error: null, errorMessage: null })
-
-  const isCurrent = (): boolean =>
-    version === operationVersion && epoch === currentClearEpoch() && $activeAvatarId.get() === avatarId
 
   try {
     const response = await window.spiritagent.api<ReferenceResponse>({
@@ -394,10 +369,6 @@ export async function restoreFullbodyReferenceVersion(avatarId: number, versionI
 
     saveHistory(avatarId, history)
 
-    if (!isCurrent()) {
-      return false
-    }
-
     $fullbodyReference.set({
       ...current,
       rawUrl,
@@ -411,12 +382,7 @@ export async function restoreFullbodyReferenceVersion(avatarId: number, versionI
       history
     })
 
-    await patchAvatarSeeds({
-      avatarId,
-      assetUrl: response.asset_url ?? undefined,
-      fullbodySeedUrl: rawUrl,
-      ...(previewUrl ? { fullbodyDisplayUrl: previewUrl } : {})
-    })
+    await syncSeeds(avatarId, response, rawUrl, previewUrl)
 
     return Boolean(rawUrl && previewUrl)
   } catch (error) {
@@ -463,8 +429,7 @@ export async function acceptFullbodyCandidate(avatarId: number): Promise<boolean
     return false
   }
 
-  const version = ++operationVersion
-  const epoch = currentClearEpoch()
+  const isCurrent = beginOperation(avatarId)
   $fullbodyReference.set({ ...current, busy: true, errorMessage: null })
 
   try {
@@ -474,14 +439,14 @@ export async function acceptFullbodyCandidate(avatarId: number): Promise<boolean
       body: {}
     })
 
-    if (version !== operationVersion || epoch !== currentClearEpoch() || $activeAvatarId.get() !== avatarId) {
+    if (!isCurrent()) {
       return false
     }
 
     const rawUrl = response.seed_fullbody_url || null
     const previewUrl = await resolvePortraitUrl(rawUrl)
 
-    if (version !== operationVersion || epoch !== currentClearEpoch() || $activeAvatarId.get() !== avatarId) {
+    if (!isCurrent()) {
       return false
     }
 
@@ -497,16 +462,11 @@ export async function acceptFullbodyCandidate(avatarId: number): Promise<boolean
       candidateError: null,
       history: current.history
     })
-    await patchAvatarSeeds({
-      avatarId,
-      assetUrl: response.asset_url ?? undefined,
-      fullbodySeedUrl: rawUrl,
-      ...(previewUrl ? { fullbodyDisplayUrl: previewUrl } : {})
-    })
+    await syncSeeds(avatarId, response, rawUrl, previewUrl)
 
     return Boolean(rawUrl && previewUrl)
   } catch (error) {
-    if (version === operationVersion && epoch === currentClearEpoch()) {
+    if (isCurrent()) {
       $fullbodyReference.set({
         ...current,
         busy: false,
@@ -528,8 +488,7 @@ export async function retryFullbodyCandidateAnalysis(avatarId: number): Promise<
     return false
   }
 
-  const version = ++operationVersion
-  const epoch = currentClearEpoch()
+  const isCurrent = beginOperation(avatarId)
   $fullbodyReference.set({ ...current, busy: true, candidateError: null })
 
   try {
@@ -539,7 +498,7 @@ export async function retryFullbodyCandidateAnalysis(avatarId: number): Promise<
       body: {}
     })
 
-    if (version !== operationVersion || epoch !== currentClearEpoch() || $activeAvatarId.get() !== avatarId) {
+    if (!isCurrent()) {
       return false
     }
 
@@ -548,7 +507,7 @@ export async function retryFullbodyCandidateAnalysis(avatarId: number): Promise<
 
     return status === 'ready'
   } catch (error) {
-    if (version === operationVersion && epoch === currentClearEpoch()) {
+    if (isCurrent()) {
       $fullbodyReference.set({
         ...current,
         busy: false,

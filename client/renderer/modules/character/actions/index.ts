@@ -24,6 +24,8 @@ export type {
   ActionPlayCommand,
   ActionPlayInstance,
   NormalizedRect,
-  PeekGeometry
+  PeekGeometry,
+  VideoActionWire,
+  VideoPackWire
 } from './action-types'
 export { isActionStageVisible, observeActionStageVisibility } from './action-visibility'

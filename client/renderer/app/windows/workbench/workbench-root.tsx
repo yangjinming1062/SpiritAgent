@@ -2,7 +2,7 @@
 
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { CompanionMenu } from '@/app/components/surface-companion/companion-menu'
 import { SurfaceCompanion } from '@/app/components/surface-companion/surface-companion'
@@ -18,6 +18,7 @@ import {
 } from '@/modules/conversation'
 import { MediaViewerOverlay } from '@/modules/media'
 import { useInteractiveRegion, useWindowMouseCapture } from '@/shared'
+import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { normalizeHashPath } from '@/shared/lib/hash-route'
 import { ArrowLeft, Home, SlidersHorizontal, Terminal } from '@/shared/lib/icons'
 import { cn } from '@/shared/lib/utils'
@@ -64,13 +65,7 @@ export function WorkbenchRoot(): React.JSX.Element {
 
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  const [settingsOpen, setSettingsOpen] = useState(() => {
-    if (typeof window !== 'undefined' && window.location.hash) {
-      return isStationSettingsHash(window.location.hash)
-    }
-
-    return false
-  })
+  const [settingsOpen, setSettingsOpen] = useState(() => isStationSettingsHash(window.location.hash))
 
   const sessionFromUrlHandledRef = useRef(false)
 
@@ -97,14 +92,11 @@ export function WorkbenchRoot(): React.JSX.Element {
       return
     }
 
-    if (typeof window !== 'undefined' && window.location.search) {
-      const params = new URLSearchParams(window.location.search)
-      const sid = params.get('sessionId')
+    const sid = new URLSearchParams(window.location.search).get('sessionId')
 
-      if (sid) {
-        sessionFromUrlHandledRef.current = true
-        void switchSession(sid)
-      }
+    if (sid) {
+      sessionFromUrlHandledRef.current = true
+      void switchSession(sid)
     }
   }, [gatewayState])
 
@@ -120,34 +112,23 @@ export function WorkbenchRoot(): React.JSX.Element {
     return () => window.removeEventListener('hashchange', onHash)
   }, [])
 
-  const clearSettingsHash = useCallback((): void => {
-    if (typeof window !== 'undefined' && isStationSettingsHash(window.location.hash)) {
+  const closeSettings = (): void => {
+    if (isStationSettingsHash(window.location.hash)) {
       window.history.replaceState(null, '', window.location.pathname + window.location.search)
     }
-  }, [])
 
-  const toggleSettings = (): void => {
-    setSettingsOpen(open => {
-      if (open) {
-        clearSettingsHash()
-      }
-
-      return !open
-    })
+    setSettingsOpen(false)
   }
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape' && settingsOpen) {
-        clearSettingsHash()
-        setSettingsOpen(false)
-      }
+  const toggleSettings = (): void => {
+    if (settingsOpen) {
+      closeSettings()
+    } else {
+      setSettingsOpen(true)
     }
+  }
 
-    window.addEventListener('keydown', onKey)
-
-    return () => window.removeEventListener('keydown', onKey)
-  }, [clearSettingsHash, settingsOpen])
+  useEscapeKey(closeSettings, { capture: false, enabled: settingsOpen, preventDefault: false, stopPropagation: false })
 
   return (
     <div className={styles.windowContainer}>
@@ -201,10 +182,7 @@ export function WorkbenchRoot(): React.JSX.Element {
           </div>
         ) : null}
 
-        <div
-          className={cn(styles.body, settingsOpen && styles.bodyHidden)}
-          style={settingsOpen ? { display: 'none' } : undefined}
-        >
+        <div className={cn(styles.body, settingsOpen && styles.bodyHidden)}>
           <div className={styles.sidebarArea}>
             <SessionSidebar />
           </div>

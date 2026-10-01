@@ -5,7 +5,6 @@ import type React from 'react'
 import { useEffect, useRef } from 'react'
 
 import { ChatPanel, openMainSession, pushExternalAttachment, useIsReadOnlySession } from '@/modules/conversation'
-import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $gatewayState } from '@/shared/store/gateway'
 
@@ -18,30 +17,26 @@ import { MomentsPage } from './moments-page'
 import { ScenePage } from './scene-page'
 import { LivingSettings } from './settings/living-settings'
 
-// 视图 → 渲染组件闭包表（`chat` 走 ChatStage 局部组件）；Record<LivingView,…> 强制新成员时报缺 key 错。
-const VIEW_RENDERERS: Record<LivingView, () => React.JSX.Element> = {
-  appearance: () => <AppearancePage />,
-  channels: () => <ChannelsPage />,
-  chat: () => <ChatStage />,
-  diary: () => <DiaryPage />,
-  moments: () => <MomentsPage />,
-  scene: () => <ScenePage />,
-  settings: () => <LivingSettings />
+// 视图 → 页面组件；Record<LivingView,…> 强制新成员时报缺 key 错。
+const VIEWS: Record<LivingView, React.ComponentType> = {
+  appearance: AppearancePage,
+  channels: ChannelsPage,
+  chat: LivingChatView,
+  diary: DiaryPage,
+  moments: MomentsPage,
+  scene: ScenePage,
+  settings: LivingSettings
 }
 
 export function LivingStage(): React.JSX.Element {
   const view = useStore($livingView)
+  const View = VIEWS[view]
 
-  return VIEW_RENDERERS[view]()
+  return <View />
 }
 
-function ChatStage(): React.JSX.Element {
+function LivingChatView(): React.JSX.Element {
   const gatewayState = useStore($gatewayState)
-
-  return <LivingChatView gatewayState={gatewayState} />
-}
-
-function LivingChatView({ gatewayState }: { gatewayState: ConnectionState }): React.JSX.Element {
   const isReadOnlySession = useIsReadOnlySession()
   const scrollRef = useRef<HTMLDivElement>(null)
 

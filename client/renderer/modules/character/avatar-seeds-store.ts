@@ -2,6 +2,7 @@
 
 import { atom } from 'nanostores'
 
+import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import {
   currentClearEpoch,
@@ -47,13 +48,7 @@ const EMPTY_SEEDS: AvatarSeeds = { avatarId: null, avatarUrl: null, fullbodySeed
 const EMPTY_PERSISTED: PersistedAvatarSeeds = { avatarId: null, assetUrl: null, fullbodySeedUrl: null }
 
 function isPersistableSeeds(val: unknown): val is PersistedAvatarSeeds {
-  if (typeof val !== 'object' || val === null) {
-    return false
-  }
-
-  const v = val as Partial<PersistedAvatarSeeds>
-
-  return Boolean(v.assetUrl || v.fullbodySeedUrl)
+  return isRecord(val) && Boolean(val.assetUrl || val.fullbodySeedUrl)
 }
 
 const seedsPersisted = definePersistedAtom<PersistedAvatarSeeds>({
@@ -89,7 +84,8 @@ function persistRaw(next: PersistedAvatarSeeds): void {
   seedsPersisted.set(next)
 }
 
-function clearSeeds(avatarId: number | null = null): void {
+/** 清空种子缓存并作废在途读写：形象切换（portrait-store 调用）与换号清理共用。 */
+export function clearAvatarSeeds(avatarId: number | null = null): void {
   seedEpoch += 1
   inflight = null
   persistRaw({ ...EMPTY_PERSISTED, avatarId })
@@ -214,7 +210,7 @@ export function patchAvatarSeeds(patch: AvatarSeedsPatch): Promise<void> {
 }
 
 registerStorageClearHandler(() => {
-  clearSeeds(null)
+  clearAvatarSeeds(null)
 })
 
 function restoreCachedSeeds(): void {
@@ -228,11 +224,6 @@ function restoreCachedSeeds(): void {
 
 registerStorageRestoreHandler(restoreCachedSeeds)
 restoreCachedSeeds()
-
-/** 形象切换时由 portrait-store 调用，清空上一形象的种子缓存。 */
-export function clearAvatarSeeds(avatarId: number | null = null): void {
-  clearSeeds(avatarId)
-}
 
 /** 确保本地缓存可用：已有展示 URL 直接返回；有持久化原始路径优先本地解析；仍缺失才向 avatar 接口补拉（状态水合，不是参考图下发）。 */
 export function hydrateAvatarSeeds(): Promise<AvatarSeeds> {

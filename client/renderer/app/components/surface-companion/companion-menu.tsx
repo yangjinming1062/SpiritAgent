@@ -1,9 +1,10 @@
 import type { SurfaceCompanionPreference, SurfaceId } from '@ipc/contracts'
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useLayoutEffect, useRef, useState } from 'react'
 
 import { useInteractiveRegion } from '@/shared'
+import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
 import { log } from '@/shared/lib/log'
 import { $surfaceCompanions, setSurfaceCompanion } from '@/shared/store/surfaces'
@@ -27,31 +28,7 @@ export function CompanionMenu({ surface }: { surface: SurfaceId }): React.JSX.El
     probeInteractiveRegions(1)
   }, [open])
 
-  useEffect(() => {
-    if (!open) {
-      return
-    }
-
-    const onPointerDown = (event: PointerEvent): void => {
-      if (!rootRef.current?.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape') {
-        setOpen(false)
-      }
-    }
-
-    window.addEventListener('pointerdown', onPointerDown)
-    window.addEventListener('keydown', onKeyDown)
-
-    return () => {
-      window.removeEventListener('pointerdown', onPointerDown)
-      window.removeEventListener('keydown', onKeyDown)
-    }
-  }, [open])
+  useDismissOnOutside(rootRef, open, () => setOpen(false))
 
   const change = async (preference: SurfaceCompanionPreference): Promise<void> => {
     if (savingRef.current) {

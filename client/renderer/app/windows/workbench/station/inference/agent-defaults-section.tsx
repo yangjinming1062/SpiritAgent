@@ -1,3 +1,4 @@
+import { REASONING_EFFORT_VALUES } from '@/shared/lib/reasoning-effort'
 import { cn } from '@/shared/lib/utils'
 import { CapsuleTabs, HINT_TEXT, SECTION_TITLE, SettingCard, SettingRow, Toggle } from '@/shared/panel'
 import type { Dictionary } from '@/shared/strings'
@@ -8,9 +9,6 @@ export interface AgentFormState {
   reasoning_effort: string
   enable_background_review: boolean
 }
-
-// 推断档位的合法值集合：选项渲染与后端返回值校验共用，避免两处清单漂移。
-export const REASONING_OPTIONS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
 
 export function AgentDefaultsSection({
   disabled,
@@ -33,7 +31,7 @@ export function AgentDefaultsSection({
             ariaLabel={t.reasoningEffort}
             disabled={disabled}
             onChange={value => update({ reasoning_effort: value })}
-            options={REASONING_OPTIONS.map(opt => ({ value: opt, label: t.reasoningOptions[opt] }))}
+            options={REASONING_EFFORT_VALUES.map(opt => ({ value: opt, label: t.reasoningOptions[opt] }))}
             size="sm"
             value={state.reasoning_effort}
           />

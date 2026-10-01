@@ -1,9 +1,10 @@
 import { useStore } from '@nanostores/react'
 import { useLayoutEffect, useRef, useState } from 'react'
 
-import { openSessionSurface } from '@/app/workflows/session-delivery'
-import { $effectiveTier, $screenLocked } from '@/modules/character'
+import { openSessionSurface, openWhisper } from '@/app/workflows/session-delivery'
 import {
+  $effectiveTier,
+  $screenLocked,
   $spatialPeek,
   $spatialPos,
   $spatialScale,
@@ -12,12 +13,10 @@ import {
   $viewport,
   computeOverlayAnchorBesideSprite
 } from '@/modules/character'
-import { $proactiveBubble, setProactiveBubble } from '@/modules/conversation'
-import { pendingMessages } from '@/modules/conversation'
+import { $proactiveBubble, pendingMessages, setProactiveBubble } from '@/modules/conversation'
 import { useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { cn } from '@/shared/lib/utils'
 import { $chatVisible } from '@/shared/store/chat-visibility'
-
-import { openWhisper } from '../whisper'
 
 // 仅在桌面提示未读；可见期间订阅轮廓与空间状态，点击按所属会话进入对话。
 const BUBBLE_GAP = 8
@@ -103,7 +102,11 @@ function ProactiveBubbleView({ text, sessionId }: { text: string; sessionId?: st
     >
       <style>{`@keyframes proactiveIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}.proactive-bubble>span{animation:proactiveIn .25s ease-out}`}</style>
       <span
-        className={`block rounded-2xl ${side === 'right' ? 'rounded-tl-sm' : 'rounded-tr-sm'} border border-line-standard bg-surface-card px-3.5 py-2 text-sm leading-relaxed break-words text-strong shadow-xl backdrop-blur-glass transition hover:bg-fill-hover`}
+        className={cn(
+          'block rounded-2xl',
+          side === 'right' ? 'rounded-tl-sm' : 'rounded-tr-sm',
+          'border border-line-standard bg-surface-card px-3.5 py-2 text-sm leading-relaxed break-words text-strong shadow-xl backdrop-blur-glass transition hover:bg-fill-hover'
+        )}
       >
         {text}
       </span>

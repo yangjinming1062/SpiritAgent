@@ -2,8 +2,8 @@
 
 import { atom } from 'nanostores'
 
-import { authedApi } from '@/shared/lib/authed-api'
-import { log } from '@/shared/lib/log'
+import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
+import { isRecord } from '@/shared/lib/is-record'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 
 export interface MomentCommentEntry {
@@ -153,15 +153,7 @@ export async function hydrateMoments(): Promise<boolean> {
       return false
     }
 
-    if (!result.ok) {
-      if (result.reason === 'err') {
-        log.warn('journal', 'hydrateMoments failed:', result.error)
-      }
-
-      return false
-    }
-
-    if (!result.value) {
+    if (!apiSucceeded(result, 'journal', 'hydrateMoments failed:') || !result.value) {
       return false
     }
 
@@ -202,15 +194,7 @@ export async function hydrateDiary(opts: { from?: string; to?: string } = {}): P
       return false
     }
 
-    if (!result.ok) {
-      if (result.reason === 'err') {
-        log.warn('journal', 'hydrateDiary failed:', result.error)
-      }
-
-      return false
-    }
-
-    if (!result.value) {
+    if (!apiSucceeded(result, 'journal', 'hydrateDiary failed:') || !result.value) {
       return false
     }
 
@@ -258,15 +242,7 @@ export async function commentMoment(momentId: string, content: string): Promise<
     return false
   }
 
-  if (!result.ok) {
-    if (result.reason === 'err') {
-      log.warn('journal', 'commentMoment failed:', result.error)
-    }
-
-    return false
-  }
-
-  if (!result.value) {
+  if (!apiSucceeded(result, 'journal', 'commentMoment failed:') || !result.value) {
     return false
   }
 
@@ -287,11 +263,7 @@ export async function deleteMomentComment(momentId: string, commentId: string): 
     return false
   }
 
-  if (!result.ok) {
-    if (result.reason === 'err') {
-      log.warn('journal', 'deleteMomentComment failed:', result.error)
-    }
-
+  if (!apiSucceeded(result, 'journal', 'deleteMomentComment failed:')) {
     return false
   }
 
@@ -302,31 +274,17 @@ export async function deleteMomentComment(momentId: string, commentId: string): 
 
 // WS 载荷未经类型校验：只接受去重、索引与映射依赖的字段形态正确的事件。
 function isMomentWire(value: unknown): value is MomentWire {
-  if (typeof value !== 'object' || value === null) {
-    return false
-  }
-
-  const w = value as Partial<MomentWire>
-
-  return typeof w.id === 'string' && (w.comments === undefined || Array.isArray(w.comments))
+  return (
+    isRecord(value) && typeof value.id === 'string' && (value.comments === undefined || Array.isArray(value.comments))
+  )
 }
 
 function isMomentCommentWire(value: unknown): value is MomentCommentWire {
-  if (typeof value !== 'object' || value === null) {
-    return false
-  }
-
-  return typeof (value as Partial<MomentCommentWire>).id === 'string'
+  return isRecord(value) && typeof value.id === 'string'
 }
 
 function isDiaryWire(value: unknown): value is DiaryWire {
-  if (typeof value !== 'object' || value === null) {
-    return false
-  }
-
-  const w = value as Partial<DiaryWire>
-
-  return typeof w.id === 'string' && typeof w.entry_date === 'string'
+  return isRecord(value) && typeof value.id === 'string' && typeof value.entry_date === 'string'
 }
 
 // WS 入口：由 app/runtime/gateway-event-router.ts 调用。

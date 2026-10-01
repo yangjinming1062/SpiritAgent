@@ -11,6 +11,17 @@ export interface PickedImage {
 // 与后端 AvatarFromImageRequest 上限对齐——更大的请求会被拒为 422，用户无从操作，所以这里先给提示直接拒收。
 const MAX_IMAGE_BASE64 = 8 * 1024 * 1024
 
+/** 解析 `data:<mime>;base64,<载荷>`；形式不符或载荷为空返回 null，缺省类型按 image/png。 */
+export function parseImageDataUrl(dataUrl: string): PickedImage | null {
+  const match = /^data:([^;,]+)?;base64,([\s\S]+)$/.exec(dataUrl)
+
+  if (!match?.[2]) {
+    return null
+  }
+
+  return { base64: match[2], contentType: match[1] || 'image/png', previewUrl: dataUrl }
+}
+
 /** `null` when the user cancels or the file is unreadable; `error` is user-facing copy. */
 export async function pickAvatarImage(title: string): Promise<{ image: PickedImage } | { error: string } | null> {
   try {
@@ -23,17 +34,13 @@ export async function pickAvatarImage(title: string): Promise<{ image: PickedIma
       return null
     }
 
-    const dataUrl = await window.spiritagent.readFileDataUrl(path)
-    const comma = dataUrl.indexOf(',')
-    const base64 = comma > 0 ? dataUrl.slice(comma + 1) : ''
+    const image = parseImageDataUrl(await window.spiritagent.readFileDataUrl(path))
 
-    if (!base64) {
+    if (!image) {
       return null
     }
 
-    return base64.length > MAX_IMAGE_BASE64
-      ? { error: getStrings().common.imagePick.tooLarge }
-      : { image: { base64, contentType: dataUrl.slice(5, comma).split(';')[0], previewUrl: dataUrl } }
+    return image.base64.length > MAX_IMAGE_BASE64 ? { error: getStrings().common.imagePick.tooLarge } : { image }
   } catch (error) {
     log.warn('avatar-image', 'Could not read picked image', error)
 

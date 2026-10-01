@@ -53,6 +53,8 @@ import type { SessionInfo } from '@/shared/types/spiritagent'
 
 import { presetIcon, PresetPickerModal } from './preset-picker-modal'
 
+const SPECIAL_PRESET_ORDER = ['developer', 'product_manager', 'copywriter', 'language_teacher']
+
 function buildSortOptions(
   t: ReturnType<typeof useStrings>['workbench']['sessionSidebar']
 ): { icon: IconComponent; label: string; value: SessionSort }[] {
@@ -146,10 +148,6 @@ export function SessionSidebar(): React.JSX.Element {
     await createNewSession(presetId)
   }
 
-  const handleSwitch = async (id: string): Promise<void> => {
-    await switchSession(id)
-  }
-
   // 固定对话只看 kind（PROTOCOL「会话种类与历史修改」）：普通会话与派生会话同样带专业预设，不能据此归入固定分组。
   const isSpecialSession = (s: SessionInfo): boolean => s.kind === 'special'
 
@@ -159,9 +157,8 @@ export function SessionSidebar(): React.JSX.Element {
   const specialSessions = workbenchSessions
     .filter(s => isSpecialSession(s))
     .sort((a, b) => {
-      const order = ['developer', 'product_manager', 'copywriter', 'language_teacher']
-      const aIdx = a.system_preset_id ? order.indexOf(a.system_preset_id) : 99
-      const bIdx = b.system_preset_id ? order.indexOf(b.system_preset_id) : 99
+      const aIdx = a.system_preset_id ? SPECIAL_PRESET_ORDER.indexOf(a.system_preset_id) : 99
+      const bIdx = b.system_preset_id ? SPECIAL_PRESET_ORDER.indexOf(b.system_preset_id) : 99
 
       return aIdx - bIdx
     })
@@ -170,8 +167,7 @@ export function SessionSidebar(): React.JSX.Element {
   const pinnedRegularSessions = workbenchSessions.filter(s => !isSpecialSession(s) && s.pinned)
   const unpinnedRegularSessions = workbenchSessions.filter(s => !isSpecialSession(s) && !s.pinned)
 
-  // 过滤掉弹出框中的 companion
-  const nonCompanionPresets = presets.filter(p => p.id !== 'companion')
+  const visibleSearchResults = searchResults.filter(s => !isCompanionSession(s))
 
   return (
     <aside className="flex h-full w-full min-h-0 flex-col overflow-hidden text-xs">
@@ -227,20 +223,18 @@ export function SessionSidebar(): React.JSX.Element {
             <div className="mb-1 px-1.5 text-[11px] font-medium text-muted">{t.searchResultsHeading}</div>
             {searchLoading ? (
               <div className="py-6 text-center text-muted">{t.searching}</div>
-            ) : searchResults.filter(s => !isCompanionSession(s)).length === 0 ? (
+            ) : visibleSearchResults.length === 0 ? (
               <div className="py-6 text-center text-muted">{t.noMatch}</div>
             ) : (
-              searchResults
-                .filter(s => !isCompanionSession(s))
-                .map(s => (
-                  <SessionRow
-                    badge={s.archived ? t.badgeArchived : undefined}
-                    isActive={s.id === activeSessionId}
-                    key={s.id}
-                    onSwitch={handleSwitch}
-                    session={s}
-                  />
-                ))
+              visibleSearchResults.map(s => (
+                <SessionRow
+                  badge={s.archived ? t.badgeArchived : undefined}
+                  isActive={s.id === activeSessionId}
+                  key={s.id}
+                  onSwitch={switchSession}
+                  session={s}
+                />
+              ))
             )}
           </div>
         ) : (
@@ -267,7 +261,7 @@ export function SessionSidebar(): React.JSX.Element {
                       isActive={s.id === activeSessionId}
                       isSpecial
                       key={s.id}
-                      onSwitch={handleSwitch}
+                      onSwitch={switchSession}
                       session={s}
                     />
                   ))}
@@ -301,18 +295,18 @@ export function SessionSidebar(): React.JSX.Element {
                           <RowAction
                             icon={PinOff}
                             label={tActions.unpin}
-                            onClick={e => stopThen(e, () => void pinSession(s.id, false))}
+                            onClick={() => void pinSession(s.id, false)}
                           />
                           <RowAction
                             icon={Archive}
                             label={tActions.archive}
-                            onClick={e => stopThen(e, () => void archiveSession(s.id, true))}
+                            onClick={() => void archiveSession(s.id, true)}
                           />
                         </>
                       }
                       isActive={s.id === activeSessionId}
                       key={s.id}
-                      onSwitch={handleSwitch}
+                      onSwitch={switchSession}
                       session={s}
                     />
                   ))}
@@ -323,27 +317,23 @@ export function SessionSidebar(): React.JSX.Element {
                     <SessionRow
                       actions={
                         <>
-                          <RowAction
-                            icon={Pin}
-                            label={tActions.pin}
-                            onClick={e => stopThen(e, () => void pinSession(s.id, true))}
-                          />
+                          <RowAction icon={Pin} label={tActions.pin} onClick={() => void pinSession(s.id, true)} />
                           <RowAction
                             icon={Archive}
                             label={tActions.archive}
-                            onClick={e => stopThen(e, () => void archiveSession(s.id, true))}
+                            onClick={() => void archiveSession(s.id, true)}
                           />
                           <RowAction
                             danger
                             icon={Trash2}
                             label={tActions.delete}
-                            onClick={e => stopThen(e, () => void deleteSession(s.id))}
+                            onClick={() => void deleteSession(s.id)}
                           />
                         </>
                       }
                       isActive={s.id === activeSessionId}
                       key={s.id}
-                      onSwitch={handleSwitch}
+                      onSwitch={switchSession}
                       session={s}
                     />
                   ))}
@@ -378,19 +368,19 @@ export function SessionSidebar(): React.JSX.Element {
                       <RowAction
                         icon={ArchiveOff}
                         label={tActions.restore}
-                        onClick={e => stopThen(e, () => void archiveSession(s.id, false))}
+                        onClick={() => void archiveSession(s.id, false)}
                       />
                       <RowAction
                         danger
                         icon={Trash2}
                         label={tActions.delete}
-                        onClick={e => stopThen(e, () => void deleteSession(s.id))}
+                        onClick={() => void deleteSession(s.id)}
                       />
                     </>
                   }
                   isActive={s.id === activeSessionId}
                   key={s.id}
-                  onSwitch={handleSwitch}
+                  onSwitch={switchSession}
                   session={s}
                 />
               ))
@@ -404,17 +394,11 @@ export function SessionSidebar(): React.JSX.Element {
           loading={presetsLoading}
           onClose={() => setPickerOpen(false)}
           onConfirm={handlePickerConfirm}
-          presets={nonCompanionPresets}
+          presets={presets}
         />
       )}
     </aside>
   )
-}
-
-function stopThen(e: React.MouseEvent, action: () => void): void {
-  e.preventDefault()
-  e.stopPropagation()
-  action()
 }
 
 function SessionRow({
@@ -492,11 +476,7 @@ function SessionRow({
         <div className="flex items-center gap-0.5 shrink-0" onClick={e => e.stopPropagation()}>
           {canRename && !editing && (
             <div className="opacity-0 transition-opacity group-hover:opacity-100">
-              <RowAction
-                icon={Pencil}
-                label={dict.chat.sessionRename.action}
-                onClick={e => stopThen(e, () => setEditing(true))}
-              />
+              <RowAction icon={Pencil} label={dict.chat.sessionRename.action} onClick={() => setEditing(true)} />
             </div>
           )}
           <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
@@ -574,7 +554,7 @@ function RowAction({
   icon: IconComponent
   label: string
   danger?: boolean
-  onClick: (e: React.MouseEvent) => void
+  onClick: () => void
 }): React.JSX.Element {
   return (
     <button

@@ -23,7 +23,3 @@ export const VOICE_PRESETS = [
   '少年音'
 ] as const
 export const USER_GENDER_PRESETS = ['女', '男', '其他', '不愿说'] as const
-
-export type RelationshipPreset = (typeof RELATIONSHIP_PRESETS)[number]
-export type PersonalityPreset = (typeof PERSONALITY_PRESETS)[number]
-export type SpeakingStylePreset = (typeof SPEAKING_STYLE_PRESETS)[number]

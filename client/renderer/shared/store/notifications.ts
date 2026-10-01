@@ -18,18 +18,14 @@ export interface AppNotification {
   message: string
   detail?: string
   action?: NotificationAction
-  onDismiss?: () => void
-  createdAt: number
 }
 
 interface NotificationInput {
-  id?: string
   kind?: NotificationKind
   title?: string
   message: string
   detail?: string
   action?: NotificationAction
-  onDismiss?: () => void
   durationMs?: number
 }
 
@@ -94,9 +90,9 @@ function readableError(error: unknown, fallback: string): { message: string; det
   return { message: summary, detail: detail === summary ? undefined : detail }
 }
 
-export function notify(input: NotificationInput): string {
+export function notify(input: NotificationInput): void {
   const kind = input.kind ?? 'info'
-  const id = input.id ?? `${Date.now()}-${notificationCounter++}`
+  const id = `${Date.now()}-${notificationCounter++}`
 
   const notification: AppNotification = {
     id,
@@ -104,14 +100,10 @@ export function notify(input: NotificationInput): string {
     title: input.title,
     message: input.message,
     detail: input.detail,
-    action: input.action,
-    onDismiss: input.onDismiss,
-    createdAt: Date.now()
+    action: input.action
   }
 
-  window.clearTimeout(timers.get(id))
-  timers.delete(id)
-  $notifications.set([notification, ...$notifications.get().filter(item => item.id !== id)].slice(0, 4))
+  $notifications.set([notification, ...$notifications.get()].slice(0, 4))
 
   const duration = input.durationMs ?? defaultDuration(kind)
 
@@ -121,14 +113,12 @@ export function notify(input: NotificationInput): string {
       window.setTimeout(() => dismissNotification(id), duration)
     )
   }
-
-  return id
 }
 
-export function notifyError(error: unknown, fallback: string): string {
+export function notifyError(error: unknown, fallback: string): void {
   const readable = readableError(error, fallback)
 
-  return notify({
+  notify({
     kind: 'error',
     title: fallback,
     message: readable.message,
@@ -139,9 +129,7 @@ export function notifyError(error: unknown, fallback: string): string {
 export function dismissNotification(id: string): void {
   window.clearTimeout(timers.get(id))
   timers.delete(id)
-  const dismissed = $notifications.get().find(item => item.id === id)
   $notifications.set($notifications.get().filter(item => item.id !== id))
-  dismissed?.onDismiss?.()
 }
 
 export function clearNotifications(): void {
@@ -150,12 +138,7 @@ export function clearNotifications(): void {
   }
 
   timers.clear()
-  const all = $notifications.get()
   $notifications.set([])
-
-  for (const item of all) {
-    item.onDismiss?.()
-  }
 }
 
 registerStorageClearHandler(clearNotifications)

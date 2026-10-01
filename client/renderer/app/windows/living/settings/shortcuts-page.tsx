@@ -36,9 +36,9 @@ export function ShortcutsPage(): React.JSX.Element {
     let active = true
 
     void window.spiritagent.shortcuts
-      ?.get()
+      .get()
       .then(res => {
-        if (active && res) {
+        if (active) {
           setState(res)
         }
       })
@@ -48,41 +48,21 @@ export function ShortcutsPage(): React.JSX.Element {
         }
       })
 
-    const off = window.spiritagent.shortcuts?.onChanged?.(next => {
-      if (active && next) {
+    const off = window.spiritagent.shortcuts.onChanged(next => {
+      if (active) {
         setState(next)
       }
     })
 
     return () => {
       active = false
-      off?.()
+      off()
     }
   }, [])
 
-  const handleChange = async (key: keyof DesktopShortcutsConfig, value: string): Promise<void> => {
+  const apply = async (shortcuts: Partial<DesktopShortcutsConfig>): Promise<void> => {
     try {
-      const res = await window.spiritagent.shortcuts.set({
-        shortcuts: { [key]: value }
-      })
-
-      if (res) {
-        setState(res)
-      }
-    } catch (err) {
-      notifyError(err, t.registerFailed)
-    }
-  }
-
-  const handleResetAll = async (): Promise<void> => {
-    try {
-      const res = await window.spiritagent.shortcuts.set({
-        shortcuts: { ...DEFAULT_SHORTCUTS }
-      })
-
-      if (res) {
-        setState(res)
-      }
+      setState(await window.spiritagent.shortcuts.set({ shortcuts }))
     } catch (err) {
       notifyError(err, t.registerFailed)
     }
@@ -104,7 +84,7 @@ export function ShortcutsPage(): React.JSX.Element {
               defaultValue={DEFAULT_SHORTCUTS[id]}
               disabled={loading}
               error={state.status[id]?.error}
-              onChange={val => void handleChange(id, val)}
+              onChange={val => void apply({ [id]: val })}
               registered={state.status[id]?.registered}
               value={state.config[id]}
             />
@@ -119,7 +99,12 @@ export function ShortcutsPage(): React.JSX.Element {
         </div>
 
         {!isAllDefault && (
-          <button className={BTN_SUBTLE} disabled={loading} onClick={() => void handleResetAll()} type="button">
+          <button
+            className={BTN_SUBTLE}
+            disabled={loading}
+            onClick={() => void apply({ ...DEFAULT_SHORTCUTS })}
+            type="button"
+          >
             <RefreshCw className="size-3.5" />
             <span>{t.resetAll}</span>
           </button>

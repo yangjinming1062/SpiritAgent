@@ -1,44 +1,7 @@
 import type { DesktopGatewayEvent, DesktopGatewayState } from '@ipc/contracts'
 
-type GatewayEventName =
-  | 'command.result'
-  | 'compress.completed'
-  | 'companion.action.catalog_changed'
-  | 'companion.action.job_updated'
-  | 'companion.action.play_requested'
-  | 'companion.mood'
-  | 'companion.diary.upserted'
-  | 'companion.message'
-  | 'companion.moment.comment'
-  | 'companion.moment.created'
-  | 'companion.outfit.updated'
-  | 'companion.video.activated'
-  | 'companion.video.failed'
-  | 'companion.video.ready'
-  | 'companion.scene.updated'
-  | 'companion.scene.activated'
-  | 'channel.peer_request'
-  | 'channel.status'
-  | 'error'
-  | 'message.break'
-  | 'message.complete'
-  | 'message.voice'
-  | 'message.media'
-  | 'message.deleted'
-  | 'message.edited'
-  | 'message.delta'
-  | 'message.persisted'
-  | 'message.reasoning.delta'
-  | 'message.start'
-  | 'system.notification'
-  | 'tool.call'
-  | 'tool.cancel'
-  | 'tool.complete'
-  | 'tool.start'
-  | 'video_gen.completed'
-  | 'video_gen.failed'
-  | 'avatar.regenerated'
-  | (string & {})
+import { isRecord } from '@/shared/lib/is-record'
+import { safeJsonParse } from '@/shared/lib/safe-json'
 
 /** Slash 命令结果 payload：与 docs/PROTOCOL.md「事件路由」 `command.result` 事件载荷一致。 */
 export interface SlashCommandResultPayload {
@@ -80,79 +43,46 @@ interface JsonRpcFrame {
   seq?: number
 }
 
+/** 字段缺省或类型符合。 */
+function optionalType(obj: Record<string, unknown>, key: string, type: 'number' | 'string'): boolean {
+  return !(key in obj) || typeof obj[key] === type
+}
+
 function parseJsonRpcFrame(raw: string): JsonRpcFrame | null {
-  let value: unknown
+  const v = safeJsonParse<unknown>(raw, null)
 
-  try {
-    value = JSON.parse(raw)
-  } catch {
+  if (
+    !isRecord(v) ||
+    !optionalType(v, 'jsonrpc', 'string') ||
+    !optionalType(v, 'method', 'string') ||
+    !optionalType(v, 'seq', 'number')
+  ) {
     return null
   }
 
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-    return null
-  }
-
-  const v = value as Record<string, unknown>
-
-  if ('jsonrpc' in v && typeof v.jsonrpc !== 'string') {
-    return null
-  }
-
-  if ('id' in v) {
-    const rawId = v.id
-
-    if (rawId !== null && typeof rawId !== 'string' && typeof rawId !== 'number') {
-      return null
-    }
-  }
-
-  if ('method' in v && typeof v.method !== 'string') {
+  if ('id' in v && v.id !== null && typeof v.id !== 'string' && typeof v.id !== 'number') {
     return null
   }
 
   if ('error' in v) {
-    const e = v.error
+    const err = v.error
 
-    if (typeof e !== 'object' || e === null || Array.isArray(e)) {
-      return null
-    }
-
-    const err = e as Record<string, unknown>
-
-    if ('code' in err && typeof err.code !== 'number') {
-      return null
-    }
-
-    if ('message' in err && typeof err.message !== 'string') {
+    if (!isRecord(err) || !optionalType(err, 'code', 'number') || !optionalType(err, 'message', 'string')) {
       return null
     }
   }
 
   if ('params' in v) {
-    const p = v.params
+    const params = v.params
 
-    if (typeof p !== 'object' || p === null || Array.isArray(p)) {
+    if (
+      !isRecord(params) ||
+      typeof params.type !== 'string' ||
+      !optionalType(params, 'seq', 'number') ||
+      !optionalType(params, 'session_id', 'string')
+    ) {
       return null
     }
-
-    const paramsObj = p as Record<string, unknown>
-
-    if (typeof paramsObj.type !== 'string') {
-      return null
-    }
-
-    if ('seq' in paramsObj && typeof paramsObj.seq !== 'number') {
-      return null
-    }
-
-    if ('session_id' in paramsObj && typeof paramsObj.session_id !== 'string') {
-      return null
-    }
-  }
-
-  if ('seq' in v && typeof v.seq !== 'number') {
-    return null
   }
 
   return v as unknown as JsonRpcFrame
@@ -183,7 +113,6 @@ export class SpiritAgentRpcError extends Error {
   }
 }
 
-const ANY = '*'
 const DEFAULT_REQUEST_TIMEOUT_MS = 30_000
 // 休眠唤醒后重连不得永久卡在 'connecting'（会禁用输入框并卡住 "Starting SpiritAgent..."）；握手超时应落到 'error' 让调用方重试。
 const CONNECT_TIMEOUT_MS = 15_000
@@ -206,7 +135,7 @@ export class JsonRpcGatewayClient {
   private _ackTimer: ReturnType<typeof setTimeout> | null = null
   private _lastMessageAt = 0
   private _heartbeatTimer: ReturnType<typeof setInterval> | null = null
-  private readonly eventHandlers = new Map<string, Set<(event: GatewayEvent) => void>>()
+  private readonly eventHandlers = new Set<(event: GatewayEvent) => void>()
   private readonly stateHandlers = new Set<(state: ConnectionState) => void>()
 
   get connectionState(): ConnectionState {
@@ -354,21 +283,10 @@ export class JsonRpcGatewayClient {
     this.setState('closed')
   }
 
-  on<P = unknown>(type: GatewayEventName, handler: (event: GatewayEvent<P>) => void): () => void {
-    let handlers = this.eventHandlers.get(type)
-
-    if (!handlers) {
-      handlers = new Set()
-      this.eventHandlers.set(type, handlers)
-    }
-
-    handlers.add(handler as (event: GatewayEvent) => void)
-
-    return () => handlers?.delete(handler as (event: GatewayEvent) => void)
-  }
-
   onEvent(handler: (event: GatewayEvent) => void): () => void {
-    return this.on(ANY as GatewayEventName, handler)
+    this.eventHandlers.add(handler)
+
+    return () => this.eventHandlers.delete(handler)
   }
 
   onState(handler: (state: ConnectionState) => void): () => void {
@@ -528,11 +446,7 @@ export class JsonRpcGatewayClient {
   }
 
   private dispatchEvent(event: GatewayEvent): void {
-    for (const handler of this.eventHandlers.get(event.type) ?? []) {
-      handler(event)
-    }
-
-    for (const handler of this.eventHandlers.get(ANY) ?? []) {
+    for (const handler of this.eventHandlers) {
       handler(event)
     }
   }

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { backendDetailMessage, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { backendDetailMessage, ipcErrorStatus, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
-import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
+import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { getStrings } from '@/shared/strings'
 import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
@@ -49,7 +50,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     mode: ImageReviseMode
   } | null>(null)
 
-  const mountedRef = useRef(true)
+  const begin = useAsyncGuard()
   const generatingRef = useRef(false)
   const msgIdRef = useRef(0)
   const revisionRef = useRef(0)
@@ -65,37 +66,33 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   }, [])
 
   useEffect(() => {
-    mountedRef.current = true
     const unregister = registerStorageClearHandler(reset)
 
     return () => {
       unregister()
-      mountedRef.current = false
       revisionRef.current += 1
     }
   }, [reset])
 
-  const isCurrent = useCallback((revision: number, epoch: number): boolean => {
-    return mountedRef.current && revision === revisionRef.current && epoch === currentClearEpoch()
+  // isLive 来自发起操作时的 begin()；revision 被 reset、卸载或更新的独占操作递增后，旧操作即失效。
+  const isCurrent = useCallback((revision: number, isLive: () => boolean): boolean => {
+    return isLive() && revision === revisionRef.current
   }, [])
 
   const push = useCallback((message: Omit<DesignMessage, 'id'>): void => {
-    if (!mountedRef.current) {
-      return
-    }
-
     msgIdRef.current += 1
     setMessages(prev => [...prev, { ...message, id: msgIdRef.current }])
   }, [])
 
   const runDesign = useCallback(
     (text: string, image: PickedImage | null, withDraft: DesignDraft | null, mode: ImageReviseMode): void => {
-      if (!mountedRef.current || generatingRef.current) {
+      const isLive = begin()
+
+      if (!isLive() || generatingRef.current) {
         return
       }
 
       const revision = ++revisionRef.current
-      const epoch = currentClearEpoch()
       generatingRef.current = true
       setBusy(true)
       setLastRequest(null)
@@ -107,7 +104,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
           // 有草稿后按用户意图走微调或重新生成（后端 regenerate 均不收图）；参考图仅用于首次生成。
           const res = withDraft ? await runRegenerate(withDraft.id, text, mode) : await runCreate(text, image)
 
-          if (!isCurrent(revision, epoch)) {
+          if (!isCurrent(revision, isLive)) {
             return
           }
 
@@ -119,7 +116,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
 
           const resolved = await resolvePortraitUrl(rawUrl)
 
-          if (!isCurrent(revision, epoch)) {
+          if (!isCurrent(revision, isLive)) {
             return
           }
 
@@ -144,7 +141,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
             tone: 'info'
           })
         } catch (err) {
-          if (!isCurrent(revision, epoch)) {
+          if (!isCurrent(revision, isLive)) {
             return
           }
 
@@ -156,7 +153,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
               rawError
             )
 
-          if (withDraft && (timedOut || /^409 /.test(rawError))) {
+          if (withDraft && (timedOut || ipcErrorStatus(err) === 409)) {
             setDraft({ id: withDraft.id, previewUrl: '' })
           }
 
@@ -171,21 +168,21 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
           })
           log.warn('wardrobe-design', timedOut ? 'generation result timed out' : 'generation failed', err)
         } finally {
-          if (isCurrent(revision, epoch)) {
+          if (isCurrent(revision, isLive)) {
             generatingRef.current = false
             setBusy(false)
           }
         }
       })()
     },
-    [isCurrent, push]
+    [begin, isCurrent, push]
   )
 
   const send = useCallback(
     (text: string, mode: ImageReviseMode = 'edit'): void => {
       const trimmed = text.trim()
 
-      if (!mountedRef.current || generatingRef.current || (!draft && !trimmed && !refImage)) {
+      if (generatingRef.current || (!draft && !trimmed && !refImage)) {
         return
       }
 
@@ -198,7 +195,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   )
 
   const retry = useCallback((): void => {
-    if (!mountedRef.current || generatingRef.current || !lastRequest) {
+    if (generatingRef.current || !lastRequest) {
       return
     }
 
@@ -206,12 +203,13 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
   }, [draft, lastRequest, runDesign])
 
   const confirm = useCallback(async (): Promise<void> => {
-    if (!mountedRef.current || !draft?.previewUrl || generatingRef.current) {
+    const isLive = begin()
+
+    if (!isLive() || !draft?.previewUrl || generatingRef.current) {
       return
     }
 
     const revision = ++revisionRef.current
-    const epoch = currentClearEpoch()
     generatingRef.current = true
     setBusy(true)
 
@@ -223,32 +221,32 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
         body: {}
       })
 
-      if (isCurrent(revision, epoch)) {
+      if (isCurrent(revision, isLive)) {
         setDraft(null)
         setMessages([])
         onConfirmed()
       }
     } catch (err) {
-      if (!isCurrent(revision, epoch)) {
+      if (!isCurrent(revision, isLive)) {
         return
       }
 
       push({ role: 'system', text: backendDetailMessage(err, getStrings().living.outfit.confirmFailed), tone: 'error' })
       log.warn('wardrobe-design', 'confirm failed', err)
     } finally {
-      if (isCurrent(revision, epoch)) {
+      if (isCurrent(revision, isLive)) {
         generatingRef.current = false
         setBusy(false)
       }
     }
-  }, [draft, isCurrent, onConfirmed, push])
+  }, [begin, draft, isCurrent, onConfirmed, push])
 
   const attachRefImage = useCallback(async (): Promise<void> => {
+    const isLive = begin()
     const revision = revisionRef.current
-    const epoch = currentClearEpoch()
     const picked = await pickAvatarImage(getStrings().living.outfit.design.pickReferenceTitle)
 
-    if (!picked || !isCurrent(revision, epoch)) {
+    if (!picked || !isCurrent(revision, isLive)) {
       return
     }
 
@@ -259,7 +257,7 @@ export function useOutfitDesignSession(onConfirmed: () => void): {
     }
 
     setRefImage(picked.image)
-  }, [isCurrent, push])
+  }, [begin, isCurrent, push])
 
   const clearRefImage = useCallback((): void => {
     setRefImage(null)

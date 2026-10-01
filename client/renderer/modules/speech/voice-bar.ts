@@ -5,7 +5,13 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { presentationPorts } from '@/shared/presentation-ports'
 import { $auth } from '@/shared/store/auth'
 import { $whisperOpen } from '@/shared/store/chat-visibility'
-import { $surfaceOpen, $surfaceOpenVisible, $surfaceRole, $surfaceSpriteVisible } from '@/shared/store/surfaces'
+import {
+  $surfaceOpen,
+  $surfaceOpenVisible,
+  $surfaceRole,
+  $surfaceSpriteVisible,
+  isSpriteStageShown
+} from '@/shared/store/surfaces'
 import type { ReplyAudio } from '@/shared/types/spiritagent'
 
 import { type AudioPlaybackOptions, playDataUrl, stopAudio } from './audio-track'
@@ -55,9 +61,7 @@ function isVoiceSurfaceVisible(): boolean {
     return $surfaceOpen.get() === 'living' && $surfaceOpenVisible.get()
   }
 
-  return (
-    $surfaceRole.get() === 'sprite' && $whisperOpen.get() && $surfaceOpen.get() === null && $surfaceSpriteVisible.get()
-  )
+  return $surfaceRole.get() === 'sprite' && $whisperOpen.get() && isSpriteStageShown()
 }
 
 function stopCurrent(): void {

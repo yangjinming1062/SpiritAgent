@@ -1,5 +1,5 @@
 import { useStore } from '@nanostores/react'
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
 import {
   $avatarSeeds,
@@ -13,8 +13,9 @@ import {
   saveCharacterCard
 } from '@/modules/character'
 import { PortraitLightbox } from '@/shared'
-import { backendDetailMessage, unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
-import { currentClearEpoch } from '@/shared/lib/storage'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
+import { backendDetailMessage, ipcErrorStatus } from '@/shared/lib/ipc-error'
+import { log } from '@/shared/lib/log'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { $auth } from '@/shared/store/auth'
@@ -33,40 +34,29 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
   const [hint, setHint] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [zoom, setZoom] = useState<string | null>(null)
-  const mounted = useRef(false)
+  const begin = useAsyncGuard()
   const current = card?.avatar_id === avatarId ? card : null
   const analyzing = current?.status === 'pending' || current?.status === 'running'
 
-  useEffect(() => {
-    mounted.current = true
-    const epoch = currentClearEpoch()
+  const refresh = useCallback((): void => {
+    const isLive = begin()
+    void hydrateCharacterCard().catch(error => {
+      if (isLive()) {
+        setHint(backendDetailMessage(error, t.loadFailed))
+      }
+    })
+  }, [begin, t.loadFailed])
 
+  useEffect(() => {
     if (authKind === 'authenticated') {
       void hydrateAvatarSeeds()
-      void hydrateCharacterCard().catch(error => {
-        if (mounted.current && epoch === currentClearEpoch()) {
-          setHint(backendDetailMessage(error, t.loadFailed))
-        }
-      })
+      refresh()
     }
-
-    return () => {
-      mounted.current = false
-    }
-  }, [authKind, t.loadFailed])
+  }, [authKind, refresh])
 
   useEffect(() => {
     if (authKind !== 'authenticated') {
       return
-    }
-
-    const refresh = (): void => {
-      const epoch = currentClearEpoch()
-      void hydrateCharacterCard().catch(error => {
-        if (mounted.current && epoch === currentClearEpoch()) {
-          setHint(backendDetailMessage(error, t.loadFailed))
-        }
-      })
     }
 
     window.addEventListener('focus', refresh)
@@ -76,41 +66,36 @@ export function CharacterCardSection({ avatarId }: { avatarId: number }): React.
       window.removeEventListener('focus', refresh)
       window.clearInterval(timer)
     }
-  }, [analyzing, authKind, t.loadFailed])
+  }, [analyzing, authKind, refresh])
 
-  const run = async (operation: () => Promise<void>): Promise<void> => {
-    const epoch = currentClearEpoch()
+  const run = async (operation: (isLive: () => boolean) => Promise<void>): Promise<void> => {
+    const isLive = begin()
     setBusy(true)
     setHint(null)
 
     try {
-      await operation()
+      await operation(isLive)
     } catch (error) {
-      if (mounted.current && epoch === currentClearEpoch()) {
+      if (isLive()) {
         setHint(backendDetailMessage(error, t.operationFailed))
 
-        if (/^409\s/.test(unwrapIpcErrorMessage(error))) {
-          await hydrateCharacterCard().catch(refreshError =>
-            console.error('Character card refresh failed', refreshError)
-          )
+        if (ipcErrorStatus(error) === 409) {
+          await hydrateCharacterCard().catch(refreshError => log.warn('character-card', 'Refresh failed', refreshError))
         }
       }
     } finally {
-      if (mounted.current && epoch === currentClearEpoch()) {
+      if (isLive()) {
         setBusy(false)
       }
     }
   }
 
   const save = (): void => {
-    const epoch = currentClearEpoch()
-    void run(async () => {
-      if (await saveCharacterCard(avatarId, revision, changes)) {
-        if (mounted.current && epoch === currentClearEpoch()) {
-          setEditing(false)
-          setChanges({})
-          setHint(t.saved)
-        }
+    void run(async isLive => {
+      if ((await saveCharacterCard(avatarId, revision, changes)) && isLive()) {
+        setEditing(false)
+        setChanges({})
+        setHint(t.saved)
       }
     })
   }

@@ -1,16 +1,16 @@
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
 import { pickAvatarImage } from '@/modules/character'
 import { adoptSceneImage, type SceneAsset } from '@/modules/scene'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { ArrowLeft, Loader2, Pencil, RefreshCw, Sparkles, ZoomIn } from '@/shared/lib/icons'
-import { currentClearEpoch } from '@/shared/lib/storage'
+import { errorMessage } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SettingCard } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
 export interface SceneEditDraft {
-  editing: boolean
   title: string
   description: string
 }
@@ -23,6 +23,7 @@ interface SceneDetailViewProps {
   loading: boolean
   onActivate: (sceneId: string) => void
   onBack: () => void
+  onCancelEdit: () => void
   onCancelTask: (sceneId: string) => Promise<void>
   onChangeDraft: (next: Partial<SceneEditDraft>) => void
   onDelete: (scene: SceneAsset) => void
@@ -43,6 +44,7 @@ export function SceneDetailView({
   loading,
   onActivate,
   onBack,
+  onCancelEdit,
   onCancelTask,
   onChangeDraft,
   onDelete,
@@ -58,7 +60,7 @@ export function SceneDetailView({
   const tToasts = useStrings().living.toasts
   const [actionBusy, setActionBusy] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
-  const mounted = useRef(true)
+  const begin = useAsyncGuard()
   const isCurrent = detail?.id === activeScene?.id
   const regenerating = detail?.regeneration?.status === 'pending'
   const generating = detail?.status === 'pending' || regenerating
@@ -71,38 +73,30 @@ export function SceneDetailView({
   const canRegenerate =
     canChangeInfo &&
     Boolean(
-      draft?.editing && hasDraft
+      draft && hasDraft
         ? draft.title.trim() && draft.description.trim()
         : detail?.status === 'ready' && detail.title.trim() && detail.description.trim()
     )
 
   const canActivate = detail?.status === 'ready' && Boolean(detail.url) && Boolean(detail.description.trim())
 
-  useEffect(() => {
-    mounted.current = true
-
-    return () => {
-      mounted.current = false
-    }
-  }, [])
-
-  const runAction = async (action: () => Promise<void>): Promise<void> => {
+  const runAction = async (action: (isLive: () => boolean) => Promise<void>): Promise<void> => {
     if (actionBusy) {
       return
     }
 
     setActionBusy(true)
     setActionError(null)
-    const epoch = currentClearEpoch()
+    const isLive = begin()
 
     try {
-      await action()
+      await action(isLive)
     } catch (error) {
-      if (mounted.current && epoch === currentClearEpoch()) {
-        setActionError(error instanceof Error ? error.message : tToasts.sceneRegenerateFailed)
+      if (isLive()) {
+        setActionError(errorMessage(error, tToasts.sceneRegenerateFailed))
       }
     } finally {
-      if (mounted.current && epoch === currentClearEpoch()) {
+      if (isLive()) {
         setActionBusy(false)
       }
     }
@@ -196,7 +190,7 @@ export function SceneDetailView({
         </div>
 
         <div className="min-w-0">
-          {draft?.editing ? (
+          {draft ? (
             <div className="space-y-4 p-4 sm:p-5">
               <label className="block space-y-1.5 text-xs text-body">
                 <span>{t.titleLabel}</span>
@@ -259,7 +253,7 @@ export function SceneDetailView({
               {t.retryAnalysis}
             </button>
           ) : null}
-          {detail.status === 'pending' ? (
+          {generating ? (
             <>
               <button className={BTN_SUBTLE} disabled={actionBusy} onClick={() => void runAction(onLoad)} type="button">
                 {t.refresh}
@@ -272,16 +266,15 @@ export function SceneDetailView({
               >
                 {t.cancelTask}
               </button>
-              {detail.stage === 'waiting_upload' ? (
+              {detail.status === 'pending' && detail.stage === 'waiting_upload' ? (
                 <button
                   className={BTN_PRIMARY}
                   disabled={actionBusy}
                   onClick={() =>
-                    void runAction(async () => {
-                      const epoch = currentClearEpoch()
+                    void runAction(async isLive => {
                       const result = await pickAvatarImage(t.chooseReference)
 
-                      if (!mounted.current || epoch !== currentClearEpoch()) {
+                      if (!isLive()) {
                         return
                       }
 
@@ -299,32 +292,10 @@ export function SceneDetailView({
               ) : null}
             </>
           ) : null}
-          {regenerating ? (
-            <>
-              <button className={BTN_SUBTLE} disabled={actionBusy} onClick={() => void runAction(onLoad)} type="button">
-                {t.refresh}
-              </button>
-              <button
-                className={BTN_SUBTLE}
-                disabled={actionBusy}
-                onClick={() => void runAction(() => onCancelTask(detail.id))}
-                type="button"
-              >
-                {t.cancelTask}
-              </button>
-            </>
-          ) : null}
           <div className="ml-auto flex flex-wrap items-center justify-end gap-2">
-            {draft?.editing ? (
+            {draft ? (
               <>
-                <button
-                  className={BTN_SUBTLE}
-                  disabled={actionBusy}
-                  onClick={() =>
-                    onChangeDraft({ editing: false, title: detail.title, description: detail.description })
-                  }
-                  type="button"
-                >
+                <button className={BTN_SUBTLE} disabled={actionBusy} onClick={onCancelEdit} type="button">
                   {t.cancel}
                 </button>
                 <button
@@ -352,7 +323,7 @@ export function SceneDetailView({
                 className={cn(BTN_PRIMARY, 'whitespace-nowrap')}
                 disabled={!canRegenerate || actionBusy}
                 onClick={() => {
-                  if (draft?.editing && hasDraft) {
+                  if (hasDraft) {
                     void runAction(() => onSaveAndRegenerate(detail.id))
                   } else {
                     void runAction(() => onRegenerate(detail.id))
@@ -361,7 +332,7 @@ export function SceneDetailView({
                 type="button"
               >
                 {actionBusy ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
-                {draft?.editing && hasDraft ? t.saveAndRegenerate : t.imageRegenerate}
+                {hasDraft ? t.saveAndRegenerate : t.imageRegenerate}
               </button>
             ) : null}
           </div>

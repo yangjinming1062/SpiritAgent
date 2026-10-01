@@ -1,10 +1,8 @@
 import type React from 'react'
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
 import { notifyError } from '@/shared/store/notifications'
-
-type SaveResult = { ok: true } | { ok: false; error: string }
 
 type Config = Record<string, unknown>
 
@@ -38,13 +36,11 @@ interface UseRunnerConfigResult {
   config: Config | null
   setConfig: React.Dispatch<React.SetStateAction<Config | null>>
   isLoading: boolean
-  patch: (path: readonly string[], value: unknown) => Promise<SaveResult>
+  patch: (path: readonly string[], value: unknown) => Promise<void>
 }
 
 export function useRunnerConfig(errorKey: string): UseRunnerConfigResult {
-  const [config, setConfig] = useState<Config | null>(null)
-
-  const loader = useAsyncLoader(async () => {
+  const loader = useAsyncLoader<Config>(async () => {
     const result = await window.spiritagent.runnerConfig.read()
 
     if (!result.ok) {
@@ -60,17 +56,13 @@ export function useRunnerConfig(errorKey: string): UseRunnerConfigResult {
     }
   }, [loader.error, errorKey])
 
-  useEffect(() => {
-    if (loader.data) {
-      setConfig(loader.data)
+  const patch = async (path: readonly string[], value: unknown): Promise<void> => {
+    const res = await window.spiritagent.runnerConfig.patch({ path, value })
+
+    if (!res.ok) {
+      throw new Error(res.error || 'unknown error')
     }
-  }, [loader.data])
+  }
 
-  const toSaveResult = (res: Awaited<ReturnType<typeof window.spiritagent.runnerConfig.patch>>): SaveResult =>
-    res.ok ? { ok: true } : { ok: false, error: res.error || 'unknown error' }
-
-  const patch = async (path: readonly string[], value: unknown): Promise<SaveResult> =>
-    toSaveResult(await window.spiritagent.runnerConfig.patch({ path, value }))
-
-  return { config, setConfig, isLoading: loader.isLoading, patch }
+  return { config: loader.data, setConfig: loader.setData, isLoading: loader.isLoading, patch }
 }

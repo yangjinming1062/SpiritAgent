@@ -1,6 +1,6 @@
 import { atom, computed } from 'nanostores'
 
-import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
 import { $gateway } from '@/shared/store/gateway'
@@ -9,7 +9,9 @@ import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 import type {
   SessionInfo,
+  SessionMessage,
   SessionResumeResponse,
+  SessionRuntimeInfo,
   SystemPresetListResponse,
   SystemPresetSummary,
   UndoResponse
@@ -262,9 +264,8 @@ export async function renameSession(sessionId: string, title: string): Promise<v
     log.error('session-list', 'Failed to rename session:', err)
     notify({
       kind: 'error',
-      message: unwrapIpcErrorMessage(err).startsWith('403 ')
-        ? getStrings().chat.sessionRename.forbidden
-        : getStrings().chat.sessionRename.failed
+      message:
+        ipcErrorStatus(err) === 403 ? getStrings().chat.sessionRename.forbidden : getStrings().chat.sessionRename.failed
     })
 
     return
@@ -532,6 +533,19 @@ export async function undoToMessage(sessionId: string, sourceMessageId: number):
   }
 }
 
+// 挂载服务端快照：快照已挂上同一会话时不再重置，保留展示快照期间入列的待发消息；回合状态以服务端 running 为准。
+function mountSyncedSession(sessionId: string, messages: SessionMessage[], info?: SessionRuntimeInfo): void {
+  if ($chatSessionId.get() !== sessionId) {
+    setChatSession(sessionId)
+  }
+
+  hydrateChatMessages(messages, info)
+
+  if (typeof info?.running === 'boolean') {
+    $chatTurnInFlight.set(info.running)
+  }
+}
+
 export async function switchSession(sessionId: string): Promise<void> {
   const gw = $gateway.get()
 
@@ -563,16 +577,7 @@ export async function switchSession(sessionId: string): Promise<void> {
       return
     }
 
-    // 快照已挂上同一会话时不再重置，保留展示快照期间入列的待发消息。
-    if ($chatSessionId.get() !== sessionId) {
-      setChatSession(sessionId)
-    }
-
-    hydrateChatMessages(synced.messages, synced.info)
-
-    if (typeof synced.info?.running === 'boolean') {
-      $chatTurnInFlight.set(synced.info.running)
-    }
+    mountSyncedSession(sessionId, synced.messages, synced.info)
   } catch (err) {
     if (token === navigationToken) {
       log.error('session-list', 'Failed to switch session:', err)
@@ -632,11 +637,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
 
             // 同步期间已切到其他会话时不覆盖其视图。
             if (isLatest() && $chatSessionId.get() === knownCompanionId) {
-              hydrateChatMessages(synced.messages, synced.info)
-
-              if (typeof synced.info?.running === 'boolean') {
-                $chatTurnInFlight.set(synced.info.running)
-              }
+              mountSyncedSession(knownCompanionId, synced.messages, synced.info)
             }
 
             onMounted?.({
@@ -679,16 +680,7 @@ export async function openMainSession(onMounted?: (res: SessionResumeResponse) =
       })
 
       if (isLatest()) {
-        // 快照已挂上同一会话时不再重置，保留展示快照期间入列的待发消息。
-        if ($chatSessionId.get() !== res.session_id) {
-          setChatSession(res.session_id)
-        }
-
-        hydrateChatMessages(res.messages || [], res.info)
-
-        if (typeof res.info?.running === 'boolean') {
-          $chatTurnInFlight.set(res.info.running)
-        }
+        mountSyncedSession(res.session_id, res.messages || [], res.info)
       }
 
       onMounted?.(res)

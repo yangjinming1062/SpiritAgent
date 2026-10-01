@@ -30,9 +30,7 @@ function resolveInitialTheme(): SpiritAgentUiTheme {
     return normalizeUiTheme(seeded)
   }
 
-  const stored = storedString(THEME_STORAGE_KEY)
-
-  return stored === null ? 'day-clear' : normalizeUiTheme(stored)
+  return normalizeUiTheme(storedString(THEME_STORAGE_KEY))
 }
 
 const initialTheme = resolveInitialTheme()
@@ -53,7 +51,7 @@ function apply(theme: SpiritAgentUiTheme): void {
 
 export function setUiTheme(theme: SpiritAgentUiTheme): void {
   apply(theme)
-  // 主进程广播到两个窗口（含本窗，回声幂等）；持久化只由发起切换的窗口写。
+  // 主进程广播到两个窗口（含本窗，回声幂等）；各窗口经 apply 各自写入本地缓存。
   window.spiritagent?.setUiTheme?.(theme)
 }
 

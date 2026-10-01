@@ -1,6 +1,6 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 
 import {
   $avatarSeeds,
@@ -10,8 +10,9 @@ import {
   SelfSourceImageFlow
 } from '@/modules/character'
 import { $pendingScene, $sceneTaskSlow, $sceneTaskStatus, hydrateScene } from '@/modules/scene'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { ArrowLeft, FileImage, Loader2, Plus, Sparkles } from '@/shared/lib/icons'
-import { currentClearEpoch } from '@/shared/lib/storage'
+import { errorMessage } from '@/shared/lib/ipc-error'
 import { cn } from '@/shared/lib/utils'
 import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, INPUT_CLASS, SettingCard } from '@/shared/panel'
 import { notify } from '@/shared/store/notifications'
@@ -57,30 +58,22 @@ export function SceneCreateView({
   const [selecting, setSelecting] = useState(false)
   const [saving, setSaving] = useState(false)
   const [referenceError, setReferenceError] = useState(false)
-  const mounted = useRef(true)
+  const begin = useAsyncGuard()
   const generating = taskStatus === 'pending'
   const waitingUpload = taskStatus === 'waiting_upload'
   const formBusy = busy || generating || waitingUpload || selecting || saving
-
-  useEffect(() => {
-    mounted.current = true
-
-    return () => {
-      mounted.current = false
-    }
-  }, [])
 
   const chooseReference = async (): Promise<void> => {
     if (formBusy) {
       return
     }
 
-    const epoch = currentClearEpoch()
+    const isLive = begin()
     setSelecting(true)
     setReferenceError(false)
     const result = await pickAvatarImage(t.chooseReference)
 
-    if (!mounted.current || epoch !== currentClearEpoch()) {
+    if (!isLive()) {
       return
     }
 
@@ -93,22 +86,36 @@ export function SceneCreateView({
     setSelecting(false)
   }
 
+  const runSaving = async (action: () => Promise<void>): Promise<void> => {
+    const isLive = begin()
+    setSaving(true)
+
+    try {
+      await action()
+    } catch (error) {
+      if (isLive()) {
+        notify({ kind: 'warning', message: errorMessage(error, tToasts.sceneRegenerateFailed) })
+      }
+    } finally {
+      if (isLive()) {
+        setSaving(false)
+      }
+    }
+  }
+
   const uploadWaitingImage = async (): Promise<void> => {
     if (!pending || selecting || saving) {
       return
     }
 
-    const epoch = currentClearEpoch()
+    const isLive = begin()
     setSelecting(true)
     const result = await pickAvatarImage(t.chooseReference)
+    setSelecting(false)
 
-    if (!mounted.current || epoch !== currentClearEpoch()) {
-      setSelecting(false)
-
+    if (!isLive()) {
       return
     }
-
-    setSelecting(false)
 
     if (!result || !('image' in result)) {
       if (result && 'error' in result) {
@@ -118,29 +125,14 @@ export function SceneCreateView({
       return
     }
 
-    setSaving(true)
-
-    try {
-      await onAdopt(result.image)
-    } catch (error) {
-      if (mounted.current && epoch === currentClearEpoch()) {
-        notify({
-          kind: 'warning',
-          message: error instanceof Error ? error.message : tToasts.sceneRegenerateFailed
-        })
-      }
-    } finally {
-      if (mounted.current && epoch === currentClearEpoch()) {
-        setSaving(false)
-      }
-    }
+    await runSaving(() => onAdopt(result.image))
   }
 
   const openSelfSource = async (): Promise<void> => {
-    const epoch = currentClearEpoch()
+    const isLive = begin()
     await hydrateAvatarSeeds()
 
-    if (mounted.current && epoch === currentClearEpoch()) {
+    if (isLive()) {
       setSelfSourceOpen(true)
     }
   }
@@ -150,23 +142,7 @@ export function SceneCreateView({
       return
     }
 
-    const epoch = currentClearEpoch()
-    setSaving(true)
-
-    try {
-      await onCancelTask(pending.id)
-    } catch (error) {
-      if (mounted.current && epoch === currentClearEpoch()) {
-        notify({
-          kind: 'warning',
-          message: error instanceof Error ? error.message : tToasts.sceneRegenerateFailed
-        })
-      }
-    } finally {
-      if (mounted.current && epoch === currentClearEpoch()) {
-        setSaving(false)
-      }
-    }
+    await runSaving(() => onCancelTask(pending.id))
   }
 
   return (
@@ -194,39 +170,24 @@ export function SceneCreateView({
                 {t.refresh}
               </button>
               {waitingUpload ? (
-                <>
-                  <button
-                    className={BTN_PRIMARY}
-                    disabled={saving || selecting}
-                    onClick={() => void uploadWaitingImage()}
-                    type="button"
-                  >
-                    {selecting || saving ? (
-                      <Loader2 className="size-3.5 animate-spin" />
-                    ) : (
-                      <Plus className="size-3.5" />
-                    )}
-                    {t.waitingUploadAction}
-                  </button>
-                  <button
-                    className={BTN_SUBTLE}
-                    disabled={selecting || saving}
-                    onClick={() => void cancelWaitingTask()}
-                    type="button"
-                  >
-                    {t.cancelTask}
-                  </button>
-                </>
-              ) : (
                 <button
-                  className={BTN_SUBTLE}
-                  disabled={selecting || saving}
-                  onClick={() => void cancelWaitingTask()}
+                  className={BTN_PRIMARY}
+                  disabled={saving || selecting}
+                  onClick={() => void uploadWaitingImage()}
                   type="button"
                 >
-                  {t.cancelTask}
+                  {selecting || saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                  {t.waitingUploadAction}
                 </button>
-              )}
+              ) : null}
+              <button
+                className={BTN_SUBTLE}
+                disabled={selecting || saving}
+                onClick={() => void cancelWaitingTask()}
+                type="button"
+              >
+                {t.cancelTask}
+              </button>
             </div>
           </div>
         </SettingCard>

@@ -2,6 +2,7 @@ import { useStore } from '@nanostores/react'
 import type React from 'react'
 import { type RefObject, useEffect, useRef, useState } from 'react'
 
+import { useDismissOnOutside } from '@/shared/hooks/use-dismiss-on-outside'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
 import { cn } from '@/shared/lib/utils'
@@ -52,33 +53,7 @@ export function ChatPanel({
   }, [gatewayState])
 
   // 点击面板外部 / ESC 关闭参数面板
-  useEffect(() => {
-    if (!paramsPanelOpen) {
-      return
-    }
-
-    const handlePointerDown = (e: PointerEvent) => {
-      const target = e.target as Node | null
-
-      if (!target || !paramsPanelRef.current?.contains(target)) {
-        setParamsPanelOpen(false)
-      }
-    }
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setParamsPanelOpen(false)
-      }
-    }
-
-    window.addEventListener('pointerdown', handlePointerDown)
-    window.addEventListener('keydown', handleKeyDown)
-
-    return () => {
-      window.removeEventListener('pointerdown', handlePointerDown)
-      window.removeEventListener('keydown', handleKeyDown)
-    }
-  }, [paramsPanelOpen])
+  useDismissOnOutside(paramsPanelRef, paramsPanelOpen, () => setParamsPanelOpen(false))
 
   const headerWrapClass = cn(
     'relative flex items-center justify-end shrink-0',

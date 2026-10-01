@@ -4,6 +4,7 @@ import { type Dispatch, type SetStateAction, useCallback, useRef, useState } fro
 import { requestGateway } from '@/shared'
 import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import type { ConnectionState } from '@/shared/lib/gateway-protocol'
+import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { parseSlashInput } from '@/shared/lib/slash-commands'
 import { presentationPorts } from '@/shared/presentation-ports'
@@ -58,6 +59,8 @@ interface BoundAttachment {
   attachment: PendingAttachment
   sessionId: string | null
 }
+
+const appendLine = (text: string, line: string): string => (text ? `${text}\n${line}` : line)
 
 export function useChatSubmit({
   externalPaths,
@@ -262,14 +265,14 @@ export function useChatSubmit({
         displayAttachments.push({ type: 'video', url: currentPending.url })
       } else if (currentPending?.type === 'file') {
         const fileRef = submit.fileInlinePrefix(currentPending.fileName, currentPending.path)
-        fullText = fullText ? `${fullText}\n${fileRef}` : fileRef
+        fullText = appendLine(fullText, fileRef)
         const fileDirective = `@file:${currentPending.path}`
-        promptText = promptText ? `${promptText}\n${fileDirective}` : fileDirective
+        promptText = appendLine(promptText, fileDirective)
       } else if (currentPending?.type === 'folder') {
         const folderRef = submit.folderInlinePrefix(currentPending.folderName, currentPending.path)
-        fullText = fullText ? `${fullText}\n${folderRef}` : folderRef
+        fullText = appendLine(fullText, folderRef)
         const folderDirective = `@folder:${currentPending.path}`
-        promptText = promptText ? `${promptText}\n${folderDirective}` : folderDirective
+        promptText = appendLine(promptText, folderDirective)
       }
 
       // 等待期间切走的会话不再接收这条消息；附件已随切换丢弃，正文留在输入框。
@@ -282,9 +285,9 @@ export function useChatSubmit({
       if (extra.length > 0) {
         const names = extra.map(basename).join(submit.attachmentsJoiner)
         const heading = submit.attachmentsHeading(names)
-        fullText = fullText ? `${fullText}\n${heading}` : heading
+        fullText = appendLine(fullText, heading)
         const extraDirectives = extra.map(p => `@file:${p}`).join('\n')
-        promptText = promptText ? `${promptText}\n${extraDirectives}` : extraDirectives
+        promptText = appendLine(promptText, extraDirectives)
       }
 
       externalPathsRef.current = []
@@ -329,7 +332,7 @@ export function useChatSubmit({
       schedulePendingFlush()
     } catch (err) {
       if (id === null || $chatSessionId.get() === id) {
-        markAssistantTerminal({ error: err instanceof Error ? err.message : getStrings().chat.sendFailed })
+        markAssistantTerminal({ error: errorMessage(err, getStrings().chat.sendFailed) })
         presentationPorts().setSpriteState('idle')
         setPending(null)
       }

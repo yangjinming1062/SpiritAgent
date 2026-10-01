@@ -8,7 +8,7 @@ interface VfxEmitOptions {
   count?: number
   /** 归一化 [0, 1] 相对精灵锚点 x（缺省 0.5） */
   nx?: number
-  /** 归一化 [0, 1] 相对精灵锚点 y（缺省 0.3） */
+  /** 归一化 [0, 1] 相对精灵锚点 y（缺省 0.25） */
   ny?: number
 }
 

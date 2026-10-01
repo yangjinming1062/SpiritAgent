@@ -9,6 +9,7 @@ import { registerStorageClearHandler } from '@/shared/lib/storage'
 import { notify } from '@/shared/store/notifications'
 import { getStrings } from '@/shared/strings'
 
+import { blobToDataUrl } from './blob-data-url'
 import { attachVideoFile } from './chat-attach-picker'
 import {
   $chatDraftFromUndo,
@@ -136,13 +137,11 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
       return
     }
 
-    if (submit.editing) {
-      e.preventDefault()
+    e.preventDefault()
 
+    if (submit.editing) {
       return
     }
-
-    e.preventDefault()
 
     // 读取与上传期间切走会话时，其余文件不再加入新会话。
     const sessionId = $chatSessionId.get()
@@ -153,13 +152,7 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
       }
 
       if (file.type.startsWith('image/')) {
-        const dataUrl = await new Promise<string | null>(resolve => {
-          const reader = new FileReader()
-
-          reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : null)
-          reader.onerror = () => resolve(null)
-          reader.readAsDataURL(file)
-        })
+        const dataUrl = await blobToDataUrl(file).catch(() => null)
 
         if (dataUrl && $chatSessionId.get() === sessionId) {
           submit.setPending({ type: 'image', value: dataUrl, fileName: file.name })
@@ -182,7 +175,6 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
 
   const submitState: ChatSubmitState = {
     editMessageId: submit.editing?.sourceMessageId,
-    externalPaths: submit.editing ? [] : externalPaths,
     gatewayState,
     isGenerating: gatewayState === 'open' && (submit.sending || pendingBatchLen > 0 || turnInFlight || lastStreaming),
     isReadOnlySession,
@@ -192,20 +184,12 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
     text: submit.text
   }
 
-  const onRecordingPointerCancel = (e: PointerEvent<HTMLButtonElement>): void => {
-    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
-      e.currentTarget.releasePointerCapture(e.pointerId)
-    }
-
-    void stopRecording()
-  }
-
   const onRecordingPointerDown = (e: PointerEvent<HTMLButtonElement>): void => {
     e.currentTarget.setPointerCapture(e.pointerId)
     void startRecording()
   }
 
-  const onRecordingPointerUp = (e: PointerEvent<HTMLButtonElement>): void => {
+  const onRecordingPointerEnd = (e: PointerEvent<HTMLButtonElement>): void => {
     if (e.currentTarget.hasPointerCapture(e.pointerId)) {
       e.currentTarget.releasePointerCapture(e.pointerId)
     }
@@ -215,14 +199,14 @@ export function useChatInput({ gatewayState, isReadOnlySession }: UseChatInputOp
 
   const inputProps: Omit<ConversationInputProps, 'variant'> = {
     attachMenuOpen,
-    externalPaths: submitState.externalPaths,
+    externalPaths: submit.editing ? [] : externalPaths,
     onAttachMenuToggle: setAttachMenuOpen,
     onCancelEdit: submit.cancelEdit,
     onDrop: handleDrop,
     onPaste: handlePaste,
-    onRecordingPointerCancel,
+    onRecordingPointerCancel: onRecordingPointerEnd,
     onRecordingPointerDown,
-    onRecordingPointerUp,
+    onRecordingPointerUp: onRecordingPointerEnd,
     onSend: () => {
       void submit.send()
     },

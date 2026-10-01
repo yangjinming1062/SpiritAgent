@@ -1,5 +1,7 @@
 import { type PointerEvent as ReactPointerEvent, useEffect, useRef, useState } from 'react'
 
+import { useLatestRef } from './use-latest-ref'
+
 export interface PointerDragDelta {
   dx: number
   dy: number
@@ -20,20 +22,8 @@ export function usePointerDrag(opts: UsePointerDragOptions = {}): {
   const { onCommit, threshold = 0 } = opts
   const [delta, setDelta] = useState<PointerDragDelta>({ dx: 0, dy: 0 })
 
-  const dragRef = useRef<{
-    active: boolean
-    dx: number
-    dy: number
-    startX: number
-    startY: number
-    thresholdMet: boolean
-  } | null>(null)
-
-  // onCommit 通过 ref 转发，避免 listener 闭包每次 render 重建时被换成旧引用。
-  const onCommitRef = useRef(onCommit)
-  onCommitRef.current = onCommit
-  const thresholdRef = useRef(threshold)
-  thresholdRef.current = threshold
+  // listener 创建于 pointerdown，经 ref 在松手时调用最新的 onCommit。
+  const onCommitRef = useLatestRef(onCommit)
   const detachRef = useRef<null | (() => void)>(null)
 
   // 卸载时释放 window 级监听，避免拖拽中途 unmount 泄漏。
@@ -53,34 +43,25 @@ export function usePointerDrag(opts: UsePointerDragOptions = {}): {
     e.preventDefault()
     e.stopPropagation()
 
-    dragRef.current = {
-      active: true,
-      dx: 0,
-      dy: 0,
-      startX: e.clientX,
-      startY: e.clientY,
-      thresholdMet: thresholdRef.current === 0
-    }
+    const startX = e.clientX
+    const startY = e.clientY
+    let dx = 0
+    let dy = 0
+    let thresholdMet = threshold === 0
 
     const onMoveListener = (ev: PointerEvent): void => {
-      const s = dragRef.current
+      dx = ev.clientX - startX
+      dy = ev.clientY - startY
 
-      if (!s) {
-        return
-      }
-
-      s.dx = ev.clientX - s.startX
-      s.dy = ev.clientY - s.startY
-
-      if (!s.thresholdMet) {
-        if (Math.hypot(s.dx, s.dy) < thresholdRef.current) {
+      if (!thresholdMet) {
+        if (Math.hypot(dx, dy) < threshold) {
           return
         }
 
-        s.thresholdMet = true
+        thresholdMet = true
       }
 
-      setDelta({ dx: s.dx, dy: s.dy })
+      setDelta({ dx, dy })
     }
 
     const detach = (): void => {
@@ -91,13 +72,7 @@ export function usePointerDrag(opts: UsePointerDragOptions = {}): {
     }
 
     const onUp = (): void => {
-      const s = dragRef.current
-
-      if (s) {
-        onCommitRef.current?.({ dx: s.dx, dy: s.dy })
-      }
-
-      dragRef.current = null
+      onCommitRef.current?.({ dx, dy })
       setDelta({ dx: 0, dy: 0 })
       detach()
     }

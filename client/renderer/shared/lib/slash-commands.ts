@@ -2,6 +2,7 @@
 
 import { atom } from 'nanostores'
 
+import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $gateway } from '@/shared/store/gateway'
@@ -32,10 +33,6 @@ registerStorageClearHandler(() => $slashCommandMeta.set([]))
 
 let slashMetaInflight: Promise<void> | null = null
 
-function setSlashCommandMeta(metas: readonly SlashCommandMeta[]): void {
-  $slashCommandMeta.set(metas)
-}
-
 function normalizeServerEntry(entry: ServerCommandEntry): SlashCommandMeta {
   return {
     name: entry.name,
@@ -47,14 +44,12 @@ function normalizeServerEntry(entry: ServerCommandEntry): SlashCommandMeta {
 
 /** 按名（已剥离前导 /，小写）查 SlashCommandMeta；atom 未加载时返回 undefined。 */
 function getLocalSlashMeta(name: string): SlashCommandMeta | undefined {
-  return $slashCommandMeta
-    .get()
-    .find(cmd => cmd.name === name.toLowerCase() || cmd.aliases.includes(name.toLowerCase()))
+  return $slashCommandMeta.get().find(cmd => cmd.name === name || cmd.aliases.includes(name))
 }
 
 /** 列出所有命令（无别名重复），按 name 排序。 */
 function listLocalSlashCommands(): SlashCommandMeta[] {
-  return [...$slashCommandMeta.get()].sort((a, b) => a.name.localeCompare(b.name))
+  return $slashCommandMeta.get().toSorted((a, b) => a.name.localeCompare(b.name))
 }
 
 interface ParsedSlashInput {
@@ -66,60 +61,22 @@ interface ParsedSlashInput {
   args: string[]
 }
 
-/** 解析用户输入：`/foo a b` 命中命令；`//注释` 与 `/path/to/file` 不视为命令（首 token 须 ASCII 字母或中文开头）。 */
+/** 解析用户输入：`/foo a b` 命中命令；`//注释` 与 `/path/to/file` 不视为命令（首 token 须以 ASCII 字母或中文 U+4E00–U+9FFF 开头）。 */
 export function parseSlashInput(rawText: string): ParsedSlashInput | null {
   const trimmed = rawText.trim()
 
-  if (!trimmed.startsWith('/')) {
+  if (!/^\/[A-Za-z\u4e00-\u9fff]/.test(trimmed)) {
     return null
   }
 
-  if (trimmed.startsWith('//')) {
-    return null
-  }
-
-  const firstChar = trimmed.charAt(1)
-
-  if (!isCommandNameStart(firstChar)) {
-    return null
-  }
-
-  const body = trimmed.slice(1)
-  const spaceIdx = body.search(/\s/)
-  const name = (spaceIdx === -1 ? body : body.slice(0, spaceIdx)).toLowerCase()
-
-  const args =
-    spaceIdx === -1
-      ? []
-      : body
-          .slice(spaceIdx + 1)
-          .split(/\s+/)
-          .filter(Boolean)
+  const [first, ...args] = trimmed.slice(1).split(/\s+/)
+  const name = first.toLowerCase()
 
   return {
     command: getLocalSlashMeta(name),
     name,
     args
   }
-}
-
-function isCommandNameStart(ch: string): boolean {
-  if (!ch) {
-    return false
-  }
-
-  const code = ch.charCodeAt(0)
-
-  if ((code >= 0x41 && code <= 0x5a) || (code >= 0x61 && code <= 0x7a)) {
-    return true
-  }
-
-  // CJK Unified Ideographs
-  if (code >= 0x4e00 && code <= 0x9fff) {
-    return true
-  }
-
-  return false
 }
 
 /** 模糊打分：完全等于 100，前缀按命中长度递减，子序列按距离得分；返回 0 表示不匹配。 */
@@ -230,10 +187,10 @@ export async function fetchSlashCommandMeta(): Promise<void> {
       const res = await gateway.request<SlashCommandListResponse>('command.list', {})
 
       if ($gateway.get() === gateway && currentClearEpoch() === epoch) {
-        setSlashCommandMeta((res.commands ?? []).map(normalizeServerEntry))
+        $slashCommandMeta.set((res.commands ?? []).map(normalizeServerEntry))
       }
     } catch (error) {
-      const msg = error instanceof Error ? error.message : String(error)
+      const msg = errorMessage(error)
       log.error('slash-commands', `command.list failed: ${msg}`, error)
     } finally {
       slashMetaInflight = null

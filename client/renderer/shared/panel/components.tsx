@@ -1,4 +1,4 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 
 import type { IconComponent } from '@/shared/lib/icons'
@@ -365,6 +365,13 @@ export function PanelSelect<T extends string>({
     listRef.current?.querySelector(`[data-index='${activeIndex}']`)?.scrollIntoView({ block: 'nearest' })
   }, [activeIndex, open])
 
+  const close = useCallback((): void => {
+    setOpen(false)
+    triggerRef.current?.focus()
+  }, [])
+
+  useEscapeKey(close, { enabled: open })
+
   useEffect(() => {
     if (!open) {
       return
@@ -376,30 +383,14 @@ export function PanelSelect<T extends string>({
       }
     }
 
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        e.stopPropagation()
-        setOpen(false)
-        triggerRef.current?.focus()
-      }
-    }
-
-    const onResize = (): void => {
-      setOpen(false)
-      triggerRef.current?.focus()
-    }
-
     document.addEventListener('pointerdown', onPointerDown, true)
-    window.addEventListener('keydown', onKey, true)
-    window.addEventListener('resize', onResize)
+    window.addEventListener('resize', close)
 
     return () => {
       document.removeEventListener('pointerdown', onPointerDown, true)
-      window.removeEventListener('keydown', onKey, true)
-      window.removeEventListener('resize', onResize)
+      window.removeEventListener('resize', close)
     }
-  }, [open])
+  }, [close, open])
 
   const commit = (index: number): void => {
     const option = options[index]
@@ -413,8 +404,7 @@ export function PanelSelect<T extends string>({
       onChange(option.value)
     }
 
-    setOpen(false)
-    triggerRef.current?.focus()
+    close()
   }
 
   const openList = (): void => {
@@ -434,8 +424,7 @@ export function PanelSelect<T extends string>({
   const onListKeyDown = (e: React.KeyboardEvent): void => {
     if (e.key === 'Tab') {
       e.preventDefault()
-      setOpen(false)
-      triggerRef.current?.focus()
+      close()
 
       return
     }

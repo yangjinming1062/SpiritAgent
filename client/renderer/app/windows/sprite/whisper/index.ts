@@ -1,2 +1,2 @@
 export { WhisperOverlay } from './whisper-overlay'
-export { openWhisper, toggleWhisper } from './whisper-store'
+export { toggleWhisper } from './whisper-store'

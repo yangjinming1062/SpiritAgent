@@ -1,15 +1,17 @@
 import { useStore } from '@nanostores/react'
 import { atom } from 'nanostores'
-import { type RefObject, useEffect, useLayoutEffect, useRef } from 'react'
+import { type RefObject, useLayoutEffect, useRef } from 'react'
 import { createPortal } from 'react-dom'
 
+import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { probeInteractiveRegions, useInteractiveRegion } from '@/shared/lib/interactive-regions'
 import { registerStorageClearHandler } from '@/shared/lib/storage'
+import { cn } from '@/shared/lib/utils'
 import type { ChatMediaItem } from '@/shared/types/spiritagent'
 
 import { InlineMedia } from './inline-media'
 
-// 富媒体查看器：聊天窗媒体卡点击后全屏放大；图片查看与视频播放共用一个遮罩。
+// 图片查看器：聊天图片卡与待发附件缩略图点击后全屏放大。
 const $mediaViewer = atom<ChatMediaItem | null>(null)
 
 // 换号或登出时关闭，旧账户媒体不留在界面上。
@@ -17,6 +19,10 @@ registerStorageClearHandler(() => $mediaViewer.set(null))
 
 export function openMediaViewer(item: ChatMediaItem): void {
   $mediaViewer.set(item)
+}
+
+function closeMediaViewer(): void {
+  $mediaViewer.set(null)
 }
 
 export function MediaViewerOverlay({
@@ -35,30 +41,24 @@ export function MediaViewerOverlay({
     probeInteractiveRegions(windowId)
   }, [item, windowId])
 
-  useEffect(() => {
-    if (!item) {
-      return
-    }
+  useEscapeKey(closeMediaViewer, {
+    capture: false,
+    enabled: item !== null,
+    preventDefault: false,
+    stopPropagation: false
+  })
 
-    const onKey = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        $mediaViewer.set(null)
-      }
-    }
-
-    window.addEventListener('keydown', onKey)
-
-    return () => window.removeEventListener('keydown', onKey)
-  }, [item])
-
-  if (!item || typeof document === 'undefined') {
+  if (!item) {
     return null
   }
 
   return createPortal(
     <div
-      className={`${containerRef ? 'absolute' : 'fixed'} inset-0 z-[100] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm`}
-      onClick={() => $mediaViewer.set(null)}
+      className={cn(
+        containerRef ? 'absolute' : 'fixed',
+        'inset-0 z-[100] flex items-center justify-center bg-black/80 p-6 backdrop-blur-sm'
+      )}
+      onClick={closeMediaViewer}
       ref={overlayRef}
       style={{ pointerEvents: 'auto' }}
     >

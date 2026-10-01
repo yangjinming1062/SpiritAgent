@@ -6,11 +6,8 @@ export async function imageUrlForNativeClipboard(url: string): Promise<string> {
 
   const img = new Image()
 
-  await new Promise<void>((resolve, reject) => {
-    img.onload = (): void => resolve()
-    img.onerror = (): void => reject(new Error('image decode failed'))
-    img.src = url
-  })
+  img.src = url
+  await img.decode()
 
   const canvas = document.createElement('canvas')
 

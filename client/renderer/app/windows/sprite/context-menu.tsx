@@ -9,18 +9,23 @@ import {
   $userPreferredTier,
   closeContextMenu,
   endQuiet,
+  openContextMenu,
   QUIET_MINUTES,
   resetToHomePosition,
   setDefaultScale,
   setSpatialLocale,
   startQuiet
 } from '@/modules/character'
+import { useEscapeKey } from '@/shared/hooks/use-escape-key'
 import { EyeOff, Home, type IconComponent, KeyRound, Monitor } from '@/shared/lib/icons'
 import { isRegionHit, useInteractiveRegion } from '@/shared/lib/interactive-regions'
+import { cn } from '@/shared/lib/utils'
 import { SURFACE_OVERLAY } from '@/shared/panel/palette'
 import { $auth } from '@/shared/store/auth'
 import { requestCloseSurface } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
+
+import { SPRITE_REGION_ID } from './behaviors/sprite-stage'
 
 interface ContextMenuProps {
   onOpenActivation?: () => void
@@ -50,7 +55,7 @@ function MenuItem({
       }}
       type="button"
     >
-      <Icon className={`size-4 shrink-0 ${accent ? 'text-accent' : 'text-muted'}`} />
+      <Icon className={cn('size-4 shrink-0', accent ? 'text-accent' : 'text-muted')} />
       <span className="min-w-0 flex-1 truncate">{label}</span>
     </button>
   )
@@ -97,28 +102,20 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
 
   useInteractiveRegion('sprite-context-menu', backdropRef, getInteractiveRect)
 
+  useEscapeKey(closeContextMenu, { capture: false, enabled: visible, preventDefault: false, stopPropagation: false })
+
   useEffect(() => {
     if (!visible) {
       return
-    }
-
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        closeContextMenu()
-      }
     }
 
     const handleBlur = () => {
       closeContextMenu()
     }
 
-    window.addEventListener('keydown', handleKeyDown)
     window.addEventListener('blur', handleBlur)
 
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown)
-      window.removeEventListener('blur', handleBlur)
-    }
+    return () => window.removeEventListener('blur', handleBlur)
   }, [visible])
 
   const left = visible ? Math.min(pos.x, window.innerWidth - 200) : 0
@@ -132,8 +129,8 @@ export function SpriteContextMenu({ onOpenActivation, onOpenSurface }: ContextMe
         e.stopPropagation()
 
         if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
-          if (isRegionHit('sprite-stage', e.clientX, e.clientY)) {
-            $contextMenuPos.set({ x: e.clientX, y: e.clientY })
+          if (isRegionHit(SPRITE_REGION_ID, e.clientX, e.clientY)) {
+            openContextMenu({ x: e.clientX, y: e.clientY })
           } else {
             closeContextMenu()
           }

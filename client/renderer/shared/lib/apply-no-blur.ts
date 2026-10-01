@@ -34,6 +34,12 @@ function applyNoBlur(degraded: boolean): void {
   $noBlur.set(degraded)
 }
 
+function refreshNoBlur(): void {
+  applyNoBlur(
+    prefersReducedTransparency() || isIntegratedGpuResult || $manualReduceTransparency.get() || $autoGlassDegraded.get()
+  )
+}
+
 /** 启动判定 + 订阅动态来源；每个窗口的 entry 模块作用域调用一次。 */
 function initNoBlur(): void {
   if (wired) {
@@ -42,17 +48,9 @@ function initNoBlur(): void {
 
   wired = true
 
-  applyNoBlur(
-    prefersReducedTransparency() || isIntegratedGpuResult || $manualReduceTransparency.get() || $autoGlassDegraded.get()
-  )
-
-  $manualReduceTransparency.listen(degraded => {
-    applyNoBlur(degraded || prefersReducedTransparency() || isIntegratedGpuResult || $autoGlassDegraded.get())
-  })
-
-  $autoGlassDegraded.listen(degraded => {
-    applyNoBlur(degraded || prefersReducedTransparency() || isIntegratedGpuResult || $manualReduceTransparency.get())
-  })
+  refreshNoBlur()
+  $manualReduceTransparency.listen(refreshNoBlur)
+  $autoGlassDegraded.listen(refreshNoBlur)
 }
 
 export function applyNoBlurIfNeeded(): void {
@@ -113,29 +111,32 @@ export function initGlassBudgetGuard(): () => void {
   const tick = (now: number): void => {
     if (document.hidden) {
       resetSample()
-    } else if (last > 0) {
-      const delta = now - last
+    } else {
+      if (last > 0) {
+        const delta = now - last
 
-      if (delta > BUDGET_FRAME_MS) {
-        overAccum += delta
-        okAccum = 0
-      } else {
-        okAccum += delta
-        overAccum = 0
+        if (delta > BUDGET_FRAME_MS) {
+          overAccum += delta
+          okAccum = 0
+        } else {
+          okAccum += delta
+          overAccum = 0
+        }
+
+        if (overAccum >= DEGRADE_WINDOW_MS) {
+          overAccum = 0
+          okAccum = 0
+          $autoGlassDegraded.set(true)
+        } else if (okAccum >= RECOVER_WINDOW_MS) {
+          overAccum = 0
+          okAccum = 0
+          $autoGlassDegraded.set(false)
+        }
       }
 
-      if (overAccum >= DEGRADE_WINDOW_MS) {
-        overAccum = 0
-        okAccum = 0
-        $autoGlassDegraded.set(true)
-      } else if (okAccum >= RECOVER_WINDOW_MS) {
-        overAccum = 0
-        okAccum = 0
-        $autoGlassDegraded.set(false)
-      }
+      last = now
     }
 
-    last = document.hidden ? 0 : now
     rafId = requestAnimationFrame(tick)
   }
 

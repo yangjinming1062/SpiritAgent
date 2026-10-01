@@ -37,11 +37,11 @@ export function holdWindowMouseCapture(windowId = 0): () => void {
   state.captureHoldsByWindow.set(windowId, holds)
   const token = Symbol()
   holds.add(token)
-  state.probesByWindow.get(windowId)?.()
+  probeInteractiveRegions(windowId)
 
   return () => {
     if (holds.delete(token)) {
-      state.probesByWindow.get(windowId)?.()
+      probeInteractiveRegions(windowId)
     }
   }
 }
@@ -65,7 +65,7 @@ function registerInteractiveRegion(
 ): void {
   const m = bucket(windowId)
   m.set(id, { getRect, hitTest, id })
-  state.probesByWindow.get(windowId)?.()
+  probeInteractiveRegions(windowId)
 }
 
 function unregisterInteractiveRegion(id: string, windowId: number = 0): void {
@@ -75,7 +75,7 @@ function unregisterInteractiveRegion(id: string, windowId: number = 0): void {
     return
   }
 
-  state.probesByWindow.get(windowId)?.()
+  probeInteractiveRegions(windowId)
 }
 
 function setCaptureProbe(fn: (() => void) | null, windowId: number = 0): void {
@@ -152,7 +152,7 @@ export function useInteractiveRegion(
   }, [id, ref, regionWindowId])
 
   useEffect(() => {
-    state.probesByWindow.get(regionWindowId)?.()
+    probeInteractiveRegions(regionWindowId)
   }, [hitTest, regionWindowId])
 }
 

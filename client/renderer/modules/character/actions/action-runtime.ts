@@ -1,9 +1,10 @@
 /** 动作播放运行时：播放实例、抢占、回执。基础状态仍是表现优先级真源，本模块只管理数据化表达请求（play_id + epoch + TTL），由 VideoStage 消费；同一动作再次播放用新 play_id 从头播放。 */
 
+import { clamp } from '@runtime'
 import { atom } from 'nanostores'
 
-import { authedApi } from '@/shared/lib/authed-api'
-import { log } from '@/shared/lib/log'
+import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
+import { trimOldest } from '@/shared/lib/trim-oldest'
 
 import { endTransientState, setSpriteState } from '../companion-store'
 
@@ -33,14 +34,7 @@ function endExpressionState(): void {
 
 function rememberPlayId(playId: string): void {
   acceptedPlayIds.add(playId)
-
-  if (acceptedPlayIds.size > MAX_TRACKED_PLAY_IDS) {
-    const oldest = acceptedPlayIds.values().next().value
-
-    if (oldest !== undefined) {
-      acceptedPlayIds.delete(oldest)
-    }
-  }
+  trimOldest(acceptedPlayIds, MAX_TRACKED_PLAY_IDS)
 }
 
 function isExpired(expiresAtMs: number | null): boolean {
@@ -59,19 +53,19 @@ export function acceptPlayCommand(
   command: ActionPlayCommand,
   clip: ActionPlayInstance['clip'] | null,
   rendered: { readonly packId: number; readonly appearanceEpoch: number | null }
-): ActionPlayInstance | null {
+): void {
   // 外观代次随每次激活递增：他包或旧代次（含换装后再穿回同一包）的请求不在当前外观执行。
   if (command.pack_id !== rendered.packId || command.appearance_epoch !== rendered.appearanceEpoch) {
     void reportReceipt(command, 'rejected', 'appearance changed')
 
-    return null
+    return
   }
 
   // 同代次目录已移除该动作或推进了素材版本。
   if (clip === null) {
     void reportReceipt(command, 'rejected', 'clip unavailable')
 
-    return null
+    return
   }
 
   const expiresAtMs = command.expires_at !== null ? Date.parse(command.expires_at) : null
@@ -80,30 +74,26 @@ export function acceptPlayCommand(
   if ((expiresAtMs !== null && !Number.isFinite(expiresAtMs)) || isExpired(expiresAtMs)) {
     void reportReceipt(command, 'rejected', 'expired')
 
-    return null
+    return
   }
 
   // 同一 play_id 只受理一次，避免重复指令从头重播。
   if (acceptedPlayIds.has(command.play_id)) {
-    return $activePlayInstance.get()
+    return
   }
 
   playGeneration += 1
 
   const instance: ActionPlayInstance = {
     playId: command.play_id,
-    actionId: command.action_id,
-    assetRevisionId: command.asset_revision_id,
     clip,
-    repeatCount: Math.max(1, Math.min(5, command.repeat_count)),
+    repeatCount: clamp(command.repeat_count, 1, 5),
     expiresAtMs,
     generation: playGeneration
   }
 
   rememberPlayId(command.play_id)
   $activePlayInstance.set(instance)
-
-  return instance
 }
 
 /** 实际开播前再次检查 TTL：拖拽期间排队的过期动作不播。 */
@@ -147,9 +137,8 @@ export async function reportReceipt(
     path: `/api/companion/actions/playback/${command.play_id}/receipt`
   })
 
-  if (!result.ok && result.reason === 'err') {
-    log.warn('action-runtime', 'receipt report failed', result.error)
-  }
+  // 回执不重试，失败只记日志。
+  apiSucceeded(result, 'action-runtime', 'receipt report failed')
 }
 
 /** 实例仅收尾一次；React 清理与迟到媒体事件不能给同一动作报告第二种终态。 */

@@ -1,7 +1,5 @@
-import { openWhisper } from '@/app/windows/sprite/whisper/whisper-store'
 import { bindConversationSpeech } from '@/app/workflows/conversation-speech'
 import { speakProactive } from '@/app/workflows/proactive-delivery'
-import { bindWhisperOpener } from '@/app/workflows/session-delivery'
 import {
   $activeAvatarId,
   $companionVoiceId,
@@ -29,7 +27,6 @@ export function bindPresentation(): void {
   })
 
   bindConversationSpeech()
-  bindWhisperOpener(openWhisper)
 
   // 仪式行走等角色行为的主动性台词经工作流送达（角色模块不依赖应用层）。
   bindProactiveLineSpeaker(speakProactive)

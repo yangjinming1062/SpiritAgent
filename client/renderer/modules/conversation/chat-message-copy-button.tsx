@@ -7,21 +7,16 @@ import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
 interface ChatMessageCopyButtonProps {
-  className?: string
   text: string
 }
 
-export function ChatMessageCopyButton({ className = '', text }: ChatMessageCopyButtonProps): React.JSX.Element {
+export function ChatMessageCopyButton({ text }: ChatMessageCopyButtonProps): React.JSX.Element {
   const dict = useStrings()
   const { status, copy } = useClipboard()
   const copied = status === 'copied'
 
   const onClick = async (e: React.MouseEvent): Promise<void> => {
     e.stopPropagation()
-
-    if (!text.trim()) {
-      return
-    }
 
     try {
       await copy(text)
@@ -37,8 +32,7 @@ export function ChatMessageCopyButton({ className = '', text }: ChatMessageCopyB
       aria-label={label}
       className={cn(
         'inline-flex size-6 shrink-0 items-center justify-center rounded-md transition select-none',
-        copied ? 'text-success hover:bg-fill-hover/80' : 'text-muted hover:bg-fill-hover/80 hover:text-strong',
-        className
+        copied ? 'text-success hover:bg-fill-hover/80' : 'text-muted hover:bg-fill-hover/80 hover:text-strong'
       )}
       onClick={e => {
         void onClick(e)

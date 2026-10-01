@@ -13,6 +13,25 @@ import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_PRIMARY, BTN_SUBTLE, Chip, FIELD_LABEL, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
+type PersonaDraft = Record<'name' | 'personality' | 'relationship' | 'speakingStyle', string>
+
+interface PersonaField {
+  key: keyof PersonaDraft
+  label: string
+  placeholder: string
+  presets?: readonly string[]
+  required?: boolean
+}
+
+function draftOf(persona: ReturnType<typeof $persona.get>): PersonaDraft {
+  return {
+    name: persona?.name ?? '',
+    personality: persona?.personality ?? '',
+    relationship: persona?.relationship ?? '',
+    speakingStyle: persona?.speakingStyle ?? ''
+  }
+}
+
 // 可编辑的 persona 字段：name/relationship/personality/speaking_style；锁定的视觉锚点字段（biological_type/gender）刻意不可编辑——见 docs/DESIGN.md「身份锁定与角色卡」。
 export function PersonaSection(): React.JSX.Element {
   const dict = useStrings()
@@ -20,25 +39,45 @@ export function PersonaSection(): React.JSX.Element {
 
   const persona = useStore($persona)
   const [editing, setEditing] = useState(false)
-  const [name, setName] = useState(persona?.name ?? '')
-  const [relationship, setRelationship] = useState(persona?.relationship ?? '')
-  const [personality, setPersonality] = useState(persona?.personality ?? '')
-  const [speakingStyle, setSpeakingStyle] = useState(persona?.speakingStyle ?? '')
+  const [draft, setDraft] = useState(() => draftOf(persona))
   const [saving, setSaving] = useState(false)
   const [hint, setHint] = useState<string | null>(null)
 
+  const fields: readonly PersonaField[] = [
+    { key: 'name', label: t.nameLabel, placeholder: t.namePlaceholder },
+    {
+      key: 'relationship',
+      label: t.relationshipLabel,
+      placeholder: t.relationshipPlaceholder,
+      presets: RELATIONSHIP_PRESETS
+    },
+    {
+      key: 'personality',
+      label: t.personalityLabel,
+      placeholder: t.personalityPlaceholder,
+      presets: PERSONALITY_PRESETS
+    },
+    {
+      key: 'speakingStyle',
+      label: t.speakingStyleLabel,
+      placeholder: t.speakingStylePlaceholder,
+      presets: SPEAKING_STYLE_PRESETS,
+      required: true
+    }
+  ]
+
+  const setField = (key: keyof PersonaDraft, value: string): void =>
+    setDraft(previous => ({ ...previous, [key]: value }))
+
   const startEdit = (): void => {
-    setName(persona?.name ?? '')
-    setRelationship(persona?.relationship ?? '')
-    setPersonality(persona?.personality ?? '')
-    setSpeakingStyle(persona?.speakingStyle ?? '')
+    setDraft(draftOf(persona))
     setHint(null)
     setEditing(true)
   }
 
   const save = async (): Promise<void> => {
-    const trimmed = name.trim()
-    const trimmedSpeakingStyle = speakingStyle.trim()
+    const trimmed = draft.name.trim()
+    const trimmedSpeakingStyle = draft.speakingStyle.trim()
 
     if (!trimmed) {
       setHint(t.hintEmptyName)
@@ -63,8 +102,8 @@ export function PersonaSection(): React.JSX.Element {
             assemblePersona(
               {
                 name: trimmed,
-                personality: personality.trim(),
-                relationship: relationship.trim(),
+                personality: draft.personality.trim(),
+                relationship: draft.relationship.trim(),
                 speaking_style: trimmedSpeakingStyle
               },
               persona ?? undefined
@@ -93,11 +132,8 @@ export function PersonaSection(): React.JSX.Element {
   }
 
   if (!editing) {
-    const details = [
-      { label: t.relationshipLabel, value: persona?.relationship },
-      { label: t.personalityLabel, value: persona?.personality },
-      { label: t.speakingStyleLabel, value: persona?.speakingStyle }
-    ].filter(({ value }) => Boolean(value))
+    const saved = draftOf(persona)
+    const details = fields.filter(({ key }) => key !== 'name' && saved[key])
 
     return (
       <section>
@@ -116,14 +152,14 @@ export function PersonaSection(): React.JSX.Element {
               </div>
               {details.length > 0 ? (
                 <dl className="mt-2 space-y-1.5">
-                  {details.map(({ label, value }) => (
-                    <div className="flex min-w-0 items-baseline gap-2" key={label}>
+                  {details.map(({ key, label }) => (
+                    <div className="flex min-w-0 items-baseline gap-2" key={key}>
                       <dt className="w-24 shrink-0 text-[12px] text-muted">
                         {label}
                         {t.detailSeparator}
                       </dt>
-                      <dd className="min-w-0 flex-1 truncate text-[13px] leading-5 text-body" title={value}>
-                        {value}
+                      <dd className="min-w-0 flex-1 truncate text-[13px] leading-5 text-body" title={saved[key]}>
+                        {saved[key]}
                       </dd>
                     </div>
                   ))}
@@ -145,58 +181,25 @@ export function PersonaSection(): React.JSX.Element {
     <section>
       <p className={cn(SECTION_TITLE, 'mb-1.5')}>{t.editHeading}</p>
       <div className="space-y-3">
-        <label className="block">
-          <span className={FIELD_LABEL}>{t.nameLabel}</span>
-          <input
-            className={INPUT_CLASS}
-            onChange={e => setName(e.target.value)}
-            placeholder={t.namePlaceholder}
-            value={name}
-          />
-        </label>
-        <label className="block">
-          <span className={FIELD_LABEL}>{t.relationshipLabel}</span>
-          <input
-            className={INPUT_CLASS}
-            onChange={e => setRelationship(e.target.value)}
-            placeholder={t.relationshipPlaceholder}
-            value={relationship}
-          />
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {RELATIONSHIP_PRESETS.map(p => (
-              <Chip active={relationship === p} key={p} label={p} onClick={() => setRelationship(p)} />
-            ))}
-          </div>
-        </label>
-        <label className="block">
-          <span className={FIELD_LABEL}>{t.personalityLabel}</span>
-          <input
-            className={INPUT_CLASS}
-            onChange={e => setPersonality(e.target.value)}
-            placeholder={t.personalityPlaceholder}
-            value={personality}
-          />
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {PERSONALITY_PRESETS.map(p => (
-              <Chip active={personality === p} key={p} label={p} onClick={() => setPersonality(p)} />
-            ))}
-          </div>
-        </label>
-        <label className="block">
-          <span className={FIELD_LABEL}>{t.speakingStyleLabel}</span>
-          <input
-            className={INPUT_CLASS}
-            onChange={e => setSpeakingStyle(e.target.value)}
-            placeholder={t.speakingStylePlaceholder}
-            required
-            value={speakingStyle}
-          />
-          <div className="mt-1.5 flex flex-wrap gap-1.5">
-            {SPEAKING_STYLE_PRESETS.map(p => (
-              <Chip active={speakingStyle === p} key={p} label={p} onClick={() => setSpeakingStyle(p)} />
-            ))}
-          </div>
-        </label>
+        {fields.map(({ key, label, placeholder, presets, required }) => (
+          <label className="block" key={key}>
+            <span className={FIELD_LABEL}>{label}</span>
+            <input
+              className={INPUT_CLASS}
+              onChange={e => setField(key, e.target.value)}
+              placeholder={placeholder}
+              required={required}
+              value={draft[key]}
+            />
+            {presets && (
+              <div className="mt-1.5 flex flex-wrap gap-1.5">
+                {presets.map(p => (
+                  <Chip active={draft[key] === p} key={p} label={p} onClick={() => setField(key, p)} />
+                ))}
+              </div>
+            )}
+          </label>
+        ))}
         {hint && <p className="text-[11px] text-amber-300/90">{hint}</p>}
         <div className="flex gap-2">
           <button

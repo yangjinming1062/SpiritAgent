@@ -4,6 +4,7 @@ import { atom, onMount, type WritableAtom } from 'nanostores'
 import { hydrateManualReduceTransparency } from '@/shared/lib/apply-no-blur'
 import {
   accountStorageKey,
+  definePersistedEnum,
   persistBoolean,
   persistString,
   registerCompanionStorageKey,
@@ -20,7 +21,7 @@ import { setDisturbanceTier, syncDisturbanceFromStorage } from './companion-stor
 export type ResponsePreference = 'text' | 'voice'
 
 const COMPANION_VOICE_ID_STORAGE_KEY = registerCompanionStorageKey('da.companion.voiceId')
-const RESPONSE_PREFERENCE_STORAGE_KEY = registerCompanionStorageKey('da.companion.responsePreference')
+const RESPONSE_PREFERENCE_STORAGE_KEY = 'da.companion.responsePreference'
 const AUTOPLAY_VOICE_STORAGE_KEY = registerCompanionStorageKey('da.companion.autoplayVoice')
 
 // localStorage 仍是各窗口的即时缓存（同步读、离线可用）；每次写入额外经 prefs:set 通道上报主进程，并入 companion.* 云同步节（云端真源，PROTOCOL「配置所有权与云同步」）。水合广播（initCompanionPrefsSync）用云端值回写缓存与 atom，跨端收敛。
@@ -29,9 +30,14 @@ function reportCloud(key: string, value: unknown): void {
 }
 
 export const $companionVoiceId = atom<string>(storedString(COMPANION_VOICE_ID_STORAGE_KEY) ?? '')
-export const $responsePreference = atom<ResponsePreference>(
-  storedString(RESPONSE_PREFERENCE_STORAGE_KEY) === 'voice' ? 'voice' : 'text'
-)
+
+const responsePreferencePersisted = definePersistedEnum<ResponsePreference>({
+  allowed: ['text', 'voice'],
+  fallback: 'text',
+  key: RESPONSE_PREFERENCE_STORAGE_KEY
+})
+
+export const $responsePreference = responsePreferencePersisted.$atom
 
 // 音色与回应偏好在生活空间设置，轻语共用同一组云端偏好。各窗口内存独立，借 storage 事件把其他窗口的写入热同步进 atom。
 onMount($companionVoiceId, () => {
@@ -53,20 +59,17 @@ export function setCompanionVoiceId(voice: string): void {
 }
 
 export function setResponsePreference(mode: ResponsePreference): void {
-  $responsePreference.set(mode)
-  persistString(RESPONSE_PREFERENCE_STORAGE_KEY, mode)
+  responsePreferencePersisted.set(mode)
   reportCloud('companion.response_preference', mode)
 }
 
 registerStorageClearHandler(() => {
   $companionVoiceId.set('')
-  $responsePreference.set('text')
   $autoplayVoice.set(true)
 })
 
 registerStorageRestoreHandler(() => {
   $companionVoiceId.set(storedString(COMPANION_VOICE_ID_STORAGE_KEY) ?? '')
-  $responsePreference.set(storedString(RESPONSE_PREFERENCE_STORAGE_KEY) === 'voice' ? 'voice' : 'text')
   $autoplayVoice.set(storedBoolean(AUTOPLAY_VOICE_STORAGE_KEY, true))
 })
 
@@ -103,26 +106,30 @@ export const $llmAutonomy = llmAutonomyPref.$atom
 
 export { autonomousMediaPref, autonomousVoicePref, llmAffectPref, llmAutonomyPref }
 
+// 云端水合时按序回写的布尔偏好（companion 节键 → 偏好）。
+const HYDRATED_BOOLEAN_PREFS = [
+  ['llm_affect', llmAffectPref],
+  ['llm_autonomy', llmAutonomyPref],
+  ['autonomous_media', autonomousMediaPref],
+  ['autonomous_voice', autonomousVoicePref]
+] as const
+
 // 云端水合应用：只接受类型匹配的键，坏值静默跳过（fail-open）。借道既有 setter 落 localStorage + atom；回写的 prefs:set 上报在主进程侧与最近一次成功上云内容比对后消解，不会形成回环。
 export function initCompanionPrefsSync(): () => void {
-  // 发送消息直接读取偏好；监听生命周期不能依赖设置面板是否订阅 atom。
-  const refreshResponsePreference = (): void => {
-    $responsePreference.set(storedString(RESPONSE_PREFERENCE_STORAGE_KEY) === 'voice' ? 'voice' : 'text')
-  }
-
   const onStorage = (event: StorageEvent): void => {
     if (event.key === accountStorageKey(AUTOPLAY_VOICE_STORAGE_KEY) || event.key === null) {
       $autoplayVoice.set(storedBoolean(AUTOPLAY_VOICE_STORAGE_KEY, true))
     }
 
     if (event.key === accountStorageKey(RESPONSE_PREFERENCE_STORAGE_KEY) || event.key === null) {
-      refreshResponsePreference()
+      responsePreferencePersisted.reload()
     }
 
     syncDisturbanceFromStorage(event.key)
   }
 
-  refreshResponsePreference()
+  // 发送消息直接读取偏好；监听生命周期不能依赖设置面板是否订阅 atom。
+  responsePreferencePersisted.reload()
   window.addEventListener('storage', onStorage)
 
   let pending: DesktopPrefsHydrated | null = null
@@ -149,20 +156,12 @@ export function initCompanionPrefsSync(): () => void {
       setResponsePreference(companion.response_preference)
     }
 
-    if (typeof companion.llm_affect === 'boolean') {
-      llmAffectPref.set(companion.llm_affect)
-    }
+    for (const [key, pref] of HYDRATED_BOOLEAN_PREFS) {
+      const value = companion[key]
 
-    if (typeof companion.llm_autonomy === 'boolean') {
-      llmAutonomyPref.set(companion.llm_autonomy)
-    }
-
-    if (typeof companion.autonomous_media === 'boolean') {
-      autonomousMediaPref.set(companion.autonomous_media)
-    }
-
-    if (typeof companion.autonomous_voice === 'boolean') {
-      autonomousVoicePref.set(companion.autonomous_voice)
+      if (typeof value === 'boolean') {
+        pref.set(value)
+      }
     }
 
     // 减少透明效果（玻璃降级手动开关）：跨窗口、跨端经 companion 节同步。

@@ -2,7 +2,7 @@
 
 import { atom, computed } from 'nanostores'
 
-import { $chatMessageBodies, $chatMessageList, type ChatMessageBody } from '@/modules/conversation'
+import { $chatMessageBodies, $chatMessageList } from '@/modules/conversation'
 
 export interface ToolStep {
   name: string
@@ -26,43 +26,24 @@ export interface RailArtifact {
 
 export const $isRailOpen = atom<boolean>(true)
 
-export function setRailOpen(open: boolean): void {
-  $isRailOpen.set(open)
-}
-
-// 找到当前轮次：会话尾部第一条 assistant 消息即视为「本轮」入口；遇到下一条 user 消息则停止向前扫描（不同回合的输出不在右栏展示）。
+// 本轮：会话尾部最近一条已有正文的 assistant 消息；只看这一条，不同回合的输出不在右栏展示。
 export const $runRound = computed([$chatMessageList, $chatMessageBodies], (list, bodies) => {
-  let active: ChatMessageBody | undefined
-  let activeId: string | undefined
+  const round = list.findLast(item => item.role === 'assistant' && bodies[item.id])
+  const active = round && bodies[round.id]
 
-  for (let i = list.length - 1; i >= 0; i--) {
-    const item = list[i]
-
-    if (active === undefined && item.role === 'assistant') {
-      active = bodies[item.id]
-      activeId = item.id
-    }
-
-    if (active !== undefined && item.role === 'user') {
-      break
-    }
-  }
-
-  if (!active || !activeId) {
+  if (!active) {
     return null
   }
 
+  const running = Boolean(active.toolName) || active.streaming === true
   const tools = active.tools?.length ? active.tools : active.toolName ? [active.toolName] : []
 
   const steps: ToolStep[] = tools.map((name, idx) => ({
-    active: idx === tools.length - 1 && (Boolean(active.toolName) || active.streaming === true),
+    active: idx === tools.length - 1 && running,
     name
   }))
 
-  return {
-    active: Boolean(active.toolName) || active.streaming === true,
-    steps
-  } satisfies RunRound | null
+  return { active: running, steps } satisfies RunRound | null
 })
 
 // 本会话工件：所有 assistant 消息携带的媒体，按时间倒序去重；不区分当前轮次——右栏「本会话工件」按会话维度累积。

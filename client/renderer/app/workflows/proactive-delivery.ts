@@ -15,7 +15,9 @@ export function isSpriteOverlayVisible(): boolean {
 }
 
 export async function speakProactive(text: string): Promise<void> {
-  if (!text.trim()) {
+  const content = text.trim()
+
+  if (!content) {
     return
   }
 
@@ -26,7 +28,7 @@ export async function speakProactive(text: string): Promise<void> {
     return
   }
 
-  const bubble = { text: text.trim() }
+  const bubble = { text: content }
 
   if (tier !== 'autonomous') {
     // 普通档位：停留更久，让用户在没有语音的情况下也能读完文字。

@@ -6,7 +6,6 @@ import { type RefObject, useEffect, useMemo } from 'react'
 
 import { useAtomListen } from '@/shared/hooks/use-atom-listen'
 import { cn } from '@/shared/lib/utils'
-import { presentationPorts } from '@/shared/presentation-ports'
 import { $gatewayState } from '@/shared/store/gateway'
 import { $surfaceOpen, $surfaceRole } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
@@ -20,20 +19,23 @@ import {
   $lastAssistantStreaming,
   $pendingPromptBatch
 } from './chat-store'
+import { CompanionAvatar } from './companion-avatar'
 import { collectTimeDividerIds } from './conversation-time'
 import { consumePendingMessages, pendingMessages } from './pending-messages'
 import { conversationVoiceSink } from './voice-link'
 
 interface ConversationSurfaceProps {
   className?: string
-  emptyHint?: string
   scrollRef: RefObject<HTMLDivElement | null>
   variant?: ConversationVariant
 }
 
+function scrollToBottom(el: HTMLElement | null): void {
+  el?.scrollTo({ top: el.scrollHeight, behavior: 'smooth' })
+}
+
 export function ConversationSurface({
   className,
-  emptyHint,
   scrollRef,
   variant = 'living'
 }: ConversationSurfaceProps): React.JSX.Element {
@@ -67,31 +69,19 @@ export function ConversationSurface({
   const pendingPromptBatch = useStore($pendingPromptBatch)
   const gatewayState = useStore($gatewayState)
 
-  const resolvedEmptyHint = emptyHint ?? dict.chat.emptyHint
-
   const isTurnPendingOrInFlight = pendingPromptBatch.length > 0 || chatTurnInFlight
   const showTyping = isTurnPendingOrInFlight && !lastAssistantStreaming && gatewayState === 'open'
 
   // 流式 tick 仅驱动跟滚，不进入渲染路径—— listen 回调直接动 DOM，避免每个 token 把整个消息流（list.map + 多个 MessageBubble）重新走一遍。
-  useEffect(() => {
-    const el = scrollRef.current
-
-    el?.scrollTo?.({ top: el.scrollHeight, behavior: 'smooth' })
-  }, [scrollRef])
-
   useAtomListen($chatStreamingTick, () => {
-    const el = scrollRef.current
-
-    el?.scrollTo?.({ top: el.scrollHeight, behavior: 'smooth' })
+    scrollToBottom(scrollRef.current)
   })
 
-  // 列表长度变化同样需要跟滚。
+  // 挂载与列表长度变化同样需要跟滚。
   useEffect(() => {
-    scrollRef.current?.scrollTo?.({ top: scrollRef.current.scrollHeight, behavior: 'smooth' })
+    scrollToBottom(scrollRef.current)
   }, [list.length, scrollRef])
 
-  const portraitUrl = useStore(presentationPorts().$portraitUrl)
-  const activeAvatarId = useStore(presentationPorts().$activeAvatarId)
   const showTimeSet = useMemo(() => collectTimeDividerIds(list), [list])
 
   return (
@@ -110,7 +100,7 @@ export function ConversationSurface({
                 : 'text-faint'
             )}
           >
-            {resolvedEmptyHint}
+            {dict.chat.emptyHint}
           </span>
         </div>
       )}
@@ -119,17 +109,7 @@ export function ConversationSurface({
       ))}
       {showTyping && (
         <div className="flex shrink-0 items-start gap-2.5">
-          {variant === 'workbench' && (
-            <div className="mt-0.5 size-8 shrink-0 overflow-hidden rounded-full border border-white/15 bg-white/10 shadow-sm">
-              {portraitUrl ? (
-                <img alt="Companion" className="size-full object-cover" src={portraitUrl} />
-              ) : activeAvatarId == null ? (
-                <div className="flex size-full items-center justify-center bg-gradient-to-tr from-blue-600 to-indigo-500 text-[11px] font-bold text-white">
-                  S
-                </div>
-              ) : null}
-            </div>
-          )}
+          {variant === 'workbench' && <CompanionAvatar />}
           <div
             className={
               variant === 'workbench'

@@ -52,6 +52,7 @@ import {
   warmAudioContext
 } from '@/modules/speech'
 import { type HistoryGalleryItem, requestGateway } from '@/shared'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { usePointerDrag } from '@/shared/hooks/use-pointer-drag'
 import { authedApi } from '@/shared/lib/authed-api'
@@ -64,24 +65,12 @@ import { cn } from '@/shared/lib/utils'
 import { Chip, DatePicker, INPUT_CLASS, SURFACE_OVERLAY } from '@/shared/panel'
 import { $gatewayState } from '@/shared/store/gateway'
 
-import { computeBackTransition } from './back-transition'
+import { computeBackTransition, type Phase, type VoiceStage } from './back-transition'
 import { type OnboardingAudioTag, playOnboardingAudio } from './onboarding-audio'
 import { PortraitPanel } from './onboarding-components'
 import { useRegeneratePortrait } from './use-regenerate-portrait'
 
-type Phase =
-  | 'q-character'
-  | 'portrait-choose'
-  | 'portrait-generate'
-  | 'hatching'
-  | 'portrait-avatar'
-  | 'fullbody-reference'
-  | 'q-user'
-  | 'voice'
-  | 'finishing'
-
-type VoiceStage = 'describe' | 'catalog'
-
+// 全部字段都经 onboarding.submit 提交，与后端 ONBOARDING_FIELDS 一致。
 type QKey = keyof OnboardingAnswers
 
 // chip 选的是答案类别而非答案本身——见 CALL_NAME_KINDS。
@@ -96,8 +85,9 @@ interface Question {
   key: QKey
   text: string
   placeholder: string
-  required: boolean
-  multiline: boolean
+  // 有值即必填：作答为空时显示该提示，且不可跳过。
+  requiredHint?: string
+  multiline?: boolean
   // Manifest tag 与录到的语音行绑定而非位置绑定——重排 QUESTIONS 也不会让音频错位。
   audioTag: OnboardingAudioTag
   presets?: readonly string[]
@@ -105,6 +95,17 @@ interface Question {
   // 与 `presets` 互斥：双层入口，而不是「点 chip 就把输入框填好」。
   kinds?: readonly AnswerKind[]
   date?: boolean
+}
+
+// 头像接口响应：恢复进度时的读取不保证字段齐全；采纳与确认接口保证带 id 与 asset_url。
+interface AvatarResponse {
+  asset_url?: string | null
+  id?: number
+}
+
+interface SavedAvatarResponse {
+  asset_url: string
+  id: number
 }
 
 // 「名字/昵称」是称呼类别不是称呼值，点 chip 只换标签再问具体值；「称号」额外给现成选项。
@@ -125,16 +126,14 @@ const QUESTIONS: readonly Question[] = [
     key: 'name',
     text: '您好…我还不认识自己。您愿意给我一个名字吗？',
     placeholder: '给我起个名字吧',
-    required: true,
-    multiline: false,
+    requiredHint: '名字是必填的哦～',
     audioTag: 'onboarding.q0'
   },
   {
     key: 'biological_type',
     text: '那我是哪种生灵呢？',
     placeholder: '或者自由描述…',
-    required: true,
-    multiline: false,
+    requiredHint: '生灵类型是必填的哦～',
     audioTag: 'onboarding.q1',
     presets: SPECIES_PRESETS
   },
@@ -142,8 +141,6 @@ const QUESTIONS: readonly Question[] = [
     key: 'gender',
     text: '嗯…那我是男性、女性、还是…',
     placeholder: '或者自由描述…',
-    required: false,
-    multiline: false,
     audioTag: 'onboarding.q2',
     presets: CHARACTER_GENDER_PRESETS
   },
@@ -151,8 +148,6 @@ const QUESTIONS: readonly Question[] = [
     key: 'relationship',
     text: '好的，那您希望我是什么样的身份？',
     placeholder: '或者自由描述…',
-    required: false,
-    multiline: false,
     audioTag: 'onboarding.q4',
     presets: RELATIONSHIP_PRESETS
   },
@@ -160,8 +155,6 @@ const QUESTIONS: readonly Question[] = [
     key: 'personality',
     text: '您希望我是什么性格？',
     placeholder: '自由描述…',
-    required: false,
-    multiline: false,
     audioTag: 'onboarding.q5',
     presets: PERSONALITY_PRESETS
   },
@@ -170,7 +163,7 @@ const QUESTIONS: readonly Question[] = [
     key: 'speaking_style',
     text: '您希望我说话的风格是什么样的？',
     placeholder: '比如：简短、爱用比喻、俏皮一点…',
-    required: true,
+    requiredHint: '说话风格是必填的哦～',
     multiline: true,
     audioTag: 'onboarding.q10',
     max: 500,
@@ -180,8 +173,6 @@ const QUESTIONS: readonly Question[] = [
     key: 'voice',
     text: '您希望我听起来是什么样的？比如温柔的少女音、沉稳的男声、活泼的正太…',
     placeholder: '描述你想要的声音…',
-    required: false,
-    multiline: false,
     audioTag: 'onboarding.q12',
     presets: VOICE_PRESETS
   },
@@ -189,8 +180,6 @@ const QUESTIONS: readonly Question[] = [
     key: 'user_call_name',
     text: '我该怎么称呼您？',
     placeholder: '或者自由描述…',
-    required: false,
-    multiline: false,
     audioTag: 'onboarding.q6',
     max: MAX_USER_TEXT,
     kinds: CALL_NAME_KINDS
@@ -199,8 +188,6 @@ const QUESTIONS: readonly Question[] = [
     key: 'user_gender',
     text: '您方便告诉我您的性别吗？',
     placeholder: '或自由描述…',
-    required: false,
-    multiline: false,
     audioTag: 'onboarding.q7',
     max: MAX_USER_TEXT,
     presets: USER_GENDER_PRESETS
@@ -209,8 +196,6 @@ const QUESTIONS: readonly Question[] = [
     key: 'user_birthday',
     text: '您方便告诉我您的生日吗？',
     placeholder: '选择日期（可不填）',
-    required: false,
-    multiline: false,
     audioTag: 'onboarding.q8',
     max: MAX_USER_TEXT,
     date: true
@@ -219,7 +204,6 @@ const QUESTIONS: readonly Question[] = [
     key: 'user_hobbies',
     text: '您平时喜欢什么？',
     placeholder: '可以多写几个…',
-    required: false,
     multiline: true,
     audioTag: 'onboarding.q9',
     max: MAX_USER_TEXT
@@ -228,7 +212,6 @@ const QUESTIONS: readonly Question[] = [
     key: 'user_freeform',
     text: '还有什么想告诉我、或者想叮嘱我的吗？',
     placeholder: '可跳过…',
-    required: false,
     multiline: true,
     audioTag: 'onboarding.q11',
     max: MAX_USER_TEXT
@@ -236,8 +219,6 @@ const QUESTIONS: readonly Question[] = [
 ]
 
 // 确认全身形象后固定；外形细节由角色卡维护。
-const LOCKED_FIELD_KEYS: ReadonlySet<QKey> = new Set(['biological_type', 'gender'])
-
 const LOCKED_FIELD_LABELS: Partial<Record<QKey, string>> = {
   biological_type: '物种',
   gender: '性别'
@@ -293,22 +274,6 @@ const retryTransient = async <T,>(
 }
 
 const DRAG_THRESHOLD = 6
-
-// 可经 onboarding.submit 提交的 key，与后端 ONBOARDING_FIELDS 对齐（恒等映射，故用 Set）。
-const ONBOARDING_FIELD_KEYS: ReadonlySet<QKey> = new Set<QKey>([
-  'name',
-  'biological_type',
-  'gender',
-  'relationship',
-  'personality',
-  'speaking_style',
-  'user_call_name',
-  'user_gender',
-  'user_birthday',
-  'user_hobbies',
-  'user_freeform',
-  'voice'
-])
 
 async function savePersona(payload: ReturnType<typeof assemblePersona>): Promise<boolean> {
   try {
@@ -408,7 +373,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const [input, setInput] = useState('')
   const [portraitUrl, setPortraitUrl] = useState<string | null>(null)
   const [portraitPreviewId, setPortraitPreviewId] = useState<number | null>(null)
-  const mountedRef = useRef(false)
+  const begin = useAsyncGuard()
   const activeAvatarId = useStore($activeAvatarId)
   const portraitHistory = useStore($portraitHistory)
   const portraitSelectedIdx = useStore($portraitSelectedIdx)
@@ -416,25 +381,17 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
   // 失败时保留当前头像：它已持有解析好的字节。
   const applyLocalPortrait = async (
-    response:
-      | {
-          asset_url?: string | null
-          id?: number
-        }
-      | null
-      | undefined
-  ): Promise<{ assetUrl: string | null; avatar: string | null; id: number | null }> => {
-    const { avatar } = await applyPortrait(
-      { id: response?.id, assetUrl: response?.asset_url },
-      () => mountedRef.current
-    )
+    response: AvatarResponse | null | undefined,
+    isLive: () => boolean
+  ): Promise<string | null> => {
+    const { avatar } = await applyPortrait({ id: response?.id, assetUrl: response?.asset_url }, isLive)
 
     if (avatar) {
       setPortraitUrl(avatar)
       setPortraitPreviewId(response?.id ?? null)
     }
 
-    return { assetUrl: response?.asset_url ?? null, avatar, id: response?.id ?? null }
+    return avatar
   }
 
   const [voice, setVoice] = useState<VoiceOption | null>(null)
@@ -489,14 +446,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   // 注册对话框可见矩形到 interactive-regions，SpriteStage 命中测试只在表单卡片上捕获；卸载时恢复穿透。
   useInteractiveRegion('onboarding', containerRef, interactiveRegionRect)
 
-  useEffect(() => {
-    mountedRef.current = true
-
-    return () => {
-      mountedRef.current = false
-      stopSpeaking()
-    }
-  }, [])
+  useEffect(() => () => stopSpeaking(), [])
 
   // q1 之前预热 ctx，避免 MediaElementSource 重路由吃掉首帧。
   useEffect(() => {
@@ -602,16 +552,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setAnswers(nextAnswers)
 
     // 逐字段增量持久化（DESIGN 断点恢复），fire-and-forget 不阻塞 UI；网关未打开前是空操作。
-    if (gatewayState === 'open' && ONBOARDING_FIELD_KEYS.has(q.key)) {
+    if (gatewayState === 'open') {
       void submitOnboardingAnswer(q.key, cleaned ?? null)
     }
 
     return nextAnswers
   }
 
-  const advance = (updatedAnswers?: OnboardingAnswers): void => {
-    const currentAnswers = updatedAnswers ?? answers
-
+  const advance = (currentAnswers: OnboardingAnswers): void => {
     // Voice describe 只有一道题；点下一题会切到 catalog，由下面的 useEffect 加载。
     if (phase === 'voice' && voiceStage === 'describe') {
       setVoiceStage('catalog')
@@ -691,14 +639,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   const onSend = (): void => {
     const q = currentList[qIndex]
 
-    if (q?.required && !input.trim()) {
-      const requiredHints: Record<string, string> = {
-        name: '名字是必填的哦～',
-        biological_type: '生灵类型是必填的哦～',
-        speaking_style: '说话风格是必填的哦～'
-      }
-
-      setHint(requiredHints[q.key] ?? '此项是必填的哦～')
+    if (q?.requiredHint && !input.trim()) {
+      setHint(q.requiredHint)
 
       return
     }
@@ -708,7 +650,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   }
 
   const onSkip = (): void => {
-    if (question?.required) {
+    if (question?.requiredHint) {
       return
     }
 
@@ -740,13 +682,12 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     }
   }
 
-  const enterPortraitStage = async (currentAnswers?: OnboardingAnswers): Promise<void> => {
+  const enterPortraitStage = async (currentAnswers: OnboardingAnswers): Promise<void> => {
     // 形象已锁死时不应再进入头像/全身图阶段。深度防御:onBack 守卫 + 此处显式短路,即使上游误调也无效。
     if (imageSealed) {
       return
     }
 
-    const ans = currentAnswers ?? answers
     setHint(null)
 
     // 先固化 persona 再进入头像阶段——让用户在「AI 生成」与「直接上传」两条入口里选。
@@ -754,7 +695,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     await onboardingSubmissionsRef.current
 
     try {
-      personaOk = (await retryTransient(() => savePersona(assembleCharacterPersona(ans)), 700)) === true
+      personaOk = (await retryTransient(() => savePersona(assembleCharacterPersona(currentAnswers)), 700)) === true
     } catch (err) {
       log.warn('onboarding', 'character persona save rejected', err)
       setPhase('q-character')
@@ -879,17 +820,14 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             try {
               await hydratePortraitHistory()
 
-              const avatarRes = await window.spiritagent.api<{
-                asset_url?: string | null
-                id?: number
-              }>({
+              const avatarRes = await window.spiritagent.api<AvatarResponse>({
                 path: '/api/companion/avatar',
                 method: 'GET'
               })
 
-              const applied = await applyLocalPortrait(avatarRes)
+              const avatar = await applyLocalPortrait(avatarRes, begin())
 
-              if (applied.avatar) {
+              if (avatar) {
                 if (avatarRes?.id != null) {
                   const idx = $portraitHistory.get().findIndex(e => e.avatarId === avatarRes.id)
 
@@ -908,11 +846,11 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
             }
           } else if (nextField === 'fullbody-reference') {
             try {
-              const avatarRes = await window.spiritagent.api<{ id: number; asset_url: string }>({
+              const avatarRes = await window.spiritagent.api<SavedAvatarResponse>({
                 path: '/api/companion/avatar'
               })
 
-              await applyLocalPortrait(avatarRes)
+              await applyLocalPortrait(avatarRes, begin())
               setPhase('fullbody-reference')
             } catch (error) {
               log.warn('onboarding', 'resume fullbody failed', error)
@@ -939,29 +877,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       } catch (error) {
         log.warn('onboarding', 'resume failed', error)
         markResumeFailed()
-
-        return
-      }
-
-      const r = await fetchVoiceCatalogRaw(requestGateway)
-
-      if (r.ok) {
-        setVoiceCatalog(r.catalog.voices)
       }
     })()
-  }, [gatewayState, onCompletedRef, resumeAttempt])
-
-  useEffect(() => {
-    if (gatewayState !== 'open' || voiceCatalog.length > 0) {
-      return
-    }
-
-    void fetchVoiceCatalogRaw(requestGateway).then(r => {
-      if (r.ok) {
-        setVoiceCatalog(r.catalog.voices)
-      }
-    })
-  }, [gatewayState, voiceCatalog.length])
+  }, [begin, gatewayState, onCompletedRef, resumeAttempt])
 
   // 新建一行 avatar 并经 hook 发布到 $activeAvatarId；微调编辑上一版，重新生成保持种子全量重绘；附参考图时微调不可用。
   const {
@@ -1016,8 +934,8 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     [portraitHistory]
   )
 
-  const pickReferenceImage = async (): Promise<void> => {
-    const picked = await pickAvatarImage('选择一张参考图')
+  const pickImage = async (title: string, onPicked: (image: PickedImage) => void): Promise<void> => {
+    const picked = await pickAvatarImage(title)
 
     if (!picked) {
       return
@@ -1029,9 +947,13 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return
     }
 
-    updateRefImage(picked.image)
+    onPicked(picked.image)
     setHint(null)
   }
+
+  const pickReferenceImage = (): Promise<void> => pickImage('选择一张参考图', updateRefImage)
+
+  const pickPresentationImage = (): Promise<void> => pickImage('选择光线与构图参考图', setPresentationRef)
 
   const fetchAvatarPrompt = async (): Promise<string> => {
     const response = await window.spiritagent.api<{ prompt: string }>({
@@ -1044,52 +966,37 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
   }
 
   const adoptAvatarSeed = async (image: PickedImage): Promise<void> => {
-    const epoch = currentClearEpoch()
+    const isLive = begin()
 
-    const response = await window.spiritagent.api<{ id: number; asset_url: string }>({
+    const response = await window.spiritagent.api<SavedAvatarResponse>({
       path: '/api/companion/avatar/adopt',
       method: 'POST',
       body: { image: image.base64, content_type: image.contentType }
     })
 
-    if (!mountedRef.current || currentClearEpoch() !== epoch) {
+    if (!isLive()) {
       return
     }
 
-    const applied = await applyLocalPortrait(response)
+    const avatar = await applyLocalPortrait(response, isLive)
 
-    if (!mountedRef.current || currentClearEpoch() !== epoch) {
+    if (!isLive()) {
       return
     }
 
-    if (!applied.avatar) {
+    if (!avatar) {
       throw new Error('头像已保存，预览加载失败，请重新加载')
     }
 
-    pushPortraitEntry({ assetUrl: applied.assetUrl, avatarId: applied.id, portraitUrl: applied.avatar })
+    const avatarId = response.id ?? null
+
+    pushPortraitEntry({ assetUrl: response.asset_url ?? null, avatarId, portraitUrl: avatar })
     $regenFeedback.set('')
     setPresentationRef(null)
     setPortraitPanelHint(null)
     // 自备图即心仪头像，采纳后直接确认。
     setPortraitDirectAdopt(true)
-    await sealPortrait(applied.id)
-  }
-
-  const pickPresentationImage = async (): Promise<void> => {
-    const picked = await pickAvatarImage('选择光线与构图参考图')
-
-    if (!picked) {
-      return
-    }
-
-    if ('error' in picked) {
-      setHint(picked.error)
-
-      return
-    }
-
-    setPresentationRef(picked.image)
-    setHint(null)
+    await sealPortrait(avatarId)
   }
 
   // 确认头像并进入全身阶段；失败落到确认步骤展示原因，可原地重试。
@@ -1098,6 +1005,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return
     }
 
+    const isLive = begin()
     setSealingPortrait(true)
 
     try {
@@ -1107,7 +1015,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
         body: { expected_avatar_id: expectedAvatarId }
       })
 
-      if (!mountedRef.current || (!result.ok && result.reason === 'unauth')) {
+      if (!isLive() || (!result.ok && result.reason === 'unauth')) {
         return
       }
 
@@ -1145,11 +1053,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
     const epoch = currentClearEpoch()
 
-    const res = await window.spiritagent.api<{
-      id: number
-      asset_url: string
-      seed_fullbody_url: string
-    }>({
+    const res = await window.spiritagent.api<SavedAvatarResponse & { seed_fullbody_url: string }>({
       path: `/api/companion/avatar/${activeAvatarId}/fullbody/confirm`,
       method: 'POST',
       body: { expected_url: expectedUrl }
@@ -1159,7 +1063,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return
     }
 
-    await applyLocalPortrait(res)
+    await applyLocalPortrait(res, begin())
 
     if (currentClearEpoch() !== epoch) {
       return
@@ -1175,9 +1079,6 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
     setPhase('voice')
     setVoiceStage('describe')
     setQIndex(0)
-    setInput('')
-    setAnswerKind(null)
-    setHint(null)
   }
 
   const previewVoice = (next: VoiceOption, context: string): void =>
@@ -1199,13 +1100,11 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
 
     setPhase('q-user')
     setQIndex(0)
-    setInput('')
-    setAnswerKind(null)
-    setHint(null)
   }
 
-  const finish = async (currentAnswers?: OnboardingAnswers): Promise<void> => {
-    const ans = { ...answers, ...(currentAnswers ?? {}) }
+  const finish = async (currentAnswers: OnboardingAnswers): Promise<void> => {
+    // 拷贝一份：下面会写入 voice，不能改动调用方传入的对象。
+    const ans = { ...currentAnswers }
 
     if (voice && !ans.voice) {
       ans.voice = voice.label || voice.id
@@ -1239,13 +1138,13 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
       return
     }
 
-    void clearDraftRefImage()
     updateRefImage(null)
     // 初次问候由伙伴在后端主动回合中生成并经陪伴消息送达，引导不等待也不代写台词。
     onCompleted()
   }
 
   const presetValues = question?.presets ?? []
+  const lockedLabel = phase === 'q-character' && question ? LOCKED_FIELD_LABELS[question.key] : undefined
   const otherVoices = voice ? voiceCatalog.filter(v => voiceSelectionId(v) !== voiceSelectionId(voice)) : []
   const voiceCandidates = voice ? [voice, ...(voiceAlternatives.length ? voiceAlternatives : otherVoices)] : []
 
@@ -1288,9 +1187,9 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
               </button>
             </div>
           )}
-          {resumeState === 'ok' && phase === 'q-character' && question && LOCKED_FIELD_KEYS.has(question.key) && (
+          {resumeState === 'ok' && lockedLabel && (
             <p className="mb-2 rounded-md border border-amber-300/30 bg-amber-300/10 px-2 py-1 text-[10px] leading-relaxed text-strong">
-              「{LOCKED_FIELD_LABELS[question.key] ?? '当前字段'}」是形象确认后无法再次更改的重点内容，请仔细选择。
+              「{lockedLabel}」是形象确认后无法再次更改的重点内容，请仔细选择。
             </p>
           )}
           {resumeState === 'ok' &&
@@ -1355,7 +1254,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     className={cn(INPUT_CLASS, 'mt-3 text-sm')}
                     onChange={e => setInput(e.target.value)}
                     onKeyDown={e => {
-                      if (e.key === 'Enter' && !question.multiline) {
+                      if (e.key === 'Enter') {
                         onSend()
                       }
                     }}
@@ -1374,7 +1273,7 @@ export function OnboardingFlow({ onCompleted }: OnboardingFlowProps): React.JSX.
                     上一题
                   </button>
                   <div className="flex gap-3">
-                    {!question.required && (
+                    {!question.requiredHint && (
                       <button className="text-body transition hover:text-strong" onClick={onSkip} type="button">
                         跳过
                       </button>

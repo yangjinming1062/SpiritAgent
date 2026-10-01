@@ -40,15 +40,20 @@ export function setSurfaceRole(role: SurfaceRole): void {
   $surfaceRole.set(role)
 }
 
+// 桌面精灵舞台展示中：精灵窗未隐藏或最小化，且未被完整入口收起。
+export function isSpriteStageShown(): boolean {
+  return $surfaceOpen.get() === null && $surfaceSpriteVisible.get()
+}
+
 export function isCompanionStageVisible(): boolean {
-  if ($surfaceScreenLocked.get() || (typeof document !== 'undefined' && document.visibilityState === 'hidden')) {
+  if ($surfaceScreenLocked.get() || document.visibilityState === 'hidden') {
     return false
   }
 
   const role = $surfaceRole.get()
 
   if (role === 'sprite') {
-    return $surfaceSpriteVisible.get() && $surfaceOpen.get() === null
+    return isSpriteStageShown()
   }
 
   return role !== null && $surfaceOpen.get() === role && $surfaceCompanions.get()[role].visible
@@ -69,10 +74,6 @@ function applySurfaceState(state: DesktopSurfaceChangedEvent): void {
 
 export async function setSurfaceCompanion(preference: SurfaceCompanionPreference): Promise<void> {
   applySurfaceState(await window.spiritagent.surface.setCompanion(preference))
-}
-
-export function isLivingProxyWindow(): boolean {
-  return $surfaceRole.get() === 'living'
 }
 
 export type OpenSurfaceOptions = Omit<DesktopSurfaceOpenPayload, 'surface'>

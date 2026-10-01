@@ -1,17 +1,14 @@
 import { useStore } from '@nanostores/react'
-import React, { useEffect, useRef, useState } from 'react'
+import type React from 'react'
+import { useEffect, useRef, useState } from 'react'
 
+import { CompanionEgg, useCompanionPresentation } from '@/app/components/companion-presentation'
 import { ActivationOverlay, BootFailureOverlay, OnboardingFlow } from '@/app/onboarding'
 import { useAccountLifecycle } from '@/app/workflows/account-lifecycle'
 import { speakProactive } from '@/app/workflows/proactive-delivery'
 import {
-  $actionCatalogStatus,
   $companionLifecycle,
   $companionVoiceId,
-  $contextMenuPos,
-  $videoGenStage,
-  $videoGenState,
-  EggStage,
   ensureCompanionHydrated,
   hydrateActionCatalog,
   hydratePersona,
@@ -19,9 +16,9 @@ import {
   hydratePortraitHistory,
   hydrateVideoPack,
   initSpatial,
+  openContextMenu,
   reportUserActivity,
   resetToHomePosition,
-  resolveCompanionPresentation,
   setCompanionLifecycle,
   setCompanionVoiceId,
   startActivityMonitor
@@ -36,7 +33,7 @@ import { $auth } from '@/shared/store/auth'
 import { $gatewayState } from '@/shared/store/gateway'
 import { notify } from '@/shared/store/notifications'
 import { hydrateRunnerStatus } from '@/shared/store/runner-status'
-import { $surfaceOpen, requestOpenSurface, setSurfaceRole } from '@/shared/store/surfaces'
+import { $surfaceOpen, requestOpenSurface } from '@/shared/store/surfaces'
 import { getStrings } from '@/shared/strings'
 
 import { SpriteStage } from './behaviors/sprite-stage'
@@ -45,37 +42,32 @@ import { DeveloperOverlay } from './developer-overlay'
 import { ProactiveBubble } from './proactive-bubble'
 import { toggleWhisper, WhisperOverlay } from './whisper'
 
-setSurfaceRole('sprite')
-
 export function SpriteWindow(): React.JSX.Element {
   useWindowMouseCapture()
   // toast 的关闭/展开按钮需要真实可点——透明窗口把它的矩形注册进交互区域。
   const notificationStackRef = useRef<HTMLDivElement>(null)
   useInteractiveRegion('notification-stack', notificationStackRef)
   const auth = useStore($auth)
-  const accountId = auth.kind === 'authenticated' ? auth.snapshot.accountId : null
   const gatewayState = useStore($gatewayState)
   const surfaceOpen = useStore($surfaceOpen)
   const lifecycle = useStore($companionLifecycle)
-  const videoStatus = useStore($actionCatalogStatus)
-  const videoGenState = useStore($videoGenState)
-  const videoGenStage = useStore($videoGenStage)
+  const presentation = useCompanionPresentation()
   const [activationOpen, setActivationOpen] = useState(false)
 
   const validityCheckedRef = useRef(false)
 
   useAccountLifecycle()
 
-  useEffect(() => initSpatial(), [])
-
-  // 挂载时预热 AudioContext：冷启动 resume 100–200ms 期间 MediaElementSource 重路由会丢首帧，预热把这段时间提前到用户抵达前；onboarding-flow 自己也调一次覆盖新用户路径。
   useEffect(() => {
+    const stopSpatial = initSpatial()
+
+    // 挂载时预热 AudioContext：冷启动 resume 100–200ms 期间 MediaElementSource 重路由会丢首帧，预热把这段时间提前到用户抵达前；onboarding-flow 自己也调一次覆盖新用户路径。
     warmAudioContext()
-  }, [])
 
-  // 挂载时一次性水合 runner-status atom（与 hydrateAuth 同款），让伙伴侧消费者直接读 $runnerPhase，不必各自实现 subscribe+同步 getter。
-  useEffect(() => {
+    // 挂载时一次性水合 runner-status atom（与 hydrateAuth 同款），让伙伴侧消费者直接读 $runnerPhase，不必各自实现 subscribe+同步 getter。
     void hydrateRunnerStatus()
+
+    return stopSpatial
   }, [])
 
   // 托盘「激活...」对偶：主进程只调 showMainWindow() 不够，激活浮层是 React state，关掉后必须显式翻回来否则死锁。
@@ -117,18 +109,11 @@ export function SpriteWindow(): React.JSX.Element {
     return () => window.removeEventListener('keydown', onKey)
   }, [])
 
-  // lifecycle 由 useAccountLifecycle 统一解析；本窗只据此决定向导与立绘水合。
-  useEffect(() => {
-    if (auth.kind === 'authenticated' && lifecycle === 'ready') {
-      void hydratePortrait()
-      void hydratePortraitHistory()
-    }
-  }, [accountId, auth.kind, lifecycle])
-
   const authed = auth.kind === 'authenticated'
   // 引导没有关闭入口（DESIGN「引导与后台准备」）：已激活且未完成时始终显示，完成后由 lifecycle 收起。
   const showOnboarding = authed && lifecycle === 'onboarding'
 
+  // lifecycle 由 useAccountLifecycle 统一解析；本窗只据此决定向导，就绪后才启动活动监视并水合立绘与动作资产。
   useEffect(() => {
     if (auth.kind !== 'authenticated' || lifecycle !== 'ready') {
       return
@@ -145,6 +130,7 @@ export function SpriteWindow(): React.JSX.Element {
       hydratePersona,
       hydratePortrait
     })
+    void hydratePortraitHistory()
 
     return () => {
       window.removeEventListener('keydown', onKey)
@@ -184,17 +170,6 @@ export function SpriteWindow(): React.JSX.Element {
     })
   }, [lifecycle, gatewayState])
 
-  // 视频就绪挂视频层，否则落蛋形并给出真实状态（DESIGN「呈现与降级」）。
-  const presentation = React.useMemo(
-    () =>
-      resolveCompanionPresentation({
-        catalogStatus: videoStatus,
-        generationStage: videoGenStage,
-        generationState: videoGenState
-      }),
-    [videoStatus, videoGenState, videoGenStage]
-  )
-
   // 鉴权前：点击打开伙伴窗口内的激活浮层。
   const onTap = (): void => {
     if (!authed) {
@@ -224,7 +199,7 @@ export function SpriteWindow(): React.JSX.Element {
       <SpriteStage
         hidden={showOnboarding || surfaceOpen === 'living' || surfaceOpen === 'workbench'}
         onContextMenu={e => {
-          $contextMenuPos.set({ x: e.clientX, y: e.clientY })
+          openContextMenu({ x: e.clientX, y: e.clientY })
         }}
         onDoubleTap={onDoubleTap}
         onTap={onTap}
@@ -232,21 +207,7 @@ export function SpriteWindow(): React.JSX.Element {
         {showOnboarding ? null : presentation.renderer === 'video' ? (
           <VideoStage />
         ) : (
-          <EggStage
-            hasRecoveryAction={presentation.fallbackActionAvailable}
-            message={presentation.fallbackMessage}
-            onStatusAction={() => {
-              if (presentation.fallbackStatus === 'failed') {
-                void requestOpenSurface('living', { view: 'appearance' })
-
-                return
-              }
-
-              void hydrateActionCatalog(true)
-              void hydrateVideoPack(true)
-            }}
-            status={presentation.fallbackStatus}
-          />
+          <CompanionEgg presentation={presentation} />
         )}
       </SpriteStage>
       <SpriteContextMenu

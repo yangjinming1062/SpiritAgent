@@ -109,14 +109,12 @@ export function MomentsPage(): React.JSX.Element {
                 </time>
               </div>
               <h3 className={styles.title}>{m.title ?? t.noTitle}</h3>
-              {m.body && (
-                <p className={`${styles.body} ${expanded ? styles.bodyExpanded : styles.bodyClamp}`}>{m.body}</p>
-              )}
+              {m.body && <p className={cn(styles.body, expanded ? styles.bodyExpanded : styles.bodyClamp)}>{m.body}</p>}
             </button>
             {m.mediaUrl ? (
               <InlineMedia alt={m.title ?? ''} audioUrl={m.audioUrl} mediaType={m.mediaType} url={m.mediaUrl} />
             ) : null}
-            <MomentComments companionName={companionName} momentId={m.id} />
+            <MomentComments comments={m.comments} companionName={companionName} momentId={m.id} />
           </article>
         )
       })}
@@ -124,14 +122,15 @@ export function MomentsPage(): React.JSX.Element {
   )
 }
 
-function MomentComments(props: { companionName: string; momentId: string }): React.JSX.Element {
-  const { companionName, momentId } = props
-  const moments = useStore($moments)
+function MomentComments(props: {
+  comments: MomentCommentEntry[]
+  companionName: string
+  momentId: string
+}): React.JSX.Element {
+  const { comments, companionName, momentId } = props
   const t = useStrings().living.moments
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
-
-  const comments = moments.find(m => m.id === momentId)?.comments ?? []
 
   const submit = async (): Promise<void> => {
     const content = draft.trim()
@@ -208,7 +207,7 @@ function CommentRow(props: {
   const t = useStrings().living.moments
 
   return (
-    <div className={`${styles.commentRow} ${isCompanion ? styles.commentCompanion : ''}`}>
+    <div className={cn(styles.commentRow, isCompanion && styles.commentCompanion)}>
       <span className={styles.commentAuthor}>{isCompanion ? companionName : t.userLabel}</span>
       <span className={styles.commentContent}>{comment.content}</span>
       {!isCompanion && (

@@ -1,30 +1,31 @@
-// ``onBack`` 转移决策的纯函数，与组件状态机隔离。输出是下一个状态意图或 null(表示"无变化")。
+// 引导阶段类型，以及 ``onBack`` 转移决策的纯函数（与组件状态机隔离）。输出是下一个状态意图或 null(表示"无变化")。
 
-type BackPhase =
+export type Phase =
   | 'q-character'
-  | 'q-user'
-  | 'voice'
-  | 'fullbody-reference'
   | 'portrait-choose'
   | 'portrait-generate'
-  | 'portrait-avatar'
   | 'hatching'
+  | 'portrait-avatar'
+  | 'fullbody-reference'
+  | 'q-user'
+  | 'voice'
   | 'finishing'
-type BackVoiceStage = 'describe' | 'catalog'
+
+export type VoiceStage = 'describe' | 'catalog'
 
 interface BackState {
-  phase: BackPhase
+  phase: Phase
   qIndex: number
-  voiceStage: BackVoiceStage
+  voiceStage: VoiceStage
   imageSealed: boolean
   // 头像未经确认步骤直接采用（自备图或「继续当前头像」）时为 true ——全身阶段返回选择步骤而非确认步骤。
   portraitDirectAdopt: boolean
 }
 
 interface BackIntent {
-  phase: BackPhase
+  phase: Phase
   qIndex?: number
-  voiceStage?: BackVoiceStage
+  voiceStage?: VoiceStage
 }
 
 export function computeBackTransition(state: BackState, characterQuestionsCount: number): BackIntent | null {
@@ -48,11 +49,7 @@ export function computeBackTransition(state: BackState, characterQuestionsCount:
     return state.portraitDirectAdopt ? { phase: 'portrait-choose' } : { phase: 'portrait-avatar' }
   }
 
-  if (state.phase === 'portrait-avatar') {
-    return { phase: 'portrait-choose' }
-  }
-
-  if (state.phase === 'portrait-generate') {
+  if (state.phase === 'portrait-avatar' || state.phase === 'portrait-generate') {
     return { phase: 'portrait-choose' }
   }
 

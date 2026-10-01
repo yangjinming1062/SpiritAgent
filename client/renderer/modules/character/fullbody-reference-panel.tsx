@@ -1,14 +1,15 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 
 import { PortraitLightbox } from '@/shared'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { authedApi } from '@/shared/lib/authed-api'
 import { FolderOpen, Sparkles } from '@/shared/lib/icons'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import { currentClearEpoch } from '@/shared/lib/storage'
 import { BTN_PRIMARY, BTN_SUBTLE, FIELD_LABEL, HINT_TEXT, INPUT_CLASS, SECTION_TITLE } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
+import type { ImageReviseMode } from '@/shared/types/spiritagent'
 
 import { pickAvatarImage, type PickedImage } from './avatar-image'
 import { $avatarSeeds, hydrateAvatarSeeds } from './avatar-seeds-store'
@@ -40,11 +41,12 @@ export function FullbodyReferencePanel({
   onContinue,
   onBack
 }: FullbodyReferencePanelProps): React.JSX.Element {
-  const t = useStrings().settings.persona.fullbodyReference
-  const genActions = useStrings().generationActions
-  const selfSource = useStrings().selfSource
+  const dict = useStrings()
+  const t = dict.settings.persona.fullbodyReference
+  const genActions = dict.generationActions
+  const selfSource = dict.selfSource
   const state = useStore($fullbodyReference)
-  const mountedRef = useRef(false)
+  const begin = useAsyncGuard()
   const portraitUrl = useStore($portraitUrl)
   const avatarSeeds = useStore($avatarSeeds)
   const [feedback, setFeedback] = useState('')
@@ -68,18 +70,23 @@ export function FullbodyReferencePanel({
   const displayedPreview = selectedHistory?.previewUrl ?? preview
   const currentImageUnavailable = state.error === 'load' || state.error === 'preview'
 
+  // 历史版本与当前版本同构展示；当前版本的 id 为 null。
+  const thumbnails = [
+    ...history.map((entry, index) => ({
+      id: entry.id,
+      label: `${t.historyVersion} ${index + 1}`,
+      url: entry.previewUrl
+    })),
+    ...(preview ? [{ id: null, label: t.historyCurrent, url: preview }] : [])
+  ]
+
   // 有结果后进入预览确认；此前引导只展示当前选定的获取方式。
   const showSourceChoice =
     onboarding && !preview && !currentRawUrl && history.length === 0 && state.error === null && sourceStep === 'choose'
 
   useEffect(() => {
-    mountedRef.current = true
     void hydrateAvatarSeeds()
     void hydrateFullbodyReference(avatarId)
-
-    return () => {
-      mountedRef.current = false
-    }
   }, [avatarId])
 
   const confirm = async (): Promise<void> => {
@@ -142,16 +149,9 @@ export function FullbodyReferencePanel({
     setSelecting(false)
   }
 
-  const regenerate = async (): Promise<void> => {
-    if (await regenerateFullbodyReference(avatarId, feedback, reference)) {
-      setFeedback('')
-      setSelectedHistoryId(null)
-    }
-  }
-
-  // 微调编辑上一版全身参考：需要已有图与反馈；附参考图时不可用（参考图属重新生成意图）。
-  const edit = async (): Promise<void> => {
-    if (await regenerateFullbodyReference(avatarId, feedback, null, 'edit')) {
+  // 重新生成与微调共用提交；微调需要反馈且不能附参考图，由 editDisabled 禁用入口，store 对 edit 也不发参考图。
+  const submit = async (mode: ImageReviseMode): Promise<void> => {
+    if (await regenerateFullbodyReference(avatarId, feedback, reference, mode)) {
       setFeedback('')
       setSelectedHistoryId(null)
     }
@@ -189,7 +189,7 @@ export function FullbodyReferencePanel({
   }
 
   const adoptSelfSourceImage = async (image: PickedImage): Promise<void> => {
-    const epoch = currentClearEpoch()
+    const isLive = begin()
 
     const result = await authedApi<{ seed_fullbody_url?: string; image_url?: string }>({
       path: `/api/companion/avatar/${avatarId}/fullbody/reference/adopt`,
@@ -197,7 +197,7 @@ export function FullbodyReferencePanel({
       body: { image: image.base64, content_type: image.contentType }
     })
 
-    if (!mountedRef.current || epoch !== currentClearEpoch() || (!result.ok && result.reason === 'unauth')) {
+    if (!isLive() || (!result.ok && result.reason === 'unauth')) {
       return
     }
 
@@ -208,7 +208,7 @@ export function FullbodyReferencePanel({
     const expectedUrl = result.value?.image_url || result.value?.seed_fullbody_url
     const hydrated = await hydrateFullbodyReference(avatarId)
 
-    if (!mountedRef.current || epoch !== currentClearEpoch()) {
+    if (!isLive()) {
       return
     }
 
@@ -311,43 +311,26 @@ export function FullbodyReferencePanel({
             <div className="space-y-2">
               <p className={FIELD_LABEL}>{t.historyTitle}</p>
               <div className="flex flex-wrap gap-2">
-                {history.map((entry, index) => (
-                  <button
-                    aria-label={`${t.historyVersion} ${index + 1}`}
-                    aria-pressed={selectedHistoryId === entry.id}
-                    className={`overflow-hidden rounded-lg border bg-fill-trough text-left transition ${
-                      selectedHistoryId === entry.id
-                        ? 'border-accent ring-1 ring-accent'
-                        : 'border-line-hairline hover:border-line-strong'
-                    }`}
-                    disabled={busy}
-                    key={entry.id}
-                    onClick={() => setSelectedHistoryId(entry.id)}
-                    type="button"
-                  >
-                    <img alt="" className="h-16 w-16 object-contain" src={entry.previewUrl} />
-                    <span className="block px-1 pb-1 text-center text-[10px] text-muted">
-                      {t.historyVersion} {index + 1}
-                    </span>
-                  </button>
-                ))}
-                {preview && (
-                  <button
-                    aria-label={t.historyCurrent}
-                    aria-pressed={!selectedHistory}
-                    className={`overflow-hidden rounded-lg border bg-fill-trough text-left transition ${
-                      !selectedHistory
-                        ? 'border-accent ring-1 ring-accent'
-                        : 'border-line-hairline hover:border-line-strong'
-                    }`}
-                    disabled={busy}
-                    onClick={() => setSelectedHistoryId(null)}
-                    type="button"
-                  >
-                    <img alt="" className="h-16 w-16 object-contain" src={preview} />
-                    <span className="block px-1 pb-1 text-center text-[10px] text-muted">{t.historyCurrent}</span>
-                  </button>
-                )}
+                {thumbnails.map(item => {
+                  const selected = item.id === (selectedHistory?.id ?? null)
+
+                  return (
+                    <button
+                      aria-label={item.label}
+                      aria-pressed={selected}
+                      className={`overflow-hidden rounded-lg border bg-fill-trough text-left transition ${
+                        selected ? 'border-accent ring-1 ring-accent' : 'border-line-hairline hover:border-line-strong'
+                      }`}
+                      disabled={busy}
+                      key={item.id ?? 'current'}
+                      onClick={() => setSelectedHistoryId(item.id)}
+                      type="button"
+                    >
+                      <img alt="" className="h-16 w-16 object-contain" src={item.url} />
+                      <span className="block px-1 pb-1 text-center text-[10px] text-muted">{item.label}</span>
+                    </button>
+                  )
+                })}
               </div>
               {selectedHistory && (
                 <div className="space-y-2">
@@ -452,8 +435,8 @@ export function FullbodyReferencePanel({
             editReason={
               reference ? t.editDisabledByReference : !feedback.trim() ? genActions.editRequiresFeedback : undefined
             }
-            onEdit={current && state.rawUrl ? () => void edit() : undefined}
-            onRegenerate={() => void regenerate()}
+            onEdit={current && state.rawUrl ? () => void submit('edit') : undefined}
+            onRegenerate={() => void submit('regenerate')}
             onSelfSource={onboarding ? undefined : openSelfSource}
             regenerateDisabled={
               busy || Boolean(selectedHistory) || currentImageUnavailable || (history.length > 0 && !currentRawUrl)
@@ -525,7 +508,7 @@ export function FullbodyReferencePanel({
             return
           }
 
-          void regenerate()
+          void submit('regenerate')
         }}
         open={selfSourceOpen}
         referenceImages={selfSourceReferences}

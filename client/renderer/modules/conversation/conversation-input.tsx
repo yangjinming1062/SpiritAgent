@@ -33,7 +33,6 @@ import { SlashCommandPopover } from './slash-command-popover'
 
 export interface ChatSubmitState {
   editMessageId?: number
-  externalPaths: string[]
   gatewayState: ConnectionState
   isGenerating: boolean
   isReadOnlySession: boolean
@@ -44,15 +43,15 @@ export interface ChatSubmitState {
 }
 
 export interface ConversationInputProps {
-  attachMenuOpen?: boolean
+  attachMenuOpen: boolean
   externalPaths: string[]
-  onAttachMenuToggle?: Dispatch<SetStateAction<boolean>>
-  onCancelEdit?: () => void
-  onDrop?: (e: React.DragEvent) => void
-  onPaste?: (e: ClipboardEvent) => void | Promise<void>
-  onRecordingPointerCancel?: (e: PointerEvent<HTMLButtonElement>) => void
-  onRecordingPointerDown?: (e: PointerEvent<HTMLButtonElement>) => void
-  onRecordingPointerUp?: (e: PointerEvent<HTMLButtonElement>) => void
+  onAttachMenuToggle: Dispatch<SetStateAction<boolean>>
+  onCancelEdit: () => void
+  onDrop: (e: React.DragEvent) => void
+  onPaste: (e: ClipboardEvent) => void | Promise<void>
+  onRecordingPointerCancel: (e: PointerEvent<HTMLButtonElement>) => void
+  onRecordingPointerDown: (e: PointerEvent<HTMLButtonElement>) => void
+  onRecordingPointerUp: (e: PointerEvent<HTMLButtonElement>) => void
   onSend: () => void
   onSetPending: Dispatch<SetStateAction<PendingAttachment | null>>
   onSetText: (next: string) => void
@@ -64,9 +63,16 @@ export interface ConversationInputProps {
 // 工作台指挥台的展开阈值：超过这个长度、存在附件或聚焦时，长成 2–4 行 textarea。生活空间始终走单行胶囊。
 const COMMAND_LINE_THRESHOLD = 80
 
+const ATTACH_MENU = [
+  { Icon: FileText, iconClass: 'text-accent', labelKey: 'addFile', pick: pickFile },
+  { Icon: FolderOpen, iconClass: 'text-amber-400', labelKey: 'addFolder', pick: pickFolder },
+  { Icon: ImageIcon, iconClass: 'text-emerald-400', labelKey: 'addImage', pick: pickImage },
+  { Icon: Video, iconClass: 'text-rose-400', labelKey: 'addVideo', pick: pickVideo }
+] as const
+
 export function ConversationInput(props: ConversationInputProps): React.JSX.Element {
   const {
-    attachMenuOpen = false,
+    attachMenuOpen,
     externalPaths,
     onAttachMenuToggle,
     onCancelEdit,
@@ -181,7 +187,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
     if (isEditing && e.key === 'Escape' && !e.nativeEvent.isComposing) {
       e.preventDefault()
       e.stopPropagation()
-      onCancelEdit?.()
+      onCancelEdit()
 
       return
     }
@@ -264,7 +270,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
       {...commonEditorProps}
       className="w-full flex-1 resize-none bg-transparent border-0 outline-none text-xs text-strong placeholder:text-faint px-1.5 py-1.5 min-h-[2.4em] max-h-[7.2em] leading-snug"
       ref={setEditorRef}
-      rows={Math.min(4, Math.max(2, Math.ceil((text.match(/\n/g)?.length ?? 0) + 1)))}
+      rows={Math.min(4, Math.max(2, (text.match(/\n/g)?.length ?? 0) + 1))}
     />
   ) : (
     <input
@@ -283,16 +289,12 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
           ? 'border-0 bg-transparent p-0'
           : 'w-full max-w-2xl mx-auto rounded-2xl border border-line-standard bg-surface-card shadow-lg backdrop-blur-xl p-2.5'
       )}
-      onDragOver={onDrop ? e => e.preventDefault() : undefined}
-      onDrop={
-        onDrop
-          ? e => {
-              // 阻止冒泡：whisper-overlay 等父容器同时挂着 onDrop 接收整层浮层的拖入，这里消费后不必再交给外层，否则文件路径会重复入附件。
-              e.stopPropagation()
-              onDrop(e)
-            }
-          : undefined
-      }
+      onDragOver={e => e.preventDefault()}
+      onDrop={e => {
+        // 阻止冒泡：whisper-overlay 等父容器同时挂着 onDrop 接收整层浮层的拖入，这里消费后不必再交给外层，否则文件路径会重复入附件。
+        e.stopPropagation()
+        onDrop(e)
+      }}
     >
       {isReadOnlySession && <p className="text-center text-[10px] text-faint">{dict.chat.input.readOnlyHint}</p>}
 
@@ -348,7 +350,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
                 attachMenuOpen && 'border-line-strong bg-fill-hover text-strong'
               )}
               disabled={isReadOnlySession}
-              onClick={() => onAttachMenuToggle?.(!attachMenuOpen)}
+              onClick={() => onAttachMenuToggle(!attachMenuOpen)}
               title={dict.chat.input.addAttachment}
               type="button"
             >
@@ -357,38 +359,17 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
 
             {attachMenuOpen && !isEditing && (
               <div className="absolute bottom-full mb-2 left-0 z-50 flex w-36 flex-col gap-0.5 rounded-xl border border-line-standard bg-surface-card p-1 shadow-2xl backdrop-blur-md animate-in fade-in zoom-in-95 duration-150">
-                <button
-                  className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-body transition hover:bg-fill-hover hover:text-strong text-left"
-                  onClick={() => void pickFile(onSetPending)}
-                  type="button"
-                >
-                  <FileText className="size-3.5 text-accent" />
-                  <span>{dict.chat.input.addFile}</span>
-                </button>
-                <button
-                  className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-body transition hover:bg-fill-hover hover:text-strong text-left"
-                  onClick={() => void pickFolder(onSetPending)}
-                  type="button"
-                >
-                  <FolderOpen className="size-3.5 text-amber-400" />
-                  <span>{dict.chat.input.addFolder}</span>
-                </button>
-                <button
-                  className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-body transition hover:bg-fill-hover hover:text-strong text-left"
-                  onClick={() => void pickImage(onSetPending)}
-                  type="button"
-                >
-                  <ImageIcon className="size-3.5 text-emerald-400" />
-                  <span>{dict.chat.input.addImage}</span>
-                </button>
-                <button
-                  className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-body transition hover:bg-fill-hover hover:text-strong text-left"
-                  onClick={() => void pickVideo(onSetPending)}
-                  type="button"
-                >
-                  <Video className="size-3.5 text-rose-400" />
-                  <span>{dict.chat.input.addVideo}</span>
-                </button>
+                {ATTACH_MENU.map(({ Icon, iconClass, labelKey, pick }) => (
+                  <button
+                    className="flex items-center gap-2 rounded-lg px-2.5 py-1.5 text-xs text-body transition hover:bg-fill-hover hover:text-strong text-left"
+                    key={labelKey}
+                    onClick={() => void pick(onSetPending)}
+                    type="button"
+                  >
+                    <Icon className={cn('size-3.5', iconClass)} />
+                    <span>{dict.chat.input[labelKey]}</span>
+                  </button>
+                ))}
               </div>
             )}
           </div>
@@ -402,7 +383,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
               )}
               disabled={isReadOnlySession}
               onClick={() => {
-                onAttachMenuToggle?.(false)
+                onAttachMenuToggle(false)
 
                 if (isOpen) {
                   setSlashPaletteForced(false)
@@ -468,7 +449,7 @@ export function ConversationInput(props: ConversationInputProps): React.JSX.Elem
                 : 'bg-blue-600 hover:bg-blue-500 text-white shadow-[0_0_12px_rgba(37,99,235,0.6)]'
             )}
             disabled={sendDisabled}
-            onClick={() => void (showStop ? onStop() : onSend())}
+            onClick={() => (showStop ? onStop() : onSend())}
             title={
               showStop
                 ? dict.chat.input.stopGenerating

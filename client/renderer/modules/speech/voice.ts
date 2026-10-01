@@ -55,9 +55,7 @@ export async function fetchVoiceCatalogRaw(
   language: string | null = $locale.get()
 ): Promise<FetchResult> {
   try {
-    const res = await requestGateway<CatalogResponse>('tts.list_voices', {
-      language: language ?? null
-    })
+    const res = await requestGateway<CatalogResponse>('tts.list_voices', { language })
 
     return {
       ok: true,
@@ -109,7 +107,7 @@ export function nextVoice(currentId: string, catalog: readonly VoiceOption[]): V
 
   const idx = catalog.findIndex(v => voiceSelectionId(v) === currentId)
 
-  return catalog[(idx + 1) % catalog.length] ?? catalog[0]
+  return catalog[(idx + 1) % catalog.length]
 }
 
 export function sampleLine(name: string): string {

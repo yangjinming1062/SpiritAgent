@@ -2,7 +2,7 @@ import { IconBrandWechat } from '@tabler/icons-react'
 import { QRCodeSVG } from 'qrcode.react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { unwrapIpcErrorMessage } from '@/shared/lib/ipc-error'
+import { ipcErrorStatus } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import {
   BTN_GHOST,
@@ -47,18 +47,11 @@ const RAW_PREFIX_TO_MIME: ReadonlyArray<[RegExp, string]> = [
 ]
 
 function isNotFoundIpc(error: unknown): boolean {
-  return /^404 /.test(unwrapIpcErrorMessage(error))
+  return ipcErrorStatus(error) === 404
 }
 
-function isDataImage(content: string): boolean {
-  if (/^data:image\//i.test(content)) {
-    return true
-  }
-
-  return RAW_PREFIX_TO_MIME.some(([re]) => re.test(content))
-}
-
-function normalizeDataImage(content: string): string {
+/** 二维码内容是图片（data URL 或裸 base64）时返回可用的 src，否则（待编码的文本）返回 null。 */
+function qrImageSrc(content: string): string | null {
   if (/^data:image\//i.test(content)) {
     return content
   }
@@ -67,31 +60,6 @@ function normalizeDataImage(content: string): string {
     if (re.test(content)) {
       return `data:image/${mime};base64,${content}`
     }
-  }
-
-  return content
-}
-
-function pickStatusPill(args: {
-  connected: boolean
-  loginFlowActive: boolean
-  loginPendingLabel: string
-  loginRequired: boolean
-  loginRequiredLabel: string
-  weixinStatusLabel: string
-}): string | null {
-  const { connected, loginFlowActive, loginPendingLabel, loginRequired, loginRequiredLabel, weixinStatusLabel } = args
-
-  if (loginFlowActive) {
-    return loginPendingLabel
-  }
-
-  if (connected) {
-    return weixinStatusLabel
-  }
-
-  if (loginRequired) {
-    return loginRequiredLabel
   }
 
   return null
@@ -141,39 +109,35 @@ export function ChannelsPage(): React.JSX.Element {
   const loginDeadlineRef = useRef(0)
 
   const reload = useCallback(async () => {
-    const [channels, peerItems] = await Promise.all([
-      listChannels(),
-      // 未建立绑定时 peers 端点返回 404，按无对端处理；其他错误须报告，加载失败时保留当前列表。
-      listChannelPeers(WEIXIN_CHANNEL).then(
-        result => result.items,
-        (error: unknown) => {
-          if (isNotFoundIpc(error)) {
-            return []
+    try {
+      const [channels, peerItems] = await Promise.all([
+        listChannels(),
+        // 未建立绑定时 peers 端点返回 404，按无对端处理；其他错误须报告，加载失败时保留当前列表。
+        listChannelPeers(WEIXIN_CHANNEL).then(
+          result => result.items,
+          (error: unknown) => {
+            if (isNotFoundIpc(error)) {
+              return []
+            }
+
+            notifyError(error, t.peers.loadFailed)
+
+            return null
           }
+        )
+      ])
 
-          notifyError(error, t.peers.loadFailed)
-
-          return null
-        }
-      )
-    ])
-
-    const weixin = channels.items.find(item => item.channel === WEIXIN_CHANNEL)?.binding ?? null
-    setWeixinBinding(weixin)
-    setPeers(prev => (weixin ? (peerItems ?? prev) : []))
-  }, [t.peers.loadFailed])
+      const weixin = channels.items.find(item => item.channel === WEIXIN_CHANNEL)?.binding ?? null
+      setWeixinBinding(weixin)
+      setPeers(prev => (weixin ? (peerItems ?? prev) : []))
+    } catch (error) {
+      notifyError(error, t.loadFailed)
+    }
+  }, [t.loadFailed, t.peers.loadFailed])
 
   useEffect(() => {
-    void (async () => {
-      try {
-        await reload()
-      } catch (error) {
-        notifyError(error, t.loadFailed)
-      } finally {
-        setIsLoading(false)
-      }
-    })()
-  }, [reload, t.loadFailed])
+    void reload().finally(() => setIsLoading(false))
+  }, [reload])
 
   // 超过登录时限或连续查询失败即停止轮询；刚发起时短暂的 login_required 属正常，继续等待。
   useEffect(() => {
@@ -222,12 +186,7 @@ export function ChannelsPage(): React.JSX.Element {
         if (state.state === 'confirmed') {
           setLoginPolling(false)
           notify({ kind: 'success', message: t.weixin.loginSuccess })
-
-          try {
-            await reload()
-          } catch (error) {
-            notifyError(error, t.loadFailed)
-          }
+          await reload()
         } else if (state.state === 'expired' || state.state === 'error') {
           setLoginPolling(false)
         }
@@ -238,7 +197,7 @@ export function ChannelsPage(): React.JSX.Element {
       active = false
       window.clearInterval(timer)
     }
-  }, [loginPolling, reload, t.loadFailed, t.weixin.loginSuccess, t.weixin.loginTimeout])
+  }, [loginPolling, reload, t.weixin.loginSuccess, t.weixin.loginTimeout])
 
   const beginLogin = async (): Promise<void> => {
     setLoginBusy(true)
@@ -288,16 +247,14 @@ export function ChannelsPage(): React.JSX.Element {
   // 已连接下再次扫码（重登录）也走同一面板：绑定状态要等确认后才翻转，不能拿 connected 判断。
   const loginFlowActive = login !== null && login.state !== 'confirmed'
 
-  const statusPill = pickStatusPill({
-    connected,
-    loginFlowActive,
-    loginRequired: weixinStatus === 'login_required',
-    loginPendingLabel: t.statusLabels.login_pending,
-    loginRequiredLabel: t.statusLabels.login_required,
-    weixinStatusLabel
-  })
+  const statusPill = loginFlowActive
+    ? t.statusLabels.login_pending
+    : connected || weixinStatus === 'login_required'
+      ? weixinStatusLabel
+      : null
 
   const qrImage = login?.qr_image ?? null
+  const qrSrc = qrImage ? qrImageSrc(qrImage) : null
 
   return (
     <SettingsContent>
@@ -331,12 +288,8 @@ export function ChannelsPage(): React.JSX.Element {
           {loginFlowActive ? (
             <div className="flex flex-col items-center gap-3 rounded-lg border border-line-standard bg-fill-faint px-4 py-5">
               {login.state === 'wait' && qrImage ? (
-                isDataImage(qrImage) ? (
-                  <img
-                    alt={t.weixin.qrAlt}
-                    className="size-44 rounded-lg bg-white p-2 object-contain"
-                    src={normalizeDataImage(qrImage)}
-                  />
+                qrSrc ? (
+                  <img alt={t.weixin.qrAlt} className="size-44 rounded-lg bg-white p-2 object-contain" src={qrSrc} />
                 ) : (
                   // 二维码必须固定黑白：彩色/半透明前景会显著降低扫码识别率，属业务约束而非主题遗漏。
                   <div className="flex items-center justify-center rounded-lg bg-white p-2.5 shadow-sm">

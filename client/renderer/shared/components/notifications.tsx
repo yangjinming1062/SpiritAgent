@@ -49,12 +49,8 @@ export function NotificationStack({ regionRef }: { regionRef?: Ref<HTMLDivElemen
 
     lastNotificationIdRef.current = latest.id
 
-    if (latest.kind === 'success') {
-      triggerHaptic('success')
-    } else if (latest.kind === 'error') {
-      triggerHaptic('error')
-    } else if (latest.kind === 'warning') {
-      triggerHaptic('warning')
+    if (latest.kind !== 'info') {
+      triggerHaptic(latest.kind)
     }
   }, [notifications])
 

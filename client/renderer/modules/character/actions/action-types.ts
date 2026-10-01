@@ -1,4 +1,4 @@
-/** 动作模块类型：播放指令、回执与目录条目。IPC 契约类型仍归 shared/ipc；此处仅模块内类型。 */
+/** 动作模块类型：播放指令、回执、目录条目与视频包响应。IPC 契约类型仍归 shared/ipc；此处仅模块内类型。 */
 
 export type NormalizedRect = readonly [left: number, top: number, right: number, bottom: number]
 
@@ -59,11 +59,37 @@ export type ActionPlaybackStatus = 'started' | 'completed' | 'interrupted' | 're
 /** 统一调度器裁决后的播放实例。 */
 export interface ActionPlayInstance {
   readonly playId: string
-  readonly actionId: number
-  readonly assetRevisionId: number | null
   readonly clip: ActionClipEntry
   readonly repeatCount: number
   readonly expiresAtMs: number | null
   /** 世代：每受理一条播放指令递增；旧实例回调凭它失效。 */
   readonly generation: number
+}
+
+/** 视频包中的单个动作。 */
+export interface VideoActionWire {
+  action: string
+  name: string
+  kind: string
+  status: string
+  stage: string
+  error: string | null
+  clip_url: string | null
+  motion_prompt: string
+  peek_geometry?: PeekGeometry | null
+}
+
+/** 视频包响应（`/api/companion/video-packs`：列表取 `packs`，generate / retry 返回单个包）。 */
+export interface VideoPackWire {
+  id: number
+  pack_version: number
+  outfit_id: number | null
+  error: string | null
+  actions: VideoActionWire[]
+  status: string
+  active: boolean
+  identity_review: 'none' | 'pass' | 'review' | 'accepted'
+  manifest_url: string | null
+  can_retry: boolean
+  can_regenerate: boolean
 }

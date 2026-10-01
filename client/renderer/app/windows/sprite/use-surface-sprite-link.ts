@@ -8,22 +8,13 @@ export function useSurfaceSpriteLink(): void {
   const open = useStore($surfaceOpen)
 
   useEffect(() => {
+    setSpatialLocale(open === 'workbench' ? 'workbench' : 'home', { instant: true })
+
+    // 生活空间由场景呈现伙伴，隐藏桌面精灵。
     if (open === 'living') {
-      // 生活空间由场景呈现伙伴，隐藏桌面精灵。
-      setSpatialLocale('home', { instant: true })
       document.documentElement.dataset.spriteHidden = 'true'
-
-      return
+    } else {
+      delete document.documentElement.dataset.spriteHidden
     }
-
-    delete document.documentElement.dataset.spriteHidden
-
-    if (open === 'workbench') {
-      setSpatialLocale('workbench', { instant: true })
-
-      return
-    }
-
-    setSpatialLocale('home', { instant: true })
   }, [open])
 }

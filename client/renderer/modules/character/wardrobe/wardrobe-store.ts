@@ -2,6 +2,7 @@ import { atom } from 'nanostores'
 
 import { authedApi } from '@/shared/lib/authed-api'
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
+import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, definePersistedAtom, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
@@ -39,19 +40,11 @@ interface WardrobeSnapshot {
 const snapshot = definePersistedAtom<WardrobeSnapshot>({
   key: 'da.companion.wardrobe',
   fallback: { outfits: [], policy: 'llm_may_replace' },
-  isPersistable: (value: unknown): value is WardrobeSnapshot => {
-    if (!value || typeof value !== 'object') {
-      return false
-    }
-
-    const state = value as WardrobeSnapshot
-
-    return (
-      Array.isArray(state.outfits) &&
-      state.outfits.every(o => o && typeof o.id === 'number' && typeof o.fullbody_url === 'string') &&
-      (state.policy === 'locked' || state.policy === 'llm_may_replace')
-    )
-  }
+  isPersistable: (value: unknown): value is WardrobeSnapshot =>
+    isRecord(value) &&
+    Array.isArray(value.outfits) &&
+    value.outfits.every(o => isRecord(o) && typeof o.id === 'number' && typeof o.fullbody_url === 'string') &&
+    (value.policy === 'locked' || value.policy === 'llm_may_replace')
 })
 
 export const $outfits = atom<WardrobeOutfit[]>([])

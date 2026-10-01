@@ -3,6 +3,7 @@ import {
   SpiritAgentRpcError,
   SpiritAgentRpcErrorCode
 } from '@/shared/lib/gateway-protocol'
+import { errorMessage } from '@/shared/lib/ipc-error'
 import type { SlashCommandMeta } from '@/shared/lib/slash-commands'
 import { getStrings } from '@/shared/strings'
 import type { SessionMessage } from '@/shared/types/spiritagent'
@@ -45,9 +46,7 @@ function slashErrorToMessage(err: unknown): string {
     }
   }
 
-  const msg = err instanceof Error ? err.message : String(err)
-
-  return msg || dict.genericFailed
+  return errorMessage(err) || dict.genericFailed
 }
 
 /** 命令发送前的拦截：发送中或挂着附件时不执行，避免「边发图片边清空」歧义。 */
@@ -102,7 +101,7 @@ async function executeSlashCommand(
     if (r.status === 'ok') {
       // hydrate=true 时，payload.messages 已包含服务端写入的 status_cleared / compress_summary marker 行——前端 hydrateChatMessages 后再 pushStatusPill 会产生重复 pill，所以 hydrate 路径只更新消息列表，不再追加 status_command_result。
       if (r.hydrate && r.payload) {
-        const raw = (r.payload as { messages?: unknown }).messages
+        const raw = r.payload.messages
 
         if (Array.isArray(raw)) {
           rememberFullHistory(sid, raw as SessionMessage[])
@@ -111,7 +110,7 @@ async function executeSlashCommand(
             hydrateChatMessages(raw as SessionMessage[])
           }
 
-          if (typeof (r.payload as { cleared_count?: number }).cleared_count === 'number') {
+          if (typeof r.payload.cleared_count === 'number') {
             removeVoicePlayback(sid)
           }
         }

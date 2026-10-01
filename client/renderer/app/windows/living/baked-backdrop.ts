@@ -33,16 +33,8 @@ async function bakeScene(
     return null
   }
 
-  try {
-    await new Promise<void>((resolve, reject) => {
-      img.onload = () => resolve()
-      img.onerror = () => reject(new Error('backdrop decode failed'))
-      img.src = source
-    })
-  } finally {
-    img.onload = null
-    img.onerror = null
-  }
+  img.src = source
+  await img.decode()
 
   const w = Math.max(1, Math.round(width * BAKE_SCALE))
   const h = Math.max(1, Math.round(height * BAKE_SCALE))

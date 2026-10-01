@@ -1,5 +1,6 @@
 import { Terminal } from '@/shared/lib/icons'
 import type { ScoredSlashCommand, SlashCommandMeta } from '@/shared/lib/slash-commands'
+import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 
 export interface SlashCommandPopoverProps {
@@ -13,18 +14,14 @@ export interface SlashCommandPopoverProps {
   onHighlight: (index: number) => void
 }
 
-/** 输入框下方的命令自动补全弹层：展示父组件候选；键盘（方向键/Tab/Enter）与鼠标 hover/click 均回调父组件。弹层不持有选中状态——``highlightedIndex`` 与 ``onSelect`` 由父组件管理，便于在弹层外监听快捷键。 */
+/** 输入框下方的命令自动补全弹层：只渲染父组件筛选好的候选，鼠标 hover / click 回调父组件；高亮索引与键盘操作（方向键 / Tab / Enter）都由父组件管理。 */
 export function SlashCommandPopover({
   items,
   highlightedIndex,
   onSelect,
   onHighlight
-}: SlashCommandPopoverProps): React.JSX.Element | null {
+}: SlashCommandPopoverProps): React.JSX.Element {
   const dict = useStrings()
-
-  if (items.length === 0) {
-    return null
-  }
 
   return (
     <div
@@ -40,17 +37,17 @@ export function SlashCommandPopover({
         return (
           <button
             aria-selected={isHighlighted}
-            className={
-              'flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition ' +
-              (isHighlighted ? 'bg-fill-hover text-strong' : 'text-body hover:bg-fill-hover')
-            }
+            className={cn(
+              'flex w-full items-start gap-2 rounded-lg px-2 py-1.5 text-left transition',
+              isHighlighted ? 'bg-fill-hover text-strong' : 'text-body hover:bg-fill-hover'
+            )}
             key={item.cmd.name}
             onClick={() => onSelect(item.cmd)}
             onMouseEnter={() => onHighlight(idx)}
             role="option"
             type="button"
           >
-            <Terminal className={'mt-0.5 size-3.5 shrink-0 ' + (isHighlighted ? 'text-accent' : 'text-faint')} />
+            <Terminal className={cn('mt-0.5 size-3.5 shrink-0', isHighlighted ? 'text-accent' : 'text-faint')} />
             <div className="flex min-w-0 flex-1 flex-col">
               <div className="flex items-baseline gap-1.5">
                 <span className="font-mono text-xs font-semibold">/{item.cmd.name}</span>

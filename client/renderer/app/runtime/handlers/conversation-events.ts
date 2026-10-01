@@ -49,7 +49,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       break
     case 'message.delta': {
       const payload = decodePayload<{ text?: string }>(event.payload)
-      const text = payload?.text ?? ''
+      const text = payload.text ?? ''
 
       if (text) {
         appendAssistantDelta(text)
@@ -59,7 +59,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
     }
 
     case 'message.reasoning.delta': {
-      const text = decodePayload<{ text?: string }>(event.payload)?.text ?? ''
+      const text = decodePayload<{ text?: string }>(event.payload).text ?? ''
 
       if (text) {
         appendAssistantReasoningDelta(text)
@@ -127,7 +127,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
     case 'message.persisted': {
       const p = decodePayload<{ role?: string; message_ids?: unknown }>(event.payload)
 
-      if (p?.role === 'user' && Array.isArray(p.message_ids)) {
+      if (p.role === 'user' && Array.isArray(p.message_ids)) {
         bindTrailingUserMessageIds(p.message_ids.filter((id): id is number => typeof id === 'number'))
       }
 
@@ -147,9 +147,9 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       // 形状异常时按缺省处理：本分支抛错会跳过下方回合收尾，让 $chatTurnInFlight 卡住。
       const bubbles = Array.isArray(payload.bubbles) ? payload.bubbles : undefined
       const media = Array.isArray(payload.media) ? payload.media : undefined
-      const text = chatDisplayText(payload?.text ?? '')
+      const text = chatDisplayText(payload.text ?? '')
 
-      if (payload?.usage) {
+      if (payload.usage) {
         setSessionContextUsage({
           completionTokens: payload.usage.completion_tokens,
           promptTokens: payload.usage.prompt_tokens,
@@ -167,9 +167,9 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       if (bubbles && typeof payload.message_id === 'number') {
         finalizeCompanionReply(bubbles, payload.message_id, payload.reasoning)
       } else {
-        finalizeAssistantMessage(hadBreak ? undefined : payload?.text, media, hadBreak ? undefined : payload?.reasoning)
+        finalizeAssistantMessage(hadBreak ? undefined : payload.text, media, hadBreak ? undefined : payload.reasoning)
 
-        if (typeof payload?.message_id === 'number') {
+        if (typeof payload.message_id === 'number') {
           bindTrailingAssistantMessageId(payload.message_id)
         }
       }
@@ -211,10 +211,10 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       // 强制重置为 idle：thinking/working 时优先级门控会静默拒绝普通状态转换。
       const payload = decodePayload<{ message?: string; retry_message_id?: number }>(event.payload)
       markAssistantTerminal({
-        error: payload?.message ?? getStrings().chat.sendFailed,
+        error: payload.message ?? getStrings().chat.sendFailed,
         retryMessageId:
-          Number.isSafeInteger(payload?.retry_message_id) && (payload?.retry_message_id ?? 0) > 0
-            ? payload?.retry_message_id
+          Number.isSafeInteger(payload.retry_message_id) && (payload.retry_message_id ?? 0) > 0
+            ? payload.retry_message_id
             : undefined
       })
       setSpriteState('idle', { force: true })
@@ -227,7 +227,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       // 服务端在 command.dispatch RPC response 之外另行广播此事件（PROTOCOL「事件路由」）；触发窗口已通过 RPC 渲染过 pill，本路径只服务其他窗口，RPC 路径的 pushStatusPill 已幂等执行。
       const payload = decodePayload<SlashCommandResultPayload>(event.payload)
 
-      const r = payload?.result
+      const r = payload.result
 
       if (!r) {
         break
@@ -258,7 +258,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       // 自动压缩单行插入；手动 /压缩 走 command.result + hydrate=true，互斥互补（PROTOCOL「事件路由」）。
       const p = decodePayload<{ subtype?: string; text?: string; message_id?: number }>(event.payload)
 
-      if (p?.subtype === 'compress_summary' && typeof p.text === 'string') {
+      if (p.subtype === 'compress_summary' && typeof p.text === 'string') {
         pushStatusPill('compress_summary', p.text)
       }
 
@@ -268,8 +268,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
     case 'message.edited': {
       const payload = decodePayload<{ messages?: SessionMessage[] }>(event.payload)
 
-      if (Array.isArray(payload?.messages)) {
-        cancelVoiceBar()
+      if (Array.isArray(payload.messages)) {
         hydrateEditedChatMessages(payload.messages)
         const sid = $chatSessionId.get()
 
@@ -290,7 +289,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
         messages?: unknown[]
       }>(event.payload)
 
-      if (Array.isArray(p?.messages)) {
+      if (Array.isArray(p.messages)) {
         const sid = p.session_id || $chatSessionId.get()
         forgetDeletedVoiceMessages(p.messages as SessionMessage[])
         hydrateChatMessages(p.messages as SessionMessage[])
@@ -301,7 +300,7 @@ export function handleConversationEvent(event: GatewayEvent, ctx: EventRouteCont
       }
 
       // 跟随窗口从事件 payload 取 anchor 推到草稿总线——对话组件用 session_id 过滤应用。
-      if (p?.session_id && p.anchor) {
+      if (p.session_id && p.anchor) {
         $chatDraftFromUndo.set({
           session_id: p.session_id,
           text: p.anchor.text ?? '',

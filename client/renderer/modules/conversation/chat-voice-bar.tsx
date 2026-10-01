@@ -1,4 +1,5 @@
 import { useStore } from '@nanostores/react'
+import { clamp } from '@runtime'
 import type React from 'react'
 import { useState } from 'react'
 
@@ -43,7 +44,7 @@ export function ChatVoiceBar({ duration, messageId, playbackKey }: ChatVoiceBarP
 
   const hasRealDuration = typeof duration === 'number' && duration > 0
   const effectiveSec = hasRealDuration ? duration : 1
-  const sec = Math.max(1, Math.min(60, effectiveSec))
+  const sec = clamp(effectiveSec, 1, 60)
   const widthPx = 88 + Math.round(((sec - 1) / 59) * (220 - 88))
 
   const state = isLoading

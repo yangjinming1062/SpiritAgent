@@ -1,6 +1,7 @@
 import { sleep } from '@runtime'
 import { atom, computed, map } from 'nanostores'
 
+import { errorMessage } from '@/shared/lib/ipc-error'
 import {
   currentClearEpoch,
   persistString,
@@ -316,11 +317,11 @@ export function setSessionContextUsage(usage: Partial<SessionContextUsage>): voi
   })
 }
 
-export function resetSessionContextUsage(contextLimit?: number): void {
+export function resetSessionContextUsage(contextLimit?: number, totalTokens = 0): void {
   $sessionContextUsage.set({
     promptTokens: 0,
     completionTokens: 0,
-    totalTokens: 0,
+    totalTokens,
     contextLimit: contextLimit ?? DEFAULT_CONTEXT_LIMIT
   })
 }
@@ -528,11 +529,10 @@ export function hydrateChatMessages(messages: SessionMessage[], info?: SessionRu
     $chatSessionKind.set(normalizeChatSessionKind(info.kind))
   }
 
-  // 估算 Token 占用（~3 字符/Token）；先清零分项避免切换会话残留，无 info 的本会话重水合沿用当前上下文上限。
+  // 估算 Token 占用（~3 字符/Token）；分项清零避免切换会话残留，无 info 的本会话重水合沿用当前上下文上限。
   const approxTokens = Math.round(totalChars / 3)
   const contextLimit = info ? info.context_window || DEFAULT_CONTEXT_LIMIT : $sessionContextUsage.get().contextLimit
-  resetSessionContextUsage(contextLimit)
-  setSessionContextUsage({ totalTokens: approxTokens })
+  resetSessionContextUsage(contextLimit, approxTokens)
 }
 
 // 多模态正文和用户附件共用一次解析；附件只交给该消息的首个气泡。
@@ -610,48 +610,43 @@ export function showMediaHint(text: string, sessionId?: string): void {
   setProactiveBubble(sessionId ? { text, sessionId } : { text }, 8000)
 }
 
+// 先写 body 再入列：列表订阅者据 id 取 body 时必须已存在。
+function appendMessage(item: Omit<ChatMessageListItem, 'id' | 'timestamp'>, body: ChatMessageBody): string {
+  const id = nextId()
+  $chatMessageBodies.setKey(id, body)
+  $chatMessageList.set([...$chatMessageList.get(), { id, ...item, timestamp: Date.now() }])
+
+  return id
+}
+
 export function pushProactiveMessage(text: string, media?: ChatMediaItem[], messageId?: number): void {
   if (messageId && $chatMessageList.get().some(item => item.backendMessageId === messageId)) {
     return
   }
 
-  const id = nextId()
-  $chatMessageBodies.setKey(id, { text: chatDisplayText(text), media, streaming: false, toolName: null })
-  $chatMessageList.set([
-    ...$chatMessageList.get(),
+  appendMessage(
     {
-      id,
       role: 'assistant',
       subtype: media?.length ? 'status_media' : 'status_proactive',
-      backendMessageId: messageId,
-      timestamp: Date.now()
-    }
-  ])
+      backendMessageId: messageId
+    },
+    { text: chatDisplayText(text), media, streaming: false, toolName: null }
+  )
 }
 
 // 后台视频完成的实时送达行，只带媒体；历史水合的同类 system 行同样不显示正文。
 export function pushMediaMessage(media: ChatMediaItem[]): string {
-  const id = nextId()
-  $chatMessageBodies.setKey(id, { text: '', media, streaming: false, toolName: null })
-  $chatMessageList.set([
-    ...$chatMessageList.get(),
-    { id, role: 'assistant', subtype: 'status_media', timestamp: Date.now() }
-  ])
-
-  return id
+  return appendMessage(
+    { role: 'assistant', subtype: 'status_media' },
+    { text: '', media, streaming: false, toolName: null }
+  )
 }
 
 export function pushUserMessage(text: string, attachments?: ChatAttachment[]): string {
-  const id = nextId()
-  $chatMessageBodies.setKey(id, {
-    text,
-    attachments: attachments?.length ? attachments : undefined,
-    streaming: false,
-    toolName: null
-  })
-  $chatMessageList.set([...$chatMessageList.get(), { id, role: 'user', timestamp: Date.now() }])
-
-  return id
+  return appendMessage(
+    { role: 'user' },
+    { text, attachments: attachments?.length ? attachments : undefined, streaming: false, toolName: null }
+  )
 }
 
 function isPositiveInt(value: unknown): value is number {
@@ -709,16 +704,7 @@ export function bindTrailingAssistantMessageId(messageId: number): void {
   }
 
   const list = $chatMessageList.get()
-  let lastUserIndex = -1
-
-  for (let i = list.length - 1; i >= 0; i--) {
-    if (list[i]?.role === 'user') {
-      lastUserIndex = i
-
-      break
-    }
-  }
-
+  const lastUserIndex = list.findLastIndex(item => item.role === 'user')
   let changed = false
   const next = list.slice()
 
@@ -739,13 +725,7 @@ export function bindTrailingAssistantMessageId(messageId: number): void {
 
 /** 追加一行本地状态行（如 `status_command_result`、`compress_summary`），渲染层按 subtype 显示为居中 pill 或摘要卡片。 */
 export function pushStatusPill(subtype: string, text: string): void {
-  const id = nextId()
-  $chatMessageBodies.setKey(id, {
-    text,
-    streaming: false,
-    toolName: null
-  })
-  $chatMessageList.set([...$chatMessageList.get(), { id, role: 'assistant', subtype, timestamp: Date.now() }])
+  appendMessage({ role: 'assistant', subtype }, { text, streaming: false, toolName: null })
 }
 
 export function pushPendingPrompt(item: PendingPromptItem): void {
@@ -768,38 +748,18 @@ export function clearPendingPrompts(): void {
 }
 
 registerStorageClearHandler(() => {
-  conversationVoiceSink().cancel()
+  resetChatMessages()
+  resetSessionContextUsage()
+  cancelPendingFlush()
+  setProactiveBubble(null)
+  clearPendingPrompts()
   $chatSessionId.set(null)
   $companionSessionId.set(null)
-  $chatMessageList.set([])
-  $chatMessageBodies.set({})
-  $lastAssistantStreaming.set(false)
   $chatStreamingTick.set(0)
   $chatSessionKind.set('standard')
   $sessionSettings.set({})
-  $sessionContextUsage.set({
-    completionTokens: 0,
-    contextLimit: DEFAULT_CONTEXT_LIMIT,
-    promptTokens: 0,
-    totalTokens: 0
-  })
-  $proactiveBubble.set(null)
   $pendingExternalAttachment.set(null)
-  $pendingPromptBatch.set([])
-  $chatTurnInFlight.set(false)
-  $turnHadBubbleBreak.set(false)
   $chatDraftFromUndo.set(null)
-  $chatEditDraft.set(null)
-
-  if (flushTimer) {
-    clearTimeout(flushTimer)
-    flushTimer = null
-  }
-
-  if (bubbleTimer) {
-    clearTimeout(bubbleTimer)
-    bubbleTimer = null
-  }
 })
 
 registerStorageRestoreHandler(() => {
@@ -919,7 +879,7 @@ export function submitPendingBatch(): void {
       return
     }
 
-    markAssistantTerminal({ error: err instanceof Error ? err.message : sendFailed })
+    markAssistantTerminal({ error: errorMessage(err, sendFailed) })
     // thinking（50）> idle（10）：不带 force 会被优先级门控吞掉，精灵卡在思考态。
     presentationPorts().setSpriteState('idle', { force: true })
     $chatTurnInFlight.set(false)
@@ -939,7 +899,7 @@ export function submitPendingBatch(): void {
       presentationPorts().setSpriteState('thinking')
       await g.request('prompt.submit', batchPayload)
     } catch (err: unknown) {
-      const errMsg = err instanceof Error ? err.message : String(err)
+      const errMsg = errorMessage(err)
 
       if (
         errMsg.includes('in-flight') &&
@@ -998,9 +958,7 @@ export function beginAssistantMessage(): void {
     finalizeAssistantMessage()
   }
 
-  const id = nextId()
-  $chatMessageBodies.setKey(id, { text: '', streaming: true, toolName: null })
-  $chatMessageList.set([...$chatMessageList.get(), { id, role: 'assistant', timestamp: Date.now() }])
+  appendMessage({ role: 'assistant' }, { text: '', streaming: true, toolName: null })
   $lastAssistantStreaming.set(true)
 }
 
@@ -1077,8 +1035,8 @@ export function finalizeAssistantMessage(text?: string, media?: ChatMediaItem[],
     (typeof reasoning === 'string' && reasoning.trim() ? reasoning : body.reasoning)?.trim() || undefined
 
   const isEmpty =
-    !finalStr.trim() &&
-    !finalReasoning?.trim() &&
+    !finalStr &&
+    !finalReasoning &&
     !body.toolName &&
     !body.error &&
     !body.cancelled &&
@@ -1178,9 +1136,8 @@ export function updateMediaBubble(messageId: number, mediaId: string, bubble: Co
   }
 
   const key = mediaUpdateKey(messageId, mediaId)
-  const previous = mediaUpdates.get(key)
 
-  if (previous && previous.status !== 'pending') {
+  if (mediaUpdates.has(key)) {
     return
   }
 
@@ -1265,14 +1222,7 @@ export function markAssistantTerminal({
     return
   }
 
-  const id = nextId()
-  $chatMessageBodies.setKey(id, {
-    text: '',
-    ...terminal,
-    streaming: false,
-    toolName: null
-  })
-  $chatMessageList.set([...$chatMessageList.get(), { id, role: 'assistant', timestamp: Date.now() }])
+  appendMessage({ role: 'assistant' }, { text: '', ...terminal, streaming: false, toolName: null })
   $lastAssistantStreaming.set(false)
 }
 

@@ -1,5 +1,7 @@
+import type { DesktopScreenRect } from '@ipc/contracts'
 import { sleep } from '@runtime'
 
+import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 
 import { isActionStageVisible, observeActionStageVisibility } from './actions'
@@ -44,38 +46,27 @@ function waitUntilHidden(): { hidden: Promise<false>; stop: () => void } {
   return { hidden, stop }
 }
 
-interface WindowGeom {
-  x: number
-  y: number
-  w: number
-  h: number
-}
-
-export type { WindowGeom }
-
-interface RunnerWindow extends WindowGeom {
+interface RunnerWindow extends DesktopScreenRect {
   name: string
   title: string
 }
 
 function isRunnerWindow(value: unknown): value is RunnerWindow {
-  if (typeof value !== 'object' || value === null) {
+  if (!isRecord(value)) {
     return false
   }
 
-  const w = value as Partial<Record<keyof RunnerWindow, unknown>>
-
   return (
-    typeof w.name === 'string' &&
-    typeof w.title === 'string' &&
-    Number.isFinite(w.x) &&
-    Number.isFinite(w.y) &&
-    Number.isFinite(w.w) &&
-    Number.isFinite(w.h)
+    typeof value.name === 'string' &&
+    typeof value.title === 'string' &&
+    Number.isFinite(value.x) &&
+    Number.isFinite(value.y) &&
+    Number.isFinite(value.w) &&
+    Number.isFinite(value.h)
   )
 }
 
-export async function findWindowByKeyword(keyword: string): Promise<WindowGeom | null> {
+export async function findWindowByKeyword(keyword: string): Promise<DesktopScreenRect | null> {
   // 空关键词会让 name.includes('') 恒真从而匹配到第一个窗口；关键词缺失 = 找不到目标。
   if (!keyword.trim() || !window.spiritagent?.runnerInvoke) {
     return null
@@ -107,7 +98,7 @@ export async function findWindowByKeyword(keyword: string): Promise<WindowGeom |
 }
 
 // Runner 给出原生屏幕坐标；落位与指向须用主进程换算后的精灵视口坐标，换算失败按定位不明处理。
-async function toViewportRect(geom: WindowGeom): Promise<WindowGeom | null> {
+async function toViewportRect(geom: DesktopScreenRect): Promise<DesktopScreenRect | null> {
   try {
     return await window.spiritagent.sprite.mapScreenRect(geom)
   } catch (error) {
@@ -119,7 +110,7 @@ async function toViewportRect(geom: WindowGeom): Promise<WindowGeom | null> {
 
 // 仪式只在精灵舞台实际可见时进行（与表达播放同一判断），每一步行动前重验；不可见时不走动、不出声、不预点击，直接执行原工具。
 export async function performRitualWalk<T>(
-  findTarget: () => Promise<WindowGeom | null>,
+  findTarget: () => Promise<DesktopScreenRect | null>,
   execute: () => Promise<T>,
   opts?: { previewClick?: boolean }
 ): Promise<T> {

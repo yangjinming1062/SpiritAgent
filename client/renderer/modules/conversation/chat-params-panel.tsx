@@ -4,6 +4,7 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { Brain, type IconComponent, Loader2, RefreshCw, Sparkles, Thermometer, X } from '@/shared/lib/icons'
+import { type ReasoningEffort, resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
 import { cn } from '@/shared/lib/utils'
 import { $gateway, $gatewayState } from '@/shared/store/gateway'
 import { notify, notifyError } from '@/shared/store/notifications'
@@ -20,10 +21,9 @@ import {
 } from './chat-store'
 import {
   type CompressContextResponse,
+  DEFAULT_THRESHOLD,
   formatTokenNumber,
   getReasoningOptions,
-  type ReasoningEffort,
-  resolveReasoningEffort,
   resolveTemperature,
   temperatureStyleLabel,
   useContextStatus
@@ -31,7 +31,6 @@ import {
 import { rememberFullHistory } from './session-history-cache'
 import { useIsReadOnlySession } from './use-is-read-only-session'
 
-const DEFAULT_THRESHOLD = 0.7
 const THRESHOLD_MIN = 0.3
 const THRESHOLD_STEP = 0.05
 
@@ -43,7 +42,11 @@ const PARAM_TAB_ICONS: Record<ChatParamsTab, IconComponent> = {
   reasoning: Brain
 }
 
-const TEMPERATURE_PRESETS = [{ value: 0.2 }, { value: 0.7 }, { value: 1 }] as const
+const TEMPERATURE_PRESETS = [
+  { key: 'precise', value: 0.2 },
+  { key: 'balanced', value: 0.7 },
+  { key: 'divergent', value: 1 }
+] as const
 
 interface DraggableThresholdBarProps {
   barColor: string
@@ -72,19 +75,13 @@ function DraggableThresholdBar({
   const [isDragging, setIsDragging] = useState(false)
   const [isHoveringThumb, setIsHoveringThumb] = useState(false)
 
-  const calcRatioFromClientX = useCallback((clientX: number): number | null => {
-    if (!trackRef.current) {
-      return null
+  const emit = (clientX: number): void => {
+    const rect = trackRef.current?.getBoundingClientRect()
+
+    if (rect && rect.width > 0) {
+      onChange(snapThreshold((clientX - rect.left) / rect.width))
     }
-
-    const rect = trackRef.current.getBoundingClientRect()
-
-    if (rect.width <= 0) {
-      return null
-    }
-
-    return snapThreshold((clientX - rect.left) / rect.width)
-  }, [])
+  }
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
     if (disabled) {
@@ -96,12 +93,7 @@ function DraggableThresholdBar({
     e.currentTarget.setPointerCapture(e.pointerId)
     draggingRef.current = true
     setIsDragging(true)
-
-    const ratio = calcRatioFromClientX(e.clientX)
-
-    if (ratio !== null) {
-      onChange(ratio)
-    }
+    emit(e.clientX)
   }
 
   const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>): void => {
@@ -110,11 +102,7 @@ function DraggableThresholdBar({
     }
 
     e.preventDefault()
-    const ratio = calcRatioFromClientX(e.clientX)
-
-    if (ratio !== null) {
-      onChange(ratio)
-    }
+    emit(e.clientX)
   }
 
   const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>): void => {
@@ -180,7 +168,7 @@ function DraggableThresholdBar({
         <div
           aria-label={params.thresholdSliderAria}
           aria-valuemax={100}
-          aria-valuemin={30}
+          aria-valuemin={THRESHOLD_MIN * 100}
           aria-valuenow={Math.round(thresholdPct)}
           className={cn(
             'absolute top-1/2 -translate-y-1/2 -translate-x-1/2 z-20 flex flex-col items-center cursor-ew-resize',
@@ -250,30 +238,9 @@ export function ChatParamsPanel({
   const contextStatus = useContextStatus()
   const [compressing, setCompressing] = useState(false)
 
-  const tempValue = resolveTemperature(settings.temperature)
-
-  const thresholdValue =
-    typeof settings.context_compression_threshold === 'number'
-      ? settings.context_compression_threshold
-      : DEFAULT_THRESHOLD
-
-  const reasoningValue = resolveReasoningEffort(settings.reasoning_effort)
-
-  const [temp, setTemp] = useState(tempValue)
-  const [threshold, setThreshold] = useState(thresholdValue)
-  const [reasoning, setReasoning] = useState<ReasoningEffort>(reasoningValue)
-
-  useEffect(() => {
-    setTemp(tempValue)
-  }, [tempValue])
-
-  useEffect(() => {
-    setThreshold(thresholdValue)
-  }, [thresholdValue])
-
-  useEffect(() => {
-    setReasoning(reasoningValue)
-  }, [reasoningValue])
+  const temp = resolveTemperature(settings.temperature)
+  const threshold = settings.context_compression_threshold ?? DEFAULT_THRESHOLD
+  const reasoning = resolveReasoningEffort(settings.reasoning_effort)
 
   type SessionSettingsPatch = {
     context_compression_threshold?: number | null
@@ -351,20 +318,17 @@ export function ChatParamsPanel({
 
   const handleTempChange = (val: number): void => {
     const rounded = Math.round(val * 100) / 100
-    setTemp(rounded)
     updateSessionSetting('temperature', rounded)
     scheduleSync({ temperature: rounded })
   }
 
   const handleThresholdChange = (val: number): void => {
     const rounded = snapThreshold(val)
-    setThreshold(rounded)
     updateSessionSetting('context_compression_threshold', rounded)
     scheduleSync({ context_compression_threshold: rounded })
   }
 
   const handleReasoningChange = (val: ReasoningEffort): void => {
-    setReasoning(val)
     updateSessionSetting('reasoning_effort', val)
     scheduleSync({ reasoning_effort: val })
   }
@@ -596,13 +560,6 @@ export function ChatParamsPanel({
               {TEMPERATURE_PRESETS.map(preset => {
                 const active = Math.abs(temp - preset.value) < 0.05
 
-                const presetLabel =
-                  preset.value === 0.2
-                    ? params.temperaturePresets.precise
-                    : preset.value === 0.7
-                      ? params.temperaturePresets.balanced
-                      : params.temperaturePresets.divergent
-
                 return (
                   <button
                     className={cn(
@@ -617,7 +574,7 @@ export function ChatParamsPanel({
                     type="button"
                   >
                     <span className="font-mono text-[11px] font-semibold">{preset.value.toFixed(2)}</span>
-                    <span className="text-[9px]">{presetLabel}</span>
+                    <span className="text-[9px]">{params.temperaturePresets[preset.key]}</span>
                   </button>
                 )
               })}
@@ -641,7 +598,7 @@ export function ChatParamsPanel({
               </span>
             </div>
 
-            <div className="grid grid-cols-4 gap-1 rounded-lg border border-line-hairline bg-fill-hover/50 p-1 sm:grid-cols-4 lg:grid-cols-8">
+            <div className="grid grid-cols-4 gap-1 rounded-lg border border-line-hairline bg-fill-hover/50 p-1 lg:grid-cols-8">
               {getReasoningOptions(params.reasoningOptions).map(opt => {
                 const active = reasoning === opt.value
 

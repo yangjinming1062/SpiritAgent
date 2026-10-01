@@ -117,11 +117,12 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
   }
 
   const previewUrl = session.draft?.previewUrl ?? null
+  const hasInput = !!text.trim() || !!session.refImage
 
   // 首次生成（无草稿）：描述/参考图创建新设计。
   const sendCreation = (): void => {
     // 生成进行中会话内部会拒绝——此时不清空输入，避免丢字。
-    if (session.busy || (!text.trim() && !session.refImage)) {
+    if (session.busy || !hasInput) {
       return
     }
 
@@ -141,24 +142,16 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
 
   // 自备图（着装立绘）：有草稿时提示词/采纳都走草稿重绘语境，否则走创建语境。
   const fetchOutfitSelfSourcePrompt = async (): Promise<string> => {
-    if (session.draft) {
-      const res = await window.spiritagent.api<{ prompt: string }>({
-        path: `/api/companion/outfits/${session.draft.id}/prompt`,
-        method: 'POST',
-        body: { feedback: text.trim() || undefined }
-      })
-
-      return res.prompt
-    }
-
     const res = await window.spiritagent.api<{ prompt: string }>({
-      path: '/api/companion/outfits/prompt',
+      path: session.draft ? `/api/companion/outfits/${session.draft.id}/prompt` : '/api/companion/outfits/prompt',
       method: 'POST',
-      body: {
-        description: text.trim() || undefined,
-        image: session.refImage?.base64,
-        content_type: session.refImage?.contentType
-      }
+      body: session.draft
+        ? { feedback: text.trim() || undefined }
+        : {
+            description: text.trim() || undefined,
+            image: session.refImage?.base64,
+            content_type: session.refImage?.contentType
+          }
     })
 
     return res.prompt
@@ -519,7 +512,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
               <button
                 aria-label={t.send}
                 className={cn(BTN_PRIMARY, 'h-9 w-9 shrink-0 self-end px-0')}
-                disabled={session.busy || (!text.trim() && !session.refImage)}
+                disabled={session.busy || !hasInput}
                 onClick={sendCreation}
                 type="button"
               >
@@ -546,7 +539,7 @@ export function OutfitSection({ onSelectOutfit }: OutfitSectionProps): React.JSX
           }
 
           // 无可发送内容时会静默拒绝——聚焦输入框把用户带回设计流程，避免点按钮毫无反馈。
-          if (!text.trim() && !session.refImage) {
+          if (!hasInput) {
             inputRef.current?.focus()
 
             return

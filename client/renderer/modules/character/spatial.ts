@@ -1,10 +1,15 @@
-import { type DesktopSpriteScalePayload, type DesktopWindowSceneSnapshot, SPRITE_SCALE_LIMITS } from '@ipc/contracts'
+import {
+  type DesktopScreenRect,
+  type DesktopSpriteScalePayload,
+  type DesktopWindowSceneSnapshot,
+  SPRITE_SCALE_LIMITS
+} from '@ipc/contracts'
 import { clamp } from '@runtime'
 import { atom, computed } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
 import { persistString, registerStorageClearHandler, storedString } from '@/shared/lib/storage'
-import { $surfaceOpen, $surfaceSpriteVisible } from '@/shared/store/surfaces'
+import { $surfaceOpen, $surfaceSpriteVisible, isSpriteStageShown } from '@/shared/store/surfaces'
 
 import { $actionCatalog, $activePlayInstance, ensurePeekAction } from './actions'
 import type { PeekGeometry } from './actions'
@@ -134,9 +139,9 @@ interface PendingWindowPeek extends WindowPeekBinding {
 
 let pendingWindowPeek: PendingWindowPeek | null = null
 
-// 桌面精灵舞台展示中（未被完整入口收起、精灵窗未隐藏或最小化）；不展示时暂停走位、漫游与探身，重新展示后由 initSpatial 恢复。
-function isDesktopStageShown(): boolean {
-  return $surfaceOpen.get() === null && $surfaceSpriteVisible.get()
+// 探身流程的舞台前提：未锁屏且桌面精灵舞台展示中（未被完整入口收起、精灵窗未隐藏或最小化）。
+function isStageActive(): boolean {
+  return !$screenLocked.get() && isSpriteStageShown()
 }
 
 function getHomePosition(): { x: number; y: number } {
@@ -178,10 +183,7 @@ export interface PerchPlacement {
 }
 
 /** 普通栖息选可容纳比例较大的一侧，同等空间优先右侧；低于 MIN_SCALE 时放弃。 */
-export function computePerchPlacement(
-  geom: { x: number; y: number; w: number; h: number },
-  maxScale: number
-): PerchPlacement | null {
+export function computePerchPlacement(geom: DesktopScreenRect, maxScale: number): PerchPlacement | null {
   const margin = 8
   const spriteW = getBaseSpriteWidth()
   const spriteH0 = getBaseSpriteHeight()
@@ -293,14 +295,7 @@ function easeInOut(t: number): number {
 
 function tick(now: number): void {
   if (!moveStart || !moveTarget || $surfaceOpen.get() === 'living') {
-    rafId = null
-    moveStart = null
-    moveTarget = null
-    moveOnArrive = null
-
-    if ($spatialLocomotion.get() !== 'drag') {
-      $spatialLocomotion.set('still')
-    }
+    cancelMovement()
 
     return
   }
@@ -318,13 +313,7 @@ function tick(now: number): void {
   if (t < 1) {
     rafId = requestAnimationFrame(tick)
   } else {
-    const cb = moveOnArrive
-    moveStart = null
-    moveTarget = null
-    moveOnArrive = null
-    rafId = null
-    $spatialLocomotion.set('still')
-    cb?.()
+    cancelMovement(true)
   }
 }
 
@@ -539,7 +528,7 @@ function applyScreenPeek(
 }
 
 async function activateScreenPeek(target: { side: 'left' | 'right'; yRatio: number }, animate = false): Promise<void> {
-  if ($screenLocked.get() || !isDesktopStageShown()) {
+  if (!isStageActive()) {
     return
   }
 
@@ -604,15 +593,13 @@ function buildWindowPeekLayout(
   )
 }
 
+// 窗口探身的 canEnterWindowPeek 已含锁屏、舞台与播放判断，屏幕探身单独检查。
 function isCurrentPeekPreparation(preparation: PeekPreparation): boolean {
   return (
     $peekPreparation.get() === preparation &&
     preparation.generation === peekIntentGeneration &&
     $actionCatalog.get()?.packId === preparation.packId &&
-    !$screenLocked.get() &&
-    isDesktopStageShown() &&
-    !$activePlayInstance.get() &&
-    (preparation.mode === 'screen' || canEnterWindowPeek())
+    (preparation.mode === 'screen' ? isStageActive() && !$activePlayInstance.get() : canEnterWindowPeek())
   )
 }
 
@@ -630,7 +617,7 @@ export function cancelPeekPreparation(action: 'peek_left' | 'peek_right', genera
   $peekPreparation.set(null)
   peekIntentGeneration += 1
 
-  if (preparation.mode === 'window' && screenEdgeHome && !$screenLocked.get() && isDesktopStageShown()) {
+  if (preparation.mode === 'window' && screenEdgeHome && isStageActive()) {
     void activateScreenPeek(screenEdgeHome)
   }
 }
@@ -648,32 +635,30 @@ export async function commitPeekPreparation(
     return false
   }
 
-  if (!isCurrentPeekPreparation(preparation)) {
+  const abort = (): false => {
     cancelPeekPreparation(action, generation)
 
     return false
+  }
+
+  if (!isCurrentPeekPreparation(preparation)) {
+    return abort()
   }
 
   const catalog = $actionCatalog.get()
   const geometry = catalog?.clipsBySlot.get(action)?.peek_geometry
 
   if (!geometry) {
-    cancelPeekPreparation(action, generation)
-
-    return false
+    return abort()
   }
 
   if (preparation.mode === 'screen' && (!screenEdgeHome || !sameScreenEdge(screenEdgeHome, preparation.screenEdge))) {
-    cancelPeekPreparation(action, generation)
-
-    return false
+    return abort()
   }
 
   // 解码失败不能先移动宿主窗口；后续窗口快照也须取自解码完成后。
   if (!(await prepareFirstFrame())) {
-    cancelPeekPreparation(action, generation)
-
-    return false
+    return abort()
   }
 
   if (!isCurrentPeekPreparation(preparation)) {
@@ -692,9 +677,7 @@ export async function commitPeekPreparation(
   let target = findBoundWindow(scene, preparation)
 
   if (!isCurrentPeekPreparation(preparation) || !scene || !target) {
-    cancelPeekPreparation(action, generation)
-
-    return false
+    return abort()
   }
 
   if (target.displayId !== scene.viewport.displayId) {
@@ -703,9 +686,7 @@ export async function commitPeekPreparation(
     target = findBoundWindow(scene, preparation)
 
     if (!isCurrentPeekPreparation(preparation) || !scene || !target || target.displayId !== scene.viewport.displayId) {
-      cancelPeekPreparation(action, generation)
-
-      return false
+      return abort()
     }
   }
 
@@ -747,18 +728,42 @@ function stopWindowPeekTracker(): void {
   }
 }
 
-/** 撤销探身意图、表演返回目标与窗口跟踪，保留栖息地和当前位置。 */
-function clearPeekState(): SpatialPeek | null {
+/** 撤销探身意图、表演返回目标与窗口跟踪，保留栖息地和当前位置；keepPendingWindow 时保留待启动的窗口探身意图及其代次。 */
+function clearPeekState(keepPendingWindow = false): SpatialPeek | null {
   const peek = $spatialPeek.get()
-  peekIntentGeneration += 1
+
+  if (!keepPendingWindow) {
+    peekIntentGeneration += 1
+    pendingWindowPeek = null
+  }
+
   expressionExitToken += 1
   expressionPeekReturn = null
-  pendingWindowPeek = null
   $peekPreparation.set(null)
   stopWindowPeekTracker()
   $spatialPeek.set(null)
 
   return peek
+}
+
+// 收回 home：撤销缩放上限并按新比例把落点钳回视口后静止；fromHome 时以 home 为落点，否则沿用当前位置。updateAdaptiveScale 会同步触发缩放监听，须先于读取落点。
+function settleHome(fromHome: boolean): { x: number; y: number } {
+  perchScaleLimit = null
+  updateAdaptiveScale()
+  const position = clampPosToViewport(fromHome ? $homePosition.get() : $spatialPos.get())
+  $spatialLocale.set('home')
+  $spatialPos.set(position)
+  $spatialLocomotion.set('still')
+
+  return position
+}
+
+// 离开探身后按当前目标比例把位置钳回视口：窗口探身回 home，屏幕探身沿用当前位置。
+function clampAfterPeek(previousPeek: SpatialPeek | null): void {
+  if (previousPeek) {
+    const raw = previousPeek.mode === 'window' ? $homePosition.get() : $spatialPos.get()
+    $spatialPos.set(clampPosToViewport(raw, computeTargetScale()))
+  }
 }
 
 function abandonPeekMode(): void {
@@ -770,13 +775,9 @@ function abandonPeekMode(): void {
   }
 
   cancelMovement()
-  perchScaleLimit = null
-  updateAdaptiveScale()
-  const raw = peek?.mode === 'window' ? $homePosition.get() : $spatialPos.get()
-  const position = clampPosToViewport(raw)
-  $spatialLocale.set('home')
-  $spatialPos.set(position)
-  $spatialLocomotion.set('still')
+
+  const position = settleHome(peek?.mode === 'window')
+
   void window.spiritagent.sprite.setPosition({
     ...position,
     ...(screenEdgeHome ? { screenEdge: screenEdgeHome } : {})
@@ -785,12 +786,7 @@ function abandonPeekMode(): void {
 
 function leaveWindowPeek(): void {
   clearPeekState()
-  perchScaleLimit = null
-  updateAdaptiveScale()
-  const home = clampPosToViewport($homePosition.get())
-  $spatialLocale.set('home')
-  $spatialPos.set(home)
-  $spatialLocomotion.set('still')
+  settleHome(true)
 
   if (screenEdgeHome) {
     void activateScreenPeek(screenEdgeHome, true)
@@ -812,7 +808,7 @@ async function updateWindowPeek(): Promise<void> {
       return
     }
 
-    if ($screenLocked.get() || !isDesktopStageShown()) {
+    if (!isStageActive()) {
       leaveWindowPeek()
 
       return
@@ -885,13 +881,7 @@ function preparePendingWindowPeek(intent: PendingWindowPeek): void {
 async function tryStartPendingWindowPeek(): Promise<boolean> {
   const intent = pendingWindowPeek
 
-  if (
-    activatingWindowPeek ||
-    !intent ||
-    intent.generation !== peekIntentGeneration ||
-    $screenLocked.get() ||
-    !isDesktopStageShown()
-  ) {
+  if (activatingWindowPeek || !intent || intent.generation !== peekIntentGeneration || !isStageActive()) {
     return false
   }
 
@@ -974,13 +964,17 @@ export interface WindowPeekIntent extends WindowPeekBinding {
 
 function canEnterWindowPeek(): boolean {
   return (
-    !$screenLocked.get() &&
-    isDesktopStageShown() &&
+    isStageActive() &&
     $effectiveTier.get() === 'autonomous' &&
     $spatialLocomotion.get() !== 'drag' &&
     !$activePlayInstance.get() &&
     !$focusContext.get()?.fullscreen
   )
+}
+
+// 冻结的探身决策仍有效：仍可进入窗口探身，且意图代次与动作包均未变化。
+function isPeekIntentCurrent(generation: number, packId: number): boolean {
+  return canEnterWindowPeek() && generation === peekIntentGeneration && packId === $actionCatalog.get()?.packId
 }
 
 /** 冻结决策发起时的窗口，避免迟到结果跟随新焦点。 */
@@ -996,13 +990,7 @@ export async function captureWindowPeekIntent(): Promise<WindowPeekIntent | null
   const scene = await readWindowScene()
   const focused = scene?.windows.find(item => item.focused && item.visible)
 
-  if (
-    !scene ||
-    !focused ||
-    !canEnterWindowPeek() ||
-    generation !== peekIntentGeneration ||
-    packId !== $actionCatalog.get()?.packId
-  ) {
+  if (!scene || !focused || !isPeekIntentCurrent(generation, packId)) {
     return null
   }
 
@@ -1012,12 +1000,7 @@ export async function captureWindowPeekIntent(): Promise<WindowPeekIntent | null
 export async function enterWindowPeek(captured?: WindowPeekIntent): Promise<boolean> {
   const target = captured ?? (await captureWindowPeekIntent())
 
-  if (
-    !target ||
-    !canEnterWindowPeek() ||
-    target.generation !== peekIntentGeneration ||
-    target.packId !== $actionCatalog.get()?.packId
-  ) {
+  if (!target || !isPeekIntentCurrent(target.generation, target.packId)) {
     return false
   }
 
@@ -1032,13 +1015,7 @@ export async function enterWindowPeek(captured?: WindowPeekIntent): Promise<bool
 
   const focused = findBoundWindow(scene, target)
 
-  if (
-    !scene ||
-    !focused ||
-    !canEnterWindowPeek() ||
-    target.generation !== peekIntentGeneration ||
-    target.packId !== $actionCatalog.get()?.packId
-  ) {
+  if (!scene || !focused || !isPeekIntentCurrent(target.generation, target.packId)) {
     return false
   }
 
@@ -1127,8 +1104,7 @@ export async function restorePeekAfterExpression(): Promise<void> {
   if (
     !previous ||
     previous.packId !== $actionCatalog.get()?.packId ||
-    $screenLocked.get() ||
-    !isDesktopStageShown() ||
+    !isStageActive() ||
     $spatialLocomotion.get() === 'drag'
   ) {
     return
@@ -1227,22 +1203,11 @@ export function setSpatialLocale(
     return
   }
 
-  const previousPeek = locale !== 'screen_peek' && locale !== 'window_peek' ? $spatialPeek.get() : null
-
-  if (locale !== 'screen_peek' && locale !== 'window_peek') {
-    expressionExitToken += 1
-    expressionPeekReturn = null
-    $peekPreparation.set(null)
-    const keepPendingWindow = locale === 'perch' && pendingWindowPeek !== null
-
-    if (!keepPendingWindow) {
-      peekIntentGeneration += 1
-      pendingWindowPeek = null
-    }
-
-    stopWindowPeekTracker()
-    $spatialPeek.set(null)
-  }
+  // 非探身落点先撤销探身；perch 保留已在途的窗口探身意图。
+  const previousPeek =
+    locale !== 'screen_peek' && locale !== 'window_peek'
+      ? clearPeekState(locale === 'perch' && pendingWindowPeek !== null)
+      : null
 
   const hasScaleLimit = locale === 'perch' || locale === 'window_peek'
   const limitChanged = perchScaleLimit !== (hasScaleLimit ? (opts?.scaleLimit ?? null) : null)
@@ -1253,10 +1218,7 @@ export function setSpatialLocale(
     updateAdaptiveScale()
   }
 
-  if (previousPeek) {
-    const raw = previousPeek.mode === 'window' ? $homePosition.get() : $spatialPos.get()
-    $spatialPos.set(clampPosToViewport(raw, computeTargetScale()))
-  }
+  clampAfterPeek(previousPeek)
 
   // home 落点可能记录于更低 scale 的时期；按当前 scale 重钳，情绪放大期间回 home 不裁脚。
   const rawTarget = opts?.position ?? $homePosition.get()
@@ -1274,7 +1236,7 @@ export function setSpatialLocale(
 }
 
 export function updateSpatialDecision(): void {
-  if ($spatialLocomotion.get() === 'drag' || !isDesktopStageShown()) {
+  if ($spatialLocomotion.get() === 'drag' || !isSpriteStageShown()) {
     return
   }
 
@@ -1375,7 +1337,7 @@ function generateRoamWaypoint(): { x: number; y: number } {
 }
 
 export function startRoam(): void {
-  if (roaming || !isDesktopStageShown()) {
+  if (roaming || !isSpriteStageShown()) {
     return
   }
 
@@ -1384,12 +1346,7 @@ export function startRoam(): void {
   perchScaleLimit = null
   $spatialLocale.set('roam')
   updateAdaptiveScale()
-
-  if (previousPeek) {
-    const raw = previousPeek.mode === 'window' ? $homePosition.get() : $spatialPos.get()
-    $spatialPos.set(clampPosToViewport(raw, computeTargetScale()))
-  }
-
+  clampAfterPeek(previousPeek)
   roamStep()
 }
 
@@ -1518,13 +1475,17 @@ export function resetToHomePosition(): void {
 
 export function initSpatial(): () => void {
   let disposed = false
-  const unlistenDefaultScale = window.spiritagent.sprite.onDefaultScaleChanged(syncDefaultScale)
+  const offs: Array<() => void> = []
 
-  const unlistenStorageClear = registerStorageClearHandler(() => {
-    abandonPeekMode()
-    screenEdgeHome = null
-    userInteracted = false
-  })
+  offs.push(window.spiritagent.sprite.onDefaultScaleChanged(syncDefaultScale))
+
+  offs.push(
+    registerStorageClearHandler(() => {
+      abandonPeekMode()
+      screenEdgeHome = null
+      userInteracted = false
+    })
+  )
 
   // 等待可见内容包围盒后恢复；保存位置超出可见区域时收回并回写。
   const restoreSavedPosition = (saved: {
@@ -1590,19 +1551,13 @@ export function initSpatial(): () => void {
         }
 
         settleSavedRectWait()
-
-        if (!userInteracted) {
-          restoreSavedPosition(saved)
-        }
+        restoreSavedPosition(saved)
       })
 
       savedRectTimer = setTimeout(() => {
         savedRectTimer = null
         settleSavedRectWait()
-
-        if (!userInteracted) {
-          restoreSavedPosition(saved)
-        }
+        restoreSavedPosition(saved)
       }, 3000)
     })
     .catch(error => {
@@ -1625,7 +1580,7 @@ export function initSpatial(): () => void {
   }
 
   const resumeDesktopStage = (): void => {
-    if (!isDesktopStageShown()) {
+    if (!isSpriteStageShown()) {
       return
     }
 
@@ -1640,91 +1595,98 @@ export function initSpatial(): () => void {
     updateSpatialDecision()
   }
 
-  const unlistenSurface = $surfaceOpen.listen(open => {
-    if (open === 'living' || open === 'workbench') {
-      pauseDesktopStage()
+  offs.push(
+    $surfaceOpen.listen(open => {
+      if (open === 'living' || open === 'workbench') {
+        pauseDesktopStage()
 
-      if (open === 'workbench') {
-        $spatialLocale.set('workbench')
+        if (open === 'workbench') {
+          $spatialLocale.set('workbench')
+        }
+      } else {
+        resumeDesktopStage()
       }
-    } else {
-      resumeDesktopStage()
-    }
-  })
+    })
+  )
 
-  const unlistenSpriteVisible = $surfaceSpriteVisible.listen(visible => {
-    if (visible) {
-      resumeDesktopStage()
-    } else {
-      pauseDesktopStage()
-    }
-  })
+  offs.push(
+    $surfaceSpriteVisible.listen(visible => {
+      if (visible) {
+        resumeDesktopStage()
+      } else {
+        pauseDesktopStage()
+      }
+    })
+  )
 
-  const unlistenState = $spriteState.listen(() => {
+  const reevaluate = (): void => {
     updateAdaptiveScale()
     updateSpatialDecision()
-  })
+  }
 
-  const unlistenTier = $effectiveTier.listen(() => {
-    updateAdaptiveScale()
-    updateSpatialDecision()
-  })
+  offs.push($spriteState.listen(reevaluate))
+  offs.push($effectiveTier.listen(reevaluate))
+  offs.push($focusContext.listen(() => updateSpatialDecision()))
 
-  const unlistenFocus = $focusContext.listen(() => updateSpatialDecision())
+  offs.push(
+    $screenLocked.listen(locked => {
+      if (locked) {
+        abandonPeekMode()
+      } else {
+        if (screenEdgeHome) {
+          void activateScreenPeek(screenEdgeHome)
+        }
 
-  const unlistenLock = $screenLocked.listen(locked => {
-    if (locked) {
-      abandonPeekMode()
-    } else {
-      if (screenEdgeHome) {
-        void activateScreenPeek(screenEdgeHome)
+        updateSpatialDecision()
       }
-
-      updateSpatialDecision()
-    }
-  })
+    })
+  )
 
   // 拖拽逐帧限制位置；移动完成时按最终比例重新落位。
-  const unlistenScale = $spatialScale.listen(() => {
-    if ($spatialLocomotion.get() === 'drag' || rafId !== null) {
-      return
-    }
-
-    const locale = $spatialLocale.get()
-
-    if (locale === 'screen_peek' && screenEdgeHome) {
-      const action = screenEdgeHome.side === 'right' ? 'peek_left' : 'peek_right'
-      const geometry = $actionCatalog.get()?.clipsBySlot.get(action)?.peek_geometry
-
-      if (geometry) {
-        applyScreenPeek(screenEdgeHome, geometry, false)
+  offs.push(
+    $spatialScale.listen(() => {
+      if ($spatialLocomotion.get() === 'drag' || rafId !== null) {
+        return
       }
 
-      return
-    }
+      const locale = $spatialLocale.get()
 
-    if (locale === 'window_peek') {
-      void updateWindowPeek()
+      if (locale === 'screen_peek' && screenEdgeHome) {
+        const action = screenEdgeHome.side === 'right' ? 'peek_left' : 'peek_right'
+        const geometry = $actionCatalog.get()?.clipsBySlot.get(action)?.peek_geometry
 
-      return
-    }
+        if (geometry) {
+          applyScreenPeek(screenEdgeHome, geometry, false)
+        }
 
-    const cur = $spatialPos.get()
-    const next = clampPosToViewport(cur)
+        return
+      }
 
-    $spatialPos.set(next)
-  })
+      if (locale === 'window_peek') {
+        void updateWindowPeek()
+
+        return
+      }
+
+      const cur = $spatialPos.get()
+      const next = clampPosToViewport(cur)
+
+      $spatialPos.set(next)
+    })
+  )
 
   // 片段切换只重钳当前位置，不能把表演落点或离开探身的路径拉回 home。
-  const unlistenContent = $spriteContentRect.listen(() => {
-    if (!screenEdgeHome) {
-      $homePosition.set(clampPosToViewport($homePosition.get()))
-    }
+  offs.push(
+    $spriteContentRect.listen(() => {
+      if (!screenEdgeHome) {
+        $homePosition.set(clampPosToViewport($homePosition.get()))
+      }
 
-    if (!$spatialPeek.get() && $spatialLocomotion.get() === 'still' && rafId === null) {
-      $spatialPos.set(clampPosToViewport($spatialPos.get()))
-    }
-  })
+      if (!$spatialPeek.get() && $spatialLocomotion.get() === 'still' && rafId === null) {
+        $spatialPos.set(clampPosToViewport($spatialPos.get()))
+      }
+    })
+  )
 
   const restoreScreenDock = (): void => {
     if (
@@ -1740,32 +1702,29 @@ export function initSpatial(): () => void {
     }
   }
 
-  const unlistenCanvas = $spriteCanvasRect.listen(() => {
-    const peek = $spatialPeek.get()
+  offs.push(
+    $spriteCanvasRect.listen(() => {
+      const peek = $spatialPeek.get()
 
-    if (peek?.mode === 'screen' && screenEdgeHome) {
-      const geometry = $actionCatalog.get()?.clipsBySlot.get(peek.action)?.peek_geometry
+      if (peek?.mode === 'screen' && screenEdgeHome) {
+        const geometry = $actionCatalog.get()?.clipsBySlot.get(peek.action)?.peek_geometry
 
-      if (geometry) {
-        applyScreenPeek(screenEdgeHome, geometry, false)
+        if (geometry) {
+          applyScreenPeek(screenEdgeHome, geometry, false)
+        }
+      } else if (peek?.mode === 'window') {
+        void updateWindowPeek()
+      } else {
+        restoreScreenDock()
       }
-    } else if (peek?.mode === 'window') {
-      void updateWindowPeek()
-    } else {
-      restoreScreenDock()
-    }
-  })
+    })
+  )
 
   const reprepareWindowPeek = (
     peek: Pick<Extract<SpatialPeek, { mode: 'window' }>, 'action' | 'runnerInstanceId' | 'windowId' | 'windowPid'>
   ): void => {
     clearPeekState()
-    perchScaleLimit = null
-    updateAdaptiveScale()
-    const position = clampPosToViewport($homePosition.get())
-    $spatialLocale.set('home')
-    $spatialPos.set(position)
-    $spatialLocomotion.set('still')
+    settleHome(true)
 
     if (!peek.windowId || !peek.windowPid || !peek.runnerInstanceId) {
       return
@@ -1784,53 +1743,55 @@ export function initSpatial(): () => void {
 
   let previousCatalog = $actionCatalog.get()
 
-  const unlistenCatalog = $actionCatalog.listen(catalog => {
-    const previous = previousCatalog
-    previousCatalog = catalog
+  offs.push(
+    $actionCatalog.listen(catalog => {
+      const previous = previousCatalog
+      previousCatalog = catalog
 
-    if (previous?.packId !== catalog?.packId) {
-      abandonPeekMode()
-      restoreScreenDock()
+      if (previous?.packId !== catalog?.packId) {
+        abandonPeekMode()
+        restoreScreenDock()
 
-      return
-    }
+        return
+      }
 
-    const peek = $spatialPeek.get()
-    const preparation = $peekPreparation.get()
-    const action = peek?.action ?? preparation?.action
-    const before = action ? previous?.clipsBySlot.get(action) : null
-    const after = action ? catalog?.clipsBySlot.get(action) : null
+      const peek = $spatialPeek.get()
+      const preparation = $peekPreparation.get()
+      const action = peek?.action ?? preparation?.action
+      const before = action ? previous?.clipsBySlot.get(action) : null
+      const after = action ? catalog?.clipsBySlot.get(action) : null
 
-    if (before && after && before.asset_revision === after.asset_revision && before.video_ref === after.video_ref) {
-      return
-    }
+      if (before && after && before.asset_revision === after.asset_revision && before.video_ref === after.video_ref) {
+        return
+      }
 
-    if (preparation?.mode === 'screen' && screenEdgeHome) {
-      cancelPeekPreparation(preparation.action, preparation.generation)
-      void activateScreenPeek(screenEdgeHome)
-    } else if (preparation?.mode === 'window') {
-      reprepareWindowPeek({
-        action: preparation.action,
-        runnerInstanceId: preparation.runnerInstanceId,
-        windowId: preparation.windowId,
-        windowPid: preparation.windowPid
-      })
-    } else if (peek?.mode === 'screen' && screenEdgeHome) {
-      const edge = screenEdgeHome
-      const visible = clampPosToViewport($spatialPos.get())
-      peekIntentGeneration += 1
-      $spatialPeek.set(null)
-      $spatialLocale.set('home')
-      $spatialPos.set(visible)
-      void activateScreenPeek(edge)
-    } else if (peek?.mode === 'window') {
-      reprepareWindowPeek(peek)
-    } else {
-      restoreScreenDock()
-    }
+      if (preparation?.mode === 'screen' && screenEdgeHome) {
+        cancelPeekPreparation(preparation.action, preparation.generation)
+        void activateScreenPeek(screenEdgeHome)
+      } else if (preparation?.mode === 'window') {
+        reprepareWindowPeek({
+          action: preparation.action,
+          runnerInstanceId: preparation.runnerInstanceId,
+          windowId: preparation.windowId,
+          windowPid: preparation.windowPid
+        })
+      } else if (peek?.mode === 'screen' && screenEdgeHome) {
+        const edge = screenEdgeHome
+        const visible = clampPosToViewport($spatialPos.get())
+        peekIntentGeneration += 1
+        $spatialPeek.set(null)
+        $spatialLocale.set('home')
+        $spatialPos.set(visible)
+        void activateScreenPeek(edge)
+      } else if (peek?.mode === 'window') {
+        reprepareWindowPeek(peek)
+      } else {
+        restoreScreenDock()
+      }
 
-    void tryStartPendingWindowPeek()
-  })
+      void tryStartPendingWindowPeek()
+    })
+  )
 
   const onResize = () => {
     $viewport.set({ width: window.innerWidth, height: window.innerHeight })
@@ -1881,18 +1842,7 @@ export function initSpatial(): () => void {
     disposed = true
     abandonPeekMode()
     settleSavedRectWait()
-    unlistenDefaultScale()
-    unlistenSurface()
-    unlistenSpriteVisible()
-    unlistenState()
-    unlistenTier()
-    unlistenFocus()
-    unlistenLock()
-    unlistenScale()
-    unlistenContent()
-    unlistenCanvas()
-    unlistenCatalog()
-    unlistenStorageClear()
+    offs.forEach(off => off())
     stopWindowPeekTracker()
     window.removeEventListener('resize', onResize)
     stopRoam()

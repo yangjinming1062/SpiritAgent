@@ -106,10 +106,12 @@ export function persistString(key: string, value: null | string): void {
     } else {
       window.localStorage.setItem(target, value)
     }
-  } catch {}
+  } catch (error) {
+    log.warn('storage', `persist failed: ${key}`, error)
+  }
 }
 
-function storedJson<T>(key: string, fallback: T, validate?: (val: unknown) => val is T): T {
+export function storedJson<T>(key: string, fallback: T, validate?: (val: unknown) => val is T): T {
   const raw = storedString(key)
 
   if (!raw) {
@@ -154,6 +156,8 @@ interface PersistedEnumResult<T extends string> {
   $atom: WritableAtom<T>
   set: (next: T) => void
   reset: () => void
+  /** 按本地存储重读并写入 atom（不回写存储）：其他窗口改动后同步用。 */
+  reload: () => void
   get: () => T
 }
 
@@ -167,7 +171,7 @@ function createPersisted<T>(opts: {
   apply: (current: T, next: T) => T
   /** isPersistable 守门：返回 false 时不落 localStorage（瞬态值保留在内存）。 */
   persist: (val: T) => void
-}): { $atom: WritableAtom<T>; get: () => T; set: (next: T) => void; reset: () => void } {
+}): { $atom: WritableAtom<T>; get: () => T; set: (next: T) => void; reset: () => void; reload: () => void } {
   const { apply, fallback, key, load, persist, preserveOnLogout } = opts
   registerCompanionStorageKey(key, { preserveOnLogout })
 
@@ -186,18 +190,21 @@ function createPersisted<T>(opts: {
     persistString(key, null)
   }
 
+  function reload(): void {
+    $atom.set(load())
+  }
+
   if (!preserveOnLogout) {
     registerStorageClearHandler(() => {
       $atom.set(fallback)
     })
-    registerStorageRestoreHandler(() => {
-      $atom.set(load())
-    })
+    registerStorageRestoreHandler(reload)
   }
 
   return {
     $atom,
     get: () => $atom.get(),
+    reload,
     reset,
     set
   }

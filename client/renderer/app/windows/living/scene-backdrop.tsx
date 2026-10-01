@@ -6,6 +6,7 @@ import { useEffect, useRef, useState } from 'react'
 
 import { $activeScene, $sceneTaskStatus } from '@/modules/scene'
 import { $noBlur } from '@/shared/lib/apply-no-blur'
+import { cn } from '@/shared/lib/utils'
 import { $theme } from '@/shared/store/theme'
 import { useStrings } from '@/shared/strings'
 
@@ -42,14 +43,14 @@ export function SceneBackdrop(): React.JSX.Element {
 
   const bgUrl = backdrop?.url ?? null
   const status = bgUrl ? 'ready' : taskStatus === 'pending' ? 'pending' : 'none'
-  const showKenBurns = !reducedMotion && status === 'ready' && bgUrl !== null
+  const showKenBurns = !reducedMotion && status === 'ready'
 
   const baked = useBakedScene(noBlur ? null : bgUrl, viewport.width, viewport.height, theme)
 
   return (
     <div aria-hidden="true" className={styles.root} ref={rootRef}>
       <div
-        className={`${styles.backdropImage} ${showKenBurns ? styles.kenBurns : ''} ${styles[`status_${status}`] ?? ''}`}
+        className={cn(styles.backdropImage, showKenBurns && styles.kenBurns, styles[`status_${status}`])}
         data-baked={baked ? 'true' : undefined}
         style={
           baked

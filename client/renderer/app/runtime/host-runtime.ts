@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect } from 'react'
 
 import {
   $effectiveTier,
@@ -23,7 +23,7 @@ import {
   syncSessionHistory
 } from '@/modules/conversation'
 import { cancelVoiceBar, stopSpeaking } from '@/modules/speech'
-import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
+import { errorMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { reconnectBackoffMs } from '@/shared/lib/reconnect'
 import { fetchSlashCommandMeta } from '@/shared/lib/slash-commands'
@@ -34,10 +34,20 @@ import { getStrings } from '@/shared/strings'
 import type { SessionResumeResponse } from '@/shared/types/spiritagent'
 
 import { clearDesktopBootFailure, failDesktopBoot } from './boot-store'
+import { handleGatewayEvent } from './gateway-event-router'
 import { isDeviceCommandEvent } from './gateway-event-util'
 
 // 1008 停止重连；会话过期由主进程的鉴权失败通知确认。
 const WS_CLOSE_POLICY_VIOLATION = 1008
+
+// 取消计时器并返回 null，供调用方复位持有它的变量。
+function clearTimer(timer: ReturnType<typeof setTimeout> | null): null {
+  if (timer !== null) {
+    clearTimeout(timer)
+  }
+
+  return null
+}
 
 // 重连后补报离线期间可能变化的生效档位。
 function syncDisturbanceTier(): void {
@@ -88,21 +98,12 @@ async function syncRunnerTools(gateway: SpiritAgentGateway, isCurrent: () => boo
     const res = await gateway.request<{ count: number }>('tools.sync', { tools, skill_scope_version: 1 })
     log.info('gateway-boot', `tools.sync: synced ${res.count} runner tools to gateway (hasFileTools=${hasFileTools})`)
   } catch (error) {
-    const msg = error instanceof Error ? error.message : String(error)
+    const msg = errorMessage(error)
     log.error('gateway-boot', `tools.sync failed: ${msg}`)
   }
 }
 
-interface GatewayBootOptions {
-  handleGatewayEvent: (event: GatewayEvent) => void
-  sessionId: string
-}
-
-export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOptions): void {
-  const handleEventRef = useRef(handleGatewayEvent)
-
-  handleEventRef.current = handleGatewayEvent
-
+export function useGatewayBoot(sessionId: string): void {
   useEffect(() => {
     let cancelled = false
     let toolsSyncGeneration = 0
@@ -111,7 +112,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
     if (!desktop) {
       failDesktopBoot(getStrings().boot.errors.bridgeUnavailable)
 
-      return () => void (cancelled = true)
+      return
     }
 
     // 初次启动后按退避重连，电源恢复、网络上线和窗口可见时立即重试。
@@ -129,20 +130,6 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
       const generation = ++toolsSyncGeneration
 
       return syncRunnerTools(gateway, () => !cancelled && generation === toolsSyncGeneration && gatewayOpen(), revoke)
-    }
-
-    const clearReconnectTimer = () => {
-      if (reconnectTimer !== null) {
-        clearTimeout(reconnectTimer)
-        reconnectTimer = null
-      }
-    }
-
-    const clearGraceTimer = () => {
-      if (graceTimer !== null) {
-        clearTimeout(graceTimer)
-        graceTimer = null
-      }
     }
 
     const attemptReconnect = async () => {
@@ -166,9 +153,6 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
         }
 
         void syncTools()
-        reconnectAttempt = 0
-        lastReconnectError = null
-        reconnectErrorNotified = false
       } catch (error) {
         if (cancelled) {
           return
@@ -214,7 +198,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
         return
       }
 
-      clearReconnectTimer()
+      reconnectTimer = clearTimer(reconnectTimer)
       reconnectAttempt = 0
       reconnectErrorNotified = false
 
@@ -236,14 +220,14 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
       }
 
       reportPrimaryGatewayState(st)
-      window.spiritagent?.gatewayBroadcastState?.(st)
+      desktop.gatewayBroadcastState?.(st)
 
       if (st === 'open') {
         reconnectAttempt = 0
         lastReconnectError = null
         reconnectErrorNotified = false
-        clearReconnectTimer()
-        clearGraceTimer()
+        reconnectTimer = clearTimer(reconnectTimer)
+        graceTimer = clearTimer(graceTimer)
         // 重推打扰档位与本地时区，覆盖离线期间尚未上云的变化。
         syncDisturbanceTier()
         syncTimezone(gateway)
@@ -351,21 +335,21 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
     })
 
     const offEvent = gateway.onEvent(event => {
-      handleEventRef.current(event)
+      handleGatewayEvent(event)
 
       if (!isDeviceCommandEvent(event.type)) {
-        window.spiritagent?.gatewayBroadcastEvent?.(event)
+        desktop.gatewayBroadcastEvent?.(event)
       }
     })
 
-    const offRpcDispatch = window.spiritagent?.onGatewayRpcDispatch?.(req => {
+    const offRpcDispatch = desktop.onGatewayRpcDispatch?.(req => {
       void (async () => {
         try {
           const result = await gateway.request(req.method, req.params)
-          window.spiritagent?.gatewayRpcReply?.({ id: req.id, ok: true, result })
+          desktop.gatewayRpcReply?.({ id: req.id, ok: true, result })
         } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          window.spiritagent?.gatewayRpcReply?.({ id: req.id, ok: false, error: message })
+          const message = errorMessage(error)
+          desktop.gatewayRpcReply?.({ id: req.id, ok: false, error: message })
         }
       })()
     })
@@ -408,7 +392,7 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
         bootCompleted = true
       } catch (err) {
         if (!cancelled) {
-          const message = err instanceof Error ? err.message : String(err)
+          const message = errorMessage(err)
           failDesktopBoot(message)
           notifyError(err, getStrings().boot.errors.desktopBootFailed)
         }
@@ -419,15 +403,15 @@ export function useGatewayBoot({ handleGatewayEvent, sessionId }: GatewayBootOpt
 
     return () => {
       cancelled = true
-      clearReconnectTimer()
-      clearGraceTimer()
+      reconnectTimer = clearTimer(reconnectTimer)
+      graceTimer = clearTimer(graceTimer)
       window.removeEventListener('online', onOnline)
       document.removeEventListener('visibilitychange', onVisible)
       offPowerResume?.()
       offRpcDispatch?.()
       offState()
       offEvent()
-      window.spiritagent?.gatewayBroadcastState?.('closed')
+      desktop.gatewayBroadcastState?.('closed')
       offRunnerStatus?.()
       stopAutonomyProvision()
       tearDownPrimaryGateway()

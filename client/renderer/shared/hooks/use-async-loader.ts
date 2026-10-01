@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { type Dispatch, type SetStateAction, useCallback, useEffect, useRef, useState } from 'react'
 
 // 规范的「挂载时拉取、持有结果、暴露错误」循环：调用方传入 resolve 出数据（或抛出）的 load，hook 负责挂载、卸载时取消、错误状态以及手动 reload。
 
@@ -7,6 +7,8 @@ export type AsyncLoader<T> = {
   isLoading: boolean
   error: unknown
   reload: () => void
+  /** 本地改写已加载的数据（如保存后直接采用返回值）。 */
+  setData: Dispatch<SetStateAction<T | null>>
 }
 
 export function useAsyncLoader<T>(load: () => Promise<T>): AsyncLoader<T> {
@@ -51,5 +53,5 @@ export function useAsyncLoader<T>(load: () => Promise<T>): AsyncLoader<T> {
     setVersion(v => v + 1)
   }, [])
 
-  return { data, isLoading, error, reload }
+  return { data, isLoading, error, reload, setData }
 }

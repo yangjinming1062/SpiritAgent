@@ -1,8 +1,7 @@
 import type { SkillItem } from '@ipc/contracts'
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
-import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { cn } from '@/shared/lib/utils'
 import {
   CHIP_FILTER,
@@ -20,6 +19,8 @@ import { refreshSession } from '@/shared/store/auth'
 import { notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 
+const EMPTY_SKILLS: SkillItem[] = []
+
 function categoryLabel(key: string): string {
   return key.replace(/-/g, ' ')
 }
@@ -29,14 +30,12 @@ export function SkillsPage(): React.JSX.Element {
   const s = t.settings.skills
   const sk = t.skills
   const brandName = t.brand.name
-  const loadErrorLabel = s.loadError
-  const loadErrorLabelRef = useLatestRef(loadErrorLabel)
 
   const loader = useAsyncLoader<SkillItem[]>(async () => {
     const res = await window.spiritagent.skills.list()
 
     if (!res.ok) {
-      notifyError(res.error ?? 'load-failed', loadErrorLabelRef.current)
+      notifyError(res.error ?? 'load-failed', s.loadError)
 
       throw new Error(res.error ?? 'skills list failed')
     }
@@ -44,22 +43,12 @@ export function SkillsPage(): React.JSX.Element {
     return res.skills ?? []
   })
 
-  const [skills, setSkills] = useState<SkillItem[]>([])
+  const skills = loader.data ?? EMPTY_SKILLS
   const loading = loader.isLoading
   const loadFailed = loader.error !== null
 
-  // loader.data 同步到本地状态——挂载时 loader 是真相源，本地写入之后优先
-  useEffect(() => {
-    if (loader.data) {
-      setSkills(loader.data)
-    }
-  }, [loader.data])
-
   const [searchTerm, setSearchTerm] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null)
-
-  const saveErrorRef = useLatestRef(s.saveError)
-  const refreshErrorRef = useLatestRef(s.refreshError)
 
   // 开关不做乐观更新，列表只取主进程返回的全量结果；失败时界面仍是点击前的状态，只需提示。
   const toggle = async (name: string, nextEnabled: boolean) => {
@@ -67,21 +56,21 @@ export function SkillsPage(): React.JSX.Element {
       const res = await window.spiritagent.skills.setEnabled({ name, enabled: nextEnabled })
 
       if (!res.ok || !res.skills) {
-        notifyError(res.error ?? 'save-failed', saveErrorRef.current)
+        notifyError(res.error ?? 'save-failed', s.saveError)
 
         return
       }
 
-      setSkills(res.skills)
+      loader.setData(res.skills)
 
       // 刷新 JWT 以获取新 skill 权限；不关精灵窗口的 WS（权限变更在服务端完成）
       try {
         await refreshSession()
       } catch (err) {
-        notifyError(err, refreshErrorRef.current)
+        notifyError(err, s.refreshError)
       }
     } catch (err) {
-      notifyError(err, saveErrorRef.current)
+      notifyError(err, s.saveError)
     }
   }
 
@@ -150,46 +139,35 @@ export function SkillsPage(): React.JSX.Element {
     body = <EmptyState description={s.hiddenByPlatformDesc(brandName)} title={s.hiddenByPlatformTitle} />
   } else if (showFilterEmpty) {
     body = <EmptyState description={sk.noSkillsDesc} title={sk.noSkillsTitle} />
-  } else if (selectedCategory !== null) {
-    const selectedSkills = groupedVisible.get(selectedCategory) ?? []
-
-    body = (
-      <SettingCard>
-        {selectedSkills.map(skill => (
-          <SettingRow description={skill.description || sk.noDescription} key={skill.name} label={skill.name}>
-            <Toggle ariaLabel={skill.name} checked={skill.enabled} onChange={value => void toggle(skill.name, value)} />
-          </SettingRow>
-        ))}
-      </SettingCard>
-    )
   } else {
+    // 选中类别时 groupedVisible 只含该类，只有「全部」才需要类别标题。
     body = (
       <div className="flex flex-col gap-6">
-        {orderedCategories.flatMap(categoryKey => {
+        {orderedCategories.map(categoryKey => {
           const items = groupedVisible.get(categoryKey)
 
-          return items
-            ? [
-                <div className="flex flex-col gap-2" key={categoryKey}>
-                  <h3 className={cn(SECTION_TITLE, 'capitalize')}>{categoryLabel(categoryKey)}</h3>
-                  <SettingCard>
-                    {items.map(skill => (
-                      <SettingRow
-                        description={skill.description || sk.noDescription}
-                        key={skill.name}
-                        label={skill.name}
-                      >
-                        <Toggle
-                          ariaLabel={skill.name}
-                          checked={skill.enabled}
-                          onChange={value => void toggle(skill.name, value)}
-                        />
-                      </SettingRow>
-                    ))}
-                  </SettingCard>
-                </div>
-              ]
-            : []
+          if (!items) {
+            return null
+          }
+
+          return (
+            <div className="flex flex-col gap-2" key={categoryKey}>
+              {selectedCategory === null && (
+                <h3 className={cn(SECTION_TITLE, 'capitalize')}>{categoryLabel(categoryKey)}</h3>
+              )}
+              <SettingCard>
+                {items.map(skill => (
+                  <SettingRow description={skill.description || sk.noDescription} key={skill.name} label={skill.name}>
+                    <Toggle
+                      ariaLabel={skill.name}
+                      checked={skill.enabled}
+                      onChange={value => void toggle(skill.name, value)}
+                    />
+                  </SettingRow>
+                ))}
+              </SettingCard>
+            </div>
+          )
         })}
       </div>
     )

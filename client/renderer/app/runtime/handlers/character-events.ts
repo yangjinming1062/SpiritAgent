@@ -3,7 +3,6 @@ import {
   $actionCatalogStatus,
   $activeAvatarId,
   $companionMood,
-  $videoPacks,
   acceptPlayCommand,
   actionCatalogChanged,
   type ActionClipEntry,
@@ -17,20 +16,15 @@ import {
   observeActionStageVisibility,
   refreshAvatarSeeds,
   reportReceipt,
-  resolveAvatarRegeneration
-} from '@/modules/character'
-import {
-  $videoGenError,
-  $videoGenScope,
-  $videoGenStage,
-  $videoGenState,
-  type VideoGenStage,
+  resolveAvatarRegeneration,
+  videoGenFailed,
+  videoGenProgress,
+  videoGenReady,
   videoPackEventReceived
-} from '@/modules/character/rendering/video'
+} from '@/modules/character'
 import { type GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
 import { $auth } from '@/shared/store/auth'
-import { getStrings } from '@/shared/strings'
 
 import { decodePayload } from '../gateway-event-util'
 
@@ -198,7 +192,7 @@ export function handleCharacterEvent(event: GatewayEvent): void {
 
       const p = decodePayload<ActionPlayCommand>(event.payload)
 
-      if (!p?.play_id || !p.pack_id || !p.action_id) {
+      if (!p.play_id || !p.pack_id || !p.action_id) {
         break
       }
 
@@ -225,74 +219,31 @@ export function handleCharacterEvent(event: GatewayEvent): void {
     case 'companion.video.ready':
     case 'companion.video.activated': {
       // 视频包就绪 / 激活：生成态收敛并重新水合激活包（写持久化状态前先走 authedApi）。
-      if (!authed()) {
-        break
+      if (authed()) {
+        videoGenReady(decodePayload<{ packId?: number; outfitId?: number | null }>(event.payload))
+        void hydrateVideoPack(true)
       }
-
-      const p = decodePayload<{ packId?: number; outfitId?: number | null }>(event.payload)
-
-      videoPackEventReceived()
-      $videoGenState.set('idle')
-      $videoGenStage.set(null)
-      $videoGenError.set(null)
-      $videoGenScope.set({ outfitId: p?.outfitId ?? null, packId: p?.packId ?? null })
-      void hydrateVideoPack(true)
 
       break
     }
 
     case 'companion.video.progress': {
       // 按参考生成的阶段推进：只更新生成态文案，不触碰已激活包的显示。
-      if (!authed()) {
-        break
+      if (authed()) {
+        const p = decodePayload<{ stage?: string; packId?: number; outfitId?: number | null }>(event.payload)
+
+        videoGenProgress(p.stage, p)
       }
-
-      const p = decodePayload<{ stage?: string; packId?: number; outfitId?: number | null }>(event.payload)
-
-      const stages: readonly VideoGenStage[] = [
-        'script',
-        'pose',
-        'submit',
-        'generate',
-        'download',
-        'process',
-        'publish'
-      ]
-
-      const stage = stages.find(s => s === p?.stage) ?? null
-
-      const progressPack = p?.packId == null ? null : ($videoPacks.get().find(pack => pack.id === p.packId) ?? null)
-
-      const previousScope = $videoGenScope.get()
-
-      const previousOutfitId =
-        p?.packId != null && previousScope?.packId === p.packId ? (previousScope?.outfitId ?? null) : null
-
-      const outfitId = p?.outfitId ?? progressPack?.outfit_id ?? previousOutfitId
-
-      videoPackEventReceived()
-      $videoGenState.set('generating')
-      $videoGenStage.set(stage)
-      $videoGenError.set(null)
-      $videoGenScope.set({ outfitId, packId: p?.packId ?? null })
 
       break
     }
 
     case 'companion.video.failed': {
       const p = decodePayload<{ reason?: string; packId?: number; outfitId?: number | null }>(event.payload)
-      log.warn('events', 'video pack failed:', p?.reason)
+      log.warn('events', 'video pack failed:', p.reason)
 
       if (authed()) {
-        videoPackEventReceived()
-        $videoGenState.set('failed')
-        $videoGenStage.set(null)
-        $videoGenScope.set({ outfitId: p?.outfitId ?? null, packId: p?.packId ?? null })
-        $videoGenError.set({
-          message: p?.reason || getStrings().living.appearance.videoGenRequestFailed,
-          outfitId: p?.outfitId ?? null,
-          packId: p?.packId ?? null
-        })
+        videoGenFailed(p.reason, p)
         void hydrateVideoPack(true)
       }
 
@@ -308,7 +259,7 @@ export function handleCharacterEvent(event: GatewayEvent): void {
         error?: string
       }>(event.payload)
 
-      if (p?.job_id) {
+      if (p.job_id) {
         resolveAvatarRegeneration(p)
       }
 

@@ -1,6 +1,7 @@
 import { atom } from 'nanostores'
 
 import { isClientErrorIpc } from '@/shared/lib/ipc-error'
+import { isRecord } from '@/shared/lib/is-record'
 import { log } from '@/shared/lib/log'
 import {
   currentClearEpoch,
@@ -23,13 +24,7 @@ const DEFAULT_PORTRAIT: PersistedPortrait = {
 }
 
 function isPersistablePortrait(val: unknown): val is PersistedPortrait {
-  if (typeof val !== 'object' || val === null) {
-    return false
-  }
-
-  const v = val as Partial<PersistedPortrait>
-
-  return typeof v.assetUrl === 'string' && Boolean(v.assetUrl)
+  return isRecord(val) && typeof val.assetUrl === 'string' && Boolean(val.assetUrl)
 }
 
 function portraitAssetIdentity(url: string | null | undefined): string {
@@ -79,17 +74,28 @@ registerStorageClearHandler(() => {
   $regenFeedback.set('')
 })
 
-function persistPortrait(next: PersistedPortrait): void {
+// 设置当前形象；id 变化时作废上一形象的种子缓存，避免自备图参考图串号。
+function setActiveAvatar(id: number | null): void {
   const previousId = $activeAvatarId.get()
 
-  $activeAvatarId.set(next.avatarId)
+  $activeAvatarId.set(id)
 
-  if (previousId !== next.avatarId) {
-    clearAvatarSeeds(next.avatarId)
+  if (previousId !== id) {
+    clearAvatarSeeds(id)
   }
+}
 
+function persistPortrait(next: PersistedPortrait): void {
+  setActiveAvatar(next.avatarId)
   portraitPersisted.reset()
   portraitPersisted.set({ assetUrl: next.assetUrl, avatarId: next.avatarId })
+}
+
+// 头像落地：展示 URL、持久化身份与种子缓存一并更新；assetUrl 为空时种子缓存保持原路径。
+function commitPortrait(url: string, assetUrl: string | null | undefined, avatarId: number | null): void {
+  $portraitUrl.set(url)
+  persistPortrait({ assetUrl: assetUrl ?? null, avatarId })
+  void patchAvatarSeeds({ avatarId, assetUrl: assetUrl ?? undefined, avatarDisplayUrl: url })
 }
 
 async function restorePortraitFromDisk(assetUrl: string, epoch: number): Promise<void> {
@@ -136,25 +142,10 @@ export async function applyPortrait(
   }
 
   if (avatar) {
-    $portraitUrl.set(avatar)
-    persistPortrait({
-      assetUrl: urls.assetUrl ?? portraitPersisted.get().assetUrl,
-      avatarId: urls.id ?? $activeAvatarId.get()
-    })
-    void patchAvatarSeeds({
-      avatarId: urls.id ?? $activeAvatarId.get(),
-      assetUrl: urls.assetUrl ?? undefined,
-      avatarDisplayUrl: avatar
-    })
+    commitPortrait(avatar, urls.assetUrl, urls.id ?? $activeAvatarId.get())
   } else if (urls.id != null) {
-    const previousId = $activeAvatarId.get()
-
-    $activeAvatarId.set(urls.id)
-
-    // 头像 URL 解析失败但 id 已切换：仍须作废上一形象的种子缓存，避免自备图参考图串号。
-    if (previousId !== urls.id) {
-      clearAvatarSeeds(urls.id)
-    }
+    // 头像 URL 解析失败但 id 已切换：种子缓存也要随形象作废。
+    setActiveAvatar(urls.id)
   }
 
   return { avatar }
@@ -190,15 +181,9 @@ export async function hydratePortrait(): Promise<void> {
         await restorePortraitFromDisk(currentCached.assetUrl, epoch)
       }
 
-      if (res.id != null && $activeAvatarId.get() !== res.id) {
-        const previousId = $activeAvatarId.get()
-
-        $activeAvatarId.set(res.id)
-
-        // 缓存身份与服务端一致但本地 active id 漂移：纠正 id 时同步作废旧形象种子。
-        if (previousId !== res.id) {
-          clearAvatarSeeds(res.id)
-        }
+      // 缓存身份与服务端一致但本地 active id 漂移：纠正 id 时同步作废旧形象种子。
+      if (res.id != null) {
+        setActiveAvatar(res.id)
       }
 
       return
@@ -211,16 +196,7 @@ export async function hydratePortrait(): Promise<void> {
     }
 
     if (newAvatar) {
-      $portraitUrl.set(newAvatar)
-      persistPortrait({
-        assetUrl: res.asset_url,
-        avatarId: res.id ?? null
-      })
-      void patchAvatarSeeds({
-        avatarId: res.id ?? null,
-        assetUrl: res.asset_url,
-        avatarDisplayUrl: newAvatar
-      })
+      commitPortrait(newAvatar, res.asset_url, res.id ?? null)
     } else {
       log.warn('portrait', 'hydratePortrait failed to resolve new avatar; keeping existing portrait')
     }
@@ -307,17 +283,7 @@ export async function selectAvatar(avatarId: number): Promise<boolean> {
     const target = $portraitHistory.get().find(entry => entry.avatarId === avatarId)
 
     if (target?.portraitUrl) {
-      $portraitUrl.set(target.portraitUrl)
-      const resolvedAssetUrl = target.assetUrl || portraitPersisted.get().assetUrl || undefined
-      persistPortrait({
-        assetUrl: resolvedAssetUrl ?? null,
-        avatarId
-      })
-      void patchAvatarSeeds({
-        avatarId,
-        assetUrl: resolvedAssetUrl,
-        avatarDisplayUrl: target.portraitUrl
-      })
+      commitPortrait(target.portraitUrl, target.assetUrl || portraitPersisted.get().assetUrl || undefined, avatarId)
     }
 
     void hydrateAvatarSeeds()

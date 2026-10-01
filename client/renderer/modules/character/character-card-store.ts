@@ -1,3 +1,4 @@
+import type { SpiritAgentApiRequest } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { authedApi } from '@/shared/lib/authed-api'
@@ -28,15 +29,13 @@ export interface CharacterCard {
 export const $characterCard = atom<CharacterCard | null>(null)
 let requestGeneration = 0
 
-registerStorageClearHandler(() => {
+function resetCard(): void {
   requestGeneration += 1
   $characterCard.set(null)
-})
+}
 
-$activeAvatarId.listen(() => {
-  requestGeneration += 1
-  $characterCard.set(null)
-})
+registerStorageClearHandler(resetCard)
+$activeAvatarId.listen(resetCard)
 
 function publish(card: CharacterCard | null): void {
   const avatarId = $activeAvatarId.get()
@@ -73,26 +72,17 @@ export async function hydrateCharacterCard(): Promise<void> {
   publish(result.value)
 }
 
-function publishMutation(card: CharacterCard | null): void {
-  requestGeneration += 1
+function publishMutation(card: CharacterCard): void {
   publish(card)
   // 分析状态可能在写响应返回前已变化，重新读取以免覆盖先到的事件刷新。
   void hydrateCharacterCard().catch(error => log.warn('character-card', 'Refresh failed', error))
 }
 
-export async function saveCharacterCard(
-  expectedAvatarId: number,
-  expectedRevision: number,
-  changes: CharacterOverrides
-): Promise<boolean> {
+// 写请求：请求错误抛出；未登录、发起后换号或换形象、响应无内容时返回 false，成功则发布响应并返回 true。
+async function mutateCard(request: SpiritAgentApiRequest): Promise<boolean> {
   const epoch = currentClearEpoch()
   const avatarId = $activeAvatarId.get()
-
-  const result = await authedApi<CharacterCard>({
-    body: { changes, expected_avatar_id: expectedAvatarId, expected_revision: expectedRevision },
-    method: 'PATCH',
-    path: '/api/companion/character-card'
-  })
+  const result = await authedApi<CharacterCard>(request)
 
   if (!result.ok) {
     if (result.reason === 'err') {
@@ -111,25 +101,22 @@ export async function saveCharacterCard(
   return true
 }
 
-export async function extractCharacterCard(expectedAvatarId: number, expectedRevision: number): Promise<void> {
-  const epoch = currentClearEpoch()
-  const avatarId = $activeAvatarId.get()
+export function saveCharacterCard(
+  expectedAvatarId: number,
+  expectedRevision: number,
+  changes: CharacterOverrides
+): Promise<boolean> {
+  return mutateCard({
+    body: { changes, expected_avatar_id: expectedAvatarId, expected_revision: expectedRevision },
+    method: 'PATCH',
+    path: '/api/companion/character-card'
+  })
+}
 
-  const result = await authedApi<CharacterCard>({
+export async function extractCharacterCard(expectedAvatarId: number, expectedRevision: number): Promise<void> {
+  await mutateCard({
     body: { expected_avatar_id: expectedAvatarId, expected_revision: expectedRevision },
     method: 'POST',
     path: '/api/companion/character-card/extract'
   })
-
-  if (!result.ok) {
-    if (result.reason === 'err') {
-      throw result.error
-    }
-
-    return
-  }
-
-  if (epoch === currentClearEpoch() && avatarId === $activeAvatarId.get()) {
-    publishMutation(result.value)
-  }
 }

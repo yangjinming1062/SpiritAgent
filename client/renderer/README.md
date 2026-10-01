@@ -19,7 +19,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 
 ## 装配与状态归属
 
-[bind-presentation.ts](app/bootstrap/bind-presentation.ts)在渲染前显式绑定窄能力端口，不依赖 barrel 副作用。[presentation-ports.ts](shared/presentation-ports.ts)是绑定真源；角色与语音实现经端口注入，窗口能力由 app 注入，模块不反向导入窗口。
+[bind-presentation.ts](app/bootstrap/bind-presentation.ts)在渲染前显式绑定窄能力端口，不依赖 barrel 副作用。[presentation-ports.ts](shared/presentation-ports.ts)是绑定真源；角色与语音实现经端口注入，窗口能力由 app 注入，模块不反向导入窗口。新增端口用 [port.ts](shared/lib/port.ts) 的 `createPort`，未绑定即使用按装配错误抛出。
 
 | 状态或能力 | 权威模块与消费方式 |
 |---|---|
@@ -34,7 +34,7 @@ character 内含 `actions`、`presentation`、`reactions`、`rendering/{video,fa
 ## 事件与异步生命周期
 
 - [网关路由](app/runtime/gateway-event-router.ts)在鉴权 pending 时丢弃事件，按信封 `session_id` 过滤（无该字段放行）后分派：会话、工具、角色与投递事件进 [handlers](app/runtime/handlers/)（会话事件与 `tool.call/cancel` 另收宿主或代理角色 `isProxy`），场景与片刻日记事件直达 modules/scene、modules/memory。
-- 各窗口独立水合，任何异步回写须核对用户、会话、回合和清理代次；清理代次与账户存储键登记见 [storage.ts](shared/lib/storage.ts)。
+- 各窗口独立水合，任何异步回写须核对用户、会话、回合和清理代次；清理代次与账户存储键登记见 [storage.ts](shared/lib/storage.ts)。判活优先复用共享件，不在站点重写：store 与工作流用 [authed-api.ts](shared/lib/authed-api.ts) 的 `captureAuthScope`（鉴权会话 + 清理代次），`authedApi` 结果的失败记录用 `apiSucceeded`，组件用 [use-async-guard.ts](shared/hooks/use-async-guard.ts)（挂载 + 清理代次）；错误文案取 [ipc-error.ts](shared/lib/ipc-error.ts)。
 - 网关休眠唤醒重连的握手超时须落到 `error`，不能永久停在 `connecting`，否则调用方无法重试。
 - 账户切换释放旧账户的内存资料、会话与通知并按 `accountId` 重挂载；持久索引按账户隔离，切回时恢复，只在明确移除账户时删除。重置期间不回写持久索引，云端偏好广播等所属账户的存储切换完成后再应用。桌面精灵按目标账户状态自动进入未完成的 onboarding。完整入口开关状态由主进程维护。
 - 引导答题逐字段增量持久化（[onboarding-flow.tsx](app/onboarding/onboarding-flow.tsx) fire-and-forget，网关未打开前空操作）；网关连通后拉回服务端草稿按 `next_field` 续答，本地非空编辑优先，读取失败暂停待重试且不得当作新引导覆盖草稿，成功后不重复。

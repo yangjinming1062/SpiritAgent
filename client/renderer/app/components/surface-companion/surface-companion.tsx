@@ -4,25 +4,23 @@ import type React from 'react'
 import { useCallback, useEffect, useLayoutEffect, useRef } from 'react'
 
 import {
-  $actionCatalogStatus,
   $companionLifecycle,
-  $videoGenStage,
-  $videoGenState,
-  EggStage,
   ensureCompanionHydrated,
   hydrateActionCatalog,
   hydratePersona,
   hydratePortrait,
   hydrateVideoPack,
-  resolveCompanionPresentation,
   SpriteVfxOverlay
 } from '@/modules/character'
 import { useVideoPixelHitTest, VideoStage } from '@/modules/character/rendering/video'
 import { useInteractiveRegion } from '@/shared'
 import { probeInteractiveRegions } from '@/shared/lib/interactive-regions'
+import { cn } from '@/shared/lib/utils'
 import { $auth } from '@/shared/store/auth'
-import { $surfaceCompanions, requestOpenSurface } from '@/shared/store/surfaces'
+import { $surfaceCompanions } from '@/shared/store/surfaces'
 import { useStrings } from '@/shared/strings'
+
+import { CompanionEgg, useCompanionPresentation } from '../companion-presentation'
 
 import styles from './surface-companion.module.css'
 
@@ -31,14 +29,11 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
   const hasSlot = state.slotWidth > 0
   const auth = useStore($auth)
   const lifecycle = useStore($companionLifecycle)
-  const catalogStatus = useStore($actionCatalogStatus)
-  const generationState = useStore($videoGenState)
-  const generationStage = useStore($videoGenStage)
   const strings = useStrings()
   const wrapperRef = useRef<HTMLDivElement>(null)
   const videoHitTest = useVideoPixelHitTest(1)
 
-  const presentation = resolveCompanionPresentation({ catalogStatus, generationStage, generationState })
+  const presentation = useCompanionPresentation()
 
   const hitTest = useCallback(
     (x: number, y: number): boolean => state.visible && presentation.renderer === 'video' && videoHitTest(x, y),
@@ -83,7 +78,7 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
   return (
     <aside className={styles.slot} style={{ order: state.preference.side === 'left' ? -1 : 1, width: slotWidth }}>
       <div
-        className={`${styles.wrapper} ${presentation.renderer === 'video' ? styles.videoWrapper : ''}`}
+        className={cn(styles.wrapper, presentation.renderer === 'video' && styles.videoWrapper)}
         onContextMenu={event => event.preventDefault()}
         ref={wrapperRef}
         title={strings.common.companionControl.dragTitle(strings.brand.name)}
@@ -91,23 +86,7 @@ export function SurfaceCompanion({ surface }: { surface: SurfaceId }): React.JSX
         <div className={styles.inner}>
           {state.visible &&
             (presentation.renderer === 'fallback' ? (
-              <EggStage
-                hasRecoveryAction={presentation.fallbackActionAvailable}
-                message={presentation.fallbackMessage}
-                onStatusAction={() => {
-                  if (presentation.fallbackStatus === 'failed') {
-                    void requestOpenSurface('living', { view: 'appearance' })
-
-                    return
-                  }
-
-                  void hydrateActionCatalog(true)
-                  void hydrateVideoPack(true)
-                }}
-                size="min(280px, 92%)"
-                status={presentation.fallbackStatus}
-                windowId={1}
-              />
+              <CompanionEgg presentation={presentation} size="min(280px, 92%)" windowId={1} />
             ) : (
               <VideoStage contentAlign={state.preference.side === 'right' ? 'left' : 'right'} />
             ))}

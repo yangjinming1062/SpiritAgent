@@ -1,17 +1,8 @@
 import { atom } from 'nanostores'
 
-import { $chatSessionId, switchSession } from '@/modules/conversation'
 import { $whisperOpen } from '@/shared/store/chat-visibility'
 
 export const $whisperOffset = atom<{ dx: number; dy: number } | null>(null)
-
-export function openWhisper(sessionId?: string): void {
-  if (sessionId && sessionId !== $chatSessionId.get()) {
-    void switchSession(sessionId)
-  }
-
-  $whisperOpen.set(true)
-}
 
 export function closeWhisper(): void {
   $whisperOpen.set(false)

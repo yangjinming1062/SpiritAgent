@@ -89,8 +89,6 @@ export { useChatInput } from './use-chat-input'
 
 export { useIsReadOnlySession } from './use-is-read-only-session'
 export {
-  $voiceBarLoadingId,
-  $voiceBarPlayingId,
   setConversationVoiceSink,
   setVoiceBarControl,
   setVoiceBarFailed,

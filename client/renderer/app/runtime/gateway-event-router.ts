@@ -36,10 +36,7 @@ export function handleGatewayEvent(event: GatewayEvent): void {
     }
   }
 
-  const gw = $gateway.get()
-  const isProxy = Boolean(gw && 'isProxy' in gw && gw.isProxy)
-
-  const ctx: EventRouteContext = { isProxy }
+  const ctx: EventRouteContext = { isProxy: $gateway.get()?.isProxy ?? false }
 
   switch (event.type) {
     case 'message.start':

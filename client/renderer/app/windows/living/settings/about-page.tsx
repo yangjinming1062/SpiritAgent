@@ -15,8 +15,8 @@ import { type Dictionary, useStrings } from '@/shared/strings'
 type AboutStrings = Dictionary['settings']['about']
 
 // 请求被主进程拒绝（如状态已变化）时不会收到更新事件，直接呈现为对应阶段的失败。
-function requestUpdate(phase: DesktopUpdatePhase, request: (() => Promise<void>) | undefined): void {
-  request?.().catch((error: unknown) => {
+function requestUpdate(phase: DesktopUpdatePhase, request: () => Promise<void>): void {
+  request().catch((error: unknown) => {
     log.warn('about', `update ${phase} request failed`, error)
     setUpdateStatus({ message: unwrapIpcErrorMessage(error), phase, status: 'error' })
   })
@@ -62,9 +62,9 @@ export function AboutPage(): React.JSX.Element {
   }, [])
 
   // 结果经 `$updateStatus` 呈现在下方 statusLine，无需独立对话框。
-  const onCheckClick = useCallback(() => requestUpdate('check', window.spiritagent?.update?.check), [])
-  const onDownloadClick = useCallback(() => requestUpdate('download', window.spiritagent?.update?.download), [])
-  const onRestartClick = useCallback(() => requestUpdate('install', window.spiritagent?.update?.install), [])
+  const onCheckClick = useCallback(() => requestUpdate('check', window.spiritagent.update.check), [])
+  const onDownloadClick = useCallback(() => requestUpdate('download', window.spiritagent.update.download), [])
+  const onRestartClick = useCallback(() => requestUpdate('install', window.spiritagent.update.install), [])
 
   const { status } = updateStatus
   const isChecking = status === 'checking'

@@ -140,7 +140,7 @@ export function DiaryPage(): React.JSX.Element {
 
             return (
               <button
-                className={`${styles.dayCell} ${selected ? styles.dayCellSelected : ''} ${hasEntry ? styles.dayCellHasEntry : ''}`}
+                className={cn(styles.dayCell, selected && styles.dayCellSelected, hasEntry && styles.dayCellHasEntry)}
                 key={key}
                 onClick={() => setSelectedDate(key)}
                 style={index === 0 && firstDayOffset > 0 ? { gridColumnStart: firstDayOffset + 1 } : undefined}

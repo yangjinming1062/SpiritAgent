@@ -2,12 +2,13 @@ import type React from 'react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { PortraitLightbox } from '@/shared'
+import { useAsyncGuard } from '@/shared/hooks/use-async-guard'
 import { useClipboard } from '@/shared/hooks/use-clipboard'
 import { useEscapeKey } from '@/shared/hooks/use-escape-key'
+import { useImageActions } from '@/shared/hooks/use-image-actions'
+import { useLatestRef } from '@/shared/hooks/use-latest-ref'
 import { Check, Copy, Download } from '@/shared/lib/icons'
-import { imageUrlForNativeClipboard } from '@/shared/lib/image-clipboard'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
-import { currentClearEpoch } from '@/shared/lib/storage'
 import { BTN_PRIMARY, BTN_SUBTLE, HINT_TEXT, WizardModal } from '@/shared/panel'
 import { useStrings } from '@/shared/strings'
 
@@ -57,15 +58,28 @@ export function SelfSourceImageFlow({
   const [adopting, setAdopting] = useState(false)
   const [adoptError, setAdoptError] = useState<string | null>(null)
   const [zoomUrl, setZoomUrl] = useState<string | null>(null)
-  const [refActionError, setRefActionError] = useState<string | null>(null)
-  const [refCopied, setRefCopied] = useState(false)
 
-  const fetchPromptRef = useRef(fetchPrompt)
-  fetchPromptRef.current = fetchPrompt
-  const adoptRef = useRef(adopt)
-  adoptRef.current = adopt
+  const {
+    copied: refCopied,
+    copy: copyRefImage,
+    error: refActionError,
+    reset: resetRefActions,
+    save: saveRefImage
+  } = useImageActions()
+
+  const begin = useAsyncGuard()
+  const fetchPromptRef = useLatestRef(fetchPrompt)
+  const adoptRef = useLatestRef(adopt)
   const promptLoadRef = useRef<Promise<void> | null>(null)
   const flowVersionRef = useRef(0)
+
+  // 一次操作只在发起时的打开周期内有效：关闭、重新打开、卸载或换号后判活为 false。
+  const beginOperation = useCallback((): (() => boolean) => {
+    const isLive = begin()
+    const version = flowVersionRef.current
+
+    return () => isLive() && version === flowVersionRef.current
+  }, [begin])
 
   const loadPrompt = useCallback((): void => {
     if (promptLoadRef.current) {
@@ -75,9 +89,7 @@ export function SelfSourceImageFlow({
     setPrompt(null)
     setPromptError(null)
 
-    const version = flowVersionRef.current
-    const epoch = currentClearEpoch()
-    const isCurrent = (): boolean => version === flowVersionRef.current && epoch === currentClearEpoch()
+    const isCurrent = beginOperation()
 
     const request = fetchPromptRef
       .current()
@@ -98,7 +110,7 @@ export function SelfSourceImageFlow({
       })
 
     promptLoadRef.current = request
-  }, [t.promptFailed])
+  }, [beginOperation, fetchPromptRef, t.promptFailed])
 
   // 灯箱打开时先关灯箱；WizardModal 同步停用 Esc，避免一次按键关掉整个自备图流程。
   useEscapeKey(() => setZoomUrl(null), { enabled: open && zoomUrl !== null })
@@ -116,8 +128,7 @@ export function SelfSourceImageFlow({
     setAdopting(false)
     setAdoptError(null)
     setZoomUrl(null)
-    setRefActionError(null)
-    setRefCopied(false)
+    resetRefActions()
     setShowGuidance(false)
     setPrompt(null)
     setPromptError(null)
@@ -125,19 +136,18 @@ export function SelfSourceImageFlow({
     return () => {
       flowVersionRef.current += 1
     }
-  }, [open])
+  }, [open, resetRefActions])
 
   if (!open) {
     return null
   }
 
   const chooseImage = async (): Promise<void> => {
-    const version = flowVersionRef.current
-    const epoch = currentClearEpoch()
+    const isCurrent = beginOperation()
     setPicking(true)
     const result = await pickAvatarImage(t.pickTitle)
 
-    if (version !== flowVersionRef.current || epoch !== currentClearEpoch()) {
+    if (!isCurrent()) {
       return
     }
 
@@ -151,37 +161,6 @@ export function SelfSourceImageFlow({
     setPicking(false)
   }
 
-  // 非 PNG/JPEG 的 data URL 先转 PNG，见 image-clipboard
-  const copyReferenceImage = async (url: string): Promise<void> => {
-    setRefActionError(null)
-    setRefCopied(false)
-
-    try {
-      if (!window.spiritagent?.copyImage) {
-        throw new Error('copyImage IPC unavailable')
-      }
-
-      await window.spiritagent.copyImage({ url: await imageUrlForNativeClipboard(url) })
-      setRefCopied(true)
-    } catch {
-      setRefActionError(t.copyRefImageFailed)
-    }
-  }
-
-  const saveReferenceImage = async (url: string, label: string): Promise<void> => {
-    setRefActionError(null)
-
-    try {
-      if (!window.spiritagent?.saveImage) {
-        throw new Error('saveImage IPC unavailable')
-      }
-
-      await window.spiritagent.saveImage({ defaultName: label || undefined, url })
-    } catch {
-      setRefActionError(t.saveRefImageFailed)
-    }
-  }
-
   const confirmAdopt = async (): Promise<void> => {
     if (!image || adopting) {
       return
@@ -189,9 +168,7 @@ export function SelfSourceImageFlow({
 
     setAdopting(true)
     setAdoptError(null)
-    const version = flowVersionRef.current
-    const epoch = currentClearEpoch()
-    const isCurrent = (): boolean => version === flowVersionRef.current && epoch === currentClearEpoch()
+    const isCurrent = beginOperation()
 
     try {
       // 场景提示词会准备待上传记录；已请求时先等它收敛，避免迟到记录取代采纳结果。
@@ -290,7 +267,7 @@ export function SelfSourceImageFlow({
                         <button
                           aria-label={t.copyRefImage}
                           className="inline-flex size-6 items-center justify-center rounded-md bg-black/70 text-white/90 transition hover:bg-black/90 hover:text-white"
-                          onClick={() => void copyReferenceImage(ref.url)}
+                          onClick={() => void copyRefImage(ref.url)}
                           title={t.copyRefImage}
                           type="button"
                         >
@@ -299,7 +276,7 @@ export function SelfSourceImageFlow({
                         <button
                           aria-label={t.saveRefImage}
                           className="inline-flex size-6 items-center justify-center rounded-md bg-black/70 text-white/90 transition hover:bg-black/90 hover:text-white"
-                          onClick={() => void saveReferenceImage(ref.url, ref.label)}
+                          onClick={() => void saveRefImage(ref.url, ref.label)}
                           title={t.saveRefImage}
                           type="button"
                         >
@@ -316,7 +293,7 @@ export function SelfSourceImageFlow({
                 )}
                 {refActionError && (
                   <p className="mt-2 text-xs text-danger-fg" role="alert">
-                    {refActionError}
+                    {refActionError === 'copy' ? t.copyRefImageFailed : t.saveRefImageFailed}
                   </p>
                 )}
               </div>

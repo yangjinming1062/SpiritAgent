@@ -4,6 +4,7 @@ import { $chatSessionId, $sessionSettings, hydrateSessionSettings } from '@/modu
 import { useAsyncLoader } from '@/shared/hooks/use-async-loader'
 import { triggerHaptic } from '@/shared/lib/haptics'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
+import { resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
 import { BTN_PRIMARY, BTN_SUBTLE, EmptyState, LoadingBlock, SettingsSectionIntro, Spinner } from '@/shared/panel'
 import { getSpiritAgentConfig, saveSpiritAgentConfig } from '@/shared/spiritagent'
 import { $gateway } from '@/shared/store/gateway'
@@ -11,47 +12,31 @@ import { notify, notifyError } from '@/shared/store/notifications'
 import { useStrings } from '@/shared/strings'
 import type { SessionRuntimeInfo, SpiritAgentConfigResponse } from '@/shared/types/spiritagent'
 
-import { AgentDefaultsSection, type AgentFormState, REASONING_OPTIONS } from './inference/agent-defaults-section'
+import { AgentDefaultsSection, type AgentFormState } from './inference/agent-defaults-section'
 import { type ChatFormState, ContextCompressionSection } from './inference/context-compression-section'
 import { type TemperatureFormState, TemperatureSection } from './inference/temperature-section'
 import { useFormSection } from './use-form-section'
 
-const EMPTY_AGENT: AgentFormState = {
+type InferenceForm = AgentFormState & ChatFormState & TemperatureFormState
+
+const EMPTY: InferenceForm = {
   reasoning_effort: 'low',
-  enable_background_review: true
-}
-
-const EMPTY_CHAT: ChatFormState = {
+  enable_background_review: true,
   enable_context_compression: true,
-  context_compression_threshold: 0.7
-}
-
-const EMPTY_TEMPERATURE: TemperatureFormState = {
+  context_compression_threshold: 0.7,
   chat_temperature: 0.7,
   title_generation_temperature: 0.3,
   compression_temperature: 0.0
 }
 
-const readAgentState = (config: SpiritAgentConfigResponse): AgentFormState => {
-  const agent = config.agent
-
-  return {
-    reasoning_effort:
-      REASONING_OPTIONS.find(option => option === agent?.reasoning_effort) ?? EMPTY_AGENT.reasoning_effort,
-    enable_background_review: agent?.enable_background_review ?? EMPTY_AGENT.enable_background_review
-  }
-}
-
-const readChatState = (config: SpiritAgentConfigResponse): ChatFormState => ({
-  enable_context_compression: config.chat?.enable_context_compression ?? EMPTY_CHAT.enable_context_compression,
-  context_compression_threshold: config.chat?.context_compression_threshold ?? EMPTY_CHAT.context_compression_threshold
-})
-
-const readTemperatureState = (config: SpiritAgentConfigResponse): TemperatureFormState => ({
-  chat_temperature: config.agent?.temperature ?? EMPTY_TEMPERATURE.chat_temperature,
-  title_generation_temperature:
-    config.chat?.title_generation_temperature ?? EMPTY_TEMPERATURE.title_generation_temperature,
-  compression_temperature: config.chat?.compression_temperature ?? EMPTY_TEMPERATURE.compression_temperature
+const readInferenceState = (config: SpiritAgentConfigResponse): InferenceForm => ({
+  reasoning_effort: resolveReasoningEffort(config.agent?.reasoning_effort),
+  enable_background_review: config.agent?.enable_background_review ?? EMPTY.enable_background_review,
+  enable_context_compression: config.chat?.enable_context_compression ?? EMPTY.enable_context_compression,
+  context_compression_threshold: config.chat?.context_compression_threshold ?? EMPTY.context_compression_threshold,
+  chat_temperature: config.agent?.temperature ?? EMPTY.chat_temperature,
+  title_generation_temperature: config.chat?.title_generation_temperature ?? EMPTY.title_generation_temperature,
+  compression_temperature: config.chat?.compression_temperature ?? EMPTY.compression_temperature
 })
 
 export function InferencePage(): React.JSX.Element {
@@ -61,26 +46,15 @@ export function InferencePage(): React.JSX.Element {
   const loader = useAsyncLoader<SpiritAgentConfigResponse>(() => getSpiritAgentConfig())
   const [isSaving, setIsSaving] = useState(false)
 
-  const agent = useFormSection(EMPTY_AGENT, readAgentState)
-  const chat = useFormSection(EMPTY_CHAT, readChatState)
-  const temperature = useFormSection(EMPTY_TEMPERATURE, readTemperatureState)
+  const form = useFormSection(EMPTY, readInferenceState)
+  const { isDirty, reset } = form
 
-  const { reset: resetAgent } = agent
-  const { reset: resetChat } = chat
-  const { reset: resetTemperature } = temperature
-
-  // 把加载结果灌进三个独立 form section —— loader.data 一旦变化即同步。
+  // 把加载结果灌进表单 —— loader.data 一旦变化即同步。
   useEffect(() => {
-    if (!loader.data) {
-      return
+    if (loader.data) {
+      reset(loader.data)
     }
-
-    resetAgent(loader.data)
-    resetChat(loader.data)
-    resetTemperature(loader.data)
-  }, [loader.data, resetAgent, resetChat, resetTemperature])
-
-  const isDirty = agent.isDirty || chat.isDirty || temperature.isDirty
+  }, [loader.data, reset])
 
   const handleSave = async () => {
     try {
@@ -88,21 +62,19 @@ export function InferencePage(): React.JSX.Element {
 
       const { config } = await saveSpiritAgentConfig({
         agent: {
-          enable_background_review: agent.state.enable_background_review,
-          reasoning_effort: agent.state.reasoning_effort,
-          temperature: temperature.state.chat_temperature
+          enable_background_review: form.state.enable_background_review,
+          reasoning_effort: form.state.reasoning_effort,
+          temperature: form.state.chat_temperature
         },
         chat: {
-          enable_context_compression: chat.state.enable_context_compression,
-          context_compression_threshold: chat.state.context_compression_threshold,
-          title_generation_temperature: temperature.state.title_generation_temperature,
-          compression_temperature: temperature.state.compression_temperature
+          enable_context_compression: form.state.enable_context_compression,
+          context_compression_threshold: form.state.context_compression_threshold,
+          title_generation_temperature: form.state.title_generation_temperature,
+          compression_temperature: form.state.compression_temperature
         }
       })
 
-      agent.reset(config)
-      chat.reset(config)
-      temperature.reset(config)
+      reset(config)
       const gateway = $gateway.get()
       const sessionId = $chatSessionId.get()
       const visibleSettings = $sessionSettings.get()
@@ -149,11 +121,11 @@ export function InferencePage(): React.JSX.Element {
     <div className="space-y-6">
       <SettingsSectionIntro hint={a.intro} title={a.heading} />
 
-      <AgentDefaultsSection disabled={isSaving} state={agent.state} t={a.agentDefaults} update={agent.set} />
+      <AgentDefaultsSection disabled={isSaving} state={form.state} t={a.agentDefaults} update={form.set} />
 
-      <ContextCompressionSection disabled={isSaving} state={chat.state} t={a.contextCompression} update={chat.set} />
+      <ContextCompressionSection disabled={isSaving} state={form.state} t={a.contextCompression} update={form.set} />
 
-      <TemperatureSection disabled={isSaving} state={temperature.state} t={a.temperature} update={temperature.set} />
+      <TemperatureSection disabled={isSaving} state={form.state} t={a.temperature} update={form.set} />
 
       <div className="flex justify-end pt-2">
         <button className={BTN_PRIMARY} disabled={isSaving || !isDirty} onClick={() => void handleSave()} type="button">

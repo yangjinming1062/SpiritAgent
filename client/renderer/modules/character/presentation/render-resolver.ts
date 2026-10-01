@@ -1,5 +1,6 @@
 import { getStrings } from '@/shared/strings'
 
+import type { ActionCatalogStatus } from '../actions'
 import type { VideoGenStage } from '../rendering/video'
 
 import type { CompanionFallbackStatus, CompanionPresentation } from './types'
@@ -13,8 +14,6 @@ export const VIDEO_GEN_STAGE_TEXT_KEYS = {
   process: 'videoGenStageProcess',
   publish: 'videoGenStagePublish'
 } as const satisfies Record<VideoGenStage, string>
-
-type GenerationStage = keyof typeof VIDEO_GEN_STAGE_TEXT_KEYS
 
 function fallback(
   fallbackStatus: CompanionFallbackStatus,
@@ -31,9 +30,9 @@ function fallback(
 
 /** 视频就绪挂视频层；否则落蛋形，并区分准备中 / 生成中 / 失败 / 尚未就绪。 */
 export function resolveCompanionPresentation(opts: {
-  catalogStatus: 'idle' | 'loading' | 'ready' | 'unavailable'
+  catalogStatus: ActionCatalogStatus
   generationState: 'idle' | 'generating' | 'failed'
-  generationStage?: GenerationStage | null
+  generationStage?: VideoGenStage | null
 }): CompanionPresentation {
   if (opts.catalogStatus === 'ready') {
     return { renderer: 'video' }

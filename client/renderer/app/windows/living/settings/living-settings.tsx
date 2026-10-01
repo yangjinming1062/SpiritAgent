@@ -26,46 +26,28 @@ import { VoicePage } from './voice-page'
 
 type SectionPage = () => React.JSX.Element
 
-const SECTION_PAGES: Record<LivingSettingsSection, SectionPage> = {
-  about: AboutPage,
-  interaction: InteractionPage,
-  persona: PersonaPage,
-  shortcuts: ShortcutsPage,
-  theme: ThemePage,
-  voice: VoicePage
-}
-
-const SECTION_ICONS: Record<LivingSettingsSection, IconComponent> = {
-  about: Info,
-  interaction: SlidersHorizontal,
-  persona: Users,
-  shortcuts: Keyboard,
-  theme: Palette,
-  voice: Volume2
+const SECTIONS: Record<LivingSettingsSection, { Page: SectionPage; icon: IconComponent }> = {
+  about: { Page: AboutPage, icon: Info },
+  interaction: { Page: InteractionPage, icon: SlidersHorizontal },
+  persona: { Page: PersonaPage, icon: Users },
+  shortcuts: { Page: ShortcutsPage, icon: Keyboard },
+  theme: { Page: ThemePage, icon: Palette },
+  voice: { Page: VoicePage, icon: Volume2 }
 }
 
 export function LivingSettings(): React.JSX.Element {
   const section = useStore($livingSettingsSection)
-  const Page = SECTION_PAGES[section]
+  const { Page } = SECTIONS[section]
   const dict = useStrings()
   const nav = dict.settings.nav
-
-  const sectionLabels: Record<LivingSettingsSection, string> = {
-    about: nav.about,
-    interaction: nav.interaction,
-    persona: nav.persona,
-    shortcuts: nav.shortcuts,
-    theme: nav.theme,
-    voice: nav.voice
-  }
 
   const NAV_OPTIONS: ReadonlyArray<{
     icon: IconComponent
     label: string
     value: LivingSettingsSection
   }> = LIVING_SETTINGS_SECTIONS.map(id => ({
-    icon: SECTION_ICONS[id],
-    label: sectionLabels[id],
+    icon: SECTIONS[id].icon,
+    label: nav[id],
     value: id
   }))
 

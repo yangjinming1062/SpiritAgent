@@ -17,59 +17,28 @@ interface ShortcutRecorderProps {
 
 const IS_MAC = typeof navigator !== 'undefined' && /Mac|iPhone|iPod|iPad/i.test(navigator.userAgent)
 
+// 每行为 [显示标签, ...按键名别名（小写）]。
+const KEY_LABELS = new Map(
+  [
+    [IS_MAC ? '⌘' : 'Ctrl', 'commandorcontrol', 'cmdorctrl'],
+    [IS_MAC ? '⌃' : 'Ctrl', 'ctrl', 'control'],
+    [IS_MAC ? '⌥' : 'Alt', 'alt', 'option'],
+    [IS_MAC ? '⇧' : 'Shift', 'shift'],
+    [IS_MAC ? '⌘' : 'Win', 'super', 'meta', 'command', 'cmd'],
+    ['↑', 'up'],
+    ['↓', 'down'],
+    ['←', 'left'],
+    ['→', 'right'],
+    ['Enter', 'return', 'enter'],
+    ['Space', 'space'],
+    ['Esc', 'escape', 'esc']
+  ].flatMap(([label, ...names]) => names.map(name => [name, label] as const))
+)
+
 function formatKeyLabel(token: string): string {
   const t = token.trim()
-  const lower = t.toLowerCase()
 
-  if (lower === 'commandorcontrol' || lower === 'cmdorctrl') {
-    return IS_MAC ? '⌘' : 'Ctrl'
-  }
-
-  if (lower === 'ctrl' || lower === 'control') {
-    return IS_MAC ? '⌃' : 'Ctrl'
-  }
-
-  if (lower === 'alt' || lower === 'option') {
-    return IS_MAC ? '⌥' : 'Alt'
-  }
-
-  if (lower === 'shift') {
-    return IS_MAC ? '⇧' : 'Shift'
-  }
-
-  if (lower === 'super' || lower === 'meta' || lower === 'command' || lower === 'cmd') {
-    return IS_MAC ? '⌘' : 'Win'
-  }
-
-  if (lower === 'up') {
-    return '↑'
-  }
-
-  if (lower === 'down') {
-    return '↓'
-  }
-
-  if (lower === 'left') {
-    return '←'
-  }
-
-  if (lower === 'right') {
-    return '→'
-  }
-
-  if (lower === 'return' || lower === 'enter') {
-    return 'Enter'
-  }
-
-  if (lower === 'space') {
-    return 'Space'
-  }
-
-  if (lower === 'escape' || lower === 'esc') {
-    return 'Esc'
-  }
-
-  return t.length === 1 ? t.toUpperCase() : t
+  return KEY_LABELS.get(t.toLowerCase()) ?? (t.length === 1 ? t.toUpperCase() : t)
 }
 
 function parseAcceleratorTokens(accelerator: string): string[] {
@@ -105,6 +74,40 @@ function modifiersFromEvent(e: KeyboardEvent): string[] {
   return held
 }
 
+// 字母、数字、F 键与小键盘数字由正则处理，其余 KeyboardEvent.code 经此表转为 accelerator 主键。
+const CODE_BASE_KEYS = new Map([
+  ['Space', 'Space'],
+  ['Enter', 'Return'],
+  ['NumpadEnter', 'Return'],
+  ['Tab', 'Tab'],
+  ['ArrowUp', 'Up'],
+  ['ArrowDown', 'Down'],
+  ['ArrowLeft', 'Left'],
+  ['ArrowRight', 'Right'],
+  ['Home', 'Home'],
+  ['End', 'End'],
+  ['PageUp', 'PageUp'],
+  ['PageDown', 'PageDown'],
+  ['Insert', 'Insert'],
+  ['Delete', 'Delete'],
+  ['Backquote', '`'],
+  ['Minus', '-'],
+  ['NumpadSubtract', '-'],
+  ['Equal', '='],
+  ['BracketLeft', '['],
+  ['BracketRight', ']'],
+  ['Backslash', '\\'],
+  ['Semicolon', ';'],
+  ['Quote', "'"],
+  ['Comma', ','],
+  ['Period', '.'],
+  ['NumpadDecimal', '.'],
+  ['Slash', '/'],
+  ['NumpadDivide', '/'],
+  ['NumpadAdd', 'plus'],
+  ['NumpadMultiply', '*']
+])
+
 function normalizeCodeToBaseKey(e: KeyboardEvent): string | null {
   const code = e.code
   const key = e.key
@@ -129,100 +132,17 @@ function normalizeCodeToBaseKey(e: KeyboardEvent): string | null {
     return `num${code.slice(6)}`
   }
 
-  switch (code) {
-    case 'Space':
-      return 'Space'
+  const mapped = CODE_BASE_KEYS.get(code)
 
-    case 'Enter':
-
-    case 'NumpadEnter':
-      return 'Return'
-
-    case 'Tab':
-      return 'Tab'
-
-    case 'ArrowUp':
-      return 'Up'
-
-    case 'ArrowDown':
-      return 'Down'
-
-    case 'ArrowLeft':
-      return 'Left'
-
-    case 'ArrowRight':
-      return 'Right'
-
-    case 'Home':
-      return 'Home'
-
-    case 'End':
-      return 'End'
-
-    case 'PageUp':
-      return 'PageUp'
-
-    case 'PageDown':
-      return 'PageDown'
-
-    case 'Insert':
-      return 'Insert'
-
-    case 'Delete':
-      return 'Delete'
-
-    case 'Backquote':
-      return '`'
-
-    case 'Minus':
-
-    case 'NumpadSubtract':
-      return '-'
-
-    case 'Equal':
-      return '='
-
-    case 'BracketLeft':
-      return '['
-
-    case 'BracketRight':
-      return ']'
-
-    case 'Backslash':
-      return '\\'
-
-    case 'Semicolon':
-      return ';'
-
-    case 'Quote':
-      return "'"
-
-    case 'Comma':
-      return ','
-
-    case 'Period':
-
-    case 'NumpadDecimal':
-      return '.'
-
-    case 'Slash':
-
-    case 'NumpadDivide':
-      return '/'
-
-    case 'NumpadAdd':
-      return 'plus'
-
-    case 'NumpadMultiply':
-      return '*'
-
-    default:
-      if (key && key.length === 1 && !/\s/.test(key)) {
-        return key.toUpperCase()
-      }
-
-      return null
+  if (mapped !== undefined) {
+    return mapped
   }
+
+  if (key && key.length === 1 && !/\s/.test(key)) {
+    return key.toUpperCase()
+  }
+
+  return null
 }
 
 export function ShortcutRecorder({

@@ -2,10 +2,6 @@ import type { HapticInput, TriggerOptions } from 'web-haptics'
 
 type HapticIntent = 'error' | 'open' | 'selection' | 'success' | 'tap' | 'warning'
 
-interface HapticConfig {
-  pattern: HapticInput
-}
-
 const airyTap = [{ duration: 16, intensity: 0.52 }]
 
 const friendlySuccess = [
@@ -19,29 +15,23 @@ const softArrive = [
   { delay: 36, duration: 22, intensity: 0.66 }
 ]
 
-const HAPTIC_INTENTS: Record<HapticIntent, HapticConfig> = {
-  error: {
-    pattern: [
-      { duration: 34, intensity: 0.82 },
-      { delay: 42, duration: 34, intensity: 0.72 },
-      { delay: 58, duration: 44, intensity: 0.86 }
-    ]
-  },
-  open: { pattern: softArrive },
-  selection: { pattern: airyTap },
-  success: { pattern: friendlySuccess },
-  tap: {
-    pattern: [
-      { duration: 14, intensity: 0.58 },
-      { delay: 30, duration: 12, intensity: 0.42 }
-    ]
-  },
-  warning: {
-    pattern: [
-      { duration: 34, intensity: 0.64 },
-      { delay: 84, duration: 42, intensity: 0.5 }
-    ]
-  }
+const HAPTIC_INTENTS: Record<HapticIntent, HapticInput> = {
+  error: [
+    { duration: 34, intensity: 0.82 },
+    { delay: 42, duration: 34, intensity: 0.72 },
+    { delay: 58, duration: 44, intensity: 0.86 }
+  ],
+  open: softArrive,
+  selection: airyTap,
+  success: friendlySuccess,
+  tap: [
+    { duration: 14, intensity: 0.58 },
+    { delay: 30, duration: 12, intensity: 0.42 }
+  ],
+  warning: [
+    { duration: 34, intensity: 0.64 },
+    { delay: 84, duration: 42, intensity: 0.5 }
+  ]
 }
 
 type HapticTrigger = (input?: HapticInput, options?: TriggerOptions) => Promise<void> | undefined
@@ -81,5 +71,5 @@ export function triggerHaptic(intent: HapticIntent = 'selection'): void {
 
   recentFires.push(now)
 
-  void registeredTrigger(HAPTIC_INTENTS[intent].pattern)?.catch(() => undefined)
+  void registeredTrigger(HAPTIC_INTENTS[intent])?.catch(() => undefined)
 }

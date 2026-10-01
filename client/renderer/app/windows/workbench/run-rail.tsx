@@ -3,7 +3,7 @@
 import { useStore } from '@nanostores/react'
 import type React from 'react'
 
-import { $artifacts, $isRailOpen, $runRound, setRailOpen } from '@/app/windows/workbench/run-rail-store'
+import { $artifacts, $isRailOpen, $runRound } from '@/app/windows/workbench/run-rail-store'
 import { ChatMediaCard } from '@/modules/conversation'
 import { X } from '@/shared/lib/icons'
 import { useStrings } from '@/shared/strings'
@@ -23,7 +23,7 @@ export function RunRail(): React.JSX.Element {
         <button
           aria-label={t.expandAria}
           className={styles.runRailExpand}
-          onClick={() => setRailOpen(true)}
+          onClick={() => $isRailOpen.set(true)}
           type="button"
         >
           <span className={styles.runRailExpandLabel}>{t.label}</span>
@@ -45,7 +45,7 @@ export function RunRail(): React.JSX.Element {
         <button
           aria-label={t.collapseAria}
           className={styles.runRailCollapse}
-          onClick={() => setRailOpen(false)}
+          onClick={() => $isRailOpen.set(false)}
           title={t.collapseTitle}
           type="button"
         >

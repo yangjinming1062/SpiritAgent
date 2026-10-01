@@ -12,6 +12,31 @@ export function stopSpeaking(): void {
   stopAudio()
 }
 
+/** 取音频并播放，返回是否完整播完。全程持有语音准备态；取回时已被更新的播放接管则放弃。取音频或播放抛错交给 onError，latest 表示此时仍是最新一次播放。 */
+export async function playPrepared(
+  fetchClip: () => Promise<{ dataUrl: string }>,
+  onError: (error: unknown, latest: boolean) => void
+): Promise<boolean> {
+  const gen = nextGen()
+  beginVoicePreparing()
+
+  try {
+    const { dataUrl } = await fetchClip()
+
+    if (!isLatestGen(gen)) {
+      return false
+    }
+
+    return (await playDataUrl(dataUrl)) === 'completed'
+  } catch (error) {
+    onError(error, isLatestGen(gen))
+
+    return false
+  } finally {
+    endVoicePreparing()
+  }
+}
+
 async function synth(
   text: string,
   voice: string | undefined,
@@ -24,35 +49,24 @@ async function synth(
     return false
   }
 
-  const gen = nextGen()
-  beginVoicePreparing()
+  return await playPrepared(
+    () =>
+      window.spiritagent.media.tts({
+        text: spokenText,
+        voice: voice ?? presentationPorts().$companionVoiceId.get(),
+        context: context ?? null,
+        persist
+      }),
+    (error, latest) => {
+      // 已被更新的播放接管时不能停掉它。
+      if (latest) {
+        stopAudio()
+      }
 
-  try {
-    const { dataUrl } = await window.spiritagent.media.tts({
-      text: spokenText,
-      voice: voice ?? presentationPorts().$companionVoiceId.get(),
-      context: context ?? null,
-      persist
-    })
-
-    if (!isLatestGen(gen)) {
-      return false
+      // 环境路径按 DESIGN「语音保存与恢复」静默降级为纯文字，但留诊断日志定位供应商故障。
+      log.warn('tts', 'synthesis failed', error)
     }
-
-    return (await playDataUrl(dataUrl)) === 'completed'
-  } catch (err) {
-    // 已被更新的播放接管时不能停掉它。
-    if (isLatestGen(gen)) {
-      stopAudio()
-    }
-
-    // 环境路径按 DESIGN「语音保存与恢复」静默降级为纯文字，但留诊断日志定位供应商故障。
-    log.warn('tts', 'synthesis failed', err)
-
-    return false
-  } finally {
-    endVoicePreparing()
-  }
+  )
 }
 
 /** 直接互动与角色行为台词。只走内存缓存，不落盘。 */

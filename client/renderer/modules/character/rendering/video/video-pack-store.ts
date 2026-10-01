@@ -2,40 +2,14 @@
 
 import { atom } from 'nanostores'
 
-import { authedApi } from '@/shared/lib/authed-api'
+import { apiSucceeded, authedApi } from '@/shared/lib/authed-api'
 import { backendDetailMessage } from '@/shared/lib/ipc-error'
 import { log } from '@/shared/lib/log'
 import { currentClearEpoch, registerStorageClearHandler } from '@/shared/lib/storage'
 import { $auth } from '@/shared/store/auth'
 import { getStrings } from '@/shared/strings'
 
-import type { PeekGeometry } from '../../actions'
-
-export interface VideoActionWire {
-  action: string
-  name: string
-  kind: string
-  status: string
-  stage: string
-  error: string | null
-  clip_url: string | null
-  motion_prompt: string
-  peek_geometry?: PeekGeometry | null
-}
-
-export interface VideoPackWire {
-  id: number
-  pack_version: number
-  outfit_id: number | null
-  error: string | null
-  actions: VideoActionWire[]
-  status: string
-  active: boolean
-  identity_review: 'none' | 'pass' | 'review' | 'accepted'
-  manifest_url: string | null
-  can_retry: boolean
-  can_regenerate: boolean
-}
+import type { VideoPackWire } from '../../actions'
 
 export const $videoPacks = atom<VideoPackWire[]>([])
 
@@ -56,8 +30,10 @@ export const $videoGenError = atom<VideoGenError | null>(null)
 /** 当前生成/最近失败的归属；与错误一起决定界面是否展示。 */
 export const $videoGenScope = atom<VideoGenScope | null>(null)
 
+const VIDEO_GEN_STAGES = ['script', 'pose', 'submit', 'generate', 'download', 'process', 'publish'] as const
+
 /** 按参考生成的任务阶段（对应后端 companion.video.progress 的 stage） */
-export type VideoGenStage = 'script' | 'pose' | 'submit' | 'generate' | 'download' | 'process' | 'publish'
+export type VideoGenStage = (typeof VIDEO_GEN_STAGES)[number]
 
 let inflight: Promise<boolean> | null = null
 let generationRevision = 0
@@ -69,7 +45,11 @@ export function videoPackEventReceived(): void {
 }
 
 /** 当前视图是否命中该归属；归属缺少着装时必须凭 packId 精确匹配。 */
-export function videoGenScopeMatches(scope: VideoGenScope | null, outfitId: number, packId: number | null): boolean {
+export function videoGenScopeMatches(
+  scope: VideoGenScope | null,
+  outfitId: number | null,
+  packId: number | null
+): boolean {
   if (!scope) {
     return false
   }
@@ -90,7 +70,7 @@ export function videoGenScopeMatches(scope: VideoGenScope | null, outfitId: numb
 }
 
 function resolveGenScope(
-  opts: { outfitId?: number; sourcePackId?: number; retryPackId?: number },
+  opts: { outfitId?: number | null; sourcePackId?: number; retryPackId?: number },
   packId?: number | null
 ): VideoGenScope {
   const resolvedPackId = packId ?? opts.sourcePackId ?? opts.retryPackId ?? null
@@ -115,6 +95,40 @@ function setGenIssue(message: string, scope: VideoGenScope): void {
 
 function clearGenIssue(): void {
   $videoGenError.set(null)
+}
+
+function eventScope(scope: Partial<VideoGenScope>): VideoGenScope {
+  return { outfitId: scope.outfitId ?? null, packId: scope.packId ?? null }
+}
+
+/** 视频包就绪 / 激活事件：生成态收敛为空闲，归属取事件载荷。 */
+export function videoGenReady(scope: Partial<VideoGenScope>): void {
+  videoPackEventReceived()
+  $videoGenState.set('idle')
+  $videoGenStage.set(null)
+  clearGenIssue()
+  $videoGenScope.set(eventScope(scope))
+}
+
+/** 生成阶段事件：未知阶段按无阶段处理；事件缺少着装时依次取包列表、同一动作包上次的归属。 */
+export function videoGenProgress(stage: string | undefined, scope: Partial<VideoGenScope>): void {
+  const { outfitId, packId } = resolveGenScope({ outfitId: scope.outfitId }, scope.packId)
+  const previous = $videoGenScope.get()
+
+  videoPackEventReceived()
+  $videoGenState.set('generating')
+  $videoGenStage.set(VIDEO_GEN_STAGES.find(known => known === stage) ?? null)
+  clearGenIssue()
+  $videoGenScope.set({
+    outfitId: outfitId ?? (packId !== null && previous?.packId === packId ? previous.outfitId : null),
+    packId
+  })
+}
+
+/** 生成失败事件：文案取后端公开原因，缺省用通用提示。 */
+export function videoGenFailed(reason: string | undefined, scope: Partial<VideoGenScope>): void {
+  videoPackEventReceived()
+  setGenFailed(reason || getStrings().living.appearance.videoGenRequestFailed, eventScope(scope))
 }
 
 registerStorageClearHandler(() => {
@@ -156,11 +170,7 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
         return false
       }
 
-      if (!res.ok) {
-        if (res.reason === 'err') {
-          log.warn('video-pack-store', 'hydrateVideoPack failed', res.error)
-        }
-
+      if (!apiSucceeded(res, 'video-pack-store', 'hydrateVideoPack failed')) {
         return false
       }
 
@@ -172,8 +182,7 @@ export async function hydrateVideoPack(refresh = false): Promise<boolean> {
       $videoPacks.set(packs)
       const scope = $videoGenScope.get()
 
-      const matchesScope = (p: VideoPackWire): boolean =>
-        videoGenScopeMatches(scope, p.outfit_id ?? Number.MIN_SAFE_INTEGER, p.id)
+      const matchesScope = (p: VideoPackWire): boolean => videoGenScopeMatches(scope, p.outfit_id, p.id)
 
       const processing =
         packs.find(p => p.status === 'processing' && matchesScope(p)) ?? packs.find(p => p.status === 'processing')

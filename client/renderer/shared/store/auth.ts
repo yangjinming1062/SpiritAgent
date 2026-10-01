@@ -1,6 +1,7 @@
 import type { DesktopActivatePayload, DesktopAuthBroadcast, DesktopAuthSnapshot } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
+import { errorMessage } from '@/shared/lib/ipc-error'
 import { setStorageAccount } from '@/shared/lib/storage'
 
 import { tearDownPrimaryGateway } from './gateway'
@@ -39,7 +40,7 @@ export async function hydrateAuth(): Promise<void> {
     }
 
     $auth.set({
-      error: error instanceof Error ? error.message : String(error),
+      error: errorMessage(error),
       kind: 'unauthenticated'
     })
   }

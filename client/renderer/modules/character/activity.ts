@@ -1,3 +1,4 @@
+import type { DesktopScreenRect } from '@ipc/contracts'
 import { atom } from 'nanostores'
 
 import { log } from '@/shared/lib/log'
@@ -27,7 +28,7 @@ type FocusCategory = 'ide' | 'music' | 'reader' | 'gaming' | 'browsing' | 'other
 interface FocusContext {
   category: FocusCategory
   fullscreen: boolean
-  windowGeom?: { x: number; y: number; w: number; h: number }
+  windowGeom?: DesktopScreenRect
   windowId?: string
   windowPid?: number
   runnerInstanceId?: string
@@ -38,15 +39,13 @@ export const $focusContext = atom<FocusContext | null>(null)
 const POLL_INTERVAL_MS = 30_000
 const IDLE_THRESHOLD_SECONDS = 30 * 60
 const CHECK_COOLDOWN_MS = 60 * 60 * 1000
-const STATS_POST_THRESHROTTLE_MS = 60_000
+const STATS_POST_THROTTLE_MS = 60_000
 
 let timer: ReturnType<typeof setInterval> | null = null
 let lastIdleExpressionAt = 0
 let lastTierPushed: DisturbanceTier | null = null
 let runnerReady = false
-let offPhaseSub: (() => void) | null = null
-let offTierSub: (() => void) | null = null
-let offTierInputSub: (() => void) | null = null
+let unsubs: Array<() => void> = []
 let monitorGeneration = 0
 let polling = false
 let lastSignalContext: string | null = null
@@ -193,10 +192,6 @@ function classifyMacos(info: FocusedAppInfo): FocusCategory {
 }
 
 function classifyFocusedApp(info: FocusedAppInfo): FocusCategory {
-  if (!info || Object.keys(info).length === 0) {
-    return 'unknown'
-  }
-
   const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
 
   return isMac ? classifyMacos(info) : classifyWindows(info)
@@ -211,12 +206,7 @@ function computeImmersiveOverride(ctx: FocusContext | null): DisturbanceTier | n
 }
 
 function maybePushTierOverride(): void {
-  const nextOverride = computeImmersiveOverride($focusContext.get())
-
-  // 值未变则跳过 set，避免订阅者级联。
-  if ($effectiveTierOverride.get() !== nextOverride) {
-    $effectiveTierOverride.set(nextOverride)
-  }
+  $effectiveTierOverride.set(computeImmersiveOverride($focusContext.get()))
 
   // 推送统一裁决后的生效档位（含临时安静），仅按值去重：只有生效值变化时才推送。
   const effective = $effectiveTier.get()
@@ -318,11 +308,7 @@ async function pollSnapshot(generation: number): Promise<void> {
   }
 
   if (snapshot.locked !== undefined) {
-    const isLocked = Boolean(snapshot.locked)
-
-    if (isLocked !== $screenLocked.get()) {
-      $screenLocked.set(isLocked)
-    }
+    $screenLocked.set(Boolean(snapshot.locked))
   }
 
   const idleSeconds = Number(snapshot.idle_seconds ?? -1)
@@ -388,14 +374,7 @@ async function pollSnapshot(generation: number): Promise<void> {
     const cur = $focusContext.get()
 
     if (cur && cur.fullscreen !== fullscreen) {
-      $focusContext.set({
-        category: cur.category,
-        fullscreen,
-        runnerInstanceId: cur.runnerInstanceId,
-        windowGeom: cur.windowGeom,
-        windowId: cur.windowId,
-        windowPid: cur.windowPid
-      })
+      $focusContext.set({ ...cur, fullscreen })
     }
   }
 
@@ -426,20 +405,17 @@ export function startActivityMonitor(): () => void {
   }
 
   monitorGeneration += 1
-  offTierSub = $effectiveTier.subscribe(tier => {
-    if (tier === 'still') {
-      void reportCompanionSignal(false)
-    }
-  })
+  unsubs.push(
+    $effectiveTier.subscribe(tier => {
+      if (tier === 'still') {
+        void reportCompanionSignal(false)
+      }
+    })
+  )
 
   // 偏好或临时安静变化（含其他窗口经 storage 同步）立即重算并推送，不等轮询，也不依赖 Runner 在线。
-  const offPreferred = $userPreferredTier.listen(() => maybePushTierOverride())
-  const offQuiet = $quietUntil.listen(() => maybePushTierOverride())
-
-  offTierInputSub = () => {
-    offPreferred()
-    offQuiet()
-  }
+  unsubs.push($userPreferredTier.listen(() => maybePushTierOverride()))
+  unsubs.push($quietUntil.listen(() => maybePushTierOverride()))
 
   let firstPollDone = false
 
@@ -453,19 +429,21 @@ export function startActivityMonitor(): () => void {
   }
 
   // nanostore 订阅即触发一次回调，已 running 会立刻 kick 首次轮询；后续 running 只保持 runnerReady，一次性 latch 避免恢复时爆发轮询。
-  offPhaseSub = $runnerPhase.subscribe(phase => {
-    if (phase === 'running') {
-      runnerReady = true
-      kickFirstPoll()
-    } else if (phase === 'stopped' || phase === 'error') {
-      // bridge 恢复后会再发 running；在此之前 setInterval tick 空操作，避免 IPC 错误日志刷屏。
-      runnerReady = false
-      monitorGeneration += 1
-      polling = false
-      $lastIdleSeconds.set(-1)
-      void reportCompanionSignal(false)
-    }
-  })
+  unsubs.push(
+    $runnerPhase.subscribe(phase => {
+      if (phase === 'running') {
+        runnerReady = true
+        kickFirstPoll()
+      } else if (phase === 'stopped' || phase === 'error') {
+        // bridge 恢复后会再发 running；在此之前 setInterval tick 空操作，避免 IPC 错误日志刷屏。
+        runnerReady = false
+        monitorGeneration += 1
+        polling = false
+        $lastIdleSeconds.set(-1)
+        void reportCompanionSignal(false)
+      }
+    })
+  )
 
   timer = setInterval(() => {
     if (!runnerReady) {
@@ -486,24 +464,15 @@ function stopActivityMonitor(): void {
   lastSignalContext = null
   pendingSignalContextChange = false
 
-  if (offTierSub) {
-    offTierSub()
-    offTierSub = null
+  for (const unsub of unsubs) {
+    unsub()
   }
 
-  if (offTierInputSub) {
-    offTierInputSub()
-    offTierInputSub = null
-  }
+  unsubs = []
 
   if (timer) {
     clearInterval(timer)
     timer = null
-  }
-
-  if (offPhaseSub) {
-    offPhaseSub()
-    offPhaseSub = null
   }
 
   runnerReady = false
@@ -521,7 +490,7 @@ export function reportInteractionStat(kind: 'chat_turn'): void {
 
   const now = Date.now()
 
-  if (localChatTurnCount > 10 && now - lastChatTurnSentAt < STATS_POST_THRESHROTTLE_MS) {
+  if (localChatTurnCount > 10 && now - lastChatTurnSentAt < STATS_POST_THROTTLE_MS) {
     return
   }
 

@@ -8,20 +8,10 @@ import {
   registerStorageClearHandler,
   storedString
 } from '@/shared/lib/storage'
+import type { SetSpriteStateOptions, SpriteStateName } from '@/shared/presentation-ports'
 
 // 渲染层按 unauthed → onboarding（向导进行中）→ ready（向导完成后）流转。
 export type CompanionLifecycle = 'unauthed' | 'onboarding' | 'ready'
-
-// 表现状态机（DESIGN「状态与播放优先级」）。
-export type SpriteStateName =
-  | 'idle'
-  | 'listening'
-  | 'thinking'
-  | 'speaking'
-  | 'working'
-  | 'emotional'
-  | 'interacting'
-  | 'disconnected'
 
 const lifecyclePersisted = definePersistedEnum<CompanionLifecycle>({
   allowed: ['unauthed', 'ready', 'onboarding'] as const,
@@ -124,8 +114,7 @@ export function endQuiet(): void {
 // 其他窗口写入档位偏好或临时安静后，经 storage 事件同步到本窗；key 为 null 表示存储被整体清空。
 export function syncDisturbanceFromStorage(key: string | null): void {
   if (key === DISTURBANCE_TIER_KEY || key === null) {
-    const stored = storedString(DISTURBANCE_TIER_KEY)
-    $userPreferredTier.set(DISTURBANCE_TIERS.find(tier => tier === stored) ?? 'normal')
+    userPreferredTierPersisted.reload()
   }
 
   if (key === QUIET_UNTIL_KEY || key === null) {
@@ -143,6 +132,7 @@ export const $effectiveTier = computed(
     preferred === 'still' || quietUntil !== null ? 'still' : (override ?? preferred)
 )
 
+// 表现状态机优先级（DESIGN「状态与播放优先级」）。
 const STATE_PRIORITY: Record<SpriteStateName, number> = {
   disconnected: 100,
   emotional: 35,
@@ -161,15 +151,17 @@ let transientTimer: ReturnType<typeof setTimeout> | null = null
 let activityCounter = 0
 let activityResetTimer: ReturnType<typeof setTimeout> | null = null
 
-export function setSpriteState(name: SpriteStateName, options?: { durationMs?: number; force?: boolean }): void {
+function clearTransientTimer(): void {
+  if (transientTimer) {
+    clearTimeout(transientTimer)
+    transientTimer = null
+  }
+}
+
+export function setSpriteState(name: SpriteStateName, options?: SetSpriteStateOptions): void {
   const current = $spriteState.get()
 
-  if (
-    !options?.force &&
-    STATE_PRIORITY[name] < STATE_PRIORITY[current] &&
-    current !== 'idle' &&
-    !TRANSIENT_STATES.has(name)
-  ) {
+  if (!options?.force && STATE_PRIORITY[name] < STATE_PRIORITY[current] && !TRANSIENT_STATES.has(name)) {
     // 低优先级不能打断高优先级，瞬时状态除外（经计时器自动恢复）。
     return
   }
@@ -180,10 +172,7 @@ export function setSpriteState(name: SpriteStateName, options?: { durationMs?: n
     }
 
     $spriteState.set(name)
-
-    if (transientTimer) {
-      clearTimeout(transientTimer)
-    }
+    clearTransientTimer()
 
     transientTimer = setTimeout(() => {
       transientTimer = null
@@ -193,11 +182,7 @@ export function setSpriteState(name: SpriteStateName, options?: { durationMs?: n
     return
   }
 
-  if (transientTimer) {
-    clearTimeout(transientTimer)
-    transientTimer = null
-  }
-
+  clearTransientTimer()
   $spriteState.set(name)
 }
 
@@ -221,8 +206,7 @@ export function endTransientState(name: SpriteStateName): void {
     return
   }
 
-  clearTimeout(transientTimer)
-  transientTimer = null
+  clearTransientTimer()
   restoreAfterTransient()
 }
 
@@ -230,10 +214,7 @@ export function endTransientState(name: SpriteStateName): void {
 export function holdInteracting(): void {
   const current = $spriteState.get()
 
-  if (transientTimer) {
-    clearTimeout(transientTimer)
-    transientTimer = null
-  }
+  clearTransientTimer()
 
   if (!TRANSIENT_STATES.has(current)) {
     $previousState.set(current)
@@ -308,10 +289,7 @@ export async function ensureCompanionHydrated(deps: {
 
 // 清掉瞬态/活动计时器（登出后 orphan 计时器会写 $spriteState）；必须在文件末尾，闭包按引用捕获上述变量，提前声明会在 HMR 时撞 TDZ。
 registerStorageClearHandler(() => {
-  if (transientTimer) {
-    clearTimeout(transientTimer)
-    transientTimer = null
-  }
+  clearTransientTimer()
 
   if (activityResetTimer) {
     clearTimeout(activityResetTimer)

@@ -57,7 +57,7 @@ export function LivingRoot(): React.JSX.Element {
         <MediaViewerOverlay containerRef={shellRef} windowId={1} />
         <SceneBackdrop />
         <div aria-hidden="true" className={styles.glassPlate} />
-        <div className={styles.shell} data-living-view={livingView} data-surface="living" ref={shellRef}>
+        <div className={styles.shell} data-surface="living" ref={shellRef}>
           <header
             className={styles.titlebar}
             onDoubleClick={() => {

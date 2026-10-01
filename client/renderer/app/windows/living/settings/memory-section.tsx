@@ -5,6 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { $systemPresets, fetchSystemPresets, presetDisplayName } from '@/modules/conversation'
 import { requestGateway } from '@/shared'
+import { safeJsonParse } from '@/shared/lib/safe-json'
 import { cn } from '@/shared/lib/utils'
 import { BTN_GHOST, BTN_SUBTLE, CapsuleTabs, CHIP, HINT_TEXT, INPUT_CLASS, PanelSelect } from '@/shared/panel'
 import { notifyError } from '@/shared/store/notifications'
@@ -107,18 +108,14 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
           system_preset_id: presetId
         })
 
-        if (loadIdRef.current !== id) {
+        if (loadIdRef.current !== id || res.system_preset_id !== presetId) {
           return
         }
 
-        if (res.system_preset_id !== presetId) {
-          return
-        }
-
-        const list = res?.memories ?? []
+        const list = res.memories ?? []
         setRows(list)
-        setCounts(res?.counts ?? null)
-        setUserProfileCount(current => current ?? res?.counts?.user_profile ?? null)
+        setCounts(res.counts ?? null)
+        setUserProfileCount(current => current ?? res.counts?.user_profile ?? null)
         setDraftById(Object.fromEntries(list.map(r => [r.id, r.content ?? ''])))
       } catch (err) {
         if (loadIdRef.current !== id) {
@@ -145,7 +142,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
     }
   }, [tab, load])
 
-  // 函数式 setState 无需镜像 ref 也能拿到上一次的 rows；回滚分支从点击时闭包捕获的 `rows` 快照里同时还原 rows[i].content 与 draftById[i]。
+  // rows 只在成功后改写；失败回滚只还原 draftById[id]，取点击时闭包捕获的 `rows` 快照里的已存内容。
   const saveRecall = useCallback(
     async (id: number) => {
       const requestId = loadIdRef.current
@@ -175,7 +172,6 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
           return
         }
 
-        setRows(prev => prev.map(r => (r.id === id ? { ...r, content: prevContent } : r)))
         setDraftById(d => ({ ...d, [id]: prevContent }))
         setHint(t.saveFailedHint)
         notifyError(err, t.saveFailedToast)
@@ -326,15 +322,7 @@ function ScopedMemorySection({ presetId }: { presetId: string }): React.ReactEle
 }
 
 function parseTags(raw: string | null): string[] {
-  if (!raw) {
-    return []
-  }
+  const parsed = safeJsonParse<unknown>(raw, [])
 
-  try {
-    const parsed = JSON.parse(raw)
-
-    return Array.isArray(parsed) ? parsed.map(String) : []
-  } catch {
-    return []
-  }
+  return Array.isArray(parsed) ? parsed.map(String) : []
 }

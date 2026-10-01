@@ -3,19 +3,16 @@ import { clamp } from '@runtime'
 import type React from 'react'
 
 import { Brain, Thermometer } from '@/shared/lib/icons'
+import { REASONING_EFFORT_VALUES, type ReasoningEffort, resolveReasoningEffort } from '@/shared/lib/reasoning-effort'
 import { cn } from '@/shared/lib/utils'
 import { useStrings } from '@/shared/strings'
 import type { SessionMessage } from '@/shared/types/spiritagent'
 
 import { $sessionContextUsage, $sessionSettings } from './chat-store'
 
-const DEFAULT_THRESHOLD = 0.7
+export const DEFAULT_THRESHOLD = 0.7
 const DEFAULT_LIMIT = 1_000_000
 const DEFAULT_TEMPERATURE = 0.7
-
-export const REASONING_EFFORT_VALUES = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra'] as const
-
-export type ReasoningEffort = (typeof REASONING_EFFORT_VALUES)[number]
 
 export interface CompressContextResponse {
   compressed: boolean
@@ -40,14 +37,6 @@ export function formatTokenNumber(num: number): string {
   }
 
   return num.toLocaleString()
-}
-
-function isReasoningEffort(value: string): value is ReasoningEffort {
-  return (REASONING_EFFORT_VALUES as readonly string[]).includes(value)
-}
-
-export function resolveReasoningEffort(value: unknown): ReasoningEffort {
-  return typeof value === 'string' && isReasoningEffort(value) ? value : 'low'
 }
 
 export function resolveTemperature(value: unknown): number {
@@ -81,11 +70,7 @@ export function useContextStatus(): {
   const usage = useStore($sessionContextUsage)
   const settings = useStore($sessionSettings)
 
-  const threshold =
-    typeof settings.context_compression_threshold === 'number'
-      ? settings.context_compression_threshold
-      : DEFAULT_THRESHOLD
-
+  const threshold = settings.context_compression_threshold ?? DEFAULT_THRESHOLD
   const totalTokens = usage.totalTokens
   const contextLimit = usage.contextLimit > 0 ? usage.contextLimit : DEFAULT_LIMIT
   const rawPct = (totalTokens / contextLimit) * 100

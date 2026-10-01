@@ -32,7 +32,6 @@ interface ProfileListResponse {
 interface ProfileEntryEditorProps {
   busy: boolean
   date?: boolean
-  deleteLabel: string
   dirty: boolean
   inputId: string
   label: string
@@ -42,8 +41,6 @@ interface ProfileEntryEditorProps {
   onDelete?: () => void
   onSave: () => void
   persisted: boolean
-  saveLabel: string
-  savedLabel: string
   value: string
 }
 
@@ -60,6 +57,13 @@ const PROFILE_FIELDS: readonly ProfileField[] = [
   { context: 'user_profile:freeform', key: 'user_freeform', multiline: true }
 ]
 
+// 草稿 trim 后非空且不同于已存内容才需要保存，返回待提交的值。
+function pendingValue(draft: string, saved: string | null | undefined): string | null {
+  const value = draft.trim()
+
+  return value && value !== (saved ?? '').trim() ? value : null
+}
+
 export function UserProfileSection({
   onCount
 }: {
@@ -69,8 +73,7 @@ export function UserProfileSection({
   const t = dict.settings.memory
   const p = t.profile
 
-  const [rowsByContext, setRowsByContext] = useState<Record<string, ProfileMemoryRow>>({})
-  const [extraRows, setExtraRows] = useState<ProfileMemoryRow[]>([])
+  const [rows, setRows] = useState<ProfileMemoryRow[]>([])
   const [loading, setLoading] = useState(true)
   const [hint, setHint] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, string>>({})
@@ -98,19 +101,7 @@ export function UserProfileSection({
         return
       }
 
-      const known: Record<string, ProfileMemoryRow> = {}
-      const extra: ProfileMemoryRow[] = []
-
-      for (const row of res.memories) {
-        if (PROFILE_FIELDS.some(field => field.context === row.context)) {
-          known[row.context ?? ''] = row
-        } else {
-          extra.push(row)
-        }
-      }
-
-      setRowsByContext(known)
-      setExtraRows(extra)
+      setRows(res.memories)
       onCount(res.counts.user_profile)
     } catch (err) {
       if (!mountedRef.current || loadIdRef.current !== id) {
@@ -138,30 +129,43 @@ export function UserProfileSection({
   }, [load])
 
   const setBusy = (key: string, busy: boolean): void => {
-    setBusyKeys(previous => {
-      const next = { ...previous }
-
-      if (busy) {
-        next[key] = true
-      } else {
-        delete next[key]
-      }
-
-      return next
-    })
+    setBusyKeys(previous => ({ ...previous, [key]: busy }))
   }
 
-  const saveKnown = async (field: ProfileField): Promise<void> => {
-    const row = rowsByContext[field.context]
-    const value = (drafts[field.key] ?? row?.content ?? '').trim()
+  // 三个写操作共用的失败与收尾：卸载后不再回写，失败提示由调用方给出。
+  const guarded = async (
+    key: string,
+    failure: { hint: string; toast: string },
+    action: () => Promise<void>
+  ): Promise<void> => {
+    setBusy(key, true)
 
-    if (!value || value === (row?.content ?? '').trim()) {
+    try {
+      await action()
+    } catch (err) {
+      if (mountedRef.current) {
+        setHint(failure.hint)
+        notifyError(err, failure.toast)
+      }
+    } finally {
+      if (mountedRef.current) {
+        setBusy(key, false)
+      }
+    }
+  }
+
+  // 资料槽位的 context 在后端唯一（uq_memories_user_context），按 context 取首条即可。
+  const rowOf = (field: ProfileField): ProfileMemoryRow | undefined => rows.find(row => row.context === field.context)
+
+  const saveKnown = async (field: ProfileField): Promise<void> => {
+    const row = rowOf(field)
+    const value = pendingValue(drafts[field.key] ?? row?.content ?? '', row?.content)
+
+    if (!value) {
       return
     }
 
-    setBusy(field.key, true)
-
-    try {
+    await guarded(field.key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async () => {
       await requestGateway('onboarding.submit', { field: field.key, value })
 
       if (!mountedRef.current) {
@@ -171,38 +175,26 @@ export function UserProfileSection({
       setDrafts(previous => ({ ...previous, [field.key]: value }))
 
       if (row) {
-        setRowsByContext(previous => ({
-          ...previous,
-          [field.context]: { ...previous[field.context], content: value }
-        }))
+        setRows(previous =>
+          previous.map(entry => (entry.context === field.context ? { ...entry, content: value } : entry))
+        )
       } else {
         onCount(previous => (previous === null ? previous : previous + 1))
       }
 
       await load()
-    } catch (err) {
-      if (mountedRef.current) {
-        setHint(t.saveFailedHint)
-        notifyError(err, t.saveFailedToast)
-      }
-    } finally {
-      if (mountedRef.current) {
-        setBusy(field.key, false)
-      }
-    }
+    })
   }
 
   const saveExtra = async (row: ProfileMemoryRow): Promise<void> => {
     const key = row.context ?? String(row.id)
-    const value = (drafts[key] ?? row.content ?? '').trim()
+    const value = pendingValue(drafts[key] ?? row.content ?? '', row.content)
 
-    if (!value || value === (row.content ?? '').trim()) {
+    if (!value) {
       return
     }
 
-    setBusy(key, true)
-
-    try {
+    await guarded(key, { hint: t.saveFailedHint, toast: t.saveFailedToast }, async () => {
       const updated = await requestGateway<ProfileMemoryRow>('memory.update', {
         memory_id: row.id,
         content: value,
@@ -214,24 +206,13 @@ export function UserProfileSection({
       }
 
       setDrafts(previous => ({ ...previous, [key]: updated.content ?? value }))
-      setExtraRows(previous => previous.map(entry => (entry.id === row.id ? updated : entry)))
+      setRows(previous => previous.map(entry => (entry.id === row.id ? updated : entry)))
       await load()
-    } catch (err) {
-      if (mountedRef.current) {
-        setHint(t.saveFailedHint)
-        notifyError(err, t.saveFailedToast)
-      }
-    } finally {
-      if (mountedRef.current) {
-        setBusy(key, false)
-      }
-    }
+    })
   }
 
   const remove = async (key: string, memoryId: number): Promise<void> => {
-    setBusy(key, true)
-
-    try {
+    await guarded(key, { hint: t.deleteFailedHint, toast: t.deleteFailedToast }, async () => {
       await requestGateway('memory.delete', { memory_id: memoryId, system_preset_id: PROFILE_PRESET_ID })
 
       if (!mountedRef.current) {
@@ -239,23 +220,13 @@ export function UserProfileSection({
       }
 
       setDrafts(previous => ({ ...previous, [key]: '' }))
-      setRowsByContext(previous =>
-        Object.fromEntries(Object.entries(previous).filter(([, row]) => row.id !== memoryId))
-      )
-      setExtraRows(previous => previous.filter(row => row.id !== memoryId))
+      setRows(previous => previous.filter(row => row.id !== memoryId))
       onCount(previous => (previous === null ? previous : Math.max(0, previous - 1)))
       await load()
-    } catch (err) {
-      if (mountedRef.current) {
-        setHint(t.deleteFailedHint)
-        notifyError(err, t.deleteFailedToast)
-      }
-    } finally {
-      if (mountedRef.current) {
-        setBusy(key, false)
-      }
-    }
+    })
   }
+
+  const extraRows = rows.filter(row => !PROFILE_FIELDS.some(field => field.context === row.context))
 
   return (
     <section className="mb-6">
@@ -268,17 +239,14 @@ export function UserProfileSection({
       ) : (
         <div className="space-y-2.5">
           {PROFILE_FIELDS.map(field => {
-            const row = rowsByContext[field.context]
+            const row = rowOf(field)
             const draft = drafts[field.key] ?? row?.content ?? ''
-            const dirty = draft.trim() !== '' && draft.trim() !== (row?.content ?? '').trim()
-            const busy = !!busyKeys[field.key]
 
             return (
               <ProfileEntryEditor
-                busy={busy}
+                busy={!!busyKeys[field.key]}
                 date={field.date}
-                deleteLabel={t.delete}
-                dirty={dirty}
+                dirty={pendingValue(draft, row?.content) !== null}
                 inputId={`profile-${field.key}`}
                 key={field.key}
                 label={`${p.fields[field.key]} · ${row ? p.set : p.unset}`}
@@ -288,8 +256,6 @@ export function UserProfileSection({
                 onDelete={row ? () => void remove(field.key, row.id) : undefined}
                 onSave={() => void saveKnown(field)}
                 persisted={!!row}
-                savedLabel={t.saved}
-                saveLabel={busy ? t.saving : row ? dict.common.save : p.add}
                 value={draft}
               />
             )
@@ -297,14 +263,11 @@ export function UserProfileSection({
           {extraRows.map(row => {
             const key = row.context ?? String(row.id)
             const draft = drafts[key] ?? row.content ?? ''
-            const dirty = draft.trim() !== '' && draft.trim() !== (row.content ?? '').trim()
-            const busy = !!busyKeys[key]
 
             return (
               <ProfileEntryEditor
-                busy={busy}
-                deleteLabel={t.delete}
-                dirty={dirty}
+                busy={!!busyKeys[key]}
+                dirty={pendingValue(draft, row.content) !== null}
                 inputId={`profile-memory-${row.id}`}
                 key={row.id}
                 label={row.context?.replace(USER_PROFILE_CONTEXT_PREFIX, '') || '—'}
@@ -313,8 +276,6 @@ export function UserProfileSection({
                 onDelete={() => void remove(key, row.id)}
                 onSave={() => void saveExtra(row)}
                 persisted
-                savedLabel={t.saved}
-                saveLabel={busy ? t.saving : dict.common.save}
                 value={draft}
               />
             )
@@ -328,7 +289,6 @@ export function UserProfileSection({
 function ProfileEntryEditor({
   busy,
   date = false,
-  deleteLabel,
   dirty,
   inputId,
   label,
@@ -338,11 +298,10 @@ function ProfileEntryEditor({
   onDelete,
   onSave,
   persisted,
-  saveLabel,
-  savedLabel,
   value
 }: ProfileEntryEditorProps): React.ReactElement {
   const dict = useStrings()
+  const t = dict.settings.memory
 
   const inputProps = {
     className: cn(INPUT_CLASS, multiline && 'resize-none'),
@@ -374,14 +333,14 @@ function ProfileEntryEditor({
       )}
       <div className="mt-2 flex items-center gap-2">
         <button className={BTN_SUBTLE} disabled={busy || !dirty} onClick={onSave} type="button">
-          {saveLabel}
+          {busy ? t.saving : persisted ? dict.common.save : t.profile.add}
         </button>
         {onDelete && (
           <button className={BTN_GHOST} disabled={busy} onClick={onDelete} type="button">
-            {deleteLabel}
+            {t.delete}
           </button>
         )}
-        {persisted && !dirty && !busy && <span className={HINT_TEXT}>{savedLabel}</span>}
+        {persisted && !dirty && !busy && <span className={HINT_TEXT}>{t.saved}</span>}
       </div>
     </div>
   )

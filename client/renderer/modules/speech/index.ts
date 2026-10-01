@@ -1,5 +1,5 @@
-export { isLatestGen, nextGen, playDataUrl, warmAudioContext } from './audio-track'
-export { speak, speakScripted, stopSpeaking } from './tts'
+export { playDataUrl, warmAudioContext } from './audio-track'
+export { playPrepared, speak, speakScripted, stopSpeaking } from './tts'
 export {
   designVoice,
   fetchVoiceCatalogRaw,
@@ -22,5 +22,5 @@ export {
   toggleVoiceBar
 } from './voice-bar'
 export { VoiceProviderBadge } from './voice-provider-badge'
-export { $voicePreparing, beginVoicePreparing, endVoicePreparing } from './voice-state'
+export { $voicePreparing } from './voice-state'
 export { checkVoiceValidity } from './voice-validity'

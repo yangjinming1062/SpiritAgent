@@ -231,14 +231,7 @@ export function SceneLibraryView({
       ) : null}
 
       <SettingCard>
-        <SettingRow
-          description={t.policyDesc}
-          label={
-            <span className="flex items-center gap-1.5">
-              <span>{t.policyLabel}</span>
-            </span>
-          }
-        >
+        <SettingRow description={t.policyDesc} label={t.policyLabel}>
           <div className="flex items-center gap-2.5">
             <span className="text-[11px] text-faint">
               {policy === 'locked' ? t.policyStatusLocked : t.policyStatusUnlocked}

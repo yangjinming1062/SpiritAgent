@@ -1,15 +1,10 @@
-import type { MemoryToolScope, RunnerCallOutcome } from '@ipc/contracts'
+import type { DesktopScreenRect, MemoryToolScope, RunnerCallOutcome } from '@ipc/contracts'
 
-import {
-  $spriteState,
-  findWindowByKeyword,
-  performRitualWalk,
-  setSpriteState,
-  type WindowGeom
-} from '@/modules/character'
+import { $spriteState, findWindowByKeyword, performRitualWalk, setSpriteState } from '@/modules/character'
 import { $chatSessionId, $chatTurnInFlight, setAssistantTool } from '@/modules/conversation'
 import type { GatewayEvent } from '@/shared/lib/gateway-protocol'
 import { log } from '@/shared/lib/log'
+import { trimOldest } from '@/shared/lib/trim-oldest'
 import { $gateway } from '@/shared/store/gateway'
 import { getStrings } from '@/shared/strings'
 
@@ -61,11 +56,8 @@ function markToolCallSeen(callId: string): boolean {
   }
 
   // 上限对齐服务端重放缓冲容量；超出后按插入序淘汰最旧的，重放窗口内的 id 不会被提前丢掉。
-  if (seenToolCalls.size >= SEEN_TOOL_CALL_CAP) {
-    seenToolCalls.delete(seenToolCalls.values().next().value as string)
-  }
-
   seenToolCalls.add(callId)
+  trimOldest(seenToolCalls, SEEN_TOOL_CALL_CAP)
 
   return true
 }
@@ -87,7 +79,7 @@ export function handleToolStart(event: GatewayEvent): void {
   // 全局 WORKING 入口：所有工具执行前都发 tool_start，因此无论工具位置精灵都会进入 WORKING；tool.call 只针对 Runner 工具。
   const p = decodePayload<{ name?: string }>(event.payload)
 
-  setAssistantTool(p?.name ?? getStrings().chat.tools.genericName)
+  setAssistantTool(p.name ?? getStrings().chat.tools.genericName)
   setSpriteState('working')
 }
 
@@ -137,7 +129,7 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
       const args = p.args ?? {}
 
       // 仪式行走目标：system.click_at 用点击坐标本身（包成虚拟几何，execute 即那次点击，避免双击）；open_application/browser_* 按名称或 URL 匹配窗口，关键词缺失时直接走常规调用。
-      let findTarget: (() => Promise<WindowGeom | null>) | null = null
+      let findTarget: (() => Promise<DesktopScreenRect | null>) | null = null
       let previewClick = true
 
       if (name === 'system.click_at') {
@@ -145,7 +137,7 @@ export function handleToolCall(event: GatewayEvent, ctx: EventRouteContext): voi
         const cy = Number(args.y)
 
         if (Number.isFinite(cx) && Number.isFinite(cy)) {
-          const geom: WindowGeom = {
+          const geom: DesktopScreenRect = {
             x: cx - CLICK_GEOM_HALF,
             y: cy - CLICK_GEOM_HALF,
             w: CLICK_GEOM_SIZE,

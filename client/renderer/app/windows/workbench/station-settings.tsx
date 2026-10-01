@@ -32,10 +32,6 @@ function buildStationNav(tTabs: ReturnType<typeof useStrings>['workbench']['stat
 const STATION_TAB_IDS: ReadonlyArray<StationSettingsTab> = ['inference', 'runner', 'skills']
 
 function readHashTab(allowed: ReadonlyArray<StationSettingsTab>): StationSettingsTab {
-  if (typeof window === 'undefined' || !window.location.hash) {
-    return 'inference'
-  }
-
   const pathOnly = normalizeHashPath(window.location.hash)
 
   const segment = pathOnly.startsWith('settings/')
@@ -64,10 +60,7 @@ export function StationSettings(): React.JSX.Element {
   const handleSelectTab = (next: StationSettingsTab): void => {
     triggerHaptic('open')
     setActiveTab(next)
-
-    if (typeof window !== 'undefined') {
-      window.history.replaceState(null, '', `#/${next}`)
-    }
+    window.history.replaceState(null, '', `#/${next}`)
   }
 
   return (

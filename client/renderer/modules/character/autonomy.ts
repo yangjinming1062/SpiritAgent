@@ -62,6 +62,12 @@ function canConsultAutonomy(): boolean {
   )
 }
 
+// 作废在途咨询：迟到结果因代次变化被丢弃，条件恢复后重新判断。
+function invalidateConsult(): void {
+  provisionGeneration += 1
+  lastSnapshot = null
+}
+
 function stateChanged(oldSnap: Snapshot, newSnap: Snapshot): boolean {
   return (
     oldSnap.focused_category !== newSnap.focused_category ||
@@ -78,10 +84,6 @@ function approachLocomotion(target: { x: number; y: number }): 'walk' | 'fly' {
 
 // 走过去搭话（DESIGN「位置、移动与缩放」「自主动作与空间智能」）：开场白由后端经 companion.message 通道投递（边走边说），客户端只负责走位——有焦点窗口落在窗口旁（复用 perch 落位与缩身，搭话后就地陪工）；用户在桌面（无窗口）时走到屏幕中下部站定，后续空间决策自然接管。
 function executeApproach(): void {
-  if (!isActionStageVisible()) {
-    return
-  }
-
   const ctx = $focusContext.get()
 
   if (ctx?.windowGeom && ctx.category !== 'unknown' && !ctx.fullscreen) {
@@ -112,6 +114,7 @@ function executeApproach(): void {
   setSpatialLocale('target', { position: point, locomotion: approachLocomotion(point) })
 }
 
+// 调用方 isCurrent 已同步重验（含舞台可见），这里不重复判断。
 function executeAutonomousAction(action: string, peekIntent: WindowPeekIntent | null): void {
   switch (action) {
     case 'roam':
@@ -223,9 +226,7 @@ export function startAutonomyProvision(): () => void {
   active = true
 
   const onStateOrEventChange = () => {
-    if (active && $runnerPhase.get() === 'running') {
-      void consultAutonomyLLM(false)
-    }
+    void consultAutonomyLLM(false)
   }
 
   // subscribe 立即回放当前值，首次咨询由此发起；其余回放受最小咨询间隔节流。
@@ -234,8 +235,7 @@ export function startAutonomyProvision(): () => void {
   unsubs.push(
     observeActionStageVisibility(visible => {
       if (!visible) {
-        provisionGeneration += 1
-        lastSnapshot = null
+        invalidateConsult()
 
         return
       }
@@ -247,8 +247,7 @@ export function startAutonomyProvision(): () => void {
   unsubs.push(
     $llmAutonomy.subscribe(enabled => {
       if (!enabled) {
-        provisionGeneration += 1
-        lastSnapshot = null
+        invalidateConsult()
       } else {
         onStateOrEventChange()
       }
@@ -257,24 +256,16 @@ export function startAutonomyProvision(): () => void {
   unsubs.push(
     $effectiveTier.subscribe(tier => {
       if (tier !== 'autonomous') {
-        provisionGeneration += 1
-        lastSnapshot = null
+        invalidateConsult()
       } else {
         onStateOrEventChange()
       }
     })
   )
-  unsubs.push(
-    $runnerPhase.listen(() => {
-      provisionGeneration += 1
-      lastSnapshot = null
-    })
-  )
+  unsubs.push($runnerPhase.listen(invalidateConsult))
 
   backgroundTimer = setInterval(() => {
-    if (active && $runnerPhase.get() === 'running') {
-      void consultAutonomyLLM(true)
-    }
+    void consultAutonomyLLM(true)
   }, BACKGROUND_CONSULT_INTERVAL_MS)
 
   return stopAutonomyProvision
@@ -282,7 +273,7 @@ export function startAutonomyProvision(): () => void {
 
 export function stopAutonomyProvision(): void {
   active = false
-  provisionGeneration += 1
+  invalidateConsult()
 
   if (backgroundTimer !== null) {
     clearInterval(backgroundTimer)
@@ -294,5 +285,4 @@ export function stopAutonomyProvision(): void {
   }
 
   unsubs = []
-  lastSnapshot = null
 }
