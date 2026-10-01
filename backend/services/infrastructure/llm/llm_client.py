@@ -116,13 +116,6 @@ async def resolve_provider_chain(
         user_ai_config = AIConfig.model_validate(user_cfg.ai_config)
         if getattr(user_ai_config.capabilities, service):
             return _chain_from_ai_config(user_ai_config, service, SETTINGS.ai_config.providers)
-    if service == ServiceType.embedding and not SETTINGS.ai_config.capabilities.embedding:
-        # 未配置 embedding 能力链时，按信息库顺序选用支持 embedding 的供应商及其默认模型。
-        entries = (
-            _chain_entry(service, card.provider, api_key=card.api_key, base_url=card.base_url, model="")
-            for card in SETTINGS.ai_config.providers
-        )
-        return [entry for entry in entries if entry is not None]
     return _chain_from_ai_config(SETTINGS.ai_config, service)
 
 
