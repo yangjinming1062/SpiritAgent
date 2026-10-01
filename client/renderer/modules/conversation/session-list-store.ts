@@ -409,7 +409,6 @@ function forkSessionInfo(sourceSessionId: string, res: SessionResumeResponse): S
 
   return {
     archived: false,
-    cwd: res.info?.cwd ?? source?.cwd ?? null,
     ended_at: null,
     id: res.session_id,
     input_tokens: 0,

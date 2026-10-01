@@ -62,7 +62,6 @@ export interface DiaryEntry {
   createdAt: string | null
   date: string
   id: string
-  memoryIds: string[]
   momentIds: string[]
   mood: string | null
   source: string
@@ -75,7 +74,6 @@ interface DiaryWire {
   created_at: string | null
   entry_date: string
   id: string
-  memory_ids: string[]
   moment_ids: string[]
   mood: string | null
   source: string
@@ -127,7 +125,6 @@ function toDiary(w: DiaryWire): DiaryEntry {
     createdAt: w.created_at,
     date: w.entry_date,
     id: w.id,
-    memoryIds: w.memory_ids,
     momentIds: w.moment_ids,
     mood: w.mood,
     source: w.source,

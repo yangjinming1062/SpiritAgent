@@ -108,8 +108,4 @@ class CompanionCharacterCard(ModelBase, TimestampMixin):
     body_result_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
     portrait_source_path: Mapped[str] = mapped_column(String(2048))
     body_source_path: Mapped[str] = mapped_column(String(2048))
-    portrait_source_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
-    body_source_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
-    portrait_pending_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
-    body_pending_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     error: Mapped[str | None] = mapped_column(Text, nullable=True)

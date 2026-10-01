@@ -18,7 +18,6 @@ class SessionSettingsPatch(BaseModel):
 
 
 class SessionRuntimeInfo(BaseModel):
-    cwd: str | None
     branch: str | None
     model: str | None
     provider: str
@@ -56,7 +55,6 @@ class ToolsSyncResult(BaseModel):
 class RuntimeSession:
     conversation_id: int
     chat_task: asyncio.Task | None = None
-    cwd: str | None = None
     # 会话级覆盖（temperature / reasoning_effort / context_compression_threshold）：mount 时镜像 Conversation.settings_json；set_settings 修改时也会写回 DB，重连后会读回相同值。
     settings: dict[str, Any] = field(default_factory=dict)
     # 会话种类镜像（special/standard/im）：prompt_submit 据此拒绝 im 渠道会话（由通道桥独占写入）。
@@ -81,7 +79,6 @@ def new_runtime_session(conv: Conversation) -> RuntimeSession:
     """为已存在的 DB 会话创建 runtime；settings 解码自 Conversation.settings_json，让回合逻辑不必每次回查 DB。"""
     return RuntimeSession(
         conversation_id=conv.id,
-        cwd=conv.cwd,
         settings=decode_session_settings(conv.settings_json),
         kind=conv.kind,
     )
@@ -95,7 +92,6 @@ def build_runtime_info(
     """发给 renderer 的会话运行信息；settings 为会话覆盖叠加生效推理参数。"""
     provider = llm_config.provider_name or "openai"
     return SessionRuntimeInfo(
-        cwd=runtime.cwd,
         branch=None,
         model=llm_config.model_name,
         provider=provider,

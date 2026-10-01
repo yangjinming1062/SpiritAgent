@@ -77,7 +77,6 @@ async def run_daily_checkpoint(
             content=resolve_prompt_text(CHECKPOINT_SUMMARY_TITLE_TEXTS, language).format(date=local_date_str)
             + f"\n{summary_text}",
             subtype="daily_summary",
-            summary_date=local_date_str,
             summary_through_message_id=through_id,
         )
         wdb.add(checkpoint)

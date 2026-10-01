@@ -156,11 +156,6 @@ class CompanionDiaryEntry(ModelBase, TimestampMixin):
         default=DiarySource.NIGHTLY.value,
         server_default=text("'nightly'"),
     )
-    memory_ids: Mapped[list[str]] = mapped_column(
-        ARRAY(String),
-        default=list,
-        server_default=text("'{}'"),
-    )
     moment_ids: Mapped[list[str]] = mapped_column(
         ARRAY(String),
         default=list,

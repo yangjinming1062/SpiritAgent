@@ -44,11 +44,10 @@ MAX_VOICE_DESIGN_PROMPT_CHARS: int = 200  # MIMO 会逐字嵌入 voice_id。
 REMOTE_ASSET_DOWNLOAD_MAX_BYTES: int = 50 * 1024 * 1024  # 超时按链路单独设定。
 SCENE_DOWNLOAD_MAX_BYTES: int = 20 * 1024 * 1024  # 背景等小体积资产。
 
-# 会话展示、重连重水化与登录心跳。
+# 会话展示与重连重水化。
 SESSION_PREVIEW_MAX_CHARS: int = 200
 SESSION_HISTORY_TRUNCATE_THRESHOLD: int = 5000  # 重连重水化防御性负载截断。
 SESSION_HISTORY_PRE_BUFFER: int = 200
-LOGIN_HEARTBEAT_INTERVAL_SECONDS: int = 60
 
 # 输入处理与脱敏防护。
 SQL_LIKE_ESCAPE_CHAR: str = "\\"  # 转义 %、_，避免字面输入放大为「全部」。

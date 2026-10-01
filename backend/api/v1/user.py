@@ -63,7 +63,6 @@ async def activate(payload: ActivateRequest, request: Request, db: DbSession) ->
             user_agent=request.headers.get("user-agent", ""),
             is_active=True,
             login_at=now,
-            last_seen_at=now,
         ),
     )
     await db.commit()
@@ -92,7 +91,6 @@ async def refresh_session(
     session: CurrentSession,
     db: DbSession,
 ) -> TokenResponse:
-    now = utc_now()
     user, login_record = session
 
     client_ctx_dict = payload.client_context.model_dump(exclude_none=True) if payload.client_context else None
@@ -105,7 +103,6 @@ async def refresh_session(
     login_record.client_version = payload.client_version
     login_record.ip_address = getattr(request.client, "host", "") or ""
     login_record.user_agent = request.headers.get("user-agent", "")
-    login_record.last_seen_at = now
     db.add(login_record)
     await db.commit()
     return TokenResponse(access_token=token, expires_in=expires_in, user=UserInfo.model_validate(user))

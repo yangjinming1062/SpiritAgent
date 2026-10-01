@@ -213,8 +213,6 @@ _last_idle_expression_ts: dict[int, float] = {}
 SHOULD_ACT_ANTIDUP_SECONDS = 2.0
 _last_should_act_ts: dict[int, float] = {}
 
-# 与 Conversation.cwd 列宽一致。
-_SESSION_CWD_MAX_CHARS = 1024
 # 试听文本交给付费语音合成，只需一句示例台词；与音色描述同上限。
 _VOICE_PREVIEW_TEXT_MAX_CHARS = MAX_VOICE_DESIGN_PROMPT_CHARS
 
@@ -744,9 +742,6 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
     dispatcher.register("session.get_main", session_get_main)
 
     async def session_create(params: dict) -> dict:
-        cwd = _optional_str(params, "cwd") or None
-        if cwd is not None and len(cwd) > _SESSION_CWD_MAX_CHARS:
-            raise JsonRpcError(JSONRPC_INVALID_PARAMS, f"cwd must be at most {_SESSION_CWD_MAX_CHARS} chars")
         raw_preset = params.get("system_preset_id")
         preset_id: str = "developer"
         if raw_preset is not None and raw_preset != "":
@@ -757,14 +752,14 @@ def _register_session_handlers(session: UserGatewaySession) -> None:
                 )
             preset_id = raw_preset
         async with SESSION_LOCAL() as db:
-            conv = Conversation(user_id=user_id, cwd=cwd, system_preset_id=preset_id)
+            conv = Conversation(user_id=user_id, system_preset_id=preset_id)
             db.add(conv)
             await db.commit()
             await db.refresh(conv)
         runtime = _mount_runtime(conv)
         logger.info(
             "session.create",
-            extra={"user_id": user_id, "session_id": runtime.session_id, "cwd": cwd, "system_preset_id": preset_id},
+            extra={"user_id": user_id, "session_id": runtime.session_id, "system_preset_id": preset_id},
         )
         await dispatcher.flush_unsent()
         return SessionCreateResult(

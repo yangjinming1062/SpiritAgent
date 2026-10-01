@@ -69,10 +69,9 @@ async def _extract_part(user_id: int, extraction_id: str, part: Literal["portrai
         setattr(card, f"{part}_status", "running")
         await db.commit()
     result: PortraitFeatures | BodyFeatures | None = None
-    source_hash = ""
     error: str | None = None
     try:
-        result, source_hash = await extract_card_features(
+        result = await extract_card_features(
             user_id,
             source_path,
             PortraitFeatures if part == "portrait" else BodyFeatures,
@@ -95,7 +94,6 @@ async def _extract_part(user_id: int, extraction_id: str, part: Literal["portrai
         setattr(card, f"{part}_status", "ready" if result is not None else "failed")
         if result is not None:
             setattr(card, f"{part}_result_json", result.model_dump_json())
-            setattr(card, f"{part}_pending_hash", source_hash)
         if error:
             card.error = error
         emit_character_card_updated(db, card)
@@ -138,8 +136,6 @@ async def _extract_character(user_id: int) -> None:
                     **BodyFeatures.model_validate_json(card.body_result_json).model_dump(),
                 )
                 card.automatic_json = features.model_dump_json()
-                card.portrait_source_hash = card.portrait_pending_hash
-                card.body_source_hash = card.body_pending_hash
                 card.revision += 1
                 card.status = "ready"
                 card.error = None

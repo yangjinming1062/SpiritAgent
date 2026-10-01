@@ -60,7 +60,6 @@ class LoginRecord(ModelBase):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("TRUE"), index=True)
     login_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
     logout_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped[User] = relationship(back_populates="login_records")
 

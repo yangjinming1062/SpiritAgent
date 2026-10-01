@@ -97,8 +97,6 @@ _EXCLUDED_COLUMNS: dict[str, frozenset[str]] = {
         {
             "portrait_result_json",
             "body_result_json",
-            "portrait_pending_hash",
-            "body_pending_hash",
             "portrait_source_path",
             "body_source_path",
         },
@@ -183,29 +181,22 @@ async def insert_rows(
             conversation = await db.get(Conversation, payload["conversation_id"])
             if conversation.user_id != target_user_id or not conversation.is_automation:
                 raise ValueError("Standard job requires an automation conversation")
-        if table in {"companion_moments", "companion_diary_entries"}:
-            memory_ids = (
-                payload.get("memory_ids", []) if table == "companion_diary_entries" else [payload.get("memory_id")]
-            )
-            for memory_id in memory_ids:
-                if memory_id is None:
-                    continue
+        if table == "companion_moments":
+            memory_id = payload.get("memory_id")
+            if memory_id is not None:
                 memory = await db.get(Memory, int(memory_id))
                 if memory is None or memory.user_id != target_user_id or memory.system_preset_id != "companion":
                     raise ValueError("Companion narrative refers to a different memory scope")
-            if table == "companion_moments" and payload.get("session_id") is not None:
+            if payload.get("session_id") is not None:
                 conversation = await db.get(Conversation, payload["session_id"])
                 if conversation.user_id != target_user_id or conversation.system_preset_id != "companion":
                     raise ValueError("Companion moment refers to a different conversation scope")
-            if table == "companion_moments":
-                if payload.get("kind") not in {kind.value for kind in MomentKind}:
-                    raise ValueError("Invalid moment kind")
-                if payload.get("source") not in {source.value for source in MomentSource}:
-                    raise ValueError("Invalid moment source")
-            if table == "companion_diary_entries" and payload.get("source") not in {
-                source.value for source in DiarySource
-            }:
-                raise ValueError("Invalid diary source")
+            if payload.get("kind") not in {kind.value for kind in MomentKind}:
+                raise ValueError("Invalid moment kind")
+            if payload.get("source") not in {source.value for source in MomentSource}:
+                raise ValueError("Invalid moment source")
+        if table == "companion_diary_entries" and payload.get("source") not in {source.value for source in DiarySource}:
+            raise ValueError("Invalid diary source")
         if table == "companion_moment_comments" and payload.get("role") not in {
             role.value for role in MomentCommentRole
         }:
@@ -443,10 +434,11 @@ def _build_payload(
             payload["status"] = "description_failed" if payload.get("media_path") else "failed"
             payload["error"] = "恢复的场景任务需要手动重试"
     if table == "companion_diary_entries":
-        for key, ref in (("memory_ids", "memories"), ("moment_ids", "companion_moments")):
-            payload[key] = [
-                str(id_map[ref][str(value)]) for value in raw.get(key, []) if str(value) in id_map.get(ref, {})
-            ]
+        payload["moment_ids"] = [
+            str(id_map["companion_moments"][str(value)])
+            for value in raw.get("moment_ids", [])
+            if str(value) in id_map.get("companion_moments", {})
+        ]
     if table not in {"messages", "user_preferences"}:
         payload["user_id"] = user_id
     return payload

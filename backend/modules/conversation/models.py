@@ -38,7 +38,6 @@ class Conversation(ModelBase, TimestampMixin):
     title: Mapped[str] = mapped_column(Text, default="New Conversation")
     pinned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
-    cwd: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     # reasoning/language 的 key-value 覆盖；随 conversation 级联清除，跨 WS 重连存活（不像 RuntimeSession.settings）。
     settings_json: Mapped[str | None] = mapped_column(Text, nullable=True)
     # 自动化任务会话仍属 standard kind，但不参与陪伴夜间记忆、活跃度或主动触达判断。
@@ -112,8 +111,6 @@ class Message(ModelBase):
     reasoning_content: Mapped[str | None] = mapped_column(Text, nullable=True)
     # content=模型气泡数组；reply_json=语音绑定、音频及媒体交付态。
     reply_json: Mapped[str | None] = mapped_column(Text, nullable=True)
-    # daily_summary 的结构化截止日期（content 是人类可读版本，本列才是结构化源）。
-    summary_date: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
     # 摘要实际覆盖到的原消息 id，与摘要插入位置及 IM 消费排序分开。
     summary_through_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # IM 入站先落库再确认；queued=True 表示已接收未被回合消费，消费时整批清除；接收顺序即 id 序。

@@ -95,7 +95,6 @@ def _conversation_to_session_info(
         output_tokens=output_tok,
         tool_call_count=tool_count,
         preview=preview,
-        cwd=conv.cwd,
         pinned=conv.pinned_at is not None,
         archived=conv.archived_at is not None,
         system_preset_id=conv.system_preset_id,

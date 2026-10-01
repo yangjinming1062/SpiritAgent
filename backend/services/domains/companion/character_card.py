@@ -190,7 +190,6 @@ async def request_character_extraction(
     keep_parts = card.status == "failed" and same_sources
     if not keep_parts:
         card.portrait_result_json = card.body_result_json = "{}"
-        card.portrait_pending_hash = card.body_pending_hash = ""
         card.portrait_status = card.body_status = "pending"
     else:
         if card.portrait_status != "ready":

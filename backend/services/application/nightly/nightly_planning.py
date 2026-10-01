@@ -843,7 +843,6 @@ async def _load_action_rows(log_id: int) -> list[NightlyActivityAction]:
                 row.status = "pending"
             else:
                 row.status = "interrupted"
-                row.finished_at = utc_now()
                 row.result = {
                     "status": "interrupted",
                     "reason": "上次进程在动作执行中终止；没有可核对的内部任务 id，为避免重复付费或重复副作用，本动作不自动重放",
@@ -862,10 +861,6 @@ async def _set_action_state(
         if row is None:
             return
         row.status = status
-        if status == "running":
-            row.started_at = utc_now()
-        if status in _TERMINAL_ACTION_STATUSES:
-            row.finished_at = utc_now()
         if result is not None:
             row.result = result
         log = await db.get(NightlyActivityLog, row.log_id)

@@ -51,7 +51,6 @@ class DiaryEntryResponse(BaseModel):
     body: str
     mood: str | None = None
     source: DiarySource
-    memory_ids: list[str] = Field(default_factory=list)
     moment_ids: list[str] = Field(default_factory=list)
     created_at: datetime | None = None
     updated_at: datetime | None = None

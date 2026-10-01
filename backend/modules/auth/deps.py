@@ -1,13 +1,10 @@
 from collections.abc import AsyncIterator
 
 from components import (
-    LOGIN_HEARTBEAT_INTERVAL_SECONDS,
     begin_user_request,
     end_user_request,
-    ensure_utc,
     get_db,
     is_user_in_maintenance,
-    utc_now,
 )
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
@@ -68,15 +65,6 @@ async def get_current_session(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户不存在或已停用。")
     if is_user_in_maintenance(uid):
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="用户数据正在维护，请稍后重试。")
-
-    now = utc_now()
-    if (
-        login_record.last_seen_at is None
-        or (now - ensure_utc(login_record.last_seen_at)).total_seconds() > LOGIN_HEARTBEAT_INTERVAL_SECONDS
-    ):
-        login_record.last_seen_at = now
-        db.add(login_record)
-        await db.commit()
     return user, login_record
 
 

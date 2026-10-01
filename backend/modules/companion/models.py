@@ -92,12 +92,10 @@ class AvatarAsset(ModelBase):
     user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     prompt_json: Mapped[str] = mapped_column(Text)
     asset_url: Mapped[str] = mapped_column(String(2048))
-    style: Mapped[str] = mapped_column(String(64), default="")
     # 日常出镜的全身参考；锁定身份后仍可重绘。
     seed_fullbody_url: Mapped[str] = mapped_column(String(2048), default="", server_default=text("''"))
     # 身份锁定的持久标志，不能由可重绘的种子路径推断。
     is_fullbody_confirmed: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"))
-    seed: Mapped[int | None] = mapped_column(Integer, nullable=True)
     active: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("FALSE"), index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -115,7 +113,6 @@ class FullbodyCandidate(ModelBase, TimestampMixin):
     base_revision: Mapped[int] = mapped_column(Integer)
     image_url: Mapped[str] = mapped_column(String(2048))
     body_features_json: Mapped[str] = mapped_column(Text, default="{}", server_default=text("'{}'"))
-    body_source_hash: Mapped[str] = mapped_column(String(64), default="", server_default=text("''"))
     status: Mapped[str] = mapped_column(String(16), default="pending", server_default=text("'pending'"), index=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 

@@ -18,7 +18,6 @@ class DesktopSessionInfo(BaseModel):
     pinned: bool = False
     archived: bool = False
     is_active: bool = True
-    cwd: str | None = None
     ended_at: int | None = None
     system_preset_id: str | None = None
     # 服务端按预设目录解析的图标键（自动化会话为 task），客户端直接使用。

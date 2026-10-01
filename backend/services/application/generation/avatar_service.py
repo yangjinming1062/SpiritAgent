@@ -1,8 +1,6 @@
 import asyncio
 import contextlib
-import hashlib
 import json
-import secrets
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -160,8 +158,8 @@ def _portrait_identity(identity: CharacterCardSnapshot | None) -> str:
     return PORTRAIT_IDENTITY_TEMPLATE.format(features=json.dumps(features, ensure_ascii=False))
 
 
-async def extract_card_features[F: BaseModel](user_id: int, source_path: str, model: type[F]) -> tuple[F, str]:
-    """按角色卡字段分析立绘裸路径，返回特征与源图散列；缺字段视为失败，空字段允许未知特征。"""
+async def extract_card_features[F: BaseModel](user_id: int, source_path: str, model: type[F]) -> F:
+    """按角色卡字段分析立绘裸路径，返回特征；缺字段视为失败，空字段允许未知特征。"""
     loaded = await asyncio.to_thread(read_portrait_bytes, source_path)
     if loaded is None:
         raise ValueError("source image is unreadable")
@@ -180,7 +178,7 @@ async def extract_card_features[F: BaseModel](user_id: int, source_path: str, mo
     payload = parse_llm_json(raw)
     if not isinstance(payload, dict) or set(payload) != set(model.model_fields):
         raise ValueError("incomplete character extraction")
-    return model.model_validate(payload), hashlib.sha256(data).hexdigest()
+    return model.model_validate(payload)
 
 
 async def latest_fullbody_candidate(user_id: int, avatar_id: int) -> FullbodyCandidateResponse | None:
@@ -209,9 +207,8 @@ async def latest_fullbody_candidate(user_id: int, avatar_id: int) -> FullbodyCan
 async def _analyze_fullbody_candidate(user_id: int, candidate_id: int, path: str) -> FullbodyCandidateResponse:
     """分析待定或失败候选的身体特征；写回前核对候选图未变。"""
     features: BodyFeatures | None = None
-    source_hash = ""
     try:
-        features, source_hash = await extract_card_features(user_id, path, BodyFeatures)
+        features = await extract_card_features(user_id, path, BodyFeatures)
     except Exception:
         logger.warning("fullbody candidate analysis failed", extra={"candidate_id": candidate_id}, exc_info=True)
     async with SESSION_LOCAL() as db:
@@ -226,7 +223,6 @@ async def _analyze_fullbody_candidate(user_id: int, candidate_id: int, path: str
         row.error = None if features is not None else "身体特征分析失败，请重试分析"
         if features is not None:
             row.body_features_json = features.model_dump_json()
-            row.body_source_hash = source_hash
         await db.commit()
         return fullbody_candidate_response(row)
 
@@ -347,8 +343,6 @@ async def accept_fullbody_candidate(user_id: int, avatar_id: int, candidate_id: 
         )
         card.body_result_json = body.model_dump_json()
         card.body_source_path = row.image_url
-        card.body_source_hash = row.body_source_hash
-        card.body_pending_hash = row.body_source_hash
         card.body_status = "ready"
         card.revision += 1
         card.error = None
@@ -471,8 +465,6 @@ async def _write_avatar_step(
                 user_id=user_id,
                 prompt_json=json.dumps(prompt_payload, ensure_ascii=False),
                 asset_url=asset_url,
-                style=style,
-                seed=secrets.randbelow(2**31),
                 active=True,
             )
             await db.execute(

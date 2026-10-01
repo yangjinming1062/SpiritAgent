@@ -71,13 +71,12 @@ async def fork_conversation_from_message(
             f"无可派生的消息：会话 {source_session_id!r} 在 message_id={source_message_id} 之前没有可复制行",
         )
 
-    # 继承 cwd / settings_json 让 runtime 启动即处于暖态；派生会话是独立的顶层会话，只记录来源。
+    # 继承 settings_json 让 runtime 启动即处于暖态；派生会话是独立的顶层会话，只记录来源。
     new_conv = Conversation(
         user_id=user_id,
         forked_from_id=src.id,
         kind=STANDARD_KIND,
         title=f"{(src.title or '新对话')} — 副本",
-        cwd=src.cwd,
         settings_json=src.settings_json,
         system_preset_id=src.system_preset_id,
         is_automation=src.is_automation,
@@ -113,7 +112,6 @@ async def fork_conversation_from_message(
             media_json=row.media_json,
             reasoning_content=row.reasoning_content,
             reply_json=copied_reply,
-            summary_date=row.summary_date,
             created_at=row.created_at,
         )
         db.add(copy)
